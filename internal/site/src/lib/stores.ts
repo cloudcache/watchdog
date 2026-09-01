@@ -1,5 +1,5 @@
 import { atom, computed, listenKeys, map, type ReadableAtom } from "nanostores"
-import type { AlertMap, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
+import type { AlertMap, ChartTimeRange, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
 import { pb } from "./api"
 import { Unit } from "./enums"
 
@@ -7,7 +7,7 @@ import { Unit } from "./enums"
 export const defaultLayoutWidth = 1580
 
 /** Store if user is authenticated */
-export const $authenticated = atom(pb.authStore.isValid)
+export const $authenticated = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true" || pb.authStore.isValid)
 
 /** Map of system records by name */
 export const $allSystemsByName = map<Record<string, SystemRecord>>({})
@@ -33,6 +33,9 @@ export const $newVersion = atom<UpdateInfo | undefined>()
 
 /** Chart time period */
 export const $chartTime = atom<ChartTimes>("1h")
+
+/** Custom chart range, stored as datetime-local input values. */
+export const $chartTimeRange = atom<ChartTimeRange>({ start: "", end: "" })
 
 /** Whether to display average or max chart values */
 export const $maxValues = atom(false)

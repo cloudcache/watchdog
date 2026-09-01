@@ -41,7 +41,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales fetch-smartctl-conditional
+.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales fetch-smartctl-conditional watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install
 .DEFAULT_GOAL := build
 
 clean:
@@ -127,6 +127,21 @@ dev-agent:
 	else \
 		go run $(AGENT_GO_TAGS) github.com/henrygd/beszel/internal/cmd/agent; \
 	fi
+
+watchdog-dev-db:
+	./scripts/watchdog-dev-db.sh
+
+watchdog-dev-api:
+	./scripts/watchdog-dev-api.sh
+
+watchdog-dev-web:
+	./scripts/watchdog-dev-web.sh
+
+watchdog-install:
+	go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock
+
+watchdog-dev-install:
+	go run ./cmd/watchdog-install --config config/watchdog.dev.yaml --init-sql install/init.sql --lock .watchdog-dev.lock
 	
 build-dotnet:
 	@if command -v dotnet >/dev/null 2>&1; then \

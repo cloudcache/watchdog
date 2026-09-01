@@ -1,0 +1,40 @@
+mysql:
+  dsn: "root:@tcp(127.0.0.1:3306)/watchdog_dev?parseTime=true&multiStatements=true"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 30m
+
+victoriametrics:
+  base_url: "http://127.0.0.1:8428"
+
+victorialogs:
+  base_url: "http://127.0.0.1:9428"
+
+export:
+  dir: "exports"
+  worker_interval: 30s
+  worker_batch: 10
+  metric: "watchdog_snmp_if_in_bps"
+
+snmp_collector:
+  interval: 1m
+
+sflow_collector:
+  listen: ":6343"
+  tenant_id: "tenant_dev"
+  agg_interval: 1m
+  prefix_sync_interval: 5m
+
+snmp:
+  mib_dirs:
+    - "/Users/chenliliang/Downloads/librenms-master/mibs"
+    - "/Users/chenliliang/Downloads/librenms-master/mibs/huawei"
+  # Embedded core MIBs already cover the collector; extra modules from
+  # mib_dirs load lazily by name. "ALL" would parse every file at startup.
+  mib_load: ""
+
+agent:
+  hub_url: "http://127.0.0.1:8091"
+  agent_id: "agent_dev_snmp"
+  token: "dev-agent-token"
+  interval: 1m

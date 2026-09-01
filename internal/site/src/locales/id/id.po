@@ -30,6 +30,15 @@ msgstr "{0} tersedia"
 msgid "{0} of {1} row(s) selected."
 msgstr "{0} dari {1} baris terpilih."
 
+#. placeholder {0}: ports.length
+#: src/components/routes/network-discover.tsx
+msgid "{0} ports imported, {deleted} stale ports removed"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "{bgpCount} BGP sessions discovered"
+msgstr ""
+
 #: src/components/routes/system/info-bar.tsx
 msgid "{cores, plural, one {# core} other {# cores}}"
 msgstr "{cores, plural, one {# inti} other {# inti}}"
@@ -45,6 +54,14 @@ msgstr "{count, plural, one {{countString} jam} other {{countString} jam}}"
 #: src/lib/utils.ts
 msgid "{count, plural, one {{countString} minute} few {{countString} minutes} many {{countString} minutes} other {{countString} minutes}}"
 msgstr "{count, plural, one {{countString} menit} few {{countString} menit} many {{countString} menit} other {{countString} menit}}"
+
+#: src/components/routes/network-device.tsx
+msgid "{portCount} ports discovered"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "{sensorCount} sensors discovered"
+msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{threads, plural, one {# thread} other {# threads}}"
@@ -68,6 +85,10 @@ msgid "1 week"
 msgstr "1 minggu"
 
 #: src/lib/utils.ts
+msgid "10 minutes"
+msgstr ""
+
+#: src/lib/utils.ts
 msgid "12 hours"
 msgstr "12 jam"
 
@@ -77,23 +98,50 @@ msgid "15 min"
 msgstr "15 menit"
 
 #: src/lib/utils.ts
+msgid "15 minutes"
+msgstr ""
+
+#: src/lib/utils.ts
 msgid "24 hours"
 msgstr "24 jam"
 
 #: src/lib/utils.ts
+msgid "3 days"
+msgstr ""
+
+#: src/lib/utils.ts
 msgid "30 days"
 msgstr "30 hari"
+
+#: src/lib/utils.ts
+msgid "30 minutes"
+msgstr ""
 
 #. Load average
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "5 min"
 msgstr "5 mnt"
 
-#. Table column
+#: src/lib/utils.ts
+msgid "5 minutes"
+msgstr ""
+
+#: src/lib/utils.ts
+msgid "6 hours"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Accepted"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/permission-form.tsx
+#: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Actions"
 msgstr "Aksi"
 
@@ -112,14 +160,35 @@ msgstr "Peringatan Aktif"
 msgid "Active state"
 msgstr "Status aktif"
 
-#: src/components/add-system.tsx
-#: src/components/add-system.tsx
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Add"
+msgstr ""
+
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Add {foo}"
 msgstr "Tambah {foo}"
+
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Add at least one data source (metric)"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Add label"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Add metadata"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Add Target"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Add transform"
+msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
@@ -136,7 +205,17 @@ msgstr "Sesuaikan lebar layar utama"
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
 #: src/components/navbar.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port.tsx
 msgid "Admin"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Admin Down"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Advertised"
 msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
@@ -147,9 +226,44 @@ msgstr "Setelah"
 msgid "After setting the environment variables, restart your Beszel hub for changes to take effect."
 msgstr "Setelah mengatur variabel lingkungan, restart hub Beszel Anda agar perubahan dapat diterapkan."
 
-#: src/components/systems-table/systems-table-columns.tsx
+#: src/components/routes/agent-runs.tsx
 msgid "Agent"
 msgstr "Agen"
+
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agent-runs.tsx
+msgid "Agent Runs"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+msgid "Agent Type"
+msgstr ""
+
+#: src/components/routes/agents.tsx
+#: src/components/routes/agents.tsx
+msgid "Agents"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Aggregate"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-charts.tsx
+msgid "Aggregate Charts"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+msgid "Aggregation"
+msgstr ""
 
 #: src/components/command-palette.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
@@ -159,29 +273,48 @@ msgstr "Riwayat Peringatan"
 
 #: src/components/alerts/alert-button.tsx
 #: src/components/alerts/alerts-sheet.tsx
+#: src/components/routes/network-device.tsx
 msgid "Alerts"
 msgstr "Peringatan"
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
+msgid "Alias"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
+msgid "All"
+msgstr ""
 
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
-#: src/components/routes/containers.tsx
 msgid "All Containers"
 msgstr "Semua Container"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "All discovered ports"
+msgstr ""
 
 #: src/components/alerts/alerts-sheet.tsx
 #: src/components/command-palette.tsx
 #: src/components/routes/home.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/systems-table/systems-table.tsx
-#: src/components/systems-table/systems-table.tsx
 msgid "All Systems"
 msgstr "Semua Sistem"
 
+#: src/components/routes/historical-data.tsx
+msgid "Archive"
+msgstr ""
+
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Are you sure you want to delete {name}?"
-msgstr "Apakah anda yakin ingin menghapus {name}?"
+#~ msgid "Are you sure you want to delete {name}?"
+#~ msgstr "Apakah anda yakin ingin menghapus {name}?"
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
@@ -191,6 +324,7 @@ msgstr "Apakah anda yakin?"
 msgid "Automatic copy requires a secure context."
 msgstr "Copy memerlukan https."
 
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/system/chart-card.tsx
 msgid "Average"
 msgstr "Rata-rata"
@@ -235,6 +369,62 @@ msgstr "Rata-rata utilisasi {0}"
 msgid "Average utilization of GPU engines"
 msgstr "Rata-rata utilisasi GPU"
 
+#: src/components/routes/agent-form.tsx
+msgid "Back to agents"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+msgid "Back to billing"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
+msgid "Back to exports"
+msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "Back to MIB modules"
+msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-port.tsx
+msgid "Back to network device"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-discover.tsx
+msgid "Back to network devices"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+msgid "Back to network port"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Back to OID mappings"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Back to permissions"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Back to saved graphs"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Back to SNMP profiles"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
+msgid "Back to targets"
+msgstr ""
+
 #: src/components/command-palette.tsx
 #: src/components/navbar.tsx
 msgid "Backups"
@@ -247,8 +437,8 @@ msgstr "Bandwith"
 
 #. Battery label in systems table header
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Bat"
-msgstr "Baterai"
+#~ msgid "Bat"
+#~ msgstr "Baterai"
 
 #: src/components/routes/system/charts/sensor-charts.tsx
 #: src/lib/alerts.ts
@@ -282,9 +472,50 @@ msgstr "Beszel mendukung OpenID Connect dan OAuth2 dari berbagai penyedia layana
 msgid "Beszel uses <0>Shoutrrr</0> to integrate with popular notification services."
 msgstr "Beszel menggunakan <0>Shoutrrr</0> untuk mengintegrasikan dengan penyedia layanan notifikasi."
 
+#: src/components/routes/network-device.tsx
+msgid "BGP"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "BGP Alerts"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "BGP Peer"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Billing"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Billing Account"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Billing base bps"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Billing Day"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Billing Period"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Billing Ports"
+msgstr ""
+
 #: src/components/add-system.tsx
-msgid "Binary"
-msgstr "Binari"
+#~ msgid "Binary"
+#~ msgstr "Binari"
 
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/general.tsx
@@ -294,6 +525,14 @@ msgstr "Bit (Kbps, Mbps, Gbps)"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Boot state"
 msgstr "Status memulai"
+
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Built-in"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Bytes"
+msgstr ""
 
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/general.tsx
@@ -318,7 +557,6 @@ msgstr "Dapat diberhentikan"
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Cancel"
 msgstr "Batal"
 
@@ -379,9 +617,22 @@ msgstr "Periksa layanan pemantauan Anda"
 msgid "Check your notification service"
 msgstr "Periksa jasa penyedia notifikasi anda"
 
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Checksum"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+msgid "Class"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Cleanup"
+msgstr ""
+
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table.tsx
 msgid "Clear"
 msgstr "Bersihkan"
 
@@ -394,17 +645,29 @@ msgid "Click on a device to view more information."
 msgstr "Klik pada perangkat untuk melihat informasi lebih banyak."
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Click on a system to view more information."
-msgstr "Klik pada sistem untuk melihat informasi lebih banyak."
+#~ msgid "Click on a system to view more information."
+#~ msgstr "Klik pada sistem untuk melihat informasi lebih banyak."
 
 #: src/components/ui/input-copy.tsx
 msgid "Click to copy"
 msgstr "Klik untuk menyalin"
 
+#: src/components/routes/network-device.tsx
+msgid "Collection Endpoint"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Comma separated port IDs"
+#~ msgstr ""
+
 #: src/components/login/forgot-pass-form.tsx
 #: src/components/login/forgot-pass-form.tsx
 msgid "Command line instructions"
 msgstr "Instruksi command line"
+
+#: src/components/routes/network-discover.tsx
+msgid "Community Override"
+msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Configure how you receive alert notifications."
@@ -423,12 +686,13 @@ msgstr "Konflik"
 msgid "Connection is down"
 msgstr "Koneksi terputus"
 
+#: src/components/routes/containers.tsx
+#: src/components/routes/containers.tsx
 #: src/components/routes/system.tsx
 msgid "Containers"
 msgstr "Kontainer"
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Continue"
 msgstr "Lanjutkan"
 
@@ -436,13 +700,11 @@ msgstr "Lanjutkan"
 msgid "Copied to clipboard"
 msgstr "Disalin ke clipboard"
 
-#: src/components/add-system.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgctxt "Button to copy docker compose file content"
 msgid "Copy docker compose"
 msgstr "Salin docker compose"
 
-#: src/components/add-system.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgctxt "Button to copy docker run command"
 msgid "Copy docker run"
@@ -459,29 +721,28 @@ msgid "Copy from"
 msgstr "Salin dari"
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Copy host"
-msgstr "Salin host"
+#~ msgid "Copy host"
+#~ msgstr "Salin host"
 
-#: src/components/add-system.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Copy Linux command"
 msgstr "Salin perintah Linux"
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Copy name"
-msgstr "Salin nama"
+#~ msgid "Copy name"
+#~ msgstr "Salin nama"
 
 #: src/components/copy-to-clipboard.tsx
 msgid "Copy text"
 msgstr "Salin teks"
 
 #: src/components/add-system.tsx
-msgid "Copy the installation command for the agent below, or register agents automatically with a <0>universal token</0>."
-msgstr "Salin perintah instalasi untuk agen di bawah, atau daftarkan agen secara otomatis dengan <0>universal token</0>."
+#~ msgid "Copy the installation command for the agent below, or register agents automatically with a <0>universal token</0>."
+#~ msgstr "Salin perintah instalasi untuk agen di bawah, atau daftarkan agen secara otomatis dengan <0>universal token</0>."
 
 #: src/components/add-system.tsx
-msgid "Copy the<0>docker-compose.yml</0> content for the agent below, or register agents automatically with a <1>universal token</1>."
-msgstr "Salin konten <0>docker-compose.yml</0> untuk agen di bawah, atau daftarkan agen secara otomatis dengan <1>universal token</1>."
+#~ msgid "Copy the<0>docker-compose.yml</0> content for the agent below, or register agents automatically with a <1>universal token</1>."
+#~ msgstr "Salin konten <0>docker-compose.yml</0> untuk agen di bawah, atau daftarkan agen secara otomatis dengan <1>universal token</1>."
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Copy YAML"
@@ -492,9 +753,21 @@ msgctxt "Core system metrics"
 msgid "Core"
 msgstr "Inti"
 
+#: src/components/routes/network-port-policy.tsx
+msgid "Correction"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Correction max"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Correction min"
+msgstr ""
+
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/containers.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "CPU"
 msgstr ""
 
@@ -521,16 +794,98 @@ msgstr "Rincian Waktu CPU"
 msgid "CPU Usage"
 msgstr "Penggunaan CPU"
 
+#: src/components/routes/agents.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+#: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/targets.tsx
 msgid "Create"
 msgstr "Buat"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Create a network target first; devices are created by discovery or agent reports."
+msgstr ""
 
 #: src/components/login/auth-form.tsx
 msgid "Create account"
 msgstr "Buat akun"
 
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agent-form.tsx
+msgid "Create Agent"
+msgstr ""
+
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing-account-form.tsx
+msgid "Create Billing Account"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Create Export"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Create Graph"
+msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "Create MIB Module"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Create Network Device"
+#~ msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-form.tsx
+#~ msgid "Create Network Port"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Create Network Target"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Create new target"
+#~ msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Create OID Mapping"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+#: src/components/routes/permission-form.tsx
+msgid "Create Permission"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Create SNMP Profile"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Create Target"
+msgstr ""
+
 #. Context: date created
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/export-detail.tsx
 msgid "Created"
 msgstr "Dibuat"
 
@@ -551,6 +906,14 @@ msgstr "Akumulasi Upload"
 msgid "Current state"
 msgstr "Status saat ini"
 
+#: src/lib/utils.ts
+msgid "Custom"
+msgstr ""
+
+#: src/components/routes/traffic-defaults.tsx
+msgid "Customer"
+msgstr ""
+
 #. Power Cycles
 #: src/components/routes/system/smart-table.tsx
 msgid "Cycles"
@@ -561,6 +924,10 @@ msgstr "Siklus"
 msgid "Daily"
 msgstr "Harian"
 
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Data Sources"
+msgstr ""
+
 #: src/components/routes/system/info-bar.tsx
 msgctxt "Default system layout option"
 msgid "Default"
@@ -570,10 +937,14 @@ msgstr ""
 msgid "Default time period"
 msgstr "Standar waktu"
 
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/historical-data.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Delete"
 msgstr "Hapus"
 
@@ -581,6 +952,70 @@ msgstr "Hapus"
 msgid "Delete fingerprint"
 msgstr "Hapus fingerprint"
 
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Delete MIB module"
+msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "Delete permission"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Delete retention policy"
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Delete SNMP profile"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+msgid "Delete this agent?"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Delete this aggregate graph?"
+msgstr ""
+
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Delete this MIB module?"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Delete this network device?"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+msgid "Delete this network port?"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Delete this OID mapping?"
+msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "Delete this permission?"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Delete this retention policy?"
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Delete this SNMP profile?"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Delete this target?"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Denied"
+#~ msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Description"
 msgstr "Deskripsi"
@@ -589,17 +1024,72 @@ msgstr "Deskripsi"
 msgid "Detail"
 msgstr ""
 
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-discover.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/system/smart-table.tsx
 msgid "Device"
 msgstr "Perangkat"
+
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+msgid "Device ID"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Device Inventory"
+#~ msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+msgid "Device SNMP"
+msgstr ""
+
+#: src/components/routes/watchdog-overview.tsx
+#~ msgid "Devices"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/retention.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Disabled"
+msgstr ""
 
 #. Context: Battery state
 #: src/lib/i18n.ts
 msgid "Discharging"
 msgstr "Sedang tidak di charge"
 
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-discover.tsx
+msgid "Discover"
+msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+msgid "Discover Interfaces"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+#: src/components/routes/network-discover.tsx
+msgid "Discover Network Device"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "discovered"
+msgstr ""
+
+#. placeholder {0}: result.count ?? result.ports?.length ?? 0
+#: src/components/routes/network-device-snmp.tsx
+msgid "Discovered {0} interfaces"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+#~ msgid "Discovery JSON"
+#~ msgstr ""
+
 #: src/components/routes/system.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Disk"
 msgstr ""
 
@@ -626,6 +1116,10 @@ msgctxt "Layout display options"
 msgid "Display"
 msgstr "Tampilan"
 
+#: src/components/routes/network-port.tsx
+msgid "Distance"
+msgstr ""
+
 #: src/components/routes/system/charts/cpu-charts.tsx
 msgid "Docker CPU Usage"
 msgstr "Penggunaan CPU Docker"
@@ -643,35 +1137,118 @@ msgstr "I/O Jaringan Docker"
 msgid "Documentation"
 msgstr "Dokumentasi"
 
+#: src/components/routes/network-devices.tsx
+msgid "down"
+msgstr ""
+
 #. Context: System is down
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 #: src/lib/alerts.ts
 msgid "Down"
 msgstr "Mati"
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Down ({downSystemsLength})"
-msgstr "Mati ({downSystemsLength})"
+#~ msgid "Down ({downSystemsLength})"
+#~ msgstr "Mati ({downSystemsLength})"
 
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+msgid "Down Ports"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
 #: src/components/routes/system/network-sheet.tsx
 msgid "Download"
 msgstr "Unduh"
 
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Draw"
+#~ msgstr ""
+
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/network-device.tsx
 msgid "Duration"
 msgstr "Durasi"
 
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/systems-table/systems-table-columns.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Edit"
 msgstr "Ubah"
 
-#: src/components/add-system.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Edit {foo}"
 msgstr "Ubah {foo}"
+
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agent-form.tsx
+msgid "Edit Agent"
+msgstr ""
+
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing-account-form.tsx
+msgid "Edit Billing Account"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Edit Graph"
+msgstr ""
+
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Edit MIB module"
+msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "Edit MIB Module"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-form.tsx
+msgid "Edit Network Device"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Edit Network Port"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Edit OID Mapping"
+msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "Edit permission"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+#: src/components/routes/permission-form.tsx
+msgid "Edit Permission"
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Edit SNMP profile"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Edit SNMP Profile"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Edit Target"
+msgstr ""
 
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
@@ -688,10 +1265,29 @@ msgstr "Notifikasi email"
 msgid "Empty"
 msgstr "Kosong"
 
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Enabled"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "End"
+msgstr ""
+
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "End Time"
 msgstr "Waktu Berakhir"
+
+#: src/components/routes/agent-runs.tsx
+msgid "Ended"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agents.tsx
+msgid "Endpoint"
+msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Endpoint URL"
@@ -713,11 +1309,17 @@ msgstr "Masukkan alamat email..."
 msgid "Enter your one-time password."
 msgstr "Masukkan otp anda."
 
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Enterprise"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Ephemeral"
 msgstr "Sementara"
 
-#: src/components/login/auth-form.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/config-yaml.tsx
 #: src/components/routes/settings/heartbeat.tsx
@@ -729,6 +1331,18 @@ msgstr "Sementara"
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Error"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+#~ msgid "Errors and CRC"
+#~ msgstr ""
+
+#: src/components/routes/network-devices.tsx
+#~ msgid "Established"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "established / total"
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
@@ -758,6 +1372,7 @@ msgstr "Keluar aktif"
 msgid "Expires after one hour or on hub restart."
 msgstr "Kedaluwarsa setelah satu jam atau saat restart hub."
 
+#: src/components/routes/export-detail.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Export"
 msgstr "Ekspor"
@@ -766,17 +1381,34 @@ msgstr "Ekspor"
 msgid "Export configuration"
 msgstr "Export konfigurasi"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Export CSV"
+msgstr ""
+
+#: src/components/routes/watchdog-overview.tsx
+msgid "Export Tasks"
+msgstr ""
+
 #: src/components/routes/settings/config-yaml.tsx
 msgid "Export your current systems configuration."
 msgstr "Export konfigurasi sistem anda saat ini."
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/watchdog-overview.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Exports"
+msgstr ""
 
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
 msgstr ""
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Failed"
-msgstr "Gagal"
+#~ msgid "Failed"
+#~ msgstr "Gagal"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Failed Attributes:"
@@ -786,11 +1418,313 @@ msgstr "Atribut yang Gagal:"
 msgid "Failed to authenticate"
 msgstr "Gagal mengautentikasi"
 
+#: src/components/routes/billing-account-detail.tsx
+msgid "Failed to create billing period"
+msgstr ""
+
+#: src/components/routes/export-new.tsx
+msgid "Failed to create export"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Failed to create historical operation"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+msgid "Failed to delete agent"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Failed to delete aggregate graph"
+msgstr ""
+
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Failed to delete MIB module"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Failed to delete network device"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+msgid "Failed to delete network port"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Failed to delete OID mapping"
+msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "Failed to delete permission"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Failed to delete retention policy"
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Failed to delete SNMP profile"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Failed to delete target"
+msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+msgid "Failed to discover interfaces"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "Failed to discover network device"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+#~ msgid "Failed to import discovery result"
+#~ msgstr ""
+
+#: src/components/routes/agent-form.tsx
+msgid "Failed to load agent"
+msgstr ""
+
+#: src/components/routes/agent-runs.tsx
+msgid "Failed to load agent runs"
+msgstr ""
+
+#: src/components/routes/agents.tsx
+msgid "Failed to load agents"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Failed to load aggregate chart"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Failed to load aggregate chart inputs"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Failed to load aggregate graph"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Failed to load aggregate graphs"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Failed to load aggregate series"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Failed to load BGP metrics"
+#~ msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+msgid "Failed to load billing account"
+msgstr ""
+
+#: src/components/routes/billing.tsx
+msgid "Failed to load billing accounts"
+msgstr ""
+
+#: src/components/routes/containers.tsx
+msgid "Failed to load container metrics"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Failed to load device resources"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Failed to load device traffic"
+#~ msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "Failed to load discovery inputs"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+msgid "Failed to load export"
+msgstr ""
+
+#: src/components/routes/exports.tsx
+msgid "Failed to load exports"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Failed to load interface health"
+#~ msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "Failed to load MIB module"
+msgstr ""
+
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Failed to load MIB modules"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
+msgid "Failed to load network device"
+msgstr ""
+
+#: src/components/routes/network-devices.tsx
+msgid "Failed to load network devices"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port.tsx
+msgid "Failed to load network port"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Failed to load OID mapping"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Failed to load OID mappings"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Failed to load optical power"
+#~ msgstr ""
+
+#: src/components/graph/graph-panel-renderer.tsx
+msgid "Failed to load panel"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Failed to load permission"
+msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "Failed to load permissions"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Failed to load port policy"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Failed to load retention policies"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Failed to load SNMP profile"
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Failed to load SNMP profiles"
+msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+msgid "Failed to load SNMP settings"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Failed to load target"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Failed to load target metrics"
+msgstr ""
+
+#: src/components/routes/targets.tsx
+msgid "Failed to load targets"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+#~ msgid "Failed to load traffic chart"
+#~ msgstr ""
+
+#: src/components/routes/traffic-defaults.tsx
+msgid "Failed to load traffic defaults"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Failed to preview historical data"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Failed to rediscover network device"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+msgid "Failed to retry export"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+msgid "Failed to save agent"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-device.tsx
+msgid "Failed to save aggregate graph"
+msgstr ""
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Failed to save billing account"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Failed to save billing ports"
+msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "Failed to save MIB module"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "Failed to save network device"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Failed to save network port"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Failed to save OID mapping"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Failed to save permission"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Failed to save port policy"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Failed to save retention policy"
+msgstr ""
+
 #: src/components/routes/settings/layout.tsx
 #: src/components/routes/settings/notifications.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Failed to save settings"
 msgstr "Gagal menyimpan pengaturan"
+
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Failed to save SNMP profile"
+msgstr ""
+
+#: src/components/routes/network-device-snmp.tsx
+msgid "Failed to save SNMP settings"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Failed to save target"
+msgstr ""
+
+#: src/components/routes/traffic-defaults.tsx
+msgid "Failed to save traffic defaults"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Failed to seed OID mappings"
+msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Failed to send heartbeat"
@@ -809,12 +1743,19 @@ msgstr "Gagal memperbarui peringatan"
 msgid "Failed: {0}"
 msgstr "Gagal: {0}"
 
+#: src/components/routes/agents.tsx
+msgid "Failures"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+msgid "File"
+msgstr ""
+
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/system/chart-card.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
-#: src/components/systems-table/systems-table.tsx
 msgid "Filter..."
 msgstr "Saring..."
 
@@ -834,11 +1775,19 @@ msgstr "Untuk <0>{min}</0> {min, plural, one {menit} other {menit}}"
 msgid "Forgot password?"
 msgstr "Lupa kata sandi?"
 
-#: src/components/add-system.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+msgid "Format"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgctxt "Button to copy install command"
 msgid "FreeBSD command"
 msgstr "Perintah FreeBSD"
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "from stored snapshots"
+msgstr ""
 
 #. Context: Battery state
 #: src/components/routes/system/info-bar.tsx
@@ -872,14 +1821,35 @@ msgstr "Konsumsi Daya GPU"
 msgid "GPU Usage"
 msgstr "Penggunaan GPU"
 
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Graph"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/network-device.tsx
+msgid "Graph name"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Graphs"
+msgstr ""
+
 #: src/components/routes/system/info-bar.tsx
-#: src/components/systems-table/systems-table.tsx
 msgid "Grid"
 msgstr "Kartu"
 
+#: src/components/routes/network-device.tsx
+msgid "Hardware"
+msgstr ""
+
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/network-device.tsx
 msgid "Health"
 msgstr "Kesehatan"
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Health Samples"
+#~ msgstr ""
 
 #: src/components/routes/settings/layout.tsx
 msgid "Heartbeat"
@@ -893,14 +1863,40 @@ msgstr "Pemantauan Heartbeat"
 msgid "Heartbeat sent successfully"
 msgstr "Heartbeat berhasil dikirim"
 
-#: src/components/add-system.tsx
+#: src/components/routes/retention.tsx
+#: src/components/routes/retention.tsx
+msgid "High precision days"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/historical-data.tsx
+#: src/components/routes/historical-data.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Historical Data"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Perintah Homebrew"
 
+#: src/components/routes/network-device.tsx
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/targets.tsx
+msgid "Host"
+msgstr ""
+
 #: src/components/add-system.tsx
-msgid "Host / IP"
+#~ msgid "Host / IP"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Host / IP / Domain"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Hostname"
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
@@ -910,6 +1906,10 @@ msgstr "Metode HTTP"
 #: src/components/routes/settings/heartbeat.tsx
 msgid "HTTP method: POST, GET, or HEAD (default: POST)"
 msgstr "Metode HTTP: POST, GET, atau HEAD (default: POST)"
+
+#: src/components/routes/network-device.tsx
+msgid "HW Rev"
+msgstr ""
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average operation time (iostat await)"
@@ -926,6 +1926,10 @@ msgctxt "Percent of time the disk is busy with I/O"
 msgid "I/O Utilization"
 msgstr "Utilisasi I/O"
 
+#: src/components/routes/historical-data.tsx
+msgid "ID"
+msgstr ""
+
 #. Context: Battery state
 #: src/lib/i18n.ts
 msgid "Idle"
@@ -935,14 +1939,41 @@ msgstr ""
 msgid "If you've lost the password to your admin account, you may reset it using the following command."
 msgstr "Jika anda kehilangan kata sandi untuk akun admin anda, anda dapat meresetnya menggunakan perintah berikut."
 
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
+msgid "ifIndex"
+msgstr ""
+
 #: src/components/containers-table/containers-table-columns.tsx
 msgctxt "Docker image"
 msgid "Image"
 msgstr "Gambar"
 
+#: src/components/routes/network-discover.tsx
+#~ msgid "Import"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "In"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
+#~ msgid "In errors"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "in selected range"
+#~ msgstr ""
+
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Inactive"
 msgstr "Tidak aktif"
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Interface Health"
+#~ msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Interval"
@@ -952,14 +1983,53 @@ msgstr ""
 msgid "Invalid email address."
 msgstr "Alamat email tidak valid."
 
+#: src/components/routes/network-device.tsx
+msgid "Inventory"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Label"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Label key"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Label value"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/targets.tsx
+msgid "Labels"
+msgstr ""
+
 #: src/components/lang-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "Bahasa"
 
+#: src/components/routes/agents.tsx
+msgid "Last Error"
+msgstr ""
+
+#: src/components/routes/agents.tsx
+msgid "Last Run"
+msgstr ""
+
+#: src/components/routes/agents.tsx
+#: src/components/routes/network-devices.tsx
+msgid "Last Seen"
+msgstr ""
+
+#: src/components/routes/agents.tsx
+msgid "Last Success"
+msgstr ""
+
 #: src/components/systems-table/systems-table.tsx
-msgid "Layout"
-msgstr "Tampilan"
+#~ msgid "Layout"
+#~ msgstr "Tampilan"
 
 #: src/components/routes/settings/general.tsx
 msgid "Layout width"
@@ -992,16 +2062,49 @@ msgstr "Rata-rata Beban 5m"
 
 #. Short label for load average
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Load Avg"
-msgstr "Rata-rata Beban"
+#~ msgid "Load Avg"
+#~ msgstr "Rata-rata Beban"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Load state"
 msgstr "Beban saat ini"
 
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Loading chart data..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Loading inventory..."
+msgstr ""
+
+#: src/components/graph/graph-panel-renderer.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/permissions.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+#: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
 msgstr "Memuat..."
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
+msgid "Location"
+msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
@@ -1020,12 +2123,17 @@ msgstr "Percobaan masuk gagal"
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
+#: src/components/routes/network-device.tsx
 msgid "Logs"
 msgstr "Log"
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Looking instead for where to create alerts? Click the bell <0/> icons in the systems table."
 msgstr "Mencari tempat untuk membuat peringatan? Klik ikon lonceng <0/> di tabel sistem."
+
+#: src/components/routes/network-device.tsx
+msgid "MAC Address"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Main PID"
@@ -1035,10 +2143,21 @@ msgstr "PID utama"
 msgid "Manage display and notification preferences."
 msgstr "Kelola preferensi tampilan dan notifikasi."
 
-#: src/components/add-system.tsx
+#: src/components/routes/retention.tsx
+msgid "Manual"
+msgstr ""
+
+#: src/components/routes/retention.tsx
+msgid "Manual cleanup"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Manual setup instructions"
 msgstr "Instruksi setup manual"
+
+#: src/components/routes/network-device.tsx
+msgid "Manufacturer"
+msgstr ""
 
 #. Chart select field. Please try to keep this short.
 #: src/components/routes/system/chart-card.tsx
@@ -1046,10 +2165,10 @@ msgid "Max 1 min"
 msgstr "Maks 1 mnt"
 
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/containers.tsx
 #: src/components/routes/system/info-bar.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Memory"
 msgstr "Memori"
 
@@ -1071,23 +2190,132 @@ msgstr "Penggunaan Memori"
 msgid "Memory usage of docker containers"
 msgstr "Penggunaan memori kontainer docker"
 
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port.tsx
+msgid "Metadata"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Metadata key"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Metadata value"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Metric"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "metrics"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Metrics"
+msgstr ""
+
+#: src/components/routes/snmp-mib-module-form.tsx
+msgid "MIB module not found"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "MIB Modules"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/network-device.tsx
+msgid "Mode"
+msgstr ""
+
 #. Device model
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/system/smart-table.tsx
 msgid "Model"
 msgstr ""
 
-#: src/components/add-system.tsx
+#: src/components/routes/network-port.tsx
+msgid "Module"
+msgstr ""
+
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Name"
 msgstr "Nama"
 
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Name is required"
+msgstr ""
+
 #: src/components/containers-table/containers-table-columns.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Net"
 msgstr "Jaringan"
+
+#: src/components/routes/containers.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Network"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+#~ msgid "Network Asset"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Network Device"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "Network device ID is required"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/watchdog-overview.tsx
+#~ msgid "Network Devices"
+#~ msgstr ""
+
+#: src/components/routes/network-port.tsx
+msgid "Network Port"
+msgstr ""
+
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-devices.tsx
+#~ msgid "Network Target"
+#~ msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/watchdog-overview.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Network Targets"
+msgstr ""
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Network traffic of docker containers"
@@ -1105,11 +2333,140 @@ msgstr "Trafik jaringan antarmuka publik"
 msgid "Network unit"
 msgstr "Unit jaringan"
 
+#: src/components/routes/agent-runs.tsx
+msgid "no"
+msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "No"
 msgstr "Tidak"
+
+#: src/components/routes/agent-runs.tsx
+msgid "No agent runs found."
+msgstr ""
+
+#: src/components/routes/agents.tsx
+msgid "No agents found."
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No aggregate graphs found."
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No aggregate samples are available for the current selection."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No alerts. Threshold-based alerting is not yet configured for this device."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No BGP data in this range."
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No BGP sessions found."
+msgstr ""
+
+#: src/components/routes/billing.tsx
+msgid "No billing accounts found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No collection events recorded yet."
+msgstr ""
+
+#: src/components/graph/graph-panel-renderer.tsx
+msgid "No data in this range."
+msgstr ""
+
+#: src/components/routes/network-devices.tsx
+msgid "No devices match the filter."
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+#~ msgid "No discovered network device is bound to this target yet."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No discovered ports for selected targets."
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "No discovered ports."
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "No discovered ports. Discover or import SNMP interfaces before computing traffic billing."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No down ports."
+msgstr ""
+
+#: src/components/routes/exports.tsx
+msgid "No exports found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No interface health data in this range."
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No LAG groups discovered (IEEE8023-LAG-MIB not supported or empty)."
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No metric samples found for this range."
+msgstr ""
+
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "No MIB modules found."
+msgstr ""
+
+#: src/components/routes/network-devices.tsx
+#~ msgid "No network devices found."
+#~ msgstr ""
+
+#: src/components/routes/network-devices.tsx
+msgid "No network targets found."
+msgstr ""
+
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "No OID mappings found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No optical power data in this range."
+#~ msgstr ""
+
+#: src/components/routes/permissions.tsx
+msgid "No permissions found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/network-device.tsx
+msgid "No ports found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No ports match the filter."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No ports to aggregate"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No resource data in this range."
+#~ msgstr ""
 
 #: src/components/command-palette.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -1125,14 +2482,63 @@ msgstr "Tidak ada hasil ditemukan."
 msgid "No results."
 msgstr "Tidak ada hasil."
 
+#: src/components/routes/retention.tsx
+msgid "No retention policies found."
+msgstr ""
+
 #: src/components/routes/system/smart-table.tsx
 msgid "No S.M.A.R.T. attributes available for this device."
 msgstr "Tidak ada atribut S.M.A.R.T. yang tersedia untuk perangkat ini."
 
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "No samples in this range."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No sensor alerts."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No sensors found."
+msgstr ""
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "No SNMP profiles found."
+msgstr ""
+
 #: src/components/systems-table/systems-table.tsx
 #: src/components/systems-table/systems-table.tsx
-msgid "No systems found."
-msgstr "Sistem tidak ditemukan."
+#~ msgid "No systems found."
+#~ msgstr "Sistem tidak ditemukan."
+
+#: src/components/routes/targets.tsx
+msgid "No targets found."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No traffic data in this range."
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "No unused network targets found. Create one here with host, IP, or domain."
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "not established"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "not ok"
+msgstr ""
+
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/retention.tsx
+msgid "Notes"
+msgstr ""
 
 #: src/components/command-palette.tsx
 #: src/components/routes/settings/layout.tsx
@@ -1143,6 +2549,16 @@ msgstr "Notifikasi"
 #: src/components/login/auth-form.tsx
 msgid "OAuth 2 / OIDC support"
 msgstr "Dukungan OAuth 2 / OIDC"
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "OID mapping not found"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "OID Mappings"
+msgstr ""
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "On each restart, systems in the database will be updated to match the systems defined in the file."
@@ -1157,21 +2573,82 @@ msgstr "Sekali pakai"
 msgid "One-time password"
 msgstr "Kata sandi sekali pakai (OTP)"
 
+#: src/components/routes/export-new.tsx
+msgid "Open Aggregate Charts"
+msgstr ""
+
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Open menu"
 msgstr "Buka menu"
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port.tsx
+#: src/components/routes/network-port.tsx
+msgid "Oper"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "oper down"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Oper Down"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
+msgid "Operating System"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Operation"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+#~ msgid "Optical Module"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Optical Power"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Optics/BGP"
+#~ msgstr ""
 
 #: src/components/login/auth-form.tsx
 msgid "Or continue with"
 msgstr "Atau lanjutkan dengan"
 
+#: src/components/routes/network-devices.tsx
+msgid "OS"
+msgstr ""
+
 #: src/components/routes/system/cpu-sheet.tsx
 msgid "Other"
 msgstr "Lainnya"
+
+#: src/components/routes/network-device.tsx
+msgid "Out"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
+#~ msgid "Out errors"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Overall Traffic"
+#~ msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Overview"
+msgstr ""
 
 #: src/components/alerts/alerts-sheet.tsx
 msgid "Overwrite existing alerts"
@@ -1215,20 +2692,32 @@ msgid "Past"
 msgstr "Lalu"
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Pause"
-msgstr "Jeda"
+#~ msgid "Pause"
+#~ msgstr "Jeda"
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Paused"
-msgstr "Dijeda"
+#~ msgid "Paused"
+#~ msgstr "Dijeda"
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Paused ({pausedSystemsLength})"
-msgstr "Dijeda ({pausedSystemsLength})"
+#~ msgid "Paused ({pausedSystemsLength})"
+#~ msgstr "Dijeda ({pausedSystemsLength})"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Payload format"
 msgstr "Format payload"
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Peak"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Peer AS"
+msgstr ""
+
+#: src/components/routes/network-devices.tsx
+msgid "Pending"
+msgstr ""
 
 #: src/components/routes/system/cpu-sheet.tsx
 #: src/components/routes/system/cpu-sheet.tsx
@@ -1243,13 +2732,33 @@ msgstr "Persentase waktu disk sibuk dengan I/O"
 msgid "Percentage of time spent in each state"
 msgstr "Persentase waktu yang dihabiskan di setiap status"
 
+#: src/components/routes/export-detail.tsx
+msgid "Period"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Permanent"
 msgstr "Permanen"
 
+#: src/components/routes/permission-form.tsx
+msgid "Permission not found"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/permissions.tsx
+#: src/components/routes/permissions.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Permissions"
+msgstr ""
+
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Persistence"
 msgstr "Tetap berlaku"
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
+msgid "Platform"
+msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Please <0>configure an SMTP server</0> to ensure alerts are delivered."
@@ -1284,14 +2793,56 @@ msgstr "Silakan lihat <0>dokumentasi</0> untuk instruksi."
 msgid "Please sign in to your account"
 msgstr "Silakan masuk ke akun anda"
 
-#: src/components/add-system.tsx
+#: src/components/routes/aggregate-charts.tsx
+msgid "points"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
+#~ msgid "Policy"
+#~ msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device.tsx
 msgid "Port"
+msgstr ""
+
+#: src/components/routes/export-new.tsx
+#~ msgid "Port ID"
+#~ msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Port Policy"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Port side"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+msgid "ports"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
+msgid "Ports"
 msgstr ""
 
 #: src/components/containers-table/containers-table-columns.tsx
 msgctxt "Container ports"
 msgid "Ports"
 msgstr "Port"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "ports selected"
+msgstr ""
 
 #. Power On Time
 #: src/components/routes/system/smart-table.tsx
@@ -1307,14 +2858,22 @@ msgstr "Utilisasi tepat pada waktu yang direkam"
 msgid "Preferred Language"
 msgstr "Pilihan Bahasa"
 
+#: src/components/routes/historical-data.tsx
+msgid "Preview"
+msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Process started"
 msgstr "Proses dimulai"
 
+#: src/components/routes/traffic-defaults.tsx
+msgid "Provider"
+msgstr ""
+
 #. Use 'Key' if your language requires many more characters
 #: src/components/add-system.tsx
-msgid "Public Key"
-msgstr "Kunci Publik"
+#~ msgid "Public Key"
+#~ msgstr "Kunci Publik"
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average queue depth"
@@ -1324,6 +2883,28 @@ msgstr "Kedalaman Antrian"
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Quiet Hours"
 msgstr "Jam Tenang"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing.tsx
+msgid "Quota"
+msgstr ""
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Quota bytes"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+msgid "Range"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Range End"
+msgstr ""
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Range Start"
+msgstr ""
 
 #. Disk read
 #: src/components/routes/system/charts/disk-charts.tsx
@@ -1337,9 +2918,32 @@ msgstr "Baca"
 msgid "Received"
 msgstr "Diterima"
 
+#: src/components/routes/network-device.tsx
+#~ msgid "Rediscover"
+#~ msgstr ""
+
 #: src/components/containers-table/containers-table.tsx
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/containers.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/permissions.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+#: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/targets.tsx
 msgid "Refresh"
 msgstr "Muat ulang"
 
@@ -1373,26 +2977,71 @@ msgstr "Reset Kata Sandi"
 msgid "Resolved"
 msgstr "Diselesaikan"
 
+#: src/components/routes/historical-data.tsx
+#: src/components/routes/permissions.tsx
+msgid "Resource"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Resource ID"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Resource Samples"
+#~ msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Resource type"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Resources"
+#~ msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Restarts"
 msgstr "Restart"
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "Resume"
-msgstr "Lanjutkan"
+#~ msgid "Resume"
+#~ msgstr "Lanjutkan"
+
+#: src/components/navbar.tsx
+#: src/components/routes/retention.tsx
+#: src/components/routes/retention.tsx
+msgid "Retention"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/snmp-profiles.tsx
+msgid "Retries"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+msgid "Retry"
+msgstr ""
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgctxt "Root disk label"
-msgid "Root"
-msgstr ""
+#~ msgctxt "Root disk label"
+#~ msgid "Root"
+#~ msgstr ""
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Rotate token"
 msgstr "Ganti ulang token"
 
+#: src/components/routes/agent-form.tsx
+msgid "Rotate Token"
+msgstr ""
+
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Rows per page"
 msgstr "Baris per halaman"
+
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agents.tsx
+msgid "Runs"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Runtime Metrics"
@@ -1406,18 +3055,65 @@ msgstr "Detail S.M.A.R.T."
 msgid "S.M.A.R.T. Self-Test"
 msgstr "Self-Test S.M.A.R.T."
 
+#: src/components/routes/network-port-policy.tsx
+msgid "Sample step"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "samples"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Samples"
+msgstr ""
+
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-port-form.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/permission-form.tsx
+#: src/components/routes/retention.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Save"
+msgstr ""
+
 #: src/components/add-system.tsx
-msgid "Save {foo}"
-msgstr "Simpan {foo}"
+#~ msgid "Save {foo}"
+#~ msgstr "Simpan {foo}"
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Save address using enter key or comma. Leave blank to disable email notifications."
 msgstr "Simpan alamat menggunakan tombol enter atau koma. Biarkan kosong untuk menonaktifkan notifikasi email."
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Save as graph"
+msgstr ""
+
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/notifications.tsx
 msgid "Save Settings"
 msgstr "Simpan Pengaturan"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Saved"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Saved Graphs"
+msgstr ""
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Saved in the database and does not expire until you disable it."
@@ -1435,25 +3131,95 @@ msgstr "Jadwalkan jam tenang dimana notifikasi tidak akan dikirim, seperti saat 
 msgid "Schedule quiet hours where notifications will not be sent."
 msgstr "Jadwalkan jam tenang dimana notifikasi tidak akan dikirim."
 
+#: src/components/routes/retention.tsx
+#: src/components/routes/retention.tsx
+msgid "Scope"
+msgstr ""
+
 #: src/components/navbar.tsx
 msgid "Search"
 msgstr "Cari"
+
+#: src/components/routes/network-devices.tsx
+msgid "Search by name, host, vendor..."
+msgstr ""
 
 #: src/components/command-palette.tsx
 msgid "Search for systems or settings..."
 msgstr "Cari sistem atau pengaturan..."
 
+#: src/components/routes/network-device.tsx
+msgid "Search ports..."
+msgstr ""
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Seconds between pings (default: 60)"
 msgstr "Detik di antara ping (default: 60)"
+
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Security JSON"
+msgstr ""
 
 #: src/components/alerts/alerts-sheet.tsx
 msgid "See <0>notification settings</0> to configure how you receive alerts."
 msgstr "Lihat <0>pengaturan notifikasi</0> untuk mengkonfigurasi bagaimana anda menerima peringatan."
 
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Seed LibreNMS"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Seeded"
+msgstr ""
+
+#: src/components/routes/agent-runs.tsx
+msgid "Seen"
+msgstr ""
+
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Select {foo}"
 msgstr "Pilih {foo}"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select a custom start and end time"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "Select a network device"
+msgstr ""
+
+#: src/components/routes/export-new.tsx
+msgid "Select a target before creating an export."
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "Select an SNMP profile"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-device.tsx
+msgid "Select at least one port"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select at least one port for port metrics"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select at least one target and one metric"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Select ports"
+#~ msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Select targets and metrics, then draw an aggregate chart."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Selected ports"
+msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send a single heartbeat ping to verify your endpoint is working."
@@ -1467,20 +3233,45 @@ msgstr "Kirim ping keluar secara berkala ke layanan pemantauan eksternal sehingg
 msgid "Send test heartbeat"
 msgstr "Kirim tes heartbeat"
 
+#: src/components/routes/network-device.tsx
+msgid "Sensor"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+msgid "Sensor Alerts"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Sensors"
+msgstr ""
+
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Sent"
 msgstr "Dikirim"
 
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
+msgid "Serial"
+msgstr ""
+
 #: src/components/routes/system/smart-table.tsx
 msgid "Serial Number"
 msgstr "Nomor Seri"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "series"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Series"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Service Details"
 msgstr "Detail Layanan"
 
 #: src/components/routes/system.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Services"
 msgstr "Layanan"
 
@@ -1510,13 +3301,63 @@ msgstr "Pengaturan disimpan"
 msgid "Sign in"
 msgstr "Masuk"
 
+#: src/components/graph/graph-panel-renderer.tsx
+msgid "signed (In ↑ / Out ↓)"
+msgstr ""
+
 #: src/components/command-palette.tsx
 msgid "SMTP settings"
 msgstr "Pengaturan SMTP"
 
+#: src/components/routes/network-devices.tsx
+#~ msgid "SNMP"
+#~ msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "SNMP Port"
+msgstr ""
+
+#: src/components/routes/network-discover.tsx
+msgid "SNMP Profile"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "SNMP Profiles"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "SNMP Version"
+msgstr ""
+
 #: src/components/systems-table/systems-table.tsx
-msgid "Sort By"
-msgstr "Urutkan Berdasarkan"
+#~ msgid "Sort By"
+#~ msgstr "Urutkan Berdasarkan"
+
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Source"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
+msgid "Speed"
+msgstr ""
+
+#: src/components/routes/network-port-form.tsx
+msgid "Speed bps"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Split side"
+msgstr ""
+
+#: src/components/routes/historical-data.tsx
+msgid "Start"
+msgstr ""
 
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -1525,22 +3366,62 @@ msgstr "Waktu Mulai"
 
 #. Context: alert state (active or resolved)
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "State"
 msgstr "Status"
 
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/historical-data.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
+#: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table.tsx
-#: src/components/systems-table/systems-table.tsx
 #: src/lib/alerts.ts
 msgid "Status"
+msgstr ""
+
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/historical-data.tsx
+msgid "Step"
 msgstr ""
 
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "Sub State"
 msgstr "Sub Status"
+
+#: src/components/routes/permissions.tsx
+msgid "Subject"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Subject ID"
+msgstr ""
+
+#: src/components/routes/permission-form.tsx
+msgid "Subject type"
+msgstr ""
+
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Summary"
+msgstr ""
 
 #: src/components/routes/system/charts/memory-charts.tsx
 msgid "Swap space used by the system"
@@ -1550,17 +3431,27 @@ msgstr "Ruang swap yang digunakan oleh sistem"
 msgid "Swap Usage"
 msgstr "Penggunaan Swap"
 
-#: src/components/add-system.tsx
+#: src/components/mode-toggle.tsx
+#: src/components/mode-toggle.tsx
+msgid "Switch theme"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "sysDescr"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "sysName or sysDescr is required"
+msgstr ""
+
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 #: src/lib/alerts.ts
 msgid "System"
 msgstr "Sistem"
@@ -1569,34 +3460,90 @@ msgstr "Sistem"
 msgid "System load averages over time"
 msgstr "Rata-rata beban sistem dari waktu ke waktu"
 
+#: src/components/routes/network-device.tsx
+msgid "System Name"
+msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Systemd Services"
 msgstr "Layanan Systemd"
 
 #: src/components/navbar.tsx
-msgid "Systems"
-msgstr "Sistem"
+#~ msgid "Systems"
+#~ msgstr "Sistem"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "Systems may be managed in a <0>config.yml</0> file inside your data directory."
 msgstr "Sistem dapat dikelola dalam file <0>config.yml</0> di dalam direktori data anda."
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Table"
-msgstr "Tabel"
+#~ msgid "Table"
+#~ msgstr "Tabel"
 
 #: src/components/routes/system/info-bar.tsx
 msgctxt "Tabs system layout option"
 msgid "Tabs"
 msgstr "Tab"
 
+#: src/components/routes/agent-form.tsx
+#: src/components/routes/agent-runs.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/containers.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/target-detail.tsx
+msgid "Target"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Target host is required"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "Target is required"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Target Name"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Target name is required"
+#~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Target Source"
+#~ msgstr ""
+
+#: src/components/routes/export-new.tsx
+msgid "Target summary"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "targets"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/targets.tsx
+#: src/components/routes/targets.tsx
+#: src/components/routes/watchdog-overview.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Targets"
+msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Tasks"
 msgstr "Tugas"
 
-#. Temperature label in systems table
 #: src/components/routes/system/smart-table.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Temp"
 msgstr "Temperatur"
 
@@ -1612,6 +3559,11 @@ msgstr "Unit temperatur"
 #: src/components/routes/system/charts/sensor-charts.tsx
 msgid "Temperatures of system sensors"
 msgstr "Temperatur sensor sistem"
+
+#: src/components/routes/retention.tsx
+#: src/components/routes/retention.tsx
+msgid "Tenant default"
+msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Test <0>URL</0>"
@@ -1634,8 +3586,12 @@ msgid "Then log into the backend and reset your user account password in the use
 msgstr "Kemudian masuk ke backend dan reset kata sandi akun pengguna anda di tabel pengguna."
 
 #: src/components/systems-table/systems-table-columns.tsx
-msgid "This action cannot be undone. This will permanently delete all current records for {name} from the database."
-msgstr "Aksi ini tidak dapat di kembalikan. ini akan menghapus permanen semua record {name} dari database"
+#~ msgid "This action cannot be undone. This will permanently delete all current records for {name} from the database."
+#~ msgstr "Aksi ini tidak dapat di kembalikan. ini akan menghapus permanen semua record {name} dari database"
+
+#: src/components/routes/export-new.tsx
+msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
+msgstr ""
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."
@@ -1649,9 +3605,21 @@ msgstr "Throughput dari {extraFsName}"
 msgid "Throughput of root filesystem"
 msgstr "Throughput dari filesystem root"
 
+#: src/components/routes/network-device.tsx
+msgid "Time"
+msgstr ""
+
 #: src/components/routes/settings/general.tsx
 msgid "Time format"
 msgstr "Format waktu"
+
+#: src/components/routes/snmp-profiles.tsx
+msgid "Timeout"
+msgstr ""
+
+#: src/components/routes/snmp-profile-form.tsx
+msgid "Timeout seconds"
+msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "To email(s)"
@@ -1659,10 +3627,10 @@ msgstr "Ke email"
 
 #: src/components/mode-toggle.tsx
 #: src/components/mode-toggle.tsx
-msgid "Toggle theme"
-msgstr "Ganti tema"
+#~ msgid "Toggle theme"
+#~ msgstr "Ganti tema"
 
-#: src/components/add-system.tsx
+#: src/components/routes/agent-form.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Token"
 msgstr ""
@@ -1681,6 +3649,9 @@ msgstr "Token memungkinkan agen untuk terhubung dan mendaftar. Fingerprint adala
 msgid "Tokens and fingerprints are used to authenticate WebSocket connections to the hub."
 msgstr "Token dan Fingerprint digunakan untuk mengautentikasi koneksi WebSocket ke hub."
 
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/ui/chart.tsx
 #: src/components/ui/chart.tsx
 msgid "Total"
@@ -1702,6 +3673,38 @@ msgstr ""
 #. placeholder {0}: data.length
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Total: {0}"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+#~ msgid "Traffic"
+#~ msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/watchdog-overview.tsx
+msgid "Traffic Defaults"
+msgstr ""
+
+#: src/components/routes/network-port-policy.tsx
+msgid "Traffic Policy"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "Traffic Samples"
+#~ msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Transform"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Transform key"
+msgstr ""
+
+#: src/components/routes/snmp-oid-mapping-form.tsx
+msgid "Transform value"
 msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
@@ -1756,11 +3759,21 @@ msgstr "Dipicu ketika status beralih antara up dan down"
 msgid "Triggers when usage of any disk exceeds a threshold"
 msgstr "Dipicu ketika penggunaan disk apa pun melebihi ambang batas"
 
+#: src/components/routes/agents.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/targets.tsx
 msgid "Type"
 msgstr "Tipe"
+
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Unit"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Unit file"
@@ -1786,22 +3799,35 @@ msgstr "Tidak diketahui"
 msgid "Unlimited"
 msgstr "Tidak terbatas"
 
+#: src/components/routes/network-devices.tsx
+msgid "up"
+msgstr ""
+
 #. Context: System is up
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Up"
 msgstr "Nyala"
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Up ({upSystemsLength})"
-msgstr "Nyala selama ({upSystemsLength})"
+#~ msgid "Up ({upSystemsLength})"
+#~ msgstr "Nyala selama ({upSystemsLength})"
+
+#: src/components/routes/network-device.tsx
+msgid "up / total"
+msgstr ""
 
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Update"
 msgstr "Perbarui"
 
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/agents.tsx
+#: src/components/routes/export-detail.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "Updated"
 msgstr "Diperbarui"
@@ -1814,8 +3840,9 @@ msgstr "Diperbarui setiap 10 menit."
 msgid "Upload"
 msgstr "Unggah"
 
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
-#: src/components/systems-table/systems-table-columns.tsx
 msgid "Uptime"
 msgstr "Waktu aktif"
 
@@ -1831,6 +3858,10 @@ msgstr "Penggunaan"
 msgid "Usage of root partition"
 msgstr "Penggunaan partisi root"
 
+#: src/components/routes/network-device-form.tsx
+#~ msgid "Use existing target"
+#~ msgstr ""
+
 #: src/components/routes/system/charts/memory-charts.tsx
 #: src/components/routes/system/charts/memory-charts.tsx
 msgid "Used"
@@ -1841,18 +3872,53 @@ msgstr "Digunakan"
 msgid "Users"
 msgstr "Pengguna"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Using every discovered port under the selected targets."
+msgstr ""
+
 #: src/components/routes/system/charts/disk-charts.tsx
 msgctxt "Disk I/O utilization"
 msgid "Utilization"
 msgstr "Utilisasi"
 
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/exports.tsx
+#: src/components/routes/network-device.tsx
 msgid "Value"
 msgstr "Nilai"
 
+#: src/components/routes/aggregate-graph-form.tsx
+msgid "Value mode"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device-snmp.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/network-port.tsx
+#: src/components/routes/snmp-oid-mapping-form.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+#: src/components/routes/snmp-oid-mappings.tsx
+msgid "Vendor"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/snmp-mib-module-form.tsx
+#: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/snmp-profile-form.tsx
+#: src/components/routes/snmp-profiles.tsx
+msgid "Version"
+msgstr ""
+
 #: src/components/systems-table/systems-table.tsx
-msgid "View"
-msgstr "Lihat"
+#~ msgid "View"
+#~ msgstr "Lihat"
 
 #: src/components/routes/system/cpu-sheet.tsx
 #: src/components/routes/system/disk-io-sheet.tsx
@@ -1865,8 +3931,16 @@ msgid "View your 200 most recent alerts."
 msgstr "Lihat 200 peringatan terbaru anda."
 
 #: src/components/systems-table/systems-table.tsx
-msgid "Visible Fields"
-msgstr "Metrik yang Terlihat"
+#~ msgid "Visible Fields"
+#~ msgstr "Metrik yang Terlihat"
+
+#: src/components/routes/network-device.tsx
+msgid "VLAN ID"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "VLANs/LAG"
+msgstr ""
 
 #: src/components/routes/system/chart-card.tsx
 msgid "Waiting for enough records to display"
@@ -1888,6 +3962,14 @@ msgstr "Peringatan (%)"
 msgid "Warning thresholds"
 msgstr "Ambang peringatan"
 
+#: src/components/navbar.tsx
+msgid "Watchdog"
+msgstr ""
+
+#: src/components/routes/network-port.tsx
+msgid "Wavelength"
+msgstr ""
+
 #: src/components/routes/settings/notifications.tsx
 msgid "Webhook / Push notifications"
 msgstr "Webhook / Push notifikasi"
@@ -1900,7 +3982,6 @@ msgstr "Ketika diaktifkan, token ini memungkinkan agen untuk mendaftar sendiri t
 msgid "When using POST, each heartbeat includes a JSON payload with system status summary, list of down systems, and triggered alerts."
 msgstr "Saat menggunakan POST, setiap heartbeat menyertakan payload JSON dengan ringkasan status sistem, daftar sistem yang mati, dan peringatan yang dipicu."
 
-#: src/components/add-system.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgctxt "Button to copy install command"
 msgid "Windows command"
@@ -1921,6 +4002,10 @@ msgstr "Konfigurasi YAML"
 #: src/components/routes/settings/config-yaml.tsx
 msgid "YAML Configuration"
 msgstr "Konfigurasi YAML"
+
+#: src/components/routes/agent-runs.tsx
+msgid "yes"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx

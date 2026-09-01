@@ -272,11 +272,29 @@ export interface ContainerRecord extends RecordModel {
 	updated: number
 }
 
-export type ChartTimes = "1m" | "1h" | "12h" | "24h" | "1w" | "30d"
+export type ChartTimes =
+	| "1m"
+	| "5m"
+	| "10m"
+	| "15m"
+	| "30m"
+	| "1h"
+	| "6h"
+	| "12h"
+	| "24h"
+	| "3d"
+	| "1w"
+	| "30d"
+	| "custom"
+
+export interface ChartTimeRange {
+	start: string
+	end: string
+}
 
 export interface ChartTimeData {
 	[key: string]: {
-		type: "1m" | "10m" | "20m" | "120m" | "480m"
+		type: string
 		expectedInterval: number
 		label: () => string
 		ticks?: number

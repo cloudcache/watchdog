@@ -1,7 +1,7 @@
 import { timeTicks } from "d3-time"
-import { getPbTimestamp, pb } from "@/lib/api"
+import { pb } from "@/lib/api"
 import { chartTimeData } from "@/lib/utils"
-import type { ChartData, ChartTimes, ContainerStatsRecord, SystemStatsRecord } from "@/types"
+import type { ChartData, ChartTimeRange, ChartTimes, ContainerStatsRecord, SystemStatsRecord } from "@/types"
 
 type ChartTimeData = {
 	time: number
@@ -10,7 +10,34 @@ type ChartTimeData = {
 		domain: number[]
 	}
 	chartTime: ChartTimes
+	rangeKey: string
 }
+
+type VMRangeResponse = {
+	data?: {
+		result?: {
+			metric?: Record<string, string>
+			values?: [number, string][]
+		}[]
+	}
+}
+
+const targetMetrics = {
+	cpu: "watchdog_system_cpu_percent",
+	memory: "watchdog_system_memory_percent",
+	disk: "watchdog_system_disk_percent",
+	netIn: "watchdog_system_net_in_bps",
+	netOut: "watchdog_system_net_out_bps",
+} as const
+
+const containerMetrics = {
+	cpu: "watchdog_container_cpu_percent",
+	memory: "watchdog_container_memory_bytes",
+	netTx: "watchdog_container_net_tx_bps",
+	netRx: "watchdog_container_net_rx_bps",
+} as const
+
+const vmChartMaxDataPoints = "600"
 
 export const cache = new Map<
 	string,
@@ -18,9 +45,11 @@ export const cache = new Map<
 >()
 
 // create ticks and domain for charts
-export function getTimeData(chartTime: ChartTimes, lastCreated: number) {
+export function getTimeData(chartTime: ChartTimes, lastCreated: number, customRange?: ChartTimeRange) {
+	const range = resolveChartRange(chartTime, customRange)
+	const rangeKey = `${range.start.toISOString()}_${range.end.toISOString()}`
 	const cached = cache.get("td") as ChartTimeData | undefined
-	if (cached && cached.chartTime === chartTime) {
+	if (cached && cached.chartTime === chartTime && cached.rangeKey === rangeKey) {
 		if (!lastCreated || cached.time >= lastCreated) {
 			return cached.data
 		}
@@ -28,13 +57,12 @@ export function getTimeData(chartTime: ChartTimes, lastCreated: number) {
 
 	// const buffer = chartTime === "1m" ? 400 : 20_000
 	const now = new Date(Date.now())
-	const startTime = chartTimeData[chartTime].getOffset(now)
-	const ticks = timeTicks(startTime, now, chartTimeData[chartTime].ticks ?? 12).map((date) => date.getTime())
+	const ticks = timeTicks(range.start, range.end, chartTimeData[chartTime].ticks ?? 12).map((date) => date.getTime())
 	const data = {
 		ticks,
-		domain: [chartTimeData[chartTime].getOffset(now).getTime(), now.getTime()],
+		domain: [range.start.getTime(), range.end.getTime()],
 	}
-	cache.set("td", { time: now.getTime(), data, chartTime })
+	cache.set("td", { time: now.getTime(), data, chartTime, rangeKey })
 	return data
 }
 
@@ -66,22 +94,211 @@ export function appendData<T extends { created: string | number | null }>(
 	return result
 }
 
-export async function getStats<T extends SystemStatsRecord | ContainerStatsRecord>(
-	collection: string,
+export async function getSystemStatsFromVM(
 	systemId: string,
-	chartTime: ChartTimes
-): Promise<T[]> {
-	const cachedStats = cache.get(`${systemId}_${chartTime}_${collection}`) as T[] | undefined
-	const lastCached = cachedStats?.at(-1)?.created as number
-	return await pb.collection<T>(collection).getFullList({
-		filter: pb.filter("system={:id} && created > {:created} && type={:type}", {
-			id: systemId,
-			created: getPbTimestamp(chartTime, lastCached ? new Date(lastCached + 1000) : undefined),
-			type: chartTimeData[chartTime].type,
-		}),
-		fields: "created,stats",
-		sort: "created",
+	chartTime: ChartTimes,
+	customRange?: ChartTimeRange
+): Promise<SystemStatsRecord[]> {
+	const range = resolveChartRange(chartTime, customRange)
+	const params = new URLSearchParams({
+		target_id: systemId,
+		time_mode: "custom",
+		start: range.start.toISOString(),
+		end: range.end.toISOString(),
+		max_data_points: vmChartMaxDataPoints,
 	})
+	const [cpu, memory, disk, netIn, netOut] = await Promise.all([
+		getVMMetric(targetMetrics.cpu, params),
+		getVMMetric(targetMetrics.memory, params),
+		getVMMetric(targetMetrics.disk, params),
+		getVMMetric(targetMetrics.netIn, params),
+		getVMMetric(targetMetrics.netOut, params),
+	])
+	return makeSystemStatsFromVM({ cpu, memory, disk, netIn, netOut })
+}
+
+export async function getRealtimeSystemStatsFromVM(systemId: string): Promise<SystemStatsRecord[]> {
+	const params = new URLSearchParams({
+		target_id: systemId,
+		max_data_points: "60",
+	})
+	const [cpu, memory, disk, netIn, netOut] = await Promise.all([
+		getVMMetric(targetMetrics.cpu, params, "/api/v1/metrics/realtime"),
+		getVMMetric(targetMetrics.memory, params, "/api/v1/metrics/realtime"),
+		getVMMetric(targetMetrics.disk, params, "/api/v1/metrics/realtime"),
+		getVMMetric(targetMetrics.netIn, params, "/api/v1/metrics/realtime"),
+		getVMMetric(targetMetrics.netOut, params, "/api/v1/metrics/realtime"),
+	])
+	return makeSystemStatsFromVM({ cpu, memory, disk, netIn, netOut })
+}
+
+export async function getContainerDataFromVM(
+	systemId: string,
+	chartTime: ChartTimes,
+	customRange?: ChartTimeRange
+): Promise<ChartData["containerData"]> {
+	const range = resolveChartRange(chartTime, customRange)
+	const params = new URLSearchParams({
+		target_id: systemId,
+		time_mode: "custom",
+		start: range.start.toISOString(),
+		end: range.end.toISOString(),
+		max_data_points: vmChartMaxDataPoints,
+	})
+	const [cpu, memory, netTx, netRx] = await Promise.all([
+		getVMMetricResponse(containerMetrics.cpu, params),
+		getVMMetricResponse(containerMetrics.memory, params),
+		getVMMetricResponse(containerMetrics.netTx, params),
+		getVMMetricResponse(containerMetrics.netRx, params),
+	])
+	return makeContainerDataFromVM({ cpu, memory, netTx, netRx })
+}
+
+function resolveChartRange(chartTime: ChartTimes, customRange?: ChartTimeRange) {
+	if (chartTime === "custom") {
+		const start = customRange?.start ? new Date(customRange.start) : null
+		const end = customRange?.end ? new Date(customRange.end) : null
+		if (start && end && !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end > start) {
+			return { start, end }
+		}
+	}
+	const end = new Date()
+	return { start: chartTimeData[chartTime].getOffset(end), end }
+}
+
+export async function getRealtimeContainerDataFromVM(systemId: string): Promise<ChartData["containerData"]> {
+	const params = new URLSearchParams({
+		target_id: systemId,
+		max_data_points: "60",
+	})
+	const [cpu, memory, netTx, netRx] = await Promise.all([
+		getVMMetricResponse(containerMetrics.cpu, params, "/api/v1/metrics/realtime"),
+		getVMMetricResponse(containerMetrics.memory, params, "/api/v1/metrics/realtime"),
+		getVMMetricResponse(containerMetrics.netTx, params, "/api/v1/metrics/realtime"),
+		getVMMetricResponse(containerMetrics.netRx, params, "/api/v1/metrics/realtime"),
+	])
+	return makeContainerDataFromVM({ cpu, memory, netTx, netRx })
+}
+
+async function getVMMetric(metric: string, baseParams: URLSearchParams, endpoint = "/api/v1/metrics/query") {
+	const response = await getVMMetricResponse(metric, baseParams, endpoint)
+	return response.data?.result?.[0]?.values ?? []
+}
+
+async function getVMMetricResponse(metric: string, baseParams: URLSearchParams, endpoint = "/api/v1/metrics/query") {
+	const params = new URLSearchParams(baseParams)
+	params.set("metric", metric)
+	return await pb.send<VMRangeResponse>(`${endpoint}?${params.toString()}`, {})
+}
+
+function makeSystemStatsFromVM(series: {
+	cpu: [number, string][]
+	memory: [number, string][]
+	disk: [number, string][]
+	netIn: [number, string][]
+	netOut: [number, string][]
+}): SystemStatsRecord[] {
+	const byTime = new Map<number, Partial<Record<keyof typeof series, number>>>()
+	for (const [name, values] of Object.entries(series) as [keyof typeof series, [number, string][]][]) {
+		for (const [timestamp, value] of values) {
+			const time = Math.round(timestamp * 1000)
+			const point = byTime.get(time) ?? {}
+			point[name] = Number(value) || 0
+			byTime.set(time, point)
+		}
+	}
+	return [...byTime.entries()]
+		.sort(([a], [b]) => a - b)
+		.map(([created, point]) => {
+			const memoryPercent = point.memory ?? 0
+			const diskPercent = point.disk ?? 0
+			const sentBytes = (point.netOut ?? 0) / 8
+			const receivedBytes = (point.netIn ?? 0) / 8
+			return {
+				system: "",
+				created,
+				stats: {
+					cpu: point.cpu ?? 0,
+					mp: memoryPercent,
+					m: 100,
+					mu: memoryPercent,
+					mb: 0,
+					s: 0,
+					su: 0,
+					d: 100,
+					du: diskPercent,
+					dp: diskPercent,
+					dr: 0,
+					dw: 0,
+					ns: sentBytes / 1024 / 1024,
+					nr: receivedBytes / 1024 / 1024,
+					b: [sentBytes, receivedBytes],
+				},
+			} as SystemStatsRecord
+		})
+}
+
+function makeContainerDataFromVM(series: {
+	cpu: VMRangeResponse
+	memory: VMRangeResponse
+	netTx: VMRangeResponse
+	netRx: VMRangeResponse
+}): ChartData["containerData"] {
+	const byTime = new Map<number, ChartData["containerData"][0]>()
+	mergeContainerSeries(byTime, series.cpu, "c", (value) => value)
+	mergeContainerSeries(byTime, series.memory, "m", (value) => value)
+	mergeContainerNetworkSeries(byTime, series.netTx, 0)
+	mergeContainerNetworkSeries(byTime, series.netRx, 1)
+	return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, point]) => point)
+}
+
+function mergeContainerSeries(
+	byTime: Map<number, ChartData["containerData"][0]>,
+	response: VMRangeResponse,
+	field: "c" | "m",
+	convert: (value: number) => number
+) {
+	for (const item of response.data?.result ?? []) {
+		const name = containerName(item.metric)
+		for (const [timestamp, rawValue] of item.values ?? []) {
+			const time = Math.round(timestamp * 1000)
+			const point = byTime.get(time) ?? ({ created: time } as ChartData["containerData"][0])
+			const container = ensureContainer(point, name)
+			container[field] = convert(Number(rawValue) || 0)
+			byTime.set(time, point)
+		}
+	}
+}
+
+function mergeContainerNetworkSeries(
+	byTime: Map<number, ChartData["containerData"][0]>,
+	response: VMRangeResponse,
+	index: 0 | 1
+) {
+	for (const item of response.data?.result ?? []) {
+		const name = containerName(item.metric)
+		for (const [timestamp, rawValue] of item.values ?? []) {
+			const time = Math.round(timestamp * 1000)
+			const point = byTime.get(time) ?? ({ created: time } as ChartData["containerData"][0])
+			const container = ensureContainer(point, name)
+			const current = container.b ?? [0, 0]
+			current[index] = (Number(rawValue) || 0) / 8
+			container.b = current
+			byTime.set(time, point)
+		}
+	}
+}
+
+function ensureContainer(point: ChartData["containerData"][0], name: string) {
+	const values = point as Record<string, ContainerStatsRecord["stats"][0] | number | null>
+	if (!values[name] || typeof values[name] !== "object") {
+		values[name] = { n: name, c: 0, m: 0 }
+	}
+	return values[name] as ContainerStatsRecord["stats"][0]
+}
+
+function containerName(metric: Record<string, string> | undefined) {
+	return metric?.container_name || metric?.container || metric?.name || "container"
 }
 
 export function makeContainerData(containers: ContainerStatsRecord[]): ChartData["containerData"] {

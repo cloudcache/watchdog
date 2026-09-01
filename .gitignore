@@ -21,3 +21,17 @@ __debug_*
 agent/lhm/obj
 agent/lhm/bin
 dockerfile_agent_dev
+
+# watchdog: ad-hoc build outputs at repo root (cmd/ sources stay tracked)
+/watchdog-dev-server
+/watchdog-snmp-collector
+/watchdog-librenms-extract
+/watchdog-sflow-collector
+# watchdog: runtime artifacts and local caches
+.watchdog*.lock
+exports/
+.gocache/
+.gomodcache/
+.DS_Store
+# reference clone of akvorado (own git repo, not a dependency)
+akvorado/

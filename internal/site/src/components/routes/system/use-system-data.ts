@@ -3,12 +3,12 @@ import { getPagePath } from "@nanostores/router"
 import { subscribeKeys } from "nanostores"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useContainerChartConfigs } from "@/components/charts/hooks"
-import { pb } from "@/lib/api"
 import { SystemStatus } from "@/lib/enums"
 import {
 	$allSystemsById,
 	$allSystemsByName,
 	$chartTime,
+	$chartTimeRange,
 	$containerFilter,
 	$direction,
 	$maxValues,
@@ -16,17 +16,17 @@ import {
 	$userSettings,
 } from "@/lib/stores"
 import { chartTimeData, listen, parseSemVer, useBrowserStorage } from "@/lib/utils"
-import type {
-	ChartData,
-	ContainerStatsRecord,
-	SystemDetailsRecord,
-	SystemInfo,
-	SystemRecord,
-	SystemStats,
-	SystemStatsRecord,
-} from "@/types"
+import type { ChartData, SystemDetailsRecord, SystemRecord, SystemStatsRecord } from "@/types"
 import { $router, navigate } from "../../router"
-import { appendData, cache, getStats, getTimeData, makeContainerData, makeContainerPoint } from "./chart-data"
+import {
+	appendData,
+	cache,
+	getContainerDataFromVM,
+	getRealtimeContainerDataFromVM,
+	getRealtimeSystemStatsFromVM,
+	getSystemStatsFromVM,
+	getTimeData,
+} from "./chart-data"
 
 export type SystemData = ReturnType<typeof useSystemData>
 
@@ -34,6 +34,7 @@ export function useSystemData(id: string) {
 	const direction = useStore($direction)
 	const systems = useStore($systems)
 	const chartTime = useStore($chartTime)
+	const chartTimeRange = useStore($chartTimeRange)
 	const maxValues = useStore($maxValues)
 	const [grid, setGrid] = useBrowserStorage("grid", true)
 	const [displayMode, setDisplayMode] = useBrowserStorage<"default" | "tabs">("displayMode", "default")
@@ -89,25 +90,8 @@ export function useSystemData(id: string) {
 		}
 	}, [system?.info?.v])
 
-	// fetch system details
+	// poll VictoriaMetrics realtime data if chart time is 1m
 	useEffect(() => {
-		// if system.info.m exists, agent is old version without system details
-		if (!system.id || system.info?.m) {
-			return
-		}
-		pb.collection<SystemDetailsRecord>("system_details")
-			.getOne(system.id, {
-				fields: "hostname,kernel,cores,threads,cpu,os,os_name,arch,memory,podman",
-				headers: {
-					"Cache-Control": "public, max-age=60",
-				},
-			})
-			.then(setDetails)
-	}, [system.id])
-
-	// subscribe to realtime metrics if chart time is 1m
-	useEffect(() => {
-		let unsub = () => {}
 		if (!system.id || chartTime !== "1m") {
 			return
 		}
@@ -115,38 +99,34 @@ export function useSystemData(id: string) {
 			$chartTime.set("1h")
 			return
 		}
-		let isFirst = true
-		pb.realtime
-			.subscribe(
-				`rt_metrics`,
-				(data: { container: ContainerStatsRecord[]; info: SystemInfo; stats: SystemStats }) => {
-					const now = Date.now()
-					const statsPoint = { created: now, stats: data.stats } as SystemStatsRecord
-					const containerPoint =
-						data.container?.length > 0
-							? makeContainerPoint(now, data.container as unknown as ContainerStatsRecord["stats"])
-							: null
-					// on first message, make sure we clear out data from other time periods
-					if (isFirst) {
-						isFirst = false
-						setSystemStats([statsPoint])
-						setContainerData(containerPoint ? [containerPoint] : [])
-						return
-					}
-					setSystemStats((prev) => appendData(prev, [statsPoint], 1000, 60))
-					if (containerPoint) {
-						setContainerData((prev) => appendData(prev, [containerPoint], 1000, 60))
-					}
-				},
-				{ query: { system: system.id } }
-			)
-			.then((us) => {
-				unsub = us
-			})
-		return () => {
-			unsub?.()
+		let cancelled = false
+		const loadRealtime = async () => {
+			try {
+				const [systemResult, containerResult] = await Promise.allSettled([
+					getRealtimeSystemStatsFromVM(system.id),
+					getRealtimeContainerDataFromVM(system.id),
+				])
+				if (cancelled) {
+					return
+				}
+				const realtimeSystemStats = systemResult.status === "fulfilled" ? systemResult.value : []
+				const realtimeContainerData = containerResult.status === "fulfilled" ? containerResult.value : []
+				setSystemStats(realtimeSystemStats)
+				setContainerData(realtimeContainerData)
+			} finally {
+				if (!cancelled) {
+					setChartLoading(false)
+				}
+			}
 		}
-	}, [chartTime, system.id])
+		setChartLoading(true)
+		loadRealtime()
+		const interval = globalThis.setInterval(loadRealtime, 10_000)
+		return () => {
+			cancelled = true
+			globalThis.clearInterval(interval)
+		}
+	}, [chartTime, system.id, system.info?.v, system.status])
 
 	const agentVersion = useMemo(() => parseSemVer(system?.info?.v), [system?.info?.v])
 
@@ -160,10 +140,10 @@ export function useSystemData(id: string) {
 			containerData,
 			chartTime,
 			orientation: direction === "rtl" ? "right" : "left",
-			...getTimeData(chartTime, lastCreated),
+			...getTimeData(chartTime, lastCreated, chartTimeRange),
 			agentVersion,
 		}
-	}, [systemStats, containerData, direction])
+	}, [agentVersion, chartTime, chartTimeRange, containerData, direction, systemStats])
 
 	// Share chart config computation for all container charts
 	const containerChartConfigs = useContainerChartConfigs(containerData)
@@ -177,8 +157,9 @@ export function useSystemData(id: string) {
 
 		const systemId = system.id
 		const { expectedInterval } = chartTimeData[chartTime]
-		const ss_cache_key = `${systemId}_${chartTime}_system_stats`
-		const cs_cache_key = `${systemId}_${chartTime}_container_stats`
+		const rangeKey = chartTime === "custom" ? `${chartTimeRange.start}_${chartTimeRange.end}` : ""
+		const ss_cache_key = `${systemId}_${chartTime}_${rangeKey}_system_stats`
+		const cs_cache_key = `${systemId}_${chartTime}_${rangeKey}_container_stats`
 		const requestId = ++statsRequestId.current
 
 		const cachedSystemStats = cache.get(ss_cache_key) as SystemStatsRecord[] | undefined
@@ -200,8 +181,8 @@ export function useSystemData(id: string) {
 		}
 
 		Promise.allSettled([
-			getStats<SystemStatsRecord>("system_stats", systemId, chartTime),
-			getStats<ContainerStatsRecord>("container_stats", systemId, chartTime),
+			getSystemStatsFromVM(systemId, chartTime, chartTimeRange),
+			getContainerDataFromVM(systemId, chartTime, chartTimeRange),
 		]).then(([systemStats, containerStats]) => {
 			// If another request has been made since this one, ignore the results
 			if (requestId !== statsRequestId.current) {
@@ -220,12 +201,12 @@ export function useSystemData(id: string) {
 			// make new container stats
 			let containerData = (cache.get(cs_cache_key) || []) as ChartData["containerData"]
 			if (containerStats.status === "fulfilled" && containerStats.value.length) {
-				containerData = appendData(containerData, makeContainerData(containerStats.value), expectedInterval, 100)
+				containerData = appendData(containerData, containerStats.value, expectedInterval, 100)
 				cache.set(cs_cache_key, containerData)
 			}
 			setContainerData(containerData)
 		})
-	}, [system, chartTime])
+	}, [system, chartTime, chartTimeRange])
 
 	// keyboard navigation between systems
 	// in tabs mode: arrow keys switch tabs, shift+arrow switches systems

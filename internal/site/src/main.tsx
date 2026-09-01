@@ -23,15 +23,52 @@ import {
 	$userSettings,
 	defaultLayoutWidth,
 } from "@/lib/stores.ts"
-import * as systemsManager from "@/lib/systemsManager.ts"
 import type { BeszelInfo, UpdateInfo } from "./types"
 
 const LoginPage = lazy(() => import("@/components/login/login.tsx"))
-const Home = lazy(() => import("@/components/routes/home.tsx"))
+const AggregateCharts = lazy(() => import("@/components/routes/aggregate-charts.tsx"))
+const AggregateGraphs = lazy(() => import("@/components/routes/aggregate-graphs.tsx"))
+const AggregateGraphForm = lazy(() => import("@/components/routes/aggregate-graph-form.tsx"))
+const AggregateGraphDetail = lazy(() => import("@/components/routes/aggregate-graph-detail.tsx"))
+const AgentForm = lazy(() => import("@/components/routes/agent-form.tsx"))
+const AgentRuns = lazy(() => import("@/components/routes/agent-runs.tsx"))
+const Agents = lazy(() => import("@/components/routes/agents.tsx"))
+const Billing = lazy(() => import("@/components/routes/billing.tsx"))
+const BillingAccountDetail = lazy(() => import("@/components/routes/billing-account-detail.tsx"))
+const BillingAccountForm = lazy(() => import("@/components/routes/billing-account-form.tsx"))
+const ExportDetail = lazy(() => import("@/components/routes/export-detail.tsx"))
+const ExportNew = lazy(() => import("@/components/routes/export-new.tsx"))
+const Exports = lazy(() => import("@/components/routes/exports.tsx"))
+const HistoricalData = lazy(() => import("@/components/routes/historical-data.tsx"))
+const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overview.tsx"))
 const Containers = lazy(() => import("@/components/routes/containers.tsx"))
+const NetworkDeviceDetail = lazy(() => import("@/components/routes/network-device.tsx"))
+const NetworkDeviceForm = lazy(() => import("@/components/routes/network-device-form.tsx"))
+const NetworkDeviceSNMP = lazy(() => import("@/components/routes/network-device-snmp.tsx"))
+const NetworkDevices = lazy(() => import("@/components/routes/network-devices.tsx"))
+const NetworkDiscover = lazy(() => import("@/components/routes/network-discover.tsx"))
+const NetworkPortDetail = lazy(() => import("@/components/routes/network-port.tsx"))
+const NetworkPortForm = lazy(() => import("@/components/routes/network-port-form.tsx"))
+const NetworkPortPolicy = lazy(() => import("@/components/routes/network-port-policy.tsx"))
+const Permissions = lazy(() => import("@/components/routes/permissions.tsx"))
+const PermissionForm = lazy(() => import("@/components/routes/permission-form.tsx"))
+const Retention = lazy(() => import("@/components/routes/retention.tsx"))
 const Smart = lazy(() => import("@/components/routes/smart.tsx"))
-const SystemDetail = lazy(() => import("@/components/routes/system.tsx"))
+const SNMPMIBModuleForm = lazy(() => import("@/components/routes/snmp-mib-module-form.tsx"))
+const SNMPMIBModules = lazy(() => import("@/components/routes/snmp-mib-modules.tsx"))
+const SNMPProfileForm = lazy(() => import("@/components/routes/snmp-profile-form.tsx"))
+const SNMPProfiles = lazy(() => import("@/components/routes/snmp-profiles.tsx"))
+const TargetDetail = lazy(() => import("@/components/routes/target-detail.tsx"))
+const TargetForm = lazy(() => import("@/components/routes/target-form.tsx"))
+const Targets = lazy(() => import("@/components/routes/targets.tsx"))
+const TrafficDefaults = lazy(() => import("@/components/routes/traffic-defaults.tsx"))
+const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.tsx"))
+const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
+const FlowSearch = lazy(() => import("@/components/routes/flow-search.tsx"))
+const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
 const CopyToClipboardDialog = lazy(() => import("@/components/copy-to-clipboard.tsx"))
+
+const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
 
 const App = memo(() => {
 	const page = useStore($router)
@@ -39,8 +76,11 @@ const App = memo(() => {
 	useEffect(() => {
 		// change auth store on auth change
 		const unsubscribeAuth = pb.authStore.onChange(() => {
-			$authenticated.set(pb.authStore.isValid)
+			$authenticated.set(watchdogDevAuth || pb.authStore.isValid)
 		})
+		if (watchdogDevAuth) {
+			return () => unsubscribeAuth()
+		}
 		// get general info for authenticated users, such as public key and version
 		pb.send<BeszelInfo>("/api/beszel/info", {}).then((data) => {
 			$publicKey.set(data.key)
@@ -51,36 +91,120 @@ const App = memo(() => {
 		})
 		// get user settings
 		updateUserSettings()
-		// need to get system list before alerts
-		systemsManager.init()
-		systemsManager
-			// get current systems list
-			.refresh()
-			// subscribe to new system updates
-			.then(systemsManager.subscribe)
-			// get current alerts
-			.then(alertManager.refresh)
-			// subscribe to new alert updates
-			.then(alertManager.subscribe)
+		alertManager.refresh().then(alertManager.subscribe)
 		return () => {
 			unsubscribeAuth()
 			alertManager.unsubscribe()
-			systemsManager.unsubscribe()
 		}
 	}, [])
 
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
+	} else if (page.route === "aggregate_charts") {
+		return <AggregateCharts />
+	} else if (page.route === "aggregate_graphs") {
+		return <AggregateGraphs />
+	} else if (page.route === "aggregate_graph_new") {
+		return <AggregateGraphForm />
+	} else if (page.route === "aggregate_graph_edit") {
+		return <AggregateGraphForm id={page.params.id} />
+	} else if (page.route === "aggregate_graph") {
+		return <AggregateGraphDetail id={page.params.id} />
+	} else if (page.route === "agents") {
+		return <Agents />
+	} else if (page.route === "agent_new") {
+		return <AgentForm />
+	} else if (page.route === "agent_edit") {
+		return <AgentForm id={page.params.id} />
+	} else if (page.route === "agent_runs") {
+		return <AgentRuns id={page.params.id} />
+	} else if (page.route === "billing") {
+		return <Billing />
+	} else if (page.route === "billing_new") {
+		return <BillingAccountForm />
+	} else if (page.route === "billing_edit") {
+		return <BillingAccountForm id={page.params.id} />
+	} else if (page.route === "billing_detail") {
+		return <BillingAccountDetail id={page.params.id} />
+	} else if (page.route === "watchdog_overview") {
+		return <WatchdogOverview />
 	} else if (page.route === "home") {
-		return <Home />
+		return <Targets />
 	} else if (page.route === "system") {
-		return <SystemDetail id={page.params.id} />
+		return <TargetDetail id={page.params.id} />
+	} else if (page.route === "targets") {
+		return <Targets />
+	} else if (page.route === "target_new") {
+		return <TargetForm />
+	} else if (page.route === "target_edit") {
+		return <TargetForm id={page.params.id} />
+	} else if (page.route === "target_detail") {
+		return <TargetDetail id={page.params.id} />
 	} else if (page.route === "containers") {
 		return <Containers />
+	} else if (page.route === "export_new") {
+		return <ExportNew />
+	} else if (page.route === "export_detail") {
+		if (page.params.id === "new") {
+			return <ExportNew />
+		}
+		return <ExportDetail id={page.params.id} />
+	} else if (page.route === "exports") {
+		return <Exports />
+	} else if (page.route === "historical_data") {
+		return <HistoricalData />
+	} else if (page.route === "network") {
+		return <NetworkDevices />
+	} else if (page.route === "network_discover") {
+		return <NetworkDiscover />
+	} else if (page.route === "network_device_new") {
+		return <TargetForm defaultType="network" />
+	} else if (page.route === "network_device_edit") {
+		return <NetworkDeviceForm id={page.params.id} />
+	} else if (page.route === "network_device") {
+		return <NetworkDeviceDetail id={page.params.id} />
+	} else if (page.route === "network_device_snmp") {
+		return <NetworkDeviceSNMP id={page.params.id} />
+	} else if (page.route === "network_port") {
+		return <NetworkPortDetail id={page.params.id} />
+	} else if (page.route === "network_port_edit") {
+		return <NetworkPortForm id={page.params.id} />
+	} else if (page.route === "network_port_policy") {
+		return <NetworkPortPolicy id={page.params.id} />
+	} else if (page.route === "permissions") {
+		return <Permissions />
+	} else if (page.route === "permission_new") {
+		return <PermissionForm />
+	} else if (page.route === "permission_edit") {
+		return <PermissionForm id={page.params.id} />
+	} else if (page.route === "retention") {
+		return <Retention />
 	} else if (page.route === "smart") {
 		return <Smart />
+	} else if (page.route === "snmp_profiles") {
+		return <SNMPProfiles />
+	} else if (page.route === "snmp_profile_new") {
+		return <SNMPProfileForm />
+	} else if (page.route === "snmp_profile_edit") {
+		return <SNMPProfileForm id={page.params.id} />
+	} else if (page.route === "snmp_mib_modules") {
+		return <SNMPMIBModules />
+	} else if (page.route === "snmp_mib_module_new") {
+		return <SNMPMIBModuleForm />
+	} else if (page.route === "snmp_mib_module_edit") {
+		return <SNMPMIBModuleForm id={page.params.id} />
 	} else if (page.route === "settings") {
 		return <Settings />
+	} else if (page.route === "traffic_defaults") {
+		return <TrafficDefaults />
+	} else if (page.route === "address_prefixes") {
+		return <AddressPrefixes />
+	} else if (page.route === "address_sets") {
+		return <AddressSets />
+	} else if (page.route === "flow_search") {
+		return <FlowSearch />
+	} else if (page.route === "traffic_matrix") {
+		return <TrafficMatrix />
 	}
 })
 

@@ -1,0 +1,97 @@
+package watchdog
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestAuthMiddlewareInjectsAuthContext(t *testing.T) {
+	middleware := AuthMiddleware(func(*http.Request) (AuthContext, error) {
+		return AuthContext{TenantID: "tenant-a", UserID: "user-a"}, nil
+	})
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, ok := AuthFromContext(r.Context())
+		if !ok {
+			t.Fatal("missing auth context")
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]ID{"user_id": auth.UserID})
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareRejectsMissingAuth(t *testing.T) {
+	middleware := AuthMiddleware(func(*http.Request) (AuthContext, error) {
+		return AuthContext{}, errors.New("missing")
+	})
+	rec := httptest.NewRecorder()
+	middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler should not run")
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestRequirePermissionAllowsGrant(t *testing.T) {
+	auth := AuthContext{
+		TenantID: "tenant-a",
+		UserID:   "user-a",
+		Grants: []Permission{{
+			TenantID:     "tenant-a",
+			SubjectType:  SubjectUser,
+			SubjectID:    "user-a",
+			ResourceType: ResourceTenant,
+			ResourceID:   "tenant-a",
+			Actions:      []Action{ActionView},
+		}},
+	}
+	handler := RequirePermission(ActionView, TenantResource)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+	handler.ServeHTTP(rec, req.WithContext(ContextWithAuth(req.Context(), auth)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}
+
+func TestRequirePermissionRejectsMissingGrant(t *testing.T) {
+	handler := RequirePermission(ActionView, TenantResource)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+	req = req.WithContext(ContextWithAuth(req.Context(), AuthContext{TenantID: "tenant-a", UserID: "user-a"}))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestNewAPIV1RouterServesMe(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body AuthContext
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.UserID != "user-a" {
+		t.Fatalf("user_id = %s", body.UserID)
+	}
+}

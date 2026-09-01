@@ -282,7 +282,7 @@ export default function AlertsHistoryDataTable() {
 				<Table>
 					<TableHeader>
 						{table.getHeaderGroups().map((headerGroup) => (
-							<tr key={headerGroup.id} className="border-border/50">
+							<tr key={headerGroup.id} className="border-border">
 								{headerGroup.headers.map((header) => (
 									<TableHead className="px-2" key={header.id}>
 										{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}

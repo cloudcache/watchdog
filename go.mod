@@ -7,13 +7,18 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/ebitengine/purego v0.10.0
 	github.com/fxamacker/cbor/v2 v2.9.0
+	github.com/gaissmai/bart v0.28.0
 	github.com/gliderlabs/ssh v0.3.8
+	github.com/go-sql-driver/mysql v1.9.1
 	github.com/google/uuid v1.6.0
+	github.com/gosnmp/gosnmp v1.43.2
 	github.com/lxzan/gws v1.9.1
+	github.com/netsampler/goflow2/v3 v3.0.0-20260528232550-6dee964c38ee
 	github.com/nicholas-fedor/shoutrrr v0.15.1
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.36.8
 	github.com/shirou/gopsutil/v4 v4.26.3
+	github.com/sleepinggenius2/gosmi v0.4.4
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -27,6 +32,8 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/alecthomas/participle v0.4.1 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -39,7 +46,6 @@ require (
 	github.com/ganigeorgiev/fexpr v0.5.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0 // indirect
-	github.com/go-sql-driver/mysql v1.9.1 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

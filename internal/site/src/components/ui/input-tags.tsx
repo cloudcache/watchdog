@@ -3,9 +3,8 @@ import * as React from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { InputProps } from "./input"
 
-type InputTagsProps = Omit<InputProps, "value" | "onChange"> & {
+type InputTagsProps = Omit<React.ComponentProps<"input">, "value" | "onChange"> & {
 	value: string[]
 	onChange: React.Dispatch<React.SetStateAction<string[]>>
 }
@@ -33,7 +32,7 @@ const InputTags = React.forwardRef<HTMLInputElement, InputTagsProps>(
 		return (
 			<div
 				className={cn(
-					"bg-background min-h-10 flex w-full flex-wrap gap-2 rounded-md border px-3 py-2 text-sm  placeholder:text-muted-foreground has-focus-visible:outline-hidden ring-offset-background has-focus-visible:ring-2 has-focus-visible:ring-ring has-focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+					"bg-background min-h-9 flex w-full flex-wrap gap-2 rounded-md border px-3 py-2 text-sm  placeholder:text-muted-foreground has-focus-visible:outline-hidden ring-offset-background has-focus-visible:ring-2 has-focus-visible:ring-ring has-focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
 					className
 				)}
 			>

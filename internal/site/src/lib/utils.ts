@@ -111,17 +111,18 @@ export const updateFavicon = (() => {
     </linearGradient>
   </defs>
   <path fill="url(#gradient)" d="M35 70H0V0h35q4.4 0 8.2 1.7a21.4 21.4 0 0 1 6.6 4.5q2.9 2.8 4.5 6.6Q56 16.7 56 21a15.4 15.4 0 0 1-.3 3.2 17.6 17.6 0 0 1-.2.8 19.4 19.4 0 0 1-1.5 4 17 17 0 0 1-2.4 3.4 13.5 13.5 0 0 1-2.6 2.3 12.5 12.5 0 0 1-.4.3q1.7 1 3 2.5Q53 39.1 54 41a18.3 18.3 0 0 1 1.5 4 17.4 17.4 0 0 1 .5 3 15.3 15.3 0 0 1 0 1q0 4.4-1.7 8.2a21.4 21.4 0 0 1-4.5 6.6q-2.8 2.9-6.6 4.6Q39.4 70 35 70ZM14 14v14h21a7 7 0 0 0 2.3-.3 6.6 6.6 0 0 0 .4-.2Q39 27 40 26a6.9 6.9 0 0 0 1.5-2.2q.5-1.3.5-2.8a7 7 0 0 0-.4-2.3 6.6 6.6 0 0 0-.1-.4Q40.9 17 40 16a7 7 0 0 0-2.3-1.4 6.9 6.9 0 0 0-2.5-.6 7.9 7.9 0 0 0-.2 0H14Zm0 28v14h21a7 7 0 0 0 2.3-.4 6.6 6.6 0 0 0 .4-.1Q39 54.9 40 54a7 7 0 0 0 1.5-2.2 6.9 6.9 0 0 0 .5-2.6 7.9 7.9 0 0 0 0-.2 7 7 0 0 0-.4-2.3 6.6 6.6 0 0 0-.1-.4Q40.9 45 40 44a7 7 0 0 0-2.3-1.5 6.9 6.9 0 0 0-2.5-.6 7.9 7.9 0 0 0-.2 0H14Z"/>
-  ${downCount > 0 &&
-			`
+  ${
+		downCount > 0 &&
+		`
 		<circle cx="40" cy="50" r="22" fill="#f00"/>
   	<text x="40" y="60" font-size="34" text-anchor="middle" fill="#fff" font-family="Arial" font-weight="bold">${downCount}</text>
 	`
-			}
+	}
 </svg>
 	`
 		const blob = new Blob([svg], { type: "image/svg+xml" })
 		const url = URL.createObjectURL(blob)
-			; (document.querySelector("link[rel='icon']") as HTMLLinkElement).href = url
+		;(document.querySelector("link[rel='icon']") as HTMLLinkElement).href = url
 	}
 })()
 
@@ -135,44 +136,100 @@ export const chartTimeData: ChartTimeData = {
 		getOffset: (endTime: Date) => timeMinute.offset(endTime, -1),
 		minVersion: "0.13.0",
 	},
+	"5m": {
+		type: "auto",
+		expectedInterval: 10_000,
+		label: () => t`5 minutes`,
+		ticks: 5,
+		format: (timestamp: string) => hourWithSeconds(timestamp),
+		getOffset: (endTime: Date) => timeMinute.offset(endTime, -5),
+	},
+	"10m": {
+		type: "auto",
+		expectedInterval: 10_000,
+		label: () => t`10 minutes`,
+		ticks: 5,
+		format: (timestamp: string) => hourWithSeconds(timestamp),
+		getOffset: (endTime: Date) => timeMinute.offset(endTime, -10),
+	},
+	"15m": {
+		type: "auto",
+		expectedInterval: 15_000,
+		label: () => t`15 minutes`,
+		ticks: 5,
+		format: (timestamp: string) => hourWithSeconds(timestamp),
+		getOffset: (endTime: Date) => timeMinute.offset(endTime, -15),
+	},
+	"30m": {
+		type: "auto",
+		expectedInterval: 30_000,
+		label: () => t`30 minutes`,
+		ticks: 6,
+		format: (timestamp: string) => hourWithMinutes(timestamp),
+		getOffset: (endTime: Date) => timeMinute.offset(endTime, -30),
+	},
 	"1h": {
-		type: "1m",
+		type: "auto",
 		expectedInterval: 60_000,
 		label: () => t`1 hour`,
 		// ticks: 12,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
 		getOffset: (endTime: Date) => timeHour.offset(endTime, -1),
 	},
+	"6h": {
+		type: "auto",
+		expectedInterval: 60_000 * 5,
+		label: () => t`6 hours`,
+		ticks: 6,
+		format: (timestamp: string) => hourWithMinutes(timestamp),
+		getOffset: (endTime: Date) => timeHour.offset(endTime, -6),
+	},
 	"12h": {
-		type: "10m",
-		expectedInterval: 60_000 * 10,
+		type: "auto",
+		expectedInterval: 60_000 * 5,
 		label: () => t`12 hours`,
 		ticks: 12,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
 		getOffset: (endTime: Date) => timeHour.offset(endTime, -12),
 	},
 	"24h": {
-		type: "20m",
-		expectedInterval: 60_000 * 20,
+		type: "auto",
+		expectedInterval: 60_000 * 10,
 		label: () => t`24 hours`,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
 		getOffset: (endTime: Date) => timeHour.offset(endTime, -24),
 	},
+	"3d": {
+		type: "auto",
+		expectedInterval: 60_000 * 30,
+		label: () => t`3 days`,
+		ticks: 6,
+		format: (timestamp: string) => formatDay(timestamp),
+		getOffset: (endTime: Date) => timeDay.offset(endTime, -3),
+	},
 	"1w": {
-		type: "120m",
-		expectedInterval: 60_000 * 120,
+		type: "auto",
+		expectedInterval: 60_000 * 60,
 		label: () => t`1 week`,
 		ticks: 7,
 		format: (timestamp: string) => formatDay(timestamp),
 		getOffset: (endTime: Date) => timeDay.offset(endTime, -7),
 	},
 	"30d": {
-		type: "480m",
-		expectedInterval: 60_000 * 480,
+		type: "auto",
+		expectedInterval: 60_000 * 240,
 		label: () => t`30 days`,
 		ticks: 30,
 		format: (timestamp: string) => formatDay(timestamp),
 		getOffset: (endTime: Date) => timeDay.offset(endTime, -30),
+	},
+	custom: {
+		type: "auto",
+		expectedInterval: 60_000,
+		label: () => t`Custom`,
+		ticks: 12,
+		format: (timestamp: string) => formatShortDate(timestamp),
+		getOffset: (endTime: Date) => timeHour.offset(endTime, -1),
 	},
 }
 
@@ -323,7 +380,7 @@ export const generateToken = () => {
 /** Get the hub URL from the global BESZEL object */
 export const getHubURL = () => globalThis.BESZEL?.HUB_URL || window.location.origin
 
-/** Map of system IDs to their corresponding tokens (used to avoid fetching in add-system dialog) */
+/** Map of target/system IDs to their corresponding agent registration tokens */
 export const tokenMap = new Map<SystemRecord["id"], FingerprintRecord["token"]>()
 
 /** Calculate duration between two dates and format as human-readable string */
@@ -365,12 +422,12 @@ export function formatDuration(
 		.join(" ")
 }
 
-/** Parse semver string into major, minor, and patch numbers 
+/** Parse semver string into major, minor, and patch numbers
  * @example
  * const semVer = "1.2.3"
  * const { major, minor, patch } = parseSemVer(semVer)
  * console.log(major, minor, patch) // 1, 2, 3
-*/
+ */
 export const parseSemVer = (semVer = ""): SemVer => {
 	// if (semVer.startsWith("v")) {
 	// 	semVer = semVer.slice(1)
@@ -452,7 +509,12 @@ export function secondsToString(seconds: number, unit: "hour" | "minute" | "day"
 	const countString = count.toLocaleString()
 	switch (unit) {
 		case "minute":
-			return plural(count, { one: `${countString} minute`, few: `${countString} minutes`, many: `${countString} minutes`, other: `${countString} minutes` })
+			return plural(count, {
+				one: `${countString} minute`,
+				few: `${countString} minutes`,
+				many: `${countString} minutes`,
+				other: `${countString} minutes`,
+			})
 		case "hour":
 			return plural(count, { one: `${countString} hour`, other: `${countString} hours` })
 		case "day":

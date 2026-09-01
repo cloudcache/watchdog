@@ -1,18 +1,7 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { CartesianGrid, Line, LineChart, YAxis } from "recharts"
-import {
-	ChartContainer,
-	ChartLegend,
-	ChartLegendContent,
-	ChartTooltip,
-	ChartTooltipContent,
-	xAxis,
-} from "@/components/ui/chart"
-import { chartMargin, cn, formatShortDate } from "@/lib/utils"
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import type { ChartData, SystemStatsRecord } from "@/types"
-import { useYAxisWidth } from "./hooks"
-import type { AxisDomain } from "recharts/types/util/types"
 import { useIntersectionObserver } from "@/lib/use-intersection-observer"
+import { createLineChart, disposeChart } from "@/lib/vchart"
 
 export type DataPoint<T = SystemStatsRecord> = {
 	label: string
@@ -24,24 +13,7 @@ export type DataPoint<T = SystemStatsRecord> = {
 	activeDot?: boolean
 }
 
-export default function LineChartDefault({
-	chartData,
-	customData,
-	max,
-	maxToggled,
-	tickFormatter,
-	contentFormatter,
-	dataPoints,
-	domain,
-	legend,
-	itemSorter,
-	showTotal = false,
-	reverseStackOrder = false,
-	hideYAxis = false,
-	filter,
-	truncate = false,
-	chartProps,
-}: {
+type LineChartDefaultProps = {
 	chartData: ChartData
 	// biome-ignore lint/suspicious/noExplicitAny: accepts different data source types (systemStats or containerData)
 	customData?: any[]
@@ -52,7 +24,7 @@ export default function LineChartDefault({
 	contentFormatter: (item: any, key: string) => ReactNode
 	// biome-ignore lint/suspicious/noExplicitAny: accepts DataPoint with different generic types
 	dataPoints?: DataPoint<any>[]
-	domain?: AxisDomain
+	domain?: unknown
 	legend?: boolean
 	showTotal?: boolean
 	// biome-ignore lint/suspicious/noExplicitAny: recharts tooltip item interop
@@ -61,10 +33,14 @@ export default function LineChartDefault({
 	hideYAxis?: boolean
 	filter?: string
 	truncate?: boolean
-	chartProps?: Omit<React.ComponentProps<typeof LineChart>, "data" | "margin">
-}) {
-	const { yAxisWidth, updateYAxisWidth } = useYAxisWidth()
+	chartProps?: Record<string, unknown>
+}
+
+export default function LineChartDefault(props: LineChartDefaultProps) {
+	const { chartData, customData, maxToggled, tickFormatter, dataPoints } = props
 	const { isIntersecting, ref } = useIntersectionObserver({ freeze: false })
+	const chartRef = useRef<HTMLDivElement>(null)
+	const chartInstance = useRef<ReturnType<typeof createLineChart> | null>(null)
 	const sourceData = customData ?? chartData.systemStats
 	const [displayData, setDisplayData] = useState(sourceData)
 	const [displayMaxToggled, setDisplayMaxToggled] = useState(maxToggled)
@@ -82,89 +58,45 @@ export default function LineChartDefault({
 		}
 	}, [displayData, displayMaxToggled, isIntersecting, maxToggled, sourceData])
 
-	// Use a stable key derived from data point identities and visual properties
-	const linesKey = dataPoints?.map((d) => `${d.label}:${d.strokeOpacity ?? ""}`).join("\0")
+	const series = useMemo(() => makeSeries(displayData, dataPoints), [displayData, dataPoints])
 
-	const Lines = useMemo(() => {
-		return dataPoints?.map((dataPoint, i) => {
-			let { color } = dataPoint
-			if (typeof color === "number") {
-				color = `var(--chart-${color})`
-			}
-			return (
-				<Line
-					key={dataPoint.label}
-					dataKey={dataPoint.dataKey}
-					name={dataPoint.label}
-					type="monotoneX"
-					dot={false}
-					strokeWidth={1.5}
-					stroke={color}
-					strokeOpacity={dataPoint.strokeOpacity}
-					isAnimationActive={false}
-					// stackId={dataPoint.stackId}
-					order={dataPoint.order || i}
-					activeDot={dataPoint.activeDot ?? true}
-				/>
-			)
-		})
-	}, [linesKey, displayMaxToggled])
-
-	return useMemo(() => {
-		if (displayData.length === 0) {
-			return null
+	useEffect(() => {
+		if (!chartRef.current || !isIntersecting || series.every((item) => item.values.length === 0)) {
+			return
 		}
-		// if (logRender) {
-		// console.log("Rendered", dataPoints?.map((d) => d.label).join(", "), new Date())
-		// }
-		return (
-			<ChartContainer
-				ref={ref}
-				className={cn("h-full w-full absolute aspect-auto bg-card opacity-0 transition-opacity", {
-					"opacity-100": yAxisWidth || hideYAxis,
-					"ps-4": hideYAxis,
-				})}
-			>
-				<LineChart
-					reverseStackOrder={reverseStackOrder}
-					accessibilityLayer
-					data={displayData}
-					margin={hideYAxis ? { ...chartMargin, left: 5 } : chartMargin}
-					{...chartProps}
-				>
-					<CartesianGrid vertical={false} />
-					{!hideYAxis && (
-						<YAxis
-							direction="ltr"
-							orientation={chartData.orientation}
-							className="tracking-tighter"
-							width={yAxisWidth}
-							domain={domain ?? [0, max ?? "auto"]}
-							tickFormatter={(value, index) => updateYAxisWidth(tickFormatter(value, index))}
-							tickLine={false}
-							axisLine={false}
-						/>
-					)}
-					{xAxis(chartData)}
-					<ChartTooltip
-						animationEasing="ease-out"
-						animationDuration={150}
-						// @ts-expect-error
-						itemSorter={itemSorter}
-						content={
-							<ChartTooltipContent
-								labelFormatter={(_, data) => formatShortDate(data[0].payload.created)}
-								contentFormatter={contentFormatter}
-								showTotal={showTotal}
-								filter={filter}
-								truncate={truncate}
-							/>
-						}
-					/>
-					{Lines}
-					{legend && <ChartLegend content={<ChartLegendContent />} />}
-				</LineChart>
-			</ChartContainer>
-		)
-	}, [displayData, yAxisWidth, filter, Lines])
+		disposeChart(chartInstance.current)
+		chartInstance.current = createLineChart(chartRef.current, {
+			series,
+			yFormatter: (value) => tickFormatter(value, 0),
+		})
+		return () => disposeChart(chartInstance.current)
+	}, [isIntersecting, series, tickFormatter])
+
+	if (!displayData.length) {
+		return null
+	}
+	return (
+		<div ref={ref} className="absolute h-full w-full bg-card">
+			<div ref={chartRef} className="h-full w-full" />
+		</div>
+	)
+}
+
+function makeSeries(
+	// biome-ignore lint/suspicious/noExplicitAny: chart points accept different data shapes.
+	data: any[],
+	// biome-ignore lint/suspicious/noExplicitAny: accepts DataPoint with different generic types.
+	dataPoints?: DataPoint<any>[]
+) {
+	return (dataPoints ?? []).map((point) => ({
+		name: point.label,
+		values: data
+			.map((record) => ({
+				time: Number(record?.created ?? 0),
+				value: point.dataKey(record),
+			}))
+			.filter(
+				(record): record is { time: number; value: number } => Boolean(record.time) && typeof record.value === "number"
+			),
+	}))
 }

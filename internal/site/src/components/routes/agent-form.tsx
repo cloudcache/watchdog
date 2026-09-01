@@ -1,0 +1,299 @@
+import { Trans, useLingui } from "@lingui/react/macro"
+import { getPagePath } from "@nanostores/router"
+import { ArrowLeftIcon, PlugZapIcon, SaveIcon, Trash2Icon } from "lucide-react"
+import { memo, useCallback, useEffect, useState } from "react"
+import { $router, Link, navigate } from "@/components/router"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { pb } from "@/lib/api"
+import { cn } from "@/lib/utils"
+
+type AgentRecord = {
+	ID?: string
+	id?: string
+	TargetID?: string
+	target_id?: string
+	AgentType?: string
+	agent_type?: string
+	Mode?: string
+	mode?: string
+	Endpoint?: string
+	endpoint?: string
+	Status?: string
+	status?: string
+}
+
+type TargetRecord = {
+	ID?: string
+	id?: string
+	Name?: string
+	name?: string
+	Type?: string
+	target_type?: string
+}
+
+type TargetsResponse = {
+	items?: TargetRecord[]
+}
+
+type AgentFormProps = {
+	id?: string
+}
+
+type FormState = {
+	id: string
+	agentType: string
+	targetID: string
+	mode: string
+	endpoint: string
+	status: string
+	token: string
+}
+
+export default memo(({ id }: AgentFormProps) => {
+	const { t } = useLingui()
+	const isEditing = Boolean(id)
+	const [targets, setTargets] = useState<TargetRecord[]>([])
+	const [form, setForm] = useState<FormState>(() => ({
+		id: id ?? createAgentID(),
+		agentType: "snmp",
+		targetID: "",
+		mode: "push",
+		endpoint: "",
+		status: "pending",
+		token: "",
+	}))
+	const [loading, setLoading] = useState(true)
+	const [saving, setSaving] = useState(false)
+	const [error, setError] = useState("")
+
+	const load = useCallback(async () => {
+		setLoading(true)
+		setError("")
+		try {
+			const targetsData = await pb.send<TargetsResponse>("/api/v1/targets", {})
+			const targetItems = targetsData.items ?? []
+			setTargets(targetItems)
+			if (!id) {
+				setForm((current) => ({
+					...current,
+					targetID: current.targetID || firstTargetIDForType(targetItems, current.agentType),
+				}))
+				return
+			}
+			const agent = await pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
+			setForm({
+				id: agent.ID ?? agent.id ?? id,
+				agentType: agent.AgentType ?? agent.agent_type ?? "snmp",
+				targetID: agent.TargetID ?? agent.target_id ?? "",
+				mode: agent.Mode ?? agent.mode ?? "push",
+				endpoint: agent.Endpoint ?? agent.endpoint ?? "",
+				status: agent.Status ?? agent.status ?? "pending",
+				token: "",
+			})
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to load agent`)
+		} finally {
+			setLoading(false)
+		}
+	}, [id, t])
+
+	useEffect(() => {
+		document.title = `${isEditing ? t`Edit Agent` : t`Create Agent`} / Beszel`
+		load()
+	}, [isEditing, load, t])
+
+	const save = async () => {
+		setSaving(true)
+		setError("")
+		try {
+			const body = {
+				ID: form.id.trim(),
+				TargetID: form.targetID,
+				AgentType: form.agentType,
+				Mode: form.mode,
+				Endpoint: form.endpoint.trim(),
+				Status: form.status,
+				Token: form.token,
+			}
+			const saved = await pb.send<AgentRecord>(id ? `/api/v1/agent-registry/${id}` : "/api/v1/agent-registry", {
+				method: id ? "PATCH" : "POST",
+				body,
+			})
+			navigate(getPagePath($router, "agent_edit", { id: saved.ID ?? saved.id ?? form.id }))
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to save agent`)
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	const deleteAgent = async () => {
+		if (!id || !window.confirm(t`Delete this agent?`)) {
+			return
+		}
+		setSaving(true)
+		setError("")
+		try {
+			await pb.send(`/api/v1/agent-registry/${id}`, { method: "DELETE" })
+			navigate(getPagePath($router, "agents"))
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to delete agent`)
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
+	const targetOptions = targets.filter((target) => targetType(target) === agentTargetType(form.agentType))
+	const canSave = form.id.trim() && form.targetID && (isEditing || form.token.trim())
+
+	return (
+		<div className="grid gap-4">
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-2">
+					<Link
+						href={getPagePath($router, "agents")}
+						className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "shrink-0")}
+						aria-label={t`Back to agents`}
+					>
+						<ArrowLeftIcon className="h-4 w-4" />
+					</Link>
+					<PlugZapIcon className="h-5 w-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+					<h1 className="truncate text-xl font-semibold tracking-normal">
+						{isEditing ? <Trans>Edit Agent</Trans> : <Trans>Create Agent</Trans>}
+					</h1>
+				</div>
+				<div className="flex items-center gap-2">
+					{isEditing ? (
+						<Button size="sm" variant="outline" onClick={deleteAgent} disabled={loading || saving}>
+							<Trash2Icon className="me-2 h-4 w-4" />
+							<Trans>Delete</Trans>
+						</Button>
+					) : null}
+					<Button size="sm" onClick={save} disabled={loading || saving || !canSave}>
+						<SaveIcon className="me-2 h-4 w-4" />
+						<Trans>Save</Trans>
+					</Button>
+				</div>
+			</div>
+
+			{error ? <div className="rounded-md border border-border p-3 text-sm text-destructive">{error}</div> : null}
+
+			<div className="grid gap-4 rounded-md border border-border p-4">
+				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+					<Field label="ID">
+						<Input
+							value={form.id}
+							onChange={(event) => update({ id: event.target.value })}
+							disabled={isEditing || loading}
+						/>
+					</Field>
+					<Field label={t`Agent Type`}>
+						<Select
+							value={form.agentType}
+							onValueChange={(agentType) =>
+								update({ agentType, targetID: firstTargetIDForType(targets, agentType) })
+							}
+							disabled={loading || isEditing}
+						>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="snmp">snmp</SelectItem>
+								<SelectItem value="system">system</SelectItem>
+							</SelectContent>
+						</Select>
+					</Field>
+					<Field label={t`Target`}>
+						<Select value={form.targetID} onValueChange={(targetID) => update({ targetID })} disabled={loading}>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{targetOptions.map((target) => {
+									const targetID = target.ID ?? target.id ?? ""
+									return (
+										<SelectItem key={targetID} value={targetID}>
+											{target.Name ?? target.name ?? targetID} · {targetType(target)}
+										</SelectItem>
+									)
+								})}
+							</SelectContent>
+						</Select>
+					</Field>
+					<Field label={t`Mode`}>
+						<Select value={form.mode} onValueChange={(mode) => update({ mode })} disabled={loading}>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="push">push</SelectItem>
+								<SelectItem value="pull">pull</SelectItem>
+							</SelectContent>
+						</Select>
+					</Field>
+					<Field label={t`Endpoint`}>
+						<Input
+							value={form.endpoint}
+							onChange={(event) => update({ endpoint: event.target.value })}
+							disabled={loading}
+						/>
+					</Field>
+					<Field label={t`Status`}>
+						<Select value={form.status} onValueChange={(status) => update({ status })} disabled={loading}>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="pending">pending</SelectItem>
+								<SelectItem value="up">up</SelectItem>
+								<SelectItem value="down">down</SelectItem>
+								<SelectItem value="disabled">disabled</SelectItem>
+							</SelectContent>
+						</Select>
+					</Field>
+					<Field label={isEditing ? t`Rotate Token` : t`Token`}>
+						<Input
+							type="password"
+							value={form.token}
+							onChange={(event) => update({ token: event.target.value })}
+							disabled={loading}
+						/>
+					</Field>
+				</div>
+			</div>
+		</div>
+	)
+})
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<div className="grid gap-1.5">
+			<Label>{label}</Label>
+			{children}
+		</div>
+	)
+}
+
+function createAgentID() {
+	const bytes = new Uint8Array(8)
+	crypto.getRandomValues(bytes)
+	return `agent_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+}
+
+function targetType(target: TargetRecord) {
+	return target.Type ?? target.target_type ?? "system"
+}
+
+function agentTargetType(agentType: string) {
+	return agentType === "system" ? "system" : "network"
+}
+
+function firstTargetIDForType(targets: TargetRecord[], agentType: string) {
+	const target = targets.find((item) => targetType(item) === agentTargetType(agentType))
+	return target?.ID ?? target?.id ?? ""
+}

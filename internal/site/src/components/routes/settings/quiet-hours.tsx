@@ -187,7 +187,7 @@ export function QuietHours() {
 				<div className="rounded-md border overflow-x-auto whitespace-nowrap">
 					<Table>
 						<TableHeader>
-							<TableRow className="border-border/50">
+							<TableRow className="border-border">
 								<TableHead className="px-4">
 									<span className="flex items-center gap-2">
 										<ServerIcon className="size-4" />

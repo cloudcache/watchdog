@@ -9,8 +9,61 @@ import { chartTimeData } from "./utils"
 /** PocketBase JS Client */
 export const pb = new PocketBase(basePath)
 
-export const isAdmin = () => pb.authStore.record?.role === "admin"
+const pocketBaseSend = pb.send.bind(pb)
+
+pb.send = ((path: string, options = {}) => {
+	if (path.startsWith("/api/v1")) {
+		return sendWatchdogAPI(path, options)
+	}
+	return pocketBaseSend(path, options)
+}) as typeof pb.send
+
+export const isAdmin = () => import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true" || pb.authStore.record?.role === "admin"
 export const isReadOnlyUser = () => pb.authStore.record?.role === "readonly"
+
+async function sendWatchdogAPI<T>(
+	path: string,
+	options: RequestInit & { body?: unknown; query?: Record<string, string | number | boolean | undefined> } = {}
+): Promise<T> {
+	const headers = new Headers(options.headers)
+	const url = new URL(`${basePath}${path}`, window.location.origin)
+	for (const [key, value] of Object.entries(options.query ?? {})) {
+		if (value !== undefined) {
+			url.searchParams.set(key, String(value))
+		}
+	}
+	const init: RequestInit = {
+		...options,
+		headers,
+	}
+	delete (init as RequestInit & { query?: unknown }).query
+	if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
+		headers.set("Content-Type", "application/json")
+		init.body = JSON.stringify(options.body)
+	}
+	const response = await fetch(url, init)
+	if (!response.ok) {
+		const message = await readAPIErrorMessage(response)
+		throw new Error(message || `Request failed with status ${response.status}`)
+	}
+	if (response.status === 204) {
+		return undefined as T
+	}
+	return response.json() as Promise<T>
+}
+
+async function readAPIErrorMessage(response: Response) {
+	const text = await response.text()
+	if (!text) {
+		return ""
+	}
+	try {
+		const data = JSON.parse(text) as { error?: { message?: string } }
+		return data.error?.message || text
+	} catch {
+		return text
+	}
+}
 
 export const verifyAuth = () => {
 	pb.collection("users")

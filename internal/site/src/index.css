@@ -6,61 +6,69 @@
 @custom-variant safari (@supports (hanging-punctuation: first) and (-webkit-appearance: none));
 
 :root {
-	--background: hsl(30 8% 98%);
-	--foreground: hsl(30 0% 10%);
-	--card: hsl(30 0% 100%);
-	--card-foreground: hsl(240 6% 12%);
-	--popover: hsl(30 0% 100%);
-	--popover-foreground: hsl(240 10% 6.2%);
-	--primary: hsl(240 5.88% 10%);
-	--primary-foreground: hsl(30 0% 100%);
-	--secondary: hsl(240 4.76% 95.88%);
-	--secondary-foreground: hsl(240 5.88% 10%);
-	--muted: hsl(26 6% 94%);
-	--muted-foreground: hsl(24 2.79% 35.1%);
-	--accent: hsl(20 23.08% 94%);
-	--accent-foreground: hsl(240 5.88% 10%);
-	--destructive: hsl(0 66% 53%);
-	--destructive-foreground: hsl(0 0% 97%);
-	--border: hsl(30 8.11% 85.49%);
-	--input: hsl(30 4.29% 72.55%);
-	--ring: hsl(30 3.97% 49.41%);
-	--radius: 0.8rem;
-	--chart-1: hsl(220 70% 50%);
-	--chart-2: hsl(160 60% 45%);
-	--chart-3: hsl(30 80% 55%);
-	--chart-4: hsl(280 65% 60%);
-	--chart-5: hsl(340 75% 55%);
-	--table-header: hsl(225, 6%, 97%);
+	--background: #ffffff;
+	--foreground: #171717;
+	--card: #ffffff;
+	--card-foreground: #171717;
+	--popover: #ffffff;
+	--popover-foreground: #171717;
+	--primary: #2d74ff;
+	--primary-foreground: #ffffff;
+	--secondary: #f2f2f2;
+	--secondary-foreground: #171717;
+	--muted: #fafafa;
+	--muted-foreground: #7d7d7d;
+	--accent: #f0f7ff;
+	--accent-foreground: #0059ec;
+	--destructive: #df1529;
+	--destructive-foreground: #ffffff;
+	--border: #e5e5e5;
+	--input: #e5e5e5;
+	--ring: #2d74ff;
+	--radius: 6px;
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 6px;
+	--radius-xl: 12px;
+	--chart-1: #2d74ff;
+	--chart-2: #28a948;
+	--chart-3: #ff9300;
+	--chart-4: #a000f8;
+	--chart-5: #f22782;
+	--table-header: #fafafa;
 	--chart-saturation: 65%;
 	--chart-lightness: 50%;
 	--container: 1500px;
+	--geist-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--geist-focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #2d74ff;
 }
 
 .dark {
 	color-scheme: dark;
-	--background: hsl(220 5.5% 9%);
-	--foreground: hsl(220 2% 97%);
-	--card: hsl(220 5.5% 10.5%);
-	--card-foreground: hsl(220 2% 97%);
-	--popover: hsl(220 5.5% 9%);
-	--popover-foreground: hsl(220 2% 97%);
-	--primary: hsl(220 2% 96%);
-	--primary-foreground: hsl(220 4% 10%);
-	--secondary: hsl(220 4% 16%);
-	--secondary-foreground: hsl(220 0% 98%);
-	--muted: hsl(220 6% 16%);
-	--muted-foreground: hsl(220 4% 67%);
-	--accent: hsl(220 5% 15.5%);
-	--accent-foreground: hsl(220 2% 98%);
-	--destructive: hsl(0 62% 46%);
-	--border: hsl(220 3% 17%);
-	--input: hsl(220 4% 22%);
-	--ring: hsl(220 4% 80%);
-	--table-header: hsl(220, 6%, 13%);
-	--radius: 0.8rem;
+	--background: #000000;
+	--foreground: #ededed;
+	--card: #0a0a0a;
+	--card-foreground: #ededed;
+	--popover: #0a0a0a;
+	--popover-foreground: #ededed;
+	--primary: #47a8ff;
+	--primary-foreground: #000000;
+	--secondary: #1a1a1a;
+	--secondary-foreground: #ededed;
+	--muted: #1a1a1a;
+	--muted-foreground: #a0a0a0;
+	--accent: #06193a;
+	--accent-foreground: #47a8ff;
+	--destructive: #f32e40;
+	--destructive-foreground: #ffffff;
+	--border: rgba(255, 255, 255, 0.12);
+	--input: rgba(255, 255, 255, 0.12);
+	--ring: #47a8ff;
+	--table-header: #0d0d0d;
 	--chart-saturation: 60%;
 	--chart-lightness: 55%;
+	--geist-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+	--geist-focus-ring: 0 0 0 2px #000000, 0 0 0 4px #47a8ff;
 }
 
 @theme inline {
@@ -70,10 +78,10 @@
 	--breakpoint-450: 28rem;
 	--breakpoint-2xl: 90rem;
 
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) + 4px);
+	--radius-sm: var(--radius-sm);
+	--radius-md: var(--radius-md);
+	--radius-lg: var(--radius-lg);
+	--radius-xl: var(--radius-xl);
 
 	--color-green-50: hsl(140 60% 95%);
 	--color-green-100: hsl(140 50% 90%);
@@ -117,7 +125,6 @@
 }
 
 @layer utilities {
-	/* Fonts */
 	@supports (font-variation-settings: normal) {
 		:root {
 			font-family: Inter, InterVariable, sans-serif;
@@ -147,11 +154,10 @@
 	button {
 		cursor: pointer;
 	}
-	
-	/* cosmetic patch for half pixel gap in table headers when scrolling content shows at top  */
+
 	thead.sticky:before {
 		content: "";
-		@apply absolute -top-2 left-0 w-full h-4 bg-table-header z-50	
+		@apply absolute -top-2 left-0 w-full h-4 bg-table-header z-50
 	}
 }
 
@@ -165,7 +171,6 @@
 }
 
 @utility ns-dialog {
-	/* New system dialog width */
 	min-width: 30.3rem;
 }
 

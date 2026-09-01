@@ -1,0 +1,43 @@
+mysql:
+  dsn: "user:password@tcp(127.0.0.1:3306)/watchdog?parseTime=true&multiStatements=true"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 30m
+
+victoriametrics:
+  base_url: "http://127.0.0.1:8428"
+
+victorialogs:
+  base_url: "http://127.0.0.1:9428"
+
+export:
+  dir: "exports"
+  worker_interval: 30s
+  worker_batch: 10
+  metric: "watchdog_snmp_if_in_bps"
+
+snmp_collector:
+  interval: 1m
+
+sflow_collector:
+  listen: ":6343"
+  tenant_id: "tenant_dev"
+  agg_interval: 1m
+  prefix_sync_interval: 5m
+
+# MIB resolution. The collector ships an embedded core MIB bundle
+# (IF-MIB, ENTITY-MIB, BGP4-MIB, HOST-RESOURCES-MIB, ...) so it works with no
+# config. mib_dirs layers extra MIB trees on top (e.g. a LibreNMS checkout's
+# mibs directory; subdirectories like mibs/cisco must be listed explicitly).
+# mib_load names extra modules to parse from those dirs, comma-separated, or
+# "ALL" to parse every file directly inside each dir (slow on large trees).
+snmp:
+  mib_dirs:
+    - "/opt/librenms/mibs"
+  mib_load: ""
+
+agent:
+  hub_url: "http://127.0.0.1:8091"
+  agent_id: "agent_dev_snmp"
+  token: "change-me"
+  interval: 1m

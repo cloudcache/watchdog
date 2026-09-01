@@ -5,7 +5,6 @@ import { getPagePath, redirectPage } from "@nanostores/router"
 import {
 	AlertOctagonIcon,
 	BellIcon,
-	FileSlidersIcon,
 	FingerprintIcon,
 	HeartPulseIcon,
 	SettingsIcon,
@@ -22,14 +21,12 @@ import { SidebarNav } from "./sidebar-nav.tsx"
 
 const generalSettingsImport = () => import("./general.tsx")
 const notificationsSettingsImport = () => import("./notifications.tsx")
-const configYamlSettingsImport = () => import("./config-yaml.tsx")
 const fingerprintsSettingsImport = () => import("./tokens-fingerprints.tsx")
 const alertsHistoryDataTableSettingsImport = () => import("./alerts-history-data-table.tsx")
 const heartbeatSettingsImport = () => import("./heartbeat.tsx")
 
 const GeneralSettings = lazy(generalSettingsImport)
 const NotificationsSettings = lazy(notificationsSettingsImport)
-const ConfigYamlSettings = lazy(configYamlSettingsImport)
 const FingerprintsSettings = lazy(fingerprintsSettingsImport)
 const AlertsHistoryDataTableSettings = lazy(alertsHistoryDataTableSettingsImport)
 const HeartbeatSettings = lazy(heartbeatSettingsImport)
@@ -97,13 +94,6 @@ export default function SettingsLayout() {
 			admin: true,
 			preload: heartbeatSettingsImport,
 		},
-		{
-			title: t`YAML Config`,
-			href: getPagePath($router, "settings", { name: "config" }),
-			icon: FileSlidersIcon,
-			admin: true,
-			preload: configYamlSettingsImport,
-		},
 	]
 
 	const page = useStore($router)
@@ -151,8 +141,6 @@ function SettingsContent({ name }: { name: string }) {
 			return <GeneralSettings userSettings={userSettings} />
 		case "notifications":
 			return <NotificationsSettings userSettings={userSettings} />
-		case "config":
-			return <ConfigYamlSettings />
 		case "tokens":
 			return <FingerprintsSettings />
 		case "alert-history":

@@ -321,7 +321,7 @@ const SectionTable = memo(({ fingerprints = [] }: { fingerprints: FingerprintRec
 		<div className="rounded-md border overflow-hidden w-full mt-4">
 			<Table>
 				<TableHeader>
-					<tr className="border-border/50">
+					<tr className="border-border">
 						{headerCols.map((col) => (
 							<TableHead key={col.label} style={{ minWidth: col.w }}>
 								<span className="flex items-center gap-2">

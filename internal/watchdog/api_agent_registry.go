@@ -1,0 +1,268 @@
+package watchdog
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+type agentRegistryAPI struct {
+	repo AgentRepository
+}
+
+type agentRegistryResponse struct {
+	ID           ID
+	TenantID     ID
+	TargetID     ID
+	AgentType    AgentType
+	Mode         AgentMode
+	Endpoint     string
+	Status       string
+	LastSeen     time.Time
+	LastRun      time.Time
+	LastSuccess  time.Time
+	LastError    string
+	RunCount     uint64
+	FailureCount uint64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type agentRunHistoryResponse struct {
+	ID         ID
+	TenantID   ID
+	AgentID    ID
+	TargetID   ID
+	Status     AgentRunStatus
+	Error      string
+	Seen       bool
+	StartedAt  time.Time
+	EndedAt    time.Time
+	DurationMS uint64
+	CreatedAt  time.Time
+}
+
+type agentRegistryRequest struct {
+	ID        ID
+	TargetID  ID
+	AgentType AgentType
+	Mode      AgentMode
+	Endpoint  string
+	Token     string
+	Status    string
+}
+
+func registerAgentRegistryRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo AgentRepository) {
+	api := agentRegistryAPI{repo: repo}
+	viewTenant := RequirePermission(ActionView, TenantResource)
+	configureTenant := RequirePermission(ActionConfigure, TenantResource)
+	mux.Handle("GET /api/v1/agent-registry", auth(viewTenant(http.HandlerFunc(api.list))))
+	mux.Handle("POST /api/v1/agent-registry", auth(configureTenant(http.HandlerFunc(api.create))))
+	mux.Handle("GET /api/v1/agent-registry/{agent_id}", auth(viewTenant(http.HandlerFunc(api.get))))
+	mux.Handle("GET /api/v1/agent-registry/{agent_id}/runs", auth(viewTenant(http.HandlerFunc(api.listRuns))))
+	mux.Handle("PATCH /api/v1/agent-registry/{agent_id}", auth(configureTenant(http.HandlerFunc(api.patch))))
+	mux.Handle("DELETE /api/v1/agent-registry/{agent_id}", auth(configureTenant(http.HandlerFunc(api.delete))))
+}
+
+func (api agentRegistryAPI) list(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	agents, err := api.repo.ListAgents(r.Context(), auth.TenantID)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	visible := make([]agentRegistryResponse, 0, len(agents))
+	for _, agent := range agents {
+		if canAccessTarget(auth, agent.TargetID, ActionView) {
+			visible = append(visible, agentRegistryDTO(agent))
+		}
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": visible})
+}
+
+func (api agentRegistryAPI) get(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	agent, err := api.repo.GetAgent(r.Context(), ID(r.PathValue("agent_id")))
+	if err != nil || agent.TenantID != auth.TenantID {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Agent not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, agent.TargetID, ActionView) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, agentRegistryDTO(agent))
+}
+
+func (api agentRegistryAPI) listRuns(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	agent, err := api.repo.GetAgent(r.Context(), ID(r.PathValue("agent_id")))
+	if err != nil || agent.TenantID != auth.TenantID {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Agent not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, agent.TargetID, ActionView) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	limit := 100
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be positive", nil)
+			return
+		}
+		limit = parsed
+	}
+	runs, err := api.repo.ListAgentRuns(r.Context(), auth.TenantID, agent.ID, limit)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	items := make([]agentRunHistoryResponse, 0, len(runs))
+	for _, run := range runs {
+		items = append(items, agentRunHistoryResponse(run))
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (api agentRegistryAPI) create(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	req, err := decodeAgentRegistryRequest(r)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if req.Token == "" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "agent token is required", nil)
+		return
+	}
+	if !canAccessTarget(auth, req.TargetID, ActionConfigure) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	created, err := api.repo.UpsertAgent(r.Context(), SNMPAgentConfig{
+		ID:        req.ID,
+		TenantID:  auth.TenantID,
+		TargetID:  req.TargetID,
+		AgentType: req.AgentType,
+		Mode:      req.Mode,
+		Endpoint:  req.Endpoint,
+		TokenHash: NewAgentTokenHash(req.Token),
+		Status:    req.Status,
+	})
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusCreated, agentRegistryDTO(created))
+}
+
+func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	existing, err := api.repo.GetAgent(r.Context(), ID(r.PathValue("agent_id")))
+	if err != nil || existing.TenantID != auth.TenantID {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Agent not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, existing.TargetID, ActionConfigure) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	req, err := decodeAgentRegistryRequest(r)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if req.TargetID != existing.TargetID && !canAccessTarget(auth, req.TargetID, ActionConfigure) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	tokenHash := existing.TokenHash
+	if req.Token != "" {
+		tokenHash = NewAgentTokenHash(req.Token)
+	}
+	updated, err := api.repo.UpsertAgent(r.Context(), SNMPAgentConfig{
+		ID:        existing.ID,
+		TenantID:  auth.TenantID,
+		TargetID:  req.TargetID,
+		AgentType: req.AgentType,
+		Mode:      req.Mode,
+		Endpoint:  req.Endpoint,
+		TokenHash: tokenHash,
+		Status:    req.Status,
+	})
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, agentRegistryDTO(updated))
+}
+
+func (api agentRegistryAPI) delete(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	existing, err := api.repo.GetAgent(r.Context(), ID(r.PathValue("agent_id")))
+	if err != nil || existing.TenantID != auth.TenantID {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Agent not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, existing.TargetID, ActionConfigure) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	if err := api.repo.DeleteAgent(r.Context(), auth.TenantID, existing.ID); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeAgentRegistryRequest(r *http.Request) (agentRegistryRequest, error) {
+	defer r.Body.Close()
+	var req agentRegistryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, err
+	}
+	if req.ID == "" {
+		return req, errors.New("agent id is required")
+	}
+	if req.TargetID == "" {
+		return req, errors.New("target id is required")
+	}
+	req.AgentType = normalizeAgentType(req.AgentType)
+	if req.AgentType != AgentTypeSNMP && req.AgentType != AgentTypeSystem {
+		return req, errors.New("agent type must be snmp or system")
+	}
+	if req.Mode == "" {
+		req.Mode = AgentModePush
+	}
+	if req.Mode != AgentModePush && req.Mode != AgentModePull {
+		return req, errors.New("agent mode must be push or pull")
+	}
+	if req.Status == "" {
+		req.Status = "pending"
+	}
+	return req, nil
+}
+
+func agentRegistryDTO(agent SNMPAgentConfig) agentRegistryResponse {
+	return agentRegistryResponse{
+		ID:           agent.ID,
+		TenantID:     agent.TenantID,
+		TargetID:     agent.TargetID,
+		AgentType:    normalizeAgentType(agent.AgentType),
+		Mode:         agent.Mode,
+		Endpoint:     agent.Endpoint,
+		Status:       agent.Status,
+		LastSeen:     agent.LastSeen,
+		LastRun:      agent.LastRun,
+		LastSuccess:  agent.LastSuccess,
+		LastError:    agent.LastError,
+		RunCount:     agent.RunCount,
+		FailureCount: agent.FailureCount,
+		CreatedAt:    agent.CreatedAt,
+		UpdatedAt:    agent.UpdatedAt,
+	}
+}

@@ -18,6 +18,8 @@ function activateLocale(locale: string, messages: Messages = enMessages) {
 	$direction.set(rtlLanguages.has(locale) ? "rtl" : "ltr")
 }
 
+activateLocale("en")
+
 // dynamically loads translations for the given locale
 export async function dynamicActivate(locale: string) {
 	if (locale === "en") {
