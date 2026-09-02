@@ -116,7 +116,7 @@ export default memo(({ id }: BillingAccountDetailProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Billing Account`} / Beszel`
+		document.title = `${t`Billing Account`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

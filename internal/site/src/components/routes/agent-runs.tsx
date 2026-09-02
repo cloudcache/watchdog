@@ -74,7 +74,7 @@ export default memo(({ id }: AgentRunsProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${id} / ${t`Agent Runs`} / Beszel`
+		document.title = `${id} / ${t`Agent Runs`} / WatchDog`
 		refresh()
 	}, [id, refresh, t])
 

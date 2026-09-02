@@ -101,7 +101,7 @@ export default memo(({ id }: AgentFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Agent` : t`Create Agent`} / Beszel`
+		document.title = `${isEditing ? t`Edit Agent` : t`Create Agent`} / WatchDog`
 		load()
 	}, [isEditing, load, t])
 

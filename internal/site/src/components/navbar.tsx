@@ -2,6 +2,7 @@ import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import {
 	BarChart3Icon,
+	LibraryIcon,
 	ContainerIcon,
 	CrosshairIcon,
 	DatabaseBackupIcon,
@@ -43,7 +44,6 @@ import {
 import { isAdmin, isReadOnlyUser, logOut, pb } from "@/lib/api"
 import { cn, runOnce } from "@/lib/utils"
 import { LangToggle } from "./lang-toggle"
-import { Logo } from "./logo"
 import { ModeToggle } from "./mode-toggle"
 import { $router, basePath, Link, navigate, prependBasePath } from "./router"
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip"
@@ -69,7 +69,7 @@ export default function Navbar() {
 				className="p-2 ps-0 me-3 group"
 				onMouseEnter={runOnce(() => import("@/components/routes/targets"))}
 			>
-				<Logo className="h-[1.2rem] md:h-5 fill-foreground" />
+				<img src="/static/watchdog-logo.svg" alt="Watchdog" className="h-6 md:h-7" />
 			</Link>
 			<Button
 				variant="outline"
@@ -254,6 +254,20 @@ export default function Navbar() {
 					</TooltipTrigger>
 					<TooltipContent>
 						<Trans>Aggregate Charts</Trans>
+					</TooltipContent>
+				</Tooltip>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Link
+							href={getPagePath($router, "aggregate_graphs")}
+							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+							aria-label="Saved Graphs"
+						>
+							<LibraryIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
+						</Link>
+					</TooltipTrigger>
+					<TooltipContent>
+						<Trans>Saved Graphs</Trans>
 					</TooltipContent>
 				</Tooltip>
 				<Tooltip>

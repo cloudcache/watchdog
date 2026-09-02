@@ -52,7 +52,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Targets`} / Beszel`
+		document.title = `${t`Targets`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

@@ -154,7 +154,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 	}, [])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Graph` : t`Create Graph`} / Beszel`
+		document.title = `${isEditing ? t`Edit Graph` : t`Create Graph`} / WatchDog`
 		let cancelled = false
 		const load = async () => {
 			setLoading(true)

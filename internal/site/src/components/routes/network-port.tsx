@@ -108,7 +108,7 @@ export default memo(({ id }: PortDetailProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Network Port`} / Beszel`
+		document.title = `${t`Network Port`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

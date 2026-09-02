@@ -88,7 +88,7 @@ export default memo(({ id }: PermissionFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Permission` : t`Create Permission`} / Beszel`
+		document.title = `${isEditing ? t`Edit Permission` : t`Create Permission`} / WatchDog`
 		loadPermission()
 	}, [isEditing, loadPermission, t])
 

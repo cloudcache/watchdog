@@ -177,7 +177,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Aggregate Charts`} / Beszel`
+		document.title = `${t`Aggregate Charts`} / WatchDog`
 		refreshCatalog()
 	}, [refreshCatalog, t])
 
@@ -338,7 +338,7 @@ export default memo(() => {
 					Name: name.trim(),
 					Aggregation: aggregate,
 					ValueMode: valueMode,
-					Unit: "",
+					Unit: selectedMetrics.every((metric) => metric.endsWith("_bps")) ? "bps" : "",
 					Description: `Created from ${trafficViewLabel(trafficView)} view`,
 				},
 			})

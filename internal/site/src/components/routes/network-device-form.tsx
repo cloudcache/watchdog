@@ -132,7 +132,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Edit Network Device`} / Beszel`
+		document.title = `${t`Edit Network Device`} / WatchDog`
 		load()
 	}, [load, t])
 

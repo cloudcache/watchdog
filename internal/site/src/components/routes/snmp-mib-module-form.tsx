@@ -85,7 +85,7 @@ export default memo(({ id }: MIBModuleFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit MIB Module` : t`Create MIB Module`} / Beszel`
+		document.title = `${isEditing ? t`Edit MIB Module` : t`Create MIB Module`} / WatchDog`
 		loadModule()
 	}, [isEditing, loadModule, t])
 

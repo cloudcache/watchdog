@@ -43,7 +43,7 @@ export default memo(({ id }: ExportDetailProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Export`} / Beszel`
+		document.title = `${t`Export`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

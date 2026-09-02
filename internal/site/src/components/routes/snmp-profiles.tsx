@@ -44,7 +44,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`SNMP Profiles`} / Beszel`
+		document.title = `${t`SNMP Profiles`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

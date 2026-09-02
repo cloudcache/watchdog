@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="10.9 10.8 72.9 31.2" role="img" aria-label="WD">
+  <title>WD</title>
+  <!-- Faithful vector replica of the referenced 2004 blue-badge WD monogram
+       (traced from the public SVG, original coordinates preserved; shifted to
+       origin only). Two requested edits:
+       1) the W's LEFT two top segments are joined into the body (wlstack-
+          style solid W) by extending their bottom edges along their own
+          slopes - restore coordinates are noted inline;
+       2) the W's top segment nearest the D is recolored #fc0082.
+       Background transparent (badge kept in a comment); glyphs #2d74ff.
+       viewBox is tightened to the glyph bounds - to restore the badge,
+       also set viewBox back to "0 0 91.19 53.35". -->
+  <g transform="translate(-557.49697 -495.59365)">
+    <!-- background removed (transparent); restore by uncommenting:
+         <path id="badge" fill="#00529f" d="M 648.67876,543.2571 C 648.67876,546.40552 646.13567,548.94173 643.00038,548.94173 L 563.17099,548.94173 C 560.03787,548.94173 557.49697,546.40552 557.49697,543.2571 L 557.49697,501.27829 C 557.49697,498.15172 560.03787,495.59365 563.17099,495.59365 L 643.00038,495.59365 C 646.13567,495.59365 648.67876,498.15172 648.67876,501.27829 L 648.67876,543.2571" /> -->
+    <path id="w-body" fill="#2d74ff" d="M 599.11537,516.40816 L 596.02809,526.09388 L 594.9939,516.27699 L 583.66625,515.86157 L 578.5739,525.4817 L 580.02132,515.73036 L 572.15708,515.46801 L 569.87227,536.04199 L 580.67719,536.04199 L 588.93103,519.33793 L 590.61235,536.04199 L 600.32416,536.04199 L 606.99052,516.69237 L 599.11537,516.40816" />
+    <!-- left segments joined to the body wlstack-style: their bottom edges
+         are extended to y=518 ALONG THEIR OWN EDGE SLOPES (identical to the
+         body strokes' slopes), so the union is seamless with no kink. To
+         restore the detached original, put the bottom vertices back to
+         (572.31859,513.98126)/(580.27923,514.00313) and
+         (584.65642,514.00313)/(594.75564,514.00313). -->
+    <path id="w-dot-left1" fill="#2d74ff" d="M 579.68810,518.00000 L 581.19119,507.83748 L 573.00102,507.83748 L 571.87225,518.00000 L 579.68810,518.00000" />
+    <path id="w-dot-left2" fill="#2d74ff" d="M 595.17691,518.00000 L 594.11723,507.9468 L 587.85319,507.9468 L 582.54646,518.00000 L 595.17691,518.00000" />
+    <!-- the segment nearest the D, recolored as requested -->
+    <path id="w-dot-near-d" fill="#fc0082" d="M 607.91558,514.00313 L 609.99922,507.9468 L 601.81087,507.9468 L 599.88255,514.00313 L 607.91558,514.00313" />
+    <path id="d" fill="#2d74ff" d="M 627.58873,507.9468 L 612.10033,507.9468 L 610.08435,514.00313 L 624.05548,514.00313 C 627.90994,514.11244 629.80552,517.26086 628.50033,521.15264 C 627.1755,525.11001 623.30758,528.12726 618.9042,528.32402 C 617.77616,528.38961 617.38475,528.49892 615.77545,528.36775 L 619.58844,517.12965 L 609.16184,516.75799 L 602.73592,536.04199 L 618.22214,536.04199 C 626.01217,536.04199 634.54356,529.89822 637.17613,522.00534 C 639.80397,514.09057 635.41151,507.9468 627.58873,507.9468" />
+  </g>
+</svg>

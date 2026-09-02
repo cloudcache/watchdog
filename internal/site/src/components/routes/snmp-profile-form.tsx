@@ -80,7 +80,7 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit SNMP Profile` : t`Create SNMP Profile`} / Beszel`
+		document.title = `${isEditing ? t`Edit SNMP Profile` : t`Create SNMP Profile`} / WatchDog`
 		loadProfile()
 	}, [isEditing, loadProfile, t])
 

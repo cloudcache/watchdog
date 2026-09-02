@@ -140,7 +140,7 @@ export default memo(({ id }: TargetDetailProps) => {
 	}
 
 	useEffect(() => {
-		document.title = `${t`Target`} / Beszel`
+		document.title = `${t`Target`} / WatchDog`
 		refresh()
 	}, [refresh, t])
 

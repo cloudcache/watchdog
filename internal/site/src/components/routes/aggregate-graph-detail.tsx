@@ -44,8 +44,22 @@ type NetworkPort = {
 	if_alias?: string
 	IfDescr?: string
 	if_descr?: string
-	OperStatus?: string
-	oper_status?: string
+	OperStatus?: string | number
+	oper_status?: string | number
+}
+
+type PortDevice = {
+	ID?: string
+	id?: string
+	SysName?: string
+	sys_name?: string
+	Model?: string
+	model?: string
+}
+
+type PortMember = {
+	device?: PortDevice | null
+	port: NetworkPort
 }
 
 type VMRangeResponse = {
@@ -78,7 +92,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 	const chartInstance = useRef<ReturnType<typeof createLineChart> | null>(null)
 	const [graph, setGraph] = useState<AggregateGraph | null>(null)
 	const [portLinks, setPortLinks] = useState<AggregateGraphPort[]>([])
-	const [ports, setPorts] = useState<NetworkPort[]>([])
+	const [members, setMembers] = useState<PortMember[]>([])
 	const [windowValue, setWindowValue] = useState("24h")
 	const [valueMode, setValueMode] = useState("")
 	const [splitSideType, setSplitSideType] = useState(false)
@@ -93,20 +107,35 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const [graphData, linkData] = await Promise.all([
+			const [graphData, linkData, itemData] = await Promise.all([
 				pb.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {}),
 				pb.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
+				pb
+					.send<{ items?: { Metric?: string; metric?: string }[] }>(`/api/v1/aggregate-graphs/${id}/items`, {})
+					.catch(() => ({ items: [] })),
 			])
+			// Older graphs were saved without a unit; derive it from the item
+			// metrics so the axis and tooltips are not raw numbers.
+			if (!(graphData.Unit ?? graphData.unit)) {
+				const metrics = (itemData.items ?? []).map((item) => item.Metric ?? item.metric ?? "")
+				if (metrics.length > 0 && metrics.every((metric) => metric.endsWith("_bps"))) {
+					graphData.Unit = "bps"
+				}
+			}
 			setGraph(graphData)
 			const links = linkData.items ?? []
 			setPortLinks(links)
 			const portIDs = links.map((link) => link.PortID ?? link.port_id ?? "").filter(Boolean)
 			const resolved = await Promise.all(
 				portIDs.map((portID) =>
-					pb.send<NetworkPort>(`/api/v1/network/ports/${portID}`, {}).catch(() => null as NetworkPort | null)
+					pb
+						// the endpoint wraps the row as { device, port }
+						.send<{ device?: PortDevice; port?: NetworkPort } & NetworkPort>(`/api/v1/network/ports/${portID}`, {})
+						.then((response): PortMember => ({ device: response.device, port: response.port ?? response }))
+						.catch(() => null as PortMember | null)
 				)
 			)
-			setPorts(resolved.filter((port): port is NetworkPort => Boolean(port)))
+			setMembers(resolved.filter((member): member is PortMember => Boolean(member)))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load aggregate graph`)
 		} finally {
@@ -152,7 +181,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 	}, [id, windowValue])
 
 	useEffect(() => {
-		document.title = `${graph?.Name ?? graph?.name ?? t`Graph`} / Beszel`
+		document.title = `${graph?.Name ?? graph?.name ?? t`Graph`} / WatchDog`
 		refresh()
 	}, [refresh, t, graph?.Name, graph?.name])
 
@@ -337,6 +366,9 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 						<TableHeader>
 							<TableRow>
 								<TableHead>
+									<Trans>Device</Trans>
+								</TableHead>
+								<TableHead>
 									<Trans>Port</Trans>
 								</TableHead>
 								<TableHead>
@@ -348,22 +380,38 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{ports.length === 0 ? (
+							{members.length === 0 ? (
 								<TableRow>
-									<TableCell colSpan={3} className="text-muted-foreground">
+									<TableCell colSpan={4} className="text-muted-foreground">
 										<Trans>No ports found.</Trans>
 									</TableCell>
 								</TableRow>
 							) : (
-								ports.map((port) => (
-									<TableRow key={port.ID ?? port.id}>
-										<TableCell className="font-medium">
-											{port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? "—"}
-										</TableCell>
-										<TableCell className="max-w-[24rem] truncate">{port.IfAlias ?? port.if_alias ?? "—"}</TableCell>
-										<TableCell>{port.OperStatus ?? port.oper_status ?? "—"}</TableCell>
-									</TableRow>
-								))
+								members.map(({ device, port }) => {
+									const deviceID = device?.ID ?? device?.id
+									const deviceName = device?.SysName ?? device?.sys_name ?? device?.Model ?? device?.model ?? deviceID
+									return (
+										<TableRow key={port.ID ?? port.id}>
+											<TableCell>
+												{deviceID ? (
+													<Link
+														href={getPagePath($router, "network_device", { id: deviceID })}
+														className="text-primary hover:underline"
+													>
+														{deviceName}
+													</Link>
+												) : (
+													(deviceName ?? "—")
+												)}
+											</TableCell>
+											<TableCell className="font-medium">
+												{port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? "—"}
+											</TableCell>
+											<TableCell className="max-w-[24rem] truncate">{port.IfAlias || port.if_alias || "—"}</TableCell>
+											<TableCell>{formatOperStatus(port.OperStatus ?? port.oper_status)}</TableCell>
+										</TableRow>
+									)
+								})
 							)}
 						</TableBody>
 					</Table>
@@ -397,6 +445,29 @@ function SummaryTile({ label, value }: { label: React.ReactNode; value: string }
 			<div className="text-xs text-muted-foreground">{label}</div>
 			<div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
 		</div>
+	)
+}
+
+// SNMP ifOperStatus: 1=up 2=down 3=testing 4=unknown 5=dormant 6=notPresent 7=lowerLayerDown
+function formatOperStatus(value?: string | number) {
+	const raw = String(value ?? "").toLowerCase()
+	if (raw === "") {
+		return "—"
+	}
+	const name =
+		{
+			"1": "up",
+			"2": "down",
+			"3": "testing",
+			"4": "unknown",
+			"5": "dormant",
+			"6": "notPresent",
+			"7": "lowerLayerDown",
+		}[raw] ?? raw
+	return (
+		<Badge variant={name === "up" ? "default" : "secondary"} className="font-normal">
+			{name}
+		</Badge>
 	)
 }
 

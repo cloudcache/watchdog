@@ -72,7 +72,7 @@ export default memo(() => {
 	const [error, setError] = useState("")
 
 	useEffect(() => {
-		document.title = `${t`Create Export`} / Beszel`
+		document.title = `${t`Create Export`} / WatchDog`
 		Promise.all([
 			pb.send<TargetsResponse>("/api/v1/targets", {}),
 			pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
