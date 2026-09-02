@@ -202,7 +202,7 @@ func (s *MySQLStore) UpsertPorts(ctx context.Context, ports []NetworkPort) error
 		if err != nil {
 			return err
 		}
-		if _, err := stmt.ExecContext(ctx, port.ID, port.TenantID, port.DeviceID, port.IfIndex, port.IfName, port.IfAlias, port.IfDescr, port.AdminStatus, port.OperStatus, port.SpeedBps, metadataJSON); err != nil {
+		if _, err := stmt.ExecContext(ctx, port.ID, port.TenantID, port.DeviceID, port.IfIndex, port.IfName, port.IfAlias, port.IfDescr, NormalizeIfStatus(port.AdminStatus), NormalizeIfStatus(port.OperStatus), port.SpeedBps, metadataJSON); err != nil {
 			return err
 		}
 	}
@@ -649,6 +649,9 @@ func scanNetworkPort(row rowScanner) (NetworkPort, error) {
 		return port, err
 	}
 	port.Metadata = metadata
+	// rows written before status normalization still hold raw integers
+	port.AdminStatus = NormalizeIfStatus(port.AdminStatus)
+	port.OperStatus = NormalizeIfStatus(port.OperStatus)
 	return port, nil
 }
 

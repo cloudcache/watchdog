@@ -58,8 +58,8 @@ func (m SNMPPortsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 			IfDescr:     descr,
 			IfName:      firstNonEmptySNMPString(columns[snmpOIDIfName][ifIndex], descr),
 			IfAlias:     columns[snmpOIDIfAlias][ifIndex],
-			AdminStatus: columns[snmpOIDIfAdminStatus][ifIndex],
-			OperStatus:  columns[snmpOIDIfOperStatus][ifIndex],
+			AdminStatus: NormalizeIfStatus(columns[snmpOIDIfAdminStatus][ifIndex]),
+			OperStatus:  NormalizeIfStatus(columns[snmpOIDIfOperStatus][ifIndex]),
 			SpeedBps:    portSpeedBps(columns[snmpOIDIfHighSpeed][ifIndex], columns[snmpOIDIfSpeed][ifIndex]),
 			Metadata: map[string]string{
 				"if_type":           columns[snmpOIDIfType][ifIndex],

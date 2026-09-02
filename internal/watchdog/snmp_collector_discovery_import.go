@@ -159,12 +159,14 @@ func portStatusChangeEvents(tenantID, deviceID ID, previous, current []NetworkPo
 	now := time.Now().UTC()
 	for _, port := range current {
 		before, seen := previousStatus[port.IfIndex]
-		if !seen || before.OperStatus == "" || port.OperStatus == "" || before.OperStatus == port.OperStatus {
+		beforeStatus := NormalizeIfStatus(before.OperStatus)
+		currentStatus := NormalizeIfStatus(port.OperStatus)
+		if !seen || beforeStatus == "" || currentStatus == "" || beforeStatus == currentStatus {
 			continue
 		}
 		severity := "info"
 		eventType := "interface_up"
-		if port.OperStatus != "up" && port.OperStatus != "1" {
+		if currentStatus != "up" {
 			severity = "warning"
 			eventType = "interface_down"
 		}
@@ -176,7 +178,7 @@ func portStatusChangeEvents(tenantID, deviceID ID, previous, current []NetworkPo
 			Source:     "discovery",
 			Severity:   severity,
 			EventType:  eventType,
-			Message:    fmt.Sprintf("Interface %s changed %s -> %s", firstNonEmptySNMPString(port.IfName, port.IfDescr), before.OperStatus, port.OperStatus),
+			Message:    fmt.Sprintf("Interface %s changed %s -> %s", firstNonEmptySNMPString(port.IfName, port.IfDescr), beforeStatus, currentStatus),
 			OccurredAt: now,
 		})
 	}

@@ -88,6 +88,29 @@ type NetworkPort struct {
 	Metadata    map[string]string
 }
 
+// NormalizeIfStatus canonicalizes IF-MIB ifAdminStatus/ifOperStatus values to
+// their enum names. Discovery walks yield raw integers ("1") while trap
+// handlers and forms use names ("up"); storage and comparisons use names only.
+func NormalizeIfStatus(value string) string {
+	switch value {
+	case "1":
+		return "up"
+	case "2":
+		return "down"
+	case "3":
+		return "testing"
+	case "4":
+		return "unknown"
+	case "5":
+		return "dormant"
+	case "6":
+		return "notPresent"
+	case "7":
+		return "lowerLayerDown"
+	}
+	return value
+}
+
 type NetworkPortTransceiver struct {
 	ID           ID
 	TenantID     ID
