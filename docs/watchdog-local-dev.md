@@ -52,6 +52,9 @@ go run ./cmd/watchdog-snmp-collector \
 
 The collector loads the device SNMP profile, discovers supported modules,
 imports collection recipes, and polls due recipes into raw samples.
+When `--tenant`, `--interval`, or `--limit` is omitted, the command uses
+`snmp_collector.tenant_id`, `interval`, and `poll_limit` from the shared config.
+Set `--discover=false` to run due polling without requiring `--device`.
 
 ## MySQL Defaults
 
@@ -84,6 +87,9 @@ make watchdog-dev-api
 The API script passes `--config config/watchdog.dev.yaml`. Environment
 variables override the YAML values, so changing `WATCHDOG_MYSQL_DSN` or
 `WATCHDOG_VICTORIAMETRICS_URL` is enough for local testing.
+Invalid or unknown configuration now fails startup instead of falling back
+silently; the complete override list and precedence are in
+[`watchdog-install.md`](watchdog-install.md).
 
 ## Commands
 

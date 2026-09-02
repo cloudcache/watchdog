@@ -326,6 +326,12 @@ VPN probe 也复用 collector 模型，而不是再建 agent 系统：`agent_typ
 
 ### 6.3 配置、维护与扩展契约
 
+#### 6.3.0 现有组件配置基线
+
+在引入签名 plan 前，现有 Watchdog 进程先统一到 [`config.go`](../internal/watchdog/config.go) 的单一 bootstrap 契约：`显式 CLI > 环境变量 > YAML > 默认值`。YAML 严格拒绝未知字段和多文档；环境变量的非法整数/周期不再静默回落；URL、ID、listen、路径和 MIB 列表规范化后再校验，DSN/token 不改写。MySQL `max_idle_conns=0` 保留其“禁用 idle pool”语义。SNMP poll/discovery、sFlow 聚合/地址同步、aggregate rollup、trap agent 和 system agent 的 YAML/环境变量/CLI 已使用相同字段，完整矩阵见 [`watchdog-install.md`](watchdog-install.md)。
+
+当前 `target_agents` 写链也先执行统一领域规范化：type/mode/status 小写、endpoint/ID 去空白，API 拒绝未知 JSON 字段，repository 写入前再次验证；system agent 只允许 push，disabled agent 不得 plan/heartbeat/report/push，run status 只允许 success/failure。这个基线只解决现有静态 bootstrap 与 registry 数据一致性，不冒充下文的签名 immutable plan、LKG、canary 和 rollback；后续迁移必须保持已有 YAML 至少一个兼容窗口，并把 secret 从长期 YAML 迁出。
+
 agent 必须是薄执行器，不保存业务评分规则、不自行判断 tenant，也不允许控制面远程下发脚本、共享库或任意握手 payload。配置分三层：
 
 | 层 | 内容 | 变更与优先级 |
