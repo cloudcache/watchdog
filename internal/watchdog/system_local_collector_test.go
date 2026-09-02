@@ -1,6 +1,19 @@
 package watchdog
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type systemAgentRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f systemAgentRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestSystemAgentClientEndpoints(t *testing.T) {
 	client := SystemAgentClient{HubURL: "http://127.0.0.1:8091/", AgentID: "agent-system-a"}
@@ -17,5 +30,27 @@ func TestSystemAgentClientEndpoints(t *testing.T) {
 	}
 	if statusEndpoint != "http://127.0.0.1:8091/api/v1/agents/agent-system-a/status" {
 		t.Fatalf("status endpoint = %s", statusEndpoint)
+	}
+}
+
+func TestSystemAgentClientReportStatusDefaultsToSuccess(t *testing.T) {
+	var report AgentRunReport
+	httpClient := &http.Client{Transport: systemAgentRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(req.Body).Decode(&report); err != nil {
+			t.Errorf("decode report: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	client := SystemAgentClient{HubURL: "http://watchdog.invalid", AgentID: "agent-system-a", AgentToken: "secret", HTTPClient: httpClient}
+	if err := client.ReportStatus(context.Background(), AgentRunReport{}); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != AgentRunSuccess {
+		t.Fatalf("status = %q, want %q", report.Status, AgentRunSuccess)
 	}
 }

@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -33,6 +34,12 @@ type AgentRunStatus string
 const (
 	AgentRunSuccess AgentRunStatus = "success"
 	AgentRunFailure AgentRunStatus = "failure"
+
+	AgentStatusPending  = "pending"
+	AgentStatusUp       = "up"
+	AgentStatusDown     = "down"
+	AgentStatusError    = "error"
+	AgentStatusDisabled = "disabled"
 )
 
 type AgentRunReport struct {
@@ -56,6 +63,74 @@ type AgentRunHistory struct {
 	EndedAt    time.Time
 	DurationMS uint64
 	CreatedAt  time.Time
+}
+
+func NormalizeAgentConfig(agent SNMPAgentConfig) SNMPAgentConfig {
+	agent.ID = ID(strings.TrimSpace(string(agent.ID)))
+	agent.TenantID = ID(strings.TrimSpace(string(agent.TenantID)))
+	agent.TargetID = ID(strings.TrimSpace(string(agent.TargetID)))
+	agent.AgentType = normalizeAgentType(agent.AgentType)
+	agent.Mode = AgentMode(strings.ToLower(strings.TrimSpace(string(agent.Mode))))
+	if agent.Mode == "" {
+		agent.Mode = AgentModePush
+	}
+	agent.Status = strings.ToLower(strings.TrimSpace(agent.Status))
+	if agent.Status == "" {
+		agent.Status = AgentStatusPending
+	}
+	agent.Endpoint = normalizeAgentEndpoint(agent.Endpoint)
+	return agent
+}
+
+func ValidateAgentConfig(agent SNMPAgentConfig) error {
+	agent = NormalizeAgentConfig(agent)
+	if agent.ID == "" {
+		return errors.New("agent id is required")
+	}
+	if agent.TenantID == "" {
+		return errors.New("agent tenant id is required")
+	}
+	if agent.TargetID == "" {
+		return errors.New("agent target id is required")
+	}
+	if agent.AgentType != AgentTypeSNMP && agent.AgentType != AgentTypeSystem {
+		return errors.New("agent type must be snmp or system")
+	}
+	if agent.Mode != AgentModePush && agent.Mode != AgentModePull {
+		return errors.New("agent mode must be push or pull")
+	}
+	if agent.AgentType == AgentTypeSystem && agent.Mode != AgentModePush {
+		return errors.New("system agents must use push mode")
+	}
+	switch agent.Status {
+	case AgentStatusPending, AgentStatusUp, AgentStatusDown, AgentStatusError, AgentStatusDisabled:
+	default:
+		return errors.New("agent status must be pending, up, down, error, or disabled")
+	}
+	if strings.Contains(agent.Endpoint, "://") {
+		parsed, err := url.Parse(agent.Endpoint)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return errors.New("agent endpoint must be a valid URL or host:port")
+		}
+	}
+	return nil
+}
+
+func normalizeAgentType(agentType AgentType) AgentType {
+	agentType = AgentType(strings.ToLower(strings.TrimSpace(string(agentType))))
+	if agentType == "" {
+		return AgentTypeSNMP
+	}
+	return agentType
+}
+
+func normalizeAgentEndpoint(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if parsed, err := url.Parse(endpoint); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		return parsed.String()
+	}
+	return endpoint
 }
 
 func ApplyDeviceSNMPOverrides(profile SNMPProfile, device NetworkDevice) SNMPProfile {

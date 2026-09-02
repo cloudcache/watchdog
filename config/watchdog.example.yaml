@@ -17,13 +17,22 @@ export:
   metric: "watchdog_snmp_if_in_bps"
 
 snmp_collector:
+  tenant_id: "tenant_dev"
   interval: 1m
+  poll_limit: 500
+  discovery_interval: 30s
+  discovery_batch: 10
 
 sflow_collector:
   listen: ":6343"
   tenant_id: "tenant_dev"
+  # Empty means use victorialogs.base_url.
+  vlogs_url: ""
   agg_interval: 1m
   prefix_sync_interval: 5m
+
+aggregate_graph:
+  rollup_interval: 5m
 
 # MIB resolution. The collector ships an embedded core MIB bundle
 # (IF-MIB, ENTITY-MIB, BGP4-MIB, HOST-RESOURCES-MIB, ...) so it works with no
@@ -36,6 +45,12 @@ snmp:
     - "/opt/librenms/mibs"
   mib_load: ""
 
+snmp_trap_agent:
+  api_url: "http://127.0.0.1:8091"
+  token: "change-me"
+  listen: ":162"
+
+# Local watchdog-system-agent bootstrap. Command flags override these values.
 agent:
   hub_url: "http://127.0.0.1:8091"
   agent_id: "agent_dev_snmp"

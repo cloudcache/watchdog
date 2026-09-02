@@ -94,6 +94,49 @@ func TestAPIAgentRegistryCreatesSystemAgent(t *testing.T) {
 	}
 }
 
+func TestAPIAgentRegistryNormalizesConfiguration(t *testing.T) {
+	repo := &fakeAgentRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:   billingTestAuth(true),
+		Agents: repo,
+	})
+	body := `{"ID":" agent-a ","TargetID":" target-a ","AgentType":" SNMP ","Mode":" PUSH ","Endpoint":" https://agent.example.com/ ","Status":" PENDING ","Token":"secret-a"}`
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/agent-registry", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if repo.agent.ID != "agent-a" || repo.agent.TargetID != "target-a" || repo.agent.AgentType != AgentTypeSNMP || repo.agent.Mode != AgentModePush || repo.agent.Endpoint != "https://agent.example.com" || repo.agent.Status != AgentStatusPending {
+		t.Fatalf("agent = %#v", repo.agent)
+	}
+}
+
+func TestAPIAgentRegistryRejectsUnknownConfigurationField(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:   billingTestAuth(true),
+		Agents: &fakeAgentRepository{},
+	})
+	body := `{"ID":"agent-a","TargetID":"target-a","Mode":"push","Token":"secret-a","PollIntervall":"1m"}`
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/agent-registry", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "PollIntervall") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIAgentRegistryRejectsUnsupportedSystemPullMode(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:   billingTestAuth(true),
+		Agents: &fakeAgentRepository{},
+	})
+	body := `{"ID":"agent-system-a","TargetID":"target-a","AgentType":"system","Mode":"pull","Token":"secret-a"}`
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/agent-registry", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "must use push mode") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAPIAgentRegistryListAllowsViewOnlyTenant(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: permissionTestAuth(false),
@@ -291,6 +334,44 @@ func TestAPIAgentHeartbeatRejectsInvalidToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIAgentHeartbeatRejectsDisabledAgent(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Agents: &fakeAgentRepository{agent: SNMPAgentConfig{
+			ID:        "agent-a",
+			TenantID:  "tenant-a",
+			TargetID:  "target-a",
+			Mode:      AgentModePush,
+			Status:    AgentStatusDisabled,
+			TokenHash: NewAgentTokenHash("secret-a"),
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/heartbeat", nil)
+	req.Header.Set("X-Watchdog-Agent-Token", "secret-a")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "agent is disabled") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIAgentStatusRejectsMissingRunStatus(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Agents: &fakeAgentRepository{agent: SNMPAgentConfig{
+			ID:        "agent-a",
+			TenantID:  "tenant-a",
+			TargetID:  "target-a",
+			TokenHash: NewAgentTokenHash("secret-a"),
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/status", strings.NewReader(`{}`))
+	req.Header.Set("X-Watchdog-Agent-Token", "secret-a")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "success or failure") {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }

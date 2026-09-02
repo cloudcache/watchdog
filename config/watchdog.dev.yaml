@@ -17,13 +17,21 @@ export:
   metric: "watchdog_snmp_if_in_bps"
 
 snmp_collector:
+  tenant_id: "tenant_dev"
   interval: 1m
+  poll_limit: 500
+  discovery_interval: 30s
+  discovery_batch: 10
 
 sflow_collector:
   listen: ":6343"
   tenant_id: "tenant_dev"
+  vlogs_url: ""
   agg_interval: 1m
   prefix_sync_interval: 5m
+
+aggregate_graph:
+  rollup_interval: 5m
 
 snmp:
   mib_dirs:
@@ -32,6 +40,11 @@ snmp:
   # Embedded core MIBs already cover the collector; extra modules from
   # mib_dirs load lazily by name. "ALL" would parse every file at startup.
   mib_load: ""
+
+snmp_trap_agent:
+  api_url: "http://127.0.0.1:8091"
+  token: "dev-agent-token"
+  listen: ":1162"
 
 agent:
   hub_url: "http://127.0.0.1:8091"

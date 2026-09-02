@@ -29,6 +29,9 @@ func (s AgentPlanService) BuildSystemAgentPlan(ctx context.Context, agentID ID, 
 	if !AgentTokenMatches(token, agent.TokenHash) {
 		return SystemAgentPlan{}, errors.New("invalid agent token")
 	}
+	if err := validateRunnableAgent(agent); err != nil {
+		return SystemAgentPlan{}, err
+	}
 	if !isSystemAgent(agent) {
 		return SystemAgentPlan{}, errors.New("agent is not configured for system collection")
 	}
@@ -56,6 +59,9 @@ func (s AgentPlanService) MarkHeartbeat(ctx context.Context, agentID ID, token s
 	if !AgentTokenMatches(token, agent.TokenHash) {
 		return errors.New("invalid agent token")
 	}
+	if err := validateRunnableAgent(agent); err != nil {
+		return err
+	}
 	return s.Agents.MarkAgentSeen(ctx, agentID)
 }
 
@@ -69,6 +75,12 @@ func (s AgentPlanService) ReportStatus(ctx context.Context, agentID ID, token st
 	}
 	if !AgentTokenMatches(token, agent.TokenHash) {
 		return errors.New("invalid agent token")
+	}
+	if err := validateRunnableAgent(agent); err != nil {
+		return err
+	}
+	if report.Status != AgentRunSuccess && report.Status != AgentRunFailure {
+		return errors.New("agent run status must be success or failure")
 	}
 	report.AgentID = agentID
 	report.Seen = true
@@ -91,6 +103,9 @@ func (s AgentPlanService) ImportSystemPush(ctx context.Context, agentID ID, toke
 		_ = s.Agents.RecordAgentRun(ctx, AgentRunReport{AgentID: agentID, Status: AgentRunFailure, Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return err
 	}
+	if err := validateRunnableAgent(agent); err != nil {
+		return err
+	}
 	if err := s.Metrics.Importer.ImportPrometheus(ctx, RenderSystemBatchPrometheus(batch)); err != nil {
 		_ = s.Agents.RecordAgentRun(ctx, AgentRunReport{AgentID: agentID, Status: AgentRunFailure, Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return err
@@ -109,6 +124,17 @@ func isSNMPAgent(agent SNMPAgentConfig) bool {
 
 func isSystemAgent(agent SNMPAgentConfig) bool {
 	return normalizeAgentType(agent.AgentType) == AgentTypeSystem
+}
+
+func validateRunnableAgent(agent SNMPAgentConfig) error {
+	agent = NormalizeAgentConfig(agent)
+	if err := ValidateAgentConfig(agent); err != nil {
+		return err
+	}
+	if agent.Status == AgentStatusDisabled {
+		return errors.New("agent is disabled")
+	}
+	return nil
 }
 
 func (s AgentPlanService) deviceForTarget(ctx context.Context, tenantID, targetID ID) (NetworkDevice, error) {

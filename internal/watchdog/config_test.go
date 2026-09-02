@@ -3,6 +3,7 @@ package watchdog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,5 +156,170 @@ agent:
 	}
 	if cfg.Agent.HubURL != "http://file-hub:8091" || cfg.Agent.AgentID != "agent-file" || cfg.Agent.Token != "file-token" || cfg.Agent.Interval != 2*time.Minute {
 		t.Fatalf("agent config = %#v", cfg.Agent)
+	}
+}
+
+func TestLoadWatchdogConfigRejectsUnknownYAMLFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("victoriametrics:\n  base_urll: http://127.0.0.1:8428\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadWatchdogConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "base_urll") {
+		t.Fatalf("error = %v, want unknown field error", err)
+	}
+}
+
+func TestLoadWatchdogConfigRejectsMultipleYAMLDocuments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("mysql: {}\n---\nmysql: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadWatchdogConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "multiple YAML documents") {
+		t.Fatalf("error = %v, want multiple document error", err)
+	}
+}
+
+func TestLoadWatchdogConfigPreservesExplicitZeroIdleConnections(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("mysql:\n  max_idle_conns: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadWatchdogConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MySQL.MaxIdleConns != 0 {
+		t.Fatalf("max idle conns = %d, want 0", cfg.MySQL.MaxIdleConns)
+	}
+}
+
+func TestLoadWatchdogConfigAllowsEnvironmentToClearMIBDirectories(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("snmp:\n  mib_dirs: [/opt/mibs]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WATCHDOG_SNMP_MIB_DIRS", "")
+	cfg, err := LoadWatchdogConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.SNMP.MIBDirs) != 0 {
+		t.Fatalf("mib dirs = %#v, want empty", cfg.SNMP.MIBDirs)
+	}
+}
+
+func TestLoadWatchdogConfigRejectsInvalidEnvironmentOverride(t *testing.T) {
+	t.Setenv("WATCHDOG_EXPORT_WORKER_BATCH", "many")
+	_, err := LoadWatchdogConfig("")
+	if err == nil || !strings.Contains(err.Error(), "WATCHDOG_EXPORT_WORKER_BATCH") {
+		t.Fatalf("error = %v, want named environment error", err)
+	}
+}
+
+func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *testing.T) {
+	t.Setenv("WATCHDOG_SFLOW_AGG_INTERVAL", "15s")
+	t.Setenv("WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL", "45s")
+	t.Setenv("WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL", "2m")
+	t.Setenv("WATCHDOG_SNMP_COLLECTOR_TENANT_ID", " tenant-a ")
+	t.Setenv("WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT", "42")
+	t.Setenv("WATCHDOG_SNMP_DISCOVERY_INTERVAL", "20s")
+	t.Setenv("WATCHDOG_SNMP_DISCOVERY_BATCH", "7")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", " https://watchdog.example.com/ ")
+	t.Setenv("WATCHDOG_AGENT_ID", " agent-a ")
+	t.Setenv("WATCHDOG_SNMP_MIB_DIRS", " /opt/mibs , /opt/mibs , /opt/vendor/../vendor ")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SFlowCollector.AggInterval != 15*time.Second || cfg.SFlowCollector.PrefixSyncInterval != 45*time.Second {
+		t.Fatalf("sflow intervals = %#v", cfg.SFlowCollector)
+	}
+	if cfg.AggregateGraph.RollupInterval != 2*time.Minute {
+		t.Fatalf("aggregate graph config = %#v", cfg.AggregateGraph)
+	}
+	if cfg.SNMPCollector.TenantID != "tenant-a" || cfg.SNMPCollector.PollLimit != 42 || cfg.SNMPCollector.DiscoveryInterval != 20*time.Second || cfg.SNMPCollector.DiscoveryBatch != 7 {
+		t.Fatalf("snmp collector config = %#v", cfg.SNMPCollector)
+	}
+	if cfg.Agent.HubURL != "https://watchdog.example.com" || cfg.Agent.AgentID != "agent-a" {
+		t.Fatalf("agent config = %#v", cfg.Agent)
+	}
+	if len(cfg.SNMP.MIBDirs) != 2 || cfg.SNMP.MIBDirs[0] != "/opt/mibs" || cfg.SNMP.MIBDirs[1] != "/opt/vendor" {
+		t.Fatalf("mib dirs = %#v", cfg.SNMP.MIBDirs)
+	}
+}
+
+func TestLoadWatchdogConfigRejectsInconsistentConnectionPool(t *testing.T) {
+	t.Setenv("WATCHDOG_MYSQL_MAX_OPEN_CONNS", "4")
+	t.Setenv("WATCHDOG_MYSQL_MAX_IDLE_CONNS", "5")
+	_, err := LoadWatchdogConfig("")
+	if err == nil || !strings.Contains(err.Error(), "max_idle_conns") {
+		t.Fatalf("error = %v, want pool consistency error", err)
+	}
+}
+
+func TestNormalizeAndValidateAgentClientConfig(t *testing.T) {
+	cfg, err := NormalizeAndValidateAgentClientConfig(AgentClientConfig{
+		HubURL:   " https://watchdog.example.com/ ",
+		AgentID:  " agent-a ",
+		Token:    "secret",
+		Interval: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HubURL != "https://watchdog.example.com" || cfg.AgentID != "agent-a" {
+		t.Fatalf("agent config = %#v", cfg)
+	}
+	_, err = NormalizeAndValidateAgentClientConfig(AgentClientConfig{HubURL: "watchdog.example.com", AgentID: "agent-a", Token: "secret", Interval: time.Minute})
+	if err == nil {
+		t.Fatal("expected invalid hub URL error")
+	}
+}
+
+func TestNormalizeAndValidateSNMPTrapAgentConfig(t *testing.T) {
+	cfg, err := NormalizeAndValidateSNMPTrapAgentConfig(SNMPTrapAgentConfig{
+		APIURL: " http://127.0.0.1:8091/ ",
+		Token:  "secret",
+		Listen: " :1162 ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIURL != "http://127.0.0.1:8091" || cfg.Listen != ":1162" {
+		t.Fatalf("trap agent config = %#v", cfg)
+	}
+}
+
+func TestWatchdogExampleConfigsMatchSchemaAndValidation(t *testing.T) {
+	for _, name := range []string{"watchdog.example.yaml", "watchdog.dev.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := defaultBackendConfig()
+			path := filepath.Join("..", "..", "config", name)
+			if err := loadBackendConfigFile(path, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			normalizeBackendConfig(&cfg)
+			if err := validateWatchdogConfig(cfg, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateSNMPCollectorConfig(cfg.SNMPCollector); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateSFlowCollectorConfig(cfg.SFlowCollector); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NormalizeAndValidateAgentClientConfig(cfg.Agent); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NormalizeAndValidateSNMPTrapAgentConfig(cfg.SNMPTrapAgent); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

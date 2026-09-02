@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/henrygd/beszel/internal/watchdog"
 )
@@ -29,16 +28,21 @@ func main() {
 		log.Fatal(err)
 	}
 	defer runtime.Close()
-	tenantID := watchdog.ID(getenv("WATCHDOG_DEV_TENANT_ID", "tenant_dev"))
+	tenantID := watchdog.ID(getenv("WATCHDOG_DEV_TENANT_ID", string(cfg.SNMPCollector.TenantID)))
 	userID := watchdog.ID(getenv("WATCHDOG_DEV_USER_ID", "user_dev"))
 	if getenv("WATCHDOG_DEV_SNMP_COLLECTOR", "1") != "0" {
+		resolvedSNMPConfig := cfg.SNMPCollector
+		resolvedSNMPConfig.TenantID = tenantID
+		if err := watchdog.ValidateSNMPCollectorConfig(resolvedSNMPConfig); err != nil {
+			log.Fatal(err)
+		}
 		go func() {
-			if err := runtime.RunSNMPCollectorScheduler(ctx, tenantID, cfg.SNMPCollector.Interval, 1000); err != nil && !errors.Is(err, context.Canceled) {
+			if err := runtime.RunSNMPCollectorScheduler(ctx, tenantID, cfg.SNMPCollector.Interval, cfg.SNMPCollector.PollLimit); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("watchdog snmp collector stopped: %v", err)
 			}
 		}()
 		go func() {
-			if err := runtime.DiscoveryScheduler.RunLoop(ctx, 30*time.Second, 10); err != nil && !errors.Is(err, context.Canceled) {
+			if err := runtime.DiscoveryScheduler.RunLoop(ctx, cfg.SNMPCollector.DiscoveryInterval, cfg.SNMPCollector.DiscoveryBatch); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("watchdog discovery scheduler stopped: %v", err)
 			}
 		}()

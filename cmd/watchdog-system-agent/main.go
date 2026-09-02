@@ -26,26 +26,39 @@ func main() {
 	rootPath := flag.String("root-path", "/", "root filesystem path for disk usage")
 	once := flag.Bool("once", false, "collect once and exit")
 	flag.Parse()
+	if *interval < 0 {
+		log.Fatal("interval must not be negative")
+	}
 
 	cfg, err := watchdog.LoadWatchdogConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	resolvedHubURL := firstNonEmpty(*hubURL, cfg.Agent.HubURL)
-	resolvedAgentID := watchdog.ID(firstNonEmpty(*agentID, string(cfg.Agent.AgentID)))
-	resolvedAgentToken := firstNonEmpty(*agentToken, cfg.Agent.Token)
-	resolvedInterval := *interval
-	if resolvedInterval <= 0 {
-		resolvedInterval = cfg.Agent.Interval
+	agentCfg := cfg.Agent
+	if strings.TrimSpace(*hubURL) != "" {
+		agentCfg.HubURL = *hubURL
+	}
+	if strings.TrimSpace(*agentID) != "" {
+		agentCfg.AgentID = watchdog.ID(*agentID)
+	}
+	if *agentToken != "" {
+		agentCfg.Token = *agentToken
+	}
+	if *interval > 0 {
+		agentCfg.Interval = *interval
+	}
+	agentCfg, err = watchdog.NormalizeAndValidateAgentClientConfig(agentCfg)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	client := watchdog.SystemAgentClient{
-		HubURL:     resolvedHubURL,
-		AgentID:    resolvedAgentID,
-		AgentToken: resolvedAgentToken,
+		HubURL:     agentCfg.HubURL,
+		AgentID:    agentCfg.AgentID,
+		AgentToken: agentCfg.Token,
 	}
 	collector := &localSystemCollector{rootPath: *rootPath}
 	if *once {
@@ -54,7 +67,7 @@ func main() {
 		}
 		return
 	}
-	if err := run(ctx, client, collector, resolvedInterval); err != nil && ctx.Err() == nil {
+	if err := run(ctx, client, collector, agentCfg.Interval); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
 }
@@ -192,13 +205,4 @@ func counterDelta(current, previous uint64) uint64 {
 		return 0
 	}
 	return current - previous
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

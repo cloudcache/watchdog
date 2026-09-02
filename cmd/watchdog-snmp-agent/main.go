@@ -11,25 +11,41 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	g "github.com/gosnmp/gosnmp"
 	"github.com/henrygd/beszel/internal/watchdog"
 )
 
 func main() {
+	configPath := flag.String("config", "", "path to watchdog YAML config")
 	apiURL := flag.String("api", "", "watchdog API base URL (e.g. http://127.0.0.1:8091)")
 	token := flag.String("token", "", "watchdog API auth token")
-	listen := flag.String("listen", ":162", "UDP listen address for SNMP traps")
+	listen := flag.String("listen", "", "UDP listen address for SNMP traps")
 	flag.Parse()
 
-	if *apiURL == "" {
-		log.Fatal("api URL is required")
+	cfg, err := watchdog.LoadWatchdogConfig(*configPath)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if *token == "" {
-		log.Fatal("token is required")
+	trapCfg := cfg.SNMPTrapAgent
+	if strings.TrimSpace(*apiURL) != "" {
+		trapCfg.APIURL = *apiURL
+	}
+	if *token != "" {
+		trapCfg.Token = *token
+	}
+	if strings.TrimSpace(*listen) != "" {
+		trapCfg.Listen = *listen
+	}
+	trapCfg, err = watchdog.NormalizeAndValidateSNMPTrapAgentConfig(trapCfg)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -37,7 +53,7 @@ func main() {
 
 	trapListener := g.NewTrapListener()
 	trapListener.OnNewTrap = func(packet *g.SnmpPacket, addr *net.UDPAddr) {
-		handleTrap(ctx, *apiURL, *token, packet, addr)
+		handleTrap(ctx, trapCfg.APIURL, trapCfg.Token, packet, addr)
 	}
 	trapListener.Params = &g.GoSNMP{
 		Version: g.Version2c,
@@ -49,8 +65,8 @@ func main() {
 		trapListener.Close()
 	}()
 
-	log.Printf("watchdog snmp trap agent listening on UDP %s, forwarding to %s", *listen, *apiURL)
-	if err := trapListener.Listen(*listen); err != nil && !errors.Is(err, context.Canceled) {
+	log.Printf("watchdog snmp trap agent listening on UDP %s, forwarding to %s", trapCfg.Listen, trapCfg.APIURL)
+	if err := trapListener.Listen(trapCfg.Listen); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("trap listener stopped: %v", err)
 	}
 }
@@ -85,17 +101,26 @@ func handleTrap(ctx context.Context, apiURL, token string, packet *g.SnmpPacket,
 		log.Printf("marshal trap payload: %v", err)
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/api/v1/snmp/traps", bytes.NewReader(body))
+	endpoint, err := url.JoinPath(apiURL, "api/v1/snmp/traps")
+	if err != nil {
+		log.Printf("build trap API endpoint: %v", err)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	client := http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("forward trap to API: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("forward trap to API: unexpected status %s", resp.Status)
+	}
 }

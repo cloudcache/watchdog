@@ -73,6 +73,9 @@ func (c SystemAgentClient) PushSamples(ctx context.Context, batch SystemSampleBa
 }
 
 func (c SystemAgentClient) ReportStatus(ctx context.Context, report AgentRunReport) error {
+	if report.Status == "" {
+		report.Status = AgentRunSuccess
+	}
 	return c.postReport(ctx, "status", report)
 }
 

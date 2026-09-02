@@ -3,8 +3,10 @@ package watchdog
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -135,7 +137,7 @@ func (api agentRegistryAPI) create(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	if req.Token == "" {
+	if strings.TrimSpace(req.Token) == "" {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "agent token is required", nil)
 		return
 	}
@@ -143,7 +145,7 @@ func (api agentRegistryAPI) create(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	created, err := api.repo.UpsertAgent(r.Context(), SNMPAgentConfig{
+	agent := NormalizeAgentConfig(SNMPAgentConfig{
 		ID:        req.ID,
 		TenantID:  auth.TenantID,
 		TargetID:  req.TargetID,
@@ -153,6 +155,11 @@ func (api agentRegistryAPI) create(w http.ResponseWriter, r *http.Request) {
 		TokenHash: NewAgentTokenHash(req.Token),
 		Status:    req.Status,
 	})
+	if err := ValidateAgentConfig(agent); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	created, err := api.repo.UpsertAgent(r.Context(), agent)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -176,6 +183,10 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	if req.ID != existing.ID {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "agent id must match the request path", nil)
+		return
+	}
 	if req.TargetID != existing.TargetID && !canAccessTarget(auth, req.TargetID, ActionConfigure) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
@@ -184,7 +195,7 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 	if req.Token != "" {
 		tokenHash = NewAgentTokenHash(req.Token)
 	}
-	updated, err := api.repo.UpsertAgent(r.Context(), SNMPAgentConfig{
+	agent := NormalizeAgentConfig(SNMPAgentConfig{
 		ID:        existing.ID,
 		TenantID:  auth.TenantID,
 		TargetID:  req.TargetID,
@@ -194,6 +205,11 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 		TokenHash: tokenHash,
 		Status:    req.Status,
 	})
+	if err := ValidateAgentConfig(agent); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	updated, err := api.repo.UpsertAgent(r.Context(), agent)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -222,7 +238,15 @@ func (api agentRegistryAPI) delete(w http.ResponseWriter, r *http.Request) {
 func decodeAgentRegistryRequest(r *http.Request) (agentRegistryRequest, error) {
 	defer r.Body.Close()
 	var req agentRegistryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return req, errors.New("request body must contain one JSON object")
+		}
 		return req, err
 	}
 	if req.ID == "" {
@@ -231,28 +255,30 @@ func decodeAgentRegistryRequest(r *http.Request) (agentRegistryRequest, error) {
 	if req.TargetID == "" {
 		return req, errors.New("target id is required")
 	}
-	req.AgentType = normalizeAgentType(req.AgentType)
-	if req.AgentType != AgentTypeSNMP && req.AgentType != AgentTypeSystem {
-		return req, errors.New("agent type must be snmp or system")
-	}
-	if req.Mode == "" {
-		req.Mode = AgentModePush
-	}
-	if req.Mode != AgentModePush && req.Mode != AgentModePull {
-		return req, errors.New("agent mode must be push or pull")
-	}
-	if req.Status == "" {
-		req.Status = "pending"
-	}
+	normalized := NormalizeAgentConfig(SNMPAgentConfig{
+		ID:        req.ID,
+		TargetID:  req.TargetID,
+		AgentType: req.AgentType,
+		Mode:      req.Mode,
+		Endpoint:  req.Endpoint,
+		Status:    req.Status,
+	})
+	req.ID = normalized.ID
+	req.TargetID = normalized.TargetID
+	req.AgentType = normalized.AgentType
+	req.Mode = normalized.Mode
+	req.Endpoint = normalized.Endpoint
+	req.Status = normalized.Status
 	return req, nil
 }
 
 func agentRegistryDTO(agent SNMPAgentConfig) agentRegistryResponse {
+	agent = NormalizeAgentConfig(agent)
 	return agentRegistryResponse{
 		ID:           agent.ID,
 		TenantID:     agent.TenantID,
 		TargetID:     agent.TargetID,
-		AgentType:    normalizeAgentType(agent.AgentType),
+		AgentType:    agent.AgentType,
 		Mode:         agent.Mode,
 		Endpoint:     agent.Endpoint,
 		Status:       agent.Status,

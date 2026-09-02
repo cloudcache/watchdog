@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -31,7 +32,7 @@ func (s *MySQLStore) GetAgent(ctx context.Context, agentID ID) (SNMPAgentConfig,
 	if lastError.Valid {
 		agent.LastError = lastError.String
 	}
-	return agent, err
+	return NormalizeAgentConfig(agent), err
 }
 
 func (s *MySQLStore) ListAgents(ctx context.Context, tenantID ID) ([]SNMPAgentConfig, error) {
@@ -69,15 +70,18 @@ func (s *MySQLStore) ListAgents(ctx context.Context, tenantID ID) ([]SNMPAgentCo
 		if lastError.Valid {
 			agent.LastError = lastError.String
 		}
-		agents = append(agents, agent)
+		agents = append(agents, NormalizeAgentConfig(agent))
 	}
 	return agents, rows.Err()
 }
 
 func (s *MySQLStore) UpsertAgent(ctx context.Context, agent SNMPAgentConfig) (SNMPAgentConfig, error) {
-	agent.AgentType = normalizeAgentType(agent.AgentType)
-	if agent.Status == "" {
-		agent.Status = "pending"
+	agent = NormalizeAgentConfig(agent)
+	if err := ValidateAgentConfig(agent); err != nil {
+		return SNMPAgentConfig{}, err
+	}
+	if agent.TokenHash == "" {
+		return SNMPAgentConfig{}, errors.New("agent token hash is required")
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO target_agents (
@@ -116,6 +120,9 @@ func (s *MySQLStore) MarkAgentSeen(ctx context.Context, agentID ID) error {
 }
 
 func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) error {
+	if report.Status != AgentRunSuccess && report.Status != AgentRunFailure {
+		return errors.New("agent run status must be success or failure")
+	}
 	endedAt := report.EndedAt
 	if endedAt.IsZero() {
 		endedAt = time.Now().UTC()
@@ -208,10 +215,3 @@ func (s *MySQLStore) ListAgentRuns(ctx context.Context, tenantID, agentID ID, li
 }
 
 var _ AgentRepository = (*MySQLStore)(nil)
-
-func normalizeAgentType(agentType AgentType) AgentType {
-	if agentType == "" {
-		return AgentTypeSNMP
-	}
-	return agentType
-}
