@@ -100,6 +100,7 @@ type DeviceTableRecord = {
 	targetID: string
 	status: string
 	agentStatus: string
+	vendor: string
 	vendorLogo: string
 	searchText: string
 	target: string
@@ -164,6 +165,7 @@ export default memo(() => {
 			columns: [
 				{
 					field: "vendorLogo",
+					filterField: "vendor",
 					title: t`Vendor`,
 					width: 80,
 					cellType: "image",
@@ -316,6 +318,7 @@ function toTableRecord(summary: NetworkDeviceSummary): DeviceTableRecord {
 		targetID,
 		status,
 		agentStatus,
+		vendor: vendor || "-",
 		vendorLogo: vendorLogoFor(vendor),
 		searchText: `${host} ${targetName} ${deviceName} ${vendor} ${location} ${osName}`.toLowerCase(),
 		target: `${statusDot} ${host}\n${deviceDisplay}`,

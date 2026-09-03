@@ -194,3 +194,149 @@
 .recharts-yAxis {
 	@apply tabular-nums;
 }
+
+.vtable-filter-popover {
+	position: fixed;
+	z-index: 1000;
+	display: flex;
+	width: min(20rem, calc(100vw - 1rem));
+	max-height: min(26rem, calc(100vh - 1rem));
+	flex-direction: column;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--popover);
+	color: var(--popover-foreground);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+	font-size: 0.8125rem;
+}
+
+.vtable-filter-heading,
+.vtable-filter-footer {
+	display: flex;
+	min-height: 2.75rem;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.625rem 0.75rem;
+}
+
+.vtable-filter-heading {
+	border-bottom: 1px solid var(--border);
+}
+
+.vtable-filter-heading strong {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.vtable-filter-heading button,
+.vtable-filter-footer button {
+	flex: none;
+	border-radius: var(--radius-sm);
+	padding: 0.35rem 0.55rem;
+	color: var(--muted-foreground);
+}
+
+.vtable-filter-heading button:hover,
+.vtable-filter-footer button:hover {
+	background: var(--secondary);
+	color: var(--foreground);
+}
+
+.vtable-filter-heading .vtable-filter-apply,
+.vtable-filter-footer .vtable-filter-apply {
+	background: var(--primary);
+	color: var(--primary-foreground);
+}
+
+.vtable-filter-heading .vtable-filter-apply:hover,
+.vtable-filter-footer .vtable-filter-apply:hover {
+	background: var(--primary);
+	color: var(--primary-foreground);
+	opacity: 0.9;
+}
+
+.vtable-filter-heading .vtable-filter-clear-all {
+	color: var(--primary);
+}
+
+.vtable-filter-search {
+	margin: 0.75rem 0.75rem 0.375rem;
+	height: 2.25rem;
+	flex: none;
+	border: 1px solid var(--input);
+	border-radius: var(--radius-md);
+	background: var(--background);
+	padding: 0 0.625rem;
+	outline: none;
+}
+
+.vtable-filter-search:focus {
+	box-shadow: var(--geist-focus-ring);
+}
+
+.vtable-filter-option {
+	display: flex;
+	min-height: 2rem;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.35rem 0.75rem;
+	cursor: pointer;
+}
+
+.vtable-filter-option:hover {
+	background: var(--secondary);
+}
+
+.vtable-filter-option input {
+	width: 0.875rem;
+	height: 0.875rem;
+	flex: none;
+	accent-color: var(--primary);
+}
+
+.vtable-filter-select-all {
+	margin-top: 0.25rem;
+	border-bottom: 1px solid var(--border);
+	font-weight: 500;
+}
+
+.vtable-filter-options {
+	min-height: 2.5rem;
+	flex: 1 1 auto;
+	overflow: auto;
+	padding: 0.25rem 0;
+}
+
+.vtable-filter-option-label {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.vtable-filter-count,
+.vtable-filter-summary,
+.vtable-filter-empty {
+	color: var(--muted-foreground);
+	font-variant-numeric: tabular-nums;
+}
+
+.vtable-filter-empty {
+	padding: 1rem 0.75rem;
+	text-align: center;
+}
+
+.vtable-filter-footer {
+	justify-content: space-between;
+	border-top: 1px solid var(--border);
+}
+
+.vtable-filter-actions {
+	display: flex;
+	gap: 0.25rem;
+}
