@@ -73,6 +73,7 @@ type NetworkRepository interface {
 	ListDeviceLAGGroups(ctx context.Context, tenantID, deviceID ID) ([]DeviceLAGGroup, error)
 	UpsertDeviceLAGGroups(ctx context.Context, tenantID, deviceID ID, groups []DeviceLAGGroup) error
 	ListBGPSessions(ctx context.Context, tenantID, deviceID ID) ([]BGPSession, error)
+	ListAllBGPSessions(ctx context.Context, tenantID ID) ([]BGPSession, error)
 	GetBGPSession(ctx context.Context, tenantID, sessionID ID) (BGPSession, error)
 	UpsertBGPSessions(ctx context.Context, sessions []BGPSession) error
 	GetPortPolicy(ctx context.Context, tenantID, portID ID) (PortPolicy, error)

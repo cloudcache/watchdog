@@ -148,7 +148,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Network Targets`} / Watchdog`
+		document.title = `${t`Network Devices`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 
@@ -202,7 +202,7 @@ export default memo(() => {
 				<div className="flex items-center gap-2">
 					<NetworkIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
 					<h1 className="text-xl font-semibold tracking-normal">
-						<Trans>Network Targets</Trans>
+						<Trans>Network Devices</Trans>
 					</h1>
 					<span className="text-sm text-muted-foreground">({allRecords.length})</span>
 				</div>

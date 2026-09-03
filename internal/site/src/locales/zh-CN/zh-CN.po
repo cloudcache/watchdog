@@ -130,9 +130,10 @@ msgstr ""
 msgid "6 hours"
 msgstr ""
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Accepted"
-msgstr ""
+msgstr "已接收"
 
 #: src/components/navbar.tsx
 msgid "Access & Billing"
@@ -195,14 +196,21 @@ msgstr ""
 msgid "Add Prefix"
 msgstr ""
 
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Add Resource"
+msgstr "添加资源"
+
 #: src/components/routes/address-sets.tsx
 msgid "Add Set"
 msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
-msgid "Add Target"
-msgstr ""
+#~ msgid "Add Target"
+#~ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #~ msgid "Add transform"
@@ -211,6 +219,10 @@ msgstr ""
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "添加 URL"
+
+#: src/components/routes/core.tsx
+msgid "Address Family"
+msgstr "地址族"
 
 #: src/components/navbar.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -250,9 +262,10 @@ msgstr ""
 msgid "Administration"
 msgstr ""
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Advertised"
-msgstr ""
+msgstr "已通告"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "After"
@@ -328,7 +341,6 @@ msgstr ""
 
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
-#: src/components/navbar.tsx
 msgid "All Containers"
 msgstr "所有容器"
 
@@ -748,6 +760,7 @@ msgstr "冲突"
 msgid "Connection is down"
 msgstr "连接已断开"
 
+#: src/components/navbar.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/system.tsx
@@ -814,6 +827,12 @@ msgstr "复制 YAML"
 msgctxt "Core system metrics"
 msgid "Core"
 msgstr "核心"
+
+#: src/components/navbar.tsx
+#: src/components/routes/core.tsx
+#: src/components/routes/core.tsx
+msgid "Core (BGP)"
+msgstr "核心 (BGP)"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction"
@@ -939,8 +958,8 @@ msgstr ""
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Create Target"
-msgstr ""
+#~ msgid "Create Target"
+#~ msgstr ""
 
 #. Context: date created
 #: src/components/alerts-history-columns.tsx
@@ -1104,6 +1123,7 @@ msgid "Detail"
 msgstr "详情"
 
 #: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-discover.tsx
 #: src/components/routes/network-port-form.tsx
@@ -1180,8 +1200,8 @@ msgid "Disk"
 msgstr "磁盘"
 
 #: src/components/navbar.tsx
-msgid "Disk Health"
-msgstr ""
+#~ msgid "Disk Health"
+#~ msgstr ""
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgid "Disk I/O"
@@ -1325,6 +1345,11 @@ msgstr ""
 msgid "Edit Permission"
 msgstr ""
 
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Edit Resource"
+msgstr "编辑资源"
+
 #: src/components/routes/snmp-profiles.tsx
 msgid "Edit SNMP profile"
 msgstr ""
@@ -1336,8 +1361,8 @@ msgstr ""
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Edit Target"
-msgstr ""
+#~ msgid "Edit Target"
+#~ msgstr ""
 
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
@@ -1631,6 +1656,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load BGP metrics"
 #~ msgstr ""
+
+#: src/components/routes/core.tsx
+msgid "Failed to load BGP sessions"
+msgstr "加载 BGP 会话失败"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
@@ -2030,6 +2059,12 @@ msgstr ""
 msgid "Hostname"
 msgstr ""
 
+#: src/components/navbar.tsx
+#: src/components/routes/targets.tsx
+#: src/components/routes/targets.tsx
+msgid "Hosts"
+msgstr "主机"
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "HTTP Method"
 msgstr "HTTP 方法"
@@ -2230,6 +2265,7 @@ msgstr ""
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -2437,10 +2473,11 @@ msgstr ""
 msgid "Net"
 msgstr "网络"
 
+#: src/components/navbar.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Network"
-msgstr ""
+msgstr "网络"
 
 #: src/components/routes/target-detail.tsx
 #~ msgid "Network Asset"
@@ -2458,11 +2495,10 @@ msgstr "网络设备"
 msgid "Network device ID is required"
 msgstr ""
 
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#: src/components/routes/watchdog-overview.tsx
-#~ msgid "Network Devices"
-#~ msgstr "网络设备"
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-devices.tsx
+msgid "Network Devices"
+msgstr "网络设备"
 
 #: src/components/routes/network-port.tsx
 msgid "Network Port"
@@ -2473,9 +2509,6 @@ msgstr ""
 #~ msgid "Network Target"
 #~ msgstr ""
 
-#: src/components/navbar.tsx
-#: src/components/routes/network-devices.tsx
-#: src/components/routes/network-devices.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Network Targets"
@@ -2541,7 +2574,11 @@ msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "No BGP sessions found."
-msgstr ""
+msgstr "暂无 BGP 会话。"
+
+#: src/components/routes/core.tsx
+msgid "No BGP sessions found. Sessions appear after SNMP discovery on network devices."
+msgstr "暂无 BGP 会话。网络设备完成 SNMP 发现后会显示会话。"
 
 #: src/components/routes/billing.tsx
 msgid "No billing accounts found."
@@ -2594,6 +2631,10 @@ msgstr ""
 #: src/components/routes/aggregate-graphs.tsx
 msgid "No grouping"
 msgstr ""
+
+#: src/components/routes/targets.tsx
+msgid "No hosts found."
+msgstr "暂无主机。"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No interface health data in this range."
@@ -2712,8 +2753,8 @@ msgstr ""
 #~ msgstr "未找到系统。"
 
 #: src/components/routes/targets.tsx
-msgid "No targets found."
-msgstr ""
+#~ msgid "No targets found."
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No traffic data in this range."
@@ -2920,9 +2961,14 @@ msgstr ""
 msgid "Peak Rate"
 msgstr ""
 
+#: src/components/routes/core.tsx
+msgid "Peer"
+msgstr "邻居"
+
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Peer AS"
-msgstr ""
+msgstr "邻居 AS"
 
 #: src/components/routes/network-devices.tsx
 msgid "Pending"
@@ -3149,6 +3195,7 @@ msgstr "接收"
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/containers.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device-snmp.tsx
@@ -3607,6 +3654,7 @@ msgstr "开始时间"
 
 #. Context: alert state (active or resolved)
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
@@ -3644,6 +3692,10 @@ msgstr "状态"
 #: src/components/routes/historical-data.tsx
 msgid "Step"
 msgstr ""
+
+#: src/components/navbar.tsx
+msgid "Storage"
+msgstr "存储"
 
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "Sub State"
@@ -3775,10 +3827,7 @@ msgstr ""
 msgid "targets"
 msgstr ""
 
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
-#: src/components/routes/targets.tsx
-#: src/components/routes/targets.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
@@ -4101,6 +4150,7 @@ msgstr "每 10 分钟更新一次。"
 msgid "Upload"
 msgstr "上传"
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx

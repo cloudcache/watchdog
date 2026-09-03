@@ -43,6 +43,7 @@ const Exports = lazy(() => import("@/components/routes/exports.tsx"))
 const HistoricalData = lazy(() => import("@/components/routes/historical-data.tsx"))
 const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overview.tsx"))
 const Containers = lazy(() => import("@/components/routes/containers.tsx"))
+const CoreBGP = lazy(() => import("@/components/routes/core.tsx"))
 const NetworkDeviceDetail = lazy(() => import("@/components/routes/network-device.tsx"))
 const NetworkDeviceForm = lazy(() => import("@/components/routes/network-device-form.tsx"))
 const NetworkDeviceSNMP = lazy(() => import("@/components/routes/network-device-snmp.tsx"))
@@ -156,6 +157,8 @@ const App = memo(() => {
 		return <TargetDetail id={page.params.id} />
 	} else if (page.route === "containers") {
 		return <Containers />
+	} else if (page.route === "core") {
+		return <CoreBGP />
 	} else if (page.route === "export_new") {
 		return <ExportNew />
 	} else if (page.route === "export_detail") {

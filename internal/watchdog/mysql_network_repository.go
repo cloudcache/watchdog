@@ -481,6 +481,29 @@ func (s *MySQLStore) ListBGPSessions(ctx context.Context, tenantID, deviceID ID)
 	return sessions, rows.Err()
 }
 
+func (s *MySQLStore) ListAllBGPSessions(ctx context.Context, tenantID ID) ([]BGPSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, device_id, peer_addr, peer_as, local_as, afi, safi, state,
+		       accepted_prefixes, denied_prefixes, advertised_prefixes, uptime_seconds, metadata_json, updated_at
+		FROM bgp_sessions
+		WHERE tenant_id = ?
+		ORDER BY device_id, peer_as, peer_addr, afi, safi
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []BGPSession
+	for rows.Next() {
+		session, err := scanBGPSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
 func (s *MySQLStore) GetBGPSession(ctx context.Context, tenantID, sessionID ID) (BGPSession, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, device_id, peer_addr, peer_as, local_as, afi, safi, state,

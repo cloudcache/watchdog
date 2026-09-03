@@ -125,6 +125,7 @@ msgstr "5 minutes"
 msgid "6 hours"
 msgstr "6 hours"
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Accepted"
 msgstr "Accepted"
@@ -190,14 +191,21 @@ msgstr "Add metadata"
 msgid "Add Prefix"
 msgstr "Add Prefix"
 
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Add Resource"
+msgstr "Add Resource"
+
 #: src/components/routes/address-sets.tsx
 msgid "Add Set"
 msgstr "Add Set"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
-msgid "Add Target"
-msgstr "Add Target"
+#~ msgid "Add Target"
+#~ msgstr "Add Target"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #~ msgid "Add transform"
@@ -206,6 +214,10 @@ msgstr "Add Target"
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "Add URL"
+
+#: src/components/routes/core.tsx
+msgid "Address Family"
+msgstr "Address Family"
 
 #: src/components/navbar.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -245,6 +257,7 @@ msgstr "Admin Down"
 msgid "Administration"
 msgstr "Administration"
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Advertised"
 msgstr "Advertised"
@@ -323,7 +336,6 @@ msgstr "All"
 
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
-#: src/components/navbar.tsx
 msgid "All Containers"
 msgstr "All Containers"
 
@@ -743,6 +755,7 @@ msgstr "Conflicts"
 msgid "Connection is down"
 msgstr "Connection is down"
 
+#: src/components/navbar.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/system.tsx
@@ -809,6 +822,12 @@ msgstr "Copy YAML"
 msgctxt "Core system metrics"
 msgid "Core"
 msgstr "Core"
+
+#: src/components/navbar.tsx
+#: src/components/routes/core.tsx
+#: src/components/routes/core.tsx
+msgid "Core (BGP)"
+msgstr "Core (BGP)"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction"
@@ -934,8 +953,8 @@ msgstr "Create SNMP Profile"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Create Target"
-msgstr "Create Target"
+#~ msgid "Create Target"
+#~ msgstr "Create Target"
 
 #. Context: date created
 #: src/components/alerts-history-columns.tsx
@@ -1099,6 +1118,7 @@ msgid "Detail"
 msgstr "Detail"
 
 #: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-discover.tsx
 #: src/components/routes/network-port-form.tsx
@@ -1175,8 +1195,8 @@ msgid "Disk"
 msgstr "Disk"
 
 #: src/components/navbar.tsx
-msgid "Disk Health"
-msgstr "Disk Health"
+#~ msgid "Disk Health"
+#~ msgstr "Disk Health"
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgid "Disk I/O"
@@ -1320,6 +1340,11 @@ msgstr "Edit permission"
 msgid "Edit Permission"
 msgstr "Edit Permission"
 
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Edit Resource"
+msgstr "Edit Resource"
+
 #: src/components/routes/snmp-profiles.tsx
 msgid "Edit SNMP profile"
 msgstr "Edit SNMP profile"
@@ -1331,8 +1356,8 @@ msgstr "Edit SNMP Profile"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Edit Target"
-msgstr "Edit Target"
+#~ msgid "Edit Target"
+#~ msgstr "Edit Target"
 
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
@@ -1626,6 +1651,10 @@ msgstr "Failed to load aggregate series"
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load BGP metrics"
 #~ msgstr "Failed to load BGP metrics"
+
+#: src/components/routes/core.tsx
+msgid "Failed to load BGP sessions"
+msgstr "Failed to load BGP sessions"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
@@ -2025,6 +2054,12 @@ msgstr "Host"
 msgid "Hostname"
 msgstr "Hostname"
 
+#: src/components/navbar.tsx
+#: src/components/routes/targets.tsx
+#: src/components/routes/targets.tsx
+msgid "Hosts"
+msgstr "Hosts"
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "HTTP Method"
 msgstr "HTTP Method"
@@ -2225,6 +2260,7 @@ msgstr "Loading inventory..."
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -2432,6 +2468,7 @@ msgstr "Name is required"
 msgid "Net"
 msgstr "Net"
 
+#: src/components/navbar.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Network"
@@ -2453,11 +2490,10 @@ msgstr "Network Device"
 msgid "Network device ID is required"
 msgstr "Network device ID is required"
 
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#: src/components/routes/watchdog-overview.tsx
-#~ msgid "Network Devices"
-#~ msgstr "Network Devices"
+#: src/components/routes/network-devices.tsx
+#: src/components/routes/network-devices.tsx
+msgid "Network Devices"
+msgstr "Network Devices"
 
 #: src/components/routes/network-port.tsx
 msgid "Network Port"
@@ -2468,9 +2504,6 @@ msgstr "Network Port"
 #~ msgid "Network Target"
 #~ msgstr "Network Target"
 
-#: src/components/navbar.tsx
-#: src/components/routes/network-devices.tsx
-#: src/components/routes/network-devices.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Network Targets"
@@ -2538,6 +2571,10 @@ msgstr "No alerts. Threshold-based alerting is not yet configured for this devic
 msgid "No BGP sessions found."
 msgstr "No BGP sessions found."
 
+#: src/components/routes/core.tsx
+msgid "No BGP sessions found. Sessions appear after SNMP discovery on network devices."
+msgstr "No BGP sessions found. Sessions appear after SNMP discovery on network devices."
+
 #: src/components/routes/billing.tsx
 msgid "No billing accounts found."
 msgstr "No billing accounts found."
@@ -2589,6 +2626,10 @@ msgstr "No exports found."
 #: src/components/routes/aggregate-graphs.tsx
 msgid "No grouping"
 msgstr "No grouping"
+
+#: src/components/routes/targets.tsx
+msgid "No hosts found."
+msgstr "No hosts found."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No interface health data in this range."
@@ -2707,8 +2748,8 @@ msgstr "No SNMP profiles found."
 #~ msgstr "No systems found."
 
 #: src/components/routes/targets.tsx
-msgid "No targets found."
-msgstr "No targets found."
+#~ msgid "No targets found."
+#~ msgstr "No targets found."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No traffic data in this range."
@@ -2915,6 +2956,11 @@ msgstr "Peak"
 msgid "Peak Rate"
 msgstr "Peak Rate"
 
+#: src/components/routes/core.tsx
+msgid "Peer"
+msgstr "Peer"
+
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Peer AS"
 msgstr "Peer AS"
@@ -3144,6 +3190,7 @@ msgstr "Received"
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/containers.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device-snmp.tsx
@@ -3602,6 +3649,7 @@ msgstr "Start Time"
 
 #. Context: alert state (active or resolved)
 #: src/components/alerts-history-columns.tsx
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
@@ -3639,6 +3687,10 @@ msgstr "Status"
 #: src/components/routes/historical-data.tsx
 msgid "Step"
 msgstr "Step"
+
+#: src/components/navbar.tsx
+msgid "Storage"
+msgstr "Storage"
 
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "Sub State"
@@ -3770,10 +3822,7 @@ msgstr "Target summary"
 msgid "targets"
 msgstr "targets"
 
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
-#: src/components/routes/targets.tsx
-#: src/components/routes/targets.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
@@ -4096,6 +4145,7 @@ msgstr "Updated every 10 minutes."
 msgid "Upload"
 msgstr "Upload"
 
+#: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx

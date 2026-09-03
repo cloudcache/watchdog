@@ -183,6 +183,10 @@ func (r *fakeNetworkRepository) ListBGPSessions(_ context.Context, _ ID, deviceI
 	return sessions, nil
 }
 
+func (r *fakeNetworkRepository) ListAllBGPSessions(_ context.Context, _ ID) ([]BGPSession, error) {
+	return append([]BGPSession(nil), r.bgp...), nil
+}
+
 func (r *fakeNetworkRepository) GetBGPSession(_ context.Context, _ ID, sessionID ID) (BGPSession, error) {
 	for _, session := range r.bgp {
 		if session.ID == sessionID {

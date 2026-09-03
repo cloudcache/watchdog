@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { CrosshairIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { PlusIcon, RefreshCwIcon, ServerIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
@@ -45,7 +45,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Targets`} / Watchdog`
+		document.title = `${t`Hosts`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 
@@ -90,9 +90,9 @@ export default memo(() => {
 		<div className="grid gap-4">
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
-					<CrosshairIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
+					<ServerIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
 					<h1 className="text-xl font-semibold tracking-normal">
-						<Trans>Targets</Trans>
+						<Trans>Hosts</Trans>
 					</h1>
 				</div>
 				<div className="flex items-center gap-2">
@@ -116,7 +116,7 @@ export default memo(() => {
 				{error ? <div className="p-3 text-sm text-destructive">{error}</div> : null}
 				{!loading && !error && targets.length === 0 ? (
 					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>No targets found.</Trans>
+						<Trans>No hosts found.</Trans>
 					</div>
 				) : null}
 				<div ref={tableRef} className="h-[520px] w-full" />

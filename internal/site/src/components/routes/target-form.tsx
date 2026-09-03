@@ -75,7 +75,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Target` : t`Create Target`} / Watchdog`
+		document.title = `${isEditing ? t`Edit Resource` : t`Add Resource`} / Watchdog`
 		loadTarget()
 	}, [isEditing, loadTarget, t])
 
@@ -124,7 +124,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 					</Link>
 					<CrosshairIcon className="h-5 w-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
 					<h1 className="truncate text-xl font-semibold tracking-normal">
-						{isEditing ? <Trans>Edit Target</Trans> : <Trans>Create Target</Trans>}
+						{isEditing ? <Trans>Edit Resource</Trans> : <Trans>Add Resource</Trans>}
 					</h1>
 				</div>
 				<Button size="sm" onClick={save} disabled={loading || saving || !form.id.trim() || !form.name.trim()}>

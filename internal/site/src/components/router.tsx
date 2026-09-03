@@ -16,6 +16,7 @@ const routes = {
 	billing_detail: "/billing/:id",
 	billing_edit: "/billing/:id/edit",
 	containers: "/containers",
+	core: "/core",
 	exports: "/exports",
 	export_new: "/exports/new",
 	export_detail: "/exports/:id",

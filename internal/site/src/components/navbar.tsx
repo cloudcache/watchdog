@@ -6,6 +6,8 @@ import {
 	Building2Icon,
 	ContainerIcon,
 	CrosshairIcon,
+	RouteIcon,
+	ServerIcon,
 	DatabaseBackupIcon,
 	DatabaseIcon,
 	FileDownIcon,
@@ -166,7 +168,7 @@ export default function Navbar() {
 						{isAdmin() && <AdminSubmenu />}
 						{!isReadOnlyUser() && (
 							<NavItem href={getPagePath($router, "target_new")} icon={PlusIcon}>
-								<Trans>Add Target</Trans>
+								<Trans>Add Resource</Trans>
 							</NavItem>
 						)}
 						<DropdownMenuSeparator />
@@ -213,7 +215,7 @@ export default function Navbar() {
 					>
 						<PlusIcon className="h-4 w-4 -ms-1" />
 						<span className="hidden lg:inline">
-							<Trans>Add Target</Trans>
+							<Trans>Add Resource</Trans>
 						</span>
 					</Button>
 				)}
@@ -222,20 +224,26 @@ export default function Navbar() {
 	)
 }
 
+// Menu follows the five target kinds frozen in the platform architecture
+// (§7.1/7.2): host / network / storage / edge / core. Edge is planned and
+// stays hidden until its probe agent ships.
 function ResourceItems() {
 	return (
 		<DropdownMenuGroup>
-			<NavItem href={getPagePath($router, "targets")} icon={CrosshairIcon}>
-				<Trans>Targets</Trans>
-			</NavItem>
-			<NavItem href={getPagePath($router, "network")} icon={NetworkIcon}>
-				<Trans>Network Targets</Trans>
+			<NavItem href={getPagePath($router, "targets")} icon={ServerIcon}>
+				<Trans>Hosts</Trans>
 			</NavItem>
 			<NavItem href={getPagePath($router, "containers")} icon={ContainerIcon}>
-				<Trans>All Containers</Trans>
+				<Trans>Containers</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "network")} icon={NetworkIcon}>
+				<Trans>Network</Trans>
 			</NavItem>
 			<NavItem href={getPagePath($router, "smart")} icon={HardDriveIcon}>
-				<Trans>Disk Health</Trans> (S.M.A.R.T.)
+				<Trans>Storage</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "core")} icon={RouteIcon}>
+				<Trans>Core (BGP)</Trans>
 			</NavItem>
 		</DropdownMenuGroup>
 	)
