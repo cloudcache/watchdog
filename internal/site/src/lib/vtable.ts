@@ -33,6 +33,11 @@ const filterIcon = {
 	interactive: true,
 } as const
 
+const activeFilterIcon = {
+	...filterIcon,
+	svg: filterIcon.svg.replace('stroke="#737373"', 'stroke="#2d74ff"'),
+}
+
 export interface CreateTableOptions {
 	records: any[]
 	columns: ColumnDefine[]
@@ -91,6 +96,7 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		},
 	}
 	const filterColumns: FilterColumn[] = []
+	const activeFilters = new Map<string, Set<string>>()
 	const columns = options.columns.map((column, index) => {
 		const { filter: filterEnabled = true, filterField, ...tableColumn } = column
 		const field = String(filterField ?? tableColumn.field ?? "")
@@ -100,7 +106,11 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		filterColumns[index] = { field, title: String(tableColumn.title ?? field) }
 		return {
 			...tableColumn,
-			headerIcon: appendHeaderIcon(tableColumn.headerIcon, filterIcon),
+			headerIcon: (args: any) =>
+				appendHeaderIcon(
+					typeof tableColumn.headerIcon === "function" ? tableColumn.headerIcon(args) : tableColumn.headerIcon,
+					activeFilters.has(field) ? activeFilterIcon : filterIcon
+				),
 		}
 	})
 	const table = new VTable.ListTable({
@@ -116,7 +126,7 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		columnResizeMode: options.columnResize === false ? "none" : "all",
 	} as any)
 	if (filterColumns.some(Boolean)) {
-		tableCleanup.set(table, enableColumnFilters(table, dom, options.records, filterColumns))
+		tableCleanup.set(table, enableColumnFilters(table, dom, options.records, filterColumns, activeFilters))
 	}
 	return table
 }
@@ -156,22 +166,25 @@ export function disposeTable(table: ListTable | null) {
 }
 
 function appendHeaderIcon(existing: any, icon: any): any {
-	if (typeof existing === "function") {
-		return (args: any) => appendHeaderIcon(existing(args), icon)
-	}
 	if (Array.isArray(existing)) {
 		return [...existing, icon]
 	}
 	return existing ? [existing, icon] : [icon]
 }
 
-function enableColumnFilters(table: ListTable, dom: HTMLElement, records: any[], columns: FilterColumn[]): () => void {
-	const activeFilters = new Map<string, Set<string>>()
+function enableColumnFilters(
+	table: ListTable,
+	dom: HTMLElement,
+	records: any[],
+	columns: FilterColumn[],
+	activeFilters: Map<string, Set<string>>
+): () => void {
 	let ownedClose: (() => void) | null = null
 
 	const applyFilters = () => {
 		if (activeFilters.size === 0) {
 			table.updateFilterRules([])
+			table.refreshHeader()
 			return
 		}
 		table.updateFilterRules([
@@ -179,6 +192,7 @@ function enableColumnFilters(table: ListTable, dom: HTMLElement, records: any[],
 				filterFunc: (record: any) => matchesFilters(record, activeFilters),
 			},
 		])
+		table.refreshHeader()
 	}
 
 	const handleIconClick = (args: any) => {
