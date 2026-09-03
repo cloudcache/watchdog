@@ -33,6 +33,23 @@ type NetworkDevice = {
 	sys_descr?: string
 	SysObjectID?: string
 	sys_object_id?: string
+	SNMPProfileID?: string
+	snmp_profile_id?: string
+	SNMPPort?: number
+	snmp_port?: number
+}
+
+type SNMPProfile = {
+	ID?: string
+	id?: string
+	Name?: string
+	name?: string
+	Version?: string
+	version?: string
+}
+
+type SNMPProfilesResponse = {
+	items?: SNMPProfile[]
 }
 
 type TargetRecord = {
@@ -67,10 +84,12 @@ type FormState = {
 	sysName: string
 	sysObjectID: string
 	sysDescr: string
+	snmpProfileID: string
+	snmpPort: string
+	snmpCommunity: string
 }
 
-// One edit page per network box: the target half (name, host, status, labels)
-// and the device half (inventory) used to live in two separate forms.
+// One edit page per network box: target identity, SNMP access, and discovered inventory.
 export default memo(({ id }: NetworkDeviceFormProps) => {
 	const { t } = useLingui()
 	const isEditing = Boolean(id)
@@ -89,7 +108,12 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 		sysName: "",
 		sysObjectID: "",
 		sysDescr: "",
+		snmpProfileID: "",
+		snmpPort: "161",
+		snmpCommunity: "",
 	}))
+	const [snmpProfiles, setSNMPProfiles] = useState<SNMPProfile[]>([])
+	const [profilesError, setProfilesError] = useState("")
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
@@ -97,12 +121,21 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 	const load = useCallback(async () => {
 		setLoading(true)
 		setError("")
+		setProfilesError("")
 		try {
 			if (!id) {
 				setError(t`Create a network target first; devices are created by discovery or agent reports.`)
 				return
 			}
-			const device = await pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {})
+			const [device, profilesResponse] = await Promise.all([
+				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				pb.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}).catch((err) => {
+					setProfilesError(err instanceof Error ? err.message : t`Failed to load SNMP profiles`)
+					return { items: [] }
+				}),
+			])
+			const profiles = profilesResponse.items ?? []
+			setSNMPProfiles(profiles)
 			const targetID = device.TargetID ?? device.target_id ?? ""
 			let target: TargetRecord = {}
 			if (targetID) {
@@ -123,6 +156,10 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				sysName: device.SysName ?? device.sys_name ?? "",
 				sysObjectID: device.SysObjectID ?? device.sys_object_id ?? "",
 				sysDescr: device.SysDescr ?? device.sys_descr ?? "",
+				snmpProfileID:
+					device.SNMPProfileID ?? device.snmp_profile_id ?? (profiles.length === 1 ? profileID(profiles[0]) : ""),
+				snmpPort: String(device.SNMPPort ?? device.snmp_port ?? 161),
+				snmpCommunity: "",
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load network device`)
@@ -145,12 +182,12 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 			setError(t`Target is required`)
 			return
 		}
-		if (!form.targetName.trim() || !form.host.trim()) {
-			setError(t`Name and host are required`)
+		if (!form.host.trim()) {
+			setError(t`Host is required`)
 			return
 		}
-		if (!form.sysName.trim() && !form.sysDescr.trim()) {
-			setError(t`sysName or sysDescr is required`)
+		if (!form.snmpProfileID || Number(form.snmpPort) < 1 || Number(form.snmpPort) > 65535) {
+			setError(t`A valid SNMP profile and port are required`)
 			return
 		}
 		setSaving(true)
@@ -179,10 +216,27 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				SysObjectID: form.sysObjectID.trim(),
 				SysDescr: form.sysDescr.trim(),
 			}
-			const saved = await pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {
-				method: "PATCH",
-				body,
-			})
+			const snmpBody: {
+				SNMPProfileID: string
+				SNMPPort: number
+				SNMPSecurity?: { community: string }
+			} = {
+				SNMPProfileID: form.snmpProfileID,
+				SNMPPort: Number(form.snmpPort),
+			}
+			if (form.snmpCommunity) {
+				snmpBody.SNMPSecurity = { community: form.snmpCommunity }
+			}
+			const [saved] = await Promise.all([
+				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {
+					method: "PATCH",
+					body,
+				}),
+				pb.send(`/api/v1/network/devices/${id}/snmp`, {
+					method: "PATCH",
+					body: snmpBody,
+				}),
+			])
 			navigate(getPagePath($router, "network_device", { id: saved.ID ?? saved.id ?? form.id }))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save network device`)
@@ -229,15 +283,57 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 					<Field label={t`Target`}>
 						<Input value={form.targetID} disabled />
 					</Field>
-					<Field label={t`Name`}>
+					<Field label={t`Display name (optional)`}>
 						<Input
 							value={form.targetName}
 							onChange={(event) => update({ targetName: event.target.value })}
 							disabled={loading}
 						/>
 					</Field>
-					<Field label={t`Host`}>
+					<Field label={t`Host / IP`}>
 						<Input value={form.host} onChange={(event) => update({ host: event.target.value })} disabled={loading} />
+					</Field>
+					<Field label={t`SNMP profile`}>
+						<Select
+							value={form.snmpProfileID}
+							onValueChange={(snmpProfileID) => update({ snmpProfileID })}
+							disabled={loading || snmpProfiles.length === 0}
+						>
+							<SelectTrigger>
+								<SelectValue placeholder={t`Select SNMP profile`} />
+							</SelectTrigger>
+							<SelectContent>
+								{snmpProfiles.map((profile) => (
+									<SelectItem key={profileID(profile)} value={profileID(profile)}>
+										{profile.Name ?? profile.name ?? profileID(profile)} ({profile.Version ?? profile.version ?? "SNMP"}
+										)
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						{profilesError ? <p className="text-xs text-destructive">{profilesError}</p> : null}
+					</Field>
+					<Field label={t`SNMP port`}>
+						<Input
+							type="number"
+							min="1"
+							max="65535"
+							value={form.snmpPort}
+							onChange={(event) => update({ snmpPort: event.target.value })}
+							disabled={loading}
+						/>
+					</Field>
+					<Field label={t`SNMP community`}>
+						<Input
+							type="password"
+							autoComplete="new-password"
+							value={form.snmpCommunity}
+							onChange={(event) => update({ snmpCommunity: event.target.value })}
+							disabled={loading}
+						/>
+						<p className="text-xs text-muted-foreground">
+							<Trans>Leave blank to keep the current value or inherit the profile default.</Trans>
+						</p>
 					</Field>
 					<Field label={t`Status`}>
 						<Select value={form.status} onValueChange={(status) => update({ status })} disabled={loading}>
@@ -328,4 +424,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 			{children}
 		</div>
 	)
+}
+
+function profileID(profile: SNMPProfile) {
+	return profile.ID ?? profile.id ?? ""
 }

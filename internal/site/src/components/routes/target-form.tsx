@@ -47,6 +47,7 @@ type FormState = {
 	labels: Record<string, string>
 	snmpProfileID: string
 	snmpPort: string
+	snmpCommunity: string
 }
 
 export default memo(({ id, defaultKind }: TargetFormProps) => {
@@ -62,6 +63,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		labels: {},
 		snmpProfileID: "",
 		snmpPort: "161",
+		snmpCommunity: "",
 	}))
 	const [snmpProfiles, setSNMPProfiles] = useState<SNMPProfile[]>([])
 	const [profilesLoading, setProfilesLoading] = useState(false)
@@ -88,6 +90,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 				labels: target.labels ?? {},
 				snmpProfileID: "",
 				snmpPort: "161",
+				snmpCommunity: "",
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load target`)
@@ -143,6 +146,9 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 			if (!isEditing && form.kind === "network") {
 				body.snmp_profile_id = form.snmpProfileID
 				body.snmp_port = Number(form.snmpPort)
+				if (form.snmpCommunity) {
+					body.snmp_security = { community: form.snmpCommunity }
+				}
 			}
 			const saved = await pb.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
 				method: id ? "PATCH" : "POST",
@@ -251,6 +257,18 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 									onChange={(event) => update({ snmpPort: event.target.value })}
 									disabled={loading}
 								/>
+							</Field>
+							<Field label={t`SNMP community (optional override)`}>
+								<Input
+									type="password"
+									autoComplete="new-password"
+									value={form.snmpCommunity}
+									onChange={(event) => update({ snmpCommunity: event.target.value })}
+									disabled={loading}
+								/>
+								<p className="text-xs text-muted-foreground">
+									<Trans>Leave blank to use the selected profile's community.</Trans>
+								</p>
 							</Field>
 						</>
 					) : null}

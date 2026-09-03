@@ -130,6 +130,10 @@ msgstr ""
 msgid "6 hours"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
+msgid "A valid SNMP profile and port are required"
+msgstr ""
+
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Accepted"
@@ -1235,6 +1239,7 @@ msgctxt "Layout display options"
 msgid "Display"
 msgstr "Vis"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Display name (optional)"
 msgstr ""
@@ -1769,6 +1774,7 @@ msgstr ""
 msgid "Failed to load SNMP profile"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
@@ -2053,7 +2059,6 @@ msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Homebrew-kommando"
 
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -2061,6 +2066,7 @@ msgstr "Homebrew-kommando"
 msgid "Host"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Host / IP"
 msgstr "Vert / IP"
@@ -2068,6 +2074,10 @@ msgstr "Vert / IP"
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Host / IP / Domain"
 #~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "Host is required"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "Hostname"
@@ -2223,6 +2233,14 @@ msgstr ""
 #: src/components/routes/settings/general.tsx
 msgid "Layout width"
 msgstr "Layoutbredde"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Leave blank to keep the current value or inherit the profile default."
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "Leave blank to use the selected profile's community."
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
@@ -2461,7 +2479,6 @@ msgstr ""
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
@@ -2476,8 +2493,8 @@ msgid "Name"
 msgstr "Navn"
 
 #: src/components/routes/network-device-form.tsx
-msgid "Name and host are required"
-msgstr ""
+#~ msgid "Name and host are required"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Name is required"
@@ -3500,6 +3517,7 @@ msgstr ""
 #~ msgid "Select ports"
 #~ msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Select SNMP profile"
 msgstr ""
@@ -3613,6 +3631,15 @@ msgstr "SMTP-innstillinger"
 #~ msgid "SNMP"
 #~ msgstr ""
 
+#: src/components/routes/network-device-form.tsx
+msgid "SNMP community"
+msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "SNMP community (optional override)"
+msgstr ""
+
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP port"
 msgstr ""
@@ -3621,6 +3648,7 @@ msgstr ""
 msgid "SNMP Port"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP profile"
 msgstr ""
@@ -3769,8 +3797,8 @@ msgid "sysDescr"
 msgstr ""
 
 #: src/components/routes/network-device-form.tsx
-msgid "sysName or sysDescr is required"
-msgstr ""
+#~ msgid "sysName or sysDescr is required"
+#~ msgstr ""
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx

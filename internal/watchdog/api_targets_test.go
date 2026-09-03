@@ -116,7 +116,7 @@ func TestAPITargetsCreateNetworkFromHostOnly(t *testing.T) {
 		DiscoveryJobs: jobs,
 	})
 	rec := httptest.NewRecorder()
-	body := `{"id":"22e97b7d-6b32-433f-b44e-936c205661b7","kind":"network","host":" 10.0.0.2 "}`
+	body := `{"id":"22e97b7d-6b32-433f-b44e-936c205661b7","kind":"network","host":" 10.0.0.2 ","snmp_security":{"community":"private-a"}}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/targets", strings.NewReader(body)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -133,6 +133,9 @@ func TestAPITargetsCreateNetworkFromHostOnly(t *testing.T) {
 	device := network.devices[0]
 	if device.TargetID != repo.created.ID || device.SNMPProfileID != "profile-a" || device.SNMPPort != 161 {
 		t.Fatalf("provisioned device = %#v", device)
+	}
+	if device.SNMPSecurity["community"] != "private-a" {
+		t.Fatalf("provisioned device SNMP security = %#v", device.SNMPSecurity)
 	}
 	if len(jobs.enqueued) != 1 || jobs.enqueued[0].DeviceID != device.ID {
 		t.Fatalf("discovery jobs = %#v", jobs.enqueued)

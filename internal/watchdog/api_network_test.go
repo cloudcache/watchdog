@@ -613,6 +613,27 @@ func TestAPINetworkDeviceSNMPPatchSupportsDeviceOverrides(t *testing.T) {
 	}
 }
 
+func TestAPINetworkDeviceSNMPPatchPreservesSecretWhenOmitted(t *testing.T) {
+	repo := &fakeNetworkRepository{devices: []NetworkDevice{{
+		ID: "device-a", TenantID: "tenant-a", TargetID: "target-a", SNMPProfileID: "profile-a", SNMPPort: 161,
+		SNMPSecurity: map[string]string{"community": "private-a"},
+	}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: configureNetworkTestAuth, Network: repo})
+	rec := httptest.NewRecorder()
+	body := `{"SNMPProfileID":"profile-b","SNMPPort":1161}`
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/network/devices/device-a/snmp", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	device := repo.devices[0]
+	if device.SNMPSecurity["community"] != "private-a" {
+		t.Fatalf("device SNMP security = %#v", device.SNMPSecurity)
+	}
+	if strings.Contains(rec.Body.String(), "private-a") {
+		t.Fatalf("response leaked community: %s", rec.Body.String())
+	}
+}
+
 type fakeSNMPInterfaceDiscoverer struct {
 	request SNMPDiscoveryEngineRequest
 	result  SNMPCollectorDiscoveryResult

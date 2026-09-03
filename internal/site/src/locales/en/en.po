@@ -125,6 +125,10 @@ msgstr "5 minutes"
 msgid "6 hours"
 msgstr "6 hours"
 
+#: src/components/routes/network-device-form.tsx
+msgid "A valid SNMP profile and port are required"
+msgstr "A valid SNMP profile and port are required"
+
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Accepted"
@@ -1230,6 +1234,7 @@ msgctxt "Layout display options"
 msgid "Display"
 msgstr "Display"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Display name (optional)"
 msgstr "Display name (optional)"
@@ -1764,6 +1769,7 @@ msgstr "Failed to load retention policies"
 msgid "Failed to load SNMP profile"
 msgstr "Failed to load SNMP profile"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
@@ -2048,7 +2054,6 @@ msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Homebrew command"
 
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -2056,6 +2061,7 @@ msgstr "Homebrew command"
 msgid "Host"
 msgstr "Host"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Host / IP"
 msgstr "Host / IP"
@@ -2063,6 +2069,10 @@ msgstr "Host / IP"
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Host / IP / Domain"
 #~ msgstr "Host / IP / Domain"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Host is required"
+msgstr "Host is required"
 
 #: src/components/routes/network-device.tsx
 msgid "Hostname"
@@ -2218,6 +2228,14 @@ msgstr "Last Success"
 #: src/components/routes/settings/general.tsx
 msgid "Layout width"
 msgstr "Layout width"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Leave blank to keep the current value or inherit the profile default."
+msgstr "Leave blank to keep the current value or inherit the profile default."
+
+#: src/components/routes/target-form.tsx
+msgid "Leave blank to use the selected profile's community."
+msgstr "Leave blank to use the selected profile's community."
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
@@ -2456,7 +2474,6 @@ msgstr "Multiple devices"
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
@@ -2471,8 +2488,8 @@ msgid "Name"
 msgstr "Name"
 
 #: src/components/routes/network-device-form.tsx
-msgid "Name and host are required"
-msgstr "Name and host are required"
+#~ msgid "Name and host are required"
+#~ msgstr "Name and host are required"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Name is required"
@@ -3495,6 +3512,7 @@ msgstr "Select at least one target and one metric"
 #~ msgid "Select ports"
 #~ msgstr "Select ports"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Select SNMP profile"
 msgstr "Select SNMP profile"
@@ -3608,6 +3626,15 @@ msgstr "SMTP settings"
 #~ msgid "SNMP"
 #~ msgstr "SNMP"
 
+#: src/components/routes/network-device-form.tsx
+msgid "SNMP community"
+msgstr "SNMP community"
+
+#: src/components/routes/target-form.tsx
+msgid "SNMP community (optional override)"
+msgstr "SNMP community (optional override)"
+
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP port"
 msgstr "SNMP port"
@@ -3616,6 +3643,7 @@ msgstr "SNMP port"
 msgid "SNMP Port"
 msgstr "SNMP Port"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP profile"
 msgstr "SNMP profile"
@@ -3764,8 +3792,8 @@ msgid "sysDescr"
 msgstr "sysDescr"
 
 #: src/components/routes/network-device-form.tsx
-msgid "sysName or sysDescr is required"
-msgstr "sysName or sysDescr is required"
+#~ msgid "sysName or sysDescr is required"
+#~ msgstr "sysName or sysDescr is required"
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx

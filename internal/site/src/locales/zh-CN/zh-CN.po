@@ -130,6 +130,10 @@ msgstr ""
 msgid "6 hours"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
+msgid "A valid SNMP profile and port are required"
+msgstr "请选择有效的 SNMP 配置模板和端口"
+
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Accepted"
@@ -1235,6 +1239,7 @@ msgctxt "Layout display options"
 msgid "Display"
 msgstr "显示"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Display name (optional)"
 msgstr "显示名称（可选）"
@@ -1769,6 +1774,7 @@ msgstr ""
 msgid "Failed to load SNMP profile"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
@@ -2053,7 +2059,6 @@ msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Homebrew 安装命令"
 
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -2061,6 +2066,7 @@ msgstr "Homebrew 安装命令"
 msgid "Host"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Host / IP"
 msgstr "主机/IP"
@@ -2068,6 +2074,10 @@ msgstr "主机/IP"
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Host / IP / Domain"
 #~ msgstr ""
+
+#: src/components/routes/network-device-form.tsx
+msgid "Host is required"
+msgstr "主机/IP 不能为空"
 
 #: src/components/routes/network-device.tsx
 msgid "Hostname"
@@ -2223,6 +2233,14 @@ msgstr ""
 #: src/components/routes/settings/general.tsx
 msgid "Layout width"
 msgstr "布局宽度"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Leave blank to keep the current value or inherit the profile default."
+msgstr "留空将保持当前值；未设置网元覆盖值时继承配置模板默认值。"
+
+#: src/components/routes/target-form.tsx
+msgid "Leave blank to use the selected profile's community."
+msgstr "留空则使用所选配置模板的 community。"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
@@ -2461,7 +2479,6 @@ msgstr ""
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
-#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
@@ -2476,8 +2493,8 @@ msgid "Name"
 msgstr "名称"
 
 #: src/components/routes/network-device-form.tsx
-msgid "Name and host are required"
-msgstr ""
+#~ msgid "Name and host are required"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Name is required"
@@ -3500,6 +3517,7 @@ msgstr ""
 #~ msgid "Select ports"
 #~ msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Select SNMP profile"
 msgstr "选择 SNMP 配置"
@@ -3613,6 +3631,15 @@ msgstr "SMTP 设置"
 #~ msgid "SNMP"
 #~ msgstr ""
 
+#: src/components/routes/network-device-form.tsx
+msgid "SNMP community"
+msgstr "SNMP Community"
+
+#: src/components/routes/target-form.tsx
+msgid "SNMP community (optional override)"
+msgstr "SNMP Community（可选网元覆盖）"
+
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP port"
 msgstr "SNMP 端口"
@@ -3621,6 +3648,7 @@ msgstr "SNMP 端口"
 msgid "SNMP Port"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "SNMP profile"
 msgstr "SNMP 配置"
@@ -3769,8 +3797,8 @@ msgid "sysDescr"
 msgstr ""
 
 #: src/components/routes/network-device-form.tsx
-msgid "sysName or sysDescr is required"
-msgstr ""
+#~ msgid "sysName or sysDescr is required"
+#~ msgstr ""
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
