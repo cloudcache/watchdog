@@ -49,7 +49,9 @@ func (e SNMPDiscoveryEngine) Discover(ctx context.Context, req SNMPDiscoveryEngi
 	device.SysName = fingerprint.SysName
 	device.Uptime = time.Duration(fingerprint.SysUpTime/100) * time.Second
 	device.OSName = osMatch.OSName
-	device.Vendor = firstNonEmptySNMPString(device.Vendor, osMatch.Vendor)
+	if osMatch.Vendor != "" {
+		device.Vendor = osMatch.Vendor
+	}
 	device.OSVersion = extractOSVersion(fingerprint.SysDescr)
 
 	osDiscovery := osDiscoveryDefinition(osDef.Definition)
@@ -186,12 +188,16 @@ func parseSNMPTimeticks(value string) uint64 {
 // sysDescr line (or a comma, which Cisco uses to separate trailing clauses).
 // A character whitelist used to truncate Huawei strings mid-parenthesis
 // ("5.170 (S5720 V200R010" instead of "... V200R010C00SPC600)").
-var osVersionPattern = regexp.MustCompile(`(?i)version[\s:,]+([vV]?\d[^\r\n,]*)`)
+var osVersionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)version[\s:,]+([vV]?\d[^\r\n,]*)`),
+	regexp.MustCompile(`(?i)kernel\s+junos\s+([^\s,]+)`),
+}
 
 func extractOSVersion(sysDescr string) string {
-	match := osVersionPattern.FindStringSubmatch(sysDescr)
-	if match == nil {
-		return ""
+	for _, pattern := range osVersionPatterns {
+		if match := pattern.FindStringSubmatch(sysDescr); match != nil {
+			return strings.TrimSpace(match[1])
+		}
 	}
-	return strings.TrimSpace(match[1])
+	return ""
 }

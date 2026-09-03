@@ -24,7 +24,7 @@ type networkAPI struct {
 type networkDeviceSummary struct {
 	Device         NetworkDevice
 	Target         Target
-	Agent          SNMPAgentConfig
+	Agent          *SNMPAgentConfig `json:",omitempty"`
 	PortCount      int
 	UpPorts        int
 	DownPorts      int
@@ -116,9 +116,9 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 		if !canAccessTarget(auth, target.ID, ActionView) {
 			continue
 		}
-		summary := networkDeviceSummary{
-			Target: target,
-			Agent:  agentsByTargetID[target.ID],
+		summary := networkDeviceSummary{Target: target}
+		if agent, ok := agentsByTargetID[target.ID]; ok {
+			summary.Agent = &agent
 		}
 		if hasDevice {
 			if err := api.fillDeviceSummary(r.Context(), auth, &summary, device); err != nil {
@@ -136,9 +136,9 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 		if !canAccessTarget(auth, device.TargetID, ActionView) {
 			continue
 		}
-		summary := networkDeviceSummary{
-			Target: targetsByID[device.TargetID],
-			Agent:  agentsByTargetID[device.TargetID],
+		summary := networkDeviceSummary{Target: targetsByID[device.TargetID]}
+		if agent, ok := agentsByTargetID[device.TargetID]; ok {
+			summary.Agent = &agent
 		}
 		if err := api.fillDeviceSummary(r.Context(), auth, &summary, device); err != nil {
 			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)

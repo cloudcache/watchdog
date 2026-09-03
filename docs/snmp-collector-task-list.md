@@ -115,3 +115,11 @@ Status values:
 27. `[done]` Make network-device state and failure output reflect SNMP results.
     - Output: `internal/watchdog/api_network.go`, `internal/watchdog/discovery_scheduler.go`, network-device forms and event log.
     - Acceptance: a new/changed device is pending, successful discovery sets it up, failed discovery sets it down and writes a `discovery_failed` event; discovery-owned status cannot be manually set to up, and an unknown vendor renders the generic network icon instead of a broken image.
+
+28. `[done]` Make LibreNMS OS-definition import lossless and fail closed.
+    - Output: `internal/watchdog/snmp_definition_parser.go`, `internal/watchdog/snmp_definition_yaml.go`, `internal/watchdog/snmp_os_detection.go`.
+    - Acceptance: scalar and list conditions, contains/regex conditions, PCRE delimiters, and negative rules retain LibreNMS semantics; an invalid source file reports its path instead of being silently skipped; the reference checkout imports 803/803 definitions and classifies `.1.3.6.1.4.1.2636` as Junos rather than EdgeSwitch.
+
+29. `[done]` Preserve every discovered sensor identity.
+    - Output: `deploy/migration/mysql/015_network_sensor_identity.sql`.
+    - Acceptance: sensors sharing class/index but exposing different OIDs no longer overwrite each other; the MX480 discovery persists 212 discovered sensors with 212 distinct OIDs.

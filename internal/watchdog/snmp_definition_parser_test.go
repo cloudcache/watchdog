@@ -3,6 +3,7 @@ package watchdog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,59 @@ bad_iftype:
 	}
 	if def.Class != "network" {
 		t.Fatalf("class = %v", def.Class)
+	}
+}
+
+func TestParseLibrenmsDefinitionsAcceptsScalarDetectionValues(t *testing.T) {
+	dir := t.TempDir()
+	defsDir := filepath.Join(dir, "resources", "definitions", "os_detection")
+	if err := os.MkdirAll(defsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlContent := `os: junos
+text: Juniper JunOS
+type: network
+group: juniper
+discovery:
+    -
+        sysObjectID: .1.3.6.1.4.1.2636
+    -
+        sysDescr:
+            - kernel JUNOS
+        sysDescr_regex: '/Juniper Networks/i'
+`
+	if err := os.WriteFile(filepath.Join(defsDir, "junos.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ParseLibrenmsDefinitions(dir, "test-v1")
+	if err != nil {
+		t.Fatalf("ParseLibrenmsDefinitions error = %v", err)
+	}
+	if len(result.OSDefinitions) != 1 {
+		t.Fatalf("os definitions = %d, want 1", len(result.OSDefinitions))
+	}
+	match, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
+		SysObjectID: ".1.3.6.1.4.1.2636.1.1.1.2.25",
+		SysDescr:    "Juniper Networks, Inc. mx480 internet router, kernel JUNOS 21.2R3-S8.5",
+	}, result.OSDefinitions)
+	if !ok || match.OSName != "junos" || match.Vendor != "juniper" {
+		t.Fatalf("unexpected match: %#v, ok=%v", match, ok)
+	}
+}
+
+func TestParseLibrenmsDefinitionsReportsInvalidDetectionFile(t *testing.T) {
+	dir := t.TempDir()
+	defsDir := filepath.Join(dir, "resources", "definitions", "os_detection")
+	if err := os.MkdirAll(defsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(defsDir, "invalid.yaml")
+	if err := os.WriteFile(path, []byte("os: invalid\ndiscovery:\n  - sysObjectID: {bad: value}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseLibrenmsDefinitions(dir, "test-v1")
+	if err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("error = %v, want source path", err)
 	}
 }
 

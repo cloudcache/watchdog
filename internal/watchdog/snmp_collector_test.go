@@ -83,6 +83,75 @@ func TestSNMPCollectorDetectOSHonorsNegativeRules(t *testing.T) {
 	}
 }
 
+func TestSNMPCollectorDetectOSRequiresEveryLibreNMSCondition(t *testing.T) {
+	match, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
+		SysObjectID: ".1.3.6.1.4.1.2636.1.1.1.2.25",
+		SysDescr:    "Juniper Networks, Inc. mx480 internet router, kernel JUNOS 21.2R3-S8.5",
+	}, []SNMPCollectorOSDefinition{
+		{
+			OSName: "edgeswitch",
+			Vendor: "ubiquiti",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysObjectID":    ".1.3.6.1.4.1",
+				"sysDescr_regex": "/^EdgeSwitch/",
+			}}},
+		},
+		{
+			OSName: "junos",
+			Vendor: "juniper",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysObjectID": ".1.3.6.1.4.1.2636",
+			}}},
+		},
+	})
+	if !ok || match.OSName != "junos" || match.Vendor != "juniper" {
+		t.Fatalf("unexpected match: %#v, ok=%v", match, ok)
+	}
+}
+
+func TestSNMPCollectorDiscoveryCorrectsVendorAndJunosVersion(t *testing.T) {
+	query := fakeSNMPCollectorQueryEngine{gets: map[string]SNMPCollectorResponse{
+		"": {VarBinds: []SNMPCollectorVarBind{
+			{OID: snmpOIDSysObjectID, Value: ".1.3.6.1.4.1.2636.1.1.1.2.25"},
+			{OID: snmpOIDSysDescr, Value: "Juniper Networks, Inc. mx480 internet router, kernel JUNOS 21.2R3-S8.5, Build date"},
+			{OID: snmpOIDSysName, Value: "core-mx480"},
+			{OID: snmpOIDSysUpTime, Value: uint32(12300)},
+		}},
+	}}
+	engine := SNMPDiscoveryEngine{
+		Query: query,
+		OSDefinitions: []SNMPCollectorOSDefinition{{
+			OSName: "junos", Vendor: "juniper",
+			Definition: map[string]any{"sysObjectID": ".1.3.6.1.4.1.2636"},
+		}},
+	}
+	result, err := engine.Discover(context.Background(), SNMPDiscoveryEngineRequest{
+		TenantID: "tenant-a", TargetID: "target-a", Target: SNMPCollectorTarget{Host: "192.0.2.1"},
+		Device:  NetworkDevice{ID: "device-a", Vendor: "ubiquiti", OSName: "edgeswitch"},
+		Profile: SNMPProfile{Version: SNMPVersion2c, Security: map[string]string{"community": "public"}},
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if got := result.DeviceUpdates; got.Vendor != "juniper" || got.OSName != "junos" || got.OSVersion != "21.2R3-S8.5" {
+		t.Fatalf("device updates = %#v", got)
+	}
+}
+
+func TestSNMPCollectorSensorIdentityIncludesOID(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "015_network_sensor_identity.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	sql := string(data)
+	for _, want := range []string{"DROP INDEX uq_network_device_sensors_index", "sensor_class", "sensor_index", "oid(191)"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("schema missing %q", want)
+		}
+	}
+}
+
 func TestSNMPCollectorDiscoveryEngineRunsCoreOSAndModules(t *testing.T) {
 	query := fakeSNMPCollectorQueryEngine{
 		gets: map[string]SNMPCollectorResponse{

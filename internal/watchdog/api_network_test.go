@@ -321,6 +321,9 @@ func TestAPINetworkDeviceSummariesIncludeUndiscoveredNetworkTarget(t *testing.T)
 	if strings.Contains(body, `"Device":{"ID":"device-`) {
 		t.Fatalf("body unexpectedly included device: %s", body)
 	}
+	if strings.Contains(body, `"Agent"`) {
+		t.Fatalf("body unexpectedly included an empty agent: %s", body)
+	}
 }
 
 func TestAPINetworkDeviceSummaryRouteIsNotDeviceID(t *testing.T) {

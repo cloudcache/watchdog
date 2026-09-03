@@ -19,17 +19,25 @@ type librenmsOSDefinition struct {
 	Discovery        []librenmsOSDiscovery `yaml:"discovery"`
 	DiscoveryModules map[string]bool       `yaml:"discovery_modules"`
 	PollerModules    map[string]bool       `yaml:"poller_modules"`
-	BadIfType        []int                 `yaml:"bad_iftype"`
-	BadIfName        []string              `yaml:"bad_ifname_regexp"`
-	BadIfDescr       []string              `yaml:"bad_ifdescr_regexp"`
+	BadIfType        librenmsStringList    `yaml:"bad_iftype"`
+	BadIfName        librenmsStringList    `yaml:"bad_ifname_regexp"`
+	BadIfDescr       librenmsStringList    `yaml:"bad_ifdescr_regexp"`
 	Extra            map[string]any        `yaml:",inline"`
 }
 
 type librenmsOSDiscovery struct {
-	SysObjectID []string `yaml:"sysObjectID" json:"sysObjectID"`
-	SysDescr    []string `yaml:"sysDescr" json:"sysDescr_regex"`
-	SysName     []string `yaml:"sysName" json:"sysName_regex"`
-	Except      []string `yaml:"except" json:"except"`
+	SysObjectID            librenmsStringList `yaml:"sysObjectID" json:"sysObjectID,omitempty"`
+	SysObjectIDRegex       librenmsStringList `yaml:"sysObjectID_regex" json:"sysObjectID_regex,omitempty"`
+	SysDescr               librenmsStringList `yaml:"sysDescr" json:"sysDescr,omitempty"`
+	SysDescrRegex          librenmsStringList `yaml:"sysDescr_regex" json:"sysDescr_regex,omitempty"`
+	SysName                librenmsStringList `yaml:"sysName" json:"sysName,omitempty"`
+	SysNameRegex           librenmsStringList `yaml:"sysName_regex" json:"sysName_regex,omitempty"`
+	SysObjectIDExcept      librenmsStringList `yaml:"sysObjectID_except" json:"sysObjectID_except,omitempty"`
+	SysObjectIDRegexExcept librenmsStringList `yaml:"sysObjectID_regex_except" json:"sysObjectID_regex_except,omitempty"`
+	SysDescrExcept         librenmsStringList `yaml:"sysDescr_except" json:"sysDescr_except,omitempty"`
+	SysDescrRegexExcept    librenmsStringList `yaml:"sysDescr_regex_except" json:"sysDescr_regex_except,omitempty"`
+	SysNameExcept          librenmsStringList `yaml:"sysName_except" json:"sysName_except,omitempty"`
+	SysNameRegexExcept     librenmsStringList `yaml:"sysName_regex_except" json:"sysName_regex_except,omitempty"`
 }
 
 type librenmsTrapConfig struct {
@@ -84,11 +92,11 @@ func parseLibrenmsOSDefinitions(dir, sourceVersion string) ([]SNMPCollectorOSDef
 	for _, path := range matches {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
 		var raw librenmsOSDefinition
 		if err := yamlUnmarshal(data, &raw); err != nil {
-			continue
+			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 		if raw.OS == "" {
 			continue
@@ -97,13 +105,17 @@ func parseLibrenmsOSDefinitions(dir, sourceVersion string) ([]SNMPCollectorOSDef
 		// (processors / mempools / storage / sensors tables by MIB name);
 		// merge it so the discovery engine is definition-driven.
 		osDiscovery := loadLibrenmsOSDiscovery(dir, raw.OS)
+		discovery, err := normalizeLibrenmsDiscoveryRules(raw.Discovery)
+		if err != nil {
+			return nil, fmt.Errorf("normalize discovery rules in %s: %w", path, err)
+		}
 		definition := map[string]any{
 			"os_discovery":       osDiscovery,
 			"text":               raw.Text,
 			"type":               raw.Type,
 			"group":              raw.Group,
 			"mib_dir":            raw.MIBDir,
-			"discovery":          raw.Discovery,
+			"discovery":          discovery,
 			"discovery_modules":  raw.DiscoveryModules,
 			"poller_modules":     raw.PollerModules,
 			"bad_iftype":         raw.BadIfType,
@@ -129,6 +141,18 @@ func parseLibrenmsOSDefinitions(dir, sourceVersion string) ([]SNMPCollectorOSDef
 		})
 	}
 	return defs, nil
+}
+
+func normalizeLibrenmsDiscoveryRules(rules []librenmsOSDiscovery) ([]map[string]any, error) {
+	data, err := json.Marshal(rules)
+	if err != nil {
+		return nil, err
+	}
+	var normalized []map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
 }
 
 // loadLibrenmsOSDiscovery reads resources/definitions/os_discovery/<os>.yaml
