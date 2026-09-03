@@ -541,7 +541,7 @@ func TestAPINetworkDevicePatchAllowsClearingInventoryOverrides(t *testing.T) {
 	}}}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: configureNetworkTestAuth, Network: repo})
 	rec := httptest.NewRecorder()
-	body := `{"ID":"ignored","TargetID":"target-a","Vendor":"","Model":"","Platform":"","OSName":"","OSVersion":"","SysName":"","SysObjectID":"","SysDescr":"manual note"}`
+	body := `{"ID":"ignored","TargetID":"target-a","Vendor":"","Model":"","Platform":"","OSName":"","OSVersion":"","SysName":"","SysObjectID":"","SysDescr":""}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/network/devices/device-a", strings.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -550,7 +550,7 @@ func TestAPINetworkDevicePatchAllowsClearingInventoryOverrides(t *testing.T) {
 	if device.Vendor != "" || device.Model != "" || device.Platform != "" || device.OSName != "" || device.OSVersion != "" || device.SysName != "" || device.SysObjectID != "" {
 		t.Fatalf("inventory was not cleared: %#v", device)
 	}
-	if device.SysDescr != "manual note" {
+	if device.SysDescr != "" {
 		t.Fatalf("sysDescr = %q", device.SysDescr)
 	}
 	if device.SNMPProfileID != "profile-a" || device.SNMPPort != 1161 || device.SNMPSecurity["community"] != "private-a" {

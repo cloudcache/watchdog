@@ -568,9 +568,6 @@ func decodeNetworkDeviceRequest(r *http.Request) (NetworkDevice, error) {
 	if device.TargetID == "" {
 		return NetworkDevice{}, errors.New("target id is required")
 	}
-	if device.SysName == "" && device.SysDescr == "" {
-		return NetworkDevice{}, errors.New("sysName or sysDescr is required")
-	}
 	return device, nil
 }
 
