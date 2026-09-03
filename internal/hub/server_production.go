@@ -18,19 +18,16 @@ import (
 func (h *Hub) startServer(se *core.ServeEvent) error {
 	indexFile, _ := fs.ReadFile(site.DistDirFS, "index.html")
 	html := modifyIndexHTML(h, indexFile)
-	// set up static asset serving
-	staticPaths := [2]string{"/static/", "/assets/"}
+	// Vite fingerprints build assets, so they can be cached permanently. Files
+	// under /static keep stable names and must be revalidated after upgrades.
 	serveStatic := apis.Static(site.DistDirFS, false)
 	// get CSP configuration
 	csp, cspExists := utils.GetEnv("CSP")
 	// add route
 	se.Router.GET("/{path...}", func(e *core.RequestEvent) error {
-		// serve static assets if path is in staticPaths
-		for i := range staticPaths {
-			if strings.Contains(e.Request.URL.Path, staticPaths[i]) {
-				e.Response.Header().Set("Cache-Control", "public, max-age=2592000")
-				return serveStatic(e)
-			}
+		if cacheControl, ok := staticCacheControl(e.Request.URL.Path); ok {
+			e.Response.Header().Set("Cache-Control", cacheControl)
+			return serveStatic(e)
 		}
 		if cspExists {
 			e.Response.Header().Del("X-Frame-Options")
@@ -39,4 +36,14 @@ func (h *Hub) startServer(se *core.ServeEvent) error {
 		return e.HTML(http.StatusOK, html)
 	})
 	return nil
+}
+
+func staticCacheControl(requestPath string) (string, bool) {
+	if strings.Contains(requestPath, "/assets/") {
+		return "public, max-age=31536000, immutable", true
+	}
+	if strings.Contains(requestPath, "/static/") {
+		return "no-cache", true
+	}
+	return "", false
 }

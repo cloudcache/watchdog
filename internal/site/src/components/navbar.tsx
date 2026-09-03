@@ -109,7 +109,7 @@ export default function Navbar() {
 				className="p-2 ps-0 me-3 group"
 				onMouseEnter={runOnce(() => import("@/components/routes/targets"))}
 			>
-				<img src="/static/watchdog-logo.svg" alt="Watchdog" className="h-6 md:h-7" />
+				<img src={prependBasePath("/static/watchdog-logo.svg")} alt="Watchdog" className="h-6 md:h-7" />
 			</Link>
 			<Button
 				variant="outline"

@@ -18,7 +18,7 @@ export default function () {
 	const { theme } = useTheme()
 
 	useEffect(() => {
-		document.title = t`Login` + " / Watchdog"
+		document.title = [t`Login`, "Watchdog"].join(" / ")
 
 		pb.send("/api/watchdog/first-run", {}).then(({ firstRun }) => {
 			setFirstRun(firstRun)
@@ -54,15 +54,14 @@ export default function () {
 			<div
 				className="grid gap-5 w-full px-4 mx-auto"
 				// @ts-expect-error
-				style={{ maxWidth: "21.5em", "--border": theme == "light" ? "hsl(30, 8%, 70%)" : "hsl(220, 3%, 25%)" }}
+				style={{ maxWidth: "21.5em", "--border": theme === "light" ? "hsl(30, 8%, 70%)" : "hsl(220, 3%, 25%)" }}
 			>
 				<div className="absolute top-3 right-3">
 					<ModeToggle />
 				</div>
 				<div className="text-center">
 					<h1 className="mb-3">
-						<Logo className="h-7 fill-foreground mx-auto" />
-						<span className="sr-only">Watchdog</span>
+						<Logo className="h-8 mx-auto" />
 					</h1>
 					<p className="text-sm text-muted-foreground">{subtitle}</p>
 				</div>

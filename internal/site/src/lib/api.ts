@@ -1,5 +1,5 @@
 import PocketBase from "pocketbase"
-import { basePath } from "@/components/router"
+import { basePath, prependBasePath } from "@/components/router"
 import type { ChartTimes, UserSettings } from "@/types"
 import {
 	$platformIdentity,
@@ -134,7 +134,7 @@ async function sendWatchdogAPI<T>(
 			headers.set("X-Watchdog-Tenant-ID", tenantID)
 		}
 	}
-	const url = new URL(`${basePath}${path}`, window.location.origin)
+	const url = new URL(prependBasePath(path), window.location.origin)
 	for (const [key, value] of Object.entries(options.query ?? {})) {
 		if (value !== undefined) {
 			url.searchParams.set(key, String(value))
