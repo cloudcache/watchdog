@@ -73,6 +73,9 @@ func (api targetAPI) create(w http.ResponseWriter, r *http.Request) {
 	}
 	target := req.target()
 	target.TenantID = auth.TenantID
+	if target.Kind == TargetKindNetwork {
+		target.Status = "pending"
+	}
 	// The API owns resource identity. Names are presentation only; a normalized
 	// tenant/kind/host key gives retries the same bounded database ID.
 	target.ID = stableID("target", string(auth.TenantID), string(target.Kind), target.Host)

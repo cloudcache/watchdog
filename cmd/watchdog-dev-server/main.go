@@ -42,7 +42,7 @@ func main() {
 			}
 		}()
 		go func() {
-			if err := runtime.DiscoveryScheduler.RunLoop(ctx, cfg.SNMPCollector.DiscoveryInterval, cfg.SNMPCollector.DiscoveryBatch); err != nil && !errors.Is(err, context.Canceled) {
+			if err := runtime.DiscoveryScheduler.RunLoop(ctx, tenantID, cfg.SNMPCollector.DiscoveryInterval, cfg.SNMPCollector.DiscoveryBatch); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("watchdog discovery scheduler stopped: %v", err)
 			}
 		}()

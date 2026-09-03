@@ -116,13 +116,16 @@ func TestAPITargetsCreateNetworkFromHostOnly(t *testing.T) {
 		DiscoveryJobs: jobs,
 	})
 	rec := httptest.NewRecorder()
-	body := `{"id":"22e97b7d-6b32-433f-b44e-936c205661b7","kind":"network","host":" 10.0.0.2 ","snmp_security":{"community":"private-a"}}`
+	body := `{"id":"22e97b7d-6b32-433f-b44e-936c205661b7","kind":"network","host":" 10.0.0.2 ","status":"up","snmp_security":{"community":"private-a"}}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/targets", strings.NewReader(body)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if repo.created.Name != "10.0.0.2" || repo.created.Host != "10.0.0.2" {
 		t.Fatalf("created target = %#v", repo.created)
+	}
+	if repo.created.Status != "pending" {
+		t.Fatalf("created target status = %q, want pending", repo.created.Status)
 	}
 	if repo.created.ID == "" || len(repo.created.ID) > 26 || repo.created.ID == "22e97b7d-6b32-433f-b44e-936c205661b7" {
 		t.Fatalf("server-generated target ID = %q", repo.created.ID)

@@ -3,7 +3,6 @@ package watchdog
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 func (s *MySQLStore) EnqueueDiscoveryJob(ctx context.Context, tenantID, deviceID ID, reason string) error {
@@ -21,17 +20,17 @@ func (s *MySQLStore) EnqueueDiscoveryJob(ctx context.Context, tenantID, deviceID
 	return err
 }
 
-func (s *MySQLStore) ListDueDiscoveryJobs(ctx context.Context, limit int, now time.Time) ([]DiscoveryJob, error) {
+func (s *MySQLStore) ListDueDiscoveryJobs(ctx context.Context, tenantID ID, limit int) ([]DiscoveryJob, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, tenant_id, device_id, reason, status, due_at, started_at, completed_at, last_error, created_at, updated_at
 		FROM discovery_jobs
-		WHERE status = 'pending' AND due_at <= ?
+		WHERE tenant_id = ? AND status = 'pending' AND due_at <= CURRENT_TIMESTAMP(3)
 		ORDER BY due_at ASC
 		LIMIT ?
-	`, now, limit)
+	`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +51,15 @@ func (s *MySQLStore) ListDueDiscoveryJobs(ctx context.Context, limit int, now ti
 	return jobs, rows.Err()
 }
 
-func (s *MySQLStore) MarkDiscoveryJobRunning(ctx context.Context, jobID ID) error {
-	_, err := s.db.ExecContext(ctx, `
+func (s *MySQLStore) MarkDiscoveryJobRunning(ctx context.Context, jobID ID) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE discovery_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND status = 'pending'
 	`, jobID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected == 1, err
 }
 
 func (s *MySQLStore) MarkDiscoveryJobCompleted(ctx context.Context, jobID ID, lastError string) error {
@@ -65,7 +68,9 @@ func (s *MySQLStore) MarkDiscoveryJobCompleted(ctx context.Context, jobID ID, la
 		status = discoveryJobFailed
 	}
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE discovery_jobs SET status = ?, completed_at = CURRENT_TIMESTAMP(3), last_error = NULLIF(?, '') WHERE id = ?
+		UPDATE discovery_jobs
+		SET status = ?, completed_at = CURRENT_TIMESTAMP(3), last_error = NULLIF(?, '')
+		WHERE id = ? AND status = 'running'
 	`, status, lastError, jobID)
 	return err
 }

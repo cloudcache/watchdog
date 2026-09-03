@@ -8,7 +8,14 @@ go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/i
 go run ./cmd/watchdog-dev-server --config config/watchdog.yaml
 # Production Hub serves PocketBase auth, the SPA, and /api/v1 on one origin.
 go run ./internal/cmd/hub serve --watchdog-config config/watchdog.yaml
+# Independent SNMP discovery/polling data plane (run as a supervised service).
+go run ./cmd/watchdog-snmp-collector --config config/watchdog.yaml --loop
 ```
+
+The Hub intentionally serves the control plane only. Saving an SNMP device
+queues discovery; at least one `watchdog-snmp-collector --loop` process must be
+running for that tenant. The worker claims queued discovery jobs immediately,
+then continues discovery and polling at the configured intervals.
 
 The installer and embedded migration runner are intentionally idempotent:
 

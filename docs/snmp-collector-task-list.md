@@ -107,3 +107,11 @@ Status values:
 25. `[done]` Start the new collector from the dev API and expose raw-counter traffic charts.
     - Output: `cmd/watchdog-dev-server/main.go`, `internal/watchdog/runtime.go`, `internal/watchdog/api_metrics.go`, `internal/watchdog/snmp_projection.go`
     - Acceptance: dev API starts the new collector by default, old SNMP pull remains stopped, collector logs successful polling, MySQL `snmp_collection_recipes.last_polled_at` advances, and `/api/v1/metrics/query` returns traffic series by projecting raw octet counters.
+
+26. `[done]` Close the production discovery-job lifecycle in the independent collector.
+    - Output: `cmd/watchdog-snmp-collector/main.go`, `internal/watchdog/discovery_scheduler.go`, `internal/watchdog/mysql_discovery_repository.go`
+    - Acceptance: `--loop` requires no single device ID, claims tenant-scoped pending jobs immediately using the database clock, atomically skips jobs claimed by another worker, records completion/error, and continues recipe polling.
+
+27. `[done]` Make network-device state and failure output reflect SNMP results.
+    - Output: `internal/watchdog/api_network.go`, `internal/watchdog/discovery_scheduler.go`, network-device forms and event log.
+    - Acceptance: a new/changed device is pending, successful discovery sets it up, failed discovery sets it down and writes a `discovery_failed` event; discovery-owned status cannot be manually set to up, and an unknown vendor renders the generic network icon instead of a broken image.

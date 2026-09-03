@@ -39,19 +39,21 @@ http://127.0.0.1:5173
 
 The Vite dev server proxies `/api/v1` to `http://127.0.0.1:8091`.
 
-4. Optional: run the SNMP collector for one network device:
+4. When testing SNMP, run the independent collector/discovery worker in another terminal:
 
 ```bash
 go run ./cmd/watchdog-snmp-collector \
   --config config/watchdog.dev.yaml \
   --tenant tenant_dev \
-  --device "$WATCHDOG_NETWORK_DEVICE_ID" \
   --interval 1m \
   --loop
 ```
 
-The collector loads the device SNMP profile, discovers supported modules,
-imports collection recipes, and polls due recipes into raw samples.
+The loop claims queued discovery jobs immediately, loads each device's SNMP
+profile and per-device override, imports collection recipes, and polls due
+recipes into raw samples. The Hub is the control plane and does not perform
+network polling in its HTTP process. For a one-off device diagnostic, omit
+`--loop` and pass `--device "$WATCHDOG_NETWORK_DEVICE_ID"`.
 When `--tenant`, `--interval`, or `--limit` is omitted, the command uses
 `snmp_collector.tenant_id`, `interval`, and `poll_limit` from the shared config.
 Set `--discover=false` to run due polling without requiring `--device`.

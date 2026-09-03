@@ -429,7 +429,11 @@ func (api networkAPI) patchDeviceSNMP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if api.discoveryJobs != nil {
-		_ = api.discoveryJobs.EnqueueDiscoveryJob(r.Context(), auth.TenantID, updated.ID, "snmp_credentials_changed")
+		if err := api.discoveryJobs.EnqueueDiscoveryJob(r.Context(), auth.TenantID, updated.ID, "snmp_credentials_changed"); err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, "SNMP settings were saved but discovery could not be queued", nil)
+			return
+		}
+		_ = updateNetworkTargetStatus(r.Context(), api.targets, auth.TenantID, updated.TargetID, "pending")
 	}
 	WriteAPIJSON(w, http.StatusOK, updated)
 }
@@ -487,6 +491,7 @@ func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	profile = ApplyDeviceSNMPOverrides(profile, device)
+	_ = updateNetworkTargetStatus(r.Context(), api.targets, auth.TenantID, device.TargetID, "pending")
 	result, err := api.discovery.Discover(r.Context(), SNMPDiscoveryEngineRequest{
 		TenantID: auth.TenantID,
 		TargetID: device.TargetID,
@@ -495,6 +500,8 @@ func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request)
 		Profile:  profile,
 	})
 	if err != nil {
+		_ = updateNetworkTargetStatus(r.Context(), api.targets, auth.TenantID, device.TargetID, "down")
+		_ = recordSNMPDiscoveryFailure(r.Context(), api.collector, auth.TenantID, device.ID, err.Error())
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
@@ -522,9 +529,12 @@ func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request)
 	}
 	report, err := ImportSNMPCollectorDiscoveryResult(r.Context(), api.repo, api.collector, auth.TenantID, device, result)
 	if err != nil {
+		_ = updateNetworkTargetStatus(r.Context(), api.targets, auth.TenantID, device.TargetID, "down")
+		_ = recordSNMPDiscoveryFailure(r.Context(), api.collector, auth.TenantID, device.ID, err.Error())
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	_ = updateNetworkTargetStatus(r.Context(), api.targets, auth.TenantID, device.TargetID, "up")
 	_ = promoteDiscoveredTargetName(r.Context(), api.targets, auth.TenantID, device.TargetID, report.Device.SysName)
 	WriteAPIJSON(w, http.StatusOK, map[string]any{
 		"ports": report.Ports, "sensors": report.Sensors, "count": report.Ports, "deleted": deleted,

@@ -6,8 +6,6 @@ export const vendorLogos: Record<string, string> = {
 	zte: "/static/vendor-logos/zte.svg",
 }
 
-export const transparentVendorLogo = "data:image/gif;base64,R0lGODlhAQABAAAAACw="
-
 export function vendorLogoFor(vendor: string) {
 	const key = vendor.trim().toLowerCase()
 	if (vendorLogos[key]) return vendorLogos[key]
@@ -16,5 +14,5 @@ export function vendorLogoFor(vendor: string) {
 	if (key.includes("juniper") || key.includes("junos")) return vendorLogos.junos
 	if (key.includes("arista")) return vendorLogos.arista
 	if (key.includes("zte")) return vendorLogos.zte
-	return transparentVendorLogo
+	return ""
 }

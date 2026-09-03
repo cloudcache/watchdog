@@ -3,11 +3,11 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 type fakeNetworkRepository struct {
@@ -637,11 +637,41 @@ func TestAPINetworkDeviceSNMPPatchPreservesSecretWhenOmitted(t *testing.T) {
 type fakeSNMPInterfaceDiscoverer struct {
 	request SNMPDiscoveryEngineRequest
 	result  SNMPCollectorDiscoveryResult
+	err     error
 }
 
 func (d *fakeSNMPInterfaceDiscoverer) Discover(_ context.Context, request SNMPDiscoveryEngineRequest) (SNMPCollectorDiscoveryResult, error) {
 	d.request = request
-	return d.result, nil
+	return d.result, d.err
+}
+
+func TestAPINetworkDeviceSNMPDiscoverMarksFailureDown(t *testing.T) {
+	repo := &fakeNetworkRepository{devices: []NetworkDevice{{
+		ID: "device-a", TenantID: "tenant-a", TargetID: "target-a", SNMPProfileID: "profile-a", SNMPPort: 161,
+	}}}
+	targets := &fakeTargetRepository{targets: []Target{{
+		ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1", Status: "up",
+	}}}
+	collector := &fakeSNMPCollectorRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:          configureNetworkTestAuth,
+		Network:       repo,
+		Targets:       targets,
+		SNMP:          &fakeSNMPRepository{profiles: []SNMPProfile{{ID: "profile-a", TenantID: "tenant-a", Version: "2c"}}},
+		SNMPDiscovery: &fakeSNMPInterfaceDiscoverer{err: errors.New("request timeout")},
+		SNMPCollector: collector,
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/network/devices/device-a/snmp/discover", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if targets.updated.Status != "down" {
+		t.Fatalf("target status = %q", targets.updated.Status)
+	}
+	if len(collector.events) != 1 || collector.events[0].EventType != "discovery_failed" {
+		t.Fatalf("events = %#v", collector.events)
+	}
 }
 
 func TestAPINetworkDeviceSNMPDiscoverSyncsPortsAndUsesDeviceCommunityOverride(t *testing.T) {
@@ -724,10 +754,12 @@ func (f *fakeDiscoveryJobRepository) EnqueueDiscoveryJob(_ context.Context, tena
 	f.enqueued = append(f.enqueued, DiscoveryJob{TenantID: tenantID, DeviceID: deviceID, Reason: reason})
 	return nil
 }
-func (f *fakeDiscoveryJobRepository) ListDueDiscoveryJobs(context.Context, int, time.Time) ([]DiscoveryJob, error) {
+func (f *fakeDiscoveryJobRepository) ListDueDiscoveryJobs(context.Context, ID, int) ([]DiscoveryJob, error) {
 	return nil, nil
 }
-func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobRunning(context.Context, ID) error { return nil }
+func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobRunning(context.Context, ID) (bool, error) {
+	return true, nil
+}
 func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobCompleted(context.Context, ID, string) error {
 	return nil
 }

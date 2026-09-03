@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -9,7 +10,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/cloudcache/watchdog/internal/watchdog"
 )
@@ -25,8 +25,11 @@ func main() {
 	limit := flag.Int("limit", 0, "maximum due recipes to poll (overrides config)")
 	flag.Parse()
 
-	if *discover && strings.TrimSpace(*deviceID) == "" {
+	if *discover && strings.TrimSpace(*deviceID) == "" && !*loop {
 		log.Fatal("device id is required")
+	}
+	if !*discover && !*poll {
+		log.Fatal("at least one of discover or poll must be enabled")
 	}
 	if *interval < 0 || *limit < 0 {
 		log.Fatal("interval and limit must not be negative")
@@ -62,7 +65,7 @@ func main() {
 
 	tenant := resolvedTenantID
 
-	if *discover {
+	if *discover && !*loop {
 		device, err := runtime.Store.GetDevice(ctx, tenant, watchdog.ID(strings.TrimSpace(*deviceID)))
 		if err != nil {
 			log.Fatal(err)
@@ -101,7 +104,7 @@ func main() {
 		fmt.Printf("discovery imported: device=%s ports=%d sensors=%d physical=%d bgp=%d vlans=%d lags=%d recipes=%d events=%d modules=%d\n",
 			report.Device.ID, report.Ports, report.Sensors, report.PhysicalEntities, report.BGPSessions, report.VLANs, report.LAGs, report.Recipes, report.Events, report.DeviceModules)
 	}
-	if *poll {
+	if *poll && !*loop {
 		result, err := runtime.RunSNMPCollectorPoll(ctx, tenant, resolvedLimit)
 		if err != nil {
 			log.Fatal(err)
@@ -109,20 +112,24 @@ func main() {
 		fmt.Printf("poll completed: recipes=%d devices=%d samples=%d failed=%d\n", result.RecipeCount, result.DeviceCount, result.SampleCount, result.FailedCount)
 	}
 	if *loop {
-		ticker := time.NewTicker(resolvedInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				result, err := runtime.RunSNMPCollectorPoll(ctx, tenant, resolvedLimit)
-				if err != nil {
-					log.Printf("poll failed: %v", err)
-					continue
+		if *discover {
+			if strings.TrimSpace(*deviceID) != "" {
+				if err := runtime.Store.EnqueueDiscoveryJob(ctx, tenant, watchdog.ID(strings.TrimSpace(*deviceID)), "collector_start"); err != nil {
+					log.Fatal(err)
 				}
-				fmt.Printf("poll completed: recipes=%d devices=%d samples=%d failed=%d\n", result.RecipeCount, result.DeviceCount, result.SampleCount, result.FailedCount)
 			}
+			go func() {
+				if err := runtime.DiscoveryScheduler.RunLoop(ctx, tenant, cfg.SNMPCollector.DiscoveryInterval, cfg.SNMPCollector.DiscoveryBatch); err != nil && !errors.Is(err, context.Canceled) {
+					log.Printf("discovery scheduler stopped: %v", err)
+				}
+			}()
 		}
+		if *poll {
+			if err := runtime.RunSNMPCollectorScheduler(ctx, tenant, resolvedInterval, resolvedLimit); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("poll scheduler stopped: %v", err)
+			}
+			return
+		}
+		<-ctx.Done()
 	}
 }

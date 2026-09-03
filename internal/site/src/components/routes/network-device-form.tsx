@@ -336,17 +336,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 						</p>
 					</Field>
 					<Field label={t`Status`}>
-						<Select value={form.status} onValueChange={(status) => update({ status })} disabled={loading}>
-							<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="pending">pending</SelectItem>
-								<SelectItem value="up">up</SelectItem>
-								<SelectItem value="down">down</SelectItem>
-								<SelectItem value="paused">paused</SelectItem>
-							</SelectContent>
-						</Select>
+						<Input value={form.status || "pending"} disabled />
 					</Field>
 					<Field label={t`Vendor`}>
 						<Input
