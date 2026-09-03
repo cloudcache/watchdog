@@ -41,7 +41,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales fetch-smartctl-conditional watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install
+.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install
 .DEFAULT_GOAL := build
 
 clean:
@@ -72,29 +72,23 @@ build-dotnet-conditional:
 		echo "Building .NET executable for Windows..."; \
 		if command -v dotnet >/dev/null 2>&1; then \
 			rm -rf ./agent/lhm/bin; \
-			dotnet build -c Release ./agent/lhm/beszel_lhm.csproj; \
+			dotnet build -c Release ./agent/lhm/watchdog_lhm.csproj; \
 		else \
 			echo "Error: dotnet not found. Install .NET SDK to build Windows agent."; \
 			exit 1; \
 		fi; \
 	fi
 
-# Download smartctl.exe at build time for Windows (skips if already present)
-fetch-smartctl-conditional:
-	@if [ "$(OS)" = "windows" ]; then \
-		go generate -run fetchsmartctl ./agent; \
-	fi
-
 # Update build-agent to include conditional .NET build
-build-agent: tidy build-dotnet-conditional fetch-smartctl-conditional
-	GOOS=$(OS) GOARCH=$(ARCH) go build $(AGENT_GO_TAGS) -o ./build/beszel-agent_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/agent
+build-agent: tidy build-dotnet-conditional
+	GOOS=$(OS) GOARCH=$(ARCH) go build $(AGENT_GO_TAGS) -o ./build/watchdog-agent_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/agent
 
 build-hub: tidy $(if $(filter false,$(SKIP_WEB)),build-web-ui)
-	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/beszel_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/hub
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/hub
 
 build-hub-dev: tidy
 	mkdir -p ./internal/site/dist && touch ./internal/site/dist/index.html
-	GOOS=$(OS) GOARCH=$(ARCH) go build -tags development -o ./build/beszel-dev_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/hub
+	GOOS=$(OS) GOARCH=$(ARCH) go build -tags development -o ./build/watchdog-dev_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/hub
 
 build: build-agent build-hub
 
@@ -123,9 +117,9 @@ dev-hub:
 
 dev-agent:
 	@if command -v entr >/dev/null 2>&1; then \
-		find ./internal/cmd/agent/*.go ./agent/*.go | entr -r go run $(AGENT_GO_TAGS) github.com/henrygd/beszel/internal/cmd/agent; \
+		find ./internal/cmd/agent/*.go ./agent/*.go | entr -r go run $(AGENT_GO_TAGS) github.com/cloudcache/watchdog/internal/cmd/agent; \
 	else \
-		go run $(AGENT_GO_TAGS) github.com/henrygd/beszel/internal/cmd/agent; \
+		go run $(AGENT_GO_TAGS) github.com/cloudcache/watchdog/internal/cmd/agent; \
 	fi
 
 watchdog-dev-db:
@@ -146,7 +140,7 @@ watchdog-dev-install:
 build-dotnet:
 	@if command -v dotnet >/dev/null 2>&1; then \
 		rm -rf ./agent/lhm/bin; \
-		dotnet build -c Release ./agent/lhm/beszel_lhm.csproj; \
+		dotnet build -c Release ./agent/lhm/watchdog_lhm.csproj; \
 	else \
 		echo "dotnet not found"; \
 	fi

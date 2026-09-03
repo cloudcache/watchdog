@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/henrygd/beszel/agent/deltatracker"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/deltatracker"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 	psutilNet "github.com/shirou/gopsutil/v4/net"
 )
 

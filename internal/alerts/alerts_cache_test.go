@@ -5,22 +5,22 @@ package alerts_test
 import (
 	"testing"
 
-	"github.com/henrygd/beszel/internal/alerts"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSystemAlertsCachePopulateAndFilter(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 2, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 2, user.Id, "up")
 	require.NoError(t, err)
 	system1 := systems[0]
 	system2 := systems[1]
 
-	statusAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	statusAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Status",
 		"system": system1.Id,
 		"user":   user.Id,
@@ -28,7 +28,7 @@ func TestSystemAlertsCachePopulateAndFilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	cpuAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	cpuAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "CPU",
 		"system": system1.Id,
 		"user":   user.Id,
@@ -37,7 +37,7 @@ func TestSystemAlertsCachePopulateAndFilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	memoryAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	memoryAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Memory",
 		"system": system2.Id,
 		"user":   user.Id,
@@ -63,14 +63,14 @@ func TestSystemAlertsCachePopulateAndFilter(t *testing.T) {
 }
 
 func TestSystemAlertsCacheLazyLoadUpdateAndDelete(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
-	statusAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	statusAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Status",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -81,7 +81,7 @@ func TestSystemAlertsCacheLazyLoadUpdateAndDelete(t *testing.T) {
 	cache := alerts.NewAlertsCache(hub)
 	require.Len(t, cache.GetSystemAlerts(systemRecord.Id), 1, "first lookup should lazy-load alerts for the system")
 
-	cpuAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	cpuAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "CPU",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -101,14 +101,14 @@ func TestSystemAlertsCacheLazyLoadUpdateAndDelete(t *testing.T) {
 }
 
 func TestSystemAlertsCacheRefreshReturnsLatestCopy(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	system := systems[0]
 
-	alert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":      "Status",
 		"system":    system.Id,
 		"user":      user.Id,
@@ -135,15 +135,15 @@ func TestSystemAlertsCacheRefreshReturnsLatestCopy(t *testing.T) {
 }
 
 func TestAlertManagerCacheLifecycle(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	system := systems[0]
 
 	// Create an alert
-	alert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "CPU",
 		"system": system.Id,
 		"user":   user.Id,
@@ -177,15 +177,15 @@ func TestAlertManagerCacheLifecycle(t *testing.T) {
 }
 
 // func TestAlertManagerCacheMovesAlertToNewSystemOnUpdate(t *testing.T) {
-// 	hub, user := beszelTests.GetHubWithUser(t)
+// 	hub, user := watchdogTests.GetHubWithUser(t)
 // 	defer hub.Cleanup()
 
-// 	systems, err := beszelTests.CreateSystems(hub, 2, user.Id, "up")
+// 	systems, err := watchdogTests.CreateSystems(hub, 2, user.Id, "up")
 // 	require.NoError(t, err)
 // 	system1 := systems[0]
 // 	system2 := systems[1]
 
-// 	alert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+// 	alert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 // 		"name":   "CPU",
 // 		"system": system1.Id,
 // 		"user":   user.Id,

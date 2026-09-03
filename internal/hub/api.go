@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	"github.com/cloudcache/watchdog/internal/ghupdate"
+	"github.com/cloudcache/watchdog/internal/hub/config"
+	"github.com/cloudcache/watchdog/internal/hub/systems"
+	"github.com/cloudcache/watchdog/internal/hub/utils"
 	"github.com/google/uuid"
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/internal/alerts"
-	"github.com/henrygd/beszel/internal/ghupdate"
-	"github.com/henrygd/beszel/internal/hub/config"
-	"github.com/henrygd/beszel/internal/hub/systems"
-	"github.com/henrygd/beszel/internal/hub/utils"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -87,10 +87,10 @@ func (h *Hub) registerMiddlewares(se *core.ServeEvent) {
 // registerApiRoutes registers custom API routes
 func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 	// auth protected routes
-	apiAuth := se.Router.Group("/api/beszel")
+	apiAuth := se.Router.Group("/api/watchdog")
 	apiAuth.Bind(apis.RequireAuth())
 	// auth optional routes
-	apiNoAuth := se.Router.Group("/api/beszel")
+	apiNoAuth := se.Router.Group("/api/watchdog")
 
 	// create first user endpoint only needed if no users exist
 	if totalUsers, _ := se.App.CountRecords("users"); totalUsers == 0 {
@@ -146,7 +146,7 @@ func (h *Hub) getInfo(e *core.RequestEvent) error {
 	}
 	info := infoResponse{
 		Key:     h.pubKey,
-		Version: beszel.Version,
+		Version: watchdog.Version,
 	}
 	if optIn, _ := utils.GetEnv("CHECK_UPDATES"); optIn == "true" {
 		info.CheckUpdate = true
@@ -164,7 +164,7 @@ func (info *UpdateInfo) getUpdate(e *core.RequestEvent) error {
 	if err != nil {
 		return err
 	}
-	currentVersion, err := semver.Parse(strings.TrimPrefix(beszel.Version, "v"))
+	currentVersion, err := semver.Parse(strings.TrimPrefix(watchdog.Version, "v"))
 	if err != nil {
 		return err
 	}
@@ -328,7 +328,7 @@ func (h *Hub) containerRequestHandler(e *core.RequestEvent, fetchFunc func(*syst
 	return e.JSON(http.StatusOK, map[string]string{responseKey: data})
 }
 
-// getContainerLogs handles GET /api/beszel/containers/logs requests
+// getContainerLogs handles GET /api/watchdog/containers/logs requests
 func (h *Hub) getContainerLogs(e *core.RequestEvent) error {
 	return h.containerRequestHandler(e, func(system *systems.System, containerID string) (string, error) {
 		return system.FetchContainerLogsFromAgent(containerID)
@@ -341,7 +341,7 @@ func (h *Hub) getContainerInfo(e *core.RequestEvent) error {
 	}, "info")
 }
 
-// getSystemdInfo handles GET /api/beszel/systemd/info requests
+// getSystemdInfo handles GET /api/watchdog/systemd/info requests
 func (h *Hub) getSystemdInfo(e *core.RequestEvent) error {
 	query := e.Request.URL.Query()
 	systemID := query.Get("system")
@@ -370,7 +370,7 @@ func (h *Hub) getSystemdInfo(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{"details": details})
 }
 
-// refreshSmartData handles POST /api/beszel/smart/refresh requests
+// refreshSmartData handles POST /api/watchdog/smart/refresh requests
 // Fetches fresh SMART data from the agent and updates the collection
 func (h *Hub) refreshSmartData(e *core.RequestEvent) error {
 	systemID := e.Request.URL.Query().Get("system")

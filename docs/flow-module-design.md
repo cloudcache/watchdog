@@ -94,7 +94,8 @@ flow module 采用 Go 编译期 registry，不使用脆弱的运行时 `.so`：
 | ClickHouse | 高基数分析事实源：分钟 pair、地址段/address set、endpoint、Geo、端口 | 接口计费真值、配置 CRUD |
 | VictoriaMetrics | 现有 SNMP/系统指标和 collect/dimension/Kafka 自监控；可选的 Flow 低基数 recording cache | Flow 业务事实、per-IP、端口和机构明细 |
 | MySQL | exporter、home profile、VPN 规则/结果；现有 CIDR 标签和审计 | flow 明细 |
-| VictoriaLogs（可选） | 限速抽样的解码诊断和错误事件 | 正式流向查询 |
+
+VictoriaLogs 不再是任何部署 profile 的组成部分。解码诊断只允许写有大小/TTL 上限的本地 capture 或 Kafka DLQ，并且默认关闭；它们不是在线查询存储。
 
 AS、IP 段、地域、运营商和六类结果完全由 flow 与离线地址库计算。已有计费场景的 SNMP 接口计数仍是计费真值，并可作为 flow 总量的独立对账基准；未部署 SNMP 时 flow 模块仍可运行，只是没有独立总量校验。sFlow counter sample 也可提供接口累计量作为同通道基准，但不能替代 SNMP 的独立性。任何 flow 估算或校准值都禁止覆盖账单原始 counter。
 
@@ -211,7 +212,7 @@ internal/modules/flow/
   module.go       descriptor/register
 ```
 
-现有 [`sflow_collector.go`](../internal/watchdog/sflow_collector.go) 不在热路径上继续堆补丁；在新 flow-collect→normalized→dimension worker 验收后删除逐 flow VictoriaLogs 写入和旧 metric，保留一版兼容迁移说明。
+现有 [`sflow_collector.go`](../internal/watchdog/sflow_collector.go) 不在热路径上继续堆补丁。逐 flow VictoriaLogs 写入和浏览器 FlowSearch 按存储收敛 S0 先行禁用/删除，不等待新管线；旧 sFlow aggregate metric 只在 flow-collect→normalized→dimension worker 验收后退役，并保留一版兼容迁移说明。
 
 ## 3. 地址库导出与读取契约
 
@@ -517,7 +518,7 @@ message NormalizedRecord {
 - 生产 base 表使用 ReplicatedSummingMergeTree insert dedup token；重试前还可按持久化 `ingest_batch_id` 检查完整 base batch，避免 dedup window 外重复；
 - base insert 成功后即可提交 normalized offset。其余五张 CH 表和可选 VM recording cache 都是可重建派生数据：每个 partition/derived-target 在 compacted checkpoint 中推进连续 watermark，空洞保存为有界 missing batch ID 列表；不得为每个 batch 创建永久 compacted key。attached MV 必须忽略 view error 并记录日志，或改用互斥的进程内 rollup loop。失败只记录 divergence，由 base fact 用同一 `(ingest_batch_id,target)` 幂等补写，不反向丢弃已确认事实；
 - 重分类 job 使用独立 consumer group/run ID 和目标 snapshot，受 retention/TTL 限制，可暂停、重试和审计，不阻塞在线 group；
-- VictoriaLogs 仅限速抽样诊断，不承载统计事实。
+- 有界本地 debug capture/Kafka DLQ 仅用于短期诊断，不承载统计事实；VictoriaLogs 按存储收敛 ADR 裁撤。
 
 ### 5.1 端到端不变量
 
@@ -1991,9 +1992,12 @@ flow_dimension:
     shards: 16
     max_pairs_per_minute: 2000000
 
-  debug_victorialogs:
+  debug_capture:
     enabled: false
     sample_ratio: 0.0001
+    directory: "/var/lib/watchdog/flow-debug"
+    max_bytes: 1073741824
+    ttl: 24h
 
 flow_vpn:
   evaluation_interval: 10m
@@ -2217,7 +2221,7 @@ dimension_instances  = ceil(test_burst_records_s / certified_worker_records_s) +
 
 降级顺序：
 
-1. 停止 VictoriaLogs debug sample；
+1. 停止有界 debug capture/DLQ sample；
 2. 停止新的 active probe、缩短 passive observation plan 并暂停 VPN backfill/低优先级评分；已有 finding 保留；
 3. dimension worker 提前 flush 或 spill 聚合状态，继续超水位则暂停 normalized partition，让 lag 吸收维度/CH 背压；
 4. 停止历史回算和非必要 rollup，优先在线 consumer；

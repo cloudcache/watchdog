@@ -170,7 +170,7 @@ func (am *AlertManager) sendStatusAlert(alertStatus string, systemName string, a
 }
 
 // resolveStatusAlerts resolves any triggered status alerts that weren't resolved
-// when system came up (https://github.com/henrygd/beszel/issues/1052).
+// when the system came up.
 func resolveStatusAlerts(app core.App) error {
 	db := app.DB()
 	// Find all active status alerts where the system is actually up

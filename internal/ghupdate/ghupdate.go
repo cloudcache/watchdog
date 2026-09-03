@@ -16,7 +16,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/henrygd/beszel"
+	"github.com/cloudcache/watchdog"
 
 	"github.com/blang/semver"
 )
@@ -47,14 +47,14 @@ type HttpClient interface {
 //
 // NB! This plugin is considered experimental and its config options may change in the future.
 type Config struct {
-	// Owner specifies the account owner of the repository (default to "pocketbase").
+	// Owner specifies the account owner of the repository (defaults to "cloudcache").
 	Owner string
 
-	// Repo specifies the name of the repository (default to "pocketbase").
+	// Repo specifies the name of the repository (defaults to "watchdog").
 	Repo string
 
 	// ArchiveExecutable specifies the name of the executable file in the release archive
-	// (default to "pocketbase"; an additional ".exe" check is also performed as a fallback).
+	// (an additional ".exe" check is also performed as a fallback).
 	ArchiveExecutable string
 
 	// Optional context to use when fetching and downloading the latest release.
@@ -67,9 +67,10 @@ type Config struct {
 	// The data directory to use when fetching and downloading the latest release.
 	DataDir string
 
-	// UseMirror specifies whether to use the beszel.dev mirror instead of GitHub API.
-	// When false (default), always uses api.github.com. When true, uses gh.beszel.dev.
-	UseMirror bool
+	// MirrorURL optionally specifies a GitHub proxy base URL. The proxy must
+	// accept the full upstream URL as a path, for example:
+	// https://proxy.example/https://api.github.com/...
+	MirrorURL string
 }
 
 type updater struct {
@@ -79,7 +80,7 @@ type updater struct {
 
 func Update(config Config) (updated bool, err error) {
 	p := &updater{
-		currentVersion: beszel.Version,
+		currentVersion: watchdog.Version,
 		config:         config,
 	}
 
@@ -94,11 +95,11 @@ func (p *updater) update() (updated bool, err error) {
 	}
 
 	if p.config.Owner == "" {
-		p.config.Owner = "henrygd"
+		p.config.Owner = "cloudcache"
 	}
 
 	if p.config.Repo == "" {
-		p.config.Repo = "beszel"
+		p.config.Repo = "watchdog"
 	}
 
 	if p.config.Context == nil {
@@ -111,10 +112,14 @@ func (p *updater) update() (updated bool, err error) {
 
 	var latest *release
 
-	apiURL := getApiURL(p.config.UseMirror, p.config.Owner, p.config.Repo)
-	if p.config.UseMirror {
-		ColorPrint(ColorYellow, "Using mirror for update.")
+	p.config.MirrorURL = strings.TrimRight(strings.TrimSpace(p.config.MirrorURL), "/")
+	if p.config.MirrorURL != "" {
+		if !strings.HasPrefix(p.config.MirrorURL, "https://") && !strings.HasPrefix(p.config.MirrorURL, "http://") {
+			return false, fmt.Errorf("mirror URL must start with http:// or https://")
+		}
+		ColorPrintf(ColorYellow, "Using GitHub mirror %s for update.", p.config.MirrorURL)
 	}
+	apiURL := getApiURL(p.config.MirrorURL, p.config.Owner, p.config.Repo)
 
 	latest, err = FetchLatestRelease(p.config.Context, p.config.HttpClient, apiURL)
 	if err != nil {
@@ -135,14 +140,14 @@ func (p *updater) update() (updated bool, err error) {
 		return false, err
 	}
 
-	releaseDir := filepath.Join(p.config.DataDir, ".beszel_update")
+	releaseDir := filepath.Join(p.config.DataDir, ".watchdog_update")
 	defer os.RemoveAll(releaseDir)
 
 	ColorPrintf(ColorYellow, "Downloading %s...", asset.Name)
 
 	// download the release asset
 	assetPath := filepath.Join(releaseDir, asset.Name)
-	if err := downloadFile(p.config.Context, p.config.HttpClient, asset.DownloadUrl, assetPath, p.config.UseMirror); err != nil {
+	if err := downloadFile(p.config.Context, p.config.HttpClient, asset.DownloadUrl, assetPath, p.config.MirrorURL); err != nil {
 		return false, err
 	}
 
@@ -220,7 +225,7 @@ func (p *updater) update() (updated bool, err error) {
 
 func FetchLatestRelease(ctx context.Context, client HttpClient, url string) (*release, error) {
 	if url == "" {
-		url = getApiURL(false, "henrygd", "beszel")
+		url = getApiURL("", "cloudcache", "watchdog")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -261,10 +266,10 @@ func downloadFile(
 	client HttpClient,
 	url string,
 	destPath string,
-	useMirror bool,
+	mirrorURL string,
 ) error {
-	if useMirror {
-		url = strings.Replace(url, "github.com", "gh.beszel.dev", 1)
+	if mirrorURL != "" {
+		url = proxyURL(mirrorURL, url)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -339,7 +344,7 @@ func archiveSuffix(binaryName, goos, goarch string) string {
 		return fmt.Sprintf("%s_%s_%s.zip", binaryName, goos, goarch)
 	}
 	// Use glibc build for agent on glibc systems (includes NVML support via purego)
-	if binaryName == "beszel-agent" && goos == "linux" && goarch == "amd64" && isGlibc() {
+	if binaryName == "watchdog-agent" && goos == "linux" && goarch == "amd64" && isGlibc() {
 		return fmt.Sprintf("%s_%s_%s_glibc.tar.gz", binaryName, goos, goarch)
 	}
 	return fmt.Sprintf("%s_%s_%s.tar.gz", binaryName, goos, goarch)
@@ -368,9 +373,14 @@ func isGlibc() bool {
 	return false
 }
 
-func getApiURL(useMirror bool, owner, repo string) string {
-	if useMirror {
-		return fmt.Sprintf("https://gh.beszel.dev/repos/%s/%s/releases/latest?api=true", owner, repo)
+func getApiURL(mirrorURL, owner, repo string) string {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	return proxyURL(mirrorURL, apiURL)
+}
+
+func proxyURL(mirrorURL, targetURL string) string {
+	if mirrorURL == "" {
+		return targetURL
 	}
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	return strings.TrimRight(mirrorURL, "/") + "/" + targetURL
 }

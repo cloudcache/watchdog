@@ -4,27 +4,26 @@ body:
     attributes:
       label: Welcome!
       description: |
-        Thank you for reaching out to the Beszel community for support! To help us assist you better, please make sure to review the following points before submitting your request:
+        Thank you for reaching out to the Watchdog community for support! To help us assist you better, please make sure to review the following points before submitting your request:
 
         Please note:
-        - For translation-related issues or requests, please use the [Crowdin project](https://crowdin.com/project/beszel).
         **- Please do not submit support reqeusts that are specific to ZFS. We plan to add integration with ZFS utilities in the near future.**
 
       options:
-      - label: I have read the [Documentation](https://beszel.dev/guide/getting-started)
+      - label: I have read the [Documentation](https://github.com/cloudcache/watchdog/tree/main/docs)
         required: true
-      - label: I have checked the [Common Issues Guide](https://beszel.dev/guide/common-issues) and my problem was not mentioned there.
+      - label: I have checked existing [issues](https://github.com/cloudcache/watchdog/issues) and my problem was not mentioned there.
         required: true
       - label: I have searched open and closed issues and discussions and my problem was not mentioned before.
         required: true
-      - label: I have verified I am using the latest version available. You can check the latest release [here](https://github.com/henrygd/beszel/releases).
+      - label: I have verified I am using the latest version available. You can check the latest release [here](https://github.com/cloudcache/watchdog/releases).
         required: true
 
   - type: dropdown
     id: component
     attributes:
       label: Component
-      description: Which part of Beszel is this about?
+      description: Which part of Watchdog is this about?
       options:
         - Hub
         - Agent
@@ -60,7 +59,7 @@ body:
 #  - type: input
 #    id: version
 #    attributes:
-#      label: Beszel version
+#      label: Watchdog version
 #      placeholder: 0.9.1
 #    validations:
 #      required: true

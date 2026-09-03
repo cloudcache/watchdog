@@ -192,15 +192,15 @@ func TestConnectionManager_WebSocketConnectionFlow(t *testing.T) {
 	assert.Equal(t, Disconnected, cm.State, "State should remain Disconnected after failed connection")
 
 	// Test with invalid URL
-	t.Setenv("BESZEL_AGENT_HUB_URL", "1,33%")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "1,33%")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	_, err2 := newWebSocketClient(agent)
 	assert.Error(t, err2, "WebSocket client creation should fail with invalid URL")
 
 	// Test with missing token
-	t.Setenv("BESZEL_AGENT_HUB_URL", "http://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "http://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "")
 
 	_, err3 := newWebSocketClient(agent)
 	assert.Error(t, err3, "WebSocket client creation should fail without token")
@@ -229,8 +229,8 @@ func TestConnectionManager_ConnectWithRateLimit(t *testing.T) {
 	cm := agent.connectionManager
 
 	// Set up environment for WebSocket client creation
-	t.Setenv("BESZEL_AGENT_HUB_URL", "ws://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "ws://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	// Create WebSocket client
 	wsClient, err := newWebSocketClient(agent)
@@ -276,8 +276,8 @@ func TestConnectionManager_CloseWebSocket(t *testing.T) {
 	}, "Should not panic when closing nil WebSocket client")
 
 	// Set up environment and create WebSocket client
-	t.Setenv("BESZEL_AGENT_HUB_URL", "ws://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "ws://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	wsClient, err := newWebSocketClient(agent)
 	require.NoError(t, err)
@@ -335,7 +335,7 @@ func TestShouldExitOnErr(t *testing.T) {
 		},
 		{
 			name:     "env var true, matching error with extra context",
-			err:      createDialErr("lookup beszel.server.lan on [::1]:53: read udp [::1]:44557->[::1]:53: read: connection refused"),
+			err:      createDialErr("lookup watchdog.server.lan on [::1]:53: read udp [::1]:44557->[::1]:53: read: connection refused"),
 			envValue: "true",
 			expected: true,
 		},

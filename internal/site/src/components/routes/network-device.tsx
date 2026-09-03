@@ -213,7 +213,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Network Device`} / WatchDog`
+		document.title = `${t`Network Device`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/henrygd/beszel/agent/health"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/health"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 )
 
 // ConnectionManager manages the connection state and events for the agent.
@@ -260,7 +260,7 @@ func (c *ConnectionManager) closeWebSocket() {
 }
 
 // shouldExitOnErr checks if the error is a DNS resolution failure and if the
-// EXIT_ON_DNS_ERROR env var is set. https://github.com/henrygd/beszel/issues/1924.
+// EXIT_ON_DNS_ERROR env var is set.
 func shouldExitOnErr(err error) bool {
 	if val, _ := utils.GetEnv("EXIT_ON_DNS_ERROR"); val == "true" {
 		if opErr, ok := errors.AsType[*net.OpError](err); ok {

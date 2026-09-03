@@ -99,7 +99,7 @@ export function UserAuthForm({
 						setErrors({ passwordConfirm: msg })
 						return
 					}
-					await pb.send("/api/beszel/create-user", {
+					await pb.send("/api/watchdog/create-user", {
 						method: "POST",
 						body: JSON.stringify({ email, password }),
 					})
@@ -138,7 +138,7 @@ export function UserAuthForm({
 	function loginWithOauth(provider: AuthProviderInfo, forcePopup = false) {
 		setIsOauthLoading(true)
 
-		if (globalThis.BESZEL.OAUTH_DISABLE_POPUP) {
+		if (globalThis.WATCHDOG.OAUTH_DISABLE_POPUP) {
 			redirectToOauthProvider(provider)
 			return
 		}
@@ -181,7 +181,9 @@ export function UserAuthForm({
 	}
 
 	useEffect(() => {
-		// handle redirect-based OAuth callback if we have a code
+		// Completing an OAuth redirect is the continuation of a login that the
+		// user already initiated. Merely rendering this form must never start or
+		// refresh a login request.
 		const params = new URLSearchParams(window.location.search)
 		const code = params.get("code")
 		if (code) {
@@ -199,21 +201,6 @@ export function UserAuthForm({
 					.finally(() => setIsOauthLoading(false))
 			}
 		}
-
-		// auto login if password disabled and only one auth provider
-		if (!code && !passwordEnabled && authProviders.length === 1 && !sessionStorage.getItem("lo")) {
-			// Add a small timeout to ensure browser is ready to handle popups
-			setTimeout(() => loginWithOauth(authProviders[0], false), 300)
-			return
-		}
-
-		// refresh auth if not in above states (required for trusted auth header)
-		pb.collection("users")
-			.authRefresh()
-			.then((res) => {
-				pb.authStore.save(res.token, res.record)
-				$authenticated.set(!!pb.authStore.isValid)
-			})
 	}, [])
 
 	if (!authMethods) {
@@ -382,13 +369,13 @@ export function UserAuthForm({
 						</DialogHeader>
 						<div className="text-primary/70 text-[0.95em] contents">
 							<p>
-								<Trans>Beszel supports OpenID Connect and many OAuth2 authentication providers.</Trans>
+								<Trans>Watchdog supports OpenID Connect and many OAuth2 authentication providers.</Trans>
 							</p>
 							<p>
 								<Trans>
 									Please see{" "}
 									<a
-										href="https://beszel.dev/guide/oauth"
+										href="https://github.com/cloudcache/watchdog/tree/main/docs"
 										className={cn(buttonVariants({ variant: "link" }), "p-0 h-auto")}
 									>
 										the documentation

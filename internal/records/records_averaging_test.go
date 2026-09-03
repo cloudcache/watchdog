@@ -6,9 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/records"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/records"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

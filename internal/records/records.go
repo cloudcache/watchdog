@@ -7,8 +7,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"

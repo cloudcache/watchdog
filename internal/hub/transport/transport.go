@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cloudcache/watchdog/internal/common"
+	"github.com/cloudcache/watchdog/internal/entities/smart"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/entities/systemd"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/henrygd/beszel/internal/common"
-	"github.com/henrygd/beszel/internal/entities/smart"
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/entities/systemd"
 )
 
 // Transport defines the interface for hub-agent communication.

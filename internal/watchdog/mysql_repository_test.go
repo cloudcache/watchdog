@@ -1,6 +1,9 @@
 package watchdog
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestEncodeDecodeActionsJSON(t *testing.T) {
 	encoded, err := encodeActionsJSON([]Action{ActionView, ActionExport, ActionAdmin})
@@ -32,5 +35,12 @@ func TestEncodeActionsJSONEmpty(t *testing.T) {
 func TestDecodeActionsJSONRejectsInvalidJSON(t *testing.T) {
 	if _, err := decodeActionsJSON([]byte(`{"view":true}`)); err == nil {
 		t.Fatal("expected invalid JSON shape error")
+	}
+}
+
+func TestLinkExternalIdentityValidatesScopeBeforeDatabaseAccess(t *testing.T) {
+	store := NewMySQLStore(nil)
+	if err := store.LinkExternalIdentity(context.Background(), "", "user-a", "pocketbase", "subject-a"); err == nil {
+		t.Fatal("expected missing tenant validation error")
 	}
 }

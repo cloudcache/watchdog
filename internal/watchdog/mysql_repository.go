@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -92,6 +93,85 @@ func (s *MySQLStore) GetUser(ctx context.Context, userID ID) (User, error) {
 		WHERE id = ?
 	`, userID).Scan(&user.ID, &user.TenantID, &user.Email, &user.Name, &user.Status, &user.CreatedAt, &user.UpdatedAt)
 	return user, err
+}
+
+func (s *MySQLStore) ListIdentityProjections(ctx context.Context, provider, externalSubject string) ([]IdentityProjection, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	externalSubject = strings.TrimSpace(externalSubject)
+	if provider == "" || externalSubject == "" {
+		return nil, errors.New("auth provider and external subject are required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			u.id, u.tenant_id, u.email, u.name, u.status, u.created_at, u.updated_at,
+			t.id, t.name, t.status, t.created_at, t.updated_at
+		FROM users u
+		INNER JOIN tenants t ON t.id = u.tenant_id
+		WHERE u.auth_provider = ? AND u.external_subject_id = ?
+		ORDER BY t.name, t.id
+	`, provider, externalSubject)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	projections := make([]IdentityProjection, 0)
+	for rows.Next() {
+		var projection IdentityProjection
+		if err := rows.Scan(
+			&projection.User.ID,
+			&projection.User.TenantID,
+			&projection.User.Email,
+			&projection.User.Name,
+			&projection.User.Status,
+			&projection.User.CreatedAt,
+			&projection.User.UpdatedAt,
+			&projection.Tenant.ID,
+			&projection.Tenant.Name,
+			&projection.Tenant.Status,
+			&projection.Tenant.CreatedAt,
+			&projection.Tenant.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		projections = append(projections, projection)
+	}
+	return projections, rows.Err()
+}
+
+func (s *MySQLStore) LinkExternalIdentity(ctx context.Context, tenantID, userID ID, provider, externalSubject string) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	externalSubject = strings.TrimSpace(externalSubject)
+	if tenantID == "" || userID == "" || provider == "" || externalSubject == "" {
+		return errors.New("tenant id, user id, auth provider, and external subject are required")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE users
+		SET auth_provider = ?, external_subject_id = ?
+		WHERE tenant_id = ? AND id = ? AND status = 'active'
+	`, provider, externalSubject, tenantID, userID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *MySQLStore) IsUserTenantAdmin(ctx context.Context, tenantID, userID ID) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM user_roles ur
+		INNER JOIN roles r ON r.id = ur.role_id
+		WHERE ur.user_id = ? AND r.tenant_id = ? AND LOWER(r.name) = 'admin'
+	`, userID, tenantID).Scan(&count)
+	return count > 0, err
 }
 
 func (s *MySQLStore) ListUserRoleIDs(ctx context.Context, tenantID, userID ID) ([]ID, error) {

@@ -15,6 +15,18 @@ type IdentityRepository interface {
 	ListUserRoleIDs(ctx context.Context, tenantID, userID ID) ([]ID, error)
 }
 
+type IdentityProjection struct {
+	User   User
+	Tenant Tenant
+}
+
+type IdentityProjectionRepository interface {
+	ListIdentityProjections(ctx context.Context, provider, externalSubject string) ([]IdentityProjection, error)
+	ListUserRoleIDs(ctx context.Context, tenantID, userID ID) ([]ID, error)
+	ListPermissionsForUser(ctx context.Context, tenantID, userID ID) ([]Permission, error)
+	IsUserTenantAdmin(ctx context.Context, tenantID, userID ID) (bool, error)
+}
+
 type PermissionRepository interface {
 	ListPermissions(ctx context.Context, tenantID ID) ([]Permission, error)
 	ListPermissionsForUser(ctx context.Context, tenantID, userID ID) ([]Permission, error)

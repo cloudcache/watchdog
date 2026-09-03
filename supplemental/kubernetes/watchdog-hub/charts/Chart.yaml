@@ -1,0 +1,12 @@
+apiVersion: v1
+description: Installs watchdog-hub in kubernetes
+home: https://github.com/cloudcache/watchdog
+name: watchdog-hub
+appVersion: "0.9"
+# Do not touch will be updated during release
+version: 0.1.0
+sources:
+  - https://github.com/cloudcache/watchdog
+maintainers:
+  - name: dnikoloski
+    email: nikoloskid@pm.me

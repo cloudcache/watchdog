@@ -227,7 +227,7 @@ func (s *MySQLStore) ListAggregateGraphData(ctx context.Context, tenantID, graph
 }
 
 func (s *MySQLStore) ListAllAggregateGraphs(ctx context.Context) ([]AggregateGraph, error) {
-	rows, err := s.db.QueryContext(ctx, aggregateGraphSelect() + `
+	rows, err := s.db.QueryContext(ctx, aggregateGraphSelect()+`
 		ORDER BY tenant_id, id
 	`)
 	if err != nil {

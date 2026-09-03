@@ -392,7 +392,7 @@ watchdog 还必须补上 Akvorado 不是重点解决的多租户 CRUD、细粒�
 | 完整部署 Akvorado | 强 | 中，需要改 schema/UI | 弱 | 中 | Kafka + CH + Akvorado 服务 | AGPL-3.0 | 参考/可做独立系统，不作为本次主实现 |
 | goflow2 v3 + watchdog | 强 | 强 | Flow 启发式；可接异步 probe 证据 | 强 | Kafka + CH；VM/MySQL 已有，SNMP 可选 | BSD-3-Clause | **推荐主管线** |
 | ntopng/nProbe/nDPI | 强 | 中 | **包可见时强** | 低/中 | 探针、ntop 组件、CH | GPL/LGPL + 版本许可证 | 可选 L7 传感器 |
-| 维持当前 sFlow + VLogs | 仅 sFlow 子集 | 弱 | 弱 | 已存在 | VLogs | 无新增 | 仅原型/故障排查，不满足目标 |
+| 维持当前 sFlow + VLogs | 仅 sFlow 子集 | 弱 | 弱 | 已存在 | VLogs | 无新增 | 原型不满足目标，且按存储收敛 ADR 全量下线 |
 
 ## 7. watchdog 代码库现状审阅
 
@@ -430,7 +430,7 @@ watchdog 还必须补上 Akvorado 不是重点解决的多租户 CRUD、细粒�
 | P1 | 当前指标 API 要求 target/port，export task 只支持 target/port+CSV | 只能复用底层 VM client/P95/格式化，不能声称 flow API/导出“直接可用” |
 | P1 | aggregate graph 只绑定 port，metric catalog/查询固定 VM；没有 dataset/visualization provider | flow 高基数 CH 图表无法作为插件接入；先完成 QueryGateway、DatasetRegistry 和通用 visualization CRUD |
 | P1 | 当前修正只有 `raw/corrected`，supplier/customer 主要改变查询步长，且算法可做确定性随机增减 | 不满足三种业务口径；迁移为 raw/supplier/customer 平行层和确定性、版本化、可审批规则 |
-| P2 | VictoriaLogs 是逐条调试存储，没有 ClickHouse 高基数聚合、Geo/ASN/六类 | 保留为可选短期诊断，不作为分析真值 |
+| P2 | VictoriaLogs 是逐条调试存储，没有 ClickHouse 高基数聚合、Geo/ASN/六类 | 按[存储收敛 ADR](storage-consolidation.md)完全裁撤；诊断改用有界本地 capture/Kafka DLQ，不保留在线 VLogs |
 
 因此，本项目不是从零开始，但当前 sFlow 代码只能算原型。最值得复用的是 goflow2 v3 依赖、独立进程形态、前缀 LPM、SNMP/VM/P95/RBAC 基础；热路径和分析存储需要重做。
 

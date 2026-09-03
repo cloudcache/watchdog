@@ -129,6 +129,12 @@ msgstr "6 hours"
 msgid "Accepted"
 msgstr "Accepted"
 
+#: src/components/navbar.tsx
+msgid "Access & Billing"
+msgstr "Access & Billing"
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
@@ -155,7 +161,10 @@ msgstr "Active Alerts"
 msgid "Active state"
 msgstr "Active state"
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-devices.tsx
 msgid "Add"
 msgstr "Add"
 
@@ -168,6 +177,7 @@ msgstr "Add {foo}"
 msgid "Add at least one data source (metric)"
 msgstr "Add at least one data source (metric)"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Add label"
 msgstr "Add label"
@@ -176,18 +186,41 @@ msgstr "Add label"
 msgid "Add metadata"
 msgstr "Add metadata"
 
+#: src/components/routes/address-prefixes.tsx
+msgid "Add Prefix"
+msgstr "Add Prefix"
+
+#: src/components/routes/address-sets.tsx
+msgid "Add Set"
+msgstr "Add Set"
+
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 msgid "Add Target"
 msgstr "Add Target"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Add transform"
-msgstr "Add transform"
+#~ msgid "Add transform"
+#~ msgstr "Add transform"
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "Add URL"
+
+#: src/components/navbar.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Address Prefixes"
+msgstr "Address Prefixes"
+
+#: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Address Set"
+msgstr "Address Set"
+
+#: src/components/navbar.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Address Sets"
+msgstr "Address Sets"
 
 #: src/components/routes/settings/general.tsx
 msgid "Adjust display options for charts."
@@ -199,7 +232,6 @@ msgstr "Adjust the width of the main layout"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Admin"
@@ -208,6 +240,10 @@ msgstr "Admin"
 #: src/components/routes/network-device.tsx
 msgid "Admin Down"
 msgstr "Admin Down"
+
+#: src/components/navbar.tsx
+msgid "Administration"
+msgstr "Administration"
 
 #: src/components/routes/network-device.tsx
 msgid "Advertised"
@@ -218,8 +254,8 @@ msgid "After"
 msgstr "After"
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "After setting the environment variables, restart your Beszel hub for changes to take effect."
-msgstr "After setting the environment variables, restart your Beszel hub for changes to take effect."
+msgid "After setting the environment variables, restart your Watchdog hub for changes to take effect."
+msgstr "After setting the environment variables, restart your Watchdog hub for changes to take effect."
 
 #: src/components/routes/agent-runs.tsx
 msgid "Agent"
@@ -244,7 +280,6 @@ msgid "Aggregate"
 msgstr "Aggregate"
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
@@ -256,6 +291,7 @@ msgstr "Aggregate Charts"
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/exports.tsx
 msgid "Aggregation"
 msgstr "Aggregation"
@@ -288,13 +324,20 @@ msgstr "All"
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 msgid "All Containers"
 msgstr "All Containers"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "All Devices"
+msgstr "All Devices"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "All discovered ports"
 msgstr "All discovered ports"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "All Sets"
+msgstr "All Sets"
 
 #: src/components/alerts/alerts-sheet.tsx
 #: src/components/command-palette.tsx
@@ -302,6 +345,15 @@ msgstr "All discovered ports"
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "All Systems"
 msgstr "All Systems"
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Analysis"
+msgstr "Analysis"
+
+#: src/components/routes/settings/general.tsx
+msgid "Appearance"
+msgstr "Appearance"
 
 #: src/components/routes/historical-data.tsx
 msgid "Archive"
@@ -399,8 +451,8 @@ msgid "Back to network port"
 msgstr "Back to network port"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Back to OID mappings"
-msgstr "Back to OID mappings"
+#~ msgid "Back to OID mappings"
+#~ msgstr "Back to OID mappings"
 
 #: src/components/routes/permission-form.tsx
 msgid "Back to permissions"
@@ -459,14 +511,6 @@ msgstr "Before"
 msgid "Below {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
 msgstr "Below {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
 
-#: src/components/login/auth-form.tsx
-msgid "Beszel supports OpenID Connect and many OAuth2 authentication providers."
-msgstr "Beszel supports OpenID Connect and many OAuth2 authentication providers."
-
-#: src/components/routes/settings/notifications.tsx
-msgid "Beszel uses <0>Shoutrrr</0> to integrate with popular notification services."
-msgstr "Beszel uses <0>Shoutrrr</0> to integrate with popular notification services."
-
 #: src/components/routes/network-device.tsx
 msgid "BGP"
 msgstr "BGP"
@@ -522,8 +566,8 @@ msgid "Boot state"
 msgstr "Boot state"
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Built-in"
-msgstr "Built-in"
+#~ msgid "Built-in"
+#~ msgstr "Built-in"
 
 #: src/components/routes/historical-data.tsx
 msgid "Bytes"
@@ -550,6 +594,8 @@ msgstr "Can start"
 msgid "Can stop"
 msgstr "Can stop"
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Cancel"
@@ -617,7 +663,19 @@ msgstr "Check your notification service"
 msgid "Checksum"
 msgstr "Checksum"
 
-#: src/components/routes/network-device.tsx
+#: src/components/routes/settings/general.tsx
+msgid "Choose a light, dark, or system theme."
+msgstr "Choose a light, dark, or system theme."
+
+#: src/components/routes/settings/general.tsx
+msgid "Choose the language used in navigation and pages."
+msgstr "Choose the language used in navigation and pages."
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "CIDR"
+msgstr "CIDR"
+
 #: src/components/routes/network-device.tsx
 msgid "Class"
 msgstr "Class"
@@ -663,6 +721,10 @@ msgstr "Command line instructions"
 #: src/components/routes/network-discover.tsx
 msgid "Community Override"
 msgstr "Community Override"
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Compose Chart"
+msgstr "Compose Chart"
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Configure how you receive alert notifications."
@@ -798,7 +860,6 @@ msgstr "CPU Usage"
 #: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/targets.tsx
 msgid "Create"
@@ -822,7 +883,6 @@ msgstr "Create Agent"
 msgid "Create Billing Account"
 msgstr "Create Billing Account"
 
-#: src/components/navbar.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -859,8 +919,8 @@ msgstr "Create MIB Module"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Create OID Mapping"
-msgstr "Create OID Mapping"
+#~ msgid "Create OID Mapping"
+#~ msgstr "Create OID Mapping"
 
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permission-form.tsx
@@ -919,6 +979,15 @@ msgstr "Cycles"
 msgid "Daily"
 msgstr "Daily"
 
+#: src/components/routes/settings/general.tsx
+msgid "Dark"
+msgstr "Dark"
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Data"
+msgstr "Data"
+
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Data Sources"
 msgstr "Data Sources"
@@ -933,11 +1002,11 @@ msgid "Default time period"
 msgstr "Default time period"
 
 #: src/components/routes/agent-form.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 msgid "Delete"
@@ -963,10 +1032,15 @@ msgstr "Delete retention policy"
 msgid "Delete SNMP profile"
 msgstr "Delete SNMP profile"
 
+#: src/components/routes/address-sets.tsx
+msgid "Delete this address set?"
+msgstr "Delete this address set?"
+
 #: src/components/routes/agent-form.tsx
 msgid "Delete this agent?"
 msgstr "Delete this agent?"
 
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Delete this aggregate graph?"
 msgstr "Delete this aggregate graph?"
@@ -984,12 +1058,16 @@ msgid "Delete this network port?"
 msgstr "Delete this network port?"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Delete this OID mapping?"
-msgstr "Delete this OID mapping?"
+#~ msgid "Delete this OID mapping?"
+#~ msgstr "Delete this OID mapping?"
 
 #: src/components/routes/permissions.tsx
 msgid "Delete this permission?"
 msgstr "Delete this permission?"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Delete this prefix?"
+msgstr "Delete this prefix?"
 
 #: src/components/routes/retention.tsx
 msgid "Delete this retention policy?"
@@ -1007,6 +1085,7 @@ msgstr "Delete this target?"
 #~ msgid "Denied"
 #~ msgstr "Denied"
 
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
@@ -1019,12 +1098,15 @@ msgstr "Description"
 msgid "Detail"
 msgstr "Detail"
 
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-discover.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Device"
 msgstr "Device"
 
@@ -1044,6 +1126,10 @@ msgstr "Device SNMP"
 #: src/components/routes/watchdog-overview.tsx
 #~ msgid "Devices"
 #~ msgstr "Devices"
+
+#: src/components/routes/address-sets.tsx
+msgid "Direction"
+msgstr "Direction"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
@@ -1087,6 +1173,10 @@ msgstr "Discovered {0} interfaces"
 #: src/components/routes/system.tsx
 msgid "Disk"
 msgstr "Disk"
+
+#: src/components/navbar.tsx
+msgid "Disk Health"
+msgstr "Disk Health"
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgid "Disk I/O"
@@ -1167,7 +1257,6 @@ msgstr "Download"
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/routes/agent-runs.tsx
-#: src/components/routes/network-device.tsx
 msgid "Duration"
 msgstr "Duration"
 
@@ -1219,8 +1308,8 @@ msgstr "Edit Network Port"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Edit OID Mapping"
-msgstr "Edit OID Mapping"
+#~ msgid "Edit OID Mapping"
+#~ msgstr "Edit OID Mapping"
 
 #: src/components/routes/permissions.tsx
 msgid "Edit permission"
@@ -1267,6 +1356,7 @@ msgid "Enabled"
 msgstr "Enabled"
 
 #: src/components/routes/historical-data.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "End"
 msgstr "End"
 
@@ -1305,8 +1395,8 @@ msgid "Enter your one-time password."
 msgstr "Enter your one-time password."
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Enterprise"
-msgstr "Enterprise"
+#~ msgid "Enterprise"
+#~ msgstr "Enterprise"
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Ephemeral"
@@ -1314,7 +1404,6 @@ msgstr "Ephemeral"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/config-yaml.tsx
 #: src/components/routes/settings/heartbeat.tsx
@@ -1340,9 +1429,17 @@ msgstr "Error"
 msgid "established / total"
 msgstr "established / total"
 
+#: src/components/routes/network-device.tsx
+msgid "Events"
+msgstr "Events"
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Example:"
 msgstr "Example:"
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "Examples: dst_ip:8.8.8.8 AND dst_port:443 · src_ip:10.0.0.0/16 · proto:6 · address_sets:电信客户"
+#~ msgstr "Examples: dst_ip:8.8.8.8 AND dst_port:443 · src_ip:10.0.0.0/16 · proto:6 · address_sets:电信客户"
 
 #. placeholder {0}: alert.value
 #. placeholder {1}: info.unit
@@ -1389,7 +1486,6 @@ msgid "Export your current systems configuration."
 msgstr "Export your current systems configuration."
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -1410,8 +1506,13 @@ msgid "Failed Attributes:"
 msgstr "Failed Attributes:"
 
 #: src/lib/api.ts
-msgid "Failed to authenticate"
-msgstr "Failed to authenticate"
+#~ msgid "Failed to authenticate"
+#~ msgstr "Failed to authenticate"
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Failed to create"
+msgstr "Failed to create"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Failed to create billing period"
@@ -1424,6 +1525,12 @@ msgstr "Failed to create export"
 #: src/components/routes/historical-data.tsx
 msgid "Failed to create historical operation"
 msgstr "Failed to create historical operation"
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Failed to delete"
+msgstr "Failed to delete"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to delete agent"
@@ -1446,8 +1553,8 @@ msgid "Failed to delete network port"
 msgstr "Failed to delete network port"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to delete OID mapping"
-msgstr "Failed to delete OID mapping"
+#~ msgid "Failed to delete OID mapping"
+#~ msgstr "Failed to delete OID mapping"
 
 #: src/components/routes/permissions.tsx
 msgid "Failed to delete permission"
@@ -1476,6 +1583,12 @@ msgstr "Failed to discover network device"
 #: src/components/routes/network-discover.tsx
 #~ msgid "Failed to import discovery result"
 #~ msgstr "Failed to import discovery result"
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Failed to load"
+msgstr "Failed to load"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to load agent"
@@ -1574,12 +1687,12 @@ msgid "Failed to load network port"
 msgstr "Failed to load network port"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to load OID mapping"
-msgstr "Failed to load OID mapping"
+#~ msgid "Failed to load OID mapping"
+#~ msgstr "Failed to load OID mapping"
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Failed to load OID mappings"
-msgstr "Failed to load OID mappings"
+#~ msgid "Failed to load OID mappings"
+#~ msgstr "Failed to load OID mappings"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load optical power"
@@ -1680,8 +1793,8 @@ msgid "Failed to save network port"
 msgstr "Failed to save network port"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to save OID mapping"
-msgstr "Failed to save OID mapping"
+#~ msgid "Failed to save OID mapping"
+#~ msgstr "Failed to save OID mapping"
 
 #: src/components/routes/permission-form.tsx
 msgid "Failed to save permission"
@@ -1717,9 +1830,13 @@ msgstr "Failed to save target"
 msgid "Failed to save traffic defaults"
 msgstr "Failed to save traffic defaults"
 
+#: src/components/routes/flow-search.tsx
+#~ msgid "Failed to search"
+#~ msgstr "Failed to search"
+
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Failed to seed OID mappings"
-msgstr "Failed to seed OID mappings"
+#~ msgid "Failed to seed OID mappings"
+#~ msgstr "Failed to seed OID mappings"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Failed to send heartbeat"
@@ -1761,6 +1878,15 @@ msgstr "Fingerprint"
 #: src/components/routes/system/smart-table.tsx
 msgid "Firmware"
 msgstr "Firmware"
+
+#: src/components/navbar.tsx
+msgid "Flow & Data"
+msgstr "Flow & Data"
+
+#: src/components/navbar.tsx
+#: src/components/routes/flow-search.tsx
+#~ msgid "Flow Search"
+#~ msgstr "Flow Search"
 
 #: src/components/alerts/alerts-sheet.tsx
 msgid "For <0>{min}</0> {min, plural, one {minute} other {minutes}}"
@@ -1826,12 +1952,16 @@ msgid "Graph name"
 msgstr "Graph name"
 
 #: src/components/routes/network-device.tsx
-msgid "Graphs"
-msgstr "Graphs"
+#~ msgid "Graphs"
+#~ msgstr "Graphs"
 
 #: src/components/routes/system/info-bar.tsx
 msgid "Grid"
 msgstr "Grid"
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Group by device"
+msgstr "Group by device"
 
 #: src/components/routes/network-device.tsx
 msgid "Hardware"
@@ -1875,6 +2005,7 @@ msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Homebrew command"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -1978,6 +2109,10 @@ msgstr "Interval"
 msgid "Invalid email address."
 msgstr "Invalid email address."
 
+#: src/components/routes/address-sets.tsx
+msgid "Invalid JSON selector"
+msgstr "Invalid JSON selector"
+
 #: src/components/routes/network-device.tsx
 msgid "Inventory"
 msgstr "Inventory"
@@ -1986,21 +2121,26 @@ msgstr "Inventory"
 msgid "Label"
 msgstr "Label"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label key"
 msgstr "Label key"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label value"
 msgstr "Label value"
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 msgid "Labels"
 msgstr "Labels"
 
-#: src/components/lang-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "Language"
@@ -2033,6 +2173,10 @@ msgstr "Layout width"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
 msgstr "Lifecycle"
+
+#: src/components/routes/settings/general.tsx
+msgid "Light"
+msgstr "Light"
 
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -2073,6 +2217,8 @@ msgid "Loading inventory..."
 msgstr "Loading inventory..."
 
 #: src/components/graph/graph-panel-renderer.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/aggregate-charts.tsx
@@ -2088,7 +2234,6 @@ msgstr "Loading inventory..."
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
@@ -2118,9 +2263,12 @@ msgstr "Login attempt failed"
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
-#: src/components/routes/network-device.tsx
 msgid "Logs"
 msgstr "Logs"
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "LogsQL Query"
+#~ msgstr "LogsQL Query"
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Looking instead for where to create alerts? Click the bell <0/> icons in the systems table."
@@ -2185,6 +2333,10 @@ msgstr "Memory Usage"
 msgid "Memory usage of docker containers"
 msgstr "Memory usage of docker containers"
 
+#: src/components/routes/network-device.tsx
+msgid "Message"
+msgstr "Message"
+
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Metadata"
@@ -2199,9 +2351,6 @@ msgid "Metadata value"
 msgstr "Metadata value"
 
 #: src/components/routes/aggregate-graph-form.tsx
-#: src/components/routes/aggregate-graphs.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 msgid "Metric"
 msgstr "Metric"
 
@@ -2210,6 +2359,7 @@ msgid "metrics"
 msgstr "metrics"
 
 #: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graphs.tsx
 msgid "Metrics"
 msgstr "Metrics"
 
@@ -2243,12 +2393,19 @@ msgstr "Model"
 msgid "Module"
 msgstr "Module"
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Multiple devices"
+msgstr "Multiple devices"
+
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
@@ -2262,6 +2419,10 @@ msgstr "Module"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Name"
 msgstr "Name"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Name and host are required"
+msgstr "Name and host are required"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Name is required"
@@ -2279,6 +2440,10 @@ msgstr "Network"
 #: src/components/routes/target-detail.tsx
 #~ msgid "Network Asset"
 #~ msgstr "Network Asset"
+
+#: src/components/navbar.tsx
+msgid "Network Configuration"
+msgstr "Network Configuration"
 
 #: src/components/routes/network-device.tsx
 msgid "Network Device"
@@ -2303,7 +2468,6 @@ msgstr "Network Port"
 #~ msgid "Network Target"
 #~ msgstr "Network Target"
 
-#: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
@@ -2338,6 +2502,10 @@ msgstr "no"
 msgid "No"
 msgstr "No"
 
+#: src/components/routes/address-sets.tsx
+msgid "No address sets found."
+msgstr "No address sets found."
+
 #: src/components/routes/agent-runs.tsx
 msgid "No agent runs found."
 msgstr "No agent runs found."
@@ -2347,8 +2515,12 @@ msgid "No agents found."
 msgstr "No agents found."
 
 #: src/components/routes/aggregate-graphs.tsx
-msgid "No aggregate graphs found."
-msgstr "No aggregate graphs found."
+#~ msgid "No aggregate graphs found."
+#~ msgstr "No aggregate graphs found."
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No aggregate graphs found. Compose one from the Aggregate Charts page and save it."
+msgstr "No aggregate graphs found. Compose one from the Aggregate Charts page and save it."
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "No aggregate samples are available for the current selection."
@@ -2371,8 +2543,8 @@ msgid "No billing accounts found."
 msgstr "No billing accounts found."
 
 #: src/components/routes/network-device.tsx
-msgid "No collection events recorded yet."
-msgstr "No collection events recorded yet."
+#~ msgid "No collection events recorded yet."
+#~ msgstr "No collection events recorded yet."
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
@@ -2402,9 +2574,21 @@ msgstr "No discovered ports. Discover or import SNMP interfaces before computing
 msgid "No down ports."
 msgstr "No down ports."
 
+#: src/components/routes/network-device.tsx
+msgid "No events yet. Events appear on interface status changes and SNMP traps."
+msgstr "No events yet. Events appear on interface status changes and SNMP traps."
+
 #: src/components/routes/exports.tsx
 msgid "No exports found."
 msgstr "No exports found."
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "No flows found."
+#~ msgstr "No flows found."
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No grouping"
+msgstr "No grouping"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No interface health data in this range."
@@ -2431,8 +2615,8 @@ msgid "No network targets found."
 msgstr "No network targets found."
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "No OID mappings found."
-msgstr "No OID mappings found."
+#~ msgid "No OID mappings found."
+#~ msgstr "No OID mappings found."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No optical power data in this range."
@@ -2446,6 +2630,10 @@ msgstr "No permissions found."
 msgid "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
 msgstr "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No ports"
+msgstr "No ports"
+
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "No ports found."
@@ -2458,6 +2646,10 @@ msgstr "No ports match the filter."
 #: src/components/routes/network-device.tsx
 #~ msgid "No ports to aggregate"
 #~ msgstr "No ports to aggregate"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "No prefixes found."
+msgstr "No prefixes found."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No resource data in this range."
@@ -2490,12 +2682,20 @@ msgid "No samples in this range."
 msgstr "No samples in this range."
 
 #: src/components/routes/network-device.tsx
+msgid "No saved graphs include this device yet."
+msgstr "No saved graphs include this device yet."
+
+#: src/components/routes/network-device.tsx
 msgid "No sensor alerts."
 msgstr "No sensor alerts."
 
 #: src/components/routes/network-device.tsx
-msgid "No sensors found."
-msgstr "No sensors found."
+msgid "No sensors discovered."
+msgstr "No sensors discovered."
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No sensors found."
+#~ msgstr "No sensors found."
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "No SNMP profiles found."
@@ -2546,14 +2746,14 @@ msgid "OAuth 2 / OIDC support"
 msgstr "OAuth 2 / OIDC support"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "OID mapping not found"
-msgstr "OID mapping not found"
+#~ msgid "OID mapping not found"
+#~ msgstr "OID mapping not found"
 
 #: src/components/navbar.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "OID Mappings"
-msgstr "OID Mappings"
+#~ msgid "OID Mappings"
+#~ msgstr "OID Mappings"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "On each restart, systems in the database will be updated to match the systems defined in the file."
@@ -2569,8 +2769,12 @@ msgid "One-time password"
 msgstr "One-time password"
 
 #: src/components/routes/export-new.tsx
-msgid "Open Aggregate Charts"
-msgstr "Open Aggregate Charts"
+#~ msgid "Open Aggregate Charts"
+#~ msgstr "Open Aggregate Charts"
+
+#: src/components/routes/export-new.tsx
+msgid "Open Charts"
+msgstr "Open Charts"
 
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/tokens-fingerprints.tsx
@@ -2641,6 +2845,7 @@ msgstr "Out"
 #~ msgid "Overall Traffic"
 #~ msgstr "Overall Traffic"
 
+#: src/components/navbar.tsx
 #: src/components/routes/network-device.tsx
 msgid "Overview"
 msgstr "Overview"
@@ -2706,6 +2911,10 @@ msgstr "Payload format"
 msgid "Peak"
 msgstr "Peak"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Peak Rate"
+msgstr "Peak Rate"
+
 #: src/components/routes/network-device.tsx
 msgid "Peer AS"
 msgstr "Peer AS"
@@ -2750,6 +2959,7 @@ msgstr "Permissions"
 msgid "Persistence"
 msgstr "Persistence"
 
+#: src/components/navbar.tsx
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Platform"
@@ -2777,8 +2987,8 @@ msgid "Please enable pop-ups for this site"
 msgstr "Please enable pop-ups for this site"
 
 #: src/lib/api.ts
-msgid "Please log in again"
-msgstr "Please log in again"
+#~ msgid "Please log in again"
+#~ msgstr "Please log in again"
 
 #: src/components/login/auth-form.tsx
 msgid "Please see <0>the documentation</0> for instructions."
@@ -2824,6 +3034,7 @@ msgstr "ports"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -2869,6 +3080,10 @@ msgstr "Provider"
 #: src/components/add-system.tsx
 #~ msgid "Public Key"
 #~ msgstr "Public Key"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Query"
+msgstr "Query"
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average queue depth"
@@ -2919,6 +3134,8 @@ msgstr "Received"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/aggregate-charts.tsx
@@ -2934,11 +3151,11 @@ msgstr "Received"
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Refresh"
 msgstr "Refresh"
 
@@ -2989,9 +3206,10 @@ msgstr "Resource ID"
 msgid "Resource type"
 msgstr "Resource type"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Resources"
-#~ msgstr "Resources"
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Resources"
+msgstr "Resources"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Restarts"
@@ -3073,7 +3291,6 @@ msgstr "Samples"
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/traffic-defaults.tsx
@@ -3107,6 +3324,7 @@ msgstr "Saved"
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/network-device.tsx
 msgid "Saved Graphs"
 msgstr "Saved Graphs"
 
@@ -3143,6 +3361,10 @@ msgstr "Search by name, host, vendor..."
 msgid "Search for systems or settings..."
 msgstr "Search for systems or settings..."
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Search graphs, devices, metrics"
+msgstr "Search graphs, devices, metrics"
+
 #: src/components/routes/network-device.tsx
 msgid "Search ports..."
 msgstr "Search ports..."
@@ -3160,12 +3382,12 @@ msgid "See <0>notification settings</0> to configure how you receive alerts."
 msgstr "See <0>notification settings</0> to configure how you receive alerts."
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Seed LibreNMS"
-msgstr "Seed LibreNMS"
+#~ msgid "Seed LibreNMS"
+#~ msgstr "Seed LibreNMS"
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Seeded"
-msgstr "Seeded"
+#~ msgid "Seeded"
+#~ msgstr "Seeded"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Seen"
@@ -3216,13 +3438,18 @@ msgstr "Select at least one target and one metric"
 msgid "Selected ports"
 msgstr "Selected ports"
 
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Selector"
+msgstr "Selector"
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send a single heartbeat ping to verify your endpoint is working."
 msgstr "Send a single heartbeat ping to verify your endpoint is working."
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Send periodic outbound pings to an external monitoring service so you can monitor Beszel without exposing it to the internet."
-msgstr "Send periodic outbound pings to an external monitoring service so you can monitor Beszel without exposing it to the internet."
+msgid "Send periodic outbound pings to an external monitoring service so you can monitor Watchdog without exposing it to the internet."
+msgstr "Send periodic outbound pings to an external monitoring service so you can monitor Watchdog without exposing it to the internet."
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send test heartbeat"
@@ -3275,8 +3502,8 @@ msgid "Set percentage thresholds for meter colors."
 msgstr "Set percentage thresholds for meter colors."
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Set the following environment variables on your Beszel hub to enable heartbeat monitoring:"
-msgstr "Set the following environment variables on your Beszel hub to enable heartbeat monitoring:"
+msgid "Set the following environment variables on your Watchdog hub to enable heartbeat monitoring:"
+msgstr "Set the following environment variables on your Watchdog hub to enable heartbeat monitoring:"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
@@ -3291,6 +3518,10 @@ msgstr "Settings"
 #: src/components/routes/settings/layout.tsx
 msgid "Settings saved"
 msgstr "Settings saved"
+
+#: src/components/routes/network-device.tsx
+msgid "Severity"
+msgstr "Severity"
 
 #: src/components/login/auth-form.tsx
 msgid "Sign in"
@@ -3331,6 +3562,15 @@ msgstr "SNMP Version"
 #~ msgid "Sort By"
 #~ msgstr "Sort By"
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Sort by name"
+msgstr "Sort by name"
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Sort by updated"
+msgstr "Sort by updated"
+
+#: src/components/routes/address-prefixes.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
@@ -3351,6 +3591,7 @@ msgid "Split side"
 msgstr "Split side"
 
 #: src/components/routes/historical-data.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Start"
 msgstr "Start"
 
@@ -3378,7 +3619,7 @@ msgstr "State"
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/historical-data.tsx
-#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -3394,6 +3635,7 @@ msgid "Status"
 msgstr "Status"
 
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/historical-data.tsx
 msgid "Step"
 msgstr "Step"
@@ -3432,6 +3674,10 @@ msgid "Switch theme"
 msgstr "Switch theme"
 
 #: src/components/routes/network-device.tsx
+msgid "Switching"
+msgstr "Switching"
+
+#: src/components/routes/network-device.tsx
 msgid "sysDescr"
 msgstr "sysDescr"
 
@@ -3441,6 +3687,7 @@ msgstr "sysName or sysDescr is required"
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -3524,8 +3771,6 @@ msgid "targets"
 msgstr "targets"
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/targets.tsx
 #: src/components/routes/targets.tsx
@@ -3555,6 +3800,10 @@ msgstr "Temperature unit"
 msgid "Temperatures of system sensors"
 msgstr "Temperatures of system sensors"
 
+#: src/components/navbar.tsx
+msgid "Tenant"
+msgstr "Tenant"
+
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "Tenant default"
@@ -3576,6 +3825,10 @@ msgstr "Test notification sent"
 msgid "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 msgstr "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 
+#: src/components/routes/settings/general.tsx
+msgid "Theme"
+msgstr "Theme"
+
 #: src/components/login/forgot-pass-form.tsx
 msgid "Then log into the backend and reset your user account password in the users table."
 msgstr "Then log into the backend and reset your user account password in the users table."
@@ -3585,8 +3838,8 @@ msgstr "Then log into the backend and reset your user account password in the us
 #~ msgstr "This action cannot be undone. This will permanently delete all current records for {name} from the database."
 
 #: src/components/routes/export-new.tsx
-msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
-msgstr "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
+#~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
+#~ msgstr "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."
@@ -3607,6 +3860,10 @@ msgstr "Time"
 #: src/components/routes/settings/general.tsx
 msgid "Time format"
 msgstr "Time format"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Time Range"
+msgstr "Time Range"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Timeout"
@@ -3670,9 +3927,9 @@ msgstr "Total time spent on read/write (can exceed 100%)"
 msgid "Total: {0}"
 msgstr "Total: {0}"
 
-#: src/components/routes/network-port.tsx
-#~ msgid "Traffic"
-#~ msgstr "Traffic"
+#: src/components/routes/network-device.tsx
+msgid "Traffic"
+msgstr "Traffic"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-defaults.tsx
@@ -3680,6 +3937,11 @@ msgstr "Total: {0}"
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
 msgstr "Traffic Defaults"
+
+#: src/components/navbar.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic Matrix"
+msgstr "Traffic Matrix"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Traffic Policy"
@@ -3691,16 +3953,16 @@ msgstr "Traffic Policy"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Transform"
-msgstr "Transform"
+#~ msgid "Transform"
+#~ msgstr "Transform"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Transform key"
-msgstr "Transform key"
+#~ msgid "Transform key"
+#~ msgstr "Transform key"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Transform value"
-msgstr "Transform value"
+#~ msgid "Transform value"
+#~ msgstr "Transform value"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Triggered by"
@@ -3755,10 +4017,9 @@ msgid "Triggers when usage of any disk exceeds a threshold"
 msgstr "Triggers when usage of any disk exceeds a threshold"
 
 #: src/components/routes/agents.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -3882,6 +4143,7 @@ msgstr "Utilization"
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
 msgid "Value"
@@ -3897,9 +4159,6 @@ msgstr "Value mode"
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 msgid "Vendor"
 msgstr "Vendor"
 
@@ -3911,9 +4170,15 @@ msgstr "Vendor"
 msgid "Version"
 msgstr "Version"
 
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "View"
-#~ msgstr "View"
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/exports.tsx
+msgid "View"
+msgstr "View"
+
+#: src/components/routes/network-device.tsx
+msgid "View all"
+msgstr "View all"
 
 #: src/components/routes/system/cpu-sheet.tsx
 #: src/components/routes/system/disk-io-sheet.tsx
@@ -3934,16 +4199,16 @@ msgid "VLAN ID"
 msgstr "VLAN ID"
 
 #: src/components/routes/network-device.tsx
-msgid "VLANs/LAG"
-msgstr "VLANs/LAG"
+#~ msgid "VLANs/LAG"
+#~ msgstr "VLANs/LAG"
 
 #: src/components/routes/system/chart-card.tsx
 msgid "Waiting for enough records to display"
 msgstr "Waiting for enough records to display"
 
 #: src/components/routes/settings/general.tsx
-msgid "Want to help improve our translations? Check <0>Crowdin</0> for details."
-msgstr "Want to help improve our translations? Check <0>Crowdin</0> for details."
+#~ msgid "Want to help improve our translations? Check <0>Crowdin</0> for details."
+#~ msgstr "Want to help improve our translations? Check <0>Crowdin</0> for details."
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Wants"
@@ -3958,8 +4223,16 @@ msgid "Warning thresholds"
 msgstr "Warning thresholds"
 
 #: src/components/navbar.tsx
-msgid "Watchdog"
-msgstr "Watchdog"
+#~ msgid "Watchdog"
+#~ msgstr "Watchdog"
+
+#: src/components/login/auth-form.tsx
+msgid "Watchdog supports OpenID Connect and many OAuth2 authentication providers."
+msgstr "Watchdog supports OpenID Connect and many OAuth2 authentication providers."
+
+#: src/components/routes/settings/notifications.tsx
+msgid "Watchdog uses <0>Shoutrrr</0> to integrate with popular notification services."
+msgstr "Watchdog uses <0>Shoutrrr</0> to integrate with popular notification services."
 
 #: src/components/routes/network-port.tsx
 msgid "Wavelength"
@@ -3991,8 +4264,8 @@ msgid "Write"
 msgstr "Write"
 
 #: src/components/routes/settings/layout.tsx
-msgid "YAML Config"
-msgstr "YAML Config"
+#~ msgid "YAML Config"
+#~ msgstr "YAML Config"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "YAML Configuration"

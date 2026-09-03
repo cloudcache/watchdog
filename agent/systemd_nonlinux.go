@@ -5,7 +5,7 @@ package agent
 import (
 	"errors"
 
-	"github.com/henrygd/beszel/internal/entities/systemd"
+	"github.com/cloudcache/watchdog/internal/entities/systemd"
 )
 
 // systemdManager manages the collection of systemd service statistics.

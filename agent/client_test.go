@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel"
+	"github.com/cloudcache/watchdog"
 
-	"github.com/henrygd/beszel/internal/common"
+	"github.com/cloudcache/watchdog/internal/common"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/assert"
@@ -70,10 +70,10 @@ func TestNewWebSocketClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set up environment
 			if tc.hubURL != "" {
-				t.Setenv("BESZEL_AGENT_HUB_URL", tc.hubURL)
+				t.Setenv("WATCHDOG_AGENT_HUB_URL", tc.hubURL)
 			}
 			if tc.token != "" {
-				t.Setenv("BESZEL_AGENT_TOKEN", tc.token)
+				t.Setenv("WATCHDOG_AGENT_TOKEN", tc.token)
 			}
 
 			client, err := newWebSocketClient(agent)
@@ -111,27 +111,27 @@ func TestWebSocketClient_GetOptions(t *testing.T) {
 			name:           "http to ws conversion",
 			inputURL:       "http://localhost:8080",
 			expectedScheme: "ws",
-			expectedPath:   "/api/beszel/agent-connect",
+			expectedPath:   "/api/watchdog/agent-connect",
 		},
 		{
 			name:           "https to wss conversion",
 			inputURL:       "https://hub.example.com",
 			expectedScheme: "wss",
-			expectedPath:   "/api/beszel/agent-connect",
+			expectedPath:   "/api/watchdog/agent-connect",
 		},
 		{
 			name:           "existing path preservation",
 			inputURL:       "http://localhost:8080/custom/path",
 			expectedScheme: "ws",
-			expectedPath:   "/custom/path/api/beszel/agent-connect",
+			expectedPath:   "/custom/path/api/watchdog/agent-connect",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set up environment
-			t.Setenv("BESZEL_AGENT_HUB_URL", tc.inputURL)
-			t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+			t.Setenv("WATCHDOG_AGENT_HUB_URL", tc.inputURL)
+			t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 			client, err := newWebSocketClient(agent)
 			require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestWebSocketClient_GetOptions(t *testing.T) {
 
 			// Check headers
 			assert.Equal(t, "test-token", options.RequestHeader.Get("X-Token"))
-			assert.Equal(t, beszel.Version, options.RequestHeader.Get("X-Beszel"))
+			assert.Equal(t, watchdog.Version, options.RequestHeader.Get("X-Watchdog"))
 			assert.Contains(t, options.RequestHeader.Get("User-Agent"), "Mozilla/5.0")
 
 			// Test options caching
@@ -173,8 +173,8 @@ func TestWebSocketClient_VerifySignature(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set up environment
-	t.Setenv("BESZEL_AGENT_HUB_URL", "http://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "http://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	client, err := newWebSocketClient(agent)
 	require.NoError(t, err)
@@ -242,8 +242,8 @@ func TestWebSocketClient_HandleHubRequest(t *testing.T) {
 	agent := createTestAgent(t)
 
 	// Set up environment
-	t.Setenv("BESZEL_AGENT_HUB_URL", "http://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "http://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	client, err := newWebSocketClient(agent)
 	require.NoError(t, err)
@@ -330,8 +330,8 @@ func TestGetUserAgent(t *testing.T) {
 func TestWebSocketClient_Close(t *testing.T) {
 	agent := createTestAgent(t)
 
-	t.Setenv("BESZEL_AGENT_HUB_URL", "http://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "http://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	client, err := newWebSocketClient(agent)
 	require.NoError(t, err)
@@ -346,8 +346,8 @@ func TestWebSocketClient_Close(t *testing.T) {
 func TestWebSocketClient_ConnectRateLimit(t *testing.T) {
 	agent := createTestAgent(t)
 
-	t.Setenv("BESZEL_AGENT_HUB_URL", "http://localhost:8080")
-	t.Setenv("BESZEL_AGENT_TOKEN", "test-token")
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "http://localhost:8080")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "test-token")
 
 	client, err := newWebSocketClient(agent)
 	require.NoError(t, err)
@@ -373,10 +373,10 @@ func TestGetToken(t *testing.T) {
 		assert.Equal(t, expectedToken, token)
 	})
 
-	t.Run("token from BESZEL_AGENT_TOKEN environment variable", func(t *testing.T) {
-		// Set BESZEL_AGENT_TOKEN env var (should take precedence)
-		expectedToken := "test-token-from-beszel-env"
-		t.Setenv("BESZEL_AGENT_TOKEN", expectedToken)
+	t.Run("token from WATCHDOG_AGENT_TOKEN environment variable", func(t *testing.T) {
+		// Set WATCHDOG_AGENT_TOKEN env var (should take precedence)
+		expectedToken := "test-token-from-watchdog-env"
+		t.Setenv("WATCHDOG_AGENT_TOKEN", expectedToken)
 
 		token, err := getToken()
 		assert.NoError(t, err)
@@ -402,9 +402,9 @@ func TestGetToken(t *testing.T) {
 		assert.Equal(t, expectedToken, token)
 	})
 
-	t.Run("token from BESZEL_AGENT_TOKEN_FILE", func(t *testing.T) {
+	t.Run("token from WATCHDOG_AGENT_TOKEN_FILE", func(t *testing.T) {
 		// Create a temporary token file
-		expectedToken := "test-token-from-beszel-file"
+		expectedToken := "test-token-from-watchdog-file"
 		tokenFile, err := os.CreateTemp("", "token-test-*.txt")
 		require.NoError(t, err)
 		defer os.Remove(tokenFile.Name())
@@ -413,8 +413,8 @@ func TestGetToken(t *testing.T) {
 		require.NoError(t, err)
 		tokenFile.Close()
 
-		// Set BESZEL_AGENT_TOKEN_FILE env var (should take precedence)
-		t.Setenv("BESZEL_AGENT_TOKEN_FILE", tokenFile.Name())
+		// Set WATCHDOG_AGENT_TOKEN_FILE env var (should take precedence)
+		t.Setenv("WATCHDOG_AGENT_TOKEN_FILE", tokenFile.Name())
 
 		token, err := getToken()
 		assert.NoError(t, err)
@@ -443,9 +443,9 @@ func TestGetToken(t *testing.T) {
 	})
 
 	t.Run("error when neither TOKEN nor TOKEN_FILE is set", func(t *testing.T) {
-		t.Setenv("BESZEL_AGENT_TOKEN", "")
+		t.Setenv("WATCHDOG_AGENT_TOKEN", "")
 		t.Setenv("TOKEN", "")
-		t.Setenv("BESZEL_AGENT_TOKEN_FILE", "")
+		t.Setenv("WATCHDOG_AGENT_TOKEN_FILE", "")
 		t.Setenv("TOKEN_FILE", "")
 
 		token, err := getToken()

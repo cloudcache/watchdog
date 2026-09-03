@@ -7,8 +7,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/system"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +16,7 @@ import (
 type systemAlertValueSetter[T any] func(info *system.Info, stats *system.Stats, value T)
 
 type systemAlertTestFixture struct {
-	hub     *beszelTests.TestHub
+	hub     *watchdogTests.TestHub
 	alertID string
 	submit  func(*system.CombinedData) error
 }
@@ -30,9 +30,9 @@ func createCombinedData[T any](value T, setValue systemAlertValueSetter[T]) *sys
 func newSystemAlertTestFixture(t *testing.T, alertName string, min int, threshold float64) *systemAlertTestFixture {
 	t.Helper()
 
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
@@ -46,7 +46,7 @@ func newSystemAlertTestFixture(t *testing.T, alertName string, min int, threshol
 	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
 	require.NoError(t, hub.Save(userSettings))
 
-	alertRecord, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alertRecord, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   alertName,
 		"system": systemRecord.Id,
 		"user":   user.Id,

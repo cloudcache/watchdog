@@ -13,8 +13,8 @@ jobs:
       max-parallel: 5
       matrix:
         include:
-          # henrygd/beszel
-          - image: henrygd/beszel
+          # cloudcache/watchdog
+          - image: cloudcache/watchdog
             dockerfile: ./internal/dockerfile_hub
             registry: docker.io
             username_secret: DOCKERHUB_USERNAME
@@ -26,8 +26,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
             
-          # henrygd/beszel-agent:alpine
-          - image: henrygd/beszel-agent
+          # cloudcache/watchdog-agent:alpine
+          - image: cloudcache/watchdog-agent
             dockerfile: ./internal/dockerfile_agent_alpine
             registry: docker.io
             username_secret: DOCKERHUB_USERNAME
@@ -38,8 +38,8 @@ jobs:
               type=semver,pattern={{major}}.{{minor}}-alpine
               type=semver,pattern={{major}}-alpine
 
-          # henrygd/beszel-agent-nvidia
-          - image: henrygd/beszel-agent-nvidia
+          # cloudcache/watchdog-agent-nvidia
+          - image: cloudcache/watchdog-agent-nvidia
             dockerfile: ./internal/dockerfile_agent_nvidia
             platforms: linux/amd64
             registry: docker.io
@@ -52,8 +52,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # henrygd/beszel-agent-intel
-          - image: henrygd/beszel-agent-intel
+          # cloudcache/watchdog-agent-intel
+          - image: cloudcache/watchdog-agent-intel
             dockerfile: ./internal/dockerfile_agent_intel
             platforms: linux/amd64
             registry: docker.io
@@ -66,8 +66,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # ghcr.io/henrygd/beszel
-          - image: ghcr.io/${{ github.repository }}/beszel
+          # ghcr.io/cloudcache/watchdog
+          - image: ghcr.io/${{ github.repository }}
             dockerfile: ./internal/dockerfile_hub
             registry: ghcr.io
             username: ${{ github.actor }}
@@ -79,8 +79,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # ghcr.io/henrygd/beszel-agent
-          - image: ghcr.io/${{ github.repository }}/beszel-agent
+          # ghcr.io/cloudcache/watchdog-agent
+          - image: ghcr.io/${{ github.repository }}-agent
             dockerfile: ./internal/dockerfile_agent
             registry: ghcr.io
             username: ${{ github.actor }}
@@ -93,8 +93,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # ghcr.io/henrygd/beszel-agent-nvidia
-          - image: ghcr.io/${{ github.repository }}/beszel-agent-nvidia
+          # ghcr.io/cloudcache/watchdog-agent-nvidia
+          - image: ghcr.io/${{ github.repository }}-agent-nvidia
             dockerfile: ./internal/dockerfile_agent_nvidia
             platforms: linux/amd64
             registry: ghcr.io
@@ -107,8 +107,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # ghcr.io/henrygd/beszel-agent-intel
-          - image: ghcr.io/${{ github.repository }}/beszel-agent-intel
+          # ghcr.io/cloudcache/watchdog-agent-intel
+          - image: ghcr.io/${{ github.repository }}-agent-intel
             dockerfile: ./internal/dockerfile_agent_intel
             platforms: linux/amd64
             registry: ghcr.io
@@ -121,8 +121,8 @@ jobs:
               type=semver,pattern={{major}}
               type=raw,value={{sha}},enable=${{ github.ref_type != 'tag' }}
 
-          # ghcr.io/henrygd/beszel-agent:alpine
-          - image: ghcr.io/${{ github.repository }}/beszel-agent
+          # ghcr.io/cloudcache/watchdog-agent:alpine
+          - image: ghcr.io/${{ github.repository }}-agent
             dockerfile: ./internal/dockerfile_agent_alpine
             registry: ghcr.io
             username: ${{ github.actor }}
@@ -133,8 +133,8 @@ jobs:
               type=semver,pattern={{major}}.{{minor}}-alpine
               type=semver,pattern={{major}}-alpine
 
-          # henrygd/beszel-agent (keep at bottom so it gets built after :alpine and gets the latest tag)
-          - image: henrygd/beszel-agent
+          # cloudcache/watchdog-agent (keep at bottom so it gets built after :alpine and gets the latest tag)
+          - image: cloudcache/watchdog-agent
             dockerfile: ./internal/dockerfile_agent
             registry: docker.io
             username_secret: DOCKERHUB_USERNAME

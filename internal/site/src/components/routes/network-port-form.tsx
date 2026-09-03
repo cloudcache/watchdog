@@ -109,7 +109,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Edit Network Port`} / WatchDog`
+		document.title = `${t`Edit Network Port`} / Watchdog`
 		load()
 	}, [load, t])
 

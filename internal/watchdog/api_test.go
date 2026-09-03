@@ -1,10 +1,12 @@
 package watchdog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +38,26 @@ func TestAuthMiddlewareRejectsMissingAuth(t *testing.T) {
 	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestAuthMiddlewarePreservesTypedFailure(t *testing.T) {
+	middleware := AuthMiddleware(func(*http.Request) (AuthContext, error) {
+		return AuthContext{}, &AuthAdapterError{
+			Status:  http.StatusForbidden,
+			Code:    APIErrorPermissionDenied,
+			Message: "Identity is not provisioned",
+		}
+	})
+	rec := httptest.NewRecorder()
+	middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler should not run")
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"permission_denied"`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -94,4 +116,51 @@ func TestNewAPIV1RouterServesMe(t *testing.T) {
 	if body.UserID != "user-a" {
 		t.Fatalf("user_id = %s", body.UserID)
 	}
+}
+
+func TestNewAPIV1RouterUsesTenantDiscoveryAuth(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{}, authAdapterError(http.StatusBadRequest, APIErrorInvalidRequest, TenantHeader+" is required")
+		},
+		TenantDiscovery: func(*http.Request) (AuthContext, error) {
+			return AuthContext{AvailableTenants: []Tenant{{ID: "tenant-a", Name: "Tenant A", Status: "active"}}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me/tenants", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ID":"tenant-a"`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNewAPIV1RouterReturnsJSONForUnknownAPIPath(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/not-a-route", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("content type = %q, want application/json", rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestNewAPIV1RouterReadiness(t *testing.T) {
+	t.Run("ready", func(t *testing.T) {
+		router := NewAPIV1Router(APIV1RouterConfig{Readiness: func(context.Context) error { return nil }})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("not ready", func(t *testing.T) {
+		router := NewAPIV1Router(APIV1RouterConfig{Readiness: func(context.Context) error { return errors.New("mysql down") }})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil))
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"service_unavailable"`) {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	})
 }

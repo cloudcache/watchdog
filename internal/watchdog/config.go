@@ -20,7 +20,6 @@ const (
 	defaultMySQLMaxIdleConns      = 5
 	defaultMySQLConnMaxLifetime   = 30 * time.Minute
 	defaultVictoriaMetricsURL     = "http://127.0.0.1:8428"
-	defaultVictoriaLogsURL        = "http://127.0.0.1:9428"
 	defaultExportDir              = "exports"
 	defaultExportWorkerInterval   = 30 * time.Second
 	defaultExportWorkerBatch      = 10
@@ -38,7 +37,6 @@ const (
 type BackendConfig struct {
 	MySQL           MySQLConfig           `yaml:"mysql"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
-	VictoriaLogs    VictoriaLogsConfig    `yaml:"victorialogs"`
 	Export          ExportConfig          `yaml:"export"`
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
 	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
@@ -59,14 +57,9 @@ type VictoriaMetricsConfig struct {
 	BaseURL string `yaml:"base_url"`
 }
 
-type VictoriaLogsConfig struct {
-	BaseURL string `yaml:"base_url"`
-}
-
 type SFlowCollectorConfig struct {
 	Listen             string        `yaml:"listen"`
 	TenantID           ID            `yaml:"tenant_id"`
-	VLogsURL           string        `yaml:"vlogs_url"`
 	AggInterval        time.Duration `yaml:"agg_interval"`
 	PrefixSyncInterval time.Duration `yaml:"prefix_sync_interval"`
 }
@@ -163,9 +156,6 @@ func defaultBackendConfig() BackendConfig {
 		VictoriaMetrics: VictoriaMetricsConfig{
 			BaseURL: defaultVictoriaMetricsURL,
 		},
-		VictoriaLogs: VictoriaLogsConfig{
-			BaseURL: defaultVictoriaLogsURL,
-		},
 		Export: ExportConfig{
 			Dir:            defaultExportDir,
 			WorkerInterval: defaultExportWorkerInterval,
@@ -217,6 +207,11 @@ func loadBackendConfigFile(path string, cfg *BackendConfig) error {
 }
 
 func applyBackendConfigEnv(cfg *BackendConfig) error {
+	for _, key := range []string{"WATCHDOG_VICTORIALOGS_URL", "WATCHDOG_SFLOW_VLOGS_URL"} {
+		if _, ok := os.LookupEnv(key); ok {
+			return fmt.Errorf("%s was removed; VictoriaLogs is no longer a supported watchdog storage backend", key)
+		}
+	}
 	var err error
 	cfg.MySQL.DSN = getEnv("WATCHDOG_MYSQL_DSN", cfg.MySQL.DSN)
 	if cfg.MySQL.MaxOpenConns, err = getEnvInt("WATCHDOG_MYSQL_MAX_OPEN_CONNS", cfg.MySQL.MaxOpenConns, 1); err != nil {
@@ -229,9 +224,7 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	cfg.VictoriaMetrics.BaseURL = getEnv("WATCHDOG_VICTORIAMETRICS_URL", cfg.VictoriaMetrics.BaseURL)
-	cfg.VictoriaLogs.BaseURL = getEnv("WATCHDOG_VICTORIALOGS_URL", cfg.VictoriaLogs.BaseURL)
 	cfg.SFlowCollector.Listen = getEnv("WATCHDOG_SFLOW_LISTEN", cfg.SFlowCollector.Listen)
-	cfg.SFlowCollector.VLogsURL = getEnv("WATCHDOG_SFLOW_VLOGS_URL", cfg.SFlowCollector.VLogsURL)
 	if tid, ok := os.LookupEnv("WATCHDOG_SFLOW_TENANT_ID"); ok {
 		cfg.SFlowCollector.TenantID = ID(tid)
 	}
@@ -342,13 +335,11 @@ func getEnvStringList(key string, fallback []string) []string {
 
 func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.VictoriaMetrics.BaseURL = normalizeBaseURL(cfg.VictoriaMetrics.BaseURL)
-	cfg.VictoriaLogs.BaseURL = normalizeBaseURL(cfg.VictoriaLogs.BaseURL)
 	cfg.Export.Dir = strings.TrimSpace(cfg.Export.Dir)
 	cfg.Export.Metric = strings.TrimSpace(cfg.Export.Metric)
 	cfg.SNMPCollector.TenantID = ID(strings.TrimSpace(string(cfg.SNMPCollector.TenantID)))
 	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
 	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
-	cfg.SFlowCollector.VLogsURL = normalizeBaseURL(cfg.SFlowCollector.VLogsURL)
 	cfg.SNMP.MIBDirs = normalizeStringPaths(cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = strings.TrimSpace(cfg.SNMP.MIBLoad)
 	cfg.SNMPTrapAgent.APIURL = normalizeBaseURL(cfg.SNMPTrapAgent.APIURL)
@@ -393,12 +384,6 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 		return errors.New("mysql.conn_max_lifetime must be positive")
 	}
 	if err := validateHTTPBaseURL("victoriametrics.base_url", cfg.VictoriaMetrics.BaseURL, true); err != nil {
-		return err
-	}
-	if err := validateHTTPBaseURL("victorialogs.base_url", cfg.VictoriaLogs.BaseURL, true); err != nil {
-		return err
-	}
-	if err := validateHTTPBaseURL("sflow_collector.vlogs_url", cfg.SFlowCollector.VLogsURL, false); err != nil {
 		return err
 	}
 	if err := validateListenAddress("sflow_collector.listen", cfg.SFlowCollector.Listen); err != nil {

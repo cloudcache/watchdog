@@ -35,7 +35,7 @@ export default function HeartbeatSettings() {
 	async function fetchStatus() {
 		try {
 			setIsLoading(true)
-			const res = await pb.send<HeartbeatStatus>("/api/beszel/heartbeat-status", {})
+			const res = await pb.send<HeartbeatStatus>("/api/watchdog/heartbeat-status", {})
 			setStatus(res)
 		} catch (error: unknown) {
 			toast({
@@ -51,7 +51,7 @@ export default function HeartbeatSettings() {
 	async function sendTestHeartbeat() {
 		setIsTesting(true)
 		try {
-			const res = await pb.send<{ err: string | false }>("/api/beszel/test-heartbeat", {
+			const res = await pb.send<{ err: string | false }>("/api/watchdog/test-heartbeat", {
 				method: "POST",
 			})
 			if ("err" in res && !res.err) {
@@ -85,7 +85,7 @@ export default function HeartbeatSettings() {
 				</h3>
 				<p className="text-sm text-muted-foreground leading-relaxed">
 					<Trans>
-						Send periodic outbound pings to an external monitoring service so you can monitor Beszel without exposing it
+						Send periodic outbound pings to an external monitoring service so you can monitor Watchdog without exposing it
 						to the internet.
 					</Trans>
 				</p>
@@ -174,7 +174,7 @@ function NotEnabledState({ isLoading }: { isLoading?: boolean }) {
 		<div className={cn("grid gap-4", isLoading && "animate-pulse")}>
 			<div>
 				<p className="text-sm text-muted-foreground leading-relaxed mb-3">
-					<Trans>Set the following environment variables on your Beszel hub to enable heartbeat monitoring:</Trans>
+					<Trans>Set the following environment variables on your Watchdog hub to enable heartbeat monitoring:</Trans>
 				</p>
 				<div className="grid gap-2.5">
 					<EnvVarItem
@@ -191,7 +191,7 @@ function NotEnabledState({ isLoading }: { isLoading?: boolean }) {
 				</div>
 			</div>
 			<p className="text-sm text-muted-foreground leading-relaxed">
-				<Trans>After setting the environment variables, restart your Beszel hub for changes to take effect.</Trans>
+				<Trans>After setting the environment variables, restart your Watchdog hub for changes to take effect.</Trans>
 			</p>
 		</div>
 	)

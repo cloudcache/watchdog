@@ -147,7 +147,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Network Targets`} / WatchDog`
+		document.title = `${t`Network Targets`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

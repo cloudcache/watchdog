@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/system"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -19,16 +19,16 @@ import (
 // TestBatteryAlertLogic tests that battery alerts trigger when value drops BELOW threshold
 // (opposite of other alerts like CPU, Memory, etc. which trigger when exceeding threshold)
 func TestBatteryAlertLogic(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
 	// Create a battery alert with threshold of 20% and min of 1 minute (immediate trigger)
-	batteryAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	batteryAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Battery",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -48,7 +48,7 @@ func TestBatteryAlertLogic(t *testing.T) {
 		Battery: [2]uint8{50, 1}, // 50% battery, discharging
 	}
 	statsHighJSON, _ := json.Marshal(statsHigh)
-	_, err = beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 		"system": systemRecord.Id,
 		"type":   "1m",
 		"stats":  string(statsHighJSON),
@@ -89,7 +89,7 @@ func TestBatteryAlertLogic(t *testing.T) {
 		Battery: [2]uint8{15, 1}, // 15% battery, discharging
 	}
 	statsLowJSON, _ := json.Marshal(statsLow)
-	_, err = beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 		"system": systemRecord.Id,
 		"type":   "1m",
 		"stats":  string(statsLowJSON),
@@ -131,7 +131,7 @@ func TestBatteryAlertLogic(t *testing.T) {
 		Battery: [2]uint8{25, 1}, // 25% battery, discharging
 	}
 	statsRecoveredJSON, _ := json.Marshal(statsRecovered)
-	_, err = beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 		"system": systemRecord.Id,
 		"type":   "1m",
 		"stats":  string(statsRecoveredJSON),
@@ -168,16 +168,16 @@ func TestBatteryAlertLogic(t *testing.T) {
 
 // TestBatteryAlertNoBattery verifies that systems without battery data don't trigger alerts
 func TestBatteryAlertNoBattery(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
 	// Create a battery alert
-	batteryAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	batteryAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Battery",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -226,16 +226,16 @@ func TestBatteryAlertNoBattery(t *testing.T) {
 // TestBatteryAlertAveragedSamples tests battery alerts with min > 1 (averaging multiple samples)
 // This ensures the inverted threshold logic works correctly across averaged time windows
 func TestBatteryAlertAveragedSamples(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
 	// Create a battery alert with threshold of 25% and min of 2 minutes (requires averaging)
-	batteryAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	batteryAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Battery",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -272,7 +272,7 @@ func TestBatteryAlertAveragedSamples(t *testing.T) {
 		statsLowJSON, _ := json.Marshal(statsLow)
 
 		recordTime := now.Add(offset)
-		record, err := beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+		record, err := watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 			"system": systemRecord.Id,
 			"type":   "1m",
 			"stats":  string(statsLowJSON),
@@ -339,7 +339,7 @@ func TestBatteryAlertAveragedSamples(t *testing.T) {
 		statsHighJSON, _ := json.Marshal(statsHigh)
 
 		recordTime := newNow.Add(offset)
-		record, err := beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+		record, err := watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 			"system": systemRecord.Id,
 			"type":   "1m",
 			"stats":  string(statsHighJSON),

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/shirou/gopsutil/v4/common"
 	"github.com/shirou/gopsutil/v4/sensors"
@@ -364,10 +364,10 @@ func TestNewSensorConfigWithEnv(t *testing.T) {
 
 func TestNewSensorConfig(t *testing.T) {
 	// Set test environment variables
-	t.Setenv("BESZEL_AGENT_PRIMARY_SENSOR", "test_primary")
-	t.Setenv("BESZEL_AGENT_SYS_SENSORS", "/test/path")
-	t.Setenv("BESZEL_AGENT_SENSORS", "test_sensor1,test_*,test_sensor3")
-	t.Setenv("BESZEL_AGENT_SENSORS_TIMEOUT", "7s")
+	t.Setenv("WATCHDOG_AGENT_PRIMARY_SENSOR", "test_primary")
+	t.Setenv("WATCHDOG_AGENT_SYS_SENSORS", "/test/path")
+	t.Setenv("WATCHDOG_AGENT_SENSORS", "test_sensor1,test_*,test_sensor3")
+	t.Setenv("WATCHDOG_AGENT_SENSORS_TIMEOUT", "7s")
 
 	agent := &Agent{}
 	result := agent.newSensorConfig()

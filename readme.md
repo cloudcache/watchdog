@@ -1,15 +1,12 @@
-# Beszel
+# Watchdog
 
-Beszel is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
+Watchdog is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
 
 It has a friendly web interface, simple configuration, and is ready to use out of the box. It supports automatic backup, multi-user, OAuth authentication, and API access.
 
-[![agent Docker Image Size](https://img.shields.io/docker/image-size/henrygd/beszel-agent/latest?logo=docker&label=agent%20image%20size)](https://hub.docker.com/r/henrygd/beszel-agent)
-[![hub Docker Image Size](https://img.shields.io/docker/image-size/henrygd/beszel/latest?logo=docker&label=hub%20image%20size)](https://hub.docker.com/r/henrygd/beszel)
-[![MIT license](https://img.shields.io/github/license/henrygd/beszel?color=%239944ee)](https://github.com/henrygd/beszel/blob/main/LICENSE)
-[![Crowdin](https://badges.crowdin.net/beszel/localized.svg)](https://crowdin.com/project/beszel)
-
-![Screenshot of Beszel dashboard and system page, side by side. The dashboard shows metrics from multiple connected systems, while the system page shows detailed metrics for a single system.](https://henrygd-assets.b-cdn.net/beszel/screenshot-new.png)
+[![agent Docker Image Size](https://img.shields.io/docker/image-size/cloudcache/watchdog-agent/latest?logo=docker&label=agent%20image%20size)](https://hub.docker.com/r/cloudcache/watchdog-agent)
+[![hub Docker Image Size](https://img.shields.io/docker/image-size/cloudcache/watchdog/latest?logo=docker&label=hub%20image%20size)](https://hub.docker.com/r/cloudcache/watchdog)
+[![MIT license](https://img.shields.io/github/license/cloudcache/watchdog?color=%239944ee)](https://github.com/cloudcache/watchdog/blob/main/LICENSE)
 
 ## Features
 
@@ -24,20 +21,14 @@ It has a friendly web interface, simple configuration, and is ready to use out o
 
 ## Architecture
 
-Beszel consists of two main components: the **hub** and the **agent**.
+Watchdog consists of two main components: the **hub** and the **agent**.
 
 - **Hub**: A web application built on [PocketBase](https://pocketbase.io/) that provides a dashboard for viewing and managing connected systems.
 - **Agent**: Runs on each system you want to monitor and communicates system metrics to the hub.
 
 ## Getting started
 
-The [quick start guide](https://beszel.dev/guide/getting-started) and other documentation is available on our website, [beszel.dev](https://beszel.dev). You'll be up and running in a few minutes.
-
-## Screenshots
-
-![Dashboard](https://beszel.dev/image/dashboard.png)
-![System page](https://beszel.dev/image/system-full.png)
-![Notification Settings](https://beszel.dev/image/settings-notifications.png)
+Start with the repository's [installation guide](docs/watchdog-install.md). Architecture, operations, and flow-module design documents are available in [docs](docs/).
 
 ## Supported metrics
 
@@ -59,12 +50,12 @@ Please search existing issues and discussions before opening a new one. I try my
 
 #### Bug reports and feature requests
 
-Bug reports and feature requests can be posted on [GitHub issues](https://github.com/henrygd/beszel/issues).
+Bug reports and feature requests can be posted on [GitHub issues](https://github.com/cloudcache/watchdog/issues).
 
 #### Support and general discussion
 
-Support requests and general discussion can be posted on [GitHub discussions](https://github.com/henrygd/beszel/discussions) or the community-run [Matrix room](https://matrix.to/#/#beszel:matrix.org): `#beszel:matrix.org`.
+Support requests and general discussion can be posted on [GitHub discussions](https://github.com/cloudcache/watchdog/discussions).
 
 ## License
 
-Beszel is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+Watchdog is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.

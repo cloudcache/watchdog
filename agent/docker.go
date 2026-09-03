@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/henrygd/beszel/agent/deltatracker"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/deltatracker"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/blang/semver"
 )
@@ -547,7 +547,7 @@ func (dm *dockerManager) updateContainerStats(ctr *container.ApiInfo, cacheTimeM
 	// Calculate memory usage
 	usedMemory, err := calculateMemoryUsage(res, dm.isWindows)
 	if err != nil {
-		return fmt.Errorf("%s - %w - see https://github.com/henrygd/beszel/issues/144", name, err)
+		return fmt.Errorf("%s - %w", name, err)
 	}
 
 	// Store current CPU stats for next calculation
@@ -743,7 +743,7 @@ func (dm *dockerManager) applyDockerVersionInfo(serverHeader string, versionInfo
 	if dockerVersion, err := semver.Parse(versionInfo.Version); err == nil && dockerVersion.Major > 24 {
 		dm.goodDockerVersion = true
 	} else {
-		slog.Info(fmt.Sprintf("Docker %s is outdated. Upgrade if possible. See https://github.com/henrygd/beszel/issues/58", versionInfo.Version))
+		slog.Info(fmt.Sprintf("Docker %s is outdated. Upgrade if possible.", versionInfo.Version))
 	}
 }
 

@@ -2,13 +2,16 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/cloudcache/watchdog/internal/entities/system"
 	"github.com/google/uuid"
-	"github.com/henrygd/beszel/internal/entities/system"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -28,6 +31,12 @@ type systemConfig struct {
 	Users []string `yaml:"users"`
 }
 
+type systemConfigIdentity struct {
+	Name string
+	Host string
+	Port uint16
+}
+
 // Syncs systems with the config.yml file
 func SyncSystems(e *core.ServeEvent) error {
 	h := e.App
@@ -37,13 +46,15 @@ func SyncSystems(e *core.ServeEvent) error {
 		return nil
 	}
 
-	var config config
-	err = yaml.Unmarshal(configData, &config)
+	cfg, err := decodeConfig(configData)
 	if err != nil {
 		return fmt.Errorf("failed to parse config.yml: %v", err)
 	}
+	if err := normalizeSystemConfigs(cfg.Systems); err != nil {
+		return fmt.Errorf("invalid config.yml: %w", err)
+	}
 
-	if len(config.Systems) == 0 {
+	if len(cfg.Systems) == 0 {
 		log.Println("No systems defined in config.yml.")
 		return nil
 	}
@@ -59,16 +70,13 @@ func SyncSystems(e *core.ServeEvent) error {
 	if len(users) > 0 {
 		firstUser = users[0]
 		for _, user := range users {
-			userEmailToID[user.GetString("email")] = user.Id
+			userEmailToID[strings.ToLower(strings.TrimSpace(user.GetString("email")))] = user.Id
 		}
 	}
 
 	// add default settings for systems if not defined in config
-	for i := range config.Systems {
-		system := &config.Systems[i]
-		if system.Port == 0 {
-			system.Port = 45876
-		}
+	for i := range cfg.Systems {
+		system := &cfg.Systems[i]
 		if len(users) > 0 && len(system.Users) == 0 {
 			// default to first user if none are defined
 			system.Users = []string{firstUser.Id}
@@ -79,7 +87,7 @@ func SyncSystems(e *core.ServeEvent) error {
 				if id, ok := userEmailToID[email]; ok {
 					userIDs = append(userIDs, id)
 				} else {
-					log.Printf("User %s not found", email)
+					return fmt.Errorf("user %q referenced by system %q was not found", email, system.Name)
 				}
 			}
 			system.Users = userIDs
@@ -93,15 +101,19 @@ func SyncSystems(e *core.ServeEvent) error {
 	}
 
 	// Create a map of existing systems
-	existingSystemsMap := make(map[string]*core.Record)
+	existingSystemsMap := make(map[systemConfigIdentity]*core.Record)
 	for _, system := range existingSystems {
-		key := system.GetString("name") + system.GetString("host") + system.GetString("port")
+		key := systemConfigIdentity{
+			Name: strings.TrimSpace(system.GetString("name")),
+			Host: strings.TrimSpace(system.GetString("host")),
+			Port: cast.ToUint16(system.Get("port")),
+		}
 		existingSystemsMap[key] = system
 	}
 
 	// Process systems from config
-	for _, sysConfig := range config.Systems {
-		key := sysConfig.Name + sysConfig.Host + cast.ToString(sysConfig.Port)
+	for _, sysConfig := range cfg.Systems {
+		key := systemConfigIdentity{Name: sysConfig.Name, Host: sysConfig.Host, Port: sysConfig.Port}
 		if existingSystem, ok := existingSystemsMap[key]; ok {
 			// Update existing system
 			existingSystem.Set("name", sysConfig.Name)
@@ -157,6 +169,58 @@ func SyncSystems(e *core.ServeEvent) error {
 	}
 
 	log.Println("Systems synced with config.yml")
+	return nil
+}
+
+func decodeConfig(data []byte) (config, error) {
+	var cfg config
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil && err != io.EOF {
+		return cfg, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return cfg, fmt.Errorf("multiple YAML documents are not allowed")
+		}
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func normalizeSystemConfigs(systems []systemConfig) error {
+	seen := make(map[systemConfigIdentity]struct{}, len(systems))
+	for i := range systems {
+		system := &systems[i]
+		system.Name = strings.TrimSpace(system.Name)
+		system.Host = strings.TrimSpace(system.Host)
+		if system.Name == "" || system.Host == "" {
+			return fmt.Errorf("systems[%d] requires non-empty name and host", i)
+		}
+		if system.Port == 0 {
+			system.Port = 45876
+		}
+		users := make([]string, 0, len(system.Users))
+		userSeen := make(map[string]struct{}, len(system.Users))
+		for _, email := range system.Users {
+			email = strings.ToLower(strings.TrimSpace(email))
+			if email == "" {
+				continue
+			}
+			if _, ok := userSeen[email]; ok {
+				continue
+			}
+			userSeen[email] = struct{}{}
+			users = append(users, email)
+		}
+		system.Users = users
+		identity := systemConfigIdentity{Name: system.Name, Host: system.Host, Port: system.Port}
+		if _, ok := seen[identity]; ok {
+			return fmt.Errorf("duplicate system %q at %s:%d", system.Name, system.Host, system.Port)
+		}
+		seen[identity] = struct{}{}
+	}
 	return nil
 }
 

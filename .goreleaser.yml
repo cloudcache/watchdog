@@ -1,15 +1,14 @@
 version: 2
 
-project_name: beszel
+project_name: watchdog
 
 before:
   hooks:
     - go mod tidy
-    - go generate -run fetchsmartctl ./agent
 
 builds:
-  - id: beszel
-    binary: beszel
+  - id: watchdog
+    binary: watchdog
     main: internal/cmd/hub/hub.go
     env:
       - CGO_ENABLED=0
@@ -32,8 +31,8 @@ builds:
       - goos: freebsd
         goarch: arm
 
-  - id: beszel-agent
-    binary: beszel-agent
+  - id: watchdog-agent
+    binary: watchdog-agent
     main: internal/cmd/agent/agent.go
     env:
       - CGO_ENABLED=0
@@ -76,8 +75,8 @@ builds:
       - goos: windows
         goarch: riscv64
 
-  - id: beszel-agent-linux-amd64-glibc
-    binary: beszel-agent
+  - id: watchdog-agent-linux-amd64-glibc
+    binary: watchdog-agent
     main: internal/cmd/agent/agent.go
     env:
       - CGO_ENABLED=0
@@ -89,10 +88,10 @@ builds:
       - amd64
 
 archives:
-  - id: beszel-agent
+  - id: watchdog-agent
     formats: [tar.gz]
     ids:
-      - beszel-agent
+      - watchdog-agent
     name_template: >-
       {{ .Binary }}_
       {{- .Os }}_
@@ -101,19 +100,19 @@ archives:
       - goos: windows
         formats: [zip]
 
-  - id: beszel-agent-linux-amd64-glibc
+  - id: watchdog-agent-linux-amd64-glibc
     formats: [tar.gz]
     ids:
-      - beszel-agent-linux-amd64-glibc
+      - watchdog-agent-linux-amd64-glibc
     name_template: >-
       {{ .Binary }}_
       {{- .Os }}_
       {{- .Arch }}_glibc
 
-  - id: beszel
+  - id: watchdog
     formats: [tar.gz]
     ids:
-      - beszel
+      - watchdog
     name_template: >-
       {{ .Binary }}_
       {{- .Os }}_
@@ -123,11 +122,11 @@ archives:
         formats: [zip]
 
 nfpms:
-  - id: beszel-agent
-    package_name: beszel-agent
+  - id: watchdog-agent
+    package_name: watchdog-agent
     description: |-
-      Agent for Beszel
-      Beszel is a lightweight server monitoring platform that includes Docker
+      Agent for Watchdog
+      Watchdog is a lightweight server monitoring platform that includes Docker
       statistics, historical data, and alert functions. It has a friendly web
       interface, simple configuration, and is ready to use out of the box.
       It supports automatic backup, multi-user, OAuth authentication, and
@@ -135,18 +134,18 @@ nfpms:
     maintainer: henrygd <hank@henrygd.me>
     section: net
     ids:
-      - beszel-agent
+      - watchdog-agent
     formats:
       - deb
     contents:
-      - src: ./supplemental/debian/beszel-agent.service
-        dst: lib/systemd/system/beszel-agent.service
+      - src: ./supplemental/debian/watchdog-agent.service
+        dst: lib/systemd/system/watchdog-agent.service
         packager: deb
       - src: ./supplemental/debian/copyright
-        dst: usr/share/doc/beszel-agent/copyright
+        dst: usr/share/doc/watchdog-agent/copyright
         packager: deb
       - src: ./supplemental/debian/lintian-overrides
-        dst: usr/share/lintian/overrides/beszel-agent
+        dst: usr/share/lintian/overrides/watchdog-agent
         packager: deb
     scripts:
       postinstall: ./supplemental/debian/postinstall.sh
@@ -161,83 +160,83 @@ nfpms:
         config: ./supplemental/debian/config.sh
 
 scoops:
-  - ids: [beszel-agent]
-    name: beszel-agent
+  - ids: [watchdog-agent]
+    name: watchdog-agent
     repository:
-      owner: henrygd
-      name: beszel-scoops
-    homepage: "https://beszel.dev"
-    description: "Agent for Beszel, a lightweight server monitoring platform."
+      owner: cloudcache
+      name: watchdog-scoops
+    homepage: "https://github.com/cloudcache/watchdog"
+    description: "Agent for Watchdog, a lightweight server monitoring platform."
     license: MIT
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
 
 # # Needs choco installed, so doesn't build on linux / default gh workflow :(
 # chocolateys:
-#   - title: Beszel Agent
-#     ids: [beszel-agent]
-#     package_source_url: https://github.com/henrygd/beszel-chocolatey
+#   - title: Watchdog Agent
+#     ids: [watchdog-agent]
+#     package_source_url: https://github.com/cloudcache/watchdog-chocolatey
 #     owners: henrygd
 #     authors: henrygd
-#     summary: 'Agent for Beszel, a lightweight server monitoring platform.'
+#     summary: 'Agent for Watchdog, a lightweight server monitoring platform.'
 #     description: |
-#       Beszel is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
+#       Watchdog is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
 
 #       It has a friendly web interface, simple configuration, and is ready to use out of the box. It supports automatic backup, multi-user, OAuth authentication, and API access.
-#     license_url: https://github.com/henrygd/beszel/blob/main/LICENSE
-#     project_url: https://beszel.dev
-#     project_source_url: https://github.com/henrygd/beszel
-#     docs_url: https://beszel.dev/guide/getting-started
-#     icon_url: https://cdn.jsdelivr.net/gh/selfhst/icons/png/beszel.png
-#     bug_tracker_url: https://github.com/henrygd/beszel/issues
+#     license_url: https://github.com/cloudcache/watchdog/blob/main/LICENSE
+#     project_url: https://github.com/cloudcache/watchdog
+#     project_source_url: https://github.com/cloudcache/watchdog
+#     docs_url: https://github.com/cloudcache/watchdog/tree/main/docs
+#     icon_url: https://cdn.jsdelivr.net/gh/selfhst/icons/png/watchdog.png
+#     bug_tracker_url: https://github.com/cloudcache/watchdog/issues
 #     copyright: 2025 henrygd
 #     tags: foss cross-platform admin monitoring
 #     require_license_acceptance: false
-#     release_notes: 'https://github.com/henrygd/beszel/releases/tag/v{{ .Version }}'
+#     release_notes: 'https://github.com/cloudcache/watchdog/releases/tag/v{{ .Version }}'
 
 brews:
-  - ids: [beszel-agent]
-    name: beszel-agent
+  - ids: [watchdog-agent]
+    name: watchdog-agent
     repository:
-      owner: henrygd
-      name: homebrew-beszel
-    homepage: "https://beszel.dev"
-    description: "Agent for Beszel, a lightweight server monitoring platform."
+      owner: cloudcache
+      name: homebrew-watchdog
+    homepage: "https://github.com/cloudcache/watchdog"
+    description: "Agent for Watchdog, a lightweight server monitoring platform."
     license: MIT
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
     extra_install: |
-      (bin/"beszel-agent-launcher").write <<~EOS
+      (bin/"watchdog-agent-launcher").write <<~EOS
         #!/bin/bash
         set -a
-        if [ -f "$HOME/.config/beszel/beszel-agent.env" ]; then
-          source "$HOME/.config/beszel/beszel-agent.env"
+        if [ -f "$HOME/.config/watchdog/watchdog-agent.env" ]; then
+          source "$HOME/.config/watchdog/watchdog-agent.env"
         fi
         set +a
-        exec #{bin}/beszel-agent "$@"
+        exec #{bin}/watchdog-agent "$@"
       EOS
-      (bin/"beszel-agent-launcher").chmod 0755
+      (bin/"watchdog-agent-launcher").chmod 0755
     service: |
-      run ["#{bin}/beszel-agent-launcher"]
-      log_path "#{Dir.home}/.cache/beszel/beszel-agent.log"
-      error_log_path "#{Dir.home}/.cache/beszel/beszel-agent.log"
+      run ["#{bin}/watchdog-agent-launcher"]
+      log_path "#{Dir.home}/.cache/watchdog/watchdog-agent.log"
+      error_log_path "#{Dir.home}/.cache/watchdog/watchdog-agent.log"
       keep_alive true
       restart_delay 5
       process_type :background
 
 winget:
-  - ids: [beszel-agent]
-    name: beszel-agent
-    package_identifier: henrygd.beszel-agent
-    publisher: henrygd
+  - ids: [watchdog-agent]
+    name: watchdog-agent
+    package_identifier: cloudcache.watchdog-agent
+    publisher: cloudcache
     license: MIT
-    license_url: "https://github.com/henrygd/beszel/blob/main/LICENSE"
+    license_url: "https://github.com/cloudcache/watchdog/blob/main/LICENSE"
     copyright: "2025 henrygd"
-    homepage: "https://beszel.dev"
-    release_notes_url: "https://github.com/henrygd/beszel/releases/tag/v{{ .Version }}"
-    publisher_support_url: "https://github.com/henrygd/beszel/issues"
-    short_description: "Agent for Beszel, a lightweight server monitoring platform."
+    homepage: "https://github.com/cloudcache/watchdog"
+    release_notes_url: "https://github.com/cloudcache/watchdog/releases/tag/v{{ .Version }}"
+    publisher_support_url: "https://github.com/cloudcache/watchdog/issues"
+    short_description: "Agent for Watchdog, a lightweight server monitoring platform."
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
     description: |
-      Beszel is a lightweight server monitoring platform that includes Docker
+      Watchdog is a lightweight server monitoring platform that includes Docker
       statistics, historical data, and alert functions. It has a friendly web
       interface, simple configuration, and is ready to use out of the box.
       It supports automatic backup, multi-user, OAuth authentication, and
@@ -247,9 +246,9 @@ winget:
       - monitoring
       - self-hosted
     repository:
-      owner: henrygd
-      name: beszel-winget
-      branch: henrygd.beszel-agent-{{ .Version }}
+      owner: cloudcache
+      name: watchdog-winget
+      branch: cloudcache.watchdog-agent-{{ .Version }}
       token: "{{ .Env.WINGET_TOKEN }}"
       # pull_request:
       #   enabled: true

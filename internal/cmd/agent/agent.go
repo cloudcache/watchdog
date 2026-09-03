@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/agent"
-	"github.com/henrygd/beszel/agent/health"
-	"github.com/henrygd/beszel/agent/utils"
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/agent"
+	"github.com/cloudcache/watchdog/agent/health"
+	"github.com/cloudcache/watchdog/agent/utils"
 	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
 )
@@ -18,7 +18,7 @@ import (
 type cmdOptions struct {
 	key    string // key is the public key(s) for SSH authentication.
 	listen string // listen is the address or port to listen on.
-	hubURL string // hubURL is the URL of the Beszel hub.
+	hubURL string // hubURL is the URL of the Watchdog hub.
 	token  string // token is the token to use for authentication.
 }
 
@@ -47,9 +47,9 @@ func (opts *cmdOptions) parse() bool {
 	// pflag.CommandLine.ParseErrorsWhitelist.UnknownFlags = true
 	pflag.StringVarP(&opts.key, "key", "k", "", "Public key(s) for SSH authentication")
 	pflag.StringVarP(&opts.listen, "listen", "l", "", "Address or port to listen on")
-	pflag.StringVarP(&opts.hubURL, "url", "u", "", "URL of the Beszel hub")
+	pflag.StringVarP(&opts.hubURL, "url", "u", "", "URL of the Watchdog hub")
 	pflag.StringVarP(&opts.token, "token", "t", "", "Token to use for authentication")
-	chinaMirrors := pflag.BoolP("china-mirrors", "c", false, "Use mirror for update (gh.beszel.dev) instead of GitHub")
+	githubMirror := pflag.String("github-mirror", "", "GitHub proxy base URL used only by the update command")
 	version := pflag.BoolP("version", "v", false, "Show version information")
 	help := pflag.BoolP("help", "h", false, "Show this help message")
 
@@ -89,22 +89,27 @@ func (opts *cmdOptions) parse() bool {
 	// Must run after pflag.Parse()
 	switch {
 	case *version:
-		fmt.Println(beszel.AppName+"-agent", beszel.Version)
+		fmt.Println(watchdog.AppName+"-agent", watchdog.Version)
 		return true
 	case *help || subcommand == "help":
 		pflag.Usage()
 		return true
 	case subcommand == "update":
-		agent.Update(*chinaMirrors)
+		agent.Update(*githubMirror)
 		return true
 	}
 
 	// Set environment variables from CLI flags (if provided)
 	if opts.hubURL != "" {
-		os.Setenv("HUB_URL", opts.hubURL)
+		// Agent config resolves the WATCHDOG_AGENT_ namespace before legacy
+		// unprefixed variables, so write both to keep an explicit CLI flag at
+		// the documented highest precedence.
+		_ = os.Setenv("WATCHDOG_AGENT_HUB_URL", strings.TrimSpace(opts.hubURL))
+		_ = os.Setenv("HUB_URL", strings.TrimSpace(opts.hubURL))
 	}
 	if opts.token != "" {
-		os.Setenv("TOKEN", opts.token)
+		_ = os.Setenv("WATCHDOG_AGENT_TOKEN", opts.token)
+		_ = os.Setenv("TOKEN", opts.token)
 	}
 	return false
 }
@@ -124,7 +129,7 @@ func (opts *cmdOptions) loadPublicKeys() ([]ssh.PublicKey, error) {
 	// Try key file
 	keyFile, ok := utils.GetEnv("KEY_FILE")
 	if !ok {
-		return nil, fmt.Errorf("no key provided: must set -key flag, KEY env var, or KEY_FILE env var. Use 'beszel-agent help' for usage")
+		return nil, fmt.Errorf("no key provided: must set -key flag, KEY env var, or KEY_FILE env var. Use 'watchdog-agent help' for usage")
 	}
 
 	pubKey, err := os.ReadFile(keyFile)

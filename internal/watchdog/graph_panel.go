@@ -16,10 +16,10 @@ import (
 
 // GraphDashboard is a set of render-ready panel definitions for an entity.
 type GraphDashboard struct {
-	ID     string       `json:"id"`
-	Title  string       `json:"title"`
-	Panels []GraphPanel `json:"panels"`
-	Refresh int         `json:"refresh"` // suggested auto-refresh, seconds (0 = off)
+	ID      string       `json:"id"`
+	Title   string       `json:"title"`
+	Panels  []GraphPanel `json:"panels"`
+	Refresh int          `json:"refresh"` // suggested auto-refresh, seconds (0 = off)
 }
 
 // GraphPanel is one panel schema. Stack values: "" (none), "normal", "signed"
@@ -242,18 +242,18 @@ func NewNetworkPortOverviewDashboard(port NetworkPort) GraphDashboard {
 		Title:   portDisplayName(port),
 		Refresh: 30,
 		Panels: []GraphPanel{
-		{
-			ID:    "traffic",
-			Title: "Traffic",
-			Type:  "line",
-			Unit:  "bps",
-			Stack: "signed",
-			Queries: []GraphQuery{
-				{Metric: MetricSNMPIfInBps, Scope: graphScopePort, PortID: port.ID, Label: "In"},
-				{Metric: MetricSNMPIfOutBps, Scope: graphScopePort, PortID: port.ID, Label: "Out", Transform: GraphQueryTransform{Negative: true}},
+			{
+				ID:    "traffic",
+				Title: "Traffic",
+				Type:  "line",
+				Unit:  "bps",
+				Stack: "signed",
+				Queries: []GraphQuery{
+					{Metric: MetricSNMPIfInBps, Scope: graphScopePort, PortID: port.ID, Label: "In"},
+					{Metric: MetricSNMPIfOutBps, Scope: graphScopePort, PortID: port.ID, Label: "Out", Transform: GraphQueryTransform{Negative: true}},
+				},
+				QueryOptions: defaultGraphQueryOptions(),
 			},
-			QueryOptions: defaultGraphQueryOptions(),
-		},
 			{
 				ID:    "errors",
 				Title: "Errors / CRC",

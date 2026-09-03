@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/henrygd/beszel/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 func main() {

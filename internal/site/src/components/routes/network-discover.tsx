@@ -83,7 +83,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Discover Network Device`} / WatchDog`
+		document.title = `${t`Discover Network Device`} / Watchdog`
 		load()
 	}, [load, t])
 

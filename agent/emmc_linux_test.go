@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/henrygd/beszel/internal/entities/smart"
+	"github.com/cloudcache/watchdog/internal/entities/smart"
 )
 
 func TestEmmcMockSysfsScanAndCollect(t *testing.T) {

@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/systemd"
 	"github.com/coreos/go-systemd/v22/dbus"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/systemd"
 )
 
 var errNoActiveTime = errors.New("no active time")
@@ -62,7 +62,7 @@ func newSystemdManager() (*systemdManager, error) {
 
 	conn, err := dbus.NewSystemConnectionContext(context.Background())
 	if err != nil {
-		slog.Debug("Error connecting to systemd", "err", err, "ref", "https://beszel.dev/guide/systemd")
+		slog.Debug("Error connecting to systemd", "err", err, "ref", "https://github.com/cloudcache/watchdog/tree/main/docs")
 		return nil, err
 	}
 

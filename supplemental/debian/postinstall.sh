@@ -3,9 +3,9 @@ set -e
 
 [ "$1" = "configure" ] || exit 0
 
-CONFIG_FILE=/etc/beszel-agent.conf
-SERVICE=beszel-agent
-SERVICE_USER=beszel
+CONFIG_FILE=/etc/watchdog-agent.conf
+SERVICE=watchdog-agent
+SERVICE_USER=watchdog
 
 . /usr/share/debconf/confmodule
 
@@ -41,7 +41,7 @@ fi;
 
 # Only add key to config if it's not already present
 if ! grep -q "^KEY=" "$CONFIG_FILE"; then
-	db_get beszel-agent/key
+	db_get watchdog-agent/key
 	echo "KEY=$RET" > "$CONFIG_FILE"
 fi;
 

@@ -101,7 +101,7 @@ export default memo(() => {
 	}, [t, targetID, window])
 
 	useEffect(() => {
-		document.title = `${t`Containers`} / WatchDog`
+		document.title = `${t`Containers`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

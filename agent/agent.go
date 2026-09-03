@@ -1,7 +1,7 @@
-// Package agent implements the Beszel monitoring agent that collects and serves system metrics.
+// Package agent implements the Watchdog monitoring agent that collects and serves system metrics.
 //
 // The agent runs on monitored systems and communicates collected data
-// to the Beszel hub for centralized monitoring and alerting.
+// to the Watchdog hub for centralized monitoring and alerting.
 package agent
 
 import (
@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/agent/deltatracker"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/common"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 	"github.com/gliderlabs/ssh"
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/agent/deltatracker"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/common"
-	"github.com/henrygd/beszel/internal/entities/system"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -97,7 +97,7 @@ func NewAgent(dataDir ...string) (agent *Agent, err error) {
 		}
 	}
 
-	slog.Debug(beszel.Version)
+	slog.Debug(watchdog.Version)
 
 	// initialize docker manager
 	agent.dockerManager = newDockerManager(agent)

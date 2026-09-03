@@ -58,7 +58,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Traffic Defaults`} / WatchDog`
+		document.title = `${t`Traffic Defaults`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

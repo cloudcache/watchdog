@@ -105,7 +105,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${t`Device SNMP`} / WatchDog`
+		document.title = `${t`Device SNMP`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

@@ -34,7 +34,7 @@ export default memo(() => {
 	const [busy, setBusy] = useState(false)
 
 	useEffect(() => {
-		document.title = `${t`Historical Data`} / WatchDog`
+		document.title = `${t`Historical Data`} / Watchdog`
 	}, [t])
 
 	const requestBody = () => ({

@@ -12,17 +12,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/henrygd/beszel/internal/common"
-	"github.com/henrygd/beszel/internal/hub/transport"
-	"github.com/henrygd/beszel/internal/hub/utils"
-	"github.com/henrygd/beszel/internal/hub/ws"
+	"github.com/cloudcache/watchdog/internal/common"
+	"github.com/cloudcache/watchdog/internal/hub/transport"
+	"github.com/cloudcache/watchdog/internal/hub/utils"
+	"github.com/cloudcache/watchdog/internal/hub/ws"
 
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/smart"
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/entities/systemd"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/smart"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/entities/systemd"
 
-	"github.com/henrygd/beszel"
+	"github.com/cloudcache/watchdog"
 
 	"github.com/blang/semver"
 	"github.com/fxamacker/cbor/v2"
@@ -79,7 +79,13 @@ func (sys *System) StartUpdater() {
 	} else {
 		// if the system does not have a websocket connection, wait before updating
 		// to allow the agent to connect via websocket (makes sure fingerprint is set).
-		time.Sleep(11 * time.Second)
+		timer := time.NewTimer(11 * time.Second)
+		select {
+		case <-sys.ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 
 	// update immediately if system is not paused (only for ws connections)
@@ -160,10 +166,12 @@ func (sys *System) update() error {
 		}
 		if sys.shouldFetchSmart() && sys.smartFetching.CompareAndSwap(false, true) {
 			sys.manager.hub.Logger().Info("SMART fetch", "system", sys.Id, "interval", sys.smartInterval.String())
-			go func() {
+			if !sys.manager.startWorker(func() {
 				defer sys.smartFetching.Store(false)
 				_ = sys.FetchAndSaveSmartDevices()
-			}()
+			}) {
+				sys.smartFetching.Store(false)
+			}
 		}
 	}
 
@@ -564,7 +572,7 @@ func (sys *System) fetchDataViaSSH(options common.DataRequestOptions) (*system.C
 
 		*sys.data = system.CombinedData{}
 
-		if sys.agentVersion.GTE(beszel.MinVersionAgentResponse) && stdinErr == nil {
+		if sys.agentVersion.GTE(watchdog.MinVersionAgentResponse) && stdinErr == nil {
 			req := common.HubRequest[any]{Action: common.GetData, Data: options}
 			_ = cbor.NewEncoder(stdin).Encode(req)
 			_ = stdin.Close()
@@ -580,7 +588,7 @@ func (sys *System) fetchDataViaSSH(options common.DataRequestOptions) (*system.C
 		}
 
 		var decodeErr error
-		if sys.agentVersion.GTE(beszel.MinVersionCbor) {
+		if sys.agentVersion.GTE(watchdog.MinVersionCbor) {
 			decodeErr = cbor.NewDecoder(stdout).Decode(sys.data)
 		} else {
 			decodeErr = json.NewDecoder(stdout).Decode(sys.data)
@@ -720,7 +728,7 @@ func (sys *System) closeWebSocketConnection() {
 	}
 }
 
-// extractAgentVersion extracts the beszel version from SSH server version string
+// extractAgentVersion extracts the watchdog version from SSH server version string
 func extractAgentVersion(versionString string) (semver.Version, error) {
 	_, after, _ := strings.Cut(versionString, "_")
 	return semver.Parse(after)

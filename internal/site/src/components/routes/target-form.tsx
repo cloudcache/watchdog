@@ -81,7 +81,7 @@ export default memo(({ id, defaultType }: TargetFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Target` : t`Create Target`} / WatchDog`
+		document.title = `${isEditing ? t`Edit Target` : t`Create Target`} / Watchdog`
 		loadTarget()
 	}, [isEditing, loadTarget, t])
 

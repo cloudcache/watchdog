@@ -2,7 +2,7 @@
 
 本文定义 flow 模块实施前必须完成的 watchdog 宿主平台整理。目标不是把所有功能重写一遍，而是把当前已经存在但边界分散的 tenant、用户权限、agent、target、指标、图表、导出和流量修正能力整理成稳定契约，使 flow、SNMP、system agent 等模块共享同一套管理面。
 
-flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-direction-requirements.md) 与 [flow-module-design.md](flow-module-design.md)，可勾选的设计/编码/测试实施项见 [flow-module-tasklist.md](flow-module-tasklist.md)。
+flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-direction-requirements.md) 与 [flow-module-design.md](flow-module-design.md)，可勾选的设计/编码/测试实施项及本轮完成证据见 [flow-module-tasklist.md](flow-module-tasklist.md)；经代码审查冻结的 PocketBase/MySQL/VictoriaLogs 收敛 ADR（PB 只保留认证、MySQL 唯一管理库、VLogs 完全裁撤、legacy system 域先迁后删）见 [storage-consolidation.md](storage-consolidation.md)。
 
 ## 1. 结论与边界
 
@@ -36,24 +36,36 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 
 | 级别 | 现状证据 | 问题与目标 |
 |---|---|---|
-| P0 | 前端使用 PocketBase 登录，而 watchdog MySQL 又有独立 `users/password_hash`；生产 hub 未发现 `BackendRuntime.Router` 挂载，只有 `watchdog-dev-server` 注入固定 AuthContext | 明确一个身份权威，补生产 Auth adapter 和路由挂载；禁止 dev admin 语义进入生产 |
-| P0 | `GET /api/v1/tenants` 返回空列表；没有完整 user/role CRUD | 先完成用户、角色、成员关系和 tenant 切换管理 |
+| P0（已完成最小闭环） | 前端使用 PocketBase 登录，而 watchdog MySQL 又有独立 `users/password_hash`；生产 hub 原先没有 `BackendRuntime.Router` 挂载 | 生产 Hub 现已挂载 `/api/v1`，PB 仅校验 `users` token，MySQL subject 投影生成 AuthContext；`password_hash` 已进入 nullable expand 窗口，最终 drop 仍待 STORE-05 |
+| P0（已完成最小闭环） | 前端 [`api.ts`](../internal/site/src/lib/api.ts) 原先对 `/api/v1` 使用裸 `fetch`，没有转发 PB auth token；生产 SPA fallback 会捕获未知 API | 兼容 client 现已注入 token/tenant/request ID，未知 API 返回 JSON 404，生产 route precedence 已测试；完整 typed DTO、ETag 与幂等重放仍待完成 |
+| P0 | PB system/alert 集合虽已从部分新页面退出，但 Hub 仍持续写 stats/inventory，告警恢复、SMART、容器/systemd action 和 legacy Agent 仍读取 | 这些是在线遗留域而非僵尸表；按存储 ADR 迁入 MySQL/VM/collector registry 后再停止 PB 业务写入 |
+| P0（部分完成） | 原 `GET /api/v1/tenants` 返回空列表；没有完整 user/role CRUD | 已实现 subject membership discovery、单 tenant 默认选择和多 tenant UI 切换；用户、角色、成员关系 CRUD 仍待完成 |
 | P0 | `APIV1RouterConfig` 手工列出每个 repository，路由依赖硬编码 | 改为 core services + module registry，模块自行声明依赖并注册 |
 | P0 | permission 的 resource type 和 Go 常量只覆盖 tenant/target/port/export/billing | 建立可注册资源类型与父子关系，支持 module、collector、dataset、visualization、flow_exporter |
 | P0 | `target_agents` 强制单一 `target_id`，agent type 只允许 snmp/system | collector 身份与 resource binding 分离，支持一个 flow collector 服务多个 exporter/target |
-| P0 | flow 原型直接写 VM/VLogs，没有 MQ、重放和 sink 隔离 | flow-collect 以 GoFlow2 接收/解码，raw WAL 后只写 normalized Kafka；dimension worker 才能写 CH base，派生存储可重建 |
+| P0（止血完成） | flow 原型原先同时写 VM aggregate 与逐 flow VLogs，没有 MQ、重放和 sink 隔离 | 逐 flow VLogs sink、配置和前端直连已删除；现有 VM aggregate 暂作兼容。正式 flow-collect 仍须以 GoFlow2 接收/解码，raw WAL 后只写 normalized Kafka，由 dimension worker 写 CH base |
 | P1 | target DB 类型可扩展，但 Go `TargetType` 只认 system/network | target kind 改为 registry，模块声明字段、校验器、详情 tab 和发现器 |
 | P1 | metric catalog 静态，查询后端固定为 VM，任意 flow 高基数查询无法接入 | 引入 dataset/metric provider 和统一 QueryGateway，支持 VM 与 ClickHouse |
 | P1 | aggregate graph 只绑定 port，item 只有 metric/direction | 图表定义改为 provider + dataset + query JSON + resource binding，支持 flow group-by/filter |
 | P1 | export task 固定 target/port、VM、CSV | export provider 化，任务保存 dataset、query snapshot、value layer、policy version |
 | P1 | 当前 `raw/corrected` 只有一层修正；supplier/customer 主要改变采样步长；修正算法是确定性随机加减固定值 | 改为 raw/supplier/customer 三个明确且可审计的平行数据层，禁止隐式随机修正 |
-| P1 | `install/init.sql` 与分散 migration 的表演进存在维护成本 | schema 以版本 migration 为唯一来源，init 由 migration 生成或 CI 比对 |
+| P1（部分完成） | `install/init.sql` 与分散 migration 的表演进存在维护成本 | migration 已嵌入二进制并按连续版本/checksum/advisory lock 执行，空库重复执行已验证；init 自动生成或 CI parity gate 仍待补齐 |
+
+### 2.3 本轮重构执行状态（2026-09-03）
+
+| 工作包 | 已落地 | 尚未满足的退出条件 |
+|---|---|---|
+| STORE-00 | VictoriaLogs 热路径、配置、页面与路由删除；旧环境变量显式拒绝；migration runner 可重复且 fail closed | PB collection 调用指标、迁移 manifest/quarantine、生产副本零调用观察 |
+| STORE-01 | 生产 Hub 路由、PB token server-side 校验、MySQL identity projection、tenant discovery/selector、MySQL RBAC 前端判定、request ID、liveness/readiness | 用户/角色 CRUD、ETag/Idempotency-Key、真实 password/OTP/OAuth 与回滚 E2E |
+| 回归 | `go test -count=1 -tags=testing ./...`、前端 production build、`git diff --check` 均通过；GPU collector 改为有界条件等待，WebSocket 测试等待业务状态收敛，SystemManager 在 PB DB teardown 前 cancel+join 全部受管 updater | 浏览器真实 password/OTP/OAuth、升级/回滚、race 与长期 soak 仍是发布门，不因本轮全仓单测通过而豁免 |
+
+完成项是可运行代码，不代表对应大项已签署完成。tasklist 只有在设计、编码、单元、集成、变更设计、变更测试和回归七类证据齐全后才允许勾选父项。
 
 ## 3. 目标技术架构
 
 ```text
                          ┌──────────────── watchdog core ────────────────┐
-PocketBase/OIDC ────────▶│ IdentityAdapter → AuthContext → RBAC           │
+PocketBase auth/OIDC ───▶│ IdentityAdapter → AuthContext → RBAC           │
                          │ ModuleRegistry / ResourceRegistry              │
                          │ CollectorRegistry / TargetService              │
                          │ QueryGateway / Visualization / Export          │
@@ -125,13 +137,18 @@ type ModuleDescriptor struct {
 
 ### 5.1 身份权威
 
-保留 PocketBase 或外部 OIDC 作为认证权威，MySQL 只保存 watchdog 授权投影：
+当前阶段保留 PocketBase `users` auth collection（终局可换外部 OIDC）作为认证权威；PocketBase 不再保存业务集合或决定业务角色，MySQL 是唯一管理库并保存 watchdog 授权投影：
 
-- `users.external_subject_id` 对应 IdP subject；
-- 密码、MFA、重置和 session 由 IdP 管理；逐步弃用 MySQL `password_hash`；
-- production `IdentityAdapter` 校验 token，映射 tenant/user，加载 role IDs 和 grants；
+- `users.auth_provider + external_subject_id` 对应 IdP subject；同一 subject 可在不同 tenant 有独立投影，MySQL user ID 不复用 PB ID；
+- 密码、MFA、重置和 session 由 IdP 管理；先回填 subject 并把 MySQL `password_hash` 置为 nullable，观察期后再独立 migration 删除；
+- production `IdentityAdapter` 必须由 PB server 校验 token，映射 active tenant/user，加载 role IDs 和 grants；仅 `/api/v1/me/tenants` 使用不产生 tenant scope 的 discovery adapter；多 tenant 未选择时 tenant-scoped API 返回 400 `invalid_request`，零投影返回 403；
+- 前端 `/api/v1` 客户端必须转发 PB token；`/api/v1/me` 返回 MySQL `is_admin/roles/grants`，前端和 `/api/watchdog` 不再读取 PB `role`；
+- 认证按需发生：应用启动、公开页面和登录表单挂载不得调用 `authRefresh`、密码、OTP 或 OAuth 登录；只有访问受控页面/数据时校验现有 session，或在用户点击登录/提交凭据后发起认证。OAuth callback 只是用户主动登录的续程，不视为自动登录；
+- MySQL 不可用时管理 API fail closed 为 503，绝不回退 PB role/collections；
 - 每个请求只接受服务端解析的 tenant，不信任 query/body 中的 tenant_id；
 - service account/collector 使用独立认证类型，不能伪装成人类用户。
+
+完整字段、跨库 bootstrap saga、路由顺序、故障语义和回滚边界以[存储收敛详细设计](storage-consolidation.md)为准。
 
 ### 5.2 资源树
 
@@ -330,7 +347,7 @@ VPN probe 也复用 collector 模型，而不是再建 agent 系统：`agent_typ
 
 在引入签名 plan 前，现有 Watchdog 进程先统一到 [`config.go`](../internal/watchdog/config.go) 的单一 bootstrap 契约：`显式 CLI > 环境变量 > YAML > 默认值`。YAML 严格拒绝未知字段和多文档；环境变量的非法整数/周期不再静默回落；URL、ID、listen、路径和 MIB 列表规范化后再校验，DSN/token 不改写。MySQL `max_idle_conns=0` 保留其“禁用 idle pool”语义。SNMP poll/discovery、sFlow 聚合/地址同步、aggregate rollup、trap agent 和 system agent 的 YAML/环境变量/CLI 已使用相同字段，完整矩阵见 [`watchdog-install.md`](watchdog-install.md)。
 
-当前 `target_agents` 写链也先执行统一领域规范化：type/mode/status 小写、endpoint/ID 去空白，API 拒绝未知 JSON 字段，repository 写入前再次验证；system agent 只允许 push，disabled agent 不得 plan/heartbeat/report/push，run status 只允许 success/failure。这个基线只解决现有静态 bootstrap 与 registry 数据一致性，不冒充下文的签名 immutable plan、LKG、canary 和 rollback；后续迁移必须保持已有 YAML 至少一个兼容窗口，并把 secret 从长期 YAML 迁出。
+当前 `target_agents` 写链也先执行统一领域规范化：type/mode/status 小写、endpoint/ID 去空白，API 拒绝未知 JSON 字段并按真实 PATCH 语义保留省略字段，repository 写入前再次验证；system agent 只允许 push，disabled agent 不得 plan/heartbeat/report/push，run status 只允许 success/failure。旧 hub `config.yml` 同步也严格拒绝未知字段/重复系统/缺失用户，并以 `(name,host,port)` 元组匹配；旧 agent 的显式 URL/token CLI 已真正覆盖 `WATCHDOG_AGENT_*` 环境变量。这个基线只解决现有静态 bootstrap 与 registry 数据一致性，不冒充下文的签名 immutable plan、LKG、canary 和 rollback；后续迁移必须保持已有 YAML 至少一个兼容窗口，并把 secret 从长期 YAML 迁出。
 
 agent 必须是薄执行器，不保存业务评分规则、不自行判断 tenant，也不允许控制面远程下发脚本、共享库或任意握手 payload。配置分三层：
 
@@ -405,13 +422,19 @@ GET                      /api/v1/collector-plan
 
 ```go
 type TargetKindDescriptor struct {
-    Key, ModuleKey string
-    Validate       func(Target) error
-    DetailTabs     []string
-    Discoverer     string
-    MetricScopes   []MetricScope
+    Key, ModuleKey      string
+    DisplayName         string
+    Readiness           string   // ga | beta | planned
+    MenuGroup           string   // resources | analysis | settings
+    AllowedCapabilities []string // 允许绑定的 collector capability
+    Validate            func(Target) error
+    DetailTabs          []string
+    Discoverer          string
+    MetricScopes        []MetricScope
 }
 ```
+
+`Readiness` 是“未就绪功能列入架构需求”的机制化表达：`planned` kind 照常注册（占住 key、文档和权限模型），但前端 manifest 不渲染其入口（或按产品决定渲染禁用态），API 对其 CRUD 返回明确的 `KIND_NOT_AVAILABLE`；转 `beta/ga` 只翻转 descriptor，不新增注册路径。
 
 目标行为：
 
@@ -436,6 +459,58 @@ GET/PATCH/DELETE         /api/v1/network-ports/{id}
 ```
 
 模块只注册 target kind、详情 tab 和关联资源，不另建“flow target CRUD”。
+
+### 7.1 Target 五分类与采集角色
+
+产品口径冻结为五个 target kind。kind 是 target 的**分类维度**；哪个 agent 能采由 **capability + binding** 决定，kind、module、agent_type 都不是一对一关系——一个 host target 可同时被 system capability（主机指标）与 storage capability（SMART/RAID）覆盖，network kind 的设备同时承载 core 域的 BGP tab。
+
+| kind | 中文 | 覆盖范围 | 采集通路 | 数据落点 | 就绪度 |
+|---|---|---|---|---|---|
+| `host` | 主机 | 服务器/VM；**容器、systemd、GPU、SMART 视图都是 host 的子资源，不是独立 kind** | `agent_type=system`（push） | VM 观测 + MySQL 库存投影（ADR-SC-001） | ga（现 `system` 更名） |
+| `network` | 网络 | SNMP 网元：交换机/路由器/防火墙，设备/端口/光模块/传感器/VLAN/LAG | `agent_type=snmp`（pull） | VM + MySQL `network_devices/ports` | ga |
+| `storage` | 存储 | RAID 卡（storcli/perccli 类 CLI）、分布式与对象存储集群（Ceph/MinIO/RustFS/BeeGFS）、磁盘 SMART 聚合 | **不新建 agent 二进制**：system agent 扩 `storage.*` capabilities（smartctl 已有雏形；RAID CLI、集群本机探针）；集群型 target 由绑定 agent 经原生 API/exporter 代理采集 | MySQL `storage_devices` 最新态 + VM 历史（对齐 ADR-SC-001 SMART 结论） | SMART=beta（迁移中）；RAID/Ceph/MinIO/RustFS/BeeGFS=planned |
+| `edge` | 边缘 | 轻量拨测：ping（ICMP）、dig/nslookup（DNS）、HTTP(S) 探活、mtr（路径质量） | `agent_type=edge_probe`：薄探针，复用 §6 的 enrollment/plan/job/result 基建；拨测任务 = plan 内的周期 job 定义 | VM 拨测时序（rtt/loss/status/http_code）+ MySQL 任务定义与最新结果摘要 | planned |
+| `core` | 核心 | BGP 路由监控（会话/前缀/状态）+ IP 库查询（本地 `flow-geo-v1` 只读 lookup 服务化） | 现：`agent_type=snmp`（BGP4-MIB，已采）；未来：`agent_type=bmp`（RIB 级）。IP 库查询无采集，只读 flow 模块 Geo loader | VM BGP 指标 + MySQL `bgp_sessions`；IP 库不落库 | BGP-via-SNMP=ga；BMP=planned；IP 库查询页=planned（仅依赖 flow-geo-v1 loader，可先于 Flow P1 独立交付） |
+
+约束与迁移：
+
+- `edge_probe` 与 `flow_probe` 共享 collector plan/job/result 基础设施但是**两个 capability/权限域**：edge 拨测是常规低危主动监测（走普通 configure/operate），绝不复用 `probe_active` 的高危审批链，也不因此绕过它——反向亦然；
+- `collector_agents.agent_type` 的 CHECK 从 `snmp/system` 枚举放开为 registry 校验，终态取值：`system | snmp | flow_collect | flow_probe | edge_probe | bmp`；`storage` 不是 agent_type，是 system agent 的 capability 组；
+- Go `TargetType` 常量 `system→host` 更名：migration 改存量值 + API 兼容读旧值一个版本；`network` 不变；
+- 容器归 host：`containers` 保留为 host 域的跨 target 视图页，不再是与 kind 平级的资源入口。
+
+### 7.2 导航信息架构
+
+菜单按 kind 分组重排，未就绪项由 `Readiness=planned` 机制隐藏（架构上已占位）：
+
+| 菜单组 | 条目 | 路由 | 就绪度 |
+|---|---|---|---|
+| Resources | All Targets（全部资源统一列表，跨 kind 过滤） | `/targets` | ga |
+| Resources | Hosts（主机；子条目 All Containers 跨主机容器视图） | `/targets?kind=host`、`/containers` | ga |
+| Resources | Network（网络） | `/network` | ga |
+| Resources | Storage（存储：storage targets + Disk Health 聚合；现 `/smart` 并入并保留跳转） | `/storage` | beta |
+| Resources | Edge（边缘拨测） | `/edge` | planned |
+| Resources | Core（核心：BGP 会话/路由总览提升为独立页；IP 库查询） | `/core`、`/core/geo` | BGP=ga 提升；IP 库=planned |
+| Analysis | 流量流向（六维总览/分析图表） | `/flow`、`/flow/charts` | planned（Flow P1） |
+| Analysis | Flow 明细（sFlow/NetFlow 的 IP/端口/对端分析——即用户口径的“sflow/netflow 分析”，exporter 采集健康属 `/settings/flow`） | `/flow/ips` 等 | planned（Flow P2） |
+| Analysis | 监控分析（Aggregate Charts、Saved Graphs、Historical） | 现有路由 | ga |
+| Analysis | 日志分析 | 未定 | planned（**独立 ADR 选型存储；ADR-SC-001 已裁撤 VictoriaLogs，日志分析立项不得默认复活它**） |
+
+前端 manifest（§4.2）相应增加 `menuGroup/readiness` 字段；导航栏从 route/menu descriptor 生成分组，不再手写平铺条目。
+
+### 7.3 未就绪功能的架构需求登记
+
+以下按 §7.1/7.2 的 planned 项登记为架构需求，立项时先补各自 ADR/设计，不进入当前任何 tasklist 排期：
+
+| 需求 | 摘要 | 关键依赖/前置 |
+|---|---|---|
+| storage:RAID 监控 | storcli/perccli/MegaCLI 输出解析为 capability 化采集；控制器/虚拟盘/物理盘三级库存 + 健康事件 | system agent capability 框架；`storage_devices` 模型泛化 |
+| storage:Ceph | 集群健康/容量/OSD/PG 指标，经 mgr API 或 exporter 代理 | 集群型 target 建模（多节点 binding）；凭据管理 |
+| storage:MinIO/RustFS/BeeGFS | 各自原生 metrics 端点接入,统一为 storage 数据集 | 同上;DatasetRegistry storage.* datasets |
+| edge:四类拨测 | ping/DNS/HTTP/mtr 的任务定义、调度、时序与告警;多 vantage 对比 | edge_probe agent;plan 内周期 job;VM 拨测指标命名 |
+| core:BMP | BGP RIB 级路由监控(前缀/AS path/撤销事件) | `agent_type=bmp`;存储选型(路由表规模评估,可能需 CH) |
+| core:IP 库查询页 | 输入 IP/CIDR 返回归属(国家/省市/机构/ASN)与版本,含租户 override 视图 | flow-geo-v1 loader(可独立于 Kafka/CH 交付);`/flow/geo/lookup` 服务化 |
+| analysis:日志 | 主机/网元/应用日志的采集、检索与告警 | 独立 ADR:存储选型、采集通道、保留与脱敏;禁止无 ADR 复活 VLogs |
 
 ## 8. Dataset、指标查询和图表 CRUD
 

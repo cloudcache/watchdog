@@ -148,22 +148,22 @@ type NetworkDeviceSensor struct {
 // standard MIB walk. Gives hardware inventory: modules, line cards, power
 // supplies, fans, serials, models — whatever the device exposes.
 type PhysicalEntity struct {
-	Index             uint64
-	Name              string
-	Description       string
-	Class             string
-	VendorType        string
-	ContainedIn       uint64
-	ParentRelPos      int
-	HardwareRevision  string
-	FirmwareRevision  string
-	SoftwareRevision  string
-	SerialNumber      string
-	ManufacturerName  string
-	ModelName         string
-	Alias             string
-	AssetID           string
-	IsFRU             bool
+	Index            uint64
+	Name             string
+	Description      string
+	Class            string
+	VendorType       string
+	ContainedIn      uint64
+	ParentRelPos     int
+	HardwareRevision string
+	FirmwareRevision string
+	SoftwareRevision string
+	SerialNumber     string
+	ManufacturerName string
+	ModelName        string
+	Alias            string
+	AssetID          string
+	IsFRU            bool
 }
 
 // DeviceVLAN is one VLAN discovered from Q-BRIDGE-MIB::dot1qVlanStaticTable.
@@ -321,27 +321,27 @@ const (
 	MetricContainerNetTxBps   = "watchdog_container_net_tx_bps"
 	MetricContainerNetRxBps   = "watchdog_container_net_rx_bps"
 
-	MetricSNMPIfInBps           = "watchdog_snmp_if_in_bps"
-	MetricSNMPIfOutBps          = "watchdog_snmp_if_out_bps"
-	MetricSNMPIfInOctetsTotal   = "watchdog_snmp_if_in_octets_total"
-	MetricSNMPIfOutOctetsTotal  = "watchdog_snmp_if_out_octets_total"
-	MetricSNMPIfOperStatus      = "watchdog_snmp_if_oper_status"
-	MetricSNMPIfAdminStatus     = "watchdog_snmp_if_admin_status"
-	MetricSNMPIfInErrorsTotal   = "watchdog_snmp_if_in_errors_total"
-	MetricSNMPIfOutErrorsTotal  = "watchdog_snmp_if_out_errors_total"
-	MetricSNMPIfInDiscardsTotal = "watchdog_snmp_if_in_discards_total"
+	MetricSNMPIfInBps            = "watchdog_snmp_if_in_bps"
+	MetricSNMPIfOutBps           = "watchdog_snmp_if_out_bps"
+	MetricSNMPIfInOctetsTotal    = "watchdog_snmp_if_in_octets_total"
+	MetricSNMPIfOutOctetsTotal   = "watchdog_snmp_if_out_octets_total"
+	MetricSNMPIfOperStatus       = "watchdog_snmp_if_oper_status"
+	MetricSNMPIfAdminStatus      = "watchdog_snmp_if_admin_status"
+	MetricSNMPIfInErrorsTotal    = "watchdog_snmp_if_in_errors_total"
+	MetricSNMPIfOutErrorsTotal   = "watchdog_snmp_if_out_errors_total"
+	MetricSNMPIfInDiscardsTotal  = "watchdog_snmp_if_in_discards_total"
 	MetricSNMPIfOutDiscardsTotal = "watchdog_snmp_if_out_discards_total"
-	MetricSNMPIfInCRCTotal      = "watchdog_snmp_if_in_crc_total"
-	MetricSNMPIfOutCRCTotal     = "watchdog_snmp_if_out_crc_total"
-	MetricSNMPOpticalRxDBM      = "watchdog_snmp_optical_rx_dbm"
-	MetricSNMPOpticalTxDBM      = "watchdog_snmp_optical_tx_dbm"
-	MetricSNMPOpticalTempC      = "watchdog_snmp_optical_temp_celsius"
-	MetricSNMPDeviceCPUPercent  = "watchdog_snmp_device_cpu_percent"
-	MetricSNMPDeviceMemPercent  = "watchdog_snmp_device_memory_percent"
-	MetricSNMPDeviceMemUsed     = "watchdog_snmp_device_memory_used_bytes"
-	MetricSNMPDeviceMemTotal    = "watchdog_snmp_device_memory_total_bytes"
-	MetricBGPState              = "watchdog_bgp_session_state"
-	MetricBGPAcceptedPrefixes   = "watchdog_bgp_accepted_prefixes"
-	MetricBGPDeniedPrefixes     = "watchdog_bgp_denied_prefixes"
-	MetricBGPAdvertisedPrefixes = "watchdog_bgp_advertised_prefixes"
+	MetricSNMPIfInCRCTotal       = "watchdog_snmp_if_in_crc_total"
+	MetricSNMPIfOutCRCTotal      = "watchdog_snmp_if_out_crc_total"
+	MetricSNMPOpticalRxDBM       = "watchdog_snmp_optical_rx_dbm"
+	MetricSNMPOpticalTxDBM       = "watchdog_snmp_optical_tx_dbm"
+	MetricSNMPOpticalTempC       = "watchdog_snmp_optical_temp_celsius"
+	MetricSNMPDeviceCPUPercent   = "watchdog_snmp_device_cpu_percent"
+	MetricSNMPDeviceMemPercent   = "watchdog_snmp_device_memory_percent"
+	MetricSNMPDeviceMemUsed      = "watchdog_snmp_device_memory_used_bytes"
+	MetricSNMPDeviceMemTotal     = "watchdog_snmp_device_memory_total_bytes"
+	MetricBGPState               = "watchdog_bgp_session_state"
+	MetricBGPAcceptedPrefixes    = "watchdog_bgp_accepted_prefixes"
+	MetricBGPDeniedPrefixes      = "watchdog_bgp_denied_prefixes"
+	MetricBGPAdvertisedPrefixes  = "watchdog_bgp_advertised_prefixes"
 )

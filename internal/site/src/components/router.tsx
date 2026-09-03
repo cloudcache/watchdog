@@ -49,7 +49,6 @@ const routes = {
 	traffic_defaults: "/network/traffic-defaults",
 	address_prefixes: "/address-prefixes",
 	address_sets: "/address-sets",
-	flow_search: "/flows",
 	traffic_matrix: "/traffic-matrix",
 	settings: `/settings/:name?`,
 	forgot_password: `/forgot-password`,
@@ -60,7 +59,7 @@ const routes = {
  * The base path of the application.
  * This is used to prepend the base path to all routes.
  */
-export const basePath = BESZEL?.BASE_PATH || ""
+export const basePath = WATCHDOG?.BASE_PATH || ""
 
 /**
  * Prepends the base path to the given path.

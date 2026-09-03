@@ -1,18 +1,20 @@
 package systems
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
-	"github.com/henrygd/beszel/internal/hub/ws"
+	"github.com/cloudcache/watchdog/internal/hub/ws"
 
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/hub/expirymap"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/hub/expirymap"
 
-	"github.com/henrygd/beszel/internal/common"
+	"github.com/cloudcache/watchdog/internal/common"
 
-	"github.com/henrygd/beszel"
+	"github.com/cloudcache/watchdog"
 
 	"github.com/blang/semver"
 	"github.com/pocketbase/pocketbase/core"
@@ -37,6 +39,7 @@ const (
 
 // errSystemExists is returned when attempting to add a system that already exists
 var errSystemExists = errors.New("system exists")
+var errSystemManagerClosed = errors.New("system manager is closed")
 
 // SystemManager manages a collection of monitored systems and their connections.
 // It handles system lifecycle, status updates, and maintains both SSH and WebSocket connections.
@@ -45,6 +48,13 @@ type SystemManager struct {
 	systems       *store.Store[string, *System]         // Thread-safe store of active systems
 	sshConfig     *ssh.ClientConfig                     // SSH client configuration for system connections
 	smartFetchMap *expirymap.ExpiryMap[smartFetchState] // Stores last SMART fetch time/result; TTL is only for cleanup
+	ctx           context.Context
+	cancel        context.CancelFunc
+	lifecycleMu   sync.Mutex
+	workerCond    *sync.Cond
+	workerCount   int
+	closed        bool
+	closeOnce     sync.Once
 }
 
 // hubLike defines the interface requirements for the hub dependency.
@@ -60,11 +70,16 @@ type hubLike interface {
 // NewSystemManager creates a new SystemManager instance with the provided hub.
 // The hub must implement the hubLike interface to provide database and alert functionality.
 func NewSystemManager(hub hubLike) *SystemManager {
-	return &SystemManager{
+	ctx, cancel := context.WithCancel(context.Background())
+	manager := &SystemManager{
 		systems:       store.New(map[string]*System{}),
 		hub:           hub,
 		smartFetchMap: expirymap.New[smartFetchState](time.Hour),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
+	manager.workerCond = sync.NewCond(&manager.lifecycleMu)
+	return manager
 }
 
 // GetSystem returns a system by ID from the store
@@ -96,17 +111,23 @@ func (sm *SystemManager) Initialize() error {
 	}
 
 	// Start systems in background with staggered timing
-	go func() {
+	sm.startWorker(func() {
 		// Calculate staggered delay between system starts (max 2 seconds per system)
 		delta := interval / max(1, len(systems))
 		delta = min(delta, 2_000)
 		sleepTime := time.Duration(delta) * time.Millisecond
 
 		for _, system := range systems {
-			time.Sleep(sleepTime)
+			timer := time.NewTimer(sleepTime)
+			select {
+			case <-sm.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 			_ = sm.AddSystem(system)
 		}
-	}()
+	})
 	return nil
 }
 
@@ -195,7 +216,7 @@ func (sm *SystemManager) onRecordAfterUpdateSuccess(e *core.RecordEvent) error {
 	case pending:
 		// Resume monitoring, preferring existing WebSocket connection
 		if ok && system.WsConn != nil {
-			go system.update()
+			sm.startWorker(func() { _ = system.update() })
 			return e.Next()
 		}
 		// Start new monitoring session
@@ -251,9 +272,62 @@ func (sm *SystemManager) AddSystem(sys *System) error {
 	sys.data = &system.CombinedData{}
 	sm.systems.Set(sys.Id, sys)
 
-	// Start monitoring in background
-	go sys.StartUpdater()
+	// Start monitoring in background and join it before the PocketBase DB closes.
+	if !sm.startWorker(sys.StartUpdater) {
+		sm.systems.Remove(sys.Id)
+		if sys.cancel != nil {
+			sys.cancel()
+		}
+		return errSystemManagerClosed
+	}
 	return nil
+}
+
+func (sm *SystemManager) startWorker(worker func()) bool {
+	sm.lifecycleMu.Lock()
+	defer sm.lifecycleMu.Unlock()
+	if sm.closed {
+		return false
+	}
+	sm.workerCount++
+	go func() {
+		defer sm.workerDone()
+		worker()
+	}()
+	return true
+}
+
+func (sm *SystemManager) workerDone() {
+	sm.lifecycleMu.Lock()
+	sm.workerCount--
+	if sm.workerCount == 0 && sm.workerCond != nil {
+		sm.workerCond.Broadcast()
+	}
+	sm.lifecycleMu.Unlock()
+}
+
+// Close cancels every managed system and waits for its background work before
+// PocketBase tears down the database. It is safe to call more than once.
+func (sm *SystemManager) Close() {
+	sm.closeOnce.Do(func() {
+		sm.lifecycleMu.Lock()
+		sm.closed = true
+		sm.cancel()
+		sm.lifecycleMu.Unlock()
+
+		for _, system := range sm.systems.GetAll() {
+			_ = sm.RemoveSystem(system.Id)
+		}
+		sm.lifecycleMu.Lock()
+		if sm.workerCond == nil {
+			sm.workerCond = sync.NewCond(&sm.lifecycleMu)
+		}
+		for sm.workerCount > 0 {
+			sm.workerCond.Wait()
+		}
+		sm.lifecycleMu.Unlock()
+		sm.smartFetchMap.StopCleaner()
+	})
 }
 
 // RemoveSystem removes a system from the manager and cleans up all associated resources.
@@ -347,7 +421,7 @@ func (sm *SystemManager) createSSHClientConfig() error {
 			MACs:         common.DefaultMACs,
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		ClientVersion:   fmt.Sprintf("SSH-2.0-%s_%s", beszel.AppName, beszel.Version),
+		ClientVersion:   fmt.Sprintf("SSH-2.0-%s_%s", watchdog.AppName, watchdog.Version),
 		Timeout:         sessionTimeout,
 	}
 	return nil

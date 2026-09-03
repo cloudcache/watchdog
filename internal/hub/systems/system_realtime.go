@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/henrygd/beszel/internal/common"
+	"github.com/cloudcache/watchdog/internal/common"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/subscriptions"
 )

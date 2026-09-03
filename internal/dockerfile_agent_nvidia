@@ -44,6 +44,6 @@ COPY --from=builder /app/agent/test-data/amdgpu.ids /usr/share/libdrm/amdgpu.ids
 COPY --from=smartmontools-builder /usr/sbin/smartctl /usr/sbin/smartctl
 
 # Ensure data persistence across container recreations
-VOLUME ["/var/lib/beszel-agent"]
+VOLUME ["/var/lib/watchdog-agent"]
 
 ENTRYPOINT ["/agent"]

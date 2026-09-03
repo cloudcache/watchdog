@@ -1,9 +1,10 @@
 /** biome-ignore-all lint/correctness/useUniqueElementIds: component is only rendered once */
 import { Trans, useLingui } from "@lingui/react/macro"
-import { LanguagesIcon, LoaderCircleIcon, SaveIcon } from "lucide-react"
+import { LanguagesIcon, LoaderCircleIcon, PaletteIcon, SaveIcon } from "lucide-react"
 import { useState } from "react"
 import { useStore } from "@nanostores/react"
 import { Button } from "@/components/ui/button"
+import { useTheme } from "@/components/theme-provider"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -20,6 +21,7 @@ import { saveSettings } from "./layout"
 export default function SettingsProfilePage({ userSettings }: { userSettings: UserSettings }) {
 	const [isLoading, setIsLoading] = useState(false)
 	const { i18n } = useLingui()
+	const { theme, setTheme } = useTheme()
 	const currentUserSettings = useStore($userSettings)
 	const layoutWidth = currentUserSettings.layoutWidth ?? defaultLayoutWidth
 
@@ -47,17 +49,42 @@ export default function SettingsProfilePage({ userSettings }: { userSettings: Us
 				<div className="grid gap-2">
 					<div className="mb-2">
 						<h3 className="mb-1 text-lg font-medium flex items-center gap-2">
+							<PaletteIcon className="h-4 w-4" />
+							<Trans>Appearance</Trans>
+						</h3>
+						<p className="text-sm text-muted-foreground leading-relaxed">
+							<Trans>Choose a light, dark, or system theme.</Trans>
+						</p>
+					</div>
+					<Label className="block" htmlFor="theme">
+						<Trans>Theme</Trans>
+					</Label>
+					<Select value={theme} onValueChange={(value) => setTheme(value as "light" | "dark" | "system")}>
+						<SelectTrigger id="theme">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="light">
+								<Trans>Light</Trans>
+							</SelectItem>
+							<SelectItem value="dark">
+								<Trans>Dark</Trans>
+							</SelectItem>
+							<SelectItem value="system">
+								<Trans>System</Trans>
+							</SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+				<Separator />
+				<div className="grid gap-2">
+					<div className="mb-2">
+						<h3 className="mb-1 text-lg font-medium flex items-center gap-2">
 							<LanguagesIcon className="h-4 w-4" />
 							<Trans>Language</Trans>
 						</h3>
 						<p className="text-sm text-muted-foreground leading-relaxed">
-							<Trans>
-								Want to help improve our translations? Check{" "}
-								<a href="https://crowdin.com/project/beszel" className="link" target="_blank" rel="noopener noreferrer">
-									Crowdin
-								</a>{" "}
-								for details.
-							</Trans>
+							<Trans>Choose the language used in navigation and pages.</Trans>
 						</p>
 					</div>
 					<Label className="block" htmlFor="lang">

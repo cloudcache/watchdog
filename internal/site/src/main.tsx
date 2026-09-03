@@ -12,7 +12,7 @@ import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
 import { alertManager } from "@/lib/alerts"
-import { isAdmin, pb, updateUserSettings } from "@/lib/api.ts"
+import { isAdmin, pb, refreshWatchdogIdentity, updateUserSettings } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import {
 	$authenticated,
@@ -23,7 +23,7 @@ import {
 	$userSettings,
 	defaultLayoutWidth,
 } from "@/lib/stores.ts"
-import type { BeszelInfo, UpdateInfo } from "./types"
+import type { WatchdogInfo, UpdateInfo } from "./types"
 
 const LoginPage = lazy(() => import("@/components/login/login.tsx"))
 const AggregateCharts = lazy(() => import("@/components/routes/aggregate-charts.tsx"))
@@ -64,7 +64,6 @@ const Targets = lazy(() => import("@/components/routes/targets.tsx"))
 const TrafficDefaults = lazy(() => import("@/components/routes/traffic-defaults.tsx"))
 const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.tsx"))
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
-const FlowSearch = lazy(() => import("@/components/routes/flow-search.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
 const CopyToClipboardDialog = lazy(() => import("@/components/copy-to-clipboard.tsx"))
 
@@ -81,13 +80,18 @@ const App = memo(() => {
 		if (watchdogDevAuth) {
 			return () => unsubscribeAuth()
 		}
+		const identityReady = refreshWatchdogIdentity().catch((error) => {
+			console.error("initialize platform identity", error)
+		})
 		// get general info for authenticated users, such as public key and version
-		pb.send<BeszelInfo>("/api/beszel/info", {}).then((data) => {
+		pb.send<WatchdogInfo>("/api/watchdog/info", {}).then((data) => {
 			$publicKey.set(data.key)
-			// check for updates if enabled
-			if (data.cu && isAdmin()) {
-				pb.send<UpdateInfo>("/api/beszel/update", {}).then($newVersion.set)
-			}
+			// Wait for the MySQL authorization projection before showing admin-only updates.
+			identityReady.then(() => {
+				if (data.cu && isAdmin()) {
+					pb.send<UpdateInfo>("/api/watchdog/update", {}).then($newVersion.set)
+				}
+			})
 		})
 		// get user settings
 		updateUserSettings()
@@ -201,8 +205,6 @@ const App = memo(() => {
 		return <AddressPrefixes />
 	} else if (page.route === "address_sets") {
 		return <AddressSets />
-	} else if (page.route === "flow_search") {
-		return <FlowSearch />
 	} else if (page.route === "traffic_matrix") {
 		return <TrafficMatrix />
 	}

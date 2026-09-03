@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/henrygd/beszel/internal/hub/heartbeat"
-	beszeltests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/hub/heartbeat"
+	watchdogtests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +57,7 @@ func TestSendGETDoesNotRequireAppOrDB(t *testing.T) {
 	app := newTestHub(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "Beszel-Heartbeat", r.Header.Get("User-Agent"))
+		assert.Equal(t, "Watchdog-Heartbeat", r.Header.Get("User-Agent"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -92,7 +92,7 @@ func TestSendReturnsErrorOnHTTPFailureStatus(t *testing.T) {
 func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T, app *beszeltests.TestHub, user *core.Record)
+		setup          func(t *testing.T, app *watchdogtests.TestHub, user *core.Record)
 		expectStatus   string
 		expectMsgPart  string
 		expectDown     int
@@ -105,7 +105,7 @@ func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 	}{
 		{
 			name: "error when at least one system is down",
-			setup: func(t *testing.T, app *beszeltests.TestHub, user *core.Record) {
+			setup: func(t *testing.T, app *watchdogtests.TestHub, user *core.Record) {
 				downSystem := createTestSystem(t, app, user.Id, "db-1", "10.0.0.1", "down")
 				_ = createTestSystem(t, app, user.Id, "web-1", "10.0.0.2", "up")
 				createTriggeredAlert(t, app, user.Id, downSystem.Id, "CPU", 95)
@@ -120,7 +120,7 @@ func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 		},
 		{
 			name: "warn when only alerts are triggered",
-			setup: func(t *testing.T, app *beszeltests.TestHub, user *core.Record) {
+			setup: func(t *testing.T, app *watchdogtests.TestHub, user *core.Record) {
 				system := createTestSystem(t, app, user.Id, "api-1", "10.1.0.1", "up")
 				createTriggeredAlert(t, app, user.Id, system.Id, "CPU", 90)
 			},
@@ -134,7 +134,7 @@ func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 		},
 		{
 			name: "ok when no down systems and no alerts",
-			setup: func(t *testing.T, app *beszeltests.TestHub, user *core.Record) {
+			setup: func(t *testing.T, app *watchdogtests.TestHub, user *core.Record) {
 				_ = createTestSystem(t, app, user.Id, "node-1", "10.2.0.1", "up")
 				_ = createTestSystem(t, app, user.Id, "node-2", "10.2.0.2", "paused")
 				_ = createTestSystem(t, app, user.Id, "node-3", "10.2.0.3", "pending")
@@ -191,7 +191,7 @@ func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 
 			req := <-captured
 			assert.Equal(t, http.MethodPost, req.method)
-			assert.Equal(t, "Beszel-Heartbeat", req.userAgent)
+			assert.Equal(t, "Watchdog-Heartbeat", req.userAgent)
 			assert.Equal(t, "application/json", req.contentType)
 
 			assert.Equal(t, tt.expectStatus, req.payload.Status)
@@ -207,24 +207,24 @@ func TestSendPOSTBuildsExpectedStatuses(t *testing.T) {
 	}
 }
 
-func newTestHub(t *testing.T) *beszeltests.TestHub {
+func newTestHub(t *testing.T) *watchdogtests.TestHub {
 	t.Helper()
-	app, err := beszeltests.NewTestHub(t.TempDir())
+	app, err := watchdogtests.NewTestHub(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(app.Cleanup)
 	return app
 }
 
-func createTestUser(t *testing.T, app *beszeltests.TestHub) *core.Record {
+func createTestUser(t *testing.T, app *watchdogtests.TestHub) *core.Record {
 	t.Helper()
-	user, err := beszeltests.CreateUser(app.App, "admin@example.com", "password123")
+	user, err := watchdogtests.CreateUser(app.App, "admin@example.com", "password123")
 	require.NoError(t, err)
 	return user
 }
 
-func createTestSystem(t *testing.T, app *beszeltests.TestHub, userID, name, host, status string) *core.Record {
+func createTestSystem(t *testing.T, app *watchdogtests.TestHub, userID, name, host, status string) *core.Record {
 	t.Helper()
-	system, err := beszeltests.CreateRecord(app.App, "systems", map[string]any{
+	system, err := watchdogtests.CreateRecord(app.App, "systems", map[string]any{
 		"name":   name,
 		"host":   host,
 		"port":   "45876",
@@ -235,9 +235,9 @@ func createTestSystem(t *testing.T, app *beszeltests.TestHub, userID, name, host
 	return system
 }
 
-func createTriggeredAlert(t *testing.T, app *beszeltests.TestHub, userID, systemID, name string, threshold float64) *core.Record {
+func createTriggeredAlert(t *testing.T, app *watchdogtests.TestHub, userID, systemID, name string, threshold float64) *core.Record {
 	t.Helper()
-	alert, err := beszeltests.CreateRecord(app.App, "alerts", map[string]any{
+	alert, err := watchdogtests.CreateRecord(app.App, "alerts", map[string]any{
 		"name":      name,
 		"system":    systemID,
 		"user":      userID,

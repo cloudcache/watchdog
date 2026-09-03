@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/henrygd/beszel/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 func main() {
@@ -32,24 +32,19 @@ func main() {
 	defer store.Close()
 
 	tenantID := cfg.SFlowCollector.TenantID
-	vlogsURL := cfg.SFlowCollector.VLogsURL
-	if vlogsURL == "" {
-		vlogsURL = cfg.VictoriaLogs.BaseURL
-	}
 
 	collector := &watchdog.SFlowCollector{
 		ListenAddr:         cfg.SFlowCollector.Listen,
 		Network:            store,
 		AddressSets:        store,
 		VMClient:           watchdog.VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL},
-		VLogsURL:           vlogsURL,
 		TenantID:           tenantID,
 		AggInterval:        cfg.SFlowCollector.AggInterval,
 		PrefixSyncInterval: cfg.SFlowCollector.PrefixSyncInterval,
 	}
 
-	log.Printf("starting sflow collector: listen=%s tenant=%s vm=%s vlogs=%s",
-		cfg.SFlowCollector.Listen, tenantID, cfg.VictoriaMetrics.BaseURL, vlogsURL)
+	log.Printf("starting sflow collector: listen=%s tenant=%s vm=%s",
+		cfg.SFlowCollector.Listen, tenantID, cfg.VictoriaMetrics.BaseURL)
 
 	if err := collector.Run(ctx); err != nil {
 		log.Fatal(err)

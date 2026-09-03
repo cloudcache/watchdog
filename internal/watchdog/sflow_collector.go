@@ -3,11 +3,9 @@ package watchdog
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -16,18 +14,17 @@ import (
 )
 
 type SFlowCollector struct {
-	ListenAddr          string
-	Network             NetworkRepository
-	AddressSets         AddressSetRepository
-	VMClient            VictoriaMetricsClient
-	VLogsURL            string
-	TenantID            ID
-	AggInterval         time.Duration
-	PrefixSyncInterval  time.Duration
-	Matcher             *PrefixMatcher
-	aggregator          map[string]*flowAggregate
-	aggMu               sync.Mutex
-	lastPrefixSync      time.Time
+	ListenAddr         string
+	Network            NetworkRepository
+	AddressSets        AddressSetRepository
+	VMClient           VictoriaMetricsClient
+	TenantID           ID
+	AggInterval        time.Duration
+	PrefixSyncInterval time.Duration
+	Matcher            *PrefixMatcher
+	aggregator         map[string]*flowAggregate
+	aggMu              sync.Mutex
+	lastPrefixSync     time.Time
 }
 
 type flowAggregate struct {
@@ -42,23 +39,23 @@ type flowAggregate struct {
 }
 
 type sflowFlowRecord struct {
-	TimeReceived  time.Time
-	AgentIP       string
-	DeviceID      string
-	PortID        string
-	IfName        string
-	IfIndex       uint32
-	Direction     string
-	SrcIP         string
-	DstIP         string
-	SrcPort       uint16
-	DstPort       uint16
-	Proto         uint8
-	Bytes         uint64
-	SamplingRate  uint64
-	AddressSets   []string
-	SrcLabels     map[string]string
-	DstLabels     map[string]string
+	TimeReceived time.Time
+	AgentIP      string
+	DeviceID     string
+	PortID       string
+	IfName       string
+	IfIndex      uint32
+	Direction    string
+	SrcIP        string
+	DstIP        string
+	SrcPort      uint16
+	DstPort      uint16
+	Proto        uint8
+	Bytes        uint64
+	SamplingRate uint64
+	AddressSets  []string
+	SrcLabels    map[string]string
+	DstLabels    map[string]string
 }
 
 func (c *SFlowCollector) Run(ctx context.Context) error {
@@ -156,7 +153,9 @@ func (c *SFlowCollector) processPacket(ctx context.Context, packet sflow.Packet,
 			flow.PortID = portID
 			flow.IfName = ifName
 			flow.IfIndex = func() uint32 {
-				if direction == "in" { return inIf }
+				if direction == "in" {
+					return inIf
+				}
 				return outIf
 			}()
 			flow.Direction = direction
@@ -189,7 +188,6 @@ func (c *SFlowCollector) processPacket(ctx context.Context, packet sflow.Packet,
 			}
 			flow.AddressSets = c.matchAddressSets(flow.SrcLabels, flow.DstLabels)
 
-			c.writeFlowToVLogs(flow)
 			c.accumulate(flow)
 		}
 		_ = port
@@ -248,47 +246,6 @@ func (c *SFlowCollector) matchAddressSets(srcLabels, dstLabels map[string]string
 		}
 	}
 	return allMatched
-}
-
-func (c *SFlowCollector) writeFlowToVLogs(flow sflowFlowRecord) {
-	if c.VLogsURL == "" {
-		return
-	}
-	record := map[string]any{
-		"_msg":            "flow",
-		"_time":           flow.TimeReceived.Format(time.RFC3339Nano),
-		"device_id":       flow.DeviceID,
-		"port_id":         flow.PortID,
-		"if_name":         flow.IfName,
-		"if_index":        flow.IfIndex,
-		"direction":       flow.Direction,
-		"src_ip":          flow.SrcIP,
-		"dst_ip":          flow.DstIP,
-		"src_port":        flow.SrcPort,
-		"dst_port":        flow.DstPort,
-		"proto":           flow.Proto,
-		"bytes":           flow.Bytes,
-		"sampling_rate":   flow.SamplingRate,
-		"estimated_bytes": flow.Bytes * flow.SamplingRate,
-	}
-	if len(flow.AddressSets) > 0 {
-		record["address_sets"] = flow.AddressSets
-	}
-	if flow.SrcLabels != nil {
-		for k, v := range flow.SrcLabels {
-			record["src_"+k] = v
-		}
-	}
-	if flow.DstLabels != nil {
-		for k, v := range flow.DstLabels {
-			record["dst_"+k] = v
-		}
-	}
-	data, _ := json.Marshal(record)
-	go func() {
-		client := &http.Client{Timeout: 5 * time.Second}
-		_, _ = client.Post(c.VLogsURL+"/insert/jsonline", "application/stream+json", bytes.NewReader(data))
-	}()
 }
 
 func (c *SFlowCollector) accumulate(flow sflowFlowRecord) {

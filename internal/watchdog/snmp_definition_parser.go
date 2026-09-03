@@ -34,7 +34,7 @@ type librenmsOSDiscovery struct {
 
 type librenmsTrapConfig struct {
 	Traps map[string]struct {
-		OID    string `yaml:"oid"`
+		OID     string `yaml:"oid"`
 		Handler string `yaml:"handler"`
 	} `yaml:"traps"`
 }
@@ -98,16 +98,16 @@ func parseLibrenmsOSDefinitions(dir, sourceVersion string) ([]SNMPCollectorOSDef
 		// merge it so the discovery engine is definition-driven.
 		osDiscovery := loadLibrenmsOSDiscovery(dir, raw.OS)
 		definition := map[string]any{
-			"os_discovery": osDiscovery,
-			"text":             raw.Text,
-			"type":             raw.Type,
-			"group":            raw.Group,
-			"mib_dir":          raw.MIBDir,
-			"discovery":        raw.Discovery,
-			"discovery_modules": raw.DiscoveryModules,
-			"poller_modules":   raw.PollerModules,
-			"bad_iftype":       raw.BadIfType,
-			"bad_ifname_regexp": raw.BadIfName,
+			"os_discovery":       osDiscovery,
+			"text":               raw.Text,
+			"type":               raw.Type,
+			"group":              raw.Group,
+			"mib_dir":            raw.MIBDir,
+			"discovery":          raw.Discovery,
+			"discovery_modules":  raw.DiscoveryModules,
+			"poller_modules":     raw.PollerModules,
+			"bad_iftype":         raw.BadIfType,
+			"bad_ifname_regexp":  raw.BadIfName,
 			"bad_ifdescr_regexp": raw.BadIfDescr,
 		}
 		for k, v := range raw.Extra {

@@ -464,14 +464,14 @@ func TestAPINetworkSNMPDiscoverPersistsRecipesBGPSessionsEventsAndModules(t *tes
 	collector := &fakeSNMPCollectorRepository{}
 	discovery := &fakeSNMPInterfaceDiscoverer{result: SNMPCollectorDiscoveryResult{
 		DeviceUpdates: NetworkDevice{ID: "device-a", Vendor: "cisco", SysName: "core-a"},
-		Ports: []NetworkPort{{ID: portID, IfIndex: 10, IfName: "Eth1/1"}},
+		Ports:         []NetworkPort{{ID: portID, IfIndex: 10, IfName: "Eth1/1"}},
 		Recipes: []SNMPCollectionRecipe{{
 			ModuleName: snmpCollectorModulePorts, EntityType: SNMPCollectorEntityPort, EntityID: portID,
 			MetricName: MetricSNMPIfInOctetsTotal, ValueType: SNMPCollectorValueCounter64,
 			OID: snmpOIDIfHCInOctets + ".10", NumericOID: snmpOIDIfHCInOctets + ".10", OIDIndex: "10",
 		}},
 		BGPSessions: []BGPSession{{PeerAddr: "10.0.0.2", PeerAS: 65001, AFI: "ipv4", SAFI: "unicast"}},
-		Events: []SNMPEvent{{Source: "discovery", EventType: "port_discovered", Message: "port Eth1/1 discovered"}},
+		Events:      []SNMPEvent{{Source: "discovery", EventType: "port_discovered", Message: "port Eth1/1 discovered"}},
 	}}
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          configureNetworkTestAuth,
@@ -702,5 +702,7 @@ func (f *fakeDiscoveryJobRepository) EnqueueDiscoveryJob(_ context.Context, tena
 func (f *fakeDiscoveryJobRepository) ListDueDiscoveryJobs(context.Context, int, time.Time) ([]DiscoveryJob, error) {
 	return nil, nil
 }
-func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobRunning(context.Context, ID) error  { return nil }
-func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobCompleted(context.Context, ID, string) error { return nil }
+func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobRunning(context.Context, ID) error { return nil }
+func (f *fakeDiscoveryJobRepository) MarkDiscoveryJobCompleted(context.Context, ID, string) error {
+	return nil
+}

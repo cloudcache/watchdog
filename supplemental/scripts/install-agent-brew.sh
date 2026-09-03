@@ -6,7 +6,7 @@ TOKEN=""
 HUB_URL=""
 
 usage() {
-  printf "Beszel Agent homebrew installation script\n\n"
+  printf "Watchdog Agent homebrew installation script\n\n"
   printf "Usage: ./install-agent-brew.sh [options]\n\n"
   printf "Options: \n"
   printf "  -k            SSH key (required, or interactive if not provided)\n"
@@ -72,27 +72,27 @@ fi
 
 # TOKEN and HUB_URL are optional for backwards compatibility - no interactive prompts
 
-mkdir -p ~/.config/beszel ~/.cache/beszel
+mkdir -p ~/.config/watchdog ~/.cache/watchdog
 
-echo "KEY=\"$KEY\"" >~/.config/beszel/beszel-agent.env
-echo "LISTEN=$PORT" >>~/.config/beszel/beszel-agent.env
+echo "KEY=\"$KEY\"" >~/.config/watchdog/watchdog-agent.env
+echo "LISTEN=$PORT" >>~/.config/watchdog/watchdog-agent.env
 
 if [ -n "$TOKEN" ]; then
-  echo "TOKEN=\"$TOKEN\"" >>~/.config/beszel/beszel-agent.env
+  echo "TOKEN=\"$TOKEN\"" >>~/.config/watchdog/watchdog-agent.env
 fi
 if [ -n "$HUB_URL" ]; then
-  echo "HUB_URL=\"$HUB_URL\"" >>~/.config/beszel/beszel-agent.env
+  echo "HUB_URL=\"$HUB_URL\"" >>~/.config/watchdog/watchdog-agent.env
 fi
 
-brew tap henrygd/beszel
-brew install beszel-agent
-brew services start beszel-agent
+brew tap cloudcache/watchdog
+brew install watchdog-agent
+brew services start watchdog-agent
 
-printf "\nCheck status: brew services info beszel-agent\n"
-echo "Stop: brew services stop beszel-agent"
-echo "Start: brew services start beszel-agent"
-echo "Restart: brew services restart beszel-agent"
-echo "Upgrade: brew upgrade beszel-agent"
-echo "Uninstall: brew uninstall beszel-agent"
-echo "View logs in ~/.cache/beszel/beszel-agent.log"
-printf "Change environment variables in ~/.config/beszel/beszel-agent.env\n"
+printf "\nCheck status: brew services info watchdog-agent\n"
+echo "Stop: brew services stop watchdog-agent"
+echo "Start: brew services start watchdog-agent"
+echo "Restart: brew services restart watchdog-agent"
+echo "Upgrade: brew upgrade watchdog-agent"
+echo "Uninstall: brew uninstall watchdog-agent"
+echo "View logs in ~/.cache/watchdog/watchdog-agent.log"
+printf "Change environment variables in ~/.config/watchdog/watchdog-agent.env\n"

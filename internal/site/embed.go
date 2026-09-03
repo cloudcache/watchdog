@@ -1,4 +1,4 @@
-// Package site handles the Beszel frontend embedding.
+// Package site handles the Watchdog frontend embedding.
 package site
 
 import (

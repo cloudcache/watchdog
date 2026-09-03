@@ -137,6 +137,56 @@ func TestAPIAgentRegistryRejectsUnsupportedSystemPullMode(t *testing.T) {
 	}
 }
 
+func TestAPIAgentRegistryPatchUpdatesOnlyProvidedFields(t *testing.T) {
+	originalTokenHash := NewAgentTokenHash("secret-a")
+	repo := &fakeAgentRepository{agent: SNMPAgentConfig{
+		ID:        "agent-system-a",
+		TenantID:  "tenant-a",
+		TargetID:  "target-a",
+		AgentType: AgentTypeSystem,
+		Mode:      AgentModePush,
+		Endpoint:  "https://agent.example.com",
+		TokenHash: originalTokenHash,
+		Status:    AgentStatusUp,
+	}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/agent-registry/agent-system-a", strings.NewReader(`{"Status":"disabled"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if repo.agent.Status != AgentStatusDisabled || repo.agent.TargetID != "target-a" || repo.agent.AgentType != AgentTypeSystem || repo.agent.Mode != AgentModePush || repo.agent.Endpoint != "https://agent.example.com" || repo.agent.TokenHash != originalTokenHash {
+		t.Fatalf("agent = %#v", repo.agent)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/agent-registry/agent-system-a", strings.NewReader(`{"Endpoint":"","Token":"   "}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear endpoint status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if repo.agent.Endpoint != "" || repo.agent.TokenHash != originalTokenHash {
+		t.Fatalf("agent after clear = %#v", repo.agent)
+	}
+}
+
+func TestAPIAgentRegistryPatchRejectsMismatchedBodyID(t *testing.T) {
+	repo := &fakeAgentRepository{agent: SNMPAgentConfig{
+		ID:        "agent-system-a",
+		TenantID:  "tenant-a",
+		TargetID:  "target-a",
+		AgentType: AgentTypeSystem,
+		Mode:      AgentModePush,
+		TokenHash: NewAgentTokenHash("secret-a"),
+		Status:    AgentStatusUp,
+	}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/agent-registry/agent-system-a", strings.NewReader(`{"ID":"agent-system-b"}`)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "must match") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAPIAgentRegistryListAllowsViewOnlyTenant(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: permissionTestAuth(false),

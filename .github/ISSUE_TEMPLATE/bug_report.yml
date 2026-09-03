@@ -7,29 +7,28 @@ body:
     attributes:
       label: Welcome!
       description: |
-        The issue tracker is for reporting bugs and feature requests only. For end-user related support questions, please use the **[GitHub Discussions](https://github.com/henrygd/beszel/discussions/new?category=support)** instead
+        The issue tracker is for reporting bugs and feature requests only. For end-user related support questions, please use the **[GitHub Discussions](https://github.com/cloudcache/watchdog/discussions/new?category=support)** instead
 
         Please note:
-        - For translation-related issues or requests, please use the [Crowdin project](https://crowdin.com/project/beszel).
-        - To request a change or feature, use the [feature request form](https://github.com/henrygd/beszel/issues/new?template=feature_request.yml).
+        - To request a change or feature, use the [feature request form](https://github.com/cloudcache/watchdog/issues/new?template=feature_request.yml).
         - Any issues that can be resolved by consulting the documentation or by reviewing existing open or closed issues will be closed.
         **- Please do not submit bugs that are specific to ZFS. We plan to add integration with ZFS utilities in the near future.**
 
       options:
-      - label: I have read the [Documentation](https://beszel.dev/guide/getting-started)
+      - label: I have read the [Documentation](https://github.com/cloudcache/watchdog/tree/main/docs)
         required: true
-      - label: I have checked the [Common Issues Guide](https://beszel.dev/guide/common-issues) and my problem was not mentioned there.
+      - label: I have checked existing [issues](https://github.com/cloudcache/watchdog/issues) and my problem was not mentioned there.
         required: true
       - label: I have searched open and closed issues and my problem was not mentioned before.
         required: true
-      - label: I have verified I am using the latest version available. You can check the latest release [here](https://github.com/henrygd/beszel/releases).
+      - label: I have verified I am using the latest version available. You can check the latest release [here](https://github.com/cloudcache/watchdog/releases).
         required: true
 
   - type: dropdown
     id: component
     attributes:
       label: Component
-      description: Which part of Beszel is this about?
+      description: Which part of Watchdog is this about?
       options:
         - Hub
         - Agent
@@ -92,7 +91,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Beszel version
+      label: Watchdog version
       placeholder: 0.9.1
     validations:
       required: true

@@ -9,6 +9,6 @@ spec:
   - name: hook1-container
     image: curlimages/curl
     imagePullPolicy: IfNotPresent
-    command: ['sh', '-c', 'curl http://{{ template "beszel.fullname" . }}-web:8090/']
+    command: ['sh', '-c', 'curl http://{{ template "watchdog.fullname" . }}-web:8090/']
   restartPolicy: Never
   terminationGracePeriodSeconds: 0

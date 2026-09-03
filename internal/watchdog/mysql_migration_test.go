@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -38,6 +39,23 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 	}
 }
 
+func TestIdentityProjectionMigrationIsExpandOnly(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "011_identity_projection.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, fragment := range []string{"add column auth_provider", "add column external_subject_id", "password_hash varchar(255) null", "uq_users_external_identity"} {
+		if !strings.Contains(sqlText, fragment) {
+			t.Fatalf("identity migration missing %q", fragment)
+		}
+	}
+	if strings.Contains(sqlText, "drop column password_hash") {
+		t.Fatal("expand migration must retain password_hash for rollback")
+	}
+}
+
 func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	dsn := os.Getenv("WATCHDOG_MYSQL_TEST_DSN")
 	if dsn == "" {
@@ -51,10 +69,22 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err := db.Ping(); err != nil {
 		t.Fatalf("ping mysql: %v", err)
 	}
-	for _, statement := range splitSQLStatements(readWatchdogMigration(t)) {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("exec statement %q: %v", statement, err)
-		}
+	first, err := ApplyMySQLMigrations(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "011" {
+		t.Fatalf("first migration result = %#v", first)
+	}
+	second, err := ApplyMySQLMigrations(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Applied) != 0 || second.CurrentVersion != "011" {
+		t.Fatalf("second migration result = %#v", second)
+	}
+	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
+		t.Fatal(err)
 	}
 	for _, table := range []string{"network_devices", "network_ports", "traffic_policy_defaults", "export_tasks"} {
 		var name string
@@ -62,6 +92,89 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 			t.Fatalf("table %s not found after migration: %v", table, err)
 		}
 	}
+	for _, column := range []string{"auth_provider", "external_subject_id", "password_hash"} {
+		var nullable string
+		if err := db.QueryRow("SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?", column).Scan(&nullable); err != nil {
+			t.Fatalf("users.%s not found after migrations: %v", column, err)
+		}
+		if nullable != "YES" {
+			t.Fatalf("users.%s nullable = %s, want YES", column, nullable)
+		}
+	}
+	const tenantID = "tenant_identity_check"
+	if _, err := db.Exec("DELETE FROM tenants WHERE id = ?", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec("DELETE FROM tenants WHERE id = ?", tenantID)
+	if _, err := db.Exec("INSERT INTO tenants (id, name, status) VALUES (?, 'Identity Check', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO users (id, tenant_id, email, name, status) VALUES ('user_identity_check', ?, 'identity-check@watchdog.local', 'Identity Check', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO roles (id, tenant_id, name, scope) VALUES ('role_identity_admin', ?, 'admin', 'tenant')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO user_roles (user_id, role_id) VALUES ('user_identity_check', 'role_identity_admin')"); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMySQLStore(db)
+	if err := store.LinkExternalIdentity(context.Background(), tenantID, "user_identity_check", "pocketbase", "pb_identity_check"); err != nil {
+		t.Fatal(err)
+	}
+	projections, err := store.ListIdentityProjections(context.Background(), "pocketbase", "pb_identity_check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projections) != 1 || projections[0].Tenant.ID != tenantID || projections[0].User.ID != "user_identity_check" {
+		t.Fatalf("projections = %#v", projections)
+	}
+	admin, err := store.IsUserTenantAdmin(context.Background(), tenantID, "user_identity_check")
+	if err != nil || !admin {
+		t.Fatalf("admin = %v, err = %v", admin, err)
+	}
+}
+
+type watchdogMigration struct {
+	name string
+	sql  string
+}
+
+func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
+	migrations, err := EmbeddedMySQLMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) != 11 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "011" {
+		t.Fatalf("migrations = %#v", migrations)
+	}
+	for i, migration := range migrations {
+		if len(migration.Checksum) != 64 || migration.SQL == "" {
+			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func readWatchdogMigrations(t *testing.T) []watchdogMigration {
+	t.Helper()
+	dir := filepath.Join("..", "..", "deploy", "migration", "mysql")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+	migrations := make([]watchdogMigration, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read migration %s: %v", entry.Name(), err)
+		}
+		migrations = append(migrations, watchdogMigration{name: entry.Name(), sql: string(data)})
+	}
+	return migrations
 }
 
 func readWatchdogMigration(t *testing.T) string {

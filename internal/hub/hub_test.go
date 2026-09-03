@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +18,7 @@ import (
 )
 
 func TestMakeLink(t *testing.T) {
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 
 	tests := []struct {
 		name     string
@@ -108,7 +108,7 @@ func TestMakeLink(t *testing.T) {
 }
 
 func TestGetSSHKey(t *testing.T) {
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 
 	// Test Case 1: Key generation (no existing key)
 	t.Run("KeyGeneration", func(t *testing.T) {
@@ -251,7 +251,7 @@ func TestGetSSHKey(t *testing.T) {
 
 func TestAppUrl(t *testing.T) {
 	t.Run("no APP_URL does't change app url", func(t *testing.T) {
-		hub, _ := beszelTests.NewTestHub(t.TempDir())
+		hub, _ := watchdogTests.NewTestHub(t.TempDir())
 		defer hub.Cleanup()
 
 		settings := hub.Settings()
@@ -259,7 +259,7 @@ func TestAppUrl(t *testing.T) {
 	})
 	t.Run("APP_URL changes app url", func(t *testing.T) {
 		t.Setenv("APP_URL", "http://example.com/app")
-		hub, _ := beszelTests.NewTestHub(t.TempDir())
+		hub, _ := watchdogTests.NewTestHub(t.TempDir())
 		defer hub.Cleanup()
 
 		settings := hub.Settings()

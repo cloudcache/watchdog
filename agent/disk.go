@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/shirou/gopsutil/v4/disk"
 )
@@ -374,7 +374,7 @@ func (a *Agent) initializeDiskInfo() {
 	a.initializeDiskIoStats(diskIoCounters)
 }
 
-// Removes extra filesystems that mirror root usage (https://github.com/henrygd/beszel/issues/1428).
+// Removes extra filesystems that mirror root usage.
 func (a *Agent) pruneDuplicateRootExtraFilesystems() {
 	var rootMountpoint string
 	for _, stats := range a.fsStats {

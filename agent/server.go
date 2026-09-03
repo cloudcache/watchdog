@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/common"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/common"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/blang/semver"
 	"github.com/fxamacker/cbor/v2"
@@ -62,7 +62,7 @@ func (a *Agent) StartServer(opts ServerOptions) error {
 
 	// base config (limit to allowed algorithms)
 	config := &gossh.ServerConfig{
-		ServerVersion: fmt.Sprintf("SSH-2.0-%s_%s", beszel.AppName, beszel.Version),
+		ServerVersion: fmt.Sprintf("SSH-2.0-%s_%s", watchdog.AppName, watchdog.Version),
 	}
 	config.KeyExchanges = common.DefaultKeyExchanges
 	config.MACs = common.DefaultMACs
@@ -132,7 +132,7 @@ func (a *Agent) handleSession(s ssh.Session) {
 	hubVersion := a.getHubVersion(sessionID, sessionCtx)
 
 	// Legacy one-shot behavior for older hubs
-	if hubVersion.LT(beszel.MinVersionAgentResponse) {
+	if hubVersion.LT(watchdog.MinVersionAgentResponse) {
 		if err := a.handleLegacyStats(s, hubVersion); err != nil {
 			slog.Error("Error encoding stats", "err", err)
 			s.Exit(1)
@@ -201,14 +201,14 @@ func (a *Agent) handleLegacyStats(w io.Writer, hubVersion semver.Version) error 
 // It chooses between CBOR and JSON encoding based on the hub version,
 // using CBOR for newer versions and JSON for legacy compatibility.
 func (a *Agent) writeToSession(w io.Writer, stats *system.CombinedData, hubVersion semver.Version) error {
-	if hubVersion.GTE(beszel.MinVersionCbor) {
+	if hubVersion.GTE(watchdog.MinVersionCbor) {
 		return cbor.NewEncoder(w).Encode(stats)
 	}
 	return json.NewEncoder(w).Encode(stats)
 }
 
-// extractHubVersion extracts the beszel version from SSH client version string.
-// Expected format: "SSH-2.0-beszel_X.Y.Z" or "beszel_X.Y.Z"
+// extractHubVersion extracts the watchdog version from SSH client version string.
+// Expected format: "SSH-2.0-watchdog_X.Y.Z" or "watchdog_X.Y.Z"
 func extractHubVersion(versionString string) (semver.Version, error) {
 	_, after, _ := strings.Cut(versionString, "_")
 	return semver.Parse(after)

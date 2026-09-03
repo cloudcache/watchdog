@@ -69,7 +69,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Saved Graphs`} / WatchDog`
+		document.title = `${t`Saved Graphs`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

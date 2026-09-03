@@ -1,35 +1,34 @@
-# Docs: https://beszel.dev/guide/getting-started
-# Env vars: https://beszel.dev/guide/environment-variables
+# Docs: https://github.com/cloudcache/watchdog/tree/main/docs
 
 services:
-  beszel:
-    image: henrygd/beszel:latest
-    container_name: beszel
+  watchdog:
+    image: cloudcache/watchdog:latest
+    container_name: watchdog
     restart: unless-stopped
     environment:
       APP_URL: http://localhost:8090
     ports:
       - 8090:8090
     volumes:
-      - ./beszel_data:/beszel_data
-      - ./beszel_socket:/beszel_socket
+      - ./watchdog_data:/watchdog_data
+      - ./watchdog_socket:/watchdog_socket
     # healthcheck:
-    #   test: ['CMD', '/beszel', 'health', '--url', 'http://localhost:8090']
+    #   test: ['CMD', '/watchdog', 'health', '--url', 'http://localhost:8090']
     #   interval: 120s
     #   start_period: 10s
     #   timeout: 5s
 
-  beszel-agent:
-    image: henrygd/beszel-agent:latest
-    container_name: beszel-agent
+  watchdog-agent:
+    image: cloudcache/watchdog-agent:latest
+    container_name: watchdog-agent
     restart: unless-stopped
     network_mode: host
     volumes:
-      - ./beszel_agent_data:/var/lib/beszel-agent
-      - ./beszel_socket:/beszel_socket
+      - ./watchdog_agent_data:/var/lib/watchdog-agent
+      - ./watchdog_socket:/watchdog_socket
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      LISTEN: /beszel_socket/beszel.sock
+      LISTEN: /watchdog_socket/watchdog.sock
       HUB_URL: http://localhost:8090
       TOKEN: <token>
       KEY: "<key>"

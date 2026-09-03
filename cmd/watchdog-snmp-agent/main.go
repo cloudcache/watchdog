@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/watchdog"
 	g "github.com/gosnmp/gosnmp"
-	"github.com/henrygd/beszel/internal/watchdog"
 )
 
 func main() {

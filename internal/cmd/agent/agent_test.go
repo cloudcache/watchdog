@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/henrygd/beszel/agent"
+	"github.com/cloudcache/watchdog/agent"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -36,9 +36,9 @@ func TestGetAddress(t *testing.T) {
 		{
 			name: "use unix socket from flag",
 			opts: cmdOptions{
-				listen: "/tmp/beszel.sock",
+				listen: "/tmp/watchdog.sock",
 			},
-			expected: "/tmp/beszel.sock",
+			expected: "/tmp/watchdog.sock",
 		},
 		{
 			name: "use LISTEN env var",
@@ -62,9 +62,9 @@ func TestGetAddress(t *testing.T) {
 				listen: "",
 			},
 			envVars: map[string]string{
-				"LISTEN": "/tmp/beszel.sock",
+				"LISTEN": "/tmp/watchdog.sock",
 			},
-			expected: "/tmp/beszel.sock",
+			expected: "/tmp/watchdog.sock",
 		},
 		{
 			name: "flag takes precedence over env vars",
@@ -218,7 +218,7 @@ func TestGetNetwork(t *testing.T) {
 		},
 		{
 			name:     "unix network",
-			opts:     cmdOptions{listen: "/tmp/beszel.sock"},
+			opts:     cmdOptions{listen: "/tmp/watchdog.sock"},
 			expected: "unix",
 		},
 		{
@@ -332,5 +332,37 @@ func TestParseFlags(t *testing.T) {
 
 			assert.Equal(t, tt.expected, opts)
 		})
+	}
+}
+
+func TestCLIClientFlagsOverridePrefixedEnvironment(t *testing.T) {
+	oldArgs := os.Args
+	oldFlags := pflag.CommandLine
+	defer func() {
+		os.Args = oldArgs
+		pflag.CommandLine = oldFlags
+	}()
+
+	t.Setenv("WATCHDOG_AGENT_HUB_URL", "https://env.example.com")
+	t.Setenv("WATCHDOG_AGENT_TOKEN", "env-token")
+	t.Setenv("HUB_URL", "https://legacy-env.example.com")
+	t.Setenv("TOKEN", "legacy-env-token")
+	os.Args = []string{"cmd", "--url", " https://cli.example.com/ ", "--token", "cli-token"}
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
+	var opts cmdOptions
+	if opts.parse() {
+		t.Fatal("client flags unexpectedly handled as a subcommand")
+	}
+	if got := os.Getenv("WATCHDOG_AGENT_HUB_URL"); got != "https://cli.example.com/" {
+		t.Fatalf("hub URL = %q", got)
+	}
+	if got := os.Getenv("WATCHDOG_AGENT_TOKEN"); got != "cli-token" {
+		t.Fatalf("token = %q", got)
+	}
+	if got := os.Getenv("HUB_URL"); got != "https://cli.example.com/" {
+		t.Fatalf("legacy hub URL = %q", got)
+	}
+	if got := os.Getenv("TOKEN"); got != "cli-token" {
+		t.Fatalf("legacy token = %q", got)
 	}
 }

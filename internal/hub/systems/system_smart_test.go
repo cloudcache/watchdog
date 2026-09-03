@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel/internal/hub/expirymap"
+	"github.com/cloudcache/watchdog/internal/hub/expirymap"
 	"github.com/stretchr/testify/assert"
 )
 

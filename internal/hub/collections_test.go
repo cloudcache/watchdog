@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/pocketbase/pocketbase/core"
 	pbTests "github.com/pocketbase/pocketbase/tests"
 	"github.com/stretchr/testify/assert"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestCollectionRulesDefault(t *testing.T) {
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	const isUserMatchesUser = `@request.auth.id != "" && user = @request.auth.id`
@@ -162,7 +162,7 @@ func TestCollectionRulesDefault(t *testing.T) {
 
 func TestCollectionRulesShareAllSystems(t *testing.T) {
 	t.Setenv("SHARE_ALL_SYSTEMS", "true")
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	const isUser = `@request.auth.id != ""`
@@ -290,7 +290,7 @@ func TestCollectionRulesShareAllSystems(t *testing.T) {
 
 func TestDisablePasswordAuth(t *testing.T) {
 	t.Setenv("DISABLE_PASSWORD_AUTH", "true")
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	usersCollection, err := hub.FindCollectionByNameOrId("users")
@@ -300,7 +300,7 @@ func TestDisablePasswordAuth(t *testing.T) {
 
 func TestUserCreation(t *testing.T) {
 	t.Setenv("USER_CREATION", "true")
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	usersCollection, err := hub.FindCollectionByNameOrId("users")
@@ -310,7 +310,7 @@ func TestUserCreation(t *testing.T) {
 
 func TestMFAOtp(t *testing.T) {
 	t.Setenv("MFA_OTP", "true")
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	usersCollection, err := hub.FindCollectionByNameOrId("users")
@@ -325,33 +325,33 @@ func TestMFAOtp(t *testing.T) {
 }
 
 func TestApiCollectionsAuthRules(t *testing.T) {
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	hub.StartHub()
 
-	user1, _ := beszelTests.CreateUser(hub, "user1@example.com", "password")
+	user1, _ := watchdogTests.CreateUser(hub, "user1@example.com", "password")
 	user1Token, _ := user1.NewAuthToken()
 
-	user2, _ := beszelTests.CreateUser(hub, "user2@example.com", "password")
+	user2, _ := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 	// user2Token, _ := user2.NewAuthToken()
 
-	userReadonly, _ := beszelTests.CreateUserWithRole(hub, "userreadonly@example.com", "password", "readonly")
+	userReadonly, _ := watchdogTests.CreateUserWithRole(hub, "userreadonly@example.com", "password", "readonly")
 	userReadonlyToken, _ := userReadonly.NewAuthToken()
 
-	userOneSystem, _ := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	userOneSystem, _ := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "system1",
 		"users": []string{user1.Id},
 		"host":  "127.0.0.1",
 	})
 
-	sharedSystem, _ := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	sharedSystem, _ := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "system2",
 		"users": []string{user1.Id, user2.Id},
 		"host":  "127.0.0.2",
 	})
 
-	userTwoSystem, _ := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	userTwoSystem, _ := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "system3",
 		"users": []string{user2.Id},
 		"host":  "127.0.0.2",
@@ -367,7 +367,7 @@ func TestApiCollectionsAuthRules(t *testing.T) {
 		return hub.TestApp
 	}
 
-	scenarios := []beszelTests.ApiScenario{
+	scenarios := []watchdogTests.ApiScenario{
 		{
 			Name:               "Unauthorized user cannot list systems",
 			Method:             http.MethodGet,

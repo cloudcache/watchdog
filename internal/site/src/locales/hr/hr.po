@@ -6,13 +6,13 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: hr\n"
-"Project-Id-Version: beszel\n"
+"Project-Id-Version: watchdog\n"
 "Report-Msgid-Bugs-To: \n"
 "PO-Revision-Date: 2026-04-05 18:28\n"
 "Last-Translator: \n"
 "Language-Team: Croatian\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
-"X-Crowdin-Project: beszel\n"
+"X-Crowdin-Project: watchdog\n"
 "X-Crowdin-Project-ID: 733311\n"
 "X-Crowdin-Language: hr\n"
 "X-Crowdin-File: /main/internal/site/src/locales/en/en.po\n"
@@ -134,6 +134,12 @@ msgstr ""
 msgid "Accepted"
 msgstr ""
 
+#: src/components/navbar.tsx
+msgid "Access & Billing"
+msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
@@ -160,7 +166,10 @@ msgstr "Aktivna Upozorenja"
 msgid "Active state"
 msgstr "Aktivno stanje"
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/network-devices.tsx
 msgid "Add"
 msgstr ""
 
@@ -173,6 +182,7 @@ msgstr "Dodaj {foo}"
 msgid "Add at least one data source (metric)"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Add label"
 msgstr ""
@@ -181,18 +191,41 @@ msgstr ""
 msgid "Add metadata"
 msgstr ""
 
+#: src/components/routes/address-prefixes.tsx
+msgid "Add Prefix"
+msgstr ""
+
+#: src/components/routes/address-sets.tsx
+msgid "Add Set"
+msgstr ""
+
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 msgid "Add Target"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Add transform"
-msgstr ""
+#~ msgid "Add transform"
+#~ msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "Dodaj URL"
+
+#: src/components/navbar.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Address Prefixes"
+msgstr ""
+
+#: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Address Set"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Address Sets"
+msgstr ""
 
 #: src/components/routes/settings/general.tsx
 msgid "Adjust display options for charts."
@@ -204,7 +237,6 @@ msgstr "Prilagodite širinu glavnog rasporeda"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Admin"
@@ -212,6 +244,10 @@ msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "Admin Down"
+msgstr ""
+
+#: src/components/navbar.tsx
+msgid "Administration"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -223,8 +259,8 @@ msgid "After"
 msgstr "Nakon"
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "After setting the environment variables, restart your Beszel hub for changes to take effect."
-msgstr "Nakon postavljanja varijabli okruženja, ponovno pokrenite svoj Beszel hub kako bi promjene stupile na snagu."
+msgid "After setting the environment variables, restart your Watchdog hub for changes to take effect."
+msgstr "Nakon postavljanja varijabli okruženja, ponovno pokrenite svoj Watchdog hub kako bi promjene stupile na snagu."
 
 #: src/components/routes/agent-runs.tsx
 msgid "Agent"
@@ -249,7 +285,6 @@ msgid "Aggregate"
 msgstr ""
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
@@ -261,6 +296,7 @@ msgstr ""
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/exports.tsx
 msgid "Aggregation"
 msgstr ""
@@ -293,12 +329,19 @@ msgstr ""
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 msgid "All Containers"
 msgstr "Svi spremnici"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "All Devices"
+msgstr ""
+
 #: src/components/routes/aggregate-charts.tsx
 msgid "All discovered ports"
+msgstr ""
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "All Sets"
 msgstr ""
 
 #: src/components/alerts/alerts-sheet.tsx
@@ -307,6 +350,15 @@ msgstr ""
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "All Systems"
 msgstr "Svi Sustavi"
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Analysis"
+msgstr ""
+
+#: src/components/routes/settings/general.tsx
+msgid "Appearance"
+msgstr ""
 
 #: src/components/routes/historical-data.tsx
 msgid "Archive"
@@ -404,8 +456,8 @@ msgid "Back to network port"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Back to OID mappings"
-msgstr ""
+#~ msgid "Back to OID mappings"
+#~ msgstr ""
 
 #: src/components/routes/permission-form.tsx
 msgid "Back to permissions"
@@ -464,14 +516,6 @@ msgstr "Prije"
 msgid "Below {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
 msgstr "Ispod {0}{1} u posljednjih {2, plural, one {# minuti} few {# minute} other {# minuta}}"
 
-#: src/components/login/auth-form.tsx
-msgid "Beszel supports OpenID Connect and many OAuth2 authentication providers."
-msgstr "Beszel podržava OpenID Connect i mnoge druge pružatelje OAuth2  autentifikacije."
-
-#: src/components/routes/settings/notifications.tsx
-msgid "Beszel uses <0>Shoutrrr</0> to integrate with popular notification services."
-msgstr "Beszel koristi <0>Shoutrrr</0> za integraciju s popularnim obavještajnim uslugama."
-
 #: src/components/routes/network-device.tsx
 msgid "BGP"
 msgstr ""
@@ -527,8 +571,8 @@ msgid "Boot state"
 msgstr "Stanje pokretanja"
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Built-in"
-msgstr ""
+#~ msgid "Built-in"
+#~ msgstr ""
 
 #: src/components/routes/historical-data.tsx
 msgid "Bytes"
@@ -555,6 +599,8 @@ msgstr "Može se pokrenuti"
 msgid "Can stop"
 msgstr "Može se zaustaviti"
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 msgid "Cancel"
@@ -622,7 +668,19 @@ msgstr "Provjerite svoju obavještajnu uslugu"
 msgid "Checksum"
 msgstr ""
 
-#: src/components/routes/network-device.tsx
+#: src/components/routes/settings/general.tsx
+msgid "Choose a light, dark, or system theme."
+msgstr ""
+
+#: src/components/routes/settings/general.tsx
+msgid "Choose the language used in navigation and pages."
+msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "CIDR"
+msgstr ""
+
 #: src/components/routes/network-device.tsx
 msgid "Class"
 msgstr ""
@@ -667,6 +725,10 @@ msgstr "Upute za naredbeni redak"
 
 #: src/components/routes/network-discover.tsx
 msgid "Community Override"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Compose Chart"
 msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
@@ -803,7 +865,6 @@ msgstr "Iskorištenost procesora"
 #: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/targets.tsx
 msgid "Create"
@@ -827,7 +888,6 @@ msgstr ""
 msgid "Create Billing Account"
 msgstr ""
 
-#: src/components/navbar.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -864,8 +924,8 @@ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Create OID Mapping"
-msgstr ""
+#~ msgid "Create OID Mapping"
+#~ msgstr ""
 
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permission-form.tsx
@@ -924,6 +984,15 @@ msgstr "Ciklusi"
 msgid "Daily"
 msgstr "Dnevno"
 
+#: src/components/routes/settings/general.tsx
+msgid "Dark"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Data"
+msgstr ""
+
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Data Sources"
 msgstr ""
@@ -938,11 +1007,11 @@ msgid "Default time period"
 msgstr "Zadano vremensko razdoblje"
 
 #: src/components/routes/agent-form.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 msgid "Delete"
@@ -968,10 +1037,15 @@ msgstr ""
 msgid "Delete SNMP profile"
 msgstr ""
 
+#: src/components/routes/address-sets.tsx
+msgid "Delete this address set?"
+msgstr ""
+
 #: src/components/routes/agent-form.tsx
 msgid "Delete this agent?"
 msgstr ""
 
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Delete this aggregate graph?"
 msgstr ""
@@ -989,11 +1063,15 @@ msgid "Delete this network port?"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Delete this OID mapping?"
-msgstr ""
+#~ msgid "Delete this OID mapping?"
+#~ msgstr ""
 
 #: src/components/routes/permissions.tsx
 msgid "Delete this permission?"
+msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Delete this prefix?"
 msgstr ""
 
 #: src/components/routes/retention.tsx
@@ -1012,6 +1090,7 @@ msgstr ""
 #~ msgid "Denied"
 #~ msgstr ""
 
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
@@ -1024,12 +1103,15 @@ msgstr "Opis"
 msgid "Detail"
 msgstr "Detalj"
 
+#: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-discover.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
 #: src/components/routes/system/smart-table.tsx
+#: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Device"
 msgstr "Uređaj"
 
@@ -1049,6 +1131,10 @@ msgstr ""
 #: src/components/routes/watchdog-overview.tsx
 #~ msgid "Devices"
 #~ msgstr ""
+
+#: src/components/routes/address-sets.tsx
+msgid "Direction"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
@@ -1091,6 +1177,10 @@ msgstr ""
 
 #: src/components/routes/system.tsx
 msgid "Disk"
+msgstr ""
+
+#: src/components/navbar.tsx
+msgid "Disk Health"
 msgstr ""
 
 #: src/components/routes/system/charts/disk-charts.tsx
@@ -1172,7 +1262,6 @@ msgstr "Preuzmi"
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/routes/agent-runs.tsx
-#: src/components/routes/network-device.tsx
 msgid "Duration"
 msgstr "Trajanje"
 
@@ -1224,8 +1313,8 @@ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Edit OID Mapping"
-msgstr ""
+#~ msgid "Edit OID Mapping"
+#~ msgstr ""
 
 #: src/components/routes/permissions.tsx
 msgid "Edit permission"
@@ -1272,6 +1361,7 @@ msgid "Enabled"
 msgstr ""
 
 #: src/components/routes/historical-data.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "End"
 msgstr ""
 
@@ -1310,8 +1400,8 @@ msgid "Enter your one-time password."
 msgstr "Unesite jednokratnu lozinku."
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Enterprise"
-msgstr ""
+#~ msgid "Enterprise"
+#~ msgstr ""
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Ephemeral"
@@ -1319,7 +1409,6 @@ msgstr "Efemeran"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/config-yaml.tsx
 #: src/components/routes/settings/heartbeat.tsx
@@ -1345,9 +1434,17 @@ msgstr "Greška"
 msgid "established / total"
 msgstr ""
 
+#: src/components/routes/network-device.tsx
+msgid "Events"
+msgstr ""
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Example:"
 msgstr "Primjer:"
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "Examples: dst_ip:8.8.8.8 AND dst_port:443 · src_ip:10.0.0.0/16 · proto:6 · address_sets:电信客户"
+#~ msgstr ""
 
 #. placeholder {0}: alert.value
 #. placeholder {1}: info.unit
@@ -1394,7 +1491,6 @@ msgid "Export your current systems configuration."
 msgstr "Izvoz trenutne sistemske konfiguracije."
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -1415,8 +1511,13 @@ msgid "Failed Attributes:"
 msgstr "Neuspjeli atributi:"
 
 #: src/lib/api.ts
-msgid "Failed to authenticate"
-msgstr "Neuspješna provjera autentičnosti"
+#~ msgid "Failed to authenticate"
+#~ msgstr "Neuspješna provjera autentičnosti"
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Failed to create"
+msgstr ""
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Failed to create billing period"
@@ -1428,6 +1529,12 @@ msgstr ""
 
 #: src/components/routes/historical-data.tsx
 msgid "Failed to create historical operation"
+msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+msgid "Failed to delete"
 msgstr ""
 
 #: src/components/routes/agent-form.tsx
@@ -1451,8 +1558,8 @@ msgid "Failed to delete network port"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to delete OID mapping"
-msgstr ""
+#~ msgid "Failed to delete OID mapping"
+#~ msgstr ""
 
 #: src/components/routes/permissions.tsx
 msgid "Failed to delete permission"
@@ -1481,6 +1588,12 @@ msgstr ""
 #: src/components/routes/network-discover.tsx
 #~ msgid "Failed to import discovery result"
 #~ msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Failed to load"
+msgstr ""
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to load agent"
@@ -1579,12 +1692,12 @@ msgid "Failed to load network port"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to load OID mapping"
-msgstr ""
+#~ msgid "Failed to load OID mapping"
+#~ msgstr ""
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Failed to load OID mappings"
-msgstr ""
+#~ msgid "Failed to load OID mappings"
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load optical power"
@@ -1685,8 +1798,8 @@ msgid "Failed to save network port"
 msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Failed to save OID mapping"
-msgstr ""
+#~ msgid "Failed to save OID mapping"
+#~ msgstr ""
 
 #: src/components/routes/permission-form.tsx
 msgid "Failed to save permission"
@@ -1722,9 +1835,13 @@ msgstr ""
 msgid "Failed to save traffic defaults"
 msgstr ""
 
+#: src/components/routes/flow-search.tsx
+#~ msgid "Failed to search"
+#~ msgstr ""
+
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Failed to seed OID mappings"
-msgstr ""
+#~ msgid "Failed to seed OID mappings"
+#~ msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Failed to send heartbeat"
@@ -1766,6 +1883,15 @@ msgstr "Otisak"
 #: src/components/routes/system/smart-table.tsx
 msgid "Firmware"
 msgstr "Firmver"
+
+#: src/components/navbar.tsx
+msgid "Flow & Data"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/flow-search.tsx
+#~ msgid "Flow Search"
+#~ msgstr ""
 
 #: src/components/alerts/alerts-sheet.tsx
 msgid "For <0>{min}</0> {min, plural, one {minute} other {minutes}}"
@@ -1831,12 +1957,16 @@ msgid "Graph name"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "Graphs"
-msgstr ""
+#~ msgid "Graphs"
+#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "Grid"
 msgstr "Rešetka"
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Group by device"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "Hardware"
@@ -1880,6 +2010,7 @@ msgctxt "Button to copy install command"
 msgid "Homebrew command"
 msgstr "Homebrew naredba"
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -1983,6 +2114,10 @@ msgstr ""
 msgid "Invalid email address."
 msgstr "Nevažeća email adresa."
 
+#: src/components/routes/address-sets.tsx
+msgid "Invalid JSON selector"
+msgstr ""
+
 #: src/components/routes/network-device.tsx
 msgid "Inventory"
 msgstr ""
@@ -1991,21 +2126,26 @@ msgstr ""
 msgid "Label"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label key"
 msgstr ""
 
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label value"
 msgstr ""
 
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/network-device-form.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 msgid "Labels"
 msgstr ""
 
-#: src/components/lang-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "Jezik"
@@ -2038,6 +2178,10 @@ msgstr "Širina rasporeda"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
 msgstr "Životni ciklus"
+
+#: src/components/routes/settings/general.tsx
+msgid "Light"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -2078,6 +2222,8 @@ msgid "Loading inventory..."
 msgstr ""
 
 #: src/components/graph/graph-panel-renderer.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/aggregate-charts.tsx
@@ -2093,7 +2239,6 @@ msgstr ""
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
@@ -2123,9 +2268,12 @@ msgstr "Neuspješno pokušaj prijave"
 #: src/components/command-palette.tsx
 #: src/components/containers-table/containers-table.tsx
 #: src/components/navbar.tsx
-#: src/components/routes/network-device.tsx
 msgid "Logs"
 msgstr "Zapisi"
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "LogsQL Query"
+#~ msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
 msgid "Looking instead for where to create alerts? Click the bell <0/> icons in the systems table."
@@ -2190,6 +2338,10 @@ msgstr "Iskorištenost memorije"
 msgid "Memory usage of docker containers"
 msgstr "Iskorištenost memorije Docker spremnika"
 
+#: src/components/routes/network-device.tsx
+msgid "Message"
+msgstr ""
+
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Metadata"
@@ -2204,9 +2356,6 @@ msgid "Metadata value"
 msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
-#: src/components/routes/aggregate-graphs.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 msgid "Metric"
 msgstr ""
 
@@ -2215,6 +2364,7 @@ msgid "metrics"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graphs.tsx
 msgid "Metrics"
 msgstr ""
 
@@ -2248,12 +2398,19 @@ msgstr ""
 msgid "Module"
 msgstr ""
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Multiple devices"
+msgstr ""
+
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
@@ -2267,6 +2424,10 @@ msgstr ""
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Name"
 msgstr "Ime"
+
+#: src/components/routes/network-device-form.tsx
+msgid "Name and host are required"
+msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Name is required"
@@ -2284,6 +2445,10 @@ msgstr ""
 #: src/components/routes/target-detail.tsx
 #~ msgid "Network Asset"
 #~ msgstr ""
+
+#: src/components/navbar.tsx
+msgid "Network Configuration"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "Network Device"
@@ -2308,7 +2473,6 @@ msgstr ""
 #~ msgid "Network Target"
 #~ msgstr ""
 
-#: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
@@ -2343,6 +2507,10 @@ msgstr ""
 msgid "No"
 msgstr "Ne"
 
+#: src/components/routes/address-sets.tsx
+msgid "No address sets found."
+msgstr ""
+
 #: src/components/routes/agent-runs.tsx
 msgid "No agent runs found."
 msgstr ""
@@ -2352,7 +2520,11 @@ msgid "No agents found."
 msgstr ""
 
 #: src/components/routes/aggregate-graphs.tsx
-msgid "No aggregate graphs found."
+#~ msgid "No aggregate graphs found."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No aggregate graphs found. Compose one from the Aggregate Charts page and save it."
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
@@ -2376,8 +2548,8 @@ msgid "No billing accounts found."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No collection events recorded yet."
-msgstr ""
+#~ msgid "No collection events recorded yet."
+#~ msgstr ""
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
@@ -2407,8 +2579,20 @@ msgstr ""
 msgid "No down ports."
 msgstr ""
 
+#: src/components/routes/network-device.tsx
+msgid "No events yet. Events appear on interface status changes and SNMP traps."
+msgstr ""
+
 #: src/components/routes/exports.tsx
 msgid "No exports found."
+msgstr ""
+
+#: src/components/routes/flow-search.tsx
+#~ msgid "No flows found."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No grouping"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -2436,8 +2620,8 @@ msgid "No network targets found."
 msgstr ""
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "No OID mappings found."
-msgstr ""
+#~ msgid "No OID mappings found."
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No optical power data in this range."
@@ -2449,6 +2633,10 @@ msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "No ports"
 msgstr ""
 
 #: src/components/routes/aggregate-graph-detail.tsx
@@ -2463,6 +2651,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #~ msgid "No ports to aggregate"
 #~ msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
+msgid "No prefixes found."
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No resource data in this range."
@@ -2495,12 +2687,20 @@ msgid "No samples in this range."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+msgid "No saved graphs include this device yet."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
 msgid "No sensor alerts."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No sensors found."
+msgid "No sensors discovered."
 msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "No sensors found."
+#~ msgstr ""
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "No SNMP profiles found."
@@ -2551,14 +2751,14 @@ msgid "OAuth 2 / OIDC support"
 msgstr "Podrška za OAuth 2 / OIDC"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "OID mapping not found"
-msgstr ""
+#~ msgid "OID mapping not found"
+#~ msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "OID Mappings"
-msgstr ""
+#~ msgid "OID Mappings"
+#~ msgstr ""
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "On each restart, systems in the database will be updated to match the systems defined in the file."
@@ -2574,7 +2774,11 @@ msgid "One-time password"
 msgstr "Jednokratna lozinka"
 
 #: src/components/routes/export-new.tsx
-msgid "Open Aggregate Charts"
+#~ msgid "Open Aggregate Charts"
+#~ msgstr ""
+
+#: src/components/routes/export-new.tsx
+msgid "Open Charts"
 msgstr ""
 
 #: src/components/routes/settings/quiet-hours.tsx
@@ -2646,6 +2850,7 @@ msgstr ""
 #~ msgid "Overall Traffic"
 #~ msgstr ""
 
+#: src/components/navbar.tsx
 #: src/components/routes/network-device.tsx
 msgid "Overview"
 msgstr ""
@@ -2711,6 +2916,10 @@ msgstr "Format korisnog tereta (Payload)"
 msgid "Peak"
 msgstr ""
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Peak Rate"
+msgstr ""
+
 #: src/components/routes/network-device.tsx
 msgid "Peer AS"
 msgstr ""
@@ -2755,6 +2964,7 @@ msgstr ""
 msgid "Persistence"
 msgstr "Postojanost"
 
+#: src/components/navbar.tsx
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Platform"
@@ -2782,8 +2992,8 @@ msgid "Please enable pop-ups for this site"
 msgstr "Molimo omogućite skočne prozore za ovu stranicu"
 
 #: src/lib/api.ts
-msgid "Please log in again"
-msgstr "Molimo prijavite se ponovno"
+#~ msgid "Please log in again"
+#~ msgstr "Molimo prijavite se ponovno"
 
 #: src/components/login/auth-form.tsx
 msgid "Please see <0>the documentation</0> for instructions."
@@ -2829,6 +3039,7 @@ msgstr ""
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -2874,6 +3085,10 @@ msgstr ""
 #: src/components/add-system.tsx
 #~ msgid "Public Key"
 #~ msgstr "Javni Ključ"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Query"
+msgstr ""
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average queue depth"
@@ -2924,6 +3139,8 @@ msgstr "Primljeno"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/address-prefixes.tsx
+#: src/components/routes/address-sets.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/aggregate-charts.tsx
@@ -2939,11 +3156,11 @@ msgstr "Primljeno"
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Refresh"
 msgstr "Osvježi"
 
@@ -2994,9 +3211,10 @@ msgstr ""
 msgid "Resource type"
 msgstr ""
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Resources"
-#~ msgstr ""
+#: src/components/navbar.tsx
+#: src/components/navbar.tsx
+msgid "Resources"
+msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Restarts"
@@ -3078,7 +3296,6 @@ msgstr ""
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/traffic-defaults.tsx
@@ -3112,6 +3329,7 @@ msgstr ""
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/network-device.tsx
 msgid "Saved Graphs"
 msgstr ""
 
@@ -3148,6 +3366,10 @@ msgstr ""
 msgid "Search for systems or settings..."
 msgstr "Pretraži sustave ili postavke..."
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Search graphs, devices, metrics"
+msgstr ""
+
 #: src/components/routes/network-device.tsx
 msgid "Search ports..."
 msgstr ""
@@ -3165,12 +3387,12 @@ msgid "See <0>notification settings</0> to configure how you receive alerts."
 msgstr "Pogledajte <0>postavke obavijesti</0> kako biste konfigurirali način primanja upozorenja."
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Seed LibreNMS"
-msgstr ""
+#~ msgid "Seed LibreNMS"
+#~ msgstr ""
 
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Seeded"
-msgstr ""
+#~ msgid "Seeded"
+#~ msgstr ""
 
 #: src/components/routes/agent-runs.tsx
 msgid "Seen"
@@ -3221,13 +3443,18 @@ msgstr ""
 msgid "Selected ports"
 msgstr ""
 
+#: src/components/routes/address-sets.tsx
+#: src/components/routes/address-sets.tsx
+msgid "Selector"
+msgstr ""
+
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send a single heartbeat ping to verify your endpoint is working."
 msgstr "Pošaljite jedan heartbeat ping kako biste provjerili radi li vaša krajnja točka."
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Send periodic outbound pings to an external monitoring service so you can monitor Beszel without exposing it to the internet."
-msgstr "Šaljite povremene odlazne pingove vanjskoj usluzi nadzora kako biste mogli nadzirati Beszel bez izlaganja internetu."
+msgid "Send periodic outbound pings to an external monitoring service so you can monitor Watchdog without exposing it to the internet."
+msgstr "Šaljite povremene odlazne pingove vanjskoj usluzi nadzora kako biste mogli nadzirati Watchdog bez izlaganja internetu."
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send test heartbeat"
@@ -3280,8 +3507,8 @@ msgid "Set percentage thresholds for meter colors."
 msgstr "Postavite pragove postotka za boje mjerača."
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Set the following environment variables on your Beszel hub to enable heartbeat monitoring:"
-msgstr "Postavite sljedeće varijable okruženja na svom Beszel hubu kako biste omogućili nadzor heartbeata:"
+msgid "Set the following environment variables on your Watchdog hub to enable heartbeat monitoring:"
+msgstr "Postavite sljedeće varijable okruženja na svom Watchdog hubu kako biste omogućili nadzor heartbeata:"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
@@ -3296,6 +3523,10 @@ msgstr "Postavke"
 #: src/components/routes/settings/layout.tsx
 msgid "Settings saved"
 msgstr "Postavke spremljene"
+
+#: src/components/routes/network-device.tsx
+msgid "Severity"
+msgstr ""
 
 #: src/components/login/auth-form.tsx
 msgid "Sign in"
@@ -3336,6 +3567,15 @@ msgstr ""
 #~ msgid "Sort By"
 #~ msgstr "Sortiraj po"
 
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Sort by name"
+msgstr ""
+
+#: src/components/routes/aggregate-graphs.tsx
+msgid "Sort by updated"
+msgstr ""
+
+#: src/components/routes/address-prefixes.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
@@ -3356,6 +3596,7 @@ msgid "Split side"
 msgstr ""
 
 #: src/components/routes/historical-data.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Start"
 msgstr ""
 
@@ -3383,7 +3624,7 @@ msgstr "Stanje"
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/historical-data.tsx
-#: src/components/routes/network-device.tsx
+#: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -3399,6 +3640,7 @@ msgid "Status"
 msgstr ""
 
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/historical-data.tsx
 msgid "Step"
 msgstr ""
@@ -3437,6 +3679,10 @@ msgid "Switch theme"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+msgid "Switching"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
 msgid "sysDescr"
 msgstr ""
 
@@ -3446,6 +3692,7 @@ msgstr ""
 
 #: src/components/alerts-history-columns.tsx
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -3529,8 +3776,6 @@ msgid "targets"
 msgstr ""
 
 #: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/targets.tsx
 #: src/components/routes/targets.tsx
@@ -3560,6 +3805,10 @@ msgstr "Mjerna jedinica za temperaturu"
 msgid "Temperatures of system sensors"
 msgstr "Temperature sustavnih mjerila"
 
+#: src/components/navbar.tsx
+msgid "Tenant"
+msgstr ""
+
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "Tenant default"
@@ -3581,6 +3830,10 @@ msgstr "Probna obavijest poslana"
 msgid "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 msgstr "Ukupni status je <0>ok</0> kada su svi sustavi u radu, <1>warn</1> kada su aktivirana upozorenja i <2>error</2> kada je bilo koji sustav isključen."
 
+#: src/components/routes/settings/general.tsx
+msgid "Theme"
+msgstr ""
+
 #: src/components/login/forgot-pass-form.tsx
 msgid "Then log into the backend and reset your user account password in the users table."
 msgstr "Zatim se prijavite u backend i resetirajte lozinku korisničkog računa u tablici korisnika."
@@ -3590,8 +3843,8 @@ msgstr "Zatim se prijavite u backend i resetirajte lozinku korisničkog računa 
 #~ msgstr "Ova radnja ne može se poništiti. Svi trenutni zapisi za {name} bit će trajno izbrisani iz baze podataka."
 
 #: src/components/routes/export-new.tsx
-msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
-msgstr ""
+#~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
+#~ msgstr ""
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."
@@ -3612,6 +3865,10 @@ msgstr ""
 #: src/components/routes/settings/general.tsx
 msgid "Time format"
 msgstr "Format vremena"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Time Range"
+msgstr ""
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Timeout"
@@ -3675,15 +3932,20 @@ msgstr ""
 msgid "Total: {0}"
 msgstr "Ukupno: {0}"
 
-#: src/components/routes/network-port.tsx
-#~ msgid "Traffic"
-#~ msgstr ""
+#: src/components/routes/network-device.tsx
+msgid "Traffic"
+msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic Matrix"
 msgstr ""
 
 #: src/components/routes/network-port-policy.tsx
@@ -3696,16 +3958,16 @@ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #: src/components/routes/snmp-oid-mappings.tsx
-msgid "Transform"
-msgstr ""
+#~ msgid "Transform"
+#~ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Transform key"
-msgstr ""
+#~ msgid "Transform key"
+#~ msgstr ""
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
-msgid "Transform value"
-msgstr ""
+#~ msgid "Transform value"
+#~ msgstr ""
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Triggered by"
@@ -3760,10 +4022,9 @@ msgid "Triggers when usage of any disk exceeds a threshold"
 msgstr "Pokreće se kada iskorištenost bilo kojeg diska premaši prag"
 
 #: src/components/routes/agents.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
@@ -3887,6 +4148,7 @@ msgstr "Iskorištenost"
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-device.tsx
 msgid "Value"
@@ -3902,9 +4164,6 @@ msgstr ""
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
 msgid "Vendor"
 msgstr ""
 
@@ -3916,9 +4175,15 @@ msgstr ""
 msgid "Version"
 msgstr ""
 
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "View"
-#~ msgstr "Prikaz"
+#: src/components/routes/export-detail.tsx
+#: src/components/routes/export-new.tsx
+#: src/components/routes/exports.tsx
+msgid "View"
+msgstr "Prikaz"
+
+#: src/components/routes/network-device.tsx
+msgid "View all"
+msgstr ""
 
 #: src/components/routes/system/cpu-sheet.tsx
 #: src/components/routes/system/disk-io-sheet.tsx
@@ -3939,16 +4204,16 @@ msgid "VLAN ID"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "VLANs/LAG"
-msgstr ""
+#~ msgid "VLANs/LAG"
+#~ msgstr ""
 
 #: src/components/routes/system/chart-card.tsx
 msgid "Waiting for enough records to display"
 msgstr "Potrebno je više podataka za prikaz"
 
 #: src/components/routes/settings/general.tsx
-msgid "Want to help improve our translations? Check <0>Crowdin</0> for details."
-msgstr "Želite li nam pomoći poboljšati prijevode? Posjetite <0>Crowdin</0> za više detalja."
+#~ msgid "Want to help improve our translations? Check <0>Crowdin</0> for details."
+#~ msgstr "Želite li nam pomoći poboljšati prijevode? Posjetite <0>Crowdin</0> za više detalja."
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Wants"
@@ -3963,8 +4228,16 @@ msgid "Warning thresholds"
 msgstr "Pragovi upozorenja"
 
 #: src/components/navbar.tsx
-msgid "Watchdog"
-msgstr ""
+#~ msgid "Watchdog"
+#~ msgstr ""
+
+#: src/components/login/auth-form.tsx
+msgid "Watchdog supports OpenID Connect and many OAuth2 authentication providers."
+msgstr "Watchdog podržava OpenID Connect i mnoge druge pružatelje OAuth2  autentifikacije."
+
+#: src/components/routes/settings/notifications.tsx
+msgid "Watchdog uses <0>Shoutrrr</0> to integrate with popular notification services."
+msgstr "Watchdog koristi <0>Shoutrrr</0> za integraciju s popularnim obavještajnim uslugama."
 
 #: src/components/routes/network-port.tsx
 msgid "Wavelength"
@@ -3996,8 +4269,8 @@ msgid "Write"
 msgstr "Piši"
 
 #: src/components/routes/settings/layout.tsx
-msgid "YAML Config"
-msgstr "YAML konfiguracija"
+#~ msgid "YAML Config"
+#~ msgstr "YAML konfiguracija"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "YAML Configuration"

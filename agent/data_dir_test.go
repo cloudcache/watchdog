@@ -39,7 +39,7 @@ func TestGetDataDir(t *testing.T) {
 	t.Run("DATA_DIR environment variable", func(t *testing.T) {
 		tempDir := t.TempDir()
 
-		t.Setenv("BESZEL_AGENT_DATA_DIR", tempDir)
+		t.Setenv("WATCHDOG_AGENT_DATA_DIR", tempDir)
 
 		result, err := GetDataDir()
 		require.NoError(t, err)

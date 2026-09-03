@@ -80,7 +80,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Retention`} / WatchDog`
+		document.title = `${t`Retention`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

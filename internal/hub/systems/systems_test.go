@@ -9,10 +9,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/hub/systems"
-	"github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/hub/systems"
+	"github.com/cloudcache/watchdog/internal/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,6 +128,32 @@ func TestSystemManagerNew(t *testing.T) {
 
 		// TODO: test with websocket client
 	})
+}
+
+func TestSystemManagerCloseCancelsAndJoinsUpdaters(t *testing.T) {
+	hub, err := tests.NewTestHub(t.TempDir())
+	require.NoError(t, err)
+	defer hub.Cleanup()
+
+	manager := hub.GetSystemManager()
+	sys := manager.NewSystem("system-close-test")
+	sys.Host = "127.0.0.1"
+	sys.Status = "pending"
+	require.NoError(t, manager.AddSystem(sys))
+
+	done := make(chan struct{})
+	go func() {
+		manager.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("system manager did not join canceled updater")
+	}
+	if err := manager.AddSystem(manager.NewSystem("after-close")); err == nil {
+		t.Fatal("closed system manager accepted new work")
+	}
 }
 
 func testOld(t *testing.T, hub *tests.TestHub) {
@@ -464,8 +490,8 @@ func TestHasUser(t *testing.T) {
 		assert.True(t, sys.HasUser(hub, user2))
 	})
 
-	t.Run("BESZEL_HUB_SHARE_ALL_SYSTEMS=true grants access to non-member", func(t *testing.T) {
-		t.Setenv("BESZEL_HUB_SHARE_ALL_SYSTEMS", "true")
+	t.Run("WATCHDOG_HUB_SHARE_ALL_SYSTEMS=true grants access to non-member", func(t *testing.T) {
+		t.Setenv("WATCHDOG_HUB_SHARE_ALL_SYSTEMS", "true")
 		assert.True(t, sys.HasUser(hub, user2))
 	})
 

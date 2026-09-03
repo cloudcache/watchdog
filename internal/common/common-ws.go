@@ -1,10 +1,10 @@
 package common
 
 import (
+	"github.com/cloudcache/watchdog/internal/entities/smart"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	"github.com/cloudcache/watchdog/internal/entities/systemd"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/henrygd/beszel/internal/entities/smart"
-	"github.com/henrygd/beszel/internal/entities/system"
-	"github.com/henrygd/beszel/internal/entities/systemd"
 )
 
 type WebSocketAction = uint8

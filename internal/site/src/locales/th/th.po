@@ -6,13 +6,13 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: th\n"
-"Project-Id-Version: beszel\n"
+"Project-Id-Version: watchdog\n"
 "Report-Msgid-Bugs-To: \n"
 "PO-Revision-Date: 2026-04-05 18:28\n"
 "Last-Translator: \n"
 "Language-Team: Thai\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
-"X-Crowdin-Project: beszel\n"
+"X-Crowdin-Project: watchdog\n"
 "X-Crowdin-Project-ID: 733311\n"
 "X-Crowdin-Language: th\n"
 "X-Crowdin-File: /main/internal/site/src/locales/en/en.po\n"
@@ -144,7 +144,7 @@ msgid "After"
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "After setting the environment variables, restart your Beszel hub for changes to take effect."
+msgid "After setting the environment variables, restart your Watchdog hub for changes to take effect."
 msgstr ""
 
 #: src/components/systems-table/systems-table-columns.tsx
@@ -266,11 +266,11 @@ msgid "Below {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
 msgstr ""
 
 #: src/components/login/auth-form.tsx
-msgid "Beszel supports OpenID Connect and many OAuth2 authentication providers."
+msgid "Watchdog supports OpenID Connect and many OAuth2 authentication providers."
 msgstr ""
 
 #: src/components/routes/settings/notifications.tsx
-msgid "Beszel uses <0>Shoutrrr</0> to integrate with popular notification services."
+msgid "Watchdog uses <0>Shoutrrr</0> to integrate with popular notification services."
 msgstr ""
 
 #: src/components/add-system.tsx
@@ -1421,7 +1421,7 @@ msgid "Send a single heartbeat ping to verify your endpoint is working."
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Send periodic outbound pings to an external monitoring service so you can monitor Beszel without exposing it to the internet."
+msgid "Send periodic outbound pings to an external monitoring service so you can monitor Watchdog without exposing it to the internet."
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
@@ -1450,7 +1450,7 @@ msgid "Set percentage thresholds for meter colors."
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
-msgid "Set the following environment variables on your Beszel hub to enable heartbeat monitoring:"
+msgid "Set the following environment variables on your Watchdog hub to enable heartbeat monitoring:"
 msgstr ""
 
 #: src/components/command-palette.tsx

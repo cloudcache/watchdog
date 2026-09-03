@@ -7,9 +7,6 @@ mysql:
 victoriametrics:
   base_url: "http://127.0.0.1:8428"
 
-victorialogs:
-  base_url: "http://127.0.0.1:9428"
-
 export:
   dir: "exports"
   worker_interval: 30s
@@ -26,7 +23,6 @@ snmp_collector:
 sflow_collector:
   listen: ":6343"
   tenant_id: "tenant_dev"
-  vlogs_url: ""
   agg_interval: 1m
   prefix_sync_interval: 5m
 

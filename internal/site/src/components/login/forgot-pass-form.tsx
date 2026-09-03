@@ -98,10 +98,10 @@ export default function ForgotPassword() {
 						<Trans>Then log into the backend and reset your user account password in the users table.</Trans>
 					</p>
 					<code className="bg-muted rounded-sm py-0.5 px-2.5 me-auto text-sm">
-						./beszel superuser upsert user@example.com password
+						./watchdog superuser upsert user@example.com password
 					</code>
 					<code className="bg-muted rounded-sm py-0.5 px-2.5 me-auto text-sm">
-						docker exec beszel /beszel superuser upsert name@example.com password
+						docker exec watchdog /watchdog superuser upsert name@example.com password
 					</code>
 				</DialogContent>
 			</Dialog>

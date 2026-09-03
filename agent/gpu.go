@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 	nvtopCmd        string = "nvtop"
 	powermetricsCmd string = "powermetrics"
 	macmonCmd       string = "macmon"
-	noGPUFoundMsg   string = "no GPU found - see https://beszel.dev/guide/gpu"
+	noGPUFoundMsg   string = "no GPU found - see https://github.com/cloudcache/watchdog/tree/main/docs"
 
 	// Command retry and timeout constants
 	retryWaitTime     time.Duration = 5 * time.Second
@@ -484,7 +484,7 @@ func (gm *GPUManager) startIntelCollector() {
 				if failures > maxFailureRetries {
 					break
 				}
-				slog.Warn("Error collecting Intel GPU data; see https://beszel.dev/guide/gpu", "err", err)
+				slog.Warn("Error collecting Intel GPU data; see https://github.com/cloudcache/watchdog/tree/main/docs", "err", err)
 				time.Sleep(retryWaitTime)
 				continue
 			}

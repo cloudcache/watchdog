@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "beszel.fullname" . }}
+  name: {{ include "watchdog.fullname" . }}
   labels:
-    {{- include "beszel.labels" . | nindent 4 }}
+    {{- include "watchdog.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
@@ -15,7 +15,7 @@ spec:
     {{- end }}
   selector:
     matchLabels:
-      {{- include "beszel.selectorLabels" . | nindent 6 }}
+      {{- include "watchdog.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -23,7 +23,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "beszel.labels" . | nindent 8 }}
+        {{- include "watchdog.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -65,7 +65,7 @@ spec:
           {{- if .Values.persistentVolumeClaim.enabled }}
           volumeMounts:
             - name: data
-              mountPath: /beszel_data
+              mountPath: /watchdog_data
             {{- with .Values.volumeMounts }}
               {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -77,7 +77,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ .Values.persistentVolumeClaim.existingClaim | default (include "beszel.fullname" .) }}
+            claimName: {{ .Values.persistentVolumeClaim.existingClaim | default (include "watchdog.fullname" .) }}
         {{- with .Values.volumes }}
           {{- toYaml . | nindent 8 }}
         {{- end }}

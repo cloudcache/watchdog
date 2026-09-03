@@ -1,8 +1,9 @@
 import { Trans } from "@lingui/react/macro"
+import { useStore } from "@nanostores/react"
 import { getPagePath } from "@nanostores/router"
 import {
 	BarChart3Icon,
-	LibraryIcon,
+	Building2Icon,
 	ContainerIcon,
 	CrosshairIcon,
 	DatabaseBackupIcon,
@@ -14,6 +15,7 @@ import {
 	HistoryIcon,
 	LayoutDashboardIcon,
 	LayersIcon,
+	LibraryIcon,
 	LogOutIcon,
 	LogsIcon,
 	MenuIcon,
@@ -35,27 +37,65 @@ import {
 	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
 	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { isAdmin, isReadOnlyUser, logOut, pb } from "@/lib/api"
+import { isAdmin, isReadOnlyUser, logOut, pb, selectWatchdogTenant } from "@/lib/api"
+import { $platformIdentity } from "@/lib/platform-auth"
 import { cn, runOnce } from "@/lib/utils"
-import { LangToggle } from "./lang-toggle"
-import { ModeToggle } from "./mode-toggle"
 import { $router, basePath, Link, navigate, prependBasePath } from "./router"
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip"
 
 const CommandPalette = lazy(() => import("./command-palette"))
 
 const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0
 
+type NavItemProps = {
+	href: string
+	icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
+	children: React.ReactNode
+}
+
+function NavItem({ href, icon: Icon, children }: NavItemProps) {
+	return (
+		<DropdownMenuItem onSelect={() => navigate(href)}>
+			<Icon className="me-2.5 h-4 w-4" strokeWidth={1.5} />
+			{children}
+		</DropdownMenuItem>
+	)
+}
+
+function DesktopNavMenu({
+	label,
+	icon: Icon,
+	children,
+}: {
+	label: React.ReactNode
+	icon: NavItemProps["icon"]
+	children: React.ReactNode
+}) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button variant="ghost" className="gap-2 px-2.5">
+					<Icon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
+					<span className="hidden lg:inline">{label}</span>
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" className="min-w-48">
+				{children}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
 export default function Navbar() {
 	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
-
-	const AdminLinks = AdminDropdownGroup()
+	useStore($platformIdentity)
 
 	return (
 		<div className="flex items-center h-12 md:h-14 bg-card px-4 pe-3 sm:px-6 border border-border bt-0 rounded-md my-3">
@@ -86,281 +126,271 @@ export default function Navbar() {
 				</span>
 			</Button>
 
-			{/* mobile menu */}
 			<div className="ms-auto flex items-center text-xl md:hidden">
-				<ModeToggle />
-				<Button variant="ghost" size="icon" onClick={() => setCommandPaletteOpen(true)}>
+				<Button variant="ghost" size="icon" onClick={() => setCommandPaletteOpen(true)} aria-label="Search">
 					<SearchIcon className="h-[1.2rem] w-[1.2rem]" />
 				</Button>
 				<DropdownMenu>
-					<DropdownMenuTrigger
-						onMouseEnter={() => import("@/components/routes/settings/general")}
-						className="ms-3"
-						aria-label="Open Menu"
-					>
+					<DropdownMenuTrigger className="ms-2" aria-label="Open Menu">
 						<MenuIcon />
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuLabel className="max-w-40 truncate">{pb.authStore.record?.email}</DropdownMenuLabel>
+					<DropdownMenuContent align="end" className="min-w-56">
+						<DropdownMenuLabel>
+							<Trans>Overview</Trans>
+						</DropdownMenuLabel>
+						<NavItem href={getPagePath($router, "watchdog_overview")} icon={LayoutDashboardIcon}>
+							Watchdog
+						</NavItem>
 						<DropdownMenuSeparator />
-						<DropdownMenuGroup>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "watchdog_overview"))}
-								className="flex items-center"
-							>
-								<LayoutDashboardIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Watchdog</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => navigate(getPagePath($router, "targets"))} className="flex items-center">
-								<CrosshairIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Targets</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "aggregate_charts"))}
-								className="flex items-center"
-							>
-								<BarChart3Icon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Aggregate Charts</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "aggregate_graphs"))}
-								className="flex items-center"
-							>
-								<BarChart3Icon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Saved Graphs</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "containers"))}
-								className="flex items-center"
-							>
-								<ContainerIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>All Containers</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => navigate(getPagePath($router, "exports"))} className="flex items-center">
-								<FileDownIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Exports</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "export_new"))}
-								className="flex items-center"
-							>
-								<FileDownIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Create Export</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => navigate(getPagePath($router, "network"))} className="flex items-center">
-								<NetworkIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Network Targets</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => navigate(getPagePath($router, "billing"))} className="flex items-center">
-								<ReceiptTextIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<Trans>Billing</Trans>
-							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => navigate(getPagePath($router, "smart"))} className="flex items-center">
-								<HardDriveIcon className="h-4 w-4 me-2.5" strokeWidth={1.5} />
-								<span>S.M.A.R.T.</span>
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onClick={() => navigate(getPagePath($router, "settings", { name: "general" }))}
-								className="flex items-center"
-							>
-								<SettingsIcon className="h-4 w-4 me-2.5" />
-								<Trans>Settings</Trans>
-							</DropdownMenuItem>
-							{isAdmin() && (
-								<DropdownMenuSub>
-									<DropdownMenuSubTrigger>
-										<UserIcon className="h-4 w-4 me-2.5" />
-										<Trans>Admin</Trans>
-									</DropdownMenuSubTrigger>
-									<DropdownMenuSubContent>{AdminLinks}</DropdownMenuSubContent>
-								</DropdownMenuSub>
-							)}
-							{!isReadOnlyUser() && (
-								<DropdownMenuItem
-									className="flex items-center"
-									onSelect={() => navigate(getPagePath($router, "target_new"))}
-								>
-									<PlusIcon className="h-4 w-4 me-2.5" />
-									<Trans>Add Target</Trans>
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuGroup>
+						<DropdownMenuLabel>
+							<Trans>Resources</Trans>
+						</DropdownMenuLabel>
+						<ResourceItems />
 						<DropdownMenuSeparator />
-						<DropdownMenuGroup>
-							<DropdownMenuItem onSelect={logOut} className="flex items-center">
-								<LogOutIcon className="h-4 w-4 me-2.5" />
-								<Trans>Log Out</Trans>
-							</DropdownMenuItem>
-						</DropdownMenuGroup>
+						<DropdownMenuLabel>
+							<Trans>Analysis</Trans>
+						</DropdownMenuLabel>
+						<AnalysisItems />
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel>
+							<Trans>Data</Trans>
+						</DropdownMenuLabel>
+						<NavItem href={getPagePath($router, "exports")} icon={FileDownIcon}>
+							<Trans>Exports</Trans>
+						</NavItem>
+						<DropdownMenuSeparator />
+						<TenantSelector />
+						<NavItem href={getPagePath($router, "settings", { name: "general" })} icon={SettingsIcon}>
+							<Trans>Settings</Trans>
+						</NavItem>
+						{isAdmin() && <AdminSubmenu />}
+						{!isReadOnlyUser() && (
+							<NavItem href={getPagePath($router, "target_new")} icon={PlusIcon}>
+								<Trans>Add Target</Trans>
+							</NavItem>
+						)}
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel className="max-w-52 truncate">{pb.authStore.record?.email}</DropdownMenuLabel>
+						<DropdownMenuItem onSelect={logOut}>
+							<LogOutIcon className="me-2.5 h-4 w-4" />
+							<Trans>Log Out</Trans>
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
 
-			{/* desktop nav */}
-			{/** biome-ignore lint/a11y/noStaticElementInteractions: ignore */}
-			<div
-				className="hidden md:flex items-center ms-auto"
-				onMouseEnter={() => import("@/components/routes/settings/general")}
-			>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "containers")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Containers"
-						>
-							<ContainerIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>All Containers</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "watchdog_overview")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Watchdog"
-						>
-							<LayoutDashboardIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>Watchdog</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "targets")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Targets"
-						>
-							<CrosshairIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Targets</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "aggregate_charts")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Aggregate Charts"
-						>
-							<BarChart3Icon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Aggregate Charts</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "aggregate_graphs")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Saved Graphs"
-						>
-							<LibraryIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Saved Graphs</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "network")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Network Targets"
-						>
-							<NetworkIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Network Targets</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "exports")}
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="Exports"
-						>
-							<FileDownIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Exports</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "smart")}
-							className={cn("hidden md:grid", buttonVariants({ variant: "ghost", size: "icon" }))}
-							aria-label="S.M.A.R.T."
-						>
-							<HardDriveIcon className="h-[1.2rem] w-[1.2rem]" strokeWidth={1.5} />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>S.M.A.R.T.</TooltipContent>
-				</Tooltip>
-				<LangToggle />
-				<ModeToggle />
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Link
-							href={getPagePath($router, "settings", { name: "general" })}
-							aria-label="Settings"
-							className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
-						>
-							<SettingsIcon className="h-[1.2rem] w-[1.2rem]" />
-						</Link>
-					</TooltipTrigger>
-					<TooltipContent>
-						<Trans>Settings</Trans>
-					</TooltipContent>
-				</Tooltip>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<button aria-label="User Actions" className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}>
-							<UserIcon className="h-[1.2rem] w-[1.2rem]" />
-						</button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align={isReadOnlyUser() ? "end" : "center"} className="min-w-44">
-						<DropdownMenuLabel>{pb.authStore.record?.email}</DropdownMenuLabel>
-						<DropdownMenuSeparator />
-						{isAdmin() && (
-							<>
-								{AdminLinks}
-								<DropdownMenuSeparator />
-							</>
-						)}
-						<DropdownMenuItem onSelect={logOut}>
-							<LogOutIcon className="me-2.5 h-4 w-4" />
-							<span>
-								<Trans>Log Out</Trans>
-							</span>
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
+			<div className="hidden md:flex items-center ms-auto gap-0.5">
+				<Link
+					href={getPagePath($router, "watchdog_overview")}
+					className={cn(buttonVariants({ variant: "ghost" }), "gap-2 px-2.5")}
+					aria-label="Watchdog"
+				>
+					<LayoutDashboardIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
+					<span className="hidden xl:inline">Watchdog</span>
+				</Link>
+				<DesktopNavMenu label={<Trans>Resources</Trans>} icon={CrosshairIcon}>
+					<ResourceItems />
+				</DesktopNavMenu>
+				<DesktopNavMenu label={<Trans>Analysis</Trans>} icon={BarChart3Icon}>
+					<AnalysisItems />
+				</DesktopNavMenu>
+				<Link
+					href={getPagePath($router, "exports")}
+					className={cn(buttonVariants({ variant: "ghost" }), "gap-2 px-2.5")}
+					aria-label="Exports"
+				>
+					<FileDownIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
+					<span className="hidden xl:inline">
+						<Trans>Data</Trans>
+					</span>
+				</Link>
+				<UserMenu />
 				{!isReadOnlyUser() && (
 					<Button
 						variant="outline"
-						className="flex gap-1 ms-2"
+						className="flex gap-1 ms-1.5"
 						onClick={() => navigate(getPagePath($router, "target_new"))}
 					>
 						<PlusIcon className="h-4 w-4 -ms-1" />
-						<Trans>Add Target</Trans>
+						<span className="hidden lg:inline">
+							<Trans>Add Target</Trans>
+						</span>
 					</Button>
 				)}
 			</div>
 		</div>
+	)
+}
+
+function ResourceItems() {
+	return (
+		<DropdownMenuGroup>
+			<NavItem href={getPagePath($router, "targets")} icon={CrosshairIcon}>
+				<Trans>Targets</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "network")} icon={NetworkIcon}>
+				<Trans>Network Targets</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "containers")} icon={ContainerIcon}>
+				<Trans>All Containers</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "smart")} icon={HardDriveIcon}>
+				<Trans>Disk Health</Trans> (S.M.A.R.T.)
+			</NavItem>
+		</DropdownMenuGroup>
+	)
+}
+
+function AnalysisItems() {
+	return (
+		<DropdownMenuGroup>
+			<NavItem href={getPagePath($router, "aggregate_charts")} icon={BarChart3Icon}>
+				<Trans>Aggregate Charts</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "aggregate_graphs")} icon={LibraryIcon}>
+				<Trans>Saved Graphs</Trans>
+			</NavItem>
+		</DropdownMenuGroup>
+	)
+}
+
+function UserMenu() {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<button aria-label="User Actions" className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}>
+					<UserIcon className="h-[1.2rem] w-[1.2rem]" />
+				</button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="end" className="min-w-52">
+				<DropdownMenuLabel className="max-w-52 truncate">{pb.authStore.record?.email}</DropdownMenuLabel>
+				<TenantSelector />
+				<DropdownMenuSeparator />
+				<NavItem href={getPagePath($router, "settings", { name: "general" })} icon={SettingsIcon}>
+					<Trans>Settings</Trans>
+				</NavItem>
+				{isAdmin() && <AdminSubmenu />}
+				<DropdownMenuSeparator />
+				<DropdownMenuItem onSelect={logOut}>
+					<LogOutIcon className="me-2.5 h-4 w-4" />
+					<Trans>Log Out</Trans>
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
+function TenantSelector() {
+	const identity = useStore($platformIdentity)
+	if (!identity.ready || identity.tenants.length === 0) {
+		return null
+	}
+	return (
+		<>
+			<DropdownMenuSeparator />
+			<DropdownMenuLabel className="flex items-center gap-2">
+				<Building2Icon className="h-4 w-4" />
+				<Trans>Tenant</Trans>
+			</DropdownMenuLabel>
+			<DropdownMenuRadioGroup
+				value={identity.current?.tenantID ?? ""}
+				onValueChange={(tenantID) => {
+					selectWatchdogTenant(tenantID)
+						.then(() => window.location.reload())
+						.catch((error) => console.error("select tenant", error))
+				}}
+			>
+				{identity.tenants.map((tenant) => (
+					<DropdownMenuRadioItem key={tenant.id} value={tenant.id}>
+						{tenant.name || tenant.id}
+					</DropdownMenuRadioItem>
+				))}
+			</DropdownMenuRadioGroup>
+		</>
+	)
+}
+
+function AdminSubmenu() {
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger>
+				<ShieldCheckIcon className="me-2.5 h-4 w-4" />
+				<Trans>Administration</Trans>
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent className="min-w-56">
+				<AdminDropdownContent />
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
+	)
+}
+
+function AdminDropdownContent() {
+	return (
+		<>
+			<DropdownMenuLabel>
+				<Trans>Access & Billing</Trans>
+			</DropdownMenuLabel>
+			<NavItem href={getPagePath($router, "billing")} icon={ReceiptTextIcon}>
+				<Trans>Billing</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "permissions")} icon={ShieldCheckIcon}>
+				<Trans>Permissions</Trans>
+			</NavItem>
+			<DropdownMenuSeparator />
+			<DropdownMenuLabel>
+				<Trans>Network Configuration</Trans>
+			</DropdownMenuLabel>
+			<NavItem href={getPagePath($router, "snmp_profiles")} icon={SlidersHorizontalIcon}>
+				<Trans>SNMP Profiles</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "snmp_mib_modules")} icon={DatabaseIcon}>
+				<Trans>MIB Modules</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "traffic_defaults")} icon={GaugeIcon}>
+				<Trans>Traffic Defaults</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "address_prefixes")} icon={GlobeIcon}>
+				<Trans>Address Prefixes</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "address_sets")} icon={LayersIcon}>
+				<Trans>Address Sets</Trans>
+			</NavItem>
+			<DropdownMenuSeparator />
+			<DropdownMenuLabel>
+				<Trans>Flow & Data</Trans>
+			</DropdownMenuLabel>
+			<NavItem href={getPagePath($router, "traffic_matrix")} icon={BarChart3Icon}>
+				<Trans>Traffic Matrix</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "retention")} icon={DatabaseIcon}>
+				<Trans>Retention</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "historical_data")} icon={HistoryIcon}>
+				<Trans>Historical Data</Trans>
+			</NavItem>
+			<DropdownMenuSeparator />
+			<DropdownMenuLabel>
+				<Trans>Platform</Trans>
+			</DropdownMenuLabel>
+			<DropdownMenuItem asChild>
+				<a href={prependBasePath("/_/")} target="_blank" rel="noreferrer">
+					<UsersIcon className="me-2.5 h-4 w-4" />
+					<Trans>Users</Trans>
+				</a>
+			</DropdownMenuItem>
+			<DropdownMenuItem asChild>
+				<a href={prependBasePath("/_/#/logs")} target="_blank" rel="noreferrer">
+					<LogsIcon className="me-2.5 h-4 w-4" />
+					<Trans>Logs</Trans>
+				</a>
+			</DropdownMenuItem>
+			<DropdownMenuItem asChild>
+				<a href={prependBasePath("/_/#/settings/backups")} target="_blank" rel="noreferrer">
+					<DatabaseBackupIcon className="me-2.5 h-4 w-4" />
+					<Trans>Backups</Trans>
+				</a>
+			</DropdownMenuItem>
+		</>
 	)
 }
 
@@ -369,106 +399,3 @@ const Kbd = ({ children }: { children: React.ReactNode }) => (
 		{children}
 	</kbd>
 )
-
-function AdminDropdownGroup() {
-	return (
-		<DropdownMenuGroup>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "billing"))}>
-				<ReceiptTextIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Billing</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "permissions"))}>
-				<ShieldCheckIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Permissions</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "snmp_profiles"))}>
-				<SlidersHorizontalIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>SNMP Profiles</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "snmp_mib_modules"))}>
-				<DatabaseIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>MIB Modules</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "traffic_defaults"))}>
-				<GaugeIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Traffic Defaults</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "address_prefixes"))}>
-				<GlobeIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Address Prefixes</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "address_sets"))}>
-				<LayersIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Address Sets</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "flow_search"))}>
-				<LogsIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Flow Search</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "traffic_matrix"))}>
-				<BarChart3Icon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Traffic Matrix</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "retention"))}>
-				<DatabaseIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Retention</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "historical_data"))}>
-				<HistoryIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Historical Data</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem onClick={() => navigate(getPagePath($router, "targets"))}>
-				<CrosshairIcon className="me-2.5 h-4 w-4" />
-				<span>
-					<Trans>Targets</Trans>
-				</span>
-			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/")} target="_blank">
-					<UsersIcon className="me-2.5 h-4 w-4" />
-					<span>
-						<Trans>Users</Trans>
-					</span>
-				</a>
-			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/#/logs")} target="_blank">
-					<LogsIcon className="me-2.5 h-4 w-4" />
-					<span>
-						<Trans>Logs</Trans>
-					</span>
-				</a>
-			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/#/settings/backups")} target="_blank">
-					<DatabaseBackupIcon className="me-2.5 h-4 w-4" />
-					<span>
-						<Trans>Backups</Trans>
-					</span>
-				</a>
-			</DropdownMenuItem>
-		</DropdownMenuGroup>
-	)
-}

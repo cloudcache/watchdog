@@ -9,8 +9,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cloudcache/watchdog/internal/entities/system"
 	"github.com/ebitengine/purego"
-	"github.com/henrygd/beszel/internal/entities/system"
 )
 
 // NVML constants and types

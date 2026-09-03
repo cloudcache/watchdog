@@ -7,8 +7,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/henrygd/beszel/internal/alerts"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stretchr/testify/assert"
@@ -30,15 +30,15 @@ func setStatusAlertEmail(t *testing.T, hub core.App, userID, email string) {
 
 func TestStatusAlerts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user := beszelTests.GetHubWithUser(t)
+		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
-		systems, err := beszelTests.CreateSystems(hub, 4, user.Id, "paused")
+		systems, err := watchdogTests.CreateSystems(hub, 4, user.Id, "paused")
 		assert.NoError(t, err)
 
 		var alerts []*core.Record
 		for i, system := range systems {
-			alert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+			alert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 				"name":   "Status",
 				"system": system.Id,
 				"user":   user.Id,
@@ -109,7 +109,7 @@ func TestStatusAlerts(t *testing.T) {
 	})
 }
 func TestStatusAlertRecoveryBeforeDeadline(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Ensure user settings have an email
@@ -155,7 +155,7 @@ func TestStatusAlertRecoveryBeforeDeadline(t *testing.T) {
 }
 
 func TestStatusAlertNormalRecovery(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Ensure user settings have an email
@@ -191,7 +191,7 @@ func TestStatusAlertNormalRecovery(t *testing.T) {
 }
 
 func TestHandleStatusAlertsDoesNotSendRecoveryWhileDownIsOnlyPending(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
@@ -235,7 +235,7 @@ func TestHandleStatusAlertsDoesNotSendRecoveryWhileDownIsOnlyPending(t *testing.
 
 func TestStatusAlertTimerCancellationPreventsBoundaryDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user := beszelTests.GetHubWithUser(t)
+		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
@@ -286,7 +286,7 @@ func TestStatusAlertTimerCancellationPreventsBoundaryDelivery(t *testing.T) {
 }
 
 func TestStatusAlertDownFiresAfterDelayExpires(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
@@ -337,14 +337,14 @@ func TestStatusAlertDownFiresAfterDelayExpires(t *testing.T) {
 
 func TestStatusAlertMultipleUsersRespectDifferentMinutes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user1 := beszelTests.GetHubWithUser(t)
+		hub, user1 := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		setStatusAlertEmail(t, hub, user1.Id, "user1@example.com")
 
-		user2, err := beszelTests.CreateUser(hub, "user2@example.com", "password")
+		user2, err := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 		require.NoError(t, err)
-		_, err = beszelTests.CreateRecord(hub, "user_settings", map[string]any{
+		_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
 			"user": user2.Id,
 			"settings": map[string]any{
 				"emails":   []string{"user2@example.com"},
@@ -353,7 +353,7 @@ func TestStatusAlertMultipleUsersRespectDifferentMinutes(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+		system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 			"name":  "shared-system",
 			"users": []string{user1.Id, user2.Id},
 			"host":  "127.0.0.1",
@@ -362,14 +362,14 @@ func TestStatusAlertMultipleUsersRespectDifferentMinutes(t *testing.T) {
 		system.Set("status", "up")
 		require.NoError(t, hub.SaveNoValidate(system))
 
-		alertUser1, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertUser1, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user1.Id,
 			"min":    1,
 		})
 		require.NoError(t, err)
-		alertUser2, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertUser2, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user2.Id,
@@ -424,14 +424,14 @@ func TestStatusAlertMultipleUsersRespectDifferentMinutes(t *testing.T) {
 
 func TestStatusAlertMultipleUsersRecoveryBetweenMinutesOnlyAlertsEarlierUser(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user1 := beszelTests.GetHubWithUser(t)
+		hub, user1 := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		setStatusAlertEmail(t, hub, user1.Id, "user1@example.com")
 
-		user2, err := beszelTests.CreateUser(hub, "user2@example.com", "password")
+		user2, err := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 		require.NoError(t, err)
-		_, err = beszelTests.CreateRecord(hub, "user_settings", map[string]any{
+		_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
 			"user": user2.Id,
 			"settings": map[string]any{
 				"emails":   []string{"user2@example.com"},
@@ -440,7 +440,7 @@ func TestStatusAlertMultipleUsersRecoveryBetweenMinutesOnlyAlertsEarlierUser(t *
 		})
 		require.NoError(t, err)
 
-		system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+		system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 			"name":  "shared-system",
 			"users": []string{user1.Id, user2.Id},
 			"host":  "127.0.0.1",
@@ -449,14 +449,14 @@ func TestStatusAlertMultipleUsersRecoveryBetweenMinutesOnlyAlertsEarlierUser(t *
 		system.Set("status", "up")
 		require.NoError(t, hub.SaveNoValidate(system))
 
-		alertUser1, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertUser1, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user1.Id,
 			"min":    1,
 		})
 		require.NoError(t, err)
-		alertUser2, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertUser2, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user2.Id,
@@ -511,7 +511,7 @@ func TestStatusAlertMultipleUsersRecoveryBetweenMinutesOnlyAlertsEarlierUser(t *
 }
 
 func TestStatusAlertDuplicateDownCallIsIdempotent(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
@@ -548,7 +548,7 @@ func TestStatusAlertDuplicateDownCallIsIdempotent(t *testing.T) {
 }
 
 func TestStatusAlertNoAlertRecord(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	systemCollection, err := hub.FindCollectionByNameOrId("systems")
@@ -572,7 +572,7 @@ func TestStatusAlertNoAlertRecord(t *testing.T) {
 }
 
 func TestRestorePendingStatusAlertsRequeuesDownSystemsAfterRestart(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
@@ -580,7 +580,7 @@ func TestRestorePendingStatusAlertsRequeuesDownSystemsAfterRestart(t *testing.T)
 	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
 	require.NoError(t, hub.Save(userSettings))
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "down")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "down")
 	require.NoError(t, err)
 	system := systems[0]
 
@@ -612,15 +612,15 @@ func TestRestorePendingStatusAlertsRequeuesDownSystemsAfterRestart(t *testing.T)
 }
 
 func TestRestorePendingStatusAlertsSkipsNonDownOrAlreadyTriggeredAlerts(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systemsDown, err := beszelTests.CreateSystems(hub, 2, user.Id, "down")
+	systemsDown, err := watchdogTests.CreateSystems(hub, 2, user.Id, "down")
 	require.NoError(t, err)
 	systemDownPending := systemsDown[0]
 	systemDownTriggered := systemsDown[1]
 
-	systemUp, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	systemUp, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":   "up-system",
 		"users":  []string{user.Id},
 		"host":   "127.0.0.2",
@@ -628,7 +628,7 @@ func TestRestorePendingStatusAlertsSkipsNonDownOrAlreadyTriggeredAlerts(t *testi
 	})
 	require.NoError(t, err)
 
-	_, err = beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":      "Status",
 		"system":    systemDownPending.Id,
 		"user":      user.Id,
@@ -637,7 +637,7 @@ func TestRestorePendingStatusAlertsSkipsNonDownOrAlreadyTriggeredAlerts(t *testi
 	})
 	require.NoError(t, err)
 
-	_, err = beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":      "Status",
 		"system":    systemUp.Id,
 		"user":      user.Id,
@@ -646,7 +646,7 @@ func TestRestorePendingStatusAlertsSkipsNonDownOrAlreadyTriggeredAlerts(t *testi
 	})
 	require.NoError(t, err)
 
-	_, err = beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":      "Status",
 		"system":    systemDownTriggered.Id,
 		"user":      user.Id,
@@ -661,14 +661,14 @@ func TestRestorePendingStatusAlertsSkipsNonDownOrAlreadyTriggeredAlerts(t *testi
 }
 
 func TestRestorePendingStatusAlertsIsIdempotent(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "down")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "down")
 	require.NoError(t, err)
 	system := systems[0]
 
-	_, err = beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":      "Status",
 		"system":    system.Id,
 		"user":      user.Id,
@@ -690,12 +690,12 @@ func TestRestorePendingStatusAlertsIsIdempotent(t *testing.T) {
 }
 
 func TestResolveStatusAlertsFixesStaleTriggered(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// CreateSystems uses SaveNoValidate after initial save to bypass the
 	// onRecordCreate hook that forces status = "pending".
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	system := systems[0]
 
@@ -716,11 +716,11 @@ func TestResolveStatusAlertsFixesStaleTriggered(t *testing.T) {
 	assert.False(t, alertRecord.GetBool("triggered"), "stale triggered flag should be cleared when system is up")
 }
 func TestResolveStatusAlerts(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a systemUp
-	systemUp, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	systemUp, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":   "test-system",
 		"users":  []string{user.Id},
 		"host":   "127.0.0.1",
@@ -728,7 +728,7 @@ func TestResolveStatusAlerts(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	systemDown, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	systemDown, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":   "test-system-2",
 		"users":  []string{user.Id},
 		"host":   "127.0.0.2",
@@ -737,7 +737,7 @@ func TestResolveStatusAlerts(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a status alertUp for the system
-	alertUp, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alertUp, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Status",
 		"system": systemUp.Id,
 		"user":   user.Id,
@@ -745,7 +745,7 @@ func TestResolveStatusAlerts(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	alertDown, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alertDown, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Status",
 		"system": systemDown.Id,
 		"user":   user.Id,
@@ -817,16 +817,16 @@ func TestResolveStatusAlerts(t *testing.T) {
 
 func TestAlertsHistoryStatus(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user := beszelTests.GetHubWithUser(t)
+		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		// Create a system
-		systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+		systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 		assert.NoError(t, err)
 		system := systems[0]
 
 		// Create a status alertRecord for the system
-		alertRecord, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertRecord, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user.Id,
@@ -883,11 +883,11 @@ func TestAlertsHistoryStatus(t *testing.T) {
 
 func TestStatusAlertClearedBeforeSend(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user := beszelTests.GetHubWithUser(t)
+		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		// Create a system
-		systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+		systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 		assert.NoError(t, err)
 		system := systems[0]
 
@@ -900,7 +900,7 @@ func TestStatusAlertClearedBeforeSend(t *testing.T) {
 		initialEmailCount := hub.TestMailer.TotalSend()
 
 		// Create a status alertRecord for the system
-		alertRecord, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		alertRecord, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user.Id,
@@ -943,7 +943,7 @@ func TestStatusAlertClearedBeforeSend(t *testing.T) {
 }
 
 func TestCancelPendingStatusAlertsClearsAllAlertsForSystem(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})

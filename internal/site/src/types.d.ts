@@ -3,7 +3,7 @@ import type { Unit, Os, BatteryState, HourFormat, ConnectionType, ServiceStatus,
 
 // global window properties
 declare global {
-	var BESZEL: {
+	var WATCHDOG: {
 		BASE_PATH: string
 		HUB_VERSION: string
 		HUB_URL: string
@@ -554,7 +554,7 @@ export interface SystemdServiceDetails {
 	WantsMountsFor: any[]
 }
 
-export interface BeszelInfo {
+export interface WatchdogInfo {
 	key: string // public key
 	v: string // version
 	cu: boolean // check updates

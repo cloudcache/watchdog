@@ -1,7 +1,7 @@
 package hub
 
 import (
-	"github.com/henrygd/beszel/internal/hub/utils"
+	"github.com/cloudcache/watchdog/internal/hub/utils"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -13,7 +13,7 @@ type collectionRules struct {
 	delete *string
 }
 
-// setCollectionAuthSettings applies Beszel's collection auth settings.
+// setCollectionAuthSettings applies Watchdog's collection auth settings.
 func setCollectionAuthSettings(app core.App) error {
 	usersCollection, err := app.FindCollectionByNameOrId("users")
 	if err != nil {

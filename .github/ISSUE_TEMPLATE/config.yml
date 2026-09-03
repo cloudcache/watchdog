@@ -1,11 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 🗣️ Translations
-    url: https://crowdin.com/project/beszel
-    about: Please report translation issues and request new translations here. 
   - name: 💬 Support and questions
-    url: https://github.com/henrygd/beszel/discussions
+    url: https://github.com/cloudcache/watchdog/discussions
     about: Ask and answer questions here.
   - name: ℹ️ View the Common Issues page
-    url: https://beszel.dev/guide/common-issues
+    url: https://github.com/cloudcache/watchdog/tree/main/docs
     about: Find information about commonly encountered problems.

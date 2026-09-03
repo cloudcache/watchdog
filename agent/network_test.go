@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel/agent/deltatracker"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog/agent/deltatracker"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 	psutilNet "github.com/shirou/gopsutil/v4/net"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

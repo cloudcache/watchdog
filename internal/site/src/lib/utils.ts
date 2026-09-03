@@ -348,8 +348,8 @@ export const chartMargin = { top: 12, right: 5 }
 /**
  * Retuns value of system host, truncating full path if socket.
  * @example
- * // Assuming system.host is "/var/run/beszel.sock"
- * const hostname = getHostDisplayValue(system) // hostname will be "beszel.sock"
+ * // Assuming system.host is "/var/run/watchdog.sock"
+ * const hostname = getHostDisplayValue(system) // hostname will be "watchdog.sock"
  */
 export const getHostDisplayValue = (system: SystemRecord): string => system.host.slice(system.host.lastIndexOf("/") + 1)
 
@@ -377,8 +377,8 @@ export const generateToken = () => {
 	}
 }
 
-/** Get the hub URL from the global BESZEL object */
-export const getHubURL = () => globalThis.BESZEL?.HUB_URL || window.location.origin
+/** Get the hub URL from the global WATCHDOG object */
+export const getHubURL = () => globalThis.WATCHDOG?.HUB_URL || window.location.origin
 
 /** Map of target/system IDs to their corresponding agent registration tokens */
 export const tokenMap = new Map<SystemRecord["id"], FingerprintRecord["token"]>()

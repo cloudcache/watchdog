@@ -8,8 +8,8 @@ metadata:
 {{ toYaml .Values.persistentVolumeClaim.annotations | indent 4 }}
 {{- end }}
   labels:
-    {{- include "beszel.labels" . | nindent 4 }}
-  name: {{ template "beszel.fullname" . }}
+    {{- include "watchdog.labels" . | nindent 4 }}
+  name: {{ template "watchdog.fullname" . }}
 spec:
   accessModes:
 {{ toYaml .Values.persistentVolumeClaim.accessModes | indent 4 }}

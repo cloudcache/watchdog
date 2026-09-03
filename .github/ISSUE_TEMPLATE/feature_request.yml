@@ -7,11 +7,10 @@ body:
     attributes:
       label: Welcome!
       description: |
-        The issue tracker is for reporting bugs and feature requests only. For end-user related support questions, please use the **[GitHub Discussions](https://github.com/henrygd/beszel/discussions)** instead
+        The issue tracker is for reporting bugs and feature requests only. For end-user related support questions, please use the **[GitHub Discussions](https://github.com/cloudcache/watchdog/discussions)** instead
 
         Please note:
-        - For **Bug reports**, use the [Bug Form](https://github.com/henrygd/beszel/issues/new?template=bug_report.yml).
-        - Any requests for new translations should be requested within the [crowdin project](https://crowdin.com/project/beszel).
+        - For **Bug reports**, use the [Bug Form](https://github.com/cloudcache/watchdog/issues/new?template=bug_report.yml).
         - Create one issue per feature request. This helps us keep track of requests and prioritize them accordingly.
 
       options:
@@ -24,7 +23,7 @@ body:
     id: component
     attributes:
       label: Component
-      description: Which part of Beszel is this about?
+      description: Which part of Watchdog is this about?
       options:
         - Hub
         - Agent

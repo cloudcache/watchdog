@@ -9,12 +9,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/agent/battery"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/agent/zfs"
-	"github.com/henrygd/beszel/internal/entities/container"
-	"github.com/henrygd/beszel/internal/entities/system"
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/agent/battery"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/agent/zfs"
+	"github.com/cloudcache/watchdog/internal/entities/container"
+	"github.com/cloudcache/watchdog/internal/entities/system"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
@@ -24,7 +24,7 @@ import (
 
 // Sets initial / non-changing values about the host system
 func (a *Agent) refreshSystemDetails() {
-	a.systemInfo.AgentVersion = beszel.Version
+	a.systemInfo.AgentVersion = watchdog.Version
 
 	// get host info from Docker if available
 	var hostInfo container.HostInfo

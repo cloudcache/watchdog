@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henrygd/beszel/internal/entities/system"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/entities/system"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -19,15 +19,15 @@ import (
 // TestDiskAlertExtraFsMultiMinute tests that multi-minute disk alerts correctly use
 // historical per-minute values for extra (non-root) filesystems, not the current live snapshot.
 func TestDiskAlertExtraFsMultiMinute(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	require.NoError(t, err)
 	systemRecord := systems[0]
 
 	// Disk alert: threshold 80%, min=2 (requires historical averaging)
-	diskAlert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	diskAlert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "Disk",
 		"system": systemRecord.Id,
 		"user":   user.Id,
@@ -61,7 +61,7 @@ func TestDiskAlertExtraFsMultiMinute(t *testing.T) {
 		statsJSON, _ := json.Marshal(stats)
 
 		recordTime := now.Add(offset)
-		record, err := beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+		record, err := watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 			"system": systemRecord.Id,
 			"type":   "1m",
 			"stats":  string(statsJSON),
@@ -118,7 +118,7 @@ func TestDiskAlertExtraFsMultiMinute(t *testing.T) {
 		statsJSON, _ := json.Marshal(stats)
 
 		recordTime := newNow.Add(offset)
-		record, err := beszelTests.CreateRecord(hub, "system_stats", map[string]any{
+		record, err := watchdogTests.CreateRecord(hub, "system_stats", map[string]any{
 			"system": systemRecord.Id,
 			"type":   "1m",
 			"stats":  string(statsJSON),

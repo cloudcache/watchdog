@@ -7,24 +7,24 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/henrygd/beszel/internal/alerts"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 
 	"github.com/pocketbase/dbx"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestAlertSilencedOneTime(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	assert.NoError(t, err)
 	system := systems[0]
 
 	// Create an alert
-	alert, err := beszelTests.CreateRecord(hub, "alerts", map[string]any{
+	alert, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   "CPU",
 		"system": system.Id,
 		"user":   user.Id,
@@ -38,7 +38,7 @@ func TestAlertSilencedOneTime(t *testing.T) {
 	startTime := now.Add(-1 * time.Hour)
 	endTime := now.Add(1 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "one-time",
@@ -59,7 +59,7 @@ func TestAlertSilencedOneTime(t *testing.T) {
 	pastStart := now.Add(-3 * time.Hour)
 	pastEnd := now.Add(-2 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "one-time",
@@ -79,7 +79,7 @@ func TestAlertSilencedOneTime(t *testing.T) {
 	futureStart := now.Add(2 * time.Hour)
 	futureEnd := now.Add(3 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "one-time",
@@ -96,11 +96,11 @@ func TestAlertSilencedOneTime(t *testing.T) {
 }
 
 func TestAlertSilencedDaily(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	assert.NoError(t, err)
 	system := systems[0]
 
@@ -121,7 +121,7 @@ func TestAlertSilencedDaily(t *testing.T) {
 	startTime := time.Date(2000, 1, 1, startHour, currentMin, 0, 0, time.UTC)
 	endTime := time.Date(2000, 1, 1, endHour, currentMin, 0, 0, time.UTC)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "daily",
@@ -145,7 +145,7 @@ func TestAlertSilencedDaily(t *testing.T) {
 	startTime = time.Date(2000, 1, 1, futureStartHour, 0, 0, 0, time.UTC)
 	endTime = time.Date(2000, 1, 1, futureEndHour, 0, 0, 0, time.UTC)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "daily",
@@ -160,11 +160,11 @@ func TestAlertSilencedDaily(t *testing.T) {
 }
 
 func TestAlertSilencedDailyMidnightCrossing(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	assert.NoError(t, err)
 	system := systems[0]
 
@@ -176,7 +176,7 @@ func TestAlertSilencedDailyMidnightCrossing(t *testing.T) {
 	startTime := time.Date(2000, 1, 1, 22, 0, 0, 0, time.UTC)
 	endTime := time.Date(2000, 1, 1, 2, 0, 0, 0, time.UTC)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system.Id,
 		"type":   "daily",
@@ -202,11 +202,11 @@ func TestAlertSilencedDailyMidnightCrossing(t *testing.T) {
 }
 
 func TestAlertSilencedGlobal(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create multiple systems
-	systems, err := beszelTests.CreateSystems(hub, 3, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 3, user.Id, "up")
 	assert.NoError(t, err)
 
 	// Get alert manager
@@ -218,7 +218,7 @@ func TestAlertSilencedGlobal(t *testing.T) {
 	startTime := now.Add(-1 * time.Hour)
 	endTime := now.Add(1 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":  user.Id,
 		"type":  "one-time",
 		"start": startTime,
@@ -239,11 +239,11 @@ func TestAlertSilencedGlobal(t *testing.T) {
 }
 
 func TestAlertSilencedSystemSpecific(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create multiple systems
-	systems, err := beszelTests.CreateSystems(hub, 2, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 2, user.Id, "up")
 	assert.NoError(t, err)
 	system1 := systems[0]
 	system2 := systems[1]
@@ -257,7 +257,7 @@ func TestAlertSilencedSystemSpecific(t *testing.T) {
 	startTime := now.Add(-1 * time.Hour)
 	endTime := now.Add(1 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user.Id,
 		"system": system1.Id,
 		"type":   "one-time",
@@ -276,18 +276,18 @@ func TestAlertSilencedSystemSpecific(t *testing.T) {
 }
 
 func TestAlertSilencedMultiUser(t *testing.T) {
-	hub, _ := beszelTests.GetHubWithUser(t)
+	hub, _ := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create two users
-	user1, err := beszelTests.CreateUser(hub, "user1@example.com", "password")
+	user1, err := watchdogTests.CreateUser(hub, "user1@example.com", "password")
 	assert.NoError(t, err)
 
-	user2, err := beszelTests.CreateUser(hub, "user2@example.com", "password")
+	user2, err := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 	assert.NoError(t, err)
 
 	// Create a system accessible to both users
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "shared-system",
 		"users": []string{user1.Id, user2.Id},
 		"host":  "127.0.0.1",
@@ -303,7 +303,7 @@ func TestAlertSilencedMultiUser(t *testing.T) {
 	startTime := now.Add(-1 * time.Hour)
 	endTime := now.Add(1 * time.Hour)
 
-	_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 		"user":   user1.Id,
 		"system": system.Id,
 		"type":   "one-time",
@@ -323,16 +323,16 @@ func TestAlertSilencedMultiUser(t *testing.T) {
 
 func TestAlertSilencedWithActualAlert(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		hub, user := beszelTests.GetHubWithUser(t)
+		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
 		// Create a system
-		systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+		systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 		assert.NoError(t, err)
 		system := systems[0]
 
 		// Create a status alert
-		_, err = beszelTests.CreateRecord(hub, "alerts", map[string]any{
+		_, err = watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 			"name":   "Status",
 			"system": system.Id,
 			"user":   user.Id,
@@ -343,7 +343,7 @@ func TestAlertSilencedWithActualAlert(t *testing.T) {
 		// Create user settings with email
 		userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", dbx.Params{"user": user.Id})
 		if err != nil || userSettings == nil {
-			userSettings, err = beszelTests.CreateRecord(hub, "user_settings", map[string]any{
+			userSettings, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
 				"user": user.Id,
 				"settings": map[string]any{
 					"emails": []string{"test@example.com"},
@@ -357,7 +357,7 @@ func TestAlertSilencedWithActualAlert(t *testing.T) {
 		startTime := now.Add(-1 * time.Hour)
 		endTime := now.Add(1 * time.Hour)
 
-		_, err = beszelTests.CreateRecord(hub, "quiet_hours", map[string]any{
+		_, err = watchdogTests.CreateRecord(hub, "quiet_hours", map[string]any{
 			"user":   user.Id,
 			"system": system.Id,
 			"type":   "one-time",
@@ -407,11 +407,11 @@ func TestAlertSilencedWithActualAlert(t *testing.T) {
 }
 
 func TestAlertSilencedNoWindows(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system
-	systems, err := beszelTests.CreateSystems(hub, 1, user.Id, "up")
+	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "up")
 	assert.NoError(t, err)
 	system := systems[0]
 

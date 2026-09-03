@@ -6,8 +6,8 @@ internalsite/node_modules
 build
 dist
 *.exe
-beszel-agent
-beszel_data*
+watchdog-agent
+watchdog_data*
 pb_data
 data
 temp

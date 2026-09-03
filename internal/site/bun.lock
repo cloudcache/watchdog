@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "beszel",
+      "name": "watchdog",
       "dependencies": {
         "@henrygd/queue": "^1.0.7",
         "@henrygd/semaphore": "^0.0.2",

@@ -9,9 +9,9 @@ import (
 )
 
 type trapAPI struct {
-	network   NetworkRepository
-	collector SNMPCollectorRepository
-	dispatcher func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
+	network       NetworkRepository
+	collector     SNMPCollectorRepository
+	dispatcher    func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	discoveryJobs DiscoveryJobRepository
 }
 
@@ -28,12 +28,12 @@ func (api trapAPI) receiveTrap(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req struct {
-		SourceIP string             `json:"source_ip"`
-		Hostname string             `json:"hostname"`
-		TrapOID  string             `json:"trap_oid"`
-		Uptime   uint64             `json:"uptime"`
-		VarBinds []SNMPTrapVarBind  `json:"varbinds"`
-		RawText  string             `json:"raw_text"`
+		SourceIP string            `json:"source_ip"`
+		Hostname string            `json:"hostname"`
+		TrapOID  string            `json:"trap_oid"`
+		Uptime   uint64            `json:"uptime"`
+		VarBinds []SNMPTrapVarBind `json:"varbinds"`
+		RawText  string            `json:"raw_text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)

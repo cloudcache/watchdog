@@ -1,8 +1,12 @@
-import { t } from "@lingui/core/macro"
 import PocketBase from "pocketbase"
 import { basePath } from "@/components/router"
-import { toast } from "@/components/ui/use-toast"
 import type { ChartTimes, UserSettings } from "@/types"
+import {
+	$platformIdentity,
+	type PlatformAuthContext,
+	type PlatformPermission,
+	type PlatformTenant,
+} from "./platform-auth"
 import { $alerts, $allSystemsById, $allSystemsByName, $userSettings } from "./stores"
 import { chartTimeData } from "./utils"
 
@@ -18,14 +22,118 @@ pb.send = ((path: string, options = {}) => {
 	return pocketBaseSend(path, options)
 }) as typeof pb.send
 
-export const isAdmin = () => import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true" || pb.authStore.record?.role === "admin"
-export const isReadOnlyUser = () => pb.authStore.record?.role === "readonly"
+const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
+
+export const isAdmin = () => watchdogDevAuth || $platformIdentity.get().current?.isAdmin === true
+export const isReadOnlyUser = () => {
+	if (watchdogDevAuth) {
+		return false
+	}
+	const identity = $platformIdentity.get()
+	if (!identity.ready || !identity.current) {
+		return true
+	}
+	if (identity.current.isAdmin) {
+		return false
+	}
+	return !identity.current.grants.some((grant) =>
+		grant.actions.some((action) => action === "configure" || action === "operate" || action === "admin")
+	)
+}
+
+export function setWatchdogTenant(tenantID: string) {
+	const subject = pb.authStore.record?.id
+	if (!subject) {
+		throw new Error("Cannot select a tenant before authentication")
+	}
+	const key = `watchdog.tenant.${subject}`
+	if (tenantID.trim()) {
+		localStorage.setItem(key, tenantID.trim())
+	} else {
+		localStorage.removeItem(key)
+	}
+}
+
+export async function refreshWatchdogIdentity() {
+	if (watchdogDevAuth) {
+		$platformIdentity.set({
+			ready: true,
+			tenants: [{ id: "development", name: "Development", status: "active" }],
+			current: { tenantID: "development", userID: "development", roleIDs: [], grants: [], isAdmin: true },
+		})
+		return
+	}
+	const response = await pb.send<{ items?: unknown[] }>("/api/v1/me/tenants", {})
+	const tenants = (response.items ?? []).map(normalizePlatformTenant).filter((tenant) => tenant.id)
+	let tenantID = getWatchdogTenant()
+	if (!tenants.some((tenant) => tenant.id === tenantID)) {
+		tenantID = tenants.length === 1 ? tenants[0].id : ""
+		setWatchdogTenant(tenantID)
+	}
+	if (!tenantID) {
+		$platformIdentity.set({ ready: true, tenants })
+		return
+	}
+	const current = normalizePlatformAuthContext(await pb.send<Record<string, unknown>>("/api/v1/me", {}))
+	$platformIdentity.set({ ready: true, tenants, current })
+}
+
+export async function selectWatchdogTenant(tenantID: string) {
+	const tenant = $platformIdentity.get().tenants.find((item) => item.id === tenantID)
+	if (!tenant) {
+		throw new Error("Tenant access denied")
+	}
+	setWatchdogTenant(tenant.id)
+	await refreshWatchdogIdentity()
+}
+
+function getWatchdogTenant() {
+	const subject = pb.authStore.record?.id
+	return subject ? localStorage.getItem(`watchdog.tenant.${subject}`) || "" : ""
+}
+
+function normalizePlatformTenant(value: unknown): PlatformTenant {
+	const tenant = value as Record<string, unknown>
+	return {
+		id: String(tenant.id ?? tenant.ID ?? ""),
+		name: String(tenant.name ?? tenant.Name ?? ""),
+		status: String(tenant.status ?? tenant.Status ?? ""),
+	}
+}
+
+function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformAuthContext {
+	const rawGrants = (value.grants ?? value.Grants ?? []) as Array<Record<string, unknown>>
+	return {
+		tenantID: String(value.tenant_id ?? value.TenantID ?? ""),
+		userID: String(value.user_id ?? value.UserID ?? ""),
+		roleIDs: ((value.role_ids ?? value.RoleIDs ?? []) as unknown[]).map(String),
+		grants: rawGrants.map(
+			(grant): PlatformPermission => ({
+				actions: ((grant.actions ?? grant.Actions ?? []) as unknown[]).map(String),
+			})
+		),
+		isAdmin: Boolean(value.is_admin ?? value.IsAdmin),
+	}
+}
 
 async function sendWatchdogAPI<T>(
 	path: string,
 	options: RequestInit & { body?: unknown; query?: Record<string, string | number | boolean | undefined> } = {}
 ): Promise<T> {
 	const headers = new Headers(options.headers)
+	if (!headers.has("X-Request-ID")) {
+		headers.set("X-Request-ID", crypto.randomUUID())
+	}
+	if (!headers.has("Authorization") && pb.authStore.token) {
+		headers.set("Authorization", pb.authStore.token)
+	}
+	const subject = pb.authStore.record?.id
+	if (!headers.has("X-Watchdog-Tenant-ID") && subject) {
+		const tenantID = localStorage.getItem(`watchdog.tenant.${subject}`)
+		if (tenantID) {
+			headers.set("X-Watchdog-Tenant-ID", tenantID)
+		}
+	}
 	const url = new URL(`${basePath}${path}`, window.location.origin)
 	for (const [key, value] of Object.entries(options.query ?? {})) {
 		if (value !== undefined) {
@@ -65,26 +173,13 @@ async function readAPIErrorMessage(response: Response) {
 	}
 }
 
-export const verifyAuth = () => {
-	pb.collection("users")
-		.authRefresh()
-		.catch(() => {
-			logOut()
-			toast({
-				title: t`Failed to authenticate`,
-				description: t`Please log in again`,
-				variant: "destructive",
-			})
-		})
-}
-
 /** Logs the user out by clearing the auth store and unsubscribing from realtime updates. */
 export function logOut() {
 	$allSystemsByName.set({})
 	$allSystemsById.set({})
 	$alerts.set({})
 	$userSettings.set({} as UserSettings)
-	sessionStorage.setItem("lo", "t") // prevent auto login on logout
+	$platformIdentity.set({ ready: false, tenants: [] })
 	pb.authStore.clear()
 	pb.realtime.unsubscribe()
 }

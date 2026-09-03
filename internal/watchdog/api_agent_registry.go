@@ -56,6 +56,16 @@ type agentRegistryRequest struct {
 	Status    string
 }
 
+type agentRegistryPatchRequest struct {
+	ID        *ID
+	TargetID  *ID
+	AgentType *AgentType
+	Mode      *AgentMode
+	Endpoint  *string
+	Token     *string
+	Status    *string
+}
+
 func registerAgentRegistryRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo AgentRepository) {
 	api := agentRegistryAPI{repo: repo}
 	viewTenant := RequirePermission(ActionView, TenantResource)
@@ -178,32 +188,52 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	req, err := decodeAgentRegistryRequest(r)
+	req, err := decodeAgentRegistryPatchRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	if req.ID != existing.ID {
+	if req.ID != nil && ID(strings.TrimSpace(string(*req.ID))) != existing.ID {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "agent id must match the request path", nil)
 		return
 	}
-	if req.TargetID != existing.TargetID && !canAccessTarget(auth, req.TargetID, ActionConfigure) {
+	targetID := existing.TargetID
+	if req.TargetID != nil {
+		targetID = ID(strings.TrimSpace(string(*req.TargetID)))
+	}
+	if targetID != existing.TargetID && !canAccessTarget(auth, targetID, ActionConfigure) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
 	tokenHash := existing.TokenHash
-	if req.Token != "" {
-		tokenHash = NewAgentTokenHash(req.Token)
+	if req.Token != nil && strings.TrimSpace(*req.Token) != "" {
+		tokenHash = NewAgentTokenHash(*req.Token)
+	}
+	agentType := existing.AgentType
+	if req.AgentType != nil {
+		agentType = *req.AgentType
+	}
+	mode := existing.Mode
+	if req.Mode != nil {
+		mode = *req.Mode
+	}
+	endpoint := existing.Endpoint
+	if req.Endpoint != nil {
+		endpoint = *req.Endpoint
+	}
+	status := existing.Status
+	if req.Status != nil {
+		status = *req.Status
 	}
 	agent := NormalizeAgentConfig(SNMPAgentConfig{
 		ID:        existing.ID,
 		TenantID:  auth.TenantID,
-		TargetID:  req.TargetID,
-		AgentType: req.AgentType,
-		Mode:      req.Mode,
-		Endpoint:  req.Endpoint,
+		TargetID:  targetID,
+		AgentType: agentType,
+		Mode:      mode,
+		Endpoint:  endpoint,
 		TokenHash: tokenHash,
-		Status:    req.Status,
+		Status:    status,
 	})
 	if err := ValidateAgentConfig(agent); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -236,17 +266,8 @@ func (api agentRegistryAPI) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeAgentRegistryRequest(r *http.Request) (agentRegistryRequest, error) {
-	defer r.Body.Close()
 	var req agentRegistryRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		return req, err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return req, errors.New("request body must contain one JSON object")
-		}
+	if err := decodeStrictAgentJSON(r, &req); err != nil {
 		return req, err
 	}
 	if req.ID == "" {
@@ -270,6 +291,30 @@ func decodeAgentRegistryRequest(r *http.Request) (agentRegistryRequest, error) {
 	req.Endpoint = normalized.Endpoint
 	req.Status = normalized.Status
 	return req, nil
+}
+
+func decodeAgentRegistryPatchRequest(r *http.Request) (agentRegistryPatchRequest, error) {
+	var req agentRegistryPatchRequest
+	if err := decodeStrictAgentJSON(r, &req); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func decodeStrictAgentJSON(r *http.Request, out any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain one JSON object")
+		}
+		return err
+	}
+	return nil
 }
 
 func agentRegistryDTO(agent SNMPAgentConfig) agentRegistryResponse {

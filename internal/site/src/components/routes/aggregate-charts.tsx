@@ -177,7 +177,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Aggregate Charts`} / WatchDog`
+		document.title = `${t`Aggregate Charts`} / Watchdog`
 		refreshCatalog()
 	}, [refreshCatalog, t])
 

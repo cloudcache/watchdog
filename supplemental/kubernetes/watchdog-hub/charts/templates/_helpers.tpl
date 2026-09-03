@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "beszel.name" -}}
+{{- define "watchdog.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "beszel.fullname" -}}
+{{- define "watchdog.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -26,16 +26,16 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "beszel.chart" -}}
+{{- define "watchdog.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "beszel.labels" -}}
-helm.sh/chart: {{ include "beszel.chart" . }}
-{{ include "beszel.selectorLabels" . }}
+{{- define "watchdog.labels" -}}
+helm.sh/chart: {{ include "watchdog.chart" . }}
+{{ include "watchdog.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -45,7 +45,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "beszel.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "beszel.name" . }}
+{{- define "watchdog.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "watchdog.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

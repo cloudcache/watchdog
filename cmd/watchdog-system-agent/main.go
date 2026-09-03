@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/henrygd/beszel/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"

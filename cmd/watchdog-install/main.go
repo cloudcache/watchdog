@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/henrygd/beszel/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 func main() {
@@ -33,5 +33,5 @@ func main() {
 		fmt.Fprintf(os.Stdout, "watchdog already installed; refreshed database marker from %s\n", result.LockPath)
 		return
 	}
-	fmt.Fprintf(os.Stdout, "watchdog installed; executed %d SQL statements and wrote %s\n", result.StatementsExecuted, result.LockPath)
+	fmt.Fprintf(os.Stdout, "watchdog installed; executed %d SQL statements, applied %d migrations, and wrote %s\n", result.StatementsExecuted, len(result.MigrationsApplied), result.LockPath)
 }

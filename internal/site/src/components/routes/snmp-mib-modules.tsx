@@ -47,7 +47,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`MIB Modules`} / WatchDog`
+		document.title = `${t`MIB Modules`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

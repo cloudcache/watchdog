@@ -129,8 +129,13 @@ const SettingsNotificationsPage = ({ userSettings }: { userSettings: UserSetting
 							</h3>
 							<p className="text-sm text-muted-foreground leading-relaxed">
 								<Trans>
-									Beszel uses{" "}
-									<a href="https://beszel.dev/guide/notifications" target="_blank" className="link" rel="noopener">
+									Watchdog uses{" "}
+									<a
+										href="https://github.com/cloudcache/watchdog/tree/main/docs"
+										target="_blank"
+										className="link"
+										rel="noopener noreferrer"
+									>
 										Shoutrrr
 									</a>{" "}
 									to integrate with popular notification services.
@@ -190,7 +195,7 @@ const ShoutrrrUrlCard = ({ url, onUrlChange, onRemove }: ShoutrrrUrlCardProps) =
 	const sendTestNotification = async () => {
 		setIsLoading(true)
 		try {
-			const res = await pb.send("/api/beszel/test-notification", { method: "POST", body: { url } })
+			const res = await pb.send("/api/watchdog/test-notification", { method: "POST", body: { url } })
 			if ("err" in res && !res.err) {
 				toast({
 					title: t`Test notification sent`,

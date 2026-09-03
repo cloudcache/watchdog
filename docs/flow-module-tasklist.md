@@ -1,6 +1,6 @@
 # Watchdog 平台化与 Flow 模块实施 Tasklist
 
-本清单把 [平台化与可插拔模块架构](watchdog-platform-module-architecture.md)、[流向需求与选型](flow-direction-requirements.md) 和 [Flow 详细设计](flow-module-design.md) 拆成可勾选工作包。所有任务初始为未完成；勾选时应在同一行或关联 issue/PR 中补充负责人和证据链接。
+本清单把 [平台化与可插拔模块架构](watchdog-platform-module-architecture.md)、[存储收敛详细设计](storage-consolidation.md)、[流向需求与选型](flow-direction-requirements.md) 和 [Flow 详细设计](flow-module-design.md) 拆成可勾选工作包。除明确标注的现有组件前置修复外，任务初始为未完成；勾选时应在同一行或关联 issue/PR 中补充负责人和证据链接。
 
 ## 1. 使用规则
 
@@ -16,12 +16,33 @@
 
 建议证据格式：`负责人：___；PR/commit：___；测试报告：___；设计评审：___；完成日期：___`。
 
+### 1.1 已完成的现有组件配置前置修复
+
+以下项目是进入 PLAT-03 前的基线修复，不表示 collector plan、LKG、灰度或 Platform P0/P1 已完成：
+
+- [x] **设计/编码**：现有进程统一 `CLI > env > YAML > default`；严格 YAML、环境变量 fail-fast、URL/ID/listen/path/MIB 规范化、组件级身份校验和完整示例配置已落地。证据：[`config.go`](../internal/watchdog/config.go)、[`watchdog.example.yaml`](../config/watchdog.example.yaml)、[`watchdog-install.md`](watchdog-install.md)。
+- [x] **准确性修复**：补齐 sFlow agg/prefix sync、SNMP poll/discovery、aggregate rollup、trap/system agent 覆盖项；MySQL idle=0 不再被默认值吞掉；SNMP polling-only 不再错误要求 device。
+- [x] **Agent 一致性修复**：registry 的 type/mode/status/endpoint 在 API 与 repository 共用规范化/校验；PATCH 保留省略字段；未知 JSON、system+pull、非法 run status 和 disabled agent 运行被拒绝；成功上报不再因缺省 status 被记成 failure；旧 agent 的显式 URL/token CLI 真正高于 prefixed env。
+- [x] **旧 hub 配置修复**：`config.yml` 严格解码并在写入前完成 name/host/user/port 规范化、重复检查和用户引用校验；现有 system 改用 `(name,host,port)` 元组匹配，消除字符串拼接碰撞。
+- [x] **单元/变更测试**：覆盖未知/多文档 YAML、显式零值、非法 env、优先级覆盖、路径/URL 规范化、示例配置 schema、Agent 规范化/部分 PATCH/禁用/状态语义、旧 hub system 配置和旧 agent CLI 优先级。证据：[`config_test.go`](../internal/watchdog/config_test.go)、[`api_agents_test.go`](../internal/watchdog/api_agents_test.go)、[`system_local_collector_test.go`](../internal/watchdog/system_local_collector_test.go)、[`config_parse_test.go`](../internal/hub/config/config_parse_test.go)。
+- [ ] **集成/回归测试**：在真实 MySQL、VM 和 UDP listener 环境完成各二进制启动、env/YAML/CLI 组合、trap 转发、SNMP poll/discovery、sFlow ingest、export/rollup 冒烟；VictoriaLogs 不再是目标环境，旧 VLogs 路径只验证“零请求/已禁用”；归档日志和配置脱敏报告。
+
+### 1.2 产品命名与导航收敛
+
+- [x] **设计/变更设计**：产品代码命名空间、环境变量、API、协议头、制品、服务、数据目录和发布仓库统一为 `watchdog` / `WATCHDOG_*`；不保留改名前的产品别名；第三方包名和许可证作者信息保持原始来源。
+- [x] **编码**：Go module/package/import、Agent/Hub 配置、前后端接口、脚本、容器、Helm、发布元数据、注释、测试及文档完成统一；在线升级默认直连 `cloudcache/watchdog`，镜像必须通过 `--github-mirror` 显式配置；安装命令改为仓库内脚本的 raw URL。
+- [x] **导航编码**：桌面端和移动端统一为“概览 / 资源 / 分析 / 数据 / 设置与管理”；Targets、Network Targets、All Containers、Disk Health 归入资源，Aggregate Charts、Saved Graphs 归入分析，主题和语言归入常规设置。
+- [x] **单元/变更测试**：升级 URL、Agent 配置优先级、API/Agent 协议、Hub 配置和领域层定向测试通过；Shell 安装脚本通过语法检查，Windows Agent 完成交叉编译。
+- [x] **集成测试**：前端 production build 通过；桌面端与 390px 移动端完成实际浏览器菜单、路由和设置页视觉回归。
+- [ ] **全量回归测试**：`go test -count=1 -tags=testing ./...`、前端 production build 与本次改动文件的 Biome check 已通过；GPU helper、Hub system worker 生命周期和 WebSocket 状态收敛问题已修复。全库 Biome 仍有既存格式、`any` 类型和无效 suppression 债务，真实登录浏览器 E2E、race、升级/回滚与 soak 尚无发布证据，因此父项保持未完成。
+
 ## 2. 阶段依赖与总览
 
 - [ ] `Platform P0`：生产身份/API 与 migration 基线完成。
 - [ ] `Platform P1`：module/resource/dataset 与 collector/target 基座完成。
 - [ ] `Platform P2`：统一查询、图表和导出完成。
 - [ ] `Platform P3`：raw/supplier/customer 三层修正完成。
+- [ ] `Storage consolidation`：生产路由/身份闭环、PB 业务域迁移、legacy Agent 适配和 VLogs 裁撤完成；PocketBase 只剩 auth 应用集合。
 - [ ] `Flow P1`：flow-collect（raw WAL + GoFlow2）→normalized→dimension worker、enriched base/派生表、地址段/六维和总览完成；依赖 Platform P0–P2。
 - [ ] `Flow P2`：多维明细、IP、归属修正和对账完成；三层导出依赖 Platform P3。
 - [ ] `Flow P3`：境外与 VPN 风险完成。
@@ -39,6 +60,12 @@
 | PLAT-03 | PLAT-01/02 | collector identity、M:N binding、enrollment、plan revision/rollout | 注册/轮换/撤销/兼容/LKG/N+1 测试 |
 | PLAT-04 | PLAT-02 | target/device/port 资源树与 CRUD | 删除影响和 tenant 隔离 |
 | PLAT-04A | PLAT-02 | dimension snapshot/publish/bundle/ack | event-time 选版与回放 |
+| STORE-00 | PLAT-00 | 存储权威基线、VLogs 止血、迁移 manifest 契约 | 读写矩阵与零直连报告 |
+| STORE-01 | PLAT-01 | 生产 Router、PB IdentityAdapter、typed API client | 真实登录、JSON API、故障语义报告 |
+| STORE-02 | PLAT-00A/01 | user 投影、偏好/通知/静默 MySQL schema 与迁移 | count/checksum/ETag/secret 报告 |
+| STORE-03 | PLAT-02/03/04 | legacy Agent、system inventory 与 VM 写入迁移 | PB/VM 对账、重连/升级报告 |
+| STORE-04 | STORE-02/03 | alert rule/state/event/delivery 与 SMART 闭环 | 触发/恢复/静默/投递/库存报告 |
+| STORE-05 | STORE-00–04 + PLAT-03 | PB contract、VLogs 全裁撤、归档/恢复/销毁 | 30 天零读写、restore/rollback 报告 |
 | PLAT-05 | PLAT-01/02/04 | QueryGateway、VM/CH provider contract | 权限/limits/completeness |
 | PLAT-06 | PLAT-05 | visualization CRUD、query/binding/layout | 旧图表无损迁移 |
 | PLAT-07 | PLAT-05 | 统计函数、provider-neutral export | 查询/导出同值同版本 |
@@ -69,6 +96,12 @@
 
 ### PLAT-00 当前系统基线与迁移治理
 
+本轮基线回归记录：`internal/watchdog`、命令包、生产 PB identity/route precedence 定向集成测试、前端 production build 及解除端口沙箱限制后的 `go test -count=1 -tags=testing ./...` 已通过。以下稳定性问题已在同轮关闭；父级“回归测试”仍须等生产副本、浏览器 E2E、race/soak 等证据齐全后再勾选：
+
+- [x] GPU collector 测试不再用固定 50/150ms 猜测后台进程完成，改为带 2s 上限的条件等待并在锁内读取结果。
+- [x] PB system updater 全部纳入 SystemManager 生命周期；Hub/test cleanup 在 DB teardown 前 cancel+join，新增 close/join 回归测试。
+- [x] legacy WebSocket enrollment 测试等待 PB 业务状态收敛，不再把 TCP/WebSocket 建连瞬间误当作认证与首轮采集完成。
+
 - [ ] **设计**：盘点 PocketBase/hub、watchdog runtime、MySQL migration/init、现有 API、前端路由及部署拓扑，形成带代码位置的现状基线。
 - [ ] **编码**：建立 migration 版本规范、空库执行器和 init snapshot/parity 检查，不修改无关业务代码。
 - [ ] **单元测试**：覆盖 migration 排序、重复执行、失败停止、版本校验和 snapshot diff。
@@ -88,6 +121,15 @@
 - [ ] **回归测试**：现有用户、target、agent、SNMP、图表、导出、billing 的列表/查看/增删改查、权限和后台任务均保持兼容。
 
 ### PLAT-01 生产身份、租户、用户、角色与权限
+
+本轮已经完成的可独立核验切片；不因这些切片完成而提前勾选覆盖用户/角色 CRUD、变更与回滚的父项：
+
+- [x] 生产 Hub 按 HTTP method 精确挂载 `/api/v1`，并验证 API 路由优先于 SPA fallback、未知 API 返回 JSON 404。
+- [x] PB `users` token 经服务端验证后按 `external_subject_id` 投影到 MySQL；禁用/不存在/歧义/越权 tenant 以及 PB superuser 均 fail closed。
+- [x] tenant discovery 与 tenant-scoped authorization 分离，解决多租户用户在尚未选择 tenant 时无法发现 membership 的启动闭环；前端提供 tenant selector。
+- [x] 前端管理 API 注入 PB token、tenant 和 request ID，`/api/v1/me` 的 MySQL roles/grants 成为管理页面授权判断依据。
+- [x] 登录改为被动触发：移除登录表单挂载时的 `authRefresh` 和单 OAuth provider 自动跳转；仅受控资源访问、用户主动提交或已主动发起的 OAuth callback 可以触发认证链路。
+- [x] 身份投影、tenant discovery、请求 ID、生产路由与 readiness 的定向单元/集成测试通过。
 
 - [ ] **设计**：确认 PocketBase/OIDC 身份权威、`external_subject_id` 投影、tenant 选择、AuthContext、用户/角色 CRUD 和资源继承规则。
 - [ ] **编码**：在生产 hub 挂载 watchdog `/api/v1`，实现 IdentityAdapter、tenant/user/role/permission API、审计和 dev admin 隔离。
@@ -143,7 +185,96 @@
 - [ ] **变更测试**：验证旧 prefixes/sets 生成首个 snapshot、版本切换、retire、旧版本重放、bundle 丢失和 rollback/forward-fix。
 - [ ] **回归测试**：现有 address prefixes/sets CRUD、labels、match_direction 和 SNMP/sFlow 原型读取保持可用。
 
-- [ ] **Platform P1 出口**：模块可独立启停；旧 agent 无中断迁移；同一 collector 可绑定多个资源；target CRUD、dimension publish 和权限继承通过。
+### WATCHDOG-SUNSET：PB/MySQL/VictoriaLogs 收敛
+
+本工作包执行[存储收敛详细设计](storage-consolidation.md)。它不是“删表清理”，而是按数据权威逐域完成 expand→backfill→shadow compare→cutover→observe→contract。任何 STORE 子包都必须同时交付以下七类证据。
+
+#### STORE-00 现状基线、迁移治理与 VLogs 安全止血
+
+本轮已完成的原子项（大项仍需 PB 调用指标、manifest 和生产副本证据后才能勾选）：
+
+- [x] 删除 sFlow collector 的逐 flow VictoriaLogs goroutine/HTTP sink，保留现有 VM aggregate 行为。
+- [x] 删除前端 FlowSearch 直连页面、菜单和路由；代码/配置不再包含可恢复 VLogs sink 的开关。
+- [x] 删除 VLogs YAML 字段；旧 `WATCHDOG_VICTORIALOGS_URL/WATCHDOG_SFLOW_VLOGS_URL` 出现即明确启动失败。
+- [x] `internal/watchdog` 单测、前端生产构建和全局 `git diff --check` 通过。
+- [x] migration 原位嵌入二进制，按连续版本排序、SHA-256 校验、同连接 advisory lock 执行；重复运行零 DDL，未知/漂移版本 fail closed。
+- [x] `install/init.sql` 包含 migration ledger 与 expand 后 users snapshot；隔离空库验证 001–011 首次执行和重复执行。
+- [ ] 增加 PB collection read/write/subscribe 指标、migration manifest/checkpoint/quarantine 和生产副本零调用报告。
+
+- [ ] **设计**：冻结 14 个 PB 业务集合的读/写/订阅/hook/cron/API/UI 矩阵、MySQL/VM 去向、数据不变量、迁移 manifest、quarantine、观察期和不可逆动作审批；纠正“system 域是僵尸集合”和调用次数百分比口径。
+- [ ] **编码**：加入 PB collection read/write/subscribe 计数与迁移检查器；禁用前端 FlowSearch 直连，停止逐 flow VLogs goroutine HTTP 写；如需确认旧消费者，只保留请求计数/迁移日志，不保留可重新写入 VLogs 的运行开关。
+- [ ] **单元测试**：覆盖 manifest checksum、分页断点/重复执行、PB ID→MySQL ID 映射、未知字段 quarantine、零读写判定和 VLogs sink 禁用。
+- [ ] **集成测试**：对生产副本生成完整清单；验证浏览器/collector 到 9428 请求为 0、旧 sFlow 聚合在 VLogs 关闭后行为已知、PB 采集指标能定位全部调用方。
+- [ ] **变更设计**：登记实际集合数量、隐式 hooks/raw SQL、旧 Agent 版本、VLogs 数据/端口/部署依赖和不能自动迁移的记录；无差异也要签字。
+- [ ] **变更测试**：验证升级前后 manifest 可比、止血开关回退、VLogs 不可用/慢响应不会拖垮 collector，以及旧配置出现时给出明确弃用错误。
+- [ ] **回归测试**：PB 登录、现有 system/SNMP/sFlow aggregate、target、图表和导出不因止血与观测埋点改变业务结果。
+
+#### STORE-01 生产 Hub、身份投影与前端 API 客户端
+
+本轮已完成的原子项（大项仍需 readiness、完整 CRUD/typed client、真实 OTP/OAuth/E2E 与回滚演练后才能勾选）：
+
+- [x] 生产 Hub 延迟初始化 MySQL runtime，并在同一 PB Router 分方法挂载 `/api/v1`；API route precedence 测试排除 SPA fallback/启动冲突。
+- [x] 实现 PB `users` token→external subject→MySQL tenant/user/role/grant 的 fail-closed IdentityAdapter；PB superuser/role 不成为业务授权。
+- [x] 实现零/单/多 tenant、禁用主体、跨 tenant、MySQL failure 的 401/403/400/503 语义及 JSON API 404。
+- [x] 实现 `/api/v1/me/tenants`，前端 API shim 注入 PB token 和按 subject 保存的 `X-Watchdog-Tenant-ID`。
+- [x] 新增 MySQL migration 011、新装 schema parity 和显式 `watchdog-identity-link`；保留 nullable `password_hash` 作为 expand/contract 回滚窗口。
+- [x] 空 MySQL 隔离库顺序执行 001–011，并验证重复执行、schema gate、subject link、投影读取和 tenant admin 解析；测试库已销毁。
+- [x] 新增 `/api/v1/health/live` 与 `/api/v1/health/ready`；ready 校验 MySQL ping 和全部嵌入 migration 的版本/checksum。
+- [x] 所有 `/api/v1` 请求生成或校验 `X-Request-ID`，写入请求上下文并在响应回显；前端兼容 client 主动生成 request ID。
+- [x] tenant discovery 与 tenant-scoped authorization 分离，首次多租户登录无需预先发送 tenant header；前端 selector 按 PB subject 保存选择并在切换后整页重载，避免复用旧租户页面状态。
+- [x] 前端管理入口与只读判定改读 `/api/v1/me` 的 MySQL `is_admin/grants`，不再使用 PB `users.role` 作为业务授权显示依据。
+- [ ] 补 ETag/idempotency、用户/角色 CRUD。
+- [ ] 完成 password/OTP/OAuth、Hub 重启、subpath、权限即时失效和旧客户端/rollback E2E。
+
+- [ ] **设计**：冻结 Hub 启动/路由顺序、PB token server-side 校验、`auth_provider/external_subject_id`、tenant 选择、bootstrap saga、MySQL fail-closed、JSON 404/503、token refresh/idempotency 和 dev admin 隔离。
+- [ ] **编码**：生产 Hub 挂载 runtime `/api/v1`；实现 IdentityAdapter、readiness 和 `/api/v1/me/tenants`；typed API client 注入 token/tenant/request ID/ETag，SPA fallback 排除 `/api/*`；MySQL user 先 expand/backfill，禁止同版直接 drop password。
+- [ ] **单元测试**：覆盖 token 缺失/过期/伪造、零/单/多 tenant、禁用用户、重复 subject、PB role 与 MySQL grants 冲突、bootstrap 重试、MySQL down 和安全/非幂等请求重放。
+- [ ] **集成测试**：真实 PB password/OTP/OAuth session 调用所有 `/api/v1`；验证 401/403/404/409/503、tenant 切换、权限即时失效、Hub 重启和 subpath 部署。
+- [ ] **变更设计**：记录 PB `role` 兼容期、用户邀请/JIT 取舍、旧 `password_hash` 行、session 续期和 production/dev 配置差异。
+- [ ] **变更测试**：空库、旧库升级、subject backfill、重复 identity 修复、nullable→drop password 两阶段、旧客户端兼容和失败 migration forward-fix。
+- [ ] **回归测试**：登录/忘记密码/OTP、target、agent、network、metric、graph、billing、export、settings 全页面用生产身份运行。
+
+#### STORE-02 用户偏好、通知渠道与静默域
+
+- [ ] **设计**：冻结 `user_preferences/notification_channels/alert_suppressions` DDL、UI 设置 allowlist、webhook secret/SSRF、时区/DST/跨午夜、CRUD/ETag/soft-delete/retention 和 PB JSON 转换。
+- [ ] **编码**：实现 migration/repository/API/前端；首次 GET 不隐式写库；email/webhook 从 settings JSON 拆分；旧 PB 记录按 subject→tenant projection 幂等 backfill。
+- [ ] **单元测试**：覆盖默认偏好、未知 key、版本冲突、email 规范化、webhook 掩码/SSRF、one-time/daily、DST、跨午夜、重叠、过期清理和跨 tenant ID。
+- [ ] **集成测试**：现有设置/通知/quiet-hours 页面完成 list/get/create/put/patch/delete/test；新旧值对比、并发编辑、secret store 故障和通知读取通过。
+- [ ] **变更设计**：记录无法映射的 settings key、缺失用户时区、一个 PB subject 多 tenant 的复制策略和通知渠道兼容期。
+- [ ] **变更测试**：执行 backfill→shadow read→短时写冻结→cutover→reverse export/forward-fix 演练；验证 count/checksum、quarantine 和 PB 只读窗口。
+- [ ] **回归测试**：主题、语言、单位、布局、通知测试、告警发送与静默行为和迁移前一致。
+
+#### STORE-03 Legacy Agent、system 运行域与历史归档
+
+- [ ] **设计**：冻结 `systems→target/collector/binding/RBAC`、`system_details→system_target_profiles`、stats/container/systemd→VM、connection manager、legacy protocol 窗口、archive manifest/RPO/RTO 和 action 鉴权。
+- [ ] **编码**：legacy `/api/watchdog/agent-connect` 适配 collector identity；样本标准化写 VM，profile 写 MySQL；容器日志/systemd info/SMART refresh 经 target binding 调在线连接；生成 system/container stats 离线归档工具。
+- [ ] **单元测试**：覆盖 token/fingerprint、system→target 映射、幂等 inventory、状态 desired/observed 分离、断连/重连、重复样本、VM 写失败、action 越权、归档 count/checksum。
+- [ ] **集成测试**：真实新旧 Agent 连续上报，比较 PB/VM 同窗口样本/速率/状态；执行 Hub 重启、Agent 升级、网络抖动、VM/MySQL 故障、日志/systemd action 和归档恢复。
+- [ ] **变更设计**：记录不兼容 Agent 版本、旧 users membership→permission 映射、container/systemd current view 查询和无法归档的损坏 JSON。
+- [ ] **变更测试**：按 target 灰度切写、shadow compare、回退/forward-fix；验证旧 PB history 只归档不在线双读、恢复样本可解码。
+- [ ] **回归测试**：target/system overview、指标、containers、systemd、Agent status/heartbeat、告警输入和服务动作均通过。
+
+#### STORE-04 告警与 SMART 业务闭环
+
+- [ ] **设计**：冻结 `alert_rules/rule_states/events/deliveries/storage_devices` DDL、durable pending、dedup/for-duration/恢复/ack/suppression/delivery lease/retry/unknown outcome、UI 条件轮询、target 父资源、stable device key、latest-vs-history 和 forget 语义。
+- [ ] **编码**：迁移 PB alert hooks/cache/timers/history 与 SMART hooks 到 MySQL repository/worker；实现 API、异步 refresh、VM SMART 历史、15s/60s ETag polling 和前端规则/历史/磁盘页面。
+- [ ] **单元测试**：覆盖并发 dedup、pending 重启恢复、阈值边界、静默不删事件、delivery lease/幂等/retry/failed/unknown outcome、ack/resolve 状态机、SMART worsening/unknown/stale、设备 key/重现和跨 tenant。
+- [ ] **集成测试**：使用相同 fixture 对比新旧 CPU/status/disk/SMART 触发和恢复；邮件/webhook sandbox 验证断网、重试、重复消费、Hub 重启、轮询断线/恢复和导出同值。
+- [ ] **变更设计**：记录旧 `triggered`→active event、history 时间/owner/resource 映射、通知失败历史、SMART 超限 attributes 和 UI realtime→polling 差异。
+- [ ] **变更测试**：alerts/quiet/history/smart backfill、shadow evaluator、单 tenant 灰度、切换/forward-fix、retention/purge 和旧 PB 只读查询演练。
+- [ ] **回归测试**：规则增删改查、全局复制、告警历史筛选/删除/导出、通知/静默、SMART 列表/详情/刷新/forget 和权限矩阵通过。
+
+#### STORE-05 PocketBase 收缩、VictoriaLogs 裁撤与发布验收
+
+- [ ] **设计**：冻结 PB application collection 最终清单、hooks/cron/API/config/deploy 删除图、30 天观察门、备份/restore、reverse export/forward-fix、password/collection/VLogs 不可逆变更和 destruction receipt。
+- [ ] **编码**：移除 13 个 PB 业务集合的运行读写/订阅/hooks/cron/schema；移除 PB role 业务读取和旧 universal token；删除 VLogs config/env/client/page/route/compose/Helm/health/docs，清理不再使用的依赖。
+- [ ] **单元测试**：启动时断言只允许 auth 应用集合；未知旧 collection/config 拒绝或迁移；验证 PB auth migration、MySQL foreign keys、VLogs 符号/环境变量静态清零和 purge guard。
+- [ ] **集成测试**：空库安装与生产副本升级后完成登录、全部管理 API/worker/Agent/告警/SMART；PB/MySQL 双备份 restore，离线 archive restore，VLogs 不部署仍全绿。
+- [ ] **变更设计**：记录实际删改的 collection/field/API/config/port/image、兼容期偏差、保留的 PB internal tables 和销毁审批。
+- [ ] **变更测试**：旧版→兼容版→收缩版、升级中断、PB/MySQL 单侧恢复、密码字段 drop、collection contract、旧配置启动、rollback/forward-fix 和销毁演练。
+- [ ] **回归测试**：全量 Go/frontend/E2E/race/security/soak；连续至少 30 天 PB business read/write/subscribe=0、VLogs request=0 后才签署退出。
+
+- [ ] **Platform P1 出口**：模块可独立启停；旧 agent 无中断迁移；同一 collector 可绑定多个资源；target CRUD、dimension publish 和权限继承通过；STORE-00–04 完成，PB 业务集合已进入只读观察期。
 
 ---
 

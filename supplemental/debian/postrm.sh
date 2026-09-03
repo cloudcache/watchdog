@@ -4,5 +4,5 @@ set -e
 if [ "$1" = "purge" ]; then
 	. /usr/share/debconf/confmodule
 	db_purge
-	rm /etc/beszel-agent.conf
+	rm /etc/watchdog-agent.conf
 fi

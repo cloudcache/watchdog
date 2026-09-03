@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/agent/utils"
-	"github.com/henrygd/beszel/internal/common"
+	"github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/agent/utils"
+	"github.com/cloudcache/watchdog/internal/common"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/lxzan/gws"
@@ -103,10 +103,10 @@ func (client *WebSocketClient) getOptions() *gws.ClientOption {
 	} else {
 		client.hubURL.Scheme = "ws"
 	}
-	client.hubURL.Path = path.Join(client.hubURL.Path, "api/beszel/agent-connect")
+	client.hubURL.Path = path.Join(client.hubURL.Path, "api/watchdog/agent-connect")
 
-	// make sure BESZEL_AGENT_ALL_PROXY works (GWS only checks ALL_PROXY)
-	if val := os.Getenv("BESZEL_AGENT_ALL_PROXY"); val != "" {
+	// make sure WATCHDOG_AGENT_ALL_PROXY works (GWS only checks ALL_PROXY)
+	if val := os.Getenv("WATCHDOG_AGENT_ALL_PROXY"); val != "" {
 		os.Setenv("ALL_PROXY", val)
 	}
 
@@ -116,7 +116,7 @@ func (client *WebSocketClient) getOptions() *gws.ClientOption {
 		RequestHeader: http.Header{
 			"User-Agent": []string{getUserAgent()},
 			"X-Token":    []string{client.token},
-			"X-Beszel":   []string{beszel.Version},
+			"X-Watchdog": []string{watchdog.Version},
 		},
 		NewDialer: func() (gws.Dialer, error) {
 			return proxy.FromEnvironment(), nil

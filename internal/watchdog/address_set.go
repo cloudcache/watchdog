@@ -16,15 +16,15 @@ type AddressPrefix struct {
 }
 
 type AddressSet struct {
-	ID            string            `json:"id"`
-	TenantID      ID                `json:"tenant_id"`
-	Name          string            `json:"name"`
-	Description   string            `json:"description"`
-	Selector      map[string]any    `json:"selector"`
-	MatchDirection string           `json:"match_direction"`
-	Enabled       bool              `json:"enabled"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID             string         `json:"id"`
+	TenantID       ID             `json:"tenant_id"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	Selector       map[string]any `json:"selector"`
+	MatchDirection string         `json:"match_direction"`
+	Enabled        bool           `json:"enabled"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 type AddressSetRepository interface {

@@ -7,14 +7,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/henrygd/beszel/internal/hub/utils"
-	"github.com/henrygd/beszel/internal/site"
+	"github.com/cloudcache/watchdog/internal/hub/utils"
+	"github.com/cloudcache/watchdog/internal/site"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// startServer sets up the production server for Beszel
+// startServer sets up the production server for Watchdog
 func (h *Hub) startServer(se *core.ServeEvent) error {
 	indexFile, _ := fs.ReadFile(site.DistDirFS, "index.html")
 	html := modifyIndexHTML(h, indexFile)

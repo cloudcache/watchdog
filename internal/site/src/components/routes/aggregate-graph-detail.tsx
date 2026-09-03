@@ -181,7 +181,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 	}, [id, windowValue])
 
 	useEffect(() => {
-		document.title = `${graph?.Name ?? graph?.name ?? t`Graph`} / WatchDog`
+		document.title = `${graph?.Name ?? graph?.name ?? t`Graph`} / Watchdog`
 		refresh()
 	}, [refresh, t, graph?.Name, graph?.name])
 

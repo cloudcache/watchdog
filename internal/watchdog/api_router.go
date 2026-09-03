@@ -7,6 +7,7 @@ import (
 
 type APIV1RouterConfig struct {
 	Auth            AuthContextAdapter
+	TenantDiscovery AuthContextAdapter
 	Targets         TargetRepository
 	Agents          AgentRepository
 	Network         NetworkRepository
@@ -25,6 +26,8 @@ type APIV1RouterConfig struct {
 	TrapDispatcher  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	Audit           AuditRepository
 	AddressSets     AddressSetRepository
+	Tenants         TenantRepository
+	Readiness       func(context.Context) error
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -34,16 +37,49 @@ type SNMPDeviceDiscoverer interface {
 func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	mux := http.NewServeMux()
 	auth := AuthMiddleware(cfg.Auth)
+	tenantDiscovery := auth
+	if cfg.TenantDiscovery != nil {
+		tenantDiscovery = AuthMiddleware(cfg.TenantDiscovery)
+	}
 	mux.Handle("GET /api/v1/health", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		WriteAPIJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	mux.Handle("GET /api/v1/health/live", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		WriteAPIJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	mux.Handle("GET /api/v1/health/ready", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Readiness == nil {
+			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Readiness check is not configured", nil)
+			return
+		}
+		if err := cfg.Readiness(r.Context()); err != nil {
+			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Platform backend is not ready", nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	}))
 	mux.Handle("GET /api/v1/me", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := AuthFromContext(r.Context())
 		WriteAPIJSON(w, http.StatusOK, user)
 	})))
-	mux.Handle("GET /api/v1/tenants", auth(RequirePermission(ActionView, TenantResource)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": []Tenant{}})
-	}))))
+	listTenants := tenantDiscovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := AuthFromContext(r.Context())
+		items := identity.AvailableTenants
+		if items == nil && cfg.Tenants != nil {
+			var err error
+			items, err = cfg.Tenants.ListTenantsForUser(r.Context(), identity.UserID)
+			if err != nil {
+				WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Tenant membership is unavailable", nil)
+				return
+			}
+		}
+		if items == nil {
+			items = []Tenant{}
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+	}))
+	mux.Handle("GET /api/v1/tenants", listTenants)
+	mux.Handle("GET /api/v1/me/tenants", listTenants)
 	if cfg.Targets != nil {
 		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs)
 	}
@@ -89,5 +125,24 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.AddressSets != nil {
 		registerAddressSetRoutes(mux, auth, cfg.AddressSets)
 	}
-	return mux
+	return RequestIDMiddleware(withJSONAPINotFound(mux))
+}
+
+func withJSONAPINotFound(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := mux.Handler(r)
+		if pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			probe := r.Clone(r.Context())
+			probe.Method = method
+			if _, candidate := mux.Handler(probe); candidate != "" {
+				mux.ServeHTTP(w, r)
+				return
+			}
+		}
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "API route not found", nil)
+	})
 }

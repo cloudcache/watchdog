@@ -20,7 +20,7 @@ func TestAPIGraphDeviceOverviewReturnsLibreNMSStylePanels(t *testing.T) {
 			{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", IfIndex: 1, IfName: "GigabitEthernet0/0/1", OperStatus: "up", AdminStatus: "up", SpeedBps: 1_000_000_000},
 			{ID: "port-b", TenantID: "tenant-a", DeviceID: "device-a", IfIndex: 2, IfName: "GigabitEthernet0/0/2", OperStatus: "down", AdminStatus: "up", SpeedBps: 1_000_000_000},
 		},
-		bgp: []BGPSession{{ID: "bgp-a", TenantID: "tenant-a", DeviceID: "device-a", PeerAddr: "10.0.0.1", State: "established"}},
+		bgp:     []BGPSession{{ID: "bgp-a", TenantID: "tenant-a", DeviceID: "device-a", PeerAddr: "10.0.0.1", State: "established"}},
 		sensors: []NetworkDeviceSensor{{ID: "sensor-a", TenantID: "tenant-a", DeviceID: "device-a", Class: "dbm", Unit: "dBm", Name: "Rx Power"}},
 	}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})

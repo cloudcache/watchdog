@@ -10,13 +10,13 @@ import (
 )
 
 type SNMPPollRunner struct {
-	Collector            SNMPCollectorRepository
-	Network              NetworkRepository
-	Targets              TargetRepository
-	SNMP                 SNMPRepository
-	Poller               SNMPPoller
-	Now                  func() time.Time
-	GlobalConcurrency    int
+	Collector         SNMPCollectorRepository
+	Network           NetworkRepository
+	Targets           TargetRepository
+	SNMP              SNMPRepository
+	Poller            SNMPPoller
+	Now               func() time.Time
+	GlobalConcurrency int
 }
 
 type SNMPPollRunnerResult struct {

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/cloudcache/watchdog/internal/common"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/henrygd/beszel/internal/common"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -188,7 +188,7 @@ func (t *SSHTransport) createSessionWithTimeout(ctx context.Context) (*ssh.Sessi
 	}
 }
 
-// extractAgentVersion extracts the beszel version from SSH server version string.
+// extractAgentVersion extracts the watchdog version from SSH server version string.
 func extractAgentVersion(versionString string) (semver.Version, error) {
 	_, after, _ := strings.Cut(versionString, "_")
 	return semver.Parse(after)

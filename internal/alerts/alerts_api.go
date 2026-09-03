@@ -14,7 +14,7 @@ import (
 )
 
 // UpsertUserAlerts handles API request to create or update alerts for a user
-// across multiple systems (POST /api/beszel/user-alerts)
+// across multiple systems (POST /api/watchdog/user-alerts)
 func UpsertUserAlerts(e *core.RequestEvent) error {
 	userID := e.Auth.Id
 
@@ -77,7 +77,7 @@ func UpsertUserAlerts(e *core.RequestEvent) error {
 }
 
 // DeleteUserAlerts handles API request to delete alerts for a user across multiple systems
-// (DELETE /api/beszel/user-alerts)
+// (DELETE /api/watchdog/user-alerts)
 func DeleteUserAlerts(e *core.RequestEvent) error {
 	userID := e.Auth.Id
 
@@ -141,7 +141,7 @@ func (am *AlertManager) SendTestNotification(e *core.RequestEvent) error {
 			return e.ForbiddenError("Only admins can send to internal destinations", nil)
 		}
 	}
-	err = am.SendShoutrrrAlert(data.URL, "Test Alert", "This is a notification from Beszel.", am.hub.Settings().Meta.AppURL, "View Beszel")
+	err = am.SendShoutrrrAlert(data.URL, "Test Alert", "This is a notification from Watchdog.", am.hub.Settings().Meta.AppURL, "View Watchdog")
 	if err != nil {
 		return e.JSON(200, map[string]string{"err": err.Error()})
 	}

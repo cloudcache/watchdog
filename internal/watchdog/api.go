@@ -28,11 +28,23 @@ type apiErrorResponse struct {
 }
 
 type AuthContext struct {
-	TenantID ID   `json:"tenant_id"`
-	UserID   ID   `json:"user_id"`
-	RoleIDs  []ID `json:"role_ids"`
-	Grants   []Permission
-	IsAdmin  bool `json:"is_admin"`
+	TenantID         ID           `json:"tenant_id"`
+	UserID           ID           `json:"user_id"`
+	RoleIDs          []ID         `json:"role_ids"`
+	Grants           []Permission `json:"grants"`
+	IsAdmin          bool         `json:"is_admin"`
+	ExternalSubject  string       `json:"-"`
+	AvailableTenants []Tenant     `json:"-"`
+}
+
+type AuthAdapterError struct {
+	Status  int
+	Code    APIErrorCode
+	Message string
+}
+
+func (e *AuthAdapterError) Error() string {
+	return e.Message
 }
 
 type authContextKey struct{}
@@ -51,8 +63,17 @@ type AuthContextAdapter func(*http.Request) (AuthContext, error)
 func AuthMiddleware(adapter AuthContextAdapter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if adapter == nil {
+				WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Authentication is not configured", nil)
+				return
+			}
 			auth, err := adapter(r)
 			if err != nil {
+				var authErr *AuthAdapterError
+				if errors.As(err, &authErr) {
+					WriteAPIError(w, authErr.Status, authErr.Code, authErr.Message, nil)
+					return
+				}
 				WriteAPIError(w, http.StatusUnauthorized, APIErrorUnauthorized, "Unauthorized", nil)
 				return
 			}

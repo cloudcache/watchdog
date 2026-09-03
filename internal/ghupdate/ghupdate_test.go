@@ -43,3 +43,28 @@ func TestExtractFailure(t *testing.T) {
 		t.Fatal("Expected Extract to fail due to missing tar.gz file")
 	}
 }
+
+func TestGetAPIURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		mirrorURL string
+		want      string
+	}{
+		{
+			name: "direct",
+			want: "https://api.github.com/repos/cloudcache/watchdog/releases/latest",
+		},
+		{
+			name:      "explicit mirror",
+			mirrorURL: "https://proxy.example/",
+			want:      "https://proxy.example/https://api.github.com/repos/cloudcache/watchdog/releases/latest",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getApiURL(tt.mirrorURL, "cloudcache", "watchdog"); got != tt.want {
+				t.Fatalf("getApiURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

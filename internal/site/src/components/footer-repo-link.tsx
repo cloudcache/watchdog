@@ -23,7 +23,7 @@ export function FooterRepoLink() {
 				className="text-muted-foreground hover:text-foreground duration-75"
 				rel="noopener"
 			>
-				WatchDog {globalThis.BESZEL.HUB_VERSION}
+				Watchdog {globalThis.WATCHDOG.HUB_VERSION}
 			</a>
 			{newVersion?.v && (
 				<>

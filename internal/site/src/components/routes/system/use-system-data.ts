@@ -78,7 +78,7 @@ export function useSystemData(id: string) {
 			const sys = newSystems[id]
 			if (sys) {
 				setSystem(sys)
-				document.title = `${sys?.name} / WatchDog`
+				document.title = `${sys?.name} / Watchdog`
 			}
 		})
 	}, [id, systems.length])

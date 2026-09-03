@@ -17,7 +17,7 @@ import (
 var healthFile = getHealthFilePath()
 
 func getHealthFilePath() string {
-	filename := "beszel_health"
+	filename := "watchdog_health"
 	if runtime.GOOS == "linux" {
 		fullPath := filepath.Join("/dev/shm", filename)
 		if err := updateHealthFile(fullPath); err == nil {

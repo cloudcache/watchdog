@@ -222,6 +222,30 @@ func TestLoadWatchdogConfigRejectsInvalidEnvironmentOverride(t *testing.T) {
 	}
 }
 
+func TestLoadWatchdogConfigRejectsRemovedVictoriaLogsEnvironment(t *testing.T) {
+	for _, key := range []string{"WATCHDOG_VICTORIALOGS_URL", "WATCHDOG_SFLOW_VLOGS_URL"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "http://127.0.0.1:9428")
+			_, err := LoadWatchdogConfig("")
+			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "removed") {
+				t.Fatalf("error = %v, want explicit removed-variable error", err)
+			}
+		})
+	}
+}
+
+func TestLoadWatchdogConfigRejectsRemovedVictoriaLogsYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("victorialogs:\n  base_url: http://127.0.0.1:9428\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadWatchdogConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "victorialogs") {
+		t.Fatalf("error = %v, want removed YAML field error", err)
+	}
+}
+
 func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *testing.T) {
 	t.Setenv("WATCHDOG_SFLOW_AGG_INTERVAL", "15s")
 	t.Setenv("WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL", "45s")

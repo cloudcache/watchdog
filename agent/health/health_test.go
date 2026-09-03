@@ -18,7 +18,7 @@ func TestHealth(t *testing.T) {
 	// Override healthFile to use a temporary directory for this test.
 	originalHealthFile := healthFile
 	tmpDir := t.TempDir()
-	healthFile = filepath.Join(tmpDir, "beszel_health_test")
+	healthFile = filepath.Join(tmpDir, "watchdog_health_test")
 	defer func() { healthFile = originalHealthFile }()
 
 	t.Run("check with no health file", func(t *testing.T) {

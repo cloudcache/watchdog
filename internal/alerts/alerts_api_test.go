@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/henrygd/beszel/internal/alerts"
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	pbTests "github.com/pocketbase/pocketbase/tests"
 
 	"github.com/pocketbase/dbx"
@@ -39,7 +39,7 @@ func TestIsInternalURL(t *testing.T) {
 		{name: "localhost hostname", url: "generic://localhost", internal: true},
 		{name: "localhost hostname", url: "generic+http://localhost/api/v1/postStuff", internal: true},
 		{name: "localhost hostname", url: "generic+http://127.0.0.1:8080/api/v1/postStuff", internal: true},
-		{name: "localhost hostname", url: "generic+https://beszel.dev/api/v1/postStuff", internal: false},
+		{name: "localhost hostname", url: "generic+https://watchdog.example/api/v1/postStuff", internal: false},
 		{name: "public ipv4", url: "generic://8.8.8.8", internal: false},
 		{name: "token style service url", url: "discord://abc123@123456789", internal: false},
 		{name: "single label service url", url: "slack://token@team/channel", internal: false},
@@ -55,24 +55,24 @@ func TestIsInternalURL(t *testing.T) {
 }
 
 func TestUserAlertsApi(t *testing.T) {
-	hub, _ := beszelTests.NewTestHub(t.TempDir())
+	hub, _ := watchdogTests.NewTestHub(t.TempDir())
 	defer hub.Cleanup()
 
 	hub.StartHub()
 
-	user1, _ := beszelTests.CreateUser(hub, "alertstest@example.com", "password")
+	user1, _ := watchdogTests.CreateUser(hub, "alertstest@example.com", "password")
 	user1Token, _ := user1.NewAuthToken()
 
-	user2, _ := beszelTests.CreateUser(hub, "alertstest2@example.com", "password")
+	user2, _ := watchdogTests.CreateUser(hub, "alertstest2@example.com", "password")
 	user2Token, _ := user2.NewAuthToken()
 
-	system1, _ := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system1, _ := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "system1",
 		"users": []string{user1.Id},
 		"host":  "127.0.0.1",
 	})
 
-	system2, _ := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system2, _ := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "system2",
 		"users": []string{user1.Id, user2.Id},
 		"host":  "127.0.0.2",
@@ -88,19 +88,19 @@ func TestUserAlertsApi(t *testing.T) {
 		return hub.TestApp
 	}
 
-	scenarios := []beszelTests.ApiScenario{
+	scenarios := []watchdogTests.ApiScenario{
 		// {
 		// 	Name:            "GET not implemented - returns index",
 		// 	Method:          http.MethodGet,
-		// 	URL:             "/api/beszel/user-alerts",
+		// 	URL:             "/api/watchdog/user-alerts",
 		// 	ExpectedStatus:  200,
-		// 	ExpectedContent: []string{"<html ", "globalThis.BESZEL"},
+		// 	ExpectedContent: []string{"<html ", "globalThis.WATCHDOG"},
 		// 	TestAppFactory:  testAppFactory,
 		// },
 		{
 			Name:            "POST no auth",
 			Method:          http.MethodPost,
-			URL:             "/api/beszel/user-alerts",
+			URL:             "/api/watchdog/user-alerts",
 			ExpectedStatus:  401,
 			ExpectedContent: []string{"requires valid"},
 			TestAppFactory:  testAppFactory,
@@ -108,7 +108,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "POST no body",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -119,7 +119,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "POST bad data",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -134,7 +134,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "POST malformed JSON",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -146,7 +146,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "POST valid alert data multiple systems",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -172,7 +172,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "POST valid alert data single system",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -193,7 +193,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "Overwrite: false, should not overwrite existing alert",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -208,8 +208,8 @@ func TestUserAlertsApi(t *testing.T) {
 				"overwrite": false,
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
-				beszelTests.CreateRecord(app, "alerts", map[string]any{
+				watchdogTests.ClearCollection(t, app, "alerts")
+				watchdogTests.CreateRecord(app, "alerts", map[string]any{
 					"name":   "CPU",
 					"system": system1.Id,
 					"user":   user1.Id,
@@ -227,7 +227,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "Overwrite: true, should overwrite existing alert",
 			Method: http.MethodPost,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user2Token,
 			},
@@ -242,8 +242,8 @@ func TestUserAlertsApi(t *testing.T) {
 				"overwrite": true,
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
-				beszelTests.CreateRecord(app, "alerts", map[string]any{
+				watchdogTests.ClearCollection(t, app, "alerts")
+				watchdogTests.CreateRecord(app, "alerts", map[string]any{
 					"name":   "CPU",
 					"system": system2.Id,
 					"user":   user2.Id,
@@ -261,7 +261,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:            "DELETE no auth",
 			Method:          http.MethodDelete,
-			URL:             "/api/beszel/user-alerts",
+			URL:             "/api/watchdog/user-alerts",
 			ExpectedStatus:  401,
 			ExpectedContent: []string{"requires valid"},
 			TestAppFactory:  testAppFactory,
@@ -270,8 +270,8 @@ func TestUserAlertsApi(t *testing.T) {
 				"systems": []string{system1.Id},
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
-				beszelTests.CreateRecord(app, "alerts", map[string]any{
+				watchdogTests.ClearCollection(t, app, "alerts")
+				watchdogTests.CreateRecord(app, "alerts", map[string]any{
 					"name":   "CPU",
 					"system": system1.Id,
 					"user":   user1.Id,
@@ -287,7 +287,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "DELETE alert",
 			Method: http.MethodDelete,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -299,8 +299,8 @@ func TestUserAlertsApi(t *testing.T) {
 				"systems": []string{system1.Id},
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
-				beszelTests.CreateRecord(app, "alerts", map[string]any{
+				watchdogTests.ClearCollection(t, app, "alerts")
+				watchdogTests.CreateRecord(app, "alerts", map[string]any{
 					"name":   "CPU",
 					"system": system1.Id,
 					"user":   user1.Id,
@@ -316,7 +316,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "DELETE alert multiple systems",
 			Method: http.MethodDelete,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user1Token,
 			},
@@ -328,9 +328,9 @@ func TestUserAlertsApi(t *testing.T) {
 				"systems": []string{system1.Id, system2.Id},
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
+				watchdogTests.ClearCollection(t, app, "alerts")
 				for _, systemId := range []string{system1.Id, system2.Id} {
-					_, err := beszelTests.CreateRecord(app, "alerts", map[string]any{
+					_, err := watchdogTests.CreateRecord(app, "alerts", map[string]any{
 						"name":   "Memory",
 						"system": systemId,
 						"user":   user1.Id,
@@ -350,7 +350,7 @@ func TestUserAlertsApi(t *testing.T) {
 		{
 			Name:   "User 2 should not be able to delete alert of user 1",
 			Method: http.MethodDelete,
-			URL:    "/api/beszel/user-alerts",
+			URL:    "/api/watchdog/user-alerts",
 			Headers: map[string]string{
 				"Authorization": user2Token,
 			},
@@ -362,9 +362,9 @@ func TestUserAlertsApi(t *testing.T) {
 				"systems": []string{system2.Id},
 			}),
 			BeforeTestFunc: func(t testing.TB, app *pbTests.TestApp, e *core.ServeEvent) {
-				beszelTests.ClearCollection(t, app, "alerts")
+				watchdogTests.ClearCollection(t, app, "alerts")
 				for _, user := range []string{user1.Id, user2.Id} {
-					beszelTests.CreateRecord(app, "alerts", map[string]any{
+					watchdogTests.CreateRecord(app, "alerts", map[string]any{
 						"name":   "CPU",
 						"system": system2.Id,
 						"user":   user,
@@ -393,16 +393,16 @@ func TestUserAlertsApi(t *testing.T) {
 	}
 }
 func TestSendTestNotification(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	userToken, err := user.NewAuthToken()
 
-	adminUser, err := beszelTests.CreateUserWithRole(hub, "admin@example.com", "password123", "admin")
+	adminUser, err := watchdogTests.CreateUserWithRole(hub, "admin@example.com", "password123", "admin")
 	assert.NoError(t, err, "Failed to create admin user")
 	adminUserToken, err := adminUser.NewAuthToken()
 
-	superuser, err := beszelTests.CreateSuperuser(hub, "superuser@example.com", "password123")
+	superuser, err := watchdogTests.CreateSuperuser(hub, "superuser@example.com", "password123")
 	assert.NoError(t, err, "Failed to create superuser")
 	superuserToken, err := superuser.NewAuthToken()
 	assert.NoError(t, err, "Failed to create superuser auth token")
@@ -411,11 +411,11 @@ func TestSendTestNotification(t *testing.T) {
 		return hub.TestApp
 	}
 
-	scenarios := []beszelTests.ApiScenario{
+	scenarios := []watchdogTests.ApiScenario{
 		{
 			Name:            "POST /test-notification - no auth should fail",
 			Method:          http.MethodPost,
-			URL:             "/api/beszel/test-notification",
+			URL:             "/api/watchdog/test-notification",
 			ExpectedStatus:  401,
 			ExpectedContent: []string{"requires valid"},
 			TestAppFactory:  testAppFactory,
@@ -426,7 +426,7 @@ func TestSendTestNotification(t *testing.T) {
 		{
 			Name:           "POST /test-notification - with external auth should succeed",
 			Method:         http.MethodPost,
-			URL:            "/api/beszel/test-notification",
+			URL:            "/api/watchdog/test-notification",
 			TestAppFactory: testAppFactory,
 			Headers: map[string]string{
 				"Authorization": userToken,
@@ -440,7 +440,7 @@ func TestSendTestNotification(t *testing.T) {
 		{
 			Name:           "POST /test-notification - local url with user auth should fail",
 			Method:         http.MethodPost,
-			URL:            "/api/beszel/test-notification",
+			URL:            "/api/watchdog/test-notification",
 			TestAppFactory: testAppFactory,
 			Headers: map[string]string{
 				"Authorization": userToken,
@@ -454,7 +454,7 @@ func TestSendTestNotification(t *testing.T) {
 		{
 			Name:           "POST /test-notification - internal url with user auth should fail",
 			Method:         http.MethodPost,
-			URL:            "/api/beszel/test-notification",
+			URL:            "/api/watchdog/test-notification",
 			TestAppFactory: testAppFactory,
 			Headers: map[string]string{
 				"Authorization": userToken,
@@ -468,7 +468,7 @@ func TestSendTestNotification(t *testing.T) {
 		{
 			Name:           "POST /test-notification - internal url with admin auth should succeed",
 			Method:         http.MethodPost,
-			URL:            "/api/beszel/test-notification",
+			URL:            "/api/watchdog/test-notification",
 			TestAppFactory: testAppFactory,
 			Headers: map[string]string{
 				"Authorization": adminUserToken,
@@ -482,7 +482,7 @@ func TestSendTestNotification(t *testing.T) {
 		{
 			Name:           "POST /test-notification - internal url with superuser auth should succeed",
 			Method:         http.MethodPost,
-			URL:            "/api/beszel/test-notification",
+			URL:            "/api/watchdog/test-notification",
 			TestAppFactory: testAppFactory,
 			Headers: map[string]string{
 				"Authorization": superuserToken,

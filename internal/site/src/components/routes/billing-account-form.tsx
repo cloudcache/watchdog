@@ -88,7 +88,7 @@ export default memo(({ id }: BillingAccountFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Billing Account` : t`Create Billing Account`} / WatchDog`
+		document.title = `${isEditing ? t`Edit Billing Account` : t`Create Billing Account`} / Watchdog`
 		loadAccount()
 	}, [isEditing, loadAccount, t])
 

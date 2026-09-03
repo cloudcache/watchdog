@@ -27,6 +27,6 @@ COPY --from=builder /tmp /tmp
 COPY --from=builder /app/agent/test-data/amdgpu.ids /usr/share/libdrm/amdgpu.ids
 
 # Ensure data persistence across container recreations
-VOLUME ["/var/lib/beszel-agent"]
+VOLUME ["/var/lib/watchdog-agent"]
 
 ENTRYPOINT ["/agent"]

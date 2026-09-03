@@ -6,19 +6,19 @@ This is useful if you want to run the hub or agent in the background continuousl
 
 There are two scripts, one for the hub and one for the agent. You can run either one, or both.
 
-The install script creates a dedicated user for the service (`beszel`), downloads the latest release, and installs the service.
+The install script creates a dedicated user for the service (`watchdog`), downloads the latest release, and installs the service.
 
 If you need to edit the service -- for instance, to change an environment variable -- you can edit the file(s) in `/etc/systemd/system/`. Then reload the systemd daemon and restart the service.
 
 > [!NOTE]
-> You need system administrator privileges to run the install script. If you encounter a problem, please [open an issue](https://github.com/henrygd/beszel/issues/new).
+> You need system administrator privileges to run the install script. If you encounter a problem, please [open an issue](https://github.com/cloudcache/watchdog/issues/new).
 
 ### Hub
 
 Download the script:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/henrygd/beszel/main/supplemental/scripts/install-hub.sh -o install-hub.sh && chmod +x install-hub.sh
+curl -sL https://raw.githubusercontent.com/cloudcache/watchdog/main/supplemental/scripts/install-hub.sh -o install-hub.sh && chmod +x install-hub.sh
 ```
 
 #### Install
@@ -38,7 +38,7 @@ You may specify a port number with the `-p` flag. The default port is `8090`.
 #### Update
 
 ```bash
-sudo /opt/beszel/beszel update && sudo systemctl restart beszel-hub
+sudo /opt/watchdog/watchdog update && sudo systemctl restart watchdog-hub
 ```
 
 ### Agent
@@ -46,7 +46,7 @@ sudo /opt/beszel/beszel update && sudo systemctl restart beszel-hub
 Download the script:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/henrygd/beszel/main/supplemental/scripts/install-agent.sh -o install-agent.sh && chmod +x install-agent.sh
+curl -sL https://raw.githubusercontent.com/cloudcache/watchdog/main/supplemental/scripts/install-agent.sh -o install-agent.sh && chmod +x install-agent.sh
 ```
 
 #### Install
@@ -68,23 +68,23 @@ If specifying your key with `-k`, please make sure to enclose it in quotes.
 #### Update
 
 ```bash
-sudo /opt/beszel-agent/beszel-agent update && sudo systemctl restart beszel-agent
+sudo /opt/watchdog-agent/watchdog-agent update && sudo systemctl restart watchdog-agent
 ```
 
 ## Manual install
 
 ### Hub
 
-1. Create the system service at `/etc/systemd/system/beszel.service`
+1. Create the system service at `/etc/systemd/system/watchdog.service`
 
 ```bash
 [Unit]
-Description=Beszel Hub Service
+Description=Watchdog Hub Service
 After=network.target
 
 [Service]
 # update the values in the curly braces below (remove the braces)
-ExecStart={/path/to/working/directory}/beszel serve
+ExecStart={/path/to/working/directory}/watchdog serve
 WorkingDirectory={/path/to/working/directory}
 User={YOUR_USERNAME}
 Restart=always
@@ -97,17 +97,17 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable beszel.service
-sudo systemctl start beszel.service
+sudo systemctl enable watchdog.service
+sudo systemctl start watchdog.service
 ```
 
 ### Agent
 
-1. Create the system service at `/etc/systemd/system/beszel-agent.service`
+1. Create the system service at `/etc/systemd/system/watchdog-agent.service`
 
 ```bash
 [Unit]
-Description=Beszel Agent Service
+Description=Watchdog Agent Service
 After=network.target
 
 [Service]
@@ -115,7 +115,7 @@ After=network.target
 Environment="PORT={PASTE_YOUR_PORT_HERE}"
 Environment="KEY={PASTE_YOUR_KEY_HERE}"
 # Environment="EXTRA_FILESYSTEMS={sdb}"
-ExecStart={/path/to/directory}/beszel-agent
+ExecStart={/path/to/directory}/watchdog-agent
 User={YOUR_USERNAME}
 Restart=always
 
@@ -127,6 +127,6 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable beszel-agent.service
-sudo systemctl start beszel-agent.service
+sudo systemctl enable watchdog-agent.service
+sudo systemctl start watchdog-agent.service
 ```

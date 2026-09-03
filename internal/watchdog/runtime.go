@@ -2,6 +2,7 @@ package watchdog
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -27,6 +28,14 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	store, err := OpenMySQLStore(ctx, cfg.MySQL)
 	if err != nil {
 		return nil, err
+	}
+	migrationResult, err := ApplyMySQLMigrations(ctx, store.db)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if len(migrationResult.Applied) > 0 {
+		log.Printf("watchdog mysql migrations applied=%v current=%s", migrationResult.Applied, migrationResult.CurrentVersion)
 	}
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
 	exportStore := DiskCSVExportStore{Dir: cfg.Export.Dir}
@@ -88,9 +97,14 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	return runtime, nil
 }
 
-func (r *BackendRuntime) Router(auth AuthContextAdapter) http.Handler {
+func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...AuthContextAdapter) http.Handler {
+	tenantDiscoveryAuth := auth
+	if len(tenantDiscovery) > 0 && tenantDiscovery[0] != nil {
+		tenantDiscoveryAuth = tenantDiscovery[0]
+	}
 	return NewAPIV1Router(APIV1RouterConfig{
 		Auth:            auth,
+		TenantDiscovery: tenantDiscoveryAuth,
 		Targets:         r.Store,
 		Agents:          r.Store,
 		Network:         r.Store,
@@ -108,6 +122,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter) http.Handler {
 		TrapDispatcher:  r.trapDispatcherFn,
 		Audit:           r.Store,
 		AddressSets:     r.Store,
+		Tenants:         r.Store,
+		Readiness:       r.Ready,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
@@ -167,6 +183,16 @@ func (r *BackendRuntime) Close() error {
 		return nil
 	}
 	return r.Store.Close()
+}
+
+func (r *BackendRuntime) Ready(ctx context.Context) error {
+	if r == nil || r.Store == nil || r.Store.db == nil {
+		return errors.New("mysql runtime is not initialized")
+	}
+	if err := r.Store.db.PingContext(ctx); err != nil {
+		return err
+	}
+	return CheckMySQLSchemaCurrent(ctx, r.Store.db)
 }
 
 func (r *BackendRuntime) buildTrapDispatcher() func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error) {

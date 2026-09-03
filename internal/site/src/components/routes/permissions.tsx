@@ -46,7 +46,7 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `${t`Permissions`} / WatchDog`
+		document.title = `${t`Permissions`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 

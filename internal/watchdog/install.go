@@ -24,6 +24,7 @@ type InstallResult struct {
 	LockPath           string
 	LockExisted        bool
 	StatementsExecuted int
+	MigrationsApplied  []string
 }
 
 func RunInstall(ctx context.Context, opts InstallOptions) (InstallResult, error) {
@@ -54,6 +55,11 @@ func RunInstall(ctx context.Context, opts InstallOptions) (InstallResult, error)
 		return result, err
 	}
 	result.StatementsExecuted = count
+	migrations, err := ApplyMySQLMigrations(ctx, store.db)
+	if err != nil {
+		return result, err
+	}
+	result.MigrationsApplied = migrations.Applied
 	if err := markInstalled(ctx, store.db, opts.LockPath, opts.ConfigPath); err != nil {
 		return result, err
 	}

@@ -6,21 +6,20 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/henrygd/beszel/internal/ghupdate"
+	"github.com/cloudcache/watchdog/internal/ghupdate"
 	"github.com/spf13/cobra"
 )
 
-// Update updates beszel to the latest version
+// Update updates watchdog to the latest version
 func Update(cmd *cobra.Command, _ []string) {
 	dataDir := os.TempDir()
 
-	// set dataDir to ./beszel_data if it exists
-	if _, err := os.Stat("./beszel_data"); err == nil {
-		dataDir = "./beszel_data"
+	// set dataDir to ./watchdog_data if it exists
+	if _, err := os.Stat("./watchdog_data"); err == nil {
+		dataDir = "./watchdog_data"
 	}
 
-	// Check if china-mirrors flag is set
-	useMirror, _ := cmd.Flags().GetBool("china-mirrors")
+	mirrorURL, _ := cmd.Flags().GetString("github-mirror")
 
 	// Get the executable path before update
 	exePath, err := os.Executable()
@@ -29,9 +28,9 @@ func Update(cmd *cobra.Command, _ []string) {
 	}
 
 	updated, err := ghupdate.Update(ghupdate.Config{
-		ArchiveExecutable: "beszel",
+		ArchiveExecutable: "watchdog",
 		DataDir:           dataDir,
-		UseMirror:         useMirror,
+		MirrorURL:         mirrorURL,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -54,18 +53,18 @@ func Update(cmd *cobra.Command, _ []string) {
 	restartService()
 }
 
-// restartService attempts to restart the beszel service
+// restartService attempts to restart the watchdog service
 func restartService() {
 	// Check if we're running as a service by looking for systemd
 	if _, err := exec.LookPath("systemctl"); err == nil {
-		// Check if beszel service exists and is active
-		cmd := exec.Command("systemctl", "is-active", "beszel.service")
+		// Check if watchdog service exists and is active
+		cmd := exec.Command("systemctl", "is-active", "watchdog.service")
 		if err := cmd.Run(); err == nil {
-			ghupdate.ColorPrint(ghupdate.ColorYellow, "Restarting beszel service...")
-			restartCmd := exec.Command("systemctl", "restart", "beszel.service")
+			ghupdate.ColorPrint(ghupdate.ColorYellow, "Restarting watchdog service...")
+			restartCmd := exec.Command("systemctl", "restart", "watchdog.service")
 			if err := restartCmd.Run(); err != nil {
 				ghupdate.ColorPrintf(ghupdate.ColorYellow, "Warning: Failed to restart service: %v\n", err)
-				ghupdate.ColorPrint(ghupdate.ColorYellow, "Please restart the service manually: sudo systemctl restart beszel")
+				ghupdate.ColorPrint(ghupdate.ColorYellow, "Please restart the service manually: sudo systemctl restart watchdog")
 			} else {
 				ghupdate.ColorPrint(ghupdate.ColorGreen, "Service restarted successfully")
 			}
@@ -75,13 +74,13 @@ func restartService() {
 
 	// Check for OpenRC (Alpine Linux)
 	if _, err := exec.LookPath("rc-service"); err == nil {
-		cmd := exec.Command("rc-service", "beszel", "status")
+		cmd := exec.Command("rc-service", "watchdog", "status")
 		if err := cmd.Run(); err == nil {
-			ghupdate.ColorPrint(ghupdate.ColorYellow, "Restarting beszel service...")
-			restartCmd := exec.Command("rc-service", "beszel", "restart")
+			ghupdate.ColorPrint(ghupdate.ColorYellow, "Restarting watchdog service...")
+			restartCmd := exec.Command("rc-service", "watchdog", "restart")
 			if err := restartCmd.Run(); err != nil {
 				ghupdate.ColorPrintf(ghupdate.ColorYellow, "Warning: Failed to restart service: %v\n", err)
-				ghupdate.ColorPrint(ghupdate.ColorYellow, "Please restart the service manually: sudo rc-service beszel restart")
+				ghupdate.ColorPrint(ghupdate.ColorYellow, "Please restart the service manually: sudo rc-service watchdog restart")
 			} else {
 				ghupdate.ColorPrint(ghupdate.ColorGreen, "Service restarted successfully")
 			}

@@ -8,7 +8,7 @@ export default memo(() => {
 	const { t } = useLingui()
 
 	useEffect(() => {
-		document.title = `${t`All Systems`} / WatchDog`
+		document.title = `${t`All Systems`} / Watchdog`
 	}, [t])
 
 	return useMemo(

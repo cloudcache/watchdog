@@ -12,6 +12,13 @@ CREATE TABLE IF NOT EXISTS watchdog_installation (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS watchdog_schema_migrations (
+  version VARCHAR(32) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  checksum CHAR(64) NOT NULL,
+  applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS tenants (
   id CHAR(26) PRIMARY KEY,
   name VARCHAR(190) NOT NULL,
@@ -27,10 +34,14 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(320) NOT NULL,
   name VARCHAR(190) NOT NULL DEFAULT '',
   status VARCHAR(32) NOT NULL DEFAULT 'active',
-  password_hash VARCHAR(255) NOT NULL,
+  auth_provider VARCHAR(32) NULL,
+  external_subject_id VARCHAR(64) NULL,
+  password_hash VARCHAR(255) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_users_tenant_email (tenant_id, email),
+  UNIQUE KEY uq_users_external_identity (auth_provider, external_subject_id, tenant_id),
+  KEY idx_users_external_identity (auth_provider, external_subject_id),
   KEY idx_users_tenant_status (tenant_id, status),
   CONSTRAINT fk_users_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

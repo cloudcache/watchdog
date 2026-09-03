@@ -1,6 +1,6 @@
 // Package heartbeat sends periodic outbound pings to an external monitoring
 // endpoint (e.g. BetterStack, Uptime Kuma, Healthchecks.io) so operators can
-// monitor Beszel without exposing it to the internet.
+// monitor Watchdog without exposing it to the internet.
 package heartbeat
 
 import (
@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/henrygd/beszel"
+	"github.com/cloudcache/watchdog"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -33,7 +33,7 @@ type Payload struct {
 	Systems   SystemsSummary `json:"systems"`
 	Down      []SystemInfo   `json:"down_systems,omitempty"`
 	Alerts    []AlertInfo    `json:"triggered_alerts,omitempty"`
-	Version   string         `json:"beszel_version"`
+	Version   string         `json:"watchdog_version"`
 }
 
 // SystemsSummary contains counts of systems by status.
@@ -175,7 +175,7 @@ func (hb *Heartbeat) send() error {
 		return err
 	}
 
-	req.Header.Set("User-Agent", "Beszel-Heartbeat")
+	req.Header.Set("User-Agent", "Watchdog-Heartbeat")
 
 	resp, err := hb.client.Do(req)
 	if err != nil {
@@ -282,7 +282,7 @@ func (hb *Heartbeat) buildPayload() (*Payload, error) {
 		Systems:   summary,
 		Down:      downSystems,
 		Alerts:    alerts,
-		Version:   beszel.Version,
+		Version:   watchdog.Version,
 	}, nil
 }
 

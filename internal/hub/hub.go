@@ -2,6 +2,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/pem"
 	"errors"
@@ -10,14 +11,16 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 
-	"github.com/henrygd/beszel/internal/alerts"
-	"github.com/henrygd/beszel/internal/hub/config"
-	"github.com/henrygd/beszel/internal/hub/heartbeat"
-	"github.com/henrygd/beszel/internal/hub/systems"
-	"github.com/henrygd/beszel/internal/hub/utils"
-	"github.com/henrygd/beszel/internal/records"
-	"github.com/henrygd/beszel/internal/users"
+	"github.com/cloudcache/watchdog/internal/alerts"
+	"github.com/cloudcache/watchdog/internal/hub/config"
+	"github.com/cloudcache/watchdog/internal/hub/heartbeat"
+	"github.com/cloudcache/watchdog/internal/hub/systems"
+	"github.com/cloudcache/watchdog/internal/hub/utils"
+	"github.com/cloudcache/watchdog/internal/records"
+	"github.com/cloudcache/watchdog/internal/users"
+	platform "github.com/cloudcache/watchdog/internal/watchdog"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -28,14 +31,18 @@ import (
 type Hub struct {
 	core.App
 	*alerts.AlertManager
-	um     *users.UserManager
-	rm     *records.RecordManager
-	sm     *systems.SystemManager
-	hb     *heartbeat.Heartbeat
-	hbStop chan struct{}
-	pubKey string
-	signer ssh.Signer
-	appURL string
+	um             *users.UserManager
+	rm             *records.RecordManager
+	sm             *systems.SystemManager
+	hb             *heartbeat.Heartbeat
+	hbStop         chan struct{}
+	pubKey         string
+	signer         ssh.Signer
+	appURL         string
+	backendFactory func(context.Context) (*platform.BackendRuntime, error)
+	backend        *platform.BackendRuntime
+	backendClose   sync.Once
+	lifecycleClose sync.Once
 }
 
 // NewHub creates a new Hub instance with default configuration
@@ -49,8 +56,29 @@ func NewHub(app core.App) *Hub {
 	if hub.hb != nil {
 		hub.hbStop = make(chan struct{})
 	}
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		hub.closeRuntimeServices()
+		return e.Next()
+	})
 	_ = onAfterBootstrapAndMigrations(app, hub.initialize)
 	return hub
+}
+
+func (h *Hub) closeRuntimeServices() {
+	h.lifecycleClose.Do(func() {
+		h.AlertManager.Stop()
+		h.sm.Close()
+		if h.hbStop != nil {
+			close(h.hbStop)
+		}
+	})
+}
+
+// SetBackendFactory enables the MySQL-backed platform API in the production
+// PocketBase server. PocketBase remains responsible only for authentication;
+// the factory is invoked only when the serve command starts.
+func (h *Hub) SetBackendFactory(factory func(context.Context) (*platform.BackendRuntime, error)) {
+	h.backendFactory = factory
 }
 
 // onAfterBootstrapAndMigrations ensures the provided function runs after the database is set up and migrations are applied.
@@ -75,6 +103,9 @@ func onAfterBootstrapAndMigrations(app core.App, fn func(app core.App) error) er
 // StartHub sets up event handlers and starts the PocketBase server
 func (h *Hub) StartHub() error {
 	h.App.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		if err := h.startBackendRuntime(); err != nil {
+			return err
+		}
 		// sync systems with config
 		if err := config.SyncSystems(e); err != nil {
 			return err
@@ -83,6 +114,9 @@ func (h *Hub) StartHub() error {
 		h.registerMiddlewares(e)
 		// register api routes
 		if err := h.registerApiRoutes(e); err != nil {
+			return err
+		}
+		if err := h.registerPlatformRoutes(e); err != nil {
 			return err
 		}
 		// register cron jobs
@@ -114,6 +148,29 @@ func (h *Hub) StartHub() error {
 		return errors.New("not a pocketbase app")
 	}
 	return pb.Start()
+}
+
+func (h *Hub) startBackendRuntime() error {
+	if h.backendFactory == nil || h.backend != nil {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runtime, err := h.backendFactory(ctx)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("initialize watchdog platform backend: %w", err)
+	}
+	h.backend = runtime
+	h.App.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		h.backendClose.Do(func() {
+			cancel()
+			if err := runtime.Close(); err != nil {
+				h.Logger().Error("close watchdog platform backend", "error", err)
+			}
+		})
+		return e.Next()
+	})
+	return nil
 }
 
 // initialize sets up initial configuration (collections, settings, etc.)

@@ -1,15 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/henrygd/beszel"
-	"github.com/henrygd/beszel/internal/hub"
-	_ "github.com/henrygd/beszel/internal/migrations"
+	appmeta "github.com/cloudcache/watchdog"
+	"github.com/cloudcache/watchdog/internal/hub"
+	_ "github.com/cloudcache/watchdog/internal/migrations"
+	platform "github.com/cloudcache/watchdog/internal/watchdog"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
@@ -28,7 +30,16 @@ func main() {
 	}
 
 	baseApp := getBaseApp()
+	var backendConfigPath string
+	baseApp.RootCmd.PersistentFlags().StringVar(&backendConfigPath, "watchdog-config", "", "path to watchdog platform YAML config")
 	hub := hub.NewHub(baseApp)
+	hub.SetBackendFactory(func(ctx context.Context) (*platform.BackendRuntime, error) {
+		cfg, err := platform.LoadBackendConfig(backendConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return platform.NewBackendRuntime(ctx, cfg)
+	})
 	if err := hub.StartHub(); err != nil {
 		log.Fatal(err)
 	}
@@ -39,19 +50,19 @@ func getBaseApp() *pocketbase.PocketBase {
 	isDev := os.Getenv("ENV") == "dev"
 
 	baseApp := pocketbase.NewWithConfig(pocketbase.Config{
-		DefaultDataDir: beszel.AppName + "_data",
+		DefaultDataDir: appmeta.AppName + "_data",
 		DefaultDev:     isDev,
 	})
-	baseApp.RootCmd.Version = beszel.Version
-	baseApp.RootCmd.Use = beszel.AppName
+	baseApp.RootCmd.Version = appmeta.Version
+	baseApp.RootCmd.Use = appmeta.AppName
 	baseApp.RootCmd.Short = ""
 	// add update command
 	updateCmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update " + beszel.AppName + " to the latest version",
+		Short: "Update " + appmeta.AppName + " to the latest version",
 		Run:   hub.Update,
 	}
-	updateCmd.Flags().Bool("china-mirrors", false, "Use mirror (gh.beszel.dev) instead of GitHub")
+	updateCmd.Flags().String("github-mirror", "", "GitHub proxy base URL")
 	baseApp.RootCmd.AddCommand(updateCmd)
 	// add health command
 	baseApp.RootCmd.AddCommand(newHealthCmd())

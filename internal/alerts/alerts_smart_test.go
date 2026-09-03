@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	beszelTests "github.com/henrygd/beszel/internal/tests"
+	watchdogTests "github.com/cloudcache/watchdog/internal/tests"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSmartDeviceAlert(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system for the user
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "test-system",
 		"users": []string{user.Id},
 		"host":  "127.0.0.1",
@@ -23,7 +23,7 @@ func TestSmartDeviceAlert(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a smart_device with state PASSED
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/sda",
 		"model":  "Samsung SSD 970 EVO",
@@ -58,17 +58,17 @@ func TestSmartDeviceAlert(t *testing.T) {
 }
 
 func TestSmartDeviceAlertPassedToWarning(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "test-system",
 		"users": []string{user.Id},
 		"host":  "127.0.0.1",
 	})
 	assert.NoError(t, err)
 
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/mmcblk0",
 		"model":  "eMMC",
@@ -92,17 +92,17 @@ func TestSmartDeviceAlertPassedToWarning(t *testing.T) {
 }
 
 func TestSmartDeviceAlertWarningToFailed(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "test-system",
 		"users": []string{user.Id},
 		"host":  "127.0.0.1",
 	})
 	assert.NoError(t, err)
 
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/mmcblk0",
 		"model":  "eMMC",
@@ -126,11 +126,11 @@ func TestSmartDeviceAlertWarningToFailed(t *testing.T) {
 }
 
 func TestSmartDeviceAlertNoAlertOnNonPassedToFailed(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system for the user
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "test-system",
 		"users": []string{user.Id},
 		"host":  "127.0.0.1",
@@ -138,7 +138,7 @@ func TestSmartDeviceAlertNoAlertOnNonPassedToFailed(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a smart_device with state UNKNOWN
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/sda",
 		"model":  "Samsung SSD 970 EVO",
@@ -177,22 +177,22 @@ func TestSmartDeviceAlertNoAlertOnNonPassedToFailed(t *testing.T) {
 }
 
 func TestSmartDeviceAlertMultipleUsers(t *testing.T) {
-	hub, user1 := beszelTests.GetHubWithUser(t)
+	hub, user1 := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a second user
-	user2, err := beszelTests.CreateUser(hub, "test2@example.com", "password")
+	user2, err := watchdogTests.CreateUser(hub, "test2@example.com", "password")
 	assert.NoError(t, err)
 
 	// Create user settings for the second user
-	_, err = beszelTests.CreateRecord(hub, "user_settings", map[string]any{
+	_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
 		"user":     user2.Id,
 		"settings": `{"emails":["test2@example.com"],"webhooks":[]}`,
 	})
 	assert.NoError(t, err)
 
 	// Create a system with both users
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "shared-system",
 		"users": []string{user1.Id, user2.Id},
 		"host":  "127.0.0.1",
@@ -200,7 +200,7 @@ func TestSmartDeviceAlertMultipleUsers(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a smart_device with state PASSED
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/nvme0n1",
 		"model":  "WD Black SN850",
@@ -224,11 +224,11 @@ func TestSmartDeviceAlertMultipleUsers(t *testing.T) {
 }
 
 func TestSmartDeviceAlertWithoutModel(t *testing.T) {
-	hub, user := beszelTests.GetHubWithUser(t)
+	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
 	// Create a system for the user
-	system, err := beszelTests.CreateRecord(hub, "systems", map[string]any{
+	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 		"name":  "test-system",
 		"users": []string{user.Id},
 		"host":  "127.0.0.1",
@@ -236,7 +236,7 @@ func TestSmartDeviceAlertWithoutModel(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a smart_device with state PASSED but no model
-	smartDevice, err := beszelTests.CreateRecord(hub, "smart_devices", map[string]any{
+	smartDevice, err := watchdogTests.CreateRecord(hub, "smart_devices", map[string]any{
 		"system": system.Id,
 		"name":   "/dev/sdb",
 		"state":  "PASSED",

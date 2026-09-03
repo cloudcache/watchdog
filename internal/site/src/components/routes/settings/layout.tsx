@@ -2,13 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath, redirectPage } from "@nanostores/router"
-import {
-	AlertOctagonIcon,
-	BellIcon,
-	FingerprintIcon,
-	HeartPulseIcon,
-	SettingsIcon,
-} from "lucide-react"
+import { AlertOctagonIcon, BellIcon, FingerprintIcon, HeartPulseIcon, SettingsIcon } from "lucide-react"
 import { lazy, useEffect } from "react"
 import { $router } from "@/components/router.tsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx"
@@ -100,7 +94,7 @@ export default function SettingsLayout() {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: no dependencies
 	useEffect(() => {
-		document.title = `${t`Settings`} / WatchDog`
+		document.title = `${t`Settings`} / Watchdog`
 		// @ts-expect-error redirect to account page if no page is specified
 		if (!page?.params?.name) {
 			redirectPage($router, "settings", { name: "general" })

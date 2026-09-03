@@ -169,7 +169,7 @@ func TestGetServicePatterns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment variables
 			if tt.prefixedEnv != "" {
-				t.Setenv("BESZEL_AGENT_SERVICE_PATTERNS", tt.prefixedEnv)
+				t.Setenv("WATCHDOG_AGENT_SERVICE_PATTERNS", tt.prefixedEnv)
 			}
 			if tt.unprefixedEnv != "" {
 				t.Setenv("SERVICE_PATTERNS", tt.unprefixedEnv)

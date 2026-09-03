@@ -1,4 +1,4 @@
-module github.com/henrygd/beszel
+module github.com/cloudcache/watchdog
 
 go 1.26.3
 
