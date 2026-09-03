@@ -115,8 +115,8 @@ func decodeTargetRequest(r *http.Request) (Target, error) {
 	if target.Name == "" {
 		return Target{}, errors.New("target name is required")
 	}
-	if target.Type == "" {
-		return Target{}, errors.New("target type is required")
+	if target.Kind == "" {
+		return Target{}, errors.New("target kind is required")
 	}
 	if target.Host == "" {
 		return Target{}, errors.New("target host is required")

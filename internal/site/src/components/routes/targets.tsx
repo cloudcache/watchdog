@@ -8,20 +8,13 @@ import { pb } from "@/lib/api"
 import { createListTable, disposeTable, getRowRecord, type ListTable } from "@/lib/vtable"
 
 type TargetRecord = {
-	ID?: string
-	id?: string
-	Name?: string
-	name?: string
-	Type?: string
-	target_type?: string
-	Host?: string
-	host?: string
-	Status?: string
-	status?: string
-	Labels?: Record<string, string>
+	id: string
+	name: string
+	kind: string
+	host: string
+	status: string
 	labels?: Record<string, string>
-	UpdatedAt?: string
-	updated_at?: string
+	updated_at: string
 }
 
 type TargetsResponse = {
@@ -43,7 +36,7 @@ export default memo(() => {
 			const data = await pb.send<TargetsResponse>("/api/v1/targets", {})
 			// Network targets live on the Network page (device view); listing
 			// them here too duplicated the same box in two lists.
-			setTargets((data.items ?? []).filter((target) => (target.Type ?? target.target_type) !== "network"))
+			setTargets((data.items ?? []).filter((target) => target.kind !== "network"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load targets`)
 		} finally {
@@ -61,16 +54,15 @@ export default memo(() => {
 			return
 		}
 		const records = targets.map((target) => {
-			const id = target.ID ?? target.id ?? ""
-			const type = target.Type ?? target.target_type ?? ""
+			const id = target.id
 			return {
 				id,
-				name: target.Name ?? target.name ?? "—",
-				type: type || "—",
-				host: target.Host ?? target.host ?? "—",
-				status: target.Status ?? target.status ?? "—",
-				labels: formatLabels(target.Labels ?? target.labels),
-				updated: target.UpdatedAt ?? target.updated_at ?? "—",
+				name: target.name || "—",
+				type: target.kind || "—",
+				host: target.host || "—",
+				status: target.status || "—",
+				labels: formatLabels(target.labels),
+				updated: target.updated_at || "—",
 			}
 		})
 		disposeTable(tableInstance.current)

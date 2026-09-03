@@ -47,19 +47,19 @@ func RunInstall(ctx context.Context, opts InstallOptions) (InstallResult, error)
 		return result, err
 	}
 
-	// Always apply the schema. Every statement is CREATE TABLE IF NOT EXISTS,
-	// so this is idempotent: re-running watchdog-install migrates an existing
-	// deployment by creating any tables added in later revisions.
-	count, err := executeSQLFile(ctx, store.db, opts.InitSQL)
-	if err != nil {
-		return result, err
-	}
-	result.StatementsExecuted = count
+	// Migrations are authoritative and must run before the final-schema
+	// bootstrap file. This keeps fresh installs and upgraded installations on
+	// the same physical table and column names.
 	migrations, err := ApplyMySQLMigrations(ctx, store.db)
 	if err != nil {
 		return result, err
 	}
 	result.MigrationsApplied = migrations.Applied
+	count, err := executeSQLFile(ctx, store.db, opts.InitSQL)
+	if err != nil {
+		return result, err
+	}
+	result.StatementsExecuted = count
 	if err := markInstalled(ctx, store.db, opts.LockPath, opts.ConfigPath); err != nil {
 		return result, err
 	}

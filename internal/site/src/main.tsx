@@ -14,6 +14,7 @@ import { Toaster } from "@/components/ui/toaster.tsx"
 import { alertManager } from "@/lib/alerts"
 import { isAdmin, pb, refreshWatchdogIdentity, updateUserSettings } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
+import { $platformIdentity } from "@/lib/platform-auth"
 import {
 	$authenticated,
 	$copyContent,
@@ -71,6 +72,7 @@ const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
 
 const App = memo(() => {
 	const page = useStore($router)
+	const platformIdentity = useStore($platformIdentity)
 
 	useEffect(() => {
 		// change auth store on auth change
@@ -102,6 +104,14 @@ const App = memo(() => {
 		}
 	}, [])
 
+	// Tenant-scoped pages must not mount until identity discovery has replaced
+	// any stale tenant selection left by a previous login or migration.
+	if (!watchdogDevAuth && !platformIdentity.ready) {
+		return <div className="p-3 text-sm text-muted-foreground">Loading...</div>
+	}
+	if (!watchdogDevAuth && !platformIdentity.current) {
+		return <div className="p-3 text-sm text-muted-foreground">Select a tenant from the account menu.</div>
+	}
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
 	} else if (page.route === "aggregate_charts") {
@@ -162,7 +172,7 @@ const App = memo(() => {
 	} else if (page.route === "network_discover") {
 		return <NetworkDiscover />
 	} else if (page.route === "network_device_new") {
-		return <TargetForm defaultType="network" />
+		return <TargetForm defaultKind="network" />
 	} else if (page.route === "network_device_edit") {
 		return <NetworkDeviceForm id={page.params.id} />
 	} else if (page.route === "network_device") {

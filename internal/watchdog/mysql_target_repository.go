@@ -42,10 +42,10 @@ func (s *MySQLStore) CreateTarget(ctx context.Context, target Target) (Target, e
 		return Target{}, err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO monitor_targets (
-			id, tenant_id, name, target_type, host, status, labels_json
+		INSERT INTO targets (
+			id, tenant_id, name, kind, host, status, labels_json
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, target.ID, target.TenantID, target.Name, target.Type, target.Host, defaultString(target.Status, "pending"), labelsJSON)
+	`, target.ID, target.TenantID, target.Name, target.Kind, target.Host, defaultString(target.Status, "pending"), labelsJSON)
 	if err != nil {
 		return Target{}, err
 	}
@@ -58,10 +58,10 @@ func (s *MySQLStore) UpdateTarget(ctx context.Context, target Target) (Target, e
 		return Target{}, err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE monitor_targets
-		SET name = ?, target_type = ?, host = ?, status = ?, labels_json = ?, updated_at = CURRENT_TIMESTAMP(3)
+		UPDATE targets
+		SET name = ?, kind = ?, host = ?, status = ?, labels_json = ?, updated_at = CURRENT_TIMESTAMP(3)
 		WHERE tenant_id = ? AND id = ?
-	`, target.Name, target.Type, target.Host, defaultString(target.Status, "pending"), labelsJSON, target.TenantID, target.ID)
+	`, target.Name, target.Kind, target.Host, defaultString(target.Status, "pending"), labelsJSON, target.TenantID, target.ID)
 	if err != nil {
 		return Target{}, err
 	}
@@ -70,7 +70,7 @@ func (s *MySQLStore) UpdateTarget(ctx context.Context, target Target) (Target, e
 
 func (s *MySQLStore) DeleteTarget(ctx context.Context, tenantID, targetID ID) error {
 	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM monitor_targets
+		DELETE FROM targets
 		WHERE tenant_id = ? AND id = ?
 	`, tenantID, targetID)
 	return err
@@ -78,15 +78,15 @@ func (s *MySQLStore) DeleteTarget(ctx context.Context, tenantID, targetID ID) er
 
 func targetSelect() string {
 	return `
-		SELECT id, tenant_id, name, target_type, host, status, labels_json, created_at, updated_at
-		FROM monitor_targets
+		SELECT id, tenant_id, name, kind, host, status, labels_json, created_at, updated_at
+		FROM targets
 	`
 }
 
 func scanTarget(row rowScanner) (Target, error) {
 	var target Target
 	var labelsJSON []byte
-	if err := row.Scan(&target.ID, &target.TenantID, &target.Name, &target.Type, &target.Host, &target.Status, &labelsJSON, &target.CreatedAt, &target.UpdatedAt); err != nil {
+	if err := row.Scan(&target.ID, &target.TenantID, &target.Name, &target.Kind, &target.Host, &target.Status, &labelsJSON, &target.CreatedAt, &target.UpdatedAt); err != nil {
 		return target, err
 	}
 	labels, err := decodeStringMapJSON(labelsJSON)

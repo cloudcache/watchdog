@@ -12,42 +12,36 @@ import { pb } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type TargetRecord = {
-	ID?: string
-	id?: string
-	Name?: string
-	name?: string
-	Type?: string
-	target_type?: string
-	Host?: string
-	host?: string
-	Status?: string
-	status?: string
-	Labels?: Record<string, string>
+	id: string
+	name: string
+	kind: string
+	host: string
+	status: string
 	labels?: Record<string, string>
 }
 
 type TargetFormProps = {
 	id?: string
-	defaultType?: "system" | "network"
+	defaultKind?: "system" | "network"
 }
 
 type FormState = {
 	id: string
 	name: string
-	type: string
+	kind: string
 	host: string
 	status: string
 	labels: Record<string, string>
 }
 
-export default memo(({ id, defaultType }: TargetFormProps) => {
+export default memo(({ id, defaultKind }: TargetFormProps) => {
 	const { t } = useLingui()
 	const isEditing = Boolean(id)
-	const initialType = defaultType || new URLSearchParams(globalThis.location.search).get("type") || "system"
+	const initialKind = defaultKind || new URLSearchParams(globalThis.location.search).get("kind") || "system"
 	const [form, setForm] = useState<FormState>(() => ({
 		id: id ?? createTargetID(),
 		name: "",
-		type: initialType === "network" ? "network" : "system",
+		kind: initialKind === "network" ? "network" : "system",
 		host: "",
 		status: "pending",
 		labels: {},
@@ -64,14 +58,14 @@ export default memo(({ id, defaultType }: TargetFormProps) => {
 		setError("")
 		try {
 			const target = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {})
-			const targetID = target.ID ?? target.id ?? id
+			const targetID = target.id || id
 			setForm({
 				id: targetID,
-				name: target.Name ?? target.name ?? "",
-				type: target.Type ?? target.target_type ?? "system",
-				host: target.Host ?? target.host ?? "",
-				status: target.Status ?? target.status ?? "pending",
-				labels: target.Labels ?? target.labels ?? {},
+				name: target.name,
+				kind: target.kind || "system",
+				host: target.host,
+				status: target.status || "pending",
+				labels: target.labels ?? {},
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load target`)
@@ -90,20 +84,20 @@ export default memo(({ id, defaultType }: TargetFormProps) => {
 		setError("")
 		try {
 			const body = {
-				ID: form.id.trim(),
-				Name: form.name.trim(),
-				Type: form.type,
-				Host: form.host.trim(),
-				Status: form.status,
-				Labels: form.labels,
+				id: form.id.trim(),
+				name: form.name.trim(),
+				kind: form.kind,
+				host: form.host.trim(),
+				status: form.status,
+				labels: form.labels,
 			}
 			const saved = await pb.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
 				method: id ? "PATCH" : "POST",
 				body,
 			})
-			const savedID = saved.ID ?? saved.id ?? form.id
+			const savedID = saved.id || form.id
 			// Network targets are surfaced on the Network page (device view).
-			if (form.type === "network") {
+			if (form.kind === "network") {
 				navigate(getPagePath($router, "network"))
 			} else {
 				navigate(getPagePath($router, "target_detail", { id: savedID }))
@@ -147,7 +141,7 @@ export default memo(({ id, defaultType }: TargetFormProps) => {
 						<Input value={form.name} onChange={(event) => update({ name: event.target.value })} disabled={loading} />
 					</Field>
 					<Field label={t`Type`}>
-						<Select value={form.type} onValueChange={(type) => update({ type })} disabled={loading}>
+						<Select value={form.kind} onValueChange={(kind) => update({ kind })} disabled={loading}>
 							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>

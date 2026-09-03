@@ -648,7 +648,7 @@ CREATE TABLE IF NOT EXISTS flow_exporters (
   CONSTRAINT fk_flow_exporter_collector
     FOREIGN KEY (collector_id) REFERENCES collector_agents(id) ON DELETE RESTRICT,
   CONSTRAINT fk_flow_exporter_target
-    FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE RESTRICT,
+    FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE RESTRICT,
   CONSTRAINT fk_flow_exporter_device
     FOREIGN KEY (device_id) REFERENCES network_devices(id) ON DELETE SET NULL,
   CHECK (protocol IN ('sflow5','netflow5','netflow9','ipfix')),

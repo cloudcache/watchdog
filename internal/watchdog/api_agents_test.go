@@ -248,7 +248,7 @@ func TestAPISystemAgentPlanBuildsTargetPlan(t *testing.T) {
 		Targets: &fakeTargetRepository{targets: []Target{{
 			ID:       "target-system-a",
 			TenantID: "tenant-a",
-			Type:     TargetTypeSystem,
+			Kind:     TargetKindSystem,
 			Host:     "192.0.2.10",
 		}}},
 	})
@@ -283,7 +283,7 @@ func TestAPISystemAgentPlanRejectsNetworkTarget(t *testing.T) {
 		Targets: &fakeTargetRepository{targets: []Target{{
 			ID:       "target-network-a",
 			TenantID: "tenant-a",
-			Type:     TargetTypeNetwork,
+			Kind:     TargetKindNetwork,
 		}}},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system-agents/agent-system-a/plan", nil)

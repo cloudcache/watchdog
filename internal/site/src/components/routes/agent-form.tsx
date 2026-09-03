@@ -30,8 +30,7 @@ type TargetRecord = {
 	id?: string
 	Name?: string
 	name?: string
-	Type?: string
-	target_type?: string
+	kind?: string
 }
 
 type TargetsResponse = {
@@ -79,7 +78,7 @@ export default memo(({ id }: AgentFormProps) => {
 			if (!id) {
 				setForm((current) => ({
 					...current,
-					targetID: current.targetID || firstTargetIDForType(targetItems, current.agentType),
+					targetID: current.targetID || firstTargetIDForKind(targetItems, current.agentType),
 				}))
 				return
 			}
@@ -147,7 +146,7 @@ export default memo(({ id }: AgentFormProps) => {
 	}
 
 	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
-	const targetOptions = targets.filter((target) => targetType(target) === agentTargetType(form.agentType))
+	const targetOptions = targets.filter((target) => targetKind(target) === agentTargetKind(form.agentType))
 	const canSave = form.id.trim() && form.targetID && (isEditing || form.token.trim())
 
 	return (
@@ -194,9 +193,7 @@ export default memo(({ id }: AgentFormProps) => {
 					<Field label={t`Agent Type`}>
 						<Select
 							value={form.agentType}
-							onValueChange={(agentType) =>
-								update({ agentType, targetID: firstTargetIDForType(targets, agentType) })
-							}
+							onValueChange={(agentType) => update({ agentType, targetID: firstTargetIDForKind(targets, agentType) })}
 							disabled={loading || isEditing}
 						>
 							<SelectTrigger>
@@ -218,7 +215,7 @@ export default memo(({ id }: AgentFormProps) => {
 									const targetID = target.ID ?? target.id ?? ""
 									return (
 										<SelectItem key={targetID} value={targetID}>
-											{target.Name ?? target.name ?? targetID} · {targetType(target)}
+											{target.Name ?? target.name ?? targetID} · {targetKind(target)}
 										</SelectItem>
 									)
 								})}
@@ -285,15 +282,15 @@ function createAgentID() {
 	return `agent_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
 }
 
-function targetType(target: TargetRecord) {
-	return target.Type ?? target.target_type ?? "system"
+function targetKind(target: TargetRecord) {
+	return target.kind ?? "system"
 }
 
-function agentTargetType(agentType: string) {
+function agentTargetKind(agentType: string) {
 	return agentType === "system" ? "system" : "network"
 }
 
-function firstTargetIDForType(targets: TargetRecord[], agentType: string) {
-	const target = targets.find((item) => targetType(item) === agentTargetType(agentType))
+function firstTargetIDForKind(targets: TargetRecord[], agentType: string) {
+	const target = targets.find((item) => targetKind(item) === agentTargetKind(agentType))
 	return target?.ID ?? target?.id ?? ""
 }

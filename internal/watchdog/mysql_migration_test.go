@@ -11,7 +11,7 @@ import (
 )
 
 func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
-	sqlText := readWatchdogMigration(t)
+	sqlText := readWatchdogInitSchema(t)
 	re := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z_]+)`)
 	matches := re.FindAllStringSubmatch(sqlText, -1)
 	tables := make(map[string]bool, len(matches))
@@ -21,7 +21,7 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 	for _, table := range []string{
 		"tenants",
 		"users",
-		"monitor_targets",
+		"targets",
 		"network_devices",
 		"network_ports",
 		"port_policies",
@@ -73,14 +73,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "011" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "013" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "011" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "013" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -91,6 +91,35 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
 		}
+	}
+	var targetKindNullable string
+	if err := db.QueryRow("SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'targets' AND column_name = 'kind'").Scan(&targetKindNullable); err != nil {
+		t.Fatalf("targets.kind not found after migrations: %v", err)
+	}
+	if targetKindNullable != "NO" {
+		t.Fatalf("targets.kind nullable = %s, want NO", targetKindNullable)
+	}
+	for _, legacy := range []struct{ table, column string }{{table: "monitor_targets"}, {table: "targets", column: "target_type"}} {
+		var count int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND (? = '' OR column_name = ?)
+		`, legacy.table, legacy.column, legacy.column).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("legacy schema name still exists: %s.%s", legacy.table, legacy.column)
+		}
+	}
+	var legacyIndexCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = 'targets' AND index_name = 'idx_targets_tenant_type_status'
+	`).Scan(&legacyIndexCount); err != nil {
+		t.Fatal(err)
+	}
+	if legacyIndexCount != 0 {
+		t.Fatal("legacy target type index still exists")
 	}
 	for _, column := range []string{"auth_provider", "external_subject_id", "password_hash"} {
 		var nullable string
@@ -146,7 +175,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 11 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "011" {
+	if len(migrations) != 13 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "013" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
@@ -177,9 +206,9 @@ func readWatchdogMigrations(t *testing.T) []watchdogMigration {
 	return migrations
 }
 
-func readWatchdogMigration(t *testing.T) string {
+func readWatchdogInitSchema(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "001_watchdog_backend.sql")
+	path := filepath.Join("..", "..", "install", "init.sql")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read migration: %v", err)

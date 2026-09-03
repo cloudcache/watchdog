@@ -11,17 +11,11 @@ import { cn } from "@/lib/utils"
 import { type createLineChart, disposeChart, updateLineChart } from "@/lib/vchart"
 
 type TargetRecord = {
-	ID?: string
-	id?: string
-	Name?: string
-	name?: string
-	Type?: string
-	target_type?: string
-	Host?: string
-	host?: string
-	Status?: string
-	status?: string
-	Labels?: Record<string, string>
+	id: string
+	name: string
+	kind: string
+	host: string
+	status: string
 	labels?: Record<string, string>
 }
 
@@ -66,7 +60,7 @@ export default memo(({ id }: TargetDetailProps) => {
 		try {
 			const targetData = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {})
 			setTarget(targetData)
-			if ((targetData.Type ?? targetData.target_type) === "network") {
+			if (targetData.kind === "network") {
 				// The device page is the canonical view for network targets;
 				// this page only remains for network targets not yet discovered.
 				const devices = await pb.send<{
@@ -219,7 +213,7 @@ export default memo(({ id }: TargetDetailProps) => {
 			</div>
 
 			<div className="grid gap-3 md:grid-cols-4">
-				<InfoCell label={t`Type`} value={target?.Type ?? target?.target_type} />
+				<InfoCell label={t`Type`} value={target?.kind} />
 				<InfoCell label={t`Host`} value={target?.Host ?? target?.host} />
 				<InfoCell label={t`Status`} value={target?.Status ?? target?.status} />
 				<InfoCell label="ID" value={id} mono />

@@ -159,12 +159,12 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 			await pb.send(`/api/v1/targets/${form.targetID}`, {
 				method: "PATCH",
 				body: {
-					ID: form.targetID,
-					Name: form.targetName.trim(),
-					Type: "network",
-					Host: form.host.trim(),
-					Status: form.status,
-					Labels: form.labels,
+					id: form.targetID,
+					name: form.targetName.trim(),
+					kind: "network",
+					host: form.host.trim(),
+					status: form.status,
+					labels: form.labels,
 				},
 			})
 			const body = {

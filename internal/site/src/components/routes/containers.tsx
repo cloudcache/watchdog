@@ -12,8 +12,7 @@ type TargetRecord = {
 	id?: string
 	Name?: string
 	name?: string
-	Type?: string
-	target_type?: string
+	kind?: string
 }
 
 type TargetsResponse = {

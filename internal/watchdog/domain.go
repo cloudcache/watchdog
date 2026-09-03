@@ -22,11 +22,11 @@ type User struct {
 	UpdatedAt time.Time
 }
 
-type TargetType string
+type TargetKind string
 
 const (
-	TargetTypeSystem  TargetType = "system"
-	TargetTypeNetwork TargetType = "network"
+	TargetKindSystem  TargetKind = "system"
+	TargetKindNetwork TargetKind = "network"
 )
 
 type AgentMode string
@@ -44,15 +44,15 @@ const (
 )
 
 type Target struct {
-	ID        ID
-	TenantID  ID
-	Name      string
-	Type      TargetType
-	Host      string
-	Status    string
-	Labels    map[string]string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        ID                `json:"id"`
+	TenantID  ID                `json:"tenant_id"`
+	Name      string            `json:"name"`
+	Kind      TargetKind        `json:"kind"`
+	Host      string            `json:"host"`
+	Status    string            `json:"status"`
+	Labels    map[string]string `json:"labels"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 type NetworkDevice struct {

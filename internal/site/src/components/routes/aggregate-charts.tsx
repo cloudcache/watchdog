@@ -26,8 +26,7 @@ type TargetRecord = {
 	id?: string
 	Name?: string
 	name?: string
-	Type?: string
-	target_type?: string
+	kind?: string
 	Host?: string
 	host?: string
 }
@@ -160,7 +159,7 @@ export default memo(() => {
 				if (valid.length > 0) {
 					return valid
 				}
-				const firstTarget = nextTargets.find((target) => targetType(target) === "network") ?? nextTargets[0]
+				const firstTarget = nextTargets.find((target) => targetKind(target) === "network") ?? nextTargets[0]
 				const first = firstTarget ? targetID(firstTarget) : ""
 				return first ? [first] : []
 			})
@@ -433,7 +432,7 @@ export default memo(() => {
 										<span className="min-w-0">
 											<span className="block truncate text-sm font-medium">{target.Name ?? target.name ?? id}</span>
 											<span className="block truncate text-xs text-muted-foreground">
-												{target.Type ?? target.target_type ?? "target"} · {target.Host ?? target.host ?? id}
+												{target.kind ?? "target"} · {target.Host ?? target.host ?? id}
 											</span>
 										</span>
 									</div>
@@ -782,8 +781,8 @@ function targetID(target: TargetRecord) {
 	return target.ID ?? target.id ?? ""
 }
 
-function targetType(target: TargetRecord) {
-	return target.Type ?? target.target_type ?? ""
+function targetKind(target: TargetRecord) {
+	return target.kind ?? ""
 }
 
 function deviceID(device: NetworkDevice) {

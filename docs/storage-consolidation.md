@@ -36,7 +36,7 @@
 | “PB 14 个集合只有 6 个活着” | 前端仍直接引用 `users/user_settings/alerts/alerts_history/quiet_hours/fingerprints/smart_devices/containers/systemd_services`；后端还读写全部 system/alert 集合 | 14 个业务集合按下表逐一迁移，不能按页面是否可见判断存活 |
 | “systems 域 8 个集合是僵尸，可直接删” | [`system.go`](../internal/hub/systems/system.go) 每轮事务写 `systems/system_stats/container_stats/containers/systemd_services/system_details`；[`system_manager.go`](../internal/hub/systems/system_manager.go)、[`internal/alerts`](../internal/alerts) 和 `/api/watchdog` 仍读取它们 | 它们是“遗留但在线”的运行域。必须先迁采集、连接、告警和详情路径，再停止 PB 写入 |
 | “删除不是丢数据，SQLite 文件就是备份” | 活跃 SQLite 文件不是归档；没有时间范围、计数、checksum、恢复工具和保留期 | 归档必须生成 manifest、校验和并做恢复演练；生产文件副本只能作为迁移输入 |
-| “SMART 字段照搬并挂 network_devices” | SMART 当前来源是 system agent，父对象是 `systems`；`network_devices` 只适用于 SNMP 网元 | 以通用 `monitor_targets` 为父资源，结构化身份/最新状态，历史观测进入 VM |
+| “SMART 字段照搬并挂 network_devices” | SMART 当前来源是 system agent，父对象是 `systems`；`network_devices` 只适用于 SNMP 网元 | 以通用 `targets` 为父资源，结构化身份/最新状态，历史观测进入 VM |
 
 因此，推荐方向 C 保持不变，但工程量不是“只迁 6 个集合”。真正的退出条件是：旧 Agent WebSocket、system 状态、告警引擎、SMART、容器/systemd 详情和 enrollment 全部不再依赖 PB 业务集合。
 
@@ -72,7 +72,7 @@
 | `alerts` | 规则与 `triggered` 状态混表 | `alert_rules` + `alert_events` | 新引擎完成规则、状态、恢复和去重 |
 | `alerts_history` | 告警发生/恢复历史 | `alert_events` | 历史 backfill、分页/导出/retention 完成 |
 | `quiet_hours` | 用户/系统静默 | `alert_suppressions` | 时区、跨午夜、一次性/周期规则验证完成 |
-| `systems` | target、成员、连接和 observed status 混表 | `monitor_targets` + `collector_agents/bindings` + RBAC | 旧 Agent 协议适配和在线连接管理迁出 PB |
+| `systems` | target、成员、连接和 observed status 混表 | `targets` + `collector_agents/bindings` + RBAC | 旧 Agent 协议适配和在线连接管理迁出 PB |
 | `system_details` | 最新主机库存 | `system_target_profiles` | system agent 上报改写 MySQL |
 | `system_stats` | 多分辨率主机历史 | VM；旧数据离线归档 | VM 写入/查询/完整率达标，归档恢复演练通过 |
 | `containers` | 最新 container 投影 | VM 当前序列/查询；管理配置仍在 target/collector | 列表和详情不再查 PB；agent action 按 target 鉴权 |
@@ -246,7 +246,7 @@ CREATE TABLE system_target_profiles (
     ON UPDATE CURRENT_TIMESTAMP(3),
   KEY idx_system_profiles_tenant (tenant_id, observed_at),
   CONSTRAINT fk_system_profiles_target FOREIGN KEY (target_id)
-    REFERENCES monitor_targets(id) ON DELETE CASCADE,
+    REFERENCES targets(id) ON DELETE CASCADE,
   CONSTRAINT fk_system_profiles_tenant FOREIGN KEY (tenant_id)
     REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -283,7 +283,7 @@ CREATE TABLE storage_devices (
   KEY idx_storage_devices_health
     (tenant_id, smart_state, last_seen_at),
   CONSTRAINT fk_storage_devices_target FOREIGN KEY (target_id)
-    REFERENCES monitor_targets(id) ON DELETE CASCADE,
+    REFERENCES targets(id) ON DELETE CASCADE,
   CONSTRAINT fk_storage_devices_collector FOREIGN KEY (collector_id)
     REFERENCES collector_agents(id) ON DELETE SET NULL,
   CONSTRAINT fk_storage_devices_tenant FOREIGN KEY (tenant_id)
@@ -523,7 +523,7 @@ rule enabled → evaluator observes breach → pending(for_seconds)
 当前 `/api/watchdog/agent-connect` 仍以 PB fingerprint/system 记录完成注册、连接和采集。收敛不能简单关停：
 
 1. 保留一个明确版本窗口的 legacy protocol adapter；
-2. token/fingerprint 映射到 collector identity，system 映射到 `monitor_targets`，成员关系映射到 permission/binding；
+2. token/fingerprint 映射到 collector identity，system 映射到 `targets`，成员关系映射到 permission/binding；
 3. system/container/systemd 样本直接标准化写 VM；details/storage latest inventory 写 MySQL；
 4. 在线连接放内存 connection manager，以 collector/target ID 索引，不把连接状态当数据库锁；
 5. 容器日志、systemd info、SMART refresh 通过 target→binding→live connection 调用，并复用 target RBAC；

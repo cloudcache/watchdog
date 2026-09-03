@@ -299,7 +299,7 @@ func TestAPINetworkDeviceSummariesIncludeUndiscoveredNetworkTarget(t *testing.T)
 			ID:       "target-a",
 			TenantID: "tenant-a",
 			Name:     "pending-switch",
-			Type:     TargetTypeNetwork,
+			Kind:     TargetKindNetwork,
 			Host:     "10.0.0.1",
 			Status:   "pending",
 		}}},
@@ -311,7 +311,7 @@ func TestAPINetworkDeviceSummariesIncludeUndiscoveredNetworkTarget(t *testing.T)
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"Target":{"ID":"target-a"`) || !strings.Contains(body, "pending-switch") {
+	if !strings.Contains(body, `"Target":{"id":"target-a"`) || !strings.Contains(body, "pending-switch") {
 		t.Fatalf("body missing undiscovered target: %s", body)
 	}
 	if strings.Contains(body, `"Device":{"ID":"device-`) {
@@ -410,7 +410,7 @@ func TestAPINetworkSNMPDiscoverUpsertsDevicePortsAndSensors(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          configureNetworkTestAuth,
 		Network:       repo,
-		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}},
+		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}},
 		SNMP:          &fakeSNMPRepository{profiles: []SNMPProfile{{ID: "profile-a", TenantID: "tenant-a", Version: "2c", Security: map[string]string{"community": "public"}}}},
 		SNMPDiscovery: discovery,
 		SNMPCollector: &fakeSNMPCollectorRepository{},
@@ -441,7 +441,7 @@ func TestAPINetworkSNMPDiscoverAppliesDeviceUpdates(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          configureNetworkTestAuth,
 		Network:       repo,
-		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}},
+		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}},
 		SNMP:          &fakeSNMPRepository{profiles: []SNMPProfile{{ID: "profile-a", TenantID: "tenant-a", Version: "2c", Security: map[string]string{"community": "public"}}}},
 		SNMPDiscovery: discovery,
 		SNMPCollector: &fakeSNMPCollectorRepository{},
@@ -476,7 +476,7 @@ func TestAPINetworkSNMPDiscoverPersistsRecipesBGPSessionsEventsAndModules(t *tes
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          configureNetworkTestAuth,
 		Network:       repo,
-		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}},
+		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}},
 		SNMP:          &fakeSNMPRepository{profiles: []SNMPProfile{{ID: "profile-a", TenantID: "tenant-a", Version: "2c", Security: map[string]string{"community": "public"}}}},
 		SNMPDiscovery: discovery,
 		SNMPCollector: collector,
@@ -637,7 +637,7 @@ func TestAPINetworkDeviceSNMPDiscoverSyncsPortsAndUsesDeviceCommunityOverride(t 
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          configureNetworkTestAuth,
 		Network:       repo,
-		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}},
+		Targets:       &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}},
 		SNMP:          &fakeSNMPRepository{profiles: []SNMPProfile{{ID: "profile-a", TenantID: "tenant-a", Version: "2c", Security: map[string]string{"community": "public"}}}},
 		SNMPDiscovery: discovery,
 		SNMPCollector: &fakeSNMPCollectorRepository{},

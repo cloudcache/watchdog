@@ -48,7 +48,7 @@ type errNotFoundForTest struct{}
 func (errNotFoundForTest) Error() string { return "not found" }
 
 func TestAPITargetsList(t *testing.T) {
-	repo := &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}}
+	repo := &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}}
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:    targetTestAuth,
 		Targets: repo,
@@ -61,14 +61,17 @@ func TestAPITargetsList(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "target-a") {
 		t.Fatalf("body missing target: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"kind":"network"`) || strings.Contains(rec.Body.String(), `"Type"`) || strings.Contains(rec.Body.String(), `"target_type"`) {
+		t.Fatalf("target response does not use canonical snake_case fields: %s", rec.Body.String())
+	}
 }
 
 func TestAPITargetsListFiltersByTargetPermission(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: targetTestAuth,
 		Targets: &fakeTargetRepository{targets: []Target{
-			{ID: "target-a", TenantID: "tenant-a", Name: "Core A", Type: TargetTypeNetwork, Host: "10.0.0.1"},
-			{ID: "target-b", TenantID: "tenant-a", Name: "Core B", Type: TargetTypeNetwork, Host: "10.0.0.2"},
+			{ID: "target-a", TenantID: "tenant-a", Name: "Core A", Kind: TargetKindNetwork, Host: "10.0.0.1"},
+			{ID: "target-b", TenantID: "tenant-a", Name: "Core B", Kind: TargetKindNetwork, Host: "10.0.0.2"},
 		}},
 	})
 	rec := httptest.NewRecorder()
@@ -89,12 +92,15 @@ func TestAPITargetsCreate(t *testing.T) {
 		Targets: repo,
 	})
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/targets", strings.NewReader(`{"ID":"target-a","Name":"Core","Type":"network","Host":"10.0.0.1"}`)))
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/targets", strings.NewReader(`{"id":"target-a","name":"Core","kind":"network","host":"10.0.0.1"}`)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if repo.created.TenantID != "tenant-a" {
 		t.Fatalf("TenantID = %s, want tenant-a", repo.created.TenantID)
+	}
+	if repo.created.Kind != TargetKindNetwork {
+		t.Fatalf("Kind = %s, want network", repo.created.Kind)
 	}
 }
 
@@ -113,7 +119,7 @@ func TestAPITargetsGetRequiresTargetPermission(t *testing.T) {
 }
 
 func TestAPITargetsDelete(t *testing.T) {
-	repo := &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Type: TargetTypeNetwork, Host: "10.0.0.1"}}}
+	repo := &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}}}
 	cleaner := &fakeSeriesCleaner{}
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:          targetTestAuth,

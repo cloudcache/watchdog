@@ -66,18 +66,18 @@ CREATE TABLE IF NOT EXISTS user_roles (
   CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS monitor_targets (
+CREATE TABLE IF NOT EXISTS targets (
   id CHAR(26) PRIMARY KEY,
   tenant_id CHAR(26) NOT NULL,
   name VARCHAR(190) NOT NULL,
-  target_type VARCHAR(32) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
   host VARCHAR(255) NOT NULL,
   mgmt_ip VARBINARY(16) NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'pending',
   labels_json JSON NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  KEY idx_targets_tenant_type_status (tenant_id, target_type, status),
+  KEY idx_targets_tenant_kind_status (tenant_id, kind, status),
   CONSTRAINT fk_targets_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS target_credentials (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   KEY idx_target_credentials_target (tenant_id, target_id, credential_type),
   CONSTRAINT fk_target_credentials_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  CONSTRAINT fk_target_credentials_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE CASCADE
+  CONSTRAINT fk_target_credentials_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS target_agents (
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS target_agents (
   KEY idx_target_agents_status (tenant_id, status, last_seen_at),
   KEY idx_target_agents_run (agent_type, mode, status, last_run_at, failure_count),
   CONSTRAINT fk_target_agents_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  CONSTRAINT fk_target_agents_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE CASCADE
+  CONSTRAINT fk_target_agents_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS agent_run_history (
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS agent_run_history (
   KEY idx_agent_run_history_status (tenant_id, status, ended_at),
   CONSTRAINT fk_agent_run_history_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_agent_run_history_agent FOREIGN KEY (agent_id) REFERENCES target_agents(id) ON DELETE CASCADE,
-  CONSTRAINT fk_agent_run_history_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_agent_run_history_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE,
   CHECK (status IN ('success', 'failure'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS network_devices (
   UNIQUE KEY uq_network_devices_target (tenant_id, target_id),
   KEY idx_network_devices_profile (snmp_profile_id),
   CONSTRAINT fk_network_devices_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  CONSTRAINT fk_network_devices_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_network_devices_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE,
   CONSTRAINT fk_network_devices_snmp_profile FOREIGN KEY (snmp_profile_id) REFERENCES snmp_profiles(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS metric_retention_policies (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_metric_retention_scope (tenant_id, target_id),
   CONSTRAINT fk_metric_retention_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  CONSTRAINT fk_metric_retention_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_metric_retention_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE,
   CHECK (high_precision_days >= 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS export_tasks (
   KEY idx_export_tasks_status (tenant_id, status),
   CONSTRAINT fk_export_tasks_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_export_tasks_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-  CONSTRAINT fk_export_tasks_target FOREIGN KEY (target_id) REFERENCES monitor_targets(id) ON DELETE SET NULL,
+  CONSTRAINT fk_export_tasks_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE SET NULL,
   CONSTRAINT fk_export_tasks_port FOREIGN KEY (port_id) REFERENCES network_ports(id) ON DELETE SET NULL,
   CHECK (period_type IN ('day', 'month', 'fixed', 'custom')),
   CHECK (aggregation IN ('p95_5m', 'avg_5m', 'fourth_peak_5m', 'daily_p95', 'daily_avg', 'total_bytes')),

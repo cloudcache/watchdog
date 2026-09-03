@@ -24,7 +24,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 | tenant/身份投影 | `tenants/users/roles/user_roles`；[`mysql_repository.go`](../internal/watchdog/mysql_repository.go) 可读取用户、角色和授权 | stable ID、tenant 约束、角色关联 |
 | RBAC | [`permissions.go`](../internal/watchdog/permissions.go) 定义 `view/configure/operate/export/admin` 和 resource grant | action 检查、tenant/target/port 继承模型 |
 | API 框架 | [`api_router.go`](../internal/watchdog/api_router.go) 用依赖非空决定注册路由 | middleware、错误格式、repository 注入 |
-| target/网元 | `monitor_targets/network_devices/network_ports`；target、设备、端口均已有列表/详情/CRUD | target 作为资源根、网元和 ifIndex 稳定映射 |
+| target/网元 | `targets/network_devices/network_ports`；target、设备、端口均已有列表/详情/CRUD | target 作为资源根、网元和 ifIndex 稳定映射 |
 | agent | `target_agents/agent_run_history`；[`api_agent_registry.go`](../internal/watchdog/api_agent_registry.go) 有 token、状态、心跳、运行历史 | enrollment 雏形、push/pull 模式、运行审计 |
 | 指标 | [`metric_catalog.go`](../internal/watchdog/metric_catalog.go)、[`api_metrics.go`](../internal/watchdog/api_metrics.go)、VictoriaMetrics client | 时间范围、step、聚合、完整率和低基数指标查询 |
 | 图表 | device/port overview + `aggregate_graphs/items/ports/data` CRUD | 图表定义、数据源 item、成员绑定和 rollup |
@@ -44,7 +44,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 | P0 | permission 的 resource type 和 Go 常量只覆盖 tenant/target/port/export/billing | 建立可注册资源类型与父子关系，支持 module、collector、dataset、visualization、flow_exporter |
 | P0 | `target_agents` 强制单一 `target_id`，agent type 只允许 snmp/system | collector 身份与 resource binding 分离，支持一个 flow collector 服务多个 exporter/target |
 | P0（止血完成） | flow 原型原先同时写 VM aggregate 与逐 flow VLogs，没有 MQ、重放和 sink 隔离 | 逐 flow VLogs sink、配置和前端直连已删除；现有 VM aggregate 暂作兼容。正式 flow-collect 仍须以 GoFlow2 接收/解码，raw WAL 后只写 normalized Kafka，由 dimension worker 写 CH base |
-| P1 | target DB 类型可扩展，但 Go `TargetType` 只认 system/network | target kind 改为 registry，模块声明字段、校验器、详情 tab 和发现器 |
+| P1 | target DB 类型可扩展，但 Go `TargetKind` 只认 system/network | target kind 改为 registry，模块声明字段、校验器、详情 tab 和发现器 |
 | P1 | metric catalog 静态，查询后端固定为 VM，任意 flow 高基数查询无法接入 | 引入 dataset/metric provider 和统一 QueryGateway，支持 VM 与 ClickHouse |
 | P1 | aggregate graph 只绑定 port，item 只有 metric/direction | 图表定义改为 provider + dataset + query JSON + resource binding，支持 flow group-by/filter |
 | P1 | export task 固定 target/port、VM、CSV | export provider 化，任务保存 dataset、query snapshot、value layer、policy version |
@@ -418,7 +418,7 @@ GET                      /api/v1/collector-plan
 
 ## 7. Target、网元和资源管理
 
-`monitor_targets` 保持跨模块资源根，`network_devices/network_ports` 保持网元投影。需要新增 `TargetKindRegistry`，替代 Go 常量穷举：
+`targets` 保持跨模块资源根，`network_devices/network_ports` 保持网元投影。需要新增 `TargetKindRegistry`，替代 Go 常量穷举：
 
 ```go
 type TargetKindDescriptor struct {
@@ -476,7 +476,7 @@ GET/PATCH/DELETE         /api/v1/network-ports/{id}
 
 - `edge_probe` 与 `flow_probe` 共享 collector plan/job/result 基础设施但是**两个 capability/权限域**：edge 拨测是常规低危主动监测（走普通 configure/operate），绝不复用 `probe_active` 的高危审批链，也不因此绕过它——反向亦然；
 - `collector_agents.agent_type` 的 CHECK 从 `snmp/system` 枚举放开为 registry 校验，终态取值：`system | snmp | flow_collect | flow_probe | edge_probe | bmp`；`storage` 不是 agent_type，是 system agent 的 capability 组；
-- Go `TargetType` 常量 `system→host` 更名：migration 改存量值 + API 兼容读旧值一个版本；`network` 不变；
+- Go `TargetKind` 常量 `system→host` 更名：migration 改存量值 + API 兼容读旧值一个版本；`network` 不变；
 - 容器归 host：`containers` 保留为 host 域的跨 target 视图页，不再是与 kind 平级的资源入口。
 
 ### 7.2 导航信息架构
@@ -743,7 +743,7 @@ active policy 不允许 PATCH 原地改变公式；修改动作创建下一 vers
 | 表/域 | 所有者 | 处理 |
 |---|---|---|
 | tenants/users/roles/user_roles/permissions | core identity/RBAC | 增加 external subject、CRUD、可注册 resource/action；保留数据 |
-| monitor_targets | core resource | 保留；target type 校验改 registry |
+| targets | core resource | 保留；`kind` 校验改 registry |
 | network_devices/network_ports/inventory | network module | 保留；flow 只引用 stable ID |
 | target_agents | legacy agent | 迁移为 collector_agents + collector_bindings 后删除写路径 |
 | agent_run_history | core collector | agent FK 迁移；支持连续 collector health event |

@@ -110,7 +110,7 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 	items := make([]networkDeviceSummary, 0, max(len(targetsByID), len(devices)))
 	for _, target := range targetsByID {
 		device, hasDevice := devicesByTargetID[target.ID]
-		if target.Type != TargetTypeNetwork && !hasDevice {
+		if target.Kind != TargetKindNetwork && !hasDevice {
 			continue
 		}
 		if !canAccessTarget(auth, target.ID, ActionView) {

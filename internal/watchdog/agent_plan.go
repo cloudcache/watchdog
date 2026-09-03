@@ -40,7 +40,7 @@ func (s AgentPlanService) BuildSystemAgentPlan(ctx context.Context, agentID ID, 
 		if err != nil {
 			return SystemAgentPlan{}, err
 		}
-		if target.Type != TargetTypeSystem {
+		if target.Kind != TargetKindSystem {
 			return SystemAgentPlan{}, errors.New("target is not a system target")
 		}
 	}
