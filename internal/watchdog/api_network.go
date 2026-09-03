@@ -525,6 +525,7 @@ func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request)
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	_ = promoteDiscoveredTargetName(r.Context(), api.targets, auth.TenantID, device.TargetID, report.Device.SysName)
 	WriteAPIJSON(w, http.StatusOK, map[string]any{
 		"ports": report.Ports, "sensors": report.Sensors, "count": report.Ports, "deleted": deleted,
 		"vlans": report.VLANs, "entities": report.PhysicalEntities, "lags": report.LAGs,

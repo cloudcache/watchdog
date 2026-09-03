@@ -73,14 +73,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "013" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "014" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "013" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "014" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -120,6 +120,16 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	}
 	if legacyIndexCount != 0 {
 		t.Fatal("legacy target type index still exists")
+	}
+	var hostIdentityIndexCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = 'targets' AND index_name = 'uq_targets_tenant_kind_host' AND non_unique = 0
+	`).Scan(&hostIdentityIndexCount); err != nil {
+		t.Fatal(err)
+	}
+	if hostIdentityIndexCount != 3 {
+		t.Fatalf("target host identity index column count = %d, want 3", hostIdentityIndexCount)
 	}
 	for _, column := range []string{"auth_provider", "external_subject_id", "password_hash"} {
 		var nullable string
@@ -175,7 +185,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 13 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "013" {
+	if len(migrations) != 14 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "014" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {

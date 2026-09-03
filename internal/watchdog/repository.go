@@ -42,6 +42,13 @@ type TargetRepository interface {
 	DeleteTarget(ctx context.Context, tenantID, targetID ID) error
 }
 
+// NetworkTargetProvisioner creates the management target and its SNMP device
+// projection as one unit. The MySQL implementation uses one transaction so a
+// failed device insert cannot leave a target that cannot be polled.
+type NetworkTargetProvisioner interface {
+	CreateNetworkTarget(ctx context.Context, target Target, device NetworkDevice) (Target, NetworkDevice, error)
+}
+
 type AgentRepository interface {
 	GetAgent(ctx context.Context, agentID ID) (SNMPAgentConfig, error)
 	ListAgents(ctx context.Context, tenantID ID) ([]SNMPAgentConfig, error)

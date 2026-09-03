@@ -1,9 +1,12 @@
 package watchdog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 )
 
 type targetAPI struct {
@@ -11,10 +14,23 @@ type targetAPI struct {
 	seriesCleaner SeriesCleaner
 	network       NetworkRepository
 	discoveryJobs DiscoveryJobRepository
+	snmp          SNMPRepository
 }
 
-func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository) {
-	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs}
+type targetRequest struct {
+	ID            ID                `json:"id"`
+	Name          string            `json:"name"`
+	Kind          TargetKind        `json:"kind"`
+	Host          string            `json:"host"`
+	Status        string            `json:"status"`
+	Labels        map[string]string `json:"labels"`
+	SNMPProfileID ID                `json:"snmp_profile_id"`
+	SNMPPort      uint16            `json:"snmp_port"`
+	SNMPSecurity  map[string]string `json:"snmp_security"`
+}
+
+func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository, snmp SNMPRepository) {
+	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs, snmp: snmp}
 	mux.Handle("GET /api/v1/targets", auth(RequirePermission(ActionView, TenantResource)(http.HandlerFunc(api.list))))
 	mux.Handle("POST /api/v1/targets", auth(RequirePermission(ActionConfigure, TenantResource)(http.HandlerFunc(api.create))))
 	mux.Handle("GET /api/v1/targets/{target_id}", auth(RequirePermission(ActionView, targetResourceFromPath)(http.HandlerFunc(api.get))))
@@ -50,15 +66,55 @@ func (api targetAPI) get(w http.ResponseWriter, r *http.Request) {
 
 func (api targetAPI) create(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	target, err := decodeTargetRequest(r)
+	req, err := decodeTargetRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	target := req.target()
 	target.TenantID = auth.TenantID
-	created, err := api.repo.CreateTarget(r.Context(), target)
+	// The API owns resource identity. Names are presentation only; a normalized
+	// tenant/kind/host key gives retries the same bounded database ID.
+	target.ID = stableID("target", string(auth.TenantID), string(target.Kind), target.Host)
+
+	if existing, duplicateErr := api.findTargetByHost(r.Context(), target); duplicateErr != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, duplicateErr.Error(), nil)
+		return
+	} else if existing.ID != "" {
+		WriteAPIError(w, http.StatusConflict, APIErrorInvalidRequest, "A target with this host already exists", map[string]any{"target_id": existing.ID})
+		return
+	}
+
+	var created Target
+	if target.Kind == TargetKindNetwork && api.network != nil {
+		profileID, profileErr := api.resolveSNMPProfileID(r.Context(), auth.TenantID, req.SNMPProfileID)
+		if profileErr != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, profileErr.Error(), nil)
+			return
+		}
+		device := NetworkDevice{
+			ID:            stableID("device", string(auth.TenantID), string(target.ID)),
+			TenantID:      auth.TenantID,
+			TargetID:      target.ID,
+			SNMPProfileID: profileID,
+			SNMPPort:      normalizeSNMPPort(req.SNMPPort),
+			SNMPSecurity:  req.SNMPSecurity,
+		}
+		created, _, err = api.createNetworkTarget(r.Context(), target, device)
+		if err == nil && api.discoveryJobs != nil && profileID != "" {
+			_ = api.discoveryJobs.EnqueueDiscoveryJob(r.Context(), auth.TenantID, device.ID, "device_created")
+		}
+	} else {
+		created, err = api.repo.CreateTarget(r.Context(), target)
+	}
 	if err != nil {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		status := http.StatusBadRequest
+		message := err.Error()
+		if errors.Is(err, ErrTargetHostExists) {
+			status = http.StatusConflict
+			message = "A target with this host already exists"
+		}
+		WriteAPIError(w, status, APIErrorInvalidRequest, message, nil)
 		return
 	}
 	WriteAPIJSON(w, http.StatusCreated, created)
@@ -71,16 +127,23 @@ func (api targetAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Target not found", nil)
 		return
 	}
-	target, err := decodeTargetRequest(r)
+	req, err := decodeTargetRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	target := req.target()
 	target.ID = existing.ID
 	target.TenantID = auth.TenantID
 	updated, err := api.repo.UpdateTarget(r.Context(), target)
 	if err != nil {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		status := http.StatusBadRequest
+		message := err.Error()
+		if errors.Is(err, ErrTargetHostExists) {
+			status = http.StatusConflict
+			message = "A target with this host already exists"
+		}
+		WriteAPIError(w, status, APIErrorInvalidRequest, message, nil)
 		return
 	}
 	if api.discoveryJobs != nil && api.network != nil && existing.Host != updated.Host {
@@ -106,22 +169,111 @@ func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeTargetRequest(r *http.Request) (Target, error) {
+func decodeTargetRequest(r *http.Request) (targetRequest, error) {
 	defer r.Body.Close()
-	var target Target
-	if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+	var req targetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return targetRequest{}, err
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Host = normalizeTargetHost(req.Host)
+	if req.Host == "" {
+		return targetRequest{}, errors.New("target host is required")
+	}
+	if req.Name == "" {
+		req.Name = req.Host
+	}
+	if req.Kind != TargetKindSystem && req.Kind != TargetKindNetwork {
+		return targetRequest{}, errors.New("target kind must be system or network")
+	}
+	return req, nil
+}
+
+func normalizeTargetHost(value string) string {
+	value = strings.TrimSpace(value)
+	if ip := net.ParseIP(strings.Trim(value, "[]")); ip != nil {
+		return ip.String()
+	}
+	return strings.ToLower(strings.TrimSuffix(value, "."))
+}
+
+func (req targetRequest) target() Target {
+	return Target{
+		ID: req.ID, Name: req.Name, Kind: req.Kind, Host: req.Host,
+		Status: req.Status, Labels: req.Labels,
+	}
+}
+
+func (api targetAPI) findTargetByHost(ctx context.Context, target Target) (Target, error) {
+	targets, err := api.repo.ListTargets(ctx, target.TenantID)
+	if err != nil {
 		return Target{}, err
 	}
-	if target.Name == "" {
-		return Target{}, errors.New("target name is required")
+	for _, existing := range targets {
+		if existing.Kind == target.Kind && strings.EqualFold(strings.TrimSpace(existing.Host), target.Host) {
+			return existing, nil
+		}
 	}
-	if target.Kind == "" {
-		return Target{}, errors.New("target kind is required")
+	return Target{}, nil
+}
+
+func (api targetAPI) resolveSNMPProfileID(ctx context.Context, tenantID, requested ID) (ID, error) {
+	if api.snmp == nil {
+		return requested, nil
 	}
-	if target.Host == "" {
-		return Target{}, errors.New("target host is required")
+	if requested != "" {
+		if _, err := api.snmp.GetSNMPProfile(ctx, tenantID, requested); err != nil {
+			return "", errors.New("selected SNMP profile does not exist")
+		}
+		return requested, nil
 	}
-	return target, nil
+	profiles, err := api.snmp.ListSNMPProfiles(ctx, tenantID)
+	if err != nil {
+		return "", err
+	}
+	switch len(profiles) {
+	case 0:
+		return "", errors.New("create an SNMP profile before adding a network device")
+	case 1:
+		return profiles[0].ID, nil
+	default:
+		return "", errors.New("select an SNMP profile")
+	}
+}
+
+func (api targetAPI) createNetworkTarget(ctx context.Context, target Target, device NetworkDevice) (Target, NetworkDevice, error) {
+	if provisioner, ok := api.repo.(NetworkTargetProvisioner); ok {
+		return provisioner.CreateNetworkTarget(ctx, target, device)
+	}
+	created, err := api.repo.CreateTarget(ctx, target)
+	if err != nil {
+		return Target{}, NetworkDevice{}, err
+	}
+	createdDevice, err := api.network.UpsertDevice(ctx, device)
+	if err != nil {
+		_ = api.repo.DeleteTarget(ctx, target.TenantID, target.ID)
+		return Target{}, NetworkDevice{}, err
+	}
+	return created, createdDevice, nil
+}
+
+func promoteDiscoveredTargetName(ctx context.Context, repo TargetRepository, tenantID, targetID ID, sysName string) error {
+	sysName = strings.TrimSpace(sysName)
+	if repo == nil || sysName == "" {
+		return nil
+	}
+	target, err := repo.GetTarget(ctx, tenantID, targetID)
+	if err != nil {
+		return err
+	}
+	// Host is the automatic placeholder. Any other name is an explicit user
+	// choice and must not be overwritten by a later discovery run.
+	if target.Name != "" && target.Name != target.Host {
+		return nil
+	}
+	target.Name = sysName
+	_, err = repo.UpdateTarget(ctx, target)
+	return err
 }
 
 func targetResourceFromPath(r *http.Request, _ AuthContext) (ResourceRef, error) {

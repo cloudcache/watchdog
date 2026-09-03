@@ -109,6 +109,9 @@ func (s DiscoveryScheduler) runDiscovery(ctx context.Context, job DiscoveryJob) 
 	if err != nil {
 		return err
 	}
-	_, err = ImportSNMPCollectorDiscoveryResult(ctx, s.Network, s.Collector, job.TenantID, device, result)
-	return err
+	report, err := ImportSNMPCollectorDiscoveryResult(ctx, s.Network, s.Collector, job.TenantID, device, result)
+	if err != nil {
+		return err
+	}
+	return promoteDiscoveredTargetName(ctx, s.Targets, job.TenantID, device.TargetID, report.Device.SysName)
 }

@@ -207,6 +207,11 @@ msgstr "添加资源"
 msgid "Add Set"
 msgstr ""
 
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Add SNMP Device"
+msgstr "添加 SNMP 網元"
+
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #~ msgid "Add Target"
@@ -951,6 +956,10 @@ msgstr ""
 msgid "Create Permission"
 msgstr ""
 
+#: src/components/routes/target-form.tsx
+msgid "Create SNMP profile"
+msgstr "新增 SNMP 設定"
+
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Create SNMP Profile"
@@ -1225,6 +1234,10 @@ msgstr "{extraFsName}的磁碟使用量"
 msgctxt "Layout display options"
 msgid "Display"
 msgstr "顯示"
+
+#: src/components/routes/target-form.tsx
+msgid "Display name (optional)"
+msgstr "顯示名稱（可選）"
 
 #: src/components/routes/network-port.tsx
 msgid "Distance"
@@ -1757,6 +1770,7 @@ msgid "Failed to load SNMP profile"
 msgstr ""
 
 #: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
 msgstr ""
 
@@ -2047,9 +2061,9 @@ msgstr "Homebrew 指令"
 msgid "Host"
 msgstr ""
 
-#: src/components/add-system.tsx
-#~ msgid "Host / IP"
-#~ msgstr ""
+#: src/components/routes/target-form.tsx
+msgid "Host / IP"
+msgstr ""
 
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Host / IP / Domain"
@@ -2277,6 +2291,7 @@ msgstr ""
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
@@ -2454,7 +2469,6 @@ msgstr ""
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
-#: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -2742,6 +2756,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #~ msgid "No sensors found."
 #~ msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "No SNMP profile is configured."
+msgstr "尚未設定 SNMP。"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "No SNMP profiles found."
@@ -3482,6 +3500,10 @@ msgstr ""
 #~ msgid "Select ports"
 #~ msgstr ""
 
+#: src/components/routes/target-form.tsx
+msgid "Select SNMP profile"
+msgstr "選擇 SNMP 設定"
+
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Select targets and metrics, then draw an aggregate chart."
 #~ msgstr ""
@@ -3591,9 +3613,17 @@ msgstr "SMTP 設定"
 #~ msgid "SNMP"
 #~ msgstr ""
 
+#: src/components/routes/target-form.tsx
+msgid "SNMP port"
+msgstr "SNMP 連接埠"
+
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Port"
 msgstr ""
+
+#: src/components/routes/target-form.tsx
+msgid "SNMP profile"
+msgstr "SNMP 設定"
 
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Profile"

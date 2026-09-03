@@ -202,6 +202,11 @@ msgstr "Add Resource"
 msgid "Add Set"
 msgstr "Add Set"
 
+#: src/components/routes/target-form.tsx
+#: src/components/routes/target-form.tsx
+msgid "Add SNMP Device"
+msgstr "Add SNMP Device"
+
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #~ msgid "Add Target"
@@ -946,6 +951,10 @@ msgstr "Create MIB Module"
 msgid "Create Permission"
 msgstr "Create Permission"
 
+#: src/components/routes/target-form.tsx
+msgid "Create SNMP profile"
+msgstr "Create SNMP profile"
+
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Create SNMP Profile"
@@ -1220,6 +1229,10 @@ msgstr "Disk usage of {extraFsName}"
 msgctxt "Layout display options"
 msgid "Display"
 msgstr "Display"
+
+#: src/components/routes/target-form.tsx
+msgid "Display name (optional)"
+msgstr "Display name (optional)"
 
 #: src/components/routes/network-port.tsx
 msgid "Distance"
@@ -1752,6 +1765,7 @@ msgid "Failed to load SNMP profile"
 msgstr "Failed to load SNMP profile"
 
 #: src/components/routes/snmp-profiles.tsx
+#: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
 msgstr "Failed to load SNMP profiles"
 
@@ -2042,9 +2056,9 @@ msgstr "Homebrew command"
 msgid "Host"
 msgstr "Host"
 
-#: src/components/add-system.tsx
-#~ msgid "Host / IP"
-#~ msgstr "Host / IP"
+#: src/components/routes/target-form.tsx
+msgid "Host / IP"
+msgstr "Host / IP"
 
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Host / IP / Domain"
@@ -2272,6 +2286,7 @@ msgstr "Loading inventory..."
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
@@ -2449,7 +2464,6 @@ msgstr "Multiple devices"
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
-#: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -2737,6 +2751,10 @@ msgstr "No sensors discovered."
 #: src/components/routes/network-device.tsx
 #~ msgid "No sensors found."
 #~ msgstr "No sensors found."
+
+#: src/components/routes/target-form.tsx
+msgid "No SNMP profile is configured."
+msgstr "No SNMP profile is configured."
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "No SNMP profiles found."
@@ -3477,6 +3495,10 @@ msgstr "Select at least one target and one metric"
 #~ msgid "Select ports"
 #~ msgstr "Select ports"
 
+#: src/components/routes/target-form.tsx
+msgid "Select SNMP profile"
+msgstr "Select SNMP profile"
+
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Select targets and metrics, then draw an aggregate chart."
 #~ msgstr "Select targets and metrics, then draw an aggregate chart."
@@ -3586,9 +3608,17 @@ msgstr "SMTP settings"
 #~ msgid "SNMP"
 #~ msgstr "SNMP"
 
+#: src/components/routes/target-form.tsx
+msgid "SNMP port"
+msgstr "SNMP port"
+
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Port"
 msgstr "SNMP Port"
+
+#: src/components/routes/target-form.tsx
+msgid "SNMP profile"
+msgstr "SNMP profile"
 
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Profile"

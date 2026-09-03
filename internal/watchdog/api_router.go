@@ -81,7 +81,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	mux.Handle("GET /api/v1/tenants", listTenants)
 	mux.Handle("GET /api/v1/me/tenants", listTenants)
 	if cfg.Targets != nil {
-		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs)
+		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs, cfg.SNMP)
 	}
 	if cfg.Network != nil {
 		registerNetworkRoutes(mux, auth, cfg.Network, cfg.Targets, cfg.Agents, cfg.SNMP, cfg.SNMPDiscovery, cfg.SNMPCollector, cfg.SeriesCleaner, cfg.DiscoveryJobs, cfg.Audit)

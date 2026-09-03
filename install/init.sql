@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS targets (
   labels_json JSON NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_targets_tenant_kind_host (tenant_id, kind, host),
   KEY idx_targets_tenant_kind_status (tenant_id, kind, status),
   CONSTRAINT fk_targets_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
