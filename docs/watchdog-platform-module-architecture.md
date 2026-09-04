@@ -341,6 +341,18 @@ plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须�
 
 这里的 Ed25519 public key 仍必须由 PLAT-03 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。key rotation、撤销、agent-side signature 验证、失败 ACK 保留 LKG 和 rollout/canary 尚未完成。
 
+Migration `019_collector_ownership_evidence.sql` 补充所有权切换需要的三类规范化机器事实，而不是把时间戳或布尔证明塞进 plan/job JSON：
+
+| 表 | 主键/唯一性 | 保存内容 | 禁止内容 |
+|---|---|---|---|
+| `collector_service_principals` | stable ID；`(service_type,principal_ref)` 全局唯一 | collector 所属、secret reference、provider、grant/revoke receipt ref+SHA-256、服务端 revoke 时间、ACL 传播窗、row version | Kafka 密码/私钥、客户端自报 revoke 时间、可被多个 collector 共用的 principal |
+| `collector_ownership_transfers` | stable ID；`(tenant,exporter,old_epoch)` 唯一 | old/new collector、old/revoke/new plan revision、严格递增 epoch、old principal、clock skew、审批、old-owner drain receipt | 管理员填写的“已 drain/已 revoke”布尔值、未绑定 plan 的模糊切换 |
+| `collector_state_restore_receipts` | `(transfer,state_kind,state_identity_key)` | new owner boot/config、exact old epoch/generation、new baseline generation、receipt hash、服务端 report 时间 | 重复复制 plan/ACL/drain 事实、任意 Kafka key |
+
+`collector_plan_revisions` 同时增加 `(tenant_id,collector_id,config_version)` 复合唯一键，使 transfer 的三个 plan 外键都在数据库层包含 tenant。transfer 创建时两端必须为 `flow_collect`；old plan 必须 active 且 ACK/LKG，old revoke plan 必须是其 validated successor，new plan 必须衔接 new collector head，old principal 必须 active 且只属于 old collector。服务层还解析签名 plan payload，验证 old plan 的 exporter/old epoch 准入、revoke plan 的完全移除，以及 new plan 以 new epoch 接管完全相同的 protocol/source-prefix/domain selector 集合。old drain 只在 old collector 当前 boot 已应用 revoke plan后接受；restore 只在 new collector 当前 boot 已应用 new plan后接受；事实时间一律由服务端写入。repository 方法中的 `AuthenticatedCollectorID` 是内部 adapter 参数，不是公开 DTO 字段：HTTP handler 必须从 token/mTLS AuthContext 注入并拒绝 body 冒充。Kafka grant/revoke receipt 同样只能由完成 provider 调用的受信 worker传入，不能开放成管理员上传接口。
+
+由此生成的 cleanup evidence 使用两类错误语义：关系尚未执行完成返回 `not ready`，允许有界重试；行已存在但关系、摘要或时序损坏返回 `invalid evidence`，任务终态失败并等待人工修复，不能无限重试或降级清理。`audit_logs` 仅记录哈希和资源关系用于追责，不是机器事实源。
+
 ### 6.2 生命周期
 
 ```text

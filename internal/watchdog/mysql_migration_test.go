@@ -37,6 +37,9 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"collector_agents",
 		"collector_bindings",
 		"collector_plan_revisions",
+		"collector_service_principals",
+		"collector_ownership_transfers",
+		"collector_state_restore_receipts",
 	} {
 		if !tables[table] {
 			t.Fatalf("migration missing table %s", table)
@@ -78,20 +81,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "018" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "019" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "018" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "019" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs", "collector_agents", "collector_bindings", "collector_plan_revisions"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers", "collector_state_restore_receipts"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -190,7 +193,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 18 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "018" {
+	if len(migrations) != 19 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "019" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {

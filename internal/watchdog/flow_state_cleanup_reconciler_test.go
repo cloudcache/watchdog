@@ -88,6 +88,57 @@ func TestFlowStateCleanupReconcilerCheckpointsBeforeRetry(t *testing.T) {
 	}
 }
 
+func TestFlowStateCleanupReconcilerClassifiesManagementEvidenceFailures(t *testing.T) {
+	base := time.Unix(2_150_000, 0).UTC()
+	tests := []struct {
+		name       string
+		evidence   *fakeFlowStateCleanupEvidence
+		wantStatus OperationJobStatus
+		wantCode   string
+		wantRetry  int
+		wantFail   int
+	}{
+		{
+			name:       "missing fence remains retryable",
+			evidence:   &fakeFlowStateCleanupEvidence{fenceErr: ErrCollectorEvidenceNotReady},
+			wantStatus: OperationJobQueued,
+			wantCode:   "FENCE_EVIDENCE_UNAVAILABLE",
+			wantRetry:  1,
+		},
+		{
+			name:       "invalid fence fails closed",
+			evidence:   &fakeFlowStateCleanupEvidence{fenceErr: ErrFlowStateCleanupInvalidEvidence},
+			wantStatus: OperationJobFailed,
+			wantCode:   "INVALID_FENCE_EVIDENCE",
+			wantFail:   1,
+		},
+		{
+			name: "invalid restore proof fails closed",
+			evidence: &fakeFlowStateCleanupEvidence{
+				fence:    cleanupEvidenceFixture(base).fence,
+				proofErr: ErrFlowStateCleanupInvalidEvidence,
+			},
+			wantStatus: OperationJobFailed,
+			wantCode:   "INVALID_RESTORE_PROOF",
+			wantFail:   1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := newFakeFlowStateCleanupRepository(flowStateCleanupJobFixture(t))
+			reconciler := newTestFlowStateCleanupReconciler(t, repository, test.evidence, cleanupReaderFixture(base), &fakeFlowStateCleanupWriter{}, base.Add(10*time.Second))
+			worked, err := reconciler.ReconcileOne(context.Background())
+			if err != nil || !worked {
+				t.Fatalf("worked=%t err=%v", worked, err)
+			}
+			job := repository.snapshot()
+			if job.Status != test.wantStatus || job.LastErrorCode != test.wantCode || repository.requeues != test.wantRetry || repository.failures != test.wantFail {
+				t.Fatalf("job=%+v requeues=%d failures=%d", job, repository.requeues, repository.failures)
+			}
+		})
+	}
+}
+
 func TestFlowStateCleanupReconcilerFailsWhenOldStateReappears(t *testing.T) {
 	base := time.Unix(2_200_000, 0).UTC()
 	repository := newFakeFlowStateCleanupRepository(flowStateCleanupJobFixture(t))

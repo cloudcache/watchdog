@@ -18,6 +18,7 @@ import (
 var (
 	ErrFlowStateCleanupReplacementNotObserved = errors.New("flow state-cleanup replacement is not visible")
 	ErrFlowStateCleanupInvalidReplacement     = errors.New("flow state-cleanup replacement is invalid")
+	ErrFlowStateCleanupInvalidEvidence        = errors.New("flow state-cleanup management evidence is invalid")
 	ErrFlowStateCleanupOldStatePresent        = errors.New("flow state-cleanup old state is present after tombstone")
 	ErrFlowStateCleanupBoundaryNotAdvanced    = errors.New("flow state-cleanup Kafka boundary has not advanced")
 )
@@ -256,6 +257,9 @@ func (r *FlowStateCleanupReconciler) advanceOne(ctx context.Context, machine *fl
 	case flowcollect.StateCleanupAwaitingFence:
 		evidence, err := r.evidence.OwnershipFence(ctx, snapshot)
 		if err != nil {
+			if errors.Is(err, ErrFlowStateCleanupInvalidEvidence) {
+				return cleanupStepTerminal("INVALID_FENCE_EVIDENCE", err)
+			}
 			return cleanupStepRetry("FENCE_EVIDENCE_UNAVAILABLE", err)
 		}
 		if err := machine.ConfirmFence(evidence, r.now().UTC()); err != nil {
@@ -271,6 +275,9 @@ func (r *FlowStateCleanupReconciler) advanceOne(ctx context.Context, machine *fl
 		}
 		proof, err := r.evidence.ReplacementRestoreProof(ctx, snapshot)
 		if err != nil {
+			if errors.Is(err, ErrFlowStateCleanupInvalidEvidence) {
+				return cleanupStepTerminal("INVALID_RESTORE_PROOF", err)
+			}
 			return cleanupStepRetry("RESTORE_PROOF_UNAVAILABLE", err)
 		}
 		replacement, observation, err := r.reader.ObserveReplacement(ctx, key, snapshot.Old.Kind, proof)

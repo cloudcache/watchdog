@@ -66,6 +66,14 @@ type CollectorPlanRepository interface {
 	AcknowledgeCollectorPlan(ctx context.Context, acknowledgement CollectorPlanAcknowledgement) error
 }
 
+type CollectorOwnershipRepository interface {
+	CreateCollectorServicePrincipal(ctx context.Context, grant CollectorServicePrincipalGrant) error
+	RevokeCollectorServicePrincipal(ctx context.Context, revocation CollectorPrincipalRevocation) error
+	CreateCollectorOwnershipTransfer(ctx context.Context, transfer CollectorOwnershipTransfer) error
+	RecordCollectorDrain(ctx context.Context, receipt CollectorDrainReceipt) error
+	RecordCollectorStateRestore(ctx context.Context, receipt CollectorStateRestoreReceipt) error
+}
+
 type NetworkRepository interface {
 	ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error)
 	GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error)

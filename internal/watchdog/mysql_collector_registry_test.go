@@ -35,6 +35,29 @@ func TestCollectorRegistryMigrationHasCompatibilityAndPlanSafetyContract(t *test
 	}
 }
 
+func TestCollectorOwnershipEvidenceMigrationHasNormalizedSafetyContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "019_collector_ownership_evidence.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, fragment := range []string{
+		"create table if not exists collector_service_principals",
+		"unique key uq_collector_service_principal_ref",
+		"create table if not exists collector_ownership_transfers",
+		"old_revoke_plan_revision bigint unsigned not null",
+		"unique key uq_collector_ownership_transfer_epoch",
+		"create table if not exists collector_state_restore_receipts",
+		"primary key (transfer_id, state_kind, state_identity_key)",
+		"state_identity_key binary(32)",
+	} {
+		if !strings.Contains(sqlText, fragment) {
+			t.Fatalf("collector ownership evidence migration missing %q", fragment)
+		}
+	}
+}
+
 func TestLegacyCollectorProjectionMappings(t *testing.T) {
 	tests := []struct {
 		legacyStatus string
