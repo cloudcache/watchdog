@@ -93,6 +93,21 @@ func TestConfigRejectsInvalidKafkaTopicAndTLSContracts(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigRequiresKafkaMTLSIdentity(t *testing.T) {
+	config := DefaultConfig()
+	config.PlanFile = "/tmp/plan.json"
+	config.PlanPublicKeyFile = "/tmp/plan.pub"
+	config.Kafka.Brokers = []string{"kafka.internal:9093"}
+	if err := config.ValidateRuntime(); err == nil {
+		t.Fatal("Kafka TLS without a client identity was accepted at runtime")
+	}
+	config.Kafka.TLSCertFile = "/tmp/collector.crt"
+	config.Kafka.TLSKeyFile = "/tmp/collector.key"
+	if err := config.ValidateRuntime(); err != nil {
+		t.Fatalf("Kafka mTLS runtime config was rejected: %v", err)
+	}
+}
+
 func TestConfigRequiresPlanHistoryActiveAndAntiRollbackSlots(t *testing.T) {
 	config := DefaultConfig()
 	config.PlanHistoryMaxEntries = 1

@@ -836,7 +836,7 @@ estimated counters,duration,quality_flags}
 ### 12.3 可靠性和安全
 
 - producer 显式启用 idempotence、`acks=all`、重试和压缩；生产 topic 推荐 replication factor 3、`min.insync.replicas=2`；这些约束与 Apache Kafka 官方 producer/topic 配置一致；
-- Kafka 使用 TLS，flow-collect principal 只能 produce normalized/decode-DLQ/quarantine 并读写 collect-state；dimension worker 只能 consume normalized group、读写 checkpoint 并写 CH base/获批派生 target；
+- Kafka 使用 TLS，flow-collect principal 只能对 normalized/decode-DLQ/quarantine 执行 `WRITE/DESCRIBE/DESCRIBE_CONFIGS`，对 collect-state 执行 `READ/WRITE/DESCRIBE/DESCRIBE_CONFIGS`，并拥有 idempotent producer 必需的 cluster `IDEMPOTENT_WRITE`；不得拥有 topic/ACL 创建、删除、alter 或 cluster action。`DESCRIBE_CONFIGS` 只用于启动 topic contract fence。dimension worker 只能 consume normalized group、读写 checkpoint 并写 CH base/获批派生 target；
 - 完整 raw datagram 先进入 append-only WAL，Kafka ack 后推进连续 checkpoint；broker 不可用时继续从 WAL 积压，WAL hard limit 产生 data-loss interval，不能静默覆盖；
 - dimension worker 为每个 partition 的连续 offset batch 在 insert 前持久化 manifest，使 crash 后仍生成同一 `ingest_batch_id`；CH enriched base 成功后才提交 offset；每个派生表保留同一 ID。VM/派生 target 以固定数量的 partition/target key 推进连续 watermark，空洞保存为有界 missing batch IDs 并从 base 幂等回补，禁止按每个 batch 创建永久 compacted key；
 - 生产 ClickHouse base 使用 Replicated* insert dedup，`ingest_batch_id` 同时写入 base 并保留到 TTL 结束，支持 dedup window 外核验；

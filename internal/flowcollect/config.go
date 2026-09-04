@@ -352,6 +352,9 @@ func (c Config) ValidateRuntime() error {
 	if len(c.Kafka.Brokers) == 0 {
 		return errors.New("flow_collect.kafka.brokers is required at runtime")
 	}
+	if c.Kafka.TLS && (c.Kafka.TLSCertFile == "" || c.Kafka.TLSKeyFile == "") {
+		return errors.New("flow_collect.kafka requires an mTLS client certificate and key at runtime")
+	}
 	if !c.Kafka.TLS {
 		for _, broker := range c.Kafka.Brokers {
 			host, _, _ := net.SplitHostPort(broker)
