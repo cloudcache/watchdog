@@ -58,6 +58,30 @@ func TestCollectorOwnershipEvidenceMigrationHasNormalizedSafetyContract(t *testi
 	}
 }
 
+func TestCollectorPrincipalOperationMigrationHasCrashRecoveryContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "020_collector_principal_operations.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, fragment := range []string{
+		"grant_operation_key char(64)",
+		"grant_request_hash char(64)",
+		"revoke_operation_key char(64)",
+		"watchdog:imported:grant:",
+		"watchdog:imported:request:",
+		"watchdog:imported:revoke:",
+		"unique key uq_collector_principal_grant_operation",
+		"unique key uq_collector_principal_revoke_operation",
+		"check ((status = 'revoked') = (revoke_operation_key is not null))",
+	} {
+		if !strings.Contains(sqlText, fragment) {
+			t.Fatalf("collector principal operation migration missing %q", fragment)
+		}
+	}
+}
+
 func TestLegacyCollectorProjectionMappings(t *testing.T) {
 	tests := []struct {
 		legacyStatus string

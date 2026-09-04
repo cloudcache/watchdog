@@ -105,6 +105,7 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 		ID: principalID, TenantID: tenantID, CollectorID: oldCollectorID,
 		ServiceType: "kafka", PrincipalRef: "User:flow-old-transfer-test",
 		CredentialSecretRef: "secret://flow/old-transfer", Provider: "kafka-admin",
+		GrantOperationKey: strings.Repeat("a", 64), GrantRequestHash: strings.Repeat("e", 64),
 		GrantReceiptRef: "kafka://acl/grant/old-transfer", GrantReceipt: []byte("verified grant response"),
 		ACLPropagationDelay: 2 * time.Second, ActorID: userID,
 	}
@@ -114,8 +115,33 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	duplicatePrincipal := grant
 	duplicatePrincipal.ID = "principal_transfer_dup"
 	duplicatePrincipal.CollectorID = newCollectorID
+	duplicatePrincipal.GrantOperationKey = strings.Repeat("c", 64)
 	if err := store.CreateCollectorServicePrincipal(ctx, duplicatePrincipal); err == nil {
 		t.Fatal("globally reused Kafka principal was accepted")
+	}
+	storedPrincipal, err := store.GetCollectorServicePrincipalByGrantOperation(ctx, tenantID, grant.GrantOperationKey)
+	if err != nil || storedPrincipal.ID != principalID || storedPrincipal.Status != "active" || storedPrincipal.RowVersion != 1 || storedPrincipal.GrantRequestHash != grant.GrantRequestHash || storedPrincipal.ACLPropagationDelay != grant.ACLPropagationDelay {
+		t.Fatalf("stored principal=%+v err=%v", storedPrincipal, err)
+	}
+	operationProvider := newCollectorPrincipalServiceProvider("kafka-admin")
+	operationService, err := NewCollectorPrincipalService(store, map[string]CollectorPrincipalProvider{"kafka-admin": operationProvider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	servicePrincipal, err := operationService.Grant(ctx, tenantID, newCollectorID, userID, CollectorPrincipalGrantRequest{
+		Provider: "kafka-admin", IdempotencyKey: "new-collector-principal", ACLPropagationDelay: time.Second,
+	})
+	if err != nil || servicePrincipal.Status != "active" || servicePrincipal.RowVersion != 1 {
+		t.Fatalf("provider-backed principal=%+v err=%v", servicePrincipal, err)
+	}
+	if replayed, err := operationService.Grant(ctx, tenantID, newCollectorID, userID, CollectorPrincipalGrantRequest{
+		Provider: "kafka-admin", IdempotencyKey: "new-collector-principal", ACLPropagationDelay: time.Second,
+	}); err != nil || replayed.ID != servicePrincipal.ID || operationProvider.grantCalls != 1 {
+		t.Fatalf("provider-backed grant replay=%+v err=%v calls=%d", replayed, err, operationProvider.grantCalls)
+	}
+	servicePrincipal, err = operationService.RevokeWrite(ctx, tenantID, newCollectorID, servicePrincipal.ID, userID, servicePrincipal.RowVersion)
+	if err != nil || servicePrincipal.Status != "revoked" || servicePrincipal.RowVersion != 2 || operationProvider.revokeCalls != 1 {
+		t.Fatalf("provider-backed revocation=%+v err=%v calls=%d", servicePrincipal, err, operationProvider.revokeCalls)
 	}
 
 	transfer := CollectorOwnershipTransfer{
@@ -194,7 +220,7 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	}
 	revocation := CollectorPrincipalRevocation{
 		TenantID: tenantID, PrincipalID: principalID, ExpectedRowVersion: 1,
-		Provider: "kafka-admin", RevokeReceiptRef: "kafka://acl/revoke/old-transfer",
+		Provider: "kafka-admin", OperationKey: strings.Repeat("b", 64), RevokeReceiptRef: "kafka://acl/revoke/old-transfer",
 		RevokeReceipt: []byte("verified revoke response"), ActorID: userID,
 	}
 	if err := store.RevokeCollectorServicePrincipal(ctx, revocation); err != nil {
@@ -202,6 +228,15 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	}
 	if err := store.RevokeCollectorServicePrincipal(ctx, revocation); err != nil {
 		t.Fatalf("idempotent principal revocation: %v", err)
+	}
+	conflictingRevocation := revocation
+	conflictingRevocation.OperationKey = strings.Repeat("d", 64)
+	if err := store.RevokeCollectorServicePrincipal(ctx, conflictingRevocation); !errors.Is(err, ErrCollectorEvidenceConflict) {
+		t.Fatalf("conflicting revocation operation error=%v", err)
+	}
+	storedPrincipal, err = store.GetCollectorServicePrincipal(ctx, tenantID, oldCollectorID, principalID)
+	if err != nil || storedPrincipal.Status != "revoked" || storedPrincipal.RevokeOperationKey != revocation.OperationKey || storedPrincipal.RowVersion != 2 {
+		t.Fatalf("revoked principal=%+v err=%v", storedPrincipal, err)
 	}
 
 	fence, err := evidenceProvider.OwnershipFence(ctx, snapshot)

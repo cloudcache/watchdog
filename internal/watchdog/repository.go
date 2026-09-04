@@ -74,6 +74,13 @@ type CollectorOwnershipRepository interface {
 	RecordCollectorStateRestore(ctx context.Context, receipt CollectorStateRestoreReceipt) error
 }
 
+type CollectorPrincipalOperationRepository interface {
+	CreateCollectorServicePrincipal(ctx context.Context, grant CollectorServicePrincipalGrant) error
+	RevokeCollectorServicePrincipal(ctx context.Context, revocation CollectorPrincipalRevocation) error
+	GetCollectorServicePrincipal(ctx context.Context, tenantID, collectorID, principalID ID) (CollectorServicePrincipal, error)
+	GetCollectorServicePrincipalByGrantOperation(ctx context.Context, tenantID ID, operationKey string) (CollectorServicePrincipal, error)
+}
+
 type NetworkRepository interface {
 	ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error)
 	GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error)

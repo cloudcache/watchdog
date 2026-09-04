@@ -345,11 +345,11 @@ Migration `019_collector_ownership_evidence.sql` 补充所有权切换需要的�
 
 | 表 | 主键/唯一性 | 保存内容 | 禁止内容 |
 |---|---|---|---|
-| `collector_service_principals` | stable ID；`(service_type,principal_ref)` 全局唯一 | collector 所属、secret reference、provider、grant/revoke receipt ref+SHA-256、服务端 revoke 时间、ACL 传播窗、row version | Kafka 密码/私钥、客户端自报 revoke 时间、可被多个 collector 共用的 principal |
+| `collector_service_principals` | stable ID；`(service_type,principal_ref)`、grant/revoke operation key 全局唯一 | collector 所属、secret reference、provider、grant operation/request hash、revoke operation key、grant/revoke receipt ref+SHA-256、服务端 revoke 时间、ACL 传播窗、row version | Kafka 密码/私钥、客户端自报 revoke 时间、可被多个 collector 共用的 principal |
 | `collector_ownership_transfers` | stable ID；`(tenant,exporter,old_epoch)` 唯一 | old/new collector、old/revoke/new plan revision、严格递增 epoch、old principal、clock skew、审批、old-owner drain receipt | 管理员填写的“已 drain/已 revoke”布尔值、未绑定 plan 的模糊切换 |
 | `collector_state_restore_receipts` | `(transfer,state_kind,state_identity_key)` | new owner boot/config、exact old epoch/generation、new baseline generation、receipt hash、服务端 report 时间 | 重复复制 plan/ACL/drain 事实、任意 Kafka key |
 
-`collector_plan_revisions` 同时增加 `(tenant_id,collector_id,config_version)` 复合唯一键，使 transfer 的三个 plan 外键都在数据库层包含 tenant。transfer 创建时两端必须为 `flow_collect`；old plan 必须 active 且 ACK/LKG，old revoke plan 必须是其 validated successor，new plan 必须衔接 new collector head，old principal 必须 active 且只属于 old collector。服务层还解析签名 plan payload，验证 old plan 的 exporter/old epoch 准入、revoke plan 的完全移除，以及 new plan 以 new epoch 接管完全相同的 protocol/source-prefix/domain selector 集合。old drain 只在 old collector 当前 boot 已应用 revoke plan后接受；restore 只在 new collector 当前 boot 已应用 new plan后接受；事实时间一律由服务端写入。repository 方法中的 `AuthenticatedCollectorID` 是内部 adapter 参数，不是公开 DTO 字段：HTTP handler 必须从 token/mTLS AuthContext 注入并拒绝 body 冒充。Kafka grant/revoke receipt 同样只能由完成 provider 调用的受信 worker传入，不能开放成管理员上传接口。
+`collector_plan_revisions` 同时增加 `(tenant_id,collector_id,config_version)` 复合唯一键，使 transfer 的三个 plan 外键都在数据库层包含 tenant。transfer 创建时两端必须为 `flow_collect`；old plan 必须 active 且 ACK/LKG，old revoke plan 必须是其 validated successor，new plan 必须衔接 new collector head，old principal 必须 active 且只属于 old collector。服务层还解析签名 plan payload，验证 old plan 的 exporter/old epoch 准入、revoke plan 的完全移除，以及 new plan 以 new epoch 接管完全相同的 protocol/source-prefix/domain selector 集合。old drain 只在 old collector 当前 boot 已应用 revoke plan 后接受；restore 只在 new collector 当前 boot 已应用 new plan 后接受；事实时间一律由服务端写入。repository 方法中的 `AuthenticatedCollectorID` 是内部 adapter 参数，不是公开 DTO 字段：HTTP handler 必须从 token/mTLS AuthContext 注入并拒绝 body 冒充。Kafka grant/revoke receipt 同样只能由完成 provider 调用的受信 worker 传入，不能开放成管理员上传接口。migration `020` 增加稳定 operation/request hash；provider-neutral service 固定先查 operation 再执行，模糊失败后二次查询，只有绑定结果通过才写 receipt 摘要。真实 provider 未注入时对应 API 不注册。
 
 由此生成的 cleanup evidence 使用两类错误语义：关系尚未执行完成返回 `not ready`，允许有界重试；行已存在但关系、摘要或时序损坏返回 `invalid evidence`，任务终态失败并等待人工修复，不能无限重试或降级清理。`audit_logs` 仅记录哈希和资源关系用于追责，不是机器事实源。
 
@@ -441,6 +441,8 @@ POST                     /api/v1/collectors/{id}/plans
 POST                     /api/v1/collectors/{id}/plans/{version}:validate
 POST                     /api/v1/collectors/{id}/plans/{version}:activate
 POST                     /api/v1/collectors/{id}/plans/{version}:rollback
+POST                     /api/v1/collectors/{id}/service-principals
+POST                     /api/v1/collectors/{id}/service-principals/{principal_id}/actions/revoke-write
 POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/actions/drain
 POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/state-restores
 POST                     /api/v1/collector-heartbeats
@@ -448,6 +450,8 @@ GET                      /api/v1/collector-plan
 ```
 
 创建 enrollment、轮换和 revoke 属 `admin/operate`；binding 和 plan draft/preview 属目标资源的 `configure`，activate/rollback 另需 `operate`，主动 probe scope 仍需 `probe_active`。DELETE 只允许 revoked collector 并要求 `If-Match`；restore 不恢复凭据，purge 要求恢复期届满、无 binding/job/spool 引用和独立权限。agent 自用 exchange/heartbeat/plan 走 service authentication，不复用人类 session。Plan list/get 默认脱敏 secret reference；每个 preview/publish/activate/rollback、capability drift 和拒绝原因都写审计。
+
+service-principal grant 要求 `operate` 与 `Idempotency-Key`，body 只允许 provider 和 ACL propagation delay；revoke-write 要求 `operate` 与当前强 `If-Match`，body 为空。principal ref、credential secret ref、operation key、request hash、provider receipt 和事实时间全部由 provider/service 生成，管理 API 不接收；响应只返回安全的 principal identity/status/provider/row version，不返回 secret reference 或 evidence。provider 未配置时路由不得伪造成功或允许上传 receipt。
 
 ownership drain/restore 是 flow collector 的机器事实入口，同样不复用人类 session。URL 中的 collector ID 只用于定位待认证主体；tenant、collector、当前 boot 由 `collector_agents` 在 token bcrypt 或已验证客户端证书 SHA-256 指纹认证后注入，请求 body 不允许覆盖。mTLS 指纹格式固定为 `sha256:<64 lowercase hex>`，未验证 peer certificate 与同时携带 token+证书均拒绝。repository 仍必须校验 transfer old/new owner、active/ACK/LKG plan 和当前 boot，避免“持有有效凭据”被误当作任意 transfer 的写权限。
 

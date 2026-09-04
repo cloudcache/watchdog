@@ -25,6 +25,28 @@ func (s *MySQLStore) CreateCollectorServicePrincipal(ctx context.Context, grant 
 		return err
 	}
 	defer tx.Rollback()
+	var existingID, existingTenant, existingCollector ID
+	var existingService, existingPrincipalRef, existingSecretRef, existingProvider, existingRequestHash, existingReceiptRef, existingReceiptHash string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, tenant_id, collector_id, service_type, principal_ref,
+			credential_secret_ref, provider, grant_request_hash,
+			grant_receipt_ref, grant_receipt_sha256
+		FROM collector_service_principals
+		WHERE grant_operation_key = ? FOR UPDATE
+	`, grant.GrantOperationKey).Scan(
+		&existingID, &existingTenant, &existingCollector, &existingService,
+		&existingPrincipalRef, &existingSecretRef, &existingProvider,
+		&existingRequestHash, &existingReceiptRef, &existingReceiptHash,
+	)
+	if err == nil {
+		if existingID == grant.ID && existingTenant == grant.TenantID && existingCollector == grant.CollectorID && existingService == grant.ServiceType && existingPrincipalRef == grant.PrincipalRef && existingSecretRef == grant.CredentialSecretRef && existingProvider == grant.Provider && existingRequestHash == grant.GrantRequestHash && existingReceiptRef == grant.GrantReceiptRef && existingReceiptHash == grantHash {
+			return tx.Commit()
+		}
+		return ErrCollectorEvidenceConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	var collectorStatus string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT status FROM collector_agents
@@ -39,18 +61,21 @@ func (s *MySQLStore) CreateCollectorServicePrincipal(ctx context.Context, grant 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO collector_service_principals (
 			id, tenant_id, collector_id, service_type, principal_ref,
-			credential_secret_ref, provider, status, grant_receipt_ref,
+			credential_secret_ref, provider, grant_operation_key, grant_request_hash,
+			status, grant_receipt_ref,
 			grant_receipt_sha256, acl_propagation_delay_ms, created_by, updated_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
 	`, grant.ID, grant.TenantID, grant.CollectorID, grant.ServiceType, grant.PrincipalRef,
-		grant.CredentialSecretRef, grant.Provider, grant.GrantReceiptRef, grantHash,
+		grant.CredentialSecretRef, grant.Provider, grant.GrantOperationKey, grant.GrantRequestHash, grant.GrantReceiptRef, grantHash,
 		uint64(grant.ACLPropagationDelay/time.Millisecond), grant.ActorID, grant.ActorID); err != nil {
 		return err
 	}
 	if err := insertCollectorEvidenceAudit(ctx, tx, grant.TenantID, grant.ActorID, "collector_principal", grant.ID, "collector.principal.granted", map[string]any{
 		"collector_id": grant.CollectorID, "service_type": grant.ServiceType,
 		"principal_ref": grant.PrincipalRef, "provider": grant.Provider,
-		"grant_receipt_ref": grant.GrantReceiptRef, "grant_receipt_sha256": grantHash,
+		"grant_operation_key": grant.GrantOperationKey,
+		"grant_request_hash":  grant.GrantRequestHash,
+		"grant_receipt_ref":   grant.GrantReceiptRef, "grant_receipt_sha256": grantHash,
 	}); err != nil {
 		return err
 	}
@@ -58,7 +83,7 @@ func (s *MySQLStore) CreateCollectorServicePrincipal(ctx context.Context, grant 
 }
 
 func (s *MySQLStore) RevokeCollectorServicePrincipal(ctx context.Context, revocation CollectorPrincipalRevocation) error {
-	if revocation.TenantID == "" || len(revocation.TenantID) > 26 || revocation.PrincipalID == "" || len(revocation.PrincipalID) > 26 || revocation.ExpectedRowVersion == 0 || revocation.ActorID == "" || len(revocation.ActorID) > 26 || revocation.Provider == "" || len(revocation.Provider) > 64 || revocation.RevokeReceiptRef == "" || len(revocation.RevokeReceiptRef) > 512 {
+	if revocation.TenantID == "" || len(revocation.TenantID) > 26 || revocation.PrincipalID == "" || len(revocation.PrincipalID) > 26 || revocation.ExpectedRowVersion == 0 || revocation.ActorID == "" || len(revocation.ActorID) > 26 || revocation.Provider == "" || len(revocation.Provider) > 64 || !isPrintableASCII(revocation.Provider) || !validSHA256Hex(revocation.OperationKey) || revocation.RevokeReceiptRef == "" || len(revocation.RevokeReceiptRef) > 512 || !isPrintableASCII(revocation.RevokeReceiptRef) {
 		return errors.New("collector principal revocation is incomplete")
 	}
 	receiptHash, err := evidencePayloadSHA256(revocation.RevokeReceipt)
@@ -72,17 +97,18 @@ func (s *MySQLStore) RevokeCollectorServicePrincipal(ctx context.Context, revoca
 	defer tx.Rollback()
 	var status, provider string
 	var rowVersion uint64
-	var storedRef, storedHash sql.NullString
+	var storedOperation, storedRef, storedHash sql.NullString
 	if err := tx.QueryRowContext(ctx, `
-		SELECT status, provider, row_version, revoke_receipt_ref, revoke_receipt_sha256
+		SELECT status, provider, row_version, revoke_operation_key,
+			revoke_receipt_ref, revoke_receipt_sha256
 		FROM collector_service_principals
 		WHERE tenant_id = ? AND id = ?
 		FOR UPDATE
-	`, revocation.TenantID, revocation.PrincipalID).Scan(&status, &provider, &rowVersion, &storedRef, &storedHash); err != nil {
+	`, revocation.TenantID, revocation.PrincipalID).Scan(&status, &provider, &rowVersion, &storedOperation, &storedRef, &storedHash); err != nil {
 		return err
 	}
 	if status == "revoked" {
-		if provider == revocation.Provider && storedRef.String == revocation.RevokeReceiptRef && storedHash.String == receiptHash {
+		if provider == revocation.Provider && storedOperation.String == revocation.OperationKey && storedRef.String == revocation.RevokeReceiptRef && storedHash.String == receiptHash {
 			return tx.Commit()
 		}
 		return ErrCollectorEvidenceConflict
@@ -93,11 +119,11 @@ func (s *MySQLStore) RevokeCollectorServicePrincipal(ctx context.Context, revoca
 	revokedAt := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE collector_service_principals
-		SET status = 'revoked', write_revoked_at = ?, revoke_receipt_ref = ?,
+		SET status = 'revoked', write_revoked_at = ?, revoke_operation_key = ?, revoke_receipt_ref = ?,
 			revoke_receipt_sha256 = ?, updated_by = ?, row_version = row_version + 1,
 			updated_at = CURRENT_TIMESTAMP(3)
 		WHERE tenant_id = ? AND id = ? AND status = 'active' AND row_version = ?
-	`, revokedAt, revocation.RevokeReceiptRef, receiptHash, revocation.ActorID,
+	`, revokedAt, revocation.OperationKey, revocation.RevokeReceiptRef, receiptHash, revocation.ActorID,
 		revocation.TenantID, revocation.PrincipalID, revocation.ExpectedRowVersion)
 	if err != nil {
 		return err
@@ -106,7 +132,7 @@ func (s *MySQLStore) RevokeCollectorServicePrincipal(ctx context.Context, revoca
 		return ErrCollectorEvidenceConflict
 	}
 	if err := insertCollectorEvidenceAudit(ctx, tx, revocation.TenantID, revocation.ActorID, "collector_principal", revocation.PrincipalID, "collector.principal.write_revoked", map[string]any{
-		"provider": revocation.Provider, "receipt_ref": revocation.RevokeReceiptRef,
+		"provider": revocation.Provider, "operation_key": revocation.OperationKey, "receipt_ref": revocation.RevokeReceiptRef,
 		"receipt_sha256": receiptHash, "write_revoked_at": revokedAt,
 	}); err != nil {
 		return err
@@ -491,6 +517,65 @@ func (s *MySQLStore) RecordCollectorStateRestore(ctx context.Context, receipt Co
 	return tx.Commit()
 }
 
+func (s *MySQLStore) GetCollectorServicePrincipal(ctx context.Context, tenantID, collectorID, principalID ID) (CollectorServicePrincipal, error) {
+	if s == nil || s.db == nil || ctx == nil || !validCollectorEvidenceID(tenantID) || !validCollectorEvidenceID(collectorID) || !validCollectorEvidenceID(principalID) {
+		return CollectorServicePrincipal{}, errors.New("collector service principal identity is required")
+	}
+	return scanCollectorServicePrincipal(s.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, collector_id, service_type, principal_ref,
+			credential_secret_ref, provider, grant_operation_key, grant_request_hash,
+			status, COALESCE(revoke_operation_key, ''), acl_propagation_delay_ms,
+			row_version, created_at, updated_at
+		FROM collector_service_principals
+		WHERE tenant_id = ? AND collector_id = ? AND id = ?
+	`, tenantID, collectorID, principalID))
+}
+
+func (s *MySQLStore) GetCollectorServicePrincipalByGrantOperation(ctx context.Context, tenantID ID, operationKey string) (CollectorServicePrincipal, error) {
+	if s == nil || s.db == nil || ctx == nil || !validCollectorEvidenceID(tenantID) || !validSHA256Hex(operationKey) {
+		return CollectorServicePrincipal{}, errors.New("collector service principal grant operation is required")
+	}
+	return scanCollectorServicePrincipal(s.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, collector_id, service_type, principal_ref,
+			credential_secret_ref, provider, grant_operation_key, grant_request_hash,
+			status, COALESCE(revoke_operation_key, ''), acl_propagation_delay_ms,
+			row_version, created_at, updated_at
+		FROM collector_service_principals
+		WHERE tenant_id = ? AND grant_operation_key = ?
+	`, tenantID, operationKey))
+}
+
+type collectorServicePrincipalRow interface {
+	Scan(...any) error
+}
+
+func scanCollectorServicePrincipal(row collectorServicePrincipalRow) (CollectorServicePrincipal, error) {
+	var principal CollectorServicePrincipal
+	var propagationDelayMS uint64
+	err := row.Scan(
+		&principal.ID, &principal.TenantID, &principal.CollectorID,
+		&principal.ServiceType, &principal.PrincipalRef, &principal.CredentialSecretRef,
+		&principal.Provider, &principal.GrantOperationKey, &principal.GrantRequestHash,
+		&principal.Status, &principal.RevokeOperationKey, &propagationDelayMS,
+		&principal.RowVersion,
+		&principal.CreatedAt, &principal.UpdatedAt,
+	)
+	if err != nil {
+		return CollectorServicePrincipal{}, err
+	}
+	if propagationDelayMS > uint64((24*time.Hour)/time.Millisecond) {
+		return CollectorServicePrincipal{}, errors.New("stored collector service principal propagation delay is invalid")
+	}
+	principal.ACLPropagationDelay = time.Duration(propagationDelayMS) * time.Millisecond
+	if !validCollectorEvidenceID(principal.ID) || !validCollectorEvidenceID(principal.TenantID) || !validCollectorEvidenceID(principal.CollectorID) || principal.ServiceType != "kafka" || principal.PrincipalRef == "" || len(principal.PrincipalRef) > 190 || !isPrintableASCII(principal.PrincipalRef) || principal.CredentialSecretRef == "" || len(principal.CredentialSecretRef) > 255 || !isPrintableASCII(principal.CredentialSecretRef) || principal.Provider == "" || len(principal.Provider) > 64 || !isPrintableASCII(principal.Provider) || !validSHA256Hex(principal.GrantOperationKey) || !validSHA256Hex(principal.GrantRequestHash) || !validEvidenceDuration(principal.ACLPropagationDelay) || principal.RowVersion == 0 || principal.CreatedAt.IsZero() || principal.UpdatedAt.Before(principal.CreatedAt) {
+		return CollectorServicePrincipal{}, errors.New("stored collector service principal is invalid")
+	}
+	if (principal.Status == "active" && principal.RevokeOperationKey != "") || (principal.Status == "revoked" && !validSHA256Hex(principal.RevokeOperationKey)) || (principal.Status != "active" && principal.Status != "revoked") {
+		return CollectorServicePrincipal{}, errors.New("stored collector service principal lifecycle is invalid")
+	}
+	return principal, nil
+}
+
 func hashCollectorReceipt(value any) (string, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -527,3 +612,4 @@ func insertCollectorEvidenceAudit(ctx context.Context, tx *sql.Tx, tenantID, act
 }
 
 var _ CollectorOwnershipRepository = (*MySQLStore)(nil)
+var _ CollectorPrincipalOperationRepository = (*MySQLStore)(nil)

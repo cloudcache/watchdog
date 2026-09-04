@@ -25,6 +25,8 @@ type CollectorServicePrincipalGrant struct {
 	PrincipalRef        string
 	CredentialSecretRef string
 	Provider            string
+	GrantOperationKey   string
+	GrantRequestHash    string
 	GrantReceiptRef     string
 	GrantReceipt        []byte
 	ACLPropagationDelay time.Duration
@@ -36,9 +38,28 @@ type CollectorPrincipalRevocation struct {
 	PrincipalID        ID
 	ExpectedRowVersion uint64
 	Provider           string
+	OperationKey       string
 	RevokeReceiptRef   string
 	RevokeReceipt      []byte
 	ActorID            ID
+}
+
+type CollectorServicePrincipal struct {
+	ID                  ID
+	TenantID            ID
+	CollectorID         ID
+	ServiceType         string
+	PrincipalRef        string
+	CredentialSecretRef string
+	Provider            string
+	GrantOperationKey   string
+	GrantRequestHash    string
+	Status              string
+	RevokeOperationKey  string
+	ACLPropagationDelay time.Duration
+	RowVersion          uint64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type CollectorOwnershipTransfer struct {
@@ -84,7 +105,7 @@ type CollectorStateRestoreReceipt struct {
 }
 
 func validateCollectorServicePrincipalGrant(grant CollectorServicePrincipalGrant) error {
-	if grant.ID == "" || len(grant.ID) > 26 || grant.TenantID == "" || len(grant.TenantID) > 26 || grant.CollectorID == "" || len(grant.CollectorID) > 26 || grant.ServiceType != "kafka" || strings.TrimSpace(grant.PrincipalRef) == "" || len(grant.PrincipalRef) > 190 || !isPrintableASCII(grant.PrincipalRef) || strings.TrimSpace(grant.CredentialSecretRef) == "" || len(grant.CredentialSecretRef) > 255 || strings.TrimSpace(grant.Provider) == "" || len(grant.Provider) > 64 || strings.TrimSpace(grant.GrantReceiptRef) == "" || len(grant.GrantReceiptRef) > 512 || len(grant.GrantReceipt) == 0 || len(grant.GrantReceipt) > collectorEvidenceMaxReceiptBytes || grant.ActorID == "" || len(grant.ActorID) > 26 {
+	if grant.ID == "" || len(grant.ID) > 26 || grant.TenantID == "" || len(grant.TenantID) > 26 || grant.CollectorID == "" || len(grant.CollectorID) > 26 || grant.ServiceType != "kafka" || strings.TrimSpace(grant.PrincipalRef) == "" || len(grant.PrincipalRef) > 190 || !isPrintableASCII(grant.PrincipalRef) || strings.TrimSpace(grant.CredentialSecretRef) == "" || len(grant.CredentialSecretRef) > 255 || !isPrintableASCII(grant.CredentialSecretRef) || strings.TrimSpace(grant.Provider) == "" || len(grant.Provider) > 64 || !isPrintableASCII(grant.Provider) || !validSHA256Hex(grant.GrantOperationKey) || !validSHA256Hex(grant.GrantRequestHash) || strings.TrimSpace(grant.GrantReceiptRef) == "" || len(grant.GrantReceiptRef) > 512 || !isPrintableASCII(grant.GrantReceiptRef) || len(grant.GrantReceipt) == 0 || len(grant.GrantReceipt) > collectorEvidenceMaxReceiptBytes || grant.ActorID == "" || len(grant.ActorID) > 26 {
 		return errors.New("collector service principal grant is incomplete")
 	}
 	if !validEvidenceDuration(grant.ACLPropagationDelay) {

@@ -193,7 +193,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 19 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "019" {
+	if len(migrations) != 20 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "020" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
