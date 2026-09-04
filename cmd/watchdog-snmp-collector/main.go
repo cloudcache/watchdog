@@ -101,8 +101,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("discovery imported: device=%s ports=%d sensors=%d physical=%d bgp=%d vlans=%d lags=%d recipes=%d events=%d modules=%d\n",
-			report.Device.ID, report.Ports, report.Sensors, report.PhysicalEntities, report.BGPSessions, report.VLANs, report.LAGs, report.Recipes, report.Events, report.DeviceModules)
+		fmt.Printf("discovery imported: device=%s ports=%d addresses=%d sensors=%d physical=%d bgp=%d vlans=%d lags=%d recipes=%d events=%d modules=%d\n",
+			report.Device.ID, report.Ports, report.InterfaceAddresses, report.Sensors, report.PhysicalEntities, report.BGPSessions, report.VLANs, report.LAGs, report.Recipes, report.Events, report.DeviceModules)
 	}
 	if *poll && !*loop {
 		result, err := runtime.RunSNMPCollectorPoll(ctx, tenant, resolvedLimit)

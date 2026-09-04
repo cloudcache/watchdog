@@ -33,7 +33,24 @@ func (api networkAPI) listPorts(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": ports})
+	addresses, err := api.repo.ListInterfaceAddresses(r.Context(), auth.TenantID, device.ID)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	byPort := make(map[ID][]NetworkInterfaceAddress, len(ports))
+	for _, address := range addresses {
+		byPort[address.PortID] = append(byPort[address.PortID], address)
+	}
+	type portListItem struct {
+		NetworkPort
+		Addresses []NetworkInterfaceAddress
+	}
+	items := make([]portListItem, 0, len(ports))
+	for _, port := range ports {
+		items = append(items, portListItem{NetworkPort: port, Addresses: byPort[port.ID]})
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (api networkAPI) getPort(w http.ResponseWriter, r *http.Request) {

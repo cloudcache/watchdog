@@ -123,3 +123,36 @@ Status values:
 29. `[done]` Preserve every discovered sensor identity.
     - Output: `deploy/migration/mysql/015_network_sensor_identity.sql`.
     - Acceptance: sensors sharing class/index but exposing different OIDs no longer overwrite each other; the MX480 discovery persists 212 discovered sensors with 212 distinct OIDs.
+
+30. `[done]` Replace OS-name BGP selection with MIB-capability providers.
+    - Design: provider descriptors declare peer and AFI/SAFI column symbols; actual table presence and coverage select the provider.
+    - Code: `internal/watchdog/snmp_discovery_bgp_provider.go`, recursive MIB directory registration in `snmp_mib.go`.
+    - Unit test: a numeric custom provider discovers IPv4 and IPv6 while the fingerprint contains an unrelated OS name.
+    - Integration test: the MX480 selects `BGP4-V2-MIB-JUNIPER` from the configured MIB tree and persists 18 IPv4 plus 17 IPv6 sessions.
+    - Regression: generic BGP4-MIB and existing vendor compatibility collectors remain fallback paths.
+
+31. `[done]` Add capability-driven interface IPv4/IPv6 inventory.
+    - Design: prefer RFC 4293 `ipAddressTable`; use legacy IPv4/IPv6 MIB tables only for missing families.
+    - Code: add `network_interface_addresses`, discovery/import/repository/API contracts, and stable port association.
+    - Unit test: decode IPv4 and IPv6 rows from one IP-MIB table without vendor or OS branching.
+    - Integration test: the MX480 persists 17 IPv4 and 27 IPv6 addresses.
+    - Change test: rediscovery replaces the device snapshot and removes stale addresses.
+
+32. `[done]` Correct location and freshness semantics for standalone SNMP collection.
+    - Design: location is the raw `sysLocation.0` value with explicit target-label fallback; last seen is the newest successful recipe poll.
+    - Code: core fingerprint, network summary API, and network-device list/detail rendering.
+    - Tests: summary API covers standalone collector freshness and location fallback remains non-fabricating.
+
+33. `[done]` Standardize every network-device detail dataset on VTable interaction.
+    - Scope: Ports, Health, Switching VLAN/LAG, BGP, Inventory, Events, and Alerts.
+    - Code: shared `PagedVTable` with search, 25/50/100 pagination, and per-column filters.
+    - Unit test: filter popover placement stays inside the viewport above/below and at both horizontal edges.
+    - Build test: the production site TypeScript build succeeds.
+    - Acceptance: each listed dataset has independent search/filter/page state and empty/loading states; a filter popover never overflows the viewport.
+
+34. `[done]` Complete release regression and local handoff.
+    - Change design review: confirm no protocol collector branches on OS/vendor/model strings.
+    - Integration test: run discovery/import/poll against the configured real target and verify API rows for addresses, BGP families, last seen, and location.
+    - Regression test: run Go full suite, site unit tests, site production build, migration validation, and `git diff --check`.
+    - Known baseline: `go test ./...` still cannot compile `internal/hub_test` because its removed `internal/tests` fixture helpers are referenced; the changed `internal/watchdog` package and full production build pass.
+    - Operations: build/restart the 8090 hub and independent collector, then commit the reviewed change set.

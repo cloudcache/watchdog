@@ -54,6 +54,7 @@ type SNMPCollectorOSFingerprint struct {
 	SysObjectID  string
 	SysDescr     string
 	SysName      string
+	SysLocation  string
 	SysUpTime    uint64
 	SNMPEngineID string
 }
@@ -187,15 +188,17 @@ type SNMPCollectorDiscoveryContext struct {
 }
 
 type SNMPCollectorDiscoveryResult struct {
-	DeviceUpdates    NetworkDevice
-	Ports            []NetworkPort
-	Sensors          []NetworkDeviceSensor
-	PhysicalEntities []PhysicalEntity
-	BGPSessions      []BGPSession
-	VLANs            []DeviceVLAN
-	LAGs             []DeviceLAGGroup
-	Recipes          []SNMPCollectionRecipe
-	Events           []SNMPEvent
+	DeviceUpdates      NetworkDevice
+	CompletedModules   []string
+	Ports              []NetworkPort
+	InterfaceAddresses []NetworkInterfaceAddress
+	Sensors            []NetworkDeviceSensor
+	PhysicalEntities   []PhysicalEntity
+	BGPSessions        []BGPSession
+	VLANs              []DeviceVLAN
+	LAGs               []DeviceLAGGroup
+	Recipes            []SNMPCollectionRecipe
+	Events             []SNMPEvent
 }
 
 type SNMPCollectionRecipe struct {

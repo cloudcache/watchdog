@@ -46,6 +46,9 @@ export interface CreateTableOptions {
 	widthMode?: "standard" | "autoWidth" | "adaptive"
 	columnResize?: boolean
 	theme?: any
+	pagination?: { totalCount?: number; perPageCount: number; currentPage?: number }
+	onFilteredCountChange?: (count: number) => void
+	onFilterApplied?: () => void
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -124,9 +127,21 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		widthMode: options.widthMode ?? "adaptive",
 		autoFillWidth: true,
 		columnResizeMode: options.columnResize === false ? "none" : "all",
+		pagination: options.pagination,
 	} as any)
 	if (filterColumns.some(Boolean)) {
-		tableCleanup.set(table, enableColumnFilters(table, dom, options.records, filterColumns, activeFilters))
+		tableCleanup.set(
+			table,
+			enableColumnFilters(
+				table,
+				dom,
+				options.records,
+				filterColumns,
+				activeFilters,
+				options.onFilteredCountChange,
+				options.onFilterApplied
+			)
+		)
 	}
 	return table
 }
@@ -177,7 +192,9 @@ function enableColumnFilters(
 	dom: HTMLElement,
 	records: any[],
 	columns: FilterColumn[],
-	activeFilters: Map<string, Set<string>>
+	activeFilters: Map<string, Set<string>>,
+	onFilteredCountChange?: (count: number) => void,
+	onFilterApplied?: () => void
 ): () => void {
 	let ownedClose: (() => void) | null = null
 
@@ -185,6 +202,8 @@ function enableColumnFilters(
 		if (activeFilters.size === 0) {
 			table.updateFilterRules([])
 			table.refreshHeader()
+			onFilteredCountChange?.(records.length)
+			onFilterApplied?.()
 			return
 		}
 		table.updateFilterRules([
@@ -193,6 +212,8 @@ function enableColumnFilters(
 			},
 		])
 		table.refreshHeader()
+		onFilteredCountChange?.(records.filter((record) => matchesFilters(record, activeFilters)).length)
+		onFilterApplied?.()
 	}
 
 	const handleIconClick = (args: any) => {

@@ -14,10 +14,9 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PagedVTable } from "@/components/ui/paged-vtable"
 import { isAdmin, pb } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import {
@@ -82,6 +81,19 @@ type NetworkPort = {
 	oper_status?: string
 	SpeedBps?: number
 	speed_bps?: number
+	Addresses?: NetworkInterfaceAddress[]
+	addresses?: NetworkInterfaceAddress[]
+}
+
+type NetworkInterfaceAddress = {
+	Address?: string
+	address?: string
+	Family?: string
+	family?: string
+	PrefixLength?: number
+	prefix_length?: number
+	Origin?: string
+	origin?: string
 }
 
 type NetworkPortsResponse = {
@@ -334,6 +346,14 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const targetName = target?.Name ?? target?.name ?? targetID
 	const targetHost = target?.Host ?? target?.host ?? ""
 	const targetStatus = target?.Status ?? target?.status ?? ""
+	const targetLabelValues = target?.Labels ?? target?.labels ?? {}
+	const resolvedLocation = firstText(
+		device?.SysLocation,
+		device?.sys_location,
+		targetLabelValues.location,
+		targetLabelValues.site,
+		targetLabelValues.region
+	)
 	const title = firstValue(device?.SysName, device?.sys_name, device?.Name, device?.name, targetName, id)
 
 	return (
@@ -385,9 +405,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 								{(device?.Uptime ?? device?.uptime) ? (
 									<span>↑ {formatDeviceUptime(device?.Uptime ?? device?.uptime)}</span>
 								) : null}
-								{firstText(device?.SysLocation, device?.sys_location) ? (
-									<span>{firstText(device?.SysLocation, device?.sys_location)}</span>
-								) : null}
+								{resolvedLocation ? <span>{resolvedLocation}</span> : null}
 							</div>
 						</div>
 					</div>
@@ -539,6 +557,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 							targetHost={targetHost}
 							targetStatus={targetStatus}
 							targetLabels={formatTargetLabels(target)}
+							resolvedLocation={resolvedLocation}
 						/>
 						<DeviceInventory deviceId={id} />
 					</TabsContent>
@@ -548,13 +567,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="alerts" className="grid gap-3">
-						<DeviceAlertLog
-							deviceId={id}
-							targetID={targetID}
-							portCount={ports.length}
-							sensorCount={sensors.length}
-							bgpCount={bgpSessions.length}
-						/>
+						<DeviceAlertLog deviceId={id} targetID={targetID} />
 					</TabsContent>
 				</Tabs>
 			</GraphContextProvider>
@@ -779,69 +792,42 @@ function PortCount({ label, value, className }: { label: React.ReactNode; value:
 }
 
 function SensorsTable({ loading, sensors }: { loading: boolean; sensors: NetworkDeviceSensor[] }) {
-	const grouped = useMemo(() => {
-		const map: Record<string, NetworkDeviceSensor[]> = {}
-		for (const s of sensors) {
-			const cls = (s.Class ?? s.class ?? "other").toLowerCase()
-			if (!map[cls]) {
-				map[cls] = []
-			}
-			map[cls].push(s)
-		}
-		return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
-	}, [sensors])
-
-	if (loading) {
-		return (
-			<div className="text-sm text-muted-foreground">
-				<Trans>Loading...</Trans>
-			</div>
-		)
-	}
-	if (sensors.length === 0) {
-		return (
-			<div className="flex h-[120px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-				<Trans>No sensors discovered.</Trans>
-			</div>
-		)
-	}
+	const { t } = useLingui()
+	const records = useMemo(
+		() =>
+			sensors.map((sensor) => {
+				const name = sensor.Name ?? sensor.name ?? "—"
+				const sensorClass = (sensor.Class ?? sensor.class ?? "other").toLowerCase()
+				const status = sensor.Status ?? sensor.status ?? "—"
+				const value = formatSensorValue(sensor)
+				return {
+					id: sensor.ID ?? sensor.id ?? "",
+					sensorClass,
+					name,
+					status,
+					value,
+					searchText: `${sensorClass} ${name} ${status} ${value}`.toLowerCase(),
+				}
+			}),
+		[sensors]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "sensorClass", title: t`Class`, width: 130, style: denseCellStyle() },
+			{ field: "name", title: t`Sensor`, width: 340, style: denseCellStyle() },
+			{ field: "status", title: t`Status`, width: 130, style: denseCellStyle() },
+			{ field: "value", title: t`Value`, width: 180, style: denseCellStyle() },
+		],
+		[t]
+	)
 	return (
-		<div className="grid gap-3">
-			{grouped.map(([cls, items]) => (
-				<div key={cls} className="overflow-hidden rounded-md bg-card">
-					<div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
-						<span className="text-sm font-medium capitalize">{cls}</span>
-						<Badge variant="outline">{items.length}</Badge>
-					</div>
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>
-									<Trans>Sensor</Trans>
-								</TableHead>
-								<TableHead>
-									<Trans>Status</Trans>
-								</TableHead>
-								<TableHead className="text-right">
-									<Trans>Value</Trans>
-								</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{items.map((sensor) => (
-								<TableRow key={sensor.ID ?? sensor.id}>
-									<TableCell className="font-medium">{sensor.Name ?? sensor.name ?? "—"}</TableCell>
-									<TableCell>
-										<StatusBadge value={sensor.Status ?? sensor.status} />
-									</TableCell>
-									<TableCell className="text-right font-mono text-xs">{formatSensorValue(sensor)}</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</div>
-			))}
-		</div>
+		<PagedVTable
+			records={records}
+			columns={columns}
+			loading={loading}
+			emptyText={t`No sensors discovered.`}
+			searchPlaceholder={t`Search sensors...`}
+		/>
 	)
 }
 
@@ -861,206 +847,118 @@ function PortsTable({
 	trafficView: TrafficViewMode
 }) {
 	const { t } = useLingui()
-	const [search, setSearch] = useState("")
-	const [operFilter, setOperFilter] = useState("all")
-	const filtered = useMemo(() => {
-		const q = search.trim().toLowerCase()
-		return ports.filter((port) => {
-			const oper = (port.OperStatus ?? port.oper_status ?? "").toLowerCase()
-			if (operFilter === "up" && oper !== "up") return false
-			if (operFilter === "down" && oper !== "down") return false
-			if (!q) return true
-			const name = (port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? "").toLowerCase()
-			const alias = (port.IfAlias ?? port.if_alias ?? "").toLowerCase()
-			return name.includes(q) || alias.includes(q)
-		})
-	}, [ports, search, operFilter])
-	const upCount = ports.filter((p) => (p.OperStatus ?? p.oper_status ?? "").toLowerCase() === "up").length
-
+	const records = useMemo(
+		() =>
+			ports.map((port) => {
+				const id = port.ID ?? port.id ?? ""
+				const name = port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? "—"
+				const alias = port.IfAlias ?? port.if_alias ?? "—"
+				const admin = port.AdminStatus ?? port.admin_status ?? "—"
+				const oper = port.OperStatus ?? port.oper_status ?? "—"
+				const speed = port.SpeedBps ?? port.speed_bps ?? 0
+				const traffic = portTraffic[id] ?? {}
+				const rateBase = trafficViewRateBase(trafficView)
+				const addresses = port.Addresses ?? port.addresses ?? []
+				const ipv4 = formatInterfaceAddresses(addresses, "ipv4")
+				const ipv6 = formatInterfaceAddresses(addresses, "ipv6")
+				return {
+					id,
+					name,
+					alias,
+					admin,
+					oper,
+					ipv4,
+					ipv6,
+					inRate: traffic.in == null ? "—" : formatBitsPerSecond(traffic.in, rateBase),
+					outRate: traffic.out == null ? "—" : formatBitsPerSecond(traffic.out, rateBase),
+					speed: formatBitsPerSecond(speed),
+					searchText: `${name} ${alias} ${admin} ${oper} ${ipv4} ${ipv6}`.toLowerCase(),
+				}
+			}),
+		[portTraffic, ports, trafficView]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "name", title: t`Port`, width: 160, style: denseCellStyle() },
+			{ field: "alias", title: t`Alias`, width: 210, style: denseCellStyle() },
+			{ field: "ipv4", title: "IPv4", width: 190, style: denseCellStyle() },
+			{ field: "ipv6", title: "IPv6", width: 250, style: denseCellStyle() },
+			{ field: "admin", title: t`Admin`, width: 100, style: denseCellStyle() },
+			{ field: "oper", title: t`Oper`, width: 100, style: denseCellStyle() },
+			{ field: "inRate", title: t`In`, width: 120, style: denseCellStyle() },
+			{ field: "outRate", title: t`Out`, width: 120, style: denseCellStyle() },
+			{ field: "speed", title: t`Speed`, width: 120, style: denseCellStyle() },
+		],
+		[t]
+	)
+	const openPort = useCallback((record: Record<string, unknown>) => {
+		if (record.id) navigate(getPagePath($router, "network_port", { id: String(record.id) }))
+	}, [])
 	return (
-		<div className="grid gap-3">
-			<div className="flex flex-wrap items-center gap-2">
-				<Input
-					value={search}
-					onChange={(e) => setSearch(e.target.value)}
-					placeholder={t`Search ports...`}
-					className="max-w-xs"
-				/>
-				<Select value={operFilter} onValueChange={setOperFilter}>
-					<SelectTrigger className="w-28">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							{t`All`} ({ports.length})
-						</SelectItem>
-						<SelectItem value="up">
-							{t`Up`} ({upCount})
-						</SelectItem>
-						<SelectItem value="down">
-							{t`Down`} ({ports.length - upCount})
-						</SelectItem>
-					</SelectContent>
-				</Select>
-			</div>
-			<div className="overflow-hidden rounded-md bg-card">
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead>
-								<Trans>Port</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Alias</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Oper</Trans>
-							</TableHead>
-							<TableHead className="text-right">
-								<Trans>In</Trans>
-							</TableHead>
-							<TableHead className="text-right">
-								<Trans>Out</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Speed</Trans>
-							</TableHead>
-							<TableHead className="text-right">
-								<Trans>Actions</Trans>
-							</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{loading ? (
-							<TableRow>
-								<TableCell colSpan={7} className="text-muted-foreground">
-									<Trans>Loading...</Trans>
-								</TableCell>
-							</TableRow>
-						) : filtered.length === 0 ? (
-							<TableRow>
-								<TableCell colSpan={7} className="text-muted-foreground">
-									{search || operFilter !== "all" ? t`No ports match the filter.` : t`No ports found.`}
-								</TableCell>
-							</TableRow>
-						) : (
-							filtered.map((port) => {
-								const portID = port.ID ?? port.id ?? ""
-								const traffic = portTraffic[portID] ?? {}
-								const speed = port.SpeedBps ?? port.speed_bps ?? 0
-								const rateBase = trafficViewRateBase(trafficView)
-								return (
-									<TableRow key={portID}>
-										<TableCell className="font-medium">
-											<Link className="hover:underline" href={getPagePath($router, "network_port", { id: portID })}>
-												{port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? "—"}
-											</Link>
-										</TableCell>
-										<TableCell className="max-w-[14rem] truncate">{port.IfAlias ?? port.if_alias ?? "—"}</TableCell>
-										<TableCell>
-											<StatusBadge value={port.OperStatus ?? port.oper_status} />
-										</TableCell>
-										<TableCell className="text-right font-mono text-xs">
-											{traffic.in != null ? <TrafficCell bps={traffic.in} speed={speed} rateBase={rateBase} /> : "—"}
-										</TableCell>
-										<TableCell className="text-right font-mono text-xs">
-											{traffic.out != null ? <TrafficCell bps={traffic.out} speed={speed} rateBase={rateBase} /> : "—"}
-										</TableCell>
-										<TableCell className="text-xs">{formatBitsPerSecond(speed)}</TableCell>
-										<TableCell className="text-right">
-											<div className="flex justify-end gap-1">
-												<Link
-													href={getPagePath($router, "network_port_edit", { id: portID })}
-													className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-												>
-													<PencilIcon className="h-3.5 w-3.5" />
-												</Link>
-												<Link
-													href={getPagePath($router, "network_port_policy", { id: portID })}
-													className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-												>
-													<SlidersHorizontalIcon className="h-3.5 w-3.5" />
-												</Link>
-											</div>
-										</TableCell>
-									</TableRow>
-								)
-							})
-						)}
-					</TableBody>
-				</Table>
-			</div>
-		</div>
+		<PagedVTable
+			records={records}
+			columns={columns}
+			loading={loading}
+			emptyText={t`No ports found.`}
+			searchPlaceholder={t`Search ports, addresses...`}
+			height={560}
+			onRowClick={openPort}
+		/>
 	)
 }
 
-function TrafficCell({ bps, speed, rateBase }: { bps: number; speed: number; rateBase: number }) {
-	const pct = speed > 0 ? (bps / speed) * 100 : 0
-	const color =
-		pct >= 80
-			? "text-red-600 dark:text-red-400"
-			: pct >= 50
-				? "text-yellow-600 dark:text-yellow-400"
-				: "text-foreground"
-	return <span className={color}>{formatBitsPerSecond(bps, rateBase)}</span>
-}
-
 function BGPSessionsTable({ loading, bgpSessions }: { loading: boolean; bgpSessions: BGPSession[] }) {
+	const { t } = useLingui()
+	const records = useMemo(
+		() =>
+			bgpSessions.map((session) => {
+				const peer = session.PeerAddr ?? session.peer_addr ?? "—"
+				const state = session.State ?? session.state ?? "—"
+				const peerAS = formatNumber(session.PeerAS ?? session.peer_as)
+				const localAS = formatNumber(session.LocalAS ?? session.local_as)
+				const afi = session.AFI ?? session.afi ?? "—"
+				const safi = session.SAFI ?? session.safi ?? "—"
+				const accepted = formatNumber(session.AcceptedPrefixes ?? session.accepted_prefixes)
+				const denied = formatNumber(session.DeniedPrefixes ?? session.denied_prefixes)
+				const advertised = formatNumber(session.AdvertisedPrefixes ?? session.advertised_prefixes)
+				return {
+					id: session.ID ?? session.id ?? "",
+					peer,
+					state,
+					peerAS,
+					localAS,
+					afi,
+					safi,
+					accepted,
+					denied,
+					advertised,
+					searchText: `${peer} ${state} ${peerAS} ${localAS} ${afi} ${safi}`.toLowerCase(),
+				}
+			}),
+		[bgpSessions]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "peer", title: t`BGP Peer`, width: 240, style: denseCellStyle() },
+			{ field: "state", title: t`State`, width: 120, style: denseCellStyle() },
+			{ field: "peerAS", title: t`Peer AS`, width: 110, style: denseCellStyle() },
+			{ field: "localAS", title: t`Local AS`, width: 110, style: denseCellStyle() },
+			{ field: "afi", title: "AFI", width: 100, style: denseCellStyle() },
+			{ field: "safi", title: "SAFI", width: 140, style: denseCellStyle() },
+			{ field: "accepted", title: t`Accepted`, width: 110, style: denseCellStyle() },
+			{ field: "denied", title: t`Denied`, width: 110, style: denseCellStyle() },
+			{ field: "advertised", title: t`Advertised`, width: 120, style: denseCellStyle() },
+		],
+		[t]
+	)
 	return (
-		<div className="overflow-hidden rounded-md bg-card">
-			<Table>
-				<TableHeader>
-					<TableRow>
-						<TableHead>
-							<Trans>BGP Peer</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>State</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Peer AS</Trans>
-						</TableHead>
-						<TableHead>AFI/SAFI</TableHead>
-						<TableHead>
-							<Trans>Accepted</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Advertised</Trans>
-						</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{loading ? (
-						<TableRow>
-							<TableCell colSpan={6} className="text-muted-foreground">
-								<Trans>Loading...</Trans>
-							</TableCell>
-						</TableRow>
-					) : bgpSessions.length === 0 ? (
-						<TableRow>
-							<TableCell colSpan={6} className="text-muted-foreground">
-								<Trans>No BGP sessions found.</Trans>
-							</TableCell>
-						</TableRow>
-					) : (
-						bgpSessions.map((session) => (
-							<TableRow key={session.ID ?? session.id}>
-								<TableCell className="font-mono text-xs">{session.PeerAddr ?? session.peer_addr ?? "—"}</TableCell>
-								<TableCell>
-									<StatusBadge value={session.State ?? session.state} />
-								</TableCell>
-								<TableCell>{formatNumber(session.PeerAS ?? session.peer_as)}</TableCell>
-								<TableCell>
-									{session.AFI ?? session.afi ?? "—"}/{session.SAFI ?? session.safi ?? "—"}
-								</TableCell>
-								<TableCell>{formatNumber(session.AcceptedPrefixes ?? session.accepted_prefixes)}</TableCell>
-								<TableCell>{formatNumber(session.AdvertisedPrefixes ?? session.advertised_prefixes)}</TableCell>
-							</TableRow>
-						))
-					)}
-				</TableBody>
-			</Table>
-		</div>
+		<PagedVTable
+			records={records}
+			columns={columns}
+			loading={loading}
+			emptyText={t`No BGP sessions found.`}
+			searchPlaceholder={t`Search BGP peers...`}
+		/>
 	)
 }
 
@@ -1071,6 +969,7 @@ function DeviceOverview({
 	targetHost,
 	targetStatus,
 	targetLabels,
+	resolvedLocation,
 }: {
 	device: NetworkDevice | null
 	targetID: string
@@ -1078,13 +977,14 @@ function DeviceOverview({
 	targetHost: string
 	targetStatus: string
 	targetLabels: string
+	resolvedLocation: string
 }) {
 	const { t } = useLingui()
 	const vendor = firstText(device?.Vendor, device?.vendor)
 	const hardware = firstText(device?.Model, device?.model, device?.Platform, device?.platform)
 	const platform = firstText(device?.Platform, device?.platform)
 	const platformRow = platform && platform !== hardware ? platform : ""
-	const location = firstText(device?.SysLocation, device?.sys_location)
+	const location = resolvedLocation
 	const sysDescr = firstText(device?.SysDescr, device?.sys_descr)
 	const systemName = firstText(device?.SysName, device?.sys_name)
 	const objectID = firstText(device?.SysObjectID, device?.sys_object_id)
@@ -1220,6 +1120,19 @@ function formatSensorValue(sensor: NetworkDeviceSensor) {
 	return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${unit ? ` ${unit}` : ""}`
 }
 
+function formatInterfaceAddresses(addresses: NetworkInterfaceAddress[], family: "ipv4" | "ipv6") {
+	const values = addresses
+		.filter((address) => (address.Family ?? address.family ?? "").toLowerCase() === family)
+		.map((address) => {
+			const ip = address.Address ?? address.address
+			if (!ip) return ""
+			const prefix = address.PrefixLength ?? address.prefix_length
+			return typeof prefix === "number" ? `${ip}/${prefix}` : ip
+		})
+		.filter(Boolean)
+	return values.length > 0 ? values.join("\n") : "—"
+}
+
 function isHealthyStatus(value?: string) {
 	const normalized = value?.toLowerCase() ?? ""
 	return (
@@ -1313,6 +1226,7 @@ type DeviceLAGGroup = {
 }
 
 function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
+	const { t } = useLingui()
 	const [vlans, setVlans] = useState<DeviceVLAN[]>([])
 	const [lags, setLags] = useState<DeviceLAGGroup[]>([])
 	const [loading, setLoading] = useState(true)
@@ -1345,79 +1259,68 @@ function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
 		}
 	}, [deviceId])
 
-	if (loading) {
-		return (
-			<div className="text-sm text-muted-foreground">
-				<Trans>Loading...</Trans>
-			</div>
-		)
-	}
+	const vlanRecords = useMemo(
+		() =>
+			vlans.map((vlan, index) => ({
+				id: String(vlan.VLANID ?? index),
+				vlanID: vlan.VLANID ?? "—",
+				name: vlan.Name || "—",
+				status: vlan.Status || "—",
+				searchText: `${vlan.VLANID ?? ""} ${vlan.Name ?? ""} ${vlan.Status ?? ""}`.toLowerCase(),
+			})),
+		[vlans]
+	)
+	const lagRecords = useMemo(
+		() =>
+			lags.map((lag, index) => ({
+				id: String(lag.AggregateIndex ?? index),
+				aggregate: lag.AggregateIndex ?? "—",
+				mac: lag.MACAddress || "—",
+				mode: lag.Mode || "—",
+				searchText: `${lag.AggregateIndex ?? ""} ${lag.MACAddress ?? ""} ${lag.Mode ?? ""}`.toLowerCase(),
+			})),
+		[lags]
+	)
+	const vlanColumns = useMemo(
+		() => [
+			{ field: "vlanID", title: t`VLAN ID`, width: 140, style: denseCellStyle() },
+			{ field: "name", title: t`Name`, width: 320, style: denseCellStyle() },
+			{ field: "status", title: t`Status`, width: 160, style: denseCellStyle() },
+		],
+		[t]
+	)
+	const lagColumns = useMemo(
+		() => [
+			{ field: "aggregate", title: t`Aggregate`, width: 180, style: denseCellStyle() },
+			{ field: "mac", title: t`MAC Address`, width: 260, style: denseCellStyle() },
+			{ field: "mode", title: t`Mode`, width: 180, style: denseCellStyle() },
+		],
+		[t]
+	)
 	return (
 		<div className="grid gap-3">
-			{vlans.length > 0 ? (
-				<div className="overflow-hidden rounded-md bg-card">
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>
-									<Trans>VLAN ID</Trans>
-								</TableHead>
-								<TableHead>
-									<Trans>Name</Trans>
-								</TableHead>
-								<TableHead>
-									<Trans>Status</Trans>
-								</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{vlans.map((vlan, index) => (
-								<TableRow key={index}>
-									<TableCell className="font-mono">{vlan.VLANID ?? "—"}</TableCell>
-									<TableCell className="font-medium">{vlan.Name || "—"}</TableCell>
-									<TableCell>{vlan.Status || "—"}</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</div>
-			) : (
-				<div className="flex h-[80px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-					<Trans>No VLANs discovered (Q-BRIDGE-MIB not supported or empty).</Trans>
-				</div>
-			)}
-			{lags.length > 0 ? (
-				<div className="overflow-hidden rounded-md bg-card">
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>
-									<Trans>Aggregate</Trans>
-								</TableHead>
-								<TableHead>
-									<Trans>MAC Address</Trans>
-								</TableHead>
-								<TableHead>
-									<Trans>Mode</Trans>
-								</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{lags.map((lag, index) => (
-								<TableRow key={index}>
-									<TableCell className="font-mono">{lag.AggregateIndex ?? "—"}</TableCell>
-									<TableCell className="font-mono text-xs">{lag.MACAddress || "—"}</TableCell>
-									<TableCell>{lag.Mode || "—"}</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</div>
-			) : (
-				<div className="flex h-[80px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-					<Trans>No LAG groups discovered (IEEE8023-LAG-MIB not supported or empty).</Trans>
-				</div>
-			)}
+			<div className="text-sm font-medium">
+				<Trans>VLANs</Trans>
+			</div>
+			<PagedVTable
+				records={vlanRecords}
+				columns={vlanColumns}
+				loading={loading}
+				emptyText={t`No VLANs discovered (Q-BRIDGE-MIB not supported or empty).`}
+				searchPlaceholder={t`Search VLANs...`}
+				height={300}
+			/>
+			<div className="text-sm font-medium">
+				<Trans>LAG groups</Trans>
+			</div>
+			<PagedVTable
+				records={lagRecords}
+				columns={lagColumns}
+				loading={loading}
+				emptyText={t`No LAG groups discovered (IEEE8023-LAG-MIB not supported or empty).`}
+				searchPlaceholder={t`Search LAG groups...`}
+				height={300}
+			/>
 		</div>
 	)
 }
@@ -1432,6 +1335,15 @@ type SNMPEventEntry = {
 }
 
 function DeviceEventLog({ deviceId, targetID: _targetID }: { deviceId: string; targetID: string }) {
+	return <DeviceEventsTable deviceId={deviceId} alertOnly={false} />
+}
+
+function DeviceAlertLog({ deviceId, targetID: _targetID }: { deviceId: string; targetID: string }) {
+	return <DeviceEventsTable deviceId={deviceId} alertOnly />
+}
+
+function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnly: boolean }) {
+	const { t } = useLingui()
 	const [events, setEvents] = useState<SNMPEventEntry[]>([])
 	const [loading, setLoading] = useState(true)
 
@@ -1440,10 +1352,17 @@ function DeviceEventLog({ deviceId, targetID: _targetID }: { deviceId: string; t
 		const load = async () => {
 			try {
 				const data = await pb.send<{ items?: SNMPEventEntry[] }>(
-					`/api/v1/network/devices/${deviceId}/events?limit=50`,
+					`/api/v1/network/devices/${deviceId}/events?limit=500`,
 					{}
 				)
-				if (!cancelled) setEvents(data.items ?? [])
+				if (!cancelled) {
+					const items = data.items ?? []
+					setEvents(
+						alertOnly
+							? items.filter((event) => ["warning", "error", "critical"].includes((event.Severity ?? "").toLowerCase()))
+							: items
+					)
+				}
 			} catch {
 				if (!cancelled) setEvents([])
 			} finally {
@@ -1454,121 +1373,53 @@ function DeviceEventLog({ deviceId, targetID: _targetID }: { deviceId: string; t
 		return () => {
 			cancelled = true
 		}
-	}, [deviceId])
-
-	if (loading)
-		return (
-			<div className="text-sm text-muted-foreground">
-				<Trans>Loading...</Trans>
-			</div>
-		)
-	if (events.length === 0) {
-		return (
-			<div className="flex h-[120px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-				<Trans>No events yet. Events appear on interface status changes and SNMP traps.</Trans>
-			</div>
-		)
-	}
-	return (
-		<div className="overflow-hidden rounded-md bg-card">
-			<Table>
-				<TableHeader>
-					<TableRow>
-						<TableHead>
-							<Trans>Time</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Severity</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Type</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Message</Trans>
-						</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{events.map((event, i) => (
-						<TableRow key={event.ID ?? i}>
-							<TableCell className="whitespace-nowrap text-xs">{formatRelative(event.OccurredAt)}</TableCell>
-							<TableCell>
-								<StatusBadge value={event.Severity} />
-							</TableCell>
-							<TableCell className="font-mono text-xs">{event.EventType ?? ""}</TableCell>
-							<TableCell className="max-w-[28rem] truncate text-xs">{event.Message ?? ""}</TableCell>
-						</TableRow>
-					))}
-				</TableBody>
-			</Table>
-		</div>
+	}, [alertOnly, deviceId])
+	const records = useMemo(
+		() =>
+			events.map((event, index) => {
+				const time = event.OccurredAt ? new Date(event.OccurredAt).toLocaleString() : "—"
+				const severity = event.Severity ?? "—"
+				const type = event.EventType ?? "—"
+				const source = event.Source ?? "—"
+				const message = event.Message ?? "—"
+				return {
+					id: event.ID ?? String(index),
+					time,
+					severity,
+					type,
+					source,
+					message,
+					searchText: `${time} ${severity} ${type} ${source} ${message}`.toLowerCase(),
+				}
+			}),
+		[events]
 	)
-}
-
-function DeviceAlertLog({
-	deviceId: _deviceId,
-	targetID: _targetID,
-	portCount,
-	sensorCount,
-	bgpCount,
-}: {
-	deviceId: string
-	targetID: string
-	portCount: number
-	sensorCount: number
-	bgpCount: number
-}) {
-	const { t } = useLingui()
-	const alerts = useMemo(() => {
-		const items: { severity: string; message: string }[] = []
-		if (portCount > 0) {
-			items.push({ severity: "info", message: t`${portCount} ports discovered` })
-		}
-		if (sensorCount > 0) {
-			items.push({ severity: "info", message: t`${sensorCount} sensors discovered` })
-		}
-		if (bgpCount > 0) {
-			items.push({ severity: "info", message: t`${bgpCount} BGP sessions discovered` })
-		}
-		return items
-	}, [portCount, sensorCount, bgpCount, t])
-
-	if (alerts.length === 0) {
-		return (
-			<div className="flex h-[120px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-				<Trans>No alerts. Threshold-based alerting is not yet configured for this device.</Trans>
-			</div>
-		)
-	}
-	return (
-		<div className="grid gap-2">
-			{alerts.map((alert, i) => (
-				<div key={i} className="flex items-center gap-3 rounded-md border border-border p-3">
-					<div
-						className={cn(
-							"h-2 w-2 shrink-0 rounded-full",
-							alert.severity === "info" ? "bg-blue-500" : alert.severity === "warning" ? "bg-yellow-500" : "bg-red-500"
-						)}
-					/>
-					<span className="text-sm">{alert.message}</span>
-				</div>
-			))}
-		</div>
+	const columns = useMemo(
+		() => [
+			{ field: "time", title: t`Time`, width: 190, style: denseCellStyle() },
+			{ field: "severity", title: t`Severity`, width: 120, style: denseCellStyle() },
+			{ field: "type", title: t`Type`, width: 180, style: denseCellStyle() },
+			{ field: "source", title: t`Source`, width: 130, style: denseCellStyle() },
+			{ field: "message", title: t`Message`, width: 520, style: denseCellStyle() },
+		],
+		[t]
 	)
-}
-
-function formatRelative(isoTime?: string): string {
-	if (!isoTime) return "—"
-	const date = new Date(isoTime)
-	if (Number.isNaN(date.getTime())) return "—"
-	const diff = Date.now() - date.getTime()
-	if (diff < 60_000) return "<1m ago"
-	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
-	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
-	return date.toLocaleString()
+	const emptyText = alertOnly
+		? t`No active warning, error, or critical events.`
+		: t`No events yet. Events appear on interface status changes and SNMP traps.`
+	return (
+		<PagedVTable
+			records={records}
+			columns={columns}
+			loading={loading}
+			emptyText={emptyText}
+			searchPlaceholder={alertOnly ? t`Search alerts...` : t`Search events...`}
+		/>
+	)
 }
 
 function DeviceInventory({ deviceId }: { deviceId: string }) {
+	const { t } = useLingui()
 	const [entities, setEntities] = useState<PhysicalEntity[]>([])
 	const [loading, setLoading] = useState(true)
 
@@ -1594,59 +1445,47 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 		}
 	}, [deviceId])
 
-	if (loading) {
-		return (
-			<div className="text-sm text-muted-foreground">
-				<Trans>Loading inventory...</Trans>
-			</div>
-		)
-	}
-	if (entities.length === 0) {
-		return (
-			<div className="flex h-[120px] items-center justify-center rounded-md border border-border bg-muted/20 text-sm text-muted-foreground">
-				<Trans>No physical entities discovered. Click Rediscover to probe ENTITY-MIB.</Trans>
-			</div>
-		)
-	}
+	const records = useMemo(
+		() =>
+			entities.map((entity, index) => {
+				const name = entity.Name || entity.Description || "—"
+				const entityClass = entity.Class || "—"
+				const model = entity.ModelName || "—"
+				const serial = entity.SerialNumber || "—"
+				const manufacturer = entity.ManufacturerName || "—"
+				const hardwareRevision = entity.HardwareRevision || "—"
+				return {
+					id: String(index),
+					name,
+					entityClass,
+					model,
+					serial,
+					manufacturer,
+					hardwareRevision,
+					searchText: `${name} ${entityClass} ${model} ${serial} ${manufacturer} ${hardwareRevision}`.toLowerCase(),
+				}
+			}),
+		[entities]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "name", title: t`Name`, width: 300, style: denseCellStyle() },
+			{ field: "entityClass", title: t`Class`, width: 140, style: denseCellStyle() },
+			{ field: "model", title: t`Model`, width: 180, style: denseCellStyle() },
+			{ field: "serial", title: t`Serial`, width: 190, style: denseCellStyle() },
+			{ field: "manufacturer", title: t`Manufacturer`, width: 180, style: denseCellStyle() },
+			{ field: "hardwareRevision", title: t`HW Rev`, width: 130, style: denseCellStyle() },
+		],
+		[t]
+	)
 	return (
-		<div className="overflow-hidden rounded-md bg-card">
-			<Table>
-				<TableHeader>
-					<TableRow>
-						<TableHead>
-							<Trans>Name</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Class</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Model</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Serial</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>Manufacturer</Trans>
-						</TableHead>
-						<TableHead>
-							<Trans>HW Rev</Trans>
-						</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{entities.map((entity, index) => (
-						<TableRow key={index}>
-							<TableCell className="font-medium">{entity.Name || entity.Description || "—"}</TableCell>
-							<TableCell>{entity.Class || "—"}</TableCell>
-							<TableCell>{entity.ModelName || "—"}</TableCell>
-							<TableCell className="font-mono text-xs">{entity.SerialNumber || "—"}</TableCell>
-							<TableCell>{entity.ManufacturerName || "—"}</TableCell>
-							<TableCell className="font-mono text-xs">{entity.HardwareRevision || "—"}</TableCell>
-						</TableRow>
-					))}
-				</TableBody>
-			</Table>
-		</div>
+		<PagedVTable
+			records={records}
+			columns={columns}
+			loading={loading}
+			emptyText={t`No physical entities discovered. Click Rediscover to probe ENTITY-MIB.`}
+			searchPlaceholder={t`Search inventory...`}
+		/>
 	)
 }
 
@@ -1716,6 +1555,18 @@ function firstValue(...values: (string | undefined)[]) {
 
 function firstText(...values: (string | undefined)[]) {
 	return values.find((value) => value?.trim())?.trim() ?? ""
+}
+
+function denseCellStyle() {
+	return {
+		textAlign: "left" as const,
+		textBaseline: "middle" as const,
+		fontSize: 13,
+		lineHeight: 18,
+		autoWrapText: true,
+		lineClamp: 3,
+		padding: [4, 8, 4, 8],
+	}
 }
 
 async function queryMetric(baseParams: URLSearchParams, metric: string) {

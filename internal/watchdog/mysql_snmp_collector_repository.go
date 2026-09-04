@@ -311,6 +311,22 @@ func (s *MySQLStore) ListSNMPCollectionRecipesByDevice(ctx context.Context, tena
 	return recipes, rows.Err()
 }
 
+func (s *MySQLStore) GetSNMPDeviceLastPolledAt(ctx context.Context, tenantID, deviceID ID) (time.Time, error) {
+	var lastPolled sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT MAX(last_polled_at)
+		FROM snmp_collection_recipes
+		WHERE tenant_id = ? AND device_id = ? AND last_error = ''
+	`, tenantID, deviceID).Scan(&lastPolled)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !lastPolled.Valid {
+		return time.Time{}, sql.ErrNoRows
+	}
+	return lastPolled.Time, nil
+}
+
 func (s *MySQLStore) ListSNMPTrapHandlers(ctx context.Context) ([]SNMPTrapHandlerDefinition, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, trap_oid, handler_key, enabled, COALESCE(options_json, JSON_OBJECT()), created_at, updated_at

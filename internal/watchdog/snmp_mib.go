@@ -16,10 +16,10 @@ import (
 
 // The SNMP collector resolves every OID it uses from MIB modules — the
 // LibreNMS approach — instead of hardcoding numeric OIDs one by one. A
-// curated subset of the LibreNMS MIB library is embedded in the binary so
-// resolution always works out of the box; a full MIB tree (for example a
-// LibreNMS checkout's mibs directory) can be layered on top through the
-// `snmp.mib_dirs` and `snmp.mib_load` config keys.
+// curated subset of the LibreNMS MIB library is embedded for core polling. A
+// full MIB tree (for example a LibreNMS checkout's mibs directory) is layered
+// on through `snmp.mib_dirs` for capability providers such as IP-MIB and
+// vendor BGPv2 tables; `snmp.mib_load` can optionally preload modules.
 
 //go:embed mibs
 var watchdogEmbeddedMIBs embed.FS
@@ -110,23 +110,27 @@ func (r *SNMPMIBRegistry) Configure(cfg SNMPConfig) error {
 		}
 		gosmi.AppendPath(dir)
 		r.loadedDirs[dir] = true
-		// A LibreNMS-style tree keeps vendor MIBs in subdirectories; mount
-		// them all so any vendor's objects resolve lazily by module name —
-		// collection capability must not depend on listing vendors by hand.
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-				continue
+		// LibreNMS has nested layouts such as mibs/juniper/junos. Register
+		// every readable directory so MIB capability discovery is independent
+		// of the detected OS/vendor name and modules can be loaded lazily.
+		walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
-			sub := filepath.Join(dir, entry.Name())
-			if r.loadedDirs[sub] {
-				continue
+			if !entry.IsDir() || path == dir {
+				return nil
 			}
-			gosmi.AppendPath(sub)
-			r.loadedDirs[sub] = true
+			if strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
+			if !r.loadedDirs[path] {
+				gosmi.AppendPath(path)
+				r.loadedDirs[path] = true
+			}
+			return nil
+		})
+		if walkErr != nil {
+			errs = append(errs, fmt.Errorf("walk snmp mib dir %q: %w", dir, walkErr))
 		}
 	}
 	load := strings.TrimSpace(cfg.MIBLoad)

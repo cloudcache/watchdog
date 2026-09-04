@@ -88,6 +88,23 @@ type NetworkPort struct {
 	Metadata    map[string]string
 }
 
+// NetworkInterfaceAddress is an IPv4 or IPv6 address assigned to a routed
+// interface. Addresses are separate rows because one interface can own many
+// addresses in both families and each address has its own prefix and origin.
+type NetworkInterfaceAddress struct {
+	ID           ID
+	TenantID     ID
+	DeviceID     ID
+	PortID       ID
+	IfIndex      uint64
+	Address      string
+	Family       string
+	PrefixLength uint8
+	Origin       string
+	ContextName  string
+	UpdatedAt    time.Time
+}
+
 // NormalizeIfStatus canonicalizes IF-MIB ifAdminStatus/ifOperStatus values to
 // their enum names. Discovery walks yield raw integers ("1") while trap
 // handlers and forms use names ("up"); storage and comparisons use names only.

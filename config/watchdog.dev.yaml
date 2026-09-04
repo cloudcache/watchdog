@@ -33,8 +33,9 @@ snmp:
   mib_dirs:
     - "/Users/chenliliang/Downloads/librenms-master/mibs"
     - "/Users/chenliliang/Downloads/librenms-master/mibs/huawei"
-  # Embedded core MIBs already cover the collector; extra modules from
-  # mib_dirs load lazily by name. "ALL" would parse every file at startup.
+  # Embedded MIBs cover core polling. Interface-address and vendor BGPv2
+  # providers resolve lazily from this full MIB tree; "ALL" would eagerly
+  # parse every file at startup and is unnecessary.
   mib_load: ""
 
 snmp_trap_agent:

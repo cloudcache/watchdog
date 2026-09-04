@@ -72,6 +72,7 @@ type SNMPOSFingerprint struct {
 	SysObjectID  string
 	SysDescr     string
 	SysName      string
+	SysLocation  string
 	SysUpTime    uint64
 	SNMPEngineID string
 }
@@ -86,8 +87,23 @@ type SNMPOSMatch struct {
 }
 ```
 
-The OS name controls module selection, MIB dependencies, bad interface rules,
-sensor YAML rules, BGP strategy, and trap behavior.
+The OS name is identification metadata. It may select device-specific sensor
+definitions, bad-interface rules, optional modules, and trap decoders, but it
+MUST NOT select a standard protocol collector by branching on `junos`, `ios`,
+`vrp`, a vendor name, or a model substring.
+
+Standard inventory is capability-driven:
+
+1. load the configured standard and vendor MIB trees;
+2. resolve provider column symbols to numeric OIDs;
+3. probe the device for the table/columns;
+4. choose the successful provider with the richest protocol coverage;
+5. use legacy tables only as compatibility fallbacks.
+
+`sysDescr`, `sysObjectID`, vendor, model, and OS remain observable explanation
+fields. They are never evidence that a table exists. This prevents a new
+firmware name or a compatible third-party implementation from silently losing
+IPv6, BGP or interface inventory.
 
 ### 3.2 Module Selection
 
@@ -668,16 +684,25 @@ watchdog_snmp_sensor_state
 
 ### 6.4 BGP Discovery
 
-Required strategies:
+Provider selection is data-driven and independent of the detected OS. Each
+provider describes its peer, AFI/SAFI, prefix-counter, and counter columns with
+MIB symbols. Discovery resolves and walks those columns, rejects incomplete
+providers, and chooses the result with the broadest AFI/SAFI coverage.
+
+Required provider coverage:
 
 ```text
-generic BGP4-MIB
-Cisco cbgpPeer2
-Juniper BGP MIB
-Arista BGP MIB
-Huawei VRP BGP MIB
+BGP4-V2-MIB / vendor BGP4-V2 extensions (IPv4 + IPv6)
+generic BGP4-MIB (IPv4 compatibility fallback)
+vendor peer tables where no standards-compatible v2 table exists
 VRF/context polling
 ```
+
+Provider descriptors are read from `snmp_module_definitions.definition_json`
+and may also be shipped as built-in MIB descriptors. Extending a device family
+therefore means adding a descriptor and its MIB files, not adding a Go
+`switch osName` branch. A provider is usable only when its required symbols
+resolve and its required table columns return rows.
 
 Recipes per peer:
 
@@ -693,6 +718,40 @@ last error
 ```
 
 `context_name` is part of the recipe key.
+
+Each persisted session key includes peer address, remote AS, AFI and SAFI.
+Discovery replaces the device's BGP snapshot atomically so withdrawn peers or
+families do not remain visible. Prefix counters are associated by the MIB's
+peer-index + AFI + SAFI index, rather than copied from the first address family.
+
+### 6.5 Interface IPv4/IPv6 Address Discovery
+
+Interface addresses are management inventory, not synthesized from an OS or
+model string. The provider order is:
+
+```text
+IP-MIB::ipAddressTable (RFC 4293: IPv4, IPv6 and scoped addresses)
+IP-MIB::ipAddrTable (legacy IPv4 fallback)
+IPV6-MIB::ipv6AddrTable (legacy IPv6 fallback)
+```
+
+The collector persists address, family, prefix length, origin, context, device,
+`ifIndex`, and the stable port identity in `network_interface_addresses`.
+The ports API embeds the address rows, and the device Ports VTable exposes
+separate IPv4 and IPv6 columns. A successful discovery replaces the device
+snapshot so removed addresses disappear. Duplicate rows from overlapping
+providers are eliminated by stable identity.
+
+### 6.6 Location and Last-Seen Semantics
+
+- `sysLocation.0` is collected as a core SNMP fact and persisted as
+  `network_devices.sys_location` exactly as returned. Empty device data remains
+  empty; the platform does not infer a location from vendor or OS.
+- The UI may fall back to explicitly managed target labels `location`, `site`,
+  then `region`.
+- `Last Seen` is the latest successful `snmp_collection_recipes.last_polled_at`
+  for the device. It does not depend on a system agent heartbeat, so an
+  independently deployed SNMP collector has the same freshness semantics.
 
 ## 7. Polling Algorithm
 

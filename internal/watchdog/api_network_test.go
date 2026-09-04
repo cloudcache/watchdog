@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeNetworkRepository struct {
 	devices      []NetworkDevice
 	ports        []NetworkPort
+	addresses    []NetworkInterfaceAddress
 	transceiver  NetworkPortTransceiver
 	sensors      []NetworkDeviceSensor
 	bgp          []BGPSession
@@ -85,6 +87,16 @@ func (r *fakeNetworkRepository) ListPorts(_ context.Context, _ ID, deviceID ID) 
 	return ports, nil
 }
 
+func (r *fakeNetworkRepository) ListInterfaceAddresses(_ context.Context, _ ID, deviceID ID) ([]NetworkInterfaceAddress, error) {
+	var addresses []NetworkInterfaceAddress
+	for _, address := range r.addresses {
+		if address.DeviceID == deviceID {
+			addresses = append(addresses, address)
+		}
+	}
+	return addresses, nil
+}
+
 func (r *fakeNetworkRepository) GetPort(_ context.Context, _ ID, portID ID) (NetworkPort, error) {
 	for _, port := range r.ports {
 		if port.ID == portID {
@@ -108,6 +120,17 @@ func (r *fakeNetworkRepository) UpsertPorts(_ context.Context, ports []NetworkPo
 			r.ports = append(r.ports, port)
 		}
 	}
+	return nil
+}
+
+func (r *fakeNetworkRepository) ReplaceInterfaceAddresses(_ context.Context, _ ID, deviceID ID, addresses []NetworkInterfaceAddress) error {
+	kept := r.addresses[:0]
+	for _, address := range r.addresses {
+		if address.DeviceID != deviceID {
+			kept = append(kept, address)
+		}
+	}
+	r.addresses = append(kept, addresses...)
 	return nil
 }
 
@@ -201,6 +224,17 @@ func (r *fakeNetworkRepository) UpsertBGPSessions(_ context.Context, sessions []
 	return nil
 }
 
+func (r *fakeNetworkRepository) ReplaceBGPSessions(_ context.Context, _ ID, deviceID ID, sessions []BGPSession) error {
+	kept := r.bgp[:0]
+	for _, session := range r.bgp {
+		if session.DeviceID != deviceID {
+			kept = append(kept, session)
+		}
+	}
+	r.bgp = append(kept, sessions...)
+	return nil
+}
+
 func (r *fakeNetworkRepository) GetPortPolicy(context.Context, ID, ID) (PortPolicy, error) {
 	if r.policy.PortID == "" {
 		return PortPolicy{}, sql.ErrNoRows
@@ -250,6 +284,7 @@ func TestAPINetworkDevicesListFiltersByTargetPermission(t *testing.T) {
 }
 
 func TestAPINetworkDeviceSummariesIncludeCounts(t *testing.T) {
+	lastPolled := time.Date(2026, 9, 4, 1, 2, 3, 0, time.UTC)
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: networkTestAuth,
 		Targets: &fakeTargetRepository{targets: []Target{{
@@ -279,6 +314,9 @@ func TestAPINetworkDeviceSummariesIncludeCounts(t *testing.T) {
 				{ID: "bgp-b", TenantID: "tenant-a", DeviceID: "device-a", State: "idle"},
 			},
 		},
+		SNMPCollector: &fakeSNMPCollectorRepository{recipes: []SNMPCollectionRecipe{{
+			ID: "recipe-a", TenantID: "tenant-a", DeviceID: "device-a", Enabled: true, LastPolledAt: lastPolled,
+		}}},
 	})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary", nil))
@@ -286,7 +324,7 @@ func TestAPINetworkDeviceSummariesIncludeCounts(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"PortCount":2`, `"UpPorts":1`, `"DownPorts":1`, `"BGPSessions":2`, `"EstablishedBGP":1`, `"Agent":{"ID":"agent-a"`} {
+	for _, want := range []string{`"PortCount":2`, `"UpPorts":1`, `"DownPorts":1`, `"BGPSessions":2`, `"EstablishedBGP":1`, `"Agent":{"ID":"agent-a"`, `"LastSeen":"2026-09-04T01:02:03Z"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
@@ -412,6 +450,9 @@ func TestAPINetworkSNMPDiscoverUpsertsDevicePortsAndSensors(t *testing.T) {
 		Ports: []NetworkPort{{
 			IfIndex: 101, IfName: "Eth1/1", IfDescr: "uplink", AdminStatus: "up", OperStatus: "up", SpeedBps: 10000000000, Metadata: map[string]string{"side_type": "provider"},
 		}},
+		InterfaceAddresses: []NetworkInterfaceAddress{{
+			IfIndex: 101, Address: "2001:db8::10", Family: "ipv6", PrefixLength: 64,
+		}},
 		Sensors: []NetworkDeviceSensor{{SensorIndex: 501, Class: "temperature", Name: "Temp sensor", OID: ".1.2.3.501", Unit: "C", Value: 38.5, Status: "ok"}},
 	}}
 	router := NewAPIV1Router(APIV1RouterConfig{
@@ -435,6 +476,12 @@ func TestAPINetworkSNMPDiscoverUpsertsDevicePortsAndSensors(t *testing.T) {
 	}
 	if len(repo.sensors) != 1 || repo.sensors[0].DeviceID != "device-a" || repo.sensors[0].TenantID != "tenant-a" || repo.sensors[0].ID == "" {
 		t.Fatalf("sensors = %#v", repo.sensors)
+	}
+	if len(repo.addresses) != 1 || repo.addresses[0].PortID == "" || repo.addresses[0].DeviceID != "device-a" {
+		t.Fatalf("interface addresses = %#v", repo.addresses)
+	}
+	if !strings.Contains(rec.Body.String(), `"interface_addresses":1`) {
+		t.Fatalf("response missing interface address count: %s", rec.Body.String())
 	}
 }
 

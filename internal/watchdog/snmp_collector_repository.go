@@ -16,6 +16,7 @@ type SNMPCollectorRepository interface {
 	ListDueSNMPCollectionRecipes(ctx context.Context, tenantID ID, limit int, now time.Time) ([]SNMPCollectionRecipe, error)
 	ListDueSNMPDevices(ctx context.Context, tenantID ID, limit int, now time.Time) ([]ID, error)
 	ListSNMPCollectionRecipesByDevice(ctx context.Context, tenantID, deviceID ID) ([]SNMPCollectionRecipe, error)
+	GetSNMPDeviceLastPolledAt(ctx context.Context, tenantID, deviceID ID) (time.Time, error)
 	MarkSNMPRecipePollResult(ctx context.Context, recipeID ID, polledAt time.Time, lastError string) error
 	ListSNMPTrapHandlers(ctx context.Context) ([]SNMPTrapHandlerDefinition, error)
 	UpsertSNMPTrapHandler(ctx context.Context, handler SNMPTrapHandlerDefinition) (SNMPTrapHandlerDefinition, error)

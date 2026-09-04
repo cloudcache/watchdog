@@ -14,6 +14,7 @@ var (
 	snmpOIDSysObjectID  = snmpMIBOID("SNMPv2-MIB::sysObjectID.0")
 	snmpOIDSysUpTime    = snmpMIBOID("SNMPv2-MIB::sysUpTime.0")
 	snmpOIDSysName      = snmpMIBOID("SNMPv2-MIB::sysName.0")
+	snmpOIDSysLocation  = snmpMIBOID("SNMPv2-MIB::sysLocation.0")
 	snmpOIDSNMPEngineID = snmpMIBOID("SNMP-FRAMEWORK-MIB::snmpEngineID.0")
 )
 
@@ -47,6 +48,7 @@ func (e SNMPDiscoveryEngine) Discover(ctx context.Context, req SNMPDiscoveryEngi
 	device.SysObjectID = fingerprint.SysObjectID
 	device.SysDescr = fingerprint.SysDescr
 	device.SysName = fingerprint.SysName
+	device.SysLocation = fingerprint.SysLocation
 	device.Uptime = time.Duration(fingerprint.SysUpTime/100) * time.Second
 	device.OSName = osMatch.OSName
 	if osMatch.Vendor != "" {
@@ -91,6 +93,7 @@ func (e SNMPDiscoveryEngine) Discover(ctx context.Context, req SNMPDiscoveryEngi
 			continue
 		}
 		appendDiscoveryResult(&result, moduleResult)
+		result.CompletedModules = append(result.CompletedModules, module.Name())
 	}
 	return result, nil
 }
@@ -144,6 +147,7 @@ func (e SNMPDiscoveryEngine) coreFingerprint(ctx context.Context, req SNMPDiscov
 			snmpOIDSysObjectID,
 			snmpOIDSysUpTime,
 			snmpOIDSysName,
+			snmpOIDSysLocation,
 			snmpOIDSNMPEngineID,
 		},
 		Flags: SNMPCollectorQueryFlags{MaxOids: 10},
@@ -163,6 +167,7 @@ func (e SNMPDiscoveryEngine) coreFingerprint(ctx context.Context, req SNMPDiscov
 		SysObjectID:  snmpCollectorStringValue(values[snmpOIDSysObjectID].Value),
 		SysDescr:     snmpCollectorStringValue(values[snmpOIDSysDescr].Value),
 		SysName:      snmpCollectorStringValue(values[snmpOIDSysName].Value),
+		SysLocation:  snmpCollectorStringValue(values[snmpOIDSysLocation].Value),
 		SysUpTime:    uint64(sysUpTime),
 		SNMPEngineID: snmpCollectorStringValue(values[snmpOIDSNMPEngineID].Value),
 	}, nil
@@ -170,6 +175,7 @@ func (e SNMPDiscoveryEngine) coreFingerprint(ctx context.Context, req SNMPDiscov
 
 func appendDiscoveryResult(dst *SNMPCollectorDiscoveryResult, src SNMPCollectorDiscoveryResult) {
 	dst.Ports = append(dst.Ports, src.Ports...)
+	dst.InterfaceAddresses = append(dst.InterfaceAddresses, src.InterfaceAddresses...)
 	dst.Sensors = append(dst.Sensors, src.Sensors...)
 	dst.PhysicalEntities = append(dst.PhysicalEntities, src.PhysicalEntities...)
 	dst.BGPSessions = append(dst.BGPSessions, src.BGPSessions...)

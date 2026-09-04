@@ -66,8 +66,10 @@ type NetworkRepository interface {
 	UpsertDevice(ctx context.Context, device NetworkDevice) (NetworkDevice, error)
 	DeleteDevice(ctx context.Context, tenantID, deviceID ID) error
 	ListPorts(ctx context.Context, tenantID, deviceID ID) ([]NetworkPort, error)
+	ListInterfaceAddresses(ctx context.Context, tenantID, deviceID ID) ([]NetworkInterfaceAddress, error)
 	GetPort(ctx context.Context, tenantID, portID ID) (NetworkPort, error)
 	UpsertPorts(ctx context.Context, ports []NetworkPort) error
+	ReplaceInterfaceAddresses(ctx context.Context, tenantID, deviceID ID, addresses []NetworkInterfaceAddress) error
 	DeletePort(ctx context.Context, tenantID, portID ID) error
 	UpsertPortTransceiver(ctx context.Context, transceiver NetworkPortTransceiver) (NetworkPortTransceiver, error)
 	GetPortTransceiver(ctx context.Context, tenantID, portID ID) (NetworkPortTransceiver, error)
@@ -83,6 +85,7 @@ type NetworkRepository interface {
 	ListAllBGPSessions(ctx context.Context, tenantID ID) ([]BGPSession, error)
 	GetBGPSession(ctx context.Context, tenantID, sessionID ID) (BGPSession, error)
 	UpsertBGPSessions(ctx context.Context, sessions []BGPSession) error
+	ReplaceBGPSessions(ctx context.Context, tenantID, deviceID ID, sessions []BGPSession) error
 	GetPortPolicy(ctx context.Context, tenantID, portID ID) (PortPolicy, error)
 	UpsertPortPolicy(ctx context.Context, policy PortPolicy) (PortPolicy, error)
 	GetTrafficPolicyDefaults(ctx context.Context, tenantID ID) (TrafficPolicyDefaults, error)

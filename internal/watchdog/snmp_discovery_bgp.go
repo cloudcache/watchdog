@@ -49,6 +49,9 @@ func (m SNMPBGPDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorD
 		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	contextName := snmpCollectorDefinitionString(req.Definition.Definition, "context_name")
+	if result := m.discoverMIBProviders(ctx, req, contextName); len(result.BGPSessions) > 0 {
+		return result, nil
+	}
 	result, err := m.discoverBGP4MIB(ctx, req, contextName)
 	if err != nil {
 		return SNMPCollectorDiscoveryResult{}, err

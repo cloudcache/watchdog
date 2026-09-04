@@ -470,7 +470,7 @@ GET/PATCH/DELETE         /api/v1/network-ports/{id}
 | `network` | 网络 | SNMP 网元：交换机/路由器/防火墙，设备/端口/光模块/传感器/VLAN/LAG | `agent_type=snmp`（pull） | VM + MySQL `network_devices/ports` | ga |
 | `storage` | 存储 | RAID 卡（storcli/perccli 类 CLI）、分布式与对象存储集群（Ceph/MinIO/RustFS/BeeGFS）、磁盘 SMART 聚合 | **不新建 agent 二进制**：system agent 扩 `storage.*` capabilities（smartctl 已有雏形；RAID CLI、集群本机探针）；集群型 target 由绑定 agent 经原生 API/exporter 代理采集 | MySQL `storage_devices` 最新态 + VM 历史（对齐 ADR-SC-001 SMART 结论） | SMART=beta（迁移中）；RAID/Ceph/MinIO/RustFS/BeeGFS=planned |
 | `edge` | 边缘 | 轻量拨测：ping（ICMP）、dig/nslookup（DNS）、HTTP(S) 探活、mtr（路径质量） | `agent_type=edge_probe`：薄探针，复用 §6 的 enrollment/plan/job/result 基建；拨测任务 = plan 内的周期 job 定义 | VM 拨测时序（rtt/loss/status/http_code）+ MySQL 任务定义与最新结果摘要 | planned |
-| `core` | 核心 | BGP 路由监控（会话/前缀/状态）+ IP 库查询（本地 `flow-geo-v1` 只读 lookup 服务化） | 现：`agent_type=snmp`（BGP4-MIB，已采）；未来：`agent_type=bmp`（RIB 级）。IP 库查询无采集，只读 flow 模块 Geo loader | VM BGP 指标 + MySQL `bgp_sessions`；IP 库不落库 | BGP-via-SNMP=ga；BMP=planned；IP 库查询页=planned（仅依赖 flow-geo-v1 loader，可先于 Flow P1 独立交付） |
+| `core` | 核心 | BGP 路由监控（会话/前缀/状态）+ IP 库查询（本地 `flow-geo-v1` 只读 lookup 服务化） | 现：`agent_type=snmp`（按实际 MIB 表能力选择 BGP4-V2/厂商扩展，BGP4-MIB 仅作 IPv4 兼容回退；不按 OS 字符串分支）；未来：`agent_type=bmp`（RIB 级）。IP 库查询无采集，只读 flow 模块 Geo loader | VM BGP 指标 + MySQL `bgp_sessions`；IP 库不落库 | BGP-via-SNMP=ga；BMP=planned；IP 库查询页=planned（仅依赖 flow-geo-v1 loader，可先于 Flow P1 独立交付） |
 
 约束与迁移：
 

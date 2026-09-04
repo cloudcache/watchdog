@@ -2,6 +2,7 @@ package watchdog
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,6 +136,81 @@ func TestSNMPCollectorDiscoveryCorrectsVendorAndJunosVersion(t *testing.T) {
 	}
 	if got := result.DeviceUpdates; got.Vendor != "juniper" || got.OSName != "junos" || got.OSVersion != "21.2R3-S8.5" {
 		t.Fatalf("device updates = %#v", got)
+	}
+}
+
+func TestInterfaceAddressDiscoveryUsesIPMIBIndexesForBothFamilies(t *testing.T) {
+	provider := snmpInterfaceAddressProvider{
+		name: "test-ip-mib", ifIndex: ".1", prefix: ".2", origin: ".3",
+	}
+	query := fakeSNMPCollectorQueryEngine{walks: map[string]SNMPCollectorResponse{
+		"1": {VarBinds: []SNMPCollectorVarBind{
+			{OID: "1.1.4.192.0.2.10", Value: uint32(7)},
+			{OID: "1.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.16", Value: uint32(8)},
+		}},
+		"2": {VarBinds: []SNMPCollectorVarBind{
+			{OID: "2.1.4.192.0.2.10", Value: ".1.3.6.1.2.1.4.32.1.5.7.1.4.192.0.2.0.24"},
+			{OID: "2.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.16", Value: ".1.3.6.1.2.1.4.32.1.5.8.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.0.64"},
+		}},
+		"3": {VarBinds: []SNMPCollectorVarBind{
+			{OID: "3.1.4.192.0.2.10", Value: uint32(2)},
+			{OID: "3.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.16", Value: uint32(5)},
+		}},
+	}}
+	addresses := discoverSNMPInterfaceAddressesWithProvider(context.Background(), SNMPCollectorDiscoveryContext{
+		TenantID: "tenant-a", Device: NetworkDevice{ID: "device-a"}, Query: query,
+	}, provider)
+	if len(addresses) != 2 {
+		t.Fatalf("addresses = %#v", addresses)
+	}
+	byFamily := map[string]NetworkInterfaceAddress{}
+	for _, address := range addresses {
+		byFamily[address.Family] = address
+	}
+	if address := byFamily["ipv4"]; address.Address != "192.0.2.10" || address.PrefixLength != 24 || address.Origin != "manual" {
+		t.Fatalf("unexpected IPv4 address: %#v", address)
+	}
+	if address := byFamily["ipv6"]; address.Address != "2001:db8::10" || address.PrefixLength != 64 || address.Origin != "linklayer" {
+		t.Fatalf("unexpected IPv6 address: %#v", address)
+	}
+}
+
+func TestBGPDiscoverySelectsConfiguredMIBProviderByTableCapability(t *testing.T) {
+	provider := map[string]any{
+		"name": "TEST-BGP-V2", "state": ".1", "local_as": ".2", "remote_as": ".3",
+		"remote_address_type": ".4", "remote_address": ".5", "peer_index": ".6",
+		"established_seconds": ".7", "prefix_afi": ".8", "prefix_safi": ".9",
+		"accepted_prefixes": ".10", "denied_prefixes": ".11", "advertised_prefixes": ".12",
+	}
+	peerIndex := "1.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1"
+	query := fakeSNMPCollectorQueryEngine{walks: map[string]SNMPCollectorResponse{
+		"1":  {VarBinds: []SNMPCollectorVarBind{{OID: "1." + peerIndex, Value: uint32(6)}}},
+		"2":  {VarBinds: []SNMPCollectorVarBind{{OID: "2." + peerIndex, Value: uint32(64512)}}},
+		"3":  {VarBinds: []SNMPCollectorVarBind{{OID: "3." + peerIndex, Value: uint32(64513)}}},
+		"4":  {VarBinds: []SNMPCollectorVarBind{{OID: "4." + peerIndex, Value: uint32(2)}}},
+		"5":  {VarBinds: []SNMPCollectorVarBind{{OID: "5." + peerIndex, Value: []byte{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}}}},
+		"6":  {VarBinds: []SNMPCollectorVarBind{{OID: "6." + peerIndex, Value: uint32(42)}}},
+		"7":  {VarBinds: []SNMPCollectorVarBind{{OID: "7." + peerIndex, Value: uint32(3600)}}},
+		"8":  {VarBinds: []SNMPCollectorVarBind{{OID: "8.42.2.1", Value: uint32(2)}}},
+		"9":  {VarBinds: []SNMPCollectorVarBind{{OID: "9.42.2.1", Value: uint32(1)}}},
+		"10": {VarBinds: []SNMPCollectorVarBind{{OID: "10.42.2.1", Value: uint32(123)}}},
+		"11": {VarBinds: []SNMPCollectorVarBind{{OID: "11.42.2.1", Value: uint32(4)}}},
+		"12": {VarBinds: []SNMPCollectorVarBind{{OID: "12.42.2.1", Value: uint32(55)}}},
+	}}
+	result, err := (SNMPBGPDiscoveryModule{}).Discover(context.Background(), SNMPCollectorDiscoveryContext{
+		TenantID: "tenant-a", TargetID: "target-a", Device: NetworkDevice{ID: "device-a"}, Query: query,
+		OS:         SNMPCollectorOSMatch{OSName: "deliberately-unrelated"},
+		Definition: SNMPCollectorModuleDefinition{Definition: map[string]any{"providers": []any{provider}}},
+	})
+	if err != nil || len(result.BGPSessions) != 1 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	session := result.BGPSessions[0]
+	if session.PeerAddr != "2001:db8::1" || session.AFI != "ipv6" || session.SAFI != "unicast" || session.AcceptedPrefixes != 123 || session.PeerAS != 64513 {
+		t.Fatalf("unexpected session: %#v", session)
+	}
+	if session.Metadata["source"] != "TEST-BGP-V2" {
+		t.Fatalf("source = %#v", session.Metadata)
 	}
 }
 
@@ -785,6 +861,9 @@ func TestSNMPCollectorDiscoveryImporterPersistsAssetsRecipesAndEvents(t *testing
 			IfIndex: 101,
 			IfName:  "Eth1/1",
 		}},
+		InterfaceAddresses: []NetworkInterfaceAddress{{
+			ID: "address-a", PortID: "port-a", IfIndex: 101, Address: "2001:db8::10", Family: "ipv6", PrefixLength: 64,
+		}},
 		Sensors: []NetworkDeviceSensor{{
 			ID:          "sensor-a",
 			SensorIndex: 501,
@@ -832,10 +911,10 @@ func TestSNMPCollectorDiscoveryImporterPersistsAssetsRecipesAndEvents(t *testing
 	if report.Device.ID != "device-a" || report.Device.TenantID != "tenant-a" || report.Device.SysName != "sw1" {
 		t.Fatalf("unexpected device report: %#v", report.Device)
 	}
-	if report.Ports != 1 || report.Sensors != 1 || report.PhysicalEntities != 1 || report.BGPSessions != 1 || report.VLANs != 1 || report.LAGs != 1 || report.Recipes != 1 || report.Events != 1 || report.DeviceModules != 1 {
+	if report.Ports != 1 || report.InterfaceAddresses != 1 || report.Sensors != 1 || report.PhysicalEntities != 1 || report.BGPSessions != 1 || report.VLANs != 1 || report.LAGs != 1 || report.Recipes != 1 || report.Events != 1 || report.DeviceModules != 1 {
 		t.Fatalf("unexpected import report: %#v", report)
 	}
-	if len(network.devices) != 1 || len(network.ports) != 1 || len(network.sensors) != 1 || len(network.physical) != 1 || len(network.bgp) != 1 || len(network.vlans) != 1 || len(network.lags) != 1 {
+	if len(network.devices) != 1 || len(network.ports) != 1 || len(network.addresses) != 1 || len(network.sensors) != 1 || len(network.physical) != 1 || len(network.bgp) != 1 || len(network.vlans) != 1 || len(network.lags) != 1 {
 		t.Fatalf("network writes missing: %#v", network)
 	}
 	if len(collector.recipes) != 1 || collector.recipes[0].TenantID != "tenant-a" || collector.recipes[0].DeviceID != "device-a" || collector.recipes[0].ID == "" || !collector.recipes[0].Enabled {
@@ -846,6 +925,22 @@ func TestSNMPCollectorDiscoveryImporterPersistsAssetsRecipesAndEvents(t *testing
 	}
 	if len(collector.events) != 1 || collector.events[0].TenantID != "tenant-a" || collector.events[0].DeviceID != "device-a" || collector.events[0].OccurredAt != eventTime {
 		t.Fatalf("event write missing identity: %#v", collector.events)
+	}
+}
+
+func TestSNMPCollectorDiscoveryImporterClearsCompletedEmptySnapshots(t *testing.T) {
+	network := &fakeNetworkRepository{
+		addresses: []NetworkInterfaceAddress{{ID: "old-address", TenantID: "tenant-a", DeviceID: "device-a", PortID: "port-a"}},
+		bgp:       []BGPSession{{ID: "old-bgp", TenantID: "tenant-a", DeviceID: "device-a", PeerAddr: "192.0.2.1"}},
+	}
+	_, err := ImportSNMPCollectorDiscoveryResult(context.Background(), network, &fakeSNMPCollectorRepository{}, "tenant-a", NetworkDevice{
+		ID: "device-a", TargetID: "target-a",
+	}, SNMPCollectorDiscoveryResult{CompletedModules: []string{snmpCollectorModulePorts, snmpCollectorModuleBGP}})
+	if err != nil {
+		t.Fatalf("ImportSNMPCollectorDiscoveryResult() error = %v", err)
+	}
+	if len(network.addresses) != 0 || len(network.bgp) != 0 {
+		t.Fatalf("completed empty snapshots were not cleared: addresses=%#v bgp=%#v", network.addresses, network.bgp)
 	}
 }
 
@@ -1126,6 +1221,19 @@ func (r *fakeSNMPCollectorRepository) ListSNMPCollectionRecipesByDevice(_ contex
 		}
 	}
 	return result, nil
+}
+
+func (r *fakeSNMPCollectorRepository) GetSNMPDeviceLastPolledAt(_ context.Context, _ ID, deviceID ID) (time.Time, error) {
+	var latest time.Time
+	for _, recipe := range r.recipes {
+		if recipe.DeviceID == deviceID && recipe.LastError == "" && recipe.LastPolledAt.After(latest) {
+			latest = recipe.LastPolledAt
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, sql.ErrNoRows
+	}
+	return latest, nil
 }
 
 func (r *fakeSNMPCollectorRepository) ListSNMPTrapHandlers(_ context.Context) ([]SNMPTrapHandlerDefinition, error) {

@@ -69,7 +69,11 @@ func (m SNMPPortsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 		ports = append(ports, port)
 		recipes = append(recipes, portRecipes(req, port, hasColumnIndex(columns[snmpOIDIfHCInOctets], ifIndex), hasColumnIndex(columns[snmpOIDIfHCOutOctets], ifIndex))...)
 	}
-	return SNMPCollectorDiscoveryResult{Ports: ports, Recipes: recipes}, nil
+	return SNMPCollectorDiscoveryResult{
+		Ports:              ports,
+		InterfaceAddresses: discoverSNMPInterfaceAddresses(ctx, req),
+		Recipes:            recipes,
+	}, nil
 }
 
 func (m SNMPPortsDiscoveryModule) walkPortColumns(ctx context.Context, req SNMPCollectorDiscoveryContext) (map[string]map[uint64]string, error) {

@@ -161,6 +161,67 @@ func (s *MySQLStore) ListPorts(ctx context.Context, tenantID, deviceID ID) ([]Ne
 	return ports, rows.Err()
 }
 
+func (s *MySQLStore) ListInterfaceAddresses(ctx context.Context, tenantID, deviceID ID) ([]NetworkInterfaceAddress, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, device_id, COALESCE(port_id, ''), if_index,
+		       address, family, prefix_length, origin, context_name, updated_at
+		FROM network_interface_addresses
+		WHERE tenant_id = ? AND device_id = ?
+		ORDER BY if_index, family, address
+	`, tenantID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var addresses []NetworkInterfaceAddress
+	for rows.Next() {
+		address, err := scanNetworkInterfaceAddress(rows)
+		if err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses, rows.Err()
+}
+
+func (s *MySQLStore) ReplaceInterfaceAddresses(ctx context.Context, tenantID, deviceID ID, addresses []NetworkInterfaceAddress) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_interface_addresses WHERE tenant_id = ? AND device_id = ?`, tenantID, deviceID); err != nil {
+		return err
+	}
+	if len(addresses) == 0 {
+		return tx.Commit()
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO network_interface_addresses (
+			id, tenant_id, device_id, port_id, if_index, address, family, prefix_length, origin, context_name
+		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, address := range addresses {
+		ip := net.ParseIP(address.Address)
+		if ip == nil {
+			return &net.ParseError{Type: "IP address", Text: address.Address}
+		}
+		if address.Family == "ipv4" {
+			ip = ip.To4()
+		} else {
+			ip = ip.To16()
+		}
+		if _, err := stmt.ExecContext(ctx, address.ID, tenantID, deviceID, address.PortID, address.IfIndex, []byte(ip), address.Family, address.PrefixLength, address.Origin, address.ContextName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *MySQLStore) GetPort(ctx context.Context, tenantID, portID ID) (NetworkPort, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, device_id, if_index, if_name, if_alias, if_descr, admin_status, oper_status, speed_bps, metadata_json
@@ -557,6 +618,49 @@ func (s *MySQLStore) UpsertBGPSessions(ctx context.Context, sessions []BGPSessio
 	return tx.Commit()
 }
 
+func (s *MySQLStore) ReplaceBGPSessions(ctx context.Context, tenantID, deviceID ID, sessions []BGPSession) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bgp_sessions WHERE tenant_id = ? AND device_id = ?`, tenantID, deviceID); err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return tx.Commit()
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO bgp_sessions (
+			id, tenant_id, device_id, peer_addr, peer_as, local_as, afi, safi, state,
+			accepted_prefixes, denied_prefixes, advertised_prefixes, uptime_seconds, metadata_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, session := range sessions {
+		metadataJSON, err := encodeStringMapJSON(session.Metadata)
+		if err != nil {
+			return err
+		}
+		peerAddr := net.ParseIP(session.PeerAddr)
+		if peerAddr == nil {
+			return &net.ParseError{Type: "IP address", Text: session.PeerAddr}
+		}
+		if peerAddr.To4() != nil {
+			peerAddr = peerAddr.To4()
+		} else {
+			peerAddr = peerAddr.To16()
+		}
+		if _, err := stmt.ExecContext(ctx, session.ID, tenantID, deviceID, []byte(peerAddr), session.PeerAS, session.LocalAS, session.AFI, session.SAFI, session.State, session.AcceptedPrefixes, session.DeniedPrefixes, session.AdvertisedPrefixes, uint64(session.Uptime.Seconds()), metadataJSON); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *MySQLStore) GetPortPolicy(ctx context.Context, tenantID, portID ID) (PortPolicy, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, port_id, side_type, billing_base_bps, sample_step_seconds,
@@ -676,6 +780,16 @@ func scanNetworkPort(row rowScanner) (NetworkPort, error) {
 	port.AdminStatus = NormalizeIfStatus(port.AdminStatus)
 	port.OperStatus = NormalizeIfStatus(port.OperStatus)
 	return port, nil
+}
+
+func scanNetworkInterfaceAddress(row rowScanner) (NetworkInterfaceAddress, error) {
+	var address NetworkInterfaceAddress
+	var rawAddress []byte
+	if err := row.Scan(&address.ID, &address.TenantID, &address.DeviceID, &address.PortID, &address.IfIndex, &rawAddress, &address.Family, &address.PrefixLength, &address.Origin, &address.ContextName, &address.UpdatedAt); err != nil {
+		return address, err
+	}
+	address.Address = net.IP(rawAddress).String()
+	return address, nil
 }
 
 func scanNetworkPortTransceiver(row rowScanner) (NetworkPortTransceiver, error) {

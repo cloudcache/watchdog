@@ -69,6 +69,8 @@ type NetworkDeviceSummary = {
 	bgp_sessions?: number
 	EstablishedBGP?: number
 	established_bgp?: number
+	LastSeen?: string
+	last_seen?: string
 }
 
 type NetworkDeviceSummariesResponse = {
@@ -305,9 +307,23 @@ function toTableRecord(summary: NetworkDeviceSummary): DeviceTableRecord {
 	const downPorts = summary.DownPorts ?? summary.down_ports ?? 0
 	const osName = firstText(device.OSName, device.os_name)
 	const osVer = firstText(device.OSVersion, device.os_version)
-	const location = firstText(device.SysLocation, device.sys_location)
+	const targetLabels = target?.Labels ?? target?.labels ?? {}
+	const location = firstText(
+		device.SysLocation,
+		device.sys_location,
+		targetLabels.location,
+		targetLabels.site,
+		targetLabels.region
+	)
 	const uptimeNs = device.Uptime ?? device.uptime ?? 0
-	const lastSuccess = firstText(agent?.LastSuccess, agent?.last_success, agent?.LastSeen, agent?.last_seen)
+	const lastSuccess = firstText(
+		summary.LastSeen,
+		summary.last_seen,
+		agent?.LastSuccess,
+		agent?.last_success,
+		agent?.LastSeen,
+		agent?.last_seen
+	)
 
 	const statusDot = status === "up" ? "🟢" : status === "down" ? "🔴" : "🟡"
 	const deviceDisplay = targetName !== deviceName ? `${targetName}\n${deviceName}` : targetName

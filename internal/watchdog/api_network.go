@@ -30,6 +30,7 @@ type networkDeviceSummary struct {
 	DownPorts      int
 	BGPSessions    int
 	EstablishedBGP int
+	LastSeen       *time.Time `json:",omitempty"`
 }
 
 type networkDeviceInventoryUpdater interface {
@@ -172,6 +173,11 @@ func (api networkAPI) fillDeviceSummary(ctx context.Context, auth AuthContext, s
 	for _, session := range bgp {
 		if session.State == "established" {
 			summary.EstablishedBGP++
+		}
+	}
+	if api.collector != nil {
+		if lastSeen, err := api.collector.GetSNMPDeviceLastPolledAt(ctx, auth.TenantID, device.ID); err == nil && !lastSeen.IsZero() {
+			summary.LastSeen = &lastSeen
 		}
 	}
 	return nil
@@ -539,7 +545,8 @@ func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request)
 	WriteAPIJSON(w, http.StatusOK, map[string]any{
 		"ports": report.Ports, "sensors": report.Sensors, "count": report.Ports, "deleted": deleted,
 		"vlans": report.VLANs, "entities": report.PhysicalEntities, "lags": report.LAGs,
-		"bgp_sessions": report.BGPSessions, "recipes": report.Recipes,
+		"interface_addresses": report.InterfaceAddresses,
+		"bgp_sessions":        report.BGPSessions, "recipes": report.Recipes,
 		"events": report.Events, "modules": report.DeviceModules,
 	})
 }

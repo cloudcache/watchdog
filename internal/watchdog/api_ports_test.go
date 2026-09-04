@@ -26,6 +26,30 @@ func TestAPIPortsListRequiresDeviceTargetPermission(t *testing.T) {
 	}
 }
 
+func TestAPIPortsListIncludesIPv4AndIPv6Addresses(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: networkTestAuth,
+		Network: &fakeNetworkRepository{
+			devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+			ports:   []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", IfIndex: 101}},
+			addresses: []NetworkInterfaceAddress{
+				{ID: "address-v4", TenantID: "tenant-a", DeviceID: "device-a", PortID: "port-a", IfIndex: 101, Address: "192.0.2.10", Family: "ipv4", PrefixLength: 24},
+				{ID: "address-v6", TenantID: "tenant-a", DeviceID: "device-a", PortID: "port-a", IfIndex: 101, Address: "2001:db8::10", Family: "ipv6", PrefixLength: 64},
+			},
+		},
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/device-a/ports", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"Address":"192.0.2.10"`, `"Family":"ipv4"`, `"Address":"2001:db8::10"`, `"Family":"ipv6"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("body missing %s: %s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestAPIPortsGetAllowsTargetInheritedPermission(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: networkTestAuth,

@@ -8,16 +8,17 @@ import (
 )
 
 type SNMPCollectorDiscoveryImportResult struct {
-	Device           NetworkDevice
-	Ports            int
-	Sensors          int
-	PhysicalEntities int
-	BGPSessions      int
-	VLANs            int
-	LAGs             int
-	Recipes          int
-	Events           int
-	DeviceModules    int
+	Device             NetworkDevice
+	Ports              int
+	InterfaceAddresses int
+	Sensors            int
+	PhysicalEntities   int
+	BGPSessions        int
+	VLANs              int
+	LAGs               int
+	Recipes            int
+	Events             int
+	DeviceModules      int
 }
 
 func ImportSNMPCollectorDiscoveryResult(ctx context.Context, network NetworkRepository, collector SNMPCollectorRepository, tenantID ID, device NetworkDevice, result SNMPCollectorDiscoveryResult) (SNMPCollectorDiscoveryImportResult, error) {
@@ -51,6 +52,13 @@ func ImportSNMPCollectorDiscoveryResult(ctx context.Context, network NetworkRepo
 		}
 		result.Ports = ports
 	}
+	if len(result.InterfaceAddresses) > 0 || completedSNMPDiscoveryModule(result, snmpCollectorModulePorts) {
+		addresses := normalizeSNMPCollectorInterfaceAddresses(tenantID, device.ID, result.InterfaceAddresses)
+		if err := network.ReplaceInterfaceAddresses(ctx, tenantID, device.ID, addresses); err != nil {
+			return SNMPCollectorDiscoveryImportResult{}, err
+		}
+		result.InterfaceAddresses = addresses
+	}
 
 	sensors := prepareDeviceSensors(tenantID, device.ID, result.Sensors)
 	if len(sensors) > 0 {
@@ -65,9 +73,9 @@ func ImportSNMPCollectorDiscoveryResult(ctx context.Context, network NetworkRepo
 			return SNMPCollectorDiscoveryImportResult{}, err
 		}
 	}
-	if len(result.BGPSessions) > 0 {
+	if len(result.BGPSessions) > 0 || completedSNMPDiscoveryModule(result, snmpCollectorModuleBGP) {
 		sessions := normalizeSNMPCollectorBGPSessions(tenantID, device.ID, result.BGPSessions)
-		if err := network.UpsertBGPSessions(ctx, sessions); err != nil {
+		if err := network.ReplaceBGPSessions(ctx, tenantID, device.ID, sessions); err != nil {
 			return SNMPCollectorDiscoveryImportResult{}, err
 		}
 		result.BGPSessions = sessions
@@ -124,17 +132,43 @@ func ImportSNMPCollectorDiscoveryResult(ctx context.Context, network NetworkRepo
 	}
 
 	return SNMPCollectorDiscoveryImportResult{
-		Device:           device,
-		Ports:            len(result.Ports),
-		Sensors:          len(result.Sensors),
-		PhysicalEntities: len(result.PhysicalEntities),
-		BGPSessions:      len(result.BGPSessions),
-		VLANs:            len(result.VLANs),
-		LAGs:             len(result.LAGs),
-		Recipes:          len(recipes),
-		Events:           len(events),
-		DeviceModules:    len(moduleNames),
+		Device:             device,
+		Ports:              len(result.Ports),
+		InterfaceAddresses: len(result.InterfaceAddresses),
+		Sensors:            len(result.Sensors),
+		PhysicalEntities:   len(result.PhysicalEntities),
+		BGPSessions:        len(result.BGPSessions),
+		VLANs:              len(result.VLANs),
+		LAGs:               len(result.LAGs),
+		Recipes:            len(recipes),
+		Events:             len(events),
+		DeviceModules:      len(moduleNames),
 	}, nil
+}
+
+func completedSNMPDiscoveryModule(result SNMPCollectorDiscoveryResult, moduleName string) bool {
+	for _, completed := range result.CompletedModules {
+		if completed == moduleName {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSNMPCollectorInterfaceAddresses(tenantID, deviceID ID, addresses []NetworkInterfaceAddress) []NetworkInterfaceAddress {
+	normalized := make([]NetworkInterfaceAddress, 0, len(addresses))
+	for _, address := range addresses {
+		address.TenantID = tenantID
+		address.DeviceID = deviceID
+		if address.ID == "" {
+			address.ID = collectorStableID("interface-address", string(tenantID), string(deviceID), fmt.Sprint(address.IfIndex), address.Family, address.Address, fmt.Sprint(address.PrefixLength), address.ContextName)
+		}
+		if address.PortID == "" && address.IfIndex != 0 {
+			address.PortID = collectorStableID("port", string(tenantID), string(deviceID), fmt.Sprint(address.IfIndex))
+		}
+		normalized = append(normalized, address)
+	}
+	return normalized
 }
 
 func mergeSNMPCollectorDeviceUpdates(tenantID ID, device NetworkDevice, updates NetworkDevice) NetworkDevice {
