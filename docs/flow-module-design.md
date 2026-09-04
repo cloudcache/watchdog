@@ -470,11 +470,15 @@ replacement 扫描契约也补齐为三个显式恢复量：`restored_old_epoch/
 
 受权 job create/get/retry API 已接入宿主 Router。创建请求只允许 transfer ID、`decoder|quality` 和 32B identity selector；审批、tenant、old collector、plan revision、epoch、Kafka typed key、checkpoint payload 与冻结 boundary 均由服务端事实源解析和校验。相同 tenant 的 `Idempotency-Key` 仅在 actor 和完整解析结果相同时重放；重试要求强 `If-Match`，且只允许固定的瞬态错误码。响应不返回 Kafka key、payload digest 或 provider receipt。canonical 路由是 `/api/v1/modules/flow/state-cleanup-jobs`，`/api/v1/flow/state-cleanup-jobs` 仅作为单版本兼容入口。
 
-provider-neutral side-effect core 已实现 `Lookup-before-apply → ambiguous-error Lookup → persist receipt digest`，并用稳定 operation key/request hash 处理 provider 已成功而 MySQL 提交或响应未知的窗口。管理员 grant 只提交 provider、ACL propagation delay 和 `Idempotency-Key`；revoke 只提交强 `If-Match`。provider 返回的 principal/secret reference/receipt 必须与服务端 operation 和 request hash 完整绑定，HTTP 不接受也不返回 secret reference、operation key、request hash 或 receipt。真实 provider 尚未注册到 runtime，因此生产 Router 不开放这些管理路由。
+provider-neutral side-effect core 已实现 `Lookup-before-apply → ambiguous-error Lookup → persist receipt digest`，并用稳定 operation key/request hash 处理 provider 已成功而 MySQL 提交或响应未知的窗口。管理员 grant 只提交 provider、ACL propagation delay 和 `Idempotency-Key`；revoke 只提交强 `If-Match`。provider 返回的 principal/secret reference/receipt 必须与服务端 operation 和 request hash 完整绑定，HTTP 不接受也不返回 secret reference、operation key、request hash 或 receipt。request hash 还绑定 provider `policy_revision`，变更最小 ACL 模板后不能把旧 operation 冒充新策略结果。
 
-剩余 B2B 是 concrete provider/config wiring、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository、evidence provider、collector machine adapter、provider-neutral recovery core、运行时监督和 job API 已完成，没有真实 provider 外部副作用闭环和基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+宿主已接入可选的 enterprise Kafka credential/ACL provider client；关闭时不注册 principal 管理路由，开启时才把单一 allowlist name 注入 `BackendRuntime.CollectorPrincipals`。传输强制 HTTPS+mTLS、禁止代理和重定向、响应禁用压缩并限长；provider client 具有请求超时和 429/5xx/传输/非法响应熔断，关闭 runtime 会关闭 idle connection。每个健康的 200/404 响应必须用 `X-Watchdog-Operation-Retention-Seconds` 声明可查询期且不低于本地灾备窗口，否则按 provider 故障处理。平台仓库不实现企业 secret manager/Kafka admin 服务本身，不能据此宣称 ACL 已实际生效。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、concrete provider/config wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository、reconciler core、宿主运行时监督、collector machine adapter、provider-neutral recovery core 和受权 job API 不能替代这些验收。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
+provider wire contract 固定为 `GET|PUT /v1/collector-principal-operations/grants/{operation_key}` 与 `GET|PUT /v1/collector-principal-operations/revocations/{operation_key}`。请求头携带 `X-Watchdog-Provider-Revision`；PUT body 固定携带 operation/request hash、policy revision 和服务端 identity，grant 另带毫秒 ACL propagation delay，revoke 另带既有 principal ref。GET 未完成返回 404，完成或 PUT 幂等成功只返回 200 JSON；grant 返回 provider/principal ref/credential secret ref/receipt ref/receipt object，revoke 不返回 credential ref。响应 unknown field、多 JSON value、非 object receipt、错误 operation/request/provider/principal 绑定均拒绝，远端错误 body 不进入 API、日志或审计。远端服务必须把 credential material 只写 secret manager，并按该 policy revision 对四个 literal topic 授予所需 `DESCRIBE/DESCRIBE_CONFIGS/WRITE`、仅 collect-state `READ`、cluster `IDEMPOTENT_WRITE`，不得授予 `CREATE/ALTER/DELETE/CREATE_ACLS`；revoke 要先删除该 principal 的 WRITE/IDEMPOTENT_WRITE 等运行权限，再吊销凭据并保存可查询的不可变 operation receipt。
+
+剩余 B2B 是 enterprise provider 服务/IaC、专用 Kafka principal/ACL，以及真实多 broker 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository、evidence provider、collector machine adapter、provider client/recovery core、运行时监督和 job API 已完成，没有真实 provider 外部副作用闭环和基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+
+当前仍未完成的是 D3B3B 的 enterprise provider 服务与 IaC 实际创建，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository、reconciler core、宿主运行时监督、collector machine adapter、remote provider client/recovery core 和受权 job API 不能替代这些验收。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -2250,6 +2254,21 @@ flow_state_cleanup:
     tls_cert_file: "/etc/watchdog/kafka/flow-state-cleanup.crt"
     tls_key_file: "/etc/watchdog/kafka/flow-state-cleanup.key"
     tls_server_name: "kafka.watchdog.internal"
+
+# Optional client for the trusted enterprise credential/Kafka ACL service.
+collector_principal_provider:
+  enabled: false
+  name: "enterprise-kafka"
+  base_url: "https://kafka-credential-provider.watchdog.internal"
+  policy_revision: "watchdog-flow-runtime-v1"
+  request_timeout: 10s
+  failure_threshold: 5
+  circuit_open_interval: 30s
+  min_operation_retention: 720h
+  tls_ca_file: "/etc/watchdog/provider/ca.crt"
+  tls_cert_file: "/etc/watchdog/provider/control-plane.crt"
+  tls_key_file: "/etc/watchdog/provider/control-plane.key"
+  tls_server_name: "kafka-credential-provider.watchdog.internal"
 
 flow_dimension:
   kafka:

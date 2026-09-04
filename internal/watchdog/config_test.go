@@ -54,6 +54,51 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.FlowCleanup.Enabled || cfg.FlowCleanup.LeaseDuration != defaultFlowCleanupLease || cfg.FlowCleanup.Kafka.Topic == "" {
 		t.Fatalf("flow state-cleanup defaults = %#v", cfg.FlowCleanup)
 	}
+	if cfg.CollectorPrincipalProvider.Enabled || cfg.CollectorPrincipalProvider.RequestTimeout != defaultPrincipalRequestTimeout || cfg.CollectorPrincipalProvider.FailureThreshold != defaultPrincipalFailureLimit || cfg.CollectorPrincipalProvider.CircuitOpenInterval != defaultPrincipalCircuitOpen || cfg.CollectorPrincipalProvider.MinOperationRetention != defaultPrincipalOperationRetention {
+		t.Fatalf("collector principal provider defaults = %#v", cfg.CollectorPrincipalProvider)
+	}
+}
+
+func TestLoadBackendConfigEnablesRemoteCollectorPrincipalProvider(t *testing.T) {
+	t.Setenv("WATCHDOG_MYSQL_DSN", "user:pass@tcp(127.0.0.1:3306)/watchdog")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_ENABLED", "true")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_NAME", " enterprise-kafka ")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_BASE_URL", " https://provider.example/ ")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_POLICY_REVISION", " flow-runtime-v7 ")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_REQUEST_TIMEOUT", "7s")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_FAILURE_THRESHOLD", "3")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_CIRCUIT_OPEN_INTERVAL", "45s")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_MIN_OPERATION_RETENTION", "2160h")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_CERT_FILE", "/etc/watchdog/provider/client.crt")
+	t.Setenv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_KEY_FILE", "/etc/watchdog/provider/client.key")
+	cfg, err := LoadBackendConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := cfg.CollectorPrincipalProvider
+	if !provider.Enabled || provider.Name != "enterprise-kafka" || provider.BaseURL != "https://provider.example" || provider.PolicyRevision != "flow-runtime-v7" || provider.RequestTimeout != 7*time.Second || provider.FailureThreshold != 3 || provider.CircuitOpenInterval != 45*time.Second || provider.MinOperationRetention != 90*24*time.Hour {
+		t.Fatalf("collector principal provider config = %#v", provider)
+	}
+}
+
+func TestCollectorPrincipalProviderConfigRejectsUnsafeTransportAndSharedIdentity(t *testing.T) {
+	cfg := defaultBackendConfig()
+	cfg.CollectorPrincipalProvider = RemoteCollectorPrincipalProviderConfig{
+		Enabled: true, Name: "enterprise-kafka", BaseURL: "http://provider.example",
+		PolicyRevision: "flow-runtime-v7", RequestTimeout: time.Second,
+		FailureThreshold: 2, CircuitOpenInterval: time.Minute,
+		MinOperationRetention: 30 * 24 * time.Hour,
+		TLSCertFile:           "/etc/watchdog/provider/client.crt", TLSKeyFile: "/etc/watchdog/provider/client.key",
+	}
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("plaintext provider error=%v", err)
+	}
+	cfg.CollectorPrincipalProvider.BaseURL = "https://provider.example"
+	cfg.FlowCollect.Kafka.TLSCertFile = cfg.CollectorPrincipalProvider.TLSCertFile
+	cfg.FlowCollect.Kafka.TLSKeyFile = "/etc/watchdog/kafka/flow-collect.key"
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "dedicated") {
+		t.Fatalf("shared provider identity error=%v", err)
+	}
 }
 
 func TestLoadBackendConfigEnablesDedicatedFlowStateCleanupWorker(t *testing.T) {

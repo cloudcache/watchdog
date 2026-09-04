@@ -120,6 +120,22 @@ flow_state_cleanup:
     scan_timeout: 2m
     tls: false
 
+# Keep disabled unless a local HTTPS/mTLS provider implementing the documented
+# collector-principal operation contract is running.
+collector_principal_provider:
+  enabled: false
+  name: ""
+  base_url: ""
+  policy_revision: ""
+  request_timeout: 10s
+  failure_threshold: 5
+  circuit_open_interval: 30s
+  min_operation_retention: 720h
+  tls_ca_file: ""
+  tls_cert_file: ""
+  tls_key_file: ""
+  tls_server_name: ""
+
 aggregate_graph:
   rollup_interval: 5m
 

@@ -39,6 +39,11 @@ const (
 	defaultFlowCleanupPoll        = time.Second
 	defaultFlowCleanupRetryMin    = time.Second
 	defaultFlowCleanupRetryMax    = time.Minute
+
+	defaultPrincipalRequestTimeout     = 10 * time.Second
+	defaultPrincipalFailureLimit       = uint32(5)
+	defaultPrincipalCircuitOpen        = 30 * time.Second
+	defaultPrincipalOperationRetention = 30 * 24 * time.Hour
 )
 
 type BackendConfig struct {
@@ -49,10 +54,28 @@ type BackendConfig struct {
 	SFlowCollector  SFlowCollectorConfig   `yaml:"sflow_collector"`
 	FlowCollect     flowcollect.Config     `yaml:"flow_collect"`
 	FlowCleanup     FlowStateCleanupConfig `yaml:"flow_state_cleanup"`
-	AggregateGraph  AggregateGraphConfig   `yaml:"aggregate_graph"`
-	SNMP            SNMPConfig             `yaml:"snmp"`
-	SNMPTrapAgent   SNMPTrapAgentConfig    `yaml:"snmp_trap_agent"`
-	Agent           AgentClientConfig      `yaml:"agent"`
+
+	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
+
+	AggregateGraph AggregateGraphConfig `yaml:"aggregate_graph"`
+	SNMP           SNMPConfig           `yaml:"snmp"`
+	SNMPTrapAgent  SNMPTrapAgentConfig  `yaml:"snmp_trap_agent"`
+	Agent          AgentClientConfig    `yaml:"agent"`
+}
+
+type RemoteCollectorPrincipalProviderConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	Name                  string        `yaml:"name"`
+	BaseURL               string        `yaml:"base_url"`
+	PolicyRevision        string        `yaml:"policy_revision"`
+	RequestTimeout        time.Duration `yaml:"request_timeout"`
+	FailureThreshold      uint32        `yaml:"failure_threshold"`
+	CircuitOpenInterval   time.Duration `yaml:"circuit_open_interval"`
+	MinOperationRetention time.Duration `yaml:"min_operation_retention"`
+	TLSCAFile             string        `yaml:"tls_ca_file"`
+	TLSCertFile           string        `yaml:"tls_cert_file"`
+	TLSKeyFile            string        `yaml:"tls_key_file"`
+	TLSServerName         string        `yaml:"tls_server_name"`
 }
 
 type FlowStateCleanupConfig struct {
@@ -217,6 +240,14 @@ func defaultBackendConfig() BackendConfig {
 				Topic: flowDefaults.Kafka.CollectStateTopic, ScanTimeout: flowDefaults.Kafka.CollectStateRestoreTimeout,
 			},
 		},
+
+		CollectorPrincipalProvider: RemoteCollectorPrincipalProviderConfig{
+			RequestTimeout:        defaultPrincipalRequestTimeout,
+			FailureThreshold:      defaultPrincipalFailureLimit,
+			CircuitOpenInterval:   defaultPrincipalCircuitOpen,
+			MinOperationRetention: defaultPrincipalOperationRetention,
+		},
+
 		AggregateGraph: AggregateGraphConfig{
 			RollupInterval: defaultAggregateGraphRollupInterval,
 		},
@@ -319,6 +350,28 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.FlowCleanup.Kafka.TLSCertFile = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_CERT_FILE", cfg.FlowCleanup.Kafka.TLSCertFile)
 	cfg.FlowCleanup.Kafka.TLSKeyFile = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_KEY_FILE", cfg.FlowCleanup.Kafka.TLSKeyFile)
 	cfg.FlowCleanup.Kafka.TLSServerName = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_SERVER_NAME", cfg.FlowCleanup.Kafka.TLSServerName)
+	if cfg.CollectorPrincipalProvider.Enabled, err = getEnvBool("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_ENABLED", cfg.CollectorPrincipalProvider.Enabled); err != nil {
+		return err
+	}
+	cfg.CollectorPrincipalProvider.Name = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_NAME", cfg.CollectorPrincipalProvider.Name)
+	cfg.CollectorPrincipalProvider.BaseURL = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_BASE_URL", cfg.CollectorPrincipalProvider.BaseURL)
+	cfg.CollectorPrincipalProvider.PolicyRevision = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_POLICY_REVISION", cfg.CollectorPrincipalProvider.PolicyRevision)
+	if cfg.CollectorPrincipalProvider.RequestTimeout, err = getEnvDuration("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_REQUEST_TIMEOUT", cfg.CollectorPrincipalProvider.RequestTimeout); err != nil {
+		return err
+	}
+	if cfg.CollectorPrincipalProvider.FailureThreshold, err = getEnvUint32("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_FAILURE_THRESHOLD", cfg.CollectorPrincipalProvider.FailureThreshold); err != nil {
+		return err
+	}
+	if cfg.CollectorPrincipalProvider.CircuitOpenInterval, err = getEnvDuration("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_CIRCUIT_OPEN_INTERVAL", cfg.CollectorPrincipalProvider.CircuitOpenInterval); err != nil {
+		return err
+	}
+	if cfg.CollectorPrincipalProvider.MinOperationRetention, err = getEnvDuration("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_MIN_OPERATION_RETENTION", cfg.CollectorPrincipalProvider.MinOperationRetention); err != nil {
+		return err
+	}
+	cfg.CollectorPrincipalProvider.TLSCAFile = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_CA_FILE", cfg.CollectorPrincipalProvider.TLSCAFile)
+	cfg.CollectorPrincipalProvider.TLSCertFile = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_CERT_FILE", cfg.CollectorPrincipalProvider.TLSCertFile)
+	cfg.CollectorPrincipalProvider.TLSKeyFile = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_KEY_FILE", cfg.CollectorPrincipalProvider.TLSKeyFile)
+	cfg.CollectorPrincipalProvider.TLSServerName = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_SERVER_NAME", cfg.CollectorPrincipalProvider.TLSServerName)
 	cfg.Export.Dir = getEnv("WATCHDOG_EXPORT_DIR", cfg.Export.Dir)
 	if cfg.Export.WorkerInterval, err = getEnvDuration("WATCHDOG_EXPORT_WORKER_INTERVAL", cfg.Export.WorkerInterval); err != nil {
 		return err
@@ -461,6 +514,13 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.FlowCleanup.Kafka.TLSCertFile = cleanOptionalConfigPath(cfg.FlowCleanup.Kafka.TLSCertFile)
 	cfg.FlowCleanup.Kafka.TLSKeyFile = cleanOptionalConfigPath(cfg.FlowCleanup.Kafka.TLSKeyFile)
 	cfg.FlowCleanup.Kafka.TLSServerName = strings.TrimSpace(cfg.FlowCleanup.Kafka.TLSServerName)
+	cfg.CollectorPrincipalProvider.Name = strings.TrimSpace(cfg.CollectorPrincipalProvider.Name)
+	cfg.CollectorPrincipalProvider.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.CollectorPrincipalProvider.BaseURL), "/")
+	cfg.CollectorPrincipalProvider.PolicyRevision = strings.TrimSpace(cfg.CollectorPrincipalProvider.PolicyRevision)
+	cfg.CollectorPrincipalProvider.TLSCAFile = cleanOptionalConfigPath(cfg.CollectorPrincipalProvider.TLSCAFile)
+	cfg.CollectorPrincipalProvider.TLSCertFile = cleanOptionalConfigPath(cfg.CollectorPrincipalProvider.TLSCertFile)
+	cfg.CollectorPrincipalProvider.TLSKeyFile = cleanOptionalConfigPath(cfg.CollectorPrincipalProvider.TLSKeyFile)
+	cfg.CollectorPrincipalProvider.TLSServerName = strings.TrimSpace(cfg.CollectorPrincipalProvider.TLSServerName)
 	cfg.SNMP.MIBDirs = normalizeStringPaths(cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = strings.TrimSpace(cfg.SNMP.MIBLoad)
 	cfg.SNMPTrapAgent.APIURL = normalizeBaseURL(cfg.SNMPTrapAgent.APIURL)
@@ -543,6 +603,16 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if err := validateFlowStateCleanupConfig(cfg.FlowCleanup, cfg.FlowCollect.Kafka); err != nil {
 		return err
+	}
+	if cfg.CollectorPrincipalProvider.Enabled {
+		if err := validateRemoteCollectorPrincipalProviderConfig(cfg.CollectorPrincipalProvider); err != nil {
+			return err
+		}
+		for _, runtimeIdentity := range []string{cfg.FlowCollect.Kafka.TLSCertFile, cfg.FlowCollect.Kafka.TLSKeyFile, cfg.FlowCleanup.Kafka.TLSCertFile, cfg.FlowCleanup.Kafka.TLSKeyFile} {
+			if runtimeIdentity != "" && (runtimeIdentity == cfg.CollectorPrincipalProvider.TLSCertFile || runtimeIdentity == cfg.CollectorPrincipalProvider.TLSKeyFile) {
+				return errors.New("collector_principal_provider must use a dedicated mTLS identity")
+			}
+		}
 	}
 	if cfg.Export.Dir == "" || cfg.Export.WorkerInterval <= 0 || cfg.Export.WorkerBatch <= 0 {
 		return errors.New("export dir, worker_interval, and worker_batch must be configured with positive worker values")

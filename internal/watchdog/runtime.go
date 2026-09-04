@@ -23,12 +23,16 @@ type BackendRuntime struct {
 	FlowStateCleanup   *FlowStateCleanupRuntime
 	FlowCleanupJobs    FlowStateCleanupJobController
 	CollectorEvidence  CollectorEvidenceController
-	trapDispatcherFn   func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
-	backgroundMu       sync.Mutex
-	backgroundStarted  bool
-	backgroundClosed   bool
-	closeOnce          sync.Once
-	closeError         error
+
+	CollectorPrincipals        CollectorPrincipalController
+	collectorPrincipalProvider interface{ CloseIdleConnections() }
+
+	trapDispatcherFn  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
+	backgroundMu      sync.Mutex
+	backgroundStarted bool
+	backgroundClosed  bool
+	closeOnce         sync.Once
+	closeError        error
 }
 
 func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime, error) {
@@ -66,6 +70,25 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		ExportStore:       exportStore,
 		CollectorEvidence: collectorEvidence,
 	}
+	if cfg.CollectorPrincipalProvider.Enabled {
+		provider, err := NewRemoteCollectorPrincipalProvider(cfg.CollectorPrincipalProvider)
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("initialize collector principal provider: %w", err)
+		}
+		principalService, err := NewCollectorPrincipalService(store, map[string]CollectorPrincipalProvider{
+			cfg.CollectorPrincipalProvider.Name: provider,
+		})
+		if err != nil {
+			if closer, ok := provider.(interface{ CloseIdleConnections() }); ok {
+				closer.CloseIdleConnections()
+			}
+			_ = store.Close()
+			return nil, fmt.Errorf("initialize collector principal service: %w", err)
+		}
+		runtime.CollectorPrincipals = principalService
+		runtime.collectorPrincipalProvider, _ = provider.(interface{ CloseIdleConnections() })
+	}
 	runtime.ExportWorker = ExportWorker{
 		Repo: store,
 		Data: VictoriaMetricsExportDataProvider{
@@ -87,6 +110,9 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	}
 	discoveryEngine, err := NewSNMPDiscoveryEngineFromRepository(ctx, store, NewGoSNMPCollectorQueryEngine(), DefaultSNMPCollectorModuleRegistry())
 	if err != nil {
+		if runtime.collectorPrincipalProvider != nil {
+			runtime.collectorPrincipalProvider.CloseIdleConnections()
+		}
 		_ = store.Close()
 		return nil, err
 	}
@@ -124,31 +150,32 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		tenantDiscoveryAuth = tenantDiscovery[0]
 	}
 	return NewAPIV1Router(APIV1RouterConfig{
-		Auth:              auth,
-		TenantDiscovery:   tenantDiscoveryAuth,
-		Targets:           r.Store,
-		Agents:            r.Store,
-		Network:           r.Store,
-		Exports:           r.Store,
-		ExportFiles:       r.ExportStore,
-		Billing:           r.Store,
-		AggregateGraphs:   r.Store,
-		Permissions:       r.Store,
-		Retention:         r.Store,
-		SNMP:              r.Store,
-		SNMPDiscovery:     r.SNMPDiscovery,
-		SNMPCollector:     r.Store,
-		SeriesCleaner:     r.MetricsClient,
-		DiscoveryJobs:     r.Store,
-		TrapDispatcher:    r.trapDispatcherFn,
-		Audit:             r.Store,
-		AddressSets:       r.Store,
-		Tenants:           r.Store,
-		Readiness:         r.Ready,
-		RuntimeHealth:     r.Health,
-		RuntimeMetrics:    r.RuntimeMetrics,
-		FlowCleanupJobs:   r.FlowCleanupJobs,
-		CollectorEvidence: r.CollectorEvidence,
+		Auth:                auth,
+		TenantDiscovery:     tenantDiscoveryAuth,
+		Targets:             r.Store,
+		Agents:              r.Store,
+		Network:             r.Store,
+		Exports:             r.Store,
+		ExportFiles:         r.ExportStore,
+		Billing:             r.Store,
+		AggregateGraphs:     r.Store,
+		Permissions:         r.Store,
+		Retention:           r.Store,
+		SNMP:                r.Store,
+		SNMPDiscovery:       r.SNMPDiscovery,
+		SNMPCollector:       r.Store,
+		SeriesCleaner:       r.MetricsClient,
+		DiscoveryJobs:       r.Store,
+		TrapDispatcher:      r.trapDispatcherFn,
+		Audit:               r.Store,
+		AddressSets:         r.Store,
+		Tenants:             r.Store,
+		Readiness:           r.Ready,
+		RuntimeHealth:       r.Health,
+		RuntimeMetrics:      r.RuntimeMetrics,
+		FlowCleanupJobs:     r.FlowCleanupJobs,
+		CollectorEvidence:   r.CollectorEvidence,
+		CollectorPrincipals: r.CollectorPrincipals,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
@@ -273,6 +300,9 @@ func (r *BackendRuntime) Close() error {
 		r.backgroundMu.Unlock()
 		if cleanup != nil {
 			r.closeError = errors.Join(r.closeError, cleanup.Close())
+		}
+		if r.collectorPrincipalProvider != nil {
+			r.collectorPrincipalProvider.CloseIdleConnections()
 		}
 		if r.Store != nil {
 			r.closeError = errors.Join(r.closeError, r.Store.Close())

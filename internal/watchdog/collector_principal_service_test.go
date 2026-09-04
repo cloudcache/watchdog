@@ -74,6 +74,7 @@ func (r *collectorPrincipalServiceRepository) GetCollectorServicePrincipalByGran
 
 type collectorPrincipalServiceProvider struct {
 	name         string
+	revision     string
 	grants       map[string]CollectorPrincipalGrantProviderResult
 	revocations  map[string]CollectorPrincipalRevokeProviderResult
 	grantCalls   int
@@ -85,10 +86,12 @@ type collectorPrincipalServiceProvider struct {
 
 func newCollectorPrincipalServiceProvider(name string) *collectorPrincipalServiceProvider {
 	return &collectorPrincipalServiceProvider{
-		name: name, grants: map[string]CollectorPrincipalGrantProviderResult{},
+		name: name, revision: "flow-runtime-v1", grants: map[string]CollectorPrincipalGrantProviderResult{},
 		revocations: map[string]CollectorPrincipalRevokeProviderResult{},
 	}
 }
+
+func (p *collectorPrincipalServiceProvider) PolicyRevision() string { return p.revision }
 
 func (p *collectorPrincipalServiceProvider) LookupGrant(_ context.Context, operationKey string) (CollectorPrincipalGrantProviderResult, bool, error) {
 	result, ok := p.grants[operationKey]
@@ -153,6 +156,15 @@ func TestCollectorPrincipalServiceGrantIsProviderAndDatabaseIdempotent(t *testin
 	request.ACLPropagationDelay = 3 * time.Second
 	if _, err := service.Grant(context.Background(), "tenant-a", "collector-a", "user-a", request); !errors.Is(err, ErrCollectorEvidenceConflict) {
 		t.Fatalf("idempotency conflict error=%v", err)
+	}
+	request.ACLPropagationDelay = 2 * time.Second
+	provider.revision = "flow-runtime-v2"
+	upgradedService, err := NewCollectorPrincipalService(repository, map[string]CollectorPrincipalProvider{"kafka-admin": provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upgradedService.Grant(context.Background(), "tenant-a", "collector-a", "user-a", request); !errors.Is(err, ErrCollectorEvidenceConflict) {
+		t.Fatalf("provider policy revision conflict error=%v", err)
 	}
 }
 

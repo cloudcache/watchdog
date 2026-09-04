@@ -20,6 +20,7 @@ var (
 type CollectorPrincipalGrantProviderRequest struct {
 	OperationKey        string
 	RequestHash         string
+	PolicyRevision      string
 	PrincipalID         ID
 	TenantID            ID
 	CollectorID         ID
@@ -28,13 +29,14 @@ type CollectorPrincipalGrantProviderRequest struct {
 }
 
 type CollectorPrincipalRevokeProviderRequest struct {
-	OperationKey string
-	RequestHash  string
-	TenantID     ID
-	CollectorID  ID
-	PrincipalID  ID
-	ServiceType  string
-	PrincipalRef string
+	OperationKey   string
+	RequestHash    string
+	PolicyRevision string
+	TenantID       ID
+	CollectorID    ID
+	PrincipalID    ID
+	ServiceType    string
+	PrincipalRef   string
 }
 
 type CollectorPrincipalGrantProviderResult struct {
@@ -61,6 +63,7 @@ type CollectorPrincipalRevokeProviderResult struct {
 // retry window. Lookup is always called before a side effect and again after an
 // ambiguous failure.
 type CollectorPrincipalProvider interface {
+	PolicyRevision() string
 	LookupGrant(context.Context, string) (CollectorPrincipalGrantProviderResult, bool, error)
 	Grant(context.Context, CollectorPrincipalGrantProviderRequest) (CollectorPrincipalGrantProviderResult, error)
 	LookupRevoke(context.Context, string) (CollectorPrincipalRevokeProviderResult, bool, error)
@@ -75,7 +78,12 @@ type CollectorPrincipalGrantRequest struct {
 
 type CollectorPrincipalService struct {
 	repository CollectorPrincipalOperationRepository
-	providers  map[string]CollectorPrincipalProvider
+	providers  map[string]collectorPrincipalProviderRegistration
+}
+
+type collectorPrincipalProviderRegistration struct {
+	provider       CollectorPrincipalProvider
+	policyRevision string
 }
 
 type CollectorPrincipalController interface {
@@ -87,12 +95,16 @@ func NewCollectorPrincipalService(repository CollectorPrincipalOperationReposito
 	if repository == nil || len(providers) == 0 {
 		return nil, errors.New("collector principal repository and providers are required")
 	}
-	cloned := make(map[string]CollectorPrincipalProvider, len(providers))
+	cloned := make(map[string]collectorPrincipalProviderRegistration, len(providers))
 	for name, provider := range providers {
 		if strings.TrimSpace(name) == "" || len(name) > 64 || !isPrintableASCII(name) || provider == nil {
 			return nil, errors.New("collector principal provider registry is invalid")
 		}
-		cloned[name] = provider
+		revision := provider.PolicyRevision()
+		if strings.TrimSpace(revision) == "" || len(revision) > 128 || !isPrintableASCII(revision) {
+			return nil, errors.New("collector principal provider registry is invalid")
+		}
+		cloned[name] = collectorPrincipalProviderRegistration{provider: provider, policyRevision: revision}
 	}
 	return &CollectorPrincipalService{repository: repository, providers: cloned}, nil
 }
@@ -101,7 +113,7 @@ func (s *CollectorPrincipalService) Grant(ctx context.Context, tenantID, collect
 	if s == nil || s.repository == nil || ctx == nil || !validCollectorEvidenceID(tenantID) || !validCollectorEvidenceID(collectorID) || !validCollectorEvidenceID(actorID) || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 || !isPrintableASCII(request.IdempotencyKey) || !validEvidenceDuration(request.ACLPropagationDelay) {
 		return CollectorServicePrincipal{}, errors.New("collector principal grant request is incomplete")
 	}
-	provider, ok := s.providers[request.Provider]
+	registration, ok := s.providers[request.Provider]
 	if !ok {
 		return CollectorServicePrincipal{}, ErrCollectorPrincipalProviderNotConfigured
 	}
@@ -114,11 +126,12 @@ func (s *CollectorPrincipalService) Grant(ctx context.Context, tenantID, collect
 		return CollectorServicePrincipal{}, err
 	}
 	requestHash, err := hashCollectorReceipt(struct {
-		CollectorID           ID     `json:"collector_id"`
-		Provider              string `json:"provider"`
-		ServiceType           string `json:"service_type"`
-		ACLPropagationDelayMS int64  `json:"acl_propagation_delay_ms"`
-	}{collectorID, request.Provider, "kafka", request.ACLPropagationDelay.Milliseconds()})
+		CollectorID            ID     `json:"collector_id"`
+		Provider               string `json:"provider"`
+		ProviderPolicyRevision string `json:"provider_policy_revision"`
+		ServiceType            string `json:"service_type"`
+		ACLPropagationDelayMS  int64  `json:"acl_propagation_delay_ms"`
+	}{collectorID, request.Provider, registration.policyRevision, "kafka", request.ACLPropagationDelay.Milliseconds()})
 	if err != nil {
 		return CollectorServicePrincipal{}, err
 	}
@@ -133,18 +146,18 @@ func (s *CollectorPrincipalService) Grant(ctx context.Context, tenantID, collect
 
 	principalID := collectorPrincipalIDFromOperationKey(operationKey)
 	providerRequest := CollectorPrincipalGrantProviderRequest{
-		OperationKey: operationKey, RequestHash: requestHash, PrincipalID: principalID,
+		OperationKey: operationKey, RequestHash: requestHash, PolicyRevision: registration.policyRevision, PrincipalID: principalID,
 		TenantID: tenantID, CollectorID: collectorID, ServiceType: "kafka",
 		ACLPropagationDelay: request.ACLPropagationDelay,
 	}
-	result, found, err := provider.LookupGrant(ctx, operationKey)
+	result, found, err := registration.provider.LookupGrant(ctx, operationKey)
 	if err != nil {
 		return CollectorServicePrincipal{}, fmt.Errorf("lookup collector principal grant: %w", err)
 	}
 	if !found {
-		result, err = provider.Grant(ctx, providerRequest)
+		result, err = registration.provider.Grant(ctx, providerRequest)
 		if err != nil {
-			recovered, recoveredFound, lookupErr := provider.LookupGrant(ctx, operationKey)
+			recovered, recoveredFound, lookupErr := registration.provider.LookupGrant(ctx, operationKey)
 			if lookupErr != nil {
 				return CollectorServicePrincipal{}, errors.Join(err, fmt.Errorf("recover collector principal grant: %w", lookupErr))
 			}
@@ -187,7 +200,7 @@ func (s *CollectorPrincipalService) RevokeWrite(ctx context.Context, tenantID, c
 	if err != nil {
 		return CollectorServicePrincipal{}, err
 	}
-	provider, ok := s.providers[principal.Provider]
+	registration, ok := s.providers[principal.Provider]
 	if !ok {
 		return CollectorServicePrincipal{}, ErrCollectorPrincipalProviderNotConfigured
 	}
@@ -210,27 +223,28 @@ func (s *CollectorPrincipalService) RevokeWrite(ctx context.Context, tenantID, c
 		return CollectorServicePrincipal{}, ErrCollectorPrincipalVersionConflict
 	}
 	requestHash, err := hashCollectorReceipt(struct {
-		CollectorID  ID     `json:"collector_id"`
-		Provider     string `json:"provider"`
-		ServiceType  string `json:"service_type"`
-		PrincipalRef string `json:"principal_ref"`
-	}{collectorID, principal.Provider, principal.ServiceType, principal.PrincipalRef})
+		CollectorID            ID     `json:"collector_id"`
+		Provider               string `json:"provider"`
+		ProviderPolicyRevision string `json:"provider_policy_revision"`
+		ServiceType            string `json:"service_type"`
+		PrincipalRef           string `json:"principal_ref"`
+	}{collectorID, principal.Provider, registration.policyRevision, principal.ServiceType, principal.PrincipalRef})
 	if err != nil {
 		return CollectorServicePrincipal{}, err
 	}
 	providerRequest := CollectorPrincipalRevokeProviderRequest{
-		OperationKey: operationKey, RequestHash: requestHash, TenantID: tenantID,
+		OperationKey: operationKey, RequestHash: requestHash, PolicyRevision: registration.policyRevision, TenantID: tenantID,
 		CollectorID: collectorID, PrincipalID: principalID,
 		ServiceType: principal.ServiceType, PrincipalRef: principal.PrincipalRef,
 	}
-	result, found, err := provider.LookupRevoke(ctx, operationKey)
+	result, found, err := registration.provider.LookupRevoke(ctx, operationKey)
 	if err != nil {
 		return CollectorServicePrincipal{}, fmt.Errorf("lookup collector principal revocation: %w", err)
 	}
 	if !found {
-		result, err = provider.RevokeWrite(ctx, providerRequest)
+		result, err = registration.provider.RevokeWrite(ctx, providerRequest)
 		if err != nil {
-			recovered, recoveredFound, lookupErr := provider.LookupRevoke(ctx, operationKey)
+			recovered, recoveredFound, lookupErr := registration.provider.LookupRevoke(ctx, operationKey)
 			if lookupErr != nil {
 				return CollectorServicePrincipal{}, errors.Join(err, fmt.Errorf("recover collector principal revocation: %w", lookupErr))
 			}
@@ -262,14 +276,14 @@ func matchesCollectorPrincipalGrant(principal CollectorServicePrincipal, collect
 }
 
 func validateCollectorPrincipalGrantProviderResult(result CollectorPrincipalGrantProviderResult, provider, operationKey, requestHash string) error {
-	if result.Provider != provider || result.OperationKey != operationKey || result.RequestHash != requestHash || result.PrincipalRef == "" || len(result.PrincipalRef) > 190 || !isPrintableASCII(result.PrincipalRef) || result.CredentialSecretRef == "" || len(result.CredentialSecretRef) > 255 || !isPrintableASCII(result.CredentialSecretRef) || result.ReceiptRef == "" || len(result.ReceiptRef) > 512 || !isPrintableASCII(result.ReceiptRef) || len(result.Receipt) == 0 || len(result.Receipt) > collectorEvidenceMaxReceiptBytes {
+	if result.Provider != provider || result.OperationKey != operationKey || result.RequestHash != requestHash || !validSHA256Hex(result.OperationKey) || !validSHA256Hex(result.RequestHash) || result.PrincipalRef == "" || len(result.PrincipalRef) > 190 || !isPrintableASCII(result.PrincipalRef) || result.CredentialSecretRef == "" || len(result.CredentialSecretRef) > 255 || !isPrintableASCII(result.CredentialSecretRef) || result.ReceiptRef == "" || len(result.ReceiptRef) > 512 || !isPrintableASCII(result.ReceiptRef) || len(result.Receipt) == 0 || len(result.Receipt) > collectorEvidenceMaxReceiptBytes {
 		return ErrCollectorPrincipalProviderResultInvalid
 	}
 	return nil
 }
 
 func validateCollectorPrincipalRevokeProviderResult(result CollectorPrincipalRevokeProviderResult, provider, principalRef, operationKey, requestHash string) error {
-	if result.Provider != provider || result.OperationKey != operationKey || result.RequestHash != requestHash || result.PrincipalRef != principalRef || result.ReceiptRef == "" || len(result.ReceiptRef) > 512 || !isPrintableASCII(result.ReceiptRef) || len(result.Receipt) == 0 || len(result.Receipt) > collectorEvidenceMaxReceiptBytes {
+	if result.Provider != provider || result.OperationKey != operationKey || result.RequestHash != requestHash || !validSHA256Hex(result.OperationKey) || !validSHA256Hex(result.RequestHash) || result.PrincipalRef != principalRef || result.PrincipalRef == "" || len(result.PrincipalRef) > 190 || !isPrintableASCII(result.PrincipalRef) || result.ReceiptRef == "" || len(result.ReceiptRef) > 512 || !isPrintableASCII(result.ReceiptRef) || len(result.Receipt) == 0 || len(result.Receipt) > collectorEvidenceMaxReceiptBytes {
 		return ErrCollectorPrincipalProviderResultInvalid
 	}
 	return nil

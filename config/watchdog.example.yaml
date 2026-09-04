@@ -138,6 +138,24 @@ flow_state_cleanup:
     tls_key_file: "/etc/watchdog/kafka/flow-state-cleanup.key"
     tls_server_name: "kafka.watchdog.internal"
 
+# Optional control-plane adapter for a trusted enterprise service that issues
+# per-collector credentials into a secret manager and applies the exact Kafka
+# ACL policy identified by policy_revision. It must return references and
+# immutable receipts only, never credential material.
+collector_principal_provider:
+  enabled: false
+  name: "enterprise-kafka"
+  base_url: "https://kafka-credential-provider.watchdog.internal"
+  policy_revision: "watchdog-flow-runtime-v1"
+  request_timeout: 10s
+  failure_threshold: 5
+  circuit_open_interval: 30s
+  min_operation_retention: 720h
+  tls_ca_file: "/etc/watchdog/provider/ca.crt"
+  tls_cert_file: "/etc/watchdog/provider/control-plane.crt"
+  tls_key_file: "/etc/watchdog/provider/control-plane.key"
+  tls_server_name: "kafka-credential-provider.watchdog.internal"
+
 aggregate_graph:
   rollup_interval: 5m
 
