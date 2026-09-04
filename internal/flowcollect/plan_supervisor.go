@@ -9,6 +9,27 @@ import (
 
 var ErrActivePlanExpired = errors.New("active flow plan expired")
 
+type planRefreshFailure struct {
+	stage  string
+	code   string
+	detail string
+	err    error
+}
+
+func (f planRefreshFailure) Error() string { return f.err.Error() }
+func (f planRefreshFailure) Unwrap() error { return f.err }
+
+func newPlanRefreshFailure(stage, code, detail string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var existing planRefreshFailure
+	if errors.As(err, &existing) {
+		return err
+	}
+	return planRefreshFailure{stage: stage, code: code, detail: detail, err: err}
+}
+
 type PlanDependencyValidator func([]*Registry) error
 
 type PlanSupervisor struct {
@@ -19,6 +40,8 @@ type PlanSupervisor struct {
 	Metrics         *Metrics
 	Runtime         *RuntimeState
 	Validate        PlanDependencyValidator
+	Wake            <-chan struct{}
+	OnActivated     func(*Registry)
 	OnError         func(error)
 	now             func() time.Time
 }
@@ -60,9 +83,19 @@ func (s *PlanSupervisor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			return nil
+		case <-s.Wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		case <-timer.C:
 		}
 	}
@@ -73,7 +106,7 @@ func (s *PlanSupervisor) Refresh(now time.Time) error {
 	if err == nil {
 		active := s.Plans.Active()
 		if activateErr := s.Runner.ActivateRegistry(active); activateErr != nil {
-			err = fmt.Errorf("publish refreshed flow plan to data plane: %w", activateErr)
+			err = newPlanRefreshFailure("activate", "DATA_PLANE_ACTIVATE_FAILED", "plan could not be activated in the data plane", fmt.Errorf("publish refreshed flow plan to data plane: %w", activateErr))
 		} else {
 			s.Metrics.PlanRefreshSuccesses.Add(1)
 			if result.Changed {
@@ -82,6 +115,9 @@ func (s *PlanSupervisor) Refresh(now time.Time) error {
 			s.Metrics.PlanHistoryPruned.Add(uint64(result.Pruned))
 			s.Metrics.PlanHistoryEntries.Store(int64(len(s.Plans.Revisions())))
 			s.Runtime.observePlan(nil, active, s.Plans.UsedLKG(), now)
+			if s.OnActivated != nil {
+				s.OnActivated(active)
+			}
 			return nil
 		}
 	}

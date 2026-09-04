@@ -28,6 +28,7 @@ type ObservabilityServer struct {
 type readinessChecks struct {
 	Runner            string `json:"runner"`
 	Plan              string `json:"plan"`
+	ControlPlane      string `json:"control_plane"`
 	WAL               string `json:"wal"`
 	AttemptState      string `json:"attempt_state"`
 	QualityState      string `json:"quality_state"`
@@ -122,6 +123,7 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 	checks := readinessChecks{
 		Runner:            healthValue(runtime.Running),
 		Plan:              healthValue(runtime.Plan.Accepting),
+		ControlPlane:      "disabled",
 		WAL:               healthValue(wal.Writable && !wal.HardWatermark),
 		AttemptState:      healthValue(attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy),
 		QualityState:      healthValue(quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy),
@@ -135,16 +137,22 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 	for _, topic := range runtime.Kafka {
 		ready = ready && topic.Healthy
 	}
+	if runtime.ControlPlane.Enabled {
+		checks.ControlPlane = healthValue(runtime.ControlPlane.Healthy)
+	}
 	status, code := "ready", http.StatusOK
 	if !ready {
 		status, code = "unavailable", http.StatusServiceUnavailable
-	} else if !runtime.Plan.Healthy || runtime.Plan.UsedLKG || wal.SoftWatermark || attempt.UsageRatio >= .8 || quality.UsageRatio >= .8 {
+	} else if !runtime.Plan.Healthy || runtime.Plan.UsedLKG || (runtime.ControlPlane.Enabled && !runtime.ControlPlane.Healthy) || wal.SoftWatermark || attempt.UsageRatio >= .8 || quality.UsageRatio >= .8 {
 		status = "degraded"
 		if !runtime.Plan.Healthy || runtime.Plan.UsedLKG {
 			checks.Plan = "degraded"
 		}
 		if wal.SoftWatermark {
 			checks.WAL = "degraded"
+		}
+		if runtime.ControlPlane.Enabled && !runtime.ControlPlane.Healthy {
+			checks.ControlPlane = "degraded"
 		}
 		if quality.UsageRatio >= .8 {
 			checks.QualityState = "degraded"
@@ -286,6 +294,23 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metricInt(&out, "watchdog_flow_plan_last_success_timestamp_seconds", "", runtime.Plan.LastSuccessAt)
 	metricHeader(&out, "watchdog_flow_plan_last_failure_timestamp_seconds", "Unix time of the last failed signed plan refresh.", "gauge")
 	metricInt(&out, "watchdog_flow_plan_last_failure_timestamp_seconds", "", runtime.Plan.LastFailureAt)
+	metricHeader(&out, "watchdog_flow_control_plane_enabled", "Whether remote collector plan delivery is configured.", "gauge")
+	metricBool(&out, "watchdog_flow_control_plane_enabled", "", runtime.ControlPlane.Enabled)
+	metricHeader(&out, "watchdog_flow_control_plane_ready", "Whether the most recent remote plan delivery operation succeeded.", "gauge")
+	metricBool(&out, "watchdog_flow_control_plane_ready", "", !runtime.ControlPlane.Enabled || runtime.ControlPlane.Healthy)
+	metricHeader(&out, "watchdog_flow_control_plane_last_success_timestamp_seconds", "Unix time of the last successful remote plan delivery operation.", "gauge")
+	metricInt(&out, "watchdog_flow_control_plane_last_success_timestamp_seconds", "", runtime.ControlPlane.LastSuccessAt)
+	metricHeader(&out, "watchdog_flow_control_plane_last_failure_timestamp_seconds", "Unix time of the last failed remote plan delivery operation.", "gauge")
+	metricInt(&out, "watchdog_flow_control_plane_last_failure_timestamp_seconds", "", runtime.ControlPlane.LastFailureAt)
+	metricHeader(&out, "watchdog_flow_plan_delivery_fetch_total", "Remote signed-plan fetch outcomes by bounded result.", "counter")
+	metricUint(&out, "watchdog_flow_plan_delivery_fetch_total", `result="downloaded"`, metrics.PlanDeliveryFetchSuccesses.Load())
+	metricUint(&out, "watchdog_flow_plan_delivery_fetch_total", `result="not_modified"`, metrics.PlanDeliveryNotModified.Load())
+	metricUint(&out, "watchdog_flow_plan_delivery_fetch_total", `result="failure"`, metrics.PlanDeliveryFetchFailures.Load())
+	metricHeader(&out, "watchdog_flow_plan_delivery_persist_failures_total", "Remote signed plans rejected because atomic local persistence failed.", "counter")
+	metricUint(&out, "watchdog_flow_plan_delivery_persist_failures_total", "", metrics.PlanDeliveryPersistFailures.Load())
+	metricHeader(&out, "watchdog_flow_plan_delivery_ack_total", "Exact plan activation acknowledgement outcomes by bounded result.", "counter")
+	metricUint(&out, "watchdog_flow_plan_delivery_ack_total", `result="success"`, metrics.PlanDeliveryAckSuccesses.Load())
+	metricUint(&out, "watchdog_flow_plan_delivery_ack_total", `result="failure"`, metrics.PlanDeliveryAckFailures.Load())
 
 	metricHeader(&out, "watchdog_flow_replay_attempts_total", "WAL record processing attempts after the first generation.", "counter")
 	metricUint(&out, "watchdog_flow_replay_attempts_total", "", metrics.ReplayAttempts.Load())

@@ -90,12 +90,27 @@ func TestControlPlaneSignedPlanMatchesRepositoryEnvelopeContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := VerifySignedPlan(envelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now)
+	encodedPublicKey := []byte(base64.StdEncoding.EncodeToString(publicKey))
+	registry, err := VerifySignedPlan(envelope, encodedPublicKey, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if registry.plan.Revision != metadata.ConfigVersion || registry.plan.CollectorID != metadata.CollectorID {
 		t.Fatalf("unexpected verified plan: %+v", registry.plan)
+	}
+	remoteRegistry, verifiedMetadata, err := VerifyControlPlaneSignedPlan(envelope, encodedPublicKey, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remoteRegistry.Plan().Revision != plan.Revision || verifiedMetadata != metadata {
+		t.Fatalf("remote registry=%+v metadata=%+v", remoteRegistry.Plan(), verifiedMetadata)
+	}
+	legacyEnvelope, err := json.Marshal(signedPlanEnvelope{SchemaVersion: 1, Payload: base64.StdEncoding.EncodeToString(payload), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := VerifyControlPlaneSignedPlan(legacyEnvelope, encodedPublicKey, now); err == nil {
+		t.Fatal("legacy envelope was accepted as a remote control-plane delivery")
 	}
 
 	var tampered signedPlanEnvelope

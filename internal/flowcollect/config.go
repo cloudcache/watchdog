@@ -15,27 +15,35 @@ import (
 const VirtualShardCount = 4096
 
 type Config struct {
-	ControlPlaneURL       string              `yaml:"control_plane_url"`
-	StateDir              string              `yaml:"state_dir"`
-	PlanFile              string              `yaml:"plan_file"`
-	PlanPublicKeyFile     string              `yaml:"plan_public_key_file"`
-	SFlowListen           string              `yaml:"sflow_listen"`
-	NetFlowListen         string              `yaml:"netflow_listen"`
-	SocketCount           int                 `yaml:"socket_count"`
-	DecodeWorkers         int                 `yaml:"decode_workers"`
-	DecodeQueueDatagrams  int                 `yaml:"decode_queue_datagrams"`
-	ReceiveBufferBytes    int                 `yaml:"receive_buffer_bytes"`
-	MaxDatagramBytes      int                 `yaml:"max_datagram_bytes"`
-	PlanRefreshInterval   time.Duration       `yaml:"plan_refresh_interval"`
-	PlanHistoryMaxEntries int                 `yaml:"plan_history_max_entries"`
-	ExporterRefreshPeriod time.Duration       `yaml:"exporter_refresh_interval"`
-	DecoderStateTTL       time.Duration       `yaml:"decoder_state_ttl"`
-	WAL                   WALConfig           `yaml:"wal"`
-	Kafka                 KafkaConfig         `yaml:"kafka"`
-	NormalizedBatch       NormalizedBatchCfg  `yaml:"normalized_batch"`
-	Diagnostics           DiagnosticsConfig   `yaml:"diagnostics"`
-	Quality               QualityConfig       `yaml:"quality"`
-	Observability         ObservabilityConfig `yaml:"observability"`
+	ControlPlaneURL            string              `yaml:"control_plane_url"`
+	ControlPlaneTokenFile      string              `yaml:"control_plane_token_file"`
+	ControlPlaneTLSCAFile      string              `yaml:"control_plane_tls_ca_file"`
+	ControlPlaneTLSCertFile    string              `yaml:"control_plane_tls_cert_file"`
+	ControlPlaneTLSKeyFile     string              `yaml:"control_plane_tls_key_file"`
+	ControlPlaneTLSServerName  string              `yaml:"control_plane_tls_server_name"`
+	ControlPlaneRequestTimeout time.Duration       `yaml:"control_plane_request_timeout"`
+	ControlPlaneRetryMin       time.Duration       `yaml:"control_plane_retry_min"`
+	ControlPlaneRetryMax       time.Duration       `yaml:"control_plane_retry_max"`
+	StateDir                   string              `yaml:"state_dir"`
+	PlanFile                   string              `yaml:"plan_file"`
+	PlanPublicKeyFile          string              `yaml:"plan_public_key_file"`
+	SFlowListen                string              `yaml:"sflow_listen"`
+	NetFlowListen              string              `yaml:"netflow_listen"`
+	SocketCount                int                 `yaml:"socket_count"`
+	DecodeWorkers              int                 `yaml:"decode_workers"`
+	DecodeQueueDatagrams       int                 `yaml:"decode_queue_datagrams"`
+	ReceiveBufferBytes         int                 `yaml:"receive_buffer_bytes"`
+	MaxDatagramBytes           int                 `yaml:"max_datagram_bytes"`
+	PlanRefreshInterval        time.Duration       `yaml:"plan_refresh_interval"`
+	PlanHistoryMaxEntries      int                 `yaml:"plan_history_max_entries"`
+	ExporterRefreshPeriod      time.Duration       `yaml:"exporter_refresh_interval"`
+	DecoderStateTTL            time.Duration       `yaml:"decoder_state_ttl"`
+	WAL                        WALConfig           `yaml:"wal"`
+	Kafka                      KafkaConfig         `yaml:"kafka"`
+	NormalizedBatch            NormalizedBatchCfg  `yaml:"normalized_batch"`
+	Diagnostics                DiagnosticsConfig   `yaml:"diagnostics"`
+	Quality                    QualityConfig       `yaml:"quality"`
+	Observability              ObservabilityConfig `yaml:"observability"`
 }
 
 type WALConfig struct {
@@ -119,18 +127,21 @@ type ObservabilityConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
-		StateDir:              "/var/lib/watchdog-flow-collect",
-		SFlowListen:           ":6343",
-		NetFlowListen:         ":2055",
-		SocketCount:           1,
-		DecodeWorkers:         1,
-		DecodeQueueDatagrams:  65536,
-		ReceiveBufferBytes:    32 << 20,
-		MaxDatagramBytes:      65535,
-		PlanRefreshInterval:   30 * time.Second,
-		PlanHistoryMaxEntries: 128,
-		ExporterRefreshPeriod: 30 * time.Second,
-		DecoderStateTTL:       30 * time.Minute,
+		ControlPlaneRequestTimeout: 10 * time.Second,
+		ControlPlaneRetryMin:       time.Second,
+		ControlPlaneRetryMax:       30 * time.Second,
+		StateDir:                   "/var/lib/watchdog-flow-collect",
+		SFlowListen:                ":6343",
+		NetFlowListen:              ":2055",
+		SocketCount:                1,
+		DecodeWorkers:              1,
+		DecodeQueueDatagrams:       65536,
+		ReceiveBufferBytes:         32 << 20,
+		MaxDatagramBytes:           65535,
+		PlanRefreshInterval:        30 * time.Second,
+		PlanHistoryMaxEntries:      128,
+		ExporterRefreshPeriod:      30 * time.Second,
+		DecoderStateTTL:            30 * time.Minute,
 		WAL: WALConfig{
 			MaxBytes:      100 << 30,
 			MaxAge:        24 * time.Hour,
@@ -201,6 +212,11 @@ func DefaultConfig() Config {
 
 func (c *Config) Normalize() {
 	c.ControlPlaneURL = strings.TrimRight(strings.TrimSpace(c.ControlPlaneURL), "/")
+	c.ControlPlaneTokenFile = cleanOptionalPath(c.ControlPlaneTokenFile)
+	c.ControlPlaneTLSCAFile = cleanOptionalPath(c.ControlPlaneTLSCAFile)
+	c.ControlPlaneTLSCertFile = cleanOptionalPath(c.ControlPlaneTLSCertFile)
+	c.ControlPlaneTLSKeyFile = cleanOptionalPath(c.ControlPlaneTLSKeyFile)
+	c.ControlPlaneTLSServerName = strings.TrimSpace(c.ControlPlaneTLSServerName)
 	c.StateDir = filepath.Clean(strings.TrimSpace(c.StateDir))
 	c.PlanFile = strings.TrimSpace(c.PlanFile)
 	if c.PlanFile == "" && c.StateDir != "." {
@@ -245,11 +261,34 @@ func (c Config) Validate() error {
 	if c.StateDir == "" || c.StateDir == "." {
 		return errors.New("flow_collect.state_dir is required")
 	}
+	if c.ControlPlaneRequestTimeout <= 0 || c.ControlPlaneRetryMin <= 0 || c.ControlPlaneRetryMax < c.ControlPlaneRetryMin {
+		return errors.New("flow_collect control plane request timeout and retry bounds are invalid")
+	}
 	if c.ControlPlaneURL != "" {
 		u, err := url.Parse(c.ControlPlaneURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return errors.New("flow_collect.control_plane_url must be an absolute http(s) URL")
 		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("flow_collect.control_plane_url must not contain credentials, query, fragment, or path")
+		}
+		if u.Scheme != "https" {
+			host := u.Hostname()
+			ip := net.ParseIP(host)
+			if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+				return errors.New("flow_collect.control_plane_url may use http only for loopback development")
+			}
+		}
+		hasToken := c.ControlPlaneTokenFile != ""
+		hasMTLS := c.ControlPlaneTLSCertFile != "" && c.ControlPlaneTLSKeyFile != ""
+		if (c.ControlPlaneTLSCertFile == "") != (c.ControlPlaneTLSKeyFile == "") || hasToken == hasMTLS {
+			return errors.New("flow_collect control plane requires exactly one token_file or mTLS certificate/key identity")
+		}
+		if u.Scheme != "https" && (c.ControlPlaneTLSCAFile != "" || hasMTLS || c.ControlPlaneTLSServerName != "") {
+			return errors.New("flow_collect control plane TLS settings require an https URL")
+		}
+	} else if c.ControlPlaneTokenFile != "" || c.ControlPlaneTLSCAFile != "" || c.ControlPlaneTLSCertFile != "" || c.ControlPlaneTLSKeyFile != "" || c.ControlPlaneTLSServerName != "" {
+		return errors.New("flow_collect control plane credentials require control_plane_url")
 	}
 	for name, addr := range map[string]string{
 		"flow_collect.sflow_listen":         c.SFlowListen,
@@ -373,6 +412,20 @@ func (c Config) ValidateRuntime() error {
 func (c *Config) ApplyEnv() error {
 	var err error
 	c.ControlPlaneURL = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_URL", c.ControlPlaneURL)
+	c.ControlPlaneTokenFile = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_TOKEN_FILE", c.ControlPlaneTokenFile)
+	c.ControlPlaneTLSCAFile = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_TLS_CA_FILE", c.ControlPlaneTLSCAFile)
+	c.ControlPlaneTLSCertFile = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_TLS_CERT_FILE", c.ControlPlaneTLSCertFile)
+	c.ControlPlaneTLSKeyFile = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_TLS_KEY_FILE", c.ControlPlaneTLSKeyFile)
+	c.ControlPlaneTLSServerName = env("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_TLS_SERVER_NAME", c.ControlPlaneTLSServerName)
+	if c.ControlPlaneRequestTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_REQUEST_TIMEOUT", c.ControlPlaneRequestTimeout); err != nil {
+		return err
+	}
+	if c.ControlPlaneRetryMin, err = envDuration("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_RETRY_MIN", c.ControlPlaneRetryMin); err != nil {
+		return err
+	}
+	if c.ControlPlaneRetryMax, err = envDuration("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_RETRY_MAX", c.ControlPlaneRetryMax); err != nil {
+		return err
+	}
 	c.StateDir = env("WATCHDOG_FLOW_COLLECT_STATE_DIR", c.StateDir)
 	c.PlanFile = env("WATCHDOG_FLOW_COLLECT_PLAN_FILE", c.PlanFile)
 	c.PlanPublicKeyFile = env("WATCHDOG_FLOW_COLLECT_PLAN_PUBLIC_KEY_FILE", c.PlanPublicKeyFile)

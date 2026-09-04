@@ -46,6 +46,8 @@ func TestPlanSupervisorActivatesValidatedRevisionAndPreservesQueuedDatagramBound
 	if err != nil {
 		t.Fatal(err)
 	}
+	activated := uint64(0)
+	supervisor.OnActivated = func(registry *Registry) { activated = registry.Plan().Revision }
 	second := validPlan(now)
 	second.Revision = 2
 	second.PartitionMapVersion = 2
@@ -54,8 +56,8 @@ func TestPlanSupervisorActivatesValidatedRevisionAndPreservesQueuedDatagramBound
 	if err := supervisor.Refresh(now.Add(6 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if validated != 1 || runner.ActiveRegistry().plan.Revision != 2 || metrics.PlanRefreshChanges.Load() != 1 {
-		t.Fatalf("validated=%d revision=%d metrics=%+v", validated, runner.ActiveRegistry().plan.Revision, metrics.Snapshot())
+	if validated != 1 || runner.ActiveRegistry().plan.Revision != 2 || activated != 2 || metrics.PlanRefreshChanges.Load() != 1 {
+		t.Fatalf("validated=%d revision=%d callback_revision=%d metrics=%+v", validated, runner.ActiveRegistry().plan.Revision, activated, metrics.Snapshot())
 	}
 	if registry := runner.registryAt(now.Add(time.Second)); registry == nil || registry.plan.Revision != 1 {
 		t.Fatalf("pre-not_before datagram used registry %+v", registry)
@@ -104,8 +106,13 @@ func TestPlanSupervisorKeepsUnexpiredPlanButDegradesOnRefreshFailure(t *testing.
 	plan.Revision = 2
 	plan.PartitionMapVersion = 2
 	writeSignedPlan(t, planPath, plan, privateKey)
-	if err := supervisor.Refresh(now.Add(time.Second)); err == nil {
+	refreshErr := supervisor.Refresh(now.Add(time.Second))
+	if refreshErr == nil {
 		t.Fatal("dependency failure was accepted")
+	}
+	var failure planRefreshFailure
+	if !errors.As(refreshErr, &failure) || failure.stage != "dependency" || failure.code != "KAFKA_CONTRACT" {
+		t.Fatalf("refresh failure=%T %v, stage=%q code=%q", refreshErr, refreshErr, failure.stage, failure.code)
 	}
 	snapshot := runtime.Snapshot().Plan
 	if snapshot.Healthy || !snapshot.Accepting || snapshot.ActiveRevision != 1 || metrics.PlanRefreshFailures.Load() != 1 {

@@ -339,7 +339,7 @@ Migration `018_collector_registry_expand.sql` 已创建上述三表，并把现�
 
 plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须是单一 JSON object、最大 4 MiB，并先规范化键顺序/空白再计算 SHA-256；签名载荷固定绑定 envelope version、plan/tenant/collector ID、config/schema version、spec hash、signing key ID、毫秒精度有效期和 supersedes version。只有 Ed25519 验证函数生成的内部 proof 才能 create，验证后再修改 spec、signature 或任一载荷字段会在入库前失效。create 只接受 `validated`，且 schema 必须位于 agent 声明区间、version 必须高于当前 head、supersedes 必须精确等于当前 head。activate 以 collector `row_version` 和 plan `row_version` 双乐观锁，在同一 transaction 中 retire 旧 active、激活新 revision、推进 collector head 并写审计；单 active unique key 是最后防线。activation/ACK 时间由服务端生成，API/agent 不得传入安全时间。ACK 必须与当前 active plan 的 version/hash/expiry 同时相符，只推进 `acknowledged_config_version/last_good_config_version` 和 observed 字段，不推进管理 `row_version`；重复 ACK 幂等且只在首次推进时审计。MySQL JSON 回读必须重新 canonicalize 后校验 hash，不能比较 MySQL 自行格式化的 JSON 原始字节。
 
-这里的 Ed25519 public key 仍必须由 PLAT-03 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。key rotation、撤销、agent-side signature 验证、失败 ACK 保留 LKG 和 rollout/canary 尚未完成。
+这里的 Ed25519 public key 仍必须由 PLAT-03 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；多 key trust rotation/撤销与 rollout/canary 尚未完成。
 
 Migration `019_collector_ownership_evidence.sql` 补充所有权切换需要的三类规范化机器事实，而不是把时间戳或布尔证明塞进 plan/job JSON：
 
@@ -390,9 +390,9 @@ agent 必须是薄执行器，不保存业务评分规则、不自行判断 tena
 
 有效配置固定为三层交集。agent 以 `If-None-Match: plan_hash` 拉取 active plan；控制面返回 canonical spec、config/schema version、key ID、signature 和 expiry。agent 依次执行签名/hash、schema、兼容范围、binding/scope、资源预算和 analyzer self-test 校验；通过后写临时文件、fsync、原子切换并 heartbeat `acknowledged_config_version`。失败继续 last-known-good，并上报失败阶段。Flow 收集型 agent 可在控制面短故障时继续使用 LKG；`flow_probe` plan 只要允许 `active_handshake`，validate 就强制非空 expiry，主动 plan/job 必须同时未过期，过期后不得领取新任务，inflight 只运行到固化 deadline。
 
-`watchdog-flow-collect` 已先实现本地 signed plan 消费端闭环，但未实现上述远程拉取：部署/控制面必须把完整 envelope 原子投递到 `plan_file`。collector 周期复核并按 expiry 精确定时；新 revision 只有在验签、单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才原子切换无锁数据面。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 因候选/当前/上一切换窗口运行时下限为 3，默认 128。`control_plane_url` 当前不触发登录或网络请求；enrollment、authenticated delivery、ACK/heartbeat、trust/credential rotation 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
+`watchdog-flow-collect` 已把本地 signed plan 消费端接到 authenticated remote delivery。进程仍从有效本地 plan bootstrap collector ID；配置 `control_plane_url` 后，机器客户端使用 token 文件或 mTLS 二选一拉取 active v2 envelope，ETag 同时包含 version/hash，304 不写盘。200 响应先本地验签并核对 signed identity/header，再以同目录临时文件、file fsync、rename、directory fsync 原子更新 `plan_file` 并立即唤醒 supervisor；新 revision 只有在单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才切换无锁数据面，切换完成才 exact ACK version/hash/process-incarnation `boot_id`/software。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 运行时下限为 3，默认 128。一次性 enrollment、capability heartbeat、mTLS/trust bundle 热轮换、token 双窗口和 rollout/canary 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
 
-投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、ACK/失败 heartbeat 和 trust rotation 尚属 FLOW-01D2B，不能因 envelope 已互通而标记远程投递完成。
+投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、激活后 ACK、固定分类失败 heartbeat、timeout/backoff 和低基数 health 已实现；enrollment、credential/trust rotation/revoke 的全生命周期与 data-loss interval 审计尚未实现。
 
 扩展以稳定 analyzer contract 完成：
 
@@ -449,8 +449,9 @@ POST                     /api/v1/collectors/{id}/service-principals
 POST                     /api/v1/collectors/{id}/service-principals/{principal_id}/actions/revoke-write
 POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/actions/drain
 POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/state-restores
-POST                     /api/v1/collector-heartbeats
-GET                      /api/v1/collector-plan
+GET                      /api/v1/collectors/{id}/plan
+POST                     /api/v1/collectors/{id}/plan-ack
+POST                     /api/v1/collectors/{id}/heartbeat
 ```
 
 创建 enrollment、轮换和 revoke 属 `admin/operate`；binding 和 plan draft/preview 属目标资源的 `configure`，activate/rollback 另需 `operate`，主动 probe scope 仍需 `probe_active`。DELETE 只允许 revoked collector 并要求 `If-Match`；restore 不恢复凭据，purge 要求恢复期届满、无 binding/job/spool 引用和独立权限。agent 自用 exchange/heartbeat/plan 走 service authentication，不复用人类 session。Plan list/get 默认脱敏 secret reference；每个 preview/publish/activate/rollback、capability drift 和拒绝原因都写审计。

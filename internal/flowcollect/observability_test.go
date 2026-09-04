@@ -21,6 +21,11 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 	metrics.CollectStateRestoreCandidates.Store(7)
 	metrics.CollectStateRestored.Store(5)
 	metrics.CollectStateRestoreNanos.Store(int64(1500 * time.Millisecond))
+	metrics.PlanDeliveryFetchSuccesses.Store(2)
+	metrics.PlanDeliveryNotModified.Store(3)
+	metrics.PlanDeliveryAckSuccesses.Store(1)
+	runtime.enableControlPlane()
+	runtime.observeControlPlane(nil, time.Unix(1700000002, 0))
 	metrics.observeKafka(kafkaTopicNormalized, nil, 25*time.Millisecond)
 	runtime.observeKafka(kafkaTopicNormalized, nil, time.Unix(1700000001, 0))
 
@@ -46,6 +51,11 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 		`watchdog_flow_attempt_state_ready 1`,
 		`watchdog_flow_plan_accepting 1`,
 		`watchdog_flow_plan_active_revision 1`,
+		`watchdog_flow_control_plane_enabled 1`,
+		`watchdog_flow_control_plane_ready 1`,
+		`watchdog_flow_plan_delivery_fetch_total{result="downloaded"} 2`,
+		`watchdog_flow_plan_delivery_fetch_total{result="not_modified"} 3`,
+		`watchdog_flow_plan_delivery_ack_total{result="success"} 1`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("metrics output does not contain %q", expected)
@@ -87,6 +97,10 @@ func TestObservabilityReadinessFailsClosedAndRecovers(t *testing.T) {
 	assertReadyStatus(t, server, http.StatusOK, `"plan":"degraded"`)
 	runtime.observePlan(nil, registry, false, time.Now())
 	assertReadyStatus(t, server, http.StatusOK, `"plan":"ok"`)
+	runtime.enableControlPlane()
+	assertReadyStatus(t, server, http.StatusOK, `"control_plane":"degraded"`)
+	runtime.observeControlPlane(nil, time.Now())
+	assertReadyStatus(t, server, http.StatusOK, `"control_plane":"ok"`)
 	runtime.observePlan(errors.New("refresh failed"), registry, true, registry.plan.ExpiresAt)
 	assertReadyStatus(t, server, http.StatusServiceUnavailable, `"plan":"failed"`)
 }

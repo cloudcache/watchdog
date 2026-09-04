@@ -442,7 +442,11 @@ FLOW-01D1 将 history 接入持续运行路径。`plan_file` 是控制面或部�
 
 plan delivery envelope 不能另造一套签名语义。兼容 v1 仅用于现有离线文件：`signature = Ed25519(spec_json)`，且不得夹带未签名控制面元数据。生产投递使用 v2：payload 仍是最大 4 MiB 的 canonical flow plan JSON；外层携带 `plan_id/tenant_id/collector_id/config_version/plan_schema_version/spec_hash/signing_key_id/not_before_unix_ms/expires_at_unix_ms/supersedes_config_version`，signature 与 MySQL `collector_plan_revisions.signature` 完全相同，签名对象固定为 `envelope_version=1` 的上述元数据。collector 先验证 payload SHA-256 等于 signed `spec_hash`，再要求内层 `collector_id/revision/schema/not_before/expires_at` 与外层逐项一致，最后验 Ed25519。管理面 repository 与采集器调用同一个 signing-payload builder，投递 API 只封装数据库已有 spec/signature，不持有私钥、不重新签名。v2 外层元数据、payload 或 signature 任一变化均 fail closed。
 
-刷新文件缺失、部分写、签名/有效期错误、revision 回退、同版本篡改、history 容量不足、WAL 扫描或 Kafka 契约失败时，旧 active 尚未过期则继续 LKG，`/health/ready` 返回 200 `degraded`；指标以无身份 label 的 gauge/counter 暴露 active revision、expiry、accepting、LKG、最近 refresh 成败和 history 回收。到 `expires_at` 仍无合法替代时 plan check 变为 failed、readiness 返回 503，supervisor 返回 fatal error，由进程统一 cancel UDP listener、Runner 和 observability；不允许“继续收包稍后补授权”。当前实现不根据 `control_plane_url` 主动登录或拉取，远程 enrollment、authenticated atomic delivery、ACK/heartbeat 和 signing-key rotation 属 FLOW-01D2，未完成前不能把本地热刷新称为控制面闭环。
+刷新文件缺失、部分写、签名/有效期错误、revision 回退、同版本篡改、history 容量不足、WAL 扫描或 Kafka 契约失败时，旧 active 尚未过期则继续 LKG，`/health/ready` 返回 200 `degraded`；指标以无身份 label 的 gauge/counter 暴露 active revision、expiry、accepting、LKG、最近 refresh 成败和 history 回收。到 `expires_at` 仍无合法替代时 plan check 变为 failed、readiness 返回 503，supervisor 返回 fatal error，由进程统一 cancel UDP listener、Runner 和 observability；不允许“继续收包稍后补授权”。
+
+FLOW-01D2B 已接通远程投递的第一条完整链路。管理面提供机器身份专用的 `GET /api/v1/collectors/{collector_id}/plan`、`POST .../plan-ack` 和 `POST .../heartbeat`，不读取用户 session，也不接受 body 自报 tenant/collector/事实时间；token 只与 `collector_agents.token_hash` 比较，mTLS 只接受 Go TLS 已验证链的 leaf 指纹，混合凭据拒绝。GET 只返回 active、未过期且 collector 仍 active 的数据库 plan，以 `"v{config_version}-{spec_hash}"` 作为 ETag，避免“复制旧 spec 生成更高 rollback version”被 hash-only 304 错判。client 对 304 不写盘；200 先按 v2 完整验签并核对 collector/version/ETag，再以同目录 `0600 temp → fsync(file) → rename → fsync(directory)` 更新 `plan_file` 并唤醒 D1 supervisor。只有 supervisor 完成 WAL/history、Kafka 契约和数据面原子切换后才发送 exact version/hash/boot/software ACK；任一步失败保留 LKG，并以固定 `transport/decode/verify/compatibility/dependency/persist/activate` stage、固定大写 code 和不含原始响应/secret 的有界 detail 上报。ACK/失败 heartbeat 只更新 observed 字段，不推进管理 `row_version`；失败不推进 `acknowledged/last_good`，成功 ACK 清除失败态。token 文件每次请求重读以支持外部原子轮换，HTTP 仅允许 loopback，非 loopback 必须 HTTPS；禁止 redirect，TLS 下限 1.2，请求有硬 timeout，失败使用有界指数 backoff。控制面失败只把独立 health 降为 degraded，不阻塞仍有效 LKG 的报文热路径；plan 到期规则不变。
+
+这一步仍以本地有效 plan 作为 bootstrap collector identity，尚未实现一次性 enrollment；mTLS 证书热轮换、按 `signing_key_id` 的多 key trust bundle/撤销、token 双窗口服务端生命周期、capability/队列/丢弃周期 heartbeat 和 data-loss interval 审计仍属于 FLOW-01D2 后续项，因此不能把整个 enrollment/rotation 生命周期标记完成。
 
 collect-state 恢复先服从当前 plan 的 ownership fence；仅当 active plan 已完全不再准入该 exporter/domain 元组时，才允许同一 collector 使用 state 自带 `registry_version` 对应的历史 plan 恢复旧 WAL 所需模板。若 active plan 已把相同元组改绑给其他 tenant/exporter，则历史状态拒绝进入共享 decoder，避免跨租户/跨出口模板污染。跨 collector 接管仍只能由当前 plan 中严格递增的 `ownership_epoch` 授权，不能借历史 plan 绕过。
 
@@ -2164,6 +2168,10 @@ modules:
 
 flow_collect:
   control_plane_url: "https://watchdog.example.com"
+  control_plane_token_file: "/etc/watchdog/flow-collect.token" # 与 mTLS cert/key 二选一
+  control_plane_request_timeout: 10s
+  control_plane_retry_min: 1s
+  control_plane_retry_max: 30s
   state_dir: "/var/lib/watchdog-flow-collect"
   plan_file: "/var/lib/watchdog-flow-collect/plan.json"
   plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub"

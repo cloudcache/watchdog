@@ -68,9 +68,31 @@ func VerifySignedPlan(envelopeData, publicKeyData []byte, now time.Time) (*Regis
 	return CompilePlan(verified.plan, now)
 }
 
+// VerifyControlPlaneSignedPlan verifies a version-2 delivery envelope and
+// returns the signed metadata needed for an exact activation acknowledgement.
+func VerifyControlPlaneSignedPlan(envelopeData, publicKeyData []byte, now time.Time) (*Registry, PlanSignatureMetadata, error) {
+	if len(envelopeData) == 0 || len(envelopeData) > signedPlanMaxBytes || len(publicKeyData) == 0 || len(publicKeyData) > 64<<10 {
+		return nil, PlanSignatureMetadata{}, errors.New("signed flow plan or public key size is invalid")
+	}
+	verified, err := verifySignedPlanPayload(envelopeData, publicKeyData)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	if verified.envelopeVersion != 2 {
+		return nil, PlanSignatureMetadata{}, errors.New("remote flow plan must use control-plane envelope version 2")
+	}
+	registry, err := CompilePlan(verified.plan, now)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	return registry, verified.metadata, nil
+}
+
 type verifiedSignedPlan struct {
-	plan    Plan
-	payload []byte
+	plan            Plan
+	payload         []byte
+	envelopeVersion uint32
+	metadata        PlanSignatureMetadata
 }
 
 func verifySignedPlanPayload(envelopeData, publicKeyData []byte) (verifiedSignedPlan, error) {
@@ -130,7 +152,10 @@ func verifySignedPlanPayload(envelopeData, publicKeyData []byte) (verifiedSigned
 			return verifiedSignedPlan{}, errors.New("flow control-plane plan signature verification failed")
 		}
 	}
-	return verifiedSignedPlan{plan: plan, payload: payload}, nil
+	return verifiedSignedPlan{
+		plan: plan, payload: payload, envelopeVersion: envelope.SchemaVersion,
+		metadata: planEnvelopeMetadata(envelope),
+	}, nil
 }
 
 func BuildPlanSignaturePayload(metadata PlanSignatureMetadata) ([]byte, error) {

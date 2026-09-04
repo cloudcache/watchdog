@@ -287,22 +287,22 @@ func (h *PlanHistory) Refresh(now time.Time, references func() (map[uint64]struc
 	}
 	envelope, err := readBoundedFile(planPath, signedPlanMaxBytes)
 	if err != nil {
-		return PlanRefreshResult{}, fmt.Errorf("read refreshed flow plan: %w", err)
+		return PlanRefreshResult{}, newPlanRefreshFailure("persist", "PLAN_FILE_READ_FAILED", "delivered plan file could not be read", fmt.Errorf("read refreshed flow plan: %w", err))
 	}
 	verified, err := verifySignedPlanPayload(envelope, publicKey)
 	if err != nil {
-		return PlanRefreshResult{}, fmt.Errorf("verify refreshed flow plan: %w", err)
+		return PlanRefreshResult{}, newPlanRefreshFailure("verify", "PLAN_SIGNATURE_INVALID", "delivered plan signature or metadata is invalid", fmt.Errorf("verify refreshed flow plan: %w", err))
 	}
 	registry, err := CompilePlan(verified.plan, now)
 	if err != nil {
-		return PlanRefreshResult{}, fmt.Errorf("compile refreshed flow plan: %w", err)
+		return PlanRefreshResult{}, newPlanRefreshFailure("compatibility", "PLAN_SCHEMA_INCOMPATIBLE", "delivered plan is incompatible with this collector", fmt.Errorf("compile refreshed flow plan: %w", err))
 	}
 
 	h.mu.RLock()
 	changed, registries, err := h.prepareRefreshLocked(verified, registry, nil)
 	h.mu.RUnlock()
 	if err != nil {
-		return PlanRefreshResult{}, err
+		return PlanRefreshResult{}, newPlanRefreshFailure("compatibility", "PLAN_ACTIVATION_REJECTED", "plan could not be activated by this collector", err)
 	}
 	var referenced map[uint64]struct{}
 	if changed {
@@ -311,16 +311,16 @@ func (h *PlanHistory) Refresh(now time.Time, references func() (map[uint64]struc
 		}
 		referenced, err = references()
 		if err != nil {
-			return PlanRefreshResult{}, fmt.Errorf("read pending WAL plan references: %w", err)
+			return PlanRefreshResult{}, newPlanRefreshFailure("persist", "WAL_REFERENCE_READ_FAILED", "pending WAL plan references could not be read", fmt.Errorf("read pending WAL plan references: %w", err))
 		}
 		h.mu.RLock()
 		changed, registries, err = h.prepareRefreshLocked(verified, registry, referenced)
 		h.mu.RUnlock()
 		if err != nil {
-			return PlanRefreshResult{}, err
+			return PlanRefreshResult{}, newPlanRefreshFailure("compatibility", "PLAN_ACTIVATION_REJECTED", "plan could not be activated by this collector", err)
 		}
 		if err := validate(registries); err != nil {
-			return PlanRefreshResult{}, fmt.Errorf("validate refreshed flow plan dependencies: %w", err)
+			return PlanRefreshResult{}, newPlanRefreshFailure("dependency", "KAFKA_CONTRACT", "plan dependencies are unavailable", fmt.Errorf("validate refreshed flow plan dependencies: %w", err))
 		}
 	}
 
@@ -328,7 +328,7 @@ func (h *PlanHistory) Refresh(now time.Time, references func() (map[uint64]struc
 	defer h.mu.Unlock()
 	changed, _, err = h.prepareRefreshLocked(verified, registry, referenced)
 	if err != nil {
-		return PlanRefreshResult{}, err
+		return PlanRefreshResult{}, newPlanRefreshFailure("compatibility", "PLAN_ACTIVATION_REJECTED", "plan could not be activated by this collector", err)
 	}
 	if !changed {
 		h.active = registry
@@ -340,7 +340,7 @@ func (h *PlanHistory) Refresh(now time.Time, references func() (map[uint64]struc
 	}
 	pruned, err := h.installRefreshLocked(envelope, verified, registry, referenced)
 	if err != nil {
-		return PlanRefreshResult{}, err
+		return PlanRefreshResult{}, newPlanRefreshFailure("persist", "PLAN_HISTORY_PERSIST_FAILED", "plan runtime state could not be made durable", err)
 	}
 	return PlanRefreshResult{Changed: changed, Revision: registry.Plan().Revision, Pruned: pruned}, nil
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	appmeta "github.com/cloudcache/watchdog"
 	"github.com/cloudcache/watchdog/internal/flowcollect"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 )
@@ -131,18 +134,52 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	planSupervisor.OnError = func(err error) { log.Printf("flow plan refresh deferred while LKG remains active: %v", err) }
+	var planDelivery *flowcollect.PlanDeliveryClient
+	workerCount := 3
+	if cfg.FlowCollect.ControlPlaneURL != "" {
+		bootID, err := newCollectorBootID()
+		if err != nil {
+			log.Fatal(err)
+		}
+		planDelivery, err = flowcollect.NewPlanDeliveryClient(cfg.FlowCollect, plan.CollectorID, bootID, appmeta.Version, plan.Revision, metrics, runtimeState)
+		if err != nil {
+			log.Fatal(err)
+		}
+		planDelivery.OnError = func(err error) { log.Printf("remote flow plan delivery deferred: %v", err) }
+		planSupervisor.Wake = planDelivery.Delivered()
+		planSupervisor.OnActivated = planDelivery.NotifyActivated
+		workerCount++
+	}
+	planSupervisor.OnError = func(err error) {
+		log.Printf("flow plan refresh deferred while LKG remains active: %v", err)
+		if planDelivery != nil {
+			planDelivery.NotifyRefreshFailure(err)
+		}
+	}
 	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s metrics=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.Observability.Listen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
 	runCtx, cancel := context.WithCancel(ctx)
-	result := make(chan error, 3)
+	result := make(chan error, workerCount)
 	go func() { result <- observability.Run(runCtx) }()
 	go func() { result <- runner.Run(runCtx) }()
 	go func() { result <- planSupervisor.Run(runCtx) }()
-	first := <-result
+	if planDelivery != nil {
+		go func() { result <- planDelivery.Run(runCtx) }()
+	}
+	results := make([]error, 0, workerCount)
+	results = append(results, <-result)
 	cancel()
-	second := <-result
-	third := <-result
-	if err := errors.Join(first, second, third); err != nil {
+	for len(results) < workerCount {
+		results = append(results, <-result)
+	}
+	if err := errors.Join(results...); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func newCollectorBootID() (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(random[:]), nil
 }
