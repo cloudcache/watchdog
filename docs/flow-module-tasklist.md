@@ -157,6 +157,13 @@
 
 ### PLAT-03 通用 Collector/Agent 注册与接入
 
+当前状态：**进行中**。migration `018` 已完成无损 expand 与旧 SNMP/system 同事务兼容投影；新 registry 写 API、plan/enrollment 和 contract 阶段尚未完成，因此不能宣称已切换权威。
+
+- [x] **PLAT-03A registry expand 与兼容写**：落地 `collector_agents/collector_bindings/collector_plan_revisions`，复合 tenant/collector FK、desired/observed 分离、token/mTLS 互斥、ack/LKG/version 单调约束、单 active plan；回填 `target_agents`，现有 upsert/heartbeat/run/delete 在同一 transaction 双写，拒绝跨 tenant agent ID 接管。空库 001→018/rerun 和真实 MySQL 生命周期已验证。
+- [ ] **PLAT-03B registry authority cutover**：实现新 repository/DTO/filter/API 与多 binding 引用校验，迁移 `agent_run_history` FK 和旧读路径；上线前逐行核对 legacy/new identity、binding、desired/observed，灰度期禁止第二套无投影写入口，最终停止 `target_agents` 写并 contract 删除。
+- [ ] **PLAT-03C enrollment、credential 与 plan 生命周期**：一次性 secret、token 双窗口/mTLS、capability heartbeat、不可变 plan validate/sign/activate/ack/LKG/rollback、preview/canary/rollout、过期与撤销闭环。
+- [ ] **PLAT-03D ownership transfer 机器证据**：plan retire/expiry、old-owner drain receipt、独立 Kafka principal revoke/provider receipt、new plan activation 和 authenticated restore ack 必须来自各自执行器，不接受管理员直接填写时间；完成后才能实现 `FlowStateCleanupEvidenceProvider`。
+
 - [ ] **设计**：冻结 `collector_agents/collector_bindings/collector_plan_revisions` DDL、enrollment、token/mTLS、rotation、heartbeat、M:N binding、desired/observed health；本机硬上限∩签名 plan∩job 配置优先级、schema/API/capability 兼容、plan expiry/ack/LKG、preview/canary/rollback 和状态机。
 - [ ] **编码**：实现表/migration、注册 API、一次性 secret、凭据轮换/吊销、capability heartbeat、不可变 plan CRUD/preview/validate/activate/rollback、原子 ack/LKG、rollout job、版本 diff/健康页和 `target_agents` 迁移；plan 只保存 secret reference。
 - [ ] **单元测试**：覆盖 secret TTL/单次使用、hash、token 双窗口、mTLS fingerprint、规范化 plan hash、未知 key/签名/expiry、schema 区间、三层配置交集、单调 version、apply 失败保留 LKG、rollback 生成新版本、pending/active/suspended/revoked/deleted/restore/purge 状态和跨 tenant binding 拒绝。

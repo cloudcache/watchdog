@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
+
+const collectorCompatibilityActor ID = "system:compatibility"
 
 func (s *MySQLStore) GetAgent(ctx context.Context, agentID ID) (SNMPAgentConfig, error) {
 	var agent SNMPAgentConfig
@@ -83,7 +86,20 @@ func (s *MySQLStore) UpsertAgent(ctx context.Context, agent SNMPAgentConfig) (SN
 	if agent.TokenHash == "" {
 		return SNMPAgentConfig{}, errors.New("agent token hash is required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SNMPAgentConfig{}, err
+	}
+	defer tx.Rollback()
+	var existingTenant ID
+	err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM target_agents WHERE id = ? FOR UPDATE`, agent.ID).Scan(&existingTenant)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return SNMPAgentConfig{}, err
+	}
+	if err == nil && existingTenant != agent.TenantID {
+		return SNMPAgentConfig{}, errors.New("agent id belongs to another tenant")
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO target_agents (
 			id, tenant_id, target_id, agent_type, mode, endpoint, token_hash, status
 		) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)
@@ -99,24 +115,60 @@ func (s *MySQLStore) UpsertAgent(ctx context.Context, agent SNMPAgentConfig) (SN
 	if err != nil {
 		return SNMPAgentConfig{}, err
 	}
+	if err := upsertCollectorCompatibilityProjection(ctx, tx, agent); err != nil {
+		return SNMPAgentConfig{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return SNMPAgentConfig{}, err
+	}
 	return s.GetAgent(ctx, agent.ID)
 }
 
 func (s *MySQLStore) DeleteAgent(ctx context.Context, tenantID, agentID ID) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM collector_agents
+		WHERE tenant_id = ? AND id = ?
+	`, tenantID, agentID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM target_agents
 		WHERE tenant_id = ? AND id = ?
-	`, tenantID, agentID)
-	return err
+	`, tenantID, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *MySQLStore) MarkAgentSeen(ctx context.Context, agentID ID) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE target_agents
 		SET status = 'up', last_seen_at = ?, updated_at = CURRENT_TIMESTAMP(3)
 		WHERE id = ?
-	`, time.Now().UTC(), agentID)
-	return err
+	`, now, agentID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE collector_agents
+		SET observed_health = 'healthy', last_seen_at = ?,
+			last_error_code = NULL, last_error_detail = NULL,
+			updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
+		WHERE id = ? AND deleted_at IS NULL
+	`, now, collectorCompatibilityActor, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) error {
@@ -131,14 +183,22 @@ func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) 
 	if startedAt.IsZero() || startedAt.After(endedAt) {
 		startedAt = endedAt
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var agent SNMPAgentConfig
-	agentErr := s.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT tenant_id, target_id
 		FROM target_agents
 		WHERE id = ?
-	`, report.AgentID).Scan(&agent.TenantID, &agent.TargetID)
+		FOR UPDATE
+	`, report.AgentID).Scan(&agent.TenantID, &agent.TargetID); err != nil {
+		return err
+	}
 	if report.Status == AgentRunSuccess {
-		_, err := s.db.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, `
 			UPDATE target_agents
 			SET status = 'up',
 				last_seen_at = IF(?, ?, last_seen_at),
@@ -153,8 +213,18 @@ func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) 
 		if err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE collector_agents
+			SET observed_health = 'healthy',
+				last_seen_at = IF(?, ?, last_seen_at),
+				last_error_code = NULL, last_error_detail = NULL,
+				updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
+			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+		`, report.Seen, endedAt, collectorCompatibilityActor, report.AgentID, agent.TenantID); err != nil {
+			return err
+		}
 	} else {
-		_, err := s.db.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, `
 			UPDATE target_agents
 			SET status = 'error',
 				last_seen_at = IF(?, ?, last_seen_at),
@@ -168,20 +238,106 @@ func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) 
 		if err != nil {
 			return err
 		}
-	}
-	if agentErr != nil {
-		return agentErr
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE collector_agents
+			SET observed_health = 'degraded',
+				last_seen_at = IF(?, ?, last_seen_at),
+				last_error_code = 'LEGACY_AGENT_RUN_FAILED',
+				last_error_detail = NULLIF(LEFT(?, 1024), ''),
+				updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
+			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+		`, report.Seen, endedAt, report.Error, collectorCompatibilityActor, report.AgentID, agent.TenantID); err != nil {
+			return err
+		}
 	}
 	duration := endedAt.Sub(startedAt)
 	if duration < 0 {
 		duration = 0
 	}
-	_, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO agent_run_history (
 			id, tenant_id, agent_id, target_id, status, error, seen, started_at, ended_at, duration_ms
 		) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
-	`, stableID("run", string(report.AgentID), endedAt.Format(time.RFC3339Nano)), agent.TenantID, report.AgentID, agent.TargetID, report.Status, report.Error, report.Seen, startedAt, endedAt, uint64(duration.Milliseconds()))
+	`, stableID("run", string(report.AgentID), endedAt.Format(time.RFC3339Nano)), agent.TenantID, report.AgentID, agent.TargetID, report.Status, report.Error, report.Seen, startedAt, endedAt, uint64(duration.Milliseconds())); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertCollectorCompatibilityProjection(ctx context.Context, tx *sql.Tx, agent SNMPAgentConfig) error {
+	if tx == nil {
+		return errors.New("collector compatibility projection transaction is required")
+	}
+	name := fmt.Sprintf("legacy-%s-%s", agent.AgentType, agent.ID)
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO collector_agents (
+			id, tenant_id, module_key, name, agent_type, mode, endpoint,
+			status, observed_health, auth_type, token_hash, created_by, updated_by
+		) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 'token', ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			module_key = VALUES(module_key),
+			agent_type = VALUES(agent_type),
+			mode = VALUES(mode),
+			endpoint = VALUES(endpoint),
+			status = VALUES(status),
+			observed_health = VALUES(observed_health),
+			auth_type = 'token',
+			token_hash = VALUES(token_hash),
+			certificate_fingerprint = NULL,
+			updated_by = VALUES(updated_by),
+			row_version = row_version + 1,
+			updated_at = CURRENT_TIMESTAMP(3)
+	`, agent.ID, agent.TenantID, legacyCollectorModuleKey(agent.AgentType), name,
+		agent.AgentType, agent.Mode, agent.Endpoint, legacyCollectorDesiredStatus(agent.Status),
+		legacyCollectorObservedHealth(agent.Status), agent.TokenHash,
+		collectorCompatibilityActor, collectorCompatibilityActor)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM collector_bindings
+		WHERE collector_id = ? AND tenant_id = ? AND resource_type = 'target'
+	`, agent.ID, agent.TenantID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO collector_bindings (
+			collector_id, tenant_id, resource_type, resource_id, binding_role,
+			created_by, updated_by
+		) VALUES (?, ?, 'target', ?, 'collect', ?, ?)
+	`, agent.ID, agent.TenantID, agent.TargetID, collectorCompatibilityActor, collectorCompatibilityActor)
 	return err
+}
+
+func legacyCollectorModuleKey(agentType AgentType) string {
+	if agentType == AgentTypeSNMP {
+		return "network"
+	}
+	return "watchdog"
+}
+
+func legacyCollectorDesiredStatus(status string) string {
+	switch status {
+	case AgentStatusPending:
+		return "pending"
+	case AgentStatusDisabled:
+		return "suspended"
+	default:
+		return "active"
+	}
+}
+
+func legacyCollectorObservedHealth(status string) string {
+	switch status {
+	case AgentStatusUp:
+		return "healthy"
+	case AgentStatusError:
+		return "degraded"
+	case AgentStatusDown:
+		return "unavailable"
+	default:
+		return "unknown"
+	}
 }
 
 func (s *MySQLStore) ListAgentRuns(ctx context.Context, tenantID, agentID ID, limit int) ([]AgentRunHistory, error) {

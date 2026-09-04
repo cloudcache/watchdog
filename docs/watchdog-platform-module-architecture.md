@@ -244,8 +244,10 @@ CREATE TABLE collector_agents (
   purge_after DATETIME(3) NULL,
   live_identity TINYINT GENERATED ALWAYS AS
     (IF(deleted_at IS NULL, 1, NULL)) STORED,
+  UNIQUE KEY uq_collector_agent_tenant_id (tenant_id, id),
   UNIQUE KEY uq_collector_name (tenant_id, module_key, name, live_identity),
-  KEY idx_collector_health (tenant_id, status, last_seen_at),
+  KEY idx_collector_health
+    (tenant_id, status, observed_health, last_seen_at),
   CONSTRAINT fk_collector_agent_tenant
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CHECK (mode IN ('push','pull','listen')),
@@ -255,7 +257,11 @@ CREATE TABLE collector_agents (
     'unknown','warming','healthy','degraded','stale','unavailable'
   )),
   CHECK (plan_schema_min <= plan_schema_max),
-  CHECK (auth_type IN ('token','mtls'))
+  CHECK (last_good_config_version <= acknowledged_config_version),
+  CHECK (acknowledged_config_version <= config_version),
+  CHECK (auth_type IN ('token','mtls')),
+  CHECK ((auth_type = 'token') = (token_hash IS NOT NULL)),
+  CHECK ((auth_type = 'mtls') = (certificate_fingerprint IS NOT NULL))
 );
 
 CREATE TABLE collector_bindings (
@@ -273,9 +279,10 @@ CREATE TABLE collector_bindings (
     ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (collector_id, resource_type, resource_id),
   KEY idx_collector_binding_resource
-    (tenant_id, resource_type, resource_id),
+    (tenant_id, resource_type, resource_id, binding_role),
   CONSTRAINT fk_collector_binding_collector
-    FOREIGN KEY (collector_id) REFERENCES collector_agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, collector_id)
+    REFERENCES collector_agents(tenant_id, id) ON DELETE CASCADE,
   CONSTRAINT fk_collector_binding_tenant
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
@@ -310,17 +317,25 @@ CREATE TABLE collector_plan_revisions (
   KEY idx_collector_plan_status (collector_id, status, config_version),
   UNIQUE KEY uq_collector_active_plan (collector_id, active_identity),
   CONSTRAINT fk_collector_plan_collector
-    FOREIGN KEY (collector_id) REFERENCES collector_agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, collector_id)
+    REFERENCES collector_agents(tenant_id, id) ON DELETE CASCADE,
   CONSTRAINT fk_collector_plan_tenant
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CHECK (status IN ('draft','validated','active','retired','rejected')),
   CHECK (config_version > 0),
-  CHECK (status <> 'active' OR signature IS NOT NULL),
-  CHECK (expires_at IS NULL OR not_before IS NULL OR expires_at > not_before)
+  CHECK (plan_schema_version > 0),
+  CHECK (status <> 'active' OR (
+    signature IS NOT NULL AND activated_at IS NOT NULL AND expires_at IS NOT NULL
+  )),
+  CHECK (status <> 'retired' OR retired_at IS NOT NULL),
+  CHECK (expires_at IS NULL OR not_before IS NULL OR expires_at > not_before),
+  CHECK (supersedes_config_version IS NULL OR supersedes_config_version < config_version)
 );
 ```
 
-真实 migration 必须补 tenant/collector FK、引用资源存在性校验 service 和 `target_agents` 数据迁移；不能仅创建空新表后让两套 registry 长期并存。`collector_plan_revisions` 保存规范化 JSON 的不可变版本，不保存明文 token、私钥或 Kafka 密码，只保存 secret reference；validated spec 由控制面 signing key 签名，agent 内置/轮换 trust bundle 验证，旧验证公钥的保留期不得短于仍可能启动的 LKG plan。rollback 复制旧 spec 生成更大的新 `config_version`，绝不倒退版本或原地重新激活旧行。Heartbeat 只更新 `software/boot/capabilities/ack/health/last_seen/error` 等 observed 字段，不递增管理 ETag 的 `row_version`、不覆盖 `updated_by`；管理员对 status/binding/spec 的有效修改才递增 row version，plan activate 再事务性更新 `config_version/plan_hash/plan_expires_at`。这样高频心跳不会让配置 PATCH 持续产生伪冲突。
+Migration `018_collector_registry_expand.sql` 已创建上述三表，并把现有 `target_agents` 原 ID、tenant、token、desired/observed 状态和 target binding 原样回填。兼容窗口采用受控 expand-contract，而不是两个可独立修改的 registry：新 collector 管理 API 尚未开放；现有 SNMP/system repository 是唯一写入口，并在一个 MySQL transaction 内同时写 `target_agents` 兼容投影和 `collector_agents/bindings`，跨 tenant 复用 agent ID 会在修改前拒绝。心跳/运行结果也同事务刷新兼容投影与新 observed health，删除同时清理两侧。待新 API、连续监听 collector 和 run history 全部切换后，先做逐行一致性校验，再移除 legacy 写读路径与 `agent_run_history → target_agents` FK；禁止在窗口中给新表增加第二套无投影写入口。兼容写的 `created_by/updated_by=system:compatibility` 只标识无用户上下文的旧 worker，原 HTTP 管理动作仍必须在 `audit_logs` 保存真实 actor。
+
+`collector_bindings.resource_type/resource_id` 是多态资源引用，数据库无法对所有 module 表建立单一 FK；service 必须在同 tenant 下验证 resource 存在及 kind/capability 相容。`collector_plan_revisions` 保存规范化 JSON 的不可变版本，不保存明文 token、私钥或 Kafka 密码，只保存 secret reference；validated spec 由控制面 signing key 签名，agent 内置/轮换 trust bundle 验证，旧验证公钥的保留期不得短于仍可能启动的 LKG plan。rollback 复制旧 spec 生成更大的新 `config_version`，绝不倒退版本或原地重新激活旧行。Heartbeat 只更新 `software/boot/capabilities/ack/health/last_seen/error` 等 observed 字段，不递增管理 ETag 的 `row_version`、不覆盖管理员 `updated_by`；018 的 compatibility adapter 是过渡例外，因旧 DTO 尚无独立 config/observed 通道。管理员对 status/binding/spec 的有效修改才递增 row version，plan activate 再事务性更新 `config_version/plan_hash/plan_expires_at`。这样高频心跳不会让配置 PATCH 持续产生伪冲突。
 
 ### 6.2 生命周期
 
