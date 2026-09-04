@@ -240,6 +240,9 @@ func exporterStateToProto(key exporterQualityKey, state *exporterQualityState) *
 }
 
 func exporterStateFromProto(encoded *flowpb.QualityExporterState) (exporterQualityKey, *exporterQualityState, error) {
+	if encoded == nil {
+		return exporterQualityKey{}, nil, errors.New("quality exporter state is missing")
+	}
 	key, err := exporterKeyFromProto(encoded.GetKey())
 	if err != nil {
 		return exporterQualityKey{}, nil, err
@@ -259,6 +262,9 @@ func sourceStateToProto(key sourceQualityKey, state *sourceQualityState) *flowpb
 }
 
 func sourceStateFromProto(encoded *flowpb.QualitySourceState) (sourceQualityKey, *sourceQualityState, error) {
+	if encoded == nil {
+		return sourceQualityKey{}, nil, errors.New("quality source state is missing")
+	}
 	exporter, err := exporterKeyFromProto(encoded.GetExporter())
 	if err != nil {
 		return sourceQualityKey{}, nil, err

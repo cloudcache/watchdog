@@ -206,3 +206,24 @@ message QualityStateSnapshot {
   repeated QualityDecision pending_decisions = 6;
   bytes payload_sha256 = 7;
 }
+
+// QualityCheckpoint contains only terminally committed post-state for one
+// exporter quality identity. It is safe for a new collector owner to restore
+// from a typed keyspace in the compacted collect-state topic; state_key is the
+// 32-byte owner-fenced portion of that Kafka key.
+message QualityCheckpoint {
+  uint32 checkpoint_schema_version = 1;
+  bytes state_key = 2;
+  bytes state_identity_key = 3;
+  string tenant_id = 4;
+  string collector_id = 5;
+  string exporter_id = 6;
+  uint64 registry_version = 7;
+  uint64 ownership_epoch = 8;
+  uint64 state_generation = 9;
+  int64 committed_at_unix_ms = 10;
+  uint64 observation_domain_id = 11;
+  QualityExporterState exporter_state = 12;
+  repeated QualitySourceState source_states = 13;
+  bytes payload_sha256 = 14;
+}

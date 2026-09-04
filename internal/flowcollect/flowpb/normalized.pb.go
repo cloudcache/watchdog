@@ -1673,6 +1673,158 @@ func (x *QualityStateSnapshot) GetPayloadSha256() []byte {
 	return nil
 }
 
+// QualityCheckpoint contains only terminally committed post-state for one
+// exporter quality identity. It is safe for a new collector owner to restore
+// from a typed keyspace in the compacted collect-state topic; state_key is the
+// 32-byte owner-fenced portion of that Kafka key.
+type QualityCheckpoint struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	CheckpointSchemaVersion uint32                 `protobuf:"varint,1,opt,name=checkpoint_schema_version,json=checkpointSchemaVersion,proto3" json:"checkpoint_schema_version,omitempty"`
+	StateKey                []byte                 `protobuf:"bytes,2,opt,name=state_key,json=stateKey,proto3" json:"state_key,omitempty"`
+	StateIdentityKey        []byte                 `protobuf:"bytes,3,opt,name=state_identity_key,json=stateIdentityKey,proto3" json:"state_identity_key,omitempty"`
+	TenantId                string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	CollectorId             string                 `protobuf:"bytes,5,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	ExporterId              string                 `protobuf:"bytes,6,opt,name=exporter_id,json=exporterId,proto3" json:"exporter_id,omitempty"`
+	RegistryVersion         uint64                 `protobuf:"varint,7,opt,name=registry_version,json=registryVersion,proto3" json:"registry_version,omitempty"`
+	OwnershipEpoch          uint64                 `protobuf:"varint,8,opt,name=ownership_epoch,json=ownershipEpoch,proto3" json:"ownership_epoch,omitempty"`
+	StateGeneration         uint64                 `protobuf:"varint,9,opt,name=state_generation,json=stateGeneration,proto3" json:"state_generation,omitempty"`
+	CommittedAtUnixMs       int64                  `protobuf:"varint,10,opt,name=committed_at_unix_ms,json=committedAtUnixMs,proto3" json:"committed_at_unix_ms,omitempty"`
+	ObservationDomainId     uint64                 `protobuf:"varint,11,opt,name=observation_domain_id,json=observationDomainId,proto3" json:"observation_domain_id,omitempty"`
+	ExporterState           *QualityExporterState  `protobuf:"bytes,12,opt,name=exporter_state,json=exporterState,proto3" json:"exporter_state,omitempty"`
+	SourceStates            []*QualitySourceState  `protobuf:"bytes,13,rep,name=source_states,json=sourceStates,proto3" json:"source_states,omitempty"`
+	PayloadSha256           []byte                 `protobuf:"bytes,14,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *QualityCheckpoint) Reset() {
+	*x = QualityCheckpoint{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityCheckpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityCheckpoint) ProtoMessage() {}
+
+func (x *QualityCheckpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityCheckpoint.ProtoReflect.Descriptor instead.
+func (*QualityCheckpoint) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *QualityCheckpoint) GetCheckpointSchemaVersion() uint32 {
+	if x != nil {
+		return x.CheckpointSchemaVersion
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetStateKey() []byte {
+	if x != nil {
+		return x.StateKey
+	}
+	return nil
+}
+
+func (x *QualityCheckpoint) GetStateIdentityKey() []byte {
+	if x != nil {
+		return x.StateIdentityKey
+	}
+	return nil
+}
+
+func (x *QualityCheckpoint) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *QualityCheckpoint) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+func (x *QualityCheckpoint) GetExporterId() string {
+	if x != nil {
+		return x.ExporterId
+	}
+	return ""
+}
+
+func (x *QualityCheckpoint) GetRegistryVersion() uint64 {
+	if x != nil {
+		return x.RegistryVersion
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetOwnershipEpoch() uint64 {
+	if x != nil {
+		return x.OwnershipEpoch
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetStateGeneration() uint64 {
+	if x != nil {
+		return x.StateGeneration
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetCommittedAtUnixMs() int64 {
+	if x != nil {
+		return x.CommittedAtUnixMs
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetObservationDomainId() uint64 {
+	if x != nil {
+		return x.ObservationDomainId
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetExporterState() *QualityExporterState {
+	if x != nil {
+		return x.ExporterState
+	}
+	return nil
+}
+
+func (x *QualityCheckpoint) GetSourceStates() []*QualitySourceState {
+	if x != nil {
+		return x.SourceStates
+	}
+	return nil
+}
+
+func (x *QualityCheckpoint) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
 
 const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
@@ -1865,7 +2017,24 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\texporters\x18\x04 \x03(\v2&.watchdog.flow.v1.QualityExporterStateR\texporters\x12>\n" +
 	"\asources\x18\x05 \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\asources\x12N\n" +
 	"\x11pending_decisions\x18\x06 \x03(\v2!.watchdog.flow.v1.QualityDecisionR\x10pendingDecisions\x12%\n" +
-	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256\"\xa0\x05\n" +
+	"\x11QualityCheckpoint\x12:\n" +
+	"\x19checkpoint_schema_version\x18\x01 \x01(\rR\x17checkpointSchemaVersion\x12\x1b\n" +
+	"\tstate_key\x18\x02 \x01(\fR\bstateKey\x12,\n" +
+	"\x12state_identity_key\x18\x03 \x01(\fR\x10stateIdentityKey\x12\x1b\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\x12!\n" +
+	"\fcollector_id\x18\x05 \x01(\tR\vcollectorId\x12\x1f\n" +
+	"\vexporter_id\x18\x06 \x01(\tR\n" +
+	"exporterId\x12)\n" +
+	"\x10registry_version\x18\a \x01(\x04R\x0fregistryVersion\x12'\n" +
+	"\x0fownership_epoch\x18\b \x01(\x04R\x0eownershipEpoch\x12)\n" +
+	"\x10state_generation\x18\t \x01(\x04R\x0fstateGeneration\x12/\n" +
+	"\x14committed_at_unix_ms\x18\n" +
+	" \x01(\x03R\x11committedAtUnixMs\x122\n" +
+	"\x15observation_domain_id\x18\v \x01(\x04R\x13observationDomainId\x12M\n" +
+	"\x0eexporter_state\x18\f \x01(\v2&.watchdog.flow.v1.QualityExporterStateR\rexporterState\x12I\n" +
+	"\rsource_states\x18\r \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\fsourceStates\x12%\n" +
+	"\x0epayload_sha256\x18\x0e \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once
@@ -1879,7 +2048,7 @@ func file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP() []byte {
 	return file_internal_flowcollect_flowpb_normalized_proto_rawDescData
 }
 
-var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_internal_flowcollect_flowpb_normalized_proto_goTypes = []any{
 	(*NormalizedRecordBatch)(nil), // 0: watchdog.flow.v1.NormalizedRecordBatch
 	(*NormalizedRecord)(nil),      // 1: watchdog.flow.v1.NormalizedRecord
@@ -1893,6 +2062,7 @@ var file_internal_flowcollect_flowpb_normalized_proto_goTypes = []any{
 	(*QualityDecision)(nil),       // 9: watchdog.flow.v1.QualityDecision
 	(*QualityJournalRecord)(nil),  // 10: watchdog.flow.v1.QualityJournalRecord
 	(*QualityStateSnapshot)(nil),  // 11: watchdog.flow.v1.QualityStateSnapshot
+	(*QualityCheckpoint)(nil),     // 12: watchdog.flow.v1.QualityCheckpoint
 }
 var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
 	1,  // 0: watchdog.flow.v1.NormalizedRecordBatch.records:type_name -> watchdog.flow.v1.NormalizedRecord
@@ -1906,11 +2076,13 @@ var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
 	7,  // 8: watchdog.flow.v1.QualityStateSnapshot.exporters:type_name -> watchdog.flow.v1.QualityExporterState
 	8,  // 9: watchdog.flow.v1.QualityStateSnapshot.sources:type_name -> watchdog.flow.v1.QualitySourceState
 	9,  // 10: watchdog.flow.v1.QualityStateSnapshot.pending_decisions:type_name -> watchdog.flow.v1.QualityDecision
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	7,  // 11: watchdog.flow.v1.QualityCheckpoint.exporter_state:type_name -> watchdog.flow.v1.QualityExporterState
+	8,  // 12: watchdog.flow.v1.QualityCheckpoint.source_states:type_name -> watchdog.flow.v1.QualitySourceState
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_internal_flowcollect_flowpb_normalized_proto_init() }
@@ -1924,7 +2096,7 @@ func file_internal_flowcollect_flowpb_normalized_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_flowcollect_flowpb_normalized_proto_rawDesc), len(file_internal_flowcollect_flowpb_normalized_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

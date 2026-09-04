@@ -597,6 +597,23 @@ message QuarantineEvent {
   uint32 payload_bytes          = 9;
   bytes  payload_sha256         = 10; // 仅摘要，绝不带 raw payload
 }
+
+message QualityCheckpoint {
+  uint32 checkpoint_schema_version = 1; // 当前 = 1
+  bytes  state_key                = 2;  // 32B，含 ownership_epoch
+  bytes  state_identity_key       = 3;  // 32B，跨 owner 稳定
+  string tenant_id                = 4;
+  string collector_id             = 5;
+  string exporter_id              = 6;
+  uint64 registry_version         = 7;
+  uint64 ownership_epoch          = 8;
+  uint64 state_generation         = 9;
+  int64  committed_at_unix_ms     = 10;
+  uint64 observation_domain_id    = 11;
+  QualityExporterState exporter_state = 12;
+  repeated QualitySourceState source_states = 13;
+  bytes  payload_sha256           = 14;
+}
 ```
 
 字段 32 之后用于补齐 GoFlow2 已能提供、且做 ASN/采样质量分析不可缺失的事实。`agent_ip/sub_agent_id/datagram_sequence/exporter_epoch` 属于 datagram，其中 `source_ip` 始终是 UDP transport source，不能拿 relay 地址覆盖 sFlow header 的 `agent_ip`；`source_id/sample_sequence/sample_pool/drops/sample_index/quality_epoch` 属于单个 sFlow sample 或 record，因此必须放在 record，不能错误提升为 batch。`sample_index` 防止同一 sFlow sample 解出多个 flow record 时重复推进 sample sequence；字段号只追加，不回填 17–31 的预留区。
@@ -611,7 +628,27 @@ E2B1 的单 owner 持久化顺序固定为 `raw WAL durable → Observe → qual
 
 周期 checkpoint 通过进程内 RW barrier 取得一致切面：先同步 WAL/ACK 和 quality journal，再把 exporter/source 状态及仅对应“尚未 durable ACK”的 retry decision 原子写入 `quality.snapshot`（临时文件 fsync、rename、目录 fsync），最后才 truncate/fsync journal。启动先扫描 raw WAL 的 durable recovery view，并严格按 snapshot→journal 恢复；只有“WAL 中仍存在且没有 durable terminal ACK”的 ID 才恢复 retry decision，查不到的 ID 不能一律当未确认，因为其 segment 可能已成功回收；已确认记录的 sequence state 仍保留。仅不完整的尾 frame 可截断，完整 frame 的 magic/CRC/SHA/collector/schema/容量任一不符均 fail closed。这样 kill/restart 后本机 epoch 连续，同时不产生 per-datagram Kafka 同步写放大。`journal_fsync_interval` 是并行 worker 的本地 group commit 窗口，`checkpoint_interval` 控制压缩频率，`journal_max_bytes` 是保护磁盘和恢复时间的硬界；三者必须纳入目标 datagrams/s、NVMe fsync p95 和最长 Kafka 故障窗口的容量验收。
 
-E2B1 只解决同一 collector identity 和本地 state volume 的进程重启。新 owner/跨节点接管仍须 E2B2：把 coalesced quality snapshot 关联到固定 exporter shard ownership 与 Kafka compacted checkpoint，连同 FLOW-02D3 的 plan history/attempt metadata 一起恢复；在 owner 切换、旧 WAL 和 kill -9 矩阵完成前，不宣称跨节点 epoch 连续。
+E2B1 只解决同一 collector identity 和本地 state volume 的进程重启。E2B2 不新增第五个 topic，而是在现有 compacted `collect-state` 中增加严格类型化 keyspace：既有 decoder state 的 Kafka key 保持 32B；quality checkpoint 的 Kafka key 固定为 `0x51 ('Q') || state_key(32B)`。恢复器只能按 key 长度和前缀分派消息类型，禁止通过“依次尝试 protobuf 反序列化”猜类型；上线必须先部署能识别两种 keyspace、但尚未发布 quality checkpoint 的兼容 reader，确认全量升级后再开启 writer，旧版本不得在开启 writer 后回滚上线。
+
+quality checkpoint 的身份与 fencing 冻结为：
+
+```text
+state_identity_key = SHA-256(length-prefix(
+  "watchdog.flow.quality-state.identity.v1",
+  tenant_id, exporter_id, protocol, transport_source_ip_16,
+  observation_domain_id, sequence_scope, sflow_agent_ip_16, sub_agent_id))
+state_key          = SHA-256(length-prefix(
+  "watchdog.flow.quality-state.partition.v1",
+  state_identity_key, ownership_epoch))
+kafka_key          = 0x51 || state_key
+restore_order      = (ownership_epoch, state_generation)
+```
+
+其中 NetFlow v9/IPFIX 的 `sequence_scope=observation_domain_id`，NetFlow v5 保留 engine type/id scope，sFlow 保留 agent/sub-agent，避免同一传输源下的独立序列互相覆盖。相同 identity/epoch/generation 若 payload SHA-256 不同即为 split-brain/corruption 并 fail closed；相同 epoch 出现不同 collector 同样拒绝。active plan 只接收 tenant/exporter/source/domain 精确匹配、epoch 不高于当前 binding、registry revision 不高于 active revision且未超过 `quality.state_ttl` 的候选；新 epoch 即使 generation 较小也必须胜过旧 epoch。
+
+远端 checkpoint 只允许包含**已 terminal Kafka ack 且其 WAL ACK 已 durable** 的绝对 post-state；尚未确认报文的 retry decision 永远只在旧 owner 本地 journal/snapshot 中恢复，绝不随 checkpoint 转移给新 owner。实现时每个 affinity worker 在 terminal ACK 后把对应 journal post-state 标为 committed，周期任务先 `WAL.Sync`，再按 WAL segment/offset 顺序把同 identity 的更新合并为一个 exporter checkpoint；sFlow source states 按 `(source_id_type,source_id_value)` 合并并排序。每个 identity 每轮最多增加一次 generation；本地 snapshot 同时持久化 committed checkpoint 和未发布标记，Kafka ack 后再清除 dirty，崩溃窗口最多重发相同 key/generation/payload。checkpoint 超过 topic message 上限或 source 容量时 readiness fail closed 并保留本地状态，不把不完整 source 集静默发布。
+
+启动在开放 UDP 前冻结同一 collect-state topic 的 partition high watermark，一次扫描分别恢复 decoder state 与 quality checkpoint；quality 候选先完成 registry/epoch/checksum/容量校验和全局选择，再与本地 committed 状态合并，最后一次性装入 tracker。旧 epoch tombstone 沿用 D3B3 的 revoke→replacement durable→审计删除状态机，但删除的是完整 33B quality Kafka key。连同 FLOW-02D3 的 plan history/attempt metadata 完成 owner 切换、旧 WAL、迟到报文和 kill -9 矩阵前，不宣称跨节点 epoch 连续。
 
 单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。存在 collect-state 时 child 0 固定留给状态消息，data child 从 1 开始；否则 data child 从 0 开始。Kafka idempotent producer 获得 `acks=all` 后，追加对应的 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。进程内失败重发递增 `replay_generation` 并保持 batch/record ID 和原 partition map；跨进程/跨节点连续 generation 仍须 FLOW-02D3 的持久化 attempt metadata/plan history 才能保证，消费端去重不能以 generation 代替稳定 ID。dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
 
