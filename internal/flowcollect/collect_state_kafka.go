@@ -236,7 +236,7 @@ func (r *KafkaCollectStateReader) readBoundarySnapshot(ctx context.Context, regi
 			}
 			keyPartitions[key] = message.Partition
 		}
-		if len(message.Value) == 0 {
+		if message.Value == nil {
 			delete(collectByKey, key)
 			delete(qualityByKey, key)
 			continue

@@ -78,8 +78,8 @@ type FrozenReplacementObservation struct {
 }
 
 type StateTombstoneReceipt struct {
-	Position    KafkaRecordPosition `json:"position"`
-	PublishedAt time.Time           `json:"published_at"`
+	Position       KafkaRecordPosition `json:"position"`
+	AcknowledgedAt time.Time           `json:"acknowledged_at"`
 }
 
 type FrozenTombstoneVerification struct {
@@ -254,12 +254,12 @@ func (j *StateCleanupJob) MarkTombstonePublished(receipt StateTombstoneReceipt) 
 	if j.snapshot.Phase != StateCleanupReadyToTombstone || j.snapshot.ReplacementObservation == nil {
 		return fmt.Errorf("state cleanup cannot record tombstone in phase %q", j.snapshot.Phase)
 	}
-	if receipt.Position.Partition < 0 || receipt.Position.Offset < 0 || receipt.PublishedAt.Before(j.snapshot.ReplacementObservation.CapturedAt) {
+	if receipt.Position.Partition < 0 || receipt.Position.Offset < 0 || receipt.AcknowledgedAt.Before(j.snapshot.ReplacementObservation.CapturedAt) {
 		return errors.New("state cleanup tombstone receipt is invalid")
 	}
 	j.snapshot.TombstoneReceipt = stateTombstoneReceiptPointer(receipt)
 	j.snapshot.Phase = StateCleanupAwaitingVerification
-	j.snapshot.UpdatedAt = receipt.PublishedAt
+	j.snapshot.UpdatedAt = receipt.AcknowledgedAt
 	return nil
 }
 
@@ -276,7 +276,7 @@ func (j *StateCleanupJob) VerifyTombstone(verification FrozenTombstoneVerificati
 		return fmt.Errorf("state cleanup cannot verify tombstone in phase %q", j.snapshot.Phase)
 	}
 	receipt := j.snapshot.TombstoneReceipt
-	if verification.CapturedAt.Before(receipt.PublishedAt) || verification.Partition != receipt.Position.Partition || verification.HighWatermark <= receipt.Position.Offset || !verification.KeyAbsent {
+	if verification.CapturedAt.Before(receipt.AcknowledgedAt) || verification.Partition != receipt.Position.Partition || verification.HighWatermark <= receipt.Position.Offset || !verification.KeyAbsent {
 		return errors.New("state cleanup tombstone is not absent at a later frozen boundary")
 	}
 	j.snapshot.Verification = frozenTombstoneVerificationPointer(verification)
@@ -427,7 +427,7 @@ func validateStateCleanupSnapshot(snapshot StateCleanupSnapshot) error {
 		}
 		return nil
 	}
-	if snapshot.TombstoneReceipt == nil || snapshot.TombstoneReceipt.Position.Partition < 0 || snapshot.TombstoneReceipt.Position.Offset < 0 || snapshot.TombstoneReceipt.PublishedAt.Before(snapshot.ReplacementObservation.CapturedAt) {
+	if snapshot.TombstoneReceipt == nil || snapshot.TombstoneReceipt.Position.Partition < 0 || snapshot.TombstoneReceipt.Position.Offset < 0 || snapshot.TombstoneReceipt.AcknowledgedAt.Before(snapshot.ReplacementObservation.CapturedAt) {
 		return errors.New("state cleanup snapshot tombstone receipt is invalid")
 	}
 	if snapshot.Phase == StateCleanupAwaitingVerification {
@@ -436,7 +436,7 @@ func validateStateCleanupSnapshot(snapshot StateCleanupSnapshot) error {
 		}
 		return nil
 	}
-	if snapshot.Verification == nil || snapshot.Verification.CapturedAt.Before(snapshot.TombstoneReceipt.PublishedAt) || snapshot.Verification.Partition != snapshot.TombstoneReceipt.Position.Partition || snapshot.Verification.HighWatermark <= snapshot.TombstoneReceipt.Position.Offset || !snapshot.Verification.KeyAbsent {
+	if snapshot.Verification == nil || snapshot.Verification.CapturedAt.Before(snapshot.TombstoneReceipt.AcknowledgedAt) || snapshot.Verification.Partition != snapshot.TombstoneReceipt.Position.Partition || snapshot.Verification.HighWatermark <= snapshot.TombstoneReceipt.Position.Offset || !snapshot.Verification.KeyAbsent {
 		return errors.New("completed cleanup snapshot verification is invalid")
 	}
 	return nil
@@ -509,7 +509,7 @@ func equalFrozenReplacementObservation(left, right FrozenReplacementObservation)
 }
 
 func equalStateTombstoneReceipt(left, right StateTombstoneReceipt) bool {
-	return left.Position == right.Position && left.PublishedAt.Equal(right.PublishedAt)
+	return left.Position == right.Position && left.AcknowledgedAt.Equal(right.AcknowledgedAt)
 }
 
 func equalFrozenTombstoneVerification(left, right FrozenTombstoneVerification) bool {

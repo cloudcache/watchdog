@@ -129,6 +129,18 @@ func TestKafkaCollectStateReaderRejectsUnknownTypedKey(t *testing.T) {
 	}
 }
 
+func TestKafkaCollectStateReaderRejectsEmptyNonNullValue(t *testing.T) {
+	key := make([]byte, sha256.Size)
+	key[0] = 1
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		{Topic: "state", Partition: 0, Offset: 0, Key: key, Value: []byte{}},
+	}}, map[int32][2]int64{0: {0, 1}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	if _, err := reader.ReadAllWithHistory(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, time.Now()), nil); err == nil {
+		t.Fatal("empty non-null Kafka value was accepted as a compaction tombstone")
+	}
+}
+
 func TestKafkaCollectStateReaderBoundsHistoricalTypedKeys(t *testing.T) {
 	first, second := make([]byte, sha256.Size), make([]byte, sha256.Size)
 	first[0], second[0] = 1, 2

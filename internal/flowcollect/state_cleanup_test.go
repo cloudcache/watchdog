@@ -65,7 +65,7 @@ func TestStateCleanupDecoderLifecycleIsFencedPersistableAndIdempotent(t *testing
 	if message.Topic != "state" || message.Partition != -1 || message.Value != nil || !bytes.Equal(messageKey, old.StateKey) {
 		t.Fatalf("decoder tombstone message is invalid: %+v key=%x", message, messageKey)
 	}
-	receipt := StateTombstoneReceipt{Position: KafkaRecordPosition{Partition: 1, Offset: 30}, PublishedAt: base.Add(8 * time.Second)}
+	receipt := StateTombstoneReceipt{Position: KafkaRecordPosition{Partition: 1, Offset: 30}, AcknowledgedAt: base.Add(8 * time.Second)}
 	if err := job.MarkTombstonePublished(receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestStateCleanupQualityUsesTypedOldEpochKey(t *testing.T) {
 	if message.Value != nil {
 		t.Fatal("quality tombstone encoded an empty value instead of Kafka null")
 	}
-	receipt := StateTombstoneReceipt{Position: KafkaRecordPosition{Partition: 2, Offset: 50}, PublishedAt: base.Add(8 * time.Second)}
+	receipt := StateTombstoneReceipt{Position: KafkaRecordPosition{Partition: 2, Offset: 50}, AcknowledgedAt: base.Add(8 * time.Second)}
 	if err := job.MarkTombstonePublished(receipt); err != nil {
 		t.Fatal(err)
 	}
