@@ -6,31 +6,32 @@ import (
 )
 
 type APIV1RouterConfig struct {
-	Auth            AuthContextAdapter
-	TenantDiscovery AuthContextAdapter
-	Targets         TargetRepository
-	Agents          AgentRepository
-	Network         NetworkRepository
-	Exports         ExportRepository
-	ExportFiles     ExportFileReader
-	Billing         BillingRepository
-	AggregateGraphs AggregateGraphRepository
-	Permissions     PermissionRepository
-	Retention       RetentionRepository
-	SNMP            SNMPRepository
-	Metrics         MetricsService
-	SNMPDiscovery   SNMPDeviceDiscoverer
-	SNMPCollector   SNMPCollectorRepository
-	SeriesCleaner   SeriesCleaner
-	DiscoveryJobs   DiscoveryJobRepository
-	TrapDispatcher  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
-	Audit           AuditRepository
-	AddressSets     AddressSetRepository
-	Tenants         TenantRepository
-	Readiness       func(context.Context) error
-	RuntimeHealth   func() PlatformRuntimeHealth
-	RuntimeMetrics  func() []byte
-	FlowCleanupJobs FlowStateCleanupJobController
+	Auth              AuthContextAdapter
+	TenantDiscovery   AuthContextAdapter
+	Targets           TargetRepository
+	Agents            AgentRepository
+	Network           NetworkRepository
+	Exports           ExportRepository
+	ExportFiles       ExportFileReader
+	Billing           BillingRepository
+	AggregateGraphs   AggregateGraphRepository
+	Permissions       PermissionRepository
+	Retention         RetentionRepository
+	SNMP              SNMPRepository
+	Metrics           MetricsService
+	SNMPDiscovery     SNMPDeviceDiscoverer
+	SNMPCollector     SNMPCollectorRepository
+	SeriesCleaner     SeriesCleaner
+	DiscoveryJobs     DiscoveryJobRepository
+	TrapDispatcher    func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
+	Audit             AuditRepository
+	AddressSets       AddressSetRepository
+	Tenants           TenantRepository
+	Readiness         func(context.Context) error
+	RuntimeHealth     func() PlatformRuntimeHealth
+	RuntimeMetrics    func() []byte
+	FlowCleanupJobs   FlowStateCleanupJobController
+	CollectorEvidence CollectorEvidenceController
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -125,6 +126,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.FlowCleanupJobs != nil {
 		registerFlowStateCleanupRoutes(mux, auth, cfg.FlowCleanupJobs)
+	}
+	if cfg.CollectorEvidence != nil {
+		registerCollectorEvidenceRoutes(mux, cfg.CollectorEvidence)
 	}
 	if cfg.SNMP != nil {
 		registerSNMPRoutes(mux, auth, cfg.SNMP)

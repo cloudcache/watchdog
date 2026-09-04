@@ -22,6 +22,7 @@ type BackendRuntime struct {
 	DiscoveryScheduler DiscoveryScheduler
 	FlowStateCleanup   *FlowStateCleanupRuntime
 	FlowCleanupJobs    FlowStateCleanupJobController
+	CollectorEvidence  CollectorEvidenceController
 	trapDispatcherFn   func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu       sync.Mutex
 	backgroundStarted  bool
@@ -48,11 +49,22 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	}
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
 	exportStore := DiskCSVExportStore{Dir: cfg.Export.Dir}
+	collectorAuthenticator, err := NewMySQLCollectorMachineAuthenticator(store.db)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	collectorEvidence, err := NewCollectorEvidenceService(collectorAuthenticator, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	runtime := &BackendRuntime{
-		Config:        cfg,
-		Store:         store,
-		MetricsClient: metricsClient,
-		ExportStore:   exportStore,
+		Config:            cfg,
+		Store:             store,
+		MetricsClient:     metricsClient,
+		ExportStore:       exportStore,
+		CollectorEvidence: collectorEvidence,
 	}
 	runtime.ExportWorker = ExportWorker{
 		Repo: store,
@@ -112,30 +124,31 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		tenantDiscoveryAuth = tenantDiscovery[0]
 	}
 	return NewAPIV1Router(APIV1RouterConfig{
-		Auth:            auth,
-		TenantDiscovery: tenantDiscoveryAuth,
-		Targets:         r.Store,
-		Agents:          r.Store,
-		Network:         r.Store,
-		Exports:         r.Store,
-		ExportFiles:     r.ExportStore,
-		Billing:         r.Store,
-		AggregateGraphs: r.Store,
-		Permissions:     r.Store,
-		Retention:       r.Store,
-		SNMP:            r.Store,
-		SNMPDiscovery:   r.SNMPDiscovery,
-		SNMPCollector:   r.Store,
-		SeriesCleaner:   r.MetricsClient,
-		DiscoveryJobs:   r.Store,
-		TrapDispatcher:  r.trapDispatcherFn,
-		Audit:           r.Store,
-		AddressSets:     r.Store,
-		Tenants:         r.Store,
-		Readiness:       r.Ready,
-		RuntimeHealth:   r.Health,
-		RuntimeMetrics:  r.RuntimeMetrics,
-		FlowCleanupJobs: r.FlowCleanupJobs,
+		Auth:              auth,
+		TenantDiscovery:   tenantDiscoveryAuth,
+		Targets:           r.Store,
+		Agents:            r.Store,
+		Network:           r.Store,
+		Exports:           r.Store,
+		ExportFiles:       r.ExportStore,
+		Billing:           r.Store,
+		AggregateGraphs:   r.Store,
+		Permissions:       r.Store,
+		Retention:         r.Store,
+		SNMP:              r.Store,
+		SNMPDiscovery:     r.SNMPDiscovery,
+		SNMPCollector:     r.Store,
+		SeriesCleaner:     r.MetricsClient,
+		DiscoveryJobs:     r.Store,
+		TrapDispatcher:    r.trapDispatcherFn,
+		Audit:             r.Store,
+		AddressSets:       r.Store,
+		Tenants:           r.Store,
+		Readiness:         r.Ready,
+		RuntimeHealth:     r.Health,
+		RuntimeMetrics:    r.RuntimeMetrics,
+		FlowCleanupJobs:   r.FlowCleanupJobs,
+		CollectorEvidence: r.CollectorEvidence,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,

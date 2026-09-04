@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -239,6 +241,65 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	}
 	if proof.RestoredOldOwnershipEpoch != 5 || proof.RestoredOldGeneration != snapshot.Old.StateGeneration || proof.NewEpochBaselineGeneration != 3 {
 		t.Fatalf("restore proof=%+v", proof)
+	}
+	authenticator, err := NewMySQLCollectorMachineAuthenticator(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenHash := NewAgentTokenHash("old-collector-secret")
+	if tokenHash == "" {
+		t.Fatal("token hash is empty")
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE collector_agents SET token_hash = ? WHERE tenant_id = ? AND id = ?", tokenHash, tenantID, oldCollectorID); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := authenticator.AuthenticateCollector(ctx, oldCollectorID, CollectorMachineCredential{Token: "old-collector-secret"})
+	if err != nil || identity.TenantID != tenantID || identity.CollectorID != oldCollectorID || identity.BootID != "boot-old-2" {
+		t.Fatalf("token identity=%+v err=%v", identity, err)
+	}
+	if _, err := authenticator.AuthenticateCollector(ctx, oldCollectorID, CollectorMachineCredential{Token: "wrong-secret"}); !errors.Is(err, ErrCollectorMachineUnauthorized) {
+		t.Fatalf("wrong token error=%v", err)
+	}
+	certificateDigest := sha256.Sum256([]byte("new-collector-certificate"))
+	certificateFingerprint := "sha256:" + hex.EncodeToString(certificateDigest[:])
+	if _, err := db.ExecContext(ctx, "UPDATE collector_agents SET auth_type = 'mtls', token_hash = NULL, certificate_fingerprint = ? WHERE tenant_id = ? AND id = ?", certificateFingerprint, tenantID, newCollectorID); err != nil {
+		t.Fatal(err)
+	}
+	identity, err = authenticator.AuthenticateCollector(ctx, newCollectorID, CollectorMachineCredential{CertificateFingerprint: certificateFingerprint})
+	if err != nil || identity.TenantID != tenantID || identity.CollectorID != newCollectorID || identity.BootID != "boot-new-1" {
+		t.Fatalf("mTLS identity=%+v err=%v", identity, err)
+	}
+	if _, err := authenticator.AuthenticateCollector(ctx, newCollectorID, CollectorMachineCredential{Token: "old-collector-secret", CertificateFingerprint: certificateFingerprint}); !errors.Is(err, ErrCollectorMachineUnauthorized) {
+		t.Fatalf("mixed credential error=%v", err)
+	}
+	evidenceService, err := NewCollectorEvidenceService(authenticator, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidenceService.RecordDrain(ctx, oldCollectorID, CollectorMachineCredential{Token: "old-collector-secret"}, CollectorDrainReport{
+		TransferID: transferID, AppliedConfigVersion: drain.AppliedConfigVersion, ReceiptNonce: drain.ReceiptNonce,
+	}); err != nil {
+		t.Fatalf("authenticated drain replay: %v", err)
+	}
+	if err := evidenceService.RecordStateRestore(ctx, newCollectorID, CollectorMachineCredential{CertificateFingerprint: certificateFingerprint}, CollectorStateRestoreReport{
+		TransferID: transferID, Kind: restore.Kind, StateIdentityKey: restore.StateIdentityKey,
+		AppliedConfigVersion:       restore.AppliedConfigVersion,
+		RestoredOldOwnershipEpoch:  restore.RestoredOldOwnershipEpoch,
+		RestoredOldGeneration:      restore.RestoredOldGeneration,
+		NewEpochBaselineGeneration: restore.NewEpochBaselineGeneration,
+		ReceiptNonce:               restore.ReceiptNonce,
+	}); err != nil {
+		t.Fatalf("authenticated restore replay: %v", err)
+	}
+	if err := evidenceService.RecordStateRestore(ctx, oldCollectorID, CollectorMachineCredential{Token: "old-collector-secret"}, CollectorStateRestoreReport{
+		TransferID: transferID, Kind: restore.Kind, StateIdentityKey: restore.StateIdentityKey,
+		AppliedConfigVersion:       restore.AppliedConfigVersion,
+		RestoredOldOwnershipEpoch:  restore.RestoredOldOwnershipEpoch,
+		RestoredOldGeneration:      restore.RestoredOldGeneration,
+		NewEpochBaselineGeneration: restore.NewEpochBaselineGeneration,
+		ReceiptNonce:               restore.ReceiptNonce,
+	}); !errors.Is(err, ErrCollectorEvidenceConflict) {
+		t.Fatalf("old collector restore error=%v", err)
 	}
 	if _, err := db.ExecContext(ctx, "UPDATE collector_state_restore_receipts SET receipt_sha256 = ? WHERE transfer_id = ?", strings.Repeat("F", 64), transferID); err != nil {
 		t.Fatal(err)

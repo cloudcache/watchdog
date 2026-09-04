@@ -441,11 +441,15 @@ POST                     /api/v1/collectors/{id}/plans
 POST                     /api/v1/collectors/{id}/plans/{version}:validate
 POST                     /api/v1/collectors/{id}/plans/{version}:activate
 POST                     /api/v1/collectors/{id}/plans/{version}:rollback
+POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/actions/drain
+POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/state-restores
 POST                     /api/v1/collector-heartbeats
 GET                      /api/v1/collector-plan
 ```
 
 创建 enrollment、轮换和 revoke 属 `admin/operate`；binding 和 plan draft/preview 属目标资源的 `configure`，activate/rollback 另需 `operate`，主动 probe scope 仍需 `probe_active`。DELETE 只允许 revoked collector 并要求 `If-Match`；restore 不恢复凭据，purge 要求恢复期届满、无 binding/job/spool 引用和独立权限。agent 自用 exchange/heartbeat/plan 走 service authentication，不复用人类 session。Plan list/get 默认脱敏 secret reference；每个 preview/publish/activate/rollback、capability drift 和拒绝原因都写审计。
+
+ownership drain/restore 是 flow collector 的机器事实入口，同样不复用人类 session。URL 中的 collector ID 只用于定位待认证主体；tenant、collector、当前 boot 由 `collector_agents` 在 token bcrypt 或已验证客户端证书 SHA-256 指纹认证后注入，请求 body 不允许覆盖。mTLS 指纹格式固定为 `sha256:<64 lowercase hex>`，未验证 peer certificate 与同时携带 token+证书均拒绝。repository 仍必须校验 transfer old/new owner、active/ACK/LKG plan 和当前 boot，避免“持有有效凭据”被误当作任意 transfer 的写权限。
 
 ## 7. Target、网元和资源管理
 
