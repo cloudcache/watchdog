@@ -18,13 +18,12 @@ import (
 type collectStateKafkaSource interface {
 	Partitions(string) ([]int32, error)
 	GetOffset(string, int32, int64) (int64, error)
-	ConsumePartition(string, int32, int64) (sarama.PartitionConsumer, error)
+	ScanBoundary(context.Context, string, collectStatePartitionBoundary, func(*sarama.ConsumerMessage) error) error
 	Close() error
 }
 
 type saramaCollectStateSource struct {
-	client   sarama.Client
-	consumer sarama.Consumer
+	client sarama.Client
 }
 
 func (s *saramaCollectStateSource) Partitions(topic string) ([]int32, error) {
@@ -35,12 +34,12 @@ func (s *saramaCollectStateSource) GetOffset(topic string, partition int32, offs
 	return s.client.GetOffset(topic, partition, offset)
 }
 
-func (s *saramaCollectStateSource) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	return s.consumer.ConsumePartition(topic, partition, offset)
+func (s *saramaCollectStateSource) ScanBoundary(ctx context.Context, topic string, boundary collectStatePartitionBoundary, emit func(*sarama.ConsumerMessage) error) error {
+	return scanSaramaCollectStateBoundary(ctx, s.client, topic, boundary, emit)
 }
 
 func (s *saramaCollectStateSource) Close() error {
-	return errors.Join(s.consumer.Close(), s.client.Close())
+	return s.client.Close()
 }
 
 type KafkaCollectStateReader struct {
@@ -63,6 +62,9 @@ func NewKafkaCollectStateReader(config KafkaConfig, collectorID string) (*KafkaC
 	saramaConfig.Consumer.Fetch.Default = 1 << 20
 	saramaConfig.Consumer.Fetch.Max = collectStateMaxBytes
 	saramaConfig.Consumer.MaxWaitTime = 250 * time.Millisecond
+	if config.CollectStateRestoreTimeout < saramaConfig.Net.ReadTimeout {
+		saramaConfig.Net.ReadTimeout = config.CollectStateRestoreTimeout
+	}
 	if err := saramaConfig.Validate(); err != nil {
 		return nil, fmt.Errorf("validate Kafka collect-state consumer config: %w", err)
 	}
@@ -70,12 +72,7 @@ func NewKafkaCollectStateReader(config KafkaConfig, collectorID string) (*KafkaC
 	if err != nil {
 		return nil, fmt.Errorf("create Kafka collect-state client: %w", err)
 	}
-	consumer, err := sarama.NewConsumerFromClient(client)
-	if err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("create Kafka collect-state consumer: %w", err)
-	}
-	return &KafkaCollectStateReader{topic: config.CollectStateTopic, timeout: config.CollectStateRestoreTimeout, maxCandidates: config.CollectStateRestoreMaxCandidates, source: &saramaCollectStateSource{client: client, consumer: consumer}}, nil
+	return &KafkaCollectStateReader{topic: config.CollectStateTopic, timeout: config.CollectStateRestoreTimeout, maxCandidates: config.CollectStateRestoreMaxCandidates, source: &saramaCollectStateSource{client: client}}, nil
 }
 
 func (r *KafkaCollectStateReader) Close() error {
@@ -158,23 +155,11 @@ func (r *KafkaCollectStateReader) ReadAllWithHistory(ctx context.Context, regist
 }
 
 func (r *KafkaCollectStateReader) readBoundarySnapshot(ctx context.Context, registry *Registry, plans *PlanHistory, boundaries []collectStatePartitionBoundary) (CollectStateKafkaSnapshot, error) {
-	type activeConsumer struct {
-		boundary collectStatePartitionBoundary
-		consumer sarama.PartitionConsumer
-	}
-	active := make([]activeConsumer, 0, len(boundaries))
+	active := make([]collectStatePartitionBoundary, 0, len(boundaries))
 	for _, boundary := range boundaries {
-		if boundary.newest == boundary.oldest {
-			continue
+		if boundary.newest != boundary.oldest {
+			active = append(active, boundary)
 		}
-		consumer, err := r.source.ConsumePartition(r.topic, boundary.partition, boundary.oldest)
-		if err != nil {
-			for _, opened := range active {
-				_ = opened.consumer.Close()
-			}
-			return CollectStateKafkaSnapshot{}, fmt.Errorf("consume Kafka collect-state partition %d: %w", boundary.partition, err)
-		}
-		active = append(active, activeConsumer{boundary: boundary, consumer: consumer})
 	}
 	if len(active) == 0 {
 		return CollectStateKafkaSnapshot{}, nil
@@ -183,15 +168,20 @@ func (r *KafkaCollectStateReader) readBoundarySnapshot(ctx context.Context, regi
 	defer cancel()
 	results := make(chan collectStateReadResult, 256)
 	var workers sync.WaitGroup
-	for _, item := range active {
+	for _, boundary := range active {
 		workers.Add(1)
-		go func() {
+		go func(boundary collectStatePartitionBoundary) {
 			defer workers.Done()
-			consumeCollectStateBoundary(readCtx, r.topic, item.boundary, item.consumer, results)
-			if err := item.consumer.Close(); err != nil {
-				sendCollectStateReadResult(readCtx, results, collectStateReadResult{err: fmt.Errorf("close Kafka collect-state partition %d: %w", item.boundary.partition, err)})
+			err := r.source.ScanBoundary(readCtx, r.topic, boundary, func(message *sarama.ConsumerMessage) error {
+				if !sendCollectStateReadResult(readCtx, results, collectStateReadResult{message: message}) {
+					return readCtx.Err()
+				}
+				return nil
+			})
+			if err != nil {
+				sendCollectStateReadResult(readCtx, results, collectStateReadResult{err: fmt.Errorf("scan Kafka collect-state partition %d: %w", boundary.partition, err)})
 			}
-		}()
+		}(boundary)
 	}
 	go func() {
 		workers.Wait()
@@ -340,47 +330,6 @@ func (r *KafkaCollectStateReader) readBoundarySnapshot(ctx context.Context, regi
 		return snapshot.QualityCheckpoints[i].Offset < snapshot.QualityCheckpoints[j].Offset
 	})
 	return snapshot, nil
-}
-
-func consumeCollectStateBoundary(ctx context.Context, topic string, boundary collectStatePartitionBoundary, consumer sarama.PartitionConsumer, results chan<- collectStateReadResult) {
-	lastOffset := boundary.oldest - 1
-	errorsChannel := consumer.Errors()
-	for {
-		select {
-		case <-ctx.Done():
-			sendCollectStateReadResult(ctx, results, collectStateReadResult{err: ctx.Err()})
-			return
-		case consumeErr, ok := <-errorsChannel:
-			if !ok {
-				errorsChannel = nil
-				continue
-			}
-			if consumeErr != nil {
-				sendCollectStateReadResult(ctx, results, collectStateReadResult{err: consumeErr})
-				return
-			}
-		case message, ok := <-consumer.Messages():
-			if !ok {
-				sendCollectStateReadResult(ctx, results, collectStateReadResult{err: fmt.Errorf("Kafka collect-state partition %d ended before high watermark %d", boundary.partition, boundary.newest)})
-				return
-			}
-			if message == nil || message.Topic != topic || message.Partition != boundary.partition || message.Offset <= lastOffset {
-				sendCollectStateReadResult(ctx, results, collectStateReadResult{err: fmt.Errorf("Kafka collect-state partition %d returned invalid message order", boundary.partition)})
-				return
-			}
-			lastOffset = message.Offset
-			if message.Offset >= boundary.newest {
-				sendCollectStateReadResult(ctx, results, collectStateReadResult{err: fmt.Errorf("Kafka collect-state partition %d advanced beyond frozen high watermark %d", boundary.partition, boundary.newest)})
-				return
-			}
-			if !sendCollectStateReadResult(ctx, results, collectStateReadResult{message: message}) {
-				return
-			}
-			if message.Offset+1 == boundary.newest {
-				return
-			}
-		}
-	}
 }
 
 func sendCollectStateReadResult(ctx context.Context, results chan<- collectStateReadResult, result collectStateReadResult) bool {

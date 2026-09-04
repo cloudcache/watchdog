@@ -40,7 +40,7 @@ func TestKafkaCollectStateReaderFreezesBoundaryAndCoalesces(t *testing.T) {
 	if len(records) != 1 || records[0].Offset != 1 || records[0].State.StateGeneration != newer.StateGeneration {
 		t.Fatalf("unexpected frozen snapshot: %+v", records)
 	}
-	if got := source.eventsSnapshot(); len(got) != 4 || got[0] != "partitions" || got[1] != "oldest/0" || got[2] != "newest/0" || got[3] != "consume/0/0" {
+	if got := source.eventsSnapshot(); len(got) != 4 || got[0] != "partitions" || got[1] != "oldest/0" || got[2] != "newest/0" || got[3] != "scan/0/0/2" {
 		t.Fatalf("high watermark was not frozen before consume: %v", got)
 	}
 }
@@ -235,9 +235,128 @@ func TestKafkaCollectStateReaderRejectsKeyMismatch(t *testing.T) {
 func TestKafkaCollectStateReaderTimesOutBeforeBoundary(t *testing.T) {
 	record := decodeWALRecord(ProtocolNetFlow9, []byte{0, 9})
 	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: nil}, map[int32][2]int64{0: {0, 1}})
+	source.stalled[0] = true
 	reader := &KafkaCollectStateReader{topic: "state", timeout: 10 * time.Millisecond, maxCandidates: 10, source: source}
 	if _, err := reader.Read(context.Background(), collectStateRegistry(t, "collector-a", 1, record.Source.Addr())); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout error=%v, want context deadline exceeded", err)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockCompletesAcrossCompactedTailHole(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 2, oldest: 3, newest: 10}
+	messages, next, complete, err := decodeCollectStateFetchBlock("state", boundary, 8, &sarama.FetchResponseBlock{HighWaterMarkOffset: 12, LogStartOffset: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 || next != boundary.newest || !complete {
+		t.Fatalf("compacted tail did not reach frozen boundary: messages=%d next=%d complete=%t", len(messages), next, complete)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockAdvancesAcrossInternalOffsetHoles(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 2, oldest: 3, newest: 10}
+	batch := &sarama.RecordBatch{
+		FirstOffset:     7,
+		Version:         2,
+		LastOffsetDelta: 0,
+		FirstTimestamp:  time.Unix(100, 0),
+		Records: []*sarama.Record{{
+			OffsetDelta: 0,
+			Key:         []byte("key"),
+			Value:       []byte("value"),
+		}},
+	}
+	messages, next, complete, err := decodeCollectStateFetchBlock("state", boundary, 3, &sarama.FetchResponseBlock{
+		HighWaterMarkOffset: 12,
+		LogStartOffset:      3,
+		RecordsSet:          []*sarama.Records{{RecordBatch: batch}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Offset != 7 || messages[0].Topic != "state" || messages[0].Partition != 2 || next != 8 || complete {
+		t.Fatalf("unexpected compacted internal-gap result: messages=%+v next=%d complete=%t", messages, next, complete)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockStopsBeforePostBoundaryRecord(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 1, oldest: 0, newest: 10}
+	batch := &sarama.RecordBatch{
+		FirstOffset:     12,
+		Version:         2,
+		LastOffsetDelta: 0,
+		Records:         []*sarama.Record{{OffsetDelta: 0, Key: []byte("newer"), Value: []byte("excluded")}},
+	}
+	messages, next, complete, err := decodeCollectStateFetchBlock("state", boundary, 8, &sarama.FetchResponseBlock{
+		HighWaterMarkOffset: 13,
+		RecordsSet:          []*sarama.Records{{RecordBatch: batch}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 || next != 10 || !complete {
+		t.Fatalf("post-boundary record leaked: messages=%+v next=%d complete=%t", messages, next, complete)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockRejectsTransactionalState(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 0, oldest: 0, newest: 1}
+	batch := &sarama.RecordBatch{FirstOffset: 0, Version: 2, LastOffsetDelta: 0, IsTransactional: true, Records: []*sarama.Record{{OffsetDelta: 0}}}
+	_, _, _, err := decodeCollectStateFetchBlock("state", boundary, 0, &sarama.FetchResponseBlock{HighWaterMarkOffset: 1, RecordsSet: []*sarama.Records{{RecordBatch: batch}}})
+	if err == nil {
+		t.Fatal("transactional collect-state record was accepted")
+	}
+}
+
+func TestDecodeCollectStateFetchBlockPreservesNullAndEmptyValues(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 0, oldest: 0, newest: 2}
+	batch := &sarama.RecordBatch{
+		FirstOffset:     0,
+		Version:         2,
+		LastOffsetDelta: 1,
+		Records: []*sarama.Record{
+			{OffsetDelta: 0, Key: []byte("null"), Value: nil},
+			{OffsetDelta: 1, Key: []byte("empty"), Value: []byte{}},
+		},
+	}
+	messages, next, complete, err := decodeCollectStateFetchBlock("state", boundary, 0, &sarama.FetchResponseBlock{HighWaterMarkOffset: 2, RecordsSet: []*sarama.Records{{RecordBatch: batch}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].Value != nil || messages[1].Value == nil || len(messages[1].Value) != 0 || next != 2 || !complete {
+		t.Fatalf("Kafka null/empty distinction was lost: messages=%+v next=%d complete=%t", messages, next, complete)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockReadsLegacyMessage(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 3, oldest: 4, newest: 5}
+	message := &sarama.Message{Version: 1, Key: []byte("legacy"), Value: []byte("state"), Timestamp: time.Unix(200, 0)}
+	messages, next, complete, err := decodeCollectStateFetchBlock("state", boundary, 4, &sarama.FetchResponseBlock{
+		HighWaterMarkOffset: 5,
+		RecordsSet:          []*sarama.Records{{MsgSet: &sarama.MessageSet{Messages: []*sarama.MessageBlock{{Offset: 4, Msg: message}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Offset != 4 || !bytes.Equal(messages[0].Key, message.Key) || !bytes.Equal(messages[0].Value, message.Value) || next != 5 || !complete {
+		t.Fatalf("unexpected legacy fetch result: messages=%+v next=%d complete=%t", messages, next, complete)
+	}
+}
+
+func TestDecodeCollectStateFetchBlockRejectsUnsafeBoundaries(t *testing.T) {
+	boundary := collectStatePartitionBoundary{partition: 0, oldest: 0, newest: 2}
+	for name, block := range map[string]*sarama.FetchResponseBlock{
+		"watermark regression": {HighWaterMarkOffset: 1},
+		"partial response":     {HighWaterMarkOffset: 2, Partial: true},
+		"partial batch": {HighWaterMarkOffset: 2, RecordsSet: []*sarama.Records{{RecordBatch: &sarama.RecordBatch{
+			FirstOffset: 0, LastOffsetDelta: 1, PartialTrailingRecord: true,
+		}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := decodeCollectStateFetchBlock("state", boundary, 0, block); err == nil {
+				t.Fatal("unsafe Kafka fetch boundary was accepted")
+			}
+		})
 	}
 }
 
@@ -331,20 +450,16 @@ type fakeCollectStateSource struct {
 	topic      string
 	partitions []int32
 	offsets    map[int32][2]int64
-	consumers  map[int32]*fakePartitionConsumer
+	messages   map[int32][]*sarama.ConsumerMessage
+	stalled    map[int32]bool
 	mu         sync.Mutex
 	events     []string
 }
 
 func newFakeCollectStateSource(topic string, messages map[int32][]*sarama.ConsumerMessage, offsets map[int32][2]int64) *fakeCollectStateSource {
-	source := &fakeCollectStateSource{topic: topic, offsets: offsets, consumers: make(map[int32]*fakePartitionConsumer)}
-	for partition, records := range messages {
+	source := &fakeCollectStateSource{topic: topic, offsets: offsets, messages: messages, stalled: make(map[int32]bool)}
+	for partition := range messages {
 		source.partitions = append(source.partitions, partition)
-		consumer := &fakePartitionConsumer{messages: make(chan *sarama.ConsumerMessage, len(records)), errors: make(chan *sarama.ConsumerError)}
-		for _, record := range records {
-			consumer.messages <- record
-		}
-		source.consumers[partition] = consumer
 	}
 	return source
 }
@@ -376,12 +491,24 @@ func (s *fakeCollectStateSource) GetOffset(topic string, partition int32, positi
 	return 0, errors.New("unexpected offset selector")
 }
 
-func (s *fakeCollectStateSource) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	s.recordEvent(fmt.Sprintf("consume/%d/%d", partition, offset))
-	if topic != s.topic || s.consumers[partition] == nil {
-		return nil, errors.New("unexpected partition")
+func (s *fakeCollectStateSource) ScanBoundary(ctx context.Context, topic string, boundary collectStatePartitionBoundary, emit func(*sarama.ConsumerMessage) error) error {
+	s.recordEvent(fmt.Sprintf("scan/%d/%d/%d", boundary.partition, boundary.oldest, boundary.newest))
+	if topic != s.topic || emit == nil {
+		return errors.New("unexpected boundary scan")
 	}
-	return s.consumers[partition], nil
+	if s.stalled[boundary.partition] {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	for _, message := range s.messages[boundary.partition] {
+		if message.Offset < boundary.oldest || message.Offset >= boundary.newest {
+			continue
+		}
+		if err := emit(message); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *fakeCollectStateSource) Close() error { return nil }
@@ -397,18 +524,3 @@ func (s *fakeCollectStateSource) eventsSnapshot() []string {
 	defer s.mu.Unlock()
 	return append([]string(nil), s.events...)
 }
-
-type fakePartitionConsumer struct {
-	messages chan *sarama.ConsumerMessage
-	errors   chan *sarama.ConsumerError
-	paused   bool
-}
-
-func (c *fakePartitionConsumer) AsyncClose()                              {}
-func (c *fakePartitionConsumer) Close() error                             { return nil }
-func (c *fakePartitionConsumer) Messages() <-chan *sarama.ConsumerMessage { return c.messages }
-func (c *fakePartitionConsumer) Errors() <-chan *sarama.ConsumerError     { return c.errors }
-func (c *fakePartitionConsumer) HighWaterMarkOffset() int64               { return 0 }
-func (c *fakePartitionConsumer) Pause()                                   { c.paused = true }
-func (c *fakePartitionConsumer) Resume()                                  { c.paused = false }
-func (c *fakePartitionConsumer) IsPaused() bool                           { return c.paused }
