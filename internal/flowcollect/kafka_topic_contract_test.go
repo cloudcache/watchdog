@@ -15,6 +15,7 @@ type fakeKafkaTopicAdmin struct {
 	configs  map[string][]sarama.ConfigEntry
 	err      error
 	closed   bool
+	created  map[string]*sarama.TopicDetail
 }
 
 func (f *fakeKafkaTopicAdmin) DescribeTopics([]string) ([]*sarama.TopicMetadata, error) {
@@ -31,6 +32,36 @@ func (f *fakeKafkaTopicAdmin) DescribeConfig(resource sarama.ConfigResource) ([]
 
 func (f *fakeKafkaTopicAdmin) Close() error {
 	f.closed = true
+	return nil
+}
+
+func (f *fakeKafkaTopicAdmin) CreateTopic(name string, detail *sarama.TopicDetail, _ bool) error {
+	if f.created == nil {
+		f.created = make(map[string]*sarama.TopicDetail)
+	}
+	f.created[name] = detail
+	createdMetadata := testKafkaTopicMetadata(name, int(detail.NumPartitions), int(detail.ReplicationFactor), int(detail.ReplicationFactor))
+	replaced := false
+	for index, topic := range f.metadata {
+		if topic != nil && topic.Name == name {
+			f.metadata[index] = createdMetadata
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		f.metadata = append(f.metadata, createdMetadata)
+	}
+	entries := make([]sarama.ConfigEntry, 0, len(detail.ConfigEntries))
+	for key, value := range detail.ConfigEntries {
+		if value != nil {
+			entries = append(entries, sarama.ConfigEntry{Name: key, Value: *value})
+		}
+	}
+	if f.configs == nil {
+		f.configs = make(map[string][]sarama.ConfigEntry)
+	}
+	f.configs[name] = entries
 	return nil
 }
 
@@ -96,6 +127,41 @@ func TestKafkaTopicSpecsCoverHistoricalPartitionMaps(t *testing.T) {
 	}
 }
 
+func TestBootstrapKafkaTopicContractsCreatesOnlyMissingTopics(t *testing.T) {
+	specs := testKafkaTopicSpecs()
+	admin := &fakeKafkaTopicAdmin{configs: make(map[string][]sarama.ConfigEntry)}
+	for _, spec := range specs {
+		admin.metadata = append(admin.metadata, &sarama.TopicMetadata{Name: spec.name, Err: sarama.ErrUnknownTopicOrPartition})
+	}
+	created, err := bootstrapKafkaTopicContracts(admin, specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != len(specs) || len(admin.created) != len(specs) {
+		t.Fatalf("created=%d topics=%d", created, len(admin.created))
+	}
+	state := admin.created["state"]
+	if state == nil || state.NumPartitions != 2 || state.ReplicationFactor != 3 || dereference(state.ConfigEntries["cleanup.policy"]) != "compact" || dereference(state.ConfigEntries["delete.retention.ms"]) != "86400000" {
+		t.Fatalf("unexpected compacted state topic detail: %+v", state)
+	}
+	if err := verifyKafkaTopicContracts(admin, specs); err != nil {
+		t.Fatalf("created topic contract did not verify: %v", err)
+	}
+}
+
+func TestBootstrapKafkaTopicContractsNeverAltersExistingTopic(t *testing.T) {
+	specs := testKafkaTopicSpecs()
+	admin := validKafkaTopicAdmin(specs)
+	admin.configs["state"] = testKafkaTopicConfig("compact,delete", specs[1])
+	created, err := bootstrapKafkaTopicContracts(admin, specs)
+	if err != nil || created != 0 || len(admin.created) != 0 {
+		t.Fatalf("existing topics were mutated: created=%d err=%v", created, err)
+	}
+	if err := verifyKafkaTopicContracts(admin, specs); err == nil {
+		t.Fatal("unsafe existing topic unexpectedly verified")
+	}
+}
+
 func testKafkaTopicSpecs() []kafkaTopicSpec {
 	return []kafkaTopicSpec{
 		{name: "normalized", partitions: 4, cleanupPolicy: "delete", minRetention: 24 * time.Hour, maxMessageBytes: 1 << 20, minReplication: 3, minInSyncReplica: 2},
@@ -147,4 +213,11 @@ func testKafkaTopicConfig(cleanup string, spec kafkaTopicSpec) []sarama.ConfigEn
 
 func formatInt64(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+func dereference(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

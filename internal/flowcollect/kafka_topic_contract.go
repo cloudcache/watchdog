@@ -19,6 +19,11 @@ type kafkaTopicAdmin interface {
 	Close() error
 }
 
+type kafkaTopicBootstrapAdmin interface {
+	kafkaTopicAdmin
+	CreateTopic(string, *sarama.TopicDetail, bool) error
+}
+
 type kafkaTopicSpec struct {
 	name             string
 	partitions       int
@@ -43,16 +48,34 @@ func VerifyKafkaTopicContracts(config Config, plans *PlanHistory, collectorID st
 	if err != nil {
 		return err
 	}
-	saramaConfig, err := buildKafkaClientConfig(config.Kafka, collectorID+"-topic-check")
+	return verifyKafkaTopicSpecsRemote(config.Kafka, specs, collectorID+"-topic-check")
+}
+
+// VerifyKafkaTopicContractsForRegistry is used by the offline provisioning
+// command. Runtime startup uses VerifyKafkaTopicContracts so retained plans
+// referenced by WAL are included as well.
+func VerifyKafkaTopicContractsForRegistry(config Config, registry *Registry, collectorID string) error {
+	if registry == nil {
+		return errors.New("flow registry is required for Kafka topic verification")
+	}
+	specs, err := kafkaTopicSpecsForRegistries(config, []*Registry{registry})
 	if err != nil {
 		return err
 	}
-	saramaConfig.Admin.Timeout = config.Kafka.TopicContract.CheckTimeout
+	return verifyKafkaTopicSpecsRemote(config.Kafka, specs, collectorID+"-topic-check")
+}
+
+func verifyKafkaTopicSpecsRemote(config KafkaConfig, specs []kafkaTopicSpec, clientID string) error {
+	saramaConfig, err := buildKafkaClientConfig(config, clientID)
+	if err != nil {
+		return err
+	}
+	saramaConfig.Admin.Timeout = config.TopicContract.CheckTimeout
 	saramaConfig.Metadata.AllowAutoTopicCreation = false
 	if err := saramaConfig.Validate(); err != nil {
 		return fmt.Errorf("validate Kafka topic-check client: %w", err)
 	}
-	admin, err := sarama.NewClusterAdmin(config.Kafka.Brokers, saramaConfig)
+	admin, err := sarama.NewClusterAdmin(config.Brokers, saramaConfig)
 	if err != nil {
 		return fmt.Errorf("create Kafka topic-check client: %w", err)
 	}
@@ -63,11 +86,22 @@ func kafkaTopicSpecs(config Config, plans *PlanHistory) ([]kafkaTopicSpec, error
 	if plans == nil {
 		return nil, errors.New("flow plan history is required")
 	}
-	requiredNormalizedPartitions := config.Kafka.TopicContract.NormalizedPartitions
+	registries := make([]*Registry, 0, len(plans.Revisions()))
 	for _, revision := range plans.Revisions() {
 		registry, ok := plans.Resolve(revision)
 		if !ok {
 			return nil, fmt.Errorf("flow plan revision %d disappeared during topic verification", revision)
+		}
+		registries = append(registries, registry)
+	}
+	return kafkaTopicSpecsForRegistries(config, registries)
+}
+
+func kafkaTopicSpecsForRegistries(config Config, registries []*Registry) ([]kafkaTopicSpec, error) {
+	requiredNormalizedPartitions := config.Kafka.TopicContract.NormalizedPartitions
+	for _, registry := range registries {
+		if registry == nil {
+			return nil, errors.New("flow registry is required")
 		}
 		for _, partition := range registry.Plan().PartitionMap {
 			if required := int(partition) + 1; required > requiredNormalizedPartitions {

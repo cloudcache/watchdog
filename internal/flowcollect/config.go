@@ -305,6 +305,9 @@ func (c Config) Validate() error {
 	if topics.CheckTimeout <= 0 || topics.NormalizedPartitions <= 0 || topics.CollectStatePartitions <= 0 || topics.DecodeDLQPartitions <= 0 || topics.QuarantinePartitions <= 0 || topics.MinReplicationFactor <= 0 || topics.MinInSyncReplicas <= 0 || topics.MinInSyncReplicas > topics.MinReplicationFactor {
 		return errors.New("flow_collect.kafka.topic_contract counts, replication, and timeout are invalid")
 	}
+	if int64(topics.NormalizedPartitions) > 1<<31-1 || int64(topics.CollectStatePartitions) > 1<<31-1 || int64(topics.DecodeDLQPartitions) > 1<<31-1 || int64(topics.QuarantinePartitions) > 1<<31-1 || int64(topics.MinReplicationFactor) > 1<<15-1 {
+		return errors.New("flow_collect.kafka.topic_contract counts exceed Kafka protocol limits")
+	}
 	if topics.NormalizedMinRetention <= 0 || topics.CollectStateDeleteRetention <= 0 || topics.DecodeDLQMinRetention <= 0 || topics.QuarantineMinRetention <= 0 {
 		return errors.New("flow_collect.kafka.topic_contract retention limits must be positive")
 	}

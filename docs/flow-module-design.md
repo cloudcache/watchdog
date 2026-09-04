@@ -2255,6 +2255,17 @@ flow_probe_agent:
       required_version: ""
 ```
 
+四个 topic 的生产基线如下；表中 partition 是默认容量起点，不替代目标环境压测。`max.message.bytes` 的校验值包含 64KiB record/batch envelope 余量，实际 topic 可以更大但不能更小：
+
+| topic 角色 | partition | cleanup | retention | RF / min ISR | 最小 message bytes |
+|---|---:|---|---|---:|---:|
+| normalized | ≥96 且覆盖所有 retained plan map | `delete` | ≥7d | 3 / 2 | `normalized_batch.max_bytes + 65536` |
+| collect-state | =32，服务期内不可变 | `compact` | tombstone `delete.retention.ms` ≥24h | 3 / 2 | `64MiB + 65536` |
+| decode-DLQ | ≥12 | `delete` | ≥30d | 3 / 2 | `max_datagram_bytes + 65536` |
+| quarantine | ≥12 | `delete` | ≥7d | 3 / 2 | `max_datagram_bytes + 65536` |
+
+所有 topic 还必须显式或通过有效默认值满足 `unclean.leader.election.enable=false`。首次部署用只存在于受控运维环境的 admin 证书执行 `watchdog-flow-kafka-bootstrap --config /path/to/admin.yaml --apply`；它只创建缺失 topic，发现已有 topic 时绝不 alter/扩分区/降 retention，随后用同一运行时契约复核。日常可去掉 `--apply` 做只读检查。admin YAML 复用相同 topic/plan 参数，但证书必须是短期 provisioning principal；长期 flow-collect YAML 随后换回 runtime mTLS 证书。任何既有不一致走显式变更单和新 topic 迁移，不能让 bootstrap 自动“修复”生产数据结构。
+
 首次 enrollment secret 通过仅 root 可读文件或进程 secret 注入，只用于 exchange，成功后删除；不能放进长期 YAML。Kafka principal/证书由 plan/secret store 引用，文档示例不包含密码。环境变量分别采用 `WATCHDOG_FLOW_COLLECT_*` 和 `WATCHDOG_FLOW_DIMENSION_*` 前缀。旧 `sflow_collector` 配置保留一个版本并在启动日志提示迁移；新旧 collector 不得同时监听同一端口。示例 worker/WAL 数值只用于说明字段，生产值必须由容量表和压测报告生成配置变更，不允许照抄。
 
 VPN rule/情报/scope/阈值的租户值存 MySQL 并版本化，不允许租户通过 YAML 绕过审批。全局 YAML 和 agent 本机配置只定义硬安全上限；服务端 `active_global_kill_switch=true`、agent `local_emergency_kill_switch=true` 或 `active.local_enabled=false` 任一成立都禁止主动握手。`allowed_cidrs=[]` 表示本机不允许任何主动目标，不是 unrestricted。probe agent 通过 CollectorRegistry 声明 `passive_observe`、`active_handshake` 和 analyzer/profile capabilities，plan 只下发它支持且被批准的 profile。
