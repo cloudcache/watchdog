@@ -38,7 +38,7 @@ func (s KafkaStateKeySnapshot) HighWatermark(partition int32) (int64, bool) {
 	return s.Boundaries[index].HighWatermark, true
 }
 
-func (s KafkaStateKeySnapshot) ReplacementObservation(restoredOldOwnershipEpoch, restoredOldGeneration uint64) (FrozenReplacementObservation, error) {
+func (s KafkaStateKeySnapshot) ReplacementObservation(restoredOldOwnershipEpoch, restoredOldGeneration, newEpochBaselineGeneration uint64) (FrozenReplacementObservation, error) {
 	if !s.Present || s.LastRecord == nil || s.CapturedAt.IsZero() || restoredOldOwnershipEpoch == 0 || restoredOldGeneration == 0 {
 		return FrozenReplacementObservation{}, errors.New("Kafka state-key snapshot does not prove a replacement")
 	}
@@ -47,11 +47,12 @@ func (s KafkaStateKeySnapshot) ReplacementObservation(restoredOldOwnershipEpoch,
 		return FrozenReplacementObservation{}, errors.New("Kafka replacement record is outside its frozen boundary")
 	}
 	return FrozenReplacementObservation{
-		CapturedAt:                s.CapturedAt,
-		Position:                  *s.LastRecord,
-		HighWatermark:             highWatermark,
-		RestoredOldOwnershipEpoch: restoredOldOwnershipEpoch,
-		RestoredOldGeneration:     restoredOldGeneration,
+		CapturedAt:                 s.CapturedAt,
+		Position:                   *s.LastRecord,
+		HighWatermark:              highWatermark,
+		RestoredOldOwnershipEpoch:  restoredOldOwnershipEpoch,
+		RestoredOldGeneration:      restoredOldGeneration,
+		NewEpochBaselineGeneration: newEpochBaselineGeneration,
 	}, nil
 }
 

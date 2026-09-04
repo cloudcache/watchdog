@@ -454,9 +454,13 @@ D3B3B2A 已把上述约束落成可持久化的纯状态机，阶段固定为 `a
 
 宿主管理面的持久化已落在 migration `017` 的公共 `operation_jobs` 与 MySQL repository，不增加第六张 flow 私有表。cleanup 创建时以 canonical immutable request hash 绑定 approval/requester/old checkpoint，`(tenant_id,job_type,idempotency_key)` 对相同请求返回原 job、不同请求报冲突；领取使用 `FOR UPDATE SKIP LOCKED`，支持过期 running lease 抢占。所有阶段推进、requeue 和 terminal failure 都要求未过期的 `lease_token + row_version`，checkpoint 与 `audit_logs` 在同一事务提交；heartbeat 只延长 lease、不改变业务版本，避免长扫描期间制造虚假 checkpoint。数据库约束保证 active 状态与 lease 三元组一致、终态与 `finished_at` 一致，repository 回读还会完整恢复并重新校验状态机 snapshot，拒绝被手工篡改或跨阶段跳转的数据。
 
-剩余 B2B 是 watchdog reconciler 的 phase executor/heartbeat/错误退避/启停 wiring、reconciler 专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。只有 repository 而没有持久化调度、实际 ACL 和真实 broker 证据时，仍不能把状态机与 mock/内存 source 测试等同于生产回收闭环。
+reconciler core 已接上 repository、targeted scanner adapter 和 tombstone writer interface。一次 claim 可连续处理已有证据的多个阶段以免无谓等待 lease 过期，但每一步只能推进一个 phase，并在触发下一项外部动作前保存 snapshot；依赖尚未就绪则从最近 checkpoint requeue。heartbeat 只续租，失败会取消正在进行的 scanner/writer 调用并禁止再写进度；`lease_token + row_version + lease_expires_at` 仍由数据库做最终 fencing。错误采用稳定 code：未成熟/未观察/扫描或发布失败可重试，非法 fence/replacement/receipt/verification 及 tombstone 后旧 key 再出现终态失败；detail 去控制字符并限制 1024 字符，重试使用有界指数退避和按 job/attempt 确定的 jitter。restart 测试证明另一个 reconciler 可从已落库 phase 接续，真实 MySQL 测试证明四阶段和审计原子闭环；同毫秒连续 heartbeat 通过让 lease/heartbeat 至少单调增加 1ms，避免 MySQL no-op update 被误判为丢租约。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler phase executor/heartbeat 与 scanner/writer 生命周期 wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL job/lease/audit repository 已完成但尚不能单独构成运行闭环。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
+replacement 扫描契约也补齐为三个显式恢复量：`restored_old_epoch/restored_old_generation/new_epoch_baseline_generation`。scanner 不再隐含 baseline=0；新 checkpoint 必须严格越过该 baseline。replacement Kafka key 只能由状态机按已确认 fence 的新 epoch 派生，管理层不能手拼 typed key；payload 依 kind 解 protobuf 并完成 checksum/identity/key 校验后才转换成状态机 checkpoint。
+
+剩余 B2B 是宿主真实 evidence provider（plan revoke/expiry、collector drain、ACL revoke、new owner restore acknowledgement）、reconciler 配置/启停/health/API wiring、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。没有这些真实证据和运行接线时，仍不能把 core 与 mock/单库测试等同于生产回收闭环。
+
+当前仍未完成的是 D3B3B 的 IaC 实际创建、宿主 evidence/config/health/API 与 scanner/writer 生命周期 wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository 与 reconciler core 已完成但尚不能单独构成运行闭环。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 

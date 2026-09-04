@@ -39,8 +39,8 @@ func TestKafkaStateKeyScannerFreezesAllPartitionsAndKeepsExactKey(t *testing.T) 
 	if watermark, ok := snapshot.HighWatermark(0); !ok || watermark != 4 {
 		t.Fatalf("partition 0 high watermark=%d ok=%t", watermark, ok)
 	}
-	replacement, err := snapshot.ReplacementObservation(5, 9)
-	if err != nil || replacement.Position != *snapshot.LastRecord || replacement.HighWatermark != 4 || replacement.RestoredOldOwnershipEpoch != 5 || replacement.RestoredOldGeneration != 9 {
+	replacement, err := snapshot.ReplacementObservation(5, 9, 7)
+	if err != nil || replacement.Position != *snapshot.LastRecord || replacement.HighWatermark != 4 || replacement.RestoredOldOwnershipEpoch != 5 || replacement.RestoredOldGeneration != 9 || replacement.NewEpochBaselineGeneration != 7 {
 		t.Fatalf("replacement observation=%+v err=%v", replacement, err)
 	}
 	if got := source.eventsSnapshot(); len(got) < 6 || got[0] != "partitions" || got[1] != "oldest/0" || got[2] != "newest/0" || got[3] != "oldest/1" || got[4] != "newest/1" {

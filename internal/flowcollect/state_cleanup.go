@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
+	"google.golang.org/protobuf/proto"
 )
 
 const stateCleanupSchemaVersion = 1
@@ -167,6 +168,18 @@ func (j *StateCleanupJob) Snapshot() StateCleanupSnapshot {
 	return cloneStateCleanupSnapshot(j.snapshot)
 }
 
+// ReplacementKafkaKey derives the only key that may satisfy the ownership
+// transfer recorded by this job. Keeping the derivation in the state machine
+// prevents the management plane from guessing typed compacted-topic keys.
+func (j *StateCleanupJob) ReplacementKafkaKey() ([]byte, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.snapshot.Phase != StateCleanupAwaitingReplacement || j.snapshot.Fence == nil {
+		return nil, fmt.Errorf("state cleanup replacement key is unavailable in phase %q", j.snapshot.Phase)
+	}
+	return stateCleanupKafkaKey(j.snapshot.Old.Kind, j.snapshot.Old.IdentityKey, j.snapshot.Fence.NewOwnershipEpoch)
+}
+
 func (j *StateCleanupJob) ConfirmFence(evidence OwnershipFenceEvidence, now time.Time) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -206,6 +219,50 @@ func (j *StateCleanupJob) ObserveQualityStateReplacement(replacement *flowpb.Qua
 		return err
 	}
 	return j.observeReplacement(checkpoint, observation)
+}
+
+// ObserveReplacementCheckpoint applies an already decoded and validated
+// checkpoint representation. Kafka-backed callers should obtain it through
+// DecodeStateCleanupCheckpoint rather than constructing fields from metadata.
+func (j *StateCleanupJob) ObserveReplacementCheckpoint(replacement StateCleanupCheckpoint, observation FrozenReplacementObservation) error {
+	return j.observeReplacement(replacement, observation)
+}
+
+// ObserveReplacementPayload decodes according to the checkpoint kind already
+// frozen in the job, then reuses the complete replacement validation path.
+func (j *StateCleanupJob) ObserveReplacementPayload(payload []byte, observation FrozenReplacementObservation) error {
+	j.mu.Lock()
+	kind := j.snapshot.Old.Kind
+	j.mu.Unlock()
+	checkpoint, err := DecodeStateCleanupCheckpoint(kind, payload)
+	if err != nil {
+		return err
+	}
+	return j.ObserveReplacementCheckpoint(checkpoint, observation)
+}
+
+// DecodeStateCleanupCheckpoint validates the protobuf and converts it into the
+// immutable representation used by the cleanup state machine.
+func DecodeStateCleanupCheckpoint(kind StateCheckpointKind, payload []byte) (StateCleanupCheckpoint, error) {
+	if len(payload) == 0 || len(payload) > collectStateMaxBytes-collectStateHeaderSize {
+		return StateCleanupCheckpoint{}, errors.New("state cleanup replacement payload size is invalid")
+	}
+	switch kind {
+	case StateCheckpointDecoder:
+		state := &flowpb.CollectState{}
+		if err := proto.Unmarshal(payload, state); err != nil {
+			return StateCleanupCheckpoint{}, fmt.Errorf("decode state cleanup replacement: %w", err)
+		}
+		return cleanupCheckpointFromCollectState(state)
+	case StateCheckpointQuality:
+		checkpoint := &flowpb.QualityCheckpoint{}
+		if err := proto.Unmarshal(payload, checkpoint); err != nil {
+			return StateCleanupCheckpoint{}, fmt.Errorf("decode quality state cleanup replacement: %w", err)
+		}
+		return cleanupCheckpointFromQualityState(checkpoint)
+	default:
+		return StateCleanupCheckpoint{}, errors.New("state cleanup replacement kind is invalid")
+	}
 }
 
 func (j *StateCleanupJob) observeReplacement(replacement StateCleanupCheckpoint, observation FrozenReplacementObservation) error {
@@ -340,6 +397,24 @@ func validateStateCleanupCheckpoint(checkpoint StateCleanupCheckpoint) error {
 		return errors.New("state cleanup checkpoint kind is invalid")
 	}
 	return nil
+}
+
+func stateCleanupKafkaKey(kind StateCheckpointKind, identityKey []byte, ownershipEpoch uint64) ([]byte, error) {
+	if len(identityKey) != sha256.Size || ownershipEpoch == 0 {
+		return nil, errors.New("state cleanup key identity and ownership epoch are required")
+	}
+	var identity [sha256.Size]byte
+	copy(identity[:], identityKey)
+	switch kind {
+	case StateCheckpointDecoder:
+		key := makeCollectStateKey(identity, ownershipEpoch)
+		return bytes.Clone(key[:]), nil
+	case StateCheckpointQuality:
+		stateKey := makeQualityCheckpointKey(identity, ownershipEpoch)
+		return append([]byte{qualityCheckpointKeyPrefix}, stateKey[:]...), nil
+	default:
+		return nil, errors.New("state cleanup checkpoint kind is invalid")
+	}
 }
 
 func validateOwnershipFenceEvidence(evidence OwnershipFenceEvidence, old StateCleanupCheckpoint, now time.Time) error {

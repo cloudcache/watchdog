@@ -185,6 +185,9 @@ func TestMySQLFlowStateCleanupRepositoryLifecycle(t *testing.T) {
 	if err := store.RenewFlowStateCleanupLease(context.Background(), claimed.ID, claimed.LeaseToken, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.RenewFlowStateCleanupLease(context.Background(), claimed.ID, claimed.LeaseToken, time.Minute); err != nil {
+		t.Fatalf("same-millisecond lease renewal was treated as a lost lease: %v", err)
+	}
 	stateMachine, err := flowcollect.RestoreStateCleanupJob(claimed.Snapshot)
 	if err != nil {
 		t.Fatal(err)

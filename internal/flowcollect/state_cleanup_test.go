@@ -21,6 +21,9 @@ func TestStateCleanupDecoderLifecycleIsFencedPersistableAndIdempotent(t *testing
 	if _, err := job.Tombstone(); err == nil {
 		t.Fatal("tombstone was available before the ownership fence")
 	}
+	if _, err := job.ReplacementKafkaKey(); err == nil {
+		t.Fatal("replacement key was available before the ownership fence")
+	}
 	fence := stateCleanupFence(old, "collector-b", 4, 11, base)
 	if err := job.ConfirmFence(fence, base.Add(4*time.Second)); !errors.Is(err, ErrStateCleanupFenceNotMature) {
 		t.Fatalf("immature ownership fence error=%v", err)
@@ -32,11 +35,19 @@ func TestStateCleanupDecoderLifecycleIsFencedPersistableAndIdempotent(t *testing
 		t.Fatalf("identical fence retry was not idempotent: %v", err)
 	}
 	replacement := cloneCollectStateForCleanup(t, old, "collector-b", 4, 11, 8, base.Add(6*time.Second))
+	replacementKey, err := job.ReplacementKafkaKey()
+	if err != nil || !bytes.Equal(replacementKey, replacement.StateKey) {
+		t.Fatalf("replacement key=%x err=%v", replacementKey, err)
+	}
 	observation := FrozenReplacementObservation{
 		CapturedAt: base.Add(7 * time.Second), Position: KafkaRecordPosition{Partition: 1, Offset: 20}, HighWatermark: 21,
 		RestoredOldOwnershipEpoch: 3, RestoredOldGeneration: 7, NewEpochBaselineGeneration: 7,
 	}
-	if err := job.ObserveCollectStateReplacement(replacement, observation); err != nil {
+	replacementPayload, err := proto.Marshal(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := job.ObserveReplacementPayload(replacementPayload, observation); err != nil {
 		t.Fatal(err)
 	}
 	if err := job.ObserveCollectStateReplacement(replacement, observation); err != nil {

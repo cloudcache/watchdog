@@ -909,7 +909,7 @@ queued → running ↔ paused → validating → succeeded
 
 异步任务公共字段至少包括：`id/tenant/type/status/idempotency_key/request_hash/progress_total/progress_done/checkpoint/result_ref/error_code/error_detail/cancel_requested_at/started_at/heartbeat_at/finished_at/expires_at/row_version/created_by/created_at/updated_at`。worker 领取任务使用 lease/heartbeat；lease 过期可恢复，但必须从 checkpoint 继续而不是从头重复产生副作用。
 
-公共骨架已由 MySQL migration `017_operation_jobs.sql` 落地：`operation_jobs` 保存上述公共生命周期字段，并增加 `lease_owner/lease_token/lease_expires_at/next_attempt_at/attempt_count`。第一位使用者是 Flow collect-state cleanup repository；它以 canonical request hash 实施幂等冲突检测，使用 `FOR UPDATE SKIP LOCKED` 领取任务，并以 lease token、未过期时间和 row version 三重条件 fencing 进度写入。checkpoint/requeue/terminal transition 与 `audit_logs` 必须同事务提交，heartbeat 不推进 row version。该表属于宿主 core，不计入 Flow 的五张私有管理表；具体 reconciler 接线完成前仍标为实现中。
+公共骨架已由 MySQL migration `017_operation_jobs.sql` 落地：`operation_jobs` 保存上述公共生命周期字段，并增加 `lease_owner/lease_token/lease_expires_at/next_attempt_at/attempt_count`。第一位使用者是 Flow collect-state cleanup repository；它以 canonical request hash 实施幂等冲突检测，使用 `FOR UPDATE SKIP LOCKED` 领取任务，并以 lease token、未过期时间和 row version 三重条件 fencing 进度写入。checkpoint/requeue/terminal transition 与 `audit_logs` 必须同事务提交，heartbeat 不推进 row version，但时间戳至少单调增加 1ms，避免同毫秒 renew 被 MySQL 作为 no-op 返回零 affected row。cleanup reconciler core 已实现逐阶段 checkpoint、heartbeat 丢失停写、稳定错误分类/有界退避和 restart 接续；该表属于宿主 core，不计入 Flow 的五张私有管理表，真实 evidence provider 与进程 wiring 完成前仍标为实现中。
 
 ### 15.3 HTTP CRUD 与动作统一语义
 

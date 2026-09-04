@@ -152,8 +152,14 @@ func (s *MySQLStore) RenewFlowStateCleanupLease(ctx context.Context, jobID ID, l
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE operation_jobs
-		SET lease_expires_at = TIMESTAMPADD(MICROSECOND, ?, CURRENT_TIMESTAMP(3)),
-			heartbeat_at = CURRENT_TIMESTAMP(3)
+		SET lease_expires_at = GREATEST(
+				TIMESTAMPADD(MICROSECOND, ?, CURRENT_TIMESTAMP(3)),
+				TIMESTAMPADD(MICROSECOND, 1000, lease_expires_at)
+			),
+			heartbeat_at = GREATEST(
+				CURRENT_TIMESTAMP(3),
+				TIMESTAMPADD(MICROSECOND, 1000, heartbeat_at)
+			)
 		WHERE id = ? AND job_type = ? AND status = 'running'
 		  AND lease_token = ? AND lease_expires_at > CURRENT_TIMESTAMP(3)
 	`, leaseDuration.Microseconds(), jobID, FlowStateCleanupJobType, leaseToken)
