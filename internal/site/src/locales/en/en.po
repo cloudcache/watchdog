@@ -30,9 +30,15 @@ msgstr "{0} of {1} row(s) selected."
 msgid "{0} ports imported, {deleted} stale ports removed"
 msgstr "{0} ports imported, {deleted} stale ports removed"
 
+#. placeholder {0}: selectedPorts.length
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-charts.tsx
+msgid "{0} ports selected"
+msgstr "{0} ports selected"
+
 #: src/components/routes/network-device.tsx
-msgid "{bgpCount} BGP sessions discovered"
-msgstr "{bgpCount} BGP sessions discovered"
+#~ msgid "{bgpCount} BGP sessions discovered"
+#~ msgstr "{bgpCount} BGP sessions discovered"
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{cores, plural, one {# core} other {# cores}}"
@@ -51,12 +57,12 @@ msgid "{count, plural, one {{countString} minute} few {{countString} minutes} ma
 msgstr "{count, plural, one {{countString} minute} few {{countString} minutes} many {{countString} minutes} other {{countString} minutes}}"
 
 #: src/components/routes/network-device.tsx
-msgid "{portCount} ports discovered"
-msgstr "{portCount} ports discovered"
+#~ msgid "{portCount} ports discovered"
+#~ msgstr "{portCount} ports discovered"
 
 #: src/components/routes/network-device.tsx
-msgid "{sensorCount} sensors discovered"
-msgstr "{sensorCount} sensors discovered"
+#~ msgid "{sensorCount} sensors discovered"
+#~ msgstr "{sensorCount} sensors discovered"
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{threads, plural, one {# thread} other {# threads}}"
@@ -142,7 +148,6 @@ msgstr "Access & Billing"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -253,6 +258,7 @@ msgstr "Adjust the width of the main layout"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Admin"
@@ -265,6 +271,10 @@ msgstr "Admin Down"
 #: src/components/navbar.tsx
 msgid "Administration"
 msgstr "Administration"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Advanced"
+msgstr "Advanced"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -307,6 +317,7 @@ msgstr "Aggregate"
 msgid "Aggregate Charts"
 msgstr "Aggregate Charts"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -338,7 +349,6 @@ msgstr "Alerts"
 msgid "Alias"
 msgstr "Alias"
 
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr "All"
@@ -698,6 +708,7 @@ msgid "CIDR"
 msgstr "CIDR"
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
 msgid "Class"
 msgstr "Class"
 
@@ -709,6 +720,10 @@ msgstr "Cleanup"
 #: src/components/routes/system/smart-table.tsx
 msgid "Clear"
 msgstr "Clear"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Clear selection"
+msgstr "Clear selection"
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Click on a container to view more information."
@@ -993,6 +1008,7 @@ msgstr "Cumulative Upload"
 msgid "Current state"
 msgstr "Current state"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/lib/utils.ts
 msgid "Custom"
 msgstr "Custom"
@@ -1114,8 +1130,8 @@ msgid "Delete this target?"
 msgstr "Delete this target?"
 
 #: src/components/routes/network-device.tsx
-#~ msgid "Denied"
-#~ msgstr "Denied"
+msgid "Denied"
+msgstr "Denied"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -1266,7 +1282,6 @@ msgstr "down"
 
 #. Context: System is down
 #: src/components/alerts-history-columns.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
@@ -2200,6 +2215,10 @@ msgstr "Label value"
 msgid "Labels"
 msgstr "Labels"
 
+#: src/components/routes/network-device.tsx
+msgid "LAG groups"
+msgstr "LAG groups"
+
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "Language"
@@ -2280,8 +2299,8 @@ msgid "Loading chart data..."
 msgstr "Loading chart data..."
 
 #: src/components/routes/network-device.tsx
-msgid "Loading inventory..."
-msgstr "Loading inventory..."
+#~ msgid "Loading inventory..."
+#~ msgstr "Loading inventory..."
 
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2294,11 +2313,6 @@ msgstr "Loading inventory..."
 #: src/components/routes/billing.tsx
 #: src/components/routes/core.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
@@ -2309,6 +2323,10 @@ msgstr "Loading inventory..."
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
 msgstr "Loading..."
+
+#: src/components/routes/network-device.tsx
+msgid "Local AS"
+msgstr "Local AS"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -2424,8 +2442,8 @@ msgid "Metric"
 msgstr "Metric"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "metrics"
-msgstr "metrics"
+#~ msgid "metrics"
+#~ msgstr "metrics"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -2566,6 +2584,10 @@ msgstr "no"
 msgid "No"
 msgstr "No"
 
+#: src/components/routes/network-device.tsx
+msgid "No active warning, error, or critical events."
+msgstr "No active warning, error, or critical events."
+
 #: src/components/routes/address-sets.tsx
 msgid "No address sets found."
 msgstr "No address sets found."
@@ -2591,8 +2613,8 @@ msgid "No aggregate samples are available for the current selection."
 msgstr "No aggregate samples are available for the current selection."
 
 #: src/components/routes/network-device.tsx
-msgid "No alerts. Threshold-based alerting is not yet configured for this device."
-msgstr "No alerts. Threshold-based alerting is not yet configured for this device."
+#~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
+#~ msgstr "No alerts. Threshold-based alerting is not yet configured for this device."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -2627,8 +2649,8 @@ msgstr "No devices match the filter."
 #~ msgstr "No discovered network device is bound to this target yet."
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "No discovered ports for selected targets."
-msgstr "No discovered ports for selected targets."
+#~ msgid "No discovered ports for selected targets."
+#~ msgstr "No discovered ports for selected targets."
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "No discovered ports."
@@ -2706,14 +2728,22 @@ msgstr "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
 msgid "No ports"
 msgstr "No ports"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports discovered yet"
+msgstr "No ports discovered yet"
+
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "No ports found."
 msgstr "No ports found."
 
 #: src/components/routes/network-device.tsx
-msgid "No ports match the filter."
-msgstr "No ports match the filter."
+#~ msgid "No ports match the filter."
+#~ msgstr "No ports match the filter."
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports match the search."
+msgstr "No ports match the search."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No ports to aggregate"
@@ -2810,6 +2840,10 @@ msgstr "not ok"
 #: src/components/routes/retention.tsx
 msgid "Notes"
 msgstr "Notes"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Nothing selected: all ports are aggregated."
+msgstr "Nothing selected: all ports are aggregated."
 
 #: src/components/command-palette.tsx
 #: src/components/routes/settings/layout.tsx
@@ -3113,6 +3147,7 @@ msgstr "Port side"
 msgid "ports"
 msgstr "ports"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -3204,6 +3239,10 @@ msgstr "Range Start"
 #: src/components/routes/system/disk-io-sheet.tsx
 msgid "Read"
 msgstr "Read"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Realtime"
+msgstr "Realtime"
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Received"
@@ -3435,9 +3474,21 @@ msgstr "Scope"
 msgid "Search"
 msgstr "Search"
 
+#: src/components/routes/network-device.tsx
+msgid "Search alerts..."
+msgstr "Search alerts..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search BGP peers..."
+msgstr "Search BGP peers..."
+
 #: src/components/routes/network-devices.tsx
 msgid "Search by name, host, vendor..."
 msgstr "Search by name, host, vendor..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search events..."
+msgstr "Search events..."
 
 #: src/components/command-palette.tsx
 msgid "Search for systems or settings..."
@@ -3448,8 +3499,28 @@ msgid "Search graphs, devices, metrics"
 msgstr "Search graphs, devices, metrics"
 
 #: src/components/routes/network-device.tsx
+msgid "Search inventory..."
+msgstr "Search inventory..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search LAG groups..."
+msgstr "Search LAG groups..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search ports, addresses..."
+msgstr "Search ports, addresses..."
+
+#: src/components/routes/aggregate-charts.tsx
 msgid "Search ports..."
 msgstr "Search ports..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search sensors..."
+msgstr "Search sensors..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search VLANs..."
+msgstr "Search VLANs..."
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Seconds between pings (default: 60)"
@@ -3495,18 +3566,22 @@ msgstr "Select a target before creating an export."
 msgid "Select an SNMP profile"
 msgstr "Select an SNMP profile"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select at least one metric"
+msgstr "Select at least one metric"
+
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
 msgstr "Select at least one port"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one port for port metrics"
-msgstr "Select at least one port for port metrics"
+#~ msgid "Select at least one port for port metrics"
+#~ msgstr "Select at least one port for port metrics"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one target and one metric"
-msgstr "Select at least one target and one metric"
+#~ msgid "Select at least one target and one metric"
+#~ msgstr "Select at least one target and one metric"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Select ports"
@@ -3522,8 +3597,12 @@ msgstr "Select SNMP profile"
 #~ msgstr "Select targets and metrics, then draw an aggregate chart."
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Selected ports"
-msgstr "Selected ports"
+msgid "Selected metrics do not aggregate per port."
+msgstr "Selected metrics do not aggregate per port."
+
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Selected ports"
+#~ msgstr "Selected ports"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -3676,6 +3755,7 @@ msgid "Sort by updated"
 msgstr "Sort by updated"
 
 #: src/components/routes/address-prefixes.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
@@ -3740,6 +3820,7 @@ msgstr "State"
 msgid "Status"
 msgstr "Status"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/historical-data.tsx
@@ -3877,10 +3958,9 @@ msgid "Target summary"
 msgstr "Target summary"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "targets"
-msgstr "targets"
+#~ msgid "targets"
+#~ msgstr "targets"
 
-#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
@@ -3968,6 +4048,10 @@ msgstr "Time"
 msgid "Time format"
 msgstr "Time format"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Time range"
+msgstr "Time range"
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "Time Range"
 msgstr "Time Range"
@@ -4044,6 +4128,10 @@ msgstr "Traffic"
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
 msgstr "Traffic Defaults"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Traffic in/out is preselected; pick others only when needed."
+msgstr "Traffic in/out is preselected; pick others only when needed."
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -4168,7 +4256,6 @@ msgstr "up"
 
 #. Context: System is up
 #: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
 msgid "Up"
@@ -4237,8 +4324,8 @@ msgid "Users"
 msgstr "Users"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Using every discovered port under the selected targets."
-msgstr "Using every discovered port under the selected targets."
+#~ msgid "Using every discovered port under the selected targets."
+#~ msgstr "Using every discovered port under the selected targets."
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgctxt "Disk I/O utilization"
@@ -4257,6 +4344,7 @@ msgstr "Utilization"
 msgid "Value"
 msgstr "Value"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Value mode"
 msgstr "Value mode"
@@ -4305,6 +4393,10 @@ msgstr "View your 200 most recent alerts."
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID"
 msgstr "VLAN ID"
+
+#: src/components/routes/network-device.tsx
+msgid "VLANs"
+msgstr "VLANs"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "VLANs/LAG"

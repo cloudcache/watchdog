@@ -35,9 +35,15 @@ msgstr "Вибрано {0} з {1} рядків."
 msgid "{0} ports imported, {deleted} stale ports removed"
 msgstr ""
 
-#: src/components/routes/network-device.tsx
-msgid "{bgpCount} BGP sessions discovered"
+#. placeholder {0}: selectedPorts.length
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-charts.tsx
+msgid "{0} ports selected"
 msgstr ""
+
+#: src/components/routes/network-device.tsx
+#~ msgid "{bgpCount} BGP sessions discovered"
+#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{cores, plural, one {# core} other {# cores}}"
@@ -56,12 +62,12 @@ msgid "{count, plural, one {{countString} minute} few {{countString} minutes} ma
 msgstr "{count, plural, one {{countString} хвилина} few {{countString} хвилини} many {{countString} хвилин} other {{countString} хвилини}}"
 
 #: src/components/routes/network-device.tsx
-msgid "{portCount} ports discovered"
-msgstr ""
+#~ msgid "{portCount} ports discovered"
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "{sensorCount} sensors discovered"
-msgstr ""
+#~ msgid "{sensorCount} sensors discovered"
+#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{threads, plural, one {# thread} other {# threads}}"
@@ -147,7 +153,6 @@ msgstr ""
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -258,6 +263,7 @@ msgstr "Налаштувати ширину основного макету"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Admin"
@@ -269,6 +275,10 @@ msgstr ""
 
 #: src/components/navbar.tsx
 msgid "Administration"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Advanced"
 msgstr ""
 
 #: src/components/routes/core.tsx
@@ -312,6 +322,7 @@ msgstr ""
 msgid "Aggregate Charts"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -343,7 +354,6 @@ msgstr "Сповіщення"
 msgid "Alias"
 msgstr ""
 
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr ""
@@ -703,6 +713,7 @@ msgid "CIDR"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
 msgid "Class"
 msgstr ""
 
@@ -714,6 +725,10 @@ msgstr ""
 #: src/components/routes/system/smart-table.tsx
 msgid "Clear"
 msgstr "Очистити"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Clear selection"
+msgstr ""
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Click on a container to view more information."
@@ -998,6 +1013,7 @@ msgstr "Кумулятивне відвантаження"
 msgid "Current state"
 msgstr "Поточний стан"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/lib/utils.ts
 msgid "Custom"
 msgstr ""
@@ -1119,8 +1135,8 @@ msgid "Delete this target?"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-#~ msgid "Denied"
-#~ msgstr ""
+msgid "Denied"
+msgstr ""
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -1271,7 +1287,6 @@ msgstr ""
 
 #. Context: System is down
 #: src/components/alerts-history-columns.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
@@ -2205,6 +2220,10 @@ msgstr ""
 msgid "Labels"
 msgstr ""
 
+#: src/components/routes/network-device.tsx
+msgid "LAG groups"
+msgstr ""
+
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "Мова"
@@ -2285,8 +2304,8 @@ msgid "Loading chart data..."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "Loading inventory..."
-msgstr ""
+#~ msgid "Loading inventory..."
+#~ msgstr ""
 
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2299,11 +2318,6 @@ msgstr ""
 #: src/components/routes/billing.tsx
 #: src/components/routes/core.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
@@ -2314,6 +2328,10 @@ msgstr ""
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
 msgstr "Завантаження..."
+
+#: src/components/routes/network-device.tsx
+msgid "Local AS"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -2429,8 +2447,8 @@ msgid "Metric"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "metrics"
-msgstr ""
+#~ msgid "metrics"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -2571,6 +2589,10 @@ msgstr ""
 msgid "No"
 msgstr "Ні"
 
+#: src/components/routes/network-device.tsx
+msgid "No active warning, error, or critical events."
+msgstr ""
+
 #: src/components/routes/address-sets.tsx
 msgid "No address sets found."
 msgstr ""
@@ -2596,8 +2618,8 @@ msgid "No aggregate samples are available for the current selection."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No alerts. Threshold-based alerting is not yet configured for this device."
-msgstr ""
+#~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -2632,8 +2654,8 @@ msgstr ""
 #~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "No discovered ports for selected targets."
-msgstr ""
+#~ msgid "No discovered ports for selected targets."
+#~ msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "No discovered ports."
@@ -2711,13 +2733,21 @@ msgstr ""
 msgid "No ports"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports discovered yet"
+msgstr ""
+
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "No ports found."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No ports match the filter."
+#~ msgid "No ports match the filter."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports match the search."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -2814,6 +2844,10 @@ msgstr ""
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/retention.tsx
 msgid "Notes"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Nothing selected: all ports are aggregated."
 msgstr ""
 
 #: src/components/command-palette.tsx
@@ -3118,6 +3152,7 @@ msgstr ""
 msgid "ports"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -3209,6 +3244,10 @@ msgstr ""
 #: src/components/routes/system/disk-io-sheet.tsx
 msgid "Read"
 msgstr "Читання"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Realtime"
+msgstr ""
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Received"
@@ -3440,8 +3479,20 @@ msgstr ""
 msgid "Search"
 msgstr "Пошук"
 
+#: src/components/routes/network-device.tsx
+msgid "Search alerts..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search BGP peers..."
+msgstr ""
+
 #: src/components/routes/network-devices.tsx
 msgid "Search by name, host, vendor..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search events..."
 msgstr ""
 
 #: src/components/command-palette.tsx
@@ -3453,7 +3504,27 @@ msgid "Search graphs, devices, metrics"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+msgid "Search inventory..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search LAG groups..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search ports, addresses..."
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
 msgid "Search ports..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search sensors..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search VLANs..."
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
@@ -3500,18 +3571,22 @@ msgstr ""
 msgid "Select an SNMP profile"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select at least one metric"
+msgstr ""
+
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one port for port metrics"
-msgstr ""
+#~ msgid "Select at least one port for port metrics"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one target and one metric"
-msgstr ""
+#~ msgid "Select at least one target and one metric"
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Select ports"
@@ -3527,8 +3602,12 @@ msgstr ""
 #~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Selected ports"
+msgid "Selected metrics do not aggregate per port."
 msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Selected ports"
+#~ msgstr ""
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -3681,6 +3760,7 @@ msgid "Sort by updated"
 msgstr ""
 
 #: src/components/routes/address-prefixes.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
@@ -3745,6 +3825,7 @@ msgstr "Стан"
 msgid "Status"
 msgstr "Статус"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/historical-data.tsx
@@ -3882,10 +3963,9 @@ msgid "Target summary"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "targets"
-msgstr ""
+#~ msgid "targets"
+#~ msgstr ""
 
-#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
@@ -3973,6 +4053,10 @@ msgstr ""
 msgid "Time format"
 msgstr "Формат часу"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Time range"
+msgstr ""
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "Time Range"
 msgstr ""
@@ -4048,6 +4132,10 @@ msgstr ""
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Traffic in/out is preselected; pick others only when needed."
 msgstr ""
 
 #: src/components/navbar.tsx
@@ -4173,7 +4261,6 @@ msgstr ""
 
 #. Context: System is up
 #: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
 msgid "Up"
@@ -4242,8 +4329,8 @@ msgid "Users"
 msgstr "Користувачі"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Using every discovered port under the selected targets."
-msgstr ""
+#~ msgid "Using every discovered port under the selected targets."
+#~ msgstr ""
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgctxt "Disk I/O utilization"
@@ -4262,6 +4349,7 @@ msgstr "Використання"
 msgid "Value"
 msgstr "Значення"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Value mode"
 msgstr ""
@@ -4309,6 +4397,10 @@ msgstr "Переглянути 200 останніх сповіщень."
 
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "VLANs"
 msgstr ""
 
 #: src/components/routes/network-device.tsx

@@ -35,9 +35,15 @@ msgstr "已選擇 {1} 個項目中的 {0} 個"
 msgid "{0} ports imported, {deleted} stale ports removed"
 msgstr ""
 
+#. placeholder {0}: selectedPorts.length
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-charts.tsx
+msgid "{0} ports selected"
+msgstr "已選 {0} 個連接埠"
+
 #: src/components/routes/network-device.tsx
-msgid "{bgpCount} BGP sessions discovered"
-msgstr ""
+#~ msgid "{bgpCount} BGP sessions discovered"
+#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{cores, plural, one {# core} other {# cores}}"
@@ -56,12 +62,12 @@ msgid "{count, plural, one {{countString} minute} few {{countString} minutes} ma
 msgstr "{count, plural, one {{countString} 分鐘} few {{countString} 分鐘} many {{countString} 分鐘} other {{countString} 分鐘}}"
 
 #: src/components/routes/network-device.tsx
-msgid "{portCount} ports discovered"
-msgstr ""
+#~ msgid "{portCount} ports discovered"
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "{sensorCount} sensors discovered"
-msgstr ""
+#~ msgid "{sensorCount} sensors discovered"
+#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{threads, plural, one {# thread} other {# threads}}"
@@ -147,7 +153,6 @@ msgstr ""
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -258,6 +263,7 @@ msgstr "調整主版面寬度"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Admin"
@@ -270,6 +276,10 @@ msgstr ""
 #: src/components/navbar.tsx
 msgid "Administration"
 msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Advanced"
+msgstr "進階"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -312,6 +322,7 @@ msgstr ""
 msgid "Aggregate Charts"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -321,7 +332,7 @@ msgstr ""
 #: src/components/routes/export-new.tsx
 #: src/components/routes/exports.tsx
 msgid "Aggregation"
-msgstr ""
+msgstr "聚合方式"
 
 #: src/components/command-palette.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
@@ -343,7 +354,6 @@ msgstr "警報"
 msgid "Alias"
 msgstr ""
 
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr ""
@@ -359,7 +369,7 @@ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "All discovered ports"
-msgstr ""
+msgstr "全部已發現連接埠"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "All Sets"
@@ -703,6 +713,7 @@ msgid "CIDR"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-device.tsx
 msgid "Class"
 msgstr ""
 
@@ -714,6 +725,10 @@ msgstr ""
 #: src/components/routes/system/smart-table.tsx
 msgid "Clear"
 msgstr "清除"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Clear selection"
+msgstr "清除選擇"
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Click on a container to view more information."
@@ -998,9 +1013,10 @@ msgstr "累計上傳"
 msgid "Current state"
 msgstr "目前狀態"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/lib/utils.ts
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/components/routes/traffic-defaults.tsx
 msgid "Customer"
@@ -1119,8 +1135,8 @@ msgid "Delete this target?"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-#~ msgid "Denied"
-#~ msgstr ""
+msgid "Denied"
+msgstr ""
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -1271,7 +1287,6 @@ msgstr ""
 
 #. Context: System is down
 #: src/components/alerts-history-columns.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
@@ -2003,7 +2018,7 @@ msgstr ""
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/network-device.tsx
 msgid "Graph name"
-msgstr ""
+msgstr "圖表名稱"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Graphs"
@@ -2205,6 +2220,10 @@ msgstr ""
 msgid "Labels"
 msgstr ""
 
+#: src/components/routes/network-device.tsx
+msgid "LAG groups"
+msgstr ""
+
 #: src/components/routes/settings/general.tsx
 msgid "Language"
 msgstr "語言"
@@ -2285,8 +2304,8 @@ msgid "Loading chart data..."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "Loading inventory..."
-msgstr ""
+#~ msgid "Loading inventory..."
+#~ msgstr ""
 
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2299,11 +2318,6 @@ msgstr ""
 #: src/components/routes/billing.tsx
 #: src/components/routes/core.tsx
 #: src/components/routes/exports.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
@@ -2314,6 +2328,10 @@ msgstr ""
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Loading..."
 msgstr "載入中..."
+
+#: src/components/routes/network-device.tsx
+msgid "Local AS"
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -2429,8 +2447,8 @@ msgid "Metric"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "metrics"
-msgstr ""
+#~ msgid "metrics"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -2571,6 +2589,10 @@ msgstr ""
 msgid "No"
 msgstr "否"
 
+#: src/components/routes/network-device.tsx
+msgid "No active warning, error, or critical events."
+msgstr ""
+
 #: src/components/routes/address-sets.tsx
 msgid "No address sets found."
 msgstr ""
@@ -2596,8 +2618,8 @@ msgid "No aggregate samples are available for the current selection."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No alerts. Threshold-based alerting is not yet configured for this device."
-msgstr ""
+#~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -2632,8 +2654,8 @@ msgstr ""
 #~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "No discovered ports for selected targets."
-msgstr ""
+#~ msgid "No discovered ports for selected targets."
+#~ msgstr ""
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "No discovered ports."
@@ -2711,14 +2733,22 @@ msgstr ""
 msgid "No ports"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports discovered yet"
+msgstr "尚未發現任何連接埠"
+
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "No ports found."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "No ports match the filter."
-msgstr ""
+#~ msgid "No ports match the filter."
+#~ msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "No ports match the search."
+msgstr "沒有符合的連接埠。"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No ports to aggregate"
@@ -2815,6 +2845,10 @@ msgstr ""
 #: src/components/routes/retention.tsx
 msgid "Notes"
 msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Nothing selected: all ports are aggregated."
+msgstr "未選擇時聚合全部連接埠。"
 
 #: src/components/command-palette.tsx
 #: src/components/routes/settings/layout.tsx
@@ -3118,6 +3152,7 @@ msgstr ""
 msgid "ports"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -3209,6 +3244,10 @@ msgstr ""
 #: src/components/routes/system/disk-io-sheet.tsx
 msgid "Read"
 msgstr "讀取"
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Realtime"
+msgstr "即時"
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Received"
@@ -3440,8 +3479,20 @@ msgstr ""
 msgid "Search"
 msgstr "搜索"
 
+#: src/components/routes/network-device.tsx
+msgid "Search alerts..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search BGP peers..."
+msgstr ""
+
 #: src/components/routes/network-devices.tsx
 msgid "Search by name, host, vendor..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search events..."
 msgstr ""
 
 #: src/components/command-palette.tsx
@@ -3453,7 +3504,27 @@ msgid "Search graphs, devices, metrics"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+msgid "Search inventory..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search LAG groups..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search ports, addresses..."
+msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
 msgid "Search ports..."
+msgstr "搜尋連接埠..."
+
+#: src/components/routes/network-device.tsx
+msgid "Search sensors..."
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "Search VLANs..."
 msgstr ""
 
 #: src/components/routes/settings/heartbeat.tsx
@@ -3500,18 +3571,22 @@ msgstr ""
 msgid "Select an SNMP profile"
 msgstr ""
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Select at least one metric"
+msgstr "請至少選擇一個指標"
+
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one port for port metrics"
-msgstr ""
+#~ msgid "Select at least one port for port metrics"
+#~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Select at least one target and one metric"
-msgstr ""
+#~ msgid "Select at least one target and one metric"
+#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Select ports"
@@ -3527,8 +3602,12 @@ msgstr "選擇 SNMP 設定"
 #~ msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Selected ports"
-msgstr ""
+msgid "Selected metrics do not aggregate per port."
+msgstr "所選指標不按連接埠聚合。"
+
+#: src/components/routes/aggregate-charts.tsx
+#~ msgid "Selected ports"
+#~ msgstr ""
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -3681,6 +3760,7 @@ msgid "Sort by updated"
 msgstr ""
 
 #: src/components/routes/address-prefixes.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
@@ -3745,11 +3825,12 @@ msgstr "狀態"
 msgid "Status"
 msgstr "狀態"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/historical-data.tsx
 msgid "Step"
-msgstr ""
+msgstr "步長"
 
 #: src/components/navbar.tsx
 msgid "Storage"
@@ -3882,10 +3963,9 @@ msgid "Target summary"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "targets"
-msgstr ""
+#~ msgid "targets"
+#~ msgstr ""
 
-#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
@@ -3973,6 +4053,10 @@ msgstr ""
 msgid "Time format"
 msgstr "時間格式"
 
+#: src/components/routes/aggregate-charts.tsx
+msgid "Time range"
+msgstr "時間範圍"
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "Time Range"
 msgstr ""
@@ -4049,6 +4133,10 @@ msgstr "流量"
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
 msgstr ""
+
+#: src/components/routes/aggregate-charts.tsx
+msgid "Traffic in/out is preselected; pick others only when needed."
+msgstr "已預設選中入/出流量,僅在需要時勾選其他指標。"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -4173,7 +4261,6 @@ msgstr ""
 
 #. Context: System is up
 #: src/components/routes/network-device.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/system/info-bar.tsx
 msgid "Up"
@@ -4242,8 +4329,8 @@ msgid "Users"
 msgstr "用戶"
 
 #: src/components/routes/aggregate-charts.tsx
-msgid "Using every discovered port under the selected targets."
-msgstr ""
+#~ msgid "Using every discovered port under the selected targets."
+#~ msgstr ""
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgctxt "Disk I/O utilization"
@@ -4262,9 +4349,10 @@ msgstr "利用率"
 msgid "Value"
 msgstr "值"
 
+#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Value mode"
-msgstr ""
+msgstr "取值口徑"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device-snmp.tsx
@@ -4309,6 +4397,10 @@ msgstr "檢視最近 200 則警報。"
 
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID"
+msgstr ""
+
+#: src/components/routes/network-device.tsx
+msgid "VLANs"
 msgstr ""
 
 #: src/components/routes/network-device.tsx

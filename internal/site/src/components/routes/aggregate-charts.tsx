@@ -1,6 +1,15 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { BarChart3Icon, DownloadIcon, RefreshCwIcon, SaveIcon } from "lucide-react"
+import {
+	BarChart3Icon,
+	ChevronDownIcon,
+	ChevronRightIcon,
+	DownloadIcon,
+	RefreshCwIcon,
+	SaveIcon,
+	SearchIcon,
+	SettingsIcon,
+} from "lucide-react"
 import type React from "react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -20,16 +29,6 @@ import {
 	type TrafficViewMode,
 } from "@/lib/traffic-view"
 import { type createLineChart, disposeChart, updateLineChart } from "@/lib/vchart"
-
-type TargetRecord = {
-	ID?: string
-	id?: string
-	Name?: string
-	name?: string
-	kind?: string
-	Host?: string
-	host?: string
-}
 
 type NetworkDevice = {
 	ID?: string
@@ -89,15 +88,16 @@ const defaultMetrics = ["watchdog_snmp_if_in_bps", "watchdog_snmp_if_out_bps"]
 
 export default memo(() => {
 	const { t } = useLingui()
-	const [targets, setTargets] = useState<TargetRecord[]>([])
 	const [devices, setDevices] = useState<NetworkDevice[]>([])
 	const [portsByDevice, setPortsByDevice] = useState<Record<string, NetworkPort[]>>({})
 	const [metrics, setMetrics] = useState<MetricDefinition[]>([])
 	const [trafficView, setTrafficView] = useState<TrafficViewMode>("customer")
-	const [selectedTargets, setSelectedTargets] = useState<string[]>([])
 	const [selectedMetrics, setSelectedMetrics] = useState<string[]>(defaultMetrics)
-	const [portMode, setPortMode] = useState("all")
 	const [selectedPorts, setSelectedPorts] = useState<string[]>([])
+	const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({})
+	const [portSearch, setPortSearch] = useState("")
+	const [graphName, setGraphName] = useState("")
+	const [advancedOpen, setAdvancedOpen] = useState(false)
 	const [aggregate, setAggregate] = useState<AggregateMethod>("sum")
 	const [timeMode, setTimeMode] = useState("fixed")
 	const [window, setWindow] = useState("1h")
@@ -126,48 +126,45 @@ export default memo(() => {
 				.filter(Boolean) as MetricDefinition[],
 		[metrics, selectedMetrics]
 	)
-	const hasPortMetrics = selectedMetricDefs.some((metric) => metricScope(metric) === "port")
-	const visiblePorts = useMemo(
+	const hasPortMetrics =
+		selectedMetricDefs.length > 0
+			? selectedMetricDefs.some((metric) => metricScope(metric) === "port")
+			: selectedMetrics.some((name) => fallbackMetricDefinition(name).Scope === "port")
+	const allPortIDs = useMemo(
 		() =>
 			devices
-				.filter((device) => selectedTargets.includes(deviceTargetID(device)))
-				.flatMap((device) =>
-					(portsByDevice[deviceID(device)] ?? []).map((port) => ({
-						...port,
-						deviceName: device.SysName ?? device.sys_name ?? device.Name ?? device.name ?? deviceID(device),
-					}))
-				),
-		[devices, portsByDevice, selectedTargets]
+				.flatMap((device) => portsByDevice[deviceID(device)] ?? [])
+				.map(portID)
+				.filter(Boolean),
+		[devices, portsByDevice]
 	)
+	const allTargetIDs = useMemo(() => Array.from(new Set(devices.map(deviceTargetID).filter(Boolean))), [devices])
 
 	const refreshCatalog = useCallback(async () => {
 		setLoading(true)
 		setError("")
 		try {
-			const [targetData, deviceData, metricData] = await Promise.all([
-				pb.send<{ items?: TargetRecord[] }>("/api/v1/targets", {}),
+			const [deviceData, metricData] = await Promise.all([
 				pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
 				pb.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
 			])
-			const nextTargets = targetData.items ?? []
-			const nextMetrics = metricData.items ?? []
-			setTargets(nextTargets)
-			setDevices(deviceData.items ?? [])
-			setMetrics(nextMetrics)
-			setSelectedTargets((current) => {
-				const valid = current.filter((id) => nextTargets.some((target) => targetID(target) === id))
-				if (valid.length > 0) {
-					return valid
-				}
-				const firstTarget = nextTargets.find((target) => targetKind(target) === "network") ?? nextTargets[0]
-				const first = firstTarget ? targetID(firstTarget) : ""
-				return first ? [first] : []
-			})
-			setSelectedMetrics((current) =>
-				(current.length ? current : defaultMetrics).filter((name) =>
-					nextMetrics.some((metric) => metricName(metric) === name)
-				)
+			const nextDevices = deviceData.items ?? []
+			setDevices(nextDevices)
+			setMetrics(metricData.items ?? [])
+			const loadedPorts = await Promise.all(
+				nextDevices.map(async (device) => {
+					const id = deviceID(device)
+					const data = await pb
+						.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
+						.catch(() => ({ items: [] as NetworkPort[] }))
+					return [id, data.items ?? []] as const
+				})
 			)
+			setPortsByDevice(Object.fromEntries(loadedPorts))
+			// A single-device install starts with its port list open.
+			if (nextDevices.length === 1) {
+				setExpandedDevices({ [deviceID(nextDevices[0])]: true })
+			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load aggregate chart inputs`)
 		} finally {
@@ -179,40 +176,6 @@ export default memo(() => {
 		document.title = `${t`Aggregate Charts`} / Watchdog`
 		refreshCatalog()
 	}, [refreshCatalog, t])
-
-	const ensurePorts = useCallback(async () => {
-		const missingDeviceIDs = devices
-			.filter((device) => selectedTargets.includes(deviceTargetID(device)))
-			.map(deviceID)
-			.filter((id) => id && !portsByDevice[id])
-		if (missingDeviceIDs.length === 0) {
-			return portsByDevice
-		}
-		const loaded = await Promise.all(
-			missingDeviceIDs.map(async (id) => {
-				const data = await pb.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
-				return [id, data.items ?? []] as const
-			})
-		)
-		const next = { ...portsByDevice }
-		for (const [id, ports] of loaded) {
-			next[id] = ports
-		}
-		setPortsByDevice(next)
-		return next
-	}, [devices, portsByDevice, selectedTargets])
-
-	useEffect(() => {
-		if (!hasPortMetrics || selectedTargets.length === 0) {
-			return
-		}
-		ensurePorts().catch(() => {})
-	}, [ensurePorts, hasPortMetrics, selectedTargets.length])
-
-	useEffect(() => {
-		const visibleIDs = new Set(visiblePorts.map(portID))
-		setSelectedPorts((current) => current.filter((id) => visibleIDs.has(id)))
-	}, [visiblePorts])
 
 	const buildTimeParams = useCallback(() => {
 		const params = new URLSearchParams({
@@ -232,8 +195,8 @@ export default memo(() => {
 	}, [end, start, step, timeMode, window])
 
 	const refreshChart = useCallback(async () => {
-		if (selectedTargets.length === 0 || selectedMetrics.length === 0) {
-			setError(t`Select at least one target and one metric`)
+		if (selectedMetrics.length === 0) {
+			setError(t`Select at least one metric`)
 			return
 		}
 		if (timeMode === "custom" && (!start || !end)) {
@@ -243,12 +206,6 @@ export default memo(() => {
 		setChartLoading(true)
 		setError("")
 		try {
-			const latestPortsByDevice = hasPortMetrics ? await ensurePorts() : portsByDevice
-			const allVisiblePortIDs = devices
-				.filter((device) => selectedTargets.includes(deviceTargetID(device)))
-				.flatMap((device) => latestPortsByDevice[deviceID(device)] ?? [])
-				.map(portID)
-				.filter(Boolean)
 			const metricsToQuery =
 				selectedMetricDefs.length > 0 ? selectedMetricDefs : selectedMetrics.map(fallbackMetricDefinition)
 			const nextSeries: QuerySeries[] = []
@@ -259,9 +216,10 @@ export default memo(() => {
 				}
 				const scope = metricScope(metric)
 				const unit = metricUnit(metric)
-				const queryPortIDs = scope === "port" ? (portMode === "selected" ? selectedPorts : allVisiblePortIDs) : []
+				// No explicit selection means "aggregate everything we discovered".
+				const queryPortIDs = scope === "port" ? (selectedPorts.length > 0 ? selectedPorts : allPortIDs) : []
 				if (scope === "port" && queryPortIDs.length === 0) {
-					throw new Error(t`Select at least one port for port metrics`)
+					throw new Error(t`No ports discovered yet`)
 				}
 				const metricSeries = await queryAggregateMetric({
 					metric: name,
@@ -269,7 +227,7 @@ export default memo(() => {
 					aggregate,
 					trafficView,
 					valueMode,
-					targetIDs: selectedTargets,
+					targetIDs: allTargetIDs,
 					portIDs: queryPortIDs,
 					timeParams: buildTimeParams(),
 				})
@@ -289,16 +247,12 @@ export default memo(() => {
 		}
 	}, [
 		aggregate,
+		allPortIDs,
+		allTargetIDs,
 		buildTimeParams,
-		devices,
-		ensurePorts,
-		hasPortMetrics,
-		portMode,
-		portsByDevice,
 		selectedPorts,
 		selectedMetricDefs,
-		selectedMetrics.length,
-		selectedTargets,
+		selectedMetrics,
 		t,
 		trafficView,
 		timeMode,
@@ -308,33 +262,23 @@ export default memo(() => {
 	])
 
 	const saveAsGraph = useCallback(async () => {
-		if (selectedMetrics.length === 0 || selectedTargets.length === 0) {
+		if (selectedMetrics.length === 0) {
 			return
 		}
 		setSavingGraph(true)
 		setError("")
 		try {
-			const latestPortsByDevice = hasPortMetrics ? await ensurePorts() : portsByDevice
-			// Honor the port selection mode: "selected" saves only the chosen
-			// ports; "all" saves every discovered port under the chosen targets.
-			const allVisiblePortIDs = devices
-				.filter((device) => selectedTargets.includes(deviceTargetID(device)))
-				.flatMap((device) => latestPortsByDevice[deviceID(device)] ?? [])
-				.map(portID)
-				.filter(Boolean)
-			const portIDs = hasPortMetrics && portMode === "selected" ? selectedPorts : allVisiblePortIDs
-			const firstTarget = targets.find((target) => targetID(target) === selectedTargets[0])
-			const defaultName = `${firstTarget?.Name ?? firstTarget?.name ?? "Aggregate"} aggregate`
-			const name = globalThis.prompt(t`Graph name`, defaultName)
-			if (!name) {
-				return
-			}
+			// An empty selection saves every discovered port, matching the chart.
+			const portIDs = hasPortMetrics ? (selectedPorts.length > 0 ? selectedPorts : allPortIDs) : []
+			const firstDevice = devices[0]
+			const fallbackName = `${firstDevice ? deviceLabel(firstDevice) : "Aggregate"} aggregate`
+			const name = graphName.trim() || fallbackName
 			const graphID = createAggregateGraphID()
 			await pb.send(`/api/v1/aggregate-graphs`, {
 				method: "POST",
 				body: {
 					id: graphID,
-					Name: name.trim(),
+					Name: name,
 					Aggregation: aggregate,
 					ValueMode: valueMode,
 					Unit: selectedMetrics.every((metric) => metric.endsWith("_bps")) ? "bps" : "",
@@ -365,15 +309,12 @@ export default memo(() => {
 		}
 	}, [
 		aggregate,
+		allPortIDs,
 		devices,
-		ensurePorts,
+		graphName,
 		hasPortMetrics,
-		portMode,
-		portsByDevice,
 		selectedMetrics,
 		selectedPorts,
-		selectedTargets,
-		targets,
 		trafficView,
 		valueMode,
 		t,
@@ -408,65 +349,78 @@ export default memo(() => {
 					<Trans>Refresh</Trans>
 				</Button>
 			</div>
-			<div className="flex flex-wrap items-center justify-between gap-3">
+
+			<div className="flex flex-wrap items-center gap-3">
 				<TrafficViewSwitcher value={trafficView} onChange={applyTrafficView} allowRaw={isAdmin()} />
-				<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-					<span>{trafficViewLabel(trafficView)}</span>
-					<span>{valueMode}</span>
-					<span>{aggregate}</span>
+				<div className="flex items-center gap-2">
+					<span className="text-sm text-muted-foreground">
+						<Trans>Time range</Trans>
+					</span>
+					<Select
+						value={timeMode === "fixed" ? window : timeMode}
+						onValueChange={(value) => {
+							if (value === "realtime" || value === "custom") {
+								setTimeMode(value)
+							} else {
+								setTimeMode("fixed")
+								setWindow(value)
+							}
+						}}
+					>
+						<SelectTrigger className="w-36">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="realtime">
+								<Trans>Realtime</Trans>
+							</SelectItem>
+							<SelectItem value="15m">15m</SelectItem>
+							<SelectItem value="1h">1h</SelectItem>
+							<SelectItem value="6h">6h</SelectItem>
+							<SelectItem value="24h">24h</SelectItem>
+							<SelectItem value="7d">7d</SelectItem>
+							<SelectItem value="30d">30d</SelectItem>
+							<SelectItem value="custom">
+								<Trans>Custom</Trans>
+							</SelectItem>
+						</SelectContent>
+					</Select>
 				</div>
+				{timeMode === "custom" ? (
+					<div className="flex items-center gap-2">
+						<Input
+							type="datetime-local"
+							className="w-52"
+							value={start}
+							onChange={(event) => setStart(event.target.value)}
+						/>
+						<span className="text-muted-foreground">→</span>
+						<Input
+							type="datetime-local"
+							className="w-52"
+							value={end}
+							onChange={(event) => setEnd(event.target.value)}
+						/>
+					</div>
+				) : null}
+				<Button variant="ghost" size="sm" onClick={() => setAdvancedOpen((open) => !open)}>
+					<SettingsIcon className="me-1.5 h-4 w-4" />
+					<Trans>Advanced</Trans>
+					{advancedOpen ? (
+						<ChevronDownIcon className="ms-1 h-3.5 w-3.5" />
+					) : (
+						<ChevronRightIcon className="ms-1 h-3.5 w-3.5" />
+					)}
+				</Button>
+				<span className="ms-auto text-xs text-muted-foreground">
+					{trafficViewLabel(trafficView)} · {aggregate} · {valueMode}
+				</span>
 			</div>
 
-			<div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-				<div className="grid gap-4">
-					<Panel title={t`Targets`}>
-						<div className="grid max-h-[280px] gap-2 overflow-auto pe-1">
-							{targets.map((target) => {
-								const id = targetID(target)
-								return (
-									<div key={id} className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
-										<Checkbox
-											checked={selectedTargets.includes(id)}
-											onCheckedChange={() => toggleSelected(setSelectedTargets, id)}
-										/>
-										<span className="min-w-0">
-											<span className="block truncate text-sm font-medium">{target.Name ?? target.name ?? id}</span>
-											<span className="block truncate text-xs text-muted-foreground">
-												{target.kind ?? "target"} · {target.Host ?? target.host ?? id}
-											</span>
-										</span>
-									</div>
-								)
-							})}
-						</div>
-					</Panel>
-
-					<Panel title={t`Metrics`}>
-						<div className="grid max-h-[320px] gap-2 overflow-auto pe-1">
-							{metrics.map((metric) => {
-								const name = metricName(metric)
-								return (
-									<div key={name} className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
-										<Checkbox
-											checked={selectedMetrics.includes(name)}
-											onCheckedChange={() => toggleSelected(setSelectedMetrics, name)}
-										/>
-										<span className="min-w-0">
-											<span className="block truncate text-sm font-medium">{labelForMetric(metric)}</span>
-											<span className="block truncate text-xs text-muted-foreground">
-												{metricFamily(metric)} · {metricScope(metric)} · {metricUnit(metric) || "value"}
-											</span>
-										</span>
-									</div>
-								)
-							})}
-						</div>
-					</Panel>
-				</div>
-
-				<div className="grid gap-4">
-					<div className="grid gap-3 rounded-md border border-border p-4">
-						<div className="grid gap-3 md:grid-cols-4">
+			{advancedOpen ? (
+				<div className="grid gap-4 rounded-md border border-border p-4">
+					<div className="grid gap-3 sm:grid-cols-3">
+						<LabeledControl label={t`Aggregation`}>
 							<Select value={aggregate} onValueChange={(value: AggregateMethod) => setAggregate(value)}>
 								<SelectTrigger>
 									<SelectValue />
@@ -479,43 +433,8 @@ export default memo(() => {
 									<SelectItem value="count">count</SelectItem>
 								</SelectContent>
 							</Select>
-							<Select value={valueMode} onValueChange={setValueMode}>
-								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="corrected">corrected</SelectItem>
-									{isAdmin() && <SelectItem value="raw">raw</SelectItem>}
-									{isAdmin() && <SelectItem value="both">both</SelectItem>}
-								</SelectContent>
-							</Select>
-							<Select value={timeMode} onValueChange={setTimeMode}>
-								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="realtime">realtime</SelectItem>
-									<SelectItem value="fixed">fixed</SelectItem>
-									<SelectItem value="custom">custom</SelectItem>
-								</SelectContent>
-							</Select>
-							{timeMode === "fixed" ? (
-								<Select value={window} onValueChange={setWindow}>
-									<SelectTrigger>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="5m">5m</SelectItem>
-										<SelectItem value="10m">10m</SelectItem>
-										<SelectItem value="15m">15m</SelectItem>
-										<SelectItem value="30m">30m</SelectItem>
-										<SelectItem value="1h">1h</SelectItem>
-										<SelectItem value="24h">24h</SelectItem>
-										<SelectItem value="7d">7d</SelectItem>
-										<SelectItem value="30d">30d</SelectItem>
-									</SelectContent>
-								</Select>
-							) : null}
+						</LabeledControl>
+						<LabeledControl label={t`Step`}>
 							<Select value={step} onValueChange={setStep}>
 								<SelectTrigger>
 									<SelectValue />
@@ -530,88 +449,96 @@ export default memo(() => {
 									<SelectItem value="3600">1h</SelectItem>
 								</SelectContent>
 							</Select>
+						</LabeledControl>
+						<LabeledControl label={t`Value mode`}>
+							<Select value={valueMode} onValueChange={setValueMode}>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="corrected">corrected</SelectItem>
+									{isAdmin() && <SelectItem value="raw">raw</SelectItem>}
+									{isAdmin() && <SelectItem value="both">both</SelectItem>}
+								</SelectContent>
+							</Select>
+						</LabeledControl>
+					</div>
+					<div>
+						<div className="mb-2 text-sm font-medium">
+							<Trans>Metrics</Trans>
+							<span className="ms-2 text-xs font-normal text-muted-foreground">
+								<Trans>Traffic in/out is preselected; pick others only when needed.</Trans>
+							</span>
 						</div>
-						{timeMode === "custom" ? (
-							<div className="grid gap-3 md:grid-cols-2">
-								<Input type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} />
-								<Input type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} />
-							</div>
-						) : null}
-						{hasPortMetrics ? (
-							<div className="grid gap-3">
-								<Select value={portMode} onValueChange={setPortMode}>
-									<SelectTrigger className="md:w-56">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="all">
-											<Trans>All discovered ports</Trans>
-										</SelectItem>
-										<SelectItem value="selected">
-											<Trans>Selected ports</Trans>
-										</SelectItem>
-									</SelectContent>
-								</Select>
-								{portMode === "selected" ? (
-									<div className="grid max-h-[220px] gap-2 overflow-auto rounded-md border border-border p-2">
-										{visiblePorts.length === 0 ? (
-											<div className="px-2 py-1 text-sm text-muted-foreground">
-												<Trans>No discovered ports for selected targets.</Trans>
-											</div>
-										) : (
-											visiblePorts.map((port) => {
-												const id = portID(port)
-												return (
-													<div key={id} className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
-														<Checkbox
-															checked={selectedPorts.includes(id)}
-															onCheckedChange={() => toggleSelected(setSelectedPorts, id)}
-														/>
-														<span className="min-w-0">
-															<span className="block truncate text-sm font-medium">{portLabel(port)}</span>
-															<span className="block truncate text-xs text-muted-foreground">
-																{port.deviceName} · {port.OperStatus ?? port.oper_status ?? "unknown"}
-															</span>
-														</span>
-													</div>
-												)
-											})
-										)}
-									</div>
-								) : (
-									<div className="text-sm text-muted-foreground">
-										<Trans>Using every discovered port under the selected targets.</Trans>
-									</div>
-								)}
-							</div>
-						) : null}
-						<div className="flex items-center justify-between gap-3">
-							<div className="text-sm text-muted-foreground">
-								{selectedTargets.length} <Trans>targets</Trans> · {selectedMetrics.length} <Trans>metrics</Trans>
-							</div>
-							<div className="flex items-center gap-2">
-								<Button
-									variant="outline"
-									onClick={() => downloadAggregateCSV(series, trafficView)}
-									disabled={series.length === 0}
-								>
-									<DownloadIcon className="me-2 h-4 w-4" />
-									<Trans>Export CSV</Trans>
-								</Button>
-								<Button
-									variant="outline"
-									onClick={saveAsGraph}
-									disabled={savingGraph || selectedMetrics.length === 0 || selectedTargets.length === 0}
-								>
-									<SaveIcon className="me-2 h-4 w-4" />
-									<Trans>Save as graph</Trans>
-								</Button>
-								<Button onClick={refreshChart} disabled={chartLoading || loading}>
-									<BarChart3Icon className="me-2 h-4 w-4" />
-									<Trans>Refresh</Trans>
-								</Button>
-							</div>
+						<div className="grid max-h-[240px] gap-1 overflow-auto pe-1 sm:grid-cols-2">
+							{metrics.map((metric) => {
+								const name = metricName(metric)
+								return (
+									<button
+										type="button"
+										key={name}
+										className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-start hover:bg-muted/60"
+										onClick={() => toggleSelected(setSelectedMetrics, name)}
+									>
+										<Checkbox className="pointer-events-none" checked={selectedMetrics.includes(name)} />
+										<span className="min-w-0">
+											<span className="block truncate text-sm">{labelForMetric(metric)}</span>
+											<span className="block truncate text-xs text-muted-foreground">
+												{metricFamily(metric)} · {metricScope(metric)} · {metricUnit(metric) || "value"}
+											</span>
+										</span>
+									</button>
+								)
+							})}
 						</div>
+					</div>
+				</div>
+			) : null}
+
+			<div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+				<PortPicker
+					devices={devices}
+					portsByDevice={portsByDevice}
+					selectedPorts={selectedPorts}
+					setSelectedPorts={setSelectedPorts}
+					expandedDevices={expandedDevices}
+					setExpandedDevices={setExpandedDevices}
+					search={portSearch}
+					setSearch={setPortSearch}
+					disabled={!hasPortMetrics}
+				/>
+
+				<div className="grid content-start gap-4">
+					<div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3">
+						<Input
+							className="w-64"
+							placeholder={t`Graph name`}
+							value={graphName}
+							onChange={(event) => setGraphName(event.target.value)}
+						/>
+						<Button variant="outline" onClick={saveAsGraph} disabled={savingGraph || selectedMetrics.length === 0}>
+							<SaveIcon className="me-2 h-4 w-4" />
+							<Trans>Save as graph</Trans>
+						</Button>
+						<Button
+							variant="outline"
+							onClick={() => downloadAggregateCSV(series, trafficView)}
+							disabled={series.length === 0}
+						>
+							<DownloadIcon className="me-2 h-4 w-4" />
+							<Trans>Export CSV</Trans>
+						</Button>
+						<Button onClick={refreshChart} disabled={chartLoading || loading}>
+							<BarChart3Icon className="me-2 h-4 w-4" />
+							<Trans>Refresh</Trans>
+						</Button>
+						<span className="ms-auto text-sm text-muted-foreground">
+							{selectedPorts.length > 0 ? (
+								<Trans>{selectedPorts.length} ports selected</Trans>
+							) : (
+								<Trans>All discovered ports</Trans>
+							)}
+						</span>
 					</div>
 
 					<div className="rounded-md border border-border p-4">
@@ -639,6 +566,179 @@ export default memo(() => {
 		</div>
 	)
 })
+
+function PortPicker({
+	devices,
+	portsByDevice,
+	selectedPorts,
+	setSelectedPorts,
+	expandedDevices,
+	setExpandedDevices,
+	search,
+	setSearch,
+	disabled,
+}: {
+	devices: NetworkDevice[]
+	portsByDevice: Record<string, NetworkPort[]>
+	selectedPorts: string[]
+	setSelectedPorts: React.Dispatch<React.SetStateAction<string[]>>
+	expandedDevices: Record<string, boolean>
+	setExpandedDevices: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+	search: string
+	setSearch: (value: string) => void
+	disabled: boolean
+}) {
+	const { t } = useLingui()
+	const query = search.trim().toLowerCase()
+	const selected = new Set(selectedPorts)
+
+	const groups = devices
+		.map((device) => {
+			const id = deviceID(device)
+			const label = deviceLabel(device)
+			const ports = portsByDevice[id] ?? []
+			const matching = query
+				? label.toLowerCase().includes(query)
+					? ports
+					: ports.filter((port) => portSearchText(port).includes(query))
+				: ports
+			return { device, id, label, ports, matching }
+		})
+		.filter((group) => group.matching.length > 0 || !query)
+
+	const toggleDevice = (portIDs: string[], allSelected: boolean) => {
+		setSelectedPorts((current) => {
+			const next = new Set(current)
+			for (const id of portIDs) {
+				if (allSelected) {
+					next.delete(id)
+				} else {
+					next.add(id)
+				}
+			}
+			return Array.from(next)
+		})
+	}
+
+	return (
+		<div className="grid content-start gap-3 rounded-md border border-border p-3">
+			<div className="flex items-center justify-between">
+				<div className="text-sm font-medium">
+					<Trans>Ports</Trans>
+				</div>
+				{selectedPorts.length > 0 ? (
+					<button
+						type="button"
+						className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+						onClick={() => setSelectedPorts([])}
+					>
+						<Trans>Clear selection</Trans>
+					</button>
+				) : null}
+			</div>
+			{disabled ? (
+				<div className="text-sm text-muted-foreground">
+					<Trans>Selected metrics do not aggregate per port.</Trans>
+				</div>
+			) : (
+				<>
+					<div className="relative">
+						<SearchIcon className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+						<Input
+							className="ps-8"
+							placeholder={t`Search ports...`}
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+						/>
+					</div>
+					<div className="text-xs text-muted-foreground">
+						{selectedPorts.length > 0 ? (
+							<Trans>{selectedPorts.length} ports selected</Trans>
+						) : (
+							<Trans>Nothing selected: all ports are aggregated.</Trans>
+						)}
+					</div>
+					<div className="grid max-h-[520px] gap-1 overflow-auto pe-1">
+						{groups.length === 0 ? (
+							<div className="px-2 py-1 text-sm text-muted-foreground">
+								<Trans>No ports match the search.</Trans>
+							</div>
+						) : null}
+						{groups.map((group) => {
+							const visiblePorts = group.matching
+							const groupIDs = visiblePorts.map(portID).filter(Boolean)
+							const selectedCount = groupIDs.filter((id) => selected.has(id)).length
+							const allSelected = groupIDs.length > 0 && selectedCount === groupIDs.length
+							const expanded = query ? true : (expandedDevices[group.id] ?? false)
+							return (
+								<div key={group.id}>
+									<div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-muted/60">
+										<Checkbox
+											checked={allSelected ? true : selectedCount > 0 ? "indeterminate" : false}
+											onCheckedChange={() => toggleDevice(groupIDs, allSelected)}
+										/>
+										<button
+											type="button"
+											className="flex min-w-0 flex-1 items-center gap-1 text-start"
+											onClick={() =>
+												setExpandedDevices((current) => ({ ...current, [group.id]: !(current[group.id] ?? false) }))
+											}
+										>
+											{expanded ? (
+												<ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+											) : (
+												<ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+											)}
+											<span className="truncate text-sm font-medium">{group.label}</span>
+											<span className="ms-auto shrink-0 text-xs text-muted-foreground">
+												{selectedCount > 0 ? `${selectedCount}/` : ""}
+												{groupIDs.length}
+											</span>
+										</button>
+									</div>
+									{expanded
+										? visiblePorts.map((port) => {
+												const id = portID(port)
+												const oper = port.OperStatus ?? port.oper_status ?? ""
+												return (
+													<button
+														type="button"
+														key={id}
+														className="ms-5 flex w-[calc(100%-1.25rem)] cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-start hover:bg-muted/60"
+														onClick={() => toggleSelected(setSelectedPorts, id)}
+													>
+														<Checkbox className="pointer-events-none" checked={selected.has(id)} />
+														<span
+															className={`h-1.5 w-1.5 shrink-0 rounded-full ${oper === "up" ? "bg-green-500" : "bg-muted-foreground/40"}`}
+														/>
+														<span className="min-w-0">
+															<span className="block truncate text-sm">{portName(port)}</span>
+															{portAlias(port) ? (
+																<span className="block truncate text-xs text-muted-foreground">{portAlias(port)}</span>
+															) : null}
+														</span>
+													</button>
+												)
+											})
+										: null}
+								</div>
+							)
+						})}
+					</div>
+				</>
+			)}
+		</div>
+	)
+}
+
+function LabeledControl({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<div className="grid gap-1.5">
+			<span className="text-xs text-muted-foreground">{label}</span>
+			{children}
+		</div>
+	)
+}
 
 function AggregateLineChart({ series, trafficView }: { series: QuerySeries[]; trafficView: TrafficViewMode }) {
 	const chartRef = useRef<HTMLDivElement>(null)
@@ -669,15 +769,6 @@ function AggregateLineChart({ series, trafficView }: { series: QuerySeries[]; tr
 					<Trans>No metric samples found for this range.</Trans>
 				</div>
 			) : null}
-		</div>
-	)
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-	return (
-		<div className="rounded-md border border-border p-3">
-			<div className="mb-2 text-sm font-medium">{title}</div>
-			{children}
 		</div>
 	)
 }
@@ -777,14 +868,6 @@ function toggleSelected(setter: React.Dispatch<React.SetStateAction<string[]>>, 
 	setter((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
 }
 
-function targetID(target: TargetRecord) {
-	return target.ID ?? target.id ?? ""
-}
-
-function targetKind(target: TargetRecord) {
-	return target.kind ?? ""
-}
-
 function deviceID(device: NetworkDevice) {
 	return device.ID ?? device.id ?? ""
 }
@@ -793,14 +876,24 @@ function deviceTargetID(device: NetworkDevice) {
 	return device.TargetID ?? device.target_id ?? ""
 }
 
+function deviceLabel(device: NetworkDevice) {
+	return device.SysName ?? device.sys_name ?? device.Name ?? device.name ?? deviceID(device)
+}
+
 function portID(port: NetworkPort) {
 	return port.ID ?? port.id ?? ""
 }
 
-function portLabel(port: NetworkPort) {
-	const name = port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? portID(port)
-	const alias = port.IfAlias ?? port.if_alias
-	return alias ? `${name} · ${alias}` : name
+function portName(port: NetworkPort) {
+	return port.IfName ?? port.if_name ?? port.IfDescr ?? port.if_descr ?? portID(port)
+}
+
+function portAlias(port: NetworkPort) {
+	return port.IfAlias ?? port.if_alias ?? ""
+}
+
+function portSearchText(port: NetworkPort) {
+	return `${portName(port)} ${portAlias(port)} ${port.IfDescr ?? port.if_descr ?? ""}`.toLowerCase()
 }
 
 function metricName(metric: MetricDefinition) {
