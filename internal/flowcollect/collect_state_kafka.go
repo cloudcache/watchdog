@@ -135,7 +135,7 @@ func (r *KafkaCollectStateReader) ReadAllWithHistory(ctx context.Context, regist
 	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
 	boundaries := make([]collectStatePartitionBoundary, 0, len(partitions))
 	for index, partition := range partitions {
-		if partition < 0 || (index > 0 && partition == partitions[index-1]) {
+		if partition != int32(index) {
 			return CollectStateKafkaSnapshot{}, errors.New("Kafka collect-state partition metadata is invalid")
 		}
 		oldest, err := r.source.GetOffset(r.topic, partition, sarama.OffsetOldest)
