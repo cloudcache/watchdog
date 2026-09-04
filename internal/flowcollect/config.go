@@ -27,6 +27,7 @@ type Config struct {
 	ReceiveBufferBytes    int                 `yaml:"receive_buffer_bytes"`
 	MaxDatagramBytes      int                 `yaml:"max_datagram_bytes"`
 	PlanRefreshInterval   time.Duration       `yaml:"plan_refresh_interval"`
+	PlanHistoryMaxEntries int                 `yaml:"plan_history_max_entries"`
 	ExporterRefreshPeriod time.Duration       `yaml:"exporter_refresh_interval"`
 	DecoderStateTTL       time.Duration       `yaml:"decoder_state_ttl"`
 	WAL                   WALConfig           `yaml:"wal"`
@@ -104,6 +105,7 @@ func DefaultConfig() Config {
 		ReceiveBufferBytes:    32 << 20,
 		MaxDatagramBytes:      65535,
 		PlanRefreshInterval:   30 * time.Second,
+		PlanHistoryMaxEntries: 128,
 		ExporterRefreshPeriod: 30 * time.Second,
 		DecoderStateTTL:       30 * time.Minute,
 		WAL: WALConfig{
@@ -221,7 +223,7 @@ func (c Config) Validate() error {
 	if c.MaxDatagramBytes < 1500 || c.MaxDatagramBytes > 65535 {
 		return errors.New("flow_collect.max_datagram_bytes must be between 1500 and 65535")
 	}
-	if c.PlanRefreshInterval <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
+	if c.PlanRefreshInterval <= 0 || c.PlanHistoryMaxEntries <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
 		return errors.New("flow_collect refresh intervals and decoder_state_ttl must be positive")
 	}
 	if c.WAL.MaxBytes <= 0 || c.WAL.SegmentBytes <= 0 || c.WAL.SegmentBytes > c.WAL.MaxBytes || c.WAL.MaxAge <= 0 || c.WAL.FsyncInterval <= 0 {
@@ -316,6 +318,9 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.PlanRefreshInterval, err = envDuration("WATCHDOG_FLOW_COLLECT_PLAN_REFRESH_INTERVAL", c.PlanRefreshInterval); err != nil {
+		return err
+	}
+	if c.PlanHistoryMaxEntries, err = envInt("WATCHDOG_FLOW_COLLECT_PLAN_HISTORY_MAX_ENTRIES", c.PlanHistoryMaxEntries); err != nil {
 		return err
 	}
 	if c.ExporterRefreshPeriod, err = envDuration("WATCHDOG_FLOW_COLLECT_EXPORTER_REFRESH_INTERVAL", c.ExporterRefreshPeriod); err != nil {

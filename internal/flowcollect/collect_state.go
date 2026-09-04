@@ -38,14 +38,18 @@ type CollectStateStore struct {
 }
 
 func OpenCollectStateStore(dir, collectorID string, registry *Registry, decoder *Decoder) (*CollectStateStore, error) {
-	return openCollectStateStore(dir, collectorID, registry, decoder, nil)
+	return openCollectStateStore(dir, collectorID, registry, nil, decoder, nil)
 }
 
 func OpenCollectStateStoreWithRemote(dir, collectorID string, registry *Registry, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
-	return openCollectStateStore(dir, collectorID, registry, decoder, remote)
+	return openCollectStateStore(dir, collectorID, registry, nil, decoder, remote)
 }
 
-func openCollectStateStore(dir, collectorID string, registry *Registry, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
+func OpenCollectStateStoreWithRecovery(dir, collectorID string, registry *Registry, plans *PlanHistory, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
+	return openCollectStateStore(dir, collectorID, registry, plans, decoder, remote)
+}
+
+func openCollectStateStore(dir, collectorID string, registry *Registry, plans *PlanHistory, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	collectorID = strings.TrimSpace(collectorID)
 	if dir == "." || collectorID == "" || registry == nil || decoder == nil {
@@ -58,7 +62,7 @@ func openCollectStateStore(dir, collectorID string, registry *Registry, decoder 
 		return nil, fmt.Errorf("create collect-state dir: %w", err)
 	}
 	store := &CollectStateStore{dir: dir, collectorID: collectorID}
-	if err := store.restore(registry, decoder, remote); err != nil {
+	if err := store.restore(registry, plans, decoder, remote); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -165,7 +169,7 @@ func (s *CollectStateStore) Persist(state *flowpb.CollectState) error {
 	return nil
 }
 
-func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder, remote []CollectStateRecord) error {
+func (s *CollectStateStore) restore(registry *Registry, plans *PlanHistory, decoder *Decoder, remote []CollectStateRecord) error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return fmt.Errorf("read collect-state dir: %w", err)
@@ -190,7 +194,7 @@ func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder, remote
 		if name != hex.EncodeToString(state.StateKey)+".state" {
 			return fmt.Errorf("restore collect state %s: state key does not match file name", name)
 		}
-		eligible, err := authorizeCollectState(state, registry, false)
+		eligible, err := authorizeCollectStateRecovery(state, registry, plans, false)
 		if err != nil {
 			return fmt.Errorf("restore collect state %s: %w", name, err)
 		}
@@ -206,7 +210,7 @@ func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder, remote
 		}
 		candidates = append(candidates, state)
 	}
-	remoteCandidates, err := eligibleRemoteCollectStates(decoder, registry, remote, now)
+	remoteCandidates, err := eligibleRemoteCollectStates(decoder, registry, plans, remote, now)
 	if err != nil {
 		return err
 	}
@@ -249,7 +253,7 @@ func RestoreRemoteCollectStates(decoder *Decoder, registry *Registry, records []
 	if decoder == nil || registry == nil || now.IsZero() {
 		return 0, errors.New("decoder, registry, and restore time are required")
 	}
-	candidates, err := eligibleRemoteCollectStates(decoder, registry, records, now)
+	candidates, err := eligibleRemoteCollectStates(decoder, registry, nil, records, now)
 	if err != nil {
 		return 0, err
 	}
@@ -265,14 +269,14 @@ func RestoreRemoteCollectStates(decoder *Decoder, registry *Registry, records []
 	return len(selected), nil
 }
 
-func eligibleRemoteCollectStates(decoder *Decoder, registry *Registry, records []CollectStateRecord, now time.Time) ([]*flowpb.CollectState, error) {
+func eligibleRemoteCollectStates(decoder *Decoder, registry *Registry, plans *PlanHistory, records []CollectStateRecord, now time.Time) ([]*flowpb.CollectState, error) {
 	candidates := make([]*flowpb.CollectState, 0, len(records))
 	for index, record := range records {
 		state := record.State
 		if err := validateCollectState(state, ""); err != nil {
 			return nil, fmt.Errorf("collect-state record %d partition=%d offset=%d: %w", index, record.Partition, record.Offset, err)
 		}
-		eligible, err := authorizeCollectState(state, registry, true)
+		eligible, err := authorizeCollectStateRecovery(state, registry, plans, true)
 		if err != nil {
 			return nil, fmt.Errorf("collect-state record %d: %w", index, err)
 		}
@@ -312,6 +316,31 @@ func authorizeCollectState(state *flowpb.CollectState, registry *Registry, allow
 		return false, nil
 	}
 	return true, nil
+}
+
+// authorizeCollectStateRecovery first applies the active ownership fence. A
+// same-collector historical plan may only recover a source tuple which is no
+// longer admitted by the active plan. Reusing an active tuple for a different
+// tenant/exporter must not restore old templates into the decoder's shared
+// source/domain namespace.
+func authorizeCollectStateRecovery(state *flowpb.CollectState, registry *Registry, plans *PlanHistory, allowPreviousOwner bool) (bool, error) {
+	eligible, err := authorizeCollectState(state, registry, allowPreviousOwner)
+	if eligible || err != nil || plans == nil {
+		return eligible, err
+	}
+	if _, admitted := registry.Admit(Protocol(state.Protocol), addressFrom16(state.SourceIp), state.ObservationDomainId); admitted {
+		return false, nil
+	}
+	historical, ok := plans.Resolve(state.RegistryVersion)
+	if !ok || state.CollectorId != registry.Plan().CollectorID || historical.Plan().CollectorID != registry.Plan().CollectorID {
+		return false, nil
+	}
+	receivedAt := time.UnixMilli(state.ReceivedAtUnixMs)
+	plan := historical.Plan()
+	if (!plan.NotBefore.IsZero() && receivedAt.Before(plan.NotBefore)) || !receivedAt.Before(plan.ExpiresAt) {
+		return false, nil
+	}
+	return authorizeCollectState(state, historical, false)
 }
 
 func selectCollectStates(states []*flowpb.CollectState) ([]*flowpb.CollectState, error) {

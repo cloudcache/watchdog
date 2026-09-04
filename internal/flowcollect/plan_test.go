@@ -79,6 +79,37 @@ func TestPlanV2RequiresOwnershipEpoch(t *testing.T) {
 	}
 }
 
+func TestCompiledRegistryOwnsAnImmutablePlanSnapshot(t *testing.T) {
+	now := time.Now()
+	domain := uint64(42)
+	ifIndex := uint32(7)
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{
+		Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", ObservationDomainID: &domain,
+		TenantID: "tenant", ExporterID: "exporter", TargetID: "target", SamplingMode: SamplingModeSampled,
+		SamplingRules: []SamplingRule{{ObservationDomainID: &domain, IfIndex: &ifIndex, Mode: SamplingModeSampled, Rate: 100}},
+		Observations:  map[uint32]Observation{7: {Direction: 1}}, Enabled: true,
+	}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.PartitionMap[0] = 99
+	plan.Sources[0].TenantID = "mutated-input"
+	plan.Sources[0].SamplingRules[0].Rate = 999
+	plan.Sources[0].Observations[7] = Observation{Direction: 2}
+	returned := registry.Plan()
+	returned.PartitionMap[0] = 88
+	returned.Sources[0].TenantID = "mutated-output"
+	returned.Sources[0].SamplingRules[0].Rate = 888
+	returned.Sources[0].Observations[7] = Observation{Direction: 2}
+
+	snapshot := registry.Plan()
+	if snapshot.PartitionMap[0] == 99 || snapshot.PartitionMap[0] == 88 || snapshot.Sources[0].TenantID != "tenant" || snapshot.Sources[0].SamplingRules[0].Rate != 100 || snapshot.Sources[0].Observations[7].Direction != 1 {
+		t.Fatalf("compiled registry plan was mutated: %+v", snapshot)
+	}
+}
+
 func validPlan(now time.Time) Plan {
 	partitionMap := make([]uint32, VirtualShardCount)
 	for index := range partitionMap {

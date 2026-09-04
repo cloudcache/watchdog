@@ -65,6 +65,34 @@ func TestKafkaCollectStateReaderAppliesTombstone(t *testing.T) {
 	}
 }
 
+func TestKafkaCollectStateReaderUsesHistoryForRemovedSource(t *testing.T) {
+	decoder, record, decoded := collectStateFixture(t)
+	historical := collectStateRegistry(t, "collector-a", 1, record.Source.Addr())
+	state, err := BuildCollectState(record, decoded, historical.Plan().Sources[0], "collector-a", decoder)
+	decoder.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activePlan := historical.Plan()
+	activePlan.Revision = 2
+	activePlan.Sources = nil
+	active, err := CompilePlan(activePlan, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		marshalCollectStateMessage(t, "state", 0, 0, state),
+	}}, map[int32][2]int64{0: {0, 1}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	records, err := reader.ReadWithHistory(context.Background(), active, testPlanHistory(active, historical, active))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].State.RegistryVersion != historical.Plan().Revision {
+		t.Fatalf("historical state was not retained: %+v", records)
+	}
+}
+
 func TestKafkaCollectStateReaderRejectsKeyMismatch(t *testing.T) {
 	decoder, record, decoded := collectStateFixture(t)
 	state, err := BuildCollectState(record, decoded, SourceBinding{TenantID: "tenant-a", ExporterID: "exporter-a", OwnershipEpoch: 2}, "collector-a", decoder)

@@ -329,6 +329,60 @@ func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesHistoricalPlanBindingAndPartitionMap(t *testing.T) {
+	now := time.Now()
+	historicalPlan := validPlan(now)
+	historicalPlan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.1/32", TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", SamplingMode: SamplingModeSampled, Enabled: true}}
+	historicalPlan.PartitionMapVersion = 11
+	for index := range historicalPlan.PartitionMap {
+		historicalPlan.PartitionMap[index] = 3
+	}
+	historical, err := CompilePlan(historicalPlan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activePlan := historicalPlan
+	activePlan.Revision = 2
+	activePlan.PartitionMapVersion = 12
+	activePlan.Sources = nil
+	activePlan.PartitionMap = append([]uint32(nil), activePlan.PartitionMap...)
+	for index := range activePlan.PartitionMap {
+		activePlan.PartitionMap[index] = 7
+	}
+	active, err := CompilePlan(activePlan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), historicalPlan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	packet := netflowlegacy.PacketNetFlowV5{Version: 5, SysUptime: 1000, UnixSecs: uint32(now.Unix()), SamplingInterval: 100, Records: []netflowlegacy.RecordsNetFlowV5{{SrcAddr: 0x0a000001, DstAddr: 0xcb007101, DPkts: 2, DOctets: 1000, Proto: 17}}}
+	payload, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow5, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), RegistryVersion: historicalPlan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, _ := NewDecoder()
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), activePlan.CollectorID, active, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingPublisher{}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: active, Plans: testPlanHistory(active, historical, active), WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.batches) != 1 || publisher.batches[0].PartitionMapVersion != 11 || publisher.batches[0].PhysicalPartition != 3 {
+		t.Fatalf("old WAL used the wrong plan: %+v", publisher.batches)
+	}
+}
+
 func TestRunnerOverlapsQualityFsyncWithKafkaButWaitsBeforeTerminalACK(t *testing.T) {
 	now := time.Now()
 	plan := validPlan(now)

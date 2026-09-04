@@ -21,6 +21,7 @@ var (
 type Runner struct {
 	Config       Config
 	Registry     *Registry
+	Plans        *PlanHistory
 	WAL          *WAL
 	Decoder      *Decoder
 	State        *CollectStateStore
@@ -237,11 +238,15 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 	if err := r.WAL.WaitDurable(ctx, record); err != nil {
 		return err
 	}
-	plan := r.Registry.Plan()
-	if record.RegistryVersion != plan.Revision {
-		return fmt.Errorf("%w: have %d need %d", ErrPlanRevisionUnavailable, plan.Revision, record.RegistryVersion)
+	registry, available := r.registryForRevision(record.RegistryVersion)
+	if !available {
+		return fmt.Errorf("%w: revision %d", ErrPlanRevisionUnavailable, record.RegistryVersion)
 	}
-	binding, admitted := r.Registry.Admit(record.Protocol, record.Source.Addr(), record.ObservationDomainID)
+	plan := registry.Plan()
+	if (!plan.NotBefore.IsZero() && record.ReceivedAt.Before(plan.NotBefore)) || !record.ReceivedAt.Before(plan.ExpiresAt) {
+		return fmt.Errorf("%w: revision %d was not valid at receive time", ErrPlanRevisionUnavailable, record.RegistryVersion)
+	}
+	binding, admitted := registry.Admit(record.Protocol, record.Source.Addr(), record.ObservationDomainID)
 	if !admitted || binding.TenantID != record.TenantID || binding.ExporterID != record.ExporterID {
 		return errors.New("WAL source binding no longer matches its signed plan")
 	}
@@ -346,6 +351,16 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 	}
 	qualityComplete = true
 	return nil
+}
+
+func (r *Runner) registryForRevision(revision uint64) (*Registry, bool) {
+	if r.Plans != nil {
+		return r.Plans.Resolve(revision)
+	}
+	if r.Registry == nil || r.Registry.Plan().Revision != revision {
+		return nil, false
+	}
+	return r.Registry, true
 }
 
 func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram) (DecodedDatagram, error) {

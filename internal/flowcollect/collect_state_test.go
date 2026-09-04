@@ -155,6 +155,73 @@ func TestCollectStateCheckpointDoesNotRestoreExpiredTemplate(t *testing.T) {
 	}
 }
 
+func TestCollectStateRecoveryUsesExactHistoricalPlanForRemovedSource(t *testing.T) {
+	decoder, record, decoded := collectStateFixture(t)
+	historical := collectStateRegistry(t, "collector-a", 1, record.Source.Addr())
+	state, err := BuildCollectState(record, decoded, historical.Plan().Sources[0], "collector-a", decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	store, err := OpenCollectStateStore(dir, "collector-a", historical, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Persist(state); err != nil {
+		t.Fatal(err)
+	}
+	decoder.Close()
+
+	activePlan := historical.Plan()
+	activePlan.Revision = 2
+	activePlan.Sources = nil
+	active, err := CompilePlan(activePlan, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := testPlanHistory(active, historical, active)
+	restored, _ := NewDecoder()
+	defer restored.Close()
+	recovered, err := OpenCollectStateStoreWithRecovery(dir, "collector-a", active, history, restored, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.RestoredCount() != 1 {
+		t.Fatalf("restored states=%d, want 1", recovered.RestoredCount())
+	}
+	if _, err := restored.Decode(decodeWALRecord(ProtocolNetFlow9, mustMarshalNFv9(t, netflowDataPacket()))); err != nil {
+		t.Fatalf("historical template was not restored: %v", err)
+	}
+}
+
+func TestCollectStateRecoveryRejectsHistoricalStateWhenTupleIsRebound(t *testing.T) {
+	decoder, record, decoded := collectStateFixture(t)
+	historical := collectStateRegistry(t, "collector-a", 1, record.Source.Addr())
+	state, err := BuildCollectState(record, decoded, historical.Plan().Sources[0], "collector-a", decoder)
+	decoder.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activePlan := historical.Plan()
+	activePlan.Revision = 2
+	activePlan.Sources = append([]SourceBinding(nil), activePlan.Sources...)
+	activePlan.Sources[0].TenantID = "tenant-b"
+	activePlan.Sources[0].ExporterID = "exporter-b"
+	activePlan.Sources[0].OwnershipEpoch = 2
+	active, err := CompilePlan(activePlan, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := testPlanHistory(active, historical, active)
+	eligible, err := authorizeCollectStateRecovery(state, active, history, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("historical state crossed an active tuple rebind")
+	}
+}
+
 func TestCollectStateV2IdentitySurvivesOwnerChangeAndEpochFencesWrites(t *testing.T) {
 	decoder, record, decoded := collectStateFixture(t)
 	defer decoder.Close()

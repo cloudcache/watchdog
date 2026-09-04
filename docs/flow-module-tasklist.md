@@ -362,7 +362,7 @@
 
 ### FLOW-02 GoFlow2 解码、采样归一与 normalized Kafka 契约
 
-当前状态：**进行中**。GoFlow2、normalized、单节点 collect-state、DLQ/quarantine、质量状态机、本地 journal/snapshot 与指标出口已经贯通；Kafka 启动回读、plan/attempt 持久化、跨 owner 质量状态和生产容量尚未闭环。
+当前状态：**进行中**。GoFlow2、normalized、单节点 collect-state、DLQ/quarantine、质量状态机、本地 journal/snapshot、Kafka 启动回读、签名 plan history 与指标出口已经贯通；attempt 持久化、跨 owner 质量状态和生产容量尚未闭环。
 
 - [x] **FLOW-02A GoFlow2 adapter**：同进程 GoFlow2 v3 解码 sFlow v5、NetFlow v5/v9、IPFIX；sFlow 按 sample 转换并保留 sub-agent/source/sample-pool/drops，NetFlow v5 保留 ASN/采样率，v9/IPFIX 按 exporter/domain 隔离内存模板。
 - [x] **FLOW-02B 计数与契约**：sampled/pre-scaled 明确分支、零采样率拒绝、精确 sampling rule、乘法溢出拒绝；protobuf v1 补齐 ASN 和 sFlow 状态，xxHash64/4096 virtual shard、稳定 child batch ID、records/bytes 边界均已有单测。
@@ -372,7 +372,9 @@
   - [x] **FLOW-02D2 发布安全点与 worker ownership**：WAL 是唯一 dispatch source；exporter/domain affinity queue；状态先本地 durable、再 Kafka `acks=all`、再 ACK2 child 0、最后 data children；已确认 state child 重试不重发；template-pending 保留 WAL；进程内 retry 推进 `replay_generation`。
   - [x] **FLOW-02D3A owner-independent 恢复契约核心**：CollectState v2 已拆分稳定 `state_identity_key` 与带 `ownership_epoch` 的 compacted `state_key`，plan schema v2 要求显式 epoch；decoder `state_generation` 可连续恢复；恢复选择器按当前签名 registry 校验 tenant/exporter/source/domain，按 `(epoch,generation)` 选新，epoch 复用或同序不同 payload fail closed；schema v1 仅允许同 collector 本地兼容。已覆盖跨 owner 恢复、旧 owner 迟到高 offset/高 generation 不能获胜、epoch 复用、冲突和 v1 边界。
   - [x] **FLOW-02D3B1 Kafka 启动恢复闸门**：启动先捕获各 partition `[log-start, high-watermark)`，并行读取固定边界；严格校验 message order/value 上限、Kafka key/payload、跨 partition 重复、tombstone、protobuf/digest/registry/epoch，受 2m timeout 与 262144 candidate 默认硬上限保护；本地/远端候选先一次性选择再恢复 decoder，完成前不打开 WAL/runner/listener。已覆盖边界冻结、coalesce、边界后消息排除、tombstone、key mismatch、timeout 与本地新状态不被远端旧状态反向覆盖。
-  - [ ] **FLOW-02D3B2 plan/attempt 持久化**：持久化 active/LKG plan history 与 datagram attempt generation；旧 WAL 必须按其 registry/partition-map history 重放，进程重启不得把有界失败尝试清零。
+  - [ ] **FLOW-02D3B2 plan/attempt 持久化（父项）**：以下 B2A 已完成；B2B 未完成前，进程重启仍可能把有界失败尝试清零。
+    - [x] **FLOW-02D3B2A 签名 plan history 与旧 WAL 精确解析**：原子持久化签名 revision，payload/revision/collector identity 不可变、拒绝 downgrade；active 不可用时仅回退到仍在有效期的最高 LKG。旧 WAL 依其 `registry_version` 使用历史 binding/sampling/partition map，并校验接收时间处于历史 plan 有效期；collect-state 仅对 active 已释放的元组使用同 collector 历史授权，相同元组已改绑时 fail closed。registry 对签名 plan 做深拷贝，调用方不能篡改。history 默认 128 项且满时拒绝写入，待 B2B 加入 WAL 引用感知回收。
+    - [ ] **FLOW-02D3B2B attempt journal 与 history 回收**：持久化 datagram attempt generation；失败后先 durable 推进 generation 再重试/DLQ，启动只恢复仍在 WAL 的 ID；按 WAL pending `registry_version` 安全回收 plan history，进程重启不得清零有界失败尝试或删除仍被引用的 revision。
   - [ ] **FLOW-02D3B3 Kafka/切换集成闭环**：创建并验证 compacted topic 配置、TLS/ACL/retention/容量与旧 epoch tombstone；完成 template/options corpus、真实多 broker 故障、进程重启、kill -9 和滚动 owner 切换集成测试。
 - [ ] **FLOW-02E 异常闭环（父项）**：以下 E1/E2A/E2B1/E3 已完成；跨 owner 质量状态尚未完成。
   - [x] **FLOW-02E1 DLQ/quarantine**：稳定 ID 的 `DecodeFailure` 与无 tenant/raw payload 的 `QuarantineEvent` protobuf；确定性 decode/normalize 错误有界指数退避，DLQ Kafka ack 后才确认 WAL；模板状态先于 DLQ；未知来源用固定异步队列和 per-source/global 双限流，慢 Kafka 不阻塞采集；DLQ raw payload 默认关闭且可设严格字节上限。

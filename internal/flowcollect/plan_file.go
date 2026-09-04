@@ -33,43 +33,56 @@ func LoadSignedPlan(planPath, publicKeyPath string, now time.Time) (*Registry, e
 }
 
 func VerifySignedPlan(envelopeData, publicKeyData []byte, now time.Time) (*Registry, error) {
+	verified, err := verifySignedPlanPayload(envelopeData, publicKeyData)
+	if err != nil {
+		return nil, err
+	}
+	return CompilePlan(verified.plan, now)
+}
+
+type verifiedSignedPlan struct {
+	plan    Plan
+	payload []byte
+}
+
+func verifySignedPlanPayload(envelopeData, publicKeyData []byte) (verifiedSignedPlan, error) {
 	var envelope signedPlanEnvelope
 	decoder := json.NewDecoder(strings.NewReader(string(envelopeData)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil {
-		return nil, fmt.Errorf("decode signed flow plan: %w", err)
+		return verifiedSignedPlan{}, fmt.Errorf("decode signed flow plan: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, errors.New("signed flow plan must contain exactly one JSON document")
+		return verifiedSignedPlan{}, errors.New("signed flow plan must contain exactly one JSON document")
 	}
 	if envelope.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported signed plan envelope version %d", envelope.SchemaVersion)
+		return verifiedSignedPlan{}, fmt.Errorf("unsupported signed plan envelope version %d", envelope.SchemaVersion)
 	}
 	payload, err := base64.StdEncoding.DecodeString(envelope.Payload)
 	if err != nil {
-		return nil, errors.New("decode signed plan payload")
+		return verifiedSignedPlan{}, errors.New("decode signed plan payload")
 	}
 	signature, err := base64.StdEncoding.DecodeString(envelope.Signature)
 	if err != nil {
-		return nil, errors.New("decode signed plan signature")
+		return verifiedSignedPlan{}, errors.New("decode signed plan signature")
 	}
 	publicKey, err := parseEd25519PublicKey(publicKeyData)
 	if err != nil {
-		return nil, err
+		return verifiedSignedPlan{}, err
 	}
 	if !ed25519.Verify(publicKey, payload, signature) {
-		return nil, errors.New("flow plan signature verification failed")
+		return verifiedSignedPlan{}, errors.New("flow plan signature verification failed")
 	}
 	var plan Plan
 	decoder = json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&plan); err != nil {
-		return nil, fmt.Errorf("decode flow plan payload: %w", err)
+		return verifiedSignedPlan{}, fmt.Errorf("decode flow plan payload: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, errors.New("flow plan payload must contain exactly one JSON document")
+		return verifiedSignedPlan{}, errors.New("flow plan payload must contain exactly one JSON document")
 	}
-	return CompilePlan(plan, now)
+	return verifiedSignedPlan{plan: plan, payload: payload}, nil
 }
 
 func parseEd25519PublicKey(data []byte) (ed25519.PublicKey, error) {

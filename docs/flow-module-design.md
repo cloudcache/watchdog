@@ -436,7 +436,11 @@ D3B 启动顺序冻结为：加载并验证 active/LKG plan 与 history → 捕�
 
 D3B1 已把 Kafka 回读接入该前置闸门：启动时先冻结每个 partition 的 `[log_start_offset, high_watermark)`，各 partition 并行读取且只接受边界内严格递增的消息；protobuf value 上限、Kafka key/`state_key` 一致性、跨 partition 重复 key、payload SHA/identity、当前签名 registry 与 epoch 全部校验，tombstone 删除同 key 候选。读取有全局 `collect_state_restore_timeout`，内存只保留当前 plan 可接收的最新 key，且受 `collect_state_restore_max_candidates` 硬上限保护。Kafka 边界读完后再次校验 plan 尚未过期，再把 Kafka 与本地候选在写入 decoder **之前一次性**按 `(ownership_epoch,state_generation)` 合并，避免“先恢复本地新状态、再被远端旧状态覆盖”；成功后才打开 WAL/quality/publisher/runner/listener。恢复数量与耗时由低基数 gauge 暴露。
 
-当前仍未完成的是 D3B2 的 active/LKG plan history 与跨进程 attempt generation，以及 D3B3 的 topic 配置/ACL/retention/旧 epoch tombstone 和真实多 broker/滚动切换故障注入；这些完成前不得宣称跨节点闭环。
+D3B2A 已持久化签名 plan history：首次接受的 revision 以 `fsync(file) → rename → fsync(directory)` 原子安装，revision/payload 不可变、collector identity 不可变且拒绝 revision 回退；active 文件损坏、缺失或不可用时，只能选择 history 中“签名有效且当前仍在有效期”的最高 revision 作为 LKG。历史 plan 可以过期但仍保留，旧 WAL 必须按 record 上的 `registry_version` 精确解析当时的 source binding、采样规则和 `partition_map_version/physical_partition`，并校验 record 的 `received_at` 落在该 plan 有效期内，绝不套用当前 plan。编译后的 registry 深拷贝签名 payload 中的 slice/map/pointer，调用方不能通过返回值改变内存中的签名事实。history 默认最多 128 个 revision；在尚未实现 WAL 引用感知的自动回收前，达到上限即 fail closed，禁止猜测删除仍被 WAL 引用的 revision。
+
+collect-state 恢复先服从当前 plan 的 ownership fence；仅当 active plan 已完全不再准入该 exporter/domain 元组时，才允许同一 collector 使用 state 自带 `registry_version` 对应的历史 plan 恢复旧 WAL 所需模板。若 active plan 已把相同元组改绑给其他 tenant/exporter，则历史状态拒绝进入共享 decoder，避免跨租户/跨出口模板污染。跨 collector 接管仍只能由当前 plan 中严格递增的 `ownership_epoch` 授权，不能借历史 plan 绕过。
+
+当前仍未完成的是 D3B2B 的跨进程 attempt generation 与 plan history 的 WAL 引用感知回收，以及 D3B3 的 topic 配置/ACL/retention/旧 epoch tombstone 和真实多 broker/滚动切换故障注入；这些完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -2080,6 +2084,7 @@ flow_collect:
   receive_buffer_bytes: 33554432
   max_datagram_bytes: 65535
   plan_refresh_interval: 30s
+  plan_history_max_entries: 128
   decoder_state_ttl: 30m
   wal:
     max_bytes: 1073741824000

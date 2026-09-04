@@ -1,0 +1,289 @@
+package flowcollect
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const signedPlanMaxBytes = 8 << 20
+
+type planHistoryEntry struct {
+	registry *Registry
+	payload  []byte
+}
+
+type PlanHistory struct {
+	mu      sync.RWMutex
+	dir     string
+	max     int
+	entries map[uint64]planHistoryEntry
+	active  *Registry
+	usedLKG bool
+}
+
+func OpenPlanHistory(planPath, publicKeyPath, dir string, maxEntries int, now time.Time) (*PlanHistory, error) {
+	planPath = filepath.Clean(strings.TrimSpace(planPath))
+	publicKeyPath = filepath.Clean(strings.TrimSpace(publicKeyPath))
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if planPath == "." || publicKeyPath == "." || dir == "." || maxEntries <= 0 || now.IsZero() {
+		return nil, errors.New("plan path, public key, history dir, max entries, and current time are required")
+	}
+	publicKey, err := readBoundedFile(publicKeyPath, 64<<10)
+	if err != nil {
+		return nil, fmt.Errorf("read flow plan public key: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("create flow plan history dir: %w", err)
+	}
+	history := &PlanHistory{dir: dir, max: maxEntries, entries: make(map[uint64]planHistoryEntry)}
+	if err := history.load(publicKey); err != nil {
+		return nil, err
+	}
+	activeEnvelope, activeReadErr := readBoundedFile(planPath, signedPlanMaxBytes)
+	if activeReadErr == nil {
+		verified, verifyErr := verifySignedPlanPayload(activeEnvelope, publicKey)
+		if verifyErr == nil {
+			registry, compileErr := CompilePlan(verified.plan, now)
+			if compileErr == nil {
+				if err := history.activate(activeEnvelope, verified, registry); err != nil {
+					return nil, err
+				}
+				return history, nil
+			}
+			activeReadErr = compileErr
+		} else {
+			activeReadErr = verifyErr
+		}
+	}
+	registry := history.latestActive(now)
+	if registry == nil {
+		return nil, fmt.Errorf("load active flow plan and LKG fallback: %w", activeReadErr)
+	}
+	history.active = registry
+	history.usedLKG = true
+	return history, nil
+}
+
+func (h *PlanHistory) load(publicKey []byte) error {
+	entries, err := os.ReadDir(h.dir)
+	if err != nil {
+		return fmt.Errorf("read flow plan history dir: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".plan") {
+			names = append(names, entry.Name())
+		}
+	}
+	if len(names) > h.max {
+		return fmt.Errorf("flow plan history has %d entries, limit is %d", len(names), h.max)
+	}
+	sort.Strings(names)
+	collectorID := ""
+	for _, name := range names {
+		revision, err := planHistoryRevision(name)
+		if err != nil {
+			return err
+		}
+		envelope, err := readBoundedFile(filepath.Join(h.dir, name), signedPlanMaxBytes)
+		if err != nil {
+			return fmt.Errorf("read flow plan history %s: %w", name, err)
+		}
+		verified, err := verifySignedPlanPayload(envelope, publicKey)
+		if err != nil {
+			return fmt.Errorf("verify flow plan history %s: %w", name, err)
+		}
+		if verified.plan.Revision != revision {
+			return fmt.Errorf("flow plan history %s revision does not match payload", name)
+		}
+		registry, err := compileHistoricalPlan(verified.plan)
+		if err != nil {
+			return fmt.Errorf("compile flow plan history %s: %w", name, err)
+		}
+		if collectorID == "" {
+			collectorID = registry.Plan().CollectorID
+		} else if registry.Plan().CollectorID != collectorID {
+			return fmt.Errorf("flow plan history %s changes collector identity", name)
+		}
+		h.entries[revision] = planHistoryEntry{registry: registry, payload: bytes.Clone(verified.payload)}
+	}
+	return nil
+}
+
+func (h *PlanHistory) activate(envelope []byte, verified verifiedSignedPlan, registry *Registry) error {
+	revision := registry.Plan().Revision
+	for cachedRevision, entry := range h.entries {
+		if entry.registry.Plan().CollectorID != registry.Plan().CollectorID {
+			return errors.New("active flow plan changes collector identity")
+		}
+		if cachedRevision > revision {
+			return fmt.Errorf("active flow plan revision %d is older than cached revision %d", revision, cachedRevision)
+		}
+	}
+	if existing, ok := h.entries[revision]; ok {
+		if !bytes.Equal(existing.payload, verified.payload) {
+			return fmt.Errorf("flow plan revision %d payload is immutable", revision)
+		}
+	} else {
+		if len(h.entries) >= h.max {
+			return fmt.Errorf("flow plan history limit %d reached; prune only after WAL references are gone", h.max)
+		}
+		if err := h.persist(revision, envelope); err != nil {
+			return err
+		}
+		h.entries[revision] = planHistoryEntry{registry: registry, payload: bytes.Clone(verified.payload)}
+	}
+	h.active = registry
+	return nil
+}
+
+func (h *PlanHistory) persist(revision uint64, envelope []byte) error {
+	if len(envelope) == 0 || len(envelope) > signedPlanMaxBytes {
+		return errors.New("signed flow plan exceeds history size limit")
+	}
+	temporary, err := os.CreateTemp(h.dir, ".plan-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create flow plan history temp file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o640); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("chmod flow plan history temp file: %w", err)
+	}
+	if err := writeFull(temporary, envelope); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write flow plan history: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("sync flow plan history: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close flow plan history: %w", err)
+	}
+	destination := filepath.Join(h.dir, fmt.Sprintf("%020d.plan", revision))
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return fmt.Errorf("install flow plan history: %w", err)
+	}
+	directory, err := os.Open(h.dir)
+	if err != nil {
+		return fmt.Errorf("open flow plan history dir: %w", err)
+	}
+	err = errors.Join(directory.Sync(), directory.Close())
+	if err != nil {
+		return fmt.Errorf("sync flow plan history dir: %w", err)
+	}
+	return nil
+}
+
+func (h *PlanHistory) latestActive(now time.Time) *Registry {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	revisions := make([]uint64, 0, len(h.entries))
+	for revision := range h.entries {
+		revisions = append(revisions, revision)
+	}
+	sort.Slice(revisions, func(i, j int) bool { return revisions[i] < revisions[j] })
+	for index := len(revisions) - 1; index >= 0; index-- {
+		entry := h.entries[revisions[index]]
+		registry, err := CompilePlan(entry.registry.Plan(), now)
+		if err == nil {
+			return registry
+		}
+	}
+	return nil
+}
+
+func (h *PlanHistory) Active() *Registry {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.active
+}
+
+func (h *PlanHistory) RevalidateActive(now time.Time) (*Registry, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.active == nil {
+		return nil, errors.New("active flow plan is unavailable")
+	}
+	registry, err := CompilePlan(h.active.Plan(), now)
+	if err != nil {
+		return nil, err
+	}
+	h.active = registry
+	entry := h.entries[registry.Plan().Revision]
+	entry.registry = registry
+	h.entries[registry.Plan().Revision] = entry
+	return registry, nil
+}
+
+func (h *PlanHistory) Resolve(revision uint64) (*Registry, bool) {
+	if h == nil || revision == 0 {
+		return nil, false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	entry, ok := h.entries[revision]
+	return entry.registry, ok
+}
+
+func (h *PlanHistory) Revisions() []uint64 {
+	if h == nil {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	revisions := make([]uint64, 0, len(h.entries))
+	for revision := range h.entries {
+		revisions = append(revisions, revision)
+	}
+	sort.Slice(revisions, func(i, j int) bool { return revisions[i] < revisions[j] })
+	return revisions
+}
+
+func (h *PlanHistory) UsedLKG() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.usedLKG
+}
+
+func planHistoryRevision(name string) (uint64, error) {
+	if len(name) != 25 || !strings.HasSuffix(name, ".plan") {
+		return 0, fmt.Errorf("invalid flow plan history file name %q", name)
+	}
+	revision, err := strconv.ParseUint(strings.TrimSuffix(name, ".plan"), 10, 64)
+	if err != nil || revision == 0 {
+		return 0, fmt.Errorf("invalid flow plan history file name %q", name)
+	}
+	return revision, nil
+}
+
+func readBoundedFile(path string, maxBytes int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() <= 0 || info.Size() > maxBytes {
+		return nil, fmt.Errorf("file size %d is outside 1..%d", info.Size(), maxBytes)
+	}
+	data := make([]byte, int(info.Size()))
+	if _, err := io.ReadFull(file, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}

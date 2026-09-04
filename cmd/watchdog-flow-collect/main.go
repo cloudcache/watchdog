@@ -27,14 +27,23 @@ func main() {
 	if err := cfg.FlowCollect.ValidateRuntime(); err != nil {
 		log.Fatal(err)
 	}
-	registry, err := flowcollect.LoadSignedPlan(cfg.FlowCollect.PlanFile, cfg.FlowCollect.PlanPublicKeyFile, time.Now())
+	if *check {
+		registry, err := flowcollect.LoadSignedPlan(cfg.FlowCollect.PlanFile, cfg.FlowCollect.PlanPublicKeyFile, time.Now())
+		if err != nil {
+			log.Fatal(err)
+		}
+		plan := registry.Plan()
+		log.Printf("flow-collect configuration valid: collector=%s plan_revision=%d sources=%d", plan.CollectorID, plan.Revision, len(plan.Sources))
+		return
+	}
+	planHistory, err := flowcollect.OpenPlanHistory(cfg.FlowCollect.PlanFile, cfg.FlowCollect.PlanPublicKeyFile, filepath.Join(cfg.FlowCollect.StateDir, "plan-history"), cfg.FlowCollect.PlanHistoryMaxEntries, time.Now())
 	if err != nil {
 		log.Fatal(err)
 	}
+	registry := planHistory.Active()
 	plan := registry.Plan()
-	if *check {
-		log.Printf("flow-collect configuration valid: collector=%s plan_revision=%d sources=%d", plan.CollectorID, plan.Revision, len(plan.Sources))
-		return
+	if planHistory.UsedLKG() {
+		log.Printf("active plan unavailable; using signed LKG: collector=%s plan_revision=%d expires_at=%s", plan.CollectorID, plan.Revision, plan.ExpiresAt.Format(time.RFC3339))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -50,16 +59,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	remoteStates, readErr := stateReader.Read(ctx, registry)
+	remoteStates, readErr := stateReader.ReadWithHistory(ctx, registry, planHistory)
 	closeErr := stateReader.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		log.Fatal(err)
 	}
-	registry, err = flowcollect.CompilePlan(plan, time.Now())
+	registry, err = planHistory.RevalidateActive(time.Now())
 	if err != nil {
 		log.Fatalf("flow plan is no longer active after collect-state restore: %v", err)
 	}
-	stateStore, err := flowcollect.OpenCollectStateStoreWithRemote(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, decoder, remoteStates)
+	stateStore, err := flowcollect.OpenCollectStateStoreWithRecovery(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, planHistory, decoder, remoteStates)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -89,7 +98,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
+	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, Plans: planHistory, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
 	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s metrics=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.Observability.Listen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
 	runCtx, cancel := context.WithCancel(ctx)
 	result := make(chan error, 2)

@@ -80,17 +80,31 @@ type Registry struct {
 }
 
 func CompilePlan(plan Plan, now time.Time) (*Registry, error) {
+	return compilePlan(plan, now, true)
+}
+
+func compileHistoricalPlan(plan Plan) (*Registry, error) {
+	return compilePlan(plan, time.Time{}, false)
+}
+
+func compilePlan(plan Plan, now time.Time, requireActive bool) (*Registry, error) {
+	plan = clonePlan(plan)
 	if plan.SchemaVersion != 1 && plan.SchemaVersion != 2 {
 		return nil, fmt.Errorf("unsupported plan schema version %d", plan.SchemaVersion)
 	}
 	if plan.Revision == 0 || strings.TrimSpace(plan.CollectorID) == "" {
 		return nil, errors.New("plan revision and collector_id are required")
 	}
-	if !plan.NotBefore.IsZero() && now.Before(plan.NotBefore) {
-		return nil, errors.New("plan is not active yet")
+	if plan.ExpiresAt.IsZero() || (!plan.NotBefore.IsZero() && !plan.NotBefore.Before(plan.ExpiresAt)) {
+		return nil, errors.New("plan validity interval is invalid")
 	}
-	if plan.ExpiresAt.IsZero() || !now.Before(plan.ExpiresAt) {
-		return nil, errors.New("plan is expired")
+	if requireActive {
+		if !plan.NotBefore.IsZero() && now.Before(plan.NotBefore) {
+			return nil, errors.New("plan is not active yet")
+		}
+		if !now.Before(plan.ExpiresAt) {
+			return nil, errors.New("plan is expired")
+		}
 	}
 	if plan.PartitionMapVersion == 0 {
 		return nil, errors.New("partition_map_version is required")
@@ -232,7 +246,53 @@ func optionalUint64Overlap(left, right *uint64) bool {
 	return left == nil || right == nil || *left == *right
 }
 
-func (r *Registry) Plan() Plan { return r.plan }
+func (r *Registry) Plan() Plan { return clonePlan(r.plan) }
+
+func clonePlan(plan Plan) Plan {
+	cloned := plan
+	cloned.PartitionMap = append([]uint32(nil), plan.PartitionMap...)
+	cloned.Sources = append([]SourceBinding(nil), plan.Sources...)
+	for index := range cloned.Sources {
+		source := &cloned.Sources[index]
+		if source.ObservationDomainID != nil {
+			value := *source.ObservationDomainID
+			source.ObservationDomainID = &value
+		}
+		source.SamplingRules = append([]SamplingRule(nil), source.SamplingRules...)
+		for ruleIndex := range source.SamplingRules {
+			rule := &source.SamplingRules[ruleIndex]
+			rule.ObservationDomainID = cloneUint64(rule.ObservationDomainID)
+			rule.SubAgentID = cloneUint32(rule.SubAgentID)
+			rule.SourceIDType = cloneUint32(rule.SourceIDType)
+			rule.SourceIDValue = cloneUint32(rule.SourceIDValue)
+			rule.IfIndex = cloneUint32(rule.IfIndex)
+		}
+		if source.Observations != nil {
+			observations := make(map[uint32]Observation, len(source.Observations))
+			for ifIndex, observation := range source.Observations {
+				observations[ifIndex] = observation
+			}
+			source.Observations = observations
+		}
+	}
+	return cloned
+}
+
+func cloneUint32(value *uint32) *uint32 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneUint64(value *uint64) *uint64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
 
 func (r *Registry) Admit(protocol Protocol, source netip.Addr, observationDomainID uint64) (SourceBinding, bool) {
 	if source.Is4In6() {

@@ -103,6 +103,10 @@ type collectStateReadResult struct {
 // consumers. Only messages below that frozen vector are eligible, so startup
 // is finite even while active owners continue publishing.
 func (r *KafkaCollectStateReader) Read(ctx context.Context, registry *Registry) ([]CollectStateRecord, error) {
+	return r.ReadWithHistory(ctx, registry, nil)
+}
+
+func (r *KafkaCollectStateReader) ReadWithHistory(ctx context.Context, registry *Registry, plans *PlanHistory) ([]CollectStateRecord, error) {
 	if r == nil || r.source == nil || r.topic == "" || r.timeout <= 0 || r.maxCandidates <= 0 || registry == nil || ctx == nil {
 		return nil, errors.New("Kafka collect-state reader and registry are required")
 	}
@@ -134,10 +138,10 @@ func (r *KafkaCollectStateReader) Read(ctx context.Context, registry *Registry) 
 		}
 		boundaries = append(boundaries, collectStatePartitionBoundary{partition: partition, oldest: oldest, newest: newest})
 	}
-	return r.readBoundaries(ctx, registry, boundaries)
+	return r.readBoundaries(ctx, registry, plans, boundaries)
 }
 
-func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *Registry, boundaries []collectStatePartitionBoundary) ([]CollectStateRecord, error) {
+func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *Registry, plans *PlanHistory, boundaries []collectStatePartitionBoundary) ([]CollectStateRecord, error) {
 	type activeConsumer struct {
 		boundary collectStatePartitionBoundary
 		consumer sarama.PartitionConsumer
@@ -230,7 +234,7 @@ func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *
 			cancel()
 			continue
 		}
-		eligible, err := authorizeCollectState(state, registry, true)
+		eligible, err := authorizeCollectStateRecovery(state, registry, plans, true)
 		if err != nil {
 			firstErr = fmt.Errorf("authorize Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
 			cancel()
