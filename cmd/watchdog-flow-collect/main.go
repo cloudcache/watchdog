@@ -39,21 +39,39 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	wal, err := flowcollect.OpenWAL(filepath.Join(cfg.FlowCollect.StateDir, "wal"), plan.CollectorID, cfg.FlowCollect.WAL)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer wal.Close()
+	metrics := &flowcollect.Metrics{}
+	restoreStartedAt := time.Now()
 	decoder, err := flowcollect.NewDecoderWithStateTTL(cfg.FlowCollect.DecoderStateTTL)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := flowcollect.OpenCollectStateStore(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, decoder)
+	stateReader, err := flowcollect.NewKafkaCollectStateReader(cfg.FlowCollect.Kafka, plan.CollectorID)
 	if err != nil {
 		log.Fatal(err)
 	}
-	metrics := &flowcollect.Metrics{}
+	remoteStates, readErr := stateReader.Read(ctx, registry)
+	closeErr := stateReader.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		log.Fatal(err)
+	}
+	registry, err = flowcollect.CompilePlan(plan, time.Now())
+	if err != nil {
+		log.Fatalf("flow plan is no longer active after collect-state restore: %v", err)
+	}
+	stateStore, err := flowcollect.OpenCollectStateStoreWithRemote(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, decoder, remoteStates)
+	if err != nil {
+		log.Fatal(err)
+	}
+	metrics.CollectStateRestoreCandidates.Store(int64(len(remoteStates)))
+	metrics.CollectStateRestored.Store(int64(stateStore.RestoredCount()))
+	metrics.CollectStateRestoreNanos.Store(time.Since(restoreStartedAt).Nanoseconds())
+	log.Printf("restored collect-state snapshot: collector=%s remote_candidates=%d restored=%d duration=%s", plan.CollectorID, len(remoteStates), stateStore.RestoredCount(), time.Since(restoreStartedAt))
+	wal, err := flowcollect.OpenWAL(filepath.Join(cfg.FlowCollect.StateDir, "wal"), plan.CollectorID, cfg.FlowCollect.WAL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer wal.Close()
 	quality := flowcollect.NewQualityTracker(cfg.FlowCollect.Quality, metrics)
 	qualityState, err := flowcollect.OpenQualityStateStore(filepath.Join(cfg.FlowCollect.StateDir, "quality-state"), plan.CollectorID, cfg.FlowCollect.Quality, quality, wal, metrics)
 	if err != nil {

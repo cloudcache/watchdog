@@ -34,9 +34,18 @@ type CollectStateStore struct {
 	dir         string
 	collectorID string
 	mu          sync.Mutex
+	restored    int
 }
 
 func OpenCollectStateStore(dir, collectorID string, registry *Registry, decoder *Decoder) (*CollectStateStore, error) {
+	return openCollectStateStore(dir, collectorID, registry, decoder, nil)
+}
+
+func OpenCollectStateStoreWithRemote(dir, collectorID string, registry *Registry, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
+	return openCollectStateStore(dir, collectorID, registry, decoder, remote)
+}
+
+func openCollectStateStore(dir, collectorID string, registry *Registry, decoder *Decoder, remote []CollectStateRecord) (*CollectStateStore, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	collectorID = strings.TrimSpace(collectorID)
 	if dir == "." || collectorID == "" || registry == nil || decoder == nil {
@@ -49,7 +58,7 @@ func OpenCollectStateStore(dir, collectorID string, registry *Registry, decoder 
 		return nil, fmt.Errorf("create collect-state dir: %w", err)
 	}
 	store := &CollectStateStore{dir: dir, collectorID: collectorID}
-	if err := store.restore(registry, decoder); err != nil {
+	if err := store.restore(registry, decoder, remote); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -156,7 +165,7 @@ func (s *CollectStateStore) Persist(state *flowpb.CollectState) error {
 	return nil
 }
 
-func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder) error {
+func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder, remote []CollectStateRecord) error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return fmt.Errorf("read collect-state dir: %w", err)
@@ -197,6 +206,11 @@ func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder) error 
 		}
 		candidates = append(candidates, state)
 	}
+	remoteCandidates, err := eligibleRemoteCollectStates(decoder, registry, remote, now)
+	if err != nil {
+		return err
+	}
+	candidates = append(candidates, remoteCandidates...)
 	selected, err := selectCollectStates(candidates)
 	if err != nil {
 		return err
@@ -206,7 +220,15 @@ func (s *CollectStateStore) restore(registry *Registry, decoder *Decoder) error 
 			return fmt.Errorf("restore collect state %x: %w", state.StateKey, err)
 		}
 	}
+	s.restored = len(selected)
 	return nil
+}
+
+func (s *CollectStateStore) RestoredCount() int {
+	if s == nil {
+		return 0
+	}
+	return s.restored
 }
 
 // CollectStateRecord preserves the Kafka position used to audit a remote
@@ -227,27 +249,9 @@ func RestoreRemoteCollectStates(decoder *Decoder, registry *Registry, records []
 	if decoder == nil || registry == nil || now.IsZero() {
 		return 0, errors.New("decoder, registry, and restore time are required")
 	}
-	candidates := make([]*flowpb.CollectState, 0, len(records))
-	for index, record := range records {
-		state := record.State
-		if err := validateCollectState(state, ""); err != nil {
-			return 0, fmt.Errorf("collect-state record %d partition=%d offset=%d: %w", index, record.Partition, record.Offset, err)
-		}
-		eligible, err := authorizeCollectState(state, registry, true)
-		if err != nil {
-			return 0, fmt.Errorf("collect-state record %d: %w", index, err)
-		}
-		if !eligible {
-			continue
-		}
-		checkpointTime := time.UnixMilli(state.ReceivedAtUnixMs)
-		if checkpointTime.After(now.Add(5 * time.Minute)) {
-			return 0, fmt.Errorf("collect-state record %d checkpoint time is in the future", index)
-		}
-		if now.Sub(checkpointTime) > decoder.stateTTL {
-			continue
-		}
-		candidates = append(candidates, state)
+	candidates, err := eligibleRemoteCollectStates(decoder, registry, records, now)
+	if err != nil {
+		return 0, err
 	}
 	selected, err := selectCollectStates(candidates)
 	if err != nil {
@@ -259,6 +263,32 @@ func RestoreRemoteCollectStates(decoder *Decoder, registry *Registry, records []
 		}
 	}
 	return len(selected), nil
+}
+
+func eligibleRemoteCollectStates(decoder *Decoder, registry *Registry, records []CollectStateRecord, now time.Time) ([]*flowpb.CollectState, error) {
+	candidates := make([]*flowpb.CollectState, 0, len(records))
+	for index, record := range records {
+		state := record.State
+		if err := validateCollectState(state, ""); err != nil {
+			return nil, fmt.Errorf("collect-state record %d partition=%d offset=%d: %w", index, record.Partition, record.Offset, err)
+		}
+		eligible, err := authorizeCollectState(state, registry, true)
+		if err != nil {
+			return nil, fmt.Errorf("collect-state record %d: %w", index, err)
+		}
+		if !eligible {
+			continue
+		}
+		checkpointTime := time.UnixMilli(state.ReceivedAtUnixMs)
+		if checkpointTime.After(now.Add(5 * time.Minute)) {
+			return nil, fmt.Errorf("collect-state record %d checkpoint time is in the future", index)
+		}
+		if now.Sub(checkpointTime) > decoder.stateTTL {
+			continue
+		}
+		candidates = append(candidates, state)
+	}
+	return candidates, nil
 }
 
 func authorizeCollectState(state *flowpb.CollectState, registry *Registry, allowPreviousOwner bool) (bool, error) {

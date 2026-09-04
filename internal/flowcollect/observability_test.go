@@ -18,6 +18,9 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 	metrics.recordSequenceGap(ProtocolSFlow5, true, 2)
 	metrics.recordSamplingRateChange(ProtocolSFlow5)
 	metrics.recordNormalized(ProtocolSFlow5, 3, nil)
+	metrics.CollectStateRestoreCandidates.Store(7)
+	metrics.CollectStateRestored.Store(5)
+	metrics.CollectStateRestoreNanos.Store(int64(1500 * time.Millisecond))
 	metrics.observeKafka(kafkaTopicNormalized, nil, 25*time.Millisecond)
 	runtime.observeKafka(kafkaTopicNormalized, nil, time.Unix(1700000001, 0))
 
@@ -37,6 +40,9 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 		`watchdog_flow_kafka_produce_latency_seconds_bucket{topic="normalized",le="+Inf"} 1`,
 		`watchdog_flow_kafka_produce_latency_seconds_sum{topic="normalized"} 0.025`,
 		`watchdog_flow_runtime_running 1`,
+		`watchdog_flow_collect_state_restore_candidates 7`,
+		`watchdog_flow_collect_state_restored 5`,
+		`watchdog_flow_collect_state_restore_duration_seconds 1.5`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("metrics output does not contain %q", expected)

@@ -52,6 +52,8 @@ flow_collect:
     brokers: ["127.0.0.1:9092"]
     normalized_topic: "watchdog.flow.normalized.v1"
     collect_state_topic: "watchdog.flow.collect-state.v1"
+    collect_state_restore_timeout: 2m
+    collect_state_restore_max_candidates: 262144
     decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
     quarantine_topic: "watchdog.flow.quarantine.v1"
     acks: "all"

@@ -48,9 +48,24 @@ func TestConfigRejectsInvalidObservability(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsInvalidCollectStateRestoreBounds(t *testing.T) {
+	config := DefaultConfig()
+	config.Kafka.CollectStateRestoreTimeout = 0
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected zero collect-state restore timeout to fail")
+	}
+	config = DefaultConfig()
+	config.Kafka.CollectStateRestoreMaxCandidates = 0
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected zero collect-state candidate bound to fail")
+	}
+}
+
 func TestConfigEnvironmentUsesFlowCollectNamespace(t *testing.T) {
 	t.Setenv("WATCHDOG_FLOW_COLLECT_SOCKET_COUNT", "4")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_BROKERS", "kafka-a:9093, kafka-b:9093")
+	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_RESTORE_TIMEOUT", "3m")
+	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_RESTORE_MAX_CANDIDATES", "1234")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_WAL_HARD_WATERMARK", "0.85")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_BATCH_MAX_WAIT", "7ms")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_DECODER_STATE_TTL", "45m")
@@ -70,7 +85,7 @@ func TestConfigEnvironmentUsesFlowCollectNamespace(t *testing.T) {
 	if err := config.ApplyEnv(); err != nil {
 		t.Fatal(err)
 	}
-	if config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
+	if config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.Kafka.CollectStateRestoreTimeout != 3*time.Minute || config.Kafka.CollectStateRestoreMaxCandidates != 1234 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
 		t.Fatalf("environment not applied: %+v", config)
 	}
 }

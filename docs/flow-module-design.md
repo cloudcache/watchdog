@@ -432,7 +432,11 @@ restore_order      = (ownership_epoch, state_generation)
 
 本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；超过可配置 `decoder_state_ttl`（默认 30 分钟）不恢复，以免把过期模板应用到新 exporter session。CollectState v1 本地文件只允许原 `collector_id` 恢复，下一次状态变化自动写 v2。若一个报文先更新模板再发生 decode/normalize 拒绝，状态安全点仍须先于 DLQ，不能因回收毒包丢失后续数据依赖的模板。
 
-D3B 启动顺序冻结为：加载并验证 active/LKG plan 与 history → 捕获 collect-state 各 partition high watermark → 扫描到该一致边界并按上述规则选择 → 与本地 checkpoint 合并 → 恢复 decoder revision/template/sampler → 恢复 WAL/attempt metadata → 最后开放 UDP listener/WAL dispatch。滚动升级先 drain listener 并发布安全点；新 owner 必须完成该恢复闸门，不能先收包再依赖进程内缓存。当前 D3A 已实现 v2 key、fencing、generation、v1 兼容和纯恢复选择器；Kafka consumer/high-watermark、plan history、attempt generation、旧 epoch tombstone 与真实切换测试仍属于 D3B，未完成前不得宣称跨节点闭环。
+D3B 启动顺序冻结为：加载并验证 active/LKG plan 与 history → 捕获 collect-state 各 partition high watermark → 扫描到该一致边界并按上述规则选择 → 与本地 checkpoint 合并 → 恢复 decoder revision/template/sampler → 恢复 WAL/attempt metadata → 最后开放 UDP listener/WAL dispatch。滚动升级先 drain listener 并发布安全点；新 owner 必须完成该恢复闸门，不能先收包再依赖进程内缓存。
+
+D3B1 已把 Kafka 回读接入该前置闸门：启动时先冻结每个 partition 的 `[log_start_offset, high_watermark)`，各 partition 并行读取且只接受边界内严格递增的消息；protobuf value 上限、Kafka key/`state_key` 一致性、跨 partition 重复 key、payload SHA/identity、当前签名 registry 与 epoch 全部校验，tombstone 删除同 key 候选。读取有全局 `collect_state_restore_timeout`，内存只保留当前 plan 可接收的最新 key，且受 `collect_state_restore_max_candidates` 硬上限保护。Kafka 边界读完后再次校验 plan 尚未过期，再把 Kafka 与本地候选在写入 decoder **之前一次性**按 `(ownership_epoch,state_generation)` 合并，避免“先恢复本地新状态、再被远端旧状态覆盖”；成功后才打开 WAL/quality/publisher/runner/listener。恢复数量与耗时由低基数 gauge 暴露。
+
+当前仍未完成的是 D3B2 的 active/LKG plan history 与跨进程 attempt generation，以及 D3B3 的 topic 配置/ACL/retention/旧 epoch tombstone 和真实多 broker/滚动切换故障注入；这些完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -1584,6 +1588,8 @@ exporter_id/worker_id 基数受 registry 限制；未知 source IP、message ID�
 
 `watchdog-flow-collect` 使用独立的 `flow_collect.observability.listen`，固定提供 `GET|HEAD /metrics`、`/health/live` 和 `/health/ready`。默认只监听 `127.0.0.1:9464`；跨主机 vmagent/Prometheus 抓取必须显式改监听地址并由管理网 ACL/mTLS sidecar 限制，不能把该端点直接暴露到业务网。HTTP 设置 header/write/idle/shutdown 超时和 16 KiB header 上限；这些端点不查询 MySQL、CH 或控制面，也不在 scrape 时扫描 WAL 全量记录。
 
+启动恢复另暴露 `watchdog_flow_collect_state_restore_candidates`、`watchdog_flow_collect_state_restored` 和 `watchdog_flow_collect_state_restore_duration_seconds` 三个无 label gauge；前者是当前签名 plan 可接收且 tombstone/coalesce 后的 Kafka key 数，后者是本地与远端合并后真正恢复的 exporter/domain identity 数。恢复失败时 listener 根本不会开放，进程退出并由启动日志保留 partition/offset 诊断，因此不能把“服务尚未启动、指标不可抓”误判成健康的零值。
+
 标签集合在代码中固定分配，不使用 map 动态创建 series：`protocol=unknown|sflow5|netflow5|netflow9|ipfix`，`listener=sflow|netflow|shared|workers`，`topic=normalized|collect_state|decode_dlq|quarantine`，Kafka `result=success|failure`，decode `reason=invalid_datagram|template_pending|decode_rejected|normalize_rejected`，sequence `scope=datagram|sample`，quality `operation=journal|checkpoint`。collector/exporter/source/tenant/target/device/IP/datagram/message/error text 均不进入该进程的 label；按实例归属由 vmagent 的静态 scrape target/relabel 提供。Kafka latency 和 WAL fsync latency使用固定 1ms–10s + `+Inf` Prometheus histogram；VM 以 `histogram_quantile` 计算 P95/P99，热路径只更新固定原子 bucket，不创建动态 series。
 
 `/health/live` 仅证明 HTTP 进程仍响应。`/health/ready` 是数据接纳闸门：runner 未运行、WAL 不可写或发生 hard admission stop、quality journal 不可写/满、最近一次 collect-state 本地持久化失败，或任一固定 Kafka topic 最近一次 produce 失败时返回 `503 unavailable`；同一组件后续成功才恢复，其他 topic 的成功不能掩盖失败。WAL 到 soft watermark 或 quality journal 达 80% 时仍返回 200，但状态为 `degraded`，用于先告警和排空；不能把历史累计错误计数直接当成永久不健康。WAL `oldest_age` 是最老**保留 segment** 内首条记录的年龄上界，已 ACK 但尚未 rotation/reclaim 的 active segment 仍会计入，不能替代 Kafka consumer lag。
@@ -2086,6 +2092,8 @@ flow_collect:
     brokers: ["kafka-1:9093", "kafka-2:9093", "kafka-3:9093"]
     normalized_topic: "watchdog.flow.normalized.v1"
     collect_state_topic: "watchdog.flow.collect-state.v1"
+    collect_state_restore_timeout: 2m
+    collect_state_restore_max_candidates: 262144
     decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
     quarantine_topic: "watchdog.flow.quarantine.v1"
     acks: "all"

@@ -47,14 +47,16 @@ type WALConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers           []string `yaml:"brokers"`
-	NormalizedTopic   string   `yaml:"normalized_topic"`
-	CollectStateTopic string   `yaml:"collect_state_topic"`
-	DecodeDLQTopic    string   `yaml:"decode_dlq_topic"`
-	QuarantineTopic   string   `yaml:"quarantine_topic"`
-	Acks              string   `yaml:"acks"`
-	Compression       string   `yaml:"compression"`
-	TLS               bool     `yaml:"tls"`
+	Brokers                          []string      `yaml:"brokers"`
+	NormalizedTopic                  string        `yaml:"normalized_topic"`
+	CollectStateTopic                string        `yaml:"collect_state_topic"`
+	CollectStateRestoreTimeout       time.Duration `yaml:"collect_state_restore_timeout"`
+	CollectStateRestoreMaxCandidates int           `yaml:"collect_state_restore_max_candidates"`
+	DecodeDLQTopic                   string        `yaml:"decode_dlq_topic"`
+	QuarantineTopic                  string        `yaml:"quarantine_topic"`
+	Acks                             string        `yaml:"acks"`
+	Compression                      string        `yaml:"compression"`
+	TLS                              bool          `yaml:"tls"`
 }
 
 type NormalizedBatchCfg struct {
@@ -113,13 +115,15 @@ func DefaultConfig() Config {
 			HardWatermark: .90,
 		},
 		Kafka: KafkaConfig{
-			NormalizedTopic:   "watchdog.flow.normalized.v1",
-			CollectStateTopic: "watchdog.flow.collect-state.v1",
-			DecodeDLQTopic:    "watchdog.flow.decode-dlq.v1",
-			QuarantineTopic:   "watchdog.flow.quarantine.v1",
-			Acks:              "all",
-			Compression:       "zstd",
-			TLS:               true,
+			NormalizedTopic:                  "watchdog.flow.normalized.v1",
+			CollectStateTopic:                "watchdog.flow.collect-state.v1",
+			CollectStateRestoreTimeout:       2 * time.Minute,
+			CollectStateRestoreMaxCandidates: 262144,
+			DecodeDLQTopic:                   "watchdog.flow.decode-dlq.v1",
+			QuarantineTopic:                  "watchdog.flow.quarantine.v1",
+			Acks:                             "all",
+			Compression:                      "zstd",
+			TLS:                              true,
 		},
 		NormalizedBatch: NormalizedBatchCfg{
 			MaxRecords: 1024,
@@ -247,6 +251,9 @@ func (c Config) Validate() error {
 	if c.Kafka.Acks != "all" {
 		return errors.New("flow_collect.kafka.acks must be all")
 	}
+	if c.Kafka.CollectStateRestoreTimeout <= 0 || c.Kafka.CollectStateRestoreMaxCandidates <= 0 {
+		return errors.New("flow_collect.kafka collect-state restore limits must be positive")
+	}
 	switch c.Kafka.Compression {
 	case "none", "gzip", "snappy", "lz4", "zstd":
 	default:
@@ -340,6 +347,12 @@ func (c *Config) ApplyEnv() error {
 	}
 	c.Kafka.NormalizedTopic = env("WATCHDOG_FLOW_COLLECT_KAFKA_NORMALIZED_TOPIC", c.Kafka.NormalizedTopic)
 	c.Kafka.CollectStateTopic = env("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_TOPIC", c.Kafka.CollectStateTopic)
+	if c.Kafka.CollectStateRestoreTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_RESTORE_TIMEOUT", c.Kafka.CollectStateRestoreTimeout); err != nil {
+		return err
+	}
+	if c.Kafka.CollectStateRestoreMaxCandidates, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_RESTORE_MAX_CANDIDATES", c.Kafka.CollectStateRestoreMaxCandidates); err != nil {
+		return err
+	}
 	c.Kafka.DecodeDLQTopic = env("WATCHDOG_FLOW_COLLECT_KAFKA_DECODE_DLQ_TOPIC", c.Kafka.DecodeDLQTopic)
 	c.Kafka.QuarantineTopic = env("WATCHDOG_FLOW_COLLECT_KAFKA_QUARANTINE_TOPIC", c.Kafka.QuarantineTopic)
 	c.Kafka.Acks = env("WATCHDOG_FLOW_COLLECT_KAFKA_ACKS", c.Kafka.Acks)
