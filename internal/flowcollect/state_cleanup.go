@@ -139,6 +139,24 @@ func NewQualityStateCleanupJob(jobID, approvalID, requestedBy string, old *flowp
 	return newStateCleanupJob(jobID, approvalID, requestedBy, checkpoint, createdAt)
 }
 
+// NewStateCleanupJobFromPayload is the management-plane entry point for a
+// checkpoint read from the compacted topic. The protobuf is fully decoded and
+// validated before the immutable cleanup request is created.
+func NewStateCleanupJobFromPayload(jobID, approvalID, requestedBy string, kind StateCheckpointKind, payload []byte, createdAt time.Time) (*StateCleanupJob, error) {
+	checkpoint, err := DecodeStateCleanupCheckpoint(kind, payload)
+	if err != nil {
+		return nil, err
+	}
+	return newStateCleanupJob(jobID, approvalID, requestedBy, checkpoint, createdAt)
+}
+
+// StateCleanupKafkaKey derives a typed compacted-topic key for a validated
+// state identity and ownership epoch. Possessing this hash is not deletion
+// authority; tombstones remain constructible only by the cleanup state machine.
+func StateCleanupKafkaKey(kind StateCheckpointKind, identityKey []byte, ownershipEpoch uint64) ([]byte, error) {
+	return stateCleanupKafkaKey(kind, identityKey, ownershipEpoch)
+}
+
 func newStateCleanupJob(jobID, approvalID, requestedBy string, old StateCleanupCheckpoint, createdAt time.Time) (*StateCleanupJob, error) {
 	if jobID == "" || approvalID == "" || requestedBy == "" || createdAt.IsZero() || createdAt.Before(old.CheckpointAt) {
 		return nil, errors.New("state cleanup job, approval, actor, and creation time are required")

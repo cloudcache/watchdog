@@ -62,7 +62,7 @@ func (s *MySQLStore) CreateFlowStateCleanupJob(ctx context.Context, job FlowStat
 		}
 		existing, findErr := s.getFlowStateCleanupJobByIdempotency(ctx, job.TenantID, job.IdempotencyKey)
 		if findErr != nil {
-			return FlowStateCleanupJob{}, err
+			return FlowStateCleanupJob{}, findErr
 		}
 		if existing.RequestHash != job.RequestHash {
 			return FlowStateCleanupJob{}, ErrFlowStateCleanupIdempotencyConflict
@@ -91,6 +91,41 @@ func (s *MySQLStore) GetFlowStateCleanupJob(ctx context.Context, tenantID, jobID
 func (s *MySQLStore) getFlowStateCleanupJobByIdempotency(ctx context.Context, tenantID ID, idempotencyKey string) (FlowStateCleanupJob, error) {
 	return scanFlowStateCleanupJob(s.db.QueryRowContext(ctx, `SELECT `+flowStateCleanupSelectColumns+`
 		FROM operation_jobs WHERE tenant_id = ? AND job_type = ? AND idempotency_key = ?`, tenantID, FlowStateCleanupJobType, idempotencyKey))
+}
+
+func (s *MySQLStore) GetFlowStateCleanupJobByIdempotency(ctx context.Context, tenantID ID, idempotencyKey string) (FlowStateCleanupJob, bool, error) {
+	if s == nil || s.db == nil || ctx == nil || tenantID == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
+		return FlowStateCleanupJob{}, false, errors.New("tenant and flow state-cleanup idempotency key are required")
+	}
+	job, err := s.getFlowStateCleanupJobByIdempotency(ctx, tenantID, idempotencyKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FlowStateCleanupJob{}, false, nil
+	}
+	return job, err == nil, err
+}
+
+func (s *MySQLStore) GetFlowStateCleanupAuthority(ctx context.Context, tenantID, transferID ID) (FlowStateCleanupAuthority, error) {
+	if s == nil || s.db == nil || ctx == nil || tenantID == "" || transferID == "" {
+		return FlowStateCleanupAuthority{}, errors.New("tenant and collector ownership transfer IDs are required")
+	}
+	var authority FlowStateCleanupAuthority
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, exporter_id, old_collector_id, old_plan_revision,
+			old_ownership_epoch, approval_id
+		FROM collector_ownership_transfers
+		WHERE tenant_id = ? AND id = ?
+	`, tenantID, transferID).Scan(
+		&authority.TransferID, &authority.TenantID, &authority.ExporterID,
+		&authority.OldCollectorID, &authority.OldPlanRevision,
+		&authority.OldOwnershipEpoch, &authority.ApprovalID,
+	)
+	if err != nil {
+		return FlowStateCleanupAuthority{}, err
+	}
+	if !validFlowStateCleanupAuthority(authority, tenantID, transferID) {
+		return FlowStateCleanupAuthority{}, ErrFlowStateCleanupCheckpointInvalid
+	}
+	return authority, nil
 }
 
 func (s *MySQLStore) ClaimFlowStateCleanupJob(ctx context.Context, leaseOwner, leaseToken string, leaseDuration time.Duration) (FlowStateCleanupJob, bool, error) {
@@ -248,6 +283,69 @@ func (s *MySQLStore) RequeueFlowStateCleanupJob(ctx context.Context, jobID ID, l
 
 func (s *MySQLStore) FailFlowStateCleanupJob(ctx context.Context, jobID ID, leaseToken string, expectedRowVersion uint64, errorCode, errorDetail string) (FlowStateCleanupJob, error) {
 	return s.finishFlowStateCleanupAttempt(ctx, jobID, leaseToken, expectedRowVersion, OperationJobFailed, errorCode, errorDetail, time.Time{})
+}
+
+func (s *MySQLStore) RetryFlowStateCleanupJob(ctx context.Context, tenantID, jobID ID, expectedRowVersion uint64, actorID ID) (FlowStateCleanupJob, error) {
+	if s == nil || s.db == nil || ctx == nil || tenantID == "" || jobID == "" || expectedRowVersion == 0 || actorID == "" || len(actorID) > 26 {
+		return FlowStateCleanupJob{}, errors.New("flow state-cleanup retry identity and expected version are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	defer tx.Rollback()
+	current, err := getFlowStateCleanupJobForUpdate(ctx, tx, jobID, true)
+	if err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	if current.TenantID != tenantID {
+		return FlowStateCleanupJob{}, sql.ErrNoRows
+	}
+	if current.RowVersion != expectedRowVersion {
+		return FlowStateCleanupJob{}, ErrFlowStateCleanupConflict
+	}
+	if current.Status != OperationJobFailed || !retryableFlowStateCleanupErrorCode(current.LastErrorCode) || current.Snapshot.Phase == flowcollect.StateCleanupComplete {
+		return FlowStateCleanupJob{}, ErrFlowStateCleanupRetryNotAllowed
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE operation_jobs
+		SET status = 'queued', next_attempt_at = CURRENT_TIMESTAMP(3),
+			finished_at = NULL, row_version = row_version + 1,
+			updated_at = CURRENT_TIMESTAMP(3)
+		WHERE tenant_id = ? AND id = ? AND job_type = ? AND status = 'failed'
+		  AND row_version = ?
+	`, tenantID, jobID, FlowStateCleanupJobType, expectedRowVersion)
+	if err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	if err := requireOneFlowStateCleanupRow(result); err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	if err := insertFlowStateCleanupAudit(ctx, tx, tenantID, actorID, jobID, "flow.state_cleanup.manual_retry", expectedRowVersion+1, map[string]any{
+		"before_status": current.Status, "after_status": OperationJobQueued,
+		"phase": current.Snapshot.Phase, "previous_error_code": current.LastErrorCode,
+	}); err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	updated, err := getFlowStateCleanupJobForUpdate(ctx, tx, jobID, false)
+	if err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return FlowStateCleanupJob{}, err
+	}
+	return updated, nil
+}
+
+func retryableFlowStateCleanupErrorCode(code string) bool {
+	switch code {
+	case "FENCE_EVIDENCE_UNAVAILABLE", "FENCE_NOT_MATURE", "RESTORE_PROOF_UNAVAILABLE",
+		"REPLACEMENT_NOT_OBSERVED", "STATE_SCAN_FAILED", "TOMBSTONE_PUBLISH_FAILED",
+		"TOMBSTONE_NOT_VISIBLE":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *MySQLStore) finishFlowStateCleanupAttempt(ctx context.Context, jobID ID, leaseToken string, expectedRowVersion uint64, status OperationJobStatus, errorCode, errorDetail string, nextAttemptAt time.Time) (FlowStateCleanupJob, error) {
@@ -475,3 +573,4 @@ func insertFlowStateCleanupAudit(ctx context.Context, tx *sql.Tx, tenantID, acto
 }
 
 var _ FlowStateCleanupRepository = (*MySQLStore)(nil)
+var _ FlowStateCleanupControlRepository = (*MySQLStore)(nil)

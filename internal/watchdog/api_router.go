@@ -30,6 +30,7 @@ type APIV1RouterConfig struct {
 	Readiness       func(context.Context) error
 	RuntimeHealth   func() PlatformRuntimeHealth
 	RuntimeMetrics  func() []byte
+	FlowCleanupJobs FlowStateCleanupJobController
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -121,6 +122,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.Retention != nil {
 		registerRetentionRoutes(mux, auth, cfg.Retention)
+	}
+	if cfg.FlowCleanupJobs != nil {
+		registerFlowStateCleanupRoutes(mux, auth, cfg.FlowCleanupJobs)
 	}
 	if cfg.SNMP != nil {
 		registerSNMPRoutes(mux, auth, cfg.SNMP)

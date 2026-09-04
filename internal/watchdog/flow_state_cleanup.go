@@ -13,6 +13,9 @@ const FlowStateCleanupJobType = "flow_state_cleanup"
 var (
 	ErrFlowStateCleanupConflict            = errors.New("flow state-cleanup job version or lease conflict")
 	ErrFlowStateCleanupIdempotencyConflict = errors.New("flow state-cleanup idempotency key was reused with a different request")
+	ErrFlowStateCleanupRetryNotAllowed     = errors.New("flow state-cleanup job cannot be retried")
+	ErrFlowStateCleanupCheckpointMissing   = errors.New("flow state-cleanup checkpoint was not observed")
+	ErrFlowStateCleanupCheckpointInvalid   = errors.New("flow state-cleanup checkpoint is invalid")
 )
 
 type OperationJobStatus string
@@ -56,4 +59,22 @@ type FlowStateCleanupRepository interface {
 	SaveFlowStateCleanupCheckpoint(context.Context, ID, string, uint64, flowcollect.StateCleanupSnapshot, time.Time) (FlowStateCleanupJob, error)
 	RequeueFlowStateCleanupJob(context.Context, ID, string, uint64, string, string, time.Time) (FlowStateCleanupJob, error)
 	FailFlowStateCleanupJob(context.Context, ID, string, uint64, string, string) (FlowStateCleanupJob, error)
+}
+
+type FlowStateCleanupAuthority struct {
+	TransferID        ID
+	TenantID          ID
+	ExporterID        ID
+	OldCollectorID    ID
+	OldPlanRevision   uint64
+	OldOwnershipEpoch uint64
+	ApprovalID        ID
+}
+
+type FlowStateCleanupControlRepository interface {
+	CreateFlowStateCleanupJob(context.Context, FlowStateCleanupJob) (FlowStateCleanupJob, error)
+	GetFlowStateCleanupJob(context.Context, ID, ID) (FlowStateCleanupJob, error)
+	GetFlowStateCleanupJobByIdempotency(context.Context, ID, string) (FlowStateCleanupJob, bool, error)
+	GetFlowStateCleanupAuthority(context.Context, ID, ID) (FlowStateCleanupAuthority, error)
+	RetryFlowStateCleanupJob(context.Context, ID, ID, uint64, ID) (FlowStateCleanupJob, error)
 }

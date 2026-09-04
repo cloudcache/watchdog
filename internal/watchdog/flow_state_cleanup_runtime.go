@@ -63,6 +63,7 @@ type FlowStateCleanupRuntime struct {
 	wait       sync.WaitGroup
 	closeOnce  sync.Once
 	closeError error
+	controller *FlowStateCleanupJobService
 }
 
 func newFlowStateCleanupRuntime(worker flowStateCleanupWorker, dependencies []flowStateCleanupDependency, pollInterval, retryMin, retryMax time.Duration) (*FlowStateCleanupRuntime, error) {
@@ -121,7 +122,20 @@ func newConfiguredFlowStateCleanupRuntime(store *MySQLStore, cfg FlowStateCleanu
 		_ = scanner.Close()
 		return nil, err
 	}
+	controller, err := NewFlowStateCleanupJobService(store, scanner)
+	if err != nil {
+		_ = runtime.Close()
+		return nil, err
+	}
+	runtime.controller = controller
 	return runtime, nil
+}
+
+func (r *FlowStateCleanupRuntime) Controller() FlowStateCleanupJobController {
+	if r == nil {
+		return nil
+	}
+	return r.controller
 }
 
 func (r *FlowStateCleanupRuntime) Start(ctx context.Context) error {
@@ -306,6 +320,9 @@ func (r *FlowStateCleanupRuntime) Close() error {
 			cancel()
 		}
 		r.wait.Wait()
+		if r.controller != nil {
+			r.closeError = errors.Join(r.closeError, r.controller.Close())
+		}
 		for _, dependency := range r.dependencies {
 			r.closeError = errors.Join(r.closeError, dependency.Close())
 		}

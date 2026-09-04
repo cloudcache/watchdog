@@ -127,6 +127,13 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	if err := store.CreateCollectorOwnershipTransfer(ctx, transfer); err != nil {
 		t.Fatal(err)
 	}
+	authority, err := store.GetFlowStateCleanupAuthority(ctx, tenantID, transferID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.TransferID != transferID || authority.TenantID != tenantID || authority.ExporterID != transfer.ExporterID || authority.OldCollectorID != oldCollectorID || authority.OldPlanRevision != transfer.OldPlanRevision || authority.OldOwnershipEpoch != transfer.OldOwnershipEpoch || authority.ApprovalID != transfer.ApprovalID {
+		t.Fatalf("cleanup authority=%+v", authority)
+	}
 	evidenceProvider, err := NewMySQLFlowStateCleanupEvidenceProvider(db)
 	if err != nil {
 		t.Fatal(err)

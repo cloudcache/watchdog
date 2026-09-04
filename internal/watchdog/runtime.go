@@ -21,6 +21,7 @@ type BackendRuntime struct {
 	AggregateRollup    AggregateGraphRollup
 	DiscoveryScheduler DiscoveryScheduler
 	FlowStateCleanup   *FlowStateCleanupRuntime
+	FlowCleanupJobs    FlowStateCleanupJobController
 	trapDispatcherFn   func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu       sync.Mutex
 	backgroundStarted  bool
@@ -134,6 +135,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		Readiness:       r.Ready,
 		RuntimeHealth:   r.Health,
 		RuntimeMetrics:  r.RuntimeMetrics,
+		FlowCleanupJobs: r.FlowCleanupJobs,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
@@ -242,6 +244,7 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		return fmt.Errorf("start flow state-cleanup runtime: %w", err)
 	}
 	r.FlowStateCleanup = cleanup
+	r.FlowCleanupJobs = cleanup.Controller()
 	r.backgroundStarted = true
 	return nil
 }

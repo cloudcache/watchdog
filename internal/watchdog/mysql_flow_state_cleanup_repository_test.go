@@ -219,13 +219,36 @@ func TestMySQLFlowStateCleanupRepositoryLifecycle(t *testing.T) {
 	if err != nil || !ok || claimedAgain.ID != created.ID || claimedAgain.RowVersion != 5 || claimedAgain.AttemptCount != 2 {
 		t.Fatalf("claimed again=%+v ok=%t err=%v", claimedAgain, ok, err)
 	}
-	failed, err := store.FailFlowStateCleanupJob(context.Background(), claimedAgain.ID, claimedAgain.LeaseToken, claimedAgain.RowVersion, "INVALID_EVIDENCE", "injected terminal failure")
+	failed, err := store.FailFlowStateCleanupJob(context.Background(), claimedAgain.ID, claimedAgain.LeaseToken, claimedAgain.RowVersion, "STATE_SCAN_FAILED", "injected retryable failure")
 	if err != nil || failed.Status != OperationJobFailed || failed.RowVersion != 6 || failed.FinishedAt.IsZero() {
 		t.Fatalf("failed=%+v err=%v", failed, err)
 	}
+	retried, err := store.RetryFlowStateCleanupJob(context.Background(), tenantID, failed.ID, failed.RowVersion, userID)
+	if err != nil || retried.Status != OperationJobQueued || retried.RowVersion != 7 || !retried.FinishedAt.IsZero() || retried.LastErrorCode != "STATE_SCAN_FAILED" {
+		t.Fatalf("retried=%+v err=%v", retried, err)
+	}
+	if _, err := store.RetryFlowStateCleanupJob(context.Background(), tenantID, failed.ID, failed.RowVersion, userID); !errors.Is(err, ErrFlowStateCleanupConflict) {
+		t.Fatalf("stale manual retry error=%v", err)
+	}
 	var auditCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE tenant_id = ? AND resource_type = 'operation_job' AND resource_id = ?", tenantID, created.ID).Scan(&auditCount); err != nil || auditCount != 6 {
+	if err := db.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE tenant_id = ? AND resource_type = 'operation_job' AND resource_id = ?", tenantID, created.ID).Scan(&auditCount); err != nil || auditCount != 7 {
 		t.Fatalf("audit count=%d err=%v", auditCount, err)
+	}
+}
+
+func TestRetryableFlowStateCleanupErrorCodesAreClosed(t *testing.T) {
+	for _, code := range []string{
+		"FENCE_EVIDENCE_UNAVAILABLE", "FENCE_NOT_MATURE", "RESTORE_PROOF_UNAVAILABLE",
+		"REPLACEMENT_NOT_OBSERVED", "STATE_SCAN_FAILED", "TOMBSTONE_PUBLISH_FAILED", "TOMBSTONE_NOT_VISIBLE",
+	} {
+		if !retryableFlowStateCleanupErrorCode(code) {
+			t.Fatalf("retryable code %q was rejected", code)
+		}
+	}
+	for _, code := range []string{"", "INVALID_FENCE_EVIDENCE", "INVALID_REPLACEMENT", "OLD_STATE_REAPPEARED", "INVALID_TOMBSTONE_VERIFICATION"} {
+		if retryableFlowStateCleanupErrorCode(code) {
+			t.Fatalf("terminal code %q was accepted", code)
+		}
 	}
 }
 

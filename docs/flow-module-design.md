@@ -464,11 +464,13 @@ reconciler core 已接上 repository、targeted scanner adapter 和 tombstone wr
 
 replacement 扫描契约也补齐为三个显式恢复量：`restored_old_epoch/restored_old_generation/new_epoch_baseline_generation`。scanner 不再隐含 baseline=0；新 checkpoint 必须严格越过该 baseline。replacement Kafka key 只能由状态机按已确认 fence 的新 epoch 派生，管理层不能手拼 typed key；payload 依 kind 解 protobuf 并完成 checksum/identity/key 校验后才转换成状态机 checkpoint。
 
-宿主 runtime 已完成专用 scanner/writer/evidence/reconciler 接线。`flow_state_cleanup.enabled=false` 默认不创建 Kafka client；只有生产 Hub 和开发服务器显式调用 `StartBackground`，独立 SNMP/export/rollup 命令即便共享配置也不会误领 cleanup lease。启用后首次成功 claim/idle 之前 readiness 保持失败；DB/Kafka 短断只把 worker 标为 not-ready 并按 `retry_min..retry_max` 有界退避，下一次成功自动恢复，不结束 HTTP 进程。关停顺序固定为 cancel worker→等待正在执行的 step/heartbeat 退出→关闭 tombstone writer→关闭 scanner→关闭 MySQL，重复关闭幂等。`GET /api/v1/health/runtime` 与 `GET /api/v1/health/runtime/metrics` 均需已有登录上下文，只暴露 enabled/started/running/ready、worked/idle/error counter 和 last-success timestamp；Prometheus result 标签集合固定，不携带 tenant/exporter/job ID 或错误文本。
+宿主 runtime 已完成专用 scanner/writer/evidence/reconciler 接线。`flow_state_cleanup.enabled=false` 默认不创建 Kafka client；只有生产 Hub 和开发服务器显式调用 `StartBackground`，独立 SNMP/export/rollup 命令即便共享配置也不会误领 cleanup lease。启用后首次成功 claim/idle 之前 readiness 保持失败；DB/Kafka 短断只把 worker 标为 not-ready 并按 `retry_min..retry_max` 有界退避，下一次成功自动恢复，不结束 HTTP 进程。关停顺序固定为 cancel worker→等待正在执行的 step/heartbeat 和 job API 的 frozen-boundary scan 退出→关闭 tombstone writer→关闭 scanner→关闭 MySQL，重复关闭幂等。`GET /api/v1/health/runtime` 与 `GET /api/v1/health/runtime/metrics` 均需已有登录上下文，只暴露 enabled/started/running/ready、worked/idle/error counter 和 last-success timestamp；Prometheus result 标签集合固定，不携带 tenant/exporter/job ID 或错误文本。
 
-剩余 B2B 是受权 job create/get/retry API、evidence executor/authenticated collector adapter、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository、evidence provider 和运行时监督已完成，没有受权操作入口和真实基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+受权 job create/get/retry API 已接入宿主 Router。创建请求只允许 transfer ID、`decoder|quality` 和 32B identity selector；审批、tenant、old collector、plan revision、epoch、Kafka typed key、checkpoint payload 与冻结 boundary 均由服务端事实源解析和校验。相同 tenant 的 `Idempotency-Key` 仅在 actor 和完整解析结果相同时重放；重试要求强 `If-Match`，且只允许固定的瞬态错误码。响应不返回 Kafka key、payload digest 或 provider receipt。canonical 路由是 `/api/v1/modules/flow/state-cleanup-jobs`，`/api/v1/flow/state-cleanup-jobs` 仅作为单版本兼容入口。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、受权 job/evidence executor/authenticated adapter API，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository、reconciler core 和宿主运行时监督不能替代这些验收。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
+剩余 B2B 是 evidence executor/authenticated collector adapter、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository、evidence provider、运行时监督和 job API 已完成，没有机器身份事实写入 adapter 和真实基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+
+当前仍未完成的是 D3B3B 的 IaC 实际创建、evidence executor/authenticated collector/provider adapter，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository、reconciler core、宿主运行时监督和受权 job API 不能替代这些验收。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -2037,6 +2039,9 @@ VPN 权限在通用 action 上增加模块级 `vpn_rules_configure`、`vpn_evide
 | GET/PUT `/settings` | home profile、HMT、internal/transit policy |
 | POST `/settings/auto-detect` | 生成候选，不改有效配置 |
 | POST `/settings/apply` | 应用指定候选并递增 classification version |
+| POST `/state-cleanup-jobs` | 创建旧 owner state 清理任务；要求 `Idempotency-Key`，body 只含 `transfer_id/state_kind/state_identity_key`，服务端解析审批与 ownership、冻结 Kafka boundary 并校验旧 checkpoint；不接受原始 Kafka key/checkpoint/receipt/time |
+| GET `/state-cleanup-jobs/{id}` | tenant 隔离查询任务、阶段、old owner tuple、attempt/error 与 row version；返回强 `ETag`，隐藏 Kafka key、payload digest 和 provider receipt |
+| POST `/state-cleanup-jobs/{id}/actions/retry` | 仅重试 failed 且错误码在固定可重试集合内的任务；要求当前强 `If-Match`，保留既有不可变 snapshot 并追加审计 |
 | POST `/geo/reload` | 立即重读 `current`；不能上传任意服务器路径 |
 | GET/POST `/geo-overrides` | 过滤/merge 写 `address_prefixes` 的 `flow.geo.*`，事务性递增 classification version |
 | DELETE `/geo-overrides/{prefix_id}` | 只删除 Geo labels，保留同 CIDR 其他 labels，并递增 classification version |
