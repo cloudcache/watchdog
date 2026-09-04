@@ -65,6 +65,16 @@ func VerifyKafkaTopicContractsForRegistry(config Config, registry *Registry, col
 	return verifyKafkaTopicSpecsRemote(config.Kafka, specs, collectorID+"-topic-check")
 }
 
+// VerifyKafkaTopicContractsForRegistries validates a prospective runtime plan
+// together with every retained history revision before the plan is activated.
+func VerifyKafkaTopicContractsForRegistries(config Config, registries []*Registry, collectorID string) error {
+	specs, err := kafkaTopicSpecsForRegistries(config, registries)
+	if err != nil {
+		return err
+	}
+	return verifyKafkaTopicSpecsRemote(config.Kafka, specs, collectorID+"-topic-check")
+}
+
 func verifyKafkaTopicSpecsRemote(config KafkaConfig, specs []kafkaTopicSpec, clientID string) error {
 	saramaConfig, err := buildKafkaClientConfig(config, clientID)
 	if err != nil {

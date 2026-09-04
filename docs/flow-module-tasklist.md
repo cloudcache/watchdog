@@ -360,11 +360,13 @@
 - [x] **FLOW-01A 配置与身份边界**：`flow_collect` 严格 YAML/`WATCHDOG_FLOW_COLLECT_*` 配置、Ed25519 签名 plan 校验、4096 项 partition map 校验、source CIDR LPM + observation-domain 准入；tenant 不从 YAML 固定值或报文获取。
 - [x] **FLOW-01B UDP 与 WAL v1**：sFlow/NetFlow 双 listener、可选 `SO_REUSEPORT`、固定 reader/worker、有界队列、单 WAL writer、segment header/record CRC、确定性 datagram ID、group fsync durable barrier、损坏尾截断恢复、软硬水位且 hard limit 不覆盖。
 - [x] **FLOW-01C checkpoint 基线**：append-only ACK2 child journal 与 group commit、重启恢复部分 ack、增量 replay cursor/queue 背压续扫、只跳过全确认 datagram、只回收全确认的关闭 segment，并在回收时压缩 ack journal。
-- [ ] **FLOW-01D 控制面闭环**：enrollment/heartbeat、plan 热刷新与 LKG/history、revocation/credential rotation、未知来源限速 quarantine topic、VM/Prometheus 暴露及 data-loss interval 审计。
+- [ ] **FLOW-01D 控制面闭环（父项）**：D1 本地签名 plan 运行时闭环已完成；enrollment/heartbeat、远程原子投递、revocation/credential rotation 和 data-loss interval 审计仍未完成。
+  - [x] **FLOW-01D1 签名 plan 热刷新与过期闸门**：运行时按 `plan_refresh_interval` 复核本地原子投递文件，并在 active expiry 设置精确定时器；严格验签/有效期、collector identity、revision 单调和同 revision payload 不可变。只有 revision 变化才扫描 durable pending WAL，并把数据面当前/上一 active revision 并入保留集；候选连同 history 先通过 Kafka topic/partition 契约，随后 `fsync(file) → rename → fsync(directory)` 持久化、回收无引用版本，最后原子切换数据面。切换前已收且早于新 `not_before` 的队列报文仍按上一 active plan 入 WAL；更老 history 只可 replay、不得重新准入。刷新失败但旧 plan 未过期时 readiness 为 degraded 并继续 LKG；到期仍无合法替代时 503/fail closed 并取消 listener/runner。相同 revision 不扫描 WAL、不访问 Kafka；revision 变化才走慢路径，数据包热路径无 history 锁。低基数指标覆盖 active revision/expiry/LKG、refresh success/failure/change、history entries/pruned。
+  - [ ] **FLOW-01D2 enrollment/heartbeat 与远程投递**：把控制面 active plan 通过认证通道原子写入本地 delivery path，完成 ACK/LKG/失败阶段 heartbeat、trust/signing-key rotation、runtime credential rotate/revoke 和 data-loss interval 审计；当前 `control_plane_url` 尚不发起请求，不能宣称远程闭环。
 - [ ] **FLOW-01E 故障与容量验收**：kill -9/掉电/磁盘满/滚动升级故障注入，以及目标硬件上 WAL MB/s、fsync P99、socket drops 和 1.90M/2.86M records/s 报告。
 
 - [ ] **设计**：冻结 listener/source plan、exporter affinity、socket/queue 模型、raw WAL segment/header/checksum/group-commit/checkpoint、磁盘软硬水位、RPO、quarantine、凭据和按端口 PPS/采样率/方向的容量公式。
-- [ ] **编码**：实现独立 flow-collect、enrollment/heartbeat/plan、`SO_REUSEPORT` listener、source admission、确定性 datagram ID、append-only WAL、启动恢复、segment 回收、磁盘保护和低基数 metrics。
+- [ ] **编码**：实现独立 flow-collect、enrollment/heartbeat/plan、`SO_REUSEPORT` listener、source admission、确定性 datagram ID、append-only WAL、启动恢复、segment 回收、磁盘保护和低基数 metrics；本地签名 plan 热刷新已完成，远程 enrollment/heartbeat/投递仍待实现。
 - [ ] **单元测试**：覆盖 listener/source/tenant 准入、datagram ID、WAL append/fsync/checksum/截断、进程崩溃恢复、连续 checkpoint、segment 回收、磁盘 soft/hard limit、quarantine 限速和敏感 payload 策略。
 - [ ] **集成测试**：真实 UDP/文件系统故障下注入 kill -9、部分写、磁盘满、控制面中断和滚动升级；确认已 fsync datagram 可恢复、未确认 segment 不覆盖、未知来源不进正式 topic，并记录 datagrams/s、kernel drops、WAL MB/s/fsync P99、CPU/RSS。
 - [ ] **变更设计**：记录实际文件系统/磁盘型号、WAL 格式版本、fsync/RPO、容量小时数、VIP/affinity、部署凭据和旧 collector 端口切换方案。

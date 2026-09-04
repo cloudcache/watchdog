@@ -122,15 +122,27 @@ func main() {
 		log.Fatal(err)
 	}
 	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, Plans: planHistory, WAL: wal, Decoder: decoder, State: stateStore, Attempts: attempts, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
+	if err := runner.ActivateRegistry(registry); err != nil {
+		log.Fatal(err)
+	}
+	planSupervisor, err := flowcollect.NewPlanSupervisor(cfg.FlowCollect.PlanRefreshInterval, planHistory, wal, runner, metrics, runtimeState, func(registries []*flowcollect.Registry) error {
+		return flowcollect.VerifyKafkaTopicContractsForRegistries(cfg.FlowCollect, registries, plan.CollectorID)
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	planSupervisor.OnError = func(err error) { log.Printf("flow plan refresh deferred while LKG remains active: %v", err) }
 	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s metrics=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.Observability.Listen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
 	runCtx, cancel := context.WithCancel(ctx)
-	result := make(chan error, 2)
+	result := make(chan error, 3)
 	go func() { result <- observability.Run(runCtx) }()
 	go func() { result <- runner.Run(runCtx) }()
+	go func() { result <- planSupervisor.Run(runCtx) }()
 	first := <-result
 	cancel()
 	second := <-result
-	if err := errors.Join(first, second); err != nil {
+	third := <-result
+	if err := errors.Join(first, second, third); err != nil {
 		log.Fatal(err)
 	}
 }

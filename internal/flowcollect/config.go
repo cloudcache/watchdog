@@ -269,8 +269,8 @@ func (c Config) Validate() error {
 	if c.PlanRefreshInterval <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
 		return errors.New("flow_collect refresh intervals and decoder_state_ttl must be positive")
 	}
-	if c.PlanHistoryMaxEntries < 2 {
-		return errors.New("flow_collect.plan_history_max_entries must be at least 2")
+	if c.PlanHistoryMaxEntries < 3 {
+		return errors.New("flow_collect.plan_history_max_entries must be at least 3")
 	}
 	if c.WAL.MaxBytes <= 0 || c.WAL.SegmentBytes <= 0 || c.WAL.SegmentBytes > c.WAL.MaxBytes || c.WAL.MaxAge <= 0 || c.WAL.FsyncInterval <= 0 {
 		return errors.New("flow_collect.wal sizes and intervals must be positive and segment_bytes <= max_bytes")

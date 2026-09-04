@@ -14,12 +14,21 @@ type componentRuntimeState struct {
 type RuntimeState struct {
 	running           atomic.Bool
 	startedAt         atomic.Int64
+	plan              planRuntimeState
 	kafka             [kafkaTopicSlots]componentRuntimeState
 	collect           componentRuntimeState
 	attemptJournal    componentRuntimeState
 	attemptCheckpoint componentRuntimeState
 	qualityJournal    componentRuntimeState
 	qualityCheckpoint componentRuntimeState
+}
+
+type planRuntimeState struct {
+	componentRuntimeState
+	accepting      atomic.Bool
+	activeRevision atomic.Uint64
+	expiresAt      atomic.Int64
+	usedLKG        atomic.Bool
 }
 
 type ComponentRuntimeSnapshot struct {
@@ -31,12 +40,23 @@ type ComponentRuntimeSnapshot struct {
 type RuntimeSnapshot struct {
 	Running           bool
 	StartedAt         int64
+	Plan              PlanRuntimeSnapshot
 	Kafka             [kafkaTopicSlots]ComponentRuntimeSnapshot
 	Collect           ComponentRuntimeSnapshot
 	AttemptJournal    ComponentRuntimeSnapshot
 	AttemptCheckpoint ComponentRuntimeSnapshot
 	QualityJournal    ComponentRuntimeSnapshot
 	QualityCheckpoint ComponentRuntimeSnapshot
+}
+
+type PlanRuntimeSnapshot struct {
+	Healthy        bool
+	Accepting      bool
+	ActiveRevision uint64
+	ExpiresAt      int64
+	UsedLKG        bool
+	LastSuccessAt  int64
+	LastFailureAt  int64
 }
 
 func NewRuntimeState() *RuntimeState {
@@ -85,8 +105,24 @@ func (s *RuntimeState) observeQualityCheckpoint(err error, now time.Time) {
 	s.qualityCheckpoint.observe(err, now)
 }
 
+func (s *RuntimeState) observePlan(err error, registry *Registry, usedLKG bool, now time.Time) {
+	s.plan.observe(err, now)
+	s.plan.usedLKG.Store(usedLKG)
+	if registry == nil {
+		s.plan.accepting.Store(false)
+		s.plan.activeRevision.Store(0)
+		s.plan.expiresAt.Store(0)
+		return
+	}
+	s.plan.activeRevision.Store(registry.plan.Revision)
+	s.plan.expiresAt.Store(registry.plan.ExpiresAt.Unix())
+	s.plan.accepting.Store(registryValidAt(registry, now))
+}
+
 func (s *RuntimeState) Snapshot() RuntimeSnapshot {
 	snapshot := RuntimeSnapshot{Running: s.running.Load(), StartedAt: s.startedAt.Load()}
+	planComponent := s.plan.componentRuntimeState.snapshot()
+	snapshot.Plan = PlanRuntimeSnapshot{Healthy: planComponent.Healthy, Accepting: s.plan.accepting.Load(), ActiveRevision: s.plan.activeRevision.Load(), ExpiresAt: s.plan.expiresAt.Load(), UsedLKG: s.plan.usedLKG.Load(), LastSuccessAt: planComponent.LastSuccessAt, LastFailureAt: planComponent.LastFailureAt}
 	for index := range s.kafka {
 		snapshot.Kafka[index] = s.kafka[index].snapshot()
 	}

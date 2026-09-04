@@ -44,6 +44,8 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 		`watchdog_flow_collect_state_restored 5`,
 		`watchdog_flow_collect_state_restore_duration_seconds 1.5`,
 		`watchdog_flow_attempt_state_ready 1`,
+		`watchdog_flow_plan_accepting 1`,
+		`watchdog_flow_plan_active_revision 1`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("metrics output does not contain %q", expected)
@@ -77,6 +79,16 @@ func TestObservabilityReadinessFailsClosedAndRecovers(t *testing.T) {
 	assertReadyStatus(t, server, http.StatusServiceUnavailable, `"attempt_state":"failed"`)
 	runtime.observeAttemptJournal(nil, time.Now())
 	assertReadyStatus(t, server, http.StatusOK, `"attempt_state":"ok"`)
+	registry, err := CompilePlan(validPlan(time.Now()), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.observePlan(errors.New("refresh failed"), registry, true, time.Now())
+	assertReadyStatus(t, server, http.StatusOK, `"plan":"degraded"`)
+	runtime.observePlan(nil, registry, false, time.Now())
+	assertReadyStatus(t, server, http.StatusOK, `"plan":"ok"`)
+	runtime.observePlan(errors.New("refresh failed"), registry, true, registry.plan.ExpiresAt)
+	assertReadyStatus(t, server, http.StatusServiceUnavailable, `"plan":"failed"`)
 }
 
 func TestObservabilityRejectsWritesAndHeadHasNoBody(t *testing.T) {
@@ -132,6 +144,11 @@ func testObservabilityServer(t *testing.T) (*ObservabilityServer, *Metrics, *Run
 		t.Fatal(err)
 	}
 	runtime := NewRuntimeState()
+	registry, err := CompilePlan(validPlan(time.Now()), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.observePlan(nil, registry, false, time.Now())
 	config := DefaultConfig().Observability
 	server, err := NewObservabilityServer(config, metrics, wal, attempt, quality, runtime)
 	if err != nil {

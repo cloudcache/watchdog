@@ -33,6 +33,7 @@ type Runner struct {
 	QualityState *QualityStateStore
 	Runtime      *RuntimeState
 
+	activeRegistry  atomic.Pointer[runnerRegistryView]
 	inflight        sync.Map
 	retryNeeded     atomic.Bool
 	metricsOnce     sync.Once
@@ -43,10 +44,87 @@ type Runner struct {
 	lastErrorReport time.Time
 }
 
+type runnerRegistryView struct {
+	current    *Registry
+	historical []*Registry
+}
+
+// ActivateRegistry publishes one immutable registry view to the data plane.
+// The immediately previous active registry is kept in the same atomic snapshot
+// solely for queued datagrams received before a new plan's not_before boundary.
+// Older history remains replay-only and cannot admit new WAL records.
+func (r *Runner) ActivateRegistry(registry *Registry) error {
+	if registry == nil {
+		return errors.New("active flow registry is required")
+	}
+	collectorID := registry.plan.CollectorID
+	view := &runnerRegistryView{current: registry}
+	if previous := r.activeRegistry.Load(); previous != nil && previous.current.plan.Revision != registry.plan.Revision {
+		if previous.current.plan.CollectorID != collectorID {
+			return errors.New("active flow plan changes collector identity")
+		}
+		view.historical = append(view.historical, previous.current)
+	}
+	r.activeRegistry.Store(view)
+	return nil
+}
+
+func (r *Runner) AdmissibleRegistryVersions() []uint64 {
+	view := r.activeRegistry.Load()
+	if view == nil {
+		if r.Registry == nil {
+			return nil
+		}
+		return []uint64{r.Registry.plan.Revision}
+	}
+	versions := make([]uint64, 0, 1+len(view.historical))
+	versions = append(versions, view.current.plan.Revision)
+	for _, registry := range view.historical {
+		versions = append(versions, registry.plan.Revision)
+	}
+	return versions
+}
+
+func (r *Runner) ActiveRegistry() *Registry {
+	if view := r.activeRegistry.Load(); view != nil {
+		return view.current
+	}
+	return r.Registry
+}
+
+func (r *Runner) registryAt(receivedAt time.Time) *Registry {
+	view := r.activeRegistry.Load()
+	if view == nil {
+		if r.Registry != nil && registryValidAt(r.Registry, receivedAt) {
+			return r.Registry
+		}
+		return nil
+	}
+	if registryValidAt(view.current, receivedAt) {
+		return view.current
+	}
+	for _, registry := range view.historical {
+		if registryValidAt(registry, receivedAt) {
+			return registry
+		}
+	}
+	return nil
+}
+
+func registryValidAt(registry *Registry, at time.Time) bool {
+	return registry != nil && (registry.plan.NotBefore.IsZero() || !at.Before(registry.plan.NotBefore)) && at.Before(registry.plan.ExpiresAt)
+}
+
 func (r *Runner) Run(ctx context.Context) error {
-	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Attempts == nil || r.Publisher == nil || r.QualityState == nil {
+	if r.ActiveRegistry() == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Attempts == nil || r.Publisher == nil || r.QualityState == nil {
 		return errors.New("flow runner dependencies are required")
 	}
+	if r.activeRegistry.Load() == nil {
+		if err := r.ActivateRegistry(r.Registry); err != nil {
+			return err
+		}
+	}
+	registry := r.ActiveRegistry()
 	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.AttemptJournalFsync <= 0 || r.Config.Diagnostics.AttemptCheckpointEvery <= 0 || r.Config.Diagnostics.AttemptJournalMaxBytes < attemptHeaderSize+attemptRecordSize || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.JournalFsync <= 0 || r.Config.Quality.CheckpointEvery <= 0 || r.Config.Quality.JournalMaxBytes <= qualityFrameHeaderSize || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
 		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
@@ -62,7 +140,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.QualityState.tracker != quality || r.QualityState.wal != r.WAL {
 		return errors.New("flow runner quality-state store does not match its tracker or WAL")
 	}
-	if r.Attempts.wal != r.WAL || r.Attempts.collectorID != r.Registry.Plan().CollectorID {
+	if r.Attempts.wal != r.WAL || r.Attempts.collectorID != registry.plan.CollectorID {
 		return errors.New("flow runner attempt store does not match its registry or WAL")
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -164,10 +242,16 @@ func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, quaran
 				r.metrics().recordDecodeError(datagram.Protocol, "invalid_datagram")
 				continue
 			}
-			binding, admitted := r.Registry.Admit(protocol, datagram.Source.Addr(), domain)
+			registry := r.registryAt(datagram.ReceivedAt)
+			if registry == nil {
+				datagram.Release()
+				r.metrics().QuarantinedDatagrams.Add(1)
+				continue
+			}
+			binding, admitted := registry.Admit(protocol, datagram.Source.Addr(), domain)
 			if !admitted {
 				if quarantineRate.Allow(datagram.Source.Addr(), datagram.ReceivedAt) {
-					event := BuildQuarantineEvent(datagram, r.Registry.Plan().CollectorID, protocol, domain)
+					event := BuildQuarantineEvent(datagram, registry.plan.CollectorID, protocol, domain)
 					select {
 					case quarantineQueue <- event:
 						r.metrics().QuarantineQueueDepth.Store(int64(len(quarantineQueue)))
@@ -181,7 +265,7 @@ func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, quaran
 				r.metrics().QuarantinedDatagrams.Add(1)
 				continue
 			}
-			_, err = r.WAL.Append(WALInput{Protocol: protocol, ReceivedAt: datagram.ReceivedAt, Source: datagram.Source, ObservationDomainID: domain, RegistryVersion: r.Registry.plan.Revision, TenantID: binding.TenantID, ExporterID: binding.ExporterID, TargetID: binding.TargetID, DeviceID: binding.DeviceID, Payload: datagram.Payload})
+			_, err = r.WAL.Append(WALInput{Protocol: protocol, ReceivedAt: datagram.ReceivedAt, Source: datagram.Source, ObservationDomainID: domain, RegistryVersion: registry.plan.Revision, TenantID: binding.TenantID, ExporterID: binding.ExporterID, TargetID: binding.TargetID, DeviceID: binding.DeviceID, Payload: datagram.Payload})
 			datagram.Release()
 			if err != nil {
 				if errors.Is(err, ErrWALHardLimit) {
@@ -418,7 +502,11 @@ func (r *Runner) waitQualityDurable(ctx context.Context, id DatagramID) error {
 }
 
 func (r *Runner) deadLetter(ctx context.Context, record WALRecord, code string, cause error, attempts uint32) error {
-	failure := BuildDecodeFailure(record, r.Registry.Plan().CollectorID, code, cause, attempts, r.Config.Diagnostics.DLQPayloadMaxBytes)
+	registry := r.ActiveRegistry()
+	if historical, ok := r.registryForRevision(record.RegistryVersion); ok {
+		registry = historical
+	}
+	failure := BuildDecodeFailure(record, registry.plan.CollectorID, code, cause, attempts, r.Config.Diagnostics.DLQPayloadMaxBytes)
 	startedAt := time.Now()
 	err := r.Publisher.PublishDecodeFailure(ctx, failure)
 	r.observePublish(kafkaTopicDecodeDLQ, err, time.Since(startedAt))

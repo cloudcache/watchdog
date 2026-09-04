@@ -110,7 +110,7 @@ func TestRuntimeConfigRequiresKafkaMTLSIdentity(t *testing.T) {
 
 func TestConfigRequiresPlanHistoryActiveAndAntiRollbackSlots(t *testing.T) {
 	config := DefaultConfig()
-	config.PlanHistoryMaxEntries = 1
+	config.PlanHistoryMaxEntries = 2
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected one-entry plan history to fail")
 	}

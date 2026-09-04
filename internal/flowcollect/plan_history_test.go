@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,6 +158,152 @@ func TestPlanHistoryPrunesOnlyRevisionsUnreferencedByWAL(t *testing.T) {
 	}
 	if _, ok := history.Resolve(3); !ok {
 		t.Fatal("active revision was pruned")
+	}
+}
+
+func TestPlanHistoryRefreshPersistsBeforeActivationAndRetainsPreviousActive(t *testing.T) {
+	now := time.Now()
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	keyPath := filepath.Join(dir, "plan.pub")
+	historyDir := filepath.Join(dir, "history")
+	writePlanPublicKey(t, keyPath, publicKey)
+	plan := validPlan(now)
+	writeSignedPlan(t, planPath, plan, privateKey)
+	history, err := OpenPlanHistory(planPath, keyPath, historyDir, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision = 2
+	plan.PartitionMapVersion = 2
+	writeSignedPlan(t, planPath, plan, privateKey)
+	validated := false
+	result, err := history.Refresh(now.Add(time.Second), func() (map[uint64]struct{}, error) { return nil, nil }, func(registries []*Registry) error {
+		validated = true
+		if _, err := os.Stat(filepath.Join(historyDir, "00000000000000000002.plan")); !os.IsNotExist(err) {
+			t.Fatalf("candidate was persisted before dependency validation: %v", err)
+		}
+		if len(registries) != 2 {
+			t.Fatalf("validator registries=%d, want 2", len(registries))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validated || !result.Changed || result.Revision != 2 || history.Active().Plan().Revision != 2 {
+		t.Fatalf("unexpected refresh result=%+v active=%d", result, history.Active().Plan().Revision)
+	}
+	if _, ok := history.Resolve(1); !ok {
+		t.Fatal("previous active revision was not retained across the pointer-swap window")
+	}
+	if _, err := os.Stat(filepath.Join(historyDir, "00000000000000000002.plan")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlanHistoryRefreshFailureLeavesActiveUntouched(t *testing.T) {
+	now := time.Now()
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	keyPath := filepath.Join(dir, "plan.pub")
+	historyDir := filepath.Join(dir, "history")
+	writePlanPublicKey(t, keyPath, publicKey)
+	plan := validPlan(now)
+	writeSignedPlan(t, planPath, plan, privateKey)
+	history, err := OpenPlanHistory(planPath, keyPath, historyDir, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision = 2
+	plan.PartitionMapVersion = 2
+	writeSignedPlan(t, planPath, plan, privateKey)
+	if _, err := history.Refresh(now, func() (map[uint64]struct{}, error) { return nil, nil }, func([]*Registry) error { return errors.New("Kafka unavailable") }); err == nil {
+		t.Fatal("dependency validation failure was accepted")
+	}
+	if history.Active().Plan().Revision != 1 {
+		t.Fatal("failed refresh changed the active revision")
+	}
+	if _, err := os.Stat(filepath.Join(historyDir, "00000000000000000002.plan")); !os.IsNotExist(err) {
+		t.Fatalf("failed refresh persisted candidate: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := history.Refresh(now, nil, func([]*Registry) error { return nil }); err == nil {
+		t.Fatal("invalid signature envelope was accepted")
+	}
+	if history.Active().Plan().Revision != 1 {
+		t.Fatal("invalid envelope changed the active revision")
+	}
+}
+
+func TestPlanHistoryRefreshRejectsUnsafeRetentionAndImmutableMutation(t *testing.T) {
+	now := time.Now()
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	keyPath := filepath.Join(dir, "plan.pub")
+	historyDir := filepath.Join(dir, "history")
+	writePlanPublicKey(t, keyPath, publicKey)
+	plan := validPlan(now)
+	writeSignedPlan(t, planPath, plan, privateKey)
+	history, err := OpenPlanHistory(planPath, keyPath, historyDir, 2, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision = 2
+	plan.PartitionMapVersion = 2
+	writeSignedPlan(t, planPath, plan, privateKey)
+	if _, err := history.Refresh(now, func() (map[uint64]struct{}, error) { return map[uint64]struct{}{1: {}}, nil }, func([]*Registry) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision = 3
+	plan.PartitionMapVersion = 3
+	writeSignedPlan(t, planPath, plan, privateKey)
+	if _, err := history.Refresh(now, func() (map[uint64]struct{}, error) { return map[uint64]struct{}{1: {}}, nil }, func([]*Registry) error { return nil }); err == nil {
+		t.Fatal("refresh exceeding the safe retained-revision limit was accepted")
+	}
+	if history.Active().Plan().Revision != 2 {
+		t.Fatal("retention failure changed the active revision")
+	}
+
+	plan.Revision = 2
+	plan.PartitionMapVersion = 99
+	writeSignedPlan(t, planPath, plan, privateKey)
+	if _, err := history.Refresh(now, nil, func([]*Registry) error { return nil }); err == nil {
+		t.Fatal("same revision with mutated payload was accepted")
+	}
+}
+
+func TestPlanHistoryUnchangedRefreshDoesNotScanWALOrRevalidateKafka(t *testing.T) {
+	now := time.Now()
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	keyPath := filepath.Join(dir, "plan.pub")
+	writePlanPublicKey(t, keyPath, publicKey)
+	writeSignedPlan(t, planPath, validPlan(now), privateKey)
+	history, err := OpenPlanHistory(planPath, keyPath, filepath.Join(dir, "history"), 4, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history.usedLKG = true
+	referencesCalled, validatorCalled := false, false
+	result, err := history.Refresh(now.Add(time.Second), func() (map[uint64]struct{}, error) {
+		referencesCalled = true
+		return nil, errors.New("must not be called")
+	}, func([]*Registry) error {
+		validatorCalled = true
+		return errors.New("must not be called")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Changed || referencesCalled || validatorCalled || history.UsedLKG() {
+		t.Fatalf("unexpected unchanged refresh result=%+v references=%v validator=%v lkg=%v", result, referencesCalled, validatorCalled, history.UsedLKG())
 	}
 }
 

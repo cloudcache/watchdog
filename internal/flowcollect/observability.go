@@ -27,6 +27,7 @@ type ObservabilityServer struct {
 
 type readinessChecks struct {
 	Runner            string `json:"runner"`
+	Plan              string `json:"plan"`
 	WAL               string `json:"wal"`
 	AttemptState      string `json:"attempt_state"`
 	QualityState      string `json:"quality_state"`
@@ -120,6 +121,7 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 	quality := s.quality.State()
 	checks := readinessChecks{
 		Runner:            healthValue(runtime.Running),
+		Plan:              healthValue(runtime.Plan.Accepting),
 		WAL:               healthValue(wal.Writable && !wal.HardWatermark),
 		AttemptState:      healthValue(attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy),
 		QualityState:      healthValue(quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy),
@@ -129,15 +131,18 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 		KafkaDecodeDLQ:    healthValue(runtime.Kafka[kafkaTopicDecodeDLQ].Healthy),
 		KafkaQuarantine:   healthValue(runtime.Kafka[kafkaTopicQuarantine].Healthy),
 	}
-	ready := runtime.Running && wal.Writable && !wal.HardWatermark && attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy && quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy && runtime.Collect.Healthy
+	ready := runtime.Running && runtime.Plan.Accepting && wal.Writable && !wal.HardWatermark && attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy && quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy && runtime.Collect.Healthy
 	for _, topic := range runtime.Kafka {
 		ready = ready && topic.Healthy
 	}
 	status, code := "ready", http.StatusOK
 	if !ready {
 		status, code = "unavailable", http.StatusServiceUnavailable
-	} else if wal.SoftWatermark || attempt.UsageRatio >= .8 || quality.UsageRatio >= .8 {
+	} else if !runtime.Plan.Healthy || runtime.Plan.UsedLKG || wal.SoftWatermark || attempt.UsageRatio >= .8 || quality.UsageRatio >= .8 {
 		status = "degraded"
+		if !runtime.Plan.Healthy || runtime.Plan.UsedLKG {
+			checks.Plan = "degraded"
+		}
 		if wal.SoftWatermark {
 			checks.WAL = "degraded"
 		}
@@ -262,6 +267,25 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metricInt(&out, "watchdog_flow_plan_history_entries", "", metrics.PlanHistoryEntries.Load())
 	metricHeader(&out, "watchdog_flow_plan_history_pruned_total", "Unreferenced signed collector plan revisions pruned.", "counter")
 	metricUint(&out, "watchdog_flow_plan_history_pruned_total", "", metrics.PlanHistoryPruned.Load())
+	metricHeader(&out, "watchdog_flow_plan_refresh_total", "Signed collector plan refresh attempts by bounded result.", "counter")
+	metricUint(&out, "watchdog_flow_plan_refresh_total", `result="success"`, metrics.PlanRefreshSuccesses.Load())
+	metricUint(&out, "watchdog_flow_plan_refresh_total", `result="failure"`, metrics.PlanRefreshFailures.Load())
+	metricHeader(&out, "watchdog_flow_plan_changes_total", "Successfully activated signed collector plan revisions.", "counter")
+	metricUint(&out, "watchdog_flow_plan_changes_total", "", metrics.PlanRefreshChanges.Load())
+	metricHeader(&out, "watchdog_flow_plan_refresh_ready", "Whether the most recent signed plan refresh succeeded.", "gauge")
+	metricBool(&out, "watchdog_flow_plan_refresh_ready", "", runtime.Plan.Healthy)
+	metricHeader(&out, "watchdog_flow_plan_accepting", "Whether the active signed plan authorizes new datagrams at the last refresh check.", "gauge")
+	metricBool(&out, "watchdog_flow_plan_accepting", "", runtime.Plan.Accepting)
+	metricHeader(&out, "watchdog_flow_plan_active_revision", "Active signed collector plan revision.", "gauge")
+	metricUint(&out, "watchdog_flow_plan_active_revision", "", runtime.Plan.ActiveRevision)
+	metricHeader(&out, "watchdog_flow_plan_expires_timestamp_seconds", "Unix expiry time of the active signed collector plan.", "gauge")
+	metricInt(&out, "watchdog_flow_plan_expires_timestamp_seconds", "", runtime.Plan.ExpiresAt)
+	metricHeader(&out, "watchdog_flow_plan_using_lkg", "Whether startup or refresh is using a last-known-good plan.", "gauge")
+	metricBool(&out, "watchdog_flow_plan_using_lkg", "", runtime.Plan.UsedLKG)
+	metricHeader(&out, "watchdog_flow_plan_last_success_timestamp_seconds", "Unix time of the last successful signed plan refresh.", "gauge")
+	metricInt(&out, "watchdog_flow_plan_last_success_timestamp_seconds", "", runtime.Plan.LastSuccessAt)
+	metricHeader(&out, "watchdog_flow_plan_last_failure_timestamp_seconds", "Unix time of the last failed signed plan refresh.", "gauge")
+	metricInt(&out, "watchdog_flow_plan_last_failure_timestamp_seconds", "", runtime.Plan.LastFailureAt)
 
 	metricHeader(&out, "watchdog_flow_replay_attempts_total", "WAL record processing attempts after the first generation.", "counter")
 	metricUint(&out, "watchdog_flow_replay_attempts_total", "", metrics.ReplayAttempts.Load())

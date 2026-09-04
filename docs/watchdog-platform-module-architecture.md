@@ -390,6 +390,8 @@ agent 必须是薄执行器，不保存业务评分规则、不自行判断 tena
 
 有效配置固定为三层交集。agent 以 `If-None-Match: plan_hash` 拉取 active plan；控制面返回 canonical spec、config/schema version、key ID、signature 和 expiry。agent 依次执行签名/hash、schema、兼容范围、binding/scope、资源预算和 analyzer self-test 校验；通过后写临时文件、fsync、原子切换并 heartbeat `acknowledged_config_version`。失败继续 last-known-good，并上报失败阶段。Flow 收集型 agent 可在控制面短故障时继续使用 LKG；`flow_probe` plan 只要允许 `active_handshake`，validate 就强制非空 expiry，主动 plan/job 必须同时未过期，过期后不得领取新任务，inflight 只运行到固化 deadline。
 
+`watchdog-flow-collect` 已先实现本地 signed plan 消费端闭环，但未实现上述远程拉取：部署/控制面必须把完整 envelope 原子投递到 `plan_file`。collector 周期复核并按 expiry 精确定时；新 revision 只有在验签、单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才原子切换无锁数据面。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 因候选/当前/上一切换窗口运行时下限为 3，默认 128。`control_plane_url` 当前不触发登录或网络请求；enrollment、authenticated delivery、ACK/heartbeat、trust/credential rotation 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
+
 扩展以稳定 analyzer contract 完成：
 
 ```go
