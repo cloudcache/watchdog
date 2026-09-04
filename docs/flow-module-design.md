@@ -448,7 +448,7 @@ TLS 使用 TLS 1.2 下限；未配置 `tls_ca_file` 时使用系统 trust store�
 
 旧 epoch tombstone 不是 owner 自己的“顺手清理”，而是 watchdog 内 reconciler 的带审计状态机：`revoke_old_plan_and_unique_principal → wait old plan expiry + clock skew and ACL propagation → new owner restore → observe new epoch state at a frozen Kafka high-watermark and require generation advance → tombstone exact old state_key → verify tombstone at a later frozen boundary`。只有同时满足旧 owner 已 drain/失去 WRITE、新 plan 的 epoch 严格增加、replacement identity 相同且新 key 已 Kafka durable，才能清理；超时保持旧 key而不影响正确性。回滚也必须再分配更高 epoch，绝不复用已 tombstone 的 epoch。tombstone 由 reconciler 专用 principal 写入，flow-collect runtime API 不暴露任意 key 删除；`delete.retention.ms` 至少覆盖最大恢复/消费者中断窗口，并记录 old/new collector、identity、epoch、generation、partition/offset 和审批审计。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler tombstone 编码，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，但不能代替厂商报文验收。这些剩余项完成前不得宣称跨节点闭环。
+当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler tombstone 编码，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
