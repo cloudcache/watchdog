@@ -2,10 +2,12 @@ package flowcollect
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/netsampler/goflow2/v3/decoders/netflow"
@@ -13,10 +15,13 @@ import (
 	"github.com/netsampler/goflow2/v3/decoders/sflow"
 	"github.com/netsampler/goflow2/v3/producer"
 	protoproducer "github.com/netsampler/goflow2/v3/producer/proto"
+	"github.com/netsampler/goflow2/v3/utils/store/samplingrate"
 	"github.com/netsampler/goflow2/v3/utils/store/templates"
 )
 
 var ErrTemplatePending = errors.New("NetFlow/IPFIX template is not available")
+
+const defaultDecoderStateTTL = 30 * time.Minute
 
 type DecodedDatagram struct {
 	Protocol            Protocol
@@ -25,6 +30,7 @@ type DecodedDatagram struct {
 	SubAgentID          uint32
 	DatagramSequence    uint32
 	TemplateChanged     bool
+	CollectStateChanged bool
 	Records             []DecodedRecord
 }
 
@@ -52,22 +58,66 @@ type DecodedRecord struct {
 }
 
 type Decoder struct {
-	templates *templates.TemplateFlowStore
-	producer  producer.ProducerInterface
+	templates    *templates.TemplateFlowStore
+	sampling     samplingrate.Store
+	producer     producer.ProducerInterface
+	stateMu      sync.Mutex
+	stateChanges map[decoderStateKey]uint64
+	stateTTL     time.Duration
+}
+
+type decoderStateKey struct {
+	router  string
+	version uint16
+	domain  uint32
 }
 
 func NewDecoder() (*Decoder, error) {
+	return NewDecoderWithStateTTL(defaultDecoderStateTTL)
+}
+
+func NewDecoderWithStateTTL(stateTTL time.Duration) (*Decoder, error) {
+	if stateTTL <= 0 {
+		return nil, errors.New("decoder state TTL must be positive")
+	}
 	producerConfig, err := (&protoproducer.ProducerConfig{}).Compile()
 	if err != nil {
 		return nil, fmt.Errorf("compile GoFlow2 producer config: %w", err)
 	}
-	protoProducer, err := protoproducer.CreateProtoProducer(producerConfig, nil)
+	decoder := &Decoder{stateChanges: make(map[decoderStateKey]uint64), stateTTL: stateTTL}
+	templateStore := templates.NewTemplateFlowStore(
+		templates.WithTTL(stateTTL),
+		templates.WithExtendOnAccess(true),
+		templates.WithHooks(templates.TemplateHooks{
+			OnAdd: func(router string, version uint16, domain uint32, _ uint16, _ interface{}, _ bool) {
+				decoder.markStateChanged(decoderStateKey{router: router, version: version, domain: domain})
+			},
+			OnRemove: func(router string, version uint16, domain uint32, _ uint16, _ interface{}) {
+				decoder.markStateChanged(decoderStateKey{router: router, version: version, domain: domain})
+			},
+		}),
+	)
+	samplingStore := samplingrate.NewSamplingRateFlowStore(
+		samplingrate.WithTTL(stateTTL),
+		samplingrate.WithExtendOnAccess(true),
+		samplingrate.WithHooks(samplingrate.Hooks{
+			OnSet: func(router string, version uint16, domain uint32, _ uint32, _ bool) {
+				decoder.markStateChanged(decoderStateKey{router: router, version: version, domain: domain})
+			},
+			OnRemove: func(router string, version uint16, domain uint32, _ uint32) {
+				decoder.markStateChanged(decoderStateKey{router: router, version: version, domain: domain})
+			},
+		}),
+	)
+	protoProducer, err := protoproducer.CreateProtoProducer(producerConfig, samplingStore)
 	if err != nil {
 		return nil, fmt.Errorf("create GoFlow2 producer: %w", err)
 	}
-	templateStore := templates.NewTemplateFlowStore(templates.WithTTL(30*time.Minute), templates.WithExtendOnAccess(true))
 	templateStore.Start()
-	return &Decoder{templates: templateStore, producer: protoProducer}, nil
+	decoder.templates = templateStore
+	decoder.sampling = samplingStore
+	decoder.producer = protoProducer
+	return decoder, nil
 }
 
 func (d *Decoder) Close() {
@@ -162,10 +212,19 @@ func (d *Decoder) decodeNetFlow5(record WALRecord) (DecodedDatagram, error) {
 }
 
 func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain uint64) (DecodedDatagram, error) {
+	version := protocolVersion(protocol)
+	if domain > math.MaxUint32 || version == 0 {
+		return DecodedDatagram{}, errors.New("invalid NetFlow/IPFIX decoder state key")
+	}
+	stateKey := decoderStateKey{router: record.Source.Addr().String(), version: version, domain: uint32(domain)}
+	stateRevision := d.stateRevision(stateKey)
 	ctx := netflow.FlowContext{RouterKey: record.Source.Addr().String()}
 	var nf9 netflow.NFv9Packet
 	var ipfix netflow.IPFIXPacket
 	if err := netflow.DecodeMessageVersion(bytes.NewBuffer(record.Payload), d.templates, ctx, &nf9, &ipfix); err != nil {
+		if errors.Is(err, netflow.ErrorTemplateNotFound) {
+			return DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, CollectStateChanged: d.stateRevision(stateKey) != stateRevision}, errors.Join(ErrTemplatePending, fmt.Errorf("decode NetFlow/IPFIX: %w", err))
+		}
 		return DecodedDatagram{}, fmt.Errorf("decode NetFlow/IPFIX: %w", err)
 	}
 	var packet interface{}
@@ -181,11 +240,92 @@ func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain
 		return DecodedDatagram{}, err
 	}
 	defer d.producer.Commit(messages)
-	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, TemplateChanged: containsTemplate(sets), Records: copyMessages(messages, record.ReceivedAt)}
+	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, TemplateChanged: containsTemplate(sets), CollectStateChanged: d.stateRevision(stateKey) != stateRevision, Records: copyMessages(messages, record.ReceivedAt)}
 	if containsRawFlowSet(sets) {
 		return result, ErrTemplatePending
 	}
 	return result, nil
+}
+
+func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uint64) ([]byte, []byte, error) {
+	version := protocolVersion(protocol)
+	if d == nil || d.templates == nil || d.sampling == nil || !source.IsValid() || version == 0 || domain > math.MaxUint32 {
+		return nil, nil, errors.New("invalid decoder state snapshot key")
+	}
+	router := source.Unmap().String()
+	templateDocument := make(map[string]map[string]interface{})
+	if entries := d.templates.GetAll()[router]; len(entries) > 0 {
+		selected := make(map[string]interface{})
+		for key, value := range entries {
+			entryVersion := uint16(key >> 48)
+			entryDomain := uint32((key >> 16) & math.MaxUint32)
+			if entryVersion == version && entryDomain == uint32(domain) {
+				selected[fmt.Sprintf("%d/%d/%d", entryVersion, entryDomain, uint16(key))] = value
+			}
+		}
+		if len(selected) > 0 {
+			templateDocument[router] = selected
+		}
+	}
+	templateJSON, err := json.Marshal(templateDocument)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal template state: %w", err)
+	}
+	samplingDocument := make(map[string]map[string]uint32)
+	if entries := d.sampling.GetAll()[router]; len(entries) > 0 {
+		selected := make(map[string]uint32)
+		for key, rate := range entries {
+			entryVersion := uint16(key >> 32)
+			entryDomain := uint32(key)
+			if entryVersion == version && entryDomain == uint32(domain) {
+				selected[fmt.Sprintf("%d/%d", entryVersion, entryDomain)] = rate
+			}
+		}
+		if len(selected) > 0 {
+			samplingDocument[router] = selected
+		}
+	}
+	samplingJSON, err := json.Marshal(samplingDocument)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal sampling-rate state: %w", err)
+	}
+	return templateJSON, samplingJSON, nil
+}
+
+func (d *Decoder) RestoreState(templateJSON, samplingJSON []byte) error {
+	if d == nil || d.templates == nil || d.sampling == nil {
+		return errors.New("decoder state stores are not initialized")
+	}
+	if err := templates.LoadJSON(d.templates, templateJSON); err != nil {
+		return fmt.Errorf("restore template state: %w", err)
+	}
+	if err := samplingrate.LoadJSON(d.sampling, samplingJSON); err != nil {
+		return fmt.Errorf("restore sampling-rate state: %w", err)
+	}
+	return nil
+}
+
+func (d *Decoder) markStateChanged(key decoderStateKey) {
+	d.stateMu.Lock()
+	d.stateChanges[key]++
+	d.stateMu.Unlock()
+}
+
+func (d *Decoder) stateRevision(key decoderStateKey) uint64 {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	return d.stateChanges[key]
+}
+
+func protocolVersion(protocol Protocol) uint16 {
+	switch protocol {
+	case ProtocolNetFlow9:
+		return 9
+	case ProtocolIPFIX:
+		return 10
+	default:
+		return 0
+	}
 }
 
 func produceArgs(record WALRecord) *producer.ProduceArgs {

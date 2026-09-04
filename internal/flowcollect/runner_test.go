@@ -2,6 +2,7 @@ package flowcollect
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"testing"
 	"time"
@@ -12,13 +13,217 @@ import (
 
 type recordingPublisher struct {
 	batches []*flowpb.NormalizedRecordBatch
+	states  []*flowpb.CollectState
+	events  []string
 }
 
 func (p *recordingPublisher) Publish(_ context.Context, batch *flowpb.NormalizedRecordBatch) error {
 	p.batches = append(p.batches, batch)
+	p.events = append(p.events, "data")
+	return nil
+}
+func (p *recordingPublisher) PublishCollectState(_ context.Context, state *flowpb.CollectState) error {
+	p.states = append(p.states, state)
+	p.events = append(p.events, "state")
 	return nil
 }
 func (p *recordingPublisher) Close() error { return nil }
+
+type failDataOncePublisher struct {
+	recordingPublisher
+	fail bool
+}
+
+func (p *failDataOncePublisher) Publish(ctx context.Context, batch *flowpb.NormalizedRecordBatch) error {
+	if p.fail {
+		p.fail = false
+		p.events = append(p.events, "data-failed")
+		return errors.New("injected normalized publish failure")
+	}
+	return p.recordingPublisher.Publish(ctx, batch)
+}
+
+func TestRunnerCheckpointsAndPublishesCollectStateBeforeData(t *testing.T) {
+	now := time.Now()
+	domain := uint64(42)
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", ObservationDomainID: &domain, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", SamplingMode: SamplingModePreScaled, Enabled: true}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), plan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	payload := mustMarshalNFv9(t, netflowTemplatePacket(true))
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow9, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), ObservationDomainID: domain, RegistryVersion: plan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingPublisher{}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.states) != 1 || len(publisher.batches) != 1 || len(publisher.events) != 2 || publisher.events[0] != "state" || publisher.events[1] != "data" {
+		t.Fatalf("collect-state/data publish order is unsafe: events=%v states=%d batches=%d", publisher.events, len(publisher.states), len(publisher.batches))
+	}
+	remaining := 0
+	if err := w.Replay(func(WALRecord) error { remaining++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("state and data children were not fully acknowledged: %d", remaining)
+	}
+}
+
+func TestRunnerAcknowledgesTemplateOnlyAfterCollectStatePublish(t *testing.T) {
+	now := time.Now()
+	domain := uint64(42)
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", ObservationDomainID: &domain, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", SamplingMode: SamplingModePreScaled, Enabled: true}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), plan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow9, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), ObservationDomainID: domain, RegistryVersion: plan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", Payload: mustMarshalNFv9(t, netflowTemplatePacket(false))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingPublisher{}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.states) != 1 || len(publisher.batches) != 0 || len(publisher.events) != 1 || publisher.events[0] != "state" {
+		t.Fatalf("template-only datagram was not safely published: events=%v states=%d batches=%d", publisher.events, len(publisher.states), len(publisher.batches))
+	}
+	assertReplayCount(t, w, 0)
+}
+
+func TestRunnerKeepsMissingTemplateDataInWAL(t *testing.T) {
+	now := time.Now()
+	domain := uint64(42)
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", ObservationDomainID: &domain, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", SamplingMode: SamplingModePreScaled, Enabled: true}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), plan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow9, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), ObservationDomainID: domain, RegistryVersion: plan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", Payload: mustMarshalNFv9(t, netflowDataPacket())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingPublisher{}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); !errors.Is(err, ErrTemplatePending) {
+		t.Fatalf("missing template error=%v, want ErrTemplatePending", err)
+	}
+	if len(publisher.states) != 0 || len(publisher.batches) != 0 {
+		t.Fatalf("missing-template data was published: states=%d batches=%d", len(publisher.states), len(publisher.batches))
+	}
+	assertReplayCount(t, w, 1)
+}
+
+func TestDecodeWorkerAffinityIsStablePerExporterDomain(t *testing.T) {
+	record := WALRecord{WALInput: WALInput{Protocol: ProtocolIPFIX, Source: netip.MustParseAddrPort("192.0.2.9:2055"), ObservationDomainID: 42}}
+	want := decodeWorkerIndex(record, 16)
+	for index := 0; index < 100; index++ {
+		if got := decodeWorkerIndex(record, 16); got != want {
+			t.Fatalf("worker affinity changed: got %d want %d", got, want)
+		}
+	}
+	seen := map[int]struct{}{want: {}}
+	for domain := uint64(43); domain < 80; domain++ {
+		record.ObservationDomainID = domain
+		seen[decodeWorkerIndex(record, 16)] = struct{}{}
+	}
+	if len(seen) == 1 {
+		t.Fatal("worker affinity ignored observation domain")
+	}
+}
+
+func TestRunnerRetrySkipsAcknowledgedCollectStateChild(t *testing.T) {
+	now := time.Now()
+	domain := uint64(42)
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", ObservationDomainID: &domain, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", SamplingMode: SamplingModePreScaled, Enabled: true}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), plan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow9, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), ObservationDomainID: domain, RegistryVersion: plan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", Payload: mustMarshalNFv9(t, netflowTemplatePacket(true))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &failDataOncePublisher{fail: true}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); err == nil {
+		t.Fatal("injected publish failure was not returned")
+	}
+	if err := runner.processRecord(context.Background(), record, 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.states) != 1 || len(publisher.batches) != 1 {
+		t.Fatalf("retry duplicated acknowledged child: states=%d batches=%d events=%v", len(publisher.states), len(publisher.batches), publisher.events)
+	}
+	if publisher.batches[0].ReplayGeneration != 1 {
+		t.Fatalf("retry generation=%d, want 1", publisher.batches[0].ReplayGeneration)
+	}
+}
 
 func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 	now := time.Now()
@@ -47,9 +252,13 @@ func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
 	publisher := &recordingPublisher{}
-	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, Publisher: publisher}
-	if err := runner.processRecord(context.Background(), record); err != nil {
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	if err := runner.processRecord(context.Background(), record, 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(publisher.batches) != 1 || publisher.batches[0].Records[0].EstimatedBytes != 100000 {
@@ -61,5 +270,16 @@ func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("published datagram remained replayable: %d", remaining)
+	}
+}
+
+func assertReplayCount(t *testing.T, w *WAL, want int) {
+	t.Helper()
+	got := 0
+	if err := w.Replay(func(WALRecord) error { got++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("replayable datagrams=%d, want %d", got, want)
 	}
 }

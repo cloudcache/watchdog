@@ -33,6 +33,9 @@ func TestBuildNormalizedBatchesPreservesDimensionsAndStableIdentity(t *testing.T
 	if string(batch.NormalizedBatchId) != string(again[0].NormalizedBatchId) {
 		t.Fatal("replay changed normalized batch identity")
 	}
+	if again[0].ReplayGeneration != 3 {
+		t.Fatalf("replay generation not propagated: %d", again[0].ReplayGeneration)
+	}
 	encoded, err := proto.Marshal(batch)
 	if err != nil {
 		t.Fatal(err)

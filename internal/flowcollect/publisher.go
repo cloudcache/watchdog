@@ -15,22 +15,24 @@ import (
 
 type Publisher interface {
 	Publish(context.Context, *flowpb.NormalizedRecordBatch) error
+	PublishCollectState(context.Context, *flowpb.CollectState) error
 	Close() error
 }
 
 type KafkaPublisher struct {
-	topic     string
-	producer  sarama.AsyncProducer
-	closed    chan struct{}
-	done      chan struct{}
-	closeOnce sync.Once
+	topic             string
+	collectStateTopic string
+	producer          sarama.AsyncProducer
+	closed            chan struct{}
+	done              chan struct{}
+	closeOnce         sync.Once
 }
 
 type publishResult struct{ done chan error }
 
 func NewKafkaPublisher(config KafkaConfig, batchConfig NormalizedBatchCfg, collectorID string) (*KafkaPublisher, error) {
-	if len(config.Brokers) == 0 || config.NormalizedTopic == "" {
-		return nil, errors.New("Kafka brokers and normalized topic are required")
+	if len(config.Brokers) == 0 || config.NormalizedTopic == "" || config.CollectStateTopic == "" {
+		return nil, errors.New("Kafka brokers, normalized topic, and collect-state topic are required")
 	}
 	saramaConfig, err := buildSaramaConfig(config, batchConfig, collectorID)
 	if err != nil {
@@ -40,7 +42,7 @@ func NewKafkaPublisher(config KafkaConfig, batchConfig NormalizedBatchCfg, colle
 	if err != nil {
 		return nil, fmt.Errorf("create Kafka producer: %w", err)
 	}
-	publisher := &KafkaPublisher{topic: config.NormalizedTopic, producer: producer, closed: make(chan struct{}), done: make(chan struct{})}
+	publisher := &KafkaPublisher{topic: config.NormalizedTopic, collectStateTopic: config.CollectStateTopic, producer: producer, closed: make(chan struct{}), done: make(chan struct{})}
 	go publisher.collectResults()
 	return publisher, nil
 }
@@ -59,7 +61,9 @@ func buildSaramaConfig(config KafkaConfig, batchConfig NormalizedBatchCfg, colle
 	saramaConfig.Producer.Retry.Max = 10
 	saramaConfig.Producer.Return.Successes = true
 	saramaConfig.Producer.Return.Errors = true
-	saramaConfig.Producer.Partitioner = sarama.NewManualPartitioner
+	saramaConfig.Producer.Partitioner = func(topic string) sarama.Partitioner {
+		return &explicitOrHashPartitioner{fallback: sarama.NewHashPartitioner(topic)}
+	}
 	saramaConfig.Producer.Flush.Frequency = batchConfig.MaxWait
 	saramaConfig.Producer.Compression = sarama.CompressionZSTD
 	switch config.Compression {
@@ -86,8 +90,28 @@ func (p *KafkaPublisher) Publish(ctx context.Context, batch *flowpb.NormalizedRe
 	if err != nil {
 		return fmt.Errorf("marshal normalized batch: %w", err)
 	}
+	message := &sarama.ProducerMessage{Topic: p.topic, Partition: int32(batch.PhysicalPartition), Key: sarama.ByteEncoder(batch.NormalizedBatchId), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(batch.ReceivedAtUnixMs)}
+	return p.publishMessage(ctx, message)
+}
+
+func (p *KafkaPublisher) PublishCollectState(ctx context.Context, state *flowpb.CollectState) error {
+	if p.collectStateTopic == "" {
+		return errors.New("Kafka collect-state topic is required")
+	}
+	if state == nil {
+		return errors.New("collect state is required")
+	}
+	data, err := proto.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal collect state: %w", err)
+	}
+	message := &sarama.ProducerMessage{Topic: p.collectStateTopic, Partition: -1, Key: sarama.ByteEncoder(state.StateKey), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(state.ReceivedAtUnixMs)}
+	return p.publishMessage(ctx, message)
+}
+
+func (p *KafkaPublisher) publishMessage(ctx context.Context, message *sarama.ProducerMessage) error {
 	result := &publishResult{done: make(chan error, 1)}
-	message := &sarama.ProducerMessage{Topic: p.topic, Partition: int32(batch.PhysicalPartition), Key: sarama.ByteEncoder(batch.NormalizedBatchId), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(batch.ReceivedAtUnixMs), Metadata: result}
+	message.Metadata = result
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -101,6 +125,24 @@ func (p *KafkaPublisher) Publish(ctx context.Context, batch *flowpb.NormalizedRe
 	case err := <-result.done:
 		return err
 	}
+}
+
+type explicitOrHashPartitioner struct {
+	fallback sarama.Partitioner
+}
+
+func (p *explicitOrHashPartitioner) Partition(message *sarama.ProducerMessage, partitions int32) (int32, error) {
+	if message.Partition >= 0 {
+		if message.Partition >= partitions {
+			return -1, fmt.Errorf("explicit Kafka partition %d is outside topic partition count %d", message.Partition, partitions)
+		}
+		return message.Partition, nil
+	}
+	return p.fallback.Partition(message, partitions)
+}
+
+func (p *explicitOrHashPartitioner) RequiresConsistency() bool {
+	return true
 }
 
 func (p *KafkaPublisher) Close() error {

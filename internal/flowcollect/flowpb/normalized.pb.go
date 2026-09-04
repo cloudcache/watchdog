@@ -478,6 +478,164 @@ func (x *NormalizedRecord) GetExporterDrops() uint64 {
 	return 0
 }
 
+// CollectState is the durable decoder state for one transport source,
+// protocol and observation domain. The compacted Kafka key is state_key.
+type CollectState struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	StateSchemaVersion  uint32                 `protobuf:"varint,1,opt,name=state_schema_version,json=stateSchemaVersion,proto3" json:"state_schema_version,omitempty"`
+	StateId             []byte                 `protobuf:"bytes,2,opt,name=state_id,json=stateId,proto3" json:"state_id,omitempty"`
+	StateKey            []byte                 `protobuf:"bytes,3,opt,name=state_key,json=stateKey,proto3" json:"state_key,omitempty"`
+	DatagramId          []byte                 `protobuf:"bytes,4,opt,name=datagram_id,json=datagramId,proto3" json:"datagram_id,omitempty"`
+	TenantId            string                 `protobuf:"bytes,5,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	CollectorId         string                 `protobuf:"bytes,6,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	ExporterId          string                 `protobuf:"bytes,7,opt,name=exporter_id,json=exporterId,proto3" json:"exporter_id,omitempty"`
+	RegistryVersion     uint64                 `protobuf:"varint,8,opt,name=registry_version,json=registryVersion,proto3" json:"registry_version,omitempty"`
+	ReceivedAtUnixMs    int64                  `protobuf:"varint,9,opt,name=received_at_unix_ms,json=receivedAtUnixMs,proto3" json:"received_at_unix_ms,omitempty"`
+	Protocol            uint32                 `protobuf:"varint,10,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	SourceIp            []byte                 `protobuf:"bytes,11,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	ObservationDomainId uint64                 `protobuf:"varint,12,opt,name=observation_domain_id,json=observationDomainId,proto3" json:"observation_domain_id,omitempty"`
+	TemplatesJson       []byte                 `protobuf:"bytes,13,opt,name=templates_json,json=templatesJson,proto3" json:"templates_json,omitempty"`
+	SamplingRatesJson   []byte                 `protobuf:"bytes,14,opt,name=sampling_rates_json,json=samplingRatesJson,proto3" json:"sampling_rates_json,omitempty"`
+	PayloadSha256       []byte                 `protobuf:"bytes,15,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *CollectState) Reset() {
+	*x = CollectState{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectState) ProtoMessage() {}
+
+func (x *CollectState) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectState.ProtoReflect.Descriptor instead.
+func (*CollectState) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CollectState) GetStateSchemaVersion() uint32 {
+	if x != nil {
+		return x.StateSchemaVersion
+	}
+	return 0
+}
+
+func (x *CollectState) GetStateId() []byte {
+	if x != nil {
+		return x.StateId
+	}
+	return nil
+}
+
+func (x *CollectState) GetStateKey() []byte {
+	if x != nil {
+		return x.StateKey
+	}
+	return nil
+}
+
+func (x *CollectState) GetDatagramId() []byte {
+	if x != nil {
+		return x.DatagramId
+	}
+	return nil
+}
+
+func (x *CollectState) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *CollectState) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+func (x *CollectState) GetExporterId() string {
+	if x != nil {
+		return x.ExporterId
+	}
+	return ""
+}
+
+func (x *CollectState) GetRegistryVersion() uint64 {
+	if x != nil {
+		return x.RegistryVersion
+	}
+	return 0
+}
+
+func (x *CollectState) GetReceivedAtUnixMs() int64 {
+	if x != nil {
+		return x.ReceivedAtUnixMs
+	}
+	return 0
+}
+
+func (x *CollectState) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *CollectState) GetSourceIp() []byte {
+	if x != nil {
+		return x.SourceIp
+	}
+	return nil
+}
+
+func (x *CollectState) GetObservationDomainId() uint64 {
+	if x != nil {
+		return x.ObservationDomainId
+	}
+	return 0
+}
+
+func (x *CollectState) GetTemplatesJson() []byte {
+	if x != nil {
+		return x.TemplatesJson
+	}
+	return nil
+}
+
+func (x *CollectState) GetSamplingRatesJson() []byte {
+	if x != nil {
+		return x.SamplingRatesJson
+	}
+	return nil
+}
+
+func (x *CollectState) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
 
 const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
@@ -539,7 +697,26 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x0fsample_sequence\x18$ \x01(\rR\x0esampleSequence\x12\x1f\n" +
 	"\vsample_pool\x18% \x01(\x04R\n" +
 	"samplePool\x12%\n" +
-	"\x0eexporter_drops\x18& \x01(\x04R\rexporterDropsJ\x04\b\x17\x10 BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	"\x0eexporter_drops\x18& \x01(\x04R\rexporterDropsJ\x04\b\x17\x10 \"\xbf\x04\n" +
+	"\fCollectState\x120\n" +
+	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12\x19\n" +
+	"\bstate_id\x18\x02 \x01(\fR\astateId\x12\x1b\n" +
+	"\tstate_key\x18\x03 \x01(\fR\bstateKey\x12\x1f\n" +
+	"\vdatagram_id\x18\x04 \x01(\fR\n" +
+	"datagramId\x12\x1b\n" +
+	"\ttenant_id\x18\x05 \x01(\tR\btenantId\x12!\n" +
+	"\fcollector_id\x18\x06 \x01(\tR\vcollectorId\x12\x1f\n" +
+	"\vexporter_id\x18\a \x01(\tR\n" +
+	"exporterId\x12)\n" +
+	"\x10registry_version\x18\b \x01(\x04R\x0fregistryVersion\x12-\n" +
+	"\x13received_at_unix_ms\x18\t \x01(\x03R\x10receivedAtUnixMs\x12\x1a\n" +
+	"\bprotocol\x18\n" +
+	" \x01(\rR\bprotocol\x12\x1b\n" +
+	"\tsource_ip\x18\v \x01(\fR\bsourceIp\x122\n" +
+	"\x15observation_domain_id\x18\f \x01(\x04R\x13observationDomainId\x12%\n" +
+	"\x0etemplates_json\x18\r \x01(\fR\rtemplatesJson\x12.\n" +
+	"\x13sampling_rates_json\x18\x0e \x01(\fR\x11samplingRatesJson\x12%\n" +
+	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once
@@ -553,10 +730,11 @@ func file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP() []byte {
 	return file_internal_flowcollect_flowpb_normalized_proto_rawDescData
 }
 
-var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_internal_flowcollect_flowpb_normalized_proto_goTypes = []any{
 	(*NormalizedRecordBatch)(nil), // 0: watchdog.flow.v1.NormalizedRecordBatch
 	(*NormalizedRecord)(nil),      // 1: watchdog.flow.v1.NormalizedRecord
+	(*CollectState)(nil),          // 2: watchdog.flow.v1.CollectState
 }
 var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
 	1, // 0: watchdog.flow.v1.NormalizedRecordBatch.records:type_name -> watchdog.flow.v1.NormalizedRecord
@@ -578,7 +756,7 @@ func file_internal_flowcollect_flowpb_normalized_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_flowcollect_flowpb_normalized_proto_rawDesc), len(file_internal_flowcollect_flowpb_normalized_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

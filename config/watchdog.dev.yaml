@@ -39,6 +39,7 @@ flow_collect:
   receive_buffer_bytes: 4194304
   max_datagram_bytes: 65535
   plan_refresh_interval: 30s
+  decoder_state_ttl: 30m
   exporter_refresh_interval: 30s
   wal:
     max_bytes: 1073741824

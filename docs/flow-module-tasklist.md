@@ -362,19 +362,22 @@
 
 ### FLOW-02 GoFlow2 解码、采样归一与 normalized Kafka 契约
 
-当前状态：**进行中**。GoFlow2 与 normalized 主干已经贯通，但 collect-state、DLQ/quarantine 和生产容量尚未闭环。
+当前状态：**进行中**。GoFlow2、normalized 与单节点 collect-state 安全点已经贯通；跨节点恢复、DLQ/quarantine 和生产容量尚未闭环。
 
 - [x] **FLOW-02A GoFlow2 adapter**：同进程 GoFlow2 v3 解码 sFlow v5、NetFlow v5/v9、IPFIX；sFlow 按 sample 转换并保留 sub-agent/source/sample-pool/drops，NetFlow v5 保留 ASN/采样率，v9/IPFIX 按 exporter/domain 隔离内存模板。
 - [x] **FLOW-02B 计数与契约**：sampled/pre-scaled 明确分支、零采样率拒绝、精确 sampling rule、乘法溢出拒绝；protobuf v1 补齐 ASN 和 sFlow 状态，xxHash64/4096 virtual shard、稳定 child batch ID、records/bytes 边界均已有单测。
 - [x] **FLOW-02C Kafka/恢复基线**：Sarama idempotent async producer、manual physical partition、`acks=all`、TLS/system roots、压缩、成功回执后 child ack；未确认 child 可从 raw WAL 重放。
-- [ ] **FLOW-02D collect-state**：模板/sampler checkpoint topic、本地 checkpoint、模板先于 data 的安全点、plan history、`replay_generation` 推进；完成前 template-only datagram 保留在 WAL 并显式报告 pending，不允许误回收。
+- [ ] **FLOW-02D collect-state（父项）**：以下 D1/D2 已完成；D3 未完成前不得宣称跨进程/跨节点恢复闭环。
+  - [x] **FLOW-02D1 本地状态契约**：`CollectState` protobuf、exporter/domain 精确 template/sampling snapshot、本地 magic/length/CRC32 + payload SHA-256、file/directory fsync + atomic rename、损坏 fail-closed、30 分钟 stale state 不恢复。
+  - [x] **FLOW-02D2 发布安全点与 worker ownership**：WAL 是唯一 dispatch source；exporter/domain affinity queue；状态先本地 durable、再 Kafka `acks=all`、再 ACK2 child 0、最后 data children；已确认 state child 重试不重发；template-pending 保留 WAL；进程内 retry 推进 `replay_generation`。
+  - [ ] **FLOW-02D3 跨节点闭环**：创建并验证 compacted collect-state topic/ACL/retention，从 Kafka 恢复新 owner，持久化 plan history 与跨进程 attempt generation，完成 template/options corpus、进程重启和滚动切换集成测试。
 - [ ] **FLOW-02E 异常闭环**：受限 decode-DLQ、quarantine protobuf、重试退避/毒包隔离、sequence/sample epoch 质量状态和低基数 VM metrics exporter。
 - [ ] **FLOW-02F 协议/性能验收**：NetFlow v9/IPFIX template/options/乱序 fixture、真实设备报文 corpus、Kafka 故障与扩分区测试、目标容量压测与 p95 batch/record bytes 报告。
   - 2026-09-04 开发机非验收 microbenchmark（Apple M2、仅 normalize+batch、不含 decode/Kafka）：1024 records 单 shard `293099 ns/op`（约 3.49M records/s/core，387849 B/op）；随机 pair 分散到多 shard `697527 ns/op`（约 1.47M records/s/core，998337 B/op）。该结果只证明算法量级并暴露多 shard allocation 成本，不能替代 FLOW-02F 的真实链路容量验收。
 
 - [ ] **设计**：冻结 GoFlow2 v3 精确 commit、四协议字段映射、exporter/domain worker ownership、collect-state 模板/sampler checkpoint 与 WAL 安全重放点、sampling mode/rate、4096 virtual shards 与版本化 physical partition map、NormalizedRecordBatch protobuf、稳定 child-batch ID/ack bitmap、records/bytes/wait 上限、Kafka TLS/ACL/retention 和 ack→WAL checkpoint 条件。
 - [ ] **编码**：在 flow-collect 内实现 GoFlow2 adapter、固定 decode workers、模板/sampler store、observation 准入、采样归一、Protobuf batcher、idempotent Kafka producer、decode-DLQ、checkpoint 推进和 metrics；禁止 JSON、逐条日志/HTTP 和每包 goroutine。
-- [ ] **单元测试**：覆盖 sFlow v5、NetFlow v5/v9、IPFIX/NetStream fixture，模板缺失/乱序/刷新、sampling option、sample pool/sequence/rate change、sampled/pre-scaled、溢出、virtual-shard/batch schema/ID/边界、ack bitmap 和一 datagram 多 record/多 partition 可恢复性。
+- [ ] **单元测试**：已覆盖 sFlow v5、NetFlow v5/v9、IPFIX、模板/采样 checkpoint 恢复、损坏/stale state、state-before-data、已确认 state child 重试、affinity、进程内 replay generation、sampled/pre-scaled、溢出、virtual-shard/batch schema/ID/边界和 ack bitmap；仍需 NetStream、options/乱序/刷新 corpus、sample epoch/sequence/rate change 和多 partition 完整恢复矩阵。
 - [ ] **集成测试**：Kafka ack 超时/断连、进程重启、WAL replay、模板 cold/warm、同 datagram 跨 session 重发、schema 旧消费者和 DLQ 恢复时，已 ack 子批次不重发、未 ack 子批次可恢复、datagram 最终不漏 record；按 `2×100G+12×10G` 实际采样配置达到批准的 records/s 与 Kafka bytes/s。
 - [ ] **变更设计**：记录实际 GoFlow2 字段差异、厂商 enterprise field mapping、模板 checkpoint、protobuf compatibility、topic 分区/retention、p95 batch/record bytes 和升级条件。
 - [ ] **变更测试**：验证 GoFlow2 commit 升级、mapping/schema v1→v2、Kafka 扩分区 minute-boundary map 切换、旧 WAL 仍投原 partition、证书轮换、带旧 WAL 的滚动升级和旧 normalized consumer 兼容。

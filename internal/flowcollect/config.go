@@ -28,6 +28,7 @@ type Config struct {
 	MaxDatagramBytes      int                `yaml:"max_datagram_bytes"`
 	PlanRefreshInterval   time.Duration      `yaml:"plan_refresh_interval"`
 	ExporterRefreshPeriod time.Duration      `yaml:"exporter_refresh_interval"`
+	DecoderStateTTL       time.Duration      `yaml:"decoder_state_ttl"`
 	WAL                   WALConfig          `yaml:"wal"`
 	Kafka                 KafkaConfig        `yaml:"kafka"`
 	NormalizedBatch       NormalizedBatchCfg `yaml:"normalized_batch"`
@@ -71,6 +72,7 @@ func DefaultConfig() Config {
 		MaxDatagramBytes:      65535,
 		PlanRefreshInterval:   30 * time.Second,
 		ExporterRefreshPeriod: 30 * time.Second,
+		DecoderStateTTL:       30 * time.Minute,
 		WAL: WALConfig{
 			MaxBytes:      100 << 30,
 			MaxAge:        24 * time.Hour,
@@ -157,8 +159,8 @@ func (c Config) Validate() error {
 	if c.MaxDatagramBytes < 1500 || c.MaxDatagramBytes > 65535 {
 		return errors.New("flow_collect.max_datagram_bytes must be between 1500 and 65535")
 	}
-	if c.PlanRefreshInterval <= 0 || c.ExporterRefreshPeriod <= 0 {
-		return errors.New("flow_collect refresh intervals must be positive")
+	if c.PlanRefreshInterval <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
+		return errors.New("flow_collect refresh intervals and decoder_state_ttl must be positive")
 	}
 	if c.WAL.MaxBytes <= 0 || c.WAL.SegmentBytes <= 0 || c.WAL.SegmentBytes > c.WAL.MaxBytes || c.WAL.MaxAge <= 0 || c.WAL.FsyncInterval <= 0 {
 		return errors.New("flow_collect.wal sizes and intervals must be positive and segment_bytes <= max_bytes")
@@ -237,6 +239,9 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.ExporterRefreshPeriod, err = envDuration("WATCHDOG_FLOW_COLLECT_EXPORTER_REFRESH_INTERVAL", c.ExporterRefreshPeriod); err != nil {
+		return err
+	}
+	if c.DecoderStateTTL, err = envDuration("WATCHDOG_FLOW_COLLECT_DECODER_STATE_TTL", c.DecoderStateTTL); err != nil {
 		return err
 	}
 	if c.WAL.MaxBytes, err = envInt64("WATCHDOG_FLOW_COLLECT_WAL_MAX_BYTES", c.WAL.MaxBytes); err != nil {

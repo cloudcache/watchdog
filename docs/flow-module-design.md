@@ -391,14 +391,29 @@ observed health:                    warming → healthy ↔ degraded ↔ stale
 - sFlow `:6343/udp`，NetFlow/IPFIX `:2055/udp`；`SO_REUSEPORT`/socket count、OS receive buffer、固定 reader/decode worker 和有界队列，禁止每包 goroutine；
 - 依据签名 plan 做 listener/source/tenant 准入，不从报文接受 tenant；未知来源只产生限速 quarantine metadata，不把未归属 payload 混入正式 topic；
 - datagram 封装 `datagram_id/tenant/collector/boot/protocol/recv_ts/source/domain_hint/payload/crc32`，批量追加本地 segment WAL；`datagram_id=hash(collector_id,boot_id,wal_segment_sequence,record_offset,payload_crc32)`，在 append 时生成并随 WAL 持久化，replay/进程重启直接复用，绝不按重放时间重新生成；
+- UDP reader 只负责准入和 append，不直接投递 decode queue；单一增量 WAL cursor 是唯一 decode dispatch source。这样 live datagram 也先越过 durable barrier，避免 live/replay 双入口造成同一 exporter 的模板与 data set 乱序；
 - WAL 采用单写者 append、group commit、segment checksum、启动扫描和已确认 watermark。默认 `fsync_interval=10ms`；主机掉电 RPO 上限等于该间隔，进程崩溃不得丢已 fsync segment；
 - 磁盘高水位先告警并停止非必要诊断；达到 hard limit 后按 plan 停止 socket/显式记录 data-loss interval，禁止静默覆盖未确认 segment。
 
 ### 步骤 2：同进程 GoFlow2 解码、模板与质量状态
 
-flow-collect 从 WAL/live cursor 按 exporter/domain 保持 worker ownership。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 模板与 sampler option 按 exporter/domain/sampler 隔离。滚动升级先 drain listener；重启从最近模板 checkpoint 前的 WAL 安全点重放，确保模板先于 data set。
+flow-collect 将 WAL record 以 `hash(protocol, UDP transport source IP, observation_domain_id)` 固定分派到 decode worker；同一 exporter/domain 只有一个 owner queue，模板、sampler options 和 data set 不跨 worker 竞态。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 使用显式注入的 template store 与 sampling-rate store，状态严格按 exporter/domain/sampler 隔离。非 template-pending 错误会阻塞该 affinity queue 并重试，防止后续模板重定义改变旧 data set 的解释；template-pending 可以释放当前 record，让 WAL 中后到的模板先建立状态，再启动下一轮重放。毒包永久阻塞不能作为终态，须由 FLOW-02E 的有界退避和 decode-DLQ 接管。
 
 内存 exporter registry 绑定 tenant/target/device，验证唯一 observation interface 和 allowlist，记录 sequence gap、restart、template wait、decode error、drops 和 quality flags。pending/suspended/retired/deleted、health=warming、无模板或无有效 sampling 语义的记录不伪造统计值：可恢复的 template wait 留在 WAL 等待重放，不可恢复坏包进入受限 decode-DLQ。
+
+GoFlow2 状态变化必须先形成 collect-state 安全点，顺序冻结为：
+
+```text
+raw WAL durable
+  -> GoFlow2 decode 更新 template/sampling store
+  -> 只快照当前 exporter/domain
+  -> 本地 .state 临时文件 + file fsync + atomic rename + directory fsync
+  -> Kafka compacted collect-state 按 state_key 发布并等待 acks=all
+  -> ACK2 child 0
+  -> 发布 normalized data children 并分别 ACK2
+```
+
+`state_key=SHA-256(collector_id,protocol,source_ip,observation_domain_id)`，Kafka producer 对它稳定 hash partition；`state_id=SHA-256(datagram_id,state_key)`，重试不变。本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；默认超过 30 分钟不恢复，以免把过期模板应用到新 exporter session。滚动升级先 drain listener 并发布安全点；新 owner 必须先恢复 compacted state 和本地/WAL 事实，不能只依赖进程内缓存。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -493,13 +508,31 @@ message NormalizedRecord {
   uint64 sample_pool            = 37;
   uint64 exporter_drops         = 38;
 }
+
+message CollectState {
+  uint32 state_schema_version  = 1;  // 当前 = 1
+  bytes  state_id              = 2;  // 32B，datagram/state key 的稳定 hash
+  bytes  state_key             = 3;  // 32B，compacted topic key
+  bytes  datagram_id           = 4;  // 32B
+  string tenant_id             = 5;
+  string collector_id          = 6;
+  string exporter_id           = 7;
+  uint64 registry_version      = 8;
+  int64  received_at_unix_ms   = 9;
+  uint32 protocol              = 10; // 仅 netflow9/ipfix
+  bytes  source_ip             = 11; // 16B，UDP transport source
+  uint64 observation_domain_id = 12;
+  bytes  templates_json        = 13; // GoFlow2 snapshot，非业务记录
+  bytes  sampling_rates_json   = 14; // GoFlow2 snapshot，非业务记录
+  bytes  payload_sha256        = 15; // 除本字段外的确定性 protobuf 摘要
+}
 ```
 
 字段 32 之后用于补齐 GoFlow2 已能提供、且做 ASN/采样质量分析不可缺失的事实。`agent_ip/sub_agent_id/datagram_sequence` 属于 datagram，其中 `source_ip` 始终是 UDP transport source，不能拿 relay 地址覆盖 sFlow header 的 `agent_ip`；`source_id/sample_sequence/sample_pool/drops` 属于单个 sFlow sample，因此必须放在 record，不能错误提升为 batch。字段号只追加，不回填 17–31 的预留区。
 
 `quality_flags` 位注册表随 schema 版本冻结、只增不改：bit0 `template_recently_learned`、bit1 `sampling_rate_overridden`、bit2 `duration_unreliable`、bit3 `sequence_gap_window`、bit4 `sample_pool_reset_window`、bit5 `clock_skew_suspected`、bit6 `truncated_header`。新增位必须先登记语义与消费方处理方式；消费端忽略未注册位但原样保留。CI 用旧 fixture 解析新 writer 输出验证前向兼容。
 
-单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。Kafka idempotent producer 获得 `acks=all` 后，先追加 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。WAL 重发递增 `replay_generation` 但保持 batch/record ID 和原 partition map；dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
+单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。存在 collect-state 时 child 0 固定留给状态消息，data child 从 1 开始；否则 data child 从 0 开始。Kafka idempotent producer 获得 `acks=all` 后，追加对应的 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。进程内失败重发递增 `replay_generation` 并保持 batch/record ID 和原 partition map；跨进程/跨节点连续 generation 仍须 FLOW-02D3 的持久化 attempt metadata/plan history 才能保证，消费端去重不能以 generation 代替稳定 ID。dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
 
 ### 步骤 4：dimension worker 选择版本并归类地址段
 
@@ -1955,6 +1988,7 @@ flow_collect:
   receive_buffer_bytes: 33554432
   max_datagram_bytes: 65535
   plan_refresh_interval: 30s
+  decoder_state_ttl: 30m
   wal:
     max_bytes: 1073741824000
     max_age: 24h

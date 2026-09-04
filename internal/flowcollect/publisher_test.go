@@ -24,6 +24,21 @@ func TestKafkaPublisherConfigIsIdempotentAndManuallyPartitioned(t *testing.T) {
 	if partition != 7 {
 		t.Fatalf("manual partition ignored: %d", partition)
 	}
+	stateMessage := &sarama.ProducerMessage{Partition: -1, Key: sarama.StringEncoder("collector/source/domain")}
+	first, err := partitioner.Partition(stateMessage, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := partitioner.Partition(stateMessage, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first < 0 || first >= 10 || second != first {
+		t.Fatalf("collect-state key was not consistently partitioned: %d %d", first, second)
+	}
+	if _, err := partitioner.Partition(&sarama.ProducerMessage{Partition: 10}, 10); err == nil {
+		t.Fatal("out-of-range explicit partition was accepted")
+	}
 }
 
 func TestKafkaPublisherRejectsUnknownCompression(t *testing.T) {
