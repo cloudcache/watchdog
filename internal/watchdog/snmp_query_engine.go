@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -36,19 +37,35 @@ func (e GoSNMPCollectorQueryEngine) Get(ctx context.Context, req SNMPCollectorGe
 	if maxOids <= 0 {
 		maxOids = 60
 	}
+	// One slow or dropped chunk must not discard the whole device's samples:
+	// devices with SNMP CPU rate limiting (e.g. Huawei CPCAR) intermittently
+	// drop a chunk under load. Failed chunks surface per-recipe through the
+	// caller's missing-response accounting; only a total failure is an error.
 	var response SNMPCollectorResponse
+	var chunkErr error
+	failedChunks := 0
+	totalChunks := 0
 	for start := 0; start < len(req.OIDs); start += maxOids {
 		end := start + maxOids
 		if end > len(req.OIDs) {
 			end = len(req.OIDs)
 		}
+		totalChunks++
 		packet, err := session.Get(req.OIDs[start:end])
 		if err != nil {
-			return response, err
+			failedChunks++
+			chunkErr = err
+			continue
 		}
 		for _, pdu := range packet.Variables {
 			response.VarBinds = append(response.VarBinds, snmpCollectorVarBindFromPDU(pdu))
 		}
+	}
+	if failedChunks == totalChunks && chunkErr != nil {
+		return response, chunkErr
+	}
+	if failedChunks > 0 {
+		log.Printf("snmp get target=%s partial: %d/%d chunks failed, last error: %v", req.Target.Host, failedChunks, totalChunks, chunkErr)
 	}
 	return response, nil
 }
