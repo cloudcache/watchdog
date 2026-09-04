@@ -29,9 +29,36 @@ type remoteCollectorPrincipalProvider struct {
 	client *http.Client
 	now    func() time.Time
 
-	breakerMu          sync.Mutex
-	consecutiveFailure uint32
-	openUntil          time.Time
+	breakerMu           sync.Mutex
+	consecutiveFailure  uint32
+	openUntil           time.Time
+	halfOpenProbe       bool
+	requestSuccessTotal uint64
+	requestFailureTotal uint64
+	remoteRejectTotal   uint64
+	circuitRejectTotal  uint64
+	lastSuccessAt       time.Time
+	lastFailureAt       time.Time
+	lastRemoteRejectAt  time.Time
+}
+
+type CollectorPrincipalProviderRuntimeHealth struct {
+	AcceptingRequests   bool      `json:"accepting_requests"`
+	CircuitOpen         bool      `json:"circuit_open"`
+	HalfOpenProbe       bool      `json:"half_open_probe"`
+	ConsecutiveFailures uint32    `json:"consecutive_failures"`
+	RequestSuccessTotal uint64    `json:"request_success_total"`
+	RequestFailureTotal uint64    `json:"request_failure_total"`
+	RemoteRejectTotal   uint64    `json:"remote_reject_total"`
+	CircuitRejectTotal  uint64    `json:"circuit_reject_total"`
+	LastSuccessAt       time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt       time.Time `json:"last_failure_at,omitempty"`
+	LastRemoteRejectAt  time.Time `json:"last_remote_reject_at,omitempty"`
+}
+
+type CollectorPrincipalProviderRuntimeStatus struct {
+	Enabled bool                                    `json:"enabled"`
+	Health  CollectorPrincipalProviderRuntimeHealth `json:"health"`
 }
 
 type remoteCollectorPrincipalGrantRequest struct {
@@ -113,6 +140,7 @@ func (p *remoteCollectorPrincipalProvider) LookupGrant(ctx context.Context, oper
 		p.recordFailure()
 		return CollectorPrincipalGrantProviderResult{}, false, ErrCollectorPrincipalProviderResultInvalid
 	}
+	p.recordSuccess()
 	return result, true, nil
 }
 
@@ -136,6 +164,7 @@ func (p *remoteCollectorPrincipalProvider) Grant(ctx context.Context, request Co
 		p.recordFailure()
 		return CollectorPrincipalGrantProviderResult{}, ErrCollectorPrincipalProviderResultInvalid
 	}
+	p.recordSuccess()
 	return result, nil
 }
 
@@ -150,6 +179,7 @@ func (p *remoteCollectorPrincipalProvider) LookupRevoke(ctx context.Context, ope
 		p.recordFailure()
 		return CollectorPrincipalRevokeProviderResult{}, false, ErrCollectorPrincipalProviderResultInvalid
 	}
+	p.recordSuccess()
 	return result, true, nil
 }
 
@@ -172,15 +202,13 @@ func (p *remoteCollectorPrincipalProvider) RevokeWrite(ctx context.Context, requ
 		p.recordFailure()
 		return CollectorPrincipalRevokeProviderResult{}, ErrCollectorPrincipalProviderResultInvalid
 	}
+	p.recordSuccess()
 	return result, nil
 }
 
 func (p *remoteCollectorPrincipalProvider) request(ctx context.Context, method, operationType, operationKey string, body, response any, lookup bool) (bool, error) {
 	if p == nil || p.client == nil || ctx == nil || !validSHA256Hex(operationKey) {
 		return false, errors.New("remote collector principal provider request is invalid")
-	}
-	if err := p.allowRequest(); err != nil {
-		return false, err
 	}
 	var requestBody io.Reader
 	if body != nil {
@@ -199,6 +227,9 @@ func (p *remoteCollectorPrincipalProvider) request(ctx context.Context, method, 
 	req.Header.Set("X-Watchdog-Provider-Revision", p.config.PolicyRevision)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := p.allowRequest(); err != nil {
+		return false, err
 	}
 	result, err := p.client.Do(req)
 	if err != nil {
@@ -222,7 +253,7 @@ func (p *remoteCollectorPrincipalProvider) request(ctx context.Context, method, 
 		if result.StatusCode == http.StatusTooManyRequests || result.StatusCode >= http.StatusInternalServerError {
 			p.recordFailure()
 		} else {
-			p.recordSuccess()
+			p.recordRemoteReject()
 		}
 		return false, fmt.Errorf("collector principal provider returned HTTP %d", result.StatusCode)
 	}
@@ -241,7 +272,6 @@ func (p *remoteCollectorPrincipalProvider) request(ctx context.Context, method, 
 		p.recordFailure()
 		return false, errors.New("collector principal provider returned more than one JSON value")
 	}
-	p.recordSuccess()
 	return true, nil
 }
 
@@ -260,8 +290,17 @@ func drainCollectorPrincipalProviderResponse(body io.Reader) {
 func (p *remoteCollectorPrincipalProvider) allowRequest() error {
 	p.breakerMu.Lock()
 	defer p.breakerMu.Unlock()
-	if !p.openUntil.IsZero() && p.now().Before(p.openUntil) {
+	now := p.now()
+	if !p.openUntil.IsZero() && now.Before(p.openUntil) {
+		p.circuitRejectTotal++
 		return ErrCollectorPrincipalProviderCircuitOpen
+	}
+	if !p.openUntil.IsZero() {
+		if p.halfOpenProbe {
+			p.circuitRejectTotal++
+			return ErrCollectorPrincipalProviderCircuitOpen
+		}
+		p.halfOpenProbe = true
 	}
 	return nil
 }
@@ -270,16 +309,108 @@ func (p *remoteCollectorPrincipalProvider) recordSuccess() {
 	p.breakerMu.Lock()
 	p.consecutiveFailure = 0
 	p.openUntil = time.Time{}
+	p.halfOpenProbe = false
+	p.requestSuccessTotal++
+	p.lastSuccessAt = p.now().UTC()
+	p.breakerMu.Unlock()
+}
+
+func (p *remoteCollectorPrincipalProvider) recordRemoteReject() {
+	p.breakerMu.Lock()
+	p.consecutiveFailure = 0
+	p.openUntil = time.Time{}
+	p.halfOpenProbe = false
+	p.remoteRejectTotal++
+	p.lastRemoteRejectAt = p.now().UTC()
 	p.breakerMu.Unlock()
 }
 
 func (p *remoteCollectorPrincipalProvider) recordFailure() {
 	p.breakerMu.Lock()
 	p.consecutiveFailure++
+	p.halfOpenProbe = false
+	p.requestFailureTotal++
+	p.lastFailureAt = p.now().UTC()
 	if p.consecutiveFailure >= p.config.FailureThreshold {
 		p.openUntil = p.now().Add(p.config.CircuitOpenInterval)
 	}
 	p.breakerMu.Unlock()
+}
+
+func (p *remoteCollectorPrincipalProvider) Health() CollectorPrincipalProviderRuntimeHealth {
+	if p == nil {
+		return CollectorPrincipalProviderRuntimeHealth{}
+	}
+	p.breakerMu.Lock()
+	defer p.breakerMu.Unlock()
+	circuitOpen := !p.openUntil.IsZero() && p.now().Before(p.openUntil)
+	return CollectorPrincipalProviderRuntimeHealth{
+		AcceptingRequests: !circuitOpen && !p.halfOpenProbe,
+		CircuitOpen:       circuitOpen, HalfOpenProbe: p.halfOpenProbe,
+		ConsecutiveFailures: p.consecutiveFailure,
+		RequestSuccessTotal: p.requestSuccessTotal, RequestFailureTotal: p.requestFailureTotal,
+		RemoteRejectTotal: p.remoteRejectTotal, CircuitRejectTotal: p.circuitRejectTotal,
+		LastSuccessAt: p.lastSuccessAt, LastFailureAt: p.lastFailureAt,
+		LastRemoteRejectAt: p.lastRemoteRejectAt,
+	}
+}
+
+func (p *remoteCollectorPrincipalProvider) PrometheusText() []byte {
+	health := p.Health()
+	var out strings.Builder
+	out.WriteString("# TYPE watchdog_collector_principal_provider_accepting_requests gauge\n")
+	out.WriteString("watchdog_collector_principal_provider_accepting_requests ")
+	out.WriteString(boolMetricValue(health.AcceptingRequests))
+	out.WriteByte('\n')
+	out.WriteString("# TYPE watchdog_collector_principal_provider_circuit_open gauge\n")
+	out.WriteString("watchdog_collector_principal_provider_circuit_open ")
+	out.WriteString(boolMetricValue(health.CircuitOpen))
+	out.WriteByte('\n')
+	out.WriteString("# TYPE watchdog_collector_principal_provider_half_open_probe gauge\n")
+	out.WriteString("watchdog_collector_principal_provider_half_open_probe ")
+	out.WriteString(boolMetricValue(health.HalfOpenProbe))
+	out.WriteByte('\n')
+	out.WriteString("# TYPE watchdog_collector_principal_provider_consecutive_failures gauge\n")
+	out.WriteString("watchdog_collector_principal_provider_consecutive_failures ")
+	out.WriteString(strconv.FormatUint(uint64(health.ConsecutiveFailures), 10))
+	out.WriteByte('\n')
+	out.WriteString("# TYPE watchdog_collector_principal_provider_request_total counter\n")
+	for _, item := range []struct {
+		result string
+		value  uint64
+	}{
+		{result: "success", value: health.RequestSuccessTotal},
+		{result: "failure", value: health.RequestFailureTotal},
+		{result: "remote_reject", value: health.RemoteRejectTotal},
+		{result: "circuit_reject", value: health.CircuitRejectTotal},
+	} {
+		out.WriteString("watchdog_collector_principal_provider_request_total{result=\"")
+		out.WriteString(item.result)
+		out.WriteString("\"} ")
+		out.WriteString(strconv.FormatUint(item.value, 10))
+		out.WriteByte('\n')
+	}
+	for _, item := range []struct {
+		name  string
+		value time.Time
+	}{
+		{name: "last_success", value: health.LastSuccessAt},
+		{name: "last_failure", value: health.LastFailureAt},
+		{name: "last_remote_reject", value: health.LastRemoteRejectAt},
+	} {
+		out.WriteString("# TYPE watchdog_collector_principal_provider_")
+		out.WriteString(item.name)
+		out.WriteString("_timestamp_seconds gauge\nwatchdog_collector_principal_provider_")
+		out.WriteString(item.name)
+		out.WriteString("_timestamp_seconds ")
+		value := int64(0)
+		if !item.value.IsZero() {
+			value = item.value.Unix()
+		}
+		out.WriteString(strconv.FormatInt(value, 10))
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
 }
 
 func (p *remoteCollectorPrincipalProvider) CloseIdleConnections() {
@@ -407,3 +538,4 @@ func normalizeRemoteCollectorPrincipalProviderConfig(config *RemoteCollectorPrin
 }
 
 var _ CollectorPrincipalProvider = (*remoteCollectorPrincipalProvider)(nil)
+var _ collectorPrincipalRuntimeProvider = (*remoteCollectorPrincipalProvider)(nil)

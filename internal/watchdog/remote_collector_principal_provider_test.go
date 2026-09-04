@@ -168,9 +168,146 @@ func TestRemoteCollectorPrincipalProviderCircuitBreaker(t *testing.T) {
 	if _, _, err := provider.LookupGrant(context.Background(), operationKey); !errors.Is(err, ErrCollectorPrincipalProviderCircuitOpen) || calls.Load() != 2 {
 		t.Fatalf("open circuit error=%v calls=%d", err, calls.Load())
 	}
+	health := provider.Health()
+	if !health.CircuitOpen || health.AcceptingRequests || health.ConsecutiveFailures != 2 || health.RequestFailureTotal != 2 || health.CircuitRejectTotal != 1 || !health.LastFailureAt.Equal(now) {
+		t.Fatalf("unexpected open-circuit health: %+v", health)
+	}
 	now = now.Add(time.Minute)
 	if _, _, err := provider.LookupGrant(context.Background(), operationKey); err == nil || calls.Load() != 3 {
 		t.Fatalf("probe error=%v calls=%d", err, calls.Load())
+	}
+}
+
+func TestRemoteCollectorPrincipalProviderSemanticFailuresTripCircuit(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{Transport: collectorPrincipalRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return remotePrincipalHTTPResponse(http.StatusOK, "application/json", `{"operation_key":"wrong"}`), nil
+	})}
+	config := testRemoteCollectorPrincipalProviderConfig("https://provider.example")
+	config.FailureThreshold = 2
+	provider, err := newRemoteCollectorPrincipalProviderWithClient(config, client, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationKey := strings.Repeat("a", 64)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, _, err := provider.LookupGrant(context.Background(), operationKey); !errors.Is(err, ErrCollectorPrincipalProviderResultInvalid) {
+			t.Fatalf("semantic failure %d error=%v", attempt, err)
+		}
+	}
+	if _, _, err := provider.LookupGrant(context.Background(), operationKey); !errors.Is(err, ErrCollectorPrincipalProviderCircuitOpen) || calls.Load() != 2 {
+		t.Fatalf("semantic failures did not open circuit: error=%v calls=%d health=%+v", err, calls.Load(), provider.Health())
+	}
+}
+
+func TestRemoteCollectorPrincipalProviderHealthSeparatesSuccessAndRemoteReject(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusNotFound)
+	client := &http.Client{Transport: collectorPrincipalRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return remotePrincipalHTTPResponse(int(status.Load()), "application/json", ""), nil
+	})}
+	now := time.Unix(2_000_000, 0).UTC()
+	provider, err := newRemoteCollectorPrincipalProviderWithClient(testRemoteCollectorPrincipalProviderConfig("https://provider.example"), client, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationKey := strings.Repeat("a", 64)
+	if _, found, err := provider.LookupGrant(context.Background(), operationKey); err != nil || found {
+		t.Fatalf("lookup found=%v err=%v", found, err)
+	}
+	status.Store(http.StatusConflict)
+	now = now.Add(time.Second)
+	if _, _, err := provider.LookupGrant(context.Background(), operationKey); err == nil {
+		t.Fatal("remote rejection was accepted")
+	}
+	health := provider.Health()
+	if !health.AcceptingRequests || health.CircuitOpen || health.RequestSuccessTotal != 1 || health.RemoteRejectTotal != 1 || health.RequestFailureTotal != 0 || !health.LastSuccessAt.Equal(now.Add(-time.Second)) || !health.LastRemoteRejectAt.Equal(now) {
+		t.Fatalf("unexpected provider health: %+v", health)
+	}
+	metrics := string(provider.PrometheusText())
+	for _, want := range []string{
+		"watchdog_collector_principal_provider_accepting_requests 1",
+		`watchdog_collector_principal_provider_request_total{result="success"} 1`,
+		`watchdog_collector_principal_provider_request_total{result="remote_reject"} 1`,
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Fatalf("metrics missing %q:\n%s", want, metrics)
+		}
+	}
+	if strings.Contains(metrics, provider.config.Name) || strings.Contains(metrics, provider.config.BaseURL) {
+		t.Fatalf("provider identity leaked into metric labels/body: %s", metrics)
+	}
+}
+
+func TestRemoteCollectorPrincipalProviderAllowsOneHalfOpenProbe(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client := &http.Client{Transport: collectorPrincipalRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		close(started)
+		<-release
+		return nil, errors.New("probe failed")
+	})}
+	now := time.Unix(3_000_000, 0)
+	config := testRemoteCollectorPrincipalProviderConfig("https://provider.example")
+	config.FailureThreshold = 1
+	config.CircuitOpenInterval = time.Minute
+	provider, err := newRemoteCollectorPrincipalProviderWithClient(config, client, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.recordFailure()
+	now = now.Add(time.Minute)
+	operationKey := strings.Repeat("a", 64)
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := provider.LookupGrant(context.Background(), operationKey)
+		done <- err
+	}()
+	<-started
+	if _, _, err := provider.LookupGrant(context.Background(), operationKey); !errors.Is(err, ErrCollectorPrincipalProviderCircuitOpen) {
+		t.Fatalf("concurrent half-open request was not rejected: %v", err)
+	}
+	health := provider.Health()
+	if !health.HalfOpenProbe || health.AcceptingRequests || health.CircuitRejectTotal != 1 {
+		t.Fatalf("unexpected half-open health: %+v", health)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("half-open probe unexpectedly succeeded")
+	}
+}
+
+func TestBackendRuntimePublishesPassiveCollectorPrincipalProviderHealth(t *testing.T) {
+	now := time.Unix(4_000_000, 0).UTC()
+	provider, err := newRemoteCollectorPrincipalProviderWithClient(
+		testRemoteCollectorPrincipalProviderConfig("https://provider-secret.example"),
+		&http.Client{Transport: collectorPrincipalRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport secret")
+		})},
+		func() time.Time { return now },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.recordFailure()
+	runtime := &BackendRuntime{Config: BackendConfig{CollectorPrincipalProvider: RemoteCollectorPrincipalProviderConfig{Enabled: true}}}
+	runtime.collectorPrincipalProvider = provider
+	health := runtime.Health()
+	if !health.CollectorPrincipalProvider.Enabled || health.CollectorPrincipalProvider.Health.RequestFailureTotal != 1 {
+		t.Fatalf("provider health missing from backend runtime: %+v", health)
+	}
+	metrics := string(runtime.RuntimeMetrics())
+	for _, want := range []string{
+		"watchdog_collector_principal_provider_enabled 1",
+		`watchdog_collector_principal_provider_request_total{result="failure"} 1`,
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Fatalf("runtime metrics missing %q:\n%s", want, metrics)
+		}
+	}
+	if strings.Contains(metrics, "provider-secret") || strings.Contains(metrics, "transport secret") {
+		t.Fatalf("provider identity or error leaked into runtime metrics: %s", metrics)
 	}
 }
 

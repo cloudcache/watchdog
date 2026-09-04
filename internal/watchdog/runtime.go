@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+type collectorPrincipalRuntimeProvider interface {
+	CloseIdleConnections()
+	Health() CollectorPrincipalProviderRuntimeHealth
+	PrometheusText() []byte
+}
+
 type BackendRuntime struct {
 	Config             BackendConfig
 	Store              *MySQLStore
@@ -25,7 +31,7 @@ type BackendRuntime struct {
 	CollectorEvidence  CollectorEvidenceController
 
 	CollectorPrincipals        CollectorPrincipalController
-	collectorPrincipalProvider interface{ CloseIdleConnections() }
+	collectorPrincipalProvider collectorPrincipalRuntimeProvider
 
 	trapDispatcherFn  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu      sync.Mutex
@@ -87,7 +93,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 			return nil, fmt.Errorf("initialize collector principal service: %w", err)
 		}
 		runtime.CollectorPrincipals = principalService
-		runtime.collectorPrincipalProvider, _ = provider.(interface{ CloseIdleConnections() })
+		runtime.collectorPrincipalProvider, _ = provider.(collectorPrincipalRuntimeProvider)
 	}
 	runtime.ExportWorker = ExportWorker{
 		Repo: store,
@@ -185,6 +191,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 
 func (r *BackendRuntime) Health() PlatformRuntimeHealth {
 	status := FlowStateCleanupRuntimeStatus{Enabled: r != nil && r.Config.FlowCleanup.Enabled}
+	providerStatus := CollectorPrincipalProviderRuntimeStatus{Enabled: r != nil && r.Config.CollectorPrincipalProvider.Enabled}
 	if r != nil {
 		r.backgroundMu.Lock()
 		cleanup := r.FlowStateCleanup
@@ -192,21 +199,39 @@ func (r *BackendRuntime) Health() PlatformRuntimeHealth {
 		if cleanup != nil {
 			status.Health = cleanup.Health()
 		}
+		if r.collectorPrincipalProvider != nil {
+			providerStatus.Health = r.collectorPrincipalProvider.Health()
+		}
 	}
-	return PlatformRuntimeHealth{FlowStateCleanup: status}
+	return PlatformRuntimeHealth{FlowStateCleanup: status, CollectorPrincipalProvider: providerStatus}
 }
 
 func (r *BackendRuntime) RuntimeMetrics() []byte {
+	metrics := make([]byte, 0, 2048)
 	if r == nil || !r.Config.FlowCleanup.Enabled {
-		return []byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 0\n")
+		metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 0\n"...)
+	} else {
+		r.backgroundMu.Lock()
+		cleanup := r.FlowStateCleanup
+		r.backgroundMu.Unlock()
+		metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n"...)
+		if cleanup == nil {
+			metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_worker_up gauge\nwatchdog_flow_state_cleanup_worker_up 0\n"...)
+		} else {
+			metrics = append(metrics, cleanup.PrometheusText()...)
+		}
 	}
-	r.backgroundMu.Lock()
-	cleanup := r.FlowStateCleanup
-	r.backgroundMu.Unlock()
-	if cleanup == nil {
-		return []byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n# TYPE watchdog_flow_state_cleanup_worker_up gauge\nwatchdog_flow_state_cleanup_worker_up 0\n")
+	if r == nil || !r.Config.CollectorPrincipalProvider.Enabled {
+		metrics = append(metrics, "# TYPE watchdog_collector_principal_provider_enabled gauge\nwatchdog_collector_principal_provider_enabled 0\n"...)
+	} else {
+		metrics = append(metrics, "# TYPE watchdog_collector_principal_provider_enabled gauge\nwatchdog_collector_principal_provider_enabled 1\n"...)
+		if r.collectorPrincipalProvider == nil {
+			metrics = append(metrics, "# TYPE watchdog_collector_principal_provider_accepting_requests gauge\nwatchdog_collector_principal_provider_accepting_requests 0\n"...)
+		} else {
+			metrics = append(metrics, r.collectorPrincipalProvider.PrometheusText()...)
+		}
 	}
-	return append([]byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n"), cleanup.PrometheusText()...)
+	return metrics
 }
 
 func (r *BackendRuntime) RunExportWorker(ctx context.Context) error {

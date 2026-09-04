@@ -31,7 +31,8 @@ type FlowStateCleanupRuntimeHealth struct {
 }
 
 type PlatformRuntimeHealth struct {
-	FlowStateCleanup FlowStateCleanupRuntimeStatus `json:"flow_state_cleanup"`
+	FlowStateCleanup           FlowStateCleanupRuntimeStatus           `json:"flow_state_cleanup"`
+	CollectorPrincipalProvider CollectorPrincipalProviderRuntimeStatus `json:"collector_principal_provider"`
 }
 
 type FlowStateCleanupRuntimeStatus struct {

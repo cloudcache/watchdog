@@ -186,12 +186,17 @@ func TestNewAPIV1RouterRuntimeHealthRequiresAuthentication(t *testing.T) {
 			return PlatformRuntimeHealth{FlowStateCleanup: FlowStateCleanupRuntimeStatus{
 				Enabled: true,
 				Health:  FlowStateCleanupRuntimeHealth{Started: true, Running: true, Ready: true, ReconcileIdleTotal: 4},
+			}, CollectorPrincipalProvider: CollectorPrincipalProviderRuntimeStatus{
+				Enabled: true,
+				Health: CollectorPrincipalProviderRuntimeHealth{
+					AcceptingRequests: true, RequestSuccessTotal: 3,
+				},
 			}}
 		},
 	})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/runtime", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"reconcile_idle_total":4`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"reconcile_idle_total":4`) || !strings.Contains(rec.Body.String(), `"request_success_total":3`) {
 		t.Fatalf("authenticated status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
