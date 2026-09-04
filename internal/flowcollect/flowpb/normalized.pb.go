@@ -636,6 +636,298 @@ func (x *CollectState) GetPayloadSha256() []byte {
 	return nil
 }
 
+// DecodeFailure is a terminal, Kafka-acknowledged outcome for a durable WAL
+// datagram. payload is empty unless explicitly enabled for restricted diagnosis.
+type DecodeFailure struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	FailureSchemaVersion uint32                 `protobuf:"varint,1,opt,name=failure_schema_version,json=failureSchemaVersion,proto3" json:"failure_schema_version,omitempty"`
+	EventId              []byte                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	DatagramId           []byte                 `protobuf:"bytes,3,opt,name=datagram_id,json=datagramId,proto3" json:"datagram_id,omitempty"`
+	TenantId             string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	CollectorId          string                 `protobuf:"bytes,5,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	ExporterId           string                 `protobuf:"bytes,6,opt,name=exporter_id,json=exporterId,proto3" json:"exporter_id,omitempty"`
+	RegistryVersion      uint64                 `protobuf:"varint,7,opt,name=registry_version,json=registryVersion,proto3" json:"registry_version,omitempty"`
+	ReceivedAtUnixMs     int64                  `protobuf:"varint,8,opt,name=received_at_unix_ms,json=receivedAtUnixMs,proto3" json:"received_at_unix_ms,omitempty"`
+	Protocol             uint32                 `protobuf:"varint,9,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	SourceIp             []byte                 `protobuf:"bytes,10,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	ObservationDomainId  uint64                 `protobuf:"varint,11,opt,name=observation_domain_id,json=observationDomainId,proto3" json:"observation_domain_id,omitempty"`
+	ErrorCode            string                 `protobuf:"bytes,12,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorSummary         string                 `protobuf:"bytes,13,opt,name=error_summary,json=errorSummary,proto3" json:"error_summary,omitempty"`
+	Attempts             uint32                 `protobuf:"varint,14,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	PayloadSha256        []byte                 `protobuf:"bytes,15,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	Payload              []byte                 `protobuf:"bytes,16,opt,name=payload,proto3" json:"payload,omitempty"`
+	PayloadTruncated     bool                   `protobuf:"varint,17,opt,name=payload_truncated,json=payloadTruncated,proto3" json:"payload_truncated,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *DecodeFailure) Reset() {
+	*x = DecodeFailure{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DecodeFailure) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DecodeFailure) ProtoMessage() {}
+
+func (x *DecodeFailure) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DecodeFailure.ProtoReflect.Descriptor instead.
+func (*DecodeFailure) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *DecodeFailure) GetFailureSchemaVersion() uint32 {
+	if x != nil {
+		return x.FailureSchemaVersion
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetEventId() []byte {
+	if x != nil {
+		return x.EventId
+	}
+	return nil
+}
+
+func (x *DecodeFailure) GetDatagramId() []byte {
+	if x != nil {
+		return x.DatagramId
+	}
+	return nil
+}
+
+func (x *DecodeFailure) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *DecodeFailure) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+func (x *DecodeFailure) GetExporterId() string {
+	if x != nil {
+		return x.ExporterId
+	}
+	return ""
+}
+
+func (x *DecodeFailure) GetRegistryVersion() uint64 {
+	if x != nil {
+		return x.RegistryVersion
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetReceivedAtUnixMs() int64 {
+	if x != nil {
+		return x.ReceivedAtUnixMs
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetSourceIp() []byte {
+	if x != nil {
+		return x.SourceIp
+	}
+	return nil
+}
+
+func (x *DecodeFailure) GetObservationDomainId() uint64 {
+	if x != nil {
+		return x.ObservationDomainId
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *DecodeFailure) GetErrorSummary() string {
+	if x != nil {
+		return x.ErrorSummary
+	}
+	return ""
+}
+
+func (x *DecodeFailure) GetAttempts() uint32 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
+}
+
+func (x *DecodeFailure) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
+func (x *DecodeFailure) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *DecodeFailure) GetPayloadTruncated() bool {
+	if x != nil {
+		return x.PayloadTruncated
+	}
+	return false
+}
+
+// QuarantineEvent is rate-limited metadata for an unregistered source. It
+// never carries the datagram payload and has no tenant supplied by the packet.
+type QuarantineEvent struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	EventSchemaVersion  uint32                 `protobuf:"varint,1,opt,name=event_schema_version,json=eventSchemaVersion,proto3" json:"event_schema_version,omitempty"`
+	EventId             []byte                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	CollectorId         string                 `protobuf:"bytes,3,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	ReceivedAtUnixMs    int64                  `protobuf:"varint,4,opt,name=received_at_unix_ms,json=receivedAtUnixMs,proto3" json:"received_at_unix_ms,omitempty"`
+	Protocol            uint32                 `protobuf:"varint,5,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	SourceIp            []byte                 `protobuf:"bytes,6,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	ObservationDomainId uint64                 `protobuf:"varint,7,opt,name=observation_domain_id,json=observationDomainId,proto3" json:"observation_domain_id,omitempty"`
+	ReasonCode          string                 `protobuf:"bytes,8,opt,name=reason_code,json=reasonCode,proto3" json:"reason_code,omitempty"`
+	PayloadBytes        uint32                 `protobuf:"varint,9,opt,name=payload_bytes,json=payloadBytes,proto3" json:"payload_bytes,omitempty"`
+	PayloadSha256       []byte                 `protobuf:"bytes,10,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *QuarantineEvent) Reset() {
+	*x = QuarantineEvent{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuarantineEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuarantineEvent) ProtoMessage() {}
+
+func (x *QuarantineEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuarantineEvent.ProtoReflect.Descriptor instead.
+func (*QuarantineEvent) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *QuarantineEvent) GetEventSchemaVersion() uint32 {
+	if x != nil {
+		return x.EventSchemaVersion
+	}
+	return 0
+}
+
+func (x *QuarantineEvent) GetEventId() []byte {
+	if x != nil {
+		return x.EventId
+	}
+	return nil
+}
+
+func (x *QuarantineEvent) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+func (x *QuarantineEvent) GetReceivedAtUnixMs() int64 {
+	if x != nil {
+		return x.ReceivedAtUnixMs
+	}
+	return 0
+}
+
+func (x *QuarantineEvent) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *QuarantineEvent) GetSourceIp() []byte {
+	if x != nil {
+		return x.SourceIp
+	}
+	return nil
+}
+
+func (x *QuarantineEvent) GetObservationDomainId() uint64 {
+	if x != nil {
+		return x.ObservationDomainId
+	}
+	return 0
+}
+
+func (x *QuarantineEvent) GetReasonCode() string {
+	if x != nil {
+		return x.ReasonCode
+	}
+	return ""
+}
+
+func (x *QuarantineEvent) GetPayloadBytes() uint32 {
+	if x != nil {
+		return x.PayloadBytes
+	}
+	return 0
+}
+
+func (x *QuarantineEvent) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
 
 const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
@@ -716,7 +1008,42 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x15observation_domain_id\x18\f \x01(\x04R\x13observationDomainId\x12%\n" +
 	"\x0etemplates_json\x18\r \x01(\fR\rtemplatesJson\x12.\n" +
 	"\x13sampling_rates_json\x18\x0e \x01(\fR\x11samplingRatesJson\x12%\n" +
-	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256\"\xf7\x04\n" +
+	"\rDecodeFailure\x124\n" +
+	"\x16failure_schema_version\x18\x01 \x01(\rR\x14failureSchemaVersion\x12\x19\n" +
+	"\bevent_id\x18\x02 \x01(\fR\aeventId\x12\x1f\n" +
+	"\vdatagram_id\x18\x03 \x01(\fR\n" +
+	"datagramId\x12\x1b\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\x12!\n" +
+	"\fcollector_id\x18\x05 \x01(\tR\vcollectorId\x12\x1f\n" +
+	"\vexporter_id\x18\x06 \x01(\tR\n" +
+	"exporterId\x12)\n" +
+	"\x10registry_version\x18\a \x01(\x04R\x0fregistryVersion\x12-\n" +
+	"\x13received_at_unix_ms\x18\b \x01(\x03R\x10receivedAtUnixMs\x12\x1a\n" +
+	"\bprotocol\x18\t \x01(\rR\bprotocol\x12\x1b\n" +
+	"\tsource_ip\x18\n" +
+	" \x01(\fR\bsourceIp\x122\n" +
+	"\x15observation_domain_id\x18\v \x01(\x04R\x13observationDomainId\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\f \x01(\tR\terrorCode\x12#\n" +
+	"\rerror_summary\x18\r \x01(\tR\ferrorSummary\x12\x1a\n" +
+	"\battempts\x18\x0e \x01(\rR\battempts\x12%\n" +
+	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256\x12\x18\n" +
+	"\apayload\x18\x10 \x01(\fR\apayload\x12+\n" +
+	"\x11payload_truncated\x18\x11 \x01(\bR\x10payloadTruncated\"\x8a\x03\n" +
+	"\x0fQuarantineEvent\x120\n" +
+	"\x14event_schema_version\x18\x01 \x01(\rR\x12eventSchemaVersion\x12\x19\n" +
+	"\bevent_id\x18\x02 \x01(\fR\aeventId\x12!\n" +
+	"\fcollector_id\x18\x03 \x01(\tR\vcollectorId\x12-\n" +
+	"\x13received_at_unix_ms\x18\x04 \x01(\x03R\x10receivedAtUnixMs\x12\x1a\n" +
+	"\bprotocol\x18\x05 \x01(\rR\bprotocol\x12\x1b\n" +
+	"\tsource_ip\x18\x06 \x01(\fR\bsourceIp\x122\n" +
+	"\x15observation_domain_id\x18\a \x01(\x04R\x13observationDomainId\x12\x1f\n" +
+	"\vreason_code\x18\b \x01(\tR\n" +
+	"reasonCode\x12#\n" +
+	"\rpayload_bytes\x18\t \x01(\rR\fpayloadBytes\x12%\n" +
+	"\x0epayload_sha256\x18\n" +
+	" \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once
@@ -730,11 +1057,13 @@ func file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP() []byte {
 	return file_internal_flowcollect_flowpb_normalized_proto_rawDescData
 }
 
-var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_internal_flowcollect_flowpb_normalized_proto_goTypes = []any{
 	(*NormalizedRecordBatch)(nil), // 0: watchdog.flow.v1.NormalizedRecordBatch
 	(*NormalizedRecord)(nil),      // 1: watchdog.flow.v1.NormalizedRecord
 	(*CollectState)(nil),          // 2: watchdog.flow.v1.CollectState
+	(*DecodeFailure)(nil),         // 3: watchdog.flow.v1.DecodeFailure
+	(*QuarantineEvent)(nil),       // 4: watchdog.flow.v1.QuarantineEvent
 }
 var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
 	1, // 0: watchdog.flow.v1.NormalizedRecordBatch.records:type_name -> watchdog.flow.v1.NormalizedRecord
@@ -756,7 +1085,7 @@ func file_internal_flowcollect_flowpb_normalized_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_flowcollect_flowpb_normalized_proto_rawDesc), len(file_internal_flowcollect_flowpb_normalized_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

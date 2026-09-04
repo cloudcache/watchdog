@@ -64,6 +64,15 @@ flow_collect:
     max_records: 1024
     max_bytes: 1048576
     max_wait: 5ms
+  diagnostics:
+    decode_max_attempts: 3
+    retry_initial: 250ms
+    retry_max: 5s
+    quarantine_queue_events: 4096
+    quarantine_max_events_per_second: 100
+    quarantine_max_events_per_source_second: 2
+    # 0 keeps raw payload out of DLQ; enable only with restricted topic ACL/TTL
+    dlq_payload_max_bytes: 0
 
 aggregate_graph:
   rollup_interval: 5m

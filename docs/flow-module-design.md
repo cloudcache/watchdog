@@ -389,7 +389,7 @@ observed health:                    warming → healthy ↔ degraded ↔ stale
 ### 步骤 1：flow-collect 接收、准入并写本地 raw WAL
 
 - sFlow `:6343/udp`，NetFlow/IPFIX `:2055/udp`；`SO_REUSEPORT`/socket count、OS receive buffer、固定 reader/decode worker 和有界队列，禁止每包 goroutine；
-- 依据签名 plan 做 listener/source/tenant 准入，不从报文接受 tenant；未知来源只产生限速 quarantine metadata，不把未归属 payload 混入正式 topic；
+- 依据签名 plan 做 listener/source/tenant 准入，不从报文接受 tenant；未知来源只产生无 tenant、无 raw payload 的 quarantine protobuf metadata，不把未归属 payload 混入 WAL/正式 topic。quarantine 使用固定异步队列、每 source/全局每秒双限流；Kafka 慢或不可用不得反压 UDP/WAL 主链，队列满、限流和发布失败分别计数；
 - datagram 封装 `datagram_id/tenant/collector/boot/protocol/recv_ts/source/domain_hint/payload/crc32`，批量追加本地 segment WAL；`datagram_id=hash(collector_id,boot_id,wal_segment_sequence,record_offset,payload_crc32)`，在 append 时生成并随 WAL 持久化，replay/进程重启直接复用，绝不按重放时间重新生成；
 - UDP reader 只负责准入和 append，不直接投递 decode queue；单一增量 WAL cursor 是唯一 decode dispatch source。这样 live datagram 也先越过 durable barrier，避免 live/replay 双入口造成同一 exporter 的模板与 data set 乱序；
 - WAL 采用单写者 append、group commit、segment checksum、启动扫描和已确认 watermark。默认 `fsync_interval=10ms`；主机掉电 RPO 上限等于该间隔，进程崩溃不得丢已 fsync segment；
@@ -397,7 +397,7 @@ observed health:                    warming → healthy ↔ degraded ↔ stale
 
 ### 步骤 2：同进程 GoFlow2 解码、模板与质量状态
 
-flow-collect 将 WAL record 以 `hash(protocol, UDP transport source IP, observation_domain_id)` 固定分派到 decode worker；同一 exporter/domain 只有一个 owner queue，模板、sampler options 和 data set 不跨 worker 竞态。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 使用显式注入的 template store 与 sampling-rate store，状态严格按 exporter/domain/sampler 隔离。非 template-pending 错误会阻塞该 affinity queue 并重试，防止后续模板重定义改变旧 data set 的解释；template-pending 可以释放当前 record，让 WAL 中后到的模板先建立状态，再启动下一轮重放。毒包永久阻塞不能作为终态，须由 FLOW-02E 的有界退避和 decode-DLQ 接管。
+flow-collect 将 WAL record 以 `hash(protocol, UDP transport source IP, observation_domain_id)` 固定分派到 decode worker；同一 exporter/domain 只有一个 owner queue，模板、sampler options 和 data set 不跨 worker 竞态。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 使用显式注入的 template store 与 sampling-rate store，状态严格按 exporter/domain/sampler 隔离。template-pending 可以释放当前 record，让 WAL 中后到的模板先建立状态，再启动下一轮重放。确定性的 decode/normalize 拒绝按 `retry_initial` 指数退避至 `retry_max`，达到 `decode_max_attempts` 后发布稳定 ID 的受限 decode-DLQ；只有 Kafka `acks=all` 后才确认原 WAL record。plan history 缺失、状态/Kafka/WAL 失败属于基础设施或控制面失败，禁止伪装成坏包进入 DLQ，继续背压/重试。由此既不会让毒包永久卡住 affinity worker，也不会因 Kafka 故障误丢事实。
 
 内存 exporter registry 绑定 tenant/target/device，验证唯一 observation interface 和 allowlist，记录 sequence gap、restart、template wait、decode error、drops 和 quality flags。pending/suspended/retired/deleted、health=warming、无模板或无有效 sampling 语义的记录不伪造统计值：可恢复的 template wait 留在 WAL 等待重放，不可恢复坏包进入受限 decode-DLQ。
 
@@ -413,7 +413,7 @@ raw WAL durable
   -> 发布 normalized data children 并分别 ACK2
 ```
 
-`state_key=SHA-256(collector_id,protocol,source_ip,observation_domain_id)`，Kafka producer 对它稳定 hash partition；`state_id=SHA-256(datagram_id,state_key)`，重试不变。本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；默认超过 30 分钟不恢复，以免把过期模板应用到新 exporter session。滚动升级先 drain listener 并发布安全点；新 owner 必须先恢复 compacted state 和本地/WAL 事实，不能只依赖进程内缓存。
+`state_key=SHA-256(collector_id,protocol,source_ip,observation_domain_id)`，Kafka producer 对它稳定 hash partition；`state_id=SHA-256(datagram_id,state_key)`，重试不变。本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；超过可配置 `decoder_state_ttl`（默认 30 分钟）不恢复，以免把过期模板应用到新 exporter session。若一个报文先更新模板再发生 decode/normalize 拒绝，状态安全点仍须先于 DLQ，不能因回收毒包丢失后续数据依赖的模板。滚动升级先 drain listener 并发布安全点；新 owner 必须先恢复 compacted state 和本地/WAL 事实，不能只依赖进程内缓存。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -525,6 +525,39 @@ message CollectState {
   bytes  templates_json        = 13; // GoFlow2 snapshot，非业务记录
   bytes  sampling_rates_json   = 14; // GoFlow2 snapshot，非业务记录
   bytes  payload_sha256        = 15; // 除本字段外的确定性 protobuf 摘要
+}
+
+message DecodeFailure {
+  uint32 failure_schema_version = 1;
+  bytes  event_id               = 2;  // hash(datagram_id,error_code)，重试稳定
+  bytes  datagram_id            = 3;
+  string tenant_id              = 4;
+  string collector_id           = 5;
+  string exporter_id            = 6;
+  uint64 registry_version       = 7;
+  int64  received_at_unix_ms    = 8;
+  uint32 protocol               = 9;
+  bytes  source_ip              = 10;
+  uint64 observation_domain_id  = 11;
+  string error_code             = 12; // 稳定枚举，不按 message 分支
+  string error_summary          = 13; // 去控制字符，最多 512 rune
+  uint32 attempts               = 14;
+  bytes  payload_sha256         = 15;
+  bytes  payload                = 16; // 默认空；仅受限 ACL/TTL 下显式开启
+  bool   payload_truncated      = 17;
+}
+
+message QuarantineEvent {
+  uint32 event_schema_version   = 1;
+  bytes  event_id               = 2;
+  string collector_id           = 3;
+  int64  received_at_unix_ms    = 4;
+  uint32 protocol               = 5;
+  bytes  source_ip              = 6;
+  uint64 observation_domain_id  = 7;
+  string reason_code            = 8;  // FLOW_EXPORTER_UNKNOWN
+  uint32 payload_bytes          = 9;
+  bytes  payload_sha256         = 10; // 仅摘要，绝不带 raw payload
 }
 ```
 
@@ -2009,6 +2042,14 @@ flow_collect:
     max_records: 1024
     max_bytes: 1048576
     max_wait: 5ms
+  diagnostics:
+    decode_max_attempts: 3
+    retry_initial: 250ms
+    retry_max: 5s
+    quarantine_queue_events: 4096
+    quarantine_max_events_per_second: 100
+    quarantine_max_events_per_source_second: 2
+    dlq_payload_max_bytes: 0 # 默认不把 raw payload 写入 DLQ
   exporter_refresh_interval: 30s
 
 flow_dimension:

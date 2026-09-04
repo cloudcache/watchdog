@@ -222,10 +222,11 @@ func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain
 	var nf9 netflow.NFv9Packet
 	var ipfix netflow.IPFIXPacket
 	if err := netflow.DecodeMessageVersion(bytes.NewBuffer(record.Payload), d.templates, ctx, &nf9, &ipfix); err != nil {
+		partial := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, CollectStateChanged: d.stateRevision(stateKey) != stateRevision}
 		if errors.Is(err, netflow.ErrorTemplateNotFound) {
-			return DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, CollectStateChanged: d.stateRevision(stateKey) != stateRevision}, errors.Join(ErrTemplatePending, fmt.Errorf("decode NetFlow/IPFIX: %w", err))
+			return partial, errors.Join(ErrTemplatePending, fmt.Errorf("decode NetFlow/IPFIX: %w", err))
 		}
-		return DecodedDatagram{}, fmt.Errorf("decode NetFlow/IPFIX: %w", err)
+		return partial, fmt.Errorf("decode NetFlow/IPFIX: %w", err)
 	}
 	var packet interface{}
 	var sequence uint32

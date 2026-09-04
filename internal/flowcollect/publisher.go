@@ -16,12 +16,16 @@ import (
 type Publisher interface {
 	Publish(context.Context, *flowpb.NormalizedRecordBatch) error
 	PublishCollectState(context.Context, *flowpb.CollectState) error
+	PublishDecodeFailure(context.Context, *flowpb.DecodeFailure) error
+	PublishQuarantine(context.Context, *flowpb.QuarantineEvent) error
 	Close() error
 }
 
 type KafkaPublisher struct {
 	topic             string
 	collectStateTopic string
+	decodeDLQTopic    string
+	quarantineTopic   string
 	producer          sarama.AsyncProducer
 	closed            chan struct{}
 	done              chan struct{}
@@ -31,8 +35,8 @@ type KafkaPublisher struct {
 type publishResult struct{ done chan error }
 
 func NewKafkaPublisher(config KafkaConfig, batchConfig NormalizedBatchCfg, collectorID string) (*KafkaPublisher, error) {
-	if len(config.Brokers) == 0 || config.NormalizedTopic == "" || config.CollectStateTopic == "" {
-		return nil, errors.New("Kafka brokers, normalized topic, and collect-state topic are required")
+	if len(config.Brokers) == 0 || config.NormalizedTopic == "" || config.CollectStateTopic == "" || config.DecodeDLQTopic == "" || config.QuarantineTopic == "" {
+		return nil, errors.New("all Kafka flow topics are required")
 	}
 	saramaConfig, err := buildSaramaConfig(config, batchConfig, collectorID)
 	if err != nil {
@@ -42,7 +46,7 @@ func NewKafkaPublisher(config KafkaConfig, batchConfig NormalizedBatchCfg, colle
 	if err != nil {
 		return nil, fmt.Errorf("create Kafka producer: %w", err)
 	}
-	publisher := &KafkaPublisher{topic: config.NormalizedTopic, collectStateTopic: config.CollectStateTopic, producer: producer, closed: make(chan struct{}), done: make(chan struct{})}
+	publisher := &KafkaPublisher{topic: config.NormalizedTopic, collectStateTopic: config.CollectStateTopic, decodeDLQTopic: config.DecodeDLQTopic, quarantineTopic: config.QuarantineTopic, producer: producer, closed: make(chan struct{}), done: make(chan struct{})}
 	go publisher.collectResults()
 	return publisher, nil
 }
@@ -106,6 +110,36 @@ func (p *KafkaPublisher) PublishCollectState(ctx context.Context, state *flowpb.
 		return fmt.Errorf("marshal collect state: %w", err)
 	}
 	message := &sarama.ProducerMessage{Topic: p.collectStateTopic, Partition: -1, Key: sarama.ByteEncoder(state.StateKey), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(state.ReceivedAtUnixMs)}
+	return p.publishMessage(ctx, message)
+}
+
+func (p *KafkaPublisher) PublishDecodeFailure(ctx context.Context, failure *flowpb.DecodeFailure) error {
+	if p.decodeDLQTopic == "" {
+		return errors.New("Kafka decode-DLQ topic is required")
+	}
+	if failure == nil {
+		return errors.New("decode failure is required")
+	}
+	data, err := proto.Marshal(failure)
+	if err != nil {
+		return fmt.Errorf("marshal decode failure: %w", err)
+	}
+	message := &sarama.ProducerMessage{Topic: p.decodeDLQTopic, Partition: -1, Key: sarama.ByteEncoder(failure.DatagramId), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(failure.ReceivedAtUnixMs)}
+	return p.publishMessage(ctx, message)
+}
+
+func (p *KafkaPublisher) PublishQuarantine(ctx context.Context, event *flowpb.QuarantineEvent) error {
+	if p.quarantineTopic == "" {
+		return errors.New("Kafka quarantine topic is required")
+	}
+	if event == nil {
+		return errors.New("quarantine event is required")
+	}
+	data, err := proto.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal quarantine event: %w", err)
+	}
+	message := &sarama.ProducerMessage{Topic: p.quarantineTopic, Partition: -1, Key: sarama.ByteEncoder(event.EventId), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(event.ReceivedAtUnixMs)}
 	return p.publishMessage(ctx, message)
 }
 

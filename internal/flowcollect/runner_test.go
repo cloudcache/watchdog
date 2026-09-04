@@ -12,9 +12,12 @@ import (
 )
 
 type recordingPublisher struct {
-	batches []*flowpb.NormalizedRecordBatch
-	states  []*flowpb.CollectState
-	events  []string
+	batches        []*flowpb.NormalizedRecordBatch
+	states         []*flowpb.CollectState
+	decodeFailures []*flowpb.DecodeFailure
+	quarantines    []*flowpb.QuarantineEvent
+	events         []string
+	dlqPublished   chan struct{}
 }
 
 func (p *recordingPublisher) Publish(_ context.Context, batch *flowpb.NormalizedRecordBatch) error {
@@ -27,11 +30,37 @@ func (p *recordingPublisher) PublishCollectState(_ context.Context, state *flowp
 	p.events = append(p.events, "state")
 	return nil
 }
+func (p *recordingPublisher) PublishDecodeFailure(_ context.Context, failure *flowpb.DecodeFailure) error {
+	p.decodeFailures = append(p.decodeFailures, failure)
+	p.events = append(p.events, "dlq")
+	if p.dlqPublished != nil {
+		p.dlqPublished <- struct{}{}
+	}
+	return nil
+}
+func (p *recordingPublisher) PublishQuarantine(_ context.Context, event *flowpb.QuarantineEvent) error {
+	p.quarantines = append(p.quarantines, event)
+	p.events = append(p.events, "quarantine")
+	return nil
+}
 func (p *recordingPublisher) Close() error { return nil }
 
 type failDataOncePublisher struct {
 	recordingPublisher
 	fail bool
+}
+
+type failDLQOncePublisher struct {
+	recordingPublisher
+	fail bool
+}
+
+func (p *failDLQOncePublisher) PublishDecodeFailure(ctx context.Context, failure *flowpb.DecodeFailure) error {
+	if p.fail {
+		p.fail = false
+		return errors.New("injected DLQ publish failure")
+	}
+	return p.recordingPublisher.PublishDecodeFailure(ctx, failure)
 }
 
 func (p *failDataOncePublisher) Publish(ctx context.Context, batch *flowpb.NormalizedRecordBatch) error {

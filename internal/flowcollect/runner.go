@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
+	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
 )
 
 var (
@@ -38,13 +39,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Publisher == nil {
 		return errors.New("flow runner dependencies are required")
 	}
-	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 {
-		return errors.New("flow runner socket, worker, and queue counts must be positive")
+	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
+		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
 	r.metrics()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ingress := make(chan Datagram, r.Config.DecodeQueueDatagrams)
+	quarantineQueue := make(chan *flowpb.QuarantineEvent, r.Config.Diagnostics.QuarantineQueueEvents)
+	quarantineRate := newQuarantineLimiter(r.Config.Diagnostics.QuarantineMaxEventsPerSecond, r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond)
 	decodeQueues := make([]chan WALRecord, r.Config.DecodeWorkers)
 	queueCapacity := (r.Config.DecodeQueueDatagrams + r.Config.DecodeWorkers - 1) / r.Config.DecodeWorkers
 	fatal := make(chan error, 1)
@@ -56,7 +59,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		go func(queue <-chan WALRecord) { defer workerWG.Done(); r.decodeLoop(ctx, queue) }(decodeQueues[index])
 	}
 	workerWG.Add(1)
-	go func() { defer workerWG.Done(); r.ingestLoop(ctx, ingress, fatal) }()
+	go func() { defer workerWG.Done(); r.ingestLoop(ctx, ingress, quarantineQueue, quarantineRate, fatal) }()
+	workerWG.Add(1)
+	go func() { defer workerWG.Done(); r.quarantineLoop(ctx, quarantineQueue) }()
 	workerWG.Add(1)
 	go func() { defer workerWG.Done(); r.replayLoop(ctx, decodeQueues) }()
 	workerWG.Add(1)
@@ -91,7 +96,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	return result
 }
 
-func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, fatal chan<- error) {
+func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, quarantineQueue chan<- *flowpb.QuarantineEvent, quarantineRate *quarantineLimiter, fatal chan<- error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -106,6 +111,16 @@ func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, fatal 
 			}
 			binding, admitted := r.Registry.Admit(protocol, datagram.Source.Addr(), domain)
 			if !admitted {
+				if quarantineRate.Allow(datagram.Source.Addr(), datagram.ReceivedAt) {
+					event := BuildQuarantineEvent(datagram, r.Registry.Plan().CollectorID, protocol, domain)
+					select {
+					case quarantineQueue <- event:
+					default:
+						r.metrics().QuarantineQueueDrops.Add(1)
+					}
+				} else {
+					r.metrics().QuarantineRateLimited.Add(1)
+				}
 				datagram.Release()
 				r.metrics().QuarantinedDatagrams.Add(1)
 				continue
@@ -142,11 +157,20 @@ func (r *Runner) decodeLoop(ctx context.Context, records <-chan WALRecord) {
 					break
 				}
 				r.report(err)
+				attempts := generation + 1
+				if code, cause, permanent := permanentFailureDetails(err); permanent && attempts >= uint32(r.Config.Diagnostics.DecodeMaxAttempts) {
+					if dlqErr := r.deadLetter(ctx, record, code, cause, attempts); dlqErr == nil {
+						r.attempts.Delete(record.DatagramID)
+						break
+					} else {
+						r.report(dlqErr)
+					}
+				}
 				if errors.Is(err, ErrTemplatePending) {
 					r.retryNeeded.Store(true)
 					break
 				}
-				timer := time.NewTimer(time.Second)
+				timer := time.NewTimer(retryBackoff(r.Config.Diagnostics, attempts))
 				select {
 				case <-ctx.Done():
 					timer.Stop()
@@ -172,9 +196,9 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 	}
 	decoded, err := r.Decoder.Decode(record)
 	if err != nil {
-		if errors.Is(err, ErrTemplatePending) && decoded.CollectStateChanged {
+		if decoded.CollectStateChanged {
 			if stateErr := r.checkpointCollectState(ctx, record, decoded, binding, plan, false, 0); stateErr != nil {
-				return errors.Join(err, stateErr)
+				return stateErr
 			}
 		}
 		if errors.Is(err, ErrTemplatePending) {
@@ -182,12 +206,20 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		} else {
 			r.metrics().DecodeFailures.Add(1)
 		}
+		if !errors.Is(err, ErrTemplatePending) {
+			return permanentProcessingFailure(decodeRejectedCode, err)
+		}
 		return err
 	}
 	batches, err := BuildNormalizedBatches(record, decoded, binding, plan.CollectorID, plan, r.Config.NormalizedBatch, replayGeneration)
 	if err != nil {
 		r.metrics().NormalizeFailures.Add(1)
-		return err
+		if decoded.CollectStateChanged {
+			if stateErr := r.checkpointCollectState(ctx, record, decoded, binding, plan, false, 0); stateErr != nil {
+				return stateErr
+			}
+		}
+		return permanentProcessingFailure(normalizeRejectedCode, err)
 	}
 	if len(batches) == 0 && !decoded.CollectStateChanged {
 		return r.WAL.Acknowledge(record.DatagramID)
@@ -216,6 +248,35 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		}
 	}
 	return nil
+}
+
+func (r *Runner) deadLetter(ctx context.Context, record WALRecord, code string, cause error, attempts uint32) error {
+	failure := BuildDecodeFailure(record, r.Registry.Plan().CollectorID, code, cause, attempts, r.Config.Diagnostics.DLQPayloadMaxBytes)
+	if err := r.Publisher.PublishDecodeFailure(ctx, failure); err != nil {
+		r.metrics().DLQPublishFailures.Add(1)
+		return err
+	}
+	if err := r.WAL.Acknowledge(record.DatagramID); err != nil {
+		return err
+	}
+	r.metrics().DLQDatagrams.Add(1)
+	return nil
+}
+
+func (r *Runner) quarantineLoop(ctx context.Context, events <-chan *flowpb.QuarantineEvent) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-events:
+			if err := r.Publisher.PublishQuarantine(ctx, event); err != nil {
+				r.metrics().QuarantinePublishFailures.Add(1)
+				r.report(err)
+				continue
+			}
+			r.metrics().PublishedQuarantine.Add(1)
+		}
+	}
 }
 
 func (r *Runner) checkpointCollectState(ctx context.Context, record WALRecord, decoded DecodedDatagram, binding SourceBinding, plan Plan, acknowledge bool, childCount uint32) error {

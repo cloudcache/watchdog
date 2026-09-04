@@ -32,6 +32,7 @@ type Config struct {
 	WAL                   WALConfig          `yaml:"wal"`
 	Kafka                 KafkaConfig        `yaml:"kafka"`
 	NormalizedBatch       NormalizedBatchCfg `yaml:"normalized_batch"`
+	Diagnostics           DiagnosticsConfig  `yaml:"diagnostics"`
 }
 
 type WALConfig struct {
@@ -58,6 +59,16 @@ type NormalizedBatchCfg struct {
 	MaxRecords int           `yaml:"max_records"`
 	MaxBytes   int           `yaml:"max_bytes"`
 	MaxWait    time.Duration `yaml:"max_wait"`
+}
+
+type DiagnosticsConfig struct {
+	DecodeMaxAttempts                  int           `yaml:"decode_max_attempts"`
+	RetryInitial                       time.Duration `yaml:"retry_initial"`
+	RetryMax                           time.Duration `yaml:"retry_max"`
+	QuarantineQueueEvents              int           `yaml:"quarantine_queue_events"`
+	QuarantineMaxEventsPerSecond       int           `yaml:"quarantine_max_events_per_second"`
+	QuarantineMaxEventsPerSourceSecond int           `yaml:"quarantine_max_events_per_source_second"`
+	DLQPayloadMaxBytes                 int           `yaml:"dlq_payload_max_bytes"`
 }
 
 func DefaultConfig() Config {
@@ -94,6 +105,15 @@ func DefaultConfig() Config {
 			MaxRecords: 1024,
 			MaxBytes:   1 << 20,
 			MaxWait:    5 * time.Millisecond,
+		},
+		Diagnostics: DiagnosticsConfig{
+			DecodeMaxAttempts:                  3,
+			RetryInitial:                       250 * time.Millisecond,
+			RetryMax:                           5 * time.Second,
+			QuarantineQueueEvents:              4096,
+			QuarantineMaxEventsPerSecond:       100,
+			QuarantineMaxEventsPerSourceSecond: 2,
+			DLQPayloadMaxBytes:                 0,
 		},
 	}
 }
@@ -170,6 +190,15 @@ func (c Config) Validate() error {
 	}
 	if c.NormalizedBatch.MaxRecords <= 0 || c.NormalizedBatch.MaxBytes <= 0 || c.NormalizedBatch.MaxWait <= 0 {
 		return errors.New("flow_collect.normalized_batch limits must be positive")
+	}
+	if c.Diagnostics.DecodeMaxAttempts <= 0 || c.Diagnostics.RetryInitial <= 0 || c.Diagnostics.RetryMax < c.Diagnostics.RetryInitial || c.Diagnostics.QuarantineQueueEvents <= 0 || c.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || c.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
+		return errors.New("flow_collect.diagnostics retry and quarantine limits are invalid")
+	}
+	if c.Diagnostics.QuarantineMaxEventsPerSourceSecond > c.Diagnostics.QuarantineMaxEventsPerSecond {
+		return errors.New("flow_collect.diagnostics per-source quarantine rate cannot exceed the global rate")
+	}
+	if c.Diagnostics.DLQPayloadMaxBytes < 0 || c.Diagnostics.DLQPayloadMaxBytes > c.MaxDatagramBytes {
+		return errors.New("flow_collect.diagnostics.dlq_payload_max_bytes must be between 0 and max_datagram_bytes")
 	}
 	if c.Kafka.Acks != "all" {
 		return errors.New("flow_collect.kafka.acks must be all")
@@ -283,6 +312,27 @@ func (c *Config) ApplyEnv() error {
 	if c.NormalizedBatch.MaxWait, err = envDuration("WATCHDOG_FLOW_COLLECT_BATCH_MAX_WAIT", c.NormalizedBatch.MaxWait); err != nil {
 		return err
 	}
+	if c.Diagnostics.DecodeMaxAttempts, err = envInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_DECODE_MAX_ATTEMPTS", c.Diagnostics.DecodeMaxAttempts); err != nil {
+		return err
+	}
+	if c.Diagnostics.RetryInitial, err = envDuration("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_RETRY_INITIAL", c.Diagnostics.RetryInitial); err != nil {
+		return err
+	}
+	if c.Diagnostics.RetryMax, err = envDuration("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_RETRY_MAX", c.Diagnostics.RetryMax); err != nil {
+		return err
+	}
+	if c.Diagnostics.QuarantineQueueEvents, err = envInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_QUARANTINE_QUEUE_EVENTS", c.Diagnostics.QuarantineQueueEvents); err != nil {
+		return err
+	}
+	if c.Diagnostics.QuarantineMaxEventsPerSecond, err = envInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_QUARANTINE_MAX_EVENTS_PER_SECOND", c.Diagnostics.QuarantineMaxEventsPerSecond); err != nil {
+		return err
+	}
+	if c.Diagnostics.QuarantineMaxEventsPerSourceSecond, err = envInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_QUARANTINE_MAX_EVENTS_PER_SOURCE_SECOND", c.Diagnostics.QuarantineMaxEventsPerSourceSecond); err != nil {
+		return err
+	}
+	if c.Diagnostics.DLQPayloadMaxBytes, err = envNonNegativeInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_DLQ_PAYLOAD_MAX_BYTES", c.Diagnostics.DLQPayloadMaxBytes); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -313,6 +363,18 @@ func envInt(key string, fallback int) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil || n <= 0 {
 		return fallback, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
+}
+
+func envNonNegativeInt(key string, fallback int) (int, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return fallback, fmt.Errorf("%s must be a non-negative integer", key)
 	}
 	return n, nil
 }

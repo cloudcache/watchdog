@@ -82,3 +82,40 @@ message CollectState {
   bytes sampling_rates_json = 14;
   bytes payload_sha256 = 15;
 }
+
+// DecodeFailure is a terminal, Kafka-acknowledged outcome for a durable WAL
+// datagram. payload is empty unless explicitly enabled for restricted diagnosis.
+message DecodeFailure {
+  uint32 failure_schema_version = 1;
+  bytes event_id = 2;
+  bytes datagram_id = 3;
+  string tenant_id = 4;
+  string collector_id = 5;
+  string exporter_id = 6;
+  uint64 registry_version = 7;
+  int64 received_at_unix_ms = 8;
+  uint32 protocol = 9;
+  bytes source_ip = 10;
+  uint64 observation_domain_id = 11;
+  string error_code = 12;
+  string error_summary = 13;
+  uint32 attempts = 14;
+  bytes payload_sha256 = 15;
+  bytes payload = 16;
+  bool payload_truncated = 17;
+}
+
+// QuarantineEvent is rate-limited metadata for an unregistered source. It
+// never carries the datagram payload and has no tenant supplied by the packet.
+message QuarantineEvent {
+  uint32 event_schema_version = 1;
+  bytes event_id = 2;
+  string collector_id = 3;
+  int64 received_at_unix_ms = 4;
+  uint32 protocol = 5;
+  bytes source_ip = 6;
+  uint64 observation_domain_id = 7;
+  string reason_code = 8;
+  uint32 payload_bytes = 9;
+  bytes payload_sha256 = 10;
+}
