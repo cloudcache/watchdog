@@ -6,7 +6,16 @@ import (
 	"math"
 )
 
-const QualitySamplingRateOverridden uint64 = 1 << 1
+const (
+	QualityTemplateRecentlyLearned uint64 = 1 << 0
+	QualitySamplingRateOverridden  uint64 = 1 << 1
+	QualitySequenceGapWindow       uint64 = 1 << 3
+	QualitySamplePoolResetWindow   uint64 = 1 << 4
+	QualitySamplingRateChange      uint64 = 1 << 7
+	QualityExporterRestartWindow   uint64 = 1 << 8
+	QualitySequenceOutOfOrder      uint64 = 1 << 9
+	QualityStateSaturated          uint64 = 1 << 10
+)
 
 type NormalizedValues struct {
 	SamplingMode     SamplingMode
@@ -21,7 +30,7 @@ func NormalizeCounters(binding SourceBinding, datagram DecodedDatagram, record D
 	if err != nil {
 		return NormalizedValues{}, err
 	}
-	values := NormalizedValues{SamplingMode: mode, SamplingRate: record.SamplingRate}
+	values := NormalizedValues{SamplingMode: mode, SamplingRate: record.SamplingRate, QualityFlags: record.QualityFlags}
 	switch mode {
 	case SamplingModePreScaled:
 		values.EstimatedBytes = record.RawBytes

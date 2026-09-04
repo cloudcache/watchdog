@@ -25,6 +25,14 @@ type Metrics struct {
 	ReplayAttempts            atomic.Uint64
 	DLQDatagrams              atomic.Uint64
 	DLQPublishFailures        atomic.Uint64
+	SequenceGapEvents         atomic.Uint64
+	MissingSequenceUnits      atomic.Uint64
+	ExporterRestartEvents     atomic.Uint64
+	SequenceOutOfOrderEvents  atomic.Uint64
+	SamplePoolResetEvents     atomic.Uint64
+	SamplingRateChangeEvents  atomic.Uint64
+	ExporterDropSamples       atomic.Uint64
+	QualityStateSaturated     atomic.Uint64
 }
 
 type MetricSnapshot struct {
@@ -50,6 +58,14 @@ type MetricSnapshot struct {
 	ReplayAttempts            uint64
 	DLQDatagrams              uint64
 	DLQPublishFailures        uint64
+	SequenceGapEvents         uint64
+	MissingSequenceUnits      uint64
+	ExporterRestartEvents     uint64
+	SequenceOutOfOrderEvents  uint64
+	SamplePoolResetEvents     uint64
+	SamplingRateChangeEvents  uint64
+	ExporterDropSamples       uint64
+	QualityStateSaturated     uint64
 }
 
 func (m *Metrics) Snapshot() MetricSnapshot {
@@ -60,5 +76,7 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		CollectStateCheckpoints: m.CollectStateCheckpoints.Load(), PublishedCollectStates: m.PublishedCollectStates.Load(), CollectStateFailures: m.CollectStateFailures.Load(), ReplayAttempts: m.ReplayAttempts.Load(),
 		QuarantineRateLimited: m.QuarantineRateLimited.Load(), QuarantineQueueDrops: m.QuarantineQueueDrops.Load(), PublishedQuarantine: m.PublishedQuarantine.Load(), QuarantinePublishFailures: m.QuarantinePublishFailures.Load(),
 		DLQDatagrams: m.DLQDatagrams.Load(), DLQPublishFailures: m.DLQPublishFailures.Load(),
+		SequenceGapEvents: m.SequenceGapEvents.Load(), MissingSequenceUnits: m.MissingSequenceUnits.Load(), ExporterRestartEvents: m.ExporterRestartEvents.Load(), SequenceOutOfOrderEvents: m.SequenceOutOfOrderEvents.Load(),
+		SamplePoolResetEvents: m.SamplePoolResetEvents.Load(), SamplingRateChangeEvents: m.SamplingRateChangeEvents.Load(), ExporterDropSamples: m.ExporterDropSamples.Load(), QualityStateSaturated: m.QualityStateSaturated.Load(),
 	}
 }

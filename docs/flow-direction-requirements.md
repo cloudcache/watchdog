@@ -86,6 +86,23 @@ estimated_packets_i = sampled_packets_i × sampling_rate_i
 
 sFlow counter sample 与 flow sample 是两条独立语义：counter sample 是接口累计 octets/packets，不乘 sampling rate；CLI 的 polling `interval` 只决定 counter sample 大致多久发送一次，也不是 flow 字节的倍率。线速按相邻 counter 的实际时间差计算，不能假定每次实际间隔都等于 CLI 配置值。
 
+### 2.5 序列、重启与质量 epoch
+
+四种协议的 sequence 不是同一计数单位，collector 必须按协议推进预期值，不能统一做 `sequence+1`：
+
+| 协议 | sequence scope | 下一预期值 | 重启依据 |
+|---|---|---|---|
+| sFlow v5 | transport source + header `agent_address/sub_agent_id` | datagram sequence `+1`；每个 `source_id` 的 sample sequence 另行 `+1` | header uptime 明确回退且不是 uint32 自然回绕 |
+| NetFlow v5 | transport source + `engine_type/engine_id` | `flow_sequence + 本报文 flow record 数` | `sys_uptime` 明确回退且不是自然回绕 |
+| NetFlow v9 | transport source + `source_id` | export-packet sequence `+1` | `system_uptime` 明确回退且不是自然回绕 |
+| IPFIX | transport source + observation domain | `sequence + 本报文 Data Record 数`，包含 Options Data Record | 协议无 uptime；仅凭 sequence 回退不能臆断重启，保守标为乱序 |
+
+sFlow 的 sample sequence、sample pool、drops 和 sampling rate 继续按 `(transport source, agent_address, sub_agent_id, source_id_type, source_id_value)` 隔离。datagram/sample gap 共用 `sequence_gap_window` 事实位，但低基数指标分别累计事件和缺失 sequence units；sampling rate 变化、sample-pool reset 或 exporter restart 关闭原质量 epoch。uint32 sequence/uptime/pool 的自然回绕不得误报为 restart/reset。
+
+这些状态只诊断输入完整性，不修正 `raw_bytes/raw_packets/estimated_*`。WAL/Kafka 同一 datagram 重试必须复用第一次质量判定，不得重复推进状态或重复计异常；早到/迟到报文不得把较新的 state 回退。状态表有 TTL 和 exporter/data-source 数量硬上限，满时继续转发事实并置 `quality_state_saturated`，禁止为了质量统计阻塞 UDP/WAL 主链。
+
+当前实现的 sequence/sample epoch 是 collector 进程内有界状态；进程重启后进入新的 warming baseline，不伪造跨重启 gap。跨节点连续 epoch、collect-state 恢复与 replay 顺序证明属于 FLOW-02D3/E2B，在完成持久化安全点和故障注入前，不得把进程内指标宣称为跨节点完整性事实。
+
 ## 3. 六维分类学
 
 ### 3.1 分类输入

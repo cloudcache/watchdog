@@ -435,7 +435,7 @@ batch_schema_version, normalized_batch_id, datagram_id, virtual_shard,
 partition_map_version, physical_partition, replay_generation,
 tenant_id, collector_id, exporter_id, registry_version,
 received_at, protocol, source_ip, observation_domain_id,
-sub_agent_id, datagram_sequence, agent_ip,
+sub_agent_id, datagram_sequence, agent_ip, exporter_epoch,
 records[] {
   record_index, normalized_id, event_time,
   target_id, device_id, observation_if_index, observation_direction, in_if, out_if,
@@ -443,7 +443,7 @@ records[] {
   raw_bytes, raw_packets, sampling_mode, sampling_rate,
   estimated_bytes, estimated_packets, flow_duration_ms, quality_flags,
   src_as, dst_as, source_id_type, source_id_value,
-  sample_sequence, sample_pool, exporter_drops
+  sample_sequence, sample_pool, exporter_drops, sample_index, quality_epoch
 }
 ```
 
@@ -474,6 +474,7 @@ message NormalizedRecordBatch {
   uint32 sub_agent_id          = 32;
   uint32 datagram_sequence     = 33;
   bytes  agent_ip              = 34; // sFlow header agent address；非 sFlow 为空
+  uint64 exporter_epoch        = 35; // collector 观察到的 exporter session epoch
 }
 
 message NormalizedRecord {
@@ -507,6 +508,8 @@ message NormalizedRecord {
   uint32 sample_sequence        = 36;
   uint64 sample_pool            = 37;
   uint64 exporter_drops         = 38;
+  uint32 sample_index           = 39; // datagram 内 sample 序号；同 sample 多 record 相同
+  uint64 quality_epoch          = 40; // high32=exporter epoch，low32=source/sampler epoch
 }
 
 message CollectState {
@@ -561,9 +564,13 @@ message QuarantineEvent {
 }
 ```
 
-字段 32 之后用于补齐 GoFlow2 已能提供、且做 ASN/采样质量分析不可缺失的事实。`agent_ip/sub_agent_id/datagram_sequence` 属于 datagram，其中 `source_ip` 始终是 UDP transport source，不能拿 relay 地址覆盖 sFlow header 的 `agent_ip`；`source_id/sample_sequence/sample_pool/drops` 属于单个 sFlow sample，因此必须放在 record，不能错误提升为 batch。字段号只追加，不回填 17–31 的预留区。
+字段 32 之后用于补齐 GoFlow2 已能提供、且做 ASN/采样质量分析不可缺失的事实。`agent_ip/sub_agent_id/datagram_sequence/exporter_epoch` 属于 datagram，其中 `source_ip` 始终是 UDP transport source，不能拿 relay 地址覆盖 sFlow header 的 `agent_ip`；`source_id/sample_sequence/sample_pool/drops/sample_index/quality_epoch` 属于单个 sFlow sample 或 record，因此必须放在 record，不能错误提升为 batch。`sample_index` 防止同一 sFlow sample 解出多个 flow record 时重复推进 sample sequence；字段号只追加，不回填 17–31 的预留区。
 
-`quality_flags` 位注册表随 schema 版本冻结、只增不改：bit0 `template_recently_learned`、bit1 `sampling_rate_overridden`、bit2 `duration_unreliable`、bit3 `sequence_gap_window`、bit4 `sample_pool_reset_window`、bit5 `clock_skew_suspected`、bit6 `truncated_header`。新增位必须先登记语义与消费方处理方式；消费端忽略未注册位但原样保留。CI 用旧 fixture 解析新 writer 输出验证前向兼容。
+`quality_flags` 位注册表随 schema 版本冻结、只增不改：bit0 `template_recently_learned`、bit1 `sampling_rate_overridden`、bit2 `duration_unreliable`、bit3 `sequence_gap_window`、bit4 `sample_pool_reset_window`、bit5 `clock_skew_suspected`、bit6 `truncated_header`、bit7 `sampling_rate_change_window`、bit8 `exporter_restart_window`、bit9 `sequence_out_of_order_window`、bit10 `quality_state_saturated`。新增位必须先登记语义与消费方处理方式；消费端忽略未注册位但原样保留。所有质量位只注释事实，不得修改 raw/nominal estimated counters。CI 用旧 fixture 解析新 writer 输出验证前向兼容。
+
+sequence unit 按协议冻结：sFlow datagram 和每 source sample 均 `+1`；NetFlow v5 按本报文 flow-record count；NetFlow v9 按 export packet `+1`；IPFIX 按 Data Record count（包含 Options Data Record）。NetFlow v5 用 engine type/id、v9/IPFIX 用 observation domain、sFlow 用 agent/sub-agent/source 隔离。只有带 uptime 的协议且 uptime 明确回退、同时排除 uint32 自然回绕时才建立 restart epoch；IPFIX sequence 回退只标乱序，不猜测重启。gap/rate-change/pool-reset/restart/out-of-order 在可配置窗口内投射到后续 record。
+
+进程内 tracker 在 downstream 失败后按 datagram ID 缓存首次判定直到 Kafka/WAL terminal ack，正常成功路径不分配 retry cache；publish/normalize retry 复用该判定，因此不会把自身重试计作乱序。tracker 使用 `quality.state_ttl/max_exporters/max_data_sources` 硬边界；容量耗尽不丢 flow，而置 bit10 并增加低基数计数。当前 E2A 不把 sequence state 逐 datagram 同步写 compacted topic，以免把低频 collect-state 变成主链同步写放大；重启从 warming baseline 开始。E2B 必须设计 coalesced durable checkpoint、水位与 WAL replay ordering，完成跨进程/跨 owner 故障测试后才能宣称 epoch 连续。
 
 单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。存在 collect-state 时 child 0 固定留给状态消息，data child 从 1 开始；否则 data child 从 0 开始。Kafka idempotent producer 获得 `acks=all` 后，追加对应的 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。进程内失败重发递增 `replay_generation` 并保持 batch/record ID 和原 partition map；跨进程/跨节点连续 generation 仍须 FLOW-02D3 的持久化 attempt metadata/plan history 才能保证，消费端去重不能以 generation 代替稳定 ID。dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
 
@@ -1507,12 +1514,12 @@ flow-collect 和 dimension worker 都暴露 Prometheus `/metrics`。flow-collect
 - `watchdog_flow_wal_dropped_total{reason}`；
 
 - `watchdog_flow_records_decoded_total{protocol}`；
-- `watchdog_flow_sampling_rate_changes_total{exporter_id}`；
-- `watchdog_flow_sample_pool_resets_total{exporter_id}`；
-- `watchdog_flow_samples_missing_rate_total{exporter_id}`；
-- `watchdog_flow_sflow_exporter_drops_total{exporter_id}`；
+- `watchdog_flow_sampling_rate_changes_total{protocol}`；
+- `watchdog_flow_sample_pool_resets_total{protocol}`；
+- `watchdog_flow_samples_missing_rate_total{protocol}`；
+- `watchdog_flow_sflow_exporter_drops_total{protocol}`；
 - `watchdog_flow_decode_errors_total{protocol,reason}`（reason 固定枚举）；
-- `watchdog_flow_sequence_gaps_total{exporter_id}`；
+- `watchdog_flow_sequence_gaps_total{protocol,scope}`（scope 仅 `datagram|sample`）；
 - `watchdog_flow_normalized_records_total{protocol,result}`；
 - `watchdog_flow_normalized_batch_bytes`、`watchdog_flow_normalized_batch_records`；
 
@@ -2050,6 +2057,11 @@ flow_collect:
     quarantine_max_events_per_second: 100
     quarantine_max_events_per_source_second: 2
     dlq_payload_max_bytes: 0 # 默认不把 raw payload 写入 DLQ
+  quality:
+    state_ttl: 1h
+    anomaly_window: 1m
+    max_exporters: 65536
+    max_data_sources: 262144
   exporter_refresh_interval: 30s
 
 flow_dimension:

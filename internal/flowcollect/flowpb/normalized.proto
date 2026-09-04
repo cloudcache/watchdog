@@ -27,6 +27,7 @@ message NormalizedRecordBatch {
   uint32 sub_agent_id = 32;
   uint32 datagram_sequence = 33;
   bytes agent_ip = 34;
+  uint64 exporter_epoch = 35;
 }
 
 message NormalizedRecord {
@@ -61,6 +62,8 @@ message NormalizedRecord {
   uint32 sample_sequence = 36;
   uint64 sample_pool = 37;
   uint64 exporter_drops = 38;
+  uint32 sample_index = 39;
+  uint64 quality_epoch = 40;
 }
 
 // CollectState is the durable decoder state for one transport source,

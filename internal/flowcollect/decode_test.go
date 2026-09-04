@@ -32,11 +32,11 @@ func TestDecoderPreservesSFlowSampleState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.AgentIP.String() != "192.0.2.1" || decoded.SubAgentID != 7 || decoded.DatagramSequence != 99 || len(decoded.Records) != 1 {
+	if decoded.AgentIP.String() != "192.0.2.1" || decoded.SubAgentID != 7 || decoded.DatagramSequence != 99 || decoded.SequenceIncrement != 1 || decoded.ExporterUptime != 1000 || !decoded.ExporterUptimeValid || len(decoded.Records) != 1 {
 		t.Fatalf("unexpected datagram: %+v", decoded)
 	}
 	record := decoded.Records[0]
-	if record.SamplingRate != 1000 || record.SampleSequence != 12 || record.SamplePool != 9000 || record.ExporterDrops != 3 || record.SourceIDValue != 44 {
+	if record.SamplingRate != 1000 || record.SampleSequence != 12 || record.SamplePool != 9000 || record.ExporterDrops != 3 || record.SourceIDValue != 44 || record.SampleIndex != 1 {
 		t.Fatalf("sample state lost: %+v", record)
 	}
 	if record.SrcIP.String() != "10.0.0.1" || record.DstIP.String() != "203.0.113.2" || record.DstPort != 443 {
@@ -59,7 +59,7 @@ func TestDecoderPreservesNetFlowV5ASNAndSampling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.DatagramSequence != 88 || len(decoded.Records) != 1 {
+	if decoded.DatagramSequence != 88 || decoded.SequenceIncrement != 1 || decoded.ExporterUptime != 10000 || !decoded.ExporterUptimeValid || len(decoded.Records) != 1 {
 		t.Fatalf("unexpected datagram: %+v", decoded)
 	}
 	record := decoded.Records[0]
@@ -86,7 +86,7 @@ func TestDecoderHandlesNetFlowV9TemplateAndData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !decoded.TemplateChanged || decoded.ObservationDomainID != 42 || len(decoded.Records) != 1 {
+	if !decoded.TemplateChanged || decoded.ObservationDomainID != 42 || decoded.SequenceIncrement != 1 || decoded.ExporterUptime != 1000 || !decoded.ExporterUptimeValid || len(decoded.Records) != 1 {
 		t.Fatalf("unexpected v9 datagram: %+v", decoded)
 	}
 	if decoded.Records[0].RawBytes != 1000 || decoded.Records[0].SrcAS != 64512 || decoded.Records[0].DstAS != 64513 {
@@ -112,11 +112,22 @@ func TestDecoderHandlesIPFIXTemplateAndData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !decoded.TemplateChanged || decoded.ObservationDomainID != 84 || len(decoded.Records) != 1 {
+	if !decoded.TemplateChanged || decoded.ObservationDomainID != 84 || decoded.SequenceIncrement != 1 || decoded.ExporterUptimeValid || len(decoded.Records) != 1 {
 		t.Fatalf("unexpected IPFIX datagram: %+v", decoded)
 	}
 	if decoded.Records[0].RawBytes != 1000 || decoded.Records[0].SrcAS != 64512 || decoded.Records[0].DstAS != 64513 {
 		t.Fatalf("IPFIX fields lost: %+v", decoded.Records[0])
+	}
+}
+
+func TestCountIPFIXDataRecordsIncludesOptionsData(t *testing.T) {
+	sets := []interface{}{
+		netflow.TemplateFlowSet{},
+		netflow.DataFlowSet{Records: make([]netflow.DataRecord, 2)},
+		netflow.OptionsDataFlowSet{Records: make([]netflow.OptionsDataRecord, 3)},
+	}
+	if got := countIPFIXDataRecords(sets); got != 5 {
+		t.Fatalf("IPFIX sequence increment=%d, want 5", got)
 	}
 }
 

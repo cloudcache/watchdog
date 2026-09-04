@@ -33,6 +33,7 @@ type Config struct {
 	Kafka                 KafkaConfig        `yaml:"kafka"`
 	NormalizedBatch       NormalizedBatchCfg `yaml:"normalized_batch"`
 	Diagnostics           DiagnosticsConfig  `yaml:"diagnostics"`
+	Quality               QualityConfig      `yaml:"quality"`
 }
 
 type WALConfig struct {
@@ -69,6 +70,13 @@ type DiagnosticsConfig struct {
 	QuarantineMaxEventsPerSecond       int           `yaml:"quarantine_max_events_per_second"`
 	QuarantineMaxEventsPerSourceSecond int           `yaml:"quarantine_max_events_per_source_second"`
 	DLQPayloadMaxBytes                 int           `yaml:"dlq_payload_max_bytes"`
+}
+
+type QualityConfig struct {
+	StateTTL       time.Duration `yaml:"state_ttl"`
+	AnomalyWindow  time.Duration `yaml:"anomaly_window"`
+	MaxExporters   int           `yaml:"max_exporters"`
+	MaxDataSources int           `yaml:"max_data_sources"`
 }
 
 func DefaultConfig() Config {
@@ -114,6 +122,12 @@ func DefaultConfig() Config {
 			QuarantineMaxEventsPerSecond:       100,
 			QuarantineMaxEventsPerSourceSecond: 2,
 			DLQPayloadMaxBytes:                 0,
+		},
+		Quality: QualityConfig{
+			StateTTL:       time.Hour,
+			AnomalyWindow:  time.Minute,
+			MaxExporters:   65536,
+			MaxDataSources: 262144,
 		},
 	}
 }
@@ -199,6 +213,9 @@ func (c Config) Validate() error {
 	}
 	if c.Diagnostics.DLQPayloadMaxBytes < 0 || c.Diagnostics.DLQPayloadMaxBytes > c.MaxDatagramBytes {
 		return errors.New("flow_collect.diagnostics.dlq_payload_max_bytes must be between 0 and max_datagram_bytes")
+	}
+	if c.Quality.StateTTL <= 0 || c.Quality.AnomalyWindow <= 0 || c.Quality.AnomalyWindow > c.Quality.StateTTL || c.Quality.MaxExporters <= 0 || c.Quality.MaxDataSources <= 0 {
+		return errors.New("flow_collect.quality requires positive limits and anomaly_window <= state_ttl")
 	}
 	if c.Kafka.Acks != "all" {
 		return errors.New("flow_collect.kafka.acks must be all")
@@ -331,6 +348,18 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.Diagnostics.DLQPayloadMaxBytes, err = envNonNegativeInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_DLQ_PAYLOAD_MAX_BYTES", c.Diagnostics.DLQPayloadMaxBytes); err != nil {
+		return err
+	}
+	if c.Quality.StateTTL, err = envDuration("WATCHDOG_FLOW_COLLECT_QUALITY_STATE_TTL", c.Quality.StateTTL); err != nil {
+		return err
+	}
+	if c.Quality.AnomalyWindow, err = envDuration("WATCHDOG_FLOW_COLLECT_QUALITY_ANOMALY_WINDOW", c.Quality.AnomalyWindow); err != nil {
+		return err
+	}
+	if c.Quality.MaxExporters, err = envInt("WATCHDOG_FLOW_COLLECT_QUALITY_MAX_EXPORTERS", c.Quality.MaxExporters); err != nil {
+		return err
+	}
+	if c.Quality.MaxDataSources, err = envInt("WATCHDOG_FLOW_COLLECT_QUALITY_MAX_DATA_SOURCES", c.Quality.MaxDataSources); err != nil {
 		return err
 	}
 	return nil

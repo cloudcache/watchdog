@@ -26,11 +26,13 @@ type Runner struct {
 	Publisher Publisher
 	OnError   func(error)
 	Metrics   *Metrics
+	Quality   *QualityTracker
 
 	inflight        sync.Map
 	attempts        sync.Map
 	retryNeeded     atomic.Bool
 	metricsOnce     sync.Once
+	qualityOnce     sync.Once
 	reportMu        sync.Mutex
 	lastErrorReport time.Time
 }
@@ -39,10 +41,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Publisher == nil {
 		return errors.New("flow runner dependencies are required")
 	}
-	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
+	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
 		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
 	r.metrics()
+	r.quality()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ingress := make(chan Datagram, r.Config.DecodeQueueDatagrams)
@@ -211,6 +214,15 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		}
 		return err
 	}
+	decoded, _ = r.quality().Observe(record, decoded)
+	qualityComplete := false
+	defer func() {
+		if qualityComplete {
+			r.quality().Forget(record.DatagramID)
+		} else {
+			r.quality().Remember(record.DatagramID, decoded)
+		}
+	}()
 	batches, err := BuildNormalizedBatches(record, decoded, binding, plan.CollectorID, plan, r.Config.NormalizedBatch, replayGeneration)
 	if err != nil {
 		r.metrics().NormalizeFailures.Add(1)
@@ -222,7 +234,11 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		return permanentProcessingFailure(normalizeRejectedCode, err)
 	}
 	if len(batches) == 0 && !decoded.CollectStateChanged {
-		return r.WAL.Acknowledge(record.DatagramID)
+		if err := r.WAL.Acknowledge(record.DatagramID); err != nil {
+			return err
+		}
+		qualityComplete = true
+		return nil
 	}
 	childCount := uint32(len(batches))
 	dataChildOffset := uint32(0)
@@ -247,6 +263,7 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 			return err
 		}
 	}
+	qualityComplete = true
 	return nil
 }
 
@@ -259,6 +276,7 @@ func (r *Runner) deadLetter(ctx context.Context, record WALRecord, code string, 
 	if err := r.WAL.Acknowledge(record.DatagramID); err != nil {
 		return err
 	}
+	r.quality().Forget(record.DatagramID)
 	r.metrics().DLQDatagrams.Add(1)
 	return nil
 }
@@ -310,6 +328,19 @@ func (r *Runner) metrics() *Metrics {
 		}
 	})
 	return r.Metrics
+}
+
+func (r *Runner) quality() *QualityTracker {
+	r.qualityOnce.Do(func() {
+		if r.Quality == nil {
+			config := r.Config.Quality
+			if config.StateTTL <= 0 || config.AnomalyWindow <= 0 || config.MaxExporters <= 0 || config.MaxDataSources <= 0 {
+				config = DefaultConfig().Quality
+			}
+			r.Quality = NewQualityTracker(config, r.metrics())
+		}
+	})
+	return r.Quality
 }
 
 func (r *Runner) replayLoop(ctx context.Context, decodeQueues []chan WALRecord) {

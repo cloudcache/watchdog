@@ -43,6 +43,7 @@ type NormalizedRecordBatch struct {
 	SubAgentId       uint32 `protobuf:"varint,32,opt,name=sub_agent_id,json=subAgentId,proto3" json:"sub_agent_id,omitempty"`
 	DatagramSequence uint32 `protobuf:"varint,33,opt,name=datagram_sequence,json=datagramSequence,proto3" json:"datagram_sequence,omitempty"`
 	AgentIp          []byte `protobuf:"bytes,34,opt,name=agent_ip,json=agentIp,proto3" json:"agent_ip,omitempty"`
+	ExporterEpoch    uint64 `protobuf:"varint,35,opt,name=exporter_epoch,json=exporterEpoch,proto3" json:"exporter_epoch,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -210,6 +211,13 @@ func (x *NormalizedRecordBatch) GetAgentIp() []byte {
 	return nil
 }
 
+func (x *NormalizedRecordBatch) GetExporterEpoch() uint64 {
+	if x != nil {
+		return x.ExporterEpoch
+	}
+	return 0
+}
+
 type NormalizedRecord struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	RecordIndex          uint32                 `protobuf:"varint,1,opt,name=record_index,json=recordIndex,proto3" json:"record_index,omitempty"`
@@ -241,6 +249,8 @@ type NormalizedRecord struct {
 	SampleSequence       uint32                 `protobuf:"varint,36,opt,name=sample_sequence,json=sampleSequence,proto3" json:"sample_sequence,omitempty"`
 	SamplePool           uint64                 `protobuf:"varint,37,opt,name=sample_pool,json=samplePool,proto3" json:"sample_pool,omitempty"`
 	ExporterDrops        uint64                 `protobuf:"varint,38,opt,name=exporter_drops,json=exporterDrops,proto3" json:"exporter_drops,omitempty"`
+	SampleIndex          uint32                 `protobuf:"varint,39,opt,name=sample_index,json=sampleIndex,proto3" json:"sample_index,omitempty"`
+	QualityEpoch         uint64                 `protobuf:"varint,40,opt,name=quality_epoch,json=qualityEpoch,proto3" json:"quality_epoch,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -474,6 +484,20 @@ func (x *NormalizedRecord) GetSamplePool() uint64 {
 func (x *NormalizedRecord) GetExporterDrops() uint64 {
 	if x != nil {
 		return x.ExporterDrops
+	}
+	return 0
+}
+
+func (x *NormalizedRecord) GetSampleIndex() uint32 {
+	if x != nil {
+		return x.SampleIndex
+	}
+	return 0
+}
+
+func (x *NormalizedRecord) GetQualityEpoch() uint64 {
+	if x != nil {
+		return x.QualityEpoch
 	}
 	return 0
 }
@@ -932,7 +956,7 @@ var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescripto
 
 const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\n" +
-	",internal/flowcollect/flowpb/normalized.proto\x12\x10watchdog.flow.v1\"\xa5\x06\n" +
+	",internal/flowcollect/flowpb/normalized.proto\x12\x10watchdog.flow.v1\"\xcc\x06\n" +
 	"\x15NormalizedRecordBatch\x120\n" +
 	"\x14batch_schema_version\x18\x01 \x01(\rR\x12batchSchemaVersion\x12.\n" +
 	"\x13normalized_batch_id\x18\x02 \x01(\fR\x11normalizedBatchId\x12\x1f\n" +
@@ -956,7 +980,8 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\fsub_agent_id\x18  \x01(\rR\n" +
 	"subAgentId\x12+\n" +
 	"\x11datagram_sequence\x18! \x01(\rR\x10datagramSequence\x12\x19\n" +
-	"\bagent_ip\x18\" \x01(\fR\aagentIpJ\x04\b\x11\x10 \"\xeb\a\n" +
+	"\bagent_ip\x18\" \x01(\fR\aagentIp\x12%\n" +
+	"\x0eexporter_epoch\x18# \x01(\x04R\rexporterEpochJ\x04\b\x11\x10 \"\xb3\b\n" +
 	"\x10NormalizedRecord\x12!\n" +
 	"\frecord_index\x18\x01 \x01(\rR\vrecordIndex\x12+\n" +
 	"\x12event_time_unix_ms\x18\x02 \x01(\x03R\x0feventTimeUnixMs\x12\x1b\n" +
@@ -989,7 +1014,9 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x0fsample_sequence\x18$ \x01(\rR\x0esampleSequence\x12\x1f\n" +
 	"\vsample_pool\x18% \x01(\x04R\n" +
 	"samplePool\x12%\n" +
-	"\x0eexporter_drops\x18& \x01(\x04R\rexporterDropsJ\x04\b\x17\x10 \"\xbf\x04\n" +
+	"\x0eexporter_drops\x18& \x01(\x04R\rexporterDrops\x12!\n" +
+	"\fsample_index\x18' \x01(\rR\vsampleIndex\x12#\n" +
+	"\rquality_epoch\x18( \x01(\x04R\fqualityEpochJ\x04\b\x17\x10 \"\xbf\x04\n" +
 	"\fCollectState\x120\n" +
 	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12\x19\n" +
 	"\bstate_id\x18\x02 \x01(\fR\astateId\x12\x1b\n" +

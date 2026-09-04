@@ -29,6 +29,11 @@ type DecodedDatagram struct {
 	AgentIP             netip.Addr
 	SubAgentID          uint32
 	DatagramSequence    uint32
+	SequenceIncrement   uint32
+	SequenceScope       uint64
+	ExporterUptime      uint32
+	ExporterUptimeValid bool
+	ExporterEpoch       uint64
 	TemplateChanged     bool
 	CollectStateChanged bool
 	Records             []DecodedRecord
@@ -55,6 +60,9 @@ type DecodedRecord struct {
 	SampleSequence uint32
 	SamplePool     uint64
 	ExporterDrops  uint64
+	SampleIndex    uint32
+	QualityFlags   uint64
+	QualityEpoch   uint64
 }
 
 type Decoder struct {
@@ -154,8 +162,8 @@ func (d *Decoder) decodeSFlow(record WALRecord) (DecodedDatagram, error) {
 	if err := sflow.DecodeMessageVersion(bytes.NewBuffer(record.Payload), &packet); err != nil {
 		return DecodedDatagram{}, fmt.Errorf("decode sFlow v5: %w", err)
 	}
-	result := DecodedDatagram{Protocol: ProtocolSFlow5, AgentIP: bytesToAddr(packet.AgentIP), SubAgentID: packet.SubAgentId, DatagramSequence: packet.SequenceNumber}
-	for _, sample := range packet.Samples {
+	result := DecodedDatagram{Protocol: ProtocolSFlow5, AgentIP: bytesToAddr(packet.AgentIP), SubAgentID: packet.SubAgentId, DatagramSequence: packet.SequenceNumber, SequenceIncrement: 1, ExporterUptime: packet.Uptime, ExporterUptimeValid: true}
+	for sampleIndex, sample := range packet.Samples {
 		meta, ok := sflowSampleMetadata(sample)
 		if !ok {
 			continue
@@ -175,6 +183,7 @@ func (d *Decoder) decodeSFlow(record WALRecord) (DecodedDatagram, error) {
 			decoded.SampleSequence = meta.sequence
 			decoded.SamplePool = meta.pool
 			decoded.ExporterDrops = meta.drops
+			decoded.SampleIndex = uint32(sampleIndex) + 1
 			result.Records = append(result.Records, decoded)
 		}
 		d.producer.Commit(messages)
@@ -208,7 +217,7 @@ func (d *Decoder) decodeNetFlow5(record WALRecord) (DecodedDatagram, error) {
 		return DecodedDatagram{}, err
 	}
 	defer d.producer.Commit(messages)
-	return DecodedDatagram{Protocol: ProtocolNetFlow5, DatagramSequence: packet.FlowSequence, Records: copyMessages(messages, record.ReceivedAt)}, nil
+	return DecodedDatagram{Protocol: ProtocolNetFlow5, DatagramSequence: packet.FlowSequence, SequenceIncrement: uint32(len(packet.Records)), SequenceScope: uint64(packet.EngineType)<<8 | uint64(packet.EngineId), ExporterUptime: packet.SysUptime, ExporterUptimeValid: true, Records: copyMessages(messages, record.ReceivedAt)}, nil
 }
 
 func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain uint64) (DecodedDatagram, error) {
@@ -241,11 +250,36 @@ func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain
 		return DecodedDatagram{}, err
 	}
 	defer d.producer.Commit(messages)
-	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, TemplateChanged: containsTemplate(sets), CollectStateChanged: d.stateRevision(stateKey) != stateRevision, Records: copyMessages(messages, record.ReceivedAt)}
+	sequenceIncrement := uint32(1)
+	exporterUptime, exporterUptimeValid := nf9.SystemUptime, protocol == ProtocolNetFlow9
+	if protocol == ProtocolIPFIX {
+		sequenceIncrement = countIPFIXDataRecords(sets)
+	}
+	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, SequenceIncrement: sequenceIncrement, SequenceScope: domain, ExporterUptime: exporterUptime, ExporterUptimeValid: exporterUptimeValid, TemplateChanged: containsTemplate(sets), CollectStateChanged: d.stateRevision(stateKey) != stateRevision, Records: copyMessages(messages, record.ReceivedAt)}
 	if containsRawFlowSet(sets) {
 		return result, ErrTemplatePending
 	}
 	return result, nil
+}
+
+func countIPFIXDataRecords(sets []interface{}) uint32 {
+	var count uint64
+	for _, set := range sets {
+		switch value := set.(type) {
+		case netflow.DataFlowSet:
+			count += uint64(len(value.Records))
+		case netflow.OptionsDataFlowSet:
+			count += uint64(len(value.Records))
+		case *netflow.DataFlowSet:
+			count += uint64(len(value.Records))
+		case *netflow.OptionsDataFlowSet:
+			count += uint64(len(value.Records))
+		}
+	}
+	if count > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(count)
 }
 
 func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uint64) ([]byte, []byte, error) {

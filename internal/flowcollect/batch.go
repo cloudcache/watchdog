@@ -40,6 +40,7 @@ func BuildNormalizedBatches(walRecord WALRecord, decoded DecodedDatagram, bindin
 			EstimatedPackets: values.EstimatedPackets, FlowDurationMs: uint64(record.FlowDuration.Milliseconds()), QualityFlags: values.QualityFlags,
 			SrcAs: record.SrcAS, DstAs: record.DstAS, SourceIdType: record.SourceIDType, SourceIdValue: record.SourceIDValue,
 			SampleSequence: record.SampleSequence, SamplePool: record.SamplePool, ExporterDrops: record.ExporterDrops,
+			SampleIndex: record.SampleIndex, QualityEpoch: record.QualityEpoch,
 		}
 		shard := VirtualShard(binding.TenantID, record.SrcIP, record.DstIP)
 		recordsByShard[shard] = append(recordsByShard[shard], normalized)
@@ -99,7 +100,7 @@ func newBatch(record WALRecord, decoded DecodedDatagram, binding SourceBinding, 
 		PartitionMapVersion: plan.PartitionMapVersion, PhysicalPartition: plan.PartitionMap[shard], ReplayGeneration: replay,
 		TenantId: binding.TenantID, CollectorId: collectorID, ExporterId: binding.ExporterID, RegistryVersion: plan.Revision,
 		ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(), Protocol: uint32(decoded.Protocol), SourceIp: address16(record.Source.Addr()),
-		ObservationDomainId: decoded.ObservationDomainID, SubAgentId: decoded.SubAgentID, DatagramSequence: decoded.DatagramSequence, AgentIp: address16(decoded.AgentIP),
+		ObservationDomainId: decoded.ObservationDomainID, SubAgentId: decoded.SubAgentID, DatagramSequence: decoded.DatagramSequence, AgentIp: address16(decoded.AgentIP), ExporterEpoch: decoded.ExporterEpoch,
 	}
 }
 

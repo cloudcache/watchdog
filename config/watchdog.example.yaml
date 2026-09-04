@@ -73,6 +73,11 @@ flow_collect:
     quarantine_max_events_per_source_second: 2
     # 0 keeps raw payload out of DLQ; enable only with restricted topic ACL/TTL
     dlq_payload_max_bytes: 0
+  quality:
+    state_ttl: 1h
+    anomaly_window: 1m
+    max_exporters: 65536
+    max_data_sources: 262144
 
 aggregate_graph:
   rollup_interval: 5m

@@ -69,6 +69,11 @@ flow_collect:
     quarantine_max_events_per_second: 20
     quarantine_max_events_per_source_second: 2
     dlq_payload_max_bytes: 0
+  quality:
+    state_ttl: 1h
+    anomaly_window: 1m
+    max_exporters: 1024
+    max_data_sources: 8192
 
 aggregate_graph:
   rollup_interval: 5m
