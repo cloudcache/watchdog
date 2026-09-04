@@ -59,6 +59,13 @@ type AgentRepository interface {
 	ListAgentRuns(ctx context.Context, tenantID, agentID ID, limit int) ([]AgentRunHistory, error)
 }
 
+type CollectorPlanRepository interface {
+	CreateCollectorPlanRevision(ctx context.Context, plan CollectorPlanRevision) (CollectorPlanRevision, error)
+	GetCollectorPlanRevision(ctx context.Context, tenantID, collectorID ID, configVersion uint64) (CollectorPlanRevision, error)
+	ActivateCollectorPlanRevision(ctx context.Context, activation CollectorPlanActivation) (CollectorPlanRevision, error)
+	AcknowledgeCollectorPlan(ctx context.Context, acknowledgement CollectorPlanAcknowledgement) error
+}
+
 type NetworkRepository interface {
 	ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error)
 	GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error)

@@ -337,6 +337,10 @@ Migration `018_collector_registry_expand.sql` 已创建上述三表，并把现�
 
 `collector_bindings.resource_type/resource_id` 是多态资源引用，数据库无法对所有 module 表建立单一 FK；service 必须在同 tenant 下验证 resource 存在及 kind/capability 相容。`collector_plan_revisions` 保存规范化 JSON 的不可变版本，不保存明文 token、私钥或 Kafka 密码，只保存 secret reference；validated spec 由控制面 signing key 签名，agent 内置/轮换 trust bundle 验证，旧验证公钥的保留期不得短于仍可能启动的 LKG plan。rollback 复制旧 spec 生成更大的新 `config_version`，绝不倒退版本或原地重新激活旧行。Heartbeat 只更新 `software/boot/capabilities/ack/health/last_seen/error` 等 observed 字段，不递增管理 ETag 的 `row_version`、不覆盖管理员 `updated_by`；018 的 compatibility adapter 是过渡例外，因旧 DTO 尚无独立 config/observed 通道。管理员对 status/binding/spec 的有效修改才递增 row version，plan activate 再事务性更新 `config_version/plan_hash/plan_expires_at`。这样高频心跳不会让配置 PATCH 持续产生伪冲突。
 
+plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须是单一 JSON object、最大 4 MiB，并先规范化键顺序/空白再计算 SHA-256；签名载荷固定绑定 envelope version、plan/tenant/collector ID、config/schema version、spec hash、signing key ID、毫秒精度有效期和 supersedes version。只有 Ed25519 验证函数生成的内部 proof 才能 create，验证后再修改 spec、signature 或任一载荷字段会在入库前失效。create 只接受 `validated`，且 schema 必须位于 agent 声明区间、version 必须高于当前 head、supersedes 必须精确等于当前 head。activate 以 collector `row_version` 和 plan `row_version` 双乐观锁，在同一 transaction 中 retire 旧 active、激活新 revision、推进 collector head 并写审计；单 active unique key 是最后防线。activation/ACK 时间由服务端生成，API/agent 不得传入安全时间。ACK 必须与当前 active plan 的 version/hash/expiry 同时相符，只推进 `acknowledged_config_version/last_good_config_version` 和 observed 字段，不推进管理 `row_version`；重复 ACK 幂等且只在首次推进时审计。MySQL JSON 回读必须重新 canonicalize 后校验 hash，不能比较 MySQL 自行格式化的 JSON 原始字节。
+
+这里的 Ed25519 public key 仍必须由 PLAT-03 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。key rotation、撤销、agent-side signature 验证、失败 ACK 保留 LKG 和 rollout/canary 尚未完成。
+
 ### 6.2 生命周期
 
 ```text

@@ -161,7 +161,9 @@
 
 - [x] **PLAT-03A registry expand 与兼容写**：落地 `collector_agents/collector_bindings/collector_plan_revisions`，复合 tenant/collector FK、desired/observed 分离、token/mTLS 互斥、ack/LKG/version 单调约束、单 active plan；回填 `target_agents`，现有 upsert/heartbeat/run/delete 在同一 transaction 双写，拒绝跨 tenant agent ID 接管。空库 001→018/rerun 和真实 MySQL 生命周期已验证。
 - [ ] **PLAT-03B registry authority cutover**：实现新 repository/DTO/filter/API 与多 binding 引用校验，迁移 `agent_run_history` FK 和旧读路径；上线前逐行核对 legacy/new identity、binding、desired/observed，灰度期禁止第二套无投影写入口，最终停止 `target_agents` 写并 contract 删除。
-- [ ] **PLAT-03C enrollment、credential 与 plan 生命周期**：一次性 secret、token 双窗口/mTLS、capability heartbeat、不可变 plan validate/sign/activate/ack/LKG/rollback、preview/canary/rollout、过期与撤销闭环。
+- [ ] **PLAT-03C enrollment、credential 与 plan 生命周期（父项）**：C1 plan repository core 已完成；trust bundle、enrollment/credential、失败 ACK 与 rollout 仍未完成。
+  - [x] **PLAT-03C1 plan repository core**：最大 4 MiB canonical JSON + SHA-256；Ed25519 envelope 绑定 plan/tenant/collector/version/schema/hash/key/effective interval/supersedes，只有验证后不可变值可入库。create 校验 schema/head/lineage；activate 以 collector+plan 双 row-version 在同事务 retire/activate/head/audit；服务端生成 activation/ACK 时间；ACK 精确匹配 active version/hash/expiry，只推进 ack/LKG/observed 且重复请求幂等。覆盖未验证签名、验证后篡改、非 canonical JSON、错误 ACK、退役 revision 复活、stale ETag、单 active、跨 tenant 读取、MySQL JSON 重格式化和 DB spec 篡改。
+  - [ ] **PLAT-03C2 trust/enrollment/rollout 闭环**：signing key registry/trust bundle 与 rotation/revoke；一次性 secret、token 双窗口/mTLS、capability heartbeat；失败 ACK 保留 LKG、preview/canary/rollout、rollback 复制旧 spec 生成更高 version、expiry/kill switch。
 - [ ] **PLAT-03D ownership transfer 机器证据**：plan retire/expiry、old-owner drain receipt、独立 Kafka principal revoke/provider receipt、new plan activation 和 authenticated restore ack 必须来自各自执行器，不接受管理员直接填写时间；完成后才能实现 `FlowStateCleanupEvidenceProvider`。
 
 - [ ] **设计**：冻结 `collector_agents/collector_bindings/collector_plan_revisions` DDL、enrollment、token/mTLS、rotation、heartbeat、M:N binding、desired/observed health；本机硬上限∩签名 plan∩job 配置优先级、schema/API/capability 兼容、plan expiry/ack/LKG、preview/canary/rollback 和状态机。
