@@ -452,9 +452,11 @@ D3B3B2A 已把上述约束落成可持久化的纯状态机，阶段固定为 `a
 
 该状态机目前刻意未接入 flow-collect runtime，也没有接受任意 byte key 的公开构造器。B2B1 已提供独立于 runtime `KafkaPublisher` 的 tombstone writer：关闭 auto-create，固定 hash partition、idempotent producer、`acks=all`、单 in-flight 和无压缩，严格发送 Kafka null value，并把 broker ACK 返回的实际 partition/offset 与本地 `acknowledged_at` 交给状态机持久化；发送失败不推进阶段。writer 只能接受状态机生成且内部 key 字段不可直接构造的 `StateTombstone`，使用独立配置/mTLS 身份，不能复用 flow-collect API 暴露任意删除。B2B2 的 targeted scanner 使用相同的确定性 Fetch 边界实现，但在内存中只保留 exact typed key 的最后 record：它先冻结并校验全部连续 partition 的 boundary vector，再并行扫描，拒绝同 key 跨 partition、保留 Kafka-null tombstone 的 record position，并以独立 `present` 位区分 null 与非 nil 的零长度 value。replacement evidence 必须绑定最后 record 的 partition/offset 和覆盖它的 high watermark；absence evidence 必须晚于 broker ACK，且同 partition 的冻结 high watermark 严格越过 receipt offset。
 
-剩余 B2B 是宿主管理面的 MySQL job/lease/audit repository、reconciler 专用 Kafka principal/ACL、scanner/writer 调度 wiring 和真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。没有持久化调度、实际 ACL 和真实 broker 证据时，不能把状态机与 mock/内存 source 测试等同于生产回收闭环。
+宿主管理面的持久化已落在 migration `017` 的公共 `operation_jobs` 与 MySQL repository，不增加第六张 flow 私有表。cleanup 创建时以 canonical immutable request hash 绑定 approval/requester/old checkpoint，`(tenant_id,job_type,idempotency_key)` 对相同请求返回原 job、不同请求报冲突；领取使用 `FOR UPDATE SKIP LOCKED`，支持过期 running lease 抢占。所有阶段推进、requeue 和 terminal failure 都要求未过期的 `lease_token + row_version`，checkpoint 与 `audit_logs` 在同一事务提交；heartbeat 只延长 lease、不改变业务版本，避免长扫描期间制造虚假 checkpoint。数据库约束保证 active 状态与 lease 三元组一致、终态与 `finished_at` 一致，repository 回读还会完整恢复并重新校验状态机 snapshot，拒绝被手工篡改或跨阶段跳转的数据。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler 管理库/lease/audit 与 scanner/writer 调度 wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
+剩余 B2B 是 watchdog reconciler 的 phase executor/heartbeat/错误退避/启停 wiring、reconciler 专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。只有 repository 而没有持久化调度、实际 ACL 和真实 broker 证据时，仍不能把状态机与 mock/内存 source 测试等同于生产回收闭环。
+
+当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler phase executor/heartbeat 与 scanner/writer 生命周期 wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL job/lease/audit repository 已完成但尚不能单独构成运行闭环。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -774,7 +776,7 @@ type Category string
 
 ## 7. MySQL：flow 模块 5 张新表
 
-沿用 watchdog MySQL 8、`CHAR(26)` ID、tenant FK 和 `utf8mb4` 约定。本节只列 flow 模块拥有的五张表；用户/角色/权限、`collector_agents/collector_bindings`、target、`dimension_snapshots`、visualization、export、adjustment policy 属于宿主 core，DDL 见平台架构文档。本地/业务/Geo override 复用 `address_prefixes`，审计复用 `audit_logs`，不另建表。
+沿用 watchdog MySQL 8、`CHAR(26)` ID、tenant FK 和 `utf8mb4` 约定。本节只列 flow 模块拥有的五张表；用户/角色/权限、`collector_agents/collector_bindings`、target、`dimension_snapshots`、visualization、export、adjustment policy 属于宿主 core，DDL 见平台架构文档。本地/业务/Geo override 复用 `address_prefixes`，审计复用 `audit_logs`，状态清理等异步操作复用宿主 migration `017` 的 `operation_jobs`，均不另建 flow 私表。
 
 ```sql
 CREATE TABLE IF NOT EXISTS flow_exporters (

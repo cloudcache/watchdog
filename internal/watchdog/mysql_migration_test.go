@@ -33,6 +33,7 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"billing_accounts",
 		"permissions",
 		"audit_logs",
+		"operation_jobs",
 	} {
 		if !tables[table] {
 			t.Fatalf("migration missing table %s", table)
@@ -74,20 +75,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "016" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "017" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "016" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "017" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -186,7 +187,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 16 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "016" {
+	if len(migrations) != 17 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "017" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
