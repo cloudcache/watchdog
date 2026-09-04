@@ -3,7 +3,9 @@ package flowcollect
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/netip"
 	"testing"
@@ -44,6 +46,7 @@ func TestSignedPlanRejectsTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 	signature := ed25519.Sign(privateKey, payload)
+	originalPayload := append([]byte(nil), payload...)
 	envelope, _ := json.Marshal(signedPlanEnvelope{SchemaVersion: 1, Payload: base64.StdEncoding.EncodeToString(payload), Signature: base64.StdEncoding.EncodeToString(signature)})
 	if _, err := VerifySignedPlan(envelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now); err != nil {
 		t.Fatal(err)
@@ -52,6 +55,70 @@ func TestSignedPlanRejectsTampering(t *testing.T) {
 	tampered, _ := json.Marshal(signedPlanEnvelope{SchemaVersion: 1, Payload: base64.StdEncoding.EncodeToString(payload), Signature: base64.StdEncoding.EncodeToString(signature)})
 	if _, err := VerifySignedPlan(tampered, []byte(base64.StdEncoding.EncodeToString(publicKey)), now); err == nil {
 		t.Fatal("tampered plan was accepted")
+	}
+	confused, _ := json.Marshal(signedPlanEnvelope{SchemaVersion: 1, Payload: base64.StdEncoding.EncodeToString(originalPayload), Signature: base64.StdEncoding.EncodeToString(signature), TenantID: "unsigned-tenant"})
+	if _, err := VerifySignedPlan(confused, []byte(base64.StdEncoding.EncodeToString(publicKey)), now); err == nil {
+		t.Fatal("legacy envelope with unsigned control-plane metadata was accepted")
+	}
+}
+
+func TestControlPlaneSignedPlanMatchesRepositoryEnvelopeContract(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := validPlan(now)
+	plan.NotBefore = plan.NotBefore.Truncate(time.Millisecond)
+	plan.ExpiresAt = plan.ExpiresAt.Truncate(time.Millisecond)
+	payload, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	metadata := PlanSignatureMetadata{
+		PlanID: "plan-test", TenantID: "tenant-test", CollectorID: plan.CollectorID,
+		ConfigVersion: plan.Revision, PlanSchemaVersion: uint16(plan.SchemaVersion),
+		SpecHash: hex.EncodeToString(digest[:]), SigningKeyID: "key-test",
+		NotBeforeUnixMilli: plan.NotBefore.UnixMilli(), ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(),
+	}
+	signingPayload, err := BuildPlanSignaturePayload(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := MarshalControlPlaneSignedPlan(metadata, payload, ed25519.Sign(privateKey, signingPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := VerifySignedPlan(envelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry.plan.Revision != metadata.ConfigVersion || registry.plan.CollectorID != metadata.CollectorID {
+		t.Fatalf("unexpected verified plan: %+v", registry.plan)
+	}
+
+	var tampered signedPlanEnvelope
+	if err := json.Unmarshal(envelope, &tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered.SigningKeyID = "other-key"
+	tamperedEnvelope, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifySignedPlan(tamperedEnvelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now); err == nil {
+		t.Fatal("tampered control-plane metadata was accepted")
+	}
+
+	tampered = signedPlanEnvelope{}
+	if err := json.Unmarshal(envelope, &tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered.Payload = base64.StdEncoding.EncodeToString(append(payload, ' '))
+	tamperedEnvelope, _ = json.Marshal(tampered)
+	if _, err := VerifySignedPlan(tamperedEnvelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now); err == nil {
+		t.Fatal("tampered control-plane payload was accepted")
 	}
 }
 

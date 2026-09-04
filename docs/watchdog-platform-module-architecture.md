@@ -392,6 +392,8 @@ agent 必须是薄执行器，不保存业务评分规则、不自行判断 tena
 
 `watchdog-flow-collect` 已先实现本地 signed plan 消费端闭环，但未实现上述远程拉取：部署/控制面必须把完整 envelope 原子投递到 `plan_file`。collector 周期复核并按 expiry 精确定时；新 revision 只有在验签、单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才原子切换无锁数据面。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 因候选/当前/上一切换窗口运行时下限为 3，默认 128。`control_plane_url` 当前不触发登录或网络请求；enrollment、authenticated delivery、ACK/heartbeat、trust/credential rotation 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
 
+投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、ACK/失败 heartbeat 和 trust rotation 尚属 FLOW-01D2B，不能因 envelope 已互通而标记远程投递完成。
+
 扩展以稳定 analyzer contract 完成：
 
 ```go

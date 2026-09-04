@@ -11,6 +11,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
 
 const collectorPlanMaxSpecBytes = 4 << 20
@@ -170,29 +172,16 @@ func CollectorPlanSigningPayload(plan CollectorPlanRevision) ([]byte, error) {
 	if !validSHA256Hex(plan.SpecHash) || plan.SpecHash != hash {
 		return nil, errors.New("collector plan spec hash does not match canonical JSON")
 	}
-	payload := struct {
-		EnvelopeVersion         uint16 `json:"envelope_version"`
-		PlanID                  ID     `json:"plan_id"`
-		TenantID                ID     `json:"tenant_id"`
-		CollectorID             ID     `json:"collector_id"`
-		ConfigVersion           uint64 `json:"config_version"`
-		PlanSchemaVersion       uint16 `json:"plan_schema_version"`
-		SpecHash                string `json:"spec_hash"`
-		SigningKeyID            string `json:"signing_key_id"`
-		NotBeforeUnixMilli      int64  `json:"not_before_unix_ms"`
-		ExpiresAtUnixMilli      int64  `json:"expires_at_unix_ms"`
-		SupersedesConfigVersion uint64 `json:"supersedes_config_version"`
-	}{
-		EnvelopeVersion: 1, PlanID: plan.ID, TenantID: plan.TenantID,
-		CollectorID: plan.CollectorID, ConfigVersion: plan.ConfigVersion,
-		PlanSchemaVersion: plan.PlanSchemaVersion, SpecHash: plan.SpecHash,
-		SigningKeyID: plan.SigningKeyID, ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(),
-		SupersedesConfigVersion: plan.SupersedesConfigVersion,
+	metadata := flowcollect.PlanSignatureMetadata{
+		PlanID: string(plan.ID), TenantID: string(plan.TenantID), CollectorID: string(plan.CollectorID),
+		ConfigVersion: plan.ConfigVersion, PlanSchemaVersion: plan.PlanSchemaVersion,
+		SpecHash: plan.SpecHash, SigningKeyID: plan.SigningKeyID,
+		ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(), SupersedesConfigVersion: plan.SupersedesConfigVersion,
 	}
 	if !plan.NotBefore.IsZero() {
-		payload.NotBeforeUnixMilli = plan.NotBefore.UnixMilli()
+		metadata.NotBeforeUnixMilli = plan.NotBefore.UnixMilli()
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := flowcollect.BuildPlanSignaturePayload(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("encode collector plan signing payload: %w", err)
 	}
