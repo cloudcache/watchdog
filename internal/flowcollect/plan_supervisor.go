@@ -60,6 +60,9 @@ func (s *PlanSupervisor) Run(ctx context.Context) error {
 	for {
 		now := s.now()
 		if err := s.Refresh(now); err != nil {
+			if errors.Is(err, ErrPlanSigningKeyRevoked) {
+				return err
+			}
 			active := s.Runner.ActiveRegistry()
 			if active == nil || !registryValidAt(active, now) {
 				return fmt.Errorf("%w: %v", ErrActivePlanExpired, err)

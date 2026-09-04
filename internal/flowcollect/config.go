@@ -27,6 +27,7 @@ type Config struct {
 	StateDir                   string              `yaml:"state_dir"`
 	PlanFile                   string              `yaml:"plan_file"`
 	PlanPublicKeyFile          string              `yaml:"plan_public_key_file"`
+	PlanTrustBundleFile        string              `yaml:"plan_trust_bundle_file"`
 	SFlowListen                string              `yaml:"sflow_listen"`
 	NetFlowListen              string              `yaml:"netflow_listen"`
 	SocketCount                int                 `yaml:"socket_count"`
@@ -228,6 +229,7 @@ func (c *Config) Normalize() {
 	if c.PlanPublicKeyFile != "" {
 		c.PlanPublicKeyFile = filepath.Clean(c.PlanPublicKeyFile)
 	}
+	c.PlanTrustBundleFile = cleanOptionalPath(c.PlanTrustBundleFile)
 	c.SFlowListen = strings.TrimSpace(c.SFlowListen)
 	c.NetFlowListen = strings.TrimSpace(c.NetFlowListen)
 	c.Observability.Listen = strings.TrimSpace(c.Observability.Listen)
@@ -385,8 +387,8 @@ func (c Config) ValidateRuntime() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if c.PlanFile == "" || c.PlanPublicKeyFile == "" {
-		return errors.New("flow_collect.plan_file and plan_public_key_file are required at runtime")
+	if c.PlanFile == "" || (c.PlanPublicKeyFile == "" && c.PlanTrustBundleFile == "") {
+		return errors.New("flow_collect.plan_file and plan_public_key_file or plan_trust_bundle_file are required at runtime")
 	}
 	if len(c.Kafka.Brokers) == 0 {
 		return errors.New("flow_collect.kafka.brokers is required at runtime")
@@ -429,6 +431,7 @@ func (c *Config) ApplyEnv() error {
 	c.StateDir = env("WATCHDOG_FLOW_COLLECT_STATE_DIR", c.StateDir)
 	c.PlanFile = env("WATCHDOG_FLOW_COLLECT_PLAN_FILE", c.PlanFile)
 	c.PlanPublicKeyFile = env("WATCHDOG_FLOW_COLLECT_PLAN_PUBLIC_KEY_FILE", c.PlanPublicKeyFile)
+	c.PlanTrustBundleFile = env("WATCHDOG_FLOW_COLLECT_PLAN_TRUST_BUNDLE_FILE", c.PlanTrustBundleFile)
 	c.SFlowListen = env("WATCHDOG_FLOW_COLLECT_SFLOW_LISTEN", c.SFlowListen)
 	c.NetFlowListen = env("WATCHDOG_FLOW_COLLECT_NETFLOW_LISTEN", c.NetFlowListen)
 	if c.SocketCount, err = envInt("WATCHDOG_FLOW_COLLECT_SOCKET_COUNT", c.SocketCount); err != nil {

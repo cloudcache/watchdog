@@ -37,7 +37,8 @@ flow_collect:
   control_plane_retry_max: 30s
   state_dir: "/var/lib/watchdog-flow-collect"
   plan_file: "/var/lib/watchdog-flow-collect/plan.json"
-  plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub"
+  plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub" # legacy single-key bootstrap compatibility
+  plan_trust_bundle_file: "/etc/watchdog/flow-plan-trust-bundle.json"
   sflow_listen: ":6343"
   netflow_listen: ":2055"
   socket_count: 8

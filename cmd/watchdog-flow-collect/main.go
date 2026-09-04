@@ -39,7 +39,7 @@ func main() {
 		log.Printf("flow-collect configuration valid: collector=%s plan_revision=%d sources=%d", plan.CollectorID, plan.Revision, len(plan.Sources))
 		return
 	}
-	planHistory, err := flowcollect.OpenPlanHistory(cfg.FlowCollect.PlanFile, cfg.FlowCollect.PlanPublicKeyFile, filepath.Join(cfg.FlowCollect.StateDir, "plan-history"), cfg.FlowCollect.PlanHistoryMaxEntries, time.Now())
+	planHistory, err := flowcollect.OpenPlanHistoryWithTrust(cfg.FlowCollect.PlanFile, cfg.FlowCollect.PlanPublicKeyFile, cfg.FlowCollect.PlanTrustBundleFile, filepath.Join(cfg.FlowCollect.StateDir, "plan-history"), cfg.FlowCollect.PlanHistoryMaxEntries, time.Now())
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -66,9 +66,22 @@ func NewPlanDeliveryClient(config Config, collectorID, bootID, softwareVersion s
 	if config.ControlPlaneURL == "" || collectorID == "" || len(collectorID) > 26 || bootID == "" || len(bootID) > 64 || !printableToken(bootID) || len(softwareVersion) > 64 || !printableToken(softwareVersion) || activeRevision == 0 || metrics == nil || runtime == nil {
 		return nil, errors.New("remote plan delivery configuration and runtime identity are required")
 	}
-	publicKey, err := readBoundedFile(config.PlanPublicKeyFile, 64<<10)
-	if err != nil {
-		return nil, fmt.Errorf("read remote plan trust key: %w", err)
+	var publicKey []byte
+	var err error
+	if config.PlanPublicKeyFile != "" {
+		publicKey, err = readBoundedFile(config.PlanPublicKeyFile, 64<<10)
+		if err != nil {
+			return nil, fmt.Errorf("read remote plan compatibility key: %w", err)
+		}
+	}
+	if config.PlanTrustBundleFile != "" {
+		trustBundle, err := readBoundedFile(config.PlanTrustBundleFile, planTrustBundleMaxBytes)
+		if err != nil {
+			return nil, fmt.Errorf("%w: read remote plan trust bundle: %v", ErrPlanTrustBundleInvalid, err)
+		}
+		if _, err := parsePlanTrustBundle(trustBundle); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrPlanTrustBundleInvalid, err)
+		}
 	}
 	httpClient, err := newPlanDeliveryHTTPClient(config)
 	if err != nil {
@@ -198,9 +211,9 @@ func (c *PlanDeliveryClient) fetch(ctx context.Context) error {
 		c.metrics.PlanDeliveryFetchFailures.Add(1)
 		return planDeliveryFailure{Stage: "decode", Code: "RESPONSE_SIZE_INVALID", Detail: "plan response size is invalid"}
 	}
-	registry, metadata, err := VerifyControlPlaneSignedPlan(envelope, c.publicKey, c.now())
+	registry, metadata, err := c.verifyPlan(envelope, planTrustDelivery)
 	if err != nil {
-		failure := planDeliveryFailure{Stage: "verify", Code: "PLAN_SIGNATURE_INVALID", Detail: "downloaded plan signature or metadata is invalid", Err: err}
+		failure := classifyDeliveredPlanVerificationFailure(err)
 		c.metrics.PlanDeliveryFetchFailures.Add(1)
 		_ = c.reportFailure(ctx, failure)
 		return failure
@@ -330,12 +343,54 @@ func (c *PlanDeliveryClient) restoreLocalDeliveryState() {
 	if err != nil {
 		return
 	}
-	registry, metadata, err := VerifyControlPlaneSignedPlan(envelope, c.publicKey, c.now())
+	registry, metadata, err := c.verifyPlan(envelope, planTrustExisting)
 	if err != nil || registry.Plan().CollectorID != c.collectorID || metadata.ConfigVersion != c.activeRevision {
 		return
 	}
 	c.pending = planDeliveryPending{ConfigVersion: metadata.ConfigVersion, SpecHash: metadata.SpecHash}
 	c.etag = planDeliveryETag(metadata.ConfigVersion, metadata.SpecHash)
+}
+
+func (c *PlanDeliveryClient) verifyPlan(envelope []byte, use planTrustUse) (*Registry, PlanSignatureMetadata, error) {
+	var trustBundle []byte
+	if c.config.PlanTrustBundleFile != "" {
+		var err error
+		trustBundle, err = readBoundedFile(c.config.PlanTrustBundleFile, planTrustBundleMaxBytes)
+		if err != nil {
+			return nil, PlanSignatureMetadata{}, fmt.Errorf("%w: read remote plan trust bundle: %v", ErrPlanTrustBundleInvalid, err)
+		}
+		if _, err := parsePlanTrustBundle(trustBundle); err != nil {
+			return nil, PlanSignatureMetadata{}, fmt.Errorf("%w: %v", ErrPlanTrustBundleInvalid, err)
+		}
+	}
+	now := c.now()
+	verified, err := verifySignedPlanPayloadWithTrust(envelope, c.publicKey, trustBundle, use, now)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	if verified.envelopeVersion != 2 {
+		return nil, PlanSignatureMetadata{}, errors.New("remote flow plan must use control-plane envelope version 2")
+	}
+	registry, err := CompilePlan(verified.plan, now)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	return registry, verified.metadata, nil
+}
+
+func classifyDeliveredPlanVerificationFailure(err error) planDeliveryFailure {
+	failure := planDeliveryFailure{Stage: "verify", Code: "PLAN_SIGNATURE_INVALID", Detail: "downloaded plan signature or metadata is invalid", Err: err}
+	switch {
+	case errors.Is(err, ErrPlanTrustBundleInvalid):
+		failure.Code, failure.Detail = "PLAN_TRUST_BUNDLE_INVALID", "plan trust bundle is unavailable or invalid"
+	case errors.Is(err, ErrPlanSigningKeyUnknown):
+		failure.Code, failure.Detail = "PLAN_SIGNING_KEY_UNKNOWN", "downloaded plan signing key is not trusted"
+	case errors.Is(err, ErrPlanSigningKeyRevoked):
+		failure.Code, failure.Detail = "PLAN_SIGNING_KEY_REVOKED", "downloaded plan signing key is revoked"
+	case errors.Is(err, ErrPlanSigningKeyNotAcceptable):
+		failure.Code, failure.Detail = "PLAN_SIGNING_KEY_NOT_ACCEPTED", "downloaded plan signing key is outside its acceptance policy"
+	}
+	return failure
 }
 
 func (c *PlanDeliveryClient) observe(err error) {

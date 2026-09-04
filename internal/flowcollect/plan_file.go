@@ -88,6 +88,23 @@ func VerifyControlPlaneSignedPlan(envelopeData, publicKeyData []byte, now time.T
 	return registry, verified.metadata, nil
 }
 
+// VerifyControlPlaneSignedPlanWithTrustBundle resolves the v2 signing key by
+// its signed key id and enforces the bundle's rotation and revocation policy.
+func VerifyControlPlaneSignedPlanWithTrustBundle(envelopeData, trustBundleData []byte, now time.Time) (*Registry, PlanSignatureMetadata, error) {
+	if len(envelopeData) == 0 || len(envelopeData) > signedPlanMaxBytes || len(trustBundleData) == 0 || len(trustBundleData) > planTrustBundleMaxBytes {
+		return nil, PlanSignatureMetadata{}, errors.New("signed flow plan or trust bundle size is invalid")
+	}
+	verified, err := verifySignedPlanPayloadWithTrust(envelopeData, nil, trustBundleData, planTrustDelivery, now)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	registry, err := CompilePlan(verified.plan, now)
+	if err != nil {
+		return nil, PlanSignatureMetadata{}, err
+	}
+	return registry, verified.metadata, nil
+}
+
 type verifiedSignedPlan struct {
 	plan            Plan
 	payload         []byte

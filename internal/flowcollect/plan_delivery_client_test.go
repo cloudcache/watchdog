@@ -69,6 +69,7 @@ func TestPlanDeliveryClientFetchesAtomicallyReloadsTokenAndAcknowledgesExactActi
 	planPath := filepath.Join(directory, "plan.json")
 	keyPath := filepath.Join(directory, "plan.pub")
 	tokenPath := filepath.Join(directory, "collector.token")
+	trustBundlePath := writePlanDeliveryTrustBundle(t, directory, publicKey, now)
 	writePlanPublicKey(t, keyPath, publicKey)
 	writeSignedPlan(t, planPath, validPlan(now), privateKey)
 	if err := os.WriteFile(tokenPath, []byte("token-one\n"), 0o600); err != nil {
@@ -76,6 +77,7 @@ func TestPlanDeliveryClientFetchesAtomicallyReloadsTokenAndAcknowledgesExactActi
 	}
 	metrics, runtime := &Metrics{}, NewRuntimeState()
 	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
+	config.PlanTrustBundleFile = trustBundlePath
 	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +144,7 @@ func TestPlanDeliveryClientRejectsInvalidEnvelopeWithoutReplacingLKGAndReportsFa
 	planPath := filepath.Join(directory, "plan.json")
 	keyPath := filepath.Join(directory, "plan.pub")
 	tokenPath := filepath.Join(directory, "collector.token")
+	trustBundlePath := writePlanDeliveryTrustBundle(t, directory, publicKey, now)
 	writePlanPublicKey(t, keyPath, publicKey)
 	writeSignedPlan(t, planPath, validPlan(now), privateKey)
 	original, err := os.ReadFile(planPath)
@@ -152,7 +155,9 @@ func TestPlanDeliveryClientRejectsInvalidEnvelopeWithoutReplacingLKGAndReportsFa
 		t.Fatal(err)
 	}
 	metrics := &Metrics{}
-	client, err := NewPlanDeliveryClient(planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath), remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, NewRuntimeState())
+	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
+	config.PlanTrustBundleFile = trustBundlePath
+	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, NewRuntimeState())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +196,7 @@ func TestRemoteDeliveryWakesSupervisorAndAcknowledgesOnlyAfterActivation(t *test
 	planPath := filepath.Join(directory, "plan.json")
 	keyPath := filepath.Join(directory, "plan.pub")
 	tokenPath := filepath.Join(directory, "collector.token")
+	trustBundlePath := writePlanDeliveryTrustBundle(t, directory, publicKey, now)
 	writePlanPublicKey(t, keyPath, publicKey)
 	writeSignedPlan(t, planPath, first, privateKey)
 	if err := os.WriteFile(tokenPath, []byte("token"), 0o600); err != nil {
@@ -211,6 +217,7 @@ func TestRemoteDeliveryWakesSupervisorAndAcknowledgesOnlyAfterActivation(t *test
 	}
 	metrics, runtime := &Metrics{}, NewRuntimeState()
 	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
+	config.PlanTrustBundleFile = trustBundlePath
 	config.PlanRefreshInterval = time.Hour
 	client, err := NewPlanDeliveryClient(config, first.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime)
 	if err != nil {
@@ -361,4 +368,14 @@ func planDeliveryTestHTTPClient(handler http.Handler) *http.Client {
 		result.Request = request
 		return result, nil
 	})}
+}
+
+func writePlanDeliveryTrustBundle(t *testing.T, directory string, publicKey ed25519.PublicKey, now time.Time) string {
+	t.Helper()
+	path := filepath.Join(directory, "plan-trust-bundle.json")
+	writeTestFile(t, path, marshalPlanTrustBundle(t, planTrustKey{
+		ID: "delivery-key", PublicKey: base64.StdEncoding.EncodeToString(publicKey), Status: "active",
+		NotBeforeUnixMilli: now.Add(-2 * time.Hour).UnixMilli(), NotAfterUnixMilli: now.Add(2 * time.Hour).UnixMilli(),
+	}))
+	return path
 }

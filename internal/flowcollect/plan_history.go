@@ -22,14 +22,15 @@ type planHistoryEntry struct {
 }
 
 type PlanHistory struct {
-	mu        sync.RWMutex
-	planPath  string
-	publicKey []byte
-	dir       string
-	max       int
-	entries   map[uint64]planHistoryEntry
-	active    *Registry
-	usedLKG   bool
+	mu              sync.RWMutex
+	planPath        string
+	publicKey       []byte
+	trustBundlePath string
+	dir             string
+	max             int
+	entries         map[uint64]planHistoryEntry
+	active          *Registry
+	usedLKG         bool
 }
 
 type PlanRefreshResult struct {
@@ -39,26 +40,51 @@ type PlanRefreshResult struct {
 }
 
 func OpenPlanHistory(planPath, publicKeyPath, dir string, maxEntries int, now time.Time) (*PlanHistory, error) {
+	return OpenPlanHistoryWithTrust(planPath, publicKeyPath, "", dir, maxEntries, now)
+}
+
+func OpenPlanHistoryWithTrust(planPath, publicKeyPath, trustBundlePath, dir string, maxEntries int, now time.Time) (*PlanHistory, error) {
 	planPath = filepath.Clean(strings.TrimSpace(planPath))
-	publicKeyPath = filepath.Clean(strings.TrimSpace(publicKeyPath))
-	dir = filepath.Clean(strings.TrimSpace(dir))
-	if planPath == "." || publicKeyPath == "." || dir == "." || maxEntries <= 0 || now.IsZero() {
-		return nil, errors.New("plan path, public key, history dir, max entries, and current time are required")
+	publicKeyPath = strings.TrimSpace(publicKeyPath)
+	if publicKeyPath != "" {
+		publicKeyPath = filepath.Clean(publicKeyPath)
 	}
-	publicKey, err := readBoundedFile(publicKeyPath, 64<<10)
-	if err != nil {
-		return nil, fmt.Errorf("read flow plan public key: %w", err)
+	trustBundlePath = strings.TrimSpace(trustBundlePath)
+	if trustBundlePath != "" {
+		trustBundlePath = filepath.Clean(trustBundlePath)
+	}
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if planPath == "." || dir == "." || (publicKeyPath == "" && trustBundlePath == "") || maxEntries <= 0 || now.IsZero() {
+		return nil, errors.New("plan path, trust material, history dir, max entries, and current time are required")
+	}
+	var publicKey []byte
+	var err error
+	if publicKeyPath != "" {
+		publicKey, err = readBoundedFile(publicKeyPath, 64<<10)
+		if err != nil {
+			return nil, fmt.Errorf("read flow plan public key: %w", err)
+		}
+	}
+	var trustBundle []byte
+	if trustBundlePath != "" {
+		trustBundle, err = readBoundedFile(trustBundlePath, planTrustBundleMaxBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read flow plan trust bundle: %w", err)
+		}
+		if _, err := parsePlanTrustBundle(trustBundle); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create flow plan history dir: %w", err)
 	}
-	history := &PlanHistory{planPath: planPath, publicKey: bytes.Clone(publicKey), dir: dir, max: maxEntries, entries: make(map[uint64]planHistoryEntry)}
-	if err := history.load(publicKey); err != nil {
+	history := &PlanHistory{planPath: planPath, publicKey: bytes.Clone(publicKey), trustBundlePath: trustBundlePath, dir: dir, max: maxEntries, entries: make(map[uint64]planHistoryEntry)}
+	if err := history.load(publicKey, trustBundle, now); err != nil {
 		return nil, err
 	}
 	activeEnvelope, activeReadErr := readBoundedFile(planPath, signedPlanMaxBytes)
 	if activeReadErr == nil {
-		verified, verifyErr := verifySignedPlanPayload(activeEnvelope, publicKey)
+		verified, verifyErr := verifySignedPlanPayloadWithTrust(activeEnvelope, publicKey, trustBundle, planTrustExisting, now)
 		if verifyErr == nil {
 			registry, compileErr := CompilePlan(verified.plan, now)
 			if compileErr == nil {
@@ -81,7 +107,7 @@ func OpenPlanHistory(planPath, publicKeyPath, dir string, maxEntries int, now ti
 	return history, nil
 }
 
-func (h *PlanHistory) load(publicKey []byte) error {
+func (h *PlanHistory) load(publicKey, trustBundle []byte, now time.Time) error {
 	entries, err := os.ReadDir(h.dir)
 	if err != nil {
 		return fmt.Errorf("read flow plan history dir: %w", err)
@@ -106,7 +132,7 @@ func (h *PlanHistory) load(publicKey []byte) error {
 		if err != nil {
 			return fmt.Errorf("read flow plan history %s: %w", name, err)
 		}
-		verified, err := verifySignedPlanPayload(envelope, publicKey)
+		verified, err := verifySignedPlanPayloadWithTrust(envelope, publicKey, trustBundle, planTrustExisting, now)
 		if err != nil {
 			return fmt.Errorf("verify flow plan history %s: %w", name, err)
 		}
@@ -281,17 +307,38 @@ func (h *PlanHistory) Refresh(now time.Time, references func() (map[uint64]struc
 	h.mu.RLock()
 	planPath := h.planPath
 	publicKey := bytes.Clone(h.publicKey)
+	trustBundlePath := h.trustBundlePath
 	h.mu.RUnlock()
-	if planPath == "" || len(publicKey) == 0 {
+	if planPath == "" || (len(publicKey) == 0 && trustBundlePath == "") {
 		return PlanRefreshResult{}, errors.New("flow plan refresh source is unavailable")
+	}
+	var trustBundle []byte
+	if trustBundlePath != "" {
+		var err error
+		trustBundle, err = readBoundedFile(trustBundlePath, planTrustBundleMaxBytes)
+		if err != nil {
+			return PlanRefreshResult{}, newPlanRefreshFailure("verify", "PLAN_TRUST_BUNDLE_INVALID", "plan trust bundle could not be read", fmt.Errorf("read flow plan trust bundle: %w", err))
+		}
+		if _, err := parsePlanTrustBundle(trustBundle); err != nil {
+			return PlanRefreshResult{}, newPlanRefreshFailure("verify", "PLAN_TRUST_BUNDLE_INVALID", "plan trust bundle is invalid", err)
+		}
 	}
 	envelope, err := readBoundedFile(planPath, signedPlanMaxBytes)
 	if err != nil {
 		return PlanRefreshResult{}, newPlanRefreshFailure("persist", "PLAN_FILE_READ_FAILED", "delivered plan file could not be read", fmt.Errorf("read refreshed flow plan: %w", err))
 	}
-	verified, err := verifySignedPlanPayload(envelope, publicKey)
+	verified, err := verifySignedPlanPayloadWithTrust(envelope, publicKey, trustBundle, planTrustExisting, now)
 	if err != nil {
-		return PlanRefreshResult{}, newPlanRefreshFailure("verify", "PLAN_SIGNATURE_INVALID", "delivered plan signature or metadata is invalid", fmt.Errorf("verify refreshed flow plan: %w", err))
+		code, detail := "PLAN_SIGNATURE_INVALID", "delivered plan signature or metadata is invalid"
+		switch {
+		case errors.Is(err, ErrPlanSigningKeyUnknown):
+			code, detail = "PLAN_SIGNING_KEY_UNKNOWN", "delivered plan signing key is not trusted"
+		case errors.Is(err, ErrPlanSigningKeyRevoked):
+			code, detail = "PLAN_SIGNING_KEY_REVOKED", "delivered plan uses a revoked signing key"
+		case errors.Is(err, ErrPlanSigningKeyNotAcceptable):
+			code, detail = "PLAN_SIGNING_KEY_NOT_ACCEPTED", "delivered plan signing key is outside its acceptance policy"
+		}
+		return PlanRefreshResult{}, newPlanRefreshFailure("verify", code, detail, fmt.Errorf("verify refreshed flow plan: %w", err))
 	}
 	registry, err := CompilePlan(verified.plan, now)
 	if err != nil {
