@@ -41,7 +41,7 @@ func (a *MySQLCollectorMachineAuthenticator) AuthenticateCollector(ctx context.C
 	if err != nil {
 		return CollectorMachineIdentity{}, err
 	}
-	if identity.CollectorID != collectorID || identity.TenantID == "" || identity.BootID == "" || agentType != "flow_collect" || moduleKey != "flow" || status != "active" {
+	if identity.CollectorID != collectorID || identity.TenantID == "" || agentType != "flow_collect" || moduleKey != "flow" || status != "active" {
 		return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
 	}
 	switch authType {

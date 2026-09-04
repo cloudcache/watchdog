@@ -106,6 +106,22 @@ func (s *MySQLStore) GetCollectorPlanRevision(ctx context.Context, tenantID, col
 	`, tenantID, collectorID, configVersion))
 }
 
+func (s *MySQLStore) GetActiveCollectorPlan(ctx context.Context, tenantID, collectorID ID) (CollectorPlanRevision, error) {
+	if tenantID == "" || collectorID == "" {
+		return CollectorPlanRevision{}, errors.New("collector plan tenant and collector are required")
+	}
+	return scanCollectorPlanRevision(s.db.QueryRowContext(ctx, `
+		SELECT `+collectorPlanSelectColumns+`
+		FROM collector_plan_revisions AS plan
+		WHERE plan.tenant_id = ? AND plan.collector_id = ? AND plan.status = 'active'
+		  AND EXISTS (
+			SELECT 1 FROM collector_agents AS collector
+			WHERE collector.tenant_id = plan.tenant_id AND collector.id = plan.collector_id
+			  AND collector.status = 'active' AND collector.deleted_at IS NULL
+		  )
+	`, tenantID, collectorID))
+}
+
 func (s *MySQLStore) ActivateCollectorPlanRevision(ctx context.Context, activation CollectorPlanActivation) (CollectorPlanRevision, error) {
 	if activation.TenantID == "" || activation.CollectorID == "" || activation.ConfigVersion == 0 || activation.ExpectedCollectorRowVersion == 0 || activation.ExpectedPlanRowVersion == 0 || activation.ActorID == "" {
 		return CollectorPlanRevision{}, errors.New("collector plan activation input is incomplete")
@@ -234,8 +250,8 @@ func (s *MySQLStore) ActivateCollectorPlanRevision(ctx context.Context, activati
 }
 
 func (s *MySQLStore) AcknowledgeCollectorPlan(ctx context.Context, acknowledgement CollectorPlanAcknowledgement) error {
-	if acknowledgement.TenantID == "" || acknowledgement.CollectorID == "" || acknowledgement.ConfigVersion == 0 || !validSHA256Hex(acknowledgement.SpecHash) || acknowledgement.BootID == "" || len(acknowledgement.BootID) > 64 || len(acknowledgement.SoftwareVersion) > 64 {
-		return errors.New("collector plan acknowledgement is incomplete")
+	if err := validateCollectorPlanAcknowledgement(acknowledgement); err != nil {
+		return err
 	}
 	acknowledgedAt := time.Now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -301,6 +317,40 @@ func (s *MySQLStore) AcknowledgeCollectorPlan(ctx context.Context, acknowledgeme
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *MySQLStore) RecordCollectorPlanFailure(ctx context.Context, failure CollectorPlanFailure) error {
+	if failure.TenantID == "" || failure.CollectorID == "" {
+		return errors.New("collector plan failure identity is required")
+	}
+	if err := validateCollectorPlanFailureReport(failure.CollectorPlanFailureReport); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE collector_agents
+		SET observed_health = 'degraded',
+			boot_id = IF(boot_id = '', ?, boot_id),
+			software_version = ?, last_seen_at = ?,
+			last_error_code = ?, last_error_detail = NULLIF(?, ''),
+			updated_at = CURRENT_TIMESTAMP(3)
+		WHERE id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL
+		  AND (? = 0 OR config_version = ?)
+	`, failure.BootID, failure.SoftwareVersion, now,
+		failure.Stage+":"+failure.Code, failure.Detail,
+		failure.CollectorID, failure.TenantID,
+		failure.FailedConfigVersion, failure.FailedConfigVersion)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrCollectorPlanInvalidTransition
+	}
+	return nil
 }
 
 func getCollectorPlanRevisionTx(ctx context.Context, tx *sql.Tx, tenantID, collectorID ID, configVersion uint64, lock bool) (CollectorPlanRevision, error) {
@@ -402,3 +452,4 @@ func insertCollectorPlanAudit(ctx context.Context, tx *sql.Tx, tenantID, actorID
 }
 
 var _ CollectorPlanRepository = (*MySQLStore)(nil)
+var _ CollectorPlanRuntimeRepository = (*MySQLStore)(nil)

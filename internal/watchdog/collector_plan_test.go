@@ -193,6 +193,46 @@ func TestMySQLCollectorPlanLifecycle(t *testing.T) {
 		t.Fatalf("retired plan 1=%+v", retired1)
 	}
 	assertCollectorPlanHead(t, db, collectorID, 2, 1, 1, active2.SpecHash, "active", 3)
+	delivered2, err := store.GetActiveCollectorPlan(ctx, tenantID, collectorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered2.ID != active2.ID || delivered2.ConfigVersion != 2 || delivered2.SpecHash != active2.SpecHash {
+		t.Fatalf("delivered active plan=%+v", delivered2)
+	}
+	if err := store.RecordCollectorPlanFailure(ctx, CollectorPlanFailure{
+		TenantID: tenantID, CollectorID: collectorID,
+		CollectorPlanFailureReport: CollectorPlanFailureReport{
+			FailedConfigVersion: 2, BootID: "boot-plan-2", SoftwareVersion: "1.1.0",
+			Stage: "dependency", Code: "KAFKA_CONTRACT", Detail: "topic contract unavailable",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var observedHealth, bootID, softwareVersion, lastErrorCode, lastErrorDetail string
+	var lastSeenAt sql.NullTime
+	var collectorRowVersion uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT observed_health, boot_id, software_version, COALESCE(last_error_code, ''),
+			COALESCE(last_error_detail, ''), last_seen_at, row_version
+		FROM collector_agents WHERE tenant_id = ? AND id = ?
+	`, tenantID, collectorID).Scan(
+		&observedHealth, &bootID, &softwareVersion, &lastErrorCode,
+		&lastErrorDetail, &lastSeenAt, &collectorRowVersion,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if observedHealth != "degraded" || bootID != "boot-plan-1" || softwareVersion != "1.1.0" || lastErrorCode != "dependency:KAFKA_CONTRACT" || lastErrorDetail != "topic contract unavailable" || !lastSeenAt.Valid || collectorRowVersion != 3 {
+		t.Fatalf("collector failure state health=%q boot=%q software=%q code=%q detail=%q seen=%v row=%d", observedHealth, bootID, softwareVersion, lastErrorCode, lastErrorDetail, lastSeenAt, collectorRowVersion)
+	}
+	if err := store.RecordCollectorPlanFailure(ctx, CollectorPlanFailure{
+		TenantID: tenantID, CollectorID: collectorID,
+		CollectorPlanFailureReport: CollectorPlanFailureReport{
+			FailedConfigVersion: 1, BootID: "boot-stale", Stage: "verify", Code: "SIGNATURE_INVALID",
+		},
+	}); !errors.Is(err, ErrCollectorPlanInvalidTransition) {
+		t.Fatalf("stale plan failure error=%v", err)
+	}
 	wrongAck := ack1
 	wrongAck.ConfigVersion = 2
 	if err := store.AcknowledgeCollectorPlan(ctx, wrongAck); !errors.Is(err, ErrCollectorPlanInvalidTransition) {

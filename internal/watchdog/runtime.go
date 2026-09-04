@@ -29,6 +29,7 @@ type BackendRuntime struct {
 	FlowStateCleanup   *FlowStateCleanupRuntime
 	FlowCleanupJobs    FlowStateCleanupJobController
 	CollectorEvidence  CollectorEvidenceController
+	CollectorPlans     CollectorPlanDeliveryController
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
@@ -69,12 +70,18 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	collectorPlans, err := NewCollectorPlanDeliveryService(collectorAuthenticator, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	runtime := &BackendRuntime{
 		Config:            cfg,
 		Store:             store,
 		MetricsClient:     metricsClient,
 		ExportStore:       exportStore,
 		CollectorEvidence: collectorEvidence,
+		CollectorPlans:    collectorPlans,
 	}
 	if cfg.CollectorPrincipalProvider.Enabled {
 		provider, err := NewRemoteCollectorPrincipalProvider(cfg.CollectorPrincipalProvider)
@@ -182,6 +189,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		FlowCleanupJobs:     r.FlowCleanupJobs,
 		CollectorEvidence:   r.CollectorEvidence,
 		CollectorPrincipals: r.CollectorPrincipals,
+		CollectorPlans:      r.CollectorPlans,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
