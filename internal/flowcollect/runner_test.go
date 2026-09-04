@@ -55,6 +55,19 @@ type failDLQOncePublisher struct {
 	fail bool
 }
 
+type signalingPublisher struct {
+	recordingPublisher
+	published chan struct{}
+}
+
+func (p *signalingPublisher) Publish(ctx context.Context, batch *flowpb.NormalizedRecordBatch) error {
+	if err := p.recordingPublisher.Publish(ctx, batch); err != nil {
+		return err
+	}
+	close(p.published)
+	return nil
+}
+
 func (p *failDLQOncePublisher) PublishDecodeFailure(ctx context.Context, failure *flowpb.DecodeFailure) error {
 	if p.fail {
 		p.fail = false
@@ -239,7 +252,15 @@ func TestRunnerRetrySkipsAcknowledgedCollectStateChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &failDataOncePublisher{fail: true}
-	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher}
+	qualityConfig := testQualityStateConfig()
+	metrics := &Metrics{}
+	quality := NewQualityTracker(qualityConfig, metrics)
+	qualityState, err := OpenQualityStateStore(t.TempDir(), plan.CollectorID, qualityConfig, quality, w, metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer qualityState.Close()
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}, Quality: qualityConfig}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState}
 	if err := runner.processRecord(context.Background(), record, 0); err == nil {
 		t.Fatal("injected publish failure was not returned")
 	}
@@ -251,6 +272,12 @@ func TestRunnerRetrySkipsAcknowledgedCollectStateChild(t *testing.T) {
 	}
 	if publisher.batches[0].ReplayGeneration != 1 {
 		t.Fatalf("retry generation=%d, want 1", publisher.batches[0].ReplayGeneration)
+	}
+	if got := metrics.Snapshot().QualityJournalAppends; got != 1 {
+		t.Fatalf("retry appended quality state %d times, want 1", got)
+	}
+	if len(qualityState.pending) != 0 {
+		t.Fatalf("successful retry retained %d pending quality decisions", len(qualityState.pending))
 	}
 }
 
@@ -299,6 +326,79 @@ func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("published datagram remained replayable: %d", remaining)
+	}
+}
+
+func TestRunnerOverlapsQualityFsyncWithKafkaButWaitsBeforeTerminalACK(t *testing.T) {
+	now := time.Now()
+	plan := validPlan(now)
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.1/32", TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", SamplingMode: SamplingModeSampled, Enabled: true}}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWAL(t.TempDir(), plan.CollectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	decoder, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualityConfig := testQualityStateConfig()
+	qualityConfig.JournalFsync = time.Hour
+	metrics := &Metrics{}
+	quality := NewQualityTracker(qualityConfig, metrics)
+	qualityState, err := OpenQualityStateStore(t.TempDir(), plan.CollectorID, qualityConfig, quality, w, metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer qualityState.Close()
+	packet := netflowlegacy.PacketNetFlowV5{Version: 5, SysUptime: 1000, UnixSecs: uint32(now.Unix()), SamplingInterval: 100, Records: []netflowlegacy.RecordsNetFlowV5{{SrcAddr: 0x0a000001, DstAddr: 0xcb007101, DPkts: 2, DOctets: 1000, Proto: 17}}}
+	payload, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := w.Append(WALInput{Protocol: ProtocolNetFlow5, ReceivedAt: now, Source: netip.MustParseAddrPort("192.0.2.1:2055"), RegistryVersion: plan.Revision, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &signalingPublisher{published: make(chan struct{})}
+	runner := &Runner{Config: Config{NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond}, Quality: qualityConfig}, Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState}
+	result := make(chan error, 1)
+	go func() { result <- runner.processRecord(context.Background(), record, 0) }()
+	select {
+	case <-publisher.published:
+	case <-time.After(time.Second):
+		t.Fatal("Kafka publish waited for the quality fsync interval")
+	}
+	if w.ChildAcknowledged(record.DatagramID, 0, 1) {
+		t.Fatal("terminal WAL acknowledgement preceded quality durability")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("record completed before quality durability: %v", err)
+	default:
+	}
+	if err := qualityState.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("record did not complete after quality state became durable")
+	}
+	if !w.ChildAcknowledged(record.DatagramID, 0, 1) {
+		t.Fatal("terminal WAL acknowledgement was not written")
 	}
 }
 

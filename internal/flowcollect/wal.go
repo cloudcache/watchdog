@@ -300,6 +300,60 @@ func (w *WAL) ChildAcknowledged(id DatagramID, childIndex, childCount uint32) bo
 	return exists
 }
 
+func (w *WAL) datagramDurablyAcknowledged(id DatagramID) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return acknowledgementComplete(w.durableAcks[id])
+}
+
+// pendingDatagramIDs returns the durable recovery view: records still present
+// in raw WAL without a durable terminal acknowledgement. A missing ID is not
+// assumed pending because acknowledged segments may already be reclaimed.
+func (w *WAL) pendingDatagramIDs() (map[DatagramID]struct{}, error) {
+	w.scanMu.Lock()
+	defer w.scanMu.Unlock()
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil, ErrWALClosed
+	}
+	if err := w.segment.Sync(); err != nil {
+		w.markSyncErrorLocked(err)
+		w.mu.Unlock()
+		return nil, err
+	}
+	if err := w.ackFile.Sync(); err != nil {
+		w.markSyncErrorLocked(err)
+		w.mu.Unlock()
+		return nil, err
+	}
+	w.markDurableLocked()
+	segments, err := w.segmentFiles()
+	if err != nil {
+		w.mu.Unlock()
+		return nil, err
+	}
+	completed := make(map[DatagramID]struct{}, len(w.durableAcks))
+	for id, state := range w.durableAcks {
+		if acknowledgementComplete(state) {
+			completed[id] = struct{}{}
+		}
+	}
+	w.mu.Unlock()
+	pending := make(map[DatagramID]struct{})
+	for _, path := range segments {
+		if err := scanSegment(path, func(record WALRecord) error {
+			if _, acknowledged := completed[record.DatagramID]; !acknowledged {
+				pending[record.DatagramID] = struct{}{}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return pending, nil
+}
+
 func (w *WAL) Replay(fn func(WALRecord) error) error {
 	var callbackErr error
 	_, _, err := w.ReplayFrom(ReplayCursor{}, func(record WALRecord) bool {

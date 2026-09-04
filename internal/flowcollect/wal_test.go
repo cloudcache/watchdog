@@ -94,6 +94,48 @@ func TestWALReclaimsOnlyClosedAcknowledgedSegments(t *testing.T) {
 	}
 }
 
+func TestWALPendingIDsDoNotConfuseReclaimedRecordsWithUnacknowledged(t *testing.T) {
+	config := testWALConfig()
+	config.SegmentBytes = 300
+	w, err := OpenWAL(t.TempDir(), "collector-a", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	first, err := w.Append(testWALInput(make([]byte, 100)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInput := testWALInput(make([]byte, 100))
+	secondInput.ReceivedAt = secondInput.ReceivedAt.Add(time.Second)
+	second, err := w.Append(secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Segment == second.Segment {
+		t.Fatal("test did not rotate segment")
+	}
+	if err := w.Acknowledge(first.DatagramID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Reclaim(); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := w.pendingDatagramIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := pending[first.DatagramID]; exists {
+		t.Fatal("reclaimed acknowledged datagram was reported pending")
+	}
+	if _, exists := pending[second.DatagramID]; !exists {
+		t.Fatal("unacknowledged datagram was not reported pending")
+	}
+}
+
 func TestWALPersistsPartialChildAcknowledgements(t *testing.T) {
 	dir := t.TempDir()
 	w, err := OpenWAL(dir, "collector-a", testWALConfig())

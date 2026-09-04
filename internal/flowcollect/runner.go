@@ -18,34 +18,39 @@ var (
 )
 
 type Runner struct {
-	Config    Config
-	Registry  *Registry
-	WAL       *WAL
-	Decoder   *Decoder
-	State     *CollectStateStore
-	Publisher Publisher
-	OnError   func(error)
-	Metrics   *Metrics
-	Quality   *QualityTracker
+	Config       Config
+	Registry     *Registry
+	WAL          *WAL
+	Decoder      *Decoder
+	State        *CollectStateStore
+	Publisher    Publisher
+	OnError      func(error)
+	Metrics      *Metrics
+	Quality      *QualityTracker
+	QualityState *QualityStateStore
 
 	inflight        sync.Map
 	attempts        sync.Map
 	retryNeeded     atomic.Bool
 	metricsOnce     sync.Once
 	qualityOnce     sync.Once
+	qualityBarrier  sync.RWMutex
 	reportMu        sync.Mutex
 	lastErrorReport time.Time
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Publisher == nil {
+	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Publisher == nil || r.QualityState == nil {
 		return errors.New("flow runner dependencies are required")
 	}
-	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
+	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.JournalFsync <= 0 || r.Config.Quality.CheckpointEvery <= 0 || r.Config.Quality.JournalMaxBytes <= qualityFrameHeaderSize || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
 		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
 	r.metrics()
-	r.quality()
+	quality := r.quality()
+	if r.QualityState.tracker != quality || r.QualityState.wal != r.WAL {
+		return errors.New("flow runner quality-state store does not match its tracker or WAL")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ingress := make(chan Datagram, r.Config.DecodeQueueDatagrams)
@@ -69,6 +74,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	go func() { defer workerWG.Done(); r.replayLoop(ctx, decodeQueues) }()
 	workerWG.Add(1)
 	go func() { defer workerWG.Done(); r.reclaimLoop(ctx) }()
+	workerWG.Add(1)
+	go func() { defer workerWG.Done(); r.qualityCheckpointLoop(ctx) }()
 
 	var receiverWG sync.WaitGroup
 	for socket := 0; socket < r.Config.SocketCount; socket++ {
@@ -214,11 +221,17 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		}
 		return err
 	}
-	decoded, _ = r.quality().Observe(record, decoded)
+	decoded, err = r.applyQuality(record, decoded)
+	if err != nil {
+		return err
+	}
 	qualityComplete := false
 	defer func() {
 		if qualityComplete {
 			r.quality().Forget(record.DatagramID)
+			if r.QualityState != nil {
+				r.QualityState.Complete(record.DatagramID)
+			}
 		} else {
 			r.quality().Remember(record.DatagramID, decoded)
 		}
@@ -234,6 +247,9 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		return permanentProcessingFailure(normalizeRejectedCode, err)
 	}
 	if len(batches) == 0 && !decoded.CollectStateChanged {
+		if err := r.waitQualityDurable(ctx, record.DatagramID); err != nil {
+			return err
+		}
 		if err := r.WAL.Acknowledge(record.DatagramID); err != nil {
 			return err
 		}
@@ -245,6 +261,11 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 	if decoded.CollectStateChanged {
 		childCount++
 		dataChildOffset = 1
+		if childCount == 1 {
+			if err := r.waitQualityDurable(ctx, record.DatagramID); err != nil {
+				return err
+			}
+		}
 		if err := r.checkpointCollectState(ctx, record, decoded, binding, plan, true, childCount); err != nil {
 			return err
 		}
@@ -259,11 +280,45 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 			return err
 		}
 		r.metrics().PublishedBatches.Add(1)
+		if childIndex+1 == childCount {
+			if err := r.waitQualityDurable(ctx, record.DatagramID); err != nil {
+				return err
+			}
+		}
 		if err := r.WAL.AcknowledgeChild(record.DatagramID, childIndex, childCount); err != nil {
 			return err
 		}
 	}
 	qualityComplete = true
+	return nil
+}
+
+func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram) (DecodedDatagram, error) {
+	tracker := r.quality()
+	r.qualityBarrier.RLock()
+	defer r.qualityBarrier.RUnlock()
+	decoded, _ = tracker.Observe(record, decoded)
+	if r.QualityState == nil {
+		return decoded, nil
+	}
+	journal, err := tracker.BuildJournalRecord(record, decoded, r.QualityState.collectorID)
+	if err == nil {
+		err = r.QualityState.Append(journal)
+	}
+	if err != nil {
+		tracker.Remember(record.DatagramID, decoded)
+		return decoded, fmt.Errorf("persist quality state: %w", err)
+	}
+	return decoded, nil
+}
+
+func (r *Runner) waitQualityDurable(ctx context.Context, id DatagramID) error {
+	if r.QualityState == nil {
+		return nil
+	}
+	if err := r.QualityState.WaitDatagram(ctx, id); err != nil {
+		return fmt.Errorf("wait for durable quality state: %w", err)
+	}
 	return nil
 }
 
@@ -273,10 +328,16 @@ func (r *Runner) deadLetter(ctx context.Context, record WALRecord, code string, 
 		r.metrics().DLQPublishFailures.Add(1)
 		return err
 	}
+	if err := r.waitQualityDurable(ctx, record.DatagramID); err != nil {
+		return err
+	}
 	if err := r.WAL.Acknowledge(record.DatagramID); err != nil {
 		return err
 	}
 	r.quality().Forget(record.DatagramID)
+	if r.QualityState != nil {
+		r.QualityState.Complete(record.DatagramID)
+	}
 	r.metrics().DLQDatagrams.Add(1)
 	return nil
 }
@@ -377,6 +438,25 @@ func (r *Runner) reclaimLoop(ctx context.Context) {
 		case <-ticker.C:
 			if _, err := r.WAL.Reclaim(); err != nil {
 				r.report(err)
+			}
+		}
+	}
+}
+
+func (r *Runner) qualityCheckpointLoop(ctx context.Context) {
+	ticker := time.NewTicker(r.Config.Quality.CheckpointEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			r.qualityBarrier.Lock()
+			err := r.QualityState.Compact(now)
+			r.qualityBarrier.Unlock()
+			if err != nil {
+				r.metrics().QualityCheckpointFailures.Add(1)
+				r.report(fmt.Errorf("compact quality state: %w", err))
 			}
 		}
 	}

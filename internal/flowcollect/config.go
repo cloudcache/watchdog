@@ -73,10 +73,13 @@ type DiagnosticsConfig struct {
 }
 
 type QualityConfig struct {
-	StateTTL       time.Duration `yaml:"state_ttl"`
-	AnomalyWindow  time.Duration `yaml:"anomaly_window"`
-	MaxExporters   int           `yaml:"max_exporters"`
-	MaxDataSources int           `yaml:"max_data_sources"`
+	StateTTL        time.Duration `yaml:"state_ttl"`
+	AnomalyWindow   time.Duration `yaml:"anomaly_window"`
+	JournalFsync    time.Duration `yaml:"journal_fsync_interval"`
+	CheckpointEvery time.Duration `yaml:"checkpoint_interval"`
+	JournalMaxBytes int64         `yaml:"journal_max_bytes"`
+	MaxExporters    int           `yaml:"max_exporters"`
+	MaxDataSources  int           `yaml:"max_data_sources"`
 }
 
 func DefaultConfig() Config {
@@ -124,10 +127,13 @@ func DefaultConfig() Config {
 			DLQPayloadMaxBytes:                 0,
 		},
 		Quality: QualityConfig{
-			StateTTL:       time.Hour,
-			AnomalyWindow:  time.Minute,
-			MaxExporters:   65536,
-			MaxDataSources: 262144,
+			StateTTL:        time.Hour,
+			AnomalyWindow:   time.Minute,
+			JournalFsync:    10 * time.Millisecond,
+			CheckpointEvery: 5 * time.Minute,
+			JournalMaxBytes: 512 << 20,
+			MaxExporters:    65536,
+			MaxDataSources:  262144,
 		},
 	}
 }
@@ -214,7 +220,7 @@ func (c Config) Validate() error {
 	if c.Diagnostics.DLQPayloadMaxBytes < 0 || c.Diagnostics.DLQPayloadMaxBytes > c.MaxDatagramBytes {
 		return errors.New("flow_collect.diagnostics.dlq_payload_max_bytes must be between 0 and max_datagram_bytes")
 	}
-	if c.Quality.StateTTL <= 0 || c.Quality.AnomalyWindow <= 0 || c.Quality.AnomalyWindow > c.Quality.StateTTL || c.Quality.MaxExporters <= 0 || c.Quality.MaxDataSources <= 0 {
+	if c.Quality.StateTTL <= 0 || c.Quality.AnomalyWindow <= 0 || c.Quality.AnomalyWindow > c.Quality.StateTTL || c.Quality.JournalFsync <= 0 || c.Quality.CheckpointEvery <= 0 || c.Quality.JournalMaxBytes <= qualityFrameHeaderSize || c.Quality.MaxExporters <= 0 || c.Quality.MaxDataSources <= 0 {
 		return errors.New("flow_collect.quality requires positive limits and anomaly_window <= state_ttl")
 	}
 	if c.Kafka.Acks != "all" {
@@ -354,6 +360,15 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.Quality.AnomalyWindow, err = envDuration("WATCHDOG_FLOW_COLLECT_QUALITY_ANOMALY_WINDOW", c.Quality.AnomalyWindow); err != nil {
+		return err
+	}
+	if c.Quality.JournalFsync, err = envDuration("WATCHDOG_FLOW_COLLECT_QUALITY_JOURNAL_FSYNC_INTERVAL", c.Quality.JournalFsync); err != nil {
+		return err
+	}
+	if c.Quality.CheckpointEvery, err = envDuration("WATCHDOG_FLOW_COLLECT_QUALITY_CHECKPOINT_INTERVAL", c.Quality.CheckpointEvery); err != nil {
+		return err
+	}
+	if c.Quality.JournalMaxBytes, err = envInt64("WATCHDOG_FLOW_COLLECT_QUALITY_JOURNAL_MAX_BYTES", c.Quality.JournalMaxBytes); err != nil {
 		return err
 	}
 	if c.Quality.MaxExporters, err = envInt("WATCHDOG_FLOW_COLLECT_QUALITY_MAX_EXPORTERS", c.Quality.MaxExporters); err != nil {

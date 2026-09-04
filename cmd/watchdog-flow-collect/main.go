@@ -52,13 +52,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	metrics := &flowcollect.Metrics{}
+	quality := flowcollect.NewQualityTracker(cfg.FlowCollect.Quality, metrics)
+	qualityState, err := flowcollect.OpenQualityStateStore(filepath.Join(cfg.FlowCollect.StateDir, "quality-state"), plan.CollectorID, cfg.FlowCollect.Quality, quality, wal, metrics)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer qualityState.Close()
 	publisher, err := flowcollect.NewKafkaPublisher(cfg.FlowCollect.Kafka, cfg.FlowCollect.NormalizedBatch, plan.CollectorID)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer publisher.Close()
 
-	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
+	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
 	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
 	if err := runner.Run(ctx); err != nil {
 		log.Fatal(err)

@@ -33,6 +33,11 @@ type Metrics struct {
 	SamplingRateChangeEvents  atomic.Uint64
 	ExporterDropSamples       atomic.Uint64
 	QualityStateSaturated     atomic.Uint64
+	QualityJournalAppends     atomic.Uint64
+	QualityJournalFailures    atomic.Uint64
+	QualityStateRestores      atomic.Uint64
+	QualityStateCheckpoints   atomic.Uint64
+	QualityCheckpointFailures atomic.Uint64
 }
 
 type MetricSnapshot struct {
@@ -66,6 +71,11 @@ type MetricSnapshot struct {
 	SamplingRateChangeEvents  uint64
 	ExporterDropSamples       uint64
 	QualityStateSaturated     uint64
+	QualityJournalAppends     uint64
+	QualityJournalFailures    uint64
+	QualityStateRestores      uint64
+	QualityStateCheckpoints   uint64
+	QualityCheckpointFailures uint64
 }
 
 func (m *Metrics) Snapshot() MetricSnapshot {
@@ -78,5 +88,6 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		DLQDatagrams: m.DLQDatagrams.Load(), DLQPublishFailures: m.DLQPublishFailures.Load(),
 		SequenceGapEvents: m.SequenceGapEvents.Load(), MissingSequenceUnits: m.MissingSequenceUnits.Load(), ExporterRestartEvents: m.ExporterRestartEvents.Load(), SequenceOutOfOrderEvents: m.SequenceOutOfOrderEvents.Load(),
 		SamplePoolResetEvents: m.SamplePoolResetEvents.Load(), SamplingRateChangeEvents: m.SamplingRateChangeEvents.Load(), ExporterDropSamples: m.ExporterDropSamples.Load(), QualityStateSaturated: m.QualityStateSaturated.Load(),
+		QualityJournalAppends: m.QualityJournalAppends.Load(), QualityJournalFailures: m.QualityJournalFailures.Load(), QualityStateRestores: m.QualityStateRestores.Load(), QualityStateCheckpoints: m.QualityStateCheckpoints.Load(), QualityCheckpointFailures: m.QualityCheckpointFailures.Load(),
 	}
 }

@@ -952,6 +952,700 @@ func (x *QuarantineEvent) GetPayloadSha256() []byte {
 	return nil
 }
 
+// Quality state is local durability metadata. It is protobuf-framed in an
+// append journal and periodically compacted into QualityStateSnapshot.
+type QualityExporterKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Protocol      uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	SourceIp      []byte                 `protobuf:"bytes,2,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	SequenceScope uint64                 `protobuf:"varint,3,opt,name=sequence_scope,json=sequenceScope,proto3" json:"sequence_scope,omitempty"`
+	AgentIp       []byte                 `protobuf:"bytes,4,opt,name=agent_ip,json=agentIp,proto3" json:"agent_ip,omitempty"`
+	SubAgentId    uint32                 `protobuf:"varint,5,opt,name=sub_agent_id,json=subAgentId,proto3" json:"sub_agent_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QualityExporterKey) Reset() {
+	*x = QualityExporterKey{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityExporterKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityExporterKey) ProtoMessage() {}
+
+func (x *QualityExporterKey) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityExporterKey.ProtoReflect.Descriptor instead.
+func (*QualityExporterKey) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *QualityExporterKey) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *QualityExporterKey) GetSourceIp() []byte {
+	if x != nil {
+		return x.SourceIp
+	}
+	return nil
+}
+
+func (x *QualityExporterKey) GetSequenceScope() uint64 {
+	if x != nil {
+		return x.SequenceScope
+	}
+	return 0
+}
+
+func (x *QualityExporterKey) GetAgentIp() []byte {
+	if x != nil {
+		return x.AgentIp
+	}
+	return nil
+}
+
+func (x *QualityExporterKey) GetSubAgentId() uint32 {
+	if x != nil {
+		return x.SubAgentId
+	}
+	return 0
+}
+
+type QualityWindows struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	TemplateUntilUnixMs   int64                  `protobuf:"varint,1,opt,name=template_until_unix_ms,json=templateUntilUnixMs,proto3" json:"template_until_unix_ms,omitempty"`
+	GapUntilUnixMs        int64                  `protobuf:"varint,2,opt,name=gap_until_unix_ms,json=gapUntilUnixMs,proto3" json:"gap_until_unix_ms,omitempty"`
+	PoolResetUntilUnixMs  int64                  `protobuf:"varint,3,opt,name=pool_reset_until_unix_ms,json=poolResetUntilUnixMs,proto3" json:"pool_reset_until_unix_ms,omitempty"`
+	RateChangeUntilUnixMs int64                  `protobuf:"varint,4,opt,name=rate_change_until_unix_ms,json=rateChangeUntilUnixMs,proto3" json:"rate_change_until_unix_ms,omitempty"`
+	RestartUntilUnixMs    int64                  `protobuf:"varint,5,opt,name=restart_until_unix_ms,json=restartUntilUnixMs,proto3" json:"restart_until_unix_ms,omitempty"`
+	OutOfOrderUntilUnixMs int64                  `protobuf:"varint,6,opt,name=out_of_order_until_unix_ms,json=outOfOrderUntilUnixMs,proto3" json:"out_of_order_until_unix_ms,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *QualityWindows) Reset() {
+	*x = QualityWindows{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityWindows) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityWindows) ProtoMessage() {}
+
+func (x *QualityWindows) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityWindows.ProtoReflect.Descriptor instead.
+func (*QualityWindows) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *QualityWindows) GetTemplateUntilUnixMs() int64 {
+	if x != nil {
+		return x.TemplateUntilUnixMs
+	}
+	return 0
+}
+
+func (x *QualityWindows) GetGapUntilUnixMs() int64 {
+	if x != nil {
+		return x.GapUntilUnixMs
+	}
+	return 0
+}
+
+func (x *QualityWindows) GetPoolResetUntilUnixMs() int64 {
+	if x != nil {
+		return x.PoolResetUntilUnixMs
+	}
+	return 0
+}
+
+func (x *QualityWindows) GetRateChangeUntilUnixMs() int64 {
+	if x != nil {
+		return x.RateChangeUntilUnixMs
+	}
+	return 0
+}
+
+func (x *QualityWindows) GetRestartUntilUnixMs() int64 {
+	if x != nil {
+		return x.RestartUntilUnixMs
+	}
+	return 0
+}
+
+func (x *QualityWindows) GetOutOfOrderUntilUnixMs() int64 {
+	if x != nil {
+		return x.OutOfOrderUntilUnixMs
+	}
+	return 0
+}
+
+type QualityExporterState struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Key               *QualityExporterKey    `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Initialized       bool                   `protobuf:"varint,2,opt,name=initialized,proto3" json:"initialized,omitempty"`
+	ExpectedSequence  uint32                 `protobuf:"varint,3,opt,name=expected_sequence,json=expectedSequence,proto3" json:"expected_sequence,omitempty"`
+	Uptime            uint32                 `protobuf:"varint,4,opt,name=uptime,proto3" json:"uptime,omitempty"`
+	UptimeValid       bool                   `protobuf:"varint,5,opt,name=uptime_valid,json=uptimeValid,proto3" json:"uptime_valid,omitempty"`
+	LastSeenUnixMs    int64                  `protobuf:"varint,6,opt,name=last_seen_unix_ms,json=lastSeenUnixMs,proto3" json:"last_seen_unix_ms,omitempty"`
+	Epoch             uint64                 `protobuf:"varint,7,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	SamplingEpoch     uint64                 `protobuf:"varint,8,opt,name=sampling_epoch,json=samplingEpoch,proto3" json:"sampling_epoch,omitempty"`
+	SamplingRate      uint64                 `protobuf:"varint,9,opt,name=sampling_rate,json=samplingRate,proto3" json:"sampling_rate,omitempty"`
+	SamplingRateKnown bool                   `protobuf:"varint,10,opt,name=sampling_rate_known,json=samplingRateKnown,proto3" json:"sampling_rate_known,omitempty"`
+	Windows           *QualityWindows        `protobuf:"bytes,11,opt,name=windows,proto3" json:"windows,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *QualityExporterState) Reset() {
+	*x = QualityExporterState{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityExporterState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityExporterState) ProtoMessage() {}
+
+func (x *QualityExporterState) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityExporterState.ProtoReflect.Descriptor instead.
+func (*QualityExporterState) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *QualityExporterState) GetKey() *QualityExporterKey {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *QualityExporterState) GetInitialized() bool {
+	if x != nil {
+		return x.Initialized
+	}
+	return false
+}
+
+func (x *QualityExporterState) GetExpectedSequence() uint32 {
+	if x != nil {
+		return x.ExpectedSequence
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetUptime() uint32 {
+	if x != nil {
+		return x.Uptime
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetUptimeValid() bool {
+	if x != nil {
+		return x.UptimeValid
+	}
+	return false
+}
+
+func (x *QualityExporterState) GetLastSeenUnixMs() int64 {
+	if x != nil {
+		return x.LastSeenUnixMs
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetSamplingEpoch() uint64 {
+	if x != nil {
+		return x.SamplingEpoch
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetSamplingRate() uint64 {
+	if x != nil {
+		return x.SamplingRate
+	}
+	return 0
+}
+
+func (x *QualityExporterState) GetSamplingRateKnown() bool {
+	if x != nil {
+		return x.SamplingRateKnown
+	}
+	return false
+}
+
+func (x *QualityExporterState) GetWindows() *QualityWindows {
+	if x != nil {
+		return x.Windows
+	}
+	return nil
+}
+
+type QualitySourceState struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Exporter         *QualityExporterKey    `protobuf:"bytes,1,opt,name=exporter,proto3" json:"exporter,omitempty"`
+	SourceIdType     uint32                 `protobuf:"varint,2,opt,name=source_id_type,json=sourceIdType,proto3" json:"source_id_type,omitempty"`
+	SourceIdValue    uint32                 `protobuf:"varint,3,opt,name=source_id_value,json=sourceIdValue,proto3" json:"source_id_value,omitempty"`
+	Initialized      bool                   `protobuf:"varint,4,opt,name=initialized,proto3" json:"initialized,omitempty"`
+	ExpectedSequence uint32                 `protobuf:"varint,5,opt,name=expected_sequence,json=expectedSequence,proto3" json:"expected_sequence,omitempty"`
+	SamplePool       uint32                 `protobuf:"varint,6,opt,name=sample_pool,json=samplePool,proto3" json:"sample_pool,omitempty"`
+	Drops            uint32                 `protobuf:"varint,7,opt,name=drops,proto3" json:"drops,omitempty"`
+	SamplingRate     uint64                 `protobuf:"varint,8,opt,name=sampling_rate,json=samplingRate,proto3" json:"sampling_rate,omitempty"`
+	RateKnown        bool                   `protobuf:"varint,9,opt,name=rate_known,json=rateKnown,proto3" json:"rate_known,omitempty"`
+	LastSeenUnixMs   int64                  `protobuf:"varint,10,opt,name=last_seen_unix_ms,json=lastSeenUnixMs,proto3" json:"last_seen_unix_ms,omitempty"`
+	ExporterEpoch    uint64                 `protobuf:"varint,11,opt,name=exporter_epoch,json=exporterEpoch,proto3" json:"exporter_epoch,omitempty"`
+	Epoch            uint64                 `protobuf:"varint,12,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Windows          *QualityWindows        `protobuf:"bytes,13,opt,name=windows,proto3" json:"windows,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *QualitySourceState) Reset() {
+	*x = QualitySourceState{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualitySourceState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualitySourceState) ProtoMessage() {}
+
+func (x *QualitySourceState) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualitySourceState.ProtoReflect.Descriptor instead.
+func (*QualitySourceState) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *QualitySourceState) GetExporter() *QualityExporterKey {
+	if x != nil {
+		return x.Exporter
+	}
+	return nil
+}
+
+func (x *QualitySourceState) GetSourceIdType() uint32 {
+	if x != nil {
+		return x.SourceIdType
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetSourceIdValue() uint32 {
+	if x != nil {
+		return x.SourceIdValue
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetInitialized() bool {
+	if x != nil {
+		return x.Initialized
+	}
+	return false
+}
+
+func (x *QualitySourceState) GetExpectedSequence() uint32 {
+	if x != nil {
+		return x.ExpectedSequence
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetSamplePool() uint32 {
+	if x != nil {
+		return x.SamplePool
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetDrops() uint32 {
+	if x != nil {
+		return x.Drops
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetSamplingRate() uint64 {
+	if x != nil {
+		return x.SamplingRate
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetRateKnown() bool {
+	if x != nil {
+		return x.RateKnown
+	}
+	return false
+}
+
+func (x *QualitySourceState) GetLastSeenUnixMs() int64 {
+	if x != nil {
+		return x.LastSeenUnixMs
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetExporterEpoch() uint64 {
+	if x != nil {
+		return x.ExporterEpoch
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *QualitySourceState) GetWindows() *QualityWindows {
+	if x != nil {
+		return x.Windows
+	}
+	return nil
+}
+
+type QualityDecision struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DatagramId    []byte                 `protobuf:"bytes,1,opt,name=datagram_id,json=datagramId,proto3" json:"datagram_id,omitempty"`
+	ExporterEpoch uint64                 `protobuf:"varint,2,opt,name=exporter_epoch,json=exporterEpoch,proto3" json:"exporter_epoch,omitempty"`
+	RecordFlags   []uint64               `protobuf:"varint,3,rep,packed,name=record_flags,json=recordFlags,proto3" json:"record_flags,omitempty"`
+	RecordEpochs  []uint64               `protobuf:"varint,4,rep,packed,name=record_epochs,json=recordEpochs,proto3" json:"record_epochs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QualityDecision) Reset() {
+	*x = QualityDecision{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityDecision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityDecision) ProtoMessage() {}
+
+func (x *QualityDecision) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityDecision.ProtoReflect.Descriptor instead.
+func (*QualityDecision) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *QualityDecision) GetDatagramId() []byte {
+	if x != nil {
+		return x.DatagramId
+	}
+	return nil
+}
+
+func (x *QualityDecision) GetExporterEpoch() uint64 {
+	if x != nil {
+		return x.ExporterEpoch
+	}
+	return 0
+}
+
+func (x *QualityDecision) GetRecordFlags() []uint64 {
+	if x != nil {
+		return x.RecordFlags
+	}
+	return nil
+}
+
+func (x *QualityDecision) GetRecordEpochs() []uint64 {
+	if x != nil {
+		return x.RecordEpochs
+	}
+	return nil
+}
+
+type QualityJournalRecord struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	StateSchemaVersion uint32                 `protobuf:"varint,1,opt,name=state_schema_version,json=stateSchemaVersion,proto3" json:"state_schema_version,omitempty"`
+	DatagramId         []byte                 `protobuf:"bytes,2,opt,name=datagram_id,json=datagramId,proto3" json:"datagram_id,omitempty"`
+	WalSegment         uint64                 `protobuf:"varint,3,opt,name=wal_segment,json=walSegment,proto3" json:"wal_segment,omitempty"`
+	WalOffset          int64                  `protobuf:"varint,4,opt,name=wal_offset,json=walOffset,proto3" json:"wal_offset,omitempty"`
+	ExporterState      *QualityExporterState  `protobuf:"bytes,5,opt,name=exporter_state,json=exporterState,proto3" json:"exporter_state,omitempty"`
+	SourceStates       []*QualitySourceState  `protobuf:"bytes,6,rep,name=source_states,json=sourceStates,proto3" json:"source_states,omitempty"`
+	Decision           *QualityDecision       `protobuf:"bytes,7,opt,name=decision,proto3" json:"decision,omitempty"`
+	PayloadSha256      []byte                 `protobuf:"bytes,8,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	CollectorId        string                 `protobuf:"bytes,9,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *QualityJournalRecord) Reset() {
+	*x = QualityJournalRecord{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityJournalRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityJournalRecord) ProtoMessage() {}
+
+func (x *QualityJournalRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityJournalRecord.ProtoReflect.Descriptor instead.
+func (*QualityJournalRecord) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *QualityJournalRecord) GetStateSchemaVersion() uint32 {
+	if x != nil {
+		return x.StateSchemaVersion
+	}
+	return 0
+}
+
+func (x *QualityJournalRecord) GetDatagramId() []byte {
+	if x != nil {
+		return x.DatagramId
+	}
+	return nil
+}
+
+func (x *QualityJournalRecord) GetWalSegment() uint64 {
+	if x != nil {
+		return x.WalSegment
+	}
+	return 0
+}
+
+func (x *QualityJournalRecord) GetWalOffset() int64 {
+	if x != nil {
+		return x.WalOffset
+	}
+	return 0
+}
+
+func (x *QualityJournalRecord) GetExporterState() *QualityExporterState {
+	if x != nil {
+		return x.ExporterState
+	}
+	return nil
+}
+
+func (x *QualityJournalRecord) GetSourceStates() []*QualitySourceState {
+	if x != nil {
+		return x.SourceStates
+	}
+	return nil
+}
+
+func (x *QualityJournalRecord) GetDecision() *QualityDecision {
+	if x != nil {
+		return x.Decision
+	}
+	return nil
+}
+
+func (x *QualityJournalRecord) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
+func (x *QualityJournalRecord) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+type QualityStateSnapshot struct {
+	state              protoimpl.MessageState  `protogen:"open.v1"`
+	StateSchemaVersion uint32                  `protobuf:"varint,1,opt,name=state_schema_version,json=stateSchemaVersion,proto3" json:"state_schema_version,omitempty"`
+	CollectorId        string                  `protobuf:"bytes,2,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
+	CreatedAtUnixMs    int64                   `protobuf:"varint,3,opt,name=created_at_unix_ms,json=createdAtUnixMs,proto3" json:"created_at_unix_ms,omitempty"`
+	Exporters          []*QualityExporterState `protobuf:"bytes,4,rep,name=exporters,proto3" json:"exporters,omitempty"`
+	Sources            []*QualitySourceState   `protobuf:"bytes,5,rep,name=sources,proto3" json:"sources,omitempty"`
+	PendingDecisions   []*QualityDecision      `protobuf:"bytes,6,rep,name=pending_decisions,json=pendingDecisions,proto3" json:"pending_decisions,omitempty"`
+	PayloadSha256      []byte                  `protobuf:"bytes,7,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *QualityStateSnapshot) Reset() {
+	*x = QualityStateSnapshot{}
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QualityStateSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QualityStateSnapshot) ProtoMessage() {}
+
+func (x *QualityStateSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_flowcollect_flowpb_normalized_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QualityStateSnapshot.ProtoReflect.Descriptor instead.
+func (*QualityStateSnapshot) Descriptor() ([]byte, []int) {
+	return file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *QualityStateSnapshot) GetStateSchemaVersion() uint32 {
+	if x != nil {
+		return x.StateSchemaVersion
+	}
+	return 0
+}
+
+func (x *QualityStateSnapshot) GetCollectorId() string {
+	if x != nil {
+		return x.CollectorId
+	}
+	return ""
+}
+
+func (x *QualityStateSnapshot) GetCreatedAtUnixMs() int64 {
+	if x != nil {
+		return x.CreatedAtUnixMs
+	}
+	return 0
+}
+
+func (x *QualityStateSnapshot) GetExporters() []*QualityExporterState {
+	if x != nil {
+		return x.Exporters
+	}
+	return nil
+}
+
+func (x *QualityStateSnapshot) GetSources() []*QualitySourceState {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *QualityStateSnapshot) GetPendingDecisions() []*QualityDecision {
+	if x != nil {
+		return x.PendingDecisions
+	}
+	return nil
+}
+
+func (x *QualityStateSnapshot) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
 
 const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
@@ -1070,7 +1764,78 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"reasonCode\x12#\n" +
 	"\rpayload_bytes\x18\t \x01(\rR\fpayloadBytes\x12%\n" +
 	"\x0epayload_sha256\x18\n" +
-	" \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	" \x01(\fR\rpayloadSha256\"\xb1\x01\n" +
+	"\x12QualityExporterKey\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x1b\n" +
+	"\tsource_ip\x18\x02 \x01(\fR\bsourceIp\x12%\n" +
+	"\x0esequence_scope\x18\x03 \x01(\x04R\rsequenceScope\x12\x19\n" +
+	"\bagent_ip\x18\x04 \x01(\fR\aagentIp\x12 \n" +
+	"\fsub_agent_id\x18\x05 \x01(\rR\n" +
+	"subAgentId\"\xd0\x02\n" +
+	"\x0eQualityWindows\x123\n" +
+	"\x16template_until_unix_ms\x18\x01 \x01(\x03R\x13templateUntilUnixMs\x12)\n" +
+	"\x11gap_until_unix_ms\x18\x02 \x01(\x03R\x0egapUntilUnixMs\x126\n" +
+	"\x18pool_reset_until_unix_ms\x18\x03 \x01(\x03R\x14poolResetUntilUnixMs\x128\n" +
+	"\x19rate_change_until_unix_ms\x18\x04 \x01(\x03R\x15rateChangeUntilUnixMs\x121\n" +
+	"\x15restart_until_unix_ms\x18\x05 \x01(\x03R\x12restartUntilUnixMs\x129\n" +
+	"\x1aout_of_order_until_unix_ms\x18\x06 \x01(\x03R\x15outOfOrderUntilUnixMs\"\xd1\x03\n" +
+	"\x14QualityExporterState\x126\n" +
+	"\x03key\x18\x01 \x01(\v2$.watchdog.flow.v1.QualityExporterKeyR\x03key\x12 \n" +
+	"\vinitialized\x18\x02 \x01(\bR\vinitialized\x12+\n" +
+	"\x11expected_sequence\x18\x03 \x01(\rR\x10expectedSequence\x12\x16\n" +
+	"\x06uptime\x18\x04 \x01(\rR\x06uptime\x12!\n" +
+	"\fuptime_valid\x18\x05 \x01(\bR\vuptimeValid\x12)\n" +
+	"\x11last_seen_unix_ms\x18\x06 \x01(\x03R\x0elastSeenUnixMs\x12\x14\n" +
+	"\x05epoch\x18\a \x01(\x04R\x05epoch\x12%\n" +
+	"\x0esampling_epoch\x18\b \x01(\x04R\rsamplingEpoch\x12#\n" +
+	"\rsampling_rate\x18\t \x01(\x04R\fsamplingRate\x12.\n" +
+	"\x13sampling_rate_known\x18\n" +
+	" \x01(\bR\x11samplingRateKnown\x12:\n" +
+	"\awindows\x18\v \x01(\v2 .watchdog.flow.v1.QualityWindowsR\awindows\"\x92\x04\n" +
+	"\x12QualitySourceState\x12@\n" +
+	"\bexporter\x18\x01 \x01(\v2$.watchdog.flow.v1.QualityExporterKeyR\bexporter\x12$\n" +
+	"\x0esource_id_type\x18\x02 \x01(\rR\fsourceIdType\x12&\n" +
+	"\x0fsource_id_value\x18\x03 \x01(\rR\rsourceIdValue\x12 \n" +
+	"\vinitialized\x18\x04 \x01(\bR\vinitialized\x12+\n" +
+	"\x11expected_sequence\x18\x05 \x01(\rR\x10expectedSequence\x12\x1f\n" +
+	"\vsample_pool\x18\x06 \x01(\rR\n" +
+	"samplePool\x12\x14\n" +
+	"\x05drops\x18\a \x01(\rR\x05drops\x12#\n" +
+	"\rsampling_rate\x18\b \x01(\x04R\fsamplingRate\x12\x1d\n" +
+	"\n" +
+	"rate_known\x18\t \x01(\bR\trateKnown\x12)\n" +
+	"\x11last_seen_unix_ms\x18\n" +
+	" \x01(\x03R\x0elastSeenUnixMs\x12%\n" +
+	"\x0eexporter_epoch\x18\v \x01(\x04R\rexporterEpoch\x12\x14\n" +
+	"\x05epoch\x18\f \x01(\x04R\x05epoch\x12:\n" +
+	"\awindows\x18\r \x01(\v2 .watchdog.flow.v1.QualityWindowsR\awindows\"\xa1\x01\n" +
+	"\x0fQualityDecision\x12\x1f\n" +
+	"\vdatagram_id\x18\x01 \x01(\fR\n" +
+	"datagramId\x12%\n" +
+	"\x0eexporter_epoch\x18\x02 \x01(\x04R\rexporterEpoch\x12!\n" +
+	"\frecord_flags\x18\x03 \x03(\x04R\vrecordFlags\x12#\n" +
+	"\rrecord_epochs\x18\x04 \x03(\x04R\frecordEpochs\"\xcc\x03\n" +
+	"\x14QualityJournalRecord\x120\n" +
+	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12\x1f\n" +
+	"\vdatagram_id\x18\x02 \x01(\fR\n" +
+	"datagramId\x12\x1f\n" +
+	"\vwal_segment\x18\x03 \x01(\x04R\n" +
+	"walSegment\x12\x1d\n" +
+	"\n" +
+	"wal_offset\x18\x04 \x01(\x03R\twalOffset\x12M\n" +
+	"\x0eexporter_state\x18\x05 \x01(\v2&.watchdog.flow.v1.QualityExporterStateR\rexporterState\x12I\n" +
+	"\rsource_states\x18\x06 \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\fsourceStates\x12=\n" +
+	"\bdecision\x18\a \x01(\v2!.watchdog.flow.v1.QualityDecisionR\bdecision\x12%\n" +
+	"\x0epayload_sha256\x18\b \x01(\fR\rpayloadSha256\x12!\n" +
+	"\fcollector_id\x18\t \x01(\tR\vcollectorId\"\x95\x03\n" +
+	"\x14QualityStateSnapshot\x120\n" +
+	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12!\n" +
+	"\fcollector_id\x18\x02 \x01(\tR\vcollectorId\x12+\n" +
+	"\x12created_at_unix_ms\x18\x03 \x01(\x03R\x0fcreatedAtUnixMs\x12D\n" +
+	"\texporters\x18\x04 \x03(\v2&.watchdog.flow.v1.QualityExporterStateR\texporters\x12>\n" +
+	"\asources\x18\x05 \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\asources\x12N\n" +
+	"\x11pending_decisions\x18\x06 \x03(\v2!.watchdog.flow.v1.QualityDecisionR\x10pendingDecisions\x12%\n" +
+	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once
@@ -1084,21 +1849,38 @@ func file_internal_flowcollect_flowpb_normalized_proto_rawDescGZIP() []byte {
 	return file_internal_flowcollect_flowpb_normalized_proto_rawDescData
 }
 
-var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_internal_flowcollect_flowpb_normalized_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_internal_flowcollect_flowpb_normalized_proto_goTypes = []any{
 	(*NormalizedRecordBatch)(nil), // 0: watchdog.flow.v1.NormalizedRecordBatch
 	(*NormalizedRecord)(nil),      // 1: watchdog.flow.v1.NormalizedRecord
 	(*CollectState)(nil),          // 2: watchdog.flow.v1.CollectState
 	(*DecodeFailure)(nil),         // 3: watchdog.flow.v1.DecodeFailure
 	(*QuarantineEvent)(nil),       // 4: watchdog.flow.v1.QuarantineEvent
+	(*QualityExporterKey)(nil),    // 5: watchdog.flow.v1.QualityExporterKey
+	(*QualityWindows)(nil),        // 6: watchdog.flow.v1.QualityWindows
+	(*QualityExporterState)(nil),  // 7: watchdog.flow.v1.QualityExporterState
+	(*QualitySourceState)(nil),    // 8: watchdog.flow.v1.QualitySourceState
+	(*QualityDecision)(nil),       // 9: watchdog.flow.v1.QualityDecision
+	(*QualityJournalRecord)(nil),  // 10: watchdog.flow.v1.QualityJournalRecord
+	(*QualityStateSnapshot)(nil),  // 11: watchdog.flow.v1.QualityStateSnapshot
 }
 var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
-	1, // 0: watchdog.flow.v1.NormalizedRecordBatch.records:type_name -> watchdog.flow.v1.NormalizedRecord
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1,  // 0: watchdog.flow.v1.NormalizedRecordBatch.records:type_name -> watchdog.flow.v1.NormalizedRecord
+	5,  // 1: watchdog.flow.v1.QualityExporterState.key:type_name -> watchdog.flow.v1.QualityExporterKey
+	6,  // 2: watchdog.flow.v1.QualityExporterState.windows:type_name -> watchdog.flow.v1.QualityWindows
+	5,  // 3: watchdog.flow.v1.QualitySourceState.exporter:type_name -> watchdog.flow.v1.QualityExporterKey
+	6,  // 4: watchdog.flow.v1.QualitySourceState.windows:type_name -> watchdog.flow.v1.QualityWindows
+	7,  // 5: watchdog.flow.v1.QualityJournalRecord.exporter_state:type_name -> watchdog.flow.v1.QualityExporterState
+	8,  // 6: watchdog.flow.v1.QualityJournalRecord.source_states:type_name -> watchdog.flow.v1.QualitySourceState
+	9,  // 7: watchdog.flow.v1.QualityJournalRecord.decision:type_name -> watchdog.flow.v1.QualityDecision
+	7,  // 8: watchdog.flow.v1.QualityStateSnapshot.exporters:type_name -> watchdog.flow.v1.QualityExporterState
+	8,  // 9: watchdog.flow.v1.QualityStateSnapshot.sources:type_name -> watchdog.flow.v1.QualitySourceState
+	9,  // 10: watchdog.flow.v1.QualityStateSnapshot.pending_decisions:type_name -> watchdog.flow.v1.QualityDecision
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_internal_flowcollect_flowpb_normalized_proto_init() }
@@ -1112,7 +1894,7 @@ func file_internal_flowcollect_flowpb_normalized_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_flowcollect_flowpb_normalized_proto_rawDesc), len(file_internal_flowcollect_flowpb_normalized_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -122,3 +122,81 @@ message QuarantineEvent {
   uint32 payload_bytes = 9;
   bytes payload_sha256 = 10;
 }
+
+// Quality state is local durability metadata. It is protobuf-framed in an
+// append journal and periodically compacted into QualityStateSnapshot.
+message QualityExporterKey {
+  uint32 protocol = 1;
+  bytes source_ip = 2;
+  uint64 sequence_scope = 3;
+  bytes agent_ip = 4;
+  uint32 sub_agent_id = 5;
+}
+
+message QualityWindows {
+  int64 template_until_unix_ms = 1;
+  int64 gap_until_unix_ms = 2;
+  int64 pool_reset_until_unix_ms = 3;
+  int64 rate_change_until_unix_ms = 4;
+  int64 restart_until_unix_ms = 5;
+  int64 out_of_order_until_unix_ms = 6;
+}
+
+message QualityExporterState {
+  QualityExporterKey key = 1;
+  bool initialized = 2;
+  uint32 expected_sequence = 3;
+  uint32 uptime = 4;
+  bool uptime_valid = 5;
+  int64 last_seen_unix_ms = 6;
+  uint64 epoch = 7;
+  uint64 sampling_epoch = 8;
+  uint64 sampling_rate = 9;
+  bool sampling_rate_known = 10;
+  QualityWindows windows = 11;
+}
+
+message QualitySourceState {
+  QualityExporterKey exporter = 1;
+  uint32 source_id_type = 2;
+  uint32 source_id_value = 3;
+  bool initialized = 4;
+  uint32 expected_sequence = 5;
+  uint32 sample_pool = 6;
+  uint32 drops = 7;
+  uint64 sampling_rate = 8;
+  bool rate_known = 9;
+  int64 last_seen_unix_ms = 10;
+  uint64 exporter_epoch = 11;
+  uint64 epoch = 12;
+  QualityWindows windows = 13;
+}
+
+message QualityDecision {
+  bytes datagram_id = 1;
+  uint64 exporter_epoch = 2;
+  repeated uint64 record_flags = 3;
+  repeated uint64 record_epochs = 4;
+}
+
+message QualityJournalRecord {
+  uint32 state_schema_version = 1;
+  bytes datagram_id = 2;
+  uint64 wal_segment = 3;
+  int64 wal_offset = 4;
+  QualityExporterState exporter_state = 5;
+  repeated QualitySourceState source_states = 6;
+  QualityDecision decision = 7;
+  bytes payload_sha256 = 8;
+  string collector_id = 9;
+}
+
+message QualityStateSnapshot {
+  uint32 state_schema_version = 1;
+  string collector_id = 2;
+  int64 created_at_unix_ms = 3;
+  repeated QualityExporterState exporters = 4;
+  repeated QualitySourceState sources = 5;
+  repeated QualityDecision pending_decisions = 6;
+  bytes payload_sha256 = 7;
+}

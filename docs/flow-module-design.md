@@ -570,7 +570,13 @@ message QuarantineEvent {
 
 sequence unit 按协议冻结：sFlow datagram 和每 source sample 均 `+1`；NetFlow v5 按本报文 flow-record count；NetFlow v9 按 export packet `+1`；IPFIX 按 Data Record count（包含 Options Data Record）。NetFlow v5 用 engine type/id、v9/IPFIX 用 observation domain、sFlow 用 agent/sub-agent/source 隔离。只有带 uptime 的协议且 uptime 明确回退、同时排除 uint32 自然回绕时才建立 restart epoch；IPFIX sequence 回退只标乱序，不猜测重启。gap/rate-change/pool-reset/restart/out-of-order 在可配置窗口内投射到后续 record。
 
-进程内 tracker 在 downstream 失败后按 datagram ID 缓存首次判定直到 Kafka/WAL terminal ack，正常成功路径不分配 retry cache；publish/normalize retry 复用该判定，因此不会把自身重试计作乱序。tracker 使用 `quality.state_ttl/max_exporters/max_data_sources` 硬边界；容量耗尽不丢 flow，而置 bit10 并增加低基数计数。当前 E2A 不把 sequence state 逐 datagram 同步写 compacted topic，以免把低频 collect-state 变成主链同步写放大；重启从 warming baseline 开始。E2B 必须设计 coalesced durable checkpoint、水位与 WAL replay ordering，完成跨进程/跨 owner 故障测试后才能宣称 epoch 连续。
+进程内 tracker 在 downstream 失败后按 datagram ID 缓存首次判定直到 Kafka/WAL terminal ack，正常成功路径不分配 retry cache；publish/normalize retry 复用该判定，因此不会把自身重试计作乱序。tracker 使用 `quality.state_ttl/max_exporters/max_data_sources` 硬边界；容量耗尽不丢 flow，而置 bit10 并增加低基数计数。
+
+E2B1 的单 owner 持久化顺序固定为 `raw WAL durable → Observe → quality journal append → normalized/state Kafka publish → quality journal durability barrier → terminal WAL ACK`。quality journal 每个 **datagram** 追加一次 exporter/source 的绝对 post-state 和该 datagram 的 quality decision，不按 flow record 写、不写 Kafka；同一 datagram ID 的追加幂等，重试只等待原 durability target。journal frame 为 `magic + uint32 length + CRC32 + protobuf`，protobuf 再含 SHA-256、原 WAL segment/offset 和 schema version。Kafka 等待时间与 journal group-fsync 并行隐藏本地落盘延迟；journal 尚未 durable 时允许发送稳定 ID 的 Kafka 消息，但绝不允许写入 terminal WAL ACK，崩溃最多造成可去重的重放而不会丢状态。append 失败、durability barrier 失败或达到硬上限时，raw WAL 仍未确认，不能跳过质量状态继续确认数据。
+
+周期 checkpoint 通过进程内 RW barrier 取得一致切面：先同步 WAL/ACK 和 quality journal，再把 exporter/source 状态及仅对应“尚未 durable ACK”的 retry decision 原子写入 `quality.snapshot`（临时文件 fsync、rename、目录 fsync），最后才 truncate/fsync journal。启动先扫描 raw WAL 的 durable recovery view，并严格按 snapshot→journal 恢复；只有“WAL 中仍存在且没有 durable terminal ACK”的 ID 才恢复 retry decision，查不到的 ID 不能一律当未确认，因为其 segment 可能已成功回收；已确认记录的 sequence state 仍保留。仅不完整的尾 frame 可截断，完整 frame 的 magic/CRC/SHA/collector/schema/容量任一不符均 fail closed。这样 kill/restart 后本机 epoch 连续，同时不产生 per-datagram Kafka 同步写放大。`journal_fsync_interval` 是并行 worker 的本地 group commit 窗口，`checkpoint_interval` 控制压缩频率，`journal_max_bytes` 是保护磁盘和恢复时间的硬界；三者必须纳入目标 datagrams/s、NVMe fsync p95 和最长 Kafka 故障窗口的容量验收。
+
+E2B1 只解决同一 collector identity 和本地 state volume 的进程重启。新 owner/跨节点接管仍须 E2B2：把 coalesced quality snapshot 关联到固定 exporter shard ownership 与 Kafka compacted checkpoint，连同 FLOW-02D3 的 plan history/attempt metadata 一起恢复；在 owner 切换、旧 WAL 和 kill -9 矩阵完成前，不宣称跨节点 epoch 连续。
 
 单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。存在 collect-state 时 child 0 固定留给状态消息，data child 从 1 开始；否则 data child 从 0 开始。Kafka idempotent producer 获得 `acks=all` 后，追加对应的 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。进程内失败重发递增 `replay_generation` 并保持 batch/record ID 和原 partition map；跨进程/跨节点连续 generation 仍须 FLOW-02D3 的持久化 attempt metadata/plan history 才能保证，消费端去重不能以 generation 代替稳定 ID。dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
 
@@ -2060,6 +2066,9 @@ flow_collect:
   quality:
     state_ttl: 1h
     anomaly_window: 1m
+    journal_fsync_interval: 10ms
+    checkpoint_interval: 5m
+    journal_max_bytes: 536870912
     max_exporters: 65536
     max_data_sources: 262144
   exporter_refresh_interval: 30s

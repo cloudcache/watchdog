@@ -76,6 +76,9 @@ flow_collect:
   quality:
     state_ttl: 1h
     anomaly_window: 1m
+    journal_fsync_interval: 10ms
+    checkpoint_interval: 5m
+    journal_max_bytes: 536870912
     max_exporters: 65536
     max_data_sources: 262144
 
