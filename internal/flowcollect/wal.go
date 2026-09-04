@@ -68,6 +68,8 @@ type WALState struct {
 	UsageRatio    float64
 	SoftWatermark bool
 	HardWatermark bool
+	Writable      bool
+	OldestAge     time.Duration
 }
 
 type ReplayCursor struct {
@@ -76,27 +78,30 @@ type ReplayCursor struct {
 }
 
 type WAL struct {
-	mu          sync.Mutex
-	scanMu      sync.Mutex
-	dir         string
-	collectorID string
-	config      WALConfig
-	bootID      [16]byte
-	segmentSeq  uint64
-	segment     *os.File
-	segmentSize int64
-	usage       int64
-	ackFile     *os.File
-	lockFile    *os.File
-	acks        map[DatagramID]ackState
-	durableAcks map[DatagramID]ackState
-	closed      bool
-	stopSync    chan struct{}
-	doneSync    chan struct{}
-	durableSeq  uint64
-	durableEnd  int64
-	syncNotify  chan struct{}
-	poisoned    error
+	mu           sync.Mutex
+	scanMu       sync.Mutex
+	dir          string
+	collectorID  string
+	config       WALConfig
+	bootID       [16]byte
+	segmentSeq   uint64
+	segment      *os.File
+	segmentSize  int64
+	usage        int64
+	ackFile      *os.File
+	lockFile     *os.File
+	acks         map[DatagramID]ackState
+	durableAcks  map[DatagramID]ackState
+	closed       bool
+	stopSync     chan struct{}
+	doneSync     chan struct{}
+	durableSeq   uint64
+	durableEnd   int64
+	syncNotify   chan struct{}
+	poisoned     error
+	metrics      *Metrics
+	hardStopped  bool
+	segmentFirst map[uint64]time.Time
 }
 
 type ackState struct {
@@ -117,7 +122,7 @@ func OpenWAL(dir, collectorID string, config WALConfig) (*WAL, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create WAL dir: %w", err)
 	}
-	w := &WAL{dir: dir, collectorID: collectorID, config: config, acks: make(map[DatagramID]ackState), durableAcks: make(map[DatagramID]ackState), stopSync: make(chan struct{}), doneSync: make(chan struct{}), syncNotify: make(chan struct{})}
+	w := &WAL{dir: dir, collectorID: collectorID, config: config, acks: make(map[DatagramID]ackState), durableAcks: make(map[DatagramID]ackState), segmentFirst: make(map[uint64]time.Time), stopSync: make(chan struct{}), doneSync: make(chan struct{}), syncNotify: make(chan struct{})}
 	lockFile, err := os.OpenFile(filepath.Join(dir, "wal.lock"), os.O_CREATE|os.O_RDWR, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("open WAL lock: %w", err)
@@ -141,7 +146,7 @@ func OpenWAL(dir, collectorID string, config WALConfig) (*WAL, error) {
 		return nil, err
 	}
 	for _, segment := range segments {
-		seq, validSize, err := recoverSegment(segment)
+		seq, validSize, firstRecordAt, err := recoverSegment(segment)
 		if err != nil {
 			w.closeFiles()
 			return nil, err
@@ -150,6 +155,9 @@ func OpenWAL(dir, collectorID string, config WALConfig) (*WAL, error) {
 			w.segmentSeq = seq
 		}
 		w.usage += validSize
+		if !firstRecordAt.IsZero() {
+			w.segmentFirst[seq] = firstRecordAt
+		}
 	}
 	w.segmentSeq++
 	if err := w.createSegment(); err != nil {
@@ -184,6 +192,7 @@ func (w *WAL) Append(input WALInput) (WALRecord, error) {
 		}
 	}
 	if w.usage+projected >= int64(float64(w.config.MaxBytes)*w.config.HardWatermark) {
+		w.hardStopped = true
 		return WALRecord{}, ErrWALHardLimit
 	}
 	offset := w.segmentSize
@@ -206,6 +215,9 @@ func (w *WAL) Append(input WALInput) (WALRecord, error) {
 	written := int64(len(prefix) + len(body))
 	w.segmentSize += written
 	w.usage += written
+	if _, exists := w.segmentFirst[w.segmentSeq]; !exists {
+		w.segmentFirst[w.segmentSeq] = input.ReceivedAt
+	}
 	input.Payload = bytes.Clone(input.Payload)
 	return WALRecord{DatagramID: id, Segment: w.segmentSeq, Offset: offset, EndOffset: w.segmentSize, WALInput: input}, nil
 }
@@ -476,6 +488,7 @@ func (w *WAL) Reclaim() (int, error) {
 			return removed, err
 		}
 		w.usage -= info.Size()
+		delete(w.segmentFirst, seq)
 		for _, id := range segmentIDs {
 			delete(w.acks, id)
 			delete(w.durableAcks, id)
@@ -486,6 +499,9 @@ func (w *WAL) Reclaim() (int, error) {
 		if err := w.rewriteAcknowledgementsLocked(); err != nil {
 			return removed, err
 		}
+		if float64(w.usage)/float64(w.config.MaxBytes) < w.config.SoftWatermark {
+			w.hardStopped = false
+		}
 	}
 	return removed, nil
 }
@@ -494,7 +510,23 @@ func (w *WAL) State() WALState {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	ratio := float64(w.usage) / float64(w.config.MaxBytes)
-	return WALState{Bytes: w.usage, MaxBytes: w.config.MaxBytes, UsageRatio: ratio, SoftWatermark: ratio >= w.config.SoftWatermark, HardWatermark: ratio >= w.config.HardWatermark}
+	oldest := time.Time{}
+	for _, firstRecordAt := range w.segmentFirst {
+		if oldest.IsZero() || firstRecordAt.Before(oldest) {
+			oldest = firstRecordAt
+		}
+	}
+	oldestAge := time.Duration(0)
+	if !oldest.IsZero() {
+		oldestAge = max(time.Since(oldest), 0)
+	}
+	return WALState{Bytes: w.usage, MaxBytes: w.config.MaxBytes, UsageRatio: ratio, SoftWatermark: ratio >= w.config.SoftWatermark, HardWatermark: ratio >= w.config.HardWatermark || w.hardStopped, Writable: !w.closed && w.poisoned == nil, OldestAge: oldestAge}
+}
+
+func (w *WAL) SetMetrics(metrics *Metrics) {
+	w.mu.Lock()
+	w.metrics = metrics
+	w.mu.Unlock()
 }
 
 func (w *WAL) Close() error {
@@ -527,8 +559,12 @@ func (w *WAL) syncLoop() {
 		case <-ticker.C:
 			w.mu.Lock()
 			if !w.closed {
+				startedAt := time.Now()
 				segmentErr := w.segment.Sync()
 				ackErr := w.ackFile.Sync()
+				if w.metrics != nil {
+					w.metrics.observeWALFsync(time.Since(startedAt))
+				}
 				if err := errors.Join(segmentErr, ackErr); err == nil {
 					w.markDurableLocked()
 				} else {
@@ -757,17 +793,18 @@ func (w *WAL) closeFiles() {
 	}
 }
 
-func recoverSegment(path string) (uint64, int64, error) {
+func recoverSegment(path string) (uint64, int64, time.Time, error) {
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, time.Time{}, err
 	}
 	defer file.Close()
 	seq, err := readSegmentHeader(file)
 	if err != nil {
-		return 0, 0, fmt.Errorf("recover %s: %w", path, err)
+		return 0, 0, time.Time{}, fmt.Errorf("recover %s: %w", path, err)
 	}
 	valid := int64(walHeaderSize)
+	firstRecordAt := time.Time{}
 	reader := bufio.NewReader(file)
 	for {
 		prefix := make([]byte, walRecordPrefix)
@@ -789,21 +826,25 @@ func recoverSegment(path string) (uint64, int64, error) {
 		if binary.BigEndian.Uint32(prefix[4:8]) != crc32.ChecksumIEEE(body) {
 			break
 		}
-		if _, err := unmarshalWALBody(body); err != nil {
+		record, err := unmarshalWALBody(body)
+		if err != nil {
 			break
+		}
+		if firstRecordAt.IsZero() {
+			firstRecordAt = record.ReceivedAt
 		}
 		valid += int64(walRecordPrefix) + int64(length)
 	}
 	info, err := file.Stat()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, time.Time{}, err
 	}
 	if info.Size() != valid {
 		if err := file.Truncate(valid); err != nil {
-			return 0, 0, err
+			return 0, 0, time.Time{}, err
 		}
 	}
-	return seq, valid, nil
+	return seq, valid, firstRecordAt, nil
 }
 
 func scanSegment(path string, fn func(WALRecord) error) error {

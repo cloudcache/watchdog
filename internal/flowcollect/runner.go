@@ -11,6 +11,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -28,12 +29,14 @@ type Runner struct {
 	Metrics      *Metrics
 	Quality      *QualityTracker
 	QualityState *QualityStateStore
+	Runtime      *RuntimeState
 
 	inflight        sync.Map
 	attempts        sync.Map
 	retryNeeded     atomic.Bool
 	metricsOnce     sync.Once
 	qualityOnce     sync.Once
+	runtimeOnce     sync.Once
 	qualityBarrier  sync.RWMutex
 	reportMu        sync.Mutex
 	lastErrorReport time.Time
@@ -46,7 +49,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.JournalFsync <= 0 || r.Config.Quality.CheckpointEvery <= 0 || r.Config.Quality.JournalMaxBytes <= qualityFrameHeaderSize || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
 		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
-	r.metrics()
+	metrics := r.metrics()
+	r.WAL.SetMetrics(metrics)
+	metrics.ReceiveQueueDepth.Store(0)
+	metrics.DecodeQueueDepth.Store(0)
+	metrics.QuarantineQueueDepth.Store(0)
+	runtime := r.runtimeState()
+	runtime.start(time.Now())
+	defer runtime.stop()
 	quality := r.quality()
 	if r.QualityState.tracker != quality || r.QualityState.wal != r.WAL {
 		return errors.New("flow runner quality-state store does not match its tracker or WAL")
@@ -55,9 +65,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer cancel()
 	ingress := make(chan Datagram, r.Config.DecodeQueueDatagrams)
 	quarantineQueue := make(chan *flowpb.QuarantineEvent, r.Config.Diagnostics.QuarantineQueueEvents)
+	metrics.ReceiveQueueCapacity.Store(int64(cap(ingress)))
+	metrics.QuarantineQueueCapacity.Store(int64(cap(quarantineQueue)))
 	quarantineRate := newQuarantineLimiter(r.Config.Diagnostics.QuarantineMaxEventsPerSecond, r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond)
 	decodeQueues := make([]chan WALRecord, r.Config.DecodeWorkers)
 	queueCapacity := (r.Config.DecodeQueueDatagrams + r.Config.DecodeWorkers - 1) / r.Config.DecodeWorkers
+	metrics.DecodeQueueCapacity.Store(int64(queueCapacity * len(decodeQueues)))
 	fatal := make(chan error, 1)
 
 	var workerWG sync.WaitGroup
@@ -82,8 +95,33 @@ func (r *Runner) Run(ctx context.Context) error {
 		for _, endpoint := range []struct {
 			protocol Protocol
 			address  string
-		}{{ProtocolSFlow5, r.Config.SFlowListen}, {0, r.Config.NetFlowListen}} {
-			receiver := &Receiver{Protocol: endpoint.protocol, ListenAddr: endpoint.address, ReceiveBufferBytes: r.Config.ReceiveBufferBytes, MaxDatagramBytes: r.Config.MaxDatagramBytes, Queue: ingress, ReusePort: r.Config.SocketCount > 1, OnQueueFull: func(Protocol) { r.metrics().ReceiveQueueDrops.Add(1) }, OnInvalid: func() { r.metrics().InvalidDatagrams.Add(1) }}
+			listener string
+		}{{ProtocolSFlow5, r.Config.SFlowListen, "sflow"}, {0, r.Config.NetFlowListen, "netflow"}} {
+			receiver := &Receiver{
+				Protocol: endpoint.protocol, ListenAddr: endpoint.address, ReceiveBufferBytes: r.Config.ReceiveBufferBytes,
+				MaxDatagramBytes: r.Config.MaxDatagramBytes, Queue: ingress, ReusePort: r.Config.SocketCount > 1, Listener: endpoint.listener,
+				OnReceived: func(protocol Protocol) { metrics.recordReceived(protocol) },
+				OnQueueFull: func(Protocol) {
+					metrics.ReceiveQueueDrops.Add(1)
+					if endpoint.listener == "sflow" {
+						metrics.UDPQueueDropsSFlow.Add(1)
+					} else {
+						metrics.UDPQueueDropsNetFlow.Add(1)
+					}
+				},
+				OnQueueDepth: func(depth int) { metrics.ReceiveQueueDepth.Store(int64(depth)) },
+				OnInvalid: func(protocol Protocol) {
+					metrics.InvalidDatagrams.Add(1)
+					metrics.recordDecodeError(protocol, "invalid_datagram")
+				},
+				OnKernelDrops: func(listener string, drops uint64) {
+					if listener == "sflow" {
+						metrics.UDPKernelDropsSFlow.Add(drops)
+					} else {
+						metrics.UDPKernelDropsNetFlow.Add(drops)
+					}
+				},
+			}
 			receiverWG.Add(1)
 			go func() {
 				defer receiverWG.Done()
@@ -112,11 +150,12 @@ func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, quaran
 		case <-ctx.Done():
 			return
 		case datagram := <-ingress:
-			r.metrics().ReceivedDatagrams.Add(1)
+			r.metrics().ReceiveQueueDepth.Store(int64(len(ingress)))
 			protocol, domain, err := InspectDatagram(datagram.Payload)
 			if err != nil {
 				datagram.Release()
 				r.metrics().InvalidDatagrams.Add(1)
+				r.metrics().recordDecodeError(datagram.Protocol, "invalid_datagram")
 				continue
 			}
 			binding, admitted := r.Registry.Admit(protocol, datagram.Source.Addr(), domain)
@@ -125,6 +164,7 @@ func (r *Runner) ingestLoop(ctx context.Context, ingress <-chan Datagram, quaran
 					event := BuildQuarantineEvent(datagram, r.Registry.Plan().CollectorID, protocol, domain)
 					select {
 					case quarantineQueue <- event:
+						r.metrics().QuarantineQueueDepth.Store(int64(len(quarantineQueue)))
 					default:
 						r.metrics().QuarantineQueueDrops.Add(1)
 					}
@@ -155,6 +195,7 @@ func (r *Runner) decodeLoop(ctx context.Context, records <-chan WALRecord) {
 		case <-ctx.Done():
 			return
 		case record := <-records:
+			r.metrics().DecodeQueueDepth.Add(-1)
 			for ctx.Err() == nil {
 				generation := r.nextReplayGeneration(record.DatagramID)
 				if generation > 0 {
@@ -213,14 +254,17 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		}
 		if errors.Is(err, ErrTemplatePending) {
 			r.metrics().TemplatePending.Add(1)
+			r.metrics().recordDecodeError(record.Protocol, "template_pending")
 		} else {
 			r.metrics().DecodeFailures.Add(1)
+			r.metrics().recordDecodeError(record.Protocol, "decode_rejected")
 		}
 		if !errors.Is(err, ErrTemplatePending) {
 			return permanentProcessingFailure(decodeRejectedCode, err)
 		}
 		return err
 	}
+	r.metrics().recordDecodedRecords(record.Protocol, len(decoded.Records))
 	decoded, err = r.applyQuality(record, decoded)
 	if err != nil {
 		return err
@@ -239,6 +283,11 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 	batches, err := BuildNormalizedBatches(record, decoded, binding, plan.CollectorID, plan, r.Config.NormalizedBatch, replayGeneration)
 	if err != nil {
 		r.metrics().NormalizeFailures.Add(1)
+		r.metrics().recordDecodeError(record.Protocol, "normalize_rejected")
+		r.metrics().recordNormalized(record.Protocol, len(decoded.Records), err)
+		if errors.Is(err, ErrSamplingRateMissing) {
+			r.metrics().recordMissingSamplingRate(record.Protocol)
+		}
 		if decoded.CollectStateChanged {
 			if stateErr := r.checkpointCollectState(ctx, record, decoded, binding, plan, false, 0); stateErr != nil {
 				return stateErr
@@ -246,6 +295,7 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		}
 		return permanentProcessingFailure(normalizeRejectedCode, err)
 	}
+	r.metrics().recordNormalized(record.Protocol, len(decoded.Records), nil)
 	if len(batches) == 0 && !decoded.CollectStateChanged {
 		if err := r.waitQualityDurable(ctx, record.DatagramID); err != nil {
 			return err
@@ -275,7 +325,12 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		if r.WAL.ChildAcknowledged(record.DatagramID, childIndex, childCount) {
 			continue
 		}
-		if err := r.Publisher.Publish(ctx, batch); err != nil {
+		startedAt := time.Now()
+		r.metrics().NormalizedBatchRecords.Store(int64(len(batch.Records)))
+		r.metrics().NormalizedBatchBytes.Store(int64(proto.Size(batch)))
+		err = r.Publisher.Publish(ctx, batch)
+		r.observePublish(kafkaTopicNormalized, err, time.Since(startedAt))
+		if err != nil {
 			r.metrics().PublishFailures.Add(1)
 			return err
 		}
@@ -306,9 +361,11 @@ func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram) (Decode
 		err = r.QualityState.Append(journal)
 	}
 	if err != nil {
+		r.runtimeState().observeQualityJournal(err, time.Now())
 		tracker.Remember(record.DatagramID, decoded)
 		return decoded, fmt.Errorf("persist quality state: %w", err)
 	}
+	r.runtimeState().observeQualityJournal(nil, time.Now())
 	return decoded, nil
 }
 
@@ -317,14 +374,19 @@ func (r *Runner) waitQualityDurable(ctx context.Context, id DatagramID) error {
 		return nil
 	}
 	if err := r.QualityState.WaitDatagram(ctx, id); err != nil {
+		r.runtimeState().observeQualityJournal(err, time.Now())
 		return fmt.Errorf("wait for durable quality state: %w", err)
 	}
+	r.runtimeState().observeQualityJournal(nil, time.Now())
 	return nil
 }
 
 func (r *Runner) deadLetter(ctx context.Context, record WALRecord, code string, cause error, attempts uint32) error {
 	failure := BuildDecodeFailure(record, r.Registry.Plan().CollectorID, code, cause, attempts, r.Config.Diagnostics.DLQPayloadMaxBytes)
-	if err := r.Publisher.PublishDecodeFailure(ctx, failure); err != nil {
+	startedAt := time.Now()
+	err := r.Publisher.PublishDecodeFailure(ctx, failure)
+	r.observePublish(kafkaTopicDecodeDLQ, err, time.Since(startedAt))
+	if err != nil {
 		r.metrics().DLQPublishFailures.Add(1)
 		return err
 	}
@@ -348,7 +410,11 @@ func (r *Runner) quarantineLoop(ctx context.Context, events <-chan *flowpb.Quara
 		case <-ctx.Done():
 			return
 		case event := <-events:
-			if err := r.Publisher.PublishQuarantine(ctx, event); err != nil {
+			r.metrics().QuarantineQueueDepth.Store(int64(len(events)))
+			startedAt := time.Now()
+			err := r.Publisher.PublishQuarantine(ctx, event)
+			r.observePublish(kafkaTopicQuarantine, err, time.Since(startedAt))
+			if err != nil {
 				r.metrics().QuarantinePublishFailures.Add(1)
 				r.report(err)
 				continue
@@ -367,11 +433,16 @@ func (r *Runner) checkpointCollectState(ctx context.Context, record WALRecord, d
 		return nil
 	}
 	if err := r.State.Persist(state); err != nil {
+		r.runtimeState().observeCollect(err, time.Now())
 		r.metrics().CollectStateFailures.Add(1)
 		return err
 	}
+	r.runtimeState().observeCollect(nil, time.Now())
 	r.metrics().CollectStateCheckpoints.Add(1)
-	if err := r.Publisher.PublishCollectState(ctx, state); err != nil {
+	startedAt := time.Now()
+	err = r.Publisher.PublishCollectState(ctx, state)
+	r.observePublish(kafkaTopicCollectState, err, time.Since(startedAt))
+	if err != nil {
 		r.metrics().CollectStateFailures.Add(1)
 		return err
 	}
@@ -402,6 +473,20 @@ func (r *Runner) quality() *QualityTracker {
 		}
 	})
 	return r.Quality
+}
+
+func (r *Runner) runtimeState() *RuntimeState {
+	r.runtimeOnce.Do(func() {
+		if r.Runtime == nil {
+			r.Runtime = NewRuntimeState()
+		}
+	})
+	return r.Runtime
+}
+
+func (r *Runner) observePublish(topic kafkaTopic, err error, duration time.Duration) {
+	r.metrics().observeKafka(topic, err, duration)
+	r.runtimeState().observeKafka(topic, err, time.Now())
 }
 
 func (r *Runner) replayLoop(ctx context.Context, decodeQueues []chan WALRecord) {
@@ -456,7 +541,10 @@ func (r *Runner) qualityCheckpointLoop(ctx context.Context) {
 			r.qualityBarrier.Unlock()
 			if err != nil {
 				r.metrics().QualityCheckpointFailures.Add(1)
+				r.runtimeState().observeQualityCheckpoint(err, now)
 				r.report(fmt.Errorf("compact quality state: %w", err))
+			} else {
+				r.runtimeState().observeQualityCheckpoint(nil, now)
 			}
 		}
 	}
@@ -467,10 +555,12 @@ func (r *Runner) submit(record WALRecord, queues []chan WALRecord) bool {
 		return true
 	}
 	queue := queues[decodeWorkerIndex(record, len(queues))]
+	r.metrics().DecodeQueueDepth.Add(1)
 	select {
 	case queue <- record:
 		return true
 	default:
+		r.metrics().DecodeQueueDepth.Add(-1)
 		r.inflight.Delete(record.DatagramID)
 		return false
 	}

@@ -77,6 +77,12 @@ flow_collect:
     journal_max_bytes: 67108864
     max_exporters: 1024
     max_data_sources: 8192
+  observability:
+    listen: "127.0.0.1:19464"
+    read_header_timeout: 2s
+    write_timeout: 10s
+    idle_timeout: 30s
+    shutdown_timeout: 5s
 
 aggregate_graph:
   rollup_interval: 5m

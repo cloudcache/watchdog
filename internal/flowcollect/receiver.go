@@ -34,9 +34,13 @@ type Receiver struct {
 	ReceiveBufferBytes int
 	MaxDatagramBytes   int
 	Queue              chan<- Datagram
+	OnReceived         func(Protocol)
 	OnQueueFull        func(Protocol)
-	OnInvalid          func()
+	OnQueueDepth       func(int)
+	OnInvalid          func(Protocol)
+	OnKernelDrops      func(string, uint64)
 	ReusePort          bool
+	Listener           string
 	pool               sync.Pool
 }
 
@@ -55,9 +59,11 @@ func (r *Receiver) Run(ctx context.Context) error {
 		}
 	}
 	go func() { <-ctx.Done(); _ = conn.Close() }()
+	oob := make([]byte, 64)
+	var lastOverflow uint32
 	for {
 		buf := r.getBuffer()
-		n, source, err := conn.ReadFromUDPAddrPort(buf)
+		n, oobn, _, source, err := conn.ReadMsgUDPAddrPort(buf, oob)
 		if err != nil {
 			r.putBuffer(buf)
 			if ctx.Err() != nil {
@@ -65,48 +71,60 @@ func (r *Receiver) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		if overflow, ok := socketOverflowCount(oob[:oobn]); ok {
+			dropped := uint64(uint32(overflow - lastOverflow))
+			lastOverflow = overflow
+			if dropped > 0 && r.OnKernelDrops != nil {
+				r.OnKernelDrops(r.Listener, dropped)
+			}
+		}
 		protocol := r.Protocol
 		if protocol == 0 {
 			protocol, _, err = InspectDatagram(buf[:n])
 			if err != nil {
 				r.putBuffer(buf)
 				if r.OnInvalid != nil {
-					r.OnInvalid()
+					r.OnInvalid(protocol)
 				}
 				continue
 			}
 		}
+		if r.OnReceived != nil {
+			r.OnReceived(protocol)
+		}
 		d := Datagram{Protocol: protocol, ReceivedAt: time.Now(), Source: source, Payload: buf[:n], release: r.putBuffer}
 		select {
 		case r.Queue <- d:
+			if r.OnQueueDepth != nil {
+				r.OnQueueDepth(len(r.Queue))
+			}
 		case <-ctx.Done():
 			d.Release()
 			return nil
 		default:
 			d.Release()
 			if r.OnQueueFull != nil {
-				r.OnQueueFull(r.Protocol)
+				r.OnQueueFull(protocol)
 			}
 		}
 	}
 }
 
 func (r *Receiver) listen(ctx context.Context) (*net.UDPConn, error) {
-	if !r.ReusePort {
-		addr, err := net.ResolveUDPAddr("udp", r.ListenAddr)
-		if err != nil {
-			return nil, err
-		}
-		return net.ListenUDP("udp", addr)
-	}
 	listenConfig := net.ListenConfig{Control: func(_, _ string, raw syscall.RawConn) error {
 		var controlErr error
 		if err := raw.Control(func(fd uintptr) {
-			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
-				controlErr = err
-				return
+			if r.ReusePort {
+				if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
+					controlErr = err
+					return
+				}
+				if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); err != nil {
+					controlErr = err
+					return
+				}
 			}
-			controlErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+			controlErr = configureRXQOverflow(int(fd))
 		}); err != nil {
 			return err
 		}

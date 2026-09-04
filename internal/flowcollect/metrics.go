@@ -1,6 +1,70 @@
 package flowcollect
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"time"
+)
+
+const (
+	protocolMetricSlots = 5
+	kafkaTopicSlots     = 4
+	latencyBucketSlots  = 13
+)
+
+var latencyUpperBounds = [...]time.Duration{
+	time.Millisecond,
+	5 * time.Millisecond,
+	10 * time.Millisecond,
+	25 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	2500 * time.Millisecond,
+	5 * time.Second,
+	10 * time.Second,
+}
+
+type kafkaTopic uint8
+
+const (
+	kafkaTopicNormalized kafkaTopic = iota
+	kafkaTopicCollectState
+	kafkaTopicDecodeDLQ
+	kafkaTopicQuarantine
+)
+
+type protocolMetricSet struct {
+	received            atomic.Uint64
+	decodedRecords      atomic.Uint64
+	missingSamplingRate atomic.Uint64
+	samplingRateChanges atomic.Uint64
+	samplePoolResets    atomic.Uint64
+	exporterDrops       atomic.Uint64
+	sequenceGapDatagram atomic.Uint64
+	sequenceGapSample   atomic.Uint64
+	decodeInvalid       atomic.Uint64
+	decodeTemplate      atomic.Uint64
+	decodeRejected      atomic.Uint64
+	normalizeRejected   atomic.Uint64
+	normalizedSucceeded atomic.Uint64
+	normalizedRejected  atomic.Uint64
+}
+
+type kafkaMetricSet struct {
+	succeeded          atomic.Uint64
+	failed             atomic.Uint64
+	latencyCount       atomic.Uint64
+	latencyNanoseconds atomic.Uint64
+	latencyBuckets     [latencyBucketSlots]atomic.Uint64
+}
+
+type durationMetric struct {
+	count       atomic.Uint64
+	nanoseconds atomic.Uint64
+	buckets     [latencyBucketSlots]atomic.Uint64
+}
 
 type Metrics struct {
 	ReceivedDatagrams         atomic.Uint64
@@ -38,6 +102,22 @@ type Metrics struct {
 	QualityStateRestores      atomic.Uint64
 	QualityStateCheckpoints   atomic.Uint64
 	QualityCheckpointFailures atomic.Uint64
+	ReceiveQueueDepth         atomic.Int64
+	ReceiveQueueCapacity      atomic.Int64
+	DecodeQueueDepth          atomic.Int64
+	DecodeQueueCapacity       atomic.Int64
+	QuarantineQueueDepth      atomic.Int64
+	QuarantineQueueCapacity   atomic.Int64
+	UDPQueueDropsSFlow        atomic.Uint64
+	UDPQueueDropsNetFlow      atomic.Uint64
+	UDPKernelDropsSFlow       atomic.Uint64
+	UDPKernelDropsNetFlow     atomic.Uint64
+	NormalizedBatchRecords    atomic.Int64
+	NormalizedBatchBytes      atomic.Int64
+
+	protocol [protocolMetricSlots]protocolMetricSet
+	kafka    [kafkaTopicSlots]kafkaMetricSet
+	walFsync durationMetric
 }
 
 type MetricSnapshot struct {
@@ -90,4 +170,134 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		SamplePoolResetEvents: m.SamplePoolResetEvents.Load(), SamplingRateChangeEvents: m.SamplingRateChangeEvents.Load(), ExporterDropSamples: m.ExporterDropSamples.Load(), QualityStateSaturated: m.QualityStateSaturated.Load(),
 		QualityJournalAppends: m.QualityJournalAppends.Load(), QualityJournalFailures: m.QualityJournalFailures.Load(), QualityStateRestores: m.QualityStateRestores.Load(), QualityStateCheckpoints: m.QualityStateCheckpoints.Load(), QualityCheckpointFailures: m.QualityCheckpointFailures.Load(),
 	}
+}
+
+func protocolMetricIndex(protocol Protocol) int {
+	if protocol >= ProtocolSFlow5 && protocol <= ProtocolIPFIX {
+		return int(protocol)
+	}
+	return 0
+}
+
+func protocolMetricName(index int) string {
+	switch Protocol(index) {
+	case ProtocolSFlow5:
+		return "sflow5"
+	case ProtocolNetFlow5:
+		return "netflow5"
+	case ProtocolNetFlow9:
+		return "netflow9"
+	case ProtocolIPFIX:
+		return "ipfix"
+	default:
+		return "unknown"
+	}
+}
+
+func kafkaTopicName(topic kafkaTopic) string {
+	switch topic {
+	case kafkaTopicCollectState:
+		return "collect_state"
+	case kafkaTopicDecodeDLQ:
+		return "decode_dlq"
+	case kafkaTopicQuarantine:
+		return "quarantine"
+	default:
+		return "normalized"
+	}
+}
+
+func (m *Metrics) recordReceived(protocol Protocol) {
+	m.ReceivedDatagrams.Add(1)
+	m.protocol[protocolMetricIndex(protocol)].received.Add(1)
+}
+
+func (m *Metrics) recordDecodedRecords(protocol Protocol, records int) {
+	if records > 0 {
+		m.protocol[protocolMetricIndex(protocol)].decodedRecords.Add(uint64(records))
+	}
+}
+
+func (m *Metrics) recordDecodeError(protocol Protocol, reason string) {
+	metric := &m.protocol[protocolMetricIndex(protocol)]
+	switch reason {
+	case "invalid_datagram":
+		metric.decodeInvalid.Add(1)
+	case "template_pending":
+		metric.decodeTemplate.Add(1)
+	case "normalize_rejected":
+		metric.normalizeRejected.Add(1)
+	default:
+		metric.decodeRejected.Add(1)
+	}
+}
+
+func (m *Metrics) recordMissingSamplingRate(protocol Protocol) {
+	m.protocol[protocolMetricIndex(protocol)].missingSamplingRate.Add(1)
+}
+
+func (m *Metrics) recordNormalized(protocol Protocol, records int, err error) {
+	metric := &m.protocol[protocolMetricIndex(protocol)]
+	if err != nil {
+		metric.normalizedRejected.Add(1)
+		return
+	}
+	if records > 0 {
+		metric.normalizedSucceeded.Add(uint64(records))
+	}
+}
+
+func (m *Metrics) recordSamplingRateChange(protocol Protocol) {
+	m.SamplingRateChangeEvents.Add(1)
+	m.protocol[protocolMetricIndex(protocol)].samplingRateChanges.Add(1)
+}
+
+func (m *Metrics) recordSamplePoolReset(protocol Protocol) {
+	m.SamplePoolResetEvents.Add(1)
+	m.protocol[protocolMetricIndex(protocol)].samplePoolResets.Add(1)
+}
+
+func (m *Metrics) recordExporterDrops(protocol Protocol, drops uint64) {
+	m.ExporterDropSamples.Add(drops)
+	m.protocol[protocolMetricIndex(protocol)].exporterDrops.Add(drops)
+}
+
+func (m *Metrics) recordSequenceGap(protocol Protocol, sampleScope bool, missing uint64) {
+	m.SequenceGapEvents.Add(1)
+	m.MissingSequenceUnits.Add(missing)
+	metric := &m.protocol[protocolMetricIndex(protocol)]
+	if sampleScope {
+		metric.sequenceGapSample.Add(1)
+	} else {
+		metric.sequenceGapDatagram.Add(1)
+	}
+}
+
+func (m *Metrics) observeKafka(topic kafkaTopic, err error, duration time.Duration) {
+	metric := &m.kafka[int(topic)]
+	if err == nil {
+		metric.succeeded.Add(1)
+	} else {
+		metric.failed.Add(1)
+	}
+	metric.latencyCount.Add(1)
+	duration = max(duration, 0)
+	metric.latencyNanoseconds.Add(uint64(duration))
+	metric.latencyBuckets[durationBucket(duration)].Add(1)
+}
+
+func (m *Metrics) observeWALFsync(duration time.Duration) {
+	duration = max(duration, 0)
+	m.walFsync.count.Add(1)
+	m.walFsync.nanoseconds.Add(uint64(duration))
+	m.walFsync.buckets[durationBucket(duration)].Add(1)
+}
+
+func durationBucket(duration time.Duration) int {
+	for index, upper := range latencyUpperBounds {
+		if duration <= upper {
+			return index
+		}
+	}
+	return len(latencyUpperBounds)
 }

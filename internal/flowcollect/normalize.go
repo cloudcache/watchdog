@@ -6,6 +6,8 @@ import (
 	"math"
 )
 
+var ErrSamplingRateMissing = errors.New("sampled flow has no authoritative sampling rate")
+
 const (
 	QualityTemplateRecentlyLearned uint64 = 1 << 0
 	QualitySamplingRateOverridden  uint64 = 1 << 1
@@ -46,7 +48,7 @@ func NormalizeCounters(binding SourceBinding, datagram DecodedDatagram, record D
 			values.QualityFlags |= QualitySamplingRateOverridden
 		}
 		if rate == 0 {
-			return NormalizedValues{}, errors.New("sampled flow has no authoritative sampling rate")
+			return NormalizedValues{}, ErrSamplingRateMissing
 		}
 		bytes, ok := checkedMultiply(record.RawBytes, rate)
 		if !ok {

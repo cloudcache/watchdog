@@ -15,25 +15,26 @@ import (
 const VirtualShardCount = 4096
 
 type Config struct {
-	ControlPlaneURL       string             `yaml:"control_plane_url"`
-	StateDir              string             `yaml:"state_dir"`
-	PlanFile              string             `yaml:"plan_file"`
-	PlanPublicKeyFile     string             `yaml:"plan_public_key_file"`
-	SFlowListen           string             `yaml:"sflow_listen"`
-	NetFlowListen         string             `yaml:"netflow_listen"`
-	SocketCount           int                `yaml:"socket_count"`
-	DecodeWorkers         int                `yaml:"decode_workers"`
-	DecodeQueueDatagrams  int                `yaml:"decode_queue_datagrams"`
-	ReceiveBufferBytes    int                `yaml:"receive_buffer_bytes"`
-	MaxDatagramBytes      int                `yaml:"max_datagram_bytes"`
-	PlanRefreshInterval   time.Duration      `yaml:"plan_refresh_interval"`
-	ExporterRefreshPeriod time.Duration      `yaml:"exporter_refresh_interval"`
-	DecoderStateTTL       time.Duration      `yaml:"decoder_state_ttl"`
-	WAL                   WALConfig          `yaml:"wal"`
-	Kafka                 KafkaConfig        `yaml:"kafka"`
-	NormalizedBatch       NormalizedBatchCfg `yaml:"normalized_batch"`
-	Diagnostics           DiagnosticsConfig  `yaml:"diagnostics"`
-	Quality               QualityConfig      `yaml:"quality"`
+	ControlPlaneURL       string              `yaml:"control_plane_url"`
+	StateDir              string              `yaml:"state_dir"`
+	PlanFile              string              `yaml:"plan_file"`
+	PlanPublicKeyFile     string              `yaml:"plan_public_key_file"`
+	SFlowListen           string              `yaml:"sflow_listen"`
+	NetFlowListen         string              `yaml:"netflow_listen"`
+	SocketCount           int                 `yaml:"socket_count"`
+	DecodeWorkers         int                 `yaml:"decode_workers"`
+	DecodeQueueDatagrams  int                 `yaml:"decode_queue_datagrams"`
+	ReceiveBufferBytes    int                 `yaml:"receive_buffer_bytes"`
+	MaxDatagramBytes      int                 `yaml:"max_datagram_bytes"`
+	PlanRefreshInterval   time.Duration       `yaml:"plan_refresh_interval"`
+	ExporterRefreshPeriod time.Duration       `yaml:"exporter_refresh_interval"`
+	DecoderStateTTL       time.Duration       `yaml:"decoder_state_ttl"`
+	WAL                   WALConfig           `yaml:"wal"`
+	Kafka                 KafkaConfig         `yaml:"kafka"`
+	NormalizedBatch       NormalizedBatchCfg  `yaml:"normalized_batch"`
+	Diagnostics           DiagnosticsConfig   `yaml:"diagnostics"`
+	Quality               QualityConfig       `yaml:"quality"`
+	Observability         ObservabilityConfig `yaml:"observability"`
 }
 
 type WALConfig struct {
@@ -80,6 +81,14 @@ type QualityConfig struct {
 	JournalMaxBytes int64         `yaml:"journal_max_bytes"`
 	MaxExporters    int           `yaml:"max_exporters"`
 	MaxDataSources  int           `yaml:"max_data_sources"`
+}
+
+type ObservabilityConfig struct {
+	Listen            string        `yaml:"listen"`
+	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
+	WriteTimeout      time.Duration `yaml:"write_timeout"`
+	IdleTimeout       time.Duration `yaml:"idle_timeout"`
+	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
 }
 
 func DefaultConfig() Config {
@@ -135,6 +144,13 @@ func DefaultConfig() Config {
 			MaxExporters:    65536,
 			MaxDataSources:  262144,
 		},
+		Observability: ObservabilityConfig{
+			Listen:            "127.0.0.1:9464",
+			ReadHeaderTimeout: 2 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+			ShutdownTimeout:   5 * time.Second,
+		},
 	}
 }
 
@@ -153,6 +169,7 @@ func (c *Config) Normalize() {
 	}
 	c.SFlowListen = strings.TrimSpace(c.SFlowListen)
 	c.NetFlowListen = strings.TrimSpace(c.NetFlowListen)
+	c.Observability.Listen = strings.TrimSpace(c.Observability.Listen)
 	seenBrokers := make(map[string]struct{}, len(c.Kafka.Brokers))
 	brokers := make([]string, 0, len(c.Kafka.Brokers))
 	for _, broker := range c.Kafka.Brokers {
@@ -186,8 +203,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, addr := range map[string]string{
-		"flow_collect.sflow_listen":   c.SFlowListen,
-		"flow_collect.netflow_listen": c.NetFlowListen,
+		"flow_collect.sflow_listen":         c.SFlowListen,
+		"flow_collect.netflow_listen":       c.NetFlowListen,
+		"flow_collect.observability.listen": c.Observability.Listen,
 	} {
 		if err := validateListen(name, addr); err != nil {
 			return err
@@ -222,6 +240,9 @@ func (c Config) Validate() error {
 	}
 	if c.Quality.StateTTL <= 0 || c.Quality.AnomalyWindow <= 0 || c.Quality.AnomalyWindow > c.Quality.StateTTL || c.Quality.JournalFsync <= 0 || c.Quality.CheckpointEvery <= 0 || c.Quality.JournalMaxBytes <= qualityFrameHeaderSize || c.Quality.MaxExporters <= 0 || c.Quality.MaxDataSources <= 0 {
 		return errors.New("flow_collect.quality requires positive limits and anomaly_window <= state_ttl")
+	}
+	if c.Observability.ReadHeaderTimeout <= 0 || c.Observability.WriteTimeout <= 0 || c.Observability.IdleTimeout <= 0 || c.Observability.ShutdownTimeout <= 0 {
+		return errors.New("flow_collect.observability timeouts must be positive")
 	}
 	if c.Kafka.Acks != "all" {
 		return errors.New("flow_collect.kafka.acks must be all")
@@ -375,6 +396,19 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.Quality.MaxDataSources, err = envInt("WATCHDOG_FLOW_COLLECT_QUALITY_MAX_DATA_SOURCES", c.Quality.MaxDataSources); err != nil {
+		return err
+	}
+	c.Observability.Listen = env("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_LISTEN", c.Observability.Listen)
+	if c.Observability.ReadHeaderTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_READ_HEADER_TIMEOUT", c.Observability.ReadHeaderTimeout); err != nil {
+		return err
+	}
+	if c.Observability.WriteTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_WRITE_TIMEOUT", c.Observability.WriteTimeout); err != nil {
+		return err
+	}
+	if c.Observability.IdleTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_IDLE_TIMEOUT", c.Observability.IdleTimeout); err != nil {
+		return err
+	}
+	if c.Observability.ShutdownTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_SHUTDOWN_TIMEOUT", c.Observability.ShutdownTimeout); err != nil {
 		return err
 	}
 	return nil

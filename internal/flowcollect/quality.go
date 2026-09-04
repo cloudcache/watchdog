@@ -198,8 +198,7 @@ func (q *QualityTracker) observeExporter(key exporterQualityKey, now time.Time, 
 	case delta < serialHalfRange:
 		state.expectedSequence = decoded.DatagramSequence + decoded.SequenceIncrement
 		state.windows.gap = now.Add(q.config.AnomalyWindow)
-		q.metrics.SequenceGapEvents.Add(1)
-		q.metrics.MissingSequenceUnits.Add(uint64(delta))
+		q.metrics.recordSequenceGap(key.protocol, false, uint64(delta))
 	default:
 		observation.advance = false
 		state.windows.outOfOrder = now.Add(q.config.AnomalyWindow)
@@ -227,7 +226,7 @@ func (q *QualityTracker) observeNetFlowSampling(key exporterQualityKey, now time
 		if state.samplingRateKnown && (state.samplingRate != rate || mixed) {
 			state.samplingEpoch = nextEpoch(state.samplingEpoch)
 			state.windows.rateChange = now.Add(q.config.AnomalyWindow)
-			q.metrics.SamplingRateChangeEvents.Add(1)
+			q.metrics.recordSamplingRateChange(key.protocol)
 		}
 		state.samplingRate, state.samplingRateKnown = rate, true
 	}
@@ -291,8 +290,7 @@ func (q *QualityTracker) observeSFlowSource(key sourceQualityKey, now time.Time,
 	case delta == 0:
 	case delta < serialHalfRange:
 		state.windows.gap = now.Add(q.config.AnomalyWindow)
-		q.metrics.SequenceGapEvents.Add(1)
-		q.metrics.MissingSequenceUnits.Add(uint64(delta))
+		q.metrics.recordSequenceGap(key.exporter.protocol, true, uint64(delta))
 	default:
 		state.windows.outOfOrder = now.Add(q.config.AnomalyWindow)
 		q.metrics.SequenceOutOfOrderEvents.Add(1)
@@ -304,12 +302,12 @@ func (q *QualityTracker) observeSFlowSource(key sourceQualityKey, now time.Time,
 	pool := uint32(record.SamplePool)
 	if counterReset(state.samplePool, pool) {
 		state.windows.poolReset = now.Add(q.config.AnomalyWindow)
-		q.metrics.SamplePoolResetEvents.Add(1)
+		q.metrics.recordSamplePoolReset(key.exporter.protocol)
 		epochBoundary = true
 	}
 	if record.SamplingRate > 0 && state.rateKnown && record.SamplingRate != state.samplingRate {
 		state.windows.rateChange = now.Add(q.config.AnomalyWindow)
-		q.metrics.SamplingRateChangeEvents.Add(1)
+		q.metrics.recordSamplingRateChange(key.exporter.protocol)
 		epochBoundary = true
 	}
 	if epochBoundary {
@@ -319,7 +317,7 @@ func (q *QualityTracker) observeSFlowSource(key sourceQualityKey, now time.Time,
 		state.expectedSequence = record.SampleSequence + 1
 		state.samplePool = pool
 		if dropDelta, valid := monotonicCounterDelta(state.drops, uint32(record.ExporterDrops)); valid {
-			q.metrics.ExporterDropSamples.Add(uint64(dropDelta))
+			q.metrics.recordExporterDrops(key.exporter.protocol, uint64(dropDelta))
 		}
 		state.drops = uint32(record.ExporterDrops)
 		if record.SamplingRate > 0 {

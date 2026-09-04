@@ -1561,6 +1561,27 @@ VPN 评分/probe 至少包括：
 
 exporter_id/worker_id 基数受 registry 限制；未知 source IP、message ID、prefix ID、address set ID 和 offset range 不作为 VM label，避免高基数维度污染时序。partition 数量必须有平台上限；更细的 lag、snapshot 和 dimension/debug 信息进健康 API 或日志。
 
+#### 9.3.1 flow-collect 指标与健康契约
+
+`watchdog-flow-collect` 使用独立的 `flow_collect.observability.listen`，固定提供 `GET|HEAD /metrics`、`/health/live` 和 `/health/ready`。默认只监听 `127.0.0.1:9464`；跨主机 vmagent/Prometheus 抓取必须显式改监听地址并由管理网 ACL/mTLS sidecar 限制，不能把该端点直接暴露到业务网。HTTP 设置 header/write/idle/shutdown 超时和 16 KiB header 上限；这些端点不查询 MySQL、CH 或控制面，也不在 scrape 时扫描 WAL 全量记录。
+
+标签集合在代码中固定分配，不使用 map 动态创建 series：`protocol=unknown|sflow5|netflow5|netflow9|ipfix`，`listener=sflow|netflow|shared|workers`，`topic=normalized|collect_state|decode_dlq|quarantine`，Kafka `result=success|failure`，decode `reason=invalid_datagram|template_pending|decode_rejected|normalize_rejected`，sequence `scope=datagram|sample`，quality `operation=journal|checkpoint`。collector/exporter/source/tenant/target/device/IP/datagram/message/error text 均不进入该进程的 label；按实例归属由 vmagent 的静态 scrape target/relabel 提供。Kafka latency 和 WAL fsync latency使用固定 1ms–10s + `+Inf` Prometheus histogram；VM 以 `histogram_quantile` 计算 P95/P99，热路径只更新固定原子 bucket，不创建动态 series。
+
+`/health/live` 仅证明 HTTP 进程仍响应。`/health/ready` 是数据接纳闸门：runner 未运行、WAL 不可写或发生 hard admission stop、quality journal 不可写/满、最近一次 collect-state 本地持久化失败，或任一固定 Kafka topic 最近一次 produce 失败时返回 `503 unavailable`；同一组件后续成功才恢复，其他 topic 的成功不能掩盖失败。WAL 到 soft watermark 或 quality journal 达 80% 时仍返回 200，但状态为 `degraded`，用于先告警和排空；不能把历史累计错误计数直接当成永久不健康。WAL `oldest_age` 是最老**保留 segment** 内首条记录的年龄上界，已 ACK 但尚未 rotation/reclaim 的 active segment 仍会计入，不能替代 Kafka consumer lag。
+
+Linux listener 启用 `SO_RXQ_OVFL`，从每个 socket 的累计 cmsg 计算含 uint32 回绕的 delta；多 `SO_REUSEPORT` socket 只对 delta 求和。非 Linux 构建必须通过 `watchdog_flow_udp_kernel_drop_telemetry_supported=0` 明示“不支持”，不能把恒为 0 解释成无丢包。建议告警门槛如下：
+
+| 信号 | warning | critical / 动作 |
+|---|---|---|
+| kernel/application UDP drop increase | 任一 1 分钟增量 > 0 | 连续 3 分钟 > 0；核对 socket buffer、CPU affinity、采样/PPS 与扩容 |
+| receive/decode/quarantine queue | 连续 5 分钟 depth/capacity > 0.70 | 连续 1 分钟 > 0.90；禁止先扩大无界队列掩盖下游不足 |
+| WAL | soft watermark 或 oldest age > 10 分钟 | hard watermark/不可写立即摘除 readiness；不得覆盖未 ACK segment |
+| Kafka | failure 增量 > 0 或 produce P99 > 1 秒 | `watchdog_flow_kafka_ready=0` 或失败持续 1 分钟；保留 WAL 并排查 broker/ACL/TLS |
+| decode/template | 5 分钟错误率 > accepted datagram 的 0.1% | > 1% 或单协议持续 template pending；检查 exporter/domain affinity 与模板生命周期 |
+| quality journal | usage > 0.80 或 checkpoint failure > 0 | 不可写/满使 readiness=503；不得越过 quality durability barrier ACK WAL |
+
+阈值是初始运维基线，容量验收后按设备采样配置和目标硬件修订；修订只改告警规则，不改变 counter 语义。抓取目标自身 `up=0` 由 vmagent/Prometheus 产生，不能由已不可达的 flow-collect 自报。
+
 ### 9.4 接口 counter 与对账
 
 对账能力分三档，均不改变 AS/IP/地域/六类的计算：
@@ -2071,6 +2092,12 @@ flow_collect:
     journal_max_bytes: 536870912
     max_exporters: 65536
     max_data_sources: 262144
+  observability:
+    listen: "127.0.0.1:9464"
+    read_header_timeout: 2s
+    write_timeout: 10s
+    idle_timeout: 30s
+    shutdown_timeout: 5s
   exporter_refresh_interval: 30s
 
 flow_dimension:

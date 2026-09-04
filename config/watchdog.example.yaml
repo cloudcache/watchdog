@@ -81,6 +81,13 @@ flow_collect:
     journal_max_bytes: 536870912
     max_exporters: 65536
     max_data_sources: 262144
+  observability:
+    # Bind loopback unless the scrape network is explicitly protected.
+    listen: "127.0.0.1:9464"
+    read_header_timeout: 2s
+    write_timeout: 10s
+    idle_timeout: 30s
+    shutdown_timeout: 5s
 
 aggregate_graph:
   rollup_interval: 5m

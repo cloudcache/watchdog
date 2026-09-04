@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -65,9 +66,21 @@ func main() {
 	}
 	defer publisher.Close()
 
-	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
-	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
-	if err := runner.Run(ctx); err != nil {
+	runtimeState := flowcollect.NewRuntimeState()
+	observability, err := flowcollect.NewObservabilityServer(cfg.FlowCollect.Observability, metrics, wal, qualityState, runtimeState)
+	if err != nil {
+		log.Fatal(err)
+	}
+	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
+	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s metrics=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.Observability.Listen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
+	runCtx, cancel := context.WithCancel(ctx)
+	result := make(chan error, 2)
+	go func() { result <- observability.Run(runCtx) }()
+	go func() { result <- runner.Run(runCtx) }()
+	first := <-result
+	cancel()
+	second := <-result
+	if err := errors.Join(first, second); err != nil {
 		log.Fatal(err)
 	}
 }

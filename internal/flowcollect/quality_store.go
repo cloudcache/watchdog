@@ -48,6 +48,14 @@ type QualityStateStore struct {
 	targets     map[DatagramID]int64
 }
 
+type QualityStoreState struct {
+	JournalBytes    int64
+	MaxJournalBytes int64
+	UsageRatio      float64
+	Pending         int
+	Writable        bool
+}
+
 func OpenQualityStateStore(dir, collectorID string, config QualityConfig, tracker *QualityTracker, wal *WAL, metrics *Metrics) (*QualityStateStore, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	collectorID = strings.TrimSpace(collectorID)
@@ -90,6 +98,18 @@ func (s *QualityStateStore) Complete(id DatagramID) {
 	delete(s.pending, id)
 	delete(s.targets, id)
 	s.mu.Unlock()
+}
+
+func (s *QualityStateStore) State() QualityStoreState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return QualityStoreState{
+		JournalBytes:    s.size,
+		MaxJournalBytes: s.config.JournalMaxBytes,
+		UsageRatio:      float64(s.size) / float64(s.config.JournalMaxBytes),
+		Pending:         len(s.pending),
+		Writable:        !s.closed && s.poisoned == nil && s.size < s.config.JournalMaxBytes,
+	}
 }
 
 func (s *QualityStateStore) AppendAndWait(ctx context.Context, journal *flowpb.QualityJournalRecord) error {
