@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowcollect"
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,6 +41,7 @@ type BackendConfig struct {
 	Export          ExportConfig          `yaml:"export"`
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
 	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
+	FlowCollect     flowcollect.Config    `yaml:"flow_collect"`
 	AggregateGraph  AggregateGraphConfig  `yaml:"aggregate_graph"`
 	SNMP            SNMPConfig            `yaml:"snmp"`
 	SNMPTrapAgent   SNMPTrapAgentConfig   `yaml:"snmp_trap_agent"`
@@ -174,6 +176,7 @@ func defaultBackendConfig() BackendConfig {
 			AggInterval:        defaultSFlowAggInterval,
 			PrefixSyncInterval: defaultSFlowPrefixSync,
 		},
+		FlowCollect: flowcollect.DefaultConfig(),
 		AggregateGraph: AggregateGraphConfig{
 			RollupInterval: defaultAggregateGraphRollupInterval,
 		},
@@ -232,6 +235,9 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	if cfg.SFlowCollector.PrefixSyncInterval, err = getEnvDuration("WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL", cfg.SFlowCollector.PrefixSyncInterval); err != nil {
+		return err
+	}
+	if err := cfg.FlowCollect.ApplyEnv(); err != nil {
 		return err
 	}
 	cfg.Export.Dir = getEnv("WATCHDOG_EXPORT_DIR", cfg.Export.Dir)
@@ -340,6 +346,7 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.SNMPCollector.TenantID = ID(strings.TrimSpace(string(cfg.SNMPCollector.TenantID)))
 	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
 	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
+	cfg.FlowCollect.Normalize()
 	cfg.SNMP.MIBDirs = normalizeStringPaths(cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = strings.TrimSpace(cfg.SNMP.MIBLoad)
 	cfg.SNMPTrapAgent.APIURL = normalizeBaseURL(cfg.SNMPTrapAgent.APIURL)
@@ -391,6 +398,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.SFlowCollector.AggInterval <= 0 || cfg.SFlowCollector.PrefixSyncInterval <= 0 {
 		return errors.New("sflow_collector intervals must be positive")
+	}
+	if err := cfg.FlowCollect.Validate(); err != nil {
+		return err
 	}
 	if cfg.Export.Dir == "" || cfg.Export.WorkerInterval <= 0 || cfg.Export.WorkerBatch <= 0 {
 		return errors.New("export dir, worker_interval, and worker_batch must be configured with positive worker values")

@@ -171,6 +171,20 @@ func TestLoadWatchdogConfigRejectsUnknownYAMLFields(t *testing.T) {
 	}
 }
 
+func TestWatchdogExampleConfigsIncludeValidFlowCollectSchema(t *testing.T) {
+	for _, name := range []string{"watchdog.example.yaml", "watchdog.dev.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := LoadWatchdogConfig(filepath.Join("..", "..", "config", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.FlowCollect.NormalizedBatch.MaxRecords != 1024 || cfg.FlowCollect.WAL.FsyncInterval != 10*time.Millisecond {
+				t.Fatalf("flow config not loaded: %+v", cfg.FlowCollect)
+			}
+		})
+	}
+}
+
 func TestLoadWatchdogConfigRejectsMultipleYAMLDocuments(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "watchdog.yaml")

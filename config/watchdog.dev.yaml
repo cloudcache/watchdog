@@ -26,6 +26,41 @@ sflow_collector:
   agg_interval: 1m
   prefix_sync_interval: 5m
 
+flow_collect:
+  control_plane_url: "http://127.0.0.1:8090"
+  state_dir: "/tmp/watchdog-flow-collect"
+  plan_file: "/tmp/watchdog-flow-collect/plan.json"
+  plan_public_key_file: "/tmp/watchdog-flow-collect/plan-ed25519.pub"
+  sflow_listen: ":16343"
+  netflow_listen: ":12055"
+  socket_count: 1
+  decode_workers: 2
+  decode_queue_datagrams: 4096
+  receive_buffer_bytes: 4194304
+  max_datagram_bytes: 65535
+  plan_refresh_interval: 30s
+  exporter_refresh_interval: 30s
+  wal:
+    max_bytes: 1073741824
+    max_age: 24h
+    segment_bytes: 16777216
+    fsync_interval: 10ms
+    soft_watermark: 0.70
+    hard_watermark: 0.90
+  kafka:
+    brokers: ["127.0.0.1:9092"]
+    normalized_topic: "watchdog.flow.normalized.v1"
+    collect_state_topic: "watchdog.flow.collect-state.v1"
+    decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
+    quarantine_topic: "watchdog.flow.quarantine.v1"
+    acks: "all"
+    compression: "zstd"
+    tls: false
+  normalized_batch:
+    max_records: 1024
+    max_bytes: 1048576
+    max_wait: 5ms
+
 aggregate_graph:
   rollup_interval: 5m
 

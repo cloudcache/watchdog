@@ -45,7 +45,7 @@ Flow P1 即部署 MQ，不再把它推迟到 HA 阶段：
 
 - `watchdog.flow.normalized.v1` 是唯一正式事实 topic，保存已解码、已采样归一但尚未做地址/Geo/业务归类的 versioned batch，支持 dimension worker 独立积压、扩容和重分类；
 - 完整 UDP datagram 先进入 `flow-collect` 本地 append-only raw WAL；normalized batch 获得 Kafka ack 后才推进 WAL checkpoint，避免为了协议重放再建设一套 raw Kafka/独立解码服务；
-- normalized 使用冻结的 4096 个 virtual shards：`virtual_shard=hash(tenant_id,src_ip,dst_ip)%4096`，Kafka key 为 `tenant_id/virtual_shard`；物理 partition 不依赖客户端默认 hash，而由签名 plan 中版本化 `PartitionMap[virtual_shard]` 指定。扩分区发布只增不减的新 map 并从分钟边界生效，WAL 子批次固化原 `partition_map_version/physical_partition`，旧数据 replay 仍投原 partition；NetFlow/IPFIX 的 exporter/observation-domain 模板亲和性在进入 Kafka 前由 flow-collect listener/worker ownership 保证；
+- normalized 使用冻结的 4096 个 virtual shards：输入为 `tenant_id || 0x00 || src_ip_16 || dst_ip_16`（IPv4 使用 v4-mapped 16B），算法为 xxHash64 seed=0，`virtual_shard=hash & 4095`，Kafka key 为稳定 `normalized_batch_id`；物理 partition 不依赖客户端默认 hash，而由签名 plan 中版本化 `PartitionMap[virtual_shard]` 指定。扩分区发布只增不减的新 map 并从分钟边界生效，WAL 子批次固化原 `partition_map_version/physical_partition`，旧数据 replay 仍投原 partition；NetFlow/IPFIX 的 exporter/observation-domain 模板亲和性在进入 Kafka 前由 flow-collect listener/worker ownership 保证；
 - producer 启用 idempotence、`acks=all`、压缩和重试；生产建议 replication factor 3、`min.insync.replicas=2`；
 - raw WAL 有容量和期限上限，MQ 恢复后按接收顺序重新解码/发布；溢出必须生成明确 data-loss window；
 - dimension consumer 采用 at-least-once：ClickHouse enriched base batch 成功并能由 `ingest_batch_id` 证明后才提交 normalized offset；派生 rollup 可从 base fact 回补。
@@ -403,29 +403,32 @@ flow-collect 从 WAL/live cursor 按 exporter/domain 保持 worker ownership。G
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
 ```text
-source_key = (agent_ip, sub_agent_id, source_type, source_id)   # sFlow
-effective_rate = source_sampling_override[source_key] ?? record.sampling_rate
+source_key = (agent_ip, sub_agent_id, observation_domain_id, source_type, source_id, if_index)
+effective_rate = most_specific_sampling_rule[source_key] ?? record.sampling_rate
 sampled:    estimated_bytes = checked_mul(record.bytes, effective_rate)
-            estimated_packets = checked_mul(max(record.packets, 1), effective_rate)
+            estimated_packets = checked_mul(record.packets, effective_rate)
 pre_scaled: estimated_bytes = record.bytes
-            estimated_packets = max(record.packets, 1)
+            estimated_packets = record.packets
 ```
 
 `sflow5` 逐 sample 使用自带 rate；rate 缺失/零且无精确 source override 时拒绝，绝不默认为 1；pre-scaled 不再乘倍率。flow-collect 维护 sample epoch/pool 质量，但不静默覆盖 nominal raw。
 
-每条解码记录产生确定性 `normalized_id=datagram_id/record_index`，包含 event/receive time、tenant/collector/exporter/target/device、observation、src/dst IP/port、protocol、原始计数字段、sampling mode/rate、estimated bytes/packets、duration、quality 和 registry version，**不包含地址段、address set、Geo、业务或六维结果**。同一 datagram 的 records 按冻结的 `virtual_shard` 分组；每个非空 shard 形成确定性子批次 `normalized_batch_id=hash(datagram_id,virtual_shard,chunk_index)`，一个子批次不能再跨 Kafka partition。WAL confirmed record 保存全部子批次的 ack bitmap，只有全部确认后 datagram 才可回收；重启只重发未确认子批次。
+每条解码记录产生确定性 `normalized_id=datagram_id/record_index`，包含 event/receive time、tenant/collector/exporter/target/device、observation、src/dst IP/port/ASN、protocol、原始计数字段、sampling mode/rate、estimated bytes/packets、duration、sFlow source/sample 状态、quality 和 registry version，**不包含地址段、address set、Geo、业务或六维结果**。同一 datagram 的 records 按冻结的 `virtual_shard` 分组；每个非空 shard 形成确定性子批次 `normalized_batch_id=SHA-256(datagram_id,virtual_shard,chunk_index)`，一个子批次不能再跨 Kafka partition。WAL confirmed record 保存全部子批次的 ack bitmap，只有全部确认后 datagram 才可回收；重启只重发未确认子批次。
 
 ```text
 batch_schema_version, normalized_batch_id, datagram_id, virtual_shard,
 partition_map_version, physical_partition, replay_generation,
 tenant_id, collector_id, exporter_id, registry_version,
 received_at, protocol, source_ip, observation_domain_id,
+sub_agent_id, datagram_sequence, agent_ip,
 records[] {
   record_index, normalized_id, event_time,
   target_id, device_id, observation_if_index, observation_direction, in_if, out_if,
   src_ip, dst_ip, src_port, dst_port, ip_proto, tcp_flags,
   raw_bytes, raw_packets, sampling_mode, sampling_rate,
-  estimated_bytes, estimated_packets, flow_duration_ms, quality_flags
+  estimated_bytes, estimated_packets, flow_duration_ms, quality_flags,
+  src_as, dst_as, source_id_type, source_id_value,
+  sample_sequence, sample_pool, exporter_drops
 }
 ```
 
@@ -453,6 +456,9 @@ message NormalizedRecordBatch {
   uint64 observation_domain_id  = 15;
   repeated NormalizedRecord records = 16;
   reserved 17 to 31;
+  uint32 sub_agent_id          = 32;
+  uint32 datagram_sequence     = 33;
+  bytes  agent_ip              = 34; // sFlow header agent address；非 sFlow 为空
 }
 
 message NormalizedRecord {
@@ -479,12 +485,21 @@ message NormalizedRecord {
   uint64 flow_duration_ms       = 21;
   uint64 quality_flags          = 22; // 位集，注册表见下
   reserved 23 to 31;
+  uint32 src_as                 = 32;
+  uint32 dst_as                 = 33;
+  uint32 source_id_type         = 34;
+  uint32 source_id_value        = 35;
+  uint32 sample_sequence        = 36;
+  uint64 sample_pool            = 37;
+  uint64 exporter_drops         = 38;
 }
 ```
 
+字段 32 之后用于补齐 GoFlow2 已能提供、且做 ASN/采样质量分析不可缺失的事实。`agent_ip/sub_agent_id/datagram_sequence` 属于 datagram，其中 `source_ip` 始终是 UDP transport source，不能拿 relay 地址覆盖 sFlow header 的 `agent_ip`；`source_id/sample_sequence/sample_pool/drops` 属于单个 sFlow sample，因此必须放在 record，不能错误提升为 batch。字段号只追加，不回填 17–31 的预留区。
+
 `quality_flags` 位注册表随 schema 版本冻结、只增不改：bit0 `template_recently_learned`、bit1 `sampling_rate_overridden`、bit2 `duration_unreliable`、bit3 `sequence_gap_window`、bit4 `sample_pool_reset_window`、bit5 `clock_skew_suspected`、bit6 `truncated_header`。新增位必须先登记语义与消费方处理方式；消费端忽略未注册位但原样保留。CI 用旧 fixture 解析新 writer 输出验证前向兼容。
 
-单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。Kafka idempotent producer 获得 `acks=all` 后 fsync 子批次 ack bitmap，只有连续 confirmed watermark 之前的 WAL segment 才能回收。WAL 重发递增 `replay_generation` 但保持 batch/record ID 和原 partition map；dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
+单个 datagram/shard 子批次达到 `max_records` 或 `max_bytes` 时按稳定 `chunk_index` 切分；Kafka producer request 再按 `max_wait` 合并多个 protobuf message，减少网络 syscall，但不改变 message ID。Kafka idempotent producer 获得 `acks=all` 后，先追加 `ACK2(datagram_id,child_index,child_count,crc32)`；ack journal 与 raw WAL 使用同周期 group fsync。进程内 pending ack 立即防重，崩溃前尚未 fsync 的 ack 只会使稳定 ID 重放，不会漏数；segment 回收只看 durable ack，并在回收时原子压缩 ack journal。恢复时重建逻辑 ack bitmap，只有全部 child confirmed 的关闭 WAL segment 才能回收。WAL 重发递增 `replay_generation` 但保持 batch/record ID 和原 partition map；dimension 对 replay batch 使用 base `source_batch_ids` 精确核验，不使用可能误删数据的 Bloom-only 判定。sFlow counter sample 走独立 counter adapter，不进入 normalized flow topic，也不乘 sampling rate。
 
 ### 步骤 4：dimension worker 选择版本并归类地址段
 
@@ -1930,12 +1945,15 @@ modules:
 flow_collect:
   control_plane_url: "https://watchdog.example.com"
   state_dir: "/var/lib/watchdog-flow-collect"
+  plan_file: "/var/lib/watchdog-flow-collect/plan.json"
+  plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub"
   sflow_listen: ":6343"
   netflow_listen: ":2055"
   socket_count: 8
   decode_workers: 16
   decode_queue_datagrams: 262144
   receive_buffer_bytes: 33554432
+  max_datagram_bytes: 65535
   plan_refresh_interval: 30s
   wal:
     max_bytes: 1073741824000
@@ -2232,7 +2250,7 @@ dimension lag 以 oldest-event-age 和 retention remaining 设置软/硬水位�
 
 ### 14.2 正确性
 
-- sFlow 必须逐 sample 使用其 rate，并按 `(agent,sub-agent,source)` 隔离 pool/sequence；sampled 模式的 rate 缺失不得默认为 1；pre-scaled 模式不得再次乘 rate；override 和 rate 变更必须审计；
+- sFlow 必须逐 sample 使用其 rate，并按 `(transport source,agent,sub-agent,source type,source value)` 隔离 pool/sequence；sampled 模式的 rate 缺失不得默认为 1；pre-scaled 模式不得再次乘 rate；override 必须精确到 sFlow source type/value（NetFlow/IPFIX 精确到 domain/sampler/interface），禁止设备级通配，override 和 rate 变更必须审计；
 - 每次 flush 只确认一个 enriched base batch；category/address/endpoint/Geo/port 和可选 VM recording cache 都必须能从 base 重建；
 - 所有分钟桶带 dimension/Geo/classification version，版本按 event time 选择；
 - WAL→normalized 和 normalized→base 的 replay、DLQ、offset commit 必须用 fixture 证明；

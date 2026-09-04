@@ -344,6 +344,14 @@
 
 ### FLOW-01 `watchdog-flow-collect` UDP、raw WAL 与接入控制
 
+当前状态：**进行中**。首批数据面骨架已进入代码库，以下细项用于防止把“可构建”误当成 FLOW-01 整体验收完成。
+
+- [x] **FLOW-01A 配置与身份边界**：`flow_collect` 严格 YAML/`WATCHDOG_FLOW_COLLECT_*` 配置、Ed25519 签名 plan 校验、4096 项 partition map 校验、source CIDR LPM + observation-domain 准入；tenant 不从 YAML 固定值或报文获取。
+- [x] **FLOW-01B UDP 与 WAL v1**：sFlow/NetFlow 双 listener、可选 `SO_REUSEPORT`、固定 reader/worker、有界队列、单 WAL writer、segment header/record CRC、确定性 datagram ID、group fsync durable barrier、损坏尾截断恢复、软硬水位且 hard limit 不覆盖。
+- [x] **FLOW-01C checkpoint 基线**：append-only ACK2 child journal 与 group commit、重启恢复部分 ack、增量 replay cursor/queue 背压续扫、只跳过全确认 datagram、只回收全确认的关闭 segment，并在回收时压缩 ack journal。
+- [ ] **FLOW-01D 控制面闭环**：enrollment/heartbeat、plan 热刷新与 LKG/history、revocation/credential rotation、未知来源限速 quarantine topic、VM/Prometheus 暴露及 data-loss interval 审计。
+- [ ] **FLOW-01E 故障与容量验收**：kill -9/掉电/磁盘满/滚动升级故障注入，以及目标硬件上 WAL MB/s、fsync P99、socket drops 和 1.90M/2.86M records/s 报告。
+
 - [ ] **设计**：冻结 listener/source plan、exporter affinity、socket/queue 模型、raw WAL segment/header/checksum/group-commit/checkpoint、磁盘软硬水位、RPO、quarantine、凭据和按端口 PPS/采样率/方向的容量公式。
 - [ ] **编码**：实现独立 flow-collect、enrollment/heartbeat/plan、`SO_REUSEPORT` listener、source admission、确定性 datagram ID、append-only WAL、启动恢复、segment 回收、磁盘保护和低基数 metrics。
 - [ ] **单元测试**：覆盖 listener/source/tenant 准入、datagram ID、WAL append/fsync/checksum/截断、进程崩溃恢复、连续 checkpoint、segment 回收、磁盘 soft/hard limit、quarantine 限速和敏感 payload 策略。
@@ -353,6 +361,16 @@
 - [ ] **回归测试**：旧 collector 停用/端口切换过程不双监听、不重复采集；agent/target 管理和其他采集器不受影响。
 
 ### FLOW-02 GoFlow2 解码、采样归一与 normalized Kafka 契约
+
+当前状态：**进行中**。GoFlow2 与 normalized 主干已经贯通，但 collect-state、DLQ/quarantine 和生产容量尚未闭环。
+
+- [x] **FLOW-02A GoFlow2 adapter**：同进程 GoFlow2 v3 解码 sFlow v5、NetFlow v5/v9、IPFIX；sFlow 按 sample 转换并保留 sub-agent/source/sample-pool/drops，NetFlow v5 保留 ASN/采样率，v9/IPFIX 按 exporter/domain 隔离内存模板。
+- [x] **FLOW-02B 计数与契约**：sampled/pre-scaled 明确分支、零采样率拒绝、精确 sampling rule、乘法溢出拒绝；protobuf v1 补齐 ASN 和 sFlow 状态，xxHash64/4096 virtual shard、稳定 child batch ID、records/bytes 边界均已有单测。
+- [x] **FLOW-02C Kafka/恢复基线**：Sarama idempotent async producer、manual physical partition、`acks=all`、TLS/system roots、压缩、成功回执后 child ack；未确认 child 可从 raw WAL 重放。
+- [ ] **FLOW-02D collect-state**：模板/sampler checkpoint topic、本地 checkpoint、模板先于 data 的安全点、plan history、`replay_generation` 推进；完成前 template-only datagram 保留在 WAL 并显式报告 pending，不允许误回收。
+- [ ] **FLOW-02E 异常闭环**：受限 decode-DLQ、quarantine protobuf、重试退避/毒包隔离、sequence/sample epoch 质量状态和低基数 VM metrics exporter。
+- [ ] **FLOW-02F 协议/性能验收**：NetFlow v9/IPFIX template/options/乱序 fixture、真实设备报文 corpus、Kafka 故障与扩分区测试、目标容量压测与 p95 batch/record bytes 报告。
+  - 2026-09-04 开发机非验收 microbenchmark（Apple M2、仅 normalize+batch、不含 decode/Kafka）：1024 records 单 shard `293099 ns/op`（约 3.49M records/s/core，387849 B/op）；随机 pair 分散到多 shard `697527 ns/op`（约 1.47M records/s/core，998337 B/op）。该结果只证明算法量级并暴露多 shard allocation 成本，不能替代 FLOW-02F 的真实链路容量验收。
 
 - [ ] **设计**：冻结 GoFlow2 v3 精确 commit、四协议字段映射、exporter/domain worker ownership、collect-state 模板/sampler checkpoint 与 WAL 安全重放点、sampling mode/rate、4096 virtual shards 与版本化 physical partition map、NormalizedRecordBatch protobuf、稳定 child-batch ID/ack bitmap、records/bytes/wait 上限、Kafka TLS/ACL/retention 和 ack→WAL checkpoint 条件。
 - [ ] **编码**：在 flow-collect 内实现 GoFlow2 adapter、固定 decode workers、模板/sampler store、observation 准入、采样归一、Protobuf batcher、idempotent Kafka producer、decode-DLQ、checkpoint 推进和 metrics；禁止 JSON、逐条日志/HTTP 和每包 goroutine。
