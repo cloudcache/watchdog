@@ -397,7 +397,7 @@ observed health:                    warming → healthy ↔ degraded ↔ stale
 
 ### 步骤 2：同进程 GoFlow2 解码、模板与质量状态
 
-flow-collect 将 WAL record 以 `hash(protocol, UDP transport source IP, observation_domain_id)` 固定分派到 decode worker；同一 exporter/domain 只有一个 owner queue，模板、sampler options 和 data set 不跨 worker 竞态。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 使用显式注入的 template store 与 sampling-rate store，状态严格按 exporter/domain/sampler 隔离。template-pending 可以释放当前 record，让 WAL 中后到的模板先建立状态，再启动下一轮重放。确定性的 decode/normalize 拒绝按 `retry_initial` 指数退避至 `retry_max`，达到 `decode_max_attempts` 后发布稳定 ID 的受限 decode-DLQ；只有 Kafka `acks=all` 后才确认原 WAL record。plan history 缺失、状态/Kafka/WAL 失败属于基础设施或控制面失败，禁止伪装成坏包进入 DLQ，继续背压/重试。由此既不会让毒包永久卡住 affinity worker，也不会因 Kafka 故障误丢事实。
+flow-collect 将 WAL record 以 `hash(protocol, UDP transport source IP, observation_domain_id)` 固定分派到 decode worker；同一 exporter/domain 只有一个 owner queue，模板、sampler options 和 data set 不跨 worker 竞态。GoFlow2 v3 解码四类协议；sFlow 保留 `subAgentId/sequence/sourceId/sampleSequence/samplingRate/samplePool/drops`，NetFlow/IPFIX 使用显式注入的 template store 与 sampling-rate store，状态严格按 exporter/domain/sampler 隔离。template-pending 可以释放当前 record，让 WAL 中后到的模板先建立状态，再启动下一轮重放。GoFlow2 的 wire decode 可能已经更新 template/options store，而后续 producer 字段映射才失败；因此 decoder 在此类错误上必须返回带 `protocol/domain/template_changed/collect_state_changed` 的部分结果，Runner 先完成 collect-state 安全点，再把原报文留在 WAL 进入有界重试/DLQ，禁止用空错误结果丢掉已学习状态。确定性的 decode/normalize 拒绝按 `retry_initial` 指数退避至 `retry_max`，达到 `decode_max_attempts` 后发布稳定 ID 的受限 decode-DLQ；只有 Kafka `acks=all` 后才确认原 WAL record。plan history 缺失、状态/Kafka/WAL 失败属于基础设施或控制面失败，禁止伪装成坏包进入 DLQ，继续背压/重试。由此既不会让毒包永久卡住 affinity worker，也不会因 Kafka 故障误丢事实。
 
 内存 exporter registry 绑定 tenant/target/device，验证唯一 observation interface 和 allowlist，记录 sequence gap、restart、template wait、decode error、drops 和 quality flags。pending/suspended/retired/deleted、health=warming、无模板或无有效 sampling 语义的记录不伪造统计值：可恢复的 template wait 留在 WAL 等待重放，不可恢复坏包进入受限 decode-DLQ。
 
@@ -448,7 +448,7 @@ TLS 使用 TLS 1.2 下限；未配置 `tls_ca_file` 时使用系统 trust store�
 
 旧 epoch tombstone 不是 owner 自己的“顺手清理”，而是 watchdog 内 reconciler 的带审计状态机：`revoke_old_plan_and_unique_principal → wait old plan expiry + clock skew and ACL propagation → new owner restore → observe new epoch state at a frozen Kafka high-watermark and require generation advance → tombstone exact old state_key → verify tombstone at a later frozen boundary`。只有同时满足旧 owner 已 drain/失去 WRITE、新 plan 的 epoch 严格增加、replacement identity 相同且新 key 已 Kafka durable，才能清理；超时保持旧 key而不影响正确性。回滚也必须再分配更高 epoch，绝不复用已 tombstone 的 epoch。tombstone 由 reconciler 专用 principal 写入，flow-collect runtime API 不暴露任意 key 删除；`delete.retention.ms` 至少覆盖最大恢复/消费者中断窗口，并记录 old/new collector、identity、epoch、generation、partition/offset 和审批审计。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler tombstone 编码，以及 template/options corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；这些完成前不得宣称跨节点闭环。
+当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler tombstone 编码，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，但不能代替厂商报文验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 

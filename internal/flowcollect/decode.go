@@ -245,17 +245,20 @@ func (d *Decoder) decodeTemplateFlow(record WALRecord, protocol Protocol, domain
 	} else {
 		packet, sequence, sets = &ipfix, ipfix.SequenceNumber, ipfix.FlowSets
 	}
-	messages, err := d.producer.Produce(packet, produceArgs(record))
-	if err != nil {
-		return DecodedDatagram{}, err
-	}
-	defer d.producer.Commit(messages)
 	sequenceIncrement := uint32(1)
 	exporterUptime, exporterUptimeValid := nf9.SystemUptime, protocol == ProtocolNetFlow9
 	if protocol == ProtocolIPFIX {
 		sequenceIncrement = countIPFIXDataRecords(sets)
 	}
-	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, SequenceIncrement: sequenceIncrement, SequenceScope: domain, ExporterUptime: exporterUptime, ExporterUptimeValid: exporterUptimeValid, TemplateChanged: containsTemplate(sets), CollectStateChanged: d.stateRevision(stateKey) != stateRevision, Records: copyMessages(messages, record.ReceivedAt)}
+	result := DecodedDatagram{Protocol: protocol, ObservationDomainID: domain, DatagramSequence: sequence, SequenceIncrement: sequenceIncrement, SequenceScope: domain, ExporterUptime: exporterUptime, ExporterUptimeValid: exporterUptimeValid, TemplateChanged: containsTemplate(sets), CollectStateChanged: d.stateRevision(stateKey) != stateRevision}
+	messages, err := d.producer.Produce(packet, produceArgs(record))
+	if err != nil {
+		result.CollectStateChanged = d.stateRevision(stateKey) != stateRevision
+		return result, err
+	}
+	defer d.producer.Commit(messages)
+	result.CollectStateChanged = d.stateRevision(stateKey) != stateRevision
+	result.Records = copyMessages(messages, record.ReceivedAt)
 	if containsRawFlowSet(sets) {
 		return result, ErrTemplatePending
 	}
