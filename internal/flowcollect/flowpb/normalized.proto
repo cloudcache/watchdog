@@ -84,6 +84,12 @@ message CollectState {
   bytes templates_json = 13;
   bytes sampling_rates_json = 14;
   bytes payload_sha256 = 15;
+  // state_identity_key is stable across collector ownership changes. state_key
+  // additionally contains ownership_epoch so a fenced old owner cannot
+  // overwrite the current owner's compacted checkpoint.
+  bytes state_identity_key = 16;
+  uint64 ownership_epoch = 17;
+  uint64 state_generation = 18;
 }
 
 // DecodeFailure is a terminal, Kafka-acknowledged outcome for a durable WAL

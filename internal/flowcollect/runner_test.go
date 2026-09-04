@@ -109,7 +109,7 @@ func TestRunnerCheckpointsAndPublishesCollectStateBeforeData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestRunnerAcknowledgesTemplateOnlyAfterCollectStatePublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRunnerKeepsMissingTemplateDataInWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestRunnerRetrySkipsAcknowledgedCollectStateChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestRunnerProcessesDurableNetFlowAndAdvancesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestRunnerOverlapsQualityFsyncWithKafkaButWaitsBeforeTerminalACK(t *testing
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}

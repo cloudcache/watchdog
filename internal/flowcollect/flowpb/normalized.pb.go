@@ -521,8 +521,14 @@ type CollectState struct {
 	TemplatesJson       []byte                 `protobuf:"bytes,13,opt,name=templates_json,json=templatesJson,proto3" json:"templates_json,omitempty"`
 	SamplingRatesJson   []byte                 `protobuf:"bytes,14,opt,name=sampling_rates_json,json=samplingRatesJson,proto3" json:"sampling_rates_json,omitempty"`
 	PayloadSha256       []byte                 `protobuf:"bytes,15,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// state_identity_key is stable across collector ownership changes. state_key
+	// additionally contains ownership_epoch so a fenced old owner cannot
+	// overwrite the current owner's compacted checkpoint.
+	StateIdentityKey []byte `protobuf:"bytes,16,opt,name=state_identity_key,json=stateIdentityKey,proto3" json:"state_identity_key,omitempty"`
+	OwnershipEpoch   uint64 `protobuf:"varint,17,opt,name=ownership_epoch,json=ownershipEpoch,proto3" json:"ownership_epoch,omitempty"`
+	StateGeneration  uint64 `protobuf:"varint,18,opt,name=state_generation,json=stateGeneration,proto3" json:"state_generation,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CollectState) Reset() {
@@ -658,6 +664,27 @@ func (x *CollectState) GetPayloadSha256() []byte {
 		return x.PayloadSha256
 	}
 	return nil
+}
+
+func (x *CollectState) GetStateIdentityKey() []byte {
+	if x != nil {
+		return x.StateIdentityKey
+	}
+	return nil
+}
+
+func (x *CollectState) GetOwnershipEpoch() uint64 {
+	if x != nil {
+		return x.OwnershipEpoch
+	}
+	return 0
+}
+
+func (x *CollectState) GetStateGeneration() uint64 {
+	if x != nil {
+		return x.StateGeneration
+	}
+	return 0
 }
 
 // DecodeFailure is a terminal, Kafka-acknowledged outcome for a durable WAL
@@ -1710,7 +1737,7 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"samplePool\x12%\n" +
 	"\x0eexporter_drops\x18& \x01(\x04R\rexporterDrops\x12!\n" +
 	"\fsample_index\x18' \x01(\rR\vsampleIndex\x12#\n" +
-	"\rquality_epoch\x18( \x01(\x04R\fqualityEpochJ\x04\b\x17\x10 \"\xbf\x04\n" +
+	"\rquality_epoch\x18( \x01(\x04R\fqualityEpochJ\x04\b\x17\x10 \"\xc1\x05\n" +
 	"\fCollectState\x120\n" +
 	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12\x19\n" +
 	"\bstate_id\x18\x02 \x01(\fR\astateId\x12\x1b\n" +
@@ -1729,7 +1756,10 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x15observation_domain_id\x18\f \x01(\x04R\x13observationDomainId\x12%\n" +
 	"\x0etemplates_json\x18\r \x01(\fR\rtemplatesJson\x12.\n" +
 	"\x13sampling_rates_json\x18\x0e \x01(\fR\x11samplingRatesJson\x12%\n" +
-	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256\"\xf7\x04\n" +
+	"\x0epayload_sha256\x18\x0f \x01(\fR\rpayloadSha256\x12,\n" +
+	"\x12state_identity_key\x18\x10 \x01(\fR\x10stateIdentityKey\x12'\n" +
+	"\x0fownership_epoch\x18\x11 \x01(\x04R\x0eownershipEpoch\x12)\n" +
+	"\x10state_generation\x18\x12 \x01(\x04R\x0fstateGeneration\"\xf7\x04\n" +
 	"\rDecodeFailure\x124\n" +
 	"\x16failure_schema_version\x18\x01 \x01(\rR\x14failureSchemaVersion\x12\x19\n" +
 	"\bevent_id\x18\x02 \x01(\fR\aeventId\x12\x1f\n" +

@@ -65,6 +65,20 @@ func TestPlanRejectsAmbiguousSamplingRules(t *testing.T) {
 	}
 }
 
+func TestPlanV2RequiresOwnershipEpoch(t *testing.T) {
+	now := time.Now()
+	plan := validPlan(now)
+	plan.SchemaVersion = 2
+	plan.Sources = []SourceBinding{{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", TenantID: "tenant", ExporterID: "exporter", TargetID: "target", SamplingMode: SamplingModeSampled, Enabled: true}}
+	if _, err := CompilePlan(plan, now); err == nil {
+		t.Fatal("schema-v2 plan without ownership_epoch was accepted")
+	}
+	plan.Sources[0].OwnershipEpoch = 2
+	if _, err := CompilePlan(plan, now); err != nil {
+		t.Fatalf("schema-v2 plan with ownership_epoch was rejected: %v", err)
+	}
+}
+
 func validPlan(now time.Time) Plan {
 	partitionMap := make([]uint32, VirtualShardCount)
 	for index := range partitionMap {

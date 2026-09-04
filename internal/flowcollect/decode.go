@@ -282,10 +282,10 @@ func countIPFIXDataRecords(sets []interface{}) uint32 {
 	return uint32(count)
 }
 
-func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uint64) ([]byte, []byte, error) {
+func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uint64) ([]byte, []byte, uint64, error) {
 	version := protocolVersion(protocol)
 	if d == nil || d.templates == nil || d.sampling == nil || !source.IsValid() || version == 0 || domain > math.MaxUint32 {
-		return nil, nil, errors.New("invalid decoder state snapshot key")
+		return nil, nil, 0, errors.New("invalid decoder state snapshot key")
 	}
 	router := source.Unmap().String()
 	templateDocument := make(map[string]map[string]interface{})
@@ -304,7 +304,7 @@ func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uin
 	}
 	templateJSON, err := json.Marshal(templateDocument)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal template state: %w", err)
+		return nil, nil, 0, fmt.Errorf("marshal template state: %w", err)
 	}
 	samplingDocument := make(map[string]map[string]uint32)
 	if entries := d.sampling.GetAll()[router]; len(entries) > 0 {
@@ -322,9 +322,13 @@ func (d *Decoder) SnapshotState(protocol Protocol, source netip.Addr, domain uin
 	}
 	samplingJSON, err := json.Marshal(samplingDocument)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal sampling-rate state: %w", err)
+		return nil, nil, 0, fmt.Errorf("marshal sampling-rate state: %w", err)
 	}
-	return templateJSON, samplingJSON, nil
+	generation := d.stateRevision(decoderStateKey{router: router, version: version, domain: uint32(domain)})
+	if generation == 0 {
+		return nil, nil, 0, errors.New("decoder state generation is zero")
+	}
+	return templateJSON, samplingJSON, generation, nil
 }
 
 func (d *Decoder) RestoreState(templateJSON, samplingJSON []byte) error {
@@ -337,6 +341,23 @@ func (d *Decoder) RestoreState(templateJSON, samplingJSON []byte) error {
 	if err := samplingrate.LoadJSON(d.sampling, samplingJSON); err != nil {
 		return fmt.Errorf("restore sampling-rate state: %w", err)
 	}
+	return nil
+}
+
+func (d *Decoder) RestoreStateRevision(protocol Protocol, source netip.Addr, domain, generation uint64, templateJSON, samplingJSON []byte) error {
+	version := protocolVersion(protocol)
+	if !source.IsValid() || version == 0 || domain > math.MaxUint32 || generation == 0 {
+		return errors.New("invalid decoder state restore key")
+	}
+	if err := d.RestoreState(templateJSON, samplingJSON); err != nil {
+		return err
+	}
+	key := decoderStateKey{router: source.Unmap().String(), version: version, domain: uint32(domain)}
+	d.stateMu.Lock()
+	if d.stateChanges[key] < generation {
+		d.stateChanges[key] = generation
+	}
+	d.stateMu.Unlock()
 	return nil
 }
 

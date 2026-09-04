@@ -362,16 +362,17 @@
 
 ### FLOW-02 GoFlow2 解码、采样归一与 normalized Kafka 契约
 
-当前状态：**进行中**。GoFlow2、normalized、单节点 collect-state、DLQ/quarantine、质量状态机及其本地 journal/snapshot 恢复主链已经贯通；跨节点恢复、指标出口和生产容量尚未闭环。
+当前状态：**进行中**。GoFlow2、normalized、单节点 collect-state、DLQ/quarantine、质量状态机、本地 journal/snapshot 与指标出口已经贯通；Kafka 启动回读、plan/attempt 持久化、跨 owner 质量状态和生产容量尚未闭环。
 
 - [x] **FLOW-02A GoFlow2 adapter**：同进程 GoFlow2 v3 解码 sFlow v5、NetFlow v5/v9、IPFIX；sFlow 按 sample 转换并保留 sub-agent/source/sample-pool/drops，NetFlow v5 保留 ASN/采样率，v9/IPFIX 按 exporter/domain 隔离内存模板。
 - [x] **FLOW-02B 计数与契约**：sampled/pre-scaled 明确分支、零采样率拒绝、精确 sampling rule、乘法溢出拒绝；protobuf v1 补齐 ASN 和 sFlow 状态，xxHash64/4096 virtual shard、稳定 child batch ID、records/bytes 边界均已有单测。
 - [x] **FLOW-02C Kafka/恢复基线**：Sarama idempotent async producer、manual physical partition、`acks=all`、TLS/system roots、压缩、成功回执后 child ack；未确认 child 可从 raw WAL 重放。
-- [ ] **FLOW-02D collect-state（父项）**：以下 D1/D2 已完成；D3 未完成前不得宣称跨进程/跨节点恢复闭环。
+- [ ] **FLOW-02D collect-state（父项）**：以下 D1/D2/D3A 已完成；D3B 未完成前不得宣称跨进程/跨节点恢复闭环。
   - [x] **FLOW-02D1 本地状态契约**：`CollectState` protobuf、exporter/domain 精确 template/sampling snapshot、本地 magic/length/CRC32 + payload SHA-256、file/directory fsync + atomic rename、损坏 fail-closed、超过可配置 TTL（默认 30 分钟）的 stale state 不恢复。
   - [x] **FLOW-02D2 发布安全点与 worker ownership**：WAL 是唯一 dispatch source；exporter/domain affinity queue；状态先本地 durable、再 Kafka `acks=all`、再 ACK2 child 0、最后 data children；已确认 state child 重试不重发；template-pending 保留 WAL；进程内 retry 推进 `replay_generation`。
-  - [ ] **FLOW-02D3 跨节点闭环**：创建并验证 compacted collect-state topic/ACL/retention，从 Kafka 恢复新 owner，持久化 plan history 与跨进程 attempt generation，完成 template/options corpus、进程重启和滚动切换集成测试。
-- [ ] **FLOW-02E 异常闭环（父项）**：以下 E1/E2A/E2B1 已完成；跨 owner 质量状态和 metrics exporter 尚未完成。
+  - [x] **FLOW-02D3A owner-independent 恢复契约核心**：CollectState v2 已拆分稳定 `state_identity_key` 与带 `ownership_epoch` 的 compacted `state_key`，plan schema v2 要求显式 epoch；decoder `state_generation` 可连续恢复；恢复选择器按当前签名 registry 校验 tenant/exporter/source/domain，按 `(epoch,generation)` 选新，epoch 复用或同序不同 payload fail closed；schema v1 仅允许同 collector 本地兼容。已覆盖跨 owner 恢复、旧 owner 迟到高 offset/高 generation 不能获胜、epoch 复用、冲突和 v1 边界。
+  - [ ] **FLOW-02D3B Kafka/控制面/切换闭环**：创建并验证 compacted collect-state topic/ACL/retention/tombstone，从 Kafka 捕获各 partition high watermark 并在 listener 开放前恢复新 owner；持久化 active/LKG plan history 与跨进程 attempt generation，完成 template/options corpus、进程重启和滚动切换集成测试。
+- [ ] **FLOW-02E 异常闭环（父项）**：以下 E1/E2A/E2B1/E3 已完成；跨 owner 质量状态尚未完成。
   - [x] **FLOW-02E1 DLQ/quarantine**：稳定 ID 的 `DecodeFailure` 与无 tenant/raw payload 的 `QuarantineEvent` protobuf；确定性 decode/normalize 错误有界指数退避，DLQ Kafka ack 后才确认 WAL；模板状态先于 DLQ；未知来源用固定异步队列和 per-source/global 双限流，慢 Kafka 不阻塞采集；DLQ raw payload 默认关闭且可设严格字节上限。
   - [x] **FLOW-02E2A 进程内质量状态**：按准确协议单位维护 sFlow datagram/source、NetFlow v5 engine、v9/IPFIX domain 的 sequence gap/out-of-order/restart，以及 sample-pool reset/rate-change epoch；排除 uint32 回绕；WAL/Kafka retry 按 datagram ID 复用首次判定；protobuf 追加 exporter/quality epoch 与 sample index；有界状态饱和只打标、不阻塞、不改流量计数。
   - [x] **FLOW-02E2B1 本地持久质量状态**：raw WAL durable 后、Kafka 前 append 一次/datagram 的绝对 post-state + retry decision journal，Kafka 等待与本地 group fsync 并行，terminal WAL ACK 前强制 durability barrier；同 ID 幂等、原子 snapshot、ACK 水位过滤、snapshot→journal 恢复、尾部 torn-write 截断和完整损坏 fail-closed 已实现；周期 checkpoint 用 RW barrier 取得一致切面，不产生 per-flow 或 per-datagram Kafka 写放大。

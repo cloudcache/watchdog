@@ -76,7 +76,7 @@ func TestDecodeLoopPublishesDLQBeforeAcknowledgingPoisonDatagram(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestNormalizeFailurePublishesCollectStateBeforeDLQ(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, decoder)
+	stateStore, err := OpenCollectStateStore(t.TempDir(), plan.CollectorID, registry, decoder)
 	if err != nil {
 		t.Fatal(err)
 	}

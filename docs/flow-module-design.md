@@ -413,7 +413,26 @@ raw WAL durable
   -> 发布 normalized data children 并分别 ACK2
 ```
 
-`state_key=SHA-256(collector_id,protocol,source_ip,observation_domain_id)`，Kafka producer 对它稳定 hash partition；`state_id=SHA-256(datagram_id,state_key)`，重试不变。本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；超过可配置 `decoder_state_ttl`（默认 30 分钟）不恢复，以免把过期模板应用到新 exporter session。若一个报文先更新模板再发生 decode/normalize 拒绝，状态安全点仍须先于 DLQ，不能因回收毒包丢失后续数据依赖的模板。滚动升级先 drain listener 并发布安全点；新 owner 必须先恢复 compacted state 和本地/WAL 事实，不能只依赖进程内缓存。
+CollectState v2 把“业务身份”和“写入 fencing”拆开，禁止把可变的当前 owner 混入业务身份：
+
+```text
+state_identity_key = SHA-256(length-prefix(
+  "watchdog.flow.collect-state.identity.v2",
+  tenant_id, exporter_id, protocol, source_ip_16, observation_domain_id))
+state_key          = SHA-256(length-prefix(
+  "watchdog.flow.collect-state.partition.v2",
+  state_identity_key, ownership_epoch))
+state_id           = SHA-256(datagram_id, state_key)
+restore_order      = (ownership_epoch, state_generation)
+```
+
+`state_identity_key` 跨 collector ownership 稳定；`state_key` 是 Kafka compacted key，并包含由控制面按 exporter binding 单调递增的 `ownership_epoch`。因此失联旧 owner 的迟到写只会更新旧 epoch key，不能把新 owner 的状态从 compacted topic 中覆盖掉；D3B 在恢复窗口结束后才可对旧 epoch 发 tombstone。plan payload schema v2 必须逐 source 明确给出正数 `ownership_epoch`；schema v1 仅为滚动兼容而隐式视为 epoch 1，不允许跨 collector 恢复。相同 epoch 出现不同 `collector_id` 视为控制面 split-brain 并 fail closed，不能用 Kafka “最后写入者获胜”掩盖。
+
+`state_generation` 来自同一 exporter/domain decoder store 的单调 revision；恢复模板/option sampler 时一并恢复 revision，后续 checkpoint 必须继续递增。恢复端只接收当前签名 plan 能准入且 `tenant_id/exporter_id` 精确匹配的状态，拒绝高于当前 plan 的 epoch；低于当前 epoch 的状态可作为新 owner 冷启动基线。同一 identity 选择最大 `(ownership_epoch,state_generation)`；同一二元组如 payload digest 不同即判定 split-brain/corruption，Kafka partition/offset 只用于审计，绝不作为消解冲突的正确性依据。
+
+本地 frame 使用 magic/length/CRC32，protobuf 内再保存 payload SHA-256；任何损坏、身份错配、文件名/key 不一致均启动失败，不静默回退为空状态。checkpoint 只承载 GoFlow2 的有界 JSON snapshot，属于低频控制状态，不是 per-flow 业务 JSON；超过可配置 `decoder_state_ttl`（默认 30 分钟）不恢复，以免把过期模板应用到新 exporter session。CollectState v1 本地文件只允许原 `collector_id` 恢复，下一次状态变化自动写 v2。若一个报文先更新模板再发生 decode/normalize 拒绝，状态安全点仍须先于 DLQ，不能因回收毒包丢失后续数据依赖的模板。
+
+D3B 启动顺序冻结为：加载并验证 active/LKG plan 与 history → 捕获 collect-state 各 partition high watermark → 扫描到该一致边界并按上述规则选择 → 与本地 checkpoint 合并 → 恢复 decoder revision/template/sampler → 恢复 WAL/attempt metadata → 最后开放 UDP listener/WAL dispatch。滚动升级先 drain listener 并发布安全点；新 owner 必须完成该恢复闸门，不能先收包再依赖进程内缓存。当前 D3A 已实现 v2 key、fencing、generation、v1 兼容和纯恢复选择器；Kafka consumer/high-watermark、plan history、attempt generation、旧 epoch tombstone 与真实切换测试仍属于 D3B，未完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 

@@ -49,7 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer decoder.Close()
-	stateStore, err := flowcollect.OpenCollectStateStore(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, decoder)
+	stateStore, err := flowcollect.OpenCollectStateStore(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, decoder)
 	if err != nil {
 		log.Fatal(err)
 	}

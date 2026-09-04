@@ -31,17 +31,21 @@ type Observation struct {
 }
 
 type SourceBinding struct {
-	Protocol            Protocol               `json:"protocol"`
-	SourcePrefix        string                 `json:"source_prefix"`
-	ObservationDomainID *uint64                `json:"observation_domain_id,omitempty"`
-	TenantID            string                 `json:"tenant_id"`
-	ExporterID          string                 `json:"exporter_id"`
-	TargetID            string                 `json:"target_id"`
-	DeviceID            string                 `json:"device_id"`
-	SamplingMode        SamplingMode           `json:"sampling_mode"`
-	SamplingRules       []SamplingRule         `json:"sampling_rules,omitempty"`
-	Observations        map[uint32]Observation `json:"observations,omitempty"`
-	Enabled             bool                   `json:"enabled"`
+	Protocol            Protocol `json:"protocol"`
+	SourcePrefix        string   `json:"source_prefix"`
+	ObservationDomainID *uint64  `json:"observation_domain_id,omitempty"`
+	TenantID            string   `json:"tenant_id"`
+	ExporterID          string   `json:"exporter_id"`
+	TargetID            string   `json:"target_id"`
+	DeviceID            string   `json:"device_id"`
+	// OwnershipEpoch is increased by the control plane every time this
+	// exporter binding moves to another collector. Schema-v1 plans implicitly
+	// use epoch 1; schema-v2 plans must carry it explicitly.
+	OwnershipEpoch uint64                 `json:"ownership_epoch,omitempty"`
+	SamplingMode   SamplingMode           `json:"sampling_mode"`
+	SamplingRules  []SamplingRule         `json:"sampling_rules,omitempty"`
+	Observations   map[uint32]Observation `json:"observations,omitempty"`
+	Enabled        bool                   `json:"enabled"`
 }
 
 type SamplingRule struct {
@@ -76,7 +80,7 @@ type Registry struct {
 }
 
 func CompilePlan(plan Plan, now time.Time) (*Registry, error) {
-	if plan.SchemaVersion != 1 {
+	if plan.SchemaVersion != 1 && plan.SchemaVersion != 2 {
 		return nil, fmt.Errorf("unsupported plan schema version %d", plan.SchemaVersion)
 	}
 	if plan.Revision == 0 || strings.TrimSpace(plan.CollectorID) == "" {
@@ -112,6 +116,9 @@ func CompilePlan(plan Plan, now time.Time) (*Registry, error) {
 		}
 		if strings.TrimSpace(source.TenantID) == "" || strings.TrimSpace(source.ExporterID) == "" || strings.TrimSpace(source.TargetID) == "" {
 			return nil, fmt.Errorf("sources[%d] tenant_id, exporter_id, and target_id are required", i)
+		}
+		if plan.SchemaVersion >= 2 && source.OwnershipEpoch == 0 {
+			return nil, fmt.Errorf("sources[%d].ownership_epoch is required", i)
 		}
 		if source.SamplingMode != SamplingModeSampled && source.SamplingMode != SamplingModePreScaled {
 			return nil, fmt.Errorf("sources[%d].sampling_mode is invalid", i)
@@ -161,6 +168,13 @@ func CompilePlan(plan Plan, now time.Time) (*Registry, error) {
 		return compiled[i].ObservationDomainID != nil && compiled[j].ObservationDomainID == nil
 	})
 	return &Registry{plan: plan, bindings: compiled}, nil
+}
+
+func (b SourceBinding) EffectiveOwnershipEpoch() uint64 {
+	if b.OwnershipEpoch == 0 {
+		return 1
+	}
+	return b.OwnershipEpoch
 }
 
 func samplingRuleKey(rule SamplingRule) string {
