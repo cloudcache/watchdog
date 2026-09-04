@@ -143,6 +143,26 @@ func qualityCheckpointProducerMessage(topic string, checkpoint *flowpb.QualityCh
 	return &sarama.ProducerMessage{Topic: topic, Partition: -1, Key: sarama.ByteEncoder(key), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(checkpoint.CommittedAtUnixMs)}, nil
 }
 
+func stateTombstoneProducerMessage(topic string, tombstone StateTombstone, createdAt time.Time) (*sarama.ProducerMessage, error) {
+	if topic == "" || createdAt.IsZero() {
+		return nil, errors.New("Kafka collect-state topic and tombstone time are required")
+	}
+	key := tombstone.Key()
+	switch tombstone.Kind() {
+	case StateCheckpointDecoder:
+		if len(key) != 32 {
+			return nil, errors.New("decoder tombstone key is invalid")
+		}
+	case StateCheckpointQuality:
+		if !isQualityCheckpointKafkaKey(key) {
+			return nil, errors.New("quality tombstone key is invalid")
+		}
+	default:
+		return nil, errors.New("state tombstone kind is invalid")
+	}
+	return &sarama.ProducerMessage{Topic: topic, Partition: -1, Key: sarama.ByteEncoder(key), Value: nil, Timestamp: createdAt}, nil
+}
+
 func (p *KafkaPublisher) PublishDecodeFailure(ctx context.Context, failure *flowpb.DecodeFailure) error {
 	if p.decodeDLQTopic == "" {
 		return errors.New("Kafka decode-DLQ topic is required")
