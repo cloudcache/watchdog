@@ -33,19 +33,50 @@ const (
 	defaultSFlowPrefixSync        = 5 * time.Minute
 	defaultSNMPTrapListen         = ":162"
 	defaultAgentInterval          = time.Minute
+	defaultFlowCleanupLease       = 30 * time.Second
+	defaultFlowCleanupHeartbeat   = 10 * time.Second
+	defaultFlowCleanupStepTimeout = 2 * time.Minute
+	defaultFlowCleanupPoll        = time.Second
+	defaultFlowCleanupRetryMin    = time.Second
+	defaultFlowCleanupRetryMax    = time.Minute
 )
 
 type BackendConfig struct {
-	MySQL           MySQLConfig           `yaml:"mysql"`
-	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
-	Export          ExportConfig          `yaml:"export"`
-	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
-	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
-	FlowCollect     flowcollect.Config    `yaml:"flow_collect"`
-	AggregateGraph  AggregateGraphConfig  `yaml:"aggregate_graph"`
-	SNMP            SNMPConfig            `yaml:"snmp"`
-	SNMPTrapAgent   SNMPTrapAgentConfig   `yaml:"snmp_trap_agent"`
-	Agent           AgentClientConfig     `yaml:"agent"`
+	MySQL           MySQLConfig            `yaml:"mysql"`
+	VictoriaMetrics VictoriaMetricsConfig  `yaml:"victoriametrics"`
+	Export          ExportConfig           `yaml:"export"`
+	SNMPCollector   SNMPCollectorConfig    `yaml:"snmp_collector"`
+	SFlowCollector  SFlowCollectorConfig   `yaml:"sflow_collector"`
+	FlowCollect     flowcollect.Config     `yaml:"flow_collect"`
+	FlowCleanup     FlowStateCleanupConfig `yaml:"flow_state_cleanup"`
+	AggregateGraph  AggregateGraphConfig   `yaml:"aggregate_graph"`
+	SNMP            SNMPConfig             `yaml:"snmp"`
+	SNMPTrapAgent   SNMPTrapAgentConfig    `yaml:"snmp_trap_agent"`
+	Agent           AgentClientConfig      `yaml:"agent"`
+}
+
+type FlowStateCleanupConfig struct {
+	Enabled           bool                        `yaml:"enabled"`
+	WorkerID          string                      `yaml:"worker_id"`
+	LeaseDuration     time.Duration               `yaml:"lease_duration"`
+	HeartbeatInterval time.Duration               `yaml:"heartbeat_interval"`
+	StepTimeout       time.Duration               `yaml:"step_timeout"`
+	PollInterval      time.Duration               `yaml:"poll_interval"`
+	RetryMin          time.Duration               `yaml:"retry_min"`
+	RetryMax          time.Duration               `yaml:"retry_max"`
+	MaxAttempts       uint32                      `yaml:"max_attempts"`
+	Kafka             FlowStateCleanupKafkaConfig `yaml:"kafka"`
+}
+
+type FlowStateCleanupKafkaConfig struct {
+	Brokers       []string      `yaml:"brokers"`
+	Topic         string        `yaml:"collect_state_topic"`
+	ScanTimeout   time.Duration `yaml:"scan_timeout"`
+	TLS           bool          `yaml:"tls"`
+	TLSCAFile     string        `yaml:"tls_ca_file"`
+	TLSCertFile   string        `yaml:"tls_cert_file"`
+	TLSKeyFile    string        `yaml:"tls_key_file"`
+	TLSServerName string        `yaml:"tls_server_name"`
 }
 
 type MySQLConfig struct {
@@ -149,6 +180,7 @@ func LoadBackendConfigFromEnv() (BackendConfig, error) {
 }
 
 func defaultBackendConfig() BackendConfig {
+	flowDefaults := flowcollect.DefaultConfig()
 	return BackendConfig{
 		MySQL: MySQLConfig{
 			MaxOpenConns:    defaultMySQLMaxOpenConns,
@@ -176,7 +208,15 @@ func defaultBackendConfig() BackendConfig {
 			AggInterval:        defaultSFlowAggInterval,
 			PrefixSyncInterval: defaultSFlowPrefixSync,
 		},
-		FlowCollect: flowcollect.DefaultConfig(),
+		FlowCollect: flowDefaults,
+		FlowCleanup: FlowStateCleanupConfig{
+			LeaseDuration: defaultFlowCleanupLease, HeartbeatInterval: defaultFlowCleanupHeartbeat,
+			StepTimeout: defaultFlowCleanupStepTimeout, PollInterval: defaultFlowCleanupPoll,
+			RetryMin: defaultFlowCleanupRetryMin, RetryMax: defaultFlowCleanupRetryMax,
+			Kafka: FlowStateCleanupKafkaConfig{
+				Topic: flowDefaults.Kafka.CollectStateTopic, ScanTimeout: flowDefaults.Kafka.CollectStateRestoreTimeout,
+			},
+		},
 		AggregateGraph: AggregateGraphConfig{
 			RollupInterval: defaultAggregateGraphRollupInterval,
 		},
@@ -240,6 +280,45 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	if err := cfg.FlowCollect.ApplyEnv(); err != nil {
 		return err
 	}
+	if cfg.FlowCleanup.Enabled, err = getEnvBool("WATCHDOG_FLOW_STATE_CLEANUP_ENABLED", cfg.FlowCleanup.Enabled); err != nil {
+		return err
+	}
+	cfg.FlowCleanup.WorkerID = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_WORKER_ID", cfg.FlowCleanup.WorkerID)
+	if cfg.FlowCleanup.LeaseDuration, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_LEASE_DURATION", cfg.FlowCleanup.LeaseDuration); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.HeartbeatInterval, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_HEARTBEAT_INTERVAL", cfg.FlowCleanup.HeartbeatInterval); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.StepTimeout, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_STEP_TIMEOUT", cfg.FlowCleanup.StepTimeout); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.PollInterval, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_POLL_INTERVAL", cfg.FlowCleanup.PollInterval); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.RetryMin, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_RETRY_MIN", cfg.FlowCleanup.RetryMin); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.RetryMax, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_RETRY_MAX", cfg.FlowCleanup.RetryMax); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.MaxAttempts, err = getEnvUint32("WATCHDOG_FLOW_STATE_CLEANUP_MAX_ATTEMPTS", cfg.FlowCleanup.MaxAttempts); err != nil {
+		return err
+	}
+	if brokers, ok := os.LookupEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_BROKERS"); ok {
+		cfg.FlowCleanup.Kafka.Brokers = splitConfigList(brokers)
+	}
+	cfg.FlowCleanup.Kafka.Topic = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_COLLECT_STATE_TOPIC", cfg.FlowCleanup.Kafka.Topic)
+	if cfg.FlowCleanup.Kafka.ScanTimeout, err = getEnvDuration("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_SCAN_TIMEOUT", cfg.FlowCleanup.Kafka.ScanTimeout); err != nil {
+		return err
+	}
+	if cfg.FlowCleanup.Kafka.TLS, err = getEnvBool("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS", cfg.FlowCleanup.Kafka.TLS); err != nil {
+		return err
+	}
+	cfg.FlowCleanup.Kafka.TLSCAFile = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_CA_FILE", cfg.FlowCleanup.Kafka.TLSCAFile)
+	cfg.FlowCleanup.Kafka.TLSCertFile = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_CERT_FILE", cfg.FlowCleanup.Kafka.TLSCertFile)
+	cfg.FlowCleanup.Kafka.TLSKeyFile = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_KEY_FILE", cfg.FlowCleanup.Kafka.TLSKeyFile)
+	cfg.FlowCleanup.Kafka.TLSServerName = getEnv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_TLS_SERVER_NAME", cfg.FlowCleanup.Kafka.TLSServerName)
 	cfg.Export.Dir = getEnv("WATCHDOG_EXPORT_DIR", cfg.Export.Dir)
 	if cfg.Export.WorkerInterval, err = getEnvDuration("WATCHDOG_EXPORT_WORKER_INTERVAL", cfg.Export.WorkerInterval); err != nil {
 		return err
@@ -318,6 +397,34 @@ func getEnvDuration(key string, fallback time.Duration) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
+func getEnvBool(key string, fallback bool) (bool, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return fallback, fmt.Errorf("%s must be a boolean", key)
+	}
+	return parsed, nil
+}
+
+func getEnvUint32(key string, fallback uint32) (uint32, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32)
+	if err != nil {
+		return fallback, fmt.Errorf("%s must be an integer between 0 and %d", key, uint64(^uint32(0)))
+	}
+	return uint32(parsed), nil
+}
+
+func splitConfigList(value string) []string {
+	return strings.FieldsFunc(value, func(char rune) bool { return char == ',' || char == ';' })
+}
+
 func getEnvStringList(key string, fallback []string) []string {
 	value, ok := os.LookupEnv(key)
 	if !ok {
@@ -347,12 +454,44 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
 	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
 	cfg.FlowCollect.Normalize()
+	cfg.FlowCleanup.WorkerID = strings.TrimSpace(cfg.FlowCleanup.WorkerID)
+	cfg.FlowCleanup.Kafka.Brokers = normalizeStringList(cfg.FlowCleanup.Kafka.Brokers)
+	cfg.FlowCleanup.Kafka.Topic = strings.TrimSpace(cfg.FlowCleanup.Kafka.Topic)
+	cfg.FlowCleanup.Kafka.TLSCAFile = cleanOptionalConfigPath(cfg.FlowCleanup.Kafka.TLSCAFile)
+	cfg.FlowCleanup.Kafka.TLSCertFile = cleanOptionalConfigPath(cfg.FlowCleanup.Kafka.TLSCertFile)
+	cfg.FlowCleanup.Kafka.TLSKeyFile = cleanOptionalConfigPath(cfg.FlowCleanup.Kafka.TLSKeyFile)
+	cfg.FlowCleanup.Kafka.TLSServerName = strings.TrimSpace(cfg.FlowCleanup.Kafka.TLSServerName)
 	cfg.SNMP.MIBDirs = normalizeStringPaths(cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = strings.TrimSpace(cfg.SNMP.MIBLoad)
 	cfg.SNMPTrapAgent.APIURL = normalizeBaseURL(cfg.SNMPTrapAgent.APIURL)
 	cfg.SNMPTrapAgent.Listen = strings.TrimSpace(cfg.SNMPTrapAgent.Listen)
 	cfg.Agent.HubURL = normalizeBaseURL(cfg.Agent.HubURL)
 	cfg.Agent.AgentID = ID(strings.TrimSpace(string(cfg.Agent.AgentID)))
+}
+
+func normalizeStringList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func cleanOptionalConfigPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return filepath.Clean(value)
 }
 
 func normalizeBaseURL(value string) string {
@@ -402,6 +541,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := cfg.FlowCollect.Validate(); err != nil {
 		return err
 	}
+	if err := validateFlowStateCleanupConfig(cfg.FlowCleanup, cfg.FlowCollect.Kafka); err != nil {
+		return err
+	}
 	if cfg.Export.Dir == "" || cfg.Export.WorkerInterval <= 0 || cfg.Export.WorkerBatch <= 0 {
 		return errors.New("export dir, worker_interval, and worker_batch must be configured with positive worker values")
 	}
@@ -427,6 +569,66 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 		return errors.New("agent.interval must be positive")
 	}
 	return nil
+}
+
+func validateFlowStateCleanupConfig(cfg FlowStateCleanupConfig, dataPlaneKafka flowcollect.KafkaConfig) error {
+	if cfg.LeaseDuration <= 0 || cfg.LeaseDuration > 24*time.Hour || cfg.HeartbeatInterval <= 0 || cfg.HeartbeatInterval >= cfg.LeaseDuration/2 || cfg.StepTimeout <= 0 || cfg.StepTimeout > 24*time.Hour || cfg.PollInterval <= 0 || cfg.PollInterval > time.Hour || cfg.RetryMin <= 0 || cfg.RetryMax < cfg.RetryMin || cfg.RetryMax > 24*time.Hour || cfg.Kafka.ScanTimeout <= 0 || cfg.Kafka.ScanTimeout > 24*time.Hour {
+		return errors.New("flow_state_cleanup worker durations are invalid")
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.WorkerID == "" || len(cfg.WorkerID) > 128 {
+		return errors.New("flow_state_cleanup.worker_id is required and must be at most 128 bytes")
+	}
+	if len(cfg.Kafka.Brokers) == 0 || cfg.Kafka.Topic == "" {
+		return errors.New("flow_state_cleanup.kafka brokers and collect_state_topic are required")
+	}
+	for _, broker := range cfg.Kafka.Brokers {
+		if err := validateListenAddress("flow_state_cleanup.kafka.brokers", broker); err != nil {
+			return err
+		}
+	}
+	if (cfg.Kafka.TLSCertFile == "") != (cfg.Kafka.TLSKeyFile == "") {
+		return errors.New("flow_state_cleanup.kafka tls_cert_file and tls_key_file must be configured together")
+	}
+	if !cfg.Kafka.TLS {
+		if cfg.Kafka.TLSCAFile != "" || cfg.Kafka.TLSCertFile != "" || cfg.Kafka.TLSKeyFile != "" || cfg.Kafka.TLSServerName != "" {
+			return errors.New("flow_state_cleanup.kafka TLS files and server name require tls=true")
+		}
+		for _, broker := range cfg.Kafka.Brokers {
+			host, _, _ := net.SplitHostPort(broker)
+			ip := net.ParseIP(host)
+			if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+				return errors.New("flow_state_cleanup.kafka.tls may be disabled only for loopback development brokers")
+			}
+		}
+	} else if cfg.Kafka.TLSCertFile == "" {
+		return errors.New("flow_state_cleanup.kafka requires a dedicated mTLS client certificate and key")
+	}
+	if (cfg.Kafka.TLSCertFile != "" && cfg.Kafka.TLSCertFile == dataPlaneKafka.TLSCertFile) ||
+		(cfg.Kafka.TLSKeyFile != "" && cfg.Kafka.TLSKeyFile == dataPlaneKafka.TLSKeyFile) {
+		return errors.New("flow_state_cleanup.kafka must not reuse the flow_collect runtime client certificate")
+	}
+	return nil
+}
+
+func (cfg FlowStateCleanupConfig) ReconcilerConfig() FlowStateCleanupReconcilerConfig {
+	return FlowStateCleanupReconcilerConfig{
+		WorkerID: cfg.WorkerID, LeaseDuration: cfg.LeaseDuration,
+		HeartbeatInterval: cfg.HeartbeatInterval, StepTimeout: cfg.StepTimeout,
+		PollInterval: cfg.PollInterval, RetryMin: cfg.RetryMin,
+		RetryMax: cfg.RetryMax, MaxAttempts: cfg.MaxAttempts,
+	}
+}
+
+func (cfg FlowStateCleanupKafkaConfig) FlowCollectKafkaConfig() flowcollect.KafkaConfig {
+	return flowcollect.KafkaConfig{
+		Brokers: cfg.Brokers, CollectStateTopic: cfg.Topic,
+		CollectStateRestoreTimeout: cfg.ScanTimeout, Acks: "all", Compression: "none",
+		TLS: cfg.TLS, TLSCAFile: cfg.TLSCAFile, TLSCertFile: cfg.TLSCertFile,
+		TLSKeyFile: cfg.TLSKeyFile, TLSServerName: cfg.TLSServerName,
+	}
 }
 
 func validateHTTPBaseURL(name, value string, required bool) error {

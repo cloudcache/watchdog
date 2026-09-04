@@ -28,6 +28,8 @@ type APIV1RouterConfig struct {
 	AddressSets     AddressSetRepository
 	Tenants         TenantRepository
 	Readiness       func(context.Context) error
+	RuntimeHealth   func() PlatformRuntimeHealth
+	RuntimeMetrics  func() []byte
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -58,6 +60,22 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		}
 		WriteAPIJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	}))
+	mux.Handle("GET /api/v1/health/runtime", auth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if cfg.RuntimeHealth == nil {
+			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Runtime health is not configured", nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusOK, cfg.RuntimeHealth())
+	})))
+	mux.Handle("GET /api/v1/health/runtime/metrics", auth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if cfg.RuntimeMetrics == nil {
+			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Runtime metrics are not configured", nil)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(cfg.RuntimeMetrics())
+	})))
 	mux.Handle("GET /api/v1/me", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := AuthFromContext(r.Context())
 		WriteAPIJSON(w, http.StatusOK, user)

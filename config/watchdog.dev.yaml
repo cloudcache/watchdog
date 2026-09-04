@@ -103,6 +103,23 @@ flow_collect:
     idle_timeout: 30s
     shutdown_timeout: 5s
 
+flow_state_cleanup:
+  # Enable only after the local Kafka topic has been bootstrapped.
+  enabled: false
+  worker_id: "watchdog-dev-control"
+  lease_duration: 30s
+  heartbeat_interval: 10s
+  step_timeout: 2m
+  poll_interval: 1s
+  retry_min: 1s
+  retry_max: 1m
+  max_attempts: 0
+  kafka:
+    brokers: ["127.0.0.1:9092"]
+    collect_state_topic: "watchdog.flow.collect-state.v1"
+    scan_timeout: 2m
+    tls: false
+
 aggregate_graph:
   rollup_interval: 5m
 

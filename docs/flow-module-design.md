@@ -464,9 +464,11 @@ reconciler core 已接上 repository、targeted scanner adapter 和 tombstone wr
 
 replacement 扫描契约也补齐为三个显式恢复量：`restored_old_epoch/restored_old_generation/new_epoch_baseline_generation`。scanner 不再隐含 baseline=0；新 checkpoint 必须严格越过该 baseline。replacement Kafka key 只能由状态机按已确认 fence 的新 epoch 派生，管理层不能手拼 typed key；payload 依 kind 解 protobuf 并完成 checksum/identity/key 校验后才转换成状态机 checkpoint。
 
-剩余 B2B 是 evidence executor/authenticated adapter、reconciler 配置/启停/health/API wiring、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository 与 evidence provider 已完成，没有运行接线和真实基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+宿主 runtime 已完成专用 scanner/writer/evidence/reconciler 接线。`flow_state_cleanup.enabled=false` 默认不创建 Kafka client；只有生产 Hub 和开发服务器显式调用 `StartBackground`，独立 SNMP/export/rollup 命令即便共享配置也不会误领 cleanup lease。启用后首次成功 claim/idle 之前 readiness 保持失败；DB/Kafka 短断只把 worker 标为 not-ready 并按 `retry_min..retry_max` 有界退避，下一次成功自动恢复，不结束 HTTP 进程。关停顺序固定为 cancel worker→等待正在执行的 step/heartbeat 退出→关闭 tombstone writer→关闭 scanner→关闭 MySQL，重复关闭幂等。`GET /api/v1/health/runtime` 与 `GET /api/v1/health/runtime/metrics` 均需已有登录上下文，只暴露 enabled/started/running/ready、worked/idle/error counter 和 last-success timestamp；Prometheus result 标签集合固定，不携带 tenant/exporter/job ID 或错误文本。
 
-当前仍未完成的是 D3B3B 的 IaC 实际创建、宿主 evidence/config/health/API 与 scanner/writer 生命周期 wiring，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository 与 reconciler core 已完成但尚不能单独构成运行闭环。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
+剩余 B2B 是受权 job create/get/retry API、evidence executor/authenticated collector adapter、专用 Kafka principal/ACL，以及真实多 broker/IaC 故障验收。特别注意 Kafka 只有 `null` value 才是 compaction tombstone，零长度但非 null 的 value 必须拒绝。虽然 MySQL 机器证据表、事务 repository、evidence provider 和运行时监督已完成，没有受权操作入口和真实基础设施时仍不能把单库生命周期测试等同于生产回收闭环。
+
+当前仍未完成的是 D3B3B 的 IaC 实际创建、受权 job/evidence executor/authenticated adapter API，以及真实设备 template/options pcap corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；MySQL repository、reconciler core 和宿主运行时监督不能替代这些验收。合成 NetFlow v9/IPFIX template/options 的乱序、刷新、状态隔离/恢复及“学习状态后字段映射失败”安全点已覆盖，并固定依赖版本 GoFlow2 `6dee964c38ee` 自带 NetFlow v9 原始 wire fixture 的内容摘要和关键字段映射。上游 wire fixture 仍缺设备型号、固件、导出配置和采集链证据，不能冒充真实厂商 pcap 验收。这些剩余项完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -2217,6 +2219,28 @@ flow_collect:
     idle_timeout: 30s
     shutdown_timeout: 5s
   exporter_refresh_interval: 30s
+
+# Embedded watchdog control-plane worker. It is separate from flow-collect and
+# must use a distinct least-privilege Kafka mTLS principal.
+flow_state_cleanup:
+  enabled: false
+  worker_id: "watchdog-control-1"
+  lease_duration: 30s
+  heartbeat_interval: 10s
+  step_timeout: 2m
+  poll_interval: 1s
+  retry_min: 1s
+  retry_max: 1m
+  max_attempts: 0 # 0 means no attempt cap for retryable job failures
+  kafka:
+    brokers: ["kafka-1:9093", "kafka-2:9093", "kafka-3:9093"]
+    collect_state_topic: "watchdog.flow.collect-state.v1"
+    scan_timeout: 2m
+    tls: true
+    tls_ca_file: "/etc/watchdog/kafka/ca.crt"
+    tls_cert_file: "/etc/watchdog/kafka/flow-state-cleanup.crt"
+    tls_key_file: "/etc/watchdog/kafka/flow-state-cleanup.key"
+    tls_server_name: "kafka.watchdog.internal"
 
 flow_dimension:
   kafka:

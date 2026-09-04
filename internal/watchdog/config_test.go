@@ -51,6 +51,55 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.SNMPCollector.Interval != defaultSNMPCollectorInterval {
 		t.Fatalf("snmp collector config = %#v", cfg.SNMPCollector)
 	}
+	if cfg.FlowCleanup.Enabled || cfg.FlowCleanup.LeaseDuration != defaultFlowCleanupLease || cfg.FlowCleanup.Kafka.Topic == "" {
+		t.Fatalf("flow state-cleanup defaults = %#v", cfg.FlowCleanup)
+	}
+}
+
+func TestLoadBackendConfigEnablesDedicatedFlowStateCleanupWorker(t *testing.T) {
+	t.Setenv("WATCHDOG_MYSQL_DSN", "user:pass@tcp(127.0.0.1:3306)/watchdog")
+	t.Setenv("WATCHDOG_FLOW_STATE_CLEANUP_ENABLED", "true")
+	t.Setenv("WATCHDOG_FLOW_STATE_CLEANUP_WORKER_ID", "cleanup-worker-a")
+	t.Setenv("WATCHDOG_FLOW_STATE_CLEANUP_KAFKA_BROKERS", "127.0.0.1:9092, 127.0.0.1:9092")
+	t.Setenv("WATCHDOG_FLOW_STATE_CLEANUP_MAX_ATTEMPTS", "9")
+	cfg, err := LoadBackendConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.FlowCleanup.Enabled || cfg.FlowCleanup.WorkerID != "cleanup-worker-a" || len(cfg.FlowCleanup.Kafka.Brokers) != 1 || cfg.FlowCleanup.MaxAttempts != 9 {
+		t.Fatalf("flow state-cleanup config = %#v", cfg.FlowCleanup)
+	}
+	kafka := cfg.FlowCleanup.Kafka.FlowCollectKafkaConfig()
+	if kafka.CollectStateTopic != cfg.FlowCleanup.Kafka.Topic || kafka.Acks != "all" || kafka.Compression != "none" {
+		t.Fatalf("flow state-cleanup Kafka adapter = %#v", kafka)
+	}
+}
+
+func TestFlowStateCleanupConfigRejectsUnsafeKafkaIdentity(t *testing.T) {
+	cfg := defaultBackendConfig()
+	cfg.FlowCleanup.Enabled = true
+	cfg.FlowCleanup.WorkerID = "cleanup-worker-a"
+	cfg.FlowCleanup.Kafka.Brokers = []string{"kafka.example:9093"}
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("remote plaintext Kafka error = %v", err)
+	}
+
+	cfg.FlowCleanup.Kafka.TLS = true
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "dedicated mTLS") {
+		t.Fatalf("missing cleanup mTLS error = %v", err)
+	}
+	cfg.FlowCleanup.Kafka.TLSCertFile = "/etc/watchdog/shared.crt"
+	cfg.FlowCleanup.Kafka.TLSKeyFile = "/etc/watchdog/cleanup.key"
+	cfg.FlowCollect.Kafka.TLSCertFile = cfg.FlowCleanup.Kafka.TLSCertFile
+	cfg.FlowCollect.Kafka.TLSKeyFile = "/etc/watchdog/flow-collect.key"
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "must not reuse") {
+		t.Fatalf("reused data-plane identity error = %v", err)
+	}
+	cfg.FlowCleanup.Kafka.TLSCertFile = "/etc/watchdog/cleanup.crt"
+	cfg.FlowCleanup.Kafka.TLSKeyFile = cfg.FlowCollect.Kafka.TLSKeyFile
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "must not reuse") {
+		t.Fatalf("reused data-plane key error = %v", err)
+	}
 }
 
 func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {

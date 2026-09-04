@@ -3,8 +3,10 @@ package watchdog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -18,7 +20,13 @@ type BackendRuntime struct {
 	SNMPDiscovery      SNMPDiscoveryEngine
 	AggregateRollup    AggregateGraphRollup
 	DiscoveryScheduler DiscoveryScheduler
+	FlowStateCleanup   *FlowStateCleanupRuntime
 	trapDispatcherFn   func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
+	backgroundMu       sync.Mutex
+	backgroundStarted  bool
+	backgroundClosed   bool
+	closeOnce          sync.Once
+	closeError         error
 }
 
 func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime, error) {
@@ -124,11 +132,39 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressSets:     r.Store,
 		Tenants:         r.Store,
 		Readiness:       r.Ready,
+		RuntimeHealth:   r.Health,
+		RuntimeMetrics:  r.RuntimeMetrics,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
 		},
 	})
+}
+
+func (r *BackendRuntime) Health() PlatformRuntimeHealth {
+	status := FlowStateCleanupRuntimeStatus{Enabled: r != nil && r.Config.FlowCleanup.Enabled}
+	if r != nil {
+		r.backgroundMu.Lock()
+		cleanup := r.FlowStateCleanup
+		r.backgroundMu.Unlock()
+		if cleanup != nil {
+			status.Health = cleanup.Health()
+		}
+	}
+	return PlatformRuntimeHealth{FlowStateCleanup: status}
+}
+
+func (r *BackendRuntime) RuntimeMetrics() []byte {
+	if r == nil || !r.Config.FlowCleanup.Enabled {
+		return []byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 0\n")
+	}
+	r.backgroundMu.Lock()
+	cleanup := r.FlowStateCleanup
+	r.backgroundMu.Unlock()
+	if cleanup == nil {
+		return []byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n# TYPE watchdog_flow_state_cleanup_worker_up gauge\nwatchdog_flow_state_cleanup_worker_up 0\n")
+	}
+	return append([]byte("# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n"), cleanup.PrometheusText()...)
 }
 
 func (r *BackendRuntime) RunExportWorker(ctx context.Context) error {
@@ -178,11 +214,55 @@ func (r *BackendRuntime) RunAggregateGraphRollup(ctx context.Context) error {
 	})
 }
 
-func (r *BackendRuntime) Close() error {
-	if r == nil || r.Store == nil {
+// StartBackground starts only the control-plane workers owned by the embedded
+// watchdog runtime. Standalone SNMP/export commands keep their own lifecycle
+// and do not accidentally acquire flow cleanup leases.
+func (r *BackendRuntime) StartBackground(ctx context.Context) error {
+	if r == nil || ctx == nil {
+		return errors.New("watchdog backend runtime and context are required")
+	}
+	r.backgroundMu.Lock()
+	defer r.backgroundMu.Unlock()
+	if r.backgroundStarted {
+		return errors.New("watchdog backend background services are already started")
+	}
+	if r.backgroundClosed {
+		return errors.New("watchdog backend runtime is closed")
+	}
+	if !r.Config.FlowCleanup.Enabled {
+		r.backgroundStarted = true
 		return nil
 	}
-	return r.Store.Close()
+	cleanup, err := newConfiguredFlowStateCleanupRuntime(r.Store, r.Config.FlowCleanup)
+	if err != nil {
+		return fmt.Errorf("initialize flow state-cleanup runtime: %w", err)
+	}
+	if err := cleanup.Start(ctx); err != nil {
+		_ = cleanup.Close()
+		return fmt.Errorf("start flow state-cleanup runtime: %w", err)
+	}
+	r.FlowStateCleanup = cleanup
+	r.backgroundStarted = true
+	return nil
+}
+
+func (r *BackendRuntime) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.closeOnce.Do(func() {
+		r.backgroundMu.Lock()
+		r.backgroundClosed = true
+		cleanup := r.FlowStateCleanup
+		r.backgroundMu.Unlock()
+		if cleanup != nil {
+			r.closeError = errors.Join(r.closeError, cleanup.Close())
+		}
+		if r.Store != nil {
+			r.closeError = errors.Join(r.closeError, r.Store.Close())
+		}
+	})
+	return r.closeError
 }
 
 func (r *BackendRuntime) Ready(ctx context.Context) error {
@@ -192,7 +272,22 @@ func (r *BackendRuntime) Ready(ctx context.Context) error {
 	if err := r.Store.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return CheckMySQLSchemaCurrent(ctx, r.Store.db)
+	if err := CheckMySQLSchemaCurrent(ctx, r.Store.db); err != nil {
+		return err
+	}
+	if r.Config.FlowCleanup.Enabled {
+		r.backgroundMu.Lock()
+		cleanup := r.FlowStateCleanup
+		started := r.backgroundStarted
+		r.backgroundMu.Unlock()
+		if !started || cleanup == nil {
+			return errors.New("flow state-cleanup runtime is enabled but not started")
+		}
+		if err := cleanup.Ready(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *BackendRuntime) buildTrapDispatcher() func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error) {

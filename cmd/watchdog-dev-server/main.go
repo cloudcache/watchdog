@@ -28,6 +28,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer runtime.Close()
+	if err := runtime.StartBackground(ctx); err != nil {
+		log.Fatal(err)
+	}
 	tenantID := watchdog.ID(getenv("WATCHDOG_DEV_TENANT_ID", string(cfg.SNMPCollector.TenantID)))
 	userID := watchdog.ID(getenv("WATCHDOG_DEV_USER_ID", "user_dev"))
 	if getenv("WATCHDOG_DEV_SNMP_COLLECTOR", "1") != "0" {

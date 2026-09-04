@@ -160,6 +160,11 @@ func (h *Hub) startBackendRuntime() error {
 		cancel()
 		return fmt.Errorf("initialize watchdog platform backend: %w", err)
 	}
+	if err := runtime.StartBackground(ctx); err != nil {
+		cancel()
+		_ = runtime.Close()
+		return fmt.Errorf("start watchdog platform background services: %w", err)
+	}
 	h.backend = runtime
 	h.App.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		h.backendClose.Do(func() {
