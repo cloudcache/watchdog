@@ -19,6 +19,7 @@ type ObservabilityServer struct {
 	config  ObservabilityConfig
 	metrics *Metrics
 	wal     *WAL
+	attempt *AttemptStore
 	quality *QualityStateStore
 	runtime *RuntimeState
 	handler http.Handler
@@ -27,6 +28,7 @@ type ObservabilityServer struct {
 type readinessChecks struct {
 	Runner            string `json:"runner"`
 	WAL               string `json:"wal"`
+	AttemptState      string `json:"attempt_state"`
 	QualityState      string `json:"quality_state"`
 	CollectState      string `json:"collect_state"`
 	KafkaNormalized   string `json:"kafka_normalized"`
@@ -40,9 +42,9 @@ type readinessResponse struct {
 	Checks readinessChecks `json:"checks"`
 }
 
-func NewObservabilityServer(config ObservabilityConfig, metrics *Metrics, wal *WAL, quality *QualityStateStore, runtime *RuntimeState) (*ObservabilityServer, error) {
-	if metrics == nil || wal == nil || quality == nil || runtime == nil {
-		return nil, errors.New("observability metrics, WAL, quality state, and runtime state are required")
+func NewObservabilityServer(config ObservabilityConfig, metrics *Metrics, wal *WAL, attempt *AttemptStore, quality *QualityStateStore, runtime *RuntimeState) (*ObservabilityServer, error) {
+	if metrics == nil || wal == nil || attempt == nil || quality == nil || runtime == nil {
+		return nil, errors.New("observability metrics, WAL, attempt state, quality state, and runtime state are required")
 	}
 	if err := validateListen("flow_collect.observability.listen", config.Listen); err != nil {
 		return nil, err
@@ -50,7 +52,7 @@ func NewObservabilityServer(config ObservabilityConfig, metrics *Metrics, wal *W
 	if config.ReadHeaderTimeout <= 0 || config.WriteTimeout <= 0 || config.IdleTimeout <= 0 || config.ShutdownTimeout <= 0 {
 		return nil, errors.New("flow_collect.observability timeouts must be positive")
 	}
-	server := &ObservabilityServer{config: config, metrics: metrics, wal: wal, quality: quality, runtime: runtime}
+	server := &ObservabilityServer{config: config, metrics: metrics, wal: wal, attempt: attempt, quality: quality, runtime: runtime}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", server.serveMetrics)
 	mux.HandleFunc("/health/live", server.serveLive)
@@ -114,10 +116,12 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 	}
 	runtime := s.runtime.Snapshot()
 	wal := s.wal.State()
+	attempt := s.attempt.State()
 	quality := s.quality.State()
 	checks := readinessChecks{
 		Runner:            healthValue(runtime.Running),
 		WAL:               healthValue(wal.Writable && !wal.HardWatermark),
+		AttemptState:      healthValue(attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy),
 		QualityState:      healthValue(quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy),
 		CollectState:      healthValue(runtime.Collect.Healthy),
 		KafkaNormalized:   healthValue(runtime.Kafka[kafkaTopicNormalized].Healthy),
@@ -125,20 +129,23 @@ func (s *ObservabilityServer) serveReady(w http.ResponseWriter, r *http.Request)
 		KafkaDecodeDLQ:    healthValue(runtime.Kafka[kafkaTopicDecodeDLQ].Healthy),
 		KafkaQuarantine:   healthValue(runtime.Kafka[kafkaTopicQuarantine].Healthy),
 	}
-	ready := runtime.Running && wal.Writable && !wal.HardWatermark && quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy && runtime.Collect.Healthy
+	ready := runtime.Running && wal.Writable && !wal.HardWatermark && attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy && quality.Writable && runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy && runtime.Collect.Healthy
 	for _, topic := range runtime.Kafka {
 		ready = ready && topic.Healthy
 	}
 	status, code := "ready", http.StatusOK
 	if !ready {
 		status, code = "unavailable", http.StatusServiceUnavailable
-	} else if wal.SoftWatermark || quality.UsageRatio >= .8 {
+	} else if wal.SoftWatermark || attempt.UsageRatio >= .8 || quality.UsageRatio >= .8 {
 		status = "degraded"
 		if wal.SoftWatermark {
 			checks.WAL = "degraded"
 		}
 		if quality.UsageRatio >= .8 {
 			checks.QualityState = "degraded"
+		}
+		if attempt.UsageRatio >= .8 {
+			checks.AttemptState = "degraded"
 		}
 	}
 	writeJSON(w, r, code, readinessResponse{Status: status, Checks: checks})
@@ -163,6 +170,7 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metrics := s.metrics
 	runtime := s.runtime.Snapshot()
 	wal := s.wal.State()
+	attempt := s.attempt.State()
 	quality := s.quality.State()
 
 	metricHeader(&out, "watchdog_flow_datagrams_received_total", "Accepted flow datagrams by decoded wire protocol.", "counter")
@@ -250,9 +258,29 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metricHistogram(&out, "watchdog_flow_wal_fsync_latency_seconds", "", metrics.walFsync.buckets[:], metrics.walFsync.nanoseconds.Load(), metrics.walFsync.count.Load())
 	metricHeader(&out, "watchdog_flow_wal_dropped_total", "Datagrams rejected by the raw WAL admission boundary.", "counter")
 	metricUint(&out, "watchdog_flow_wal_dropped_total", `reason="hard_watermark"`, metrics.WALHardStops.Load())
+	metricHeader(&out, "watchdog_flow_plan_history_entries", "Signed collector plan revisions retained after WAL-reference reconciliation.", "gauge")
+	metricInt(&out, "watchdog_flow_plan_history_entries", "", metrics.PlanHistoryEntries.Load())
+	metricHeader(&out, "watchdog_flow_plan_history_pruned_total", "Unreferenced signed collector plan revisions pruned.", "counter")
+	metricUint(&out, "watchdog_flow_plan_history_pruned_total", "", metrics.PlanHistoryPruned.Load())
 
 	metricHeader(&out, "watchdog_flow_replay_attempts_total", "WAL record processing attempts after the first generation.", "counter")
 	metricUint(&out, "watchdog_flow_replay_attempts_total", "", metrics.ReplayAttempts.Load())
+	metricHeader(&out, "watchdog_flow_attempt_journal_bytes", "Bytes retained by the local replay-attempt journal.", "gauge")
+	metricInt(&out, "watchdog_flow_attempt_journal_bytes", "", attempt.JournalBytes)
+	metricHeader(&out, "watchdog_flow_attempt_journal_max_bytes", "Configured maximum bytes for the local replay-attempt journal.", "gauge")
+	metricInt(&out, "watchdog_flow_attempt_journal_max_bytes", "", attempt.MaxJournalBytes)
+	metricHeader(&out, "watchdog_flow_attempt_tracked", "Datagram attempt generations retained until durable terminal WAL acknowledgement.", "gauge")
+	metricInt(&out, "watchdog_flow_attempt_tracked", "", int64(attempt.Tracked))
+	metricHeader(&out, "watchdog_flow_attempt_journal_appends_total", "Generation records appended to the replay-attempt journal.", "counter")
+	metricUint(&out, "watchdog_flow_attempt_journal_appends_total", "", metrics.AttemptJournalAppends.Load())
+	metricHeader(&out, "watchdog_flow_attempt_journal_failures_total", "Replay-attempt journal write or sync failures.", "counter")
+	metricUint(&out, "watchdog_flow_attempt_journal_failures_total", "", metrics.AttemptJournalFailures.Load())
+	metricHeader(&out, "watchdog_flow_attempt_state_restores_total", "Pending datagram attempt generations restored at startup.", "counter")
+	metricUint(&out, "watchdog_flow_attempt_state_restores_total", "", metrics.AttemptStateRestores.Load())
+	metricHeader(&out, "watchdog_flow_attempt_state_checkpoints_total", "Replay-attempt journal compactions completed.", "counter")
+	metricUint(&out, "watchdog_flow_attempt_state_checkpoints_total", "", metrics.AttemptStateCheckpoints.Load())
+	metricHeader(&out, "watchdog_flow_attempt_checkpoint_failures_total", "Replay-attempt journal compaction failures.", "counter")
+	metricUint(&out, "watchdog_flow_attempt_checkpoint_failures_total", "", metrics.AttemptCheckpointFailures.Load())
 	metricHeader(&out, "watchdog_flow_dlq_total", "Datagrams durably published to the decode DLQ.", "counter")
 	metricUint(&out, "watchdog_flow_dlq_total", `reason="permanent_decode"`, metrics.DLQDatagrams.Load())
 	metricHeader(&out, "watchdog_flow_quarantine_total", "Unknown-source quarantine outcomes.", "counter")
@@ -286,6 +314,11 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metricInt(&out, "watchdog_flow_collect_state_restored", "", metrics.CollectStateRestored.Load())
 	metricHeader(&out, "watchdog_flow_collect_state_restore_duration_seconds", "Duration of the startup collect-state read and restore gate.", "gauge")
 	metricFloat(&out, "watchdog_flow_collect_state_restore_duration_seconds", "", float64(metrics.CollectStateRestoreNanos.Load())/float64(time.Second))
+	metricHeader(&out, "watchdog_flow_attempt_state_ready", "Whether replay-attempt persistence and checkpointing are writable.", "gauge")
+	metricBool(&out, "watchdog_flow_attempt_state_ready", "", attempt.Writable && runtime.AttemptJournal.Healthy && runtime.AttemptCheckpoint.Healthy)
+	metricHeader(&out, "watchdog_flow_attempt_state_last_failure_timestamp_seconds", "Unix time of the last replay-attempt journal or checkpoint failure.", "gauge")
+	metricInt(&out, "watchdog_flow_attempt_state_last_failure_timestamp_seconds", `operation="journal"`, runtime.AttemptJournal.LastFailureAt)
+	metricInt(&out, "watchdog_flow_attempt_state_last_failure_timestamp_seconds", `operation="checkpoint"`, runtime.AttemptCheckpoint.LastFailureAt)
 	metricHeader(&out, "watchdog_flow_quality_state_ready", "Whether the local quality-state journal and checkpoint are writable.", "gauge")
 	metricBool(&out, "watchdog_flow_quality_state_ready", "", runtime.QualityJournal.Healthy && runtime.QualityCheckpoint.Healthy && quality.Writable)
 	metricHeader(&out, "watchdog_flow_quality_state_last_failure_timestamp_seconds", "Unix time of the last quality-state journal or checkpoint failure.", "gauge")

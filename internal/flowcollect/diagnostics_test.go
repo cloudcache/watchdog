@@ -80,13 +80,18 @@ func TestDecodeLoopPublishesDLQBeforeAcknowledgingPoisonDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attempts, err := OpenAttemptStore(t.TempDir(), plan.CollectorID, DefaultConfig().Diagnostics, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempts.Close()
 	publisher := &recordingPublisher{dlqPublished: make(chan struct{}, 1)}
 	runner := &Runner{
 		Config: Config{
 			NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond},
 			Diagnostics:     DiagnosticsConfig{DecodeMaxAttempts: 2, RetryInitial: time.Millisecond, RetryMax: 2 * time.Millisecond},
 		},
-		Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher,
+		Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Attempts: attempts, Publisher: publisher,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -151,13 +156,18 @@ func TestNormalizeFailurePublishesCollectStateBeforeDLQ(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attempts, err := OpenAttemptStore(t.TempDir(), plan.CollectorID, DefaultConfig().Diagnostics, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempts.Close()
 	publisher := &recordingPublisher{dlqPublished: make(chan struct{}, 1)}
 	runner := &Runner{
 		Config: Config{
 			NormalizedBatch: NormalizedBatchCfg{MaxRecords: 100, MaxBytes: 1 << 20, MaxWait: time.Millisecond},
 			Diagnostics:     DiagnosticsConfig{DecodeMaxAttempts: 1, RetryInitial: time.Millisecond, RetryMax: time.Millisecond},
 		},
-		Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Publisher: publisher,
+		Registry: registry, WAL: w, Decoder: decoder, State: stateStore, Attempts: attempts, Publisher: publisher,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

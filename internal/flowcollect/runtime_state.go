@@ -16,6 +16,8 @@ type RuntimeState struct {
 	startedAt         atomic.Int64
 	kafka             [kafkaTopicSlots]componentRuntimeState
 	collect           componentRuntimeState
+	attemptJournal    componentRuntimeState
+	attemptCheckpoint componentRuntimeState
 	qualityJournal    componentRuntimeState
 	qualityCheckpoint componentRuntimeState
 }
@@ -31,6 +33,8 @@ type RuntimeSnapshot struct {
 	StartedAt         int64
 	Kafka             [kafkaTopicSlots]ComponentRuntimeSnapshot
 	Collect           ComponentRuntimeSnapshot
+	AttemptJournal    ComponentRuntimeSnapshot
+	AttemptCheckpoint ComponentRuntimeSnapshot
 	QualityJournal    ComponentRuntimeSnapshot
 	QualityCheckpoint ComponentRuntimeSnapshot
 }
@@ -41,6 +45,8 @@ func NewRuntimeState() *RuntimeState {
 		state.kafka[index].healthy.Store(true)
 	}
 	state.collect.healthy.Store(true)
+	state.attemptJournal.healthy.Store(true)
+	state.attemptCheckpoint.healthy.Store(true)
 	state.qualityJournal.healthy.Store(true)
 	state.qualityCheckpoint.healthy.Store(true)
 	return state
@@ -63,6 +69,14 @@ func (s *RuntimeState) observeCollect(err error, now time.Time) {
 	s.collect.observe(err, now)
 }
 
+func (s *RuntimeState) observeAttemptJournal(err error, now time.Time) {
+	s.attemptJournal.observe(err, now)
+}
+
+func (s *RuntimeState) observeAttemptCheckpoint(err error, now time.Time) {
+	s.attemptCheckpoint.observe(err, now)
+}
+
 func (s *RuntimeState) observeQualityJournal(err error, now time.Time) {
 	s.qualityJournal.observe(err, now)
 }
@@ -77,6 +91,8 @@ func (s *RuntimeState) Snapshot() RuntimeSnapshot {
 		snapshot.Kafka[index] = s.kafka[index].snapshot()
 	}
 	snapshot.Collect = s.collect.snapshot()
+	snapshot.AttemptJournal = s.attemptJournal.snapshot()
+	snapshot.AttemptCheckpoint = s.attemptCheckpoint.snapshot()
 	snapshot.QualityJournal = s.qualityJournal.snapshot()
 	snapshot.QualityCheckpoint = s.qualityCheckpoint.snapshot()
 	return snapshot

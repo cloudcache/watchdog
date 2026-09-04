@@ -25,6 +25,7 @@ type Runner struct {
 	WAL          *WAL
 	Decoder      *Decoder
 	State        *CollectStateStore
+	Attempts     *AttemptStore
 	Publisher    Publisher
 	OnError      func(error)
 	Metrics      *Metrics
@@ -33,7 +34,6 @@ type Runner struct {
 	Runtime      *RuntimeState
 
 	inflight        sync.Map
-	attempts        sync.Map
 	retryNeeded     atomic.Bool
 	metricsOnce     sync.Once
 	qualityOnce     sync.Once
@@ -44,10 +44,10 @@ type Runner struct {
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Publisher == nil || r.QualityState == nil {
+	if r.Registry == nil || r.WAL == nil || r.Decoder == nil || r.State == nil || r.Attempts == nil || r.Publisher == nil || r.QualityState == nil {
 		return errors.New("flow runner dependencies are required")
 	}
-	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.JournalFsync <= 0 || r.Config.Quality.CheckpointEvery <= 0 || r.Config.Quality.JournalMaxBytes <= qualityFrameHeaderSize || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
+	if r.Config.SocketCount <= 0 || r.Config.DecodeWorkers <= 0 || r.Config.DecodeQueueDatagrams <= 0 || r.Config.Diagnostics.DecodeMaxAttempts <= 0 || r.Config.Diagnostics.RetryInitial <= 0 || r.Config.Diagnostics.RetryMax < r.Config.Diagnostics.RetryInitial || r.Config.Diagnostics.AttemptJournalFsync <= 0 || r.Config.Diagnostics.AttemptCheckpointEvery <= 0 || r.Config.Diagnostics.AttemptJournalMaxBytes < attemptHeaderSize+attemptRecordSize || r.Config.Diagnostics.QuarantineQueueEvents <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || r.Config.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 || r.Config.Quality.StateTTL <= 0 || r.Config.Quality.AnomalyWindow <= 0 || r.Config.Quality.JournalFsync <= 0 || r.Config.Quality.CheckpointEvery <= 0 || r.Config.Quality.JournalMaxBytes <= qualityFrameHeaderSize || r.Config.Quality.MaxExporters <= 0 || r.Config.Quality.MaxDataSources <= 0 {
 		return errors.New("flow runner socket, worker, queue, and retry limits must be positive")
 	}
 	metrics := r.metrics()
@@ -61,6 +61,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	quality := r.quality()
 	if r.QualityState.tracker != quality || r.QualityState.wal != r.WAL {
 		return errors.New("flow runner quality-state store does not match its tracker or WAL")
+	}
+	if r.Attempts.wal != r.WAL || r.Attempts.collectorID != r.Registry.Plan().CollectorID {
+		return errors.New("flow runner attempt store does not match its registry or WAL")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -90,6 +93,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	go func() { defer workerWG.Done(); r.reclaimLoop(ctx) }()
 	workerWG.Add(1)
 	go func() { defer workerWG.Done(); r.qualityCheckpointLoop(ctx) }()
+	workerWG.Add(1)
+	go func() { defer workerWG.Done(); r.attemptCheckpointLoop(ctx) }()
 
 	var receiverWG sync.WaitGroup
 	for socket := 0; socket < r.Config.SocketCount; socket++ {
@@ -198,21 +203,37 @@ func (r *Runner) decodeLoop(ctx context.Context, records <-chan WALRecord) {
 		case record := <-records:
 			r.metrics().DecodeQueueDepth.Add(-1)
 			for ctx.Err() == nil {
-				generation := r.nextReplayGeneration(record.DatagramID)
+				generation, generationErr := r.Attempts.Generation(record.DatagramID)
+				if generationErr != nil {
+					r.runtimeState().observeAttemptJournal(generationErr, time.Now())
+					r.report(generationErr)
+					r.retryNeeded.Store(true)
+					break
+				}
 				if generation > 0 {
 					r.metrics().ReplayAttempts.Add(1)
 				}
 				err := r.processRecord(ctx, record, generation)
 				if err == nil {
 					r.metrics().DecodedDatagrams.Add(1)
-					r.attempts.Delete(record.DatagramID)
 					break
 				}
 				r.report(err)
+				if generation == ^uint32(0) {
+					r.report(errors.New("attempt generation exhausted uint32"))
+					r.retryNeeded.Store(true)
+					break
+				}
 				attempts := generation + 1
+				attemptErr := r.Attempts.Advance(ctx, record.DatagramID, attempts)
+				r.runtimeState().observeAttemptJournal(attemptErr, time.Now())
+				if attemptErr != nil {
+					r.report(attemptErr)
+					r.retryNeeded.Store(true)
+					break
+				}
 				if code, cause, permanent := permanentFailureDetails(err); permanent && attempts >= uint32(r.Config.Diagnostics.DecodeMaxAttempts) {
 					if dlqErr := r.deadLetter(ctx, record, code, cause, attempts); dlqErr == nil {
-						r.attempts.Delete(record.DatagramID)
 						break
 					} else {
 						r.report(dlqErr)
@@ -565,6 +586,24 @@ func (r *Runner) qualityCheckpointLoop(ctx context.Context) {
 	}
 }
 
+func (r *Runner) attemptCheckpointLoop(ctx context.Context) {
+	ticker := time.NewTicker(r.Config.Diagnostics.AttemptCheckpointEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			err := r.Attempts.Compact()
+			r.runtimeState().observeAttemptCheckpoint(err, now)
+			if err != nil {
+				r.metrics().AttemptCheckpointFailures.Add(1)
+				r.report(fmt.Errorf("compact attempt state: %w", err))
+			}
+		}
+	}
+}
+
 func (r *Runner) submit(record WALRecord, queues []chan WALRecord) bool {
 	if _, loaded := r.inflight.LoadOrStore(record.DatagramID, struct{}{}); loaded {
 		return true
@@ -595,11 +634,6 @@ func decodeWorkerIndex(record WALRecord, workers int) int {
 	binary.BigEndian.PutUint64(domain[:], record.ObservationDomainID)
 	_, _ = hash.Write(domain[:])
 	return int(hash.Sum64() % uint64(workers))
-}
-
-func (r *Runner) nextReplayGeneration(id DatagramID) uint32 {
-	value, _ := r.attempts.LoadOrStore(id, &atomic.Uint32{})
-	return value.(*atomic.Uint32).Add(1) - 1
 }
 
 func (r *Runner) report(err error) {

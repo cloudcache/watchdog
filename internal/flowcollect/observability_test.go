@@ -43,6 +43,7 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 		`watchdog_flow_collect_state_restore_candidates 7`,
 		`watchdog_flow_collect_state_restored 5`,
 		`watchdog_flow_collect_state_restore_duration_seconds 1.5`,
+		`watchdog_flow_attempt_state_ready 1`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("metrics output does not contain %q", expected)
@@ -72,6 +73,10 @@ func TestObservabilityReadinessFailsClosedAndRecovers(t *testing.T) {
 	assertReadyStatus(t, server, http.StatusServiceUnavailable, `"quality_state":"failed"`)
 	runtime.observeQualityCheckpoint(nil, time.Now())
 	assertReadyStatus(t, server, http.StatusOK, `"quality_state":"ok"`)
+	runtime.observeAttemptJournal(errors.New("attempt sync failed"), time.Now())
+	assertReadyStatus(t, server, http.StatusServiceUnavailable, `"attempt_state":"failed"`)
+	runtime.observeAttemptJournal(nil, time.Now())
+	assertReadyStatus(t, server, http.StatusOK, `"attempt_state":"ok"`)
 }
 
 func TestObservabilityRejectsWritesAndHeadHasNoBody(t *testing.T) {
@@ -115,21 +120,29 @@ func testObservabilityServer(t *testing.T) (*ObservabilityServer, *Metrics, *Run
 		t.Fatal(err)
 	}
 	qualityConfig := testQualityStateConfig()
+	attempt, err := OpenAttemptStore(t.TempDir(), "collector-a", DefaultConfig().Diagnostics, wal, metrics)
+	if err != nil {
+		_ = wal.Close()
+		t.Fatal(err)
+	}
 	quality, err := OpenQualityStateStore(t.TempDir(), "collector-a", qualityConfig, NewQualityTracker(qualityConfig, metrics), wal, metrics)
 	if err != nil {
+		_ = attempt.Close()
 		_ = wal.Close()
 		t.Fatal(err)
 	}
 	runtime := NewRuntimeState()
 	config := DefaultConfig().Observability
-	server, err := NewObservabilityServer(config, metrics, wal, quality, runtime)
+	server, err := NewObservabilityServer(config, metrics, wal, attempt, quality, runtime)
 	if err != nil {
 		_ = quality.Close()
+		_ = attempt.Close()
 		_ = wal.Close()
 		t.Fatal(err)
 	}
 	return server, metrics, runtime, func() {
 		_ = quality.Close()
+		_ = attempt.Close()
 		_ = wal.Close()
 	}
 }

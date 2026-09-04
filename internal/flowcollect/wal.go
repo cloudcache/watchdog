@@ -322,28 +322,41 @@ func (w *WAL) datagramDurablyAcknowledged(id DatagramID) bool {
 // in raw WAL without a durable terminal acknowledgement. A missing ID is not
 // assumed pending because acknowledged segments may already be reclaimed.
 func (w *WAL) pendingDatagramIDs() (map[DatagramID]struct{}, error) {
+	pending, _, err := w.pendingRecoveryState()
+	return pending, err
+}
+
+// PendingRegistryVersions returns the exact signed-plan revisions referenced
+// by durable, terminally-unacknowledged WAL records. It is intended for the
+// startup recovery gate, before UDP listeners can append concurrently.
+func (w *WAL) PendingRegistryVersions() (map[uint64]struct{}, error) {
+	_, revisions, err := w.pendingRecoveryState()
+	return revisions, err
+}
+
+func (w *WAL) pendingRecoveryState() (map[DatagramID]struct{}, map[uint64]struct{}, error) {
 	w.scanMu.Lock()
 	defer w.scanMu.Unlock()
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
-		return nil, ErrWALClosed
+		return nil, nil, ErrWALClosed
 	}
 	if err := w.segment.Sync(); err != nil {
 		w.markSyncErrorLocked(err)
 		w.mu.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
 	if err := w.ackFile.Sync(); err != nil {
 		w.markSyncErrorLocked(err)
 		w.mu.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
 	w.markDurableLocked()
 	segments, err := w.segmentFiles()
 	if err != nil {
 		w.mu.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
 	completed := make(map[DatagramID]struct{}, len(w.durableAcks))
 	for id, state := range w.durableAcks {
@@ -353,17 +366,19 @@ func (w *WAL) pendingDatagramIDs() (map[DatagramID]struct{}, error) {
 	}
 	w.mu.Unlock()
 	pending := make(map[DatagramID]struct{})
+	revisions := make(map[uint64]struct{})
 	for _, path := range segments {
 		if err := scanSegment(path, func(record WALRecord) error {
 			if _, acknowledged := completed[record.DatagramID]; !acknowledged {
 				pending[record.DatagramID] = struct{}{}
+				revisions[record.RegistryVersion] = struct{}{}
 			}
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return pending, nil
+	return pending, revisions, nil
 }
 
 func (w *WAL) Replay(fn func(WALRecord) error) error {

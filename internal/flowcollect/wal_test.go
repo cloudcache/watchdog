@@ -136,6 +136,39 @@ func TestWALPendingIDsDoNotConfuseReclaimedRecordsWithUnacknowledged(t *testing.
 	}
 }
 
+func TestWALPendingRegistryVersionsExcludeDurablyAcknowledgedRecords(t *testing.T) {
+	wal, err := OpenWAL(t.TempDir(), "collector-a", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wal.Close()
+	firstInput := testWALInput([]byte("revision-one"))
+	firstInput.RegistryVersion = 1
+	if _, err := wal.Append(firstInput); err != nil {
+		t.Fatal(err)
+	}
+	secondInput := testWALInput([]byte("revision-two"))
+	secondInput.RegistryVersion = 2
+	secondInput.ReceivedAt = secondInput.ReceivedAt.Add(time.Second)
+	second, err := wal.Append(secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wal.Acknowledge(second.DatagramID); err != nil {
+		t.Fatal(err)
+	}
+	versions, err := wal.PendingRegistryVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := versions[1]; !exists {
+		t.Fatal("pending plan revision was omitted")
+	}
+	if _, exists := versions[2]; exists {
+		t.Fatal("durably acknowledged plan revision was retained")
+	}
+}
+
 func TestWALPersistsPartialChildAcknowledgements(t *testing.T) {
 	dir := t.TempDir()
 	w, err := OpenWAL(dir, "collector-a", testWALConfig())

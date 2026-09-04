@@ -115,6 +115,51 @@ func TestHistoricalPlanCanBeResolvedAfterExpiry(t *testing.T) {
 	}
 }
 
+func TestPlanHistoryPrunesOnlyRevisionsUnreferencedByWAL(t *testing.T) {
+	now := time.Now()
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	keyPath := filepath.Join(dir, "plan.pub")
+	historyDir := filepath.Join(dir, "history")
+	writePlanPublicKey(t, keyPath, publicKey)
+	plan := validPlan(now)
+	for revision := uint64(1); revision <= 3; revision++ {
+		plan.Revision = revision
+		plan.PartitionMapVersion = uint32(revision)
+		writeSignedPlan(t, planPath, plan, privateKey)
+		if _, err := OpenPlanHistory(planPath, keyPath, historyDir, 2, now); err != nil {
+			t.Fatalf("open revision %d: %v", revision, err)
+		}
+	}
+	history, err := OpenPlanHistory(planPath, keyPath, historyDir, 2, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := history.Revisions(); len(got) != 3 {
+		t.Fatalf("temporary startup overflow was not retained: %v", got)
+	}
+	if _, err := history.Prune(map[uint64]struct{}{9: {}}); err == nil {
+		t.Fatal("missing WAL plan revision was accepted")
+	}
+	removed, err := history.Prune(map[uint64]struct{}{1: {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("pruned revisions=%d, want 1", removed)
+	}
+	if _, ok := history.Resolve(1); !ok {
+		t.Fatal("WAL-referenced revision was pruned")
+	}
+	if _, ok := history.Resolve(2); ok {
+		t.Fatal("unreferenced revision was retained")
+	}
+	if _, ok := history.Resolve(3); !ok {
+		t.Fatal("active revision was pruned")
+	}
+}
+
 func writePlanPublicKey(t *testing.T, path string, publicKey ed25519.PublicKey) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(publicKey)), 0o600); err != nil {

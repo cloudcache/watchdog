@@ -84,8 +84,8 @@ func (h *PlanHistory) load(publicKey []byte) error {
 			names = append(names, entry.Name())
 		}
 	}
-	if len(names) > h.max {
-		return fmt.Errorf("flow plan history has %d entries, limit is %d", len(names), h.max)
+	if len(names) > h.max+1 {
+		return fmt.Errorf("flow plan history has %d entries, startup overflow limit is %d", len(names), h.max+1)
 	}
 	sort.Strings(names)
 	collectorID := ""
@@ -134,8 +134,8 @@ func (h *PlanHistory) activate(envelope []byte, verified verifiedSignedPlan, reg
 			return fmt.Errorf("flow plan revision %d payload is immutable", revision)
 		}
 	} else {
-		if len(h.entries) >= h.max {
-			return fmt.Errorf("flow plan history limit %d reached; prune only after WAL references are gone", h.max)
+		if len(h.entries) >= h.max+1 {
+			return fmt.Errorf("flow plan history startup overflow limit %d reached", h.max+1)
 		}
 		if err := h.persist(revision, envelope); err != nil {
 			return err
@@ -255,6 +255,70 @@ func (h *PlanHistory) UsedLKG() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.usedLKG
+}
+
+// Prune retains the active revision, the highest revision as an anti-rollback
+// watermark, and every revision referenced by pending WAL. OpenPlanHistory
+// permits one temporary entry above max so a newly signed active plan can be
+// made durable before this recovery-time reconciliation.
+func (h *PlanHistory) Prune(referenced map[uint64]struct{}) (int, error) {
+	if h == nil {
+		return 0, errors.New("flow plan history is required")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.active == nil {
+		return 0, errors.New("active flow plan is unavailable")
+	}
+	activeRevision := h.active.Plan().Revision
+	if _, exists := h.entries[activeRevision]; !exists {
+		return 0, fmt.Errorf("active flow plan revision %d is absent from history", activeRevision)
+	}
+	retained := make(map[uint64]struct{}, len(referenced)+2)
+	retained[activeRevision] = struct{}{}
+	highestRevision := uint64(0)
+	for revision := range h.entries {
+		if revision > highestRevision {
+			highestRevision = revision
+		}
+	}
+	retained[highestRevision] = struct{}{}
+	for revision := range referenced {
+		if revision == 0 {
+			return 0, errors.New("pending WAL references plan revision zero")
+		}
+		if _, exists := h.entries[revision]; !exists {
+			return 0, fmt.Errorf("pending WAL references unavailable plan revision %d", revision)
+		}
+		retained[revision] = struct{}{}
+	}
+	if len(retained) > h.max {
+		return 0, fmt.Errorf("pending WAL requires %d plan revisions, history limit is %d", len(retained), h.max)
+	}
+	victims := make([]uint64, 0, len(h.entries)-len(retained))
+	for revision := range h.entries {
+		if _, keep := retained[revision]; !keep {
+			victims = append(victims, revision)
+		}
+	}
+	sort.Slice(victims, func(i, j int) bool { return victims[i] < victims[j] })
+	for _, revision := range victims {
+		path := filepath.Join(h.dir, fmt.Sprintf("%020d.plan", revision))
+		if err := os.Remove(path); err != nil {
+			return 0, fmt.Errorf("remove unreferenced flow plan revision %d: %w", revision, err)
+		}
+		delete(h.entries, revision)
+	}
+	if len(victims) > 0 {
+		directory, err := os.Open(h.dir)
+		if err != nil {
+			return 0, fmt.Errorf("open flow plan history dir after prune: %w", err)
+		}
+		if err := errors.Join(directory.Sync(), directory.Close()); err != nil {
+			return 0, fmt.Errorf("sync flow plan history prune: %w", err)
+		}
+	}
+	return len(victims), nil
 }
 
 func planHistoryRevision(name string) (uint64, error) {

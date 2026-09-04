@@ -68,6 +68,9 @@ flow_collect:
     decode_max_attempts: 3
     retry_initial: 250ms
     retry_max: 5s
+    attempt_journal_fsync_interval: 10ms
+    attempt_checkpoint_interval: 5m
+    attempt_journal_max_bytes: 268435456
     quarantine_queue_events: 1024
     quarantine_max_events_per_second: 20
     quarantine_max_events_per_source_second: 2

@@ -89,7 +89,14 @@ type Metrics struct {
 	CollectStateRestoreCandidates atomic.Int64
 	CollectStateRestored          atomic.Int64
 	CollectStateRestoreNanos      atomic.Int64
+	PlanHistoryEntries            atomic.Int64
+	PlanHistoryPruned             atomic.Uint64
 	ReplayAttempts                atomic.Uint64
+	AttemptJournalAppends         atomic.Uint64
+	AttemptJournalFailures        atomic.Uint64
+	AttemptStateRestores          atomic.Uint64
+	AttemptStateCheckpoints       atomic.Uint64
+	AttemptCheckpointFailures     atomic.Uint64
 	DLQDatagrams                  atomic.Uint64
 	DLQPublishFailures            atomic.Uint64
 	SequenceGapEvents             atomic.Uint64
@@ -143,7 +150,13 @@ type MetricSnapshot struct {
 	CollectStateCheckpoints   uint64
 	PublishedCollectStates    uint64
 	CollectStateFailures      uint64
+	PlanHistoryPruned         uint64
 	ReplayAttempts            uint64
+	AttemptJournalAppends     uint64
+	AttemptJournalFailures    uint64
+	AttemptStateRestores      uint64
+	AttemptStateCheckpoints   uint64
+	AttemptCheckpointFailures uint64
 	DLQDatagrams              uint64
 	DLQPublishFailures        uint64
 	SequenceGapEvents         uint64
@@ -167,6 +180,7 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		QuarantinedDatagrams: m.QuarantinedDatagrams.Load(), WALAppended: m.WALAppended.Load(), WALHardStops: m.WALHardStops.Load(),
 		DecodedDatagrams: m.DecodedDatagrams.Load(), DecodeFailures: m.DecodeFailures.Load(), NormalizeFailures: m.NormalizeFailures.Load(), PublishFailures: m.PublishFailures.Load(), TemplatePending: m.TemplatePending.Load(), PublishedBatches: m.PublishedBatches.Load(),
 		CollectStateCheckpoints: m.CollectStateCheckpoints.Load(), PublishedCollectStates: m.PublishedCollectStates.Load(), CollectStateFailures: m.CollectStateFailures.Load(), ReplayAttempts: m.ReplayAttempts.Load(),
+		PlanHistoryPruned: m.PlanHistoryPruned.Load(), AttemptJournalAppends: m.AttemptJournalAppends.Load(), AttemptJournalFailures: m.AttemptJournalFailures.Load(), AttemptStateRestores: m.AttemptStateRestores.Load(), AttemptStateCheckpoints: m.AttemptStateCheckpoints.Load(), AttemptCheckpointFailures: m.AttemptCheckpointFailures.Load(),
 		QuarantineRateLimited: m.QuarantineRateLimited.Load(), QuarantineQueueDrops: m.QuarantineQueueDrops.Load(), PublishedQuarantine: m.PublishedQuarantine.Load(), QuarantinePublishFailures: m.QuarantinePublishFailures.Load(),
 		DLQDatagrams: m.DLQDatagrams.Load(), DLQPublishFailures: m.DLQPublishFailures.Load(),
 		SequenceGapEvents: m.SequenceGapEvents.Load(), MissingSequenceUnits: m.MissingSequenceUnits.Load(), ExporterRestartEvents: m.ExporterRestartEvents.Load(), SequenceOutOfOrderEvents: m.SequenceOutOfOrderEvents.Load(),

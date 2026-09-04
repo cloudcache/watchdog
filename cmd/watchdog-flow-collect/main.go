@@ -49,6 +49,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	metrics := &flowcollect.Metrics{}
+	wal, err := flowcollect.OpenWAL(filepath.Join(cfg.FlowCollect.StateDir, "wal"), plan.CollectorID, cfg.FlowCollect.WAL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer wal.Close()
+	pendingPlanRevisions, err := wal.PendingRegistryVersions()
+	if err != nil {
+		log.Fatal(err)
+	}
+	prunedPlans, err := planHistory.Prune(pendingPlanRevisions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	metrics.PlanHistoryEntries.Store(int64(len(planHistory.Revisions())))
+	metrics.PlanHistoryPruned.Store(uint64(prunedPlans))
 	restoreStartedAt := time.Now()
 	decoder, err := flowcollect.NewDecoderWithStateTTL(cfg.FlowCollect.DecoderStateTTL)
 	if err != nil {
@@ -76,11 +91,12 @@ func main() {
 	metrics.CollectStateRestored.Store(int64(stateStore.RestoredCount()))
 	metrics.CollectStateRestoreNanos.Store(time.Since(restoreStartedAt).Nanoseconds())
 	log.Printf("restored collect-state snapshot: collector=%s remote_candidates=%d restored=%d duration=%s", plan.CollectorID, len(remoteStates), stateStore.RestoredCount(), time.Since(restoreStartedAt))
-	wal, err := flowcollect.OpenWAL(filepath.Join(cfg.FlowCollect.StateDir, "wal"), plan.CollectorID, cfg.FlowCollect.WAL)
+	attempts, err := flowcollect.OpenAttemptStore(filepath.Join(cfg.FlowCollect.StateDir, "attempt-state"), plan.CollectorID, cfg.FlowCollect.Diagnostics, wal, metrics)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer wal.Close()
+	defer attempts.Close()
+	log.Printf("restored replay-attempt state: collector=%s pending=%d", plan.CollectorID, attempts.RestoredCount())
 	quality := flowcollect.NewQualityTracker(cfg.FlowCollect.Quality, metrics)
 	qualityState, err := flowcollect.OpenQualityStateStore(filepath.Join(cfg.FlowCollect.StateDir, "quality-state"), plan.CollectorID, cfg.FlowCollect.Quality, quality, wal, metrics)
 	if err != nil {
@@ -94,11 +110,11 @@ func main() {
 	defer publisher.Close()
 
 	runtimeState := flowcollect.NewRuntimeState()
-	observability, err := flowcollect.NewObservabilityServer(cfg.FlowCollect.Observability, metrics, wal, qualityState, runtimeState)
+	observability, err := flowcollect.NewObservabilityServer(cfg.FlowCollect.Observability, metrics, wal, attempts, qualityState, runtimeState)
 	if err != nil {
 		log.Fatal(err)
 	}
-	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, Plans: planHistory, WAL: wal, Decoder: decoder, State: stateStore, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
+	runner := &flowcollect.Runner{Config: cfg.FlowCollect, Registry: registry, Plans: planHistory, WAL: wal, Decoder: decoder, State: stateStore, Attempts: attempts, Publisher: publisher, Metrics: metrics, Quality: quality, QualityState: qualityState, Runtime: runtimeState, OnError: func(err error) { log.Printf("flow record deferred: %v", err) }}
 	log.Printf("starting flow-collect: collector=%s plan_revision=%d sflow=%s netflow=%s metrics=%s sockets=%d workers=%d", plan.CollectorID, plan.Revision, cfg.FlowCollect.SFlowListen, cfg.FlowCollect.NetFlowListen, cfg.FlowCollect.Observability.Listen, cfg.FlowCollect.SocketCount, cfg.FlowCollect.DecodeWorkers)
 	runCtx, cancel := context.WithCancel(ctx)
 	result := make(chan error, 2)

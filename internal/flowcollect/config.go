@@ -70,6 +70,9 @@ type DiagnosticsConfig struct {
 	DecodeMaxAttempts                  int           `yaml:"decode_max_attempts"`
 	RetryInitial                       time.Duration `yaml:"retry_initial"`
 	RetryMax                           time.Duration `yaml:"retry_max"`
+	AttemptJournalFsync                time.Duration `yaml:"attempt_journal_fsync_interval"`
+	AttemptCheckpointEvery             time.Duration `yaml:"attempt_checkpoint_interval"`
+	AttemptJournalMaxBytes             int64         `yaml:"attempt_journal_max_bytes"`
 	QuarantineQueueEvents              int           `yaml:"quarantine_queue_events"`
 	QuarantineMaxEventsPerSecond       int           `yaml:"quarantine_max_events_per_second"`
 	QuarantineMaxEventsPerSourceSecond int           `yaml:"quarantine_max_events_per_source_second"`
@@ -136,6 +139,9 @@ func DefaultConfig() Config {
 			DecodeMaxAttempts:                  3,
 			RetryInitial:                       250 * time.Millisecond,
 			RetryMax:                           5 * time.Second,
+			AttemptJournalFsync:                10 * time.Millisecond,
+			AttemptCheckpointEvery:             5 * time.Minute,
+			AttemptJournalMaxBytes:             256 << 20,
 			QuarantineQueueEvents:              4096,
 			QuarantineMaxEventsPerSecond:       100,
 			QuarantineMaxEventsPerSourceSecond: 2,
@@ -223,8 +229,11 @@ func (c Config) Validate() error {
 	if c.MaxDatagramBytes < 1500 || c.MaxDatagramBytes > 65535 {
 		return errors.New("flow_collect.max_datagram_bytes must be between 1500 and 65535")
 	}
-	if c.PlanRefreshInterval <= 0 || c.PlanHistoryMaxEntries <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
+	if c.PlanRefreshInterval <= 0 || c.ExporterRefreshPeriod <= 0 || c.DecoderStateTTL <= 0 {
 		return errors.New("flow_collect refresh intervals and decoder_state_ttl must be positive")
+	}
+	if c.PlanHistoryMaxEntries < 2 {
+		return errors.New("flow_collect.plan_history_max_entries must be at least 2")
 	}
 	if c.WAL.MaxBytes <= 0 || c.WAL.SegmentBytes <= 0 || c.WAL.SegmentBytes > c.WAL.MaxBytes || c.WAL.MaxAge <= 0 || c.WAL.FsyncInterval <= 0 {
 		return errors.New("flow_collect.wal sizes and intervals must be positive and segment_bytes <= max_bytes")
@@ -235,7 +244,7 @@ func (c Config) Validate() error {
 	if c.NormalizedBatch.MaxRecords <= 0 || c.NormalizedBatch.MaxBytes <= 0 || c.NormalizedBatch.MaxWait <= 0 {
 		return errors.New("flow_collect.normalized_batch limits must be positive")
 	}
-	if c.Diagnostics.DecodeMaxAttempts <= 0 || c.Diagnostics.RetryInitial <= 0 || c.Diagnostics.RetryMax < c.Diagnostics.RetryInitial || c.Diagnostics.QuarantineQueueEvents <= 0 || c.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || c.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
+	if c.Diagnostics.DecodeMaxAttempts <= 0 || c.Diagnostics.RetryInitial <= 0 || c.Diagnostics.RetryMax < c.Diagnostics.RetryInitial || c.Diagnostics.AttemptJournalFsync <= 0 || c.Diagnostics.AttemptCheckpointEvery <= 0 || c.Diagnostics.AttemptJournalMaxBytes < attemptHeaderSize+attemptRecordSize || c.Diagnostics.QuarantineQueueEvents <= 0 || c.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || c.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
 		return errors.New("flow_collect.diagnostics retry and quarantine limits are invalid")
 	}
 	if c.Diagnostics.QuarantineMaxEventsPerSourceSecond > c.Diagnostics.QuarantineMaxEventsPerSecond {
@@ -381,6 +390,15 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.Diagnostics.RetryMax, err = envDuration("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_RETRY_MAX", c.Diagnostics.RetryMax); err != nil {
+		return err
+	}
+	if c.Diagnostics.AttemptJournalFsync, err = envDuration("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_ATTEMPT_JOURNAL_FSYNC_INTERVAL", c.Diagnostics.AttemptJournalFsync); err != nil {
+		return err
+	}
+	if c.Diagnostics.AttemptCheckpointEvery, err = envDuration("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_ATTEMPT_CHECKPOINT_INTERVAL", c.Diagnostics.AttemptCheckpointEvery); err != nil {
+		return err
+	}
+	if c.Diagnostics.AttemptJournalMaxBytes, err = envInt64("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_ATTEMPT_JOURNAL_MAX_BYTES", c.Diagnostics.AttemptJournalMaxBytes); err != nil {
 		return err
 	}
 	if c.Diagnostics.QuarantineQueueEvents, err = envInt("WATCHDOG_FLOW_COLLECT_DIAGNOSTICS_QUARANTINE_QUEUE_EVENTS", c.Diagnostics.QuarantineQueueEvents); err != nil {
