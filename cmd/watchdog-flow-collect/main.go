@@ -64,6 +64,10 @@ func main() {
 	}
 	metrics.PlanHistoryEntries.Store(int64(len(planHistory.Revisions())))
 	metrics.PlanHistoryPruned.Store(uint64(prunedPlans))
+	if err := flowcollect.VerifyKafkaTopicContracts(cfg.FlowCollect, planHistory, plan.CollectorID); err != nil {
+		log.Fatalf("Kafka flow topic contract verification failed: %v", err)
+	}
+	log.Printf("verified Kafka flow topic contracts: collector=%s normalized=%s collect_state=%s decode_dlq=%s quarantine=%s", plan.CollectorID, cfg.FlowCollect.Kafka.NormalizedTopic, cfg.FlowCollect.Kafka.CollectStateTopic, cfg.FlowCollect.Kafka.DecodeDLQTopic, cfg.FlowCollect.Kafka.QuarantineTopic)
 	restoreStartedAt := time.Now()
 	decoder, err := flowcollect.NewDecoderWithStateTTL(cfg.FlowCollect.DecoderStateTTL)
 	if err != nil {

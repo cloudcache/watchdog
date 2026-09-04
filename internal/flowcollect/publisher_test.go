@@ -15,6 +15,12 @@ func TestKafkaPublisherConfigIsIdempotentAndManuallyPartitioned(t *testing.T) {
 	if !config.Producer.Idempotent || config.Producer.RequiredAcks != sarama.WaitForAll || config.Net.MaxOpenRequests != 1 {
 		t.Fatalf("unsafe producer config: %+v", config.Producer)
 	}
+	if config.Producer.MaxMessageBytes < collectStateMaxBytes {
+		t.Fatalf("producer cannot carry the bounded collect-state message: %d", config.Producer.MaxMessageBytes)
+	}
+	if config.Metadata.AllowAutoTopicCreation {
+		t.Fatal("flow collector Kafka client may not auto-create topics")
+	}
 	message := &sarama.ProducerMessage{Partition: 7}
 	partitioner := config.Producer.Partitioner("topic")
 	partition, err := partitioner.Partition(message, 10)

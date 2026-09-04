@@ -2,7 +2,6 @@ package flowcollect
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"sync"
@@ -52,16 +51,14 @@ func NewKafkaPublisher(config KafkaConfig, batchConfig NormalizedBatchCfg, colle
 }
 
 func buildSaramaConfig(config KafkaConfig, batchConfig NormalizedBatchCfg, collectorID string) (*sarama.Config, error) {
-	saramaConfig := sarama.NewConfig()
-	saramaConfig.ClientID = collectorID
-	saramaConfig.Version = sarama.V2_8_0_0
-	saramaConfig.Net.MaxOpenRequests = 1
-	saramaConfig.Net.TLS.Enable = config.TLS
-	if config.TLS {
-		saramaConfig.Net.TLS.Config = &tls.Config{MinVersion: tls.VersionTLS12}
+	saramaConfig, err := buildKafkaClientConfig(config, collectorID)
+	if err != nil {
+		return nil, err
 	}
+	saramaConfig.Net.MaxOpenRequests = 1
 	saramaConfig.Producer.RequiredAcks = sarama.WaitForAll
 	saramaConfig.Producer.Idempotent = true
+	saramaConfig.Producer.MaxMessageBytes = collectStateMaxBytes + kafkaRecordOverheadBytes
 	saramaConfig.Producer.Retry.Max = 10
 	saramaConfig.Producer.Return.Successes = true
 	saramaConfig.Producer.Return.Errors = true

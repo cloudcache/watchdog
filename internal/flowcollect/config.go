@@ -48,16 +48,35 @@ type WALConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers                          []string      `yaml:"brokers"`
-	NormalizedTopic                  string        `yaml:"normalized_topic"`
-	CollectStateTopic                string        `yaml:"collect_state_topic"`
-	CollectStateRestoreTimeout       time.Duration `yaml:"collect_state_restore_timeout"`
-	CollectStateRestoreMaxCandidates int           `yaml:"collect_state_restore_max_candidates"`
-	DecodeDLQTopic                   string        `yaml:"decode_dlq_topic"`
-	QuarantineTopic                  string        `yaml:"quarantine_topic"`
-	Acks                             string        `yaml:"acks"`
-	Compression                      string        `yaml:"compression"`
-	TLS                              bool          `yaml:"tls"`
+	Brokers                          []string                 `yaml:"brokers"`
+	NormalizedTopic                  string                   `yaml:"normalized_topic"`
+	CollectStateTopic                string                   `yaml:"collect_state_topic"`
+	CollectStateRestoreTimeout       time.Duration            `yaml:"collect_state_restore_timeout"`
+	CollectStateRestoreMaxCandidates int                      `yaml:"collect_state_restore_max_candidates"`
+	DecodeDLQTopic                   string                   `yaml:"decode_dlq_topic"`
+	QuarantineTopic                  string                   `yaml:"quarantine_topic"`
+	Acks                             string                   `yaml:"acks"`
+	Compression                      string                   `yaml:"compression"`
+	TLS                              bool                     `yaml:"tls"`
+	TLSCAFile                        string                   `yaml:"tls_ca_file"`
+	TLSCertFile                      string                   `yaml:"tls_cert_file"`
+	TLSKeyFile                       string                   `yaml:"tls_key_file"`
+	TLSServerName                    string                   `yaml:"tls_server_name"`
+	TopicContract                    KafkaTopicContractConfig `yaml:"topic_contract"`
+}
+
+type KafkaTopicContractConfig struct {
+	CheckTimeout                time.Duration `yaml:"check_timeout"`
+	NormalizedPartitions        int           `yaml:"normalized_partitions"`
+	CollectStatePartitions      int           `yaml:"collect_state_partitions"`
+	DecodeDLQPartitions         int           `yaml:"decode_dlq_partitions"`
+	QuarantinePartitions        int           `yaml:"quarantine_partitions"`
+	MinReplicationFactor        int           `yaml:"min_replication_factor"`
+	MinInSyncReplicas           int           `yaml:"min_in_sync_replicas"`
+	NormalizedMinRetention      time.Duration `yaml:"normalized_min_retention"`
+	CollectStateDeleteRetention time.Duration `yaml:"collect_state_delete_retention"`
+	DecodeDLQMinRetention       time.Duration `yaml:"decode_dlq_min_retention"`
+	QuarantineMinRetention      time.Duration `yaml:"quarantine_min_retention"`
 }
 
 type NormalizedBatchCfg struct {
@@ -129,6 +148,19 @@ func DefaultConfig() Config {
 			Acks:                             "all",
 			Compression:                      "zstd",
 			TLS:                              true,
+			TopicContract: KafkaTopicContractConfig{
+				CheckTimeout:                10 * time.Second,
+				NormalizedPartitions:        96,
+				CollectStatePartitions:      32,
+				DecodeDLQPartitions:         12,
+				QuarantinePartitions:        12,
+				MinReplicationFactor:        3,
+				MinInSyncReplicas:           2,
+				NormalizedMinRetention:      7 * 24 * time.Hour,
+				CollectStateDeleteRetention: 24 * time.Hour,
+				DecodeDLQMinRetention:       30 * 24 * time.Hour,
+				QuarantineMinRetention:      7 * 24 * time.Hour,
+			},
 		},
 		NormalizedBatch: NormalizedBatchCfg{
 			MaxRecords: 1024,
@@ -202,6 +234,10 @@ func (c *Config) Normalize() {
 	c.Kafka.QuarantineTopic = strings.TrimSpace(c.Kafka.QuarantineTopic)
 	c.Kafka.Acks = strings.TrimSpace(c.Kafka.Acks)
 	c.Kafka.Compression = strings.TrimSpace(c.Kafka.Compression)
+	c.Kafka.TLSCAFile = cleanOptionalPath(c.Kafka.TLSCAFile)
+	c.Kafka.TLSCertFile = cleanOptionalPath(c.Kafka.TLSCertFile)
+	c.Kafka.TLSKeyFile = cleanOptionalPath(c.Kafka.TLSKeyFile)
+	c.Kafka.TLSServerName = strings.TrimSpace(c.Kafka.TLSServerName)
 }
 
 func (c Config) Validate() error {
@@ -241,8 +277,8 @@ func (c Config) Validate() error {
 	if c.WAL.SoftWatermark <= 0 || c.WAL.HardWatermark >= 1 || c.WAL.SoftWatermark >= c.WAL.HardWatermark {
 		return errors.New("flow_collect.wal watermarks must satisfy 0 < soft < hard < 1")
 	}
-	if c.NormalizedBatch.MaxRecords <= 0 || c.NormalizedBatch.MaxBytes <= 0 || c.NormalizedBatch.MaxWait <= 0 {
-		return errors.New("flow_collect.normalized_batch limits must be positive")
+	if c.NormalizedBatch.MaxRecords <= 0 || c.NormalizedBatch.MaxRecords > 65535 || c.NormalizedBatch.MaxBytes <= 0 || c.NormalizedBatch.MaxBytes > collectStateMaxBytes || c.NormalizedBatch.MaxWait <= 0 {
+		return errors.New("flow_collect.normalized_batch limits are invalid")
 	}
 	if c.Diagnostics.DecodeMaxAttempts <= 0 || c.Diagnostics.RetryInitial <= 0 || c.Diagnostics.RetryMax < c.Diagnostics.RetryInitial || c.Diagnostics.AttemptJournalFsync <= 0 || c.Diagnostics.AttemptCheckpointEvery <= 0 || c.Diagnostics.AttemptJournalMaxBytes < attemptHeaderSize+attemptRecordSize || c.Diagnostics.QuarantineQueueEvents <= 0 || c.Diagnostics.QuarantineMaxEventsPerSecond <= 0 || c.Diagnostics.QuarantineMaxEventsPerSourceSecond <= 0 {
 		return errors.New("flow_collect.diagnostics retry and quarantine limits are invalid")
@@ -264,6 +300,30 @@ func (c Config) Validate() error {
 	}
 	if c.Kafka.CollectStateRestoreTimeout <= 0 || c.Kafka.CollectStateRestoreMaxCandidates <= 0 {
 		return errors.New("flow_collect.kafka collect-state restore limits must be positive")
+	}
+	topics := c.Kafka.TopicContract
+	if topics.CheckTimeout <= 0 || topics.NormalizedPartitions <= 0 || topics.CollectStatePartitions <= 0 || topics.DecodeDLQPartitions <= 0 || topics.QuarantinePartitions <= 0 || topics.MinReplicationFactor <= 0 || topics.MinInSyncReplicas <= 0 || topics.MinInSyncReplicas > topics.MinReplicationFactor {
+		return errors.New("flow_collect.kafka.topic_contract counts, replication, and timeout are invalid")
+	}
+	if topics.NormalizedMinRetention <= 0 || topics.CollectStateDeleteRetention <= 0 || topics.DecodeDLQMinRetention <= 0 || topics.QuarantineMinRetention <= 0 {
+		return errors.New("flow_collect.kafka.topic_contract retention limits must be positive")
+	}
+	if (c.Kafka.TLSCertFile == "") != (c.Kafka.TLSKeyFile == "") {
+		return errors.New("flow_collect.kafka tls_cert_file and tls_key_file must be configured together")
+	}
+	if !c.Kafka.TLS && (c.Kafka.TLSCAFile != "" || c.Kafka.TLSCertFile != "" || c.Kafka.TLSKeyFile != "" || c.Kafka.TLSServerName != "") {
+		return errors.New("flow_collect.kafka TLS files and server name require tls=true")
+	}
+	topicNames := []string{c.Kafka.NormalizedTopic, c.Kafka.CollectStateTopic, c.Kafka.DecodeDLQTopic, c.Kafka.QuarantineTopic}
+	seenTopics := make(map[string]struct{}, len(topicNames))
+	for _, topic := range topicNames {
+		if topic == "" {
+			continue
+		}
+		if _, exists := seenTopics[topic]; exists {
+			return fmt.Errorf("flow_collect.kafka topic %q cannot serve more than one role", topic)
+		}
+		seenTopics[topic] = struct{}{}
 	}
 	switch c.Kafka.Compression {
 	case "none", "gzip", "snappy", "lz4", "zstd":
@@ -374,6 +434,43 @@ func (c *Config) ApplyEnv() error {
 	if c.Kafka.TLS, err = envBool("WATCHDOG_FLOW_COLLECT_KAFKA_TLS", c.Kafka.TLS); err != nil {
 		return err
 	}
+	c.Kafka.TLSCAFile = env("WATCHDOG_FLOW_COLLECT_KAFKA_TLS_CA_FILE", c.Kafka.TLSCAFile)
+	c.Kafka.TLSCertFile = env("WATCHDOG_FLOW_COLLECT_KAFKA_TLS_CERT_FILE", c.Kafka.TLSCertFile)
+	c.Kafka.TLSKeyFile = env("WATCHDOG_FLOW_COLLECT_KAFKA_TLS_KEY_FILE", c.Kafka.TLSKeyFile)
+	c.Kafka.TLSServerName = env("WATCHDOG_FLOW_COLLECT_KAFKA_TLS_SERVER_NAME", c.Kafka.TLSServerName)
+	if c.Kafka.TopicContract.CheckTimeout, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_TOPIC_CHECK_TIMEOUT", c.Kafka.TopicContract.CheckTimeout); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.NormalizedPartitions, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_NORMALIZED_PARTITIONS", c.Kafka.TopicContract.NormalizedPartitions); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.CollectStatePartitions, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_PARTITIONS", c.Kafka.TopicContract.CollectStatePartitions); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.DecodeDLQPartitions, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_DECODE_DLQ_PARTITIONS", c.Kafka.TopicContract.DecodeDLQPartitions); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.QuarantinePartitions, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_QUARANTINE_PARTITIONS", c.Kafka.TopicContract.QuarantinePartitions); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.MinReplicationFactor, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_MIN_REPLICATION_FACTOR", c.Kafka.TopicContract.MinReplicationFactor); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.MinInSyncReplicas, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_MIN_IN_SYNC_REPLICAS", c.Kafka.TopicContract.MinInSyncReplicas); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.NormalizedMinRetention, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_NORMALIZED_MIN_RETENTION", c.Kafka.TopicContract.NormalizedMinRetention); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.CollectStateDeleteRetention, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_DELETE_RETENTION", c.Kafka.TopicContract.CollectStateDeleteRetention); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.DecodeDLQMinRetention, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_DECODE_DLQ_MIN_RETENTION", c.Kafka.TopicContract.DecodeDLQMinRetention); err != nil {
+		return err
+	}
+	if c.Kafka.TopicContract.QuarantineMinRetention, err = envDuration("WATCHDOG_FLOW_COLLECT_KAFKA_QUARANTINE_MIN_RETENTION", c.Kafka.TopicContract.QuarantineMinRetention); err != nil {
+		return err
+	}
 	if c.NormalizedBatch.MaxRecords, err = envInt("WATCHDOG_FLOW_COLLECT_BATCH_MAX_RECORDS", c.NormalizedBatch.MaxRecords); err != nil {
 		return err
 	}
@@ -460,6 +557,14 @@ func validateListen(name, value string) error {
 		return fmt.Errorf("%s must contain a port between 1 and 65535", name)
 	}
 	return nil
+}
+
+func cleanOptionalPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return filepath.Clean(value)
 }
 
 func env(key, fallback string) string {

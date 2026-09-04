@@ -61,6 +61,35 @@ func TestConfigRejectsInvalidCollectStateRestoreBounds(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsInvalidKafkaTopicAndTLSContracts(t *testing.T) {
+	config := DefaultConfig()
+	config.Kafka.TopicContract.MinInSyncReplicas = config.Kafka.TopicContract.MinReplicationFactor + 1
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected min ISR greater than replication factor to fail")
+	}
+	config = DefaultConfig()
+	config.Kafka.TLSCertFile = "/tmp/client.crt"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected partial Kafka mTLS credentials to fail")
+	}
+	config = DefaultConfig()
+	config.Kafka.TLS = false
+	config.Kafka.TLSCAFile = "/tmp/ca.crt"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected TLS material with TLS disabled to fail")
+	}
+	config = DefaultConfig()
+	config.Kafka.DecodeDLQTopic = config.Kafka.NormalizedTopic
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected a topic shared by two roles to fail")
+	}
+	config = DefaultConfig()
+	config.NormalizedBatch.MaxBytes = collectStateMaxBytes + 1
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected an unsupported Kafka batch size to fail")
+	}
+}
+
 func TestConfigRequiresPlanHistoryActiveAndAntiRollbackSlots(t *testing.T) {
 	config := DefaultConfig()
 	config.PlanHistoryMaxEntries = 1
@@ -106,11 +135,13 @@ func TestConfigEnvironmentUsesFlowCollectNamespace(t *testing.T) {
 	t.Setenv("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_LISTEN", "127.0.0.1:19464")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_OBSERVABILITY_WRITE_TIMEOUT", "9s")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_TLS", "false")
+	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_NORMALIZED_PARTITIONS", "128")
+	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_PARTITIONS", "16")
 	config := DefaultConfig()
 	if err := config.ApplyEnv(); err != nil {
 		t.Fatal(err)
 	}
-	if config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.Kafka.CollectStateRestoreTimeout != 3*time.Minute || config.Kafka.CollectStateRestoreMaxCandidates != 1234 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.PlanHistoryMaxEntries != 64 || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Diagnostics.AttemptJournalFsync != 4*time.Millisecond || config.Diagnostics.AttemptCheckpointEvery != 11*time.Minute || config.Diagnostics.AttemptJournalMaxBytes != 3<<20 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
+	if config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.Kafka.CollectStateRestoreTimeout != 3*time.Minute || config.Kafka.CollectStateRestoreMaxCandidates != 1234 || config.Kafka.TopicContract.NormalizedPartitions != 128 || config.Kafka.TopicContract.CollectStatePartitions != 16 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.PlanHistoryMaxEntries != 64 || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Diagnostics.AttemptJournalFsync != 4*time.Millisecond || config.Diagnostics.AttemptCheckpointEvery != 11*time.Minute || config.Diagnostics.AttemptJournalMaxBytes != 3<<20 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
 		t.Fatalf("environment not applied: %+v", config)
 	}
 }

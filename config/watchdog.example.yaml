@@ -63,6 +63,25 @@ flow_collect:
     acks: "all"
     compression: "zstd"
     tls: true
+    # Client identity is carried by mTLS and mapped to least-privilege Kafka
+    # ACLs. Topic creation/alteration must use a separate admin principal.
+    tls_ca_file: "/etc/watchdog/kafka/ca.crt"
+    tls_cert_file: "/etc/watchdog/kafka/flow-collect.crt"
+    tls_key_file: "/etc/watchdog/kafka/flow-collect.key"
+    tls_server_name: "kafka.watchdog.internal"
+    topic_contract:
+      check_timeout: 10s
+      normalized_partitions: 96
+      # Exact/immutable while this keyed compacted topic is in service.
+      collect_state_partitions: 32
+      decode_dlq_partitions: 12
+      quarantine_partitions: 12
+      min_replication_factor: 3
+      min_in_sync_replicas: 2
+      normalized_min_retention: 168h
+      collect_state_delete_retention: 24h
+      decode_dlq_min_retention: 720h
+      quarantine_min_retention: 168h
   normalized_batch:
     max_records: 1024
     max_bytes: 1048576

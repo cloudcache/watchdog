@@ -3,7 +3,6 @@ package flowcollect
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"sort"
@@ -54,12 +53,9 @@ func NewKafkaCollectStateReader(config KafkaConfig, collectorID string) (*KafkaC
 	if len(config.Brokers) == 0 || config.CollectStateTopic == "" || config.CollectStateRestoreTimeout <= 0 || config.CollectStateRestoreMaxCandidates <= 0 {
 		return nil, errors.New("Kafka collect-state restore configuration is invalid")
 	}
-	saramaConfig := sarama.NewConfig()
-	saramaConfig.ClientID = collectorID + "-state-restore"
-	saramaConfig.Version = sarama.V2_8_0_0
-	saramaConfig.Net.TLS.Enable = config.TLS
-	if config.TLS {
-		saramaConfig.Net.TLS.Config = &tls.Config{MinVersion: tls.VersionTLS12}
+	saramaConfig, err := buildKafkaClientConfig(config, collectorID+"-state-restore")
+	if err != nil {
+		return nil, err
 	}
 	saramaConfig.Consumer.Return.Errors = true
 	saramaConfig.Consumer.Offsets.Initial = sarama.OffsetOldest

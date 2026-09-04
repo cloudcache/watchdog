@@ -60,6 +60,18 @@ flow_collect:
     acks: "all"
     compression: "zstd"
     tls: false
+    topic_contract:
+      check_timeout: 5s
+      normalized_partitions: 8
+      collect_state_partitions: 1
+      decode_dlq_partitions: 1
+      quarantine_partitions: 1
+      min_replication_factor: 1
+      min_in_sync_replicas: 1
+      normalized_min_retention: 24h
+      collect_state_delete_retention: 1h
+      decode_dlq_min_retention: 24h
+      quarantine_min_retention: 24h
   normalized_batch:
     max_records: 1024
     max_bytes: 1048576

@@ -442,7 +442,13 @@ collect-state 恢复先服从当前 plan 的 ownership fence；仅当 active pla
 
 D3B2B 使用独立、定长、有界的 attempt journal 保存失败路径，避免给正常高吞吐流量增加逐报文状态写放大。首次处理的 `replay_generation=0` 是隐式值；某次处理返回失败后，必须先追加 `(datagram_id,next_generation)`，等 group-fsync durability barrier 完成，才允许按该 generation 重试或发布 DLQ。文件头绑定 `collector_id` 的 SHA-256，record 带 magic/version/CRC32；同 ID generation 只能逐一递增，完整损坏 fail closed，仅尾部 torn-write 可截断。启动恢复只保留 durable WAL 中未终态确认的 ID；运行时即使 Kafka 已成功，也不立即删除内存 generation，周期 checkpoint 会先同步 WAL/ACK，再仅回收已 durable terminal ACK 的 ID并原子重写 journal，从而避免“ACK 尚未落盘而 attempt 已删除”的崩溃窗口。默认 group-fsync 10ms、checkpoint 5m、上限 256MiB；满时先压缩，真实 pending 集合仍放不下则拒绝推进重试并使 readiness fail closed。journal bytes/tracked/appends/failures/restores/checkpoints 与 plan history entries/pruned 均为低基数指标。
 
-当前仍未完成的是 D3B3 的 topic 配置/ACL/retention/旧 epoch tombstone 和真实多 broker/滚动切换故障注入；这些完成前不得宣称跨节点闭环。
+D3B3A 已把 Kafka topic 从部署约定提升为启动硬契约。签名 plan/history 完成 WAL 引用回收后、读取 collect-state 之前，flow-collect 使用关闭 auto-create 的只读 admin client 校验四个 topic：存在且名称不复用、partition 从 0 连续、leader 可用、无 offline replica、每 partition 的 RF/ISR 达标、`cleanup.policy` 精确、有效 `min.insync.replicas/max.message.bytes/retention.ms/delete.retention.ms/unclean.leader.election.enable` 达标；缺少 `DESCRIBE_CONFIGS` ACL 或任一值不安全均拒绝开放 UDP。normalized 的 partition 下限取配置值与**所有保留 plan** 中最大 physical partition 加一的较大者，旧 WAL 不会因扩分区失去原 partition；collect-state 因当前 keyed hash 会在扩分区后把同一 key 漂移到不同 partition，所以 partition 数必须精确等于配置且服务期内不可原地扩容，扩容只能新建版本 topic并做有界迁移。所有 topic 禁止 unclean leader election；normalized/DLQ/quarantine 必须是 `delete`，collect-state 必须是仅 `compact`，禁止叠加会按普通 retention 删除仍有效模板状态的 `delete`。producer 的 message 上限同步提高到 collect-state 本地硬上限，避免 broker 配够而客户端仍按 Sarama 默认约 1MB 拒绝。
+
+TLS 使用 TLS 1.2 下限；未配置 `tls_ca_file` 时使用系统 trust store，配置后则只信任该私有 CA 文件，并可用成对的 `tls_cert_file/tls_key_file` 提供每 collector 独立 mTLS 身份；不允许 `InsecureSkipVerify`，`tls_server_name` 只用于显式 SNI/主机名校验。runtime principal 只授予四 topic 的 `DESCRIBE`、`DESCRIBE_CONFIGS`、`WRITE`，collect-state 的 `READ`，以及 idempotent producer 所需的 cluster `IDEMPOTENT_WRITE`；它没有 `CREATE/ALTER/DELETE/CREATE_ACLS`。topic 必须由独立 IaC/admin principal 预创建，采集器不会因拼错名称偷偷建出默认单副本 topic。对 WRITE/READ 的最终授权仍由 collect-state 启动读取及每 topic 首次真实 publish 的 broker ack 验证，`DescribeAcls` 不授予 runtime principal。
+
+旧 epoch tombstone 不是 owner 自己的“顺手清理”，而是 watchdog 内 reconciler 的带审计状态机：`revoke_old_plan_and_unique_principal → wait old plan expiry + clock skew and ACL propagation → new owner restore → observe new epoch state at a frozen Kafka high-watermark and require generation advance → tombstone exact old state_key → verify tombstone at a later frozen boundary`。只有同时满足旧 owner 已 drain/失去 WRITE、新 plan 的 epoch 严格增加、replacement identity 相同且新 key 已 Kafka durable，才能清理；超时保持旧 key而不影响正确性。回滚也必须再分配更高 epoch，绝不复用已 tombstone 的 epoch。tombstone 由 reconciler 专用 principal 写入，flow-collect runtime API 不暴露任意 key 删除；`delete.retention.ms` 至少覆盖最大恢复/消费者中断窗口，并记录 old/new collector、identity、epoch、generation、partition/offset 和审批审计。
+
+当前仍未完成的是 D3B3B 的 IaC 实际创建、reconciler tombstone 编码，以及 template/options corpus、真实多 broker/ACL/TLS 故障、进程重启、kill -9 和滚动 owner 切换故障注入；这些完成前不得宣称跨节点闭环。
 
 ### 步骤 3：采样归一、批量发布并推进 WAL
 
@@ -2106,6 +2112,22 @@ flow_collect:
     acks: "all"
     compression: "zstd"
     tls: true
+    tls_ca_file: "/etc/watchdog/kafka/ca.crt"
+    tls_cert_file: "/etc/watchdog/kafka/flow-collect.crt"
+    tls_key_file: "/etc/watchdog/kafka/flow-collect.key"
+    tls_server_name: "kafka.watchdog.internal"
+    topic_contract:
+      check_timeout: 10s
+      normalized_partitions: 96
+      collect_state_partitions: 32 # 精确值；当前 compacted key hash topic 禁止原地扩容
+      decode_dlq_partitions: 12
+      quarantine_partitions: 12
+      min_replication_factor: 3
+      min_in_sync_replicas: 2
+      normalized_min_retention: 168h
+      collect_state_delete_retention: 24h
+      decode_dlq_min_retention: 720h
+      quarantine_min_retention: 168h
   normalized_batch:
     max_records: 1024
     max_bytes: 1048576
