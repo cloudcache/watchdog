@@ -432,11 +432,21 @@ func newPlanDeliveryHTTPClient(config Config) (*http.Client, error) {
 		tlsConfig.RootCAs = roots
 	}
 	if config.ControlPlaneTLSCertFile != "" {
-		certificate, err := tls.LoadX509KeyPair(config.ControlPlaneTLSCertFile, config.ControlPlaneTLSKeyFile)
+		_, err := tls.LoadX509KeyPair(config.ControlPlaneTLSCertFile, config.ControlPlaneTLSKeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("load control plane client identity: %w", err)
 		}
-		tlsConfig.Certificates = []tls.Certificate{certificate}
+		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			certificate, err := tls.LoadX509KeyPair(config.ControlPlaneTLSCertFile, config.ControlPlaneTLSKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("reload control plane client identity: %w", err)
+			}
+			return &certificate, nil
+		}
+		// A reused TLS connection would keep presenting the previous certificate.
+		// Heartbeats are low-frequency, so one handshake per request is the
+		// bounded cost of making external certificate rotation deterministic.
+		transport.DisableKeepAlives = true
 	}
 	transport.TLSClientConfig = tlsConfig
 	return &http.Client{

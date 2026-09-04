@@ -446,7 +446,7 @@ plan delivery envelope 不能另造一套签名语义。兼容 v1 仅用于现�
 
 FLOW-01D2B 已接通远程投递的第一条完整链路。管理面提供机器身份专用的 `GET /api/v1/collectors/{collector_id}/plan`、`POST .../plan-ack` 和 `POST .../heartbeat`，不读取用户 session，也不接受 body 自报 tenant/collector/事实时间；token 只与 `collector_agents.token_hash` 比较，mTLS 只接受 Go TLS 已验证链的 leaf 指纹，混合凭据拒绝。GET 只返回 active、未过期且 collector 仍 active 的数据库 plan，以 `"v{config_version}-{spec_hash}"` 作为 ETag，避免“复制旧 spec 生成更高 rollback version”被 hash-only 304 错判。client 对 304 不写盘；200 先按 v2 完整验签并核对 collector/version/ETag，再以同目录 `0600 temp → fsync(file) → rename → fsync(directory)` 更新 `plan_file` 并唤醒 D1 supervisor。只有 supervisor 完成 WAL/history、Kafka 契约和数据面原子切换后才发送 exact version/hash/boot/software ACK；任一步失败保留 LKG，并以固定 `transport/decode/verify/compatibility/dependency/persist/activate` stage、固定大写 code 和不含原始响应/secret 的有界 detail 上报。ACK/失败 heartbeat 只更新 observed 字段，不推进管理 `row_version`；失败不推进 `acknowledged/last_good`，成功 ACK 清除失败态。token 文件每次请求重读以支持外部原子轮换，HTTP 仅允许 loopback，非 loopback 必须 HTTPS；禁止 redirect，TLS 下限 1.2，请求有硬 timeout，失败使用有界指数 backoff。控制面失败只把独立 health 降为 degraded，不阻塞仍有效 LKG 的报文热路径；plan 到期规则不变。
 
-这一步仍以本地有效 plan 作为 bootstrap collector identity，尚未实现一次性 enrollment；mTLS 证书热轮换、token 双窗口服务端生命周期、trust bundle 签名分发/防回滚代际、capability/队列/丢弃周期 heartbeat 和 data-loss interval 审计仍属于 FLOW-01D2 后续项，因此不能把整个 enrollment/rotation 生命周期标记完成。
+这一步仍以本地有效 plan 作为 bootstrap collector identity，尚未实现一次性 enrollment；token 双窗口、mTLS 服务端双指纹接受/撤销、trust bundle 签名分发/防回滚代际、capability/队列/丢弃周期 heartbeat 和 data-loss interval 审计仍属于 FLOW-01D2 后续项，因此不能把整个 enrollment/rotation 生命周期标记完成。
 
 FLOW-01D2B2A 已将 agent 签名信任从“一个无名公钥”收敛为按 signed `signing_key_id` 解析的本地 trust bundle。`plan_trust_bundle_file` 是受操作系统权限保护、由配置管理原子替换的严格 JSON；collector 在每次远程 fetch 和本地 refresh 都重读，因此 overlap/retire/revoke 无需重启。bundle 最大 256 KiB、64 keys，unknown field/重复 ID/非 Ed25519 key/非法时间窗全部 fail closed；v2 必须按 key ID 命中，plan 的完整有效期必须被 key 有效期覆盖。`active` 可接收新 plan；`retiring` 仅允许 `not_before <= accept_until` 的旧 plan 在 history/replay 继续验证，collector 当前时间超过 cutoff 后不再接受新投递；`revoked` 是密钥泄漏等安全事件的立即停用语义，如 active plan 命中该 key，supervisor 立即 fail closed，不继续 LKG。
 
@@ -474,6 +474,8 @@ FLOW-01D2B2A 已将 agent 签名信任从“一个无名公钥”收敛为按 si
 ```
 
 普通轮换顺序固定为“先分发包含 old+new 的 overlap bundle → 用 new key 签新 revision → 等待全部 collector exact ACK 且 old-key plan 不再被 active/LKG/WAL history 引用 → old 改 retiring 并越过 cutoff → 移除 old”；不得用 `revoked` 代替普通 retirement。`plan_public_key_file` 只保留给存量 single-key bootstrap 兼容；未配置 bundle 时 v2 仍可在该无轮换迁移模式下验证，但生产 v2 必须配置 trust bundle。当前 bundle 仍由本机配置管理分发，控制面签名分发 bundle/防回滚代际及全 fleet 轮换协调尚未完成，不得扩大 B2A 的完成范围。
+
+mTLS client identity 已从启动时静态载入改为 TLS `GetClientCertificate` 每次握手重读 cert/key；mTLS 控制面请求禁用长连接复用，因此配置管理原子替换证书后的下一请求必然使用新身份，代价是低频 heartbeat/plan 请求每次增加一次 TLS 握手。cert/key 不完整或替换中短暂不匹配时请求失败并进入既有有界 backoff，不污染 LKG。这只完成 agent-side reload；管理面在轮换窗内同时接受 old/new fingerprint、确认新 fingerprint 已被观测后撤销 old 仍待实现。
 
 collect-state 恢复先服从当前 plan 的 ownership fence；仅当 active plan 已完全不再准入该 exporter/domain 元组时，才允许同一 collector 使用 state 自带 `registry_version` 对应的历史 plan 恢复旧 WAL 所需模板。若 active plan 已把相同元组改绑给其他 tenant/exporter，则历史状态拒绝进入共享 decoder，避免跨租户/跨出口模板污染。跨 collector 接管仍只能由当前 plan 中严格递增的 `ownership_epoch` 授权，不能借历史 plan 绕过。
 

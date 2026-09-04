@@ -1,14 +1,19 @@
 package flowcollect
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -274,6 +279,34 @@ func TestPlanDeliveryRetryDelayIsExponentiallyBounded(t *testing.T) {
 	}
 }
 
+func TestPlanDeliveryMTLSIdentityReloadsForEveryRequest(t *testing.T) {
+	directory := t.TempDir()
+	certificatePath := filepath.Join(directory, "collector.crt")
+	keyPath := filepath.Join(directory, "collector.key")
+	firstDER := writePlanDeliveryClientCertificate(t, certificatePath, keyPath, 1)
+	config := DefaultConfig()
+	config.ControlPlaneURL = "https://watchdog.example.com"
+	config.ControlPlaneTLSCertFile = certificatePath
+	config.ControlPlaneTLSKeyFile = keyPath
+	client, err := newPlanDeliveryHTTPClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || !transport.DisableKeepAlives || transport.TLSClientConfig.GetClientCertificate == nil || len(transport.TLSClientConfig.Certificates) != 0 {
+		t.Fatalf("mTLS transport=%T keep_alive_disabled=%v", client.Transport, ok && transport.DisableKeepAlives)
+	}
+	first, err := transport.TLSClientConfig.GetClientCertificate(nil)
+	if err != nil || len(first.Certificate) == 0 || !bytes.Equal(first.Certificate[0], firstDER) {
+		t.Fatalf("first client certificate error=%v", err)
+	}
+	secondDER := writePlanDeliveryClientCertificate(t, certificatePath, keyPath, 2)
+	second, err := transport.TLSClientConfig.GetClientCertificate(nil)
+	if err != nil || len(second.Certificate) == 0 || !bytes.Equal(second.Certificate[0], secondDER) || bytes.Equal(first.Certificate[0], second.Certificate[0]) {
+		t.Fatalf("rotated client certificate error=%v", err)
+	}
+}
+
 func (s *planDeliveryServerState) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -378,4 +411,33 @@ func writePlanDeliveryTrustBundle(t *testing.T, directory string, publicKey ed25
 		NotBeforeUnixMilli: now.Add(-2 * time.Hour).UnixMilli(), NotAfterUnixMilli: now.Add(2 * time.Hour).UnixMilli(),
 	}))
 	return path
+}
+
+func writePlanDeliveryClientCertificate(t *testing.T, certificatePath, keyPath string, serial int64) []byte {
+	t.Helper()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "flow-collector"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certificatePath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return der
 }
