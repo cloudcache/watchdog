@@ -13,22 +13,35 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const qualityStateSchemaVersion = 1
+const (
+	qualityJournalSchemaV1       = 1
+	qualityJournalSchemaVersion  = 2
+	qualitySnapshotSchemaV1      = 1
+	qualitySnapshotSchemaVersion = 2
+)
 
-func (q *QualityTracker) BuildJournalRecord(record WALRecord, decoded DecodedDatagram, collectorID string) (*flowpb.QualityJournalRecord, error) {
+func (q *QualityTracker) BuildJournalRecord(record WALRecord, decoded DecodedDatagram, binding SourceBinding, collectorID string) (*flowpb.QualityJournalRecord, error) {
 	if zeroDatagramID(record.DatagramID) || record.Segment == 0 || record.Offset < walHeaderSize || collectorID == "" {
 		return nil, errors.New("quality journal requires a persisted WAL record")
+	}
+	if record.RegistryVersion == 0 || binding.Protocol != record.Protocol || binding.TenantID == "" || binding.ExporterID == "" || binding.TenantID != record.TenantID || binding.ExporterID != record.ExporterID || binding.EffectiveOwnershipEpoch() == 0 {
+		return nil, errors.New("quality journal requires an admitted owner binding")
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	key := qualityKey(record, decoded)
 	journal := &flowpb.QualityJournalRecord{
-		StateSchemaVersion: qualityStateSchemaVersion,
-		DatagramId:         bytes.Clone(record.DatagramID[:]),
-		WalSegment:         record.Segment,
-		WalOffset:          record.Offset,
-		CollectorId:        collectorID,
-		Decision:           qualityDecisionToProto(record.DatagramID, decoded),
+		StateSchemaVersion:  qualityJournalSchemaVersion,
+		DatagramId:          bytes.Clone(record.DatagramID[:]),
+		WalSegment:          record.Segment,
+		WalOffset:           record.Offset,
+		CollectorId:         collectorID,
+		TenantId:            binding.TenantID,
+		ExporterId:          binding.ExporterID,
+		RegistryVersion:     record.RegistryVersion,
+		OwnershipEpoch:      binding.EffectiveOwnershipEpoch(),
+		ObservationDomainId: record.ObservationDomainID,
+		Decision:            qualityDecisionToProto(record.DatagramID, decoded),
 	}
 	if state := q.exporters[key]; state != nil {
 		journal.ExporterState = exporterStateToProto(key, state)
@@ -54,13 +67,13 @@ func (q *QualityTracker) BuildJournalRecord(record WALRecord, decoded DecodedDat
 	return journal, nil
 }
 
-func (q *QualityTracker) BuildSnapshot(collectorID string, createdAt time.Time, pending []*flowpb.QualityDecision) (*flowpb.QualityStateSnapshot, error) {
+func (q *QualityTracker) BuildSnapshot(collectorID string, createdAt time.Time, pending []*flowpb.QualityDecision, checkpoints []*flowpb.QualityCheckpoint, dirty [][32]byte) (*flowpb.QualityStateSnapshot, error) {
 	if collectorID == "" {
 		return nil, errors.New("collector ID is required for quality snapshot")
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	snapshot := &flowpb.QualityStateSnapshot{StateSchemaVersion: qualityStateSchemaVersion, CollectorId: collectorID, CreatedAtUnixMs: createdAt.UnixMilli()}
+	snapshot := &flowpb.QualityStateSnapshot{StateSchemaVersion: qualitySnapshotSchemaVersion, CollectorId: collectorID, CreatedAtUnixMs: createdAt.UnixMilli()}
 	for key, state := range q.exporters {
 		snapshot.Exporters = append(snapshot.Exporters, exporterStateToProto(key, state))
 	}
@@ -93,6 +106,14 @@ func (q *QualityTracker) BuildSnapshot(collectorID string, createdAt time.Time, 
 	sort.Slice(snapshot.PendingDecisions, func(i, j int) bool {
 		return bytes.Compare(snapshot.PendingDecisions[i].DatagramId, snapshot.PendingDecisions[j].DatagramId) < 0
 	})
+	snapshot.CommittedCheckpoints = cloneQualityCheckpoints(checkpoints)
+	sort.Slice(snapshot.CommittedCheckpoints, func(i, j int) bool {
+		return bytes.Compare(snapshot.CommittedCheckpoints[i].StateIdentityKey, snapshot.CommittedCheckpoints[j].StateIdentityKey) < 0
+	})
+	sort.Slice(dirty, func(i, j int) bool { return bytes.Compare(dirty[i][:], dirty[j][:]) < 0 })
+	for _, identity := range dirty {
+		snapshot.DirtyStateIdentityKeys = append(snapshot.DirtyStateIdentityKeys, bytes.Clone(identity[:]))
+	}
 	digest, err := qualitySnapshotDigest(snapshot)
 	if err != nil {
 		return nil, err
@@ -319,8 +340,24 @@ func qualityKeyProtoLess(left, right *flowpb.QualityExporterKey) bool {
 }
 
 func validateQualityJournalRecord(journal *flowpb.QualityJournalRecord) error {
-	if journal == nil || journal.StateSchemaVersion != qualityStateSchemaVersion || journal.CollectorId == "" || len(journal.DatagramId) != sha256.Size || journal.WalSegment == 0 || journal.WalOffset < walHeaderSize || journal.Decision == nil || !bytes.Equal(journal.DatagramId, journal.Decision.DatagramId) || len(journal.PayloadSha256) != sha256.Size {
+	if journal == nil || (journal.StateSchemaVersion != qualityJournalSchemaV1 && journal.StateSchemaVersion != qualityJournalSchemaVersion) || journal.CollectorId == "" || len(journal.DatagramId) != sha256.Size || journal.WalSegment == 0 || journal.WalOffset < walHeaderSize || journal.Decision == nil || !bytes.Equal(journal.DatagramId, journal.Decision.DatagramId) || len(journal.PayloadSha256) != sha256.Size {
 		return errors.New("quality journal record is invalid")
+	}
+	if journal.StateSchemaVersion == qualityJournalSchemaVersion {
+		if journal.TenantId == "" || journal.ExporterId == "" || journal.RegistryVersion == 0 || journal.OwnershipEpoch == 0 {
+			return errors.New("quality journal owner metadata is invalid")
+		}
+		if journal.ExporterState == nil {
+			return errors.New("quality journal exporter state is required")
+		}
+		key, _, err := exporterStateFromProto(journal.ExporterState)
+		if err != nil {
+			return err
+		}
+		record := WALRecord{WALInput: WALInput{Protocol: key.protocol, Source: netip.AddrPortFrom(key.source, 0), ObservationDomainID: journal.ObservationDomainId}}
+		if err := validateQualityCheckpointRecordIdentity(record, key); err != nil {
+			return err
+		}
 	}
 	if _, _, err := qualityDecisionFromProto(journal.Decision); err != nil {
 		return err
@@ -346,8 +383,11 @@ func validateQualityJournalRecord(journal *flowpb.QualityJournalRecord) error {
 }
 
 func validateQualitySnapshot(snapshot *flowpb.QualityStateSnapshot, collectorID string, config QualityConfig) error {
-	if snapshot == nil || snapshot.StateSchemaVersion != qualityStateSchemaVersion || snapshot.CollectorId != collectorID || snapshot.CreatedAtUnixMs == 0 || len(snapshot.PayloadSha256) != sha256.Size || len(snapshot.Exporters) > config.MaxExporters || len(snapshot.Sources) > config.MaxDataSources {
+	if snapshot == nil || (snapshot.StateSchemaVersion != qualitySnapshotSchemaV1 && snapshot.StateSchemaVersion != qualitySnapshotSchemaVersion) || snapshot.CollectorId != collectorID || snapshot.CreatedAtUnixMs == 0 || len(snapshot.PayloadSha256) != sha256.Size || len(snapshot.Exporters) > config.MaxExporters || len(snapshot.Sources) > config.MaxDataSources || len(snapshot.CommittedCheckpoints) > config.MaxExporters {
 		return errors.New("quality snapshot is invalid")
+	}
+	if snapshot.StateSchemaVersion == qualitySnapshotSchemaV1 && (len(snapshot.CommittedCheckpoints) != 0 || len(snapshot.DirtyStateIdentityKeys) != 0) {
+		return errors.New("legacy quality snapshot contains publication state")
 	}
 	for _, decision := range snapshot.PendingDecisions {
 		if _, _, err := qualityDecisionFromProto(decision); err != nil {
@@ -363,6 +403,38 @@ func validateQualitySnapshot(snapshot *flowpb.QualityStateSnapshot, collectorID 
 		if _, _, err := sourceStateFromProto(state); err != nil {
 			return err
 		}
+	}
+	checkpointIdentities := make(map[[32]byte]struct{}, len(snapshot.CommittedCheckpoints))
+	totalCheckpointSources := 0
+	for _, checkpoint := range snapshot.CommittedCheckpoints {
+		if err := validateQualityCheckpoint(checkpoint, config.MaxDataSources); err != nil {
+			return err
+		}
+		var identity [32]byte
+		copy(identity[:], checkpoint.StateIdentityKey)
+		if _, duplicate := checkpointIdentities[identity]; duplicate {
+			return errors.New("quality snapshot contains duplicate checkpoint identity")
+		}
+		checkpointIdentities[identity] = struct{}{}
+		totalCheckpointSources += len(checkpoint.SourceStates)
+		if totalCheckpointSources > config.MaxDataSources {
+			return errors.New("quality snapshot checkpoints exceed source state capacity")
+		}
+	}
+	dirtyIdentities := make(map[[32]byte]struct{}, len(snapshot.DirtyStateIdentityKeys))
+	for _, encoded := range snapshot.DirtyStateIdentityKeys {
+		if len(encoded) != sha256.Size {
+			return errors.New("quality snapshot dirty checkpoint identity is invalid")
+		}
+		var identity [32]byte
+		copy(identity[:], encoded)
+		if _, duplicate := dirtyIdentities[identity]; duplicate {
+			return errors.New("quality snapshot contains duplicate dirty checkpoint identity")
+		}
+		if _, exists := checkpointIdentities[identity]; !exists {
+			return errors.New("quality snapshot dirty identity has no checkpoint")
+		}
+		dirtyIdentities[identity] = struct{}{}
 	}
 	digest, err := qualitySnapshotDigest(snapshot)
 	if err != nil {

@@ -195,6 +195,13 @@ message QualityJournalRecord {
   QualityDecision decision = 7;
   bytes payload_sha256 = 8;
   string collector_id = 9;
+  // Schema v2 metadata required to promote a terminally committed journal
+  // post-state into an owner-fenced QualityCheckpoint.
+  string tenant_id = 10;
+  string exporter_id = 11;
+  uint64 registry_version = 12;
+  uint64 ownership_epoch = 13;
+  uint64 observation_domain_id = 14;
 }
 
 message QualityStateSnapshot {
@@ -205,6 +212,10 @@ message QualityStateSnapshot {
   repeated QualitySourceState sources = 5;
   repeated QualityDecision pending_decisions = 6;
   bytes payload_sha256 = 7;
+  // Schema v2 local publication state. Checkpoints contain only journal
+  // post-states whose terminal WAL acknowledgements crossed WAL.Sync.
+  repeated QualityCheckpoint committed_checkpoints = 8;
+  repeated bytes dirty_state_identity_keys = 9;
 }
 
 // QualityCheckpoint contains only terminally committed post-state for one
@@ -226,4 +237,8 @@ message QualityCheckpoint {
   QualityExporterState exporter_state = 12;
   repeated QualitySourceState source_states = 13;
   bytes payload_sha256 = 14;
+  // Highest durable terminal-ACK journal position folded into this state.
+  // Compared only within the same collector_id + ownership_epoch.
+  uint64 last_wal_segment = 15;
+  int64 last_wal_offset = 16;
 }

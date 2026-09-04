@@ -1484,8 +1484,15 @@ type QualityJournalRecord struct {
 	Decision           *QualityDecision       `protobuf:"bytes,7,opt,name=decision,proto3" json:"decision,omitempty"`
 	PayloadSha256      []byte                 `protobuf:"bytes,8,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
 	CollectorId        string                 `protobuf:"bytes,9,opt,name=collector_id,json=collectorId,proto3" json:"collector_id,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Schema v2 metadata required to promote a terminally committed journal
+	// post-state into an owner-fenced QualityCheckpoint.
+	TenantId            string `protobuf:"bytes,10,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	ExporterId          string `protobuf:"bytes,11,opt,name=exporter_id,json=exporterId,proto3" json:"exporter_id,omitempty"`
+	RegistryVersion     uint64 `protobuf:"varint,12,opt,name=registry_version,json=registryVersion,proto3" json:"registry_version,omitempty"`
+	OwnershipEpoch      uint64 `protobuf:"varint,13,opt,name=ownership_epoch,json=ownershipEpoch,proto3" json:"ownership_epoch,omitempty"`
+	ObservationDomainId uint64 `protobuf:"varint,14,opt,name=observation_domain_id,json=observationDomainId,proto3" json:"observation_domain_id,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *QualityJournalRecord) Reset() {
@@ -1581,6 +1588,41 @@ func (x *QualityJournalRecord) GetCollectorId() string {
 	return ""
 }
 
+func (x *QualityJournalRecord) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *QualityJournalRecord) GetExporterId() string {
+	if x != nil {
+		return x.ExporterId
+	}
+	return ""
+}
+
+func (x *QualityJournalRecord) GetRegistryVersion() uint64 {
+	if x != nil {
+		return x.RegistryVersion
+	}
+	return 0
+}
+
+func (x *QualityJournalRecord) GetOwnershipEpoch() uint64 {
+	if x != nil {
+		return x.OwnershipEpoch
+	}
+	return 0
+}
+
+func (x *QualityJournalRecord) GetObservationDomainId() uint64 {
+	if x != nil {
+		return x.ObservationDomainId
+	}
+	return 0
+}
+
 type QualityStateSnapshot struct {
 	state              protoimpl.MessageState  `protogen:"open.v1"`
 	StateSchemaVersion uint32                  `protobuf:"varint,1,opt,name=state_schema_version,json=stateSchemaVersion,proto3" json:"state_schema_version,omitempty"`
@@ -1590,8 +1632,12 @@ type QualityStateSnapshot struct {
 	Sources            []*QualitySourceState   `protobuf:"bytes,5,rep,name=sources,proto3" json:"sources,omitempty"`
 	PendingDecisions   []*QualityDecision      `protobuf:"bytes,6,rep,name=pending_decisions,json=pendingDecisions,proto3" json:"pending_decisions,omitempty"`
 	PayloadSha256      []byte                  `protobuf:"bytes,7,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Schema v2 local publication state. Checkpoints contain only journal
+	// post-states whose terminal WAL acknowledgements crossed WAL.Sync.
+	CommittedCheckpoints   []*QualityCheckpoint `protobuf:"bytes,8,rep,name=committed_checkpoints,json=committedCheckpoints,proto3" json:"committed_checkpoints,omitempty"`
+	DirtyStateIdentityKeys [][]byte             `protobuf:"bytes,9,rep,name=dirty_state_identity_keys,json=dirtyStateIdentityKeys,proto3" json:"dirty_state_identity_keys,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *QualityStateSnapshot) Reset() {
@@ -1673,6 +1719,20 @@ func (x *QualityStateSnapshot) GetPayloadSha256() []byte {
 	return nil
 }
 
+func (x *QualityStateSnapshot) GetCommittedCheckpoints() []*QualityCheckpoint {
+	if x != nil {
+		return x.CommittedCheckpoints
+	}
+	return nil
+}
+
+func (x *QualityStateSnapshot) GetDirtyStateIdentityKeys() [][]byte {
+	if x != nil {
+		return x.DirtyStateIdentityKeys
+	}
+	return nil
+}
+
 // QualityCheckpoint contains only terminally committed post-state for one
 // exporter quality identity. It is safe for a new collector owner to restore
 // from a typed keyspace in the compacted collect-state topic; state_key is the
@@ -1693,8 +1753,12 @@ type QualityCheckpoint struct {
 	ExporterState           *QualityExporterState  `protobuf:"bytes,12,opt,name=exporter_state,json=exporterState,proto3" json:"exporter_state,omitempty"`
 	SourceStates            []*QualitySourceState  `protobuf:"bytes,13,rep,name=source_states,json=sourceStates,proto3" json:"source_states,omitempty"`
 	PayloadSha256           []byte                 `protobuf:"bytes,14,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Highest durable terminal-ACK journal position folded into this state.
+	// Compared only within the same collector_id + ownership_epoch.
+	LastWalSegment uint64 `protobuf:"varint,15,opt,name=last_wal_segment,json=lastWalSegment,proto3" json:"last_wal_segment,omitempty"`
+	LastWalOffset  int64  `protobuf:"varint,16,opt,name=last_wal_offset,json=lastWalOffset,proto3" json:"last_wal_offset,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *QualityCheckpoint) Reset() {
@@ -1823,6 +1887,20 @@ func (x *QualityCheckpoint) GetPayloadSha256() []byte {
 		return x.PayloadSha256
 	}
 	return nil
+}
+
+func (x *QualityCheckpoint) GetLastWalSegment() uint64 {
+	if x != nil {
+		return x.LastWalSegment
+	}
+	return 0
+}
+
+func (x *QualityCheckpoint) GetLastWalOffset() int64 {
+	if x != nil {
+		return x.LastWalOffset
+	}
+	return 0
 }
 
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
@@ -1996,7 +2074,7 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"datagramId\x12%\n" +
 	"\x0eexporter_epoch\x18\x02 \x01(\x04R\rexporterEpoch\x12!\n" +
 	"\frecord_flags\x18\x03 \x03(\x04R\vrecordFlags\x12#\n" +
-	"\rrecord_epochs\x18\x04 \x03(\x04R\frecordEpochs\"\xcc\x03\n" +
+	"\rrecord_epochs\x18\x04 \x03(\x04R\frecordEpochs\"\x92\x05\n" +
 	"\x14QualityJournalRecord\x120\n" +
 	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12\x1f\n" +
 	"\vdatagram_id\x18\x02 \x01(\fR\n" +
@@ -2009,7 +2087,14 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\rsource_states\x18\x06 \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\fsourceStates\x12=\n" +
 	"\bdecision\x18\a \x01(\v2!.watchdog.flow.v1.QualityDecisionR\bdecision\x12%\n" +
 	"\x0epayload_sha256\x18\b \x01(\fR\rpayloadSha256\x12!\n" +
-	"\fcollector_id\x18\t \x01(\tR\vcollectorId\"\x95\x03\n" +
+	"\fcollector_id\x18\t \x01(\tR\vcollectorId\x12\x1b\n" +
+	"\ttenant_id\x18\n" +
+	" \x01(\tR\btenantId\x12\x1f\n" +
+	"\vexporter_id\x18\v \x01(\tR\n" +
+	"exporterId\x12)\n" +
+	"\x10registry_version\x18\f \x01(\x04R\x0fregistryVersion\x12'\n" +
+	"\x0fownership_epoch\x18\r \x01(\x04R\x0eownershipEpoch\x122\n" +
+	"\x15observation_domain_id\x18\x0e \x01(\x04R\x13observationDomainId\"\xaa\x04\n" +
 	"\x14QualityStateSnapshot\x120\n" +
 	"\x14state_schema_version\x18\x01 \x01(\rR\x12stateSchemaVersion\x12!\n" +
 	"\fcollector_id\x18\x02 \x01(\tR\vcollectorId\x12+\n" +
@@ -2017,7 +2102,9 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\texporters\x18\x04 \x03(\v2&.watchdog.flow.v1.QualityExporterStateR\texporters\x12>\n" +
 	"\asources\x18\x05 \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\asources\x12N\n" +
 	"\x11pending_decisions\x18\x06 \x03(\v2!.watchdog.flow.v1.QualityDecisionR\x10pendingDecisions\x12%\n" +
-	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256\"\xa0\x05\n" +
+	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256\x12X\n" +
+	"\x15committed_checkpoints\x18\b \x03(\v2#.watchdog.flow.v1.QualityCheckpointR\x14committedCheckpoints\x129\n" +
+	"\x19dirty_state_identity_keys\x18\t \x03(\fR\x16dirtyStateIdentityKeys\"\xf2\x05\n" +
 	"\x11QualityCheckpoint\x12:\n" +
 	"\x19checkpoint_schema_version\x18\x01 \x01(\rR\x17checkpointSchemaVersion\x12\x1b\n" +
 	"\tstate_key\x18\x02 \x01(\fR\bstateKey\x12,\n" +
@@ -2034,7 +2121,9 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x15observation_domain_id\x18\v \x01(\x04R\x13observationDomainId\x12M\n" +
 	"\x0eexporter_state\x18\f \x01(\v2&.watchdog.flow.v1.QualityExporterStateR\rexporterState\x12I\n" +
 	"\rsource_states\x18\r \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\fsourceStates\x12%\n" +
-	"\x0epayload_sha256\x18\x0e \x01(\fR\rpayloadSha256BCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	"\x0epayload_sha256\x18\x0e \x01(\fR\rpayloadSha256\x12(\n" +
+	"\x10last_wal_segment\x18\x0f \x01(\x04R\x0elastWalSegment\x12&\n" +
+	"\x0flast_wal_offset\x18\x10 \x01(\x03R\rlastWalOffsetBCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once
@@ -2076,13 +2165,14 @@ var file_internal_flowcollect_flowpb_normalized_proto_depIdxs = []int32{
 	7,  // 8: watchdog.flow.v1.QualityStateSnapshot.exporters:type_name -> watchdog.flow.v1.QualityExporterState
 	8,  // 9: watchdog.flow.v1.QualityStateSnapshot.sources:type_name -> watchdog.flow.v1.QualitySourceState
 	9,  // 10: watchdog.flow.v1.QualityStateSnapshot.pending_decisions:type_name -> watchdog.flow.v1.QualityDecision
-	7,  // 11: watchdog.flow.v1.QualityCheckpoint.exporter_state:type_name -> watchdog.flow.v1.QualityExporterState
-	8,  // 12: watchdog.flow.v1.QualityCheckpoint.source_states:type_name -> watchdog.flow.v1.QualitySourceState
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	12, // 11: watchdog.flow.v1.QualityStateSnapshot.committed_checkpoints:type_name -> watchdog.flow.v1.QualityCheckpoint
+	7,  // 12: watchdog.flow.v1.QualityCheckpoint.exporter_state:type_name -> watchdog.flow.v1.QualityExporterState
+	8,  // 13: watchdog.flow.v1.QualityCheckpoint.source_states:type_name -> watchdog.flow.v1.QualitySourceState
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_internal_flowcollect_flowpb_normalized_proto_init() }

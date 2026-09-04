@@ -26,7 +26,7 @@ func TestQualityStateStoreRestoresDecisionAndSequenceState(t *testing.T) {
 	if !fresh {
 		t.Fatal("first quality observation was unexpectedly cached")
 	}
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestQualityStateStoreAppendIsIdempotentPerDatagram(t *testing.T) {
 	defer store.Close()
 	record := appendQualityWALRecord(t, w, 1, time.Unix(2000, 0))
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestQualityStateStoreCompactsAndRestoresSnapshot(t *testing.T) {
 	}
 	record := appendQualityWALRecord(t, w, 1, time.Unix(3000, 0))
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +119,8 @@ func TestQualityStateStoreCompactsAndRestoresSnapshot(t *testing.T) {
 	if err := store.Compact(time.Unix(3001, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(filepath.Join(qualityDir, "quality.journal")); err != nil || info.Size() != 0 {
-		t.Fatalf("journal was not compacted: info=%v err=%v", info, err)
+	if info, err := os.Stat(filepath.Join(qualityDir, "quality.journal")); err != nil || info.Size() == 0 {
+		t.Fatalf("pending quality journal was not retained: info=%v err=%v", info, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -134,6 +134,125 @@ func TestQualityStateStoreCompactsAndRestoresSnapshot(t *testing.T) {
 	_, fresh := restored.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
 	if fresh {
 		t.Fatal("snapshot did not restore the pending quality decision")
+	}
+}
+
+func TestQualityStateStorePromotesOnlyCompletedDurableStateAndRestoresDirty(t *testing.T) {
+	walDir, qualityDir := t.TempDir(), t.TempDir()
+	config := testQualityStateConfig()
+	w, err := OpenWAL(walDir, "collector-a", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	tracker := NewQualityTracker(config, nil)
+	store, err := OpenQualityStateStore(qualityDir, "collector-a", config, tracker, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := appendQualityWALRecord(t, w, 1, time.Unix(3200, 0))
+	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendAndWait(context.Background(), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Compact(time.Unix(3201, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints := store.PendingQualityCheckpoints(); len(checkpoints) != 0 {
+		t.Fatalf("unacknowledged quality state was promoted: %+v", checkpoints)
+	}
+	if err := w.Acknowledge(record.DatagramID); err != nil {
+		t.Fatal(err)
+	}
+	store.Complete(record.DatagramID)
+	if err := store.Compact(time.Unix(3202, 0)); err != nil {
+		t.Fatal(err)
+	}
+	checkpoints := store.PendingQualityCheckpoints()
+	if len(checkpoints) != 1 || checkpoints[0].StateGeneration != 1 || checkpoints[0].LastWalSegment != record.Segment || checkpoints[0].LastWalOffset != record.Offset {
+		t.Fatalf("durably completed quality state was not promoted: %+v", checkpoints)
+	}
+	if info, err := os.Stat(filepath.Join(qualityDir, "quality.journal")); err != nil || info.Size() != 0 {
+		t.Fatalf("folded quality journal was not removed: info=%v err=%v", info, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restored := NewQualityTracker(config, nil)
+	store, err = OpenQualityStateStore(qualityDir, "collector-a", config, restored, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	checkpoints = store.PendingQualityCheckpoints()
+	if len(checkpoints) != 1 || checkpoints[0].StateGeneration != 1 {
+		t.Fatalf("dirty quality checkpoint was not restored: %+v", checkpoints)
+	}
+	if err := store.MarkQualityCheckpointPublished(checkpoints[0]); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints := store.PendingQualityCheckpoints(); len(checkpoints) != 0 {
+		t.Fatalf("published quality checkpoint remained dirty: %+v", checkpoints)
+	}
+}
+
+func TestQualityStateStoreOldJournalAfterSnapshotIsIdempotent(t *testing.T) {
+	walDir, qualityDir := t.TempDir(), t.TempDir()
+	config := testQualityStateConfig()
+	w, err := OpenWAL(walDir, "collector-a", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	tracker := NewQualityTracker(config, nil)
+	store, err := OpenQualityStateStore(qualityDir, "collector-a", config, tracker, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := appendQualityWALRecord(t, w, 1, time.Unix(3300, 0))
+	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendAndWait(context.Background(), journal); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(qualityDir, "quality.journal")
+	oldJournal, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Acknowledge(record.DatagramID); err != nil {
+		t.Fatal(err)
+	}
+	store.Complete(record.DatagramID)
+	if err := store.Compact(time.Unix(3301, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, oldJournal, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = OpenQualityStateStore(qualityDir, "collector-a", config, NewQualityTracker(config, nil), w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Compact(time.Unix(3302, 0)); err != nil {
+		t.Fatal(err)
+	}
+	checkpoints := store.PendingQualityCheckpoints()
+	if len(checkpoints) != 1 || checkpoints[0].StateGeneration != 1 {
+		t.Fatalf("old journal advanced the committed generation twice: %+v", checkpoints)
 	}
 }
 
@@ -152,7 +271,7 @@ func TestQualityStateStoreDropsDurablyAcknowledgedRetryDecision(t *testing.T) {
 	}
 	record := appendQualityWALRecord(t, w, 1, time.Unix(3500, 0))
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +318,7 @@ func TestQualityStateStoreTruncatesOnlyIncompleteTail(t *testing.T) {
 	}
 	record := appendQualityWALRecord(t, w, 1, time.Unix(4000, 0))
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +372,7 @@ func TestQualityStateStoreRejectsCorruptCompleteFrame(t *testing.T) {
 	}
 	record := appendQualityWALRecord(t, w, 1, time.Unix(5000, 0))
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,6 +420,10 @@ func appendQualityWALRecord(t *testing.T, w *WAL, marker byte, receivedAt time.T
 		t.Fatal(err)
 	}
 	return record
+}
+
+func testQualityBinding(record WALRecord) SourceBinding {
+	return SourceBinding{Protocol: record.Protocol, SourcePrefix: record.Source.Addr().String() + "/32", TenantID: record.TenantID, ExporterID: record.ExporterID, TargetID: record.TargetID, DeviceID: record.DeviceID, OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true}
 }
 
 func testQualityStateConfig() QualityConfig {

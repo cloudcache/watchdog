@@ -291,7 +291,7 @@ func (r *Runner) processRecord(ctx context.Context, record WALRecord, replayGene
 		return err
 	}
 	r.metrics().recordDecodedRecords(record.Protocol, len(decoded.Records))
-	decoded, err = r.applyQuality(record, decoded)
+	decoded, err = r.applyQuality(record, decoded, binding)
 	if err != nil {
 		return err
 	}
@@ -384,7 +384,7 @@ func (r *Runner) registryForRevision(revision uint64) (*Registry, bool) {
 	return r.Registry, true
 }
 
-func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram) (DecodedDatagram, error) {
+func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram, binding SourceBinding) (DecodedDatagram, error) {
 	tracker := r.quality()
 	r.qualityBarrier.RLock()
 	defer r.qualityBarrier.RUnlock()
@@ -392,7 +392,7 @@ func (r *Runner) applyQuality(record WALRecord, decoded DecodedDatagram) (Decode
 	if r.QualityState == nil {
 		return decoded, nil
 	}
-	journal, err := tracker.BuildJournalRecord(record, decoded, r.QualityState.collectorID)
+	journal, err := tracker.BuildJournalRecord(record, decoded, binding, r.QualityState.collectorID)
 	if err == nil {
 		err = r.QualityState.Append(journal)
 	}

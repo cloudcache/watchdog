@@ -41,13 +41,13 @@ func TestQualityCheckpointBindsNetFlowObservationDomain(t *testing.T) {
 	decoded := netflowQualityDatagram(10, 1, 1000, 100)
 	decoded.Protocol = ProtocolNetFlow9
 	decoded.SequenceScope = 42
+	binding := SourceBinding{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", TenantID: record.TenantID, ExporterID: record.ExporterID, TargetID: "target-a", OwnershipEpoch: 3, SamplingMode: SamplingModeSampled, Enabled: true}
 	tracker := NewQualityTracker(testQualityStateConfig(), nil)
 	decoded, _ = tracker.Observe(record, decoded)
-	journal, err := tracker.BuildJournalRecord(record, decoded, "collector-a")
+	journal, err := tracker.BuildJournalRecord(record, decoded, binding, "collector-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := SourceBinding{Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.1/32", TenantID: record.TenantID, ExporterID: record.ExporterID, TargetID: "target-a", OwnershipEpoch: 3, SamplingMode: SamplingModeSampled, Enabled: true}
 	checkpoint, err := BuildQualityCheckpoint(record, binding, "collector-a", 1, now, journal)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func qualityCheckpointFixture(t *testing.T, collectorID string, ownershipEpoch, 
 	binding := SourceBinding{Protocol: ProtocolSFlow5, SourcePrefix: "192.0.2.1/32", TenantID: record.TenantID, ExporterID: record.ExporterID, TargetID: record.TargetID, OwnershipEpoch: ownershipEpoch, SamplingMode: SamplingModeSampled, Enabled: true}
 	tracker := NewQualityTracker(testQualityStateConfig(), nil)
 	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
-	journal, err := tracker.BuildJournalRecord(record, decoded, collectorID)
+	journal, err := tracker.BuildJournalRecord(record, decoded, binding, collectorID)
 	if err != nil {
 		t.Fatal(err)
 	}
