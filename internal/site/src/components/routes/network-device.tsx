@@ -991,30 +991,25 @@ function DeviceOverview({
 	const uptime = formatDeviceUptime(device?.Uptime ?? device?.uptime)
 	const snmpProfile = firstText(device?.SNMPProfileID, device?.snmp_profile_id)
 	const snmpPort = formatNumber(device?.SNMPPort ?? device?.snmp_port)
-	const logo = vendorLogoFor(vendor)
+	// The page header above already shows the logo, device name, status badge,
+	// host, OS and uptime — these cards only carry the details, without
+	// repeating that banner or truncating long values.
 	return (
-		<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+		<div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
 			<div className="overflow-hidden rounded-md border border-border">
-				<div className="flex items-start gap-4 border-b border-border bg-muted/30 p-4">
-					{logo ? <img src={logo} alt={vendor || "vendor"} className="h-14 w-20 shrink-0 object-contain" /> : null}
-					<div className="min-w-0">
-						<div className="text-base font-semibold leading-6">
-							{hardware || platform || vendor || targetName || "—"}
-						</div>
-						{sysDescr ? <div className="mt-1 break-words text-sm text-muted-foreground">{sysDescr}</div> : null}
-					</div>
+				<div className="border-b border-border bg-muted/30 px-4 py-3 text-sm font-semibold">
+					<Trans>System Information</Trans>
 				</div>
 				<OverviewTable
 					rows={[
 						[t`System Name`, systemName],
-						[t`Hostname`, targetHost, true],
-						[t`Hardware`, hardware],
-						[t`Operating System`, deviceOS(device)],
+						[t`Hardware`, hardware && vendor ? `${vendor} ${hardware}` : hardware || vendor],
 						[t`Platform`, platformRow],
+						[t`Operating System`, deviceOS(device)],
 						["Object ID", objectID, true],
 						[t`Uptime`, uptime],
 						[t`Location`, location],
-						[t`sysDescr`, sysDescr?.slice(0, 80)],
+						[t`sysDescr`, sysDescr],
 					]}
 				/>
 			</div>
@@ -1024,14 +1019,13 @@ function DeviceOverview({
 				</div>
 				<OverviewTable
 					rows={[
-						[t`Target`, targetName || targetID, true],
 						[t`Host`, targetHost, true],
-						[t`Status`, targetStatus],
-						[t`Labels`, targetLabels],
+						[t`Status`, <StatusBadge key="status" value={targetStatus} />],
+						[t`SNMP Version`, firstText(device?.SNMPProfileID, device?.snmp_profile_id) ? "v2c" : ""],
 						["SNMP Profile", snmpProfile, true],
 						["SNMP Port", snmpPort, true],
-						[t`Vendor`, vendor],
-						[t`SNMP Version`, firstText(device?.SNMPProfileID, device?.snmp_profile_id) ? "v2c" : ""],
+						[t`Target`, targetName || targetID],
+						[t`Labels`, targetLabels],
 					]}
 				/>
 			</div>
@@ -1044,9 +1038,11 @@ function OverviewTable({ rows }: { rows: [string, React.ReactNode, boolean?][] }
 	return (
 		<div className="divide-y divide-border/50 text-sm">
 			{visibleRows.map(([label, value, mono]) => (
-				<div key={label} className="grid grid-cols-[150px_minmax(0,1fr)]">
+				<div key={label} className="grid grid-cols-[132px_minmax(0,1fr)]">
 					<div className="bg-muted/20 px-4 py-2 text-muted-foreground">{label}</div>
-					<div className={cn("min-w-0 px-4 py-2", mono && "font-mono text-xs")}>{value}</div>
+					<div className={cn("min-w-0 break-words px-4 py-2", mono && "break-all font-mono text-xs leading-5")}>
+						{value}
+					</div>
 				</div>
 			))}
 		</div>

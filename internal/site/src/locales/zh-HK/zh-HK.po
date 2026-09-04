@@ -2095,8 +2095,8 @@ msgid "Host is required"
 msgstr "主機/IP 不能為空"
 
 #: src/components/routes/network-device.tsx
-msgid "Hostname"
-msgstr ""
+#~ msgid "Hostname"
+#~ msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/targets.tsx
@@ -3894,6 +3894,10 @@ msgstr ""
 msgid "System"
 msgstr "系統"
 
+#: src/components/routes/network-device.tsx
+msgid "System Information"
+msgstr "系統資訊"
+
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "System load averages over time"
 msgstr "系統平均負載隨時間變化"
@@ -4356,7 +4360,6 @@ msgstr "取值口徑"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device-snmp.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx

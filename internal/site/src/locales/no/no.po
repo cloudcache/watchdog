@@ -2095,8 +2095,8 @@ msgid "Host is required"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
-msgid "Hostname"
-msgstr ""
+#~ msgid "Hostname"
+#~ msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/targets.tsx
@@ -3894,6 +3894,10 @@ msgstr ""
 msgid "System"
 msgstr ""
 
+#: src/components/routes/network-device.tsx
+msgid "System Information"
+msgstr ""
+
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "System load averages over time"
 msgstr "Systembelastning gjennomsnitt over tid"
@@ -4356,7 +4360,6 @@ msgstr ""
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device-snmp.tsx
-#: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
