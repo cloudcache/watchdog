@@ -15,6 +15,7 @@ import (
 type Publisher interface {
 	Publish(context.Context, *flowpb.NormalizedRecordBatch) error
 	PublishCollectState(context.Context, *flowpb.CollectState) error
+	PublishQualityCheckpoint(context.Context, *flowpb.QualityCheckpoint) error
 	PublishDecodeFailure(context.Context, *flowpb.DecodeFailure) error
 	PublishQuarantine(context.Context, *flowpb.QuarantineEvent) error
 	Close() error
@@ -108,6 +109,38 @@ func (p *KafkaPublisher) PublishCollectState(ctx context.Context, state *flowpb.
 	}
 	message := &sarama.ProducerMessage{Topic: p.collectStateTopic, Partition: -1, Key: sarama.ByteEncoder(state.StateKey), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(state.ReceivedAtUnixMs)}
 	return p.publishMessage(ctx, message)
+}
+
+func (p *KafkaPublisher) PublishQualityCheckpoint(ctx context.Context, checkpoint *flowpb.QualityCheckpoint) error {
+	if p.collectStateTopic == "" {
+		return errors.New("Kafka collect-state topic is required")
+	}
+	message, err := qualityCheckpointProducerMessage(p.collectStateTopic, checkpoint)
+	if err != nil {
+		return err
+	}
+	return p.publishMessage(ctx, message)
+}
+
+func qualityCheckpointProducerMessage(topic string, checkpoint *flowpb.QualityCheckpoint) (*sarama.ProducerMessage, error) {
+	if topic == "" {
+		return nil, errors.New("Kafka collect-state topic is required")
+	}
+	if err := validateQualityCheckpoint(checkpoint, 0); err != nil {
+		return nil, err
+	}
+	key, err := qualityCheckpointKafkaKey(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	data, err := proto.Marshal(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("marshal quality checkpoint: %w", err)
+	}
+	if len(data) > collectStateMaxBytes-collectStateHeaderSize {
+		return nil, errors.New("quality checkpoint exceeds Kafka value limit")
+	}
+	return &sarama.ProducerMessage{Topic: topic, Partition: -1, Key: sarama.ByteEncoder(key), Value: sarama.ByteEncoder(data), Timestamp: time.UnixMilli(checkpoint.CommittedAtUnixMs)}, nil
 }
 
 func (p *KafkaPublisher) PublishDecodeFailure(ctx context.Context, failure *flowpb.DecodeFailure) error {

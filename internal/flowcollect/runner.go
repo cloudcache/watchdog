@@ -572,9 +572,7 @@ func (r *Runner) qualityCheckpointLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			r.qualityBarrier.Lock()
-			err := r.QualityState.Compact(now)
-			r.qualityBarrier.Unlock()
+			err := r.checkpointQualityState(ctx, now)
 			if err != nil {
 				r.metrics().QualityCheckpointFailures.Add(1)
 				r.runtimeState().observeQualityCheckpoint(err, now)
@@ -584,6 +582,28 @@ func (r *Runner) qualityCheckpointLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (r *Runner) checkpointQualityState(ctx context.Context, now time.Time) error {
+	r.qualityBarrier.Lock()
+	err := r.QualityState.Compact(now)
+	r.qualityBarrier.Unlock()
+	if err != nil || !r.Config.Kafka.QualityCheckpointWriteEnabled {
+		return err
+	}
+	for _, checkpoint := range r.QualityState.PendingQualityCheckpoints() {
+		startedAt := time.Now()
+		err := r.Publisher.PublishQualityCheckpoint(ctx, checkpoint)
+		r.observePublish(kafkaTopicCollectState, err, time.Since(startedAt))
+		if err != nil {
+			return fmt.Errorf("publish quality checkpoint: %w", err)
+		}
+		if err := r.QualityState.MarkQualityCheckpointPublished(checkpoint); err != nil {
+			return fmt.Errorf("complete quality checkpoint publication: %w", err)
+		}
+		r.metrics().PublishedQualityCheckpoints.Add(1)
+	}
+	return nil
 }
 
 func (r *Runner) attemptCheckpointLoop(ctx context.Context) {

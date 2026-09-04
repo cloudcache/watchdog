@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
 )
 
 func TestQualityStateStoreRestoresDecisionAndSequenceState(t *testing.T) {
@@ -253,6 +255,111 @@ func TestQualityStateStoreOldJournalAfterSnapshotIsIdempotent(t *testing.T) {
 	checkpoints := store.PendingQualityCheckpoints()
 	if len(checkpoints) != 1 || checkpoints[0].StateGeneration != 1 {
 		t.Fatalf("old journal advanced the committed generation twice: %+v", checkpoints)
+	}
+}
+
+func TestQualityStateStoreRestoresPreviousOwnerCheckpointAsBaseline(t *testing.T) {
+	now := time.Now()
+	config := testQualityStateConfig()
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 3, 9, 10, now.Add(-time.Second))
+	registry := qualityCheckpointRegistry(t, "collector-b", 4, 11, now)
+	w, err := OpenWAL(t.TempDir(), "collector-b", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	tracker := NewQualityTracker(config, nil)
+	store, err := OpenQualityStateStoreWithRemote(t.TempDir(), "collector-b", config, tracker, w, nil, registry, []QualityCheckpointRecord{{Checkpoint: checkpoint, Partition: 2, Offset: 41}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state := store.State()
+	if store.RestoredRemoteCount() != 1 || state.Committed != 1 || state.Dirty != 0 {
+		t.Fatalf("previous owner quality baseline was not restored: restored=%d state=%+v", store.RestoredRemoteCount(), state)
+	}
+	record := qualityWALRecord(2, now)
+	decoded, fresh := tracker.Observe(record, sflowQualityDatagram(11, 1100, 21, 1100, 100, 0))
+	if !fresh || decoded.Records[0].QualityFlags != 0 {
+		t.Fatalf("restored owner baseline did not continue sequence state: fresh=%v decoded=%+v", fresh, decoded)
+	}
+}
+
+func TestQualityStateStoreLocalPendingStateWinsRemoteCheckpoint(t *testing.T) {
+	now := time.Now()
+	config := testQualityStateConfig()
+	walDir, qualityDir := t.TempDir(), t.TempDir()
+	w, err := OpenWAL(walDir, "collector-b", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	localTracker := NewQualityTracker(config, nil)
+	localStore, err := OpenQualityStateStore(qualityDir, "collector-b", config, localTracker, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localRecord := appendQualityWALRecord(t, w, 2, now.Add(-time.Second))
+	localDecision, _ := localTracker.Observe(localRecord, sflowQualityDatagram(30, 3000, 40, 3000, 100, 0))
+	journal, err := localTracker.BuildJournalRecord(localRecord, localDecision, testQualityBinding(localRecord), "collector-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.AppendAndWait(context.Background(), journal); err != nil {
+		t.Fatal(err)
+	}
+	localTracker.Remember(localRecord.DatagramID, localDecision)
+	if err := localStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := qualityCheckpointFixture(t, "collector-a", 3, 9, 10, now.Add(-2*time.Second))
+	registry := qualityCheckpointRegistry(t, "collector-b", 4, 11, now)
+	restoredTracker := NewQualityTracker(config, nil)
+	store, err := OpenQualityStateStoreWithRemote(qualityDir, "collector-b", config, restoredTracker, w, nil, registry, []QualityCheckpointRecord{{Checkpoint: remote, Partition: 1, Offset: 8}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.RestoredRemoteCount() != 0 {
+		t.Fatalf("remote state replaced a local pending exporter: restored=%d", store.RestoredRemoteCount())
+	}
+	next := qualityWALRecord(3, now)
+	decoded, fresh := restoredTracker.Observe(next, sflowQualityDatagram(31, 3100, 41, 3100, 100, 0))
+	if !fresh || decoded.Records[0].QualityFlags != 0 {
+		t.Fatalf("local pending sequence state did not win remote checkpoint: fresh=%v decoded=%+v", fresh, decoded)
+	}
+}
+
+func TestQualityStateStoreDelayedPublishAckCannotClearNewGeneration(t *testing.T) {
+	now := time.Now()
+	config := testQualityStateConfig()
+	old := qualityCheckpointFixture(t, "collector-a", 3, 1, 10, now.Add(-time.Second))
+	current := qualityCheckpointFixture(t, "collector-a", 3, 2, 10, now)
+	committed, err := newQualityCommitAccumulator([]*flowpb.QualityCheckpoint{current}, config.MaxExporters, config.MaxDataSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity [32]byte
+	copy(identity[:], current.StateIdentityKey)
+	store := &QualityStateStore{
+		collectorID: "collector-a",
+		config:      config,
+		committed:   committed,
+		dirty:       map[[32]byte]struct{}{identity: {}},
+	}
+	if err := store.MarkQualityCheckpointPublished(old); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.PendingQualityCheckpoints()) != 1 {
+		t.Fatal("delayed acknowledgement cleared the newer quality checkpoint")
+	}
+	if err := store.MarkQualityCheckpointPublished(current); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.PendingQualityCheckpoints()) != 0 {
+		t.Fatal("exact quality checkpoint acknowledgement did not clear dirty state")
 	}
 }
 

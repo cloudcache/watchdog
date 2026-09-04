@@ -78,7 +78,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	remoteStates, readErr := stateReader.ReadWithHistory(ctx, registry, planHistory)
+	remoteSnapshot, readErr := stateReader.ReadAllWithHistory(ctx, registry, planHistory)
 	closeErr := stateReader.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		log.Fatal(err)
@@ -87,14 +87,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("flow plan is no longer active after collect-state restore: %v", err)
 	}
-	stateStore, err := flowcollect.OpenCollectStateStoreWithRecovery(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, planHistory, decoder, remoteStates)
+	stateStore, err := flowcollect.OpenCollectStateStoreWithRecovery(filepath.Join(cfg.FlowCollect.StateDir, "collect-state"), plan.CollectorID, registry, planHistory, decoder, remoteSnapshot.CollectStates)
 	if err != nil {
 		log.Fatal(err)
 	}
-	metrics.CollectStateRestoreCandidates.Store(int64(len(remoteStates)))
+	metrics.CollectStateRestoreCandidates.Store(int64(len(remoteSnapshot.CollectStates)))
 	metrics.CollectStateRestored.Store(int64(stateStore.RestoredCount()))
 	metrics.CollectStateRestoreNanos.Store(time.Since(restoreStartedAt).Nanoseconds())
-	log.Printf("restored collect-state snapshot: collector=%s remote_candidates=%d restored=%d duration=%s", plan.CollectorID, len(remoteStates), stateStore.RestoredCount(), time.Since(restoreStartedAt))
+	log.Printf("restored collect-state snapshot: collector=%s decoder_candidates=%d quality_candidates=%d decoder_restored=%d duration=%s", plan.CollectorID, len(remoteSnapshot.CollectStates), len(remoteSnapshot.QualityCheckpoints), stateStore.RestoredCount(), time.Since(restoreStartedAt))
 	attempts, err := flowcollect.OpenAttemptStore(filepath.Join(cfg.FlowCollect.StateDir, "attempt-state"), plan.CollectorID, cfg.FlowCollect.Diagnostics, wal, metrics)
 	if err != nil {
 		log.Fatal(err)
@@ -102,11 +102,14 @@ func main() {
 	defer attempts.Close()
 	log.Printf("restored replay-attempt state: collector=%s pending=%d", plan.CollectorID, attempts.RestoredCount())
 	quality := flowcollect.NewQualityTracker(cfg.FlowCollect.Quality, metrics)
-	qualityState, err := flowcollect.OpenQualityStateStore(filepath.Join(cfg.FlowCollect.StateDir, "quality-state"), plan.CollectorID, cfg.FlowCollect.Quality, quality, wal, metrics)
+	qualityState, err := flowcollect.OpenQualityStateStoreWithRemote(filepath.Join(cfg.FlowCollect.StateDir, "quality-state"), plan.CollectorID, cfg.FlowCollect.Quality, quality, wal, metrics, registry, remoteSnapshot.QualityCheckpoints, time.Now())
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer qualityState.Close()
+	metrics.QualityRestoreCandidates.Store(int64(len(remoteSnapshot.QualityCheckpoints)))
+	metrics.QualityRestored.Store(int64(qualityState.RestoredRemoteCount()))
+	log.Printf("restored quality-state snapshot: collector=%s candidates=%d restored=%d", plan.CollectorID, len(remoteSnapshot.QualityCheckpoints), qualityState.RestoredRemoteCount())
 	publisher, err := flowcollect.NewKafkaPublisher(cfg.FlowCollect.Kafka, cfg.FlowCollect.NormalizedBatch, plan.CollectorID)
 	if err != nil {
 		log.Fatal(err)

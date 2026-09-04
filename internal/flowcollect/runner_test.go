@@ -14,6 +14,7 @@ import (
 type recordingPublisher struct {
 	batches        []*flowpb.NormalizedRecordBatch
 	states         []*flowpb.CollectState
+	qualityStates  []*flowpb.QualityCheckpoint
 	decodeFailures []*flowpb.DecodeFailure
 	quarantines    []*flowpb.QuarantineEvent
 	events         []string
@@ -28,6 +29,11 @@ func (p *recordingPublisher) Publish(_ context.Context, batch *flowpb.Normalized
 func (p *recordingPublisher) PublishCollectState(_ context.Context, state *flowpb.CollectState) error {
 	p.states = append(p.states, state)
 	p.events = append(p.events, "state")
+	return nil
+}
+func (p *recordingPublisher) PublishQualityCheckpoint(_ context.Context, checkpoint *flowpb.QualityCheckpoint) error {
+	p.qualityStates = append(p.qualityStates, checkpoint)
+	p.events = append(p.events, "quality-state")
 	return nil
 }
 func (p *recordingPublisher) PublishDecodeFailure(_ context.Context, failure *flowpb.DecodeFailure) error {
@@ -51,6 +57,11 @@ type failDataOncePublisher struct {
 }
 
 type failDLQOncePublisher struct {
+	recordingPublisher
+	fail bool
+}
+
+type failQualityOncePublisher struct {
 	recordingPublisher
 	fail bool
 }
@@ -83,6 +94,65 @@ func (p *failDataOncePublisher) Publish(ctx context.Context, batch *flowpb.Norma
 		return errors.New("injected normalized publish failure")
 	}
 	return p.recordingPublisher.Publish(ctx, batch)
+}
+
+func (p *failQualityOncePublisher) PublishQualityCheckpoint(ctx context.Context, checkpoint *flowpb.QualityCheckpoint) error {
+	if p.fail {
+		p.fail = false
+		return errors.New("injected quality checkpoint publish failure")
+	}
+	return p.recordingPublisher.PublishQualityCheckpoint(ctx, checkpoint)
+}
+
+func TestRunnerRetainsDirtyQualityCheckpointUntilKafkaAck(t *testing.T) {
+	now := time.Now()
+	w, err := OpenWAL(t.TempDir(), "collector-a", testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	config := testQualityStateConfig()
+	tracker := NewQualityTracker(config, nil)
+	store, err := OpenQualityStateStore(t.TempDir(), "collector-a", config, tracker, w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	record := appendQualityWALRecord(t, w, 1, now)
+	decoded, _ := tracker.Observe(record, sflowQualityDatagram(10, 1000, 20, 1000, 100, 0))
+	journal, err := tracker.BuildJournalRecord(record, decoded, testQualityBinding(record), "collector-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendAndWait(context.Background(), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Acknowledge(record.DatagramID); err != nil {
+		t.Fatal(err)
+	}
+	store.Complete(record.DatagramID)
+	publisher := &failQualityOncePublisher{fail: true}
+	metrics := &Metrics{}
+	runner := &Runner{Config: Config{}, WAL: w, Publisher: publisher, Quality: tracker, QualityState: store, Metrics: metrics}
+	if err := runner.checkpointQualityState(context.Background(), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if state := store.State(); state.Dirty != 1 || len(publisher.qualityStates) != 0 {
+		t.Fatalf("reader-only rollout mode did not retain unpublished state: state=%+v published=%d", state, len(publisher.qualityStates))
+	}
+	runner.Config.Kafka.QualityCheckpointWriteEnabled = true
+	if err := runner.checkpointQualityState(context.Background(), now.Add(2*time.Second)); err == nil {
+		t.Fatal("quality checkpoint publish failure was ignored")
+	}
+	if state := store.State(); state.Dirty != 1 || len(publisher.qualityStates) != 0 {
+		t.Fatalf("failed quality checkpoint was not retained: state=%+v published=%d", state, len(publisher.qualityStates))
+	}
+	if err := runner.checkpointQualityState(context.Background(), now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if state := store.State(); state.Dirty != 0 || len(publisher.qualityStates) != 1 || metrics.PublishedQualityCheckpoints.Load() != 1 {
+		t.Fatalf("quality checkpoint ack did not clear exact dirty state: state=%+v published=%d metrics=%d", state, len(publisher.qualityStates), metrics.PublishedQualityCheckpoints.Load())
+	}
 }
 
 func TestRunnerCheckpointsAndPublishesCollectStateBeforeData(t *testing.T) {

@@ -434,7 +434,7 @@ restore_order      = (ownership_epoch, state_generation)
 
 D3B 启动顺序冻结为：加载并验证 active/LKG plan 与 history（允许新 active 暂时形成 `max+1`）→ 打开并恢复 WAL、扫描 pending `registry_version`、保留 active 与所有 WAL 引用并回收其余 history → 捕获 collect-state 各 partition high watermark → 扫描到该一致边界并按上述规则选择 → 与本地 checkpoint 合并并恢复 decoder revision/template/sampler → 仅从仍 pending 的 WAL ID 恢复 attempt/quality metadata → 最后开放 UDP listener/WAL dispatch。这里“打开 WAL”只做本地恢复和加锁，不启动 listener/dispatch。滚动升级先 drain listener 并发布安全点；新 owner 必须完成该恢复闸门，不能先收包再依赖进程内缓存。
 
-D3B1 已把 Kafka 回读接入该前置闸门：启动时先冻结每个 partition 的 `[log_start_offset, high_watermark)`，各 partition 并行读取且只接受边界内严格递增的消息；protobuf value 上限、Kafka key/`state_key` 一致性、跨 partition 重复 key、payload SHA/identity、当前签名 registry 与 epoch 全部校验，tombstone 删除同 key 候选。读取有全局 `collect_state_restore_timeout`，内存只保留当前 plan 可接收的最新 key，且受 `collect_state_restore_max_candidates` 硬上限保护。Kafka 边界读完后再次校验 plan 尚未过期，再把 Kafka 与本地候选在写入 decoder **之前一次性**按 `(ownership_epoch,state_generation)` 合并，避免“先恢复本地新状态、再被远端旧状态覆盖”；成功后才打开 WAL/quality/publisher/runner/listener。恢复数量与耗时由低基数 gauge 暴露。
+D3B1 已把 Kafka 回读接入该前置闸门：启动时先冻结每个 partition 的 `[log_start_offset, high_watermark)`，各 partition 并行读取且只接受边界内严格递增的消息；reader 按 32B decoder key 与 `0x51 + 32B` quality key 严格分派，禁止猜 protobuf 类型。两类消息分别校验 value 上限、Kafka key/`state_key`、跨 partition 重复 key、payload SHA/identity、当前签名 registry 与 epoch，tombstone 只删除同一 typed key 候选。读取有全局 `collect_state_restore_timeout`；为使并行到达顺序不改变跨 partition 冲突结论，边界内所有 distinct typed key（包括 tombstone）都记录一次 partition 归属，并共同受 `collect_state_restore_max_candidates` 硬上限保护，存活的 decoder/quality 候选也不得超过该上限。Kafka 边界读完后再次校验 plan 尚未过期，再把各自的 Kafka 与本地候选在写入 decoder/tracker **之前一次性**按 `(ownership_epoch,state_generation)` 合并；quality 只向本地不存在的 identity 注入跨 owner baseline，不能覆盖可能包含 pending datagram 的本地状态。成功后才开放 publisher/runner/listener。writer 由默认 `false` 的 `quality_checkpoint_write_enabled` 控制；必须先确认全部实例运行兼容 reader，再分批开启。恢复数量与耗时由低基数 gauge 暴露。
 
 D3B2A 已持久化签名 plan history：首次接受的 revision 以 `fsync(file) → rename → fsync(directory)` 原子安装，revision/payload 不可变、collector identity 不可变且拒绝 revision 回退；active 文件损坏、缺失或不可用时，只能选择 history 中“签名有效且当前仍在有效期”的最高 revision 作为 LKG。历史 plan 可以过期但仍保留，旧 WAL 必须按 record 上的 `registry_version` 精确解析当时的 source binding、采样规则和 `partition_map_version/physical_partition`，并校验 record 的 `received_at` 落在该 plan 有效期内，绝不套用当前 plan。编译后的 registry 深拷贝签名 payload 中的 slice/map/pointer，调用方不能通过返回值改变内存中的签名事实。history 默认最多 128 个 revision且至少需要 2 个槽位；新 active 可先原子落盘形成一个受控的 `max+1` 启动窗口，随后扫描 durable WAL，只保留 active、历史最高 revision（防回退水位）和所有 pending record 引用的 revision并 `fsync(directory)`。引用缺失或实际必需 revision 超过上限时启动失败，绝不猜测删除。
 
@@ -615,6 +615,7 @@ message QualityCheckpoint {
   bytes  payload_sha256           = 14;
   uint64 last_wal_segment          = 15;
   int64  last_wal_offset           = 16;
+  bytes  last_datagram_id          = 17;
 }
 ```
 
@@ -648,7 +649,7 @@ restore_order      = (ownership_epoch, state_generation)
 
 其中 NetFlow v9/IPFIX 的 `sequence_scope=observation_domain_id`，NetFlow v5 保留 engine type/id scope，sFlow 保留 agent/sub-agent，避免同一传输源下的独立序列互相覆盖。相同 identity/epoch/generation 若 payload SHA-256 不同即为 split-brain/corruption 并 fail closed；相同 epoch 出现不同 collector 同样拒绝。active plan 只接收 tenant/exporter/source/domain 精确匹配、epoch 不高于当前 binding、registry revision 不高于 active revision且未超过 `quality.state_ttl` 的候选；新 epoch 即使 generation 较小也必须胜过旧 epoch。
 
-远端 checkpoint 只允许包含**已 terminal Kafka ack 且其 WAL ACK 已 durable** 的绝对 post-state；尚未确认报文的 retry decision 永远只在旧 owner 本地 journal/snapshot 中恢复，绝不随 checkpoint 转移给新 owner。实现时每个 affinity worker 在 terminal ACK 后把对应 journal post-state 标为 committed，周期任务先 `WAL.Sync`，再按 WAL segment/offset 顺序把同 identity 的更新合并为一个 exporter checkpoint；sFlow source states 按 `(source_id_type,source_id_value)` 合并并排序。每个 identity 每轮最多增加一次 generation；checkpoint 固化该 owner 已合并的 `last_wal_segment/last_wal_offset`，本地 snapshot 已原子落盘但 journal 尚未清理就崩溃时，重放不高于该水位的 journal 必须幂等跳过，WAL 位置只允许在同 `collector_id + ownership_epoch` 内比较。新 ownership epoch 的本地 WAL 序号不与旧 owner 比较，generation 从 1 重新开始。本地 snapshot 同时持久化 committed checkpoint 和未发布标记，Kafka ack 后再清除 dirty，崩溃窗口最多重发相同 key/generation/payload。checkpoint 超过 topic message 上限或 source 容量时 readiness fail closed 并保留本地状态，不把不完整 source 集静默发布。
+远端 checkpoint 只允许包含**已 terminal Kafka ack 且其 WAL ACK 已 durable** 的绝对 post-state；尚未确认报文的 retry decision 永远只在旧 owner 本地 journal/snapshot 中恢复，绝不随 checkpoint 转移给新 owner。实现时每个 affinity worker 在 terminal ACK 后把对应 journal post-state 标为 committed，周期任务先 `WAL.Sync`，再按 WAL segment/offset 顺序把同 identity 的更新合并为一个 exporter checkpoint；sFlow source states 按 `(source_id_type,source_id_value)` 合并并排序。每个 identity 每轮最多增加一次 generation；checkpoint 固化该 owner 已合并的 `last_wal_segment/last_wal_offset/last_datagram_id`，本地 snapshot 已原子落盘但 journal 尚未清理就崩溃时，重放不高于该水位的 journal 必须幂等跳过，同一位置换成不同 datagram ID 必须 fail closed。WAL 位置只允许在同 `collector_id + ownership_epoch` 内比较；同 collector 丢失本地 WAL 后也必须提升 ownership epoch，禁止拿从 1 重新开始的 WAL 接续旧 epoch。新 ownership epoch 的本地 WAL 序号不与旧 owner 比较，generation 从 1 重新开始。本地 snapshot 同时持久化 committed checkpoint 和未发布标记，Kafka ack 后再清除 dirty，崩溃窗口最多重发相同 key/generation/payload。checkpoint 超过 topic message 上限或 source 容量时 readiness fail closed 并保留本地状态，不把不完整 source 集静默发布。
 
 启动在开放 UDP 前冻结同一 collect-state topic 的 partition high watermark，一次扫描分别恢复 decoder state 与 quality checkpoint；quality 候选先完成 registry/epoch/checksum/容量校验和全局选择，再与本地 committed 状态合并，最后一次性装入 tracker。旧 epoch tombstone 沿用 D3B3 的 revoke→replacement durable→审计删除状态机，但删除的是完整 33B quality Kafka key。连同 FLOW-02D3 的 plan history/attempt metadata 完成 owner 切换、旧 WAL、迟到报文和 kill -9 矩阵前，不宣称跨节点 epoch 连续。
 
@@ -1639,7 +1640,7 @@ exporter_id/worker_id 基数受 registry 限制；未知 source IP、message ID�
 
 `watchdog-flow-collect` 使用独立的 `flow_collect.observability.listen`，固定提供 `GET|HEAD /metrics`、`/health/live` 和 `/health/ready`。默认只监听 `127.0.0.1:9464`；跨主机 vmagent/Prometheus 抓取必须显式改监听地址并由管理网 ACL/mTLS sidecar 限制，不能把该端点直接暴露到业务网。HTTP 设置 header/write/idle/shutdown 超时和 16 KiB header 上限；这些端点不查询 MySQL、CH 或控制面，也不在 scrape 时扫描 WAL 全量记录。
 
-启动恢复另暴露 `watchdog_flow_collect_state_restore_candidates`、`watchdog_flow_collect_state_restored` 和 `watchdog_flow_collect_state_restore_duration_seconds` 三个无 label gauge；前者是当前签名 plan 可接收且 tombstone/coalesce 后的 Kafka key 数，后者是本地与远端合并后真正恢复的 exporter/domain identity 数。恢复失败时 listener 根本不会开放，进程退出并由启动日志保留 partition/offset 诊断，因此不能把“服务尚未启动、指标不可抓”误判成健康的零值。
+启动恢复另暴露 `watchdog_flow_collect_state_restore_candidates`、`watchdog_flow_collect_state_restored`、`watchdog_flow_collect_state_restore_duration_seconds`、`watchdog_flow_quality_restore_candidates` 和 `watchdog_flow_quality_restored` 无 label gauge；前三项描述 decoder 恢复，后两项描述 quality typed keyspace 的候选数与实际注入数。运行期另暴露本地 committed/dirty checkpoint gauge 和 Kafka 已确认发布 counter。恢复失败时 listener 根本不会开放，进程退出并由启动日志保留 partition/offset 诊断，因此不能把“服务尚未启动、指标不可抓”误判成健康的零值。
 
 标签集合在代码中固定分配，不使用 map 动态创建 series：`protocol=unknown|sflow5|netflow5|netflow9|ipfix`，`listener=sflow|netflow|shared|workers`，`topic=normalized|collect_state|decode_dlq|quarantine`，Kafka `result=success|failure`，decode `reason=invalid_datagram|template_pending|decode_rejected|normalize_rejected`，sequence `scope=datagram|sample`，quality `operation=journal|checkpoint`。collector/exporter/source/tenant/target/device/IP/datagram/message/error text 均不进入该进程的 label；按实例归属由 vmagent 的静态 scrape target/relabel 提供。Kafka latency 和 WAL fsync latency使用固定 1ms–10s + `+Inf` Prometheus histogram；VM 以 `histogram_quantile` 计算 P95/P99，热路径只更新固定原子 bucket，不创建动态 series。
 
@@ -2146,6 +2147,7 @@ flow_collect:
     collect_state_topic: "watchdog.flow.collect-state.v1"
     collect_state_restore_timeout: 2m
     collect_state_restore_max_candidates: 262144
+    quality_checkpoint_write_enabled: false # reader 全量兼容后才分批开启
     decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
     quarantine_topic: "watchdog.flow.quarantine.v1"
     acks: "all"

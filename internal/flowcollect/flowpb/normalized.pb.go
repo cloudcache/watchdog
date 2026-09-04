@@ -1757,6 +1757,7 @@ type QualityCheckpoint struct {
 	// Compared only within the same collector_id + ownership_epoch.
 	LastWalSegment uint64 `protobuf:"varint,15,opt,name=last_wal_segment,json=lastWalSegment,proto3" json:"last_wal_segment,omitempty"`
 	LastWalOffset  int64  `protobuf:"varint,16,opt,name=last_wal_offset,json=lastWalOffset,proto3" json:"last_wal_offset,omitempty"`
+	LastDatagramId []byte `protobuf:"bytes,17,opt,name=last_datagram_id,json=lastDatagramId,proto3" json:"last_datagram_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1901,6 +1902,13 @@ func (x *QualityCheckpoint) GetLastWalOffset() int64 {
 		return x.LastWalOffset
 	}
 	return 0
+}
+
+func (x *QualityCheckpoint) GetLastDatagramId() []byte {
+	if x != nil {
+		return x.LastDatagramId
+	}
+	return nil
 }
 
 var File_internal_flowcollect_flowpb_normalized_proto protoreflect.FileDescriptor
@@ -2104,7 +2112,7 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\x11pending_decisions\x18\x06 \x03(\v2!.watchdog.flow.v1.QualityDecisionR\x10pendingDecisions\x12%\n" +
 	"\x0epayload_sha256\x18\a \x01(\fR\rpayloadSha256\x12X\n" +
 	"\x15committed_checkpoints\x18\b \x03(\v2#.watchdog.flow.v1.QualityCheckpointR\x14committedCheckpoints\x129\n" +
-	"\x19dirty_state_identity_keys\x18\t \x03(\fR\x16dirtyStateIdentityKeys\"\xf2\x05\n" +
+	"\x19dirty_state_identity_keys\x18\t \x03(\fR\x16dirtyStateIdentityKeys\"\x9c\x06\n" +
 	"\x11QualityCheckpoint\x12:\n" +
 	"\x19checkpoint_schema_version\x18\x01 \x01(\rR\x17checkpointSchemaVersion\x12\x1b\n" +
 	"\tstate_key\x18\x02 \x01(\fR\bstateKey\x12,\n" +
@@ -2123,7 +2131,8 @@ const file_internal_flowcollect_flowpb_normalized_proto_rawDesc = "" +
 	"\rsource_states\x18\r \x03(\v2$.watchdog.flow.v1.QualitySourceStateR\fsourceStates\x12%\n" +
 	"\x0epayload_sha256\x18\x0e \x01(\fR\rpayloadSha256\x12(\n" +
 	"\x10last_wal_segment\x18\x0f \x01(\x04R\x0elastWalSegment\x12&\n" +
-	"\x0flast_wal_offset\x18\x10 \x01(\x03R\rlastWalOffsetBCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
+	"\x0flast_wal_offset\x18\x10 \x01(\x03R\rlastWalOffset\x12(\n" +
+	"\x10last_datagram_id\x18\x11 \x01(\fR\x0elastDatagramIdBCZAgithub.com/cloudcache/watchdog/internal/flowcollect/flowpb;flowpbb\x06proto3"
 
 var (
 	file_internal_flowcollect_flowpb_normalized_proto_rawDescOnce sync.Once

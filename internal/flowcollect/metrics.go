@@ -111,6 +111,9 @@ type Metrics struct {
 	QualityJournalFailures        atomic.Uint64
 	QualityStateRestores          atomic.Uint64
 	QualityStateCheckpoints       atomic.Uint64
+	PublishedQualityCheckpoints   atomic.Uint64
+	QualityRestoreCandidates      atomic.Int64
+	QualityRestored               atomic.Int64
 	QualityCheckpointFailures     atomic.Uint64
 	ReceiveQueueDepth             atomic.Int64
 	ReceiveQueueCapacity          atomic.Int64
@@ -131,47 +134,48 @@ type Metrics struct {
 }
 
 type MetricSnapshot struct {
-	ReceivedDatagrams         uint64
-	ReceiveQueueDrops         uint64
-	InvalidDatagrams          uint64
-	QuarantinedDatagrams      uint64
-	QuarantineRateLimited     uint64
-	QuarantineQueueDrops      uint64
-	PublishedQuarantine       uint64
-	QuarantinePublishFailures uint64
-	WALAppended               uint64
-	WALHardStops              uint64
-	DecodedDatagrams          uint64
-	DecodeFailures            uint64
-	NormalizeFailures         uint64
-	PublishFailures           uint64
-	TemplatePending           uint64
-	PublishedBatches          uint64
-	CollectStateCheckpoints   uint64
-	PublishedCollectStates    uint64
-	CollectStateFailures      uint64
-	PlanHistoryPruned         uint64
-	ReplayAttempts            uint64
-	AttemptJournalAppends     uint64
-	AttemptJournalFailures    uint64
-	AttemptStateRestores      uint64
-	AttemptStateCheckpoints   uint64
-	AttemptCheckpointFailures uint64
-	DLQDatagrams              uint64
-	DLQPublishFailures        uint64
-	SequenceGapEvents         uint64
-	MissingSequenceUnits      uint64
-	ExporterRestartEvents     uint64
-	SequenceOutOfOrderEvents  uint64
-	SamplePoolResetEvents     uint64
-	SamplingRateChangeEvents  uint64
-	ExporterDropSamples       uint64
-	QualityStateSaturated     uint64
-	QualityJournalAppends     uint64
-	QualityJournalFailures    uint64
-	QualityStateRestores      uint64
-	QualityStateCheckpoints   uint64
-	QualityCheckpointFailures uint64
+	ReceivedDatagrams           uint64
+	ReceiveQueueDrops           uint64
+	InvalidDatagrams            uint64
+	QuarantinedDatagrams        uint64
+	QuarantineRateLimited       uint64
+	QuarantineQueueDrops        uint64
+	PublishedQuarantine         uint64
+	QuarantinePublishFailures   uint64
+	WALAppended                 uint64
+	WALHardStops                uint64
+	DecodedDatagrams            uint64
+	DecodeFailures              uint64
+	NormalizeFailures           uint64
+	PublishFailures             uint64
+	TemplatePending             uint64
+	PublishedBatches            uint64
+	CollectStateCheckpoints     uint64
+	PublishedCollectStates      uint64
+	CollectStateFailures        uint64
+	PlanHistoryPruned           uint64
+	ReplayAttempts              uint64
+	AttemptJournalAppends       uint64
+	AttemptJournalFailures      uint64
+	AttemptStateRestores        uint64
+	AttemptStateCheckpoints     uint64
+	AttemptCheckpointFailures   uint64
+	DLQDatagrams                uint64
+	DLQPublishFailures          uint64
+	SequenceGapEvents           uint64
+	MissingSequenceUnits        uint64
+	ExporterRestartEvents       uint64
+	SequenceOutOfOrderEvents    uint64
+	SamplePoolResetEvents       uint64
+	SamplingRateChangeEvents    uint64
+	ExporterDropSamples         uint64
+	QualityStateSaturated       uint64
+	QualityJournalAppends       uint64
+	QualityJournalFailures      uint64
+	QualityStateRestores        uint64
+	QualityStateCheckpoints     uint64
+	PublishedQualityCheckpoints uint64
+	QualityCheckpointFailures   uint64
 }
 
 func (m *Metrics) Snapshot() MetricSnapshot {
@@ -185,7 +189,7 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		DLQDatagrams: m.DLQDatagrams.Load(), DLQPublishFailures: m.DLQPublishFailures.Load(),
 		SequenceGapEvents: m.SequenceGapEvents.Load(), MissingSequenceUnits: m.MissingSequenceUnits.Load(), ExporterRestartEvents: m.ExporterRestartEvents.Load(), SequenceOutOfOrderEvents: m.SequenceOutOfOrderEvents.Load(),
 		SamplePoolResetEvents: m.SamplePoolResetEvents.Load(), SamplingRateChangeEvents: m.SamplingRateChangeEvents.Load(), ExporterDropSamples: m.ExporterDropSamples.Load(), QualityStateSaturated: m.QualityStateSaturated.Load(),
-		QualityJournalAppends: m.QualityJournalAppends.Load(), QualityJournalFailures: m.QualityJournalFailures.Load(), QualityStateRestores: m.QualityStateRestores.Load(), QualityStateCheckpoints: m.QualityStateCheckpoints.Load(), QualityCheckpointFailures: m.QualityCheckpointFailures.Load(),
+		QualityJournalAppends: m.QualityJournalAppends.Load(), QualityJournalFailures: m.QualityJournalFailures.Load(), QualityStateRestores: m.QualityStateRestores.Load(), QualityStateCheckpoints: m.QualityStateCheckpoints.Load(), PublishedQualityCheckpoints: m.PublishedQualityCheckpoints.Load(), QualityCheckpointFailures: m.QualityCheckpointFailures.Load(),
 	}
 }
 

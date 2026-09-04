@@ -53,6 +53,7 @@ type KafkaConfig struct {
 	CollectStateTopic                string                   `yaml:"collect_state_topic"`
 	CollectStateRestoreTimeout       time.Duration            `yaml:"collect_state_restore_timeout"`
 	CollectStateRestoreMaxCandidates int                      `yaml:"collect_state_restore_max_candidates"`
+	QualityCheckpointWriteEnabled    bool                     `yaml:"quality_checkpoint_write_enabled"`
 	DecodeDLQTopic                   string                   `yaml:"decode_dlq_topic"`
 	QuarantineTopic                  string                   `yaml:"quarantine_topic"`
 	Acks                             string                   `yaml:"acks"`
@@ -428,6 +429,9 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.Kafka.CollectStateRestoreMaxCandidates, err = envInt("WATCHDOG_FLOW_COLLECT_KAFKA_COLLECT_STATE_RESTORE_MAX_CANDIDATES", c.Kafka.CollectStateRestoreMaxCandidates); err != nil {
+		return err
+	}
+	if c.Kafka.QualityCheckpointWriteEnabled, err = envBool("WATCHDOG_FLOW_COLLECT_KAFKA_QUALITY_CHECKPOINT_WRITE_ENABLED", c.Kafka.QualityCheckpointWriteEnabled); err != nil {
 		return err
 	}
 	c.Kafka.DecodeDLQTopic = env("WATCHDOG_FLOW_COLLECT_KAFKA_DECODE_DLQ_TOPIC", c.Kafka.DecodeDLQTopic)

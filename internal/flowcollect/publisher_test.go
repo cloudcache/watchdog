@@ -1,10 +1,13 @@
 package flowcollect
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestKafkaPublisherConfigIsIdempotentAndManuallyPartitioned(t *testing.T) {
@@ -44,6 +47,29 @@ func TestKafkaPublisherConfigIsIdempotentAndManuallyPartitioned(t *testing.T) {
 	}
 	if _, err := partitioner.Partition(&sarama.ProducerMessage{Partition: 10}, 10); err == nil {
 		t.Fatal("out-of-range explicit partition was accepted")
+	}
+}
+
+func TestQualityCheckpointProducerMessageUsesTypedCompactedKey(t *testing.T) {
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 3, 7, 10, time.Unix(120_000, 0))
+	message, err := qualityCheckpointProducerMessage("state", checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := message.Key.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := message.Value.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := &flowpb.QualityCheckpoint{}
+	if err := proto.Unmarshal(value, restored); err != nil {
+		t.Fatal(err)
+	}
+	if message.Topic != "state" || message.Partition != -1 || !isQualityCheckpointKafkaKey(key) || !bytes.Equal(key[1:], checkpoint.StateKey) || !proto.Equal(restored, checkpoint) || !message.Timestamp.Equal(time.UnixMilli(checkpoint.CommittedAtUnixMs)) {
+		t.Fatalf("quality checkpoint Kafka message is invalid: topic=%q partition=%d key=%x timestamp=%s", message.Topic, message.Partition, key, message.Timestamp)
 	}
 }
 

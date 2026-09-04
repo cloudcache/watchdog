@@ -52,6 +52,7 @@ type QualityStateStore struct {
 	completed   map[DatagramID]struct{}
 	committed   *qualityCommitAccumulator
 	dirty       map[[32]byte]struct{}
+	remoteCount int
 }
 
 type QualityStoreState struct {
@@ -103,6 +104,57 @@ func OpenQualityStateStore(dir, collectorID string, config QualityConfig, tracke
 	}
 	go store.syncLoop()
 	return store, nil
+}
+
+func OpenQualityStateStoreWithRemote(dir, collectorID string, config QualityConfig, tracker *QualityTracker, wal *WAL, metrics *Metrics, registry *Registry, records []QualityCheckpointRecord, now time.Time) (*QualityStateStore, error) {
+	if registry == nil || now.IsZero() {
+		return nil, errors.New("remote quality-state restore requires registry and current time")
+	}
+	store, err := OpenQualityStateStore(dir, collectorID, config, tracker, wal, metrics)
+	if err != nil {
+		return nil, err
+	}
+	checkpoints := make([]*flowpb.QualityCheckpoint, 0, len(records))
+	for _, record := range records {
+		checkpoints = append(checkpoints, record.Checkpoint)
+	}
+	eligible, err := eligibleRemoteQualityCheckpoints(registry, checkpoints, config, now)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	selected, err := selectQualityCheckpoints(eligible)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	store.mu.Lock()
+	local := store.committed.Snapshot()
+	store.mu.Unlock()
+	combined := make([]*flowpb.QualityCheckpoint, 0, len(local)+len(selected))
+	combined = append(combined, local...)
+	combined = append(combined, selected...)
+	merged, err := newQualityCommitAccumulator(combined, config.MaxExporters, config.MaxDataSources)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("merge local and remote quality checkpoints: %w", err)
+	}
+	count, err := tracker.MergeQualityCheckpoints(merged.Snapshot())
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("restore remote quality checkpoints: %w", err)
+	}
+	store.mu.Lock()
+	store.committed = merged
+	store.remoteCount = count
+	store.mu.Unlock()
+	return store, nil
+}
+
+func (s *QualityStateStore) RestoredRemoteCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.remoteCount
 }
 
 func (s *QualityStateStore) Complete(id DatagramID) {

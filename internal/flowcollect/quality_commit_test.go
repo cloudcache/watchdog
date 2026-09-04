@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestQualityCommitAccumulatorCoalescesInWALOrderAndMergesSources(t *testing.T) {
@@ -30,6 +31,17 @@ func TestQualityCommitAccumulatorCoalescesInWALOrderAndMergesSources(t *testing.
 	}
 	if replayed, err := accumulator.Coalesce([]*flowpb.QualityJournalRecord{first, second}, "collector-a", now.Add(3*time.Second)); err != nil || len(replayed) != 0 {
 		t.Fatalf("already folded quality journals were not idempotent: checkpoints=%+v err=%v", replayed, err)
+	}
+	conflict := proto.Clone(second).(*flowpb.QualityJournalRecord)
+	conflict.DatagramId[0] ^= 0xff
+	conflict.Decision.DatagramId = append([]byte(nil), conflict.DatagramId...)
+	digest, err := qualityJournalDigest(conflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict.PayloadSha256 = digest[:]
+	if _, err := accumulator.Coalesce([]*flowpb.QualityJournalRecord{conflict}, "collector-a", now.Add(3*time.Second)); err == nil {
+		t.Fatal("quality WAL position reuse by another datagram was accepted")
 	}
 
 	third := qualityCommitJournalFixture(t, "collector-a", 3, 11, 3, walHeaderSize+200, 9, 12, now.Add(4*time.Second))

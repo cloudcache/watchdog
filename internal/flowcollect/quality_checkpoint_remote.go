@@ -60,6 +60,7 @@ func BuildQualityCheckpoint(record WALRecord, binding SourceBinding, collectorID
 		SourceStates:            cloneQualitySourceStates(journal.SourceStates),
 		LastWalSegment:          journal.WalSegment,
 		LastWalOffset:           journal.WalOffset,
+		LastDatagramId:          bytes.Clone(journal.DatagramId),
 	}
 	sortQualitySourceStates(checkpoint.SourceStates)
 	digest, err := qualityCheckpointDigest(checkpoint)
@@ -106,7 +107,7 @@ func validateQualityCheckpointRecordIdentity(record WALRecord, key exporterQuali
 }
 
 func validateQualityCheckpoint(checkpoint *flowpb.QualityCheckpoint, maxSources int) error {
-	if checkpoint == nil || checkpoint.CheckpointSchemaVersion != qualityCheckpointSchemaVersion || len(checkpoint.StateKey) != sha256.Size || len(checkpoint.StateIdentityKey) != sha256.Size || checkpoint.TenantId == "" || checkpoint.CollectorId == "" || checkpoint.ExporterId == "" || checkpoint.RegistryVersion == 0 || checkpoint.OwnershipEpoch == 0 || checkpoint.StateGeneration == 0 || checkpoint.CommittedAtUnixMs == 0 || checkpoint.ExporterState == nil || checkpoint.LastWalSegment == 0 || checkpoint.LastWalOffset < walHeaderSize || len(checkpoint.PayloadSha256) != sha256.Size {
+	if checkpoint == nil || checkpoint.CheckpointSchemaVersion != qualityCheckpointSchemaVersion || len(checkpoint.StateKey) != sha256.Size || len(checkpoint.StateIdentityKey) != sha256.Size || checkpoint.TenantId == "" || checkpoint.CollectorId == "" || checkpoint.ExporterId == "" || checkpoint.RegistryVersion == 0 || checkpoint.OwnershipEpoch == 0 || checkpoint.StateGeneration == 0 || checkpoint.CommittedAtUnixMs == 0 || checkpoint.ExporterState == nil || checkpoint.LastWalSegment == 0 || checkpoint.LastWalOffset < walHeaderSize || len(checkpoint.LastDatagramId) != sha256.Size || len(checkpoint.PayloadSha256) != sha256.Size {
 		return errors.New("quality checkpoint is invalid")
 	}
 	if maxSources > 0 && len(checkpoint.SourceStates) > maxSources {

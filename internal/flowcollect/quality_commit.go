@@ -93,7 +93,11 @@ func (a *qualityCommitAccumulator) Coalesce(journals []*flowpb.QualityJournalRec
 				if journal.RegistryVersion < current.RegistryVersion {
 					return nil, errors.New("committed quality journal plan revision regressed")
 				}
-				if compareWALPosition(journal.WalSegment, journal.WalOffset, current.LastWalSegment, current.LastWalOffset) <= 0 {
+				position := compareWALPosition(journal.WalSegment, journal.WalOffset, current.LastWalSegment, current.LastWalOffset)
+				if position == 0 && !bytes.Equal(journal.DatagramId, current.LastDatagramId) {
+					return nil, errors.New("quality checkpoint WAL position was reused by another datagram")
+				}
+				if position <= 0 {
 					continue
 				}
 			}

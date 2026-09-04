@@ -156,6 +156,60 @@ func (q *QualityTracker) RestoreSnapshot(snapshot *flowpb.QualityStateSnapshot, 
 	return nil
 }
 
+// MergeQualityCheckpoints adds remote baselines only for exporter identities
+// that have no local snapshot/journal state. Local state can include pending
+// datagrams newer than the committed cross-owner cut and therefore always wins.
+func (q *QualityTracker) MergeQualityCheckpoints(checkpoints []*flowpb.QualityCheckpoint) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	exporters := make(map[exporterQualityKey]*exporterQualityState, len(q.exporters)+len(checkpoints))
+	for key, state := range q.exporters {
+		clone := *state
+		exporters[key] = &clone
+	}
+	sources := make(map[sourceQualityKey]*sourceQualityState, len(q.sources))
+	for key, state := range q.sources {
+		clone := *state
+		sources[key] = &clone
+	}
+	restored := 0
+	for index, checkpoint := range checkpoints {
+		if err := validateQualityCheckpoint(checkpoint, q.config.MaxDataSources); err != nil {
+			return 0, fmt.Errorf("quality checkpoint %d: %w", index, err)
+		}
+		key, state, err := exporterStateFromProto(checkpoint.ExporterState)
+		if err != nil {
+			return 0, err
+		}
+		if exporters[key] != nil {
+			continue
+		}
+		if len(exporters) >= q.config.MaxExporters {
+			return 0, errors.New("quality checkpoints exceed exporter state capacity")
+		}
+		exporters[key] = state
+		for _, encoded := range checkpoint.SourceStates {
+			sourceKey, sourceState, err := sourceStateFromProto(encoded)
+			if err != nil {
+				return 0, err
+			}
+			if sourceKey.exporter != key {
+				return 0, errors.New("quality checkpoint source belongs to another exporter")
+			}
+			if sources[sourceKey] != nil {
+				return 0, errors.New("quality checkpoint conflicts with local source state")
+			}
+			if len(sources) >= q.config.MaxDataSources {
+				return 0, errors.New("quality checkpoints exceed source state capacity")
+			}
+			sources[sourceKey] = sourceState
+		}
+		restored++
+	}
+	q.exporters, q.sources = exporters, sources
+	return restored, nil
+}
+
 func (q *QualityTracker) ApplyJournalRecord(journal *flowpb.QualityJournalRecord) error {
 	if err := validateQualityJournalRecord(journal); err != nil {
 		return err

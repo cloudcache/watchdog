@@ -241,4 +241,5 @@ message QualityCheckpoint {
   // Compared only within the same collector_id + ownership_epoch.
   uint64 last_wal_segment = 15;
   int64 last_wal_offset = 16;
+  bytes last_datagram_id = 17;
 }

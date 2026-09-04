@@ -3,6 +3,7 @@ package flowcollect
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sync"
@@ -41,6 +42,116 @@ func TestKafkaCollectStateReaderFreezesBoundaryAndCoalesces(t *testing.T) {
 	}
 	if got := source.eventsSnapshot(); len(got) != 4 || got[0] != "partitions" || got[1] != "oldest/0" || got[2] != "newest/0" || got[3] != "consume/0/0" {
 		t.Fatalf("high watermark was not frozen before consume: %v", got)
+	}
+}
+
+func TestKafkaCollectStateReaderDispatchesDecoderAndQualityKeyspaces(t *testing.T) {
+	now := time.Now()
+	decoder, record, decoded := collectStateFixture(t)
+	state, err := BuildCollectState(record, decoded, SourceBinding{TenantID: "tenant-a", ExporterID: "exporter-a", OwnershipEpoch: 2}, "collector-a", decoder)
+	decoder.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 2, 1, 1, now.Add(-time.Second))
+	plan := validPlan(now)
+	plan.SchemaVersion = 2
+	plan.CollectorID = "collector-a"
+	plan.Revision = 1
+	plan.Sources = []SourceBinding{
+		{Protocol: ProtocolNetFlow9, SourcePrefix: record.Source.Addr().String() + "/32", ObservationDomainID: uint64Pointer(42), TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", OwnershipEpoch: 2, SamplingMode: SamplingModeSampled, Enabled: true},
+		{Protocol: ProtocolSFlow5, SourcePrefix: "192.0.2.1/32", TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", OwnershipEpoch: 2, SamplingMode: SamplingModeSampled, Enabled: true},
+	}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		marshalCollectStateMessage(t, "state", 0, 0, state),
+		marshalQualityCheckpointMessage(t, "state", 0, 1, checkpoint),
+	}}, map[int32][2]int64{0: {0, 2}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	snapshot, err := reader.ReadAllWithHistory(context.Background(), registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.CollectStates) != 1 || len(snapshot.QualityCheckpoints) != 1 || snapshot.CollectStates[0].Offset != 0 || snapshot.QualityCheckpoints[0].Offset != 1 || !proto.Equal(snapshot.QualityCheckpoints[0].Checkpoint, checkpoint) {
+		t.Fatalf("typed collect-state snapshot was not dispatched: %+v", snapshot)
+	}
+}
+
+func TestKafkaCollectStateReaderAppliesQualityTombstone(t *testing.T) {
+	now := time.Now()
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 2, 1, 1, now.Add(-time.Second))
+	key, err := qualityCheckpointKafkaKey(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		marshalQualityCheckpointMessage(t, "state", 0, 0, checkpoint),
+		{Topic: "state", Partition: 0, Offset: 1, Key: key},
+	}}, map[int32][2]int64{0: {0, 2}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	snapshot, err := reader.ReadAllWithHistory(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, now), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.QualityCheckpoints) != 0 {
+		t.Fatalf("tombstoned quality checkpoint was retained: %+v", snapshot.QualityCheckpoints)
+	}
+}
+
+func TestKafkaCollectStateCompatibilityReaderConsumesQualityKeyspace(t *testing.T) {
+	now := time.Now()
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 2, 1, 1, now.Add(-time.Second))
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		marshalQualityCheckpointMessage(t, "state", 0, 0, checkpoint),
+	}}, map[int32][2]int64{0: {0, 1}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	records, err := reader.Read(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("compatibility reader returned quality checkpoints as decoder state: %+v", records)
+	}
+}
+
+func TestKafkaCollectStateReaderRejectsUnknownTypedKey(t *testing.T) {
+	key := make([]byte, 1+sha256.Size)
+	key[0] = 'X'
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		{Topic: "state", Partition: 0, Offset: 0, Key: key},
+	}}, map[int32][2]int64{0: {0, 1}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	if _, err := reader.ReadAllWithHistory(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, time.Now()), nil); err == nil {
+		t.Fatal("unknown typed key was accepted as a tombstone")
+	}
+}
+
+func TestKafkaCollectStateReaderBoundsHistoricalTypedKeys(t *testing.T) {
+	first, second := make([]byte, sha256.Size), make([]byte, sha256.Size)
+	first[0], second[0] = 1, 2
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{0: {
+		{Topic: "state", Partition: 0, Offset: 0, Key: first},
+		{Topic: "state", Partition: 0, Offset: 1, Key: second},
+	}}, map[int32][2]int64{0: {0, 2}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 1, source: source}
+	if _, err := reader.ReadAllWithHistory(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, time.Now()), nil); err == nil {
+		t.Fatal("distinct typed-key capacity did not bound historical tombstones")
+	}
+}
+
+func TestKafkaCollectStateReaderRejectsLiveKeyAcrossPartitions(t *testing.T) {
+	now := time.Now()
+	checkpoint := qualityCheckpointFixture(t, "collector-a", 2, 1, 1, now.Add(-time.Second))
+	source := newFakeCollectStateSource("state", map[int32][]*sarama.ConsumerMessage{
+		0: {marshalQualityCheckpointMessage(t, "state", 0, 0, checkpoint)},
+		1: {marshalQualityCheckpointMessage(t, "state", 1, 0, checkpoint)},
+	}, map[int32][2]int64{0: {0, 1}, 1: {0, 1}})
+	reader := &KafkaCollectStateReader{topic: "state", timeout: time.Second, maxCandidates: 10, source: source}
+	if _, err := reader.ReadAllWithHistory(context.Background(), qualityCheckpointRegistry(t, "collector-a", 2, 1, now), nil); err == nil {
+		t.Fatal("live quality checkpoint key was accepted across partitions")
 	}
 }
 
@@ -185,6 +296,19 @@ func marshalCollectStateMessage(t *testing.T, topic string, partition int32, off
 		t.Fatal(err)
 	}
 	return &sarama.ConsumerMessage{Topic: topic, Partition: partition, Offset: offset, Key: bytes.Clone(state.StateKey), Value: value}
+}
+
+func marshalQualityCheckpointMessage(t *testing.T, topic string, partition int32, offset int64, checkpoint *flowpb.QualityCheckpoint) *sarama.ConsumerMessage {
+	t.Helper()
+	value, err := proto.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := qualityCheckpointKafkaKey(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &sarama.ConsumerMessage{Topic: topic, Partition: partition, Offset: offset, Key: key, Value: value}
 }
 
 func netflowContextForSource(source string) netflow.FlowContext {

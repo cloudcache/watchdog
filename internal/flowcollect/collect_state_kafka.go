@@ -3,6 +3,7 @@ package flowcollect
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -95,6 +96,17 @@ type collectStateReadResult struct {
 	err     error
 }
 
+type QualityCheckpointRecord struct {
+	Checkpoint *flowpb.QualityCheckpoint
+	Partition  int32
+	Offset     int64
+}
+
+type CollectStateKafkaSnapshot struct {
+	CollectStates      []CollectStateRecord
+	QualityCheckpoints []QualityCheckpointRecord
+}
+
 // Read captures every partition's next-offset high watermark before it opens
 // consumers. Only messages below that frozen vector are eligible, so startup
 // is finite even while active owners continue publishing.
@@ -103,41 +115,49 @@ func (r *KafkaCollectStateReader) Read(ctx context.Context, registry *Registry) 
 }
 
 func (r *KafkaCollectStateReader) ReadWithHistory(ctx context.Context, registry *Registry, plans *PlanHistory) ([]CollectStateRecord, error) {
+	snapshot, err := r.ReadAllWithHistory(ctx, registry, plans)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.CollectStates, nil
+}
+
+func (r *KafkaCollectStateReader) ReadAllWithHistory(ctx context.Context, registry *Registry, plans *PlanHistory) (CollectStateKafkaSnapshot, error) {
 	if r == nil || r.source == nil || r.topic == "" || r.timeout <= 0 || r.maxCandidates <= 0 || registry == nil || ctx == nil {
-		return nil, errors.New("Kafka collect-state reader and registry are required")
+		return CollectStateKafkaSnapshot{}, errors.New("Kafka collect-state reader and registry are required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	partitions, err := r.source.Partitions(r.topic)
 	if err != nil {
-		return nil, fmt.Errorf("list Kafka collect-state partitions: %w", err)
+		return CollectStateKafkaSnapshot{}, fmt.Errorf("list Kafka collect-state partitions: %w", err)
 	}
 	if len(partitions) == 0 {
-		return nil, errors.New("Kafka collect-state topic has no partitions")
+		return CollectStateKafkaSnapshot{}, errors.New("Kafka collect-state topic has no partitions")
 	}
 	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
 	boundaries := make([]collectStatePartitionBoundary, 0, len(partitions))
 	for index, partition := range partitions {
 		if partition < 0 || (index > 0 && partition == partitions[index-1]) {
-			return nil, errors.New("Kafka collect-state partition metadata is invalid")
+			return CollectStateKafkaSnapshot{}, errors.New("Kafka collect-state partition metadata is invalid")
 		}
 		oldest, err := r.source.GetOffset(r.topic, partition, sarama.OffsetOldest)
 		if err != nil {
-			return nil, fmt.Errorf("read Kafka collect-state oldest offset for partition %d: %w", partition, err)
+			return CollectStateKafkaSnapshot{}, fmt.Errorf("read Kafka collect-state oldest offset for partition %d: %w", partition, err)
 		}
 		newest, err := r.source.GetOffset(r.topic, partition, sarama.OffsetNewest)
 		if err != nil {
-			return nil, fmt.Errorf("read Kafka collect-state high watermark for partition %d: %w", partition, err)
+			return CollectStateKafkaSnapshot{}, fmt.Errorf("read Kafka collect-state high watermark for partition %d: %w", partition, err)
 		}
 		if oldest < 0 || newest < oldest {
-			return nil, fmt.Errorf("Kafka collect-state offsets are invalid for partition %d: oldest=%d newest=%d", partition, oldest, newest)
+			return CollectStateKafkaSnapshot{}, fmt.Errorf("Kafka collect-state offsets are invalid for partition %d: oldest=%d newest=%d", partition, oldest, newest)
 		}
 		boundaries = append(boundaries, collectStatePartitionBoundary{partition: partition, oldest: oldest, newest: newest})
 	}
-	return r.readBoundaries(ctx, registry, plans, boundaries)
+	return r.readBoundarySnapshot(ctx, registry, plans, boundaries)
 }
 
-func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *Registry, plans *PlanHistory, boundaries []collectStatePartitionBoundary) ([]CollectStateRecord, error) {
+func (r *KafkaCollectStateReader) readBoundarySnapshot(ctx context.Context, registry *Registry, plans *PlanHistory, boundaries []collectStatePartitionBoundary) (CollectStateKafkaSnapshot, error) {
 	type activeConsumer struct {
 		boundary collectStatePartitionBoundary
 		consumer sarama.PartitionConsumer
@@ -152,12 +172,12 @@ func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *
 			for _, opened := range active {
 				_ = opened.consumer.Close()
 			}
-			return nil, fmt.Errorf("consume Kafka collect-state partition %d: %w", boundary.partition, err)
+			return CollectStateKafkaSnapshot{}, fmt.Errorf("consume Kafka collect-state partition %d: %w", boundary.partition, err)
 		}
 		active = append(active, activeConsumer{boundary: boundary, consumer: consumer})
 	}
 	if len(active) == 0 {
-		return nil, nil
+		return CollectStateKafkaSnapshot{}, nil
 	}
 	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -178,7 +198,8 @@ func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *
 		close(results)
 	}()
 
-	byKey := make(map[string]CollectStateRecord)
+	collectByKey := make(map[string]CollectStateRecord)
+	qualityByKey := make(map[string]QualityCheckpointRecord)
 	keyPartitions := make(map[string]int32)
 	var firstErr error
 	for result := range results {
@@ -194,19 +215,30 @@ func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *
 		}
 		message := result.message
 		key := string(message.Key)
-		if len(message.Key) != 32 {
-			firstErr = fmt.Errorf("Kafka collect-state partition=%d offset=%d has invalid key length", message.Partition, message.Offset)
+		isCollectState := len(message.Key) == sha256.Size
+		isQualityCheckpoint := isQualityCheckpointKafkaKey(message.Key)
+		if !isCollectState && !isQualityCheckpoint {
+			firstErr = fmt.Errorf("Kafka collect-state partition=%d offset=%d has invalid typed key", message.Partition, message.Offset)
 			cancel()
 			continue
 		}
-		if partition, exists := keyPartitions[key]; exists && partition != message.Partition {
-			firstErr = fmt.Errorf("Kafka collect-state key appears in partitions %d and %d", partition, message.Partition)
-			cancel()
-			continue
+		if partition, exists := keyPartitions[key]; exists {
+			if partition != message.Partition {
+				firstErr = fmt.Errorf("Kafka collect-state key appears in partitions %d and %d", partition, message.Partition)
+				cancel()
+				continue
+			}
+		} else {
+			if len(keyPartitions) >= r.maxCandidates {
+				firstErr = fmt.Errorf("Kafka collect-state restore exceeds %d distinct typed keys", r.maxCandidates)
+				cancel()
+				continue
+			}
+			keyPartitions[key] = message.Partition
 		}
-		keyPartitions[key] = message.Partition
 		if len(message.Value) == 0 {
-			delete(byKey, key)
+			delete(collectByKey, key)
+			delete(qualityByKey, key)
 			continue
 		}
 		if len(message.Value) > collectStateMaxBytes-collectStateHeaderSize {
@@ -214,55 +246,100 @@ func (r *KafkaCollectStateReader) readBoundaries(ctx context.Context, registry *
 			cancel()
 			continue
 		}
-		state := &flowpb.CollectState{}
-		if err := proto.Unmarshal(message.Value, state); err != nil {
-			firstErr = fmt.Errorf("decode Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+		if isCollectState {
+			state := &flowpb.CollectState{}
+			if err := proto.Unmarshal(message.Value, state); err != nil {
+				firstErr = fmt.Errorf("decode Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+				cancel()
+				continue
+			}
+			if err := validateCollectState(state, ""); err != nil {
+				firstErr = fmt.Errorf("validate Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+				cancel()
+				continue
+			}
+			if !bytes.Equal(message.Key, state.StateKey) {
+				firstErr = fmt.Errorf("Kafka collect-state partition=%d offset=%d key does not match payload", message.Partition, message.Offset)
+				cancel()
+				continue
+			}
+			eligible, err := authorizeCollectStateRecovery(state, registry, plans, true)
+			if err != nil {
+				firstErr = fmt.Errorf("authorize Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+				cancel()
+				continue
+			}
+			if !eligible {
+				continue
+			}
+			if _, exists := collectByKey[key]; !exists && len(collectByKey)+len(qualityByKey) >= r.maxCandidates {
+				firstErr = fmt.Errorf("Kafka collect-state restore exceeds %d candidates", r.maxCandidates)
+				cancel()
+				continue
+			}
+			collectByKey[key] = CollectStateRecord{State: state, Partition: message.Partition, Offset: message.Offset}
+			continue
+		}
+
+		checkpoint := &flowpb.QualityCheckpoint{}
+		if err := proto.Unmarshal(message.Value, checkpoint); err != nil {
+			firstErr = fmt.Errorf("decode Kafka quality checkpoint partition=%d offset=%d: %w", message.Partition, message.Offset, err)
 			cancel()
 			continue
 		}
-		if err := validateCollectState(state, ""); err != nil {
-			firstErr = fmt.Errorf("validate Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+		if err := validateQualityCheckpoint(checkpoint, 0); err != nil {
+			firstErr = fmt.Errorf("validate Kafka quality checkpoint partition=%d offset=%d: %w", message.Partition, message.Offset, err)
 			cancel()
 			continue
 		}
-		if !bytes.Equal(message.Key, state.StateKey) {
-			firstErr = fmt.Errorf("Kafka collect-state partition=%d offset=%d key does not match payload", message.Partition, message.Offset)
+		expectedKey, err := qualityCheckpointKafkaKey(checkpoint)
+		if err != nil || !bytes.Equal(message.Key, expectedKey) {
+			firstErr = fmt.Errorf("Kafka quality checkpoint partition=%d offset=%d key does not match payload", message.Partition, message.Offset)
 			cancel()
 			continue
 		}
-		eligible, err := authorizeCollectStateRecovery(state, registry, plans, true)
+		eligible, err := authorizeQualityCheckpoint(checkpoint, registry, true)
 		if err != nil {
-			firstErr = fmt.Errorf("authorize Kafka collect-state partition=%d offset=%d: %w", message.Partition, message.Offset, err)
+			firstErr = fmt.Errorf("authorize Kafka quality checkpoint partition=%d offset=%d: %w", message.Partition, message.Offset, err)
 			cancel()
 			continue
 		}
 		if !eligible {
 			continue
 		}
-		if _, exists := byKey[key]; !exists && len(byKey) >= r.maxCandidates {
+		if _, exists := qualityByKey[key]; !exists && len(collectByKey)+len(qualityByKey) >= r.maxCandidates {
 			firstErr = fmt.Errorf("Kafka collect-state restore exceeds %d candidates", r.maxCandidates)
 			cancel()
 			continue
 		}
-		byKey[key] = CollectStateRecord{State: state, Partition: message.Partition, Offset: message.Offset}
+		qualityByKey[key] = QualityCheckpointRecord{Checkpoint: checkpoint, Partition: message.Partition, Offset: message.Offset}
 	}
 	if firstErr != nil {
-		return nil, firstErr
+		return CollectStateKafkaSnapshot{}, firstErr
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("read Kafka collect-state snapshot: %w", err)
+		return CollectStateKafkaSnapshot{}, fmt.Errorf("read Kafka collect-state snapshot: %w", err)
 	}
-	records := make([]CollectStateRecord, 0, len(byKey))
-	for _, record := range byKey {
-		records = append(records, record)
+	snapshot := CollectStateKafkaSnapshot{CollectStates: make([]CollectStateRecord, 0, len(collectByKey)), QualityCheckpoints: make([]QualityCheckpointRecord, 0, len(qualityByKey))}
+	for _, record := range collectByKey {
+		snapshot.CollectStates = append(snapshot.CollectStates, record)
 	}
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].Partition != records[j].Partition {
-			return records[i].Partition < records[j].Partition
+	for _, record := range qualityByKey {
+		snapshot.QualityCheckpoints = append(snapshot.QualityCheckpoints, record)
+	}
+	sort.Slice(snapshot.CollectStates, func(i, j int) bool {
+		if snapshot.CollectStates[i].Partition != snapshot.CollectStates[j].Partition {
+			return snapshot.CollectStates[i].Partition < snapshot.CollectStates[j].Partition
 		}
-		return records[i].Offset < records[j].Offset
+		return snapshot.CollectStates[i].Offset < snapshot.CollectStates[j].Offset
 	})
-	return records, nil
+	sort.Slice(snapshot.QualityCheckpoints, func(i, j int) bool {
+		if snapshot.QualityCheckpoints[i].Partition != snapshot.QualityCheckpoints[j].Partition {
+			return snapshot.QualityCheckpoints[i].Partition < snapshot.QualityCheckpoints[j].Partition
+		}
+		return snapshot.QualityCheckpoints[i].Offset < snapshot.QualityCheckpoints[j].Offset
+	})
+	return snapshot, nil
 }
 
 func consumeCollectStateBoundary(ctx context.Context, topic string, boundary collectStatePartitionBoundary, consumer sarama.PartitionConsumer, results chan<- collectStateReadResult) {
