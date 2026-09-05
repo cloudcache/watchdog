@@ -42,7 +42,8 @@
   - [x] network device 列表可选 keyset 分页 + 权限下推（B）：`ListDevicesPage` 按 (sys_name,id) keyset（复用 target 的字符串游标），device SELECT 抽成共享 const 防两查询漂移；`visibleDeviceScope` 镜像 `canAccessTarget`/`HasPermission`——admin 或持 tenant 域授权=全租户，其余按 target 域 view 授权把 `target_id IN (...)` 下推，无授权非 admin 短路空页。严格 opt-in（仅 limit/cursor 走分页），`limit` 非正数 400、`next_cursor` 仅有下页时出现，前端主表接入延后。API opt-in/下推（按 target/admin/tenant 授权）/坏 limit + gated MySQL keyset（sys_name,id 重名 id 破平、无重叠、全覆盖、target 授权过滤）测试（commit 7a602d3d）。
   - [x] Hosts 主表接入 load-more（B 前端）：targets.tsx 由全量拉取改为分页（首页 limit 200 + `exclude_kind=network`，next_cursor 非空显示"Load more"追加），非网络过滤由客户端移到服务端——`ListTargetsPage` 加 `ExcludeKind`（SQL `kind != ?`）、端点读 `?exclude_kind=`。Hosts 页无用户搜索故不破坏客户端过滤。API 透传 + gated MySQL exclude_kind 过滤测试（commit 24739658）。
   - [x] Network Devices 主表接入渐进分页（B 前端）：`/summary` 加 opt-in keyset 路径（limit/cursor）——复用 `ListDevicesPage`（授权下推）+ `fillDeviceSummary`，**只富集当前页**的 ports/BGP/last-seen，避免单请求对全 fleet 逐设备扇出（大规模易超时），缺省仍全量。前端 network-devices.tsx 改为渐进加载：首页立即渲染、其余追加，客户端 search/status/上下行计数在累积集上不变（无需服务端 search，零回归）。无新 repo/migration。API 测试证明 opt-in/授权下推/富集页/next_cursor（commit 799de1a4）。
-  - 余项：BGP/inventory ETag；device 表**真正的服务端 search/filter/sort + 聚合计数**仍归下方"所有 VTable 统一 server pagination"独立项（当前为渐进加载，非服务端过滤）。
+  - [x] **device 表服务端 search/filter/sort + 聚合计数**：`/summary` opt-in 加 q/status/sort/order/limit/offset——`ListDeviceSummaryDevicesPage` JOIN targets 做跨列 ci 搜索（name/host/sys_name/vendor/location/os）、status 过滤（down=非 up 与徽章一致）、白名单排序列（防注入）、offset 分页，仅富集当前页；`GetTargetsByIDs` 批量取页内 target；`CountDeviceStatuses` 返回授权域徽章计数（仅首页）；授权经 visibleDeviceScope 下推。前端 network-devices.tsx 改服务端驱动：防抖搜索 + status + 新排序控件触发从头刷新、Load more 按 offset 追加、徽章/计数来自响应。device SELECT 抽共享 aliased const 防漂移。API 透传 + gated MySQL（搜索全列/status 含 down=非up/排序升降/offset/授权下推/计数，**本地 MySQL 实跑**，并顺带修早先 device-page 测试坏 seed）（commit d6de03b2）。
+  - 余项：BGP/inventory ETag（其余表 server VTable 化见下方独立项）。
 - [ ] 所有删除实现 preview→异步 job→审计→可验证销毁；禁止 handler 内同步级联大删除。
   - [x] target delete-preview：GET `/targets/{id}/delete-preview` 按随删/脱钩分列依赖（device/ports/agents/投影/历史/留存/VM series vs 聚合图/export），DeleteTarget 同事务清理投影孤儿且不触碰 registry 行；前端删除确认对话框展示影响清单；gated MySQL 全扇出实跑（commits 3fcaece8、753a9fc6）。
   - [x] 异步 operation job 运行时（017 表首次落地执行面）：幂等入队（tenant/type/key + request hash 冲突检测）、SKIP LOCKED 租约认领、过期接管（死 owner token 失效）、心跳续租+取消传播、退避重试/终态四路完成，全程 token 守卫；GET/cancel API；target DELETE 配置 job repo 时改为 202+job（重复 DELETE 复用同 job），worker 在 StartBackground 启动执行级联+VM 清理，前端轮询 job 至终态。gated MySQL：生命周期/竞争/接管/取消/worker 端到端（commit 2446a37b）。
@@ -57,6 +58,7 @@
 - [ ] Provider-neutral QueryRequest/QueryResult，统一 VM/CH 的 tenant scope、时间、bucket、limit、cancel 和 completeness。
 - [ ] Visualization CRUD、版本/owner、series、布局、预览和 dashboard 引用。
 - [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。
+  - [x] Network Devices 表首个服务端驱动样板（q/status/sort/offset + 聚合计数，列白名单防注入，本地 MySQL 实跑，commit d6de03b2）；Hosts 表 load-more（commit 24739658）。余项：其余 VTable（ports/BGP/inventory/audit/jobs 等）按同模式收敛，popover portal/collision。
 - [ ] Export job 统一 CSV/Parquet、快照、权限复核、checksum、TTL、下载审计和失败重试。
 
 ## P3 raw/supplier/customer 修正
