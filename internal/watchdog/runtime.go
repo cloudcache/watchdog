@@ -324,6 +324,7 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			return err
 		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
+		NewStoreMaintenance(r.Store, nil).Start(ctx)
 	}
 	return nil
 }
