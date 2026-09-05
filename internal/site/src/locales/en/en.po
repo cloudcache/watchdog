@@ -131,6 +131,10 @@ msgstr "5 minutes"
 msgid "6 hours"
 msgstr "6 hours"
 
+#: src/components/routes/users.tsx
+msgid "A role named \"admin\" grants tenant administration."
+msgstr "A role named \"admin\" grants tenant administration."
+
 #: src/components/routes/network-device-form.tsx
 msgid "A valid SNMP profile and port are required"
 msgstr "A valid SNMP profile and port are required"
@@ -228,6 +232,11 @@ msgstr "Add SNMP Device"
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "Add URL"
+
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Add User"
+msgstr "Add User"
 
 #: src/components/routes/core.tsx
 msgid "Address Family"
@@ -397,6 +406,10 @@ msgstr "Archive"
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "Are you sure?"
+
+#: src/components/routes/users.tsx
+msgid "Auth provider"
+msgstr "Auth provider"
 
 #: src/components/copy-to-clipboard.tsx
 msgid "Automatic copy requires a secure context."
@@ -629,6 +642,7 @@ msgstr "Can stop"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/users.tsx
 msgid "Cancel"
 msgstr "Cancel"
 
@@ -970,6 +984,10 @@ msgstr "Create MIB Module"
 msgid "Create Permission"
 msgstr "Create Permission"
 
+#: src/components/routes/users.tsx
+msgid "Create role"
+msgstr "Create role"
+
 #: src/components/routes/target-form.tsx
 msgid "Create SNMP profile"
 msgstr "Create SNMP profile"
@@ -990,6 +1008,10 @@ msgstr "Create SNMP Profile"
 #: src/components/routes/export-detail.tsx
 msgid "Created"
 msgstr "Created"
+
+#: src/components/routes/users.tsx
+msgid "Credentials live in the identity provider; this manages the authorization projection."
+msgstr "Credentials live in the identity provider; this manages the authorization projection."
 
 #: src/components/routes/settings/general.tsx
 msgid "Critical (%)"
@@ -1076,6 +1098,10 @@ msgstr "Delete permission"
 msgid "Delete retention policy"
 msgstr "Delete retention policy"
 
+#: src/components/routes/users.tsx
+msgid "Delete role"
+msgstr "Delete role"
+
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete SNMP profile"
 msgstr "Delete SNMP profile"
@@ -1120,6 +1146,10 @@ msgstr "Delete this prefix?"
 #: src/components/routes/retention.tsx
 msgid "Delete this retention policy?"
 msgstr "Delete this retention policy?"
+
+#: src/components/routes/users.tsx
+msgid "Delete this role? Its members and permission grants lose it immediately."
+msgstr "Delete this role? Its members and permission grants lose it immediately."
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete this SNMP profile?"
@@ -1179,6 +1209,14 @@ msgstr "Device SNMP"
 #: src/components/routes/address-sets.tsx
 msgid "Direction"
 msgstr "Direction"
+
+#: src/components/routes/users.tsx
+msgid "Disable this user? They will lose access until re-enabled."
+msgstr "Disable this user? They will lose access until re-enabled."
+
+#: src/components/routes/users.tsx
+msgid "Disable user"
+msgstr "Disable user"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
@@ -1392,9 +1430,19 @@ msgstr "Edit SNMP Profile"
 #~ msgid "Edit Target"
 #~ msgstr "Edit Target"
 
+#: src/components/routes/users.tsx
+msgid "Edit user"
+msgstr "Edit user"
+
+#: src/components/routes/users.tsx
+msgid "Edit User"
+msgstr "Edit User"
+
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
 #: src/components/login/otp-forms.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 msgid "Email"
 msgstr "Email"
 
@@ -1550,6 +1598,10 @@ msgstr "Export your current systems configuration."
 #: src/components/routes/watchdog-overview.tsx
 msgid "Exports"
 msgstr "Exports"
+
+#: src/components/routes/users.tsx
+msgid "External subject"
+msgstr "External subject"
 
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
@@ -1813,6 +1865,10 @@ msgstr "Failed to load targets"
 #: src/components/routes/traffic-defaults.tsx
 msgid "Failed to load traffic defaults"
 msgstr "Failed to load traffic defaults"
+
+#: src/components/routes/users.tsx
+msgid "Failed to load users"
+msgstr "Failed to load users"
 
 #: src/components/routes/historical-data.tsx
 msgid "Failed to preview historical data"
@@ -2129,6 +2185,10 @@ msgstr "I/O Utilization"
 #: src/components/routes/historical-data.tsx
 msgid "ID"
 msgstr "ID"
+
+#: src/components/routes/users.tsx
+msgid "Identity"
+msgstr "Identity"
 
 #. Context: Battery state
 #: src/lib/i18n.ts
@@ -2500,6 +2560,8 @@ msgstr "Multiple devices"
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Name"
@@ -2573,6 +2635,10 @@ msgstr "Network traffic of public interfaces"
 #: src/components/routes/settings/general.tsx
 msgid "Network unit"
 msgstr "Network unit"
+
+#: src/components/routes/users.tsx
+msgid "New role name"
+msgstr "New role name"
 
 #: src/components/routes/agent-runs.tsx
 msgid "no"
@@ -2775,6 +2841,11 @@ msgstr "No results."
 msgid "No retention policies found."
 msgstr "No retention policies found."
 
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "No roles yet."
+msgstr "No roles yet."
+
 #: src/components/routes/system/smart-table.tsx
 msgid "No S.M.A.R.T. attributes available for this device."
 msgstr "No S.M.A.R.T. attributes available for this device."
@@ -2824,6 +2895,10 @@ msgstr "No SNMP profiles found."
 #~ msgid "No unused network targets found. Create one here with host, IP, or domain."
 #~ msgstr "No unused network targets found. Create one here with host, IP, or domain."
 
+#: src/components/routes/users.tsx
+msgid "No users found."
+msgstr "No users found."
+
 #: src/components/routes/network-device.tsx
 msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
 msgstr "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
@@ -2831,6 +2906,10 @@ msgstr "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
 #: src/components/routes/network-device.tsx
 msgid "not established"
 msgstr "not established"
+
+#: src/components/routes/users.tsx
+msgid "Not linked"
+msgstr "Not linked"
 
 #: src/components/routes/network-device.tsx
 msgid "not ok"
@@ -3277,6 +3356,7 @@ msgstr "Received"
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
 #: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/users.tsx
 msgid "Refresh"
 msgstr "Refresh"
 
@@ -3287,6 +3367,13 @@ msgstr "Relationships"
 #: src/components/login/login.tsx
 msgid "Request a one-time password"
 msgstr "Request a one-time password"
+
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Request failed"
+msgstr "Request failed"
 
 #: src/components/login/otp-forms.tsx
 msgid "Request OTP"
@@ -3355,6 +3442,12 @@ msgstr "Retries"
 msgid "Retry"
 msgstr "Retry"
 
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Roles"
+msgstr "Roles"
+
 #: src/components/systems-table/systems-table-columns.tsx
 #~ msgctxt "Root disk label"
 #~ msgid "Root"
@@ -3415,6 +3508,7 @@ msgstr "Samples"
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/users.tsx
 msgid "Save"
 msgstr "Save"
 
@@ -3439,6 +3533,7 @@ msgstr "Save Settings"
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/users.tsx
 msgid "Saved"
 msgstr "Saved"
 
@@ -3815,6 +3910,8 @@ msgstr "State"
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 #: src/components/systemd-table/systemd-table.tsx
 #: src/lib/alerts.ts
 msgid "Status"
@@ -4322,10 +4419,19 @@ msgstr "Usage of root partition"
 msgid "Used"
 msgstr "Used"
 
+#: src/components/routes/users.tsx
+msgid "User disabled"
+msgstr "User disabled"
+
 #: src/components/command-palette.tsx
-#: src/components/navbar.tsx
 msgid "Users"
 msgstr "Users"
+
+#: src/components/navbar.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Users & Roles"
+msgstr "Users & Roles"
 
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Using every discovered port under the selected targets."

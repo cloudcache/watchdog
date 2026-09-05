@@ -136,6 +136,10 @@ msgstr ""
 msgid "6 hours"
 msgstr ""
 
+#: src/components/routes/users.tsx
+msgid "A role named \"admin\" grants tenant administration."
+msgstr "名为 \"admin\" 的角色拥有租户管理权限。"
+
 #: src/components/routes/network-device-form.tsx
 msgid "A valid SNMP profile and port are required"
 msgstr "请选择有效的 SNMP 配置模板和端口"
@@ -233,6 +237,11 @@ msgstr "添加 SNMP 网元"
 #: src/components/routes/settings/notifications.tsx
 msgid "Add URL"
 msgstr "添加 URL"
+
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Add User"
+msgstr "添加用户"
 
 #: src/components/routes/core.tsx
 msgid "Address Family"
@@ -402,6 +411,10 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "您确定吗？"
+
+#: src/components/routes/users.tsx
+msgid "Auth provider"
+msgstr "认证提供方"
 
 #: src/components/copy-to-clipboard.tsx
 msgid "Automatic copy requires a secure context."
@@ -634,6 +647,7 @@ msgstr "可停止"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/users.tsx
 msgid "Cancel"
 msgstr "取消"
 
@@ -975,6 +989,10 @@ msgstr ""
 msgid "Create Permission"
 msgstr ""
 
+#: src/components/routes/users.tsx
+msgid "Create role"
+msgstr "创建角色"
+
 #: src/components/routes/target-form.tsx
 msgid "Create SNMP profile"
 msgstr "新建 SNMP 配置"
@@ -995,6 +1013,10 @@ msgstr ""
 #: src/components/routes/export-detail.tsx
 msgid "Created"
 msgstr "创建时间"
+
+#: src/components/routes/users.tsx
+msgid "Credentials live in the identity provider; this manages the authorization projection."
+msgstr "凭据由身份提供方管理;此处仅维护授权投影。"
 
 #: src/components/routes/settings/general.tsx
 msgid "Critical (%)"
@@ -1081,6 +1103,10 @@ msgstr ""
 msgid "Delete retention policy"
 msgstr ""
 
+#: src/components/routes/users.tsx
+msgid "Delete role"
+msgstr "删除角色"
+
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete SNMP profile"
 msgstr ""
@@ -1125,6 +1151,10 @@ msgstr ""
 #: src/components/routes/retention.tsx
 msgid "Delete this retention policy?"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "Delete this role? Its members and permission grants lose it immediately."
+msgstr "确定删除该角色?其成员与权限授权将立即失效。"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete this SNMP profile?"
@@ -1184,6 +1214,14 @@ msgstr ""
 #: src/components/routes/address-sets.tsx
 msgid "Direction"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "Disable this user? They will lose access until re-enabled."
+msgstr "确定禁用该用户?在重新启用前其将无法访问。"
+
+#: src/components/routes/users.tsx
+msgid "Disable user"
+msgstr "禁用用户"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
@@ -1397,9 +1435,19 @@ msgstr ""
 #~ msgid "Edit Target"
 #~ msgstr ""
 
+#: src/components/routes/users.tsx
+msgid "Edit user"
+msgstr "编辑用户"
+
+#: src/components/routes/users.tsx
+msgid "Edit User"
+msgstr "编辑用户"
+
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
 #: src/components/login/otp-forms.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 msgid "Email"
 msgstr "电子邮件"
 
@@ -1555,6 +1603,10 @@ msgstr "导出您当前的系统配置。"
 #: src/components/routes/watchdog-overview.tsx
 msgid "Exports"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "External subject"
+msgstr "外部主体 ID"
 
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
@@ -1818,6 +1870,10 @@ msgstr ""
 #: src/components/routes/traffic-defaults.tsx
 msgid "Failed to load traffic defaults"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "Failed to load users"
+msgstr "加载用户失败"
 
 #: src/components/routes/historical-data.tsx
 msgid "Failed to preview historical data"
@@ -2134,6 +2190,10 @@ msgstr "I/O 利用率"
 #: src/components/routes/historical-data.tsx
 msgid "ID"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "Identity"
+msgstr "身份绑定"
 
 #. Context: Battery state
 #: src/lib/i18n.ts
@@ -2505,6 +2565,8 @@ msgstr ""
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Name"
@@ -2578,6 +2640,10 @@ msgstr "公共接口的网络流量"
 #: src/components/routes/settings/general.tsx
 msgid "Network unit"
 msgstr "网络单位"
+
+#: src/components/routes/users.tsx
+msgid "New role name"
+msgstr "新角色名称"
 
 #: src/components/routes/agent-runs.tsx
 msgid "no"
@@ -2780,6 +2846,11 @@ msgstr "无结果。"
 msgid "No retention policies found."
 msgstr ""
 
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "No roles yet."
+msgstr "暂无角色。"
+
 #: src/components/routes/system/smart-table.tsx
 msgid "No S.M.A.R.T. attributes available for this device."
 msgstr "此设备没有可用的 S.M.A.R.T. 属性。"
@@ -2829,6 +2900,10 @@ msgstr ""
 #~ msgid "No unused network targets found. Create one here with host, IP, or domain."
 #~ msgstr ""
 
+#: src/components/routes/users.tsx
+msgid "No users found."
+msgstr "暂无用户。"
+
 #: src/components/routes/network-device.tsx
 msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
 msgstr ""
@@ -2836,6 +2911,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 msgid "not established"
 msgstr ""
+
+#: src/components/routes/users.tsx
+msgid "Not linked"
+msgstr "未绑定"
 
 #: src/components/routes/network-device.tsx
 msgid "not ok"
@@ -3282,6 +3361,7 @@ msgstr "接收"
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/targets.tsx
 #: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/users.tsx
 msgid "Refresh"
 msgstr "刷新"
 
@@ -3292,6 +3372,13 @@ msgstr "关系"
 #: src/components/login/login.tsx
 msgid "Request a one-time password"
 msgstr "请求一次性密码"
+
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Request failed"
+msgstr "请求失败"
 
 #: src/components/login/otp-forms.tsx
 msgid "Request OTP"
@@ -3360,6 +3447,12 @@ msgstr ""
 msgid "Retry"
 msgstr ""
 
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Roles"
+msgstr "角色"
+
 #: src/components/systems-table/systems-table-columns.tsx
 #~ msgctxt "Root disk label"
 #~ msgid "Root"
@@ -3420,6 +3513,7 @@ msgstr ""
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/users.tsx
 msgid "Save"
 msgstr ""
 
@@ -3444,8 +3538,9 @@ msgstr "保存设置"
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/users.tsx
 msgid "Saved"
-msgstr ""
+msgstr "已保存"
 
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -3820,6 +3915,8 @@ msgstr "状态"
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
 #: src/components/systemd-table/systemd-table.tsx
 #: src/lib/alerts.ts
 msgid "Status"
@@ -4327,10 +4424,19 @@ msgstr "根分区的使用"
 msgid "Used"
 msgstr "已用"
 
+#: src/components/routes/users.tsx
+msgid "User disabled"
+msgstr "用户已禁用"
+
 #: src/components/command-palette.tsx
-#: src/components/navbar.tsx
 msgid "Users"
 msgstr "用户"
+
+#: src/components/navbar.tsx
+#: src/components/routes/users.tsx
+#: src/components/routes/users.tsx
+msgid "Users & Roles"
+msgstr "用户与角色"
 
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Using every discovered port under the selected targets."

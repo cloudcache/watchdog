@@ -380,12 +380,9 @@ function AdminDropdownContent() {
 			<DropdownMenuLabel>
 				<Trans>Platform</Trans>
 			</DropdownMenuLabel>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/")} target="_blank" rel="noreferrer">
-					<UsersIcon className="me-2.5 h-4 w-4" />
-					<Trans>Users</Trans>
-				</a>
-			</DropdownMenuItem>
+			<NavItem href={getPagePath($router, "users_admin")} icon={UsersIcon}>
+				<Trans>Users & Roles</Trans>
+			</NavItem>
 			<DropdownMenuItem asChild>
 				<a href={prependBasePath("/_/#/logs")} target="_blank" rel="noreferrer">
 					<LogsIcon className="me-2.5 h-4 w-4" />

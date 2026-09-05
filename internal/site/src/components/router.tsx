@@ -31,6 +31,7 @@ const routes = {
 	network_port_edit: "/network/ports/:id/edit",
 	network_port_policy: "/network/ports/:id/policy",
 	permissions: "/permissions",
+	users_admin: "/users",
 	permission_new: "/permissions/new",
 	permission_edit: "/permissions/:id/edit",
 	retention: "/retention",
