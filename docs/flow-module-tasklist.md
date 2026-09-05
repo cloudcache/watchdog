@@ -174,10 +174,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05E 设计**：冻结 local/remote/either base membership、`include_any/include_all/exclude_any`、事件时间 snapshot、无 `ARRAY JOIN` 的 fact 去重、customer/count、1h 同步预算与异步升级边界。
 - [x] **FLOW-05E 编码**：复用唯一 `flowdimension.CompiledAddressSetFilter` canonical 语义实现参数化 `flow_records FINAL` 统计 compiler 和 multi-block typed runner；未新增集合数学或任务引擎。
 - [x] **FLOW-05E 单元**：覆盖 A∪B、A∩B、A−B SQL，重叠 fact 无展开、三种 endpoint、metric/bucket、空/排除-only、非法/总量超限 ID、跨版本、采样未知、顺序/重复/列错位/执行失败。
-- [ ] **FLOW-05E 集成**：真实 CH 对重叠 membership 重放，核对 base 去重、`FINAL`、原始/估算计数守恒、超时/扫描限制。
+- [x] **FLOW-05E 集成**：真实 CH 顺序迁移/native 写入已覆盖 A∪B、A∩B、A−B，重叠 membership 单 fact 只计一次、较新 generation 经 `FINAL` 替换旧行、raw/estimated/received/unknown-sampling/quality 守恒，以及过期 deadline、`max_rows_to_read` 拒绝时零部分结果。
 - [x] **FLOW-05E 变更设计**：集合规则只影响新 snapshot；历史事实按事件时间 snapshot 分组；超预算返回稳定错误并由平台异步 job 承接，不在 provider 内复制状态机。
 - [ ] **FLOW-05E 变更测试**：本地已覆盖 snapshot 跨版本不合并与 immutable canonical filter；真实规则增删/回滚、旧事实可解释、同步→异步协议兼容等待 publication/job 平台门禁。
 - [x] **FLOW-05E 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
+- [x] **FLOW-05E 已提交**：真实 CH 集成门禁及 LowCardinality wire type 显式 String cast 修复进入提交 `c89e8f33`；测试使用独立数据库并在退出时清理。
 - [ ] 实现总览、多维、源 IP、目的 IP、境外、VPN 六页和 query/search/export API。
 - [ ] 所有 VTable 统一服务端分页/搜索/排序/column filter；popover portal + collision，禁止溢出错位。
 - [ ] 完成参数/RBAC/统计精度单元，API→CH/页面/导出集成，API 版本/灰度/回退变更测试和前后端回归。

@@ -627,7 +627,9 @@ ClickHouse 会在同一 SELECT 内做全局 alias substitution，因此 field ma
 
 ```sql
 SELECT toDateTime(toStartOfMinute(event_time), 'UTC') AS bucket,
-       dimension_snapshot_id, geo_version, classification_version,
+       CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
+       CAST(geo_version AS String) AS geo_version,
+       classification_version,
        sum(estimated_bytes) * 8 / 60 AS value,
        count() AS received_records,
        countIf(NOT estimated_valid) AS unknown_sampling_records,
@@ -645,6 +647,8 @@ WHERE tenant_id = {tenant:String}
 GROUP BY bucket, dimension_snapshot_id, geo_version, classification_version
 ORDER BY bucket, dimension_snapshot_id, geo_version, classification_version;
 ```
+
+CH native result contract 不接受把 `LowCardinality(String)` 隐式当作 `String`；`dimension_snapshot_id/geo_version` 必须在查询投影中显式 `CAST(... AS String)`，与 runner 的 `ColStr` 一致。真实集成数据必须至少包含同时属于 A/B、只属于 A、均不属于三类 fact，以及同 record ID 的较新 generation；分别核对 A∪B、A∩B、A−B，证明重叠 membership 不展开、不重复计数，raw/estimated counter、unknown sampling 和 quality record 同源守恒，并验证 deadline/扫描预算拒绝时不返回部分点。
 
 95th 必须先生成等长 bucket 的 bps，再使用 `quantileExact(0.95)`；平均是 bucket 平均，不是不同 bucket 宽度混算。当前值必须标明最新完整 bucket，不能使用未关闭 bucket 冒充完整数据。
 
