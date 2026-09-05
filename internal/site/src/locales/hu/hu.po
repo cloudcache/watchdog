@@ -686,6 +686,7 @@ msgstr "Leállítható"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -1133,6 +1134,7 @@ msgstr "Alapértelmezett időszak"
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/historical-data.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
@@ -1222,6 +1224,7 @@ msgstr ""
 #~ msgid "Delete this target?"
 #~ msgstr ""
 
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 msgid "deleted"
 msgstr ""
@@ -1243,6 +1246,7 @@ msgstr ""
 msgid "Description"
 msgstr "Leírás"
 
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 msgid "detached"
 msgstr ""
@@ -1744,6 +1748,7 @@ msgstr ""
 msgid "Failed to delete MIB module"
 msgstr ""
 
+#: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Failed to delete network device"
 msgstr ""
@@ -2838,6 +2843,7 @@ msgstr ""
 msgid "No data in this range."
 msgstr ""
 
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 msgid "No dependent resources found."
 msgstr ""
@@ -4295,6 +4301,7 @@ msgstr "Ezután jelentkezzen be a backendbe, és állítsa vissza a felhasznál�
 #~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 #~ msgstr ""
 
+#: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 msgid "This shows everything the deletion touches. Removed data cannot be recovered."
 msgstr ""
