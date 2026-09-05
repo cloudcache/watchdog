@@ -122,6 +122,7 @@ func (api aggregateGraphAPI) get(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Aggregate graph not found", nil)
 		return
 	}
+	SetEntityETag(w, graph.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, graph)
 }
 
@@ -147,6 +148,15 @@ func (api aggregateGraphAPI) create(w http.ResponseWriter, r *http.Request) {
 
 func (api aggregateGraphAPI) patch(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	graphID := ID(r.PathValue("aggregate_graph_id"))
+	existing, err := api.repo.GetAggregateGraph(r.Context(), auth.TenantID, graphID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Aggregate graph not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	graph, err := decodeAggregateGraphRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -156,19 +166,29 @@ func (api aggregateGraphAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, err.Error(), nil)
 		return
 	}
-	graph.ID = ID(r.PathValue("aggregate_graph_id"))
+	graph.ID = graphID
 	graph.TenantID = auth.TenantID
 	updated, err := api.repo.UpdateAggregateGraph(r.Context(), graph)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	SetEntityETag(w, updated.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, updated)
 }
 
 func (api aggregateGraphAPI) delete(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	if err := api.repo.DeleteAggregateGraph(r.Context(), auth.TenantID, ID(r.PathValue("aggregate_graph_id"))); err != nil {
+	graphID := ID(r.PathValue("aggregate_graph_id"))
+	existing, err := api.repo.GetAggregateGraph(r.Context(), auth.TenantID, graphID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Aggregate graph not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
+	if err := api.repo.DeleteAggregateGraph(r.Context(), auth.TenantID, graphID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
