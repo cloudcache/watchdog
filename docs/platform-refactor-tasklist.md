@@ -39,7 +39,7 @@
   - [x] 可验证销毁（destruction receipt）：target_delete payload 升 v2 携带 preview 影响摘要（入队捕获，不进幂等 hash），handler 成功后写 `target.destroyed` 审计回执（target id/actor=CreatedBy/影响计数/VM series matcher，ID 由 jobID 派生 + ON DUPLICATE 幂等，非 users actor 保留于 detail.actor），经 `/api/v1/audit-logs` 可查。gated MySQL 证明重试幂等/可查/内容/系统 actor 保留（commit 3b179535）。
   - [x] device 删除推广：GET `/network/devices/{id}/delete-preview`（级联 11 表：ports/sensors/bgp/vlan/lag/物理实体/接口地址/snmp recipe·module/discovery job，脱钩聚合图），DELETE 配 job repo 时改 202+device_delete job（payload v1 携带影响），worker 跑级联+清 `{device_id=...}` series+写 `network_device.destroyed` 回执（jobID 派生幂等），前端影响对话框+轮询;复用现有 registry/信封/回执,零迁移。gated MySQL 预览计数+异步级联+series 清理+回执（commit ad2e89b0）。
   - [x] port 删除推广：GET `/network/ports/{id}/delete-preview`（随删 interface_address/transceiver/policy，脱钩聚合图/账单/export_task），DELETE 配 job repo 时 202+port_delete job，worker 跑级联+清 `{port_id=...}` series+写 `network_port.destroyed` 回执,前端影响对话框+轮询;零迁移。gated MySQL 全程实跑（commit 60a52ac7）。
-  - 余项：collector 删除推广（同一 preview→job→receipt 闭环）。
+  - [x] collector 删除推广：GET `/collectors/{id}/delete-preview`（随删 bindings/plan_revisions，**阻塞** service_principals/ownership_transfers=RESTRICT 证据），DELETE 阻塞返 409 否则 202+collector_delete job（DeleteCollector 事务内复检阻塞返 ErrCollectorDeleteBlocked→terminal 不重试），worker 级联+写 `collector.destroyed` 回执;零迁移。gated MySQL 证明有 principal 不可删（预览 flag/409/terminal）、干净 collector 异步删+回执（commit 5e5df5eb）。**删除生命周期 4 类资源（target/device/port/collector）全覆盖。**
 
 ## P2 Query、图表、统计与导出
 
