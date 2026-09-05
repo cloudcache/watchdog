@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, NetworkIcon, SaveIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { KeyValueEditor } from "@/components/key-value-editor"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -117,6 +117,9 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
+	// Weak ETag of the target from the last load, echoed as If-Match on save so a
+	// concurrent edit is rejected (412) instead of silently overwritten.
+	const targetEtagRef = useRef("")
 
 	const load = useCallback(async () => {
 		setLoading(true)
@@ -139,7 +142,13 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 			const targetID = device.TargetID ?? device.target_id ?? ""
 			let target: TargetRecord = {}
 			if (targetID) {
-				target = await pb.send<TargetRecord>(`/api/v1/targets/${targetID}`, {}).catch(() => ({}))
+				target = await pb
+					.send<TargetRecord>(`/api/v1/targets/${targetID}`, {
+						onResponse: (response) => {
+							targetEtagRef.current = response.headers.get("ETag") ?? ""
+						},
+					})
+					.catch(() => ({}))
 			}
 			setForm({
 				id: device.ID ?? device.id ?? id,
@@ -195,6 +204,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 		try {
 			await pb.send(`/api/v1/targets/${form.targetID}`, {
 				method: "PATCH",
+				headers: targetEtagRef.current ? { "If-Match": targetEtagRef.current } : undefined,
 				body: {
 					id: form.targetID,
 					name: form.targetName.trim(),
