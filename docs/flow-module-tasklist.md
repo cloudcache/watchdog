@@ -225,7 +225,12 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 ### FLOW-08 HA/Lifecycle/Release
 
-- [ ] **FLOW-08A CH schema 生命周期**：为 `deploy/migration/clickhouse` 的顺序 migration 提供 checksum/已应用状态、并发互斥、失败可诊断、inspect/apply CLI 和滚动升级门禁；绝不修改已发布 migration 或在 worker/hub 启动时隐式改 schema。
+- [x] **FLOW-08A1 设计/编码**：loader 固定连续 `NNN_lower_snake.sql`、4 MiB/UTF-8/no-BOM/no-NUL、精确字节 SHA-256 和 quote/comment-aware statement 拆分；planner 对 version/name/checksum/state 做 fail-closed 对齐，dirty 只允许显式 resume。
+- [x] **FLOW-08A1 单元/变更测试**：读取真实 001..005；覆盖内容微改 checksum、空/非法名/缺号/超大/坏 UTF-8/NUL/BOM/未闭合 SQL、数据库 gap/duplicate/ahead/name/checksum/unknown-state/dirty 及从 dirty 精确续跑。
+- [x] **FLOW-08A1 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；并行工作区的告警域变更也未破坏本轮全库验证。
+- [ ] **FLOW-08A1 已提交**：loader/planner、单元测试与设计进入同一独立提交后关闭。
+- [ ] **FLOW-08A2 executor/CLI**：增加 CH 状态表、并发 fail-fast 锁、失败诊断、inspect/apply/resume/unlock（精确 owner token）和连接/TLS/secret-file；worker/hub 启动不得隐式迁移。
+- [ ] **FLOW-08A3 集成/发布**：真实空库 001..current、二次 apply、并发、statement 中断、dirty inspect/resume、checksum drift、旧/新二进制前后兼容和集群 DDL 演练。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。

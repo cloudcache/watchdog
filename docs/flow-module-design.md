@@ -409,6 +409,8 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 
 完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据，005 前向保留 supplier/customer 双层事实 provenance。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
 
+CH migration 文件名固定为连续的 `NNN_lower_snake.sql`，单文件不超过 4 MiB、必须是无 BOM/NUL 的 UTF-8；SHA-256 覆盖精确文件字节，已发布文件连注释和空白都禁止修改。loader 只在引号/反引号/行注释/块注释之外按分号拆 statement，避免把 enum 默认值中的分号误拆。planner 将本地清单与 CH 最新状态按 version/name/checksum 对齐：缺号、重复、数据库超前、checksum 漂移、未知状态全部 fail-closed；`applying/failed` 是 dirty，普通 apply 禁止隐式重放，只有显式 resume 且 dirty 是最后一条记录时才从该版本继续。08A1 只冻结纯 loader/planner；状态表、并发锁、inspect/apply/resume CLI 和真实 CH 故障恢复由 08A2 完成，worker/hub 启动永不隐式改 schema。
+
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
 | `flow_records` | 完整 enriched base fact | `record_id=32-byte SHA-256`；Replacing 收敛；base 查询去重 |
