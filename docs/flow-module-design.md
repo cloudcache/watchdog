@@ -611,6 +611,8 @@ LIMIT {fetch_limit:UInt16}; -- requested limit + 1
 
 provider 使用与 field mask 对应的 typed ch-go columns 消费任意多个 data block，校验列等长、总行数不超过 `limit+1`、时间范围/毫秒精度、record ID canonical hex、IP 端点命中、游标边界以及跨 block 全局严格降序/唯一。任一结果畸形、取消或 CH 执行失败都丢弃累积行，响应全有或全无；只有真实读到额外一行才返回 `has_more=true + next_cursor`。
 
+ClickHouse 会在同一 SELECT 内做全局 alias substitution，因此 field mask 中的 `src_ip AS src_ip` 不能反向改变 WHERE 中的 IPv6 列类型。detail registry 只保存固定物理列名和结果类型，compiler 统一生成 `source.<column>` 及必要的 `toString/toUInt64` 转换；`flow_records` 固定写成 `AS source FINAL`，tenant、时间、disposition、endpoint、filter、supplier evidence 和 cursor 全部显式引用 `source.*`。新增任意字段都必须通过同一路径，禁止重新放入任意 SQL expression。真实 CH 门禁必须同时验证 IPv4-mapped 规范化、相同毫秒 record ID 降序翻页、较新 ingest generation 覆盖旧物理行、首 block 取消和 deadline/扫描预算错误时零部分结果。
+
 ### 9.5 重叠地址集合统计
 
 地址集合的单组 rollup 只能回答“每个组各有多少”，不能把 A、B 两组的结果相加来回答 `A∪B`，因为同一 fact 可同时属于 A/B。任意并/交/差必须读取 base fact 的事件时间 membership 数组并在聚合前执行一次布尔谓词；查询没有 `ARRAY JOIN`，命中的一行 fact 无论含多少选中组都只进入一次 `sum/count`。

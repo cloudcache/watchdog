@@ -166,10 +166,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05D 设计**：冻结 source/destination/either IP、customer/count view、24h 毫秒时间范围、稳定 `(event_time,record_id)` cursor、固定 field mask registry、limit+1、base `FINAL` 去重、500 万行/1 GiB/10s 扫描预算和全有或全无结果。
 - [x] **FLOW-05D 编码**：实现参数化 `flow_records FINAL` compiler、有界 multi-block typed result runner、结果一致性复核和 next cursor；不接线 hub。
 - [x] **FLOW-05D 单元**：覆盖 IPv4/IPv6、三种 endpoint side、同毫秒 cursor 边界/全局顺序、field mask、参数注入、重复/非法/列错位/越界结果、执行中断和 limit+1。
-- [ ] **FLOW-05D 集成**：真实 CH 重放去重、同毫秒 record-ID 翻页不重不漏、取消/超时/扫描限制。
+- [x] **FLOW-05D 集成**：真实 CH 顺序迁移/native 写入已覆盖较新 generation 的 `FINAL` 重放去重、同毫秒 record-ID 两页不重不漏、IPv4-mapped source/destination/either、首 block 取消、过期 deadline 和 `max_rows_to_read` 拒绝；所有失败均返回零部分结果。
 - [x] **FLOW-05D 变更设计**：字段增加只通过 registry；cursor 与 field mask 解耦；不兼容 cursor 使用新前缀，未知版本明确拒绝，旧 decoder 保留一个发布窗口。
 - [x] **FLOW-05D 变更测试**：固定 v1 golden cursor、未知字段/版本/畸形 payload、field mask 改变后旧 cursor 语义不变均已覆盖。
 - [x] **FLOW-05D 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
+- [x] **FLOW-05D 已提交**：字段 registry 收敛为物理列+结果类型、`source.*` alias 隔离、编译器契约测试与真实 CH 门禁进入提交 `eacc1ec5`；测试库退出后清理，不修改现有开发数据。
 - [x] **FLOW-05E 设计**：冻结 local/remote/either base membership、`include_any/include_all/exclude_any`、事件时间 snapshot、无 `ARRAY JOIN` 的 fact 去重、customer/count、1h 同步预算与异步升级边界。
 - [x] **FLOW-05E 编码**：复用唯一 `flowdimension.CompiledAddressSetFilter` canonical 语义实现参数化 `flow_records FINAL` 统计 compiler 和 multi-block typed runner；未新增集合数学或任务引擎。
 - [x] **FLOW-05E 单元**：覆盖 A∪B、A∩B、A−B SQL，重叠 fact 无展开、三种 endpoint、metric/bucket、空/排除-only、非法/总量超限 ID、跨版本、采样未知、顺序/重复/列错位/执行失败。
