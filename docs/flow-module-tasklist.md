@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-07B — 境外 KPI/query 契约。** 独立 provider 核心的设计、编码、单元、变更测试和本地回归已完成；真实 CH endpoint 镜像/IPv4-mapped/repair/TopN 守恒仍是外部门禁，UI/hub 接线仍归 FLOW-05C。下一无平台依赖切片是 FLOW-07A candidate schema/materializer，须先以前向 CH migration 解除既有 schema 门禁。
+**活动切片：FLOW-07A2 — candidate schema/materializer。** FLOW-07B 独立 provider 核心已提交；真实 CH endpoint 镜像/IPv4-mapped/repair/TopN 守恒仍是外部门禁，UI/hub 接线仍归 FLOW-05C。本切片只以前向 CH migration 解除 candidate v1 字段缺口，再实现关闭窗口 materializer；不接 probe/job/管理面。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -40,6 +40,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 代码提交：`886ccb2b feat(flow): complete raw pipeline dimensions and rollup lifecycle`；包含 027/028、旧 collector state-restore/cleanup 删除、分层 Geo/address set、worker/CH/query 契约及 rollup production handler/store/runtime。
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
+- FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -176,8 +177,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **FLOW-07B 集成**：真实 CH 顺序 migration + rollup 执行，验证 IPv4/IPv6 混合、in/out local/remote 镜像、unknown country/region、repair 后旧 key 消失、TopN+other 和流量守恒；当前环境无 CH，保留外部门禁。
 - [x] **FLOW-07B 变更设计**：唯一 IP 明确为 `observed_remote_ips/observed_local_hosts`，即收到的 Flow 事实精确去重，不按 sampling rate 放大；历史 classification/Geo/version 不重判，结果跨版本拆分或告警。
 - [x] **FLOW-07B 变更测试**：customer-only、未知 level/direction/metric、请求值不插 SQL、IP/Geo unknown 不冒充、endpoint 汇总不一致 fail-closed、结果硬限与 sentinel 错误均已固定为契约测试。
-- [x] **FLOW-07B 回归（本地）**：`go test -race ./internal/flowquery`、`go vet ./internal/flowquery` 及 Flow/全库回归通过后登记最终命令；真实 CH 不由本地 fake executor 冒充。
-- [ ] **FLOW-07B 已提交**：代码、测试和本文须进入独立可复现提交后才能勾选并记录 hash。
+- [x] **FLOW-07B 回归（本地）**：`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...` 与 `git diff --check` 通过；真实 CH 不由本地 fake executor 冒充。
+- [x] **FLOW-07B 已提交**：`f8beffaf feat(flow): add overseas KPI query core`；代码、测试和设计可由提交复现，工作区不再残留该切片生产文件。
 - [ ] **FLOW-07C（平台依赖解除后）**：复用 operation_jobs 实现授权/配额/cooldown/kill-switch probe 编排与可插拔 agent；不得把主动握手放进 Flow 热路径。
 
 ### FLOW-08 HA/Lifecycle/Release
