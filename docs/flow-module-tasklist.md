@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C1C — 生产进程故障恢复与 rebalance。** 两个 production command 的四协议基线和独立 VM promscrape 已经关闭；下一轮在同一隔离 harness 中注入未知 source、Kafka/ClickHouse 中断恢复和重叠 worker rebalance。集群 DDL、N+1、RXQ overflow 和固定硬件容量证据仍是后续门禁，不用单节点结果冒充。
+**活动切片：FLOW-04C1D — Kafka/ClickHouse 恢复与 worker rebalance。** 两个 production command 的四协议基线、独立 VM promscrape、未知 source 和 UDP truncate 已经关闭；下一轮在同一隔离 harness 中注入 Kafka/ClickHouse 中断恢复和重叠 worker rebalance。集群 DDL、N+1、RXQ overflow 和固定硬件容量证据仍是后续门禁，不用单节点结果冒充。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -53,6 +53,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C VM 兼容门禁：`c61bb658 test(flow): verify VictoriaMetrics round trip`；生产 collector/worker metrics handler 经真实 loopback HTTP server 输出 Prometheus text，写入现有 VictoriaMetrics 后分别核对 Kafka durable record 和 lag 值，并检查落库 series 不含 tenant/exporter/ASN/prefix/IP/topic/partition 标签。真实 race 连续 2 次通过；每轮唯一测试 series 均精确删除。当前 VM 容器未配置 `promscrape.config`，因此这不冒充 vmagent pull 或两个生产命令联调。
 - FLOW-04C production process 基线：`0ce9075d test(flow): run production pipeline end to end`；测试实际编译并启动 `watchdog-flow-collect` 与 `watchdog-flow-worker`，隔离 topic/database 中 5 个 NetFlow-family + 1 个 sFlow datagram 经 Kafka 4.3.1 和 ClickHouse 26.3 收敛为 38 条事实、四种协议和 durable receipt；两个真实进程的 Kafka 指标为 6/6，template missing/rejected/retryable 均为 0，并经现有 VM import/query 验证。测试发现并修复 worker 在空 Geo catalog 上先调用 `LoadHistorical` 而必然启动失败的问题；Geo bootstrap 现在明确按 oldest→newest 输入、末项 active。进程、topic、database 和测试 series 成功/失败均清理；本项不冒充尚未执行的 promscrape pull 与故障矩阵。
 - FLOW-04C production VM pull：`c2845406 test(flow): scrape production process metrics`；同一 production harness 临时启动已有 `victoriametrics/victoria-metrics` 镜像，使用 250ms `promscrape.config` 从容器内主动抓取 collector/worker；两 target 的 `up=1`，Kafka durable/committed records 均为 6。VM 使用动态 loopback 映射和临时存储，结束后删除；现有 `victoriametrics:8428` 不重建、不改配置、不写测试 series。
+- FLOW-04C UDP safety：`95bb583f test(flow): reject unsafe UDP inputs`；production collector 监听同一真实 UDP socket，从本机非 loopback IPv4 注入格式正确但 plan 未授权的 NetFlow，`rejected=1`；再注入 4097-byte datagram 命中 4096-byte 上限，`oversize=1`。两类输入之后 Kafka records 仍为 0，正常四协议随后仍收敛为 6 个 datagram、38 条事实；测试不以协议解析失败冒充 source admission，也不以 oversize 冒充 RXQ overflow。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
@@ -146,6 +147,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **集成（外部服务）**：启动两个生产命令并由 VM 抓取；注入未知 source、UDP truncate/RXQ overflow、Kafka/CH 失败与恢复、rebalance，核对 broker lag 和 shutdown 末值。真实 Kafka/CH/UDP/VM 环境已就绪；production baseline 和 VM pull 已关闭，故障矩阵仍未关闭。
 - [x] **集成（生产进程基线）**：实际编译并启动两个 production command；真实 UDP 注入 NetFlow v5/v9、IPFIX、sFlow v5，collector Kafka durable ack 6/6，worker commit 6/6，ClickHouse `FINAL` 中 38 条事实覆盖四协议且 receipt 非空；真实进程指标写入现有 VM 后查询一致。使用唯一 topic/database/series，成功和失败路径均清理；证据 `0ce9075d`。这只关闭无故障基线，不代替 promscrape、故障恢复、rebalance、RXQ overflow。
 - [x] **集成（VM promscrape）**：独立临时 VM 从 Docker 内主动 pull 两个 production metrics endpoint，两个 `up` 和 Kafka records 精确核对；随机宿主端口、临时存储，cleanup 后零容器/series 残留且不修改现有 VM。证据 `c2845406`。
+- [x] **集成（source admission / UDP truncate）**：真实非 loopback source 命中签名 plan 拒绝，超过配置读取边界的 datagram 命中 `MSG_TRUNC`；分别核对 rejected/oversize 且 Kafka 保持 0，再运行正常 corpus 证明监听器没有被异常输入污染。证据 `95bb583f`；RXQ overflow 仍未关闭。
 - [x] **集成（真实 VM 存储/查询子门禁）**：production collector/worker handler 通过真实 HTTP server 输出，VictoriaMetrics Prometheus import 后 instant query 精确得到 collector Kafka records 和 worker lag；落库 label 复核无高基数维度，唯一 `integration_run` series 在成功/失败 cleanup 中删除。显式环境变量开启，证据提交 `c61bb658`。该测试只证明 wire/storage/query 兼容，不替代上项的 promscrape/生产进程/故障恢复。
 - [x] **变更设计**：新增独立 `-metrics-listen`，默认 loopback `9090/9091`、空值禁用；远程 TLS/mTLS 归部署层反代/sidecar，不复制证书生命周期。
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
