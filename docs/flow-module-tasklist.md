@@ -207,8 +207,12 @@ Flow 数据面已按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 重置。旧 F
 
 ### PLAT-04 Target、网元、端口与资源管理
 
+本轮已完成的可独立核验切片（cursor/filter/sort、tombstone/retention 等父项范围未完成，不提前勾选）：
+
+- [x] 删除影响预览：GET `/api/v1/targets/{id}/delete-preview`（ActionConfigure）按行为分列依赖——随删（device/ports/agents/legacy collector 投影/run history/retention policy/VM series）与脱钩（聚合图失去成员端口但保留、export task 清空 target 引用保留历史），条目列表封顶 20。修复 DeleteTarget 孤儿泄漏：targets 级联删 `target_agents` 但 legacy collector 投影无反向 FK，现同事务清理投影所属 collector 行（registry 所属行不动，延续 PLAT-03B1 授权域）。gated MySQL 测试全依赖扇出实跑：预览计数、级联结果、孤儿清理、export 脱钩。证据：commit 3fcaece8（`target_delete_preview.go` + 测试）。
+
 - [ ] **设计**：确认 target 资源根、TargetKindRegistry、network device/port 投影、列表/详情/CRUD、发现和删除影响预览。
-- [ ] **编码**：实现可注册 target kind、统一 cursor/filter/sort、资源树、模块详情 tab、delete-preview 和 tombstone/retention 行为。
+- [ ] **编码**：实现可注册 target kind、统一 cursor/filter/sort、资源树、模块详情 tab、delete-preview 和 tombstone/retention 行为。（delete-preview 已完成，见上）
 - [ ] **单元测试**：覆盖 target kind 校验、tenant 隔离、资源父子关系、删除约束、设备/端口 stable ID 和 ifIndex 映射。
 - [ ] **集成测试**：完成 target→发现设备→端口→collector binding→模块 tab 全流程，并验证删除预览列出全部依赖。
 - [ ] **变更设计**：记录当前 `system/network` 常量迁移、已有 API 兼容和事实数据不随管理对象删除的策略。
