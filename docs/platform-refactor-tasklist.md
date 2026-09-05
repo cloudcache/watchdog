@@ -1,0 +1,61 @@
+# Watchdog 平台架构重构 Tasklist
+
+> 平台通用工作与 Flow 分离。Flow 只依赖这里已经落地的模块、身份、collector、target、query、export 与 correction 契约；非阻断平台缺陷不得混入 Flow 数据面 diff。
+
+## 0. 执行规则
+
+每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。
+
+## P0 生产入口、身份与存储收敛
+
+- [x] Hub 挂载 `/api/v1`，前端同源访问；登录只在主动登录或访问受控数据时被动触发。
+- [x] Beszel/`BESZEL_*` 对外命名收敛到 Watchdog/`WATCHDOG_*`。
+- [x] VictoriaLogs Flow 原型和浏览器直连删除；MySQL 为唯一管理库，VM/CH 各自保留指标/Flow 事实角色。
+- [ ] PB 收缩为认证内核：迁 user settings、quiet hours、alerts、smart devices；僵尸 system collections 停写并归档。
+- [ ] 消除 PB/MySQL 双身份权威，验证登录、OTP、找回、session、禁用和 tenant projection。
+- [ ] 完成空库安装、存量迁移、checksum/quarantine、shadow read、切换、回退和生产零调用观察。
+
+## P1 模块、Collector/Agent 与 Target
+
+- [x] Module/Resource/Dataset registry 基座与 tenant module 开关。
+- [x] collector agent registry、plan revision/signature/ack、credential/enrollment 基础。
+- [ ] collector enrollment 一次性 secret、rotation/revoke、capability negotiation、fleet rollout/canary 完整闭环。
+  - [x] 一次性 enrollment secret：migration 026 + 无认证兑换端点（行锁单次焚毁、错值不烧、同形拒答），初始 token 一次性签发即可机器认证；gated MySQL 实跑（commit cb226ccf）。
+  - [x] token/mTLS 双窗口 rotation/commit/abort/revoke：migration 025 staged 凭据 + If-Match row_version 守卫 + 审计，认证器双窗口，UTC 过期比较；gated MySQL 实跑（commit 89b7a062）。凭据唯一写权先行切到 registry，legacy 投影只同步非凭据字段（commit c981a8e5）。
+  - [x] capability negotiation：enroll 可携带声明（software/agent_api/plan_schema 区间/规范化能力集，与心跳同一校验），入册即落列，首个 plan 直接按真实 schema 区间校验；声明先于 secret 校验（400 不烧不探）。gated MySQL + API 测试（commit b2d48eed）。plan 创建端 FOR UPDATE 校验 schema 区间与心跳能力/健康联动此前已在（C1/021）。
+  - 余项：fleet rollout/canary（preview/canary/rollback 复制旧 spec 生成更高 version、expiry/kill switch）。
+- [x] target 名称与 host 身份分离；网络 target 以 `(tenant, kind, host)` 唯一，display name 可选。
+- [x] SNMP profile/community 在新建与编辑可配置，sysName/sysDescr 为采集结果而非输入必填。
+- [ ] Target/Network Device/Port/BGP/Inventory/Event/Alert 全 CRUD、分页、搜索、VTable filter 和稳定 ETag/If-Match。
+  - [x] 平台 ETag/If-Match 契约（PLAT-00A）：弱 ETag + 412 version_conflict + Idempotency-Key 重放（migration 024，commit a8f43017），已挂 users/roles（a8f43017）、targets（bb304d26）、network device/port GET/PATCH/DELETE（00a8d4f5，struct 补 UpdatedAt+scan updated_at）；error envelope 补 retryable。
+  - 余项：BGP/inventory/event/alert 推广、分页/搜索/VTable filter。
+- [ ] 所有删除实现 preview→异步 job→审计→可验证销毁；禁止 handler 内同步级联大删除。
+  - [x] target delete-preview：GET `/targets/{id}/delete-preview` 按随删/脱钩分列依赖（device/ports/agents/投影/历史/留存/VM series vs 聚合图/export），DeleteTarget 同事务清理投影孤儿且不触碰 registry 行；前端删除确认对话框展示影响清单；gated MySQL 全扇出实跑（commits 3fcaece8、753a9fc6）。
+  - [x] 异步 operation job 运行时（017 表首次落地执行面）：幂等入队（tenant/type/key + request hash 冲突检测）、SKIP LOCKED 租约认领、过期接管（死 owner token 失效）、心跳续租+取消传播、退避重试/终态四路完成，全程 token 守卫；GET/cancel API；target DELETE 配置 job repo 时改为 202+job（重复 DELETE 复用同 job），worker 在 StartBackground 启动执行级联+VM 清理，前端轮询 job 至终态。gated MySQL：生命周期/竞争/接管/取消/worker 端到端（commit 2446a37b）。
+  - [x] job 管理面：`GET /api/v1/operation-jobs` keyset 游标分页 + job_type/status 筛选；/jobs 管理页（类型/状态/尝试次数/错误详情、取消排队或运行中的 job、加载更多）。gated MySQL 分页+双筛选、API 参数映射测试（commit 250bd2ff）。
+  - 余项：可验证销毁（destruction receipt）、其余资源类删除推广。
+
+## P2 Query、图表、统计与导出
+
+- [ ] Provider-neutral QueryRequest/QueryResult，统一 VM/CH 的 tenant scope、时间、bucket、limit、cancel 和 completeness。
+- [ ] Visualization CRUD、版本/owner、series、布局、预览和 dashboard 引用。
+- [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。
+- [ ] Export job 统一 CSV/Parquet、快照、权限复核、checksum、TTL、下载审计和失败重试。
+
+## P3 raw/supplier/customer 修正
+
+- [ ] Adjustment policy/version/rule/approval/reconciliation 数据契约。
+- [ ] 查询时应用与批量物化边界、冲突优先级、effective time、血缘和回滚。
+- [ ] 修正前后对账、审计、导出视图和租户级权限。
+
+- [x] 审计读取面：`GET /api/v1/audit-logs`（tenant admin）keyset 游标分页 + resource/actor/action 前缀筛选；/audit-logs 管理页（筛选+加载更多）。同时修复两类静默丢失的审计写入：无 ID 记录被拒（api 层全部 recordAudit）、非 users 表 actor 触发 FK 丢弃（system:enrollment 等，现保留于 detail.actor）。gated MySQL + API 测试（commit 578a4061）。
+
+## 平台缺陷登记
+
+- [ ] **PLAT-04A immutable dimension publication**：`dimension_snapshots` 目前只存在于平台设计文字，MySQL migration、repository、publish/rollback API 和引用保留均未实现；Flow worker 只能使用静态验签 bootstrap。完成前不得让 Flow 热路径回退查询 `address_prefixes/address_sets`，也不得把设计中的外键当成已存在 schema。
+- [ ] **PLAT-04B operation job registry/scheduler**：`operation_jobs` 表和 lease worker 已实现，但 runtime 只硬编码一个 `target_delete` worker，缺少受控 handler registry、周期 job enqueue、水位所有权、每类并发/扫描预算和 typed payload version。Flow rollup 调度在此能力落地前保持挂起，禁止在 `flow-worker` 复制第二套 job 状态机。
+- [ ] **PLAT-04C address-prefix/set 管理闭环**：现有 API 只存任意 `selector JSON`，没有 canonical CIDR/IPv6 校验、members/exclude/include DAG、集合并交差/有限补集预览、冲突/展开量检查、publication 引用、分页/filter、ETag/审计；POST/PATCH 还会无条件把 `enabled=true`。平台侧需补 typed schema、validate/preview/publish 生命周期和 VTable 管理面；Flow 侧只实现 immutable 编译与事实 membership，不在数据面复制 CRUD。
+- [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
+- [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
+- [ ] 旧 `sflow_collector` VM 聚合原型仍在平台配置/命令中；待新 Flow P1 验收后独立迁移/下线，不与 RawFlow collector 共端口。
+- [x] 默认 `go vet ./...` 会编译 `internal/hub_test`，但 `GetHubWithUser` 只在 `testing` tag 可见；已按既有约定给 `api_test.go`/`platform_backend_test.go` 补 `//go:build testing`，默认与 `-tags=testing` 两种 vet 均通过，tagged hub 套件通过（commit a549a602）。
