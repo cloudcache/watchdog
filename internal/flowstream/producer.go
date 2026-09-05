@@ -83,8 +83,10 @@ func (p *Producer) Ping(ctx context.Context) error {
 	return p.client.Ping(ctx)
 }
 
-// Send transfers ownership of payload to Kafka. release is called exactly
-// once, after the asynchronous produce succeeds or permanently fails.
+// Send checks ctx before transferring ownership of payload to Kafka. Once
+// accepted, delivery is independent of the receiver lifecycle so shutdown can
+// stop UDP reads before Close flushes records already buffered by franz-go.
+// release is called exactly once after delivery succeeds or permanently fails.
 func (p *Producer) Send(ctx context.Context, key, payload []byte, release func(), completion func(error)) error {
 	finish := func(err error) {
 		if completion != nil {
@@ -109,10 +111,20 @@ func (p *Producer) Send(ctx context.Context, key, payload []byte, release func()
 		finish(err)
 		return err
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		finish(err)
+		return err
+	}
 
 	record := &kgo.Record{Topic: p.topic, Key: key, Value: payload}
 	started := time.Now()
-	p.client.Produce(ctx, record, func(_ *kgo.Record, err error) {
+	// Akvorado uses a producer-owned context here. The caller context only
+	// governs admission; retaining it on a buffered record would cancel valid
+	// datagrams when the UDP receiver is stopped immediately before flush.
+	p.client.Produce(context.Background(), record, func(_ *kgo.Record, err error) {
 		p.stats.produceDurationNanos.Add(uint64(time.Since(started)))
 		if err != nil {
 			p.stats.errors.Add(1)

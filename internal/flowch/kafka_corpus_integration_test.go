@@ -11,11 +11,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,31 +88,20 @@ func TestRealKafkaFourProtocolCorpusToClickHouseFiveLevelRollup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	receivedAt := time.Now().UTC()
-	datagrams := []flowstream.Datagram{
-		corpusDatagram(t, receivedAt, "192.0.2.5:2055", flowpb.RawFlow_DECODER_NETFLOW, "netflow", "nfv5.pcap"),
-		corpusDatagram(t, receivedAt.Add(time.Millisecond), "192.0.2.9:2055", flowpb.RawFlow_DECODER_NETFLOW, "netflow", "template.pcap"),
-		corpusDatagram(t, receivedAt.Add(2*time.Millisecond), "192.0.2.9:2055", flowpb.RawFlow_DECODER_NETFLOW, "netflow", "data.pcap"),
-		corpusDatagram(t, receivedAt.Add(3*time.Millisecond), "192.0.2.10:4739", flowpb.RawFlow_DECODER_NETFLOW, "netflow", "ipfixprobe-templates.pcap"),
-		corpusDatagram(t, receivedAt.Add(4*time.Millisecond), "192.0.2.10:4739", flowpb.RawFlow_DECODER_NETFLOW, "netflow", "ipfixprobe-data.pcap"),
-		corpusDatagram(t, receivedAt.Add(5*time.Millisecond), "192.0.2.50:6343", flowpb.RawFlow_DECODER_SFLOW, "sflow", "data-sflow-expanded-sample.pcap"),
+	payloads := [][]byte{
+		corpusFixturePayload(t, "netflow", "nfv5.pcap"),
+		corpusFixturePayload(t, "netflow", "template.pcap"),
+		corpusFixturePayload(t, "netflow", "data.pcap"),
+		corpusFixturePayload(t, "netflow", "ipfixprobe-templates.pcap"),
+		corpusFixturePayload(t, "netflow", "ipfixprobe-data.pcap"),
+		corpusFixturePayload(t, "sflow", "data-sflow-expanded-sample.pcap"),
 	}
-	produced := make(chan error, len(datagrams))
-	for _, datagram := range datagrams {
-		if err := inlet.Send(ctx, datagram, func(err error) { produced <- err }); err != nil {
-			t.Fatal(err)
-		}
-	}
+	publishCorpusThroughUDPReceiver(t, ctx, inlet, payloads)
 	if err := producer.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for range datagrams {
-		if err := <-produced; err != nil {
-			t.Fatalf("produce corpus datagram: %v", err)
-		}
-	}
 	producerStats := producer.Stats()
-	if producerStats.Records != uint64(len(datagrams)) || producerStats.Errors != 0 || producerStats.BufferedRecords != 0 {
+	if producerStats.Records != uint64(len(payloads)) || producerStats.Errors != 0 || producerStats.BufferedRecords != 0 {
 		t.Fatalf("producer stats=%+v", producerStats)
 	}
 
@@ -130,7 +121,7 @@ func TestRealKafkaFourProtocolCorpusToClickHouseFiveLevelRollup(t *testing.T) {
 	runContext, cancelRun := context.WithCancel(ctx)
 	runDone := make(chan error, 1)
 	go func() { runDone <- consumer.RunPartitionBatches(runContext, processor.HandleRecords) }()
-	waitForCorpusConsumption(t, consumer, uint64(len(datagrams)), runDone, cancelRun)
+	waitForCorpusConsumption(t, consumer, uint64(len(payloads)), runDone, cancelRun)
 
 	facts := readAndAuditCorpusFacts(t, ctx, native, writer)
 	assertCorpusRuntimeStats(t, producerStats, consumer.Stats(), processor.Stats(), pipeline.Stats(), writer.Stats(), facts)
@@ -238,12 +229,104 @@ func corpusBinding(_ string, _ uint64, protocol flowplan.Protocol, source netip.
 	}, nil
 }
 
-func corpusDatagram(t testing.TB, receivedAt time.Time, source string, decoder flowpb.RawFlow_Decoder, family, name string) flowstream.Datagram {
+func publishCorpusThroughUDPReceiver(t testing.TB, ctx context.Context, inlet *flowstream.Inlet, payloads [][]byte) {
 	t.Helper()
-	return flowstream.Datagram{
-		CollectorID: "collector-corpus", ListenerID: "listener-corpus", RegistryVersion: 1,
-		ReceivedAt: receivedAt, Source: netip.MustParseAddrPort(source), Decoder: decoder,
-		Payload: corpusFixturePayload(t, family, name),
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := probe.LocalAddr().String()
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var received, publishErrors atomic.Uint64
+	invalid := make(chan struct{}, 1)
+	receiver := &flowstream.Receiver{
+		ListenAddr: address, CollectorID: "collector-corpus", ListenerID: "listener-corpus", RegistryVersion: 1,
+		Decoder: flowpb.RawFlow_DECODER_UNSPECIFIED, ReceiveBufferBytes: 1 << 20, MaxDatagramBytes: 65535,
+		Sender: inlet, Admit: func(source netip.AddrPort) bool { return source.Addr().IsLoopback() },
+		OnReceived: func(flowpb.RawFlow_Decoder) { received.Add(1) },
+		OnInvalid: func() {
+			select {
+			case invalid <- struct{}{}:
+			default:
+			}
+		},
+		OnPublishError: func() { publishErrors.Add(1) },
+	}
+	runContext, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- receiver.Run(runContext) }()
+	remote, err := net.ResolveUDPAddr("udp4", address)
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	connection, err := net.DialUDP("udp4", nil, remote)
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	waitForCorpusReceiver(t, connection, invalid, done, cancel)
+	for _, payload := range payloads {
+		if _, err := connection.Write(payload); err != nil {
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	for received.Load() < uint64(len(payloads)) {
+		select {
+		case err := <-done:
+			cancel()
+			t.Fatalf("UDP receiver stopped after %d/%d datagrams: %v", received.Load(), len(payloads), err)
+		case <-deadline.C:
+			cancel()
+			<-done
+			t.Fatalf("UDP receiver timed out after %d/%d datagrams", received.Load(), len(payloads))
+		case <-ticker.C:
+		}
+	}
+	deadline.Stop()
+	ticker.Stop()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("stop UDP receiver: %v", err)
+	}
+	if publishErrors.Load() != 0 {
+		t.Fatalf("UDP receiver observed %d Kafka publish errors", publishErrors.Load())
+	}
+}
+
+func waitForCorpusReceiver(t testing.TB, connection *net.UDPConn, invalid <-chan struct{}, done <-chan error, cancel context.CancelFunc) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := connection.Write([]byte{0}); err != nil {
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+		select {
+		case <-invalid:
+			return
+		case err := <-done:
+			cancel()
+			t.Fatalf("UDP receiver failed before readiness: %v", err)
+		case <-deadline.C:
+			cancel()
+			<-done
+			t.Fatal("UDP receiver readiness timed out")
+		case <-ticker.C:
+		}
 	}
 }
 
