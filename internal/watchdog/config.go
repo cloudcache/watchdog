@@ -78,19 +78,20 @@ type FlowRollupConfig struct {
 	MaxAttempts             uint32        `yaml:"max_attempts"`
 	RetryBase               time.Duration `yaml:"retry_base"`
 
-	ClickHouseAddress      string        `yaml:"clickhouse_address"`
-	ClickHouseDatabase     string        `yaml:"clickhouse_database"`
-	ClickHouseUser         string        `yaml:"clickhouse_user"`
-	ClickHousePasswordFile string        `yaml:"clickhouse_password_file"`
-	ClickHouseMaxConns     int           `yaml:"clickhouse_max_conns"`
-	ClickHouseMinConns     int           `yaml:"clickhouse_min_conns"`
-	ClickHouseDialTimeout  time.Duration `yaml:"clickhouse_dial_timeout"`
-	ClickHouseReadTimeout  time.Duration `yaml:"clickhouse_read_timeout"`
-	ClickHouseTLS          bool          `yaml:"clickhouse_tls"`
-	ClickHouseCAFile       string        `yaml:"clickhouse_tls_ca"`
-	ClickHouseCertFile     string        `yaml:"clickhouse_tls_cert"`
-	ClickHouseKeyFile      string        `yaml:"clickhouse_tls_key"`
-	ClickHouseServerName   string        `yaml:"clickhouse_tls_server_name"`
+	ClickHouseAddress          string        `yaml:"clickhouse_address"`
+	ClickHouseDatabase         string        `yaml:"clickhouse_database"`
+	ClickHouseUser             string        `yaml:"clickhouse_user"`
+	ClickHousePasswordFile     string        `yaml:"clickhouse_password_file"`
+	ClickHouseMaxConns         int           `yaml:"clickhouse_max_conns"`
+	ClickHouseMinConns         int           `yaml:"clickhouse_min_conns"`
+	ClickHouseDialTimeout      time.Duration `yaml:"clickhouse_dial_timeout"`
+	ClickHouseReadTimeout      time.Duration `yaml:"clickhouse_read_timeout"`
+	ClickHouseOperationTimeout time.Duration `yaml:"clickhouse_operation_timeout"`
+	ClickHouseTLS              bool          `yaml:"clickhouse_tls"`
+	ClickHouseCAFile           string        `yaml:"clickhouse_tls_ca"`
+	ClickHouseCertFile         string        `yaml:"clickhouse_tls_cert"`
+	ClickHouseKeyFile          string        `yaml:"clickhouse_tls_key"`
+	ClickHouseServerName       string        `yaml:"clickhouse_tls_server_name"`
 }
 
 type RemoteCollectorPrincipalProviderConfig struct {
@@ -255,6 +256,7 @@ func defaultBackendConfig() BackendConfig {
 			ClickHouseAddress: "127.0.0.1:9000", ClickHouseDatabase: "watchdog_flow", ClickHouseUser: "default",
 			ClickHouseMaxConns: 2, ClickHouseMinConns: 0,
 			ClickHouseDialTimeout: 3 * time.Second, ClickHouseReadTimeout: 90 * time.Second,
+			ClickHouseOperationTimeout: 5 * time.Minute,
 		},
 
 		AggregateGraph: AggregateGraphConfig{
@@ -356,6 +358,9 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	if cfg.FlowRollup.ClickHouseReadTimeout, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_READ_TIMEOUT", cfg.FlowRollup.ClickHouseReadTimeout); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.ClickHouseOperationTimeout, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_OPERATION_TIMEOUT", cfg.FlowRollup.ClickHouseOperationTimeout); err != nil {
 		return err
 	}
 	if cfg.FlowRollup.ClickHouseTLS, err = getEnvBool("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_TLS", cfg.FlowRollup.ClickHouseTLS); err != nil {
@@ -674,7 +679,7 @@ func validateFlowRollupConfig(cfg FlowRollupConfig) error {
 	}
 	if cfg.ClickHouseAddress == "" || cfg.ClickHouseDatabase == "" || cfg.ClickHouseUser == "" ||
 		cfg.ClickHouseMaxConns <= 0 || cfg.ClickHouseMaxConns > 1_024 || cfg.ClickHouseMinConns < 0 ||
-		cfg.ClickHouseMinConns > cfg.ClickHouseMaxConns || cfg.ClickHouseDialTimeout <= 0 || cfg.ClickHouseReadTimeout <= 0 {
+		cfg.ClickHouseMinConns > cfg.ClickHouseMaxConns || cfg.ClickHouseDialTimeout <= 0 || cfg.ClickHouseReadTimeout <= 0 || cfg.ClickHouseOperationTimeout <= 0 {
 		return errors.New("enabled flow_rollup requires valid ClickHouse endpoint, identity, connection limits, and timeouts")
 	}
 	if (cfg.ClickHouseCertFile == "") != (cfg.ClickHouseKeyFile == "") {

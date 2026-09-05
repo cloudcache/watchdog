@@ -25,12 +25,12 @@ import (
 )
 
 type options struct {
-	command                               string
-	address, user, passwordFile           string
-	tlsEnabled                            bool
-	caFile, certFile, keyFile, serverName string
-	dialTimeout, readTimeout              time.Duration
-	lockOwner                             string
+	command                                    string
+	address, user, passwordFile                string
+	tlsEnabled                                 bool
+	caFile, certFile, keyFile, serverName      string
+	dialTimeout, readTimeout, operationTimeout time.Duration
+	lockOwner                                  string
 }
 
 type migrationService interface {
@@ -54,7 +54,8 @@ func main() {
 	flag.StringVar(&opt.user, "clickhouse-user", "default", "ClickHouse user")
 	flag.StringVar(&opt.passwordFile, "clickhouse-password-file", "", "file containing the ClickHouse password")
 	flag.DurationVar(&opt.dialTimeout, "clickhouse-dial-timeout", 3*time.Second, "ClickHouse connection timeout")
-	flag.DurationVar(&opt.readTimeout, "clickhouse-read-timeout", 30*time.Second, "ClickHouse packet read timeout")
+	flag.DurationVar(&opt.readTimeout, "clickhouse-read-timeout", 30*time.Second, "ClickHouse packet polling interval")
+	flag.DurationVar(&opt.operationTimeout, "clickhouse-operation-timeout", 5*time.Minute, "maximum duration of one ClickHouse migration operation")
 	flag.BoolVar(&opt.tlsEnabled, "clickhouse-tls", false, "enable ClickHouse TLS")
 	flag.StringVar(&opt.caFile, "clickhouse-tls-ca", "", "ClickHouse TLS CA file")
 	flag.StringVar(&opt.certFile, "clickhouse-tls-cert", "", "ClickHouse TLS client certificate file")
@@ -150,7 +151,7 @@ func buildNativeConfig(opt options) (flowch.NativeConfig, error) {
 	if strings.TrimSpace(opt.address) == "" || strings.TrimSpace(opt.user) == "" {
 		return flowch.NativeConfig{}, errors.New("ClickHouse address and user are required")
 	}
-	if opt.dialTimeout <= 0 || opt.readTimeout <= 0 {
+	if opt.dialTimeout <= 0 || opt.readTimeout <= 0 || opt.operationTimeout <= 0 {
 		return flowch.NativeConfig{}, errors.New("ClickHouse timeouts must be positive")
 	}
 	password := ""
@@ -170,7 +171,7 @@ func buildNativeConfig(opt options) (flowch.NativeConfig, error) {
 	}
 	return flowch.NativeConfig{
 		Address: strings.TrimSpace(opt.address), Database: "default", User: strings.TrimSpace(opt.user), Password: password,
-		ClientName: "watchdog-flow-migrate", DialTimeout: opt.dialTimeout, ReadTimeout: opt.readTimeout,
+		ClientName: "watchdog-flow-migrate", DialTimeout: opt.dialTimeout, ReadTimeout: opt.readTimeout, OperationTimeout: opt.operationTimeout,
 		MaxConns: 1, MinConns: 1, TLS: tlsConfig,
 	}, nil
 }

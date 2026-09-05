@@ -24,6 +24,7 @@ import (
 const (
 	defaultClickHouseAddress  = "127.0.0.1:9000"
 	defaultClickHouseDatabase = "watchdog_flow"
+	defaultOperationTimeout   = 2 * time.Minute
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_batches"
 	receiptSchemaVersion      = 2
@@ -38,9 +39,12 @@ type NativeConfig struct {
 	ClientName  string
 	DialTimeout time.Duration
 	ReadTimeout time.Duration
-	MaxConns    int32
-	MinConns    int32
-	TLS         *tls.Config
+	// OperationTimeout bounds one complete query. ch-go's ReadTimeout only
+	// bounds a packet read before it polls again, so it is not a query deadline.
+	OperationTimeout time.Duration
+	MaxConns         int32
+	MinConns         int32
+	TLS              *tls.Config
 }
 
 type queryExecutor interface {
@@ -50,6 +54,17 @@ type queryExecutor interface {
 type NativeInserter struct {
 	executor queryExecutor
 	close    func()
+}
+
+type operationTimeoutExecutor struct {
+	next    queryExecutor
+	timeout time.Duration
+}
+
+func (e operationTimeoutExecutor) Do(ctx context.Context, query ch.Query) error {
+	bounded, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+	return e.next.Do(bounded, query)
 }
 
 // NewNativeInserter creates the bounded connection pool used by partition
@@ -65,20 +80,25 @@ func NewNativeInserter(ctx context.Context, config NativeConfig) (*NativeInserte
 	if config.ClientName == "" {
 		config.ClientName = "watchdog-flow-worker"
 	}
+	if config.OperationTimeout == 0 {
+		config.OperationTimeout = defaultOperationTimeout
+	}
 	if !validClickHouseIdentifier(config.Database) {
 		return nil, errors.New("ClickHouse database name is invalid")
 	}
 	if config.MaxConns < 0 || config.MinConns < 0 || (config.MaxConns != 0 && config.MinConns > config.MaxConns) {
 		return nil, errors.New("ClickHouse connection limits are invalid")
 	}
-	if config.DialTimeout < 0 || config.ReadTimeout < 0 {
+	if config.DialTimeout < 0 || config.ReadTimeout < 0 || config.OperationTimeout < 0 {
 		return nil, errors.New("ClickHouse timeouts must not be negative")
 	}
 	var tlsConfig *tls.Config
 	if config.TLS != nil {
 		tlsConfig = config.TLS.Clone()
 	}
-	pool, err := chpool.Dial(ctx, chpool.Options{
+	dialCtx, cancelDial := context.WithTimeout(ctx, config.OperationTimeout)
+	defer cancelDial()
+	pool, err := chpool.Dial(dialCtx, chpool.Options{
 		ClientOptions: ch.Options{
 			Address: config.Address, Database: config.Database, User: config.User, Password: config.Password,
 			DialTimeout: config.DialTimeout, ReadTimeout: config.ReadTimeout, TLS: tlsConfig,
@@ -90,7 +110,10 @@ func NewNativeInserter(ctx context.Context, config NativeConfig) (*NativeInserte
 	if err != nil {
 		return nil, fmt.Errorf("connect ClickHouse native endpoint: %w", err)
 	}
-	return &NativeInserter{executor: pool, close: pool.Close}, nil
+	return &NativeInserter{
+		executor: operationTimeoutExecutor{next: pool, timeout: config.OperationTimeout},
+		close:    pool.Close,
+	}, nil
 }
 
 func (n *NativeInserter) Close() {

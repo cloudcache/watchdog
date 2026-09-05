@@ -211,7 +211,7 @@ func realMigrationConfig(t *testing.T, clientName string, readTimeout time.Durat
 	}
 	return NativeConfig{
 		Address: address, Database: "default", User: "default", Password: password,
-		ClientName: clientName, DialTimeout: 5 * time.Second, ReadTimeout: readTimeout,
+		ClientName: clientName, DialTimeout: 5 * time.Second, ReadTimeout: readTimeout, OperationTimeout: readTimeout,
 		MaxConns: 1, MinConns: 1,
 	}
 }

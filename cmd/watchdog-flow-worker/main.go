@@ -54,16 +54,16 @@ type options struct {
 	fetchMinBytes, templateReplayRecords     int64
 	fetchMaxWait, decoderStateTTL            time.Duration
 
-	clickHouseAddress, clickHouseDatabase        string
-	clickHouseUser, clickHousePasswordFile       string
-	clickHouseCAFile, clickHouseCertFile         string
-	clickHouseKeyFile, clickHouseServerName      string
-	clickHouseTLS                                bool
-	clickHouseMaxConns, clickHouseMinConns       int
-	clickHouseDialTimeout, clickHouseReadTimeout time.Duration
-	blockMaxRows, blockMaxBytes                  int
-	metricsListen                                string
-	check                                        bool
+	clickHouseAddress, clickHouseDatabase                                    string
+	clickHouseUser, clickHousePasswordFile                                   string
+	clickHouseCAFile, clickHouseCertFile                                     string
+	clickHouseKeyFile, clickHouseServerName                                  string
+	clickHouseTLS                                                            bool
+	clickHouseMaxConns, clickHouseMinConns                                   int
+	clickHouseDialTimeout, clickHouseReadTimeout, clickHouseOperationTimeout time.Duration
+	blockMaxRows, blockMaxBytes                                              int
+	metricsListen                                                            string
+	check                                                                    bool
 }
 
 func main() {
@@ -98,7 +98,8 @@ func main() {
 	flag.IntVar(&opt.clickHouseMaxConns, "clickhouse-max-conns", 8, "maximum ClickHouse native connections")
 	flag.IntVar(&opt.clickHouseMinConns, "clickhouse-min-conns", 1, "minimum ClickHouse native connections")
 	flag.DurationVar(&opt.clickHouseDialTimeout, "clickhouse-dial-timeout", 3*time.Second, "ClickHouse connection timeout")
-	flag.DurationVar(&opt.clickHouseReadTimeout, "clickhouse-read-timeout", 30*time.Second, "ClickHouse packet read timeout")
+	flag.DurationVar(&opt.clickHouseReadTimeout, "clickhouse-read-timeout", 30*time.Second, "ClickHouse packet polling interval")
+	flag.DurationVar(&opt.clickHouseOperationTimeout, "clickhouse-operation-timeout", 2*time.Minute, "maximum duration of one ClickHouse operation")
 	flag.BoolVar(&opt.clickHouseTLS, "clickhouse-tls", false, "enable ClickHouse TLS")
 	flag.StringVar(&opt.clickHouseCAFile, "clickhouse-tls-ca", "", "ClickHouse TLS CA file")
 	flag.StringVar(&opt.clickHouseCertFile, "clickhouse-tls-cert", "", "ClickHouse TLS client certificate file")
@@ -285,13 +286,14 @@ func buildClickHouseConfig(opt options) (flowch.NativeConfig, error) {
 	if opt.clickHouseMaxConns < 1 || opt.clickHouseMaxConns > 1_024 || opt.clickHouseMinConns < 0 || opt.clickHouseMinConns > opt.clickHouseMaxConns {
 		return flowch.NativeConfig{}, errors.New("ClickHouse connection limits are invalid")
 	}
-	if strings.TrimSpace(opt.clickHouseAddress) == "" || strings.TrimSpace(opt.clickHouseDatabase) == "" || strings.TrimSpace(opt.clickHouseUser) == "" || opt.clickHouseDialTimeout <= 0 || opt.clickHouseReadTimeout <= 0 {
+	if strings.TrimSpace(opt.clickHouseAddress) == "" || strings.TrimSpace(opt.clickHouseDatabase) == "" || strings.TrimSpace(opt.clickHouseUser) == "" || opt.clickHouseDialTimeout <= 0 || opt.clickHouseReadTimeout <= 0 || opt.clickHouseOperationTimeout <= 0 {
 		return flowch.NativeConfig{}, errors.New("ClickHouse address, database, user, and positive timeouts are required")
 	}
 	return flowch.NativeConfig{
 		Address: strings.TrimSpace(opt.clickHouseAddress), Database: strings.TrimSpace(opt.clickHouseDatabase), User: strings.TrimSpace(opt.clickHouseUser), Password: password,
 		ClientName:  "watchdog-flow-worker",
-		DialTimeout: opt.clickHouseDialTimeout, ReadTimeout: opt.clickHouseReadTimeout, MaxConns: int32(opt.clickHouseMaxConns), MinConns: int32(opt.clickHouseMinConns), TLS: tlsConfig,
+		DialTimeout: opt.clickHouseDialTimeout, ReadTimeout: opt.clickHouseReadTimeout, OperationTimeout: opt.clickHouseOperationTimeout,
+		MaxConns: int32(opt.clickHouseMaxConns), MinConns: int32(opt.clickHouseMinConns), TLS: tlsConfig,
 	}, nil
 }
 

@@ -45,6 +45,7 @@ func TestBuildClickHouseConfigRejectsHiddenTLSAndInlinePassword(t *testing.T) {
 	base := options{
 		clickHouseAddress: "clickhouse:9000", clickHouseDatabase: "watchdog_flow", clickHouseUser: "flow",
 		clickHouseMaxConns: 8, clickHouseMinConns: 1, clickHouseDialTimeout: time.Second, clickHouseReadTimeout: time.Second,
+		clickHouseOperationTimeout: 2 * time.Second,
 	}
 	withHiddenTLS := base
 	withHiddenTLS.clickHouseCAFile = "ca.pem"
@@ -57,7 +58,7 @@ func TestBuildClickHouseConfigRejectsHiddenTLSAndInlinePassword(t *testing.T) {
 	}
 	base.clickHousePasswordFile = secret
 	config, err := buildClickHouseConfig(base)
-	if err != nil || config.Password != "secret" {
+	if err != nil || config.Password != "secret" || config.OperationTimeout != 2*time.Second {
 		t.Fatalf("config=%+v error=%v", config, err)
 	}
 }

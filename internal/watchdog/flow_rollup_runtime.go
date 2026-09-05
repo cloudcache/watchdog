@@ -27,7 +27,7 @@ func newFlowRollupRuntime(ctx context.Context, store *MySQLStore, config FlowRol
 	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{
 		Address: config.ClickHouseAddress, Database: config.ClickHouseDatabase,
 		User: config.ClickHouseUser, Password: password, ClientName: "watchdog-flow-rollup",
-		DialTimeout: config.ClickHouseDialTimeout, ReadTimeout: config.ClickHouseReadTimeout,
+		DialTimeout: config.ClickHouseDialTimeout, ReadTimeout: config.ClickHouseReadTimeout, OperationTimeout: config.ClickHouseOperationTimeout,
 		MaxConns: int32(config.ClickHouseMaxConns), MinConns: int32(config.ClickHouseMinConns), TLS: tlsConfig,
 	})
 	if err != nil {

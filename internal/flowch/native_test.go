@@ -28,9 +28,50 @@ type queryRecorder struct {
 	errors  map[int]error
 }
 
+type deadlineRecorder struct {
+	remaining time.Duration
+}
+
+func (r *deadlineRecorder) Do(ctx context.Context, _ ch.Query) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("operation context has no deadline")
+	}
+	r.remaining = time.Until(deadline)
+	return nil
+}
+
 func (r *queryRecorder) Do(_ context.Context, query ch.Query) error {
 	r.queries = append(r.queries, query)
 	return r.errors[len(r.queries)]
+}
+
+func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		parentTimeout time.Duration
+		wantMaximum   time.Duration
+	}{
+		{name: "unbounded", wantMaximum: time.Second},
+		{name: "earlier caller", parentTimeout: 50 * time.Millisecond, wantMaximum: 100 * time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			cancel := func() {}
+			if test.parentTimeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, test.parentTimeout)
+			}
+			defer cancel()
+			recorder := &deadlineRecorder{}
+			executor := operationTimeoutExecutor{next: recorder, timeout: time.Second}
+			if err := executor.Do(ctx, ch.Query{Body: "SELECT 1"}); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.remaining <= 0 || recorder.remaining > test.wantMaximum {
+				t.Fatalf("remaining deadline=%s, want 0..%s", recorder.remaining, test.wantMaximum)
+			}
+		})
+	}
 }
 
 func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T) {

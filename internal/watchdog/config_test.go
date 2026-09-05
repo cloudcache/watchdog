@@ -78,6 +78,7 @@ func TestLoadWatchdogConfigFlowRollupEnvironment(t *testing.T) {
 	t.Setenv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_MIN_CONNS", "1")
 	t.Setenv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_DIAL_TIMEOUT", "5s")
 	t.Setenv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_READ_TIMEOUT", "2m")
+	t.Setenv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_OPERATION_TIMEOUT", "7m")
 	cfg, err := LoadWatchdogConfig("")
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +91,8 @@ func TestLoadWatchdogConfigFlowRollupEnvironment(t *testing.T) {
 		rollup.RetryBase != 20*time.Second || rollup.ClickHouseAddress != "clickhouse.internal:9000" ||
 		rollup.ClickHouseDatabase != "flow_prod" || rollup.ClickHouseUser != "rollup" ||
 		rollup.ClickHouseMaxConns != 4 || rollup.ClickHouseMinConns != 1 ||
-		rollup.ClickHouseDialTimeout != 5*time.Second || rollup.ClickHouseReadTimeout != 2*time.Minute {
+		rollup.ClickHouseDialTimeout != 5*time.Second || rollup.ClickHouseReadTimeout != 2*time.Minute ||
+		rollup.ClickHouseOperationTimeout != 7*time.Minute {
 		t.Fatalf("flow rollup config = %#v", rollup)
 	}
 }

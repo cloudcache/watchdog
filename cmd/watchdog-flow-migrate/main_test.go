@@ -101,15 +101,15 @@ func TestBuildNativeConfigUsesDefaultDatabaseAndSecretFile(t *testing.T) {
 	}
 	config, err := buildNativeConfig(options{
 		address: "127.0.0.1:9000", user: "default", passwordFile: secret,
-		dialTimeout: time.Second, readTimeout: 2 * time.Second,
+		dialTimeout: time.Second, readTimeout: 2 * time.Second, operationTimeout: 3 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Database != "default" || config.Password != "secret" || config.ClientName != "watchdog-flow-migrate" || config.MaxConns != 1 {
+	if config.Database != "default" || config.Password != "secret" || config.ClientName != "watchdog-flow-migrate" || config.MaxConns != 1 || config.OperationTimeout != 3*time.Second {
 		t.Fatalf("config=%+v", config)
 	}
-	hiddenTLS := options{address: "127.0.0.1:9000", user: "default", caFile: "ca.pem", dialTimeout: time.Second, readTimeout: time.Second}
+	hiddenTLS := options{address: "127.0.0.1:9000", user: "default", caFile: "ca.pem", dialTimeout: time.Second, readTimeout: time.Second, operationTimeout: time.Second}
 	if _, err := buildNativeConfig(hiddenTLS); err == nil {
 		t.Fatal("hidden TLS file was accepted")
 	}

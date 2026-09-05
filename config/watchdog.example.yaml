@@ -97,7 +97,9 @@ flow_rollup:
   clickhouse_max_conns: 2
   clickhouse_min_conns: 0
   clickhouse_dial_timeout: 3s
+  # ch-go uses this as a packet polling interval, not a whole-query deadline.
   clickhouse_read_timeout: 90s
+  clickhouse_operation_timeout: 5m
   clickhouse_tls: false
   clickhouse_tls_ca: ""
   clickhouse_tls_cert: ""

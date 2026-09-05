@@ -84,6 +84,7 @@ flow_rollup:
   clickhouse_min_conns: 0
   clickhouse_dial_timeout: 3s
   clickhouse_read_timeout: 90s
+  clickhouse_operation_timeout: 5m
   clickhouse_tls: false
   clickhouse_tls_ca: ""
   clickhouse_tls_cert: ""
