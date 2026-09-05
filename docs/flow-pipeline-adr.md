@@ -44,7 +44,8 @@ Kafka key 固定为 `collector_id || 0x00 || exporter_ip`，不含 UDP 源端口
 - 保留客户端默认幂等 producer 和 broker 重试，不在外层实现第二套 retry/WAL/ACK 状态机；
 - Kafka 拥塞时 `Produce` 对有界队列形成背压，最终由 UDP socket drop 指标暴露容量不足；UDP 不承诺绝对零丢失；
 - completion callback 无论成功或最终失败都释放 protobuf/payload buffer；失败计入低基数 counter，并进入 collector degraded 状态；
-- 正常关闭先在有界期限内 `Flush`，再关闭 client；超时作为明确未确认区间记录。
+- Receiver context 只控制转交前准入；一旦记录进入 franz-go buffer，其 delivery context 归 producer 所有，不能随 Receiver 停止而取消；
+- 正常关闭先停止 UDP Receiver，再在有界期限内 `Flush`，最后关闭 client；超时作为明确未确认区间记录。
 
 ### Consumer
 

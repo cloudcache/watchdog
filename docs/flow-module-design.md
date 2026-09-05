@@ -74,7 +74,8 @@ plan 到期且没有新版本时 fail closed；控制面短暂不可用时，在
 - Kafka broker/topic/TLS/SASL/ACL 由部署系统创建，collector 只拥有目标 topic 的 write/describe 权限；
 - callback 后才能复用 payload/protobuf buffer；最终失败计数并标记 degraded；
 - 队列满形成接收背压，最终 socket/kernel drop 是明确的 UDP 服务语义；
-- 关闭时先停止收包，再在有界时间内 flush；超时记录未确认时间窗。
+- 调用方 context 在所有权转交前已取消则拒绝；一旦 `Produce` 接受，记录使用 producer 生命周期，停止 Receiver 不得取消已入 franz-go buffer 的记录；
+- 关闭时先停止收包，再在有界时间内 flush；超时记录未确认时间窗。禁止把 Receiver 的 cancel context 留在已接收记录上，否则正常关停会把在途 flow 误报为 produce error 并丢弃。
 
 Kafka 不可用不会触发第二套 WAL、retry 数据库或 ACK 状态机。容量必须通过 Kafka buffer、socket buffer、N+1 collector 和告警窗口保证，而不是宣称绝对零丢失。
 
@@ -263,7 +264,9 @@ MySQL 管理态保存 CIDR、labels、组 ID/名称和 selector；immutable publ
 
 base fact 一条 flow 只写一行：保存唯一 `local_prefix_id/remote_prefix_id`、去重后的 `*_address_set_ids`，以及 `remote_geo_continent_id/region_id/country_id/province_id/city_id`。不为五级 Geo 复制五条 base fact。异步 rollup 才将同一计数展开为五种独立 `dimension_kind`；每次查询必须选定一个 kind。地址段流量归类必定异步：collector 只送 raw datagram；worker 使用已加载内存快照做 LPM/Geo range lookup；CH rollup 从 base 的稳定 ID 汇总。禁止 UDP 热路径访问 MySQL、文件或 HTTP。
 
-真实 CH 五级守恒门禁使用独立数据库顺序执行 001..005，同一闭合 1m 桶只写三条 base fact，分别落到两个国家、两个省和三个城市；一次 rollup 后分别查询 `geo.continent/region/country/province/city`。每一级都必须保持 600 raw bytes、3 received records，同一级稳定 ID 唯一，父级值等于其叶节点之和；这证明“每条 fact 每级一次”，不能替代尚未执行的 Kafka 四协议 corpus 重放。
+真实 CH 五级守恒门禁使用独立数据库顺序执行 001..005，同一闭合 1m 桶只写三条 base fact，分别落到两个国家、两个省和三个城市；一次 rollup 后分别查询 `geo.continent/region/country/province/city`。每一级都必须保持 600 raw bytes、3 received records，同一级稳定 ID 唯一，父级值等于其叶节点之和；这只证明“每条 fact 每级一次”，协议输入链路由下述 Kafka 四协议 corpus 门禁独立证明。
+
+四协议正常链路门禁已独立补齐：固定 Akvorado sFlow v5、NetFlow v5/v9、IPFIX pcap 通过真实回环 UDP Receiver、来源准入和自动 decoder 进入唯一 RawFlow topic，再由真实 consumer group、GoFlow2、immutable version catalog 和 native CH writer 落隔离数据库。验收从每条 CH fact 按 block 原顺序重算 receipt SHA-256，同时核对 record count、raw/estimated bytes/packets 和 valid-estimate count；再对所有 event-time 分钟桶执行 production rollup，continent/region/country/province/city 每一级的 raw bytes/records 都必须等于 base。测试用唯一 topic/database，成功或失败均清理，不改开发数据；该正常链路不能替代 broker/rebalance/worker/CH 故障矩阵、版本混跑或容量测试。
 
 例如地址区间 `203.0.113.0/24` 的 range 只保存 `geo_leaf_code=330100`、`asn=0`；字典使用 EdgeManager 的稳定编码保存 `Asia <- EastAsia <- CN <- 330000 <- 330100`。worker 一次 lookup 后在同一 fact 得到五个 ID。若它还属于“重点客户”和“教育网”两个组，`remote_address_set_ids=[set-education,set-key-customer]`；不会复制成七条 flow，也不要求先分配 ASN。
 

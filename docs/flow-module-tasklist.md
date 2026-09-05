@@ -40,7 +40,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 代码提交：`886ccb2b feat(flow): complete raw pipeline dimensions and rollup lifecycle`；包含 027/028、旧 collector state-restore/cleanup 删除、分层 Geo/address set、worker/CH/query 契约及 rollup production handler/store/runtime。
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
-- FLOW-03B 真实 CH：`66453df3 test(flow): verify Geo rollups on ClickHouse`；同一组三条 base fact 在 continent/region/country/province/city 五级分别保持 600 raw bytes/3 records，同层稳定 ID 无重复；七组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。Kafka 四协议 corpus 重放仍是独立未完成门禁。
+- FLOW-03B 真实 CH：`66453df3 test(flow): verify Geo rollups on ClickHouse`；同一组三条 base fact 在 continent/region/country/province/city 五级分别保持 600 raw bytes/3 records，同层稳定 ID 无重复；七组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。
+- FLOW-03B Kafka corpus：`66c28373 test(flow): replay four protocols through Kafka` 与 `282e2a22 fix(flow): flush accepted datagrams on shutdown`；Akvorado sFlow v5、NetFlow v5/v9、IPFIX pcap 经真实 UDP Receiver/source admission/自动协议识别 → RawFlow → Kafka 4.3.1 → GoFlow2 worker → ClickHouse 26.3，逐 block 从 fact 重算 receipt checksum 并核对 count/counter，五级 Geo rollup 守恒。测试同时复现并修复 Receiver 先停时取消 Kafka 在途记录的问题：已接收记录由 producer 生命周期持有，`Close` flush 后 6/6 到达。隔离 topic/database 均已清理。
 - FLOW-05A 真实 CH：`c876e974 test(flow): verify versioned aggregate limits`；跨版本同名维度不合并、等值 TopN tuple tie-break、版本化 `_other`、mixed-version metadata、bytes/records 守恒，以及 `max_rows_to_read/max_result_rows` 拒绝且零部分结果已验证。服务端长查询/静默传输超时仍属 FLOW-08。
 - FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
@@ -56,7 +57,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-08A1：`24bd111b feat(flow): validate ClickHouse migration lifecycle`；真实 001..005 loader、精确字节 checksum、quote/comment-aware statement splitter 和 fail-closed recorded-state planner 已提交；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A2：`5182f28e feat(flow): operationalize ClickHouse migrations`；embedded migration CLI、持久锁/statement checkpoint、固定 Kafka/ClickHouse Compose 和真实生命周期测试已提交；ClickHouse 26.3 空库/重放/dirty resume 与 Kafka 4.3.1 `acks=all` 生产消费通过。
 - FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility` 与 `5d7f9761 test(flow): recover migrations after statement deadline`；旧/新 migration set、drift fail-closed、CH/Kafka restart、真实 active-statement deadline 和新连接池 resume 已验证。静默断包、集群和容量门禁未关闭。
-- 尚未具备的证据：四协议真实 RawFlow corpus、broker/worker/CH 故障矩阵、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点通过替代。
+- 尚未具备的证据：broker/worker/CH 故障矩阵、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点正常链路通过替代。
 
 ## 3. 已完成实现与证据
 
@@ -73,7 +74,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] partition 内串行、跨 partition 并行；成功 durable handler 后才 mark offset。
 - [x] sFlow v5、NetFlow v5/v9、IPFIX；模板/采样状态按 owner 隔离；assignment 有界回放且不倒退 committed watermark。
 - [x] 生产入口装配签名历史 plan、checksummed dimension/classification publication、Geo bundle、Kafka、GoFlow2、CH。
-- [x] 证据：Akvorado 四协议 pcap、多 sampler `4000/2000`、fresh processor deterministic replay、decode/adapter fuzz、Flow race/vet。
+- [x] 证据：Akvorado 四协议 pcap、多 sampler `4000/2000`、fresh processor deterministic replay、decode/adapter fuzz、Flow race/vet；真实 UDP→Kafka→worker→CH 正常链路见 `66c28373`/`282e2a22`。
 - [x] **已提交**：`886ccb2b`。
 
 ### FLOW-03 采样、方向和六维
@@ -109,12 +110,13 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **查询 API/显示**：一次只选一个 Geo level，返回 id/name/parent/path/additive/completeness/version；地址组支持 include_any/include_all/exclude_any，组合值从 base 去重计算，单组 rollup 明确 `additive=false`。平台现存重复 v1 loader 的收敛登记在 PLAT-04D，本切片不直接改 hub。
 - [x] **集成（进程内）**：真实压缩 v4/v6 bundle、原子热加载、事件时间旧版本选择、Geo v2 → worker → CH native input/rollup 字段契约已覆盖；同一 base flow 只携带一组五级 ID。
 - [x] **集成（真实 CH）**：独立数据库顺序 migration、native writer、1m rollup 和五级 query 串联；同一组三条 base fact 在 continent/region/country/province/city 每级均保持 600 raw bytes/3 records，同层稳定 ID 无重复，父级与叶节点求和一致。证据提交 `66453df3`。
-- [ ] **集成（Kafka corpus 重放）**：以真实 sFlow v5、NetFlow v5/v9、IPFIX corpus 经 collector→Kafka→worker 重放并与真实 CH 五级结果对账；不得用直接 writer 测试冒充该协议链路。
+- [x] **集成（Kafka corpus 重放）**：真实 sFlow v5、NetFlow v5/v9、IPFIX corpus 已经 production UDP Receiver、source admission、自动 decoder、RawFlow/Inlet、隔离 Kafka topic、partition worker 和 native CH writer；四协议均有 durable fact，template missing/reject/retry 为零；逐 receipt 重算 checksum 并核对 count/raw/estimated bytes/packets，真实 1m rollup 五级均与 base 守恒。测试由显式 `WATCHDOG_FLOW_KAFKA_CLICKHOUSE_INTEGRATION=1` 开启，只创建并清理隔离 topic/database。
 - [x] **变更设计/契约测试（数据面）**：v1/v2 bundle 并存读取，worker schema v2，CH 002 只向前增加字段/枚举且 migration contract 以顺序执行后的有效 schema 为准；客户 Geo 修正会清除不兼容的供应商路径 ID；导出版本 hash 覆盖 v4/v6、运营商和字典全部语义输入。
 - [ ] **变更设计/测试（查询面）**：旧 worker 对不兼容 publication 的拒绝/滚动升级、双版本查询窗口、回滚只切 publication 不改 base。
 - [x] **回归（本地）**：Flow 定向包/命令 race、vet、test，Geo 导出脚本/py_compile 与 CH schema contract 通过。
-- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览、查询 API/显示和 Kafka corpus 重放仍未提交，不因此关闭 FLOW-03B 剩余门禁。
+- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览和查询 API/显示仍未提交，不因此关闭 FLOW-03B 剩余门禁。
 - [x] **外部 CH 证据已提交**：五级 Geo 直计数与守恒门禁进入 `66453df3`；测试只创建并清理 `watchdog_flow_it_geo_hierarchy`，不修改已有开发数据。
+- [x] **外部 Kafka→CH 证据已提交**：四协议正常链路进入 `66c28373`，真实 UDP collector 与关停 flush 修复进入 `282e2a22`；连续执行及与其余八项真实 CH 数据门禁组合回归通过，测试结束只保留部署固定 topic `watchdog.flow.raw-v1`。
 
 ### FLOW-04B Rollup operation job
 
@@ -271,8 +273,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 ## 5. 外部门禁
 
-- [ ] 真实 Kafka：四协议 RawFlow、partition key、broker restart、rebalance、worker crash、模板重放、关闭 flush。
-- [ ] 真实 ClickHouse：重复消费、partial response、restart/timeout、dedup window 外 repair、DDL 升级和 count/checksum。
+- [x] 真实 Kafka/CH 正常链路：四协议 UDP RawFlow、按 exporter key 保持模板/数据顺序、关闭 flush、四协议 durable fact、receipt count/counter/checksum 和五级 rollup 守恒。
+- [ ] 真实 Kafka 故障链路：四协议链路上的 broker restart、rebalance、worker crash、assignment 模板窗口重放和 lag/committed offset 收敛；既有单条 broker restart 不能替代。
+- [ ] 真实 ClickHouse 故障链路：重复消费、partial insert/response、worker/CH restart/timeout、dedup window 外 repair 和 count/checksum 重收敛；正常链路精确 checksum 不能替代。
+- [ ] ClickHouse 发布：实际旧/新制品、Replicated/Distributed/ON CLUSTER DDL 与集群回滚/forward-fix。
 - [ ] 性能环境：固定硬件、真实混合 corpus、N+1、容量和 72h soak。
 - [ ] 发布许可证：Akvorado 派生文件 SPDX/来源、根许可证、NOTICE、依赖/制品声明。
 
