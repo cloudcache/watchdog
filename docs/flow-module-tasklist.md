@@ -42,7 +42,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-03B 真实 CH：`66453df3 test(flow): verify Geo rollups on ClickHouse`；同一组三条 base fact 在 continent/region/country/province/city 五级分别保持 600 raw bytes/3 records，同层稳定 ID 无重复；七组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。
 - FLOW-03B Kafka corpus：`66c28373 test(flow): replay four protocols through Kafka` 与 `282e2a22 fix(flow): flush accepted datagrams on shutdown`；Akvorado sFlow v5、NetFlow v5/v9、IPFIX pcap 经真实 UDP Receiver/source admission/自动协议识别 → RawFlow → Kafka 4.3.1 → GoFlow2 worker → ClickHouse 26.3，逐 block 从 fact 重算 receipt checksum 并核对 count/counter，五级 Geo rollup 守恒。测试同时复现并修复 Receiver 先停时取消 Kafka 在途记录的问题：已接收记录由 producer 生命周期持有，`Close` flush 后 6/6 到达。隔离 topic/database 均已清理。
-- FLOW-05A 真实 CH：`c876e974 test(flow): verify versioned aggregate limits`；跨版本同名维度不合并、等值 TopN tuple tie-break、版本化 `_other`、mixed-version metadata、bytes/records 守恒，以及 `max_rows_to_read/max_result_rows` 拒绝且零部分结果已验证。服务端长查询/静默传输超时仍属 FLOW-08。
+- FLOW-05A 真实 CH：`c876e974 test(flow): verify versioned aggregate limits`；跨版本同名维度不合并、等值 TopN tuple tie-break、版本化 `_other`、mixed-version metadata、bytes/records 守恒，以及 `max_rows_to_read/max_result_rows` 拒绝且零部分结果已验证。服务端长查询/静默传输的单节点时限证据由 FLOW-08A3 承载。
 - FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；真实 CH 执行证据由后述 `55a3b166` 独立承载。
@@ -57,7 +57,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-05C1：`8a4a9b24 feat(flow): publish query capability registry`；aggregate/customer 与 detail 三层能力从 compiler 的同一 registry 导出，逐项验证声明与接受/拒绝一致且返回副本不可污染；`internal/flowquery` race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A1：`24bd111b feat(flow): validate ClickHouse migration lifecycle`；真实 001..005 loader、精确字节 checksum、quote/comment-aware statement splitter 和 fail-closed recorded-state planner 已提交；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A2：`5182f28e feat(flow): operationalize ClickHouse migrations`；embedded migration CLI、持久锁/statement checkpoint、固定 Kafka/ClickHouse Compose 和真实生命周期测试已提交；ClickHouse 26.3 空库/重放/dirty resume 与 Kafka 4.3.1 `acks=all` 生产消费通过。
-- FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility` 与 `5d7f9761 test(flow): recover migrations after statement deadline`；旧/新 migration set、drift fail-closed、CH/Kafka restart、真实 active-statement deadline 和新连接池 resume 已验证。静默断包、集群和容量门禁未关闭。
+- FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility`、`5d7f9761 test(flow): recover migrations after statement deadline` 与 `f13b57d3 fix(flow): bound silent ClickHouse operations`；旧/新 migration set、drift fail-closed、CH/Kafka restart、调用方 deadline、内部 operation deadline、无隐式 DDL retry 和新连接池恢复已验证。集群和容量门禁未关闭。
 - FLOW-08A3 Kafka worker 恢复：`11cd81b0 test(flow): verify Kafka template replay recovery`；同一真实 consumer group 先提交 v9/IPFIX 模板和数据至 offset 4，新数据不带模板；全新 worker 经 assignment 有界回放后能解码新数据，注入 durable failure 时 committed offset 保持 4，下一全新 worker 再次接管并精确推进至 6。真实 Kafka 连续 5 次及正常 corpus 组合 race 2 次通过，隔离 topic 已清理。
 - 尚未具备的证据：完整 broker/worker/CH 故障矩阵、实际 worker 强杀与重叠成员 rebalance、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点证据替代。
 
@@ -267,10 +267,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A3 Kafka 单节点集成**：Kafka `4.3.1` 隔离 topic 以 `acks=all` 写入一条，broker restart 后从原 partition/offset 读回；测试 topic 已删除，`watchdog.flow.raw-v1` 12 个 partition 的 leader/ISR 均恢复为 1。
 - [x] **FLOW-08A3 Kafka worker failure/assignment replay 集成**：真实单 partition topic/group 先提交 v9/IPFIX template+data 至 committed-next-offset 4，再只写 data；全新 processor 必须从 4 向前回放 4 条才能解码新 data。注入 durable handler failure 后 offset 仍为 4，下一全新 processor 接管后同时看到 replay data `1/3` 与新 data `4/5`，offset 收敛为 6，template missing/reject 为零；测试不新建状态库/topic 类型，隔离 topic 自动清理。证据提交 `11cd81b0`。
 - [x] **FLOW-08A3 active-statement deadline 集成**：真实无结果 migration statement 运行中由 100ms context deadline 中断；旧连接池关闭后，新连接池 inspect 到 dirty statement 0、锁已由独立 cleanup context 释放，显式 resume 后收敛为 applied。测试语句写入 `null()` table function，无业务副作用。
-- [ ] **FLOW-08A3 transport timeout/断包集成**：静默丢包的 `ReadTimeout` 仍须受控代理验证；不能用持续发送 progress packet 的长查询冒充，也不得在 migration executor 内增加隐式 DDL retry。
+- [x] **FLOW-08A3 transport timeout/断包集成**：查明 ch-go `ReadTimeout` 只是单次 packet read 的轮询间隔，超时后库内继续读取，不能充当操作截止时间；生产 native executor 增加独立 `OperationTimeout`，且保留更早的调用方 deadline。透明 TCP 代理先通过 control query，再静默丢弃 server→client 响应；真实 CH race 连续 5 次均由约 250ms 的内部 operation deadline 结束，连接数保持 1（无隐式 DDL retry），新连接池恢复成功。证据提交 `f13b57d3`。
 - [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
 - [x] **FLOW-08A3 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
-- [x] **FLOW-08A3 已提交（单节点兼容范围）**：版本/restart 证据进入 `d67f08aa`，active-statement deadline/resume 进入 `5d7f9761`；静默 transport 断包与集群门禁继续保持未完成。
+- [x] **FLOW-08A3 已提交（单节点兼容范围）**：版本/restart 证据进入 `d67f08aa`，active-statement deadline/resume 进入 `5d7f9761`，静默断包与生产操作时限进入 `f13b57d3`；集群/发布门禁继续保持未完成。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。

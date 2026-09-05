@@ -430,7 +430,9 @@ CH migration 文件名固定为连续的 `NNN_lower_snake.sql`，单文件不超
 
 08A3 的版本兼容规则只允许“相同不可变前缀 + 新 migration 后缀”：旧 migration 集先应用后，新二进制必须只看到待执行后缀；数据库版本高于二进制内置集合时，旧二进制必须拒绝；任何已记录 version 的 name/checksum 变化，无论状态 clean/dirty，都必须拒绝，系统不提供 adopt-checksum、跳过或自动改 ledger 的逃生口。预发布 migration 只有在尚未通过外部发布门禁且没有生产 ledger 时才可修正；一旦制品发布，修复只能新增下一版本 migration。进程 cancel/超时后不再执行新 statement，但锁释放使用独立的短清理上下文；若 ClickHouse 不可达或进程被强杀，持久锁跨服务重启保留，必须在确认旧进程死亡后 exact-owner unlock。
 
-单节点故障门禁至少覆盖：旧集合 001..N → 新集合 001..N+1、旧集合读新库拒绝、checksum drift 拒绝、最后一条未确认 statement 重放、调用方 cancel/deadline 后锁释放与新连接池 resume、锁跨 ClickHouse restart 保留、Kafka `acks=all` 记录跨 broker restart 可读。它只能证明本地持久化和 fail-closed 控制面；不能证明副本故障、controller quorum、ISR 收缩、Replicated/Distributed DDL、N+1 容量或 RPO/RTO。ch-go `ReadTimeout` 是连续无 packet 的传输超时，ClickHouse progress packet 会刷新它；长查询 deadline 通过 context 独立控制，静默丢包/read timeout 必须另用受控代理验证。两类超时都不允许迁移器自行无限重试 DDL，操作者必须先 inspect，再按 clean/dirty 状态选择 apply/resume。
+单节点故障门禁至少覆盖：旧集合 001..N → 新集合 001..N+1、旧集合读新库拒绝、checksum drift 拒绝、最后一条未确认 statement 重放、调用方 cancel/deadline 后锁释放与新连接池 resume、锁跨 ClickHouse restart 保留、Kafka `acks=all` 记录跨 broker restart 可读。它只能证明本地持久化和 fail-closed 控制面；不能证明副本故障、controller quorum、ISR 收缩、Replicated/Distributed DDL、N+1 容量或 RPO/RTO。
+
+ClickHouse 时限必须拆成三类，不得把配置名当成库行为推断：`DialTimeout` 约束 TCP 建连；ch-go `ReadTimeout` 仅给一次 packet read 设置 deadline，库捕获该网络超时后继续轮询，因此它既不是静默链路的失败时限，也不会因有/无 progress packet 决定整条查询何时结束；`OperationTimeout` 才是一次 pool 建立或完整 `Do` 的硬上限，并与调用方 context 取更早者。worker 默认 operation 2m，migration CLI 与 hub rollup 默认 5m；预计更长的 DDL/rollup 必须显式调大，不能设成无界。透明 TCP 代理门禁在成功 control query 后仅丢弃 server→client 响应，验证内部 operation deadline、单连接无隐式 DDL retry，以及关闭旧池后新池恢复。操作者仍必须先 inspect，再按 clean/dirty 状态选择 apply/resume。
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
