@@ -196,7 +196,7 @@ const overseasQuerySQL = `WITH
   ),
   selected AS (
     SELECT source.*
-    FROM {{TABLE}} FINAL AS source
+    FROM {{TABLE}} AS source FINAL
     INNER JOIN latest USING (tenant_id, bucket, generation)
     WHERE tenant_id = {tenant:String}
       AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}

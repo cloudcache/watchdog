@@ -171,7 +171,7 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 			t.Fatalf("request value %q was interpolated into SQL", value)
 		}
 	}
-	if queryParameter(first.Query, "ip") != "'2001:db8::1'" || queryParameter(first.Query, "fetch_limit") != "3" ||
+	if queryParameter(first.Query, "ip") != "'2001:db8::1'" || queryParameter(first.Query, "fetch_limit") != "'3'" ||
 		queryParameter(first.Query, "detail_target_0") != "'target-a'" || queryParameter(first.Query, "detail_target_1") != "'target-b'" {
 		t.Fatalf("detail parameters=%+v", first.Query.Parameters)
 	}

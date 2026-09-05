@@ -60,7 +60,7 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 		"AND dimension_kind = {dimension:String}",
 		"AND business_direction IN ({direction_0:String}, {direction_1:String})",
 		"ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC",
-		"if(is_top, dimension_value, '_other')",
+		"if(is_top, dimension_value, '_other') AS grouped_dimension_value",
 		"toFloat64(sum(estimated_bytes)) * 8 / {bucket_seconds:UInt32}",
 		"toUInt8(1), toUInt64(count())",
 		"is_metadata ASC, bucket ASC",
@@ -146,7 +146,7 @@ func TestCompileOneHourNormalizesTimesAndDefaultsPresentationTimezone(t *testing
 	if compiled.From.Location() != time.UTC || compiled.From.Hour() != 0 || compiled.To.Hour() != 0 || compiled.Timezone != "UTC" || compiled.EstimatedRows != 49 {
 		t.Fatalf("compiled metadata=%+v", compiled)
 	}
-	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") || queryParameter(compiled.Query, "bucket_seconds") != "3600" {
+	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") || queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
 		t.Fatalf("one-hour query is wrong: %s", compiled.Query.Body)
 	}
 }

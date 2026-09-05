@@ -481,7 +481,11 @@ func stringParameter(key, value string) proto.Parameter {
 }
 
 func uintParameter(key string, value uint64) proto.Parameter {
-	return proto.Parameter{Key: key, Value: strconv.FormatUint(value, 10)}
+	// The native protocol serializes query parameters as custom settings. Its
+	// value is a ClickHouse Field dump, not a bare SQL token; numeric dumps must
+	// therefore be quoted just like ch.Parameters does before the placeholder
+	// type converts them to UInt8/UInt16/UInt32.
+	return proto.Parameter{Key: key, Value: "'" + strconv.FormatUint(value, 10) + "'"}
 }
 
 func boolUint(value bool) uint64 {
@@ -511,7 +515,7 @@ const querySQL = `WITH
   ),
   filtered AS (
     SELECT source.*
-    FROM %s FINAL AS source
+    FROM %s AS source FINAL
     INNER JOIN latest USING (tenant_id, bucket, generation)
     WHERE tenant_id = {tenant:String}
       AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
@@ -537,7 +541,7 @@ const querySQL = `WITH
   series_rows AS (
     SELECT
       bucket,
-      if(is_top, dimension_value, '_other') AS dimension_value,
+      if(is_top, dimension_value, '_other') AS grouped_dimension_value,
       if(is_top, toUInt8(0), toUInt8(1)) AS is_other,
       dimension_snapshot_id,
       geo_version,
@@ -550,13 +554,13 @@ const querySQL = `WITH
     FROM tagged
     WHERE {include_other:UInt8} = 1 OR is_top
     GROUP BY
-      bucket, is_top, if(is_top, dimension_value, '_other'),
+      bucket, is_top, grouped_dimension_value,
       dimension_snapshot_id, geo_version, classification_version
   )
 SELECT *
 FROM (
   SELECT
-    bucket, dimension_value, is_other,
+    bucket, grouped_dimension_value AS dimension_value, is_other,
     dimension_snapshot_id, geo_version, classification_version,
     value, received_records, unknown_sampling_records, quality_records, generated_at,
     toUInt8(0) AS is_metadata, toUInt64(0) AS covered_buckets

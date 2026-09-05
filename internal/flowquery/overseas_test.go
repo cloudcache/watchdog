@@ -88,8 +88,8 @@ func TestCompileOverseasSupportsRegionHourlyAndNonRateMetric(t *testing.T) {
 	}
 	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") ||
 		!strings.Contains(compiled.Query.Body, "toFloat64(metric_total) AS value") ||
-		queryParameter(compiled.Query, "geo_dimension") != "'geo.region'" || queryParameter(compiled.Query, "include_other") != "0" ||
-		queryParameter(compiled.Query, "bucket_seconds") != "3600" {
+		queryParameter(compiled.Query, "geo_dimension") != "'geo.region'" || queryParameter(compiled.Query, "include_other") != "'0'" ||
+		queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
 		t.Fatalf("hourly region query is wrong:\n%s\n%+v", compiled.Query.Body, compiled.Query.Parameters)
 	}
 }
