@@ -591,6 +591,21 @@ ORDER BY bucket, dimension_snapshot_id, geo_version, classification_version;
 
 95th 必须先生成等长 bucket 的 bps，再使用 `quantileExact(0.95)`；平均是 bucket 平均，不是不同 bucket 宽度混算。当前值必须标明最新完整 bucket，不能使用未关闭 bucket 冒充完整数据。
 
+### 9.6 境外 KPI 与 country/region 查询
+
+境外专题只读 1m/1h aggregate 的最新 generation，不同步扫描 `flow_records`，也不增加第二张境外事实表。`category=overseas` 是数据面按事件时间 classification snapshot 生成的唯一境外权威；查询层不得再次用国家名称、ISO 字符串或当前港澳台设置重判历史。`geo_level` 首发只接受 `country/region`，分别固定读取 `geo.country/geo.region` rollup；Geo 名称和 breadcrumb 由结果行自己的 `geo_version` 在共享 `flowdimension.GeoCatalog` 中解析，不能跨版本按名称合并。
+
+同一个 latest-generation 查询返回两类行：
+
+- `kind=kpi`：对 `category=overseas` 的流量返回 `in/out/combined × ipv4/ipv6/unknown/all`。业务方向决定远端和本地端：入向的远端/本地分别是 `src_ip/dst_ip`，出向分别是 `dst_ip/src_ip`；复用现有 endpoint rollup，不新增冗余的 local/remote IP 高基数维度。查询同时聚合远端和本地两条镜像计数并校验 metric、received、unknown-sampling、quality 四组总数完全一致，不一致时 provider 整体失败，禁止只显示其中一侧。
+- `kind=geo`：已分配稳定 Geo ID 且 `category=overseas` 的行进入 `geo_scope=overseas` TopN；所选 country/region 层为 `_unassigned` 的所有入/出向流量进入独立 `geo_scope=unknown_geo` 行，先判 unknown 再判 overseas。unknown 不进入境外 TopN/other，也不能因为地址看起来像公网地址而补猜境外。`other` 只合并当前版本内非 TopN 的已知境外 ID。
+
+IPv4 在 aggregate endpoint 中仍是 `::ffff:a.b.c.d` 的 IPv4-mapped IPv6；family 只在这一规范表示上判定，并显式保留 `::`/异常为 `unknown`，绝不把 sentinel 计作 IPv6。每个 family 和 direction 组合还生成服务端精确的 `all/combined` 行：流量可加，唯一 IP 数必须由 `uniqExact` 对原始 endpoint ID 集合计算，客户端不得把入/出向去重数相加。
+
+KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已接收 Flow 事实中的精确去重数量，不应用 sampling rate，也不声称等于未采样全网的真实唯一主机数。bytes/packets 按既有 raw/estimated metric 口径计算；每行同时返回 `received_records/unknown_sampling_records/quality_records` 和已知标志，页面必须把 observed 与 sampling completeness 一起展示。
+
+请求继续只允许 `customer` view、闭桶 UTC 范围、固定 metric registry、TopN 1..100，以及 `in/out/business/target/device/exporter` typed filters；tenant 仅来自 authenticated scope。结果预算按每桶最多 `12 + 3 × (TopN + other + unknown)` 行预拒绝，CH 设置 15 秒、25 万结果、5,000 万扫描行、4 GiB 扫描字节和 4 GiB 查询内存硬限，且固定 `join_use_nulls=0` 让缺失的 endpoint 镜像产生 `endpoint_consistent=0`，而不是受集群默认值影响。结果保留 `dimension_snapshot_id/geo_version/classification_version`，返回 mixed-version 和 generation coverage；唯一 metadata sentinel、typed multi-block 校验及任一错误全有或全无的规则与 9.1 相同。真实 CH 对 endpoint 镜像、IPv4-mapped 输出、repair generation 和 TopN/unknown 守恒的执行证据是独立集成门禁，本地 SQL contract test 不能替代。
+
 ## 10. API
 
 所有路径在 `/api/v1` 下，统一 tenant/RBAC、cursor/page、sort、filter、field mask、ETag、idempotency、audit 和错误 envelope。

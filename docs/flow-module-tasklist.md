@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-07B — 境外 KPI/query 契约。** FLOW-04B 的设计、编码、单元、本地回归和真实 MySQL 验证已经完成，真实 CH 与版本混跑仍保留在外部门禁；按循环协议返回既定队列。下一轮只实现独立的 country/region/unknown Geo 查询核心，不接 UI/hub。
+**活动切片：FLOW-07B — 境外 KPI/query 契约。** 独立 provider 核心的设计、编码、单元、变更测试和本地回归已完成；真实 CH endpoint 镜像/IPv4-mapped/repair/TopN 守恒仍是外部门禁，UI/hub 接线仍归 FLOW-05C。下一无平台依赖切片是 FLOW-07A candidate schema/materializer，须先以前向 CH migration 解除既有 schema 门禁。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -170,7 +170,14 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **FLOW-07A 变更测试**：本地已覆盖确定性 evidence/score、未知 schema 和规则顺序/输入修改；跨版本 CH 重算、publication 增删/回滚等待 candidate/platform 门禁。
 - [ ] **FLOW-07A schema 门禁**：001 candidate 缺 `remote_prefix_id/geo_version/classification_version`；实现 materializer 前新增顺序 migration 与兼容/回填测试，不回改已发布 migration。
 - [x] **FLOW-07A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker`、同范围 `go vet` 与 `git diff --check` 通过。
-- [ ] **FLOW-07B（当前）**：境外 KPI/query 核心；country/region 口径、IPv4/IPv6 和 unknown Geo 单列。UI/hub 接线仍归 FLOW-05C 平台门禁。
+- [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
+- [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。
+- [x] **FLOW-07B 单元**：覆盖 typed tenant/filter、闭桶/范围/结果预算、country/region、rate/count、境外/unknown 分离、方向端点映射、IPv4-mapped family、TopN/other、镜像一致性、metadata coverage、mixed versions、多 block、畸形/重复/越界/取消全失败。
+- [ ] **FLOW-07B 集成**：真实 CH 顺序 migration + rollup 执行，验证 IPv4/IPv6 混合、in/out local/remote 镜像、unknown country/region、repair 后旧 key 消失、TopN+other 和流量守恒；当前环境无 CH，保留外部门禁。
+- [x] **FLOW-07B 变更设计**：唯一 IP 明确为 `observed_remote_ips/observed_local_hosts`，即收到的 Flow 事实精确去重，不按 sampling rate 放大；历史 classification/Geo/version 不重判，结果跨版本拆分或告警。
+- [x] **FLOW-07B 变更测试**：customer-only、未知 level/direction/metric、请求值不插 SQL、IP/Geo unknown 不冒充、endpoint 汇总不一致 fail-closed、结果硬限与 sentinel 错误均已固定为契约测试。
+- [x] **FLOW-07B 回归（本地）**：`go test -race ./internal/flowquery`、`go vet ./internal/flowquery` 及 Flow/全库回归通过后登记最终命令；真实 CH 不由本地 fake executor 冒充。
+- [ ] **FLOW-07B 已提交**：代码、测试和本文须进入独立可复现提交后才能勾选并记录 hash。
 - [ ] **FLOW-07C（平台依赖解除后）**：复用 operation_jobs 实现授权/配额/cooldown/kill-switch probe 编排与可插拔 agent；不得把主动握手放进 Flow 热路径。
 
 ### FLOW-08 HA/Lifecycle/Release
