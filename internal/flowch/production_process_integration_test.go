@@ -73,6 +73,8 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	if clickHouseAddress == "" {
 		clickHouseAddress = "127.0.0.1:9000"
 	}
+	clickHouseProxy := newSilentResponseProxy(t, clickHouseAddress)
+	t.Cleanup(clickHouseProxy.Close)
 
 	worker := startProductionProcess(t, root, workerBinary,
 		"-bootstrap-plan", artifacts.plan,
@@ -85,9 +87,11 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 		"-kafka-fetch-min-bytes", "1",
 		"-kafka-fetch-max-wait", "100ms",
 		"-kafka-template-replay-records", "64",
-		"-clickhouse-address", clickHouseAddress,
+		"-clickhouse-address", clickHouseProxy.Address(),
 		"-clickhouse-database", database,
 		"-clickhouse-password-file", passwordFile,
+		"-clickhouse-read-timeout", "50ms",
+		"-clickhouse-operation-timeout", "250ms",
 		"-metrics-listen", "0.0.0.0:"+workerMetricsPort,
 	)
 	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 0)
@@ -112,8 +116,15 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_datagrams_oversize_total", 1)
 	assertProcessMetric(t, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
 
+	clickHouseProxy.DropServerResponses()
+	sendUDPPayloads(t, netflowAddress, corpusFixturePayload(t, "netflow", "nfv5.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 1)
+	waitForProcessMetric(t, ctx, worker, workerMetrics, `watchdog_flow_clickhouse_insert_errors_total{class="retryable"}`, 1)
+	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_kafka_records_total", 0)
+	clickHouseProxy.ForwardServerResponses()
+	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 1)
+
 	sendUDPPayloads(t, netflowAddress,
-		corpusFixturePayload(t, "netflow", "nfv5.pcap"),
 		corpusFixturePayload(t, "netflow", "template.pcap"),
 		corpusFixturePayload(t, "netflow", "data.pcap"),
 		corpusFixturePayload(t, "netflow", "ipfixprobe-templates.pcap"),
@@ -139,6 +150,10 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 
 	collector.stop(t)
 	worker.stop(t)
+}
+
+func (p *silentResponseProxy) ForwardServerResponses() {
+	p.responseMode.Store(proxyForward)
 }
 
 type productionBootstrap struct {
