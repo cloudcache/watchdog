@@ -142,13 +142,20 @@ type compiledAddressSetMembership struct {
 type GeoOverrideFields uint8
 
 const (
-	GeoOverrideCountry GeoOverrideFields = 1 << iota
-	GeoOverrideAdminCode
-	GeoOverrideSubdivision
-	GeoOverrideCity
-	GeoOverrideISPID
-	GeoOverrideASN
+	// These values are persisted in flow_records.customer_geo_override_fields.
+	// Never renumber them; new fields must use an unused bit.
+	GeoOverrideCountry     GeoOverrideFields = 1 << 0
+	GeoOverrideAdminCode   GeoOverrideFields = 1 << 1
+	GeoOverrideSubdivision GeoOverrideFields = 1 << 2
+	GeoOverrideCity        GeoOverrideFields = 1 << 3
+	GeoOverrideISPID       GeoOverrideFields = 1 << 4
+	GeoOverrideASN         GeoOverrideFields = 1 << 5
+	GeoOverrideKnownFields                   = GeoOverrideCountry | GeoOverrideAdminCode | GeoOverrideSubdivision | GeoOverrideCity | GeoOverrideISPID | GeoOverrideASN
 )
+
+func (f GeoOverrideFields) Valid() bool {
+	return f&^GeoOverrideKnownFields == 0
+}
 
 type compiledGeoOverride struct {
 	info   GeoInfo

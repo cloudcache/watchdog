@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 4 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" {
+	if len(paths) != 5 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
@@ -48,6 +48,10 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"receipt_schema UInt16 DEFAULT 1", "tenant_ids Array(String)",
 		"raw_packets UInt64", "estimated_packets UInt64", "estimated_valid_records UInt64",
 		"min_event_time DateTime64(3, 'UTC')", "max_event_time DateTime64(3, 'UTC')",
+		"fact_schema UInt16 DEFAULT 1", "supplier_remote_country FixedString(2)",
+		"supplier_remote_geo_continent_id", "supplier_remote_geo_region_id", "supplier_remote_geo_country_id",
+		"supplier_remote_geo_province_id", "supplier_remote_geo_city_id", "supplier_remote_asn_source Enum8(",
+		"supplier_geo_version LowCardinality(String)", "supplier_category Enum8(", "customer_geo_override_fields UInt8",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

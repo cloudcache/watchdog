@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	WorkerSchemaVersion = 2
+	WorkerSchemaVersion = 3
 	defaultMaxRows      = 50_000
 	defaultMaxBytes     = 64 << 20
 	hardMaxRows         = 1_000_000
@@ -186,6 +186,8 @@ func approximateRecordBytes(batch *flowworker.EnrichedBatch, record *flowworker.
 	size += len(record.Dimensions.Local.PrefixID) + len(record.Dimensions.Remote.PrefixID)
 	size += len(record.RemoteGeo.Country) + len(record.RemoteGeo.AdminCode) + len(record.RemoteGeo.Subdivision) + len(record.RemoteGeo.City) + len(record.RemoteGeo.Version)
 	size += len(record.RemoteGeo.ContinentID) + len(record.RemoteGeo.RegionID) + len(record.RemoteGeo.CountryID) + len(record.RemoteGeo.ProvinceID) + len(record.RemoteGeo.CityID)
+	size += len(record.SupplierRemoteGeo.Country) + len(record.SupplierRemoteGeo.AdminCode) + len(record.SupplierRemoteGeo.Subdivision) + len(record.SupplierRemoteGeo.City) + len(record.SupplierRemoteGeo.Version)
+	size += len(record.SupplierRemoteGeo.ContinentID) + len(record.SupplierRemoteGeo.RegionID) + len(record.SupplierRemoteGeo.CountryID) + len(record.SupplierRemoteGeo.ProvinceID) + len(record.SupplierRemoteGeo.CityID)
 	for index := 0; index < record.Dimensions.Local.AddressSets.Count(); index++ {
 		id, _ := record.Dimensions.Local.AddressSets.At(index)
 		size += len(id) + 8

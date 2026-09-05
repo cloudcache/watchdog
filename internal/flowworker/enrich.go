@@ -17,7 +17,7 @@ import (
 
 const (
 	RecordBatchSchemaVersion   = 1
-	EnrichedBatchSchemaVersion = 2
+	EnrichedBatchSchemaVersion = 3
 	defaultMaxRecordsPerBatch  = 1_024
 	hardMaxRecordsPerBatch     = 65_535
 	defaultMaxFutureSkew       = 5 * time.Minute
@@ -83,50 +83,55 @@ type EnrichedBatch struct {
 }
 
 type EnrichedRecord struct {
-	SourceRecordID        [32]byte
-	RecordIndex           uint32
-	EventTime             time.Time
-	TargetID              string
-	DeviceID              string
-	ObservationIfIndex    uint32
-	ObservationDirection  ObservationDirection
-	InIf                  uint32
-	OutIf                 uint32
-	SourceIP              netip.Addr
-	DestinationIP         netip.Addr
-	SourcePort            uint16
-	DestinationPort       uint16
-	IPProtocol            uint8
-	TCPFlags              uint8
-	SourceASN             uint32
-	DestinationASN        uint32
-	RawBytes              uint64
-	RawPackets            uint64
-	SamplingMode          uint8
-	SamplingRate          uint64
-	SamplingSource        uint8
-	EstimatedValid        bool
-	EstimatedBytes        uint64
-	EstimatedPackets      uint64
-	FlowDurationMS        uint64
-	QualityFlags          uint64
-	SourceIDType          uint32
-	SourceIDValue         uint32
-	SampleSequence        uint32
-	SamplePool            uint64
-	ExporterDrops         uint64
-	SampleIndex           uint32
-	QualityEpoch          uint64
-	Dimensions            flowdimension.ClassifiedEndpoints
-	LocalPort             uint16
-	RemotePort            uint16
-	RemoteGeo             flowdimension.GeoInfo
-	RemoteASN             uint32
-	RemoteASNSource       ASNSource
-	Category              flowdimension.Category
-	Disposition           flowdimension.RecordDisposition
-	ClassificationVersion uint32
-	DimensionFingerprint  uint64
+	SourceRecordID            [32]byte
+	RecordIndex               uint32
+	EventTime                 time.Time
+	TargetID                  string
+	DeviceID                  string
+	ObservationIfIndex        uint32
+	ObservationDirection      ObservationDirection
+	InIf                      uint32
+	OutIf                     uint32
+	SourceIP                  netip.Addr
+	DestinationIP             netip.Addr
+	SourcePort                uint16
+	DestinationPort           uint16
+	IPProtocol                uint8
+	TCPFlags                  uint8
+	SourceASN                 uint32
+	DestinationASN            uint32
+	RawBytes                  uint64
+	RawPackets                uint64
+	SamplingMode              uint8
+	SamplingRate              uint64
+	SamplingSource            uint8
+	EstimatedValid            bool
+	EstimatedBytes            uint64
+	EstimatedPackets          uint64
+	FlowDurationMS            uint64
+	QualityFlags              uint64
+	SourceIDType              uint32
+	SourceIDValue             uint32
+	SampleSequence            uint32
+	SamplePool                uint64
+	ExporterDrops             uint64
+	SampleIndex               uint32
+	QualityEpoch              uint64
+	Dimensions                flowdimension.ClassifiedEndpoints
+	LocalPort                 uint16
+	RemotePort                uint16
+	RemoteGeo                 flowdimension.GeoInfo
+	RemoteASN                 uint32
+	RemoteASNSource           ASNSource
+	Category                  flowdimension.Category
+	SupplierRemoteGeo         flowdimension.GeoInfo
+	SupplierRemoteASN         uint32
+	SupplierRemoteASNSource   ASNSource
+	SupplierCategory          flowdimension.Category
+	CustomerGeoOverrideFields flowdimension.GeoOverrideFields
+	Disposition               flowdimension.RecordDisposition
+	ClassificationVersion     uint32
+	DimensionFingerprint      uint64
 }
 
 // VersionBlockedError is the consumer-loop signal to pause a Kafka partition
@@ -268,14 +273,15 @@ func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Rec
 
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
 	geoMetadata := geoIndex.Metadata()
-	remoteGeo := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
+	supplierRemoteGeo := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
 	geoMatched := false
 	if dimensions.Remote.IP.IsValid() {
 		if resolved, matched := geoIndex.Lookup(dimensions.Remote.IP); matched {
-			remoteGeo, geoMatched = resolved, true
+			supplierRemoteGeo, geoMatched = resolved, true
 		}
 	}
-	remoteGeo, overrideFields, _ := dimensionSnapshot.ApplyGeoOverride(dimensions.Remote.IP, remoteGeo)
+	supplierRemoteASN, supplierRemoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, supplierRemoteGeo, geoMatched, 0)
+	remoteGeo, overrideFields, _ := dimensionSnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
 	remoteASN, remoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, remoteGeo, geoMatched, overrideFields)
 	localPort, remotePort := endpointPorts(decoded, dimensions)
 	record := EnrichedRecord{
@@ -296,6 +302,8 @@ func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Rec
 		ExporterDrops: decoded.ExporterDrops, SampleIndex: decoded.SampleIndex, QualityEpoch: decoded.QualityEpoch,
 		Dimensions: dimensions, LocalPort: localPort, RemotePort: remotePort,
 		RemoteGeo: remoteGeo, RemoteASN: remoteASN, RemoteASNSource: remoteASNSource,
+		SupplierRemoteGeo: supplierRemoteGeo, SupplierRemoteASN: supplierRemoteASN, SupplierRemoteASNSource: supplierRemoteASNSource,
+		SupplierCategory: classificationSnapshot.Classify(dimensions.Direction, supplierRemoteGeo), CustomerGeoOverrideFields: overrideFields,
 		Category:              classificationSnapshot.Classify(dimensions.Direction, remoteGeo),
 		Disposition:           classificationSnapshot.Disposition(dimensions.Direction),
 		ClassificationVersion: classificationMetadata.Version,

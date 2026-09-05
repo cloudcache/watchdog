@@ -57,6 +57,10 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	if first.RemoteASN != 64500 || first.RemoteASNSource != ASNSourceGeo || secondResult.RemoteASN != 64501 || secondResult.RemoteASNSource != ASNSourceGeo {
 		t.Fatalf("unexpected remote ASN provenance: first=%d/%s second=%d/%s", first.RemoteASN, first.RemoteASNSource, secondResult.RemoteASN, secondResult.RemoteASNSource)
 	}
+	if first.SupplierRemoteGeo != first.RemoteGeo || first.SupplierRemoteASN != first.RemoteASN || first.SupplierRemoteASNSource != first.RemoteASNSource || first.SupplierCategory != first.Category || first.CustomerGeoOverrideFields != 0 ||
+		secondResult.SupplierRemoteGeo != secondResult.RemoteGeo || secondResult.SupplierRemoteASN != secondResult.RemoteASN || secondResult.SupplierRemoteASNSource != secondResult.RemoteASNSource || secondResult.SupplierCategory != secondResult.Category || secondResult.CustomerGeoOverrideFields != 0 {
+		t.Fatalf("unmodified supplier/customer views diverged: first=%+v second=%+v", first, secondResult)
+	}
 	if first.SourcePort != 12345 || first.DestinationPort != 443 || first.LocalPort != 12345 || first.RemotePort != 443 || first.SourceASN != 65001 || first.DestinationASN != 65002 {
 		t.Fatalf("normalized fields changed during enrichment: %+v", first)
 	}
@@ -89,6 +93,12 @@ func TestEnrichBatchAppliesGeoOverrideAndPreservesExplicitUnknownASN(t *testing.
 		t.Fatal(err)
 	}
 	record := result.Records[0]
+	if record.SupplierRemoteGeo.Country != "US" || record.SupplierRemoteGeo.AdminCode != "" || record.SupplierRemoteGeo.ISPID != 0 || record.SupplierRemoteGeo.Source != flowdimension.GeoSchemaV1 {
+		t.Fatalf("supplier Geo baseline was not preserved: %+v", record.SupplierRemoteGeo)
+	}
+	if record.SupplierRemoteASN != 65002 || record.SupplierRemoteASNSource != ASNSourceExporter || record.SupplierCategory != flowdimension.CategoryOverseas {
+		t.Fatalf("supplier provenance = geo=%+v asn=%d/%s category=%s", record.SupplierRemoteGeo, record.SupplierRemoteASN, record.SupplierRemoteASNSource, record.SupplierCategory)
+	}
 	if record.RemoteGeo.Country != "CN" || record.RemoteGeo.AdminCode != "330100" || record.RemoteGeo.ISPID != 3 || record.RemoteGeo.Version != "geo-1" || record.RemoteGeo.Source != "flow_geo_override" {
 		t.Fatalf("unexpected Geo override: %+v", record.RemoteGeo)
 	}
@@ -97,6 +107,10 @@ func TestEnrichBatchAppliesGeoOverrideAndPreservesExplicitUnknownASN(t *testing.
 	}
 	if record.Category != flowdimension.CategoryOnNetLocalCity {
 		t.Fatalf("category = %q", record.Category)
+	}
+	wantOverrideFields := flowdimension.GeoOverrideCountry | flowdimension.GeoOverrideAdminCode | flowdimension.GeoOverrideISPID | flowdimension.GeoOverrideASN
+	if record.CustomerGeoOverrideFields != wantOverrideFields {
+		t.Fatalf("customer override fields = %08b, want %08b", record.CustomerGeoOverrideFields, wantOverrideFields)
 	}
 }
 

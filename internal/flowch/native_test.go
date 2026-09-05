@@ -36,6 +36,14 @@ func (r *queryRecorder) Do(_ context.Context, query ch.Query) error {
 func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T) {
 	batch := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
 	batch.AgentIP = batch.SourceIP
+	batch.Records[0].SupplierRemoteGeo = flowdimension.GeoInfo{
+		Country: "US", City: "San Francisco", Version: "supplier-geo-a", Source: flowdimension.GeoSchemaV2,
+		ContinentID: "NorthAmerica", RegionID: "NorthernAmerica", CountryID: "US", CityID: "SFO",
+	}
+	batch.Records[0].SupplierRemoteASN = 64512
+	batch.Records[0].SupplierRemoteASNSource = flowworker.ASNSourceGeoV2
+	batch.Records[0].SupplierCategory = flowdimension.CategoryOverseas
+	batch.Records[0].CustomerGeoOverrideFields = flowdimension.GeoOverrideCountry | flowdimension.GeoOverrideCity
 	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
@@ -64,9 +72,23 @@ func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T
 	assertEnumValue(t, recorder.queries[0].Input, "business_direction", "out")
 	assertEnumValue(t, recorder.queries[0].Input, "category", "on_net_local_city")
 	assertEnumValue(t, recorder.queries[0].Input, "remote_asn_source", "flow-geo-v2")
+	assertEnumValue(t, recorder.queries[0].Input, "supplier_remote_asn_source", "flow-geo-v2")
+	assertEnumValue(t, recorder.queries[0].Input, "supplier_category", "overseas")
+	if got := columnValue(recorder.queries[0].Input, "fact_schema").(proto.ColUInt16).Row(0); got != factSchemaVersion {
+		t.Fatalf("fact schema=%d", got)
+	}
+	if got := columnValue(recorder.queries[0].Input, "customer_geo_override_fields").(proto.ColUInt8).Row(0); got != uint8(flowdimension.GeoOverrideCountry|flowdimension.GeoOverrideCity) {
+		t.Fatalf("customer override fields=%d", got)
+	}
 	for name, want := range map[string]string{
 		"remote_geo_continent_id": "Asia", "remote_geo_region_id": "EastAsia", "remote_geo_country_id": "CN",
 		"remote_geo_province_id": "330000", "remote_geo_city_id": "330100",
+	} {
+		assertLowCardinalityString(t, recorder.queries[0].Input, name, want)
+	}
+	for name, want := range map[string]string{
+		"supplier_remote_geo_continent_id": "NorthAmerica", "supplier_remote_geo_region_id": "NorthernAmerica",
+		"supplier_remote_geo_country_id": "US", "supplier_remote_geo_city_id": "SFO", "supplier_geo_version": "supplier-geo-a",
 	} {
 		assertLowCardinalityString(t, recorder.queries[0].Input, name, want)
 	}
@@ -154,18 +176,31 @@ func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
 	}
 }
 
-func TestNativeInserterRejectsInvalidEnumsBeforeIO(t *testing.T) {
-	record := testEnrichedRecord(1, 100, 1_000)
-	record.Category = flowdimension.Category("invented")
-	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, record)}, BatchLimits{})
-	if err != nil {
-		t.Fatal(err)
+func TestNativeInserterRejectsInvalidProvenanceBeforeIO(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*flowworker.EnrichedRecord)
+	}{
+		{name: "customer-category", mutate: func(record *flowworker.EnrichedRecord) { record.Category = flowdimension.Category("invented") }},
+		{name: "supplier-category", mutate: func(record *flowworker.EnrichedRecord) { record.SupplierCategory = flowdimension.Category("invented") }},
+		{name: "supplier-override-source", mutate: func(record *flowworker.EnrichedRecord) { record.SupplierRemoteASNSource = flowworker.ASNSourceOverride }},
+		{name: "unknown-override-bit", mutate: func(record *flowworker.EnrichedRecord) { record.CustomerGeoOverrideFields = 1 << 7 }},
 	}
-	recorder := &queryRecorder{}
-	err = (&NativeInserter{executor: recorder}).InsertFlowBlock(context.Background(), blocks[0])
-	var permanent *PermanentError
-	if !errors.As(err, &permanent) || len(recorder.queries) != 0 {
-		t.Fatalf("error=%v queries=%d, want permanent preflight rejection", err, len(recorder.queries))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := testEnrichedRecord(1, 100, 1_000)
+			test.mutate(&record)
+			blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, record)}, BatchLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := &queryRecorder{}
+			err = (&NativeInserter{executor: recorder}).InsertFlowBlock(context.Background(), blocks[0])
+			var permanent *PermanentError
+			if !errors.As(err, &permanent) || len(recorder.queries) != 0 {
+				t.Fatalf("error=%v queries=%d, want permanent preflight rejection", err, len(recorder.queries))
+			}
+		})
 	}
 }
 

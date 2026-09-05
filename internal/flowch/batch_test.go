@@ -128,9 +128,11 @@ func testEnrichedRecord(index byte, rawBytes, estimatedBytes uint64) flowworker.
 			Country: "CN", AdminCode: "330100", City: "Hangzhou", Version: "geo-a", Source: flowdimension.GeoSchemaV2,
 			ContinentID: "Asia", RegionID: "EastAsia", CountryID: "CN", ProvinceID: "330000", CityID: "330100",
 		},
-		RemoteASNSource:       flowworker.ASNSourceGeoV2,
-		Category:              flowdimension.CategoryOnNetLocalCity,
-		Disposition:           flowdimension.DispositionCount,
-		ClassificationVersion: 1,
+		RemoteASNSource:         flowworker.ASNSourceGeoV2,
+		Category:                flowdimension.CategoryOnNetLocalCity,
+		SupplierRemoteASNSource: flowworker.ASNSourceUnknown,
+		SupplierCategory:        flowdimension.CategoryUnknown,
+		Disposition:             flowdimension.DispositionCount,
+		ClassificationVersion:   1,
 	}
 }

@@ -324,11 +324,15 @@ Geo 不足得到 `unknown`。港澳台口径由 snapshot 固定。`home_isp_ids/
 
 原始事实不可变。用户可选择：
 
-- `raw`：导出包/协议原始值；
-- `supplier`：供应商 Geo/ASN/ISP 及其版本；
-- `customer`：租户版本化 prefix/Geo/business override。
+- `raw`：导出协议直接携带的 src/dst IP、端口、ASN、接口和原始/估算计数；不附会 Geo、ISP、地址组或业务归属。方向未知时仍保留 src/dst，不为得到 local/remote 而猜测客户地址库；
+- `supplier`：事件时间命中的只读供应商 Geo bundle 基线，以及“供应商 ASN 优先、缺失时回退 exporter ASN”的明确来源；方向、local/remote 和 category 仍使用同一客户 publication 的网络边界/分类规则，但不得包含客户 Geo/ASN/ISP override；
+- `customer`：同一 supplier 基线上叠加租户版本化 prefix、Geo/ASN/ISP、address set 和 business override 后的生产视图。
 
-规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；在线查询按事件时间选版本。大范围历史修正使用 `operation_jobs` 异步回算，在新 generation 守恒验证后切换，不原地 UPDATE CH facts。
+`flow_records` 只保存一份原始 tuple/计数，同时保存 supplier 基线和 customer 最终值：`source_asn/destination_asn` 属于 raw；`supplier_remote_* / supplier_category / supplier_geo_version` 属于 supplier；现有 `remote_* / category / dimension_snapshot_id / classification_version` 属于 customer。`customer_geo_override_fields` 是稳定 bitset（country/admin/subdivision/city/isp/asn 分别为 bit 0..5），用于解释两个视图为何不同。`fact_schema=1` 的旧事实没有 supplier 基线，supplier 查询必须报告 unavailable/incomplete，禁止拿 customer 值冒充；migration 005 后由 worker 显式写 `fact_schema=2`。
+
+规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；新流量按事件时间选择已发布版本。历史修正必须复用 `operation_jobs`，输入固定为 tenant、时间窗、源/目标 publication、目标 view 和 generation；只从仍在 base TTL 内且具备所需 `fact_schema` 的事实重算。作业先写隔离的新 generation，再校验 record count、raw/estimated counter 和稳定 record-ID checksum 守恒，最后原子切换可见 generation；失败、取消或校验不通过继续读取旧 generation。禁止 `ALTER/UPDATE flow_records`、禁止复用 `ingest_generation` 表达分类版本，也禁止在请求线程扫描 base 做大范围修正。超出 base TTL 的请求只能从受控 raw archive 重放；没有 archive 证据时稳定拒绝，不能产生“部分已修正”的结果。
+
+本节冻结的是语义和事实 provenance。历史修正的派生投影/aggregate 写入契约必须在 FLOW-06B 通过真实 CH 容量测试后选定；在此之前不新增第六张高基数表，也不开放 supplier/raw aggregate API。这样 migration 005 是后续任何实现都必需的无损基线，不预埋未经验证的 overlay 状态机。
 
 ## 5. 管理和操作流程
 
@@ -403,7 +407,7 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 
 ## 7. ClickHouse 5 张表
 
-完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
+完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据，005 前向保留 supplier/customer 双层事实 provenance。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
@@ -413,7 +417,7 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 | `flow_ingest_batches` | 每次 durable insert receipt | 不参与写前判断；v2 保留跨 tenant、event range、offset/count/counter/checksum 审计证据 |
 | `flow_vpn_candidates` | 异步 VPN 候选 | 事实三版本 + 规则版本隔离；marker 选最新 generation，证据有 TTL |
 
-DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate，004 只前向扩展 receipt；禁止原地篡改已部署 migration。
+DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate，004 只前向扩展 receipt，005 只前向增加 `fact_schema=2` supplier 基线；禁止原地篡改已部署 migration。
 
 `dimension_kind` 的公开 registry 固定为 `total/category/geo.continent/geo.region/geo.country/geo.province/geo.city/isp/asn/business/local_prefix/remote_prefix/address_set/src_ip/dst_ip/remote_port/protocol/observation_interface`；`_generation` 是不可查询的内部 marker。每次查询必须选一个公开 kind。`primary_prefix` 和每个单独 Geo level 在包含 `_unassigned` 时可与 `total` 对账；`address_set` 是重叠标签统计，不能与 `total` 对账；不同 Geo level 也不能彼此相加。1m/1h rollup 由异步 job 对单个 `tenant + 已关闭 bucket` 发出一次原子 `INSERT SELECT`，同一 generation 同时生成全部维度和 marker；迟到/修正以更大 generation 完整重建。查询先按 `tenant+bucket`（包括 marker）求最新 generation，再只读该 generation 的公开 kind，不能逐 key `argMax`，否则新版本已消失的旧 key 会残留。IPv4 写 IPv4-mapped IPv6，API 还原文本。
 

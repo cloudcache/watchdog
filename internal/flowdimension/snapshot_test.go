@@ -373,6 +373,20 @@ func TestSnapshotCatalogSelectsByEventTime(t *testing.T) {
 	}
 }
 
+func TestGeoOverrideFieldBitsAreStableAndRejectUnknownBits(t *testing.T) {
+	for field, want := range map[GeoOverrideFields]uint8{
+		GeoOverrideCountry: 1, GeoOverrideAdminCode: 2, GeoOverrideSubdivision: 4,
+		GeoOverrideCity: 8, GeoOverrideISPID: 16, GeoOverrideASN: 32,
+	} {
+		if uint8(field) != want || !field.Valid() {
+			t.Fatalf("Geo override field=%08b want=%08b valid=%t", field, want, field.Valid())
+		}
+	}
+	if !GeoOverrideFields(0).Valid() || !GeoOverrideKnownFields.Valid() || GeoOverrideFields(1<<7).Valid() {
+		t.Fatal("Geo override persisted bitset validity changed")
+	}
+}
+
 func testBundle(snapshotID string, version uint64, effectiveFrom time.Time) SnapshotBundle {
 	return SnapshotBundle{
 		SchemaVersion: BundleSchemaVersion,

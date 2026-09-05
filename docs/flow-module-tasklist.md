@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C3A — receipt 审计元数据前向扩展。** FLOW-04C3 边界审计已证实 receipt 是可跨 tenant 的 Kafka partition block，而不是 tenant job；权威键、闭合 offset、mismatch 枚举、有界扫描和不完整快照语义已冻结。本轮只前向补齐对账必需的确定性 receipt 字段与 encoder contract；全局 job 依赖 PLAT-04F，查询访问路径依赖真实 CH 容量证据，未解除前不写 scanner/state machine。
+**活动切片：FLOW-06A — raw/supplier/customer 事实 provenance。** 当前 base 已保留 raw tuple，却只保存 customer override 后的 Geo/ASN/category，supplier 基线丢失；本轮只前向保存 supplier 基线、稳定 override bitset 和事实 schema cutover，继续保持 customer-only 查询。历史重分类投影、CRUD/API/job 接线和 supplier/raw aggregate 必须在后续容量与平台门禁解除后实施，不在本切片预造 overlay 状态机。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -45,6 +45,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
+- FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -168,8 +169,14 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 ### FLOW-06 Correction/Reclass/Export
 
-- [ ] 冻结 raw/supplier/customer、审批、有效期、冲突、血缘；实现版本化 CRUD、异步 reclass/export。
-- [ ] 覆盖重叠规则、事件时间、幂等、脱敏、base TTL 边界、失败续跑、前后 count/checksum 对账和回退。
+- [x] **FLOW-06A 设计**：冻结 raw 协议 tuple、supplier bundle 基线、customer override 最终值三层边界；supplier ASN 明确保留 Geo 优先/exporter fallback 来源，customer override 用稳定 bitset 解释；旧 `fact_schema=1` 不冒充 supplier。
+- [x] **FLOW-06A 编码/单元**：migration 005 前向增加 `fact_schema=2`、supplier Geo/ASN/category/version 和 customer override fields；worker 在覆盖前复制 supplier 基线，native writer 明确写出；覆盖无覆盖等值、覆盖分歧、ASN fallback、Geo v2 hierarchy、稳定 bit 和非法 provenance。
+- [x] **FLOW-06A 变更设计/契约测试**：001..004 不修改；顺序固定为 005 → 全 worker schema 3 → 记录时间/partition cutover → 才开放 supplier。migration 顺序/native exact columns 已锁定，混跑/旧事实禁止回填猜测值，customer rollup/query SQL 未改变。
+- [ ] **FLOW-06A 回归/已提交**：Flow race/vet、全库 test/vet、migration/native contract、diff check 全过并进入独立提交后关闭。
+- [ ] **FLOW-06A 外部门禁**：真实 CH 执行 001→005、v2/v3 worker 混跑与 cutover 后 supplier completeness；本机 9000/8123 未监听，不能由 SQL parser/fake executor 替代。
+- [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
+- [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。
+- [ ] **FLOW-06C 管理/导出**：复用平台 immutable publication、typed CRUD/审批/If-Match/audit 和 operation_jobs；异步导出执行权限/脱敏/配额/过期销毁，raw/supplier/customer 分权，不复制地址库 CRUD。
 
 ### FLOW-07 Overseas/VPN
 

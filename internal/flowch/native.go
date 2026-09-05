@@ -27,6 +27,7 @@ const (
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_batches"
 	receiptSchemaVersion      = 2
+	factSchemaVersion         = 2
 )
 
 type NativeConfig struct {
@@ -137,89 +138,105 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		return nil, time.Time{}, 0, fmt.Errorf("%w: prepared block identity or records are missing", ErrInvalidBatchGroup)
 	}
 	var (
-		eventTime             = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
-		receivedTime          = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
-		recordID              proto.ColFixedStr32
-		ingestBatchID         proto.ColFixedStr32
-		ingestGeneration      proto.ColUInt64
-		kafkaTopic            = new(proto.ColStr).LowCardinality()
-		kafkaPartition        proto.ColUInt32
-		kafkaOffset           proto.ColUInt64
-		recordIndex           proto.ColUInt32
-		tenantID              = new(proto.ColStr).LowCardinality()
-		collectorID           = new(proto.ColStr).LowCardinality()
-		exporterID            = new(proto.ColStr).LowCardinality()
-		targetID              = new(proto.ColStr).LowCardinality()
-		deviceID              = new(proto.ColStr).LowCardinality()
-		registryVersion       proto.ColUInt64
-		exporterEpoch         proto.ColUInt64
-		exporterSourceIP      proto.ColIPv6
-		flowProtocol          proto.ColUInt8
-		observationDomainID   proto.ColUInt64
-		subAgentID            proto.ColUInt32
-		datagramSequence      proto.ColUInt32
-		agentIP               proto.ColIPv6
-		agentIPValid          proto.ColBool
-		observationIfIndex    proto.ColUInt32
-		ingressIfIndex        proto.ColUInt32
-		egressIfIndex         proto.ColUInt32
-		observationDirection  proto.ColEnum
-		srcIP                 proto.ColIPv6
-		dstIP                 proto.ColIPv6
-		srcPort               proto.ColUInt16
-		dstPort               proto.ColUInt16
-		ipProtocol            proto.ColUInt8
-		tcpFlags              proto.ColUInt8
-		sourceASN             proto.ColUInt32
-		destinationASN        proto.ColUInt32
-		rawBytes              proto.ColUInt64
-		rawPackets            proto.ColUInt64
-		samplingMode          proto.ColEnum
-		samplingRate          proto.ColUInt64
-		samplingSource        proto.ColEnum
-		estimatedValid        proto.ColBool
-		estimatedBytes        proto.ColUInt64
-		estimatedPackets      proto.ColUInt64
-		flowDurationMS        proto.ColUInt64
-		qualityFlags          proto.ColUInt64
-		sourceIDType          proto.ColUInt32
-		sourceIDValue         proto.ColUInt32
-		sampleSequence        proto.ColUInt32
-		samplePool            proto.ColUInt64
-		exporterDrops         proto.ColUInt64
-		sampleIndex           proto.ColUInt32
-		qualityEpoch          proto.ColUInt64
-		dimensionSnapshotID   = new(proto.ColStr).LowCardinality()
-		dimensionVersion      proto.ColUInt64
-		dimensionFingerprint  proto.ColUInt64
-		businessDirection     proto.ColEnum
-		business              = new(proto.ColStr).LowCardinality()
-		localIP               proto.ColIPv6
-		localIPValid          proto.ColBool
-		remoteIP              proto.ColIPv6
-		remoteIPValid         proto.ColBool
-		localPort             proto.ColUInt16
-		remotePort            proto.ColUInt16
-		localPrefixID         = new(proto.ColStr).LowCardinality()
-		remotePrefixID        = new(proto.ColStr).LowCardinality()
-		localAddressSetIDs    = new(proto.ColStr).Array()
-		remoteAddressSetIDs   = new(proto.ColStr).Array()
-		remoteCountry         = &proto.ColFixedStr{Size: 2}
-		remoteAdminCode       = new(proto.ColStr).LowCardinality()
-		remoteSubdivision     = new(proto.ColStr).LowCardinality()
-		remoteCity            = new(proto.ColStr).LowCardinality()
-		remoteGeoContinentID  = new(proto.ColStr).LowCardinality()
-		remoteGeoRegionID     = new(proto.ColStr).LowCardinality()
-		remoteGeoCountryID    = new(proto.ColStr).LowCardinality()
-		remoteGeoProvinceID   = new(proto.ColStr).LowCardinality()
-		remoteGeoCityID       = new(proto.ColStr).LowCardinality()
-		remoteISPID           proto.ColUInt16
-		remoteASN             proto.ColUInt32
-		remoteASNSource       proto.ColEnum
-		geoVersion            = new(proto.ColStr).LowCardinality()
-		category              proto.ColEnum
-		disposition           proto.ColEnum
-		classificationVersion proto.ColUInt32
+		eventTime                 = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		receivedTime              = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		recordID                  proto.ColFixedStr32
+		ingestBatchID             proto.ColFixedStr32
+		ingestGeneration          proto.ColUInt64
+		kafkaTopic                = new(proto.ColStr).LowCardinality()
+		kafkaPartition            proto.ColUInt32
+		kafkaOffset               proto.ColUInt64
+		recordIndex               proto.ColUInt32
+		tenantID                  = new(proto.ColStr).LowCardinality()
+		collectorID               = new(proto.ColStr).LowCardinality()
+		exporterID                = new(proto.ColStr).LowCardinality()
+		targetID                  = new(proto.ColStr).LowCardinality()
+		deviceID                  = new(proto.ColStr).LowCardinality()
+		registryVersion           proto.ColUInt64
+		exporterEpoch             proto.ColUInt64
+		exporterSourceIP          proto.ColIPv6
+		flowProtocol              proto.ColUInt8
+		observationDomainID       proto.ColUInt64
+		subAgentID                proto.ColUInt32
+		datagramSequence          proto.ColUInt32
+		agentIP                   proto.ColIPv6
+		agentIPValid              proto.ColBool
+		observationIfIndex        proto.ColUInt32
+		ingressIfIndex            proto.ColUInt32
+		egressIfIndex             proto.ColUInt32
+		observationDirection      proto.ColEnum
+		srcIP                     proto.ColIPv6
+		dstIP                     proto.ColIPv6
+		srcPort                   proto.ColUInt16
+		dstPort                   proto.ColUInt16
+		ipProtocol                proto.ColUInt8
+		tcpFlags                  proto.ColUInt8
+		sourceASN                 proto.ColUInt32
+		destinationASN            proto.ColUInt32
+		rawBytes                  proto.ColUInt64
+		rawPackets                proto.ColUInt64
+		samplingMode              proto.ColEnum
+		samplingRate              proto.ColUInt64
+		samplingSource            proto.ColEnum
+		estimatedValid            proto.ColBool
+		estimatedBytes            proto.ColUInt64
+		estimatedPackets          proto.ColUInt64
+		flowDurationMS            proto.ColUInt64
+		qualityFlags              proto.ColUInt64
+		sourceIDType              proto.ColUInt32
+		sourceIDValue             proto.ColUInt32
+		sampleSequence            proto.ColUInt32
+		samplePool                proto.ColUInt64
+		exporterDrops             proto.ColUInt64
+		sampleIndex               proto.ColUInt32
+		qualityEpoch              proto.ColUInt64
+		dimensionSnapshotID       = new(proto.ColStr).LowCardinality()
+		dimensionVersion          proto.ColUInt64
+		dimensionFingerprint      proto.ColUInt64
+		businessDirection         proto.ColEnum
+		business                  = new(proto.ColStr).LowCardinality()
+		localIP                   proto.ColIPv6
+		localIPValid              proto.ColBool
+		remoteIP                  proto.ColIPv6
+		remoteIPValid             proto.ColBool
+		localPort                 proto.ColUInt16
+		remotePort                proto.ColUInt16
+		localPrefixID             = new(proto.ColStr).LowCardinality()
+		remotePrefixID            = new(proto.ColStr).LowCardinality()
+		localAddressSetIDs        = new(proto.ColStr).Array()
+		remoteAddressSetIDs       = new(proto.ColStr).Array()
+		remoteCountry             = &proto.ColFixedStr{Size: 2}
+		remoteAdminCode           = new(proto.ColStr).LowCardinality()
+		remoteSubdivision         = new(proto.ColStr).LowCardinality()
+		remoteCity                = new(proto.ColStr).LowCardinality()
+		remoteGeoContinentID      = new(proto.ColStr).LowCardinality()
+		remoteGeoRegionID         = new(proto.ColStr).LowCardinality()
+		remoteGeoCountryID        = new(proto.ColStr).LowCardinality()
+		remoteGeoProvinceID       = new(proto.ColStr).LowCardinality()
+		remoteGeoCityID           = new(proto.ColStr).LowCardinality()
+		remoteISPID               proto.ColUInt16
+		remoteASN                 proto.ColUInt32
+		remoteASNSource           proto.ColEnum
+		geoVersion                = new(proto.ColStr).LowCardinality()
+		category                  proto.ColEnum
+		disposition               proto.ColEnum
+		classificationVersion     proto.ColUInt32
+		factSchema                proto.ColUInt16
+		supplierRemoteCountry     = &proto.ColFixedStr{Size: 2}
+		supplierRemoteAdminCode   = new(proto.ColStr).LowCardinality()
+		supplierRemoteSubdivision = new(proto.ColStr).LowCardinality()
+		supplierRemoteCity        = new(proto.ColStr).LowCardinality()
+		supplierRemoteContinentID = new(proto.ColStr).LowCardinality()
+		supplierRemoteRegionID    = new(proto.ColStr).LowCardinality()
+		supplierRemoteCountryID   = new(proto.ColStr).LowCardinality()
+		supplierRemoteProvinceID  = new(proto.ColStr).LowCardinality()
+		supplierRemoteCityID      = new(proto.ColStr).LowCardinality()
+		supplierRemoteISPID       proto.ColUInt16
+		supplierRemoteASN         proto.ColUInt32
+		supplierRemoteASNSource   proto.ColEnum
+		supplierGeoVersion        = new(proto.ColStr).LowCardinality()
+		supplierCategory          proto.ColEnum
+		customerGeoOverrideFields proto.ColUInt8
 	)
 
 	var maxReceivedAt time.Time
@@ -245,7 +262,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		if !ok {
 			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid business direction", ErrInvalidBatchGroup, index)
 		}
-		categoryName, ok := categoryName(ref.Record.Category)
+		customerCategoryName, ok := categoryName(ref.Record.Category)
 		if !ok {
 			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid category", ErrInvalidBatchGroup, index)
 		}
@@ -256,6 +273,17 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		asnSource, ok := asnSourceName(ref.Record.RemoteASNSource)
 		if !ok {
 			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid remote ASN source", ErrInvalidBatchGroup, index)
+		}
+		supplierASNSource, ok := asnSourceName(ref.Record.SupplierRemoteASNSource)
+		if !ok || supplierASNSource == "flow_geo_override" {
+			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid supplier remote ASN source", ErrInvalidBatchGroup, index)
+		}
+		supplierCategoryName, ok := categoryName(ref.Record.SupplierCategory)
+		if !ok {
+			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid supplier category", ErrInvalidBatchGroup, index)
+		}
+		if !ref.Record.CustomerGeoOverrideFields.Valid() {
+			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid customer Geo override fields", ErrInvalidBatchGroup, index)
 		}
 		received := ref.Batch.ReceivedAt.UTC()
 		rowGeneration := uint64(received.UnixMilli())
@@ -348,9 +376,25 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		remoteASN.Append(ref.Record.RemoteASN)
 		remoteASNSource.Append(asnSource)
 		geoVersion.Append(ref.Record.RemoteGeo.Version)
-		category.Append(categoryName)
+		category.Append(customerCategoryName)
 		disposition.Append(dispositionName)
 		classificationVersion.Append(ref.Record.ClassificationVersion)
+		factSchema.Append(factSchemaVersion)
+		supplierRemoteCountry.Append(countryCode(ref.Record.SupplierRemoteGeo.Country))
+		supplierRemoteAdminCode.Append(ref.Record.SupplierRemoteGeo.AdminCode)
+		supplierRemoteSubdivision.Append(ref.Record.SupplierRemoteGeo.Subdivision)
+		supplierRemoteCity.Append(ref.Record.SupplierRemoteGeo.City)
+		supplierRemoteContinentID.Append(ref.Record.SupplierRemoteGeo.ContinentID)
+		supplierRemoteRegionID.Append(ref.Record.SupplierRemoteGeo.RegionID)
+		supplierRemoteCountryID.Append(ref.Record.SupplierRemoteGeo.CountryID)
+		supplierRemoteProvinceID.Append(ref.Record.SupplierRemoteGeo.ProvinceID)
+		supplierRemoteCityID.Append(ref.Record.SupplierRemoteGeo.CityID)
+		supplierRemoteISPID.Append(ref.Record.SupplierRemoteGeo.ISPID)
+		supplierRemoteASN.Append(ref.Record.SupplierRemoteASN)
+		supplierRemoteASNSource.Append(supplierASNSource)
+		supplierGeoVersion.Append(ref.Record.SupplierRemoteGeo.Version)
+		supplierCategory.Append(supplierCategoryName)
+		customerGeoOverrideFields.Append(uint8(ref.Record.CustomerGeoOverrideFields))
 	}
 
 	return proto.Input{
@@ -377,6 +421,15 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		{Name: "remote_geo_province_id", Data: remoteGeoProvinceID}, {Name: "remote_geo_city_id", Data: remoteGeoCityID},
 		{Name: "remote_isp_id", Data: remoteISPID}, {Name: "remote_asn", Data: remoteASN}, {Name: "remote_asn_source", Data: &remoteASNSource}, {Name: "geo_version", Data: geoVersion},
 		{Name: "category", Data: &category}, {Name: "disposition", Data: &disposition}, {Name: "classification_version", Data: classificationVersion},
+		{Name: "fact_schema", Data: factSchema},
+		{Name: "supplier_remote_country", Data: supplierRemoteCountry}, {Name: "supplier_remote_admin_code", Data: supplierRemoteAdminCode},
+		{Name: "supplier_remote_subdivision", Data: supplierRemoteSubdivision}, {Name: "supplier_remote_city", Data: supplierRemoteCity},
+		{Name: "supplier_remote_geo_continent_id", Data: supplierRemoteContinentID}, {Name: "supplier_remote_geo_region_id", Data: supplierRemoteRegionID},
+		{Name: "supplier_remote_geo_country_id", Data: supplierRemoteCountryID}, {Name: "supplier_remote_geo_province_id", Data: supplierRemoteProvinceID},
+		{Name: "supplier_remote_geo_city_id", Data: supplierRemoteCityID}, {Name: "supplier_remote_isp_id", Data: supplierRemoteISPID},
+		{Name: "supplier_remote_asn", Data: supplierRemoteASN}, {Name: "supplier_remote_asn_source", Data: &supplierRemoteASNSource},
+		{Name: "supplier_geo_version", Data: supplierGeoVersion}, {Name: "supplier_category", Data: &supplierCategory},
+		{Name: "customer_geo_override_fields", Data: customerGeoOverrideFields},
 	}, maxReceivedAt, generation, nil
 }
 
