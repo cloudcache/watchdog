@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -16,6 +18,7 @@ type targetAPI struct {
 	discoveryJobs DiscoveryJobRepository
 	snmp          SNMPRepository
 	deletePreview TargetDeletePreviewRepository
+	operationJobs OperationJobRepository
 }
 
 type targetRequest struct {
@@ -30,8 +33,8 @@ type targetRequest struct {
 	SNMPSecurity  map[string]string `json:"snmp_security"`
 }
 
-func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository, snmp SNMPRepository, deletePreview TargetDeletePreviewRepository) {
-	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs, snmp: snmp, deletePreview: deletePreview}
+func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository, snmp SNMPRepository, deletePreview TargetDeletePreviewRepository, operationJobs OperationJobRepository) {
+	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs, snmp: snmp, deletePreview: deletePreview, operationJobs: operationJobs}
 	mux.Handle("GET /api/v1/targets", auth(RequirePermission(ActionView, TenantResource)(http.HandlerFunc(api.list))))
 	mux.Handle("POST /api/v1/targets", auth(RequirePermission(ActionConfigure, TenantResource)(http.HandlerFunc(api.create))))
 	mux.Handle("GET /api/v1/targets/{target_id}", auth(RequirePermission(ActionView, targetResourceFromPath)(http.HandlerFunc(api.get))))
@@ -184,6 +187,33 @@ func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
 		if !CheckIfMatch(w, r, current.UpdatedAt) {
 			return
 		}
+	} else {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Target not found", nil)
+		return
+	}
+	// With a job repository configured, deletion runs asynchronously: the
+	// handler only enqueues (202 + job id) and the worker performs the
+	// cascade, so a large fan-out cannot stall or die inside the request.
+	if api.operationJobs != nil {
+		payload, _ := json.Marshal(targetDeleteJobPayload{TargetID: targetID})
+		digest := sha256.Sum256(payload)
+		job, err := api.operationJobs.EnqueueOperationJob(r.Context(), OperationJob{
+			TenantID:       auth.TenantID,
+			JobType:        TargetDeleteJobType,
+			IdempotencyKey: "target_delete:" + string(targetID),
+			RequestHash:    hex.EncodeToString(digest[:]),
+			CheckpointJSON: payload,
+			CreatedBy:      auth.UserID,
+		})
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": job.ID, "status": job.Status,
+			"status_url": "/api/v1/operation-jobs/" + string(job.ID),
+		})
+		return
 	}
 	if err := api.repo.DeleteTarget(r.Context(), auth.TenantID, targetID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)

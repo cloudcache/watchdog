@@ -21,6 +21,7 @@ type APIV1RouterConfig struct {
 	TargetDeletePreview  TargetDeletePreviewRepository
 	CollectorCredentials CollectorCredentialRepository
 	CollectorEnrollment  CollectorEnrollmentRepository
+	OperationJobs        OperationJobRepository
 	Registries           *PlatformRegistries
 	TenantModules        TenantModuleRepository
 	FlowGeo              *FlowGeoService
@@ -110,7 +111,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	mux.Handle("GET /api/v1/tenants", listTenants)
 	mux.Handle("GET /api/v1/me/tenants", listTenants)
 	if cfg.Targets != nil {
-		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs, cfg.SNMP, cfg.TargetDeletePreview)
+		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs, cfg.SNMP, cfg.TargetDeletePreview, cfg.OperationJobs)
 	}
 	if cfg.Network != nil {
 		registerNetworkRoutes(mux, auth, cfg.Network, cfg.Targets, cfg.Agents, cfg.SNMP, cfg.SNMPDiscovery, cfg.SNMPCollector, cfg.SeriesCleaner, cfg.DiscoveryJobs, cfg.Audit)
@@ -156,6 +157,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.CollectorEnrollment != nil {
 		registerCollectorEnrollmentRoutes(mux, auth, cfg.CollectorEnrollment, cfg.Audit)
+	}
+	if cfg.OperationJobs != nil {
+		registerOperationJobRoutes(mux, auth, cfg.OperationJobs)
 	}
 	if cfg.SNMP != nil {
 		registerSNMPRoutes(mux, auth, cfg.SNMP)

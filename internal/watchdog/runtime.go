@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -312,6 +313,19 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		return errors.New("watchdog backend runtime is closed")
 	}
 	r.backgroundStarted = true
+	if r.Store != nil {
+		owner, _ := os.Hostname()
+		if owner == "" {
+			owner = "watchdog-hub"
+		}
+		worker := &OperationJobWorker{
+			Repo:    r.Store,
+			JobType: TargetDeleteJobType,
+			Owner:   owner,
+			Handler: NewTargetDeleteJobHandler(r.Store, r.MetricsClient),
+		}
+		go worker.Run(ctx)
+	}
 	return nil
 }
 

@@ -156,7 +156,25 @@ export default memo(({ id }: TargetDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/targets/${id}`, { method: "DELETE" })
+			// Deletion is asynchronous: the API answers 202 with a job id and a
+			// worker performs the cascade. Poll the job until it finishes.
+			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/targets/${id}`, { method: "DELETE" })
+			const jobID = response?.job_id
+			if (jobID) {
+				for (let attempt = 0; attempt < 120; attempt++) {
+					const job = await pb.send<{ status?: string; last_error_detail?: string }>(
+						`/api/v1/operation-jobs/${jobID}`,
+						{}
+					)
+					if (job.status === "succeeded") {
+						break
+					}
+					if (job.status === "failed" || job.status === "canceled") {
+						throw new Error(job.last_error_detail || t`Failed to delete target`)
+					}
+					await new Promise((resolve) => globalThis.setTimeout(resolve, 1000))
+				}
+			}
 			navigate(getPagePath($router, "targets"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete target`)
