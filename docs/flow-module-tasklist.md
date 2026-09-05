@@ -42,7 +42,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
-- FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
+- FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；真实 CH 执行证据由后述 `55a3b166` 独立承载。
+- FLOW-07A 真实 CH：`55a3b166 test(flow): verify VPN candidates on ClickHouse`；覆盖双向会话归一、稳定 conversation SHA-256、coverage/record/quality 完整度、迟到 generation 2、评分 gate 和 generation 3 权威空修复；六组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
@@ -211,7 +212,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07A 设计**：冻结 conversation/window 身份、双向计数、完整度、端口/协议/ASN/prefix/country/行为 evidence、versioned rule、score/level/verdict、terminal tie-break；被动建议不等于探测授权。
 - [x] **FLOW-07A 编码**：新增纯函数 candidate normalizer/scorer、schema v1 固定 match/effect registry、immutable canonical rule set 和 explainable evidence；增加关闭窗口 CH materializer，但未接 MySQL、hub、Kafka 或 probe job。
 - [x] **FLOW-07A 单元**：覆盖对称/单向、长连接/流量/复发、显式 TLS hint 且不由 443 猜测、ASN/prefix、allow/suppress 优先级、完整度 gate、阈值/封顶、输入变异隔离和非法 schema/candidate。
-- [ ] **FLOW-07A 集成**：真实 CH candidate 窗口聚合、迟到 generation、双向会话归一、完整度和 count/checksum 对账。
+- [x] **FLOW-07A 集成（数据面）**：真实 CH 顺序 migration、base writer、两个 1m rollup、candidate materializer 和 scorer 串联；验证反向原始流归一为同一 local/remote 会话、稳定 SHA-256 key、count/quality/coverage 完整度、迟到 generation 2 和 generation 3 权威空修复。finding/MySQL/probe 编排仍属平台侧。
 - [x] **FLOW-07A 变更设计**：candidate/评分结果携带 dimension snapshot、Geo、classification 和 rule-set 四类版本；规则升级生成新 generation/result，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
 - [ ] **FLOW-07A 变更测试**：本地已覆盖确定性 evidence/score、未知 schema 和规则顺序/输入修改；跨版本 CH 重算、publication 增删/回滚等待 candidate/platform 门禁。
 - [x] **FLOW-07A2 schema 门禁**：003 前向增加 `remote_prefix_id/geo_version/classification_version/row_kind` 并扩展 replacement key；001/002 未回改，旧行默认 candidate，新读取契约只接受有 marker 的 generation。
@@ -220,8 +221,9 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07A2 已提交**：`2e9d9474`；代码和 migration 可由提交复现，本清单更新不把 fake executor 冒充真实 CH 集成。
 - [x] **FLOW-07A3 设计/编码**：同一 CH 查询选 marker 与 latest-generation candidate；metadata block 顺序无关，typed 参数/列、`limit+1` 与 50,000 硬上限；规范化后调用 immutable scorer，无 finding 写入或 probe/job 副作用。
 - [x] **FLOW-07A3 单元/变更测试**：覆盖 marker 在前、跨 block、合法空 generation、缺/重复 marker、混 generation、重复 key、超限、列错位、未知 evidence 字段、ratio 不一致、非法 hint、执行失败、非法 scope/window/rules/limit；任一失败均无部分结果。
-- [x] **FLOW-07A3 回归/已提交**：`ad4c2c6e`；Flow 全范围 race、全库 test/vet 和 diff check 通过；真实 CH query/repair 并发仍归 FLOW-07A 集成门禁。
+- [x] **FLOW-07A3 回归/已提交**：`ad4c2c6e`；Flow 全范围 race、全库 test/vet 和 diff check 通过；真实 CH query/repair 数据门禁已由 `55a3b166` 补齐。
 - [x] **FLOW-07A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker`、同范围 `go vet` 与 `git diff --check` 通过。
+- [x] **FLOW-07A 外部证据已提交**：真实 CH candidate/materializer/reader/scorer 门禁进入 `55a3b166`；测试只创建并清理 `watchdog_flow_it_vpn_candidate`。跨 rule-set publication 增删/回滚仍保留为变更测试，未因数据面通过而错误勾选。
 - [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
 - [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。
 - [x] **FLOW-07B 单元**：覆盖 typed tenant/filter、闭桶/范围/结果预算、country/region、rate/count、境外/unknown 分离、方向端点映射、IPv4-mapped family、TopN/other、镜像一致性、metadata coverage、mixed versions、多 block、畸形/重复/越界/取消全失败。

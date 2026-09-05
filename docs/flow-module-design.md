@@ -386,6 +386,8 @@ FLOW-07A2 只在已关闭、UTC 分钟对齐且不超过 24 小时的窗口运�
 
 FLOW-07A3 reader/scorer bridge 用同一个参数化 CH 查询同时选择 marker 和该 marker 的 candidate，避免“两次查询先读 generation、再读数据”之间发生 repair 竞态。读取上限由请求给出且不得超过 50,000，SQL 用 `limit+1`，runner 再做独立硬限；tenant、窗口、rule-set version 和 limit 全是 typed parameter。CH 的 UNION/block 返回顺序不构成协议，metadata 可先于或后于数据；runner 只在整次执行结束后验证恰有一个 marker、generation 大于零且所有 candidate generation 一致。列数/列长、重复候选键、IPv4-mapped 还原、四类版本、canonical conversation key、显式 hint、evidence schema/counter、complete ratio 和 scorer 输入逐项验证；缺 marker、坏行、部分响应、执行错误或超限全部 fail-closed，不返回部分评分。空窗口只有合法 marker 时返回空 candidate 集与对应 generation，不回看旧行。该 bridge 仍无 MySQL 写入和 probe/job 副作用。
 
+真实 CH candidate 门禁在独立数据库顺序执行 001..005，写入同一 local/remote IPv6 tuple 的 out、反向 in 和 unknown-sampling 三条事实，先生成两个 1m coverage marker，再执行 generation 1 materialize/read/score。它必须得到一个稳定 SHA-256 conversation key、双向 `1000/900` bytes、3 条事实/2 个 active bucket、`2/3` 完整度和质量计数；追加迟到 out 事实并修复对应 rollup 后，generation 2 必须收敛为 `1700/900`、4 条事实、`3/4` 完整度，评分才可从完整度阻断转为 probe recommendation。最后用同 record ID 的较新 drop 事实生成 generation 3，reader 只能返回权威空集，不能泄漏旧 candidate。该门禁验证 candidate 数据面与纯评分边界，不替代 rule publication、finding 持久化、RBAC 或主动探测授权。
+
 ## 6. MySQL 管理契约
 
 Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 operation_jobs，地址规则复用 address_prefixes/address_sets，审计复用 audit_logs。四表当前尚未进入 migration，不能把本文当作已部署 schema；实施时只在新的顺序 migration 中建表，并同步 fresh-install、repository、API、迁移和回滚测试。
