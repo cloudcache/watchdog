@@ -2,7 +2,7 @@ import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, PlusIcon, SaveIcon, Trash2Icon } from "lucide-react"
 import type React from "react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -122,6 +122,9 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
+	// Weak ETag from the last load, echoed as If-Match on save (optimistic
+	// concurrency): a concurrent edit is rejected (412), not overwritten.
+	const etagRef = useRef("")
 
 	const loadCatalog = useCallback(async () => {
 		const [metricData, deviceData] = await Promise.all([
@@ -164,7 +167,11 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				await loadAllPorts(deviceList)
 				if (id) {
 					const [graph, portLinks, itemLinks] = await Promise.all([
-						pb.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {}),
+						pb.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {
+							onResponse: (response) => {
+								etagRef.current = response.headers.get("ETag") ?? ""
+							},
+						}),
 						pb.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
 						pb.send<{ items?: AggregateGraphItem[] }>(`/api/v1/aggregate-graphs/${id}/items`, {}),
 					])
@@ -267,7 +274,11 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				Description: form.description.trim(),
 			}
 			if (isEditing) {
-				await pb.send(`/api/v1/aggregate-graphs/${id}`, { method: "PATCH", body })
+				await pb.send(`/api/v1/aggregate-graphs/${id}`, {
+					method: "PATCH",
+					headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
+					body,
+				})
 			} else {
 				await pb.send(`/api/v1/aggregate-graphs`, { method: "POST", body: { ...body, id: form.id } })
 			}
