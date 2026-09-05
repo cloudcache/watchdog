@@ -62,9 +62,13 @@ func (s *MySQLStore) CreateUser(ctx context.Context, user User) (User, error) {
 		}
 		user.ID = id
 	}
+	// Identity is an authorization projection: credentials live in the
+	// external IdP (PocketBase), never in MySQL. password_hash is deliberately
+	// omitted so no code path can introduce credential material here; the
+	// column (nullable, defaulting NULL) is dropped by a later migration.
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id, password_hash)
-		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULL)
+		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
+		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))
 	`, user.ID, user.TenantID, user.Email, user.Name, user.Status, strings.ToLower(user.AuthProvider), user.ExternalSubjectID)
 	if err != nil {
 		return User{}, err
