@@ -383,6 +383,9 @@ function AdminDropdownContent() {
 			<NavItem href={getPagePath($router, "users_admin")} icon={UsersIcon}>
 				<Trans>Users & Roles</Trans>
 			</NavItem>
+			<NavItem href={getPagePath($router, "modules_admin")} icon={LayersIcon}>
+				<Trans>Modules</Trans>
+			</NavItem>
 			<DropdownMenuItem asChild>
 				<a href={prependBasePath("/_/#/logs")} target="_blank" rel="noreferrer">
 					<LogsIcon className="me-2.5 h-4 w-4" />

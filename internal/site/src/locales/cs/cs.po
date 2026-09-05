@@ -651,6 +651,7 @@ msgstr "Může zastavit"
 msgid "Cancel"
 msgstr "Zrušit"
 
+#: src/components/routes/modules.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Capabilities"
 msgstr "Schopnosti"
@@ -1067,6 +1068,10 @@ msgstr ""
 msgid "Data Sources"
 msgstr ""
 
+#: src/components/routes/modules.tsx
+msgid "Default"
+msgstr ""
+
 #: src/components/routes/system/info-bar.tsx
 msgctxt "Default system layout option"
 msgid "Default"
@@ -1168,6 +1173,10 @@ msgstr ""
 msgid "Denied"
 msgstr ""
 
+#: src/components/routes/modules.tsx
+msgid "Dependencies"
+msgstr ""
+
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-port-form.tsx
@@ -1221,6 +1230,10 @@ msgstr ""
 
 #: src/components/routes/users.tsx
 msgid "Disable user"
+msgstr ""
+
+#: src/components/routes/modules.tsx
+msgid "disabled"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -1460,6 +1473,11 @@ msgstr "Emailová upozornění"
 msgid "Empty"
 msgstr "Prázdná"
 
+#: src/components/routes/modules.tsx
+msgid "enabled"
+msgstr ""
+
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
@@ -1789,6 +1807,10 @@ msgstr ""
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Failed to load MIB modules"
+msgstr ""
+
+#: src/components/routes/modules.tsx
+msgid "Failed to load modules"
 msgstr ""
 
 #: src/components/routes/network-device-form.tsx
@@ -2256,6 +2278,10 @@ msgstr ""
 msgid "Inventory"
 msgstr ""
 
+#: src/components/routes/modules.tsx
+msgid "Kind"
+msgstr ""
+
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Label"
 msgstr ""
@@ -2541,8 +2567,16 @@ msgstr ""
 msgid "Model"
 msgstr ""
 
+#: src/components/routes/modules.tsx
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-port.tsx
 msgid "Module"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/modules.tsx
+#: src/components/routes/modules.tsx
+msgid "Modules"
 msgstr ""
 
 #: src/components/routes/aggregate-graphs.tsx
@@ -3324,6 +3358,10 @@ msgstr ""
 msgid "Read"
 msgstr "Číst"
 
+#: src/components/routes/modules.tsx
+msgid "Readiness"
+msgstr ""
+
 #: src/components/routes/aggregate-charts.tsx
 msgid "Realtime"
 msgstr ""
@@ -3351,6 +3389,7 @@ msgstr "Přijato"
 #: src/components/routes/core.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
@@ -3373,6 +3412,7 @@ msgstr "Vztahy"
 msgid "Request a one-time password"
 msgstr "Požádat o jednorázové heslo"
 
+#: src/components/routes/modules.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
@@ -3660,6 +3700,10 @@ msgstr ""
 
 #: src/components/routes/export-new.tsx
 msgid "Select a target before creating an export."
+msgstr ""
+
+#: src/components/routes/modules.tsx
+msgid "Select a tenant first"
 msgstr ""
 
 #: src/components/routes/network-discover.tsx
@@ -4045,6 +4089,10 @@ msgstr ""
 
 #: src/components/routes/network-device-form.tsx
 msgid "Target is required"
+msgstr ""
+
+#: src/components/routes/modules.tsx
+msgid "Target Kinds"
 msgstr ""
 
 #: src/components/routes/network-device-form.tsx
@@ -4472,6 +4520,7 @@ msgstr ""
 msgid "Vendor"
 msgstr ""
 
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx

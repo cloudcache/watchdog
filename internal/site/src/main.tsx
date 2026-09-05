@@ -43,6 +43,7 @@ const Exports = lazy(() => import("@/components/routes/exports.tsx"))
 const HistoricalData = lazy(() => import("@/components/routes/historical-data.tsx"))
 const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overview.tsx"))
 const UsersAdmin = lazy(() => import("@/components/routes/users.tsx"))
+const ModulesAdmin = lazy(() => import("@/components/routes/modules.tsx"))
 const Containers = lazy(() => import("@/components/routes/containers.tsx"))
 const CoreBGP = lazy(() => import("@/components/routes/core.tsx"))
 const NetworkDeviceDetail = lazy(() => import("@/components/routes/network-device.tsx"))
@@ -191,6 +192,8 @@ const App = memo(() => {
 		return <NetworkPortPolicy id={page.params.id} />
 	} else if (page.route === "users_admin") {
 		return <UsersAdmin />
+	} else if (page.route === "modules_admin") {
+		return <ModulesAdmin />
 	} else if (page.route === "permissions") {
 		return <Permissions />
 	} else if (page.route === "permission_new") {

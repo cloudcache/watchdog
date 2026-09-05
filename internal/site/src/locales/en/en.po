@@ -646,6 +646,7 @@ msgstr "Can stop"
 msgid "Cancel"
 msgstr "Cancel"
 
+#: src/components/routes/modules.tsx
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Capabilities"
 msgstr "Capabilities"
@@ -1062,6 +1063,10 @@ msgstr "Data"
 msgid "Data Sources"
 msgstr "Data Sources"
 
+#: src/components/routes/modules.tsx
+msgid "Default"
+msgstr "Default"
+
 #: src/components/routes/system/info-bar.tsx
 msgctxt "Default system layout option"
 msgid "Default"
@@ -1163,6 +1168,10 @@ msgstr "Delete this target?"
 msgid "Denied"
 msgstr "Denied"
 
+#: src/components/routes/modules.tsx
+msgid "Dependencies"
+msgstr "Dependencies"
+
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-port-form.tsx
@@ -1217,6 +1226,10 @@ msgstr "Disable this user? They will lose access until re-enabled."
 #: src/components/routes/users.tsx
 msgid "Disable user"
 msgstr "Disable user"
+
+#: src/components/routes/modules.tsx
+msgid "disabled"
+msgstr "disabled"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
@@ -1455,6 +1468,11 @@ msgstr "Email notifications"
 msgid "Empty"
 msgstr "Empty"
 
+#: src/components/routes/modules.tsx
+msgid "enabled"
+msgstr "enabled"
+
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
@@ -1785,6 +1803,10 @@ msgstr "Failed to load MIB module"
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Failed to load MIB modules"
 msgstr "Failed to load MIB modules"
+
+#: src/components/routes/modules.tsx
+msgid "Failed to load modules"
+msgstr "Failed to load modules"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
@@ -2251,6 +2273,10 @@ msgstr "Invalid JSON selector"
 msgid "Inventory"
 msgstr "Inventory"
 
+#: src/components/routes/modules.tsx
+msgid "Kind"
+msgstr "Kind"
+
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Label"
 msgstr "Label"
@@ -2536,9 +2562,17 @@ msgstr "Mode"
 msgid "Model"
 msgstr "Model"
 
+#: src/components/routes/modules.tsx
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-port.tsx
 msgid "Module"
 msgstr "Module"
+
+#: src/components/navbar.tsx
+#: src/components/routes/modules.tsx
+#: src/components/routes/modules.tsx
+msgid "Modules"
+msgstr "Modules"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Multiple devices"
@@ -3319,6 +3353,10 @@ msgstr "Range Start"
 msgid "Read"
 msgstr "Read"
 
+#: src/components/routes/modules.tsx
+msgid "Readiness"
+msgstr "Readiness"
+
 #: src/components/routes/aggregate-charts.tsx
 msgid "Realtime"
 msgstr "Realtime"
@@ -3346,6 +3384,7 @@ msgstr "Received"
 #: src/components/routes/core.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
@@ -3368,6 +3407,7 @@ msgstr "Relationships"
 msgid "Request a one-time password"
 msgstr "Request a one-time password"
 
+#: src/components/routes/modules.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
@@ -3656,6 +3696,10 @@ msgstr "Select a network device"
 #: src/components/routes/export-new.tsx
 msgid "Select a target before creating an export."
 msgstr "Select a target before creating an export."
+
+#: src/components/routes/modules.tsx
+msgid "Select a tenant first"
+msgstr "Select a tenant first"
 
 #: src/components/routes/network-discover.tsx
 msgid "Select an SNMP profile"
@@ -4041,6 +4085,10 @@ msgstr "Target"
 #: src/components/routes/network-device-form.tsx
 msgid "Target is required"
 msgstr "Target is required"
+
+#: src/components/routes/modules.tsx
+msgid "Target Kinds"
+msgstr "Target Kinds"
 
 #: src/components/routes/network-device-form.tsx
 #~ msgid "Target Name"
@@ -4467,6 +4515,7 @@ msgstr "Value mode"
 msgid "Vendor"
 msgstr "Vendor"
 
+#: src/components/routes/modules.tsx
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
