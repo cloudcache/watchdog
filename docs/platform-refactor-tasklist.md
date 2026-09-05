@@ -12,6 +12,9 @@
 - [x] Beszel/`BESZEL_*` 对外命名收敛到 Watchdog/`WATCHDOG_*`。
 - [x] VictoriaLogs Flow 原型和浏览器直连删除；MySQL 为唯一管理库，VM/CH 各自保留指标/Flow 事实角色。
 - [ ] PB 收缩为认证内核：迁 user settings、quiet hours、alerts、smart devices；僵尸 system collections 停写并归档。
+  - 细化（版图与顺序）：前端直连 PB collection 计 6 处——`users`(认证保留)、`user_settings`(4)、`quiet_hours`(4)、`smart_devices`(2)、`alerts_history`(2)、`fingerprints`(agent 认证保留)。后端 agent-connect 依赖 `systems`/`fingerprints`（load-bearing，不可简单停写）。逐域按 MySQL 表 → repo/API → 前端切换 → PB collection 只读归档 → 生产 backfill 推进。
+  - [x] **user_settings → MySQL user_preferences**：migration 030（每用户一行、row_version 乐观锁），repo（读无行返默认不写、写 create/If-Match）、GET/PUT `/api/v1/me/preferences`（仅本人、quoted ETag），前端 getSettings/saveSettings 切到该 API、应用内已无 PB user_settings 调用。settings_json 过渡态含全 blob（含 legacy email/webhook）。gated MySQL + API 测试（commit a6b5ca65）。
+  - 余项：① email/webhook 从 settings_json 拆到 `notification_channels`（带 secret store + webhook SSRF 校验）；② quiet_hours / alerts_history / smart_devices 逐域迁移；③ 生产 PB→MySQL 一次性 backfill（dev 为空库无需）；④ PB user_settings collection 停写+归档（当前前端已不用，`InitializeUserSettings` hook 可后续移除）；⑤ 僵尸 telemetry collection（system_stats/container_stats 等）在 agent-connect 解耦后停写。
 - [x] 消除 PB/MySQL 双身份权威，验证登录、OTP、找回、session、禁用和 tenant projection。（认证=PB 唯一权威、授权=MySQL 投影、password_hash 列已删，见下）
   - 现状核查：认证=PB 唯一权威（前端 `pb.authStore`/`requestPasswordReset`/OTP/session；服务端 `FindAuthRecordByToken` 验 token，非 `users` collection 拒绝 → PB superuser 被挡在平台 API 外，`platform_backend_test.go` 已测），授权=MySQL 投影（按 `external_subject_id`=PB record id，`identity_adapter.go` 多租户 discovery 分离、disabled fail-closed，`identity_adapter_test.go` 已测）。禁用为设计内单边：MySQL `status=disabled` 即时断业务 API，PB session 清理为独立动作（不影响 fail-closed）。
   - [x] 消除代码层凭据双写：CreateUser 移除最后一处 `password_hash`（写 NULL）引用，identity 代码 100% 无 password；gated MySQL 锁死"create/update 永不写凭据材料"+"disabled 投影 fail-closed，PB 链接不动"（commit e599ab81）。
