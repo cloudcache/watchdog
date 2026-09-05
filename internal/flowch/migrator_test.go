@@ -22,6 +22,9 @@ type migrationExecutor struct {
 	migrationStatements []string
 	stateWrites         []ch.Query
 	failStatement       string
+	cancelStatement     string
+	cancel              context.CancelFunc
+	dropContextErr      error
 }
 
 func (e *migrationExecutor) Do(ctx context.Context, query ch.Query) error {
@@ -49,12 +52,17 @@ func (e *migrationExecutor) Do(ctx context.Context, query ch.Query) error {
 		e.stateWrites = append(e.stateWrites, query)
 		return nil
 	case query.Body == "DROP TABLE watchdog_flow.flow_schema_migration_lock":
+		e.dropContextErr = ctx.Err()
 		e.lock = nil
 		return nil
 	default:
 		e.migrationStatements = append(e.migrationStatements, query.Body)
 		if query.Body == e.failStatement {
 			return errors.New("injected statement failure")
+		}
+		if query.Body == e.cancelStatement {
+			e.cancel()
+			return ctx.Err()
 		}
 		return nil
 	}
@@ -180,6 +188,16 @@ func TestMigratorRecordsFailureAtLastCompletedStatementAndReleasesLock(t *testin
 	if migrationParameter(last, "state") != string(MigrationFailed) || migrationParameter(last, "completed") != "1" ||
 		!strings.Contains(migrationParameter(last, "error"), "injected statement failure") {
 		t.Fatalf("failed state=%+v", last.Parameters)
+	}
+}
+
+func TestMigratorReleasesLockAfterCallerCancellation(t *testing.T) {
+	migrations := migrationExecutorSet()
+	ctx, cancel := context.WithCancel(context.Background())
+	executor := &migrationExecutor{cancelStatement: migrations[0].Statements[0], cancel: cancel}
+	_, err := (&Migrator{executor: executor}).Apply(ctx, migrations, MigrationApplyOptions{LockOwner: strings.Repeat("g", 32)})
+	if !errors.Is(err, context.Canceled) || executor.lock != nil || executor.dropContextErr != nil {
+		t.Fatalf("error=%v lock=%+v drop context error=%v", err, executor.lock, executor.dropContextErr)
 	}
 }
 

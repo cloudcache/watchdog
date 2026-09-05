@@ -419,6 +419,10 @@ CH migration 文件名固定为连续的 `NNN_lower_snake.sql`，单文件不超
 
 本地真实门禁使用 `deploy/compose.flow-dev.yml`：固定 Apache Kafka KRaft 与 ClickHouse LTS 完整版本、所有宿主端口只绑定 `127.0.0.1`、Kafka 关闭 auto-create，并由一次性 init 服务幂等创建 12 分区的 `watchdog.flow.raw-v1`。Compose 是单节点功能/故障恢复环境，不冒充生产 HA 或吞吐验收；worker/hub 仍不得因容器存在而自动迁移。
 
+08A3 的版本兼容规则只允许“相同不可变前缀 + 新 migration 后缀”：旧 migration 集先应用后，新二进制必须只看到待执行后缀；数据库版本高于二进制内置集合时，旧二进制必须拒绝；任何已记录 version 的 name/checksum 变化，无论状态 clean/dirty，都必须拒绝，系统不提供 adopt-checksum、跳过或自动改 ledger 的逃生口。预发布 migration 只有在尚未通过外部发布门禁且没有生产 ledger 时才可修正；一旦制品发布，修复只能新增下一版本 migration。进程 cancel/超时后不再执行新 statement，但锁释放使用独立的短清理上下文；若 ClickHouse 不可达或进程被强杀，持久锁跨服务重启保留，必须在确认旧进程死亡后 exact-owner unlock。
+
+单节点故障门禁至少覆盖：旧集合 001..N → 新集合 001..N+1、旧集合读新库拒绝、checksum drift 拒绝、最后一条未确认 statement 重放、调用方 cancel 后锁释放、锁跨 ClickHouse restart 保留、Kafka `acks=all` 记录跨 broker restart 可读。它只能证明本地持久化和 fail-closed 控制面；不能证明副本故障、controller quorum、ISR 收缩、Replicated/Distributed DDL、N+1 容量或 RPO/RTO。网络/读超时不允许迁移器自行无限重试 DDL，操作者必须先 inspect，再按 clean/dirty 状态选择 apply/resume。
+
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
 | `flow_records` | 完整 enriched base fact | `record_id=32-byte SHA-256`；Replacing 收敛；base 查询去重 |

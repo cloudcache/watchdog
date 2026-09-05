@@ -53,21 +53,48 @@ func TestMigratorRealClickHouseLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	before, err := migrator.Inspect(ctx, migrations, false)
+	if len(migrations) < 2 {
+		t.Fatal("integration test requires an old and a new migration set")
+	}
+	olderMigrations := migrations[:len(migrations)-1]
+	before, err := migrator.Inspect(ctx, olderMigrations, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstOwner := strings.Repeat("1", 32)
-	first, err := migrator.Apply(ctx, migrations, MigrationApplyOptions{LockOwner: firstOwner})
+	first, err := migrator.Apply(ctx, olderMigrations, MigrationApplyOptions{LockOwner: firstOwner})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := migrator.Apply(ctx, migrations, MigrationApplyOptions{LockOwner: strings.Repeat("2", 32)})
+	if len(first.AppliedVersions) != len(before.Plan.Pending) || len(first.AppliedVersions) != len(olderMigrations) {
+		t.Fatalf("old plan=%+v applied=%+v", before.Plan, first.AppliedVersions)
+	}
+	oldInspection, err := migrator.Inspect(ctx, olderMigrations, false)
+	if err != nil || len(oldInspection.Plan.Pending) != 0 {
+		t.Fatalf("old binary inspection=%+v error=%v", oldInspection, err)
+	}
+	upgradeInspection, err := migrator.Inspect(ctx, migrations, false)
+	if err != nil || len(upgradeInspection.Plan.Pending) != 1 {
+		t.Fatalf("new binary inspection=%+v error=%v", upgradeInspection, err)
+	}
+	upgrade, err := migrator.Apply(ctx, migrations, MigrationApplyOptions{LockOwner: strings.Repeat("2", 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.AppliedVersions) != len(before.Plan.Pending) || len(second.AppliedVersions) != 0 {
-		t.Fatalf("before=%+v first=%+v second=%+v", before.Plan, first.AppliedVersions, second.AppliedVersions)
+	if len(upgrade.AppliedVersions) != 1 || upgrade.AppliedVersions[0] != migrations[len(migrations)-1].Version {
+		t.Fatalf("upgrade applied=%+v", upgrade.AppliedVersions)
+	}
+	second, err := migrator.Apply(ctx, migrations, MigrationApplyOptions{LockOwner: strings.Repeat("9", 32)})
+	if err != nil || len(second.AppliedVersions) != 0 {
+		t.Fatalf("idempotent apply=%+v error=%v", second, err)
+	}
+	if _, err := migrator.Inspect(ctx, olderMigrations, false); err == nil || !strings.Contains(err.Error(), "newer") {
+		t.Fatalf("old binary accepted a newer schema: %v", err)
+	}
+	drifted := append([]Migration(nil), migrations...)
+	drifted[0].Checksum = strings.Repeat("f", 64)
+	if _, err := migrator.Inspect(ctx, drifted, false); err == nil || !strings.Contains(err.Error(), "drift") {
+		t.Fatalf("checksum drift was accepted: %v", err)
 	}
 	// Migration 003 extends ORDER BY with columns introduced by the same ALTER.
 	// Replay it explicitly to cover a crash after DDL success but before the

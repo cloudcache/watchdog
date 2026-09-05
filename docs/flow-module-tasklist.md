@@ -238,7 +238,16 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A2 集成测试**：ClickHouse `26.3.29.7` 无持久卷空库通过 001..005、二次 apply、003 sorting-key statement 重放、并发拒绝、wrong-owner、dirty 普通拒绝及 exact checkpoint resume；实测修正了 ch-go 空 metadata block 处理和 003 不合法的旧 ORDER BY 扩展。Kafka `4.3.1` health/topic metadata、`acks=all` 单条生产及 partition/offset 消费通过，隔离测试 topic 已删除，12 分区 raw topic 保留。
 - [x] **FLOW-08A2 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
 - [x] **FLOW-08A2 已提交**：代码、环境、文档和真实测试证据已进入独立提交 `5182f28e`；工作区只保留其他平台切片和用户备份，不残留本切片生产/测试文件。
-- [ ] **FLOW-08A3 集成/发布**：真实空库 001..current、二次 apply、并发、statement 中断、dirty inspect/resume、checksum drift、旧/新二进制前后兼容和集群 DDL 演练。
+- [x] **FLOW-08A3 设计**：冻结“不可变相同前缀 + 新 migration 后缀”的唯一升级路径；旧二进制面对更高数据库版本、任意 checksum/name drift 均 fail-closed，不提供 adopt/skip/自动改 ledger。
+- [x] **FLOW-08A3 编码（故障测试能力）**：复用同一 production migrator 执行旧/新 migration 子集与真实 CH，不新增测试专用迁移状态机；fake executor 只增加 cancel 注入和清理 context 观测。
+- [x] **FLOW-08A3 单元**：增加调用方 cancel 后锁释放上下文仍有效的测试；原有 planner 覆盖 checksum/name/gap/ahead/dirty。
+- [x] **FLOW-08A3 变更设计/测试**：cancel 停止新 statement，独立清理上下文释放锁；强杀/CH 不可达则保留持久锁供人工 exact-owner unlock。真实集成覆盖旧集合→新集合、旧集合读新库与 checksum drift 拒绝。
+- [x] **FLOW-08A3 CH 单节点集成**：ClickHouse `26.3.29.7` 无持久卷空库先应用 001..004，再由新集合只应用 005；旧集合随后拒绝新库，篡改本地 checksum 拒绝；003 statement 连续 replay、dirty 005 resume 通过。持久开发实例创建空 metadata lock 后重启 ClickHouse，owner 保留；错误 owner 解锁失败，production CLI exact-owner 解锁成功。
+- [x] **FLOW-08A3 Kafka 单节点集成**：Kafka `4.3.1` 隔离 topic 以 `acks=all` 写入一条，broker restart 后从原 partition/offset 读回；测试 topic 已删除，`watchdog.flow.raw-v1` 12 个 partition 的 leader/ISR 均恢复为 1。
+- [ ] **FLOW-08A3 timeout/中断集成**：在受控代理或 fault-injection ClickHouse 上中断 active statement/packet，验证 read timeout、错误合并、dirty checkpoint 和进程重启后的 inspect/resume；不得用单元 cancel 冒充网络中断。
+- [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
+- [x] **FLOW-08A3 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
+- [ ] **FLOW-08A3 已提交（单节点兼容范围）**：代码、测试和证据进入独立提交；timeout/中断与集群门禁继续保持未完成。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。
