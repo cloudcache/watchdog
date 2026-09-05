@@ -46,7 +46,8 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	ctx, native := openDataIntegrationClickHouse(t, database)
 	removeCorpusTTLs(t, ctx, native)
 
-	brokers := corpusKafkaBrokers()
+	kafkaAddress, kafkaContainer := startProductionKafka(t)
+	brokers := []string{kafkaAddress}
 	topicBase := fmt.Sprintf("watchdog.flow.process.%d", time.Now().UnixNano())
 	topic := fmt.Sprintf("%s-v%d", topicBase, flowstream.SchemaVersion)
 	admin := newCorpusKafkaAdmin(t, ctx, brokers)
@@ -109,23 +110,32 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	)
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
 	waitForUDPListeners(t, ctx, collector, sflowAddress, netflowAddress)
+	netflowSender := dialUDPSender(t, "", netflowAddress)
+	defer netflowSender.Close()
 	unknownSource := nonLoopbackIPv4(t)
 	sendUDPPayloadsFrom(t, unknownSource, net.JoinHostPort(unknownSource, netflowPort), corpusFixturePayload(t, "netflow", "nfv5.pcap"))
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_datagrams_rejected_total", 1)
-	sendUDPPayloads(t, netflowAddress, make([]byte, 4097))
+	writeUDPPayloads(t, netflowSender, make([]byte, 4097))
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_datagrams_oversize_total", 1)
 	assertProcessMetric(t, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
 
-	clickHouseProxy.DropServerResponses()
-	sendUDPPayloads(t, netflowAddress, corpusFixturePayload(t, "netflow", "nfv5.pcap"))
+	pauseProductionContainer(t, kafkaContainer)
+	writeUDPPayloads(t, netflowSender, corpusFixturePayload(t, "netflow", "template.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_buffered_records", 1)
+	assertProcessMetric(t, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
+	unpauseProductionContainer(t, kafkaContainer)
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 1)
-	waitForProcessMetric(t, ctx, worker, workerMetrics, `watchdog_flow_clickhouse_insert_errors_total{class="retryable"}`, 1)
-	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_kafka_records_total", 0)
-	clickHouseProxy.ForwardServerResponses()
 	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 1)
 
-	sendUDPPayloads(t, netflowAddress,
-		corpusFixturePayload(t, "netflow", "template.pcap"),
+	clickHouseProxy.DropServerResponses()
+	writeUDPPayloads(t, netflowSender, corpusFixturePayload(t, "netflow", "nfv5.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 2)
+	waitForProcessMetric(t, ctx, worker, workerMetrics, `watchdog_flow_clickhouse_insert_errors_total{class="retryable"}`, 1)
+	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_kafka_records_total", 1)
+	clickHouseProxy.ForwardServerResponses()
+	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 2)
+
+	writeUDPPayloads(t, netflowSender,
 		corpusFixturePayload(t, "netflow", "data.pcap"),
 		corpusFixturePayload(t, "netflow", "ipfixprobe-templates.pcap"),
 		corpusFixturePayload(t, "netflow", "ipfixprobe-data.pcap"),
@@ -154,6 +164,78 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 
 func (p *silentResponseProxy) ForwardServerResponses() {
 	p.responseMode.Store(proxyForward)
+}
+
+func startProductionKafka(t testing.TB) (string, string) {
+	t.Helper()
+	port := reserveTCPPort(t)
+	container := "watchdog-flow-kafka-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	image := strings.TrimSpace(os.Getenv("WATCHDOG_KAFKA_IMAGE"))
+	if image == "" {
+		image = "apache/kafka:4.3.1"
+	}
+	environment := []string{
+		"KAFKA_NODE_ID=1",
+		"KAFKA_PROCESS_ROLES=broker,controller",
+		"KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:19092,HOST://:9092",
+		"KAFKA_ADVERTISED_LISTENERS=INTERNAL://127.0.0.1:19092,HOST://127.0.0.1:" + port,
+		"KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT",
+		"KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL",
+		"KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER",
+		"KAFKA_CONTROLLER_QUORUM_VOTERS=1@127.0.0.1:9093",
+		"KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1",
+		"KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1",
+		"KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1",
+		"KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0",
+		"KAFKA_AUTO_CREATE_TOPICS_ENABLE=false",
+		"KAFKA_LOG_DIRS=/tmp/kraft-combined-logs",
+	}
+	arguments := []string{"run", "--detach", "--rm", "--name", container, "-p", "127.0.0.1:" + port + ":9092"}
+	for _, value := range environment {
+		arguments = append(arguments, "--env", value)
+	}
+	arguments = append(arguments, image)
+	if output, err := exec.Command("docker", arguments...).CombinedOutput(); err != nil {
+		t.Fatalf("start integration Kafka: %v\n%s", err, output)
+	}
+	t.Cleanup(func() { removeProductionContainer(t, container) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		command := exec.CommandContext(ctx, "docker", "exec", container, "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "127.0.0.1:19092", "--list")
+		if err := command.Run(); err == nil {
+			return "127.0.0.1:" + port, container
+		}
+		select {
+		case <-ctx.Done():
+			logs, _ := exec.Command("docker", "logs", container).CombinedOutput()
+			t.Fatalf("wait for integration Kafka: %v\n%s", ctx.Err(), logs)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func pauseProductionContainer(t testing.TB, container string) {
+	t.Helper()
+	if output, err := exec.Command("docker", "pause", container).CombinedOutput(); err != nil {
+		t.Fatalf("pause %s: %v\n%s", container, err, output)
+	}
+}
+
+func unpauseProductionContainer(t testing.TB, container string) {
+	t.Helper()
+	if output, err := exec.Command("docker", "unpause", container).CombinedOutput(); err != nil {
+		t.Fatalf("unpause %s: %v\n%s", container, err, output)
+	}
+}
+
+func removeProductionContainer(t testing.TB, container string) {
+	t.Helper()
+	output, err := exec.Command("docker", "rm", "--force", container).CombinedOutput()
+	if err != nil && !strings.Contains(string(output), "No such container") {
+		t.Errorf("remove %s: %v\n%s", container, err, output)
+	}
 }
 
 type productionBootstrap struct {
@@ -433,6 +515,13 @@ func sendUDPPayloads(t testing.TB, address string, payloads ...[]byte) {
 
 func sendUDPPayloadsFrom(t testing.TB, sourceIP, address string, payloads ...[]byte) {
 	t.Helper()
+	connection := dialUDPSender(t, sourceIP, address)
+	defer connection.Close()
+	writeUDPPayloads(t, connection, payloads...)
+}
+
+func dialUDPSender(t testing.TB, sourceIP, address string) *net.UDPConn {
+	t.Helper()
 	remote, err := net.ResolveUDPAddr("udp4", address)
 	if err != nil {
 		t.Fatal(err)
@@ -445,7 +534,11 @@ func sendUDPPayloadsFrom(t testing.TB, sourceIP, address string, payloads ...[]b
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	return connection
+}
+
+func writeUDPPayloads(t testing.TB, connection *net.UDPConn, payloads ...[]byte) {
+	t.Helper()
 	for _, payload := range payloads {
 		if _, err := connection.Write(payload); err != nil {
 			t.Fatal(err)
