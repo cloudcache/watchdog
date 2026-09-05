@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06A3 — supplier 明细查询与全窗完整性。** supplier 必须映射 migration 005 的基线列，并证明整个请求过滤范围（不受 cursor/limit 影响）全部为 `fact_schema>=2`；旧事实存在时全请求失败且不返回部分页。只开放 supplier 可解释字段，不泄漏 customer Geo/ASN override、business 或 prefix。
+**活动切片：FLOW-05C — 查询 API 接线前置复核。** 只审计并补齐 Flow query provider 接入生产 hub 所必需的 tenant/RBAC、CH executor/config、错误 envelope 和超时边界；平台已有身份、Geo loader、限流或审计能力一律复用，缺口登记平台清单，不在 Flow 包内另造框架。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -48,6 +48,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，真实 CH/mixed worker 保留为外部门禁。
 - FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
+- FLOW-06A3：`d56bc3f6 feat(flow): expose complete supplier detail view`；supplier 明细映射冻结的 supplier 基线，完整过滤窗在 cursor 之前计算 `fact_schema` 证据，旧事实、缺失或矛盾 evidence 均全页失败；Flow race/vet、全库 test/vet 与 diff check 通过。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -184,7 +185,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-06A3 单元/变更测试**：覆盖 supplier Geo/ASN/ISP/category/version 映射、customer business/prefix 拒绝、typed filters/default fields、schema 1 unavailable、metadata-only、缺失/跨 block 矛盾 evidence 和 all-or-nothing runner。
 - [ ] **FLOW-06A3 集成**：真实 CH 验证 window/FINAL/IPv4-mapped、空范围、cursor 前后范围与 max_rows/max_bytes；本机无 CH，保留外部门禁。
 - [x] **FLOW-06A3 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；真实 CH 集成仍按上一项保留外部门禁。
-- [ ] **FLOW-06A3 已提交**：生产代码、测试与契约文档进入同一独立提交后关闭。
+- [x] **FLOW-06A3 已提交**：生产代码、测试与契约文档已进入独立提交 `d56bc3f6`；工作区不再残留该切片生产文件。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
 - [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。
