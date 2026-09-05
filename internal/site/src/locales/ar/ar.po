@@ -3949,6 +3949,7 @@ msgid "Settings"
 msgstr "الإعدادات"
 
 #: src/components/routes/settings/layout.tsx
+#: src/components/routes/settings/notifications.tsx
 msgid "Settings saved"
 msgstr "تم حفظ الإعدادات"
 
@@ -4776,6 +4777,10 @@ msgstr ""
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Yes"
 msgstr "نعم"
+
+#: src/components/routes/settings/notifications.tsx
+msgid "Your notification settings have been updated."
+msgstr ""
 
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."

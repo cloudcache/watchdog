@@ -200,18 +200,19 @@ func (am *AlertManager) SendAlert(data AlertMessageData) error {
 		return nil
 	}
 
-	// get user settings
+	// Notification channels (emails/webhooks) live in the PocketBase
+	// user_settings collection. A user who never configured any channels has no
+	// row; that is not an error — there is simply nothing to deliver to.
+	userAlertSettings := UserNotificationSettings{
+		Emails:   []string{},
+		Webhooks: []string{},
+	}
 	record, err := am.hub.FindFirstRecordByFilter(
 		"user_settings", "user={:user}",
 		dbx.Params{"user": data.UserID},
 	)
 	if err != nil {
-		return err
-	}
-	// unmarshal user settings
-	userAlertSettings := UserNotificationSettings{
-		Emails:   []string{},
-		Webhooks: []string{},
+		return nil
 	}
 	if err := record.UnmarshalJSONField("settings", &userAlertSettings); err != nil {
 		am.hub.Logger().Error("Failed to unmarshal user settings", "err", err)

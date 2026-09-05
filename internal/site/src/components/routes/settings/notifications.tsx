@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
 import { isAdmin, pb } from "@/lib/api"
 import type { UserSettings } from "@/types"
-import { saveSettings } from "./layout"
+import { saveNotificationSettings } from "@/lib/api"
 import { QuietHours } from "./quiet-hours"
 import type { ClientResponseError } from "pocketbase"
 
@@ -59,7 +59,8 @@ const SettingsNotificationsPage = ({ userSettings }: { userSettings: UserSetting
 		setIsLoading(true)
 		try {
 			const parsedData = v.parse(NotificationSchema, { emails, webhooks })
-			await saveSettings(parsedData)
+			await saveNotificationSettings(parsedData)
+			toast({ title: t`Settings saved`, description: t`Your notification settings have been updated.` })
 		} catch (e: unknown) {
 			toast({
 				title: t`Failed to save settings`,

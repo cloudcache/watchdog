@@ -184,38 +184,89 @@ export function logOut() {
 	pb.realtime.unsubscribe()
 }
 
-// User preferences live in MySQL (was the PocketBase user_settings
-// collection). row_version drives optimistic concurrency: it comes back in the
-// GET/PUT body and is echoed as the If-Match on the next write.
+// UI display preferences live in MySQL (was part of the PocketBase
+// user_settings collection). row_version drives optimistic concurrency: it
+// comes back in the GET/PUT body and is echoed as the If-Match on the next
+// write. Notification channels (emails/webhooks) stay in PocketBase for now
+// because the alert delivery path reads them there; extracting them into a
+// MySQL notification_channels table (and redirecting delivery) is a follow-up.
 let userPreferencesRowVersion = 0
 
 type UserPreferencesResponse = { settings?: UserSettings; row_version?: number }
 
-/** Fetch the current user's preferences from the database. */
+// The fields that belong in MySQL user_preferences (display prefs only).
+const UI_PREFERENCE_KEYS = [
+	"chartTime",
+	"unitTemp",
+	"unitNet",
+	"unitDisk",
+	"colorWarn",
+	"colorCrit",
+	"hourFormat",
+	"layoutWidth",
+] as const
+
+function pickUIPreferences(settings: Partial<UserSettings>): Partial<UserSettings> {
+	const out: Partial<UserSettings> = {}
+	for (const key of UI_PREFERENCE_KEYS) {
+		if (settings[key] !== undefined) {
+			// biome-ignore lint/suspicious/noExplicitAny: narrow copy across a keyed union
+			;(out as any)[key] = settings[key]
+		}
+	}
+	return out
+}
+
+/** Load UI preferences from MySQL and notification channels from PocketBase. */
 export async function updateUserSettings() {
+	const merged: Partial<UserSettings> = { ...$userSettings.get() }
 	try {
 		const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {})
 		userPreferencesRowVersion = res.row_version ?? 0
-		if (res.settings && Object.keys(res.settings).length > 0) {
-			$userSettings.set(res.settings)
-		}
+		Object.assign(merged, pickUIPreferences(res.settings ?? {}))
 	} catch (e) {
 		console.error("get preferences", e)
 	}
+	try {
+		const req = await pb.collection("user_settings").getFirstListItem("", { fields: "settings" })
+		merged.emails = req.settings?.emails ?? merged.emails
+		merged.webhooks = req.settings?.webhooks ?? merged.webhooks
+	} catch {
+		// no notification row yet — keep defaults
+	}
+	$userSettings.set(merged as UserSettings)
 }
 
-/** Merge and persist the current user's preferences to the database. */
+/** Persist UI display preferences to MySQL (notification channels excluded). */
 export async function saveUserPreferences(newSettings: Partial<UserSettings>): Promise<UserSettings> {
 	const merged = { ...$userSettings.get(), ...newSettings }
+	const uiOnly = pickUIPreferences(merged)
 	const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {
 		method: "PUT",
 		headers: userPreferencesRowVersion > 0 ? { "If-Match": `"${userPreferencesRowVersion}"` } : {},
-		body: merged,
+		body: uiOnly,
 	})
 	userPreferencesRowVersion = res.row_version ?? userPreferencesRowVersion
-	const saved = res.settings ?? merged
-	$userSettings.set(saved)
-	return saved
+	$userSettings.set(merged)
+	return merged
+}
+
+/** Persist notification channels (emails/webhooks) to PocketBase user_settings,
+ * where the alert delivery path reads them. */
+export async function saveNotificationSettings(
+	channels: Pick<UserSettings, "emails" | "webhooks">
+): Promise<void> {
+	const userID = pb.authStore.record?.id
+	try {
+		const req = await pb.collection("user_settings").getFirstListItem("", { fields: "id,settings" })
+		await pb.collection("user_settings").update(req.id, {
+			settings: { ...req.settings, ...channels },
+		})
+	} catch {
+		// no row yet — create one for this user
+		await pb.collection("user_settings").create({ user: userID, settings: channels })
+	}
+	$userSettings.set({ ...$userSettings.get(), ...channels })
 }
 
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {
