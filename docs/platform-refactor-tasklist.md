@@ -53,7 +53,7 @@
 ## 平台缺陷登记
 
 - [ ] **PLAT-04A immutable dimension publication**：`dimension_snapshots` 目前只存在于平台设计文字，MySQL migration、repository、publish/rollback API 和引用保留均未实现；Flow worker 只能使用静态验签 bootstrap。完成前不得让 Flow 热路径回退查询 `address_prefixes/address_sets`，也不得把设计中的外键当成已存在 schema。
-- [ ] **PLAT-04B operation job registry/scheduler**：`operation_jobs` 表和 lease worker 已实现，但 runtime 只硬编码一个 `target_delete` worker，缺少受控 handler registry、周期 job enqueue、水位所有权、每类并发/扫描预算和 typed payload version。Flow rollup 调度在此能力落地前保持挂起，禁止在 `flow-worker` 复制第二套 job 状态机。
+- [ ] **PLAT-04B operation job registry/scheduler**：受控 handler registry（重复/空 handler 启动即拒）、每类并发预算调度器（每 worker 独立 lease owner `base/type/index`）、typed payload（各 handler 自行 JSON 反序列化）已实现，hub 通过 registry 注册 `target_delete`（并发 2）。gated MySQL 多类型排水 + 单测（commit 18fde3a3）。**余项**：周期 job enqueue（cron 式）、payload schema version 显式化、每类扫描预算/背压。Flow rollup 调度在余项落地前保持挂起，禁止在 `flow-worker` 复制第二套 job 状态机。
 - [ ] **PLAT-04C address-prefix/set 管理闭环**：现有 API 只存任意 `selector JSON`，没有 canonical CIDR/IPv6 校验、members/exclude/include DAG、集合并交差/有限补集预览、冲突/展开量检查、publication 引用、分页/filter、ETag/审计；POST/PATCH 还会无条件把 `enabled=true`。平台侧需补 typed schema、validate/preview/publish 生命周期和 VTable 管理面；Flow 侧只实现 immutable 编译与事实 membership，不在数据面复制 CRUD。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
