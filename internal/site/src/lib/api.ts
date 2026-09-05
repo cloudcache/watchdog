@@ -187,9 +187,8 @@ export function logOut() {
 // UI display preferences live in MySQL (was part of the PocketBase
 // user_settings collection). row_version drives optimistic concurrency: it
 // comes back in the GET/PUT body and is echoed as the If-Match on the next
-// write. Notification channels (emails/webhooks) stay in PocketBase for now
-// because the alert delivery path reads them there; extracting them into a
-// MySQL notification_channels table (and redirecting delivery) is a follow-up.
+// write. Notification channels (emails/webhooks) now live in MySQL too and the
+// alert delivery path reads them there (see saveNotificationSettings below).
 let userPreferencesRowVersion = 0
 
 type UserPreferencesResponse = { settings?: UserSettings; row_version?: number }
