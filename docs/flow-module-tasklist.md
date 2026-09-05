@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06A2 — raw 明细查询。** raw tuple 对全部 fact schema 都完整，本轮在现有有界 `flow_records FINAL` 明细查询中开放 raw view，并严格限制 raw 可见字段/过滤器、不应用 customer disposition。supplier 明细需要全窗 `fact_schema>=2` 完整性证据，留到独立切片；aggregate/reclass 继续不越过平台和真实 CH 门禁。
+**活动切片：FLOW-06A3 — supplier 明细查询与全窗完整性。** supplier 必须映射 migration 005 的基线列，并证明整个请求过滤范围（不受 cursor/limit 影响）全部为 `fact_schema>=2`；旧事实存在时全请求失败且不返回部分页。只开放 supplier 可解释字段，不泄漏 customer Geo/ASN override、business 或 prefix。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -47,6 +47,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，真实 CH/mixed worker 保留为外部门禁。
+- FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -178,7 +179,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-06A2 raw detail 设计**：raw 对全部 fact schema 可用，只包含协议 tuple/采样/质量/资源/observation 字段，不应用 customer disposition；customer-derived 字段及 direction/category/business filters 在 raw view 稳定拒绝，supplier 继续关闭。
 - [x] **FLOW-06A2 编码/单元/变更测试**：detail schema v2 增加显式 raw/customer view；view 进入 compiled/result contract，raw 使用独立默认/允许字段集和资源过滤器；覆盖参数化 SQL、无 customer/supplier 泄漏、drop fact 可审计、非法字段/过滤器/view 及 runner fail-closed。
 - [ ] **FLOW-06A2 集成**：真实 CH 用含 count/drop 和 fact schema 1/2 的数据核对 raw/customer 行集、翻页和权限上层接线；本机无 CH，保留外部门禁。
-- [ ] **FLOW-06A2 回归/已提交**：Flow race/vet、全库 test/vet、diff check 全过并进入独立提交后关闭。
+- [x] **FLOW-06A2 回归/已提交**：提交 `d00b620a`；Flow race/vet、全库 test/vet 与 diff check 全过，工作区不再残留该切片生产文件。
+- [ ] **FLOW-06A3 supplier detail**：固定 supplier 字段映射、允许的方向/category/resource filters、全请求窗 fact-schema completeness sentinel 和 cursor 独立性；旧事实、缺/重复/矛盾 sentinel、partial block 全部 fail-closed。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
 - [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。
