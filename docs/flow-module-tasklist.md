@@ -2,6 +2,24 @@
 
 本清单把 [平台化与可插拔模块架构](watchdog-platform-module-architecture.md)、[存储收敛详细设计](storage-consolidation.md)、[流向需求与选型](flow-direction-requirements.md) 和 [Flow 详细设计](flow-module-design.md) 拆成可勾选工作包。除明确标注的现有组件前置修复外，任务初始为未完成；勾选时应在同一行或关联 issue/PR 中补充负责人和证据链接。
 
+Flow 数据面已按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 重置。旧 FLOW-01/FLOW-02 中 raw WAL、normalized/collect-state/quality/attempt/tombstone 相关已完成项只代表历史代码存在，不再是目标架构；除阻断性修复外禁止继续扩展，最终由 FLOW-R01 删除。
+
+### FLOW-R01 数据面收敛：Akvorado RawFlow + GoFlow2
+
+- [x] **设计**：冻结 `UDP → RawFlow protobuf → franz-go/Kafka → GoFlow2 decode → dimension → ClickHouse`；Kafka 是唯一排队/短期重放边界，collector 不再维护 raw WAL 和分布式状态机。
+- [x] **编码 R01A**：隔离新增 `internal/flowstream`；RawFlow 保留 Akvorado 字段并增加 collector/listener/source-port/registry-version；按 collector+exporter 固定 partition key；实现复用 buffer 的 protobuf encoder。
+- [x] **编码 R01B**：引入 franz-go producer/consumer；producer 采用异步回调、批压缩、有界 queue 和 key affinity；consumer 采用 group/blocked rebalance/marked offsets，handler 成功后才标记 offset。
+- [x] **单元测试 R01A/B**：覆盖 envelope round-trip、身份隔离、源端口不改变 affinity、输入边界、producer success/failure/release/close、consumer 成功/失败 offset 和生命周期。
+- [x] **并发/基准 R01A/B**：`go test -race ./internal/flowstream/...` 通过；Apple M2、1400B payload protobuf 编码三轮约 231ns/op、6.05GB/s、56B/op、2 allocs/op。
+- [ ] **编码 R01C**：consumer value 解包并接 GoFlow2 四协议 decoder；模板和 sampling store 按 Kafka partition 隔离，输出统一 raw count/sampling mode/normalized count。
+- [ ] **单元测试 R01C**：复用并扩充脱敏 sFlow/NetFlow v5/v9/IPFIX fixture；覆盖模板前置/缺失、采样率、counter mode、IPv4/v6、ASN、接口和坏 payload。
+- [ ] **集成测试**：真实 Kafka producer/consumer group、topic version、partition affinity、broker 中断恢复、rebalance/shutdown offset、坏消息 DLQ ack 后提交。
+- [ ] **性能测试**：目标硬件 datagrams/s、decoded records/s、Kafka bytes/s、CPU/RSS/GC；2×持续、3×突发、72h soak；不得以链路 Gbps 替代记录量。
+- [ ] **变更设计**：给出旧 WAL/normalized/collect-state/quality/attempt/state-cleanup 的文件、配置、topic、migration 删除 manifest，确认保留的 exporter/采样/维度/CH 契约。
+- [ ] **变更测试**：镜像输入比较新旧 datagram/record/raw/normalized/六维守恒；验证切换、观察窗口、forward-fix 和旧 topic 只读退役。
+- [ ] **回归测试**：Flow API/查询/图表/导出、SNMP 可选对账和非 Flow 平台功能不回归。
+- [ ] **许可证发布门**：根许可证、NOTICE、源码入口、依赖/制品声明与 Akvorado 派生文件一致；未完成前不得对外发布测试制品。
+
 ## 1. 使用规则
 
 - [ ] 已为本轮迭代填写负责人、目标版本、开始/完成日期和关联 issue/PR。
@@ -113,9 +131,16 @@
 
 ### PLAT-00A 全生命周期与 API/数据契约
 
+本轮已完成的可独立核验切片（父项覆盖 job lease/删除预览/reconciler 等更大范围，不提前勾选）：
+
+- [x] Idempotency-Key 幂等写：migration 024 `idempotency_records`（tenant 域 key→request hash+响应快照，TTL 过期）；`WithIdempotency` middleware 对相同 (key, body) 重放存储响应并带 `Idempotency-Replayed` 头，key 复用不同 body 返回 409，仅记录 2xx–4xx（5xx 允许重试），无 header 走兼容窗口。已挂 POST /users、/roles。证据：commit a8f43017（`api_idempotency.go`）。
+- [x] ETag/If-Match 乐观锁：实体 GET 暴露弱 ETag，`CheckIfMatch` 不匹配返回 412 `version_conflict`（含 current_etag），无 If-Match 兼容放行；已挂 user/role 的 PATCH/DELETE。证据：同 commit。
+- [x] 错误契约补 `retryable` 字段（429/5xx 为 true）。init.sql 快照再生成（52 表）、migration/parity 断言升至 024 并实跑通过。
+- [x] 单测：重放一致性（仓库只写一次）、key 冲突 409、无 repo/无 key 直通、陈旧 If-Match 412 + 新鲜 ETag 放行（`api_idempotency_test.go`）。
+
 - [ ] **设计**：冻结资源/job/data/feature 生命周期、公共字段、create/list/get/patch/action/delete-preview/delete/restore/purge/bulk 语义、ETag/If-Match、Idempotency-Key、错误码、query completeness envelope、retention/destruction receipt 和 desired-state 安全边界；只形成 watchdog core 公共契约，不新增独立微服务。
-- [ ] **编码**：在现有 API/repository/worker 框架内实现公共 DTO、校验/middleware、乐观锁、幂等记录、审计钩子、异步 job lease/checkpoint、删除影响预览和 reconciler interface；模块按需注册资源规则，不建设通用工作流引擎。
-- [ ] **单元测试**：覆盖重复 create/action、版本冲突、非法状态迁移、cursor/filter/sort、dry-run、依赖占用、tombstone/restore/purge、job cancel/retry/lease takeover、partial/empty/error 区分和未知配置拒绝。
+- [ ] **编码**：在现有 API/repository/worker 框架内实现公共 DTO、校验/middleware、乐观锁、幂等记录、审计钩子、异步 job lease/checkpoint、删除影响预览和 reconciler interface；模块按需注册资源规则，不建设通用工作流引擎。（乐观锁/幂等记录/错误码切片已完成，见上）
+- [ ] **单元测试**：覆盖重复 create/action、版本冲突、非法状态迁移、cursor/filter/sort、dry-run、依赖占用、tombstone/restore/purge、job cancel/retry/lease takeover、partial/empty/error 区分和未知配置拒绝。（重复 create/版本冲突已覆盖，见上）
 - [ ] **集成测试**：以 target、collector、visualization、export 和 flow exporter 各跑一遍创建→验证→启用→停用→退役→删除→恢复→销毁；注入 API 重试、worker 崩溃和 actual-state 漂移，确认副作用不重复且不可逆动作不会自动执行。
 - [ ] **变更设计**：记录与现有 handler/repository/job/status 字段的映射、兼容窗口和不适合统一的资源差异；若公共抽象开始承载业务流程，必须拆回模块 action 并更新 ADR。
 - [ ] **变更测试**：验证旧客户端缺少 ETag/幂等键的兼容期、旧状态迁移、新旧错误响应、soft-delete 唯一键、retention 改动、schema forward-fix 和 reconciler 版本切换。
