@@ -40,6 +40,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 代码提交：`886ccb2b feat(flow): complete raw pipeline dimensions and rollup lifecycle`；包含 027/028、旧 collector state-restore/cleanup 删除、分层 Geo/address set、worker/CH/query 契约及 rollup production handler/store/runtime。
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
+- FLOW-03B 真实 CH：`66453df3 test(flow): verify Geo rollups on ClickHouse`；同一组三条 base fact 在 continent/region/country/province/city 五级分别保持 600 raw bytes/3 records，同层稳定 ID 无重复；七组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。Kafka 四协议 corpus 重放仍是独立未完成门禁。
 - FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；真实 CH 执行证据由后述 `55a3b166` 独立承载。
@@ -106,11 +107,13 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **编码/单元（查询原语）**：共享 `GeoIndex` 按单一 bundle 版本提供稳定 code 节点、breadcrumb、启用的直属 children，以及有硬上限的目标层级 descendant code 展开；不让 hub/API 再实现第二套树遍历。
 - [ ] **查询 API/显示**：一次只选一个 Geo level，返回 id/name/parent/path/additive/completeness/version；地址组支持 include_any/include_all/exclude_any，组合值从 base 去重计算，单组 rollup 明确 `additive=false`。平台现存重复 v1 loader 的收敛登记在 PLAT-04D，本切片不直接改 hub。
 - [x] **集成（进程内）**：真实压缩 v4/v6 bundle、原子热加载、事件时间旧版本选择、Geo v2 → worker → CH native input/rollup 字段契约已覆盖；同一 base flow 只携带一组五级 ID。
-- [ ] **集成（外部服务）**：Kafka 重放 + 真实 CH 迁移/写入/五级直计数与叶节点求和一致；同一 flow 不得在同一级重复。
+- [x] **集成（真实 CH）**：独立数据库顺序 migration、native writer、1m rollup 和五级 query 串联；同一组三条 base fact 在 continent/region/country/province/city 每级均保持 600 raw bytes/3 records，同层稳定 ID 无重复，父级与叶节点求和一致。证据提交 `66453df3`。
+- [ ] **集成（Kafka corpus 重放）**：以真实 sFlow v5、NetFlow v5/v9、IPFIX corpus 经 collector→Kafka→worker 重放并与真实 CH 五级结果对账；不得用直接 writer 测试冒充该协议链路。
 - [x] **变更设计/契约测试（数据面）**：v1/v2 bundle 并存读取，worker schema v2，CH 002 只向前增加字段/枚举且 migration contract 以顺序执行后的有效 schema 为准；客户 Geo 修正会清除不兼容的供应商路径 ID；导出版本 hash 覆盖 v4/v6、运营商和字典全部语义输入。
 - [ ] **变更设计/测试（查询面）**：旧 worker 对不兼容 publication 的拒绝/滚动升级、双版本查询窗口、回滚只切 publication 不改 base。
 - [x] **回归（本地）**：Flow 定向包/命令 race、vet、test，Geo 导出脚本/py_compile 与 CH schema contract 通过。
-- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览、查询 API/显示和外部服务集成仍未提交，不因此关闭 FLOW-03B 剩余门禁。
+- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览、查询 API/显示和 Kafka corpus 重放仍未提交，不因此关闭 FLOW-03B 剩余门禁。
+- [x] **外部 CH 证据已提交**：五级 Geo 直计数与守恒门禁进入 `66453df3`；测试只创建并清理 `watchdog_flow_it_geo_hierarchy`，不修改已有开发数据。
 
 ### FLOW-04B Rollup operation job
 
