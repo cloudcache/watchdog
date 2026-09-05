@@ -202,6 +202,47 @@ func TestRealClickHousePartialResponseFailsWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestRealClickHouseReplayConvergesWithoutServerDedup(t *testing.T) {
+	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION=1 to run")
+	}
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_no_server_dedup")
+	for _, table := range []string{flowRecordsTable, flowReceiptsTable} {
+		if err := native.executor.Do(ctx, synchronousMigrationQuery(
+			"ALTER TABLE "+table+" MODIFY SETTING non_replicated_deduplication_window = 0",
+		)); err != nil {
+			t.Fatalf("disable %s server dedup: %v", table, err)
+		}
+		if err := native.executor.Do(ctx, synchronousMigrationQuery("SYSTEM STOP MERGES "+table)); err != nil {
+			t.Fatalf("stop %s merges: %v", table, err)
+		}
+	}
+
+	eventTime := time.Date(2026, 9, 6, 2, 3, 0, 0, time.UTC)
+	batch := integrationBatch(100, eventTime.Add(time.Minute),
+		integrationRecord(3, eventTime, "geo-city-a", 400),
+		integrationRecord(4, eventTime.Add(time.Second), "geo-city-b", 500),
+	)
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("prepare blocks=%d error=%v", len(blocks), err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := native.InsertFlowBlock(ctx, blocks[0]); err != nil {
+			t.Fatalf("insert attempt %d: %v", attempt+1, err)
+		}
+	}
+	physicalFacts, physicalReceipts := readReplayPhysicalCounts(t, ctx, native, blocks[0])
+	if physicalFacts != 4 || physicalReceipts != 2 {
+		t.Fatalf("physical fact/receipt counts=%d/%d, want 4/2 with dedup disabled and merges stopped", physicalFacts, physicalReceipts)
+	}
+	logical := readReplayState(t, ctx, native, blocks[0])
+	if logical.factCount != 2 || logical.rawBytes != 900 || logical.rawPackets != 2 ||
+		logical.receiptCount != 1 || logical.receiptChecksum != blocks[0].Checksum {
+		t.Fatalf("dedup-window-independent replay did not converge: %+v", logical)
+	}
+}
+
 type replayState struct {
 	factCount       uint64
 	rawBytes        uint64
@@ -261,6 +302,27 @@ WHERE ingest_batch_id = unhex({batch_id:String})`,
 		state.receiptChecksum = checksums[0]
 	}
 	return state
+}
+
+func readReplayPhysicalCounts(t testing.TB, ctx context.Context, native *NativeInserter, block PreparedBlock) (uint64, uint64) {
+	t.Helper()
+	id := hex.EncodeToString(block.ID[:])
+	count := func(table string) uint64 {
+		var values proto.ColUInt64
+		query := ch.Query{
+			Body:       "SELECT count() FROM " + table + " WHERE ingest_batch_id = unhex({batch_id:String})",
+			Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+			Result:     proto.Results{{Name: "count()", Data: &values}},
+		}
+		if err := native.executor.Do(ctx, query); err != nil {
+			t.Fatalf("read physical %s count: %v", table, err)
+		}
+		if len(values) != 1 {
+			t.Fatalf("physical %s count rows=%d", table, len(values))
+		}
+		return values[0]
+	}
+	return count(flowRecordsTable), count(flowReceiptsTable)
 }
 
 type silentResponseProxy struct {
