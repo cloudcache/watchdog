@@ -17,6 +17,8 @@ type APIV1RouterConfig struct {
 	AggregateGraphs     AggregateGraphRepository
 	Permissions         PermissionRepository
 	IdentityAdmin       IdentityAdminRepository
+	Registries          *PlatformRegistries
+	TenantModules       TenantModuleRepository
 	Retention           RetentionRepository
 	SNMP                SNMPRepository
 	Metrics             MetricsService
@@ -126,6 +128,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.IdentityAdmin != nil {
 		registerIdentityAdminRoutes(mux, auth, cfg.IdentityAdmin, cfg.Audit)
+	}
+	if cfg.Registries != nil {
+		registerModuleRoutes(mux, auth, cfg.Registries, cfg.TenantModules, cfg.Audit)
 	}
 	if cfg.Retention != nil {
 		registerRetentionRoutes(mux, auth, cfg.Retention)

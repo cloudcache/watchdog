@@ -19,6 +19,7 @@ type collectorPrincipalRuntimeProvider interface {
 type BackendRuntime struct {
 	Config             BackendConfig
 	Store              *MySQLStore
+	Registries         *PlatformRegistries
 	MetricsClient      VictoriaMetricsClient
 	ExportStore        DiskCSVExportStore
 	ExportWorker       ExportWorker
@@ -75,9 +76,15 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	registries, err := NewBuiltinPlatformRegistries()
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("register builtin platform modules: %w", err)
+	}
 	runtime := &BackendRuntime{
 		Config:            cfg,
 		Store:             store,
+		Registries:        registries,
 		MetricsClient:     metricsClient,
 		ExportStore:       exportStore,
 		CollectorEvidence: collectorEvidence,
@@ -174,6 +181,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AggregateGraphs:     r.Store,
 		Permissions:         r.Store,
 		IdentityAdmin:       r.Store,
+		Registries:          r.Registries,
+		TenantModules:       r.Store,
 		Retention:           r.Store,
 		SNMP:                r.Store,
 		SNMPDiscovery:       r.SNMPDiscovery,
