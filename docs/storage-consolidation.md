@@ -1,6 +1,6 @@
 # 存储与管理面收敛详细设计
 
-> 状态：ADR-SC-001，已评审修订；范围只覆盖 PocketBase、MySQL 与 VictoriaLogs。VictoriaMetrics 和 ClickHouse 的职责边界保持不变，见[平台架构](watchdog-platform-module-architecture.md)。实施清单见[平台与 Flow tasklist](flow-module-tasklist.md)。
+> 状态：ADR-SC-001，已评审修订；范围只覆盖 PocketBase、MySQL 与 VictoriaLogs。VictoriaMetrics 和 ClickHouse 的职责边界保持不变，见[平台架构](watchdog-platform-module-architecture.md)。平台实施见[平台重构 tasklist](platform-refactor-tasklist.md)，Flow 实施见[Flow tasklist](flow-module-tasklist.md)。
 
 > 实施状态（2026-09-03）：STORE-00 的 VictoriaLogs 止血，以及 STORE-01 的 migration/readiness、生产路由和身份投影最小闭环已完成；PB 业务集合迁移、完整 typed client、用户/角色 CRUD 和 STORE-02–05 尚未完成。细粒度完成项及证据以 tasklist 为准。
 
@@ -10,7 +10,7 @@
 
 1. PocketBase 只负责密码、OTP/MFA、重置邮件、OAuth、session/token 和 `users` auth collection；`role` 不再是授权权威；
 2. MySQL 是 tenant、用户投影、角色权限、target、collector、配置、告警、库存、任务和审计的唯一管理面事实源；
-3. VictoriaLogs 从运行时、前端、配置、部署、健康检查和测试矩阵中全部移除，不保留 `debug_victorialogs` 例外；限速诊断使用本地有界 capture/Kafka DLQ，不新增常驻存储；
+3. VictoriaLogs 从运行时、前端、配置、部署、健康检查和测试矩阵中全部移除，不保留 `debug_victorialogs` 例外；限速诊断使用低基数指标和本地有界、脱敏 capture，不新增 Kafka DLQ 或常驻存储；
 4. VictoriaMetrics 继续保存 SNMP、system、container、systemd、SMART 历史观测和管线指标；ClickHouse 继续保存 Flow 分析事实；二者不是本文要合并的管理库；
 5. 生产只暴露一个 Hub HTTP 入口，但“一个进程”不等于“一个存储”。PocketBase 的 auth SQLite 仍需独立备份、恢复和升级测试。
 

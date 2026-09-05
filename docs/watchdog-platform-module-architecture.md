@@ -11,7 +11,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 1. **watchdog core**：身份、RBAC、module registry、collector registry、target/resource、统一查询、可视化、统计导出、修正规则、审计；
 2. **业务模块**：flow、SNMP、system 等，以编译期注册方式提供资源类型、数据集、API、worker 和前端入口；
 3. **独立采集器**：部署在数据源附近，通过一次性 enrollment 和持续 heartbeat 接入，不直接写业务数据库；
-4. **数据基础设施**：Kafka-compatible MQ 提供 flow-collect→dimension worker 的 normalized 事实边界，本地 raw WAL 保护接收与协议重放，MySQL 保存管理数据，VictoriaMetrics 保存 SNMP/系统/运行指标，ClickHouse 保存 Flow 分析事实。
+4. **数据基础设施**：Kafka-compatible MQ 提供 Flow RawFlow 唯一队列与短期重放边界，MySQL 保存管理数据，VictoriaMetrics 保存 SNMP/系统/运行指标，ClickHouse 保存 Flow 分析事实。
 
 “可插拔”不采用 Go `.so` 动态插件。模块随 watchdog 二进制编译，通过 registry、feature flag 和 tenant module enablement 启停。这样保留类型安全、迁移可控和统一鉴权，同时避免模块把路由、菜单和表直接耦合进 core。
 
@@ -43,7 +43,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 | P0 | `APIV1RouterConfig` 手工列出每个 repository，路由依赖硬编码 | 改为 core services + module registry，模块自行声明依赖并注册 |
 | P0 | permission 的 resource type 和 Go 常量只覆盖 tenant/target/port/export/billing | 建立可注册资源类型与父子关系，支持 module、collector、dataset、visualization、flow_exporter |
 | P0 | `target_agents` 强制单一 `target_id`，agent type 只允许 snmp/system | collector 身份与 resource binding 分离，支持一个 flow collector 服务多个 exporter/target |
-| P0（止血完成） | flow 原型原先同时写 VM aggregate 与逐 flow VLogs，没有 MQ、重放和 sink 隔离 | 逐 flow VLogs sink、配置和前端直连已删除；现有 VM aggregate 暂作兼容。正式 flow-collect 仍须以 GoFlow2 接收/解码，raw WAL 后只写 normalized Kafka，由 dimension worker 写 CH base |
+| P0（止血完成） | flow 原型原先同时写 VM aggregate 与逐 flow VLogs，没有 MQ、重放和 sink 隔离 | 逐 flow VLogs sink、配置和前端直连已删除；旧 `internal/flowcollect` 和状态清理链也已删除。正式链路固定为轻量 collector 写单一 RawFlow topic，Kafka 后 worker/GoFlow2 解码并写 CH |
 | P1 | target DB 类型可扩展，但 Go `TargetKind` 只认 system/network | target kind 改为 registry，模块声明字段、校验器、详情 tab 和发现器 |
 | P1 | metric catalog 静态，查询后端固定为 VM，任意 flow 高基数查询无法接入 | 引入 dataset/metric provider 和统一 QueryGateway，支持 VM 与 ClickHouse |
 | P1 | aggregate graph 只绑定 port，item 只有 metric/direction | 图表定义改为 provider + dataset + query JSON + resource binding，支持 flow group-by/filter |
@@ -78,12 +78,11 @@ PocketBase auth/OIDC ───▶│ IdentityAdapter → AuthContext → RBAC   
                     └───────────────▲──────────────┘        │
                                     │                       │
 设备 sFlow/NetFlow ─▶ flow-collect                           │
-                      registered agent                       │
-                      raw WAL + GoFlow2 decode                │
+                      UDP + source admission + RawFlow        │
                                             │                │
-                                   Kafka normalized topic    │
+                                      Kafka raw topic        │
                                             ▼                │
-                                  flow-dimension-worker      │
+                                  flow-worker + GoFlow2      │
                                             │                │
                                         ClickHouse           ▼
                                                           Web UI
@@ -92,9 +91,9 @@ SNMP/system collectors ──同一 CollectorRegistry/Target/RBAC/VM Provider─
 flow pipeline `/metrics` ────────────────────────────────▶ existing VM
 ```
 
-这是最小基线而不是组件堆叠：只有一个 watchdog 管理面、两个 Flow 数据面进程角色、一个 normalized topic、一个 Flow 事实库。生命周期、权限、幂等、删除和测试是同一管理/API 框架中的契约，不新增“生命周期服务”“权限服务”或另一套 Flow 时序库。ClickHouse 的派生表是同一库内可重建查询加速，不是新的事实源；VM 不默认保存 Flow 业务曲线。
+这是最小基线而不是组件堆叠：只有一个 watchdog 管理面、两个 Flow 数据面进程角色、一个 RawFlow topic、一个 Flow 事实库。生命周期、权限、幂等、删除和测试是同一管理/API 框架中的契约，不新增“生命周期服务”“权限服务”或另一套 Flow 时序库。ClickHouse 的派生表是同一库内可重建查询加速，不是新的事实源；VM 不默认保存 Flow 业务曲线。
 
-控制面和数据面必须分开：API/MySQL 短暂不可用时，已注册 flow-collect 可使用最后一次签名 plan 继续收数；接收/解码、统计维度归类和查询互相隔离。Kafka 不可用由本地 raw WAL 承接，dimension/CH 不可用由 normalized lag 承接，所有容量耗尽都产生显式 data-loss interval。
+控制面和数据面必须分开：API/MySQL 短暂不可用时，已注册 flow-collect 可在签名 plan 有效期内继续收数；接收、解码/归类和查询互相隔离。Kafka 不可用时 collector 的有界 producer 最终表现为 UDP drop；worker/CH 不可用由 RawFlow lag 承接，所有容量耗尽都产生显式 data-loss interval。
 
 ## 4. Module contract
 
@@ -357,17 +356,15 @@ plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须�
 
 这里的 Ed25519 public key 必须由 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、本地多 key bundle 的 overlap/retiring/revoked 执行、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；PLAT-03 管理面 key registry、bundle 签名分发/本地防回滚代际、fleet ACK 与 rollout/canary 尚未完成。
 
-Migration `019_collector_ownership_evidence.sql` 补充所有权切换需要的三类规范化机器事实，而不是把时间戳或布尔证明塞进 plan/job JSON：
+Migration `019_collector_ownership_evidence.sql` 历史上为旧 collector 数据面补过三类机器事实；收敛后只保留仍属于管理面的 principal 与 ownership transfer：
 
 | 表 | 主键/唯一性 | 保存内容 | 禁止内容 |
 |---|---|---|---|
 | `collector_service_principals` | stable ID；`(service_type,principal_ref)`、grant/revoke operation key 全局唯一 | collector 所属、secret reference、provider、grant operation/request hash、revoke operation key、grant/revoke receipt ref+SHA-256、服务端 revoke 时间、ACL 传播窗、row version | Kafka 密码/私钥、客户端自报 revoke 时间、可被多个 collector 共用的 principal |
 | `collector_ownership_transfers` | stable ID；`(tenant,exporter,old_epoch)` 唯一 | old/new collector、old/revoke/new plan revision、严格递增 epoch、old principal、clock skew、审批、old-owner drain receipt | 管理员填写的“已 drain/已 revoke”布尔值、未绑定 plan 的模糊切换 |
-| `collector_state_restore_receipts` | `(transfer,state_kind,state_identity_key)` | new owner boot/config、exact old epoch/generation、new baseline generation、receipt hash、服务端 report 时间 | 重复复制 plan/ACL/drain 事实、任意 Kafka key |
+| `collector_state_restore_receipts` | — | migration 027 已删除；RawFlow collector 不复制模板/WAL/checkpoint 状态 | 禁止恢复该表或对应 API |
 
-`collector_plan_revisions` 同时增加 `(tenant_id,collector_id,config_version)` 复合唯一键，使 transfer 的三个 plan 外键都在数据库层包含 tenant。transfer 创建时两端必须为 `flow_collect`；old plan 必须 active 且 ACK/LKG，old revoke plan 必须是其 validated successor，new plan 必须衔接 new collector head，old principal 必须 active 且只属于 old collector。服务层还解析签名 plan payload，验证 old plan 的 exporter/old epoch 准入、revoke plan 的完全移除，以及 new plan 以新 epoch 接管完全相同的 protocol/source-prefix/domain selector 集合。old drain 只在 old collector 当前 boot 已应用 revoke plan 后接受；restore 只在 new collector 当前 boot 已应用 new plan 后接受；事实时间一律由服务端写入。repository 方法中的 `AuthenticatedCollectorID` 是内部 adapter 参数，不是公开 DTO 字段：HTTP handler 必须从 token/mTLS AuthContext 注入并拒绝 body 冒充。Kafka grant/revoke receipt 同样只能由完成 provider 调用的受信 worker 传入，不能开放成管理员上传接口。migration `020` 增加稳定 operation/request hash；provider-neutral service 固定先查 operation 再执行，模糊失败后二次查询，只有绑定结果通过才写 receipt 摘要。remote provider 默认关闭；只有 HTTPS+mTLS、独立身份、policy revision、超时/熔断和 operation retention 均通过配置校验后才注入 runtime 并注册 API。provider 健康只被动观测真实 operation，不在启动/页面刷新时主动请求；语义错误同样计入熔断，open 窗口后只允许单个 half-open probe，指标保持固定低基数且不含身份或错误正文。
-
-由此生成的 cleanup evidence 使用两类错误语义：关系尚未执行完成返回 `not ready`，允许有界重试；行已存在但关系、摘要或时序损坏返回 `invalid evidence`，任务终态失败并等待人工修复，不能无限重试或降级清理。`audit_logs` 仅记录哈希和资源关系用于追责，不是机器事实源。
+`collector_plan_revisions` 的 tenant/collector/version 约束、签名验证和 principal revoke 继续有效。ownership transfer 只负责停止旧 owner、撤销旧凭据、发布新 plan 和确认新 owner 收到数据；模板由 Kafka partition 内 worker 重新学习，不存在跨 collector state restore。旧 state-cleanup service、repository、API、heartbeat 字段和配置已经删除，升级路径由 migration 027 清表。
 
 ### 6.2 生命周期
 
@@ -406,9 +403,9 @@ agent 必须是薄执行器，不保存业务评分规则、不自行判断 tena
 
 有效配置固定为三层交集。agent 以 `If-None-Match: plan_hash` 拉取 active plan；控制面返回 canonical spec、config/schema version、key ID、signature 和 expiry。agent 依次执行签名/hash、schema、兼容范围、binding/scope、资源预算和 analyzer self-test 校验；通过后写临时文件、fsync、原子切换并 heartbeat `acknowledged_config_version`。失败继续 last-known-good，并上报失败阶段。Flow 收集型 agent 可在控制面短故障时继续使用 LKG；`flow_probe` plan 只要允许 `active_handshake`，validate 就强制非空 expiry，主动 plan/job 必须同时未过期，过期后不得领取新任务，inflight 只运行到固化 deadline。
 
-`watchdog-flow-collect` 已把本地 signed plan 消费端接到 authenticated remote delivery。进程仍从有效本地 plan bootstrap collector ID；配置 `control_plane_url` 后，机器客户端使用 token 文件或 mTLS 二选一拉取 active v2 envelope，ETag 同时包含 version/hash，304 不写盘。200 响应先本地验签并核对 signed identity/header，再以同目录临时文件、file fsync、rename、directory fsync 原子更新 `plan_file` 并立即唤醒 supervisor；新 revision 只有在单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才切换无锁数据面，切换完成才 exact ACK version/hash/process-incarnation `boot_id`/software。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。多 key `plan_trust_bundle_file` 已按 signed key ID 校验密钥时间窗与 active/retiring/revoked 状态，每次刷新重读；普通 overlap 轮换保留仍被 LKG/WAL history 引用的旧 key，撤销 active key 则立即 fail closed。agent mTLS cert/key 在启动校验后改由每次 TLS 握手重读，且 mTLS transport 禁用 keep-alive，确保外部原子替换后下一请求使用新 identity。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 运行时下限为 3，默认 128。
+当前轻量 `watchdog-flow-collect` 只实现本地 signed plan 验签、来源准入、RawFlow producer 和 UDP 生命周期。authenticated remote delivery、ETag/LKG 原子更新、credential/trust rotation、fleet rollout/canary 必须作为独立管理面切片重新接线和测试；旧 `internal/flowcollect` supervisor/history/WAL 实现已经删除，文档不得把它描述成现状。
 
-周期 runtime heartbeat 已采用 envelope schema v1 的 strict discriminated union，与 plan failure 共用 `/heartbeat` 但不再复用扁平字段。capabilities 只保存稳定协议/envelope 能力并单独 hash；动态 observation 保存 uptime、plan/LKG、control-plane、Kafka、三类队列、WAL 和累计 drop/failure。client 按默认 30s 独立调度；传输结果不确定时原样重试相同 boot/sequence/payload，明确的 active/LKG 冲突用同 sequence 重建，412 process fence 则退出并停止数据面。服务端只信 machine-auth identity 与 received time，保存 clock offset，以 current/LKG/hash、同 boot 单调 sequence/counter、同序同 hash 幂等和新 boot sequence 1 做 fence；已有 heartbeat stream 后 ACK/plan-failure 也不能由其他 boot 覆盖。schema 不兼容或运行依赖异常仍保存证据但派生为 degraded，只有健康运行于 LKG 才为 warming，健康态不能由 agent 自报或被后续 ACK 掩盖。migration 021 的 runtime JSON/hash 字段只承载 observed snapshot，心跳不得推进 config/ACK/LKG/row_version。一次性 enrollment、mTLS/token 服务端双窗口、trust bundle 签名分发/防回滚代际、fleet drift 和 rollout/canary 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
+服务端 runtime heartbeat 保留 strict envelope、boot/sequence fence、服务端接收时间和 observed/config 分离。Flow collector 动态 counter 已收敛为 received/rejected/invalid/kernel-drop、Kafka records/bytes/failures 和 Kafka queue；不再接受 WAL/decode/quarantine counter。collector 端 heartbeat client、enrollment、mTLS/token 双窗口和 trust bundle 仍未闭环，完成状态以平台 tasklist 为准。
 
 投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、激活后 ACK、固定分类失败 heartbeat、周期 capability/runtime heartbeat、timeout/backoff 和低基数 health 已实现；enrollment、credential/trust rotation/revoke 的全生命周期、fleet drift 与 data-loss interval 审计尚未实现。
 
@@ -466,7 +463,6 @@ POST                     /api/v1/collectors/{id}/plans/{version}:rollback
 POST                     /api/v1/collectors/{id}/service-principals
 POST                     /api/v1/collectors/{id}/service-principals/{principal_id}/actions/revoke-write
 POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/actions/drain
-POST                     /api/v1/collectors/{id}/ownership-transfers/{transfer_id}/state-restores
 GET                      /api/v1/collectors/{id}/plan
 POST                     /api/v1/collectors/{id}/plan-ack
 POST                     /api/v1/collectors/{id}/heartbeat
@@ -476,7 +472,7 @@ POST                     /api/v1/collectors/{id}/heartbeat
 
 service-principal grant 要求 `operate` 与 `Idempotency-Key`，body 只允许 provider 和 ACL propagation delay；revoke-write 要求 `operate` 与当前强 `If-Match`，body 为空。principal ref、credential secret ref、operation key、request hash、provider receipt 和事实时间全部由 provider/service 生成，管理 API 不接收；响应只返回安全的 principal identity/status/provider/row version，不返回 secret reference 或 evidence。provider 未配置时路由不得伪造成功或允许上传 receipt。启用 remote provider 时，唯一 allowlist name 和版本化 policy 一并参与 request hash；provider 的健康 200/404 必须声明 operation lookup retention 覆盖本地灾备窗，低于要求即失败，不能在超时后把未知副作用当成未执行。
 
-ownership drain/restore 是 flow collector 的机器事实入口，同样不复用人类 session。URL 中的 collector ID 只用于定位待认证主体；tenant、collector、当前 boot 由 `collector_agents` 在 token bcrypt 或已验证客户端证书 SHA-256 指纹认证后注入，请求 body 不允许覆盖。mTLS 指纹格式固定为 `sha256:<64 lowercase hex>`，未验证 peer certificate 与同时携带 token+证书均拒绝。repository 仍必须校验 transfer old/new owner、active/ACK/LKG plan 和当前 boot，避免“持有有效凭据”被误当作任意 transfer 的写权限。
+ownership drain 是 collector 的机器事实入口，同样不复用人类 session。URL 中的 collector ID 只用于定位待认证主体；tenant、collector、当前 boot 由 `collector_agents` 在 token bcrypt 或已验证客户端证书 SHA-256 指纹认证后注入，请求 body 不允许覆盖。mTLS 指纹格式固定为 `sha256:<64 lowercase hex>`，未验证 peer certificate 与同时携带 token+证书均拒绝。repository 仍必须校验 transfer old/new owner、active/ACK/LKG plan 和当前 boot，避免“持有有效凭据”被误当作任意 transfer 的写权限。NetFlow/IPFIX 模板在 Kafka partition owner 内按有界回放重新学习，不提供 collector state-restore 写入口。
 
 ## 7. Target、网元和资源管理
 
@@ -532,7 +528,7 @@ GET/PATCH/DELETE         /api/v1/network-ports/{id}
 | `network` | 网络 | SNMP 网元：交换机/路由器/防火墙，设备/端口/光模块/传感器/VLAN/LAG | `agent_type=snmp`（pull） | VM + MySQL `network_devices/ports` | ga |
 | `storage` | 存储 | RAID 卡（storcli/perccli 类 CLI）、分布式与对象存储集群（Ceph/MinIO/RustFS/BeeGFS）、磁盘 SMART 聚合 | **不新建 agent 二进制**：system agent 扩 `storage.*` capabilities（smartctl 已有雏形；RAID CLI、集群本机探针）；集群型 target 由绑定 agent 经原生 API/exporter 代理采集 | MySQL `storage_devices` 最新态 + VM 历史（对齐 ADR-SC-001 SMART 结论） | SMART=beta（迁移中）；RAID/Ceph/MinIO/RustFS/BeeGFS=planned |
 | `edge` | 边缘 | 轻量拨测：ping（ICMP）、dig/nslookup（DNS）、HTTP(S) 探活、mtr（路径质量） | `agent_type=edge_probe`：薄探针，复用 §6 的 enrollment/plan/job/result 基建；拨测任务 = plan 内的周期 job 定义 | VM 拨测时序（rtt/loss/status/http_code）+ MySQL 任务定义与最新结果摘要 | planned |
-| `core` | 核心 | BGP 路由监控（会话/前缀/状态）+ IP 库查询（本地 `flow-geo-v1` 只读 lookup 服务化） | 现：`agent_type=snmp`（按实际 MIB 表能力选择 BGP4-V2/厂商扩展，BGP4-MIB 仅作 IPv4 兼容回退；不按 OS 字符串分支）；未来：`agent_type=bmp`（RIB 级）。IP 库查询无采集，只读 flow 模块 Geo loader | VM BGP 指标 + MySQL `bgp_sessions`；IP 库不落库 | BGP-via-SNMP=ga；BMP=planned；IP 库查询页=planned（仅依赖 flow-geo-v1 loader，可先于 Flow P1 独立交付） |
+| `core` | 核心 | BGP 路由监控（会话/前缀/状态）+ IP 库查询（本地 `flow-geo-v1/v2` 只读 lookup 服务化） | 现：`agent_type=snmp`（按实际 MIB 表能力选择 BGP4-V2/厂商扩展，BGP4-MIB 仅作 IPv4 兼容回退；不按 OS 字符串分支）；未来：`agent_type=bmp`（RIB 级）。IP 库查询无采集，只读 flow 模块共享 Geo loader | VM BGP 指标 + MySQL `bgp_sessions`；IP 库不落库 | BGP-via-SNMP=ga；BMP=planned；IP 库查询页=planned（仅依赖共享 Geo loader，可先于 Flow P1 独立交付） |
 
 约束与迁移：
 
@@ -571,7 +567,7 @@ GET/PATCH/DELETE         /api/v1/network-ports/{id}
 | storage:MinIO/RustFS/BeeGFS | 各自原生 metrics 端点接入,统一为 storage 数据集 | 同上;DatasetRegistry storage.* datasets |
 | edge:四类拨测 | ping/DNS/HTTP/mtr 的任务定义、调度、时序与告警;多 vantage 对比 | edge_probe agent;plan 内周期 job;VM 拨测指标命名 |
 | core:BMP | BGP RIB 级路由监控(前缀/AS path/撤销事件) | `agent_type=bmp`;存储选型(路由表规模评估,可能需 CH) |
-| core:IP 库查询页 | 输入 IP/CIDR 返回归属(国家/省市/机构/ASN)与版本,含租户 override 视图 | flow-geo-v1 loader(可独立于 Kafka/CH 交付);`/flow/geo/lookup` 服务化 |
+| core:IP 库查询页 | 输入 IP/CIDR 返回归属(洲/区域/国家/省市/机构/ASN)与版本,含租户 override 视图 | 共享 flow-geo-v1/v2 loader（禁止 hub 维护第二套索引）；`/flow/geo/lookup` 服务化 |
 | analysis:日志 | 主机/网元/应用日志的采集、检索与告警 | 独立 ADR:存储选型、采集通道、保留与脱敏;禁止无 ADR 复活 VLogs |
 
 ## 8. Dataset、指标查询和图表 CRUD
@@ -641,7 +637,7 @@ CREATE TABLE dimension_snapshots (
 - `primary_prefix`：每个 endpoint 只取最长前缀，一个 address role 内互斥且可加总；未命中进入 `_unassigned`，保证守恒；
 - `address_set`：prefix labels 可命中多个 selector，属于非互斥 tag 统计；单个 set 内可汇总，但不同 set 之间禁止相加，响应必须返回 `additive=false`。
 
-flow-collect 只把可靠解码和采样归一后的事实写 durable normalized topic；独立 dimension worker 再按 snapshot 异步完成 local/remote、primary prefix、address set、Geo/ASN、业务、六维和分钟汇聚。异步执行采用 Kafka partition ownership、固定 worker 和有界聚合状态，不允许逐 flow 启动 goroutine。dimension worker/CH 故障在容量预算内先形成 normalized lag；Kafka 生产故障由本地 raw WAL 继续保护数据。只有 normalized retention 与 WAL 的联合窗口耗尽时才形成显式 data-loss interval。重分类从 normalized topic 重放；超出其 retention 的历史回算只能使用仍在 TTL 内、包含 IP 的 base fact，并明确可回算时间范围。
+flow-collect 只把 UDP datagram 封装为 RawFlow 写入唯一 Kafka topic；独立 flow-worker 按 partition 用 GoFlow2 解码，再按 event-time snapshot 异步完成 local/remote、primary prefix、address set、Geo/ASN、业务、六维和 CH 批次。执行采用固定 partition worker 和有界 batch，不允许逐 flow 启动 goroutine。worker/CH 故障形成 RawFlow lag；Kafka 生产故障最终形成显式 UDP data-loss interval。重分类在 RawFlow retention 内可重放，超出后只能使用仍在 TTL 内、包含 IP 与版本字段的 CH base fact。
 
 ```text
 GET                      /api/v1/dimensions/address/versions
@@ -819,53 +815,17 @@ active policy 不允许 PATCH 原地改变公式；修改动作创建下一 vers
 
 每个 migration 必须同时有 up、兼容读取期和清理门；不采用一次上线同时重命名全部表。`install/init.sql` 应由 migration snapshot 生成，CI 在空库执行全量 migration并与 snapshot 比对。
 
-## 12. Flow Kafka 数据面契约
+## 12. Flow 数据面边界
 
-Kafka-compatible MQ 是 flow 的强制依赖，不能再降级为 collector 直接写 CH/VM。
+平台文档只冻结宿主边界，不复制 Flow 的 topic、schema、DDL、采样和故障细节；唯一现行定义见 [flow-pipeline-adr.md](flow-pipeline-adr.md) 和 [flow-module-design.md](flow-module-design.md)。
 
-### 12.1 组件职责
+- Kafka 是强制依赖，只有 `watchdog.flow.raw-v1` 一个 Flow 数据 topic；
+- collector 只做 UDP、来源准入、RawFlow 和 Kafka，不连接 MySQL/CH/VM；
+- worker 在 Kafka partition 内用 GoFlow2 有序解码、归类和批写 CH，成功后提交 offset；
+- 平台只提供 identity/RBAC、collector/exporter、签名 plan、snapshot、query/export/job/audit；
+- 禁止恢复 collector WAL、normalized/collect-state topic、state restore/cleanup API 或 Flow VM 双写。
 
-- `watchdog-flow-collect`：UDP socket/source allowlist、raw datagram WAL、GoFlow2 decode、NetFlow template、sampling normalization、normalized batch producer、collector heartbeat；
-- `watchdog-flow-dimension-worker`：消费 normalized，按 event-time dimension snapshot 做方向、地址段/address set、Geo/ASN/六维和分钟聚合，只写 CH enriched base 后提交 normalized offset；
-- `watchdog flow module`：exporter 管理、dimension/rollup worker 生命周期、查询/API/页面、dataset/visualization/export provider；
-- flow-collect 禁止连接业务 MySQL、ClickHouse、VictoriaMetrics；只通过签名 plan、本地 WAL 和 Kafka 工作。
-
-### 12.2 Topic
-
-| topic | key | value | 建议保留 |
-|---|---|---|---|
-| `watchdog.flow.normalized.v1` | `tenant/virtual-shard` | 已解码、采样归一、尚未做地址/Geo/业务归类的 versioned record batch；virtual shard 固定 4096 | 默认 72h；至少覆盖维度故障恢复和发布重放窗口 |
-| `watchdog.flow.collect-state.v1` | exporter/observation-domain | versioned template/sampler/sequence checkpoint，不含业务 flow records | compact；至少保留最新两版 |
-| `watchdog.flow.decode-dlq.v1` | collector/exporter/datagram | payload hash、错误枚举、限长诊断；敏感 raw 是否保留由策略决定 | 7d |
-| `watchdog.flow.quarantine.v1` | collector/source | 未注册来源的限速 metadata，默认不保存完整 payload | 24h |
-| `watchdog.flow.dimension-checkpoint.v1` | consumer-group/topic/partition/derived-target | base/target 连续 offset watermark、最近 ingest batch、snapshot versions、checksum 和有界 missing batch IDs | compact；永久保留每个有限 key 的最新状态 |
-
-同一 exporter/observation-domain 的 UDP 报文必须由同一 flow-collect ownership 解码，保证 NetFlow template/options 和序列有序；负载均衡使用 exporter affinity。normalized partition 数由 decoded records/s、dimension lookup/s、address-set expansion 和 p95 Protobuf bytes 压测确定，不写死在代码。
-
-Normalized batch 至少包含：
-
-```text
-schema_version, normalized_batch_id, datagram_id, virtual_shard,
-partition_map_version, physical_partition, replay_generation,
-tenant_id, collector_id, exporter_id, registry_version,
-received_at, protocol, source_ip, observation_domain_id,
-records[]{normalized_id,event_time,target/device/observation,
-src/dst/port/protocol,raw counters,sampling mode/rate,
-estimated counters,duration,quality_flags}
-```
-
-`datagram_id` 和 `normalized_id=datagram_id/record_index` 跨 WAL replay 稳定；protobuf 只做向后兼容字段追加，CI 用旧 fixture 验证新 consumer。单 batch 受 records/bytes/wait 三重上限约束，Kafka producer request 可以批量承载多个 protobuf batch。4096 virtual shards 通过签名 plan 中的版本化 map 显式映射到物理 partition；扩分区从分钟边界发布新 map，WAL replay 保持原 map/partition，禁止 Kafka 客户端默认 hash 在 partition count 变化时隐式改路由。
-
-### 12.3 可靠性和安全
-
-- producer 显式启用 idempotence、`acks=all`、重试和压缩；生产 topic 推荐 replication factor 3、`min.insync.replicas=2`；这些约束与 Apache Kafka 官方 producer/topic 配置一致；
-- Kafka 使用 TLS，flow-collect principal 只能对 normalized/decode-DLQ/quarantine 执行 `WRITE/DESCRIBE/DESCRIBE_CONFIGS`，对 collect-state 执行 `READ/WRITE/DESCRIBE/DESCRIBE_CONFIGS`，并拥有 idempotent producer 必需的 cluster `IDEMPOTENT_WRITE`；不得拥有 topic/ACL 创建、删除、alter 或 cluster action。`DESCRIBE_CONFIGS` 只用于启动 topic contract fence。dimension worker 只能 consume normalized group、读写 checkpoint 并写 CH base/获批派生 target；
-- 完整 raw datagram 先进入 append-only WAL，Kafka ack 后推进连续 checkpoint；broker 不可用时继续从 WAL 积压，WAL hard limit 产生 data-loss interval，不能静默覆盖；
-- dimension worker 为每个 partition 的连续 offset batch 在 insert 前持久化 manifest，使 crash 后仍生成同一 `ingest_batch_id`；CH enriched base 成功后才提交 offset；每个派生表保留同一 ID。VM/派生 target 以固定数量的 partition/target key 推进连续 watermark，空洞保存为有界 missing batch IDs 并从 base 幂等回补，禁止按每个 batch 创建永久 compacted key；
-- 生产 ClickHouse base 使用 Replicated* insert dedup，`ingest_batch_id` 同时写入 base 并保留到 TTL 结束，支持 dedup window 外核验；
-- WAL oldest age/bytes/fsync latency、normalized lag/oldest age、dimension snapshot/worker ack、produce/decode errors、DLQ、base/derived divergence 和 offset commit latency都是阻断级健康指标。
-
-参考：[Apache Kafka producer configs](https://kafka.apache.org/43/configuration/producer-configs/)、[Apache Kafka topic configs](https://kafka.apache.org/40/generated/topic_config.html)。
+Flow 执行状态只维护在 [flow-module-tasklist.md](flow-module-tasklist.md)，平台问题只维护在 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
 
 ## 13. 分期顺序
 
@@ -908,7 +868,7 @@ estimated counters,duration,quality_flags}
 
 ### Flow P1 及以后
 
-完成 Platform P0–P2 后才能进入 flow 正式功能 P1；三层修正相关 flow 导出在 Platform P3 后开放。Kafka 集群、collector enrollment、flow-collect raw WAL/GoFlow2、normalized topic 和 dimension replay 是 Flow P1 的组成部分，不再推迟到扩展阶段。
+Flow 与 Platform 使用独立任务集并可并行推进；Flow 遇到平台阻断点时只做最小平台修复并登记。Kafka 集群、collector enrollment、RawFlow collector、Kafka 后 GoFlow2 worker 和 dimension replay 属于 Flow P1；三层修正相关导出依赖 Platform P3。
 
 ## 14. 首批实施工作包
 
@@ -921,7 +881,7 @@ estimated counters,duration,quality_flags}
 7. provider 化 export worker；
 8. 实施三层 adjustment policy，移除新请求使用 legacy 随机 correction；
 9. 建 dimension snapshot/publish 基座，先用现有 address prefixes/sets 验证版本和 event-time 语义；
-10. 最后接入 flow-collect（raw WAL + GoFlow2）→normalized→dimension worker，不允许 flow 绕开上述平台契约或同步计算高成本统计维度。
+10. 按 Flow tasklist 接入 `flow-collect→RawFlow Kafka→flow-worker/GoFlow2→CH`，不允许绕开平台契约或同步计算高成本统计维度。
 
 每个工作包独立 migration、单测、API contract test 和回滚说明；不能以一次超大重构同时替换身份、agent、图表和 flow 数据面。
 
@@ -971,7 +931,7 @@ queued → running ↔ paused → validating → succeeded
 
 异步任务公共字段至少包括：`id/tenant/type/status/idempotency_key/request_hash/progress_total/progress_done/checkpoint/result_ref/error_code/error_detail/cancel_requested_at/started_at/heartbeat_at/finished_at/expires_at/row_version/created_by/created_at/updated_at`。worker 领取任务使用 lease/heartbeat；lease 过期可恢复，但必须从 checkpoint 继续而不是从头重复产生副作用。
 
-公共骨架已由 MySQL migration `017_operation_jobs.sql` 落地：`operation_jobs` 保存上述公共生命周期字段，并增加 `lease_owner/lease_token/lease_expires_at/next_attempt_at/attempt_count`。第一位使用者是 Flow collect-state cleanup repository；它以 canonical request hash 实施幂等冲突检测，使用 `FOR UPDATE SKIP LOCKED` 领取任务，并以 lease token、未过期时间和 row version 三重条件 fencing 进度写入。checkpoint/requeue/terminal transition 与 `audit_logs` 必须同事务提交，heartbeat 不推进 row version，但时间戳至少单调增加 1ms，避免同毫秒 renew 被 MySQL 作为 no-op 返回零 affected row。cleanup reconciler core 已实现逐阶段 checkpoint、heartbeat 丢失停写、稳定错误分类/有界退避和 restart 接续；该表属于宿主 core，不计入 Flow 的五张私有管理表，真实 evidence provider 与进程 wiring 完成前仍标为实现中。
+公共骨架已由 MySQL migration `017_operation_jobs.sql` 落地：`operation_jobs` 保存上述公共生命周期字段，并增加 `lease_owner/lease_token/lease_expires_at/next_attempt_at/attempt_count`。migration `028_operation_job_watermarks.sql` 另提供常数规模的 `(tenant_id,job_type,partition_key) -> UInt64 watermark`，供周期 producer 保存长期单调游标；终态 job 有保留期，严禁从 job 历史反推永久水位。producer 必须先 durable enqueue 再以 `GREATEST` 推进 watermark，使崩溃最多重复入队而不会跳过工作。后续 reclass、export、probe 和 purge worker 统一使用 canonical request hash、`FOR UPDATE SKIP LOCKED`、lease token/expiry/row-version fencing 与 checkpoint；checkpoint/requeue/terminal transition 必须和 audit 同事务提交。旧 Flow collect-state cleanup 是已删除的错误试用，不再作为 operation job 的参考实现；每个新 job type 必须在自己的切片中补状态机、重启接续和副作用幂等测试。
 
 ### 15.3 HTTP CRUD 与动作统一语义
 
@@ -1025,7 +985,7 @@ meta {
 闭环要求：
 
 - **准确性**：单位、采样/修正公式、聚合函数、时间边界和 rounding 有版本化定义与 golden fixture；raw 不被覆盖；
-- **完整性**：expected/received/accepted/decoded/normalized/base/served 各阶段计数可对齐，缺失、迟到、DLQ、权限裁剪和 TTL 截断分别回显；
+- **完整性**：expected/received/published/decoded/base/served 各阶段计数可对齐，缺失、迟到、DLQ、权限裁剪和 TTL 截断分别回显；
 - **一致性**：在线查询、保存图表、统计和导出使用同一 canonical query、snapshot 和 value-layer version；同一 idempotency key/result hash 可复现；
 - **高效率**：QueryGateway 先估算 cost，选择满足范围/维度的最粗可用 resolution；禁止全表扫描、无界 group-by 和先查全量再在 API 过滤；
 - **时态**：列表使用 `as_of` 和 stable cursor；长查询/导出固定版本，不在翻页过程中混入新配置；
@@ -1055,12 +1015,12 @@ Service account 只拥有其协议所需 action 和资源 binding；collector �
 | 管理配置 | tombstone，停止新引用 | 恢复窗口内可 restore；自然键占用需冲突处理 |
 | 不可变 snapshot/字典 | retire，不原地修改 | 至少保留到所有引用事实 TTL 结束；checksum 可验证 |
 | 流量/指标事实 | 不随 target/exporter tombstone 立即 cascade | 按 tenant retention/partition 删除；完成前查询返回 purge_pending |
-| WAL/Kafka/DLQ | checkpoint/retention 自动回收 | hard limit、过期和人工清理均形成区间/receipt；DLQ 遵循敏感策略 |
+| Kafka/DLQ | retention 自动回收 | 过期和人工清理形成区间/receipt；DLQ 遵循敏感策略 |
 | 导出文件 | task metadata 与 object 分离过期 | 删除对象、撤销分享、物理 object delete 和 checksum 验证 |
 | 凭据 | 先 revoke，再删除 secret material | 证明旧 token/cert 失败；审计不保存 secret |
 | 审计/销毁证明 | append-only、单独 retention | purge 后只保留不含业务 payload 的最小合规记录 |
 
-tenant purge 固定顺序：冻结写入 → 撤销 collector/service credentials → 等待/终止 jobs → 删除导出和缓存 → 删除 Kafka/WAL 可定位数据 → 删除 CH/VM facts → tombstone/purge MySQL 配置 → 校验所有 provider 查询为空 → 生成带计数/checksum 的 destruction receipt。任一步失败保持可恢复 checkpoint，禁止报告成功。
+tenant purge 固定顺序：冻结写入 → 撤销 collector/service credentials → 等待/终止 jobs → 删除导出和缓存 → 删除 Kafka 可定位数据 → 删除 CH/VM facts → tombstone/purge MySQL 配置 → 校验所有 provider 查询为空 → 生成带计数/checksum 的 destruction receipt。任一步失败保持可恢复 checkpoint，禁止报告成功。
 
 ### 15.7 Desired-state reconciler 与漂移治理
 
@@ -1084,7 +1044,7 @@ Schema/catalog/config 只有一个 source of truth；init、migration、protobuf
 | 管理 API | body、filter、bulk 数、并发写、每用户速率 | 400/413/429，绝不进入无界 goroutine |
 | Query | range、points、series、group cardinality、scan bytes、并发/cost | 拒绝或建议更粗 resolution；不静默截 Top |
 | Export | 行数/bytes、并发、tenant 队列、文件 TTL | 排队/取消/分片；在线查询优先 |
-| Collector | source PPS、socket/queue/WAL、每 exporter 公平性 | quarantine/背压/明确 loss interval |
+| Collector | source PPS、socket/Kafka queue、每 exporter 公平性 | 拒绝未知来源/背压/明确 loss interval |
 | Kafka/worker | batch bytes/records/time、lag、inflight、partition ownership | 扩容/暂停 partition/停止 backfill |
 | CH/VM | 各自的 insert/query concurrency、memory、timeout、disk watermark | CH 保护 Flow base 写入并降级 derived/长查询；VM 保护 SNMP/系统与 pipeline 监控 |
 
