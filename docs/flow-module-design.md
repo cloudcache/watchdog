@@ -156,6 +156,27 @@ plan 的 `default_sampling_rate` 只作为 exporter 最后兜底；pre-scaled �
 
 崩溃发生在 records 与 receipt 之间时，重放直接使用相同 records、generation 和 insert token，不做写前查询；物理重复由稳定 `record_id + ReplacingMergeTree` 收敛。目标 ClickHouse 版本必须实测 insert token、ReplacingMergeTree、`FINAL` 和 replicated/distributed 变体；在这些证据完成前只承诺 at-least-once，不宣称 exactly-once。
 
+#### 3.4.1 Ingest receipt 对账契约
+
+receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当前 block 只保证来自同一 Kafka topic/partition，一次 fetch 可以含多个 exporter 和 tenant；因此不得把 tenant 补进 receipt 权威键，也不得用按 tenant 分片的 rollup 水位代替分区对账。`ingest_batch_id` 为 `SHA-256(v1, topic, partition, first_offset, last_offset, checksum)`；权威身份是 `(topic, partition, first_offset, last_offset, ingest_batch_id)`，`generation` 只是 ReplacingMergeTree 版本。fact 一侧先以 `record_id` 去重，再按 `ingest_batch_id` 核对，不得对物理重放行直接求和。
+
+一次对账先从 Kafka consumer group 取得同一时点的 `committed_next_offset`，只检查 `last_offset < committed_next_offset - safety_lag` 的闭合范围。records 已写而 receipt 尚未写的热路径窗口记为 pending，不报 mismatch。模板缺失、拒绝或解码后零行的 Kafka offset 可以合法提交且没有 receipt，所以不得从“offset 已提交”推断“每个 offset 必须有 receipt”；同时缺 fact 和 receipt 无法仅从 CH 证明，需要 Kafka RawFlow 重放/离线核验。
+
+对每个已闭合 batch 比较下列值：
+
+| 项目 | receipt 权威值 | `flow_records FINAL` 复算 |
+|---|---|---|
+| 身份 | topic/partition/first/last/batch ID | topic/partition 必须唯一，offset 取 min/max，batch ID 必须唯一 |
+| 规模 | source batch count/record count | `uniqExact(kafka_offset)` / 去重行数 |
+| 计数 | raw bytes/valid estimated bytes | `sum(raw_bytes)` / `sumIf(estimated_bytes, estimated_valid)` |
+| 内容 | checksum | 按 `(kafka_offset, record_index)` 重建与 Go 端完全相同的 big-endian SHA-256 字节流 |
+
+指标不使用会重复累加的 counter，而由最后一次**完整、成功**的有界扫描替换 gauge 快照：`watchdog_flow_ingest_reconciliation_mismatches{reason}`，`reason` 固定为 `missing_receipt|missing_records|identity_mismatch|count_mismatch|counter_mismatch|checksum_mismatch`。另行暴露 last-success 和 scan-complete；超时、超预算、Kafka/CH 不可用或仅扫了一部分时保留上次快照并将 complete 置 0，不得发布伪零。内部 topic/partition/offset/batch ID 可进 job payload/checkpoint 和审计明细，不作 metric label。
+
+扫描按 `(topic, partition, offset)` keyset 接续，必须同时限制 partitions、offset span、batch IDs、fact rows、CH read bytes 和 wall time。先做 count/counter 便宜核对，checksum 在同一持久水位下分批覆盖全部 batch，不在 worker 热路径执行。执行必须复用 `operation_jobs` 的 lease/cancel/retry，但现有 job 强制 tenant，receipt 却可跨 tenant；全局/system scope job 契约已登记 PLAT-04F，未落地前 Flow 不伪造 tenant 也不另建状态机。
+
+现有 DDL 还有两个必须前向修正的限制：`flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor；receipt 缺 tenant 列表、event-time 范围和 packet/valid-estimate 诊断数，无法在 fact TTL 边界安全区分“丢失”与“已过保留期”。后续 migration 只能增加确定性派生列，不改 001 checksum。`flow_records` 的 ORDER BY 也不支持便宜的 batch/offset 反查；先在真实 CH 上以 EXPLAIN 和 read_rows/read_bytes 对比 skipping index、projection 与窄审计投影，通过容量门禁后再选一种，不在文档中猜 DDL 性能。
+
 NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已提交。每次 partition assignment 因此从原 committed offset 向前回放固定数量的 RawFlow record：旧窗口参与解码和幂等 CH 写入以重建模板，但提交水位绝不能低于 assignment 前的 committed offset；到达旧水位后才正常前进。`template_replay_records` 必须为正且有硬上限，并按“单 partition 在 exporter 最大模板刷新间隔内的 record 数 + 裕量”定容。exporter 必须周期刷新模板；未满足此前置条件时显示 template-missing/partial，不能声称完整，也不能用猜测字段解码。
 
 ### 3.5 FLOW-04B 关闭桶调度与 repair

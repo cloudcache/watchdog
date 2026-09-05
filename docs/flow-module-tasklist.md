@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C3 — ingest receipt reconciliation 边界审计。** FLOW-04C2 的真实 runner attempt/error/success/initial/repair 与 bucket-age 指标已提交；hub machine-scrape 暴露登记为 PLAT-04E。本轮先冻结 receipt mismatch 的权威比较键、扫描预算和故障语义；若必须增加通用巡检框架则只登记平台依赖，不在 Flow 内另造 scanner/state machine。
+**活动切片：FLOW-04C3A — receipt 审计元数据前向扩展。** FLOW-04C3 边界审计已证实 receipt 是可跨 tenant 的 Kafka partition block，而不是 tenant job；权威键、闭合 offset、mismatch 枚举、有界扫描和不完整快照语义已冻结。本轮只前向补齐对账必需的确定性 receipt 字段与 encoder contract；全局 job 依赖 PLAT-04F，查询访问路径依赖真实 CH 容量证据，未解除前不写 scanner/state machine。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -44,6 +44,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。真实 CH migration/聚合未执行，仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
+- FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -123,7 +124,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
 - [x] **FLOW-04C2 rollup 指标**：runner 在真实 CH 调用点原子记录 1m/1h attempt/success、retryable/permanent、initial/repair、last success/最大完成 bucket；provider 只使用固定 resolution/class/kind 标签，unknown age 有独立 known gauge，旧桶 repair 不倒退。
 - [x] **FLOW-04C2 单元/变更/回归/已提交**：覆盖 resolution、失败分类、repair、未来 age clamp、从未成功 unknown、高基数标签禁止和 hub provider 组合；定向 race/vet 与全库 test 通过，提交 `041eebf4`。
-- [ ] **FLOW-04C3 ingest receipt mismatch**：冻结 records/receipt/offset 的权威比较与有界 reconciliation，再由真实执行者产生 mismatch；禁止在 metrics renderer 猜值或为指标另建状态机。
+- [x] **FLOW-04C3 设计/边界审计**：冻结可跨 tenant 的 batch 权威键、Kafka committed-next-offset 闭合规则、`FINAL` 去重后 count/counter/checksum 比较、固定 mismatch reason、有界 keyset 扫描和不完整 gauge 快照语义；禁止在 metrics renderer 猜值或为指标另建状态机。
+- [ ] **FLOW-04C3A 编码/单元/变更测试**：新顺序 CH migration 补 receipt 的 tenant IDs、min/max event time、raw/estimated packets 和 valid-estimate record count；native encoder 必须从同一 PreparedBlock 确定性产生并由 schema contract 锁死，不回改 001。
+- [ ] **FLOW-04C3B 编码/集成**：复用平台 global/system-scope `operation_jobs` 运行分区对账；先在真实 CH 对 index/projection/窄审计投影执行 EXPLAIN 和 read_rows/read_bytes 容量测试，选定唯一访问路径后才接指标和 repair；受 PLAT-04F 与真实 Kafka/CH 门禁阻塞。
+- [ ] **FLOW-04C3 已提交**：只有审计元数据、runner、指标、job 接线和对应测试都进入可复现提交后才可勾选；仅文档审计不冒充功能完成。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
 ### FLOW-05 Query/API/UI
