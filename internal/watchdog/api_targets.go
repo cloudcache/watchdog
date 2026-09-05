@@ -70,7 +70,10 @@ func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api targetAPI) listPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
-	filter := TargetPageFilter{Cursor: strings.TrimSpace(query.Get("cursor"))}
+	filter := TargetPageFilter{
+		Cursor:      strings.TrimSpace(query.Get("cursor")),
+		ExcludeKind: strings.TrimSpace(query.Get("exclude_kind")),
+	}
 	if raw := query.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit <= 0 {

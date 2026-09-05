@@ -120,6 +120,13 @@ func TestAPITargetsListPagedOptIn(t *testing.T) {
 		t.Fatalf("cursor not threaded: %+v", repo.pagedFilter)
 	}
 
+	// exclude_kind threads through (the Hosts view excludes network targets).
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?limit=2&exclude_kind=network", nil))
+	if repo.pagedFilter.ExcludeKind != "network" {
+		t.Fatalf("exclude_kind not threaded: %+v", repo.pagedFilter)
+	}
+
 	// An admin pushes down as "whole tenant" (all=true, no id filter).
 	adminRepo := &fakeTargetRepository{}
 	adminRouter := NewAPIV1Router(APIV1RouterConfig{Auth: adminTargetAuth, Targets: adminRepo})

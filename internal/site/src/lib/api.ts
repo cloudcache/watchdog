@@ -252,9 +252,7 @@ export async function saveUserPreferences(newSettings: Partial<UserSettings>): P
 
 /** Persist notification channels (emails/webhooks) to MySQL, where the alert
  * delivery path reads them. */
-export async function saveNotificationSettings(
-	channels: Pick<UserSettings, "emails" | "webhooks">
-): Promise<void> {
+export async function saveNotificationSettings(channels: Pick<UserSettings, "emails" | "webhooks">): Promise<void> {
 	const saved = await pb.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {
 		method: "PUT",
 		body: { emails: channels.emails ?? [], webhooks: channels.webhooks ?? [] },
@@ -330,6 +328,33 @@ export async function fetchAlertsHistory(limit = 200): Promise<AlertHistoryEntry
 
 export async function deleteAlertHistory(id: string): Promise<void> {
 	await pb.send(`/api/v1/me/alerts-history/${id}`, { method: "DELETE" })
+}
+
+// A page of the target list. GET /api/v1/targets paginates opt-in (only when a
+// limit or cursor is passed); the Hosts view pages with exclude_kind=network.
+export interface TargetListItem {
+	id: string
+	name: string
+	kind: string
+	host: string
+	status: string
+	labels?: Record<string, string>
+	updated_at: string
+}
+
+export async function fetchTargetsPage(opts: {
+	limit?: number
+	cursor?: string
+	excludeKind?: string
+}): Promise<{ items: TargetListItem[]; nextCursor: string }> {
+	const res = await pb.send<{ items?: TargetListItem[]; next_cursor?: string }>("/api/v1/targets", {
+		query: {
+			limit: opts.limit ?? 100,
+			cursor: opts.cursor || undefined,
+			exclude_kind: opts.excludeKind || undefined,
+		},
+	})
+	return { items: res.items ?? [], nextCursor: res.next_cursor ?? "" }
 }
 
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {

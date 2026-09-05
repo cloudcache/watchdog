@@ -55,10 +55,12 @@ type PermissionRepository interface {
 
 // TargetPageFilter requests an opt-in keyset page of targets ordered by
 // (name, id). Limit is clamped by the repository; Cursor is a next_cursor from
-// a prior page ("" for the first).
+// a prior page (""for the first). ExcludeKind, when set, omits targets of that
+// kind (the Hosts view excludes network targets, which live on the device page).
 type TargetPageFilter struct {
-	Limit  int
-	Cursor string
+	Limit       int
+	Cursor      string
+	ExcludeKind string
 }
 
 type TargetRepository interface {

@@ -4,45 +4,52 @@ import { PlusIcon, RefreshCwIcon, ServerIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
-import { pb } from "@/lib/api"
+import { fetchTargetsPage, type TargetListItem } from "@/lib/api"
 import { createListTable, disposeTable, getRowRecord, type ListTable } from "@/lib/vtable"
 
-type TargetRecord = {
-	id: string
-	name: string
-	kind: string
-	host: string
-	status: string
-	labels?: Record<string, string>
-	updated_at: string
-}
-
-type TargetsResponse = {
-	items?: TargetRecord[]
-}
+// Network targets live on the Network page (device view); the Hosts list
+// excludes them server-side so pagination pages over host targets only.
+const PAGE_SIZE = 200
 
 export default memo(() => {
 	const { t } = useLingui()
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
-	const [targets, setTargets] = useState<TargetRecord[]>([])
+	const [targets, setTargets] = useState<TargetListItem[]>([])
+	const [cursor, setCursor] = useState("")
 	const [loading, setLoading] = useState(true)
+	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<TargetsResponse>("/api/v1/targets", {})
-			// Network targets live on the Network page (device view); listing
-			// them here too duplicated the same box in two lists.
-			setTargets((data.items ?? []).filter((target) => target.kind !== "network"))
+			const { items, nextCursor } = await fetchTargetsPage({ limit: PAGE_SIZE, excludeKind: "network" })
+			setTargets(items)
+			setCursor(nextCursor)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load targets`)
 		} finally {
 			setLoading(false)
 		}
 	}, [t])
+
+	const loadMore = useCallback(async () => {
+		if (!cursor || loadingMore) {
+			return
+		}
+		setLoadingMore(true)
+		try {
+			const { items, nextCursor } = await fetchTargetsPage({ limit: PAGE_SIZE, cursor, excludeKind: "network" })
+			setTargets((current) => [...current, ...items])
+			setCursor(nextCursor)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to load targets`)
+		} finally {
+			setLoadingMore(false)
+		}
+	}, [cursor, loadingMore])
 
 	useEffect(() => {
 		document.title = `${t`Hosts`} / Watchdog`
@@ -121,6 +128,14 @@ export default memo(() => {
 				) : null}
 				<div ref={tableRef} className="h-[520px] w-full" />
 			</div>
+
+			{cursor ? (
+				<div className="flex justify-center">
+					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
+					</Button>
+				</div>
+			) : null}
 		</div>
 	)
 })

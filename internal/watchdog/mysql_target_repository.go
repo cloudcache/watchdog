@@ -42,6 +42,10 @@ func (s *MySQLStore) ListTargetsPage(ctx context.Context, tenantID ID, all bool,
 	}
 	query := targetSelect() + ` WHERE tenant_id = ?`
 	args := []any{tenantID}
+	if filter.ExcludeKind != "" {
+		query += ` AND kind != ?`
+		args = append(args, filter.ExcludeKind)
+	}
 	if !all {
 		query += ` AND id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedIDs)), ",") + `)`
 		for _, id := range allowedIDs {

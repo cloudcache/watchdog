@@ -90,6 +90,38 @@ func TestMySQLListTargetsPage(t *testing.T) {
 	if err != nil || len(empty) != 0 || next != "" {
 		t.Fatalf("empty scope = %v next=%q err=%v", empty, next, err)
 	}
+
+	// exclude_kind omits network targets (the Hosts view). Seed a network
+	// target, then page with ExcludeKind=network and confirm it is absent while
+	// the five system targets remain.
+	if _, err := store.CreateTarget(ctx, Target{ID: "tgt_page_net", TenantID: tenant, Name: "aaa-net", Kind: TargetKindNetwork, Host: "h-net"}); err != nil {
+		t.Fatal(err)
+	}
+	hosts := collect(true, nil, 100)
+	if !contains(hosts, "tgt_page_net") {
+		t.Fatal("network target should appear without exclude_kind")
+	}
+	filtered, _, err := store.ListTargetsPage(ctx, tenant, true, nil, TargetPageFilter{Limit: 100, ExcludeKind: string(TargetKindNetwork)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range filtered {
+		if tg.ID == "tgt_page_net" {
+			t.Fatal("exclude_kind=network must omit the network target")
+		}
+	}
+	if len(filtered) != len(wantOrder) {
+		t.Fatalf("exclude_kind page = %d, want %d system targets", len(filtered), len(wantOrder))
+	}
+}
+
+func contains(ids []ID, want ID) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }
 
 func equalIDs(a, b []ID) bool {
