@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 )
 
 type MySQLCollectorMachineAuthenticator struct {
@@ -26,14 +27,19 @@ func (a *MySQLCollectorMachineAuthenticator) AuthenticateCollector(ctx context.C
 	}
 	var identity CollectorMachineIdentity
 	var agentType, moduleKey, authType, tokenHash, certificateFingerprint, status string
+	var pendingTokenHash, pendingFingerprint string
+	var pendingExpires sql.NullTime
 	err := a.db.QueryRowContext(ctx, `
 		SELECT tenant_id, id, boot_id, agent_type, module_key, auth_type,
-			COALESCE(token_hash, ''), COALESCE(certificate_fingerprint, ''), status
+			COALESCE(token_hash, ''), COALESCE(certificate_fingerprint, ''), status,
+			COALESCE(pending_token_hash, ''), COALESCE(pending_certificate_fingerprint, ''),
+			pending_credential_expires_at
 		FROM collector_agents
 		WHERE id = ? AND deleted_at IS NULL
 	`, collectorID).Scan(
 		&identity.TenantID, &identity.CollectorID, &identity.BootID,
 		&agentType, &moduleKey, &authType, &tokenHash, &certificateFingerprint, &status,
+		&pendingTokenHash, &pendingFingerprint, &pendingExpires,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
@@ -44,13 +50,26 @@ func (a *MySQLCollectorMachineAuthenticator) AuthenticateCollector(ctx context.C
 	if identity.CollectorID != collectorID || identity.TenantID == "" || agentType != "flow_collect" || moduleKey != "flow" || status != "active" {
 		return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
 	}
+	// PLAT-03C2 dual window: an unexpired staged credential authenticates
+	// alongside the active one until the rotation is committed or aborted.
+	pendingValid := pendingExpires.Valid && pendingExpires.Time.After(time.Now().UTC())
 	switch authType {
 	case "token":
-		if credential.Token == "" || credential.CertificateFingerprint != "" || !AgentTokenMatches(credential.Token, tokenHash) {
+		if credential.Token == "" || credential.CertificateFingerprint != "" {
+			return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
+		}
+		if !AgentTokenMatches(credential.Token, tokenHash) &&
+			!(pendingValid && pendingTokenHash != "" && AgentTokenMatches(credential.Token, pendingTokenHash)) {
 			return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
 		}
 	case "mtls":
-		if credential.Token != "" || credential.CertificateFingerprint == "" || subtle.ConstantTimeCompare([]byte(credential.CertificateFingerprint), []byte(certificateFingerprint)) != 1 {
+		if credential.Token != "" || credential.CertificateFingerprint == "" {
+			return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
+		}
+		activeMatch := subtle.ConstantTimeCompare([]byte(credential.CertificateFingerprint), []byte(certificateFingerprint)) == 1
+		pendingMatch := pendingValid && pendingFingerprint != "" &&
+			subtle.ConstantTimeCompare([]byte(credential.CertificateFingerprint), []byte(pendingFingerprint)) == 1
+		if !activeMatch && !pendingMatch {
 			return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
 		}
 	default:

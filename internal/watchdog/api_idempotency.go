@@ -39,8 +39,8 @@ func (s *MySQLStore) GetIdempotencyRecord(ctx context.Context, tenantID ID, key 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT tenant_id, idempotency_key, request_hash, response_status, response_body, expires_at
 		FROM idempotency_records
-		WHERE tenant_id = ? AND idempotency_key = ? AND expires_at > NOW(3)
-	`, tenantID, key).Scan(&record.TenantID, &record.Key, &record.RequestHash,
+		WHERE tenant_id = ? AND idempotency_key = ? AND expires_at > ?
+	`, tenantID, key, time.Now().UTC()).Scan(&record.TenantID, &record.Key, &record.RequestHash,
 		&record.ResponseStatus, &record.ResponseBody, &record.ExpiresAt)
 	return record, err
 }

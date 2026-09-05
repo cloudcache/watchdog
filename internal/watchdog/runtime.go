@@ -195,6 +195,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		IdentityAdmin:       r.Store,
 		Idempotency:         r.Store,
 		TargetDeletePreview: r.Store,
+		CollectorCredentials: r.Store,
 		Registries:          r.Registries,
 		TenantModules:       r.Store,
 		FlowGeo:             r.FlowGeo,

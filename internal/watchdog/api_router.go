@@ -19,6 +19,7 @@ type APIV1RouterConfig struct {
 	IdentityAdmin       IdentityAdminRepository
 	Idempotency         IdempotencyRepository
 	TargetDeletePreview TargetDeletePreviewRepository
+	CollectorCredentials CollectorCredentialRepository
 	Registries          *PlatformRegistries
 	TenantModules       TenantModuleRepository
 	FlowGeo             *FlowGeoService
@@ -152,6 +153,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.CollectorPrincipals != nil {
 		registerCollectorPrincipalRoutes(mux, auth, cfg.CollectorPrincipals)
+	}
+	if cfg.CollectorCredentials != nil {
+		registerCollectorCredentialRoutes(mux, auth, cfg.CollectorCredentials, cfg.Audit)
 	}
 	if cfg.SNMP != nil {
 		registerSNMPRoutes(mux, auth, cfg.SNMP)
