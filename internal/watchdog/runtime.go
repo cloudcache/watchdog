@@ -16,6 +16,10 @@ type collectorPrincipalRuntimeProvider interface {
 	PrometheusText() []byte
 }
 
+type PlatformRuntimeHealth struct {
+	CollectorPrincipalProvider CollectorPrincipalProviderRuntimeStatus `json:"collector_principal_provider"`
+}
+
 type BackendRuntime struct {
 	Config             BackendConfig
 	Store              *MySQLStore
@@ -28,8 +32,6 @@ type BackendRuntime struct {
 	SNMPDiscovery      SNMPDiscoveryEngine
 	AggregateRollup    AggregateGraphRollup
 	DiscoveryScheduler DiscoveryScheduler
-	FlowStateCleanup   *FlowStateCleanupRuntime
-	FlowCleanupJobs    FlowStateCleanupJobController
 	CollectorEvidence  CollectorEvidenceController
 	CollectorPlans     CollectorPlanDeliveryController
 
@@ -182,40 +184,40 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		tenantDiscoveryAuth = tenantDiscovery[0]
 	}
 	return NewAPIV1Router(APIV1RouterConfig{
-		Auth:                auth,
-		TenantDiscovery:     tenantDiscoveryAuth,
-		Targets:             r.Store,
-		Agents:              r.Store,
-		Network:             r.Store,
-		Exports:             r.Store,
-		ExportFiles:         r.ExportStore,
-		Billing:             r.Store,
-		AggregateGraphs:     r.Store,
-		Permissions:         r.Store,
-		IdentityAdmin:       r.Store,
-		Idempotency:         r.Store,
-		TargetDeletePreview: r.Store,
+		Auth:                 auth,
+		TenantDiscovery:      tenantDiscoveryAuth,
+		Targets:              r.Store,
+		Agents:               r.Store,
+		Network:              r.Store,
+		Exports:              r.Store,
+		ExportFiles:          r.ExportStore,
+		Billing:              r.Store,
+		AggregateGraphs:      r.Store,
+		Permissions:          r.Store,
+		IdentityAdmin:        r.Store,
+		Idempotency:          r.Store,
+		TargetDeletePreview:  r.Store,
 		CollectorCredentials: r.Store,
-		Registries:          r.Registries,
-		TenantModules:       r.Store,
-		FlowGeo:             r.FlowGeo,
-		Retention:           r.Store,
-		SNMP:                r.Store,
-		SNMPDiscovery:       r.SNMPDiscovery,
-		SNMPCollector:       r.Store,
-		SeriesCleaner:       r.MetricsClient,
-		DiscoveryJobs:       r.Store,
-		TrapDispatcher:      r.trapDispatcherFn,
-		Audit:               r.Store,
-		AddressSets:         r.Store,
-		Tenants:             r.Store,
-		Readiness:           r.Ready,
-		RuntimeHealth:       r.Health,
-		RuntimeMetrics:      r.RuntimeMetrics,
-		FlowCleanupJobs:     r.FlowCleanupJobs,
-		CollectorEvidence:   r.CollectorEvidence,
-		CollectorPrincipals: r.CollectorPrincipals,
-		CollectorPlans:      r.CollectorPlans,
+		CollectorEnrollment:  r.Store,
+		Registries:           r.Registries,
+		TenantModules:        r.Store,
+		FlowGeo:              r.FlowGeo,
+		Retention:            r.Store,
+		SNMP:                 r.Store,
+		SNMPDiscovery:        r.SNMPDiscovery,
+		SNMPCollector:        r.Store,
+		SeriesCleaner:        r.MetricsClient,
+		DiscoveryJobs:        r.Store,
+		TrapDispatcher:       r.trapDispatcherFn,
+		Audit:                r.Store,
+		AddressSets:          r.Store,
+		Tenants:              r.Store,
+		Readiness:            r.Ready,
+		RuntimeHealth:        r.Health,
+		RuntimeMetrics:       r.RuntimeMetrics,
+		CollectorEvidence:    r.CollectorEvidence,
+		CollectorPrincipals:  r.CollectorPrincipals,
+		CollectorPlans:       r.CollectorPlans,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
@@ -224,37 +226,17 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 }
 
 func (r *BackendRuntime) Health() PlatformRuntimeHealth {
-	status := FlowStateCleanupRuntimeStatus{Enabled: r != nil && r.Config.FlowCleanup.Enabled}
 	providerStatus := CollectorPrincipalProviderRuntimeStatus{Enabled: r != nil && r.Config.CollectorPrincipalProvider.Enabled}
 	if r != nil {
-		r.backgroundMu.Lock()
-		cleanup := r.FlowStateCleanup
-		r.backgroundMu.Unlock()
-		if cleanup != nil {
-			status.Health = cleanup.Health()
-		}
 		if r.collectorPrincipalProvider != nil {
 			providerStatus.Health = r.collectorPrincipalProvider.Health()
 		}
 	}
-	return PlatformRuntimeHealth{FlowStateCleanup: status, CollectorPrincipalProvider: providerStatus}
+	return PlatformRuntimeHealth{CollectorPrincipalProvider: providerStatus}
 }
 
 func (r *BackendRuntime) RuntimeMetrics() []byte {
 	metrics := make([]byte, 0, 2048)
-	if r == nil || !r.Config.FlowCleanup.Enabled {
-		metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 0\n"...)
-	} else {
-		r.backgroundMu.Lock()
-		cleanup := r.FlowStateCleanup
-		r.backgroundMu.Unlock()
-		metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_enabled gauge\nwatchdog_flow_state_cleanup_enabled 1\n"...)
-		if cleanup == nil {
-			metrics = append(metrics, "# TYPE watchdog_flow_state_cleanup_worker_up gauge\nwatchdog_flow_state_cleanup_worker_up 0\n"...)
-		} else {
-			metrics = append(metrics, cleanup.PrometheusText()...)
-		}
-	}
 	if r == nil || !r.Config.CollectorPrincipalProvider.Enabled {
 		metrics = append(metrics, "# TYPE watchdog_collector_principal_provider_enabled gauge\nwatchdog_collector_principal_provider_enabled 0\n"...)
 	} else {
@@ -315,9 +297,8 @@ func (r *BackendRuntime) RunAggregateGraphRollup(ctx context.Context) error {
 	})
 }
 
-// StartBackground starts only the control-plane workers owned by the embedded
-// watchdog runtime. Standalone SNMP/export commands keep their own lifecycle
-// and do not accidentally acquire flow cleanup leases.
+// StartBackground owns the lifecycle gate for embedded control-plane workers.
+// Standalone collectors keep their own process lifecycle.
 func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return errors.New("watchdog backend runtime and context are required")
@@ -330,20 +311,6 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 	if r.backgroundClosed {
 		return errors.New("watchdog backend runtime is closed")
 	}
-	if !r.Config.FlowCleanup.Enabled {
-		r.backgroundStarted = true
-		return nil
-	}
-	cleanup, err := newConfiguredFlowStateCleanupRuntime(r.Store, r.Config.FlowCleanup)
-	if err != nil {
-		return fmt.Errorf("initialize flow state-cleanup runtime: %w", err)
-	}
-	if err := cleanup.Start(ctx); err != nil {
-		_ = cleanup.Close()
-		return fmt.Errorf("start flow state-cleanup runtime: %w", err)
-	}
-	r.FlowStateCleanup = cleanup
-	r.FlowCleanupJobs = cleanup.Controller()
 	r.backgroundStarted = true
 	return nil
 }
@@ -355,11 +322,7 @@ func (r *BackendRuntime) Close() error {
 	r.closeOnce.Do(func() {
 		r.backgroundMu.Lock()
 		r.backgroundClosed = true
-		cleanup := r.FlowStateCleanup
 		r.backgroundMu.Unlock()
-		if cleanup != nil {
-			r.closeError = errors.Join(r.closeError, cleanup.Close())
-		}
 		if r.collectorPrincipalProvider != nil {
 			r.collectorPrincipalProvider.CloseIdleConnections()
 		}
@@ -379,18 +342,6 @@ func (r *BackendRuntime) Ready(ctx context.Context) error {
 	}
 	if err := CheckMySQLSchemaCurrent(ctx, r.Store.db); err != nil {
 		return err
-	}
-	if r.Config.FlowCleanup.Enabled {
-		r.backgroundMu.Lock()
-		cleanup := r.FlowStateCleanup
-		started := r.backgroundStarted
-		r.backgroundMu.Unlock()
-		if !started || cleanup == nil {
-			return errors.New("flow state-cleanup runtime is enabled but not started")
-		}
-		if err := cleanup.Ready(); err != nil {
-			return err
-		}
 	}
 	return nil
 }
