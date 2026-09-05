@@ -432,7 +432,7 @@ CH migration 文件名固定为连续的 `NNN_lower_snake.sql`，单文件不超
 
 单节点故障门禁至少覆盖：旧集合 001..N → 新集合 001..N+1、旧集合读新库拒绝、checksum drift 拒绝、最后一条未确认 statement 重放、调用方 cancel/deadline 后锁释放与新连接池 resume、锁跨 ClickHouse restart 保留、Kafka `acks=all` 记录跨 broker restart 可读。它只能证明本地持久化和 fail-closed 控制面；不能证明副本故障、controller quorum、ISR 收缩、Replicated/Distributed DDL、N+1 容量或 RPO/RTO。
 
-ClickHouse 时限必须拆成三类，不得把配置名当成库行为推断：`DialTimeout` 约束 TCP 建连；ch-go `ReadTimeout` 仅给一次 packet read 设置 deadline，库捕获该网络超时后继续轮询，因此它既不是静默链路的失败时限，也不会因有/无 progress packet 决定整条查询何时结束；`OperationTimeout` 才是一次 pool 建立或完整 `Do` 的硬上限，并与调用方 context 取更早者。worker 默认 operation 2m，migration CLI 与 hub rollup 默认 5m；预计更长的 DDL/rollup 必须显式调大，不能设成无界。透明 TCP 代理门禁在成功 control query 后仅丢弃 server→client 响应，验证内部 operation deadline、单连接无隐式 DDL retry，以及关闭旧池后新池恢复。操作者仍必须先 inspect，再按 clean/dirty 状态选择 apply/resume。
+ClickHouse 时限必须拆成三类，不得把配置名当成库行为推断：`DialTimeout` 约束 TCP 建连；ch-go `ReadTimeout` 仅给一次 packet read 设置 deadline，库捕获该网络超时后继续轮询，因此它既不是静默链路的失败时限，也不会因有/无 progress packet 决定整条查询何时结束；`OperationTimeout` 才是一次 pool 建立或完整 `Do` 的硬上限，并与调用方 context 取更早者。worker 默认 operation 2m，migration CLI 与 hub rollup 默认 5m；预计更长的 DDL/rollup 必须显式调大，不能设成无界。透明 TCP 代理门禁在成功 control query 后仅丢弃 server→client 响应，验证内部 operation deadline、单连接无隐式 DDL retry，以及关闭旧池后新池恢复。第二条门禁按协议时序放行 INSERT column metadata 和客户端 block 后丢弃最终响应，必须先观察到“facts 已提交、receipt 缺失”的模糊状态，再用完全相同的 `PreparedBlock`/dedup token 重放并以 `FINAL` fact count、raw counters、单条 receipt/checksum 收敛为成功；禁止把“首次根本没提交”误报成幂等恢复。操作者仍必须先 inspect，再按 clean/dirty 状态选择 apply/resume。
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
