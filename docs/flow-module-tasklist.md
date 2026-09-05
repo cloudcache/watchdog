@@ -180,7 +180,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-06A2 编码/单元/变更测试**：detail schema v2 增加显式 raw/customer view；view 进入 compiled/result contract，raw 使用独立默认/允许字段集和资源过滤器；覆盖参数化 SQL、无 customer/supplier 泄漏、drop fact 可审计、非法字段/过滤器/view 及 runner fail-closed。
 - [ ] **FLOW-06A2 集成**：真实 CH 用含 count/drop 和 fact schema 1/2 的数据核对 raw/customer 行集、翻页和权限上层接线；本机无 CH，保留外部门禁。
 - [x] **FLOW-06A2 回归/已提交**：提交 `d00b620a`；Flow race/vet、全库 test/vet 与 diff check 全过，工作区不再残留该切片生产文件。
-- [ ] **FLOW-06A3 supplier detail**：固定 supplier 字段映射、允许的方向/category/resource filters、全请求窗 fact-schema completeness sentinel 和 cursor 独立性；旧事实、缺/重复/矛盾 sentinel、partial block 全部 fail-closed。
+- [x] **FLOW-06A3 设计/编码**：固定 supplier 字段映射、direction/supplier-category/resource filters，并用 cursor 前的 full-scope window evidence 证明 `min(fact_schema)>=2`；metadata-only 行覆盖 cursor 排除全部数据的情况，不双扫 base。
+- [x] **FLOW-06A3 单元/变更测试**：覆盖 supplier Geo/ASN/ISP/category/version 映射、customer business/prefix 拒绝、typed filters/default fields、schema 1 unavailable、metadata-only、缺失/跨 block 矛盾 evidence 和 all-or-nothing runner。
+- [ ] **FLOW-06A3 集成**：真实 CH 验证 window/FINAL/IPv4-mapped、空范围、cursor 前后范围与 max_rows/max_bytes；本机无 CH，保留外部门禁。
+- [x] **FLOW-06A3 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；真实 CH 集成仍按上一项保留外部门禁。
+- [ ] **FLOW-06A3 已提交**：生产代码、测试与契约文档进入同一独立提交后关闭。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
 - [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。

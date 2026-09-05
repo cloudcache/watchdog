@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	maxDetailRange           = 24 * time.Hour
-	maxDetailLimit           = 500
-	maxDetailValuesPerFilter = 100
-	maxDetailFilterValues    = 256
-	detailCursorPrefix       = "v1."
-	detailCursorPayloadSize  = 8 + 32
+	maxDetailRange            = 24 * time.Hour
+	maxDetailLimit            = 500
+	maxDetailValuesPerFilter  = 100
+	maxDetailFilterValues     = 256
+	detailCursorPrefix        = "v1."
+	detailCursorPayloadSize   = 8 + 32
+	minimumSupplierFactSchema = 2
 )
 
 type DetailEndpoint string
@@ -178,6 +179,29 @@ var defaultRawDetailFields = []DetailField{
 	DetailFieldEstimatedBytes, DetailFieldEstimatedValid, DetailFieldSamplingRate, DetailFieldQualityFlags,
 }
 
+var supplierDetailFields = map[DetailField]struct{}{
+	DetailFieldReceivedTime: {}, DetailFieldSourceIP: {}, DetailFieldDestinationIP: {},
+	DetailFieldSourcePort: {}, DetailFieldDestinationPort: {}, DetailFieldIPProtocol: {}, DetailFieldTCPFlags: {},
+	DetailFieldBusinessDirection: {}, DetailFieldCategory: {}, DetailFieldSourceASN: {}, DetailFieldDestinationASN: {},
+	DetailFieldRemoteASN: {}, DetailFieldRemoteASNSource: {}, DetailFieldRemoteCountry: {},
+	DetailFieldRawBytes: {}, DetailFieldRawPackets: {}, DetailFieldEstimatedBytes: {}, DetailFieldEstimatedPackets: {},
+	DetailFieldEstimatedValid: {}, DetailFieldSamplingMode: {}, DetailFieldSamplingRate: {}, DetailFieldSamplingSource: {},
+	DetailFieldQualityFlags: {}, DetailFieldFlowDurationMS: {}, DetailFieldTargetID: {}, DetailFieldDeviceID: {},
+	DetailFieldExporterID: {}, DetailFieldObservationIfIndex: {}, DetailFieldIngressIfIndex: {},
+	DetailFieldEgressIfIndex: {}, DetailFieldObservationDirection: {}, DetailFieldDimensionSnapshotID: {},
+	DetailFieldDimensionVersion: {}, DetailFieldGeoVersion: {}, DetailFieldClassificationVersion: {},
+	DetailFieldLocalIP: {}, DetailFieldRemoteIP: {}, DetailFieldLocalPort: {}, DetailFieldRemotePort: {},
+	DetailFieldRemoteISPID: {}, DetailFieldRemoteGeoContinentID: {}, DetailFieldRemoteGeoRegionID: {},
+	DetailFieldRemoteGeoCountryID: {}, DetailFieldRemoteGeoProvinceID: {}, DetailFieldRemoteGeoCityID: {},
+}
+
+var defaultSupplierDetailFields = []DetailField{
+	DetailFieldSourceIP, DetailFieldDestinationIP, DetailFieldSourcePort, DetailFieldDestinationPort,
+	DetailFieldIPProtocol, DetailFieldBusinessDirection, DetailFieldCategory, DetailFieldRemoteASN,
+	DetailFieldRemoteCountry, DetailFieldRawBytes, DetailFieldEstimatedBytes, DetailFieldSamplingRate,
+	DetailFieldQualityFlags,
+}
+
 type DetailFilters struct {
 	Directions  []string `json:"directions,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
@@ -233,8 +257,8 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if request.View == "" {
 		return CompiledDetail{}, requestError("view", ErrorRequired, "view is required")
 	}
-	if request.View != ViewCustomer && request.View != ViewRaw {
-		return CompiledDetail{}, requestError("view", ErrorUnsupported, "detail schema v2 supports raw and customer views")
+	if request.View != ViewCustomer && request.View != ViewRaw && request.View != ViewSupplier {
+		return CompiledDetail{}, requestError("view", ErrorUnsupported, "detail schema v2 supports raw, supplier, and customer views")
 	}
 	ip, err := netip.ParseAddr(request.IP)
 	if err != nil || ip.Zone() != "" {
@@ -290,7 +314,6 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 			return CompiledDetail{}, requestError("cursor", ErrorInvalid, "cursor is outside the requested time range")
 		}
 		cursor = &decoded
-		conditions = append(conditions, "AND (event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))")
 		parameters = append(parameters,
 			stringParameter("cursor_time", formatDateTime64(decoded.eventTime)),
 			stringParameter("cursor_record_id", hex.EncodeToString(decoded.recordID[:])),
@@ -298,14 +321,32 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	}
 	selectFields := make([]string, 0, len(fields))
 	for _, field := range fields {
-		spec := detailFieldRegistry[field]
+		spec := detailFieldSpecForView(request.View, field)
 		selectFields = append(selectFields, fmt.Sprintf("  %s AS %s", spec.expression, spec.field))
 	}
 	visibilityCondition := "AND disposition = 'count'"
 	if request.View == ViewRaw {
 		visibilityCondition = ""
 	}
-	body := fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
+	cursorCondition := ""
+	if cursor != nil {
+		cursorCondition = "AND (event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))"
+	}
+	var body string
+	if request.View == ViewSupplier {
+		selectAliases := make([]string, 0, len(fields))
+		for _, field := range fields {
+			selectAliases = append(selectAliases, "  "+string(field))
+		}
+		cursorExpression := "true"
+		if cursor != nil {
+			cursorExpression = "(event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))"
+		}
+		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
+	} else {
+		conditions = append(conditions, cursorCondition)
+		body = fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
+	}
 	maxRows := uint64(request.Limit) + 1
 	query := ch.Query{
 		Body: body, Parameters: parameters,
@@ -329,6 +370,8 @@ func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error
 		input = defaultDetailFields
 		if view == ViewRaw {
 			input = defaultRawDetailFields
+		} else if view == ViewSupplier {
+			input = defaultSupplierDetailFields
 		}
 	}
 	if len(input) > len(detailFieldRegistry) {
@@ -342,6 +385,11 @@ func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error
 		if view == ViewRaw {
 			if _, exists := rawDetailFields[field]; !exists {
 				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in raw view", field))
+			}
+		}
+		if view == ViewSupplier {
+			if _, exists := supplierDetailFields[field]; !exists {
+				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in supplier view", field))
 			}
 		}
 		requested[field] = struct{}{}
@@ -370,6 +418,9 @@ func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.P
 			}
 		}
 	}
+	if view == ViewSupplier && len(filters.Businesses) != 0 {
+		return nil, nil, requestError("filters.businesses", ErrorUnsupported, "customer business filters are not available in supplier view")
+	}
 	type filterSpec struct {
 		field, column, prefix string
 		values                []string
@@ -380,11 +431,17 @@ func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.P
 		{"filters.device_ids", "device_id", "detail_device", filters.DeviceIDs, nil},
 		{"filters.exporter_ids", "exporter_id", "detail_exporter", filters.ExporterIDs, nil},
 	}
-	if view == ViewCustomer {
+	switch view {
+	case ViewCustomer:
 		filtersList = append([]filterSpec{
 			{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
 			{"filters.categories", "category", "detail_category", filters.Categories, validCategories},
 			{"filters.businesses", "business", "detail_business", filters.Businesses, nil},
+		}, filtersList...)
+	case ViewSupplier:
+		filtersList = append([]filterSpec{
+			{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
+			{"filters.categories", "supplier_category", "detail_category", filters.Categories, validCategories},
 		}, filtersList...)
 	}
 	conditions := make([]string, 0, len(filtersList))
@@ -410,6 +467,38 @@ func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.P
 		}
 	}
 	return conditions, parameters, nil
+}
+
+func detailFieldSpecForView(view View, field DetailField) detailFieldSpec {
+	spec := detailFieldRegistry[field]
+	if view != ViewSupplier {
+		return spec
+	}
+	switch field {
+	case DetailFieldCategory:
+		spec.expression = "toString(supplier_category)"
+	case DetailFieldRemoteASN:
+		spec.expression = "toUInt64(supplier_remote_asn)"
+	case DetailFieldRemoteASNSource:
+		spec.expression = "toString(supplier_remote_asn_source)"
+	case DetailFieldRemoteCountry:
+		spec.expression = "toString(supplier_remote_country)"
+	case DetailFieldGeoVersion:
+		spec.expression = "supplier_geo_version"
+	case DetailFieldRemoteISPID:
+		spec.expression = "toUInt64(supplier_remote_isp_id)"
+	case DetailFieldRemoteGeoContinentID:
+		spec.expression = "supplier_remote_geo_continent_id"
+	case DetailFieldRemoteGeoRegionID:
+		spec.expression = "supplier_remote_geo_region_id"
+	case DetailFieldRemoteGeoCountryID:
+		spec.expression = "supplier_remote_geo_country_id"
+	case DetailFieldRemoteGeoProvinceID:
+		spec.expression = "supplier_remote_geo_province_id"
+	case DetailFieldRemoteGeoCityID:
+		spec.expression = "supplier_remote_geo_city_id"
+	}
+	return spec
 }
 
 func EncodeDetailCursor(eventTime time.Time, recordIDHex string) (string, error) {
@@ -461,4 +550,37 @@ WHERE tenant_id = {tenant:String}
   AND %s
   %s
 ORDER BY event_time DESC, record_id DESC
+LIMIT {fetch_limit:UInt16}`
+
+// Supplier completeness is computed before the cursor predicate. Every data
+// row carries the full-scope minimum fact schema. If a cursor excludes the
+// entire page, _scope_row=1 still returns one metadata-only row so callers
+// cannot bypass old fact_schema=1 evidence with a forged/reused cursor.
+const supplierDetailQuerySQL = `SELECT
+  event_time,
+  lower(hex(_record_id)) AS record_id,
+  toString(_source_ip) AS _source_ip,
+  toString(_destination_ip) AS _destination_ip,
+%s,
+  _scope_match,
+  _minimum_fact_schema
+FROM (
+  SELECT
+    event_time,
+    record_id AS _record_id,
+    src_ip AS _source_ip,
+    dst_ip AS _destination_ip,
+%s,
+    %s AS _scope_match,
+    min(fact_schema) OVER () AS _minimum_fact_schema,
+    row_number() OVER (ORDER BY event_time DESC, record_id DESC) AS _scope_row
+  FROM flow_records FINAL
+  WHERE tenant_id = {tenant:String}
+    AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}
+    %s
+    AND %s
+    %s
+)
+WHERE _scope_match OR _scope_row = 1
+ORDER BY _scope_match DESC, event_time DESC, _record_id DESC
 LIMIT {fetch_limit:UInt16}`

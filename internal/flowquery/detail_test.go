@@ -133,6 +133,64 @@ func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
 	}
 }
 
+func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
+	request := validDetailRequest()
+	request.View = ViewSupplier
+	request.Fields = []DetailField{
+		DetailFieldCategory, DetailFieldRemoteASN, DetailFieldRemoteASNSource, DetailFieldRemoteCountry,
+		DetailFieldGeoVersion, DetailFieldRemoteISPID, DetailFieldRemoteGeoCityID, DetailFieldDimensionSnapshotID,
+	}
+	request.Filters = DetailFilters{Directions: []string{"out"}, Categories: []string{"overseas"}, TargetIDs: []string{"target-a"}}
+	cursor, err := EncodeDetailCursor(request.From.Add(30*time.Minute), strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Cursor = cursor
+	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.View != ViewSupplier {
+		t.Fatalf("compiled view=%q", compiled.View)
+	}
+	for _, required := range []string{
+		"toString(supplier_category) AS category", "toUInt64(supplier_remote_asn) AS remote_asn",
+		"toString(supplier_remote_asn_source) AS remote_asn_source", "toString(supplier_remote_country) AS remote_country",
+		"supplier_geo_version AS geo_version", "toUInt64(supplier_remote_isp_id) AS remote_isp_id",
+		"supplier_remote_geo_city_id AS remote_geo_city_id", "min(fact_schema) OVER () AS _minimum_fact_schema",
+		"row_number() OVER (ORDER BY event_time DESC, record_id DESC) AS _scope_row",
+		"AND supplier_category IN ({detail_category_0:String})", "WHERE _scope_match OR _scope_row = 1",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("supplier query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	cursorPosition := strings.Index(compiled.Query.Body, "AS _scope_match")
+	windowPosition := strings.Index(compiled.Query.Body, "min(fact_schema) OVER ()")
+	outerWherePosition := strings.Index(compiled.Query.Body, "WHERE _scope_match OR _scope_row = 1")
+	if cursorPosition < 0 || windowPosition < cursorPosition || outerWherePosition < windowPosition {
+		t.Fatalf("supplier completeness is not evaluated before cursor filtering:\n%s", compiled.Query.Body)
+	}
+	for _, forbidden := range []string{"toString(category) AS category", "toUInt64(remote_asn) AS remote_asn", "toString(remote_country) AS remote_country", " business AS business", "prefix_id"} {
+		if strings.Contains(compiled.Query.Body, forbidden) {
+			t.Fatalf("supplier query contains customer expression %q:\n%s", forbidden, compiled.Query.Body)
+		}
+	}
+
+	request.Cursor, request.Fields, request.Filters = "", nil, DetailFilters{}
+	defaults, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := normalizeDetailFields(ViewSupplier, defaultSupplierDetailFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(defaults.Fields, want) {
+		t.Fatalf("supplier default fields=%v want=%v", defaults.Fields, want)
+	}
+}
+
 func TestCompileDetailUsesEndpointSpecificPredicatesForIPv4AndIPv6(t *testing.T) {
 	tests := []struct {
 		name, ip  string
@@ -202,7 +260,7 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		apply func(*Scope, *DetailRequest)
 	}{
 		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *DetailRequest) { scope.TenantID = "tenant'" }},
-		{"view", "view", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.View = ViewSupplier }},
+		{"view", "view", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.View = "invented" }},
 		{"raw customer field", "fields", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
 			request.View = ViewRaw
 			request.Fields = []DetailField{DetailFieldRemoteCountry}
@@ -210,6 +268,14 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		{"raw customer filter", "filters.categories", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
 			request.View = ViewRaw
 			request.Filters.Categories = []string{"overseas"}
+		}},
+		{"supplier customer field", "fields", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
+			request.View = ViewSupplier
+			request.Fields = []DetailField{DetailFieldBusiness}
+		}},
+		{"supplier customer filter", "filters.businesses", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
+			request.View = ViewSupplier
+			request.Filters.Businesses = []string{"customer-a"}
 		}},
 		{"ip", "ip", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.IP = "not-an-ip" }},
 		{"zone", "ip", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.IP = "fe80::1%en0" }},

@@ -22,6 +22,8 @@ type fakeDetailRow struct {
 	sourceIP      string
 	destinationIP string
 	values        map[DetailField]any
+	scopeMatch    bool
+	minimumSchema uint16
 }
 
 type fakeDetailExecutor struct {
@@ -124,6 +126,88 @@ func TestDetailRunnerReturnsCompleteShortOrEmptyPageWithoutCursor(t *testing.T) 
 	}
 }
 
+func TestSupplierDetailRunnerRequiresFullScopeProvenance(t *testing.T) {
+	request := validDetailRequest()
+	request.View = ViewSupplier
+	request.Fields = []DetailField{DetailFieldCategory, DetailFieldRemoteASN}
+	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := detailDataRow(compiled.From.Add(time.Minute), 2)
+	row.values = map[DetailField]any{DetailFieldCategory: "overseas", DetailFieldRemoteASN: uint64(64512)}
+	runner, err := NewDetailRunner(fakeDetailExecutor{blocks: [][]fakeDetailRow{{row}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.View != ViewSupplier || !result.SupplierProvenanceComplete || result.MinimumFactSchema != minimumSupplierFactSchema || len(result.Rows) != 1 || result.Rows[0].Values[DetailFieldRemoteASN] != uint64(64512) {
+		t.Fatalf("supplier result=%+v", result)
+	}
+
+	metadataOnly := detailDataRow(compiled.To.Add(-time.Millisecond), 9)
+	metadataOnly.scopeMatch = false
+	metadataRunner, err := NewDetailRunner(fakeDetailExecutor{blocks: [][]fakeDetailRow{{metadataOnly}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := metadataRunner.Run(context.Background(), compiled)
+	if err != nil || len(empty.Rows) != 0 || !empty.SupplierProvenanceComplete || empty.MinimumFactSchema != minimumSupplierFactSchema {
+		t.Fatalf("metadata-only supplier result=%+v error=%v", empty, err)
+	}
+
+	old := detailDataRow(compiled.From.Add(time.Minute), 1)
+	old.minimumSchema = 1
+	for _, blocks := range [][][]fakeDetailRow{
+		{{old}},
+		{{row}, {old}},
+		{{func() fakeDetailRow { value := old; value.scopeMatch = false; return value }()}},
+	} {
+		oldRunner, createErr := NewDetailRunner(fakeDetailExecutor{blocks: blocks})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if got, runErr := oldRunner.Run(context.Background(), compiled); !errors.Is(runErr, ErrSupplierProvenanceUnavailable) || len(got.Rows) != 0 {
+			t.Fatalf("old supplier result=%+v error=%v", got, runErr)
+		}
+	}
+}
+
+func TestSupplierDetailRunnerRejectsInconsistentOrMissingEvidence(t *testing.T) {
+	request := validDetailRequest()
+	request.View = ViewSupplier
+	request.Fields = []DetailField{DetailFieldRawBytes}
+	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := detailDataRow(compiled.From.Add(2*time.Minute), 2)
+	second := detailDataRow(compiled.From.Add(time.Minute), 1)
+	second.minimumSchema = 3
+	for _, test := range []struct {
+		name       string
+		blocks     [][]fakeDetailRow
+		skipColumn string
+	}{
+		{name: "inconsistent", blocks: [][]fakeDetailRow{{first, second}}},
+		{name: "missing-match", blocks: [][]fakeDetailRow{{first}}, skipColumn: "_scope_match"},
+		{name: "missing-minimum", blocks: [][]fakeDetailRow{{first}}, skipColumn: "_minimum_fact_schema"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner, createErr := NewDetailRunner(fakeDetailExecutor{blocks: test.blocks, skipColumn: test.skipColumn})
+			if createErr != nil {
+				t.Fatal(createErr)
+			}
+			if result, runErr := runner.Run(context.Background(), compiled); runErr == nil || len(result.Rows) != 0 {
+				t.Fatalf("result=%+v error=%v", result, runErr)
+			}
+		})
+	}
+}
+
 func TestDetailRunnerEnforcesCursorAcrossBlocks(t *testing.T) {
 	request := validDetailRequest()
 	boundaryTime := request.From.Add(30 * time.Minute)
@@ -174,7 +258,7 @@ func TestDetailRunnerRejectsMalformedUnorderedOrUnboundedResults(t *testing.T) {
 		{"column mismatch", [][]fakeDetailRow{{valid}}, "raw_bytes", nil},
 		{"row bound", [][]fakeDetailRow{{valid, detailDataRow(valid.eventTime, 2), detailDataRow(valid.eventTime, 1), detailDataRow(valid.eventTime.Add(-time.Millisecond), 4)}}, "", nil},
 		{"invalid endpoint", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Endpoint = "remote" }},
-		{"invalid view", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.View = ViewSupplier }},
+		{"invalid view", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.View = "invented" }},
 		{"unknown field", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Fields = []DetailField{"unknown"} }},
 		{"duplicate field", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Fields = []DetailField{DetailFieldRawBytes, DetailFieldRawBytes} }},
 	}
@@ -243,7 +327,8 @@ func detailDataRow(eventTime time.Time, id byte) fakeDetailRow {
 	return fakeDetailRow{
 		eventTime: eventTime, recordID: detailRecordID(id),
 		sourceIP: "192.0.2.10", destinationIP: "198.51.100.20",
-		values: map[DetailField]any{DetailFieldRawBytes: uint64(1), DetailFieldDestinationIP: "198.51.100.20"},
+		values:     map[DetailField]any{DetailFieldRawBytes: uint64(1), DetailFieldDestinationIP: "198.51.100.20"},
+		scopeMatch: true, minimumSchema: minimumSupplierFactSchema,
 	}
 }
 
@@ -265,6 +350,10 @@ func appendFakeDetailRow(results proto.Results, row fakeDetailRow, skipColumn st
 			result.Data.(*proto.ColStr).Append(row.sourceIP)
 		case "_destination_ip":
 			result.Data.(*proto.ColStr).Append(row.destinationIP)
+		case "_scope_match":
+			result.Data.(*proto.ColBool).Append(row.scopeMatch)
+		case "_minimum_fact_schema":
+			result.Data.(*proto.ColUInt16).Append(row.minimumSchema)
 		default:
 			value := row.values[DetailField(result.Name)]
 			switch column := result.Data.(type) {

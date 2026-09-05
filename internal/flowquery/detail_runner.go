@@ -15,6 +15,8 @@ import (
 	"github.com/ClickHouse/ch-go/proto"
 )
 
+var ErrSupplierProvenanceUnavailable = errors.New("supplier provenance is unavailable for part of the requested fact range")
+
 type DetailRunner struct {
 	executor Executor
 }
@@ -26,11 +28,13 @@ type DetailRow struct {
 }
 
 type DetailResult struct {
-	View       View          `json:"view"`
-	Fields     []DetailField `json:"fields"`
-	Rows       []DetailRow   `json:"rows"`
-	HasMore    bool          `json:"has_more"`
-	NextCursor string        `json:"next_cursor,omitempty"`
+	View                       View          `json:"view"`
+	Fields                     []DetailField `json:"fields"`
+	Rows                       []DetailRow   `json:"rows"`
+	HasMore                    bool          `json:"has_more"`
+	NextCursor                 string        `json:"next_cursor,omitempty"`
+	SupplierProvenanceComplete bool          `json:"supplier_provenance_complete,omitempty"`
+	MinimumFactSchema          uint16        `json:"minimum_fact_schema,omitempty"`
 }
 
 func NewDetailRunner(executor Executor) (*DetailRunner, error) {
@@ -49,7 +53,7 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 		compiled.MaxResultRows != uint64(compiled.Limit)+1 {
 		return DetailResult{}, errors.New("compiled Flow detail query is invalid")
 	}
-	columns, err := newDetailResultColumns(compiled.Fields)
+	columns, err := newDetailResultColumns(compiled.View, compiled.Fields)
 	if err != nil {
 		return DetailResult{}, fmt.Errorf("compiled Flow detail query is invalid: %w", err)
 	}
@@ -76,6 +80,10 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 		return DetailResult{}, state.err
 	}
 	result := DetailResult{View: compiled.View, Fields: append([]DetailField(nil), compiled.Fields...), Rows: state.rows}
+	if compiled.View == ViewSupplier {
+		result.SupplierProvenanceComplete = true
+		result.MinimumFactSchema = state.minimumFactSchema
+	}
 	if len(result.Rows) > int(compiled.Limit) {
 		result.HasMore = true
 		result.Rows = result.Rows[:compiled.Limit]
@@ -100,10 +108,16 @@ type detailResultColumns struct {
 	sourceIP      proto.ColStr
 	destinationIP proto.ColStr
 	dynamic       []detailDynamicColumn
+	scopeMatch    *proto.ColBool
+	minimumSchema *proto.ColUInt16
 }
 
-func newDetailResultColumns(fields []DetailField) (*detailResultColumns, error) {
+func newDetailResultColumns(view View, fields []DetailField) (*detailResultColumns, error) {
 	columns := &detailResultColumns{eventTime: new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli).WithLocation(time.UTC)}
+	if view == ViewSupplier {
+		columns.scopeMatch = new(proto.ColBool)
+		columns.minimumSchema = new(proto.ColUInt16)
+	}
 	seen := make(map[DetailField]struct{}, len(fields))
 	for _, field := range fields {
 		if _, exists := seen[field]; exists {
@@ -152,6 +166,12 @@ func (c *detailResultColumns) results() proto.Results {
 	for _, column := range c.dynamic {
 		result = append(result, proto.ResultColumn{Name: string(column.field), Data: column.data})
 	}
+	if c.scopeMatch != nil {
+		result = append(result,
+			proto.ResultColumn{Name: "_scope_match", Data: c.scopeMatch},
+			proto.ResultColumn{Name: "_minimum_fact_schema", Data: c.minimumSchema},
+		)
+	}
 	return result
 }
 
@@ -172,6 +192,11 @@ func (c *detailResultColumns) rowCount() (int, error) {
 			return 0, fmt.Errorf("invalid ClickHouse Flow detail result: column %s has %d rows, want %d", column.field, rows, want)
 		}
 	}
+	if c.scopeMatch != nil {
+		if c.minimumSchema == nil || c.scopeMatch.Rows() != want || c.minimumSchema.Rows() != want {
+			return 0, errors.New("invalid ClickHouse Flow detail result: supplier metadata columns have inconsistent rows")
+		}
+	}
 	return want, nil
 }
 
@@ -181,11 +206,13 @@ type detailResultKey struct {
 }
 
 type detailResultState struct {
-	compiled CompiledDetail
-	rows     []DetailRow
-	seen     map[detailResultKey]struct{}
-	previous *detailResultKey
-	err      error
+	compiled            CompiledDetail
+	rows                []DetailRow
+	seen                map[detailResultKey]struct{}
+	previous            *detailResultKey
+	minimumFactSchema   uint16
+	hasSupplierEvidence bool
+	err                 error
 }
 
 func (s *detailResultState) consume(columns *detailResultColumns) error {
@@ -197,6 +224,20 @@ func (s *detailResultState) consume(columns *detailResultColumns) error {
 		return fmt.Errorf("invalid ClickHouse Flow detail result: rows exceed hard limit %d", s.compiled.MaxResultRows)
 	}
 	for index := 0; index < count; index++ {
+		if columns.scopeMatch != nil {
+			minimum := columns.minimumSchema.Row(index)
+			if minimum < minimumSupplierFactSchema {
+				return ErrSupplierProvenanceUnavailable
+			}
+			if s.hasSupplierEvidence && minimum != s.minimumFactSchema {
+				return errors.New("invalid ClickHouse Flow detail result: inconsistent supplier fact schema evidence")
+			}
+			s.minimumFactSchema = minimum
+			s.hasSupplierEvidence = true
+			if !columns.scopeMatch.Row(index) {
+				continue
+			}
+		}
 		row, key, err := s.row(columns, index)
 		if err != nil {
 			return err
@@ -279,7 +320,7 @@ func validDetailEndpoint(value DetailEndpoint) bool {
 }
 
 func validDetailView(value View) bool {
-	return value == ViewRaw || value == ViewCustomer
+	return value == ViewRaw || value == ViewSupplier || value == ViewCustomer
 }
 
 func isDetailIPField(field DetailField) bool {
