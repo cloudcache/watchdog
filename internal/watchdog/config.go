@@ -113,6 +113,10 @@ type MySQLConfig struct {
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+	// EncryptionKey is a base64-encoded 32-byte AES-256 key for at-rest secrets
+	// (webhook URLs). Empty disables encryption; new secrets are then stored as
+	// plaintext until a key is configured.
+	EncryptionKey string `yaml:"encryption_key"`
 }
 
 type VictoriaMetricsConfig struct {
@@ -293,6 +297,7 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	}
 	var err error
 	cfg.MySQL.DSN = getEnv("WATCHDOG_MYSQL_DSN", cfg.MySQL.DSN)
+	cfg.MySQL.EncryptionKey = getEnv("WATCHDOG_ENCRYPTION_KEY", cfg.MySQL.EncryptionKey)
 	if cfg.MySQL.MaxOpenConns, err = getEnvInt("WATCHDOG_MYSQL_MAX_OPEN_CONNS", cfg.MySQL.MaxOpenConns, 1); err != nil {
 		return err
 	}
@@ -608,6 +613,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.MySQL.ConnMaxLifetime <= 0 {
 		return errors.New("mysql.conn_max_lifetime must be positive")
+	}
+	if _, err := decodeEncryptionKey(cfg.MySQL.EncryptionKey); err != nil {
+		return fmt.Errorf("mysql.encryption_key: %w", err)
 	}
 	if err := validateHTTPBaseURL("victoriametrics.base_url", cfg.VictoriaMetrics.BaseURL, true); err != nil {
 		return err

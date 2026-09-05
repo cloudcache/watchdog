@@ -28,11 +28,12 @@ type NotificationChannelRepository interface {
 }
 
 func (s *MySQLStore) GetNotificationChannels(ctx context.Context, tenantID, userID ID) (NotificationChannels, error) {
-	return scanNotificationChannels(s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT channel_type, address FROM notification_channels
 		WHERE tenant_id = ? AND user_id = ? AND enabled = TRUE
 		ORDER BY channel_type, id
-	`, tenantID, userID))
+	`, tenantID, userID)
+	return scanNotificationChannels(rows, err, s.encryptionKey)
 }
 
 func (s *MySQLStore) NotificationChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) (NotificationChannels, error) {
@@ -41,13 +42,14 @@ func (s *MySQLStore) NotificationChannelsForExternalSubject(ctx context.Context,
 	if provider == "" || externalSubject == "" {
 		return NotificationChannels{}, nil
 	}
-	return scanNotificationChannels(s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.channel_type, c.address
 		FROM notification_channels c
 		INNER JOIN users u ON u.id = c.user_id
 		WHERE u.auth_provider = ? AND u.external_subject_id = ? AND c.enabled = TRUE
 		ORDER BY c.channel_type, c.id
-	`, provider, externalSubject))
+	`, provider, externalSubject)
+	return scanNotificationChannels(rows, err, s.encryptionKey)
 }
 
 func (s *MySQLStore) ReplaceNotificationChannels(ctx context.Context, tenantID, userID ID, channels NotificationChannels) error {
@@ -78,14 +80,18 @@ func (s *MySQLStore) ReplaceNotificationChannels(ctx context.Context, tenantID, 
 		}
 	}
 	for _, webhook := range channels.Webhooks {
-		if err := insert("webhook", webhook); err != nil {
+		encrypted, err := encryptSecret(webhook, s.encryptionKey)
+		if err != nil {
+			return err
+		}
+		if err := insert("webhook", encrypted); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func scanNotificationChannels(rows *sql.Rows, scanErr error) (NotificationChannels, error) {
+func scanNotificationChannels(rows *sql.Rows, scanErr error, key []byte) (NotificationChannels, error) {
 	if scanErr != nil {
 		return NotificationChannels{}, scanErr
 	}
@@ -100,7 +106,11 @@ func scanNotificationChannels(rows *sql.Rows, scanErr error) (NotificationChanne
 		case "email":
 			channels.Emails = append(channels.Emails, address)
 		case "webhook":
-			channels.Webhooks = append(channels.Webhooks, address)
+			decrypted, err := decryptSecret(address, key)
+			if err != nil {
+				return NotificationChannels{}, err
+			}
+			channels.Webhooks = append(channels.Webhooks, decrypted)
 		}
 	}
 	return channels, rows.Err()

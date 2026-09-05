@@ -15,11 +15,18 @@ import (
 
 type MySQLStore struct {
 	db *sql.DB
+	// encryptionKey is the AES-256 key for at-rest secrets (webhook URLs).
+	// Nil disables encryption (tests and installs without a configured key).
+	encryptionKey []byte
 }
 
 func OpenMySQLStore(ctx context.Context, cfg MySQLConfig) (*MySQLStore, error) {
 	if cfg.DSN == "" {
 		return nil, errors.New("mysql dsn is required")
+	}
+	encryptionKey, err := decodeEncryptionKey(cfg.EncryptionKey)
+	if err != nil {
+		return nil, err
 	}
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
@@ -38,7 +45,7 @@ func OpenMySQLStore(ctx context.Context, cfg MySQLConfig) (*MySQLStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &MySQLStore{db: db}, nil
+	return &MySQLStore{db: db, encryptionKey: encryptionKey}, nil
 }
 
 func NewMySQLStore(db *sql.DB) *MySQLStore {

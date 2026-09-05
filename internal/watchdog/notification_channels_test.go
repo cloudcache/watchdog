@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -120,5 +121,70 @@ func TestMySQLNotificationChannelsLifecycle(t *testing.T) {
 	empty, err := store.NotificationChannelsForExternalSubject(ctx, "pocketbase", "pb_unknown")
 	if err != nil || len(empty.Emails) != 0 || len(empty.Webhooks) != 0 {
 		t.Fatalf("unknown subject = %+v err=%v", empty, err)
+	}
+}
+
+// TestMySQLNotificationChannelsWebhookEncryption proves webhook URLs are
+// encrypted at rest (the address column is ciphertext), decrypt transparently
+// on read, and that legacy plaintext rows keep working.
+func TestMySQLNotificationChannelsWebhookEncryption(t *testing.T) {
+	db, tenant := operationJobTestDB(t)
+	store := NewMySQLStore(db)
+	store.encryptionKey = bytes.Repeat([]byte("k"), 32)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
+		VALUES ('user_enc_1', ?, 'enc@test.local', 'Enc', 'active', 'pocketbase', 'pb_enc_1')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+
+	const webhook = "https://hooks.example.com/T/B/supersecret"
+	if err := store.ReplaceNotificationChannels(ctx, tenant, "user_enc_1", NotificationChannels{
+		Webhooks: []string{webhook},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// At rest the address is ciphertext (prefixed, no plaintext token).
+	var stored string
+	if err := db.QueryRowContext(ctx, `
+		SELECT address FROM notification_channels WHERE user_id = 'user_enc_1' AND channel_type = 'webhook'
+	`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(stored, encryptedSecretPrefix) || strings.Contains(stored, "supersecret") {
+		t.Fatalf("webhook not encrypted at rest: %s", stored)
+	}
+
+	// Both read paths decrypt transparently.
+	got, err := store.GetNotificationChannels(ctx, tenant, "user_enc_1")
+	if err != nil || len(got.Webhooks) != 1 || got.Webhooks[0] != webhook {
+		t.Fatalf("get decrypted = %+v err=%v", got, err)
+	}
+	byPB, err := store.NotificationChannelsForExternalSubject(ctx, "pocketbase", "pb_enc_1")
+	if err != nil || len(byPB.Webhooks) != 1 || byPB.Webhooks[0] != webhook {
+		t.Fatalf("by-subject decrypted = %+v err=%v", byPB, err)
+	}
+
+	// A legacy plaintext row (written before encryption) reads back unchanged.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO notification_channels (id, tenant_id, user_id, channel_type, address)
+		VALUES ('ch_legacy', ?, 'user_enc_1', 'webhook', 'https://legacy.example.com/plain')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.GetNotificationChannels(ctx, tenant, "user_enc_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range after.Webhooks {
+		if w == "https://legacy.example.com/plain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("legacy plaintext webhook not read back: %+v", after.Webhooks)
 	}
 }
