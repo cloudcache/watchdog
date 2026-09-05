@@ -158,9 +158,14 @@ type HomeProfile struct {
 }
 
 type GeoInfo struct {
-	Country   string
-	AdminCode string
-	ISPID     uint16
+	Country     string
+	AdminCode   string
+	Subdivision string
+	City        string
+	ISPID       uint16
+	ASN         uint32
+	Version     string
+	Source      string
 }
 
 func ClassifyCategory(direction BusinessDirection, remote GeoInfo, home HomeProfile) Category {

@@ -14,6 +14,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.1
 	github.com/google/uuid v1.6.0
 	github.com/gosnmp/gosnmp v1.43.2
+	github.com/klauspost/compress v1.18.5
 	github.com/lxzan/gws v1.9.1
 	github.com/netsampler/goflow2/v3 v3.0.0-20260528232550-6dee964c38ee
 	github.com/nicholas-fedor/shoutrrr v0.15.1
@@ -65,7 +66,6 @@ require (
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.3 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
-	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260324052639-156f7da3f749 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect

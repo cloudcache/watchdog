@@ -238,6 +238,7 @@ internal/modules/flow/
   "schema": "flow-geo-v1",
   "version": "2026-09-02T120000Z-a13f9c2e",
   "generated_at": "2026-09-02T12:00:00Z",
+  "effective_from": "2026-09-02T12:05:00Z",
   "admin_code_system": "GB/T2260-6",
   "unknown_country": "ZZ",
   "files": {
@@ -265,9 +266,13 @@ ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn
 - 港澳台必须规范化为 `country=CN` 且 `admin_code` 以 `71/81/82` 开头（GB/T 2260：`710000/810000/820000`）；导出器负责把上游 `HK/MO/TW` 国家码折算为该表示，同一版本内不得两种表示混存，否则 `overseas_includes_hmt` 无法确定性实现（分类函数仍做入口规范化以兼容旧导出）；
 - `isp_id` 是导出物内稳定 UInt16，0=未知；
 - ASN 为 UInt32，0=未知；
-- `operators.json` 至少含 `{id,name,short_name,category,enabled}`；
-- `geo_dict.json` 至少含 `{kind,code,name,parent_code,enabled}`；
-- 文件可由 `.zst` 流式解压，watchdog 不把压缩文本整体读入内存。
+- `operators.json` 固定为 JSON array，每项严格为 `{id,name,short_name,category,enabled}`；`id=0` 可用于未知项显示，但 CSV 中 `isp_id=0` 不要求外键，`isp_id>0` 必须在本版本字典中存在；
+- `geo_dict.json` 固定为 JSON array，每项严格为 `{kind,code,name,parent_code,enabled}`；`code` 在整份文件全局唯一，父链不得成环，非空 `parent_code` 和 CSV 非空 `admin_code` 必须能在本版本字典中找到；
+- 两个 JSON 字典必须显式输出 `[]` 表示空，不接受 `null`；manifest 只接受上述四个文件键，`rows` 对 JSON 是 array 长度、对 CSV 是不含 header 的数据行数；
+- `sha256` 是文件原始字节的 64 位小写十六进制，不带 `sha256:` 前缀；未知 JSON 字段、重复业务主键、行数/SHA 不一致均拒绝整版；
+- `generated_at` 是导出完成时间，`effective_from` 是严格 UTC 分钟边界的分类生效时间；两者不可互换，worker 按 record `event_time` 选择 `effective_from<=event_time` 的最近版本；回滚必须复制旧内容发布一个更晚 `effective_from` 的新 version，禁止把旧 version 重新设为 current；
+- CSV 固定 UTF-8、无 BOM、header 逐字节一致、每个物理行一条 record；字段内逗号可按 RFC 4180 引号转义，但禁止字段内 CR/LF；
+- `.zst` 按流解压，watchdog 不把压缩 CSV 整体读入内存。默认上限是 manifest 256 KiB、单个 JSON 字典 64 MiB、单个压缩 CSV 1 GiB、单个解压 CSV 2 GiB、单行 64 KiB、每 family 2000 万条、Zstd window 128 MiB；部署只能收紧或经容量验证后显式放宽。
 
 ### 3.2 与 EdgeManager 四类表的最小关系
 
@@ -284,15 +289,19 @@ watchdog 不关心导出器如何审核和发布，也不携带 EdgeManager 凭�
 
 ### 3.3 Loader 和内存索引
 
-1. poll `current/manifest.json`，version 未变直接返回；
-2. 校验 manifest 大小上限、schema 和所有 SHA-256；
-3. 流式解析并验证 IP、区间、排序、重叠、字典外键；
-4. IPv4 转 `uint32 start/end` 有序数组；IPv6 转两个 `uint64` 或 `uint128` 等价结构有序数组；
-5. 各用二分查找，构建期间不阻塞旧索引；同时把版本对应的 operator/Geo 字典登记到只读 `GeoCatalog`；
-6. 验证抽样 lookup 后 `atomic.Pointer[GeoIndex].Store(new)`；
-7. 更新 `watchdog_flow_geo_version_info` 和 reload 指标。
+1. poll `current/manifest.json`；先将 `current` 只解析一次为确定的版本目录，再读取本轮全部文件，避免发布切换期间拼出跨版本文件；
+2. 校验 manifest 大小、严格 schema、四个固定文件及所有 SHA-256；active version 与 manifest checksum 都未变才直接返回，同 version 但 manifest checksum 改变按不可变版本冲突拒绝，新 active 的 `effective_from` 必须递增且不得与历史版本冲突；
+3. 流式解析并验证 IP family、闭区间、严格排序、无重叠、HMT 表示、行数、Zstd/CSV 上限和字典外键；
+4. IPv4 转 `uint32 start/end/info_id` 有序数组；IPv6 转两个 `uint64 start/end + info_id` 有序数组；country/admin/subdivision/city/ISP/ASN/version 元组进入去重表，避免每个区间重复保存字符串；
+5. 各用二分查找，构建期间不阻塞旧索引；同时把版本对应的 operator/Geo 字典登记到只读 `GeoCatalog`；启动先加载 current，再加载 normalized retention/open bucket/backfill 仍可引用的历史目录，record 按 event time 选择版本，不能套 active；
+6. 验证首/中/末样本 lookup 后，以单个 immutable catalog state 原子发布；热路径 lookup 不加锁、不分配；
+7. worker 接线后更新 `watchdog_flow_geo_version_info`、reload 成败/耗时/行数/内存指标；loader 核心不直接依赖 VM 客户端。
 
 加载失败不得把旧索引置空。初次启动无有效地址库时 flow-collect 仍可把 normalized records 写入 Kafka，但 dimension worker 必须暂停受影响的 tenant/partition 且不提交 offset，直到有效 `GeoIndex` 就绪；`/flow` 页面同时显示阻断级健康告警。只有显式发布、带版本号的“空 Geo snapshot”才允许把 Geo 字段归为 unknown，防止安装错误被静默固化。
+
+`GeoCatalog` 的历史版本内存回收必须由 worker 显式给出保留集合：至少覆盖 Kafka 当前最老未提交 event time、所有未关闭 minute bucket、未完成 replay/backfill 和查询仍需补名称的版本；active 永不被回收。为防止时间线中间挖洞后把 record 错套到更老版本，loader 只允许从最老端删除连续前缀，实际保留“最老引用版本至 active”的完整后缀；引用未知版本时本轮不 GC。文件目录的物理删除由部署生命周期任务在引用归零并超过 normalized/base/回算保留窗口后执行，不能由 loader 根据目录数量自行猜测。
+
+`FLOW-03B1` 已在 `internal/flowdimension` 实现上述文件加载、校验、紧凑索引、版本 catalog 和原子 reload；它只建立可复用的数据面边界。poll/指标、租户 override、按 normalized record event time 选版并固化 `geo_version`、Kafka offset 暂停/恢复和 ClickHouse 落库仍由 `FLOW-03B2/B3` 接线，不能因 loader 可用就宣称 worker 链路完成。
 
 ### 3.4 watchdog 租户级修正
 
@@ -844,7 +853,7 @@ type Category string
 ### 6.2 配置变化
 
 - 应用新 home profile 时 `classification_version + 1`；
-- Geo 文件切换只改变 `geo_version`；
+- Geo 文件切换只改变 `geo_version`；worker 用 record event time 从 Geo `effective_from` 时间线选版，并把选中的版本固化到 base；
 - 正在写的旧分钟桶继续使用其首次创建时的版本，下一分钟统一切新版本，避免同 key 混版本；
 - 租户 Geo override version 计入 `classification_version`；
 - QueryGateway 按分钟解析 live/active overlay，只选择一套 dimension/Geo/classification version；跨时间片可以拼接，不得把同一分钟的多个版本直接相加；详情和导出必须返回版本分布。
@@ -2345,7 +2354,14 @@ flow_dimension:
     path: "/var/lib/watchdog/flow-geo/current"
     schema: "flow-geo-v1"
     poll_interval: 5m
+    max_manifest_bytes: 262144
+    max_dictionary_bytes: 67108864
+    max_compressed_bytes: 1073741824
     max_uncompressed_bytes: 2147483648
+    max_ipv4_rows: 20000000
+    max_ipv6_rows: 20000000
+    max_csv_row_bytes: 65536
+    max_zstd_window_bytes: 134217728
 
   clickhouse:
     dsn: "clickhouse://127.0.0.1:9000/watchdog_flow"
