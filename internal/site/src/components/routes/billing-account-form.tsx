@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, ReceiptTextIcon, SaveIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -62,6 +62,10 @@ export default memo(({ id }: BillingAccountFormProps) => {
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 
+	// Weak ETag from the last load, echoed as If-Match on save (optimistic
+	// concurrency): a concurrent edit is rejected (412), not overwritten.
+	const etagRef = useRef("")
+
 	const loadAccount = useCallback(async () => {
 		if (!id) {
 			return
@@ -69,7 +73,11 @@ export default memo(({ id }: BillingAccountFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const account = await pb.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {})
+			const account = await pb.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			setForm({
 				id: account.ID ?? account.id ?? id,
 				name: account.Name ?? account.name ?? "",
@@ -108,6 +116,7 @@ export default memo(({ id }: BillingAccountFormProps) => {
 			}
 			const saved = await pb.send<BillingAccount>(id ? `/api/v1/billing/accounts/${id}` : "/api/v1/billing/accounts", {
 				method: id ? "PATCH" : "POST",
+				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
 			})
 			navigate(getPagePath($router, "billing_detail", { id: saved.ID ?? saved.id ?? form.id }))
