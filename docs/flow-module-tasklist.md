@@ -52,6 +52,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-05C1：`8a4a9b24 feat(flow): publish query capability registry`；aggregate/customer 与 detail 三层能力从 compiler 的同一 registry 导出，逐项验证声明与接受/拒绝一致且返回副本不可污染；`internal/flowquery` race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A1：`24bd111b feat(flow): validate ClickHouse migration lifecycle`；真实 001..005 loader、精确字节 checksum、quote/comment-aware statement splitter 和 fail-closed recorded-state planner 已提交；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A2：`5182f28e feat(flow): operationalize ClickHouse migrations`；embedded migration CLI、持久锁/statement checkpoint、固定 Kafka/ClickHouse Compose 和真实生命周期测试已提交；ClickHouse 26.3 空库/重放/dirty resume 与 Kafka 4.3.1 `acks=all` 生产消费通过。
+- FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility` 与 `5d7f9761 test(flow): recover migrations after statement deadline`；旧/新 migration set、drift fail-closed、CH/Kafka restart、真实 active-statement deadline 和新连接池 resume 已验证。静默断包、集群和容量门禁未关闭。
 - 尚未具备的证据：四协议真实 RawFlow corpus、broker/worker/CH 故障矩阵、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点通过替代。
 
 ## 3. 已完成实现与证据
@@ -248,7 +249,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **FLOW-08A3 transport timeout/断包集成**：静默丢包的 `ReadTimeout` 仍须受控代理验证；不能用持续发送 progress packet 的长查询冒充，也不得在 migration executor 内增加隐式 DDL retry。
 - [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
 - [x] **FLOW-08A3 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
-- [ ] **FLOW-08A3 已提交（单节点兼容范围）**：代码、测试和证据进入独立提交；timeout/中断与集群门禁继续保持未完成。
+- [x] **FLOW-08A3 已提交（单节点兼容范围）**：版本/restart 证据进入 `d67f08aa`，active-statement deadline/resume 进入 `5d7f9761`；静默 transport 断包与集群门禁继续保持未完成。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。
