@@ -161,6 +161,23 @@ var defaultDetailFields = []DetailField{
 	DetailFieldQualityFlags,
 }
 
+var rawDetailFields = map[DetailField]struct{}{
+	DetailFieldReceivedTime: {}, DetailFieldSourceIP: {}, DetailFieldDestinationIP: {},
+	DetailFieldSourcePort: {}, DetailFieldDestinationPort: {}, DetailFieldIPProtocol: {}, DetailFieldTCPFlags: {},
+	DetailFieldSourceASN: {}, DetailFieldDestinationASN: {}, DetailFieldRawBytes: {}, DetailFieldRawPackets: {},
+	DetailFieldEstimatedBytes: {}, DetailFieldEstimatedPackets: {}, DetailFieldEstimatedValid: {},
+	DetailFieldSamplingMode: {}, DetailFieldSamplingRate: {}, DetailFieldSamplingSource: {},
+	DetailFieldQualityFlags: {}, DetailFieldFlowDurationMS: {}, DetailFieldTargetID: {}, DetailFieldDeviceID: {},
+	DetailFieldExporterID: {}, DetailFieldObservationIfIndex: {}, DetailFieldIngressIfIndex: {},
+	DetailFieldEgressIfIndex: {}, DetailFieldObservationDirection: {},
+}
+
+var defaultRawDetailFields = []DetailField{
+	DetailFieldSourceIP, DetailFieldDestinationIP, DetailFieldSourcePort, DetailFieldDestinationPort,
+	DetailFieldIPProtocol, DetailFieldSourceASN, DetailFieldDestinationASN, DetailFieldRawBytes,
+	DetailFieldEstimatedBytes, DetailFieldEstimatedValid, DetailFieldSamplingRate, DetailFieldQualityFlags,
+}
+
 type DetailFilters struct {
 	Directions  []string `json:"directions,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
@@ -189,6 +206,7 @@ type detailCursorKey struct {
 
 type CompiledDetail struct {
 	Query         ch.Query
+	View          View
 	From          time.Time
 	To            time.Time
 	IP            netip.Addr
@@ -215,8 +233,8 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if request.View == "" {
 		return CompiledDetail{}, requestError("view", ErrorRequired, "view is required")
 	}
-	if request.View != ViewCustomer {
-		return CompiledDetail{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in detail schema v1")
+	if request.View != ViewCustomer && request.View != ViewRaw {
+		return CompiledDetail{}, requestError("view", ErrorUnsupported, "detail schema v2 supports raw and customer views")
 	}
 	ip, err := netip.ParseAddr(request.IP)
 	if err != nil || ip.Zone() != "" {
@@ -239,11 +257,11 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if request.Limit < 1 || request.Limit > maxDetailLimit {
 		return CompiledDetail{}, requestError("limit", ErrorLimitExceeded, "limit must be 1..500")
 	}
-	fields, err := normalizeDetailFields(request.Fields)
+	fields, err := normalizeDetailFields(request.View, request.Fields)
 	if err != nil {
 		return CompiledDetail{}, err
 	}
-	conditions, filterParameters, err := compileDetailFilters(request.Filters)
+	conditions, filterParameters, err := compileDetailFilters(request.View, request.Filters)
 	if err != nil {
 		return CompiledDetail{}, err
 	}
@@ -283,7 +301,11 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		spec := detailFieldRegistry[field]
 		selectFields = append(selectFields, fmt.Sprintf("  %s AS %s", spec.expression, spec.field))
 	}
-	body := fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), matchCondition, strings.Join(conditions, "\n  "))
+	visibilityCondition := "AND disposition = 'count'"
+	if request.View == ViewRaw {
+		visibilityCondition = ""
+	}
+	body := fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
 	maxRows := uint64(request.Limit) + 1
 	query := ch.Query{
 		Body: body, Parameters: parameters,
@@ -297,14 +319,17 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		},
 	}
 	return CompiledDetail{
-		Query: query, From: from, To: to, IP: ip, Endpoint: request.Endpoint,
+		Query: query, View: request.View, From: from, To: to, IP: ip, Endpoint: request.Endpoint,
 		Fields: fields, Limit: request.Limit, MaxResultRows: maxRows, cursor: cursor,
 	}, nil
 }
 
-func normalizeDetailFields(input []DetailField) ([]DetailField, error) {
+func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error) {
 	if len(input) == 0 {
 		input = defaultDetailFields
+		if view == ViewRaw {
+			input = defaultRawDetailFields
+		}
 	}
 	if len(input) > len(detailFieldRegistry) {
 		return nil, requestError("fields", ErrorLimitExceeded, "too many fields")
@@ -313,6 +338,11 @@ func normalizeDetailFields(input []DetailField) ([]DetailField, error) {
 	for _, field := range input {
 		if _, exists := detailFieldRegistry[field]; !exists {
 			return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not in the detail registry", field))
+		}
+		if view == ViewRaw {
+			if _, exists := rawDetailFields[field]; !exists {
+				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in raw view", field))
+			}
 		}
 		requested[field] = struct{}{}
 	}
@@ -325,19 +355,37 @@ func normalizeDetailFields(input []DetailField) ([]DetailField, error) {
 	return result, nil
 }
 
-func compileDetailFilters(filters DetailFilters) ([]string, []proto.Parameter, error) {
+func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.Parameter, error) {
+	if view == ViewRaw {
+		for _, filter := range []struct {
+			field  string
+			values []string
+		}{
+			{"filters.directions", filters.Directions},
+			{"filters.categories", filters.Categories},
+			{"filters.businesses", filters.Businesses},
+		} {
+			if len(filter.values) != 0 {
+				return nil, nil, requestError(filter.field, ErrorUnsupported, "customer-derived filters are not available in raw view")
+			}
+		}
+	}
 	type filterSpec struct {
 		field, column, prefix string
 		values                []string
 		allowed               map[string]struct{}
 	}
 	filtersList := []filterSpec{
-		{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
-		{"filters.categories", "category", "detail_category", filters.Categories, validCategories},
-		{"filters.businesses", "business", "detail_business", filters.Businesses, nil},
 		{"filters.target_ids", "target_id", "detail_target", filters.TargetIDs, nil},
 		{"filters.device_ids", "device_id", "detail_device", filters.DeviceIDs, nil},
 		{"filters.exporter_ids", "exporter_id", "detail_exporter", filters.ExporterIDs, nil},
+	}
+	if view == ViewCustomer {
+		filtersList = append([]filterSpec{
+			{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
+			{"filters.categories", "category", "detail_category", filters.Categories, validCategories},
+			{"filters.businesses", "business", "detail_business", filters.Businesses, nil},
+		}, filtersList...)
 	}
 	conditions := make([]string, 0, len(filtersList))
 	parameters := make([]proto.Parameter, 0)
@@ -409,7 +457,7 @@ const detailQuerySQL = `SELECT
 FROM flow_records FINAL
 WHERE tenant_id = {tenant:String}
   AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}
-  AND disposition = 'count'
+  %s
   AND %s
   %s
 ORDER BY event_time DESC, record_id DESC

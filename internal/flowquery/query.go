@@ -74,7 +74,11 @@ const (
 
 type View string
 
-const ViewCustomer View = "customer"
+const (
+	ViewRaw      View = "raw"
+	ViewSupplier View = "supplier"
+	ViewCustomer View = "customer"
+)
 
 type Scope struct {
 	TenantID string

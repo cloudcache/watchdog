@@ -97,7 +97,7 @@ func CompileAddressSet(scope Scope, request AddressSetRequest, now time.Time) (C
 	if len(sets.IncludeAny) == 0 && len(sets.IncludeAll) == 0 {
 		return CompiledAddressSet{}, requestError("address_set_filter", ErrorRequired, "include_any or include_all must select a finite positive set")
 	}
-	conditions, filterParameters, err := compileDetailFilters(request.Filters)
+	conditions, filterParameters, err := compileDetailFilters(ViewCustomer, request.Filters)
 	if err != nil {
 		return CompiledAddressSet{}, err
 	}

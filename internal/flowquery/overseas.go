@@ -172,7 +172,7 @@ func compileOverseasFilters(filters OverseasFilters) ([]string, []proto.Paramete
 	if err != nil {
 		return nil, nil, err
 	}
-	conditions, parameters, err := compileDetailFilters(DetailFilters{
+	conditions, parameters, err := compileDetailFilters(ViewCustomer, DetailFilters{
 		Directions: directions, Businesses: filters.Businesses, TargetIDs: filters.TargetIDs,
 		DeviceIDs: filters.DeviceIDs, ExporterIDs: filters.ExporterIDs,
 	})

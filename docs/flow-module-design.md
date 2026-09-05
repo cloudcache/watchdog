@@ -561,15 +561,15 @@ LIMIT {limit:UInt16};
 
 ### 9.4 源/目的 IP 明细
 
-IP 明细是 base fact 搜索，不复用 rollup，也不把 ASN 当作地址段身份。v1 请求契约固定为：
+IP 明细是 base fact 搜索，不复用 rollup，也不把 ASN 当作地址段身份。v2 请求契约固定为：
 
 - tenant 只从 authenticated scope 注入；`ip` 接受 IPv4/IPv6（拒绝 zone），内部规范化并与 IPv4-mapped IPv6 存储比较；`endpoint` 只能是 `source/destination/either`；
-- `view` 只接受 `customer`，并固定过滤 `disposition='count'`。在 FLOW-06 建成事实 provenance 前，`raw/supplier` 返回 `unsupported`，不能改标签冒充；
+- `view=customer` 读取已入库的客户视图并固定过滤 `disposition='count'`；`view=raw` 读取协议 tuple，不应用 customer disposition，因此被客户规则标记 drop 的事实仍可由具备 raw 权限的用户审计。`supplier` 必须先完成全请求窗 `fact_schema>=2` 完整性证明，本版本仍返回 `unsupported`，禁止过滤旧行或拿 customer 值冒充；
 - `from/to` 是 UTC 左闭右开、毫秒精度，单次最多 24 小时且 `to` 不得在未来；`limit` 为 1..500，CH 实际读取 `limit+1`；
 - 排序键固定为 `(event_time DESC, record_id DESC)`。opaque cursor v1 由 8 字节大端 Unix 毫秒和 32 字节 record ID 组成；续页谓词是 `(event_time < cursor_time) OR (event_time = cursor_time AND record_id < cursor_record_id)`。next cursor 取已返回页最后一行而不是探测出的额外行，因此同一毫秒也不重不漏；修改 field mask 不改变 cursor 含义；
 - cursor 版本、长度、base64 canonical encoding、时间范围均严格检查。首发只有 v1；未来不兼容升级必须以新前缀发布、旧 decoder 保留一个发布窗口，未知版本明确拒绝，不能猜测；客户端续页时必须原样保持 IP、endpoint、时间和 filters；
-- 可选字段只能来自 provider 固定 registry；`event_time/record_id` 永远返回，内部还读取 src/dst IP 复核结果。地址集合数组不进入 v1 field mask：重叠集合的并/交/差必须走 base membership 谓词和去重聚合，不能由明细数组在 UI 侧相加；
-- filters 只开放 `directions/categories/businesses/target_ids/device_ids/exporter_ids`，单字段最多 100 个、原始总数最多 256 个，先限量再排序去重。所有值都是 typed parameter，只有固定 registry 中的表达式进入 SQL；
+- 可选字段只能来自 provider 固定 registry；`event_time/record_id` 永远返回，内部还读取 src/dst IP 复核结果。raw 只开放协议/采样/质量/target/device/exporter/observation 字段，不开放 business/category/local/remote/Geo/ISP/customer snapshot 等派生字段。地址集合数组不进入 field mask：重叠集合的并/交/差必须走 base membership 谓词和去重聚合，不能由明细数组在 UI 侧相加；
+- customer filters 开放 `directions/categories/businesses/target_ids/device_ids/exporter_ids`；raw 只开放后三种资源过滤器，若携带方向/category/business 立即稳定拒绝，而不是暗中按 customer 字段筛 raw。单字段最多 100 个、原始总数最多 256 个，先限量再排序去重。所有值都是 typed parameter，只有固定 registry 中的表达式进入 SQL；
 - 查询使用 `flow_records FINAL` 收敛 at-least-once 物理重复，并设置 10 秒、`limit+1` 结果行、500 万扫描行、1 GiB 扫描字节硬限，所有 overflow mode 为 `throw`。超限/超时返回错误，不返回静默截断页。
 
 ```sql
@@ -581,7 +581,7 @@ SELECT event_time,
 FROM flow_records FINAL
 WHERE tenant_id = {tenant:String}
   AND event_time >= {from:DateTime64(3,'UTC')} AND event_time < {to:DateTime64(3,'UTC')}
-  AND disposition = 'count'
+  /* customer only: AND disposition = 'count' */
   AND (src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))
   AND (event_time < {cursor_time:DateTime64(3,'UTC')}
        OR (event_time = {cursor_time:DateTime64(3,'UTC')}

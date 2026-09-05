@@ -79,7 +79,7 @@ func TestDetailRunnerDecodesMultipleBlocksAndBuildsStableNextCursor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Rows) != 2 || !result.HasMore || result.NextCursor == "" || !reflect.DeepEqual(result.Fields, compiled.Fields) {
+	if result.View != ViewCustomer || len(result.Rows) != 2 || !result.HasMore || result.NextCursor == "" || !reflect.DeepEqual(result.Fields, compiled.Fields) {
 		t.Fatalf("detail result=%+v", result)
 	}
 	if result.Rows[0].RecordID != detailRecordID(3) || result.Rows[1].RecordID != detailRecordID(2) {
@@ -174,6 +174,7 @@ func TestDetailRunnerRejectsMalformedUnorderedOrUnboundedResults(t *testing.T) {
 		{"column mismatch", [][]fakeDetailRow{{valid}}, "raw_bytes", nil},
 		{"row bound", [][]fakeDetailRow{{valid, detailDataRow(valid.eventTime, 2), detailDataRow(valid.eventTime, 1), detailDataRow(valid.eventTime.Add(-time.Millisecond), 4)}}, "", nil},
 		{"invalid endpoint", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Endpoint = "remote" }},
+		{"invalid view", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.View = ViewSupplier }},
 		{"unknown field", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Fields = []DetailField{"unknown"} }},
 		{"duplicate field", [][]fakeDetailRow{{valid}}, "", func(value *CompiledDetail) { value.Fields = []DetailField{DetailFieldRawBytes, DetailFieldRawBytes} }},
 	}

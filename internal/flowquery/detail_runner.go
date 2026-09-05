@@ -26,6 +26,7 @@ type DetailRow struct {
 }
 
 type DetailResult struct {
+	View       View          `json:"view"`
 	Fields     []DetailField `json:"fields"`
 	Rows       []DetailRow   `json:"rows"`
 	HasMore    bool          `json:"has_more"`
@@ -44,7 +45,7 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 		return DetailResult{}, errors.New("ClickHouse Flow detail runner is not initialized")
 	}
 	if ctx == nil || compiled.Query.Body == "" || !compiled.To.After(compiled.From) || !compiled.IP.IsValid() ||
-		!validDetailEndpoint(compiled.Endpoint) || compiled.Limit < 1 || compiled.Limit > maxDetailLimit ||
+		!validDetailView(compiled.View) || !validDetailEndpoint(compiled.Endpoint) || compiled.Limit < 1 || compiled.Limit > maxDetailLimit ||
 		compiled.MaxResultRows != uint64(compiled.Limit)+1 {
 		return DetailResult{}, errors.New("compiled Flow detail query is invalid")
 	}
@@ -74,7 +75,7 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 	if state.err != nil {
 		return DetailResult{}, state.err
 	}
-	result := DetailResult{Fields: append([]DetailField(nil), compiled.Fields...), Rows: state.rows}
+	result := DetailResult{View: compiled.View, Fields: append([]DetailField(nil), compiled.Fields...), Rows: state.rows}
 	if len(result.Rows) > int(compiled.Limit) {
 		result.HasMore = true
 		result.Rows = result.Rows[:compiled.Limit]
@@ -275,6 +276,10 @@ func detailKeyBefore(left, right detailResultKey) bool {
 
 func validDetailEndpoint(value DetailEndpoint) bool {
 	return value == DetailEndpointSource || value == DetailEndpointDestination || value == DetailEndpointEither
+}
+
+func validDetailView(value View) bool {
+	return value == ViewRaw || value == ViewCustomer
 }
 
 func isDetailIPField(field DetailField) bool {

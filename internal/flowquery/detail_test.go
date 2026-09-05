@@ -24,7 +24,7 @@ func TestDetailRegistryAndDefaultMaskAreFixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := normalizeDetailFields(defaultDetailFields)
+	want, err := normalizeDetailFields(ViewCustomer, defaultDetailFields)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,49 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 	}
 	if setting(first.Query, "max_result_rows") != "3" || setting(first.Query, "max_rows_to_read") != "5000000" || setting(first.Query, "max_bytes_to_read") != "1073741824" {
 		t.Fatalf("detail query budgets=%+v", first.Query.Settings)
+	}
+}
+
+func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
+	request := validDetailRequest()
+	request.View = ViewRaw
+	request.Fields = []DetailField{
+		DetailFieldSourceIP, DetailFieldSourceASN, DetailFieldDestinationASN,
+		DetailFieldObservationDirection, DetailFieldRawBytes, DetailFieldEstimatedValid,
+	}
+	request.Filters = DetailFilters{TargetIDs: []string{"target-a"}, ExporterIDs: []string{"exporter-a"}}
+	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.View != ViewRaw {
+		t.Fatalf("compiled view=%q", compiled.View)
+	}
+	for _, required := range []string{
+		"toUInt64(source_asn) AS source_asn", "toUInt64(destination_asn) AS destination_asn",
+		"toString(observation_direction) AS observation_direction", "AND target_id IN ({detail_target_0:String})",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("raw query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	for _, forbidden := range []string{"disposition = 'count'", "supplier_", "customer_", "business_direction IN", "category IN", "business IN"} {
+		if strings.Contains(compiled.Query.Body, forbidden) {
+			t.Fatalf("raw query contains customer/supplier expression %q:\n%s", forbidden, compiled.Query.Body)
+		}
+	}
+
+	request.Fields = nil
+	defaults, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := normalizeDetailFields(ViewRaw, defaultRawDetailFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(defaults.Fields, want) {
+		t.Fatalf("raw default fields=%v want=%v", defaults.Fields, want)
 	}
 }
 
@@ -159,7 +202,15 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		apply func(*Scope, *DetailRequest)
 	}{
 		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *DetailRequest) { scope.TenantID = "tenant'" }},
-		{"view", "view", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.View = "raw" }},
+		{"view", "view", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.View = ViewSupplier }},
+		{"raw customer field", "fields", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
+			request.View = ViewRaw
+			request.Fields = []DetailField{DetailFieldRemoteCountry}
+		}},
+		{"raw customer filter", "filters.categories", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
+			request.View = ViewRaw
+			request.Filters.Categories = []string{"overseas"}
+		}},
 		{"ip", "ip", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.IP = "not-an-ip" }},
 		{"zone", "ip", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.IP = "fe80::1%en0" }},
 		{"endpoint", "endpoint", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Endpoint = "remote" }},
