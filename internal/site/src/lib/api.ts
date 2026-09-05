@@ -310,6 +310,28 @@ export async function deleteQuietHour(id: string): Promise<void> {
 	await pb.send(`/api/v1/me/quiet-hours/${id}`, { method: "DELETE" })
 }
 
+// Alert history lives in MySQL (was the PocketBase alerts_history collection).
+// The PocketBase alert engine writes it on trigger/resolve; a user reads and
+// deletes only their own entries. `system` is the PocketBase system id.
+export interface AlertHistoryEntry {
+	id: string
+	alert_id: string
+	system: string
+	name: string
+	value: number
+	created: string
+	resolved: string | null
+}
+
+export async function fetchAlertsHistory(limit = 200): Promise<AlertHistoryEntry[]> {
+	const res = await pb.send<{ items?: AlertHistoryEntry[] }>("/api/v1/me/alerts-history", { query: { limit } })
+	return res.items ?? []
+}
+
+export async function deleteAlertHistory(id: string): Promise<void> {
+	await pb.send(`/api/v1/me/alerts-history/${id}`, { method: "DELETE" })
+}
+
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {
 	d ||= chartTimeData[timeString].getOffset(new Date())
 	const year = d.getUTCFullYear()

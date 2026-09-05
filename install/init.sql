@@ -134,6 +134,24 @@ CREATE TABLE IF NOT EXISTS `aggregate_graphs` (
   CONSTRAINT `aggregate_graphs_chk_2` CHECK ((`value_mode` in ('corrected','raw','both')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `alerts_history` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `alert_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `system_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `value` double NOT NULL DEFAULT '0',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `resolved_at` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_alerts_history_user` (`tenant_id`,`user_id`,`created_at`,`id`),
+  KEY `idx_alerts_history_alert` (`alert_id`,`resolved_at`),
+  KEY `fk_alerts_history_user` (`user_id`),
+  CONSTRAINT `fk_alerts_history_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_alerts_history_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `audit_logs` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

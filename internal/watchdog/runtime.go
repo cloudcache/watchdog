@@ -233,6 +233,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		UserPreferences:        r.Store,
 		NotificationChannels:   r.Store,
 		QuietHours:             r.Store,
+		AlertsHistory:          r.Store,
 		CollectorCredentials:   r.Store,
 		CollectorEnrollment:    r.Store,
 		Registries:             r.Registries,

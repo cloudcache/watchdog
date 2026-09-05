@@ -235,13 +235,18 @@ export interface AlertRecord extends RecordModel {
 }
 
 export interface AlertsHistoryRecord extends RecordModel {
-	alert: string
-	user: string
+	alert_id: string
 	system: string
 	name: string
-	val: number
+	value: number
 	created: string
 	resolved?: string | null
+	// system name is resolved client-side from the systems store at load time
+	expand?: {
+		system?: {
+			name?: string
+		}
+	}
 }
 
 export interface ContainerRecord extends RecordModel {

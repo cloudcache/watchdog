@@ -20,7 +20,7 @@ import {
 	DownloadIcon,
 	Trash2Icon,
 } from "lucide-react"
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -38,9 +38,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useStore } from "@nanostores/react"
 import { useToast } from "@/components/ui/use-toast"
 import { alertInfo } from "@/lib/alerts"
-import { pb } from "@/lib/api"
+import { type AlertHistoryEntry, deleteAlertHistory, fetchAlertsHistory } from "@/lib/api"
+import { $allSystemsById } from "@/lib/stores"
 import { cn, formatDuration, formatShortDate, useBrowserStorage } from "@/lib/utils"
 import type { AlertsHistoryRecord } from "@/types"
 import { alertsHistoryColumns } from "../../alerts-history-columns"
@@ -59,7 +61,18 @@ const SectionIntro = memo(() => {
 })
 
 export default function AlertsHistoryDataTable() {
-	const [data, setData] = useState<AlertsHistoryRecord[]>([])
+	const [rows, setRows] = useState<AlertHistoryEntry[]>([])
+	const systemsById = useStore($allSystemsById)
+	// Resolve the system name client-side (was a PocketBase relation expand); this
+	// re-runs when the systems store finishes loading.
+	const data = useMemo<AlertsHistoryRecord[]>(
+		() =>
+			rows.map((entry) => ({
+				...entry,
+				expand: { system: { name: systemsById[entry.system]?.name } },
+			})) as AlertsHistoryRecord[],
+		[rows, systemsById]
+	)
 	const [sorting, setSorting] = useState<SortingState>([])
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -75,40 +88,16 @@ export default function AlertsHistoryDataTable() {
 	})
 
 	useEffect(() => {
-		let unsubscribe: (() => void) | undefined
-		const pbOptions = {
-			expand: "system",
-			fields: "id,name,value,state,created,resolved,expand.system.name",
-		}
-		// Initial load
-		pb.collection<AlertsHistoryRecord>("alerts_history")
-			.getList(0, 200, {
-				...pbOptions,
-				sort: "-created",
+		fetchAlertsHistory(200)
+			.then(setRows)
+			.catch((e: unknown) => {
+				toast({
+					variant: "destructive",
+					title: t`Error`,
+					description: (e as Error).message || "Failed to load alert history.",
+				})
 			})
-			.then(({ items }) => setData(items))
-
-		// Subscribe to changes
-		;(async () => {
-			unsubscribe = await pb.collection("alerts_history").subscribe(
-				"*",
-				(e) => {
-					if (e.action === "create") {
-						setData((current) => [e.record as AlertsHistoryRecord, ...current])
-					}
-					if (e.action === "update") {
-						setData((current) => current.map((r) => (r.id === e.record.id ? (e.record as AlertsHistoryRecord) : r)))
-					}
-					if (e.action === "delete") {
-						setData((current) => current.filter((r) => r.id !== e.record.id))
-					}
-				},
-				pbOptions
-			)
-		})()
-		// Unsubscribe on unmount
-		return () => unsubscribe?.()
-	}, [])
+	}, [toast])
 
 	const table = useReactTable({
 		data,
@@ -171,18 +160,9 @@ export default function AlertsHistoryDataTable() {
 		setDeleteDialogOpen(false)
 		const selectedIds = table.getSelectedRowModel().rows.map((row) => row.original.id)
 		try {
-			let batch = pb.createBatch()
-			let inBatch = 0
-			for (const id of selectedIds) {
-				batch.collection("alerts_history").delete(id)
-				inBatch++
-				if (inBatch > 20) {
-					await batch.send()
-					batch = pb.createBatch()
-					inBatch = 0
-				}
-			}
-			inBatch && (await batch.send())
+			await Promise.all(selectedIds.map((id) => deleteAlertHistory(id)))
+			const removed = new Set(selectedIds)
+			setRows((current) => current.filter((r) => !removed.has(r.id)))
 			table.resetRowSelection()
 		} catch (e) {
 			toast({

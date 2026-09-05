@@ -44,6 +44,14 @@ type QuietHoursReader interface {
 	QuietHoursForExternalSubject(ctx context.Context, provider, externalSubject, systemID string) ([]QuietHourWindow, error)
 }
 
+// AlertHistoryStore records and resolves alert history in MySQL. When set it
+// replaces the legacy PocketBase alerts_history writes; the PocketBase alert
+// engine still drives the create/resolve events.
+type AlertHistoryStore interface {
+	CreateAlertHistoryForExternalSubject(ctx context.Context, provider, externalSubject, alertID, systemID, name string, value float64) error
+	ResolveAlertHistory(ctx context.Context, alertID string) error
+}
+
 type AlertManager struct {
 	hub              hubLike
 	stopOnce         sync.Once
@@ -51,6 +59,7 @@ type AlertManager struct {
 	alertsCache      *AlertsCache
 	channelReader    NotificationChannelReader
 	quietHoursReader QuietHoursReader
+	historyStore     AlertHistoryStore
 }
 
 // SetNotificationChannelReader wires the MySQL-backed channel source. It is
@@ -63,6 +72,11 @@ func (am *AlertManager) SetNotificationChannelReader(reader NotificationChannelR
 // SetQuietHoursReader wires the MySQL-backed quiet-hours source.
 func (am *AlertManager) SetQuietHoursReader(reader QuietHoursReader) {
 	am.quietHoursReader = reader
+}
+
+// SetAlertHistoryStore wires the MySQL-backed alert history writer.
+func (am *AlertManager) SetAlertHistoryStore(store AlertHistoryStore) {
+	am.historyStore = store
 }
 
 type AlertMessageData struct {
@@ -146,8 +160,8 @@ func NewAlertManager(app hubLike) *AlertManager {
 
 // Bind events to the alerts collection lifecycle
 func (am *AlertManager) bindEvents() {
-	am.hub.OnRecordAfterUpdateSuccess("alerts").BindFunc(updateHistoryOnAlertUpdate)
-	am.hub.OnRecordAfterDeleteSuccess("alerts").BindFunc(resolveHistoryOnAlertDelete)
+	am.hub.OnRecordAfterUpdateSuccess("alerts").BindFunc(am.updateHistoryOnAlertUpdate)
+	am.hub.OnRecordAfterDeleteSuccess("alerts").BindFunc(am.resolveHistoryOnAlertDelete)
 	am.hub.OnRecordAfterUpdateSuccess("smart_devices").BindFunc(am.handleSmartDeviceAlert)
 
 	am.hub.OnServe().BindFunc(func(e *core.ServeEvent) error {

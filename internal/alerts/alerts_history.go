@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"context"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -8,16 +9,16 @@ import (
 )
 
 // On triggered alert record delete, set matching alert history record to resolved
-func resolveHistoryOnAlertDelete(e *core.RecordEvent) error {
+func (am *AlertManager) resolveHistoryOnAlertDelete(e *core.RecordEvent) error {
 	if !e.Record.GetBool("triggered") {
 		return e.Next()
 	}
-	_ = resolveAlertHistoryRecord(e.App, e.Record.Id)
+	am.resolveAlertHistory(e.App, e.Record.Id)
 	return e.Next()
 }
 
 // On alert record update, update alert history record
-func updateHistoryOnAlertUpdate(e *core.RecordEvent) error {
+func (am *AlertManager) updateHistoryOnAlertUpdate(e *core.RecordEvent) error {
 	original := e.Record.Original()
 	new := e.Record
 
@@ -31,13 +32,39 @@ func updateHistoryOnAlertUpdate(e *core.RecordEvent) error {
 
 	// if new state is triggered, create new alert history record
 	if newTriggered {
-		_, _ = createAlertHistoryRecord(e.App, new)
+		am.createAlertHistory(e.App, new)
 		return e.Next()
 	}
 
 	// if new state is not triggered, check for matching alert history record and set it to resolved
-	_ = resolveAlertHistoryRecord(e.App, new.Id)
+	am.resolveAlertHistory(e.App, new.Id)
 	return e.Next()
+}
+
+// createAlertHistory records a triggered alert in MySQL when the store is wired,
+// otherwise in the legacy PocketBase collection.
+func (am *AlertManager) createAlertHistory(app core.App, alertRecord *core.Record) {
+	if am.historyStore != nil {
+		if err := am.historyStore.CreateAlertHistoryForExternalSubject(context.Background(), "pocketbase",
+			alertRecord.GetString("user"), alertRecord.Id, alertRecord.GetString("system"),
+			alertRecord.GetString("name"), alertRecord.GetFloat("value")); err != nil {
+			am.hub.Logger().Error("Failed to save alert history", "err", err)
+		}
+		return
+	}
+	_, _ = createAlertHistoryRecord(app, alertRecord)
+}
+
+// resolveAlertHistory resolves the open history row for an alert, in MySQL when
+// the store is wired, otherwise in the legacy PocketBase collection.
+func (am *AlertManager) resolveAlertHistory(app core.App, alertRecordID string) {
+	if am.historyStore != nil {
+		if err := am.historyStore.ResolveAlertHistory(context.Background(), alertRecordID); err != nil {
+			am.hub.Logger().Error("Failed to resolve alert history", "err", err)
+		}
+		return
+	}
+	_ = resolveAlertHistoryRecord(app, alertRecordID)
 }
 
 // resolveAlertHistoryRecord sets the resolved field to the current time
