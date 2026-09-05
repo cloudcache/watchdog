@@ -160,6 +160,11 @@ type NetworkRepository interface {
 	ListBGPSessions(ctx context.Context, tenantID, deviceID ID) ([]BGPSession, error)
 	ListAllBGPSessions(ctx context.Context, tenantID ID) ([]BGPSession, error)
 	GetBGPSession(ctx context.Context, tenantID, sessionID ID) (BGPSession, error)
+	// ListAllBGPSessionsPage returns one offset page for the server-driven Core
+	// (BGP) table (search/state/sort via a join to the owning devices).
+	ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, error)
+	// CountBGPSessions returns the grant-scoped total/established counts.
+	CountBGPSessions(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (BGPSessionCounts, error)
 	UpsertBGPSessions(ctx context.Context, sessions []BGPSession) error
 	ReplaceBGPSessions(ctx context.Context, tenantID, deviceID ID, sessions []BGPSession) error
 	GetPortPolicy(ctx context.Context, tenantID, portID ID) (PortPolicy, error)

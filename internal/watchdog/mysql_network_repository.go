@@ -749,6 +749,144 @@ func (s *MySQLStore) ListBGPSessions(ctx context.Context, tenantID, deviceID ID)
 	return sessions, rows.Err()
 }
 
+// bgpSessionSelect is aliased `b` so it composes with a JOIN to network_devices
+// for search/sort/grant; single-table callers still read the columns fine.
+const bgpSessionSelect = `
+	SELECT b.id, b.tenant_id, b.device_id, b.peer_addr, b.peer_as, b.local_as, b.afi, b.safi, b.state,
+	       b.accepted_prefixes, b.denied_prefixes, b.advertised_prefixes, b.uptime_seconds, b.metadata_json, b.updated_at
+	FROM bgp_sessions b`
+
+// BGPSessionQuery drives the server-driven Core (BGP) table: search over device
+// name / peer address / peer AS, a state filter, a sort column and offset paging.
+type BGPSessionQuery struct {
+	Search string
+	State  string // "" (all) or an exact state, e.g. "established"
+	Sort   string // "" (device) | device | peer | peer_as | state
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+// BGPSessionCounts are the grant-scoped totals behind the table's badges.
+type BGPSessionCounts struct {
+	Total       int `json:"total"`
+	Established int `json:"established"`
+}
+
+var bgpSortColumns = map[string]string{
+	"":        "d.sys_name",
+	"device":  "d.sys_name",
+	"peer":    "b.peer_addr",
+	"peer_as": "b.peer_as",
+	"state":   "b.state",
+}
+
+func bgpDeviceScope(query string, args []any, all bool, allowedTargetIDs []ID) (string, []any) {
+	if !all {
+		query += ` AND d.target_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedTargetIDs)), ",") + `)`
+		for _, id := range allowedTargetIDs {
+			args = append(args, id)
+		}
+	}
+	return query, args
+}
+
+// applyBGPFilters appends the state and search predicates shared by the page and
+// count queries. peer_addr is stored binary, so it is searched via INET6_NTOA.
+func applyBGPFilters(query string, args []any, q BGPSessionQuery, withState bool) (string, []any) {
+	if withState && q.State != "" {
+		query += ` AND b.state = ?`
+		args = append(args, q.State)
+	}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		query += ` AND (d.sys_name LIKE ? OR INET6_NTOA(b.peer_addr) LIKE ? OR CAST(b.peer_as AS CHAR) LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	return query, args
+}
+
+// ListAllBGPSessionsPage returns one offset page of BGP sessions for the
+// server-driven Core table, with search/state/sort applied via a join to the
+// owning devices (grant pushed into SQL).
+func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, error) {
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if !all && len(allowedTargetIDs) == 0 {
+		return nil, nil
+	}
+	query := bgpSessionSelect + ` JOIN network_devices d ON d.id = b.device_id AND d.tenant_id = b.tenant_id WHERE b.tenant_id = ?`
+	args := []any{tenantID}
+	query, args = bgpDeviceScope(query, args, all, allowedTargetIDs)
+	query, args = applyBGPFilters(query, args, q, true)
+
+	sortCol := bgpSortColumns[q.Sort]
+	if sortCol == "" {
+		sortCol = "d.sys_name"
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	query += fmt.Sprintf(" ORDER BY %s %s, b.id %s LIMIT ? OFFSET ?", sortCol, dir, dir)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []BGPSession
+	for rows.Next() {
+		session, err := scanBGPSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
+// CountBGPSessions returns the grant-scoped total and established counts for the
+// badges. It applies the search but not the state filter.
+func (s *MySQLStore) CountBGPSessions(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (BGPSessionCounts, error) {
+	var counts BGPSessionCounts
+	if !all && len(allowedTargetIDs) == 0 {
+		return counts, nil
+	}
+	query := `SELECT b.state, COUNT(*) FROM bgp_sessions b
+		JOIN network_devices d ON d.id = b.device_id AND d.tenant_id = b.tenant_id
+		WHERE b.tenant_id = ?`
+	args := []any{tenantID}
+	query, args = bgpDeviceScope(query, args, all, allowedTargetIDs)
+	query, args = applyBGPFilters(query, args, BGPSessionQuery{Search: search}, false)
+	query += ` GROUP BY b.state`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return counts, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return counts, err
+		}
+		counts.Total += n
+		if state == "established" {
+			counts.Established += n
+		}
+	}
+	return counts, rows.Err()
+}
+
 func (s *MySQLStore) ListAllBGPSessions(ctx context.Context, tenantID ID) ([]BGPSession, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, tenant_id, device_id, peer_addr, peer_as, local_as, afi, safi, state,
