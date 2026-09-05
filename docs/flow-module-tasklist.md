@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-08A2 — ClickHouse migration executor/CLI。** 基于已提交 loader/planner 增加状态表、并发 fail-fast 锁、失败诊断和 inspect/apply/resume；连接只读 secret file，锁恢复必须匹配精确 owner token，worker/hub 启动不隐式迁移。
+**活动切片：FLOW-08A2 — ClickHouse migration executor/CLI 提交门禁。** executor/CLI、固定版本 Docker 环境、真实 ClickHouse 生命周期和 Kafka 生产消费均已通过；完成精确提交并确认工作区边界后进入 FLOW-08A3 故障/版本兼容演练。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -41,12 +41,12 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
-- FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。真实 CH migration/聚合未执行，仍保留外部门禁。
+- FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
-- FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，真实 CH/mixed worker 保留为外部门禁。
+- FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
 - FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
 - FLOW-06A3：`d56bc3f6 feat(flow): expose complete supplier detail view`；supplier 明细映射冻结的 supplier 基线，完整过滤窗在 cursor 之前计算 `fact_schema` 证据，旧事实、缺失或矛盾 evidence 均全页失败；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-05C1：`8a4a9b24 feat(flow): publish query capability registry`；aggregate/customer 与 detail 三层能力从 compiler 的同一 registry 导出，逐项验证声明与接受/拒绝一致且返回副本不可污染；`internal/flowquery` race/vet、全库 test/vet 与 diff check 通过。
@@ -186,11 +186,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **FLOW-06A 外部门禁**：真实 CH 执行 001→005、v2/v3 worker 混跑与 cutover 后 supplier completeness；本机 9000/8123 未监听，不能由 SQL parser/fake executor 替代。
 - [x] **FLOW-06A2 raw detail 设计**：raw 对全部 fact schema 可用，只包含协议 tuple/采样/质量/资源/observation 字段，不应用 customer disposition；customer-derived 字段及 direction/category/business filters 在 raw view 稳定拒绝，supplier 继续关闭。
 - [x] **FLOW-06A2 编码/单元/变更测试**：detail schema v2 增加显式 raw/customer view；view 进入 compiled/result contract，raw 使用独立默认/允许字段集和资源过滤器；覆盖参数化 SQL、无 customer/supplier 泄漏、drop fact 可审计、非法字段/过滤器/view 及 runner fail-closed。
-- [ ] **FLOW-06A2 集成**：真实 CH 用含 count/drop 和 fact schema 1/2 的数据核对 raw/customer 行集、翻页和权限上层接线；本机无 CH，保留外部门禁。
+- [ ] **FLOW-06A2 集成**：真实 CH 用含 count/drop 和 fact schema 1/2 的数据核对 raw/customer 行集、翻页和权限上层接线；环境已具备 CH，数据语义门禁仍未执行。
 - [x] **FLOW-06A2 回归/已提交**：提交 `d00b620a`；Flow race/vet、全库 test/vet 与 diff check 全过，工作区不再残留该切片生产文件。
 - [x] **FLOW-06A3 设计/编码**：固定 supplier 字段映射、direction/supplier-category/resource filters，并用 cursor 前的 full-scope window evidence 证明 `min(fact_schema)>=2`；metadata-only 行覆盖 cursor 排除全部数据的情况，不双扫 base。
 - [x] **FLOW-06A3 单元/变更测试**：覆盖 supplier Geo/ASN/ISP/category/version 映射、customer business/prefix 拒绝、typed filters/default fields、schema 1 unavailable、metadata-only、缺失/跨 block 矛盾 evidence 和 all-or-nothing runner。
-- [ ] **FLOW-06A3 集成**：真实 CH 验证 window/FINAL/IPv4-mapped、空范围、cursor 前后范围与 max_rows/max_bytes；本机无 CH，保留外部门禁。
+- [ ] **FLOW-06A3 集成**：真实 CH 验证 window/FINAL/IPv4-mapped、空范围、cursor 前后范围与 max_rows/max_bytes；环境已具备 CH，查询数据门禁仍未执行。
 - [x] **FLOW-06A3 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；真实 CH 集成仍按上一项保留外部门禁。
 - [x] **FLOW-06A3 已提交**：生产代码、测试与契约文档已进入独立提交 `d56bc3f6`；工作区不再残留该切片生产文件。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
@@ -217,7 +217,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
 - [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。
 - [x] **FLOW-07B 单元**：覆盖 typed tenant/filter、闭桶/范围/结果预算、country/region、rate/count、境外/unknown 分离、方向端点映射、IPv4-mapped family、TopN/other、镜像一致性、metadata coverage、mixed versions、多 block、畸形/重复/越界/取消全失败。
-- [ ] **FLOW-07B 集成**：真实 CH 顺序 migration + rollup 执行，验证 IPv4/IPv6 混合、in/out local/remote 镜像、unknown country/region、repair 后旧 key 消失、TopN+other 和流量守恒；当前环境无 CH，保留外部门禁。
+- [ ] **FLOW-07B 集成**：真实 CH 顺序 migration + rollup 执行，验证 IPv4/IPv6 混合、in/out local/remote 镜像、unknown country/region、repair 后旧 key 消失、TopN+other 和流量守恒；migration 环境已具备，数据重放门禁仍未执行。
 - [x] **FLOW-07B 变更设计**：唯一 IP 明确为 `observed_remote_ips/observed_local_hosts`，即收到的 Flow 事实精确去重，不按 sampling rate 放大；历史 classification/Geo/version 不重判，结果跨版本拆分或告警。
 - [x] **FLOW-07B 变更测试**：customer-only、未知 level/direction/metric、请求值不插 SQL、IP/Geo unknown 不冒充、endpoint 汇总不一致 fail-closed、结果硬限与 sentinel 错误均已固定为契约测试。
 - [x] **FLOW-07B 回归（本地）**：`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...` 与 `git diff --check` 通过；真实 CH 不由本地 fake executor 冒充。
@@ -230,7 +230,13 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A1 单元/变更测试**：读取真实 001..005；覆盖内容微改 checksum、空/非法名/缺号/超大/坏 UTF-8/NUL/BOM/未闭合 SQL、数据库 gap/duplicate/ahead/name/checksum/unknown-state/dirty 及从 dirty 精确续跑。
 - [x] **FLOW-08A1 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；并行工作区的告警域变更也未破坏本轮全库验证。
 - [x] **FLOW-08A1 已提交**：loader/planner、单元测试与设计已进入独立提交 `24bd111b`；工作区不再残留该切片生产文件。
-- [ ] **FLOW-08A2 executor/CLI**：增加 CH 状态表、并发 fail-fast 锁、失败诊断、inspect/apply/resume/unlock（精确 owner token）和连接/TLS/secret-file；worker/hub 启动不得隐式迁移。
+- [x] **FLOW-08A2 设计/变更设计**：冻结 embedded migration binary、statement checkpoint、dirty/resume、单调 generation、同步状态写、持久 metadata owner 锁、无超时 takeover、exact-owner unlock 和 worker/hub 禁止自动迁移；DDL 成功但 checkpoint 未确认时最多重放最后一条幂等 statement。
+- [x] **FLOW-08A2 编码**：实现 CH ledger bootstrap、fail-fast acquire、cancel-independent release、inspect/apply/resume/unlock、错误诊断与 JSON CLI；连接从 `default` 进入 canonical `watchdog_flow`，密码只读 secret file，TLS 配置 fail-closed。
+- [x] **FLOW-08A2 单元/变更测试**：覆盖逐 statement 状态、同步写、首次/续跑 generation、并发 owner、失败 checkpoint、精确解锁、只读 inspect、非法 token、UTF-8 诊断截断、embedded 001..005 和 CLI 生命周期映射；race/vet 已通过。
+- [x] **FLOW-08A2 本地环境**：固定单节点 Kafka KRaft + ClickHouse LTS Compose，回环端口、持久卷、healthcheck、Kafka 禁止 auto-create、一次性创建 12 分区 `watchdog.flow.raw-v1`；明确不作为 HA/容量结果。
+- [x] **FLOW-08A2 集成测试**：ClickHouse `26.3.29.7` 无持久卷空库通过 001..005、二次 apply、003 sorting-key statement 重放、并发拒绝、wrong-owner、dirty 普通拒绝及 exact checkpoint resume；实测修正了 ch-go 空 metadata block 处理和 003 不合法的旧 ORDER BY 扩展。Kafka `4.3.1` health/topic metadata、`acks=all` 单条生产及 partition/offset 消费通过，隔离测试 topic 已删除，12 分区 raw topic 保留。
+- [x] **FLOW-08A2 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
+- [ ] **FLOW-08A2 已提交**：代码、环境、文档和真实测试证据进入独立提交，工作区不得残留本切片文件。
 - [ ] **FLOW-08A3 集成/发布**：真实空库 001..current、二次 apply、并发、statement 中断、dirty inspect/resume、checksum drift、旧/新二进制前后兼容和集群 DDL 演练。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。

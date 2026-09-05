@@ -32,6 +32,7 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 		"INSERT INTO flow_vpn_candidates", "FROM flow_records FINAL", "FROM flow_aggregate_1m FINAL",
 		"AND dimension_kind = '_generation'", "UNION ALL", "'_generation'",
 		"dimension_snapshot_id, geo_version, classification_version",
+		"key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version",
 		"sumIf(estimated_bytes, estimated_valid AND business_direction = 'out')",
 		"sumIf(estimated_bytes, estimated_valid AND business_direction = 'in')",
 		"argMax(", "tuple(estimated_valid, estimated_bytes, raw_bytes, event_time, hex(record_id))",

@@ -41,7 +41,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install
+.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
 
 clean:
@@ -136,7 +136,16 @@ watchdog-install:
 
 watchdog-dev-install:
 	go run ./cmd/watchdog-install --config config/watchdog.dev.yaml --init-sql install/init.sql --lock .watchdog-dev.lock
-	
+
+flow-dev-up:
+	docker compose -f deploy/compose.flow-dev.yml up -d
+
+flow-dev-down:
+	docker compose -f deploy/compose.flow-dev.yml down
+
+flow-dev-status:
+	docker compose -f deploy/compose.flow-dev.yml ps
+
 build-dotnet:
 	@if command -v dotnet >/dev/null 2>&1; then \
 		rm -rf ./agent/lhm/bin; \

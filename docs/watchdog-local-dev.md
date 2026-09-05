@@ -99,3 +99,46 @@ silently; the complete override list and precedence are in
 - `cmd/watchdog-install`: fresh MySQL installer using `install/init.sql` and a local lock file.
 - `cmd/watchdog-export-worker`: async CSV export worker.
 - `cmd/watchdog-snmp-collector`: SNMP discovery, recipe import, and raw sample polling.
+
+## Flow Kafka and ClickHouse
+
+The Flow development data plane uses the pinned single-node Kafka KRaft and
+ClickHouse LTS images in `deploy/compose.flow-dev.yml`. It binds Kafka and both
+ClickHouse endpoints to `127.0.0.1`; this is a functional integration setup,
+not the multi-node capacity or HA environment.
+
+Start the services and explicitly migrate ClickHouse:
+
+```bash
+export WATCHDOG_CLICKHOUSE_PASSWORD='watchdog-local'
+make flow-dev-up
+
+flow_secret_file=$(mktemp)
+chmod 600 "$flow_secret_file"
+printf '%s' "$WATCHDOG_CLICKHOUSE_PASSWORD" > "$flow_secret_file"
+go run ./cmd/watchdog-flow-migrate \
+  --command apply \
+  --clickhouse-password-file "$flow_secret_file"
+rm -f "$flow_secret_file"
+```
+
+The migration set is embedded in `watchdog-flow-migrate`; the worker and hub
+never modify ClickHouse schema during startup. Use `--command inspect` for a
+read-only state/lock report. A failed or interrupted migration is dirty and
+requires `--command resume`. An orphaned lock can be removed only with
+`--command unlock --lock-owner <exact-owner-token>` after the operator has
+confirmed that the original process is no longer running.
+
+Kafka auto-topic creation is disabled. The one-shot `kafka-init` service
+idempotently creates `watchdog.flow.raw-v1` with 12 partitions. Host processes
+connect to `127.0.0.1:9092`; Compose services use `kafka:19092`.
+
+Inspect or stop the local data plane without deleting its named volumes:
+
+```bash
+make flow-dev-status
+make flow-dev-down
+```
+
+`docker compose down -v` intentionally destroys the local Kafka log and
+ClickHouse data and is therefore not wrapped in a Make target.

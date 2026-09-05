@@ -65,7 +65,8 @@ func (m *VPNCandidateMaterializer) LatestGeneration(ctx context.Context, request
 		return 0, Permanent(errors.New("ClickHouse VPN candidate materializer is not initialized"))
 	}
 	var generations proto.ColUInt64
-	rows := 0
+	var generation uint64
+	found := false
 	query := ch.Query{
 		Body: `SELECT max(generation) AS generation
 FROM flow_vpn_candidates FINAL
@@ -77,20 +78,24 @@ WHERE tenant_id = {tenant:String}
 		Parameters: candidateParameters(request),
 		Result:     proto.Results{{Name: "generation", Data: &generations}},
 	}
-	query.OnResult = func(_ context.Context, _ proto.Block) error {
-		if generations.Rows() != 1 || rows != 0 {
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if block.Rows == 0 {
+			return nil
+		}
+		if block.Rows != 1 || generations.Rows() != 1 || found {
 			return Permanent(errors.New("ClickHouse VPN candidate generation query returned an invalid row count"))
 		}
-		rows++
+		generation = generations[0]
+		found = true
 		return nil
 	}
 	if err := m.executor.Do(ctx, query); err != nil {
 		return 0, classifyClickHouseError(fmt.Errorf("read ClickHouse VPN candidate generation: %w", err))
 	}
-	if rows != 1 {
+	if !found {
 		return 0, Permanent(errors.New("ClickHouse VPN candidate generation query returned no result"))
 	}
-	return generations[0], nil
+	return generation, nil
 }
 
 func ValidateVPNCandidateRequest(request VPNCandidateRequest) error {
@@ -165,6 +170,7 @@ const vpnCandidateSQL = `INSERT INTO flow_vpn_candidates (
   active_bucket_count, max_duration_ms, remote_asn, remote_country,
   remote_prefix_id, transport_hints, complete_ratio, evidence_json,
   rule_set_version, dimension_snapshot_id, geo_version, classification_version,
+  key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version,
   generation, generated_at)
 WITH
   {window_start:DateTime('UTC')} AS candidate_start,
@@ -240,6 +246,10 @@ SELECT
   dimension_snapshot_id,
   geo_version,
   classification_version,
+  toUInt8(1),
+  dimension_snapshot_id,
+  geo_version,
+  classification_version,
   {generation:UInt64},
   {generated_at:DateTime64(3, 'UTC')}
 FROM candidates
@@ -249,5 +259,5 @@ SELECT
   candidate_start, candidate_end, {tenant:String}, '_generation',
   CAST('', 'FixedString(32)'), toIPv6('::'), toIPv6('::'), 0, 0, 0,
   0, 0, 0, 0, 0, 0, '', '', [], 0, '{"schema_version":1}',
-  {rule_set_version:String}, '', '', 0, {generation:UInt64},
+  {rule_set_version:String}, '', '', 0, toUInt8(2), '', '', 0, {generation:UInt64},
   {generated_at:DateTime64(3, 'UTC')}`

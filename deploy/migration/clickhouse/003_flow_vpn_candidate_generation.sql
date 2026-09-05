@@ -16,9 +16,16 @@ ALTER TABLE watchdog_flow.flow_vpn_candidates
 ALTER TABLE watchdog_flow.flow_vpn_candidates
   ADD COLUMN IF NOT EXISTS classification_version UInt32 AFTER geo_version;
 
--- The original key remains an exact prefix. Version identity is part of the
--- replacement key so publication changes cannot overwrite each other.
+-- ClickHouse permits an ORDER BY extension only through columns added by the
+-- same ALTER. Keep explicit, writer-populated identity columns so this
+-- statement is replay-safe after an acknowledged or unacknowledged success.
+-- Pre-v1 rows receive zero/empty identities and remain outside the marker-led
+-- reader contract; v1 writers must always populate all four columns.
 ALTER TABLE watchdog_flow.flow_vpn_candidates
+  ADD COLUMN IF NOT EXISTS key_row_kind UInt8 AFTER classification_version,
+  ADD COLUMN IF NOT EXISTS key_dimension_snapshot_id String AFTER key_row_kind,
+  ADD COLUMN IF NOT EXISTS key_geo_version String AFTER key_dimension_snapshot_id,
+  ADD COLUMN IF NOT EXISTS key_classification_version UInt32 AFTER key_geo_version,
   MODIFY ORDER BY (
     tenant_id, window_start, window_end, conversation_key, rule_set_version,
-    row_kind, dimension_snapshot_id, geo_version, classification_version);
+    key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version);

@@ -85,7 +85,8 @@ func (r *RollupRunner) LatestGeneration(ctx context.Context, tenantID string, re
 	}
 	_, table, _ := rollupTarget(resolution)
 	var generations proto.ColUInt64
-	rows := 0
+	var generation uint64
+	found := false
 	query := ch.Query{
 		Body: fmt.Sprintf(`SELECT max(generation) AS generation
 FROM %s FINAL
@@ -97,20 +98,24 @@ WHERE tenant_id = {tenant:String}
 		}),
 		Result: proto.Results{{Name: "generation", Data: &generations}},
 	}
-	query.OnResult = func(_ context.Context, _ proto.Block) error {
-		if generations.Rows() != 1 || rows != 0 {
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if block.Rows == 0 {
+			return nil
+		}
+		if block.Rows != 1 || generations.Rows() != 1 || found {
 			return Permanent(errors.New("ClickHouse rollup generation query returned an invalid row count"))
 		}
-		rows++
+		generation = generations[0]
+		found = true
 		return nil
 	}
 	if err := r.executor.Do(ctx, query); err != nil {
 		return 0, classifyClickHouseError(fmt.Errorf("read ClickHouse %s rollup generation: %w", resolution, err))
 	}
-	if rows != 1 {
+	if !found {
 		return 0, Permanent(errors.New("ClickHouse rollup generation query returned no result"))
 	}
-	return generations[0], nil
+	return generation, nil
 }
 
 func NewRollupRunner(native *NativeInserter) (*RollupRunner, error) {

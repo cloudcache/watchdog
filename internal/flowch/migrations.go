@@ -23,10 +23,10 @@ const maxClickHouseMigrationBytes = 4 << 20
 var clickHouseMigrationName = regexp.MustCompile(`^([0-9]{3})_([a-z0-9][a-z0-9_]*)\.sql$`)
 
 type Migration struct {
-	Version    uint32
-	Name       string
-	Checksum   string
-	Statements []string
+	Version    uint32   `json:"version"`
+	Name       string   `json:"name"`
+	Checksum   string   `json:"checksum"`
+	Statements []string `json:"-"`
 }
 
 type MigrationState string
@@ -38,16 +38,21 @@ const (
 )
 
 type AppliedMigration struct {
-	Version  uint32
-	Name     string
-	Checksum string
-	State    MigrationState
+	Version             uint32         `json:"version"`
+	Name                string         `json:"name"`
+	Checksum            string         `json:"checksum"`
+	State               MigrationState `json:"state"`
+	CompletedStatements uint32         `json:"completed_statements"`
+	AttemptID           string         `json:"attempt_id"`
+	LastError           string         `json:"last_error,omitempty"`
+	Generation          uint64         `json:"generation"`
 }
 
 type MigrationPlan struct {
-	Applied []Migration
-	Pending []Migration
-	Resume  bool
+	Applied         []Migration `json:"applied"`
+	Pending         []Migration `json:"pending"`
+	Resume          bool        `json:"resume"`
+	ResumeStatement uint32      `json:"resume_statement"`
 }
 
 // LoadMigrations reads and validates the immutable, consecutively numbered
@@ -140,8 +145,14 @@ func PlanMigrations(available []Migration, recorded []AppliedMigration, resume b
 		}
 		switch state.State {
 		case MigrationApplied:
+			if state.CompletedStatements != uint32(len(migration.Statements)) {
+				return MigrationPlan{}, fmt.Errorf("applied ClickHouse migration %03d has incomplete statement progress", state.Version)
+			}
 			plan.Applied = append(plan.Applied, migration)
 		case MigrationApplying, MigrationFailed:
+			if state.CompletedStatements > uint32(len(migration.Statements)) {
+				return MigrationPlan{}, fmt.Errorf("dirty ClickHouse migration %03d has invalid statement progress", state.Version)
+			}
 			if index != len(states)-1 {
 				return MigrationPlan{}, fmt.Errorf("dirty ClickHouse migration %03d is followed by newer recorded state", state.Version)
 			}
@@ -150,6 +161,7 @@ func PlanMigrations(available []Migration, recorded []AppliedMigration, resume b
 			}
 			plan.Pending = append(plan.Pending, available[state.Version-1:]...)
 			plan.Resume = true
+			plan.ResumeStatement = state.CompletedStatements
 			return plan, nil
 		default:
 			return MigrationPlan{}, fmt.Errorf("ClickHouse migration %03d has unknown state %q", state.Version, state.State)

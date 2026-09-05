@@ -89,7 +89,7 @@ SELECT "semi;colon", ` + "`identifier;name`" + `;
 
 func TestPlanMigrationsRejectsDriftGapsAheadAndDirtyByDefault(t *testing.T) {
 	available := testMigrations(3)
-	valid := []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationApplied}}
+	valid := []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationApplied, CompletedStatements: 1}}
 	plan, err := PlanMigrations(available, valid, false)
 	if err != nil {
 		t.Fatal(err)
@@ -102,12 +102,14 @@ func TestPlanMigrationsRejectsDriftGapsAheadAndDirtyByDefault(t *testing.T) {
 		states []AppliedMigration
 	}{
 		{name: "duplicate", states: []AppliedMigration{valid[0], valid[0]}},
-		{name: "gap", states: []AppliedMigration{{Version: 2, Name: available[1].Name, Checksum: available[1].Checksum, State: MigrationApplied}}},
+		{name: "gap", states: []AppliedMigration{{Version: 2, Name: available[1].Name, Checksum: available[1].Checksum, State: MigrationApplied, CompletedStatements: 1}}},
 		{name: "ahead", states: append(valid, AppliedMigration{Version: 4, Name: "004_ahead.sql", Checksum: "x", State: MigrationApplied})},
-		{name: "name drift", states: []AppliedMigration{{Version: 1, Name: "001_changed.sql", Checksum: available[0].Checksum, State: MigrationApplied}}},
-		{name: "checksum drift", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: "changed", State: MigrationApplied}}},
+		{name: "name drift", states: []AppliedMigration{{Version: 1, Name: "001_changed.sql", Checksum: available[0].Checksum, State: MigrationApplied, CompletedStatements: 1}}},
+		{name: "checksum drift", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: "changed", State: MigrationApplied, CompletedStatements: 1}}},
 		{name: "dirty", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationFailed}}},
 		{name: "unknown state", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: "mystery"}}},
+		{name: "applied incomplete", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationApplied}}},
+		{name: "dirty progress overflow", states: []AppliedMigration{{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationFailed, CompletedStatements: 2}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := PlanMigrations(available, test.states, false); err == nil {
@@ -125,17 +127,17 @@ func TestPlanMigrationsRejectsDriftGapsAheadAndDirtyByDefault(t *testing.T) {
 func TestPlanMigrationsExplicitResumeStartsAtDirtyVersion(t *testing.T) {
 	available := testMigrations(3)
 	recorded := []AppliedMigration{
-		{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationApplied},
-		{Version: 2, Name: available[1].Name, Checksum: available[1].Checksum, State: MigrationApplying},
+		{Version: 1, Name: available[0].Name, Checksum: available[0].Checksum, State: MigrationApplied, CompletedStatements: 1},
+		{Version: 2, Name: available[1].Name, Checksum: available[1].Checksum, State: MigrationApplying, CompletedStatements: 1},
 	}
 	plan, err := PlanMigrations(available, recorded, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Resume || !reflect.DeepEqual(plan.Applied, available[:1]) || !reflect.DeepEqual(plan.Pending, available[1:]) {
+	if !plan.Resume || plan.ResumeStatement != 1 || !reflect.DeepEqual(plan.Applied, available[:1]) || !reflect.DeepEqual(plan.Pending, available[1:]) {
 		t.Fatalf("resume plan=%+v", plan)
 	}
-	recorded = append(recorded, AppliedMigration{Version: 3, Name: available[2].Name, Checksum: available[2].Checksum, State: MigrationApplied})
+	recorded = append(recorded, AppliedMigration{Version: 3, Name: available[2].Name, Checksum: available[2].Checksum, State: MigrationApplied, CompletedStatements: 1})
 	if _, err := PlanMigrations(available, recorded, true); err == nil {
 		t.Fatal("dirty state followed by a newer version was resumable")
 	}

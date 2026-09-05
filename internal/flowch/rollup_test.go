@@ -38,8 +38,11 @@ func (e *rollupGenerationExecutor) Do(ctx context.Context, query ch.Query) error
 	if !ok {
 		return errors.New("unexpected generation result column")
 	}
+	if err := query.OnResult(ctx, proto.Block{Columns: 1}); err != nil {
+		return err
+	}
 	*column = append(*column, e.generation)
-	return query.OnResult(ctx, proto.Block{})
+	return query.OnResult(ctx, proto.Block{Columns: 1, Rows: 1})
 }
 
 func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
