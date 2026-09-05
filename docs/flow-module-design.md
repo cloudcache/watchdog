@@ -448,6 +448,8 @@ DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_pr
 
 两个数据面进程各自提供 Prometheus 文本格式 `GET /metrics`，由 VM pull/scrape；进程不主动写 VM。collector 默认监听 `127.0.0.1:9090`，worker 默认监听 `127.0.0.1:9091`，`-metrics-listen ''` 明确禁用。地址必须是裸 `host:port`，不接受 URL/路径或 0 端口；绑定失败使进程启动失败，运行中 metrics server 异常退出也会终止主进程，避免“数据面活着但监控永久消失”。端点只读、无业务数据，默认仅 loopback；跨主机抓取必须由部署层提供网络 ACL，TLS/mTLS 通过同机反向代理或 sidecar 终止，不在两个数据面进程中复制证书生命周期。
 
+真实 VictoriaMetrics wire 门禁使用 production collector/worker handler 启动回环 HTTP server，读取未经改写的 Prometheus text，经 VM Prometheus import 后用 instant query 核对 durable Kafka record 与 worker lag，并枚举 series 拒绝 tenant/exporter/ASN/prefix/IP/topic/partition 高基数标签。测试用唯一 `integration_run`/process 外部抓取标签隔离并在退出时精确删除。该门禁只证明 exposition→VM storage/query 兼容；VM/vmagent 的 pull discovery、两个真实进程、网络 ACL/TLS、scrape `up` 和故障恢复仍必须用部署配置验收，不能因为 import 成功而标记完成。
+
 指标契约如下；除表内固定枚举外不允许增加 label：
 
 | 进程/层 | metric | 类型/单位 | 语义 |
