@@ -48,9 +48,6 @@ func TestCollectorOwnershipEvidenceMigrationHasNormalizedSafetyContract(t *testi
 		"create table if not exists collector_ownership_transfers",
 		"old_revoke_plan_revision bigint unsigned not null",
 		"unique key uq_collector_ownership_transfer_epoch",
-		"create table if not exists collector_state_restore_receipts",
-		"primary key (transfer_id, state_kind, state_identity_key)",
-		"state_identity_key binary(32)",
 	} {
 		if !strings.Contains(sqlText, fragment) {
 			t.Fatalf("collector ownership evidence migration missing %q", fragment)

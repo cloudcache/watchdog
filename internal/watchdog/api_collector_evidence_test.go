@@ -10,29 +10,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
 
 type collectorEvidenceAPIController struct {
-	collector    ID
-	credential   CollectorMachineCredential
-	drain        CollectorDrainReport
-	restore      CollectorStateRestoreReport
-	drainCalls   int
-	restoreCalls int
-	err          error
+	collector  ID
+	credential CollectorMachineCredential
+	drain      CollectorDrainReport
+	drainCalls int
+	err        error
 }
 
 func (c *collectorEvidenceAPIController) RecordDrain(_ context.Context, collectorID ID, credential CollectorMachineCredential, report CollectorDrainReport) error {
 	c.collector, c.credential, c.drain = collectorID, credential, report
 	c.drainCalls++
-	return c.err
-}
-
-func (c *collectorEvidenceAPIController) RecordStateRestore(_ context.Context, collectorID ID, credential CollectorMachineCredential, report CollectorStateRestoreReport) error {
-	c.collector, c.credential, c.restore = collectorID, credential, report
-	c.restoreCalls++
 	return c.err
 }
 
@@ -63,9 +53,8 @@ func TestCollectorEvidenceAPIAcceptsTokenDrainWithoutIdentityFields(t *testing.T
 func TestCollectorEvidenceAPIAcceptsOnlyVerifiedClientCertificate(t *testing.T) {
 	controller := &collectorEvidenceAPIController{}
 	router := NewAPIV1Router(APIV1RouterConfig{CollectorEvidence: controller})
-	identity := sha256.Sum256([]byte("restore-identity"))
-	body := `{"state_kind":"decoder","state_identity_key":"` + hex.EncodeToString(identity[:]) + `","applied_config_version":13,"restored_old_ownership_epoch":5,"restored_old_generation":9,"new_epoch_baseline_generation":2,"receipt_nonce":"restore-1"}`
-	path := "/api/v1/collectors/collector-b/ownership-transfers/transfer-a/state-restores"
+	body := `{"applied_config_version":13,"receipt_nonce":"drain-1"}`
+	path := "/api/v1/collectors/collector-b/ownership-transfers/transfer-a/actions/drain"
 	certificate := &x509.Certificate{Raw: []byte("verified-client-certificate")}
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.TLS = &tls.ConnectionState{
@@ -76,16 +65,16 @@ func TestCollectorEvidenceAPIAcceptsOnlyVerifiedClientCertificate(t *testing.T) 
 	router.ServeHTTP(rec, req)
 	digest := sha256.Sum256(certificate.Raw)
 	wantFingerprint := "sha256:" + hex.EncodeToString(digest[:])
-	if rec.Code != http.StatusAccepted || controller.restoreCalls != 1 || controller.credential.CertificateFingerprint != wantFingerprint || controller.restore.Kind != flowcollect.StateCheckpointDecoder || controller.restore.TransferID != "transfer-a" {
-		t.Fatalf("status=%d calls=%d credential=%+v report=%+v body=%s", rec.Code, controller.restoreCalls, controller.credential, controller.restore, rec.Body.String())
+	if rec.Code != http.StatusAccepted || controller.drainCalls != 1 || controller.credential.CertificateFingerprint != wantFingerprint || controller.drain.TransferID != "transfer-a" {
+		t.Fatalf("status=%d calls=%d credential=%+v report=%+v body=%s", rec.Code, controller.drainCalls, controller.credential, controller.drain, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificate}}
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Watchdog-Collector" || controller.restoreCalls != 1 {
-		t.Fatalf("unverified status=%d calls=%d body=%s", rec.Code, controller.restoreCalls, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Watchdog-Collector" || controller.drainCalls != 1 {
+		t.Fatalf("unverified status=%d calls=%d body=%s", rec.Code, controller.drainCalls, rec.Body.String())
 	}
 }
 

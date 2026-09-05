@@ -26,111 +26,6 @@ sflow_collector:
   agg_interval: 1m
   prefix_sync_interval: 5m
 
-flow_collect:
-  control_plane_url: "http://127.0.0.1:8090"
-  control_plane_token_file: "/tmp/watchdog-flow-collect/control-plane.token"
-  control_plane_request_timeout: 10s
-  control_plane_retry_min: 1s
-  control_plane_retry_max: 30s
-  control_plane_heartbeat_interval: 30s
-  state_dir: "/tmp/watchdog-flow-collect"
-  plan_file: "/tmp/watchdog-flow-collect/plan.json"
-  plan_public_key_file: "/tmp/watchdog-flow-collect/plan-ed25519.pub"
-  sflow_listen: ":16343"
-  netflow_listen: ":12055"
-  socket_count: 1
-  decode_workers: 2
-  decode_queue_datagrams: 4096
-  receive_buffer_bytes: 4194304
-  max_datagram_bytes: 65535
-  plan_refresh_interval: 30s
-  plan_history_max_entries: 128
-  decoder_state_ttl: 30m
-  exporter_refresh_interval: 30s
-  wal:
-    max_bytes: 1073741824
-    max_age: 24h
-    segment_bytes: 16777216
-    fsync_interval: 10ms
-    soft_watermark: 0.70
-    hard_watermark: 0.90
-  kafka:
-    brokers: ["127.0.0.1:9092"]
-    normalized_topic: "watchdog.flow.normalized.v1"
-    collect_state_topic: "watchdog.flow.collect-state.v1"
-    collect_state_restore_timeout: 2m
-    collect_state_restore_max_candidates: 262144
-    quality_checkpoint_write_enabled: false
-    decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
-    quarantine_topic: "watchdog.flow.quarantine.v1"
-    acks: "all"
-    compression: "zstd"
-    tls: false
-    topic_contract:
-      check_timeout: 5s
-      normalized_partitions: 8
-      collect_state_partitions: 1
-      decode_dlq_partitions: 1
-      quarantine_partitions: 1
-      min_replication_factor: 1
-      min_in_sync_replicas: 1
-      normalized_min_retention: 24h
-      collect_state_delete_retention: 1h
-      decode_dlq_min_retention: 24h
-      quarantine_min_retention: 24h
-  normalized_batch:
-    max_records: 1024
-    max_bytes: 1048576
-    max_wait: 5ms
-  diagnostics:
-    decode_max_attempts: 3
-    retry_initial: 250ms
-    retry_max: 5s
-    attempt_journal_fsync_interval: 10ms
-    attempt_checkpoint_interval: 5m
-    attempt_journal_max_bytes: 268435456
-    quarantine_queue_events: 1024
-    quarantine_max_events_per_second: 20
-    quarantine_max_events_per_source_second: 2
-    dlq_payload_max_bytes: 0
-  quality:
-    state_ttl: 1h
-    anomaly_window: 1m
-    journal_fsync_interval: 10ms
-    checkpoint_interval: 5m
-    journal_max_bytes: 67108864
-    max_exporters: 1024
-    max_data_sources: 8192
-  observability:
-    listen: "127.0.0.1:19464"
-    read_header_timeout: 2s
-    write_timeout: 10s
-    idle_timeout: 30s
-    shutdown_timeout: 5s
-
-# flow-geo-v1 bundle exported by scripts/edgemanager-geo-export.py
-flow_geo:
-  path: "dev/flow-geo/current"
-
-flow_state_cleanup:
-  # Enable only after the local Kafka topic has been bootstrapped.
-  enabled: false
-  worker_id: "watchdog-dev-control"
-  lease_duration: 30s
-  heartbeat_interval: 10s
-  step_timeout: 2m
-  poll_interval: 1s
-  retry_min: 1s
-  retry_max: 1m
-  max_attempts: 0
-  kafka:
-    brokers: ["127.0.0.1:9092"]
-    collect_state_topic: "watchdog.flow.collect-state.v1"
-    scan_timeout: 2m
-    tls: false
-
-# Keep disabled unless a local HTTPS/mTLS provider implementing the documented
-# collector-principal operation contract is running.
 collector_principal_provider:
   enabled: false
   name: ""
@@ -167,3 +62,30 @@ agent:
   agent_id: "agent_dev_snmp"
   token: "dev-agent-token"
   interval: 1m
+
+flow_rollup:
+  # Enable only when local ClickHouse has deploy/migration/clickhouse applied.
+  enabled: false
+  scan_interval: 30s
+  late_arrival_window: 5m
+  bootstrap_lookback: 24h
+  max_tenants_per_scan: 500
+  max_buckets_per_series_scan: 500
+  max_buckets_per_scan: 5000
+  worker_concurrency: 2
+  lease_for: 2m
+  max_attempts: 5
+  retry_base: 30s
+  clickhouse_address: "127.0.0.1:9000"
+  clickhouse_database: "watchdog_flow"
+  clickhouse_user: "default"
+  clickhouse_password_file: ""
+  clickhouse_max_conns: 2
+  clickhouse_min_conns: 0
+  clickhouse_dial_timeout: 3s
+  clickhouse_read_timeout: 90s
+  clickhouse_tls: false
+  clickhouse_tls_ca: ""
+  clickhouse_tls_cert: ""
+  clickhouse_tls_key: ""
+  clickhouse_tls_server_name: ""

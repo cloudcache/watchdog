@@ -61,6 +61,13 @@ type CollectorPrincipalProviderRuntimeStatus struct {
 	Health  CollectorPrincipalProviderRuntimeHealth `json:"health"`
 }
 
+func boolMetricValue(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
 type remoteCollectorPrincipalGrantRequest struct {
 	OperationKey        string `json:"operation_key"`
 	RequestHash         string `json:"request_hash"`

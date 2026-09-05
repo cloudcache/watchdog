@@ -55,6 +55,13 @@ func (m AddressSetMembership) IDs() []string {
 	return append([]string(nil), m.ids...)
 }
 
+// AppendTo copies the immutable membership IDs into destination. Persistence
+// boundaries can reuse destination capacity instead of allocating one slice
+// per flow record.
+func (m AddressSetMembership) AppendTo(destination []string) []string {
+	return append(destination, m.ids...)
+}
+
 type ClassifiedEndpoints struct {
 	SnapshotID string
 	Version    uint64
@@ -105,16 +112,19 @@ func (s *CompiledSnapshot) ClassifyEndpoints(source, destination netip.Addr) Cla
 
 func (s *CompiledSnapshot) endpoint(ip netip.Addr, side EndpointSide, prefix compiledPrefix, matched bool, direction BusinessDirection) EndpointDimension {
 	endpoint := EndpointDimension{IP: ip, Side: side, PrefixID: UnassignedDimensionID}
-	if !matched {
-		return endpoint
+	if matched {
+		endpoint.PrefixID = prefix.id
+		endpoint.PrefixCIDR = prefix.cidr
 	}
-	endpoint.PrefixID = prefix.id
-	endpoint.PrefixCIDR = prefix.cidr
-	switch direction {
-	case DirectionIn:
-		endpoint.AddressSets.ids = prefix.inAddressSets
-	case DirectionOut:
-		endpoint.AddressSets.ids = prefix.outAddressSets
+	if s.addressSets != nil {
+		if membership, membershipMatched := s.addressSets.Lookup(ip); membershipMatched {
+			switch direction {
+			case DirectionIn:
+				endpoint.AddressSets.ids = membership.in
+			case DirectionOut:
+				endpoint.AddressSets.ids = membership.out
+			}
+		}
 	}
 	return endpoint
 }
@@ -153,6 +163,7 @@ type HomeProfile struct {
 	Province            string
 	City                string
 	ISPIDs              map[uint16]struct{}
+	ASNs                map[uint32]struct{}
 	OverseasIncludesHMT bool
 	Version             uint32
 }
@@ -162,6 +173,11 @@ type GeoInfo struct {
 	AdminCode   string
 	Subdivision string
 	City        string
+	ContinentID string
+	RegionID    string
+	CountryID   string
+	ProvinceID  string
+	CityID      string
 	ISPID       uint16
 	ASN         uint32
 	Version     string
@@ -189,10 +205,24 @@ func ClassifyCategory(direction BusinessDirection, remote GeoInfo, home HomeProf
 	}
 	province, ok := provincePart(adminCode)
 	homeProvince, homeOK := provincePart(home.Province)
-	if !ok || !homeOK || remote.ISPID == 0 || len(home.ISPIDs) == 0 {
+	if !ok || !homeOK {
 		return CategoryUnknown
 	}
-	_, onNet := home.ISPIDs[remote.ISPID]
+	identityAvailable := false
+	onNet := false
+	if remote.ISPID != 0 && len(home.ISPIDs) > 0 {
+		identityAvailable = true
+		_, onNet = home.ISPIDs[remote.ISPID]
+	}
+	if remote.ASN != 0 && len(home.ASNs) > 0 {
+		identityAvailable = true
+		if _, matched := home.ASNs[remote.ASN]; matched {
+			onNet = true
+		}
+	}
+	if !identityAvailable {
+		return CategoryUnknown
+	}
 	if !onNet {
 		if province == homeProvince {
 			return CategoryOffNetInProvince

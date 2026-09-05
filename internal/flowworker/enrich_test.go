@@ -13,11 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
-	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/klauspost/compress/zstd"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
@@ -39,9 +36,9 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	enricher := newTestEnricher(t, dimensions, geo, classifications)
 
 	batch := testBatch(testMinute(12, 30))
-	second := proto.Clone(batch.Records[0]).(*flowpb.NormalizedRecord)
+	second := cloneRecord(batch.Records[0])
 	second.RecordIndex = 2
-	second.EventTimeUnixMs = testMinute(13, 30).UnixMilli()
+	second.EventTimeUnixMS = testMinute(13, 30).UnixMilli()
 	batch.Records = append(batch.Records, second)
 	enriched, err := enricher.EnrichBatch(batch)
 	if err != nil {
@@ -66,13 +63,12 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	if first.EstimatedBytes != batch.Records[0].EstimatedBytes || secondResult.EstimatedBytes != second.EstimatedBytes || first.DimensionFingerprint == secondResult.DimensionFingerprint {
 		t.Fatalf("counter conservation or version fingerprint failed: first=%+v second=%+v", first, secondResult)
 	}
-	replayed := proto.Clone(batch).(*flowpb.NormalizedRecordBatch)
-	replayed.ReplayGeneration = 7
+	replayed := cloneBatch(batch)
 	replayedResult, err := enricher.EnrichBatch(replayed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayedResult.Records[0].NormalizedRecordID != first.NormalizedRecordID || replayedResult.Records[0].DimensionFingerprint != first.DimensionFingerprint {
+	if replayedResult.Records[0].SourceRecordID != first.SourceRecordID || replayedResult.Records[0].DimensionFingerprint != first.DimensionFingerprint {
 		t.Fatal("stable record identity or dimension fingerprint changed on replay")
 	}
 }
@@ -101,6 +97,36 @@ func TestEnrichBatchAppliesGeoOverrideAndPreservesExplicitUnknownASN(t *testing.
 	}
 	if record.Category != flowdimension.CategoryOnNetLocalCity {
 		t.Fatalf("category = %q", record.Category)
+	}
+}
+
+func TestEnrichBatchPersistsGeoV2HierarchyAndASNProvenance(t *testing.T) {
+	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
+	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
+	classification := compileClassification(t, 1, testMinute(12, 0), "dimension-1", flowdimension.RecordPolicyCount, flowdimension.RecordPolicyCount)
+	classifications, _ := flowdimension.NewClassificationCatalog(classification)
+	geo := flowdimension.NewGeoCatalog()
+	dictionary := []flowdimension.GeoDictionaryEntry{
+		{Kind: "continent", Code: "Asia", Name: "Asia", Enabled: true},
+		{Kind: "region", Code: "EastAsia", Name: "East Asia", ParentCode: "Asia", Enabled: true},
+		{Kind: "country", Code: "CN", Name: "China", ParentCode: "EastAsia", Enabled: true},
+		{Kind: "province", Code: "330000", Name: "Zhejiang", ParentCode: "CN", Enabled: true},
+		{Kind: "city", Code: "330100", Name: "Hangzhou", ParentCode: "330000", Enabled: true},
+	}
+	loadGeoSchema(t, geo, flowdimension.GeoSchemaV2, "geo-v2", testMinute(12, 0),
+		"203.0.113.0,203.0.113.255,CN,330100,Zhejiang,Hangzhou,3,64500,330100", dictionary)
+
+	result, err := newTestEnricher(t, dimensions, geo, classifications).EnrichBatch(testBatch(testMinute(12, 30)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := result.Records[0]
+	if record.RemoteGeo.ContinentID != "Asia" || record.RemoteGeo.RegionID != "EastAsia" || record.RemoteGeo.CountryID != "CN" ||
+		record.RemoteGeo.ProvinceID != "330000" || record.RemoteGeo.CityID != "330100" || record.RemoteGeo.Source != flowdimension.GeoSchemaV2 {
+		t.Fatalf("unexpected v2 Geo hierarchy: %+v", record.RemoteGeo)
+	}
+	if record.RemoteASN != 64500 || record.RemoteASNSource != ASNSourceGeoV2 {
+		t.Fatalf("unexpected v2 ASN provenance: %d/%s", record.RemoteASN, record.RemoteASNSource)
 	}
 }
 
@@ -165,8 +191,7 @@ func TestEnrichBatchCarriesDropDispositionWithoutLosingCounters(t *testing.T) {
 	loadGeo(t, geo, "geo-1", testMinute(12, 0), "10.0.0.0,10.255.255.255,CN,330100,Zhejiang,Hangzhou,3,64500")
 	batch := testBatch(testMinute(12, 30))
 	destination := address16("10.2.3.4")
-	batch.Records[0].DstIp = destination
-	batch.VirtualShard = flowcollect.VirtualShard(batch.TenantId, mustAddress(batch.Records[0].SrcIp), mustAddress(destination))
+	batch.Records[0].DestinationIP = destination
 	result, err := newTestEnricher(t, dimensions, geo, classifications).EnrichBatch(batch)
 	if err != nil {
 		t.Fatal(err)
@@ -186,9 +211,9 @@ func TestEnrichBatchIntoClearsPartialOutputOnBlockedRecord(t *testing.T) {
 	loadGeo(t, geo, "geo-1", testMinute(12, 0), "203.0.113.0,203.0.113.255,ZZ,,,,0,0")
 	enricher := newTestEnricher(t, dimensions, geo, classifications)
 	batch := testBatch(testMinute(12, 30))
-	second := proto.Clone(batch.Records[0]).(*flowpb.NormalizedRecord)
+	second := cloneRecord(batch.Records[0])
 	second.RecordIndex = 2
-	second.EventTimeUnixMs = testMinute(11, 30).UnixMilli()
+	second.EventTimeUnixMS = testMinute(11, 30).UnixMilli()
 	batch.Records = append(batch.Records, second)
 	destination := &EnrichedBatch{Records: make([]EnrichedRecord, 1, 4)}
 	if err := enricher.EnrichBatchInto(batch, destination); !errors.Is(err, ErrVersionUnavailable) {
@@ -219,7 +244,7 @@ func TestEnrichBatchIntoDoesNotAllocateWithReusableBuffer(t *testing.T) {
 	}
 }
 
-func TestEnrichBatchRejectsCorruptNormalizedMessagesBeforeLookup(t *testing.T) {
+func TestEnrichBatchRejectsCorruptRecordBatchesBeforeLookup(t *testing.T) {
 	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
 	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
 	classification := compileClassification(t, 1, testMinute(12, 0), "dimension-1", flowdimension.RecordPolicyCount, flowdimension.RecordPolicyCount)
@@ -229,28 +254,28 @@ func TestEnrichBatchRejectsCorruptNormalizedMessagesBeforeLookup(t *testing.T) {
 	enricher := newTestEnricher(t, dimensions, geo, classifications)
 	tests := []struct {
 		name   string
-		mutate func(*flowpb.NormalizedRecordBatch)
+		mutate func(*RecordBatch)
 		want   string
 	}{
-		{name: "schema", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.BatchSchemaVersion = 2 }, want: "schema"},
-		{name: "id", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.DatagramId = batch.DatagramId[:31] }, want: "32 bytes"},
-		{name: "partition", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.VirtualShard++ }, want: "virtual shard"},
-		{name: "address", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.Records[0].SrcIp = []byte{1, 2, 3, 4} }, want: "16-byte"},
-		{name: "port", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.Records[0].DstPort = 65536 }, want: "port"},
-		{name: "sampling-rate", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.Records[0].SamplingRate = 0 }, want: "sampling rate"},
-		{name: "counter", mutate: func(batch *flowpb.NormalizedRecordBatch) { batch.Records[0].EstimatedBytes++ }, want: "counters"},
-		{name: "duplicate", mutate: func(batch *flowpb.NormalizedRecordBatch) {
-			batch.Records = append(batch.Records, proto.Clone(batch.Records[0]).(*flowpb.NormalizedRecord))
+		{name: "schema", mutate: func(batch *RecordBatch) { batch.BatchSchemaVersion = 2 }, want: "schema"},
+		{name: "id", mutate: func(batch *RecordBatch) { batch.SourceID = batch.SourceID[:31] }, want: "32 bytes"},
+		{name: "partition", mutate: func(batch *RecordBatch) { batch.KafkaPartition = -1 }, want: "Kafka source"},
+		{name: "address", mutate: func(batch *RecordBatch) { batch.Records[0].SourceIP = []byte{1, 2, 3, 4} }, want: "16-byte"},
+		{name: "port", mutate: func(batch *RecordBatch) { batch.Records[0].DestinationPort = 65536 }, want: "port"},
+		{name: "sampling-rate", mutate: func(batch *RecordBatch) { batch.Records[0].SamplingRate = 0 }, want: "sampling rate"},
+		{name: "counter", mutate: func(batch *RecordBatch) { batch.Records[0].EstimatedBytes++ }, want: "counters"},
+		{name: "duplicate", mutate: func(batch *RecordBatch) {
+			batch.Records = append(batch.Records, cloneRecord(batch.Records[0]))
 		}, want: "strictly increasing"},
-		{name: "future-time", mutate: func(batch *flowpb.NormalizedRecordBatch) {
-			batch.Records[0].EventTimeUnixMs = time.UnixMilli(batch.ReceivedAtUnixMs).Add(6 * time.Minute).UnixMilli()
+		{name: "future-time", mutate: func(batch *RecordBatch) {
+			batch.Records[0].EventTimeUnixMS = time.UnixMilli(batch.ReceivedAtUnixMS).Add(6 * time.Minute).UnixMilli()
 		}, want: "future skew"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			batch := proto.Clone(testBatch(testMinute(12, 30))).(*flowpb.NormalizedRecordBatch)
+			batch := cloneBatch(testBatch(testMinute(12, 30)))
 			test.mutate(batch)
-			if _, err := enricher.EnrichBatch(batch); !errors.Is(err, ErrInvalidNormalizedBatch) || !strings.Contains(err.Error(), test.want) {
+			if _, err := enricher.EnrichBatch(batch); !errors.Is(err, ErrInvalidRecordBatch) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
@@ -259,16 +284,18 @@ func TestEnrichBatchRejectsCorruptNormalizedMessagesBeforeLookup(t *testing.T) {
 
 func BenchmarkEnrichBatch1024RecordsReused(b *testing.B) {
 	dimension := compileDimension(b, "dimension-1", 1, testMinute(12, 0), nil)
-	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
 	classification := compileClassification(b, 1, testMinute(12, 0), "dimension-1", flowdimension.RecordPolicyCount, flowdimension.RecordPolicyCount)
-	classifications, _ := flowdimension.NewClassificationCatalog(classification)
+	versions, _ := NewEnrichmentVersionCatalog(EnrichmentVersion{Dimension: dimension, Classification: classification})
 	geo := flowdimension.NewGeoCatalog()
 	loadGeo(b, geo, "geo-1", testMinute(12, 0), "203.0.113.0,203.0.113.255,CN,330100,Zhejiang,Hangzhou,3,64500")
-	enricher := newTestEnricher(b, dimensions, geo, classifications)
+	enricher, err := NewEnricherWithVersionCatalog(versions, geo, EnrichmentLimits{})
+	if err != nil {
+		b.Fatal(err)
+	}
 	batch := testBatch(testMinute(12, 30))
-	batch.Records = make([]*flowpb.NormalizedRecord, 1024)
+	batch.Records = make([]*Record, 1024)
 	for index := range batch.Records {
-		record := proto.Clone(testBatch(testMinute(12, 30)).Records[0]).(*flowpb.NormalizedRecord)
+		record := cloneRecord(testBatch(testMinute(12, 30)).Records[0])
 		record.RecordIndex = uint32(index)
 		batch.Records[index] = record
 	}
@@ -325,25 +352,53 @@ func newTestEnricher(t testing.TB, dimensions *flowdimension.SnapshotCatalog, ge
 	return enricher
 }
 
-func testBatch(eventTime time.Time) *flowpb.NormalizedRecordBatch {
-	source := mustAddress(address16("10.1.2.3"))
-	destination := mustAddress(address16("203.0.113.20"))
-	return &flowpb.NormalizedRecordBatch{
-		BatchSchemaVersion: 1, NormalizedBatchId: bytes.Repeat([]byte{0x11}, 32), DatagramId: bytes.Repeat([]byte{0x22}, 32),
-		VirtualShard: flowcollect.VirtualShard("tenant-a", source, destination), PartitionMapVersion: 1, PhysicalPartition: 7,
-		TenantId: "tenant-a", CollectorId: "collector-a", ExporterId: "exporter-a", RegistryVersion: 9,
-		ReceivedAtUnixMs: testMinute(14, 0).UnixMilli(), Protocol: 1, SourceIp: address16("192.0.2.10"),
-		Records: []*flowpb.NormalizedRecord{{
-			RecordIndex: 1, EventTimeUnixMs: eventTime.UnixMilli(), TargetId: "target-a", DeviceId: "device-a",
+func testBatch(eventTime time.Time) *RecordBatch {
+	return &RecordBatch{
+		BatchSchemaVersion: 1, SourceID: bytes.Repeat([]byte{0x22}, 32),
+		KafkaTopic: "watchdog.flow.raw-v1", KafkaPartition: 7, KafkaOffset: 42,
+		TenantID: "tenant-a", CollectorID: "collector-a", ExporterID: "exporter-a", RegistryVersion: 9,
+		ReceivedAtUnixMS: testMinute(14, 0).UnixMilli(), Protocol: 1, SourceIP: address16("192.0.2.10"),
+		Records: []*Record{{
+			RecordIndex: 1, EventTimeUnixMS: eventTime.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
 			ObservationIfIndex: 9, ObservationDirection: 1, InIf: 9, OutIf: 10,
-			SrcIp: address16("10.1.2.3"), DstIp: address16("203.0.113.20"), SrcPort: 12345, DstPort: 443, IpProto: 6, TcpFlags: 0x12,
-			SrcAs: 65001, DstAs: 65002, RawBytes: 100, RawPackets: 2, SamplingMode: 1, SamplingRate: 1000,
-			EstimatedBytes: 100_000, EstimatedPackets: 2_000, FlowDurationMs: 250, QualityFlags: 4,
+			SourceIP: address16("10.1.2.3"), DestinationIP: address16("203.0.113.20"), SourcePort: 12345, DestinationPort: 443, IPProtocol: 6, TCPFlags: 0x12,
+			SourceASN: 65001, DestinationASN: 65002, RawBytes: 100, RawPackets: 2, SamplingMode: 1, SamplingRate: 1000, EstimatedValid: true,
+			EstimatedBytes: 100_000, EstimatedPackets: 2_000, FlowDurationMS: 250, QualityFlags: 4,
 		}},
 	}
 }
 
+func cloneRecord(source *Record) *Record {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.SourceIP = append([]byte(nil), source.SourceIP...)
+	result.DestinationIP = append([]byte(nil), source.DestinationIP...)
+	return &result
+}
+
+func cloneBatch(source *RecordBatch) *RecordBatch {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.SourceID = append([]byte(nil), source.SourceID...)
+	result.SourceIP = append([]byte(nil), source.SourceIP...)
+	result.AgentIP = append([]byte(nil), source.AgentIP...)
+	result.Records = make([]*Record, len(source.Records))
+	for index, record := range source.Records {
+		result.Records[index] = cloneRecord(record)
+	}
+	return &result
+}
+
 func loadGeo(t testing.TB, catalog *flowdimension.GeoCatalog, version string, effectiveFrom time.Time, ipv4Row string) {
+	loadGeoSchema(t, catalog, flowdimension.GeoSchemaV1, version, effectiveFrom, ipv4Row,
+		[]flowdimension.GeoDictionaryEntry{{Kind: "city", Code: "330100", Name: "Hangzhou", Enabled: true}})
+}
+
+func loadGeoSchema(t testing.TB, catalog *flowdimension.GeoCatalog, schema, version string, effectiveFrom time.Time, ipv4Row string, dictionary []flowdimension.GeoDictionaryEntry) {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), version)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -353,15 +408,18 @@ func loadGeo(t testing.TB, catalog *flowdimension.GeoCatalog, version string, ef
 		{ID: 3, Name: "Carrier 3", ShortName: "C3", Category: "carrier", Enabled: true},
 		{ID: 4, Name: "Carrier 4", ShortName: "C4", Category: "carrier", Enabled: true},
 	}
-	dictionary := []flowdimension.GeoDictionaryEntry{{Kind: "city", Code: "330100", Name: "Hangzhou", Enabled: true}}
+	header := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"
+	if schema == flowdimension.GeoSchemaV2 {
+		header += ",geo_leaf_code"
+	}
 	files := map[string][]byte{
-		"ipv4.csv.zst":   zstdBytes(t, []byte("ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn\n"+ipv4Row+"\n")),
-		"ipv6.csv.zst":   zstdBytes(t, []byte("ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn\n")),
+		"ipv4.csv.zst":   zstdBytes(t, []byte(header+"\n"+ipv4Row+"\n")),
+		"ipv6.csv.zst":   zstdBytes(t, []byte(header+"\n")),
 		"operators.json": jsonBytes(t, operators),
 		"geo_dict.json":  jsonBytes(t, dictionary),
 	}
 	manifest := flowdimension.GeoManifest{
-		Schema: flowdimension.GeoSchema, Version: version, GeneratedAt: effectiveFrom, EffectiveFrom: effectiveFrom,
+		Schema: schema, Version: version, GeneratedAt: effectiveFrom, EffectiveFrom: effectiveFrom,
 		AdminCodeSystem: flowdimension.GeoAdminCodeSystem, UnknownCountry: flowdimension.GeoUnknownCountry,
 		Files: make(map[string]flowdimension.GeoFileSpec, len(files)),
 	}
@@ -421,14 +479,6 @@ func address16(value string) []byte {
 	}
 	bytes := address.As16()
 	return append([]byte(nil), bytes[:]...)
-}
-
-func mustAddress(value []byte) netip.Addr {
-	address, ok := parseAddress16(value)
-	if !ok {
-		panic("invalid address")
-	}
-	return address
 }
 
 func testMinute(hour, minute int) time.Time {

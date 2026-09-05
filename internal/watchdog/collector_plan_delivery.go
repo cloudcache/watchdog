@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 var ErrCollectorPlanUnavailable = errors.New("collector active plan is unavailable")
@@ -75,7 +75,7 @@ func (s *CollectorPlanDeliveryService) Fetch(ctx context.Context, collectorID ID
 	if plan.Status != CollectorPlanActive || (!plan.NotBefore.IsZero() && now.Before(plan.NotBefore)) || !now.Before(plan.ExpiresAt) {
 		return CollectorPlanDelivery{}, ErrCollectorPlanUnavailable
 	}
-	metadata := flowcollect.PlanSignatureMetadata{
+	metadata := flowplan.PlanSignatureMetadata{
 		PlanID: string(plan.ID), TenantID: string(plan.TenantID), CollectorID: string(plan.CollectorID),
 		ConfigVersion: plan.ConfigVersion, PlanSchemaVersion: plan.PlanSchemaVersion,
 		SpecHash: plan.SpecHash, SigningKeyID: plan.SigningKeyID,
@@ -84,7 +84,7 @@ func (s *CollectorPlanDeliveryService) Fetch(ctx context.Context, collectorID ID
 	if !plan.NotBefore.IsZero() {
 		metadata.NotBeforeUnixMilli = plan.NotBefore.UnixMilli()
 	}
-	envelope, err := flowcollect.MarshalControlPlaneSignedPlan(metadata, plan.SpecJSON, plan.Signature)
+	envelope, err := flowplan.MarshalControlPlaneSignedPlan(metadata, plan.SpecJSON, plan.Signature)
 	if err != nil {
 		return CollectorPlanDelivery{}, fmt.Errorf("encode active collector plan delivery: %w", err)
 	}

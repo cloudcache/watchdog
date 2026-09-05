@@ -167,10 +167,7 @@ func TestNewAPIV1RouterReadiness(t *testing.T) {
 
 func TestNewAPIV1RouterRuntimeHealthRequiresAuthentication(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{RuntimeHealth: func() PlatformRuntimeHealth {
-		return PlatformRuntimeHealth{FlowStateCleanup: FlowStateCleanupRuntimeStatus{
-			Enabled: true,
-			Health:  FlowStateCleanupRuntimeHealth{Started: true, Running: true, Ready: true, ReconcileIdleTotal: 4},
-		}}
+		return PlatformRuntimeHealth{}
 	}})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/runtime", nil))
@@ -183,10 +180,7 @@ func TestNewAPIV1RouterRuntimeHealthRequiresAuthentication(t *testing.T) {
 			return AuthContext{TenantID: "tenant-a", UserID: "user-a"}, nil
 		},
 		RuntimeHealth: func() PlatformRuntimeHealth {
-			return PlatformRuntimeHealth{FlowStateCleanup: FlowStateCleanupRuntimeStatus{
-				Enabled: true,
-				Health:  FlowStateCleanupRuntimeHealth{Started: true, Running: true, Ready: true, ReconcileIdleTotal: 4},
-			}, CollectorPrincipalProvider: CollectorPrincipalProviderRuntimeStatus{
+			return PlatformRuntimeHealth{CollectorPrincipalProvider: CollectorPrincipalProviderRuntimeStatus{
 				Enabled: true,
 				Health: CollectorPrincipalProviderRuntimeHealth{
 					AcceptingRequests: true, RequestSuccessTotal: 3,
@@ -196,7 +190,7 @@ func TestNewAPIV1RouterRuntimeHealthRequiresAuthentication(t *testing.T) {
 	})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/runtime", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"reconcile_idle_total":4`) || !strings.Contains(rec.Body.String(), `"request_success_total":3`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"request_success_total":3`) {
 		t.Fatalf("authenticated status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
@@ -205,12 +199,12 @@ func TestNewAPIV1RouterRuntimeHealthRequiresAuthentication(t *testing.T) {
 			return AuthContext{TenantID: "tenant-a", UserID: "user-a"}, nil
 		},
 		RuntimeMetrics: func() []byte {
-			return []byte("watchdog_flow_state_cleanup_ready 1\n")
+			return []byte("watchdog_collector_principal_provider_enabled 1\n")
 		},
 	})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/runtime/metrics", nil))
-	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || !strings.Contains(rec.Body.String(), "cleanup_ready 1") {
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || !strings.Contains(rec.Body.String(), "principal_provider_enabled 1") {
 		t.Fatalf("metrics status = %d, content type = %q, body = %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
 }

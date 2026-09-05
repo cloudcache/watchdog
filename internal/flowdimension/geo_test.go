@@ -77,6 +77,112 @@ func TestLoadGeoIndexValidatesAndLooksUpBothFamilies(t *testing.T) {
 	}
 }
 
+func TestLoadGeoV2IndexCompilesStableFiveLevelPath(t *testing.T) {
+	dictionary := []GeoDictionaryEntry{
+		{Kind: "continent", Code: "Asia", Name: "亚洲", Enabled: true},
+		{Kind: "region", Code: "EastAsia", Name: "东亚", ParentCode: "Asia", Enabled: true},
+		{Kind: "country", Code: "CN", Name: "中国", ParentCode: "EastAsia", Enabled: true},
+		{Kind: "province", Code: "330000", Name: "浙江省", ParentCode: "CN", Enabled: true},
+		{Kind: "city", Code: "330100", Name: "杭州市", ParentCode: "330000", Enabled: true},
+		{Kind: "city", Code: "330200", Name: "宁波市", ParentCode: "330000", Enabled: true},
+		{Kind: "city", Code: "330300", Name: "温州市", ParentCode: "330000", Enabled: false},
+	}
+	directory := writeGeoV2Fixture(t, t.TempDir(), "geo-v2",
+		[]string{"203.0.113.0,203.0.113.255,CN,330100,浙江省,杭州市,0,0,330100"},
+		[]string{"2001:db8::,2001:db8::ffff,CN,330100,浙江省,杭州市,0,0,330100"},
+		nil, dictionary,
+	)
+	index, err := LoadGeoIndex(directory, GeoLoadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata := index.Metadata(); metadata.Schema != GeoSchemaV2 || metadata.Version != "geo-v2" {
+		t.Fatalf("unexpected metadata: %+v", metadata)
+	}
+	for _, address := range []string{"203.0.113.1", "2001:db8::1"} {
+		info, ok := index.Lookup(netip.MustParseAddr(address))
+		if !ok || info.Source != GeoSchemaV2 || info.ContinentID != "Asia" || info.RegionID != "EastAsia" ||
+			info.CountryID != "CN" || info.ProvinceID != "330000" || info.CityID != "330100" || info.ASN != 0 {
+			t.Fatalf("Lookup(%s) = %+v, %v", address, info, ok)
+		}
+	}
+	node, ok := index.GeoNode("330100")
+	if !ok || node.Name != "杭州市" || node.ParentCode != "330000" {
+		t.Fatalf("GeoNode(330100) = %+v, %v", node, ok)
+	}
+	breadcrumb, ok := index.GeoBreadcrumb("330100")
+	if !ok || geoCodes(breadcrumb) != "Asia/EastAsia/CN/330000/330100" {
+		t.Fatalf("GeoBreadcrumb(330100) = %+v, %v", breadcrumb, ok)
+	}
+	children, ok := index.GeoChildren("330000")
+	if !ok || geoCodes(children) != "330100/330200" {
+		t.Fatalf("GeoChildren(330000) = %+v, %v", children, ok)
+	}
+	descendants, err := index.GeoDescendantCodes("CN", "city", 10)
+	if err != nil || strings.Join(descendants, "/") != "330100/330200" {
+		t.Fatalf("GeoDescendantCodes(CN, city) = %v, %v", descendants, err)
+	}
+	if _, err := index.GeoDescendantCodes("CN", "city", 1); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("bounded Geo descendant expansion error = %v", err)
+	}
+	if _, err := index.GeoDescendantCodes("CN", "continent", 10); err == nil {
+		t.Fatal("reverse Geo descendant expansion succeeded")
+	}
+	if _, err := index.GeoDescendantCodes("CN", "city", 0); err == nil {
+		t.Fatal("unbounded Geo descendant expansion succeeded")
+	}
+}
+
+func TestLoadGeoV2IndexRejectsInvalidTreeAndRangeReferences(t *testing.T) {
+	validTree := func() []GeoDictionaryEntry {
+		return []GeoDictionaryEntry{
+			{Kind: "continent", Code: "Asia", Name: "亚洲", Enabled: true},
+			{Kind: "country", Code: "CN", Name: "中国", ParentCode: "Asia", Enabled: true},
+			{Kind: "province", Code: "330000", Name: "浙江省", ParentCode: "CN", Enabled: true},
+			{Kind: "city", Code: "330100", Name: "杭州市", ParentCode: "330000", Enabled: true},
+			{Kind: "city", Code: "330200", Name: "宁波市", ParentCode: "330000", Enabled: true},
+		}
+	}
+	tests := []struct {
+		name       string
+		row        string
+		dictionary []GeoDictionaryEntry
+		want       string
+	}{
+		{name: "missing leaf", row: "203.0.113.0,203.0.113.255,CN,330100,浙江省,杭州市,0,0,missing", dictionary: validTree(), want: "geo_leaf_code"},
+		{name: "country conflict", row: "203.0.113.0,203.0.113.255,US,,California,Los Angeles,0,0,330100", dictionary: validTree(), want: "country conflicts"},
+		{name: "city conflict", row: "203.0.113.0,203.0.113.255,CN,330200,浙江省,宁波市,0,0,330100", dictionary: validTree(), want: "city conflicts"},
+		{name: "disabled ancestor", row: "203.0.113.0,203.0.113.255,CN,330100,浙江省,杭州市,0,0,330100", dictionary: []GeoDictionaryEntry{
+			{Kind: "continent", Code: "Asia", Name: "亚洲", Enabled: false},
+			{Kind: "country", Code: "CN", Name: "中国", ParentCode: "Asia", Enabled: true},
+			{Kind: "province", Code: "330000", Name: "浙江省", ParentCode: "CN", Enabled: true},
+			{Kind: "city", Code: "330100", Name: "杭州市", ParentCode: "330000", Enabled: true},
+		}, want: "disabled dictionary node"},
+		{name: "repeated layer", dictionary: []GeoDictionaryEntry{
+			{Kind: "country", Code: "CN", Name: "中国", Enabled: true},
+			{Kind: "country", Code: "CN-East", Name: "中国东部", ParentCode: "CN", Enabled: true},
+		}, want: "invalid parent layer"},
+		{name: "reverse layer", dictionary: []GeoDictionaryEntry{
+			{Kind: "province", Code: "330000", Name: "浙江省", Enabled: true},
+			{Kind: "country", Code: "CN", Name: "中国", ParentCode: "330000", Enabled: true},
+		}, want: "invalid parent layer"},
+		{name: "unsupported kind", dictionary: []GeoDictionaryEntry{{Kind: "district", Code: "330106", Name: "西湖区", Enabled: true}}, want: "unsupported v2 kind"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := test.row
+			if row == "" {
+				row = "203.0.113.0,203.0.113.255,CN,330100,浙江省,杭州市,0,0,330100"
+			}
+			directory := writeGeoV2Fixture(t, t.TempDir(), "geo-invalid", []string{row}, nil, nil, test.dictionary)
+			_, err := LoadGeoIndex(directory, GeoLoadLimits{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadGeoIndex error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadGeoIndexAcceptsExplicitVersionedEmptySnapshot(t *testing.T) {
 	directory := writeGeoFixture(t, t.TempDir(), "geo-empty", nil, nil, nil, nil)
 	index, err := LoadGeoIndex(directory, GeoLoadLimits{})
@@ -404,12 +510,28 @@ func BenchmarkGeoIndexLookup(b *testing.B) {
 	}
 }
 
+func geoCodes(entries []GeoDictionaryEntry) string {
+	codes := make([]string, len(entries))
+	for position, entry := range entries {
+		codes[position] = entry.Code
+	}
+	return strings.Join(codes, "/")
+}
+
 type testTB interface {
 	Helper()
 	Fatalf(string, ...any)
 }
 
 func writeGeoFixture(t testTB, root, version string, ipv4, ipv6 []string, operators []GeoOperator, dictionary []GeoDictionaryEntry) string {
+	return writeGeoFixtureSchema(t, root, GeoSchemaV1, version, ipv4, ipv6, operators, dictionary)
+}
+
+func writeGeoV2Fixture(t testTB, root, version string, ipv4, ipv6 []string, operators []GeoOperator, dictionary []GeoDictionaryEntry) string {
+	return writeGeoFixtureSchema(t, root, GeoSchemaV2, version, ipv4, ipv6, operators, dictionary)
+}
+
+func writeGeoFixtureSchema(t testTB, root, schema, version string, ipv4, ipv6 []string, operators []GeoOperator, dictionary []GeoDictionaryEntry) string {
 	t.Helper()
 	directory := filepath.Join(root, version)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -422,13 +544,13 @@ func writeGeoFixture(t testTB, root, version string, ipv4, ipv6 []string, operat
 		dictionary = []GeoDictionaryEntry{}
 	}
 	files := map[string][]byte{
-		"ipv4.csv.zst":   encodeTestZstd(t, geoCSV(ipv4)),
-		"ipv6.csv.zst":   encodeTestZstd(t, geoCSV(ipv6)),
+		"ipv4.csv.zst":   encodeTestZstd(t, geoCSVSchema(schema, ipv4)),
+		"ipv6.csv.zst":   encodeTestZstd(t, geoCSVSchema(schema, ipv6)),
 		"operators.json": marshalTestJSON(t, operators),
 		"geo_dict.json":  marshalTestJSON(t, dictionary),
 	}
 	manifest := GeoManifest{
-		Schema: GeoSchema, Version: version, GeneratedAt: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		Schema: schema, Version: version, GeneratedAt: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
 		EffectiveFrom:   time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
 		AdminCodeSystem: GeoAdminCodeSystem, UnknownCountry: GeoUnknownCountry, Files: make(map[string]GeoFileSpec, len(files)),
 	}
@@ -451,7 +573,15 @@ func writeGeoFixture(t testTB, root, version string, ipv4, ipv6 []string, operat
 }
 
 func geoCSV(rows []string) []byte {
-	all := append([]string{"ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"}, rows...)
+	return geoCSVSchema(GeoSchemaV1, rows)
+}
+
+func geoCSVSchema(schema string, rows []string) []byte {
+	header := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"
+	if schema == GeoSchemaV2 {
+		header += ",geo_leaf_code"
+	}
+	all := append([]string{header}, rows...)
 	return []byte(strings.Join(all, "\n") + "\n")
 }
 

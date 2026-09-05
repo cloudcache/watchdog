@@ -1,0 +1,416 @@
+// SPDX-FileCopyrightText: 2026 Watchdog contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package flowquery
+
+import (
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"net/netip"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ClickHouse/ch-go"
+	"github.com/ClickHouse/ch-go/proto"
+)
+
+const (
+	maxDetailRange           = 24 * time.Hour
+	maxDetailLimit           = 500
+	maxDetailValuesPerFilter = 100
+	maxDetailFilterValues    = 256
+	detailCursorPrefix       = "v1."
+	detailCursorPayloadSize  = 8 + 32
+)
+
+type DetailEndpoint string
+
+const (
+	DetailEndpointSource      DetailEndpoint = "source"
+	DetailEndpointDestination DetailEndpoint = "destination"
+	DetailEndpointEither      DetailEndpoint = "either"
+)
+
+type DetailField string
+
+const (
+	DetailFieldReceivedTime          DetailField = "received_time"
+	DetailFieldSourceIP              DetailField = "src_ip"
+	DetailFieldDestinationIP         DetailField = "dst_ip"
+	DetailFieldSourcePort            DetailField = "src_port"
+	DetailFieldDestinationPort       DetailField = "dst_port"
+	DetailFieldIPProtocol            DetailField = "ip_protocol"
+	DetailFieldTCPFlags              DetailField = "tcp_flags"
+	DetailFieldBusinessDirection     DetailField = "business_direction"
+	DetailFieldBusiness              DetailField = "business"
+	DetailFieldCategory              DetailField = "category"
+	DetailFieldSourceASN             DetailField = "source_asn"
+	DetailFieldDestinationASN        DetailField = "destination_asn"
+	DetailFieldRemoteASN             DetailField = "remote_asn"
+	DetailFieldRemoteASNSource       DetailField = "remote_asn_source"
+	DetailFieldRemoteCountry         DetailField = "remote_country"
+	DetailFieldRawBytes              DetailField = "raw_bytes"
+	DetailFieldRawPackets            DetailField = "raw_packets"
+	DetailFieldEstimatedBytes        DetailField = "estimated_bytes"
+	DetailFieldEstimatedPackets      DetailField = "estimated_packets"
+	DetailFieldEstimatedValid        DetailField = "estimated_valid"
+	DetailFieldSamplingMode          DetailField = "sampling_mode"
+	DetailFieldSamplingRate          DetailField = "sampling_rate"
+	DetailFieldSamplingSource        DetailField = "sampling_source"
+	DetailFieldQualityFlags          DetailField = "quality_flags"
+	DetailFieldFlowDurationMS        DetailField = "flow_duration_ms"
+	DetailFieldTargetID              DetailField = "target_id"
+	DetailFieldDeviceID              DetailField = "device_id"
+	DetailFieldExporterID            DetailField = "exporter_id"
+	DetailFieldObservationIfIndex    DetailField = "observation_if_index"
+	DetailFieldIngressIfIndex        DetailField = "ingress_if_index"
+	DetailFieldEgressIfIndex         DetailField = "egress_if_index"
+	DetailFieldObservationDirection  DetailField = "observation_direction"
+	DetailFieldDimensionSnapshotID   DetailField = "dimension_snapshot_id"
+	DetailFieldDimensionVersion      DetailField = "dimension_version"
+	DetailFieldGeoVersion            DetailField = "geo_version"
+	DetailFieldClassificationVersion DetailField = "classification_version"
+	DetailFieldLocalIP               DetailField = "local_ip"
+	DetailFieldRemoteIP              DetailField = "remote_ip"
+	DetailFieldLocalPort             DetailField = "local_port"
+	DetailFieldRemotePort            DetailField = "remote_port"
+	DetailFieldLocalPrefixID         DetailField = "local_prefix_id"
+	DetailFieldRemotePrefixID        DetailField = "remote_prefix_id"
+	DetailFieldRemoteISPID           DetailField = "remote_isp_id"
+	DetailFieldRemoteGeoContinentID  DetailField = "remote_geo_continent_id"
+	DetailFieldRemoteGeoRegionID     DetailField = "remote_geo_region_id"
+	DetailFieldRemoteGeoCountryID    DetailField = "remote_geo_country_id"
+	DetailFieldRemoteGeoProvinceID   DetailField = "remote_geo_province_id"
+	DetailFieldRemoteGeoCityID       DetailField = "remote_geo_city_id"
+)
+
+type detailFieldKind uint8
+
+const (
+	detailKindString detailFieldKind = iota + 1
+	detailKindUInt64
+	detailKindBool
+	detailKindTime
+)
+
+type detailFieldSpec struct {
+	field      DetailField
+	expression string
+	kind       detailFieldKind
+}
+
+var detailFieldRegistry = map[DetailField]detailFieldSpec{
+	DetailFieldReceivedTime:          {DetailFieldReceivedTime, "received_time", detailKindTime},
+	DetailFieldSourceIP:              {DetailFieldSourceIP, "toString(src_ip)", detailKindString},
+	DetailFieldDestinationIP:         {DetailFieldDestinationIP, "toString(dst_ip)", detailKindString},
+	DetailFieldSourcePort:            {DetailFieldSourcePort, "toUInt64(src_port)", detailKindUInt64},
+	DetailFieldDestinationPort:       {DetailFieldDestinationPort, "toUInt64(dst_port)", detailKindUInt64},
+	DetailFieldIPProtocol:            {DetailFieldIPProtocol, "toUInt64(ip_protocol)", detailKindUInt64},
+	DetailFieldTCPFlags:              {DetailFieldTCPFlags, "toUInt64(tcp_flags)", detailKindUInt64},
+	DetailFieldBusinessDirection:     {DetailFieldBusinessDirection, "toString(business_direction)", detailKindString},
+	DetailFieldBusiness:              {DetailFieldBusiness, "business", detailKindString},
+	DetailFieldCategory:              {DetailFieldCategory, "toString(category)", detailKindString},
+	DetailFieldSourceASN:             {DetailFieldSourceASN, "toUInt64(source_asn)", detailKindUInt64},
+	DetailFieldDestinationASN:        {DetailFieldDestinationASN, "toUInt64(destination_asn)", detailKindUInt64},
+	DetailFieldRemoteASN:             {DetailFieldRemoteASN, "toUInt64(remote_asn)", detailKindUInt64},
+	DetailFieldRemoteASNSource:       {DetailFieldRemoteASNSource, "toString(remote_asn_source)", detailKindString},
+	DetailFieldRemoteCountry:         {DetailFieldRemoteCountry, "toString(remote_country)", detailKindString},
+	DetailFieldRawBytes:              {DetailFieldRawBytes, "raw_bytes", detailKindUInt64},
+	DetailFieldRawPackets:            {DetailFieldRawPackets, "raw_packets", detailKindUInt64},
+	DetailFieldEstimatedBytes:        {DetailFieldEstimatedBytes, "estimated_bytes", detailKindUInt64},
+	DetailFieldEstimatedPackets:      {DetailFieldEstimatedPackets, "estimated_packets", detailKindUInt64},
+	DetailFieldEstimatedValid:        {DetailFieldEstimatedValid, "estimated_valid", detailKindBool},
+	DetailFieldSamplingMode:          {DetailFieldSamplingMode, "toString(sampling_mode)", detailKindString},
+	DetailFieldSamplingRate:          {DetailFieldSamplingRate, "sampling_rate", detailKindUInt64},
+	DetailFieldSamplingSource:        {DetailFieldSamplingSource, "toString(sampling_source)", detailKindString},
+	DetailFieldQualityFlags:          {DetailFieldQualityFlags, "quality_flags", detailKindUInt64},
+	DetailFieldFlowDurationMS:        {DetailFieldFlowDurationMS, "flow_duration_ms", detailKindUInt64},
+	DetailFieldTargetID:              {DetailFieldTargetID, "target_id", detailKindString},
+	DetailFieldDeviceID:              {DetailFieldDeviceID, "device_id", detailKindString},
+	DetailFieldExporterID:            {DetailFieldExporterID, "exporter_id", detailKindString},
+	DetailFieldObservationIfIndex:    {DetailFieldObservationIfIndex, "toUInt64(observation_if_index)", detailKindUInt64},
+	DetailFieldIngressIfIndex:        {DetailFieldIngressIfIndex, "toUInt64(ingress_if_index)", detailKindUInt64},
+	DetailFieldEgressIfIndex:         {DetailFieldEgressIfIndex, "toUInt64(egress_if_index)", detailKindUInt64},
+	DetailFieldObservationDirection:  {DetailFieldObservationDirection, "toString(observation_direction)", detailKindString},
+	DetailFieldDimensionSnapshotID:   {DetailFieldDimensionSnapshotID, "dimension_snapshot_id", detailKindString},
+	DetailFieldDimensionVersion:      {DetailFieldDimensionVersion, "dimension_version", detailKindUInt64},
+	DetailFieldGeoVersion:            {DetailFieldGeoVersion, "geo_version", detailKindString},
+	DetailFieldClassificationVersion: {DetailFieldClassificationVersion, "toUInt64(classification_version)", detailKindUInt64},
+	DetailFieldLocalIP:               {DetailFieldLocalIP, "toString(local_ip)", detailKindString},
+	DetailFieldRemoteIP:              {DetailFieldRemoteIP, "toString(remote_ip)", detailKindString},
+	DetailFieldLocalPort:             {DetailFieldLocalPort, "toUInt64(local_port)", detailKindUInt64},
+	DetailFieldRemotePort:            {DetailFieldRemotePort, "toUInt64(remote_port)", detailKindUInt64},
+	DetailFieldLocalPrefixID:         {DetailFieldLocalPrefixID, "local_prefix_id", detailKindString},
+	DetailFieldRemotePrefixID:        {DetailFieldRemotePrefixID, "remote_prefix_id", detailKindString},
+	DetailFieldRemoteISPID:           {DetailFieldRemoteISPID, "toUInt64(remote_isp_id)", detailKindUInt64},
+	DetailFieldRemoteGeoContinentID:  {DetailFieldRemoteGeoContinentID, "remote_geo_continent_id", detailKindString},
+	DetailFieldRemoteGeoRegionID:     {DetailFieldRemoteGeoRegionID, "remote_geo_region_id", detailKindString},
+	DetailFieldRemoteGeoCountryID:    {DetailFieldRemoteGeoCountryID, "remote_geo_country_id", detailKindString},
+	DetailFieldRemoteGeoProvinceID:   {DetailFieldRemoteGeoProvinceID, "remote_geo_province_id", detailKindString},
+	DetailFieldRemoteGeoCityID:       {DetailFieldRemoteGeoCityID, "remote_geo_city_id", detailKindString},
+}
+
+var defaultDetailFields = []DetailField{
+	DetailFieldSourceIP, DetailFieldDestinationIP, DetailFieldSourcePort, DetailFieldDestinationPort,
+	DetailFieldIPProtocol, DetailFieldBusinessDirection, DetailFieldCategory, DetailFieldRemoteASN,
+	DetailFieldRemoteCountry, DetailFieldRawBytes, DetailFieldEstimatedBytes, DetailFieldSamplingRate,
+	DetailFieldQualityFlags,
+}
+
+type DetailFilters struct {
+	Directions  []string `json:"directions,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
+	Businesses  []string `json:"businesses,omitempty"`
+	TargetIDs   []string `json:"target_ids,omitempty"`
+	DeviceIDs   []string `json:"device_ids,omitempty"`
+	ExporterIDs []string `json:"exporter_ids,omitempty"`
+}
+
+type DetailRequest struct {
+	IP       string         `json:"ip"`
+	Endpoint DetailEndpoint `json:"endpoint"`
+	From     time.Time      `json:"from"`
+	To       time.Time      `json:"to"`
+	View     View           `json:"view"`
+	Fields   []DetailField  `json:"fields,omitempty"`
+	Filters  DetailFilters  `json:"filters,omitempty"`
+	Limit    uint16         `json:"limit"`
+	Cursor   string         `json:"cursor,omitempty"`
+}
+
+type detailCursorKey struct {
+	eventTime time.Time
+	recordID  [32]byte
+}
+
+type CompiledDetail struct {
+	Query         ch.Query
+	From          time.Time
+	To            time.Time
+	IP            netip.Addr
+	Endpoint      DetailEndpoint
+	Fields        []DetailField
+	Limit         uint16
+	MaxResultRows uint64
+	cursor        *detailCursorKey
+}
+
+func DetailFields() []DetailField {
+	result := make([]DetailField, 0, len(detailFieldRegistry))
+	for field := range detailFieldRegistry {
+		result = append(result, field)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result
+}
+
+func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledDetail, error) {
+	if !validTenant(scope.TenantID) {
+		return CompiledDetail{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
+	}
+	if request.View == "" {
+		return CompiledDetail{}, requestError("view", ErrorRequired, "view is required")
+	}
+	if request.View != ViewCustomer {
+		return CompiledDetail{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in detail schema v1")
+	}
+	ip, err := netip.ParseAddr(request.IP)
+	if err != nil || ip.Zone() != "" {
+		return CompiledDetail{}, requestError("ip", ErrorInvalid, "ip must be an IPv4 or IPv6 address without a zone")
+	}
+	ip = ip.Unmap()
+	if request.Endpoint != DetailEndpointSource && request.Endpoint != DetailEndpointDestination && request.Endpoint != DetailEndpointEither {
+		return CompiledDetail{}, requestError("endpoint", ErrorUnsupported, "endpoint must be source, destination, or either")
+	}
+	from, to := request.From.UTC(), request.To.UTC()
+	if request.From.IsZero() || request.To.IsZero() {
+		return CompiledDetail{}, requestError("from/to", ErrorRequired, "from and to are required")
+	}
+	if !to.After(from) || to.Sub(from) > maxDetailRange || from.Nanosecond()%int(time.Millisecond) != 0 || to.Nanosecond()%int(time.Millisecond) != 0 {
+		return CompiledDetail{}, requestError("from/to", ErrorInvalid, "range must be increasing, millisecond-aligned, and no longer than 24 hours")
+	}
+	if to.After(now.UTC()) {
+		return CompiledDetail{}, requestError("to", ErrorIncompleteRange, "to cannot be in the future")
+	}
+	if request.Limit < 1 || request.Limit > maxDetailLimit {
+		return CompiledDetail{}, requestError("limit", ErrorLimitExceeded, "limit must be 1..500")
+	}
+	fields, err := normalizeDetailFields(request.Fields)
+	if err != nil {
+		return CompiledDetail{}, err
+	}
+	conditions, filterParameters, err := compileDetailFilters(request.Filters)
+	if err != nil {
+		return CompiledDetail{}, err
+	}
+	parameters := []proto.Parameter{
+		stringParameter("tenant", scope.TenantID),
+		stringParameter("from", formatDateTime64(from)),
+		stringParameter("to", formatDateTime64(to)),
+		stringParameter("ip", ip.String()),
+		uintParameter("fetch_limit", uint64(request.Limit)+1),
+	}
+	parameters = append(parameters, filterParameters...)
+	matchCondition := "(src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))"
+	switch request.Endpoint {
+	case DetailEndpointSource:
+		matchCondition = "src_ip = toIPv6({ip:String})"
+	case DetailEndpointDestination:
+		matchCondition = "dst_ip = toIPv6({ip:String})"
+	}
+	var cursor *detailCursorKey
+	if request.Cursor != "" {
+		decoded, err := decodeDetailCursor(request.Cursor)
+		if err != nil {
+			return CompiledDetail{}, requestError("cursor", ErrorInvalid, err.Error())
+		}
+		if decoded.eventTime.Before(from) || !decoded.eventTime.Before(to) {
+			return CompiledDetail{}, requestError("cursor", ErrorInvalid, "cursor is outside the requested time range")
+		}
+		cursor = &decoded
+		conditions = append(conditions, "AND (event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))")
+		parameters = append(parameters,
+			stringParameter("cursor_time", formatDateTime64(decoded.eventTime)),
+			stringParameter("cursor_record_id", hex.EncodeToString(decoded.recordID[:])),
+		)
+	}
+	selectFields := make([]string, 0, len(fields))
+	for _, field := range fields {
+		spec := detailFieldRegistry[field]
+		selectFields = append(selectFields, fmt.Sprintf("  %s AS %s", spec.expression, spec.field))
+	}
+	body := fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), matchCondition, strings.Join(conditions, "\n  "))
+	maxRows := uint64(request.Limit) + 1
+	query := ch.Query{
+		Body: body, Parameters: parameters,
+		Settings: []ch.Setting{
+			{Key: "max_execution_time", Value: "10", Important: true},
+			{Key: "max_result_rows", Value: strconv.FormatUint(maxRows, 10), Important: true},
+			{Key: "result_overflow_mode", Value: "throw", Important: true},
+			{Key: "max_rows_to_read", Value: "5000000", Important: true},
+			{Key: "max_bytes_to_read", Value: "1073741824", Important: true},
+			{Key: "read_overflow_mode", Value: "throw", Important: true},
+		},
+	}
+	return CompiledDetail{
+		Query: query, From: from, To: to, IP: ip, Endpoint: request.Endpoint,
+		Fields: fields, Limit: request.Limit, MaxResultRows: maxRows, cursor: cursor,
+	}, nil
+}
+
+func normalizeDetailFields(input []DetailField) ([]DetailField, error) {
+	if len(input) == 0 {
+		input = defaultDetailFields
+	}
+	if len(input) > len(detailFieldRegistry) {
+		return nil, requestError("fields", ErrorLimitExceeded, "too many fields")
+	}
+	requested := make(map[DetailField]struct{}, len(input))
+	for _, field := range input {
+		if _, exists := detailFieldRegistry[field]; !exists {
+			return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not in the detail registry", field))
+		}
+		requested[field] = struct{}{}
+	}
+	result := make([]DetailField, 0, len(requested))
+	for _, field := range DetailFields() {
+		if _, exists := requested[field]; exists {
+			result = append(result, field)
+		}
+	}
+	return result, nil
+}
+
+func compileDetailFilters(filters DetailFilters) ([]string, []proto.Parameter, error) {
+	type filterSpec struct {
+		field, column, prefix string
+		values                []string
+		allowed               map[string]struct{}
+	}
+	filtersList := []filterSpec{
+		{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
+		{"filters.categories", "category", "detail_category", filters.Categories, validCategories},
+		{"filters.businesses", "business", "detail_business", filters.Businesses, nil},
+		{"filters.target_ids", "target_id", "detail_target", filters.TargetIDs, nil},
+		{"filters.device_ids", "device_id", "detail_device", filters.DeviceIDs, nil},
+		{"filters.exporter_ids", "exporter_id", "detail_exporter", filters.ExporterIDs, nil},
+	}
+	conditions := make([]string, 0, len(filtersList))
+	parameters := make([]proto.Parameter, 0)
+	total := 0
+	for _, filter := range filtersList {
+		if len(filter.values) > maxDetailValuesPerFilter || total+len(filter.values) > maxDetailFilterValues {
+			return nil, nil, requestError(filter.field, ErrorLimitExceeded, "too many detail filter values")
+		}
+		total += len(filter.values)
+		values, err := normalizeStrings(filter.field, filter.values, filter.allowed)
+		if err != nil {
+			return nil, nil, err
+		}
+		placeholders := make([]string, 0, len(values))
+		for index, value := range values {
+			key := fmt.Sprintf("%s_%d", filter.prefix, index)
+			placeholders = append(placeholders, fmt.Sprintf("{%s:String}", key))
+			parameters = append(parameters, stringParameter(key, value))
+		}
+		if len(placeholders) > 0 {
+			conditions = append(conditions, fmt.Sprintf("AND %s IN (%s)", filter.column, strings.Join(placeholders, ", ")))
+		}
+	}
+	return conditions, parameters, nil
+}
+
+func EncodeDetailCursor(eventTime time.Time, recordIDHex string) (string, error) {
+	if eventTime.IsZero() || eventTime.UnixMilli() < 0 || eventTime.Nanosecond()%int(time.Millisecond) != 0 {
+		return "", requestError("cursor", ErrorInvalid, "cursor event time must be millisecond-aligned")
+	}
+	recordID, err := hex.DecodeString(recordIDHex)
+	if err != nil || len(recordID) != 32 {
+		return "", requestError("cursor", ErrorInvalid, "cursor record id must be 64 hexadecimal characters")
+	}
+	payload := make([]byte, detailCursorPayloadSize)
+	binary.BigEndian.PutUint64(payload[:8], uint64(eventTime.UTC().UnixMilli()))
+	copy(payload[8:], recordID)
+	return detailCursorPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeDetailCursor(value string) (detailCursorKey, error) {
+	if !strings.HasPrefix(value, detailCursorPrefix) {
+		return detailCursorKey{}, fmt.Errorf("cursor version is unsupported")
+	}
+	encoded := strings.TrimPrefix(value, detailCursorPrefix)
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(payload) != detailCursorPayloadSize || base64.RawURLEncoding.EncodeToString(payload) != encoded {
+		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
+	}
+	millis := binary.BigEndian.Uint64(payload[:8])
+	if millis > uint64(^uint64(0)>>1) {
+		return detailCursorKey{}, fmt.Errorf("cursor time is invalid")
+	}
+	key := detailCursorKey{eventTime: time.UnixMilli(int64(millis)).UTC()}
+	copy(key.recordID[:], payload[8:])
+	return key, nil
+}
+
+func formatDateTime64(value time.Time) string {
+	return value.UTC().Format("2006-01-02 15:04:05.000")
+}
+
+const detailQuerySQL = `SELECT
+  event_time,
+  lower(hex(record_id)) AS record_id,
+  toString(src_ip) AS _source_ip,
+  toString(dst_ip) AS _destination_ip,
+%s
+FROM flow_records FINAL
+WHERE tenant_id = {tenant:String}
+  AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}
+  AND disposition = 'count'
+  AND %s
+  %s
+ORDER BY event_time DESC, record_id DESC
+LIMIT {fetch_limit:UInt16}`

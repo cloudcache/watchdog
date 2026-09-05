@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
 
 const collectorEvidenceMaxReceiptBytes = 1 << 20
@@ -90,20 +88,6 @@ type CollectorDrainReceipt struct {
 	ReceiptNonce             string
 }
 
-type CollectorStateRestoreReceipt struct {
-	TenantID                   ID
-	TransferID                 ID
-	AuthenticatedCollectorID   ID
-	Kind                       flowcollect.StateCheckpointKind
-	StateIdentityKey           []byte
-	BootID                     string
-	AppliedConfigVersion       uint64
-	RestoredOldOwnershipEpoch  uint64
-	RestoredOldGeneration      uint64
-	NewEpochBaselineGeneration uint64
-	ReceiptNonce               string
-}
-
 func validateCollectorServicePrincipalGrant(grant CollectorServicePrincipalGrant) error {
 	if grant.ID == "" || len(grant.ID) > 26 || grant.TenantID == "" || len(grant.TenantID) > 26 || grant.CollectorID == "" || len(grant.CollectorID) > 26 || grant.ServiceType != "kafka" || strings.TrimSpace(grant.PrincipalRef) == "" || len(grant.PrincipalRef) > 190 || !isPrintableASCII(grant.PrincipalRef) || strings.TrimSpace(grant.CredentialSecretRef) == "" || len(grant.CredentialSecretRef) > 255 || !isPrintableASCII(grant.CredentialSecretRef) || strings.TrimSpace(grant.Provider) == "" || len(grant.Provider) > 64 || !isPrintableASCII(grant.Provider) || !validSHA256Hex(grant.GrantOperationKey) || !validSHA256Hex(grant.GrantRequestHash) || strings.TrimSpace(grant.GrantReceiptRef) == "" || len(grant.GrantReceiptRef) > 512 || !isPrintableASCII(grant.GrantReceiptRef) || len(grant.GrantReceipt) == 0 || len(grant.GrantReceipt) > collectorEvidenceMaxReceiptBytes || grant.ActorID == "" || len(grant.ActorID) > 26 {
 		return errors.New("collector service principal grant is incomplete")
@@ -143,4 +127,9 @@ func evidencePayloadSHA256(payload []byte) (string, error) {
 	}
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func validSHA256Hex(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
 }

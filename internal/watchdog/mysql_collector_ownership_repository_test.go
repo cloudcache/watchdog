@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
@@ -64,13 +64,13 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 
 	base := time.Now().UTC().Truncate(time.Millisecond)
 	domainID := uint64(42)
-	oldSources := []flowcollect.SourceBinding{{
-		Protocol: flowcollect.ProtocolNetFlow9, SourcePrefix: "192.0.2.31/32",
+	oldSources := []flowplan.SourceBinding{{
+		Protocol: flowplan.ProtocolNetFlow9, SourcePrefix: "192.0.2.31/32",
 		ObservationDomainID: &domainID, TenantID: string(tenantID), ExporterID: string(exporterID),
 		TargetID: "target-flow-transfer", OwnershipEpoch: 5,
-		SamplingMode: flowcollect.SamplingModeSampled, Enabled: true,
+		SamplingMode: flowplan.SamplingModeSampled, Enabled: true,
 	}}
-	newSources := append([]flowcollect.SourceBinding(nil), oldSources...)
+	newSources := append([]flowplan.SourceBinding(nil), oldSources...)
 	newSources[0].OwnershipEpoch = 6
 	oldPlan1 := flowCollectorPlanFixture(t, "plan_transfer_old_00001", tenantID, oldCollectorID, userID, 1, 0, base, oldSources)
 	oldPlan1, err = store.CreateCollectorPlanRevision(ctx, oldPlan1)
@@ -155,21 +155,6 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	if err := store.CreateCollectorOwnershipTransfer(ctx, transfer); err != nil {
 		t.Fatal(err)
 	}
-	authority, err := store.GetFlowStateCleanupAuthority(ctx, tenantID, transferID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if authority.TransferID != transferID || authority.TenantID != tenantID || authority.ExporterID != transfer.ExporterID || authority.OldCollectorID != oldCollectorID || authority.OldPlanRevision != transfer.OldPlanRevision || authority.OldOwnershipEpoch != transfer.OldOwnershipEpoch || authority.ApprovalID != transfer.ApprovalID {
-		t.Fatalf("cleanup authority=%+v", authority)
-	}
-	evidenceProvider, err := NewMySQLFlowStateCleanupEvidenceProvider(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot := ownershipTransferCleanupSnapshot(t, tenantID, userID, exporterID, oldCollectorID)
-	if _, err := evidenceProvider.OwnershipFence(ctx, snapshot); !errors.Is(err, ErrCollectorEvidenceNotReady) {
-		t.Fatalf("early ownership fence error=%v", err)
-	}
 	if err := store.RecordCollectorDrain(ctx, CollectorDrainReceipt{
 		TenantID: tenantID, TransferID: transferID, AuthenticatedCollectorID: oldCollectorID,
 		BootID: "boot-old-1", AppliedConfigVersion: 2, ReceiptNonce: "drain-before-revoke-plan",
@@ -239,44 +224,6 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 		t.Fatalf("revoked principal=%+v err=%v", storedPrincipal, err)
 	}
 
-	fence, err := evidenceProvider.OwnershipFence(ctx, snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fence.OldCollectorID != string(oldCollectorID) || fence.NewCollectorID != string(newCollectorID) || fence.OldPlanRevision != 1 || fence.NewPlanRevision != 1 || fence.OldOwnershipEpoch != 5 || fence.NewOwnershipEpoch != 6 || !fence.UniqueOldPrincipal || fence.MaxClockSkew != 500*time.Millisecond || fence.ACLPropagationDelay != 2*time.Second {
-		t.Fatalf("ownership fence=%+v", fence)
-	}
-	if !fence.OldOwnerDrainedAt.After(fence.OldPlanRevokedAt) && !fence.OldOwnerDrainedAt.Equal(fence.OldPlanRevokedAt) {
-		t.Fatalf("drain precedes old plan revocation: %+v", fence)
-	}
-	if _, err := evidenceProvider.ReplacementRestoreProof(ctx, snapshot); !errors.Is(err, ErrCollectorEvidenceNotReady) {
-		t.Fatalf("early restore proof error=%v", err)
-	}
-	restore := CollectorStateRestoreReceipt{
-		TenantID: tenantID, TransferID: transferID, AuthenticatedCollectorID: newCollectorID,
-		Kind: snapshot.Old.Kind, StateIdentityKey: snapshot.Old.IdentityKey,
-		BootID: "boot-new-1", AppliedConfigVersion: 1,
-		RestoredOldOwnershipEpoch: 5, RestoredOldGeneration: snapshot.Old.StateGeneration,
-		NewEpochBaselineGeneration: 3, ReceiptNonce: "restore-receipt-1",
-	}
-	if err := store.RecordCollectorStateRestore(ctx, restore); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RecordCollectorStateRestore(ctx, restore); err != nil {
-		t.Fatalf("idempotent restore receipt: %v", err)
-	}
-	conflictingRestore := restore
-	conflictingRestore.RestoredOldGeneration++
-	if err := store.RecordCollectorStateRestore(ctx, conflictingRestore); !errors.Is(err, ErrCollectorEvidenceConflict) {
-		t.Fatalf("conflicting restore receipt error=%v", err)
-	}
-	proof, err := evidenceProvider.ReplacementRestoreProof(ctx, snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if proof.RestoredOldOwnershipEpoch != 5 || proof.RestoredOldGeneration != snapshot.Old.StateGeneration || proof.NewEpochBaselineGeneration != 3 {
-		t.Fatalf("restore proof=%+v", proof)
-	}
 	authenticator, err := NewMySQLCollectorMachineAuthenticator(db)
 	if err != nil {
 		t.Fatal(err)
@@ -316,32 +263,6 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("authenticated drain replay: %v", err)
 	}
-	if err := evidenceService.RecordStateRestore(ctx, newCollectorID, CollectorMachineCredential{CertificateFingerprint: certificateFingerprint}, CollectorStateRestoreReport{
-		TransferID: transferID, Kind: restore.Kind, StateIdentityKey: restore.StateIdentityKey,
-		AppliedConfigVersion:       restore.AppliedConfigVersion,
-		RestoredOldOwnershipEpoch:  restore.RestoredOldOwnershipEpoch,
-		RestoredOldGeneration:      restore.RestoredOldGeneration,
-		NewEpochBaselineGeneration: restore.NewEpochBaselineGeneration,
-		ReceiptNonce:               restore.ReceiptNonce,
-	}); err != nil {
-		t.Fatalf("authenticated restore replay: %v", err)
-	}
-	if err := evidenceService.RecordStateRestore(ctx, oldCollectorID, CollectorMachineCredential{Token: "old-collector-secret"}, CollectorStateRestoreReport{
-		TransferID: transferID, Kind: restore.Kind, StateIdentityKey: restore.StateIdentityKey,
-		AppliedConfigVersion:       restore.AppliedConfigVersion,
-		RestoredOldOwnershipEpoch:  restore.RestoredOldOwnershipEpoch,
-		RestoredOldGeneration:      restore.RestoredOldGeneration,
-		NewEpochBaselineGeneration: restore.NewEpochBaselineGeneration,
-		ReceiptNonce:               restore.ReceiptNonce,
-	}); !errors.Is(err, ErrCollectorEvidenceConflict) {
-		t.Fatalf("old collector restore error=%v", err)
-	}
-	if _, err := db.ExecContext(ctx, "UPDATE collector_state_restore_receipts SET receipt_sha256 = ? WHERE transfer_id = ?", strings.Repeat("F", 64), transferID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := evidenceProvider.ReplacementRestoreProof(ctx, snapshot); !errors.Is(err, ErrFlowStateCleanupInvalidEvidence) {
-		t.Fatalf("tampered restore proof error=%v", err)
-	}
 }
 
 func TestValidateFlowCollectorOwnershipPlanTransferRejectsSemanticGaps(t *testing.T) {
@@ -349,16 +270,16 @@ func TestValidateFlowCollectorOwnershipPlanTransferRejectsSemanticGaps(t *testin
 	tenantID, userID := ID("tenant_semantic_plan_001"), ID("user_semantic_plan_00001")
 	oldCollectorID, newCollectorID := ID("collector_semantic_old"), ID("collector_semantic_new")
 	domainID := uint64(42)
-	oldSource := flowcollect.SourceBinding{
-		Protocol: flowcollect.ProtocolIPFIX, SourcePrefix: "192.0.2.8/32", ObservationDomainID: &domainID,
+	oldSource := flowplan.SourceBinding{
+		Protocol: flowplan.ProtocolIPFIX, SourcePrefix: "192.0.2.8/32", ObservationDomainID: &domainID,
 		TenantID: string(tenantID), ExporterID: "exporter-semantic", TargetID: "target-semantic",
-		OwnershipEpoch: 7, SamplingMode: flowcollect.SamplingModeSampled, Enabled: true,
+		OwnershipEpoch: 7, SamplingMode: flowplan.SamplingModeSampled, Enabled: true,
 	}
 	newSource := oldSource
 	newSource.OwnershipEpoch = 8
-	oldPlan := flowCollectorPlanFixture(t, "plan_semantic_old_000001", tenantID, oldCollectorID, userID, 1, 0, at, []flowcollect.SourceBinding{oldSource})
+	oldPlan := flowCollectorPlanFixture(t, "plan_semantic_old_000001", tenantID, oldCollectorID, userID, 1, 0, at, []flowplan.SourceBinding{oldSource})
 	revokePlan := flowCollectorPlanFixture(t, "plan_semantic_old_000002", tenantID, oldCollectorID, userID, 2, 1, at, nil)
-	newPlan := flowCollectorPlanFixture(t, "plan_semantic_new_000001", tenantID, newCollectorID, userID, 1, 0, at, []flowcollect.SourceBinding{newSource})
+	newPlan := flowCollectorPlanFixture(t, "plan_semantic_new_000001", tenantID, newCollectorID, userID, 1, 0, at, []flowplan.SourceBinding{newSource})
 	transfer := CollectorOwnershipTransfer{TenantID: tenantID, ExporterID: "exporter-semantic", OldOwnershipEpoch: 7, NewOwnershipEpoch: 8}
 	if err := validateFlowCollectorOwnershipPlanTransfer(transfer, oldPlan, revokePlan, newPlan); err != nil {
 		t.Fatalf("valid semantic transfer: %v", err)
@@ -369,9 +290,9 @@ func TestValidateFlowCollectorOwnershipPlanTransferRejectsSemanticGaps(t *testin
 		revoke CollectorPlanRevision
 		new    CollectorPlanRevision
 	}{
-		{name: "old successor still admits exporter", revoke: flowCollectorPlanFixture(t, "plan_semantic_bad_revoke", tenantID, oldCollectorID, userID, 2, 1, at, []flowcollect.SourceBinding{oldSource}), new: newPlan},
-		{name: "new owner reuses old epoch", revoke: revokePlan, new: flowCollectorPlanFixture(t, "plan_semantic_bad_epoch", tenantID, newCollectorID, userID, 1, 0, at, []flowcollect.SourceBinding{oldSource})},
-		{name: "new owner changes selector", revoke: revokePlan, new: flowCollectorPlanFixture(t, "plan_semantic_bad_source", tenantID, newCollectorID, userID, 1, 0, at, []flowcollect.SourceBinding{func() flowcollect.SourceBinding {
+		{name: "old successor still admits exporter", revoke: flowCollectorPlanFixture(t, "plan_semantic_bad_revoke", tenantID, oldCollectorID, userID, 2, 1, at, []flowplan.SourceBinding{oldSource}), new: newPlan},
+		{name: "new owner reuses old epoch", revoke: revokePlan, new: flowCollectorPlanFixture(t, "plan_semantic_bad_epoch", tenantID, newCollectorID, userID, 1, 0, at, []flowplan.SourceBinding{oldSource})},
+		{name: "new owner changes selector", revoke: revokePlan, new: flowCollectorPlanFixture(t, "plan_semantic_bad_source", tenantID, newCollectorID, userID, 1, 0, at, []flowplan.SourceBinding{func() flowplan.SourceBinding {
 			changed := newSource
 			changed.SourcePrefix = "192.0.2.9/32"
 			return changed
@@ -386,14 +307,13 @@ func TestValidateFlowCollectorOwnershipPlanTransferRejectsSemanticGaps(t *testin
 	}
 }
 
-func flowCollectorPlanFixture(t *testing.T, id string, tenantID, collectorID, userID ID, version, supersedes uint64, at time.Time, sources []flowcollect.SourceBinding) CollectorPlanRevision {
+func flowCollectorPlanFixture(t *testing.T, id string, tenantID, collectorID, userID ID, version, supersedes uint64, at time.Time, sources []flowplan.SourceBinding) CollectorPlanRevision {
 	t.Helper()
 	notBefore := at.Add(-time.Minute)
 	expiresAt := at.Add(time.Hour)
-	spec, err := json.Marshal(flowcollect.Plan{
+	spec, err := json.Marshal(flowplan.Plan{
 		SchemaVersion: 2, Revision: version, CollectorID: string(collectorID),
 		NotBefore: notBefore, ExpiresAt: expiresAt,
-		PartitionMapVersion: 1, PartitionMap: make([]uint32, flowcollect.VirtualShardCount),
 		Sources: sources,
 	})
 	if err != nil {
@@ -428,7 +348,6 @@ func flowCollectorPlanFixture(t *testing.T, id string, tenantID, collectorID, us
 
 func cleanupCollectorOwnershipEvidenceFixture(ctx context.Context, db *sql.DB, tenantID ID) error {
 	tables := []string{
-		"collector_state_restore_receipts",
 		"collector_ownership_transfers",
 		"collector_service_principals",
 		"collector_plan_revisions",
@@ -447,20 +366,4 @@ func cleanupCollectorOwnershipEvidenceFixture(ctx context.Context, db *sql.DB, t
 	}
 	_, err := db.ExecContext(ctx, "DELETE FROM tenants WHERE id = ?", tenantID)
 	return err
-}
-
-func ownershipTransferCleanupSnapshot(t *testing.T, tenantID, userID, exporterID, collectorID ID) flowcollect.StateCleanupSnapshot {
-	t.Helper()
-	snapshot := flowStateCleanupSnapshotFixture(t)
-	snapshot.Old.TenantID = string(tenantID)
-	snapshot.Old.ExporterID = string(exporterID)
-	snapshot.Old.CollectorID = string(collectorID)
-	snapshot.Old.RegistryVersion = 1
-	snapshot.Old.OwnershipEpoch = 5
-	snapshot.RequestedBy = string(userID)
-	snapshot.Old.StateGeneration = 9
-	if _, err := flowcollect.RestoreStateCleanupJob(snapshot); err != nil {
-		t.Fatal(err)
-	}
-	return snapshot
 }

@@ -12,23 +12,21 @@ import (
 	"unicode/utf8"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/cloudcache/watchdog/internal/flowcollect"
-	"github.com/cloudcache/watchdog/internal/flowcollect/flowpb"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 )
 
 const (
-	NormalizedBatchSchemaVersion = 1
-	EnrichedBatchSchemaVersion   = 1
-	defaultMaxRecordsPerBatch    = 1_024
-	hardMaxRecordsPerBatch       = 65_535
-	defaultMaxFutureSkew         = 5 * time.Minute
+	RecordBatchSchemaVersion   = 1
+	EnrichedBatchSchemaVersion = 2
+	defaultMaxRecordsPerBatch  = 1_024
+	hardMaxRecordsPerBatch     = 65_535
+	defaultMaxFutureSkew       = 5 * time.Minute
 )
 
 var (
-	ErrInvalidNormalizedBatch = errors.New("invalid normalized flow batch")
-	ErrVersionUnavailable     = errors.New("event-time dimension version unavailable")
-	ErrVersionSkew            = errors.New("classification and dimension snapshots are inconsistent")
+	ErrInvalidRecordBatch = errors.New("invalid flow record batch")
+	ErrVersionUnavailable = errors.New("event-time dimension version unavailable")
+	ErrVersionSkew        = errors.New("classification and dimension snapshots are inconsistent")
 )
 
 type ObservationDirection uint8
@@ -44,7 +42,9 @@ type ASNSource string
 const (
 	ASNSourceUnknown  ASNSource = "unknown"
 	ASNSourceExporter ASNSource = "exporter"
-	ASNSourceGeo      ASNSource = flowdimension.GeoSchema
+	ASNSourceGeoV1    ASNSource = flowdimension.GeoSchemaV1
+	ASNSourceGeoV2    ASNSource = flowdimension.GeoSchemaV2
+	ASNSourceGeo      ASNSource = ASNSourceGeoV1
 	ASNSourceOverride ASNSource = "flow_geo_override"
 )
 
@@ -57,17 +57,16 @@ type Enricher struct {
 	dimensions     *flowdimension.SnapshotCatalog
 	geo            *flowdimension.GeoCatalog
 	classification *flowdimension.ClassificationCatalog
+	versions       *EnrichmentVersionCatalog
 	limits         EnrichmentLimits
 }
 
 type EnrichedBatch struct {
 	SchemaVersion       uint32
-	NormalizedBatchID   [32]byte
-	DatagramID          [32]byte
-	VirtualShard        uint32
-	PartitionMapVersion uint32
-	PhysicalPartition   uint32
-	ReplayGeneration    uint32
+	SourceID            [32]byte
+	KafkaTopic          string
+	KafkaPartition      int32
+	KafkaOffset         int64
 	TenantID            string
 	CollectorID         string
 	ExporterID          string
@@ -84,7 +83,7 @@ type EnrichedBatch struct {
 }
 
 type EnrichedRecord struct {
-	NormalizedRecordID    [32]byte
+	SourceRecordID        [32]byte
 	RecordIndex           uint32
 	EventTime             time.Time
 	TargetID              string
@@ -105,6 +104,8 @@ type EnrichedRecord struct {
 	RawPackets            uint64
 	SamplingMode          uint8
 	SamplingRate          uint64
+	SamplingSource        uint8
+	EstimatedValid        bool
 	EstimatedBytes        uint64
 	EstimatedPackets      uint64
 	FlowDurationMS        uint64
@@ -134,7 +135,7 @@ type EnrichedRecord struct {
 type VersionBlockedError struct {
 	Dependency  string
 	TenantID    string
-	BatchID     [32]byte
+	SourceID    [32]byte
 	RecordIndex uint32
 	EventTime   time.Time
 	Cause       error
@@ -156,25 +157,47 @@ func NewEnricher(dimensions *flowdimension.SnapshotCatalog, geo *flowdimension.G
 	if dimensions == nil || geo == nil || classification == nil {
 		return nil, errors.New("dimension, Geo, and classification catalogs are required")
 	}
+	limits, err := normalizeEnrichmentLimits(limits)
+	if err != nil {
+		return nil, err
+	}
+	return &Enricher{dimensions: dimensions, geo: geo, classification: classification, limits: limits}, nil
+}
+
+// NewEnricherWithVersionCatalog is the production constructor. It consumes
+// atomically published dimension/classification pairs. NewEnricher is retained
+// for callers that still own the two legacy catalogs independently.
+func NewEnricherWithVersionCatalog(versions *EnrichmentVersionCatalog, geo *flowdimension.GeoCatalog, limits EnrichmentLimits) (*Enricher, error) {
+	if versions == nil || geo == nil {
+		return nil, errors.New("enrichment version and Geo catalogs are required")
+	}
+	limits, err := normalizeEnrichmentLimits(limits)
+	if err != nil {
+		return nil, err
+	}
+	return &Enricher{versions: versions, geo: geo, limits: limits}, nil
+}
+
+func normalizeEnrichmentLimits(limits EnrichmentLimits) (EnrichmentLimits, error) {
 	if limits.MaxRecordsPerBatch == 0 {
 		limits.MaxRecordsPerBatch = defaultMaxRecordsPerBatch
 	}
 	if limits.MaxRecordsPerBatch < 1 || limits.MaxRecordsPerBatch > hardMaxRecordsPerBatch {
-		return nil, errors.New("max records per enriched batch must be 1..65535")
+		return EnrichmentLimits{}, errors.New("max records per enriched batch must be 1..65535")
 	}
 	if limits.MaxFutureSkew == 0 {
 		limits.MaxFutureSkew = defaultMaxFutureSkew
 	}
 	if limits.MaxFutureSkew < 0 || limits.MaxFutureSkew > 24*time.Hour {
-		return nil, errors.New("max event-time future skew must be 1ns..24h")
+		return EnrichmentLimits{}, errors.New("max event-time future skew must be 1ns..24h")
 	}
-	return &Enricher{dimensions: dimensions, geo: geo, classification: classification, limits: limits}, nil
+	return limits, nil
 }
 
-// EnrichBatch is atomic at the normalized Kafka message boundary: callers get
+// EnrichBatch is atomic at the decoded RawFlow batch boundary: callers get
 // either every validated record or no result. It performs no network, database,
 // Kafka, or ClickHouse I/O.
-func (e *Enricher) EnrichBatch(batch *flowpb.NormalizedRecordBatch) (*EnrichedBatch, error) {
+func (e *Enricher) EnrichBatch(batch *RecordBatch) (*EnrichedBatch, error) {
 	result := &EnrichedBatch{}
 	if err := e.EnrichBatchInto(batch, result); err != nil {
 		return nil, err
@@ -182,14 +205,14 @@ func (e *Enricher) EnrichBatch(batch *flowpb.NormalizedRecordBatch) (*EnrichedBa
 	return result, nil
 }
 
-// EnrichBatchInto lets the aggregate worker reuse one record buffer per
-// partition/shard. On any error Records is reset to length zero, so partially
-// enriched input cannot be mistaken for a complete Kafka message.
-func (e *Enricher) EnrichBatchInto(batch *flowpb.NormalizedRecordBatch, result *EnrichedBatch) error {
+// EnrichBatchInto lets the worker reuse one record buffer per partition.
+// On any error Records is reset to length zero, so partially
+// enriched input cannot be mistaken for a complete source batch.
+func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) error {
 	if result == nil {
 		return invalid("enriched batch destination is required")
 	}
-	if e == nil || e.dimensions == nil || e.geo == nil || e.classification == nil {
+	if e == nil || e.geo == nil || (e.versions == nil && (e.dimensions == nil || e.classification == nil)) {
 		result.Records = result.Records[:0]
 		return invalid("enricher is not initialized")
 	}
@@ -200,23 +223,22 @@ func (e *Enricher) EnrichBatchInto(batch *flowpb.NormalizedRecordBatch, result *
 	}
 	records := result.Records[:0]
 	*result = EnrichedBatch{
-		SchemaVersion:     EnrichedBatchSchemaVersion,
-		NormalizedBatchID: validated.batchID, DatagramID: validated.datagramID,
-		VirtualShard: batch.VirtualShard, PartitionMapVersion: batch.PartitionMapVersion,
-		PhysicalPartition: batch.PhysicalPartition, ReplayGeneration: batch.ReplayGeneration,
-		TenantID: batch.TenantId, CollectorID: batch.CollectorId, ExporterID: batch.ExporterId,
-		RegistryVersion: batch.RegistryVersion, ReceivedAt: time.UnixMilli(batch.ReceivedAtUnixMs).UTC(),
+		SchemaVersion: EnrichedBatchSchemaVersion,
+		SourceID:      validated.sourceID, KafkaTopic: batch.KafkaTopic,
+		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset,
+		TenantID: batch.TenantID, CollectorID: batch.CollectorID, ExporterID: batch.ExporterID,
+		RegistryVersion: batch.RegistryVersion, ReceivedAt: time.UnixMilli(batch.ReceivedAtUnixMS).UTC(),
 		Protocol: uint8(batch.Protocol), SourceIP: validated.sourceIP,
-		ObservationDomainID: batch.ObservationDomainId,
-		SubAgentID:          batch.SubAgentId, DatagramSequence: batch.DatagramSequence,
+		ObservationDomainID: batch.ObservationDomainID,
+		SubAgentID:          batch.SubAgentID, DatagramSequence: batch.DatagramSequence,
 		AgentIP: validated.agentIP, ExporterEpoch: batch.ExporterEpoch,
 		Records: records,
 	}
 	if cap(result.Records) < len(batch.Records) {
 		result.Records = make([]EnrichedRecord, 0, len(batch.Records))
 	}
-	for _, normalized := range batch.Records {
-		record, err := e.enrichRecord(batch.TenantId, validated.datagramID, validated.batchID, normalized)
+	for _, decoded := range batch.Records {
+		record, err := e.enrichRecord(batch.TenantID, validated.sourceID, decoded)
 		if err != nil {
 			result.Records = result.Records[:0]
 			return err
@@ -226,31 +248,27 @@ func (e *Enricher) EnrichBatchInto(batch *flowpb.NormalizedRecordBatch, result *
 	return nil
 }
 
-func (e *Enricher) enrichRecord(tenantID string, datagramID, batchID [32]byte, normalized *flowpb.NormalizedRecord) (EnrichedRecord, error) {
-	eventTime := time.UnixMilli(normalized.EventTimeUnixMs).UTC()
-	source, _ := parseAddress16(normalized.SrcIp)
-	destination, _ := parseAddress16(normalized.DstIp)
-	dimensionSnapshot, err := e.dimensions.Select(tenantID, eventTime)
+func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Record) (EnrichedRecord, error) {
+	eventTime := time.UnixMilli(decoded.EventTimeUnixMS).UTC()
+	source, _ := parseAddress16(decoded.SourceIP)
+	destination, _ := parseAddress16(decoded.DestinationIP)
+	dimensionSnapshot, classificationSnapshot, dependency, err := e.selectVersions(tenantID, eventTime)
 	if err != nil {
-		return EnrichedRecord{}, blocked("dimension", tenantID, batchID, normalized, eventTime, err)
-	}
-	classificationSnapshot, err := e.classification.Select(tenantID, eventTime)
-	if err != nil {
-		return EnrichedRecord{}, blocked("classification", tenantID, batchID, normalized, eventTime, err)
+		return EnrichedRecord{}, blocked(dependency, tenantID, sourceID, decoded, eventTime, err)
 	}
 	dimensionMetadata := dimensionSnapshot.Metadata()
 	classificationMetadata := classificationSnapshot.Metadata()
 	if classificationMetadata.DimensionSnapshotID != dimensionMetadata.SnapshotID {
-		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, batchID, normalized, eventTime, ErrVersionSkew)
+		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, sourceID, decoded, eventTime, ErrVersionSkew)
 	}
 	geoIndex, err := e.geo.Select(eventTime)
 	if err != nil {
-		return EnrichedRecord{}, blocked("geo", tenantID, batchID, normalized, eventTime, err)
+		return EnrichedRecord{}, blocked("geo", tenantID, sourceID, decoded, eventTime, err)
 	}
 
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
 	geoMetadata := geoIndex.Metadata()
-	remoteGeo := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: flowdimension.GeoSchema}
+	remoteGeo := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
 	geoMatched := false
 	if dimensions.Remote.IP.IsValid() {
 		if resolved, matched := geoIndex.Lookup(dimensions.Remote.IP); matched {
@@ -258,23 +276,24 @@ func (e *Enricher) enrichRecord(tenantID string, datagramID, batchID [32]byte, n
 		}
 	}
 	remoteGeo, overrideFields, _ := dimensionSnapshot.ApplyGeoOverride(dimensions.Remote.IP, remoteGeo)
-	remoteASN, remoteASNSource := selectRemoteASN(normalized, dimensions.Remote.Side, remoteGeo, geoMatched, overrideFields)
-	localPort, remotePort := endpointPorts(normalized, dimensions)
+	remoteASN, remoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, remoteGeo, geoMatched, overrideFields)
+	localPort, remotePort := endpointPorts(decoded, dimensions)
 	record := EnrichedRecord{
-		NormalizedRecordID: normalizedRecordID(datagramID, normalized.RecordIndex),
-		RecordIndex:        normalized.RecordIndex, EventTime: eventTime, TargetID: normalized.TargetId, DeviceID: normalized.DeviceId,
-		ObservationIfIndex: normalized.ObservationIfIndex, ObservationDirection: ObservationDirection(normalized.ObservationDirection),
-		InIf: normalized.InIf, OutIf: normalized.OutIf, SourceIP: source, DestinationIP: destination,
-		SourcePort: uint16(normalized.SrcPort), DestinationPort: uint16(normalized.DstPort),
-		IPProtocol: uint8(normalized.IpProto), TCPFlags: uint8(normalized.TcpFlags),
-		SourceASN: normalized.SrcAs, DestinationASN: normalized.DstAs,
-		RawBytes: normalized.RawBytes, RawPackets: normalized.RawPackets,
-		SamplingMode: uint8(normalized.SamplingMode), SamplingRate: normalized.SamplingRate,
-		EstimatedBytes: normalized.EstimatedBytes, EstimatedPackets: normalized.EstimatedPackets,
-		FlowDurationMS: normalized.FlowDurationMs, QualityFlags: normalized.QualityFlags,
-		SourceIDType: normalized.SourceIdType, SourceIDValue: normalized.SourceIdValue,
-		SampleSequence: normalized.SampleSequence, SamplePool: normalized.SamplePool,
-		ExporterDrops: normalized.ExporterDrops, SampleIndex: normalized.SampleIndex, QualityEpoch: normalized.QualityEpoch,
+		SourceRecordID: sourceRecordID(sourceID, decoded.RecordIndex),
+		RecordIndex:    decoded.RecordIndex, EventTime: eventTime, TargetID: decoded.TargetID, DeviceID: decoded.DeviceID,
+		ObservationIfIndex: decoded.ObservationIfIndex, ObservationDirection: ObservationDirection(decoded.ObservationDirection),
+		InIf: decoded.InIf, OutIf: decoded.OutIf, SourceIP: source, DestinationIP: destination,
+		SourcePort: uint16(decoded.SourcePort), DestinationPort: uint16(decoded.DestinationPort),
+		IPProtocol: uint8(decoded.IPProtocol), TCPFlags: uint8(decoded.TCPFlags),
+		SourceASN: decoded.SourceASN, DestinationASN: decoded.DestinationASN,
+		RawBytes: decoded.RawBytes, RawPackets: decoded.RawPackets,
+		SamplingMode: uint8(decoded.SamplingMode), SamplingRate: decoded.SamplingRate,
+		SamplingSource: uint8(decoded.SamplingSource), EstimatedValid: decoded.EstimatedValid,
+		EstimatedBytes: decoded.EstimatedBytes, EstimatedPackets: decoded.EstimatedPackets,
+		FlowDurationMS: decoded.FlowDurationMS, QualityFlags: decoded.QualityFlags,
+		SourceIDType: decoded.SourceIDType, SourceIDValue: decoded.SourceIDValue,
+		SampleSequence: decoded.SampleSequence, SamplePool: decoded.SamplePool,
+		ExporterDrops: decoded.ExporterDrops, SampleIndex: decoded.SampleIndex, QualityEpoch: decoded.QualityEpoch,
 		Dimensions: dimensions, LocalPort: localPort, RemotePort: remotePort,
 		RemoteGeo: remoteGeo, RemoteASN: remoteASN, RemoteASNSource: remoteASNSource,
 		Category:              classificationSnapshot.Classify(dimensions.Direction, remoteGeo),
@@ -285,41 +304,58 @@ func (e *Enricher) enrichRecord(tenantID string, datagramID, batchID [32]byte, n
 	return record, nil
 }
 
-type validatedBatch struct {
-	batchID    [32]byte
-	datagramID [32]byte
-	sourceIP   netip.Addr
-	agentIP    netip.Addr
+func (e *Enricher) selectVersions(tenantID string, eventTime time.Time) (*flowdimension.CompiledSnapshot, *flowdimension.ClassificationSnapshot, string, error) {
+	if e.versions != nil {
+		version, err := e.versions.Select(tenantID, eventTime)
+		if err != nil {
+			return nil, nil, "dimension_classification_pair", err
+		}
+		return version.Dimension, version.Classification, "", nil
+	}
+	dimension, err := e.dimensions.Select(tenantID, eventTime)
+	if err != nil {
+		return nil, nil, "dimension", err
+	}
+	classification, err := e.classification.Select(tenantID, eventTime)
+	if err != nil {
+		return nil, nil, "classification", err
+	}
+	return dimension, classification, "", nil
 }
 
-func validateBatch(batch *flowpb.NormalizedRecordBatch, limits EnrichmentLimits) (validatedBatch, error) {
+type validatedBatch struct {
+	sourceID [32]byte
+	sourceIP netip.Addr
+	agentIP  netip.Addr
+}
+
+func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch, error) {
 	var result validatedBatch
 	if batch == nil {
 		return result, invalid("batch is required")
 	}
-	if batch.BatchSchemaVersion != NormalizedBatchSchemaVersion {
+	if batch.BatchSchemaVersion != RecordBatchSchemaVersion {
 		return result, invalid("unsupported batch schema version")
 	}
-	if len(batch.NormalizedBatchId) != len(result.batchID) || len(batch.DatagramId) != len(result.datagramID) {
-		return result, invalid("batch and datagram IDs must be 32 bytes")
+	if len(batch.SourceID) != len(result.sourceID) {
+		return result, invalid("source ID must be 32 bytes")
 	}
-	copy(result.batchID[:], batch.NormalizedBatchId)
-	copy(result.datagramID[:], batch.DatagramId)
-	if batch.VirtualShard >= flowcollect.VirtualShardCount || batch.PhysicalPartition > math.MaxInt32 || batch.PartitionMapVersion == 0 {
-		return result, invalid("partition identity is invalid")
+	copy(result.sourceID[:], batch.SourceID)
+	if !validText(batch.KafkaTopic, 249) || batch.KafkaPartition < 0 || batch.KafkaOffset < 0 {
+		return result, invalid("Kafka source identity is invalid")
 	}
-	if !validIdentifier(batch.TenantId, 64) || !validIdentifier(batch.CollectorId, 128) || !validIdentifier(batch.ExporterId, 128) || batch.RegistryVersion == 0 {
+	if !validIdentifier(batch.TenantID, 64) || !validIdentifier(batch.CollectorID, 128) || !validIdentifier(batch.ExporterID, 128) || batch.RegistryVersion == 0 {
 		return result, invalid("tenant, collector, exporter, and registry identity are required")
 	}
-	if batch.ReceivedAtUnixMs <= 0 || batch.Protocol < 1 || batch.Protocol > 4 {
+	if batch.ReceivedAtUnixMS <= 0 || batch.Protocol < 1 || batch.Protocol > 4 {
 		return result, invalid("receive time or protocol is invalid")
 	}
 	var ok bool
-	if result.sourceIP, ok = parseAddress16(batch.SourceIp); !ok {
+	if result.sourceIP, ok = parseAddress16(batch.SourceIP); !ok {
 		return result, invalid("exporter source IP must be a 16-byte address")
 	}
-	if len(batch.AgentIp) != 0 {
-		if result.agentIP, ok = parseAddress16(batch.AgentIp); !ok {
+	if len(batch.AgentIP) != 0 {
+		if result.agentIP, ok = parseAddress16(batch.AgentIP); !ok {
 			return result, invalid("sFlow agent IP must be empty or a 16-byte address")
 		}
 	}
@@ -328,43 +364,51 @@ func validateBatch(batch *flowpb.NormalizedRecordBatch, limits EnrichmentLimits)
 	}
 	for position, record := range batch.Records {
 		if err := validateRecord(batch, record, limits); err != nil {
-			return result, fmt.Errorf("%w: record[%d]: %v", ErrInvalidNormalizedBatch, position, err)
+			return result, fmt.Errorf("%w: record[%d]: %v", ErrInvalidRecordBatch, position, err)
 		}
 		if position > 0 && batch.Records[position-1].RecordIndex >= record.RecordIndex {
-			return result, fmt.Errorf("%w: record_index must be strictly increasing", ErrInvalidNormalizedBatch)
+			return result, fmt.Errorf("%w: record_index must be strictly increasing", ErrInvalidRecordBatch)
 		}
 	}
 	return result, nil
 }
 
-func validateRecord(batch *flowpb.NormalizedRecordBatch, record *flowpb.NormalizedRecord, limits EnrichmentLimits) error {
+func validateRecord(batch *RecordBatch, record *Record, limits EnrichmentLimits) error {
 	if record == nil {
 		return errors.New("record is required")
 	}
-	if record.EventTimeUnixMs <= 0 || !validIdentifier(record.TargetId, 128) || !validOptionalIdentifier(record.DeviceId, 128) {
+	if record.EventTimeUnixMS <= 0 || !validIdentifier(record.TargetID, 128) || !validOptionalIdentifier(record.DeviceID, 128) {
 		return errors.New("event time, target, or device identity is invalid")
 	}
-	if record.EventTimeUnixMs > batch.ReceivedAtUnixMs && record.EventTimeUnixMs-batch.ReceivedAtUnixMs > limits.MaxFutureSkew.Milliseconds() {
+	if record.EventTimeUnixMS > batch.ReceivedAtUnixMS && record.EventTimeUnixMS-batch.ReceivedAtUnixMS > limits.MaxFutureSkew.Milliseconds() {
 		return errors.New("event time exceeds the allowed receive-time future skew")
 	}
-	source, sourceOK := parseAddress16(record.SrcIp)
-	destination, destinationOK := parseAddress16(record.DstIp)
+	_, sourceOK := parseAddress16(record.SourceIP)
+	_, destinationOK := parseAddress16(record.DestinationIP)
 	if !sourceOK || !destinationOK {
 		return errors.New("source and destination must be 16-byte addresses")
 	}
-	if flowcollect.VirtualShard(batch.TenantId, source, destination) != batch.VirtualShard {
-		return errors.New("record does not belong to the declared virtual shard")
-	}
-	if record.ObservationDirection > uint32(ObservationEgress) || record.SrcPort > math.MaxUint16 || record.DstPort > math.MaxUint16 || record.IpProto > math.MaxUint8 || record.TcpFlags > math.MaxUint8 {
+	if record.ObservationDirection > uint32(ObservationEgress) || record.SourcePort > math.MaxUint16 || record.DestinationPort > math.MaxUint16 || record.IPProtocol > math.MaxUint8 || record.TCPFlags > math.MaxUint8 {
 		return errors.New("direction, port, protocol, or TCP flags exceed the normalized schema")
 	}
 	switch record.SamplingMode {
+	case 0:
+		if record.EstimatedValid || record.SamplingRate != 0 || record.EstimatedBytes != 0 || record.EstimatedPackets != 0 {
+			return errors.New("unknown sampling must not carry estimated counters")
+		}
 	case 1:
-		if record.SamplingRate == 0 || !scaledCountersMatch(record) {
+		if record.SamplingRate == 0 {
 			return errors.New("sampled counters do not match the authoritative sampling rate")
 		}
+		if record.EstimatedValid {
+			if !scaledCountersMatch(record) {
+				return errors.New("sampled counters do not match the authoritative sampling rate")
+			}
+		} else if record.QualityFlags&QualityCounterOverflow == 0 || record.EstimatedBytes != 0 || record.EstimatedPackets != 0 {
+			return errors.New("invalid sampled counters require an explicit overflow marker")
+		}
 	case 2:
-		if record.EstimatedBytes != record.RawBytes || record.EstimatedPackets != record.RawPackets {
+		if !record.EstimatedValid || record.EstimatedBytes != record.RawBytes || record.EstimatedPackets != record.RawPackets {
 			return errors.New("pre-scaled counters must not be multiplied again")
 		}
 	default:
@@ -373,7 +417,7 @@ func validateRecord(batch *flowpb.NormalizedRecordBatch, record *flowpb.Normaliz
 	return nil
 }
 
-func scaledCountersMatch(record *flowpb.NormalizedRecord) bool {
+func scaledCountersMatch(record *Record) bool {
 	if record.RawBytes != 0 && record.SamplingRate > math.MaxUint64/record.RawBytes {
 		return false
 	}
@@ -392,13 +436,13 @@ func parseAddress16(value []byte) (netip.Addr, bool) {
 	return netip.AddrFrom16(bytes).Unmap(), true
 }
 
-func endpointPorts(record *flowpb.NormalizedRecord, dimensions flowdimension.ClassifiedEndpoints) (uint16, uint16) {
+func endpointPorts(record *Record, dimensions flowdimension.ClassifiedEndpoints) (uint16, uint16) {
 	port := func(side flowdimension.EndpointSide) uint16 {
 		switch side {
 		case flowdimension.EndpointSrc:
-			return uint16(record.SrcPort)
+			return uint16(record.SourcePort)
 		case flowdimension.EndpointDst:
-			return uint16(record.DstPort)
+			return uint16(record.DestinationPort)
 		default:
 			return 0
 		}
@@ -406,19 +450,24 @@ func endpointPorts(record *flowpb.NormalizedRecord, dimensions flowdimension.Cla
 	return port(dimensions.Local.Side), port(dimensions.Remote.Side)
 }
 
-func selectRemoteASN(record *flowpb.NormalizedRecord, side flowdimension.EndpointSide, geo flowdimension.GeoInfo, geoMatched bool, overrideFields flowdimension.GeoOverrideFields) (uint32, ASNSource) {
+func selectRemoteASN(record *Record, side flowdimension.EndpointSide, geo flowdimension.GeoInfo, geoMatched bool, overrideFields flowdimension.GeoOverrideFields) (uint32, ASNSource) {
 	if overrideFields&flowdimension.GeoOverrideASN != 0 {
 		return geo.ASN, ASNSourceOverride
 	}
 	if geoMatched && geo.ASN != 0 {
-		return geo.ASN, ASNSourceGeo
+		switch geo.Source {
+		case flowdimension.GeoSchemaV1:
+			return geo.ASN, ASNSourceGeoV1
+		case flowdimension.GeoSchemaV2:
+			return geo.ASN, ASNSourceGeoV2
+		}
 	}
 	var exporterASN uint32
 	switch side {
 	case flowdimension.EndpointSrc:
-		exporterASN = record.SrcAs
+		exporterASN = record.SourceASN
 	case flowdimension.EndpointDst:
-		exporterASN = record.DstAs
+		exporterASN = record.DestinationASN
 	}
 	if exporterASN != 0 {
 		return exporterASN, ASNSourceExporter
@@ -459,19 +508,19 @@ func writeHashUint64(hash *xxhash.Digest, value uint64) {
 	_, _ = hash.Write(encoded[:length])
 }
 
-func normalizedRecordID(datagramID [32]byte, recordIndex uint32) [32]byte {
+func sourceRecordID(datagramID [32]byte, recordIndex uint32) [32]byte {
 	var input [36]byte
 	copy(input[:32], datagramID[:])
 	binary.BigEndian.PutUint32(input[32:], recordIndex)
 	return sha256.Sum256(input[:])
 }
 
-func blocked(dependency, tenantID string, batchID [32]byte, record *flowpb.NormalizedRecord, eventTime time.Time, cause error) error {
-	return &VersionBlockedError{Dependency: dependency, TenantID: tenantID, BatchID: batchID, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
+func blocked(dependency, tenantID string, sourceID [32]byte, record *Record, eventTime time.Time, cause error) error {
+	return &VersionBlockedError{Dependency: dependency, TenantID: tenantID, SourceID: sourceID, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
 }
 
 func invalid(message string) error {
-	return fmt.Errorf("%w: %s", ErrInvalidNormalizedBatch, message)
+	return fmt.Errorf("%w: %s", ErrInvalidRecordBatch, message)
 }
 
 func validIdentifier(value string, maximum int) bool {

@@ -504,11 +504,9 @@ func (s *MySQLStore) RecordCollectorRuntimeHeartbeat(ctx context.Context, heartb
 
 func collectorRuntimeObservedHealth(heartbeat CollectorRuntimeHeartbeat, currentConfigVersion uint64, schemaCompatible bool) string {
 	observation := heartbeat.Observation
-	queueFull := (observation.Queues.Receive.Capacity > 0 && observation.Queues.Receive.Depth >= observation.Queues.Receive.Capacity) ||
-		(observation.Queues.Decode.Capacity > 0 && observation.Queues.Decode.Depth >= observation.Queues.Decode.Capacity) ||
-		(observation.Queues.Quarantine.Capacity > 0 && observation.Queues.Quarantine.Depth >= observation.Queues.Quarantine.Capacity)
+	queueFull := observation.Queues.Kafka.Capacity > 0 && observation.Queues.Kafka.Depth >= observation.Queues.Kafka.Capacity
 	if !schemaCompatible || !observation.Running || !observation.PlanAccepting || !observation.ControlPlaneHealthy || !observation.KafkaHealthy ||
-		!observation.WAL.Writable || observation.WAL.HardWatermark || queueFull {
+		queueFull {
 		return "degraded"
 	}
 	if heartbeat.ActiveConfigVersion != currentConfigVersion {

@@ -90,7 +90,6 @@ type CollectorOwnershipRepository interface {
 	RevokeCollectorServicePrincipal(ctx context.Context, revocation CollectorPrincipalRevocation) error
 	CreateCollectorOwnershipTransfer(ctx context.Context, transfer CollectorOwnershipTransfer) error
 	RecordCollectorDrain(ctx context.Context, receipt CollectorDrainReceipt) error
-	RecordCollectorStateRestore(ctx context.Context, receipt CollectorStateRestoreReceipt) error
 }
 
 type CollectorPrincipalOperationRepository interface {

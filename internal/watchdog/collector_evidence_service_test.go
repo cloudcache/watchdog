@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
 
 type collectorEvidenceServiceAuthenticator struct {
@@ -21,17 +19,11 @@ func (a *collectorEvidenceServiceAuthenticator) AuthenticateCollector(_ context.
 }
 
 type collectorEvidenceServiceRecorder struct {
-	drain   CollectorDrainReceipt
-	restore CollectorStateRestoreReceipt
+	drain CollectorDrainReceipt
 }
 
 func (r *collectorEvidenceServiceRecorder) RecordCollectorDrain(_ context.Context, receipt CollectorDrainReceipt) error {
 	r.drain = receipt
-	return nil
-}
-
-func (r *collectorEvidenceServiceRecorder) RecordCollectorStateRestore(_ context.Context, receipt CollectorStateRestoreReceipt) error {
-	r.restore = receipt
 	return nil
 }
 
@@ -52,21 +44,6 @@ func TestCollectorEvidenceServiceInjectsAuthenticatedIdentity(t *testing.T) {
 	}
 	if authenticator.collector != "collector-a" || authenticator.credential.Token != "secret-token" || recorder.drain.TenantID != "tenant-a" || recorder.drain.AuthenticatedCollectorID != "collector-a" || recorder.drain.BootID != "boot-a" {
 		t.Fatalf("authenticator=%+v drain=%+v", authenticator, recorder.drain)
-	}
-
-	identity := make([]byte, 32)
-	identity[0] = 7
-	if err := service.RecordStateRestore(context.Background(), "collector-a", credential, CollectorStateRestoreReport{
-		TransferID: "transfer-a", Kind: flowcollect.StateCheckpointQuality,
-		StateIdentityKey: identity, AppliedConfigVersion: 13,
-		RestoredOldOwnershipEpoch: 5, RestoredOldGeneration: 9,
-		NewEpochBaselineGeneration: 2, ReceiptNonce: "restore-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	identity[0] = 9
-	if recorder.restore.TenantID != "tenant-a" || recorder.restore.AuthenticatedCollectorID != "collector-a" || recorder.restore.BootID != "boot-a" || recorder.restore.StateIdentityKey[0] != 7 {
-		t.Fatalf("restore=%+v", recorder.restore)
 	}
 }
 

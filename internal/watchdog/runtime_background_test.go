@@ -10,9 +10,6 @@ func TestBackendRuntimeBackgroundServicesDisabled(t *testing.T) {
 	if err := runtime.StartBackground(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.FlowStateCleanup != nil {
-		t.Fatal("disabled flow state-cleanup runtime was initialized")
-	}
 	if err := runtime.StartBackground(context.Background()); err == nil {
 		t.Fatal("expected duplicate background start to fail")
 	}

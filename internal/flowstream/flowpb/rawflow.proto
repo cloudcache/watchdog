@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: 2022 Free Mobile
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// Adapted from Akvorado common/pb/rawflow.proto for Watchdog. The additional
+// fields bind an undecoded datagram to its collector configuration without
+// putting tenant or dimension lookups on the UDP receive path.
+
+syntax = "proto3";
+
+package watchdog.flow.raw.v1;
+
+option go_package = "github.com/cloudcache/watchdog/internal/flowstream/flowpb";
+
+message RawFlow {
+  uint64 time_received = 1;
+  bytes payload = 2;
+  bytes source_address = 3;
+  bool use_source_address = 4;
+  Decoder decoder = 5;
+  TimestampSource timestamp_source = 6;
+  DecapsulationProtocol decapsulation_protocol = 7;
+  uint64 rate_limit = 8;
+
+  string collector_id = 9;
+  string listener_id = 10;
+  uint32 source_port = 11;
+  uint64 registry_version = 12;
+
+  enum Decoder {
+    DECODER_UNSPECIFIED = 0;
+    DECODER_NETFLOW = 1;
+    DECODER_SFLOW = 2;
+    DECODER_GOB = 3;
+  }
+
+  enum TimestampSource {
+    TS_INPUT = 0;
+    TS_NETFLOW_PACKET = 1;
+    TS_NETFLOW_FIRST_SWITCHED = 2;
+  }
+
+  enum DecapsulationProtocol {
+    DECAP_NONE = 0;
+    DECAP_IPIP = 1;
+    DECAP_GRE = 2;
+    DECAP_VXLAN = 3;
+    DECAP_SRV6 = 4;
+  }
+}

@@ -25,7 +25,9 @@ import (
 )
 
 const (
-	GeoSchema                 = "flow-geo-v1"
+	GeoSchemaV1               = "flow-geo-v1"
+	GeoSchemaV2               = "flow-geo-v2"
+	GeoSchema                 = GeoSchemaV1
 	GeoAdminCodeSystem        = "GB/T2260-6"
 	GeoUnknownCountry         = "ZZ"
 	defaultMaxManifestBytes   = 256 << 10
@@ -36,6 +38,7 @@ const (
 	defaultMaxCSVRowBytes     = 64 << 10
 	defaultMaxZstdWindow      = 128 << 20
 	defaultInitialGeoCapacity = 64 << 10
+	hardMaxGeoDescendants     = 100_000
 )
 
 var geoRequiredFiles = [...]string{"ipv4.csv.zst", "ipv6.csv.zst", "operators.json", "geo_dict.json"}
@@ -85,6 +88,7 @@ type GeoDictionaryEntry struct {
 }
 
 type GeoIndexMetadata struct {
+	Schema           string
 	Version          string
 	GeneratedAt      time.Time
 	EffectiveFrom    time.Time
@@ -113,6 +117,19 @@ type geoDictionaryKey struct {
 	code string
 }
 
+type GeoPath struct {
+	ContinentID string
+	RegionID    string
+	CountryID   string
+	ProvinceID  string
+	CityID      string
+}
+
+type compiledGeoPath struct {
+	path    GeoPath
+	enabled bool
+}
+
 // GeoIndex is immutable after construction. Lookup performs one binary search
 // and does not retain mutable data supplied by callers.
 type GeoIndex struct {
@@ -122,6 +139,9 @@ type GeoIndex struct {
 	infos      []GeoInfo
 	operators  map[uint16]GeoOperator
 	dictionary map[geoDictionaryKey]GeoDictionaryEntry
+	nodes      map[string]GeoDictionaryEntry
+	paths      map[string]compiledGeoPath
+	children   map[string][]string
 }
 
 func (i *GeoIndex) Metadata() GeoIndexMetadata {
@@ -168,6 +188,105 @@ func (i *GeoIndex) Dictionary(kind, code string) (GeoDictionaryEntry, bool) {
 	}
 	entry, ok := i.dictionary[geoDictionaryKey{kind: kind, code: code}]
 	return entry, ok
+}
+
+// GeoNode resolves a globally unique stable code. Names are display metadata;
+// callers must continue to persist and filter by Code.
+func (i *GeoIndex) GeoNode(code string) (GeoDictionaryEntry, bool) {
+	if i == nil {
+		return GeoDictionaryEntry{}, false
+	}
+	entry, ok := i.nodes[code]
+	return entry, ok
+}
+
+// GeoBreadcrumb returns root-to-node entries from this immutable bundle.
+func (i *GeoIndex) GeoBreadcrumb(code string) ([]GeoDictionaryEntry, bool) {
+	if i == nil {
+		return nil, false
+	}
+	current, ok := i.nodes[code]
+	if !ok {
+		return nil, false
+	}
+	reversed := make([]GeoDictionaryEntry, 0, len(geoKindRank))
+	for {
+		reversed = append(reversed, current)
+		if current.ParentCode == "" {
+			break
+		}
+		current, ok = i.nodes[current.ParentCode]
+		if !ok {
+			return nil, false
+		}
+	}
+	result := make([]GeoDictionaryEntry, len(reversed))
+	for position := range reversed {
+		result[len(reversed)-1-position] = reversed[position]
+	}
+	return result, true
+}
+
+// GeoChildren returns enabled direct children sorted by kind and stable code.
+// An empty parent code lists enabled roots.
+func (i *GeoIndex) GeoChildren(parentCode string) ([]GeoDictionaryEntry, bool) {
+	if i == nil {
+		return nil, false
+	}
+	if parentCode != "" {
+		if _, ok := i.nodes[parentCode]; !ok {
+			return nil, false
+		}
+	}
+	codes := i.children[parentCode]
+	result := make([]GeoDictionaryEntry, 0, len(codes))
+	for _, code := range codes {
+		if path, ok := i.paths[code]; ok && path.enabled {
+			result = append(result, i.nodes[code])
+		}
+	}
+	return result, true
+}
+
+// GeoDescendantCodes expands one v2 ancestor into enabled codes at exactly
+// targetKind. The result is sorted and bounded before it can become a query
+// predicate; callers must not mix codes from different bundle versions.
+func (i *GeoIndex) GeoDescendantCodes(ancestorCode, targetKind string, maximum int) ([]string, error) {
+	if i == nil {
+		return nil, errors.New("geo index is required")
+	}
+	if i.metadata.Schema != GeoSchemaV2 {
+		return nil, errors.New("Geo descendant expansion requires flow-geo-v2")
+	}
+	ancestor, exists := i.nodes[ancestorCode]
+	if !exists {
+		return nil, fmt.Errorf("unknown Geo ancestor code %q", ancestorCode)
+	}
+	ancestorPath := i.paths[ancestorCode]
+	if !ancestorPath.enabled {
+		return nil, fmt.Errorf("Geo ancestor code %q is disabled", ancestorCode)
+	}
+	targetRank, validKind := geoKindRank[targetKind]
+	ancestorRank := geoKindRank[ancestor.Kind]
+	if !validKind || targetRank < ancestorRank {
+		return nil, fmt.Errorf("Geo target kind %q cannot descend from %s", targetKind, ancestor.Kind)
+	}
+	if maximum < 1 || maximum > hardMaxGeoDescendants {
+		return nil, fmt.Errorf("Geo descendant maximum must be 1..%d", hardMaxGeoDescendants)
+	}
+	result := make([]string, 0)
+	for code, entry := range i.nodes {
+		path := i.paths[code]
+		if entry.Kind != targetKind || !path.enabled || !geoPathContains(path.path, ancestorCode) {
+			continue
+		}
+		result = append(result, code)
+		if len(result) > maximum {
+			return nil, fmt.Errorf("Geo descendant expansion exceeds limit %d", maximum)
+		}
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 type GeoCatalog struct {
@@ -365,26 +484,47 @@ func loadResolvedGeoIndex(directory string, manifest GeoManifest, manifestChecks
 	if err != nil {
 		return nil, err
 	}
-	dictionary, dictionaryCodes, err := loadGeoDictionary(filepath.Join(directory, "geo_dict.json"), manifest.Files["geo_dict.json"], limits)
+	dictionary, dictionaryPaths, err := loadGeoDictionary(filepath.Join(directory, "geo_dict.json"), manifest.Files["geo_dict.json"], manifest.Schema, limits)
 	if err != nil {
 		return nil, err
 	}
 	infoTable := newGeoInfoTable()
-	ipv4, _, err := loadGeoRanges(filepath.Join(directory, "ipv4.csv.zst"), 4, manifest, operators, dictionaryCodes, infoTable, limits)
+	ipv4, _, err := loadGeoRanges(filepath.Join(directory, "ipv4.csv.zst"), 4, manifest, operators, dictionaryPaths, infoTable, limits)
 	if err != nil {
 		return nil, err
 	}
-	_, ipv6, err := loadGeoRanges(filepath.Join(directory, "ipv6.csv.zst"), 6, manifest, operators, dictionaryCodes, infoTable, limits)
+	_, ipv6, err := loadGeoRanges(filepath.Join(directory, "ipv6.csv.zst"), 6, manifest, operators, dictionaryPaths, infoTable, limits)
 	if err != nil {
 		return nil, err
 	}
 	index := &GeoIndex{
 		metadata: GeoIndexMetadata{
-			Version: manifest.Version, GeneratedAt: manifest.GeneratedAt.UTC(), EffectiveFrom: manifest.EffectiveFrom.UTC(), ManifestChecksum: manifestChecksum,
+			Schema: manifest.Schema, Version: manifest.Version, GeneratedAt: manifest.GeneratedAt.UTC(), EffectiveFrom: manifest.EffectiveFrom.UTC(), ManifestChecksum: manifestChecksum,
 			IPv4Rows: uint64(len(ipv4)), IPv6Rows: uint64(len(ipv6)), DistinctInfoRows: uint64(len(infoTable.values)),
 			OperatorRows: manifest.Files["operators.json"].Rows, DictionaryRows: manifest.Files["geo_dict.json"].Rows,
 		},
 		ipv4: ipv4, ipv6: ipv6, infos: infoTable.values, operators: operators, dictionary: dictionary,
+		nodes: make(map[string]GeoDictionaryEntry, len(dictionary)), paths: dictionaryPaths,
+		children: make(map[string][]string),
+	}
+	for _, entry := range dictionary {
+		index.nodes[entry.Code] = entry
+		index.children[entry.ParentCode] = append(index.children[entry.ParentCode], entry.Code)
+	}
+	for parentCode := range index.children {
+		sort.Slice(index.children[parentCode], func(left, right int) bool {
+			leftEntry := index.nodes[index.children[parentCode][left]]
+			rightEntry := index.nodes[index.children[parentCode][right]]
+			leftRank, leftKnown := geoKindRank[leftEntry.Kind]
+			rightRank, rightKnown := geoKindRank[rightEntry.Kind]
+			if leftKnown != rightKnown {
+				return leftKnown
+			}
+			if leftRank != rightRank {
+				return leftRank < rightRank
+			}
+			return leftEntry.Code < rightEntry.Code
+		})
 	}
 	if err := validateGeoLookupSamples(index); err != nil {
 		return nil, err
@@ -417,7 +557,7 @@ func readGeoManifest(path string, limits GeoLoadLimits) (string, GeoManifest, st
 }
 
 func validateGeoManifest(manifest GeoManifest, limits GeoLoadLimits) error {
-	if manifest.Schema != GeoSchema {
+	if manifest.Schema != GeoSchemaV1 && manifest.Schema != GeoSchemaV2 {
 		return fmt.Errorf("unsupported geo schema %q", manifest.Schema)
 	}
 	if !validIdentifier(manifest.Version, 128) {
@@ -483,7 +623,7 @@ func loadGeoOperators(path string, spec GeoFileSpec, limits GeoLoadLimits) (map[
 	return operators, nil
 }
 
-func loadGeoDictionary(path string, spec GeoFileSpec, limits GeoLoadLimits) (map[geoDictionaryKey]GeoDictionaryEntry, map[string]struct{}, error) {
+func loadGeoDictionary(path string, spec GeoFileSpec, schema string, limits GeoLoadLimits) (map[geoDictionaryKey]GeoDictionaryEntry, map[string]compiledGeoPath, error) {
 	data, err := readAndVerifyGeoFile(path, spec.SHA256, limits.MaxDictionaryBytes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load geo_dict.json: %w", err)
@@ -496,7 +636,7 @@ func loadGeoDictionary(path string, spec GeoFileSpec, limits GeoLoadLimits) (map
 		return nil, nil, fmt.Errorf("geo_dict.json row count is %d, manifest declares %d", len(entries), spec.Rows)
 	}
 	dictionary := make(map[geoDictionaryKey]GeoDictionaryEntry, len(entries))
-	codes := make(map[string]struct{}, len(entries))
+	byCode := make(map[string]GeoDictionaryEntry, len(entries))
 	parents := make(map[string]string, len(entries))
 	for position, entry := range entries {
 		if !validText(entry.Kind, 64) || !validText(entry.Code, 128) || !validText(entry.Name, 256) ||
@@ -507,24 +647,104 @@ func loadGeoDictionary(path string, spec GeoFileSpec, limits GeoLoadLimits) (map
 		if _, exists := dictionary[key]; exists {
 			return nil, nil, fmt.Errorf("geo_dict.json[%d] duplicates kind/code", position)
 		}
-		if _, exists := codes[entry.Code]; exists {
+		if _, exists := byCode[entry.Code]; exists {
 			return nil, nil, fmt.Errorf("geo_dict.json[%d] duplicates globally unique code %q", position, entry.Code)
 		}
 		dictionary[key] = entry
-		codes[entry.Code] = struct{}{}
+		byCode[entry.Code] = entry
 		parents[entry.Code] = entry.ParentCode
 	}
 	for position, entry := range entries {
 		if entry.ParentCode != "" {
-			if _, exists := codes[entry.ParentCode]; !exists {
+			if _, exists := byCode[entry.ParentCode]; !exists {
 				return nil, nil, fmt.Errorf("geo_dict.json[%d] references missing parent_code %q", position, entry.ParentCode)
 			}
 		}
 	}
-	if err := validateGeoDictionaryHierarchy(parents); err != nil {
-		return nil, nil, err
+	paths := make(map[string]compiledGeoPath, len(entries))
+	if schema == GeoSchemaV2 {
+		var err error
+		paths, err = compileGeoDictionaryPaths(byCode)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		if err := validateGeoDictionaryHierarchy(parents); err != nil {
+			return nil, nil, err
+		}
+		for code, entry := range byCode {
+			paths[code] = compiledGeoPath{enabled: entry.Enabled}
+		}
 	}
-	return dictionary, codes, nil
+	return dictionary, paths, nil
+}
+
+var geoKindRank = map[string]int{
+	"continent": 0,
+	"region":    1,
+	"country":   2,
+	"province":  3,
+	"city":      4,
+}
+
+func compileGeoDictionaryPaths(entries map[string]GeoDictionaryEntry) (map[string]compiledGeoPath, error) {
+	states := make(map[string]uint8, len(entries))
+	compiled := make(map[string]compiledGeoPath, len(entries))
+	var visit func(string) (compiledGeoPath, error)
+	visit = func(code string) (compiledGeoPath, error) {
+		switch states[code] {
+		case 1:
+			return compiledGeoPath{}, fmt.Errorf("geo_dict.json contains a parent cycle at code %q", code)
+		case 2:
+			return compiled[code], nil
+		}
+		entry := entries[code]
+		rank, validKind := geoKindRank[entry.Kind]
+		if !validKind {
+			return compiledGeoPath{}, fmt.Errorf("geo_dict.json code %q has unsupported v2 kind %q", code, entry.Kind)
+		}
+		states[code] = 1
+		result := compiledGeoPath{enabled: entry.Enabled}
+		if entry.ParentCode != "" {
+			parent := entries[entry.ParentCode]
+			parentRank, validParentKind := geoKindRank[parent.Kind]
+			if !validParentKind || parentRank >= rank {
+				return compiledGeoPath{}, fmt.Errorf("geo_dict.json code %q has invalid parent layer %q", code, parent.Kind)
+			}
+			parentPath, err := visit(entry.ParentCode)
+			if err != nil {
+				return compiledGeoPath{}, err
+			}
+			result.path = parentPath.path
+			result.enabled = result.enabled && parentPath.enabled
+		}
+		switch entry.Kind {
+		case "continent":
+			result.path.ContinentID = entry.Code
+		case "region":
+			result.path.RegionID = entry.Code
+		case "country":
+			result.path.CountryID = entry.Code
+		case "province":
+			result.path.ProvinceID = entry.Code
+		case "city":
+			result.path.CityID = entry.Code
+		}
+		states[code] = 2
+		compiled[code] = result
+		return result, nil
+	}
+	for code := range entries {
+		if _, err := visit(code); err != nil {
+			return nil, err
+		}
+	}
+	return compiled, nil
+}
+
+func geoPathContains(path GeoPath, code string) bool {
+	return path.ContinentID == code || path.RegionID == code || path.CountryID == code ||
+		path.ProvinceID == code || path.CityID == code
 }
 
 func validateGeoDictionaryHierarchy(parents map[string]string) error {
@@ -554,7 +774,7 @@ func validateGeoDictionaryHierarchy(parents map[string]string) error {
 	return nil
 }
 
-func loadGeoRanges(path string, family int, manifest GeoManifest, operators map[uint16]GeoOperator, dictionaryCodes map[string]struct{}, infoTable *geoInfoTable, limits GeoLoadLimits) ([]geoRange4, []geoRange6, error) {
+func loadGeoRanges(path string, family int, manifest GeoManifest, operators map[uint16]GeoOperator, dictionaryPaths map[string]compiledGeoPath, infoTable *geoInfoTable, limits GeoLoadLimits) ([]geoRange4, []geoRange6, error) {
 	name := filepath.Base(path)
 	spec := manifest.Files[name]
 	file, err := os.Open(path)
@@ -602,7 +822,11 @@ func loadGeoRanges(path string, family int, manifest GeoManifest, operators map[
 	row := uint64(0)
 	for scanner.Scan() {
 		if row == 0 {
-			if string(scanner.Bytes()) != "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn" {
+			expectedHeader := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"
+			if manifest.Schema == GeoSchemaV2 {
+				expectedHeader += ",geo_leaf_code"
+			}
+			if string(scanner.Bytes()) != expectedHeader {
 				return nil, nil, fmt.Errorf("%s has an invalid CSV header", name)
 			}
 			row++
@@ -611,11 +835,15 @@ func loadGeoRanges(path string, family int, manifest GeoManifest, operators map[
 		if row-1 >= spec.Rows {
 			return nil, nil, fmt.Errorf("%s has more rows than the manifest declares", name)
 		}
-		fields, err := parseGeoCSVLine(scanner.Bytes())
+		expectedFields := 8
+		if manifest.Schema == GeoSchemaV2 {
+			expectedFields = 9
+		}
+		fields, err := parseGeoCSVLine(scanner.Bytes(), expectedFields)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s row %d: %w", name, row+1, err)
 		}
-		start, end, info, err := parseGeoRange(fields, family, manifest.Version, operators, dictionaryCodes)
+		start, end, info, err := parseGeoRange(fields, family, manifest.Schema, manifest.Version, operators, dictionaryPaths)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s row %d: %w", name, row+1, err)
 		}
@@ -658,9 +886,9 @@ func loadGeoRanges(path string, family int, manifest GeoManifest, operators map[
 	return ipv4, ipv6, nil
 }
 
-func parseGeoCSVLine(line []byte) ([]string, error) {
+func parseGeoCSVLine(line []byte, expectedFields int) ([]string, error) {
 	reader := csv.NewReader(bytes.NewReader(line))
-	reader.FieldsPerRecord = 8
+	reader.FieldsPerRecord = expectedFields
 	record, err := reader.Read()
 	if err != nil {
 		return nil, err
@@ -671,7 +899,7 @@ func parseGeoCSVLine(line []byte) ([]string, error) {
 	return record, nil
 }
 
-func parseGeoRange(fields []string, family int, version string, operators map[uint16]GeoOperator, dictionaryCodes map[string]struct{}) (netip.Addr, netip.Addr, GeoInfo, error) {
+func parseGeoRange(fields []string, family int, schema, version string, operators map[uint16]GeoOperator, dictionaryPaths map[string]compiledGeoPath) (netip.Addr, netip.Addr, GeoInfo, error) {
 	start, err := netip.ParseAddr(fields[0])
 	if err != nil || start.Is4() != (family == 4) || start.Unmap() != start {
 		return netip.Addr{}, netip.Addr{}, GeoInfo{}, errors.New("ip_start has the wrong address family")
@@ -696,7 +924,7 @@ func parseGeoRange(fields []string, family int, version string, operators map[ui
 		return netip.Addr{}, netip.Addr{}, GeoInfo{}, errors.New("non-CN admin_code must be empty")
 	}
 	if adminCode != "" {
-		if _, exists := dictionaryCodes[adminCode]; !exists {
+		if _, exists := dictionaryPaths[adminCode]; !exists {
 			return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("admin_code %q is missing from geo_dict.json", adminCode)
 		}
 	}
@@ -716,10 +944,41 @@ func parseGeoRange(fields []string, family int, version string, operators map[ui
 	if err != nil {
 		return netip.Addr{}, netip.Addr{}, GeoInfo{}, errors.New("asn must be UInt32")
 	}
-	return start, end, GeoInfo{
+	info := GeoInfo{
 		Country: country, AdminCode: adminCode, Subdivision: fields[4], City: fields[5],
-		ISPID: uint16(isp), ASN: uint32(asn), Version: version, Source: GeoSchema,
-	}, nil
+		ISPID: uint16(isp), ASN: uint32(asn), Version: version, Source: schema,
+	}
+	if schema == GeoSchemaV2 {
+		leafCode := fields[8]
+		path, exists := dictionaryPaths[leafCode]
+		if leafCode == "" || !exists {
+			return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q is missing from geo_dict.json", leafCode)
+		}
+		if !path.enabled {
+			return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q contains a disabled dictionary node", leafCode)
+		}
+		if path.path.CountryID == "" || path.path.CountryID != country {
+			return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q country conflicts with range country %q", leafCode, country)
+		}
+		if adminCode != "" {
+			if path.path.ProvinceID != "" && country == "CN" && path.path.ProvinceID != adminCode[:2]+"0000" {
+				return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q province conflicts with range admin_code %q", leafCode, adminCode)
+			}
+			if path.path.CityID != "" {
+				if path.path.CityID != adminCode {
+					return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q city conflicts with range admin_code %q", leafCode, adminCode)
+				}
+			} else if path.path.ProvinceID != adminCode {
+				return netip.Addr{}, netip.Addr{}, GeoInfo{}, fmt.Errorf("geo_leaf_code %q province conflicts with range admin_code %q", leafCode, adminCode)
+			}
+		}
+		info.ContinentID = path.path.ContinentID
+		info.RegionID = path.path.RegionID
+		info.CountryID = path.path.CountryID
+		info.ProvinceID = path.path.ProvinceID
+		info.CityID = path.path.CityID
+	}
+	return start, end, info, nil
 }
 
 func validateGeoLookupSamples(index *GeoIndex) error {

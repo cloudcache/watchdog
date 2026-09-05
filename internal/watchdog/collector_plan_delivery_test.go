@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 type collectorPlanRuntimeRepositoryStub struct {
@@ -70,7 +70,7 @@ func TestCollectorPlanDeliveryUsesAuthenticatedIdentityAndStoredSignature(t *tes
 	if repository.fetchTenantID != plan.TenantID || repository.fetchCollectorID != plan.CollectorID {
 		t.Fatalf("fetch identity was not injected: tenant=%q collector=%q", repository.fetchTenantID, repository.fetchCollectorID)
 	}
-	registry, err := flowcollect.VerifySignedPlan(delivery.Envelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now)
+	registry, err := flowplan.VerifySignedPlan(delivery.Envelope, []byte(base64.StdEncoding.EncodeToString(publicKey)), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestCollectorPlanDeliveryRuntimeHeartbeatUsesAuthenticatedIdentityAndServer
 	if !validSHA256Hex(heartbeat.CapabilitiesHash) || !validSHA256Hex(heartbeat.ObservationHash) || !validSHA256Hex(heartbeat.PayloadHash) || len(heartbeat.CapabilitiesJSON) == 0 || len(heartbeat.ObservationJSON) == 0 {
 		t.Fatalf("heartbeat canonical payload=%+v", heartbeat)
 	}
-	report.Observation.Queues.Decode.Depth = report.Observation.Queues.Decode.Capacity + 1
+	report.Observation.Queues.Kafka.Depth = report.Observation.Queues.Kafka.Capacity + 1
 	if err := service.ReportRuntime(context.Background(), "collector-runtime", CollectorMachineCredential{Token: "secret"}, report); err == nil {
 		t.Fatal("invalid runtime heartbeat was accepted")
 	}
@@ -178,13 +178,8 @@ func collectorRuntimeHeartbeatFixture() CollectorRuntimeHeartbeatReport {
 		Observation: CollectorRuntimeObservation{
 			Running: true, UptimeSeconds: 10, PlanAccepting: true,
 			ControlPlaneHealthy: true, KafkaHealthy: true,
-			Queues: CollectorRuntimeQueues{
-				Receive:    CollectorQueueObservation{Depth: 1, Capacity: 10},
-				Decode:     CollectorQueueObservation{Depth: 2, Capacity: 20},
-				Quarantine: CollectorQueueObservation{Capacity: 10},
-			},
-			WAL:      CollectorWALObservation{Bytes: 1024, MaxBytes: 1 << 20, OldestAgeMilliseconds: 50, Writable: true},
-			Counters: CollectorRuntimeCounters{ReceivedDatagrams: 100, ReceiveQueueDrops: 1, UDPKernelDrops: 2, DecodeFailures: 3, PublishFailures: 4},
+			Queues:   CollectorRuntimeQueues{Kafka: CollectorQueueObservation{Depth: 2, Capacity: 20}},
+			Counters: CollectorRuntimeCounters{ReceivedDatagrams: 100, RejectedSources: 1, UDPKernelDrops: 2, KafkaRecords: 99, KafkaBytes: 4096, PublishFailures: 4},
 		},
 	}
 }
@@ -212,13 +207,13 @@ func TestCollectorRuntimeHeartbeatSequenceAndHealthTransitions(t *testing.T) {
 			}
 		})
 	}
-	previousCounters := CollectorRuntimeCounters{ReceivedDatagrams: 10, ReceiveQueueDrops: 2, UDPKernelDrops: 1}
+	previousCounters := CollectorRuntimeCounters{ReceivedDatagrams: 10, RejectedSources: 2, UDPKernelDrops: 1}
 	currentCounters := previousCounters
 	currentCounters.ReceivedDatagrams++
 	if !collectorRuntimeCountersMonotonic(previousCounters, currentCounters) {
 		t.Fatal("increasing runtime counters were rejected")
 	}
-	currentCounters.ReceiveQueueDrops--
+	currentCounters.RejectedSources--
 	if collectorRuntimeCountersMonotonic(previousCounters, currentCounters) {
 		t.Fatal("runtime counter rollback was accepted")
 	}
@@ -232,14 +227,14 @@ func TestCollectorRuntimeHeartbeatSequenceAndHealthTransitions(t *testing.T) {
 	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion+1, true); got != "warming" {
 		t.Fatalf("LKG observation=%q", got)
 	}
-	heartbeat.Observation.WAL.HardWatermark = true
+	heartbeat.Observation.Queues.Kafka.Depth = heartbeat.Observation.Queues.Kafka.Capacity
 	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion+1, true); got != "degraded" {
 		t.Fatalf("unhealthy LKG observation=%q", got)
 	}
 	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, true); got != "degraded" {
-		t.Fatalf("hard watermark observation=%q", got)
+		t.Fatalf("full Kafka queue observation=%q", got)
 	}
-	heartbeat.Observation.WAL.HardWatermark = false
+	heartbeat.Observation.Queues.Kafka.Depth = 0
 	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, false); got != "degraded" {
 		t.Fatalf("incompatible schema observation=%q", got)
 	}
@@ -273,14 +268,9 @@ func collectorPlanDeliveryFixture(t *testing.T, now time.Time) (CollectorPlanRev
 	if err != nil {
 		t.Fatal(err)
 	}
-	partitionMap := make([]uint32, flowcollect.VirtualShardCount)
-	for index := range partitionMap {
-		partitionMap[index] = uint32(index % 8)
-	}
-	flowPlan := flowcollect.Plan{
+	flowPlan := flowplan.Plan{
 		SchemaVersion: 1, Revision: 7, CollectorID: "collector-plan-test",
 		NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
-		PartitionMapVersion: 1, PartitionMap: partitionMap,
 	}
 	raw, err := json.Marshal(flowPlan)
 	if err != nil {

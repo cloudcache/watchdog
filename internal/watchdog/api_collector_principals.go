@@ -53,7 +53,7 @@ func (api collectorPrincipalAPI) grant(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	idempotencyKey := r.Header.Get(flowStateCleanupIdempotencyHeader)
+	idempotencyKey := r.Header.Get(idempotencyKeyHeader)
 	if idempotencyKey == "" || len(idempotencyKey) > 128 || !isPrintableASCII(idempotencyKey) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "Idempotency-Key must be 1 to 128 non-space printable ASCII bytes", nil)
 		return

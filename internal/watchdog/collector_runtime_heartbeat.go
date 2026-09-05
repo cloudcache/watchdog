@@ -37,28 +37,17 @@ type CollectorQueueObservation struct {
 }
 
 type CollectorRuntimeQueues struct {
-	Receive    CollectorQueueObservation `json:"receive"`
-	Decode     CollectorQueueObservation `json:"decode"`
-	Quarantine CollectorQueueObservation `json:"quarantine"`
-}
-
-type CollectorWALObservation struct {
-	Bytes                 uint64 `json:"bytes"`
-	MaxBytes              uint64 `json:"max_bytes"`
-	OldestAgeMilliseconds uint64 `json:"oldest_age_ms"`
-	Writable              bool   `json:"writable"`
-	SoftWatermark         bool   `json:"soft_watermark"`
-	HardWatermark         bool   `json:"hard_watermark"`
+	Kafka CollectorQueueObservation `json:"kafka"`
 }
 
 type CollectorRuntimeCounters struct {
-	ReceivedDatagrams    uint64 `json:"received_datagrams"`
-	ReceiveQueueDrops    uint64 `json:"receive_queue_drops"`
-	QuarantineQueueDrops uint64 `json:"quarantine_queue_drops"`
-	UDPKernelDrops       uint64 `json:"udp_kernel_drops"`
-	WALHardStops         uint64 `json:"wal_hard_stops"`
-	DecodeFailures       uint64 `json:"decode_failures"`
-	PublishFailures      uint64 `json:"publish_failures"`
+	ReceivedDatagrams uint64 `json:"received_datagrams"`
+	RejectedSources   uint64 `json:"rejected_sources"`
+	InvalidDatagrams  uint64 `json:"invalid_datagrams"`
+	UDPKernelDrops    uint64 `json:"udp_kernel_drops"`
+	KafkaRecords      uint64 `json:"kafka_records"`
+	KafkaBytes        uint64 `json:"kafka_bytes"`
+	PublishFailures   uint64 `json:"publish_failures"`
 }
 
 type CollectorRuntimeObservation struct {
@@ -69,7 +58,6 @@ type CollectorRuntimeObservation struct {
 	ControlPlaneHealthy bool                     `json:"control_plane_healthy"`
 	KafkaHealthy        bool                     `json:"kafka_healthy"`
 	Queues              CollectorRuntimeQueues   `json:"queues"`
-	WAL                 CollectorWALObservation  `json:"wal"`
 	Counters            CollectorRuntimeCounters `json:"counters"`
 }
 
@@ -169,20 +157,17 @@ func validateCollectorRuntimeCapabilities(capabilities CollectorRuntimeCapabilit
 }
 
 func validateCollectorRuntimeObservation(observation CollectorRuntimeObservation) error {
-	queues := []CollectorQueueObservation{observation.Queues.Receive, observation.Queues.Decode, observation.Queues.Quarantine}
-	for _, queue := range queues {
-		if queue.Depth > queue.Capacity || queue.Capacity > collectorRuntimeValueMax {
-			return errors.New("collector runtime queue observation is invalid")
-		}
+	queue := observation.Queues.Kafka
+	if queue.Depth > queue.Capacity || queue.Capacity > collectorRuntimeValueMax {
+		return errors.New("collector runtime Kafka queue observation is invalid")
 	}
-	wal := observation.WAL
-	if wal.MaxBytes == 0 || wal.Bytes > collectorRuntimeValueMax || wal.MaxBytes > collectorRuntimeValueMax || wal.OldestAgeMilliseconds > collectorRuntimeValueMax || observation.UptimeSeconds > collectorRuntimeValueMax || (wal.HardWatermark && !wal.SoftWatermark) {
-		return errors.New("collector runtime WAL or uptime observation is invalid")
+	if observation.UptimeSeconds > collectorRuntimeValueMax {
+		return errors.New("collector runtime uptime observation is invalid")
 	}
 	counters := observation.Counters
 	for _, value := range []uint64{
-		counters.ReceivedDatagrams, counters.ReceiveQueueDrops, counters.QuarantineQueueDrops,
-		counters.UDPKernelDrops, counters.WALHardStops, counters.DecodeFailures, counters.PublishFailures,
+		counters.ReceivedDatagrams, counters.RejectedSources, counters.InvalidDatagrams,
+		counters.UDPKernelDrops, counters.KafkaRecords, counters.KafkaBytes, counters.PublishFailures,
 	} {
 		if value > collectorRuntimeValueMax {
 			return errors.New("collector runtime counter observation is invalid")
@@ -215,10 +200,10 @@ func validateCollectorHeartbeatSequence(previousBootID string, previousSequence 
 
 func collectorRuntimeCountersMonotonic(previous, current CollectorRuntimeCounters) bool {
 	return current.ReceivedDatagrams >= previous.ReceivedDatagrams &&
-		current.ReceiveQueueDrops >= previous.ReceiveQueueDrops &&
-		current.QuarantineQueueDrops >= previous.QuarantineQueueDrops &&
+		current.RejectedSources >= previous.RejectedSources &&
+		current.InvalidDatagrams >= previous.InvalidDatagrams &&
 		current.UDPKernelDrops >= previous.UDPKernelDrops &&
-		current.WALHardStops >= previous.WALHardStops &&
-		current.DecodeFailures >= previous.DecodeFailures &&
+		current.KafkaRecords >= previous.KafkaRecords &&
+		current.KafkaBytes >= previous.KafkaBytes &&
 		current.PublishFailures >= previous.PublishFailures
 }

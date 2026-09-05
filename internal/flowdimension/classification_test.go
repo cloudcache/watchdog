@@ -1,10 +1,46 @@
 package flowdimension
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestDecodeAndCompileClassificationBundleVerifiesWireContract(t *testing.T) {
+	bundle := ClassificationBundle{
+		SchemaVersion: ClassificationSchemaVersion, TenantID: "tenant-a", Version: 7,
+		EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-7",
+		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3, 4}, HomeASNs: []uint32{4134, 4812},
+		OverseasIncludesHMT: true, InternalPolicy: RecordPolicyDrop, TransitPolicy: RecordPolicyCount,
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum := classificationChecksum(data)
+	snapshot, err := DecodeAndCompileClassificationBundle(data, checksum, ClassificationCompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := snapshot.Metadata()
+	if metadata.Version != bundle.Version || metadata.DimensionSnapshotID != bundle.DimensionSnapshotID || metadata.Checksum != checksum {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+	badChecksum := "sha256:" + strings.Repeat("0", 64)
+	if _, err := DecodeAndCompileClassificationBundle(data, badChecksum, ClassificationCompileLimits{}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("checksum error = %v", err)
+	}
+	unknown := append(data[:len(data)-1], []byte(`,"unexpected":true}`)...)
+	if _, err := DecodeAndCompileClassificationBundle(unknown, classificationChecksum(unknown), ClassificationCompileLimits{}); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown-field error = %v", err)
+	}
+	if _, err := DecodeAndCompileClassificationBundle(data, checksum, ClassificationCompileLimits{MaxBundleBytes: len(data) - 1}); err == nil || !strings.Contains(err.Error(), "bundle size") {
+		t.Fatalf("size error = %v", err)
+	}
+}
 
 func TestClassificationCatalogSelectsImmutableEventTimeProfiles(t *testing.T) {
 	definition := testClassificationDefinition(1, testMinute(12, 0), "snapshot-1")
@@ -66,6 +102,8 @@ func TestCompileClassificationRejectsInvalidDefinitions(t *testing.T) {
 		{name: "city", mutate: func(value *ClassificationDefinition) { value.HomeCity = "320100" }, want: "inside"},
 		{name: "duplicate-isp", mutate: func(value *ClassificationDefinition) { value.HomeISPIDs = []uint16{3, 3} }, want: "unique"},
 		{name: "zero-isp", mutate: func(value *ClassificationDefinition) { value.HomeISPIDs = []uint16{0} }, want: "non-zero"},
+		{name: "duplicate-asn", mutate: func(value *ClassificationDefinition) { value.HomeASNs = []uint32{4134, 4134} }, want: "unique"},
+		{name: "zero-asn", mutate: func(value *ClassificationDefinition) { value.HomeASNs = []uint32{0} }, want: "non-zero"},
 		{name: "policy", mutate: func(value *ClassificationDefinition) { value.TransitPolicy = "archive" }, want: "count or drop"},
 	}
 	for _, test := range tests {
@@ -102,7 +140,12 @@ func TestClassificationCatalogRejectsConflictingTimeline(t *testing.T) {
 func testClassificationDefinition(version uint32, effectiveFrom time.Time, dimensionSnapshotID string) ClassificationDefinition {
 	return ClassificationDefinition{
 		TenantID: "tenant-a", Version: version, EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimensionSnapshotID,
-		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
+		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, HomeASNs: []uint32{4134}, OverseasIncludesHMT: true,
 		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
 	}
+}
+
+func classificationChecksum(data []byte) string {
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:])
 }

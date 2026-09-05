@@ -11,8 +11,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
 
 const collectorEvidenceRequestMaxBytes = 8 << 10
@@ -22,16 +20,6 @@ type collectorDrainAPIRequest struct {
 	ReceiptNonce         string `json:"receipt_nonce"`
 }
 
-type collectorStateRestoreAPIRequest struct {
-	StateKind                  string `json:"state_kind"`
-	StateIdentityKey           string `json:"state_identity_key"`
-	AppliedConfigVersion       uint64 `json:"applied_config_version"`
-	RestoredOldOwnershipEpoch  uint64 `json:"restored_old_ownership_epoch"`
-	RestoredOldGeneration      uint64 `json:"restored_old_generation"`
-	NewEpochBaselineGeneration uint64 `json:"new_epoch_baseline_generation"`
-	ReceiptNonce               string `json:"receipt_nonce"`
-}
-
 type collectorEvidenceAPI struct {
 	controller CollectorEvidenceController
 }
@@ -39,7 +27,6 @@ type collectorEvidenceAPI struct {
 func registerCollectorEvidenceRoutes(mux *http.ServeMux, controller CollectorEvidenceController) {
 	api := collectorEvidenceAPI{controller: controller}
 	mux.HandleFunc("POST /api/v1/collectors/{collector_id}/ownership-transfers/{transfer_id}/actions/drain", api.recordDrain)
-	mux.HandleFunc("POST /api/v1/collectors/{collector_id}/ownership-transfers/{transfer_id}/state-restores", api.recordStateRestore)
 }
 
 func (api collectorEvidenceAPI) recordDrain(w http.ResponseWriter, r *http.Request) {
@@ -64,45 +51,6 @@ func (api collectorEvidenceAPI) recordDrain(w http.ResponseWriter, r *http.Reque
 	err = api.controller.RecordDrain(r.Context(), ID(r.PathValue("collector_id")), credential, CollectorDrainReport{
 		TransferID: ID(r.PathValue("transfer_id")), AppliedConfigVersion: req.AppliedConfigVersion,
 		ReceiptNonce: req.ReceiptNonce,
-	})
-	if err != nil {
-		writeCollectorEvidenceError(w, err)
-		return
-	}
-	WriteAPIJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
-}
-
-func (api collectorEvidenceAPI) recordStateRestore(w http.ResponseWriter, r *http.Request) {
-	if !validCollectorEvidenceID(ID(r.PathValue("collector_id"))) || !validCollectorEvidenceID(ID(r.PathValue("transfer_id"))) {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "collector_id and transfer_id are required", nil)
-		return
-	}
-	credential, err := collectorMachineCredentialFromRequest(r)
-	if err != nil {
-		writeCollectorEvidenceError(w, err)
-		return
-	}
-	var req collectorStateRestoreAPIRequest
-	if err := decodeCollectorEvidenceJSON(r, &req); err != nil {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
-		return
-	}
-	identityKey, err := hex.DecodeString(req.StateIdentityKey)
-	if err != nil || len(identityKey) != sha256.Size || req.StateIdentityKey != strings.ToLower(req.StateIdentityKey) {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "state_identity_key must be 64 lowercase hexadecimal characters", nil)
-		return
-	}
-	if (req.StateKind != string(flowcollect.StateCheckpointDecoder) && req.StateKind != string(flowcollect.StateCheckpointQuality)) || req.AppliedConfigVersion == 0 || req.RestoredOldOwnershipEpoch == 0 || req.RestoredOldGeneration == 0 || !validCollectorReceiptNonce(req.ReceiptNonce) {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "state restore report is incomplete", nil)
-		return
-	}
-	err = api.controller.RecordStateRestore(r.Context(), ID(r.PathValue("collector_id")), credential, CollectorStateRestoreReport{
-		TransferID: ID(r.PathValue("transfer_id")), Kind: flowcollect.StateCheckpointKind(req.StateKind),
-		StateIdentityKey: identityKey, AppliedConfigVersion: req.AppliedConfigVersion,
-		RestoredOldOwnershipEpoch:  req.RestoredOldOwnershipEpoch,
-		RestoredOldGeneration:      req.RestoredOldGeneration,
-		NewEpochBaselineGeneration: req.NewEpochBaselineGeneration,
-		ReceiptNonce:               req.ReceiptNonce,
 	})
 	if err != nil {
 		writeCollectorEvidenceError(w, err)

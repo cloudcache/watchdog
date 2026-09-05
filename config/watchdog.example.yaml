@@ -29,125 +29,6 @@ sflow_collector:
 # Formal flow data plane. tenant/exporter bindings are supplied only by the
 # signed plan; unlike the legacy sflow_collector, no tenant is trusted from YAML
 # or a datagram. Do not bind the legacy and formal collectors to the same port.
-flow_collect:
-  control_plane_url: "https://watchdog.example.com"
-  control_plane_token_file: "/etc/watchdog/flow-collect.token"
-  control_plane_request_timeout: 10s
-  control_plane_retry_min: 1s
-  control_plane_retry_max: 30s
-  control_plane_heartbeat_interval: 30s
-  state_dir: "/var/lib/watchdog-flow-collect"
-  plan_file: "/var/lib/watchdog-flow-collect/plan.json"
-  plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub" # legacy single-key bootstrap compatibility
-  plan_trust_bundle_file: "/etc/watchdog/flow-plan-trust-bundle.json"
-  sflow_listen: ":6343"
-  netflow_listen: ":2055"
-  socket_count: 8
-  decode_workers: 16
-  decode_queue_datagrams: 262144
-  receive_buffer_bytes: 33554432
-  max_datagram_bytes: 65535
-  plan_refresh_interval: 30s
-  plan_history_max_entries: 128
-  decoder_state_ttl: 30m
-  exporter_refresh_interval: 30s
-  wal:
-    max_bytes: 1073741824000
-    max_age: 24h
-    segment_bytes: 134217728
-    fsync_interval: 10ms
-    soft_watermark: 0.70
-    hard_watermark: 0.90
-  kafka:
-    brokers: ["kafka-1:9093", "kafka-2:9093", "kafka-3:9093"]
-    normalized_topic: "watchdog.flow.normalized.v1"
-    collect_state_topic: "watchdog.flow.collect-state.v1"
-    collect_state_restore_timeout: 2m
-    collect_state_restore_max_candidates: 262144
-    # Keep false until every collector runs the typed-key compatible reader.
-    quality_checkpoint_write_enabled: false
-    decode_dlq_topic: "watchdog.flow.decode-dlq.v1"
-    quarantine_topic: "watchdog.flow.quarantine.v1"
-    acks: "all"
-    compression: "zstd"
-    tls: true
-    # Client identity is carried by mTLS and mapped to least-privilege Kafka
-    # ACLs. Topic creation/alteration must use a separate admin principal.
-    tls_ca_file: "/etc/watchdog/kafka/ca.crt"
-    tls_cert_file: "/etc/watchdog/kafka/flow-collect.crt"
-    tls_key_file: "/etc/watchdog/kafka/flow-collect.key"
-    tls_server_name: "kafka.watchdog.internal"
-    topic_contract:
-      check_timeout: 10s
-      normalized_partitions: 96
-      # Exact/immutable while this keyed compacted topic is in service.
-      collect_state_partitions: 32
-      decode_dlq_partitions: 12
-      quarantine_partitions: 12
-      min_replication_factor: 3
-      min_in_sync_replicas: 2
-      normalized_min_retention: 168h
-      collect_state_delete_retention: 24h
-      decode_dlq_min_retention: 720h
-      quarantine_min_retention: 168h
-  normalized_batch:
-    max_records: 1024
-    max_bytes: 1048576
-    max_wait: 5ms
-  diagnostics:
-    decode_max_attempts: 3
-    retry_initial: 250ms
-    retry_max: 5s
-    attempt_journal_fsync_interval: 10ms
-    attempt_checkpoint_interval: 5m
-    attempt_journal_max_bytes: 268435456
-    quarantine_queue_events: 4096
-    quarantine_max_events_per_second: 100
-    quarantine_max_events_per_source_second: 2
-    # 0 keeps raw payload out of DLQ; enable only with restricted topic ACL/TTL
-    dlq_payload_max_bytes: 0
-  quality:
-    state_ttl: 1h
-    anomaly_window: 1m
-    journal_fsync_interval: 10ms
-    checkpoint_interval: 5m
-    journal_max_bytes: 536870912
-    max_exporters: 65536
-    max_data_sources: 262144
-  observability:
-    # Bind loopback unless the scrape network is explicitly protected.
-    listen: "127.0.0.1:9464"
-    read_header_timeout: 2s
-    write_timeout: 10s
-    idle_timeout: 30s
-    shutdown_timeout: 5s
-
-# Control-plane worker for safely deleting superseded compacted state. It uses
-# a dedicated Kafka mTLS principal; never reuse the flow_collect certificate.
-flow_state_cleanup:
-  enabled: false
-  worker_id: "watchdog-control-1"
-  lease_duration: 30s
-  heartbeat_interval: 10s
-  step_timeout: 2m
-  poll_interval: 1s
-  retry_min: 1s
-  retry_max: 1m
-  max_attempts: 0
-  kafka:
-    brokers: ["kafka-1:9093", "kafka-2:9093", "kafka-3:9093"]
-    collect_state_topic: "watchdog.flow.collect-state.v1"
-    scan_timeout: 2m
-    tls: true
-    tls_ca_file: "/etc/watchdog/kafka/ca.crt"
-    tls_cert_file: "/etc/watchdog/kafka/flow-state-cleanup.crt"
-    tls_key_file: "/etc/watchdog/kafka/flow-state-cleanup.key"
-    tls_server_name: "kafka.watchdog.internal"
-
-# Optional control-plane adapter for a trusted enterprise service that issues
-# per-collector credentials into a secret manager and applies the exact Kafka
-# ACL policy identified by policy_revision. It must return references and
-# immutable receipts only, never credential material.
 collector_principal_provider:
   enabled: false
   name: "enterprise-kafka"
@@ -193,3 +74,32 @@ agent:
 # scripts/edgemanager-geo-export.py; empty path disables the service.
 flow_geo:
   path: ""
+
+# Closed-bucket Flow aggregation runs in the hub through operation_jobs.
+# Keep disabled until the ClickHouse migrations are applied. Secrets are read
+# from files; no inline ClickHouse password is accepted here.
+flow_rollup:
+  enabled: false
+  scan_interval: 30s
+  late_arrival_window: 5m
+  bootstrap_lookback: 24h
+  max_tenants_per_scan: 500
+  max_buckets_per_series_scan: 500
+  max_buckets_per_scan: 5000
+  worker_concurrency: 2
+  lease_for: 2m
+  max_attempts: 5
+  retry_base: 30s
+  clickhouse_address: "127.0.0.1:9000"
+  clickhouse_database: "watchdog_flow"
+  clickhouse_user: "default"
+  clickhouse_password_file: ""
+  clickhouse_max_conns: 2
+  clickhouse_min_conns: 0
+  clickhouse_dial_timeout: 3s
+  clickhouse_read_timeout: 90s
+  clickhouse_tls: false
+  clickhouse_tls_ca: ""
+  clickhouse_tls_cert: ""
+  clickhouse_tls_key: ""
+  clickhouse_tls_server_name: ""

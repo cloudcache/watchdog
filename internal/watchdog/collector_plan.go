@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 const collectorPlanMaxSpecBytes = 4 << 20
@@ -172,7 +172,7 @@ func CollectorPlanSigningPayload(plan CollectorPlanRevision) ([]byte, error) {
 	if !validSHA256Hex(plan.SpecHash) || plan.SpecHash != hash {
 		return nil, errors.New("collector plan spec hash does not match canonical JSON")
 	}
-	metadata := flowcollect.PlanSignatureMetadata{
+	metadata := flowplan.PlanSignatureMetadata{
 		PlanID: string(plan.ID), TenantID: string(plan.TenantID), CollectorID: string(plan.CollectorID),
 		ConfigVersion: plan.ConfigVersion, PlanSchemaVersion: plan.PlanSchemaVersion,
 		SpecHash: plan.SpecHash, SigningKeyID: plan.SigningKeyID,
@@ -181,7 +181,7 @@ func CollectorPlanSigningPayload(plan CollectorPlanRevision) ([]byte, error) {
 	if !plan.NotBefore.IsZero() {
 		metadata.NotBeforeUnixMilli = plan.NotBefore.UnixMilli()
 	}
-	encoded, err := flowcollect.BuildPlanSignaturePayload(metadata)
+	encoded, err := flowplan.BuildPlanSignaturePayload(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("encode collector plan signing payload: %w", err)
 	}

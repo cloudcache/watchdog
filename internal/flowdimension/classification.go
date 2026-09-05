@@ -1,10 +1,22 @@
 package flowdimension
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"sync/atomic"
 	"time"
+)
+
+const (
+	ClassificationSchemaVersion   = 1
+	defaultMaxClassificationBytes = 64 << 10
+	maxHomeISPIDs                 = 4_096
+	maxHomeASNs                   = 4_096
 )
 
 var ErrNoClassificationSnapshot = errors.New("no classification snapshot for event time")
@@ -31,9 +43,32 @@ type ClassificationDefinition struct {
 	HomeProvince        string
 	HomeCity            string
 	HomeISPIDs          []uint16
+	HomeASNs            []uint32
 	OverseasIncludesHMT bool
 	InternalPolicy      RecordPolicy
 	TransitPolicy       RecordPolicy
+}
+
+// ClassificationBundle is the immutable wire object published by the control
+// plane. ClassificationDefinition remains the programmatic compile input so a
+// schema version is never silently optional on the wire.
+type ClassificationBundle struct {
+	SchemaVersion       uint32       `json:"schema_version"`
+	TenantID            string       `json:"tenant_id"`
+	Version             uint32       `json:"version"`
+	EffectiveFrom       time.Time    `json:"effective_from"`
+	DimensionSnapshotID string       `json:"dimension_snapshot_id"`
+	HomeProvince        string       `json:"home_province"`
+	HomeCity            string       `json:"home_city"`
+	HomeISPIDs          []uint16     `json:"home_isp_ids"`
+	HomeASNs            []uint32     `json:"home_asns"`
+	OverseasIncludesHMT bool         `json:"overseas_includes_hmt"`
+	InternalPolicy      RecordPolicy `json:"internal_policy"`
+	TransitPolicy       RecordPolicy `json:"transit_policy"`
+}
+
+type ClassificationCompileLimits struct {
+	MaxBundleBytes int
 }
 
 type ClassificationMetadata struct {
@@ -43,6 +78,7 @@ type ClassificationMetadata struct {
 	DimensionSnapshotID string
 	InternalPolicy      RecordPolicy
 	TransitPolicy       RecordPolicy
+	Checksum            string
 }
 
 // ClassificationSnapshot is immutable and is selected using the flow record's
@@ -54,6 +90,47 @@ type ClassificationSnapshot struct {
 }
 
 func CompileClassification(definition ClassificationDefinition) (*ClassificationSnapshot, error) {
+	return compileClassification(definition, "")
+}
+
+func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, limits ClassificationCompileLimits) (*ClassificationSnapshot, error) {
+	maxBytes := limits.MaxBundleBytes
+	if maxBytes == 0 {
+		maxBytes = defaultMaxClassificationBytes
+	}
+	if maxBytes < 1 || len(data) == 0 || len(data) > maxBytes {
+		return nil, fmt.Errorf("classification bundle size must be 1..%d bytes", maxBytes)
+	}
+	want, err := parseSHA256Checksum(expectedChecksum)
+	if err != nil {
+		return nil, err
+	}
+	got := sha256.Sum256(data)
+	if got != want {
+		return nil, errors.New("classification bundle checksum mismatch")
+	}
+	var bundle ClassificationBundle
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&bundle); err != nil {
+		return nil, fmt.Errorf("decode classification bundle: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, fmt.Errorf("decode classification bundle: %w", err)
+	}
+	if bundle.SchemaVersion != ClassificationSchemaVersion {
+		return nil, fmt.Errorf("unsupported classification bundle schema_version %d", bundle.SchemaVersion)
+	}
+	return compileClassification(ClassificationDefinition{
+		TenantID: bundle.TenantID, Version: bundle.Version, EffectiveFrom: bundle.EffectiveFrom,
+		DimensionSnapshotID: bundle.DimensionSnapshotID, HomeProvince: bundle.HomeProvince,
+		HomeCity: bundle.HomeCity, HomeISPIDs: bundle.HomeISPIDs, HomeASNs: bundle.HomeASNs,
+		OverseasIncludesHMT: bundle.OverseasIncludesHMT,
+		InternalPolicy:      bundle.InternalPolicy, TransitPolicy: bundle.TransitPolicy,
+	}, "sha256:"+hex.EncodeToString(got[:]))
+}
+
+func compileClassification(definition ClassificationDefinition, checksum string) (*ClassificationSnapshot, error) {
 	if !validIdentifier(definition.TenantID, 64) || definition.Version == 0 || !validIdentifier(definition.DimensionSnapshotID, 64) {
 		return nil, errors.New("classification tenant, version, and dimension snapshot are required")
 	}
@@ -77,6 +154,12 @@ func CompileClassification(definition ClassificationDefinition) (*Classification
 	if !validRecordPolicy(definition.InternalPolicy) || !validRecordPolicy(definition.TransitPolicy) {
 		return nil, errors.New("classification internal and transit policies must be count or drop")
 	}
+	if len(definition.HomeISPIDs) > maxHomeISPIDs {
+		return nil, fmt.Errorf("classification home ISP IDs exceed limit %d", maxHomeISPIDs)
+	}
+	if len(definition.HomeASNs) > maxHomeASNs {
+		return nil, fmt.Errorf("classification home ASNs exceed limit %d", maxHomeASNs)
+	}
 	ispIDs := append([]uint16(nil), definition.HomeISPIDs...)
 	sort.Slice(ispIDs, func(left, right int) bool { return ispIDs[left] < ispIDs[right] })
 	ispSet := make(map[uint16]struct{}, len(ispIDs))
@@ -86,14 +169,24 @@ func CompileClassification(definition ClassificationDefinition) (*Classification
 		}
 		ispSet[id] = struct{}{}
 	}
+	asns := append([]uint32(nil), definition.HomeASNs...)
+	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
+	asnSet := make(map[uint32]struct{}, len(asns))
+	for index, asn := range asns {
+		if asn == 0 || (index > 0 && asn == asns[index-1]) {
+			return nil, errors.New("classification home ASNs must be non-zero and unique")
+		}
+		asnSet[asn] = struct{}{}
+	}
 	return &ClassificationSnapshot{
 		metadata: ClassificationMetadata{
 			TenantID: definition.TenantID, Version: definition.Version, EffectiveFrom: effectiveFrom,
 			DimensionSnapshotID: definition.DimensionSnapshotID,
 			InternalPolicy:      definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
+			Checksum: checksum,
 		},
 		home: HomeProfile{
-			Province: definition.HomeProvince, City: definition.HomeCity, ISPIDs: ispSet,
+			Province: definition.HomeProvince, City: definition.HomeCity, ISPIDs: ispSet, ASNs: asnSet,
 			OverseasIncludesHMT: definition.OverseasIncludesHMT, Version: definition.Version,
 		},
 	}, nil
@@ -213,11 +306,16 @@ func validRecordPolicy(policy RecordPolicy) bool {
 
 func sameClassification(left, right *ClassificationSnapshot) bool {
 	if left.metadata != right.metadata || left.home.Province != right.home.Province || left.home.City != right.home.City ||
-		left.home.OverseasIncludesHMT != right.home.OverseasIncludesHMT || len(left.home.ISPIDs) != len(right.home.ISPIDs) {
+		left.home.OverseasIncludesHMT != right.home.OverseasIncludesHMT || len(left.home.ISPIDs) != len(right.home.ISPIDs) || len(left.home.ASNs) != len(right.home.ASNs) {
 		return false
 	}
 	for id := range left.home.ISPIDs {
 		if _, exists := right.home.ISPIDs[id]; !exists {
+			return false
+		}
+	}
+	for asn := range left.home.ASNs {
+		if _, exists := right.home.ASNs[asn]; !exists {
 			return false
 		}
 	}

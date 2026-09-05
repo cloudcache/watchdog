@@ -789,6 +789,18 @@ CREATE TABLE IF NOT EXISTS `operation_jobs` (
   CONSTRAINT `operation_jobs_chk_6` CHECK (((`status` in ('succeeded','failed','canceled')) = (`finished_at` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `operation_job_watermarks` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `partition_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `watermark_value` bigint unsigned NOT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`,`job_type`,`partition_key`),
+  CONSTRAINT `fk_operation_job_watermark_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `permissions` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

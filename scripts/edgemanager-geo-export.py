@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export the EdgeManager geo library as a watchdog flow-geo-v1 bundle.
+"""Export the EdgeManager geo library as a watchdog flow-geo-v2 bundle.
 
 The EdgeManager database already holds the merged+corrected interval tables
 (geo_base_v4/geo_base_v6 with admin_code, isp_group, asn), the operator
 registry (isp_operators) and the display dictionary (geo_dict). This script
 does NO parsing or importing of its own: it reads those four tables over a
 plain MySQL connection (mysql CLI, TSV) and writes the versioned bundle
-described in docs/flow-module-design.md §3.1.
+described in docs/flow-module-design.md §4.1.
 
 Usage (read-only account is enough):
   python3 scripts/edgemanager-geo-export.py \
@@ -21,11 +21,10 @@ Approved geo_subnets overrides are applied on top of the base intervals
 the flattened merged+corrected view.
 
 Hong Kong / Macau / Taiwan are normalized to country=CN with GB/T admin codes
-(810000/820000/710000) per the frozen flow-geo-v1 contract.
+(810000/820000/710000) per the frozen flow-geo-v2 contract.
 """
 
 import argparse
-import gzip
 import hashlib
 import ipaddress
 import json
@@ -36,6 +35,47 @@ import tempfile
 from datetime import datetime, timezone
 
 HMT_ADMIN = {"HK": "810000", "MO": "820000", "TW": "710000"}
+
+
+def effective_time(value, now):
+    """Return the frozen UTC minute boundary used for event-time selection."""
+    if not value:
+        return now.replace(second=0, microsecond=0)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit(f"invalid --effective-from: {exc}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise SystemExit("--effective-from must be an explicit UTC timestamp")
+    if parsed.second or parsed.microsecond:
+        raise SystemExit("--effective-from must be a UTC minute boundary")
+    return parsed.astimezone(timezone.utc)
+
+
+def build_manifest(version, generated_at, effective_from, files):
+    return {
+        "schema": "flow-geo-v2",
+        "version": version,
+        "generated_at": generated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "effective_from": effective_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "admin_code_system": "GB/T2260-6",
+        "unknown_country": "ZZ",
+        "files": files,
+    }
+
+
+def bundle_content_hash(v4, v6, operators, dictionary):
+    """Hash every semantic input without building one huge serialized value."""
+    digest = hashlib.sha256()
+    for label, values in (("ipv4", v4), ("ipv6", v6),
+                          ("operators", operators), ("geo_dict", dictionary)):
+        digest.update(label.encode("ascii") + b"\0")
+        for value in values:
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":")).encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+    return digest.hexdigest()
 
 
 def mysql_tsv(args, query):
@@ -58,6 +98,7 @@ def norm(value):
 
 
 def normalize_hmt(country, admin_code):
+    country = country or "ZZ"
     if country in HMT_ADMIN:
         return "CN", admin_code or HMT_ADMIN[country]
     return country, admin_code
@@ -169,6 +210,35 @@ def validate(rows, label):
         previous_end = row[1]
 
 
+def attach_geo_leaf(rows, dictionary):
+    """Attach one stable leaf code per flattened range.
+
+    EdgeManager already uses ISO country and GB/T province/city codes as the
+    stable geo_dict codes. A CN city/province is therefore the most-specific
+    leaf; other ranges use the country. Fully unknown ranges use the explicit
+    synthetic ZZ country node.
+    """
+    by_code = {}
+    for entry in dictionary:
+        code = entry["code"]
+        if code in by_code:
+            raise SystemExit(f"geo_dict contains duplicate global code {code!r}")
+        by_code[code] = entry
+    result = []
+    for row in rows:
+        country = row[2] or "ZZ"
+        row = list(row)
+        row[2] = country
+        leaf = row[3] if country == "CN" and row[3] else country
+        entry = by_code.get(leaf)
+        if not entry:
+            raise SystemExit(f"range leaf {leaf!r} is missing from geo_dict")
+        if not entry.get("enabled", False):
+            raise SystemExit(f"range leaf {leaf!r} is disabled in geo_dict")
+        result.append(row + [leaf])
+    return result
+
+
 def format_ip(value, version):
     if version == 4:
         return str(ipaddress.IPv4Address(value))
@@ -176,10 +246,10 @@ def format_ip(value, version):
 
 
 def write_csv_zst(path, rows, version):
-    csv_lines = ["ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"]
+    csv_lines = ["ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn,geo_leaf_code"]
     for row in rows:
         fields = [format_ip(row[0], version), format_ip(row[1], version),
-                  row[2], row[3], row[4], row[5], str(row[6]), str(row[7])]
+                  row[2], row[3], row[4], row[5], str(row[6]), str(row[7]), row[8]]
         csv_lines.append(",".join(field.replace(",", " ") for field in fields))
     data = ("\n".join(csv_lines) + "\n").encode("utf-8")
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -205,6 +275,8 @@ def main():
     parser.add_argument("--password", default="")
     parser.add_argument("--database", default="edgemanager")
     parser.add_argument("--out", default="dev/flow-geo")
+    parser.add_argument("--effective-from", default="",
+                        help="UTC minute boundary, default: current UTC minute")
     parser.add_argument("--skip-subnets", action="store_true",
                         help="base tables already contain the merged corrections")
     args = parser.parse_args()
@@ -226,6 +298,9 @@ def main():
     """)
     dict_json = [{"kind": r[0], "code": r[1], "name": r[2], "parent_code": norm(r[3]),
                   "enabled": r[4] in ("1", "true")} for r in dictionary]
+    if not any(entry["code"] == "ZZ" for entry in dict_json):
+        dict_json.append({"kind": "country", "code": "ZZ", "name": "Unknown",
+                          "parent_code": "", "enabled": True})
 
     v4 = load_base_v4(args)
     v6 = load_base_v6(args)
@@ -235,15 +310,17 @@ def main():
         v6 = apply_overrides(v6, over6, operators_by_name)
     validate(v4, "ipv4")
     validate(v6, "ipv6")
+    v4 = attach_geo_leaf(v4, dict_json)
+    v6 = attach_geo_leaf(v6, dict_json)
     if not v4:
         raise SystemExit("geo_base_v4 produced no rows; refusing to publish an empty bundle")
 
-    content_hash = hashlib.sha256()
-    for row in v4[:1000] + v4[-1000:]:
-        content_hash.update(repr(row).encode())
-    version = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ") + "-" + content_hash.hexdigest()[:8]
+    content_hash = bundle_content_hash(v4, v6, operators_json, dict_json)
+    generated_at = datetime.now(timezone.utc)
+    effective_from = effective_time(args.effective_from, generated_at)
+    version = generated_at.strftime("%Y-%m-%dT%H%M%SZ") + "-" + content_hash[:12]
     bundle_dir = os.path.join(args.out, version)
-    os.makedirs(bundle_dir, exist_ok=True)
+    os.makedirs(bundle_dir, exist_ok=False)
 
     files = {}
     rows4, sha4 = write_csv_zst(os.path.join(bundle_dir, "ipv4.csv.zst"), v4, 4)
@@ -258,16 +335,7 @@ def main():
         "sha256": write_json(os.path.join(bundle_dir, "geo_dict.json"), dict_json),
         "rows": len(dict_json),
     }
-    manifest = {
-        "schema": "flow-geo-v1",
-        "version": version,
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "admin_code_system": "GB/T2260-6",
-        "unknown_country": "ZZ",
-        "source": {"database": args.database, "host": args.host,
-                   "subnets_applied": not args.skip_subnets},
-        "files": files,
-    }
+    manifest = build_manifest(version, generated_at, effective_from, files)
     write_json(os.path.join(bundle_dir, "manifest.json"), manifest)
 
     current = os.path.join(args.out, "current")

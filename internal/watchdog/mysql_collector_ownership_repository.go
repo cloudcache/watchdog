@@ -9,7 +9,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/flowcollect"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 func (s *MySQLStore) CreateCollectorServicePrincipal(ctx context.Context, grant CollectorServicePrincipalGrant) error {
@@ -271,30 +271,30 @@ func validateFlowCollectorOwnershipPlanTransfer(transfer CollectorOwnershipTrans
 	return nil
 }
 
-func flowPlanFromCollectorRevision(revision CollectorPlanRevision) (flowcollect.Plan, error) {
-	var plan flowcollect.Plan
+func flowPlanFromCollectorRevision(revision CollectorPlanRevision) (flowplan.Plan, error) {
+	var plan flowplan.Plan
 	if err := json.Unmarshal(revision.SpecJSON, &plan); err != nil {
-		return flowcollect.Plan{}, err
+		return flowplan.Plan{}, err
 	}
 	if uint16(plan.SchemaVersion) != revision.PlanSchemaVersion || plan.Revision != revision.ConfigVersion || plan.CollectorID != string(revision.CollectorID) || !plan.NotBefore.Equal(revision.NotBefore) || !plan.ExpiresAt.Equal(revision.ExpiresAt) {
-		return flowcollect.Plan{}, errors.New("signed plan payload does not match its revision envelope")
+		return flowplan.Plan{}, errors.New("signed plan payload does not match its revision envelope")
 	}
 	validationTime := plan.ExpiresAt.Add(-time.Millisecond)
 	if !plan.NotBefore.IsZero() {
 		validationTime = plan.NotBefore
 	}
-	if _, err := flowcollect.CompilePlan(plan, validationTime); err != nil {
-		return flowcollect.Plan{}, err
+	if _, err := flowplan.CompilePlan(plan, validationTime); err != nil {
+		return flowplan.Plan{}, err
 	}
 	for index, source := range plan.Sources {
 		if source.TenantID != string(revision.TenantID) {
-			return flowcollect.Plan{}, fmt.Errorf("sources[%d] belongs to another tenant", index)
+			return flowplan.Plan{}, fmt.Errorf("sources[%d] belongs to another tenant", index)
 		}
 	}
 	return plan, nil
 }
 
-func flowExporterSelectors(plan flowcollect.Plan, tenantID, exporterID string, requiredEpoch uint64) (map[string]struct{}, error) {
+func flowExporterSelectors(plan flowplan.Plan, tenantID, exporterID string, requiredEpoch uint64) (map[string]struct{}, error) {
 	selectors := make(map[string]struct{})
 	for _, source := range plan.Sources {
 		if !source.Enabled || source.TenantID != tenantID || source.ExporterID != exporterID {
@@ -400,117 +400,6 @@ func (s *MySQLStore) RecordCollectorDrain(ctx context.Context, receipt Collector
 		"collector_id": oldCollectorID, "boot_id": receipt.BootID,
 		"config_version": receipt.AppliedConfigVersion, "receipt_sha256": receiptHash,
 		"drained_at": drainedAt,
-	}); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *MySQLStore) RecordCollectorStateRestore(ctx context.Context, receipt CollectorStateRestoreReceipt) error {
-	if receipt.TenantID == "" || len(receipt.TenantID) > 26 || receipt.TransferID == "" || len(receipt.TransferID) > 26 || receipt.AuthenticatedCollectorID == "" || len(receipt.AuthenticatedCollectorID) > 26 || len(receipt.StateIdentityKey) != 32 || receipt.BootID == "" || len(receipt.BootID) > 64 || receipt.AppliedConfigVersion == 0 || receipt.RestoredOldOwnershipEpoch == 0 || receipt.RestoredOldGeneration == 0 || receipt.ReceiptNonce == "" || len(receipt.ReceiptNonce) > 128 || (receipt.Kind != flowcollect.StateCheckpointDecoder && receipt.Kind != flowcollect.StateCheckpointQuality) {
-		return errors.New("collector state restore receipt is incomplete")
-	}
-	receiptHash, err := hashCollectorReceipt(struct {
-		Type                       string                          `json:"type"`
-		TenantID                   ID                              `json:"tenant_id"`
-		TransferID                 ID                              `json:"transfer_id"`
-		CollectorID                ID                              `json:"collector_id"`
-		Kind                       flowcollect.StateCheckpointKind `json:"kind"`
-		IdentityKey                []byte                          `json:"identity_key"`
-		BootID                     string                          `json:"boot_id"`
-		ConfigVersion              uint64                          `json:"config_version"`
-		RestoredOldOwnershipEpoch  uint64                          `json:"restored_old_ownership_epoch"`
-		RestoredOldGeneration      uint64                          `json:"restored_old_generation"`
-		NewEpochBaselineGeneration uint64                          `json:"new_epoch_baseline_generation"`
-		Nonce                      string                          `json:"nonce"`
-	}{"restore", receipt.TenantID, receipt.TransferID, receipt.AuthenticatedCollectorID, receipt.Kind,
-		receipt.StateIdentityKey, receipt.BootID, receipt.AppliedConfigVersion,
-		receipt.RestoredOldOwnershipEpoch, receipt.RestoredOldGeneration,
-		receipt.NewEpochBaselineGeneration, receipt.ReceiptNonce})
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var newCollectorID ID
-	var newPlanRevision, oldEpoch uint64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT new_collector_id, new_plan_revision, old_ownership_epoch
-		FROM collector_ownership_transfers
-		WHERE tenant_id = ? AND id = ? FOR UPDATE
-	`, receipt.TenantID, receipt.TransferID).Scan(&newCollectorID, &newPlanRevision, &oldEpoch); err != nil {
-		return err
-	}
-	if newCollectorID != receipt.AuthenticatedCollectorID || newPlanRevision != receipt.AppliedConfigVersion || oldEpoch != receipt.RestoredOldOwnershipEpoch {
-		return ErrCollectorEvidenceConflict
-	}
-	var existingBoot, existingHash string
-	var existingConfig, existingEpoch, existingGeneration, existingBaseline uint64
-	err = tx.QueryRowContext(ctx, `
-		SELECT new_owner_boot_id, restore_config_version, restored_old_ownership_epoch,
-			restored_old_generation, new_epoch_baseline_generation, receipt_sha256
-		FROM collector_state_restore_receipts
-		WHERE tenant_id = ? AND transfer_id = ? AND state_kind = ? AND state_identity_key = ?
-		FOR UPDATE
-	`, receipt.TenantID, receipt.TransferID, receipt.Kind, receipt.StateIdentityKey).Scan(
-		&existingBoot, &existingConfig, &existingEpoch, &existingGeneration, &existingBaseline, &existingHash,
-	)
-	if err == nil {
-		if existingBoot == receipt.BootID && existingConfig == receipt.AppliedConfigVersion && existingEpoch == receipt.RestoredOldOwnershipEpoch && existingGeneration == receipt.RestoredOldGeneration && existingBaseline == receipt.NewEpochBaselineGeneration && existingHash == receiptHash {
-			return tx.Commit()
-		}
-		return ErrCollectorEvidenceConflict
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	var configVersion, acknowledgedVersion, lastGoodVersion uint64
-	var bootID, status string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT config_version, acknowledged_config_version, last_good_config_version, boot_id, status
-		FROM collector_agents
-		WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL FOR UPDATE
-	`, receipt.TenantID, newCollectorID).Scan(&configVersion, &acknowledgedVersion, &lastGoodVersion, &bootID, &status); err != nil {
-		return err
-	}
-	if status != "active" || configVersion < newPlanRevision || acknowledgedVersion < newPlanRevision || lastGoodVersion < newPlanRevision || bootID != receipt.BootID {
-		return ErrCollectorEvidenceNotReady
-	}
-	var activatedAt sql.NullTime
-	err = tx.QueryRowContext(ctx, `
-		SELECT activated_at FROM collector_plan_revisions
-		WHERE tenant_id = ? AND collector_id = ? AND config_version = ?
-		  AND status IN ('active','retired') FOR UPDATE
-	`, receipt.TenantID, newCollectorID, newPlanRevision).Scan(&activatedAt)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !activatedAt.Valid) {
-		return ErrCollectorEvidenceNotReady
-	}
-	if err != nil {
-		return err
-	}
-	reportedAt := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO collector_state_restore_receipts (
-			transfer_id, tenant_id, state_kind, state_identity_key, new_owner_boot_id,
-			restore_config_version, restored_old_ownership_epoch, restored_old_generation,
-			new_epoch_baseline_generation, receipt_sha256, reported_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, receipt.TransferID, receipt.TenantID, receipt.Kind, receipt.StateIdentityKey,
-		receipt.BootID, receipt.AppliedConfigVersion, receipt.RestoredOldOwnershipEpoch,
-		receipt.RestoredOldGeneration, receipt.NewEpochBaselineGeneration, receiptHash, reportedAt); err != nil {
-		return err
-	}
-	if err := insertCollectorEvidenceAudit(ctx, tx, receipt.TenantID, "", "collector_transfer", receipt.TransferID, "collector.ownership_transfer.state_restored", map[string]any{
-		"collector_id": newCollectorID, "state_kind": receipt.Kind,
-		"state_identity_key_sha256":     evidenceIdentityAuditHash(receipt.StateIdentityKey),
-		"config_version":                receipt.AppliedConfigVersion,
-		"restored_old_ownership_epoch":  receipt.RestoredOldOwnershipEpoch,
-		"restored_old_generation":       receipt.RestoredOldGeneration,
-		"new_epoch_baseline_generation": receipt.NewEpochBaselineGeneration,
-		"receipt_sha256":                receiptHash, "reported_at": reportedAt,
 	}); err != nil {
 		return err
 	}

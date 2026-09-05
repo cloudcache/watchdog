@@ -77,7 +77,7 @@ func TestCompileBundleRejectsInvalidOrUnboundedDefinitions(t *testing.T) {
 		{name: "prefix-limit", limits: CompileLimits{MaxPrefixes: 1}, want: "prefixes, limit"},
 		{name: "set-limit", limits: CompileLimits{MaxAddressSets: 1}, want: "address sets, limit"},
 		{name: "expansion-limit", limits: CompileLimits{MaxAddressSetsPerRecord: 2}, want: "expansion 3"},
-		{name: "selector-work-limit", limits: CompileLimits{MaxSelectorCandidates: 1}, want: "selector candidates"},
+		{name: "address-set-work-limit", limits: CompileLimits{MaxAddressSetEvaluations: 1}, want: "address-set evaluations"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -117,6 +117,10 @@ func TestCompiledSnapshotClassifiesDirectionPrefixesAndSets(t *testing.T) {
 	assertStrings(t, out.Remote.AddressSets.IDs(), []string{"set-both-provider", "set-out-region"})
 	owned := out.Remote.AddressSets.IDs()
 	owned[0] = "mutated"
+	reused := make([]string, 0, out.Remote.AddressSets.Count())
+	reused = out.Remote.AddressSets.AppendTo(reused)
+	assertStrings(t, reused, []string{"set-both-provider", "set-out-region"})
+	reused[0] = "mutated-again"
 	again := snapshot.ClassifyEndpoints(netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.200"))
 	if first, ok := again.Remote.AddressSets.At(0); !ok || first != "set-both-provider" {
 		t.Fatalf("membership storage was exposed: %q %v", first, ok)
@@ -158,6 +162,48 @@ func TestAddressSetSelectorRequiresEveryLabel(t *testing.T) {
 	assertStrings(t, result.Remote.AddressSets.IDs(), []string{"set-both-provider", "set-out-region"})
 }
 
+func TestNestedPrefixesInheritHierarchyLabelsAndMultipleGroupsWithoutASN(t *testing.T) {
+	bundle := SnapshotBundle{
+		SchemaVersion: BundleSchemaVersion,
+		SnapshotID:    "snapshot-hierarchy",
+		TenantID:      "tenant-a",
+		Version:       1,
+		EffectiveFrom: testMinute(12, 0),
+		Prefixes: []PrefixDefinition{
+			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "default"}},
+			{ID: "local-customer", CIDR: "10.1.0.0/16", Labels: map[string]string{"business": "customer-a"}},
+			{ID: "asia", CIDR: "203.0.0.0/16", Labels: map[string]string{"continent": "asia"}},
+			{ID: "china", CIDR: "203.0.113.0/24", Labels: map[string]string{"region": "east-asia", "country": "CN", "flow.geo.country": "CN", "flow.geo.admin_code": "330000"}},
+			{ID: "hangzhou", CIDR: "203.0.113.128/25", Labels: map[string]string{"province": "330000", "city": "330100", "flow.geo.city": "330100"}},
+		},
+		AddressSets: []AddressSetDefinition{
+			{ID: "group-asia", Selector: LabelSelector{Labels: map[string][]string{"continent": {"asia"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-china", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-hangzhou", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}, "city": {"330100"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-customer", Selector: LabelSelector{Labels: map[string][]string{"business": {"customer-a"}}}, MatchDirection: "both", Enabled: true},
+		},
+	}
+	snapshot, err := CompileBundle(bundle, CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	classified := snapshot.ClassifyEndpoints(netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.200"))
+	if classified.Direction != DirectionOut || classified.Business != "customer-a" {
+		t.Fatalf("covering local labels were not inherited: %+v", classified)
+	}
+	if classified.Local.PrefixID != "local-customer" || classified.Remote.PrefixID != "hangzhou" {
+		t.Fatalf("primary prefix must remain the most-specific match: %+v", classified)
+	}
+	assertStrings(t, classified.Local.AddressSets.IDs(), []string{"group-customer"})
+	assertStrings(t, classified.Remote.AddressSets.IDs(), []string{"group-asia", "group-china", "group-hangzhou"})
+	overridden, fields, ok := snapshot.ApplyGeoOverride(netip.MustParseAddr("203.0.113.200"), GeoInfo{})
+	if !ok || overridden.Country != "CN" || overridden.AdminCode != "330000" || overridden.City != "330100" ||
+		fields != GeoOverrideCountry|GeoOverrideAdminCode|GeoOverrideCity {
+		t.Fatalf("nested Geo override labels were not inherited: info=%+v fields=%b", overridden, fields)
+	}
+}
+
 func TestCompiledSnapshotClassifiesNonBusinessTopologies(t *testing.T) {
 	snapshot, err := CompileBundle(testBundle("snapshot-a", 1, testMinute(12, 0)), CompileLimits{})
 	if err != nil {
@@ -197,13 +243,19 @@ func TestGeoOverrideUsesItsOwnLongestPrefixAndOverlaysSelectedGeo(t *testing.T) 
 	if classified.Remote.PrefixID != "remote-specific" {
 		t.Fatalf("unexpected primary prefix: %+v", classified.Remote)
 	}
-	base := GeoInfo{Country: "US", Subdivision: "California", City: "San Francisco", ISPID: 9, ASN: 64500, Version: "geo-7", Source: GeoSchema}
+	base := GeoInfo{
+		Country: "US", Subdivision: "California", City: "San Francisco", ISPID: 9, ASN: 64500, Version: "geo-7", Source: GeoSchemaV2,
+		ContinentID: "NorthAmerica", RegionID: "NorthernAmerica", CountryID: "US", ProvinceID: "US-CA", CityID: "US-SFO",
+	}
 	resolved, fields, matched := snapshot.ApplyGeoOverride(classified.Remote.IP, base)
 	if !matched || resolved.Country != "CN" || resolved.AdminCode != "330100" || resolved.Subdivision != "California" || resolved.City != "San Francisco" || resolved.ISPID != 3 || resolved.ASN != 0 {
 		t.Fatalf("unexpected override: %+v fields=%d matched=%v", resolved, fields, matched)
 	}
 	if resolved.Version != "geo-7" || resolved.Source != "flow_geo_override" || fields&GeoOverrideASN == 0 {
 		t.Fatalf("override provenance was not preserved: %+v fields=%d", resolved, fields)
+	}
+	if resolved.ContinentID != "" || resolved.RegionID != "" || resolved.CountryID != "CN" || resolved.ProvinceID != "330000" || resolved.CityID != "330100" {
+		t.Fatalf("override retained an incompatible supplier Geo path: %+v", resolved)
 	}
 }
 

@@ -26,7 +26,7 @@ const (
 	defaultMaxPrefixes        = 1_000_000
 	defaultMaxAddressSets     = 10_000
 	defaultMaxSetsPerRecord   = 32
-	defaultMaxSetCandidates   = 50_000_000
+	defaultMaxSetEvaluations  = 50_000_000
 	maxLabelsPerPrefix        = 64
 	maxSelectorValuesPerLabel = 256
 )
@@ -34,11 +34,11 @@ const (
 var ErrNoDimensionSnapshot = errors.New("no dimension snapshot for event time")
 
 type CompileLimits struct {
-	MaxBundleBytes          int
-	MaxPrefixes             int
-	MaxAddressSets          int
-	MaxAddressSetsPerRecord int
-	MaxSelectorCandidates   int64
+	MaxBundleBytes           int
+	MaxPrefixes              int
+	MaxAddressSets           int
+	MaxAddressSetsPerRecord  int
+	MaxAddressSetEvaluations int64
 }
 
 type SnapshotBundle struct {
@@ -60,6 +60,10 @@ type PrefixDefinition struct {
 type AddressSetDefinition struct {
 	ID             string        `json:"id"`
 	Selector       LabelSelector `json:"selector"`
+	Members        []string      `json:"members,omitempty"`
+	ExcludeMembers []string      `json:"exclude_members,omitempty"`
+	IncludeSetIDs  []string      `json:"include_set_ids,omitempty"`
+	ExcludeSetIDs  []string      `json:"exclude_set_ids,omitempty"`
 	MatchDirection string        `json:"match_direction"`
 	Enabled        bool          `json:"enabled"`
 }
@@ -120,15 +124,19 @@ type SnapshotMetadata struct {
 type CompiledSnapshot struct {
 	metadata     SnapshotMetadata
 	prefixes     *bart.Table[compiledPrefix]
+	addressSets  *bart.Table[compiledAddressSetMembership]
 	geoOverrides *bart.Table[compiledGeoOverride]
 }
 
 type compiledPrefix struct {
-	id             string
-	cidr           string
-	labels         map[string]string
-	inAddressSets  []string
-	outAddressSets []string
+	id     string
+	cidr   string
+	labels map[string]string
+}
+
+type compiledAddressSetMembership struct {
+	in  []string
+	out []string
 }
 
 type GeoOverrideFields uint8
@@ -148,9 +156,13 @@ type compiledGeoOverride struct {
 }
 
 type compiledAddressSet struct {
-	id        string
-	direction BusinessDirection
-	selector  map[string][]string
+	id             string
+	direction      BusinessDirection
+	selector       map[string][]string
+	members        []netip.Prefix
+	excludeMembers []netip.Prefix
+	include        []int
+	exclude        []int
 }
 
 func DecodeAndCompileBundle(data []byte, expectedChecksum string, limits CompileLimits) (*CompiledSnapshot, error) {
@@ -205,7 +217,6 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	prefixCIDRs := make(map[string]struct{}, len(bundle.Prefixes))
 	parsedPrefixes := make([]netip.Prefix, 0, len(bundle.Prefixes))
 	compiledPrefixes := make([]compiledPrefix, 0, len(bundle.Prefixes))
-	geoOverrides := &bart.Table[compiledGeoOverride]{}
 	for index, definition := range bundle.Prefixes {
 		if !validIdentifier(definition.ID, 128) || len(definition.Labels) > maxLabelsPerPrefix {
 			return nil, fmt.Errorf("prefixes[%d] has invalid id or too many labels", index)
@@ -225,57 +236,40 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 			return nil, fmt.Errorf("prefixes[%d].labels: %w", index, err)
 		}
 		compiled := compiledPrefix{id: definition.ID, cidr: definition.CIDR, labels: labels}
-		override, hasOverride, err := compileGeoOverride(labels)
-		if err != nil {
-			return nil, fmt.Errorf("prefixes[%d].labels: %w", index, err)
-		}
-		if hasOverride {
-			geoOverrides.Insert(prefix, override)
-		}
 		parsedPrefixes = append(parsedPrefixes, prefix)
 		compiledPrefixes = append(compiledPrefixes, compiled)
 		prefixIDs[definition.ID] = struct{}{}
 		prefixCIDRs[definition.CIDR] = struct{}{}
 	}
 
-	sets := make([]compiledAddressSet, 0, len(bundle.AddressSets))
-	setIDs := make(map[string]struct{}, len(bundle.AddressSets))
-	for index, definition := range bundle.AddressSets {
-		if !validIdentifier(definition.ID, 128) {
-			return nil, fmt.Errorf("address_sets[%d].id is invalid", index)
-		}
-		if _, exists := setIDs[definition.ID]; exists {
-			return nil, fmt.Errorf("address_sets[%d] duplicates id %q", index, definition.ID)
-		}
-		setIDs[definition.ID] = struct{}{}
-		if !definition.Enabled {
-			continue
-		}
-		direction := BusinessDirection(strings.ToLower(strings.TrimSpace(definition.MatchDirection)))
-		if direction == "" {
-			direction = DirectionBoth
-		}
-		if direction != DirectionIn && direction != DirectionOut && direction != DirectionBoth {
-			return nil, fmt.Errorf("address_sets[%d].match_direction must be in, out, or both", index)
-		}
-		selector, err := cloneAndValidateSelector(definition.Selector.Labels)
-		if err != nil {
-			return nil, fmt.Errorf("address_sets[%d].selector: %w", index, err)
-		}
-		sets = append(sets, compiledAddressSet{id: definition.ID, direction: direction, selector: selector})
-	}
-	sort.Slice(sets, func(i, j int) bool { return sets[i].id < sets[j].id })
-
-	if err := precomputePrefixMemberships(compiledPrefixes, sets, limits.MaxAddressSetsPerRecord, limits.MaxSelectorCandidates); err != nil {
+	sets, membershipPrefixes, err := compileAddressSetDefinitions(bundle.AddressSets, limits.MaxPrefixes)
+	if err != nil {
 		return nil, err
 	}
-	maxExpansion := estimateMaxSetExpansion(compiledPrefixes)
-	if maxExpansion > limits.MaxAddressSetsPerRecord {
-		return nil, fmt.Errorf("dimension bundle address-set expansion %d exceeds per-record limit %d", maxExpansion, limits.MaxAddressSetsPerRecord)
+
+	if err := inheritPrefixLabels(parsedPrefixes, compiledPrefixes); err != nil {
+		return nil, err
+	}
+	geoOverrides := &bart.Table[compiledGeoOverride]{}
+	for index := range compiledPrefixes {
+		override, hasOverride, err := compileGeoOverride(compiledPrefixes[index].labels)
+		if err != nil {
+			return nil, fmt.Errorf("prefixes[%d].effective labels: %w", index, err)
+		}
+		if hasOverride {
+			geoOverrides.Insert(parsedPrefixes[index], override)
+		}
 	}
 	tree := &bart.Table[compiledPrefix]{}
 	for index := range compiledPrefixes {
 		tree.Insert(parsedPrefixes[index], compiledPrefixes[index])
+	}
+	addressSets, maxExpansion, err := compileAddressSetMemberships(
+		tree, parsedPrefixes, membershipPrefixes, sets,
+		limits.MaxAddressSetsPerRecord, limits.MaxAddressSetEvaluations,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return &CompiledSnapshot{
 		metadata: SnapshotMetadata{
@@ -283,8 +277,40 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 			EffectiveFrom: effectiveFrom, Checksum: checksum, PrefixCount: len(compiledPrefixes),
 			EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
 		},
-		prefixes: tree, geoOverrides: geoOverrides,
+		prefixes: tree, addressSets: addressSets, geoOverrides: geoOverrides,
 	}, nil
+}
+
+// inheritPrefixLabels compiles nested CIDRs into one effective label set per
+// LPM result. A more-specific prefix overrides the same key from a covering
+// prefix, while labels at different hierarchy levels are retained. Runtime
+// lookup therefore remains one allocation-free LPM and address sets can match
+// continent/region/country/site labels without ASN being present.
+func inheritPrefixLabels(prefixes []netip.Prefix, values []compiledPrefix) error {
+	if len(prefixes) != len(values) {
+		return errors.New("dimension prefix compilation is inconsistent")
+	}
+	tree := &bart.Table[compiledPrefix]{}
+	for index := range prefixes {
+		tree.Insert(prefixes[index], values[index])
+	}
+	for index, prefix := range prefixes {
+		chain := make([]compiledPrefix, 0, 8)
+		for _, value := range tree.Supernets(prefix) {
+			chain = append(chain, value)
+		}
+		effective := make(map[string]string)
+		for position := len(chain) - 1; position >= 0; position-- {
+			for key, value := range chain[position].labels {
+				effective[key] = value
+			}
+		}
+		if len(effective) > maxLabelsPerPrefix {
+			return fmt.Errorf("prefixes[%d] effective labels exceed limit %d", index, maxLabelsPerPrefix)
+		}
+		values[index].labels = effective
+	}
+	return nil
 }
 
 // ApplyGeoOverride overlays the most-specific tenant correction without
@@ -300,15 +326,31 @@ func (s *CompiledSnapshot) ApplyGeoOverride(address netip.Addr, base GeoInfo) (G
 	}
 	if override.fields&GeoOverrideCountry != 0 {
 		base.Country = override.info.Country
+		base.ContinentID = ""
+		base.RegionID = ""
+		base.CountryID = override.info.Country
+		base.ProvinceID = ""
+		base.CityID = ""
 	}
 	if override.fields&GeoOverrideAdminCode != 0 {
 		base.AdminCode = override.info.AdminCode
+		base.ProvinceID = ""
+		base.CityID = ""
+		if base.Country == "CN" && len(base.AdminCode) == 6 {
+			base.ProvinceID = base.AdminCode[:2] + "0000"
+			if !strings.HasSuffix(base.AdminCode, "0000") {
+				base.CityID = base.AdminCode
+			}
+		}
 	}
 	if override.fields&GeoOverrideSubdivision != 0 {
 		base.Subdivision = override.info.Subdivision
 	}
 	if override.fields&GeoOverrideCity != 0 {
 		base.City = override.info.City
+		if override.fields&GeoOverrideAdminCode == 0 {
+			base.CityID = ""
+		}
 	}
 	if override.fields&GeoOverrideISPID != 0 {
 		base.ISPID = override.info.ISPID
@@ -446,8 +488,8 @@ func normalizeCompileLimits(limits CompileLimits) CompileLimits {
 	if limits.MaxAddressSetsPerRecord <= 0 {
 		limits.MaxAddressSetsPerRecord = defaultMaxSetsPerRecord
 	}
-	if limits.MaxSelectorCandidates <= 0 {
-		limits.MaxSelectorCandidates = defaultMaxSetCandidates
+	if limits.MaxAddressSetEvaluations <= 0 {
+		limits.MaxAddressSetEvaluations = defaultMaxSetEvaluations
 	}
 	return limits
 }
@@ -546,83 +588,6 @@ func cloneAndValidateSelector(selector map[string][]string) (map[string][]string
 	return cloned, nil
 }
 
-func precomputePrefixMemberships(prefixes []compiledPrefix, sets []compiledAddressSet, endpointLimit int, candidateLimit int64) error {
-	type anchorBuckets map[string][]int
-	index := make(map[string]anchorBuckets)
-	for setIndex, set := range sets {
-		anchorKey := ""
-		var anchorValues []string
-		for key, values := range set.selector {
-			if anchorKey == "" || len(values) < len(anchorValues) || (len(values) == len(anchorValues) && key < anchorKey) {
-				anchorKey, anchorValues = key, values
-			}
-		}
-		if index[anchorKey] == nil {
-			index[anchorKey] = make(anchorBuckets)
-		}
-		for _, value := range anchorValues {
-			index[anchorKey][value] = append(index[anchorKey][value], setIndex)
-		}
-	}
-	var candidates int64
-	for prefixIndex := range prefixes {
-		prefix := &prefixes[prefixIndex]
-		for key, value := range prefix.labels {
-			bucket := index[key][value]
-			if int64(len(bucket)) > candidateLimit-candidates {
-				return fmt.Errorf("dimension bundle selector candidates exceed compilation limit %d", candidateLimit)
-			}
-			candidates += int64(len(bucket))
-			for _, setIndex := range bucket {
-				set := sets[setIndex]
-				if !selectorMatches(set.selector, prefix.labels) {
-					continue
-				}
-				if set.direction == DirectionIn || set.direction == DirectionBoth {
-					prefix.inAddressSets = append(prefix.inAddressSets, set.id)
-				}
-				if set.direction == DirectionOut || set.direction == DirectionBoth {
-					prefix.outAddressSets = append(prefix.outAddressSets, set.id)
-				}
-				if len(prefix.inAddressSets) > endpointLimit || len(prefix.outAddressSets) > endpointLimit {
-					return fmt.Errorf("dimension bundle address-set endpoint expansion exceeds per-record limit %d", endpointLimit)
-				}
-			}
-		}
-		sort.Strings(prefix.inAddressSets)
-		sort.Strings(prefix.outAddressSets)
-	}
-	return nil
-}
-
-func estimateMaxSetExpansion(prefixes []compiledPrefix) int {
-	if len(prefixes) == 0 {
-		return 0
-	}
-	maximum := 0
-	for _, direction := range []BusinessDirection{DirectionIn, DirectionOut} {
-		localMaximum, remoteMaximum, hasLocal := 0, 0, false
-		for _, prefix := range prefixes {
-			count := len(prefix.inAddressSets)
-			if direction == DirectionOut {
-				count = len(prefix.outAddressSets)
-			}
-			if prefix.labels["flow"] == "local" {
-				hasLocal = true
-				if count > localMaximum {
-					localMaximum = count
-				}
-			} else if count > remoteMaximum {
-				remoteMaximum = count
-			}
-		}
-		if hasLocal && localMaximum+remoteMaximum > maximum {
-			maximum = localMaximum + remoteMaximum
-		}
-	}
-	return maximum
-}
-
 func selectorMatches(selector map[string][]string, labels map[string]string) bool {
 	for key, allowed := range selector {
 		actual, ok := labels[key]
@@ -640,11 +605,11 @@ func selectorMatches(selector map[string][]string, labels map[string]string) boo
 func parseSHA256Checksum(value string) ([32]byte, error) {
 	var checksum [32]byte
 	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") || value != strings.ToLower(value) {
-		return checksum, errors.New("dimension bundle checksum must be canonical sha256:<lowerhex>")
+		return checksum, errors.New("bundle checksum must be canonical sha256:<lowerhex>")
 	}
 	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
 	if err != nil || len(decoded) != len(checksum) {
-		return checksum, errors.New("dimension bundle checksum must be canonical sha256:<lowerhex>")
+		return checksum, errors.New("bundle checksum must be canonical sha256:<lowerhex>")
 	}
 	copy(checksum[:], decoded)
 	return checksum, nil
