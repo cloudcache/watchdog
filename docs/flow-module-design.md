@@ -536,6 +536,8 @@ ch-go native 查询有三条必须由真实 ClickHouse 门禁锁定、不能只�
 
 版本与预算的真实 CH 门禁另构造三个 rank 完全相同的 Geo 序列，其中同一 city ID 分属两个 snapshot/Geo/classification 版本。`TopN=2 + other` 必须按固定 tuple tie-break 选择两个版本化 city 行，第三行按自身版本进入 `_other`，最终返回 `mixed_versions=true/version_count=2` 且 bytes/records 守恒。将 `max_rows_to_read` 或 `max_result_rows` 压到 1 时，ClickHouse 必须抛错且 provider 返回零部分点。静默传输超时、服务端长查询 deadline 与集群容量仍由 12.2/外部故障门禁完成，不能用客户端已过期 context 冒充。
 
+查询并发状态只能存在于单次 `Run` 栈内：共享 runner 只持有并发安全的 executor，每次调用必须新建 result columns、去重集合、version 集合和 metadata counter，不得缓存或复用 decoder。单节点门禁在同一个 4-connection production pool 上交错提交 64 个 `geo.city TopN+other` 与 `total` 请求，逐请求核对点、records、完整桶和总量；race 与多轮结果隔离通过只证明并发正确性，不代表固定硬件 QPS、N+1 或集群容量。
+
 查询能力也必须由同一编译器 registry 导出，而不是让 hub 或前端复制白名单：aggregate v1 只发布 customer view 及现有 metric/dimension registry；detail 按 raw/supplier/customer 分别发布允许字段、默认字段和 filters。能力返回值是稳定排序的副本，调用方修改不得污染进程内 registry；未知 view 必须明确拒绝。编译器的接受/拒绝测试遍历同一 capability，确保能力声明与实际 SQL 校验不会漂移。
 
 ```json
