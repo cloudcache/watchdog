@@ -35,3 +35,6 @@ exports/
 .DS_Store
 # reference clone of akvorado (own git repo, not a dependency)
 akvorado/
+
+# offline geo bundles exported from EdgeManager (large, regenerable)
+dev/flow-geo/

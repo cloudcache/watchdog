@@ -54,6 +54,7 @@ type BackendConfig struct {
 	SFlowCollector  SFlowCollectorConfig   `yaml:"sflow_collector"`
 	FlowCollect     flowcollect.Config     `yaml:"flow_collect"`
 	FlowCleanup     FlowStateCleanupConfig `yaml:"flow_state_cleanup"`
+	FlowGeo         FlowGeoConfig          `yaml:"flow_geo"`
 
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
 
@@ -298,6 +299,7 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	cfg.VictoriaMetrics.BaseURL = getEnv("WATCHDOG_VICTORIAMETRICS_URL", cfg.VictoriaMetrics.BaseURL)
+	cfg.FlowGeo.Path = getEnv("WATCHDOG_FLOW_GEO_PATH", cfg.FlowGeo.Path)
 	cfg.SFlowCollector.Listen = getEnv("WATCHDOG_SFLOW_LISTEN", cfg.SFlowCollector.Listen)
 	if tid, ok := os.LookupEnv("WATCHDOG_SFLOW_TENANT_ID"); ok {
 		cfg.SFlowCollector.TenantID = ID(tid)

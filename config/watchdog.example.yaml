@@ -187,3 +187,9 @@ agent:
   agent_id: "agent_dev_snmp"
   token: "change-me"
   interval: 1m
+
+# Offline flow-geo-v1 bundle (EdgeManager merged+corrected geo library) used
+# by the IP-library lookup API and future flow enrichment. Export with
+# scripts/edgemanager-geo-export.py; empty path disables the service.
+flow_geo:
+  path: ""

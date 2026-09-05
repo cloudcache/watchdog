@@ -20,6 +20,7 @@ type BackendRuntime struct {
 	Config             BackendConfig
 	Store              *MySQLStore
 	Registries         *PlatformRegistries
+	FlowGeo            *FlowGeoService
 	MetricsClient      VictoriaMetricsClient
 	ExportStore        DiskCSVExportStore
 	ExportWorker       ExportWorker
@@ -76,6 +77,16 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	var flowGeo *FlowGeoService
+	if cfg.FlowGeo.Path != "" {
+		flowGeo = NewFlowGeoService(cfg.FlowGeo.Path)
+		if err := flowGeo.Reload(); err != nil {
+			log.Printf("watchdog flow geo bundle load failed (serving without geo until reload): %v", err)
+		} else {
+			status := flowGeo.Status()
+			log.Printf("watchdog flow geo bundle loaded version=%s v4=%d v6=%d", status.Version, status.RowsV4, status.RowsV6)
+		}
+	}
 	registries, err := NewBuiltinPlatformRegistries()
 	if err != nil {
 		_ = store.Close()
@@ -85,6 +96,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		Config:            cfg,
 		Store:             store,
 		Registries:        registries,
+		FlowGeo:           flowGeo,
 		MetricsClient:     metricsClient,
 		ExportStore:       exportStore,
 		CollectorEvidence: collectorEvidence,
@@ -183,6 +195,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		IdentityAdmin:       r.Store,
 		Registries:          r.Registries,
 		TenantModules:       r.Store,
+		FlowGeo:             r.FlowGeo,
 		Retention:           r.Store,
 		SNMP:                r.Store,
 		SNMPDiscovery:       r.SNMPDiscovery,

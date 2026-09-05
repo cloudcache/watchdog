@@ -108,6 +108,10 @@ flow_collect:
     idle_timeout: 30s
     shutdown_timeout: 5s
 
+# flow-geo-v1 bundle exported by scripts/edgemanager-geo-export.py
+flow_geo:
+  path: "dev/flow-geo/current"
+
 flow_state_cleanup:
   # Enable only after the local Kafka topic has been bootstrapped.
   enabled: false
