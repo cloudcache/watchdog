@@ -58,7 +58,7 @@
 - [ ] Provider-neutral QueryRequest/QueryResult，统一 VM/CH 的 tenant scope、时间、bucket、limit、cancel 和 completeness。
 - [ ] Visualization CRUD、版本/owner、series、布局、预览和 dashboard 引用。
 - [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。
-  - [x] Network Devices 表首个服务端驱动样板（q/status/sort/offset + 聚合计数，列白名单防注入，本地 MySQL 实跑，commit d6de03b2）；Hosts 表 load-more（commit 24739658）；Core (BGP) 表服务端 search/state/sort + total/established 计数（INET6_NTOA 搜 peer、授权按 device.target 下推，commit 9b121983）。audit-logs / operation-jobs 表此前已 keyset 服务端分页+筛选。余项：其余 load-all 前端表（如 containers）按同模式收敛，popover portal/collision。
+  - [x] Network Devices 表首个服务端驱动样板（q/status/sort/offset + 聚合计数，列白名单防注入，本地 MySQL 实跑，commit d6de03b2）；Hosts 表 load-more（commit 24739658）；Core (BGP) 表服务端 search/state/sort + total/established 计数（INET6_NTOA 搜 peer、授权按 device.target 下推，commit 9b121983）。audit-logs / operation-jobs 表此前已 keyset 服务端分页+筛选；Agent Runs 历史加 keyset load-more（(ended_at,id) 游标，本地 MySQL 实跑，commit c243b622）。**主要 VTable（targets/devices/BGP/agent-runs + audit/jobs）已全部服务端化**。余项：`agents` 注册表（有界，暂不需）、popover portal/collision（UI 打磨）。
 - [ ] Export job 统一 CSV/Parquet、快照、权限复核、checksum、TTL、下载审计和失败重试。
 
 ## P3 raw/supplier/customer 修正
