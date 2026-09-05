@@ -14,6 +14,12 @@ type fakeMaintenanceRepo struct {
 	idempotency atomic.Int64
 	enrollment  atomic.Int64
 	jobs        atomic.Int64
+	quiet       atomic.Int64
+}
+
+func (f *fakeMaintenanceRepo) PurgeExpiredQuietHours(context.Context, time.Time, int) (int64, error) {
+	f.quiet.Add(1)
+	return 0, nil
 }
 
 func (f *fakeMaintenanceRepo) PurgeExpiredIdempotencyRecords(context.Context, time.Time, int) (int64, error) {
@@ -38,7 +44,7 @@ func TestNewStoreMaintenanceRegistersExpectedTasks(t *testing.T) {
 			t.Fatalf("task %q misconfigured: interval=%v run-nil=%t", task.Name, task.Interval, task.Run == nil)
 		}
 	}
-	for _, want := range []string{"idempotency_records", "enrollment_secrets", "operation_jobs"} {
+	for _, want := range []string{"idempotency_records", "enrollment_secrets", "operation_jobs", "quiet_hours"} {
 		if !names[want] {
 			t.Fatalf("missing maintenance task %q; got %v", want, names)
 		}
@@ -195,6 +201,34 @@ func TestMySQLMaintenancePurges(t *testing.T) {
 	var jobsLeft int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM operation_jobs WHERE tenant_id = ? AND job_type = 'maint'", tenant).Scan(&jobsLeft); err != nil || jobsLeft != 2 {
 		t.Fatalf("operation jobs left=%d err=%v", jobsLeft, err)
+	}
+
+	// quiet_hours: an expired one-time window is purged; a future one-time and a
+	// daily window (recurs, never expires) are kept.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (id, tenant_id, email, name, status)
+		VALUES ('user_maint_qh', ?, 'qh-maint@test.local', 'QH', 'active')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	seedQuietHour := func(id, windowType string, end time.Time) {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO quiet_hours (id, tenant_id, user_id, system_id, window_type, start_at, end_at)
+			VALUES (?, ?, 'user_maint_qh', '', ?, ?, ?)
+		`, id, tenant, windowType, now.Add(-2*time.Hour), end); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedQuietHour("qh_expired", "one-time", now.Add(-time.Hour))
+	seedQuietHour("qh_future", "one-time", now.Add(time.Hour))
+	seedQuietHour("qh_daily", "daily", now.Add(-time.Hour))
+	removed, err = store.PurgeExpiredQuietHours(ctx, now, 1000)
+	if err != nil || removed != 1 {
+		t.Fatalf("quiet hours purge removed=%d err=%v", removed, err)
+	}
+	var quietLeft int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quiet_hours WHERE tenant_id = ?", tenant).Scan(&quietLeft); err != nil || quietLeft != 2 {
+		t.Fatalf("quiet hours left=%d err=%v", quietLeft, err)
 	}
 
 	// drainPurge clears a backlog larger than one batch (seed batch+2 expired

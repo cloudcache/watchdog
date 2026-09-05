@@ -29,10 +29,8 @@ func (rm *RecordManager) DeleteOldRecords() {
 		if err != nil {
 			slog.Error("Error deleting old alerts history", "err", err)
 		}
-		err = deleteOldQuietHours(txApp)
-		if err != nil {
-			slog.Error("Error deleting old quiet hours", "err", err)
-		}
+		// Quiet-hours retention moved to the MySQL maintenance reaper
+		// (PurgeExpiredQuietHours) when the collection migrated to MySQL.
 		return nil
 	})
 }
@@ -126,13 +124,3 @@ func deleteOldContainerRecords(app core.App) error {
 	return nil
 }
 
-// Deletes old quiet hours records where end date has passed
-func deleteOldQuietHours(app core.App) error {
-	now := time.Now().UTC()
-	_, err := app.DB().NewQuery("DELETE FROM quiet_hours WHERE type = 'one-time' AND end < {:now}").Bind(dbx.Params{"now": now}).Execute()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
