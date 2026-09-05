@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -158,7 +159,7 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_template_missing_total", 0)
 	assertProcessMetric(t, worker2Metrics, "watchdog_flow_worker_template_missing_total", 0)
 
-	worker.stop(t)
+	worker.kill(t)
 	waitForProcessMetric(t, ctx, worker2, worker2Metrics, "watchdog_flow_worker_kafka_rebalances_total", 2)
 	waitForProcessMetric(t, ctx, worker2, worker2Metrics, "watchdog_flow_worker_kafka_assigned_partitions", 4)
 	sendUDPPayloads(t, sflowAddress, corpusFixturePayload(t, "sflow", "data-sflow-expanded-sample.pcap"))
@@ -437,6 +438,23 @@ func (p *productionProcess) stop(t testing.TB) {
 			_ = p.command.Process.Kill()
 			<-p.done
 			t.Errorf("process %s did not stop gracefully; log:\n%s", filepath.Base(p.command.Path), readProductionLog(p.logPath))
+		}
+	})
+}
+
+func (p *productionProcess) kill(t testing.TB) {
+	t.Helper()
+	p.stopOnce.Do(func() {
+		if p.command.Process == nil {
+			return
+		}
+		if err := p.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("kill process %s: %v", filepath.Base(p.command.Path), err)
+		}
+		select {
+		case <-p.done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("killed process %s did not exit; log:\n%s", filepath.Base(p.command.Path), readProductionLog(p.logPath))
 		}
 	})
 }
