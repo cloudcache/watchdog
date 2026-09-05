@@ -13,6 +13,9 @@
 - [x] VictoriaLogs Flow 原型和浏览器直连删除；MySQL 为唯一管理库，VM/CH 各自保留指标/Flow 事实角色。
 - [ ] PB 收缩为认证内核：迁 user settings、quiet hours、alerts、smart devices；僵尸 system collections 停写并归档。
 - [ ] 消除 PB/MySQL 双身份权威，验证登录、OTP、找回、session、禁用和 tenant projection。
+  - 现状核查：认证=PB 唯一权威（前端 `pb.authStore`/`requestPasswordReset`/OTP/session；服务端 `FindAuthRecordByToken` 验 token，非 `users` collection 拒绝 → PB superuser 被挡在平台 API 外，`platform_backend_test.go` 已测），授权=MySQL 投影（按 `external_subject_id`=PB record id，`identity_adapter.go` 多租户 discovery 分离、disabled fail-closed，`identity_adapter_test.go` 已测）。禁用为设计内单边：MySQL `status=disabled` 即时断业务 API，PB session 清理为独立动作（不影响 fail-closed）。
+  - [x] 消除代码层凭据双写：CreateUser 移除最后一处 `password_hash`（写 NULL）引用，identity 代码 100% 无 password；gated MySQL 锁死"create/update 永不写凭据材料"+"disabled 投影 fail-closed，PB 链接不动"（commit e599ab81）。
+  - 余项（阻塞/待协调）：`password_hash` 空壳列的 drop 迁移——committed 链停在 026、027 在并行会话工作区未提交，加 028 会造成迁移编号断裂；待 027 落库后再补 drop 迁移并翻转 `mysql_migration_test` 中"011 保留 password_hash 供回滚"的历史断言。
 - [ ] 完成空库安装、存量迁移、checksum/quarantine、shadow read、切换、回退和生产零调用观察。
 
 ## P1 模块、Collector/Agent 与 Target
