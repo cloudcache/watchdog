@@ -8,7 +8,7 @@ import {
 	UserRoundXIcon,
 	UsersIcon,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -319,6 +319,19 @@ function UserDialog({
 	const [selectedRoles, setSelectedRoles] = useState<string[]>(initialRoles)
 	const [saving, setSaving] = useState(false)
 
+	// The user list has no per-row ETag, so fetch the single user when the edit
+	// dialog opens to capture its weak ETag; it is echoed as If-Match on save so
+	// a concurrent edit is rejected (412) instead of silently overwritten.
+	const etagRef = useRef("")
+	useEffect(() => {
+		if (!user?.ID) return
+		pb.send<UserRecord>(`/api/v1/users/${user.ID}`, {
+			onResponse: (response) => {
+				etagRef.current = response.headers.get("ETag") ?? ""
+			},
+		}).catch(() => {})
+	}, [user?.ID])
+
 	const save = async () => {
 		setSaving(true)
 		try {
@@ -331,7 +344,11 @@ function UserDialog({
 			}
 			let userID = user?.ID
 			if (user) {
-				await pb.send(`/api/v1/users/${user.ID}`, { method: "PATCH", body })
+				await pb.send(`/api/v1/users/${user.ID}`, {
+					method: "PATCH",
+					headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
+					body,
+				})
 			} else {
 				const created = await pb.send<UserRecord>("/api/v1/users", { method: "POST", body })
 				userID = created.ID
