@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-07A3 — candidate reader/scorer bridge 审计。** FLOW-07A2 的前向 schema、关闭窗口 materializer、空修复 marker 和评分 provenance 已提交；真实 CH 执行仍是外部门禁。本切片只审计并实现“最新 marker generation → typed candidate → immutable scorer result”的有界桥接，不接 probe/job/API/管理面。
+**活动切片：FLOW-04C2 — rollup 运行指标审计。** FLOW-07A2/A3 的 candidate 物化与有界评分读取已提交；真实 CH 执行仍是外部门禁。下一轮只补 rollup runner/operation-job 已真实产生但尚未暴露的低基数 success/error/age/repair 指标及测试；不增加扫描器、状态库或平台任务引擎。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -42,6 +42,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。真实 CH migration/聚合未执行，仍保留外部门禁。
+- FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -174,6 +175,9 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07A2 materializer**：单条同步 `INSERT SELECT ... UNION ALL` 写候选和 `_generation`；空修复可推进 generation，版本不互相覆盖，同请求 dedup token 稳定；未知采样不混 raw/estimated，443 不推断 TLS/QUIC。
 - [x] **FLOW-07A2 单元/变更测试**：覆盖 UTC/闭窗/1m..24h、安全标识符、原子 marker、稳定主 tuple、双向计数、rollup/sampling 完整度、四类版本、永久/暂时 CH 错误和 authoritative generation read。
 - [x] **FLOW-07A2 已提交**：`2e9d9474`；代码和 migration 可由提交复现，本清单更新不把 fake executor 冒充真实 CH 集成。
+- [x] **FLOW-07A3 设计/编码**：同一 CH 查询选 marker 与 latest-generation candidate；metadata block 顺序无关，typed 参数/列、`limit+1` 与 50,000 硬上限；规范化后调用 immutable scorer，无 finding 写入或 probe/job 副作用。
+- [x] **FLOW-07A3 单元/变更测试**：覆盖 marker 在前、跨 block、合法空 generation、缺/重复 marker、混 generation、重复 key、超限、列错位、未知 evidence 字段、ratio 不一致、非法 hint、执行失败、非法 scope/window/rules/limit；任一失败均无部分结果。
+- [x] **FLOW-07A3 回归/已提交**：`ad4c2c6e`；Flow 全范围 race、全库 test/vet 和 diff check 通过；真实 CH query/repair 并发仍归 FLOW-07A 集成门禁。
 - [x] **FLOW-07A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker`、同范围 `go vet` 与 `git diff --check` 通过。
 - [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
 - [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。

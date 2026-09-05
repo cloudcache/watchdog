@@ -357,6 +357,8 @@ FLOW-07A2 只在已关闭、UTC 分钟对齐且不超过 24 小时的窗口运�
 
 顺序 migration 003 向 001 的已发布基线前向增加 `remote_prefix_id/geo_version/classification_version/row_kind`，并在保留原排序键完整前缀的基础上加入 row kind 与三个事实版本。每次 materialize 用一个同步 `INSERT SELECT ... UNION ALL` 原子写入全部 candidate 和内部 `_generation` marker；即使窗口为空也写 marker。相同请求使用稳定 dedup token；迟到或规则重算使用更大 generation。读取方必须先按 `tenant + window + rule_set_version + row_kind=_generation` 取得最新 generation，再只读该 generation 的 candidate，不能按剩余 candidate 求 max，否则空修复或候选消失后会泄漏旧行。001/002 不回改；旧行通过 `row_kind='candidate'` 默认值保持可读，但在没有对应 marker 时不属于新读取契约。
 
+FLOW-07A3 reader/scorer bridge 用同一个参数化 CH 查询同时选择 marker 和该 marker 的 candidate，避免“两次查询先读 generation、再读数据”之间发生 repair 竞态。读取上限由请求给出且不得超过 50,000，SQL 用 `limit+1`，runner 再做独立硬限；tenant、窗口、rule-set version 和 limit 全是 typed parameter。CH 的 UNION/block 返回顺序不构成协议，metadata 可先于或后于数据；runner 只在整次执行结束后验证恰有一个 marker、generation 大于零且所有 candidate generation 一致。列数/列长、重复候选键、IPv4-mapped 还原、四类版本、canonical conversation key、显式 hint、evidence schema/counter、complete ratio 和 scorer 输入逐项验证；缺 marker、坏行、部分响应、执行错误或超限全部 fail-closed，不返回部分评分。空窗口只有合法 marker 时返回空 candidate 集与对应 generation，不回看旧行。该 bridge 仍无 MySQL 写入和 probe/job 副作用。
+
 ## 6. MySQL 管理契约
 
 Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 operation_jobs，地址规则复用 address_prefixes/address_sets，审计复用 audit_logs。四表当前尚未进入 migration，不能把本文当作已部署 schema；实施时只在新的顺序 migration 中建表，并同步 fresh-install、repository、API、迁移和回滚测试。
