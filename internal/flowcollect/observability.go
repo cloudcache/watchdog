@@ -311,6 +311,9 @@ func (s *ObservabilityServer) prometheusText() []byte {
 	metricHeader(&out, "watchdog_flow_plan_delivery_ack_total", "Exact plan activation acknowledgement outcomes by bounded result.", "counter")
 	metricUint(&out, "watchdog_flow_plan_delivery_ack_total", `result="success"`, metrics.PlanDeliveryAckSuccesses.Load())
 	metricUint(&out, "watchdog_flow_plan_delivery_ack_total", `result="failure"`, metrics.PlanDeliveryAckFailures.Load())
+	metricHeader(&out, "watchdog_flow_control_plane_heartbeat_total", "Periodic runtime heartbeat outcomes by bounded result.", "counter")
+	metricUint(&out, "watchdog_flow_control_plane_heartbeat_total", `result="success"`, metrics.HeartbeatSuccesses.Load())
+	metricUint(&out, "watchdog_flow_control_plane_heartbeat_total", `result="failure"`, metrics.HeartbeatFailures.Load())
 
 	metricHeader(&out, "watchdog_flow_replay_attempts_total", "WAL record processing attempts after the first generation.", "counter")
 	metricUint(&out, "watchdog_flow_replay_attempts_total", "", metrics.ReplayAttempts.Load())

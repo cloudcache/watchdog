@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +20,11 @@ type collectorPlanRuntimeRepositoryStub struct {
 	fetchCollectorID ID
 	ack              CollectorPlanAcknowledgement
 	failure          CollectorPlanFailure
+	heartbeat        CollectorRuntimeHeartbeat
 	fetchErr         error
 	ackErr           error
 	failureErr       error
+	heartbeatErr     error
 }
 
 func (r *collectorPlanRuntimeRepositoryStub) GetActiveCollectorPlan(_ context.Context, tenantID, collectorID ID) (CollectorPlanRevision, error) {
@@ -37,6 +40,11 @@ func (r *collectorPlanRuntimeRepositoryStub) AcknowledgeCollectorPlan(_ context.
 func (r *collectorPlanRuntimeRepositoryStub) RecordCollectorPlanFailure(_ context.Context, failure CollectorPlanFailure) error {
 	r.failure = failure
 	return r.failureErr
+}
+
+func (r *collectorPlanRuntimeRepositoryStub) RecordCollectorRuntimeHeartbeat(_ context.Context, heartbeat CollectorRuntimeHeartbeat) error {
+	r.heartbeat = heartbeat
+	return r.heartbeatErr
 }
 
 func TestCollectorPlanDeliveryUsesAuthenticatedIdentityAndStoredSignature(t *testing.T) {
@@ -127,6 +135,117 @@ func TestCollectorPlanDeliveryRejectsExpiredOrMismatchedIdentity(t *testing.T) {
 	authenticator.identity.CollectorID = "other-collector"
 	if _, err := service.Fetch(context.Background(), plan.CollectorID, CollectorMachineCredential{Token: "token"}); !errors.Is(err, ErrCollectorMachineUnauthorized) {
 		t.Fatalf("mismatched identity error=%v", err)
+	}
+}
+
+func TestCollectorPlanDeliveryRuntimeHeartbeatUsesAuthenticatedIdentityAndServerTime(t *testing.T) {
+	receivedAt := time.UnixMilli(2_000_000_000_250).UTC()
+	repository := &collectorPlanRuntimeRepositoryStub{}
+	service, err := NewCollectorPlanDeliveryService(&collectorEvidenceServiceAuthenticator{identity: CollectorMachineIdentity{
+		TenantID: "tenant-runtime", CollectorID: "collector-runtime", BootID: "stored-boot",
+	}}, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return receivedAt }
+	report := collectorRuntimeHeartbeatFixture()
+	if err := service.ReportRuntime(context.Background(), "collector-runtime", CollectorMachineCredential{Token: "secret"}, report); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := repository.heartbeat
+	if heartbeat.TenantID != "tenant-runtime" || heartbeat.CollectorID != "collector-runtime" || !heartbeat.ReceivedAt.Equal(receivedAt) || heartbeat.ClockOffsetMilliseconds != 250 {
+		t.Fatalf("heartbeat server facts=%+v", heartbeat)
+	}
+	if !validSHA256Hex(heartbeat.CapabilitiesHash) || !validSHA256Hex(heartbeat.ObservationHash) || !validSHA256Hex(heartbeat.PayloadHash) || len(heartbeat.CapabilitiesJSON) == 0 || len(heartbeat.ObservationJSON) == 0 {
+		t.Fatalf("heartbeat canonical payload=%+v", heartbeat)
+	}
+	report.Observation.Queues.Decode.Depth = report.Observation.Queues.Decode.Capacity + 1
+	if err := service.ReportRuntime(context.Background(), "collector-runtime", CollectorMachineCredential{Token: "secret"}, report); err == nil {
+		t.Fatal("invalid runtime heartbeat was accepted")
+	}
+}
+
+func collectorRuntimeHeartbeatFixture() CollectorRuntimeHeartbeatReport {
+	return CollectorRuntimeHeartbeatReport{
+		SchemaVersion: 1, Sequence: 1, SentAtUnixMilli: 2_000_000_000_000,
+		BootID: "boot-runtime", SoftwareVersion: "1.2.3", AgentAPIVersion: 1,
+		PlanSchemaMin: 1, PlanSchemaMax: 1, ActiveConfigVersion: 7,
+		ActiveSpecHash: strings.Repeat("a", 64),
+		Capabilities: CollectorRuntimeCapabilities{
+			SchemaVersion: 1, Protocols: []string{"ipfix", "netflow5", "netflow9", "sflow5"},
+			PlanEnvelopeVersions: []uint16{2},
+		},
+		Observation: CollectorRuntimeObservation{
+			Running: true, UptimeSeconds: 10, PlanAccepting: true,
+			ControlPlaneHealthy: true, KafkaHealthy: true,
+			Queues: CollectorRuntimeQueues{
+				Receive:    CollectorQueueObservation{Depth: 1, Capacity: 10},
+				Decode:     CollectorQueueObservation{Depth: 2, Capacity: 20},
+				Quarantine: CollectorQueueObservation{Capacity: 10},
+			},
+			WAL:      CollectorWALObservation{Bytes: 1024, MaxBytes: 1 << 20, OldestAgeMilliseconds: 50, Writable: true},
+			Counters: CollectorRuntimeCounters{ReceivedDatagrams: 100, ReceiveQueueDrops: 1, UDPKernelDrops: 2, DecodeFailures: 3, PublishFailures: 4},
+		},
+	}
+}
+
+func TestCollectorRuntimeHeartbeatSequenceAndHealthTransitions(t *testing.T) {
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
+	for _, test := range []struct {
+		name                                   string
+		previousBoot, boot, previousHash, hash string
+		previousSequence, sequence             uint64
+		idempotent, conflict                   bool
+	}{
+		{name: "next", previousBoot: "boot-a", boot: "boot-a", previousHash: hashA, hash: hashB, previousSequence: 1, sequence: 2},
+		{name: "exact replay", previousBoot: "boot-a", boot: "boot-a", previousHash: hashA, hash: hashA, previousSequence: 1, sequence: 1, idempotent: true},
+		{name: "same sequence different payload", previousBoot: "boot-a", boot: "boot-a", previousHash: hashA, hash: hashB, previousSequence: 1, sequence: 1, conflict: true},
+		{name: "sequence rollback", previousBoot: "boot-a", boot: "boot-a", previousHash: hashA, hash: hashA, previousSequence: 2, sequence: 1, conflict: true},
+		{name: "new boot starts at one", previousBoot: "boot-a", boot: "boot-b", previousHash: hashA, hash: hashB, previousSequence: 9, sequence: 1},
+		{name: "new boot skips first", previousBoot: "boot-a", boot: "boot-b", previousHash: hashA, hash: hashB, previousSequence: 9, sequence: 2, conflict: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			idempotent, err := validateCollectorHeartbeatSequence(test.previousBoot, test.previousSequence, test.previousHash, test.boot, test.sequence, test.hash)
+			if idempotent != test.idempotent || errors.Is(err, ErrCollectorHeartbeatFenced) != test.conflict || (err != nil) != test.conflict {
+				t.Fatalf("idempotent=%v conflict=%v err=%v", idempotent, test.conflict, err)
+			}
+		})
+	}
+	previousCounters := CollectorRuntimeCounters{ReceivedDatagrams: 10, ReceiveQueueDrops: 2, UDPKernelDrops: 1}
+	currentCounters := previousCounters
+	currentCounters.ReceivedDatagrams++
+	if !collectorRuntimeCountersMonotonic(previousCounters, currentCounters) {
+		t.Fatal("increasing runtime counters were rejected")
+	}
+	currentCounters.ReceiveQueueDrops--
+	if collectorRuntimeCountersMonotonic(previousCounters, currentCounters) {
+		t.Fatal("runtime counter rollback was accepted")
+	}
+	heartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: "tenant", CollectorID: "collector"}, collectorRuntimeHeartbeatFixture(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, true); got != "healthy" {
+		t.Fatalf("healthy observation=%q", got)
+	}
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion+1, true); got != "warming" {
+		t.Fatalf("LKG observation=%q", got)
+	}
+	heartbeat.Observation.WAL.HardWatermark = true
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion+1, true); got != "degraded" {
+		t.Fatalf("unhealthy LKG observation=%q", got)
+	}
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, true); got != "degraded" {
+		t.Fatalf("hard watermark observation=%q", got)
+	}
+	heartbeat.Observation.WAL.HardWatermark = false
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, false); got != "degraded" {
+		t.Fatalf("incompatible schema observation=%q", got)
+	}
+	heartbeat.Observation.ControlPlaneHealthy = false
+	if got := collectorRuntimeObservedHealth(heartbeat, heartbeat.ActiveConfigVersion, true); got != "degraded" {
+		t.Fatalf("unhealthy control plane observation=%q", got)
 	}
 }
 

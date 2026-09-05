@@ -225,6 +225,131 @@ func TestMySQLCollectorPlanLifecycle(t *testing.T) {
 	if observedHealth != "degraded" || bootID != "boot-plan-1" || softwareVersion != "1.1.0" || lastErrorCode != "dependency:KAFKA_CONTRACT" || lastErrorDetail != "topic contract unavailable" || !lastSeenAt.Valid || collectorRowVersion != 3 {
 		t.Fatalf("collector failure state health=%q boot=%q software=%q code=%q detail=%q seen=%v row=%d", observedHealth, bootID, softwareVersion, lastErrorCode, lastErrorDetail, lastSeenAt, collectorRowVersion)
 	}
+	runtimeReport := collectorRuntimeHeartbeatFixture()
+	runtimeReport.BootID = bootID
+	runtimeReport.ActiveConfigVersion = 1
+	runtimeReport.ActiveSpecHash = retired1.SpecHash
+	runtimeHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, runtimeReport, base.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, runtimeHeartbeat); err != nil {
+		t.Fatal(err)
+	}
+	replayedHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, runtimeReport, base.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, replayedHeartbeat); err != nil {
+		t.Fatalf("exact runtime heartbeat replay was not idempotent: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT last_seen_at FROM collector_agents WHERE tenant_id = ? AND id = ?", tenantID, collectorID).Scan(&lastSeenAt); err != nil {
+		t.Fatal(err)
+	}
+	if !lastSeenAt.Valid || lastSeenAt.Time.UnixMilli() != replayedHeartbeat.ReceivedAt.UnixMilli() {
+		t.Fatalf("exact replay did not refresh server-observed liveness: %v", lastSeenAt)
+	}
+	conflictingReport := runtimeReport
+	conflictingReport.Observation.Counters.ReceivedDatagrams++
+	conflictingHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, conflictingReport, base.Add(6*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, conflictingHeartbeat); !errors.Is(err, ErrCollectorHeartbeatFenced) {
+		t.Fatalf("same sequence conflicting heartbeat error=%v", err)
+	}
+	runtimeReport.BootID = "boot-plan-2"
+	runtimeReport.Sequence = 1
+	runtimeReport.ActiveConfigVersion = 2
+	runtimeReport.ActiveSpecHash = active2.SpecHash
+	runtimeHeartbeat, err = prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, runtimeReport, base.Add(7*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, runtimeHeartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeSchema uint16
+	var heartbeatSequence uint64
+	var heartbeatSentAt time.Time
+	var clockOffset int64
+	var capabilitiesHash, observationHash, heartbeatPayloadHash string
+	var capabilitiesJSON, observationJSON []byte
+	if err := db.QueryRowContext(ctx, `
+		SELECT observed_health, boot_id, runtime_schema_version, heartbeat_sequence,
+			heartbeat_sent_at, clock_offset_ms, capabilities_json, capabilities_hash,
+			runtime_observation_json, runtime_observation_hash, heartbeat_payload_hash,
+			COALESCE(last_error_code, ''), COALESCE(last_error_detail, ''), row_version
+		FROM collector_agents WHERE tenant_id = ? AND id = ?
+	`, tenantID, collectorID).Scan(
+		&observedHealth, &bootID, &runtimeSchema, &heartbeatSequence,
+		&heartbeatSentAt, &clockOffset, &capabilitiesJSON, &capabilitiesHash,
+		&observationJSON, &observationHash, &heartbeatPayloadHash,
+		&lastErrorCode, &lastErrorDetail, &collectorRowVersion,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if observedHealth != "healthy" || bootID != "boot-plan-2" || runtimeSchema != 1 || heartbeatSequence != 1 || heartbeatSentAt.UnixMilli() != runtimeReport.SentAtUnixMilli || clockOffset != runtimeHeartbeat.ClockOffsetMilliseconds || len(capabilitiesJSON) == 0 || len(observationJSON) == 0 || !validSHA256Hex(capabilitiesHash) || !validSHA256Hex(observationHash) || !validSHA256Hex(heartbeatPayloadHash) || lastErrorCode != "" || lastErrorDetail != "" || collectorRowVersion != 3 {
+		t.Fatalf("collector runtime state health=%q boot=%q schema=%d seq=%d sent=%s offset=%d capabilities=%s/%s observation=%s/%s payload=%s errors=%q/%q row=%d", observedHealth, bootID, runtimeSchema, heartbeatSequence, heartbeatSentAt, clockOffset, capabilitiesJSON, capabilitiesHash, observationJSON, observationHash, heartbeatPayloadHash, lastErrorCode, lastErrorDetail, collectorRowVersion)
+	}
+	counterRollbackReport := runtimeReport
+	counterRollbackReport.Sequence = 2
+	counterRollbackReport.Observation.Counters.ReceivedDatagrams--
+	counterRollbackHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, counterRollbackReport, base.Add(7*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, counterRollbackHeartbeat); !errors.Is(err, ErrCollectorHeartbeatFenced) {
+		t.Fatalf("same-boot counter rollback error=%v", err)
+	}
+	degradedReport := runtimeReport
+	degradedReport.Sequence = 2
+	degradedReport.Observation.ControlPlaneHealthy = false
+	degradedHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, degradedReport, base.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, degradedHeartbeat); err != nil {
+		t.Fatalf("degraded runtime heartbeat failed: %v", err)
+	}
+	staleBootAck := CollectorPlanAcknowledgement{
+		TenantID: tenantID, CollectorID: collectorID, ConfigVersion: 2,
+		SpecHash: active2.SpecHash, BootID: "boot-plan-1", SoftwareVersion: "1.0.0",
+	}
+	if err := store.AcknowledgeCollectorPlan(ctx, staleBootAck); !errors.Is(err, ErrCollectorHeartbeatFenced) {
+		t.Fatalf("previous boot reclaimed plan acknowledgement stream: %v", err)
+	}
+	currentBootAck := staleBootAck
+	currentBootAck.BootID = "boot-plan-2"
+	currentBootAck.SoftwareVersion = "1.1.0"
+	if err := store.AcknowledgeCollectorPlan(ctx, currentBootAck); err != nil {
+		t.Fatalf("current boot acknowledgement failed: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT observed_health FROM collector_agents WHERE tenant_id = ? AND id = ?", tenantID, collectorID).Scan(&observedHealth); err != nil {
+		t.Fatal(err)
+	}
+	if observedHealth != "degraded" {
+		t.Fatalf("plan acknowledgement masked runtime health: %q", observedHealth)
+	}
+	if err := store.RecordCollectorPlanFailure(ctx, CollectorPlanFailure{
+		TenantID: tenantID, CollectorID: collectorID,
+		CollectorPlanFailureReport: CollectorPlanFailureReport{
+			FailedConfigVersion: 2, BootID: "boot-plan-1", SoftwareVersion: "1.0.0",
+			Stage: "activate", Code: "STALE_PROCESS", Detail: "stale process failure",
+		},
+	}); !errors.Is(err, ErrCollectorHeartbeatFenced) {
+		t.Fatalf("previous boot reported plan failure after takeover: %v", err)
+	}
+	staleBootReport := runtimeReport
+	staleBootReport.BootID = "boot-plan-1"
+	staleBootReport.Sequence = 2
+	staleBootHeartbeat, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{TenantID: tenantID, CollectorID: collectorID}, staleBootReport, base.Add(9*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordCollectorRuntimeHeartbeat(ctx, staleBootHeartbeat); !errors.Is(err, ErrCollectorHeartbeatFenced) {
+		t.Fatalf("previous boot reclaimed heartbeat stream: %v", err)
+	}
 	if err := store.RecordCollectorPlanFailure(ctx, CollectorPlanFailure{
 		TenantID: tenantID, CollectorID: collectorID,
 		CollectorPlanFailureReport: CollectorPlanFailureReport{

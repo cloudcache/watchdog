@@ -82,6 +82,32 @@ func TestCollectorPrincipalOperationMigrationHasCrashRecoveryContract(t *testing
 	}
 }
 
+func TestCollectorRuntimeHeartbeatMigrationHasObservedStateContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "021_collector_runtime_heartbeat.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, fragment := range []string{
+		"runtime_schema_version smallint unsigned",
+		"heartbeat_sequence bigint unsigned",
+		"heartbeat_sent_at datetime(3)",
+		"clock_offset_ms bigint",
+		"runtime_observation_json json",
+		"runtime_observation_hash char(64)",
+		"heartbeat_payload_hash char(64)",
+		"check (",
+	} {
+		if !strings.Contains(sqlText, fragment) {
+			t.Fatalf("collector runtime heartbeat migration missing %q", fragment)
+		}
+	}
+	if strings.Contains(sqlText, "row_version = row_version") || strings.Contains(sqlText, "acknowledged_config_version =") {
+		t.Fatal("runtime heartbeat migration must not advance management or plan acknowledgement state")
+	}
+}
+
 func TestLegacyCollectorProjectionMappings(t *testing.T) {
 	tests := []struct {
 		legacyStatus string

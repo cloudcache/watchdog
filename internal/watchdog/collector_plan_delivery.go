@@ -39,12 +39,14 @@ type CollectorPlanRuntimeRepository interface {
 	GetActiveCollectorPlan(context.Context, ID, ID) (CollectorPlanRevision, error)
 	AcknowledgeCollectorPlan(context.Context, CollectorPlanAcknowledgement) error
 	RecordCollectorPlanFailure(context.Context, CollectorPlanFailure) error
+	RecordCollectorRuntimeHeartbeat(context.Context, CollectorRuntimeHeartbeat) error
 }
 
 type CollectorPlanDeliveryController interface {
 	Fetch(context.Context, ID, CollectorMachineCredential) (CollectorPlanDelivery, error)
 	Acknowledge(context.Context, ID, CollectorMachineCredential, CollectorPlanAcknowledgement) error
 	ReportFailure(context.Context, ID, CollectorMachineCredential, CollectorPlanFailureReport) error
+	ReportRuntime(context.Context, ID, CollectorMachineCredential, CollectorRuntimeHeartbeatReport) error
 }
 
 type CollectorPlanDeliveryService struct {
@@ -116,6 +118,18 @@ func (s *CollectorPlanDeliveryService) ReportFailure(ctx context.Context, collec
 	return s.repository.RecordCollectorPlanFailure(ctx, CollectorPlanFailure{
 		TenantID: identity.TenantID, CollectorID: identity.CollectorID, CollectorPlanFailureReport: report,
 	})
+}
+
+func (s *CollectorPlanDeliveryService) ReportRuntime(ctx context.Context, collectorID ID, credential CollectorMachineCredential, report CollectorRuntimeHeartbeatReport) error {
+	identity, err := s.authenticate(ctx, collectorID, credential)
+	if err != nil {
+		return err
+	}
+	heartbeat, err := prepareCollectorRuntimeHeartbeat(identity, report, s.now())
+	if err != nil {
+		return err
+	}
+	return s.repository.RecordCollectorRuntimeHeartbeat(ctx, heartbeat)
 }
 
 func (s *CollectorPlanDeliveryService) authenticate(ctx context.Context, collectorID ID, credential CollectorMachineCredential) (CollectorMachineIdentity, error) {

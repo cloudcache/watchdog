@@ -24,6 +24,7 @@ type Config struct {
 	ControlPlaneRequestTimeout time.Duration       `yaml:"control_plane_request_timeout"`
 	ControlPlaneRetryMin       time.Duration       `yaml:"control_plane_retry_min"`
 	ControlPlaneRetryMax       time.Duration       `yaml:"control_plane_retry_max"`
+	HeartbeatInterval          time.Duration       `yaml:"control_plane_heartbeat_interval"`
 	StateDir                   string              `yaml:"state_dir"`
 	PlanFile                   string              `yaml:"plan_file"`
 	PlanPublicKeyFile          string              `yaml:"plan_public_key_file"`
@@ -131,6 +132,7 @@ func DefaultConfig() Config {
 		ControlPlaneRequestTimeout: 10 * time.Second,
 		ControlPlaneRetryMin:       time.Second,
 		ControlPlaneRetryMax:       30 * time.Second,
+		HeartbeatInterval:          30 * time.Second,
 		StateDir:                   "/var/lib/watchdog-flow-collect",
 		SFlowListen:                ":6343",
 		NetFlowListen:              ":2055",
@@ -263,8 +265,8 @@ func (c Config) Validate() error {
 	if c.StateDir == "" || c.StateDir == "." {
 		return errors.New("flow_collect.state_dir is required")
 	}
-	if c.ControlPlaneRequestTimeout <= 0 || c.ControlPlaneRetryMin <= 0 || c.ControlPlaneRetryMax < c.ControlPlaneRetryMin {
-		return errors.New("flow_collect control plane request timeout and retry bounds are invalid")
+	if c.ControlPlaneRequestTimeout <= 0 || c.ControlPlaneRetryMin <= 0 || c.ControlPlaneRetryMax < c.ControlPlaneRetryMin || c.HeartbeatInterval <= 0 {
+		return errors.New("flow_collect control plane request timeout, retry bounds, or heartbeat interval are invalid")
 	}
 	if c.ControlPlaneURL != "" {
 		u, err := url.Parse(c.ControlPlaneURL)
@@ -426,6 +428,9 @@ func (c *Config) ApplyEnv() error {
 		return err
 	}
 	if c.ControlPlaneRetryMax, err = envDuration("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_RETRY_MAX", c.ControlPlaneRetryMax); err != nil {
+		return err
+	}
+	if c.HeartbeatInterval, err = envDuration("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_HEARTBEAT_INTERVAL", c.HeartbeatInterval); err != nil {
 		return err
 	}
 	c.StateDir = env("WATCHDOG_FLOW_COLLECT_STATE_DIR", c.StateDir)

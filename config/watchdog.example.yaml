@@ -35,6 +35,7 @@ flow_collect:
   control_plane_request_timeout: 10s
   control_plane_retry_min: 1s
   control_plane_retry_max: 30s
+  control_plane_heartbeat_interval: 30s
   state_dir: "/var/lib/watchdog-flow-collect"
   plan_file: "/var/lib/watchdog-flow-collect/plan.json"
   plan_public_key_file: "/etc/watchdog/flow-plan-ed25519.pub" # legacy single-key bootstrap compatibility

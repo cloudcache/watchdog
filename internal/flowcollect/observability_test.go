@@ -24,6 +24,7 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 	metrics.PlanDeliveryFetchSuccesses.Store(2)
 	metrics.PlanDeliveryNotModified.Store(3)
 	metrics.PlanDeliveryAckSuccesses.Store(1)
+	metrics.HeartbeatSuccesses.Store(4)
 	runtime.enableControlPlane()
 	runtime.observeControlPlane(nil, time.Unix(1700000002, 0))
 	metrics.observeKafka(kafkaTopicNormalized, nil, 25*time.Millisecond)
@@ -56,6 +57,7 @@ func TestObservabilityMetricsAreBoundedAndExposePipelineState(t *testing.T) {
 		`watchdog_flow_plan_delivery_fetch_total{result="downloaded"} 2`,
 		`watchdog_flow_plan_delivery_fetch_total{result="not_modified"} 3`,
 		`watchdog_flow_plan_delivery_ack_total{result="success"} 1`,
+		`watchdog_flow_control_plane_heartbeat_total{result="success"} 4`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("metrics output does not contain %q", expected)

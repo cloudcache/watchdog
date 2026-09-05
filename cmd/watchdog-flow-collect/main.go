@@ -141,7 +141,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		planDelivery, err = flowcollect.NewPlanDeliveryClient(cfg.FlowCollect, plan.CollectorID, bootID, appmeta.Version, plan.Revision, metrics, runtimeState)
+		planDelivery, err = flowcollect.NewPlanDeliveryClient(cfg.FlowCollect, plan.CollectorID, bootID, appmeta.Version, plan.Revision, metrics, runtimeState, wal)
 		if err != nil {
 			log.Fatal(err)
 		}

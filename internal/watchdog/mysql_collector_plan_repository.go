@@ -259,18 +259,18 @@ func (s *MySQLStore) AcknowledgeCollectorPlan(ctx context.Context, acknowledgeme
 		return err
 	}
 	defer tx.Rollback()
-	var currentVersion, acknowledgedVersion, lastGoodVersion uint64
-	var specHash string
+	var currentVersion, acknowledgedVersion, lastGoodVersion, heartbeatSequence uint64
+	var specHash, currentBootID string
 	var expiresAt time.Time
 	var status string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT config_version, acknowledged_config_version, last_good_config_version,
-			plan_hash, plan_expires_at, status
+			plan_hash, plan_expires_at, status, boot_id, heartbeat_sequence
 		FROM collector_agents
 		WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
 		FOR UPDATE
 	`, acknowledgement.CollectorID, acknowledgement.TenantID).Scan(
-		&currentVersion, &acknowledgedVersion, &lastGoodVersion, &specHash, &expiresAt, &status,
+		&currentVersion, &acknowledgedVersion, &lastGoodVersion, &specHash, &expiresAt, &status, &currentBootID, &heartbeatSequence,
 	); err != nil {
 		return err
 	}
@@ -293,10 +293,14 @@ func (s *MySQLStore) AcknowledgeCollectorPlan(ctx context.Context, acknowledgeme
 	if activeSpecHash != specHash || !activeExpiresAt.Equal(expiresAt) {
 		return ErrCollectorPlanInvalidTransition
 	}
+	if heartbeatSequence > 0 && currentBootID != acknowledgement.BootID {
+		return ErrCollectorHeartbeatFenced
+	}
 	_, err = tx.ExecContext(ctx, `
 		UPDATE collector_agents
 		SET acknowledged_config_version = ?, last_good_config_version = ?,
-			boot_id = ?, software_version = ?, observed_health = 'healthy',
+			boot_id = ?, software_version = ?,
+			observed_health = IF(heartbeat_sequence = 0, 'healthy', observed_health),
 			last_seen_at = IF(last_seen_at IS NULL OR last_seen_at < ?, ?, last_seen_at),
 			last_error_code = NULL, last_error_detail = NULL
 		WHERE id = ? AND tenant_id = ? AND config_version = ?
@@ -327,30 +331,193 @@ func (s *MySQLStore) RecordCollectorPlanFailure(ctx context.Context, failure Col
 		return err
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var configVersion, heartbeatSequence uint64
+	var status, bootID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT config_version, status, boot_id, heartbeat_sequence
+		FROM collector_agents
+		WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+		FOR UPDATE
+	`, failure.CollectorID, failure.TenantID).Scan(&configVersion, &status, &bootID, &heartbeatSequence); err != nil {
+		return err
+	}
+	if status != "active" || (failure.FailedConfigVersion != 0 && failure.FailedConfigVersion != configVersion) {
+		return ErrCollectorPlanInvalidTransition
+	}
+	if heartbeatSequence > 0 && bootID != failure.BootID {
+		return ErrCollectorHeartbeatFenced
+	}
+	result, err := tx.ExecContext(ctx, `
 		UPDATE collector_agents
 		SET observed_health = 'degraded',
 			boot_id = IF(boot_id = '', ?, boot_id),
-			software_version = ?, last_seen_at = ?,
+			software_version = ?,
+			last_seen_at = IF(last_seen_at IS NULL OR last_seen_at < ?, ?, last_seen_at),
 			last_error_code = ?, last_error_detail = NULLIF(?, ''),
 			updated_at = CURRENT_TIMESTAMP(3)
 		WHERE id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL
-		  AND (? = 0 OR config_version = ?)
-	`, failure.BootID, failure.SoftwareVersion, now,
+	`, failure.BootID, failure.SoftwareVersion, now, now,
 		failure.Stage+":"+failure.Code, failure.Detail,
-		failure.CollectorID, failure.TenantID,
-		failure.FailedConfigVersion, failure.FailedConfigVersion)
+		failure.CollectorID, failure.TenantID)
 	if err != nil {
 		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected != 1 {
+	if err := requireOneCollectorPlanRow(result); err != nil {
 		return ErrCollectorPlanInvalidTransition
 	}
-	return nil
+	return tx.Commit()
+}
+
+func (s *MySQLStore) RecordCollectorRuntimeHeartbeat(ctx context.Context, heartbeat CollectorRuntimeHeartbeat) error {
+	if heartbeat.TenantID == "" || heartbeat.CollectorID == "" || heartbeat.ReceivedAt.IsZero() ||
+		!validSHA256Hex(heartbeat.CapabilitiesHash) || !validSHA256Hex(heartbeat.ObservationHash) || !validSHA256Hex(heartbeat.PayloadHash) ||
+		len(heartbeat.CapabilitiesJSON) == 0 || len(heartbeat.ObservationJSON) == 0 {
+		return errors.New("collector runtime heartbeat storage input is incomplete")
+	}
+	if err := validateCollectorRuntimeHeartbeatReport(heartbeat.CollectorRuntimeHeartbeatReport); err != nil {
+		return err
+	}
+	prepared, err := prepareCollectorRuntimeHeartbeat(CollectorMachineIdentity{
+		TenantID: heartbeat.TenantID, CollectorID: heartbeat.CollectorID,
+	}, heartbeat.CollectorRuntimeHeartbeatReport, heartbeat.ReceivedAt)
+	if err != nil || !heartbeat.ReceivedAt.Equal(prepared.ReceivedAt) || heartbeat.ClockOffsetMilliseconds != prepared.ClockOffsetMilliseconds ||
+		heartbeat.CapabilitiesHash != prepared.CapabilitiesHash || string(heartbeat.CapabilitiesJSON) != string(prepared.CapabilitiesJSON) ||
+		heartbeat.ObservationHash != prepared.ObservationHash || string(heartbeat.ObservationJSON) != string(prepared.ObservationJSON) ||
+		heartbeat.PayloadHash != prepared.PayloadHash {
+		return errors.New("collector runtime heartbeat derived facts are inconsistent")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var currentVersion, lastGoodVersion, previousSequence uint64
+	var currentPlanSchema uint16
+	var currentSpecHash, status, previousBootID, previousPayloadHash, previousObservationHash string
+	var previousObservationJSON sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT collector.config_version, collector.last_good_config_version,
+			collector.plan_hash, collector.status, collector.boot_id,
+			collector.heartbeat_sequence, collector.heartbeat_payload_hash,
+			collector.runtime_observation_json, collector.runtime_observation_hash,
+			active_plan.plan_schema_version
+		FROM collector_agents AS collector
+		JOIN collector_plan_revisions AS active_plan
+		  ON active_plan.tenant_id = collector.tenant_id
+		 AND active_plan.collector_id = collector.id
+		 AND active_plan.config_version = collector.config_version
+		 AND active_plan.status = 'active'
+		WHERE collector.id = ? AND collector.tenant_id = ?
+		  AND collector.deleted_at IS NULL
+		FOR UPDATE
+	`, heartbeat.CollectorID, heartbeat.TenantID).Scan(
+		&currentVersion, &lastGoodVersion, &currentSpecHash, &status,
+		&previousBootID, &previousSequence, &previousPayloadHash, &previousObservationJSON, &previousObservationHash, &currentPlanSchema,
+	); err != nil {
+		return err
+	}
+	if status != "active" || (heartbeat.ActiveConfigVersion != currentVersion && heartbeat.ActiveConfigVersion != lastGoodVersion) {
+		return ErrCollectorHeartbeatConflict
+	}
+	idempotent, err := validateCollectorHeartbeatSequence(previousBootID, previousSequence, previousPayloadHash, heartbeat.BootID, heartbeat.Sequence, heartbeat.PayloadHash)
+	if err != nil {
+		return err
+	}
+	if idempotent {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE collector_agents
+			SET last_seen_at = IF(last_seen_at IS NULL OR last_seen_at < ?, ?, last_seen_at)
+			WHERE id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL
+		`, heartbeat.ReceivedAt.UTC(), heartbeat.ReceivedAt.UTC(), heartbeat.CollectorID, heartbeat.TenantID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if previousBootID == heartbeat.BootID && previousObservationJSON.Valid {
+		var previousObservation CollectorRuntimeObservation
+		if err := json.Unmarshal([]byte(previousObservationJSON.String), &previousObservation); err != nil {
+			return fmt.Errorf("decode stored collector runtime observation: %w", err)
+		}
+		_, storedObservationHash, err := marshalCollectorRuntimeValue(previousObservation)
+		if err != nil || storedObservationHash != previousObservationHash {
+			return errors.New("stored collector runtime observation integrity check failed")
+		}
+		if !collectorRuntimeCountersMonotonic(previousObservation.Counters, heartbeat.Observation.Counters) {
+			return ErrCollectorHeartbeatFenced
+		}
+	}
+	if heartbeat.ActiveSpecHash != "" {
+		expectedSpecHash := currentSpecHash
+		if heartbeat.ActiveConfigVersion != currentVersion {
+			if err := tx.QueryRowContext(ctx, `
+				SELECT spec_hash
+				FROM collector_plan_revisions
+				WHERE tenant_id = ? AND collector_id = ? AND config_version = ?
+				  AND status IN ('active','retired')
+			`, heartbeat.TenantID, heartbeat.CollectorID, heartbeat.ActiveConfigVersion).Scan(&expectedSpecHash); err != nil {
+				return err
+			}
+		}
+		if heartbeat.ActiveSpecHash != expectedSpecHash {
+			return ErrCollectorHeartbeatConflict
+		}
+	}
+
+	health := collectorRuntimeObservedHealth(heartbeat, currentVersion, currentPlanSchema >= heartbeat.PlanSchemaMin && currentPlanSchema <= heartbeat.PlanSchemaMax)
+	sentAt := time.UnixMilli(heartbeat.SentAtUnixMilli).UTC()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE collector_agents
+		SET capabilities_json = ?, capabilities_hash = ?, capability_schema_version = ?,
+			software_version = ?, agent_api_version = ?,
+			plan_schema_min = ?, plan_schema_max = ?, boot_id = ?,
+			runtime_schema_version = ?, heartbeat_sequence = ?,
+			heartbeat_sent_at = ?, clock_offset_ms = ?,
+			runtime_observation_json = ?, runtime_observation_hash = ?,
+			heartbeat_payload_hash = ?,
+			last_seen_at = IF(last_seen_at IS NULL OR last_seen_at < ?, ?, last_seen_at),
+			observed_health = ?,
+			last_error_code = IF(? = 'healthy', NULL, last_error_code),
+			last_error_detail = IF(? = 'healthy', NULL, last_error_detail)
+		WHERE id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL
+	`, string(heartbeat.CapabilitiesJSON), heartbeat.CapabilitiesHash, heartbeat.Capabilities.SchemaVersion,
+		heartbeat.SoftwareVersion, heartbeat.AgentAPIVersion,
+		heartbeat.PlanSchemaMin, heartbeat.PlanSchemaMax, heartbeat.BootID,
+		heartbeat.SchemaVersion, heartbeat.Sequence,
+		sentAt, heartbeat.ClockOffsetMilliseconds,
+		string(heartbeat.ObservationJSON), heartbeat.ObservationHash,
+		heartbeat.PayloadHash, heartbeat.ReceivedAt.UTC(), heartbeat.ReceivedAt.UTC(), health,
+		health, health, heartbeat.CollectorID, heartbeat.TenantID)
+	if err != nil {
+		return err
+	}
+	if err := requireOneCollectorPlanRow(result); err != nil {
+		return ErrCollectorHeartbeatConflict
+	}
+	return tx.Commit()
+}
+
+func collectorRuntimeObservedHealth(heartbeat CollectorRuntimeHeartbeat, currentConfigVersion uint64, schemaCompatible bool) string {
+	observation := heartbeat.Observation
+	queueFull := (observation.Queues.Receive.Capacity > 0 && observation.Queues.Receive.Depth >= observation.Queues.Receive.Capacity) ||
+		(observation.Queues.Decode.Capacity > 0 && observation.Queues.Decode.Depth >= observation.Queues.Decode.Capacity) ||
+		(observation.Queues.Quarantine.Capacity > 0 && observation.Queues.Quarantine.Depth >= observation.Queues.Quarantine.Capacity)
+	if !schemaCompatible || !observation.Running || !observation.PlanAccepting || !observation.ControlPlaneHealthy || !observation.KafkaHealthy ||
+		!observation.WAL.Writable || observation.WAL.HardWatermark || queueFull {
+		return "degraded"
+	}
+	if heartbeat.ActiveConfigVersion != currentConfigVersion {
+		return "warming"
+	}
+	if observation.PlanUsingLKG {
+		return "degraded"
+	}
+	return "healthy"
 }
 
 func getCollectorPlanRevisionTx(ctx context.Context, tx *sql.Tx, tenantID, collectorID ID, configVersion uint64, lock bool) (CollectorPlanRevision, error) {

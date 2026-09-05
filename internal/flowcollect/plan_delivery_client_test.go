@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -31,6 +32,7 @@ type planDeliveryServerState struct {
 	metadata    PlanSignatureMetadata
 	acks        []planDeliveryAckTestRequest
 	failures    []planDeliveryFailureTestRequest
+	heartbeats  []planDeliveryRuntimeHeartbeat
 	getCalls    int
 	notModified int
 	ackSignal   chan struct{}
@@ -81,9 +83,11 @@ func TestPlanDeliveryClientFetchesAtomicallyReloadsTokenAndAcknowledgesExactActi
 		t.Fatal(err)
 	}
 	metrics, runtime := &Metrics{}, NewRuntimeState()
+	wal := openPlanDeliveryTestWAL(t, directory, remotePlan.CollectorID)
+	defer wal.Close()
 	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
 	config.PlanTrustBundleFile = trustBundlePath
-	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime)
+	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime, wal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,9 +164,11 @@ func TestPlanDeliveryClientRejectsInvalidEnvelopeWithoutReplacingLKGAndReportsFa
 		t.Fatal(err)
 	}
 	metrics := &Metrics{}
+	wal := openPlanDeliveryTestWAL(t, directory, remotePlan.CollectorID)
+	defer wal.Close()
 	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
 	config.PlanTrustBundleFile = trustBundlePath
-	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, NewRuntimeState())
+	client, err := NewPlanDeliveryClient(config, remotePlan.CollectorID, "boot-test", "1.2.3", 1, metrics, NewRuntimeState(), wal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +230,7 @@ func TestRemoteDeliveryWakesSupervisorAndAcknowledgesOnlyAfterActivation(t *test
 	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
 	config.PlanTrustBundleFile = trustBundlePath
 	config.PlanRefreshInterval = time.Hour
-	client, err := NewPlanDeliveryClient(config, first.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime)
+	client, err := NewPlanDeliveryClient(config, first.CollectorID, "boot-test", "1.2.3", 1, metrics, runtime, wal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +282,118 @@ func TestPlanDeliveryRetryDelayIsExponentiallyBounded(t *testing.T) {
 		if actual := client.retryDelay(test.failures); actual != test.expected {
 			t.Fatalf("retry delay after %d failures=%s, want %s", test.failures, actual, test.expected)
 		}
+	}
+}
+
+func TestPlanDeliveryRuntimeHeartbeatRetriesExactPayloadAndSeparatesCapabilities(t *testing.T) {
+	now := time.UnixMilli(2_000_000_000_000).UTC()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := validPlan(now)
+	directory := t.TempDir()
+	planPath := filepath.Join(directory, "plan.json")
+	keyPath := filepath.Join(directory, "plan.pub")
+	tokenPath := filepath.Join(directory, "collector.token")
+	writePlanPublicKey(t, keyPath, publicKey)
+	writeSignedPlan(t, planPath, plan, privateKey)
+	if err := os.WriteFile(tokenPath, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wal := openPlanDeliveryTestWAL(t, directory, plan.CollectorID)
+	defer wal.Close()
+	metrics := &Metrics{}
+	metrics.ReceivedDatagrams.Store(100)
+	metrics.ReceiveQueueDrops.Store(2)
+	metrics.QuarantineQueueDrops.Store(3)
+	metrics.UDPKernelDropsSFlow.Store(4)
+	metrics.UDPKernelDropsNetFlow.Store(5)
+	metrics.ReceiveQueueDepth.Store(7)
+	metrics.ReceiveQueueCapacity.Store(70)
+	metrics.DecodeQueueDepth.Store(8)
+	metrics.DecodeQueueCapacity.Store(80)
+	metrics.QuarantineQueueDepth.Store(9)
+	metrics.QuarantineQueueCapacity.Store(90)
+	metrics.PublishFailures.Store(1)
+	metrics.QuarantinePublishFailures.Store(2)
+	metrics.DLQPublishFailures.Store(3)
+	metrics.CollectStateFailures.Store(4)
+	metrics.QualityCheckpointFailures.Store(5)
+	runtime := NewRuntimeState()
+	runtime.start(now.Add(-10 * time.Second))
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.observePlan(nil, registry, false, now)
+	config := planDeliveryTestConfig("http://127.0.0.1:18090", planPath, keyPath, tokenPath)
+	client, err := NewPlanDeliveryClient(config, plan.CollectorID, "boot-heartbeat", "1.2.3", plan.Revision, metrics, runtime, wal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.now = func() time.Time { return now }
+	var bodies [][]byte
+	responseStatus := http.StatusServiceUnavailable
+	client.httpClient = planDeliveryTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Error(readErr)
+		}
+		bodies = append(bodies, append([]byte(nil), body...))
+		w.WriteHeader(responseStatus)
+	}))
+	if err := client.reportRuntime(context.Background()); err == nil {
+		t.Fatal("failed heartbeat unexpectedly succeeded")
+	}
+	responseStatus = http.StatusAccepted
+	if err := client.reportRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) || metrics.HeartbeatFailures.Load() != 1 || metrics.HeartbeatSuccesses.Load() != 1 {
+		t.Fatalf("heartbeat retry bodies=%d equal=%v success=%d failure=%d", len(bodies), len(bodies) == 2 && bytes.Equal(bodies[0], bodies[1]), metrics.HeartbeatSuccesses.Load(), metrics.HeartbeatFailures.Load())
+	}
+	var request planDeliveryHeartbeatRequest
+	if err := json.Unmarshal(bodies[0], &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.SchemaVersion != 1 || request.Kind != "runtime" || request.Runtime == nil || request.PlanFailure != nil || request.Runtime.Sequence != 1 || request.Runtime.BootID != "boot-heartbeat" || request.Runtime.PlanSchemaMax != 2 || len(request.Runtime.Capabilities.PlanEnvelopeVersions) != 2 || request.Runtime.Observation.UptimeSeconds != 10 || request.Runtime.Observation.ControlPlaneHealthy || request.Runtime.Observation.Queues.Receive.Depth != 7 || request.Runtime.Observation.Counters.UDPKernelDrops != 9 || request.Runtime.Observation.Counters.PublishFailures != 15 || request.Runtime.Capabilities.SchemaVersion != 1 {
+		t.Fatalf("runtime heartbeat=%+v", request)
+	}
+	if err := client.reportRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 3 || bytes.Equal(bodies[1], bodies[2]) {
+		t.Fatalf("next heartbeat did not create a new payload: bodies=%d", len(bodies))
+	}
+	request = planDeliveryHeartbeatRequest{}
+	if err := json.Unmarshal(bodies[2], &request); err != nil || request.Runtime == nil || request.Runtime.Sequence != 2 {
+		t.Fatalf("second heartbeat=%+v err=%v", request, err)
+	}
+	responseStatus = http.StatusConflict
+	if err := client.reportRuntime(context.Background()); err == nil || len(client.pendingHeartbeat) != 0 || client.heartbeatSequence != 2 {
+		t.Fatalf("conflicting heartbeat error=%v pending=%d sequence=%d", err, len(client.pendingHeartbeat), client.heartbeatSequence)
+	}
+	metrics.ReceiveQueueDepth.Store(11)
+	responseStatus = http.StatusAccepted
+	if err := client.reportRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var conflicted, rebuilt planDeliveryHeartbeatRequest
+	if err := json.Unmarshal(bodies[3], &conflicted); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bodies[4], &rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	if conflicted.Runtime == nil || rebuilt.Runtime == nil || conflicted.Runtime.Sequence != 3 || rebuilt.Runtime.Sequence != 3 || rebuilt.Runtime.Observation.Queues.Receive.Depth != 11 || bytes.Equal(bodies[3], bodies[4]) {
+		t.Fatalf("conflict rebuild old=%+v new=%+v", conflicted.Runtime, rebuilt.Runtime)
+	}
+	responseStatus = http.StatusPreconditionFailed
+	err = client.reportRuntime(context.Background())
+	var fenced planDeliveryFailure
+	if !errors.As(err, &fenced) || fenced.Code != "HEARTBEAT_FENCED" || len(client.pendingHeartbeat) == 0 {
+		t.Fatalf("fenced heartbeat error=%v pending=%d", err, len(client.pendingHeartbeat))
 	}
 }
 
@@ -344,16 +462,41 @@ func (s *planDeliveryServerState) serveHTTP(w http.ResponseWriter, r *http.Reque
 		}
 		w.WriteHeader(http.StatusAccepted)
 	case r.Method == http.MethodPost && filepath.Base(r.URL.Path) == "heartbeat":
-		var request planDeliveryFailureTestRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&request); err != nil {
+		var request planDeliveryHeartbeatRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 32<<10)).Decode(&request); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		s.failures = append(s.failures, request)
+		switch request.Kind {
+		case "plan_failure":
+			if request.PlanFailure == nil || request.Runtime != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			s.failures = append(s.failures, planDeliveryFailureTestRequest(*request.PlanFailure))
+		case "runtime":
+			if request.Runtime == nil || request.PlanFailure != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			s.heartbeats = append(s.heartbeats, *request.Runtime)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func openPlanDeliveryTestWAL(t *testing.T, directory, collectorID string) *WAL {
+	t.Helper()
+	wal, err := OpenWAL(filepath.Join(directory, "delivery-wal"), collectorID, testWALConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wal
 }
 
 func controlPlanePlanEnvelope(t *testing.T, plan Plan, privateKey ed25519.PrivateKey) ([]byte, PlanSignatureMetadata) {

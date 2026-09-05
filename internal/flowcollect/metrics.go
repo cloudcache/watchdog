@@ -100,6 +100,8 @@ type Metrics struct {
 	PlanDeliveryPersistFailures   atomic.Uint64
 	PlanDeliveryAckSuccesses      atomic.Uint64
 	PlanDeliveryAckFailures       atomic.Uint64
+	HeartbeatSuccesses            atomic.Uint64
+	HeartbeatFailures             atomic.Uint64
 	ReplayAttempts                atomic.Uint64
 	AttemptJournalAppends         atomic.Uint64
 	AttemptJournalFailures        atomic.Uint64
@@ -172,6 +174,8 @@ type MetricSnapshot struct {
 	PlanDeliveryPersistFailures uint64
 	PlanDeliveryAckSuccesses    uint64
 	PlanDeliveryAckFailures     uint64
+	HeartbeatSuccesses          uint64
+	HeartbeatFailures           uint64
 	ReplayAttempts              uint64
 	AttemptJournalAppends       uint64
 	AttemptJournalFailures      uint64
@@ -204,6 +208,7 @@ func (m *Metrics) Snapshot() MetricSnapshot {
 		CollectStateCheckpoints: m.CollectStateCheckpoints.Load(), PublishedCollectStates: m.PublishedCollectStates.Load(), CollectStateFailures: m.CollectStateFailures.Load(), ReplayAttempts: m.ReplayAttempts.Load(),
 		PlanHistoryPruned: m.PlanHistoryPruned.Load(), PlanRefreshSuccesses: m.PlanRefreshSuccesses.Load(), PlanRefreshFailures: m.PlanRefreshFailures.Load(), PlanRefreshChanges: m.PlanRefreshChanges.Load(),
 		PlanDeliveryFetchSuccesses: m.PlanDeliveryFetchSuccesses.Load(), PlanDeliveryNotModified: m.PlanDeliveryNotModified.Load(), PlanDeliveryFetchFailures: m.PlanDeliveryFetchFailures.Load(), PlanDeliveryPersistFailures: m.PlanDeliveryPersistFailures.Load(), PlanDeliveryAckSuccesses: m.PlanDeliveryAckSuccesses.Load(), PlanDeliveryAckFailures: m.PlanDeliveryAckFailures.Load(),
+		HeartbeatSuccesses: m.HeartbeatSuccesses.Load(), HeartbeatFailures: m.HeartbeatFailures.Load(),
 		AttemptJournalAppends: m.AttemptJournalAppends.Load(), AttemptJournalFailures: m.AttemptJournalFailures.Load(), AttemptStateRestores: m.AttemptStateRestores.Load(), AttemptStateCheckpoints: m.AttemptStateCheckpoints.Load(), AttemptCheckpointFailures: m.AttemptCheckpointFailures.Load(),
 		QuarantineRateLimited: m.QuarantineRateLimited.Load(), QuarantineQueueDrops: m.QuarantineQueueDrops.Load(), PublishedQuarantine: m.PublishedQuarantine.Load(), QuarantinePublishFailures: m.QuarantinePublishFailures.Load(),
 		DLQDatagrams: m.DLQDatagrams.Load(), DLQPublishFailures: m.DLQPublishFailures.Load(),

@@ -23,6 +23,13 @@ type collectorPlanFailureAPIRequest struct {
 	Detail              string `json:"detail"`
 }
 
+type collectorHeartbeatAPIRequest struct {
+	SchemaVersion uint16                           `json:"schema_version"`
+	Kind          string                           `json:"kind"`
+	Runtime       *CollectorRuntimeHeartbeatReport `json:"runtime,omitempty"`
+	PlanFailure   *collectorPlanFailureAPIRequest  `json:"plan_failure,omitempty"`
+}
+
 type collectorPlanDeliveryAPI struct {
 	controller CollectorPlanDeliveryController
 }
@@ -31,7 +38,7 @@ func registerCollectorPlanDeliveryRoutes(mux *http.ServeMux, controller Collecto
 	api := collectorPlanDeliveryAPI{controller: controller}
 	mux.HandleFunc("GET /api/v1/collectors/{collector_id}/plan", api.fetch)
 	mux.HandleFunc("POST /api/v1/collectors/{collector_id}/plan-ack", api.acknowledge)
-	mux.HandleFunc("POST /api/v1/collectors/{collector_id}/heartbeat", api.reportFailure)
+	mux.HandleFunc("POST /api/v1/collectors/{collector_id}/heartbeat", api.heartbeat)
 }
 
 func (api collectorPlanDeliveryAPI) fetch(w http.ResponseWriter, r *http.Request) {
@@ -90,30 +97,66 @@ func (api collectorPlanDeliveryAPI) acknowledge(w http.ResponseWriter, r *http.R
 	WriteAPIJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
 }
 
-func (api collectorPlanDeliveryAPI) reportFailure(w http.ResponseWriter, r *http.Request) {
+func (api collectorPlanDeliveryAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 	collectorID := ID(r.PathValue("collector_id"))
 	credential, ok := collectorPlanAPIIdentity(w, r, collectorID)
 	if !ok {
 		return
 	}
-	var req collectorPlanFailureAPIRequest
+	var req collectorHeartbeatAPIRequest
 	if err := decodeCollectorEvidenceJSON(r, &req); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	if req.SchemaVersion != CollectorHeartbeatEnvelopeSchemaVersion {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "heartbeat envelope schema is unsupported", nil)
+		return
+	}
+	switch req.Kind {
+	case "runtime":
+		if req.Runtime == nil || req.PlanFailure != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "runtime heartbeat payload is required", nil)
+			return
+		}
+		if err := validateCollectorRuntimeHeartbeatReport(*req.Runtime); err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		if err := api.controller.ReportRuntime(r.Context(), collectorID, credential, *req.Runtime); err != nil {
+			writeCollectorPlanDeliveryError(w, err)
+			return
+		}
+	case "plan_failure":
+		if req.PlanFailure == nil || req.Runtime != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "plan failure heartbeat payload is required", nil)
+			return
+		}
+		if err := api.reportFailure(r, collectorID, credential, *req.PlanFailure); err != nil {
+			if errors.Is(err, errCollectorHeartbeatInvalid) {
+				WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			} else {
+				writeCollectorPlanDeliveryError(w, err)
+			}
+			return
+		}
+	default:
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "heartbeat kind is unsupported", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
+}
+
+var errCollectorHeartbeatInvalid = errors.New("collector heartbeat payload is invalid")
+
+func (api collectorPlanDeliveryAPI) reportFailure(r *http.Request, collectorID ID, credential CollectorMachineCredential, req collectorPlanFailureAPIRequest) error {
 	report := CollectorPlanFailureReport{
 		FailedConfigVersion: req.FailedConfigVersion, BootID: req.BootID,
 		SoftwareVersion: req.SoftwareVersion, Stage: req.Stage, Code: req.Code, Detail: req.Detail,
 	}
 	if err := validateCollectorPlanFailureReport(report); err != nil {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
-		return
+		return errors.Join(errCollectorHeartbeatInvalid, err)
 	}
-	if err := api.controller.ReportFailure(r.Context(), collectorID, credential, report); err != nil {
-		writeCollectorPlanDeliveryError(w, err)
-		return
-	}
-	WriteAPIJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
+	return api.controller.ReportFailure(r.Context(), collectorID, credential, report)
 }
 
 func collectorPlanAPIIdentity(w http.ResponseWriter, r *http.Request, collectorID ID) (CollectorMachineCredential, bool) {
@@ -136,6 +179,10 @@ func writeCollectorPlanDeliveryError(w http.ResponseWriter, err error) {
 		WriteAPIError(w, http.StatusUnauthorized, APIErrorUnauthorized, "Collector authentication failed", nil)
 	case errors.Is(err, ErrCollectorPlanUnavailable), errors.Is(err, ErrCollectorPlanInvalidTransition), errors.Is(err, sql.ErrNoRows):
 		WriteAPIError(w, http.StatusConflict, APIErrorInvalidRequest, "Collector active plan is unavailable or no longer applicable", nil)
+	case errors.Is(err, ErrCollectorHeartbeatConflict):
+		WriteAPIError(w, http.StatusConflict, APIErrorInvalidRequest, "Collector heartbeat is stale or conflicts with stored runtime state", nil)
+	case errors.Is(err, ErrCollectorHeartbeatFenced):
+		WriteAPIError(w, http.StatusPreconditionFailed, APIErrorInvalidRequest, "Collector process incarnation is fenced", nil)
 	default:
 		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Collector plan service is unavailable", nil)
 	}

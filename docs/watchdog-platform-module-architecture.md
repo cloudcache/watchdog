@@ -226,6 +226,13 @@ CREATE TABLE collector_agents (
   plan_schema_min SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   plan_schema_max SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   boot_id VARCHAR(64) NOT NULL DEFAULT '',
+  runtime_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  heartbeat_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  heartbeat_sent_at DATETIME(3) NULL,
+  clock_offset_ms BIGINT NULL,
+  runtime_observation_json JSON NULL,
+  runtime_observation_hash CHAR(64) NOT NULL DEFAULT '',
+  heartbeat_payload_hash CHAR(64) NOT NULL DEFAULT '',
   config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
   acknowledged_config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
   last_good_config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -259,6 +266,15 @@ CREATE TABLE collector_agents (
   CHECK (plan_schema_min <= plan_schema_max),
   CHECK (last_good_config_version <= acknowledged_config_version),
   CHECK (acknowledged_config_version <= config_version),
+  CHECK (
+    (runtime_schema_version = 0 AND heartbeat_sequence = 0 AND heartbeat_sent_at IS NULL AND clock_offset_ms IS NULL
+      AND runtime_observation_json IS NULL AND runtime_observation_hash = '' AND heartbeat_payload_hash = '')
+    OR
+    (runtime_schema_version > 0 AND heartbeat_sequence > 0 AND heartbeat_sent_at IS NOT NULL AND clock_offset_ms IS NOT NULL
+      AND capabilities_json IS NOT NULL AND CHAR_LENGTH(capabilities_hash) = 64
+      AND runtime_observation_json IS NOT NULL AND CHAR_LENGTH(runtime_observation_hash) = 64
+      AND CHAR_LENGTH(heartbeat_payload_hash) = 64)
+  ),
   CHECK (auth_type IN ('token','mtls')),
   CHECK ((auth_type = 'token') = (token_hash IS NOT NULL)),
   CHECK ((auth_type = 'mtls') = (certificate_fingerprint IS NOT NULL))
@@ -390,9 +406,11 @@ agent 必须是薄执行器，不保存业务评分规则、不自行判断 tena
 
 有效配置固定为三层交集。agent 以 `If-None-Match: plan_hash` 拉取 active plan；控制面返回 canonical spec、config/schema version、key ID、signature 和 expiry。agent 依次执行签名/hash、schema、兼容范围、binding/scope、资源预算和 analyzer self-test 校验；通过后写临时文件、fsync、原子切换并 heartbeat `acknowledged_config_version`。失败继续 last-known-good，并上报失败阶段。Flow 收集型 agent 可在控制面短故障时继续使用 LKG；`flow_probe` plan 只要允许 `active_handshake`，validate 就强制非空 expiry，主动 plan/job 必须同时未过期，过期后不得领取新任务，inflight 只运行到固化 deadline。
 
-`watchdog-flow-collect` 已把本地 signed plan 消费端接到 authenticated remote delivery。进程仍从有效本地 plan bootstrap collector ID；配置 `control_plane_url` 后，机器客户端使用 token 文件或 mTLS 二选一拉取 active v2 envelope，ETag 同时包含 version/hash，304 不写盘。200 响应先本地验签并核对 signed identity/header，再以同目录临时文件、file fsync、rename、directory fsync 原子更新 `plan_file` 并立即唤醒 supervisor；新 revision 只有在单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才切换无锁数据面，切换完成才 exact ACK version/hash/process-incarnation `boot_id`/software。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。多 key `plan_trust_bundle_file` 已按 signed key ID 校验密钥时间窗与 active/retiring/revoked 状态，每次刷新重读；普通 overlap 轮换保留仍被 LKG/WAL history 引用的旧 key，撤销 active key 则立即 fail closed。agent mTLS cert/key 在启动校验后改由每次 TLS 握手重读，且 mTLS transport 禁用 keep-alive，确保外部原子替换后下一请求使用新 identity。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 运行时下限为 3，默认 128。一次性 enrollment、capability heartbeat、mTLS/token 服务端双窗口、trust bundle 签名分发/防回滚代际和 rollout/canary 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
+`watchdog-flow-collect` 已把本地 signed plan 消费端接到 authenticated remote delivery。进程仍从有效本地 plan bootstrap collector ID；配置 `control_plane_url` 后，机器客户端使用 token 文件或 mTLS 二选一拉取 active v2 envelope，ETag 同时包含 version/hash，304 不写盘。200 响应先本地验签并核对 signed identity/header，再以同目录临时文件、file fsync、rename、directory fsync 原子更新 `plan_file` 并立即唤醒 supervisor；新 revision 只有在单调/不可变检查、pending WAL/history 容量和 Kafka topic 契约全部通过，且 history 已 durable 后才切换无锁数据面，切换完成才 exact ACK version/hash/process-incarnation `boot_id`/software。刷新失败时未过期 LKG 继续服务且 readiness 为 degraded；到期无替代立即 fail closed。多 key `plan_trust_bundle_file` 已按 signed key ID 校验密钥时间窗与 active/retiring/revoked 状态，每次刷新重读；普通 overlap 轮换保留仍被 LKG/WAL history 引用的旧 key，撤销 active key 则立即 fail closed。agent mTLS cert/key 在启动校验后改由每次 TLS 握手重读，且 mTLS transport 禁用 keep-alive，确保外部原子替换后下一请求使用新 identity。相同 revision 不扫描 WAL、不请求 Kafka；新 revision 保留数据面当前/上一 active 加全部 durable WAL 引用，旧 history 只供 replay。`plan_history_max_entries` 运行时下限为 3，默认 128。
 
-投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、激活后 ACK、固定分类失败 heartbeat、timeout/backoff 和低基数 health 已实现；enrollment、credential/trust rotation/revoke 的全生命周期与 data-loss interval 审计尚未实现。
+周期 runtime heartbeat 已采用 envelope schema v1 的 strict discriminated union，与 plan failure 共用 `/heartbeat` 但不再复用扁平字段。capabilities 只保存稳定协议/envelope 能力并单独 hash；动态 observation 保存 uptime、plan/LKG、control-plane、Kafka、三类队列、WAL 和累计 drop/failure。client 按默认 30s 独立调度；传输结果不确定时原样重试相同 boot/sequence/payload，明确的 active/LKG 冲突用同 sequence 重建，412 process fence 则退出并停止数据面。服务端只信 machine-auth identity 与 received time，保存 clock offset，以 current/LKG/hash、同 boot 单调 sequence/counter、同序同 hash 幂等和新 boot sequence 1 做 fence；已有 heartbeat stream 后 ACK/plan-failure 也不能由其他 boot 覆盖。schema 不兼容或运行依赖异常仍保存证据但派生为 degraded，只有健康运行于 LKG 才为 warming，健康态不能由 agent 自报或被后续 ACK 掩盖。migration 021 的 runtime JSON/hash 字段只承载 observed snapshot，心跳不得推进 config/ACK/LKG/row_version。一次性 enrollment、mTLS/token 服务端双窗口、trust bundle 签名分发/防回滚代际、fleet drift 和 rollout/canary 仍是后续 PLAT-03C2/FLOW-01D2，禁止把现状标记为完整 control-plane lifecycle。
+
+投递格式已消除 repository/runtime 的签名分叉：旧 v1 文件继续验证 `Ed25519(spec_json)`，但拒绝附加未签名控制面字段；生产 v2 直接携带 `collector_plan_revisions` 已有 canonical spec、SHA-256、签名元数据和 signature。管理面与 flow-collect 共用唯一 signing-payload builder，内外 collector/version/schema/effective interval 必须一致，服务端只封装已有签名事实而不持有/调用 plan 私钥。authenticated GET/304、原子落盘、激活后 ACK、固定分类失败 heartbeat、周期 capability/runtime heartbeat、timeout/backoff 和低基数 health 已实现；enrollment、credential/trust rotation/revoke 的全生命周期、fleet drift 与 data-loss interval 审计尚未实现。
 
 扩展以稳定 analyzer contract 完成：
 

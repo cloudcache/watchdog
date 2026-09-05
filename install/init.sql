@@ -141,6 +141,13 @@ CREATE TABLE IF NOT EXISTS collector_agents (
   plan_schema_min SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   plan_schema_max SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   boot_id VARCHAR(64) NOT NULL DEFAULT '',
+  runtime_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  heartbeat_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  heartbeat_sent_at DATETIME(3) NULL,
+  clock_offset_ms BIGINT NULL,
+  runtime_observation_json JSON NULL,
+  runtime_observation_hash CHAR(64) NOT NULL DEFAULT '',
+  heartbeat_payload_hash CHAR(64) NOT NULL DEFAULT '',
   config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
   acknowledged_config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
   last_good_config_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -168,6 +175,15 @@ CREATE TABLE IF NOT EXISTS collector_agents (
   CHECK (plan_schema_min <= plan_schema_max),
   CHECK (last_good_config_version <= acknowledged_config_version),
   CHECK (acknowledged_config_version <= config_version),
+  CHECK (
+    (runtime_schema_version = 0 AND heartbeat_sequence = 0 AND heartbeat_sent_at IS NULL AND clock_offset_ms IS NULL
+      AND runtime_observation_json IS NULL AND runtime_observation_hash = '' AND heartbeat_payload_hash = '')
+    OR
+    (runtime_schema_version > 0 AND heartbeat_sequence > 0 AND heartbeat_sent_at IS NOT NULL AND clock_offset_ms IS NOT NULL
+      AND capabilities_json IS NOT NULL AND CHAR_LENGTH(capabilities_hash) = 64
+      AND runtime_observation_json IS NOT NULL AND CHAR_LENGTH(runtime_observation_hash) = 64
+      AND CHAR_LENGTH(heartbeat_payload_hash) = 64)
+  ),
   CHECK (auth_type IN ('token','mtls')),
   CHECK ((auth_type = 'token') = (token_hash IS NOT NULL)),
   CHECK ((auth_type = 'mtls') = (certificate_fingerprint IS NOT NULL))

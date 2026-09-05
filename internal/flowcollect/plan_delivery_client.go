@@ -42,28 +42,110 @@ type planDeliveryPending struct {
 	SpecHash      string
 }
 
-type PlanDeliveryClient struct {
-	config          Config
-	collectorID     string
-	bootID          string
-	softwareVersion string
-	publicKey       []byte
-	httpClient      *http.Client
-	metrics         *Metrics
-	runtime         *RuntimeState
-	delivered       chan struct{}
-	activated       chan uint64
-	failures        chan error
-	activeRevision  uint64
-	pending         planDeliveryPending
-	acknowledged    planDeliveryPending
-	etag            string
-	now             func() time.Time
-	OnError         func(error)
+type planDeliveryHeartbeatRequest struct {
+	SchemaVersion uint16                            `json:"schema_version"`
+	Kind          string                            `json:"kind"`
+	Runtime       *planDeliveryRuntimeHeartbeat     `json:"runtime,omitempty"`
+	PlanFailure   *planDeliveryFailureHeartbeatBody `json:"plan_failure,omitempty"`
 }
 
-func NewPlanDeliveryClient(config Config, collectorID, bootID, softwareVersion string, activeRevision uint64, metrics *Metrics, runtime *RuntimeState) (*PlanDeliveryClient, error) {
-	if config.ControlPlaneURL == "" || collectorID == "" || len(collectorID) > 26 || bootID == "" || len(bootID) > 64 || !printableToken(bootID) || len(softwareVersion) > 64 || !printableToken(softwareVersion) || activeRevision == 0 || metrics == nil || runtime == nil {
+type planDeliveryFailureHeartbeatBody struct {
+	FailedConfigVersion uint64 `json:"failed_config_version"`
+	BootID              string `json:"boot_id"`
+	SoftwareVersion     string `json:"software_version"`
+	Stage               string `json:"stage"`
+	Code                string `json:"code"`
+	Detail              string `json:"detail"`
+}
+
+type planDeliveryRuntimeHeartbeat struct {
+	SchemaVersion       uint16                          `json:"schema_version"`
+	Sequence            uint64                          `json:"sequence"`
+	SentAtUnixMilli     int64                           `json:"sent_at_unix_ms"`
+	BootID              string                          `json:"boot_id"`
+	SoftwareVersion     string                          `json:"software_version"`
+	AgentAPIVersion     uint16                          `json:"agent_api_version"`
+	PlanSchemaMin       uint16                          `json:"plan_schema_min"`
+	PlanSchemaMax       uint16                          `json:"plan_schema_max"`
+	ActiveConfigVersion uint64                          `json:"active_config_version"`
+	ActiveSpecHash      string                          `json:"active_spec_hash,omitempty"`
+	Capabilities        planDeliveryRuntimeCapabilities `json:"capabilities"`
+	Observation         planDeliveryRuntimeObservation  `json:"observation"`
+}
+
+type planDeliveryRuntimeCapabilities struct {
+	SchemaVersion        uint16   `json:"schema_version"`
+	Protocols            []string `json:"protocols"`
+	PlanEnvelopeVersions []uint16 `json:"plan_envelope_versions"`
+}
+
+type planDeliveryQueueObservation struct {
+	Depth    uint64 `json:"depth"`
+	Capacity uint64 `json:"capacity"`
+}
+
+type planDeliveryRuntimeQueues struct {
+	Receive    planDeliveryQueueObservation `json:"receive"`
+	Decode     planDeliveryQueueObservation `json:"decode"`
+	Quarantine planDeliveryQueueObservation `json:"quarantine"`
+}
+
+type planDeliveryWALObservation struct {
+	Bytes                 uint64 `json:"bytes"`
+	MaxBytes              uint64 `json:"max_bytes"`
+	OldestAgeMilliseconds uint64 `json:"oldest_age_ms"`
+	Writable              bool   `json:"writable"`
+	SoftWatermark         bool   `json:"soft_watermark"`
+	HardWatermark         bool   `json:"hard_watermark"`
+}
+
+type planDeliveryRuntimeCounters struct {
+	ReceivedDatagrams    uint64 `json:"received_datagrams"`
+	ReceiveQueueDrops    uint64 `json:"receive_queue_drops"`
+	QuarantineQueueDrops uint64 `json:"quarantine_queue_drops"`
+	UDPKernelDrops       uint64 `json:"udp_kernel_drops"`
+	WALHardStops         uint64 `json:"wal_hard_stops"`
+	DecodeFailures       uint64 `json:"decode_failures"`
+	PublishFailures      uint64 `json:"publish_failures"`
+}
+
+type planDeliveryRuntimeObservation struct {
+	Running             bool                        `json:"running"`
+	UptimeSeconds       uint64                      `json:"uptime_seconds"`
+	PlanAccepting       bool                        `json:"plan_accepting"`
+	PlanUsingLKG        bool                        `json:"plan_using_lkg"`
+	ControlPlaneHealthy bool                        `json:"control_plane_healthy"`
+	KafkaHealthy        bool                        `json:"kafka_healthy"`
+	Queues              planDeliveryRuntimeQueues   `json:"queues"`
+	WAL                 planDeliveryWALObservation  `json:"wal"`
+	Counters            planDeliveryRuntimeCounters `json:"counters"`
+}
+
+type PlanDeliveryClient struct {
+	config            Config
+	collectorID       string
+	bootID            string
+	softwareVersion   string
+	publicKey         []byte
+	httpClient        *http.Client
+	metrics           *Metrics
+	runtime           *RuntimeState
+	wal               *WAL
+	delivered         chan struct{}
+	activated         chan uint64
+	failures          chan error
+	activeRevision    uint64
+	pending           planDeliveryPending
+	acknowledged      planDeliveryPending
+	etag              string
+	heartbeatSequence uint64
+	pendingHeartbeat  []byte
+	now               func() time.Time
+	OnError           func(error)
+}
+
+func NewPlanDeliveryClient(config Config, collectorID, bootID, softwareVersion string, activeRevision uint64, metrics *Metrics, runtime *RuntimeState, wal *WAL) (*PlanDeliveryClient, error) {
+	if config.ControlPlaneURL == "" || collectorID == "" || len(collectorID) > 26 || bootID == "" || len(bootID) > 64 || !printableToken(bootID) || softwareVersion == "" || len(softwareVersion) > 64 || !printableToken(softwareVersion) || activeRevision == 0 || metrics == nil || runtime == nil || wal == nil {
 		return nil, errors.New("remote plan delivery configuration and runtime identity are required")
 	}
 	var publicKey []byte
@@ -90,7 +172,7 @@ func NewPlanDeliveryClient(config Config, collectorID, bootID, softwareVersion s
 	client := &PlanDeliveryClient{
 		config: config, collectorID: collectorID, bootID: bootID, softwareVersion: softwareVersion,
 		activeRevision: activeRevision, publicKey: publicKey, httpClient: httpClient,
-		metrics: metrics, runtime: runtime, delivered: make(chan struct{}, 1),
+		metrics: metrics, runtime: runtime, wal: wal, delivered: make(chan struct{}, 1),
 		activated: make(chan uint64, 1), failures: make(chan error, 1), now: time.Now,
 	}
 	client.restoreLocalDeliveryState()
@@ -132,9 +214,12 @@ func (c *PlanDeliveryClient) Run(ctx context.Context) error {
 	if c == nil || ctx == nil {
 		return errors.New("remote plan delivery client is required")
 	}
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	failureCount := 0
+	planTimer := time.NewTimer(0)
+	heartbeatTimer := time.NewTimer(0)
+	defer planTimer.Stop()
+	defer heartbeatTimer.Stop()
+	planFailureCount := 0
+	heartbeatFailureCount := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -147,22 +232,38 @@ func (c *PlanDeliveryClient) Run(ctx context.Context) error {
 			err := c.acknowledge(ctx)
 			c.observe(err)
 			if err != nil {
-				failureCount++
-				resetPlanDeliveryTimer(timer, c.retryDelay(failureCount))
+				planFailureCount++
+				resetPlanDeliveryTimer(planTimer, c.retryDelay(planFailureCount))
 			}
 		case refreshErr := <-c.failures:
 			failure := classifyPlanRefreshFailure(refreshErr, c.pending.ConfigVersion)
 			_ = c.reportFailure(ctx, failure)
 			c.observe(failure)
-		case <-timer.C:
+		case <-planTimer.C:
 			err := c.sync(ctx)
 			c.observe(err)
 			if err == nil {
-				failureCount = 0
-				resetPlanDeliveryTimer(timer, c.config.PlanRefreshInterval)
+				planFailureCount = 0
+				resetPlanDeliveryTimer(planTimer, c.config.PlanRefreshInterval)
 			} else {
-				failureCount++
-				resetPlanDeliveryTimer(timer, c.retryDelay(failureCount))
+				planFailureCount++
+				resetPlanDeliveryTimer(planTimer, c.retryDelay(planFailureCount))
+			}
+		case <-heartbeatTimer.C:
+			err := c.reportRuntime(ctx)
+			if err != nil && c.OnError != nil {
+				c.OnError(err)
+			}
+			var failure planDeliveryFailure
+			if errors.As(err, &failure) && failure.Code == "HEARTBEAT_FENCED" {
+				return failure
+			}
+			if err == nil {
+				heartbeatFailureCount = 0
+				resetPlanDeliveryTimer(heartbeatTimer, c.config.HeartbeatInterval)
+			} else {
+				heartbeatFailureCount++
+				resetPlanDeliveryTimer(heartbeatTimer, c.retryDelay(heartbeatFailureCount))
 			}
 		}
 	}
@@ -283,14 +384,10 @@ func (c *PlanDeliveryClient) acknowledge(ctx context.Context) error {
 }
 
 func (c *PlanDeliveryClient) reportFailure(ctx context.Context, failure planDeliveryFailure) error {
-	body, err := json.Marshal(struct {
-		FailedConfigVersion uint64 `json:"failed_config_version"`
-		BootID              string `json:"boot_id"`
-		SoftwareVersion     string `json:"software_version"`
-		Stage               string `json:"stage"`
-		Code                string `json:"code"`
-		Detail              string `json:"detail"`
-	}{failure.ConfigVersion, c.bootID, c.softwareVersion, failure.Stage, failure.Code, failure.Detail})
+	body, err := json.Marshal(planDeliveryHeartbeatRequest{SchemaVersion: 1, Kind: "plan_failure", PlanFailure: &planDeliveryFailureHeartbeatBody{
+		FailedConfigVersion: failure.ConfigVersion, BootID: c.bootID, SoftwareVersion: c.softwareVersion,
+		Stage: failure.Stage, Code: failure.Code, Detail: failure.Detail,
+	}})
 	if err != nil {
 		return err
 	}
@@ -308,6 +405,111 @@ func (c *PlanDeliveryClient) reportFailure(ctx context.Context, failure planDeli
 		return planDeliveryStatusFailure("report failure", response.StatusCode, failure.ConfigVersion)
 	}
 	return nil
+}
+
+func (c *PlanDeliveryClient) reportRuntime(ctx context.Context) error {
+	if len(c.pendingHeartbeat) == 0 {
+		c.heartbeatSequence++
+		heartbeat := c.runtimeHeartbeat(c.heartbeatSequence, c.now())
+		body, err := json.Marshal(planDeliveryHeartbeatRequest{SchemaVersion: 1, Kind: "runtime", Runtime: &heartbeat})
+		if err != nil {
+			c.metrics.HeartbeatFailures.Add(1)
+			return err
+		}
+		c.pendingHeartbeat = body
+	}
+	request, err := c.newRequest(ctx, http.MethodPost, "heartbeat", c.pendingHeartbeat)
+	if err != nil {
+		c.metrics.HeartbeatFailures.Add(1)
+		return err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		c.metrics.HeartbeatFailures.Add(1)
+		return planDeliveryFailure{Stage: "transport", Code: "CONTROL_PLANE_UNAVAILABLE", Detail: "runtime heartbeat request failed", ConfigVersion: c.activeRevision, Err: err}
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode == http.StatusPreconditionFailed {
+		c.metrics.HeartbeatFailures.Add(1)
+		return planDeliveryFailure{Stage: "transport", Code: "HEARTBEAT_FENCED", Detail: "collector process incarnation was fenced by the control plane", ConfigVersion: c.activeRevision}
+	}
+	if response.StatusCode == http.StatusConflict {
+		c.pendingHeartbeat = nil
+		c.heartbeatSequence--
+		c.metrics.HeartbeatFailures.Add(1)
+		return planDeliveryFailure{Stage: "compatibility", Code: "HEARTBEAT_STATE_CONFLICT", Detail: "runtime state no longer matches the active or last-good plan", ConfigVersion: c.activeRevision}
+	}
+	if response.StatusCode != http.StatusAccepted {
+		c.metrics.HeartbeatFailures.Add(1)
+		return planDeliveryStatusFailure("report runtime heartbeat", response.StatusCode, c.activeRevision)
+	}
+	c.pendingHeartbeat = nil
+	c.metrics.HeartbeatSuccesses.Add(1)
+	return nil
+}
+
+func (c *PlanDeliveryClient) runtimeHeartbeat(sequence uint64, now time.Time) planDeliveryRuntimeHeartbeat {
+	runtime := c.runtime.Snapshot()
+	wal := c.wal.State()
+	kafkaHealthy := true
+	for _, component := range runtime.Kafka {
+		kafkaHealthy = kafkaHealthy && component.Healthy
+	}
+	uptime := uint64(0)
+	if runtime.Running && runtime.StartedAt > 0 && now.Unix() > runtime.StartedAt {
+		uptime = uint64(now.Unix() - runtime.StartedAt)
+	}
+	return planDeliveryRuntimeHeartbeat{
+		SchemaVersion: 1, Sequence: sequence, SentAtUnixMilli: now.UTC().UnixMilli(),
+		BootID: c.bootID, SoftwareVersion: c.softwareVersion, AgentAPIVersion: 1,
+		PlanSchemaMin: 1, PlanSchemaMax: 2, ActiveConfigVersion: c.activeRevision,
+		ActiveSpecHash: c.activeSpecHash(),
+		Capabilities: planDeliveryRuntimeCapabilities{
+			SchemaVersion: 1, Protocols: []string{"ipfix", "netflow5", "netflow9", "sflow5"},
+			PlanEnvelopeVersions: []uint16{1, 2},
+		},
+		Observation: planDeliveryRuntimeObservation{
+			Running: runtime.Running, UptimeSeconds: uptime, PlanAccepting: runtime.Plan.Accepting,
+			PlanUsingLKG: runtime.Plan.UsedLKG, ControlPlaneHealthy: runtime.ControlPlane.Healthy,
+			KafkaHealthy: kafkaHealthy,
+			Queues: planDeliveryRuntimeQueues{
+				Receive:    planDeliveryQueueObservation{Depth: nonNegativeRuntimeValue(c.metrics.ReceiveQueueDepth.Load()), Capacity: nonNegativeRuntimeValue(c.metrics.ReceiveQueueCapacity.Load())},
+				Decode:     planDeliveryQueueObservation{Depth: nonNegativeRuntimeValue(c.metrics.DecodeQueueDepth.Load()), Capacity: nonNegativeRuntimeValue(c.metrics.DecodeQueueCapacity.Load())},
+				Quarantine: planDeliveryQueueObservation{Depth: nonNegativeRuntimeValue(c.metrics.QuarantineQueueDepth.Load()), Capacity: nonNegativeRuntimeValue(c.metrics.QuarantineQueueCapacity.Load())},
+			},
+			WAL: planDeliveryWALObservation{
+				Bytes: nonNegativeRuntimeValue(wal.Bytes), MaxBytes: nonNegativeRuntimeValue(wal.MaxBytes),
+				OldestAgeMilliseconds: nonNegativeRuntimeValue(wal.OldestAge.Milliseconds()),
+				Writable:              wal.Writable, SoftWatermark: wal.SoftWatermark, HardWatermark: wal.HardWatermark,
+			},
+			Counters: planDeliveryRuntimeCounters{
+				ReceivedDatagrams: c.metrics.ReceivedDatagrams.Load(), ReceiveQueueDrops: c.metrics.ReceiveQueueDrops.Load(),
+				QuarantineQueueDrops: c.metrics.QuarantineQueueDrops.Load(),
+				UDPKernelDrops:       c.metrics.UDPKernelDropsSFlow.Load() + c.metrics.UDPKernelDropsNetFlow.Load(),
+				WALHardStops:         c.metrics.WALHardStops.Load(), DecodeFailures: c.metrics.DecodeFailures.Load(),
+				PublishFailures: c.metrics.PublishFailures.Load() + c.metrics.QuarantinePublishFailures.Load() +
+					c.metrics.DLQPublishFailures.Load() + c.metrics.CollectStateFailures.Load() + c.metrics.QualityCheckpointFailures.Load(),
+			},
+		},
+	}
+}
+
+func (c *PlanDeliveryClient) activeSpecHash() string {
+	if c.pending.ConfigVersion == c.activeRevision {
+		return c.pending.SpecHash
+	}
+	if c.acknowledged.ConfigVersion == c.activeRevision {
+		return c.acknowledged.SpecHash
+	}
+	return ""
+}
+
+func nonNegativeRuntimeValue(value int64) uint64 {
+	if value <= 0 {
+		return 0
+	}
+	return uint64(value)
 }
 
 func (c *PlanDeliveryClient) newRequest(ctx context.Context, method, action string, body []byte) (*http.Request, error) {

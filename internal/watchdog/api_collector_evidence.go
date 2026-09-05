@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"database/sql"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/cloudcache/watchdog/internal/flowcollect"
 )
+
+const collectorEvidenceRequestMaxBytes = 8 << 10
 
 type collectorDrainAPIRequest struct {
 	AppliedConfigVersion uint64 `json:"applied_config_version"`
@@ -162,7 +165,14 @@ func verifiedCollectorClientCertificate(r *http.Request) *x509.Certificate {
 
 func decodeCollectorEvidenceJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 8193))
+	payload, err := io.ReadAll(io.LimitReader(r.Body, collectorEvidenceRequestMaxBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(payload) == 0 || len(payload) > collectorEvidenceRequestMaxBytes {
+		return errors.New("request body must be between 1 byte and 8 KiB")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

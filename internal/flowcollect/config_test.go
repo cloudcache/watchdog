@@ -78,6 +78,11 @@ func TestConfigValidatesControlPlaneIdentityAndTransport(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("control plane URL with a path was accepted")
 	}
+	config = DefaultConfig()
+	config.HeartbeatInterval = 0
+	if err := config.Validate(); err == nil {
+		t.Fatal("zero control plane heartbeat interval was accepted")
+	}
 }
 
 func TestConfigRejectsInvalidCollectStateRestoreBounds(t *testing.T) {
@@ -169,6 +174,7 @@ func TestConfigEnvironmentUsesFlowCollectNamespace(t *testing.T) {
 	t.Setenv("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_REQUEST_TIMEOUT", "8s")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_RETRY_MIN", "2s")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_RETRY_MAX", "20s")
+	t.Setenv("WATCHDOG_FLOW_COLLECT_CONTROL_PLANE_HEARTBEAT_INTERVAL", "15s")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_PLAN_TRUST_BUNDLE_FILE", "/tmp/flow-plan-trust-bundle.json")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_SOCKET_COUNT", "4")
 	t.Setenv("WATCHDOG_FLOW_COLLECT_KAFKA_BROKERS", "kafka-a:9093, kafka-b:9093")
@@ -200,7 +206,7 @@ func TestConfigEnvironmentUsesFlowCollectNamespace(t *testing.T) {
 	if err := config.ApplyEnv(); err != nil {
 		t.Fatal(err)
 	}
-	if config.ControlPlaneURL != "http://127.0.0.1:18090" || config.ControlPlaneTokenFile != "/tmp/flow-collect.token" || config.ControlPlaneRequestTimeout != 8*time.Second || config.ControlPlaneRetryMin != 2*time.Second || config.ControlPlaneRetryMax != 20*time.Second || config.PlanTrustBundleFile != "/tmp/flow-plan-trust-bundle.json" || config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.Kafka.CollectStateRestoreTimeout != 3*time.Minute || config.Kafka.CollectStateRestoreMaxCandidates != 1234 || !config.Kafka.QualityCheckpointWriteEnabled || config.Kafka.TopicContract.NormalizedPartitions != 128 || config.Kafka.TopicContract.CollectStatePartitions != 16 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.PlanHistoryMaxEntries != 64 || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Diagnostics.AttemptJournalFsync != 4*time.Millisecond || config.Diagnostics.AttemptCheckpointEvery != 11*time.Minute || config.Diagnostics.AttemptJournalMaxBytes != 3<<20 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
+	if config.ControlPlaneURL != "http://127.0.0.1:18090" || config.ControlPlaneTokenFile != "/tmp/flow-collect.token" || config.ControlPlaneRequestTimeout != 8*time.Second || config.ControlPlaneRetryMin != 2*time.Second || config.ControlPlaneRetryMax != 20*time.Second || config.HeartbeatInterval != 15*time.Second || config.PlanTrustBundleFile != "/tmp/flow-plan-trust-bundle.json" || config.SocketCount != 4 || len(config.Kafka.Brokers) != 2 || config.Kafka.CollectStateRestoreTimeout != 3*time.Minute || config.Kafka.CollectStateRestoreMaxCandidates != 1234 || !config.Kafka.QualityCheckpointWriteEnabled || config.Kafka.TopicContract.NormalizedPartitions != 128 || config.Kafka.TopicContract.CollectStatePartitions != 16 || config.WAL.HardWatermark != .85 || config.NormalizedBatch.MaxWait.String() != "7ms" || config.PlanHistoryMaxEntries != 64 || config.DecoderStateTTL != 45*time.Minute || config.Diagnostics.DecodeMaxAttempts != 5 || config.Diagnostics.DLQPayloadMaxBytes != 1024 || config.Diagnostics.AttemptJournalFsync != 4*time.Millisecond || config.Diagnostics.AttemptCheckpointEvery != 11*time.Minute || config.Diagnostics.AttemptJournalMaxBytes != 3<<20 || config.Quality.StateTTL != 2*time.Hour || config.Quality.AnomalyWindow != 2*time.Minute || config.Quality.JournalFsync != 3*time.Millisecond || config.Quality.CheckpointEvery != 10*time.Minute || config.Quality.JournalMaxBytes != 2<<20 || config.Quality.MaxExporters != 1000 || config.Quality.MaxDataSources != 5000 || config.Observability.Listen != "127.0.0.1:19464" || config.Observability.WriteTimeout != 9*time.Second || config.Kafka.TLS {
 		t.Fatalf("environment not applied: %+v", config)
 	}
 }

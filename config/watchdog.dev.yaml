@@ -32,6 +32,7 @@ flow_collect:
   control_plane_request_timeout: 10s
   control_plane_retry_min: 1s
   control_plane_retry_max: 30s
+  control_plane_heartbeat_interval: 30s
   state_dir: "/tmp/watchdog-flow-collect"
   plan_file: "/tmp/watchdog-flow-collect/plan.json"
   plan_public_key_file: "/tmp/watchdog-flow-collect/plan-ed25519.pub"
