@@ -149,8 +149,8 @@
 ### PLAT-02 Module、Resource、TargetKind 与 Dataset Registry
 
 - [ ] **设计**：冻结 descriptor、依赖、启停、migration、health、resource parent、target kind、dataset provider 和前端 manifest 契约。
-- [ ] **编码**：实现 registry、重复 key/循环依赖校验、tenant module enablement，并先迁移 SNMP/system 模块验证契约。
-- [ ] **单元测试**：覆盖注册成功、重复 key、依赖缺失、循环依赖、启停、资源继承、非法 dataset 字段和 descriptor 版本不一致。
+- [x] **编码**：实现 registry、重复 key/循环依赖校验、tenant module enablement，并先迁移 SNMP/system 模块验证契约。证据：commit 6695e186 —— Module/Resource/TargetKind/Dataset 四 registry + builtin core/host/network/edge 模块（五 kind 分类学 §7.1，edge=planned 不可创建）、migration 023 `tenant_modules`、`/api/v1/modules`、`/api/v1/modules/target-kinds`、GET/PUT `/api/v1/tenants/{id}/modules`（core 不可禁用、未知 key 拒绝、审计）。路由/worker 迁入 RegisterRoutes 为后续增量。
+- [x] **单元测试**：覆盖注册成功、重复 key、依赖缺失、循环依赖、启停、资源继承、非法 dataset 字段和 descriptor 版本不一致。证据：`platform_registry_test.go`（依赖序 Resolve、缺失/循环依赖、资源树祖先链与自环拒绝、readiness 校验、planned 不可用、dataset provider 校验、模块 API 生效态/越权租户/审计）。
 - [ ] **集成测试**：启动完整 watchdog，验证模块路由、worker、health、菜单、tenant 启停和事实数据保留。
 - [ ] **变更设计**：记录实际 Go interface、模块生命周期、兼容别名和 frontend manifest 生成方式与原设计差异。
 - [ ] **变更测试**：验证模块新增/升级/禁用、migration 失败、兼容路由和旧 SNMP/system 注册前后行为。
@@ -456,15 +456,15 @@
 当前状态：**进行中**。先交付不依赖管理面发布 API、Kafka consumer 或 ClickHouse 的纯数据面内核；平台 `PLAT-04A` 仍负责把管理态地址段/集合发布成不可变 bundle。
 
 - [x] **FLOW-03A immutable dimension/classification core**：`internal/flowdimension` 已实现最大 64 MiB 的 strict bundle、canonical SHA-256、canonical IPv4/IPv6 CIDR、不可变 BART 索引和 atomic event-time catalog；缺历史版本明确阻断，不套消费时最新版。local/remote 方向、业务标签、每 role 唯一 primary prefix 与 `_unassigned`、按业务 `in/out/both` 生效且有序的多 address-set tag、local+remote 最坏扩张发布上限均已实现；selector 成员在编译期按 prefix 预计算，record 热路径不扫描集合并由零 allocation 测试锁定。HMT 规范化和六维/unknown/internal/transit/ambiguous 有序纯函数已覆盖。该项不读取 MySQL、不提交 Kafka offset、不写 ClickHouse，不能替代 FLOW-03B。
-- [x] **FLOW-03B1 `flow-geo-v1` loader/index core**：实现 `current` 单次 symlink resolve、strict manifest/固定四文件、原始字节 SHA-256、JSON array 字典、Zstd 流式 CSV、IPv4/IPv6/排序/无重叠/HMT/行数/外键/资源上限校验；range 只保存紧凑 `info_id`，Geo 元组去重，v4/v6 二分 lookup 零分配；只读 `GeoCatalog` 保留历史版本并原子切 active，同版本改 manifest 拒绝、失败 reload 保留旧版、显式版本空库可用。该项不做 poll/VM 指标、override、Kafka/CH/offset 接线。
-- [ ] **FLOW-03B2 worker source/enrichment wiring**：接 `PLAT-04A` object ref/checksum/worker ACK，消费 normalized Kafka；按 record 的 event-time/snapshot ref/geo_version 取得 immutable dimension + Geo，叠加租户 override，完成 local/remote、业务/address-set、Geo/ASN/ISP/六维 enrich；缺任一历史版本暂停对应 partition 且不提交 offset，禁止退回 active/current，也禁止同步查询管理库。
+- [x] **FLOW-03B1 `flow-geo-v1` loader/index core**：实现 `current` 单次 symlink resolve、strict manifest/固定四文件、原始字节 SHA-256、`generated_at/effective_from` 分离、JSON array 字典、Zstd 流式 CSV、IPv4/IPv6/排序/无重叠/HMT/行数/外键/资源上限校验；range 只保存紧凑 `info_id`，Geo 元组去重，v4/v6 二分 lookup 零分配；只读 `GeoCatalog` 按 event time 选版、保留/显式回收历史版本并原子切 active，同版本改 manifest/旧版回切拒绝、失败 reload 保留旧版、显式版本空库可用。该项不做 poll/VM 指标、override、Kafka/CH/offset 接线。
+- [ ] **FLOW-03B2 worker source/enrichment wiring**：接 `PLAT-04A` object ref/checksum/worker ACK，消费 normalized Kafka；按 record event time 取得 immutable dimension snapshot 与 Geo effective version，固化两者 ID/version，再叠加租户 override，完成 local/remote、业务/address-set、Geo/ASN/ISP/六维 enrich；缺任一历史版本暂停对应 partition 且不提交 offset，禁止退回 active/current，也禁止同步查询管理库；Geo 历史内存/目录 GC 保留集必须覆盖 lag/open bucket/replay/backfill 引用。
 - [ ] **FLOW-03B3 bounded aggregate/sink wiring**：把 enriched records 按固定 shard/minute 汇聚，落实 address-set 非加和、迟到窗口、spill/backpressure、base manifest/ClickHouse 单事实提交、重试/dedup 和 normalized offset commit；不得反向把 draft CRUD 或同步数据库查询接入逐 flow 热路径。
 
 2026-09-05 开发机非验收 microbenchmark（Apple M2、6 prefixes/4 enabled sets、只含两次 LPM + 预编译 set/方向归类）：约 `200 ns/record`，`0 B/op`、`0 allocs/op`。它不包含大规模 bundle cache 行为、Kafka decode/consume、Geo、分钟聚合、spill、CH insert 或 offset commit，不能替代 FLOW-03B/性能验收。
 
-2026-09-05 开发机非验收 microbenchmark（Apple M2、65,536 个 IPv4 区间、首/中/末混合二分 lookup）：约 `21 ns/lookup`，`0 B/op`、`0 allocs/op`。加载测试覆盖真实 Zstd、IPv4/IPv6、字典外键、空版本、失败保持旧版、历史版本回切和并发 reader；结果不包含百万级真实地址库加载耗时/峰值 RSS，也不替代 FLOW-03B2/B3 链路验收。
+2026-09-05 开发机非验收 microbenchmark（Apple M2、65,536 个 IPv4 区间、首/中/末混合二分 lookup）：约 `21 ns/lookup`，`0 B/op`、`0 allocs/op`。加载测试覆盖真实 Zstd、IPv4/IPv6、字典外键、空版本、失败保持旧版、event-time 选版、历史加载/显式回收、拒绝旧版回切和并发 reader；结果不包含百万级真实地址库加载耗时/峰值 RSS，也不替代 FLOW-03B2/B3 链路验收。
 
-- [ ] **设计**：已冻结 immutable dimension bundle/classifier 与 `flow-geo-v1` loader/index；仍需冻结 normalized consumer、record 如何绑定 dimension snapshot + geo_version、override、enriched schema、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
+- [ ] **设计**：已冻结 immutable dimension bundle/classifier 与 `flow-geo-v1` loader/index；仍需冻结 normalized consumer、record event time 选 dimension/Geo 后如何固化版本、override、enriched schema、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
 - [ ] **编码**：已实现 snapshot loader/LPM/selector、方向、地址段/set、Geo/ASN/ISP loader/index、业务/六维纯函数；仍需 dimension worker、override/enrich 接线、分片汇聚、batch manifest 和 normalized commit。
 - [ ] **单元测试**：已覆盖 event-time 选版、重叠 CIDR、IPv4/IPv6、`_unassigned`、多 set、max expansion、四种方向、六维/unknown/HMT、Geo 严格加载/lookup/原子切换/失败保持；仍需 override/enriched record、重复 record、spill/aggregate/commit 状态机。
 - [ ] **集成测试**：dimension worker/CH 中断先形成 normalized lag；Kafka 生产中断验证 flow-collect WAL 保护；恢复后按原 snapshot 重放，primary prefix 守恒且 address set 标记非加和。
