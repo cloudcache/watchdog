@@ -315,16 +315,15 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 	r.backgroundStarted = true
 	if r.Store != nil {
 		owner, _ := os.Hostname()
-		if owner == "" {
-			owner = "watchdog-hub"
+		registry := NewOperationJobHandlerRegistry()
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     TargetDeleteJobType,
+			Handler:     NewTargetDeleteJobHandler(r.Store, r.MetricsClient),
+			Concurrency: 2,
+		}); err != nil {
+			return err
 		}
-		worker := &OperationJobWorker{
-			Repo:    r.Store,
-			JobType: TargetDeleteJobType,
-			Owner:   owner,
-			Handler: NewTargetDeleteJobHandler(r.Store, r.MetricsClient),
-		}
-		go worker.Run(ctx)
+		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
 	}
 	return nil
 }
