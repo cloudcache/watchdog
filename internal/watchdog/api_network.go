@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,8 @@ type networkAPI struct {
 	seriesCleaner SeriesCleaner
 	discoveryJobs DiscoveryJobRepository
 	audit         AuditRepository
+	deletePreview DeviceDeletePreviewRepository
+	operationJobs OperationJobRepository
 }
 
 type networkDeviceSummary struct {
@@ -37,8 +41,8 @@ type networkDeviceInventoryUpdater interface {
 	UpdateDeviceInventory(ctx context.Context, device NetworkDevice) (NetworkDevice, error)
 }
 
-func registerNetworkRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo NetworkRepository, targets TargetRepository, agents AgentRepository, snmp SNMPRepository, discovery SNMPDeviceDiscoverer, collector SNMPCollectorRepository, cleaner SeriesCleaner, jobs DiscoveryJobRepository, audit AuditRepository) {
-	api := networkAPI{repo: repo, targets: targets, agents: agents, snmp: snmp, discovery: discovery, collector: collector, seriesCleaner: cleaner, discoveryJobs: jobs, audit: audit}
+func registerNetworkRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo NetworkRepository, targets TargetRepository, agents AgentRepository, snmp SNMPRepository, discovery SNMPDeviceDiscoverer, collector SNMPCollectorRepository, cleaner SeriesCleaner, jobs DiscoveryJobRepository, audit AuditRepository, deletePreview DeviceDeletePreviewRepository, operationJobs OperationJobRepository) {
+	api := networkAPI{repo: repo, targets: targets, agents: agents, snmp: snmp, discovery: discovery, collector: collector, seriesCleaner: cleaner, discoveryJobs: jobs, audit: audit, deletePreview: deletePreview, operationJobs: operationJobs}
 	configureTenant := RequirePermission(ActionConfigure, TenantResource)
 	mux.Handle("GET /api/v1/network/devices", auth(http.HandlerFunc(api.listDevices)))
 	mux.Handle("GET /api/v1/network/devices/summary", auth(http.HandlerFunc(api.listDeviceSummaries)))
@@ -50,6 +54,7 @@ func registerNetworkRoutes(mux *http.ServeMux, auth func(http.Handler) http.Hand
 	mux.Handle("GET /api/v1/network/devices/{device_id}/lags", auth(http.HandlerFunc(api.listDeviceLAGGroups)))
 	mux.Handle("PATCH /api/v1/network/devices/{device_id}", auth(http.HandlerFunc(api.patchDevice)))
 	mux.Handle("DELETE /api/v1/network/devices/{device_id}", auth(http.HandlerFunc(api.deleteDevice)))
+	mux.Handle("GET /api/v1/network/devices/{device_id}/delete-preview", auth(http.HandlerFunc(api.previewDeviceDelete)))
 	mux.Handle("PATCH /api/v1/network/devices/{device_id}/snmp", auth(http.HandlerFunc(api.patchDeviceSNMP)))
 	mux.Handle("POST /api/v1/network/devices/{device_id}/snmp/discover", auth(http.HandlerFunc(api.discoverDeviceSNMP)))
 	mux.Handle("GET /api/v1/network/devices/{device_id}/events", auth(http.HandlerFunc(api.listDeviceEvents)))
@@ -393,6 +398,45 @@ func (api networkAPI) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	if !CheckIfMatch(w, r, existing.UpdatedAt) {
 		return
 	}
+	// With a job repository configured, deletion runs asynchronously so a large
+	// device fan-out (ports/sensors/BGP/VLAN/recipes) cannot stall or die
+	// inside the request; the worker runs the cascade and writes a receipt.
+	if api.operationJobs != nil {
+		impact := map[string]int{}
+		if api.deletePreview != nil {
+			if preview, previewErr := api.deletePreview.PreviewDeviceDelete(r.Context(), auth.TenantID, existing.ID); previewErr == nil {
+				for _, item := range preview.Impacts {
+					if item.Behavior == "deleted" && item.Count > 0 {
+						impact[item.ResourceType] = item.Count
+					}
+				}
+			}
+		}
+		payload, err := EncodeDeviceDeletePayload(existing.ID, impact)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		digest := sha256.Sum256([]byte("device_delete:" + string(existing.ID)))
+		job, err := api.operationJobs.EnqueueOperationJob(r.Context(), OperationJob{
+			TenantID:       auth.TenantID,
+			JobType:        DeviceDeleteJobType,
+			IdempotencyKey: "device_delete:" + string(existing.ID),
+			RequestHash:    hex.EncodeToString(digest[:]),
+			CheckpointJSON: payload,
+			CreatedBy:      auth.UserID,
+		})
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		api.auditLog(r.Context(), auth, "delete", ResourceTarget, existing.TargetID, "device_delete_enqueued", existing.ID)
+		WriteAPIJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": job.ID, "status": job.Status,
+			"status_url": "/api/v1/operation-jobs/" + string(job.ID),
+		})
+		return
+	}
 	if err := api.repo.DeleteDevice(r.Context(), auth.TenantID, existing.ID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -404,6 +448,29 @@ func (api networkAPI) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (api networkAPI) previewDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	device, err := api.repo.GetDevice(r.Context(), auth.TenantID, ID(r.PathValue("device_id")))
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Network device not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, device.TargetID, ActionConfigure) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	if api.deletePreview == nil {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Delete preview is not available", nil)
+		return
+	}
+	preview, err := api.deletePreview.PreviewDeviceDelete(r.Context(), auth.TenantID, device.ID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Network device not found", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, preview)
 }
 
 func (api networkAPI) patchDeviceSNMP(w http.ResponseWriter, r *http.Request) {

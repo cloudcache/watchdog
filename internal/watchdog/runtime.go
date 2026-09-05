@@ -35,9 +35,12 @@ type BackendRuntime struct {
 	DiscoveryScheduler DiscoveryScheduler
 	CollectorEvidence  CollectorEvidenceController
 	CollectorPlans     CollectorPlanDeliveryController
+	FlowRollupRunner   FlowBucketRollupRunner
+	FlowRollupService  *FlowRollupService
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
+	flowRollupNative           interface{ Close() }
 
 	trapDispatcherFn  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu      sync.Mutex
@@ -176,6 +179,19 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		Collector: store,
 	}
 	runtime.trapDispatcherFn = runtime.buildTrapDispatcher()
+	if cfg.FlowRollup.Enabled {
+		native, runner, service, err := newFlowRollupRuntime(ctx, store, cfg.FlowRollup)
+		if err != nil {
+			if runtime.collectorPrincipalProvider != nil {
+				runtime.collectorPrincipalProvider.CloseIdleConnections()
+			}
+			_ = store.Close()
+			return nil, fmt.Errorf("initialize flow rollup: %w", err)
+		}
+		runtime.flowRollupNative = native
+		runtime.FlowRollupRunner = runner
+		runtime.FlowRollupService = service
+	}
 	return runtime, nil
 }
 
@@ -198,6 +214,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		IdentityAdmin:        r.Store,
 		Idempotency:          r.Store,
 		TargetDeletePreview:  r.Store,
+		DeviceDeletePreview:  r.Store,
 		CollectorCredentials: r.Store,
 		CollectorEnrollment:  r.Store,
 		Registries:           r.Registries,
@@ -323,7 +340,27 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     DeviceDeleteJobType,
+			Handler:     NewDeviceDeleteJobHandler(r.Store, r.MetricsClient, r.Store),
+			Concurrency: 2,
+		}); err != nil {
+			return err
+		}
+		if r.FlowRollupRunner != nil {
+			if err := registry.Register(OperationJobRegistration{
+				JobType: FlowRollupJobType, Handler: NewFlowRollupJobHandler(r.FlowRollupRunner),
+				Concurrency: r.Config.FlowRollup.WorkerConcurrency, LeaseFor: r.Config.FlowRollup.LeaseFor,
+				MaxAttempts: r.Config.FlowRollup.MaxAttempts, RetryBase: r.Config.FlowRollup.RetryBase,
+			}); err != nil {
+				return err
+			}
+		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
+		if r.FlowRollupService != nil {
+			r.FlowRollupService.Logf = log.Printf
+			go r.FlowRollupService.Run(ctx)
+		}
 		NewStoreMaintenance(r.Store, nil).Start(ctx)
 	}
 	return nil
@@ -339,6 +376,9 @@ func (r *BackendRuntime) Close() error {
 		r.backgroundMu.Unlock()
 		if r.collectorPrincipalProvider != nil {
 			r.collectorPrincipalProvider.CloseIdleConnections()
+		}
+		if r.flowRollupNative != nil {
+			r.flowRollupNative.Close()
 		}
 		if r.Store != nil {
 			r.closeError = errors.Join(r.closeError, r.Store.Close())

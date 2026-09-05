@@ -13,6 +13,16 @@ import {
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -182,6 +192,42 @@ type DeviceDetailProps = {
 	id: string
 }
 
+
+type DeviceDeleteImpact = {
+	resource_type: string
+	behavior: string
+	count: number
+	detail?: string
+	items?: { id: string; name: string }[]
+}
+
+function deviceImpactLabel(resourceType: string) {
+	switch (resourceType) {
+		case "network_port":
+			return "Ports"
+		case "network_device_sensor":
+			return "Sensors"
+		case "bgp_session":
+			return "BGP sessions"
+		case "device_vlan":
+			return "VLANs"
+		case "device_lag_group":
+			return "LAG groups"
+		case "device_physical_entity":
+			return "Physical entities"
+		case "network_interface_address":
+			return "Interface addresses"
+		case "snmp_collection_recipe":
+			return "SNMP recipes"
+		case "aggregate_graph":
+			return "Aggregate graphs"
+		case "metric_series":
+			return "Metric series"
+		default:
+			return resourceType
+	}
+}
+
 export default memo(({ id }: DeviceDetailProps) => {
 	const { t } = useLingui()
 	const [device, setDevice] = useState<NetworkDevice | null>(null)
@@ -197,6 +243,8 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const [loading, setLoading] = useState(true)
 	const [rediscovering, setRediscovering] = useState(false)
 	const [error, setError] = useState("")
+	const [deleteOpen, setDeleteOpen] = useState(false)
+	const [deleteImpacts, setDeleteImpacts] = useState<DeviceDeleteImpact[]>([])
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
@@ -314,14 +362,36 @@ export default memo(({ id }: DeviceDetailProps) => {
 		}
 	}
 
-	const deleteDevice = async () => {
-		if (!globalThis.confirm(t`Delete this network device?`)) {
-			return
+	const openDeletePreview = async () => {
+		setError("")
+		try {
+			const preview = await pb.send<{ impacts?: DeviceDeleteImpact[] }>(`/api/v1/network/devices/${id}/delete-preview`, {})
+			setDeleteImpacts(preview.impacts ?? [])
+		} catch {
+			setDeleteImpacts([])
 		}
+		setDeleteOpen(true)
+	}
+
+	const deleteDevice = async () => {
+		setDeleteOpen(false)
 		setLoading(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/network/devices/${id}`, { method: "DELETE" })
+			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/network/devices/${id}`, { method: "DELETE" })
+			const jobID = response?.job_id
+			if (jobID) {
+				for (let attempt = 0; attempt < 120; attempt++) {
+					const job = await pb.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					if (job.status === "succeeded") {
+						break
+					}
+					if (job.status === "failed" || job.status === "canceled") {
+						throw new Error(job.last_error_detail || t`Failed to delete network device`)
+					}
+					await new Promise((resolve) => globalThis.setTimeout(resolve, 1000))
+				}
+			}
 			navigate(getPagePath($router, "network"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete network device`)
@@ -428,7 +498,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 						<Button variant="ghost" size="sm" onClick={saveAsGraph} disabled={loading || portIDs.length === 0}>
 							<BarChart3Icon className="h-4 w-4" />
 						</Button>
-						<Button variant="ghost" size="sm" onClick={deleteDevice} disabled={loading}>
+						<Button variant="ghost" size="sm" onClick={openDeletePreview} disabled={loading}>
 							<Trash2Icon className="h-4 w-4 text-destructive" />
 						</Button>
 						<Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
@@ -571,6 +641,52 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 				</Tabs>
 			</GraphContextProvider>
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							<Trans>Delete this network device?</Trans>
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							<Trans>This shows everything the deletion touches. Removed data cannot be recovered.</Trans>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<div className="max-h-64 space-y-2 overflow-y-auto text-sm">
+						{deleteImpacts.length === 0 ? (
+							<div className="text-muted-foreground">
+								<Trans>No dependent resources found.</Trans>
+							</div>
+						) : (
+							deleteImpacts.map((impact) => (
+								<div
+									key={impact.resource_type}
+									className="flex items-start justify-between gap-3 rounded-md border border-border p-2"
+								>
+									<div className="min-w-0">
+										<div className="font-medium">{deviceImpactLabel(impact.resource_type)}</div>
+										{impact.detail ? <div className="text-xs text-muted-foreground">{impact.detail}</div> : null}
+									</div>
+									<div className="flex shrink-0 items-center gap-2">
+										{impact.count > 0 ? <span className="text-xs text-muted-foreground">×{impact.count}</span> : null}
+										<Badge variant={impact.behavior === "deleted" ? "destructive" : "outline"} className="font-normal">
+											{impact.behavior === "deleted" ? <Trans>deleted</Trans> : <Trans>detached</Trans>}
+										</Badge>
+									</div>
+								</div>
+							))
+						)}
+					</div>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							<Trans>Cancel</Trans>
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={deleteDevice}>
+							<Trans>Delete</Trans>
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	)
 })

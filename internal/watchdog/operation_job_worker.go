@@ -280,3 +280,53 @@ func NewTargetDeleteJobHandler(targets TargetRepository, cleaner SeriesCleaner, 
 		return "deleted:" + string(payload.TargetID), nil
 	}
 }
+
+// DeviceDeleteJobType names the async network-device deletion job (PLAT-04).
+const DeviceDeleteJobType = "device_delete"
+
+// DeviceDeletePayloadVersion is the payload schema version for device_delete.
+const DeviceDeletePayloadVersion = 1
+
+type deviceDeleteJobPayload struct {
+	DeviceID ID             `json:"device_id"`
+	Impact   map[string]int `json:"impact,omitempty"`
+}
+
+// EncodeDeviceDeletePayload builds the versioned envelope for a device delete.
+func EncodeDeviceDeletePayload(deviceID ID, impact map[string]int) (json.RawMessage, error) {
+	return EncodeJobPayload(DeviceDeletePayloadVersion, deviceDeleteJobPayload{DeviceID: deviceID, Impact: impact})
+}
+
+// NewDeviceDeleteJobHandler deletes the device (its dependents cascade), clears
+// its VictoriaMetrics series and records a destruction receipt. Every step is
+// idempotent so a retry or takeover converges and writes exactly one receipt.
+func NewDeviceDeleteJobHandler(network NetworkRepository, cleaner SeriesCleaner, receipts DestructionReceiptRecorder) OperationJobHandler {
+	return func(ctx context.Context, job OperationJob) (string, error) {
+		var payload deviceDeleteJobPayload
+		if err := DecodeJobPayload(job.CheckpointJSON, DeviceDeletePayloadVersion, &payload); err != nil {
+			return "", err
+		}
+		if payload.DeviceID == "" {
+			return "", TerminalJobError(fmt.Errorf("device delete job payload has no device_id"))
+		}
+		if err := network.DeleteDevice(ctx, job.TenantID, payload.DeviceID); err != nil {
+			return "", err
+		}
+		seriesMatch := `{device_id="` + string(payload.DeviceID) + `"}`
+		if cleaner != nil {
+			if err := cleaner.DeleteSeries(ctx, []string{seriesMatch}); err != nil {
+				return "", err
+			}
+		}
+		if receipts != nil {
+			if err := receipts.RecordDestructionReceipt(ctx, DestructionReceipt{
+				TenantID: job.TenantID, JobID: job.ID, ResourceType: "network_device",
+				ResourceID: payload.DeviceID, ActorID: job.CreatedBy,
+				Impact: payload.Impact, SeriesMatch: seriesMatch, DestroyedAt: time.Now().UTC(),
+			}); err != nil {
+				return "", err
+			}
+		}
+		return "deleted:" + string(payload.DeviceID), nil
+	}
+}
