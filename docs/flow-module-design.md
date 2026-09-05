@@ -523,6 +523,8 @@ provider result runner 必须消费 CH 的多个 data block，校验所有列等
 
 ch-go native 查询有三条必须由真实 ClickHouse 门禁锁定、不能只靠 SQL 字符串单测的协议约束：`proto.Parameter.Value` 是 custom setting 的 ClickHouse Field dump，数字也必须按 `'1'` 形式编码，再由 `{name:UInt*}` 占位符做类型转换；带别名读取 `ReplacingMergeTree` 时固定写成 `FROM table AS source FINAL`；TopN/other 聚合的输出别名不得与输入列 `dimension_value` 同名，必须先使用 `grouped_dimension_value`，仅在最外层投影恢复 API 列名。否则会分别触发 native parameter restore、`FINAL` 语法或 alias substitution 聚合错误。外部集成测试使用独立临时数据库，按 001→005 顺序执行真实 DDL，经 native writer 写入 facts，并覆盖 1m/1h、同 generation 重放、下一 generation repair、空桶 sentinel、强制多 result block 以及首 block 后取消且零部分结果；不得复用或清空开发数据库来完成测试。
 
+版本与预算的真实 CH 门禁另构造三个 rank 完全相同的 Geo 序列，其中同一 city ID 分属两个 snapshot/Geo/classification 版本。`TopN=2 + other` 必须按固定 tuple tie-break 选择两个版本化 city 行，第三行按自身版本进入 `_other`，最终返回 `mixed_versions=true/version_count=2` 且 bytes/records 守恒。将 `max_rows_to_read` 或 `max_result_rows` 压到 1 时，ClickHouse 必须抛错且 provider 返回零部分点。静默传输超时、服务端长查询 deadline 与集群容量仍由 12.2/外部故障门禁完成，不能用客户端已过期 context 冒充。
+
 查询能力也必须由同一编译器 registry 导出，而不是让 hub 或前端复制白名单：aggregate v1 只发布 customer view 及现有 metric/dimension registry；detail 按 raw/supplier/customer 分别发布允许字段、默认字段和 filters。能力返回值是稳定排序的副本，调用方修改不得污染进程内 registry；未知 view 必须明确拒绝。编译器的接受/拒绝测试遍历同一 capability，确保能力声明与实际 SQL 校验不会漂移。
 
 ```json

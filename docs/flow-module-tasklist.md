@@ -41,6 +41,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-03B 真实 CH：`66453df3 test(flow): verify Geo rollups on ClickHouse`；同一组三条 base fact 在 continent/region/country/province/city 五级分别保持 600 raw bytes/3 records，同层稳定 ID 无重复；七组真实 CH 数据回归、Flow race、全库 test/vet 与 diff check 通过。Kafka 四协议 corpus 重放仍是独立未完成门禁。
+- FLOW-05A 真实 CH：`c876e974 test(flow): verify versioned aggregate limits`；跨版本同名维度不合并、等值 TopN tuple tie-break、版本化 `_other`、mixed-version metadata、bytes/records 守恒，以及 `max_rows_to_read/max_result_rows` 拒绝且零部分结果已验证。服务端长查询/静默传输超时仍属 FLOW-08。
 - FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；真实 CH 执行证据由后述 `55a3b166` 独立承载。
@@ -149,18 +150,20 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05A 编码**：新增独立 `internal/flowquery` compiler；SQL 结构只来自固定 registry，全部请求值 typed parameter；按 `_generation` marker 选每桶最新 generation，TopN key 包含三个版本字段，固定超时/结果/扫描硬限；内部 metadata sentinel 即使空结果也返回 rollup 覆盖桶数。
 - [x] **FLOW-05A 单元**：覆盖 registry/additive、确定性、参数转义且不插入 SQL、filter 排序去重、latest generation/coverage sentinel、TopN tie-break、other、UTC/闭桶、结果预算、非法 enum/view/timezone/scope。
 - [x] **FLOW-05A 集成（单节点核心）**：在真实 CH 顺序 migration 上执行 1m/1h 查询，覆盖空 generation、repair 后旧 key 消失、TopN/other 守恒；同时锁定 native 数字 parameter Field dump、`AS source FINAL` 和聚合别名规则。
-- [ ] **FLOW-05A 集成（剩余生产门禁）**：补跨版本拆分、同值 TopN tie，以及服务端超时/扫描/结果限制的真实拒绝；归入 FLOW-08 容量与故障矩阵，不阻塞单节点查询链路完成。
+- [x] **FLOW-05A 集成（版本/预算）**：真实 CH 已验证两个版本的同名维度不合并、等值 TopN 按 `dimension + snapshot + geo + classification` 稳定排序、版本化 `_other` 与总量守恒；`max_rows_to_read/max_result_rows` 压限均抛错且零部分结果。证据提交 `c876e974`。
+- [ ] **FLOW-05A 集成（超时/集群容量）**：服务端长查询 deadline、静默传输超时、partial packet、并发和集群容量继续归 FLOW-08 故障/容量矩阵；不得以客户端预过期 context 代替。
 - [x] **FLOW-05A 变更设计**：aggregate v1 只开放 customer view；raw/supplier 保持稳定 unsupported，等待 FLOW-06 的事实 provenance/reclass schema。修正未知单值维度统一 `_unassigned` 的前向语义，不改已发布 CH DDL。
 - [x] **FLOW-05A 变更测试**：rollup contract test 覆盖 ASN/ISP/business/local/remote prefix/remote port/observation interface 的 `_unassigned`，防止再次破坏单值维度可加性；旧请求缺 view 明确拒绝而非猜默认。
 - [x] **FLOW-05A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 - [x] **FLOW-05B 设计**：冻结 Point/Result/RollupCompleteness、单 sentinel、多 block、点唯一键、版本混合和全有或全无结果语义。
 - [x] **FLOW-05B 编码**：typed ch-go result columns、有界累积、sentinel 剥离、bucket/sampling/quality completeness 与 mixed-version 已实现。
 - [x] **FLOW-05B 单元**：fake executor 覆盖跨 block、空结果但 rollup incomplete、采样/质量比、版本混合、缺失/重复/畸形 sentinel、覆盖溢出、NaN/Inf、越界 bucket、重复点和硬行限。
-- [x] **FLOW-05B 集成**：真实 CH 执行并核对 native result 类型、强制 `max_block_size=1` 的多 block、首个数据 block 后 context 取消时零部分结果，以及有 marker 无公开行的完整空结果。服务端硬超时仍由 FLOW-05A 剩余生产门禁覆盖。
+- [x] **FLOW-05B 集成**：真实 CH 执行并核对 native result 类型、强制 `max_block_size=1` 的多 block、首个数据 block 后 context 取消时零部分结果，以及有 marker 无公开行的完整空结果。服务端长查询/静默传输超时仍由 FLOW-08 覆盖。
 - [x] **FLOW-05B 变更设计**：provider 覆盖传入 query 的 result callback，但保留 compiler body/parameter/setting；CH 任一 block 后失败时丢弃已累积点，不允许部分成功响应。
 - [x] **FLOW-05B 变更测试**：执行中断、未初始化 runner、malformed/重复 sentinel 和超限结果均返回错误且零结果。
 - [x] **FLOW-05B 回归**：Flow 全范围 race/vet/test 通过。
 - [x] **FLOW-04B/05A/05B 外部证据已提交**：真实 CH 数据链路、查询修复与隔离集成测试进入提交 `27278350`；测试只创建并清理 `watchdog_flow_it_rollup_query`，不修改现有开发库。
+- [x] **FLOW-05A 版本/预算证据已提交**：跨版本、tie-break、服务端扫描/结果预算门禁进入 `c876e974`；测试只创建并清理 `watchdog_flow_it_query_versions`。
 - [x] **FLOW-05C 前置审计**：确认 compiler/runner 已隔离 tenant scope 和 typed 参数，但宿主尚无可执行 QueryGateway；Flow module/dataset 未注册，value-layer action 缺失，CH pool 私绑 rollup enablement，Flow readiness/限流/错误映射未装配。平台缺口已登记 PLAT-04H。
 - [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader、身份逻辑、CH pool 或 rate limiter。
 - [x] **FLOW-05C1 设计/编码**：从 Flow 固定 registry 导出 aggregate customer view 与 detail raw/supplier/customer 的允许字段、默认字段和过滤器；compiler/runner 验证改为消费同一 view registry，hub/UI 不再需要复制白名单。
