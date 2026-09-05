@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -187,6 +188,94 @@ func TestRealClickHouseDetailPaginationAndLimits(t *testing.T) {
 	if err == nil || len(limitedResult.Rows) != 0 {
 		t.Fatalf("scan-limited detail result=%+v error=%v", limitedResult, err)
 	}
+}
+
+func TestRealClickHouseConcurrentAggregateQueriesRemainIsolated(t *testing.T) {
+	ctx, writerNative := openDataIntegrationClickHouse(t, "watchdog_flow_it_concurrent_query")
+	bucket := time.Date(2026, 9, 6, 4, 0, 0, 0, time.UTC)
+	insertIntegrationBatch(t, ctx, writerNative, integrationBatch(80, bucket.Add(time.Minute),
+		integrationRecord(20, bucket.Add(10*time.Second), "geo-city-a", 100),
+		integrationRecord(21, bucket.Add(20*time.Second), "geo-city-a", 200),
+		integrationRecord(22, bucket.Add(30*time.Second), "geo-city-b", 50),
+	))
+	rollup, err := NewRollupRunner(writerNative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rollup.Run(ctx, RollupRequest{
+		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Generation: 1, GeneratedAt: bucket.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	poolConfig := realMigrationConfig(t, "watchdog-flow-concurrent-query", 30*time.Second)
+	poolConfig.Database = "watchdog_flow_it_concurrent_query"
+	poolConfig.MaxConns = 4
+	poolConfig.MinConns = 1
+	pooled, err := NewNativeInserter(ctx, poolConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pooled.Close()
+	runner, err := flowquery.NewRunner(pooled.executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cityQuery := compileIntegrationAggregate(t, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionGeoCity, 1, true)
+	totalQuery := compileIntegrationAggregate(t, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionTotal, 1, false)
+
+	const concurrentQueries = 64
+	errors := make(chan error, concurrentQueries)
+	var wait sync.WaitGroup
+	for index := 0; index < concurrentQueries; index++ {
+		index := index
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			queryContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			compiled := cityQuery
+			want := map[string]aggregateWant{"geo-city-a": {value: 300, records: 2}, "_other": {value: 50, records: 1}}
+			if index%2 == 1 {
+				compiled = totalQuery
+				want = map[string]aggregateWant{"total": {value: 350, records: 3}}
+			}
+			result, err := runner.Run(queryContext, compiled)
+			if err == nil {
+				err = validateConcurrentAggregate(result, want)
+			}
+			if err != nil {
+				errors <- fmt.Errorf("query %d: %w", index, err)
+			}
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+}
+
+func validateConcurrentAggregate(result flowquery.Result, want map[string]aggregateWant) error {
+	if !result.RollupCompleteness.Complete || result.RollupCompleteness.CoveredBuckets != 1 || result.RollupCompleteness.ExpectedBuckets != 1 {
+		return fmt.Errorf("rollup completeness=%+v", result.RollupCompleteness)
+	}
+	if len(result.Points) != len(want) {
+		return fmt.Errorf("points=%+v want=%+v", result.Points, want)
+	}
+	seen := make(map[string]struct{}, len(result.Points))
+	for _, point := range result.Points {
+		expected, exists := want[point.DimensionValue]
+		if !exists || point.Value != expected.value || point.ReceivedRecords != expected.records {
+			return fmt.Errorf("point=%+v want=%+v", point, expected)
+		}
+		if _, duplicate := seen[point.DimensionValue]; duplicate {
+			return fmt.Errorf("duplicate dimension %q", point.DimensionValue)
+		}
+		seen[point.DimensionValue] = struct{}{}
+	}
+	return nil
 }
 
 func openDataIntegrationClickHouse(t *testing.T, database string) (context.Context, *NativeInserter) {
