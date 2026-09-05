@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { NetworkIcon, PlusIcon, RadarIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ArrowDownIcon, ArrowUpIcon, NetworkIcon, PlusIcon, RadarIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -77,6 +77,11 @@ type NetworkDeviceSummariesResponse = {
 	items?: NetworkDeviceSummary[]
 }
 
+type DeviceCounts = { total: number; up: number; down: number; pending: number }
+type DeviceSummariesResponse = NetworkDeviceSummariesResponse & { counts?: DeviceCounts }
+
+const PAGE_SIZE = 100
+
 type AgentRecord = {
 	ID?: string
 	id?: string
@@ -119,61 +124,83 @@ export default memo(() => {
 	const { t } = useLingui()
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
-	const [allRecords, setAllRecords] = useState<DeviceTableRecord[]>([])
+	const [records, setRecords] = useState<DeviceTableRecord[]>([])
+	const [counts, setCounts] = useState<DeviceCounts>({ total: 0, up: 0, down: 0, pending: 0 })
 	const [search, setSearch] = useState("")
+	const [debouncedSearch, setDebouncedSearch] = useState("")
 	const [statusFilter, setStatusFilter] = useState("all")
+	const [sortField, setSortField] = useState("name")
+	const [sortDesc, setSortDesc] = useState(false)
+	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
+	const [loadingMore, setLoadingMore] = useState(false)
+	const [hasMore, setHasMore] = useState(false)
 	const [error, setError] = useState("")
 
-	const records = useMemo(() => {
-		const q = search.trim().toLowerCase()
-		return allRecords.filter((r) => {
-			if (statusFilter === "up" && r.status !== "up") return false
-			if (statusFilter === "down" && r.status === "up") return false
-			if (statusFilter === "pending" && r.status !== "pending") return false
-			if (!q) return true
-			return r.searchText.includes(q)
-		})
-	}, [allRecords, search, statusFilter])
+	// Debounce the search box so typing does not fire a request per keystroke.
+	useEffect(() => {
+		const handle = setTimeout(() => setDebouncedSearch(search), 300)
+		return () => clearTimeout(handle)
+	}, [search])
 
-	const refresh = useCallback(async () => {
+	// Search, status filter, sort and paging all happen server-side; the table
+	// shows exactly the returned page.
+	const buildQuery = useCallback(
+		(offset: number) => ({
+			q: debouncedSearch.trim() || undefined,
+			status: statusFilter !== "all" ? statusFilter : undefined,
+			sort: sortField,
+			order: sortDesc ? "desc" : "asc",
+			limit: PAGE_SIZE,
+			offset: offset || undefined,
+		}),
+		[debouncedSearch, statusFilter, sortField, sortDesc]
+	)
+
+	// Refetch from the top when the query changes or Refresh is clicked. The
+	// cancelled flag drops a stale response if a newer query started meanwhile.
+	useEffect(() => {
+		document.title = `${t`Network Devices`} / Watchdog`
+		let cancelled = false
 		setLoading(true)
 		setError("")
+		pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery(0) })
+			.then((data) => {
+				if (cancelled) return
+				const items = (data.items ?? []).map(toTableRecord)
+				setRecords(items)
+				if (data.counts) setCounts(data.counts)
+				setHasMore(items.length === PAGE_SIZE)
+			})
+			.catch((err) => {
+				if (!cancelled) setError(err instanceof Error ? err.message : t`Failed to load network devices`)
+			})
+			.finally(() => {
+				if (!cancelled) setLoading(false)
+			})
+		return () => {
+			cancelled = true
+		}
+	}, [buildQuery, reloadKey, t])
+
+	const loadMore = useCallback(async () => {
+		if (loadingMore || !hasMore) return
+		setLoadingMore(true)
 		try {
-			// Load pages progressively: render the first page immediately, then
-			// append the rest. Each request enriches only its page server-side, so
-			// no single request fans out across the whole fleet. Search, status
-			// filter and up/down counts stay client-side over the accumulated set.
-			const PAGE = 200
-			const accumulated: DeviceTableRecord[] = []
-			let cursor = ""
-			let firstPage = true
-			do {
-				const data = await pb.send<NetworkDeviceSummariesResponse & { next_cursor?: string }>(
-					"/api/v1/network/devices/summary",
-					{ query: { limit: PAGE, cursor: cursor || undefined } }
-				)
-				for (const item of data.items ?? []) {
-					accumulated.push(toTableRecord(item))
-				}
-				setAllRecords([...accumulated])
-				if (firstPage) {
-					setLoading(false)
-					firstPage = false
-				}
-				cursor = data.next_cursor ?? ""
-			} while (cursor)
+			const data = await pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", {
+				query: buildQuery(records.length),
+			})
+			const items = (data.items ?? []).map(toTableRecord)
+			setRecords((current) => [...current, ...items])
+			setHasMore(items.length === PAGE_SIZE)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load network devices`)
 		} finally {
-			setLoading(false)
+			setLoadingMore(false)
 		}
-	}, [t])
+	}, [buildQuery, hasMore, loadingMore, records.length, t])
 
-	useEffect(() => {
-		document.title = `${t`Network Devices`} / Watchdog`
-		refresh()
-	}, [refresh, t])
+	const refresh = useCallback(() => setReloadKey((key) => key + 1), [])
 
 	useEffect(() => {
 		if (!tableRef.current || loading || error) {
@@ -216,8 +243,7 @@ export default memo(() => {
 		return () => disposeTable(tableInstance.current)
 	}, [error, loading, records, t])
 
-	const upCount = allRecords.filter((r) => r.status === "up").length
-	const downCount = allRecords.length - upCount
+	const { total, up: upCount, down: downCount } = counts
 
 	return (
 		<div className="grid gap-4">
@@ -227,7 +253,7 @@ export default memo(() => {
 					<h1 className="text-xl font-semibold tracking-normal">
 						<Trans>Network Devices</Trans>
 					</h1>
-					<span className="text-sm text-muted-foreground">({allRecords.length})</span>
+					<span className="text-sm text-muted-foreground">({total})</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<Button variant="outline" size="sm" onClick={() => navigate(getPagePath($router, "network_device_new"))}>
@@ -261,7 +287,7 @@ export default memo(() => {
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">
-							{t`All`} ({allRecords.length})
+							{t`All`} ({total})
 						</SelectItem>
 						<SelectItem value="up">
 							{t`Up`} ({upCount})
@@ -272,6 +298,27 @@ export default memo(() => {
 						<SelectItem value="pending">{t`Pending`}</SelectItem>
 					</SelectContent>
 				</Select>
+				<Select value={sortField} onValueChange={setSortField}>
+					<SelectTrigger className="w-32">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="name">{t`Name`}</SelectItem>
+						<SelectItem value="host">{t`Host`}</SelectItem>
+						<SelectItem value="vendor">{t`Vendor`}</SelectItem>
+						<SelectItem value="os">{t`OS`}</SelectItem>
+						<SelectItem value="status">{t`Status`}</SelectItem>
+					</SelectContent>
+				</Select>
+				<Button
+					variant="outline"
+					size="icon"
+					className="size-9 shrink-0"
+					onClick={() => setSortDesc((desc) => !desc)}
+					title={sortDesc ? t`Descending` : t`Ascending`}
+				>
+					{sortDesc ? <ArrowDownIcon className="h-4 w-4" /> : <ArrowUpIcon className="h-4 w-4" />}
+				</Button>
 				<div className="flex items-center gap-1.5">
 					<Badge variant={upCount > 0 ? "success" : "outline"}>
 						{upCount} <Trans>up</Trans>
@@ -307,6 +354,14 @@ export default memo(() => {
 				) : null}
 				<div ref={tableRef} className="h-[620px] w-full" />
 			</div>
+
+			{hasMore ? (
+				<div className="flex justify-center">
+					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
+					</Button>
+				</div>
+			) : null}
 		</div>
 	)
 })

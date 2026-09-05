@@ -88,6 +88,33 @@ func (s *MySQLStore) ListTargetsPage(ctx context.Context, tenantID ID, all bool,
 	return targets, nextCursor, nil
 }
 
+// GetTargetsByIDs batch-loads targets by id for a page of device summaries,
+// avoiding a per-row lookup. Missing ids are simply absent from the map.
+func (s *MySQLStore) GetTargetsByIDs(ctx context.Context, tenantID ID, ids []ID) (map[ID]Target, error) {
+	out := make(map[ID]Target, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	query := targetSelect() + ` WHERE tenant_id = ? AND id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + `)`
+	args := []any{tenantID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		target, err := scanTarget(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[target.ID] = target
+	}
+	return out, rows.Err()
+}
+
 func (s *MySQLStore) GetTarget(ctx context.Context, tenantID, targetID ID) (Target, error) {
 	row := s.db.QueryRowContext(ctx, targetSelect()+`
 		WHERE tenant_id = ? AND id = ?

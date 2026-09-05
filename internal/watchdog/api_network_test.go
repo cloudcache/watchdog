@@ -26,12 +26,26 @@ type fakeNetworkRepository struct {
 	deleted      ID
 	deletedPort  ID
 	deletedPorts []ID
-	// captured by ListDevicesPage for assertions
+	// captured by ListDevicesPage / ListDeviceSummaryDevicesPage for assertions
 	pagedCalled  bool
 	pagedAll     bool
 	pagedAllowed []ID
 	pagedFilter  NetworkDevicePageFilter
 	pageNext     string
+	summaryQuery DeviceSummaryQuery
+	statusCounts DeviceStatusCounts
+}
+
+func (r *fakeNetworkRepository) ListDeviceSummaryDevicesPage(_ context.Context, _ ID, all bool, allowedTargetIDs []ID, q DeviceSummaryQuery) ([]NetworkDevice, error) {
+	r.pagedCalled = true
+	r.pagedAll = all
+	r.pagedAllowed = allowedTargetIDs
+	r.summaryQuery = q
+	return r.devices, nil
+}
+
+func (r *fakeNetworkRepository) CountDeviceStatuses(_ context.Context, _ ID, _ bool, _ []ID, _ string) (DeviceStatusCounts, error) {
+	return r.statusCounts, nil
 }
 
 func (r *fakeNetworkRepository) ListDevices(context.Context, ID) ([]NetworkDevice, error) {
@@ -376,12 +390,13 @@ func TestAPINetworkDevicesListPagedGuards(t *testing.T) {
 }
 
 func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
-	// limit opts into the paged path: devices come from ListDevicesPage (grant
-	// pushed down), each enriched, and next_cursor surfaces the further page.
+	// Server-driven opt-in: search/status/sort/offset thread into the query, the
+	// grant scope is pushed down, the page is enriched, and the first page
+	// carries the badge counts.
 	repo := &fakeNetworkRepository{
-		devices:  []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
-		ports:    []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", OperStatus: "up"}},
-		pageNext: "CURSOR2",
+		devices:      []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		ports:        []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", OperStatus: "up"}},
+		statusCounts: DeviceStatusCounts{Total: 7, Up: 5, Down: 2, Pending: 1},
 	}
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth:    networkTestAuth,
@@ -389,19 +404,38 @@ func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
 		Network: repo,
 	})
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?limit=1", nil))
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/summary?limit=25&q=core&status=up&sort=vendor&order=desc", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !repo.pagedCalled || repo.pagedFilter.Limit != 1 {
-		t.Fatalf("paged not called with limit 1: %+v", repo.pagedFilter)
+	if !repo.pagedCalled {
+		t.Fatal("summary paged path not taken")
+	}
+	if repo.summaryQuery.Search != "core" || repo.summaryQuery.Status != "up" ||
+		repo.summaryQuery.Sort != "vendor" || !repo.summaryQuery.Desc || repo.summaryQuery.Limit != 25 {
+		t.Fatalf("query not threaded: %+v", repo.summaryQuery)
 	}
 	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
 		t.Fatalf("grant pushdown wrong: all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"PortCount":1`) || !strings.Contains(body, `"next_cursor":"CURSOR2"`) {
+	if !strings.Contains(body, `"PortCount":1`) || !strings.Contains(body, `"counts":{"total":7,"up":5,"down":2,"pending":1}`) {
 		t.Fatalf("paged summary body = %s", body)
+	}
+
+	// Later pages (offset > 0) omit counts; the client keeps them.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?limit=25&offset=25", nil))
+	if repo.summaryQuery.Offset != 25 || strings.Contains(rec.Body.String(), "counts") {
+		t.Fatalf("offset page: offset=%d body=%s", repo.summaryQuery.Offset, rec.Body.String())
+	}
+
+	// "all" status means no filter.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?status=all", nil))
+	if repo.summaryQuery.Status != "" {
+		t.Fatalf("status=all must clear the filter, got %q", repo.summaryQuery.Status)
 	}
 }
 

@@ -152,10 +152,11 @@ func visibleDeviceScope(auth AuthContext) (all bool, targetIDs []ID) {
 func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	query := r.URL.Query()
-	// Pagination is opt-in: only when limit or cursor is present. Without them
-	// the endpoint keeps its full-list behavior (the table computes up/down
-	// counts over the whole set), so nothing regresses.
-	if query.Get("limit") != "" || query.Get("cursor") != "" {
+	// The server-driven table is opt-in: any of limit/offset/q/status/sort
+	// switches to the paged path. Without them the endpoint keeps its full-list
+	// behavior for any other caller, so nothing regresses.
+	if query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
+		query.Get("status") != "" || query.Get("sort") != "" {
 		api.listDeviceSummariesPaged(w, r, auth, query)
 		return
 	}
@@ -234,39 +235,57 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// listDeviceSummariesPaged is the opt-in keyset variant. It pages the devices
-// (grant-pushed into SQL) and enriches only that page, so each request does a
-// bounded amount of the expensive per-device port/BGP work instead of fanning
-// out across the whole fleet in one call. The frontend loads pages
-// progressively, keeping its client-side search, status filter and up/down
-// counts over the accumulated set.
+// listDeviceSummariesPaged is the server-driven variant: search, status filter
+// and sort are applied in SQL over the device+target join, only the requested
+// offset page is enriched (ports/BGP/last-seen), and the badge totals come from
+// one grant-scoped aggregate. So a large fleet fetches and enriches only the
+// visible page, not the whole set.
 func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
-	filter := NetworkDevicePageFilter{Cursor: strings.TrimSpace(query.Get("cursor"))}
+	q := DeviceSummaryQuery{
+		Search: strings.TrimSpace(query.Get("q")),
+		Status: strings.TrimSpace(query.Get("status")),
+		Sort:   strings.TrimSpace(query.Get("sort")),
+		Desc:   strings.EqualFold(strings.TrimSpace(query.Get("order")), "desc"),
+	}
+	if q.Status == "all" {
+		q.Status = ""
+	}
 	if raw := query.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit <= 0 {
 			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
 			return
 		}
-		filter.Limit = limit
+		q.Limit = limit
 	}
+	if raw := query.Get("offset"); raw != "" {
+		offset, err := strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be a non-negative integer", nil)
+			return
+		}
+		q.Offset = offset
+	}
+
 	all, allowedTargetIDs := visibleDeviceScope(auth)
-	devices, nextCursor, err := api.repo.ListDevicesPage(r.Context(), auth.TenantID, all, allowedTargetIDs, filter)
+	devices, err := api.repo.ListDeviceSummaryDevicesPage(r.Context(), auth.TenantID, all, allowedTargetIDs, q)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	// Targets and agents are cheap single queries; only the per-device
-	// enrichment below is bounded to this page.
+
+	// Batch the page's targets; load agents once (both cheap). Only the
+	// per-device enrichment below is bounded to this page.
+	targetIDs := make([]ID, 0, len(devices))
+	for _, device := range devices {
+		targetIDs = append(targetIDs, device.TargetID)
+	}
 	targetsByID := map[ID]Target{}
 	if api.targets != nil {
-		targets, err := api.targets.ListTargets(r.Context(), auth.TenantID)
+		targetsByID, err = api.targets.GetTargetsByIDs(r.Context(), auth.TenantID, targetIDs)
 		if err != nil {
 			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 			return
-		}
-		for _, target := range targets {
-			targetsByID[target.ID] = target
 		}
 	}
 	agentsByTargetID := map[ID]SNMPAgentConfig{}
@@ -294,9 +313,17 @@ func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Re
 		}
 		items = append(items, summary)
 	}
+
 	response := map[string]any{"items": items}
-	if nextCursor != "" {
-		response["next_cursor"] = nextCursor
+	// The badge totals do not change between pages, so compute them only for the
+	// first page and let the client keep them.
+	if q.Offset == 0 {
+		counts, err := api.repo.CountDeviceStatuses(r.Context(), auth.TenantID, all, allowedTargetIDs, q.Search)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		response["counts"] = counts
 	}
 	WriteAPIJSON(w, http.StatusOK, response)
 }

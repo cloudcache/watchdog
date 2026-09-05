@@ -71,6 +71,8 @@ type TargetRepository interface {
 	// next_cursor ("" on the last page).
 	ListTargetsPage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, filter TargetPageFilter) ([]Target, string, error)
 	GetTarget(ctx context.Context, tenantID, targetID ID) (Target, error)
+	// GetTargetsByIDs batch-loads targets by id (for a page of device summaries).
+	GetTargetsByIDs(ctx context.Context, tenantID ID, ids []ID) (map[ID]Target, error)
 	CreateTarget(ctx context.Context, target Target) (Target, error)
 	UpdateTarget(ctx context.Context, target Target) (Target, error)
 	DeleteTarget(ctx context.Context, tenantID, targetID ID) error
@@ -129,6 +131,12 @@ type NetworkRepository interface {
 	// target_id is in allowedTargetIDs are returned (per-target view grants
 	// pushed into SQL). Returns the page and a next_cursor ("" on the last page).
 	ListDevicesPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, filter NetworkDevicePageFilter) ([]NetworkDevice, string, error)
+	// ListDeviceSummaryDevicesPage returns one offset page of devices for the
+	// server-driven summary table (search/status/sort applied via a join to
+	// targets); the caller enriches only this page.
+	ListDeviceSummaryDevicesPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q DeviceSummaryQuery) ([]NetworkDevice, error)
+	// CountDeviceStatuses returns the grant-scoped status totals for the badges.
+	CountDeviceStatuses(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (DeviceStatusCounts, error)
 	GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error)
 	GetDeviceByTarget(ctx context.Context, tenantID, targetID ID) (NetworkDevice, error)
 	UpsertDevice(ctx context.Context, device NetworkDevice) (NetworkDevice, error)

@@ -10,13 +10,16 @@ import (
 	"time"
 )
 
+// networkDeviceSelect is aliased `d` so it composes with a JOIN to targets in
+// the device-summary query; single-table callers reference the columns
+// unqualified, which stays unambiguous.
 const networkDeviceSelect = `
-	SELECT id, tenant_id, target_id, vendor, model,
-	       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
-	       sys_object_id, sys_name, sys_descr,
-	       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
-	       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
-	FROM network_devices`
+	SELECT d.id, d.tenant_id, d.target_id, d.vendor, d.model,
+	       COALESCE(d.platform, ''), COALESCE(d.os_name, ''), COALESCE(d.os_version, ''),
+	       d.sys_object_id, d.sys_name, d.sys_descr,
+	       COALESCE(d.sys_location, ''), COALESCE(d.uptime_seconds, 0),
+	       COALESCE(d.snmp_profile_id, ''), d.snmp_port, COALESCE(d.snmp_security_json, JSON_OBJECT()), d.updated_at
+	FROM network_devices d`
 
 func (s *MySQLStore) ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error) {
 	rows, err := s.db.QueryContext(ctx, networkDeviceSelect+`
@@ -89,6 +92,155 @@ func (s *MySQLStore) ListDevicesPage(ctx context.Context, tenantID ID, all bool,
 		nextCursor = encodeStringCursor(last.SysName, last.ID)
 	}
 	return devices, nextCursor, nil
+}
+
+// DeviceSummaryQuery drives the server-driven Network Devices table: search
+// over device+target text, a status filter, a sort column and offset paging.
+type DeviceSummaryQuery struct {
+	Search string
+	Status string // "" (all) | up | down (not up) | pending
+	Sort   string // "" (name) | name | host | status | vendor | os
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+// DeviceStatusCounts are the full grant-scoped totals behind the table's
+// badges. Down mirrors the UI's "not up" semantics (total - up).
+type DeviceStatusCounts struct {
+	Total   int `json:"total"`
+	Up      int `json:"up"`
+	Down    int `json:"down"`
+	Pending int `json:"pending"`
+}
+
+// deviceSummarySortColumns whitelists sort keys to real columns so the sort
+// input can never reach the query as raw SQL.
+var deviceSummarySortColumns = map[string]string{
+	"":       "t.name",
+	"name":   "t.name",
+	"host":   "t.host",
+	"status": "t.status",
+	"vendor": "d.vendor",
+	"os":     "d.os_name",
+}
+
+func deviceSummaryScope(query string, args []any, all bool, allowedTargetIDs []ID) (string, []any) {
+	if !all {
+		query += ` AND d.target_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedTargetIDs)), ",") + `)`
+		for _, id := range allowedTargetIDs {
+			args = append(args, id)
+		}
+	}
+	return query, args
+}
+
+// ListDeviceSummaryDevicesPage returns one offset page of devices for the
+// summary table. Search/status/sort operate on device+target columns via the
+// join; the caller enriches only this page. A non-admin with no grants and no
+// tenant-wide grant gets nothing.
+func (s *MySQLStore) ListDeviceSummaryDevicesPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q DeviceSummaryQuery) ([]NetworkDevice, error) {
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if !all && len(allowedTargetIDs) == 0 {
+		return nil, nil
+	}
+	query := networkDeviceSelect + ` JOIN targets t ON t.id = d.target_id AND t.tenant_id = d.tenant_id WHERE d.tenant_id = ?`
+	args := []any{tenantID}
+	query, args = deviceSummaryScope(query, args, all, allowedTargetIDs)
+	query, args = applyDeviceSummaryFilters(query, args, q)
+
+	sortCol := deviceSummarySortColumns[q.Sort]
+	if sortCol == "" {
+		sortCol = "t.name"
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	query += fmt.Sprintf(" ORDER BY %s %s, d.id %s LIMIT ? OFFSET ?", sortCol, dir, dir)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []NetworkDevice
+	for rows.Next() {
+		device, err := scanNetworkDevice(rows)
+		if err != nil {
+			return nil, err
+		}
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
+}
+
+// CountDeviceStatuses returns the grant-scoped status totals for the badges.
+// It applies the search but not the status filter, so the badges show the whole
+// searched set (matching the table's client-side behaviour it replaces).
+func (s *MySQLStore) CountDeviceStatuses(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (DeviceStatusCounts, error) {
+	var counts DeviceStatusCounts
+	if !all && len(allowedTargetIDs) == 0 {
+		return counts, nil
+	}
+	query := `SELECT t.status, COUNT(*) FROM network_devices d
+		JOIN targets t ON t.id = d.target_id AND t.tenant_id = d.tenant_id
+		WHERE d.tenant_id = ?`
+	args := []any{tenantID}
+	query, args = deviceSummaryScope(query, args, all, allowedTargetIDs)
+	query, args = applyDeviceSummaryFilters(query, args, DeviceSummaryQuery{Search: search})
+	query += ` GROUP BY t.status`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return counts, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return counts, err
+		}
+		counts.Total += n
+		switch status {
+		case "up":
+			counts.Up += n
+		case "pending":
+			counts.Pending += n
+		}
+	}
+	counts.Down = counts.Total - counts.Up
+	return counts, rows.Err()
+}
+
+// applyDeviceSummaryFilters appends the status and search predicates shared by
+// the page and count queries.
+func applyDeviceSummaryFilters(query string, args []any, q DeviceSummaryQuery) (string, []any) {
+	switch q.Status {
+	case "up":
+		query += ` AND t.status = 'up'`
+	case "pending":
+		query += ` AND t.status = 'pending'`
+	case "down":
+		query += ` AND t.status <> 'up'`
+	}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		query += ` AND (t.name LIKE ? OR t.host LIKE ? OR d.sys_name LIKE ? OR d.vendor LIKE ? OR COALESCE(d.sys_location, '') LIKE ? OR COALESCE(d.os_name, '') LIKE ?)`
+		for i := 0; i < 6; i++ {
+			args = append(args, like)
+		}
+	}
+	return query, args
 }
 
 func (s *MySQLStore) GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error) {

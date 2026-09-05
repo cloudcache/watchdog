@@ -34,6 +34,18 @@ func (r *fakeTargetRepository) ListTargetsPage(_ context.Context, _ ID, all bool
 	return r.targets, r.pageNext, nil
 }
 
+func (r *fakeTargetRepository) GetTargetsByIDs(_ context.Context, _ ID, ids []ID) (map[ID]Target, error) {
+	out := make(map[ID]Target, len(ids))
+	for _, target := range r.targets {
+		for _, id := range ids {
+			if target.ID == id {
+				out[id] = target
+			}
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeTargetRepository) GetTarget(_ context.Context, _ ID, targetID ID) (Target, error) {
 	for _, target := range r.targets {
 		if target.ID == targetID {
