@@ -184,12 +184,8 @@ func TestSmartDeviceAlertMultipleUsers(t *testing.T) {
 	user2, err := watchdogTests.CreateUser(hub, "test2@example.com", "password")
 	assert.NoError(t, err)
 
-	// Create user settings for the second user
-	_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
-		"user":     user2.Id,
-		"settings": `{"emails":["test2@example.com"],"webhooks":[]}`,
-	})
-	assert.NoError(t, err)
+	// Configure the second user's notification channel
+	hub.SetNotificationChannels(user2.Id, []string{"test2@example.com"}, nil)
 
 	// Create a system with both users
 	system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{

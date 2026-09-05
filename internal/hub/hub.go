@@ -139,9 +139,10 @@ func (h *Hub) StartHub() error {
 	})
 
 	// TODO: move to users package
-	// handle default values for user / user_settings creation
+	// handle default values for user creation. The PocketBase user_settings
+	// collection is retired: UI preferences and notification channels live in
+	// MySQL, and alert delivery reads them there.
 	h.App.OnRecordCreate("users").BindFunc(h.um.InitializeUserRole)
-	h.App.OnRecordCreate("user_settings").BindFunc(h.um.InitializeUserSettings)
 
 	pb, ok := h.App.(*pocketbase.PocketBase)
 	if !ok {

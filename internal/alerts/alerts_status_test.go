@@ -15,17 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setStatusAlertEmail(t *testing.T, hub core.App, userID, email string) {
+func setStatusAlertEmail(t *testing.T, hub *watchdogTests.TestHub, userID, email string) {
 	t.Helper()
-
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": userID})
-	require.NoError(t, err)
-
-	userSettings.Set("settings", map[string]any{
-		"emails":   []string{email},
-		"webhooks": []string{},
-	})
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(userID, []string{email}, nil)
 }
 
 func TestStatusAlerts(t *testing.T) {
@@ -113,9 +105,7 @@ func TestStatusAlertRecoveryBeforeDeadline(t *testing.T) {
 	defer hub.Cleanup()
 
 	// Ensure user settings have an email
-	userSettings, _ := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	hub.Save(userSettings)
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	// Initial email count
 	initialEmailCount := hub.TestMailer.TotalSend()
@@ -159,9 +149,7 @@ func TestStatusAlertNormalRecovery(t *testing.T) {
 	defer hub.Cleanup()
 
 	// Ensure user settings have an email
-	userSettings, _ := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	hub.Save(userSettings)
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systemCollection, _ := hub.FindCollectionByNameOrId("systems")
 	system := core.NewRecord(systemCollection)
@@ -194,10 +182,7 @@ func TestHandleStatusAlertsDoesNotSendRecoveryWhileDownIsOnlyPending(t *testing.
 	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systemCollection, err := hub.FindCollectionByNameOrId("systems")
 	require.NoError(t, err)
@@ -238,10 +223,7 @@ func TestStatusAlertTimerCancellationPreventsBoundaryDelivery(t *testing.T) {
 		hub, user := watchdogTests.GetHubWithUser(t)
 		defer hub.Cleanup()
 
-		userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-		require.NoError(t, err)
-		userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-		require.NoError(t, hub.Save(userSettings))
+		hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 		systemCollection, err := hub.FindCollectionByNameOrId("systems")
 		require.NoError(t, err)
@@ -289,10 +271,7 @@ func TestStatusAlertDownFiresAfterDelayExpires(t *testing.T) {
 	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systemCollection, err := hub.FindCollectionByNameOrId("systems")
 	require.NoError(t, err)
@@ -344,14 +323,7 @@ func TestStatusAlertMultipleUsersRespectDifferentMinutes(t *testing.T) {
 
 		user2, err := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 		require.NoError(t, err)
-		_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
-			"user": user2.Id,
-			"settings": map[string]any{
-				"emails":   []string{"user2@example.com"},
-				"webhooks": []string{},
-			},
-		})
-		require.NoError(t, err)
+		hub.SetNotificationChannels(user2.Id, []string{"user2@example.com"}, nil)
 
 		system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 			"name":  "shared-system",
@@ -431,14 +403,7 @@ func TestStatusAlertMultipleUsersRecoveryBetweenMinutesOnlyAlertsEarlierUser(t *
 
 		user2, err := watchdogTests.CreateUser(hub, "user2@example.com", "password")
 		require.NoError(t, err)
-		_, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
-			"user": user2.Id,
-			"settings": map[string]any{
-				"emails":   []string{"user2@example.com"},
-				"webhooks": []string{},
-			},
-		})
-		require.NoError(t, err)
+		hub.SetNotificationChannels(user2.Id, []string{"user2@example.com"}, nil)
 
 		system, err := watchdogTests.CreateRecord(hub, "systems", map[string]any{
 			"name":  "shared-system",
@@ -514,10 +479,7 @@ func TestStatusAlertDuplicateDownCallIsIdempotent(t *testing.T) {
 	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systemCollection, err := hub.FindCollectionByNameOrId("systems")
 	require.NoError(t, err)
@@ -575,10 +537,7 @@ func TestRestorePendingStatusAlertsRequeuesDownSystemsAfterRestart(t *testing.T)
 	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systems, err := watchdogTests.CreateSystems(hub, 1, user.Id, "down")
 	require.NoError(t, err)
@@ -892,9 +851,7 @@ func TestStatusAlertClearedBeforeSend(t *testing.T) {
 		system := systems[0]
 
 		// Ensure user settings have an email
-		userSettings, _ := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-		userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-		hub.Save(userSettings)
+		hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 		// Initial email count
 		initialEmailCount := hub.TestMailer.TotalSend()
@@ -946,10 +903,7 @@ func TestCancelPendingStatusAlertsClearsAllAlertsForSystem(t *testing.T) {
 	hub, user := watchdogTests.GetHubWithUser(t)
 	defer hub.Cleanup()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	systemCollection, err := hub.FindCollectionByNameOrId("systems")
 	require.NoError(t, err)

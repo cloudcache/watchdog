@@ -2,12 +2,10 @@
 package users
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/cloudcache/watchdog/internal/migrations"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -26,33 +24,6 @@ func (um *UserManager) InitializeUserRole(e *core.RecordEvent) error {
 	if e.Record.GetString("role") == "" {
 		e.Record.Set("role", "user")
 	}
-	return e.Next()
-}
-
-// Initialize user settings with defaults if not set
-func (um *UserManager) InitializeUserSettings(e *core.RecordEvent) error {
-	record := e.Record
-	// intialize settings with defaults (zero values can be ignored)
-	settings := struct {
-		ChartTime string   `json:"chartTime"`
-		Emails    []string `json:"emails"`
-	}{
-		ChartTime: "1h",
-	}
-	record.UnmarshalJSONField("settings", &settings)
-	// get user email from auth record
-	var user struct {
-		Email string `db:"email"`
-	}
-	err := e.App.DB().NewQuery("SELECT email FROM users WHERE id = {:id}").Bind(dbx.Params{
-		"id": record.GetString("user"),
-	}).One(&user)
-	if err != nil {
-		log.Println("failed to get user email", "err", err)
-		return err
-	}
-	settings.Emails = []string{user.Email}
-	record.Set("settings", settings)
 	return e.Next()
 }
 

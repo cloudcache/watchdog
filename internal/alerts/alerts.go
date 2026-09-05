@@ -22,8 +22,8 @@ type hubLike interface {
 
 // NotificationChannelReader resolves a user's notification channels from the
 // MySQL store by their PocketBase id (the identity projection's external
-// subject). When set, it is the authoritative source; otherwise delivery falls
-// back to the legacy PocketBase user_settings collection.
+// subject). It is the sole source of delivery channels; when no reader is wired
+// there is nothing to deliver to.
 type NotificationChannelReader interface {
 	ChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) (emails, webhooks []string, err error)
 }
@@ -149,11 +149,26 @@ var supportsTitle = map[string]struct{}{
 }
 
 // NewAlertManager creates a new AlertManager instance.
+// channelReaderProvider lets a host supply the notification channel reader at
+// construction. Production wires the reader explicitly after the backend starts
+// (via SetNotificationChannelReader); the test hub implements this so
+// test-created managers get the reader without a separate wiring call.
+type channelReaderProvider interface {
+	NotificationChannelReader() NotificationChannelReader
+}
+
+func (am *AlertManager) adoptChannelReader(app hubLike) {
+	if provider, ok := app.(channelReaderProvider); ok {
+		am.channelReader = provider.NotificationChannelReader()
+	}
+}
+
 func NewAlertManager(app hubLike) *AlertManager {
 	am := &AlertManager{
 		hub:         app,
 		alertsCache: NewAlertsCache(app),
 	}
+	am.adoptChannelReader(app)
 	am.bindEvents()
 	return am
 }
@@ -274,34 +289,24 @@ func (am *AlertManager) SendAlert(data AlertMessageData) error {
 		return nil
 	}
 
-	// Notification channels (emails/webhooks) come from MySQL once the channel
-	// reader is wired; otherwise fall back to the legacy PocketBase
-	// user_settings collection. A user with no configured channels is not an
-	// error — there is simply nothing to deliver to.
+	// Notification channels (emails/webhooks) come from MySQL via the channel
+	// reader (resolved by PocketBase id). A user with no configured channels is
+	// not an error — there is simply nothing to deliver to. When no reader is
+	// wired there is no channel source, so nothing is delivered.
 	userAlertSettings := UserNotificationSettings{
 		Emails:   []string{},
 		Webhooks: []string{},
 	}
-	if am.channelReader != nil {
-		emails, webhooks, err := am.channelReader.ChannelsForExternalSubject(context.Background(), "pocketbase", data.UserID)
-		if err != nil {
-			am.hub.Logger().Error("Failed to read notification channels", "err", err)
-			return nil
-		}
-		userAlertSettings.Emails = emails
-		userAlertSettings.Webhooks = webhooks
-	} else {
-		record, err := am.hub.FindFirstRecordByFilter(
-			"user_settings", "user={:user}",
-			dbx.Params{"user": data.UserID},
-		)
-		if err != nil {
-			return nil
-		}
-		if err := record.UnmarshalJSONField("settings", &userAlertSettings); err != nil {
-			am.hub.Logger().Error("Failed to unmarshal user settings", "err", err)
-		}
+	if am.channelReader == nil {
+		return nil
 	}
+	emails, webhooks, err := am.channelReader.ChannelsForExternalSubject(context.Background(), "pocketbase", data.UserID)
+	if err != nil {
+		am.hub.Logger().Error("Failed to read notification channels", "err", err)
+		return nil
+	}
+	userAlertSettings.Emails = emails
+	userAlertSettings.Webhooks = webhooks
 	// send alerts via webhooks
 	for _, webhook := range userAlertSettings.Webhooks {
 		if err := am.SendShoutrrrAlert(webhook, data.Title, data.Message, data.Link, data.LinkText); err != nil {
@@ -325,8 +330,7 @@ func (am *AlertManager) SendAlert(data AlertMessageData) error {
 			Name:    am.hub.Settings().Meta.SenderName,
 		},
 	}
-	err := am.hub.NewMailClient().Send(&message)
-	if err != nil {
+	if err := am.hub.NewMailClient().Send(&message); err != nil {
 		return err
 	}
 	am.hub.Logger().Info("Sent email alert", "to", message.To, "subj", message.Subject)

@@ -41,10 +41,7 @@ func newSystemAlertTestFixture(t *testing.T, alertName string, min int, threshol
 	require.NotNil(t, sysManagerSystem)
 	sysManagerSystem.StopUpdater()
 
-	userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", map[string]any{"user": user.Id})
-	require.NoError(t, err)
-	userSettings.Set("settings", `{"emails":["test@example.com"],"webhooks":[]}`)
-	require.NoError(t, hub.Save(userSettings))
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	alertRecord, err := watchdogTests.CreateRecord(hub, "alerts", map[string]any{
 		"name":   alertName,

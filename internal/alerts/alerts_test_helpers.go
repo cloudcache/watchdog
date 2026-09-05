@@ -10,10 +10,12 @@ import (
 )
 
 func NewTestAlertManagerWithoutWorker(app hubLike) *AlertManager {
-	return &AlertManager{
+	am := &AlertManager{
 		hub:         app,
 		alertsCache: NewAlertsCache(app),
 	}
+	am.adoptChannelReader(app)
+	return am
 }
 
 // GetSystemAlertsCache returns the internal system alerts cache.

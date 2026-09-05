@@ -4,9 +4,12 @@
 package tests
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"testing"
 
+	"github.com/cloudcache/watchdog/internal/alerts"
 	"github.com/cloudcache/watchdog/internal/hub"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -16,11 +19,47 @@ import (
 	_ "github.com/pocketbase/pocketbase/migrations"
 )
 
+// mockChannelReader stands in for the MySQL notification-channel source in hub
+// integration tests, so alert delivery no longer depends on the retired
+// PocketBase user_settings collection. Tests populate it per user.
+type mockChannelReader struct {
+	mu       sync.Mutex
+	channels map[string]struct {
+		emails   []string
+		webhooks []string
+	}
+}
+
+func (m *mockChannelReader) ChannelsForExternalSubject(_ context.Context, _, externalSubject string) ([]string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := m.channels[externalSubject]
+	return c.emails, c.webhooks, nil
+}
+
+// NotificationChannelReader lets alert managers created against this test hub
+// adopt the mock reader at construction (channelReaderProvider).
+func (t *TestHub) NotificationChannelReader() alerts.NotificationChannelReader {
+	return t.channels
+}
+
 // TestHub is a wrapper hub instance used for testing.
 type TestHub struct {
 	core.App
 	*tests.TestApp
 	*hub.Hub
+	channels *mockChannelReader
+}
+
+// SetNotificationChannels configures the emails/webhooks alert delivery will
+// see for a user (keyed by PocketBase id), replacing the old user_settings row.
+func (t *TestHub) SetNotificationChannels(userID string, emails, webhooks []string) {
+	t.channels.mu.Lock()
+	defer t.channels.mu.Unlock()
+	t.channels.channels[userID] = struct {
+		emails   []string
+		webhooks []string
+	}{emails: emails, webhooks: webhooks}
 }
 
 // NewTestHub creates and initializes a test application instance.
@@ -52,12 +91,19 @@ func NewTestHubWithConfig(config core.BaseAppConfig) (*TestHub, error) {
 		return nil, err
 	}
 
-	hub := hub.NewHub(testApp)
+	h := hub.NewHub(testApp)
+
+	channels := &mockChannelReader{channels: map[string]struct {
+		emails   []string
+		webhooks []string
+	}{}}
+	h.SetNotificationChannelReader(channels)
 
 	t := &TestHub{
-		App:     testApp,
-		TestApp: testApp,
-		Hub:     hub,
+		App:      testApp,
+		TestApp:  testApp,
+		Hub:      h,
+		channels: channels,
 	}
 
 	return t, nil
@@ -159,13 +205,8 @@ func GetHubWithUser(t *testing.T) (*TestHub, *core.Record) {
 	user, err := CreateUser(hub, "test@example.com", "password")
 	assert.NoError(t, err)
 
-	// Create user settings for the test user (required for alert notifications)
-	userSettingsData := map[string]any{
-		"user":     user.Id,
-		"settings": `{"emails":[test@example.com],"webhooks":[]}`,
-	}
-	_, err = CreateRecord(hub, "user_settings", userSettingsData)
-	assert.NoError(t, err)
+	// Configure the user's notification channel (required for alert delivery).
+	hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 	return hub, user
 }

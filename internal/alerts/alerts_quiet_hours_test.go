@@ -340,17 +340,8 @@ func TestAlertSilencedWithActualAlert(t *testing.T) {
 		})
 		assert.NoError(t, err)
 
-		// Create user settings with email
-		userSettings, err := hub.FindFirstRecordByFilter("user_settings", "user={:user}", dbx.Params{"user": user.Id})
-		if err != nil || userSettings == nil {
-			userSettings, err = watchdogTests.CreateRecord(hub, "user_settings", map[string]any{
-				"user": user.Id,
-				"settings": map[string]any{
-					"emails": []string{"test@example.com"},
-				},
-			})
-			assert.NoError(t, err)
-		}
+		// Configure the user's notification channel
+		hub.SetNotificationChannels(user.Id, []string{"test@example.com"}, nil)
 
 		// Create a quiet hours window
 		now := time.Now().UTC()
