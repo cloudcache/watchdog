@@ -76,26 +76,12 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	}
 	clickHouseProxy := newSilentResponseProxy(t, clickHouseAddress)
 	t.Cleanup(clickHouseProxy.Close)
-
-	worker := startProductionProcess(t, root, workerBinary,
-		"-bootstrap-plan", artifacts.plan,
-		"-plan-public-key", artifacts.publicKey,
-		"-bootstrap-version-publication", artifacts.publication,
-		"-geo-bundle", artifacts.geo,
-		"-kafka-brokers", strings.Join(brokers, ","),
-		"-kafka-topic", topicBase,
-		"-kafka-consumer-group", "watchdog-flow-process-"+strconv.FormatInt(time.Now().UnixNano(), 10),
-		"-kafka-fetch-min-bytes", "1",
-		"-kafka-fetch-max-wait", "100ms",
-		"-kafka-template-replay-records", "64",
-		"-clickhouse-address", clickHouseProxy.Address(),
-		"-clickhouse-database", database,
-		"-clickhouse-password-file", passwordFile,
-		"-clickhouse-read-timeout", "50ms",
-		"-clickhouse-operation-timeout", "250ms",
-		"-metrics-listen", "0.0.0.0:"+workerMetricsPort,
-	)
+	consumerGroup := "watchdog-flow-process-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	worker := startProductionProcess(t, root, workerBinary, productionWorkerArguments(
+		artifacts, brokers, topicBase, consumerGroup, "worker-a", clickHouseProxy.Address(), database, passwordFile, workerMetricsPort,
+	)...)
 	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 0)
+	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_assigned_partitions", 4)
 
 	collector := startProductionProcess(t, root, collectorBinary,
 		"-plan", artifacts.plan,
@@ -157,13 +143,64 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	waitForProductionVMValue(t, ctx, vmURL, runID, "worker", "up", 1)
 	waitForProductionVMValue(t, ctx, vmURL, runID, "collector", "watchdog_flow_collector_kafka_records_total", 6)
 	waitForProductionVMValue(t, ctx, vmURL, runID, "worker", "watchdog_flow_worker_kafka_records_total", 6)
+	waitForKafkaOffsets(t, kafkaContainer, consumerGroup, topic, 6)
+
+	worker2MetricsPort := reserveTCPPort(t)
+	worker2Metrics := "127.0.0.1:" + worker2MetricsPort
+	worker2 := startProductionProcess(t, root, workerBinary, productionWorkerArguments(
+		artifacts, brokers, topicBase, consumerGroup, "worker-b", clickHouseProxy.Address(), database, passwordFile, worker2MetricsPort,
+	)...)
+	waitForProcessMetric(t, ctx, worker2, worker2Metrics, "watchdog_flow_worker_kafka_rebalances_total", 1)
+	waitForWorkerAssignments(t, ctx, worker, workerMetrics, worker2, worker2Metrics, 2, 2)
+	sendUDPPayloads(t, sflowAddress, corpusFixturePayload(t, "sflow", "data-sflow-expanded-sample.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 7)
+	waitForKafkaOffsets(t, kafkaContainer, consumerGroup, topic, 7)
+	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_template_missing_total", 0)
+	assertProcessMetric(t, worker2Metrics, "watchdog_flow_worker_template_missing_total", 0)
+
+	worker.stop(t)
+	waitForProcessMetric(t, ctx, worker2, worker2Metrics, "watchdog_flow_worker_kafka_rebalances_total", 2)
+	waitForProcessMetric(t, ctx, worker2, worker2Metrics, "watchdog_flow_worker_kafka_assigned_partitions", 4)
+	sendUDPPayloads(t, sflowAddress, corpusFixturePayload(t, "sflow", "data-sflow-expanded-sample.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 8)
+	waitForKafkaOffsets(t, kafkaContainer, consumerGroup, topic, 8)
+	assertProcessMetric(t, worker2Metrics, "watchdog_flow_worker_template_missing_total", 0)
+	assertProcessMetric(t, worker2Metrics, "watchdog_flow_worker_rejected_total", 0)
+	waitForProductionFacts(t, ctx, native)
 
 	collector.stop(t)
-	worker.stop(t)
+	worker2.stop(t)
 }
 
 func (p *silentResponseProxy) ForwardServerResponses() {
 	p.responseMode.Store(proxyForward)
+}
+
+func productionWorkerArguments(
+	artifacts productionBootstrap,
+	brokers []string,
+	topicBase, consumerGroup, workerID, clickHouseAddress, database, passwordFile, metricsPort string,
+) []string {
+	return []string{
+		"-bootstrap-plan", artifacts.plan,
+		"-plan-public-key", artifacts.publicKey,
+		"-bootstrap-version-publication", artifacts.publication,
+		"-geo-bundle", artifacts.geo,
+		"-worker-id", workerID,
+		"-kafka-brokers", strings.Join(brokers, ","),
+		"-kafka-topic", topicBase,
+		"-kafka-client-id", workerID,
+		"-kafka-consumer-group", consumerGroup,
+		"-kafka-fetch-min-bytes", "1",
+		"-kafka-fetch-max-wait", "100ms",
+		"-kafka-template-replay-records", "64",
+		"-clickhouse-address", clickHouseAddress,
+		"-clickhouse-database", database,
+		"-clickhouse-password-file", passwordFile,
+		"-clickhouse-read-timeout", "50ms",
+		"-clickhouse-operation-timeout", "250ms",
+		"-metrics-listen", "0.0.0.0:" + metricsPort,
+	}
 }
 
 func startProductionKafka(t testing.TB) (string, string) {
@@ -630,6 +667,86 @@ func waitForProductionFacts(t testing.TB, ctx context.Context, native *NativeIns
 		case <-ticker.C:
 		}
 	}
+}
+
+func waitForWorkerAssignments(
+	t testing.TB,
+	ctx context.Context,
+	first *productionProcess,
+	firstAddress string,
+	second *productionProcess,
+	secondAddress string,
+	wantFirst, wantSecond uint64,
+) {
+	t.Helper()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		firstValue, firstFound, firstErr := readProcessMetric(ctx, firstAddress, "watchdog_flow_worker_kafka_assigned_partitions")
+		secondValue, secondFound, secondErr := readProcessMetric(ctx, secondAddress, "watchdog_flow_worker_kafka_assigned_partitions")
+		if firstErr == nil && secondErr == nil && firstFound && secondFound && firstValue == float64(wantFirst) && secondValue == float64(wantSecond) {
+			return
+		}
+		select {
+		case <-first.done:
+			t.Fatalf("first worker exited during rebalance: %v\n%s", first.exitError(), readProductionLog(first.logPath))
+		case <-second.done:
+			t.Fatalf("second worker exited during rebalance: %v\n%s", second.exitError(), readProductionLog(second.logPath))
+		case <-ctx.Done():
+			t.Fatalf("wait for worker assignments %d/%d: %v (got %v/%v, errors %v/%v)", wantFirst, wantSecond, ctx.Err(), firstValue, secondValue, firstErr, secondErr)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForKafkaOffsets(t testing.TB, container, group, topic string, want int64) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var lastOutput []byte
+	var lastErr error
+	for {
+		command := exec.CommandContext(ctx, "docker", "exec", container, "/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "127.0.0.1:19092", "--group", group, "--describe")
+		lastOutput, lastErr = command.CombinedOutput()
+		if lastErr == nil {
+			partitions := 0
+			var currentTotal, endTotal int64
+			zeroLag := true
+			for _, line := range strings.Split(string(lastOutput), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) < 6 || fields[1] != topic {
+					continue
+				}
+				current, currentOK := parseKafkaOffset(fields[3])
+				end, endOK := parseKafkaOffset(fields[4])
+				lag, lagOK := parseKafkaOffset(fields[5])
+				if !currentOK || !endOK || (!lagOK && end != 0) {
+					zeroLag = false
+					continue
+				}
+				partitions++
+				currentTotal += current
+				endTotal += end
+				zeroLag = zeroLag && lag == 0
+			}
+			if partitions == 4 && currentTotal == want && endTotal == want && zeroLag {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for Kafka group %s offset=end=%d: %v (error=%v)\n%s", group, want, ctx.Err(), lastErr, lastOutput)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func parseKafkaOffset(value string) (int64, bool) {
+	if value == "-" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return parsed, err == nil
 }
 
 func startScrapingVictoriaMetrics(t testing.TB, runID, collectorPort, workerPort string) string {
