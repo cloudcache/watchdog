@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, CableIcon, SaveIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { KeyValueEditor } from "@/components/key-value-editor"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -83,11 +83,19 @@ export default memo(({ id }: NetworkPortFormProps) => {
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 
+	// Weak ETag from the last load, echoed as If-Match on save (optimistic
+	// concurrency): a concurrent edit is rejected (412), not overwritten.
+	const etagRef = useRef("")
+
 	const load = useCallback(async () => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {})
+			const data = await pb.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			const port = data.port
 			setDevice(data.device ?? null)
 			setForm({
@@ -119,6 +127,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 		try {
 			const saved = await pb.send<NetworkPort>(`/api/v1/network/ports/${id}`, {
 				method: "PATCH",
+				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body: {
 					ID: form.id.trim(),
 					IfIndex: Number(form.ifIndex),
