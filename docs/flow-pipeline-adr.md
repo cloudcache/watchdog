@@ -64,6 +64,8 @@ Kafka key 固定为 `collector_id || 0x00 || exporter_ip`，不含 UDP 源端口
 
 partition 接管/进程重启会丢失内存模板，因此 consumer 从原 committed offset 向前回放一个有界 record 窗口。回放数据照常走 deterministic CH 幂等路径，但低于原水位的 record 不得提交，避免 group offset 倒退。窗口必须覆盖 exporter 最大模板刷新间隔对应的单 partition record 数；模板周期刷新是 exporter 开通前置条件。
 
+本地真实 Kafka 门禁已经验证 v9/IPFIX 冷 worker 的 `committed-next-offset 4 → durable failure 后仍为 4 → 下一冷 worker 恢复后为 6`；新 data 本身不带模板，只有 assignment 回放成功才能被解码。该证据只关闭 handler failure、worker restart、模板重建和 offset 收敛子场景，broker restart、实际进程强杀、存活成员间 rebalance/lost partition 与 lag 恢复仍按任务清单单独验收。
+
 下游从验签后的 immutable catalog 按 `collector_id + registry_version` 精确加载 collector/exporter binding，不回退到最新 revision；过期 revision 只用于解释已进入 Kafka 的历史记录。地址/Geo/分类 snapshot 按事件时间选择。ClickHouse enriched base 同时保存 raw endpoint/接口/ASN/计数和分类版本，派生统计可以从 base 重建。分类版本短暂不可用时 Kafka lag 承接，不允许 flow-collect 同步查询或丢弃已进入 Kafka 的原始报文。
 
 ## 5. 容量和可观测性

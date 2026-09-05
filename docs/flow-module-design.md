@@ -182,6 +182,8 @@ receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当�
 
 NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已提交。每次 partition assignment 因此从原 committed offset 向前回放固定数量的 RawFlow record：旧窗口参与解码和幂等 CH 写入以重建模板，但提交水位绝不能低于 assignment 前的 committed offset；到达旧水位后才正常前进。`template_replay_records` 必须为正且有硬上限，并按“单 partition 在 exporter 最大模板刷新间隔内的 record 数 + 裕量”定容。exporter 必须周期刷新模板；未满足此前置条件时显示 template-missing/partial，不能声称完整，也不能用猜测字段解码。
 
+单节点真实 Kafka 恢复门禁固定检查 committed-next-offset，而不是仅看 handler 调用次数：同一 partition 先写入 v9/IPFIX 的 template+data 并提交到 4，再只追加无模板的 data。新的冷 processor assignment 后向前回放 4 条；当新 data 的 durable handler 被注入失败时 group offset 必须仍为 4，第三个冷 processor 再次接管后必须从回放窗口恢复两套模板、解码旧 data `1/3` 和新 data `4/5`，最终提交到 6。该门禁证明有界回放、水位不倒退和依赖恢复后的可重放性；它不模拟 broker 断网、`kill -9`、两个存活成员间的 partition 转移或 lag 时间序列，这些仍是独立故障门禁。
+
 ### 3.5 FLOW-04B 关闭桶调度与 repair
 
 rollup 不在 `flow-worker` 内执行。hub 复用平台 `operation_jobs` 的 handler registry，以 `flow_rollup` 类型领取任务；通用 worker 继续负责 lease、heartbeat、cancel、takeover、retry/backoff 和终态，Flow 只提供版本化 payload、关闭桶入队和 ClickHouse handler。这样 CH 聚合失败只形成 rollup stale，不阻塞 Kafka 消费或 base fact 写入。

@@ -57,7 +57,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-08A1：`24bd111b feat(flow): validate ClickHouse migration lifecycle`；真实 001..005 loader、精确字节 checksum、quote/comment-aware statement splitter 和 fail-closed recorded-state planner 已提交；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-08A2：`5182f28e feat(flow): operationalize ClickHouse migrations`；embedded migration CLI、持久锁/statement checkpoint、固定 Kafka/ClickHouse Compose 和真实生命周期测试已提交；ClickHouse 26.3 空库/重放/dirty resume 与 Kafka 4.3.1 `acks=all` 生产消费通过。
 - FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility` 与 `5d7f9761 test(flow): recover migrations after statement deadline`；旧/新 migration set、drift fail-closed、CH/Kafka restart、真实 active-statement deadline 和新连接池 resume 已验证。静默断包、集群和容量门禁未关闭。
-- 尚未具备的证据：broker/worker/CH 故障矩阵、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点正常链路通过替代。
+- FLOW-08A3 Kafka worker 恢复：`11cd81b0 test(flow): verify Kafka template replay recovery`；同一真实 consumer group 先提交 v9/IPFIX 模板和数据至 offset 4，新数据不带模板；全新 worker 经 assignment 有界回放后能解码新数据，注入 durable failure 时 committed offset 保持 4，下一全新 worker 再次接管并精确推进至 6。真实 Kafka 连续 5 次及正常 corpus 组合 race 2 次通过，隔离 topic 已清理。
+- 尚未具备的证据：完整 broker/worker/CH 故障矩阵、实际 worker 强杀与重叠成员 rebalance、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点证据替代。
 
 ## 3. 已完成实现与证据
 
@@ -74,7 +75,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] partition 内串行、跨 partition 并行；成功 durable handler 后才 mark offset。
 - [x] sFlow v5、NetFlow v5/v9、IPFIX；模板/采样状态按 owner 隔离；assignment 有界回放且不倒退 committed watermark。
 - [x] 生产入口装配签名历史 plan、checksummed dimension/classification publication、Geo bundle、Kafka、GoFlow2、CH。
-- [x] 证据：Akvorado 四协议 pcap、多 sampler `4000/2000`、fresh processor deterministic replay、decode/adapter fuzz、Flow race/vet；真实 UDP→Kafka→worker→CH 正常链路见 `66c28373`/`282e2a22`。
+- [x] 证据：Akvorado 四协议 pcap、多 sampler `4000/2000`、fresh processor deterministic replay、decode/adapter fuzz、Flow race/vet；真实 UDP→Kafka→worker→CH 正常链路见 `66c28373`/`282e2a22`，真实 v9/IPFIX assignment 回放与 committed offset 故障恢复见 `11cd81b0`。
 - [x] **已提交**：`886ccb2b`。
 
 ### FLOW-03 采样、方向和六维
@@ -262,6 +263,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A3 变更设计/测试**：cancel 停止新 statement，独立清理上下文释放锁；强杀/CH 不可达则保留持久锁供人工 exact-owner unlock。真实集成覆盖旧集合→新集合、旧集合读新库与 checksum drift 拒绝。
 - [x] **FLOW-08A3 CH 单节点集成**：ClickHouse `26.3.29.7` 无持久卷空库先应用 001..004，再由新集合只应用 005；旧集合随后拒绝新库，篡改本地 checksum 拒绝；003 statement 连续 replay、dirty 005 resume 通过。持久开发实例创建空 metadata lock 后重启 ClickHouse，owner 保留；错误 owner 解锁失败，production CLI exact-owner 解锁成功。
 - [x] **FLOW-08A3 Kafka 单节点集成**：Kafka `4.3.1` 隔离 topic 以 `acks=all` 写入一条，broker restart 后从原 partition/offset 读回；测试 topic 已删除，`watchdog.flow.raw-v1` 12 个 partition 的 leader/ISR 均恢复为 1。
+- [x] **FLOW-08A3 Kafka worker failure/assignment replay 集成**：真实单 partition topic/group 先提交 v9/IPFIX template+data 至 committed-next-offset 4，再只写 data；全新 processor 必须从 4 向前回放 4 条才能解码新 data。注入 durable handler failure 后 offset 仍为 4，下一全新 processor 接管后同时看到 replay data `1/3` 与新 data `4/5`，offset 收敛为 6，template missing/reject 为零；测试不新建状态库/topic 类型，隔离 topic 自动清理。证据提交 `11cd81b0`。
 - [x] **FLOW-08A3 active-statement deadline 集成**：真实无结果 migration statement 运行中由 100ms context deadline 中断；旧连接池关闭后，新连接池 inspect 到 dirty statement 0、锁已由独立 cleanup context 释放，显式 resume 后收敛为 applied。测试语句写入 `null()` table function，无业务副作用。
 - [ ] **FLOW-08A3 transport timeout/断包集成**：静默丢包的 `ReadTimeout` 仍须受控代理验证；不能用持续发送 progress packet 的长查询冒充，也不得在 migration executor 内增加隐式 DDL retry。
 - [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
@@ -274,7 +276,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 ## 5. 外部门禁
 
 - [x] 真实 Kafka/CH 正常链路：四协议 UDP RawFlow、按 exporter key 保持模板/数据顺序、关闭 flush、四协议 durable fact、receipt count/counter/checksum 和五级 rollup 守恒。
-- [ ] 真实 Kafka 故障链路：四协议链路上的 broker restart、rebalance、worker crash、assignment 模板窗口重放和 lag/committed offset 收敛；既有单条 broker restart 不能替代。
+- [ ] 真实 Kafka 故障链路：v9/IPFIX 的 durable failure → 新 worker assignment 回放 → committed offset `4→4→6` 已由 `11cd81b0` 证明；仍需四协议链路内 broker restart、实际 worker 强杀、重叠成员 rebalance/lost partition 和 lag 增长/归零，既有单条 broker restart 与进程内注入均不能替代这些剩余项。
 - [ ] 真实 ClickHouse 故障链路：重复消费、partial insert/response、worker/CH restart/timeout、dedup window 外 repair 和 count/checksum 重收敛；正常链路精确 checksum 不能替代。
 - [ ] ClickHouse 发布：实际旧/新制品、Replicated/Distributed/ON CLUSTER DDL 与集群回滚/forward-fix。
 - [ ] 性能环境：固定硬件、真实混合 corpus、N+1、容量和 72h soak。
