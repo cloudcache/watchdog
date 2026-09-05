@@ -517,6 +517,8 @@ aggregate schema v1 只物化 `customer` view；`raw/supplier` 请求必须返�
 
 provider result runner 必须消费 CH 的多个 data block，校验所有列等长、结果行硬限、bucket 范围/对齐、非负有限值、版本身份、quality counters 和点唯一键。metadata sentinel 必须恰好一条且除 `covered_buckets` 外为固定零值；缺失、重复、畸形或覆盖数大于期望桶数都使整个查询失败，不能返回部分结果。对每个公开点返回 `sampling_completeness=(received-unknown_sampling)/received` 和 `quality_record_ratio=quality/received`；分母为零时分别标记 `Known=false`，不返回虚假的 100%。结果总体返回 `expected_buckets/covered_buckets/ratio/complete` 以及 `mixed_versions/version_count`；CH 在任一 block 后失败时丢弃已累积点，不泄漏部分成功。
 
+ch-go native 查询有三条必须由真实 ClickHouse 门禁锁定、不能只靠 SQL 字符串单测的协议约束：`proto.Parameter.Value` 是 custom setting 的 ClickHouse Field dump，数字也必须按 `'1'` 形式编码，再由 `{name:UInt*}` 占位符做类型转换；带别名读取 `ReplacingMergeTree` 时固定写成 `FROM table AS source FINAL`；TopN/other 聚合的输出别名不得与输入列 `dimension_value` 同名，必须先使用 `grouped_dimension_value`，仅在最外层投影恢复 API 列名。否则会分别触发 native parameter restore、`FINAL` 语法或 alias substitution 聚合错误。外部集成测试使用独立临时数据库，按 001→005 顺序执行真实 DDL，经 native writer 写入 facts，并覆盖 1m/1h、同 generation 重放、下一 generation repair、空桶 sentinel、强制多 result block 以及首 block 后取消且零部分结果；不得复用或清空开发数据库来完成测试。
+
 查询能力也必须由同一编译器 registry 导出，而不是让 hub 或前端复制白名单：aggregate v1 只发布 customer view 及现有 metric/dimension registry；detail 按 raw/supplier/customer 分别发布允许字段、默认字段和 filters。能力返回值是稳定排序的副本，调用方修改不得污染进程内 registry；未知 view 必须明确拒绝。编译器的接受/拒绝测试遍历同一 capability，确保能力声明与实际 SQL 校验不会漂移。
 
 ```json

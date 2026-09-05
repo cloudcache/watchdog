@@ -116,11 +116,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **设计**：冻结 v1 payload、逻辑桶与含 generation 的执行幂等键、独立于有限 job retention 的通用持久水位、关闭/迟到窗口、双扫描预算和从 CH marker 前进的 repair generation；明确调度水位不等于查询完整性水位。
 - [x] **编码**：v1 encode/decode、稳定 hash/key、关闭 bucket 有界 enqueue、migration 028 通用水位、活跃 Flow tenant 公平分页、repair `generation+1`、CH handler 永久/暂时错误映射、默认关闭的 hub CH/registry/周期扫描生产装配已完成。lease/heartbeat/cancel/retry 继续只由平台 worker 承担，`flow-worker` 未增加状态机。
 - [x] **单元**：覆盖 payload/key、UTC/桶对齐、关闭/迟到边界、bootstrap/持久水位、enqueue→watermark crash gap、每 series/全局预算、tenant cursor、repair/CH generation marker、旧 payload、取消传播和永久/暂时错误；takeover/cancel/retry 状态机继续引用平台公共测试，不复制实现。
-- [ ] **集成**：真实 MySQL lease/handler/repair 已通过；真实 CH rebuild、crash/retry 后同 generation 收敛仍待执行。
+- [x] **集成**：真实 MySQL lease/handler/repair 已通过；隔离数据库按 001→005 执行真实 CH DDL，经 native writer 写入 facts，完成 1m/1h rebuild、新 runner 模拟确认前重启后同 generation 重放收敛、下一 generation repair 且旧 key 消失、空桶 marker 查询。
 - [ ] **变更设计/测试**：先读后写 rolling upgrade、旧 payload 拒绝、repair forward-fix、空库/bootstrap 和 migration 028 存量 job forward-fill 已形成契约；真实 MySQL 已验证 forward-fill 幂等且水位不回退，余项是旧/新进程版本混跑。
 - [x] **回归（本地）**：`go test ./...`、`go test -race ./internal/watchdog ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker`、`go vet ./...`、`git diff --check` 通过。
 - [x] **已提交（本地与 MySQL 范围）**：`886ccb2b`；包含曾仅留在工作区的 production handler/store/runtime，`flow_rollup_jobs_test.go` 已使用 enqueue 返回的持久化 job ID，不再依靠 `_test.go` 隐式补契约。
-- [ ] **外部门禁**：真实 MySQL 已完成 001→028、027 删除、028 存量 job forward-fill/单调不回退及 lease/handler/repair；CH native `127.0.0.1:9000` 尚未验真实 rebuild/crash/dedup-window，因此集成项保持未勾选。
+- [x] **外部门禁（单节点）**：真实 MySQL 已完成 001→028、027 删除、028 存量 job forward-fill/单调不回退及 lease/handler/repair；ClickHouse 26.3 native 已验证 rebuild、同 generation 重放及 repair。跨 dedup window、replicated CH 和故障注入继续属于 FLOW-08 生产门禁，不以本项代替。
 
 ### FLOW-04C 低基数运行指标（核心已完成，剩余项受门禁）
 
@@ -144,17 +144,19 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05A 设计**：冻结 authenticated tenant scope 与客户端请求分离、1m/1h 闭桶、metric/dimension/filter registry、TopN/other、版本拆分、completeness 字段、稳定错误码和查询预算。aggregate v1 只支持 customer view；禁止伪装 raw/supplier。
 - [x] **FLOW-05A 编码**：新增独立 `internal/flowquery` compiler；SQL 结构只来自固定 registry，全部请求值 typed parameter；按 `_generation` marker 选每桶最新 generation，TopN key 包含三个版本字段，固定超时/结果/扫描硬限；内部 metadata sentinel 即使空结果也返回 rollup 覆盖桶数。
 - [x] **FLOW-05A 单元**：覆盖 registry/additive、确定性、参数转义且不插入 SQL、filter 排序去重、latest generation/coverage sentinel、TopN tie-break、other、UTC/闭桶、结果预算、非法 enum/view/timezone/scope。
-- [ ] **FLOW-05A 集成**：在真实 CH 顺序 migration 上执行 1m/1h 查询，覆盖空 generation、repair 后旧 key 消失、跨版本拆分、TopN tie、other 守恒、超时/扫描/结果限制。
+- [x] **FLOW-05A 集成（单节点核心）**：在真实 CH 顺序 migration 上执行 1m/1h 查询，覆盖空 generation、repair 后旧 key 消失、TopN/other 守恒；同时锁定 native 数字 parameter Field dump、`AS source FINAL` 和聚合别名规则。
+- [ ] **FLOW-05A 集成（剩余生产门禁）**：补跨版本拆分、同值 TopN tie，以及服务端超时/扫描/结果限制的真实拒绝；归入 FLOW-08 容量与故障矩阵，不阻塞单节点查询链路完成。
 - [x] **FLOW-05A 变更设计**：aggregate v1 只开放 customer view；raw/supplier 保持稳定 unsupported，等待 FLOW-06 的事实 provenance/reclass schema。修正未知单值维度统一 `_unassigned` 的前向语义，不改已发布 CH DDL。
 - [x] **FLOW-05A 变更测试**：rollup contract test 覆盖 ASN/ISP/business/local/remote prefix/remote port/observation interface 的 `_unassigned`，防止再次破坏单值维度可加性；旧请求缺 view 明确拒绝而非猜默认。
 - [x] **FLOW-05A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 - [x] **FLOW-05B 设计**：冻结 Point/Result/RollupCompleteness、单 sentinel、多 block、点唯一键、版本混合和全有或全无结果语义。
 - [x] **FLOW-05B 编码**：typed ch-go result columns、有界累积、sentinel 剥离、bucket/sampling/quality completeness 与 mixed-version 已实现。
 - [x] **FLOW-05B 单元**：fake executor 覆盖跨 block、空结果但 rollup incomplete、采样/质量比、版本混合、缺失/重复/畸形 sentinel、覆盖溢出、NaN/Inf、越界 bucket、重复点和硬行限。
-- [ ] **FLOW-05B 集成**：真实 CH 执行并核对 native result 类型、多 block、取消/超时和 sentinel 空结果；并入 FLOW-05A 外部门禁。
+- [x] **FLOW-05B 集成**：真实 CH 执行并核对 native result 类型、强制 `max_block_size=1` 的多 block、首个数据 block 后 context 取消时零部分结果，以及有 marker 无公开行的完整空结果。服务端硬超时仍由 FLOW-05A 剩余生产门禁覆盖。
 - [x] **FLOW-05B 变更设计**：provider 覆盖传入 query 的 result callback，但保留 compiler body/parameter/setting；CH 任一 block 后失败时丢弃已累积点，不允许部分成功响应。
 - [x] **FLOW-05B 变更测试**：执行中断、未初始化 runner、malformed/重复 sentinel 和超限结果均返回错误且零结果。
 - [x] **FLOW-05B 回归**：Flow 全范围 race/vet/test 通过。
+- [x] **FLOW-04B/05A/05B 外部证据已提交**：真实 CH 数据链路、查询修复与隔离集成测试进入提交 `27278350`；测试只创建并清理 `watchdog_flow_it_rollup_query`，不修改现有开发库。
 - [x] **FLOW-05C 前置审计**：确认 compiler/runner 已隔离 tenant scope 和 typed 参数，但宿主尚无可执行 QueryGateway；Flow module/dataset 未注册，value-layer action 缺失，CH pool 私绑 rollup enablement，Flow readiness/限流/错误映射未装配。平台缺口已登记 PLAT-04H。
 - [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader、身份逻辑、CH pool 或 rate limiter。
 - [x] **FLOW-05C1 设计/编码**：从 Flow 固定 registry 导出 aggregate customer view 与 detail raw/supplier/customer 的允许字段、默认字段和过滤器；compiler/runner 验证改为消费同一 view registry，hub/UI 不再需要复制白名单。
