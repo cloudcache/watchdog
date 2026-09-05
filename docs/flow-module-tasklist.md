@@ -104,9 +104,9 @@
 - [ ] **PLAT-00B test entrypoint 收敛**：当前 `internal/tests/hub.go` 只在 `testing` build tag 下提供 fixture，但无 tag 的 `internal/hub/api_test.go` 直接引用这些符号，导致标准 `go test ./...` 编译失败；统一测试 build constraint 或移除 helper 的非必要 tag，并把 CI 的 canonical 命令和需要 loopback socket 的执行权限写入测试契约。该问题不在 Flow 数据面包内顺带修改。
 
 - [ ] **设计**：盘点 PocketBase/hub、watchdog runtime、MySQL migration/init、现有 API、前端路由及部署拓扑，形成带代码位置的现状基线。
-- [ ] **编码**：建立 migration 版本规范、空库执行器和 init snapshot/parity 检查，不修改无关业务代码。
-- [ ] **单元测试**：覆盖 migration 排序、重复执行、失败停止、版本校验和 snapshot diff。
-- [ ] **集成测试**：在空库与当前生产版本副本上执行全量 migration，验证 schema、约束和种子数据。
+- [x] **编码**：建立 migration 版本规范、空库执行器和 init snapshot/parity 检查，不修改无关业务代码。证据：commit f6c52871 —— `install/init.sql` 改为由 migration 链生成的规范快照（50 表），新增 `022_aggregate_graphs.sql` 修复仅存在于 init.sql 的四张聚合图表。
+- [x] **单元测试**：覆盖 migration 排序、重复执行、失败停止、版本校验和 snapshot diff。证据：`mysql_migration_test.go`（022 版本断言）+ `mysql_schema_parity_test.go` 规范化 SHOW CREATE 对比。
+- [x] **集成测试**：在空库与当前生产版本副本上执行全量 migration，验证 schema、约束和种子数据。证据：`TestInitSQLMatchesEmbeddedMigrations`（WATCHDOG_TEST_MYSQL_DSN 门控）双 scratch 库实跑通过；首跑即发现并修复 init/migration 双向漂移（aggregate 4 表缺 migration、007–010 十表缺 init）。
 - [ ] **变更设计**：记录无法由 migration 生成的 init 差异、历史表兼容期、数据迁移和回滚策略；无偏差也要签字确认。
 - [ ] **变更测试**：验证旧版本→新版本、空库→新版本、失败 migration 恢复和允许范围内的 down/forward-fix。
 - [ ] **回归测试**：运行现有 backend、SNMP、target、billing、export 和前端 smoke tests，确认基线治理未改变业务结果。
@@ -133,8 +133,8 @@
 - [x] 身份投影、tenant discovery、请求 ID、生产路由与 readiness 的定向单元/集成测试通过。
 
 - [ ] **设计**：确认 PocketBase/OIDC 身份权威、`external_subject_id` 投影、tenant 选择、AuthContext、用户/角色 CRUD 和资源继承规则。
-- [ ] **编码**：在生产 hub 挂载 watchdog `/api/v1`，实现 IdentityAdapter、tenant/user/role/permission API、审计和 dev admin 隔离。
-- [ ] **单元测试**：覆盖 token 映射、用户禁用、角色合并、resource inheritance、action 判定、跨 tenant ID 和 service account 隔离。
+- [x] **编码**：在生产 hub 挂载 watchdog `/api/v1`，实现 IdentityAdapter、tenant/user/role/permission API、审计和 dev admin 隔离。证据：挂载/IdentityAdapter/tenant discovery 见 STORE-01（`platform_backend.go`/`identity_adapter.go`）；用户/角色 CRUD + user_roles 替换 + 审计见 commit 0253e2cd（`api_identity_admin.go`，DELETE=禁用投影、角色删除同事务清理其 permission 主体）。
+- [x] **单元测试**：覆盖 token 映射、用户禁用、角色合并、resource inheritance、action 判定、跨 tenant ID 和 service account 隔离。证据：`identity_adapter_test.go`（已有）+ `api_identity_admin_test.go`（admin 门禁、生命周期、自禁拒绝、字段校验、跨租户角色拒绝、审计记录）。
 - [ ] **集成测试**：用真实登录 session 调用 watchdog API，验证用户/角色变更即时生效、前后端 401/403/404 行为一致。
 - [ ] **变更设计**：记录身份字段弃用、session/tenant 切换、旧 MySQL password 字段和 permission 兼容策略。
 - [ ] **变更测试**：验证旧用户/角色/grant 数据迁移、权限缓存失效、回滚后登录与授权不丢失。
@@ -456,15 +456,19 @@
 当前状态：**进行中**。先交付不依赖管理面发布 API、Kafka consumer 或 ClickHouse 的纯数据面内核；平台 `PLAT-04A` 仍负责把管理态地址段/集合发布成不可变 bundle。
 
 - [x] **FLOW-03A immutable dimension/classification core**：`internal/flowdimension` 已实现最大 64 MiB 的 strict bundle、canonical SHA-256、canonical IPv4/IPv6 CIDR、不可变 BART 索引和 atomic event-time catalog；缺历史版本明确阻断，不套消费时最新版。local/remote 方向、业务标签、每 role 唯一 primary prefix 与 `_unassigned`、按业务 `in/out/both` 生效且有序的多 address-set tag、local+remote 最坏扩张发布上限均已实现；selector 成员在编译期按 prefix 预计算，record 热路径不扫描集合并由零 allocation 测试锁定。HMT 规范化和六维/unknown/internal/transit/ambiguous 有序纯函数已覆盖。该项不读取 MySQL、不提交 Kafka offset、不写 ClickHouse，不能替代 FLOW-03B。
-- [ ] **FLOW-03B worker/source/sink wiring**：接 `PLAT-04A` 的 object ref/checksum/worker ACK，消费 normalized Kafka，加载 GeoIndex，固定 shard 分钟汇聚、spill/backpressure、base manifest/CH 单事实提交和 offset commit；该项不得反向把 draft CRUD 或同步数据库查询接入逐 flow 热路径。
+- [x] **FLOW-03B1 `flow-geo-v1` loader/index core**：实现 `current` 单次 symlink resolve、strict manifest/固定四文件、原始字节 SHA-256、JSON array 字典、Zstd 流式 CSV、IPv4/IPv6/排序/无重叠/HMT/行数/外键/资源上限校验；range 只保存紧凑 `info_id`，Geo 元组去重，v4/v6 二分 lookup 零分配；只读 `GeoCatalog` 保留历史版本并原子切 active，同版本改 manifest 拒绝、失败 reload 保留旧版、显式版本空库可用。该项不做 poll/VM 指标、override、Kafka/CH/offset 接线。
+- [ ] **FLOW-03B2 worker source/enrichment wiring**：接 `PLAT-04A` object ref/checksum/worker ACK，消费 normalized Kafka；按 record 的 event-time/snapshot ref/geo_version 取得 immutable dimension + Geo，叠加租户 override，完成 local/remote、业务/address-set、Geo/ASN/ISP/六维 enrich；缺任一历史版本暂停对应 partition 且不提交 offset，禁止退回 active/current，也禁止同步查询管理库。
+- [ ] **FLOW-03B3 bounded aggregate/sink wiring**：把 enriched records 按固定 shard/minute 汇聚，落实 address-set 非加和、迟到窗口、spill/backpressure、base manifest/ClickHouse 单事实提交、重试/dedup 和 normalized offset commit；不得反向把 draft CRUD 或同步数据库查询接入逐 flow 热路径。
 
 2026-09-05 开发机非验收 microbenchmark（Apple M2、6 prefixes/4 enabled sets、只含两次 LPM + 预编译 set/方向归类）：约 `200 ns/record`，`0 B/op`、`0 allocs/op`。它不包含大规模 bundle cache 行为、Kafka decode/consume、Geo、分钟聚合、spill、CH insert 或 offset commit，不能替代 FLOW-03B/性能验收。
 
-- [ ] **设计**：冻结 normalized consumer、event-time snapshot、local/remote、primary prefix 守恒、address-set 非加和、Geo/ASN/六维、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
-- [ ] **编码**：实现 dimension worker、snapshot loader/LPM/selector、方向、地址段/set、Geo/ASN/ISP、业务/六维、分片汇聚、batch manifest 和 normalized commit。
-- [ ] **单元测试**：覆盖 event-time 选版、重叠 CIDR、IPv4/IPv6、`_unassigned`、多 set、max expansion、四种方向、六维/unknown/HMT 和重复 record。
+2026-09-05 开发机非验收 microbenchmark（Apple M2、65,536 个 IPv4 区间、首/中/末混合二分 lookup）：约 `21 ns/lookup`，`0 B/op`、`0 allocs/op`。加载测试覆盖真实 Zstd、IPv4/IPv6、字典外键、空版本、失败保持旧版、历史版本回切和并发 reader；结果不包含百万级真实地址库加载耗时/峰值 RSS，也不替代 FLOW-03B2/B3 链路验收。
+
+- [ ] **设计**：已冻结 immutable dimension bundle/classifier 与 `flow-geo-v1` loader/index；仍需冻结 normalized consumer、record 如何绑定 dimension snapshot + geo_version、override、enriched schema、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
+- [ ] **编码**：已实现 snapshot loader/LPM/selector、方向、地址段/set、Geo/ASN/ISP loader/index、业务/六维纯函数；仍需 dimension worker、override/enrich 接线、分片汇聚、batch manifest 和 normalized commit。
+- [ ] **单元测试**：已覆盖 event-time 选版、重叠 CIDR、IPv4/IPv6、`_unassigned`、多 set、max expansion、四种方向、六维/unknown/HMT、Geo 严格加载/lookup/原子切换/失败保持；仍需 override/enriched record、重复 record、spill/aggregate/commit 状态机。
 - [ ] **集成测试**：dimension worker/CH 中断先形成 normalized lag；Kafka 生产中断验证 flow-collect WAL 保护；恢复后按原 snapshot 重放，primary prefix 守恒且 address set 标记非加和。
-- [ ] **变更设计**：记录地址库格式、snapshot bundle、admin code/ISP/ASN 缺失、set 扩张上限、spill 和回算窗口。
+- [ ] **变更设计**：地址库格式、snapshot bundle、admin code/ISP/ASN 缺失和 set 扩张上限已落文档；仍需记录 override、enriched schema、spill 和回算窗口的实现差异。
 - [ ] **变更测试**：验证 snapshot/Geo/classification 版本切换、override merge/delete、旧 normalized replay、历史版本字典和 backfill。
 - [ ] **回归测试**：现有 address sets/prefixes CRUD、local/business labels、最长前缀和 SNMP target/port 映射不受影响。
 
