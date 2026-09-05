@@ -232,21 +232,25 @@ func DecodeJobPayload(checkpoint json.RawMessage, supported int, out any) error 
 const TargetDeleteJobType = "target_delete"
 
 // TargetDeletePayloadVersion is the payload schema version for target_delete.
-const TargetDeletePayloadVersion = 1
+// v2 carries the delete-preview impact summary so the destruction receipt can
+// record what was removed after the rows are gone.
+const TargetDeletePayloadVersion = 2
 
 type targetDeleteJobPayload struct {
-	TargetID ID `json:"target_id"`
+	TargetID ID             `json:"target_id"`
+	Impact   map[string]int `json:"impact,omitempty"`
 }
 
 // EncodeTargetDeletePayload builds the versioned envelope the enqueue side
 // stores, so the handler and enqueue agree on the payload contract.
-func EncodeTargetDeletePayload(targetID ID) (json.RawMessage, error) {
-	return EncodeJobPayload(TargetDeletePayloadVersion, targetDeleteJobPayload{TargetID: targetID})
+func EncodeTargetDeletePayload(targetID ID, impact map[string]int) (json.RawMessage, error) {
+	return EncodeJobPayload(TargetDeletePayloadVersion, targetDeleteJobPayload{TargetID: targetID, Impact: impact})
 }
 
-// NewTargetDeleteJobHandler deletes the target and its VictoriaMetrics series.
-// Both steps are idempotent, so a retried or taken-over attempt converges.
-func NewTargetDeleteJobHandler(targets TargetRepository, cleaner SeriesCleaner) OperationJobHandler {
+// NewTargetDeleteJobHandler deletes the target and its VictoriaMetrics series,
+// then records a destruction receipt. Every step is idempotent, so a retried
+// or taken-over attempt converges and writes exactly one receipt.
+func NewTargetDeleteJobHandler(targets TargetRepository, cleaner SeriesCleaner, receipts DestructionReceiptRecorder) OperationJobHandler {
 	return func(ctx context.Context, job OperationJob) (string, error) {
 		var payload targetDeleteJobPayload
 		if err := DecodeJobPayload(job.CheckpointJSON, TargetDeletePayloadVersion, &payload); err != nil {
@@ -258,8 +262,18 @@ func NewTargetDeleteJobHandler(targets TargetRepository, cleaner SeriesCleaner) 
 		if err := targets.DeleteTarget(ctx, job.TenantID, payload.TargetID); err != nil {
 			return "", err
 		}
+		seriesMatch := `{target_id="` + string(payload.TargetID) + `"}`
 		if cleaner != nil {
-			if err := cleaner.DeleteSeries(ctx, []string{`{target_id="` + string(payload.TargetID) + `"}`}); err != nil {
+			if err := cleaner.DeleteSeries(ctx, []string{seriesMatch}); err != nil {
+				return "", err
+			}
+		}
+		if receipts != nil {
+			if err := receipts.RecordDestructionReceipt(ctx, DestructionReceipt{
+				TenantID: job.TenantID, JobID: job.ID, ResourceType: "target",
+				ResourceID: payload.TargetID, ActorID: job.CreatedBy,
+				Impact: payload.Impact, SeriesMatch: seriesMatch, DestroyedAt: time.Now().UTC(),
+			}); err != nil {
 				return "", err
 			}
 		}

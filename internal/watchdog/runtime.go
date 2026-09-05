@@ -318,7 +318,7 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		registry := NewOperationJobHandlerRegistry()
 		if err := registry.Register(OperationJobRegistration{
 			JobType:     TargetDeleteJobType,
-			Handler:     NewTargetDeleteJobHandler(r.Store, r.MetricsClient),
+			Handler:     NewTargetDeleteJobHandler(r.Store, r.MetricsClient, r.Store),
 			Concurrency: 2,
 		}); err != nil {
 			return err

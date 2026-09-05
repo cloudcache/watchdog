@@ -324,7 +324,7 @@ func TestMySQLOperationJobWorkerEndToEnd(t *testing.T) {
 	deleteWorker := &OperationJobWorker{
 		Repo: store, JobType: TargetDeleteJobType, Owner: "worker-e2e",
 		PollInterval: 50 * time.Millisecond, LeaseFor: 3 * time.Second,
-		Handler: NewTargetDeleteJobHandler(store, nil),
+		Handler: NewTargetDeleteJobHandler(store, nil, store),
 	}
 	go deleteWorker.Run(ctx)
 
@@ -377,7 +377,7 @@ func waitForOperationJob(t *testing.T, store *MySQLStore, tenant, jobID ID, want
 }
 
 func TestJobPayloadEnvelopeRoundTrip(t *testing.T) {
-	encoded, err := EncodeTargetDeletePayload("target-xyz")
+	encoded, err := EncodeTargetDeletePayload("target-xyz", map[string]int{"network_device": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,8 +389,11 @@ func TestJobPayloadEnvelopeRoundTrip(t *testing.T) {
 		t.Fatalf("decoded = %+v", payload)
 	}
 
+	if len(payload.Impact) != 1 || payload.Impact["network_device"] != 1 {
+		t.Fatalf("impact not carried: %+v", payload.Impact)
+	}
 	// Wrong version is terminal (won't fix on retry).
-	if err := DecodeJobPayload(encoded, 2, &payload); err == nil || !IsTerminalJobError(err) {
+	if err := DecodeJobPayload(encoded, 99, &payload); err == nil || !IsTerminalJobError(err) {
 		t.Fatalf("version mismatch should be terminal, got %v", err)
 	}
 	// Malformed envelope is terminal.
@@ -415,7 +418,7 @@ func TestMySQLTerminalPayloadDoesNotRetry(t *testing.T) {
 		Repo: store, JobType: TargetDeleteJobType, Owner: "worker-terminal",
 		PollInterval: 50 * time.Millisecond, LeaseFor: 3 * time.Second,
 		MaxAttempts: 5, RetryBase: time.Nanosecond,
-		Handler: NewTargetDeleteJobHandler(store, nil),
+		Handler: NewTargetDeleteJobHandler(store, nil, store),
 	}
 	go worker.Run(ctx)
 

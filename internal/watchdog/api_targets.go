@@ -195,12 +195,27 @@ func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
 	// handler only enqueues (202 + job id) and the worker performs the
 	// cascade, so a large fan-out cannot stall or die inside the request.
 	if api.operationJobs != nil {
-		payload, err := EncodeTargetDeletePayload(targetID)
+		// Capture the delete-preview impact now so the destruction receipt can
+		// record what was removed after the rows are gone. The impact does not
+		// enter the idempotency hash — it is advisory metadata.
+		impact := map[string]int{}
+		if api.deletePreview != nil {
+			if preview, previewErr := api.deletePreview.PreviewTargetDelete(r.Context(), auth.TenantID, targetID); previewErr == nil {
+				for _, item := range preview.Impacts {
+					if item.Behavior == "deleted" && item.Count > 0 {
+						impact[item.ResourceType] = item.Count
+					}
+				}
+			}
+		}
+		payload, err := EncodeTargetDeletePayload(targetID, impact)
 		if err != nil {
 			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 			return
 		}
-		digest := sha256.Sum256(payload)
+		// Idempotency key stays payload-independent so a retry with a slightly
+		// different preview still maps to the same job.
+		digest := sha256.Sum256([]byte("target_delete:" + string(targetID)))
 		job, err := api.operationJobs.EnqueueOperationJob(r.Context(), OperationJob{
 			TenantID:       auth.TenantID,
 			JobType:        TargetDeleteJobType,
