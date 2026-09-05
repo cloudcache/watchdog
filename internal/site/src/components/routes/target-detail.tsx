@@ -3,6 +3,17 @@ import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, CrosshairIcon, PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { pb } from "@/lib/api"
@@ -31,6 +42,14 @@ type TargetDetailProps = {
 	id: string
 }
 
+type DeleteImpact = {
+	resource_type: string
+	behavior: string
+	count: number
+	detail?: string
+	items?: { id: string; name: string }[]
+}
+
 const targetCharts = [
 	{ key: "cpu", name: "watchdog_system_cpu_percent", label: "CPU", unit: "percent" },
 	{ key: "memory", name: "watchdog_system_memory_percent", label: "Memory", unit: "percent" },
@@ -53,6 +72,8 @@ export default memo(({ id }: TargetDetailProps) => {
 	const [series, setSeries] = useState<{ name: string; unit?: string; values: { time: number; value: number }[] }[]>([])
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
+	const [deleteOpen, setDeleteOpen] = useState(false)
+	const [deleteImpacts, setDeleteImpacts] = useState<DeleteImpact[]>([])
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
@@ -118,10 +139,20 @@ export default memo(({ id }: TargetDetailProps) => {
 		}
 	}, [id, t, window])
 
-	const deleteTarget = async () => {
-		if (!globalThis.confirm(t`Delete this target?`)) {
-			return
+	const openDeletePreview = async () => {
+		setError("")
+		try {
+			const preview = await pb.send<{ impacts?: DeleteImpact[] }>(`/api/v1/targets/${id}/delete-preview`, {})
+			setDeleteImpacts(preview.impacts ?? [])
+		} catch {
+			// Preview is advisory; deletion still confirms with an empty list.
+			setDeleteImpacts([])
 		}
+		setDeleteOpen(true)
+	}
+
+	const deleteTarget = async () => {
+		setDeleteOpen(false)
 		setLoading(true)
 		setError("")
 		try {
@@ -201,7 +232,7 @@ export default memo(({ id }: TargetDetailProps) => {
 						<PencilIcon className="me-2 h-4 w-4" />
 						<Trans>Edit</Trans>
 					</Link>
-					<Button variant="outline" size="sm" onClick={deleteTarget} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={openDeletePreview} disabled={loading}>
 						<Trash2Icon className="me-2 h-4 w-4" />
 						<Trans>Delete</Trans>
 					</Button>
@@ -232,9 +263,82 @@ export default memo(({ id }: TargetDetailProps) => {
 					<div className="text-sm text-muted-foreground">NA</div>
 				) : null}
 			</div>
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							<Trans>Delete {name}?</Trans>
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							<Trans>This shows everything the deletion touches. Removed data cannot be recovered.</Trans>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<div className="max-h-64 space-y-2 overflow-y-auto text-sm">
+						{deleteImpacts.length === 0 ? (
+							<div className="text-muted-foreground">
+								<Trans>No dependent resources found.</Trans>
+							</div>
+						) : (
+							deleteImpacts.map((impact) => (
+								<div key={impact.resource_type} className="flex items-start justify-between gap-3 rounded-md border border-border p-2">
+									<div className="min-w-0">
+										<div className="font-medium">{impactLabel(impact.resource_type)}</div>
+										{impact.items?.length ? (
+											<div className="truncate text-xs text-muted-foreground">
+												{impact.items.map((item) => item.name || item.id).join(", ")}
+											</div>
+										) : null}
+										{impact.detail ? <div className="text-xs text-muted-foreground">{impact.detail}</div> : null}
+									</div>
+									<div className="flex shrink-0 items-center gap-2">
+										{impact.count > 0 ? <span className="text-xs text-muted-foreground">×{impact.count}</span> : null}
+										<Badge variant={impact.behavior === "deleted" ? "destructive" : "outline"} className="font-normal">
+											{impact.behavior === "deleted" ? <Trans>deleted</Trans> : <Trans>detached</Trans>}
+										</Badge>
+									</div>
+								</div>
+							))
+						)}
+					</div>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							<Trans>Cancel</Trans>
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={deleteTarget}>
+							<Trans>Delete</Trans>
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	)
 })
+
+function impactLabel(resourceType: string) {
+	switch (resourceType) {
+		case "network_device":
+			return <Trans>Devices</Trans>
+		case "network_port":
+			return <Trans>Ports</Trans>
+		case "aggregate_graph":
+			return <Trans>Aggregate graphs</Trans>
+		case "agent":
+			return <Trans>Agents</Trans>
+		case "collector_projection":
+			return <Trans>Collector projections</Trans>
+		case "agent_run_history":
+			return <Trans>Run history</Trans>
+		case "metric_retention_policy":
+			return <Trans>Retention policies</Trans>
+		case "export_task":
+			return <Trans>Export tasks</Trans>
+		case "metric_series":
+			return <Trans>Metric series</Trans>
+		default:
+			return resourceType
+	}
+}
 
 function InfoCell({ label, value, mono }: { label: React.ReactNode; value?: string; mono?: boolean }) {
 	return (
