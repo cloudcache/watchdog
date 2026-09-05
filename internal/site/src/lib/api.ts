@@ -217,7 +217,7 @@ function pickUIPreferences(settings: Partial<UserSettings>): Partial<UserSetting
 	return out
 }
 
-/** Load UI preferences from MySQL and notification channels from PocketBase. */
+/** Load UI preferences and notification channels, both from MySQL. */
 export async function updateUserSettings() {
 	const merged: Partial<UserSettings> = { ...$userSettings.get() }
 	try {
@@ -228,11 +228,11 @@ export async function updateUserSettings() {
 		console.error("get preferences", e)
 	}
 	try {
-		const req = await pb.collection("user_settings").getFirstListItem("", { fields: "settings" })
-		merged.emails = req.settings?.emails ?? merged.emails
-		merged.webhooks = req.settings?.webhooks ?? merged.webhooks
-	} catch {
-		// no notification row yet — keep defaults
+		const channels = await pb.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {})
+		merged.emails = channels.emails ?? []
+		merged.webhooks = channels.webhooks ?? []
+	} catch (e) {
+		console.error("get notification channels", e)
 	}
 	$userSettings.set(merged as UserSettings)
 }
@@ -251,22 +251,16 @@ export async function saveUserPreferences(newSettings: Partial<UserSettings>): P
 	return merged
 }
 
-/** Persist notification channels (emails/webhooks) to PocketBase user_settings,
- * where the alert delivery path reads them. */
+/** Persist notification channels (emails/webhooks) to MySQL, where the alert
+ * delivery path reads them. */
 export async function saveNotificationSettings(
 	channels: Pick<UserSettings, "emails" | "webhooks">
 ): Promise<void> {
-	const userID = pb.authStore.record?.id
-	try {
-		const req = await pb.collection("user_settings").getFirstListItem("", { fields: "id,settings" })
-		await pb.collection("user_settings").update(req.id, {
-			settings: { ...req.settings, ...channels },
-		})
-	} catch {
-		// no row yet — create one for this user
-		await pb.collection("user_settings").create({ user: userID, settings: channels })
-	}
-	$userSettings.set({ ...$userSettings.get(), ...channels })
+	const saved = await pb.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {
+		method: "PUT",
+		body: { emails: channels.emails ?? [], webhooks: channels.webhooks ?? [] },
+	})
+	$userSettings.set({ ...$userSettings.get(), emails: saved.emails ?? [], webhooks: saved.webhooks ?? [] })
 }
 
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {

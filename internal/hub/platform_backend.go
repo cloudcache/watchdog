@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -49,4 +50,18 @@ func NewPocketBaseIdentityAuthenticator(app core.App) platform.ExternalIdentityA
 		}
 		return platform.ExternalIdentity{Provider: "pocketbase", Subject: record.Id}, nil
 	}
+}
+
+// notificationChannelReader adapts the MySQL store to the alert delivery
+// path's NotificationChannelReader (PLAT P0 alert subsystem).
+type notificationChannelReader struct {
+	store *platform.MySQLStore
+}
+
+func (r notificationChannelReader) ChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) ([]string, []string, error) {
+	channels, err := r.store.NotificationChannelsForExternalSubject(ctx, provider, externalSubject)
+	if err != nil {
+		return nil, nil, err
+	}
+	return channels.Emails, channels.Webhooks, nil
 }

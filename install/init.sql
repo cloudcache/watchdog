@@ -747,6 +747,23 @@ CREATE TABLE IF NOT EXISTS `network_ports` (
   CONSTRAINT `fk_network_ports_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `notification_channels` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `channel_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `address` varchar(1024) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_notification_channels_user` (`tenant_id`,`user_id`,`enabled`),
+  KEY `fk_notification_channels_user` (`user_id`),
+  CONSTRAINT `fk_notification_channels_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_notification_channels_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_notification_channel_type` CHECK ((`channel_type` in ('email','webhook')))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `operation_job_watermarks` (
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,

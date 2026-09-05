@@ -166,6 +166,11 @@ func (h *Hub) startBackendRuntime() error {
 		return fmt.Errorf("start watchdog platform background services: %w", err)
 	}
 	h.backend = runtime
+	// Alert delivery now reads notification channels from MySQL. The store is
+	// only available once the backend has started, so wire it here.
+	if h.AlertManager != nil {
+		h.AlertManager.SetNotificationChannelReader(notificationChannelReader{store: runtime.Store})
+	}
 	h.App.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		h.backendClose.Do(func() {
 			cancel()
