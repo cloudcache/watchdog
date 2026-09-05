@@ -79,6 +79,8 @@ plan 到期且没有新版本时 fail closed；控制面短暂不可用时，在
 
 Kafka 不可用不会触发第二套 WAL、retry 数据库或 ACK 状态机。容量必须通过 Kafka buffer、socket buffer、N+1 collector 和告警窗口保证，而不是宣称绝对零丢失。
 
+producer/consumer 共用 franz-go 的连接恢复和 backoff，不在 Flow 外包一层状态机。两个生产进程都在启动时以有界 `Ping` 验证 broker/TLS/SASL；启动成功后启用 `AlwaysRetryEOF`，因此 broker restart 或高负载切断替换连接时的首请求 EOF 继续由 franz-go 恢复，不会被误判为 TLS 配置错误并终止 worker。生产门禁必须在已提交 offset 后实际 restart 保留数据的隔离 broker，确认同一进程存活、offset 不回退且后续 flow 继续落库；仅 pause/unpause 或另起 worker 不能替代。
+
 ### 2.4 Collector 配置
 
 ```yaml
