@@ -105,6 +105,7 @@ func (api agentRegistryAPI) get(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	SetEntityETag(w, agent.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, agentRegistryDTO(agent))
 }
 
@@ -192,6 +193,9 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	req, err := decodeAgentRegistryPatchRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -248,6 +252,7 @@ func (api agentRegistryAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	SetEntityETag(w, updated.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, agentRegistryDTO(updated))
 }
 

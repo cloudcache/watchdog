@@ -182,6 +182,38 @@ func TestAPIAgentRegistryPatchUpdatesOnlyProvidedFields(t *testing.T) {
 	}
 }
 
+func TestAPIAgentRegistryIfMatchOptimisticLocking(t *testing.T) {
+	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	repo := &fakeAgentRepository{agent: SNMPAgentConfig{
+		ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a",
+		AgentType: AgentTypeSystem, Mode: AgentModePush, Status: AgentStatusUp, UpdatedAt: updatedAt,
+	}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry/agent-a", nil))
+	etag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || etag != WeakETagFromTime(updatedAt) {
+		t.Fatalf("get status=%d etag=%q", rec.Code, etag)
+	}
+
+	stale := httptest.NewRecorder()
+	staleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/agent-registry/agent-a", strings.NewReader(`{"Status":"disabled"}`))
+	staleReq.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(stale, staleReq)
+	if stale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale If-Match status = %d, want 412", stale.Code)
+	}
+
+	ok := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodPatch, "/api/v1/agent-registry/agent-a", strings.NewReader(`{"Status":"disabled"}`))
+	okReq.Header.Set("If-Match", etag)
+	router.ServeHTTP(ok, okReq)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("matched If-Match status = %d body = %s", ok.Code, ok.Body.String())
+	}
+}
+
 func TestAPIAgentRegistryPatchRejectsMismatchedBodyID(t *testing.T) {
 	repo := &fakeAgentRepository{agent: SNMPAgentConfig{
 		ID:        "agent-system-a",
