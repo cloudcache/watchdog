@@ -37,58 +37,41 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/use-toast"
-import { pb } from "@/lib/api"
+import { deleteQuietHour, fetchQuietHours, type QuietHourWindow, saveQuietHour } from "@/lib/api"
 import { $systems } from "@/lib/stores"
 import { formatShortDate } from "@/lib/utils"
-import type { QuietHoursRecord, SystemRecord } from "@/types"
+import type { SystemRecord } from "@/types"
 
 const quietHoursTranslation = t`Quiet Hours`
 
 export function QuietHours() {
-	const [data, setData] = useState<QuietHoursRecord[]>([])
+	const [data, setData] = useState<QuietHourWindow[]>([])
 	const [dialogOpen, setDialogOpen] = useState(false)
-	const [editingRecord, setEditingRecord] = useState<QuietHoursRecord | null>(null)
+	const [editingRecord, setEditingRecord] = useState<QuietHourWindow | null>(null)
 	const { toast } = useToast()
 	const systems = useStore($systems)
-	useEffect(() => {
-		let unsubscribe: (() => void) | undefined
-		const pbOptions = {
-			expand: "system",
-			fields: "id,user,system,type,start,end,expand.system.name",
-		}
-		// Initial load
-		pb.collection<QuietHoursRecord>("quiet_hours")
-			.getList(0, 200, {
-				...pbOptions,
-				sort: "system",
-			})
-			.then(({ items }) => setData(items))
 
-		// Subscribe to changes
-		;(async () => {
-			unsubscribe = await pb.collection("quiet_hours").subscribe(
-				"*",
-				(e) => {
-					if (e.action === "create") {
-						setData((current) => [e.record as QuietHoursRecord, ...current])
-					}
-					if (e.action === "update") {
-						setData((current) => current.map((r) => (r.id === e.record.id ? (e.record as QuietHoursRecord) : r)))
-					}
-					if (e.action === "delete") {
-						setData((current) => current.filter((r) => r.id !== e.record.id))
-					}
-				},
-				pbOptions
-			)
-		})()
-		// Unsubscribe on unmount
-		return () => unsubscribe?.()
+	const reload = () => {
+		fetchQuietHours()
+			.then(setData)
+			.catch((e: unknown) => {
+				toast({
+					variant: "destructive",
+					title: t`Error`,
+					description: (e as Error).message || "Failed to load quiet hours.",
+				})
+			})
+	}
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: load once on mount
+	useEffect(() => {
+		reload()
 	}, [])
 
 	const handleDelete = async (id: string) => {
 		try {
-			await pb.collection("quiet_hours").delete(id)
+			await deleteQuietHour(id)
+			setData((current) => current.filter((r) => r.id !== id))
 		} catch (e: unknown) {
 			toast({
 				variant: "destructive",
@@ -98,7 +81,7 @@ export function QuietHours() {
 		}
 	}
 
-	const openEditDialog = (record: QuietHoursRecord) => {
+	const openEditDialog = (record: QuietHourWindow) => {
 		setEditingRecord(record)
 		setDialogOpen(true)
 	}
@@ -108,7 +91,7 @@ export function QuietHours() {
 		setEditingRecord(null)
 	}
 
-	const formatDateTime = (record: QuietHoursRecord) => {
+	const formatDateTime = (record: QuietHourWindow) => {
 		if (record.type === "daily") {
 			// For daily windows, show only time
 			const startTime = new Date(record.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -121,7 +104,7 @@ export function QuietHours() {
 		return `${start} - ${end}`
 	}
 
-	const getWindowState = (record: QuietHoursRecord): "active" | "past" | "inactive" => {
+	const getWindowState = (record: QuietHourWindow): "active" | "past" | "inactive" => {
 		const now = new Date()
 
 		if (record.type === "daily") {
@@ -180,7 +163,13 @@ export function QuietHours() {
 							</span>
 						</Button>
 					</DialogTrigger>
-					<QuietHoursDialog editingRecord={editingRecord} systems={systems} onClose={closeDialog} toast={toast} />
+					<QuietHoursDialog
+						editingRecord={editingRecord}
+						systems={systems}
+						onClose={closeDialog}
+						onSaved={reload}
+						toast={toast}
+					/>
 				</Dialog>
 			</div>
 			{data.length > 0 && (
@@ -221,7 +210,11 @@ export function QuietHours() {
 							{data.map((record) => (
 								<TableRow key={record.id}>
 									<TableCell className="px-4 py-3">
-										{record.system ? record.expand?.system?.name || record.system : <Trans>All Systems</Trans>}
+										{record.system ? (
+											systems.find((s) => s.id === record.system)?.name || record.system
+										) : (
+											<Trans>All Systems</Trans>
+										)}
 									</TableCell>
 									<TableCell className="px-4 py-3">
 										{record.type === "daily" ? <Trans>Daily</Trans> : <Trans>One-time</Trans>}
@@ -286,11 +279,13 @@ function QuietHoursDialog({
 	editingRecord,
 	systems,
 	onClose,
+	onSaved,
 	toast,
 }: {
-	editingRecord: QuietHoursRecord | null
+	editingRecord: QuietHourWindow | null
 	systems: SystemRecord[]
 	onClose: () => void
+	onSaved: () => void
 	toast: ReturnType<typeof useToast>["toast"]
 }) {
 	const [selectedSystem, setSelectedSystem] = useState(editingRecord?.system || "")
@@ -362,20 +357,15 @@ function QuietHoursDialog({
 				endValue = endDateTime ? new Date(endDateTime).toISOString() : undefined
 			}
 
-			const data = {
-				user: pb.authStore.record?.id,
-				system: isGlobal ? undefined : selectedSystem,
+			await saveQuietHour({
+				id: editingRecord?.id,
+				system: isGlobal ? "" : selectedSystem,
 				type: windowType,
 				start: startValue,
-				end: endValue,
-			}
+				end: endValue ?? startValue,
+			})
 
-			if (editingRecord) {
-				await pb.collection("quiet_hours").update(editingRecord.id, data)
-			} else {
-				await pb.collection("quiet_hours").create(data)
-			}
-
+			onSaved()
 			onClose()
 		} catch (e) {
 			toast({

@@ -24,6 +24,7 @@ type APIV1RouterConfig struct {
 	CollectorDeletePreview CollectorDeletePreviewRepository
 	UserPreferences        UserPreferencesRepository
 	NotificationChannels   NotificationChannelRepository
+	QuietHours             QuietHoursRepository
 	CollectorCredentials   CollectorCredentialRepository
 	CollectorEnrollment    CollectorEnrollmentRepository
 	OperationJobs          OperationJobRepository
@@ -142,6 +143,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.NotificationChannels != nil {
 		registerNotificationChannelRoutes(mux, auth, cfg.NotificationChannels)
+	}
+	if cfg.QuietHours != nil {
+		registerQuietHoursRoutes(mux, auth, cfg.QuietHours)
 	}
 	if cfg.IdentityAdmin != nil {
 		registerIdentityAdminRoutes(mux, auth, cfg.IdentityAdmin, cfg.Audit, cfg.Idempotency)

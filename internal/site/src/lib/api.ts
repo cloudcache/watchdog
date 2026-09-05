@@ -263,6 +263,54 @@ export async function saveNotificationSettings(
 	$userSettings.set({ ...$userSettings.get(), emails: saved.emails ?? [], webhooks: saved.webhooks ?? [] })
 }
 
+// Quiet hours live in MySQL (was the PocketBase quiet_hours collection). The
+// alert silencing path reads a user's windows there by resolving the PocketBase
+// user id to the MySQL user. `system` is the PocketBase system id the window
+// applies to; "" means it is global (all systems).
+export interface QuietHourWindow {
+	id: string
+	system: string
+	type: "one-time" | "daily"
+	start: string
+	end: string
+}
+
+type QuietHourAPI = {
+	id: string
+	system_id?: string
+	type: "one-time" | "daily"
+	start: string
+	end: string
+}
+
+function fromQuietHourAPI(w: QuietHourAPI): QuietHourWindow {
+	return { id: w.id, system: w.system_id ?? "", type: w.type, start: w.start, end: w.end }
+}
+
+export async function fetchQuietHours(): Promise<QuietHourWindow[]> {
+	const res = await pb.send<{ items?: QuietHourAPI[] }>("/api/v1/me/quiet-hours", {})
+	return (res.items ?? []).map(fromQuietHourAPI)
+}
+
+export async function saveQuietHour(input: {
+	id?: string
+	system: string
+	type: "one-time" | "daily"
+	start: string
+	end: string
+}): Promise<QuietHourWindow> {
+	const body = { system_id: input.system, type: input.type, start: input.start, end: input.end }
+	const saved = await pb.send<QuietHourAPI>(
+		input.id ? `/api/v1/me/quiet-hours/${input.id}` : "/api/v1/me/quiet-hours",
+		{ method: input.id ? "PATCH" : "POST", body }
+	)
+	return fromQuietHourAPI(saved)
+}
+
+export async function deleteQuietHour(id: string): Promise<void> {
+	await pb.send(`/api/v1/me/quiet-hours/${id}`, { method: "DELETE" })
+}
+
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {
 	d ||= chartTimeData[timeString].getOffset(new Date())
 	const year = d.getUTCFullYear()

@@ -28,12 +28,29 @@ type NotificationChannelReader interface {
 	ChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) (emails, webhooks []string, err error)
 }
 
+// QuietHourWindow is a silencing window sourced from MySQL (PLAT P0 alert
+// subsystem). Type is "daily" (compare only the clock time) or "one-time"
+// (the full datetime range applies once).
+type QuietHourWindow struct {
+	Type  string
+	Start time.Time
+	End   time.Time
+}
+
+// QuietHoursReader resolves a user's quiet-hour windows relevant to a system
+// (global + that system) by their PocketBase id. When set it replaces the
+// legacy PocketBase quiet_hours read.
+type QuietHoursReader interface {
+	QuietHoursForExternalSubject(ctx context.Context, provider, externalSubject, systemID string) ([]QuietHourWindow, error)
+}
+
 type AlertManager struct {
-	hub           hubLike
-	stopOnce      sync.Once
-	pendingAlerts sync.Map
-	alertsCache   *AlertsCache
-	channelReader NotificationChannelReader
+	hub              hubLike
+	stopOnce         sync.Once
+	pendingAlerts    sync.Map
+	alertsCache      *AlertsCache
+	channelReader    NotificationChannelReader
+	quietHoursReader QuietHoursReader
 }
 
 // SetNotificationChannelReader wires the MySQL-backed channel source. It is
@@ -41,6 +58,11 @@ type AlertManager struct {
 // AlertManager is constructed).
 func (am *AlertManager) SetNotificationChannelReader(reader NotificationChannelReader) {
 	am.channelReader = reader
+}
+
+// SetQuietHoursReader wires the MySQL-backed quiet-hours source.
+func (am *AlertManager) SetQuietHoursReader(reader QuietHoursReader) {
+	am.quietHoursReader = reader
 }
 
 type AlertMessageData struct {
@@ -144,68 +166,89 @@ func (am *AlertManager) bindEvents() {
 
 // IsNotificationSilenced checks if a notification should be silenced based on configured quiet hours
 func (am *AlertManager) IsNotificationSilenced(userID, systemID string) bool {
-	// Query for quiet hours windows that match this user and system
-	// Include both global windows (system is null/empty) and system-specific windows
+	windows := am.quietHourWindows(userID, systemID)
+	if len(windows) == 0 {
+		return false
+	}
+	now := time.Now().UTC()
+	for _, window := range windows {
+		if quietHourWindowActive(window.Type, window.Start, window.End, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// quietHourWindows sources a user's windows from MySQL when the reader is wired,
+// otherwise from the legacy PocketBase quiet_hours collection.
+func (am *AlertManager) quietHourWindows(userID, systemID string) []QuietHourWindow {
+	if am.quietHoursReader != nil {
+		windows, err := am.quietHoursReader.QuietHoursForExternalSubject(context.Background(), "pocketbase", userID, systemID)
+		if err != nil {
+			am.hub.Logger().Error("Failed to read quiet hours", "err", err)
+			return nil
+		}
+		return windows
+	}
+
 	var filter string
 	var params dbx.Params
-
 	if systemID == "" {
-		// If no systemID provided, only check global windows
 		filter = "user={:user} AND system=''"
 		params = dbx.Params{"user": userID}
 	} else {
-		// Check both global and system-specific windows
 		filter = "user={:user} AND (system='' OR system={:system})"
-		params = dbx.Params{
-			"user":   userID,
-			"system": systemID,
-		}
+		params = dbx.Params{"user": userID, "system": systemID}
 	}
-
-	quietHourWindows, err := am.hub.FindAllRecords("quiet_hours", dbx.NewExp(filter, params))
-	if err != nil || len(quietHourWindows) == 0 {
-		return false
+	records, err := am.hub.FindAllRecords("quiet_hours", dbx.NewExp(filter, params))
+	if err != nil {
+		return nil
 	}
+	windows := make([]QuietHourWindow, 0, len(records))
+	for _, record := range records {
+		windows = append(windows, QuietHourWindow{
+			Type:  record.GetString("type"),
+			Start: record.GetDateTime("start").Time(),
+			End:   record.GetDateTime("end").Time(),
+		})
+	}
+	return windows
+}
 
-	now := time.Now().UTC()
+// quietHourWindowActive reports whether now falls inside a window: daily windows
+// compare only the clock time (and may cross midnight); one-time windows use the
+// full datetime range.
+func quietHourWindowActive(windowType string, start, end, now time.Time) bool {
+	if windowType == "daily" {
+		// For daily recurring windows, extract just the time portion and compare
+		// The start/end are stored as full datetime but we only care about HH:MM
+		startHour, startMin, _ := start.Clock()
+		endHour, endMin, _ := end.Clock()
+		nowHour, nowMin, _ := now.Clock()
 
-	for _, window := range quietHourWindows {
-		windowType := window.GetString("type")
-		start := window.GetDateTime("start").Time()
-		end := window.GetDateTime("end").Time()
+		// Convert to minutes since midnight for easier comparison
+		startMinutes := startHour*60 + startMin
+		endMinutes := endHour*60 + endMin
+		nowMinutes := nowHour*60 + nowMin
 
-		if windowType == "daily" {
-			// For daily recurring windows, extract just the time portion and compare
-			// The start/end are stored as full datetime but we only care about HH:MM
-			startHour, startMin, _ := start.Clock()
-			endHour, endMin, _ := end.Clock()
-			nowHour, nowMin, _ := now.Clock()
-
-			// Convert to minutes since midnight for easier comparison
-			startMinutes := startHour*60 + startMin
-			endMinutes := endHour*60 + endMin
-			nowMinutes := nowHour*60 + nowMin
-
-			// Handle case where window crosses midnight
-			if endMinutes < startMinutes {
-				// Window crosses midnight (e.g., 23:00 - 01:00)
-				if nowMinutes >= startMinutes || nowMinutes < endMinutes {
-					return true
-				}
-			} else {
-				// Normal case (e.g., 09:00 - 17:00)
-				if nowMinutes >= startMinutes && nowMinutes < endMinutes {
-					return true
-				}
+		// Handle case where window crosses midnight
+		if endMinutes < startMinutes {
+			// Window crosses midnight (e.g., 23:00 - 01:00)
+			if nowMinutes >= startMinutes || nowMinutes < endMinutes {
+				return true
 			}
 		} else {
-			// One-time window: check if current time is within the date range
-			if (now.After(start) || now.Equal(start)) && now.Before(end) {
+			// Normal case (e.g., 09:00 - 17:00)
+			if nowMinutes >= startMinutes && nowMinutes < endMinutes {
 				return true
 			}
 		}
+	} else {
+		// One-time window: check if current time is within the date range
+		if (now.After(start) || now.Equal(start)) && now.Before(end) {
+			return true
+		}
 	}
-
 	return false
 }
 

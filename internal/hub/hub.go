@@ -170,6 +170,7 @@ func (h *Hub) startBackendRuntime() error {
 	// only available once the backend has started, so wire it here.
 	if h.AlertManager != nil {
 		h.AlertManager.SetNotificationChannelReader(notificationChannelReader{store: runtime.Store})
+		h.AlertManager.SetQuietHoursReader(quietHoursReader{store: runtime.Store})
 	}
 	h.App.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		h.backendClose.Do(func() {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	alerts "github.com/cloudcache/watchdog/internal/alerts"
 	platform "github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -64,4 +65,22 @@ func (r notificationChannelReader) ChannelsForExternalSubject(ctx context.Contex
 		return nil, nil, err
 	}
 	return channels.Emails, channels.Webhooks, nil
+}
+
+// quietHoursReader adapts the MySQL store to the alert silencing path's
+// QuietHoursReader (PLAT P0 alert subsystem).
+type quietHoursReader struct {
+	store *platform.MySQLStore
+}
+
+func (r quietHoursReader) QuietHoursForExternalSubject(ctx context.Context, provider, externalSubject, systemID string) ([]alerts.QuietHourWindow, error) {
+	windows, err := r.store.QuietHoursForExternalSubject(ctx, provider, externalSubject, systemID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]alerts.QuietHourWindow, 0, len(windows))
+	for _, window := range windows {
+		out = append(out, alerts.QuietHourWindow{Type: window.Type, Start: window.Start, End: window.End})
+	}
+	return out, nil
 }

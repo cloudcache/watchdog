@@ -861,6 +861,25 @@ CREATE TABLE IF NOT EXISTS `port_policies` (
   CONSTRAINT `port_policies_chk_5` CHECK ((`correction_max` >= `correction_min`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `quiet_hours` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `system_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `window_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `start_at` datetime(3) NOT NULL,
+  `end_at` datetime(3) NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_quiet_hours_user` (`tenant_id`,`user_id`),
+  KEY `idx_quiet_hours_user_system` (`tenant_id`,`user_id`,`system_id`),
+  KEY `fk_quiet_hours_user` (`user_id`),
+  CONSTRAINT `fk_quiet_hours_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_quiet_hours_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_quiet_hours_type` CHECK ((`window_type` in ('daily','one-time')))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `roles` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
