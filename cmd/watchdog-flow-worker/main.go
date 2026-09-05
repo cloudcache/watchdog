@@ -71,7 +71,7 @@ func main() {
 	flag.Var(&opt.planFiles, "bootstrap-plan", "signed plan file; repeat for every registry revision retained in Kafka")
 	flag.StringVar(&opt.planPublicKey, "plan-public-key", "", "Ed25519 plan public key file")
 	flag.Var(&opt.versionPublications, "bootstrap-version-publication", "dimension/classification publication JSON; repeat for retained event-time versions")
-	flag.Var(&opt.geoBundles, "geo-bundle", "flow-geo-v1 or flow-geo-v2 bundle directory; repeat for retained event-time versions")
+	flag.Var(&opt.geoBundles, "geo-bundle", "flow-geo-v1 or flow-geo-v2 bundle directory; repeat oldest to newest, with the last bundle active")
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
 
 	flag.StringVar(&opt.brokers, "kafka-brokers", "127.0.0.1:9092", "comma-separated Kafka brokers")
@@ -336,9 +336,13 @@ func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowwo
 	}
 
 	geo := flowdimension.NewGeoCatalog()
-	for _, path := range opt.geoBundles {
+	activeGeo := opt.geoBundles[len(opt.geoBundles)-1]
+	if _, err := geo.Reload(activeGeo, flowdimension.GeoLoadLimits{}); err != nil {
+		return nil, nil, nil, fmt.Errorf("load active Geo bundle %s: %w", filepath.Base(activeGeo), err)
+	}
+	for _, path := range opt.geoBundles[:len(opt.geoBundles)-1] {
 		if _, err := geo.LoadHistorical(path, flowdimension.GeoLoadLimits{}); err != nil {
-			return nil, nil, nil, fmt.Errorf("load Geo bundle %s: %w", filepath.Base(path), err)
+			return nil, nil, nil, fmt.Errorf("load historical Geo bundle %s: %w", filepath.Base(path), err)
 		}
 	}
 	return plans, versions, geo, nil
