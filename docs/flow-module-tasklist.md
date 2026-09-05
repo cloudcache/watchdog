@@ -244,7 +244,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A3 变更设计/测试**：cancel 停止新 statement，独立清理上下文释放锁；强杀/CH 不可达则保留持久锁供人工 exact-owner unlock。真实集成覆盖旧集合→新集合、旧集合读新库与 checksum drift 拒绝。
 - [x] **FLOW-08A3 CH 单节点集成**：ClickHouse `26.3.29.7` 无持久卷空库先应用 001..004，再由新集合只应用 005；旧集合随后拒绝新库，篡改本地 checksum 拒绝；003 statement 连续 replay、dirty 005 resume 通过。持久开发实例创建空 metadata lock 后重启 ClickHouse，owner 保留；错误 owner 解锁失败，production CLI exact-owner 解锁成功。
 - [x] **FLOW-08A3 Kafka 单节点集成**：Kafka `4.3.1` 隔离 topic 以 `acks=all` 写入一条，broker restart 后从原 partition/offset 读回；测试 topic 已删除，`watchdog.flow.raw-v1` 12 个 partition 的 leader/ISR 均恢复为 1。
-- [ ] **FLOW-08A3 timeout/中断集成**：在受控代理或 fault-injection ClickHouse 上中断 active statement/packet，验证 read timeout、错误合并、dirty checkpoint 和进程重启后的 inspect/resume；不得用单元 cancel 冒充网络中断。
+- [x] **FLOW-08A3 active-statement deadline 集成**：真实无结果 migration statement 运行中由 100ms context deadline 中断；旧连接池关闭后，新连接池 inspect 到 dirty statement 0、锁已由独立 cleanup context 释放，显式 resume 后收敛为 applied。测试语句写入 `null()` table function，无业务副作用。
+- [ ] **FLOW-08A3 transport timeout/断包集成**：静默丢包的 `ReadTimeout` 仍须受控代理验证；不能用持续发送 progress packet 的长查询冒充，也不得在 migration executor 内增加隐式 DDL retry。
 - [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
 - [x] **FLOW-08A3 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
 - [ ] **FLOW-08A3 已提交（单节点兼容范围）**：代码、测试和证据进入独立提交；timeout/中断与集群门禁继续保持未完成。

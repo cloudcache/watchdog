@@ -21,25 +21,9 @@ func TestMigratorRealClickHouseLifecycle(t *testing.T) {
 	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_INTEGRATION") != "1" {
 		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_INTEGRATION=1 to run")
 	}
-	passwordFile := os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")
-	if passwordFile == "" {
-		t.Fatal("WATCHDOG_CLICKHOUSE_PASSWORD_FILE is required")
-	}
-	password, err := flowstream.ReadSecretFile(passwordFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := os.Getenv("WATCHDOG_CLICKHOUSE_ADDRESS")
-	if address == "" {
-		address = "127.0.0.1:9000"
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	native, err := NewNativeInserter(ctx, NativeConfig{
-		Address: address, Database: "default", User: "default", Password: password,
-		ClientName: "watchdog-flow-migrate-integration", DialTimeout: 5 * time.Second,
-		ReadTimeout: 30 * time.Second, MaxConns: 1, MinConns: 1,
-	})
+	native, err := NewNativeInserter(ctx, realMigrationConfig(t, "watchdog-flow-migrate-integration", 30*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,5 +126,92 @@ func TestMigratorRealClickHouseLifecycle(t *testing.T) {
 	final, err := migrator.Inspect(ctx, migrations, false)
 	if err != nil || final.Lock != nil || len(final.Plan.Pending) != 0 || len(final.Plan.Applied) != len(migrations) {
 		t.Fatalf("final=%+v error=%v", final, err)
+	}
+}
+
+func TestMigratorRealDeadlineAndProcessResume(t *testing.T) {
+	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION=1 to run")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	probe := []Migration{{
+		Version: 1, Name: "001_timeout_probe.sql", Checksum: strings.Repeat("a", 64),
+		Statements: []string{"INSERT INTO TABLE FUNCTION null('value UInt8') SELECT sleep(2)"},
+	}}
+
+	setup, err := NewNativeInserter(ctx, realMigrationConfig(t, "watchdog-flow-migrate-fault-setup", 5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupMigrator, err := NewMigrator(setup)
+	if err != nil {
+		setup.Close()
+		t.Fatal(err)
+	}
+	if err := setupMigrator.bootstrap(ctx); err != nil {
+		setup.Close()
+		t.Fatal(err)
+	}
+	setup.Close()
+
+	timed, err := NewNativeInserter(ctx, realMigrationConfig(t, "watchdog-flow-migrate-fault-deadline", 5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	timedMigrator, err := NewMigrator(timed)
+	if err != nil {
+		timed.Close()
+		t.Fatal(err)
+	}
+	applyContext, applyCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	_, timedErr := timedMigrator.Apply(applyContext, probe, MigrationApplyOptions{LockOwner: strings.Repeat("t", 32)})
+	applyCancel()
+	timed.Close()
+	if !errors.Is(timedErr, context.DeadlineExceeded) {
+		t.Fatalf("controlled statement deadline error=%v", timedErr)
+	}
+
+	resumedNative, err := NewNativeInserter(ctx, realMigrationConfig(t, "watchdog-flow-migrate-fault-resume", 5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumedNative.Close()
+	resumedMigrator, err := NewMigrator(resumedNative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := resumedMigrator.Inspect(ctx, probe, true)
+	if err != nil || dirty.Lock != nil || !dirty.Plan.Resume || dirty.Plan.ResumeStatement != 0 {
+		t.Fatalf("post-timeout inspection=%+v error=%v", dirty, err)
+	}
+	run, err := resumedMigrator.Apply(ctx, probe, MigrationApplyOptions{Resume: true, LockOwner: strings.Repeat("u", 32)})
+	if err != nil || len(run.AppliedVersions) != 1 || run.AppliedVersions[0] != 1 {
+		t.Fatalf("post-timeout resume=%+v error=%v", run, err)
+	}
+	final, err := resumedMigrator.Inspect(ctx, probe, false)
+	if err != nil || final.Lock != nil || len(final.Plan.Applied) != 1 || len(final.Plan.Pending) != 0 {
+		t.Fatalf("post-timeout final=%+v error=%v", final, err)
+	}
+}
+
+func realMigrationConfig(t *testing.T, clientName string, readTimeout time.Duration) NativeConfig {
+	t.Helper()
+	passwordFile := os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")
+	if passwordFile == "" {
+		t.Fatal("WATCHDOG_CLICKHOUSE_PASSWORD_FILE is required")
+	}
+	password, err := flowstream.ReadSecretFile(passwordFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := os.Getenv("WATCHDOG_CLICKHOUSE_ADDRESS")
+	if address == "" {
+		address = "127.0.0.1:9000"
+	}
+	return NativeConfig{
+		Address: address, Database: "default", User: "default", Password: password,
+		ClientName: clientName, DialTimeout: 5 * time.Second, ReadTimeout: readTimeout,
+		MaxConns: 1, MinConns: 1,
 	}
 }
