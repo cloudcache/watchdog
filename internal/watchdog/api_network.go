@@ -12,17 +12,18 @@ import (
 )
 
 type networkAPI struct {
-	repo          NetworkRepository
-	targets       TargetRepository
-	agents        AgentRepository
-	snmp          SNMPRepository
-	discovery     SNMPDeviceDiscoverer
-	collector     SNMPCollectorRepository
-	seriesCleaner SeriesCleaner
-	discoveryJobs DiscoveryJobRepository
-	audit         AuditRepository
-	deletePreview DeviceDeletePreviewRepository
-	operationJobs OperationJobRepository
+	repo              NetworkRepository
+	targets           TargetRepository
+	agents            AgentRepository
+	snmp              SNMPRepository
+	discovery         SNMPDeviceDiscoverer
+	collector         SNMPCollectorRepository
+	seriesCleaner     SeriesCleaner
+	discoveryJobs     DiscoveryJobRepository
+	audit             AuditRepository
+	deletePreview     DeviceDeletePreviewRepository
+	portDeletePreview PortDeletePreviewRepository
+	operationJobs     OperationJobRepository
 }
 
 type networkDeviceSummary struct {

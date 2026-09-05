@@ -1,18 +1,21 @@
 package watchdog
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 )
 
-func registerPortRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo NetworkRepository) {
-	api := networkAPI{repo: repo}
+func registerPortRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo NetworkRepository, portDeletePreview PortDeletePreviewRepository, operationJobs OperationJobRepository, cleaner SeriesCleaner) {
+	api := networkAPI{repo: repo, portDeletePreview: portDeletePreview, operationJobs: operationJobs, seriesCleaner: cleaner}
 	mux.Handle("GET /api/v1/network/devices/{device_id}/ports", auth(http.HandlerFunc(api.listPorts)))
 	mux.Handle("GET /api/v1/network/ports/{port_id}", auth(http.HandlerFunc(api.getPort)))
 	mux.Handle("PATCH /api/v1/network/ports/{port_id}", auth(http.HandlerFunc(api.patchPort)))
 	mux.Handle("DELETE /api/v1/network/ports/{port_id}", auth(http.HandlerFunc(api.deletePort)))
+	mux.Handle("GET /api/v1/network/ports/{port_id}/delete-preview", auth(http.HandlerFunc(api.previewPortDelete)))
 	mux.Handle("GET /api/v1/network/ports/{port_id}/policy", auth(http.HandlerFunc(api.getPortPolicy)))
 	mux.Handle("PATCH /api/v1/network/ports/{port_id}/policy", auth(http.HandlerFunc(api.patchPortPolicy)))
 }
@@ -111,11 +114,67 @@ func (api networkAPI) deletePort(w http.ResponseWriter, r *http.Request) {
 	if !CheckIfMatch(w, r, port.UpdatedAt) {
 		return
 	}
+	if api.operationJobs != nil {
+		impact := map[string]int{}
+		if api.portDeletePreview != nil {
+			if preview, previewErr := api.portDeletePreview.PreviewPortDelete(r.Context(), auth.TenantID, port.ID); previewErr == nil {
+				for _, item := range preview.Impacts {
+					if item.Behavior == "deleted" && item.Count > 0 {
+						impact[item.ResourceType] = item.Count
+					}
+				}
+			}
+		}
+		payload, err := EncodePortDeletePayload(port.ID, impact)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		digest := sha256.Sum256([]byte("port_delete:" + string(port.ID)))
+		job, err := api.operationJobs.EnqueueOperationJob(r.Context(), OperationJob{
+			TenantID:       auth.TenantID,
+			JobType:        PortDeleteJobType,
+			IdempotencyKey: "port_delete:" + string(port.ID),
+			RequestHash:    hex.EncodeToString(digest[:]),
+			CheckpointJSON: payload,
+			CreatedBy:      auth.UserID,
+		})
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": job.ID, "status": job.Status,
+			"status_url": "/api/v1/operation-jobs/" + string(job.ID),
+		})
+		return
+	}
 	if err := api.repo.DeletePort(r.Context(), auth.TenantID, port.ID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	if api.seriesCleaner != nil {
+		_ = api.seriesCleaner.DeleteSeries(r.Context(), []string{`{port_id="` + string(port.ID) + `"}`})
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (api networkAPI) previewPortDelete(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	port, _, ok := api.authorizePort(w, r, ActionConfigure)
+	if !ok {
+		return
+	}
+	if api.portDeletePreview == nil {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Delete preview is not available", nil)
+		return
+	}
+	preview, err := api.portDeletePreview.PreviewPortDelete(r.Context(), auth.TenantID, port.ID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Network port not found", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, preview)
 }
 
 func (api networkAPI) getPortPolicy(w http.ResponseWriter, r *http.Request) {

@@ -330,3 +330,53 @@ func NewDeviceDeleteJobHandler(network NetworkRepository, cleaner SeriesCleaner,
 		return "deleted:" + string(payload.DeviceID), nil
 	}
 }
+
+// PortDeleteJobType names the async network-port deletion job (PLAT-04).
+const PortDeleteJobType = "port_delete"
+
+// PortDeletePayloadVersion is the payload schema version for port_delete.
+const PortDeletePayloadVersion = 1
+
+type portDeleteJobPayload struct {
+	PortID ID             `json:"port_id"`
+	Impact map[string]int `json:"impact,omitempty"`
+}
+
+// EncodePortDeletePayload builds the versioned envelope for a port delete.
+func EncodePortDeletePayload(portID ID, impact map[string]int) (json.RawMessage, error) {
+	return EncodeJobPayload(PortDeletePayloadVersion, portDeleteJobPayload{PortID: portID, Impact: impact})
+}
+
+// NewPortDeleteJobHandler deletes the port (its owned rows cascade, references
+// detach), clears its VictoriaMetrics series and records a destruction
+// receipt. Every step is idempotent so a retry or takeover converges.
+func NewPortDeleteJobHandler(network NetworkRepository, cleaner SeriesCleaner, receipts DestructionReceiptRecorder) OperationJobHandler {
+	return func(ctx context.Context, job OperationJob) (string, error) {
+		var payload portDeleteJobPayload
+		if err := DecodeJobPayload(job.CheckpointJSON, PortDeletePayloadVersion, &payload); err != nil {
+			return "", err
+		}
+		if payload.PortID == "" {
+			return "", TerminalJobError(fmt.Errorf("port delete job payload has no port_id"))
+		}
+		if err := network.DeletePort(ctx, job.TenantID, payload.PortID); err != nil {
+			return "", err
+		}
+		seriesMatch := `{port_id="` + string(payload.PortID) + `"}`
+		if cleaner != nil {
+			if err := cleaner.DeleteSeries(ctx, []string{seriesMatch}); err != nil {
+				return "", err
+			}
+		}
+		if receipts != nil {
+			if err := receipts.RecordDestructionReceipt(ctx, DestructionReceipt{
+				TenantID: job.TenantID, JobID: job.ID, ResourceType: "network_port",
+				ResourceID: payload.PortID, ActorID: job.CreatedBy,
+				Impact: payload.Impact, SeriesMatch: seriesMatch, DestroyedAt: time.Now().UTC(),
+			}); err != nil {
+				return "", err
+			}
+		}
+		return "deleted:" + string(payload.PortID), nil
+	}
+}

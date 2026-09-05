@@ -20,6 +20,7 @@ type APIV1RouterConfig struct {
 	Idempotency          IdempotencyRepository
 	TargetDeletePreview  TargetDeletePreviewRepository
 	DeviceDeletePreview  DeviceDeletePreviewRepository
+	PortDeletePreview    PortDeletePreviewRepository
 	CollectorCredentials CollectorCredentialRepository
 	CollectorEnrollment  CollectorEnrollmentRepository
 	OperationJobs        OperationJobRepository
@@ -117,7 +118,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.Network != nil {
 		registerNetworkRoutes(mux, auth, cfg.Network, cfg.Targets, cfg.Agents, cfg.SNMP, cfg.SNMPDiscovery, cfg.SNMPCollector, cfg.SeriesCleaner, cfg.DiscoveryJobs, cfg.Audit, cfg.DeviceDeletePreview, cfg.OperationJobs)
-		registerPortRoutes(mux, auth, cfg.Network)
+		registerPortRoutes(mux, auth, cfg.Network, cfg.PortDeletePreview, cfg.OperationJobs, cfg.SeriesCleaner)
 		registerBGPRoutes(mux, auth, cfg.Network)
 		registerGraphRoutes(mux, auth, cfg.Network)
 	}

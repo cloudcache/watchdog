@@ -687,6 +687,7 @@ msgstr "停止可能"
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -1135,6 +1136,7 @@ msgstr "デフォルトの期間"
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
@@ -1225,6 +1227,7 @@ msgstr ""
 #~ msgstr ""
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "deleted"
 msgstr ""
@@ -1247,6 +1250,7 @@ msgid "Description"
 msgstr "説明"
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "detached"
 msgstr ""
@@ -1753,6 +1757,7 @@ msgstr ""
 msgid "Failed to delete network device"
 msgstr ""
 
+#: src/components/routes/network-port.tsx
 #: src/components/routes/network-port.tsx
 msgid "Failed to delete network port"
 msgstr ""
@@ -2844,6 +2849,7 @@ msgid "No data in this range."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "No dependent resources found."
 msgstr ""
@@ -4302,6 +4308,7 @@ msgstr "その後、バックエンドにログインして、ユーザーテー
 #~ msgstr ""
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "This shows everything the deletion touches. Removed data cannot be recovered."
 msgstr ""

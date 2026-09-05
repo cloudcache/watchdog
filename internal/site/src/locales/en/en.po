@@ -682,6 +682,7 @@ msgstr "Can stop"
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
@@ -1130,6 +1131,7 @@ msgstr "Default time period"
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
@@ -1220,6 +1222,7 @@ msgstr "Delete this SNMP profile?"
 #~ msgstr "Delete this target?"
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "deleted"
 msgstr "deleted"
@@ -1242,6 +1245,7 @@ msgid "Description"
 msgstr "Description"
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "detached"
 msgstr "detached"
@@ -1748,6 +1752,7 @@ msgstr "Failed to delete MIB module"
 msgid "Failed to delete network device"
 msgstr "Failed to delete network device"
 
+#: src/components/routes/network-port.tsx
 #: src/components/routes/network-port.tsx
 msgid "Failed to delete network port"
 msgstr "Failed to delete network port"
@@ -2839,6 +2844,7 @@ msgid "No data in this range."
 msgstr "No data in this range."
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "No dependent resources found."
 msgstr "No dependent resources found."
@@ -4297,6 +4303,7 @@ msgstr "Then log into the backend and reset your user account password in the us
 #~ msgstr "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 
 #: src/components/routes/network-device.tsx
+#: src/components/routes/network-port.tsx
 #: src/components/routes/target-detail.tsx
 msgid "This shows everything the deletion touches. Removed data cannot be recovered."
 msgstr "This shows everything the deletion touches. Removed data cannot be recovered."

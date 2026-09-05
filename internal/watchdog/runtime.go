@@ -215,6 +215,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		Idempotency:          r.Store,
 		TargetDeletePreview:  r.Store,
 		DeviceDeletePreview:  r.Store,
+		PortDeletePreview:    r.Store,
 		CollectorCredentials: r.Store,
 		CollectorEnrollment:  r.Store,
 		Registries:           r.Registries,
@@ -343,6 +344,13 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		if err := registry.Register(OperationJobRegistration{
 			JobType:     DeviceDeleteJobType,
 			Handler:     NewDeviceDeleteJobHandler(r.Store, r.MetricsClient, r.Store),
+			Concurrency: 2,
+		}); err != nil {
+			return err
+		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     PortDeleteJobType,
+			Handler:     NewPortDeleteJobHandler(r.Store, r.MetricsClient, r.Store),
 			Concurrency: 2,
 		}); err != nil {
 			return err

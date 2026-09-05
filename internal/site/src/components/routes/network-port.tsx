@@ -4,6 +4,16 @@ import { ArrowLeftIcon, CableIcon, PencilIcon, RefreshCwIcon, SlidersHorizontalI
 import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { GraphContextProvider, GraphPanelRenderer, type GraphDashboard } from "@/components/graph/graph-panel-renderer"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -78,6 +88,35 @@ type PortDetailProps = {
 	id: string
 }
 
+
+type PortDeleteImpact = {
+	resource_type: string
+	behavior: string
+	count: number
+	detail?: string
+}
+
+function portImpactLabel(resourceType: string) {
+	switch (resourceType) {
+		case "network_interface_address":
+			return "Interface addresses"
+		case "network_port_transceiver":
+			return "Transceiver"
+		case "port_policy":
+			return "Traffic policy"
+		case "aggregate_graph":
+			return "Aggregate graphs"
+		case "billing_account":
+			return "Billing accounts"
+		case "export_task":
+			return "Export tasks"
+		case "metric_series":
+			return "Metric series"
+		default:
+			return resourceType
+	}
+}
+
 export default memo(({ id }: PortDetailProps) => {
 	const { t } = useLingui()
 	const [port, setPort] = useState<NetworkPort | null>(null)
@@ -86,6 +125,8 @@ export default memo(({ id }: PortDetailProps) => {
 	const [dashboard, setDashboard] = useState<GraphDashboard | null>(null)
 	const [rangeWindow, setRangeWindow] = useState("24h")
 	const [loading, setLoading] = useState(true)
+	const [deleteOpen, setDeleteOpen] = useState(false)
+	const [deleteImpacts, setDeleteImpacts] = useState<PortDeleteImpact[]>([])
 	const [error, setError] = useState("")
 
 	const refresh = useCallback(async () => {
@@ -116,14 +157,36 @@ export default memo(({ id }: PortDetailProps) => {
 	const targetID = device?.TargetID ?? device?.target_id ?? ""
 	const title = port?.IfName ?? port?.if_name ?? port?.IfDescr ?? port?.if_descr ?? id
 
-	const deletePort = async () => {
-		if (!globalThis.confirm(t`Delete this network port?`)) {
-			return
+	const openDeletePreview = async () => {
+		setError("")
+		try {
+			const preview = await pb.send<{ impacts?: PortDeleteImpact[] }>(`/api/v1/network/ports/${id}/delete-preview`, {})
+			setDeleteImpacts(preview.impacts ?? [])
+		} catch {
+			setDeleteImpacts([])
 		}
+		setDeleteOpen(true)
+	}
+
+	const deletePort = async () => {
+		setDeleteOpen(false)
 		setLoading(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/network/ports/${id}`, { method: "DELETE" })
+			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/network/ports/${id}`, { method: "DELETE" })
+			const jobID = response?.job_id
+			if (jobID) {
+				for (let attempt = 0; attempt < 120; attempt++) {
+					const job = await pb.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					if (job.status === "succeeded") {
+						break
+					}
+					if (job.status === "failed" || job.status === "canceled") {
+						throw new Error(job.last_error_detail || t`Failed to delete network port`)
+					}
+					await new Promise((resolve) => globalThis.setTimeout(resolve, 1000))
+				}
+			}
 			navigate(deviceID ? getPagePath($router, "network_device", { id: deviceID }) : getPagePath($router, "network"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete network port`)
@@ -169,7 +232,7 @@ export default memo(({ id }: PortDetailProps) => {
 						<Link href={getPagePath($router, "network_port_policy", { id })} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
 							<SlidersHorizontalIcon className="h-4 w-4" />
 						</Link>
-						<Button variant="ghost" size="sm" onClick={deletePort} disabled={loading}>
+						<Button variant="ghost" size="sm" onClick={openDeletePreview} disabled={loading}>
 							<Trash2Icon className="h-4 w-4 text-destructive" />
 						</Button>
 						<Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
@@ -242,6 +305,52 @@ export default memo(({ id }: PortDetailProps) => {
 						))
 					: null}
 			</GraphContextProvider>
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							<Trans>Delete this network port?</Trans>
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							<Trans>This shows everything the deletion touches. Removed data cannot be recovered.</Trans>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<div className="max-h-64 space-y-2 overflow-y-auto text-sm">
+						{deleteImpacts.length === 0 ? (
+							<div className="text-muted-foreground">
+								<Trans>No dependent resources found.</Trans>
+							</div>
+						) : (
+							deleteImpacts.map((impact) => (
+								<div
+									key={impact.resource_type}
+									className="flex items-start justify-between gap-3 rounded-md border border-border p-2"
+								>
+									<div className="min-w-0">
+										<div className="font-medium">{portImpactLabel(impact.resource_type)}</div>
+										{impact.detail ? <div className="text-xs text-muted-foreground">{impact.detail}</div> : null}
+									</div>
+									<div className="flex shrink-0 items-center gap-2">
+										{impact.count > 0 ? <span className="text-xs text-muted-foreground">×{impact.count}</span> : null}
+										<Badge variant={impact.behavior === "deleted" ? "destructive" : "outline"} className="font-normal">
+											{impact.behavior === "deleted" ? <Trans>deleted</Trans> : <Trans>detached</Trans>}
+										</Badge>
+									</div>
+								</div>
+							))
+						)}
+					</div>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							<Trans>Cancel</Trans>
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={deletePort}>
+							<Trans>Delete</Trans>
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	)
 })
