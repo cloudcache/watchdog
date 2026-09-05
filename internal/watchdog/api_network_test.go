@@ -375,6 +375,36 @@ func TestAPINetworkDevicesListPagedGuards(t *testing.T) {
 	}
 }
 
+func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
+	// limit opts into the paged path: devices come from ListDevicesPage (grant
+	// pushed down), each enriched, and next_cursor surfaces the further page.
+	repo := &fakeNetworkRepository{
+		devices:  []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		ports:    []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", OperStatus: "up"}},
+		pageNext: "CURSOR2",
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:    networkTestAuth,
+		Targets: &fakeTargetRepository{targets: []Target{{ID: "target-a", TenantID: "tenant-a", Name: "core-a"}}},
+		Network: repo,
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?limit=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !repo.pagedCalled || repo.pagedFilter.Limit != 1 {
+		t.Fatalf("paged not called with limit 1: %+v", repo.pagedFilter)
+	}
+	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
+		t.Fatalf("grant pushdown wrong: all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"PortCount":1`) || !strings.Contains(body, `"next_cursor":"CURSOR2"`) {
+		t.Fatalf("paged summary body = %s", body)
+	}
+}
+
 func TestAPINetworkDeviceSummariesIncludeCounts(t *testing.T) {
 	lastPolled := time.Date(2026, 9, 4, 1, 2, 3, 0, time.UTC)
 	router := NewAPIV1Router(APIV1RouterConfig{

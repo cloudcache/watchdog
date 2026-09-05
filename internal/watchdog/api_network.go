@@ -151,6 +151,14 @@ func visibleDeviceScope(auth AuthContext) (all bool, targetIDs []ID) {
 
 func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	query := r.URL.Query()
+	// Pagination is opt-in: only when limit or cursor is present. Without them
+	// the endpoint keeps its full-list behavior (the table computes up/down
+	// counts over the whole set), so nothing regresses.
+	if query.Get("limit") != "" || query.Get("cursor") != "" {
+		api.listDeviceSummariesPaged(w, r, auth, query)
+		return
+	}
 	devices, err := api.repo.ListDevices(r.Context(), auth.TenantID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -224,6 +232,73 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 		items = append(items, summary)
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// listDeviceSummariesPaged is the opt-in keyset variant. It pages the devices
+// (grant-pushed into SQL) and enriches only that page, so each request does a
+// bounded amount of the expensive per-device port/BGP work instead of fanning
+// out across the whole fleet in one call. The frontend loads pages
+// progressively, keeping its client-side search, status filter and up/down
+// counts over the accumulated set.
+func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	filter := NetworkDevicePageFilter{Cursor: strings.TrimSpace(query.Get("cursor"))}
+	if raw := query.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	all, allowedTargetIDs := visibleDeviceScope(auth)
+	devices, nextCursor, err := api.repo.ListDevicesPage(r.Context(), auth.TenantID, all, allowedTargetIDs, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	// Targets and agents are cheap single queries; only the per-device
+	// enrichment below is bounded to this page.
+	targetsByID := map[ID]Target{}
+	if api.targets != nil {
+		targets, err := api.targets.ListTargets(r.Context(), auth.TenantID)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		for _, target := range targets {
+			targetsByID[target.ID] = target
+		}
+	}
+	agentsByTargetID := map[ID]SNMPAgentConfig{}
+	if api.agents != nil {
+		agents, err := api.agents.ListAgents(r.Context(), auth.TenantID)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		for _, agent := range agents {
+			if existing, ok := agentsByTargetID[agent.TargetID]; !ok || agent.UpdatedAt.After(existing.UpdatedAt) {
+				agentsByTargetID[agent.TargetID] = agent
+			}
+		}
+	}
+	items := make([]networkDeviceSummary, 0, len(devices))
+	for _, device := range devices {
+		summary := networkDeviceSummary{Target: targetsByID[device.TargetID]}
+		if agent, ok := agentsByTargetID[device.TargetID]; ok {
+			summary.Agent = &agent
+		}
+		if err := api.fillDeviceSummary(r.Context(), auth, &summary, device); err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		items = append(items, summary)
+	}
+	response := map[string]any{"items": items}
+	if nextCursor != "" {
+		response["next_cursor"] = nextCursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
 }
 
 func (api networkAPI) fillDeviceSummary(ctx context.Context, auth AuthContext, summary *networkDeviceSummary, device NetworkDevice) error {

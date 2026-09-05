@@ -140,8 +140,29 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<NetworkDeviceSummariesResponse>("/api/v1/network/devices/summary", {})
-			setAllRecords((data.items ?? []).map(toTableRecord))
+			// Load pages progressively: render the first page immediately, then
+			// append the rest. Each request enriches only its page server-side, so
+			// no single request fans out across the whole fleet. Search, status
+			// filter and up/down counts stay client-side over the accumulated set.
+			const PAGE = 200
+			const accumulated: DeviceTableRecord[] = []
+			let cursor = ""
+			let firstPage = true
+			do {
+				const data = await pb.send<NetworkDeviceSummariesResponse & { next_cursor?: string }>(
+					"/api/v1/network/devices/summary",
+					{ query: { limit: PAGE, cursor: cursor || undefined } }
+				)
+				for (const item of data.items ?? []) {
+					accumulated.push(toTableRecord(item))
+				}
+				setAllRecords([...accumulated])
+				if (firstPage) {
+					setLoading(false)
+					firstPage = false
+				}
+				cursor = data.next_cursor ?? ""
+			} while (cursor)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load network devices`)
 		} finally {
