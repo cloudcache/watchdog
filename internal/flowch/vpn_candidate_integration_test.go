@@ -100,6 +100,81 @@ func TestRealClickHouseVPNCandidateRepairAndScoring(t *testing.T) {
 	}
 }
 
+func TestRealClickHouseVPNCandidateVersionUpgradeAndRollback(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_vpn_versions")
+	windowStart := time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)
+	windowEnd := windowStart.Add(2 * time.Minute)
+	local := netip.MustParseAddr("10.10.0.1")
+	remote := netip.MustParseAddr("198.51.100.20")
+
+	v1Out := integrationVPNRecord(10, windowStart.Add(10*time.Second), flowdimension.DirectionOut, local, remote, 1_000, true)
+	v1In := integrationVPNRecord(11, windowStart.Add(time.Minute+10*time.Second), flowdimension.DirectionIn, local, remote, 900, true)
+	v2Out := integrationVPNRecord(12, windowStart.Add(20*time.Second), flowdimension.DirectionOut, local, remote, 700, true)
+	v2In := integrationVPNRecord(13, windowStart.Add(time.Minute+20*time.Second), flowdimension.DirectionIn, local, remote, 600, true)
+	for _, record := range []*flowworker.EnrichedRecord{&v2Out, &v2In} {
+		record.Dimensions.SnapshotID = "snapshot-vpn-v2"
+		record.Dimensions.Version = 2
+		record.RemoteGeo.Version = "geo-vpn-v2"
+		record.ClassificationVersion = 2
+	}
+	insertIntegrationBatch(t, ctx, native, integrationBatch(70, windowEnd.Add(time.Minute), v1Out, v1In, v2Out, v2In))
+
+	rollup, err := NewRollupRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for offset := 0; offset < 2; offset++ {
+		bucket := windowStart.Add(time.Duration(offset) * time.Minute)
+		if err := rollup.Run(ctx, RollupRequest{
+			TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+			Generation: 1, GeneratedAt: windowEnd.Add(2 * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	materializer, err := NewVPNCandidateMaterializer(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := flowvpn.NewCandidateRunner(native.executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1Rules := integrationVPNRulesVersion(t, "vpn-rules-v1", 20)
+	v1Request := VPNCandidateRequest{
+		TenantID: "flow-it-tenant", WindowStart: windowStart, WindowEnd: windowEnd,
+		RuleSetVersion: "vpn-rules-v1", Generation: 1, GeneratedAt: windowEnd.Add(3 * time.Minute),
+	}
+	if err := materializer.Run(ctx, v1Request); err != nil {
+		t.Fatal(err)
+	}
+	v1Before := runIntegrationVPNCandidates(t, ctx, runner, v1Request, v1Rules)
+	assertVPNVersionCandidates(t, v1Before, 1, 20)
+
+	v2Rules := integrationVPNRulesVersion(t, "vpn-rules-v2", 30)
+	v2Request := v1Request
+	v2Request.RuleSetVersion = "vpn-rules-v2"
+	v2Request.GeneratedAt = windowEnd.Add(4 * time.Minute)
+	if err := materializer.Run(ctx, v2Request); err != nil {
+		t.Fatal(err)
+	}
+	v2 := runIntegrationVPNCandidates(t, ctx, runner, v2Request, v2Rules)
+	assertVPNVersionCandidates(t, v2, 1, 30)
+	// Publishing v2 does not mutate the v1 machine result.
+	assertVPNVersionCandidates(t, runIntegrationVPNCandidates(t, ctx, runner, v1Request, v1Rules), 1, 20)
+
+	// A management-plane rollback selects the immutable v1 rule set and writes
+	// a new v1 generation; it does not rewrite either historical generation.
+	v1Request.Generation = 2
+	v1Request.GeneratedAt = windowEnd.Add(5 * time.Minute)
+	if err := materializer.Run(ctx, v1Request); err != nil {
+		t.Fatal(err)
+	}
+	assertVPNVersionCandidates(t, runIntegrationVPNCandidates(t, ctx, runner, v1Request, v1Rules), 2, 20)
+	assertVPNVersionCandidates(t, runIntegrationVPNCandidates(t, ctx, runner, v2Request, v2Rules), 1, 30)
+}
+
 func integrationVPNRecord(index byte, eventTime time.Time, direction flowdimension.BusinessDirection, local, remote netip.Addr, bytes uint64, estimatedValid bool) flowworker.EnrichedRecord {
 	record := testEnrichedRecord(index, bytes, bytes)
 	record.EventTime = eventTime
@@ -139,13 +214,17 @@ func integrationVPNRecord(index byte, eventTime time.Time, direction flowdimensi
 }
 
 func integrationVPNRules(t *testing.T) flowvpn.CompiledRuleSet {
+	return integrationVPNRulesVersion(t, "vpn-integration-v1", 20)
+}
+
+func integrationVPNRulesVersion(t *testing.T, version string, weight uint16) flowvpn.CompiledRuleSet {
 	t.Helper()
 	rules, err := flowvpn.CompileRuleSet(flowvpn.RuleSet{
-		SchemaVersion: flowvpn.RuleSchemaV1, Version: "vpn-integration-v1",
+		SchemaVersion: flowvpn.RuleSchemaV1, Version: version,
 		MediumThreshold: 10, HighThreshold: 20, CriticalThreshold: 30,
 		ProbeThreshold: 20, MinimumCompleteness: 0.7,
 		Rules: []flowvpn.Rule{{
-			ID: "remote-tls-port", Effect: flowvpn.EffectScore, Weight: 20,
+			ID: "remote-tls-port", Effect: flowvpn.EffectScore, Weight: weight,
 			Match: flowvpn.Match{RemotePorts: []uint16{443}, Protocols: []uint8{6}},
 		}},
 	})
@@ -153,6 +232,32 @@ func integrationVPNRules(t *testing.T) flowvpn.CompiledRuleSet {
 		t.Fatal(err)
 	}
 	return rules
+}
+
+func assertVPNVersionCandidates(t testing.TB, result flowvpn.ScoreWindowResult, generation uint64, score uint16) {
+	t.Helper()
+	if result.Generation != generation || len(result.Candidates) != 2 {
+		t.Fatalf("versioned VPN candidates generation=%d count=%d, want %d/2", result.Generation, len(result.Candidates), generation)
+	}
+	wantVersions := map[string]struct {
+		geo            string
+		classification uint32
+	}{
+		"snapshot-vpn":    {geo: "geo-vpn", classification: 1},
+		"snapshot-vpn-v2": {geo: "geo-vpn-v2", classification: 2},
+	}
+	seen := make(map[string]struct{}, len(result.Candidates))
+	for _, candidate := range result.Candidates {
+		want, exists := wantVersions[candidate.Candidate.DimensionSnapshotID]
+		if !exists || candidate.Candidate.GeoVersion != want.geo || candidate.Candidate.ClassificationVersion != want.classification ||
+			candidate.Score.Score != score || candidate.Generation != generation || candidate.Score.RuleSetVersion != result.RuleSetVersion {
+			t.Fatalf("versioned VPN candidate=%+v result=%+v", candidate, result)
+		}
+		seen[candidate.Candidate.DimensionSnapshotID] = struct{}{}
+	}
+	if len(seen) != len(wantVersions) {
+		t.Fatalf("versioned VPN snapshots=%v", seen)
+	}
 }
 
 func runIntegrationVPNCandidates(t *testing.T, ctx context.Context, runner *flowvpn.CandidateRunner, request VPNCandidateRequest, rules flowvpn.CompiledRuleSet) flowvpn.ScoreWindowResult {
