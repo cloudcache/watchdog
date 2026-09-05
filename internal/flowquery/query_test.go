@@ -13,6 +13,14 @@ import (
 )
 
 func TestRegistryIsFixedAndMarksOnlyAddressSetsNonAdditive(t *testing.T) {
+	views := AggregateViews()
+	if len(views) != 1 || views[0] != ViewCustomer {
+		t.Fatalf("aggregate views=%v", views)
+	}
+	views[0] = ViewRaw
+	if AggregateViews()[0] != ViewCustomer {
+		t.Fatal("caller mutation changed aggregate view capabilities")
+	}
 	if got := len(Metrics()); got != 9 {
 		t.Fatalf("metric definitions=%d", got)
 	}

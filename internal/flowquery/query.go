@@ -223,6 +223,13 @@ func Dimensions() []DimensionDefinition {
 	return result
 }
 
+// AggregateViews returns the value layers implemented by the current
+// aggregate schema. Callers must not infer support for raw or supplier from
+// the detail-query capabilities.
+func AggregateViews() []View {
+	return []View{ViewCustomer}
+}
+
 func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	if !validTenant(scope.TenantID) {
 		return Compiled{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")

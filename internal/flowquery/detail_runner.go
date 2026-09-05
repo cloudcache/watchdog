@@ -320,7 +320,8 @@ func validDetailEndpoint(value DetailEndpoint) bool {
 }
 
 func validDetailView(value View) bool {
-	return value == ViewRaw || value == ViewSupplier || value == ViewCustomer
+	_, ok := detailViewRegistry[value]
+	return ok
 }
 
 func isDetailIPField(field DetailField) bool {

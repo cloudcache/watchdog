@@ -153,7 +153,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05B 回归**：Flow 全范围 race/vet/test 通过。
 - [x] **FLOW-05C 前置审计**：确认 compiler/runner 已隔离 tenant scope 和 typed 参数，但宿主尚无可执行 QueryGateway；Flow module/dataset 未注册，value-layer action 缺失，CH pool 私绑 rollup enablement，Flow readiness/限流/错误映射未装配。平台缺口已登记 PLAT-04H。
 - [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader、身份逻辑、CH pool 或 rate limiter。
-- [ ] **FLOW-05C1 查询能力契约**：从 Flow 固定 registry 导出 aggregate metric/dimension/view 与 detail 各 view 的允许字段、默认字段和过滤器；返回值不可修改内部 registry，未知 view 明确拒绝。API/UI 只能消费该契约，不能再维护平行白名单。
+- [x] **FLOW-05C1 设计/编码**：从 Flow 固定 registry 导出 aggregate customer view 与 detail raw/supplier/customer 的允许字段、默认字段和过滤器；compiler/runner 验证改为消费同一 view registry，hub/UI 不再需要复制白名单。
+- [x] **FLOW-05C1 单元/变更测试**：逐 view 验证全部已声明字段/filter 可编译、全部未声明项被拒绝、顺序稳定、默认字段属于允许集合、返回切片修改不污染 registry、未知 view fail-closed；aggregate 仍只声明 customer。
+- [x] **FLOW-05C1 回归**：`internal/flowquery` race/vet、全库 test/vet 与 diff check 全过。
+- [ ] **FLOW-05C1 已提交**：能力契约、共享 registry 改造、测试与设计进入同一独立提交后关闭。
 - [x] **FLOW-05D 设计**：冻结 source/destination/either IP、customer/count view、24h 毫秒时间范围、稳定 `(event_time,record_id)` cursor、固定 field mask registry、limit+1、base `FINAL` 去重、500 万行/1 GiB/10s 扫描预算和全有或全无结果。
 - [x] **FLOW-05D 编码**：实现参数化 `flow_records FINAL` compiler、有界 multi-block typed result runner、结果一致性复核和 next cursor；不接线 hub。
 - [x] **FLOW-05D 单元**：覆盖 IPv4/IPv6、三种 endpoint side、同毫秒 cursor 边界/全局顺序、field mask、参数注入、重复/非法/列错位/越界结果、执行中断和 limit+1。

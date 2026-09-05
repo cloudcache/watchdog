@@ -503,6 +503,8 @@ aggregate schema v1 只物化 `customer` view；`raw/supplier` 请求必须返�
 
 provider result runner 必须消费 CH 的多个 data block，校验所有列等长、结果行硬限、bucket 范围/对齐、非负有限值、版本身份、quality counters 和点唯一键。metadata sentinel 必须恰好一条且除 `covered_buckets` 外为固定零值；缺失、重复、畸形或覆盖数大于期望桶数都使整个查询失败，不能返回部分结果。对每个公开点返回 `sampling_completeness=(received-unknown_sampling)/received` 和 `quality_record_ratio=quality/received`；分母为零时分别标记 `Known=false`，不返回虚假的 100%。结果总体返回 `expected_buckets/covered_buckets/ratio/complete` 以及 `mixed_versions/version_count`；CH 在任一 block 后失败时丢弃已累积点，不泄漏部分成功。
 
+查询能力也必须由同一编译器 registry 导出，而不是让 hub 或前端复制白名单：aggregate v1 只发布 customer view 及现有 metric/dimension registry；detail 按 raw/supplier/customer 分别发布允许字段、默认字段和 filters。能力返回值是稳定排序的副本，调用方修改不得污染进程内 registry；未知 view 必须明确拒绝。编译器的接受/拒绝测试遍历同一 capability，确保能力声明与实际 SQL 校验不会漂移。
+
 ```json
 {
   "dimension": "geo.city",

@@ -89,6 +89,24 @@ const (
 	DetailFieldRemoteGeoCityID       DetailField = "remote_geo_city_id"
 )
 
+type DetailFilter string
+
+const (
+	DetailFilterDirection DetailFilter = "directions"
+	DetailFilterCategory  DetailFilter = "categories"
+	DetailFilterBusiness  DetailFilter = "businesses"
+	DetailFilterTarget    DetailFilter = "target_ids"
+	DetailFilterDevice    DetailFilter = "device_ids"
+	DetailFilterExporter  DetailFilter = "exporter_ids"
+)
+
+type DetailViewCapability struct {
+	View          View           `json:"view"`
+	Fields        []DetailField  `json:"fields"`
+	DefaultFields []DetailField  `json:"default_fields"`
+	Filters       []DetailFilter `json:"filters"`
+}
+
 type detailFieldKind uint8
 
 const (
@@ -202,6 +220,29 @@ var defaultSupplierDetailFields = []DetailField{
 	DetailFieldQualityFlags,
 }
 
+type detailViewSpec struct {
+	fields        map[DetailField]struct{}
+	defaultFields []DetailField
+	filters       []DetailFilter
+}
+
+var detailViewOrder = []View{ViewRaw, ViewSupplier, ViewCustomer}
+
+var detailViewRegistry = map[View]detailViewSpec{
+	ViewRaw: {
+		fields: rawDetailFields, defaultFields: defaultRawDetailFields,
+		filters: []DetailFilter{DetailFilterTarget, DetailFilterDevice, DetailFilterExporter},
+	},
+	ViewSupplier: {
+		fields: supplierDetailFields, defaultFields: defaultSupplierDetailFields,
+		filters: []DetailFilter{DetailFilterDirection, DetailFilterCategory, DetailFilterTarget, DetailFilterDevice, DetailFilterExporter},
+	},
+	ViewCustomer: {
+		defaultFields: defaultDetailFields,
+		filters:       []DetailFilter{DetailFilterDirection, DetailFilterCategory, DetailFilterBusiness, DetailFilterTarget, DetailFilterDevice, DetailFilterExporter},
+	},
+}
+
 type DetailFilters struct {
 	Directions  []string `json:"directions,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
@@ -250,6 +291,42 @@ func DetailFields() []DetailField {
 	return result
 }
 
+// DetailCapabilities returns an immutable snapshot of the supported detail
+// views. It is the only capability source an HTTP/UI adapter should expose;
+// validation below consumes the same registry.
+func DetailCapabilities() []DetailViewCapability {
+	result := make([]DetailViewCapability, 0, len(detailViewOrder))
+	for _, view := range detailViewOrder {
+		capability, _ := DetailCapability(view)
+		result = append(result, capability)
+	}
+	return result
+}
+
+func DetailCapability(view View) (DetailViewCapability, error) {
+	spec, ok := detailViewRegistry[view]
+	if !ok {
+		return DetailViewCapability{}, requestError("view", ErrorUnsupported, fmt.Sprintf("detail view %q is unsupported", view))
+	}
+	fields := DetailFields()
+	if spec.fields != nil {
+		fields = fields[:0]
+		for _, field := range DetailFields() {
+			if _, allowed := spec.fields[field]; allowed {
+				fields = append(fields, field)
+			}
+		}
+	}
+	defaults, err := normalizeDetailFields(view, spec.defaultFields)
+	if err != nil {
+		return DetailViewCapability{}, err
+	}
+	return DetailViewCapability{
+		View: view, Fields: fields, DefaultFields: defaults,
+		Filters: append([]DetailFilter(nil), spec.filters...),
+	}, nil
+}
+
 func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledDetail, error) {
 	if !validTenant(scope.TenantID) {
 		return CompiledDetail{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
@@ -257,7 +334,7 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if request.View == "" {
 		return CompiledDetail{}, requestError("view", ErrorRequired, "view is required")
 	}
-	if request.View != ViewCustomer && request.View != ViewRaw && request.View != ViewSupplier {
+	if _, ok := detailViewRegistry[request.View]; !ok {
 		return CompiledDetail{}, requestError("view", ErrorUnsupported, "detail schema v2 supports raw, supplier, and customer views")
 	}
 	ip, err := netip.ParseAddr(request.IP)
@@ -366,13 +443,12 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 }
 
 func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error) {
+	spec, ok := detailViewRegistry[view]
+	if !ok {
+		return nil, requestError("view", ErrorUnsupported, fmt.Sprintf("detail view %q is unsupported", view))
+	}
 	if len(input) == 0 {
-		input = defaultDetailFields
-		if view == ViewRaw {
-			input = defaultRawDetailFields
-		} else if view == ViewSupplier {
-			input = defaultSupplierDetailFields
-		}
+		input = spec.defaultFields
 	}
 	if len(input) > len(detailFieldRegistry) {
 		return nil, requestError("fields", ErrorLimitExceeded, "too many fields")
@@ -382,14 +458,9 @@ func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error
 		if _, exists := detailFieldRegistry[field]; !exists {
 			return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not in the detail registry", field))
 		}
-		if view == ViewRaw {
-			if _, exists := rawDetailFields[field]; !exists {
-				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in raw view", field))
-			}
-		}
-		if view == ViewSupplier {
-			if _, exists := supplierDetailFields[field]; !exists {
-				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in supplier view", field))
+		if spec.fields != nil {
+			if _, exists := spec.fields[field]; !exists {
+				return nil, requestError("fields", ErrorUnsupported, fmt.Sprintf("field %q is not available in %s view", field, view))
 			}
 		}
 		requested[field] = struct{}{}
@@ -404,50 +475,41 @@ func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error
 }
 
 func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.Parameter, error) {
-	if view == ViewRaw {
-		for _, filter := range []struct {
-			field  string
-			values []string
-		}{
-			{"filters.directions", filters.Directions},
-			{"filters.categories", filters.Categories},
-			{"filters.businesses", filters.Businesses},
-		} {
-			if len(filter.values) != 0 {
-				return nil, nil, requestError(filter.field, ErrorUnsupported, "customer-derived filters are not available in raw view")
-			}
-		}
-	}
-	if view == ViewSupplier && len(filters.Businesses) != 0 {
-		return nil, nil, requestError("filters.businesses", ErrorUnsupported, "customer business filters are not available in supplier view")
+	viewSpec, ok := detailViewRegistry[view]
+	if !ok {
+		return nil, nil, requestError("view", ErrorUnsupported, fmt.Sprintf("detail view %q is unsupported", view))
 	}
 	type filterSpec struct {
+		kind                  DetailFilter
 		field, column, prefix string
 		values                []string
 		allowed               map[string]struct{}
 	}
 	filtersList := []filterSpec{
-		{"filters.target_ids", "target_id", "detail_target", filters.TargetIDs, nil},
-		{"filters.device_ids", "device_id", "detail_device", filters.DeviceIDs, nil},
-		{"filters.exporter_ids", "exporter_id", "detail_exporter", filters.ExporterIDs, nil},
+		{DetailFilterDirection, "filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
+		{DetailFilterCategory, "filters.categories", "category", "detail_category", filters.Categories, validCategories},
+		{DetailFilterBusiness, "filters.businesses", "business", "detail_business", filters.Businesses, nil},
+		{DetailFilterTarget, "filters.target_ids", "target_id", "detail_target", filters.TargetIDs, nil},
+		{DetailFilterDevice, "filters.device_ids", "device_id", "detail_device", filters.DeviceIDs, nil},
+		{DetailFilterExporter, "filters.exporter_ids", "exporter_id", "detail_exporter", filters.ExporterIDs, nil},
 	}
-	switch view {
-	case ViewCustomer:
-		filtersList = append([]filterSpec{
-			{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
-			{"filters.categories", "category", "detail_category", filters.Categories, validCategories},
-			{"filters.businesses", "business", "detail_business", filters.Businesses, nil},
-		}, filtersList...)
-	case ViewSupplier:
-		filtersList = append([]filterSpec{
-			{"filters.directions", "business_direction", "detail_direction", filters.Directions, validDirections},
-			{"filters.categories", "supplier_category", "detail_category", filters.Categories, validCategories},
-		}, filtersList...)
+	if view == ViewSupplier {
+		filtersList[1].column = "supplier_category"
+	}
+	allowedFilters := make(map[DetailFilter]struct{}, len(viewSpec.filters))
+	for _, filter := range viewSpec.filters {
+		allowedFilters[filter] = struct{}{}
 	}
 	conditions := make([]string, 0, len(filtersList))
 	parameters := make([]proto.Parameter, 0)
 	total := 0
 	for _, filter := range filtersList {
+		if _, allowed := allowedFilters[filter.kind]; !allowed {
+			if len(filter.values) != 0 {
+				return nil, nil, requestError(filter.field, ErrorUnsupported, fmt.Sprintf("filter %q is not available in %s view", filter.kind, view))
+			}
+			continue
+		}
 		if len(filter.values) > maxDetailValuesPerFilter || total+len(filter.values) > maxDetailFilterValues {
 			return nil, nil, requestError(filter.field, ErrorLimitExceeded, "too many detail filter values")
 		}

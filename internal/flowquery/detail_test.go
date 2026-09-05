@@ -33,6 +33,96 @@ func TestDetailRegistryAndDefaultMaskAreFixed(t *testing.T) {
 	}
 }
 
+func TestDetailCapabilitiesShareValidationRegistryAndReturnCopies(t *testing.T) {
+	capabilities := DetailCapabilities()
+	if len(capabilities) != 3 || capabilities[0].View != ViewRaw || capabilities[1].View != ViewSupplier || capabilities[2].View != ViewCustomer {
+		t.Fatalf("detail capabilities=%+v", capabilities)
+	}
+	for _, capability := range capabilities {
+		if len(capability.Fields) == 0 || len(capability.DefaultFields) == 0 || len(capability.Filters) == 0 {
+			t.Fatalf("incomplete capability=%+v", capability)
+		}
+		allowedFields := make(map[DetailField]struct{}, len(capability.Fields))
+		for index, field := range capability.Fields {
+			if index > 0 && capability.Fields[index-1] >= field {
+				t.Fatalf("%s fields are not sorted: %v", capability.View, capability.Fields)
+			}
+			allowedFields[field] = struct{}{}
+			request := validDetailRequest()
+			request.View, request.Fields = capability.View, []DetailField{field}
+			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err != nil {
+				t.Fatalf("advertised %s field %s was rejected: %v", capability.View, field, err)
+			}
+		}
+		for _, field := range capability.DefaultFields {
+			if _, ok := allowedFields[field]; !ok {
+				t.Fatalf("%s default field %s is not allowed", capability.View, field)
+			}
+		}
+		for _, filter := range capability.Filters {
+			request := validDetailRequest()
+			request.View = capability.View
+			setDetailFilter(&request.Filters, filter)
+			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err != nil {
+				t.Fatalf("advertised %s filter %s was rejected: %v", capability.View, filter, err)
+			}
+		}
+	}
+
+	capabilities[0].Fields[0] = "mutated"
+	capabilities[0].DefaultFields[0] = "mutated"
+	capabilities[0].Filters[0] = "mutated"
+	again, err := DetailCapability(ViewRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Fields[0] == "mutated" || again.DefaultFields[0] == "mutated" || again.Filters[0] == "mutated" {
+		t.Fatal("caller mutation changed the detail capability registry")
+	}
+	if _, err := DetailCapability("invented"); err == nil {
+		t.Fatal("unknown detail view returned capabilities")
+	}
+}
+
+func TestDetailCapabilitiesDoNotAdvertiseUnsupportedFieldsOrFilters(t *testing.T) {
+	allFields := DetailFields()
+	allFilters := []DetailFilter{
+		DetailFilterDirection, DetailFilterCategory, DetailFilterBusiness,
+		DetailFilterTarget, DetailFilterDevice, DetailFilterExporter,
+	}
+	for _, capability := range DetailCapabilities() {
+		allowedFields := make(map[DetailField]struct{}, len(capability.Fields))
+		for _, field := range capability.Fields {
+			allowedFields[field] = struct{}{}
+		}
+		for _, field := range allFields {
+			if _, ok := allowedFields[field]; ok {
+				continue
+			}
+			request := validDetailRequest()
+			request.View, request.Fields = capability.View, []DetailField{field}
+			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err == nil {
+				t.Fatalf("unadvertised %s field %s was accepted", capability.View, field)
+			}
+		}
+		allowedFilters := make(map[DetailFilter]struct{}, len(capability.Filters))
+		for _, filter := range capability.Filters {
+			allowedFilters[filter] = struct{}{}
+		}
+		for _, filter := range allFilters {
+			if _, ok := allowedFilters[filter]; ok {
+				continue
+			}
+			request := validDetailRequest()
+			request.View = capability.View
+			setDetailFilter(&request.Filters, filter)
+			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err == nil {
+				t.Fatalf("unadvertised %s filter %s was accepted", capability.View, filter)
+			}
+		}
+	}
+}
+
 func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 	request := validDetailRequest()
 	request.IP = "2001:0DB8::1"
@@ -343,4 +433,23 @@ func validDetailRequest() DetailRequest {
 
 func detailNow() time.Time {
 	return time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+}
+
+func setDetailFilter(filters *DetailFilters, filter DetailFilter) {
+	switch filter {
+	case DetailFilterDirection:
+		filters.Directions = []string{"in"}
+	case DetailFilterCategory:
+		filters.Categories = []string{"overseas"}
+	case DetailFilterBusiness:
+		filters.Businesses = []string{"business-a"}
+	case DetailFilterTarget:
+		filters.TargetIDs = []string{"target-a"}
+	case DetailFilterDevice:
+		filters.DeviceIDs = []string{"device-a"}
+	case DetailFilterExporter:
+		filters.ExporterIDs = []string{"exporter-a"}
+	default:
+		panic("unknown detail filter " + filter)
+	}
 }
