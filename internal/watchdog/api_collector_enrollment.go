@@ -118,8 +118,9 @@ func (api collectorEnrollmentAPI) revoke(w http.ResponseWriter, r *http.Request)
 }
 
 type enrollRequest struct {
-	SecretID ID     `json:"secret_id"`
-	Secret   string `json:"secret"`
+	SecretID    ID                              `json:"secret_id"`
+	Secret      string                          `json:"secret"`
+	Declaration *CollectorEnrollmentDeclaration `json:"declaration"`
 }
 
 func (api collectorEnrollmentAPI) enroll(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +134,15 @@ func (api collectorEnrollmentAPI) enroll(w http.ResponseWriter, r *http.Request)
 		writeEnrollmentRejected(w)
 		return
 	}
+	// Declaration shape is validated before the secret is consulted, so a 400
+	// here reveals nothing about the secret and a bad declaration cannot burn
+	// a valid secret.
+	if req.Declaration != nil {
+		if err := validateCollectorEnrollmentDeclaration(*req.Declaration); err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+	}
 	token, err := NewCollectorToken()
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, "enrollment failed", nil)
@@ -141,7 +151,7 @@ func (api collectorEnrollmentAPI) enroll(w http.ResponseWriter, r *http.Request)
 	tokenHash := NewAgentTokenHash(token)
 	result, err := api.repo.ConsumeEnrollmentSecret(r.Context(), req.SecretID, func(secretHash string) bool {
 		return AgentTokenMatches(req.Secret, secretHash)
-	}, tokenHash)
+	}, tokenHash, req.Declaration)
 	if err != nil {
 		if errors.Is(err, ErrEnrollmentSecretInvalid) {
 			writeEnrollmentRejected(w)

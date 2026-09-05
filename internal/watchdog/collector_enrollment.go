@@ -39,11 +39,34 @@ type CollectorEnrollmentSecret struct {
 }
 
 type CollectorEnrollmentResult struct {
-	CollectorID ID     `json:"collector_id"`
-	TenantID    ID     `json:"tenant_id"`
-	ModuleKey   string `json:"module_key"`
-	AgentType   string `json:"agent_type"`
-	Token       string `json:"token"` // returned exactly once, never stored
+	CollectorID   ID     `json:"collector_id"`
+	TenantID      ID     `json:"tenant_id"`
+	ModuleKey     string `json:"module_key"`
+	AgentType     string `json:"agent_type"`
+	Token         string `json:"token"` // returned exactly once, never stored
+	PlanSchemaMin uint16 `json:"plan_schema_min"`
+	PlanSchemaMax uint16 `json:"plan_schema_max"`
+}
+
+// CollectorEnrollmentDeclaration is the collector's capability negotiation at
+// enrollment: what it runs, which plan schemas it accepts, and its canonical
+// capability set. The declared range is stored immediately so the first plan
+// can be validated against it without waiting for a heartbeat; the same
+// canonical rules as the runtime heartbeat apply.
+type CollectorEnrollmentDeclaration struct {
+	SoftwareVersion string                       `json:"software_version"`
+	AgentAPIVersion uint16                       `json:"agent_api_version"`
+	PlanSchemaMin   uint16                       `json:"plan_schema_min"`
+	PlanSchemaMax   uint16                       `json:"plan_schema_max"`
+	Capabilities    CollectorRuntimeCapabilities `json:"capabilities"`
+}
+
+func validateCollectorEnrollmentDeclaration(declaration CollectorEnrollmentDeclaration) error {
+	if declaration.SoftwareVersion == "" || len(declaration.SoftwareVersion) > 64 || !isPrintableASCII(declaration.SoftwareVersion) ||
+		declaration.AgentAPIVersion == 0 || declaration.PlanSchemaMin == 0 || declaration.PlanSchemaMax < declaration.PlanSchemaMin {
+		return errors.New("collector enrollment declaration header is invalid")
+	}
+	return validateCollectorRuntimeCapabilities(declaration.Capabilities)
 }
 
 type CollectorEnrollmentRepository interface {
@@ -52,8 +75,9 @@ type CollectorEnrollmentRepository interface {
 	DeleteEnrollmentSecret(ctx context.Context, tenantID, secretID ID) error
 	// ConsumeEnrollmentSecret atomically verifies and burns the secret, creates
 	// the collector row and stores the initial token hash. verify receives the
-	// stored secret hash and must return true for the exchange to proceed.
-	ConsumeEnrollmentSecret(ctx context.Context, secretID ID, verify func(secretHash string) bool, tokenHash string) (CollectorEnrollmentResult, error)
+	// stored secret hash and must return true for the exchange to proceed. A
+	// non-nil declaration must already be validated and is stored with the row.
+	ConsumeEnrollmentSecret(ctx context.Context, secretID ID, verify func(secretHash string) bool, tokenHash string, declaration *CollectorEnrollmentDeclaration) (CollectorEnrollmentResult, error)
 }
 
 func (s *MySQLStore) CreateEnrollmentSecret(ctx context.Context, secret CollectorEnrollmentSecret, secretHash string) (CollectorEnrollmentSecret, error) {
@@ -124,9 +148,14 @@ func (s *MySQLStore) DeleteEnrollmentSecret(ctx context.Context, tenantID, secre
 	return nil
 }
 
-func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, verify func(secretHash string) bool, tokenHash string) (CollectorEnrollmentResult, error) {
+func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, verify func(secretHash string) bool, tokenHash string, declaration *CollectorEnrollmentDeclaration) (CollectorEnrollmentResult, error) {
 	if verify == nil || tokenHash == "" {
 		return CollectorEnrollmentResult{}, ErrEnrollmentSecretInvalid
+	}
+	if declaration != nil {
+		if err := validateCollectorEnrollmentDeclaration(*declaration); err != nil {
+			return CollectorEnrollmentResult{}, err
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -159,13 +188,33 @@ func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, v
 	if err != nil {
 		return CollectorEnrollmentResult{}, err
 	}
+	softwareVersion, agentAPIVersion := "", uint16(1)
+	planSchemaMin, planSchemaMax := uint16(1), uint16(1)
+	var capabilitiesJSON any
+	capabilitiesHash, capabilitySchemaVersion := "", uint16(1)
+	if declaration != nil {
+		payload, hash, err := marshalCollectorRuntimeValue(declaration.Capabilities)
+		if err != nil {
+			return CollectorEnrollmentResult{}, err
+		}
+		softwareVersion, agentAPIVersion = declaration.SoftwareVersion, declaration.AgentAPIVersion
+		planSchemaMin, planSchemaMax = declaration.PlanSchemaMin, declaration.PlanSchemaMax
+		capabilitiesJSON, capabilitiesHash = string(payload), hash
+		capabilitySchemaVersion = declaration.Capabilities.SchemaVersion
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO collector_agents (
 			id, tenant_id, module_key, name, agent_type, mode,
-			status, observed_health, auth_type, token_hash, created_by, updated_by
-		) VALUES (?, ?, ?, ?, ?, ?, 'active', 'unknown', 'token', ?, ?, ?)
+			status, observed_health, auth_type, token_hash,
+			software_version, agent_api_version, plan_schema_min, plan_schema_max,
+			capabilities_json, capabilities_hash, capability_schema_version,
+			created_by, updated_by
+		) VALUES (?, ?, ?, ?, ?, ?, 'active', 'unknown', 'token', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, collectorID, secret.TenantID, secret.ModuleKey, secret.CollectorName,
-		secret.AgentType, secret.Mode, tokenHash, secret.CreatedBy, secret.CreatedBy); err != nil {
+		secret.AgentType, secret.Mode, tokenHash,
+		softwareVersion, agentAPIVersion, planSchemaMin, planSchemaMax,
+		capabilitiesJSON, capabilitiesHash, capabilitySchemaVersion,
+		secret.CreatedBy, secret.CreatedBy); err != nil {
 		return CollectorEnrollmentResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -181,5 +230,6 @@ func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, v
 	return CollectorEnrollmentResult{
 		CollectorID: collectorID, TenantID: secret.TenantID,
 		ModuleKey: secret.ModuleKey, AgentType: secret.AgentType,
+		PlanSchemaMin: planSchemaMin, PlanSchemaMax: planSchemaMax,
 	}, nil
 }

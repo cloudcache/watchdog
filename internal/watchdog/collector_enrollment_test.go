@@ -19,7 +19,8 @@ type fakeEnrollmentRepository struct {
 		expired bool
 		used    bool
 	}
-	consumed int
+	consumed    int
+	declaration *CollectorEnrollmentDeclaration
 }
 
 func (f *fakeEnrollmentRepository) CreateEnrollmentSecret(_ context.Context, secret CollectorEnrollmentSecret, secretHash string) (CollectorEnrollmentSecret, error) {
@@ -49,13 +50,18 @@ func (f *fakeEnrollmentRepository) DeleteEnrollmentSecret(context.Context, ID, I
 	return nil
 }
 
-func (f *fakeEnrollmentRepository) ConsumeEnrollmentSecret(_ context.Context, secretID ID, verify func(string) bool, _ string) (CollectorEnrollmentResult, error) {
+func (f *fakeEnrollmentRepository) ConsumeEnrollmentSecret(_ context.Context, secretID ID, verify func(string) bool, _ string, declaration *CollectorEnrollmentDeclaration) (CollectorEnrollmentResult, error) {
 	record, ok := f.secrets[secretID]
 	if !ok || record.expired || record.used || !verify(record.hash) {
 		return CollectorEnrollmentResult{}, ErrEnrollmentSecretInvalid
 	}
 	f.consumed++
-	return CollectorEnrollmentResult{CollectorID: "collector-fake-1", TenantID: record.tenant, ModuleKey: "flow", AgentType: "flow_collect"}, nil
+	f.declaration = declaration
+	result := CollectorEnrollmentResult{CollectorID: "collector-fake-1", TenantID: record.tenant, ModuleKey: "flow", AgentType: "flow_collect", PlanSchemaMin: 1, PlanSchemaMax: 1}
+	if declaration != nil {
+		result.PlanSchemaMin, result.PlanSchemaMax = declaration.PlanSchemaMin, declaration.PlanSchemaMax
+	}
+	return result, nil
 }
 
 func TestCollectorEnrollmentSecretMintAndExchange(t *testing.T) {
@@ -101,6 +107,69 @@ func TestCollectorEnrollmentSecretMintAndExchange(t *testing.T) {
 	}
 }
 
+func TestCollectorEnrollmentDeclarationNegotiation(t *testing.T) {
+	repo := &fakeEnrollmentRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(true), CollectorEnrollment: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collector-enrollment-secrets",
+		strings.NewReader(`{"collector_name":"edge-2","module_key":"flow","agent_type":"flow_collect"}`)))
+	var minted CollectorEnrollmentSecret
+	if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
+		t.Fatal(err)
+	}
+
+	declared := `{"secret_id":"` + string(minted.ID) + `","secret":"` + minted.Secret + `",` +
+		`"declaration":{"software_version":"1.4.0","agent_api_version":1,"plan_schema_min":1,"plan_schema_max":2,` +
+		`"capabilities":{"schema_version":1,"protocols":["netflow9","sflow5"],"plan_envelope_versions":[1,2]}}}`
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collectors/enroll", strings.NewReader(declared)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("declared enroll status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var result CollectorEnrollmentResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.PlanSchemaMin != 1 || result.PlanSchemaMax != 2 {
+		t.Fatalf("negotiated schema range = %d..%d", result.PlanSchemaMin, result.PlanSchemaMax)
+	}
+	if repo.declaration == nil || repo.declaration.SoftwareVersion != "1.4.0" {
+		t.Fatalf("declaration not passed through: %+v", repo.declaration)
+	}
+
+	// Invalid declarations are rejected before the secret is consulted: the
+	// same still-valid secret enrolls successfully afterwards.
+	repo2 := &fakeEnrollmentRepository{}
+	router2 := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(true), CollectorEnrollment: repo2})
+	rec = httptest.NewRecorder()
+	router2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collector-enrollment-secrets",
+		strings.NewReader(`{"collector_name":"edge-3","module_key":"flow","agent_type":"flow_collect"}`)))
+	if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
+		t.Fatal(err)
+	}
+	for name, declaration := range map[string]string{
+		"missing v2 envelope": `{"software_version":"1.4.0","agent_api_version":1,"plan_schema_min":1,"plan_schema_max":2,"capabilities":{"schema_version":1,"protocols":["sflow5"],"plan_envelope_versions":[1]}}`,
+		"inverted range":      `{"software_version":"1.4.0","agent_api_version":1,"plan_schema_min":3,"plan_schema_max":2,"capabilities":{"schema_version":1,"protocols":["sflow5"],"plan_envelope_versions":[1,2]}}`,
+		"unknown protocol":    `{"software_version":"1.4.0","agent_api_version":1,"plan_schema_min":1,"plan_schema_max":2,"capabilities":{"schema_version":1,"protocols":["carrier-pigeon"],"plan_envelope_versions":[1,2]}}`,
+	} {
+		rec = httptest.NewRecorder()
+		router2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collectors/enroll",
+			strings.NewReader(`{"secret_id":"`+string(minted.ID)+`","secret":"`+minted.Secret+`","declaration":`+declaration+`}`)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, body = %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if repo2.consumed != 0 {
+		t.Fatalf("invalid declarations must not consume the secret, consumed = %d", repo2.consumed)
+	}
+	rec = httptest.NewRecorder()
+	router2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collectors/enroll",
+		strings.NewReader(`{"secret_id":"`+string(minted.ID)+`","secret":"`+minted.Secret+`"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("secret must survive rejected declarations, status = %d", rec.Code)
+	}
+}
+
 // TestMySQLCollectorEnrollmentLifecycle proves single-use consumption on real
 // MySQL: the exchange creates an active collector whose token authenticates,
 // a replay of the same secret is rejected, a wrong secret leaves the row
@@ -143,7 +212,7 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 
 	// Wrong secret value: rejected, row stays unused.
 	verifyWrong := func(hash string) bool { return AgentTokenMatches("wde_wrong", hash) }
-	if _, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyWrong, NewAgentTokenHash("wdc_x")); err == nil {
+	if _, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyWrong, NewAgentTokenHash("wdc_x"), nil); err == nil {
 		t.Fatal("wrong secret must be rejected")
 	}
 	secrets, err := store.ListEnrollmentSecrets(ctx, tenant)
@@ -154,7 +223,7 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 	// Correct exchange: collector row exists, is active, token authenticates.
 	initialToken := "wdc_enroll_initial_token"
 	verifyRight := func(hash string) bool { return AgentTokenMatches(secretValue, hash) }
-	result, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyRight, NewAgentTokenHash(initialToken))
+	result, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyRight, NewAgentTokenHash(initialToken), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,12 +240,47 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 	}
 
 	// Replay of the consumed secret mints nothing.
-	if _, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyRight, NewAgentTokenHash("wdc_second")); err == nil {
+	if _, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyRight, NewAgentTokenHash("wdc_second"), nil); err == nil {
 		t.Fatal("replayed secret must be rejected")
 	}
 	var collectorCount int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM collector_agents WHERE tenant_id = ?", tenant).Scan(&collectorCount); err != nil || collectorCount != 1 {
 		t.Fatalf("collector count after replay = %d, err = %v", collectorCount, err)
+	}
+
+	// Declared enrollment: the negotiated range and capabilities land on the
+	// collector row so the first plan validates without waiting for a heartbeat.
+	declaredSecret, err := store.CreateEnrollmentSecret(ctx, CollectorEnrollmentSecret{
+		TenantID: tenant, ModuleKey: "flow", AgentType: "flow_collect", Mode: "listen",
+		CollectorName: "edge-enroll-declared", ExpiresAt: time.Now().UTC().Add(time.Hour), CreatedBy: "user_registry_admin",
+	}, NewAgentTokenHash(secretValue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaredResult, err := store.ConsumeEnrollmentSecret(ctx, declaredSecret.ID, verifyRight, NewAgentTokenHash("wdc_declared"), &CollectorEnrollmentDeclaration{
+		SoftwareVersion: "1.4.0", AgentAPIVersion: 2, PlanSchemaMin: 1, PlanSchemaMax: 2,
+		Capabilities: CollectorRuntimeCapabilities{SchemaVersion: 1, Protocols: []string{"netflow9", "sflow5"}, PlanEnvelopeVersions: []uint16{1, 2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declaredResult.PlanSchemaMin != 1 || declaredResult.PlanSchemaMax != 2 {
+		t.Fatalf("declared result schema range = %d..%d", declaredResult.PlanSchemaMin, declaredResult.PlanSchemaMax)
+	}
+	var softwareVersion, capabilitiesHash string
+	var agentAPIVersion, schemaMin, schemaMax, capabilitySchemaVersion uint16
+	if err := db.QueryRowContext(ctx, `
+		SELECT software_version, agent_api_version, plan_schema_min, plan_schema_max,
+			capabilities_hash, capability_schema_version
+		FROM collector_agents WHERE id = ?
+	`, declaredResult.CollectorID).Scan(&softwareVersion, &agentAPIVersion, &schemaMin, &schemaMax,
+		&capabilitiesHash, &capabilitySchemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	if softwareVersion != "1.4.0" || agentAPIVersion != 2 || schemaMin != 1 || schemaMax != 2 ||
+		len(capabilitiesHash) != 64 || capabilitySchemaVersion != 1 {
+		t.Fatalf("declared collector row = %q api=%d range=%d..%d hash=%q capschema=%d",
+			softwareVersion, agentAPIVersion, schemaMin, schemaMax, capabilitiesHash, capabilitySchemaVersion)
 	}
 
 	// Expired secret: rejected.
@@ -187,7 +291,7 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConsumeEnrollmentSecret(ctx, expired.ID, verifyRight, NewAgentTokenHash("wdc_y")); err == nil {
+	if _, err := store.ConsumeEnrollmentSecret(ctx, expired.ID, verifyRight, NewAgentTokenHash("wdc_y"), nil); err == nil {
 		t.Fatal("expired secret must be rejected")
 	}
 
@@ -202,7 +306,7 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 	if err := store.DeleteEnrollmentSecret(ctx, tenant, revocable.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConsumeEnrollmentSecret(ctx, revocable.ID, verifyRight, NewAgentTokenHash("wdc_z")); err == nil {
+	if _, err := store.ConsumeEnrollmentSecret(ctx, revocable.ID, verifyRight, NewAgentTokenHash("wdc_z"), nil); err == nil {
 		t.Fatal("revoked secret must be rejected")
 	}
 	if err := store.DeleteEnrollmentSecret(ctx, tenant, secret.ID); err == nil {
