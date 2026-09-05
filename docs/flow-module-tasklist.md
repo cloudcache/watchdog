@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05C1 — transport-independent 查询能力契约。** 从现有 compiler 的唯一 registry 导出各 view 可选/default 字段和 filter 能力，供后续 QueryGateway/API/UI 消费；顺序稳定、返回副本、未知 view fail-closed，禁止 hub/frontend 复制 raw/supplier/customer 白名单。
+**活动切片：FLOW-08A — ClickHouse schema 生命周期。** 冻结顺序 migration、checksum、并发执行、dirty/失败恢复和 inspect/apply 契约；在不修改已发布 001..005 的前提下提供可审计执行入口，解除“手工执行 SQL”造成的部署漂移。真实 CH 执行仍是独立外部门禁。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -49,6 +49,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，真实 CH/mixed worker 保留为外部门禁。
 - FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
 - FLOW-06A3：`d56bc3f6 feat(flow): expose complete supplier detail view`；supplier 明细映射冻结的 supplier 基线，完整过滤窗在 cursor 之前计算 `fact_schema` 证据，旧事实、缺失或矛盾 evidence 均全页失败；Flow race/vet、全库 test/vet 与 diff check 通过。
+- FLOW-05C1：`8a4a9b24 feat(flow): publish query capability registry`；aggregate/customer 与 detail 三层能力从 compiler 的同一 registry 导出，逐项验证声明与接受/拒绝一致且返回副本不可污染；`internal/flowquery` race/vet、全库 test/vet 与 diff check 通过。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -156,7 +157,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05C1 设计/编码**：从 Flow 固定 registry 导出 aggregate customer view 与 detail raw/supplier/customer 的允许字段、默认字段和过滤器；compiler/runner 验证改为消费同一 view registry，hub/UI 不再需要复制白名单。
 - [x] **FLOW-05C1 单元/变更测试**：逐 view 验证全部已声明字段/filter 可编译、全部未声明项被拒绝、顺序稳定、默认字段属于允许集合、返回切片修改不污染 registry、未知 view fail-closed；aggregate 仍只声明 customer。
 - [x] **FLOW-05C1 回归**：`internal/flowquery` race/vet、全库 test/vet 与 diff check 全过。
-- [ ] **FLOW-05C1 已提交**：能力契约、共享 registry 改造、测试与设计进入同一独立提交后关闭。
+- [x] **FLOW-05C1 已提交**：能力契约、共享 registry 改造、测试与设计已进入独立提交 `8a4a9b24`；工作区不再残留该切片生产文件。
 - [x] **FLOW-05D 设计**：冻结 source/destination/either IP、customer/count view、24h 毫秒时间范围、稳定 `(event_time,record_id)` cursor、固定 field mask registry、limit+1、base `FINAL` 去重、500 万行/1 GiB/10s 扫描预算和全有或全无结果。
 - [x] **FLOW-05D 编码**：实现参数化 `flow_records FINAL` compiler、有界 multi-block typed result runner、结果一致性复核和 next cursor；不接线 hub。
 - [x] **FLOW-05D 单元**：覆盖 IPv4/IPv6、三种 endpoint side、同毫秒 cursor 边界/全局顺序、field mask、参数注入、重复/非法/列错位/越界结果、执行中断和 limit+1。
@@ -224,6 +225,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 ### FLOW-08 HA/Lifecycle/Release
 
+- [ ] **FLOW-08A CH schema 生命周期**：为 `deploy/migration/clickhouse` 的顺序 migration 提供 checksum/已应用状态、并发互斥、失败可诊断、inspect/apply CLI 和滚动升级门禁；绝不修改已发布 migration 或在 worker/hub 启动时隐式改 schema。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。
