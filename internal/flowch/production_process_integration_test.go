@@ -113,6 +113,10 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	unpauseProductionContainer(t, kafkaContainer)
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 1)
 	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 1)
+	waitForKafkaOffsets(t, kafkaContainer, consumerGroup, topic, 1)
+	restartProductionContainer(t, kafkaContainer)
+	waitForProductionKafka(t, kafkaContainer)
+	waitForKafkaOffsets(t, kafkaContainer, consumerGroup, topic, 1)
 
 	clickHouseProxy.DropServerResponses()
 	writeUDPPayloads(t, netflowSender, corpusFixturePayload(t, "netflow", "nfv5.pcap"))
@@ -237,13 +241,18 @@ func startProductionKafka(t testing.TB) (string, string) {
 		t.Fatalf("start integration Kafka: %v\n%s", err, output)
 	}
 	t.Cleanup(func() { removeProductionContainer(t, container) })
+	waitForProductionKafka(t, container)
+	return "127.0.0.1:" + port, container
+}
 
+func waitForProductionKafka(t testing.TB, container string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
 		command := exec.CommandContext(ctx, "docker", "exec", container, "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "127.0.0.1:19092", "--list")
 		if err := command.Run(); err == nil {
-			return "127.0.0.1:" + port, container
+			return
 		}
 		select {
 		case <-ctx.Done():
@@ -251,6 +260,13 @@ func startProductionKafka(t testing.TB) (string, string) {
 			t.Fatalf("wait for integration Kafka: %v\n%s", ctx.Err(), logs)
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+func restartProductionContainer(t testing.TB, container string) {
+	t.Helper()
+	if output, err := exec.Command("docker", "restart", container).CombinedOutput(); err != nil {
+		t.Fatalf("restart %s: %v\n%s", container, err, output)
 	}
 }
 

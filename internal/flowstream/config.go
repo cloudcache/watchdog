@@ -171,7 +171,10 @@ func (c KafkaConfig) options() ([]kgo.Opt, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
-	opts := []kgo.Opt{kgo.SeedBrokers(c.Brokers...), kgo.ClientID(c.ClientID)}
+	// Flow services validate connectivity during startup. Once that succeeds,
+	// an EOF on the first request of a replacement connection is a transient
+	// broker restart/load event, not evidence of a TLS or SASL mismatch.
+	opts := []kgo.Opt{kgo.SeedBrokers(c.Brokers...), kgo.ClientID(c.ClientID), kgo.AlwaysRetryEOF()}
 	if c.TLS.Enabled {
 		tlsConfig, err := c.TLS.ClientConfig()
 		if err != nil {
