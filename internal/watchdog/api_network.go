@@ -534,8 +534,13 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	limit := parsePositiveInt(r.URL.Query().Get("limit"))
-	events, err := api.collector.ListSNMPEvents(r.Context(), auth.TenantID, device.ID, limit)
+	query := r.URL.Query()
+	events, nextCursor, err := api.collector.ListSNMPEventsPaged(r.Context(), auth.TenantID, device.ID, SNMPEventFilter{
+		Severity:  query.Get("severity"),
+		EventType: query.Get("event_type"),
+		Limit:     parsePositiveInt(query.Get("limit")),
+		Cursor:    query.Get("cursor"),
+	})
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -543,7 +548,11 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []SNMPEvent{}
 	}
-	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": events})
+	response := map[string]any{"items": events}
+	if nextCursor != "" {
+		response["next_cursor"] = nextCursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
 }
 
 func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request) {

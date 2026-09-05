@@ -1458,34 +1458,39 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 	const { t } = useLingui()
 	const [events, setEvents] = useState<SNMPEventEntry[]>([])
 	const [loading, setLoading] = useState(true)
+	const [nextCursor, setNextCursor] = useState("")
 
-	useEffect(() => {
-		let cancelled = false
-		const load = async () => {
+	const fetchEvents = useCallback(
+		async (cursor: string, append: boolean) => {
+			setLoading(true)
 			try {
-				const data = await pb.send<{ items?: SNMPEventEntry[] }>(
-					`/api/v1/network/devices/${deviceId}/events?limit=500`,
+				const params = new URLSearchParams({ limit: "200" })
+				if (cursor) {
+					params.set("cursor", cursor)
+				}
+				const data = await pb.send<{ items?: SNMPEventEntry[]; next_cursor?: string }>(
+					`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
 					{}
 				)
-				if (!cancelled) {
-					const items = data.items ?? []
-					setEvents(
-						alertOnly
-							? items.filter((event) => ["warning", "error", "critical"].includes((event.Severity ?? "").toLowerCase()))
-							: items
-					)
-				}
+				const items = (data.items ?? []).filter((event) =>
+					alertOnly ? ["warning", "error", "critical"].includes((event.Severity ?? "").toLowerCase()) : true
+				)
+				setEvents((current) => (append ? [...current, ...items] : items))
+				setNextCursor(data.next_cursor ?? "")
 			} catch {
-				if (!cancelled) setEvents([])
+				if (!append) {
+					setEvents([])
+				}
 			} finally {
-				if (!cancelled) setLoading(false)
+				setLoading(false)
 			}
-		}
-		load()
-		return () => {
-			cancelled = true
-		}
-	}, [alertOnly, deviceId])
+		},
+		[alertOnly, deviceId]
+	)
+
+	useEffect(() => {
+		fetchEvents("", false)
+	}, [fetchEvents])
 	const records = useMemo(
 		() =>
 			events.map((event, index) => {
@@ -1520,13 +1525,22 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 		? t`No active warning, error, or critical events.`
 		: t`No events yet. Events appear on interface status changes and SNMP traps.`
 	return (
-		<PagedVTable
-			records={records}
-			columns={columns}
-			loading={loading}
-			emptyText={emptyText}
-			searchPlaceholder={alertOnly ? t`Search alerts...` : t`Search events...`}
-		/>
+		<div className="grid gap-3">
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={emptyText}
+				searchPlaceholder={alertOnly ? t`Search alerts...` : t`Search events...`}
+			/>
+			{nextCursor ? (
+				<div>
+					<Button variant="outline" size="sm" onClick={() => fetchEvents(nextCursor, true)} disabled={loading}>
+						<Trans>Load more</Trans>
+					</Button>
+				</div>
+			) : null}
+		</div>
 	)
 }
 

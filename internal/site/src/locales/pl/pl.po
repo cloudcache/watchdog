@@ -2468,6 +2468,7 @@ msgstr "Średnie obciążenie 5 min"
 #~ msgstr "Śr. obciążenie"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr ""

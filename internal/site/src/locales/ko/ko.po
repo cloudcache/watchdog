@@ -2468,6 +2468,7 @@ msgstr "부하 평균 5분"
 #~ msgstr "부하 평균"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr ""

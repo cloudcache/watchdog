@@ -408,6 +408,72 @@ func (s *MySQLStore) PruneSNMPCollectionRecipes(ctx context.Context, tenantID, d
 	return result.RowsAffected()
 }
 
+// SNMPEventFilter narrows and pages device events. Cursor is the opaque value
+// from the previous page; events are ordered newest-occurred first.
+type SNMPEventFilter struct {
+	Severity  string
+	EventType string
+	Limit     int
+	Cursor    string
+}
+
+// ListSNMPEventsPaged returns a device's events with keyset pagination and
+// optional severity/event_type filters. The device scoping and permission
+// check happen at the API layer, so this query is a clean tenant+device keyset.
+func (s *MySQLStore) ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID ID, filter SNMPEventFilter) ([]SNMPEvent, string, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `
+		SELECT id, tenant_id, device_id, entity_type, entity_id, source, severity, event_type, message, occurred_at
+		FROM snmp_events
+		WHERE tenant_id = ? AND device_id = ?`
+	args := []any{tenantID, deviceID}
+	if filter.Severity != "" {
+		query += ` AND severity = ?`
+		args = append(args, filter.Severity)
+	}
+	if filter.EventType != "" {
+		query += ` AND event_type = ?`
+		args = append(args, filter.EventType)
+	}
+	if filter.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (occurred_at < ? OR (occurred_at = ? AND id < ?))`
+		args = append(args, cursorTime, cursorTime, cursorID)
+	}
+	query += ` ORDER BY occurred_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var events []SNMPEvent
+	for rows.Next() {
+		var event SNMPEvent
+		if err := rows.Scan(&event.ID, &event.TenantID, &event.DeviceID, &event.EntityType, &event.EntityID, &event.Source, &event.Severity, &event.EventType, &event.Message, &event.OccurredAt); err != nil {
+			return nil, "", err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(events) > limit {
+		events = events[:limit]
+		last := events[len(events)-1]
+		nextCursor = encodeAuditCursor(last.OccurredAt, last.ID)
+	}
+	return events, nextCursor, nil
+}
+
 func (s *MySQLStore) ListSNMPEvents(ctx context.Context, tenantID, deviceID ID, limit int) ([]SNMPEvent, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

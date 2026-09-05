@@ -1249,6 +1249,10 @@ func (r *fakeSNMPCollectorRepository) ListSNMPEvents(_ context.Context, _ ID, _ 
 	return r.events, nil
 }
 
+func (r *fakeSNMPCollectorRepository) ListSNMPEventsPaged(_ context.Context, _ ID, _ ID, _ SNMPEventFilter) ([]SNMPEvent, string, error) {
+	return r.events, "", nil
+}
+
 func (r *fakeSNMPCollectorRepository) CreateSNMPEvent(_ context.Context, event SNMPEvent) error {
 	r.events = append(r.events, event)
 	return nil

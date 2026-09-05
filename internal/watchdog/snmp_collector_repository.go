@@ -23,4 +23,5 @@ type SNMPCollectorRepository interface {
 	PruneSNMPCollectionRecipes(ctx context.Context, tenantID, deviceID ID, keep []ID) (int64, error)
 	CreateSNMPEvent(ctx context.Context, event SNMPEvent) error
 	ListSNMPEvents(ctx context.Context, tenantID, deviceID ID, limit int) ([]SNMPEvent, error)
+	ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID ID, filter SNMPEventFilter) ([]SNMPEvent, string, error)
 }

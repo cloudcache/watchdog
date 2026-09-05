@@ -2468,6 +2468,7 @@ msgstr "5分鐘平均負載"
 #~ msgstr "平均負載"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr "載入更多"

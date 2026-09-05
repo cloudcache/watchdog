@@ -2463,6 +2463,7 @@ msgstr "Load Average 5m"
 #~ msgstr "Load Avg"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr "Load more"

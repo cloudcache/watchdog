@@ -2468,6 +2468,7 @@ msgstr "Carga media 5m"
 #~ msgstr "Carga media"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/network-device.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr ""
