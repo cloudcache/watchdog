@@ -58,25 +58,27 @@ const (
 )
 
 type Candidate struct {
-	WindowStart         time.Time
-	WindowEnd           time.Time
-	ConversationKey     string
-	LocalIP             netip.Addr
-	RemoteIP            netip.Addr
-	PrimaryProtocol     uint8
-	PrimaryLocalPort    uint16
-	PrimaryRemotePort   uint16
-	LocalToRemoteBytes  uint64
-	RemoteToLocalBytes  uint64
-	FlowRecordCount     uint64
-	ActiveBucketCount   uint32
-	MaxDurationMS       uint64
-	RemoteASN           uint32
-	RemoteCountry       string
-	RemotePrefixID      string
-	TransportHints      []TransportHint
-	CompleteRatio       float64
-	DimensionSnapshotID string
+	WindowStart           time.Time
+	WindowEnd             time.Time
+	ConversationKey       string
+	LocalIP               netip.Addr
+	RemoteIP              netip.Addr
+	PrimaryProtocol       uint8
+	PrimaryLocalPort      uint16
+	PrimaryRemotePort     uint16
+	LocalToRemoteBytes    uint64
+	RemoteToLocalBytes    uint64
+	FlowRecordCount       uint64
+	ActiveBucketCount     uint32
+	MaxDurationMS         uint64
+	RemoteASN             uint32
+	RemoteCountry         string
+	RemotePrefixID        string
+	TransportHints        []TransportHint
+	CompleteRatio         float64
+	DimensionSnapshotID   string
+	GeoVersion            string
+	ClassificationVersion uint32
 }
 
 type Match struct {
@@ -121,17 +123,20 @@ type Evidence struct {
 }
 
 type Result struct {
-	RuleSetVersion   string     `json:"rule_set_version"`
-	Score            uint16     `json:"score"`
-	ScoreCapped      bool       `json:"score_capped"`
-	Level            RiskLevel  `json:"level"`
-	Verdict          Verdict    `json:"verdict"`
-	SymmetryRatio    float64    `json:"symmetry_ratio"`
-	DominanceRatio   float64    `json:"dominance_ratio"`
-	Evidence         []Evidence `json:"evidence"`
-	DecisionRuleID   string     `json:"decision_rule_id,omitempty"`
-	ProbeRecommended bool       `json:"probe_recommended"`
-	ProbeBlockReason string     `json:"probe_block_reason,omitempty"`
+	RuleSetVersion        string     `json:"rule_set_version"`
+	DimensionSnapshotID   string     `json:"dimension_snapshot_id"`
+	GeoVersion            string     `json:"geo_version"`
+	ClassificationVersion uint32     `json:"classification_version"`
+	Score                 uint16     `json:"score"`
+	ScoreCapped           bool       `json:"score_capped"`
+	Level                 RiskLevel  `json:"level"`
+	Verdict               Verdict    `json:"verdict"`
+	SymmetryRatio         float64    `json:"symmetry_ratio"`
+	DominanceRatio        float64    `json:"dominance_ratio"`
+	Evidence              []Evidence `json:"evidence"`
+	DecisionRuleID        string     `json:"decision_rule_id,omitempty"`
+	ProbeRecommended      bool       `json:"probe_recommended"`
+	ProbeBlockReason      string     `json:"probe_block_reason,omitempty"`
 }
 
 type compiledRule struct {
@@ -207,7 +212,11 @@ func (r CompiledRuleSet) Evaluate(candidate Candidate) (Result, error) {
 		return Result{}, err
 	}
 	symmetry, dominance := trafficRatios(normalized.LocalToRemoteBytes, normalized.RemoteToLocalBytes)
-	result := Result{RuleSetVersion: r.version, SymmetryRatio: symmetry, DominanceRatio: dominance}
+	result := Result{
+		RuleSetVersion: r.version, DimensionSnapshotID: normalized.DimensionSnapshotID,
+		GeoVersion: normalized.GeoVersion, ClassificationVersion: normalized.ClassificationVersion,
+		SymmetryRatio: symmetry, DominanceRatio: dominance,
+	}
 	var terminal *Rule
 	var score uint32
 	for _, current := range r.rules {
@@ -276,6 +285,9 @@ func normalizeCandidate(input Candidate) (Candidate, error) {
 	}
 	if input.DimensionSnapshotID == "" || !validIdentifier(input.DimensionSnapshotID) {
 		return Candidate{}, errors.New("VPN candidate dimension snapshot is invalid")
+	}
+	if input.GeoVersion == "" || !validIdentifier(input.GeoVersion) || input.ClassificationVersion == 0 {
+		return Candidate{}, errors.New("VPN candidate Geo and classification versions are invalid")
 	}
 	if input.RemotePrefixID != "" && !validIdentifier(input.RemotePrefixID) {
 		return Candidate{}, errors.New("VPN candidate remote prefix is invalid")

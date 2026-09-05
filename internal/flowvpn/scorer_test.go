@@ -41,6 +41,9 @@ func TestScorerCombinesExplainableEvidenceAndCapsScore(t *testing.T) {
 	if result.Score != 100 || !result.ScoreCapped || result.Level != RiskCritical || result.Verdict != VerdictProbeCandidate || !result.ProbeRecommended || result.ProbeBlockReason != "" {
 		t.Fatalf("result=%+v", result)
 	}
+	if result.DimensionSnapshotID != candidate.DimensionSnapshotID || result.GeoVersion != candidate.GeoVersion || result.ClassificationVersion != candidate.ClassificationVersion {
+		t.Fatalf("candidate provenance was not preserved: %+v", result)
+	}
 	if result.SymmetryRatio != 0.9 || math.Abs(result.DominanceRatio-0.1) > 1e-12 {
 		t.Fatalf("ratios=%+v", result)
 	}
@@ -288,6 +291,8 @@ func TestEvaluateRejectsInvalidCandidates(t *testing.T) {
 		{"bucket overflow", func(value *Candidate) { value.ActiveBucketCount = uint32(value.FlowRecordCount + 1) }},
 		{"completeness", func(value *Candidate) { value.CompleteRatio = -1 }},
 		{"snapshot", func(value *Candidate) { value.DimensionSnapshotID = "bad snapshot" }},
+		{"geo version", func(value *Candidate) { value.GeoVersion = "bad version" }},
+		{"classification version", func(value *Candidate) { value.ClassificationVersion = 0 }},
 		{"prefix", func(value *Candidate) { value.RemotePrefixID = "bad prefix" }},
 		{"country", func(value *Candidate) { value.RemoteCountry = "cn" }},
 		{"hint", func(value *Candidate) { value.TransportHints = []TransportHint{"ssh"} }},
@@ -326,6 +331,6 @@ func validCandidate() Candidate {
 		FlowRecordCount: 10, ActiveBucketCount: 5, MaxDurationMS: 120_000,
 		RemoteASN: 64512, RemoteCountry: "CN", RemotePrefixID: "risk-prefix",
 		TransportHints: []TransportHint{HintTLS, HintTCP}, CompleteRatio: 1,
-		DimensionSnapshotID: "snapshot-1",
+		DimensionSnapshotID: "snapshot-1", GeoVersion: "geo-1", ClassificationVersion: 1,
 	}
 }

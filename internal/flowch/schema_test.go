@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 2 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" {
+	if len(paths) != 3 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
@@ -42,6 +42,9 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"record_id FixedString(32)", "quality_flags UInt64", "estimated_valid Bool",
 		"'on_net_local_city'=1", "'off_net_in_province'=4", "remote_geo_continent_id", "remote_geo_region_id",
 		"remote_geo_country_id", "remote_geo_province_id", "remote_geo_city_id", "'flow-geo-v2'=4",
+		"row_kind Enum8('candidate'=1,'_generation'=2)", "remote_prefix_id LowCardinality(String)",
+		"geo_version LowCardinality(String)", "classification_version UInt32",
+		"row_kind, dimension_snapshot_id, geo_version, classification_version",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)
