@@ -380,3 +380,59 @@ func NewPortDeleteJobHandler(network NetworkRepository, cleaner SeriesCleaner, r
 		return "deleted:" + string(payload.PortID), nil
 	}
 }
+
+// CollectorDeleteJobType names the async collector deletion job (PLAT-04).
+const CollectorDeleteJobType = "collector_delete"
+
+// CollectorDeletePayloadVersion is the payload schema version for
+// collector_delete.
+const CollectorDeletePayloadVersion = 1
+
+type collectorDeleteJobPayload struct {
+	CollectorID ID             `json:"collector_id"`
+	Impact      map[string]int `json:"impact,omitempty"`
+}
+
+// EncodeCollectorDeletePayload builds the versioned envelope for a collector
+// delete.
+func EncodeCollectorDeletePayload(collectorID ID, impact map[string]int) (json.RawMessage, error) {
+	return EncodeJobPayload(CollectorDeletePayloadVersion, collectorDeleteJobPayload{CollectorID: collectorID, Impact: impact})
+}
+
+// CollectorDeleter deletes a registry collector, refusing when RESTRICT
+// ownership evidence remains.
+type CollectorDeleter interface {
+	DeleteCollector(ctx context.Context, tenantID, collectorID ID) error
+}
+
+// NewCollectorDeleteJobHandler deletes the collector (bindings and plan
+// revisions cascade) and records a destruction receipt. Blocked deletes
+// (ownership evidence still present) fail terminally — they will not clear on
+// retry.
+func NewCollectorDeleteJobHandler(collectors CollectorDeleter, receipts DestructionReceiptRecorder) OperationJobHandler {
+	return func(ctx context.Context, job OperationJob) (string, error) {
+		var payload collectorDeleteJobPayload
+		if err := DecodeJobPayload(job.CheckpointJSON, CollectorDeletePayloadVersion, &payload); err != nil {
+			return "", err
+		}
+		if payload.CollectorID == "" {
+			return "", TerminalJobError(fmt.Errorf("collector delete job payload has no collector_id"))
+		}
+		if err := collectors.DeleteCollector(ctx, job.TenantID, payload.CollectorID); err != nil {
+			if errors.Is(err, ErrCollectorDeleteBlocked) {
+				return "", TerminalJobError(err)
+			}
+			return "", err
+		}
+		if receipts != nil {
+			if err := receipts.RecordDestructionReceipt(ctx, DestructionReceipt{
+				TenantID: job.TenantID, JobID: job.ID, ResourceType: "collector",
+				ResourceID: payload.CollectorID, ActorID: job.CreatedBy,
+				Impact: payload.Impact, DestroyedAt: time.Now().UTC(),
+			}); err != nil {
+				return "", err
+			}
+		}
+		return "deleted:" + string(payload.CollectorID), nil
+	}
+}

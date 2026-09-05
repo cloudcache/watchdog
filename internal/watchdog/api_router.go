@@ -6,45 +6,46 @@ import (
 )
 
 type APIV1RouterConfig struct {
-	Auth                 AuthContextAdapter
-	TenantDiscovery      AuthContextAdapter
-	Targets              TargetRepository
-	Agents               AgentRepository
-	Network              NetworkRepository
-	Exports              ExportRepository
-	ExportFiles          ExportFileReader
-	Billing              BillingRepository
-	AggregateGraphs      AggregateGraphRepository
-	Permissions          PermissionRepository
-	IdentityAdmin        IdentityAdminRepository
-	Idempotency          IdempotencyRepository
-	TargetDeletePreview  TargetDeletePreviewRepository
-	DeviceDeletePreview  DeviceDeletePreviewRepository
-	PortDeletePreview    PortDeletePreviewRepository
-	CollectorCredentials CollectorCredentialRepository
-	CollectorEnrollment  CollectorEnrollmentRepository
-	OperationJobs        OperationJobRepository
-	AuditLogs            AuditLogReader
-	Registries           *PlatformRegistries
-	TenantModules        TenantModuleRepository
-	FlowGeo              *FlowGeoService
-	Retention            RetentionRepository
-	SNMP                 SNMPRepository
-	Metrics              MetricsService
-	SNMPDiscovery        SNMPDeviceDiscoverer
-	SNMPCollector        SNMPCollectorRepository
-	SeriesCleaner        SeriesCleaner
-	DiscoveryJobs        DiscoveryJobRepository
-	TrapDispatcher       func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
-	Audit                AuditRepository
-	AddressSets          AddressSetRepository
-	Tenants              TenantRepository
-	Readiness            func(context.Context) error
-	RuntimeHealth        func() PlatformRuntimeHealth
-	RuntimeMetrics       func() []byte
-	CollectorEvidence    CollectorEvidenceController
-	CollectorPrincipals  CollectorPrincipalController
-	CollectorPlans       CollectorPlanDeliveryController
+	Auth                   AuthContextAdapter
+	TenantDiscovery        AuthContextAdapter
+	Targets                TargetRepository
+	Agents                 AgentRepository
+	Network                NetworkRepository
+	Exports                ExportRepository
+	ExportFiles            ExportFileReader
+	Billing                BillingRepository
+	AggregateGraphs        AggregateGraphRepository
+	Permissions            PermissionRepository
+	IdentityAdmin          IdentityAdminRepository
+	Idempotency            IdempotencyRepository
+	TargetDeletePreview    TargetDeletePreviewRepository
+	DeviceDeletePreview    DeviceDeletePreviewRepository
+	PortDeletePreview      PortDeletePreviewRepository
+	CollectorDeletePreview CollectorDeletePreviewRepository
+	CollectorCredentials   CollectorCredentialRepository
+	CollectorEnrollment    CollectorEnrollmentRepository
+	OperationJobs          OperationJobRepository
+	AuditLogs              AuditLogReader
+	Registries             *PlatformRegistries
+	TenantModules          TenantModuleRepository
+	FlowGeo                *FlowGeoService
+	Retention              RetentionRepository
+	SNMP                   SNMPRepository
+	Metrics                MetricsService
+	SNMPDiscovery          SNMPDeviceDiscoverer
+	SNMPCollector          SNMPCollectorRepository
+	SeriesCleaner          SeriesCleaner
+	DiscoveryJobs          DiscoveryJobRepository
+	TrapDispatcher         func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
+	Audit                  AuditRepository
+	AddressSets            AddressSetRepository
+	Tenants                TenantRepository
+	Readiness              func(context.Context) error
+	RuntimeHealth          func() PlatformRuntimeHealth
+	RuntimeMetrics         func() []byte
+	CollectorEvidence      CollectorEvidenceController
+	CollectorPrincipals    CollectorPrincipalController
+	CollectorPlans         CollectorPlanDeliveryController
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -160,6 +161,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.CollectorEnrollment != nil {
 		registerCollectorEnrollmentRoutes(mux, auth, cfg.CollectorEnrollment, cfg.Audit)
+	}
+	if cfg.CollectorDeletePreview != nil {
+		registerCollectorDeleteRoutes(mux, auth, cfg.CollectorDeletePreview, cfg.OperationJobs)
 	}
 	if cfg.OperationJobs != nil {
 		registerOperationJobRoutes(mux, auth, cfg.OperationJobs)
