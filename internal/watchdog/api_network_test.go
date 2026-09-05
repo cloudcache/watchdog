@@ -26,10 +26,24 @@ type fakeNetworkRepository struct {
 	deleted      ID
 	deletedPort  ID
 	deletedPorts []ID
+	// captured by ListDevicesPage for assertions
+	pagedCalled  bool
+	pagedAll     bool
+	pagedAllowed []ID
+	pagedFilter  NetworkDevicePageFilter
+	pageNext     string
 }
 
 func (r *fakeNetworkRepository) ListDevices(context.Context, ID) ([]NetworkDevice, error) {
 	return r.devices, nil
+}
+
+func (r *fakeNetworkRepository) ListDevicesPage(_ context.Context, _ ID, all bool, allowedTargetIDs []ID, filter NetworkDevicePageFilter) ([]NetworkDevice, string, error) {
+	r.pagedCalled = true
+	r.pagedAll = all
+	r.pagedAllowed = allowedTargetIDs
+	r.pagedFilter = filter
+	return r.devices, r.pageNext, nil
 }
 
 func (r *fakeNetworkRepository) GetDevice(_ context.Context, _ ID, deviceID ID) (NetworkDevice, error) {
@@ -280,6 +294,84 @@ func TestAPINetworkDevicesListFiltersByTargetPermission(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "device-a") || strings.Contains(body, "device-b") {
 		t.Fatalf("unexpected body = %s", body)
+	}
+}
+
+func adminNetworkAuth(*http.Request) (AuthContext, error) {
+	return AuthContext{TenantID: "tenant-a", UserID: "admin", IsAdmin: true}, nil
+}
+
+func tenantGrantNetworkAuth(*http.Request) (AuthContext, error) {
+	return AuthContext{
+		TenantID: "tenant-a",
+		UserID:   "user-t",
+		Grants: []Permission{{
+			TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-t",
+			ResourceType: ResourceTenant, ResourceID: "tenant-a", Actions: []Action{ActionView},
+		}},
+	}, nil
+}
+
+func TestAPINetworkDevicesListPagedOptIn(t *testing.T) {
+	// A per-target grant pushes down to that target only; next_cursor surfaces
+	// only when the repo reports a further page.
+	repo := &fakeNetworkRepository{
+		devices:  []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		pageNext: "CURSOR2",
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices?limit=2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !repo.pagedCalled || repo.pagedFilter.Limit != 2 {
+		t.Fatalf("paged not called with limit 2: %+v", repo.pagedFilter)
+	}
+	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
+		t.Fatalf("grant pushdown wrong: all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
+	}
+	if !strings.Contains(rec.Body.String(), `"next_cursor":"CURSOR2"`) {
+		t.Fatalf("expected next_cursor: %s", rec.Body.String())
+	}
+
+	// A cursor alone opts in and threads through.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices?cursor=abc", nil))
+	if !repo.pagedCalled || repo.pagedFilter.Cursor != "abc" {
+		t.Fatalf("cursor not threaded: %+v", repo.pagedFilter)
+	}
+
+	// An admin and a tenant-scoped grant both push down as "whole tenant".
+	for _, auth := range []AuthContextAdapter{adminNetworkAuth, tenantGrantNetworkAuth} {
+		scopeRepo := &fakeNetworkRepository{}
+		scopeRouter := NewAPIV1Router(APIV1RouterConfig{Auth: auth, Network: scopeRepo})
+		rec = httptest.NewRecorder()
+		scopeRouter.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices?limit=5", nil))
+		if !scopeRepo.pagedAll || scopeRepo.pagedAllowed != nil {
+			t.Fatalf("tenant-wide scope wrong: all=%v allowed=%v", scopeRepo.pagedAll, scopeRepo.pagedAllowed)
+		}
+	}
+}
+
+func TestAPINetworkDevicesListPagedGuards(t *testing.T) {
+	repo := &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+
+	// No limit/cursor => legacy path, paged repo untouched.
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices", nil))
+	if repo.pagedCalled {
+		t.Fatal("full-list request must not hit the paged path")
+	}
+	// Bad limit rejected before the repo.
+	for _, bad := range []string{"0", "-1", "abc"} {
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices?limit="+bad, nil))
+		if rec.Code != http.StatusBadRequest || repo.pagedCalled {
+			t.Fatalf("limit=%q status=%d called=%v", bad, rec.Code, repo.pagedCalled)
+		}
 	}
 }
 

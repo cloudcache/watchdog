@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -65,6 +68,14 @@ func registerNetworkRoutes(mux *http.ServeMux, auth func(http.Handler) http.Hand
 
 func (api networkAPI) listDevices(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	query := r.URL.Query()
+	// Pagination is opt-in: only when limit or cursor is present. Without them
+	// the endpoint keeps returning the full tenant-visible list, because callers
+	// use it as a complete source and count its length.
+	if query.Get("limit") != "" || query.Get("cursor") != "" {
+		api.listDevicesPaged(w, r, auth, query)
+		return
+	}
 	devices, err := api.repo.ListDevices(r.Context(), auth.TenantID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -77,6 +88,65 @@ func (api networkAPI) listDevices(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": visible})
+}
+
+func (api networkAPI) listDevicesPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	filter := NetworkDevicePageFilter{Cursor: strings.TrimSpace(query.Get("cursor"))}
+	if raw := query.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	all, allowedTargetIDs := visibleDeviceScope(auth)
+	devices, nextCursor, err := api.repo.ListDevicesPage(r.Context(), auth.TenantID, all, allowedTargetIDs, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if devices == nil {
+		devices = []NetworkDevice{}
+	}
+	response := map[string]any{"items": devices}
+	if nextCursor != "" {
+		response["next_cursor"] = nextCursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
+}
+
+// visibleDeviceScope resolves which devices the caller may view, for pushing the
+// grant set into a paginated query. It mirrors canAccessTarget: admins and
+// holders of a tenant-scoped grant see the whole tenant (all=true); other
+// subjects see devices whose target carries a matching per-target view grant.
+func visibleDeviceScope(auth AuthContext) (all bool, targetIDs []ID) {
+	if auth.IsAdmin {
+		return true, nil
+	}
+	seen := make(map[ID]struct{})
+	for _, grant := range auth.Grants {
+		if grant.TenantID != auth.TenantID {
+			continue
+		}
+		if !subjectMatches(AccessRequest{UserID: auth.UserID, RoleIDs: auth.RoleIDs}, grant) {
+			continue
+		}
+		if !actionAllowed(ActionView, grant.Actions) {
+			continue
+		}
+		// A tenant-scoped grant sees every device (mirrors resourceMatches).
+		if grant.ResourceType == ResourceTenant && grant.ResourceID != "" {
+			return true, nil
+		}
+		if grant.ResourceType == ResourceTarget && grant.ResourceID != "" {
+			if _, dup := seen[grant.ResourceID]; !dup {
+				seen[grant.ResourceID] = struct{}{}
+				targetIDs = append(targetIDs, grant.ResourceID)
+			}
+		}
+	}
+	return false, targetIDs
 }
 
 func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request) {

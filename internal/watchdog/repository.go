@@ -112,8 +112,21 @@ type CollectorPrincipalOperationRepository interface {
 	GetCollectorServicePrincipalByGrantOperation(ctx context.Context, tenantID ID, operationKey string) (CollectorServicePrincipal, error)
 }
 
+// NetworkDevicePageFilter requests an opt-in keyset page of network devices
+// ordered by (sys_name, id). Limit is clamped by the repository; Cursor is a
+// next_cursor from a prior page ("" for the first).
+type NetworkDevicePageFilter struct {
+	Limit  int
+	Cursor string
+}
+
 type NetworkRepository interface {
 	ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error)
+	// ListDevicesPage returns a keyset page. When all is true the whole tenant is
+	// visible (admin or a tenant-scoped grant); otherwise only devices whose
+	// target_id is in allowedTargetIDs are returned (per-target view grants
+	// pushed into SQL). Returns the page and a next_cursor ("" on the last page).
+	ListDevicesPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, filter NetworkDevicePageFilter) ([]NetworkDevice, string, error)
 	GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error)
 	GetDeviceByTarget(ctx context.Context, tenantID, targetID ID) (NetworkDevice, error)
 	UpsertDevice(ctx context.Context, device NetworkDevice) (NetworkDevice, error)

@@ -10,14 +10,16 @@ import (
 	"time"
 )
 
+const networkDeviceSelect = `
+	SELECT id, tenant_id, target_id, vendor, model,
+	       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
+	       sys_object_id, sys_name, sys_descr,
+	       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
+	       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
+	FROM network_devices`
+
 func (s *MySQLStore) ListDevices(ctx context.Context, tenantID ID) ([]NetworkDevice, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, tenant_id, target_id, vendor, model,
-		       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
-		       sys_object_id, sys_name, sys_descr,
-		       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
-		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
-		FROM network_devices
+	rows, err := s.db.QueryContext(ctx, networkDeviceSelect+`
 		WHERE tenant_id = ?
 		ORDER BY sys_name, id
 	`, tenantID)
@@ -34,6 +36,59 @@ func (s *MySQLStore) ListDevices(ctx context.Context, tenantID ID) ([]NetworkDev
 		devices = append(devices, device)
 	}
 	return devices, rows.Err()
+}
+
+func (s *MySQLStore) ListDevicesPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, filter NetworkDevicePageFilter) ([]NetworkDevice, string, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	// A non-admin with no target grants sees nothing; skip the query.
+	if !all && len(allowedTargetIDs) == 0 {
+		return nil, "", nil
+	}
+	query := networkDeviceSelect + ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if !all {
+		query += ` AND target_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedTargetIDs)), ",") + `)`
+		for _, id := range allowedTargetIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.Cursor != "" {
+		sysName, id, err := decodeStringCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (sys_name > ? OR (sys_name = ? AND id > ?))`
+		args = append(args, sysName, sysName, id)
+	}
+	query += ` ORDER BY sys_name, id LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var devices []NetworkDevice
+	for rows.Next() {
+		device, err := scanNetworkDevice(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		devices = append(devices, device)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(devices) > limit {
+		devices = devices[:limit]
+		last := devices[limit-1]
+		nextCursor = encodeStringCursor(last.SysName, last.ID)
+	}
+	return devices, nextCursor, nil
 }
 
 func (s *MySQLStore) GetDevice(ctx context.Context, tenantID, deviceID ID) (NetworkDevice, error) {
