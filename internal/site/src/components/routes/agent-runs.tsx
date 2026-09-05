@@ -47,14 +47,20 @@ type AgentRunsProps = {
 	id: string
 }
 
+const RUNS_PAGE_SIZE = 200
+
 export default memo(({ id }: AgentRunsProps) => {
 	const { t } = useLingui()
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
 	const [agent, setAgent] = useState<AgentRecord | null>(null)
 	const [runs, setRuns] = useState<AgentRunRecord[]>([])
+	const [cursor, setCursor] = useState("")
 	const [loading, setLoading] = useState(true)
+	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
+
+	type RunsResponse = { items?: AgentRunRecord[]; next_cursor?: string }
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
@@ -62,16 +68,33 @@ export default memo(({ id }: AgentRunsProps) => {
 		try {
 			const [agentData, runData] = await Promise.all([
 				pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {}),
-				pb.send<{ items?: AgentRunRecord[] }>(`/api/v1/agent-registry/${id}/runs?limit=200`, {}),
+				pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, { query: { limit: RUNS_PAGE_SIZE } }),
 			])
 			setAgent(agentData)
 			setRuns(runData.items ?? [])
+			setCursor(runData.next_cursor ?? "")
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load agent runs`)
 		} finally {
 			setLoading(false)
 		}
 	}, [id, t])
+
+	const loadMore = useCallback(async () => {
+		if (!cursor || loadingMore) return
+		setLoadingMore(true)
+		try {
+			const data = await pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
+				query: { limit: RUNS_PAGE_SIZE, cursor },
+			})
+			setRuns((current) => [...current, ...(data.items ?? [])])
+			setCursor(data.next_cursor ?? "")
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to load agent runs`)
+		} finally {
+			setLoadingMore(false)
+		}
+	}, [cursor, id, loadingMore, t])
 
 	useEffect(() => {
 		document.title = `${id} / ${t`Agent Runs`} / Watchdog`
@@ -83,7 +106,7 @@ export default memo(({ id }: AgentRunsProps) => {
 			runs.map((run) => ({
 				id: run.ID ?? run.id ?? "",
 				status: localizedStatus(run.Status ?? run.status ?? ""),
-				seen: run.Seen ?? run.seen ? t`yes` : t`no`,
+				seen: (run.Seen ?? run.seen) ? t`yes` : t`no`,
 				started: formatDate(run.StartedAt ?? run.started_at),
 				ended: formatDate(run.EndedAt ?? run.ended_at),
 				duration: formatDuration(run.DurationMS ?? run.duration_ms ?? 0),
@@ -145,7 +168,10 @@ export default memo(({ id }: AgentRunsProps) => {
 				<Summary label={t`Agent`} value={id} />
 				<Summary label={t`Target`} value={targetID} />
 				<Summary label={t`Status`} value={localizedStatus(status)} />
-				<Summary label={t`Runs`} value={`${agent?.RunCount ?? agent?.run_count ?? 0} / ${agent?.FailureCount ?? agent?.failure_count ?? 0}`} />
+				<Summary
+					label={t`Runs`}
+					value={`${agent?.RunCount ?? agent?.run_count ?? 0} / ${agent?.FailureCount ?? agent?.failure_count ?? 0}`}
+				/>
 			</div>
 
 			<div className="rounded-md border border-border bg-card">
@@ -162,6 +188,14 @@ export default memo(({ id }: AgentRunsProps) => {
 				) : null}
 				<div ref={tableRef} className="h-[560px] w-full" />
 			</div>
+
+			{cursor ? (
+				<div className="flex justify-center">
+					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
+					</Button>
+				</div>
+			) : null}
 		</div>
 	)
 })
@@ -179,7 +213,11 @@ function localizedStatus(status: string) {
 	if (!status) {
 		return "-"
 	}
-	return status === "success" || status === "up" ? `● ${status}` : status === "failure" || status === "error" ? `● ${status}` : status
+	return status === "success" || status === "up"
+		? `● ${status}`
+		: status === "failure" || status === "error"
+			? `● ${status}`
+			: status
 }
 
 function formatDate(value?: string) {

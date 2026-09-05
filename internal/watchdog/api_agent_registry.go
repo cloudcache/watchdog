@@ -119,16 +119,16 @@ func (api agentRegistryAPI) listRuns(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	limit := 100
+	filter := AgentRunPageFilter{Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed <= 0 {
 			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be positive", nil)
 			return
 		}
-		limit = parsed
+		filter.Limit = parsed
 	}
-	runs, err := api.repo.ListAgentRuns(r.Context(), auth.TenantID, agent.ID, limit)
+	runs, nextCursor, err := api.repo.ListAgentRunsPage(r.Context(), auth.TenantID, agent.ID, filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -137,7 +137,11 @@ func (api agentRegistryAPI) listRuns(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		items = append(items, agentRunHistoryResponse(run))
 	}
-	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+	response := map[string]any{"items": items}
+	if nextCursor != "" {
+		response["next_cursor"] = nextCursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
 }
 
 func (api agentRegistryAPI) create(w http.ResponseWriter, r *http.Request) {

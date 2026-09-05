@@ -11,10 +11,17 @@ import (
 )
 
 type fakeAgentRepository struct {
-	agent   SNMPAgentConfig
-	deleted ID
-	run     AgentRunReport
-	runs    []AgentRunHistory
+	agent     SNMPAgentConfig
+	deleted   ID
+	run       AgentRunReport
+	runs      []AgentRunHistory
+	runFilter AgentRunPageFilter
+	runNext   string
+}
+
+func (r *fakeAgentRepository) ListAgentRunsPage(_ context.Context, _, _ ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error) {
+	r.runFilter = filter
+	return r.runs, r.runNext, nil
 }
 
 func (r *fakeAgentRepository) GetAgent(context.Context, ID) (SNMPAgentConfig, error) {
@@ -49,28 +56,34 @@ func (r *fakeAgentRepository) ListAgentRuns(context.Context, ID, ID, int) ([]Age
 }
 
 func TestAPIAgentRegistryListsRuns(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{
-		Auth: billingTestAuth(true),
-		Agents: &fakeAgentRepository{
-			agent: SNMPAgentConfig{ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a"},
-			runs: []AgentRunHistory{{
-				ID:       "run-a",
-				TenantID: "tenant-a",
-				AgentID:  "agent-a",
-				TargetID: "target-a",
-				Status:   AgentRunFailure,
-				Error:    "snmp timeout",
-			}},
-		},
-	})
+	repo := &fakeAgentRepository{
+		agent: SNMPAgentConfig{ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a"},
+		runs: []AgentRunHistory{{
+			ID:       "run-a",
+			TenantID: "tenant-a",
+			AgentID:  "agent-a",
+			TargetID: "target-a",
+			Status:   AgentRunFailure,
+			Error:    "snmp timeout",
+		}},
+		runNext: "CURSOR2",
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry/agent-a/runs", nil))
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry/agent-a/runs?limit=50&cursor=abc", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "run-a") || !strings.Contains(body, "snmp timeout") {
 		t.Fatalf("body = %s", body)
+	}
+	// limit/cursor thread into the keyset filter and next_cursor surfaces.
+	if repo.runFilter.Limit != 50 || repo.runFilter.Cursor != "abc" {
+		t.Fatalf("filter not threaded: %+v", repo.runFilter)
+	}
+	if !strings.Contains(body, `"next_cursor":"CURSOR2"`) {
+		t.Fatalf("expected next_cursor: %s", body)
 	}
 }
 

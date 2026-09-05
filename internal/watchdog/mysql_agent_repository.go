@@ -358,14 +358,25 @@ func legacyCollectorObservedHealth(status string) string {
 	}
 }
 
+const agentRunSelect = `
+	SELECT id, tenant_id, agent_id, target_id, status, COALESCE(error, ''), seen,
+		started_at, ended_at, duration_ms, created_at
+	FROM agent_run_history`
+
+func scanAgentRun(rows *sql.Rows) (AgentRunHistory, error) {
+	var run AgentRunHistory
+	err := rows.Scan(
+		&run.ID, &run.TenantID, &run.AgentID, &run.TargetID, &run.Status, &run.Error, &run.Seen,
+		&run.StartedAt, &run.EndedAt, &run.DurationMS, &run.CreatedAt,
+	)
+	return run, err
+}
+
 func (s *MySQLStore) ListAgentRuns(ctx context.Context, tenantID, agentID ID, limit int) ([]AgentRunHistory, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, tenant_id, agent_id, target_id, status, COALESCE(error, ''), seen,
-			started_at, ended_at, duration_ms, created_at
-		FROM agent_run_history
+	rows, err := s.db.QueryContext(ctx, agentRunSelect+`
 		WHERE tenant_id = ? AND agent_id = ?
 		ORDER BY ended_at DESC, id DESC
 		LIMIT ?
@@ -376,16 +387,65 @@ func (s *MySQLStore) ListAgentRuns(ctx context.Context, tenantID, agentID ID, li
 	defer rows.Close()
 	var runs []AgentRunHistory
 	for rows.Next() {
-		var run AgentRunHistory
-		if err := rows.Scan(
-			&run.ID, &run.TenantID, &run.AgentID, &run.TargetID, &run.Status, &run.Error, &run.Seen,
-			&run.StartedAt, &run.EndedAt, &run.DurationMS, &run.CreatedAt,
-		); err != nil {
+		run, err := scanAgentRun(rows)
+		if err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+// AgentRunPageFilter requests a keyset page of an agent's run history ordered by
+// (ended_at, id) descending (newest first).
+type AgentRunPageFilter struct {
+	Limit  int
+	Cursor string
+}
+
+// ListAgentRunsPage returns a keyset page of one agent's runs and a next_cursor
+// ("" on the last page), so the UI can page beyond the initial window.
+func (s *MySQLStore) ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := agentRunSelect + ` WHERE tenant_id = ? AND agent_id = ?`
+	args := []any{tenantID, agentID}
+	if filter.Cursor != "" {
+		endedAt, id, err := decodeAuditCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (ended_at < ? OR (ended_at = ? AND id < ?))`
+		args = append(args, endedAt.UTC(), endedAt.UTC(), id)
+	}
+	query += ` ORDER BY ended_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var runs []AgentRunHistory
+	for rows.Next() {
+		run, err := scanAgentRun(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(runs) > limit {
+		runs = runs[:limit]
+		last := runs[limit-1]
+		nextCursor = encodeAuditCursor(last.EndedAt, last.ID)
+	}
+	return runs, nextCursor, nil
 }
 
 var _ AgentRepository = (*MySQLStore)(nil)
