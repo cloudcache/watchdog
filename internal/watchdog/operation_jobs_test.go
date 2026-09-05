@@ -42,6 +42,75 @@ func operationJobTestDB(t *testing.T) (*sql.DB, ID) {
 	return db, tenant
 }
 
+type fakeOperationJobRepository struct {
+	filter OperationJobFilter
+	jobs   []OperationJob
+	next   string
+}
+
+func (f *fakeOperationJobRepository) EnqueueOperationJob(context.Context, OperationJob) (OperationJob, error) {
+	return OperationJob{}, nil
+}
+func (f *fakeOperationJobRepository) GetOperationJob(context.Context, ID, ID) (OperationJob, error) {
+	return OperationJob{}, sql.ErrNoRows
+}
+func (f *fakeOperationJobRepository) ListOperationJobs(_ context.Context, _ ID, filter OperationJobFilter) ([]OperationJob, string, error) {
+	f.filter = filter
+	return f.jobs, f.next, nil
+}
+func (f *fakeOperationJobRepository) LeaseNextOperationJob(context.Context, string, string, time.Duration) (OperationJob, error) {
+	return OperationJob{}, sql.ErrNoRows
+}
+func (f *fakeOperationJobRepository) HeartbeatOperationJob(context.Context, ID, string, time.Duration, uint64, json.RawMessage) (bool, error) {
+	return false, nil
+}
+func (f *fakeOperationJobRepository) CompleteOperationJobSucceeded(context.Context, ID, string, string) error {
+	return nil
+}
+func (f *fakeOperationJobRepository) CompleteOperationJobCanceled(context.Context, ID, string) error {
+	return nil
+}
+func (f *fakeOperationJobRepository) CompleteOperationJobFailed(context.Context, ID, string, string, string, bool, time.Time) error {
+	return nil
+}
+func (f *fakeOperationJobRepository) RequestOperationJobCancel(context.Context, ID, ID) error {
+	return nil
+}
+
+func TestOperationJobListEndpoint(t *testing.T) {
+	repo := &fakeOperationJobRepository{
+		jobs: []OperationJob{{ID: "job-1", TenantID: "tenant-a", JobType: "target_delete", Status: "succeeded"}},
+		next: "cursor-2",
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(true), OperationJobs: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/operation-jobs?job_type=target_delete&status=succeeded&limit=25&cursor=abc", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if repo.filter.JobType != "target_delete" || repo.filter.Status != "succeeded" ||
+		repo.filter.Limit != 25 || repo.filter.Cursor != "abc" {
+		t.Fatalf("filter = %+v", repo.filter)
+	}
+	var body struct {
+		Items      []OperationJob `json:"items"`
+		NextCursor string         `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.NextCursor != "cursor-2" {
+		t.Fatalf("body = %+v", body)
+	}
+
+	bad := httptest.NewRecorder()
+	router.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/api/v1/operation-jobs?limit=0", nil))
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("limit=0 status = %d", bad.Code)
+	}
+}
+
 func TestMySQLOperationJobLifecycle(t *testing.T) {
 	db, tenant := operationJobTestDB(t)
 	store := NewMySQLStore(db)
@@ -115,6 +184,30 @@ func TestMySQLOperationJobLifecycle(t *testing.T) {
 	// A stale token cannot double-finish.
 	if err := store.CompleteOperationJobSucceeded(ctx, leased2.ID, leased2.LeaseToken, "again"); !errors.Is(err, ErrOperationJobLeaseLost) {
 		t.Fatalf("double finish error = %v", err)
+	}
+
+	// List with pagination and filters over a second enqueued job.
+	other, err := store.EnqueueOperationJob(ctx, OperationJob{
+		TenantID: tenant, JobType: "other_job", IdempotencyKey: "key-other", RequestHash: strings.Repeat("f", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page1, cursor, err := store.ListOperationJobs(ctx, tenant, OperationJobFilter{Limit: 1})
+	if err != nil || len(page1) != 1 || cursor == "" {
+		t.Fatalf("page1 = %d cursor=%q err=%v", len(page1), cursor, err)
+	}
+	page2, cursor2, err := store.ListOperationJobs(ctx, tenant, OperationJobFilter{Limit: 1, Cursor: cursor})
+	if err != nil || len(page2) != 1 || cursor2 != "" || page2[0].ID == page1[0].ID {
+		t.Fatalf("page2 = %+v cursor=%q err=%v", page2, cursor2, err)
+	}
+	byType, _, err := store.ListOperationJobs(ctx, tenant, OperationJobFilter{JobType: "other_job"})
+	if err != nil || len(byType) != 1 || byType[0].ID != other.ID {
+		t.Fatalf("type filter = %+v err=%v", byType, err)
+	}
+	succeeded, _, err := store.ListOperationJobs(ctx, tenant, OperationJobFilter{Status: OperationJobStatusSucceeded})
+	if err != nil || len(succeeded) != 1 || succeeded[0].ID != job.ID {
+		t.Fatalf("status filter = %+v err=%v", succeeded, err)
 	}
 }
 

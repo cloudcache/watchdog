@@ -45,6 +45,7 @@ const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overvie
 const UsersAdmin = lazy(() => import("@/components/routes/users.tsx"))
 const ModulesAdmin = lazy(() => import("@/components/routes/modules.tsx"))
 const AuditLogs = lazy(() => import("@/components/routes/audit-logs.tsx"))
+const OperationJobs = lazy(() => import("@/components/routes/operation-jobs.tsx"))
 const Containers = lazy(() => import("@/components/routes/containers.tsx"))
 const CoreBGP = lazy(() => import("@/components/routes/core.tsx"))
 const NetworkDeviceDetail = lazy(() => import("@/components/routes/network-device.tsx"))
@@ -197,6 +198,8 @@ const App = memo(() => {
 		return <ModulesAdmin />
 	} else if (page.route === "audit_logs") {
 		return <AuditLogs />
+	} else if (page.route === "operation_jobs") {
+		return <OperationJobs />
 	} else if (page.route === "permissions") {
 		return <Permissions />
 	} else if (page.route === "permission_new") {

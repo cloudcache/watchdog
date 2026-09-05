@@ -71,6 +71,7 @@ type OperationJobRepository interface {
 	// returns the existing job; a differing hash is a conflict.
 	EnqueueOperationJob(ctx context.Context, job OperationJob) (OperationJob, error)
 	GetOperationJob(ctx context.Context, tenantID, jobID ID) (OperationJob, error)
+	ListOperationJobs(ctx context.Context, tenantID ID, filter OperationJobFilter) ([]OperationJob, string, error)
 	// LeaseNextOperationJob claims the next due job of the type: a queued job
 	// whose next_attempt_at has passed, or a running job whose lease expired
 	// (takeover). sql.ErrNoRows when nothing is due.
@@ -174,6 +175,72 @@ func (s *MySQLStore) GetOperationJob(ctx context.Context, tenantID, jobID ID) (O
 		FROM operation_jobs
 		WHERE tenant_id = ? AND id = ?
 	`, tenantID, jobID))
+}
+
+// OperationJobFilter narrows and pages ListOperationJobs. Cursor is the opaque
+// value returned by the previous page; jobs are ordered newest-created first.
+type OperationJobFilter struct {
+	JobType string
+	Status  string
+	Limit   int
+	Cursor  string
+}
+
+func (s *MySQLStore) ListOperationJobs(ctx context.Context, tenantID ID, filter OperationJobFilter) ([]OperationJob, string, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	query := `
+		SELECT ` + operationJobColumns + `
+		FROM operation_jobs
+		WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if filter.JobType != "" {
+		query += ` AND job_type = ?`
+		args = append(args, filter.JobType)
+	}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, cursorTime, cursorTime, cursorID)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var jobs []OperationJob
+	for rows.Next() {
+		job, err := scanOperationJob(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+		last := jobs[len(jobs)-1]
+		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
+	return jobs, nextCursor, nil
 }
 
 func (s *MySQLStore) LeaseNextOperationJob(ctx context.Context, jobType, owner string, leaseFor time.Duration) (OperationJob, error) {

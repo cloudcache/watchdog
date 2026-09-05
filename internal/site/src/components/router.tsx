@@ -34,6 +34,7 @@ const routes = {
 	users_admin: "/users",
 	modules_admin: "/modules",
 	audit_logs: "/audit-logs",
+	operation_jobs: "/jobs",
 	permission_new: "/permissions/new",
 	permission_edit: "/permissions/:id/edit",
 	retention: "/retention",

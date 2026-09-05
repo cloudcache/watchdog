@@ -405,6 +405,10 @@ msgstr ""
 msgid "All Sets"
 msgstr ""
 
+#: src/components/routes/operation-jobs.tsx
+msgid "All statuses"
+msgstr ""
+
 #: src/components/alerts/alerts-sheet.tsx
 #: src/components/command-palette.tsx
 #: src/components/routes/home.tsx
@@ -432,6 +436,10 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "Jeste li sigurni?"
+
+#: src/components/routes/operation-jobs.tsx
+msgid "Attempts"
+msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/audit-logs.tsx
@@ -546,6 +554,12 @@ msgstr ""
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 msgid "Back to targets"
+msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/operation-jobs.tsx
+#: src/components/routes/operation-jobs.tsx
+msgid "Background Jobs"
 msgstr ""
 
 #: src/components/command-palette.tsx
@@ -672,6 +686,7 @@ msgstr "Može se zaustaviti"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/target-detail.tsx
@@ -1044,6 +1059,7 @@ msgstr ""
 #: src/components/alerts-history-columns.tsx
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Created"
 msgstr "Kreiran"
 
@@ -1233,6 +1249,7 @@ msgstr ""
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Detail"
 msgstr "Detalj"
 
@@ -1856,6 +1873,10 @@ msgstr ""
 #~ msgid "Failed to load interface health"
 #~ msgstr ""
 
+#: src/components/routes/operation-jobs.tsx
+msgid "Failed to load jobs"
+msgstr ""
+
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Failed to load MIB module"
 msgstr ""
@@ -2437,6 +2458,7 @@ msgstr "Prosječno Opterećenje 5m"
 #~ msgstr "Prosječno Opterećenje"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr ""
 
@@ -2786,6 +2808,10 @@ msgstr ""
 
 #: src/components/routes/audit-logs.tsx
 msgid "No audit records match the filters."
+msgstr ""
+
+#: src/components/routes/operation-jobs.tsx
+msgid "No background jobs."
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -3466,6 +3492,7 @@ msgstr "Primljeno"
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profiles.tsx
@@ -3486,6 +3513,7 @@ msgid "Request a one-time password"
 msgstr "Zatraži jednokratnu lozinku"
 
 #: src/components/routes/modules.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
@@ -4037,6 +4065,8 @@ msgstr "Stanje"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
+#: src/components/routes/operation-jobs.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
@@ -4455,6 +4485,7 @@ msgstr "Pokreće se kada iskorištenost bilo kojeg diska premaši prag"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx

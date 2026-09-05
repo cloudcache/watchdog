@@ -405,6 +405,10 @@ msgstr "全部資源"
 msgid "All Sets"
 msgstr ""
 
+#: src/components/routes/operation-jobs.tsx
+msgid "All statuses"
+msgstr "全部狀態"
+
 #: src/components/alerts/alerts-sheet.tsx
 #: src/components/command-palette.tsx
 #: src/components/routes/home.tsx
@@ -432,6 +436,10 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "您確定嗎？"
+
+#: src/components/routes/operation-jobs.tsx
+msgid "Attempts"
+msgstr "嘗試次數"
 
 #: src/components/navbar.tsx
 #: src/components/routes/audit-logs.tsx
@@ -547,6 +555,12 @@ msgstr ""
 #: src/components/routes/target-form.tsx
 msgid "Back to targets"
 msgstr ""
+
+#: src/components/navbar.tsx
+#: src/components/routes/operation-jobs.tsx
+#: src/components/routes/operation-jobs.tsx
+msgid "Background Jobs"
+msgstr "背景任務"
 
 #: src/components/command-palette.tsx
 #: src/components/navbar.tsx
@@ -672,6 +686,7 @@ msgstr "可停止"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/target-detail.tsx
@@ -1044,6 +1059,7 @@ msgstr ""
 #: src/components/alerts-history-columns.tsx
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/export-detail.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Created"
 msgstr "已建立"
 
@@ -1233,6 +1249,7 @@ msgstr "脫鉤保留"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Detail"
 msgstr "詳細資訊"
 
@@ -1856,6 +1873,10 @@ msgstr ""
 #~ msgid "Failed to load interface health"
 #~ msgstr ""
 
+#: src/components/routes/operation-jobs.tsx
+msgid "Failed to load jobs"
+msgstr "載入任務失敗"
+
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Failed to load MIB module"
 msgstr ""
@@ -2437,6 +2458,7 @@ msgstr "5分鐘平均負載"
 #~ msgstr "平均負載"
 
 #: src/components/routes/audit-logs.tsx
+#: src/components/routes/operation-jobs.tsx
 msgid "Load more"
 msgstr "載入更多"
 
@@ -2787,6 +2809,10 @@ msgstr ""
 #: src/components/routes/audit-logs.tsx
 msgid "No audit records match the filters."
 msgstr "沒有符合篩選條件的審計記錄。"
+
+#: src/components/routes/operation-jobs.tsx
+msgid "No background jobs."
+msgstr "暫無背景任務。"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -3466,6 +3492,7 @@ msgstr "接收"
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-port-policy.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-profiles.tsx
@@ -3486,6 +3513,7 @@ msgid "Request a one-time password"
 msgstr "請求一次性密碼"
 
 #: src/components/routes/modules.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
@@ -4037,6 +4065,8 @@ msgstr "狀態"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
+#: src/components/routes/operation-jobs.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
@@ -4455,6 +4485,7 @@ msgstr "當任何磁碟使用率超過閾值時觸發"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/operation-jobs.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
