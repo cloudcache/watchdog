@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05C — 查询 API 接线前置复核。** 只审计并补齐 Flow query provider 接入生产 hub 所必需的 tenant/RBAC、CH executor/config、错误 envelope 和超时边界；平台已有身份、Geo loader、限流或审计能力一律复用，缺口登记平台清单，不在 Flow 包内另造框架。
+**活动切片：FLOW-05C1 — transport-independent 查询能力契约。** 从现有 compiler 的唯一 registry 导出各 view 可选/default 字段和 filter 能力，供后续 QueryGateway/API/UI 消费；顺序稳定、返回副本、未知 view fail-closed，禁止 hub/frontend 复制 raw/supplier/customer 白名单。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -151,7 +151,9 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05B 变更设计**：provider 覆盖传入 query 的 result callback，但保留 compiler body/parameter/setting；CH 任一 block 后失败时丢弃已累积点，不允许部分成功响应。
 - [x] **FLOW-05B 变更测试**：执行中断、未初始化 runner、malformed/重复 sentinel 和超限结果均返回错误且零结果。
 - [x] **FLOW-05B 回归**：Flow 全范围 race/vet/test 通过。
-- [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader 或身份逻辑。
+- [x] **FLOW-05C 前置审计**：确认 compiler/runner 已隔离 tenant scope 和 typed 参数，但宿主尚无可执行 QueryGateway；Flow module/dataset 未注册，value-layer action 缺失，CH pool 私绑 rollup enablement，Flow readiness/限流/错误映射未装配。平台缺口已登记 PLAT-04H。
+- [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader、身份逻辑、CH pool 或 rate limiter。
+- [ ] **FLOW-05C1 查询能力契约**：从 Flow 固定 registry 导出 aggregate metric/dimension/view 与 detail 各 view 的允许字段、默认字段和过滤器；返回值不可修改内部 registry，未知 view 明确拒绝。API/UI 只能消费该契约，不能再维护平行白名单。
 - [x] **FLOW-05D 设计**：冻结 source/destination/either IP、customer/count view、24h 毫秒时间范围、稳定 `(event_time,record_id)` cursor、固定 field mask registry、limit+1、base `FINAL` 去重、500 万行/1 GiB/10s 扫描预算和全有或全无结果。
 - [x] **FLOW-05D 编码**：实现参数化 `flow_records FINAL` compiler、有界 multi-block typed result runner、结果一致性复核和 next cursor；不接线 hub。
 - [x] **FLOW-05D 单元**：覆盖 IPv4/IPv6、三种 endpoint side、同毫秒 cursor 边界/全局顺序、field mask、参数注入、重复/非法/列错位/越界结果、执行中断和 limit+1。
