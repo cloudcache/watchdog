@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -117,8 +118,9 @@ type SnapshotMetadata struct {
 }
 
 type CompiledSnapshot struct {
-	metadata SnapshotMetadata
-	prefixes *bart.Table[compiledPrefix]
+	metadata     SnapshotMetadata
+	prefixes     *bart.Table[compiledPrefix]
+	geoOverrides *bart.Table[compiledGeoOverride]
 }
 
 type compiledPrefix struct {
@@ -127,6 +129,22 @@ type compiledPrefix struct {
 	labels         map[string]string
 	inAddressSets  []string
 	outAddressSets []string
+}
+
+type GeoOverrideFields uint8
+
+const (
+	GeoOverrideCountry GeoOverrideFields = 1 << iota
+	GeoOverrideAdminCode
+	GeoOverrideSubdivision
+	GeoOverrideCity
+	GeoOverrideISPID
+	GeoOverrideASN
+)
+
+type compiledGeoOverride struct {
+	info   GeoInfo
+	fields GeoOverrideFields
 }
 
 type compiledAddressSet struct {
@@ -187,6 +205,7 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	prefixCIDRs := make(map[string]struct{}, len(bundle.Prefixes))
 	parsedPrefixes := make([]netip.Prefix, 0, len(bundle.Prefixes))
 	compiledPrefixes := make([]compiledPrefix, 0, len(bundle.Prefixes))
+	geoOverrides := &bart.Table[compiledGeoOverride]{}
 	for index, definition := range bundle.Prefixes {
 		if !validIdentifier(definition.ID, 128) || len(definition.Labels) > maxLabelsPerPrefix {
 			return nil, fmt.Errorf("prefixes[%d] has invalid id or too many labels", index)
@@ -206,6 +225,13 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 			return nil, fmt.Errorf("prefixes[%d].labels: %w", index, err)
 		}
 		compiled := compiledPrefix{id: definition.ID, cidr: definition.CIDR, labels: labels}
+		override, hasOverride, err := compileGeoOverride(labels)
+		if err != nil {
+			return nil, fmt.Errorf("prefixes[%d].labels: %w", index, err)
+		}
+		if hasOverride {
+			geoOverrides.Insert(prefix, override)
+		}
 		parsedPrefixes = append(parsedPrefixes, prefix)
 		compiledPrefixes = append(compiledPrefixes, compiled)
 		prefixIDs[definition.ID] = struct{}{}
@@ -257,8 +283,41 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 			EffectiveFrom: effectiveFrom, Checksum: checksum, PrefixCount: len(compiledPrefixes),
 			EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
 		},
-		prefixes: tree,
+		prefixes: tree, geoOverrides: geoOverrides,
 	}, nil
+}
+
+// ApplyGeoOverride overlays the most-specific tenant correction without
+// consulting mutable management state. The selected Geo version remains on
+// the result so event-time provenance is not lost.
+func (s *CompiledSnapshot) ApplyGeoOverride(address netip.Addr, base GeoInfo) (GeoInfo, GeoOverrideFields, bool) {
+	if s == nil || s.geoOverrides == nil || !address.IsValid() {
+		return base, 0, false
+	}
+	override, matched := s.geoOverrides.Lookup(address.Unmap())
+	if !matched {
+		return base, 0, false
+	}
+	if override.fields&GeoOverrideCountry != 0 {
+		base.Country = override.info.Country
+	}
+	if override.fields&GeoOverrideAdminCode != 0 {
+		base.AdminCode = override.info.AdminCode
+	}
+	if override.fields&GeoOverrideSubdivision != 0 {
+		base.Subdivision = override.info.Subdivision
+	}
+	if override.fields&GeoOverrideCity != 0 {
+		base.City = override.info.City
+	}
+	if override.fields&GeoOverrideISPID != 0 {
+		base.ISPID = override.info.ISPID
+	}
+	if override.fields&GeoOverrideASN != 0 {
+		base.ASN = override.info.ASN
+	}
+	base.Source = "flow_geo_override"
+	return base, override.fields, true
 }
 
 func (s *CompiledSnapshot) Metadata() SnapshotMetadata {
@@ -402,6 +461,63 @@ func cloneAndValidateLabels(labels map[string]string) (map[string]string, error)
 		cloned[key] = value
 	}
 	return cloned, nil
+}
+
+func compileGeoOverride(labels map[string]string) (compiledGeoOverride, bool, error) {
+	var override compiledGeoOverride
+	for key, value := range labels {
+		switch key {
+		case "flow.geo.country":
+			if !validCountryCode(value) || value == "HK" || value == "MO" || value == "TW" {
+				return override, false, errors.New("flow.geo.country must be canonical ISO alpha-2 with HMT represented as CN")
+			}
+			override.info.Country = value
+			override.fields |= GeoOverrideCountry
+		case "flow.geo.admin_code":
+			if len(value) != 6 || !allDigits(value) || value[:2] == "00" {
+				return override, false, errors.New("flow.geo.admin_code must be a six-digit GB/T 2260 code")
+			}
+			override.info.AdminCode = value
+			override.fields |= GeoOverrideAdminCode
+		case "flow.geo.subdivision":
+			override.info.Subdivision = value
+			override.fields |= GeoOverrideSubdivision
+		case "flow.geo.city":
+			override.info.City = value
+			override.fields |= GeoOverrideCity
+		case "flow.geo.isp_id":
+			parsed, err := strconv.ParseUint(value, 10, 16)
+			if err != nil {
+				return override, false, errors.New("flow.geo.isp_id must be an unsigned 16-bit decimal")
+			}
+			override.info.ISPID = uint16(parsed)
+			override.fields |= GeoOverrideISPID
+		case "flow.geo.asn":
+			parsed, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return override, false, errors.New("flow.geo.asn must be an unsigned 32-bit decimal")
+			}
+			override.info.ASN = uint32(parsed)
+			override.fields |= GeoOverrideASN
+		case "flow.geo.reason":
+		default:
+			if strings.HasPrefix(key, "flow.geo.") {
+				return override, false, fmt.Errorf("unknown Geo override label %q", key)
+			}
+		}
+	}
+	if override.fields == 0 {
+		if _, hasReason := labels["flow.geo.reason"]; hasReason {
+			return override, false, errors.New("flow.geo.reason requires at least one Geo override field")
+		}
+		return override, false, nil
+	}
+	if override.fields&GeoOverrideAdminCode != 0 {
+		if override.fields&GeoOverrideCountry == 0 || override.info.Country != "CN" {
+			return override, false, errors.New("flow.geo.admin_code requires flow.geo.country=CN")
+		}
+	}
+	return override, true, nil
 }
 
 func cloneAndValidateSelector(selector map[string][]string) (map[string][]string, error) {

@@ -180,6 +180,60 @@ func TestCompiledSnapshotClassifiesNonBusinessTopologies(t *testing.T) {
 	}
 }
 
+func TestGeoOverrideUsesItsOwnLongestPrefixAndOverlaysSelectedGeo(t *testing.T) {
+	bundle := testBundle("snapshot-a", 1, testMinute(12, 0))
+	bundle.Prefixes[2].Labels["flow.geo.country"] = "CN"
+	bundle.Prefixes[2].Labels["flow.geo.admin_code"] = "330100"
+	bundle.Prefixes[2].Labels["flow.geo.isp_id"] = "3"
+	bundle.Prefixes[2].Labels["flow.geo.asn"] = "0"
+	bundle.Prefixes[2].Labels["flow.geo.reason"] = "operator correction"
+	snapshot, err := CompileBundle(bundle, CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// remote-specific /25 is the primary dimension prefix, but the independent
+	// override LPM must still find remote-root /24.
+	classified := snapshot.ClassifyEndpoints(netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.200"))
+	if classified.Remote.PrefixID != "remote-specific" {
+		t.Fatalf("unexpected primary prefix: %+v", classified.Remote)
+	}
+	base := GeoInfo{Country: "US", Subdivision: "California", City: "San Francisco", ISPID: 9, ASN: 64500, Version: "geo-7", Source: GeoSchema}
+	resolved, fields, matched := snapshot.ApplyGeoOverride(classified.Remote.IP, base)
+	if !matched || resolved.Country != "CN" || resolved.AdminCode != "330100" || resolved.Subdivision != "California" || resolved.City != "San Francisco" || resolved.ISPID != 3 || resolved.ASN != 0 {
+		t.Fatalf("unexpected override: %+v fields=%d matched=%v", resolved, fields, matched)
+	}
+	if resolved.Version != "geo-7" || resolved.Source != "flow_geo_override" || fields&GeoOverrideASN == 0 {
+		t.Fatalf("override provenance was not preserved: %+v fields=%d", resolved, fields)
+	}
+}
+
+func TestCompileBundleRejectsInvalidGeoOverrideLabels(t *testing.T) {
+	tests := []struct {
+		name  string
+		label map[string]string
+		want  string
+	}{
+		{name: "unknown-key", label: map[string]string{"flow.geo.typo": "CN"}, want: "unknown Geo override"},
+		{name: "reason-only", label: map[string]string{"flow.geo.reason": "note"}, want: "at least one"},
+		{name: "hmt-not-canonical", label: map[string]string{"flow.geo.country": "HK"}, want: "HMT"},
+		{name: "admin-without-country", label: map[string]string{"flow.geo.admin_code": "330100"}, want: "country=CN"},
+		{name: "foreign-admin", label: map[string]string{"flow.geo.country": "US", "flow.geo.admin_code": "330100"}, want: "country=CN"},
+		{name: "bad-isp", label: map[string]string{"flow.geo.isp_id": "65536"}, want: "16-bit"},
+		{name: "bad-asn", label: map[string]string{"flow.geo.asn": "-1"}, want: "32-bit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bundle := testBundle("snapshot-a", 1, testMinute(12, 0))
+			for key, value := range test.label {
+				bundle.Prefixes[2].Labels[key] = value
+			}
+			if _, err := CompileBundle(bundle, CompileLimits{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestClassifyEndpointsHotPathDoesNotAllocate(t *testing.T) {
 	snapshot, err := CompileBundle(testBundle("snapshot-a", 1, testMinute(12, 0)), CompileLimits{})
 	if err != nil {

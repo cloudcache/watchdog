@@ -323,6 +323,8 @@ watchdog 不关心导出器如何审核和发布，也不携带 EdgeManager 凭�
 
 lookup 优先级：租户 override LPM > `flow-geo-v1` 区间 > unknown。若同 CIDR 已有 `flow=local` 或 `business` 标签，服务端必须 merge `flow.geo.*`，不能覆盖整张 labels。创建、修改或删除 override 时，同一服务事务必须递增 `flow_settings.classification_version` 并写审计；删除修正也只删除 `flow.geo.*`，剩余 labels 非空时保留行。
 
+worker 编译 snapshot 时从所有含 `flow.geo.*` 的 prefix 另外构建一棵只含 override 的 BART；override LPM 与 primary-prefix LPM 相互独立。否则更具体但未修正的业务 prefix 会错误遮住上层修正网段。override 是对同 event-time Geo 结果的字段级 overlay，未声明字段保留文件值，`geo_version` 仍记录被选择的文件版本，`source=flow_geo_override`；`flow.geo.asn=0`/`isp_id=0` 是显式清空，不等同于字段缺失。HMT 只能写为 `country=CN + 71/81/82xxxx`，`admin_code` 必须同时声明 `country=CN`，未知 `flow.geo.*` key 在发布编译期拒绝，避免拼错标签被静默忽略。
+
 可提供“导出修正清单”CSV 给地址库维护人员离线导入，但主流程不依赖此动作。
 
 ## 4. 管理流程
@@ -753,7 +755,7 @@ FLOW-03A 已把该步骤的纯数据面内核落在 `internal/flowdimension`，�
 
 selector 与现有管理格式兼容，label value 可为单字符串或字符串数组，编译后排序去重；`match_direction` 明确定义为业务 `in/out/both`，不是观察方向或 src/dst side。发布编译期用 selector anchor 倒排候选为每个 prefix 预计算入/出方向的 set ID 列表，并对候选求值次数设置 5000 万默认硬界，防止恶意/错误 bundle 把发布编译拖成无界笛卡尔积；再按一条业务 record 的 local+remote endpoint 合计估算最坏扩张，超过默认 32 或配置硬上限即拒绝 bundle。record 热路径因此固定为两次 BART LPM + 常数时间读取预计算成员，不逐 flow 扫描集合，单测锁定零 allocation。每个 `in/out` 结果必有 local/remote 两个 primary 成员，未匹配写 `_unassigned`；set ID 有序、可多命中、只作 immutable tag。`internal` 固定 src 为本地业务选择，`transit/ambiguous` 不伪造 local/remote。
 
-同一内核实现 HMT 规范化和 §6 的有序六维纯函数；Geo 文件/override loader、snapshot object source/worker ACK、normalized consumer、固定 shard 聚合、spill/backpressure、ClickHouse base manifest 和 offset commit 仍属于 FLOW-03B，不能因为纯函数完成而宣称异步归类链路已完成。
+同一内核实现 HMT 规范化和 §6 的有序六维纯函数；Geo loader/index 已由 `FLOW-03B1` 完成，override/enriched 纯接线已由 `FLOW-03B2A` 完成。snapshot/classification object source、worker ACK、normalized consumer、固定 shard 聚合、spill/backpressure、ClickHouse base manifest 和 offset commit 仍属于 `FLOW-03B2B/B3`，不能因为纯函数完成而宣称异步归类链路已完成。
 
 ### 步骤 5：Geo/ASN、业务和六维富化
 
@@ -762,6 +764,14 @@ selector 与现有管理格式兼容，label value 可为单字符串或字符�
 - 固化 `dimension_snapshot_id`、`geo_version` 和 `classification_version`；
 - `internal` 记录（两端皆本地）的 business 取 src 侧本地标签作为确定性选择，只进入 internal 质量口径，不进入业务 × 六类矩阵；
 - 配置加载失败继续旧版本并告警；没有可用 event-time 版本时暂停该 tenant/partition，不把记录归入错误的新版本。
+
+Home profile 和 `internal/transit` policy 同样不能在热路径读取 MySQL 当前值。控制面必须发布不可变 classification snapshot，最小字段为 `tenant_id/version/effective_from/dimension_snapshot_id/home_province/home_city/home_isp_ids/overseas_includes_hmt/internal_policy/transit_policy`。worker 分别按 record event time 选择 dimension、Geo、classification 三条时间线，并要求 classification 所引用的 `dimension_snapshot_id` 与本次选择一致；缺历史版本或引用不一致统一返回 partition-block 信号，不提交 offset，也不回退 current。只改 Home profile 可发布一个引用既有 dimension 的新 classification version；Geo override 变更必须让新 dimension 和 classification 在同一生效分钟形成一致引用。
+
+`FLOW-03B2A` 已在 `internal/flowworker` 冻结无 I/O 的 normalized→enriched 边界：batch 先校验 schema、32B ID、tenant/collector/exporter、partition map、record 数量（默认与 producer 一致为 1024、硬上限 65535）、严格递增 `record_index`、16B IP、按 IP pair 重算 virtual shard、端口/协议宽度、sampling mode/counter 等式和默认 5 分钟 receive-time future skew；sampled 必须满足 `estimated=raw×sampling_rate` 且 rate>0，pre-scaled 必须满足 `estimated=raw`，任何整数溢出或不一致均不得进入统计。`normalized_record_id=SHA-256(datagram_id_raw_32B || record_index_uint32_be)`，与 replay generation、chunk 和 Kafka offset 无关。
+
+每条 enriched record 原样保留 normalized 的 observation、五元组、src/dst AS、raw/estimated counter、sampling、duration、quality 与 sFlow source/sample 状态；新增 local/remote side+port、primary prefix、ordered address-set tags、business direction、business、remote Geo、resolved remote ASN+source、category、disposition、dimension fingerprint 和三个版本。resolved `remote_asn` 的确定优先级是“override ASN 字段（包括显式 0）→ Geo 文件非零 ASN → remote side 对应的 exporter src/dst AS → unknown(0)”，并另存 `remote_asn_source=flow_geo_override|flow-geo-v1|exporter|unknown`，不能把 exporter AS 冒充地址库值。`dimension_fingerprint` 对 snapshot/direction/business/local+remote side/prefix/set 的长度前缀 canonical 序列做 xxHash64；set 仍是非加和 tag。
+
+纯内核不自行消费或提交 Kafka。`EnrichBatchInto` 允许 partition/shard worker 复用输出缓冲并在任一 record 阻断时把输出长度归零，防止半批进入聚合；`EnrichBatch` 只作为便捷分配接口。Kafka source/object loader/worker ACK、缺版本 pause/resume、坏 normalized message 的有界失败处置、历史引用 GC 和 offset 条件仍属于 `FLOW-03B2B`；分钟聚合、spill、base manifest/CH insert/dedup 属于 `FLOW-03B3`。
 
 ### 步骤 6：异步分片分钟汇聚
 
@@ -1224,6 +1234,7 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_pair_1m (
   remote_city LowCardinality(String),
   remote_isp_id UInt16,
   remote_asn UInt32,
+  remote_asn_source LowCardinality(String),
   dimension_snapshot_id LowCardinality(String),
   local_endpoint_side Enum8('none' = 0, 'src' = 1, 'dst' = 2),
   remote_endpoint_side Enum8('none' = 0, 'src' = 1, 'dst' = 2),
@@ -1253,7 +1264,7 @@ ORDER BY (
   business_direction, category, business,
   src_ip, dst_ip, src_port, dst_port, ip_proto, tcp_flags,
   remote_country, remote_admin_code, remote_subdivision, remote_city,
-  remote_isp_id, remote_asn, dimension_snapshot_id,
+  remote_isp_id, remote_asn, remote_asn_source, dimension_snapshot_id,
   local_prefix_id, remote_prefix_id, dimension_fingerprint,
   geo_version, classification_version
 )
