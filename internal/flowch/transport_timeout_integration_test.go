@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -17,6 +18,14 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/cloudcache/watchdog/internal/flowworker"
+)
+
+const (
+	proxyForward int32 = iota
+	proxyWaitServerResponse
+	proxyWaitClientWrite
+	proxyDropResponses
+	proxyCutResponse
 )
 
 // TestRealClickHouseSilentResponseHonorsOperationTimeout uses a transparent TCP
@@ -142,6 +151,57 @@ func TestRealClickHouseLostInsertResponseConvergesAfterReplay(t *testing.T) {
 	}
 }
 
+func TestRealClickHousePartialResponseFailsWithoutRetry(t *testing.T) {
+	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION=1 to run")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	proxy := newSilentResponseProxy(t, "127.0.0.1:9000")
+	defer proxy.Close()
+	config := realMigrationConfig(t, "watchdog-flow-partial-response", 2*time.Second)
+	config.Address = proxy.Address()
+	config.ReadTimeout = 50 * time.Millisecond
+	native, err := NewNativeInserter(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close()
+	if err := native.executor.Do(ctx, synchronousMigrationQuery("INSERT INTO TABLE FUNCTION null('value UInt8') SELECT 1")); err != nil {
+		t.Fatalf("ClickHouse control query through proxy: %v", err)
+	}
+
+	var values proto.ColStr
+	proxy.CutNextServerResponseAfterBytes(64)
+	started := time.Now()
+	err = native.executor.Do(ctx, ch.Query{
+		Body:   "SELECT randomString(1048576) AS value",
+		Result: proto.Results{{Name: "value", Data: &values}},
+	})
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("partial ClickHouse response error=%v, want immediate transport/decode failure", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("partial ClickHouse response took %s, want immediate failure", elapsed)
+	}
+	if values.Rows() != 0 {
+		t.Fatalf("partial ClickHouse response exposed %d result rows", values.Rows())
+	}
+	if got := proxy.AcceptedConnections(); got != 1 {
+		t.Fatalf("partial response query used %d connections, want no implicit retry", got)
+	}
+
+	recoveryConfig := realMigrationConfig(t, "watchdog-flow-partial-response-recovery", 2*time.Second)
+	recovered, err := NewNativeInserter(ctx, recoveryConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	if err := recovered.executor.Do(ctx, synchronousMigrationQuery("INSERT INTO TABLE FUNCTION null('value UInt8') SELECT 1")); err != nil {
+		t.Fatalf("ClickHouse query did not recover with a fresh pool: %v", err)
+	}
+}
+
 type replayState struct {
 	factCount       uint64
 	rawBytes        uint64
@@ -206,10 +266,9 @@ WHERE ingest_batch_id = unhex({batch_id:String})`,
 type silentResponseProxy struct {
 	listener net.Listener
 	backend  string
-	// responseMode is 0 while forwarding normally, 1 while waiting to
-	// forward the next server response, 2 while waiting for the following
-	// client write, and 3 while server responses are silently discarded.
+	// responseMode controls the fault transition constants above.
 	responseMode atomic.Int32
+	cutRemaining atomic.Int64
 	accepted     atomic.Uint64
 
 	mu          sync.Mutex
@@ -232,12 +291,19 @@ func newSilentResponseProxy(t testing.TB, backend string) *silentResponseProxy {
 
 func (p *silentResponseProxy) Address() string { return p.listener.Addr().String() }
 
-func (p *silentResponseProxy) DropServerResponses() { p.responseMode.Store(3) }
+func (p *silentResponseProxy) DropServerResponses() { p.responseMode.Store(proxyDropResponses) }
 
 func (p *silentResponseProxy) DropServerResponsesAfterNextClientWrite() {
-	if !p.responseMode.CompareAndSwap(0, 1) {
+	if !p.responseMode.CompareAndSwap(proxyForward, proxyWaitServerResponse) {
 		panic("response drop transition is already active")
 	}
+}
+
+func (p *silentResponseProxy) CutNextServerResponseAfterBytes(count int64) {
+	if count <= 0 || !p.responseMode.CompareAndSwap(proxyForward, proxyCutResponse) {
+		panic("response cut transition is invalid or already active")
+	}
+	p.cutRemaining.Store(count)
 }
 
 func (p *silentResponseProxy) AcceptedConnections() uint64 { return p.accepted.Load() }
@@ -279,8 +345,8 @@ func (p *silentResponseProxy) proxyConnection(client, backend net.Conn) {
 				// Mode 2 means the server's column metadata reached the
 				// client. Drop responses before forwarding the subsequent
 				// input bytes, so the server can commit but EOS cannot pass.
-				p.responseMode.CompareAndSwap(2, 3)
-				if _, writeErr := backend.Write(buffer[:count]); writeErr != nil {
+				p.responseMode.CompareAndSwap(proxyWaitClientWrite, proxyDropResponses)
+				if writeErr := writeProxyBytes(backend, buffer[:count]); writeErr != nil {
 					break
 				}
 			}
@@ -295,11 +361,27 @@ func (p *silentResponseProxy) proxyConnection(client, backend net.Conn) {
 	buffer := make([]byte, 32<<10)
 	for {
 		count, err := backend.Read(buffer)
-		if count > 0 && p.responseMode.Load() != 3 {
-			if _, writeErr := client.Write(buffer[:count]); writeErr != nil {
-				return
+		if count > 0 {
+			switch p.responseMode.Load() {
+			case proxyDropResponses:
+			case proxyCutResponse:
+				remaining := p.cutRemaining.Load()
+				if remaining <= int64(count) {
+					if remaining > 0 {
+						_ = writeProxyBytes(client, buffer[:remaining])
+					}
+					return
+				}
+				if err := writeProxyBytes(client, buffer[:count]); err != nil {
+					return
+				}
+				p.cutRemaining.Add(-int64(count))
+			default:
+				if writeErr := writeProxyBytes(client, buffer[:count]); writeErr != nil {
+					return
+				}
+				p.responseMode.CompareAndSwap(proxyWaitServerResponse, proxyWaitClientWrite)
 			}
-			p.responseMode.CompareAndSwap(1, 2)
 		}
 		if err != nil {
 			return
@@ -310,6 +392,20 @@ func (p *silentResponseProxy) proxyConnection(client, backend net.Conn) {
 		default:
 		}
 	}
+}
+
+func writeProxyBytes(connection net.Conn, data []byte) error {
+	for len(data) > 0 {
+		count, err := connection.Write(data)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[count:]
+	}
+	return nil
 }
 
 func (p *silentResponseProxy) track(connection net.Conn, add bool) {
