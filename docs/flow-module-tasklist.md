@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-08A3 — ClickHouse/Kafka 故障与版本兼容演练。** 先冻结可在本地单节点证明的 restart/timeout/checksum drift/旧新 migration binary 场景；集群 DDL、N+1 和固定硬件容量证据继续作为外部门禁，不用单节点结果冒充。
+**活动切片：FLOW-04C1B — 生产进程故障恢复、rebalance 与 VM pull。** 两个 production command 的四协议基线已经关闭；下一轮在同一隔离 harness 中注入未知 source、Kafka/ClickHouse 中断恢复、重叠 worker rebalance，并用独立临时 VM promscrape 验证真实 pull。集群 DDL、N+1、RXQ overflow 和固定硬件容量证据仍是后续门禁，不用单节点结果冒充。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -51,6 +51,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-07A 版本切换：`a7ea3f2d test(flow): verify VPN rule rollback isolation`；同一会话的 dimension snapshot/Geo/classification v1/v2 物化为独立候选；规则集 v1→v2→回切 v1 时得分分别保持 20/30/20，回切只推进 v1 generation，v2 历史 generation 不变。真实 CH race 连续 5 次通过；平台 publication 投递仍是独立门禁。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
 - FLOW-04C VM 兼容门禁：`c61bb658 test(flow): verify VictoriaMetrics round trip`；生产 collector/worker metrics handler 经真实 loopback HTTP server 输出 Prometheus text，写入现有 VictoriaMetrics 后分别核对 Kafka durable record 和 lag 值，并检查落库 series 不含 tenant/exporter/ASN/prefix/IP/topic/partition 标签。真实 race 连续 2 次通过；每轮唯一测试 series 均精确删除。当前 VM 容器未配置 `promscrape.config`，因此这不冒充 vmagent pull 或两个生产命令联调。
+- FLOW-04C production process 基线：`0ce9075d test(flow): run production pipeline end to end`；测试实际编译并启动 `watchdog-flow-collect` 与 `watchdog-flow-worker`，隔离 topic/database 中 5 个 NetFlow-family + 1 个 sFlow datagram 经 Kafka 4.3.1 和 ClickHouse 26.3 收敛为 38 条事实、四种协议和 durable receipt；两个真实进程的 Kafka 指标为 6/6，template missing/rejected/retryable 均为 0，并经现有 VM import/query 验证。测试发现并修复 worker 在空 Geo catalog 上先调用 `LoadHistorical` 而必然启动失败的问题；Geo bootstrap 现在明确按 oldest→newest 输入、末项 active。进程、topic、database 和测试 series 成功/失败均清理；本项不冒充尚未执行的 promscrape pull 与故障矩阵。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
@@ -142,6 +143,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **编码（数据面核心）**：collector/worker 分别提供只读 `/metrics`；atomic receiver/producer/consumer/processor/pipeline/writer 统计覆盖 UDP、Kafka buffer/ack latency/poll/assignment/lag/rebalance、decode/template、sampling/snapshot、CH attempt/error/retry/durable row 和 process。Flow facts 不写 VM；高频失败不逐报文刷日志。
 - [x] **单元**：固定 exposition contract、并发计数、lag known/assignment/revoke/lost、retry/permanent/durable 计数、GET-only、禁止高基数 label 和 server shutdown 已覆盖。
 - [ ] **集成（外部服务）**：启动两个生产命令并由 VM 抓取；注入未知 source、UDP truncate/RXQ overflow、Kafka/CH 失败与恢复、rebalance，核对 broker lag 和 shutdown 末值。需要真实 Kafka/CH/UDP/VM 环境。
+- [x] **集成（生产进程基线）**：实际编译并启动两个 production command；真实 UDP 注入 NetFlow v5/v9、IPFIX、sFlow v5，collector Kafka durable ack 6/6，worker commit 6/6，ClickHouse `FINAL` 中 38 条事实覆盖四协议且 receipt 非空；真实进程指标写入现有 VM 后查询一致。使用唯一 topic/database/series，成功和失败路径均清理；证据 `0ce9075d`。这只关闭无故障基线，不代替 promscrape、故障恢复、rebalance、RXQ overflow。
 - [x] **集成（真实 VM 存储/查询子门禁）**：production collector/worker handler 通过真实 HTTP server 输出，VictoriaMetrics Prometheus import 后 instant query 精确得到 collector Kafka records 和 worker lag；落库 label 复核无高基数维度，唯一 `integration_run` series 在成功/失败 cleanup 中删除。显式环境变量开启，证据提交 `c61bb658`。该测试只证明 wire/storage/query 兼容，不替代上项的 promscrape/生产进程/故障恢复。
 - [x] **变更设计**：新增独立 `-metrics-listen`，默认 loopback `9090/9091`、空值禁用；远程 TLS/mTLS 归部署层反代/sidecar，不复制证书生命周期。
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
@@ -150,7 +152,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-04C3 设计/边界审计**：冻结可跨 tenant 的 batch 权威键、Kafka committed-next-offset 闭合规则、`FINAL` 去重后 count/counter/checksum 比较、固定 mismatch reason、有界 keyset 扫描和不完整 gauge 快照语义；禁止在 metrics renderer 猜值或为指标另建状态机。
 - [x] **FLOW-04C3A 编码/单元**：migration 004 前向增加 receipt schema v2、排序去重 tenant IDs、min/max event time、raw/estimated packets 和 valid-estimate record count；native encoder 从同一 PreparedBlock 确定性产生，覆盖跨 tenant、时间边界、无效 estimated 排除、byte/packet 溢出与 DDL 列契约。
 - [x] **FLOW-04C3A 变更设计/测试**：001 不改，旧行 `receipt_schema=1`，新行显式为 2；发布顺序为 004 → 全 worker v2 → 记录 per-partition cutover offset → 启用对账，不对旧 receipt 猜缺失字段。schema contract 已锁定 migration 顺序和 v2 native input。
-- [ ] **FLOW-04C3B 编码/集成**：复用平台 global/system-scope `operation_jobs` 运行分区对账；先在真实 CH 对 index/projection/窄审计投影执行 EXPLAIN 和 read_rows/read_bytes 容量测试，选定唯一访问路径后才接指标和 repair；受 PLAT-04F 与真实 Kafka/CH 门禁阻塞。
+- [ ] **FLOW-04C3B 编码/集成**：复用平台 global/system-scope `operation_jobs` 运行分区对账；先在真实 CH 对 index/projection/窄审计投影执行 EXPLAIN 和 read_rows/read_bytes 容量测试，选定唯一访问路径后才接指标和 repair；Kafka/CH 单节点环境已就绪，当前只受 PLAT-04F 全局 job 契约和访问路径容量证据约束。
 - [ ] **FLOW-04C3 已提交**：只有审计元数据、runner、指标、job 接线和对应测试都进入可复现提交后才可勾选；仅文档审计不冒充功能完成。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
