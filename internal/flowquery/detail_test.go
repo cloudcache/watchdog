@@ -197,7 +197,7 @@ func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
 	}
 	for _, required := range []string{
 		"toUInt64(source.source_asn) AS source_asn", "toUInt64(source.destination_asn) AS destination_asn",
-		"toString(source.observation_direction) AS observation_direction", "AND source.target_id IN ({detail_target_0:String})",
+		"CAST(source.observation_direction AS String) AS observation_direction", "AND source.target_id IN ({detail_target_0:String})",
 	} {
 		if !strings.Contains(compiled.Query.Body, required) {
 			t.Fatalf("raw query missing %q:\n%s", required, compiled.Query.Body)
@@ -244,11 +244,12 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 		t.Fatalf("compiled view=%q", compiled.View)
 	}
 	for _, required := range []string{
-		"toString(source.supplier_category) AS category", "toUInt64(source.supplier_remote_asn) AS remote_asn",
-		"toString(source.supplier_remote_asn_source) AS remote_asn_source", "toString(source.supplier_remote_country) AS remote_country",
-		"toString(source.supplier_geo_version) AS geo_version", "toUInt64(source.supplier_remote_isp_id) AS remote_isp_id",
-		"toString(source.supplier_remote_geo_city_id) AS remote_geo_city_id", "min(source.fact_schema) OVER () AS _minimum_fact_schema",
+		"CAST(source.supplier_category AS String) AS category", "toUInt64(source.supplier_remote_asn) AS remote_asn",
+		"CAST(source.supplier_remote_asn_source AS String) AS remote_asn_source", "CAST(source.supplier_remote_country AS String) AS remote_country",
+		"CAST(source.supplier_geo_version AS String) AS geo_version", "toUInt64(source.supplier_remote_isp_id) AS remote_isp_id",
+		"CAST(source.supplier_remote_geo_city_id AS String) AS remote_geo_city_id", "min(source.fact_schema) OVER () AS _minimum_fact_schema",
 		"row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row",
+		"CAST((source.event_time < {cursor_time:DateTime64(3, 'UTC')}", "AS Bool) AS _scope_match",
 		"AND source.supplier_category IN ({detail_category_0:String})", "WHERE _scope_match OR _scope_row = 1",
 	} {
 		if !strings.Contains(compiled.Query.Body, required) {

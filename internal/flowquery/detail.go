@@ -575,7 +575,7 @@ func detailFieldExpression(spec detailFieldSpec) string {
 	column := "source." + spec.column
 	switch spec.kind {
 	case detailKindString:
-		return "toString(" + column + ")"
+		return "CAST(" + column + " AS String)"
 	case detailKindUInt64:
 		return "toUInt64(" + column + ")"
 	default:
@@ -653,7 +653,7 @@ FROM (
     source.src_ip AS _source_ip,
     source.dst_ip AS _destination_ip,
 %s,
-    %s AS _scope_match,
+    CAST(%s AS Bool) AS _scope_match,
     min(source.fact_schema) OVER () AS _minimum_fact_schema,
     row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row
   FROM flow_records AS source FINAL
