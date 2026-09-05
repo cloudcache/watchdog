@@ -132,8 +132,8 @@ func (s *MySQLStore) DeleteAgent(ctx context.Context, tenantID, agentID ID) erro
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM collector_agents
-		WHERE tenant_id = ? AND id = ?
-	`, tenantID, agentID); err != nil {
+		WHERE tenant_id = ? AND id = ? AND created_by = ?
+	`, tenantID, agentID, collectorCompatibilityActor); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -164,8 +164,8 @@ func (s *MySQLStore) MarkAgentSeen(ctx context.Context, agentID ID) error {
 		SET observed_health = 'healthy', last_seen_at = ?,
 			last_error_code = NULL, last_error_detail = NULL,
 			updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
-		WHERE id = ? AND deleted_at IS NULL
-	`, now, collectorCompatibilityActor, agentID); err != nil {
+		WHERE id = ? AND created_by = ? AND deleted_at IS NULL
+	`, now, collectorCompatibilityActor, agentID, collectorCompatibilityActor); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -219,8 +219,8 @@ func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) 
 				last_seen_at = IF(?, ?, last_seen_at),
 				last_error_code = NULL, last_error_detail = NULL,
 				updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
-			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
-		`, report.Seen, endedAt, collectorCompatibilityActor, report.AgentID, agent.TenantID); err != nil {
+			WHERE id = ? AND tenant_id = ? AND created_by = ? AND deleted_at IS NULL
+		`, report.Seen, endedAt, collectorCompatibilityActor, report.AgentID, agent.TenantID, collectorCompatibilityActor); err != nil {
 			return err
 		}
 	} else {
@@ -245,8 +245,8 @@ func (s *MySQLStore) RecordAgentRun(ctx context.Context, report AgentRunReport) 
 				last_error_code = 'LEGACY_AGENT_RUN_FAILED',
 				last_error_detail = NULLIF(LEFT(?, 1024), ''),
 				updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
-			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
-		`, report.Seen, endedAt, report.Error, collectorCompatibilityActor, report.AgentID, agent.TenantID); err != nil {
+			WHERE id = ? AND tenant_id = ? AND created_by = ? AND deleted_at IS NULL
+		`, report.Seen, endedAt, report.Error, collectorCompatibilityActor, report.AgentID, agent.TenantID, collectorCompatibilityActor); err != nil {
 			return err
 		}
 	}
@@ -268,31 +268,49 @@ func upsertCollectorCompatibilityProjection(ctx context.Context, tx *sql.Tx, age
 	if tx == nil {
 		return errors.New("collector compatibility projection transaction is required")
 	}
-	name := fmt.Sprintf("legacy-%s-%s", agent.AgentType, agent.ID)
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO collector_agents (
-			id, tenant_id, module_key, name, agent_type, mode, endpoint,
-			status, observed_health, auth_type, token_hash, created_by, updated_by
-		) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 'token', ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			module_key = VALUES(module_key),
-			agent_type = VALUES(agent_type),
-			mode = VALUES(mode),
-			endpoint = VALUES(endpoint),
-			status = VALUES(status),
-			observed_health = VALUES(observed_health),
-			auth_type = 'token',
-			token_hash = VALUES(token_hash),
-			certificate_fingerprint = NULL,
-			updated_by = VALUES(updated_by),
-			row_version = row_version + 1,
-			updated_at = CURRENT_TIMESTAMP(3)
-	`, agent.ID, agent.TenantID, legacyCollectorModuleKey(agent.AgentType), name,
-		agent.AgentType, agent.Mode, agent.Endpoint, legacyCollectorDesiredStatus(agent.Status),
-		legacyCollectorObservedHealth(agent.Status), agent.TokenHash,
-		collectorCompatibilityActor, collectorCompatibilityActor)
-	if err != nil {
+	// PLAT-03B1: the collector registry holds the sole credential write
+	// authority. The legacy projection may seed credentials when it creates a
+	// row, but an existing row keeps its auth_type/token_hash/
+	// certificate_fingerprint and management row_version untouched, and rows
+	// created by anything other than this projection are never modified.
+	var existingTenant, existingCreator ID
+	err := tx.QueryRowContext(ctx, `
+		SELECT tenant_id, created_by FROM collector_agents WHERE id = ? FOR UPDATE
+	`, agent.ID).Scan(&existingTenant, &existingCreator)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		name := fmt.Sprintf("legacy-%s-%s", agent.AgentType, agent.ID)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO collector_agents (
+				id, tenant_id, module_key, name, agent_type, mode, endpoint,
+				status, observed_health, auth_type, token_hash, created_by, updated_by
+			) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 'token', ?, ?, ?)
+		`, agent.ID, agent.TenantID, legacyCollectorModuleKey(agent.AgentType), name,
+			agent.AgentType, agent.Mode, agent.Endpoint, legacyCollectorDesiredStatus(agent.Status),
+			legacyCollectorObservedHealth(agent.Status), agent.TokenHash,
+			collectorCompatibilityActor, collectorCompatibilityActor); err != nil {
+			return err
+		}
+	case err != nil:
 		return err
+	default:
+		if existingTenant != agent.TenantID {
+			return errors.New("collector id belongs to another tenant")
+		}
+		if existingCreator != collectorCompatibilityActor {
+			return errors.New("collector id is owned by the collector registry; legacy agent writes cannot modify it")
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE collector_agents
+			SET module_key = ?, agent_type = ?, mode = ?, endpoint = NULLIF(?, ''),
+				status = ?, observed_health = ?,
+				updated_by = ?, updated_at = CURRENT_TIMESTAMP(3)
+			WHERE id = ? AND tenant_id = ?
+		`, legacyCollectorModuleKey(agent.AgentType), agent.AgentType, agent.Mode, agent.Endpoint,
+			legacyCollectorDesiredStatus(agent.Status), legacyCollectorObservedHealth(agent.Status),
+			collectorCompatibilityActor, agent.ID, agent.TenantID); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM collector_bindings

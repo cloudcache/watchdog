@@ -212,6 +212,97 @@ func TestMySQLLegacyAgentCollectorProjectionLifecycle(t *testing.T) {
 	}
 	assertCollectorProjection(t, db, agentID, tenantA, targetA2, "suspended", "healthy", 1)
 
+	// PLAT-03B1: the registry is the sole credential write authority. Rotate
+	// the collector credential registry-side, then prove legacy upsert /
+	// heartbeat / run sync leave credentials and the management row_version
+	// untouched while target_agents keeps its own legacy token.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE collector_agents
+		SET auth_type = 'mtls', token_hash = NULL, certificate_fingerprint = 'rotated-fp',
+			row_version = row_version + 1, updated_by = 'user_registry_admin'
+		WHERE id = ?
+	`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	var rowVersionBefore uint64
+	if err := db.QueryRowContext(ctx, `SELECT row_version FROM collector_agents WHERE id = ?`, agentID).Scan(&rowVersionBefore); err != nil {
+		t.Fatal(err)
+	}
+	agent.TokenHash = "legacy-rotated-token-hash"
+	if _, err := store.UpsertAgent(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAgentSeen(ctx, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentRun(ctx, AgentRunReport{
+		AgentID: agentID, Status: AgentRunSuccess, Seen: true,
+		StartedAt: time.Now().UTC().Add(-time.Second), EndedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var authType, certFP string
+	var registryTokenHash sql.NullString
+	var rowVersionAfter uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT auth_type, token_hash, COALESCE(certificate_fingerprint, ''), row_version
+		FROM collector_agents WHERE id = ?
+	`, agentID).Scan(&authType, &registryTokenHash, &certFP, &rowVersionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if authType != "mtls" || registryTokenHash.Valid || certFP != "rotated-fp" {
+		t.Fatalf("legacy writes overwrote registry credentials: auth=%q token=%v fp=%q", authType, registryTokenHash.String, certFP)
+	}
+	if rowVersionAfter != rowVersionBefore {
+		t.Fatalf("legacy writes moved management row_version: %d -> %d", rowVersionBefore, rowVersionAfter)
+	}
+	var legacyTokenHash string
+	if err := db.QueryRowContext(ctx, `SELECT token_hash FROM target_agents WHERE id = ?`, agentID).Scan(&legacyTokenHash); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTokenHash != "legacy-rotated-token-hash" {
+		t.Fatalf("legacy auth token hash = %q, want the rotated legacy value", legacyTokenHash)
+	}
+
+	// A registry-created collector must be invisible to legacy writes: upsert
+	// under the same id is rejected (and rolls back its target_agents write),
+	// heartbeat sync skips it, and legacy delete leaves the row in place.
+	registryID := ID("agent_registry_owned_01")
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO collector_agents (
+			id, tenant_id, module_key, name, agent_type, mode,
+			status, observed_health, auth_type, token_hash, created_by, updated_by
+		) VALUES (?, ?, 'flow', 'registry-owned', 'flow_collect', 'listen',
+			'active', 'unknown', 'token', 'registry-token-hash', 'user_registry_admin', 'user_registry_admin')
+	`, registryID, tenantA); err != nil {
+		t.Fatal(err)
+	}
+	registryAgent := agent
+	registryAgent.ID = registryID
+	registryAgent.TokenHash = "legacy-takeover-hash"
+	if _, err := store.UpsertAgent(ctx, registryAgent); err == nil || !strings.Contains(err.Error(), "collector registry") {
+		t.Fatalf("legacy takeover of registry-owned collector error = %v", err)
+	}
+	var legacyRows int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM target_agents WHERE id = ?`, registryID).Scan(&legacyRows); err != nil || legacyRows != 0 {
+		t.Fatalf("rejected takeover left target_agents rows = %d, err = %v", legacyRows, err)
+	}
+	if err := store.MarkAgentSeen(ctx, registryID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAgent(ctx, tenantA, registryID); err != nil {
+		t.Fatal(err)
+	}
+	var registryHealth, registryToken string
+	if err := db.QueryRowContext(ctx, `
+		SELECT observed_health, COALESCE(token_hash, '') FROM collector_agents WHERE id = ?
+	`, registryID).Scan(&registryHealth, &registryToken); err != nil {
+		t.Fatalf("registry-owned collector row missing after legacy delete: %v", err)
+	}
+	if registryHealth != "unknown" || registryToken != "registry-token-hash" {
+		t.Fatalf("legacy sync touched registry-owned collector: health=%q token=%q", registryHealth, registryToken)
+	}
+
 	if err := store.DeleteAgent(ctx, tenantA, agentID); err != nil {
 		t.Fatal(err)
 	}
