@@ -123,11 +123,29 @@ func (s *MySQLStore) UpdateTarget(ctx context.Context, target Target) (Target, e
 }
 
 func (s *MySQLStore) DeleteTarget(ctx context.Context, tenantID, targetID ID) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// The targets cascade removes target_agents rows, but the legacy collector
+	// projection has no FK back to targets — delete projection-owned collector
+	// rows (and their bindings via cascade) in the same transaction so they
+	// cannot outlive their agent. Registry-owned rows are never touched.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE c FROM collector_agents c
+		INNER JOIN target_agents a ON a.id = c.id AND a.tenant_id = c.tenant_id
+		WHERE a.tenant_id = ? AND a.target_id = ? AND c.created_by = ?
+	`, tenantID, targetID, collectorCompatibilityActor); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM targets
 		WHERE tenant_id = ? AND id = ?
-	`, tenantID, targetID)
-	return err
+	`, tenantID, targetID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func targetSelect() string {

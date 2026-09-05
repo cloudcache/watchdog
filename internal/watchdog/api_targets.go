@@ -15,6 +15,7 @@ type targetAPI struct {
 	network       NetworkRepository
 	discoveryJobs DiscoveryJobRepository
 	snmp          SNMPRepository
+	deletePreview TargetDeletePreviewRepository
 }
 
 type targetRequest struct {
@@ -29,13 +30,14 @@ type targetRequest struct {
 	SNMPSecurity  map[string]string `json:"snmp_security"`
 }
 
-func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository, snmp SNMPRepository) {
-	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs, snmp: snmp}
+func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo TargetRepository, cleaner SeriesCleaner, network NetworkRepository, jobs DiscoveryJobRepository, snmp SNMPRepository, deletePreview TargetDeletePreviewRepository) {
+	api := targetAPI{repo: repo, seriesCleaner: cleaner, network: network, discoveryJobs: jobs, snmp: snmp, deletePreview: deletePreview}
 	mux.Handle("GET /api/v1/targets", auth(RequirePermission(ActionView, TenantResource)(http.HandlerFunc(api.list))))
 	mux.Handle("POST /api/v1/targets", auth(RequirePermission(ActionConfigure, TenantResource)(http.HandlerFunc(api.create))))
 	mux.Handle("GET /api/v1/targets/{target_id}", auth(RequirePermission(ActionView, targetResourceFromPath)(http.HandlerFunc(api.get))))
 	mux.Handle("PATCH /api/v1/targets/{target_id}", auth(RequirePermission(ActionConfigure, targetResourceFromPath)(http.HandlerFunc(api.patch))))
 	mux.Handle("DELETE /api/v1/targets/{target_id}", auth(RequirePermission(ActionConfigure, targetResourceFromPath)(http.HandlerFunc(api.delete))))
+	mux.Handle("GET /api/v1/targets/{target_id}/delete-preview", auth(RequirePermission(ActionConfigure, targetResourceFromPath)(http.HandlerFunc(api.previewDelete))))
 }
 
 func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +157,20 @@ func (api targetAPI) patch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	WriteAPIJSON(w, http.StatusOK, updated)
+}
+
+func (api targetAPI) previewDelete(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	if api.deletePreview == nil {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Delete preview is not available", nil)
+		return
+	}
+	preview, err := api.deletePreview.PreviewTargetDelete(r.Context(), auth.TenantID, ID(r.PathValue("target_id")))
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Target not found", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, preview)
 }
 
 func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
