@@ -26,6 +26,7 @@ const (
 	defaultClickHouseDatabase = "watchdog_flow"
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_batches"
+	receiptSchemaVersion      = 2
 )
 
 type NativeConfig struct {
@@ -104,7 +105,7 @@ func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBloc
 	if n == nil || n.executor == nil {
 		return Permanent(errors.New("ClickHouse native inserter is not initialized"))
 	}
-	records, insertedAt, generation, err := buildRecordInput(block)
+	records, maxReceivedAt, generation, err := buildRecordInput(block)
 	if err != nil {
 		return Permanent(err)
 	}
@@ -112,7 +113,7 @@ func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBloc
 	if err := n.executor.Do(ctx, insertQuery(flowRecordsTable, token, records)); err != nil {
 		return classifyClickHouseError(fmt.Errorf("insert flow records: %w", err))
 	}
-	receipt := buildReceiptInput(block, insertedAt, generation)
+	receipt := buildReceiptInput(block, maxReceivedAt, generation)
 	if err := n.executor.Do(ctx, insertQuery(flowReceiptsTable, token+"-receipt", receipt)); err != nil {
 		return classifyClickHouseError(fmt.Errorf("insert flow receipt: %w", err))
 	}
@@ -221,7 +222,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		classificationVersion proto.ColUInt32
 	)
 
-	var insertedAt time.Time
+	var maxReceivedAt time.Time
 	var generation uint64
 	var localAddressSetScratch, remoteAddressSetScratch []string
 	for index, ref := range block.Records {
@@ -258,8 +259,8 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		}
 		received := ref.Batch.ReceivedAt.UTC()
 		rowGeneration := uint64(received.UnixMilli())
-		if received.After(insertedAt) {
-			insertedAt = received
+		if received.After(maxReceivedAt) {
+			maxReceivedAt = received
 		}
 		if rowGeneration > generation {
 			generation = rowGeneration
@@ -376,13 +377,15 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		{Name: "remote_geo_province_id", Data: remoteGeoProvinceID}, {Name: "remote_geo_city_id", Data: remoteGeoCityID},
 		{Name: "remote_isp_id", Data: remoteISPID}, {Name: "remote_asn", Data: remoteASN}, {Name: "remote_asn_source", Data: &remoteASNSource}, {Name: "geo_version", Data: geoVersion},
 		{Name: "category", Data: &category}, {Name: "disposition", Data: &disposition}, {Name: "classification_version", Data: classificationVersion},
-	}, insertedAt, generation, nil
+	}, maxReceivedAt, generation, nil
 }
 
-func buildReceiptInput(block PreparedBlock, insertedAt time.Time, generation uint64) proto.Input {
+func buildReceiptInput(block PreparedBlock, maxReceivedAt time.Time, generation uint64) proto.Input {
 	var (
 		ingestBatchID    proto.ColFixedStr32
 		workerSchema     proto.ColUInt32
+		receiptSchema    proto.ColUInt16
+		tenantIDs        = new(proto.ColStr).Array()
 		kafkaTopic       = new(proto.ColStr).LowCardinality()
 		kafkaPartition   proto.ColUInt32
 		firstOffset      proto.ColUInt64
@@ -390,13 +393,20 @@ func buildReceiptInput(block PreparedBlock, insertedAt time.Time, generation uin
 		sourceBatchCount proto.ColUInt32
 		recordCount      proto.ColUInt64
 		rawBytes         proto.ColUInt64
+		rawPackets       proto.ColUInt64
 		estimatedBytes   proto.ColUInt64
+		estimatedPackets proto.ColUInt64
+		estimatedValid   proto.ColUInt64
+		minEventTime     = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		maxEventTime     = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
 		checksum         proto.ColFixedStr32
 		generationCol    proto.ColUInt64
-		insertedAtCol    = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		legacyInsertedAt = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
 	)
 	ingestBatchID.Append(block.ID)
 	workerSchema.Append(WorkerSchemaVersion)
+	receiptSchema.Append(receiptSchemaVersion)
+	tenantIDs.Append(block.TenantIDs)
 	kafkaTopic.Append(block.KafkaTopic)
 	kafkaPartition.Append(uint32(block.KafkaPartition))
 	firstOffset.Append(uint64(block.FirstOffset))
@@ -404,15 +414,23 @@ func buildReceiptInput(block PreparedBlock, insertedAt time.Time, generation uin
 	sourceBatchCount.Append(block.SourceBatchCount)
 	recordCount.Append(uint64(len(block.Records)))
 	rawBytes.Append(block.RawBytes)
+	rawPackets.Append(block.RawPackets)
 	estimatedBytes.Append(block.EstimatedBytes)
+	estimatedPackets.Append(block.EstimatedPackets)
+	estimatedValid.Append(block.EstimatedValidRecords)
+	minEventTime.Append(block.MinEventTime.UTC())
+	maxEventTime.Append(block.MaxEventTime.UTC())
 	checksum.Append(block.Checksum)
 	generationCol.Append(generation)
-	insertedAtCol.Append(insertedAt.UTC())
+	// The published v1 column name is immutable; its value has always been the
+	// block's maximum source receive time, not the ClickHouse persistence time.
+	legacyInsertedAt.Append(maxReceivedAt.UTC())
 	return proto.Input{
-		{Name: "ingest_batch_id", Data: ingestBatchID}, {Name: "worker_schema", Data: workerSchema}, {Name: "kafka_topic", Data: kafkaTopic},
+		{Name: "ingest_batch_id", Data: ingestBatchID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "tenant_ids", Data: tenantIDs}, {Name: "kafka_topic", Data: kafkaTopic},
 		{Name: "kafka_partition", Data: kafkaPartition}, {Name: "first_offset", Data: firstOffset}, {Name: "last_offset", Data: lastOffset},
-		{Name: "source_batch_count", Data: sourceBatchCount}, {Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes},
-		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "checksum", Data: checksum}, {Name: "generation", Data: generationCol}, {Name: "inserted_at", Data: insertedAtCol},
+		{Name: "source_batch_count", Data: sourceBatchCount}, {Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
+		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets}, {Name: "estimated_valid_records", Data: estimatedValid},
+		{Name: "min_event_time", Data: minEventTime}, {Name: "max_event_time", Data: maxEventTime}, {Name: "checksum", Data: checksum}, {Name: "generation", Data: generationCol}, {Name: "inserted_at", Data: legacyInsertedAt},
 	}
 }
 

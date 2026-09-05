@@ -35,11 +35,34 @@ func TestPrepareBlocksIsBoundedAndDeterministic(t *testing.T) {
 	if len(first) != 2 || len(first[0].Records) != 2 || len(first[1].Records) != 1 {
 		t.Fatalf("unexpected blocks: %+v", first)
 	}
-	if first[0].FirstOffset != 10 || first[0].LastOffset != 11 || first[0].SourceBatchCount != 2 || first[0].RawBytes != 300 || first[0].EstimatedBytes != 3_000 {
+	if first[0].FirstOffset != 10 || first[0].LastOffset != 11 || first[0].SourceBatchCount != 2 || first[0].RawBytes != 300 || first[0].RawPackets != 2 || first[0].EstimatedBytes != 3_000 || first[0].EstimatedPackets != 20 || first[0].EstimatedValidRecords != 2 {
 		t.Fatalf("unexpected first receipt: %+v", first[0])
+	}
+	if !reflect.DeepEqual(first[0].TenantIDs, []string{"tenant-a"}) || !first[0].MinEventTime.Equal(time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC)) || !first[0].MaxEventTime.Equal(first[0].MinEventTime) {
+		t.Fatalf("unexpected first audit metadata: %+v", first[0])
 	}
 	if first[0].ID == ([32]byte{}) || first[0].Checksum == ([32]byte{}) || first[0].ID == first[1].ID {
 		t.Fatalf("invalid block identity: %x %x", first[0].ID, first[1].ID)
+	}
+}
+
+func TestPrepareBlocksCanonicalizesCrossTenantAuditMetadata(t *testing.T) {
+	first := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
+	first.TenantID = "tenant-z"
+	first.Records[0].EventTime = time.Date(2026, 9, 5, 1, 3, 0, 0, time.UTC)
+	second := testEnrichedBatch(11, testEnrichedRecord(2, 200, 2_000))
+	second.TenantID = "tenant-a"
+	second.Records[0].EventTime = time.Date(2026, 9, 5, 1, 1, 0, 0, time.UTC)
+
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || !reflect.DeepEqual(blocks[0].TenantIDs, []string{"tenant-a", "tenant-z"}) {
+		t.Fatalf("tenant IDs are not canonical: %+v", blocks)
+	}
+	if !blocks[0].MinEventTime.Equal(second.Records[0].EventTime) || !blocks[0].MaxEventTime.Equal(first.Records[0].EventTime) {
+		t.Fatalf("event range=%s..%s", blocks[0].MinEventTime, blocks[0].MaxEventTime)
 	}
 }
 
@@ -53,6 +76,29 @@ func TestPrepareBlocksRejectsMixedPartitionAndReceiptOverflow(t *testing.T) {
 	second.KafkaPartition = first.KafkaPartition
 	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
 		t.Fatalf("overflow error=%v", err)
+	}
+	second = testEnrichedBatch(11, testEnrichedRecord(2, 1, 0))
+	second.TenantID = ""
+	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, testEnrichedRecord(1, 1, 0)), second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
+		t.Fatalf("empty tenant error=%v", err)
+	}
+}
+
+func TestPrepareBlocksRejectsPacketReceiptOverflow(t *testing.T) {
+	first := testEnrichedBatch(10, testEnrichedRecord(1, 0, 0))
+	second := testEnrichedBatch(11, testEnrichedRecord(2, 0, 0))
+	first.Records[0].RawPackets = math.MaxUint64
+	second.Records[0].RawPackets = 1
+	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
+		t.Fatalf("raw packet overflow error=%v", err)
+	}
+
+	first = testEnrichedBatch(10, testEnrichedRecord(1, 0, 0))
+	second = testEnrichedBatch(11, testEnrichedRecord(2, 0, 0))
+	first.Records[0].EstimatedPackets = math.MaxUint64
+	second.Records[0].EstimatedPackets = 1
+	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
+		t.Fatalf("estimated packet overflow error=%v", err)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
@@ -100,14 +101,57 @@ func TestNativeInputColumnsMatchAuthoritativeMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, insertedAt, generation, err := buildRecordInput(blocks[0])
+	records, maxReceivedAt, generation, err := buildRecordInput(blocks[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildReceiptInput(blocks[0], insertedAt, generation)
+	receipt := buildReceiptInput(blocks[0], maxReceivedAt, generation)
 	schema := readClickHouseMigrations(t)
 	assertColumnsMatchDDL(t, schema, "flow_records", records)
 	assertColumnsMatchDDL(t, schema, "flow_ingest_batches", receipt)
+}
+
+func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
+	first := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
+	first.TenantID = "tenant-z"
+	first.Records[0].RawPackets = 2
+	first.Records[0].EventTime = time.Date(2026, 9, 5, 1, 3, 0, 0, time.UTC)
+	second := testEnrichedBatch(11, testEnrichedRecord(2, 200, 2_000))
+	second.TenantID = "tenant-a"
+	second.Records[0].RawPackets = 4
+	second.Records[0].EstimatedValid = false
+	second.Records[0].EventTime = time.Date(2026, 9, 5, 1, 1, 0, 0, time.UTC)
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, maxReceivedAt, generation, err := buildRecordInput(blocks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := buildReceiptInput(blocks[0], maxReceivedAt, generation)
+	assertInputRows(t, records, 2)
+	assertInputRows(t, receipt, 1)
+
+	if got := columnValue(receipt, "receipt_schema").(proto.ColUInt16).Row(0); got != receiptSchemaVersion {
+		t.Fatalf("receipt schema=%d", got)
+	}
+	if got := columnValue(receipt, "tenant_ids").(*proto.ColArr[string]).Row(0); !reflect.DeepEqual(got, []string{"tenant-a", "tenant-z"}) {
+		t.Fatalf("tenant IDs=%v", got)
+	}
+	for name, want := range map[string]uint64{
+		"raw_packets": 6, "estimated_packets": 10, "estimated_valid_records": 1,
+	} {
+		if got := columnValue(receipt, name).(proto.ColUInt64).Row(0); got != want {
+			t.Fatalf("%s=%d want=%d", name, got, want)
+		}
+	}
+	if got := columnValue(receipt, "min_event_time").(*proto.ColDateTime64).Row(0); !got.Equal(second.Records[0].EventTime) {
+		t.Fatalf("min event time=%s", got)
+	}
+	if got := columnValue(receipt, "max_event_time").(*proto.ColDateTime64).Row(0); !got.Equal(first.Records[0].EventTime) {
+		t.Fatalf("max event time=%s", got)
+	}
 }
 
 func TestNativeInserterRejectsInvalidEnumsBeforeIO(t *testing.T) {

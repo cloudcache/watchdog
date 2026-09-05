@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
+	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowworker"
 )
@@ -35,17 +37,23 @@ type RecordRef struct {
 }
 
 type PreparedBlock struct {
-	ID               [32]byte
-	Checksum         [32]byte
-	KafkaTopic       string
-	KafkaPartition   int32
-	FirstOffset      int64
-	LastOffset       int64
-	SourceBatchCount uint32
-	RawBytes         uint64
-	EstimatedBytes   uint64
-	ApproxBytes      int
-	Records          []RecordRef
+	ID                    [32]byte
+	Checksum              [32]byte
+	KafkaTopic            string
+	KafkaPartition        int32
+	FirstOffset           int64
+	LastOffset            int64
+	SourceBatchCount      uint32
+	TenantIDs             []string
+	RawBytes              uint64
+	RawPackets            uint64
+	EstimatedBytes        uint64
+	EstimatedPackets      uint64
+	EstimatedValidRecords uint64
+	MinEventTime          time.Time
+	MaxEventTime          time.Time
+	ApproxBytes           int
+	Records               []RecordRef
 }
 
 func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]PreparedBlock, error) {
@@ -59,15 +67,22 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 
 	blocks := make([]PreparedBlock, 0, 1)
 	current := PreparedBlock{KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
+	currentTenants := make(map[string]struct{})
 	currentOffset := int64(-1)
 	flush := func() error {
 		if len(current.Records) == 0 {
 			return nil
 		}
+		current.TenantIDs = make([]string, 0, len(currentTenants))
+		for tenantID := range currentTenants {
+			current.TenantIDs = append(current.TenantIDs, tenantID)
+		}
+		sort.Strings(current.TenantIDs)
 		current.Checksum = blockChecksum(current.Records)
 		current.ID = blockID(current)
 		blocks = append(blocks, current)
 		current = PreparedBlock{KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
+		clear(currentTenants)
 		currentOffset = -1
 		return nil
 	}
@@ -90,17 +105,34 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			current.LastOffset = batch.KafkaOffset
 			if currentOffset != batch.KafkaOffset {
 				current.SourceBatchCount++
+				currentTenants[batch.TenantID] = struct{}{}
 				currentOffset = batch.KafkaOffset
 			}
 			if current.RawBytes > math.MaxUint64-record.RawBytes {
 				return nil, fmt.Errorf("%w: raw byte receipt overflow", ErrInvalidBatchGroup)
 			}
 			current.RawBytes += record.RawBytes
+			if current.RawPackets > math.MaxUint64-record.RawPackets {
+				return nil, fmt.Errorf("%w: raw packet receipt overflow", ErrInvalidBatchGroup)
+			}
+			current.RawPackets += record.RawPackets
 			if record.EstimatedValid {
 				if current.EstimatedBytes > math.MaxUint64-record.EstimatedBytes {
 					return nil, fmt.Errorf("%w: estimated byte receipt overflow", ErrInvalidBatchGroup)
 				}
+				if current.EstimatedPackets > math.MaxUint64-record.EstimatedPackets {
+					return nil, fmt.Errorf("%w: estimated packet receipt overflow", ErrInvalidBatchGroup)
+				}
 				current.EstimatedBytes += record.EstimatedBytes
+				current.EstimatedPackets += record.EstimatedPackets
+				current.EstimatedValidRecords++
+			}
+			eventTime := record.EventTime.UTC()
+			if current.MinEventTime.IsZero() || eventTime.Before(current.MinEventTime) {
+				current.MinEventTime = eventTime
+			}
+			if eventTime.After(current.MaxEventTime) {
+				current.MaxEventTime = eventTime
 			}
 			current.ApproxBytes += recordBytes
 			current.Records = append(current.Records, RecordRef{Batch: batch, Record: record})
@@ -130,7 +162,7 @@ func validateBatchGroup(batches []*flowworker.EnrichedBatch) error {
 		return fmt.Errorf("%w: ordered partition batches are required", ErrInvalidBatchGroup)
 	}
 	for index, batch := range batches {
-		if batch == nil || batch.SchemaVersion != flowworker.EnrichedBatchSchemaVersion || batch.KafkaTopic != batches[0].KafkaTopic || batch.KafkaPartition != batches[0].KafkaPartition || batch.KafkaOffset < 0 || len(batch.Records) == 0 {
+		if batch == nil || batch.SchemaVersion != flowworker.EnrichedBatchSchemaVersion || batch.KafkaTopic != batches[0].KafkaTopic || batch.KafkaPartition != batches[0].KafkaPartition || batch.KafkaOffset < 0 || batch.TenantID == "" || len(batch.Records) == 0 {
 			return fmt.Errorf("%w: source batch %d has invalid identity or records", ErrInvalidBatchGroup, index)
 		}
 		if index > 0 && batches[index-1].KafkaOffset >= batch.KafkaOffset {

@@ -168,14 +168,16 @@ receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当�
 |---|---|---|
 | 身份 | topic/partition/first/last/batch ID | topic/partition 必须唯一，offset 取 min/max，batch ID 必须唯一 |
 | 规模 | source batch count/record count | `uniqExact(kafka_offset)` / 去重行数 |
-| 计数 | raw bytes/valid estimated bytes | `sum(raw_bytes)` / `sumIf(estimated_bytes, estimated_valid)` |
+| 计数 | raw bytes/packets、valid estimated bytes/packets、valid-estimate records | 对应 `sum`，estimated 三项只统计 `estimated_valid` |
 | 内容 | checksum | 按 `(kafka_offset, record_index)` 重建与 Go 端完全相同的 big-endian SHA-256 字节流 |
 
-指标不使用会重复累加的 counter，而由最后一次**完整、成功**的有界扫描替换 gauge 快照：`watchdog_flow_ingest_reconciliation_mismatches{reason}`，`reason` 固定为 `missing_receipt|missing_records|identity_mismatch|count_mismatch|counter_mismatch|checksum_mismatch`。另行暴露 last-success 和 scan-complete；超时、超预算、Kafka/CH 不可用或仅扫了一部分时保留上次快照并将 complete 置 0，不得发布伪零。内部 topic/partition/offset/batch ID 可进 job payload/checkpoint 和审计明细，不作 metric label。
+指标不使用会重复累加的 counter，而由最后一次**完整、成功**的有界扫描替换 gauge 快照：`watchdog_flow_ingest_reconciliation_mismatches{reason}`，`reason` 固定为 `missing_receipt|missing_records|identity_mismatch|count_mismatch|counter_mismatch|checksum_mismatch`，同一 batch 多项失败时按该顺序只计第一个 reason，详细证据仍全部保留。同时暴露 `watchdog_flow_ingest_reconciliation_last_success_timestamp_seconds` 和 `watchdog_flow_ingest_reconciliation_scan_complete`；超时、超预算、Kafka/CH 不可用或仅扫了一部分时保留上次快照并将 complete 置 0，不得发布伪零。内部 topic/partition/offset/batch ID 可进 job payload/checkpoint 和审计明细，不作 metric label。
 
 扫描按 `(topic, partition, offset)` keyset 接续，必须同时限制 partitions、offset span、batch IDs、fact rows、CH read bytes 和 wall time。先做 count/counter 便宜核对，checksum 在同一持久水位下分批覆盖全部 batch，不在 worker 热路径执行。执行必须复用 `operation_jobs` 的 lease/cancel/retry，但现有 job 强制 tenant，receipt 却可跨 tenant；全局/system scope job 契约已登记 PLAT-04F，未落地前 Flow 不伪造 tenant 也不另建状态机。
 
-现有 DDL 还有两个必须前向修正的限制：`flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor；receipt 缺 tenant 列表、event-time 范围和 packet/valid-estimate 诊断数，无法在 fact TTL 边界安全区分“丢失”与“已过保留期”。后续 migration 只能增加确定性派生列，不改 001 checksum。`flow_records` 的 ORDER BY 也不支持便宜的 batch/offset 反查；先在真实 CH 上以 EXPLAIN 和 read_rows/read_bytes 对比 skipping index、projection 与窄审计投影，通过容量门禁后再选一种，不在文档中猜 DDL 性能。
+已发布的 `flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor。migration 004 因此不改 001，而是增加 `receipt_schema`、排序去重的 `tenant_ids`、`min/max_event_time`、raw/estimated packet 数和 valid-estimate record 数；旧行为 schema 1，新 writer 显式写 schema 2。missing-records 只在 `now < min_event_time + base_fact_ttl - ttl_merge_grace` 时才可判定，否则该 batch 超出对账资格。变更顺序固定为 migration 004 → 所有 worker 升级为 receipt v2 → 以每 partition 当时 committed offset 记录 reconciliation cutover → 启用 job；不回填 v1 receipt，混跑期低于 cutover 的 v1 行不进完整性分母。
+
+`flow_records` 的 ORDER BY 不支持便宜的 batch/offset 反查；先在真实 CH 上以 EXPLAIN 和 read_rows/read_bytes 对比 skipping index、projection 与窄审计投影，通过容量门禁后再选一种，不在文档中猜 DDL 性能。
 
 NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已提交。每次 partition assignment 因此从原 committed offset 向前回放固定数量的 RawFlow record：旧窗口参与解码和幂等 CH 写入以重建模板，但提交水位绝不能低于 assignment 前的 committed offset；到达旧水位后才正常前进。`template_replay_records` 必须为正且有硬上限，并按“单 partition 在 exporter 最大模板刷新间隔内的 record 数 + 裕量”定容。exporter 必须周期刷新模板；未满足此前置条件时显示 template-missing/partial，不能声称完整，也不能用猜测字段解码。
 
@@ -401,17 +403,17 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 
 ## 7. ClickHouse 5 张表
 
-完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker 契约。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
+完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
 | `flow_records` | 完整 enriched base fact | `record_id=32-byte SHA-256`；Replacing 收敛；base 查询去重 |
 | `flow_aggregate_1m` | 近期趋势/TopN | 关闭 bucket 异步重建；按 `generation` 取最新 |
 | `flow_aggregate_1h` | 长期趋势/TopN | 与 1m 同 schema，不从未关闭 1m 增量拼接 |
-| `flow_ingest_batches` | 每次 durable insert receipt | 不参与写前判断；只做 offset/count/checksum 审计 |
+| `flow_ingest_batches` | 每次 durable insert receipt | 不参与写前判断；v2 保留跨 tenant、event range、offset/count/counter/checksum 审计证据 |
 | `flow_vpn_candidates` | 异步 VPN 候选 | 事实三版本 + 规则版本隔离；marker 选最新 generation，证据有 TTL |
 
-DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate；禁止原地篡改已部署 migration。
+DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate，004 只前向扩展 receipt；禁止原地篡改已部署 migration。
 
 `dimension_kind` 的公开 registry 固定为 `total/category/geo.continent/geo.region/geo.country/geo.province/geo.city/isp/asn/business/local_prefix/remote_prefix/address_set/src_ip/dst_ip/remote_port/protocol/observation_interface`；`_generation` 是不可查询的内部 marker。每次查询必须选一个公开 kind。`primary_prefix` 和每个单独 Geo level 在包含 `_unassigned` 时可与 `total` 对账；`address_set` 是重叠标签统计，不能与 `total` 对账；不同 Geo level 也不能彼此相加。1m/1h rollup 由异步 job 对单个 `tenant + 已关闭 bucket` 发出一次原子 `INSERT SELECT`，同一 generation 同时生成全部维度和 marker；迟到/修正以更大 generation 完整重建。查询先按 `tenant+bucket`（包括 marker）求最新 generation，再只读该 generation 的公开 kind，不能逐 key `argMax`，否则新版本已消失的旧 key 会残留。IPv4 写 IPv4-mapped IPv6，API 还原文本。
 

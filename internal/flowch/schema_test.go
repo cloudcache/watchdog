@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 3 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" {
+	if len(paths) != 4 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
@@ -45,6 +45,9 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"row_kind Enum8('candidate'=1,'_generation'=2)", "remote_prefix_id LowCardinality(String)",
 		"geo_version LowCardinality(String)", "classification_version UInt32",
 		"row_kind, dimension_snapshot_id, geo_version, classification_version",
+		"receipt_schema UInt16 DEFAULT 1", "tenant_ids Array(String)",
+		"raw_packets UInt64", "estimated_packets UInt64", "estimated_valid_records UInt64",
+		"min_event_time DateTime64(3, 'UTC')", "max_event_time DateTime64(3, 'UTC')",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

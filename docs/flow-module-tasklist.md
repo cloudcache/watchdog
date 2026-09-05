@@ -125,7 +125,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-04C2 rollup 指标**：runner 在真实 CH 调用点原子记录 1m/1h attempt/success、retryable/permanent、initial/repair、last success/最大完成 bucket；provider 只使用固定 resolution/class/kind 标签，unknown age 有独立 known gauge，旧桶 repair 不倒退。
 - [x] **FLOW-04C2 单元/变更/回归/已提交**：覆盖 resolution、失败分类、repair、未来 age clamp、从未成功 unknown、高基数标签禁止和 hub provider 组合；定向 race/vet 与全库 test 通过，提交 `041eebf4`。
 - [x] **FLOW-04C3 设计/边界审计**：冻结可跨 tenant 的 batch 权威键、Kafka committed-next-offset 闭合规则、`FINAL` 去重后 count/counter/checksum 比较、固定 mismatch reason、有界 keyset 扫描和不完整 gauge 快照语义；禁止在 metrics renderer 猜值或为指标另建状态机。
-- [ ] **FLOW-04C3A 编码/单元/变更测试**：新顺序 CH migration 补 receipt 的 tenant IDs、min/max event time、raw/estimated packets 和 valid-estimate record count；native encoder 必须从同一 PreparedBlock 确定性产生并由 schema contract 锁死，不回改 001。
+- [x] **FLOW-04C3A 编码/单元**：migration 004 前向增加 receipt schema v2、排序去重 tenant IDs、min/max event time、raw/estimated packets 和 valid-estimate record count；native encoder 从同一 PreparedBlock 确定性产生，覆盖跨 tenant、时间边界、无效 estimated 排除、byte/packet 溢出与 DDL 列契约。
+- [x] **FLOW-04C3A 变更设计/测试**：001 不改，旧行 `receipt_schema=1`，新行显式为 2；发布顺序为 004 → 全 worker v2 → 记录 per-partition cutover offset → 启用对账，不对旧 receipt 猜缺失字段。schema contract 已锁定 migration 顺序和 v2 native input。
 - [ ] **FLOW-04C3B 编码/集成**：复用平台 global/system-scope `operation_jobs` 运行分区对账；先在真实 CH 对 index/projection/窄审计投影执行 EXPLAIN 和 read_rows/read_bytes 容量测试，选定唯一访问路径后才接指标和 repair；受 PLAT-04F 与真实 Kafka/CH 门禁阻塞。
 - [ ] **FLOW-04C3 已提交**：只有审计元数据、runner、指标、job 接线和对应测试都进入可复现提交后才可勾选；仅文档审计不冒充功能完成。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
