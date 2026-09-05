@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C1G — production worker 强杀/lost partition 与 RXQ overflow。** 两个 production command 的四协议基线、独立 VM promscrape、UDP safety、ClickHouse/Kafka 恢复和双 worker 正常 rebalance 已经关闭；下一轮验证非优雅 worker 丢失后的 takeover，再单列内核 RXQ overflow 压力门禁。集群 DDL、N+1 和固定硬件容量证据仍是后续门禁，不用单节点结果冒充。
+**活动切片：FLOW-04C1H — production broker restart 与 RXQ overflow。** 两个 production command 的四协议基线、独立 VM promscrape、UDP safety、ClickHouse/Kafka 恢复、双 worker 正常 rebalance 和强杀 takeover 已经关闭；下一轮验证隔离 broker 保留数据重启，RXQ overflow 因本机 Darwin 不提供 `SO_RXQ_OVFL` 单列 Linux 压力门禁。集群 DDL、N+1 和固定硬件容量证据仍是后续门禁，不用单节点结果冒充。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -57,6 +57,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C ClickHouse recovery：`1f2d4762 test(flow): recover production worker after ClickHouse fault`；worker 经透明 TCP 代理连接真实 CH，握手后丢弃服务端响应。collector 已将首条 NetFlow durable 写入 Kafka 时，CH retryable error 增长且 worker committed records 保持 0；恢复代理后同一 worker 自动重试到 committed=1，再完成四协议 6/6、38 条事实和 receipt。共享 CH 容器未停止，本项验证的是生产 backpressure/replay，不以进程重启掩盖失败。
 - FLOW-04C Kafka recovery：`3e5c6abf test(flow): recover production pipeline after Kafka pause`；测试启动无卷、随机 loopback 端口的隔离 Kafka 4.3.1 KRaft broker，pause 后 v9 template 停留在 collector buffer，durable records 保持 0；unpause 后 collector ack=1、worker committed=1，随后经 CH 故障恢复和完整 corpus 收敛至 6/6、lag=0、template missing=0。整个 NetFlow corpus 复用一个稳定 UDP exporter session；现有开发 Kafka 未暂停。
 - FLOW-04C worker rebalance：`013f3f9f test(flow): verify production worker rebalance`；同 group 的两个真实 worker 从 A 独占 4 个 partition 收敛为 2+2；追加流量后 broker group committed total=end=7、lag=0。优雅停止 A 后 B 第二次 assignment 并接管 4 个 partition，再追加流量后 committed=end=8、lag=0；两端 template missing/rejected 为 0，CH `FINAL` 保持四协议事实收敛。累计进程指标不作为 offset 权威，验收直接读取 broker group。
+- FLOW-04C worker strong-kill：`7cb8ef41 test(flow): recover after production worker kill`；A/B 先稳定为 2+2，随后对 A 执行 `Process.Kill`，不提供 revoke/commit 机会；Kafka session 失效后 B 第二次 assignment 并接管 4 个 partition，新 flow 后 broker committed=end=8、lag=0，template missing/rejected=0，CH 事实继续收敛。被杀进程内存已不存在，因此不伪造其 `lost_partitions_total`，以 broker ownership/offset 和存活 worker assignment 为权威。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
@@ -153,7 +154,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **集成（source admission / UDP truncate）**：真实非 loopback source 命中签名 plan 拒绝，超过配置读取边界的 datagram 命中 `MSG_TRUNC`；分别核对 rejected/oversize 且 Kafka 保持 0，再运行正常 corpus 证明监听器没有被异常输入污染。证据 `95bb583f`；RXQ overflow 仍未关闭。
 - [x] **集成（ClickHouse 中断恢复）**：透明代理静默丢弃 CH response；Kafka durable record 已存在但 worker offset 不提交，writer retryable 指标增长。代理恢复后同一进程重试并提交，事实/receipt/四协议最终收敛。证据 `1f2d4762`。
 - [x] **集成（Kafka 中断恢复）**：隔离 Kafka broker pause 时 collector 只缓冲、不产生 durable ack；unpause 后 producer/consumer 自动恢复，offset 与 broker high watermark 收敛且模板状态保持。证据 `3e5c6abf`；共享开发 broker 未受影响。
-- [x] **集成（重叠 worker rebalance）**：同 group 两个 production worker 稳定为 2+2 assignment；追加 flow 后 broker committed=end。优雅退出 A 后 B 接管全部 4 partition，再次追加后 committed=end、lag=0，template state 与 CH 事实收敛。证据 `013f3f9f`；强杀/lost partition 仍未关闭。
+- [x] **集成（重叠 worker rebalance）**：同 group 两个 production worker 稳定为 2+2 assignment；追加 flow 后 broker committed=end。优雅退出 A 后 B 接管全部 4 partition，再次追加后 committed=end、lag=0，template state 与 CH 事实收敛。证据 `013f3f9f`。
+- [x] **集成（worker 强杀 takeover）**：A 被 SIGKILL 后无 revoke/commit，B 等 broker session 失效并接管 4 partition；新 flow 后 committed=end、lag=0，模板与事实收敛。证据 `7cb8ef41`；死亡进程内存指标不作为持久证据。
 - [x] **集成（真实 VM 存储/查询子门禁）**：production collector/worker handler 通过真实 HTTP server 输出，VictoriaMetrics Prometheus import 后 instant query 精确得到 collector Kafka records 和 worker lag；落库 label 复核无高基数维度，唯一 `integration_run` series 在成功/失败 cleanup 中删除。显式环境变量开启，证据提交 `c61bb658`。该测试只证明 wire/storage/query 兼容，不替代上项的 promscrape/生产进程/故障恢复。
 - [x] **变更设计**：新增独立 `-metrics-listen`，默认 loopback `9090/9091`、空值禁用；远程 TLS/mTLS 归部署层反代/sidecar，不复制证书生命周期。
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
@@ -296,7 +298,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 ## 5. 外部门禁
 
 - [x] 真实 Kafka/CH 正常链路：四协议 UDP RawFlow、按 exporter key 保持模板/数据顺序、关闭 flush、四协议 durable fact、receipt count/counter/checksum 和五级 rollup 守恒。
-- [ ] 真实 Kafka 故障链路：v9/IPFIX durable failure → assignment 回放 → committed offset `4→4→6` 由 `11cd81b0` 证明；production broker pause/unpause 与 lag 归零由 `3e5c6abf` 证明；重叠成员 2+2、单成员 takeover 和 broker committed=end 由 `013f3f9f` 证明。仍需四协议链路内 broker restart、实际 worker 强杀/lost partition；正常退出不能代替强杀。
+- [ ] 真实 Kafka 故障链路：v9/IPFIX durable failure → assignment 回放 → committed offset `4→4→6` 由 `11cd81b0` 证明；production broker pause/unpause 与 lag 归零由 `3e5c6abf` 证明；重叠成员 2+2 与正常 takeover 由 `013f3f9f` 证明；实际 worker 强杀后的 broker takeover 由 `7cb8ef41` 证明。仍需四协议链路内 broker restart。
 - [ ] 真实 ClickHouse 故障链路：静默 timeout、“fact 已提交/receipt 响应丢失→同 block 重放→count/counter/checksum 收敛”、任意 packet 中途截断及禁用 server dedup 后逻辑收敛已由 `f13b57d3`/`21a74da8`/`ffcc64e3`/`33c3f95f` 证明；仍需实际 worker/CH restart 与组合故障，正常链路或单一代理故障不能替代。
 - [ ] ClickHouse 发布：实际旧/新制品、Replicated/Distributed/ON CLUSTER DDL 与集群回滚/forward-fix。
 - [ ] 性能环境：固定硬件、真实混合 corpus、N+1、容量和 72h soak。
