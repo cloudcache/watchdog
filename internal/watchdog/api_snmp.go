@@ -41,6 +41,7 @@ func (api snmpAPI) getProfile(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "SNMP profile not found", nil)
 		return
 	}
+	SetEntityETag(w, profile.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, profile)
 }
 
@@ -62,24 +63,43 @@ func (api snmpAPI) createProfile(w http.ResponseWriter, r *http.Request) {
 
 func (api snmpAPI) patchProfile(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	profileID := ID(r.PathValue("profile_id"))
+	existing, err := api.repo.GetSNMPProfile(r.Context(), auth.TenantID, profileID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "SNMP profile not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	profile, err := decodeSNMPProfileRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
-	profile.ID = ID(r.PathValue("profile_id"))
+	profile.ID = profileID
 	profile.TenantID = auth.TenantID
 	saved, err := api.repo.UpsertSNMPProfile(r.Context(), profile)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	SetEntityETag(w, saved.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, saved)
 }
 
 func (api snmpAPI) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	if err := api.repo.DeleteSNMPProfile(r.Context(), auth.TenantID, ID(r.PathValue("profile_id"))); err != nil {
+	profileID := ID(r.PathValue("profile_id"))
+	existing, err := api.repo.GetSNMPProfile(r.Context(), auth.TenantID, profileID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "SNMP profile not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
+	if err := api.repo.DeleteSNMPProfile(r.Context(), auth.TenantID, profileID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}

@@ -89,6 +89,51 @@ func TestAPISNMPProfileGetNotFound(t *testing.T) {
 	}
 }
 
+func TestAPISNMPProfileIfMatchOptimisticLocking(t *testing.T) {
+	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	repo := &fakeSNMPRepository{profiles: []SNMPProfile{{
+		ID: "profile-a", Name: "Core v2c", Version: SNMPVersion2c, Timeout: 5 * time.Second, Retries: 2, UpdatedAt: updatedAt,
+	}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(false), SNMP: repo})
+
+	// GET exposes a weak ETag derived from updated_at.
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/snmp/profiles/profile-a", nil))
+	etag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || etag != WeakETagFromTime(updatedAt) {
+		t.Fatalf("get status=%d etag=%q", rec.Code, etag)
+	}
+
+	body := `{"ID":"profile-a","Name":"Core v3","Version":"2c","Security":{"community":"public"},"Retries":2}`
+
+	// A stale If-Match is rejected with 412 and the write does not happen.
+	stale := httptest.NewRecorder()
+	staleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/snmp/profiles/profile-a", strings.NewReader(body))
+	staleReq.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(stale, staleReq)
+	if stale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale If-Match status = %d, want 412", stale.Code)
+	}
+
+	// The current ETag is accepted.
+	ok := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodPatch, "/api/v1/snmp/profiles/profile-a", strings.NewReader(body))
+	okReq.Header.Set("If-Match", etag)
+	router.ServeHTTP(ok, okReq)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("matched If-Match status = %d body = %s", ok.Code, ok.Body.String())
+	}
+
+	// DELETE also honors a stale If-Match.
+	del := httptest.NewRecorder()
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/snmp/profiles/profile-a", nil)
+	delReq.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(del, delReq)
+	if del.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale delete If-Match status = %d, want 412", del.Code)
+	}
+}
+
 func TestAPISNMPProfileCreateStoresTenantScopedProfile(t *testing.T) {
 	repo := &fakeSNMPRepository{}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(false), SNMP: repo})
