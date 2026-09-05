@@ -133,7 +133,7 @@
 - [x] 身份投影、tenant discovery、请求 ID、生产路由与 readiness 的定向单元/集成测试通过。
 
 - [ ] **设计**：确认 PocketBase/OIDC 身份权威、`external_subject_id` 投影、tenant 选择、AuthContext、用户/角色 CRUD 和资源继承规则。
-- [x] **编码**：在生产 hub 挂载 watchdog `/api/v1`，实现 IdentityAdapter、tenant/user/role/permission API、审计和 dev admin 隔离。证据：挂载/IdentityAdapter/tenant discovery 见 STORE-01（`platform_backend.go`/`identity_adapter.go`）；用户/角色 CRUD + user_roles 替换 + 审计见 commit 0253e2cd（`api_identity_admin.go`，DELETE=禁用投影、角色删除同事务清理其 permission 主体）。
+- [x] **编码**：在生产 hub 挂载 watchdog `/api/v1`，实现 IdentityAdapter、tenant/user/role/permission API、审计和 dev admin 隔离。证据：挂载/IdentityAdapter/tenant discovery 见 STORE-01（`platform_backend.go`/`identity_adapter.go`）；用户/角色 CRUD + user_roles 替换 + 审计见 commit 0253e2cd（`api_identity_admin.go`，DELETE=禁用投影、角色删除同事务清理其 permission 主体）；管理 UI（/users 用户表+角色面板+绑定对话框，取代导航中的 PocketBase Users 外链）见 commit 8e0dbe2d。
 - [x] **单元测试**：覆盖 token 映射、用户禁用、角色合并、resource inheritance、action 判定、跨 tenant ID 和 service account 隔离。证据：`identity_adapter_test.go`（已有）+ `api_identity_admin_test.go`（admin 门禁、生命周期、自禁拒绝、字段校验、跨租户角色拒绝、审计记录）。
 - [ ] **集成测试**：用真实登录 session 调用 watchdog API，验证用户/角色变更即时生效、前后端 401/403/404 行为一致。
 - [ ] **变更设计**：记录身份字段弃用、session/tenant 切换、旧 MySQL password 字段和 permission 兼容策略。
@@ -149,7 +149,7 @@
 ### PLAT-02 Module、Resource、TargetKind 与 Dataset Registry
 
 - [ ] **设计**：冻结 descriptor、依赖、启停、migration、health、resource parent、target kind、dataset provider 和前端 manifest 契约。
-- [x] **编码**：实现 registry、重复 key/循环依赖校验、tenant module enablement，并先迁移 SNMP/system 模块验证契约。证据：commit 6695e186 —— Module/Resource/TargetKind/Dataset 四 registry + builtin core/host/network/edge 模块（五 kind 分类学 §7.1，edge=planned 不可创建）、migration 023 `tenant_modules`、`/api/v1/modules`、`/api/v1/modules/target-kinds`、GET/PUT `/api/v1/tenants/{id}/modules`（core 不可禁用、未知 key 拒绝、审计）。路由/worker 迁入 RegisterRoutes 为后续增量。
+- [x] **编码**：实现 registry、重复 key/循环依赖校验、tenant module enablement，并先迁移 SNMP/system 模块验证契约。证据：commit 6695e186 —— Module/Resource/TargetKind/Dataset 四 registry + builtin core/host/network/edge 模块（五 kind 分类学 §7.1，edge=planned 不可创建）、migration 023 `tenant_modules`、`/api/v1/modules`、`/api/v1/modules/target-kinds`、GET/PUT `/api/v1/tenants/{id}/modules`（core 不可禁用、未知 key 拒绝、审计）。路由/worker 迁入 RegisterRoutes 为后续增量；模块中心 UI（/modules 启停+五分类就绪度表）见 commit 340cf943。
 - [x] **单元测试**：覆盖注册成功、重复 key、依赖缺失、循环依赖、启停、资源继承、非法 dataset 字段和 descriptor 版本不一致。证据：`platform_registry_test.go`（依赖序 Resolve、缺失/循环依赖、资源树祖先链与自环拒绝、readiness 校验、planned 不可用、dataset provider 校验、模块 API 生效态/越权租户/审计）。
 - [ ] **集成测试**：启动完整 watchdog，验证模块路由、worker、health、菜单、tenant 启停和事实数据保留。
 - [ ] **变更设计**：记录实际 Go interface、模块生命周期、兼容别名和 frontend manifest 生成方式与原设计差异。
@@ -197,6 +197,8 @@
 - [ ] **变更设计**：记录现有 address CRUD 兼容、snapshot object 存储、版本保留、最大 set expansion 和历史回算范围。
 - [ ] **变更测试**：验证旧 prefixes/sets 生成首个 snapshot、版本切换、retire、旧版本重放、bundle 丢失和 rollback/forward-fix。
 - [ ] **回归测试**：现有 address prefixes/sets CRUD、labels、match_direction 和 SNMP/sFlow 原型读取保持可用。
+
+2026-09-05 Flow 侧依赖冻结：`FLOW-03B2B1` 已定义 PLAT-04A 需要提供的 enrichment publication/object source/success ACK 字段、byte limit、checksum 和幂等语义；平台侧尚未实现 endpoint、租户授权、worker set/readiness 与 ACK 持久化，因此不得把内存测试替代 PLAT-04A 完成状态。该缺口只登记在本工作包，Flow 侧后续通过 adapter 接入，不反向改平台现有认证/路由。
 
 ### WATCHDOG-SUNSET：PB/MySQL/VictoriaLogs 收敛
 
@@ -459,7 +461,10 @@
 - [x] **FLOW-03B1 `flow-geo-v1` loader/index core**：实现 `current` 单次 symlink resolve、strict manifest/固定四文件、原始字节 SHA-256、`generated_at/effective_from` 分离、JSON array 字典、Zstd 流式 CSV、IPv4/IPv6/排序/无重叠/HMT/行数/外键/资源上限校验；range 只保存紧凑 `info_id`，Geo 元组去重，v4/v6 二分 lookup 零分配；只读 `GeoCatalog` 按 event time 选版、保留/显式回收历史版本并原子切 active，同版本改 manifest/旧版回切拒绝、失败 reload 保留旧版、显式版本空库可用。该项不做 poll/VM 指标、override、Kafka/CH/offset 接线。
 - [ ] **FLOW-03B2 worker source/enrichment wiring（父项）**：接 `PLAT-04A` object ref/checksum/worker ACK，消费 normalized Kafka；按 record event time 取得 immutable dimension snapshot 与 Geo effective version，固化两者 ID/version，再叠加租户 override，完成 local/remote、业务/address-set、Geo/ASN/ISP/六维 enrich；缺任一历史版本暂停对应 partition 且不提交 offset，禁止退回 active/current，也禁止同步查询管理库；Geo 历史内存/目录 GC 保留集必须覆盖 lag/open bucket/replay/backfill 引用。
   - [x] **FLOW-03B2A normalized→enriched 纯内核**：新增 immutable event-time `ClassificationCatalog`，profile 固化 Home/HMT/internal/transit policy 并强引用 dimension snapshot；snapshot 内编译独立 override LPM，支持字段 overlay 和显式 ASN/ISP=0。`internal/flowworker` 对 normalized batch 做 schema/identity/shard/IP/宽度/sampling counter/future-skew 校验，按每条 record event time 选择 dimension+Geo+classification，引用 skew 与缺版返回类型化 partition-block 错误；输出保留原始字段和三版本，resolved ASN 记录 override/Geo/exporter/unknown 来源，稳定 record ID/fingerprint，失败不返回半批。聚合调用可复用 batch buffer，1024-record 开发机基准 0 allocation。
-  - [ ] **FLOW-03B2B source/ACK/consumer 生命周期接线**：从 `PLAT-04A` 拉取带 checksum 的 dimension+classification object，旁路编译、原子安装、worker ACK；Kafka group 固定 partition owner，先 protobuf decode/大小校验再调用 B2A；缺版/skew pause 且不提交 offset，版本到齐后原 offset resume。冻结坏 normalized message 的 bounded retry + 受限失败证据 + offset 决策，禁止毒消息永久忙循环或静默跳过；实现 lag/open bucket/replay/backfill 引用水位驱动的 dimension/Geo/classification 内存和文件 GC，并补 readiness/低基数指标。
+  - [ ] **FLOW-03B2B source/ACK/consumer 生命周期接线（父项）**：完成版本对象 source、consumer pause/resume、坏消息处置、历史引用 GC 和 readiness 的运行时接线。
+    - [x] **FLOW-03B2B1 版本对象装载与原子生效**：classification wire object 固定 schema v1、64 KiB、canonical SHA-256、strict JSON 和 Home ISP 数量边界；PLAT-04A 发布信封逐项声明 tenant/version/effective/object ref/checksum。worker 对 dimension/classification 先完成受限拉取、双 checksum、编译和声明元数据反查，再用单次 CAS 安装完整版本对；新 dimension 必须与 classification 同分钟，Home-only 版本只可引用已安装旧 dimension。ACK 固化 publication/worker/boot/software/两对象版本、生效时间、checksum 和 installed_at；ACK 失败保留本地版本并允许 checksum 幂等重试。实际 HTTP/object-store adapter 仍归 PLAT-04A，不在 worker 猜测接口。
+    - [ ] **FLOW-03B2B2 Kafka partition 生命周期**：Kafka group 固定 partition owner，先做 message byte limit/protobuf decode/normalized 大小校验再调用 B2A；缺版/skew pause 且不提交 offset，版本到齐后从原 offset resume。冻结坏 normalized message 的 bounded retry、受限失败证据 durable ACK 与 offset 决策，禁止毒消息永久忙循环或静默跳过；base sink 未确认前不得提交 normalized offset。
+    - [ ] **FLOW-03B2B3 历史引用与就绪**：用 partition lag 最早 event time、open bucket、未完成 manifest、replay/backfill 水位求版本保留集，实现 dimension/Geo/classification 内存与文件 GC；补 object/ACK/blocked partition/oldest blocked event/GC/readiness 低基数指标和重启恢复测试。
 - [ ] **FLOW-03B3 bounded aggregate/sink wiring**：把 enriched records 按固定 shard/minute 汇聚，落实 address-set 非加和、迟到窗口、spill/backpressure、base manifest/ClickHouse 单事实提交、重试/dedup 和 normalized offset commit；不得反向把 draft CRUD 或同步数据库查询接入逐 flow 热路径。
 
 2026-09-05 开发机非验收 microbenchmark（Apple M2、6 prefixes/4 enabled sets、只含两次 LPM + 预编译 set/方向归类）：约 `200 ns/record`，`0 B/op`、`0 allocs/op`。它不包含大规模 bundle cache 行为、Kafka decode/consume、Geo、分钟聚合、spill、CH insert 或 offset commit，不能替代 FLOW-03B/性能验收。
@@ -468,9 +473,9 @@
 
 2026-09-05 开发机非验收 microbenchmark（Apple M2、1024 records/batch、复用 enriched buffer、单租户单 IPv4 pair，包含 normalized 全校验、virtual-shard 复核、dimension/override/Geo/classification event-time lookup、fingerprint，不含 protobuf unmarshal/Kafka/聚合/CH）：约 `0.96 µs/record`、`1.06M records/s/core`、`0 B/op`、`0 allocs/op`。它不代表多租户大地址库 cache、真实消息分布或端到端容量；FLOW-03B2B/B3 仍须以批准的 p95 records/s 与 bytes/s 做多核链路验收。
 
-- [ ] **设计**：已冻结 immutable dimension bundle/classifier、`flow-geo-v1` loader/index、classification profile/dimension 强引用、独立 override LPM、normalized 校验、enriched 字段/ASN 优先级/稳定 ID/fingerprint；仍需冻结 Kafka consumer/pause-resume、坏消息失败证据、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
-- [ ] **编码**：已实现 snapshot loader/LPM/selector、方向、地址段/set、Geo/ASN/ISP loader/index、业务/六维纯函数、event-time classification catalog、override/enrich 纯接线和可复用零分配 batch 输出；仍需 object source/ACK、Kafka consumer、分片汇聚、batch manifest 和 normalized commit。
-- [ ] **单元测试**：已覆盖 event-time 三版本选择/引用 skew、重叠 CIDR、IPv4/IPv6、`_unassigned`、多 set、max expansion、四种方向、六维/unknown/HMT、Geo 严格加载/lookup/override/ASN 来源/原子切换/失败保持、normalized 输入校验、counter 守恒、稳定 replay ID/fingerprint 和失败半批清空；仍需 Kafka pause/resume、坏消息、重复 offset、spill/aggregate/commit 状态机。
+- [ ] **设计**：已冻结 immutable dimension bundle/classifier、`flow-geo-v1` loader/index、classification profile/dimension 强引用、独立 override LPM、normalized 校验、enriched 字段/ASN 优先级/稳定 ID/fingerprint，以及版本对发布信封、受限 source、单 CAS 生效和 worker ACK；仍需冻结 Kafka consumer/pause-resume、坏消息失败证据、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
+- [ ] **编码**：已实现 snapshot/classification object 严格 loader、LPM/selector、方向、地址段/set、Geo/ASN/ISP loader/index、业务/六维纯函数、原子 enrichment version catalog、override/enrich 纯接线和可复用零分配 batch 输出；仍需 PLAT-04A HTTP adapter、Kafka consumer、历史引用 GC/readiness、分片汇聚、batch manifest 和 normalized commit。
+- [ ] **单元测试**：已覆盖 event-time 三版本选择/引用 skew、版本对并发 reader 不混配、对象 checksum/schema/size/声明反查、失败不半安装与 ACK 幂等重试、重叠 CIDR、IPv4/IPv6、`_unassigned`、多 set、max expansion、四种方向、六维/unknown/HMT、Geo 严格加载/lookup/override/ASN 来源/原子切换/失败保持、normalized 输入校验、counter 守恒、稳定 replay ID/fingerprint 和失败半批清空；仍需 Kafka pause/resume、坏消息、重复 offset、GC、spill/aggregate/commit 状态机。
 - [ ] **集成测试**：dimension worker/CH 中断先形成 normalized lag；Kafka 生产中断验证 flow-collect WAL 保护；恢复后按原 snapshot 重放，primary prefix 守恒且 address set 标记非加和。
 - [ ] **变更设计**：地址库格式、snapshot bundle、admin code/ISP/ASN 缺失和 set 扩张上限已落文档；仍需记录 override、enriched schema、spill 和回算窗口的实现差异。
 - [ ] **变更测试**：验证 snapshot/Geo/classification 版本切换、override merge/delete、旧 normalized replay、历史版本字典和 backfill。
@@ -571,7 +576,7 @@
 - [ ] 港澳台分类口径已确认并记录；`flow-geo-v1` 中港澳台统一为 `country=CN` + `71/81/82` 前缀 admin_code 的表示法已随导出器冻结。
 - [ ] 设备型号/固件/协议/字段/采样语义已确认并保存 fixture。
 - [ ] flow/counter 偏差、完整率和 unknown 阈值已冻结。
-- [ ] 地址库生产打包、发布和负责人已确认。
+- [ ] 地址库生产打包、发布和负责人已确认。进行中：导出脚本与双端 loader 已就绪并用同构种子库端到端验证（含修正 splice/HMT 规范化/GB/T 提升）；**待办**：从 69.197.131.122:15533 或 173.208.242.162 取回线上 SQL 备份出首个生产包（本会话 SSH 被权限分类器拦截，需用户侧放行或代拉文件）。
 - [ ] 地址段/address set 主维度、非加和口径、snapshot 保留、最大扩张和历史回算窗口已确认。
 - [ ] Kafka 产品/版本、normalized/collect-state/DLQ/quarantine/checkpoint topics、分区与 retention、flow-collect WAL/RPO 和灾备目标已冻结。
 - [ ] ClickHouse 六表、single-base/derived 契约、cluster、TTL、ingest batch dedup、重建、容量和备份责任已冻结。
