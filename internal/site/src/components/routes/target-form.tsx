@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, CrosshairIcon, SaveIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { KeyValueEditor } from "@/components/key-value-editor"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -72,6 +72,10 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 
+	// The weak ETag from the last load, echoed as If-Match on save so a
+	// concurrent edit is rejected (412) instead of silently overwritten.
+	const etagRef = useRef("")
+
 	const loadTarget = useCallback(async () => {
 		if (!id) {
 			return
@@ -79,7 +83,11 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const target = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {})
+			const target = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			const targetID = target.id || id
 			setForm({
 				id: targetID,
@@ -152,6 +160,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 			}
 			const saved = await pb.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
 				method: id ? "PATCH" : "POST",
+				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
 			})
 			const savedID = saved.id || form.id

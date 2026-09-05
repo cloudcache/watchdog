@@ -118,7 +118,13 @@ function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformA
 
 async function sendWatchdogAPI<T>(
 	path: string,
-	options: RequestInit & { body?: unknown; query?: Record<string, string | number | boolean | undefined> } = {}
+	options: RequestInit & {
+		body?: unknown
+		query?: Record<string, string | number | boolean | undefined>
+		// onResponse exposes the raw response (headers) so callers can read the
+		// ETag for optimistic-concurrency edits.
+		onResponse?: (response: Response) => void
+	} = {}
 ): Promise<T> {
 	const headers = new Headers(options.headers)
 	if (!headers.has("X-Request-ID")) {
@@ -145,11 +151,13 @@ async function sendWatchdogAPI<T>(
 		headers,
 	}
 	delete (init as RequestInit & { query?: unknown }).query
+	delete (init as RequestInit & { onResponse?: unknown }).onResponse
 	if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
 		headers.set("Content-Type", "application/json")
 		init.body = JSON.stringify(options.body)
 	}
 	const response = await fetch(url, init)
+	options.onResponse?.(response)
 	if (!response.ok) {
 		const message = await readAPIErrorMessage(response)
 		throw new Error(message || `Request failed with status ${response.status}`)
