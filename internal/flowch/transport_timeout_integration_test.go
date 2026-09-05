@@ -5,14 +5,18 @@ package flowch
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
-	"io"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ClickHouse/ch-go"
+	"github.com/ClickHouse/ch-go/proto"
+	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
 // TestRealClickHouseSilentResponseHonorsOperationTimeout uses a transparent TCP
@@ -77,11 +81,136 @@ func TestRealClickHouseSilentResponseHonorsOperationTimeout(t *testing.T) {
 	}
 }
 
+// TestRealClickHouseLostInsertResponseConvergesAfterReplay models the
+// ambiguous commit boundary: ClickHouse receives and commits the fact insert,
+// but the client never sees its final response and therefore cannot write the
+// receipt. Replaying the exact prepared block must produce one logical fact
+// set and one matching receipt.
+func TestRealClickHouseLostInsertResponseConvergesAfterReplay(t *testing.T) {
+	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_FAULT_INTEGRATION=1 to run")
+	}
+	ctx, direct := openDataIntegrationClickHouse(t, "watchdog_flow_it_lost_insert_response")
+	eventTime := time.Date(2026, 9, 6, 1, 2, 0, 0, time.UTC)
+	batch := integrationBatch(99, eventTime.Add(time.Minute),
+		integrationRecord(1, eventTime, "geo-city-a", 100),
+		integrationRecord(2, eventTime.Add(time.Second), "geo-city-b", 200),
+	)
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("prepare blocks=%d error=%v", len(blocks), err)
+	}
+	block := blocks[0]
+
+	proxy := newSilentResponseProxy(t, "127.0.0.1:9000")
+	defer proxy.Close()
+	faultConfig := realMigrationConfig(t, "watchdog-flow-lost-insert-response", 250*time.Millisecond)
+	faultConfig.Address = proxy.Address()
+	faultConfig.Database = "watchdog_flow_it_lost_insert_response"
+	faultConfig.ReadTimeout = 50 * time.Millisecond
+	faulty, err := NewNativeInserter(ctx, faultConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := faulty.executor.Do(ctx, synchronousMigrationQuery("INSERT INTO TABLE FUNCTION null('value UInt8') SELECT 1")); err != nil {
+		faulty.Close()
+		t.Fatalf("ClickHouse control query through proxy: %v", err)
+	}
+	// The first server read carries INSERT column metadata. Forwarding it lets
+	// the client send the block; all later responses, including EOS, disappear.
+	proxy.DropServerResponsesAfterNextClientWrite()
+	err = faulty.InsertFlowBlock(ctx, block)
+	faulty.Close()
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lost INSERT response error=%v, want operation deadline", err)
+	}
+	if got := proxy.AcceptedConnections(); got != 1 {
+		t.Fatalf("ambiguous INSERT used %d connections, want no implicit retry", got)
+	}
+
+	before := readReplayState(t, ctx, direct, block)
+	if before.factCount != uint64(len(block.Records)) || before.receiptCount != 0 {
+		t.Fatalf("ambiguous commit state=%+v, want committed facts without receipt", before)
+	}
+	if err := direct.InsertFlowBlock(ctx, block); err != nil {
+		t.Fatalf("replay exact prepared block: %v", err)
+	}
+	after := readReplayState(t, ctx, direct, block)
+	if after.factCount != uint64(len(block.Records)) || after.rawBytes != 300 || after.rawPackets != 2 ||
+		after.receiptCount != 1 || after.receiptChecksum != block.Checksum {
+		t.Fatalf("replayed block did not converge: %+v", after)
+	}
+}
+
+type replayState struct {
+	factCount       uint64
+	rawBytes        uint64
+	rawPackets      uint64
+	receiptCount    uint64
+	receiptChecksum [32]byte
+}
+
+func readReplayState(t testing.TB, ctx context.Context, native *NativeInserter, block PreparedBlock) replayState {
+	t.Helper()
+	id := hex.EncodeToString(block.ID[:])
+	state := replayState{}
+	var factCounts, rawBytes, rawPackets proto.ColUInt64
+	factQuery := ch.Query{
+		Body: `SELECT count(), sum(raw_bytes), sum(raw_packets)
+FROM flow_records FINAL
+WHERE ingest_batch_id = unhex({batch_id:String})`,
+		Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+		Result: proto.Results{
+			{Name: "count()", Data: &factCounts},
+			{Name: "sum(raw_bytes)", Data: &rawBytes},
+			{Name: "sum(raw_packets)", Data: &rawPackets},
+		},
+	}
+	if err := native.executor.Do(ctx, factQuery); err != nil {
+		t.Fatalf("read replay facts: %v", err)
+	}
+	if len(factCounts) != 1 || len(rawBytes) != 1 || len(rawPackets) != 1 {
+		t.Fatalf("fact aggregate rows count=%d raw_bytes=%d raw_packets=%d", len(factCounts), len(rawBytes), len(rawPackets))
+	}
+	state.factCount, state.rawBytes, state.rawPackets = factCounts[0], rawBytes[0], rawPackets[0]
+	var (
+		checksums proto.ColFixedStr32
+		counts    proto.ColUInt64
+	)
+	receiptQuery := ch.Query{
+		Body: `SELECT checksum, record_count
+FROM flow_ingest_batches FINAL
+WHERE ingest_batch_id = unhex({batch_id:String})`,
+		Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+		Result: proto.Results{
+			{Name: "checksum", Data: &checksums},
+			{Name: "record_count", Data: &counts},
+		},
+	}
+	if err := native.executor.Do(ctx, receiptQuery); err != nil {
+		t.Fatalf("read replay receipt: %v", err)
+	}
+	if len(checksums) != counts.Rows() || len(checksums) > 1 {
+		t.Fatalf("receipt rows checksum=%d count=%d", len(checksums), counts.Rows())
+	}
+	state.receiptCount = uint64(len(checksums))
+	if len(checksums) == 1 {
+		if counts[0] != uint64(len(block.Records)) {
+			t.Fatalf("receipt record count=%d want=%d", counts[0], len(block.Records))
+		}
+		state.receiptChecksum = checksums[0]
+	}
+	return state
+}
+
 type silentResponseProxy struct {
 	listener net.Listener
 	backend  string
-	drop     atomic.Bool
-	accepted atomic.Uint64
+	// responseMode is 0 while forwarding normally, 1 while waiting to
+	// forward the next server response, 2 while waiting for the following
+	// client write, and 3 while server responses are silently discarded.
+	responseMode atomic.Int32
+	accepted     atomic.Uint64
 
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
@@ -103,7 +232,13 @@ func newSilentResponseProxy(t testing.TB, backend string) *silentResponseProxy {
 
 func (p *silentResponseProxy) Address() string { return p.listener.Addr().String() }
 
-func (p *silentResponseProxy) DropServerResponses() { p.drop.Store(true) }
+func (p *silentResponseProxy) DropServerResponses() { p.responseMode.Store(3) }
+
+func (p *silentResponseProxy) DropServerResponsesAfterNextClientWrite() {
+	if !p.responseMode.CompareAndSwap(0, 1) {
+		panic("response drop transition is already active")
+	}
+}
 
 func (p *silentResponseProxy) AcceptedConnections() uint64 { return p.accepted.Load() }
 
@@ -137,7 +272,22 @@ func (p *silentResponseProxy) proxyConnection(client, backend net.Conn) {
 	}()
 	clientDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(backend, client)
+		buffer := make([]byte, 32<<10)
+		for {
+			count, err := client.Read(buffer)
+			if count > 0 {
+				// Mode 2 means the server's column metadata reached the
+				// client. Drop responses before forwarding the subsequent
+				// input bytes, so the server can commit but EOS cannot pass.
+				p.responseMode.CompareAndSwap(2, 3)
+				if _, writeErr := backend.Write(buffer[:count]); writeErr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 		_ = backend.SetReadDeadline(time.Now())
 		close(clientDone)
 	}()
@@ -145,10 +295,11 @@ func (p *silentResponseProxy) proxyConnection(client, backend net.Conn) {
 	buffer := make([]byte, 32<<10)
 	for {
 		count, err := backend.Read(buffer)
-		if count > 0 && !p.drop.Load() {
+		if count > 0 && p.responseMode.Load() != 3 {
 			if _, writeErr := client.Write(buffer[:count]); writeErr != nil {
 				return
 			}
+			p.responseMode.CompareAndSwap(1, 2)
 		}
 		if err != nil {
 			return
