@@ -375,3 +375,68 @@ func waitForOperationJob(t *testing.T, store *MySQLStore, tenant, jobID ID, want
 	}
 	t.Fatalf("job %s did not reach %s in time", jobID, wantStatus)
 }
+
+func TestJobPayloadEnvelopeRoundTrip(t *testing.T) {
+	encoded, err := EncodeTargetDeletePayload("target-xyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload targetDeleteJobPayload
+	if err := DecodeJobPayload(encoded, TargetDeletePayloadVersion, &payload); err != nil {
+		t.Fatalf("round trip failed: %v", err)
+	}
+	if payload.TargetID != "target-xyz" {
+		t.Fatalf("decoded = %+v", payload)
+	}
+
+	// Wrong version is terminal (won't fix on retry).
+	if err := DecodeJobPayload(encoded, 2, &payload); err == nil || !IsTerminalJobError(err) {
+		t.Fatalf("version mismatch should be terminal, got %v", err)
+	}
+	// Malformed envelope is terminal.
+	if err := DecodeJobPayload(json.RawMessage(`not json`), 1, &payload); err == nil || !IsTerminalJobError(err) {
+		t.Fatalf("malformed envelope should be terminal, got %v", err)
+	}
+	// A legacy raw payload (no envelope) reads as version 0, terminal against v1.
+	if err := DecodeJobPayload(json.RawMessage(`{"target_id":"x"}`), TargetDeletePayloadVersion, &payload); err == nil || !IsTerminalJobError(err) {
+		t.Fatalf("unversioned legacy payload should be terminal against v1, got %v", err)
+	}
+}
+
+// TestMySQLTerminalPayloadDoesNotRetry proves a wrong-version payload fails the
+// job immediately (attempt_count 1) instead of exhausting the retry budget.
+func TestMySQLTerminalPayloadDoesNotRetry(t *testing.T) {
+	db, tenant := operationJobTestDB(t)
+	store := NewMySQLStore(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	worker := &OperationJobWorker{
+		Repo: store, JobType: TargetDeleteJobType, Owner: "worker-terminal",
+		PollInterval: 50 * time.Millisecond, LeaseFor: 3 * time.Second,
+		MaxAttempts: 5, RetryBase: time.Nanosecond,
+		Handler: NewTargetDeleteJobHandler(store, nil),
+	}
+	go worker.Run(ctx)
+
+	// Enqueue a job whose payload is a wrong-version envelope.
+	badPayload, err := EncodeJobPayload(99, targetDeleteJobPayload{TargetID: "whatever"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.EnqueueOperationJob(ctx, OperationJob{
+		TenantID: tenant, JobType: TargetDeleteJobType, IdempotencyKey: "terminal-1",
+		RequestHash: strings.Repeat("e", 64), CheckpointJSON: badPayload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForOperationJob(t, store, tenant, job.ID, OperationJobStatusFailed)
+	final, err := store.GetOperationJob(ctx, tenant, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.AttemptCount != 1 || final.LastErrorCode != "TERMINAL" {
+		t.Fatalf("terminal job attempts=%d code=%q, want 1/TERMINAL", final.AttemptCount, final.LastErrorCode)
+	}
+}

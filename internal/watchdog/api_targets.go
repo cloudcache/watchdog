@@ -195,7 +195,11 @@ func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
 	// handler only enqueues (202 + job id) and the worker performs the
 	// cascade, so a large fan-out cannot stall or die inside the request.
 	if api.operationJobs != nil {
-		payload, _ := json.Marshal(targetDeleteJobPayload{TargetID: targetID})
+		payload, err := EncodeTargetDeletePayload(targetID)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
 		digest := sha256.Sum256(payload)
 		job, err := api.operationJobs.EnqueueOperationJob(r.Context(), OperationJob{
 			TenantID:       auth.TenantID,

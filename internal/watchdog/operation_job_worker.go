@@ -141,10 +141,17 @@ func (w *OperationJobWorker) finishAttempt(ctx context.Context, job OperationJob
 		if maxAttempts == 0 {
 			maxAttempts = 5
 		}
+		// A terminal error (bad payload, unknown schema version) will not fix
+		// itself on retry, so it fails immediately regardless of the budget.
+		code := "HANDLER_FAILED"
 		retry := job.AttemptCount < maxAttempts
+		if IsTerminalJobError(handlerErr) {
+			retry = false
+			code = "TERMINAL"
+		}
 		retryAt := time.Now().UTC().Add(w.retryBackoff(job.AttemptCount))
 		detail := fmt.Sprintf("attempt %d: %v", job.AttemptCount, handlerErr)
-		if err := w.Repo.CompleteOperationJobFailed(ctx, job.ID, job.LeaseToken, "HANDLER_FAILED", detail, retry, retryAt); err != nil {
+		if err := w.Repo.CompleteOperationJobFailed(ctx, job.ID, job.LeaseToken, code, detail, retry, retryAt); err != nil {
 			w.logf("operation job %s failure finish: %v", job.ID, err)
 		}
 	}
@@ -165,11 +172,76 @@ func (w *OperationJobWorker) retryBackoff(attempt uint32) time.Duration {
 	return backoff
 }
 
+// terminalJobError marks a handler failure that a retry cannot fix (a
+// malformed or wrong-version payload). The worker fails such a job
+// immediately instead of consuming its retry budget.
+type terminalJobError struct{ err error }
+
+func (e terminalJobError) Error() string { return e.err.Error() }
+func (e terminalJobError) Unwrap() error { return e.err }
+
+// TerminalJobError wraps err so the worker treats it as non-retryable.
+func TerminalJobError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return terminalJobError{err: err}
+}
+
+func IsTerminalJobError(err error) bool {
+	var terminal terminalJobError
+	return errors.As(err, &terminal)
+}
+
+// jobPayloadEnvelope versions every job payload so a future payload change can
+// be recognized rather than silently misparsed. schema_version is the payload
+// contract for this job type, independent of the plan/API versions.
+type jobPayloadEnvelope struct {
+	SchemaVersion int             `json:"schema_version"`
+	Payload       json.RawMessage `json:"payload"`
+}
+
+// EncodeJobPayload wraps a typed payload in a versioned envelope for storage
+// in operation_jobs.checkpoint_json.
+func EncodeJobPayload(schemaVersion int, payload any) (json.RawMessage, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(jobPayloadEnvelope{SchemaVersion: schemaVersion, Payload: raw})
+}
+
+// DecodeJobPayload reads the envelope, rejects any schema version the caller
+// does not support (a terminal error), and unmarshals the inner payload into
+// out. Legacy jobs written without an envelope are read as schema version 0.
+func DecodeJobPayload(checkpoint json.RawMessage, supported int, out any) error {
+	var envelope jobPayloadEnvelope
+	if err := json.Unmarshal(checkpoint, &envelope); err != nil {
+		return TerminalJobError(fmt.Errorf("job payload envelope is malformed: %w", err))
+	}
+	if envelope.SchemaVersion != supported {
+		return TerminalJobError(fmt.Errorf("unsupported job payload schema version %d (handler supports %d)", envelope.SchemaVersion, supported))
+	}
+	if err := json.Unmarshal(envelope.Payload, out); err != nil {
+		return TerminalJobError(fmt.Errorf("job payload is malformed: %w", err))
+	}
+	return nil
+}
+
 // TargetDeleteJobType names the async target deletion job (PLAT-04).
 const TargetDeleteJobType = "target_delete"
 
+// TargetDeletePayloadVersion is the payload schema version for target_delete.
+const TargetDeletePayloadVersion = 1
+
 type targetDeleteJobPayload struct {
 	TargetID ID `json:"target_id"`
+}
+
+// EncodeTargetDeletePayload builds the versioned envelope the enqueue side
+// stores, so the handler and enqueue agree on the payload contract.
+func EncodeTargetDeletePayload(targetID ID) (json.RawMessage, error) {
+	return EncodeJobPayload(TargetDeletePayloadVersion, targetDeleteJobPayload{TargetID: targetID})
 }
 
 // NewTargetDeleteJobHandler deletes the target and its VictoriaMetrics series.
@@ -177,8 +249,11 @@ type targetDeleteJobPayload struct {
 func NewTargetDeleteJobHandler(targets TargetRepository, cleaner SeriesCleaner) OperationJobHandler {
 	return func(ctx context.Context, job OperationJob) (string, error) {
 		var payload targetDeleteJobPayload
-		if err := json.Unmarshal(job.CheckpointJSON, &payload); err != nil || payload.TargetID == "" {
-			return "", fmt.Errorf("target delete job payload is invalid: %v", err)
+		if err := DecodeJobPayload(job.CheckpointJSON, TargetDeletePayloadVersion, &payload); err != nil {
+			return "", err
+		}
+		if payload.TargetID == "" {
+			return "", TerminalJobError(fmt.Errorf("target delete job payload has no target_id"))
 		}
 		if err := targets.DeleteTarget(ctx, job.TenantID, payload.TargetID); err != nil {
 			return "", err
