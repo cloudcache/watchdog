@@ -669,6 +669,8 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 
 请求继续只允许 `customer` view、闭桶 UTC 范围、固定 metric registry、TopN 1..100，以及 `in/out/business/target/device/exporter` typed filters；tenant 仅来自 authenticated scope。结果预算按每桶最多 `12 + 3 × (TopN + other + unknown)` 行预拒绝，CH 设置 15 秒、25 万结果、5,000 万扫描行、4 GiB 扫描字节和 4 GiB 查询内存硬限，且固定 `join_use_nulls=0` 让缺失的 endpoint 镜像产生 `endpoint_consistent=0`，而不是受集群默认值影响。结果保留 `dimension_snapshot_id/geo_version/classification_version`，返回 mixed-version 和 generation coverage；唯一 metadata sentinel、typed multi-block 校验及任一错误全有或全无的规则与 9.1 相同。真实 CH 对 endpoint 镜像、IPv4-mapped 输出、repair generation 和 TopN/unknown 守恒的执行证据是独立集成门禁，本地 SQL contract test 不能替代。
 
+真实 CH 集成门禁使用独立数据库顺序执行 001..005，并写入同一闭合 1m 桶的入向 IPv4、出向 IPv4、出向 IPv6 和双端未知地址事实：generation 1 同时校验 `in/out/combined × ipv4/ipv6/unknown/all`、远端/本地镜像计数、country/region `TopN=1 + other + unknown_geo` 与总量守恒；随后写入迟到 IPv6 事实并以 generation 2 重建，查询只能看到新 generation，TopN 排序和 other 必须随之收敛。测试库退出时清理。该门禁验证的是 Flow 数据面与查询契约，不替代 hub API、tenant/RBAC 和 UI 验收。
+
 ## 10. API
 
 所有路径在 `/api/v1` 下，统一 tenant/RBAC、cursor/page、sort、filter、field mask、ETag、idempotency、audit 和错误 envelope。

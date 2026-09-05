@@ -40,7 +40,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 代码提交：`886ccb2b feat(flow): complete raw pipeline dimensions and rollup lifecycle`；包含 027/028、旧 collector state-restore/cleanup 删除、分层 Geo/address set、worker/CH/query 契约及 rollup production handler/store/runtime。
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
-- FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
+- FLOW-07B：查询核心为 `f8beffaf feat(flow): add overseas KPI query core`；真实 ClickHouse 数据门禁为 `54ac6173 test(flow): verify overseas queries on ClickHouse`，覆盖 IPv4/IPv6/双端 unknown、in/out 端点镜像、country/region TopN+other+unknown、流量守恒和 generation 2 迟到修复；五组真实 CH 数据回归、Flow race、全库 test/vet 与 `git diff --check` 通过。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。003 已在 ClickHouse 26.3 LTS 空库及 statement replay 上通过，candidate 数据聚合/迟到 generation 仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
 - FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
@@ -225,11 +225,12 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
 - [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。
 - [x] **FLOW-07B 单元**：覆盖 typed tenant/filter、闭桶/范围/结果预算、country/region、rate/count、境外/unknown 分离、方向端点映射、IPv4-mapped family、TopN/other、镜像一致性、metadata coverage、mixed versions、多 block、畸形/重复/越界/取消全失败。
-- [ ] **FLOW-07B 集成**：真实 CH 顺序 migration + rollup 执行，验证 IPv4/IPv6 混合、in/out local/remote 镜像、unknown country/region、repair 后旧 key 消失、TopN+other 和流量守恒；migration 环境已具备，数据重放门禁仍未执行。
+- [x] **FLOW-07B 集成**：独立真实 CH 数据库顺序执行 migration + rollup；验证 IPv4/IPv6/双端 unknown、in/out local/remote 镜像、country/region、TopN+other+unknown 和流量守恒，并在同桶写入迟到事实后以 generation 2 重建，旧 generation 不再被查询读取。
 - [x] **FLOW-07B 变更设计**：唯一 IP 明确为 `observed_remote_ips/observed_local_hosts`，即收到的 Flow 事实精确去重，不按 sampling rate 放大；历史 classification/Geo/version 不重判，结果跨版本拆分或告警。
 - [x] **FLOW-07B 变更测试**：customer-only、未知 level/direction/metric、请求值不插 SQL、IP/Geo unknown 不冒充、endpoint 汇总不一致 fail-closed、结果硬限与 sentinel 错误均已固定为契约测试。
-- [x] **FLOW-07B 回归（本地）**：`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...` 与 `git diff --check` 通过；真实 CH 不由本地 fake executor 冒充。
+- [x] **FLOW-07B 回归**：境外单项及 rollup/detail/address-set/provenance/overseas 五组真实 CH 数据测试通过；Flow 全范围 race、`go test ./...`、`go vet ./...` 与 `git diff --check` 通过。
 - [x] **FLOW-07B 已提交**：`f8beffaf feat(flow): add overseas KPI query core`；代码、测试和设计可由提交复现，工作区不再残留该切片生产文件。
+- [x] **FLOW-07B 外部证据已提交**：真实 CH 境外数据门禁进入 `54ac6173`；测试仅创建并清理 `watchdog_flow_it_overseas`，不修改已有开发数据；hub API/RBAC/UI 仍归平台侧，未在此错误关闭。
 - [ ] **FLOW-07C（平台依赖解除后）**：复用 operation_jobs 实现授权/配额/cooldown/kill-switch probe 编排与可插拔 agent；不得把主动握手放进 Flow 热路径。
 
 ### FLOW-08 HA/Lifecycle/Release
