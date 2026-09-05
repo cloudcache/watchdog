@@ -8,186 +8,123 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/klauspost/compress/zstd"
 )
 
-func writeGeoFixtureFile(t *testing.T, dir, name string, data []byte, manifest *FlowGeoManifest, rows int) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(data)
-	manifest.Files[name] = FlowGeoManifestRef{SHA256: hex.EncodeToString(digest[:]), Rows: rows}
-}
+// PLAT-04D: the hub's FlowGeoService is a thin adapter over the Flow
+// data-plane's flowdimension.GeoCatalog. These tests exercise the adapter
+// (reload/lookup/status, keep-serving-after-failed-reload) against a bundle
+// built with flowdimension's exported flow-geo-v1 format; the loader's own
+// validation is tested in the flowdimension package.
 
-func compressCSV(t *testing.T, csv string) []byte {
-	t.Helper()
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return encoder.EncodeAll([]byte(csv), nil)
-}
-
-func writeGeoFixtureBundle(t *testing.T, mutate func(manifest *FlowGeoManifest, dir string)) string {
+func writeFlowGeoBundle(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	manifest := &FlowGeoManifest{
-		Schema:          "flow-geo-v1",
-		Version:         "test-1",
-		GeneratedAt:     "2026-09-05T00:00:00Z",
-		AdminCodeSystem: "GB/T2260-6",
-		UnknownCountry:  "ZZ",
-		Files:           map[string]FlowGeoManifestRef{},
+	compress := func(csv string) []byte {
+		encoder, err := zstd.NewWriter(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoder.EncodeAll([]byte(csv), nil)
 	}
-	v4 := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn\n" +
-		"1.96.0.0,1.96.255.255,CN,810000,,,0,4760\n" +
-		"8.8.8.0,8.8.8.255,US,,CA,,0,15169\n" +
-		"124.160.0.0,124.160.135.255,CN,330100,,,1,4134\n" +
-		"124.160.136.0,124.160.136.255,CN,440000,,,3,9808\n"
-	writeGeoFixtureFile(t, dir, "ipv4.csv.zst", compressCSV(t, v4), manifest, 4)
-	v6 := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn\n" +
-		"2400::,2400:ffff:ffff:ffff:ffff:ffff:ffff:ffff,CN,440100,,,1,4134\n"
-	writeGeoFixtureFile(t, dir, "ipv6.csv.zst", compressCSV(t, v6), manifest, 1)
-	operators, _ := json.Marshal([]FlowGeoOperator{
+	header := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"
+	ipv4 := header + "\n" +
+		"1.96.0.0,1.96.255.255,CN,810000,,,1,4760\n" +
+		"8.8.8.0,8.8.8.255,US,,CA,,0,15169\n"
+	ipv6 := header + "\n" +
+		"2400::,2400:ffff:ffff:ffff:ffff:ffff:ffff:ffff,CN,440000,,,1,4134\n"
+	operators, _ := json.Marshal([]flowdimension.GeoOperator{
 		{ID: 1, Name: "中国电信", ShortName: "电信", Category: "carrier", Enabled: true},
-		{ID: 3, Name: "中国移动", ShortName: "移动", Category: "carrier", Enabled: true},
 	})
-	writeGeoFixtureFile(t, dir, "operators.json", operators, manifest, 2)
-	dictionary, _ := json.Marshal([]FlowGeoDictEntry{
-		{Kind: "province", Code: "330000", Name: "浙江", Enabled: true},
-		{Kind: "province", Code: "440000", Name: "广东", Enabled: true},
+	dictionary, _ := json.Marshal([]flowdimension.GeoDictionaryEntry{
 		{Kind: "province", Code: "810000", Name: "香港", Enabled: true},
+		{Kind: "province", Code: "440000", Name: "广东", Enabled: true},
 	})
-	writeGeoFixtureFile(t, dir, "geo_dict.json", dictionary, manifest, 3)
-	if mutate != nil {
-		mutate(manifest, dir)
+
+	files := map[string]struct {
+		data []byte
+		rows uint64
+	}{
+		"ipv4.csv.zst":   {compress(ipv4), 2},
+		"ipv6.csv.zst":   {compress(ipv6), 1},
+		"operators.json": {operators, 1},
+		"geo_dict.json":  {dictionary, 2},
 	}
-	manifestRaw, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifestRaw, 0o644); err != nil {
+	manifest := map[string]any{
+		"schema":            flowdimension.GeoSchemaV1,
+		"version":           "test-1",
+		"generated_at":      time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		"effective_from":    time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		"admin_code_system": flowdimension.GeoAdminCodeSystem,
+		"unknown_country":   flowdimension.GeoUnknownCountry,
+	}
+	specs := map[string]flowdimension.GeoFileSpec{}
+	for name, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), f.data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(f.data)
+		specs[name] = flowdimension.GeoFileSpec{SHA256: hex.EncodeToString(digest[:]), Rows: f.rows}
+	}
+	manifest["files"] = specs
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir
 }
 
-func TestFlowGeoBundleLoadAndLookup(t *testing.T) {
-	dir := writeGeoFixtureBundle(t, nil)
-	index, err := LoadFlowGeoBundle(dir)
-	if err != nil {
-		t.Fatal(err)
+func TestFlowGeoServiceReloadLookupStatus(t *testing.T) {
+	dir := writeFlowGeoBundle(t)
+	service := NewFlowGeoService(dir)
+
+	// Before a reload nothing is loaded.
+	if service.Status().Loaded {
+		t.Fatal("service must start unloaded")
 	}
-	if index.RowsV4 != 4 || index.RowsV6 != 1 {
-		t.Fatalf("rows v4=%d v6=%d", index.RowsV4, index.RowsV6)
+	if _, found := service.Lookup(netip.MustParseAddr("1.96.0.1")); found {
+		t.Fatal("lookup before reload must not find anything")
 	}
 
-	info, found := index.Lookup(netip.MustParseAddr("124.160.136.66"))
-	if !found || info.Country != "CN" || info.AdminCode != "440000" || info.ISPID != 3 || info.ISPName != "中国移动" || info.ASN != 9808 {
-		t.Fatalf("corrected range lookup = %+v found=%v", info, found)
+	if err := service.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
 	}
-	if info.Subdivision != "广东" {
-		t.Fatalf("province name from dictionary = %q", info.Subdivision)
-	}
-
-	info, found = index.Lookup(netip.MustParseAddr("124.160.1.1"))
-	if !found || info.AdminCode != "330100" || info.ISPName != "中国电信" {
-		t.Fatalf("base range lookup = %+v", info)
+	status := service.Status()
+	if !status.Loaded || status.Version != "test-1" || status.RowsV4 != 2 || status.RowsV6 != 1 {
+		t.Fatalf("status = %+v", status)
 	}
 
-	info, found = index.Lookup(netip.MustParseAddr("1.96.8.8"))
+	info, found := service.Lookup(netip.MustParseAddr("1.96.0.1"))
 	if !found || info.Country != "CN" || info.AdminCode != "810000" {
-		t.Fatalf("hmt lookup = %+v", info)
+		t.Fatalf("lookup = %+v found=%v", info, found)
 	}
-
-	info, found = index.Lookup(netip.MustParseAddr("8.8.8.8"))
-	if !found || info.Country != "US" || info.Subdivision != "CA" {
-		t.Fatalf("overseas lookup = %+v", info)
-	}
-
-	if _, found = index.Lookup(netip.MustParseAddr("9.9.9.9")); found {
+	if _, found := service.Lookup(netip.MustParseAddr("203.0.113.1")); found {
 		t.Fatal("uncovered address must not resolve")
-	}
-
-	info, found = index.Lookup(netip.MustParseAddr("2400::1"))
-	if !found || info.AdminCode != "440100" {
-		t.Fatalf("v6 lookup = %+v", info)
-	}
-	// IPv4-mapped input resolves through the v4 table.
-	info, found = index.Lookup(netip.MustParseAddr("::ffff:8.8.8.8"))
-	if !found || info.Country != "US" {
-		t.Fatalf("v4-mapped lookup = %+v", info)
-	}
-}
-
-func TestFlowGeoBundleRejectsTampering(t *testing.T) {
-	dir := writeGeoFixtureBundle(t, nil)
-	path := filepath.Join(dir, "operators.json")
-	data, _ := os.ReadFile(path)
-	if err := os.WriteFile(path, append(data, ' '), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadFlowGeoBundle(dir); err == nil {
-		t.Fatal("checksum mismatch must fail the load")
-	}
-}
-
-func TestFlowGeoBundleRejectsUnsortedRows(t *testing.T) {
-	dir := writeGeoFixtureBundle(t, func(manifest *FlowGeoManifest, dir string) {
-		csv := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn\n" +
-			"124.160.0.0,124.160.255.255,CN,330100,,,1,4134\n" +
-			"8.8.8.0,8.8.8.255,US,,CA,,0,15169\n"
-		writeGeoFixtureFile(t, dir, "ipv4.csv.zst", compressCSV(t, csv), manifest, 2)
-	})
-	if _, err := LoadFlowGeoBundle(dir); err == nil {
-		t.Fatal("unsorted rows must fail the load")
-	}
-}
-
-func TestFlowGeoBundleRejectsRowCountMismatch(t *testing.T) {
-	dir := writeGeoFixtureBundle(t, func(manifest *FlowGeoManifest, _ string) {
-		ref := manifest.Files["ipv4.csv.zst"]
-		ref.Rows++
-		manifest.Files["ipv4.csv.zst"] = ref
-	})
-	if _, err := LoadFlowGeoBundle(dir); err == nil {
-		t.Fatal("row count mismatch must fail the load")
 	}
 }
 
 func TestFlowGeoServiceKeepsServingAfterFailedReload(t *testing.T) {
-	dir := writeGeoFixtureBundle(t, nil)
+	dir := writeFlowGeoBundle(t)
 	service := NewFlowGeoService(dir)
 	if err := service.Reload(); err != nil {
 		t.Fatal(err)
 	}
+	// Corrupt the bundle so the next reload fails.
 	if err := os.Remove(filepath.Join(dir, "manifest.json")); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.Reload(); err == nil {
 		t.Fatal("reload without manifest must fail")
 	}
-	if service.Index() == nil {
-		t.Fatal("failed reload must keep the previous index serving")
-	}
+	// The previous index keeps serving and the error is surfaced.
 	status := service.Status()
 	if !status.Loaded || status.LastError == "" {
-		t.Fatalf("status = %+v", status)
+		t.Fatalf("status after failed reload = %+v", status)
 	}
-}
-
-// TestFlowGeoLoadsExportedBundle validates a real exporter product end to end
-// when WATCHDOG_TEST_FLOW_GEO_DIR points at a bundle directory.
-func TestFlowGeoLoadsExportedBundle(t *testing.T) {
-	dir := os.Getenv("WATCHDOG_TEST_FLOW_GEO_DIR")
-	if dir == "" {
-		t.Skip("WATCHDOG_TEST_FLOW_GEO_DIR is not set")
-	}
-	index, err := LoadFlowGeoBundle(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("bundle version=%s v4=%d v6=%d operators=%d", index.Version, index.RowsV4, index.RowsV6, len(index.operators))
-	if index.RowsV4 == 0 {
-		t.Fatal("bundle has no IPv4 rows")
+	if _, found := service.Lookup(netip.MustParseAddr("1.96.0.1")); !found {
+		t.Fatal("failed reload must keep the previous index serving")
 	}
 }

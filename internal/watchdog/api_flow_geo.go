@@ -22,12 +22,11 @@ func registerFlowGeoRoutes(mux *http.ServeMux, auth func(http.Handler) http.Hand
 			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "a valid ip parameter is required", nil)
 			return
 		}
-		index := service.Index()
-		if index == nil {
+		if !service.Status().Loaded {
 			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Geo bundle is not loaded", nil)
 			return
 		}
-		info, found := index.Lookup(addr)
+		info, found := service.Lookup(addr)
 		WriteAPIJSON(w, http.StatusOK, map[string]any{
 			"ip":    addr.String(),
 			"found": found,
