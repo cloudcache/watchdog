@@ -317,6 +317,27 @@ CREATE TABLE IF NOT EXISTS `collector_bindings` (
   CONSTRAINT `fk_collector_binding_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `collector_enrollment_secrets` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `secret_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `module_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `agent_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mode` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `collector_name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `expires_at` datetime(3) NOT NULL,
+  `used_at` datetime(3) DEFAULT NULL,
+  `used_by_collector_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_by` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_collector_enrollment_tenant` (`tenant_id`,`expires_at`),
+  CONSTRAINT `fk_collector_enrollment_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `collector_enrollment_secrets_chk_1` CHECK (((`used_at` is null) = (`used_by_collector_id` is null))),
+  CONSTRAINT `collector_enrollment_secrets_chk_2` CHECK ((`mode` in ('push','pull','listen')))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `collector_ownership_transfers` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -448,30 +469,6 @@ CREATE TABLE IF NOT EXISTS `collector_service_principals` (
   CONSTRAINT `collector_service_principals_chk_4` CHECK (((`status` = 'revoked') = (`revoke_receipt_ref` is not null))),
   CONSTRAINT `collector_service_principals_chk_5` CHECK (((`status` = 'revoked') = (`revoke_receipt_sha256` is not null))),
   CONSTRAINT `collector_service_principals_chk_6` CHECK (((`status` = 'revoked') = (`revoke_operation_key` is not null)))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `collector_state_restore_receipts` (
-  `transfer_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `state_kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `state_identity_key` binary(32) NOT NULL,
-  `new_owner_boot_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `restore_config_version` bigint unsigned NOT NULL,
-  `restored_old_ownership_epoch` bigint unsigned NOT NULL,
-  `restored_old_generation` bigint unsigned NOT NULL,
-  `new_epoch_baseline_generation` bigint unsigned NOT NULL,
-  `receipt_sha256` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `reported_at` datetime(3) NOT NULL,
-  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`transfer_id`,`state_kind`,`state_identity_key`),
-  KEY `idx_collector_state_restore_identity` (`tenant_id`,`state_kind`,`state_identity_key`),
-  KEY `fk_collector_state_restore_transfer` (`tenant_id`,`transfer_id`),
-  CONSTRAINT `fk_collector_state_restore_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_collector_state_restore_transfer` FOREIGN KEY (`tenant_id`, `transfer_id`) REFERENCES `collector_ownership_transfers` (`tenant_id`, `id`) ON DELETE CASCADE,
-  CONSTRAINT `collector_state_restore_receipts_chk_1` CHECK ((`state_kind` in ('decoder','quality'))),
-  CONSTRAINT `collector_state_restore_receipts_chk_2` CHECK ((`restore_config_version` > 0)),
-  CONSTRAINT `collector_state_restore_receipts_chk_3` CHECK ((`restored_old_ownership_epoch` > 0)),
-  CONSTRAINT `collector_state_restore_receipts_chk_4` CHECK ((`restored_old_generation` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `device_lag_groups` (

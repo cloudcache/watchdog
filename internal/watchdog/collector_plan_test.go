@@ -387,8 +387,11 @@ func TestMySQLCollectorPlanLifecycle(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM collector_plan_revisions WHERE collector_id = ? AND status = 'active'", collectorID).Scan(&activeCount); err != nil || activeCount != 1 {
 		t.Fatalf("active plan count=%d err=%v", activeCount, err)
 	}
+	// Eight distinct plan-lifecycle audits: created×3 (rev1/2/3), activated×2
+	// (rev1/2), retired×1 (rev1), acknowledged×2 (rev1/2). Plan failures do not
+	// audit; rev3's activation conflicts so it is only created, not activated.
 	var auditCount int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_logs WHERE tenant_id = ? AND resource_type = 'collector_plan'", tenantID).Scan(&auditCount); err != nil || auditCount != 7 {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_logs WHERE tenant_id = ? AND resource_type = 'collector_plan'", tenantID).Scan(&auditCount); err != nil || auditCount != 8 {
 		t.Fatalf("collector plan audit count=%d err=%v", auditCount, err)
 	}
 	if _, err := store.GetCollectorPlanRevision(ctx, "tenant_other_plan_001", collectorID, 2); !errors.Is(err, sql.ErrNoRows) {
