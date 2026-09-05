@@ -117,55 +117,55 @@ const (
 )
 
 type detailFieldSpec struct {
-	field      DetailField
-	expression string
-	kind       detailFieldKind
+	field  DetailField
+	column string
+	kind   detailFieldKind
 }
 
 var detailFieldRegistry = map[DetailField]detailFieldSpec{
 	DetailFieldReceivedTime:          {DetailFieldReceivedTime, "received_time", detailKindTime},
-	DetailFieldSourceIP:              {DetailFieldSourceIP, "toString(src_ip)", detailKindString},
-	DetailFieldDestinationIP:         {DetailFieldDestinationIP, "toString(dst_ip)", detailKindString},
-	DetailFieldSourcePort:            {DetailFieldSourcePort, "toUInt64(src_port)", detailKindUInt64},
-	DetailFieldDestinationPort:       {DetailFieldDestinationPort, "toUInt64(dst_port)", detailKindUInt64},
-	DetailFieldIPProtocol:            {DetailFieldIPProtocol, "toUInt64(ip_protocol)", detailKindUInt64},
-	DetailFieldTCPFlags:              {DetailFieldTCPFlags, "toUInt64(tcp_flags)", detailKindUInt64},
-	DetailFieldBusinessDirection:     {DetailFieldBusinessDirection, "toString(business_direction)", detailKindString},
+	DetailFieldSourceIP:              {DetailFieldSourceIP, "src_ip", detailKindString},
+	DetailFieldDestinationIP:         {DetailFieldDestinationIP, "dst_ip", detailKindString},
+	DetailFieldSourcePort:            {DetailFieldSourcePort, "src_port", detailKindUInt64},
+	DetailFieldDestinationPort:       {DetailFieldDestinationPort, "dst_port", detailKindUInt64},
+	DetailFieldIPProtocol:            {DetailFieldIPProtocol, "ip_protocol", detailKindUInt64},
+	DetailFieldTCPFlags:              {DetailFieldTCPFlags, "tcp_flags", detailKindUInt64},
+	DetailFieldBusinessDirection:     {DetailFieldBusinessDirection, "business_direction", detailKindString},
 	DetailFieldBusiness:              {DetailFieldBusiness, "business", detailKindString},
-	DetailFieldCategory:              {DetailFieldCategory, "toString(category)", detailKindString},
-	DetailFieldSourceASN:             {DetailFieldSourceASN, "toUInt64(source_asn)", detailKindUInt64},
-	DetailFieldDestinationASN:        {DetailFieldDestinationASN, "toUInt64(destination_asn)", detailKindUInt64},
-	DetailFieldRemoteASN:             {DetailFieldRemoteASN, "toUInt64(remote_asn)", detailKindUInt64},
-	DetailFieldRemoteASNSource:       {DetailFieldRemoteASNSource, "toString(remote_asn_source)", detailKindString},
-	DetailFieldRemoteCountry:         {DetailFieldRemoteCountry, "toString(remote_country)", detailKindString},
+	DetailFieldCategory:              {DetailFieldCategory, "category", detailKindString},
+	DetailFieldSourceASN:             {DetailFieldSourceASN, "source_asn", detailKindUInt64},
+	DetailFieldDestinationASN:        {DetailFieldDestinationASN, "destination_asn", detailKindUInt64},
+	DetailFieldRemoteASN:             {DetailFieldRemoteASN, "remote_asn", detailKindUInt64},
+	DetailFieldRemoteASNSource:       {DetailFieldRemoteASNSource, "remote_asn_source", detailKindString},
+	DetailFieldRemoteCountry:         {DetailFieldRemoteCountry, "remote_country", detailKindString},
 	DetailFieldRawBytes:              {DetailFieldRawBytes, "raw_bytes", detailKindUInt64},
 	DetailFieldRawPackets:            {DetailFieldRawPackets, "raw_packets", detailKindUInt64},
 	DetailFieldEstimatedBytes:        {DetailFieldEstimatedBytes, "estimated_bytes", detailKindUInt64},
 	DetailFieldEstimatedPackets:      {DetailFieldEstimatedPackets, "estimated_packets", detailKindUInt64},
 	DetailFieldEstimatedValid:        {DetailFieldEstimatedValid, "estimated_valid", detailKindBool},
-	DetailFieldSamplingMode:          {DetailFieldSamplingMode, "toString(sampling_mode)", detailKindString},
+	DetailFieldSamplingMode:          {DetailFieldSamplingMode, "sampling_mode", detailKindString},
 	DetailFieldSamplingRate:          {DetailFieldSamplingRate, "sampling_rate", detailKindUInt64},
-	DetailFieldSamplingSource:        {DetailFieldSamplingSource, "toString(sampling_source)", detailKindString},
+	DetailFieldSamplingSource:        {DetailFieldSamplingSource, "sampling_source", detailKindString},
 	DetailFieldQualityFlags:          {DetailFieldQualityFlags, "quality_flags", detailKindUInt64},
 	DetailFieldFlowDurationMS:        {DetailFieldFlowDurationMS, "flow_duration_ms", detailKindUInt64},
 	DetailFieldTargetID:              {DetailFieldTargetID, "target_id", detailKindString},
 	DetailFieldDeviceID:              {DetailFieldDeviceID, "device_id", detailKindString},
 	DetailFieldExporterID:            {DetailFieldExporterID, "exporter_id", detailKindString},
-	DetailFieldObservationIfIndex:    {DetailFieldObservationIfIndex, "toUInt64(observation_if_index)", detailKindUInt64},
-	DetailFieldIngressIfIndex:        {DetailFieldIngressIfIndex, "toUInt64(ingress_if_index)", detailKindUInt64},
-	DetailFieldEgressIfIndex:         {DetailFieldEgressIfIndex, "toUInt64(egress_if_index)", detailKindUInt64},
-	DetailFieldObservationDirection:  {DetailFieldObservationDirection, "toString(observation_direction)", detailKindString},
+	DetailFieldObservationIfIndex:    {DetailFieldObservationIfIndex, "observation_if_index", detailKindUInt64},
+	DetailFieldIngressIfIndex:        {DetailFieldIngressIfIndex, "ingress_if_index", detailKindUInt64},
+	DetailFieldEgressIfIndex:         {DetailFieldEgressIfIndex, "egress_if_index", detailKindUInt64},
+	DetailFieldObservationDirection:  {DetailFieldObservationDirection, "observation_direction", detailKindString},
 	DetailFieldDimensionSnapshotID:   {DetailFieldDimensionSnapshotID, "dimension_snapshot_id", detailKindString},
 	DetailFieldDimensionVersion:      {DetailFieldDimensionVersion, "dimension_version", detailKindUInt64},
 	DetailFieldGeoVersion:            {DetailFieldGeoVersion, "geo_version", detailKindString},
-	DetailFieldClassificationVersion: {DetailFieldClassificationVersion, "toUInt64(classification_version)", detailKindUInt64},
-	DetailFieldLocalIP:               {DetailFieldLocalIP, "toString(local_ip)", detailKindString},
-	DetailFieldRemoteIP:              {DetailFieldRemoteIP, "toString(remote_ip)", detailKindString},
-	DetailFieldLocalPort:             {DetailFieldLocalPort, "toUInt64(local_port)", detailKindUInt64},
-	DetailFieldRemotePort:            {DetailFieldRemotePort, "toUInt64(remote_port)", detailKindUInt64},
+	DetailFieldClassificationVersion: {DetailFieldClassificationVersion, "classification_version", detailKindUInt64},
+	DetailFieldLocalIP:               {DetailFieldLocalIP, "local_ip", detailKindString},
+	DetailFieldRemoteIP:              {DetailFieldRemoteIP, "remote_ip", detailKindString},
+	DetailFieldLocalPort:             {DetailFieldLocalPort, "local_port", detailKindUInt64},
+	DetailFieldRemotePort:            {DetailFieldRemotePort, "remote_port", detailKindUInt64},
 	DetailFieldLocalPrefixID:         {DetailFieldLocalPrefixID, "local_prefix_id", detailKindString},
 	DetailFieldRemotePrefixID:        {DetailFieldRemotePrefixID, "remote_prefix_id", detailKindString},
-	DetailFieldRemoteISPID:           {DetailFieldRemoteISPID, "toUInt64(remote_isp_id)", detailKindUInt64},
+	DetailFieldRemoteISPID:           {DetailFieldRemoteISPID, "remote_isp_id", detailKindUInt64},
 	DetailFieldRemoteGeoContinentID:  {DetailFieldRemoteGeoContinentID, "remote_geo_continent_id", detailKindString},
 	DetailFieldRemoteGeoRegionID:     {DetailFieldRemoteGeoRegionID, "remote_geo_region_id", detailKindString},
 	DetailFieldRemoteGeoCountryID:    {DetailFieldRemoteGeoCountryID, "remote_geo_country_id", detailKindString},
@@ -362,7 +362,7 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if err != nil {
 		return CompiledDetail{}, err
 	}
-	conditions, filterParameters, err := compileDetailFilters(request.View, request.Filters)
+	conditions, filterParameters, err := compileDetailFiltersForSource(request.View, request.Filters)
 	if err != nil {
 		return CompiledDetail{}, err
 	}
@@ -374,12 +374,12 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		uintParameter("fetch_limit", uint64(request.Limit)+1),
 	}
 	parameters = append(parameters, filterParameters...)
-	matchCondition := "(src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))"
+	matchCondition := "(source.src_ip = toIPv6({ip:String}) OR source.dst_ip = toIPv6({ip:String}))"
 	switch request.Endpoint {
 	case DetailEndpointSource:
-		matchCondition = "src_ip = toIPv6({ip:String})"
+		matchCondition = "source.src_ip = toIPv6({ip:String})"
 	case DetailEndpointDestination:
-		matchCondition = "dst_ip = toIPv6({ip:String})"
+		matchCondition = "source.dst_ip = toIPv6({ip:String})"
 	}
 	var cursor *detailCursorKey
 	if request.Cursor != "" {
@@ -399,15 +399,15 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	selectFields := make([]string, 0, len(fields))
 	for _, field := range fields {
 		spec := detailFieldSpecForView(request.View, field)
-		selectFields = append(selectFields, fmt.Sprintf("  %s AS %s", spec.expression, spec.field))
+		selectFields = append(selectFields, fmt.Sprintf("  %s AS %s", detailFieldExpression(spec), spec.field))
 	}
-	visibilityCondition := "AND disposition = 'count'"
+	visibilityCondition := "AND source.disposition = 'count'"
 	if request.View == ViewRaw {
 		visibilityCondition = ""
 	}
 	cursorCondition := ""
 	if cursor != nil {
-		cursorCondition = "AND (event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))"
+		cursorCondition = "AND (source.event_time < {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id < unhex({cursor_record_id:String})))"
 	}
 	var body string
 	if request.View == ViewSupplier {
@@ -417,7 +417,7 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		}
 		cursorExpression := "true"
 		if cursor != nil {
-			cursorExpression = "(event_time < {cursor_time:DateTime64(3, 'UTC')} OR (event_time = {cursor_time:DateTime64(3, 'UTC')} AND record_id < unhex({cursor_record_id:String})))"
+			cursorExpression = "(source.event_time < {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id < unhex({cursor_record_id:String})))"
 		}
 		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
 	} else {
@@ -475,6 +475,14 @@ func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error
 }
 
 func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.Parameter, error) {
+	return compileDetailFiltersWithQualifier(view, filters, "")
+}
+
+func compileDetailFiltersForSource(view View, filters DetailFilters) ([]string, []proto.Parameter, error) {
+	return compileDetailFiltersWithQualifier(view, filters, "source.")
+}
+
+func compileDetailFiltersWithQualifier(view View, filters DetailFilters, qualifier string) ([]string, []proto.Parameter, error) {
 	viewSpec, ok := detailViewRegistry[view]
 	if !ok {
 		return nil, nil, requestError("view", ErrorUnsupported, fmt.Sprintf("detail view %q is unsupported", view))
@@ -525,7 +533,7 @@ func compileDetailFilters(view View, filters DetailFilters) ([]string, []proto.P
 			parameters = append(parameters, stringParameter(key, value))
 		}
 		if len(placeholders) > 0 {
-			conditions = append(conditions, fmt.Sprintf("AND %s IN (%s)", filter.column, strings.Join(placeholders, ", ")))
+			conditions = append(conditions, fmt.Sprintf("AND %s%s IN (%s)", qualifier, filter.column, strings.Join(placeholders, ", ")))
 		}
 	}
 	return conditions, parameters, nil
@@ -538,29 +546,41 @@ func detailFieldSpecForView(view View, field DetailField) detailFieldSpec {
 	}
 	switch field {
 	case DetailFieldCategory:
-		spec.expression = "toString(supplier_category)"
+		spec.column = "supplier_category"
 	case DetailFieldRemoteASN:
-		spec.expression = "toUInt64(supplier_remote_asn)"
+		spec.column = "supplier_remote_asn"
 	case DetailFieldRemoteASNSource:
-		spec.expression = "toString(supplier_remote_asn_source)"
+		spec.column = "supplier_remote_asn_source"
 	case DetailFieldRemoteCountry:
-		spec.expression = "toString(supplier_remote_country)"
+		spec.column = "supplier_remote_country"
 	case DetailFieldGeoVersion:
-		spec.expression = "supplier_geo_version"
+		spec.column = "supplier_geo_version"
 	case DetailFieldRemoteISPID:
-		spec.expression = "toUInt64(supplier_remote_isp_id)"
+		spec.column = "supplier_remote_isp_id"
 	case DetailFieldRemoteGeoContinentID:
-		spec.expression = "supplier_remote_geo_continent_id"
+		spec.column = "supplier_remote_geo_continent_id"
 	case DetailFieldRemoteGeoRegionID:
-		spec.expression = "supplier_remote_geo_region_id"
+		spec.column = "supplier_remote_geo_region_id"
 	case DetailFieldRemoteGeoCountryID:
-		spec.expression = "supplier_remote_geo_country_id"
+		spec.column = "supplier_remote_geo_country_id"
 	case DetailFieldRemoteGeoProvinceID:
-		spec.expression = "supplier_remote_geo_province_id"
+		spec.column = "supplier_remote_geo_province_id"
 	case DetailFieldRemoteGeoCityID:
-		spec.expression = "supplier_remote_geo_city_id"
+		spec.column = "supplier_remote_geo_city_id"
 	}
 	return spec
+}
+
+func detailFieldExpression(spec detailFieldSpec) string {
+	column := "source." + spec.column
+	switch spec.kind {
+	case detailKindString:
+		return "toString(" + column + ")"
+	case detailKindUInt64:
+		return "toUInt64(" + column + ")"
+	default:
+		return column
+	}
 }
 
 func EncodeDetailCursor(eventTime time.Time, recordIDHex string) (string, error) {
@@ -600,14 +620,14 @@ func formatDateTime64(value time.Time) string {
 }
 
 const detailQuerySQL = `SELECT
-  event_time,
-  lower(hex(record_id)) AS record_id,
-  toString(src_ip) AS _source_ip,
-  toString(dst_ip) AS _destination_ip,
+  source.event_time,
+  lower(hex(source.record_id)) AS record_id,
+  toString(source.src_ip) AS _source_ip,
+  toString(source.dst_ip) AS _destination_ip,
 %s
-FROM flow_records FINAL
-WHERE tenant_id = {tenant:String}
-  AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}
+FROM flow_records AS source FINAL
+WHERE source.tenant_id = {tenant:String}
+  AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
   %s
   AND %s
   %s
@@ -628,17 +648,17 @@ const supplierDetailQuerySQL = `SELECT
   _minimum_fact_schema
 FROM (
   SELECT
-    event_time,
-    record_id AS _record_id,
-    src_ip AS _source_ip,
-    dst_ip AS _destination_ip,
+    source.event_time,
+    source.record_id AS _record_id,
+    source.src_ip AS _source_ip,
+    source.dst_ip AS _destination_ip,
 %s,
     %s AS _scope_match,
-    min(fact_schema) OVER () AS _minimum_fact_schema,
-    row_number() OVER (ORDER BY event_time DESC, record_id DESC) AS _scope_row
-  FROM flow_records FINAL
-  WHERE tenant_id = {tenant:String}
-    AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}
+    min(source.fact_schema) OVER () AS _minimum_fact_schema,
+    row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row
+  FROM flow_records AS source FINAL
+  WHERE source.tenant_id = {tenant:String}
+    AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
     %s
     AND %s
     %s

@@ -151,14 +151,14 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 		t.Fatalf("fields=%v, want %v", first.Fields, wantFields)
 	}
 	for _, required := range []string{
-		"FROM flow_records FINAL",
-		"lower(hex(record_id)) AS record_id",
-		"toString(src_ip) AS _source_ip",
-		"estimated_valid AS estimated_valid",
-		"raw_bytes AS raw_bytes",
-		"(src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))",
-		"AND disposition = 'count'",
-		"AND business_direction IN ({detail_direction_0:String}, {detail_direction_1:String})",
+		"FROM flow_records AS source FINAL",
+		"lower(hex(source.record_id)) AS record_id",
+		"toString(source.src_ip) AS _source_ip",
+		"source.estimated_valid AS estimated_valid",
+		"toUInt64(source.raw_bytes) AS raw_bytes",
+		"(source.src_ip = toIPv6({ip:String}) OR source.dst_ip = toIPv6({ip:String}))",
+		"AND source.disposition = 'count'",
+		"AND source.business_direction IN ({detail_direction_0:String}, {detail_direction_1:String})",
 		"ORDER BY event_time DESC, record_id DESC",
 		"LIMIT {fetch_limit:UInt16}",
 	} {
@@ -196,8 +196,8 @@ func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
 		t.Fatalf("compiled view=%q", compiled.View)
 	}
 	for _, required := range []string{
-		"toUInt64(source_asn) AS source_asn", "toUInt64(destination_asn) AS destination_asn",
-		"toString(observation_direction) AS observation_direction", "AND target_id IN ({detail_target_0:String})",
+		"toUInt64(source.source_asn) AS source_asn", "toUInt64(source.destination_asn) AS destination_asn",
+		"toString(source.observation_direction) AS observation_direction", "AND source.target_id IN ({detail_target_0:String})",
 	} {
 		if !strings.Contains(compiled.Query.Body, required) {
 			t.Fatalf("raw query missing %q:\n%s", required, compiled.Query.Body)
@@ -244,19 +244,19 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 		t.Fatalf("compiled view=%q", compiled.View)
 	}
 	for _, required := range []string{
-		"toString(supplier_category) AS category", "toUInt64(supplier_remote_asn) AS remote_asn",
-		"toString(supplier_remote_asn_source) AS remote_asn_source", "toString(supplier_remote_country) AS remote_country",
-		"supplier_geo_version AS geo_version", "toUInt64(supplier_remote_isp_id) AS remote_isp_id",
-		"supplier_remote_geo_city_id AS remote_geo_city_id", "min(fact_schema) OVER () AS _minimum_fact_schema",
-		"row_number() OVER (ORDER BY event_time DESC, record_id DESC) AS _scope_row",
-		"AND supplier_category IN ({detail_category_0:String})", "WHERE _scope_match OR _scope_row = 1",
+		"toString(source.supplier_category) AS category", "toUInt64(source.supplier_remote_asn) AS remote_asn",
+		"toString(source.supplier_remote_asn_source) AS remote_asn_source", "toString(source.supplier_remote_country) AS remote_country",
+		"toString(source.supplier_geo_version) AS geo_version", "toUInt64(source.supplier_remote_isp_id) AS remote_isp_id",
+		"toString(source.supplier_remote_geo_city_id) AS remote_geo_city_id", "min(source.fact_schema) OVER () AS _minimum_fact_schema",
+		"row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row",
+		"AND source.supplier_category IN ({detail_category_0:String})", "WHERE _scope_match OR _scope_row = 1",
 	} {
 		if !strings.Contains(compiled.Query.Body, required) {
 			t.Fatalf("supplier query missing %q:\n%s", required, compiled.Query.Body)
 		}
 	}
 	cursorPosition := strings.Index(compiled.Query.Body, "AS _scope_match")
-	windowPosition := strings.Index(compiled.Query.Body, "min(fact_schema) OVER ()")
+	windowPosition := strings.Index(compiled.Query.Body, "min(source.fact_schema) OVER ()")
 	outerWherePosition := strings.Index(compiled.Query.Body, "WHERE _scope_match OR _scope_row = 1")
 	if cursorPosition < 0 || windowPosition < cursorPosition || outerWherePosition < windowPosition {
 		t.Fatalf("supplier completeness is not evaluated before cursor filtering:\n%s", compiled.Query.Body)
@@ -287,9 +287,9 @@ func TestCompileDetailUsesEndpointSpecificPredicatesForIPv4AndIPv6(t *testing.T)
 		endpoint  DetailEndpoint
 		predicate string
 	}{
-		{"ipv4 source", "192.0.2.10", DetailEndpointSource, "AND src_ip = toIPv6({ip:String})"},
-		{"ipv4 destination", "192.0.2.10", DetailEndpointDestination, "AND dst_ip = toIPv6({ip:String})"},
-		{"ipv6 either", "2001:db8::10", DetailEndpointEither, "AND (src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))"},
+		{"ipv4 source", "192.0.2.10", DetailEndpointSource, "AND source.src_ip = toIPv6({ip:String})"},
+		{"ipv4 destination", "192.0.2.10", DetailEndpointDestination, "AND source.dst_ip = toIPv6({ip:String})"},
+		{"ipv6 either", "2001:db8::10", DetailEndpointEither, "AND (source.src_ip = toIPv6({ip:String}) OR source.dst_ip = toIPv6({ip:String}))"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

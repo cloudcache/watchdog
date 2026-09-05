@@ -6,6 +6,8 @@ package flowch
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -21,52 +23,7 @@ import (
 // the native writer, both rollup resolutions, generation replay/repair, and
 // the real aggregate result decoder without touching the development data.
 func TestRealClickHouseRollupQueryRepair(t *testing.T) {
-	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION") != "1" {
-		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION=1 to run")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	const database = "watchdog_flow_it_rollup_query"
-	adminConfig := realMigrationConfig(t, "watchdog-flow-data-integration-admin", 30*time.Second)
-	adminConfig.Database = "default"
-	admin, err := NewNativeInserter(ctx, adminConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := admin.executor.Do(ctx, ch.Query{Body: "DROP DATABASE IF EXISTS " + database}); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	defer func() {
-		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		if err := admin.executor.Do(cleanupContext, ch.Query{Body: "DROP DATABASE IF EXISTS " + database}); err != nil {
-			t.Errorf("drop integration database: %v", err)
-		}
-		admin.Close()
-	}()
-
-	migrations, err := LoadMigrations(os.DirFS("../../deploy/migration/clickhouse"), ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, migration := range migrations {
-		for statementIndex, statement := range migration.Statements {
-			isolated := strings.ReplaceAll(statement, migrationDatabase, database)
-			if err := admin.executor.Do(ctx, synchronousMigrationQuery(isolated)); err != nil {
-				t.Fatalf("apply isolated migration %03d statement %d: %v", migration.Version, statementIndex+1, err)
-			}
-		}
-	}
-
-	dataConfig := realMigrationConfig(t, "watchdog-flow-data-integration", 30*time.Second)
-	dataConfig.Database = database
-	native, err := NewNativeInserter(ctx, dataConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer native.Close()
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_rollup_query")
 
 	bucket := time.Date(2026, 9, 5, 10, 20, 0, 0, time.UTC)
 	first := integrationRecord(1, bucket.Add(10*time.Second), "geo-city-a", 100)
@@ -164,6 +121,126 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	}
 }
 
+func TestRealClickHouseDetailPaginationAndLimits(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_detail")
+
+	eventTime := time.Date(2026, 9, 5, 11, 22, 33, 123_000_000, time.UTC)
+	wanted := netip.MustParseAddr("192.0.2.10")
+	first := integrationDetailRecord(1, eventTime, wanted, netip.MustParseAddr("2001:db8::1"), 100)
+	second := integrationDetailRecord(2, eventTime, netip.MustParseAddr("198.51.100.2"), wanted, 200)
+	third := integrationDetailRecord(3, eventTime, wanted, netip.MustParseAddr("2001:db8::3"), 300)
+	insertIntegrationBatch(t, ctx, native, integrationBatch(20, eventTime.Add(time.Minute), first, second, third))
+
+	// A later generation for the same record identity must replace the first
+	// physical version when detail queries use FINAL.
+	replacement := integrationDetailRecord(1, eventTime, wanted, netip.MustParseAddr("2001:db8::1"), 900)
+	insertIntegrationBatch(t, ctx, native, integrationBatch(21, eventTime.Add(2*time.Minute), replacement))
+
+	runner, err := flowquery.NewDetailRunner(&integrationBlockExecutor{executor: native.executor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := integrationDetailRequest(eventTime, wanted, flowquery.DetailEndpointEither, 2)
+	firstPage := runIntegrationDetail(t, ctx, runner, request)
+	assertDetailPage(t, firstPage, []byte{3, 2}, []uint64{300, 200}, true)
+	if firstPage.Rows[0].Values[flowquery.DetailFieldSourceIP] != wanted.String() ||
+		firstPage.Rows[1].Values[flowquery.DetailFieldDestinationIP] != wanted.String() {
+		t.Fatalf("IPv4-mapped detail values were not normalized: %+v", firstPage.Rows)
+	}
+
+	request.Cursor = firstPage.NextCursor
+	secondPage := runIntegrationDetail(t, ctx, runner, request)
+	assertDetailPage(t, secondPage, []byte{1}, []uint64{900}, false)
+
+	sourceRequest := integrationDetailRequest(eventTime, wanted, flowquery.DetailEndpointSource, 10)
+	sourcePage := runIntegrationDetail(t, ctx, runner, sourceRequest)
+	assertDetailPage(t, sourcePage, []byte{3, 1}, []uint64{300, 900}, false)
+	destinationRequest := integrationDetailRequest(eventTime, wanted, flowquery.DetailEndpointDestination, 10)
+	destinationPage := runIntegrationDetail(t, ctx, runner, destinationRequest)
+	assertDetailPage(t, destinationPage, []byte{2}, []uint64{200}, false)
+
+	compiled := compileIntegrationDetail(t, integrationDetailRequest(eventTime, wanted, flowquery.DetailEndpointEither, 2))
+	cancelExecutor := &integrationBlockExecutor{executor: native.executor, cancelAfterFirst: true}
+	cancelRunner, err := flowquery.NewDetailRunner(cancelExecutor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceledResult, err := cancelRunner.Run(ctx, compiled)
+	if err == nil || !errors.Is(err, context.Canceled) || len(canceledResult.Rows) != 0 || !cancelExecutor.canceled {
+		t.Fatalf("canceled detail result=%+v error=%v canceled=%t", canceledResult, err, cancelExecutor.canceled)
+	}
+
+	expiredContext, expiredCancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer expiredCancel()
+	timedResult, err := runner.Run(expiredContext, compiled)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || len(timedResult.Rows) != 0 {
+		t.Fatalf("expired detail result=%+v error=%v", timedResult, err)
+	}
+
+	limitedRunner, err := flowquery.NewDetailRunner(&integrationSettingExecutor{
+		executor: native.executor, overrides: map[string]string{"max_rows_to_read": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limitedResult, err := limitedRunner.Run(ctx, compiled)
+	if err == nil || len(limitedResult.Rows) != 0 {
+		t.Fatalf("scan-limited detail result=%+v error=%v", limitedResult, err)
+	}
+}
+
+func openDataIntegrationClickHouse(t *testing.T, database string) (context.Context, *NativeInserter) {
+	t.Helper()
+	if os.Getenv("WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION=1 to run")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	adminConfig := realMigrationConfig(t, "watchdog-flow-data-integration-admin", 30*time.Second)
+	adminConfig.Database = "default"
+	admin, err := NewNativeInserter(ctx, adminConfig)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	var native *NativeInserter
+	t.Cleanup(func() {
+		if native != nil {
+			native.Close()
+		}
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := admin.executor.Do(cleanupContext, ch.Query{Body: "DROP DATABASE IF EXISTS " + database}); err != nil {
+			t.Errorf("drop integration database: %v", err)
+		}
+		admin.Close()
+		cancel()
+	})
+	if err := admin.executor.Do(ctx, ch.Query{Body: "DROP DATABASE IF EXISTS " + database}); err != nil {
+		t.Fatal(err)
+	}
+
+	migrations, err := LoadMigrations(os.DirFS("../../deploy/migration/clickhouse"), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations {
+		for statementIndex, statement := range migration.Statements {
+			isolated := strings.ReplaceAll(statement, migrationDatabase, database)
+			if err := admin.executor.Do(ctx, synchronousMigrationQuery(isolated)); err != nil {
+				t.Fatalf("apply isolated migration %03d statement %d: %v", migration.Version, statementIndex+1, err)
+			}
+		}
+	}
+
+	dataConfig := realMigrationConfig(t, "watchdog-flow-data-integration", 30*time.Second)
+	dataConfig.Database = database
+	native, err = NewNativeInserter(ctx, dataConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx, native
+}
+
 func integrationBatch(offset int64, receivedAt time.Time, records ...flowworker.EnrichedRecord) *flowworker.EnrichedBatch {
 	batch := testEnrichedBatch(offset, records...)
 	batch.TenantID = "flow-it-tenant"
@@ -176,6 +253,66 @@ func integrationRecord(index byte, eventTime time.Time, cityID string, rawBytes 
 	record.EventTime = eventTime
 	record.RemoteGeo.CityID = cityID
 	return record
+}
+
+func integrationDetailRecord(index byte, eventTime time.Time, source, destination netip.Addr, rawBytes uint64) flowworker.EnrichedRecord {
+	record := testEnrichedRecord(index, rawBytes, rawBytes*10)
+	record.EventTime = eventTime
+	record.SourceIP = source
+	record.DestinationIP = destination
+	record.SourcePort = uint16(10_000) + uint16(index)
+	record.DestinationPort = 443
+	record.IPProtocol = 6
+	return record
+}
+
+func integrationDetailRequest(eventTime time.Time, ip netip.Addr, endpoint flowquery.DetailEndpoint, limit uint16) flowquery.DetailRequest {
+	return flowquery.DetailRequest{
+		IP: ip.String(), Endpoint: endpoint,
+		From: eventTime.Add(-time.Minute), To: eventTime.Add(time.Minute),
+		View: flowquery.ViewCustomer, Limit: limit,
+		Fields: []flowquery.DetailField{
+			flowquery.DetailFieldSourceIP,
+			flowquery.DetailFieldDestinationIP,
+			flowquery.DetailFieldRawBytes,
+		},
+	}
+}
+
+func compileIntegrationDetail(t *testing.T, request flowquery.DetailRequest) flowquery.CompiledDetail {
+	t.Helper()
+	compiled, err := flowquery.CompileDetail(flowquery.Scope{TenantID: "flow-it-tenant"}, request, request.To.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiled
+}
+
+func runIntegrationDetail(t *testing.T, ctx context.Context, runner *flowquery.DetailRunner, request flowquery.DetailRequest) flowquery.DetailResult {
+	t.Helper()
+	result, err := runner.Run(ctx, compileIntegrationDetail(t, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func assertDetailPage(t *testing.T, result flowquery.DetailResult, ids []byte, rawBytes []uint64, hasMore bool) {
+	t.Helper()
+	if len(result.Rows) != len(ids) || len(ids) != len(rawBytes) || result.HasMore != hasMore || (hasMore && result.NextCursor == "") || (!hasMore && result.NextCursor != "") {
+		t.Fatalf("detail page=%+v, ids=%v raw=%v has_more=%t", result, ids, rawBytes, hasMore)
+	}
+	for index, row := range result.Rows {
+		wantID := fmt.Sprintf("%064x", ids[index])
+		if row.RecordID != wantID || row.Values[flowquery.DetailFieldRawBytes] != rawBytes[index] {
+			t.Fatalf("detail row[%d]=%+v, want id=%s raw=%d", index, row, wantID, rawBytes[index])
+		}
+		for _, field := range []flowquery.DetailField{flowquery.DetailFieldSourceIP, flowquery.DetailFieldDestinationIP} {
+			if _, err := netip.ParseAddr(row.Values[field].(string)); err != nil {
+				t.Fatalf("detail row[%d] field %s=%v: %v", index, field, row.Values[field], err)
+			}
+		}
+	}
 }
 
 func insertIntegrationBatch(t *testing.T, ctx context.Context, native *NativeInserter, batch *flowworker.EnrichedBatch) {
@@ -256,6 +393,21 @@ type integrationBlockExecutor struct {
 	lastBlocks       int
 	cancelAfterFirst bool
 	canceled         bool
+}
+
+type integrationSettingExecutor struct {
+	executor  queryExecutor
+	overrides map[string]string
+}
+
+func (e *integrationSettingExecutor) Do(ctx context.Context, query ch.Query) error {
+	query.Settings = append([]ch.Setting(nil), query.Settings...)
+	for index := range query.Settings {
+		if value, exists := e.overrides[query.Settings[index].Key]; exists {
+			query.Settings[index].Value = value
+		}
+	}
+	return e.executor.Do(ctx, query)
 }
 
 func (e *integrationBlockExecutor) Do(ctx context.Context, query ch.Query) error {
