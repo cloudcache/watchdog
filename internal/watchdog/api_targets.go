@@ -63,6 +63,7 @@ func (api targetAPI) get(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Target not found", nil)
 		return
 	}
+	SetEntityETag(w, target.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, target)
 }
 
@@ -132,6 +133,9 @@ func (api targetAPI) patch(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Target not found", nil)
 		return
 	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	req, err := decodeTargetRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -176,6 +180,11 @@ func (api targetAPI) previewDelete(w http.ResponseWriter, r *http.Request) {
 func (api targetAPI) delete(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	targetID := ID(r.PathValue("target_id"))
+	if current, err := api.repo.GetTarget(r.Context(), auth.TenantID, targetID); err == nil {
+		if !CheckIfMatch(w, r, current.UpdatedAt) {
+			return
+		}
+	}
 	if err := api.repo.DeleteTarget(r.Context(), auth.TenantID, targetID); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return

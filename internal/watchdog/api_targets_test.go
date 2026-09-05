@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeTargetRepository struct {
@@ -232,4 +233,53 @@ func targetTestAuth(*http.Request) (AuthContext, error) {
 			{TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a", ResourceType: ResourceTarget, ResourceID: "target-a", Actions: []Action{ActionView, ActionConfigure}},
 		},
 	}, nil
+}
+
+func TestAPITargetsIfMatchOptimisticLocking(t *testing.T) {
+	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	repo := &fakeTargetRepository{targets: []Target{{
+		ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork,
+		Host: "10.0.0.1", UpdatedAt: updatedAt,
+	}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: targetTestAuth, Targets: repo})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets/target-a", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" || !strings.HasPrefix(etag, `W/"`) {
+		t.Fatalf("expected weak ETag, got %q", etag)
+	}
+
+	stale := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/targets/target-a", strings.NewReader(`{"name":"Renamed","host":"10.0.0.1","kind":"network"}`))
+	req.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(stale, req)
+	if stale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale patch status = %d, body = %s", stale.Code, stale.Body.String())
+	}
+	if repo.updated.ID != "" {
+		t.Fatalf("stale patch must not update, got %+v", repo.updated)
+	}
+
+	fresh := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/targets/target-a", strings.NewReader(`{"name":"Renamed","host":"10.0.0.1","kind":"network"}`))
+	req.Header.Set("If-Match", etag)
+	router.ServeHTTP(fresh, req)
+	if fresh.Code != http.StatusOK {
+		t.Fatalf("fresh patch status = %d, body = %s", fresh.Code, fresh.Body.String())
+	}
+
+	staleDelete := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/targets/target-a", nil)
+	req.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(staleDelete, req)
+	if staleDelete.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale delete status = %d", staleDelete.Code)
+	}
+	if repo.deleted != "" {
+		t.Fatalf("stale delete must not delete, got %q", repo.deleted)
+	}
 }
