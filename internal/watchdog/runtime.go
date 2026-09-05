@@ -9,11 +9,17 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowmetrics"
 )
 
 type collectorPrincipalRuntimeProvider interface {
 	CloseIdleConnections()
 	Health() CollectorPrincipalProviderRuntimeHealth
+	PrometheusText() []byte
+}
+
+type flowRollupRuntimeMetrics interface {
 	PrometheusText() []byte
 }
 
@@ -41,6 +47,7 @@ type BackendRuntime struct {
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
 	flowRollupNative           interface{ Close() }
+	flowRollupMetrics          flowRollupRuntimeMetrics
 
 	trapDispatcherFn  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu      sync.Mutex
@@ -191,6 +198,12 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		runtime.flowRollupNative = native
 		runtime.FlowRollupRunner = runner
 		runtime.FlowRollupService = service
+		runtime.flowRollupMetrics, err = flowmetrics.NewRollup(runner.Stats)
+		if err != nil {
+			native.Close()
+			_ = store.Close()
+			return nil, fmt.Errorf("initialize flow rollup metrics: %w", err)
+		}
 	}
 	return runtime, nil
 }
@@ -267,6 +280,9 @@ func (r *BackendRuntime) RuntimeMetrics() []byte {
 		} else {
 			metrics = append(metrics, r.collectorPrincipalProvider.PrometheusText()...)
 		}
+	}
+	if r != nil && r.flowRollupMetrics != nil {
+		metrics = append(metrics, r.flowRollupMetrics.PrometheusText()...)
 	}
 	return metrics
 }

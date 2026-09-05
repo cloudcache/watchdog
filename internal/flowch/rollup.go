@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/ch-go"
@@ -33,6 +34,35 @@ type RollupRequest struct {
 
 type RollupRunner struct {
 	executor queryExecutor
+	stats    [2]rollupCounters
+	now      func() time.Time
+}
+
+type RollupResolutionStats struct {
+	Attempts                  uint64
+	Successes                 uint64
+	RetryableErrors           uint64
+	PermanentErrors           uint64
+	InitialRebuilds           uint64
+	RepairRebuilds            uint64
+	LastSuccessUnix           uint64
+	LatestCompletedBucketUnix uint64
+}
+
+type RollupStats struct {
+	OneMinute RollupResolutionStats
+	OneHour   RollupResolutionStats
+}
+
+type rollupCounters struct {
+	attempts                  atomic.Uint64
+	successes                 atomic.Uint64
+	retryableErrors           atomic.Uint64
+	permanentErrors           atomic.Uint64
+	initialRebuilds           atomic.Uint64
+	repairRebuilds            atomic.Uint64
+	lastSuccessUnix           atomic.Uint64
+	latestCompletedBucketUnix atomic.Uint64
 }
 
 // LatestGeneration reads the authoritative generation marker from
@@ -87,7 +117,7 @@ func NewRollupRunner(native *NativeInserter) (*RollupRunner, error) {
 	if native == nil || native.executor == nil {
 		return nil, errors.New("ClickHouse native connection is required")
 	}
-	return &RollupRunner{executor: native.executor}, nil
+	return &RollupRunner{executor: native.executor, now: time.Now}, nil
 }
 
 // Run rebuilds one closed tenant bucket in one INSERT SELECT. Every public
@@ -102,10 +132,65 @@ func (r *RollupRunner) Run(ctx context.Context, request RollupRequest) error {
 	if r == nil || r.executor == nil {
 		return Permanent(errors.New("ClickHouse rollup runner is not initialized"))
 	}
+	index, duration := rollupStatsTarget(request.Resolution)
+	r.stats[index].attempts.Add(1)
 	if err := r.executor.Do(ctx, query); err != nil {
-		return classifyClickHouseError(fmt.Errorf("rebuild ClickHouse %s bucket: %w", request.Resolution, err))
+		classified := classifyClickHouseError(fmt.Errorf("rebuild ClickHouse %s bucket: %w", request.Resolution, err))
+		var permanent *PermanentError
+		if errors.As(classified, &permanent) {
+			r.stats[index].permanentErrors.Add(1)
+		} else {
+			r.stats[index].retryableErrors.Add(1)
+		}
+		return classified
 	}
+	r.stats[index].successes.Add(1)
+	if request.Generation == 1 {
+		r.stats[index].initialRebuilds.Add(1)
+	} else {
+		r.stats[index].repairRebuilds.Add(1)
+	}
+	now := time.Now()
+	if r.now != nil {
+		now = r.now()
+	}
+	storeMax(&r.stats[index].lastSuccessUnix, uint64(now.UTC().Unix()))
+	storeMax(&r.stats[index].latestCompletedBucketUnix, uint64(request.Bucket.UTC().Add(duration).Unix()))
 	return nil
+}
+
+func (r *RollupRunner) Stats() RollupStats {
+	if r == nil {
+		return RollupStats{}
+	}
+	return RollupStats{
+		OneMinute: snapshotRollupCounters(&r.stats[0]),
+		OneHour:   snapshotRollupCounters(&r.stats[1]),
+	}
+}
+
+func snapshotRollupCounters(value *rollupCounters) RollupResolutionStats {
+	return RollupResolutionStats{
+		Attempts: value.attempts.Load(), Successes: value.successes.Load(),
+		RetryableErrors: value.retryableErrors.Load(), PermanentErrors: value.permanentErrors.Load(),
+		InitialRebuilds: value.initialRebuilds.Load(), RepairRebuilds: value.repairRebuilds.Load(),
+		LastSuccessUnix: value.lastSuccessUnix.Load(), LatestCompletedBucketUnix: value.latestCompletedBucketUnix.Load(),
+	}
+}
+
+func rollupStatsTarget(resolution RollupResolution) (int, time.Duration) {
+	if resolution == RollupOneHour {
+		return 1, time.Hour
+	}
+	return 0, time.Minute
+}
+
+func storeMax(target *atomic.Uint64, value uint64) {
+	for current := target.Load(); value > current; current = target.Load() {
+		if target.CompareAndSwap(current, value) {
+			return
+		}
+	}
 }
 
 // ValidateRollupRequest validates the public rollup contract without issuing
@@ -128,6 +213,9 @@ func ValidateRollupRequest(request RollupRequest) error {
 	}
 	if request.GeneratedAt.UTC().Before(end) {
 		return fmt.Errorf("%s rollup generated_at precedes the closed bucket end", request.Resolution)
+	}
+	if bucket.Unix() < 0 {
+		return fmt.Errorf("%s rollup bucket must not predate the Unix epoch", request.Resolution)
 	}
 	return nil
 }

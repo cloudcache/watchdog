@@ -99,12 +99,59 @@ func TestBuildRollupQueryRejectsUnalignedOrUnsafeRequests(t *testing.T) {
 		func(value *RollupRequest) { value.Generation = 0 },
 		func(value *RollupRequest) { value.GeneratedAt = value.GeneratedAt.In(time.FixedZone("local", 3600)) },
 		func(value *RollupRequest) { value.GeneratedAt = value.Bucket.Add(30 * time.Minute) },
+		func(value *RollupRequest) {
+			value.Bucket = time.Date(1969, 12, 31, 23, 0, 0, 0, time.UTC)
+			value.GeneratedAt = value.Bucket.Add(time.Hour)
+		},
 	} {
 		request := valid
 		mutate(&request)
 		if _, err := buildRollupQuery(request); err == nil {
 			t.Fatalf("invalid request was accepted: %+v", request)
 		}
+	}
+}
+
+func TestRollupRunnerStatsSeparateResolutionRepairAndFailureClass(t *testing.T) {
+	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
+	runner := &RollupRunner{executor: &queryRecorder{}, now: func() time.Time { return now }}
+	minute := RollupRequest{
+		TenantID: "tenant-a", Resolution: RollupOneMinute,
+		Bucket: time.Date(2026, 9, 5, 2, 58, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
+	}
+	if err := runner.Run(context.Background(), minute); err != nil {
+		t.Fatal(err)
+	}
+	minute.Generation = 2
+	if err := runner.Run(context.Background(), minute); err != nil {
+		t.Fatal(err)
+	}
+	hour := RollupRequest{
+		TenantID: "tenant-a", Resolution: RollupOneHour,
+		Bucket: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
+	}
+	if err := runner.Run(context.Background(), hour); err != nil {
+		t.Fatal(err)
+	}
+	stats := runner.Stats()
+	if stats.OneMinute.Attempts != 2 || stats.OneMinute.Successes != 2 || stats.OneMinute.InitialRebuilds != 1 || stats.OneMinute.RepairRebuilds != 1 ||
+		stats.OneMinute.LastSuccessUnix != uint64(now.Unix()) || stats.OneMinute.LatestCompletedBucketUnix != uint64(minute.Bucket.Add(time.Minute).Unix()) {
+		t.Fatalf("one-minute stats=%+v", stats.OneMinute)
+	}
+	if stats.OneHour.Attempts != 1 || stats.OneHour.Successes != 1 || stats.OneHour.InitialRebuilds != 1 || stats.OneHour.RepairRebuilds != 0 ||
+		stats.OneHour.LatestCompletedBucketUnix != uint64(hour.Bucket.Add(time.Hour).Unix()) {
+		t.Fatalf("one-hour stats=%+v", stats.OneHour)
+	}
+
+	failures := &RollupRunner{executor: &queryRecorder{errors: map[int]error{
+		1: &ch.Exception{Code: proto.ErrUnknownTable, Name: "UNKNOWN_TABLE"},
+		2: errors.New("connection reset"),
+	}}}
+	_ = failures.Run(context.Background(), minute)
+	_ = failures.Run(context.Background(), minute)
+	failed := failures.Stats().OneMinute
+	if failed.Attempts != 2 || failed.Successes != 0 || failed.PermanentErrors != 1 || failed.RetryableErrors != 1 || failed.LastSuccessUnix != 0 {
+		t.Fatalf("failure stats=%+v", failed)
 	}
 }
 
