@@ -32,7 +32,7 @@
   - [x] 一次性 enrollment secret：migration 026 + 无认证兑换端点（行锁单次焚毁、错值不烧、同形拒答），初始 token 一次性签发即可机器认证；gated MySQL 实跑（commit cb226ccf）。
   - [x] token/mTLS 双窗口 rotation/commit/abort/revoke：migration 025 staged 凭据 + If-Match row_version 守卫 + 审计，认证器双窗口，UTC 过期比较；gated MySQL 实跑（commit 89b7a062）。凭据唯一写权先行切到 registry，legacy 投影只同步非凭据字段（commit c981a8e5）。
   - [x] capability negotiation：enroll 可携带声明（software/agent_api/plan_schema 区间/规范化能力集，与心跳同一校验），入册即落列，首个 plan 直接按真实 schema 区间校验；声明先于 secret 校验（400 不烧不探）。gated MySQL + API 测试（commit b2d48eed）。plan 创建端 FOR UPDATE 校验 schema 区间与心跳能力/健康联动此前已在（C1/021）。
-  - 余项：fleet rollout/canary（preview/canary/rollback 复制旧 spec 生成更高 version、expiry/kill switch）。
+  - 余项：fleet rollout/canary（preview/canary/rollback 复制旧 spec 生成更高 version、expiry/kill switch）——**设计已冻结**见 [collector-fleet-rollout-design.md](collector-fleet-rollout-design.md)：现状为纯 per-collector plan revision、无 fleet/rollout 概念、无 operator plan-management API；提出 2 张新表 + rollout 状态机 + operator API，复用现有 activation/ack/failure/delivery 与 maintenance reaper，5 阶段可独立交付（Phase 1 = plan-revision 管理 API，无决策依赖、自足）。Phase 2+ 待 §9 决策（canary 健康信号、selector v1 是否需 labels、config_version 命名空间、kill revert 原子性）。
 - [x] target 名称与 host 身份分离；网络 target 以 `(tenant, kind, host)` 唯一，display name 可选。
 - [x] SNMP profile/community 在新建与编辑可配置，sysName/sysDescr 为采集结果而非输入必填。
 - [ ] Target/Network Device/Port/BGP/Inventory/Event/Alert 全 CRUD、分页、搜索、VTable filter 和稳定 ETag/If-Match。
