@@ -11,10 +11,12 @@ Flow 数据面已按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 重置。旧 F
 - [x] **编码 R01B**：引入 franz-go producer/consumer；producer 采用异步回调、批压缩、有界 queue 和 key affinity；consumer 采用 group/blocked rebalance/marked offsets，handler 成功后才标记 offset。
 - [x] **单元测试 R01A/B**：覆盖 envelope round-trip、身份隔离、源端口不改变 affinity、输入边界、producer success/failure/release/close、consumer 成功/失败 offset 和生命周期。
 - [x] **并发/基准 R01A/B**：`go test -race ./internal/flowstream/...` 通过；Apple M2、1400B payload protobuf 编码三轮约 231ns/op、6.05GB/s、56B/op、2 allocs/op。
-- [ ] **编码 R01C**：consumer value 解包并接 GoFlow2 四协议 decoder；模板和 sampling store 按 Kafka partition 隔离，输出统一 raw count/sampling mode/normalized count。
-- [ ] **单元测试 R01C**：复用并扩充脱敏 sFlow/NetFlow v5/v9/IPFIX fixture；覆盖模板前置/缺失、采样率、counter mode、IPv4/v6、ASN、接口和坏 payload。
+- [x] **编码 R01C1**：consumer value 解包并接 GoFlow2 `FlowPipe`；每个 Kafka topic/partition 独立持有 template/sampling store，输出带 collector/listener/registry/source 元数据的 GoFlow2 record batch。
+- [ ] **编码 R01C2**：补齐 sFlow sample-pool/drop/source-id 和统一 raw count/sampling mode/normalized count；不得重复采样放大。
+- [x] **单元测试 R01C1**：覆盖 sFlow、NetFlow v5/v9、IPFIX、模板先于数据、跨 partition 模板不可见、采样率、raw bytes/packets、ASN、接口和坏 envelope。
+- [ ] **单元测试 R01C2**：覆盖 sample-pool/drop、counter mode、IPv4/v6、sampling=0/1、溢出和缺模板分类指标。
 - [ ] **集成测试**：真实 Kafka producer/consumer group、topic version、partition affinity、broker 中断恢复、rebalance/shutdown offset、坏消息 DLQ ack 后提交。
-- [ ] **性能测试**：目标硬件 datagrams/s、decoded records/s、Kafka bytes/s、CPU/RSS/GC；2×持续、3×突发、72h soak；不得以链路 Gbps 替代记录量。
+- [ ] **性能测试**：目标硬件 datagrams/s、decoded records/s、Kafka bytes/s、CPU/RSS/GC；2×持续、3×突发、72h soak；不得以链路 Gbps 替代记录量。当前 Apple M2 微基线：30-record NetFlow v5 约 0.56–0.74M records/s/core，仍需真实 Kafka/并行 worker 和 fixture 混合负载报告。
 - [ ] **变更设计**：给出旧 WAL/normalized/collect-state/quality/attempt/state-cleanup 的文件、配置、topic、migration 删除 manifest，确认保留的 exporter/采样/维度/CH 契约。
 - [ ] **变更测试**：镜像输入比较新旧 datagram/record/raw/normalized/六维守恒；验证切换、观察窗口、forward-fix 和旧 topic 只读退役。
 - [ ] **回归测试**：Flow API/查询/图表/导出、SNMP 可选对账和非 Flow 平台功能不回归。
@@ -187,7 +189,7 @@ Flow 数据面已按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 重置。旧 F
 
 - [x] **PLAT-03A registry expand 与兼容写**：落地 `collector_agents/collector_bindings/collector_plan_revisions`，复合 tenant/collector FK、desired/observed 分离、token/mTLS 互斥、ack/LKG/version 单调约束、单 active plan；回填 `target_agents`，现有 upsert/heartbeat/run/delete 在同一 transaction 双写，拒绝跨 tenant agent ID 接管。空库 001→018/rerun 和真实 MySQL 生命周期已验证。
 - [ ] **PLAT-03B registry authority cutover**：实现新 repository/DTO/filter/API 与多 binding 引用校验，迁移 `agent_run_history` FK 和旧读路径；上线前逐行核对 legacy/new identity、binding、desired/observed，灰度期禁止第二套无投影写入口，最终停止 `target_agents` 写并 contract 删除。
-  - [ ] **PLAT-03B1 credential authority 阻断修正**：当前 `target_agents` 兼容 upsert 会覆盖 `collector_agents.token_hash` 并递增同一个管理 `row_version`；在 token/mTLS 双窗口服务端接线前，必须把凭据唯一写权切到 collector registry，旧投影只同步非凭据兼容字段，并用并发轮换/legacy heartbeat/upsert 回归证明不会覆盖 active/pending credential。该项归平台任务，不在 Flow 数据面工作包中顺带改造。
+  - [x] **PLAT-03B1 credential authority 阻断修正**：凭据唯一写权已切到 collector registry。投影 upsert 先 `FOR UPDATE` 锁 collector 行：新建仍种子 token（行生而为 legacy），已存在行只同步非凭据兼容字段且不再递增管理 `row_version`；非投影创建（`created_by != system:compatibility`）的行被拒绝接管，collector 表层面同样拒绝跨 tenant ID 复用。MarkAgentSeen/RecordAgentRun 健康同步与 DeleteAgent 均加 `created_by` 投影域限定，legacy 路径无法触碰或删除 registry 所属 collector。gated MySQL 回归证明：registry 侧 mTLS 轮换后 legacy upsert+heartbeat+run 不覆盖凭据/row_version（`target_agents` 保留 legacy token 供旧认证路径）、registry 所属 ID 接管失败并回滚 `target_agents` 写、legacy delete 不删 registry 行。证据：commit c981a8e5（`mysql_agent_repository.go` + `mysql_collector_registry_test.go` 实跑通过）。
 - [ ] **PLAT-03C enrollment、credential 与 plan 生命周期（父项）**：C1 plan repository core、固定分类失败 heartbeat/exact ACK、capability/runtime 周期 heartbeat 和 agent-side trust bundle 执行已完成；管理面 key registry/bundle 分发防回滚、enrollment/credential、fleet drift 与 rollout 仍未完成。
   - [x] **PLAT-03C1 plan repository core**：最大 4 MiB canonical JSON + SHA-256；Ed25519 envelope 绑定 plan/tenant/collector/version/schema/hash/key/effective interval/supersedes，只有验证后不可变值可入库。create 校验 schema/head/lineage；activate 以 collector+plan 双 row-version 在同事务 retire/activate/head/audit；服务端生成 activation/ACK 时间；ACK 精确匹配 active version/hash/expiry，只推进 ack/LKG/observed 且重复请求幂等。覆盖未验证签名、验证后篡改、非 canonical JSON、错误 ACK、退役 revision 复活、stale ETag、单 active、跨 tenant 读取、MySQL JSON 重格式化和 DB spec 篡改。
   - [ ] **PLAT-03C2 trust/enrollment/rollout 闭环**：agent 已执行本地 multi-key overlap/retiring/revoked、mTLS cert/key 热加载和 capability/runtime 周期 heartbeat，仍需 signing key registry、bundle 签名分发/防回滚与 fleet ACK；一次性 secret、token/mTLS 服务端双窗口及 revoke、capability drift；preview/canary/rollout、rollback 复制旧 spec 生成更高 version、expiry/kill switch。
