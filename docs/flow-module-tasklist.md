@@ -59,6 +59,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-08A2：`5182f28e feat(flow): operationalize ClickHouse migrations`；embedded migration CLI、持久锁/statement checkpoint、固定 Kafka/ClickHouse Compose 和真实生命周期测试已提交；ClickHouse 26.3 空库/重放/dirty resume 与 Kafka 4.3.1 `acks=all` 生产消费通过。
 - FLOW-08A3（单节点范围）：`d67f08aa test(flow): prove migration restart compatibility`、`5d7f9761 test(flow): recover migrations after statement deadline` 与 `f13b57d3 fix(flow): bound silent ClickHouse operations`；旧/新 migration set、drift fail-closed、CH/Kafka restart、调用方 deadline、内部 operation deadline、无隐式 DDL retry 和新连接池恢复已验证。集群和容量门禁未关闭。
 - FLOW-08A3 ambiguous INSERT：`21a74da8 test(flow): recover lost ClickHouse insert ack`；透明代理放行 column metadata 与客户端数据块后静默丢弃最终响应，证明超时返回时事实已经提交但 receipt 尚未写入；同一 `PreparedBlock`/dedup token 经新连接重放后，`FINAL` fact count、raw bytes/packets、单条 receipt 与 checksum 精确收敛。真实 CH race 连续 5 次通过，隔离数据库逐轮删除。
+- FLOW-08A3 partial response：`ffcc64e3 test(flow): reject partial ClickHouse responses`；透明代理在服务端响应第 64 byte 截断 TCP，production executor 必须立即返回 transport/decode error，不等内部 operation deadline、不暴露半条 result、不在连接层重试；新连接池随后恢复。三种代理故障组合真实 CH race 连续 5 次通过。
 - FLOW-08A3 Kafka worker 恢复：`11cd81b0 test(flow): verify Kafka template replay recovery`；同一真实 consumer group 先提交 v9/IPFIX 模板和数据至 offset 4，新数据不带模板；全新 worker 经 assignment 有界回放后能解码新数据，注入 durable failure 时 committed offset 保持 4，下一全新 worker 再次接管并精确推进至 6。真实 Kafka 连续 5 次及正常 corpus 组合 race 2 次通过，隔离 topic 已清理。
 - 尚未具备的证据：完整 broker/worker/CH 故障矩阵、实际 worker 强杀与重叠成员 rebalance、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点证据替代。
 
@@ -157,7 +158,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-05A 单元**：覆盖 registry/additive、确定性、参数转义且不插入 SQL、filter 排序去重、latest generation/coverage sentinel、TopN tie-break、other、UTC/闭桶、结果预算、非法 enum/view/timezone/scope。
 - [x] **FLOW-05A 集成（单节点核心）**：在真实 CH 顺序 migration 上执行 1m/1h 查询，覆盖空 generation、repair 后旧 key 消失、TopN/other 守恒；同时锁定 native 数字 parameter Field dump、`AS source FINAL` 和聚合别名规则。
 - [x] **FLOW-05A 集成（版本/预算）**：真实 CH 已验证两个版本的同名维度不合并、等值 TopN 按 `dimension + snapshot + geo + classification` 稳定排序、版本化 `_other` 与总量守恒；`max_rows_to_read/max_result_rows` 压限均抛错且零部分结果。证据提交 `c876e974`。
-- [ ] **FLOW-05A 集成（超时/集群容量）**：服务端长查询 deadline、静默传输超时、partial packet、并发和集群容量继续归 FLOW-08 故障/容量矩阵；不得以客户端预过期 context 代替。
+- [ ] **FLOW-05A 集成（超时/集群容量）**：active query deadline、静默传输 operation timeout 和 partial packet 已由 FLOW-08A3 真实 CH 门禁证明；并发、集群与固定硬件容量仍未完成，不得以前三项替代。
 - [x] **FLOW-05A 变更设计**：aggregate v1 只开放 customer view；raw/supplier 保持稳定 unsupported，等待 FLOW-06 的事实 provenance/reclass schema。修正未知单值维度统一 `_unassigned` 的前向语义，不改已发布 CH DDL。
 - [x] **FLOW-05A 变更测试**：rollup contract test 覆盖 ASN/ISP/business/local/remote prefix/remote port/observation interface 的 `_unassigned`，防止再次破坏单值维度可加性；旧请求缺 view 明确拒绝而非猜默认。
 - [x] **FLOW-05A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
@@ -280,7 +281,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 - [x] 真实 Kafka/CH 正常链路：四协议 UDP RawFlow、按 exporter key 保持模板/数据顺序、关闭 flush、四协议 durable fact、receipt count/counter/checksum 和五级 rollup 守恒。
 - [ ] 真实 Kafka 故障链路：v9/IPFIX 的 durable failure → 新 worker assignment 回放 → committed offset `4→4→6` 已由 `11cd81b0` 证明；仍需四协议链路内 broker restart、实际 worker 强杀、重叠成员 rebalance/lost partition 和 lag 增长/归零，既有单条 broker restart 与进程内注入均不能替代这些剩余项。
-- [ ] 真实 ClickHouse 故障链路：静默 timeout 与“fact 已提交/receipt 响应丢失→同 block 重放→count/counter/checksum 收敛”已由 `f13b57d3`/`21a74da8` 证明；仍需实际 worker/CH restart、任意 packet 截断、dedup window 外 repair 及组合故障，正常链路或单一代理故障不能替代。
+- [ ] 真实 ClickHouse 故障链路：静默 timeout、“fact 已提交/receipt 响应丢失→同 block 重放→count/counter/checksum 收敛”和任意 packet 中途截断已由 `f13b57d3`/`21a74da8`/`ffcc64e3` 证明；仍需实际 worker/CH restart、dedup window 外 repair 及组合故障，正常链路或单一代理故障不能替代。
 - [ ] ClickHouse 发布：实际旧/新制品、Replicated/Distributed/ON CLUSTER DDL 与集群回滚/forward-fix。
 - [ ] 性能环境：固定硬件、真实混合 corpus、N+1、容量和 72h soak。
 - [ ] 发布许可证：Akvorado 派生文件 SPDX/来源、根许可证、NOTICE、依赖/制品声明。
