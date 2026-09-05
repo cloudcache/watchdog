@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-08A — ClickHouse schema 生命周期。** 冻结顺序 migration、checksum、并发执行、dirty/失败恢复和 inspect/apply 契约；在不修改已发布 001..005 的前提下提供可审计执行入口，解除“手工执行 SQL”造成的部署漂移。真实 CH 执行仍是独立外部门禁。
+**活动切片：FLOW-08A2 — ClickHouse migration executor/CLI。** 基于已提交 loader/planner 增加状态表、并发 fail-fast 锁、失败诊断和 inspect/apply/resume；连接只读 secret file，锁恢复必须匹配精确 owner token，worker/hub 启动不隐式迁移。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -50,6 +50,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
 - FLOW-06A3：`d56bc3f6 feat(flow): expose complete supplier detail view`；supplier 明细映射冻结的 supplier 基线，完整过滤窗在 cursor 之前计算 `fact_schema` 证据，旧事实、缺失或矛盾 evidence 均全页失败；Flow race/vet、全库 test/vet 与 diff check 通过。
 - FLOW-05C1：`8a4a9b24 feat(flow): publish query capability registry`；aggregate/customer 与 detail 三层能力从 compiler 的同一 registry 导出，逐项验证声明与接受/拒绝一致且返回副本不可污染；`internal/flowquery` race/vet、全库 test/vet 与 diff check 通过。
+- FLOW-08A1：`24bd111b feat(flow): validate ClickHouse migration lifecycle`；真实 001..005 loader、精确字节 checksum、quote/comment-aware statement splitter 和 fail-closed recorded-state planner 已提交；Flow race/vet、全库 test/vet 与 diff check 通过。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -228,7 +229,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-08A1 设计/编码**：loader 固定连续 `NNN_lower_snake.sql`、4 MiB/UTF-8/no-BOM/no-NUL、精确字节 SHA-256 和 quote/comment-aware statement 拆分；planner 对 version/name/checksum/state 做 fail-closed 对齐，dirty 只允许显式 resume。
 - [x] **FLOW-08A1 单元/变更测试**：读取真实 001..005；覆盖内容微改 checksum、空/非法名/缺号/超大/坏 UTF-8/NUL/BOM/未闭合 SQL、数据库 gap/duplicate/ahead/name/checksum/unknown-state/dirty 及从 dirty 精确续跑。
 - [x] **FLOW-08A1 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；并行工作区的告警域变更也未破坏本轮全库验证。
-- [ ] **FLOW-08A1 已提交**：loader/planner、单元测试与设计进入同一独立提交后关闭。
+- [x] **FLOW-08A1 已提交**：loader/planner、单元测试与设计已进入独立提交 `24bd111b`；工作区不再残留该切片生产文件。
 - [ ] **FLOW-08A2 executor/CLI**：增加 CH 状态表、并发 fail-fast 锁、失败诊断、inspect/apply/resume/unlock（精确 owner token）和连接/TLS/secret-file；worker/hub 启动不得隐式迁移。
 - [ ] **FLOW-08A3 集成/发布**：真实空库 001..current、二次 apply、并发、statement 中断、dirty inspect/resume、checksum drift、旧/新二进制前后兼容和集群 DDL 演练。
 - [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
