@@ -83,6 +83,7 @@ type NetworkDevice struct {
 	SNMPProfileID ID
 	SNMPPort      uint16
 	SNMPSecurity  map[string]string `json:"-"`
+	UpdatedAt     time.Time
 }
 
 type NetworkPort struct {
@@ -97,6 +98,7 @@ type NetworkPort struct {
 	OperStatus  string
 	SpeedBps    uint64
 	Metadata    map[string]string
+	UpdatedAt   time.Time
 }
 
 // NetworkInterfaceAddress is an IPv4 or IPv6 address assigned to a routed

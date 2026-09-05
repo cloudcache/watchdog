@@ -194,6 +194,7 @@ func (api networkAPI) getDevice(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	SetEntityETag(w, device.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, device)
 }
 
@@ -344,6 +345,9 @@ func (api networkAPI) patchDevice(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	device, err := decodeNetworkDeviceRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -384,6 +388,9 @@ func (api networkAPI) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canAccessTarget(auth, existing.TargetID, ActionConfigure) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
 		return
 	}
 	if err := api.repo.DeleteDevice(r.Context(), auth.TenantID, existing.ID); err != nil {

@@ -66,6 +66,7 @@ func (api networkAPI) getPort(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	SetEntityETag(w, port.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"port": port, "device": device, "transceiver": transceiver})
 }
 
@@ -73,6 +74,9 @@ func (api networkAPI) patchPort(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	port, _, ok := api.authorizePort(w, r, ActionConfigure)
 	if !ok {
+		return
+	}
+	if !CheckIfMatch(w, r, port.UpdatedAt) {
 		return
 	}
 	updated, err := decodeNetworkPortRequest(r)
@@ -102,6 +106,9 @@ func (api networkAPI) deletePort(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	port, _, ok := api.authorizePort(w, r, ActionConfigure)
 	if !ok {
+		return
+	}
+	if !CheckIfMatch(w, r, port.UpdatedAt) {
 		return
 	}
 	if err := api.repo.DeletePort(r.Context(), auth.TenantID, port.ID); err != nil {

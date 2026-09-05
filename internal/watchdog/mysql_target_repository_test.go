@@ -91,3 +91,58 @@ func TestMySQLCreateNetworkTargetIsAtomicAndHostUnique(t *testing.T) {
 		t.Fatalf("rolled back target lookup error = %v", err)
 	}
 }
+
+// TestMySQLDeviceAndPortUpdatedAtPopulated proves the device/port reads scan
+// updated_at so the ETag/If-Match contract has a real value to hash.
+func TestMySQLDeviceAndPortUpdatedAtPopulated(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_MYSQL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set WATCHDOG_MYSQL_TEST_DSN to run MySQL device/port updated_at test")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	tenant := ID("tenant_updatedat_check")
+	_, _ = db.Exec("DELETE FROM tenants WHERE id = ?", tenant)
+	defer db.Exec("DELETE FROM tenants WHERE id = ?", tenant)
+	if _, err := db.Exec("INSERT INTO tenants (id, name, status) VALUES (?, 'UpdatedAt', 'active')", tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO targets (id, tenant_id, name, kind, host, status)
+		VALUES ('target_ua', ?, 'UA', 'network', '10.9.9.9', 'pending')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMySQLStore(db)
+	if _, err := store.UpsertDevice(ctx, NetworkDevice{ID: "device_ua", TenantID: tenant, TargetID: "target_ua", SNMPPort: 161}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertPorts(ctx, []NetworkPort{{ID: "port_ua", TenantID: tenant, DeviceID: "device_ua", IfIndex: 1, IfName: "ge-0/0/1"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	device, err := store.GetDevice(ctx, tenant, "device_ua")
+	if err != nil || device.UpdatedAt.IsZero() {
+		t.Fatalf("device UpdatedAt = %v, err = %v", device.UpdatedAt, err)
+	}
+	port, err := store.GetPort(ctx, tenant, "port_ua")
+	if err != nil || port.UpdatedAt.IsZero() {
+		t.Fatalf("port UpdatedAt = %v, err = %v", port.UpdatedAt, err)
+	}
+	// The list paths feed the same scanners; verify they populate it too.
+	devices, err := store.ListDevices(ctx, tenant)
+	if err != nil || len(devices) != 1 || devices[0].UpdatedAt.IsZero() {
+		t.Fatalf("ListDevices UpdatedAt not populated: %+v err=%v", devices, err)
+	}
+	ports, err := store.ListPorts(ctx, tenant, "device_ua")
+	if err != nil || len(ports) != 1 || ports[0].UpdatedAt.IsZero() {
+		t.Fatalf("ListPorts UpdatedAt not populated: %+v err=%v", ports, err)
+	}
+}

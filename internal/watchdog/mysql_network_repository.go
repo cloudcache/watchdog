@@ -16,7 +16,7 @@ func (s *MySQLStore) ListDevices(ctx context.Context, tenantID ID) ([]NetworkDev
 		       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
 		       sys_object_id, sys_name, sys_descr,
 		       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
-		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT())
+		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
 		FROM network_devices
 		WHERE tenant_id = ?
 		ORDER BY sys_name, id
@@ -42,7 +42,7 @@ func (s *MySQLStore) GetDevice(ctx context.Context, tenantID, deviceID ID) (Netw
 		       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
 		       sys_object_id, sys_name, sys_descr,
 		       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
-		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT())
+		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
 		FROM network_devices
 		WHERE tenant_id = ? AND id = ?
 	`, tenantID, deviceID)
@@ -124,7 +124,7 @@ func (s *MySQLStore) GetDeviceByTarget(ctx context.Context, tenantID, targetID I
 		       COALESCE(platform, ''), COALESCE(os_name, ''), COALESCE(os_version, ''),
 		       sys_object_id, sys_name, sys_descr,
 		       COALESCE(sys_location, ''), COALESCE(uptime_seconds, 0),
-		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT())
+		       COALESCE(snmp_profile_id, ''), snmp_port, COALESCE(snmp_security_json, JSON_OBJECT()), updated_at
 		FROM network_devices
 		WHERE tenant_id = ? AND target_id = ?
 	`, tenantID, targetID)
@@ -141,7 +141,7 @@ func (s *MySQLStore) DeleteDevice(ctx context.Context, tenantID, deviceID ID) er
 
 func (s *MySQLStore) ListPorts(ctx context.Context, tenantID, deviceID ID) ([]NetworkPort, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, tenant_id, device_id, if_index, if_name, if_alias, if_descr, admin_status, oper_status, speed_bps, metadata_json
+		SELECT id, tenant_id, device_id, if_index, if_name, if_alias, if_descr, admin_status, oper_status, speed_bps, metadata_json, updated_at
 		FROM network_ports
 		WHERE tenant_id = ? AND device_id = ?
 		ORDER BY if_index
@@ -224,7 +224,7 @@ func (s *MySQLStore) ReplaceInterfaceAddresses(ctx context.Context, tenantID, de
 
 func (s *MySQLStore) GetPort(ctx context.Context, tenantID, portID ID) (NetworkPort, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, device_id, if_index, if_name, if_alias, if_descr, admin_status, oper_status, speed_bps, metadata_json
+		SELECT id, tenant_id, device_id, if_index, if_name, if_alias, if_descr, admin_status, oper_status, speed_bps, metadata_json, updated_at
 		FROM network_ports
 		WHERE tenant_id = ? AND id = ?
 	`, tenantID, portID)
@@ -751,7 +751,7 @@ func scanNetworkDevice(row rowScanner) (NetworkDevice, error) {
 	var device NetworkDevice
 	var securityJSON []byte
 	var uptimeSeconds uint64
-	err := row.Scan(&device.ID, &device.TenantID, &device.TargetID, &device.Vendor, &device.Model, &device.Platform, &device.OSName, &device.OSVersion, &device.SysObjectID, &device.SysName, &device.SysDescr, &device.SysLocation, &uptimeSeconds, &device.SNMPProfileID, &device.SNMPPort, &securityJSON)
+	err := row.Scan(&device.ID, &device.TenantID, &device.TargetID, &device.Vendor, &device.Model, &device.Platform, &device.OSName, &device.OSVersion, &device.SysObjectID, &device.SysName, &device.SysDescr, &device.SysLocation, &uptimeSeconds, &device.SNMPProfileID, &device.SNMPPort, &securityJSON, &device.UpdatedAt)
 	if err != nil {
 		return device, err
 	}
@@ -768,7 +768,7 @@ func scanNetworkDevice(row rowScanner) (NetworkDevice, error) {
 func scanNetworkPort(row rowScanner) (NetworkPort, error) {
 	var port NetworkPort
 	var metadataJSON []byte
-	if err := row.Scan(&port.ID, &port.TenantID, &port.DeviceID, &port.IfIndex, &port.IfName, &port.IfAlias, &port.IfDescr, &port.AdminStatus, &port.OperStatus, &port.SpeedBps, &metadataJSON); err != nil {
+	if err := row.Scan(&port.ID, &port.TenantID, &port.DeviceID, &port.IfIndex, &port.IfName, &port.IfAlias, &port.IfDescr, &port.AdminStatus, &port.OperStatus, &port.SpeedBps, &metadataJSON, &port.UpdatedAt); err != nil {
 		return port, err
 	}
 	metadata, err := decodeStringMapJSON(metadataJSON)
