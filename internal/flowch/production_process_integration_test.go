@@ -4,7 +4,6 @@
 package flowch
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -36,8 +35,8 @@ import (
 )
 
 // TestProductionCollectorAndWorkerFourProtocolEndToEnd builds and starts the
-// two production commands. It owns an isolated Kafka topic and ClickHouse
-// database and removes its uniquely labelled VictoriaMetrics series.
+// two production commands. It owns an isolated Kafka topic, ClickHouse
+// database, and temporary VictoriaMetrics promscrape process.
 func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	if os.Getenv("WATCHDOG_FLOW_PRODUCTION_PROCESS_INTEGRATION") != "1" {
 		t.Skip("set WATCHDOG_FLOW_PRODUCTION_PROCESS_INTEGRATION=1 to run")
@@ -58,8 +57,10 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	artifacts := writeProductionBootstrap(t)
 	collectorBinary := buildProductionCommand(t, root, "watchdog-flow-collect")
 	workerBinary := buildProductionCommand(t, root, "watchdog-flow-worker")
-	collectorMetrics := reserveTCPAddress(t)
-	workerMetrics := reserveTCPAddress(t)
+	collectorMetricsPort := reserveTCPPort(t)
+	workerMetricsPort := reserveTCPPort(t)
+	collectorMetrics := "127.0.0.1:" + collectorMetricsPort
+	workerMetrics := "127.0.0.1:" + workerMetricsPort
 	sflowAddress := reserveUDPAddress(t)
 	netflowAddress := reserveUDPAddress(t)
 	passwordFile := os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")
@@ -85,7 +86,7 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 		"-clickhouse-address", clickHouseAddress,
 		"-clickhouse-database", database,
 		"-clickhouse-password-file", passwordFile,
-		"-metrics-listen", workerMetrics,
+		"-metrics-listen", "0.0.0.0:"+workerMetricsPort,
 	)
 	waitForProcessMetric(t, ctx, worker, workerMetrics, "watchdog_flow_worker_kafka_records_total", 0)
 
@@ -96,7 +97,7 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 		"-kafka-topic", topicBase,
 		"-sflow-listen", sflowAddress,
 		"-netflow-listen", netflowAddress,
-		"-metrics-listen", collectorMetrics,
+		"-metrics-listen", "0.0.0.0:"+collectorMetricsPort,
 		"-receive-buffer-bytes", strconv.Itoa(1<<20),
 	)
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
@@ -120,14 +121,10 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_rejected_total", 0)
 	assertProcessMetric(t, workerMetrics, "watchdog_flow_worker_retryable_errors_total", 0)
 
-	vmURL := strings.TrimRight(strings.TrimSpace(os.Getenv("WATCHDOG_VICTORIAMETRICS_URL")), "/")
-	if vmURL == "" {
-		vmURL = "http://127.0.0.1:8428"
-	}
 	runID := "flow-process-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	t.Cleanup(func() { deleteProductionMetricSeries(t, vmURL, runID) })
-	importProductionMetrics(t, ctx, vmURL, collectorMetrics, runID, "collector")
-	importProductionMetrics(t, ctx, vmURL, workerMetrics, runID, "worker")
+	vmURL := startScrapingVictoriaMetrics(t, runID, collectorMetricsPort, workerMetricsPort)
+	waitForProductionVMValue(t, ctx, vmURL, runID, "collector", "up", 1)
+	waitForProductionVMValue(t, ctx, vmURL, runID, "worker", "up", 1)
 	waitForProductionVMValue(t, ctx, vmURL, runID, "collector", "watchdog_flow_collector_kafka_records_total", 6)
 	waitForProductionVMValue(t, ctx, vmURL, runID, "worker", "watchdog_flow_worker_kafka_records_total", 6)
 
@@ -328,17 +325,17 @@ func buildProductionCommand(t testing.TB, root, name string) string {
 	return path
 }
 
-func reserveTCPAddress(t testing.TB) string {
+func reserveTCPPort(t testing.TB) string {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.Addr().String()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return address
+	return port
 }
 
 func reserveUDPAddress(t testing.TB) string {
@@ -484,30 +481,72 @@ func waitForProductionFacts(t testing.TB, ctx context.Context, native *NativeIns
 	}
 }
 
-func importProductionMetrics(t testing.TB, ctx context.Context, baseURL, address, runID, process string) {
+func startScrapingVictoriaMetrics(t testing.TB, runID, collectorPort, workerPort string) string {
 	t.Helper()
-	response, err := http.Get("http://" + address + "/metrics")
-	if err != nil {
-		t.Fatal(err)
+	config := fmt.Sprintf(`global:
+  scrape_interval: 250ms
+  scrape_timeout: 200ms
+scrape_configs:
+  - job_name: flow-collector
+    static_configs:
+      - targets: ["host.docker.internal:%s"]
+        labels:
+          integration_run: %q
+          process: collector
+  - job_name: flow-worker
+    static_configs:
+      - targets: ["host.docker.internal:%s"]
+        labels:
+          integration_run: %q
+          process: worker
+`, collectorPort, runID, workerPort, runID)
+	configPath := writeProductionFile(t, t.TempDir(), "promscrape.yml", []byte(config), 0o600)
+	container := "watchdog-flow-vm-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	image := strings.TrimSpace(os.Getenv("WATCHDOG_VICTORIAMETRICS_IMAGE"))
+	if image == "" {
+		image = "victoriametrics/victoria-metrics:latest"
 	}
-	body, readErr := io.ReadAll(response.Body)
-	closeErr := response.Body.Close()
-	if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
-		t.Fatalf("read %s metrics: status=%s read=%v close=%v", process, response.Status, readErr, closeErr)
+	command := exec.Command(
+		"docker", "run", "--detach", "--rm", "--name", container,
+		"--add-host", "host.docker.internal:host-gateway",
+		"-p", "127.0.0.1::8428",
+		"-v", configPath+":/etc/victoria-metrics/promscrape.yml:ro",
+		image, "-promscrape.config=/etc/victoria-metrics/promscrape.yml",
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("start scraping VictoriaMetrics: %v\n%s", err, output)
 	}
-	values := url.Values{"extra_label": []string{"integration_run=" + runID, "process=" + process}}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/import/prometheus?"+values.Encode(), bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err = http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	closeErr = response.Body.Close()
-	if response.StatusCode/100 != 2 || closeErr != nil {
-		t.Fatalf("import %s metrics: status=%s close=%v", process, response.Status, closeErr)
+	t.Cleanup(func() {
+		cleanup := exec.Command("docker", "rm", "--force", container)
+		if output, err := cleanup.CombinedOutput(); err != nil && !strings.Contains(string(output), "No such container") {
+			t.Errorf("remove scraping VictoriaMetrics: %v\n%s", err, output)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		output, err := exec.CommandContext(ctx, "docker", "port", container, "8428/tcp").CombinedOutput()
+		if err == nil {
+			address := strings.TrimSpace(string(output))
+			if strings.HasPrefix(address, "127.0.0.1:") {
+				baseURL := "http://" + address
+				request, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+				response, requestErr := http.DefaultClient.Do(request)
+				if requestErr == nil {
+					_, _ = io.Copy(io.Discard, response.Body)
+					closeErr := response.Body.Close()
+					if response.StatusCode == http.StatusOK && closeErr == nil {
+						return baseURL
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for scraping VictoriaMetrics: %v (docker port output=%q)", ctx.Err(), output)
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 }
 
@@ -545,25 +584,6 @@ func waitForProductionVMValue(t testing.TB, ctx context.Context, baseURL, runID,
 			t.Fatalf("wait for VictoriaMetrics query %q: %v", query, ctx.Err())
 		case <-ticker.C:
 		}
-	}
-}
-
-func deleteProductionMetricSeries(t testing.TB, baseURL, runID string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	matcher := fmt.Sprintf(`{integration_run=%q}`, runID)
-	endpoint := baseURL + "/api/v1/admin/tsdb/delete_series?" + url.Values{"match[]": []string{matcher}}.Encode()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Errorf("delete VictoriaMetrics process series: %v", err)
-		return
-	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	closeErr := response.Body.Close()
-	if response.StatusCode/100 != 2 || closeErr != nil {
-		t.Errorf("delete VictoriaMetrics process series: status=%s close=%v", response.Status, closeErr)
 	}
 }
 
