@@ -132,6 +132,37 @@ func TestAPIBillingPatchAccount(t *testing.T) {
 	}
 }
 
+func TestAPIBillingAccountIfMatchOptimisticLocking(t *testing.T) {
+	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	repo := &fakeBillingRepository{accounts: []BillingAccount{{ID: "billing-a", TenantID: "tenant-a", Name: "Old", UpdatedAt: updatedAt}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(false), Billing: repo})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/accounts/billing-a", nil))
+	etag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || etag != WeakETagFromTime(updatedAt) {
+		t.Fatalf("get status=%d etag=%q", rec.Code, etag)
+	}
+
+	body := `{"name":"Customer A","value_mode":"corrected"}`
+
+	stale := httptest.NewRecorder()
+	staleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/billing/accounts/billing-a", strings.NewReader(body))
+	staleReq.Header.Set("If-Match", WeakETagFromTime(updatedAt.Add(-time.Hour)))
+	router.ServeHTTP(stale, staleReq)
+	if stale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale If-Match status = %d, want 412", stale.Code)
+	}
+
+	ok := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodPatch, "/api/v1/billing/accounts/billing-a", strings.NewReader(body))
+	okReq.Header.Set("If-Match", etag)
+	router.ServeHTTP(ok, okReq)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("matched If-Match status = %d body = %s", ok.Code, ok.Body.String())
+	}
+}
+
 func TestAPIBillingReplacePorts(t *testing.T) {
 	repo := &fakeBillingRepository{}
 	router := NewAPIV1Router(APIV1RouterConfig{

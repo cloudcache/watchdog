@@ -64,11 +64,21 @@ func (api billingAPI) getAccount(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Billing account not found", nil)
 		return
 	}
+	SetEntityETag(w, account.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, account)
 }
 
 func (api billingAPI) patchAccount(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	accountID := ID(r.PathValue("billing_account_id"))
+	existing, err := api.repo.GetBillingAccount(r.Context(), auth.TenantID, accountID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Billing account not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, existing.UpdatedAt) {
+		return
+	}
 	account, err := decodeBillingAccountRequest(r)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -78,13 +88,14 @@ func (api billingAPI) patchAccount(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, err.Error(), nil)
 		return
 	}
-	account.ID = ID(r.PathValue("billing_account_id"))
+	account.ID = accountID
 	account.TenantID = auth.TenantID
 	updated, err := api.repo.UpdateBillingAccount(r.Context(), account)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	SetEntityETag(w, updated.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, updated)
 }
 
