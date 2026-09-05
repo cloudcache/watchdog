@@ -34,6 +34,8 @@ func TestCompileAddressSetBuildsDeterministicDeduplicatedBaseQuery(t *testing.T)
 	}
 	for _, required := range []string{
 		"FROM flow_records FINAL",
+		"CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id",
+		"CAST(geo_version AS String) AS geo_version",
 		"toDateTime(toStartOfMinute(event_time), 'UTC') AS bucket",
 		"toFloat64(sum(estimated_bytes)) * 8 / {bucket_seconds:UInt32}",
 		"hasAny(arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids)), [{address_include_any_0:String}, {address_include_any_1:String}])",

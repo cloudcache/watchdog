@@ -183,8 +183,8 @@ func compileAddressSetConditions(membership string, filter flowdimension.Address
 
 const addressSetQuerySQL = `SELECT
   %s AS bucket,
-  dimension_snapshot_id,
-  geo_version,
+  CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
+  CAST(geo_version AS String) AS geo_version,
   classification_version,
   %s AS value,
   count() AS received_records,
