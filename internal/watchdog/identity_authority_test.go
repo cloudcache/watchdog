@@ -41,16 +41,18 @@ func TestMySQLIdentityStoresNoCredentialMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertNoPasswordMaterial := func(stage string) {
-		var passwordHash sql.NullString
-		if err := db.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id = ?", created.ID).Scan(&passwordHash); err != nil {
-			t.Fatalf("%s: %v", stage, err)
-		}
-		if passwordHash.Valid {
-			t.Fatalf("%s: MySQL stored credential material %q; PB must be the sole authentication authority", stage, passwordHash.String)
-		}
+	// Migration 029 dropped password_hash entirely: MySQL has no column for
+	// credential material at all, so create/update cannot introduce any.
+	var passwordHashColumns int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'password_hash'
+	`).Scan(&passwordHashColumns); err != nil {
+		t.Fatal(err)
 	}
-	assertNoPasswordMaterial("after create")
+	if passwordHashColumns != 0 {
+		t.Fatal("users.password_hash column still exists; PB must be the sole authentication authority")
+	}
 
 	if _, err := store.UpdateUser(ctx, User{
 		ID: created.ID, TenantID: tenant, Email: "projected2@example.com", Name: "Projected2",
@@ -58,7 +60,6 @@ func TestMySQLIdentityStoresNoCredentialMaterial(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertNoPasswordMaterial("after update")
 
 	// The projection carries the external identity (PB record id), which is the
 	// only link back to the authentication authority.

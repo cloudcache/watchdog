@@ -82,14 +82,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "028" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "029" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "028" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "029" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -147,7 +147,7 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if hostIdentityIndexCount != 3 {
 		t.Fatalf("target host identity index column count = %d, want 3", hostIdentityIndexCount)
 	}
-	for _, column := range []string{"auth_provider", "external_subject_id", "password_hash"} {
+	for _, column := range []string{"auth_provider", "external_subject_id"} {
 		var nullable string
 		if err := db.QueryRow("SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?", column).Scan(&nullable); err != nil {
 			t.Fatalf("users.%s not found after migrations: %v", column, err)
@@ -155,6 +155,15 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 		if nullable != "YES" {
 			t.Fatalf("users.%s nullable = %s, want YES", column, nullable)
 		}
+	}
+	// Migration 029 drops password_hash: MySQL must hold no credential material,
+	// PocketBase is the sole authentication authority.
+	var passwordHashColumns int
+	if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'password_hash'").Scan(&passwordHashColumns); err != nil {
+		t.Fatal(err)
+	}
+	if passwordHashColumns != 0 {
+		t.Fatal("users.password_hash must be dropped after migrations; MySQL must store no credential material")
 	}
 	const tenantID = "tenant_identity_check"
 	if _, err := db.Exec("DELETE FROM tenants WHERE id = ?", tenantID); err != nil {
@@ -263,7 +272,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 28 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "028" {
+	if len(migrations) != 29 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "029" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
