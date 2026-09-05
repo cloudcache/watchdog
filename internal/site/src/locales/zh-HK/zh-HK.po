@@ -318,8 +318,9 @@ msgstr ""
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/agents.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Agents"
-msgstr ""
+msgstr "採集代理"
 
 #: src/components/routes/network-device.tsx
 msgid "Aggregate"
@@ -330,6 +331,10 @@ msgstr ""
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
 msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Aggregate graphs"
+msgstr "聚合圖"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -647,6 +652,7 @@ msgstr "可停止"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/target-detail.tsx
 #: src/components/routes/users.tsx
 msgid "Cancel"
 msgstr "取消"
@@ -764,6 +770,10 @@ msgstr "點擊以複製"
 #: src/components/routes/network-device.tsx
 msgid "Collection Endpoint"
 msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Collector projections"
+msgstr "採集器投影"
 
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Comma separated port IDs"
@@ -1089,8 +1099,13 @@ msgstr "預設時間段"
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Delete"
 msgstr "刪除"
+
+#: src/components/routes/target-detail.tsx
+msgid "Delete {name}?"
+msgstr "刪除 {name}?"
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Delete fingerprint"
@@ -1166,8 +1181,12 @@ msgid "Delete this SNMP profile?"
 msgstr ""
 
 #: src/components/routes/target-detail.tsx
-msgid "Delete this target?"
-msgstr ""
+#~ msgid "Delete this target?"
+#~ msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "deleted"
+msgstr "隨刪"
 
 #: src/components/routes/network-device.tsx
 msgid "Denied"
@@ -1185,6 +1204,10 @@ msgstr "依賴"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Description"
 msgstr "描述"
+
+#: src/components/routes/target-detail.tsx
+msgid "detached"
+msgstr "脫鉤保留"
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Detail"
@@ -1216,9 +1239,9 @@ msgstr ""
 msgid "Device SNMP"
 msgstr ""
 
-#: src/components/routes/watchdog-overview.tsx
-#~ msgid "Devices"
-#~ msgstr ""
+#: src/components/routes/target-detail.tsx
+msgid "Devices"
+msgstr "設備"
 
 #: src/components/routes/address-sets.tsx
 msgid "Direction"
@@ -1605,6 +1628,10 @@ msgstr "匯出設定"
 #: src/components/routes/aggregate-charts.tsx
 msgid "Export CSV"
 msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Export tasks"
+msgstr "匯出任務"
 
 #: src/components/routes/watchdog-overview.tsx
 msgid "Export Tasks"
@@ -2532,6 +2559,10 @@ msgstr ""
 msgid "Metric"
 msgstr ""
 
+#: src/components/routes/target-detail.tsx
+msgid "Metric series"
+msgstr "指標序列"
+
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "metrics"
 #~ msgstr ""
@@ -2744,6 +2775,10 @@ msgstr ""
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
 msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "No dependent resources found."
+msgstr "未發現依賴資源。"
 
 #: src/components/routes/network-devices.tsx
 msgid "No devices match the filter."
@@ -3272,6 +3307,7 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Ports"
 msgstr "端口"
 
@@ -3478,6 +3514,10 @@ msgstr "重啟次數"
 msgid "Retention"
 msgstr ""
 
+#: src/components/routes/target-detail.tsx
+msgid "Retention policies"
+msgstr "保留策略"
+
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 msgid "Retries"
@@ -3509,6 +3549,10 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Rows per page"
 msgstr "每頁行數"
+
+#: src/components/routes/target-detail.tsx
+msgid "Run history"
+msgstr "執行歷史"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -4181,6 +4225,10 @@ msgstr "然後登錄到後端並在用戶表中重置您的用戶帳戶密碼。
 #: src/components/routes/export-new.tsx
 #~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 #~ msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "This shows everything the deletion touches. Removed data cannot be recovered."
+msgstr "以下列出刪除將波及的全部內容,刪除的資料不可恢復。"
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."

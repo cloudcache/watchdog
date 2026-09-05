@@ -313,6 +313,7 @@ msgstr "Agent Type"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/agents.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Agents"
 msgstr "Agents"
 
@@ -325,6 +326,10 @@ msgstr "Aggregate"
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
 msgstr "Aggregate Charts"
+
+#: src/components/routes/target-detail.tsx
+msgid "Aggregate graphs"
+msgstr "Aggregate graphs"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -642,6 +647,7 @@ msgstr "Can stop"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/target-detail.tsx
 #: src/components/routes/users.tsx
 msgid "Cancel"
 msgstr "Cancel"
@@ -759,6 +765,10 @@ msgstr "Click to copy"
 #: src/components/routes/network-device.tsx
 msgid "Collection Endpoint"
 msgstr "Collection Endpoint"
+
+#: src/components/routes/target-detail.tsx
+msgid "Collector projections"
+msgstr "Collector projections"
 
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Comma separated port IDs"
@@ -1084,8 +1094,13 @@ msgstr "Default time period"
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Delete"
 msgstr "Delete"
+
+#: src/components/routes/target-detail.tsx
+msgid "Delete {name}?"
+msgstr "Delete {name}?"
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Delete fingerprint"
@@ -1161,8 +1176,12 @@ msgid "Delete this SNMP profile?"
 msgstr "Delete this SNMP profile?"
 
 #: src/components/routes/target-detail.tsx
-msgid "Delete this target?"
-msgstr "Delete this target?"
+#~ msgid "Delete this target?"
+#~ msgstr "Delete this target?"
+
+#: src/components/routes/target-detail.tsx
+msgid "deleted"
+msgstr "deleted"
 
 #: src/components/routes/network-device.tsx
 msgid "Denied"
@@ -1180,6 +1199,10 @@ msgstr "Dependencies"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Description"
 msgstr "Description"
+
+#: src/components/routes/target-detail.tsx
+msgid "detached"
+msgstr "detached"
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Detail"
@@ -1211,9 +1234,9 @@ msgstr "Device ID"
 msgid "Device SNMP"
 msgstr "Device SNMP"
 
-#: src/components/routes/watchdog-overview.tsx
-#~ msgid "Devices"
-#~ msgstr "Devices"
+#: src/components/routes/target-detail.tsx
+msgid "Devices"
+msgstr "Devices"
 
 #: src/components/routes/address-sets.tsx
 msgid "Direction"
@@ -1600,6 +1623,10 @@ msgstr "Export configuration"
 #: src/components/routes/aggregate-charts.tsx
 msgid "Export CSV"
 msgstr "Export CSV"
+
+#: src/components/routes/target-detail.tsx
+msgid "Export tasks"
+msgstr "Export tasks"
 
 #: src/components/routes/watchdog-overview.tsx
 msgid "Export Tasks"
@@ -2527,6 +2554,10 @@ msgstr "Metadata value"
 msgid "Metric"
 msgstr "Metric"
 
+#: src/components/routes/target-detail.tsx
+msgid "Metric series"
+msgstr "Metric series"
+
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "metrics"
 #~ msgstr "metrics"
@@ -2739,6 +2770,10 @@ msgstr "No billing accounts found."
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
 msgstr "No data in this range."
+
+#: src/components/routes/target-detail.tsx
+msgid "No dependent resources found."
+msgstr "No dependent resources found."
 
 #: src/components/routes/network-devices.tsx
 msgid "No devices match the filter."
@@ -3267,6 +3302,7 @@ msgstr "ports"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Ports"
 msgstr "Ports"
 
@@ -3473,6 +3509,10 @@ msgstr "Restarts"
 msgid "Retention"
 msgstr "Retention"
 
+#: src/components/routes/target-detail.tsx
+msgid "Retention policies"
+msgstr "Retention policies"
+
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 msgid "Retries"
@@ -3504,6 +3544,10 @@ msgstr "Rotate Token"
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Rows per page"
 msgstr "Rows per page"
+
+#: src/components/routes/target-detail.tsx
+msgid "Run history"
+msgstr "Run history"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -4176,6 +4220,10 @@ msgstr "Then log into the backend and reset your user account password in the us
 #: src/components/routes/export-new.tsx
 #~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 #~ msgstr "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
+
+#: src/components/routes/target-detail.tsx
+msgid "This shows everything the deletion touches. Removed data cannot be recovered."
+msgstr "This shows everything the deletion touches. Removed data cannot be recovered."
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."

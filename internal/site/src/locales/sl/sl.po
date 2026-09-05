@@ -318,6 +318,7 @@ msgstr ""
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/agents.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Agents"
 msgstr ""
 
@@ -329,6 +330,10 @@ msgstr ""
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Aggregate graphs"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
@@ -647,6 +652,7 @@ msgstr "Lahko ustavi"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #: src/components/routes/settings/quiet-hours.tsx
+#: src/components/routes/target-detail.tsx
 #: src/components/routes/users.tsx
 msgid "Cancel"
 msgstr "Prekliči"
@@ -763,6 +769,10 @@ msgstr "Klikni za kopiranje"
 
 #: src/components/routes/network-device.tsx
 msgid "Collection Endpoint"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Collector projections"
 msgstr ""
 
 #: src/components/routes/aggregate-charts.tsx
@@ -1089,8 +1099,13 @@ msgstr "Privzeto časovno obdobje"
 #: src/components/routes/settings/quiet-hours.tsx
 #: src/components/routes/system/smart-table.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Delete"
 msgstr "Izbriši"
+
+#: src/components/routes/target-detail.tsx
+msgid "Delete {name}?"
+msgstr ""
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 msgid "Delete fingerprint"
@@ -1166,7 +1181,11 @@ msgid "Delete this SNMP profile?"
 msgstr ""
 
 #: src/components/routes/target-detail.tsx
-msgid "Delete this target?"
+#~ msgid "Delete this target?"
+#~ msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "deleted"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -1185,6 +1204,10 @@ msgstr ""
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Description"
 msgstr "Opis"
+
+#: src/components/routes/target-detail.tsx
+msgid "detached"
+msgstr ""
 
 #: src/components/containers-table/containers-table.tsx
 msgid "Detail"
@@ -1216,9 +1239,9 @@ msgstr ""
 msgid "Device SNMP"
 msgstr ""
 
-#: src/components/routes/watchdog-overview.tsx
-#~ msgid "Devices"
-#~ msgstr ""
+#: src/components/routes/target-detail.tsx
+msgid "Devices"
+msgstr ""
 
 #: src/components/routes/address-sets.tsx
 msgid "Direction"
@@ -1604,6 +1627,10 @@ msgstr "Izvozi nastavitve"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Export CSV"
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "Export tasks"
 msgstr ""
 
 #: src/components/routes/watchdog-overview.tsx
@@ -2532,6 +2559,10 @@ msgstr ""
 msgid "Metric"
 msgstr ""
 
+#: src/components/routes/target-detail.tsx
+msgid "Metric series"
+msgstr ""
+
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "metrics"
 #~ msgstr ""
@@ -2743,6 +2774,10 @@ msgstr ""
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
+msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "No dependent resources found."
 msgstr ""
 
 #: src/components/routes/network-devices.tsx
@@ -3272,6 +3307,7 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Ports"
 msgstr ""
 
@@ -3478,6 +3514,10 @@ msgstr "Ponovni zagoni"
 msgid "Retention"
 msgstr ""
 
+#: src/components/routes/target-detail.tsx
+msgid "Retention policies"
+msgstr ""
+
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 msgid "Retries"
@@ -3509,6 +3549,10 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Rows per page"
 msgstr "Vrstic na stran"
+
+#: src/components/routes/target-detail.tsx
+msgid "Run history"
+msgstr ""
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -4181,6 +4225,10 @@ msgstr "Nato se prijavite v zaledni sistem in ponastavite geslo svojega uporabni
 #: src/components/routes/export-new.tsx
 #~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
 #~ msgstr ""
+
+#: src/components/routes/target-detail.tsx
+msgid "This shows everything the deletion touches. Removed data cannot be recovered."
+msgstr ""
 
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "This will permanently delete all selected records from the database."
