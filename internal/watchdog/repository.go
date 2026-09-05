@@ -38,6 +38,7 @@ type IdentityAdminRepository interface {
 	UpdateUser(ctx context.Context, user User) (User, error)
 	DisableUser(ctx context.Context, tenantID, userID ID) error
 	ListRoles(ctx context.Context, tenantID ID) ([]Role, error)
+	GetTenantRole(ctx context.Context, tenantID, roleID ID) (Role, error)
 	CreateRole(ctx context.Context, role Role) (Role, error)
 	UpdateRole(ctx context.Context, role Role) (Role, error)
 	DeleteRole(ctx context.Context, tenantID, roleID ID) error

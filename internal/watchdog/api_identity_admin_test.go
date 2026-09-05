@@ -78,6 +78,14 @@ func (f *fakeIdentityAdminRepository) ListRoles(_ context.Context, tenantID ID) 
 	return roles, nil
 }
 
+func (f *fakeIdentityAdminRepository) GetTenantRole(_ context.Context, tenantID, roleID ID) (Role, error) {
+	role, ok := f.roles[roleID]
+	if !ok || role.TenantID != tenantID {
+		return Role{}, sql.ErrNoRows
+	}
+	return role, nil
+}
+
 func (f *fakeIdentityAdminRepository) CreateRole(_ context.Context, role Role) (Role, error) {
 	if role.ID == "" {
 		role.ID = ID("role-" + role.Name)

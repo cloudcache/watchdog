@@ -17,6 +17,7 @@ type APIV1RouterConfig struct {
 	AggregateGraphs     AggregateGraphRepository
 	Permissions         PermissionRepository
 	IdentityAdmin       IdentityAdminRepository
+	Idempotency         IdempotencyRepository
 	Registries          *PlatformRegistries
 	TenantModules       TenantModuleRepository
 	FlowGeo             *FlowGeoService
@@ -128,7 +129,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		registerPermissionRoutes(mux, auth, cfg.Permissions)
 	}
 	if cfg.IdentityAdmin != nil {
-		registerIdentityAdminRoutes(mux, auth, cfg.IdentityAdmin, cfg.Audit)
+		registerIdentityAdminRoutes(mux, auth, cfg.IdentityAdmin, cfg.Audit, cfg.Idempotency)
 	}
 	if cfg.Registries != nil {
 		registerModuleRoutes(mux, auth, cfg.Registries, cfg.TenantModules, cfg.Audit)

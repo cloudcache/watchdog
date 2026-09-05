@@ -241,6 +241,10 @@ func (s *MySQLStore) ReplaceUserRoles(ctx context.Context, tenantID, userID ID, 
 
 var errRoleNotInTenant = errors.New("role not in tenant")
 
+func (s *MySQLStore) GetTenantRole(ctx context.Context, tenantID, roleID ID) (Role, error) {
+	return s.getRole(ctx, tenantID, roleID)
+}
+
 func (s *MySQLStore) getRole(ctx context.Context, tenantID, roleID ID) (Role, error) {
 	var role Role
 	err := s.db.QueryRowContext(ctx, `

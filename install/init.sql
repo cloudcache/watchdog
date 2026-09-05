@@ -579,6 +579,19 @@ CREATE TABLE IF NOT EXISTS `export_tasks` (
   CONSTRAINT `export_tasks_chk_4` CHECK ((`format` = 'csv'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `idempotency_records` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `idempotency_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `response_status` smallint unsigned NOT NULL,
+  `response_body` mediumblob NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `expires_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`tenant_id`,`idempotency_key`),
+  KEY `idx_idempotency_expiry` (`expires_at`),
+  CONSTRAINT `fk_idempotency_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `metric_retention_policies` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

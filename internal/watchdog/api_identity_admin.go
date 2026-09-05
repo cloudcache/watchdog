@@ -20,18 +20,18 @@ type identityAdminAPI struct {
 	audit AuditRepository
 }
 
-func registerIdentityAdminRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo IdentityAdminRepository, audit AuditRepository) {
+func registerIdentityAdminRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo IdentityAdminRepository, audit AuditRepository, idempotency IdempotencyRepository) {
 	api := identityAdminAPI{repo: repo, audit: audit}
 	admin := RequirePermission(ActionAdmin, TenantResource)
 	mux.Handle("GET /api/v1/users", auth(admin(http.HandlerFunc(api.listUsers))))
-	mux.Handle("POST /api/v1/users", auth(admin(http.HandlerFunc(api.createUser))))
+	mux.Handle("POST /api/v1/users", auth(admin(WithIdempotency(idempotency, 0, api.createUser))))
 	mux.Handle("GET /api/v1/users/{user_id}", auth(admin(http.HandlerFunc(api.getUser))))
 	mux.Handle("PATCH /api/v1/users/{user_id}", auth(admin(http.HandlerFunc(api.updateUser))))
 	mux.Handle("DELETE /api/v1/users/{user_id}", auth(admin(http.HandlerFunc(api.disableUser))))
 	mux.Handle("GET /api/v1/users/{user_id}/roles", auth(admin(http.HandlerFunc(api.listUserRoles))))
 	mux.Handle("PUT /api/v1/users/{user_id}/roles", auth(admin(http.HandlerFunc(api.replaceUserRoles))))
 	mux.Handle("GET /api/v1/roles", auth(admin(http.HandlerFunc(api.listRoles))))
-	mux.Handle("POST /api/v1/roles", auth(admin(http.HandlerFunc(api.createRole))))
+	mux.Handle("POST /api/v1/roles", auth(admin(WithIdempotency(idempotency, 0, api.createRole))))
 	mux.Handle("PATCH /api/v1/roles/{role_id}", auth(admin(http.HandlerFunc(api.updateRole))))
 	mux.Handle("DELETE /api/v1/roles/{role_id}", auth(admin(http.HandlerFunc(api.deleteRole))))
 }
@@ -61,6 +61,7 @@ func (api identityAdminAPI) getUser(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "User not found", nil)
 		return
 	}
+	SetEntityETag(w, user.UpdatedAt)
 	WriteAPIJSON(w, http.StatusOK, user)
 }
 
@@ -96,6 +97,9 @@ func (api identityAdminAPI) updateUser(w http.ResponseWriter, r *http.Request) {
 	current, err := api.repo.GetTenantUser(r.Context(), auth.TenantID, userID)
 	if err != nil {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "User not found", nil)
+		return
+	}
+	if !CheckIfMatch(w, r, current.UpdatedAt) {
 		return
 	}
 	var req userRequest
@@ -139,6 +143,11 @@ func (api identityAdminAPI) disableUser(w http.ResponseWriter, r *http.Request) 
 	if userID == auth.UserID {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "You cannot disable your own account", nil)
 		return
+	}
+	if current, err := api.repo.GetTenantUser(r.Context(), auth.TenantID, userID); err == nil {
+		if !CheckIfMatch(w, r, current.UpdatedAt) {
+			return
+		}
 	}
 	if err := api.repo.DisableUser(r.Context(), auth.TenantID, userID); err != nil {
 		writeIdentityWriteError(w, err)
@@ -237,6 +246,11 @@ func (api identityAdminAPI) updateRole(w http.ResponseWriter, r *http.Request) {
 	if req.Scope == "" {
 		req.Scope = "tenant"
 	}
+	if current, err := api.repo.GetTenantRole(r.Context(), auth.TenantID, roleID); err == nil {
+		if !CheckIfMatch(w, r, current.UpdatedAt) {
+			return
+		}
+	}
 	role, err := api.repo.UpdateRole(r.Context(), Role{ID: roleID, TenantID: auth.TenantID, Name: req.Name, Scope: req.Scope})
 	if err != nil {
 		writeIdentityWriteError(w, err)
@@ -249,6 +263,11 @@ func (api identityAdminAPI) updateRole(w http.ResponseWriter, r *http.Request) {
 func (api identityAdminAPI) deleteRole(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	roleID := ID(r.PathValue("role_id"))
+	if current, err := api.repo.GetTenantRole(r.Context(), auth.TenantID, roleID); err == nil {
+		if !CheckIfMatch(w, r, current.UpdatedAt) {
+			return
+		}
+	}
 	if err := api.repo.DeleteRole(r.Context(), auth.TenantID, roleID); err != nil {
 		writeIdentityWriteError(w, err)
 		return

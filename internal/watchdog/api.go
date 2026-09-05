@@ -18,9 +18,10 @@ const (
 )
 
 type APIError struct {
-	Code    APIErrorCode   `json:"code"`
-	Message string         `json:"message"`
-	Details map[string]any `json:"details,omitempty"`
+	Code      APIErrorCode   `json:"code"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 type apiErrorResponse struct {
@@ -126,7 +127,10 @@ func WriteAPIError(w http.ResponseWriter, status int, code APIErrorCode, message
 	WriteAPIJSON(w, status, apiErrorResponse{Error: APIError{
 		Code:    code,
 		Message: message,
-		Details: details,
+		// Transient conditions a client may retry verbatim; conflicts and
+		// validation failures need a changed request first (platform §15.3).
+		Retryable: status == http.StatusTooManyRequests || status >= 500,
+		Details:   details,
 	}})
 }
 
