@@ -61,8 +61,10 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	workerMetricsPort := reserveTCPPort(t)
 	collectorMetrics := "127.0.0.1:" + collectorMetricsPort
 	workerMetrics := "127.0.0.1:" + workerMetricsPort
-	sflowAddress := reserveUDPAddress(t)
-	netflowAddress := reserveUDPAddress(t)
+	sflowPort := reserveUDPPort(t)
+	netflowPort := reserveUDPPort(t)
+	sflowAddress := "127.0.0.1:" + sflowPort
+	netflowAddress := "127.0.0.1:" + netflowPort
 	passwordFile := os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")
 	if passwordFile == "" {
 		t.Fatal("WATCHDOG_CLICKHOUSE_PASSWORD_FILE is required")
@@ -95,13 +97,20 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 		"-plan-public-key", artifacts.publicKey,
 		"-kafka-brokers", strings.Join(brokers, ","),
 		"-kafka-topic", topicBase,
-		"-sflow-listen", sflowAddress,
-		"-netflow-listen", netflowAddress,
+		"-sflow-listen", "0.0.0.0:"+sflowPort,
+		"-netflow-listen", "0.0.0.0:"+netflowPort,
 		"-metrics-listen", "0.0.0.0:"+collectorMetricsPort,
 		"-receive-buffer-bytes", strconv.Itoa(1<<20),
+		"-max-datagram-bytes", "4096",
 	)
 	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
 	waitForUDPListeners(t, ctx, collector, sflowAddress, netflowAddress)
+	unknownSource := nonLoopbackIPv4(t)
+	sendUDPPayloadsFrom(t, unknownSource, net.JoinHostPort(unknownSource, netflowPort), corpusFixturePayload(t, "netflow", "nfv5.pcap"))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_datagrams_rejected_total", 1)
+	sendUDPPayloads(t, netflowAddress, make([]byte, 4097))
+	waitForProcessMetric(t, ctx, collector, collectorMetrics, "watchdog_flow_collector_datagrams_oversize_total", 1)
+	assertProcessMetric(t, collectorMetrics, "watchdog_flow_collector_kafka_records_total", 0)
 
 	sendUDPPayloads(t, netflowAddress,
 		corpusFixturePayload(t, "netflow", "nfv5.pcap"),
@@ -338,17 +347,42 @@ func reserveTCPPort(t testing.TB) string {
 	return port
 }
 
-func reserveUDPAddress(t testing.TB) string {
+func reserveUDPPort(t testing.TB) string {
 	t.Helper()
 	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.LocalAddr().String()
+	port := strconv.Itoa(listener.LocalAddr().(*net.UDPAddr).Port)
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return address
+	return port
+}
+
+func nonLoopbackIPv4(t testing.TB) string {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range interfaces {
+		if current.Flags&net.FlagUp == 0 || current.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := current.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && ip.To4() != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+				return ip.String()
+			}
+		}
+	}
+	t.Fatal("a non-loopback IPv4 address is required for source admission integration")
+	return ""
 }
 
 func waitForUDPListeners(t testing.TB, ctx context.Context, process *productionProcess, addresses ...string) {
@@ -379,11 +413,20 @@ func waitForUDPListeners(t testing.TB, ctx context.Context, process *productionP
 
 func sendUDPPayloads(t testing.TB, address string, payloads ...[]byte) {
 	t.Helper()
+	sendUDPPayloadsFrom(t, "", address, payloads...)
+}
+
+func sendUDPPayloadsFrom(t testing.TB, sourceIP, address string, payloads ...[]byte) {
+	t.Helper()
 	remote, err := net.ResolveUDPAddr("udp4", address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection, err := net.DialUDP("udp4", nil, remote)
+	var local *net.UDPAddr
+	if sourceIP != "" {
+		local = &net.UDPAddr{IP: net.ParseIP(sourceIP)}
+	}
+	connection, err := net.DialUDP("udp4", local, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
