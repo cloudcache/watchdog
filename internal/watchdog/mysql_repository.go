@@ -453,6 +453,26 @@ func decodeAuditCursor(cursor string) (time.Time, ID, error) {
 	return createdAt, ID(parts[1]), nil
 }
 
+// encodeStringCursor / decodeStringCursor page a list ordered by a (string,
+// id) composite key (e.g. name, id). The id is written first because ids are
+// "|"-free CHAR(26), so the sort value — which may itself contain "|" — is the
+// remainder after the first separator.
+func encodeStringCursor(sortValue string, id ID) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(string(id) + "|" + sortValue))
+}
+
+func decodeStringCursor(cursor string) (string, ID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", errors.New("cursor is invalid")
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 {
+		return "", "", errors.New("cursor is invalid")
+	}
+	return parts[1], ID(parts[0]), nil
+}
+
 func escapeSQLLike(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, "%", `\%`)

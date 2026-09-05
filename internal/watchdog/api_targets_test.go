@@ -14,10 +14,24 @@ type fakeTargetRepository struct {
 	created Target
 	updated Target
 	deleted ID
+	// captured by ListTargetsPage for assertions
+	pagedAll     bool
+	pagedAllowed []ID
+	pagedFilter  TargetPageFilter
+	pagedCalled  bool
+	pageNext     string
 }
 
 func (r *fakeTargetRepository) ListTargets(context.Context, ID) ([]Target, error) {
 	return r.targets, nil
+}
+
+func (r *fakeTargetRepository) ListTargetsPage(_ context.Context, _ ID, all bool, allowedIDs []ID, filter TargetPageFilter) ([]Target, string, error) {
+	r.pagedCalled = true
+	r.pagedAll = all
+	r.pagedAllowed = allowedIDs
+	r.pagedFilter = filter
+	return r.targets, r.pageNext, nil
 }
 
 func (r *fakeTargetRepository) GetTarget(_ context.Context, _ ID, targetID ID) (Target, error) {
@@ -64,6 +78,74 @@ func TestAPITargetsList(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"kind":"network"`) || strings.Contains(rec.Body.String(), `"Type"`) || strings.Contains(rec.Body.String(), `"target_type"`) {
 		t.Fatalf("target response does not use canonical snake_case fields: %s", rec.Body.String())
+	}
+	// No limit/cursor => legacy full-list path, the paged repo method is untouched.
+	if repo.pagedCalled {
+		t.Fatal("full-list request must not hit the paged path")
+	}
+}
+
+func adminTargetAuth(*http.Request) (AuthContext, error) {
+	return AuthContext{TenantID: "tenant-a", UserID: "admin", IsAdmin: true}, nil
+}
+
+func TestAPITargetsListPagedOptIn(t *testing.T) {
+	// limit triggers the paged path; grant scope is pushed down (non-admin sees
+	// only its granted target), and next_cursor surfaces only when non-empty.
+	repo := &fakeTargetRepository{
+		targets:  []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Core", Kind: TargetKindNetwork, Host: "10.0.0.1"}},
+		pageNext: "CURSOR2",
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: targetTestAuth, Targets: repo})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?limit=2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !repo.pagedCalled || repo.pagedFilter.Limit != 2 {
+		t.Fatalf("paged not called with limit 2: called=%v filter=%+v", repo.pagedCalled, repo.pagedFilter)
+	}
+	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
+		t.Fatalf("grant pushdown wrong: all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
+	}
+	if !strings.Contains(rec.Body.String(), `"next_cursor":"CURSOR2"`) {
+		t.Fatalf("expected next_cursor in body: %s", rec.Body.String())
+	}
+
+	// A cursor alone (no limit) also opts in and threads through.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?cursor=abc", nil))
+	if !repo.pagedCalled || repo.pagedFilter.Cursor != "abc" {
+		t.Fatalf("cursor not threaded: %+v", repo.pagedFilter)
+	}
+
+	// An admin pushes down as "whole tenant" (all=true, no id filter).
+	adminRepo := &fakeTargetRepository{}
+	adminRouter := NewAPIV1Router(APIV1RouterConfig{Auth: adminTargetAuth, Targets: adminRepo})
+	rec = httptest.NewRecorder()
+	adminRouter.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?limit=5", nil))
+	if !adminRepo.pagedAll || adminRepo.pagedAllowed != nil {
+		t.Fatalf("admin scope wrong: all=%v allowed=%v", adminRepo.pagedAll, adminRepo.pagedAllowed)
+	}
+	// Empty page with no next cursor omits next_cursor and returns [] not null.
+	if strings.Contains(rec.Body.String(), "next_cursor") || !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Fatalf("empty admin page body = %s", rec.Body.String())
+	}
+}
+
+func TestAPITargetsListPagedRejectsBadLimit(t *testing.T) {
+	repo := &fakeTargetRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: targetTestAuth, Targets: repo})
+	for _, bad := range []string{"0", "-3", "abc"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?limit="+bad, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("limit=%q status = %d, want 400", bad, rec.Code)
+		}
+		if repo.pagedCalled {
+			t.Fatalf("limit=%q must be rejected before the repo", bad)
+		}
 	}
 }
 

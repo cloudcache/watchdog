@@ -53,8 +53,21 @@ type PermissionRepository interface {
 	DeletePermission(ctx context.Context, tenantID ID, subjectType SubjectType, subjectID ID, resourceType ResourceType, resourceID ID) error
 }
 
+// TargetPageFilter requests an opt-in keyset page of targets ordered by
+// (name, id). Limit is clamped by the repository; Cursor is a next_cursor from
+// a prior page ("" for the first).
+type TargetPageFilter struct {
+	Limit  int
+	Cursor string
+}
+
 type TargetRepository interface {
 	ListTargets(ctx context.Context, tenantID ID) ([]Target, error)
+	// ListTargetsPage returns a keyset page. When all is true the whole tenant
+	// is visible (admin); otherwise only targets whose id is in allowedIDs are
+	// returned (per-target view grants pushed into SQL). Returns the page and a
+	// next_cursor ("" on the last page).
+	ListTargetsPage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, filter TargetPageFilter) ([]Target, string, error)
 	GetTarget(ctx context.Context, tenantID, targetID ID) (Target, error)
 	CreateTarget(ctx context.Context, target Target) (Target, error)
 	UpdateTarget(ctx context.Context, target Target) (Target, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -28,6 +29,59 @@ func (s *MySQLStore) ListTargets(ctx context.Context, tenantID ID) ([]Target, er
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
+}
+
+func (s *MySQLStore) ListTargetsPage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, filter TargetPageFilter) ([]Target, string, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	// A non-admin with no granted targets sees nothing; skip the query.
+	if !all && len(allowedIDs) == 0 {
+		return nil, "", nil
+	}
+	query := targetSelect() + ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if !all {
+		query += ` AND id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedIDs)), ",") + `)`
+		for _, id := range allowedIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.Cursor != "" {
+		name, id, err := decodeStringCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (name > ? OR (name = ? AND id > ?))`
+		args = append(args, name, name, id)
+	}
+	query += ` ORDER BY name, id LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var targets []Target
+	for rows.Next() {
+		target, err := scanTarget(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(targets) > limit {
+		targets = targets[:limit]
+		last := targets[limit-1]
+		nextCursor = encodeStringCursor(last.Name, last.ID)
+	}
+	return targets, nextCursor, nil
 }
 
 func (s *MySQLStore) GetTarget(ctx context.Context, tenantID, targetID ID) (Target, error) {

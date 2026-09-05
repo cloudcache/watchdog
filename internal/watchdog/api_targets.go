@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -45,6 +47,14 @@ func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handl
 
 func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	query := r.URL.Query()
+	// Pagination is opt-in: only when limit or cursor is present. Without them
+	// the endpoint keeps returning the full tenant-visible list, because many
+	// callers use it as a complete dropdown source and count its length.
+	if query.Get("limit") != "" || query.Get("cursor") != "" {
+		api.listPaged(w, r, auth, query)
+		return
+	}
 	targets, err := api.repo.ListTargets(r.Context(), auth.TenantID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -57,6 +67,32 @@ func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": visible})
+}
+
+func (api targetAPI) listPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	filter := TargetPageFilter{Cursor: strings.TrimSpace(query.Get("cursor"))}
+	if raw := query.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	all, allowedIDs := visibleTargetScope(auth)
+	targets, nextCursor, err := api.repo.ListTargetsPage(r.Context(), auth.TenantID, all, allowedIDs, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if targets == nil {
+		targets = []Target{}
+	}
+	response := map[string]any{"items": targets}
+	if nextCursor != "" {
+		response["next_cursor"] = nextCursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
 }
 
 func (api targetAPI) get(w http.ResponseWriter, r *http.Request) {
@@ -377,4 +413,31 @@ func canListTarget(auth AuthContext, targetID ID) bool {
 		}
 	}
 	return false
+}
+
+// visibleTargetScope resolves which targets the caller may view, for pushing
+// the grant set into a paginated query. It mirrors canListTarget row-by-row:
+// admins see the whole tenant (all=true, ids nil); other subjects see exactly
+// the targets carrying a matching per-target view grant. Keep the two in sync.
+func visibleTargetScope(auth AuthContext) (all bool, ids []ID) {
+	if auth.IsAdmin {
+		return true, nil
+	}
+	seen := make(map[ID]struct{})
+	for _, grant := range auth.Grants {
+		if grant.TenantID != auth.TenantID || grant.ResourceType != ResourceTarget || grant.ResourceID == "" {
+			continue
+		}
+		if !subjectMatches(AccessRequest{UserID: auth.UserID, RoleIDs: auth.RoleIDs}, grant) {
+			continue
+		}
+		if !actionAllowed(ActionView, grant.Actions) {
+			continue
+		}
+		if _, dup := seen[grant.ResourceID]; !dup {
+			seen[grant.ResourceID] = struct{}{}
+			ids = append(ids, grant.ResourceID)
+		}
+	}
+	return false, ids
 }
