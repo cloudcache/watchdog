@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C2 — rollup 运行指标审计。** FLOW-07A2/A3 的 candidate 物化与有界评分读取已提交；真实 CH 执行仍是外部门禁。下一轮只补 rollup runner/operation-job 已真实产生但尚未暴露的低基数 success/error/age/repair 指标及测试；不增加扫描器、状态库或平台任务引擎。
+**活动切片：FLOW-04C3 — ingest receipt reconciliation 边界审计。** FLOW-04C2 的真实 runner attempt/error/success/initial/repair 与 bucket-age 指标已提交；hub machine-scrape 暴露登记为 PLAT-04E。本轮先冻结 receipt mismatch 的权威比较键、扫描预算和故障语义；若必须增加通用巡检框架则只登记平台依赖，不在 Flow 内另造 scanner/state machine。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -43,6 +43,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
 - FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。真实 CH migration/聚合未执行，仍保留外部门禁。
 - FLOW-07A3：`ad4c2c6e feat(flow): score authoritative VPN candidate generations`；单查询 latest-marker reader、50,000 条硬上限、严格 evidence/ratio/provenance 校验、空 generation 和 all-or-nothing scorer bridge 已提交；Flow 全范围 race、`go test ./...` 与 `go vet ./...` 通过，真实 CH 仍不冒充完成。
+- FLOW-04C2：`041eebf4 feat(flow): expose rollup lifecycle metrics`；CH runner 原子统计 1m/1h attempt/success/retryable/permanent、initial/repair、last success 与最大完成 bucket，hub runtime 组合低基数 provider；定向 race/vet 与 `go test ./...` 通过。VM 可抓取的 hub machine endpoint 仍由 PLAT-04E 承担。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -120,7 +121,9 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **集成（外部服务）**：启动两个生产命令并由 VM 抓取；注入未知 source、UDP truncate/RXQ overflow、Kafka/CH 失败与恢复、rebalance，核对 broker lag 和 shutdown 末值。需要真实 Kafka/CH/UDP/VM 环境。
 - [x] **变更设计**：新增独立 `-metrics-listen`，默认 loopback `9090/9091`、空值禁用；远程 TLS/mTLS 归部署层反代/sidecar，不复制证书生命周期。
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
-- [ ] **编码/集成（依赖 FLOW-04B）**：operation-job rollup runner 落地后补 ingest receipt mismatch、rollup age/success/error/repair 指标和对应故障测试。
+- [x] **FLOW-04C2 rollup 指标**：runner 在真实 CH 调用点原子记录 1m/1h attempt/success、retryable/permanent、initial/repair、last success/最大完成 bucket；provider 只使用固定 resolution/class/kind 标签，unknown age 有独立 known gauge，旧桶 repair 不倒退。
+- [x] **FLOW-04C2 单元/变更/回归/已提交**：覆盖 resolution、失败分类、repair、未来 age clamp、从未成功 unknown、高基数标签禁止和 hub provider 组合；定向 race/vet 与全库 test 通过，提交 `041eebf4`。
+- [ ] **FLOW-04C3 ingest receipt mismatch**：冻结 records/receipt/offset 的权威比较与有界 reconciliation，再由真实执行者产生 mismatch；禁止在 metrics renderer 猜值或为指标另建状态机。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
 ### FLOW-05 Query/API/UI

@@ -417,12 +417,15 @@ DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_pr
 | worker | `watchdog_flow_worker_sampling_unknown_records_total` / `sampling_conflict_records_total` / `snapshot_miss_total` | counter/record,event | 仅在 durable 后计采样质量；snapshot 缺失按被阻塞 enrich 尝试计 |
 | CH | `watchdog_flow_clickhouse_insert_attempts_total` / `insert_errors_total{class="retryable|permanent"}` / `insert_retries_total` | counter/attempt | 每次真实 insert 调用、固定两类失败和实际 backoff 后的重试 |
 | CH | `watchdog_flow_clickhouse_blocks_total` / `rows_total` / `insert_duration_seconds_total` | counter/block,row,second | records+receipt durable block、行数和所有 insert attempt 累计耗时 |
+| rollup | `watchdog_flow_rollup_attempts_total` / `success_total` / `errors_total{resolution,class}` | counter/attempt | 真实 CH rebuild 调用、成功和固定 retryable/permanent 失败；resolution 仅 `1m/1h` |
+| rollup | `watchdog_flow_rollup_rebuilds_total{resolution,kind}` | counter/rebuild | 成功的 initial/repair；`generation=1` 为 initial，更大 generation 为 repair |
+| rollup | `watchdog_flow_rollup_last_success_timestamp_seconds` / `completed_bucket_known` / `completed_bucket_age_seconds` | gauge | 当前 hub 进程最近成功时间与完成的最大 bucket end；无成功样本以 known=0 表示，age 零值不可单独解释 |
 | process | `watchdog_flow_process_goroutines` / `heap_alloc_bytes` / `gc_cycles_total` / `start_time_seconds` | gauge,gauge,counter,gauge | Go runtime 状态 |
 | process | `watchdog_flow_process_stats_up` / `cpu_seconds_total` / `resident_memory_bytes` / `open_fds` | gauge,counter,gauge,gauge | OS 进程统计；读取任一失败时 `stats_up=0`，其余值归零；Prometheus 自身 `up` 仍表示 scrape 可达性 |
 
-counter 只用 atomic 单调累加；gauge 来自单次一致快照。worker lag 在 assignment 后、首次 high-watermark fetch 前是 unknown，必须用 `lag_known_partitions < assigned_partitions` 表达不完整，禁止填成零。模板有界 replay 期间，低于原 committed floor 的 record 不更新 lag；到达原水位后才更新。当前 consumer 没有 pause/resume 状态，CH/dimension 暂时失败直接不提交并退出等待编排重启，因此不暴露恒为零的伪 pause 指标。
+counter 只用 atomic 单调累加；gauge 来自单次一致快照。worker lag 在 assignment 后、首次 high-watermark fetch 前是 unknown，必须用 `lag_known_partitions < assigned_partitions` 表达不完整，禁止填成零。模板有界 replay 期间，低于原 committed floor 的 record 不更新 lag；到达原水位后才更新。当前 consumer 没有 pause/resume 状态，CH/dimension 暂时失败直接不提交并退出等待编排重启，因此不暴露恒为零的伪 pause 指标。rollup 指标在真正调用 CH 的 runner 内计 attempt/error/success，repair 只按已验证 request 的 generation 判定；latest completed bucket 取本进程成功集合的最大 bucket end，旧桶 repair 不使 age 倒退，也不声称代表每个 tenant 的覆盖率。
 
-禁止用 tenant、IP、ASN、prefix、port、topic、partition 或 exporter 原始地址作 metric label。高基数分析只进 CH。ingest receipt mismatch、rollup age/repair 只有在 FLOW-04B 复用平台 operation job 调度器后才能由真实 reconciliation/rollup runner 产生，不能在当前 worker 猜测或另建巡检状态机。
+禁止用 tenant、IP、ASN、prefix、port、topic、partition、bucket、job ID、generation 或 exporter 原始地址作 metric label。高基数分析只进 CH。rollup provider 已组合进 hub 现有 runtime Prometheus 文本，但该路由当前依赖交互登录，不能直接冒充 VM scrape target；统一 machine scrape/TLS/ACL 生命周期登记为平台 PLAT-04E，Flow 不另起第三个 HTTP server。ingest receipt mismatch 仍须由真实 reconciliation 产生，不能在当前 worker 猜测或为了指标另建巡检状态机。
 
 告警至少同时判断 scrape `up`、`watchdog_flow_process_stats_up`、UDP kernel drop 增量、Kafka publish error/buffer、`lag_known_partitions/assigned_partitions`、lag 增长、template/snapshot miss、CH retryable/permanent error。任何未知覆盖率或缺失分区必须显示 incomplete，不得按零流量处理。
 
