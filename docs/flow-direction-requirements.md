@@ -156,6 +156,8 @@ sFlow 的 sample sequence、sample pool、drops 和 sampling rate 继续按 `(tr
 - **主地址段 `primary_prefix`**：对 src/dst 或 local/remote endpoint 做最长前缀匹配，每个 address role 最多命中一个 prefix；未命中记 `_unassigned`。同一 role 下各 prefix 互斥，因此汇总必须等于该 role 原始总量；
 - **地址集合 `address_set`**：现有 selector 可让一个 prefix 同时命中多个集合，属于 tag 口径。单个集合内部可汇总，不同集合之间不可相加，API 必须返回 `additive=false`，避免重复计量。
 
+`address_sets.match_direction` 固定解释为已经由本地网段判定后的**业务方向**，只允许 `in/out/both`；它不是 `in_if/out_if` 的观察方向，也不是 src/dst endpoint side。selector 在 snapshot 发布时针对 prefix labels 预编译，运行时不得逐 flow 扫描全部集合；发布检查以同一条 `in/out` record 的 local+remote 两个 endpoint 合计计算最坏 tag 扩张，超过租户批准的 `max_address_sets_per_record` 时拒绝发布，不能静默截断。
+
 prefixes、labels、sets 和 selector 需发布为不可变 `dimension_version`。排队记录按 flow `event_time` 选择当时生效版本，不能因为异步延迟套用消费时的最新配置。响应和导出必须带 dimension version；变更后的重分类通过 normalized topic 或仍在 TTL 内的 base fact 异步回放完成。
 
 ## 4. F1–F9 功能需求

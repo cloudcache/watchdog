@@ -740,6 +740,12 @@ restore_order      = (ownership_epoch, state_generation)
 - 根据 prefix labels 运行 address set selector；一个 record 可命中多个 set，写 `membership_mode=tag`，API 标记非加和；
 - snapshot 发布前预估匹配扩张并限制 `max_address_sets_per_record`；超限配置禁止发布，不靠运行时静默截断。
 
+FLOW-03A 已把该步骤的纯数据面内核落在 `internal/flowdimension`，未接管理库和消费循环。`dimension bundle schema v1` 的根字段固定为 `schema_version/snapshot_id/tenant_id/version/effective_from/prefixes/address_sets`；prefix 只携带稳定 `id/cidr/labels`，set 只携带稳定 `id/selector/match_direction/enabled`。object loader 在解析前验证最大 64 MiB 和 canonical `sha256:<lowerhex>`，strict JSON 拒绝未知字段/尾随对象；CIDR 必须是 canonical IPv4/IPv6，snapshot ID、tenant、version、同租户 effective minute 均不可冲突。`effective_from` 必须落在分钟边界，catalog 只按 record event time 选择 `effective_from <= event_time` 的最高历史切面；早于首版或租户无版本时返回阻断错误，由后续 worker 暂停 partition，不能回退到消费时“最新版本”。
+
+selector 与现有管理格式兼容，label value 可为单字符串或字符串数组，编译后排序去重；`match_direction` 明确定义为业务 `in/out/both`，不是观察方向或 src/dst side。发布编译期用 selector anchor 倒排候选为每个 prefix 预计算入/出方向的 set ID 列表，并对候选求值次数设置 5000 万默认硬界，防止恶意/错误 bundle 把发布编译拖成无界笛卡尔积；再按一条业务 record 的 local+remote endpoint 合计估算最坏扩张，超过默认 32 或配置硬上限即拒绝 bundle。record 热路径因此固定为两次 BART LPM + 常数时间读取预计算成员，不逐 flow 扫描集合，单测锁定零 allocation。每个 `in/out` 结果必有 local/remote 两个 primary 成员，未匹配写 `_unassigned`；set ID 有序、可多命中、只作 immutable tag。`internal` 固定 src 为本地业务选择，`transit/ambiguous` 不伪造 local/remote。
+
+同一内核实现 HMT 规范化和 §6 的有序六维纯函数；Geo 文件/override loader、snapshot object source/worker ACK、normalized consumer、固定 shard 聚合、spill/backpressure、ClickHouse base manifest 和 offset commit 仍属于 FLOW-03B，不能因为纯函数完成而宣称异步归类链路已完成。
+
 ### 步骤 5：Geo/ASN、业务和六维富化
 
 - tenant Geo override LPM 优先，否则查询与 event time 对齐的 `GeoIndex`；

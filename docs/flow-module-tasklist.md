@@ -101,6 +101,7 @@
 - [x] GPU collector 测试不再用固定 50/150ms 猜测后台进程完成，改为带 2s 上限的条件等待并在锁内读取结果。
 - [x] PB system updater 全部纳入 SystemManager 生命周期；Hub/test cleanup 在 DB teardown 前 cancel+join，新增 close/join 回归测试。
 - [x] legacy WebSocket enrollment 测试等待 PB 业务状态收敛，不再把 TCP/WebSocket 建连瞬间误当作认证与首轮采集完成。
+- [ ] **PLAT-00B test entrypoint 收敛**：当前 `internal/tests/hub.go` 只在 `testing` build tag 下提供 fixture，但无 tag 的 `internal/hub/api_test.go` 直接引用这些符号，导致标准 `go test ./...` 编译失败；统一测试 build constraint 或移除 helper 的非必要 tag，并把 CI 的 canonical 命令和需要 loopback socket 的执行权限写入测试契约。该问题不在 Flow 数据面包内顺带修改。
 
 - [ ] **设计**：盘点 PocketBase/hub、watchdog runtime、MySQL migration/init、现有 API、前端路由及部署拓扑，形成带代码位置的现状基线。
 - [ ] **编码**：建立 migration 版本规范、空库执行器和 init snapshot/parity 检查，不修改无关业务代码。
@@ -161,6 +162,7 @@
 
 - [x] **PLAT-03A registry expand 与兼容写**：落地 `collector_agents/collector_bindings/collector_plan_revisions`，复合 tenant/collector FK、desired/observed 分离、token/mTLS 互斥、ack/LKG/version 单调约束、单 active plan；回填 `target_agents`，现有 upsert/heartbeat/run/delete 在同一 transaction 双写，拒绝跨 tenant agent ID 接管。空库 001→018/rerun 和真实 MySQL 生命周期已验证。
 - [ ] **PLAT-03B registry authority cutover**：实现新 repository/DTO/filter/API 与多 binding 引用校验，迁移 `agent_run_history` FK 和旧读路径；上线前逐行核对 legacy/new identity、binding、desired/observed，灰度期禁止第二套无投影写入口，最终停止 `target_agents` 写并 contract 删除。
+  - [ ] **PLAT-03B1 credential authority 阻断修正**：当前 `target_agents` 兼容 upsert 会覆盖 `collector_agents.token_hash` 并递增同一个管理 `row_version`；在 token/mTLS 双窗口服务端接线前，必须把凭据唯一写权切到 collector registry，旧投影只同步非凭据兼容字段，并用并发轮换/legacy heartbeat/upsert 回归证明不会覆盖 active/pending credential。该项归平台任务，不在 Flow 数据面工作包中顺带改造。
 - [ ] **PLAT-03C enrollment、credential 与 plan 生命周期（父项）**：C1 plan repository core、固定分类失败 heartbeat/exact ACK、capability/runtime 周期 heartbeat 和 agent-side trust bundle 执行已完成；管理面 key registry/bundle 分发防回滚、enrollment/credential、fleet drift 与 rollout 仍未完成。
   - [x] **PLAT-03C1 plan repository core**：最大 4 MiB canonical JSON + SHA-256；Ed25519 envelope 绑定 plan/tenant/collector/version/schema/hash/key/effective interval/supersedes，只有验证后不可变值可入库。create 校验 schema/head/lineage；activate 以 collector+plan 双 row-version 在同事务 retire/activate/head/audit；服务端生成 activation/ACK 时间；ACK 精确匹配 active version/hash/expiry，只推进 ack/LKG/observed 且重复请求幂等。覆盖未验证签名、验证后篡改、非 canonical JSON、错误 ACK、退役 revision 复活、stale ETag、单 active、跨 tenant 读取、MySQL JSON 重格式化和 DB spec 篡改。
   - [ ] **PLAT-03C2 trust/enrollment/rollout 闭环**：agent 已执行本地 multi-key overlap/retiring/revoked、mTLS cert/key 热加载和 capability/runtime 周期 heartbeat，仍需 signing key registry、bundle 签名分发/防回滚与 fleet ACK；一次性 secret、token/mTLS 服务端双窗口及 revoke、capability drift；preview/canary/rollout、rollback 复制旧 spec 生成更高 version、expiry/kill switch。
@@ -450,6 +452,13 @@
 - [ ] **回归测试**：sFlow 现有 IPv4/IPv6/五元组字段与新解码结果对照，确认没有协议字段退化。
 
 ### FLOW-03 `watchdog-flow-dimension-worker` 与地址段异步归类
+
+当前状态：**进行中**。先交付不依赖管理面发布 API、Kafka consumer 或 ClickHouse 的纯数据面内核；平台 `PLAT-04A` 仍负责把管理态地址段/集合发布成不可变 bundle。
+
+- [x] **FLOW-03A immutable dimension/classification core**：`internal/flowdimension` 已实现最大 64 MiB 的 strict bundle、canonical SHA-256、canonical IPv4/IPv6 CIDR、不可变 BART 索引和 atomic event-time catalog；缺历史版本明确阻断，不套消费时最新版。local/remote 方向、业务标签、每 role 唯一 primary prefix 与 `_unassigned`、按业务 `in/out/both` 生效且有序的多 address-set tag、local+remote 最坏扩张发布上限均已实现；selector 成员在编译期按 prefix 预计算，record 热路径不扫描集合并由零 allocation 测试锁定。HMT 规范化和六维/unknown/internal/transit/ambiguous 有序纯函数已覆盖。该项不读取 MySQL、不提交 Kafka offset、不写 ClickHouse，不能替代 FLOW-03B。
+- [ ] **FLOW-03B worker/source/sink wiring**：接 `PLAT-04A` 的 object ref/checksum/worker ACK，消费 normalized Kafka，加载 GeoIndex，固定 shard 分钟汇聚、spill/backpressure、base manifest/CH 单事实提交和 offset commit；该项不得反向把 draft CRUD 或同步数据库查询接入逐 flow 热路径。
+
+2026-09-05 开发机非验收 microbenchmark（Apple M2、6 prefixes/4 enabled sets、只含两次 LPM + 预编译 set/方向归类）：约 `200 ns/record`，`0 B/op`、`0 allocs/op`。它不包含大规模 bundle cache 行为、Kafka decode/consume、Geo、分钟聚合、spill、CH insert 或 offset commit，不能替代 FLOW-03B/性能验收。
 
 - [ ] **设计**：冻结 normalized consumer、event-time snapshot、local/remote、primary prefix 守恒、address-set 非加和、Geo/ASN/六维、有界 shard/spill、lag 软硬水位、逐级背压和 offset 条件。
 - [ ] **编码**：实现 dimension worker、snapshot loader/LPM/selector、方向、地址段/set、Geo/ASN/ISP、业务/六维、分片汇聚、batch manifest 和 normalized commit。
