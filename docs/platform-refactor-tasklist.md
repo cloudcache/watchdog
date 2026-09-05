@@ -33,7 +33,8 @@
   - [x] target delete-preview：GET `/targets/{id}/delete-preview` 按随删/脱钩分列依赖（device/ports/agents/投影/历史/留存/VM series vs 聚合图/export），DeleteTarget 同事务清理投影孤儿且不触碰 registry 行；前端删除确认对话框展示影响清单；gated MySQL 全扇出实跑（commits 3fcaece8、753a9fc6）。
   - [x] 异步 operation job 运行时（017 表首次落地执行面）：幂等入队（tenant/type/key + request hash 冲突检测）、SKIP LOCKED 租约认领、过期接管（死 owner token 失效）、心跳续租+取消传播、退避重试/终态四路完成，全程 token 守卫；GET/cancel API；target DELETE 配置 job repo 时改为 202+job（重复 DELETE 复用同 job），worker 在 StartBackground 启动执行级联+VM 清理，前端轮询 job 至终态。gated MySQL：生命周期/竞争/接管/取消/worker 端到端（commit 2446a37b）。
   - [x] job 管理面：`GET /api/v1/operation-jobs` keyset 游标分页 + job_type/status 筛选；/jobs 管理页（类型/状态/尝试次数/错误详情、取消排队或运行中的 job、加载更多）。gated MySQL 分页+双筛选、API 参数映射测试（commit 250bd2ff）。
-  - 余项：可验证销毁（destruction receipt）、其余资源类删除推广。
+  - [x] 可验证销毁（destruction receipt）：target_delete payload 升 v2 携带 preview 影响摘要（入队捕获，不进幂等 hash），handler 成功后写 `target.destroyed` 审计回执（target id/actor=CreatedBy/影响计数/VM series matcher，ID 由 jobID 派生 + ON DUPLICATE 幂等，非 users actor 保留于 detail.actor），经 `/api/v1/audit-logs` 可查。gated MySQL 证明重试幂等/可查/内容/系统 actor 保留（commit 3b179535）。
+  - 余项：其余资源类删除推广（device/port/collector 走同一 preview→job→receipt 闭环）。
 
 ## P2 Query、图表、统计与导出
 
