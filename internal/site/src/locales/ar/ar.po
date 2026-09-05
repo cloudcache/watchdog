@@ -153,6 +153,14 @@ msgstr ""
 msgid "Access & Billing"
 msgstr ""
 
+#: src/components/routes/audit-logs.tsx
+msgid "Action"
+msgstr ""
+
+#: src/components/routes/audit-logs.tsx
+msgid "Action prefix, e.g. user."
+msgstr ""
+
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -179,6 +187,10 @@ msgstr "التنبيهات النشطة"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Active state"
 msgstr "الحالة النشطة"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Actor"
+msgstr ""
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
@@ -385,6 +397,10 @@ msgstr ""
 msgid "All discovered ports"
 msgstr ""
 
+#: src/components/routes/audit-logs.tsx
+msgid "All resources"
+msgstr ""
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "All Sets"
 msgstr ""
@@ -416,6 +432,12 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "هل أنت متأكد؟"
+
+#: src/components/navbar.tsx
+#: src/components/routes/audit-logs.tsx
+#: src/components/routes/audit-logs.tsx
+msgid "Audit Logs"
+msgstr ""
 
 #: src/components/routes/users.tsx
 msgid "Auth provider"
@@ -1210,6 +1232,7 @@ msgid "detached"
 msgstr ""
 
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/audit-logs.tsx
 msgid "Detail"
 msgstr "التفاصيل"
 
@@ -1729,6 +1752,7 @@ msgid "Failed to delete SNMP profile"
 msgstr ""
 
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Failed to delete target"
 msgstr ""
 
@@ -1781,6 +1805,10 @@ msgstr ""
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Failed to load aggregate series"
+msgstr ""
+
+#: src/components/routes/audit-logs.tsx
+msgid "Failed to load audit logs"
 msgstr ""
 
 #: src/components/routes/network-device.tsx
@@ -2408,6 +2436,10 @@ msgstr "متوسط التحميل 5 دقائق"
 #~ msgid "Load Avg"
 #~ msgstr "متوسط التحميل"
 
+#: src/components/routes/audit-logs.tsx
+msgid "Load more"
+msgstr ""
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Load state"
 msgstr "حالة التحميل"
@@ -2751,6 +2783,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
 #~ msgstr ""
+
+#: src/components/routes/audit-logs.tsx
+msgid "No audit records match the filters."
+msgstr ""
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -3420,6 +3456,7 @@ msgstr "تم الاستلام"
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/core.tsx
@@ -3478,6 +3515,7 @@ msgstr "إعادة تعيين كلمة المرور"
 msgid "Resolved"
 msgstr "تم حلها"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/permissions.tsx
 msgid "Resource"
@@ -3491,6 +3529,7 @@ msgstr ""
 #~ msgid "Resource Samples"
 #~ msgstr ""
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/permission-form.tsx
 msgid "Resource type"
 msgstr ""
@@ -4242,6 +4281,7 @@ msgstr "معدل نقل {extraFsName}"
 msgid "Throughput of root filesystem"
 msgstr "معدل نقل نظام الملفات الجذر"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/network-device.tsx
 msgid "Time"
 msgstr ""

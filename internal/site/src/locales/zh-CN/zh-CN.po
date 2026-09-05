@@ -153,6 +153,14 @@ msgstr "已接收"
 msgid "Access & Billing"
 msgstr ""
 
+#: src/components/routes/audit-logs.tsx
+msgid "Action"
+msgstr "操作"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Action prefix, e.g. user."
+msgstr "操作前缀,如 user."
+
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -179,6 +187,10 @@ msgstr "启用的警报"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Active state"
 msgstr "活动状态"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Actor"
+msgstr "操作者"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
@@ -385,6 +397,10 @@ msgstr ""
 msgid "All discovered ports"
 msgstr "全部已发现端口"
 
+#: src/components/routes/audit-logs.tsx
+msgid "All resources"
+msgstr "全部资源"
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "All Sets"
 msgstr ""
@@ -416,6 +432,12 @@ msgstr ""
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "您确定吗？"
+
+#: src/components/navbar.tsx
+#: src/components/routes/audit-logs.tsx
+#: src/components/routes/audit-logs.tsx
+msgid "Audit Logs"
+msgstr "审计日志"
 
 #: src/components/routes/users.tsx
 msgid "Auth provider"
@@ -1210,6 +1232,7 @@ msgid "detached"
 msgstr "脱钩保留"
 
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/audit-logs.tsx
 msgid "Detail"
 msgstr "详情"
 
@@ -1729,6 +1752,7 @@ msgid "Failed to delete SNMP profile"
 msgstr ""
 
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Failed to delete target"
 msgstr ""
 
@@ -1782,6 +1806,10 @@ msgstr ""
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Failed to load aggregate series"
 msgstr ""
+
+#: src/components/routes/audit-logs.tsx
+msgid "Failed to load audit logs"
+msgstr "加载审计日志失败"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load BGP metrics"
@@ -2408,6 +2436,10 @@ msgstr "5 分钟内的平均负载"
 #~ msgid "Load Avg"
 #~ msgstr "负载"
 
+#: src/components/routes/audit-logs.tsx
+msgid "Load more"
+msgstr "加载更多"
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Load state"
 msgstr "加载状态"
@@ -2751,6 +2783,10 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
 #~ msgstr ""
+
+#: src/components/routes/audit-logs.tsx
+msgid "No audit records match the filters."
+msgstr "没有匹配筛选条件的审计记录。"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -3420,6 +3456,7 @@ msgstr "接收"
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/core.tsx
@@ -3478,10 +3515,11 @@ msgstr "重置密码"
 msgid "Resolved"
 msgstr "已解决"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/permissions.tsx
 msgid "Resource"
-msgstr ""
+msgstr "资源"
 
 #: src/components/routes/permission-form.tsx
 msgid "Resource ID"
@@ -3491,9 +3529,10 @@ msgstr ""
 #~ msgid "Resource Samples"
 #~ msgstr ""
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/permission-form.tsx
 msgid "Resource type"
-msgstr ""
+msgstr "资源类型"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
@@ -4242,9 +4281,10 @@ msgstr "{extraFsName}的吞吐量"
 msgid "Throughput of root filesystem"
 msgstr "根文件系统的吞吐量"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/network-device.tsx
 msgid "Time"
-msgstr ""
+msgstr "时间"
 
 #: src/components/routes/settings/general.tsx
 msgid "Time format"

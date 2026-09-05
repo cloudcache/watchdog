@@ -22,6 +22,7 @@ type APIV1RouterConfig struct {
 	CollectorCredentials CollectorCredentialRepository
 	CollectorEnrollment  CollectorEnrollmentRepository
 	OperationJobs        OperationJobRepository
+	AuditLogs            AuditLogReader
 	Registries           *PlatformRegistries
 	TenantModules        TenantModuleRepository
 	FlowGeo              *FlowGeoService
@@ -160,6 +161,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.OperationJobs != nil {
 		registerOperationJobRoutes(mux, auth, cfg.OperationJobs)
+	}
+	if cfg.AuditLogs != nil {
+		registerAuditLogRoutes(mux, auth, cfg.AuditLogs)
 	}
 	if cfg.SNMP != nil {
 		registerSNMPRoutes(mux, auth, cfg.SNMP)

@@ -148,6 +148,14 @@ msgstr "Accepted"
 msgid "Access & Billing"
 msgstr "Access & Billing"
 
+#: src/components/routes/audit-logs.tsx
+msgid "Action"
+msgstr "Action"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Action prefix, e.g. user."
+msgstr "Action prefix, e.g. user."
+
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -174,6 +182,10 @@ msgstr "Active Alerts"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Active state"
 msgstr "Active state"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Actor"
+msgstr "Actor"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
@@ -380,6 +392,10 @@ msgstr "All Devices"
 msgid "All discovered ports"
 msgstr "All discovered ports"
 
+#: src/components/routes/audit-logs.tsx
+msgid "All resources"
+msgstr "All resources"
+
 #: src/components/routes/traffic-matrix.tsx
 msgid "All Sets"
 msgstr "All Sets"
@@ -411,6 +427,12 @@ msgstr "Archive"
 #: src/components/routes/settings/alerts-history-data-table.tsx
 msgid "Are you sure?"
 msgstr "Are you sure?"
+
+#: src/components/navbar.tsx
+#: src/components/routes/audit-logs.tsx
+#: src/components/routes/audit-logs.tsx
+msgid "Audit Logs"
+msgstr "Audit Logs"
 
 #: src/components/routes/users.tsx
 msgid "Auth provider"
@@ -1205,6 +1227,7 @@ msgid "detached"
 msgstr "detached"
 
 #: src/components/containers-table/containers-table.tsx
+#: src/components/routes/audit-logs.tsx
 msgid "Detail"
 msgstr "Detail"
 
@@ -1724,6 +1747,7 @@ msgid "Failed to delete SNMP profile"
 msgstr "Failed to delete SNMP profile"
 
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/target-detail.tsx
 msgid "Failed to delete target"
 msgstr "Failed to delete target"
 
@@ -1777,6 +1801,10 @@ msgstr "Failed to load aggregate graphs"
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Failed to load aggregate series"
 msgstr "Failed to load aggregate series"
+
+#: src/components/routes/audit-logs.tsx
+msgid "Failed to load audit logs"
+msgstr "Failed to load audit logs"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Failed to load BGP metrics"
@@ -2403,6 +2431,10 @@ msgstr "Load Average 5m"
 #~ msgid "Load Avg"
 #~ msgstr "Load Avg"
 
+#: src/components/routes/audit-logs.tsx
+msgid "Load more"
+msgstr "Load more"
+
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Load state"
 msgstr "Load state"
@@ -2746,6 +2778,10 @@ msgstr "No aggregate samples are available for the current selection."
 #: src/components/routes/network-device.tsx
 #~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
 #~ msgstr "No alerts. Threshold-based alerting is not yet configured for this device."
+
+#: src/components/routes/audit-logs.tsx
+msgid "No audit records match the filters."
+msgstr "No audit records match the filters."
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No BGP data in this range."
@@ -3415,6 +3451,7 @@ msgstr "Received"
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/core.tsx
@@ -3473,6 +3510,7 @@ msgstr "Reset Password"
 msgid "Resolved"
 msgstr "Resolved"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/permissions.tsx
 msgid "Resource"
@@ -3486,6 +3524,7 @@ msgstr "Resource ID"
 #~ msgid "Resource Samples"
 #~ msgstr "Resource Samples"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/permission-form.tsx
 msgid "Resource type"
 msgstr "Resource type"
@@ -4237,6 +4276,7 @@ msgstr "Throughput of {extraFsName}"
 msgid "Throughput of root filesystem"
 msgstr "Throughput of root filesystem"
 
+#: src/components/routes/audit-logs.tsx
 #: src/components/routes/network-device.tsx
 msgid "Time"
 msgstr "Time"

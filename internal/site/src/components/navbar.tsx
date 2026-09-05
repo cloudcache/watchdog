@@ -17,6 +17,7 @@ import {
 	HistoryIcon,
 	LayoutDashboardIcon,
 	LayersIcon,
+	ScrollTextIcon,
 	LibraryIcon,
 	LogOutIcon,
 	LogsIcon,
@@ -385,6 +386,9 @@ function AdminDropdownContent() {
 			</NavItem>
 			<NavItem href={getPagePath($router, "modules_admin")} icon={LayersIcon}>
 				<Trans>Modules</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "audit_logs")} icon={ScrollTextIcon}>
+				<Trans>Audit Logs</Trans>
 			</NavItem>
 			<DropdownMenuItem asChild>
 				<a href={prependBasePath("/_/#/logs")} target="_blank" rel="noreferrer">

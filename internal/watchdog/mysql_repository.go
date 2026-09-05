@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -311,7 +312,27 @@ func (s *MySQLStore) DeletePermission(ctx context.Context, tenantID ID, subjectT
 
 func (s *MySQLStore) CreateAuditLog(ctx context.Context, log AuditLog) error {
 	if log.ID == "" {
-		return errors.New("audit log id is required")
+		id, err := newIdentityID()
+		if err != nil {
+			return err
+		}
+		log.ID = id
+	}
+	// The actor FK targets users(id); system actors and identities that are
+	// not user projections would otherwise make the whole audit write vanish.
+	// Keep the record and preserve the raw actor in the detail instead.
+	if log.ActorID != "" {
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ?`, log.ActorID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if log.Detail == nil {
+				log.Detail = map[string]any{}
+			}
+			log.Detail["actor"] = string(log.ActorID)
+			log.ActorID = ""
+		}
 	}
 	detailJSON, err := json.Marshal(log.Detail)
 	if err != nil {
@@ -327,6 +348,115 @@ func (s *MySQLStore) CreateAuditLog(ctx context.Context, log AuditLog) error {
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?)
 	`, log.ID, log.TenantID, log.ActorID, log.Action, log.ResourceType, log.ResourceID, detailJSON, createdAt)
 	return err
+}
+
+// AuditLogFilter narrows and pages ListAuditLogs. Cursor is the opaque value
+// returned by the previous page.
+type AuditLogFilter struct {
+	ResourceType ResourceType
+	ResourceID   ID
+	ActorID      ID
+	Action       string // prefix match
+	Limit        int    // default 50, max 200
+	Cursor       string
+}
+
+func (s *MySQLStore) ListAuditLogs(ctx context.Context, tenantID ID, filter AuditLogFilter) ([]AuditLog, string, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	query := `
+		SELECT id, tenant_id, COALESCE(actor_id, ''), action, resource_type,
+			COALESCE(resource_id, ''), detail_json, created_at
+		FROM audit_logs
+		WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if filter.ResourceType != "" {
+		query += ` AND resource_type = ?`
+		args = append(args, filter.ResourceType)
+	}
+	if filter.ResourceID != "" {
+		query += ` AND resource_id = ?`
+		args = append(args, filter.ResourceID)
+	}
+	if filter.ActorID != "" {
+		query += ` AND actor_id = ?`
+		args = append(args, filter.ActorID)
+	}
+	if filter.Action != "" {
+		query += ` AND action LIKE ?`
+		args = append(args, escapeSQLLike(filter.Action)+"%")
+	}
+	if filter.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, cursorTime, cursorTime, cursorID)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var logs []AuditLog
+	for rows.Next() {
+		var log AuditLog
+		var detailJSON []byte
+		if err := rows.Scan(&log.ID, &log.TenantID, &log.ActorID, &log.Action,
+			&log.ResourceType, &log.ResourceID, &detailJSON, &log.CreatedAt); err != nil {
+			return nil, "", err
+		}
+		if len(detailJSON) > 0 {
+			_ = json.Unmarshal(detailJSON, &log.Detail)
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(logs) > limit {
+		logs = logs[:limit]
+		last := logs[len(logs)-1]
+		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
+	return logs, nextCursor, nil
+}
+
+func encodeAuditCursor(createdAt time.Time, id ID) string {
+	return base64.RawURLEncoding.EncodeToString(
+		[]byte(createdAt.UTC().Format(time.RFC3339Nano) + "|" + string(id)))
+}
+
+func decodeAuditCursor(cursor string) (time.Time, ID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", errors.New("audit cursor is invalid")
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, "", errors.New("audit cursor is invalid")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, "", errors.New("audit cursor is invalid")
+	}
+	return createdAt, ID(parts[1]), nil
+}
+
+func escapeSQLLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "%", `\%`)
+	return strings.ReplaceAll(value, "_", `\_`)
 }
 
 func encodeActionsJSON(actions []Action) ([]byte, error) {
