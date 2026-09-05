@@ -64,6 +64,7 @@
 
 ## 平台缺陷登记
 
+- [ ] **PLAT-04G long-running operation job progress/checkpoint**：表/repository 已有 `progress_done/checkpoint_json` 和 lease token 校验，但 `OperationJobHandler` 只收到租约时的静态 job，无法在处理页/分片后上报受租约保护的 progress/checkpoint；worker heartbeat 还会持续提交旧 `job.ProgressDone` 和 nil checkpoint。需提供 attempt-scoped reporter（绑定 job ID + lease token），原子 heartbeat/checkpoint、单调 progress、takeover 后从最新 checkpoint 恢复，并验证 cancel/lease-lost 后旧 attempt 不能再写。Flow reclass/export 等长作业在此能力完成前不得另造状态机，只能实现短原子 job 或纯契约。
 - [ ] **PLAT-04F global/system-scope operation job**：现有 `operation_jobs`/`operation_job_watermarks` 强制真实 `tenant_id` 外键，无法承载 Kafka partition、全局保留、跨 tenant receipt 等平台级作业。需冻结显式 `scope_type=tenant|system`、system actor/audit、幂等键命名域、查询权限、并发预算、水位和销毁语义；禁止伪造“系统 tenant”、去掉外键或让 Flow 复制 lease/retry 状态机。FLOW-04C3 ingest reconciliation 在该原语落地前只实现可独立验证的 receipt 契约。
 - [ ] **PLAT-04E hub metrics scrape 契约**：Flow rollup 运行在 hub，现有 collector/worker `/metrics` 无法承载；hub 的 Prometheus 文本只挂在需交互登录 session 的 `/api/v1/health/runtime/metrics`，不适合作为稳定 VM scrape target。平台需统一决定独立内网 `/metrics` 或 machine-auth scrape、TLS/ACL、provider registry、启动失败语义和部署发现；Flow 只提供无 tenant/bucket/job label 的可组合 provider，不另起第三个 HTTP server。
 - [ ] **PLAT-04A immutable dimension publication**：`dimension_snapshots` 目前只存在于平台设计文字，MySQL migration、repository、publish/rollback API 和引用保留均未实现；Flow worker 只能使用静态验签 bootstrap。完成前不得让 Flow 热路径回退查询 `address_prefixes/address_sets`，也不得把设计中的外键当成已存在 schema。

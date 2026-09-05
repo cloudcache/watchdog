@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06B1 — 历史重分类 job/守恒契约。** FLOW-06A 已无损保留 raw/supplier/customer 三层事实；本轮冻结 tenant/window/target publication/generation 的版本化 payload、base TTL 前置检查、checkpoint 与 count/counter/checksum 守恒结果。只实现可独立验证的 job/validator 契约，不在真实 CH 容量证据前选择高基数派生投影或新增表。
+**活动切片：FLOW-06A2 — raw 明细查询。** raw tuple 对全部 fact schema 都完整，本轮在现有有界 `flow_records FINAL` 明细查询中开放 raw view，并严格限制 raw 可见字段/过滤器、不应用 customer disposition。supplier 明细需要全窗 `fact_schema>=2` 完整性证据，留到独立切片；aggregate/reclass 继续不越过平台和真实 CH 门禁。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -176,6 +176,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-06A 回归/已提交**：提交 `3d63a5a7`；Flow race/vet、全库 test/vet、migration/native contract 与 diff check 全过，工作区不再残留该切片生产文件。
 - [ ] **FLOW-06A 外部门禁**：真实 CH 执行 001→005、v2/v3 worker 混跑与 cutover 后 supplier completeness；本机 9000/8123 未监听，不能由 SQL parser/fake executor 替代。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
+- [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。
 - [ ] **FLOW-06C 管理/导出**：复用平台 immutable publication、typed CRUD/审批/If-Match/audit 和 operation_jobs；异步导出执行权限/脱敏/配额/过期销毁，raw/supplier/customer 分权，不复制地址库 CRUD。
 
