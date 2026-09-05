@@ -1113,6 +1113,20 @@ CREATE TABLE IF NOT EXISTS `traffic_policy_defaults` (
   CONSTRAINT `traffic_policy_defaults_chk_5` CHECK ((`correction_max` >= `correction_min`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `user_preferences` (
+  `user_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `schema_version` smallint unsigned NOT NULL DEFAULT '1',
+  `settings_json` json NOT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`user_id`),
+  KEY `idx_user_preferences_tenant` (`tenant_id`,`updated_at`),
+  CONSTRAINT `fk_user_preferences_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_user_preferences_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `user_roles` (
   `user_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `role_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

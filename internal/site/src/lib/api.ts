@@ -184,22 +184,38 @@ export function logOut() {
 	pb.realtime.unsubscribe()
 }
 
-/** Fetch or create user settings in database */
+// User preferences live in MySQL (was the PocketBase user_settings
+// collection). row_version drives optimistic concurrency: it comes back in the
+// GET/PUT body and is echoed as the If-Match on the next write.
+let userPreferencesRowVersion = 0
+
+type UserPreferencesResponse = { settings?: UserSettings; row_version?: number }
+
+/** Fetch the current user's preferences from the database. */
 export async function updateUserSettings() {
 	try {
-		const req = await pb.collection("user_settings").getFirstListItem("", { fields: "settings" })
-		$userSettings.set(req.settings)
-		return
+		const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {})
+		userPreferencesRowVersion = res.row_version ?? 0
+		if (res.settings && Object.keys(res.settings).length > 0) {
+			$userSettings.set(res.settings)
+		}
 	} catch (e) {
-		console.error("get settings", e)
+		console.error("get preferences", e)
 	}
-	// create user settings if error fetching existing
-	try {
-		const createdSettings = await pb.collection("user_settings").create({ user: pb.authStore.record?.id })
-		$userSettings.set(createdSettings.settings)
-	} catch (e) {
-		console.error("create settings", e)
-	}
+}
+
+/** Merge and persist the current user's preferences to the database. */
+export async function saveUserPreferences(newSettings: Partial<UserSettings>): Promise<UserSettings> {
+	const merged = { ...$userSettings.get(), ...newSettings }
+	const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {
+		method: "PUT",
+		headers: userPreferencesRowVersion > 0 ? { "If-Match": `"${userPreferencesRowVersion}"` } : {},
+		body: merged,
+	})
+	userPreferencesRowVersion = res.row_version ?? userPreferencesRowVersion
+	const saved = res.settings ?? merged
+	$userSettings.set(saved)
+	return saved
 }
 
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {

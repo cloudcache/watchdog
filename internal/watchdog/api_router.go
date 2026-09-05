@@ -22,6 +22,7 @@ type APIV1RouterConfig struct {
 	DeviceDeletePreview    DeviceDeletePreviewRepository
 	PortDeletePreview      PortDeletePreviewRepository
 	CollectorDeletePreview CollectorDeletePreviewRepository
+	UserPreferences        UserPreferencesRepository
 	CollectorCredentials   CollectorCredentialRepository
 	CollectorEnrollment    CollectorEnrollmentRepository
 	OperationJobs          OperationJobRepository
@@ -134,6 +135,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.Permissions != nil {
 		registerPermissionRoutes(mux, auth, cfg.Permissions)
+	}
+	if cfg.UserPreferences != nil {
+		registerUserPreferencesRoutes(mux, auth, cfg.UserPreferences)
 	}
 	if cfg.IdentityAdmin != nil {
 		registerIdentityAdminRoutes(mux, auth, cfg.IdentityAdmin, cfg.Audit, cfg.Idempotency)
