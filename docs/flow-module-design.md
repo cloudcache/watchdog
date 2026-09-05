@@ -337,7 +337,7 @@ collector 健康由平台根据 heartbeat 派生：plan/LKG、Kafka buffer/failu
 
 FLOW-07A 的被动评分内核是纯函数边界：输入一个已关闭窗口的 normalized candidate 与一个已验证、不可变的 rule-set snapshot，输出可解释 `score/level/verdict/evidence` 和 `probe_recommended`；它不读 MySQL/CH/Kafka、不创建 job，也没有授权探测的能力。`probe_recommended=true` 仅表示评分和完整度达到门槛，平台调度仍必须重新检查 RBAC、目标范围、配额、cooldown 和 kill switch。
 
-candidate v1 字段固定覆盖 window/conversation key、local/remote IP、主协议和端口、双向 bytes、flow record/active bucket 数、最大时长、remote ASN/country/prefix、显式 transport hints、窗口完整度和 dimension snapshot。输入约束是：conversation key 为 canonical 32-byte hex，窗口递增且不超过 24h，IP 无 zone，record/bucket 数为正，ratio 在 `[0,1]`，country 为大写 ISO2，ID 使用稳定编码。双向行为定义为：
+candidate v1 字段固定覆盖 window/conversation key、local/remote IP、主协议和端口、双向 bytes、flow record/active bucket 数、最大时长、remote ASN/country/prefix、显式 transport hints、窗口完整度，以及 dimension snapshot/Geo/classification 三个事实版本。输入约束是：conversation key 为 canonical 32-byte hex，窗口递增且不超过 24h，IP 无 zone，record/bucket 数为正，ratio 在 `[0,1]`，country 为大写 ISO2，ID 使用稳定编码，classification version 大于零。评分结果原样携带三个事实版本和 rule-set version，finding 写入前不得丢失或改写 provenance。双向行为定义为：
 
 ```text
 symmetry = min(local_to_remote_bytes, remote_to_local_bytes)
@@ -351,7 +351,11 @@ dominance = 1 - symmetry
 
 规则 effect 为 `score/allow/suppress`。score weight 为 1..100，所有命中贡献求和并在 100 封顶，同时返回 `score_capped`；风险阈值满足 `0 < medium < high < critical <= 100`。allow/suppress 是不触发 probe 的 terminal rule，仍保留其它评分证据；多条 terminal 同时命中时按 priority DESC、同优先级 `suppress > allow`、再按 rule ID ASC 选唯一 decision rule。无 terminal 时，完整度不足返回 `incomplete_window`，分数不足返回 `below_threshold`，只有两项都通过才给出 `probe_candidate + probe_recommended`。证据按 rule ID 稳定排序，规则输入顺序不影响结果；历史 finding 永远记录 rule-set version。
 
-当前 001 `flow_vpn_candidates` DDL 尚缺 scorer 所需的 `remote_prefix_id`，也未保存 `geo_version/classification_version`；这属于 FLOW-07A candidate materializer 的前向 schema 门禁。接线前必须新增顺序 migration、回填/兼容测试和真实 CH 聚合证据，不能因纯评分代码已有字段就声称存储已完成。
+FLOW-07A2 只在已关闭、UTC 分钟对齐且不超过 24 小时的窗口运行。materializer 从 `flow_records FINAL` 读取 `disposition=count`、方向为 `in/out` 且 local/remote endpoint 有效的事实，按 `tenant + local_ip + remote_ip + dimension_snapshot_id + geo_version + classification_version` 分组；会话 key 是 tenant 与规范化 endpoint 对的 SHA-256，版本不混入会话身份，而是进入存储替换键。主协议、端口、remote ASN/country/prefix 必须由同一条事实的稳定 `argMax(estimated_valid, estimated_bytes, raw_bytes, event_time, record_id)` tuple 产生，禁止分别取 max 后拼成从未出现过的组合。
+
+双向 bytes 只累加 `estimated_valid=true` 的 `estimated_bytes`：`out` 为 local→remote，`in` 为 remote→local；未知采样事实仍计入 `flow_record_count/active_bucket_count` 和 evidence，但不把 raw bytes 混进估算口径。完整度为 `min(窗口内已有 1m _generation marker 数 / 预期分钟数, estimated_valid 事实数 / 全部事实数)`；quality record 数单列进入 versioned JSON evidence，不因 fallback 等非致命 flag 自动篡改完整度。当前 base fact 没有 DPI/L7 证据，materializer 只能由明确 IP protocol 6 生成 `tcp` hint，绝不由 443 端口猜 TLS，也不由 UDP/443 猜 QUIC；TLS/QUIC 只能由未来受支持 analyzer 的显式证据加入。
+
+顺序 migration 003 向 001 的已发布基线前向增加 `remote_prefix_id/geo_version/classification_version/row_kind`，并在保留原排序键完整前缀的基础上加入 row kind 与三个事实版本。每次 materialize 用一个同步 `INSERT SELECT ... UNION ALL` 原子写入全部 candidate 和内部 `_generation` marker；即使窗口为空也写 marker。相同请求使用稳定 dedup token；迟到或规则重算使用更大 generation。读取方必须先按 `tenant + window + rule_set_version + row_kind=_generation` 取得最新 generation，再只读该 generation 的 candidate，不能按剩余 candidate 求 max，否则空修复或候选消失后会泄漏旧行。001/002 不回改；旧行通过 `row_kind='candidate'` 默认值保持可读，但在没有对应 marker 时不属于新读取契约。
 
 ## 6. MySQL 管理契约
 
@@ -374,7 +378,7 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 
 ## 7. ClickHouse 5 张表
 
-完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
+完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker 契约。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
@@ -382,9 +386,9 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 | `flow_aggregate_1m` | 近期趋势/TopN | 关闭 bucket 异步重建；按 `generation` 取最新 |
 | `flow_aggregate_1h` | 长期趋势/TopN | 与 1m 同 schema，不从未关闭 1m 增量拼接 |
 | `flow_ingest_batches` | 每次 durable insert receipt | 不参与写前判断；只做 offset/count/checksum 审计 |
-| `flow_vpn_candidates` | 异步 VPN 候选 | 规则版本 + generation 替换，证据有 TTL |
+| `flow_vpn_candidates` | 异步 VPN 候选 | 事实三版本 + 规则版本隔离；marker 选最新 generation，证据有 TTL |
 
-DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID；禁止原地篡改已部署 migration。
+DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate；禁止原地篡改已部署 migration。
 
 `dimension_kind` 的公开 registry 固定为 `total/category/geo.continent/geo.region/geo.country/geo.province/geo.city/isp/asn/business/local_prefix/remote_prefix/address_set/src_ip/dst_ip/remote_port/protocol/observation_interface`；`_generation` 是不可查询的内部 marker。每次查询必须选一个公开 kind。`primary_prefix` 和每个单独 Geo level 在包含 `_unassigned` 时可与 `total` 对账；`address_set` 是重叠标签统计，不能与 `total` 对账；不同 Geo level 也不能彼此相加。1m/1h rollup 由异步 job 对单个 `tenant + 已关闭 bucket` 发出一次原子 `INSERT SELECT`，同一 generation 同时生成全部维度和 marker；迟到/修正以更大 generation 完整重建。查询先按 `tenant+bucket`（包括 marker）求最新 generation，再只读该 generation 的公开 kind，不能逐 key `argMax`，否则新版本已消失的旧 key 会残留。IPv4 写 IPv4-mapped IPv6，API 还原文本。
 

@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-07A2 — candidate schema/materializer。** FLOW-07B 独立 provider 核心已提交；真实 CH endpoint 镜像/IPv4-mapped/repair/TopN 守恒仍是外部门禁，UI/hub 接线仍归 FLOW-05C。本切片只以前向 CH migration 解除 candidate v1 字段缺口，再实现关闭窗口 materializer；不接 probe/job/管理面。
+**活动切片：FLOW-07A3 — candidate reader/scorer bridge 审计。** FLOW-07A2 的前向 schema、关闭窗口 materializer、空修复 marker 和评分 provenance 已提交；真实 CH 执行仍是外部门禁。本切片只审计并实现“最新 marker generation → typed candidate → immutable scorer result”的有界桥接，不接 probe/job/API/管理面。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -41,6 +41,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - 静态与本地回归：`go build ./...`、`go test ./...`、`go vet ./...`、Flow 定向 `go test -race`、EdgeManager Geo 导出 Python unit/compile、`git diff --check`。
 - 真实 MySQL：隔离空库执行 001→028 和二次幂等检查；验证 027 后旧表不存在；重复执行 028 可从已有 v1 job 回填最大 bucket 且不会覆盖更高水位；真实 operation-job worker 完成 initial + repair 两个 generation。测试临时库执行后已删除。
 - FLOW-07B：`f8beffaf feat(flow): add overseas KPI query core`；`go test -race ./internal/flowquery`、Flow 全范围 race、`go test ./...`、`go vet ./...`、`git diff --check` 通过。只读复核时 `127.0.0.1:8123` 未监听，因此没有把 fake executor 当作真实 CH 集成证据。
+- FLOW-07A2：`2e9d9474 feat(flow): materialize versioned VPN candidates`；003 前向 migration、原子 candidate+marker materializer、稳定 replay token、版本 provenance 已进入独立提交；Flow 全范围 race、`go test ./...`、`go vet ./...` 和文档 diff check 通过。真实 CH migration/聚合未执行，仍保留外部门禁。
 - 尚未具备的证据：真实 Kafka/CH、固定硬件压测和版本混跑，继续保留在 §5 外部门禁，不能由本轮本地通过替代。
 
 ## 3. 已完成实现与证据
@@ -164,12 +165,15 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 ### FLOW-07 Overseas/VPN
 
 - [x] **FLOW-07A 设计**：冻结 conversation/window 身份、双向计数、完整度、端口/协议/ASN/prefix/country/行为 evidence、versioned rule、score/level/verdict、terminal tie-break；被动建议不等于探测授权。
-- [x] **FLOW-07A 编码**：新增纯函数 candidate normalizer/scorer、schema v1 固定 match/effect registry、immutable canonical rule set 和 explainable evidence；未接 MySQL、hub、Kafka 或 probe job。
+- [x] **FLOW-07A 编码**：新增纯函数 candidate normalizer/scorer、schema v1 固定 match/effect registry、immutable canonical rule set 和 explainable evidence；增加关闭窗口 CH materializer，但未接 MySQL、hub、Kafka 或 probe job。
 - [x] **FLOW-07A 单元**：覆盖对称/单向、长连接/流量/复发、显式 TLS hint 且不由 443 猜测、ASN/prefix、allow/suppress 优先级、完整度 gate、阈值/封顶、输入变异隔离和非法 schema/candidate。
 - [ ] **FLOW-07A 集成**：真实 CH candidate 窗口聚合、迟到 generation、双向会话归一、完整度和 count/checksum 对账。
-- [x] **FLOW-07A 变更设计**：评分结果携带 rule-set version；规则升级生成新结果，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
+- [x] **FLOW-07A 变更设计**：candidate/评分结果携带 dimension snapshot、Geo、classification 和 rule-set 四类版本；规则升级生成新 generation/result，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
 - [ ] **FLOW-07A 变更测试**：本地已覆盖确定性 evidence/score、未知 schema 和规则顺序/输入修改；跨版本 CH 重算、publication 增删/回滚等待 candidate/platform 门禁。
-- [ ] **FLOW-07A schema 门禁**：001 candidate 缺 `remote_prefix_id/geo_version/classification_version`；实现 materializer 前新增顺序 migration 与兼容/回填测试，不回改已发布 migration。
+- [x] **FLOW-07A2 schema 门禁**：003 前向增加 `remote_prefix_id/geo_version/classification_version/row_kind` 并扩展 replacement key；001/002 未回改，旧行默认 candidate，新读取契约只接受有 marker 的 generation。
+- [x] **FLOW-07A2 materializer**：单条同步 `INSERT SELECT ... UNION ALL` 写候选和 `_generation`；空修复可推进 generation，版本不互相覆盖，同请求 dedup token 稳定；未知采样不混 raw/estimated，443 不推断 TLS/QUIC。
+- [x] **FLOW-07A2 单元/变更测试**：覆盖 UTC/闭窗/1m..24h、安全标识符、原子 marker、稳定主 tuple、双向计数、rollup/sampling 完整度、四类版本、永久/暂时 CH 错误和 authoritative generation read。
+- [x] **FLOW-07A2 已提交**：`2e9d9474`；代码和 migration 可由提交复现，本清单更新不把 fake executor 冒充真实 CH 集成。
 - [x] **FLOW-07A 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker`、同范围 `go vet` 与 `git diff --check` 通过。
 - [x] **FLOW-07B 设计**：冻结 classification `category=overseas` 权威、country/region 两级、所选层 `_unassigned` 独立 unknown Geo、方向确定 local/remote endpoint、IPv4-mapped family、TopN/other、版本和完整性口径；不由查询层按当前国家/HMT 设置重判历史。
 - [x] **FLOW-07B 编码**：新增独立 `CompileOverseas`/`OverseasRunner`；只读 latest-generation 1m/1h aggregate，复用 src/dst endpoint rollup生成 in/out/combined 与 ipv4/ipv6/unknown/all KPI，返回 country/region TopN 和 unknown Geo；不接 UI/hub、不扫 base、不新增表或 job。
