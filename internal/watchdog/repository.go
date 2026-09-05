@@ -27,6 +27,24 @@ type IdentityProjectionRepository interface {
 	IsUserTenantAdmin(ctx context.Context, tenantID, userID ID) (bool, error)
 }
 
+// IdentityAdminRepository backs the tenant-scoped user and role management
+// APIs (PLAT-01). Users are authorization projections: credentials live in the
+// external identity provider, so there is no password material here and
+// "deleting" a user disables the projection instead of dropping history.
+type IdentityAdminRepository interface {
+	ListTenantUsers(ctx context.Context, tenantID ID) ([]User, error)
+	GetTenantUser(ctx context.Context, tenantID, userID ID) (User, error)
+	CreateUser(ctx context.Context, user User) (User, error)
+	UpdateUser(ctx context.Context, user User) (User, error)
+	DisableUser(ctx context.Context, tenantID, userID ID) error
+	ListRoles(ctx context.Context, tenantID ID) ([]Role, error)
+	CreateRole(ctx context.Context, role Role) (Role, error)
+	UpdateRole(ctx context.Context, role Role) (Role, error)
+	DeleteRole(ctx context.Context, tenantID, roleID ID) error
+	ReplaceUserRoles(ctx context.Context, tenantID, userID ID, roleIDs []ID) error
+	ListUserRoleIDs(ctx context.Context, tenantID, userID ID) ([]ID, error)
+}
+
 type PermissionRepository interface {
 	ListPermissions(ctx context.Context, tenantID ID) ([]Permission, error)
 	ListPermissionsForUser(ctx context.Context, tenantID, userID ID) ([]Permission, error)

@@ -173,6 +173,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		Billing:             r.Store,
 		AggregateGraphs:     r.Store,
 		Permissions:         r.Store,
+		IdentityAdmin:       r.Store,
 		Retention:           r.Store,
 		SNMP:                r.Store,
 		SNMPDiscovery:       r.SNMPDiscovery,

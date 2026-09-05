@@ -13,11 +13,22 @@ type Tenant struct {
 }
 
 type User struct {
+	ID                ID
+	TenantID          ID
+	Email             string
+	Name              string
+	Status            string
+	AuthProvider      string
+	ExternalSubjectID string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type Role struct {
 	ID        ID
 	TenantID  ID
-	Email     string
 	Name      string
-	Status    string
+	Scope     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
