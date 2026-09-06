@@ -70,6 +70,16 @@ type Decoder struct {
 	idIntern         map[string]string
 	lastSamplerAddr  netip.Addr
 	lastSamplerBytes []byte
+	// fastSFlow selects the hand-written sFlow v5 framing decoder (reusing
+	// GoFlow2's ParseSampledHeader for the packet parse) over GoFlow2's pipe.
+	// sflowBacking/sflowMetadata are its reused outputs; sflow{AgentIP,SubAgent,
+	// Sequence} carry the datagram identity for the batch.
+	fastSFlow      bool
+	sflowBacking   []protoproducer.ProtoProducerMessage
+	sflowMetadata  []DecodedRecordMetadata
+	sflowAgentIP   netip.Addr
+	sflowSubAgent  uint32
+	sflowSequence  uint32
 }
 
 // maxInternedIDs bounds the collector/listener identity cache so hostile input
@@ -97,7 +107,7 @@ func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
 		return nil, fmt.Errorf("create GoFlow2 producer: %w", err)
 	}
 	metadata := newMetadataProducer(protoProducer, stateTTL)
-	decoder := &Decoder{producer: metadata, metadata: metadata, templates: templateStore, fastNetFlowV5: true}
+	decoder := &Decoder{producer: metadata, metadata: metadata, templates: templateStore, fastNetFlowV5: true, fastSFlow: true}
 	// No Format/Transport: with a nil format the pipe's formatSend is a no-op, so
 	// the pooled decode buffers are never marshalled. Decode reads them directly
 	// from the producer (zero-copy) instead of unmarshalling a transport payload.
@@ -209,6 +219,29 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 		}
 		d.recordPtrs = records
 		return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, 0, 0, netip.Addr{}, records, nil), nil
+	}
+
+	// Fast path: hand-written sFlow v5 framing decoder, reusing GoFlow2's hardened
+	// ParseSampledHeader for the untrusted packet parse. Produces the same
+	// FlowMessages + sample metadata as the slow path (TestSFlowFastMatchesGoFlow2)
+	// for the handled record types, and falls back to GoFlow2 for the rest.
+	if d.fastSFlow && flowType == goflowpb.FlowMessage_SFLOW_5 {
+		err = recoverDecoderPanic(func() error { return d.decodeSFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano())) })
+		if err == nil {
+			records := d.recordPtrs[:0]
+			for index := range d.sflowBacking {
+				records = append(records, &d.sflowBacking[index].FlowMessage)
+			}
+			d.recordPtrs = records
+			if len(records) != len(d.sflowMetadata) {
+				return DecodedBatch{}, errors.New("sflow fast path records and sample metadata are inconsistent")
+			}
+			return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.sflowSubAgent, d.sflowSequence, d.sflowAgentIP, records, d.sflowMetadata), nil
+		}
+		if !errors.Is(err, errSFlowFallback) {
+			return DecodedBatch{}, err
+		}
+		// Unhandled construct: fall through and let GoFlow2 decode this datagram.
 	}
 
 	message := &utils.Message{Src: source, Payload: raw.Payload, Received: receivedAt}
