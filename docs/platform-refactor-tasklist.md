@@ -147,6 +147,8 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **已提交门禁**：`f44d1978`、`4a079e4a`、`78a388b0`、`a4d7a823`、`f34b9786`、`59a6e5aa`、`87a98e83`、`9c613c10`、`1d442dfa`、`e8775c76`、`acbdd4a7`、`c241358a`。
 - [ ] **PLAT-04C2 Address Library 引用选择 UX**：把 Geo/operator/set 的原始 ID 输入改为服务端 searchable reference picker；不改表、不改 Flow 协议，独立做 UI/可用性验收，不能再反向打开 C1。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
+  - ✅ **编译路径已基线**（commit 2b762ec5，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie / 选择器集合 / per-address overlap benchmark + 常驻内存 tripwire；结论 prefix 与 set 编译均线性、无二次爆炸、~74 B/prefix；发现 `MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32（overlap 编译期封顶）。
+  - ⏳ **余项**：MMDB/IPDB 真实导入吞吐/峰值内存（导入解析在别处）、API body/result limit、真实百万级 corpus 端到端。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
