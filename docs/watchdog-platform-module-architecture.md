@@ -604,6 +604,31 @@ QueryGateway 按 descriptor 校验字段、做 resource/RBAC 过滤、限制序�
 
 `address_prefixes/address_sets` 是管理态，不能由采集热路径逐条查询 MySQL，也不能在配置修改时原地改变排队中 flow 的语义。core 增加不可变 dimension snapshot：
 
+地址库管理只保留一套平台 API/CRUD，内部明确分成四层，避免把“导入的百万行底图”和“人工编辑”混在一张可变表中：
+
+| 层 | 权威数据 | 写入方式 | 生命周期 |
+|---|---|---|---|
+| source artifact | 管理员上传的 MMDB/IPDB 原文件、sha256、格式/build epoch | 上传端点只做限额、落隔离区和格式探测，随后投递 `address_import` operation job | quarantined → importing → ready/failed；按引用和保留期清理 |
+| imported base | `address_base_prefixes` 中按 `import_id` 隔离的 canonical v4/v6 前缀及 Geo/ASN/运营商字段 | importer 流式解码、批量写新 import，成功后一次 CAS 切换 active import；绝不原地清空当前 active | immutable；未激活/失败 generation 可回收 |
+| draft override/set | `address_prefixes` 人工修正层、typed `address_sets`、`geo_dict/isp_operators/geo_lines` | 平台 typed CRUD + ETag；所有大批量变更先 preview 再原子 apply | 可编辑 draft，完整审计；不直接影响 worker |
+| publication | `dimension_snapshots` 引用的签名 bundle | validate/approve/publish；从明确 UTC 分钟生效 | immutable；按事实引用保留，可 retire/rollback |
+
+MMDB 使用成熟 Go reader 顺序枚举 network；IPDB reader负责格式/字段/语言校验，平台 importer 按其 trie 网络边界枚举，不以逐 IP 查询生成库。Geo 与 ASN 可各自拥有独立 active generation，也可上传 combined 库；发布编译器按两边区间边界做线性 overlay 后输出统一记录，不把两个来源的版本切换强绑成一次大事务。IPDB 的 `country_code/continent_code/china_admin_code/region_name/city_name/isp_domain/asn` 只写存在的 typed 字段，不用显示名冒充稳定 ID。上传请求本身不解析百万行、不持有数据库事务；operation job 按批次 checkpoint，最终切换 active import 的事务只包含状态和指针更新。
+
+所有地址输入共用一个服务端数学内核，接受 canonical/non-canonical CIDR、裸 IP 和 `start-end`，持久化前统一输出最小 canonical CIDR 集。任一坏值整体拒绝，禁止像旧 EdgeManager `filter_map` 一样静默丢行。运算语义固定为：
+
+- `union(A,B)`、`intersection(A,B)`、`difference(A,B)`；IPv4/IPv6 分族计算，跨族不相交；
+- `complement(A,U)=U-A` 必须显式给有限 `universe U`，不提供隐式 `0.0.0.0/0` 或 `::/0`；
+- `normalize/merge` 只合并重叠或真正相邻的区间，再转最小 CIDR，覆盖集合严格等于输入并集，绝不跨空洞；
+- “提升到 `/24`”是独立 `cover` 操作，不是 merge。它可能把 `/25` 或任意 range 扩大到包含它的 `/24`；preview 必须返回 `added_addresses_v4/v6`、结果条目数和 `requires_confirmation=true`，apply 必须携带 preview digest 与显式确认。IPv6 不套用 `/24`，目标前缀必须单独给出；
+- overlap lint 返回总冲突对数和有界明细；发布预览同时报告输入/规范化/输出前缀数、v4/v6 地址数、DAG 深度、selector evaluation 预算以及单 endpoint 最坏 address-set membership。超过编译上限只拒绝发布，不截断后继续。
+
+管理操作统一是 `draft read → preview → compare-and-apply → publish`。preview 纯计算且不落库；apply 使用 draft revision/ETag 和 preview digest，revision 已变化返回 412；导入、批量合并、覆盖提升和发布写 operation/audit，支持失败重试但不重复应用。列表必须后端分页/filter/search，前端统一使用带列筛选的 VTable；百万级 base 不允许全量返回浏览器。
+
+`address_sets.match_direction` 唯一允许 `in/out/both`，与 Flow 已归一化的业务方向一致；migration 038 将旧 `source` 显式迁移为 `out`、将手工 schema 中可能存在的 `destination` 迁移为 `in`。它不表示报文原始 src/dst，查询端若需要原始端点必须使用独立的 endpoint filter，禁止混用两套方向语义。
+
+地域/线路模型沿用 EdgeManager 已验证的稳定引用思路，但不连接或回写 EdgeManager：`geo_dict` 保存 `continent → region → country → province → city` 邻接树；稳定主键为 `id`，`(tenant, kind, code)` 是自然唯一键，允许不同层级复用诸如 `AS` 的代码。`isp_operators` 保存运营商/教育网/云/搜索等稳定 ID 与 ASN 列表，`geo_lines` 保存父子线路节点及可空的 `geo_selector/operator_id/address_set_id` 组合。线路选择器按根到叶累积约束，查询/发布按稳定 ID，名称只负责显示。地址库发布仍导出 watchdog 自己的 immutable bundle；Flow 热路径只加载 bundle 做内存 LPM/range lookup。
+
 ```sql
 CREATE TABLE dimension_snapshots (
   id CHAR(26) PRIMARY KEY,
@@ -641,6 +666,22 @@ flow-collect 只把 UDP datagram 封装为 RawFlow 写入唯一 Kafka topic；�
 
 ```text
 GET                      /api/v1/dimensions/address/versions
+GET                      /api/v1/address-prefixes?cursor=&q=&family=&source=&geo_leaf_id=&operator_id=&asn=
+POST                     /api/v1/address-prefixes
+PATCH/DELETE             /api/v1/address-prefixes/{id}              (If-Match)
+GET/POST                 /api/v1/address-sets
+GET/PATCH/DELETE         /api/v1/address-sets/{id}                   (If-Match)
+POST                     /api/v1/address-sets/actions/preview        (集合运算/规范化/cover)
+POST                     /api/v1/address-sets/actions/apply          (preview digest + confirm expansion)
+POST                     /api/v1/address-imports                     (multipart MMDB/IPDB)
+GET                      /api/v1/address-imports/{id}
+GET                      /api/v1/address-imports/{id}/prefixes?cursor=&q=&family=&country_code=&asn=
+GET                      /api/v1/address-imports/{id}/lookup?ip=
+POST                     /api/v1/address-imports/{id}/actions/activate
+GET/POST                 /api/v1/geo/dictionary
+GET/PATCH/DELETE         /api/v1/geo/dictionary/{id}                 (If-Match)
+GET/POST/PATCH/DELETE    /api/v1/network/operators[/{id}]
+GET/POST/PATCH/DELETE    /api/v1/geo/lines[/{id}]
 POST                     /api/v1/dimensions/address/preview
 POST                     /api/v1/dimensions/address/publish
 GET                      /api/v1/dimensions/address/versions/{version}
