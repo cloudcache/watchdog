@@ -48,6 +48,10 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	jointRunner, err := flowquery.NewJointRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registries, err := NewBuiltinPlatformRegistries()
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +60,7 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	providers := NewQueryProviderRegistry()
 	if err := providers.Register(QueryProviderRegistration{
 		Kind:     DatasetProviderClickHouse,
-		Provider: ClickHouseFlowQueryProvider{Runner: runner, Readiness: native},
+		Provider: ClickHouseFlowQueryProvider{Runner: runner, JointRunner: jointRunner, Readiness: native},
 		Enabled:  true, MaxConcurrent: 2,
 	}); err != nil {
 		t.Fatal(err)
@@ -98,5 +102,35 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		len(response.Data.Points) != 0 || response.Data.RollupCompleteness.ExpectedBuckets != 1 ||
 		response.Data.RollupCompleteness.CoveredBuckets != 0 || !response.Meta.Partial || response.Meta.Source != "clickhouse" {
 		t.Fatalf("response=%+v", response)
+	}
+
+	jointBody := map[string]any{
+		"dataset": FlowTrafficDataset, "from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:02:00Z",
+		"step_seconds": 0, "limit": 10, "value_layer": "customer",
+		"parameters": map[string]any{
+			"metric": "estimated_bps", "dimensions": []string{"geo.country", "asn"}, "top_n": 2,
+			"include_other": true, "timezone": "UTC", "target_points": 300,
+		},
+	}
+	encoded, err = json.Marshal(jointBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/query", bytes.NewReader(encoded)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("joint status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var jointResponse struct {
+		Data flowquery.JointResult `json:"data"`
+		Meta QueryResultMeta       `json:"meta"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &jointResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(jointResponse.Data.Points) != 0 || jointResponse.Data.Plan.Source != "flow_records" ||
+		jointResponse.Data.Plan.StepSeconds != 60 || jointResponse.Meta.StepSeconds != 60 ||
+		!jointResponse.Meta.Partial || jointResponse.Meta.Source != "clickhouse" {
+		t.Fatalf("joint response=%+v", jointResponse)
 	}
 }

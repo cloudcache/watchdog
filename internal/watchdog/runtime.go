@@ -165,10 +165,15 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 				_ = runtime.Close()
 				return nil, fmt.Errorf("initialize Flow query runner: %w", runnerErr)
 			}
+			jointRunner, runnerErr := flowquery.NewJointRunner(runtime.flowClickHouseNative)
+			if runnerErr != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow joint-query runner: %w", runnerErr)
+			}
 			if err := runtime.QueryProviders.Register(QueryProviderRegistration{
 				Kind: DatasetProviderClickHouse,
 				Provider: ClickHouseFlowQueryProvider{
-					Runner: runner, Readiness: runtime.flowClickHouseNative, Network: store,
+					Runner: runner, JointRunner: jointRunner, Readiness: runtime.flowClickHouseNative, Network: store,
 				},
 				Enabled: true, MaxConcurrent: uint32(cfg.QueryGateway.ClickHouseConcurrent),
 			}); err != nil {

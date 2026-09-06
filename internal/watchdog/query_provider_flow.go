@@ -18,6 +18,10 @@ type flowAggregateRunner interface {
 	Run(context.Context, flowquery.Compiled) (flowquery.Result, error)
 }
 
+type flowJointRunner interface {
+	Run(context.Context, flowquery.CompiledJoint) (flowquery.JointResult, error)
+}
+
 type flowQueryReadiness interface {
 	Ready(context.Context) error
 }
@@ -27,20 +31,22 @@ type flowQueryReadiness interface {
 // Tenant, time range and value layer always come from the authenticated
 // envelope; clients cannot smuggle them through provider parameters.
 type ClickHouseFlowQueryProvider struct {
-	Runner    flowAggregateRunner
-	Readiness flowQueryReadiness
-	Network   NetworkRepository
-	Now       func() time.Time
+	Runner      flowAggregateRunner
+	JointRunner flowJointRunner
+	Readiness   flowQueryReadiness
+	Network     NetworkRepository
+	Now         func() time.Time
 }
 
 type flowAggregateQueryParameters struct {
-	Metric       flowquery.Metric    `json:"metric"`
-	Dimension    flowquery.Dimension `json:"dimension"`
-	Filters      flowquery.Filters   `json:"filters,omitempty"`
-	TopN         uint16              `json:"top_n"`
-	IncludeOther bool                `json:"include_other"`
-	Timezone     string              `json:"timezone,omitempty"`
-	TargetPoints uint16              `json:"target_points,omitempty"`
+	Metric       flowquery.Metric      `json:"metric"`
+	Dimension    flowquery.Dimension   `json:"dimension,omitempty"`
+	Dimensions   []flowquery.Dimension `json:"dimensions,omitempty"`
+	Filters      flowquery.Filters     `json:"filters,omitempty"`
+	TopN         uint16                `json:"top_n"`
+	IncludeOther bool                  `json:"include_other"`
+	Timezone     string                `json:"timezone,omitempty"`
+	TargetPoints uint16                `json:"target_points,omitempty"`
 }
 
 func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
@@ -61,16 +67,19 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if err != nil {
 		return QueryProviderResult{}, err
 	}
+	view, err := flowView(request.ValueLayer)
+	if err != nil {
+		return QueryProviderResult{}, err
+	}
+	if len(parameters.Dimensions) > 0 {
+		return p.queryJoint(ctx, request, parameters, view)
+	}
 	plan, err := flowquery.PlanAggregate(
 		request.From, request.To, time.Duration(request.StepSeconds)*time.Second,
 		parameters.TargetPoints, p.now(),
 	)
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
-	}
-	view, err := flowView(request.ValueLayer)
-	if err != nil {
-		return QueryProviderResult{}, err
 	}
 	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval, Metric: parameters.Metric,
@@ -123,6 +132,55 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	}, nil
 }
 
+func (p ClickHouseFlowQueryProvider) queryJoint(
+	ctx context.Context,
+	request QueryProviderRequest,
+	parameters flowAggregateQueryParameters,
+	view flowquery.View,
+) (QueryProviderResult, error) {
+	if p.JointRunner == nil {
+		return QueryProviderResult{}, ErrQueryProviderUnavailable
+	}
+	compiled, err := flowquery.CompileJoint(flowquery.Scope{
+		TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view},
+	}, flowquery.JointRequest{
+		From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
+		TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: parameters.Dimensions,
+		Filters: parameters.Filters, View: view, TopN: parameters.TopN,
+		IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
+	}, p.now())
+	if err != nil {
+		return QueryProviderResult{}, mapFlowQueryError(err)
+	}
+	if compiled.EstimatedRows > uint64(request.Limit) {
+		return QueryProviderResult{}, &QueryGatewayError{
+			Code: QueryErrorRowLimit, Message: "Flow joint result exceeds the query row limit",
+			Details: map[string]any{"max_result_rows": request.Limit, "estimated_result_rows": compiled.EstimatedRows},
+		}
+	}
+	result, err := p.JointRunner.Run(ctx, compiled)
+	if err != nil {
+		return QueryProviderResult{}, mapFlowQueryError(err)
+	}
+	if uint64(len(result.Points)) > uint64(request.Limit) {
+		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "Flow joint result exceeds the query row limit"}
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return QueryProviderResult{}, fmt.Errorf("marshal Flow joint-query result: %w", err)
+	}
+	from, to := compiled.From, compiled.To
+	return QueryProviderResult{
+		Data: data, Unit: result.Metric.Unit, Timezone: compiled.Timezone, StepSeconds: result.Plan.StepSeconds,
+		AsOf: flowJointResultAsOf(result.Points, p.now()), Versions: flowJointResultVersions(result.Points),
+		Completeness: QueryCompleteness{
+			AvailableFrom: &from, AvailableTo: &to, CompleteRatio: 1, Partial: true,
+			UnknownRatio: flowJointUnknownSamplingRatio(result.Points),
+			Warnings:     []string{"joint result is a bounded flow_records scan; end-to-end ingest coverage is not independently proven"},
+		},
+	}, nil
+}
+
 func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth AuthContext, request QueryProviderRequest) error {
 	if auth.IsAdmin {
 		return nil
@@ -160,6 +218,9 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 	}
 	if err := ensureDashboardJSONEOF(decoder); err != nil {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid Flow query parameters", Cause: err}
+	}
+	if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "exactly one of dimension or dimensions is required"}
 	}
 	return parameters, nil
 }
@@ -209,6 +270,18 @@ func flowUnknownSamplingRatio(points []flowquery.Point) float64 {
 	return float64(unknown) / float64(received)
 }
 
+func flowJointUnknownSamplingRatio(points []flowquery.JointPoint) float64 {
+	var received, unknown uint64
+	for _, point := range points {
+		received += point.ReceivedRecords
+		unknown += point.UnknownSamplingRecords
+	}
+	if received == 0 {
+		return 0
+	}
+	return float64(unknown) / float64(received)
+}
+
 func flowResultAsOf(points []flowquery.Point, fallback time.Time) time.Time {
 	asOf := time.Time{}
 	for _, point := range points {
@@ -222,7 +295,44 @@ func flowResultAsOf(points []flowquery.Point, fallback time.Time) time.Time {
 	return asOf.UTC()
 }
 
+func flowJointResultAsOf(points []flowquery.JointPoint, fallback time.Time) time.Time {
+	asOf := time.Time{}
+	for _, point := range points {
+		if point.ObservedAt.After(asOf) {
+			asOf = point.ObservedAt
+		}
+	}
+	if asOf.IsZero() {
+		asOf = fallback
+	}
+	return asOf.UTC()
+}
+
 func flowResultVersions(points []flowquery.Point) map[string]string {
+	versions := map[string]map[string]struct{}{
+		"dimension_snapshot_id": {}, "geo_version": {}, "classification_version": {},
+	}
+	for _, point := range points {
+		versions["dimension_snapshot_id"][point.DimensionSnapshotID] = struct{}{}
+		versions["geo_version"][point.GeoVersion] = struct{}{}
+		versions["classification_version"][strconv.FormatUint(uint64(point.ClassificationVersion), 10)] = struct{}{}
+	}
+	result := make(map[string]string, len(versions))
+	for key, values := range versions {
+		if len(values) != 1 {
+			continue
+		}
+		for value := range values {
+			result[key] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func flowJointResultVersions(points []flowquery.JointPoint) map[string]string {
 	versions := map[string]map[string]struct{}{
 		"dimension_snapshot_id": {}, "geo_version": {}, "classification_version": {},
 	}

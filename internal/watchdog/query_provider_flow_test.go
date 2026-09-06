@@ -16,6 +16,17 @@ type flowAggregateRunnerStub struct {
 	err      error
 }
 
+type flowJointRunnerStub struct {
+	compiled flowquery.CompiledJoint
+	result   flowquery.JointResult
+	err      error
+}
+
+func (s *flowJointRunnerStub) Run(_ context.Context, compiled flowquery.CompiledJoint) (flowquery.JointResult, error) {
+	s.compiled = compiled
+	return s.result, s.err
+}
+
 func (s *flowAggregateRunnerStub) Run(_ context.Context, compiled flowquery.Compiled) (flowquery.Result, error) {
 	s.compiled = compiled
 	return s.result, s.err
@@ -113,6 +124,45 @@ func TestClickHouseFlowQueryProviderAutomaticallyPlansDisplayDensityAndSource(t 
 	}
 	if decoded.Plan == nil || decoded.Plan.Source != flowquery.BucketOneHour || decoded.Plan.StepSeconds != 3600 || decoded.Plan.TargetPoints != 300 {
 		t.Fatalf("response plan=%+v", decoded.Plan)
+	}
+}
+
+func TestClickHouseFlowQueryProviderRunsBoundedTrueJointQuery(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	joint := &flowJointRunnerStub{result: flowquery.JointResult{
+		Points: []flowquery.JointPoint{{
+			Bucket: now.Add(-time.Hour), DimensionValues: []string{"CN", "4134"},
+			DimensionSnapshotID: "snapshot-1", GeoVersion: "geo-1", ClassificationVersion: 2,
+			Value: 800, ReceivedRecords: 10, UnknownSamplingRecords: 1, ObservedAt: now.Add(-time.Minute),
+		}},
+		Metric: flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimensions: []flowquery.DimensionDefinition{
+			{Kind: flowquery.DimensionGeoCountry, Additive: true}, {Kind: flowquery.DimensionASN, Additive: true},
+		},
+		Plan: flowquery.JointPlan{
+			RequestedFrom: now.Add(-time.Hour), RequestedTo: now, EffectiveFrom: now.Add(-time.Hour), EffectiveTo: now,
+			Source: "flow_records", StepSeconds: 60, TargetPoints: 300, MaxRangeSeconds: 86_400,
+		},
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: &flowAggregateRunnerStub{}, JointRunner: joint, Readiness: flowReadinessStub{}, Now: func() time.Time { return now },
+	}
+	result, err := provider.Query(context.Background(), QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: now.Add(-time.Hour), To: now,
+		Limit: 10_000, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{"metric":"estimated_bps","dimensions":["geo.country","asn"],"top_n":20,"include_other":true,"target_points":300}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(joint.compiled.Dimensions) != 2 || joint.compiled.Dimensions[0].Kind != flowquery.DimensionGeoCountry ||
+		result.StepSeconds != 60 || !result.Completeness.Partial || result.Completeness.CompleteRatio != 1 ||
+		result.Completeness.UnknownRatio != 0.1 || len(result.Completeness.Warnings) != 1 {
+		t.Fatalf("compiled=%+v result=%+v", joint.compiled, result)
+	}
+	var decoded flowquery.JointResult
+	if err := json.Unmarshal(result.Data, &decoded); err != nil || len(decoded.Points) != 1 || decoded.Points[0].DimensionValues[1] != "4134" {
+		t.Fatalf("data=%s err=%v", result.Data, err)
 	}
 }
 

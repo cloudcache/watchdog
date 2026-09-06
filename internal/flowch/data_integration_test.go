@@ -30,6 +30,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	first := integrationRecord(1, bucket.Add(10*time.Second), "geo-city-a", 100)
 	second := integrationRecord(2, bucket.Add(20*time.Second), "geo-city-a", 200)
 	third := integrationRecord(3, bucket.Add(30*time.Second), "geo-city-b", 50)
+	first.RemoteASN, second.RemoteASN, third.RemoteASN = 4134, 4134, 4837
 	insertIntegrationBatch(t, ctx, native, integrationBatch(10, bucket.Add(2*time.Minute), first, second, third))
 
 	initial := RollupRequest{
@@ -69,7 +70,29 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	})
 
 	late := integrationRecord(4, bucket.Add(40*time.Second), "geo-city-b", 500)
+	late.RemoteASN = 4837
 	insertIntegrationBatch(t, ctx, native, integrationBatch(11, bucket.Add(4*time.Minute), late))
+	jointRunner, err := flowquery.NewJointRunner(native.executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jointQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
+		Dimensions: []flowquery.Dimension{flowquery.DimensionGeoCity, flowquery.DimensionASN},
+		View:       flowquery.ViewCustomer, TopN: 1, IncludeOther: true, TargetPoints: 300, Timezone: "UTC",
+	}, bucket.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jointResult, err := jointRunner.Run(ctx, jointQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jointResult.Points) != 2 || jointResult.Points[0].DimensionValues[0] != "geo-city-b" ||
+		jointResult.Points[0].DimensionValues[1] != "4837" || jointResult.Points[0].Value != 550 ||
+		!jointResult.Points[1].Other || jointResult.Points[1].Value != 300 {
+		t.Fatalf("true joint tuple result=%+v", jointResult)
+	}
 	repair := initial
 	repair.Generation = 2
 	repair.GeneratedAt = bucket.Add(5 * time.Minute)

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { buildFlowSeries, parseFlowFilter, resolveFlowTimeRange } from "./flow-explorer-model.ts"
+import { buildFlowJointSeries, buildFlowSeries, parseFlowFilter, resolveFlowTimeRange } from "./flow-explorer-model.ts"
 
 test("flow ranges are independent presets and custom ranges are minute-aligned", () => {
 	const now = new Date("2026-09-06T12:37:45Z")
@@ -56,4 +56,75 @@ test("flow series statistics use actual final bucket duration", () => {
 	assert.equal(series.maximum, 800)
 	assert.equal(series.last, 400)
 	assert.equal(series.p95, 800)
+})
+
+test("joint series preserves ordered tuple paths from the same facts", () => {
+	const series = buildFlowJointSeries(
+		[
+			{
+				bucket: "2026-09-06T10:00:00Z",
+				dimension_values: ["CN", "4134"],
+				other: false,
+				value: 800,
+				dimension_snapshot_id: "snapshot-1",
+				geo_version: "geo-1",
+				classification_version: 1,
+				received_records: 2,
+				unknown_sampling_records: 0,
+				quality_records: 0,
+				observed_at: "2026-09-06T10:01:00Z",
+			},
+		],
+		{
+			requested_from: "2026-09-06T10:00:00Z",
+			requested_to: "2026-09-06T10:01:00Z",
+			effective_from: "2026-09-06T10:00:00Z",
+			effective_to: "2026-09-06T10:01:00Z",
+			source: "flow_records",
+			step_seconds: 60,
+			target_points: 300,
+		},
+		"bits_per_second"
+	)[0]
+	assert.deepEqual(series.path, ["CN", "4134"])
+	assert.equal(series.label, "CN → 4134")
+	assert.equal(series.sankeyValue, 800)
+})
+
+test("missing tuple buckets are zero-filled for last and weighted average", () => {
+	const series = buildFlowSeries(
+		[
+			{
+				bucket: "2026-09-06T10:00:00Z",
+				dimension_value: "CN",
+				other: false,
+				value: 800,
+				dimension_snapshot_id: "snapshot-1",
+				geo_version: "geo-1",
+				classification_version: 1,
+				received_records: 1,
+				unknown_sampling_records: 0,
+				quality_records: 0,
+				generated_at: "2026-09-06T10:01:00Z",
+			},
+		],
+		{
+			requested_from: "2026-09-06T10:00:00Z",
+			requested_to: "2026-09-06T10:02:00Z",
+			effective_from: "2026-09-06T10:00:00Z",
+			effective_to: "2026-09-06T10:02:00Z",
+			source: "1m",
+			source_seconds: 60,
+			step_seconds: 60,
+			target_points: 300,
+		},
+		"bits_per_second"
+	)[0]
+	assert.deepEqual(series.values, [
+		{ time: Date.parse("2026-09-06T10:00:00Z"), value: 800 },
+		{ time: Date.parse("2026-09-06T10:01:00Z"), value: 0 },
+	])
+	assert.equal(series.last, 0)
+	assert.equal(series.average, 400)
+	assert.equal(series.sankeyValue, 400)
 })

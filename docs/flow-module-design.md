@@ -536,7 +536,9 @@ tenant 不属于客户端 QueryRequest，由已认证 scope 单独注入 compile
 - TopN 为 1..100，稳定顺序是值 DESC，再按 dimension ID 和三个版本字段 ASC；`total` 要求 TopN=1。点数乘 `(TopN + other)` 超过 250,000 时在查询前拒绝，CH 同时设置 15 秒、25 万结果行、5,000 万扫描行硬限并以 `throw` 结束，不能静默截断；
 - `timezone` 只控制 API/前端显示，CH bucket 始终 UTC。
 
-Flow Explorer 的目标查询状态包含 range/custom start-end、metric、ordered dimensions、typed filter、TopN/Other、target points、graph type 和 value layer，并编码进 URL。首个 aggregate provider 当前只实现一个 dimension 的时间序列，支持折线/堆叠/热力/表格；其过滤编辑器当前只把 `direction/category/business/target/device/exporter/dimension` 的 `=`/`IN` 表达式编译成已有 typed filter 对象。桑基和真正的多维序列必须新增联合维度 compiler/runner：现有 `dimension_kind + dimension_value` 单维 rollup 不保留两个高基数维度间的相关性，不能用两次单维查询拼接。联合查询应优先使用预配置异步联合索引，缺失时按 [Flow 地址查询方案](flow-address-query-plan.md) 在有界窗口回落 `flow_records`；其 SQL、扫描预算、tuple TopN/Other、权限和 all-or-nothing runner 单列门禁。
+Flow Explorer 的查询状态包含 range/custom start-end、metric、1–4 个 ordered dimensions、typed filter、TopN/Other、target points、graph type 和 value layer，并编码进 URL。单维查询读 1m/1h aggregate，支持折线/堆叠/热力/表格；2–4 维查询由独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成真实有序 tuple，支持同样的时间序列和桑基，绝不把多次单维 TopN 在浏览器拼接。同步 joint v1 固定为 customer/count、UTC 分钟边界、最长 24h、TopN 1..100、最多 4 维和 5,000 万扫描行/4 GiB 扫描/4 GiB 内存/15 秒；`total/address_set` 暂不属于 base joint registry，前者无信息增益，后者重叠多归属必须由显式异步索引定义。长于 24h 或需要 address-set path 的查询必须命中未来的预配置异步联合索引，否则稳定拒绝，不能静默换成单维口径。joint 响应声明 `source=flow_records`，并因 base 尚无独立闭桶 coverage marker 而返回 partial warning，不能伪报端到端完整。其新增仅为查询代码，不新增状态或表，故本切片没有伪造一个空 migration；联合索引落地时必须用独立 forward-only migration。
+
+当前过滤编辑器只把 `direction/category/business/target/device/exporter/dimension` 的 `=`/`IN` 表达式编译成已有 typed filter 对象；joint 模式会拒绝语义不明确的裸 `dimension_values`。完整过滤生命周期仍需服务端 named-dimension AST/validate/complete/canonical，联合索引应优先服务预配置常用组合，缺失时按 [Flow 地址查询方案](flow-address-query-plan.md) 在上述有界窗口回落 `flow_records`。
 
 aggregate schema v1 只物化 `customer` view；`raw/supplier` 请求必须返回稳定的 `unsupported` 错误，不能把 customer 结果换个标签返回。FLOW-06 只有在 base/rollup 增加可验证的并行 provenance 或 versioned reclass generation 后才能开放另外两个 view。
 

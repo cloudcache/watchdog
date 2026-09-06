@@ -12,19 +12,36 @@ export type FlowPoint = {
 	generated_at: string
 }
 
+export type FlowJointPoint = {
+	bucket: string
+	dimension_values: string[]
+	other: boolean
+	value: number
+	dimension_snapshot_id: string
+	geo_version: string
+	classification_version: number
+	received_records: number
+	unknown_sampling_records: number
+	quality_records: number
+	observed_at: string
+}
+
 export type FlowPlan = {
 	requested_from: string
 	requested_to: string
 	effective_from: string
 	effective_to: string
-	source: "1m" | "1h"
-	source_seconds: number
+	source: "1m" | "1h" | "flow_records"
+	source_seconds?: number
 	step_seconds: number
 	target_points: number
+	max_range_seconds?: number
 }
 
 export type FlowSeries = {
 	name: string
+	label: string
+	path: string[]
 	values: { time: number; value: number }[]
 	minimum: number
 	maximum: number
@@ -35,6 +52,7 @@ export type FlowSeries = {
 	receivedRecords: number
 	unknownSamplingRecords: number
 	qualityRecords: number
+	sankeyValue: number
 }
 
 export type FlowFilters = {
@@ -126,15 +144,47 @@ export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFil
 }
 
 export function buildFlowSeries(points: FlowPoint[], plan: FlowPlan | undefined, unit: string): FlowSeries[] {
-	const grouped = new Map<string, FlowPoint[]>()
+	return buildSeries(
+		points.map((point) => ({ ...point, path: [point.other ? "Other" : point.dimension_value] })),
+		plan,
+		unit
+	)
+}
+
+export function buildFlowJointSeries(points: FlowJointPoint[], plan: FlowPlan | undefined, unit: string): FlowSeries[] {
+	return buildSeries(
+		points.map((point) => ({ ...point, path: point.dimension_values.map((value) => (point.other ? "Other" : value)) })),
+		plan,
+		unit
+	)
+}
+
+type SeriesPoint = Pick<
+	FlowPoint,
+	| "bucket"
+	| "other"
+	| "value"
+	| "dimension_snapshot_id"
+	| "geo_version"
+	| "classification_version"
+	| "received_records"
+	| "unknown_sampling_records"
+	| "quality_records"
+> & { path: string[] }
+
+function buildSeries(points: SeriesPoint[], plan: FlowPlan | undefined, unit: string): FlowSeries[] {
+	const grouped = new Map<string, { path: string[]; version: string; rows: SeriesPoint[] }>()
 	for (const point of points) {
-		const version = `${point.dimension_snapshot_id}|${point.geo_version}|${point.classification_version}`
-		const name = `${point.other ? "Other" : point.dimension_value}|${version}`
-		grouped.set(name, [...(grouped.get(name) ?? []), point])
+		const version = `${point.dimension_snapshot_id}/${point.geo_version}/${point.classification_version}`
+		const key = JSON.stringify([point.path, version])
+		const current = grouped.get(key) ?? { path: point.path, version, rows: [] }
+		current.rows.push(point)
+		grouped.set(key, current)
 	}
-	return [...grouped.entries()].map(([versionedName, rows]) => {
+	return [...grouped.values()].map(({ path, version, rows }) => {
 		const sorted = rows.slice().sort((a, b) => Date.parse(a.bucket) - Date.parse(b.bucket))
-		const values = sorted.map((row) => row.value)
+		const plottedValues = fillSeriesValues(sorted, plan)
+		const values = plottedValues.map((point) => point.value)
 		const total = sorted.reduce((sum, row) => {
 			if (unit !== "bits_per_second" && unit !== "packets_per_second") return sum + row.value
 			const start = Date.parse(row.bucket)
@@ -142,24 +192,46 @@ export function buildFlowSeries(points: FlowPoint[], plan: FlowPlan | undefined,
 			const seconds = Math.max(0, Math.min(plan?.step_seconds ?? 0, (effectiveEnd - start) / 1000))
 			return sum + (row.value * seconds) / (unit === "bits_per_second" ? 8 : 1)
 		}, 0)
+		const parsedRangeSeconds = (Date.parse(plan?.effective_to ?? "") - Date.parse(plan?.effective_from ?? "")) / 1000
+		const rangeSeconds =
+			Number.isFinite(parsedRangeSeconds) && parsedRangeSeconds > 0 ? parsedRangeSeconds : Math.max(1, values.length)
+		const average =
+			unit === "bits_per_second"
+				? (total * 8) / rangeSeconds
+				: unit === "packets_per_second"
+					? total / rangeSeconds
+					: values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length)
+		const label = path.join(" → ")
 		return {
-			name: versionedName,
-			values: sorted.map((row) => ({ time: Date.parse(row.bucket), value: row.value })),
+			name: `${label} [${version}]`,
+			label,
+			path,
+			values: plottedValues,
 			minimum: Math.min(...values),
 			maximum: Math.max(...values),
 			last: values[values.length - 1] ?? 0,
-			average: values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length),
+			average,
 			p95: percentile(values, 0.95),
 			total,
 			receivedRecords: sorted.reduce((sum, row) => sum + row.received_records, 0),
 			unknownSamplingRecords: sorted.reduce((sum, row) => sum + row.unknown_sampling_records, 0),
 			qualityRecords: sorted.reduce((sum, row) => sum + row.quality_records, 0),
+			sankeyValue: unit === "bits_per_second" || unit === "packets_per_second" ? average : total,
 		}
 	})
 }
 
-export function stripVersion(name: string) {
-	return name.split("|")[0]
+function fillSeriesValues(rows: SeriesPoint[], plan: FlowPlan | undefined) {
+	const existing = new Map(rows.map((row) => [Date.parse(row.bucket), row.value]))
+	const from = Date.parse(plan?.effective_from ?? "")
+	const to = Date.parse(plan?.effective_to ?? "")
+	const step = (plan?.step_seconds ?? 0) * 1000
+	if (!Number.isFinite(from) || !Number.isFinite(to) || step <= 0 || to <= from) {
+		return rows.map((row) => ({ time: Date.parse(row.bucket), value: row.value }))
+	}
+	const result: { time: number; value: number }[] = []
+	for (let time = from; time < to; time += step) result.push({ time, value: existing.get(time) ?? 0 })
+	return result
 }
 
 function floorMinute(value: Date) {

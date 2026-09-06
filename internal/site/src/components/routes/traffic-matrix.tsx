@@ -10,13 +10,14 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createFlowExplorerChart, type FlowGraphType } from "@/lib/flow-explorer-chart"
 import {
+	buildFlowJointSeries,
 	buildFlowSeries,
 	FLOW_TIME_PRESETS,
 	mergeFlowFilters,
 	parseFlowFilter,
 	resolveFlowTimeRange,
-	stripVersion,
 	type FlowFilters,
+	type FlowJointPoint,
 	type FlowPlan,
 	type FlowPoint,
 	type FlowSeries,
@@ -25,11 +26,12 @@ import { pb } from "@/lib/api"
 import { disposeChart } from "@/lib/vchart"
 
 type FlowAggregateResult = {
-	points: FlowPoint[]
+	points: (FlowPoint | FlowJointPoint)[]
 	metric: { name: string; unit: string }
-	dimension: { kind: string; additive: boolean }
+	dimension?: { kind: string; additive: boolean }
+	dimensions?: { kind: string; additive: boolean }[]
 	plan?: FlowPlan
-	rollup_completeness: { expected_buckets: number; covered_buckets: number; ratio: number; complete: boolean }
+	rollup_completeness?: { expected_buckets: number; covered_buckets: number; ratio: number; complete: boolean }
 	mixed_versions: boolean
 	version_count: number
 }
@@ -57,6 +59,8 @@ const GRAPH_OPTIONS: { value: GraphMode; label: string }[] = [
 	{ value: "heatmap", label: "Heatmap" },
 	{ value: "table", label: "Table only" },
 ]
+
+const SANKEY_OPTION: { value: GraphMode; label: string } = { value: "sankey", label: "Sankey" }
 
 const METRIC_OPTIONS = [
 	{ value: "estimated_bps", label: "Estimated L3 bit rate" },
@@ -105,6 +109,9 @@ export default memo(function TrafficMatrix() {
 	const [customEnd, setCustomEnd] = useState(() => queryState("end", ""))
 	const [metric, setMetric] = useState(() => queryState("metric", "estimated_bps"))
 	const [dimension, setDimension] = useState(() => queryState("dimension", "category"))
+	const [dimension2, setDimension2] = useState(() => queryState("dimension2", "none"))
+	const [dimension3, setDimension3] = useState(() => queryState("dimension3", "none"))
+	const [dimension4, setDimension4] = useState(() => queryState("dimension4", "none"))
 	const [graphMode, setGraphMode] = useState<GraphMode>(() => queryState("graph", "lines") as GraphMode)
 	const [targetPoints, setTargetPoints] = useState(() => Number(queryState("points", "300")))
 	const [topN, setTopN] = useState(() => Number(queryState("top", "20")))
@@ -140,12 +147,20 @@ export default memo(function TrafficMatrix() {
 		try {
 			const { start, end } = resolveFlowTimeRange(timeRange, customStart, customEnd)
 			const selectedDimension = selectedSet === "all" ? dimension : "address_set"
+			const selectedDimensions = [selectedDimension]
+			const jointAllowed = selectedSet === "all" && selectedDimension !== "total" && selectedDimension !== "address_set"
+			if (jointAllowed && dimension2 !== "none") selectedDimensions.push(dimension2)
+			if (jointAllowed && dimension2 !== "none" && dimension3 !== "none") selectedDimensions.push(dimension3)
+			if (jointAllowed && dimension2 !== "none" && dimension3 !== "none" && dimension4 !== "none")
+				selectedDimensions.push(dimension4)
+			const joint = selectedDimensions.length > 1
 			const selectedTopN = selectedDimension === "total" ? 1 : Math.max(1, Math.min(100, topN))
 			const expressionFilters = parseFlowFilter(filterExpression)
 			const selectionFilters: FlowFilters = {}
 			if (selectedDevice !== "all") selectionFilters.device_ids = [selectedDevice]
 			if (selectedSet !== "all") selectionFilters.dimension_values = [selectedSet]
 			const filters = mergeFlowFilters(expressionFilters, selectionFilters)
+			const grouping = joint ? { dimensions: selectedDimensions } : { dimension: selectedDimension }
 			const query = await pb.send<FlowQueryResponse>("/api/v1/query", {
 				method: "POST",
 				body: {
@@ -159,7 +174,7 @@ export default memo(function TrafficMatrix() {
 					value_layer: "customer",
 					parameters: {
 						metric,
-						dimension: selectedDimension,
+						...grouping,
 						filters,
 						top_n: selectedTopN,
 						include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
@@ -169,8 +184,11 @@ export default memo(function TrafficMatrix() {
 				},
 			})
 			setResponse(query)
+			const queryUnit = query.data?.metric?.unit ?? query.meta?.unit ?? ""
 			setSeries(
-				buildFlowSeries(query.data?.points ?? [], query.data?.plan, query.data?.metric?.unit ?? query.meta?.unit ?? "")
+				query.data?.dimensions
+					? buildFlowJointSeries((query.data.points ?? []) as FlowJointPoint[], query.data.plan, queryUnit)
+					: buildFlowSeries((query.data?.points ?? []) as FlowPoint[], query.data?.plan, queryUnit)
 			)
 			persistQueryState({
 				range: timeRange,
@@ -178,6 +196,9 @@ export default memo(function TrafficMatrix() {
 				end: timeRange === "custom" ? customEnd : "",
 				metric,
 				dimension,
+				dimension2,
+				dimension3,
+				dimension4,
 				graph: graphMode,
 				points: String(targetPoints),
 				top: String(selectedTopN),
@@ -197,6 +218,9 @@ export default memo(function TrafficMatrix() {
 		customEnd,
 		metric,
 		dimension,
+		dimension2,
+		dimension3,
+		dimension4,
 		graphMode,
 		targetPoints,
 		topN,
@@ -213,6 +237,24 @@ export default memo(function TrafficMatrix() {
 		refresh().catch(() => {})
 	}, [refresh])
 
+	const jointSelected =
+		selectedSet === "all" && dimension !== "total" && dimension !== "address_set" && dimension2 !== "none"
+	useEffect(() => {
+		if (!jointSelected && graphMode === "sankey") setGraphMode("lines")
+	}, [graphMode, jointSelected])
+	useEffect(() => {
+		if (dimension2 === dimension) {
+			setDimension2("none")
+			setDimension3("none")
+			setDimension4("none")
+		} else if (dimension3 === dimension || dimension3 === dimension2) {
+			setDimension3("none")
+			setDimension4("none")
+		} else if (dimension4 === dimension || dimension4 === dimension2 || dimension4 === dimension3) {
+			setDimension4("none")
+		}
+	}, [dimension, dimension2, dimension3, dimension4])
+
 	const unit = response?.data?.metric?.unit ?? response?.meta?.unit ?? ""
 	const mixedVersions = response?.data?.mixed_versions ?? false
 	const formatValue = useCallback((value: number) => formatFlowValue(value, unit), [unit])
@@ -224,7 +266,7 @@ export default memo(function TrafficMatrix() {
 			chartInstance.current = createFlowExplorerChart(
 				chartRef.current,
 				graphMode,
-				series.map((item) => ({ ...item, name: mixedVersions ? item.name : stripVersion(item.name) })),
+				series.map((item) => ({ ...item, name: mixedVersions ? item.name : item.label })),
 				formatValue
 			)
 		}
@@ -240,7 +282,7 @@ export default memo(function TrafficMatrix() {
 				.slice()
 				.sort((a, b) => b.maximum - a.maximum)
 				.map((item) => ({
-					dimension: mixedVersions ? item.name : stripVersion(item.name),
+					dimension: mixedVersions ? item.name : item.label,
 					last: formatFlowValue(item.last, unit),
 					average: formatFlowValue(item.average, unit),
 					p95: formatFlowValue(item.p95, unit),
@@ -273,6 +315,31 @@ export default memo(function TrafficMatrix() {
 
 	const plan = response?.data?.plan
 	const completeness = response?.meta?.completeness
+	const secondaryOptions = [
+		{ value: "none", label: t`None` },
+		...DIMENSION_OPTIONS.filter(
+			(item) => item.value !== "total" && item.value !== "address_set" && item.value !== dimension
+		),
+	]
+	const tertiaryOptions = [
+		{ value: "none", label: t`None` },
+		...DIMENSION_OPTIONS.filter(
+			(item) =>
+				item.value !== "total" && item.value !== "address_set" && item.value !== dimension && item.value !== dimension2
+		),
+	]
+	const quaternaryOptions = [
+		{ value: "none", label: t`None` },
+		...DIMENSION_OPTIONS.filter(
+			(item) =>
+				item.value !== "total" &&
+				item.value !== "address_set" &&
+				item.value !== dimension &&
+				item.value !== dimension2 &&
+				item.value !== dimension3
+		),
+	]
+	const graphOptions = jointSelected ? [...GRAPH_OPTIONS, SANKEY_OPTION] : GRAPH_OPTIONS
 
 	return (
 		<div className="grid gap-4">
@@ -301,10 +368,43 @@ export default memo(function TrafficMatrix() {
 						disabled={selectedSet !== "all"}
 					/>
 					<OptionSelect
+						label={t`Then by`}
+						value={dimension2}
+						onChange={(value) => {
+							setDimension2(value)
+							if (value === "none") {
+								setDimension3("none")
+								setDimension4("none")
+							}
+						}}
+						options={secondaryOptions}
+						width="w-52"
+						disabled={selectedSet !== "all" || dimension === "total" || dimension === "address_set"}
+					/>
+					<OptionSelect
+						label={t`Then by`}
+						value={dimension3}
+						onChange={(value) => {
+							setDimension3(value)
+							if (value === "none") setDimension4("none")
+						}}
+						options={tertiaryOptions}
+						width="w-52"
+						disabled={!jointSelected}
+					/>
+					<OptionSelect
+						label={t`Then by`}
+						value={dimension4}
+						onChange={setDimension4}
+						options={quaternaryOptions}
+						width="w-52"
+						disabled={!jointSelected || dimension3 === "none"}
+					/>
+					<OptionSelect
 						label={t`Graph type`}
 						value={graphMode}
 						onChange={(value) => setGraphMode(value as GraphMode)}
-						options={GRAPH_OPTIONS}
+						options={graphOptions}
 						width="w-44"
 					/>
 					<OptionSelect
@@ -400,6 +500,14 @@ export default memo(function TrafficMatrix() {
 						(...). Press Ctrl/Cmd+Enter to apply.
 					</Trans>
 				</p>
+				{jointSelected && (
+					<p className="text-xs text-muted-foreground">
+						<Trans>
+							Multi-dimension and Sankey queries read true tuples from the same Flow facts and are synchronously limited
+							to 24 hours. Longer ranges require a published asynchronous joint index.
+						</Trans>
+					</p>
+				)}
 			</div>
 
 			{error && (
@@ -411,7 +519,9 @@ export default memo(function TrafficMatrix() {
 			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				{plan && (
 					<>
-						<Badge variant="outline">{formatDuration(plan.source_seconds)} source</Badge>
+						<Badge variant="outline">
+							{plan.source_seconds ? formatDuration(plan.source_seconds) : plan.source} source
+						</Badge>
 						<Badge variant="outline">{formatDuration(plan.step_seconds)} display</Badge>
 						<span>{formatRange(plan.effective_from, plan.effective_to)}</span>
 					</>
@@ -426,6 +536,9 @@ export default memo(function TrafficMatrix() {
 						<Trans>Mixed classification versions</Trans>
 					</Badge>
 				)}
+				{completeness?.warnings?.map((warning) => (
+					<span key={warning}>{warning}</span>
+				))}
 			</div>
 
 			{graphMode !== "table" && (

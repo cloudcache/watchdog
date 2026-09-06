@@ -103,7 +103,7 @@ address set 的集合公式固定为 `(selector ∪ explicit CIDRs ∪ included 
 - 筛选：租户、target/device/exporter、业务、运营商、时间、高峰段、方向、IP 族和修正视图。
 - 模式：流量值、占比、差值；TopN 必须有稳定 tie-breaker 和 `other` 桶。
 - 查询器必须把时间窗、目标点数/显式展示步长、底层聚合 resolution、维度、过滤、TopN 和图表类型分别建模；后端按时间窗与目标点数选择数据源和展示步长，前端不得把 `1m/1h` 当作仅有的时间范围。
-- 至少支持折线、堆叠、热力、数据表和桑基。折线/堆叠/热力可使用单维时间序列；桑基必须由同一事实或联合维度索引返回真实有序维度 tuple，禁止把多个互不相关的单维 TopN 在浏览器中拼成虚假链路。
+- 至少支持折线、堆叠、热力、数据表和桑基。折线/堆叠/热力可使用单维时间序列；桑基必须由同一事实或联合维度索引返回真实有序维度 tuple，禁止把多个互不相关的单维 TopN 在浏览器中拼成虚假链路。没有联合索引时只允许在明确扫描预算和短时间窗内回落原始事实，长窗必须异步或稳定拒绝。
 - 过滤必须进入可验证的 typed grammar/AST 并可通过 URL 分享；不得把用户表达式直接拼进 SQL。数据表至少显示 last/average/95th/min/max/total、采样完整性、质量和版本，且使用统一 VTable 搜索/列过滤/分页。
 - Geo 返回 breadcrumb/children/path/version/completeness；同层可加。address set 返回 `additive=false`，不得显示一个会误导为总占比的组间合计。
 - 多组过滤明确支持 `include_any/include_all/exclude_any`；组合总量从 base membership 一次求和，大范围组合查询异步执行。
