@@ -771,14 +771,17 @@ GET                     /api/v1/visualizations/{id}/data
 `export_tasks` 演进为 provider-neutral：
 
 ```text
-module_key, dataset_key, query_json, query_hash,
-value_layer(raw|supplier|customer), adjustment_version,
-format(csv|xlsx), timezone, locale,
-status, progress, file_ref, checksum, row_count,
-created_by, approved_by, expires_at
+contract_version, dataset_key, query_json, query_hash,
+value_layer(raw|supplier|customer), versions_json,
+authorization_json, operation_job_id,
+format(csv|parquet), retention_seconds,
+artifact_schema_version, content_type, file_ref, checksum, size_bytes, row_count,
+status, row_version, created_by, expires_at
 ```
 
-导出 worker 通过 DatasetProvider 读取，不复制 API SQL。任务创建时固化 descriptor version、Geo/classification version 和 adjustment version；重试必须使用同一 snapshot。raw/supplier 导出权限单独校验，下载和过期删除写审计。
+`export_tasks` 只保存领域请求/产物，`operation_jobs` 唯一负责 lease、heartbeat、attempt、retry/backoff、cancel 和 crash takeover；禁止两个表各自实现一套执行状态机。导出 handler 通过 QueryGateway/DatasetProvider 读取，不复制 API SQL。任务创建时固化 canonical query、descriptor/query-policy/Geo/classification/adjustment version 和授权决定证据；重试必须使用同一 snapshot，不能重新解释当前配置。旧任务由 migration 明确标记 `contract_version=0` 和 `snapshot_complete=false`，保留兼容读取但不冒充可复现的新任务。
+
+raw/supplier/customer 创建、执行和下载分别用 `export_raw/export_supplier/export_customer` 复核当前权限；`authorization_json` 只保存当时的决定证据，不能替代当前授权。产物以 schema version、content type、row count、size 和 SHA-256 自描述；下载校验元数据并写审计，过期删除也写审计。CSV 与 Parquet 共享同一逻辑 row schema，格式 writer 不得各自重新计算查询或修正规则。
 
 ```text
 POST                     /api/v1/query

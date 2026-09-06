@@ -98,6 +98,88 @@ func TestInitSQLMatchesEmbeddedMigrations(t *testing.T) {
 	}
 }
 
+func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_export_legacy_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	migrations, err := EmbeddedMySQLMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations {
+		if migration.Version == "046" {
+			break
+		}
+		for index, statement := range SplitSQLStatements(migration.SQL) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("apply %s statement %d: %v", migration.Name, index+1, err)
+			}
+		}
+	}
+	const tenantID, userID, exportID = "tenant_export_legacy", "user_export_legacy", "export_legacy_046"
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Legacy Export', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO users (id, tenant_id, email, name, status) VALUES (?, ?, 'legacy-export@watchdog.local', 'Legacy Export', 'active')", userID, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO export_tasks (
+			id, tenant_id, created_by, period_type, range_start, range_end,
+			step_seconds, aggregation, value_mode, format, status
+		) VALUES (?, ?, ?, 'custom', '2026-08-24 11:00:00', '2026-08-24 12:00:00',
+			300, 'p95_5m', 'both', 'csv', 'failed')
+	`, exportID, tenantID, userID); err != nil {
+		t.Fatal(err)
+	}
+	for replay := 0; replay < 2; replay++ {
+		for index, statement := range SplitSQLStatements(migrations[len(migrations)-1].SQL) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("replay 046 pass %d statement %d: %v", replay+1, index+1, err)
+			}
+		}
+	}
+	var contractVersion, retention uint32
+	var dataset, queryHash, valueLayer, queryJSON, versionsJSON, authorizationJSON string
+	if err := db.QueryRowContext(ctx, `
+		SELECT contract_version, dataset_key, query_hash, value_layer,
+		       CAST(query_json AS CHAR), CAST(versions_json AS CHAR),
+		       CAST(authorization_json AS CHAR), retention_seconds
+		FROM export_tasks WHERE id = ?
+	`, exportID).Scan(&contractVersion, &dataset, &queryHash, &valueLayer, &queryJSON, &versionsJSON, &authorizationJSON, &retention); err != nil {
+		t.Fatal(err)
+	}
+	if contractVersion != 0 || dataset != "network.snmp_interface" || len(queryHash) != 64 || valueLayer != "customer" || retention != 604800 {
+		t.Fatalf("legacy projection version=%d dataset=%q hash=%q layer=%q retention=%d", contractVersion, dataset, queryHash, valueLayer, retention)
+	}
+	for label, value := range map[string]string{
+		"query": queryJSON, "versions": versionsJSON, "authorization": authorizationJSON,
+	} {
+		if !strings.Contains(value, `"legacy": true`) && label != "versions" {
+			t.Fatalf("%s snapshot does not identify legacy evidence: %s", label, value)
+		}
+	}
+	if !strings.Contains(versionsJSON, `"snapshot_complete": false`) || !strings.Contains(authorizationJSON, `"required_action": "export_raw"`) {
+		t.Fatalf("versions=%s authorization=%s", versionsJSON, authorizationJSON)
+	}
+}
+
 func randomSchemaSuffix(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)

@@ -95,14 +95,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "045" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "046" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "045" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "046" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -292,12 +292,46 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 45 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "045" {
+	if len(migrations) != 46 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "046" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func TestExportExecutionMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "046_export_execution_contract.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"contract_version smallint unsigned",
+		"dataset_key varchar(128)",
+		"query_json json",
+		"query_hash char(64)",
+		"value_layer varchar(16)",
+		"versions_json json",
+		"authorization_json json",
+		"operation_job_id char(26)",
+		"references operation_jobs(id) on delete set null",
+		"retention_seconds int unsigned",
+		"artifact_schema_version smallint unsigned",
+		"content_type varchar(128)",
+		"row_count bigint unsigned",
+		"format in (''csv'', ''parquet'')",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("export execution migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"attempt_count int", "lease_owner", "next_attempt_at"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("export execution migration must reuse operation_jobs, found %q", forbidden)
 		}
 	}
 }
