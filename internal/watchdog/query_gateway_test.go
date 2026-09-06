@@ -155,7 +155,7 @@ func TestQueryGatewayInjectsTenantAndReturnsCanonicalMetadata(t *testing.T) {
 	provider := &queryProviderStub{query: func(_ context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
 		received = request
 		return QueryProviderResult{
-			Data: json.RawMessage(`[{"value":42}]`), Unit: "bytes", Timezone: "UTC",
+			Data: json.RawMessage(`[{"value":42}]`), Unit: "bytes", Timezone: "UTC", StepSeconds: 300,
 			Completeness: QueryCompleteness{CompleteRatio: 1}, Versions: map[string]string{"dimension": "7"},
 		}, nil
 	}}
@@ -171,7 +171,7 @@ func TestQueryGatewayInjectsTenantAndReturnsCanonicalMetadata(t *testing.T) {
 		t.Fatalf("provider request = %#v", received)
 	}
 	if received.Limit != defaultQueryLimit || result.Meta.RequestID != "request-a" || result.Meta.Source != "clickhouse" ||
-		result.Meta.PolicyVersion != 0 || result.Meta.AsOf != fixedNow || len(result.Meta.QueryHash) != 64 {
+		result.Meta.PolicyVersion != 0 || result.Meta.AsOf != fixedNow || result.Meta.StepSeconds != 300 || len(result.Meta.QueryHash) != 64 {
 		t.Fatalf("result meta = %#v", result.Meta)
 	}
 

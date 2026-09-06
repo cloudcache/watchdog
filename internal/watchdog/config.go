@@ -739,7 +739,7 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateQueryGatewayConfig(cfg.QueryGateway); err != nil {
 		return err
 	}
-	if err := validateFlowRollupConfig(cfg.FlowRollup); err != nil {
+	if err := validateFlowRollupConfig(cfg.FlowRollup, cfg.FlowRollup.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled)); err != nil {
 		return err
 	}
 	if cfg.CollectorPrincipalProvider.Enabled {
@@ -821,7 +821,7 @@ func validateMetricsScrapeConfig(cfg MetricsScrapeConfig) error {
 	return nil
 }
 
-func validateFlowRollupConfig(cfg FlowRollupConfig) error {
+func validateFlowRollupConfig(cfg FlowRollupConfig, requireClickHouse bool) error {
 	if cfg.ScanInterval <= 0 || cfg.LateArrivalWindow < 0 || cfg.BootstrapLookback <= 0 ||
 		cfg.MaxTenantsPerScan <= 0 || cfg.MaxTenantsPerScan > 10_000 ||
 		cfg.MaxBucketsPerSeriesScan <= 0 || cfg.MaxBucketsPerScan <= 0 ||
@@ -829,7 +829,7 @@ func validateFlowRollupConfig(cfg FlowRollupConfig) error {
 		cfg.MaxAttempts == 0 || cfg.RetryBase <= 0 {
 		return errors.New("flow_rollup intervals, lookback, budgets, concurrency, lease, and retry values are invalid")
 	}
-	if !cfg.Enabled {
+	if !requireClickHouse {
 		return nil
 	}
 	if cfg.ClickHouseAddress == "" || cfg.ClickHouseDatabase == "" || cfg.ClickHouseUser == "" ||

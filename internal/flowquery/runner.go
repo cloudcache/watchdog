@@ -23,37 +23,38 @@ type Runner struct {
 }
 
 type Point struct {
-	Bucket                    time.Time
-	DimensionValue            string
-	Other                     bool
-	DimensionSnapshotID       string
-	GeoVersion                string
-	ClassificationVersion     uint32
-	Value                     float64
-	ReceivedRecords           uint64
-	UnknownSamplingRecords    uint64
-	QualityRecords            uint64
-	GeneratedAt               time.Time
-	SamplingCompleteness      float64
-	SamplingCompletenessKnown bool
-	QualityRecordRatio        float64
-	QualityRecordRatioKnown   bool
+	Bucket                    time.Time `json:"bucket"`
+	DimensionValue            string    `json:"dimension_value"`
+	Other                     bool      `json:"other"`
+	DimensionSnapshotID       string    `json:"dimension_snapshot_id"`
+	GeoVersion                string    `json:"geo_version"`
+	ClassificationVersion     uint32    `json:"classification_version"`
+	Value                     float64   `json:"value"`
+	ReceivedRecords           uint64    `json:"received_records"`
+	UnknownSamplingRecords    uint64    `json:"unknown_sampling_records"`
+	QualityRecords            uint64    `json:"quality_records"`
+	GeneratedAt               time.Time `json:"generated_at"`
+	SamplingCompleteness      float64   `json:"sampling_completeness,omitempty"`
+	SamplingCompletenessKnown bool      `json:"sampling_completeness_known"`
+	QualityRecordRatio        float64   `json:"quality_record_ratio,omitempty"`
+	QualityRecordRatioKnown   bool      `json:"quality_record_ratio_known"`
 }
 
 type RollupCompleteness struct {
-	ExpectedBuckets uint64
-	CoveredBuckets  uint64
-	Ratio           float64
-	Complete        bool
+	ExpectedBuckets uint64  `json:"expected_buckets"`
+	CoveredBuckets  uint64  `json:"covered_buckets"`
+	Ratio           float64 `json:"ratio"`
+	Complete        bool    `json:"complete"`
 }
 
 type Result struct {
-	Points             []Point
-	Metric             MetricDefinition
-	Dimension          DimensionDefinition
-	RollupCompleteness RollupCompleteness
-	MixedVersions      bool
-	VersionCount       uint64
+	Points             []Point             `json:"points"`
+	Metric             MetricDefinition    `json:"metric"`
+	Dimension          DimensionDefinition `json:"dimension"`
+	Plan               *AggregatePlan      `json:"plan,omitempty"`
+	RollupCompleteness RollupCompleteness  `json:"rollup_completeness"`
+	MixedVersions      bool                `json:"mixed_versions"`
+	VersionCount       uint64              `json:"version_count"`
 }
 
 func NewRunner(executor Executor) (*Runner, error) {
@@ -67,7 +68,8 @@ func (r *Runner) Run(ctx context.Context, compiled Compiled) (Result, error) {
 	if r == nil || r.executor == nil {
 		return Result{}, errors.New("ClickHouse Flow query runner is not initialized")
 	}
-	if ctx == nil || compiled.Query.Body == "" || compiled.BucketDuration <= 0 || !compiled.To.After(compiled.From) || compiled.MaxResultRows == 0 {
+	if ctx == nil || compiled.Query.Body == "" || compiled.SourceBucketDuration <= 0 || compiled.BucketDuration <= 0 ||
+		compiled.BucketDuration%compiled.SourceBucketDuration != 0 || !compiled.To.After(compiled.From) || compiled.MaxResultRows == 0 {
 		return Result{}, errors.New("compiled Flow query is invalid")
 	}
 	columns := newResultColumns()
@@ -97,7 +99,7 @@ func (r *Runner) Run(ctx context.Context, compiled Compiled) (Result, error) {
 	if state.metadataRows != 1 {
 		return Result{}, fmt.Errorf("invalid ClickHouse Flow result: metadata rows=%d, want 1", state.metadataRows)
 	}
-	expected := uint64(compiled.To.Sub(compiled.From) / compiled.BucketDuration)
+	expected := uint64(compiled.To.Sub(compiled.From) / compiled.SourceBucketDuration)
 	if state.coveredBuckets > expected {
 		return Result{}, fmt.Errorf("invalid ClickHouse Flow result: covered buckets=%d exceed expected=%d", state.coveredBuckets, expected)
 	}
@@ -261,7 +263,7 @@ func (s *resultState) point(columns *resultColumns, index int) (Point, resultVer
 	unknownSampling := columns.unknownSampling[index]
 	qualityRecords := columns.qualityRecords[index]
 	generatedAt := columns.generatedAt.Row(index).UTC()
-	if bucket.Before(s.from) || !bucket.Before(s.to) || bucket.Truncate(s.bucketDuration) != bucket {
+	if bucket.Before(s.from) || !bucket.Before(s.to) || bucket.Sub(s.from)%s.bucketDuration != 0 {
 		return Point{}, resultVersion{}, resultPointKey{}, errors.New("invalid ClickHouse Flow result: point bucket is outside or unaligned")
 	}
 	if isOther > 1 || (isOther == 1 && dimensionValue != "_other") || dimensionValue == "" || dimensionSnapshotID == "" || geoVersion == "" || classificationVersion == 0 || columns.coveredBuckets[index] != 0 {

@@ -158,9 +158,12 @@ type QueryCompleteness struct {
 }
 
 type QueryProviderResult struct {
-	Data         json.RawMessage
-	Unit         string
-	Timezone     string
+	Data     json.RawMessage
+	Unit     string
+	Timezone string
+	// StepSeconds is the effective presentation interval selected by a
+	// provider. Zero preserves the requested envelope value.
+	StepSeconds  uint32
 	AsOf         time.Time
 	NextCursor   string
 	Versions     map[string]string
@@ -523,10 +526,17 @@ func (g *QueryGateway) execute(ctx context.Context, auth AuthContext, requestID 
 	return QueryResult{Data: providerResult.Data, Meta: QueryResultMeta{
 		RequestID: requestID, SchemaVersion: "query-result-v1", QueryHash: hash,
 		AsOf: providerResult.AsOf.UTC(), Source: string(descriptor.Provider), ValueLayer: request.ValueLayer,
-		Unit: providerResult.Unit, Timezone: providerResult.Timezone, StepSeconds: request.StepSeconds,
+		Unit: providerResult.Unit, Timezone: providerResult.Timezone, StepSeconds: effectiveQueryStep(request.StepSeconds, providerResult.StepSeconds),
 		PolicyVersion: policy.RowVersion, Versions: providerResult.Versions, NextCursor: providerResult.NextCursor,
 		QueryCompleteness: providerResult.Completeness,
 	}}, nil
+}
+
+func effectiveQueryStep(requested, provided uint32) uint32 {
+	if provided != 0 {
+		return provided
+	}
+	return requested
 }
 
 func queryResultIsComplete(completeness QueryCompleteness) bool {

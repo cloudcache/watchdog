@@ -123,6 +123,23 @@ func (n *NativeInserter) Close() {
 	}
 }
 
+// Do executes an already compiled ClickHouse query on the same bounded native
+// pool used by Flow ingestion and rollups. SQL construction remains owned by
+// the typed flowquery/flowch compilers; the hub only shares the connection
+// lifecycle instead of opening a second query-only pool.
+func (n *NativeInserter) Do(ctx context.Context, query ch.Query) error {
+	if n == nil || n.executor == nil {
+		return errors.New("ClickHouse native connection is not initialized")
+	}
+	return n.executor.Do(ctx, query)
+}
+
+// Ready verifies the selected database through the native protocol without
+// reading application data.
+func (n *NativeInserter) Ready(ctx context.Context) error {
+	return n.Do(ctx, ch.Query{Body: "SELECT 1 FORMAT Null"})
+}
+
 // InsertFlowBlock is synchronous. A retry uses exactly the same block and
 // deduplication tokens; the ReplacingMergeTree generation is also stable.
 func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBlock) error {

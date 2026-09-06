@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C3B2B — bounded ingest reconciliation ClickHouse scanner。** receipt audit projection 与无状态判定内核已经关闭。当前只实现 CH 输入边界：固定 cursor/window/budget，先读 receipt/fact cheap counters，再仅为候选 batch 拉取 checksum 行并返回完整/不完整结果；平台 global/system-scope job 仍由 PLAT-04F 承载，不在 Flow 内另造 job、水位或 metric 状态机。
+**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；当前继续完成真正联合维度的 compiler/runner、桑基和生产 HTTP/RBAC 页面验收。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；本轮不把两个切片的文件混入同一提交。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -224,6 +224,20 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] 实现总览、多维、源 IP、目的 IP、境外、VPN 六页和 query/search/export API。
 - [ ] 所有 VTable 统一服务端分页/搜索/排序/column filter；popover portal + collision，禁止溢出错位。
 - [ ] 完成参数/RBAC/统计精度单元，API→CH/页面/导出集成，API 版本/灰度/回退变更测试和前后端回归。
+
+#### FLOW-05F Flow Explorer（Akvorado 查询模型对齐）
+
+- [x] **设计**：冻结 `range ≠ display step ≠ source resolution`；`target_points` 驱动自动 planner，显式 step 也只控制展示；响应回传 requested/effective range、source、source/display seconds。冻结折线/堆叠/热力/表格先消费单维序列，桑基只能消费真实联合维度 tuple，禁止多次单维查询拼接。
+- [x] **编码（自动 planner/单维查询）**：`PlanAggregate` 支持 5..2000 目标点、1m..30d 显式展示步长、1m/1h 自动选源和各自扫描预算；aggregate compiler 以 effective-from 为锚点二次汇聚 source bucket，provider 回传实际 step/source；QueryGateway metadata 使用 provider 实际 step。
+- [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、`=/IN` typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
+- [x] **单元**：planner 覆盖 5m/1h/6h/24h/7d/30d/1y、显式 15m、未来/非法密度/两类源扫描超限；compiler/runner 覆盖 source completeness 与展示桶对齐；前端覆盖预设/自定义、typed filter、末桶 total 和三种 chart spec。
+- [x] **集成（真实 CH）**：独立库在两个完整 1m source bucket 上以 15m 展示步长查询，末桶仅覆盖 120 秒；bps 使用实际 120 秒且 completeness 仍为 2/2 source marker。既有 repair/多 block/cancel 门禁同测通过。
+- [ ] **联合维度/桑基编码**：实现 ordered dimensions capability、tuple TopN/Other 和联合查询 runner；常用组合走异步索引，短窗缺索引按 `flow-address-query-plan.md` 有界回落 base。未完成前 UI 不显示一个会伪造相关性的桑基按钮。
+- [ ] **过滤生命周期**：把当前前端 `=/IN` 子集提升为服务端 validate/complete/canonical AST，补 IP/CIDR/ASN/Geo/ISP/端口/协议操作符、保存/共享/权限；任何表达式仍不得直拼 SQL。
+- [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
+- [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
+- [x] **回归（本切片自动化）**：Flow race、全库 test/vet、前端 23 项 model/chart test + production build、真实 CH `step=auto` HTTP gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
+- [ ] **已提交**：上述已完成范围必须进入独立可复现提交；联合维度/桑基和服务端 filter 未完成项不得因单维页面可打开而提前关闭。
 
 ### FLOW-06 Correction/Reclass/Export
 

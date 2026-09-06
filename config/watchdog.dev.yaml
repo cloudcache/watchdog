@@ -7,6 +7,15 @@ mysql:
 victoriametrics:
   base_url: "http://127.0.0.1:8428"
 
+query_gateway:
+  enabled: true
+  victoriametrics_enabled: true
+  victoriametrics_max_concurrent: 8
+  # Opt in with WATCHDOG_QUERY_CLICKHOUSE_ENABLED=true and a ClickHouse
+  # password secret file; never make the shared dev config depend on a local secret.
+  clickhouse_enabled: false
+  clickhouse_max_concurrent: 8
+
 export:
   dir: "exports"
   worker_interval: 30s

@@ -125,6 +125,34 @@ func TestRunnerPreservesEmptyResultAndIncompleteRollup(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesSourceBucketsForCompletenessAndPresentationBucketsForAlignment(t *testing.T) {
+	request := validRequest()
+	request.Interval = 15 * time.Minute
+	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := NewRunner(fakeResultExecutor{blocks: [][]fakeResultRow{{
+		dataRow(compiled.From.Add(15*time.Minute), "64512", false), metadataRow(60),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RollupCompleteness.Complete || result.RollupCompleteness.ExpectedBuckets != 60 {
+		t.Fatalf("completeness=%+v", result.RollupCompleteness)
+	}
+
+	bad := dataRow(compiled.From.Add(time.Minute), "64512", false)
+	runner, _ = NewRunner(fakeResultExecutor{blocks: [][]fakeResultRow{{bad, metadataRow(60)}}})
+	if _, err := runner.Run(context.Background(), compiled); err == nil || !strings.Contains(err.Error(), "unaligned") {
+		t.Fatalf("unaligned presentation bucket error=%v", err)
+	}
+}
+
 func TestRunnerRejectsMalformedOrUnboundedResults(t *testing.T) {
 	compiled := compiledQuery(t)
 	valid := dataRow(compiled.From, "64512", false)

@@ -162,6 +162,13 @@ func TestBuiltinPlatformRegistriesComposeFiveKinds(t *testing.T) {
 	if _, ok := registries.Datasets.Get("host.agent_metrics"); !ok {
 		t.Fatal("host metrics dataset must be registered")
 	}
+	flowDataset, ok := registries.Datasets.Get(FlowTrafficDataset)
+	if !ok || flowDataset.Provider != DatasetProviderClickHouse || flowDataset.ModuleKey != "flow" {
+		t.Fatalf("Flow dataset = %#v, found = %v", flowDataset, ok)
+	}
+	if module, ok := registries.Modules.Get("flow"); !ok || !module.Descriptor().DefaultEnabled {
+		t.Fatalf("Flow module is not registered and enabled: %#v, found = %v", module, ok)
+	}
 	metricOwners := map[string]string{}
 	for _, dataset := range registries.Datasets.List() {
 		for _, metric := range dataset.Metrics {

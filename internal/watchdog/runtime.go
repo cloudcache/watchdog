@@ -10,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowmetrics"
+	"github.com/cloudcache/watchdog/internal/flowquery"
 )
 
 type collectorPrincipalRuntimeProvider interface {
@@ -53,7 +55,7 @@ type BackendRuntime struct {
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
-	flowRollupNative           interface{ Close() }
+	flowClickHouseNative       *flowch.NativeInserter
 	flowRollupMetrics          flowRollupRuntimeMetrics
 	metricsScrapeHandler       http.Handler
 
@@ -142,6 +144,13 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		MetricProviders:   NewRuntimeMetricsRegistry(),
 		QueryProviders:    NewQueryProviderRegistry(),
 	}
+	if cfg.FlowRollup.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
+		runtime.flowClickHouseNative, err = newFlowClickHouseNative(ctx, cfg.FlowRollup)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, fmt.Errorf("initialize Flow ClickHouse connection: %w", err)
+		}
+	}
 	if cfg.QueryGateway.Enabled {
 		if err := runtime.QueryProviders.Register(QueryProviderRegistration{
 			Kind: DatasetProviderVM, Provider: VictoriaMetricsQueryProvider{Client: metricsClient, Network: store},
@@ -149,6 +158,23 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		}); err != nil {
 			_ = runtime.Close()
 			return nil, fmt.Errorf("initialize VictoriaMetrics query provider: %w", err)
+		}
+		if cfg.QueryGateway.ClickHouseEnabled {
+			runner, runnerErr := flowquery.NewRunner(runtime.flowClickHouseNative)
+			if runnerErr != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow query runner: %w", runnerErr)
+			}
+			if err := runtime.QueryProviders.Register(QueryProviderRegistration{
+				Kind: DatasetProviderClickHouse,
+				Provider: ClickHouseFlowQueryProvider{
+					Runner: runner, Readiness: runtime.flowClickHouseNative, Network: store,
+				},
+				Enabled: true, MaxConcurrent: uint32(cfg.QueryGateway.ClickHouseConcurrent),
+			}); err != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow ClickHouse query provider: %w", err)
+			}
 		}
 		runtime.QueryGateway, err = NewQueryGateway(registries, store, store, runtime.QueryProviders)
 		if err != nil {
@@ -233,21 +259,16 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	}
 	runtime.trapDispatcherFn = runtime.buildTrapDispatcher()
 	if cfg.FlowRollup.Enabled {
-		native, runner, service, err := newFlowRollupRuntime(ctx, store, cfg.FlowRollup)
+		runner, service, err := newFlowRollupRuntime(store, cfg.FlowRollup, runtime.flowClickHouseNative)
 		if err != nil {
-			if runtime.collectorPrincipalProvider != nil {
-				runtime.collectorPrincipalProvider.CloseIdleConnections()
-			}
-			_ = store.Close()
+			_ = runtime.Close()
 			return nil, fmt.Errorf("initialize flow rollup: %w", err)
 		}
-		runtime.flowRollupNative = native
 		runtime.FlowRollupRunner = runner
 		runtime.FlowRollupService = service
 		runtime.flowRollupMetrics, err = flowmetrics.NewRollup(runner.Stats)
 		if err != nil {
-			native.Close()
-			_ = store.Close()
+			_ = runtime.Close()
 			return nil, fmt.Errorf("initialize flow rollup metrics: %w", err)
 		}
 		if err := runtime.MetricProviders.Register("flow_rollup", runtime.flowRollupMetrics); err != nil {
@@ -559,8 +580,8 @@ func (r *BackendRuntime) Close() error {
 		if r.collectorPrincipalProvider != nil {
 			r.collectorPrincipalProvider.CloseIdleConnections()
 		}
-		if r.flowRollupNative != nil {
-			r.flowRollupNative.Close()
+		if r.flowClickHouseNative != nil {
+			r.flowClickHouseNative.Close()
 		}
 		if r.QueryProviders != nil {
 			r.closeError = errors.Join(r.closeError, r.QueryProviders.Close())

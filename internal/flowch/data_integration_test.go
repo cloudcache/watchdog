@@ -110,6 +110,27 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 		t.Fatalf("empty closed bucket result=%+v", emptyResult)
 	}
 
+	// Presentation intervals are independent of the source table. This range
+	// has two complete 1m source buckets but is shorter than the requested 15m
+	// display interval; the final bps point must divide by the actual 120
+	// seconds, while completeness still counts both source markers.
+	resampled, err := flowquery.Compile(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.Request{
+		From: bucket, To: emptyBucket.Add(time.Minute), Bucket: flowquery.BucketOneMinute,
+		Interval: 15 * time.Minute, Metric: flowquery.MetricRawBitsPerSecond,
+		Dimension: flowquery.DimensionTotal, View: flowquery.ViewCustomer, TopN: 1, Timezone: "UTC",
+	}, emptyBucket.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resampledResult, err := queryRunner.Run(ctx, resampled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resampledResult.Points) != 1 || resampledResult.Points[0].Value != float64(850*8)/120 ||
+		resampledResult.RollupCompleteness.ExpectedBuckets != 2 || !resampledResult.RollupCompleteness.Complete {
+		t.Fatalf("resampled result=%+v", resampledResult)
+	}
+
 	cancelExecutor := &integrationBlockExecutor{executor: native.executor, cancelAfterFirst: true}
 	cancelRunner, err := flowquery.NewRunner(cancelExecutor)
 	if err != nil {

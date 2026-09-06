@@ -508,27 +508,35 @@ deviation  = abs(flow_bytes - snmp_bytes) / max(snmp_bytes, 1)
 
 ```json
 {
+  "dataset": "flow.traffic",
   "from": "2026-09-05T00:00:00Z",
-  "to": "2026-09-05T01:00:00Z",
-  "bucket": "1m",
-  "metric": "estimated_bps",
-  "dimension": "geo.city",
-  "filters": {"directions":["in","out"],"dimension_values":["330100","330200"],"target_ids":[]},
-  "view": "customer",
-  "top_n": 20,
-  "include_other": true,
-  "timezone": "Asia/Shanghai"
+  "to": "2026-09-12T00:00:00Z",
+  "step_seconds": 0,
+  "limit": 250000,
+  "value_layer": "customer",
+  "parameters": {
+    "metric": "estimated_bps",
+    "dimension": "geo.city",
+    "filters": {"directions":["in","out"],"dimension_values":["330100","330200"]},
+    "top_n": 20,
+    "include_other": true,
+    "target_points": 300,
+    "timezone": "Asia/Shanghai"
+  }
 }
 ```
 
-tenant 不属于客户端 QueryRequest，由已认证 scope 单独注入 compiler；请求里的任意 ID、名称和时间都只能成为 typed ClickHouse parameter，不能进入 SQL 标识符或表达式。当前 provider registry 固定为：
+tenant 不属于客户端 QueryRequest，由已认证 scope 单独注入 compiler；请求里的任意 ID、名称和时间都只能成为 typed ClickHouse parameter，不能进入 SQL 标识符或表达式。`from/to` 是用户业务时间窗，`target_points` 是期望图表密度，`step_seconds=0` 表示自动；非零值是显式**展示步长**，不是 CH 表名。当前 provider registry 固定为：
 
-- bucket：`1m` 读 `flow_aggregate_1m`，最多 10,080 点；`1h` 读 `flow_aggregate_1h`，最多 9,600 点；`from/to` 统一换算 UTC、左闭右开、必须桶对齐且 `to` 不得包含未关闭桶；
-- metric：`raw_bytes/raw_bps/raw_packets/raw_pps/estimated_bytes/estimated_bps/estimated_packets/estimated_pps/received_records`；速率以当前桶秒数计算，TopN 仍按对应可加计数排序；
+- 时间/分辨率 planner：时间窗支持多预设和任意自定义；默认 `target_points=300`（允许 5..2000），按 `ceil(range/points)` 选择不小于目标的稳定人类可读步长（1m/5m/15m/30m/1h/2h/3h/6h/12h/1d/2d/7d/30d）。再选择不粗于展示步长的最粗可用源：近期细粒度读 `flow_aggregate_1m`，小时以上读 `flow_aggregate_1h`；1m 源最多 10,080 个闭桶，1h 源最多 9,600 个闭桶。响应必须返回 `requested/effective range + source/source_seconds + step_seconds + target_points`，不能让前端猜源表。
+- `from/to` 统一换算 UTC、左闭右开；provider 只查询已关闭 source bucket，并明确返回对齐后的 effective range。展示 bucket 以 effective-from 为锚点，可由多个 source bucket 汇聚；自定义范围末尾不足一个展示步长时，bps/pps 必须除以该末桶实际覆盖秒数，不能按完整展示步长低估。
+- metric：`raw_bytes/raw_bps/raw_packets/raw_pps/estimated_bytes/estimated_bps/estimated_packets/estimated_pps/received_records`；速率以当前**展示桶实际秒数**计算，TopN 仍按对应可加计数排序；
 - dimension：第 7 节公开 registry 的 18 个值；只有 `address_set` 可多归属且 `additive=false`，禁止 `include_other`，其他单值维度都通过 `_unassigned` 保持与 total 可对账；
 - filter：`directions/categories/businesses/target_ids/device_ids/exporter_ids/dimension_values/dimension_snapshot_ids/geo_versions/classification_versions`。枚举严格校验，值排序去重，单字段最多 2,048、总计最多 4,096；API 将 `geo_ancestor_ids` 用同一 Geo version 展开后才填 `dimension_values`；
 - TopN 为 1..100，稳定顺序是值 DESC，再按 dimension ID 和三个版本字段 ASC；`total` 要求 TopN=1。点数乘 `(TopN + other)` 超过 250,000 时在查询前拒绝，CH 同时设置 15 秒、25 万结果行、5,000 万扫描行硬限并以 `throw` 结束，不能静默截断；
 - `timezone` 只控制 API/前端显示，CH bucket 始终 UTC。
+
+Flow Explorer 的目标查询状态包含 range/custom start-end、metric、ordered dimensions、typed filter、TopN/Other、target points、graph type 和 value layer，并编码进 URL。首个 aggregate provider 当前只实现一个 dimension 的时间序列，支持折线/堆叠/热力/表格；其过滤编辑器当前只把 `direction/category/business/target/device/exporter/dimension` 的 `=`/`IN` 表达式编译成已有 typed filter 对象。桑基和真正的多维序列必须新增联合维度 compiler/runner：现有 `dimension_kind + dimension_value` 单维 rollup 不保留两个高基数维度间的相关性，不能用两次单维查询拼接。联合查询应优先使用预配置异步联合索引，缺失时按 [Flow 地址查询方案](flow-address-query-plan.md) 在有界窗口回落 `flow_records`；其 SQL、扫描预算、tuple TopN/Other、权限和 all-or-nothing runner 单列门禁。
 
 aggregate schema v1 只物化 `customer` view；`raw/supplier` 请求必须返回稳定的 `unsupported` 错误，不能把 customer 结果换个标签返回。FLOW-06 只有在 base/rollup 增加可验证的并行 provenance 或 versioned reclass generation 后才能开放另外两个 view。
 

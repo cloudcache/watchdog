@@ -277,13 +277,13 @@ function AnalysisItems() {
 }
 
 // Flow is a primary, user-facing section (the traffic analysis surface), not an
-// admin setting. Traffic Matrix is the first page; the total / multi-dimension /
+// admin setting. Flow Explorer is the first page; the total / multi-dimension /
 // source-IP / destination-IP / overseas / VPN pages land here as they ship.
 function FlowItems() {
 	return (
 		<DropdownMenuGroup>
 			<NavItem href={getPagePath($router, "traffic_matrix")} icon={BarChart3Icon}>
-				<Trans>Traffic Matrix</Trans>
+				<Trans>Flow Explorer</Trans>
 			</NavItem>
 			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
 				<Trans>Address Library</Trans>

@@ -200,7 +200,7 @@ func TestFlowRollupConfigRejectsUnsafeOrUnboundedValues(t *testing.T) {
 	} {
 		cfg := defaultBackendConfig().FlowRollup
 		mutate(&cfg)
-		if err := validateFlowRollupConfig(cfg); err == nil {
+		if err := validateFlowRollupConfig(cfg, cfg.Enabled); err == nil {
 			t.Fatalf("invalid flow rollup config was accepted: %#v", cfg)
 		}
 	}

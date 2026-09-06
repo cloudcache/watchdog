@@ -1,0 +1,59 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { buildFlowSeries, parseFlowFilter, resolveFlowTimeRange } from "./flow-explorer-model.ts"
+
+test("flow ranges are independent presets and custom ranges are minute-aligned", () => {
+	const now = new Date("2026-09-06T12:37:45Z")
+	assert.deepEqual(resolveFlowTimeRange("7d", "", "", now), {
+		start: "2026-08-30T12:37:00.000Z",
+		end: "2026-09-06T12:37:00.000Z",
+	})
+	assert.deepEqual(resolveFlowTimeRange("custom", "2026-09-06T10:03:49Z", "2026-09-06T11:04:59Z", now), {
+		start: "2026-09-06T10:03:00.000Z",
+		end: "2026-09-06T11:04:00.000Z",
+	})
+})
+
+test("flow filter expression compiles to the typed provider filter", () => {
+	assert.deepEqual(parseFlowFilter(`direction IN (in, out) AND category=overseas AND business="customer and cache"`), {
+		directions: ["in", "out"],
+		categories: ["overseas"],
+		businesses: ["customer and cache"],
+	})
+	assert.throws(() => parseFlowFilter("src_ip=203.0.113.1"), /Unsupported filter field/)
+})
+
+test("flow series statistics use actual final bucket duration", () => {
+	const base = {
+		other: false,
+		dimension_snapshot_id: "snapshot-1",
+		geo_version: "geo-1",
+		classification_version: 1,
+		received_records: 1,
+		unknown_sampling_records: 0,
+		quality_records: 0,
+		generated_at: "2026-09-06T10:03:00Z",
+	}
+	const series = buildFlowSeries(
+		[
+			{ ...base, bucket: "2026-09-06T10:00:00Z", dimension_value: "CN", value: 800 },
+			{ ...base, bucket: "2026-09-06T10:05:00Z", dimension_value: "CN", value: 400 },
+		],
+		{
+			requested_from: "2026-09-06T10:00:00Z",
+			requested_to: "2026-09-06T10:07:00Z",
+			effective_from: "2026-09-06T10:00:00Z",
+			effective_to: "2026-09-06T10:07:00Z",
+			source: "1m",
+			source_seconds: 60,
+			step_seconds: 300,
+			target_points: 300,
+		},
+		"bits_per_second"
+	)[0]
+	assert.equal(series.total, (800 * 300) / 8 + (400 * 120) / 8)
+	assert.equal(series.minimum, 400)
+	assert.equal(series.maximum, 800)
+	assert.equal(series.last, 400)
+	assert.equal(series.p95, 800)
+})

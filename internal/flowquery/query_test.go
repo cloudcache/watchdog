@@ -61,7 +61,7 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 		"AND business_direction IN ({direction_0:String}, {direction_1:String})",
 		"ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC",
 		"if(is_top, dimension_value, '_other') AS grouped_dimension_value",
-		"toFloat64(sum(estimated_bytes)) * 8 / {bucket_seconds:UInt32}",
+		"toFloat64(sum(estimated_bytes)) * 8 / greatest(toUInt32(1), least({bucket_seconds:UInt32}",
 		"toUInt8(1), toUInt64(count())",
 		"is_metadata ASC, bucket ASC",
 	} {
@@ -153,6 +153,45 @@ func TestCompileOneHourNormalizesTimesAndDefaultsPresentationTimezone(t *testing
 	}
 	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") || queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
 		t.Fatalf("one-hour query is wrong: %s", compiled.Query.Body)
+	}
+}
+
+func TestCompileSeparatesSourceResolutionFromPresentationInterval(t *testing.T) {
+	request := validRequest()
+	request.To = request.From.Add(2*time.Hour + 5*time.Minute)
+	request.Interval = 15 * time.Minute
+	request.TopN = 2
+	request.IncludeOther = false
+	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.SourceBucketDuration != time.Minute || compiled.BucketDuration != 15*time.Minute || compiled.EstimatedRows != 19 {
+		t.Fatalf("compiled resolution metadata=%+v", compiled)
+	}
+	for _, required := range []string{
+		"FROM flow_aggregate_1m FINAL",
+		"intDiv(toUnixTimestamp(bucket) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32})",
+		"output_bucket AS bucket",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("resampled query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if queryParameter(compiled.Query, "bucket_seconds") != "'900'" {
+		t.Fatalf("presentation interval parameter=%q", queryParameter(compiled.Query, "bucket_seconds"))
+	}
+}
+
+func TestCompileRejectsPresentationIntervalFinerThanSource(t *testing.T) {
+	request := validRequest()
+	request.Bucket = BucketOneHour
+	request.Interval = 15 * time.Minute
+	request.From = request.From.Truncate(time.Hour)
+	request.To = request.To.Truncate(time.Hour)
+	_, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if !IsRequestError(err, "interval", ErrorInvalid) {
+		t.Fatalf("error=%v, want invalid interval", err)
 	}
 }
 

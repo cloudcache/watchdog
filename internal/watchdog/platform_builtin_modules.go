@@ -1,6 +1,10 @@
 package watchdog
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/cloudcache/watchdog/internal/flowquery"
+)
 
 // Builtin module descriptors validate the PLAT-02 registry contract with the
 // subsystems that already exist. Routes and workers stay wired through the
@@ -110,6 +114,40 @@ func newEdgeModule() edgeModule {
 	}}}
 }
 
+type flowModule struct{ baseModule }
+
+func newFlowModule() flowModule {
+	return flowModule{baseModule{ModuleDescriptor{
+		Key:            "flow",
+		Version:        "1",
+		DisplayName:    "Flow",
+		Dependencies:   []string{"core", "network"},
+		DefaultEnabled: true,
+	}}}
+}
+
+func (flowModule) RegisterDatasets(registry *DatasetRegistry) error {
+	metrics := flowquery.Metrics()
+	metricNames := make([]string, 0, len(metrics))
+	for _, metric := range metrics {
+		metricNames = append(metricNames, string(metric.Name))
+	}
+	dimensions := flowquery.Dimensions()
+	groupByFields := make([]string, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		groupByFields = append(groupByFields, string(dimension.Kind))
+	}
+	return registry.Register(DatasetDescriptor{
+		Key: FlowTrafficDataset, ModuleKey: "flow", Provider: DatasetProviderClickHouse,
+		TimeField: "bucket_start", Metrics: metricNames, GroupByFields: groupByFields,
+		FilterFields: []string{
+			"directions", "categories", "businesses", "target_ids", "device_ids", "exporter_ids",
+			"dimension_values", "dimension_snapshot_ids", "geo_versions", "classification_versions",
+		},
+		ValueLayers: []QueryValueLayer{QueryValueCustomer}, MaxRangeDays: 400, MaxResultRows: 250_000,
+	})
+}
+
 func (edgeModule) RegisterTargetKinds(registry *TargetKindRegistry) error {
 	return registry.Register(TargetKindDescriptor{
 		Key:                 TargetKind("edge"),
@@ -195,7 +233,7 @@ func metricNamesForFamilies(families ...string) []string {
 // module registered; the hub and tests share this single composition point.
 func NewBuiltinPlatformRegistries() (*PlatformRegistries, error) {
 	registries := NewPlatformRegistries()
-	if err := registries.RegisterModules(newCoreModule(), newHostModule(), newNetworkModule(), newEdgeModule()); err != nil {
+	if err := registries.RegisterModules(newCoreModule(), newHostModule(), newNetworkModule(), newEdgeModule(), newFlowModule()); err != nil {
 		return nil, err
 	}
 	return registries, nil
