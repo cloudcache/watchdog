@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -23,6 +25,39 @@ func registerAddressSetRoutes(mux *http.ServeMux, auth func(http.Handler) http.H
 	mux.Handle("GET /api/v1/address-sets/{set_id}", auth(viewTenant(http.HandlerFunc(api.getSet))))
 	mux.Handle("PATCH /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.upsertSet))))
 	mux.Handle("DELETE /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.deleteSet))))
+	mux.Handle("POST /api/v1/address-sets/actions/preview", auth(configureTenant(http.HandlerFunc(api.previewOperation))))
+}
+
+func (api addressSetAPI) previewOperation(w http.ResponseWriter, r *http.Request) {
+	var request AddressSetOperationRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if err := ensureAddressJSONEOF(decoder); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	preview, err := PreviewAddressSetOperation(request)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, preview)
+}
+
+func ensureAddressJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("request body must contain exactly one JSON value")
+	}
+	return err
 }
 
 func (api addressSetAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {
