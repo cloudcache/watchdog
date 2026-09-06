@@ -1446,38 +1446,71 @@ type DeviceLAGGroup = {
 }
 
 function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
+	return (
+		<div className="grid gap-6">
+			<DeviceVLANTable deviceId={deviceId} />
+			<DeviceLAGTable deviceId={deviceId} />
+		</div>
+	)
+}
+
+function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 	const { t } = useLingui()
 	const [vlans, setVlans] = useState<DeviceVLAN[]>([])
-	const [lags, setLags] = useState<DeviceLAGGroup[]>([])
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [status, setStatus] = useState("all")
+	const [sort, setSort] = useState("vlan_id:asc")
 	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		let cancelled = false
-		const load = async () => {
-			try {
-				const [vlanData, lagData] = await Promise.all([
-					pb
-						.send<{ items?: DeviceVLAN[] }>(`/api/v1/network/devices/${deviceId}/vlans`, {})
-						.catch(() => ({ items: [] })),
-					pb
-						.send<{ items?: DeviceLAGGroup[] }>(`/api/v1/network/devices/${deviceId}/lags`, {})
-						.catch(() => ({ items: [] })),
-				])
-				if (!cancelled) {
-					setVlans(vlanData.items ?? [])
-					setLags(lagData.items ?? [])
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<{ items?: DeviceVLAN[]; total?: number }>(
+				`/api/v1/network/devices/${deviceId}/vlans`,
+				{
+					query: {
+						q: query || undefined,
+						status: status === "all" ? undefined : status,
+						sort: sortField,
+						order,
+						limit: pageSize,
+						offset: page * pageSize,
+					},
 				}
-			} finally {
-				if (!cancelled) setLoading(false)
-			}
+			)
+			if (sequence !== requestSequence.current) return
+			setVlans(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setVlans([])
+			setTotal(0)
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
 		}
-		load().catch(() => {
-			if (!cancelled) setLoading(false)
-		})
-		return () => {
-			cancelled = true
-		}
-	}, [deviceId])
+	}, [deviceId, page, pageSize, query, sort, status])
+
+	useEffect(() => {
+		load()
+	}, [load])
 
 	const vlanRecords = useMemo(
 		() =>
@@ -1490,6 +1523,132 @@ function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
 			})),
 		[vlans]
 	)
+	const vlanColumns = useMemo(
+		() => [
+			{ field: "vlanID", title: t`VLAN ID`, width: 140, style: denseCellStyle() },
+			{ field: "name", title: t`Name`, width: 320, style: denseCellStyle() },
+			{ field: "status", title: t`Status`, width: 160, style: denseCellStyle() },
+		],
+		[t]
+	)
+	return (
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="text-sm font-medium"><Trans>VLANs</Trans></div>
+				<div className="flex flex-wrap items-center gap-2">
+					<Select
+						value={status}
+						onValueChange={(value) => {
+							setStatus(value)
+							setPage(0)
+						}}
+					>
+						<SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+						<SelectContent>
+							<SelectItem value="all"><Trans>All statuses</Trans></SelectItem>
+							<SelectItem value="active"><Trans>Active</Trans></SelectItem>
+						</SelectContent>
+					</Select>
+					<Select
+						value={sort}
+						onValueChange={(value) => {
+							setSort(value)
+							setPage(0)
+						}}
+					>
+						<SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+						<SelectContent>
+							<SelectItem value="vlan_id:asc"><Trans>VLAN ID ascending</Trans></SelectItem>
+							<SelectItem value="vlan_id:desc"><Trans>VLAN ID descending</Trans></SelectItem>
+							<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
+							<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			<PagedVTable
+				records={vlanRecords}
+				columns={vlanColumns}
+				loading={loading}
+				emptyText={t`No VLANs discovered (Q-BRIDGE-MIB not supported or empty).`}
+				searchPlaceholder={t`Search VLANs...`}
+				height={300}
+				searchValue={search}
+				onSearchChange={setSearch}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
+				}}
+			/>
+		</div>
+	)
+}
+
+function DeviceLAGTable({ deviceId }: { deviceId: string }) {
+	const { t } = useLingui()
+	const [lags, setLags] = useState<DeviceLAGGroup[]>([])
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [mode, setMode] = useState("all")
+	const [sort, setSort] = useState("aggregate_index:asc")
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<{ items?: DeviceLAGGroup[]; total?: number }>(
+				`/api/v1/network/devices/${deviceId}/lags`,
+				{
+					query: {
+						q: query || undefined,
+						mode: mode === "all" ? undefined : mode,
+						sort: sortField,
+						order,
+						limit: pageSize,
+						offset: page * pageSize,
+					},
+				}
+			)
+			if (sequence !== requestSequence.current) return
+			setLags(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setLags([])
+			setTotal(0)
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [deviceId, mode, page, pageSize, query, sort])
+
+	useEffect(() => {
+		load()
+	}, [load])
+
 	const lagRecords = useMemo(
 		() =>
 			lags.map((lag, index) => ({
@@ -1501,14 +1660,6 @@ function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
 			})),
 		[lags]
 	)
-	const vlanColumns = useMemo(
-		() => [
-			{ field: "vlanID", title: t`VLAN ID`, width: 140, style: denseCellStyle() },
-			{ field: "name", title: t`Name`, width: 320, style: denseCellStyle() },
-			{ field: "status", title: t`Status`, width: 160, style: denseCellStyle() },
-		],
-		[t]
-	)
 	const lagColumns = useMemo(
 		() => [
 			{ field: "aggregate", title: t`Aggregate`, width: 180, style: denseCellStyle() },
@@ -1519,20 +1670,43 @@ function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
 	)
 	return (
 		<div className="grid gap-3">
-			<div className="text-sm font-medium">
-				<Trans>VLANs</Trans>
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="text-sm font-medium"><Trans>LAG groups</Trans></div>
+				<div className="flex flex-wrap items-center gap-2">
+					<Select
+						value={mode}
+						onValueChange={(value) => {
+							setMode(value)
+							setPage(0)
+						}}
+					>
+						<SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+						<SelectContent>
+							<SelectItem value="all"><Trans>All modes</Trans></SelectItem>
+							<SelectItem value="lacp">LACP</SelectItem>
+							<SelectItem value="active"><Trans>Active</Trans></SelectItem>
+							<SelectItem value="passive"><Trans>Passive</Trans></SelectItem>
+							<SelectItem value="unknown"><Trans>Unknown</Trans></SelectItem>
+						</SelectContent>
+					</Select>
+					<Select
+						value={sort}
+						onValueChange={(value) => {
+							setSort(value)
+							setPage(0)
+						}}
+					>
+						<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+						<SelectContent>
+							<SelectItem value="aggregate_index:asc"><Trans>Aggregate ascending</Trans></SelectItem>
+							<SelectItem value="aggregate_index:desc"><Trans>Aggregate descending</Trans></SelectItem>
+							<SelectItem value="mac_address:asc"><Trans>MAC ascending</Trans></SelectItem>
+							<SelectItem value="mode:asc"><Trans>Mode ascending</Trans></SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
 			</div>
-			<PagedVTable
-				records={vlanRecords}
-				columns={vlanColumns}
-				loading={loading}
-				emptyText={t`No VLANs discovered (Q-BRIDGE-MIB not supported or empty).`}
-				searchPlaceholder={t`Search VLANs...`}
-				height={300}
-			/>
-			<div className="text-sm font-medium">
-				<Trans>LAG groups</Trans>
-			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
 			<PagedVTable
 				records={lagRecords}
 				columns={lagColumns}
@@ -1540,6 +1714,18 @@ function DeviceVLANsLAG({ deviceId }: { deviceId: string }) {
 				emptyText={t`No LAG groups discovered (IEEE8023-LAG-MIB not supported or empty).`}
 				searchPlaceholder={t`Search LAG groups...`}
 				height={300}
+				searchValue={search}
+				onSearchChange={setSearch}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
+				}}
 			/>
 		</div>
 	)

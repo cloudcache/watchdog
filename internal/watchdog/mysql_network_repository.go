@@ -735,6 +735,56 @@ func (s *MySQLStore) ListDeviceVLANs(ctx context.Context, tenantID, deviceID ID)
 	return vlans, rows.Err()
 }
 
+var deviceVLANSortColumns = map[string]string{
+	"":        "vlan_id",
+	"vlan_id": "vlan_id",
+	"name":    "name",
+	"status":  "status",
+}
+
+func (s *MySQLStore) ListDeviceVLANsPage(ctx context.Context, tenantID, deviceID ID, q DeviceVLANQuery) ([]DeviceVLAN, int, error) {
+	limit, offset := boundedPage(q.Limit, q.Offset)
+	where := ` WHERE tenant_id = ? AND device_id = ?`
+	args := []any{tenantID, deviceID}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (CAST(vlan_id AS CHAR) LIKE ? OR name LIKE ? OR status LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	if q.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, q.Status)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_vlans`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	sortColumn := deviceVLANSortColumns[q.Sort]
+	if sortColumn == "" {
+		sortColumn = "vlan_id"
+	}
+	query := `SELECT vlan_id, name, status FROM device_vlans` + where + fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, dir, dir)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	vlans := make([]DeviceVLAN, 0, min(limit, total))
+	for rows.Next() {
+		var vlan DeviceVLAN
+		if err := rows.Scan(&vlan.VLANID, &vlan.Name, &vlan.Status); err != nil {
+			return nil, 0, err
+		}
+		vlans = append(vlans, vlan)
+	}
+	return vlans, total, rows.Err()
+}
+
 func (s *MySQLStore) UpsertDeviceVLANs(ctx context.Context, tenantID, deviceID ID, vlans []DeviceVLAN) error {
 	return upsertSimple(ctx, s.db, "device_vlans", tenantID, deviceID, len(vlans), func(stmt *sql.Stmt, i int) error {
 		v := vlans[i]
@@ -759,6 +809,66 @@ func (s *MySQLStore) ListDeviceLAGGroups(ctx context.Context, tenantID, deviceID
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
+}
+
+var deviceLAGSortColumns = map[string]string{
+	"":                "aggregate_index",
+	"aggregate_index": "aggregate_index",
+	"mac_address":     "mac_address",
+	"mode":            "mode",
+}
+
+func (s *MySQLStore) ListDeviceLAGGroupsPage(ctx context.Context, tenantID, deviceID ID, q DeviceLAGQuery) ([]DeviceLAGGroup, int, error) {
+	limit, offset := boundedPage(q.Limit, q.Offset)
+	where := ` WHERE tenant_id = ? AND device_id = ?`
+	args := []any{tenantID, deviceID}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (CAST(aggregate_index AS CHAR) LIKE ? OR mac_address LIKE ? OR mode LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	if q.Mode != "" {
+		where += ` AND mode = ?`
+		args = append(args, q.Mode)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_lag_groups`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	sortColumn := deviceLAGSortColumns[q.Sort]
+	if sortColumn == "" {
+		sortColumn = "aggregate_index"
+	}
+	query := `SELECT aggregate_index, mac_address, mode FROM device_lag_groups` + where + fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, dir, dir)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	groups := make([]DeviceLAGGroup, 0, min(limit, total))
+	for rows.Next() {
+		var group DeviceLAGGroup
+		if err := rows.Scan(&group.AggregateIndex, &group.MACAddress, &group.Mode); err != nil {
+			return nil, 0, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, total, rows.Err()
+}
+
+func boundedPage(limit, offset int) (int, int) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func (s *MySQLStore) UpsertDeviceLAGGroups(ctx context.Context, tenantID, deviceID ID, groups []DeviceLAGGroup) error {

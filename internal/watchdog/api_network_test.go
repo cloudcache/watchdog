@@ -21,6 +21,10 @@ type fakeNetworkRepository struct {
 	physical     []PhysicalEntity
 	vlans        []DeviceVLAN
 	lags         []DeviceLAGGroup
+	vlanQuery    DeviceVLANQuery
+	vlanTotal    int
+	lagQuery     DeviceLAGQuery
+	lagTotal     int
 	policy       PortPolicy
 	defaults     TrafficPolicyDefaults
 	deleted      ID
@@ -222,12 +226,20 @@ func (r *fakeNetworkRepository) UpsertDevicePhysicalEntities(_ context.Context, 
 func (r *fakeNetworkRepository) ListDeviceVLANs(_ context.Context, _ ID, _ ID) ([]DeviceVLAN, error) {
 	return r.vlans, nil
 }
+func (r *fakeNetworkRepository) ListDeviceVLANsPage(_ context.Context, _ ID, _ ID, query DeviceVLANQuery) ([]DeviceVLAN, int, error) {
+	r.vlanQuery = query
+	return r.vlans, r.vlanTotal, nil
+}
 func (r *fakeNetworkRepository) UpsertDeviceVLANs(_ context.Context, _ ID, _ ID, vlans []DeviceVLAN) error {
 	r.vlans = append(r.vlans, vlans...)
 	return nil
 }
 func (r *fakeNetworkRepository) ListDeviceLAGGroups(_ context.Context, _ ID, _ ID) ([]DeviceLAGGroup, error) {
 	return r.lags, nil
+}
+func (r *fakeNetworkRepository) ListDeviceLAGGroupsPage(_ context.Context, _ ID, _ ID, query DeviceLAGQuery) ([]DeviceLAGGroup, int, error) {
+	r.lagQuery = query
+	return r.lags, r.lagTotal, nil
 }
 func (r *fakeNetworkRepository) UpsertDeviceLAGGroups(_ context.Context, _ ID, _ ID, groups []DeviceLAGGroup) error {
 	r.lags = append(r.lags, groups...)
@@ -461,6 +473,54 @@ func TestAPIDeviceEventsRejectsInvalidFilters(t *testing.T) {
 			"/api/v1/network/devices/device-a/events?"+query, nil))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("query %q status = %d body = %s", query, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAPIDeviceSwitchingPagesPushFiltersAndReturnTotals(t *testing.T) {
+	repo := &fakeNetworkRepository{
+		devices:   []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		vlans:     []DeviceVLAN{{VLANID: 100, Name: "users", Status: "active"}},
+		lags:      []DeviceLAGGroup{{AggregateIndex: 7, MACAddress: "00:11:22:33:44:55", Mode: "lacp"}},
+		vlanTotal: 12,
+		lagTotal:  4,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+
+	vlan := httptest.NewRecorder()
+	router.ServeHTTP(vlan, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/device-a/vlans?q=user&status=active&sort=name&order=desc&limit=25&offset=25", nil))
+	if vlan.Code != http.StatusOK || !strings.Contains(vlan.Body.String(), `"total":12`) {
+		t.Fatalf("vlan status=%d body=%s", vlan.Code, vlan.Body.String())
+	}
+	if repo.vlanQuery.Search != "user" || repo.vlanQuery.Status != "active" || repo.vlanQuery.Sort != "name" ||
+		!repo.vlanQuery.Desc || repo.vlanQuery.Limit != 25 || repo.vlanQuery.Offset != 25 {
+		t.Fatalf("vlan query = %+v", repo.vlanQuery)
+	}
+
+	lag := httptest.NewRecorder()
+	router.ServeHTTP(lag, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/device-a/lags?q=00%3A11&mode=lacp&sort=mac_address&order=asc&limit=50", nil))
+	if lag.Code != http.StatusOK || !strings.Contains(lag.Body.String(), `"total":4`) {
+		t.Fatalf("lag status=%d body=%s", lag.Code, lag.Body.String())
+	}
+	if repo.lagQuery.Search != "00:11" || repo.lagQuery.Mode != "lacp" || repo.lagQuery.Sort != "mac_address" ||
+		repo.lagQuery.Desc || repo.lagQuery.Limit != 50 {
+		t.Fatalf("lag query = %+v", repo.lagQuery)
+	}
+}
+
+func TestAPIDeviceSwitchingPagesRejectInvalidQueries(t *testing.T) {
+	repo := &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+	for _, path := range []string{
+		"vlans?limit=0", "vlans?sort=unsafe", "vlans?order=sideways",
+		"lags?limit=501", "lags?offset=-1", "lags?sort=unsafe",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/device-a/"+path, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("path %q status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
 }

@@ -173,8 +173,10 @@ type NetworkRepository interface {
 	ListDevicePhysicalEntitiesPage(ctx context.Context, tenantID, deviceID ID, query PhysicalEntityQuery) ([]PhysicalEntity, int, error)
 	UpsertDevicePhysicalEntities(ctx context.Context, tenantID, deviceID ID, entities []PhysicalEntity) error
 	ListDeviceVLANs(ctx context.Context, tenantID, deviceID ID) ([]DeviceVLAN, error)
+	ListDeviceVLANsPage(ctx context.Context, tenantID, deviceID ID, query DeviceVLANQuery) ([]DeviceVLAN, int, error)
 	UpsertDeviceVLANs(ctx context.Context, tenantID, deviceID ID, vlans []DeviceVLAN) error
 	ListDeviceLAGGroups(ctx context.Context, tenantID, deviceID ID) ([]DeviceLAGGroup, error)
+	ListDeviceLAGGroupsPage(ctx context.Context, tenantID, deviceID ID, query DeviceLAGQuery) ([]DeviceLAGGroup, int, error)
 	UpsertDeviceLAGGroups(ctx context.Context, tenantID, deviceID ID, groups []DeviceLAGGroup) error
 	ListBGPSessions(ctx context.Context, tenantID, deviceID ID) ([]BGPSession, error)
 	ListDeviceBGPSessionsPage(ctx context.Context, tenantID, deviceID ID, q BGPSessionQuery) ([]BGPSession, int, error)
@@ -200,6 +202,24 @@ type PhysicalEntityQuery struct {
 	Search string
 	Class  string
 	FRU    *bool
+	Sort   string
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+type DeviceVLANQuery struct {
+	Search string
+	Status string
+	Sort   string
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+type DeviceLAGQuery struct {
+	Search string
+	Mode   string
 	Sort   string
 	Desc   bool
 	Limit  int

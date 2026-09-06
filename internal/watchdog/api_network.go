@@ -550,6 +550,31 @@ func (api networkAPI) listDeviceVLANs(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	query := r.URL.Query()
+	if hasDeviceSwitchingPageParams(query, "status") {
+		page, err := parseDeviceSwitchingPage(query, deviceVLANSortColumns, "vlan_id")
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		status := strings.TrimSpace(query.Get("status"))
+		if len(status) > 32 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "status must be at most 32 characters", nil)
+			return
+		}
+		vlans, total, err := api.repo.ListDeviceVLANsPage(r.Context(), auth.TenantID, device.ID, DeviceVLANQuery{
+			Search: page.Search, Status: status, Sort: page.Sort, Desc: page.Desc, Limit: page.Limit, Offset: page.Offset,
+		})
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		if vlans == nil {
+			vlans = []DeviceVLAN{}
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": vlans, "total": total})
+		return
+	}
 	vlans, err := api.repo.ListDeviceVLANs(r.Context(), auth.TenantID, device.ID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -569,12 +594,78 @@ func (api networkAPI) listDeviceLAGGroups(w http.ResponseWriter, r *http.Request
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	query := r.URL.Query()
+	if hasDeviceSwitchingPageParams(query, "mode") {
+		page, err := parseDeviceSwitchingPage(query, deviceLAGSortColumns, "aggregate_index")
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		mode := strings.TrimSpace(query.Get("mode"))
+		if len(mode) > 32 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "mode must be at most 32 characters", nil)
+			return
+		}
+		groups, total, err := api.repo.ListDeviceLAGGroupsPage(r.Context(), auth.TenantID, device.ID, DeviceLAGQuery{
+			Search: page.Search, Mode: mode, Sort: page.Sort, Desc: page.Desc, Limit: page.Limit, Offset: page.Offset,
+		})
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		if groups == nil {
+			groups = []DeviceLAGGroup{}
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": groups, "total": total})
+		return
+	}
 	groups, err := api.repo.ListDeviceLAGGroups(r.Context(), auth.TenantID, device.ID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": groups})
+}
+
+type deviceSwitchingPage struct {
+	Search string
+	Sort   string
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+func hasDeviceSwitchingPageParams(query url.Values, exactFilter string) bool {
+	return query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
+		query.Get(exactFilter) != "" || query.Get("sort") != "" || query.Get("order") != ""
+}
+
+func parseDeviceSwitchingPage(query url.Values, allowedSorts map[string]string, defaultSort string) (deviceSwitchingPage, error) {
+	page := deviceSwitchingPage{Search: strings.TrimSpace(query.Get("q")), Sort: strings.TrimSpace(query.Get("sort")), Limit: 100}
+	if len(page.Search) > 256 {
+		return deviceSwitchingPage{}, fmt.Errorf("q must be at most 256 characters")
+	}
+	if page.Sort == "" {
+		page.Sort = defaultSort
+	}
+	if _, ok := allowedSorts[page.Sort]; !ok {
+		return deviceSwitchingPage{}, fmt.Errorf("invalid sort")
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		return deviceSwitchingPage{}, fmt.Errorf("order must be asc or desc")
+	}
+	page.Desc = order == "desc"
+	var err error
+	page.Limit, err = parseNetworkInventoryInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		return deviceSwitchingPage{}, fmt.Errorf("limit must be between 1 and 500")
+	}
+	page.Offset, err = parseNetworkInventoryInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		return deviceSwitchingPage{}, fmt.Errorf("offset must be zero or greater")
+	}
+	return page, nil
 }
 
 func (api networkAPI) patchDevice(w http.ResponseWriter, r *http.Request) {
