@@ -341,7 +341,12 @@ func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, hand
 				}
 				failed := records[failedIndex]
 				errorsByPartition[index] = fmt.Errorf("process %s[%d] offset %d: %w", failed.Topic, failed.Partition, failed.Offset, err)
-				cancel()
+				// Do not cancel sibling partitions: one partition's failure must
+				// not abort healthy partitions' in-flight ClickHouse inserts.
+				// Healthy partitions run to completion and mark their records
+				// (committed on shutdown); only the failed partition's records
+				// stay unmarked and replay. The writer's RetryMaxElapsed budget
+				// bounds how long a stuck partition can delay this barrier.
 			}
 		}()
 	}

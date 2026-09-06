@@ -165,6 +165,8 @@ func (m *Worker) Handler() http.Handler {
 		writeUint(output, "watchdog_flow_clickhouse_blocks_total", "Flow blocks durably written with their receipts.", "counter", writer.Blocks)
 		writeUint(output, "watchdog_flow_clickhouse_rows_total", "Flow rows durably written with their receipts.", "counter", writer.Rows)
 		writeFloat(output, "watchdog_flow_clickhouse_insert_duration_seconds_total", "Cumulative time spent in ClickHouse flow block insert attempts.", "counter", float64(writer.InsertDurationNanos)/float64(time.Second))
+		writeInt(output, "watchdog_flow_clickhouse_blocks_retrying", "Flow blocks currently retrying a ClickHouse insert; a sustained non-zero value marks a stuck partition.", "gauge", writer.RetryingNow)
+		writeUint(output, "watchdog_flow_clickhouse_insert_budget_exceeded_total", "Flow blocks that exhausted their retry budget and were surfaced for replay.", "counter", writer.BudgetExceeded)
 		m.process.write(output)
 	})
 }

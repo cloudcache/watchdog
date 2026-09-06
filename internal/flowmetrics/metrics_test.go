@@ -99,7 +99,7 @@ func TestWorkerMetricsExposeDurableAndFailureCounters(t *testing.T) {
 			return flowch.PipelineStats{Records: 5, SamplingUnknown: 2, SamplingConflict: 1, SnapshotMiss: 3}
 		},
 		func() flowch.WriterStats {
-			return flowch.WriterStats{InsertAttempts: 4, RetryableErrors: 1, PermanentErrors: 1, Retries: 1, Blocks: 2, Rows: 5, InsertDurationNanos: uint64(2 * time.Second)}
+			return flowch.WriterStats{InsertAttempts: 4, RetryableErrors: 1, PermanentErrors: 1, Retries: 1, Blocks: 2, Rows: 5, InsertDurationNanos: uint64(2 * time.Second), RetryingNow: 1, BudgetExceeded: 2}
 		},
 	)
 	if err != nil {
@@ -121,6 +121,8 @@ func TestWorkerMetricsExposeDurableAndFailureCounters(t *testing.T) {
 		`watchdog_flow_clickhouse_insert_errors_total{class="retryable"} 1`,
 		`watchdog_flow_clickhouse_insert_errors_total{class="permanent"} 1`,
 		"watchdog_flow_clickhouse_insert_duration_seconds_total 2",
+		"watchdog_flow_clickhouse_blocks_retrying 1",
+		"watchdog_flow_clickhouse_insert_budget_exceeded_total 2",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("metrics missing %q:\n%s", expected, body)

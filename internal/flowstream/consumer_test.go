@@ -152,6 +152,35 @@ func TestConsumerSerializesEachPartitionAndRunsPartitionsConcurrently(t *testing
 	}
 }
 
+func TestConsumerPartitionFailureDoesNotAbortHealthyPartitions(t *testing.T) {
+	// One partition's ClickHouse failure must not cancel a healthy sibling's
+	// in-flight work: the healthy partition runs to completion and marks its
+	// records (committed on shutdown); only the failed partition replays.
+	p0 := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 0, Offset: 10}
+	p1 := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 1, Offset: 20, Value: []byte("healthy")}
+	client := &fakeConsumerClient{fetches: testPartitionFetches(
+		kgo.FetchPartition{Partition: 0, Records: []*kgo.Record{p0}},
+		kgo.FetchPartition{Partition: 1, Records: []*kgo.Record{p1}},
+	)}
+	consumer := newConsumerWithClient(client, nil)
+	p0errored := make(chan struct{})
+	wantErr := errors.New("ClickHouse rejected partition 0")
+	err := consumer.RunPartitionBatches(context.Background(), func(ctx context.Context, records []*kgo.Record) error {
+		if records[0].Partition == 0 {
+			close(p0errored)
+			return wantErr
+		}
+		<-p0errored          // partition 0 has already failed
+		return ctx.Err()     // must be nil: a sibling failure no longer cancels this partition
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("want partition 0 failure surfaced, got %v", err)
+	}
+	if len(client.marked) != 1 || client.marked[0] != p1 {
+		t.Fatalf("healthy partition 1 record was not committed: %+v", client.marked)
+	}
+}
+
 func TestConsumerPartitionBatchMarksOnlyAfterDurableSuccess(t *testing.T) {
 	first := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 10, Value: []byte("first")}
 	second := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 11, Value: []byte("second")}

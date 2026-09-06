@@ -23,6 +23,17 @@ type WriterConfig struct {
 	Limits       BatchLimits
 	RetryInitial time.Duration
 	RetryMax     time.Duration
+	// RetryMaxElapsed bounds the total wall-clock a single block may retry
+	// before it gives up for this cycle. It exists so one partition whose
+	// ClickHouse insert is persistently failing cannot retry forever and hang
+	// the consumer's per-fetch barrier — which would stall every healthy
+	// partition and block group rebalance indefinitely. Exceeding the budget is
+	// not a drop: the block's records are left unmarked and replay through the
+	// consumer's normal restart path (ADR lag-absorb), so nothing is lost. The
+	// value trades head-of-line blocking of healthy partitions during a stuck
+	// event (up to one budget) against restart churn on a ClickHouse outage
+	// longer than the budget; operators can tune it.
+	RetryMaxElapsed time.Duration
 }
 
 type Writer struct {
@@ -40,6 +51,8 @@ type writerStats struct {
 	blocks              atomic.Uint64
 	rows                atomic.Uint64
 	insertDurationNanos atomic.Uint64
+	retryingNow         atomic.Int64
+	budgetExceeded      atomic.Uint64
 }
 
 type WriterStats struct {
@@ -51,6 +64,12 @@ type WriterStats struct {
 	Blocks              uint64
 	Rows                uint64
 	InsertDurationNanos uint64
+	// RetryingNow is a gauge of blocks currently in retry (a partition insert
+	// that has failed at least once and is grinding). A sustained non-zero value
+	// is the "stuck partition" signal. BudgetExceeded counts blocks that hit
+	// RetryMaxElapsed and were surfaced for replay.
+	RetryingNow    int64
+	BudgetExceeded uint64
 }
 
 type PermanentError struct{ Err error }
@@ -80,8 +99,14 @@ func NewWriter(inserter BlockInserter, config WriterConfig) (*Writer, error) {
 	if config.RetryMax == 0 {
 		config.RetryMax = 30 * time.Second
 	}
+	if config.RetryMaxElapsed == 0 {
+		config.RetryMaxElapsed = 2 * time.Minute
+	}
 	if config.RetryInitial < 0 || config.RetryMax < config.RetryInitial || config.RetryMax > time.Minute {
 		return nil, errors.New("ClickHouse retry durations are invalid")
+	}
+	if config.RetryMaxElapsed < config.RetryMax || config.RetryMaxElapsed > time.Hour {
+		return nil, errors.New("ClickHouse retry budget is invalid")
 	}
 	return &Writer{inserter: inserter, config: config}, nil
 }
@@ -106,6 +131,13 @@ func (w *Writer) Write(ctx context.Context, batches []*flowworker.EnrichedBatch)
 
 func (w *Writer) insertWithRetry(ctx context.Context, block PreparedBlock) error {
 	delay := w.config.RetryInitial
+	deadline := time.Now().Add(w.config.RetryMaxElapsed)
+	retrying := false
+	defer func() {
+		if retrying {
+			w.stats.retryingNow.Add(-1)
+		}
+	}()
 	for {
 		started := time.Now()
 		w.stats.insertAttempts.Add(1)
@@ -125,6 +157,17 @@ func (w *Writer) insertWithRetry(ctx context.Context, block PreparedBlock) error
 		w.stats.retryableErrors.Add(1)
 		if ctx.Err() != nil {
 			return errors.Join(err, ctx.Err())
+		}
+		// Bound total retry time so a persistently failing partition cannot hang
+		// the consumer's per-fetch barrier forever and block rebalance. The block
+		// is surfaced for the normal unmarked->replay path; nothing is dropped.
+		if time.Now().After(deadline) {
+			w.stats.budgetExceeded.Add(1)
+			return fmt.Errorf("ClickHouse flow block insert exceeded %s retry budget: %w", w.config.RetryMaxElapsed, err)
+		}
+		if !retrying {
+			retrying = true
+			w.stats.retryingNow.Add(1)
 		}
 		wait := jitter(delay)
 		timer := time.NewTimer(wait)
@@ -156,6 +199,7 @@ func (w *Writer) Stats() WriterStats {
 		RetryableErrors: w.stats.retryableErrors.Load(), PermanentErrors: w.stats.permanentErrors.Load(),
 		Retries: w.stats.retries.Load(), Blocks: w.stats.blocks.Load(), Rows: w.stats.rows.Load(),
 		InsertDurationNanos: w.stats.insertDurationNanos.Load(),
+		RetryingNow:         w.stats.retryingNow.Load(), BudgetExceeded: w.stats.budgetExceeded.Load(),
 	}
 }
 
