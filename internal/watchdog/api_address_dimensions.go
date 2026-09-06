@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -37,16 +36,50 @@ func registerAddressDimensionRoutes(mux *http.ServeMux, auth func(http.Handler) 
 
 func (api addressDimensionAPI) list(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	filter := AddressDimensionListFilter{Status: strings.TrimSpace(r.URL.Query().Get("status")), Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+	query := r.URL.Query()
+	for key := range query {
+		switch key {
+		case "q", "status", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
 			return
 		}
-		filter.Limit = limit
 	}
-	items, cursor, err := api.publisher.ListAddressDimensionSnapshots(r.Context(), auth.TenantID, filter)
+	filter := AddressDimensionListFilter{
+		Status: strings.TrimSpace(query.Get("status")), Search: strings.TrimSpace(query.Get("q")),
+		Sort: strings.TrimSpace(query.Get("sort")), Cursor: strings.TrimSpace(query.Get("cursor")),
+	}
+	if len(filter.Status) > 32 || len(filter.Search) > 255 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "address publication filter is too long", nil)
+		return
+	}
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if _, ok := addressDimensionSnapshotSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid address publication sort", nil)
+		return
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc"
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	items, cursor, total, err := api.publisher.ListAddressDimensionSnapshots(r.Context(), auth.TenantID, filter)
 	if err != nil {
 		writeAddressDimensionError(w, err)
 		return
@@ -54,7 +87,11 @@ func (api addressDimensionAPI) list(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []AddressDimensionSnapshot{}
 	}
-	response := map[string]any{"items": items}
+	response := map[string]any{"items": items, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}

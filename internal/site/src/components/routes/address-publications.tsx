@@ -1,11 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { ClockIcon, RefreshCwIcon, RocketIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { pb } from "@/lib/api"
 
 type AddressDimensionSnapshot = {
@@ -35,38 +34,62 @@ type AddressDimensionPreview = {
 	estimated_bundle_bytes: number
 }
 
-type ListResponse = { items?: AddressDimensionSnapshot[]; next_cursor?: string }
+type ListResponse = { items?: AddressDimensionSnapshot[]; total?: number }
 
 export default memo(function AddressPublications() {
 	const { t } = useLingui()
 	const [items, setItems] = useState<AddressDimensionSnapshot[]>([])
-	const [nextCursor, setNextCursor] = useState("")
-	const [status, setStatus] = useState("all")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [debouncedSearch, setDebouncedSearch] = useState("")
+	const [status, setStatus] = useState("")
+	const [sort, setSort] = useState("version:desc")
 	const [effectiveFrom, setEffectiveFrom] = useState(defaultEffectiveFrom)
 	const [preview, setPreview] = useState<AddressDimensionPreview | null>(null)
 	const [loading, setLoading] = useState(true)
 	const [working, setWorking] = useState(false)
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
+	const requestSequence = useRef(0)
 
-	const fetchPage = useCallback(
-		async (cursor = "", append = false) => {
-			setLoading(true)
-			setError("")
-			try {
-				const data = await pb.send<ListResponse>("/api/v1/dimensions/address/versions", {
-					query: { status: status === "all" ? undefined : status, limit: 100, cursor: cursor || undefined },
-				})
-				setItems((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load publications`)
-			} finally {
-				setLoading(false)
-			}
-		},
-		[status, t]
-	)
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const fetchPage = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<ListResponse>("/api/v1/dimensions/address/versions", {
+				query: {
+					q: debouncedSearch || undefined,
+					status: status || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setItems(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setItems([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load publications`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [debouncedSearch, page, pageSize, sort, status, t])
 
 	useEffect(() => {
 		fetchPage()
@@ -140,6 +163,46 @@ export default memo(function AddressPublications() {
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				status: [
+					{ value: "active", label: t`Active` },
+					{ value: "retired", label: t`Retired` },
+				],
+			},
+			selected: { status: status ? [status] : [] },
+			selection: { status: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setStatus(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetPage(() => setStatus("")),
+		}),
+		[status, t]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				version: "version",
+				status: "status",
+				effective: "effective",
+				prefixes: "prefixes",
+				sets: "sets",
+				maxMembership: "max_membership",
+				schema: "schema",
+				checksum: "checksum",
+				created: "created",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -203,35 +266,25 @@ export default memo(function AddressPublications() {
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
 			) : null}
 			{notice ? <div className="rounded-md border border-green-500/30 p-3 text-sm text-green-700">{notice}</div> : null}
-			<Select value={status} onValueChange={setStatus}>
-				<SelectTrigger className="w-40">
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent>
-					<SelectItem value="all">
-						<Trans>All statuses</Trans>
-					</SelectItem>
-					<SelectItem value="active">
-						<Trans>Active</Trans>
-					</SelectItem>
-					<SelectItem value="retired">
-						<Trans>Retired</Trans>
-					</SelectItem>
-				</SelectContent>
-			</Select>
 			<PagedVTable
 				records={records}
 				columns={columns}
 				loading={loading}
 				emptyText={t`No dimension publications found.`}
 				searchPlaceholder={t`Search versions or checksums...`}
+				searchValue={search}
+				onSearchChange={setSearch}
 				height={420}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+				}}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 			/>
-			{nextCursor ? (
-				<Button variant="outline" onClick={() => fetchPage(nextCursor, true)}>
-					<Trans>Load more</Trans>
-				</Button>
-			) : null}
 		</div>
 	)
 })

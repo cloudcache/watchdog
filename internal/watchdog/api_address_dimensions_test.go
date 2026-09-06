@@ -200,3 +200,25 @@ func TestAddressDimensionLifecycleAPIRequiresVerifiedTenantKeyAndIfMatch(t *test
 func addressDimensionTestAuth(*http.Request) (AuthContext, error) {
 	return AuthContext{TenantID: "tenant-dimension", UserID: "user-dimension", IsAdmin: true}, nil
 }
+
+func TestAddressDimensionVersionListServerTable(t *testing.T) {
+	publisher := &fakeAddressDimensionPublisher{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressDimensionTestAuth, AddressDimensions: publisher})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dimensions/address/versions?q=sha256&status=active&sort=prefixes&order=desc&limit=25&offset=50", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := publisher.filter; !filter.TableMode || filter.Search != "sha256" || filter.Status != AddressDimensionStatusActive || filter.Sort != "prefixes" || !filter.Desc || filter.Limit != 25 || filter.Offset != 50 {
+		t.Fatalf("filter=%#v", filter)
+	}
+	var page struct {
+		Items  []AddressDimensionSnapshot `json:"items"`
+		Total  int                        `json:"total"`
+		Limit  int                        `json:"limit"`
+		Offset int                        `json:"offset"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Total != 3 || page.Limit != 25 || page.Offset != 50 {
+		t.Fatalf("page=%#v err=%v", page, err)
+	}
+}

@@ -95,9 +95,14 @@ type AddressDimensionPublishRequest struct {
 }
 
 type AddressDimensionListFilter struct {
-	Status string
-	Limit  int
-	Cursor string
+	Status    string
+	Search    string
+	Sort      string
+	Desc      bool
+	Limit     int
+	Offset    int
+	Cursor    string
+	TableMode bool
 }
 
 type AddressDimensionActivation struct {
@@ -143,7 +148,7 @@ type AddressDimensionReference struct {
 type AddressDimensionPublisher interface {
 	PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error)
 	PublishAddressDimension(context.Context, ID, ID, AddressDimensionPublishRequest) (AddressDimensionSnapshot, error)
-	ListAddressDimensionSnapshots(context.Context, ID, AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, error)
+	ListAddressDimensionSnapshots(context.Context, ID, AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, int, error)
 	GetAddressDimensionSnapshot(context.Context, ID, ID) (AddressDimensionSnapshot, error)
 }
 

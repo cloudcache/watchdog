@@ -147,9 +147,15 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if classified.Direction != flowdimension.DirectionOut || classified.Business != "changed" {
 		t.Fatalf("published bundle classification = %#v", classified)
 	}
-	items, cursor, err := publisher.ListAddressDimensionSnapshots(ctx, tenantID, AddressDimensionListFilter{Limit: 10})
+	items, cursor, _, err := publisher.ListAddressDimensionSnapshots(ctx, tenantID, AddressDimensionListFilter{Limit: 10})
 	if err != nil || len(items) != 1 || cursor != "" || items[0].ID != snapshot.ID {
 		t.Fatalf("list snapshots = %#v %q %v", items, cursor, err)
+	}
+	items, cursor, total, err := publisher.ListAddressDimensionSnapshots(ctx, tenantID, AddressDimensionListFilter{
+		Search: snapshot.Checksum[:12], Status: AddressDimensionStatusActive, Sort: "prefixes", Desc: true, Limit: 25, TableMode: true,
+	})
+	if err != nil || len(items) != 1 || cursor != "" || total != 1 || items[0].ID != snapshot.ID {
+		t.Fatalf("server snapshots = %#v %q total=%d err=%v", items, cursor, total, err)
 	}
 
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)

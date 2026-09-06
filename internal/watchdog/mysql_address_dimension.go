@@ -274,10 +274,24 @@ func (p *MySQLAddressDimensionPublisher) GetAddressDimensionSnapshot(ctx context
 		FROM dimension_snapshots WHERE tenant_id = ? AND id = ?`, tenantID, snapshotID))
 }
 
-func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx context.Context, tenantID ID, filter AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, error) {
+var addressDimensionSnapshotSortColumns = map[string]string{
+	"":               "version",
+	"version":        "version",
+	"status":         "status",
+	"effective":      "effective_from",
+	"prefixes":       "prefix_count",
+	"sets":           "address_set_count",
+	"max_membership": "max_address_sets_per_record",
+	"schema":         "bundle_schema_version",
+	"checksum":       "checksum",
+	"created":        "created_at",
+}
+
+func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx context.Context, tenantID ID, filter AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, int, error) {
 	filter.Status = strings.TrimSpace(filter.Status)
+	filter.Search = strings.TrimSpace(filter.Search)
 	if filter.Status != "" && filter.Status != AddressDimensionStatusActive && filter.Status != AddressDimensionStatusRetired {
-		return nil, "", ErrAddressDimensionInvalid
+		return nil, "", 0, ErrAddressDimensionInvalid
 	}
 	if filter.Limit <= 0 {
 		filter.Limit = 100
@@ -285,45 +299,67 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx conte
 	if filter.Limit > 500 {
 		filter.Limit = 500
 	}
-	query := `SELECT ` + addressDimensionSnapshotColumns + ` FROM dimension_snapshots
-		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ?`
+	sortColumn, validSort := addressDimensionSnapshotSortColumns[filter.Sort]
+	if len(filter.Search) > 255 || filter.Offset < 0 || !validSort {
+		return nil, "", 0, ErrAddressDimensionInvalid
+	}
+	where := ` WHERE tenant_id = ? AND module_key = ? AND dimension_key = ?`
 	args := []any{tenantID, AddressDimensionModuleKey, AddressDimensionKey}
 	if filter.Status != "" {
-		query += ` AND status = ?`
+		where += ` AND status = ?`
 		args = append(args, filter.Status)
 	}
+	if filter.Search != "" {
+		like := "%" + escapeSQLLike(filter.Search) + "%"
+		where += ` AND (id LIKE ? OR CAST(version AS CHAR) LIKE ? OR checksum LIKE ? OR draft_digest LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+	var total int
+	if err := p.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dimension_snapshots`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressDimensionSnapshotColumns + ` FROM dimension_snapshots` + where
 	if filter.Cursor != "" {
 		cursor, err := strconv.ParseUint(filter.Cursor, 10, 64)
 		if err != nil || cursor == 0 {
-			return nil, "", ErrAddressDimensionInvalid
+			return nil, "", 0, ErrAddressDimensionInvalid
 		}
 		query += ` AND version < ?`
 		args = append(args, cursor)
 	}
-	query += ` ORDER BY version DESC LIMIT ?`
-	args = append(args, filter.Limit+1)
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY version DESC LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := p.store.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressDimensionSnapshot, 0, filter.Limit)
 	for rows.Next() {
 		item, scanErr := scanAddressDimensionSnapshot(rows)
 		if scanErr != nil {
-			return nil, "", scanErr
+			return nil, "", 0, scanErr
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	next := ""
-	if len(items) > filter.Limit {
+	if !filter.TableMode && len(items) > filter.Limit {
 		items = items[:filter.Limit]
 		next = strconv.FormatUint(items[len(items)-1].Version, 10)
 	}
-	return items, next, nil
+	return items, next, total, nil
 }
 
 const addressDimensionSnapshotColumns = `

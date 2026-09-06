@@ -12,6 +12,7 @@ type fakeAddressDimensionPublisher struct {
 	request  AddressDimensionPublishRequest
 	tenantID ID
 	actorID  ID
+	filter   AddressDimensionListFilter
 }
 
 func (p *fakeAddressDimensionPublisher) PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error) {
@@ -23,8 +24,9 @@ func (p *fakeAddressDimensionPublisher) PublishAddressDimension(_ context.Contex
 	return AddressDimensionSnapshot{ID: "snapshot-a"}, nil
 }
 
-func (*fakeAddressDimensionPublisher) ListAddressDimensionSnapshots(context.Context, ID, AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, error) {
-	return nil, "", nil
+func (p *fakeAddressDimensionPublisher) ListAddressDimensionSnapshots(_ context.Context, tenantID ID, filter AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, int, error) {
+	p.tenantID, p.filter = tenantID, filter
+	return []AddressDimensionSnapshot{{ID: "snapshot-a", TenantID: tenantID, Version: 7, Status: AddressDimensionStatusActive}}, "6", 3, nil
 }
 
 func (*fakeAddressDimensionPublisher) GetAddressDimensionSnapshot(context.Context, ID, ID) (AddressDimensionSnapshot, error) {
