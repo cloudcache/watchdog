@@ -60,6 +60,10 @@ func TestMySQLDashboardLifecycle(t *testing.T) {
 		len(references[0].Series) != 1 || references[1].Exists {
 		t.Fatalf("references = %+v err=%v", references, err)
 	}
+	options, optionTotal, err := store.ListDashboardGraphOptions(ctx, tenant, DashboardGraphOptionListFilter{Search: "traffic", Limit: 1})
+	if err != nil || optionTotal != 1 || len(options) != 1 || options[0].ID != graph.ID {
+		t.Fatalf("graph options = %+v total=%d err=%v", options, optionTotal, err)
+	}
 
 	// Duplicate name in the same tenant is a conflict.
 	if _, err := store.CreateDashboard(ctx, Dashboard{

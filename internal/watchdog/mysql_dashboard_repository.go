@@ -70,6 +70,39 @@ func (s *MySQLStore) ListDashboards(ctx context.Context, tenantID ID, filter Das
 	return dashboards, total, rows.Err()
 }
 
+func (s *MySQLStore) ListDashboardGraphOptions(ctx context.Context, tenantID ID, filter DashboardGraphOptionListFilter) ([]AggregateGraph, int64, error) {
+	filter, err := normalizeDashboardGraphOptionListFilter(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	where := ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if filter.Search != "" {
+		like := "%" + escapeSQLLike(filter.Search) + "%"
+		where += ` AND (name LIKE ? OR COALESCE(description, '') LIKE ?)`
+		args = append(args, like, like)
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM aggregate_graphs`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	queryArgs := append(append([]any(nil), args...), filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, aggregateGraphSelect()+where+` ORDER BY name, id LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	graphs := make([]AggregateGraph, 0, filter.Limit)
+	for rows.Next() {
+		graph, scanErr := scanAggregateGraph(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		graphs = append(graphs, graph)
+	}
+	return graphs, total, rows.Err()
+}
+
 func (s *MySQLStore) GetDashboard(ctx context.Context, tenantID, id ID) (Dashboard, error) {
 	return scanDashboard(s.db.QueryRowContext(ctx, `
 		SELECT `+dashboardColumns+`

@@ -37,6 +37,15 @@ type DashboardListFilter struct {
 	Offset  int
 }
 
+// DashboardGraphOptionListFilter is the bounded lookup contract used by the
+// dashboard panel picker. It deliberately returns graph metadata only; series
+// are resolved in one batch by the preview endpoint after selection.
+type DashboardGraphOptionListFilter struct {
+	Search string
+	Limit  int
+	Offset int
+}
+
 // DashboardGraphReference is the resolved, tenant-scoped dependency behind a
 // dashboard panel. Missing references stay in the response so drafts remain
 // editable and preview can explain exactly what cannot be rendered.
@@ -62,6 +71,10 @@ type DashboardRepository interface {
 	UpdateDashboard(ctx context.Context, dashboard Dashboard, expectedVersion uint32) (Dashboard, error)
 	DeleteDashboard(ctx context.Context, tenantID, id ID, expectedVersion uint32) error
 	ResolveDashboardGraphReferences(ctx context.Context, tenantID ID, graphIDs []ID) ([]DashboardGraphReference, error)
+}
+
+type DashboardGraphOptionRepository interface {
+	ListDashboardGraphOptions(ctx context.Context, tenantID ID, filter DashboardGraphOptionListFilter) ([]AggregateGraph, int64, error)
 }
 
 // ErrDashboardNameConflict is returned when a tenant already has a dashboard
@@ -172,6 +185,23 @@ func normalizeDashboardListFilter(filter DashboardListFilter) (DashboardListFilt
 	case "name", "owner_id", "version", "created_at", "updated_at":
 	default:
 		return filter, errors.New("unsupported dashboard sort column")
+	}
+	return filter, nil
+}
+
+func normalizeDashboardGraphOptionListFilter(filter DashboardGraphOptionListFilter) (DashboardGraphOptionListFilter, error) {
+	filter.Search = strings.TrimSpace(filter.Search)
+	if len(filter.Search) > 255 {
+		return filter, errors.New("dashboard graph search exceeds 255 characters")
+	}
+	if filter.Offset < 0 {
+		return filter, errors.New("dashboard graph offset must not be negative")
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 25
+	}
+	if filter.Limit > 100 {
+		filter.Limit = 100
 	}
 	return filter, nil
 }

@@ -21,12 +21,32 @@ func registerDashboardRoutes(mux *http.ServeMux, auth func(http.Handler) http.Ha
 	configureTenant := RequirePermission(ActionConfigure, TenantResource)
 	viewTenant := RequirePermission(ActionView, TenantResource)
 	mux.Handle("GET /api/v1/dashboards", auth(viewTenant(http.HandlerFunc(api.list))))
+	mux.Handle("GET /api/v1/dashboards/graph-options", auth(viewTenant(http.HandlerFunc(api.listGraphOptions))))
 	mux.Handle("POST /api/v1/dashboards", auth(configureTenant(http.HandlerFunc(api.create))))
 	mux.Handle("POST /api/v1/dashboards/actions/preview", auth(viewTenant(http.HandlerFunc(api.previewDraft))))
 	mux.Handle("GET /api/v1/dashboards/{dashboard_id}", auth(viewTenant(http.HandlerFunc(api.get))))
 	mux.Handle("GET /api/v1/dashboards/{dashboard_id}/preview", auth(viewTenant(http.HandlerFunc(api.previewSaved))))
 	mux.Handle("PATCH /api/v1/dashboards/{dashboard_id}", auth(configureTenant(http.HandlerFunc(api.patch))))
 	mux.Handle("DELETE /api/v1/dashboards/{dashboard_id}", auth(configureTenant(http.HandlerFunc(api.delete))))
+}
+
+func (api dashboardAPI) listGraphOptions(w http.ResponseWriter, r *http.Request) {
+	repo, ok := api.repo.(DashboardGraphOptionRepository)
+	if !ok {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Dashboard graph lookup is unavailable", nil)
+		return
+	}
+	auth, _ := AuthFromContext(r.Context())
+	filter, ok := parseDashboardGraphOptionListFilter(w, r)
+	if !ok {
+		return
+	}
+	graphs, total, err := repo.ListDashboardGraphOptions(r.Context(), auth.TenantID, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": graphs, "total": total, "limit": filter.Limit, "offset": filter.Offset})
 }
 
 func (api dashboardAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -238,6 +258,33 @@ func parseDashboardListFilter(w http.ResponseWriter, r *http.Request) (Dashboard
 		filter.Offset = value
 	}
 	filter, err := normalizeDashboardListFilter(filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return filter, false
+	}
+	return filter, true
+}
+
+func parseDashboardGraphOptionListFilter(w http.ResponseWriter, r *http.Request) (DashboardGraphOptionListFilter, bool) {
+	query := r.URL.Query()
+	filter := DashboardGraphOptionListFilter{Search: query.Get("q")}
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return filter, false
+		}
+		filter.Limit = value
+	}
+	if raw := strings.TrimSpace(query.Get("offset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be a non-negative integer", nil)
+			return filter, false
+		}
+		filter.Offset = value
+	}
+	filter, err := normalizeDashboardGraphOptionListFilter(filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return filter, false

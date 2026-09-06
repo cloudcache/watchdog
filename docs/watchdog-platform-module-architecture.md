@@ -788,6 +788,20 @@ POST                    /api/v1/visualizations/{id}/preview
 GET                     /api/v1/visualizations/{id}/data
 ```
 
+当前 migration 039 的过渡实现保持单一 `dashboards` 管理对象，不提前复制第二套 query/data 状态：Dashboard 的 `layout_json.panels[].graph_id` 只引用现有 `aggregate_graphs` 稳定 ID，panel 可附带 `id/title/span` 等布局字段，服务端只对引用和 200-panel/256-KiB 边界作兼容校验。等 provider-neutral visualization 落地时，通过 adapter 将 aggregate graph 解释为 visualization，Dashboard ID、owner、version 和布局无需再次迁移。
+
+管理面契约如下：
+
+```text
+GET/POST                /api/v1/dashboards
+GET/PATCH/DELETE        /api/v1/dashboards/{id}                  (ETag/If-Match)
+GET                     /api/v1/dashboards/graph-options         (q/limit/offset/total)
+POST                    /api/v1/dashboards/actions/preview
+GET                     /api/v1/dashboards/{id}/preview
+```
+
+列表的搜索、owner、排序和分页都在 MySQL tenant scope 内执行；VTable 只渲染当前页。panel picker 同样只请求当前搜索页，preview 再按所选 ID 一次批量解析图表及 series，因此编辑操作不会随全租户图表数量线性放大。引用对象删除后不静默清 panel：preview 返回 `missing_graph_ids`，编辑器保留原 ID 并显示 Missing，用户可显式删除或替换。布局编辑只改变 JSON 顺序和 span，不改图表定义；并发保存由 Dashboard version ETag 和 SQL CAS 双重拒绝陈旧写入。
+
 ### 8.4 管理界面
 
 | 页面 | 核心能力 |

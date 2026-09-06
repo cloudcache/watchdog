@@ -254,6 +254,9 @@ function ResourceItems() {
 function AnalysisItems() {
 	return (
 		<DropdownMenuGroup>
+			<NavItem href={getPagePath($router, "dashboards")} icon={LayoutDashboardIcon}>
+				<Trans>Dashboards</Trans>
+			</NavItem>
 			<NavItem href={getPagePath($router, "aggregate_charts")} icon={BarChart3Icon}>
 				<Trans>Aggregate Charts</Trans>
 			</NavItem>

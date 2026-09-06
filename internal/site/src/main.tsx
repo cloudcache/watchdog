@@ -31,6 +31,8 @@ const AggregateCharts = lazy(() => import("@/components/routes/aggregate-charts.
 const AggregateGraphs = lazy(() => import("@/components/routes/aggregate-graphs.tsx"))
 const AggregateGraphForm = lazy(() => import("@/components/routes/aggregate-graph-form.tsx"))
 const AggregateGraphDetail = lazy(() => import("@/components/routes/aggregate-graph-detail.tsx"))
+const Dashboards = lazy(() => import("@/components/routes/dashboards.tsx"))
+const DashboardForm = lazy(() => import("@/components/routes/dashboard-form.tsx"))
 const AgentForm = lazy(() => import("@/components/routes/agent-form.tsx"))
 const AgentRuns = lazy(() => import("@/components/routes/agent-runs.tsx"))
 const Agents = lazy(() => import("@/components/routes/agents.tsx"))
@@ -130,6 +132,12 @@ const App = memo(() => {
 		return <AggregateGraphForm id={page.params.id} />
 	} else if (page.route === "aggregate_graph") {
 		return <AggregateGraphDetail id={page.params.id} />
+	} else if (page.route === "dashboards") {
+		return <Dashboards />
+	} else if (page.route === "dashboard_new") {
+		return <DashboardForm />
+	} else if (page.route === "dashboard_edit") {
+		return <DashboardForm id={page.params.id} />
 	} else if (page.route === "agents") {
 		return <Agents />
 	} else if (page.route === "agent_new") {

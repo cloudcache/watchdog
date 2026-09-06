@@ -126,6 +126,30 @@ func (f *fakeDashboardRepo) ResolveDashboardGraphReferences(_ context.Context, t
 	return refs, nil
 }
 
+func (f *fakeDashboardRepo) ListDashboardGraphOptions(_ context.Context, tenantID ID, filter DashboardGraphOptionListFilter) ([]AggregateGraph, int64, error) {
+	filter, err := normalizeDashboardGraphOptionListFilter(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	graphs := make([]AggregateGraph, 0)
+	for _, graph := range f.graphs {
+		if graph.TenantID != tenantID || (filter.Search != "" && !strings.Contains(strings.ToLower(graph.Name+" "+graph.Description), strings.ToLower(filter.Search))) {
+			continue
+		}
+		graphs = append(graphs, graph)
+	}
+	sort.Slice(graphs, func(i, j int) bool { return graphs[i].Name < graphs[j].Name })
+	total := int64(len(graphs))
+	if filter.Offset >= len(graphs) {
+		return []AggregateGraph{}, total, nil
+	}
+	graphs = graphs[filter.Offset:]
+	if len(graphs) > filter.Limit {
+		graphs = graphs[:filter.Limit]
+	}
+	return graphs, total, nil
+}
+
 func dashboardTestRouter(repo DashboardRepository) http.Handler {
 	return dashboardTestRouterWithAudit(repo, nil)
 }
@@ -239,6 +263,20 @@ func TestDashboardAPIListParsesServerFiltersAndPagination(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":1`) ||
 		!strings.Contains(rec.Body.String(), `"name":"Core links"`) || strings.Contains(rec.Body.String(), "Foreign") {
 		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDashboardAPIGraphOptionsAreTenantScopedAndPaged(t *testing.T) {
+	repo := newFakeDashboardRepo()
+	repo.graphs["g2"] = AggregateGraph{ID: "g2", TenantID: "tenant-a", Name: "Core Out", Description: "uplink"}
+	repo.graphs["g1"] = AggregateGraph{ID: "g1", TenantID: "tenant-a", Name: "Core In", Description: "downlink"}
+	repo.graphs["foreign"] = AggregateGraph{ID: "foreign", TenantID: "tenant-b", Name: "Core Foreign"}
+	rec := httptest.NewRecorder()
+	dashboardTestRouter(repo).ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/dashboards/graph-options?q=core&limit=1&offset=1", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":2`) ||
+		!strings.Contains(rec.Body.String(), `"ID":"g2"`) || strings.Contains(rec.Body.String(), "foreign") {
+		t.Fatalf("graph options status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
