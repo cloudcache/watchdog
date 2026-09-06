@@ -1150,10 +1150,61 @@ CREATE TABLE IF NOT EXISTS `operation_job_watermarks` (
   CONSTRAINT `fk_operation_job_watermark_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `operation_job_schedules` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `scope_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'tenant',
+  `idempotency_domain` char(26) COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (coalesce(`tenant_id`,_utf8mb4'__system__')) VIRTUAL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `partition_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `cron_expression` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `timezone` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'UTC',
+  `payload_json` json NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `max_inflight` int unsigned NOT NULL DEFAULT '1',
+  `next_run_at` datetime(3) NOT NULL,
+  `last_enqueued_at` datetime(3) DEFAULT NULL,
+  `last_error_detail` varchar(1024) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_operation_job_schedule_domain` (`idempotency_domain`,`job_type`,`partition_key`),
+  KEY `idx_operation_job_schedules_due` (`enabled`,`next_run_at`,`id`),
+  KEY `idx_operation_job_schedules_tenant` (`tenant_id`,`created_at`,`id`),
+  KEY `fk_operation_job_schedules_creator` (`created_by`),
+  CONSTRAINT `fk_operation_job_schedules_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_operation_job_schedules_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_operation_job_schedule_scope` CHECK (((`scope_type` = 'tenant') and (`tenant_id` is not null)) or ((`scope_type` = 'system') and (`tenant_id` is null))),
+  CONSTRAINT `chk_operation_job_schedule_inflight` CHECK ((`max_inflight` between 1 and 1024))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `operation_job_scheduler_state` (
+  `scanner_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `cursor_due_at` datetime(3) DEFAULT NULL,
+  `cursor_schedule_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`scanner_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `operation_job_system_watermarks` (
+  `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `partition_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `watermark_value` bigint unsigned NOT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`job_type`,`partition_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `operation_jobs` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `scope_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'tenant',
+  `schedule_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'queued',
   `idempotency_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -1183,9 +1234,11 @@ CREATE TABLE IF NOT EXISTS `operation_jobs` (
   UNIQUE KEY `uq_operation_jobs_idem_domain` (`idempotency_domain`,`job_type`,`idempotency_key`),
   KEY `idx_operation_jobs_due` (`job_type`,`status`,`next_attempt_at`,`lease_expires_at`,`id`),
   KEY `idx_operation_jobs_tenant_created` (`tenant_id`,`job_type`,`created_at`,`id`),
+  KEY `idx_operation_jobs_schedule_status` (`schedule_id`,`status`,`id`),
   KEY `fk_operation_jobs_creator` (`created_by`),
   CONSTRAINT `fk_operation_jobs_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_operation_jobs_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_operation_jobs_schedule` FOREIGN KEY (`schedule_id`) REFERENCES `operation_job_schedules` (`id`) ON DELETE SET NULL,
   CONSTRAINT `operation_jobs_chk_1` CHECK ((`status` in ('queued','running','paused','validating','cancel_requested','succeeded','failed','canceled'))),
   CONSTRAINT `operation_jobs_chk_2` CHECK (((`progress_total` is null) or (`progress_done` <= `progress_total`))),
   CONSTRAINT `operation_jobs_chk_3` CHECK (((`lease_owner` is null) = (`lease_token` is null))),

@@ -43,6 +43,9 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"billing_accounts",
 		"permissions",
 		"audit_logs",
+		"operation_job_schedules",
+		"operation_job_scheduler_state",
+		"operation_job_system_watermarks",
 		"operation_jobs",
 		"operation_job_watermarks",
 		"collector_agents",
@@ -91,20 +94,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "043" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "044" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "043" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "044" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs", "operation_job_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -173,6 +176,13 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	}
 	if passwordHashColumns != 0 {
 		t.Fatal("users.password_hash must be dropped after migrations; MySQL must store no credential material")
+	}
+	var scheduleColumnCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'operation_jobs' AND column_name = 'schedule_id'").Scan(&scheduleColumnCount); err != nil {
+		t.Fatal(err)
+	}
+	if scheduleColumnCount != 1 {
+		t.Fatalf("operation_jobs.schedule_id count = %d, want 1", scheduleColumnCount)
 	}
 	const tenantID = "tenant_identity_check"
 	if _, err := db.Exec("DELETE FROM tenants WHERE id = ?", tenantID); err != nil {
@@ -281,12 +291,47 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 43 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "043" {
+	if len(migrations) != 44 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "044" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func TestOperationSchedulerMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "044_operation_scheduler.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists operation_job_schedules",
+		"generated always as (coalesce(tenant_id, '__system__')) virtual",
+		"unique key uq_operation_job_schedule_domain",
+		"create table if not exists operation_job_scheduler_state",
+		"cursor_due_at datetime(3)",
+		"create table if not exists operation_job_system_watermarks",
+		"primary key (job_type, partition_key)",
+		"add column schedule_id",
+		"idx_operation_jobs_schedule_status",
+		"fk_operation_jobs_schedule",
+		"on delete set null",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("operation scheduler migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"drop table operation_jobs",
+		"delete from operation_jobs",
+		"truncate table",
+	} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("operation scheduler migration unexpectedly contains %q", forbidden)
 		}
 	}
 }

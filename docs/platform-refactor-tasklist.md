@@ -59,10 +59,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 已提交的迁移头为 `043`：`038_address_taxonomy.sql`（`f34b9786`）、`039_dashboards.sql` 与 `040_dimension_snapshots.sql`（`3a7db545`）、`041_address_draft_revisions.sql`（`e8775c76`）、`042_dimension_publication_lifecycle.sql`（`d89efae9`）及其 tenant cascade 前向修正 `043`（`c53b90f5`）都和 fresh-install 的 `install/init.sql` 保持一致。
+- 当前迁移头为 `044`：`038_address_taxonomy.sql`（`f34b9786`）、`039_dashboards.sql` 与 `040_dimension_snapshots.sql`（`3a7db545`）、`041_address_draft_revisions.sql`（`e8775c76`）、`042_dimension_publication_lifecycle.sql`（`d89efae9`）及其 tenant cascade 前向修正 `043`（`c53b90f5`）均已提交；`044_operation_scheduler.sql` 的 schema、fresh-install parity 和迁移测试已实现，通用 scheduler backend 尚未完成。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交。下一个持久化工作从 `044` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占。下一个持久化工作从 `045` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -73,7 +73,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `041` | Address draft batch revision | preview/apply revision、request/result digest、逐操作审计关联 | 已提交 |
 | `042` | Dimension publication lifecycle | approval/signature、event-time activation/rollback、ACK 失败态、事实引用保留/安全回收 | 已提交 `d89efae9` |
 | `043` | Dimension lifecycle correction | 解除 snapshot RESTRICT 对 tenant CASCADE 的阻断；保留应用层单 snapshot 回收门禁 | 已提交 `c53b90f5`，不改 042 checksum |
-| `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 待 `043` 提交后开工 |
+| `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | schema/fresh-install/迁移测试已实现；backend 待完成 |
 | `045` | QueryGateway policy | dataset/provider enablement、raw/supplier/customer action、tenant 并发/范围预算 | 待 `044` 提交后开工 |
 | `046` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `045` 提交后开工 |
 
@@ -108,14 +108,14 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 - [ ] **PLAT-04C address-prefix/set 管理闭环**：现有 API 只存任意 `selector JSON`，没有 canonical CIDR/IPv6 校验、members/exclude/include DAG、集合并交差/有限补集预览、冲突/展开量检查、publication 引用、分页/filter、ETag/审计；POST/PATCH 还会无条件把 `enabled=true`。平台侧需补 typed schema、validate/preview/publish 生命周期和 VTable 管理面；Flow 侧只实现 immutable 编译与事实 membership，不在数据面复制 CRUD。
   - [x] **设计（集合数学）**：冻结 CIDR/裸 IP/start-end 全量校验、v4/v6 分族并交差、显式 universe 有限补集、重叠 lint、结果/地址量上限；普通 merge 保持集合完全相等，可能扩大的 `/24` 整理独立为 `cover + added-address preview + confirm`。
   - [x] **编码/单元（集合数学）**：平台共享 Go 内核已实现规范化、并/交/差/有限补集、overlap 有界明细、128-bit 地址计数和 cover 扩大量；纯计算 preview API 已接入，非法/未知字段整体 400；全库测试通过（commit `f44d1978`）。
-  - [x] **设计/迁移（导入与管理表）**：immutable import generation/base rows、active slot CAS、同租户复合外键及 actor 删除生命周期已落地（commit `4a079e4a`）；migration 038 已增加 typed taxonomy/prefix/set；040 增加 immutable publication/worker ack；041 增加 draft revision；042 增加审批签名/激活回滚/ACK/reference；043 前向修正 tenant cascade（commits `f34b9786`、`3a7db545`、`e8775c76`、`d89efae9`、`c53b90f5`）。001–043 已在真实 MySQL 空库顺序/二次零变更及 fresh-install parity 通过。
+  - [x] **设计/迁移（导入与管理表）**：immutable import generation/base rows、active slot CAS、同租户复合外键及 actor 删除生命周期已落地（commit `4a079e4a`）；migration 038 已增加 typed taxonomy/prefix/set；040 增加 immutable publication/worker ack；041 增加 draft revision；042 增加审批签名/激活回滚/ACK/reference；043 前向修正 tenant cascade（commits `f34b9786`、`3a7db545`、`e8775c76`、`d89efae9`、`c53b90f5`）。001–043 已在真实 MySQL 空库顺序/二次零变更及 fresh-install parity 通过；044 是独立的 operation scheduler 平台契约，不改变地址库表。
   - [ ] **编码（MMDB/IPDB）**：有界 multipart 落盘+sha256、官方 reader 校验/流式 trie 枚举、`address_import` job 批量幂等写入、lease-fenced ordinal checkpoint、ready 后冻结及显式 CAS 激活、导入/active slot/前缀浏览管理页已落地，真实 MySQL 上传→job→入库→激活 E2E 通过（commits `f44d1978`、`78a388b0`、`87a98e83`）；City+ASN 双 active generation 区间 overlay 尚未实现。
   - [x] **编码（typed CRUD/apply）**：prefix/set/dictionary/operator/line 的 tenant-scoped keyset 分页、搜索/filter、严格输入、members/exclude/include DAG、防环/预算、ETag/If-Match、启停语义、稳定 ID 和引用删除保护已落地（commit `f34b9786`）；集合方向与 Flow 编译契约统一为 `in/out/both`。prefix batch 已实现顺序无关 request digest、确定性 create ID、重复/过期 preview、全租户 prefix range lock、draft CAS、整批删旧建新、result digest 和同事务逐操作审计（commit `acbdd4a7`）。
   - [ ] **编码（validate/publish）**：人工 override+sets+Geo/operator 标签 compiler、DAG/预算、语义 digest CAS、异步 immutable publish 和版本查询已落地（`3a7db545`）；签名审批、event-time activate/rollback、retire、ACK/reference 仓储闭环已落地（`8b86d829`）。余项是 active base overlay、Geo/line 显示字典固化、API trusted-key/RBAC、worker 安装接线及安全回收。
   - [ ] **前端**：导入/active slot/导入前缀浏览、prefix/set、地域字典、运营商、线路组合和 publication preview/publish 均已组织为 Address Library，列表使用带搜索/列 filter 的分页 VTable（commits `59a6e5aa`、`87a98e83`、`3a7db545`）；集合运算工作台支持严格 merge、并/交/差、有限补集、overlap 和显式 cover 扩大量（commit `9c613c10`）；prefix/set 已补齐 If-Match 编辑表单及 typed selector 字段（commit `1d442dfa`）；Batch Apply 页支持带 filter/search 的旧前缀选择、CIDR/IP/range replacement、持久 preview、ETag 原子 apply、revision 历史/变更明细 VTable（commit `c241358a`）。余项是 searchable Geo/operator/set 引用选择以及 retire/rollback/worker 状态页面。
   - [ ] **集成/变更测试**：真实 MySQL 上传→job→批量入库→active generation CAS，以及 typed CRUD/DAG/引用保护/并发 ETag/批量 apply 已通过；001–043 空库迁移/二次零变更/fresh-init parity，以及两版本签名审批→激活→退休→回滚→失败/成功 ACK→reference merge→tenant cascade 已通过。余项是百万行/崩溃接管、旧 selector 兼容、base overlay、真实 worker install ack、安全回收和 API RBAC E2E。
   - [ ] **性能/回归**：百万级 MMDB/IPDB 导入吞吐/内存、50k 输入集合运算、最坏 overlap/DAG、API body/结果上限；全库 race/vet/test、前端 typecheck/build、fresh-install parity。
-  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）、`1d442dfa`（prefix/set 编辑闭环）、`e8775c76`（migration 041）、`acbdd4a7`（batch revision backend）、`c241358a`（Batch Apply UI）、`d89efae9`（migration 042）、`c53b90f5`（migration 043）、`8b86d829`（publication lifecycle repository）；整项尚有上列门禁。当前 MySQL migration head 为 **043**，下一个 backend P2 migration 必须从 **044** 顺序追加。
+  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）、`1d442dfa`（prefix/set 编辑闭环）、`e8775c76`（migration 041）、`acbdd4a7`（batch revision backend）、`c241358a`（Batch Apply UI）、`d89efae9`（migration 042）、`c53b90f5`（migration 043）、`8b86d829`（publication lifecycle repository）；整项尚有上列门禁。当前 MySQL migration head 为 **044**，下一个 backend P2 migration 必须从 **045** 顺序追加。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
