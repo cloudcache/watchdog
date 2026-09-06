@@ -179,6 +179,32 @@ func (e *RequestError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
+// classifyExecutionError maps a ClickHouse resource-limit exception to the typed
+// limit_exceeded code so a caller sees a bounded, actionable error instead of a
+// raw engine overflow. Every Flow query sets read/memory guards
+// (max_rows_to_read, max_bytes_to_read, max_memory_usage, ...); the guard the
+// caller cannot predict from the request alone is the raw scan whose pre-FINAL
+// row count is inflated by unmerged ReplacingMergeTree versions — a long
+// mixed-version range trips max_rows_to_read even though points*top_n is small.
+// Non-limit errors pass through unchanged.
+func classifyExecutionError(err error) error {
+	var exception *ch.Exception
+	if errors.As(err, &exception) && exception.IsCode(
+		proto.ErrTooManyRows,
+		proto.ErrTooManyBytes,
+		proto.ErrTooManyRowsOrBytes,
+		proto.ErrMemoryLimitExceeded,
+		proto.ErrSetSizeLimitExceeded,
+	) {
+		return &RequestError{
+			Field:   "from/to",
+			Code:    ErrorLimitExceeded,
+			Message: "query exceeded a ClickHouse resource limit; narrow the time range or top_n",
+		}
+	}
+	return err
+}
+
 type metricSpec struct {
 	definition MetricDefinition
 	column     string

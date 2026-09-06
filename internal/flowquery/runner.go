@@ -89,7 +89,7 @@ func (r *Runner) Run(ctx context.Context, compiled Compiled) (Result, error) {
 		if state.err != nil {
 			return Result{}, state.err
 		}
-		return Result{}, fmt.Errorf("execute ClickHouse Flow query: %w", err)
+		return Result{}, classifyExecutionError(fmt.Errorf("execute ClickHouse Flow query: %w", err))
 	}
 	if state.err != nil {
 		return Result{}, state.err

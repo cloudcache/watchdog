@@ -119,7 +119,7 @@ func (r *OverseasRunner) Run(ctx context.Context, compiled CompiledOverseas) (Ov
 		if state.err != nil {
 			return OverseasResult{}, state.err
 		}
-		return OverseasResult{}, fmt.Errorf("execute ClickHouse Flow overseas query: %w", err)
+		return OverseasResult{}, classifyExecutionError(fmt.Errorf("execute ClickHouse Flow overseas query: %w", err))
 	}
 	if state.err != nil {
 		return OverseasResult{}, state.err

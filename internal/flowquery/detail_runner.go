@@ -74,7 +74,7 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 		if state.err != nil {
 			return DetailResult{}, state.err
 		}
-		return DetailResult{}, fmt.Errorf("execute ClickHouse Flow detail query: %w", err)
+		return DetailResult{}, classifyExecutionError(fmt.Errorf("execute ClickHouse Flow detail query: %w", err))
 	}
 	if state.err != nil {
 		return DetailResult{}, state.err

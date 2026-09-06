@@ -74,7 +74,7 @@ func (r *AddressSetRunner) Run(ctx context.Context, compiled CompiledAddressSet)
 		if state.err != nil {
 			return AddressSetResult{}, state.err
 		}
-		return AddressSetResult{}, fmt.Errorf("execute ClickHouse Flow address-set query: %w", err)
+		return AddressSetResult{}, classifyExecutionError(fmt.Errorf("execute ClickHouse Flow address-set query: %w", err))
 	}
 	if state.err != nil {
 		return AddressSetResult{}, state.err

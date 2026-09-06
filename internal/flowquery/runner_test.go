@@ -6,6 +6,7 @@ package flowquery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -14,6 +15,36 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
 )
+
+func TestClassifyExecutionErrorMapsResourceLimitsToTypedError(t *testing.T) {
+	// Every Flow query sets read/memory guards; when a range trips one — most
+	// importantly a mixed-version raw scan whose pre-FINAL row count the caller
+	// cannot predict — the engine overflow must surface as the typed
+	// limit_exceeded code, not a generic internal error.
+	for _, code := range []proto.Error{
+		proto.ErrTooManyRows,
+		proto.ErrTooManyBytes,
+		proto.ErrTooManyRowsOrBytes,
+		proto.ErrMemoryLimitExceeded,
+		proto.ErrSetSizeLimitExceeded,
+	} {
+		wrapped := fmt.Errorf("execute ClickHouse Flow query: %w", &ch.Exception{Code: code, Message: "limit"})
+		if got := classifyExecutionError(wrapped); !IsRequestError(got, "from/to", ErrorLimitExceeded) {
+			t.Fatalf("code %v: got %v, want a from/to limit_exceeded RequestError", code, got)
+		}
+	}
+}
+
+func TestClassifyExecutionErrorPassesThroughNonLimitErrors(t *testing.T) {
+	nonLimit := fmt.Errorf("execute ClickHouse Flow query: %w", &ch.Exception{Code: proto.ErrUnknownTable})
+	if got := classifyExecutionError(nonLimit); IsRequestError(got, "from/to", ErrorLimitExceeded) {
+		t.Fatalf("a non-limit ClickHouse exception was mistyped as limit_exceeded: %v", got)
+	}
+	plain := errors.New("connection reset")
+	if got := classifyExecutionError(plain); got != plain {
+		t.Fatalf("a plain transport error must pass through unchanged, got %v", got)
+	}
+}
 
 type fakeResultRow struct {
 	bucket, generatedAt                             time.Time
