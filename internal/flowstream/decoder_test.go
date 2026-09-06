@@ -86,6 +86,74 @@ func TestDecoderHandlesSFlowAndNetFlowV5(t *testing.T) {
 	}
 }
 
+// TestDecoderReuseKeepsBatchesCorrectAcrossDecodes exercises the zero-copy
+// contract. Decode returns FlowMessage pointers into GoFlow2's pooled buffers,
+// which the next Decode on the same decoder recycles and decodes into again. As
+// long as the caller maps each batch into its own memory before decoding again —
+// as the partition worker does — every batch must observe correct, uncorrupted
+// data. This decodes many multi-record datagrams in sequence with
+// per-(datagram,record)-distinct fields, maps each batch into caller-owned
+// copies before the next decode, and verifies every copy still holds its own
+// datagram's data afterwards. Under -race it also guards the recycled pooled
+// buffers against data races.
+func TestDecoderReuseKeepsBatchesCorrectAcrossDecodes(t *testing.T) {
+	decoder, err := NewDecoder(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+
+	ipForSeq := func(seq uint32) netip.Addr {
+		base := 0x0a000000 + seq
+		return netip.AddrFrom4([4]byte{byte(base >> 24), byte(base >> 16), byte(base >> 8), byte(base)})
+	}
+	type mapped struct {
+		src     netip.Addr
+		dstPort uint32
+		bytes   uint64
+	}
+	const datagrams, recordsPer = 40, 2
+	kept := make([][]mapped, 0, datagrams)
+	for i := range datagrams {
+		records := make([]netflowlegacy.RecordsNetFlowV5, recordsPer)
+		for j := range records {
+			seq := uint32(i*recordsPer + j)
+			records[j] = netflowlegacy.RecordsNetFlowV5{
+				SrcAddr: netflowlegacy.IPAddress(0x0a000000 + seq), DstAddr: 0xcb007102,
+				DPkts: 1, DOctets: 100 + seq, SrcPort: 12345, DstPort: uint16(1000 + seq),
+				Proto: 6, First: 9000, Last: 9500,
+			}
+		}
+		packet := netflowlegacy.PacketNetFlowV5{Version: 5, SysUptime: 10000, UnixSecs: uint32(time.Unix(1_800_000_000, 0).Unix()), FlowSequence: uint32(i), SamplingInterval: 1, Records: records}
+		payload, err := packet.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch, err := decoder.DecodeValue(rawFlowValue(t, flowpb.RawFlow_DECODER_NETFLOW, payload))
+		if err != nil {
+			t.Fatalf("datagram %d: %v", i, err)
+		}
+		if len(batch.Records) != recordsPer {
+			t.Fatalf("datagram %d records=%d", i, len(batch.Records))
+		}
+		// Map into caller-owned memory before the next decode recycles the pool.
+		batchCopy := make([]mapped, recordsPer)
+		for j, record := range batch.Records {
+			batchCopy[j] = mapped{src: addressFromBytes(t, record.SrcAddr), dstPort: record.DstPort, bytes: record.Bytes}
+		}
+		kept = append(kept, batchCopy)
+	}
+
+	for i, batch := range kept {
+		for j, got := range batch {
+			seq := uint32(i*recordsPer + j)
+			if got.src != ipForSeq(seq) || got.dstPort != 1000+seq || got.bytes != uint64(100+seq) {
+				t.Fatalf("datagram %d record %d corrupted by later decode: got %v/%d/%d, want seq %d", i, j, got.src, got.dstPort, got.bytes, seq)
+			}
+		}
+	}
+}
+
 func TestPartitionDecodersHandleNetFlowV9AndIPFIX(t *testing.T) {
 	v9Template, v9Data := netFlowV9Fixture(t)
 	ipfixCombined := ipfixFixture(t)
@@ -180,6 +248,14 @@ func TestPartitionDecodersProcessPartitionsConcurrently(t *testing.T) {
 				}
 				if len(batch.Records) != 1 {
 					errorsFound <- errors.New("decoded record count mismatch")
+					return
+				}
+				// Read the pooled record's contents concurrently across partitions.
+				// The batches reference GoFlow2's shared pool zero-copy; if a decode
+				// recycled a buffer another partition still held, -race would fire
+				// here (and the value would be wrong) instead of staying quiet.
+				if addressFromBytes(t, batch.Records[0].SrcAddr) != netip.MustParseAddr("10.0.0.1") {
+					errorsFound <- errors.New("decoded record content mismatch")
 					return
 				}
 			}

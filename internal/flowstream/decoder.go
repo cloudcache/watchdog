@@ -4,7 +4,6 @@
 package flowstream
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
-	formatbinary "github.com/netsampler/goflow2/v3/format/binary"
 	goflowpb "github.com/netsampler/goflow2/v3/pb"
 	"github.com/netsampler/goflow2/v3/producer"
 	protoproducer "github.com/netsampler/goflow2/v3/producer/proto"
@@ -22,7 +20,6 @@ import (
 	"github.com/netsampler/goflow2/v3/utils/store/samplingrate"
 	"github.com/netsampler/goflow2/v3/utils/store/templates"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"google.golang.org/protobuf/encoding/protodelim"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -45,25 +42,19 @@ type DecodedBatch struct {
 
 // Decoder owns one GoFlow2 template and sampling state set. It is not safe for
 // concurrent use and must be assigned to exactly one Kafka partition worker.
+//
+// Zero-copy contract: Decode returns FlowMessage pointers that reference
+// GoFlow2's pooled decode buffers directly, without marshalling. Those buffers
+// stay valid only until the NEXT Decode call on this decoder, which recycles
+// the previous batch back to the pool before decoding into it again. The caller
+// MUST fully consume (map into its own structs) each returned batch before it
+// calls Decode again on the same decoder. The per-partition worker satisfies
+// this by mapping every record of a batch before decoding the next record.
 type Decoder struct {
 	pipe      *utils.AutoFlowPipe
 	producer  producer.ProducerInterface
 	metadata  *metadataProducer
 	templates *templates.TemplateFlowStore
-	sink      captureTransport
-}
-
-type captureTransport struct {
-	records []*goflowpb.FlowMessage
-}
-
-func (t *captureTransport) Send(_ []byte, data []byte) error {
-	message := &goflowpb.FlowMessage{}
-	if err := protodelim.UnmarshalFrom(bytes.NewReader(data), message); err != nil {
-		return fmt.Errorf("unmarshal GoFlow2 message: %w", err)
-	}
-	t.records = append(t.records, message)
-	return nil
 }
 
 func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
@@ -88,9 +79,10 @@ func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
 	}
 	metadata := newMetadataProducer(protoProducer, stateTTL)
 	decoder := &Decoder{producer: metadata, metadata: metadata, templates: templateStore}
+	// No Format/Transport: with a nil format the pipe's formatSend is a no-op, so
+	// the pooled decode buffers are never marshalled. Decode reads them directly
+	// from the producer (zero-copy) instead of unmarshalling a transport payload.
 	decoder.pipe = utils.NewFlowPipe(&utils.PipeConfig{
-		Format:        &formatbinary.BinaryDriver{},
-		Transport:     &decoder.sink,
 		Producer:      metadata,
 		TemplateStore: templateStore,
 	})
@@ -138,7 +130,10 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	receivedAt := time.Unix(int64(raw.TimeReceived), 0).UTC()
 	message := &utils.Message{Src: source, Payload: raw.Payload, Received: receivedAt}
 
-	d.sink.records = d.sink.records[:0]
+	// Recycle the previous batch's pooled buffers before decoding into them
+	// again. Safe under the zero-copy contract: the caller has finished mapping
+	// the prior batch by the time it asks for the next one.
+	d.metadata.recyclePending()
 	err = recoverDecoderPanic(func() error {
 		switch raw.Decoder {
 		case flowpb.RawFlow_DECODER_NETFLOW:
@@ -150,11 +145,22 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 		}
 	})
 	if err != nil {
-		d.sink.records = d.sink.records[:0]
-		d.metadata.records = d.metadata.records[:0]
+		// The deferred Commit inside DecodeFlow already handed any produced
+		// buffers to recyclePending; the next Decode returns them to the pool.
 		return DecodedBatch{}, err
 	}
-	records := append([]*goflowpb.FlowMessage(nil), d.sink.records...)
+	// Zero-copy: reference the pooled FlowMessages the producer just filled,
+	// rather than unmarshalling a marshalled transport payload. Only the pointer
+	// slice is owned by the batch; the messages live in the pool until the next
+	// Decode recycles them (see the Decoder contract).
+	records := make([]*goflowpb.FlowMessage, 0, len(d.metadata.pending))
+	for _, msg := range d.metadata.pending {
+		ppm, ok := msg.(*protoproducer.ProtoProducerMessage)
+		if !ok {
+			return DecodedBatch{}, fmt.Errorf("unexpected GoFlow2 message type %T", msg)
+		}
+		records = append(records, &ppm.FlowMessage)
+	}
 	metadata := append([]DecodedRecordMetadata(nil), d.metadata.records...)
 	if flowType == goflowpb.FlowMessage_SFLOW_5 && len(records) != len(metadata) {
 		return DecodedBatch{}, errors.New("GoFlow2 sFlow records and sample metadata are inconsistent")

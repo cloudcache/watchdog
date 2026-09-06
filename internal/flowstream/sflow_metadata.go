@@ -29,6 +29,11 @@ type metadataProducer struct {
 	subAgentID       uint32
 	datagramSequence uint32
 	records          []DecodedRecordMetadata
+	// pending holds the pooled messages of the batch the decoder last returned.
+	// They are recycled to GoFlow2's pool by recyclePending at the start of the
+	// next Decode — deferred so the decoder can reference them zero-copy until
+	// then (see the Decoder contract).
+	pending []producer.ProducerMessage
 }
 
 func newMetadataProducer(delegate producer.ProducerInterface, stateTTL time.Duration) *metadataProducer {
@@ -85,11 +90,25 @@ func sampleMetadata(subAgentID uint32, header sflow.SampleHeader, samplePool, dr
 	}
 }
 
+// Commit defers recycling instead of returning the pooled messages immediately.
+// GoFlow2 calls this from DecodeFlow's defer, but the decoder still references
+// these buffers zero-copy after DecodeFlow returns. recyclePending returns them
+// to the pool at the start of the next Decode, once the caller has consumed the
+// batch. The slice is copied because GoFlow2 may reuse its own backing array.
 func (p *metadataProducer) Commit(messages []producer.ProducerMessage) {
-	p.delegate.Commit(messages)
+	p.pending = append(p.pending[:0], messages...)
+}
+
+func (p *metadataProducer) recyclePending() {
+	if len(p.pending) == 0 {
+		return
+	}
+	p.delegate.Commit(p.pending)
+	p.pending = p.pending[:0]
 }
 
 func (p *metadataProducer) Close() {
+	p.recyclePending()
 	p.delegate.Close()
 	if p.netflowSampling != nil {
 		p.netflowSampling.Stop()
