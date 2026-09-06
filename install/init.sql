@@ -314,6 +314,16 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   `address_set_count` bigint unsigned NOT NULL DEFAULT '0',
   `max_address_sets_per_record` int unsigned NOT NULL DEFAULT '0',
   `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `approval_state` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `decided_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `decided_at` datetime(3) DEFAULT NULL,
+  `decision_reason` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `signature_algorithm` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `signing_key_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `signature` varbinary(512) DEFAULT NULL,
+  `signed_at` datetime(3) DEFAULT NULL,
+  `retention_until` datetime(3) DEFAULT NULL,
+  `object_deleted_at` datetime(3) DEFAULT NULL,
   `row_version` bigint unsigned NOT NULL DEFAULT '1',
   `created_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `retired_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -324,14 +334,63 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   UNIQUE KEY `uq_dimension_version` (`tenant_id`,`module_key`,`dimension_key`,`version`),
   UNIQUE KEY `uq_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`effective_from`),
   KEY `idx_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`status`,`effective_from`),
+  KEY `idx_dimension_snapshot_approval` (`tenant_id`,`module_key`,`dimension_key`,`approval_state`,`version`),
+  KEY `idx_dimension_snapshot_retention` (`status`,`retention_until`,`object_deleted_at`),
   KEY `fk_dimension_snapshot_creator` (`created_by`),
   KEY `fk_dimension_snapshot_retired_by` (`retired_by`),
+  KEY `fk_dimension_snapshot_decider` (`decided_by`),
   CONSTRAINT `fk_dimension_snapshot_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dimension_snapshot_decider` FOREIGN KEY (`decided_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_dimension_snapshot_retired_by` FOREIGN KEY (`retired_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_dimension_snapshot_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
   CONSTRAINT `dimension_snapshots_chk_1` CHECK ((`status` in ('active','retired'))),
   CONSTRAINT `dimension_snapshots_chk_2` CHECK ((`version` > 0)),
-  CONSTRAINT `dimension_snapshots_chk_3` CHECK ((`bundle_schema_version` > 0))
+  CONSTRAINT `dimension_snapshots_chk_3` CHECK ((`bundle_schema_version` > 0)),
+  CONSTRAINT `dimension_snapshots_chk_approval` CHECK ((`approval_state` in ('pending','approved','rejected'))),
+  CONSTRAINT `dimension_snapshots_chk_signature` CHECK (((`signature` is null) and (`signature_algorithm` is null) and (`signing_key_id` is null) and (`signed_at` is null)) or ((`signature` is not null) and (`signature_algorithm` is not null) and (`signing_key_id` is not null) and (`signed_at` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `dimension_snapshot_activations` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `module_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dimension_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `snapshot_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `effective_from` datetime(3) NOT NULL,
+  `reason` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `rollback_of_snapshot_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dimension_activation_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_dimension_activation_effective` (`tenant_id`,`module_key`,`dimension_key`,`effective_from`),
+  KEY `idx_dimension_activation_snapshot` (`tenant_id`,`snapshot_id`,`effective_from`),
+  KEY `idx_dimension_activation_rollback` (`tenant_id`,`rollback_of_snapshot_id`),
+  KEY `fk_dimension_activation_creator` (`created_by`),
+  CONSTRAINT `fk_dimension_activation_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dimension_activation_rollback` FOREIGN KEY (`tenant_id`, `rollback_of_snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_dimension_activation_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_dimension_activation_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `dimension_snapshot_activations_chk_1` CHECK ((`reason` in ('publish','rollback'))),
+  CONSTRAINT `dimension_snapshot_activations_chk_2` CHECK (((`reason` = 'publish') and (`rollback_of_snapshot_id` is null)) or ((`reason` = 'rollback') and (`rollback_of_snapshot_id` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `dimension_snapshot_references` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `snapshot_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `consumer_kind` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `consumer_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `min_event_time` datetime(3) NOT NULL,
+  `max_event_time` datetime(3) NOT NULL,
+  `retain_until` datetime(3) NOT NULL,
+  `last_observed_at` datetime(3) NOT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  PRIMARY KEY (`tenant_id`,`snapshot_id`,`consumer_kind`,`consumer_id`),
+  KEY `idx_dimension_reference_retention` (`tenant_id`,`retain_until`),
+  CONSTRAINT `fk_dimension_reference_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_dimension_reference_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `dimension_snapshot_references_chk_1` CHECK ((`min_event_time` <= `max_event_time`)),
+  CONSTRAINT `dimension_snapshot_references_chk_2` CHECK ((`max_event_time` <= `retain_until`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `dimension_snapshot_acks` (
@@ -341,12 +400,20 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshot_acks` (
   `boot_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `software_version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `checksum` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `installed_at` datetime(3) NOT NULL,
+  `state` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'installed',
+  `attempted_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `installed_at` datetime(3) DEFAULT NULL,
+  `error_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `error_message` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`tenant_id`,`snapshot_id`,`worker_id`),
   KEY `idx_dimension_snapshot_acks_worker` (`tenant_id`,`worker_id`,`installed_at`),
+  KEY `idx_dimension_snapshot_acks_state` (`tenant_id`,`snapshot_id`,`state`,`attempted_at`),
   CONSTRAINT `fk_dimension_snapshot_acks_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_dimension_snapshot_acks_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_dimension_snapshot_acks_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `dimension_snapshot_acks_chk_state` CHECK ((`state` in ('downloaded','installed','failed'))),
+  CONSTRAINT `dimension_snapshot_acks_chk_installed` CHECK (((`state` <> 'installed') or (`installed_at` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `alerts_history` (

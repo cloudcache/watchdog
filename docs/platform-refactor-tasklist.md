@@ -64,6 +64,20 @@
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
 - `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；下一个持久化工作从 `042` 领取。publication lifecycle、export snapshot/retry 等改动只在开工时按迁移头顺序领取，禁止并行工作包自行猜号。
 
+P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
+
+| migration | 工作包 | 持久化契约 | 状态 |
+| --- | --- | --- | --- |
+| `039` | Visualization CRUD | `dashboards` owner/version/layout；panel/series 仍内嵌版本化 layout JSON | 已提交，backend 待用该表完成 |
+| `040` | Dimension publication base | immutable snapshot、worker ack | 已提交 |
+| `041` | Address draft batch revision | preview/apply revision、request/result digest、逐操作审计关联 | 已提交 |
+| `042` | Dimension publication lifecycle | approval/signature、event-time activation/rollback、ACK 失败态、事实引用保留/安全回收 | 本轮 |
+| `043` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 待 `042` 提交后开工 |
+| `044` | QueryGateway policy | dataset/provider enablement、raw/supplier/customer action、tenant 并发/范围预算 | 待 `043` 提交后开工 |
+| `045` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `044` 提交后开工 |
+
+无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
+
 - [ ] Provider-neutral QueryRequest/QueryResult，统一 VM/CH 的 tenant scope、时间、bucket、limit、cancel 和 completeness。
 - [ ] Visualization CRUD、版本/owner、series、布局、预览和 dashboard 引用。
 - [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。

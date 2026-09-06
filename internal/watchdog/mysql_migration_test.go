@@ -34,7 +34,9 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"dashboards",
 		"address_draft_revisions",
 		"dimension_snapshots",
+		"dimension_snapshot_activations",
 		"dimension_snapshot_acks",
+		"dimension_snapshot_references",
 		"geo_dict",
 		"isp_operators",
 		"geo_lines",
@@ -89,14 +91,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "041" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "042" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "041" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "042" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -279,12 +281,40 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 41 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "041" {
+	if len(migrations) != 42 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "042" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func TestDimensionPublicationLifecycleMigrationOwnsTheCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "042_dimension_publication_lifecycle.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"add column approval_state",
+		"alter column approval_state set default 'pending'",
+		"create table if not exists dimension_snapshot_activations",
+		"insert ignore into dimension_snapshot_activations",
+		"create table if not exists dimension_snapshot_references",
+		"max_event_time <= retain_until",
+		"modify column installed_at datetime(3) null",
+		"dimension_snapshot_acks_chk_state",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("dimension lifecycle migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"drop table dimension_snapshots", "delete from dimension_snapshots", "update dimension_snapshots set status"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("dimension lifecycle migration unexpectedly contains %q", forbidden)
 		}
 	}
 }
