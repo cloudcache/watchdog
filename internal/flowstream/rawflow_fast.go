@@ -20,9 +20,11 @@ import (
 //
 // It handles exactly the RawFlow fields the decoder reads and skips any other
 // field by wire type, so it stays forward-compatible. dst is reused across
-// calls; it is Reset first. TestRawFlowZeroCopyParseMatchesProto asserts this
-// produces the same result as proto.Unmarshal for well-formed envelopes.
-func parseRawFlowInto(value []byte, dst *flowpb.RawFlow) error {
+// calls; it is Reset first. intern, when non-nil, returns a shared string for
+// the identity fields to avoid a per-datagram allocation; a nil intern copies
+// them. TestRawFlowZeroCopyParseMatchesProto asserts this produces the same
+// result as proto.Unmarshal for well-formed envelopes.
+func parseRawFlowInto(value []byte, dst *flowpb.RawFlow, intern func([]byte) string) error {
 	dst.Reset()
 	for len(value) > 0 {
 		tag, width := binary.Uvarint(value)
@@ -67,9 +69,9 @@ func parseRawFlowInto(value []byte, dst *flowpb.RawFlow) error {
 			case 3:
 				dst.SourceAddress = data // zero-copy: slice of value
 			case 9:
-				dst.CollectorId = string(data)
+				dst.CollectorId = internOrCopy(intern, data)
 			case 10:
-				dst.ListenerId = string(data)
+				dst.ListenerId = internOrCopy(intern, data)
 			}
 		case 1: // 64-bit
 			if len(value) < 8 {
@@ -86,4 +88,11 @@ func parseRawFlowInto(value []byte, dst *flowpb.RawFlow) error {
 		}
 	}
 	return nil
+}
+
+func internOrCopy(intern func([]byte) string, data []byte) string {
+	if intern != nil {
+		return intern(data)
+	}
+	return string(data)
 }

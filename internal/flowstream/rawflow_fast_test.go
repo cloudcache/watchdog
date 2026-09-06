@@ -51,7 +51,7 @@ func TestRawFlowZeroCopyParseMatchesProto(t *testing.T) {
 		if err := proto.Unmarshal(encoded, &viaProto); err != nil {
 			t.Fatalf("case %d proto.Unmarshal: %v", i, err)
 		}
-		if err := parseRawFlowInto(encoded, &viaFast); err != nil {
+		if err := parseRawFlowInto(encoded, &viaFast, nil); err != nil {
 			t.Fatalf("case %d parseRawFlowInto: %v", i, err)
 		}
 		if !decoderRawFieldsEqual(&viaProto, &viaFast) {
@@ -67,7 +67,7 @@ func TestRawFlowZeroCopyParseRejectsTruncated(t *testing.T) {
 	}
 	var dst flowpb.RawFlow
 	// Cut mid-field: a length-delimited field now claims more bytes than remain.
-	if err := parseRawFlowInto(encoded[:len(encoded)-5], &dst); err == nil {
+	if err := parseRawFlowInto(encoded[:len(encoded)-5], &dst, nil); err == nil {
 		t.Fatal("truncated envelope was accepted")
 	}
 }
@@ -111,7 +111,7 @@ func BenchmarkRawFlowEnvelope(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(int64(len(encoded)))
 		for range b.N {
-			if err := parseRawFlowInto(encoded, &dst); err != nil {
+			if err := parseRawFlowInto(encoded, &dst, nil); err != nil {
 				b.Fatal(err)
 			}
 		}
