@@ -31,6 +31,8 @@ type APIV1RouterConfig struct {
 	CollectorEnrollment    CollectorEnrollmentRepository
 	OperationJobs          OperationJobRepository
 	OperationJobSchedules  OperationJobScheduleRepository
+	QueryGateway           *QueryGateway
+	QueryPolicies          QueryDatasetPolicyRepository
 	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
 	TenantModules          TenantModuleRepository
@@ -196,6 +198,12 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.OperationJobSchedules != nil {
 		registerOperationJobScheduleRoutes(mux, auth, cfg.OperationJobSchedules, cfg.Audit)
+	}
+	if cfg.QueryGateway != nil {
+		registerQueryGatewayRoutes(mux, auth, cfg.QueryGateway, cfg.Audit)
+	}
+	if cfg.QueryPolicies != nil && cfg.Registries != nil {
+		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)
 	}
 	if cfg.AuditLogs != nil {
 		registerAuditLogRoutes(mux, auth, cfg.AuditLogs)

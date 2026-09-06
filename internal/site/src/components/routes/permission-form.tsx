@@ -43,7 +43,19 @@ type FormState = {
 	actions: string[]
 }
 
-const availableActions = ["view", "configure", "operate", "export", "admin"]
+const availableActions = [
+	"view",
+	"configure",
+	"operate",
+	"export",
+	"admin",
+	"view_raw",
+	"view_supplier",
+	"view_customer",
+	"export_raw",
+	"export_supplier",
+	"export_customer",
+]
 
 export default memo(({ id }: PermissionFormProps) => {
 	const { t } = useLingui()
@@ -206,10 +218,7 @@ export default memo(({ id }: PermissionFormProps) => {
 						{availableActions.map((action) => {
 							const actionID = `permission-action-${action}`
 							return (
-								<div
-									key={action}
-									className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
-								>
+								<div key={action} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
 									<Checkbox
 										id={actionID}
 										checked={form.actions.includes(action)}

@@ -3,11 +3,17 @@ package watchdog
 type Action string
 
 const (
-	ActionView      Action = "view"
-	ActionConfigure Action = "configure"
-	ActionOperate   Action = "operate"
-	ActionExport    Action = "export"
-	ActionAdmin     Action = "admin"
+	ActionView           Action = "view"
+	ActionConfigure      Action = "configure"
+	ActionOperate        Action = "operate"
+	ActionExport         Action = "export"
+	ActionAdmin          Action = "admin"
+	ActionViewRaw        Action = "view_raw"
+	ActionViewSupplier   Action = "view_supplier"
+	ActionViewCustomer   Action = "view_customer"
+	ActionExportRaw      Action = "export_raw"
+	ActionExportSupplier Action = "export_supplier"
+	ActionExportCustomer Action = "export_customer"
 )
 
 type SubjectType string

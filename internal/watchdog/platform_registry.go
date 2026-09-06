@@ -253,14 +253,16 @@ const (
 )
 
 type DatasetDescriptor struct {
-	Key           string
-	ModuleKey     string
-	Provider      DatasetProviderKind
-	TimeField     string
-	Metrics       []string
-	GroupByFields []string
-	FilterFields  []string
-	MaxRangeDays  int
+	Key           string              `json:"key"`
+	ModuleKey     string              `json:"module_key"`
+	Provider      DatasetProviderKind `json:"provider"`
+	TimeField     string              `json:"time_field"`
+	Metrics       []string            `json:"metrics,omitempty"`
+	GroupByFields []string            `json:"group_by_fields,omitempty"`
+	FilterFields  []string            `json:"filter_fields,omitempty"`
+	ValueLayers   []QueryValueLayer   `json:"value_layers,omitempty"`
+	MaxRangeDays  int                 `json:"max_range_days"`
+	MaxResultRows uint32              `json:"max_result_rows"`
 }
 
 type DatasetRegistry struct {

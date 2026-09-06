@@ -47,6 +47,8 @@ type BackendRuntime struct {
 	FlowRollupRunner   FlowBucketRollupRunner
 	FlowRollupService  *FlowRollupService
 	MetricProviders    *RuntimeMetricsRegistry
+	QueryProviders     *QueryProviderRegistry
+	QueryGateway       *QueryGateway
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
@@ -130,6 +132,21 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		CollectorEvidence: collectorEvidence,
 		CollectorPlans:    collectorPlans,
 		MetricProviders:   NewRuntimeMetricsRegistry(),
+		QueryProviders:    NewQueryProviderRegistry(),
+	}
+	if cfg.QueryGateway.Enabled {
+		if err := runtime.QueryProviders.Register(QueryProviderRegistration{
+			Kind: DatasetProviderVM, Provider: VictoriaMetricsQueryProvider{Client: metricsClient, Network: store},
+			Enabled: cfg.QueryGateway.VictoriaMetricsEnabled, MaxConcurrent: uint32(cfg.QueryGateway.VictoriaMetricsConcurrent),
+		}); err != nil {
+			_ = runtime.Close()
+			return nil, fmt.Errorf("initialize VictoriaMetrics query provider: %w", err)
+		}
+		runtime.QueryGateway, err = NewQueryGateway(registries, store, store, runtime.QueryProviders)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, fmt.Errorf("initialize query gateway: %w", err)
+		}
 	}
 	if err := runtime.MetricProviders.Register("collector_principal_provider", runtimeMetricsProviderFunc(runtime.collectorPrincipalMetrics)); err != nil {
 		_ = runtime.Close()
@@ -285,6 +302,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressDimensions:      r.AddressDimensions,
 		OperationJobs:          r.Store,
 		OperationJobSchedules:  r.Store,
+		QueryGateway:           r.QueryGateway,
+		QueryPolicies:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,
 		RuntimeHealth:          r.Health,
@@ -493,6 +512,9 @@ func (r *BackendRuntime) Close() error {
 		if r.flowRollupNative != nil {
 			r.flowRollupNative.Close()
 		}
+		if r.QueryProviders != nil {
+			r.closeError = errors.Join(r.closeError, r.QueryProviders.Close())
+		}
 		if r.Store != nil {
 			r.closeError = errors.Join(r.closeError, r.Store.Close())
 		}
@@ -509,6 +531,11 @@ func (r *BackendRuntime) Ready(ctx context.Context) error {
 	}
 	if err := CheckMySQLSchemaCurrent(ctx, r.Store.db); err != nil {
 		return err
+	}
+	if r.QueryProviders != nil {
+		if err := r.QueryProviders.Ready(ctx); err != nil {
+			return fmt.Errorf("query provider is not ready: %w", err)
+		}
 	}
 	return nil
 }

@@ -156,7 +156,9 @@ func (networkModule) RegisterDatasets(registry *DatasetRegistry) error {
 		Metrics:       []string{MetricSNMPIfInBps, MetricSNMPIfOutBps, MetricSNMPIfInOctetsTotal, MetricSNMPIfOutOctetsTotal},
 		GroupByFields: []string{"device_id", "port_id", "if_name"},
 		FilterFields:  []string{"target_id", "device_id", "port_id"},
+		ValueLayers:   []QueryValueLayer{QueryValueRaw, QueryValueSupplier, QueryValueCustomer},
 		MaxRangeDays:  400,
+		MaxResultRows: 250_000,
 	})
 }
 

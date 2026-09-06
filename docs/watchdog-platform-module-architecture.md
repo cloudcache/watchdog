@@ -584,21 +584,28 @@ module/dataset key、provider(vm|clickhouse)、事实时间字段、metric
 
 统一查询入口：
 
-```text
+```json
 POST /api/v1/query
 {
-  "dataset":"flow.category_1m",
-  "metrics":["estimated_bps"],
-  "resources":[{"type":"target","id":"..."}],
-  "filters":{"category":["overseas"]},
-  "group_by":["category"],
-  "time":{"start":"...","end":"...","step":300},
-  "aggregation":"sum",
-  "value_layer":"customer"
+  "dataset": "network.snmp_interface",
+  "from": "2026-08-24T11:00:00Z",
+  "to": "2026-08-24T12:00:00Z",
+  "step_seconds": 60,
+  "limit": 1000,
+  "value_layer": "customer",
+  "require_complete": false,
+  "parameters": {
+    "metric": "watchdog_snmp_if_in_bps",
+    "device_id": "device_..."
+  }
 }
 ```
 
-QueryGateway 按 descriptor 校验字段、做 resource/RBAC 过滤、限制序列/点数/时间、选择 VM 或 CH provider，并返回统一 `series/stats/completeness/source/policy_version`。保留现有 metrics API 一个兼容版本，内部改走同一 gateway。
+平台 QueryGateway 固定拥有 tenant/user 注入、module enablement、dataset policy、value-layer RBAC、tenant+dataset 并发、provider 全局并发、时间/行数/timeout/cancel 与错误 envelope；provider 只接收已收敛的 `QueryProviderRequest`，不得从 `parameters` 接收 tenant、任意 SQL 或 MetricsQL。provider 返回 JSON data 和统一 `request_id/schema_version/query_hash/as_of/source/value_layer/unit/timezone/step_seconds/policy_version/versions/completeness/next_cursor` 元数据。`require_complete=true` 时，partial、unknown、late 或 `complete_ratio != 1` 均拒绝返回，禁止用未知完整性冒充完整结果。
+
+`query_dataset_policies` 是 tenant+dataset 的唯一持久 admission policy：dataset/layer enablement 与 `view_raw/view_supplier/view_customer` 授权是两个独立门，任一不满足即 fail closed；export 对应使用独立 `export_raw/export_supplier/export_customer` action。默认策略只开放 customer 层。provider endpoint/凭据和 provider-global 并发留在部署配置，避免把基础设施 secret 写进管理库。当前 VM adapter 只接受注册 metric 和 target/device/port typed selector，复用现有资源解析及三层流量视图；VM 无法证明期望样本完整性，因此返回 unknown completeness。Flow ClickHouse adapter 由 Flow 工作包按同一 contract 注册并复用现有 CH pool，平台不得再建第二个连接池。
+
+管理 API 为 `GET/PUT/DELETE /api/v1/query-policies[/{dataset_key}]`；PUT/DELETE 必须带强 `If-Match`，并写审计。统一查询为 `POST /api/v1/query`；raw/supplier 成功读取另写敏感访问审计。保留现有 metrics API 一个兼容版本，内部迁移到同一 gateway 后才能删除旧路径。
 
 ### 8.2 地址统计维度快照与异步汇聚
 

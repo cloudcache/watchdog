@@ -48,6 +48,32 @@ type VMValue struct {
 	Value float64
 }
 
+// Ready verifies the configured VictoriaMetrics HTTP dependency without
+// issuing a data query. The provider registry calls it from platform readiness.
+func (c VictoriaMetricsClient) Ready(ctx context.Context) error {
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(c.BaseURL, "/"), "health")
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrVictoriaMetricsUnavailable, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("%w: health returned %s", ErrVictoriaMetricsUnavailable, res.Status)
+	}
+	return nil
+}
+
 func (v VMValue) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]any{float64(v.Time.UnixMilli()) / 1000, strconv.FormatFloat(v.Value, 'f', -1, 64)})
 }

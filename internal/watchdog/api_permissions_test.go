@@ -62,6 +62,29 @@ func TestAPIPermissionsPutStoresTenantScopedGrant(t *testing.T) {
 	}
 }
 
+func TestAPIPermissionsPutValidatesValueLayerActions(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		actions string
+		status  int
+	}{
+		{name: "value layers", actions: `"view_raw","view_supplier","view_customer","export_raw","export_supplier","export_customer"`, status: http.StatusOK},
+		{name: "unknown", actions: `"view_raw","generated_action"`, status: http.StatusBadRequest},
+		{name: "empty", actions: ``, status: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := &fakePermissionRepository{}
+			router := NewAPIV1Router(APIV1RouterConfig{Auth: permissionTestAuth(true), Permissions: repo})
+			body := `{"ID":"perm-value","SubjectType":"user","SubjectID":"user-b","ResourceType":"tenant","ResourceID":"tenant-a","Actions":[` + testCase.actions + `]}`
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/permissions", strings.NewReader(body)))
+			if response.Code != testCase.status {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func permissionTestAuth(admin bool) AuthContextAdapter {
 	return func(*http.Request) (AuthContext, error) {
 		actions := []Action{ActionView}

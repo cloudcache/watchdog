@@ -7,6 +7,16 @@ mysql:
 victoriametrics:
   base_url: "http://127.0.0.1:8428"
 
+# Provider endpoints and credentials stay in their existing sections. This
+# section only enables the unified query gateway and bounds query concurrency;
+# enabling ClickHouse requires the Flow task to register its provider.
+query_gateway:
+  enabled: true
+  victoriametrics_enabled: true
+  victoriametrics_max_concurrent: 8
+  clickhouse_enabled: false
+  clickhouse_max_concurrent: 16
+
 # Optional machine-only Prometheus endpoint at /metrics on the hub's existing
 # listener. The bearer value is read once from the file at startup. ACL checks
 # the direct TCP peer and deliberately ignores forwarding headers.

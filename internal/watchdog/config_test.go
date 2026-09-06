@@ -48,6 +48,11 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.MetricsScrape.Enabled || cfg.MetricsScrape.TokenFile != "" || len(cfg.MetricsScrape.AllowedCIDRs) != 0 {
 		t.Fatalf("metrics scrape defaults = %#v", cfg.MetricsScrape)
 	}
+	if !cfg.QueryGateway.Enabled || !cfg.QueryGateway.VictoriaMetricsEnabled ||
+		cfg.QueryGateway.VictoriaMetricsConcurrent != defaultQueryVMMaxConcurrent ||
+		cfg.QueryGateway.ClickHouseEnabled || cfg.QueryGateway.ClickHouseConcurrent != defaultQueryCHMaxConcurrent {
+		t.Fatalf("query gateway defaults = %#v", cfg.QueryGateway)
+	}
 	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.Metric != MetricSNMPIfInBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
@@ -62,6 +67,33 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	}
 	if cfg.FlowRollup.Enabled || cfg.FlowRollup.ScanInterval != defaultFlowRollupScanInterval || cfg.FlowRollup.LateArrivalWindow != defaultFlowRollupLateWindow || cfg.FlowRollup.WorkerConcurrency != defaultFlowRollupWorkerConcurrency {
 		t.Fatalf("flow rollup defaults = %#v", cfg.FlowRollup)
+	}
+}
+
+func TestLoadWatchdogConfigQueryGatewayEnvironment(t *testing.T) {
+	t.Setenv("WATCHDOG_QUERY_GATEWAY_ENABLED", "true")
+	t.Setenv("WATCHDOG_QUERY_VM_ENABLED", "false")
+	t.Setenv("WATCHDOG_QUERY_VM_MAX_CONCURRENT", "12")
+	t.Setenv("WATCHDOG_QUERY_CLICKHOUSE_ENABLED", "true")
+	t.Setenv("WATCHDOG_QUERY_CLICKHOUSE_MAX_CONCURRENT", "24")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.QueryGateway.Enabled || cfg.QueryGateway.VictoriaMetricsEnabled ||
+		cfg.QueryGateway.VictoriaMetricsConcurrent != 12 || !cfg.QueryGateway.ClickHouseEnabled ||
+		cfg.QueryGateway.ClickHouseConcurrent != 24 {
+		t.Fatalf("query gateway config = %#v", cfg.QueryGateway)
+	}
+}
+
+func TestQueryGatewayConfigRejectsInvalidConcurrency(t *testing.T) {
+	for _, value := range []int{0, 4097} {
+		cfg := defaultBackendConfig().QueryGateway
+		cfg.VictoriaMetricsConcurrent = value
+		if err := validateQueryGatewayConfig(cfg); err == nil {
+			t.Fatalf("invalid config accepted: %#v", cfg)
+		}
 	}
 }
 

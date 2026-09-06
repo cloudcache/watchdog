@@ -49,6 +49,8 @@ const (
 	defaultAddressLibraryDir           = "address-artifacts"
 	defaultAddressLibraryBatchSize     = 1_000
 	defaultAddressLibraryWorkers       = 1
+	defaultQueryVMMaxConcurrent        = 8
+	defaultQueryCHMaxConcurrent        = 16
 )
 
 type BackendConfig struct {
@@ -61,6 +63,7 @@ type BackendConfig struct {
 	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
 	FlowGeo         FlowGeoConfig         `yaml:"flow_geo"`
 	FlowRollup      FlowRollupConfig      `yaml:"flow_rollup"`
+	QueryGateway    QueryGatewayConfig    `yaml:"query_gateway"`
 
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
 
@@ -77,6 +80,17 @@ type MetricsScrapeConfig struct {
 	Enabled      bool     `yaml:"enabled"`
 	TokenFile    string   `yaml:"token_file"`
 	AllowedCIDRs []string `yaml:"allowed_cidrs"`
+}
+
+// QueryGatewayConfig controls provider admission only. Endpoints and secrets
+// remain in their existing provider sections so one dependency has one source
+// of truth.
+type QueryGatewayConfig struct {
+	Enabled                   bool `yaml:"enabled"`
+	VictoriaMetricsEnabled    bool `yaml:"victoriametrics_enabled"`
+	VictoriaMetricsConcurrent int  `yaml:"victoriametrics_max_concurrent"`
+	ClickHouseEnabled         bool `yaml:"clickhouse_enabled"`
+	ClickHouseConcurrent      int  `yaml:"clickhouse_max_concurrent"`
 }
 
 type FlowRollupConfig struct {
@@ -244,6 +258,11 @@ func defaultBackendConfig() BackendConfig {
 		VictoriaMetrics: VictoriaMetricsConfig{
 			BaseURL: defaultVictoriaMetricsURL,
 		},
+		QueryGateway: QueryGatewayConfig{
+			Enabled: true, VictoriaMetricsEnabled: true,
+			VictoriaMetricsConcurrent: defaultQueryVMMaxConcurrent,
+			ClickHouseConcurrent:      defaultQueryCHMaxConcurrent,
+		},
 		Export: ExportConfig{
 			Dir:            defaultExportDir,
 			WorkerInterval: defaultExportWorkerInterval,
@@ -335,6 +354,21 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	cfg.VictoriaMetrics.BaseURL = getEnv("WATCHDOG_VICTORIAMETRICS_URL", cfg.VictoriaMetrics.BaseURL)
+	if cfg.QueryGateway.Enabled, err = getEnvBool("WATCHDOG_QUERY_GATEWAY_ENABLED", cfg.QueryGateway.Enabled); err != nil {
+		return err
+	}
+	if cfg.QueryGateway.VictoriaMetricsEnabled, err = getEnvBool("WATCHDOG_QUERY_VM_ENABLED", cfg.QueryGateway.VictoriaMetricsEnabled); err != nil {
+		return err
+	}
+	if cfg.QueryGateway.VictoriaMetricsConcurrent, err = getEnvInt("WATCHDOG_QUERY_VM_MAX_CONCURRENT", cfg.QueryGateway.VictoriaMetricsConcurrent, 1); err != nil {
+		return err
+	}
+	if cfg.QueryGateway.ClickHouseEnabled, err = getEnvBool("WATCHDOG_QUERY_CLICKHOUSE_ENABLED", cfg.QueryGateway.ClickHouseEnabled); err != nil {
+		return err
+	}
+	if cfg.QueryGateway.ClickHouseConcurrent, err = getEnvInt("WATCHDOG_QUERY_CLICKHOUSE_MAX_CONCURRENT", cfg.QueryGateway.ClickHouseConcurrent, 1); err != nil {
+		return err
+	}
 	if cfg.MetricsScrape.Enabled, err = getEnvBool("WATCHDOG_METRICS_SCRAPE_ENABLED", cfg.MetricsScrape.Enabled); err != nil {
 		return err
 	}
@@ -694,6 +728,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateMetricsScrapeConfig(cfg.MetricsScrape); err != nil {
 		return err
 	}
+	if err := validateQueryGatewayConfig(cfg.QueryGateway); err != nil {
+		return err
+	}
 	if err := validateListenAddress("sflow_collector.listen", cfg.SFlowCollector.Listen); err != nil {
 		return err
 	}
@@ -736,6 +773,14 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.Agent.Interval <= 0 {
 		return errors.New("agent.interval must be positive")
+	}
+	return nil
+}
+
+func validateQueryGatewayConfig(cfg QueryGatewayConfig) error {
+	if cfg.VictoriaMetricsConcurrent < 1 || cfg.VictoriaMetricsConcurrent > 4096 ||
+		cfg.ClickHouseConcurrent < 1 || cfg.ClickHouseConcurrent > 4096 {
+		return errors.New("query_gateway provider concurrency must be between 1 and 4096")
 	}
 	return nil
 }
