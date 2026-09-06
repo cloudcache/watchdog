@@ -15,6 +15,7 @@ type APIV1RouterConfig struct {
 	ExportFiles            ExportFileReader
 	Billing                BillingRepository
 	AggregateGraphs        AggregateGraphRepository
+	Dashboards             DashboardRepository
 	Permissions            PermissionRepository
 	IdentityAdmin          IdentityAdminRepository
 	Idempotency            IdempotencyRepository
@@ -140,6 +141,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.AggregateGraphs != nil {
 		registerAggregateGraphRoutes(mux, auth, cfg.AggregateGraphs, cfg.Network, cfg.Metrics)
+	}
+	if cfg.Dashboards != nil {
+		registerDashboardRoutes(mux, auth, cfg.Dashboards, cfg.Audit)
 	}
 	if cfg.Permissions != nil {
 		registerPermissionRoutes(mux, auth, cfg.Permissions)

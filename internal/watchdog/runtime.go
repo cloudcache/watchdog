@@ -236,6 +236,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		ExportFiles:            r.ExportStore,
 		Billing:                r.Store,
 		AggregateGraphs:        r.Store,
+		Dashboards:             r.Store,
 		Permissions:            r.Store,
 		IdentityAdmin:          r.Store,
 		Idempotency:            r.Store,
