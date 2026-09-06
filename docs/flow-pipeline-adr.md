@@ -4,6 +4,8 @@
 生效日期：2026-09-05
 关系：本文记录数据面决策；`flow-module-design.md` 和 `flow-module-tasklist.md` 已同步为同一架构，不再保留冲突方案。
 
+> **修订(2026-09)——分类模型**:分类从"ingest 时用 flowdimension 把六维烘进 `flow_records`"改为"`flow_records` 只存原始字段;分类改成一份**版本化的 ClickHouse `IP_TRIE` 字典**,写入不算分类,rollup 和查询都 `dictGet` 现导;定义改了 = 换字典版本 + 重跑受影响的聚合(重分类 = 重跑 rollup),不再单独建重新分类子系统。地址组本阶段由**管理员基于已就绪 geo 规划**(不开放用户自定义地址段)。详见 [flow-address-query-plan.md](flow-address-query-plan.md)。本文下述"地址库/六维在 Kafka 后烘进 CH base"的段落(§1 流水线图 dimensions、§4 维度与事实提交)按该方案修订;**传输 / Kafka / GoFlow2 解码 / RawFlow 契约决策不变**。
+
 ## 1. 决策
 
 数据面固定为两个可独立扩容的进程角色：
