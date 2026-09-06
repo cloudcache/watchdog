@@ -7,12 +7,15 @@ import (
 )
 
 const (
-	AddressDimensionModuleKey     = "flow"
-	AddressDimensionKey           = "address"
-	AddressDimensionPublishJob    = "address_dimension_publish"
-	AddressDimensionPayloadV1     = 1
-	AddressDimensionStatusActive  = "active"
-	AddressDimensionStatusRetired = "retired"
+	AddressDimensionModuleKey        = "flow"
+	AddressDimensionKey              = "address"
+	AddressDimensionPublishJob       = "address_dimension_publish"
+	AddressDimensionPayloadV1        = 1
+	AddressDimensionStatusActive     = "active"
+	AddressDimensionStatusRetired    = "retired"
+	AddressDimensionApprovalPending  = "pending"
+	AddressDimensionApprovalApproved = "approved"
+	AddressDimensionApprovalRejected = "rejected"
 )
 
 var (
@@ -37,6 +40,16 @@ type AddressDimensionSnapshot struct {
 	AddressSetCount         uint64     `json:"address_set_count"`
 	MaxAddressSetsPerRecord uint32     `json:"max_address_sets_per_record"`
 	Status                  string     `json:"status"`
+	ApprovalState           string     `json:"approval_state"`
+	DecidedBy               ID         `json:"decided_by,omitempty"`
+	DecidedAt               *time.Time `json:"decided_at,omitempty"`
+	DecisionReason          string     `json:"decision_reason,omitempty"`
+	SignatureAlgorithm      string     `json:"signature_algorithm,omitempty"`
+	SigningKeyID            string     `json:"signing_key_id,omitempty"`
+	Signature               []byte     `json:"signature,omitempty"`
+	SignedAt                *time.Time `json:"signed_at,omitempty"`
+	RetentionUntil          *time.Time `json:"retention_until,omitempty"`
+	ObjectDeletedAt         *time.Time `json:"object_deleted_at,omitempty"`
 	RowVersion              uint64     `json:"row_version"`
 	CreatedBy               ID         `json:"created_by,omitempty"`
 	RetiredBy               ID         `json:"retired_by,omitempty"`
@@ -66,9 +79,60 @@ type AddressDimensionListFilter struct {
 	Cursor string
 }
 
+type AddressDimensionActivation struct {
+	ID                   ID        `json:"id"`
+	TenantID             ID        `json:"tenant_id"`
+	ModuleKey            string    `json:"module_key"`
+	DimensionKey         string    `json:"dimension_key"`
+	SnapshotID           ID        `json:"snapshot_id"`
+	EffectiveFrom        time.Time `json:"effective_from"`
+	Reason               string    `json:"reason"`
+	RollbackOfSnapshotID ID        `json:"rollback_of_snapshot_id,omitempty"`
+	CreatedBy            ID        `json:"created_by,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+}
+
+type AddressDimensionAcknowledgement struct {
+	TenantID        ID         `json:"tenant_id"`
+	SnapshotID      ID         `json:"snapshot_id"`
+	WorkerID        string     `json:"worker_id"`
+	BootID          string     `json:"boot_id"`
+	SoftwareVersion string     `json:"software_version"`
+	Checksum        string     `json:"checksum"`
+	State           string     `json:"state"`
+	AttemptedAt     time.Time  `json:"attempted_at"`
+	InstalledAt     *time.Time `json:"installed_at,omitempty"`
+	ErrorCode       string     `json:"error_code,omitempty"`
+	ErrorMessage    string     `json:"error_message,omitempty"`
+	RowVersion      uint64     `json:"row_version"`
+}
+
+type AddressDimensionReference struct {
+	TenantID       ID        `json:"tenant_id"`
+	SnapshotID     ID        `json:"snapshot_id"`
+	ConsumerKind   string    `json:"consumer_kind"`
+	ConsumerID     string    `json:"consumer_id"`
+	MinEventTime   time.Time `json:"min_event_time"`
+	MaxEventTime   time.Time `json:"max_event_time"`
+	RetainUntil    time.Time `json:"retain_until"`
+	LastObservedAt time.Time `json:"last_observed_at"`
+	RowVersion     uint64    `json:"row_version"`
+}
+
 type AddressDimensionPublisher interface {
 	PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error)
 	PublishAddressDimension(context.Context, ID, ID, AddressDimensionPublishRequest) (AddressDimensionSnapshot, error)
 	ListAddressDimensionSnapshots(context.Context, ID, AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, error)
 	GetAddressDimensionSnapshot(context.Context, ID, ID) (AddressDimensionSnapshot, error)
+}
+
+type AddressDimensionLifecycle interface {
+	ApproveAddressDimension(context.Context, ID, ID, uint64, AddressDimensionApproval) (AddressDimensionSnapshot, error)
+	RejectAddressDimension(context.Context, ID, ID, ID, uint64, string) (AddressDimensionSnapshot, error)
+	ActivateAddressDimension(context.Context, ID, ID, AddressDimensionActivationRequest) (AddressDimensionActivation, error)
+	RollbackAddressDimension(context.Context, ID, ID, AddressDimensionRollbackRequest) (AddressDimensionActivation, error)
+	RetireAddressDimension(context.Context, ID, ID, AddressDimensionRetireRequest) (AddressDimensionSnapshot, error)
+	GetAddressDimensionActivationAt(context.Context, ID, time.Time) (AddressDimensionActivation, error)
+	ReportAddressDimensionAcknowledgement(context.Context, AddressDimensionAcknowledgement) (AddressDimensionAcknowledgement, error)
+	ReportAddressDimensionReference(context.Context, AddressDimensionReference) (AddressDimensionReference, error)
 }

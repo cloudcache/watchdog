@@ -271,7 +271,10 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx conte
 const addressDimensionSnapshotColumns = `
 	id, tenant_id, module_key, dimension_key, version, effective_from, object_ref,
 	checksum, draft_digest, bundle_schema_version, entry_count, prefix_count,
-	address_set_count, max_address_sets_per_record, status, row_version,
+	address_set_count, max_address_sets_per_record, status, approval_state,
+	COALESCE(decided_by, ''), decided_at, COALESCE(decision_reason, ''),
+	COALESCE(signature_algorithm, ''), COALESCE(signing_key_id, ''), signature,
+	signed_at, retention_until, object_deleted_at, row_version,
 	COALESCE(created_by, ''), COALESCE(retired_by, ''), created_at, retired_at`
 
 func scanAddressDimensionSnapshot(row rowScanner) (AddressDimensionSnapshot, error) {
@@ -279,7 +282,10 @@ func scanAddressDimensionSnapshot(row rowScanner) (AddressDimensionSnapshot, err
 	err := row.Scan(&item.ID, &item.TenantID, &item.ModuleKey, &item.DimensionKey, &item.Version,
 		&item.EffectiveFrom, &item.ObjectRef, &item.Checksum, &item.DraftDigest, &item.BundleSchemaVersion,
 		&item.EntryCount, &item.PrefixCount, &item.AddressSetCount, &item.MaxAddressSetsPerRecord,
-		&item.Status, &item.RowVersion, &item.CreatedBy, &item.RetiredBy, &item.CreatedAt, &item.RetiredAt)
+		&item.Status, &item.ApprovalState, &item.DecidedBy, &item.DecidedAt, &item.DecisionReason,
+		&item.SignatureAlgorithm, &item.SigningKeyID, &item.Signature, &item.SignedAt,
+		&item.RetentionUntil, &item.ObjectDeletedAt, &item.RowVersion, &item.CreatedBy,
+		&item.RetiredBy, &item.CreatedAt, &item.RetiredAt)
 	return item, err
 }
 
