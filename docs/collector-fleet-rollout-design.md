@@ -20,6 +20,12 @@ The plan model today is strictly **per-collector**:
   active plan) + `POST /collectors/{id}/plan-ack`. **There is no operator-facing
   plan-management API** — no way to create/validate/activate a revision, and no
   concept of applying one change across many collectors.
+- The repository deliberately accepts only a revision carrying an internal
+  proof produced after Ed25519 verification. The runtime has no control-plane
+  signer or trusted-key registry yet. An HTTP handler cannot safely construct
+  this proof, accept an arbitrary client public key, or store a private key in
+  `collector_plan_revisions`; signer/key lifecycle is therefore Phase 0, not an
+  implementation detail of the create endpoint.
 - `collector_agents` selection axes that already exist: `tenant_id`,
   `module_key`, `agent_type`, `status`, `config_version`, capabilities. There is
   **no** tags/labels column and no fleet/group entity.
@@ -177,7 +183,15 @@ tenant; preview/get require `view`. Reuses the existing permission model.
 
 ## 8. Phasing (independently shippable slices)
 
-1. **Plan-revision management API** — create (incl. clone `from_config_version`),
+0. **Control-plane signer and trust-key lifecycle** — resolve an active signing
+   key by stable key ID from a secret reference, keep public keys in
+   active/retiring/revoked states, publish a monotonically-versioned agent trust
+   bundle with overlap at least as long as the longest still-startable plan, and
+   expose only a signer interface to plan creation. Private key bytes never enter
+   MySQL plan rows, API DTOs, logs, or audit detail. Real tests cover rotation,
+   retiring overlap, revoked-key rejection, missing key fail-closed and agent
+   bundle generation rollback rejection.
+1. **Plan-revision management API** — after Phase 0, create (incl. clone `from_config_version`),
    list, activate. Pure reuse of existing repo methods + a new operator API +
    gated MySQL/API tests. *Unblocks everything and is useful on its own.*
 2. **Rollout tables + create + preview** — migration for the two tables, create
@@ -198,3 +212,8 @@ tenant; preview/get require `view`. Reuses the existing permission model.
   single `config_version` sequence — confirm that's fine vs. a separate lane.
 - **Kill revert atomicity**: best-effort per-target revert (some may already be
   offline) — is "reverted where reachable, flagged where not" acceptable?
+
+Phase 0 is not an open product decision: it is required by the already-enforced
+repository trust boundary. A deployment may choose the secret backend (file,
+KMS, Vault), but the signer/key-state/bundle contract and fail-closed behavior
+must exist before any operator create/clone endpoint is enabled.
