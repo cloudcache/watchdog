@@ -72,9 +72,10 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `040` | Dimension publication base | immutable snapshot、worker ack | 已提交 |
 | `041` | Address draft batch revision | preview/apply revision、request/result digest、逐操作审计关联 | 已提交 |
 | `042` | Dimension publication lifecycle | approval/signature、event-time activation/rollback、ACK 失败态、事实引用保留/安全回收 | 本轮 |
-| `043` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 待 `042` 提交后开工 |
-| `044` | QueryGateway policy | dataset/provider enablement、raw/supplier/customer action、tenant 并发/范围预算 | 待 `043` 提交后开工 |
-| `045` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `044` 提交后开工 |
+| `043` | Dimension lifecycle correction | 解除 snapshot RESTRICT 对 tenant CASCADE 的阻断；保留应用层单 snapshot 回收门禁 | 本轮测试发现后追加，不改 042 checksum |
+| `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 待 `043` 提交后开工 |
+| `045` | QueryGateway policy | dataset/provider enablement、raw/supplier/customer action、tenant 并发/范围预算 | 待 `044` 提交后开工 |
+| `046` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `045` 提交后开工 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 

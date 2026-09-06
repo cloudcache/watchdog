@@ -368,8 +368,8 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshot_activations` (
   KEY `idx_dimension_activation_rollback` (`tenant_id`,`rollback_of_snapshot_id`),
   KEY `fk_dimension_activation_creator` (`created_by`),
   CONSTRAINT `fk_dimension_activation_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_dimension_activation_rollback` FOREIGN KEY (`tenant_id`, `rollback_of_snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
-  CONSTRAINT `fk_dimension_activation_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_dimension_activation_rollback` FOREIGN KEY (`tenant_id`, `rollback_of_snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_dimension_activation_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
   CONSTRAINT `fk_dimension_activation_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
   CONSTRAINT `dimension_snapshot_activations_chk_1` CHECK ((`reason` in ('publish','rollback'))),
   CONSTRAINT `dimension_snapshot_activations_chk_2` CHECK (((`reason` = 'publish') and (`rollback_of_snapshot_id` is null)) or ((`reason` = 'rollback') and (`rollback_of_snapshot_id` is not null)))
@@ -387,7 +387,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshot_references` (
   `row_version` bigint unsigned NOT NULL DEFAULT '1',
   PRIMARY KEY (`tenant_id`,`snapshot_id`,`consumer_kind`,`consumer_id`),
   KEY `idx_dimension_reference_retention` (`tenant_id`,`retain_until`),
-  CONSTRAINT `fk_dimension_reference_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_dimension_reference_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
   CONSTRAINT `fk_dimension_reference_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
   CONSTRAINT `dimension_snapshot_references_chk_1` CHECK ((`min_event_time` <= `max_event_time`)),
   CONSTRAINT `dimension_snapshot_references_chk_2` CHECK ((`max_event_time` <= `retain_until`))

@@ -91,14 +91,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "042" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "043" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "042" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "043" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -281,7 +281,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 42 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "042" {
+	if len(migrations) != 43 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "043" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
@@ -315,6 +315,30 @@ func TestDimensionPublicationLifecycleMigrationOwnsTheCompleteContract(t *testin
 	for _, forbidden := range []string{"drop table dimension_snapshots", "delete from dimension_snapshots", "update dimension_snapshots set status"} {
 		if strings.Contains(sqlText, forbidden) {
 			t.Fatalf("dimension lifecycle migration unexpectedly contains %q", forbidden)
+		}
+	}
+}
+
+func TestDimensionPublicationTenantCascadeIsAForwardCorrection(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "043_dimension_publication_tenant_cascade.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"drop foreign key fk_dimension_activation_snapshot",
+		"drop foreign key fk_dimension_activation_rollback",
+		"drop foreign key fk_dimension_reference_snapshot",
+		"on delete cascade",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("dimension lifecycle correction missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"drop table", "delete from", "truncate table"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("dimension lifecycle correction unexpectedly contains %q", forbidden)
 		}
 	}
 }
