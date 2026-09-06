@@ -80,7 +80,7 @@ func sflowCorpus(t *testing.T) map[string][]byte {
 	}, Priority: 5}}
 	routerRec := sflow.FlowRecord{Data: sflow.ExtendedRouter{NextHopIPVersion: 1, NextHop: decoderutils.IPAddress{192, 0, 2, 254}, SrcMaskLen: 24, DstMaskLen: 16}}
 	switchRec := sflow.FlowRecord{Data: sflow.ExtendedSwitch{SrcVlan: 100, SrcPriority: 1, DstVlan: 200, DstPriority: 2}}
-	headerRec := sflow.FlowRecord{Data: sflow.SampledHeader{Protocol: 1, FrameLength: 1514, Stripped: 4, HeaderData: ethernetIPv4TCPFrame()}}
+	headerRec := sflow.FlowRecord{Data: sflow.SampledHeader{Protocol: 1, FrameLength: 1514, Stripped: 4, OriginalLength: uint32(len(ethernetIPv4TCPFrame())), HeaderData: ethernetIPv4TCPFrame()}}
 
 	flowSample := func(seq, srcVal uint32, records ...sflow.FlowRecord) sflow.FlowSample {
 		return sflow.FlowSample{
@@ -99,6 +99,9 @@ func sflowCorpus(t *testing.T) map[string][]byte {
 		"ipv4":            build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 99, Uptime: 1000, Samples: []interface{}{flowSample(12, 44, ipv4Rec)}}),
 		"ipv6":            build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 100, Uptime: 1000, Samples: []interface{}{flowSample(13, 44, ipv6Rec)}}),
 		"sampledHeader":   build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 101, Uptime: 1000, Samples: []interface{}{flowSample(14, 44, headerRec)}}),
+		"headerUDP":       build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 111, Uptime: 1000, Samples: []interface{}{flowSample(24, 44, headerRecord(ethernetIPv4UDPFrame()))}}),
+		"headerIPv6":      build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 112, Uptime: 1000, Samples: []interface{}{flowSample(25, 44, headerRecord(ethernetIPv6TCPFrame()))}}),
+		"headerVLANback":  build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 113, Uptime: 1000, Samples: []interface{}{flowSample(26, 44, headerRecord(vlanIPv4TCPFrame()))}}),
 		"expanded":        build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 102, Uptime: 1000, Samples: []interface{}{expandedSample}}),
 		"router":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 103, Uptime: 1000, Samples: []interface{}{flowSample(15, 44, ipv4Rec, routerRec)}}),
 		"switch":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 104, Uptime: 1000, Samples: []interface{}{flowSample(16, 44, ipv4Rec, switchRec)}}),
@@ -174,7 +177,7 @@ func benchIPv4Record() sflow.FlowRecord {
 }
 
 func benchHeaderRecord() sflow.FlowRecord {
-	return sflow.FlowRecord{Data: sflow.SampledHeader{Protocol: 1, FrameLength: 1514, Stripped: 4, HeaderData: ethernetIPv4TCPFrame()}}
+	return sflow.FlowRecord{Data: sflow.SampledHeader{Protocol: 1, FrameLength: 1514, Stripped: 4, OriginalLength: uint32(len(ethernetIPv4TCPFrame())), HeaderData: ethernetIPv4TCPFrame()}}
 }
 
 // SampledIPv4: 5-tuple already in the record (no packet parse) — the light case.
@@ -186,8 +189,10 @@ func BenchmarkDecodeSFlowHeaderFast(b *testing.B) { benchmarkSFlow(b, benchHeade
 func BenchmarkDecodeSFlowHeaderSlow(b *testing.B) { benchmarkSFlow(b, benchHeaderRecord(), false) }
 
 // ethernetIPv4TCPFrame is a minimal valid Ethernet/IPv4/TCP frame for a sampled
-// header record. Both decode paths run GoFlow2's ParseSampledHeader over it, so
-// the test verifies the fast path's framing feeds it identically.
+// header record. The fast path parses it with parseSampledPacket and the slow
+// path with GoFlow2's ParseSampledHeader; the differential test asserts they
+// agree. (OriginalLength must be set — it is the XDR opaque length the encoder
+// writes; leaving it 0 encodes an empty frame.)
 func ethernetIPv4TCPFrame() []byte {
 	frame := make([]byte, 0, 54)
 	// Ethernet: dst MAC, src MAC, ethertype 0x0800.
@@ -197,4 +202,38 @@ func ethernetIPv4TCPFrame() []byte {
 	// TCP header (20 bytes): src port 12345, dst port 443, seq, ack, offset/flags, window, checksum, urgent.
 	frame = append(frame, 0x30, 0x39, 0x01, 0xBB, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x50, 0x18, 0x72, 0x10, 0x00, 0x00, 0x00, 0x00)
 	return frame
+}
+
+// ethernetIPv4UDPFrame: Ethernet/IPv4/UDP — exercises the fast extractor's UDP
+// branch (no TCP flags) and a non-zero TOS.
+func ethernetIPv4UDPFrame() []byte {
+	frame := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0x08, 0x00}
+	frame = append(frame, 0x45, 0x10, 0x00, 0x1C, 0x00, 0x02, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 10, 0, 0, 5, 8, 8, 8, 8) // proto 17, TOS 0x10
+	frame = append(frame, 0x00, 0x35, 0x81, 0xA8, 0x00, 0x08, 0x00, 0x00)                                                  // UDP: src 53, dst 33192
+	return frame
+}
+
+// ethernetIPv6TCPFrame: Ethernet/IPv6/TCP — exercises the IPv6 branch and the
+// traffic-class → IpTos computation.
+func ethernetIPv6TCPFrame() []byte {
+	frame := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0x86, 0xDD}
+	// IPv6: version 6, traffic class 0x30, flow label 0, payload len 20, next header TCP(6), hop 64.
+	frame = append(frame, 0x63, 0x00, 0x00, 0x00, 0x00, 0x14, 0x06, 0x40)
+	frame = append(frame, 0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1) // src
+	frame = append(frame, 0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2) // dst
+	frame = append(frame, 0x30, 0x39, 0x01, 0xBB, 0, 0, 0, 1, 0, 0, 0, 0, 0x50, 0x02, 0x72, 0x10, 0, 0, 0, 0)
+	return frame
+}
+
+// vlanIPv4TCPFrame: 802.1Q-tagged — the fast extractor declines VLAN, so this
+// exercises the fall-back to GoFlow2 (both paths must still agree).
+func vlanIPv4TCPFrame() []byte {
+	frame := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0x81, 0x00, 0x00, 0x64, 0x08, 0x00} // VLAN 100
+	frame = append(frame, 0x45, 0x00, 0x00, 0x28, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00, 10, 0, 0, 1, 203, 0, 113, 2)
+	frame = append(frame, 0x30, 0x39, 0x01, 0xBB, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x50, 0x18, 0x72, 0x10, 0x00, 0x00, 0x00, 0x00)
+	return frame
+}
+
+func headerRecord(frame []byte) sflow.FlowRecord {
+	return sflow.FlowRecord{Data: sflow.SampledHeader{Protocol: 1, FrameLength: 1514, Stripped: 4, OriginalLength: uint32(len(frame)), HeaderData: frame}}
 }
