@@ -23,6 +23,7 @@ type fakeAddressImportAPIRepository struct {
 	activatedImport ID
 	expectedVersion uint64
 	prefixFilter    AddressBasePrefixFilter
+	importFilter    AddressImportListFilter
 	lookupIP        string
 }
 
@@ -45,9 +46,14 @@ func (r *fakeAddressImportAPIRepository) GetAddressImport(_ context.Context, ten
 	return AddressImport{ID: importID, TenantID: tenantID, Status: AddressImportStatusReady}, nil
 }
 
-func (r *fakeAddressImportAPIRepository) ListAddressBasePrefixes(_ context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error) {
+func (r *fakeAddressImportAPIRepository) ListAddressImports(_ context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, int, error) {
+	r.importFilter = filter
+	return []AddressImport{{ID: "import-a", TenantID: tenantID, OriginalName: "Geo.mmdb", SourceSlot: AddressImportSlotGeo, Status: AddressImportStatusReady}}, "next", 3, nil
+}
+
+func (r *fakeAddressImportAPIRepository) ListAddressBasePrefixes(_ context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, int, error) {
 	r.prefixFilter = filter
-	return []AddressBasePrefix{{ID: 7, TenantID: tenantID, ImportID: importID, Family: 4, PrefixLength: 24, CIDR: "192.0.2.0/24"}}, "next", nil
+	return []AddressBasePrefix{{ID: 7, TenantID: tenantID, ImportID: importID, Family: 4, PrefixLength: 24, CIDR: "192.0.2.0/24"}}, "next", 3, nil
 }
 
 func (r *fakeAddressImportAPIRepository) LookupAddressBasePrefixes(_ context.Context, tenantID, importID ID, ip string, _ int) ([]AddressBasePrefix, error) {
@@ -167,6 +173,35 @@ func TestAddressImportPrefixListParsesServerSideFilters(t *testing.T) {
 		NextCursor string              `json:"next_cursor"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestAddressImportListsParseServerTableContract(t *testing.T) {
+	repo := &fakeAddressImportAPIRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressImports: repo})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-imports?q=geo&source_slot=geo&status=ready&sort=size&order=desc&limit=25&offset=50", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("imports status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := repo.importFilter; !filter.TableMode || filter.Search != "geo" || filter.SourceSlot != AddressImportSlotGeo || filter.Status != AddressImportStatusReady || filter.Sort != "size" || !filter.Desc || filter.Limit != 25 || filter.Offset != 50 {
+		t.Fatalf("import filter = %#v", filter)
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-imports/import-a/prefixes?q=china&family=6&sort=cidr&order=desc&limit=50&offset=100", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("prefixes status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := repo.prefixFilter; !filter.TableMode || filter.Search != "china" || filter.Family != 6 || filter.Sort != "cidr" || !filter.Desc || filter.Limit != 50 || filter.Offset != 100 {
+		t.Fatalf("prefix filter = %#v", filter)
+	}
+	var result struct {
+		Total  int `json:"total"`
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Total != 3 || result.Limit != 50 || result.Offset != 100 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }

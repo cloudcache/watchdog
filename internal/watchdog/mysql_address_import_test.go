@@ -107,13 +107,13 @@ func TestMySQLAddressImportGenerationLifecycleAndCAS(t *testing.T) {
 		t.Fatalf("completed import = %#v", first)
 	}
 	asn := uint32(4134)
-	prefixes, prefixCursor, err := store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{
+	prefixes, prefixCursor, _, err := store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{
 		Family: 4, CountryCode: "cn", ASN: &asn, Operator: "China Telecom", Search: "Beijing", Limit: 1,
 	})
 	if err != nil || len(prefixes) != 1 || prefixCursor == "" || prefixes[0].Labels["source"] != "mmdb" {
 		t.Fatalf("prefix first page=%#v cursor=%q err=%v", prefixes, prefixCursor, err)
 	}
-	prefixes, _, err = store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{Family: 4, Cursor: prefixCursor, Limit: 1})
+	prefixes, _, _, err = store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{Family: 4, Cursor: prefixCursor, Limit: 1})
 	if err != nil || len(prefixes) != 1 {
 		t.Fatalf("prefix second page=%#v err=%v", prefixes, err)
 	}
@@ -153,14 +153,27 @@ func TestMySQLAddressImportGenerationLifecycleAndCAS(t *testing.T) {
 		t.Fatalf("second activation = %#v, err=%v", slot, err)
 	}
 
-	items, cursor, err := store.ListAddressImports(ctx, tenantID, AddressImportListFilter{SourceSlot: AddressImportSlotCombined, Status: AddressImportStatusReady, Limit: 1})
+	items, cursor, _, err := store.ListAddressImports(ctx, tenantID, AddressImportListFilter{SourceSlot: AddressImportSlotCombined, Status: AddressImportStatusReady, Limit: 1})
 	if err != nil || len(items) != 1 || cursor == "" {
 		t.Fatalf("first page = %#v cursor=%q err=%v", items, cursor, err)
 	}
 	firstPageID := items[0].ID
-	items, _, err = store.ListAddressImports(ctx, tenantID, AddressImportListFilter{SourceSlot: AddressImportSlotCombined, Status: AddressImportStatusReady, Limit: 1, Cursor: cursor})
+	items, _, _, err = store.ListAddressImports(ctx, tenantID, AddressImportListFilter{SourceSlot: AddressImportSlotCombined, Status: AddressImportStatusReady, Limit: 1, Cursor: cursor})
 	if err != nil || len(items) != 1 || items[0].ID == firstPageID {
 		t.Fatalf("second page = %#v err=%v", items, err)
+	}
+	items, cursor, total, err := store.ListAddressImports(ctx, tenantID, AddressImportListFilter{
+		Search: "second", SourceSlot: AddressImportSlotCombined, Status: AddressImportStatusReady,
+		Format: AddressImportFormatIPDB, Sort: "name", Desc: true, Limit: 25, Offset: 0, TableMode: true,
+	})
+	if err != nil || len(items) != 1 || items[0].ID != second.ID || cursor != "" || total != 1 {
+		t.Fatalf("server import page = %#v cursor=%q total=%d err=%v", items, cursor, total, err)
+	}
+	prefixes, prefixCursor, prefixTotal, err := store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{
+		Family: 4, CountryCode: "CN", Sort: "cidr", Desc: true, Limit: 1, Offset: 1, TableMode: true,
+	})
+	if err != nil || len(prefixes) != 1 || prefixCursor != "" || prefixTotal != 2 {
+		t.Fatalf("server prefix page = %#v cursor=%q total=%d err=%v", prefixes, prefixCursor, prefixTotal, err)
 	}
 
 	failed, err := store.CreateAddressImport(ctx, addressImportFixture("import_addr_test_failed", tenantID, actorID, AddressImportSlotGeo, "failed.mmdb"))

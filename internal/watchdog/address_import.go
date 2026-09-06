@@ -68,8 +68,14 @@ type AddressImportSlot struct {
 type AddressImportListFilter struct {
 	SourceSlot string
 	Status     string
+	Format     string
+	Search     string
+	Sort       string
+	Desc       bool
 	Limit      int
+	Offset     int
 	Cursor     string
+	TableMode  bool
 }
 
 type AddressBasePrefix struct {
@@ -100,20 +106,24 @@ type AddressBasePrefixFilter struct {
 	ASN         *uint32
 	Operator    string
 	Search      string
+	Sort        string
+	Desc        bool
 	Limit       int
+	Offset      int
 	Cursor      string
+	TableMode   bool
 }
 
 type AddressImportRepository interface {
 	CreateAddressImport(context.Context, AddressImport) (AddressImport, error)
 	GetAddressImport(ctx context.Context, tenantID, importID ID) (AddressImport, error)
-	ListAddressImports(ctx context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, error)
+	ListAddressImports(ctx context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, int, error)
 	BeginAddressImport(ctx context.Context, tenantID, importID ID) error
 	InsertAddressImportBatch(ctx context.Context, tenantID, importID ID, records []AddressImportRecord) error
 	CompleteAddressImport(ctx context.Context, tenantID, importID ID, metadata AddressImportMetadata, language string) (AddressImport, error)
 	FailAddressImport(ctx context.Context, tenantID, importID ID, code, detail string) error
 	GetAddressImportSlot(ctx context.Context, tenantID ID, sourceSlot string) (AddressImportSlot, error)
 	ActivateAddressImport(ctx context.Context, tenantID, importID, actorID ID, expectedVersion uint64) (AddressImportSlot, error)
-	ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error)
+	ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, int, error)
 	LookupAddressBasePrefixes(ctx context.Context, tenantID, importID ID, address string, limit int) ([]AddressBasePrefix, error)
 }

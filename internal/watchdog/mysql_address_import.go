@@ -124,60 +124,111 @@ func (s *MySQLStore) GetAddressImport(ctx context.Context, tenantID, importID ID
 	`, tenantID, importID))
 }
 
-func (s *MySQLStore) ListAddressImports(ctx context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, error) {
+var addressImportSortColumns = map[string]string{
+	"":        "created_at",
+	"name":    "original_name",
+	"slot":    "source_slot",
+	"format":  "format",
+	"type":    "database_type",
+	"status":  "status",
+	"rows":    "(row_count_v4 + row_count_v6)",
+	"size":    "size_bytes",
+	"created": "created_at",
+}
+
+func (s *MySQLStore) ListAddressImports(ctx context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, int, error) {
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 500 {
+		limit = 500
 	}
-	query := `SELECT ` + addressImportColumns + ` FROM address_imports WHERE tenant_id = ?`
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.SourceSlot = strings.TrimSpace(filter.SourceSlot)
+	filter.Status = strings.TrimSpace(filter.Status)
+	filter.Format = strings.TrimSpace(filter.Format)
+	sortColumn, validSort := addressImportSortColumns[filter.Sort]
+	if len(filter.Search) > 255 || filter.Offset < 0 || !validSort {
+		return nil, "", 0, fmt.Errorf("%w: invalid address import filter", ErrAddressImportInvalid)
+	}
+	where := ` WHERE tenant_id = ?`
 	args := []any{tenantID}
 	if filter.SourceSlot != "" {
 		if !validAddressImportSlot(filter.SourceSlot) {
-			return nil, "", fmt.Errorf("%w: unsupported source slot", ErrAddressImportInvalid)
+			return nil, "", 0, fmt.Errorf("%w: unsupported source slot", ErrAddressImportInvalid)
 		}
-		query += ` AND source_slot = ?`
+		where += ` AND source_slot = ?`
 		args = append(args, filter.SourceSlot)
 	}
 	if filter.Status != "" {
-		query += ` AND status = ?`
+		switch filter.Status {
+		case AddressImportStatusQuarantined, AddressImportStatusQueued, AddressImportStatusImporting, AddressImportStatusReady, AddressImportStatusFailed, AddressImportStatusRetired:
+		default:
+			return nil, "", 0, fmt.Errorf("%w: unsupported import status", ErrAddressImportInvalid)
+		}
+		where += ` AND status = ?`
 		args = append(args, filter.Status)
 	}
+	if filter.Format != "" {
+		if filter.Format != AddressImportFormatMMDB && filter.Format != AddressImportFormatIPDB {
+			return nil, "", 0, fmt.Errorf("%w: unsupported import format", ErrAddressImportInvalid)
+		}
+		where += ` AND format = ?`
+		args = append(args, filter.Format)
+	}
+	if filter.Search != "" {
+		like := "%" + escapeSQLLike(filter.Search) + "%"
+		where += ` AND (original_name LIKE ? OR id LIKE ? OR COALESCE(database_type, '') LIKE ? OR COALESCE(error_code, '') LIKE ? OR COALESCE(error_detail, '') LIKE ?)`
+		args = append(args, like, like, like, like, like)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_imports`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressImportColumns + ` FROM address_imports` + where
 	if filter.Cursor != "" {
 		cursorTime, cursorID, err := decodeAuditCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
 		args = append(args, cursorTime, cursorTime, cursorID)
 	}
-	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	args = append(args, limit+1)
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		args = append(args, limit, filter.Offset)
+	} else {
+		query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+		args = append(args, limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressImport, 0, limit)
 	for rows.Next() {
 		item, err := scanAddressImport(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	nextCursor := ""
-	if len(items) > limit {
+	if !filter.TableMode && len(items) > limit {
 		items = items[:limit]
 		last := items[len(items)-1]
 		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, total, nil
 }
 
 func (s *MySQLStore) BeginAddressImport(ctx context.Context, tenantID, importID ID) error {
@@ -510,7 +561,16 @@ func scanAddressBasePrefix(row rowScanner) (AddressBasePrefix, error) {
 	return item, nil
 }
 
-func (s *MySQLStore) ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error) {
+var addressBasePrefixSortColumns = map[string]string{
+	"":         "id",
+	"family":   "family",
+	"country":  "country_code",
+	"region":   "subdivision_name",
+	"asn":      "asn",
+	"operator": "operator_name",
+}
+
+func (s *MySQLStore) ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, int, error) {
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
@@ -519,63 +579,92 @@ func (s *MySQLStore) ListAddressBasePrefixes(ctx context.Context, tenantID, impo
 		limit = 500
 	}
 	if filter.Family != 0 && filter.Family != 4 && filter.Family != 6 {
-		return nil, "", fmt.Errorf("%w: family must be 4 or 6", ErrAddressImportInvalid)
+		return nil, "", 0, fmt.Errorf("%w: family must be 4 or 6", ErrAddressImportInvalid)
 	}
-	query := `SELECT ` + addressBasePrefixColumns + ` FROM address_base_prefixes WHERE tenant_id = ? AND import_id = ?`
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.CountryCode = strings.TrimSpace(filter.CountryCode)
+	filter.Operator = strings.TrimSpace(filter.Operator)
+	if len(filter.Search) > 255 || len(filter.CountryCode) > 2 || len(filter.Operator) > 255 || filter.Offset < 0 {
+		return nil, "", 0, fmt.Errorf("%w: invalid address prefix filter", ErrAddressImportInvalid)
+	}
+	if filter.Sort != "cidr" {
+		if _, ok := addressBasePrefixSortColumns[filter.Sort]; !ok {
+			return nil, "", 0, fmt.Errorf("%w: invalid address prefix sort", ErrAddressImportInvalid)
+		}
+	}
+	where := ` WHERE tenant_id = ? AND import_id = ?`
 	args := []any{tenantID, importID}
 	if filter.Family != 0 {
-		query += ` AND family = ?`
+		where += ` AND family = ?`
 		args = append(args, filter.Family)
 	}
 	if filter.CountryCode != "" {
-		query += ` AND country_code = ?`
+		where += ` AND country_code = ?`
 		args = append(args, strings.ToUpper(strings.TrimSpace(filter.CountryCode)))
 	}
 	if filter.ASN != nil {
-		query += ` AND asn = ?`
+		where += ` AND asn = ?`
 		args = append(args, *filter.ASN)
 	}
 	if filter.Operator != "" {
-		query += ` AND operator_name = ?`
+		where += ` AND operator_name = ?`
 		args = append(args, strings.TrimSpace(filter.Operator))
 	}
 	if search := strings.TrimSpace(filter.Search); search != "" {
 		like := "%" + escapeSQLLike(search) + "%"
-		query += ` AND (cidr LIKE ? OR COALESCE(country_name, '') LIKE ? OR COALESCE(subdivision_name, '') LIKE ? OR COALESCE(city_name, '') LIKE ? OR COALESCE(operator_name, '') LIKE ? OR CAST(asn AS CHAR) LIKE ?)`
+		where += ` AND (cidr LIKE ? OR COALESCE(country_name, '') LIKE ? OR COALESCE(subdivision_name, '') LIKE ? OR COALESCE(city_name, '') LIKE ? OR COALESCE(operator_name, '') LIKE ? OR CAST(asn AS CHAR) LIKE ?)`
 		args = append(args, like, like, like, like, like, like)
 	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_base_prefixes`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressBasePrefixColumns + ` FROM address_base_prefixes` + where
 	if filter.Cursor != "" {
 		cursor, err := decodeAddressBaseCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND id > ?`
 		args = append(args, cursor)
 	}
-	query += ` ORDER BY id LIMIT ?`
-	args = append(args, limit+1)
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		if filter.Sort == "cidr" {
+			query += fmt.Sprintf(" ORDER BY family %s, ip_start %s, prefix_length %s, id %s LIMIT ? OFFSET ?", direction, direction, direction, direction)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", addressBasePrefixSortColumns[filter.Sort], direction, direction)
+		}
+		args = append(args, limit, filter.Offset)
+	} else {
+		query += ` ORDER BY id LIMIT ?`
+		args = append(args, limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressBasePrefix, 0, limit)
 	for rows.Next() {
 		item, err := scanAddressBasePrefix(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	nextCursor := ""
-	if len(items) > limit {
+	if !filter.TableMode && len(items) > limit {
 		items = items[:limit]
 		nextCursor = encodeAddressBaseCursor(items[len(items)-1].ID)
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, total, nil
 }
 
 func (s *MySQLStore) LookupAddressBasePrefixes(ctx context.Context, tenantID, importID ID, value string, limit int) ([]AddressBasePrefix, error) {

@@ -40,11 +40,20 @@ func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	query := r.URL.Query()
+	for key := range query {
+		switch key {
+		case "q", "family", "country_code", "operator", "asn", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
+	}
 	filter := AddressBasePrefixFilter{
 		CountryCode: strings.TrimSpace(query.Get("country_code")),
 		Operator:    strings.TrimSpace(query.Get("operator")),
 		Search:      strings.TrimSpace(query.Get("q")),
 		Cursor:      strings.TrimSpace(query.Get("cursor")),
+		Sort:        strings.TrimSpace(query.Get("sort")),
 	}
 	if len(filter.CountryCode) > 2 || len(filter.Operator) > 255 || len(filter.Search) > 255 {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "address prefix filter is too long", nil)
@@ -67,15 +76,35 @@ func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request)
 		value := uint32(asn)
 		filter.ASN = &value
 	}
-	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if filter.Sort != "cidr" {
+		if _, ok := addressBasePrefixSortColumns[filter.Sort]; !ok {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid address prefix sort", nil)
 			return
 		}
-		filter.Limit = limit
 	}
-	items, cursor, err := api.repo.ListAddressBasePrefixes(r.Context(), auth.TenantID, importID, filter)
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc"
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	items, cursor, total, err := api.repo.ListAddressBasePrefixes(r.Context(), auth.TenantID, importID, filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -83,7 +112,11 @@ func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request)
 	if items == nil {
 		items = []AddressBasePrefix{}
 	}
-	response := map[string]any{"items": items}
+	response := map[string]any{"items": items, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}
@@ -137,20 +170,53 @@ func (api addressImportAPI) addressImportExists(w http.ResponseWriter, r *http.R
 func (api addressImportAPI) list(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	query := r.URL.Query()
+	for key := range query {
+		switch key {
+		case "q", "source_slot", "status", "format", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
+	}
 	filter := AddressImportListFilter{
 		SourceSlot: strings.TrimSpace(query.Get("source_slot")),
 		Status:     strings.TrimSpace(query.Get("status")),
+		Format:     strings.TrimSpace(query.Get("format")),
+		Search:     strings.TrimSpace(query.Get("q")),
+		Sort:       strings.TrimSpace(query.Get("sort")),
 		Cursor:     strings.TrimSpace(query.Get("cursor")),
 	}
-	if raw := query.Get("limit"); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
-			return
-		}
-		filter.Limit = limit
+	if len(filter.Search) > 255 || len(filter.SourceSlot) > 32 || len(filter.Status) > 32 || len(filter.Format) > 16 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "address import filter is too long", nil)
+		return
 	}
-	items, cursor, err := api.repo.ListAddressImports(r.Context(), auth.TenantID, filter)
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if _, ok := addressImportSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid address import sort", nil)
+		return
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc"
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 50, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	items, cursor, total, err := api.repo.ListAddressImports(r.Context(), auth.TenantID, filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -158,7 +224,11 @@ func (api addressImportAPI) list(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []AddressImport{}
 	}
-	response := map[string]any{"items": items}
+	response := map[string]any{"items": items, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}

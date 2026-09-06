@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { DatabaseZapIcon, RefreshCwIcon, SearchIcon, UploadIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { DatabaseZapIcon, RefreshCwIcon, UploadIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -42,21 +42,25 @@ type ImportedPrefix = {
 	labels?: Record<string, string>
 }
 
-type ListResponse<T> = { items?: T[]; next_cursor?: string }
+type ListResponse<T> = { items?: T[]; next_cursor?: string; total?: number }
 type UploadResponse = { import: AddressImport }
 
-const pageSize = 100
 const importSlots = ["geo", "asn", "combined"] as const
 
 export default memo(function AddressImports() {
 	const { t } = useLingui()
 	const [imports, setImports] = useState<AddressImport[]>([])
-	const [nextCursor, setNextCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [debouncedSearch, setDebouncedSearch] = useState("")
 	const [slots, setSlots] = useState<Record<string, AddressImportSlot>>({})
-	const [sourceSlot, setSourceSlot] = useState("all")
-	const [status, setStatus] = useState("all")
+	const [sourceSlot, setSourceSlot] = useState("")
+	const [status, setStatus] = useState("")
+	const [format, setFormat] = useState("")
+	const [sort, setSort] = useState("created:desc")
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showUpload, setShowUpload] = useState(false)
 	const [uploading, setUploading] = useState(false)
@@ -66,6 +70,15 @@ export default memo(function AddressImports() {
 		language: "en",
 	})
 	const [selected, setSelected] = useState<AddressImport | null>(null)
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
 
 	const refreshSlots = useCallback(async () => {
 		const next: Record<string, AddressImportSlot> = {}
@@ -81,33 +94,40 @@ export default memo(function AddressImports() {
 		setSlots(next)
 	}, [])
 
-	const fetchPage = useCallback(
-		async (cursor: string, append: boolean) => {
-			append ? setLoadingMore(true) : setLoading(true)
-			setError("")
-			try {
-				const data = await pb.send<ListResponse<AddressImport>>("/api/v1/address-imports", {
-					query: {
-						source_slot: sourceSlot === "all" ? undefined : sourceSlot,
-						status: status === "all" ? undefined : status,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setImports((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-				if (!append) await refreshSlots()
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load`)
-			} finally {
-				append ? setLoadingMore(false) : setLoading(false)
-			}
-		},
-		[refreshSlots, sourceSlot, status, t]
-	)
+	const fetchPage = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<ListResponse<AddressImport>>("/api/v1/address-imports", {
+				query: {
+					q: debouncedSearch || undefined,
+					source_slot: sourceSlot || undefined,
+					status: status || undefined,
+					format: format || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setImports(data.items ?? [])
+			setTotal(data.total ?? 0)
+			await refreshSlots()
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setImports([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [debouncedSearch, format, page, pageSize, refreshSlots, sort, sourceSlot, status, t])
 
 	useEffect(() => {
-		fetchPage("", false)
+		fetchPage()
 	}, [fetchPage])
 
 	const submitUpload = async () => {
@@ -126,7 +146,8 @@ export default memo(function AddressImports() {
 			setSelected(response.import)
 			setShowUpload(false)
 			setUpload({ file: null, sourceSlot: "geo", language: "en" })
-			await fetchPage("", false)
+			if (page === 0) await fetchPage()
+			else setPage(0)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to upload`)
 		} finally {
@@ -145,7 +166,7 @@ export default memo(function AddressImports() {
 					method: "POST",
 					headers: { "If-Match": `"${current?.row_version ?? 0}"` },
 				})
-				await fetchPage("", false)
+				await fetchPage()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : t`Failed to activate`)
 			}
@@ -188,6 +209,65 @@ export default memo(function AddressImports() {
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				slot: importSlots.map((value) => ({ value, label: value })),
+				format: [
+					{ value: "mmdb", label: "MMDB" },
+					{ value: "ipdb", label: "IPDB" },
+				],
+				status: ["quarantined", "queued", "importing", "ready", "failed", "retired"].map((value) => ({
+					value,
+					label: value,
+				})),
+			},
+			selected: {
+				slot: sourceSlot ? [sourceSlot] : [],
+				format: format ? [format] : [],
+				status: status ? [status] : [],
+			},
+			selection: { slot: "single" as const, format: "single" as const, status: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				const value = values.length > 0 ? String(values[0]) : ""
+				resetPage(() => {
+					if (field === "slot") setSourceSlot(value)
+					if (field === "format") setFormat(value)
+					if (field === "status") setStatus(value)
+				})
+			},
+			onClearAll: () =>
+				resetPage(() => {
+					setSourceSlot("")
+					setFormat("")
+					setStatus("")
+				}),
+		}),
+		[format, sourceSlot, status]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				name: "name",
+				slot: "slot",
+				format: "format",
+				type: "type",
+				status: "status",
+				rows: "rows",
+				size: "size",
+				created: "created",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -199,7 +279,7 @@ export default memo(function AddressImports() {
 					</h2>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm" onClick={() => fetchPage("", false)} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={fetchPage} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
@@ -208,39 +288,6 @@ export default memo(function AddressImports() {
 						<Trans>Upload Database</Trans>
 					</Button>
 				</div>
-			</div>
-
-			<div className="flex flex-wrap gap-2">
-				<Select value={sourceSlot} onValueChange={setSourceSlot}>
-					<SelectTrigger className="w-40">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All slots</Trans>
-						</SelectItem>
-						<SelectItem value="geo">Geo</SelectItem>
-						<SelectItem value="asn">ASN</SelectItem>
-						<SelectItem value="combined">
-							<Trans>Combined</Trans>
-						</SelectItem>
-					</SelectContent>
-				</Select>
-				<Select value={status} onValueChange={setStatus}>
-					<SelectTrigger className="w-40">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All statuses</Trans>
-						</SelectItem>
-						{["queued", "importing", "ready", "failed", "retired"].map((value) => (
-							<SelectItem key={value} value={value}>
-								{value}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
 			</div>
 
 			{showUpload ? (
@@ -305,18 +352,24 @@ export default memo(function AddressImports() {
 				loading={loading}
 				emptyText={t`No address imports found.`}
 				searchPlaceholder={t`Search imported files...`}
+				searchValue={search}
+				onSearchChange={setSearch}
 				height={420}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+				}}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				onCellClick={(record, field) => {
 					const item = record.item as AddressImport
 					if (field === "browse") setSelected(item)
 					if (field === "activate" && record.activate !== "—") activate(item)
 				}}
 			/>
-			{nextCursor ? (
-				<Button variant="outline" onClick={() => fetchPage(nextCursor, true)} disabled={loadingMore}>
-					{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-				</Button>
-			) : null}
 			{selected ? <ImportedPrefixBrowser item={selected} onClose={() => setSelected(null)} /> : null}
 		</div>
 	)
@@ -325,51 +378,65 @@ export default memo(function AddressImports() {
 function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose: () => void }) {
 	const { t } = useLingui()
 	const [prefixes, setPrefixes] = useState<ImportedPrefix[]>([])
-	const [nextCursor, setNextCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
-	const [family, setFamily] = useState("all")
+	const [family, setFamily] = useState("")
 	const [country, setCountry] = useState("")
 	const [operator, setOperator] = useState("")
 	const [asn, setASN] = useState("")
+	const [sort, setSort] = useState("cidr:asc")
+	const [lookupActive, setLookupActive] = useState(false)
 	const [lookupIP, setLookupIP] = useState("")
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
 
-	const fetchPrefixes = useCallback(
-		async (cursor = "", append = false) => {
-			setLoading(true)
-			setError("")
-			try {
-				const parsedASN = asn.trim() ? Number(asn) : undefined
-				if (parsedASN !== undefined && (!Number.isInteger(parsedASN) || parsedASN <= 0))
-					throw new Error(t`ASN must be a positive integer`)
-				const data = await pb.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/prefixes`, {
-					query: {
-						q: debouncedSearch || undefined,
-						family: family === "all" ? undefined : family,
-						country_code: country.trim() || undefined,
-						operator: operator.trim() || undefined,
-						asn: parsedASN,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setPrefixes((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load prefixes`)
-			} finally {
-				setLoading(false)
-			}
-		},
-		[asn, country, debouncedSearch, family, item.id, operator, t]
-	)
+	const fetchPrefixes = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		setLookupActive(false)
+		try {
+			const parsedASN = asn.trim() ? Number(asn) : undefined
+			if (parsedASN !== undefined && (!Number.isInteger(parsedASN) || parsedASN <= 0))
+				throw new Error(t`ASN must be a positive integer`)
+			const data = await pb.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/prefixes`, {
+				query: {
+					q: debouncedSearch || undefined,
+					family: family || undefined,
+					country_code: country.trim() || undefined,
+					operator: operator.trim() || undefined,
+					asn: parsedASN,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setPrefixes(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setPrefixes([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load prefixes`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [asn, country, debouncedSearch, family, item.id, operator, page, pageSize, sort, t])
 
 	useEffect(() => {
 		fetchPrefixes()
@@ -377,18 +444,23 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 
 	const lookup = async () => {
 		if (!lookupIP.trim()) return
+		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
 		try {
 			const data = await pb.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/lookup`, {
 				query: { ip: lookupIP.trim(), limit: 100 },
 			})
+			if (sequence !== requestSequence.current) return
 			setPrefixes(data.items ?? [])
-			setNextCursor("")
+			setTotal(data.items?.length ?? 0)
+			setPage(0)
+			setLookupActive(true)
 		} catch (err) {
+			if (sequence !== requestSequence.current) return
 			setError(err instanceof Error ? err.message : t`Lookup failed`)
 		} finally {
-			setLoading(false)
+			if (sequence === requestSequence.current) setLoading(false)
 		}
 	}
 
@@ -420,6 +492,43 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				family: [
+					{ value: "4", label: "IPv4" },
+					{ value: "6", label: "IPv6" },
+				],
+			},
+			selected: { family: family ? [family] : [] },
+			selection: { family: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setFamily(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetPage(() => setFamily("")),
+		}),
+		[family]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				cidr: "cidr",
+				family: "family",
+				country: "country",
+				region: "region",
+				asn: "asn",
+				operator: "operator",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-3 rounded-md border border-border bg-card p-4">
@@ -433,27 +542,6 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 				</Button>
 			</div>
 			<div className="flex flex-wrap gap-2">
-				<div className="relative min-w-60 flex-1">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						className="pl-9"
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						placeholder={t`Search CIDR or location...`}
-					/>
-				</div>
-				<Select value={family} onValueChange={setFamily}>
-					<SelectTrigger className="w-28">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All</Trans>
-						</SelectItem>
-						<SelectItem value="4">IPv4</SelectItem>
-						<SelectItem value="6">IPv6</SelectItem>
-					</SelectContent>
-				</Select>
 				<Input
 					className="w-28"
 					value={country}
@@ -484,9 +572,21 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 				<Button variant="outline" onClick={lookup}>
 					<Trans>Lookup</Trans>
 				</Button>
-				<Button variant="outline" onClick={() => fetchPrefixes()}>
+				<Button
+					variant="outline"
+					onClick={() => {
+						setLookupIP("")
+						if (page === 0) fetchPrefixes()
+						else setPage(0)
+					}}
+				>
 					<Trans>Reset</Trans>
 				</Button>
+				{lookupActive ? (
+					<span className="self-center text-xs text-muted-foreground">
+						<Trans>Exact lookup result</Trans>
+					</span>
+				) : null}
 			</div>
 			{error ? <div className="text-sm text-destructive">{error}</div> : null}
 			<PagedVTable
@@ -494,14 +594,20 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 				columns={columns}
 				loading={loading}
 				emptyText={t`No imported prefixes found.`}
-				showSearch={false}
+				searchValue={search}
+				onSearchChange={setSearch}
+				searchPlaceholder={t`Search CIDR or location...`}
 				height={380}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+				}}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 			/>
-			{nextCursor ? (
-				<Button variant="outline" onClick={() => fetchPrefixes(nextCursor, true)}>
-					<Trans>Load more</Trans>
-				</Button>
-			) : null}
 		</div>
 	)
 }
