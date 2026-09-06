@@ -31,6 +31,9 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"snmp_profiles",
 		"bgp_sessions",
 		"export_tasks",
+		"dashboards",
+		"dimension_snapshots",
+		"dimension_snapshot_acks",
 		"geo_dict",
 		"isp_operators",
 		"geo_lines",
@@ -85,14 +88,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "038" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "040" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "038" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "040" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -275,7 +278,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 38 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "038" {
+	if len(migrations) != 40 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "040" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {

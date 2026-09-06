@@ -5,11 +5,12 @@ import { memo } from "react"
 import { $router, navigate } from "@/components/router"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import AddressImports from "./address-imports"
+import AddressPublications from "./address-publications"
 import AddressPrefixes from "./address-prefixes"
 import AddressSets from "./address-sets"
 import AddressTaxonomy from "./address-taxonomy"
 
-const sections = ["imports", "prefixes", "sets", "geography", "operators", "lines"] as const
+const sections = ["imports", "prefixes", "sets", "publications", "geography", "operators", "lines"] as const
 type AddressLibrarySection = (typeof sections)[number]
 
 function normalizeSection(value: string): AddressLibrarySection {
@@ -40,6 +41,9 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 					<TabsTrigger value="sets">
 						<Trans>Sets</Trans>
 					</TabsTrigger>
+					<TabsTrigger value="publications">
+						<Trans>Publications</Trans>
+					</TabsTrigger>
 					<TabsTrigger value="geography">
 						<Trans>Geography</Trans>
 					</TabsTrigger>
@@ -54,6 +58,7 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 			{active === "imports" ? <AddressImports /> : null}
 			{active === "prefixes" ? <AddressPrefixes /> : null}
 			{active === "sets" ? <AddressSets /> : null}
+			{active === "publications" ? <AddressPublications /> : null}
 			{active === "geography" ? <AddressTaxonomy kind="geography" /> : null}
 			{active === "operators" ? <AddressTaxonomy kind="operators" /> : null}
 			{active === "lines" ? <AddressTaxonomy kind="lines" /> : null}

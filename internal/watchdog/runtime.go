@@ -35,6 +35,8 @@ type BackendRuntime struct {
 	MetricsClient      VictoriaMetricsClient
 	ExportStore        DiskCSVExportStore
 	AddressArtifacts   DiskAddressArtifactStore
+	DimensionObjects   DiskDimensionObjectStore
+	AddressDimensions  *MySQLAddressDimensionPublisher
 	ExportWorker       ExportWorker
 	SNMPCollector      SNMPPollRunner
 	SNMPDiscovery      SNMPDiscoveryEngine
@@ -77,6 +79,12 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
 	exportStore := DiskCSVExportStore{Dir: cfg.Export.Dir}
 	addressArtifacts := DiskAddressArtifactStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxUploadBytes}
+	dimensionObjects := DiskDimensionObjectStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: 64 << 20}
+	addressDimensions, err := NewMySQLAddressDimensionPublisher(store, dimensionObjects)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	collectorAuthenticator, err := NewMySQLCollectorMachineAuthenticator(store.db)
 	if err != nil {
 		_ = store.Close()
@@ -115,6 +123,8 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		MetricsClient:     metricsClient,
 		ExportStore:       exportStore,
 		AddressArtifacts:  addressArtifacts,
+		DimensionObjects:  dimensionObjects,
+		AddressDimensions: addressDimensions,
 		CollectorEvidence: collectorEvidence,
 		CollectorPlans:    collectorPlans,
 	}
@@ -255,6 +265,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressImports:         r.Store,
 		AddressArtifacts:       r.AddressArtifacts,
 		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,
+		AddressDimensions:      r.AddressDimensions,
 		OperationJobs:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,
@@ -398,6 +409,12 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			LeaseFor:    2 * time.Minute,
 			MaxAttempts: 5,
 			RetryBase:   30 * time.Second,
+		}); err != nil {
+			return err
+		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType: AddressDimensionPublishJob, Handler: NewAddressDimensionPublishJobHandler(r.AddressDimensions),
+			Concurrency: 1, LeaseFor: 5 * time.Minute, MaxAttempts: 3, RetryBase: 30 * time.Second,
 		}); err != nil {
 			return err
 		}

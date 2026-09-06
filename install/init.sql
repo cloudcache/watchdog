@@ -243,6 +243,75 @@ CREATE TABLE IF NOT EXISTS `aggregate_graphs` (
   CONSTRAINT `aggregate_graphs_chk_2` CHECK ((`value_mode` in ('corrected','raw','both')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `dashboards` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `layout_json` json NOT NULL,
+  `version` int unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dashboards_tenant_name` (`tenant_id`,`name`),
+  KEY `idx_dashboards_tenant_owner` (`tenant_id`,`owner_id`),
+  KEY `fk_dashboards_owner` (`owner_id`),
+  CONSTRAINT `fk_dashboards_owner` FOREIGN KEY (`owner_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dashboards_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `module_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dimension_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` bigint unsigned NOT NULL,
+  `effective_from` datetime(3) NOT NULL,
+  `object_ref` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `checksum` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `draft_digest` char(71) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `bundle_schema_version` int unsigned NOT NULL,
+  `entry_count` bigint unsigned NOT NULL DEFAULT '0',
+  `prefix_count` bigint unsigned NOT NULL DEFAULT '0',
+  `address_set_count` bigint unsigned NOT NULL DEFAULT '0',
+  `max_address_sets_per_record` int unsigned NOT NULL DEFAULT '0',
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `retired_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `retired_at` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dimension_snapshot_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_dimension_version` (`tenant_id`,`module_key`,`dimension_key`,`version`),
+  UNIQUE KEY `uq_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`effective_from`),
+  KEY `idx_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`status`,`effective_from`),
+  KEY `fk_dimension_snapshot_creator` (`created_by`),
+  KEY `fk_dimension_snapshot_retired_by` (`retired_by`),
+  CONSTRAINT `fk_dimension_snapshot_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dimension_snapshot_retired_by` FOREIGN KEY (`retired_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dimension_snapshot_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `dimension_snapshots_chk_1` CHECK ((`status` in ('active','retired'))),
+  CONSTRAINT `dimension_snapshots_chk_2` CHECK ((`version` > 0)),
+  CONSTRAINT `dimension_snapshots_chk_3` CHECK ((`bundle_schema_version` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `dimension_snapshot_acks` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `snapshot_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `worker_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `boot_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `software_version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `checksum` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `installed_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`,`snapshot_id`,`worker_id`),
+  KEY `idx_dimension_snapshot_acks_worker` (`tenant_id`,`worker_id`,`installed_at`),
+  CONSTRAINT `fk_dimension_snapshot_acks_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_dimension_snapshot_acks_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `alerts_history` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
