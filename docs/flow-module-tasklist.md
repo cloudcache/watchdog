@@ -239,7 +239,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
-- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI、测试和设计证据已进入独立提交 `157b070d`；联合维度/桑基、服务端 filter、生产浏览器和滚动升级门禁仍保持未完成，未因单维页面可打开而提前关闭。
+- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基、真实 CH 集成和回归证据进入 `0751551a`。异步联合索引、服务端 filter 生命周期、生产浏览器和滚动升级门禁仍保持未完成，未因查询页面可打开而提前关闭。
 
 ### FLOW-06 Correction/Reclass/Export
 
