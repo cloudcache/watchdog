@@ -9,10 +9,14 @@
 go test ./internal/flowdimension -run '^$' -bench 'CompileBundle|AddressSet' -benchmem
 go test ./internal/flowdimension -run TestAddressLibraryScaleRetainedMemory -v
 WATCHDOG_ADDRESS_MANAGEMENT_SCALE=1 go test ./internal/watchdog -run '^TestAddressOperationScaleCertification$' -count=1 -v
+WATCHDOG_ADDRESS_IMPORT_SCALE=1 WATCHDOG_MYSQL_TEST_DSN='root@tcp(127.0.0.1:3306)/watchdog_c3b_ipdb?parseTime=true&multiStatements=true' \
+  go test ./internal/watchdog -run '^TestAddressImportMillionIPDBMySQLEndToEnd$' -count=1 -v
 ```
 
 基准与内存测试在 `internal/flowdimension/address_scale_bench_test.go`。
 管理集合运算规模门禁在 `internal/watchdog/address_management_scale_test.go`。
+百万导入命令假定调用者预先创建独立的 `watchdog_c3b_ipdb` 空库；测试负责迁移并级联
+清理测试 tenant/import/job，调用者在命令结束后删除该 scratch database。
 
 ## 基线数字（本机 darwin/arm64，参考量级，非绝对阈值）
 
@@ -29,6 +33,7 @@ WATCHDOG_ADDRESS_MANAGEMENT_SCALE=1 go test ./internal/watchdog -run '^TestAddre
 | 集合规范化 | 50k 不相邻地址 | 28 ms | 55.6 MiB |
 | overlap 最坏输入 | 50k 完全重叠地址 | 9 ms | 34.7 MiB |
 | 结果上限拒绝 | 20k 隔离地址范围，展开 >200k prefix | 21 ms | 29.9 MiB |
+| IPDB 端到端（含一次 retry） | 1,048,576 个不同 IPv4 `/20` | 2m02.177s / 8,582 rows/s | 35.0 MiB peak heap |
 
 ## 结论
 
@@ -57,9 +62,28 @@ WATCHDOG_ADDRESS_MANAGEMENT_SCALE=1 go test ./internal/watchdog -run '^TestAddre
 - preview handler 的普通单测构造超过 4 MiB 的真实 JSON body，锁定 HTTP 边界；输入、
   结果和 overlap 规模由 opt-in 测试锁定，避免让全库普通回归长期承担大 fixture 成本。
 
+## 百万级 IPDB 端到端
+
+`TestAddressImportMillionIPDBMySQLEndToEnd` 构造 96 个 IPv4-mapped path 节点与完整
+20-bit IPv4 子树（1,048,575 个内部节点、1,048,576 个不同 `/20` 叶子）；生成文件先由官方
+`ipipdotnet/ipdb-go` reader 校验，再由生产 `StreamIPDB` 枚举，不能通过重复小 fixture
+或伪造回调计数通过。导入使用实际 MySQL schema、`operation_jobs` lease/reporter 和
+`address_base_prefixes` 三组查询索引。
+
+规模认证发现原实现虽然名为 batch，事务内仍为每行一次 prepared Exec，百万记录会产生
+百万次数据库往返。现改为单条最多 1,000 rows/19,000 placeholders 的 multi-row upsert；
+配置允许的 5,000-row batch 仍在一个事务内，但拆为五条 statement，明确低于 MySQL
+prepared statement 的 placeholder 上限。`(import_id,cidr)` 幂等键、batch transaction、
+ordinal checkpoint 和 takeover 语义不变。
+
+故障门禁在 100,000 行已提交并上报 checkpoint 后注入一次暂时性 batch error。第一次
+attempt 回到 queued，第二次从持久 `processed=100000` 继续；解析器必须重放不可变 artifact
+以定位 ordinal，但不会再次写前 100,000 行。最终 job/import/表三方计数一致。4 分钟、
+4,000 rows/s、512 MiB 是跨机器宽松退化阈值，不是产品 SLA。测试 tenant 级联删除后
+prefix/job 均为零；运行者还应使用独立 scratch database 并在测试后删除。
+
 ## 未覆盖（本切片不做，避免改数据面）
 
-- MMDB/IPDB 真实解析→operation job batch/checkpoint→MySQL ready 的吞吐、峰值内存、
-  crash/resume 和清理；必须使用各自合法的生产级数据库文件。
-- 真实百万级导入 corpus 端到端。当前仓库只有 MaxMind 小型测试库；不能通过循环读取
-  小 fixture 或复制回调计数伪造该结论，因此该项继续作为 C3b 独立门禁。
+- 百万级 MMDB 的解析→operation job batch/checkpoint→MySQL ready 吞吐、峰值内存、
+  crash/resume 和清理。当前仓库只有 MaxMind 小型测试库；不能通过循环读取小 fixture
+  或复制回调计数伪造该结论，因此 MMDB 继续作为 C3b 独立门禁。

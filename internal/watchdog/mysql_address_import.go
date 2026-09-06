@@ -13,7 +13,10 @@ import (
 	"strings"
 )
 
-const maxAddressImportBatch = 5_000
+const (
+	maxAddressImportBatch         = 5_000
+	maxAddressImportStatementRows = 1_000
+)
 
 type addressImportBatchRow struct {
 	record AddressImportRecord
@@ -266,34 +269,45 @@ func (s *MySQLStore) InsertAddressImportBatch(ctx context.Context, tenantID, imp
 	if status != AddressImportStatusImporting {
 		return ErrAddressImportNotWritable
 	}
-	statement, err := tx.PrepareContext(ctx, `
+	const statementPrefix = `
 		INSERT INTO address_base_prefixes (
 			tenant_id, import_id, family, prefix_length, cidr, ip_start, ip_end,
 			continent_code, country_code, country_name, subdivision_code,
 			subdivision_name, city_code, city_name, asn, operator_name,
 			latitude, longitude, labels
-		) VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
+		) VALUES `
+	const rowPlaceholder = `(?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
 			NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, 0),
-			NULLIF(?, ''), ?, ?, ?)
+			NULLIF(?, ''), ?, ?, ?)`
+	const statementSuffix = `
 		ON DUPLICATE KEY UPDATE
 			continent_code = VALUES(continent_code), country_code = VALUES(country_code),
 			country_name = VALUES(country_name), subdivision_code = VALUES(subdivision_code),
 			subdivision_name = VALUES(subdivision_name), city_code = VALUES(city_code),
 			city_name = VALUES(city_name), asn = VALUES(asn), operator_name = VALUES(operator_name),
 			latitude = VALUES(latitude), longitude = VALUES(longitude), labels = VALUES(labels)
-	`)
-	if err != nil {
-		return err
-	}
-	defer statement.Close()
-	for _, row := range batch {
-		record := row.record
-		if _, err := statement.ExecContext(ctx,
-			tenantID, importID, row.family, row.bits, record.Prefix, row.start[:], row.end[:],
-			record.ContinentCode, record.CountryCode, record.CountryName, record.SubdivisionCode,
-			record.SubdivisionName, record.CityCode, record.CityName, record.ASN, record.Operator,
-			record.Latitude, record.Longitude, row.labels,
-		); err != nil {
+	`
+	for start := 0; start < len(batch); start += maxAddressImportStatementRows {
+		end := min(start+maxAddressImportStatementRows, len(batch))
+		var query strings.Builder
+		query.Grow(len(statementPrefix) + (end-start)*len(rowPlaceholder) + len(statementSuffix))
+		query.WriteString(statementPrefix)
+		args := make([]any, 0, (end-start)*19)
+		for index, row := range batch[start:end] {
+			if index != 0 {
+				query.WriteByte(',')
+			}
+			query.WriteString(rowPlaceholder)
+			record := row.record
+			args = append(args,
+				tenantID, importID, row.family, row.bits, record.Prefix, row.start[:], row.end[:],
+				record.ContinentCode, record.CountryCode, record.CountryName, record.SubdivisionCode,
+				record.SubdivisionName, record.CityCode, record.CityName, record.ASN, record.Operator,
+				record.Latitude, record.Longitude, row.labels,
+			)
+		}
+		query.WriteString(statementSuffix)
+		if _, err := tx.ExecContext(ctx, query.String(), args...); err != nil {
 			return err
 		}
 	}

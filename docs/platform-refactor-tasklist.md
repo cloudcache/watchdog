@@ -174,7 +174,12 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **集成**：真实算法以 50k 不相邻地址跑满输入上限并守恒；50k 完全重叠精确计得 1,249,975,000 对、明细限 1,000；20k 隔离范围展开超过 200k 时整体失败、无部分结果。
     - [x] **变更设计/测试**：10s/512 MiB 是跨机器宽松退化阈值，不把本机数字硬编码成产品 SLA；本机 darwin/arm64 分别为 28ms/55.6 MiB、9ms/34.7 MiB、结果门禁 21ms/29.9 MiB。无 schema/状态变化，不创建空 migration，下一持久化 migration 仍为 050。
     - [x] **回归/已提交门禁**：opt-in scale、watchdog、全库、race/vet/build 通过；测试、报告和清单由本提交原子交付，不夹带 Flow 数据面或既有 maintenance/delete-preview 文件。
-  - [ ] **C3b 导入端到端规模认证**：使用真实 MMDB 和 IPDB 各自验证解析→operation job 分批/checkpoint→MySQL ready 的吞吐、峰值内存、crash/resume 和百万级 corpus；测试数据必须是合法数据库格式，不能把重复读取小 fixture 冒充百万条。产出隔离临时 tenant/import 并清理。当前缺生产级百万记录 MMDB/IPDB corpus，不影响 C3a/C3c 已完成边界。
+  - [ ] **C3b 导入端到端规模认证**：使用真实 MMDB 和 IPDB 各自验证解析→operation job 分批/checkpoint→MySQL ready 的吞吐、峰值内存、crash/resume 和百万级 corpus；测试数据必须是合法数据库格式，不能把重复读取小 fixture 冒充百万条。
+    - [x] **C3b-IPDB 设计/编码**：测试生成符合公开 IPDB trie 格式的 1,048,576 个不同 IPv4 `/20`，并必须先经官方 `ipipdotnet/ipdb-go` reader 验证；生产 `InsertAddressImportBatch` 从逐行 Exec 改为每 statement 最多 1,000 行的 multi-row upsert，外层 5,000 batch/事务与 operation-job checkpoint 不变，避开 prepared statement 65,535 placeholder 上限。
+    - [x] **C3b-IPDB 单元/集成**：真实 MySQL 空库迁移后，由 operation worker 在 100,000 durable rows 后注入一次暂时性 batch failure；job 回到 queued 并保留 progress/checkpoint，第二 attempt 重放 artifact、跳过 durable ordinal 后继续，最终 job succeeded、import ready、v4 row count 与实际表 count 均为 1,048,576。
+    - [x] **C3b-IPDB 变更/回归**：本机 darwin/arm64 + MySQL 9.6，8,389,532-byte artifact，含 retry 的业务阶段 2m02.177s（8,582 rows/s）、peak heap 35.0 MiB；门禁 4 分钟/4k rows/s/512 MiB。tenant cascade 后 prefix/job 均为 0，显式 scratch database 已删除。无 schema 变化，不创建空 migration，下一持久化 migration 仍为 050；全库 test/race/vet/build 后提交。
+    - [x] **C3b-IPDB 已提交门禁**：bulk upsert、合法 corpus、真实 MySQL 故障续跑测试、报告与清单由本提交原子交付，不夹带 Flow 数据面或既有 maintenance/config 工作区文件。
+    - [ ] **C3b-MMDB**：以真实生产级百万记录 MMDB 重跑同一吞吐/峰值内存、job crash/resume、ready/count/cleanup 门禁；当前仓库只有 MaxMind 小型测试库，禁止循环读取小 fixture 或复制回调计数冒充百万数据。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
