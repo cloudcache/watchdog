@@ -40,15 +40,17 @@ type ClickHouseFlowQueryProvider struct {
 }
 
 type flowAggregateQueryParameters struct {
-	Metric       flowquery.Metric            `json:"metric"`
-	Dimension    flowquery.Dimension         `json:"dimension,omitempty"`
-	Dimensions   []flowquery.Dimension       `json:"dimensions,omitempty"`
-	Filters      flowquery.Filters           `json:"filters,omitempty"`
-	Filter       *flowquery.FilterExpression `json:"filter,omitempty"`
-	TopN         uint16                      `json:"top_n"`
-	IncludeOther bool                        `json:"include_other"`
-	Timezone     string                      `json:"timezone,omitempty"`
-	TargetPoints uint16                      `json:"target_points,omitempty"`
+	Metric         flowquery.Metric            `json:"metric"`
+	Dimension      flowquery.Dimension         `json:"dimension,omitempty"`
+	Dimensions     []flowquery.Dimension       `json:"dimensions,omitempty"`
+	Filters        flowquery.Filters           `json:"filters,omitempty"`
+	Filter         *flowquery.FilterExpression `json:"filter,omitempty"`
+	TopN           uint16                      `json:"top_n"`
+	IncludeOther   bool                        `json:"include_other"`
+	Timezone       string                      `json:"timezone,omitempty"`
+	TargetPoints   uint16                      `json:"target_points,omitempty"`
+	DirectionSplit bool                        `json:"direction_split,omitempty"`
+	Table          *flowTableRequest           `json:"table,omitempty"`
 }
 
 func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
@@ -72,6 +74,9 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	view, err := flowView(request.ValueLayer)
 	if err != nil {
 		return QueryProviderResult{}, err
+	}
+	if parameters.DirectionSplit {
+		return p.queryDirections(ctx, request, parameters, view)
 	}
 	baseFilter := false
 	if parameters.Filter != nil {
@@ -118,7 +123,7 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "Flow result exceeds the query row limit"}
 	}
 	result.Plan = &plan
-	data, err := json.Marshal(result)
+	data, err := marshalFlowAggregateResult(result, parameters.Table)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow query result: %w", err)
 	}
@@ -176,7 +181,7 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 	if uint64(len(result.Points)) > uint64(request.Limit) {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "Flow joint result exceeds the query row limit"}
 	}
-	data, err := json.Marshal(result)
+	data, err := marshalFlowJointResult(result, parameters.Table)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow joint-query result: %w", err)
 	}
@@ -264,6 +269,13 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 	}
 	if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "exactly one of dimension or dimensions is required"}
+	}
+	if parameters.DirectionSplit && (parameters.Dimension != flowquery.DimensionTotal || len(parameters.Dimensions) != 0 ||
+		parameters.TopN != 1 || parameters.IncludeOther || len(parameters.Filters.Directions) != 0) {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter"}
+	}
+	if err := normalizeFlowTableRequest(parameters.Table); err != nil {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: err.Error(), Cause: err}
 	}
 	if parameters.Filter != nil {
 		canonical, err := flowquery.CanonicalFilter(*parameters.Filter)

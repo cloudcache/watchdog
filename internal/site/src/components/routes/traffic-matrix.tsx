@@ -41,6 +41,40 @@ type FlowAggregateResult = {
 	rollup_completeness?: { expected_buckets: number; covered_buckets: number; ratio: number; complete: boolean }
 	mixed_versions: boolean
 	version_count: number
+	table?: FlowTablePage
+}
+
+type FlowTableRow = {
+	name: string
+	label: string
+	path: string[]
+	last: number
+	average: number
+	p95: number
+	maximum: number
+	minimum: number
+	total: number
+	received_records: number
+	unknown_sampling_ratio: number
+	quality_record_ratio: number
+}
+
+type FlowTableFilterOption = { value: string; count: number }
+type FlowTablePage = {
+	items: FlowTableRow[]
+	total: number
+	limit: number
+	offset: number
+	filter_options: Record<string, FlowTableFilterOption[]>
+}
+
+type FlowTableControl = {
+	search: string
+	page: number
+	pageSize: number
+	sortBy: string
+	sortDirection: "asc" | "desc"
+	filters: Record<string, string[]>
 }
 
 type FlowQueryResponse = {
@@ -164,6 +198,15 @@ const DIMENSION_OPTIONS = [
 
 const POINT_OPTIONS = [100, 200, 300, 500, 1000]
 
+const INITIAL_FLOW_TABLE_CONTROL: FlowTableControl = {
+	search: "",
+	page: 0,
+	pageSize: 25,
+	sortBy: "maximum",
+	sortDirection: "desc",
+	filters: {},
+}
+
 const QUICK_ANALYSIS_OPTIONS: { value: QuickAnalysisMode; label: string }[] = [
 	{ value: "direction", label: "Traffic direction" },
 	{ value: "protocol", label: "Protocol" },
@@ -229,6 +272,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [series, setSeries] = useState<FlowSeries[]>([])
 	const [selectedDetailIP, setSelectedDetailIP] = useState("")
 	const [response, setResponse] = useState<FlowQueryResponse | null>(null)
+	const [tableControl, setTableControl] = useState<FlowTableControl>(INITIAL_FLOW_TABLE_CONTROL)
+	const [tableSearch, setTableSearch] = useState("")
 	const [overseasResponse, setOverseasResponse] = useState<OverseasQueryResponse | null>(null)
 	const [overseasError, setOverseasError] = useState("")
 	const [overseasGeoLevel, setOverseasGeoLevel] = useState(() => queryState("geo_level", "country"))
@@ -241,6 +286,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const chartRef = useRef<HTMLDivElement>(null)
 	const chartInstance = useRef<ReturnType<typeof createFlowExplorerChart> | null>(null)
 	const initialQuery = useRef(false)
+	const querySequence = useRef(0)
 
 	useEffect(() => {
 		Promise.all([
@@ -303,12 +349,14 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	}, [selectedProvince, t])
 
 	const refresh = useCallback(
-		async (modeOverride?: QueryMode) => {
+		async (modeOverride?: QueryMode, tableOverride?: FlowTableControl) => {
+			const sequence = ++querySequence.current
 			setLoading(true)
 			setError("")
 			setOverseasError("")
 			try {
 				const activeMode = modeOverride ?? queryMode
+				const activeTable = tableOverride ?? tableControl
 				const { start, end } = resolveFlowTimeRange(timeRange, customStart, customEnd)
 				let selectedDimension: string
 				let selectedDimensions: string[]
@@ -379,20 +427,21 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 								include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
 								target_points: targetPoints,
 								timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+								direction_split: activeMode === "direction" || undefined,
+								table: {
+									search: activeTable.search || undefined,
+									sort_by: activeTable.sortBy,
+									sort_direction: activeTable.sortDirection,
+									limit: activeTable.pageSize,
+									offset: activeTable.page * activeTable.pageSize,
+									filters: activeTable.filters,
+								},
 							},
 						},
 					})
-				let query: FlowQueryResponse
-				if (activeMode === "direction") {
-					const [inbound, outbound] = await Promise.all([
-						sendQuery(mergeFlowFilters(filters, { directions: ["in"] })),
-						sendQuery(mergeFlowFilters(filters, { directions: ["out"] })),
-					])
-					query = combineDirectionResponses(inbound, outbound)
-				} else {
-					query = await sendQuery(filters)
-					if (activeMode === "protocol") query = labelProtocolPoints(query)
-				}
+				let query = await sendQuery(filters)
+				if (activeMode === "protocol") query = labelProtocolPoints(query)
+				if (sequence !== querySequence.current) return
 				setResponse(query)
 				setQueryMode(activeMode)
 				const queryUnit = query.data?.metric?.unit ?? query.meta?.unit ?? ""
@@ -418,6 +467,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 								filters: selectedDevice === "all" ? {} : { device_ids: [selectedDevice] },
 							},
 						})
+						if (sequence !== querySequence.current) return
 						setOverseasResponse(overseas)
 					} catch (overseasRequestError) {
 						setOverseasResponse(null)
@@ -450,9 +500,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					geo_level: overseasGeoLevel,
 				})
 			} catch (err) {
+				if (sequence !== querySequence.current) return
 				setError(err instanceof Error ? err.message : t`Failed to load`)
 			} finally {
-				setLoading(false)
+				if (sequence === querySequence.current) setLoading(false)
 			}
 		},
 		[
@@ -482,6 +533,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			selectedDevice,
 			overseasGeoLevel,
 			surface,
+			tableControl,
 			t,
 		]
 	)
@@ -561,26 +613,23 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		}
 	}, [formatValue, graphMode, mixedVersions, series])
 
+	const tablePage = response?.data.table
 	const records = useMemo(
 		() =>
-			series
-				.slice()
-				.sort((a, b) => b.maximum - a.maximum)
-				.map((item) => ({
-					ip: item.path[0] ?? "",
-					dimension: mixedVersions ? item.name : item.label,
-					last: formatFlowValue(item.last, unit),
-					average: formatFlowValue(item.average, unit),
-					p95: formatFlowValue(item.p95, unit),
-					maximum: formatFlowValue(item.maximum, unit),
-					minimum: formatFlowValue(item.minimum, unit),
-					total: formatFlowTotal(item.total, unit),
-					records: item.receivedRecords.toLocaleString(),
-					unknown: ratio(item.unknownSamplingRecords, item.receivedRecords),
-					quality: ratio(item.qualityRecords, item.receivedRecords),
-					searchText: `${item.name} ${item.last} ${item.average} ${item.p95}`.toLowerCase(),
-				})),
-		[mixedVersions, series, unit]
+			(tablePage?.items ?? []).map((item) => ({
+				ip: item.path[0] ?? "",
+				dimension: flowDimensionLabel(mixedVersions ? item.name : item.label, queryMode),
+				last: formatFlowValue(item.last, unit),
+				average: formatFlowValue(item.average, unit),
+				p95: formatFlowValue(item.p95, unit),
+				maximum: formatFlowValue(item.maximum, unit),
+				minimum: formatFlowValue(item.minimum, unit),
+				total: formatFlowTotal(item.total, unit),
+				records: item.received_records.toLocaleString(),
+				unknown: formatFlowRatio(item.unknown_sampling_ratio),
+				quality: formatFlowRatio(item.quality_record_ratio),
+			})),
+		[mixedVersions, queryMode, tablePage?.items, unit]
 	)
 
 	const columns = useMemo(
@@ -597,6 +646,56 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			{ field: "quality", title: t`Quality flags`, width: 130, style: denseCellStyle() },
 		],
 		[t]
+	)
+	const runTableQuery = useCallback(
+		(next: FlowTableControl) => {
+			setTableControl(next)
+			refresh(undefined, next).catch(() => {})
+		},
+		[refresh]
+	)
+	const serverFiltering = useMemo(
+		() => ({
+			options: Object.fromEntries(
+				Object.entries(tablePage?.filter_options ?? {}).map(([field, options]) => [
+					field,
+					options.map((option) => ({
+						value: option.value,
+						label: flowTableFilterLabel(field, option.value, unit, queryMode),
+						count: option.count,
+					})),
+				])
+			),
+			selected: tableControl.filters,
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				const filters = { ...tableControl.filters, [field]: values.map(String) }
+				if (filters[field].length === 0) delete filters[field]
+				runTableQuery({ ...tableControl, page: 0, filters })
+			},
+			onClearAll: () => runTableQuery({ ...tableControl, page: 0, filters: {} }),
+		}),
+		[queryMode, runTableQuery, tableControl, tablePage?.filter_options, unit]
+	)
+	const serverSorting = useMemo(
+		() => ({
+			field: tableControl.sortBy,
+			direction: tableControl.sortDirection,
+			fields: {
+				dimension: "dimension",
+				last: "last",
+				average: "average",
+				p95: "p95",
+				maximum: "maximum",
+				minimum: "minimum",
+				total: "total",
+				records: "records",
+				unknown: "unknown",
+				quality: "quality",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") =>
+				runTableQuery({ ...tableControl, page: 0, sortBy: field, sortDirection: direction }),
+		}),
+		[runTableQuery, tableControl]
 	)
 
 	const plan = response?.data?.plan
@@ -1021,6 +1120,18 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					loading={loading}
 					emptyText={t`No Flow rows found`}
 					searchPlaceholder={t`Search Flow results...`}
+					searchValue={tableSearch}
+					onSearchChange={setTableSearch}
+					onSearchSubmit={(search) => runTableQuery({ ...tableControl, page: 0, search: search.trim() })}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
+					serverPagination={{
+						page: tableControl.page,
+						pageSize: tableControl.pageSize,
+						totalCount: tablePage?.total ?? 0,
+						onPageChange: (page) => runTableQuery({ ...tableControl, page }),
+						onPageSizeChange: (pageSize) => runTableQuery({ ...tableControl, page: 0, pageSize }),
+					}}
 					height={420}
 					onRowClick={
 						surface === "source" || surface === "destination"
@@ -1332,51 +1443,20 @@ function selectedReference<T extends { id: string; name: string }>(
 	return item
 }
 
-function combineDirectionResponses(inbound: FlowQueryResponse, outbound: FlowQueryResponse): FlowQueryResponse {
-	const inboundUnit = inbound.data.metric?.unit ?? inbound.meta.unit ?? ""
-	const outboundUnit = outbound.data.metric?.unit ?? outbound.meta.unit ?? ""
-	if (inboundUnit !== outboundUnit) throw new Error("Direction query returned inconsistent units")
-	const relabel = (response: FlowQueryResponse, label: string) =>
-		((response.data.points ?? []) as FlowPoint[]).map((point) => ({ ...point, dimension_value: label }))
-	const left = inbound.meta.completeness
-	const right = outbound.meta.completeness
-	const leftRollup = inbound.data.rollup_completeness
-	const rightRollup = outbound.data.rollup_completeness
-	const warnings = [...new Set([...(left?.warnings ?? []), ...(right?.warnings ?? [])])]
+function labelProtocolPoints(response: FlowQueryResponse): FlowQueryResponse {
 	return {
+		...response,
 		data: {
-			...inbound.data,
-			points: [...relabel(inbound, "Inbound"), ...relabel(outbound, "Outbound")],
-			dimension: { kind: "direction", additive: true },
-			dimensions: undefined,
-			mixed_versions: inbound.data.mixed_versions || outbound.data.mixed_versions,
-			version_count: Math.max(inbound.data.version_count, outbound.data.version_count),
-			rollup_completeness:
-				leftRollup && rightRollup
-					? {
-							expected_buckets: Math.max(leftRollup.expected_buckets, rightRollup.expected_buckets),
-							covered_buckets: Math.min(leftRollup.covered_buckets, rightRollup.covered_buckets),
-							ratio: Math.min(leftRollup.ratio, rightRollup.ratio),
-							complete: leftRollup.complete && rightRollup.complete,
-						}
-					: (leftRollup ?? rightRollup),
-		},
-		meta: {
-			...inbound.meta,
-			completeness:
-				left && right
-					? {
-							complete_ratio: Math.min(left.complete_ratio, right.complete_ratio),
-							partial: left.partial || right.partial,
-							unknown_ratio: Math.max(left.unknown_ratio, right.unknown_ratio),
-							warnings,
-						}
-					: (left ?? right),
+			...response.data,
+			points: ((response.data.points ?? []) as FlowPoint[]).map((point) => ({
+				...point,
+				dimension_value: protocolLabel(point.dimension_value),
+			})),
 		},
 	}
 }
 
-function labelProtocolPoints(response: FlowQueryResponse): FlowQueryResponse {
+function protocolLabel(value: string) {
 	const names: Record<string, string> = {
 		"1": "ICMP (1)",
 		"6": "TCP (6)",
@@ -1387,16 +1467,27 @@ function labelProtocolPoints(response: FlowQueryResponse): FlowQueryResponse {
 		"58": "ICMPv6 (58)",
 		"132": "SCTP (132)",
 	}
-	return {
-		...response,
-		data: {
-			...response.data,
-			points: ((response.data.points ?? []) as FlowPoint[]).map((point) => ({
-				...point,
-				dimension_value: names[point.dimension_value] ?? point.dimension_value,
-			})),
-		},
-	}
+	return names[value] ?? value
+}
+
+function flowDimensionLabel(value: string, mode: QueryMode) {
+	if (mode !== "protocol") return value
+	const match = /^(\d+)(.*)$/.exec(value)
+	return match ? `${protocolLabel(match[1])}${match[2]}` : value
+}
+
+function formatFlowRatio(value: number) {
+	return `${(Math.max(0, value) * 100).toFixed(1)}%`
+}
+
+function flowTableFilterLabel(field: string, value: string, unit: string, mode: QueryMode) {
+	if (field === "dimension") return flowDimensionLabel(value, mode)
+	const numeric = Number(value)
+	if (!Number.isFinite(numeric)) return value
+	if (field === "records") return numeric.toLocaleString()
+	if (field === "unknown" || field === "quality") return formatFlowRatio(numeric)
+	if (field === "total") return formatFlowTotal(numeric, unit)
+	return formatFlowValue(numeric, unit)
 }
 
 function persistQueryState(values: Record<string, string>) {
