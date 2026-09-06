@@ -255,16 +255,22 @@ type DetailFilters struct {
 }
 
 type DetailRequest struct {
-	IP       string         `json:"ip"`
-	Endpoint DetailEndpoint `json:"endpoint"`
-	From     time.Time      `json:"from"`
-	To       time.Time      `json:"to"`
-	View     View           `json:"view"`
-	Fields   []DetailField  `json:"fields,omitempty"`
-	Filters  DetailFilters  `json:"filters,omitempty"`
-	Limit    uint16         `json:"limit"`
-	Cursor   string         `json:"cursor,omitempty"`
-	Sort     DetailSort     `json:"sort,omitempty"`
+	IP            string               `json:"ip"`
+	Endpoint      DetailEndpoint       `json:"endpoint"`
+	From          time.Time            `json:"from"`
+	To            time.Time            `json:"to"`
+	View          View                 `json:"view"`
+	Fields        []DetailField        `json:"fields,omitempty"`
+	Filters       DetailFilters        `json:"filters,omitempty"`
+	ColumnFilters []DetailColumnFilter `json:"column_filters,omitempty"`
+	Limit         uint16               `json:"limit"`
+	Cursor        string               `json:"cursor,omitempty"`
+	Sort          DetailSort           `json:"sort,omitempty"`
+}
+
+type DetailColumnFilter struct {
+	Field  string   `json:"field"`
+	Values []string `json:"values"`
 }
 
 type DetailSort struct {
@@ -395,6 +401,12 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if err != nil {
 		return CompiledDetail{}, err
 	}
+	columnConditions, columnParameters, err := compileDetailColumnFiltersForSource(request.View, request.Filters, request.ColumnFilters, "")
+	if err != nil {
+		return CompiledDetail{}, err
+	}
+	conditions = append(conditions, columnConditions...)
+	filterParameters = append(filterParameters, columnParameters...)
 	parameters := []proto.Parameter{
 		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", formatDateTime64(from)),

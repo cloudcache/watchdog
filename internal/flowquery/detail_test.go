@@ -386,6 +386,40 @@ func TestCompileDetailUsesWhitelistedStableSortAndBoundCursor(t *testing.T) {
 	}
 }
 
+func TestCompileDetailColumnFiltersAreTypedCanonicalAndParameterized(t *testing.T) {
+	request := validDetailRequest()
+	request.ColumnFilters = []DetailColumnFilter{
+		{Field: string(DetailFieldSourceIP), Values: []string{"192.0.2.1", "::ffff:192.0.2.1"}},
+		{Field: string(DetailFieldSourcePort), Values: []string{"443", "80", "443"}},
+		{Field: string(DetailFieldEstimatedValid), Values: []string{"true"}},
+		{Field: string(DetailFieldRemoteCountry), Values: []string{"", "CN"}},
+	}
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"source.src_ip IN (toIPv6({detail_column_0_0:String}))",
+		"toUInt64(source.src_port) IN ({detail_column_1_0:UInt64}, {detail_column_1_1:UInt64})",
+		"toUInt8(source.estimated_valid) IN ({detail_column_2_0:UInt8})",
+		"CAST(source.remote_country AS String) IN ({detail_column_3_0:String}, {detail_column_3_1:String})",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if queryParameter(compiled.Query, "detail_column_0_0") != "'192.0.2.1'" ||
+		queryParameter(compiled.Query, "detail_column_1_0") != "'443'" || queryParameter(compiled.Query, "detail_column_1_1") != "'80'" ||
+		queryParameter(compiled.Query, "detail_column_3_0") != "''" {
+		t.Fatalf("column filter parameters=%+v", compiled.Query.Parameters)
+	}
+	for _, unsafe := range []string{"192.0.2.1", "443", "CN"} {
+		if strings.Contains(compiled.Query.Body, unsafe) {
+			t.Fatalf("column filter value %q was interpolated into SQL", unsafe)
+		}
+	}
+}
+
 func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -424,6 +458,16 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		{"sort not selected", "sort.field", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
 			request.Fields = []DetailField{DetailFieldSourceIP}
 			request.Sort.Field = string(DetailFieldRawBytes)
+		}},
+		{"column duplicate", "column_filters", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
+			request.ColumnFilters = []DetailColumnFilter{{Field: "category", Values: []string{"overseas"}}, {Field: "category", Values: []string{"unknown"}}}
+		}},
+		{"column invalid uint", "column_filters[0].values", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
+			request.ColumnFilters = []DetailColumnFilter{{Field: "src_port", Values: []string{"080"}}}
+		}},
+		{"column legacy overlap", "column_filters", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
+			request.Filters.Categories = []string{"overseas"}
+			request.ColumnFilters = []DetailColumnFilter{{Field: "category", Values: []string{"unknown"}}}
 		}},
 		{"filter", "filters.directions", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Filters.Directions = []string{"sideways"} }},
 		{"filter limit", "filters.target_ids", ErrorLimitExceeded, func(_ *Scope, request *DetailRequest) {

@@ -22,6 +22,7 @@ export type ServerFiltering = {
 	options: Record<string, ServerFilterOption[]>
 	selected: Record<string, unknown[]>
 	selection?: Record<string, "single" | "multiple">
+	loadOptions?: (field: string, search: string, signal: AbortSignal) => Promise<ServerFilterOption[]>
 	onColumnFilterChange: (field: string, values: unknown[]) => void
 	onClearAll: () => void
 }
@@ -301,22 +302,36 @@ function enableColumnFilters(
 				count: option.count ?? -1,
 				raw: option.value,
 			})),
+			loadValues: serverFiltering?.loadOptions
+				? async (search, signal) =>
+						((await serverFiltering.loadOptions?.(column.field, search, signal)) ?? []).map((option) => ({
+							key: filterValueKey(option.value),
+							label: option.label ?? filterValueLabel(option.value),
+							count: option.count ?? -1,
+							raw: option.value,
+						}))
+				: undefined,
 			records: records.filter((record) => matchesFilters(record, activeFilters, column.field)),
 			selected: activeFilters.get(column.field),
 			singleSelect,
 			hasAnyFilter: activeFilters.size > 0,
-			onApply: (selected, allValues) => {
+			onApply: (selected, allValues, availableValues, unconstrained) => {
 				// An empty server-side array means "no constraint" in every list
 				// contract. Treat both zero and all selected as clearing this column
 				// so the UI cannot display an active filter while the API returns all.
-				const cleared = selected.size === 0 || (!singleSelect && selected.size === allValues.size)
+				const cleared =
+					selected.size === 0 ||
+					Boolean(serverFiltering?.loadOptions ? unconstrained : !singleSelect && selected.size === allValues.size)
 				if (cleared) {
 					activeFilters.delete(column.field)
 				} else {
 					activeFilters.set(column.field, selected)
 				}
 				if (serverFiltering) {
-					const options = serverFiltering.options[column.field] ?? []
+					const options = [
+						...(serverFiltering.options[column.field] ?? []),
+						...availableValues.map((value) => ({ value: value.raw })),
+					]
 					serverFiltering.onColumnFilterChange(
 						column.field,
 						cleared
@@ -391,18 +406,21 @@ type OpenFilterPopoverOptions = {
 	column: FilterColumn
 	records: any[]
 	values?: FilterValue[]
+	loadValues?: (search: string, signal: AbortSignal) => Promise<FilterValue[]>
 	selected?: Set<string>
 	singleSelect?: boolean
 	hasAnyFilter: boolean
-	onApply: (selected: Set<string>, allValues: Set<string>) => void
+	onApply: (selected: Set<string>, allValues: Set<string>, values: FilterValue[], unconstrained: boolean) => void
 	onClear: () => void
 	onClearAll: () => void
 	onClose: () => void
 }
 
 function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
-	const values = options.values ?? collectFilterValues(options.records, options.column.field)
+	let values = options.values ?? collectFilterValues(options.records, options.column.field)
 	const allValues = new Set(values.map((value) => value.key))
+	const valueByKey = new Map(values.map((value) => [value.key, value]))
+	let unconstrained = options.selected == null
 	const selected = options.selected
 		? new Set(options.selected)
 		: options.singleSelect
@@ -454,10 +472,25 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 
 	let visibleValues = values
 	let closed = false
+	let loadTimer: ReturnType<typeof setTimeout> | undefined
+	let loadController: AbortController | undefined
+	let loadingValues = false
 	const renderOptions = () => {
 		const query = search.value.trim().toLocaleLowerCase()
-		visibleValues = query ? values.filter((value) => value.label.toLocaleLowerCase().includes(query)) : values
+		visibleValues = options.loadValues
+			? values
+			: query
+				? values.filter((value) => value.label.toLocaleLowerCase().includes(query))
+				: values
 		list.replaceChildren()
+		if (loadingValues) {
+			const loading = document.createElement("div")
+			loading.className = "vtable-filter-empty"
+			loading.textContent = labels.loading
+			list.append(loading)
+			updateSummary()
+			return
+		}
 		for (const value of visibleValues) {
 			const row = document.createElement("label")
 			row.className = "vtable-filter-option"
@@ -465,6 +498,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 			checkbox.type = "checkbox"
 			checkbox.checked = selected.has(value.key)
 			checkbox.addEventListener("change", () => {
+				unconstrained = false
 				if (checkbox.checked) {
 					if (options.singleSelect) selected.clear()
 					selected.add(value.key)
@@ -498,6 +532,8 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	const close = () => {
 		if (closed) return
 		closed = true
+		if (loadTimer) clearTimeout(loadTimer)
+		loadController?.abort()
 		popover.remove()
 		document.removeEventListener("pointerdown", handleOutsidePointer)
 		document.removeEventListener("keydown", handleKeydown)
@@ -519,8 +555,42 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 		if (event.key === "Escape") close()
 	}
 
-	search.addEventListener("input", renderOptions)
+	const loadRemoteValues = () => {
+		if (!options.loadValues) {
+			renderOptions()
+			return
+		}
+		if (loadTimer) clearTimeout(loadTimer)
+		loadController?.abort()
+		loadController = undefined
+		loadTimer = setTimeout(async () => {
+			const controller = new AbortController()
+			loadController = controller
+			loadingValues = true
+			renderOptions()
+			try {
+				const loaded = await options.loadValues?.(search.value.trim(), controller.signal)
+				if (closed || controller.signal.aborted || !loaded) return
+				for (const value of loaded) valueByKey.set(value.key, value)
+				values = loaded
+				allValues.clear()
+				for (const value of loaded) {
+					allValues.add(value.key)
+					if (unconstrained) selected.add(value.key)
+				}
+			} catch (reason) {
+				if (!controller.signal.aborted) values = []
+			} finally {
+				if (!closed && loadController === controller) {
+					loadingValues = false
+					renderOptions()
+				}
+			}
+		}, 200)
+	}
+	search.addEventListener("input", loadRemoteValues)
 	selectAll.addEventListener("change", () => {
+		unconstrained = false
 		for (const value of visibleValues) {
 			if (selectAll.checked) selected.add(value.key)
 			else selected.delete(value.key)
@@ -533,7 +603,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	})
 	cancelButton.addEventListener("click", close)
 	applyButton.addEventListener("click", () => {
-		options.onApply(new Set(selected), allValues)
+		options.onApply(new Set(selected), allValues, [...valueByKey.values()], unconstrained)
 		close()
 	})
 	if (options.hasAnyFilter) {
@@ -545,7 +615,8 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 		heading.insertBefore(clearAllButton, clearButton)
 	}
 
-	renderOptions()
+	if (options.loadValues) loadRemoteValues()
+	else renderOptions()
 	positionFilterPopover(popover, options.anchor)
 	document.addEventListener("pointerdown", handleOutsidePointer)
 	document.addEventListener("keydown", handleKeydown)
@@ -610,6 +681,7 @@ function filterLabels() {
 				cancel: "取消",
 				apply: "应用",
 				noValues: "没有匹配值",
+				loading: "正在加载…",
 				selected: (selected: number, total: number) => `已选 ${selected}/${total}`,
 			}
 		: {
@@ -621,6 +693,7 @@ function filterLabels() {
 				cancel: "Cancel",
 				apply: "Apply",
 				noValues: "No matching values",
+				loading: "Loading…",
 				selected: (selected: number, total: number) => `${selected} of ${total} selected`,
 			}
 }

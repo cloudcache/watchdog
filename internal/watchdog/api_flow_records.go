@@ -11,6 +11,7 @@ import (
 
 type flowDetailRunner interface {
 	Run(context.Context, flowquery.CompiledDetail) (flowquery.DetailResult, error)
+	RunFacet(context.Context, flowquery.CompiledDetailFacet) (flowquery.DetailFacetResult, error)
 }
 
 type flowRecordAPI struct {
@@ -31,6 +32,7 @@ func registerFlowRecordRoutes(
 	api := flowRecordAPI{runner: runner, network: network, audit: audit, now: now}
 	mux.Handle("GET /api/v1/flow/records/capabilities", auth(http.HandlerFunc(api.capabilities)))
 	mux.Handle("POST /api/v1/flow/records/search", auth(http.HandlerFunc(api.search)))
+	mux.Handle("POST /api/v1/flow/records/facets", auth(http.HandlerFunc(api.facets)))
 }
 
 func (api flowRecordAPI) capabilities(w http.ResponseWriter, _ *http.Request) {
@@ -61,7 +63,8 @@ func (api flowRecordAPI) search(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Flow detail view is not permitted", nil)
 		return
 	}
-	if err := authorizeFlowResourceFilters(r.Context(), auth, api.network, input.Filters.TargetIDs, input.Filters.DeviceIDs, input.Filters.ExporterIDs); err != nil {
+	targetIDs, deviceIDs, exporterIDs := detailResourceFilters(input.Filters, input.ColumnFilters)
+	if err := authorizeFlowResourceFilters(r.Context(), auth, api.network, targetIDs, deviceIDs, exporterIDs); err != nil {
 		writeQueryGatewayError(w, err)
 		return
 	}
@@ -93,6 +96,73 @@ func (api flowRecordAPI) search(w http.ResponseWriter, r *http.Request) {
 			"sort": sortDescription, "page_size": input.Limit,
 		},
 	})
+}
+
+func (api flowRecordAPI) facets(w http.ResponseWriter, r *http.Request) {
+	var input flowquery.DetailFacetRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if err := ensureDashboardJSONEOF(decoder); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	auth, _ := AuthFromContext(r.Context())
+	layer := QueryValueLayer(input.View)
+	view, err := flowView(layer)
+	if err != nil {
+		writeQueryGatewayError(w, err)
+		return
+	}
+	if !queryLayerAuthorized(auth, layer) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Flow detail view is not permitted", nil)
+		return
+	}
+	targetIDs, deviceIDs, exporterIDs := detailResourceFilters(input.Filters, input.ColumnFilters)
+	if err := authorizeFlowResourceFilters(r.Context(), auth, api.network, targetIDs, deviceIDs, exporterIDs); err != nil {
+		writeQueryGatewayError(w, err)
+		return
+	}
+	input.View = view
+	compiled, err := flowquery.CompileDetailFacet(flowquery.Scope{
+		TenantID: string(auth.TenantID), AllowedViews: []flowquery.View{view},
+	}, input, api.currentTime())
+	if err != nil {
+		writeFlowExecutionError(w, err)
+		return
+	}
+	result, err := api.runner.RunFacet(r.Context(), compiled)
+	if err != nil {
+		writeFlowExecutionError(w, err)
+		return
+	}
+	(queryGatewayAPI{audit: api.audit}).recordAudit(r.Context(), auth, "query.sensitive_viewed", "flow.record_facets", map[string]any{
+		"value_layer": input.View, "endpoint": input.Endpoint, "field": input.Field, "result_count": len(result.Items),
+	})
+	WriteAPIJSON(w, http.StatusOK, map[string]any{
+		"data": result,
+		"meta": map[string]any{"limit": input.Limit},
+	})
+}
+
+func detailResourceFilters(filters flowquery.DetailFilters, columns []flowquery.DetailColumnFilter) ([]string, []string, []string) {
+	targetIDs := append([]string(nil), filters.TargetIDs...)
+	deviceIDs := append([]string(nil), filters.DeviceIDs...)
+	exporterIDs := append([]string(nil), filters.ExporterIDs...)
+	for _, filter := range columns {
+		switch filter.Field {
+		case string(flowquery.DetailFieldTargetID):
+			targetIDs = append(targetIDs, filter.Values...)
+		case string(flowquery.DetailFieldDeviceID):
+			deviceIDs = append(deviceIDs, filter.Values...)
+		case string(flowquery.DetailFieldExporterID):
+			exporterIDs = append(exporterIDs, filter.Values...)
+		}
+	}
+	return targetIDs, deviceIDs, exporterIDs
 }
 
 func (api flowRecordAPI) currentTime() time.Time {

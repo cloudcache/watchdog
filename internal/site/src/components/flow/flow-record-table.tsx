@@ -2,7 +2,13 @@ import { Trans, useLingui } from "@lingui/react/macro"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { pb } from "@/lib/api"
-import { buildFlowRecordRows, type FlowRecordRow, updateFlowRecordCursors } from "@/lib/flow-record-model"
+import {
+	buildFlowRecordRows,
+	flowProtocolLabel,
+	formatFlowBytes,
+	type FlowRecordRow,
+	updateFlowRecordCursors,
+} from "@/lib/flow-record-model"
 
 type FlowRecordEndpoint = "source" | "destination"
 
@@ -11,6 +17,13 @@ type FlowRecordSearchResponse = {
 		rows: FlowRecordRow[]
 		has_more: boolean
 		next_cursor?: string
+	}
+}
+
+type FlowRecordFacetResponse = {
+	data: {
+		field: string
+		items: { value: string; count: number }[]
 	}
 }
 
@@ -29,17 +42,20 @@ const DETAIL_FIELDS = [
 	"quality_flags",
 ]
 
-const CATEGORY_OPTIONS = [
-	"on_net_local_city",
-	"on_net_cross_city",
-	"on_net_cross_province",
-	"off_net_in_province",
-	"off_net_cross_province",
-	"overseas",
-	"internal",
-	"transit",
-	"ambiguous",
-	"unknown",
+const FILTER_FIELDS = [
+	"event_time",
+	"src_ip",
+	"src_port",
+	"dst_ip",
+	"dst_port",
+	"ip_protocol",
+	"business_direction",
+	"category",
+	"remote_asn",
+	"remote_country",
+	"estimated_bytes",
+	"sampling_rate",
+	"quality_flags",
 ]
 
 export function FlowRecordTable({
@@ -57,8 +73,7 @@ export function FlowRecordTable({
 }) {
 	const { t } = useLingui()
 	const [search, setSearch] = useState(selectedIP)
-	const [directions, setDirections] = useState<string[]>([])
-	const [categories, setCategories] = useState<string[]>([])
+	const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
 	const [sortField, setSortField] = useState("event_time")
 	const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
 	const [page, setPage] = useState(0)
@@ -97,10 +112,7 @@ export function FlowRecordTable({
 						to,
 						view: "customer",
 						fields: DETAIL_FIELDS,
-						filters: {
-							directions: directions.length === 0 ? undefined : directions,
-							categories: categories.length === 0 ? undefined : categories,
-						},
+						column_filters: Object.entries(columnFilters).map(([field, values]) => ({ field, values })),
 						sort: { field: sortField, direction: sortDirection },
 						limit: pageSize,
 						cursor,
@@ -123,7 +135,7 @@ export function FlowRecordTable({
 				}
 			}
 		},
-		[categories, directions, endpoint, from, pageSize, selectedIP, sortDirection, sortField, t, to]
+		[columnFilters, endpoint, from, pageSize, selectedIP, sortDirection, sortField, t, to]
 	)
 
 	useEffect(() => {
@@ -135,40 +147,65 @@ export function FlowRecordTable({
 	const records = useMemo(() => buildFlowRecordRows(rows), [rows])
 	const columns = useMemo(
 		() => [
-			{ field: "event_time", title: t`Event time`, width: 180, filter: false },
-			{ field: "src_ip", title: t`Source IP`, width: 170, filter: false },
-			{ field: "src_port", title: t`Source port`, width: 100, filter: false },
-			{ field: "dst_ip", title: t`Destination IP`, width: 170, filter: false },
-			{ field: "dst_port", title: t`Destination port`, width: 110, filter: false },
-			{ field: "protocol", title: t`Protocol`, width: 100, filter: false },
-			{ field: "direction", title: t`Direction`, width: 110 },
+			{ field: "event_time", title: t`Event time`, width: 180 },
+			{ field: "src_ip", title: t`Source IP`, width: 170 },
+			{ field: "src_port", title: t`Source port`, width: 100 },
+			{ field: "dst_ip", title: t`Destination IP`, width: 170 },
+			{ field: "dst_port", title: t`Destination port`, width: 110 },
+			{ field: "protocol", filterField: "ip_protocol", title: t`Protocol`, width: 100 },
+			{ field: "direction", filterField: "business_direction", title: t`Direction`, width: 110 },
 			{ field: "category", title: t`Category`, width: 170 },
-			{ field: "remote_asn", title: t`Remote ASN`, width: 110, filter: false },
-			{ field: "country", title: t`Country`, width: 110, filter: false },
-			{ field: "estimated_bytes", title: t`Estimated bytes`, width: 130, filter: false },
-			{ field: "sampling_rate", title: t`Sampling rate`, width: 110, filter: false },
-			{ field: "quality_flags", title: t`Quality flags`, width: 110, filter: false },
+			{ field: "remote_asn", title: t`Remote ASN`, width: 110 },
+			{ field: "country", filterField: "remote_country", title: t`Country`, width: 110 },
+			{ field: "estimated_bytes", title: t`Estimated bytes`, width: 130 },
+			{ field: "sampling_rate", title: t`Sampling rate`, width: 110 },
+			{ field: "quality_flags", title: t`Quality flags`, width: 110 },
 		],
 		[t]
 	)
 	const serverFiltering = useMemo(
 		() => ({
-			options: {
-				direction: ["in", "out", "internal", "transit", "ambiguous"].map((value) => ({ value })),
-				category: CATEGORY_OPTIONS.map((value) => ({ value })),
+			options: Object.fromEntries(
+				FILTER_FIELDS.map((field) => [field, (columnFilters[field] ?? []).map((value) => ({ value }))])
+			),
+			selected: columnFilters,
+			loadOptions: async (field: string, searchText: string, signal: AbortSignal) => {
+				if (!selectedIP || !from || !to) return []
+				const response = await pb.send<FlowRecordFacetResponse>("/api/v1/flow/records/facets", {
+					method: "POST",
+					signal,
+					body: {
+						ip: selectedIP,
+						endpoint,
+						from,
+						to,
+						view: "customer",
+						field,
+						search: searchText || undefined,
+						column_filters: Object.entries(columnFilters).map(([filterField, values]) => ({
+							field: filterField,
+							values,
+						})),
+						limit: 100,
+					},
+				})
+				return (response.data.items ?? []).map((item) => ({
+					value: item.value,
+					label: flowFacetLabel(field, item.value),
+					count: item.count,
+				}))
 			},
-			selected: { direction: directions, category: categories },
 			onColumnFilterChange: (field: string, values: unknown[]) => {
 				const normalized = values.map(String)
-				if (field === "direction") setDirections(normalized)
-				if (field === "category") setCategories(normalized)
+				setColumnFilters((current) => {
+					const next = { ...current, [field]: normalized }
+					if (normalized.length === 0) delete next[field]
+					return next
+				})
 			},
-			onClearAll: () => {
-				setDirections([])
-				setCategories([])
-			},
+			onClearAll: () => setColumnFilters({}),
 		}),
-		[categories, directions]
+		[columnFilters, endpoint, from, selectedIP, to]
 	)
 	const serverSorting = useMemo(
 		() => ({
@@ -245,4 +282,14 @@ export function FlowRecordTable({
 			/>
 		</div>
 	)
+}
+
+function flowFacetLabel(field: string, value: string) {
+	if (field === "ip_protocol") return flowProtocolLabel(value)
+	if (field === "estimated_bytes") return formatFlowBytes(value)
+	if (field === "event_time") {
+		const instant = new Date(value)
+		if (!Number.isNaN(instant.valueOf())) return instant.toLocaleString()
+	}
+	return value || undefined
 }

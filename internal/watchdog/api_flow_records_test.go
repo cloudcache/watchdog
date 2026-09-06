@@ -15,12 +15,19 @@ import (
 type flowDetailAPIRunnerStub struct {
 	compiled flowquery.CompiledDetail
 	result   flowquery.DetailResult
+	facet    flowquery.CompiledDetailFacet
+	items    flowquery.DetailFacetResult
 	err      error
 }
 
 func (s *flowDetailAPIRunnerStub) Run(_ context.Context, compiled flowquery.CompiledDetail) (flowquery.DetailResult, error) {
 	s.compiled = compiled
 	return s.result, s.err
+}
+
+func (s *flowDetailAPIRunnerStub) RunFacet(_ context.Context, compiled flowquery.CompiledDetailFacet) (flowquery.DetailFacetResult, error) {
+	s.facet = compiled
+	return s.items, s.err
 }
 
 func TestFlowRecordSearchInjectsTenantAndReturnsCursorEnvelope(t *testing.T) {
@@ -108,5 +115,28 @@ func TestFlowRecordSearchEnforcesLayerPermissionAndStrictInput(t *testing.T) {
 	router.ServeHTTP(capabilities, httptest.NewRequest(http.MethodGet, "/api/v1/flow/records/capabilities", nil))
 	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"default_fields"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
+	}
+}
+
+func TestFlowRecordFacetsInjectTenantAndAuthorizeColumnResources(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	runner := &flowDetailAPIRunnerStub{items: flowquery.DetailFacetResult{
+		Field: "remote_country", Items: []flowquery.DetailFacetOption{{Value: "CN", Count: 42}},
+	}}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
+		},
+		FlowRecords: runner, FlowRecordNow: func() time.Time { return now },
+	})
+	body := `{
+		"ip":"203.0.113.1","endpoint":"source","from":"2026-09-07T11:00:00Z","to":"2026-09-07T12:00:00Z",
+		"view":"customer","field":"remote_country","column_filters":[{"field":"src_port","values":["443"]}],"limit":50
+	}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/facets", strings.NewReader(body)))
+	if response.Code != http.StatusOK || runner.facet.Query.Body == "" || runner.facet.Field != "remote_country" ||
+		!strings.Contains(response.Body.String(), `"value":"CN"`) {
+		t.Fatalf("status=%d body=%s compiled=%+v", response.Code, response.Body.String(), runner.facet)
 	}
 }

@@ -215,6 +215,52 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		detailResponse.Meta.Sort != "event_time:desc,record_id:desc" || detailResponse.Meta.PageSize != 25 {
 		t.Fatalf("detail response=%+v", detailResponse)
 	}
+	for _, field := range []string{
+		"event_time", "src_ip", "src_port", "dst_ip", "dst_port", "ip_protocol", "business_direction",
+		"category", "remote_asn", "remote_country", "estimated_bytes", "sampling_rate", "quality_flags",
+	} {
+		fields := []string{"src_ip"}
+		if field != "event_time" && field != "src_ip" {
+			fields = append(fields, field)
+		}
+		sortedBody, err := json.Marshal(map[string]any{
+			"ip": "203.0.113.1", "endpoint": "source", "from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:01:00Z",
+			"view": "customer", "fields": fields, "sort": map[string]string{"field": field, "direction": "asc"}, "limit": 25,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sortedRecorder := httptest.NewRecorder()
+		router.ServeHTTP(sortedRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", bytes.NewReader(sortedBody)))
+		if sortedRecorder.Code != http.StatusOK {
+			t.Fatalf("detail sort %s status=%d body=%s", field, sortedRecorder.Code, sortedRecorder.Body.String())
+		}
+	}
+
+	for _, field := range []string{
+		"event_time", "src_ip", "src_port", "dst_ip", "dst_port", "ip_protocol", "business_direction",
+		"category", "remote_asn", "remote_country", "estimated_bytes", "sampling_rate", "quality_flags",
+	} {
+		facetRecorder := httptest.NewRecorder()
+		facetBody := `{
+			"ip":"203.0.113.1","endpoint":"source","from":"2020-01-01T00:00:00Z","to":"2020-01-01T00:01:00Z",
+			"view":"customer","field":"` + field + `","column_filters":[{"field":"src_port","values":["443"]}],
+			"search":"c","limit":50
+		}`
+		router.ServeHTTP(facetRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/facets", strings.NewReader(facetBody)))
+		if facetRecorder.Code != http.StatusOK {
+			t.Fatalf("facet %s status=%d body=%s", field, facetRecorder.Code, facetRecorder.Body.String())
+		}
+		var facetResponse struct {
+			Data flowquery.DetailFacetResult `json:"data"`
+		}
+		if err := json.Unmarshal(facetRecorder.Body.Bytes(), &facetResponse); err != nil {
+			t.Fatal(err)
+		}
+		if facetResponse.Data.Field != field || len(facetResponse.Data.Items) != 0 {
+			t.Fatalf("facet response=%+v", facetResponse)
+		}
+	}
 
 	overseasRecorder := httptest.NewRecorder()
 	router.ServeHTTP(overseasRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/overseas/query", strings.NewReader(`{
