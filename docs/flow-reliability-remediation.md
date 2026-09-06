@@ -48,7 +48,7 @@
   - 备注:真正的 async 物化只能靠**未来新迁移从一开始就写成 async + migrator 加 poll 支持**;不为 006 追溯。
 - [x] **F18-block 回放块跨 >100 event-time 日触分区上限卡死** ✅ commit 21fa59d7 — PrepareBlocks 跟踪当前块 distinct partition-day，超 `MaxPartitionDays`(默认90,硬顶100) 前先 flush，数据保留（尾部起新块）。单测证 4 天在 2 天上限下分 2 块。 — `max_partitions_per_insert_block` 未归类 permanent → 无限重试。→ 按分区日切块 + event_time 合理性窗口。文件：`flowch/batch.go:90`。
 - [x] **F18-est 行数估计忽略 version 元组乘数** ✅ commit 2c156d94 — 采「翻译 overflow」方案(比预估版本多重性更稳):`classifyExecutionError` 把 CH 资源上限异常(`TOO_MANY_ROWS`/`TOO_MANY_BYTES`/`TOO_MANY_ROWS_OR_BYTES`/`MEMORY_LIMIT_EXCEEDED`/`SET_SIZE_LIMIT_EXCEEDED`)统一映射成 `from/to` 的 `ErrorLimitExceeded`,四个 runner(aggregate/detail/overseas/address-set)共用;非上限错误原样透传。unit 验限额码→typed、非限额码/普通错误不误判。 — 混版本长范围抛原始 CH overflow 而非 typed 错误。→ 把版本多重性纳入估计，或翻译 overflow 回 `ErrorLimitExceeded`。文件：`flowquery/query.go`、`runner.go`、`detail_runner.go`、`overseas_runner.go`、`address_set_runner.go`。
-- [ ] **F13 遗留 `watchdog-sflow-collector` 下线** 【需决策】 — 逐包 DB I/O、静默丢包、关闭挂起、60s 丢数窗口。→ 推荐以 flowstream Receiver 取代后删除；若须保留则内存缓存 device/port + `SetReadBuffer` + 丢包指标 + ctx 关 conn + 退出前 flush。文件：`internal/watchdog/sflow_collector.go`。
+- [x] **F13 遗留 `watchdog-sflow-collector` 下线** ✅ commit 52b9d3f2（用户拍板下线，不走"保留并加固"分支）— 逐包 DB I/O、静默丢包、关闭挂起、60s 丢数窗口。直接删除该独立原型(cmd + `internal/watchdog/sflow_collector.go` + config.go 的 `SFlowCollectorConfig`/`WATCHDOG_SFLOW_*`/校验 + config_test + yaml/install 文档/gitignore)；其角色由 RawFlow 数据面(flow-collect→Kafka→flow-worker，GoFlow2 解 sFlow v5)取代。无自有 MySQL 表/迁移(原写 VM),goflow2 依赖保留(新管线在用),`go build`/`go vet`/config 测试通过;新管线 sFlow 处理(protocol "sflow5")不动。
 
 ## 设计事实（非缺陷，须告知运维）
 
