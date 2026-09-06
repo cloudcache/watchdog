@@ -36,6 +36,7 @@ type fakeNetworkRepository struct {
 	statusCounts   DeviceStatusCounts
 	bgpQuery       BGPSessionQuery
 	bgpCounts      BGPSessionCounts
+	bgpPageTotal   int
 	inventoryQuery PhysicalEntityQuery
 	inventoryTotal int
 }
@@ -241,6 +242,16 @@ func (r *fakeNetworkRepository) ListBGPSessions(_ context.Context, _ ID, deviceI
 		}
 	}
 	return sessions, nil
+}
+
+func (r *fakeNetworkRepository) ListDeviceBGPSessionsPage(_ context.Context, _ ID, deviceID ID, q BGPSessionQuery) ([]BGPSession, int, error) {
+	r.bgpQuery = q
+	sessions, _ := r.ListBGPSessions(context.Background(), "", deviceID)
+	return sessions, r.bgpPageTotal, nil
+}
+
+func (r *fakeNetworkRepository) CountDeviceBGPSessions(_ context.Context, _ ID, _ ID) (BGPSessionCounts, error) {
+	return r.bgpCounts, nil
 }
 
 func (r *fakeNetworkRepository) ListAllBGPSessions(_ context.Context, _ ID) ([]BGPSession, error) {

@@ -926,6 +926,79 @@ func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, al
 	return sessions, rows.Err()
 }
 
+// ListDeviceBGPSessionsPage returns one filtered offset page and its filtered
+// total. The owning device permission is checked before this repository call.
+func (s *MySQLStore) ListDeviceBGPSessionsPage(ctx context.Context, tenantID, deviceID ID, q BGPSessionQuery) ([]BGPSession, int, error) {
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	where := ` JOIN network_devices d ON d.id = b.device_id AND d.tenant_id = b.tenant_id
+		WHERE b.tenant_id = ? AND b.device_id = ?`
+	args := []any{tenantID, deviceID}
+	filteredWhere, filteredArgs := applyBGPFilters(where, append([]any(nil), args...), q, true)
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bgp_sessions b`+filteredWhere, filteredArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	sortCol := bgpSortColumns[q.Sort]
+	if sortCol == "" {
+		sortCol = "b.peer_addr"
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	query := bgpSessionSelect + filteredWhere + fmt.Sprintf(" ORDER BY %s %s, b.id %s LIMIT ? OFFSET ?", sortCol, dir, dir)
+	filteredArgs = append(filteredArgs, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, filteredArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	sessions := make([]BGPSession, 0, min(limit, total))
+	for rows.Next() {
+		session, err := scanBGPSession(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, total, rows.Err()
+}
+
+func (s *MySQLStore) CountDeviceBGPSessions(ctx context.Context, tenantID, deviceID ID) (BGPSessionCounts, error) {
+	var counts BGPSessionCounts
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT state, COUNT(*)
+		FROM bgp_sessions
+		WHERE tenant_id = ? AND device_id = ?
+		GROUP BY state
+	`, tenantID, deviceID)
+	if err != nil {
+		return counts, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			return counts, err
+		}
+		counts.Total += count
+		if state == "established" {
+			counts.Established += count
+		}
+	}
+	return counts, rows.Err()
+}
+
 // CountBGPSessions returns the grant-scoped total and established counts for the
 // badges. It applies the search but not the state filter.
 func (s *MySQLStore) CountBGPSessions(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (BGPSessionCounts, error) {

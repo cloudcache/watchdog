@@ -153,7 +153,11 @@ type BGPSession = {
 
 type BGPSessionsResponse = {
 	items?: BGPSession[]
+	total?: number
+	counts?: BGPCounts
 }
+
+type BGPCounts = { total: number; established: number }
 
 type NetworkDeviceSensor = {
 	ID?: string
@@ -234,7 +238,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const [device, setDevice] = useState<NetworkDevice | null>(null)
 	const [target, setTarget] = useState<TargetRecord | null>(null)
 	const [ports, setPorts] = useState<NetworkPort[]>([])
-	const [bgpSessions, setBGPSessions] = useState<BGPSession[]>([])
+	const [bgpCounts, setBGPCounts] = useState<BGPCounts>({ total: 0, established: 0 })
 	const [sensors, setSensors] = useState<NetworkDeviceSensor[]>([])
 	const [chartWindow, setChartWindow] = useState("24h")
 	const [portTraffic, setPortTraffic] = useState<Record<string, { in?: number; out?: number }>>({})
@@ -254,7 +258,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 			const [deviceData, portsData, bgpData, sensorData, targetsData, dashboardData] = await Promise.all([
 				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
 				pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
-				pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp`, {}),
+				pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
 				pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors`, {}).catch(() => ({ items: [] })),
 				pb.send<TargetsResponse>("/api/v1/targets", {}),
 				pb.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
@@ -263,7 +267,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 			const targetID = deviceData.TargetID ?? deviceData.target_id ?? ""
 			setTarget((targetsData.items ?? []).find((item) => (item.ID ?? item.id) === targetID) ?? null)
 			setPorts(portsData.items ?? [])
-			setBGPSessions(bgpData.items ?? [])
+			setBGPCounts(bgpData.counts ?? { total: bgpData.total ?? 0, established: 0 })
 			setSensors(sensorData.items ?? [])
 			setDashboard(dashboardData)
 		} catch (err) {
@@ -579,7 +583,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 							portTraffic={portTraffic}
 							trafficView={trafficView}
 						/>
-						<DeviceStatusSummary ports={ports} sensors={sensors} bgpSessions={bgpSessions} />
+						<DeviceStatusSummary ports={ports} sensors={sensors} bgpCounts={bgpCounts} />
 						<DeviceSavedGraphs deviceId={id} />
 					</TabsContent>
 
@@ -597,7 +601,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="health" className="grid gap-3">
-						<DeviceHealthPanel ports={ports} sensors={sensors} bgpSessions={bgpSessions} />
+						<DeviceHealthPanel ports={ports} sensors={sensors} bgpCounts={bgpCounts} />
 						<SensorsTable loading={loading} sensors={sensors} />
 					</TabsContent>
 
@@ -617,7 +621,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="bgp" className="grid gap-3">
-						<BGPSessionsTable loading={loading} bgpSessions={bgpSessions} />
+						<BGPSessionsTable deviceId={id} />
 					</TabsContent>
 
 					<TabsContent value="inventory" className="grid gap-3">
@@ -695,11 +699,11 @@ export default memo(({ id }: DeviceDetailProps) => {
 function DeviceStatusSummary({
 	ports,
 	sensors,
-	bgpSessions,
+	bgpCounts,
 }: {
 	ports: NetworkPort[]
 	sensors: NetworkDeviceSensor[]
-	bgpSessions: BGPSession[]
+	bgpCounts: BGPCounts
 }) {
 	const upPorts = ports.filter((port) => {
 		const s = (port.OperStatus ?? port.oper_status ?? "").toString().toLowerCase()
@@ -709,9 +713,6 @@ function DeviceStatusSummary({
 		const s = (port.OperStatus ?? port.oper_status ?? "").toString().toLowerCase()
 		return s === "down" || s === "2"
 	}).length
-	const establishedBGP = bgpSessions.filter(
-		(session) => (session.State ?? session.state ?? "").toLowerCase() === "established"
-	).length
 	return (
 		<div className="grid gap-3 md:grid-cols-4">
 			<SummaryTile
@@ -723,7 +724,7 @@ function DeviceStatusSummary({
 			<SummaryTile label={<Trans>Sensors</Trans>} value={String(sensors.length)} detail={<Trans>discovered</Trans>} />
 			<SummaryTile
 				label={<Trans>BGP</Trans>}
-				value={`${establishedBGP}/${bgpSessions.length}`}
+				value={`${bgpCounts.established}/${bgpCounts.total}`}
 				detail={<Trans>established / total</Trans>}
 			/>
 		</div>
@@ -766,11 +767,11 @@ function GraphRangeSelect({ value, onChange }: { value: string; onChange: (value
 function DeviceHealthPanel({
 	ports,
 	sensors,
-	bgpSessions,
+	bgpCounts,
 }: {
 	ports: NetworkPort[]
 	sensors: NetworkDeviceSensor[]
-	bgpSessions: BGPSession[]
+	bgpCounts: BGPCounts
 }) {
 	const downPorts = ports.filter((port) => {
 		const s = (port.OperStatus ?? port.oper_status ?? "").toString().toLowerCase()
@@ -781,9 +782,7 @@ function DeviceHealthPanel({
 		return s === "down" || s === "2"
 	})
 	const sensorProblems = sensors.filter((sensor) => !isHealthyStatus(sensor.Status ?? sensor.status))
-	const bgpProblems = bgpSessions.filter(
-		(session) => (session.State ?? session.state ?? "").toLowerCase() !== "established"
-	)
+	const bgpProblems = Math.max(0, bgpCounts.total - bgpCounts.established)
 	return (
 		<div className="grid gap-3">
 			<div className="grid gap-3 md:grid-cols-4">
@@ -800,7 +799,7 @@ function DeviceHealthPanel({
 				/>
 				<SummaryTile
 					label={<Trans>BGP Alerts</Trans>}
-					value={String(bgpProblems.length)}
+					value={String(bgpProblems)}
 					detail={<Trans>not established</Trans>}
 				/>
 			</div>
@@ -1024,8 +1023,63 @@ function PortsTable({
 	)
 }
 
-function BGPSessionsTable({ loading, bgpSessions }: { loading: boolean; bgpSessions: BGPSession[] }) {
+function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 	const { t } = useLingui()
+	const [bgpSessions, setBGPSessions] = useState<BGPSession[]>([])
+	const [counts, setCounts] = useState<BGPCounts>({ total: 0, established: 0 })
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [state, setState] = useState("all")
+	const [sort, setSort] = useState("peer:asc")
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${deviceId}/bgp`, {
+				query: {
+					q: query || undefined,
+					state: state === "all" ? undefined : state,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setBGPSessions(data.items ?? [])
+			setTotal(data.total ?? 0)
+			if (data.counts) setCounts(data.counts)
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setBGPSessions([])
+			setTotal(0)
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [deviceId, page, pageSize, query, sort, state])
+
+	useEffect(() => {
+		load()
+	}, [load])
+
 	const records = useMemo(
 		() =>
 			bgpSessions.map((session) => {
@@ -1069,13 +1123,65 @@ function BGPSessionsTable({ loading, bgpSessions }: { loading: boolean; bgpSessi
 		[t]
 	)
 	return (
-		<PagedVTable
-			records={records}
-			columns={columns}
-			loading={loading}
-			emptyText={t`No BGP sessions found.`}
-			searchPlaceholder={t`Search BGP peers...`}
-		/>
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center gap-2">
+				<Select
+					value={state}
+					onValueChange={(value) => {
+						setState(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all"><Trans>All states</Trans></SelectItem>
+						<SelectItem value="established"><Trans>Established</Trans></SelectItem>
+						<SelectItem value="idle"><Trans>Idle</Trans></SelectItem>
+						<SelectItem value="active"><Trans>Active</Trans></SelectItem>
+						<SelectItem value="connect"><Trans>Connect</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Select
+					value={sort}
+					onValueChange={(value) => {
+						setSort(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="peer:asc"><Trans>Peer ascending</Trans></SelectItem>
+						<SelectItem value="peer:desc"><Trans>Peer descending</Trans></SelectItem>
+						<SelectItem value="peer_as:asc"><Trans>Peer AS ascending</Trans></SelectItem>
+						<SelectItem value="peer_as:desc"><Trans>Peer AS descending</Trans></SelectItem>
+						<SelectItem value="state:asc"><Trans>State ascending</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Badge variant={counts.established === counts.total && counts.total > 0 ? "success" : "secondary"}>
+					{counts.established}/{counts.total} <Trans>established</Trans>
+				</Badge>
+			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={t`No BGP sessions found.`}
+				searchPlaceholder={t`Search BGP peers or AS numbers...`}
+				searchValue={search}
+				onSearchChange={setSearch}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
+				}}
+			/>
+		</div>
 	)
 }
 
