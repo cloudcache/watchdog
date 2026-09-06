@@ -254,7 +254,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-07A 集成（数据面）**：真实 CH 顺序 migration、base writer、两个 1m rollup、candidate materializer 和 scorer 串联；验证反向原始流归一为同一 local/remote 会话、稳定 SHA-256 key、count/quality/coverage 完整度、迟到 generation 2 和 generation 3 权威空修复。finding/MySQL/probe 编排仍属平台侧。
 - [x] **FLOW-07A 变更设计**：candidate/评分结果携带 dimension snapshot、Geo、classification 和 rule-set 四类版本；规则升级生成新 generation/result，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
 - [x] **FLOW-07A 数据面变更测试**：确定性 evidence/score、未知 schema、规则顺序/输入修改、dimension/Geo/classification 跨版本 CH 物化，以及 immutable rule-set v1→v2→回切 v1 的 generation/result 隔离均已覆盖；证据提交 `a7ea3f2d`。
-- [ ] **FLOW-07A 管理面 publication 门禁**：真实 typed CRUD/审批/If-Match/audit 发布、撤销和回滚投递仍由平台 PLAT-04C 承载；数据面直接选取已编译 immutable rule set 的测试不能替代。
+- [ ] **FLOW-07A 管理面 publication 门禁**：平台 migrations 042/043 与 `8b86d829` 已提供签名审批 proof、If-Match、event-time activate/rollback、retire、ACK/reference 和审计仓储；仍缺 trusted-key/RBAC API、真实 worker 下载/安装 ACK 与安全 object GC。上述能力继续由 PLAT-04A/04C 承载；数据面直接选取已编译 immutable rule set 的测试不能替代。
 - [x] **FLOW-07A2 schema 门禁**：003 前向增加 `remote_prefix_id/geo_version/classification_version/row_kind` 并扩展 replacement key；001/002 未回改，旧行默认 candidate，新读取契约只接受有 marker 的 generation。
 - [x] **FLOW-07A2 materializer**：单条同步 `INSERT SELECT ... UNION ALL` 写候选和 `_generation`；空修复可推进 generation，版本不互相覆盖，同请求 dedup token 稳定；未知采样不混 raw/estimated，443 不推断 TLS/QUIC。
 - [x] **FLOW-07A2 单元/变更测试**：覆盖 UTC/闭窗/1m..24h、安全标识符、原子 marker、稳定主 tuple、双向计数、rollup/sampling 完整度、四类版本、永久/暂时 CH 错误和 authoritative generation read。
