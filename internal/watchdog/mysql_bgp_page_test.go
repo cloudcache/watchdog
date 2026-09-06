@@ -48,9 +48,12 @@ func TestMySQLListAllBGPSessionsPage(t *testing.T) {
 	}
 	page := func(q BGPSessionQuery) []ID {
 		t.Helper()
-		sessions, err := store.ListAllBGPSessionsPage(ctx, tenant, true, nil, q)
+		sessions, total, err := store.ListAllBGPSessionsPage(ctx, tenant, true, nil, q)
 		if err != nil {
 			t.Fatalf("page %+v: %v", q, err)
+		}
+		if total != len(sessions) && q.Limit >= 10 {
+			t.Fatalf("page %+v total=%d rows=%d", q, total, len(sessions))
 		}
 		return ids(sessions)
 	}
@@ -92,13 +95,13 @@ func TestMySQLListAllBGPSessionsPage(t *testing.T) {
 	if got := page(BGPSessionQuery{Limit: 10}); len(got) != 3 { // admin sanity
 		t.Fatalf("pre-scope = %v", got)
 	}
-	scoped, err := store.ListAllBGPSessionsPage(ctx, tenant, false, []ID{"tgt_bg"}, BGPSessionQuery{Limit: 10})
-	if err != nil || len(scoped) != 3 {
-		t.Fatalf("granted scope = %d err=%v", len(scoped), err)
+	scoped, scopedTotal, err := store.ListAllBGPSessionsPage(ctx, tenant, false, []ID{"tgt_bg"}, BGPSessionQuery{Limit: 10})
+	if err != nil || len(scoped) != 3 || scopedTotal != 3 {
+		t.Fatalf("granted scope = %d total=%d err=%v", len(scoped), scopedTotal, err)
 	}
-	empty, err := store.ListAllBGPSessionsPage(ctx, tenant, false, nil, BGPSessionQuery{Limit: 10})
-	if err != nil || len(empty) != 0 {
-		t.Fatalf("no-grant scope = %d err=%v", len(empty), err)
+	empty, emptyTotal, err := store.ListAllBGPSessionsPage(ctx, tenant, false, nil, BGPSessionQuery{Limit: 10})
+	if err != nil || len(empty) != 0 || emptyTotal != 0 {
+		t.Fatalf("no-grant scope = %d total=%d err=%v", len(empty), emptyTotal, err)
 	}
 
 	// Counts: 3 total, 2 established; search narrows both.

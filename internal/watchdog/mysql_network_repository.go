@@ -1191,7 +1191,7 @@ func applyBGPFilters(query string, args []any, q BGPSessionQuery, withState bool
 // ListAllBGPSessionsPage returns one offset page of BGP sessions for the
 // server-driven Core table, with search/state/sort applied via a join to the
 // owning devices (grant pushed into SQL).
-func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, error) {
+func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, int, error) {
 	limit := q.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -1201,12 +1201,16 @@ func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, al
 		offset = 0
 	}
 	if !all && len(allowedTargetIDs) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
-	query := bgpSessionSelect + ` JOIN network_devices d ON d.id = b.device_id AND d.tenant_id = b.tenant_id WHERE b.tenant_id = ?`
+	where := ` JOIN network_devices d ON d.id = b.device_id AND d.tenant_id = b.tenant_id WHERE b.tenant_id = ?`
 	args := []any{tenantID}
-	query, args = bgpDeviceScope(query, args, all, allowedTargetIDs)
-	query, args = applyBGPFilters(query, args, q, true)
+	where, args = bgpDeviceScope(where, args, all, allowedTargetIDs)
+	where, args = applyBGPFilters(where, args, q, true)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bgp_sessions b`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 
 	sortCol := bgpSortColumns[q.Sort]
 	if sortCol == "" {
@@ -1216,23 +1220,23 @@ func (s *MySQLStore) ListAllBGPSessionsPage(ctx context.Context, tenantID ID, al
 	if q.Desc {
 		dir = "DESC"
 	}
-	query += fmt.Sprintf(" ORDER BY %s %s, b.id %s LIMIT ? OFFSET ?", sortCol, dir, dir)
+	query := bgpSessionSelect + where + fmt.Sprintf(" ORDER BY %s %s, b.id %s LIMIT ? OFFSET ?", sortCol, dir, dir)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var sessions []BGPSession
 	for rows.Next() {
 		session, err := scanBGPSession(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		sessions = append(sessions, session)
 	}
-	return sessions, rows.Err()
+	return sessions, total, rows.Err()
 }
 
 // ListDeviceBGPSessionsPage returns one filtered offset page and its filtered

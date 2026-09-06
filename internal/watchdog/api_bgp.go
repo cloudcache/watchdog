@@ -26,8 +26,7 @@ func (api networkAPI) listAllBGPSessions(w http.ResponseWriter, r *http.Request)
 	query := r.URL.Query()
 	// The server-driven table is opt-in: any of limit/offset/q/state/sort
 	// switches to the paged path; without them the full-list behavior is kept.
-	if query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
-		query.Get("state") != "" || query.Get("sort") != "" || query.Get("order") != "" {
+	if len(query) > 0 {
 		api.listAllBGPSessionsPaged(w, r, auth, query)
 		return
 	}
@@ -69,7 +68,7 @@ func (api networkAPI) listAllBGPSessionsPaged(w http.ResponseWriter, r *http.Req
 	}
 
 	all, allowedTargetIDs := visibleDeviceScope(auth)
-	sessions, err := api.repo.ListAllBGPSessionsPage(r.Context(), auth.TenantID, all, allowedTargetIDs, q)
+	sessions, total, err := api.repo.ListAllBGPSessionsPage(r.Context(), auth.TenantID, all, allowedTargetIDs, q)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -91,15 +90,12 @@ func (api networkAPI) listAllBGPSessionsPaged(w http.ResponseWriter, r *http.Req
 		items = append(items, bgpSessionListItem{BGPSession: session, DeviceSysName: device.SysName, TargetID: device.TargetID})
 	}
 
-	response := map[string]any{"items": items}
-	if q.Offset == 0 {
-		counts, err := api.repo.CountBGPSessions(r.Context(), auth.TenantID, all, allowedTargetIDs, q.Search)
-		if err != nil {
-			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
-			return
-		}
-		response["counts"] = counts
+	counts, err := api.repo.CountBGPSessions(r.Context(), auth.TenantID, all, allowedTargetIDs, q.Search)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
 	}
+	response := map[string]any{"items": items, "total": total, "counts": counts}
 	WriteAPIJSON(w, http.StatusOK, response)
 }
 
@@ -115,8 +111,7 @@ func (api networkAPI) listBGPSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	if query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
-		query.Get("state") != "" || query.Get("sort") != "" || query.Get("order") != "" {
+	if len(query) > 0 {
 		q, err := parseBGPSessionQuery(query, "peer")
 		if err != nil {
 			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -151,6 +146,13 @@ func (api networkAPI) listBGPSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseBGPSessionQuery(query url.Values, defaultSort string) (BGPSessionQuery, error) {
+	for key := range query {
+		switch key {
+		case "q", "state", "sort", "order", "limit", "offset":
+		default:
+			return BGPSessionQuery{}, fmt.Errorf("unsupported query parameter: %s", key)
+		}
+	}
 	q := BGPSessionQuery{
 		Search: strings.TrimSpace(query.Get("q")),
 		State:  strings.ToLower(strings.TrimSpace(query.Get("state"))),
@@ -168,8 +170,9 @@ func parseBGPSessionQuery(query url.Values, defaultSort string) (BGPSessionQuery
 	if q.State == "all" {
 		q.State = ""
 	}
-	if len(q.State) > 32 {
-		return BGPSessionQuery{}, fmt.Errorf("state must be at most 32 characters")
+	if q.State != "" && q.State != "idle" && q.State != "connect" && q.State != "active" &&
+		q.State != "opensent" && q.State != "openconfirm" && q.State != "established" {
+		return BGPSessionQuery{}, fmt.Errorf("invalid BGP state")
 	}
 	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
 	if order != "" && order != "asc" && order != "desc" {

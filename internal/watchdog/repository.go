@@ -207,7 +207,7 @@ type NetworkRepository interface {
 	GetBGPSession(ctx context.Context, tenantID, sessionID ID) (BGPSession, error)
 	// ListAllBGPSessionsPage returns one offset page for the server-driven Core
 	// (BGP) table (search/state/sort via a join to the owning devices).
-	ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, error)
+	ListAllBGPSessionsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, q BGPSessionQuery) ([]BGPSession, int, error)
 	// CountBGPSessions returns the grant-scoped total/established counts.
 	CountBGPSessions(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, search string) (BGPSessionCounts, error)
 	UpsertBGPSessions(ctx context.Context, sessions []BGPSession) error
