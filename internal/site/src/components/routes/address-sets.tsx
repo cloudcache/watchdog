@@ -1,12 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { LayersIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
+import { LayersIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { parseAddressEntries, parseSetLabelSelector } from "@/lib/address-set-form"
+import { parseAddressEntries, parseSetLabelSelector, parseUnsignedIntegerEntries } from "@/lib/address-set-form"
 import { pb } from "@/lib/api"
 
 type AddressSet = {
@@ -33,9 +33,15 @@ type AddressSetList = { items?: AddressSet[]; next_cursor?: string }
 
 const pageSize = 100
 const emptyForm = {
+	id: "",
+	rowVersion: 0,
 	name: "",
 	description: "",
 	labels: "",
+	geoNodeIDs: "",
+	operatorIDs: "",
+	asns: "",
+	families: "",
 	members: "",
 	excludeMembers: "",
 	includeSetIDs: "",
@@ -92,16 +98,29 @@ export default memo(function AddressSets() {
 		fetchPage("", false)
 	}, [fetchPage])
 
-	const add = async () => {
+	const save = async () => {
 		if (!form.name.trim()) return
 		try {
 			const labels = parseSetLabelSelector(form.labels)
-			await pb.send("/api/v1/address-sets", {
-				method: "POST",
+			const asns = parseUnsignedIntegerEntries(form.asns, 1, 4_294_967_295, "ASN")
+			const families = parseUnsignedIntegerEntries(form.families, 4, 6, "IP family")
+			if (families.some((family) => family !== 4 && family !== 6)) throw new Error(t`IP families must be 4 or 6`)
+			const selector = {
+				...(Object.keys(labels).length ? { labels } : {}),
+				...(parseAddressEntries(form.geoNodeIDs).length ? { geo_node_ids: parseAddressEntries(form.geoNodeIDs) } : {}),
+				...(parseAddressEntries(form.operatorIDs).length
+					? { operator_ids: parseAddressEntries(form.operatorIDs) }
+					: {}),
+				...(asns.length ? { asns } : {}),
+				...(families.length ? { families } : {}),
+			}
+			await pb.send(form.id ? `/api/v1/address-sets/${form.id}` : "/api/v1/address-sets", {
+				method: form.id ? "PATCH" : "POST",
+				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
 				body: {
 					name: form.name.trim(),
 					description: form.description.trim(),
-					selector: Object.keys(labels).length ? { labels } : {},
+					selector,
 					explicit_members: parseAddressEntries(form.members),
 					explicit_exclude_members: parseAddressEntries(form.excludeMembers),
 					include_set_ids: parseAddressEntries(form.includeSetIDs),
@@ -114,9 +133,35 @@ export default memo(function AddressSets() {
 			setShowForm(false)
 			await fetchPage("", false)
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to create`)
+			setError(err instanceof Error ? err.message : t`Failed to save`)
 		}
 	}
+
+	const edit = useCallback((record: Record<string, unknown>) => {
+		const item = record.item as AddressSet | undefined
+		if (!item) return
+		setForm({
+			id: item.id,
+			rowVersion: item.row_version,
+			name: item.name,
+			description: item.description ?? "",
+			labels: Object.entries(item.selector.labels ?? {})
+				.map(([key, values]) => `${key}=${values.join("|")}`)
+				.join(","),
+			geoNodeIDs: (item.selector.geo_node_ids ?? []).join(","),
+			operatorIDs: (item.selector.operator_ids ?? []).join(","),
+			asns: (item.selector.asns ?? []).join(","),
+			families: (item.selector.families ?? []).join(","),
+			members: (item.explicit_members ?? []).join("\n"),
+			excludeMembers: (item.explicit_exclude_members ?? []).join("\n"),
+			includeSetIDs: (item.include_set_ids ?? []).join(","),
+			excludeSetIDs: (item.exclude_set_ids ?? []).join(","),
+			direction: item.match_direction,
+			enabled: item.enabled,
+		})
+		setShowForm(true)
+		setError("")
+	}, [])
 
 	const remove = useCallback(
 		async (record: Record<string, unknown>) => {
@@ -151,8 +196,10 @@ export default memo(function AddressSets() {
 				includes: set.include_set_ids?.join(", ") || "—",
 				direction: set.match_direction,
 				status: set.enabled ? t`Enabled` : t`Disabled`,
-				action: t`Delete`,
+				edit: t`Edit`,
+				remove: t`Delete`,
 				rowVersion: set.row_version,
+				item: set,
 			})),
 		[sets, t]
 	)
@@ -167,8 +214,15 @@ export default memo(function AddressSets() {
 			{ field: "direction", title: t`Direction`, width: 100, style: denseCellStyle() },
 			{ field: "status", title: t`Status`, width: 100, style: denseCellStyle() },
 			{
-				field: "action",
-				title: t`Actions`,
+				field: "edit",
+				title: t`Edit`,
+				width: 90,
+				filter: false,
+				style: { ...denseCellStyle(), color: "#2563eb", cursor: "pointer" },
+			},
+			{
+				field: "remove",
+				title: t`Delete`,
 				width: 90,
 				filter: false,
 				style: { ...denseCellStyle(), color: "#dc2626", cursor: "pointer" },
@@ -191,7 +245,13 @@ export default memo(function AddressSets() {
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
-					<Button size="sm" onClick={() => setShowForm((visible) => !visible)}>
+					<Button
+						size="sm"
+						onClick={() => {
+							setForm(emptyForm)
+							setShowForm((visible) => !visible)
+						}}
+					>
 						<PlusIcon className="me-2 h-4 w-4" />
 						<Trans>Add Set</Trans>
 					</Button>
@@ -247,6 +307,10 @@ export default memo(function AddressSets() {
 
 			{showForm ? (
 				<div className="grid gap-3 rounded-md border border-border bg-card p-4 md:grid-cols-2">
+					<div className="flex items-center gap-2 font-medium md:col-span-2">
+						{form.id ? <PencilIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
+						{form.id ? <Trans>Edit Address Set</Trans> : <Trans>Add Address Set</Trans>}
+					</div>
 					<div className="grid gap-2">
 						<Label>
 							<Trans>Name</Trans>
@@ -255,6 +319,44 @@ export default memo(function AddressSets() {
 							value={form.name}
 							onChange={(event) => setForm({ ...form, name: event.target.value })}
 							placeholder="电信客户"
+						/>
+					</div>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>Geography node IDs</Trans>
+						</Label>
+						<Input
+							value={form.geoNodeIDs}
+							onChange={(event) => setForm({ ...form, geoNodeIDs: event.target.value })}
+							placeholder="geo node IDs, comma separated"
+						/>
+					</div>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>Operator IDs</Trans>
+						</Label>
+						<Input
+							value={form.operatorIDs}
+							onChange={(event) => setForm({ ...form, operatorIDs: event.target.value })}
+							placeholder="operator IDs, comma separated"
+						/>
+					</div>
+					<div className="grid gap-2">
+						<Label>ASNs</Label>
+						<Input
+							value={form.asns}
+							onChange={(event) => setForm({ ...form, asns: event.target.value })}
+							placeholder="4134, 4837"
+						/>
+					</div>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>IP families</Trans>
+						</Label>
+						<Input
+							value={form.families}
+							onChange={(event) => setForm({ ...form, families: event.target.value })}
+							placeholder="4, 6"
 						/>
 					</div>
 					<div className="grid gap-2">
@@ -353,10 +455,17 @@ export default memo(function AddressSets() {
 						</Trans>
 					</div>
 					<div className="flex gap-2 md:col-span-2">
-						<Button size="sm" onClick={add}>
-							<Trans>Add</Trans>
+						<Button size="sm" onClick={save}>
+							<Trans>Save</Trans>
 						</Button>
-						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								setShowForm(false)
+								setForm(emptyForm)
+							}}
+						>
 							<Trans>Cancel</Trans>
 						</Button>
 					</div>
@@ -375,7 +484,8 @@ export default memo(function AddressSets() {
 					showSearch={false}
 					height={560}
 					onCellClick={(record, field) => {
-						if (field === "action") remove(record)
+						if (field === "edit") edit(record)
+						if (field === "remove") remove(record)
 					}}
 				/>
 			</div>

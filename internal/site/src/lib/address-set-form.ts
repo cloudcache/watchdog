@@ -18,6 +18,16 @@ export function parseSetLabelSelector(value: string): Record<string, string[]> {
 	return parseLabelAssignments(value, true)
 }
 
+export function parseUnsignedIntegerEntries(value: string, minimum: number, maximum: number, label: string): number[] {
+	return parseAddressEntries(value).map((raw) => {
+		const parsed = Number(raw)
+		if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+			throw new Error(`${label} must be an integer between ${minimum} and ${maximum}: ${raw}`)
+		}
+		return parsed
+	})
+}
+
 function parseLabelAssignments(value: string, allowMany: boolean): Record<string, string[]> {
 	const labels: Record<string, string[]> = {}
 	for (const rawPair of value.split(",")) {

@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { GlobeIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
+import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -25,6 +25,16 @@ type AddressPrefix = {
 type AddressPrefixList = { items?: AddressPrefix[]; next_cursor?: string }
 
 const pageSize = 100
+const emptyForm = {
+	id: "",
+	rowVersion: 0,
+	cidr: "",
+	labels: "",
+	source: "manual",
+	asn: "",
+	geoLeafID: "",
+	operatorID: "",
+}
 
 export default memo(function AddressPrefixes() {
 	const { t } = useLingui()
@@ -38,7 +48,7 @@ export default memo(function AddressPrefixes() {
 	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
-	const [form, setForm] = useState({ cidr: "", labels: "", source: "manual", asn: "" })
+	const [form, setForm] = useState(emptyForm)
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -74,7 +84,7 @@ export default memo(function AddressPrefixes() {
 		fetchPage("", false)
 	}, [fetchPage])
 
-	const add = async () => {
+	const save = async () => {
 		if (!form.cidr.trim()) return
 		try {
 			const labels = parsePrefixLabels(form.labels)
@@ -82,17 +92,44 @@ export default memo(function AddressPrefixes() {
 			if (asn !== undefined && (!Number.isInteger(asn) || asn <= 0 || asn > 4_294_967_295)) {
 				throw new Error(t`ASN must be an integer between 1 and 4294967295`)
 			}
-			await pb.send("/api/v1/address-prefixes", {
-				method: "POST",
-				body: { cidr: form.cidr.trim(), labels, source: form.source.trim() || "manual", asn },
+			await pb.send(form.id ? `/api/v1/address-prefixes/${form.id}` : "/api/v1/address-prefixes", {
+				method: form.id ? "PATCH" : "POST",
+				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
+				body: {
+					cidr: form.cidr.trim(),
+					labels,
+					source: form.source.trim() || "manual",
+					asn: asn ?? 0,
+					geo_leaf_id: form.geoLeafID.trim(),
+					operator_id: form.operatorID.trim(),
+				},
 			})
-			setForm({ cidr: "", labels: "", source: "manual", asn: "" })
+			setForm(emptyForm)
 			setShowForm(false)
 			await fetchPage("", false)
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to create`)
+			setError(err instanceof Error ? err.message : t`Failed to save`)
 		}
 	}
+
+	const edit = useCallback((record: Record<string, unknown>) => {
+		const prefix = record.item as AddressPrefix | undefined
+		if (!prefix) return
+		setForm({
+			id: prefix.id,
+			rowVersion: prefix.row_version,
+			cidr: prefix.cidr,
+			labels: Object.entries(prefix.labels ?? {})
+				.map(([key, value]) => `${key}=${value}`)
+				.join(","),
+			source: prefix.source,
+			asn: prefix.asn ? String(prefix.asn) : "",
+			geoLeafID: prefix.geo_leaf_id ?? "",
+			operatorID: prefix.operator_id ?? "",
+		})
+		setShowForm(true)
+		setError("")
+	}, [])
 
 	const remove = useCallback(
 		async (record: Record<string, unknown>) => {
@@ -127,8 +164,10 @@ export default memo(function AddressPrefixes() {
 				operator: prefix.operator_id || "—",
 				asn: prefix.asn ?? "—",
 				source: prefix.source,
-				action: t`Delete`,
+				edit: t`Edit`,
+				remove: t`Delete`,
 				rowVersion: prefix.row_version,
+				item: prefix,
 			})),
 		[prefixes, t]
 	)
@@ -142,8 +181,15 @@ export default memo(function AddressPrefixes() {
 			{ field: "asn", title: "ASN", width: 100, style: denseCellStyle() },
 			{ field: "source", title: t`Source`, width: 110, style: denseCellStyle() },
 			{
-				field: "action",
-				title: t`Actions`,
+				field: "edit",
+				title: t`Edit`,
+				width: 90,
+				filter: false,
+				style: { ...denseCellStyle(), color: "#2563eb", cursor: "pointer" },
+			},
+			{
+				field: "remove",
+				title: t`Delete`,
 				width: 90,
 				filter: false,
 				style: { ...denseCellStyle(), color: "#dc2626", cursor: "pointer" },
@@ -166,7 +212,13 @@ export default memo(function AddressPrefixes() {
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
-					<Button size="sm" onClick={() => setShowForm((visible) => !visible)}>
+					<Button
+						size="sm"
+						onClick={() => {
+							setForm(emptyForm)
+							setShowForm((visible) => !visible)
+						}}
+					>
 						<PlusIcon className="me-2 h-4 w-4" />
 						<Trans>Add Prefix</Trans>
 					</Button>
@@ -205,6 +257,10 @@ export default memo(function AddressPrefixes() {
 
 			{showForm ? (
 				<div className="grid gap-3 rounded-md border border-border bg-card p-4 md:grid-cols-2">
+					<div className="flex items-center gap-2 font-medium md:col-span-2">
+						{form.id ? <PencilIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
+						{form.id ? <Trans>Edit Prefix</Trans> : <Trans>Add Prefix</Trans>}
+					</div>
 					<div className="grid gap-2">
 						<Label>
 							<Trans>CIDR, IP, or range</Trans>
@@ -246,11 +302,30 @@ export default memo(function AddressPrefixes() {
 							placeholder="4134"
 						/>
 					</div>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>Geography node ID</Trans> (<Trans>optional</Trans>)
+						</Label>
+						<Input value={form.geoLeafID} onChange={(event) => setForm({ ...form, geoLeafID: event.target.value })} />
+					</div>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>Operator ID</Trans> (<Trans>optional</Trans>)
+						</Label>
+						<Input value={form.operatorID} onChange={(event) => setForm({ ...form, operatorID: event.target.value })} />
+					</div>
 					<div className="flex gap-2 md:col-span-2">
-						<Button size="sm" onClick={add}>
-							<Trans>Add</Trans>
+						<Button size="sm" onClick={save}>
+							<Trans>Save</Trans>
 						</Button>
-						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								setShowForm(false)
+								setForm(emptyForm)
+							}}
+						>
 							<Trans>Cancel</Trans>
 						</Button>
 					</div>
@@ -270,7 +345,8 @@ export default memo(function AddressPrefixes() {
 					showSearch={false}
 					height={560}
 					onCellClick={(record, field) => {
-						if (field === "action") remove(record)
+						if (field === "edit") edit(record)
+						if (field === "remove") remove(record)
 					}}
 				/>
 			</div>
