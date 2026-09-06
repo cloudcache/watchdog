@@ -17,6 +17,9 @@ type fakeNetworkRepository struct {
 	addresses    []NetworkInterfaceAddress
 	transceiver  NetworkPortTransceiver
 	sensors      []NetworkDeviceSensor
+	sensorQuery  DeviceSensorQuery
+	sensorTotal  int
+	sensorCounts DeviceSensorCounts
 	bgp          []BGPSession
 	physical     []PhysicalEntity
 	vlans        []DeviceVLAN
@@ -203,6 +206,15 @@ func (r *fakeNetworkRepository) ListDeviceSensors(_ context.Context, _ ID, devic
 		}
 	}
 	return sensors, nil
+}
+
+func (r *fakeNetworkRepository) ListDeviceSensorsPage(_ context.Context, _ ID, _ ID, query DeviceSensorQuery) ([]NetworkDeviceSensor, int, error) {
+	r.sensorQuery = query
+	return r.sensors, r.sensorTotal, nil
+}
+
+func (r *fakeNetworkRepository) CountDeviceSensors(_ context.Context, _ ID, _ ID) (DeviceSensorCounts, error) {
+	return r.sensorCounts, nil
 }
 
 func (r *fakeNetworkRepository) UpsertDeviceSensors(_ context.Context, sensors []NetworkDeviceSensor) error {
@@ -746,6 +758,49 @@ func TestAPINetworkDeviceSensorsList(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "sensor-a") || !strings.Contains(body, "Temp sensor") {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAPINetworkDeviceSensorsPageMapsQueryAndCounts(t *testing.T) {
+	repo := &fakeNetworkRepository{
+		devices:      []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		sensors:      []NetworkDeviceSensor{{ID: "sensor-a", DeviceID: "device-a", Class: "temperature", Status: "warning"}},
+		sensorTotal:  7,
+		sensorCounts: DeviceSensorCounts{Total: 19, Problems: 4},
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/device-a/sensors?q=temp&class=temperature&status=warning&health=problem&sort=value&order=desc&limit=10&offset=20", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	query := repo.sensorQuery
+	if query.Search != "temp" || query.Class != "temperature" || query.Status != "warning" || query.Health != "problem" || query.Sort != "value" || !query.Desc || query.Limit != 10 || query.Offset != 20 {
+		t.Fatalf("query = %+v", query)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"total":7`) || !strings.Contains(body, `"problems":4`) || !strings.Contains(body, `"limit":10`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAPINetworkDeviceSensorsPageRejectsInvalidQuery(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:    networkTestAuth,
+		Network: &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}},
+	})
+	for _, path := range []string{
+		"/api/v1/network/devices/device-a/sensors?health=broken",
+		"/api/v1/network/devices/device-a/sensors?sort=raw_sql",
+		"/api/v1/network/devices/device-a/sensors?order=sideways",
+		"/api/v1/network/devices/device-a/sensors?limit=0",
+		"/api/v1/network/devices/device-a/sensors?offset=-1",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("path %s: status = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

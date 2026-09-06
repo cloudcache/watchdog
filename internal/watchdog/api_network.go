@@ -447,12 +447,86 @@ func (api networkAPI) listDeviceSensors(w http.ResponseWriter, r *http.Request) 
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	values := r.URL.Query()
+	if hasDeviceSensorPageParams(values) {
+		query, err := parseDeviceSensorPage(values)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		sensors, total, err := api.repo.ListDeviceSensorsPage(r.Context(), auth.TenantID, device.ID, query)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		counts, err := api.repo.CountDeviceSensors(r.Context(), auth.TenantID, device.ID)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		if sensors == nil {
+			sensors = []NetworkDeviceSensor{}
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{
+			"items": sensors, "total": total, "counts": counts, "limit": query.Limit, "offset": query.Offset,
+		})
+		return
+	}
 	sensors, err := api.repo.ListDeviceSensors(r.Context(), auth.TenantID, device.ID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": sensors})
+}
+
+func hasDeviceSensorPageParams(query url.Values) bool {
+	return query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
+		query.Get("class") != "" || query.Get("status") != "" || query.Get("health") != "" ||
+		query.Get("sort") != "" || query.Get("order") != ""
+}
+
+func parseDeviceSensorPage(values url.Values) (DeviceSensorQuery, error) {
+	query := DeviceSensorQuery{
+		Search: strings.TrimSpace(values.Get("q")),
+		Class:  strings.TrimSpace(values.Get("class")),
+		Status: strings.TrimSpace(values.Get("status")),
+		Health: strings.ToLower(strings.TrimSpace(values.Get("health"))),
+		Sort:   strings.TrimSpace(values.Get("sort")),
+	}
+	if len(query.Search) > 256 {
+		return DeviceSensorQuery{}, fmt.Errorf("q must be at most 256 characters")
+	}
+	if len(query.Class) > 64 || len(query.Status) > 32 {
+		return DeviceSensorQuery{}, fmt.Errorf("sensor filter is too long")
+	}
+	if query.Health != "" && query.Health != "all" && query.Health != "healthy" && query.Health != "problem" {
+		return DeviceSensorQuery{}, fmt.Errorf("health must be all, healthy, or problem")
+	}
+	if query.Health == "all" {
+		query.Health = ""
+	}
+	if query.Sort == "" {
+		query.Sort = "class"
+	}
+	if _, ok := deviceSensorSortColumns[query.Sort]; !ok {
+		return DeviceSensorQuery{}, fmt.Errorf("invalid sensor sort")
+	}
+	order := strings.ToLower(strings.TrimSpace(values.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		return DeviceSensorQuery{}, fmt.Errorf("order must be asc or desc")
+	}
+	query.Desc = order == "desc"
+	var err error
+	query.Limit, err = parseNetworkInventoryInteger(values.Get("limit"), 100, 1, 500)
+	if err != nil {
+		return DeviceSensorQuery{}, fmt.Errorf("limit must be between 1 and 500")
+	}
+	query.Offset, err = parseNetworkInventoryInteger(values.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		return DeviceSensorQuery{}, fmt.Errorf("offset must be zero or greater")
+	}
+	return query, nil
 }
 
 func (api networkAPI) listDeviceInventory(w http.ResponseWriter, r *http.Request) {

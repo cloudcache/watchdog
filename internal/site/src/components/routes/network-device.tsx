@@ -182,7 +182,11 @@ type NetworkDeviceSensor = {
 
 type NetworkDeviceSensorsResponse = {
 	items?: NetworkDeviceSensor[]
+	total?: number
+	counts?: SensorCounts
 }
+
+type SensorCounts = { total: number; problems: number }
 
 type VMRangeResponse = {
 	data?: {
@@ -239,7 +243,8 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const [target, setTarget] = useState<TargetRecord | null>(null)
 	const [ports, setPorts] = useState<NetworkPort[]>([])
 	const [bgpCounts, setBGPCounts] = useState<BGPCounts>({ total: 0, established: 0 })
-	const [sensors, setSensors] = useState<NetworkDeviceSensor[]>([])
+	const [sensorProblems, setSensorProblems] = useState<NetworkDeviceSensor[]>([])
+	const [sensorCounts, setSensorCounts] = useState<SensorCounts>({ total: 0, problems: 0 })
 	const [chartWindow, setChartWindow] = useState("24h")
 	const [portTraffic, setPortTraffic] = useState<Record<string, { in?: number; out?: number }>>({})
 	const [dashboard, setDashboard] = useState<GraphDashboard | null>(null)
@@ -259,7 +264,9 @@ export default memo(({ id }: DeviceDetailProps) => {
 				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
 				pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
 				pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
-				pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors`, {}).catch(() => ({ items: [] })),
+				pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
+					() => ({ items: [], counts: { total: 0, problems: 0 } })
+				),
 				pb.send<TargetsResponse>("/api/v1/targets", {}),
 				pb.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
 			])
@@ -268,7 +275,8 @@ export default memo(({ id }: DeviceDetailProps) => {
 			setTarget((targetsData.items ?? []).find((item) => (item.ID ?? item.id) === targetID) ?? null)
 			setPorts(portsData.items ?? [])
 			setBGPCounts(bgpData.counts ?? { total: bgpData.total ?? 0, established: 0 })
-			setSensors(sensorData.items ?? [])
+			setSensorProblems(sensorData.items ?? [])
+			setSensorCounts(sensorData.counts ?? { total: sensorData.total ?? 0, problems: sensorData.total ?? 0 })
 			setDashboard(dashboardData)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load network device`)
@@ -583,7 +591,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 							portTraffic={portTraffic}
 							trafficView={trafficView}
 						/>
-						<DeviceStatusSummary ports={ports} sensors={sensors} bgpCounts={bgpCounts} />
+						<DeviceStatusSummary ports={ports} sensorCount={sensorCounts.total} bgpCounts={bgpCounts} />
 						<DeviceSavedGraphs deviceId={id} />
 					</TabsContent>
 
@@ -601,8 +609,13 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="health" className="grid gap-3">
-						<DeviceHealthPanel ports={ports} sensors={sensors} bgpCounts={bgpCounts} />
-						<SensorsTable loading={loading} sensors={sensors} />
+						<DeviceHealthPanel
+							ports={ports}
+							sensorProblems={sensorProblems}
+							sensorProblemCount={sensorCounts.problems}
+							bgpCounts={bgpCounts}
+						/>
+						<DeviceSensorsTable deviceId={id} />
 					</TabsContent>
 
 					<TabsContent value="ports">
@@ -698,11 +711,11 @@ export default memo(({ id }: DeviceDetailProps) => {
 
 function DeviceStatusSummary({
 	ports,
-	sensors,
+	sensorCount,
 	bgpCounts,
 }: {
 	ports: NetworkPort[]
-	sensors: NetworkDeviceSensor[]
+	sensorCount: number
 	bgpCounts: BGPCounts
 }) {
 	const upPorts = ports.filter((port) => {
@@ -721,7 +734,7 @@ function DeviceStatusSummary({
 				detail={<Trans>up / total</Trans>}
 			/>
 			<SummaryTile label={<Trans>Down Ports</Trans>} value={String(downPorts)} detail={<Trans>oper down</Trans>} />
-			<SummaryTile label={<Trans>Sensors</Trans>} value={String(sensors.length)} detail={<Trans>discovered</Trans>} />
+			<SummaryTile label={<Trans>Sensors</Trans>} value={String(sensorCount)} detail={<Trans>discovered</Trans>} />
 			<SummaryTile
 				label={<Trans>BGP</Trans>}
 				value={`${bgpCounts.established}/${bgpCounts.total}`}
@@ -766,11 +779,13 @@ function GraphRangeSelect({ value, onChange }: { value: string; onChange: (value
 
 function DeviceHealthPanel({
 	ports,
-	sensors,
+	sensorProblems,
+	sensorProblemCount,
 	bgpCounts,
 }: {
 	ports: NetworkPort[]
-	sensors: NetworkDeviceSensor[]
+	sensorProblems: NetworkDeviceSensor[]
+	sensorProblemCount: number
 	bgpCounts: BGPCounts
 }) {
 	const downPorts = ports.filter((port) => {
@@ -781,7 +796,6 @@ function DeviceHealthPanel({
 		const s = (port.AdminStatus ?? port.admin_status ?? "").toString().toLowerCase()
 		return s === "down" || s === "2"
 	})
-	const sensorProblems = sensors.filter((sensor) => !isHealthyStatus(sensor.Status ?? sensor.status))
 	const bgpProblems = Math.max(0, bgpCounts.total - bgpCounts.established)
 	return (
 		<div className="grid gap-3">
@@ -794,7 +808,7 @@ function DeviceHealthPanel({
 				/>
 				<SummaryTile
 					label={<Trans>Sensor Alerts</Trans>}
-					value={String(sensorProblems.length)}
+					value={String(sensorProblemCount)}
 					detail={<Trans>not ok</Trans>}
 				/>
 				<SummaryTile
@@ -907,8 +921,63 @@ function PortCount({ label, value, className }: { label: React.ReactNode; value:
 	)
 }
 
-function SensorsTable({ loading, sensors }: { loading: boolean; sensors: NetworkDeviceSensor[] }) {
+function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 	const { t } = useLingui()
+	const [sensors, setSensors] = useState<NetworkDeviceSensor[]>([])
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [health, setHealth] = useState("all")
+	const [sort, setSort] = useState("class:asc")
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [total, setTotal] = useState(0)
+	const [counts, setCounts] = useState<SensorCounts>({ total: 0, problems: 0 })
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${deviceId}/sensors`, {
+				query: {
+					q: query || undefined,
+					health: health === "all" ? undefined : health,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setSensors(data.items ?? [])
+			setTotal(data.total ?? 0)
+			if (data.counts) setCounts(data.counts)
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setSensors([])
+			setTotal(0)
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [deviceId, health, page, pageSize, query, sort])
+
+	useEffect(() => {
+		load()
+	}, [load])
+
 	const records = useMemo(
 		() =>
 			sensors.map((sensor) => {
@@ -937,13 +1006,63 @@ function SensorsTable({ loading, sensors }: { loading: boolean; sensors: Network
 		[t]
 	)
 	return (
-		<PagedVTable
-			records={records}
-			columns={columns}
-			loading={loading}
-			emptyText={t`No sensors discovered.`}
-			searchPlaceholder={t`Search sensors...`}
-		/>
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center gap-2">
+				<Select
+					value={health}
+					onValueChange={(value) => {
+						setHealth(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all"><Trans>All health</Trans></SelectItem>
+						<SelectItem value="healthy"><Trans>Healthy</Trans></SelectItem>
+						<SelectItem value="problem"><Trans>Problems</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Select
+					value={sort}
+					onValueChange={(value) => {
+						setSort(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="class:asc"><Trans>Class ascending</Trans></SelectItem>
+						<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
+						<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
+						<SelectItem value="status:asc"><Trans>Status ascending</Trans></SelectItem>
+						<SelectItem value="value:desc"><Trans>Value descending</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Badge variant={counts.problems > 0 ? "danger" : "success"}>
+					{counts.problems}/{counts.total} <Trans>problems</Trans>
+				</Badge>
+			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={t`No sensors discovered.`}
+				searchPlaceholder={t`Search sensors...`}
+				searchValue={search}
+				onSearchChange={setSearch}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
+				}}
+			/>
+		</div>
 	)
 }
 
@@ -1350,13 +1469,6 @@ function formatInterfaceAddresses(addresses: NetworkInterfaceAddress[], family: 
 		})
 		.filter(Boolean)
 	return values.length > 0 ? values.join("\n") : "—"
-}
-
-function isHealthyStatus(value?: string) {
-	const normalized = value?.toLowerCase() ?? ""
-	return (
-		normalized === "" || normalized === "ok" || normalized === "up" || normalized === "normal" || normalized === "1"
-	)
 }
 
 function portLabel(port: NetworkPort) {

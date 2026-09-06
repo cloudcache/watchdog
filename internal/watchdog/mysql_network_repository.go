@@ -548,6 +548,84 @@ func (s *MySQLStore) ListDeviceSensors(ctx context.Context, tenantID, deviceID I
 	return sensors, rows.Err()
 }
 
+var deviceSensorSortColumns = map[string]string{
+	"":             "sensor_class",
+	"class":        "sensor_class",
+	"name":         "name",
+	"status":       "status",
+	"value":        "COALESCE(current_value, 0)",
+	"sensor_index": "sensor_index",
+	"updated_at":   "updated_at",
+}
+
+const healthySensorStatusSQL = `LOWER(TRIM(status)) IN ('', 'ok', 'up', 'normal', '1')`
+
+func (s *MySQLStore) ListDeviceSensorsPage(ctx context.Context, tenantID, deviceID ID, q DeviceSensorQuery) ([]NetworkDeviceSensor, int, error) {
+	limit, offset := boundedPage(q.Limit, q.Offset)
+	where := ` WHERE tenant_id = ? AND device_id = ?`
+	args := []any{tenantID, deviceID}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (sensor_class LIKE ? OR name LIKE ? OR oid LIKE ? OR unit LIKE ? OR status LIKE ?)`
+		args = append(args, like, like, like, like, like)
+	}
+	if q.Class != "" {
+		where += ` AND sensor_class = ?`
+		args = append(args, q.Class)
+	}
+	if q.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, q.Status)
+	}
+	switch q.Health {
+	case "healthy":
+		where += ` AND ` + healthySensorStatusSQL
+	case "problem":
+		where += ` AND NOT (` + healthySensorStatusSQL + `)`
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_device_sensors`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	sortColumn := deviceSensorSortColumns[q.Sort]
+	if sortColumn == "" {
+		sortColumn = "sensor_class"
+	}
+	query := `
+		SELECT id, tenant_id, device_id, COALESCE(port_id, ''), sensor_index, sensor_class, name, oid, unit,
+		       COALESCE(current_value, 0), COALESCE(warn_limit, 0), COALESCE(crit_limit, 0), status, metadata_json, updated_at
+		FROM network_device_sensors` + where + fmt.Sprintf(" ORDER BY %s %s, sensor_class %s, sensor_index %s, id %s LIMIT ? OFFSET ?", sortColumn, dir, dir, dir, dir)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	sensors := make([]NetworkDeviceSensor, 0, min(limit, total))
+	for rows.Next() {
+		sensor, err := scanNetworkDeviceSensor(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		sensors = append(sensors, sensor)
+	}
+	return sensors, total, rows.Err()
+}
+
+func (s *MySQLStore) CountDeviceSensors(ctx context.Context, tenantID, deviceID ID) (DeviceSensorCounts, error) {
+	var counts DeviceSensorCounts
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN NOT (`+healthySensorStatusSQL+`) THEN 1 ELSE 0 END), 0)
+		FROM network_device_sensors
+		WHERE tenant_id = ? AND device_id = ?
+	`, tenantID, deviceID).Scan(&counts.Total, &counts.Problems)
+	return counts, err
+}
+
 func (s *MySQLStore) UpsertDeviceSensors(ctx context.Context, sensors []NetworkDeviceSensor) error {
 	if len(sensors) == 0 {
 		return nil

@@ -168,6 +168,8 @@ type NetworkRepository interface {
 	UpsertPortTransceiver(ctx context.Context, transceiver NetworkPortTransceiver) (NetworkPortTransceiver, error)
 	GetPortTransceiver(ctx context.Context, tenantID, portID ID) (NetworkPortTransceiver, error)
 	ListDeviceSensors(ctx context.Context, tenantID, deviceID ID) ([]NetworkDeviceSensor, error)
+	ListDeviceSensorsPage(ctx context.Context, tenantID, deviceID ID, query DeviceSensorQuery) ([]NetworkDeviceSensor, int, error)
+	CountDeviceSensors(ctx context.Context, tenantID, deviceID ID) (DeviceSensorCounts, error)
 	UpsertDeviceSensors(ctx context.Context, sensors []NetworkDeviceSensor) error
 	ListDevicePhysicalEntities(ctx context.Context, tenantID, deviceID ID) ([]PhysicalEntity, error)
 	ListDevicePhysicalEntitiesPage(ctx context.Context, tenantID, deviceID ID, query PhysicalEntityQuery) ([]PhysicalEntity, int, error)
@@ -224,6 +226,22 @@ type DeviceLAGQuery struct {
 	Desc   bool
 	Limit  int
 	Offset int
+}
+
+type DeviceSensorQuery struct {
+	Search string
+	Class  string
+	Status string
+	Health string
+	Sort   string
+	Desc   bool
+	Limit  int
+	Offset int
+}
+
+type DeviceSensorCounts struct {
+	Total    int `json:"total"`
+	Problems int `json:"problems"`
 }
 
 type RetentionRepository interface {
