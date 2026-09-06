@@ -1,0 +1,456 @@
+package watchdog
+
+import (
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/netip"
+	"strings"
+)
+
+const maxAddressImportBatch = 5_000
+
+type addressImportBatchRow struct {
+	record AddressImportRecord
+	family uint8
+	bits   uint8
+	start  [16]byte
+	end    [16]byte
+	labels []byte
+}
+
+func (s *MySQLStore) CreateAddressImport(ctx context.Context, item AddressImport) (AddressImport, error) {
+	if err := validateAddressImport(item); err != nil {
+		return AddressImport{}, err
+	}
+	if item.ID == "" {
+		id, err := newIdentityID()
+		if err != nil {
+			return AddressImport{}, err
+		}
+		item.ID = id
+	}
+	if item.Status == "" {
+		item.Status = AddressImportStatusQuarantined
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO address_imports (
+			id, tenant_id, source_slot, format, original_name, artifact_ref,
+			checksum_sha256, size_bytes, status, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.TenantID, item.SourceSlot, item.Format, item.OriginalName,
+		item.ArtifactRef, strings.ToLower(item.ChecksumSHA256), item.SizeBytes, item.Status, item.CreatedBy)
+	if err != nil {
+		return AddressImport{}, err
+	}
+	return s.GetAddressImport(ctx, item.TenantID, item.ID)
+}
+
+func validateAddressImport(item AddressImport) error {
+	if item.TenantID == "" || item.CreatedBy == "" || strings.TrimSpace(item.OriginalName) == "" || strings.TrimSpace(item.ArtifactRef) == "" || item.SizeBytes == 0 {
+		return fmt.Errorf("%w: tenant, creator, artifact name/ref, and non-zero size are required", ErrAddressImportInvalid)
+	}
+	if !validAddressImportSlot(item.SourceSlot) {
+		return fmt.Errorf("%w: unsupported source slot %q", ErrAddressImportInvalid, item.SourceSlot)
+	}
+	if item.Format != AddressImportFormatMMDB && item.Format != AddressImportFormatIPDB {
+		return fmt.Errorf("%w: unsupported format %q", ErrAddressImportInvalid, item.Format)
+	}
+	checksum, err := hex.DecodeString(item.ChecksumSHA256)
+	if err != nil || len(checksum) != 32 {
+		return fmt.Errorf("%w: checksum_sha256 must be 64 hexadecimal characters", ErrAddressImportInvalid)
+	}
+	if item.Status != "" && item.Status != AddressImportStatusQuarantined && item.Status != AddressImportStatusQueued {
+		return fmt.Errorf("%w: a new import must be quarantined or queued", ErrAddressImportInvalid)
+	}
+	return nil
+}
+
+func validAddressImportSlot(value string) bool {
+	return value == AddressImportSlotGeo || value == AddressImportSlotASN || value == AddressImportSlotCombined
+}
+
+const addressImportColumns = `
+	id, tenant_id, source_slot, format, original_name, artifact_ref,
+	checksum_sha256, size_bytes, COALESCE(database_type, ''), build_epoch,
+	ip_version, COALESCE(language, ''), status, row_count_v4, row_count_v6,
+	COALESCE(created_by, ''), COALESCE(error_code, ''), COALESCE(error_detail, ''),
+	created_at, updated_at, ready_at, activated_at`
+
+func scanAddressImport(row rowScanner) (AddressImport, error) {
+	var item AddressImport
+	var buildEpoch, ipVersion sql.NullInt64
+	var readyAt, activatedAt sql.NullTime
+	if err := row.Scan(
+		&item.ID, &item.TenantID, &item.SourceSlot, &item.Format, &item.OriginalName, &item.ArtifactRef,
+		&item.ChecksumSHA256, &item.SizeBytes, &item.DatabaseType, &buildEpoch,
+		&ipVersion, &item.Language, &item.Status, &item.RowCountV4, &item.RowCountV6,
+		&item.CreatedBy, &item.ErrorCode, &item.ErrorDetail,
+		&item.CreatedAt, &item.UpdatedAt, &readyAt, &activatedAt,
+	); err != nil {
+		return AddressImport{}, err
+	}
+	if buildEpoch.Valid {
+		value := buildEpoch.Int64
+		item.BuildEpoch = &value
+	}
+	if ipVersion.Valid {
+		value := uint8(ipVersion.Int64)
+		item.IPVersion = &value
+	}
+	if readyAt.Valid {
+		value := readyAt.Time
+		item.ReadyAt = &value
+	}
+	if activatedAt.Valid {
+		value := activatedAt.Time
+		item.ActivatedAt = &value
+	}
+	return item, nil
+}
+
+func (s *MySQLStore) GetAddressImport(ctx context.Context, tenantID, importID ID) (AddressImport, error) {
+	return scanAddressImport(s.db.QueryRowContext(ctx, `
+		SELECT `+addressImportColumns+` FROM address_imports
+		WHERE tenant_id = ? AND id = ?
+	`, tenantID, importID))
+}
+
+func (s *MySQLStore) ListAddressImports(ctx context.Context, tenantID ID, filter AddressImportListFilter) ([]AddressImport, string, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	query := `SELECT ` + addressImportColumns + ` FROM address_imports WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if filter.SourceSlot != "" {
+		if !validAddressImportSlot(filter.SourceSlot) {
+			return nil, "", fmt.Errorf("%w: unsupported source slot", ErrAddressImportInvalid)
+		}
+		query += ` AND source_slot = ?`
+		args = append(args, filter.SourceSlot)
+	}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, cursorTime, cursorTime, cursorID)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	items := make([]AddressImport, 0, limit)
+	for rows.Next() {
+		item, err := scanAddressImport(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
+	return items, nextCursor, nil
+}
+
+func (s *MySQLStore) BeginAddressImport(ctx context.Context, tenantID, importID ID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status FROM address_imports
+		WHERE tenant_id = ? AND id = ? FOR UPDATE
+	`, tenantID, importID).Scan(&status); err != nil {
+		return err
+	}
+	if status != AddressImportStatusQuarantined && status != AddressImportStatusQueued && status != AddressImportStatusImporting {
+		return ErrAddressImportNotWritable
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE address_imports
+		SET status = 'importing', error_code = NULL, error_detail = NULL
+		WHERE tenant_id = ? AND id = ?
+	`, tenantID, importID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func prepareAddressImportBatch(records []AddressImportRecord) ([]addressImportBatchRow, error) {
+	if len(records) == 0 {
+		return nil, nil
+	}
+	if len(records) > maxAddressImportBatch {
+		return nil, fmt.Errorf("%w: batch has %d records, limit is %d", ErrAddressImportInvalid, len(records), maxAddressImportBatch)
+	}
+	rows := make([]addressImportBatchRow, 0, len(records))
+	for index, record := range records {
+		prefix, err := addressRecordPrefix(record)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", index, err)
+		}
+		start, end := addressPrefixBounds(prefix)
+		family := uint8(6)
+		if prefix.Addr().Is4() {
+			family = 4
+		}
+		labels, err := json.Marshal(map[string]string{"source": record.Source})
+		if err != nil {
+			return nil, fmt.Errorf("record %d labels: %w", index, err)
+		}
+		rows = append(rows, addressImportBatchRow{record: record, family: family, bits: uint8(prefix.Bits()), start: start, end: end, labels: labels})
+	}
+	return rows, nil
+}
+
+func addressPrefixBounds(prefix netip.Prefix) ([16]byte, [16]byte) {
+	prefix = prefix.Masked()
+	startNumber := addressNumberFromAddr(prefix.Addr())
+	width := 128
+	if prefix.Addr().Is4() {
+		width = 32
+	}
+	endNumber := addressBlockEnd(startNumber, width-prefix.Bits())
+	return addressNumberBytes(startNumber), addressNumberBytes(endNumber)
+}
+
+func addressNumberBytes(number addressNumber) [16]byte {
+	address := addressFromNumber(number, 6)
+	return address.As16()
+}
+
+func (s *MySQLStore) InsertAddressImportBatch(ctx context.Context, tenantID, importID ID, records []AddressImportRecord) error {
+	batch, err := prepareAddressImportBatch(records)
+	if err != nil || len(batch) == 0 {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status FROM address_imports
+		WHERE tenant_id = ? AND id = ? FOR UPDATE
+	`, tenantID, importID).Scan(&status); err != nil {
+		return err
+	}
+	if status != AddressImportStatusImporting {
+		return ErrAddressImportNotWritable
+	}
+	statement, err := tx.PrepareContext(ctx, `
+		INSERT INTO address_base_prefixes (
+			tenant_id, import_id, family, prefix_length, cidr, ip_start, ip_end,
+			continent_code, country_code, country_name, subdivision_code,
+			subdivision_name, city_code, city_name, asn, operator_name,
+			latitude, longitude, labels
+		) VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
+			NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, 0),
+			NULLIF(?, ''), ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			continent_code = VALUES(continent_code), country_code = VALUES(country_code),
+			country_name = VALUES(country_name), subdivision_code = VALUES(subdivision_code),
+			subdivision_name = VALUES(subdivision_name), city_code = VALUES(city_code),
+			city_name = VALUES(city_name), asn = VALUES(asn), operator_name = VALUES(operator_name),
+			latitude = VALUES(latitude), longitude = VALUES(longitude), labels = VALUES(labels)
+	`)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+	for _, row := range batch {
+		record := row.record
+		if _, err := statement.ExecContext(ctx,
+			tenantID, importID, row.family, row.bits, record.Prefix, row.start[:], row.end[:],
+			record.ContinentCode, record.CountryCode, record.CountryName, record.SubdivisionCode,
+			record.SubdivisionName, record.CityCode, record.CityName, record.ASN, record.Operator,
+			record.Latitude, record.Longitude, row.labels,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *MySQLStore) CompleteAddressImport(ctx context.Context, tenantID, importID ID, metadata AddressImportMetadata, language string) (AddressImport, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AddressImport{}, err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status FROM address_imports WHERE tenant_id = ? AND id = ? FOR UPDATE
+	`, tenantID, importID).Scan(&status); err != nil {
+		return AddressImport{}, err
+	}
+	if status == AddressImportStatusReady {
+		if err := tx.Rollback(); err != nil {
+			return AddressImport{}, err
+		}
+		return s.GetAddressImport(ctx, tenantID, importID)
+	}
+	if status != AddressImportStatusImporting {
+		return AddressImport{}, ErrAddressImportNotWritable
+	}
+	var countV4, countV6 uint64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(CASE WHEN family = 4 THEN 1 END), COUNT(CASE WHEN family = 6 THEN 1 END)
+		FROM address_base_prefixes WHERE tenant_id = ? AND import_id = ?
+	`, tenantID, importID).Scan(&countV4, &countV6); err != nil {
+		return AddressImport{}, err
+	}
+	var buildEpoch any
+	if !metadata.BuildTime.IsZero() {
+		buildEpoch = metadata.BuildTime.Unix()
+	}
+	var ipVersion any
+	if metadata.IPVersion != 0 {
+		ipVersion = metadata.IPVersion
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE address_imports SET status = 'ready', database_type = NULLIF(?, ''),
+			build_epoch = ?, ip_version = ?, language = NULLIF(?, ''),
+			row_count_v4 = ?, row_count_v6 = ?, ready_at = CURRENT_TIMESTAMP(3),
+			error_code = NULL, error_detail = NULL
+		WHERE tenant_id = ? AND id = ? AND status = 'importing'
+	`, metadata.DatabaseType, buildEpoch, ipVersion, strings.TrimSpace(language), countV4, countV6, tenantID, importID); err != nil {
+		return AddressImport{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AddressImport{}, err
+	}
+	return s.GetAddressImport(ctx, tenantID, importID)
+}
+
+func (s *MySQLStore) FailAddressImport(ctx context.Context, tenantID, importID ID, code, detail string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE address_imports SET status = 'failed', error_code = NULLIF(LEFT(?, 64), ''),
+			error_detail = NULLIF(LEFT(?, 4096), '')
+		WHERE tenant_id = ? AND id = ? AND status IN ('quarantined','queued','importing','failed')
+	`, strings.TrimSpace(code), strings.TrimSpace(detail), tenantID, importID)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return err
+	} else if count > 0 {
+		return nil
+	}
+	var status string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT status FROM address_imports WHERE tenant_id = ? AND id = ?
+	`, tenantID, importID).Scan(&status); err != nil {
+		return err
+	}
+	if status == AddressImportStatusFailed {
+		return nil
+	}
+	return ErrAddressImportNotWritable
+}
+
+func scanAddressImportSlot(row rowScanner) (AddressImportSlot, error) {
+	var slot AddressImportSlot
+	err := row.Scan(&slot.TenantID, &slot.SourceSlot, &slot.ImportID, &slot.RowVersion, &slot.ActivatedBy, &slot.ActivatedAt)
+	return slot, err
+}
+
+func (s *MySQLStore) GetAddressImportSlot(ctx context.Context, tenantID ID, sourceSlot string) (AddressImportSlot, error) {
+	return scanAddressImportSlot(s.db.QueryRowContext(ctx, `
+		SELECT tenant_id, source_slot, import_id, row_version, COALESCE(activated_by, ''), activated_at
+		FROM address_import_slots WHERE tenant_id = ? AND source_slot = ?
+	`, tenantID, sourceSlot))
+}
+
+func (s *MySQLStore) ActivateAddressImport(ctx context.Context, tenantID, importID, actorID ID, expectedVersion uint64) (AddressImportSlot, error) {
+	if tenantID == "" || importID == "" || actorID == "" {
+		return AddressImportSlot{}, fmt.Errorf("%w: tenant, import, and actor are required", ErrAddressImportInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AddressImportSlot{}, err
+	}
+	defer tx.Rollback()
+	var sourceSlot, status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT source_slot, status FROM address_imports
+		WHERE tenant_id = ? AND id = ? FOR UPDATE
+	`, tenantID, importID).Scan(&sourceSlot, &status); err != nil {
+		return AddressImportSlot{}, err
+	}
+	if status != AddressImportStatusReady {
+		return AddressImportSlot{}, ErrAddressImportNotWritable
+	}
+	var currentVersion uint64
+	err = tx.QueryRowContext(ctx, `
+		SELECT row_version FROM address_import_slots
+		WHERE tenant_id = ? AND source_slot = ? FOR UPDATE
+	`, tenantID, sourceSlot).Scan(&currentVersion)
+	switch {
+	case errors.Is(err, sql.ErrNoRows) && expectedVersion != 0:
+		return AddressImportSlot{}, ErrAddressImportVersionConflict
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO address_import_slots (tenant_id, source_slot, import_id, row_version, activated_by)
+			VALUES (?, ?, ?, 1, ?)
+		`, tenantID, sourceSlot, importID, actorID)
+	case err != nil:
+		return AddressImportSlot{}, err
+	case currentVersion != expectedVersion:
+		return AddressImportSlot{}, ErrAddressImportVersionConflict
+	default:
+		_, err = tx.ExecContext(ctx, `
+			UPDATE address_import_slots SET import_id = ?, row_version = row_version + 1,
+				activated_by = ?, activated_at = CURRENT_TIMESTAMP(3)
+			WHERE tenant_id = ? AND source_slot = ? AND row_version = ?
+		`, importID, actorID, tenantID, sourceSlot, expectedVersion)
+	}
+	if err != nil {
+		return AddressImportSlot{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE address_imports SET activated_at = CURRENT_TIMESTAMP(3)
+		WHERE tenant_id = ? AND id = ?
+	`, tenantID, importID); err != nil {
+		return AddressImportSlot{}, err
+	}
+	slot, err := scanAddressImportSlot(tx.QueryRowContext(ctx, `
+		SELECT tenant_id, source_slot, import_id, row_version, COALESCE(activated_by, ''), activated_at
+		FROM address_import_slots WHERE tenant_id = ? AND source_slot = ?
+	`, tenantID, sourceSlot))
+	if err != nil {
+		return AddressImportSlot{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AddressImportSlot{}, err
+	}
+	return slot, nil
+}
+
+var _ AddressImportRepository = (*MySQLStore)(nil)
