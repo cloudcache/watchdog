@@ -362,6 +362,46 @@ func TestFlowRollupServicePagesTenantsAndWrapsFairly(t *testing.T) {
 	}
 }
 
+func TestFlowRollupServiceResumesAtUnprocessedTenantUnderBudget(t *testing.T) {
+	store := newMemoryFlowRollupStore()
+	// A per-scan budget of two buckets is exactly one tenant's 1m+1h series, so
+	// each scan finishes one tenant and stops at the next.
+	scheduler, err := NewFlowRollupScheduler(store, FlowRollupScheduleConfig{
+		LateArrivalWindow: time.Minute, BootstrapLookback: 3 * time.Hour,
+		MaxBucketsPerSeriesScan: 1, MaxBucketsPerScan: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenants := &recordingFlowRollupTenantSource{tenants: []ID{"tenant-a", "tenant-b", "tenant-c"}}
+	service := &FlowRollupService{Scheduler: scheduler, Tenants: tenants, MaxTenantsPerScan: 3}
+	now := time.Date(2026, 9, 5, 12, 10, 0, 0, time.UTC)
+
+	first, err := service.ScanOnce(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.StoppedEarly || first.LastProcessedTenant != "tenant-a" {
+		t.Fatalf("scan 1 result = %+v, want StoppedEarly at tenant-a", first)
+	}
+	if _, err := service.ScanOnce(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanOnce(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	// The resume cursors must walk a -> b, not restart at "" each scan. Before the
+	// fix the full-page cursor advanced to "" every scan, so every scan restarted
+	// at tenant-a and tenant-b/c starved.
+	if len(tenants.afters) != 3 || tenants.afters[0] != "" || tenants.afters[1] != "tenant-a" || tenants.afters[2] != "tenant-b" {
+		t.Fatalf("resume cursors=%v, want [\"\" tenant-a tenant-b]", tenants.afters)
+	}
+	// All three tenants were scheduled (2 series each), so none starved.
+	if scheduled := len(flowRollupKeys(store)); scheduled != 6 {
+		t.Fatalf("scheduled jobs=%d, want 6 (2 per tenant, none starved)", scheduled)
+	}
+}
+
 func TestMySQLFlowRollupLedgerAndRepair(t *testing.T) {
 	db, tenant := operationJobTestDB(t)
 	store := NewMySQLStore(db)

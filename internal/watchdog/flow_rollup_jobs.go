@@ -57,6 +57,12 @@ type FlowRollupScanResult struct {
 	SeriesScanned   int
 	BootstrapSeries int
 	BudgetExhausted bool
+	// StoppedEarly is set when the per-scan bucket budget stopped the scan before
+	// every listed tenant was iterated, leaving later tenants unprocessed.
+	// LastProcessedTenant is the greatest tenant id whose series were all
+	// scheduled this scan; the fairness cursor resumes after it.
+	StoppedEarly        bool
+	LastProcessedTenant ID
 }
 
 type FlowRollupTenantSource interface {
@@ -147,8 +153,24 @@ func (s *FlowRollupService) ScanOnce(ctx context.Context, now time.Time) (FlowRo
 			return FlowRollupScanResult{}, err
 		}
 	}
-	s.tenantCursor = ID(next)
-	return s.Scheduler.ScanClosedBuckets(ctx, tenants, now)
+	previousCursor := s.tenantCursor
+	result, err := s.Scheduler.ScanClosedBuckets(ctx, tenants, now)
+	if err != nil {
+		return FlowRollupScanResult{}, err
+	}
+	// Advance the fairness cursor only over tenants actually processed. When the
+	// per-scan bucket budget stops the scan mid-list, resume at the first
+	// unprocessed tenant next time instead of skipping the rest until the cursor
+	// cycles all the way around — which starved later tenants during catch-up.
+	switch {
+	case !result.StoppedEarly:
+		s.tenantCursor = ID(next)
+	case result.LastProcessedTenant != "":
+		s.tenantCursor = result.LastProcessedTenant
+	default:
+		s.tenantCursor = previousCursor
+	}
+	return result, nil
 }
 
 // ScanClosedBuckets advances the durable scheduled watermark for each
@@ -168,6 +190,7 @@ func (s *FlowRollupScheduler) ScanClosedBuckets(ctx context.Context, tenantIDs [
 		for _, resolution := range []flowch.RollupResolution{flowch.RollupOneMinute, flowch.RollupOneHour} {
 			if result.Scheduled >= s.config.MaxBucketsPerScan {
 				result.BudgetExhausted = true
+				result.StoppedEarly = true
 				return result, nil
 			}
 			result.SeriesScanned++
@@ -206,6 +229,7 @@ func (s *FlowRollupScheduler) ScanClosedBuckets(ctx context.Context, tenantIDs [
 				result.BudgetExhausted = true
 			}
 		}
+		result.LastProcessedTenant = tenantID
 	}
 	return result, nil
 }
