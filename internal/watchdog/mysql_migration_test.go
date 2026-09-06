@@ -297,12 +297,44 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 49 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "049" {
+	if len(migrations) == 0 || migrations[0].Version != "001" {
 		t.Fatalf("migrations = %#v", migrations)
+	}
+	manifestData, err := os.ReadFile(filepath.Join("..", "..", "deploy", "migration", "mysql", "checksums.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := make(map[string]string, len(migrations))
+	for lineNumber, line := range strings.Split(string(manifestData), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[0]) != 64 || filepath.Base(fields[1]) != fields[1] {
+			t.Fatalf("invalid checksum manifest line %d: %q", lineNumber+1, line)
+		}
+		if _, duplicate := published[fields[1]]; duplicate {
+			t.Fatalf("duplicate checksum manifest entry %q", fields[1])
+		}
+		published[fields[1]] = fields[0]
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+		checksum, ok := published[migration.Name]
+		if !ok {
+			t.Fatalf("migration %s is not published in checksums.sha256", migration.Name)
+		}
+		if checksum != migration.Checksum {
+			t.Fatalf("published migration %s changed: got %s, want %s; add a new migration instead", migration.Name, migration.Checksum, checksum)
+		}
+		delete(published, migration.Name)
+	}
+	if len(published) != 0 {
+		for name := range published {
+			t.Fatalf("checksum manifest contains missing migration %s", name)
 		}
 	}
 }

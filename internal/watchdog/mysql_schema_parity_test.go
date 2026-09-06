@@ -98,6 +98,41 @@ func TestInitSQLMatchesEmbeddedMigrations(t *testing.T) {
 	}
 }
 
+func TestAppliedMySQLMigrationChecksumMismatchFailsClosed(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_checksum_drift_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE watchdog_schema_migrations SET checksum = ? WHERE version = '001'`, strings.Repeat("0", 64)); err != nil {
+		t.Fatalf("corrupt checksum: %v", err)
+	}
+	if err := CheckMySQLSchemaCurrent(ctx, db); err == nil || !strings.Contains(err.Error(), "001_watchdog_backend.sql checksum mismatch") {
+		t.Fatalf("schema readiness error = %v, want checksum mismatch", err)
+	}
+	if _, err := ApplyMySQLMigrations(ctx, db); err == nil || !strings.Contains(err.Error(), "001_watchdog_backend.sql checksum mismatch") {
+		t.Fatalf("migration apply error = %v, want checksum mismatch", err)
+	}
+}
+
 func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
 	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
 	if dsn == "" {

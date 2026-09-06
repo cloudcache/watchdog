@@ -49,7 +49,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 | P1 | aggregate graph 只绑定 port，item 只有 metric/direction | 图表定义改为 provider + dataset + query JSON + resource binding，支持 flow group-by/filter |
 | P1 | export task 固定 target/port、VM、CSV | export provider 化，任务保存 dataset、query snapshot、value layer、policy version |
 | P1 | 当前 `raw/corrected` 只有一层修正；supplier/customer 主要改变采样步长；修正算法是确定性随机加减固定值 | 改为 raw/supplier/customer 三个明确且可审计的平行数据层，禁止隐式随机修正 |
-| P1（部分完成） | `install/init.sql` 与分散 migration 的表演进存在维护成本 | migration 已嵌入二进制并按连续版本/checksum/advisory lock 执行，空库重复执行已验证；init 自动生成或 CI parity gate 仍待补齐 |
+| P1（已完成门禁） | `install/init.sql` 与分散 migration 的表演进存在维护成本 | migration 已嵌入二进制并按连续版本/checksum/advisory lock 执行；`checksums.sha256` 锁定已发布文件，数据库 ledger 漂移 fail closed，真实 MySQL parity gate 验证 init 与全量 migration 表结构一致；修复只能追加下一版本 migration |
 
 ### 2.3 本轮重构执行状态（2026-09-03）
 

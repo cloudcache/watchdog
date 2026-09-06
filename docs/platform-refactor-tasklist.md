@@ -186,7 +186,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **C3b-IPDB 已提交门禁**：bulk upsert、合法 corpus、真实 MySQL 故障续跑测试、报告与清单由本提交原子交付，不夹带 Flow 数据面或既有 maintenance/config 工作区文件。
     - [ ] **C3b-MMDB**：以真实生产级百万记录 MMDB 重跑同一吞吐/峰值内存、job crash/resume、ready/count/cleanup 门禁；当前仓库只有 MaxMind 小型测试库，禁止循环读取小 fixture 或复制回调计数冒充百万数据。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
-- [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
+- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；不创建空 migration，下一持久化 migration 仍为 050。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
 - [x] 旧 `sflow_collector` VM 聚合原型已独立退役：命令、平台配置、环境变量、安装项和实现均已删除，仓库生产代码零引用；RawFlow sFlow5 接收链继续保留且不与旧原型共端口（commits `52b9d3f2`、`5039ee77`）。
 - [x] 默认 `go vet ./...` 会编译 `internal/hub_test`，但 `GetHubWithUser` 只在 `testing` tag 可见；已按既有约定给 `api_test.go`/`platform_backend_test.go` 补 `//go:build testing`，默认与 `-tags=testing` 两种 vet 均通过，tagged hub 套件通过（commit a549a602）。
