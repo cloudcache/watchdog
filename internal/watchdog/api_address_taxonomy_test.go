@@ -12,21 +12,29 @@ import (
 type fakeAddressTaxonomyRepository struct {
 	AddressTaxonomyRepository
 	geoFilter       AddressTaxonomyListFilter
+	operatorFilter  AddressTaxonomyListFilter
+	lineFilter      AddressTaxonomyListFilter
 	createdGeo      GeoDictionaryNode
 	updatedGeo      GeoDictionaryNode
 	expectedVersion uint64
 }
 
-func (r *fakeAddressTaxonomyRepository) ListISPOperators(_ context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]ISPOperator, string, error) {
+func (r *fakeAddressTaxonomyRepository) ListISPOperators(_ context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]ISPOperator, string, int, error) {
+	r.operatorFilter = filter
 	return []ISPOperator{{
 		ID: "operator-a", TenantID: tenantID, FlowISPID: 7, Code: "telecom", Name: "Telecom",
 		Category: "carrier", ASNs: []uint32{4134}, Enabled: true, RowVersion: 1,
-	}}, "", nil
+	}}, "", 1, nil
 }
 
-func (r *fakeAddressTaxonomyRepository) ListGeoDictionary(_ context.Context, _ ID, filter AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, error) {
+func (r *fakeAddressTaxonomyRepository) ListGeoDictionary(_ context.Context, _ ID, filter AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, int, error) {
 	r.geoFilter = filter
-	return []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindCountry, Code: "CN", Name: "China", RowVersion: 1}}, "next", nil
+	return []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindCountry, Code: "CN", Name: "China", RowVersion: 1}}, "next", 3, nil
+}
+
+func (r *fakeAddressTaxonomyRepository) ListGeoLines(_ context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]GeoLine, string, int, error) {
+	r.lineFilter = filter
+	return []GeoLine{{ID: "line-a", TenantID: tenantID, Code: "cn", Name: "China", Enabled: true, RowVersion: 1}}, "", 2, nil
 }
 
 func (r *fakeAddressTaxonomyRepository) GetGeoDictionary(_ context.Context, tenantID, id ID) (GeoDictionaryNode, error) {
@@ -63,9 +71,63 @@ func TestAddressTaxonomyGeoListParsesFilters(t *testing.T) {
 	var result struct {
 		Items      []GeoDictionaryNode `json:"items"`
 		NextCursor string              `json:"next_cursor"`
+		Total      int                 `json:"total"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" {
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" || result.Total != 3 {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestAddressTaxonomyListsParseServerTableContract(t *testing.T) {
+	repo := &fakeAddressTaxonomyRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressTaxonomy: repo})
+
+	for _, tc := range []struct {
+		path   string
+		filter *AddressTaxonomyListFilter
+	}{
+		{"/api/v1/geo/dictionary?q=china&kind=country&enabled=true&sort=kind&order=desc&limit=25&offset=50", &repo.geoFilter},
+		{"/api/v1/network/operators?q=telecom&enabled=false&sort=flow_isp_id&order=asc&limit=50&offset=100", &repo.operatorFilter},
+		{"/api/v1/geo/lines?q=china&parent_id=line-root&enabled=true&sort=parent&order=desc&limit=100&offset=200", &repo.lineFilter},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("path=%s status=%d body=%s", tc.path, response.Code, response.Body.String())
+		}
+		filter := *tc.filter
+		if !filter.TableMode || filter.Sort == "" || filter.Limit < 25 || filter.Offset < 50 || filter.Cursor != "" {
+			t.Fatalf("path=%s filter=%#v", tc.path, filter)
+		}
+		if !strings.Contains(response.Body.String(), `"total":`) || !strings.Contains(response.Body.String(), `"offset":`) {
+			t.Fatalf("path=%s response=%s", tc.path, response.Body.String())
+		}
+	}
+}
+
+func TestAddressTaxonomyListsRejectInvalidServerQueries(t *testing.T) {
+	repo := &fakeAddressTaxonomyRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressTaxonomy: repo})
+	for _, path := range []string{
+		"/api/v1/geo/dictionary?unknown=1",
+		"/api/v1/geo/dictionary?kind=building",
+		"/api/v1/geo/dictionary?enabled=1",
+		"/api/v1/geo/dictionary?sort=parent",
+		"/api/v1/geo/dictionary?order=sideways",
+		"/api/v1/geo/dictionary?limit=501",
+		"/api/v1/geo/dictionary?offset=-1",
+		"/api/v1/geo/dictionary?cursor=abc&sort=name",
+		"/api/v1/network/operators?kind=country",
+		"/api/v1/network/operators?parent_id=geo-a",
+		"/api/v1/network/operators?sort=kind",
+		"/api/v1/geo/lines?kind=country",
+		"/api/v1/geo/lines?sort=category",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 

@@ -34,7 +34,7 @@ func decodeAddressTaxonomyCursor(value string) (addressTaxonomyCursor, error) {
 func normalizeAddressTaxonomyListFilter(filter AddressTaxonomyListFilter) (AddressTaxonomyListFilter, error) {
 	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Kind = strings.ToLower(strings.TrimSpace(filter.Kind))
-	if len(filter.Search) > 255 || (filter.Kind != "" && !validGeoKind(filter.Kind)) {
+	if len(filter.Search) > 255 || filter.Offset < 0 || (filter.Kind != "" && !validGeoKind(filter.Kind)) {
 		return filter, fmt.Errorf("%w: invalid list filter", ErrAddressTaxonomyInvalid)
 	}
 	if filter.Limit <= 0 {
@@ -44,6 +44,34 @@ func normalizeAddressTaxonomyListFilter(filter AddressTaxonomyListFilter) (Addre
 		filter.Limit = 500
 	}
 	return filter, nil
+}
+
+var geoDictionarySortColumns = map[string]string{
+	"":        "sort_order",
+	"order":   "sort_order",
+	"code":    "code",
+	"name":    "name",
+	"kind":    "kind",
+	"enabled": "enabled",
+}
+
+var ispOperatorSortColumns = map[string]string{
+	"":            "sort_order",
+	"order":       "sort_order",
+	"code":        "code",
+	"name":        "name",
+	"flow_isp_id": "flow_isp_id",
+	"category":    "category",
+	"enabled":     "enabled",
+}
+
+var geoLineSortColumns = map[string]string{
+	"":        "sort_order",
+	"order":   "sort_order",
+	"code":    "code",
+	"name":    "name",
+	"parent":  "parent_id",
+	"enabled": "enabled",
 }
 
 const geoDictionaryColumns = `
@@ -61,38 +89,68 @@ func (s *MySQLStore) GetGeoDictionary(ctx context.Context, tenantID, id ID) (Geo
 	return scanGeoDictionaryNode(s.db.QueryRowContext(ctx, `SELECT `+geoDictionaryColumns+` FROM geo_dict WHERE tenant_id = ? AND id = ?`, tenantID, id))
 }
 
-func (s *MySQLStore) ListGeoDictionary(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, error) {
+func (s *MySQLStore) ListGeoDictionary(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, int, error) {
 	filter, err := normalizeAddressTaxonomyListFilter(filter)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
+	}
+	if _, ok := geoDictionarySortColumns[filter.Sort]; !ok {
+		return nil, "", 0, fmt.Errorf("%w: invalid geography sort", ErrAddressTaxonomyInvalid)
 	}
 	if filter.Cursor != "" {
 		if _, err := decodeAddressTaxonomyCursor(filter.Cursor); err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 	}
-	query := `SELECT ` + geoDictionaryColumns + ` FROM geo_dict WHERE tenant_id = ?`
+	where := ` WHERE tenant_id = ?`
 	args := []any{tenantID}
-	query, args = appendAddressTaxonomyFilters(query, args, filter, true, "COALESCE(short_name, '')")
-	query += ` ORDER BY sort_order, name, id LIMIT ?`
-	args = append(args, filter.Limit+1)
+	where, args = appendAddressTaxonomyFilters(where, args, filter, true, "COALESCE(short_name, '')")
+	countWhere := where
+	countArgs := append([]any(nil), args...)
+	if filter.Cursor != "" {
+		countFilter := filter
+		countFilter.Cursor = ""
+		countWhere = ` WHERE tenant_id = ?`
+		countArgs = []any{tenantID}
+		countWhere, countArgs = appendAddressTaxonomyFilters(countWhere, countArgs, countFilter, true, "COALESCE(short_name, '')")
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM geo_dict`+countWhere, countArgs...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + geoDictionaryColumns + ` FROM geo_dict` + where
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, name %s, id %s LIMIT ? OFFSET ?", geoDictionarySortColumns[filter.Sort], direction, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY sort_order, name, id LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]GeoDictionaryNode, 0, filter.Limit)
 	for rows.Next() {
 		item, err := scanGeoDictionaryNode(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
-	return pageGeoDictionary(items, filter.Limit)
+	if filter.TableMode {
+		return items, "", total, nil
+	}
+	items, cursor, err := pageGeoDictionary(items, filter.Limit)
+	return items, cursor, total, err
 }
 
 func appendAddressTaxonomyFilters(query string, args []any, filter AddressTaxonomyListFilter, allowKind bool, thirdSearchColumn string) (string, []any) {
@@ -241,46 +299,71 @@ func (s *MySQLStore) GetISPOperator(ctx context.Context, tenantID, id ID) (ISPOp
 	return scanISPOperator(s.db.QueryRowContext(ctx, `SELECT `+ispOperatorColumns+` FROM isp_operators WHERE tenant_id = ? AND id = ?`, tenantID, id))
 }
 
-func (s *MySQLStore) ListISPOperators(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]ISPOperator, string, error) {
+func (s *MySQLStore) ListISPOperators(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]ISPOperator, string, int, error) {
 	filter, err := normalizeAddressTaxonomyListFilter(filter)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	if filter.Kind != "" || filter.ParentID != "" {
-		return nil, "", fmt.Errorf("%w: operator list does not accept kind or parent_id", ErrAddressTaxonomyInvalid)
+		return nil, "", 0, fmt.Errorf("%w: operator list does not accept kind or parent_id", ErrAddressTaxonomyInvalid)
+	}
+	if _, ok := ispOperatorSortColumns[filter.Sort]; !ok {
+		return nil, "", 0, fmt.Errorf("%w: invalid operator sort", ErrAddressTaxonomyInvalid)
 	}
 	if filter.Cursor != "" {
 		if _, err := decodeAddressTaxonomyCursor(filter.Cursor); err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 	}
-	query := `SELECT ` + ispOperatorColumns + ` FROM isp_operators WHERE tenant_id = ?`
+	where := ` WHERE tenant_id = ?`
 	args := []any{tenantID}
-	query, args = appendAddressTaxonomyFilters(query, args, filter, false, "COALESCE(short_name, '')")
-	query += ` ORDER BY sort_order, name, id LIMIT ?`
-	args = append(args, filter.Limit+1)
+	where, args = appendAddressTaxonomyFilters(where, args, filter, false, "COALESCE(short_name, '')")
+	countFilter := filter
+	countFilter.Cursor = ""
+	countWhere := ` WHERE tenant_id = ?`
+	countArgs := []any{tenantID}
+	countWhere, countArgs = appendAddressTaxonomyFilters(countWhere, countArgs, countFilter, false, "COALESCE(short_name, '')")
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM isp_operators`+countWhere, countArgs...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + ispOperatorColumns + ` FROM isp_operators` + where
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, name %s, id %s LIMIT ? OFFSET ?", ispOperatorSortColumns[filter.Sort], direction, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY sort_order, name, id LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]ISPOperator, 0, filter.Limit)
 	for rows.Next() {
 		item, err := scanISPOperator(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
+	}
+	if filter.TableMode {
+		return items, "", total, nil
 	}
 	if len(items) <= filter.Limit {
-		return items, "", nil
+		return items, "", total, nil
 	}
 	items = items[:filter.Limit]
 	last := items[len(items)-1]
-	return items, encodeAddressTaxonomyCursor(addressTaxonomyCursor{SortOrder: last.SortOrder, Name: last.Name, ID: last.ID}), nil
+	return items, encodeAddressTaxonomyCursor(addressTaxonomyCursor{SortOrder: last.SortOrder, Name: last.Name, ID: last.ID}), total, nil
 }
 
 func (s *MySQLStore) CreateISPOperator(ctx context.Context, operator ISPOperator) (ISPOperator, error) {
@@ -398,46 +481,71 @@ func (s *MySQLStore) GetGeoLine(ctx context.Context, tenantID, id ID) (GeoLine, 
 	return scanGeoLine(s.db.QueryRowContext(ctx, `SELECT `+geoLineColumns+` FROM geo_lines WHERE tenant_id = ? AND id = ?`, tenantID, id))
 }
 
-func (s *MySQLStore) ListGeoLines(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]GeoLine, string, error) {
+func (s *MySQLStore) ListGeoLines(ctx context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]GeoLine, string, int, error) {
 	filter, err := normalizeAddressTaxonomyListFilter(filter)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	if filter.Kind != "" {
-		return nil, "", fmt.Errorf("%w: line list does not accept kind", ErrAddressTaxonomyInvalid)
+		return nil, "", 0, fmt.Errorf("%w: line list does not accept kind", ErrAddressTaxonomyInvalid)
+	}
+	if _, ok := geoLineSortColumns[filter.Sort]; !ok {
+		return nil, "", 0, fmt.Errorf("%w: invalid line sort", ErrAddressTaxonomyInvalid)
 	}
 	if filter.Cursor != "" {
 		if _, err := decodeAddressTaxonomyCursor(filter.Cursor); err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 	}
-	query := `SELECT ` + geoLineColumns + ` FROM geo_lines WHERE tenant_id = ?`
+	where := ` WHERE tenant_id = ?`
 	args := []any{tenantID}
-	query, args = appendAddressTaxonomyFilters(query, args, filter, false, "COALESCE(description, '')")
-	query += ` ORDER BY sort_order, name, id LIMIT ?`
-	args = append(args, filter.Limit+1)
+	where, args = appendAddressTaxonomyFilters(where, args, filter, false, "COALESCE(description, '')")
+	countFilter := filter
+	countFilter.Cursor = ""
+	countWhere := ` WHERE tenant_id = ?`
+	countArgs := []any{tenantID}
+	countWhere, countArgs = appendAddressTaxonomyFilters(countWhere, countArgs, countFilter, false, "COALESCE(description, '')")
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM geo_lines`+countWhere, countArgs...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + geoLineColumns + ` FROM geo_lines` + where
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, name %s, id %s LIMIT ? OFFSET ?", geoLineSortColumns[filter.Sort], direction, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY sort_order, name, id LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]GeoLine, 0, filter.Limit)
 	for rows.Next() {
 		item, err := scanGeoLine(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
+	}
+	if filter.TableMode {
+		return items, "", total, nil
 	}
 	if len(items) <= filter.Limit {
-		return items, "", nil
+		return items, "", total, nil
 	}
 	items = items[:filter.Limit]
 	last := items[len(items)-1]
-	return items, encodeAddressTaxonomyCursor(addressTaxonomyCursor{SortOrder: last.SortOrder, Name: last.Name, ID: last.ID}), nil
+	return items, encodeAddressTaxonomyCursor(addressTaxonomyCursor{SortOrder: last.SortOrder, Name: last.Name, ID: last.ID}), total, nil
 }
 
 func (s *MySQLStore) CreateGeoLine(ctx context.Context, line GeoLine) (GeoLine, error) {

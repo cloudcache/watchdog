@@ -53,6 +53,91 @@ func TestMySQLAddressServerTables(t *testing.T) {
 	}
 }
 
+func TestMySQLAddressTaxonomyServerTables(t *testing.T) {
+	db, tenant := operationJobTestDB(t)
+	store := NewMySQLStore(db)
+	ctx := context.Background()
+	// Operator identity rows intentionally outlive ordinary operator deletion.
+	// Remove the business rows before operationJobTestDB deletes the tenant so
+	// this test does not depend on the separately tracked PLAT-DB-01 cascade fix.
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM isp_operators WHERE tenant_id = ?`, tenant)
+	})
+
+	continent, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{
+		TenantID: tenant, Kind: GeoKindContinent, Code: "AS", Name: "Asia", SortOrder: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	country, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{
+		TenantID: tenant, Kind: GeoKindCountry, Code: "CN", Name: "China", ParentID: continent.ID, SortOrder: 2, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	geos, cursor, total, err := store.ListGeoDictionary(ctx, tenant, AddressTaxonomyListFilter{
+		Search: "china", Kind: GeoKindCountry, Enabled: boolPointer(false), Sort: "name", Desc: true, Limit: 25, TableMode: true,
+	})
+	if err != nil || cursor != "" || total != 1 || len(geos) != 1 || geos[0].ID != country.ID {
+		t.Fatalf("geo page=%v cursor=%q total=%d err=%v", taxonomyGeoNames(geos), cursor, total, err)
+	}
+
+	for _, operator := range []ISPOperator{
+		{TenantID: tenant, Code: "telecom", Name: "Telecom", Category: "carrier", ASNs: []uint32{4134}, SortOrder: 2, Enabled: true},
+		{TenantID: tenant, Code: "mobile", Name: "Mobile", Category: "carrier", ASNs: []uint32{9808}, SortOrder: 1, Enabled: false},
+	} {
+		if _, err := store.CreateISPOperator(ctx, operator); err != nil {
+			t.Fatalf("seed operator %s: %v", operator.Code, err)
+		}
+	}
+	operators, cursor, total, err := store.ListISPOperators(ctx, tenant, AddressTaxonomyListFilter{
+		Enabled: boolPointer(false), Sort: "flow_isp_id", Desc: true, Limit: 25, TableMode: true,
+	})
+	if err != nil || cursor != "" || total != 1 || len(operators) != 1 || operators[0].Code != "mobile" {
+		t.Fatalf("operator page=%v cursor=%q total=%d err=%v", taxonomyOperatorNames(operators), cursor, total, err)
+	}
+
+	line, err := store.CreateGeoLine(ctx, GeoLine{
+		TenantID: tenant, Code: "china", Name: "China line", GeoSelector: GeoLineSelector{GeoNodeIDs: []ID{country.ID}}, SortOrder: 3, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, cursor, total, err := store.ListGeoLines(ctx, tenant, AddressTaxonomyListFilter{
+		Search: "china", Enabled: boolPointer(true), Sort: "code", Limit: 25, TableMode: true,
+	})
+	if err != nil || cursor != "" || total != 1 || len(lines) != 1 || lines[0].ID != line.ID {
+		t.Fatalf("line page=%v cursor=%q total=%d err=%v", taxonomyLineNames(lines), cursor, total, err)
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
+
+func taxonomyGeoNames(items []GeoDictionaryNode) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Name)
+	}
+	return values
+}
+
+func taxonomyOperatorNames(items []ISPOperator) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Name)
+	}
+	return values
+}
+
+func taxonomyLineNames(items []GeoLine) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Name)
+	}
+	return values
+}
+
 func addressPrefixCIDRs(prefixes []AddressPrefix) []string {
 	values := make([]string, 0, len(prefixes))
 	for _, prefix := range prefixes {

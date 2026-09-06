@@ -104,11 +104,11 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	if _, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{TenantID: tenantID, Kind: GeoKindContinent, Code: "CN", ParentID: region.ID, Name: "Invalid"}); !errors.Is(err, ErrAddressTaxonomyInvalid) {
 		t.Fatalf("invalid parent kind error = %v", err)
 	}
-	items, cursor, err := store.ListGeoDictionary(ctx, tenantID, AddressTaxonomyListFilter{Search: "a", Limit: 1})
+	items, cursor, _, err := store.ListGeoDictionary(ctx, tenantID, AddressTaxonomyListFilter{Search: "a", Limit: 1})
 	if err != nil || len(items) != 1 || cursor == "" {
 		t.Fatalf("geo first page=%#v cursor=%q err=%v", items, cursor, err)
 	}
-	items, _, err = store.ListGeoDictionary(ctx, tenantID, AddressTaxonomyListFilter{Search: "a", Limit: 1, Cursor: cursor})
+	items, _, _, err = store.ListGeoDictionary(ctx, tenantID, AddressTaxonomyListFilter{Search: "a", Limit: 1, Cursor: cursor})
 	if err != nil || len(items) != 1 {
 		t.Fatalf("geo second page=%#v err=%v", items, err)
 	}
@@ -125,7 +125,7 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	if err != nil || operator.FlowISPID == 0 || len(operator.ASNs) != 2 {
 		t.Fatalf("operator=%#v err=%v", operator, err)
 	}
-	operators, _, err := store.ListISPOperators(ctx, tenantID, AddressTaxonomyListFilter{Search: "telecom", Limit: 10})
+	operators, _, _, err := store.ListISPOperators(ctx, tenantID, AddressTaxonomyListFilter{Search: "telecom", Limit: 10})
 	if err != nil || len(operators) != 1 {
 		t.Fatalf("operators=%#v err=%v", operators, err)
 	}
@@ -173,7 +173,7 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	if _, err := store.UpdateGeoLine(ctx, root, root.RowVersion); !errors.Is(err, ErrAddressTaxonomyCycle) {
 		t.Fatalf("line cycle error = %v", err)
 	}
-	lines, _, err := store.ListGeoLines(ctx, tenantID, AddressTaxonomyListFilter{ParentID: root.ID, Limit: 10})
+	lines, _, _, err := store.ListGeoLines(ctx, tenantID, AddressTaxonomyListFilter{ParentID: root.ID, Limit: 10})
 	if err != nil || len(lines) != 1 || lines[0].ID != child.ID {
 		t.Fatalf("child lines=%#v err=%v", lines, err)
 	}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
@@ -70,12 +69,12 @@ type geoLineInput struct {
 
 func (api addressTaxonomyAPI) listGeo(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	filter, ok := parseAddressTaxonomyListFilter(w, r, true, true)
+	filter, ok := parseAddressTaxonomyListFilter(w, r, true, true, geoDictionarySortColumns)
 	if !ok {
 		return
 	}
-	items, cursor, err := api.repo.ListGeoDictionary(r.Context(), auth.TenantID, filter)
-	writeAddressTaxonomyList(w, items, cursor, err)
+	items, cursor, total, err := api.repo.ListGeoDictionary(r.Context(), auth.TenantID, filter)
+	writeAddressTaxonomyList(w, items, cursor, total, filter, err)
 }
 
 func (api addressTaxonomyAPI) getGeo(w http.ResponseWriter, r *http.Request) {
@@ -169,12 +168,12 @@ func (api addressTaxonomyAPI) deleteGeo(w http.ResponseWriter, r *http.Request) 
 
 func (api addressTaxonomyAPI) listOperators(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	filter, ok := parseAddressTaxonomyListFilter(w, r, false, false)
+	filter, ok := parseAddressTaxonomyListFilter(w, r, false, false, ispOperatorSortColumns)
 	if !ok {
 		return
 	}
-	items, cursor, err := api.repo.ListISPOperators(r.Context(), auth.TenantID, filter)
-	writeAddressTaxonomyList(w, items, cursor, err)
+	items, cursor, total, err := api.repo.ListISPOperators(r.Context(), auth.TenantID, filter)
+	writeAddressTaxonomyList(w, items, cursor, total, filter, err)
 }
 
 func (api addressTaxonomyAPI) getOperator(w http.ResponseWriter, r *http.Request) {
@@ -267,12 +266,12 @@ func (api addressTaxonomyAPI) deleteOperator(w http.ResponseWriter, r *http.Requ
 
 func (api addressTaxonomyAPI) listLines(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
-	filter, ok := parseAddressTaxonomyListFilter(w, r, false, true)
+	filter, ok := parseAddressTaxonomyListFilter(w, r, false, true, geoLineSortColumns)
 	if !ok {
 		return
 	}
-	items, cursor, err := api.repo.ListGeoLines(r.Context(), auth.TenantID, filter)
-	writeAddressTaxonomyList(w, items, cursor, err)
+	items, cursor, total, err := api.repo.ListGeoLines(r.Context(), auth.TenantID, filter)
+	writeAddressTaxonomyList(w, items, cursor, total, filter, err)
 }
 
 func (api addressTaxonomyAPI) getLine(w http.ResponseWriter, r *http.Request) {
@@ -369,36 +368,73 @@ func (api addressTaxonomyAPI) deleteLine(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func parseAddressTaxonomyListFilter(w http.ResponseWriter, r *http.Request, allowKind, allowParent bool) (AddressTaxonomyListFilter, bool) {
+func parseAddressTaxonomyListFilter(w http.ResponseWriter, r *http.Request, allowKind, allowParent bool, sortColumns map[string]string) (AddressTaxonomyListFilter, bool) {
 	query := r.URL.Query()
-	filter := AddressTaxonomyListFilter{Search: query.Get("q"), Cursor: query.Get("cursor")}
+	for key := range query {
+		switch key {
+		case "q", "kind", "parent_id", "enabled", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return AddressTaxonomyListFilter{}, false
+		}
+	}
+	filter := AddressTaxonomyListFilter{
+		Search: strings.TrimSpace(query.Get("q")), Cursor: strings.TrimSpace(query.Get("cursor")), Sort: strings.TrimSpace(query.Get("sort")),
+	}
+	if len(filter.Search) > 255 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "q must be at most 255 characters", nil)
+		return filter, false
+	}
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return filter, false
+	}
+	if _, ok := sortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid taxonomy sort", nil)
+		return filter, false
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return filter, false
+	}
+	filter.Desc = order == "desc"
 	if allowKind {
-		filter.Kind = query.Get("kind")
-	} else if query.Get("kind") != "" {
+		filter.Kind = strings.ToLower(strings.TrimSpace(query.Get("kind")))
+		if filter.Kind != "" && !validGeoKind(filter.Kind) {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid geography kind", nil)
+			return filter, false
+		}
+	} else if query.Has("kind") {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "kind is not supported by this list", nil)
 		return filter, false
 	}
 	if allowParent {
 		filter.ParentID = ID(strings.TrimSpace(query.Get("parent_id")))
-	} else if query.Get("parent_id") != "" {
+	} else if query.Has("parent_id") {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "parent_id is not supported by this list", nil)
 		return filter, false
 	}
 	if raw := strings.TrimSpace(query.Get("enabled")); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
+		raw = strings.ToLower(raw)
+		if raw != "true" && raw != "false" {
 			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "enabled must be true or false", nil)
 			return filter, false
 		}
+		value := raw == "true"
 		filter.Enabled = &value
 	}
-	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
-			return filter, false
-		}
-		filter.Limit = value
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return filter, false
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return filter, false
 	}
 	return filter, true
 }
@@ -425,7 +461,7 @@ func requireAddressTaxonomyIfMatch(w http.ResponseWriter, r *http.Request) (uint
 	return parseUserPreferencesIfMatch(w, r)
 }
 
-func writeAddressTaxonomyList[T any](w http.ResponseWriter, items []T, cursor string, err error) {
+func writeAddressTaxonomyList[T any](w http.ResponseWriter, items []T, cursor string, total int, filter AddressTaxonomyListFilter, err error) {
 	if err != nil {
 		writeAddressTaxonomyError(w, err)
 		return
@@ -433,7 +469,11 @@ func writeAddressTaxonomyList[T any](w http.ResponseWriter, items []T, cursor st
 	if items == nil {
 		items = []T{}
 	}
-	response := map[string]any{"items": items}
+	response := map[string]any{"items": items, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}

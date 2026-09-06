@@ -78,26 +78,30 @@ type GeoLine struct {
 }
 
 type AddressTaxonomyListFilter struct {
-	Search   string
-	Kind     string
-	ParentID ID
-	Enabled  *bool
-	Limit    int
-	Cursor   string
+	Search    string
+	Kind      string
+	ParentID  ID
+	Enabled   *bool
+	Limit     int
+	Offset    int
+	Cursor    string
+	Sort      string
+	Desc      bool
+	TableMode bool
 }
 
 type AddressTaxonomyRepository interface {
-	ListGeoDictionary(context.Context, ID, AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, error)
+	ListGeoDictionary(context.Context, ID, AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, int, error)
 	GetGeoDictionary(context.Context, ID, ID) (GeoDictionaryNode, error)
 	CreateGeoDictionary(context.Context, GeoDictionaryNode) (GeoDictionaryNode, error)
 	UpdateGeoDictionary(context.Context, GeoDictionaryNode, uint64) (GeoDictionaryNode, error)
 	DeleteGeoDictionary(context.Context, ID, ID, uint64) error
-	ListISPOperators(context.Context, ID, AddressTaxonomyListFilter) ([]ISPOperator, string, error)
+	ListISPOperators(context.Context, ID, AddressTaxonomyListFilter) ([]ISPOperator, string, int, error)
 	GetISPOperator(context.Context, ID, ID) (ISPOperator, error)
 	CreateISPOperator(context.Context, ISPOperator) (ISPOperator, error)
 	UpdateISPOperator(context.Context, ISPOperator, uint64) (ISPOperator, error)
 	DeleteISPOperator(context.Context, ID, ID, uint64) error
-	ListGeoLines(context.Context, ID, AddressTaxonomyListFilter) ([]GeoLine, string, error)
+	ListGeoLines(context.Context, ID, AddressTaxonomyListFilter) ([]GeoLine, string, int, error)
 	GetGeoLine(context.Context, ID, ID) (GeoLine, error)
 	CreateGeoLine(context.Context, GeoLine) (GeoLine, error)
 	UpdateGeoLine(context.Context, GeoLine, uint64) (GeoLine, error)

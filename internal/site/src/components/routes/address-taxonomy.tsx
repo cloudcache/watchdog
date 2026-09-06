@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { GitBranchIcon, MapIcon, NetworkIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { GitBranchIcon, MapIcon, NetworkIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -54,7 +54,7 @@ type GeoLine = {
 }
 
 type TaxonomyItem = GeoNode | Operator | GeoLine
-type ListResponse<T> = { items?: T[]; next_cursor?: string }
+type ListResponse<T> = { items?: T[]; next_cursor?: string; total?: number }
 
 type TaxonomyForm = {
 	id: string
@@ -76,7 +76,6 @@ type TaxonomyForm = {
 	enabled: boolean
 }
 
-const pageSize = 100
 const emptyForm: TaxonomyForm = {
 	id: "",
 	rowVersion: 0,
@@ -106,13 +105,16 @@ const endpointByKind: Record<TaxonomyKind, string> = {
 export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 	const { t } = useLingui()
 	const [items, setItems] = useState<TaxonomyItem[]>([])
-	const [nextCursor, setNextCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
-	const [geoKind, setGeoKind] = useState("all")
-	const [enabled, setEnabled] = useState("all")
+	const [geoKind, setGeoKind] = useState("")
+	const [enabled, setEnabled] = useState("")
+	const [sort, setSort] = useState("order:asc")
+	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState<TaxonomyForm>(emptyForm)
@@ -120,9 +122,13 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 	const [operatorOptions, setOperatorOptions] = useState<Operator[]>([])
 	const [lineOptions, setLineOptions] = useState<GeoLine[]>([])
 	const [setOptions, setSetOptions] = useState<Array<{ id: string; name: string }>>([])
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
 
@@ -143,38 +149,52 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 		}
 	}, [t])
 
-	const fetchPage = useCallback(
-		async (cursor: string, append: boolean) => {
-			append ? setLoadingMore(true) : setLoading(true)
-			setError("")
-			try {
-				const data = await pb.send<ListResponse<TaxonomyItem>>(endpointByKind[kind], {
-					query: {
-						q: debouncedSearch || undefined,
-						kind: kind === "geography" && geoKind !== "all" ? geoKind : undefined,
-						enabled: enabled === "all" ? undefined : enabled,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setItems((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-				if (!append) await loadReferences()
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load`)
-			} finally {
-				append ? setLoadingMore(false) : setLoading(false)
-			}
-		},
-		[debouncedSearch, enabled, geoKind, kind, loadReferences, t]
-	)
+	const fetchPage = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<ListResponse<TaxonomyItem>>(endpointByKind[kind], {
+				query: {
+					q: debouncedSearch || undefined,
+					kind: kind === "geography" && geoKind ? geoKind : undefined,
+					enabled: enabled || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setItems(data.items ?? [])
+			setTotal(data.total ?? 0)
+			await loadReferences()
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setItems([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [debouncedSearch, enabled, geoKind, kind, loadReferences, page, pageSize, reloadKey, sort, t])
+
+	useEffect(() => {
+		fetchPage()
+	}, [fetchPage])
 
 	useEffect(() => {
 		setItems([])
+		setPage(0)
+		setSearch("")
+		setDebouncedSearch("")
+		setGeoKind("")
+		setEnabled("")
+		setSort("order:asc")
 		setForm(emptyForm)
 		setShowForm(false)
-		fetchPage("", false)
-	}, [fetchPage])
+	}, [kind])
 
 	const edit = useCallback(
 		(item: TaxonomyItem) => {
@@ -276,7 +296,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 			})
 			setShowForm(false)
 			setForm(emptyForm)
-			await fetchPage("", false)
+			await fetchPage()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save`)
 		}
@@ -291,7 +311,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					method: "DELETE",
 					headers: { "If-Match": `"${item.row_version}"` },
 				})
-				await fetchPage("", false)
+				await fetchPage()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : t`Failed to delete`)
 			}
@@ -355,6 +375,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					operator: names.operators.get(line.operator_id ?? "") ?? "—",
 					addressSet: names.sets.get(line.address_set_id ?? "") ?? "—",
 					enabled: yesNo(line.enabled),
+					order: line.sort_order,
 					edit: t`Edit`,
 					delete: t`Delete`,
 					item: line,
@@ -364,6 +385,57 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 	)
 
 	const columns = useMemo(() => taxonomyColumns(kind, t), [kind, t])
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(() => {
+		const options: Record<string, Array<{ value: string; label?: string }>> = {
+			enabled: [
+				{ value: "true", label: t`Enabled` },
+				{ value: "false", label: t`Disabled` },
+			],
+		}
+		const selected: Record<string, unknown[]> = { enabled: enabled ? [enabled] : [] }
+		const selection: Record<string, "single"> = { enabled: "single" }
+		if (kind === "geography") {
+			options.kind = ["continent", "region", "country", "province", "city"].map((value) => ({ value }))
+			selected.kind = geoKind ? [geoKind] : []
+			selection.kind = "single"
+		}
+		return {
+			options,
+			selected,
+			selection,
+			onColumnFilterChange: (field: string, values: unknown[]) =>
+				resetPage(() => {
+					const value = values.length > 0 ? String(values[0]) : ""
+					if (field === "kind") setGeoKind(value)
+					if (field === "enabled") setEnabled(value)
+				}),
+			onClearAll: () =>
+				resetPage(() => {
+					setGeoKind("")
+					setEnabled("")
+				}),
+		}
+	}, [enabled, geoKind, kind, t])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => {
+		const fields: Record<string, string> = { code: "code", name: "name", order: "order", enabled: "enabled" }
+		if (kind === "geography") fields.kind = "kind"
+		if (kind === "operators") {
+			fields.flowISPID = "flow_isp_id"
+			fields.category = "category"
+		}
+		if (kind === "lines") fields.parent = "parent"
+		return {
+			field: sortField,
+			direction: sortDirection,
+			fields,
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}
+	}, [kind, sortDirection, sortField])
 	const Icon = kind === "geography" ? MapIcon : kind === "operators" ? NetworkIcon : GitBranchIcon
 
 	return (
@@ -374,7 +446,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					<h2 className="text-lg font-semibold">{taxonomyTitle(kind)}</h2>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm" onClick={() => fetchPage("", false)}>
+					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
@@ -389,50 +461,6 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 						<Trans>Add</Trans>
 					</Button>
 				</div>
-			</div>
-			<div className="flex flex-wrap gap-2">
-				<div className="relative min-w-64 max-w-sm flex-1">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						className="pl-9"
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						placeholder={t`Search code or name...`}
-					/>
-				</div>
-				{kind === "geography" ? (
-					<Select value={geoKind} onValueChange={setGeoKind}>
-						<SelectTrigger className="w-40">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">
-								<Trans>All levels</Trans>
-							</SelectItem>
-							{["continent", "region", "country", "province", "city"].map((value) => (
-								<SelectItem key={value} value={value}>
-									{value}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				) : null}
-				<Select value={enabled} onValueChange={setEnabled}>
-					<SelectTrigger className="w-36">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All states</Trans>
-						</SelectItem>
-						<SelectItem value="true">
-							<Trans>Enabled</Trans>
-						</SelectItem>
-						<SelectItem value="false">
-							<Trans>Disabled</Trans>
-						</SelectItem>
-					</SelectContent>
-				</Select>
 			</div>
 			{showForm ? (
 				<TaxonomyEditor
@@ -458,19 +486,25 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 				columns={columns}
 				loading={loading}
 				emptyText={t`No taxonomy entries found.`}
-				showSearch={false}
+				searchValue={search}
+				onSearchChange={setSearch}
+				searchPlaceholder={t`Search code or name...`}
 				height={440}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+				}}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				onCellClick={(record, field) => {
 					const item = record.item as TaxonomyItem
 					if (field === "edit") edit(item)
 					if (field === "delete") remove(item)
 				}}
 			/>
-			{nextCursor ? (
-				<Button variant="outline" onClick={() => fetchPage(nextCursor, true)} disabled={loadingMore}>
-					{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-				</Button>
-			) : null}
 		</div>
 	)
 })
@@ -759,6 +793,7 @@ function taxonomyColumns(kind: TaxonomyKind, t: (message: TemplateStringsArray) 
 	return [
 		...common,
 		...specific,
+		{ field: "order", title: t`Sort order`, width: 100, style: denseCellStyle() },
 		{ field: "enabled", title: t`Enabled`, width: 100, style: denseCellStyle() },
 		{ field: "edit", title: t`Edit`, width: 80, filter: false, style: actionCellStyle("#2563eb") },
 		{ field: "delete", title: t`Delete`, width: 80, filter: false, style: actionCellStyle("#dc2626") },
