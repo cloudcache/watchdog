@@ -23,6 +23,7 @@ const (
 	defaultExportDir                   = "exports"
 	defaultExportWorkerInterval        = 30 * time.Second
 	defaultExportWorkerBatch           = 10
+	defaultExportWorkerConcurrency     = 2
 	defaultSNMPCollectorInterval       = time.Minute
 	defaultSNMPCollectorPollLimit      = 500
 	defaultSNMPDiscoveryInterval       = 30 * time.Second
@@ -160,10 +161,11 @@ type SFlowCollectorConfig struct {
 }
 
 type ExportConfig struct {
-	Dir            string        `yaml:"dir"`
-	WorkerInterval time.Duration `yaml:"worker_interval"`
-	WorkerBatch    int           `yaml:"worker_batch"`
-	Metric         string        `yaml:"metric"`
+	Dir               string        `yaml:"dir"`
+	WorkerInterval    time.Duration `yaml:"worker_interval"`
+	WorkerBatch       int           `yaml:"worker_batch"`
+	WorkerConcurrency int           `yaml:"worker_concurrency"`
+	Metric            string        `yaml:"metric"`
 }
 
 type AddressLibraryConfig struct {
@@ -264,10 +266,11 @@ func defaultBackendConfig() BackendConfig {
 			ClickHouseConcurrent:      defaultQueryCHMaxConcurrent,
 		},
 		Export: ExportConfig{
-			Dir:            defaultExportDir,
-			WorkerInterval: defaultExportWorkerInterval,
-			WorkerBatch:    defaultExportWorkerBatch,
-			Metric:         MetricSNMPIfInBps,
+			Dir:               defaultExportDir,
+			WorkerInterval:    defaultExportWorkerInterval,
+			WorkerBatch:       defaultExportWorkerBatch,
+			WorkerConcurrency: defaultExportWorkerConcurrency,
+			Metric:            MetricSNMPIfInBps,
 		},
 		AddressLibrary: AddressLibraryConfig{
 			Dir: defaultAddressLibraryDir, MaxUploadBytes: DefaultAddressArtifactMaxBytes,
@@ -471,6 +474,9 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	if cfg.Export.WorkerBatch, err = getEnvInt("WATCHDOG_EXPORT_WORKER_BATCH", cfg.Export.WorkerBatch, 1); err != nil {
+		return err
+	}
+	if cfg.Export.WorkerConcurrency, err = getEnvInt("WATCHDOG_EXPORT_WORKER_CONCURRENCY", cfg.Export.WorkerConcurrency, 1); err != nil {
 		return err
 	}
 	cfg.Export.Metric = getEnv("WATCHDOG_EXPORT_METRIC", cfg.Export.Metric)
@@ -747,6 +753,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.Export.Dir == "" || cfg.Export.WorkerInterval <= 0 || cfg.Export.WorkerBatch <= 0 {
 		return errors.New("export dir, worker_interval, and worker_batch must be configured with positive worker values")
+	}
+	if cfg.Export.WorkerConcurrency < 1 || cfg.Export.WorkerConcurrency > 32 {
+		return errors.New("export.worker_concurrency must be between 1 and 32")
 	}
 	if cfg.Export.Metric != MetricSNMPIfInBps && cfg.Export.Metric != MetricSNMPIfOutBps {
 		return fmt.Errorf("export.metric must be %q or %q", MetricSNMPIfInBps, MetricSNMPIfOutBps)

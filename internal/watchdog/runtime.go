@@ -33,7 +33,7 @@ type BackendRuntime struct {
 	Registries         *PlatformRegistries
 	FlowGeo            *FlowGeoService
 	MetricsClient      VictoriaMetricsClient
-	ExportStore        DiskCSVExportStore
+	ExportStore        DiskExportStore
 	AddressArtifacts   DiskAddressArtifactStore
 	DimensionObjects   DiskDimensionObjectStore
 	AddressDimensions  *MySQLAddressDimensionPublisher
@@ -81,7 +81,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		log.Printf("watchdog mysql migrations applied=%v current=%s", migrationResult.Applied, migrationResult.CurrentVersion)
 	}
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
-	exportStore := DiskCSVExportStore{Dir: cfg.Export.Dir}
+	exportStore := DiskExportStore{Dir: cfg.Export.Dir}
 	addressArtifacts := DiskAddressArtifactStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxUploadBytes}
 	dimensionObjects := DiskDimensionObjectStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: 64 << 20}
 	addressDimensions, err := NewMySQLAddressDimensionPublisher(store, dimensionObjects)
@@ -171,14 +171,15 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		runtime.CollectorPrincipals = principalService
 		runtime.collectorPrincipalProvider, _ = provider.(collectorPrincipalRuntimeProvider)
 	}
+	var exportData ExportDataProvider = VictoriaMetricsExportDataProvider{
+		Client: metricsClient, Metric: cfg.Export.Metric, Network: store, CollectionStep: cfg.SNMPCollector.Interval,
+	}
+	if runtime.QueryGateway != nil {
+		exportData = QueryGatewayExportDataProvider{Gateway: runtime.QueryGateway}
+	}
 	runtime.ExportWorker = ExportWorker{
-		Repo: store,
-		Data: VictoriaMetricsExportDataProvider{
-			Client:         metricsClient,
-			Metric:         cfg.Export.Metric,
-			Network:        store,
-			CollectionStep: cfg.SNMPCollector.Interval,
-		},
+		Repo:    store,
+		Data:    exportData,
 		Writer:  exportStore,
 		Network: store,
 		CompletenessPolicy: func(task ExportTask) CompletenessPolicy {
@@ -267,6 +268,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		Network:                r.Store,
 		Exports:                r.Store,
 		ExportFiles:            r.ExportStore,
+		ExportMetric:           r.Config.Export.Metric,
+		ExportCollectionStep:   r.Config.SNMPCollector.Interval,
 		Billing:                r.Store,
 		AggregateGraphs:        r.Store,
 		Dashboards:             r.Store,
@@ -473,6 +476,21 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			Concurrency: 1, LeaseFor: 5 * time.Minute, MaxAttempts: 3, RetryBase: 30 * time.Second,
 		}); err != nil {
 			return err
+		}
+		if r.QueryGateway != nil {
+			if err := registry.Register(OperationJobRegistration{
+				JobType: ExportExecutionJobType,
+				Handler: NewExportExecutionJobHandler(r.Store, r.ExportWorker, ExportExecutionJobDependencies{
+					Authorization: r.Store,
+					Network:       r.Store,
+				}),
+				Concurrency: r.Config.Export.WorkerConcurrency,
+				LeaseFor:    5 * time.Minute,
+				MaxAttempts: 5,
+				RetryBase:   30 * time.Second,
+			}); err != nil {
+				return err
+			}
 		}
 		if r.FlowRollupRunner != nil {
 			if err := registry.Register(OperationJobRegistration{

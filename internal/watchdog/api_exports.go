@@ -3,11 +3,15 @@ package watchdog
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +22,10 @@ type exportAPI struct {
 	files   ExportFileReader
 	network NetworkRepository
 	audit   AuditRepository
+	jobs    OperationJobRepository
+	gateway *QueryGateway
+	metric  string
+	step    time.Duration
 }
 
 func (api exportAPI) recordAudit(ctx context.Context, auth AuthContext, action string, exportID ID, details map[string]any) {
@@ -30,11 +38,12 @@ func (api exportAPI) recordAudit(ctx context.Context, auth AuthContext, action s
 	})
 }
 
-func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository, audit AuditRepository) {
-	api := exportAPI{repo: repo, files: files, network: network, audit: audit}
+func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository, audit AuditRepository, jobs OperationJobRepository, gateway *QueryGateway, metric string, collectionStep time.Duration) {
+	api := exportAPI{repo: repo, files: files, network: network, audit: audit, jobs: jobs, gateway: gateway, metric: metric, step: collectionStep}
 	mux.Handle("POST /api/v1/exports", auth(http.HandlerFunc(api.create)))
 	mux.Handle("GET /api/v1/exports", auth(http.HandlerFunc(api.list)))
 	mux.Handle("GET /api/v1/exports/{export_id}", auth(http.HandlerFunc(api.get)))
+	mux.Handle("POST /api/v1/exports/{export_id}/cancel", auth(http.HandlerFunc(api.cancel)))
 	mux.Handle("POST /api/v1/exports/{export_id}/retry", auth(http.HandlerFunc(api.retry)))
 	mux.Handle("GET /api/v1/exports/{export_id}/download", auth(http.HandlerFunc(api.download)))
 }
@@ -66,6 +75,7 @@ func (api exportAPI) create(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	task = normalizeExportTask(task)
 	if err := ValidateExportRequest(ExportRequestValidation{
 		Task:    task,
 		Access:  exportAccessRequest(auth, task),
@@ -75,11 +85,20 @@ func (api exportAPI) create(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	task, err = prepareExportExecutionTask(r.Context(), api.gateway, api.network, auth, api.metric, api.step, task)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
 	created, err := api.repo.CreateExportTask(r.Context(), task)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	api.recordAudit(r.Context(), auth, "export.created", created.ID, map[string]any{
+		"dataset_key": created.DatasetKey, "value_layer": created.ValueLayer, "format": created.Format,
+		"query_hash": created.QueryHash, "operation_job_id": created.OperationJobID,
+	})
 	WriteAPIJSON(w, http.StatusCreated, created)
 }
 
@@ -137,12 +156,12 @@ func (api exportAPI) retry(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
 		return
 	}
-	if !auth.IsAdmin && task.CreatedBy != auth.UserID {
+	if !api.authorizeCurrent(auth, task) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	if task.Status != ExportStatusFailed {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "Only failed exports can be retried", nil)
+	if task.Status != ExportStatusFailed && task.Status != ExportStatusCanceled {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "Only failed or canceled exports can be retried", nil)
 		return
 	}
 	if err := api.repo.RetryExportTask(r.Context(), auth.TenantID, task.ID); err != nil {
@@ -154,7 +173,40 @@ func (api exportAPI) retry(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
 		return
 	}
+	api.recordAudit(r.Context(), auth, "export.retried", task.ID, map[string]any{"operation_job_id": task.OperationJobID})
 	WriteAPIJSON(w, http.StatusOK, task)
+}
+
+func (api exportAPI) cancel(w http.ResponseWriter, r *http.Request) {
+	if api.jobs == nil {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Export cancellation is not configured", nil)
+		return
+	}
+	auth, _ := AuthFromContext(r.Context())
+	task, err := api.repo.GetExportTask(r.Context(), auth.TenantID, ID(r.PathValue("export_id")))
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
+		return
+	}
+	if !api.authorizeCurrent(auth, task) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	if task.ContractVersion != ExportExecutionContractVersion || task.OperationJobID == "" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "Legacy exports cannot be canceled", nil)
+		return
+	}
+	if err := api.jobs.RequestOperationJobCancel(r.Context(), auth.TenantID, task.OperationJobID); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	api.recordAudit(r.Context(), auth, "export.cancel_requested", task.ID, map[string]any{"operation_job_id": task.OperationJobID})
+	updated, err := api.repo.GetExportTask(r.Context(), auth.TenantID, task.ID)
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, updated)
 }
 
 func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +220,7 @@ func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
 		return
 	}
-	if !auth.IsAdmin && task.CreatedBy != auth.UserID {
+	if !api.authorizeCurrent(auth, task) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
@@ -185,13 +237,35 @@ func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export file not found", nil)
 		return
 	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	checksum := sha256.Sum256(data)
+	actualChecksum := hex.EncodeToString(checksum[:])
+	if task.ContractVersion == ExportExecutionContractVersion {
+		if task.SizeBytes != int64(len(data)) || task.Checksum == "" || !strings.EqualFold(task.Checksum, actualChecksum) {
+			WriteAPIError(w, http.StatusConflict, APIErrorCode("export_integrity_failed"), "Export artifact integrity check failed", nil)
+			return
+		}
+		if task.ArtifactSchemaVersion == 0 || task.ContentType == "" || (contentType != "" && contentType != task.ContentType) {
+			WriteAPIError(w, http.StatusConflict, APIErrorCode("export_metadata_invalid"), "Export artifact metadata is invalid", nil)
+			return
+		}
+		contentType = task.ContentType
+	} else {
+		if task.Checksum != "" && !strings.EqualFold(task.Checksum, actualChecksum) {
+			WriteAPIError(w, http.StatusConflict, APIErrorCode("export_integrity_failed"), "Export artifact integrity check failed", nil)
+			return
+		}
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
 	}
 	// Record who downloaded which export (download audit trail).
 	api.recordAudit(r.Context(), auth, "export.downloaded", task.ID, nil)
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+string(task.ID)+`.csv"`)
+	extension := string(task.Format)
+	if extension != string(ExportFormatCSV) && extension != string(ExportFormatParquet) {
+		extension = "bin"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.%s"`, task.ID, extension))
 	if task.Checksum != "" {
 		w.Header().Set("X-Checksum-SHA256", task.Checksum)
 	}
@@ -203,10 +277,36 @@ func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
 func decodeExportTaskRequest(r *http.Request) (ExportTask, error) {
 	defer r.Body.Close()
 	var task ExportTask
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&task); err != nil {
+		return ExportTask{}, err
+	}
+	if err := ensureExportJSONEOF(decoder); err != nil {
 		return ExportTask{}, err
 	}
 	return task, nil
+}
+
+func ensureExportJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request must contain exactly one JSON object")
+		}
+		return err
+	}
+	return nil
+}
+
+func (api exportAPI) authorizeCurrent(auth AuthContext, task ExportTask) bool {
+	if !auth.IsAdmin && task.CreatedBy != auth.UserID {
+		return false
+	}
+	if task.ValueLayer == "" {
+		task.ValueLayer = inferExportValueLayer(task)
+	}
+	return CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin)
 }
 
 func newExportTaskID() (ID, error) {

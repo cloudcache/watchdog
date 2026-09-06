@@ -1,10 +1,13 @@
 package watchdog
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/parquet-go/parquet-go"
 )
 
 func TestRenderCSVExportColumnsWritesHeaderAndRows(t *testing.T) {
@@ -138,7 +141,8 @@ func TestCSVExportWriterStoresFileRef(t *testing.T) {
 	if artifact.FileRef != "exports/export-a.csv" {
 		t.Fatalf("fileRef = %s", artifact.FileRef)
 	}
-	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 {
+	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 || artifact.SchemaVersion != ExportArtifactSchemaVersion ||
+		artifact.ContentType != "text/csv; charset=utf-8" || artifact.RowCount != 1 {
 		t.Fatalf("artifact metadata = %+v", artifact)
 	}
 	if len(writer.Files[artifact.FileRef]) == 0 {
@@ -158,7 +162,8 @@ func TestDiskCSVExportStoreWritesAndReadsFile(t *testing.T) {
 	if artifact.FileRef != "exports/export-a.csv" {
 		t.Fatalf("fileRef = %q", artifact.FileRef)
 	}
-	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 {
+	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 || artifact.SchemaVersion != ExportArtifactSchemaVersion ||
+		artifact.ContentType != "text/csv; charset=utf-8" || artifact.RowCount != 1 {
 		t.Fatalf("artifact metadata = %+v", artifact)
 	}
 	data, contentType, err := store.ReadExport(context.Background(), artifact.FileRef)
@@ -167,5 +172,56 @@ func TestDiskCSVExportStoreWritesAndReadsFile(t *testing.T) {
 	}
 	if contentType != "text/csv; charset=utf-8" || !strings.Contains(string(data), "42") {
 		t.Fatalf("data = %q contentType=%q", data, contentType)
+	}
+}
+
+func TestRenderAndReadParquetExportColumns(t *testing.T) {
+	start := time.Date(2026, 6, 1, 0, 0, 0, 123*int(time.Millisecond), time.UTC)
+	task := ExportTask{
+		ID: "export-parquet", ContractVersion: ExportExecutionContractVersion,
+		Format: ExportFormatParquet, ValueLayer: QueryValueSupplier,
+	}
+	columns := ExportColumns{ValueLayer: QueryValueSupplier, Values: []Sample{
+		{Time: start, Value: 12.5},
+		{Time: start.Add(time.Minute), Value: 18.75},
+	}}
+	data, err := RenderParquetExportColumns(task, columns)
+	if err != nil {
+		t.Fatalf("RenderParquetExportColumns() error = %v", err)
+	}
+	if len(data) < 8 || string(data[:4]) != "PAR1" || string(data[len(data)-4:]) != "PAR1" {
+		t.Fatalf("parquet magic is missing: %x", data)
+	}
+	rows, err := parquet.Read[exportParquetRow](bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("parquet.Read() error = %v", err)
+	}
+	if len(rows) != 2 || rows[0].Timestamp != start.UnixMilli() || rows[0].Value != 12.5 || rows[0].ValueLayer != string(QueryValueSupplier) {
+		t.Fatalf("parquet rows = %+v", rows)
+	}
+}
+
+func TestDiskExportStoreWritesAndReadsParquet(t *testing.T) {
+	store := DiskExportStore{Dir: t.TempDir()}
+	task := ExportTask{
+		ID: "export-parquet", ContractVersion: ExportExecutionContractVersion,
+		Format: ExportFormatParquet, ValueLayer: QueryValueRaw,
+	}
+	artifact, err := store.WriteExport(context.Background(), task, ExportColumns{
+		ValueLayer: QueryValueRaw,
+		Values:     []Sample{{Time: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), Value: 42}},
+	})
+	if err != nil {
+		t.Fatalf("WriteExport() error = %v", err)
+	}
+	if artifact.FileRef != "exports/export-parquet.parquet" || artifact.ContentType != "application/vnd.apache.parquet" || artifact.RowCount != 1 {
+		t.Fatalf("artifact = %+v", artifact)
+	}
+	data, contentType, err := store.ReadExport(context.Background(), artifact.FileRef)
+	if err != nil {
+		t.Fatalf("ReadExport() error = %v", err)
+	}
+	if contentType != artifact.ContentType || !bytes.Equal(data[:4], []byte("PAR1")) {
+		t.Fatalf("contentType=%q data=%x", contentType, data)
 	}
 }

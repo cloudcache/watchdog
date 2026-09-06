@@ -5,6 +5,24 @@ export type ExportTask = {
 	target_id?: string
 	PortID?: string
 	port_id?: string
+	ContractVersion?: number
+	contract_version?: number
+	DatasetKey?: string
+	dataset_key?: string
+	QueryHash?: string
+	query_hash?: string
+	ValueLayer?: string
+	value_layer?: string
+	OperationJobID?: string
+	operation_job_id?: string
+	RetentionSeconds?: number
+	retention_seconds?: number
+	ArtifactSchemaVersion?: number
+	artifact_schema_version?: number
+	ContentType?: string
+	content_type?: string
+	RowCount?: number
+	row_count?: number
 	PeriodType?: string
 	period_type?: string
 	RangeStart?: string
@@ -25,6 +43,14 @@ export type ExportTask = {
 	file_ref?: string
 	ErrorMessage?: string
 	error_message?: string
+	Checksum?: string
+	checksum?: string
+	SizeBytes?: number
+	size_bytes?: number
+	ExpiresAt?: string
+	expires_at?: string
+	RowVersion?: number
+	row_version?: number
 	CreatedAt?: string
 	created_at?: string
 	UpdatedAt?: string
@@ -37,6 +63,10 @@ export function exportID(task: ExportTask) {
 
 export function exportStatus(task: ExportTask) {
 	return task.Status ?? task.status ?? ""
+}
+
+export function exportValueLayer(task: ExportTask) {
+	return task.ValueLayer ?? task.value_layer ?? ""
 }
 
 export function exportDownloadURL(task: ExportTask) {

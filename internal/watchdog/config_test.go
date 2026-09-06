@@ -53,7 +53,7 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 		cfg.QueryGateway.ClickHouseEnabled || cfg.QueryGateway.ClickHouseConcurrent != defaultQueryCHMaxConcurrent {
 		t.Fatalf("query gateway defaults = %#v", cfg.QueryGateway)
 	}
-	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.Metric != MetricSNMPIfInBps {
+	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.WorkerConcurrency != defaultExportWorkerConcurrency || cfg.Export.Metric != MetricSNMPIfInBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
 	if cfg.AddressLibrary.Dir != defaultAddressLibraryDir || cfg.AddressLibrary.MaxUploadBytes != DefaultAddressArtifactMaxBytes || cfg.AddressLibrary.ImportBatchSize != defaultAddressLibraryBatchSize || cfg.AddressLibrary.WorkerConcurrency != defaultAddressLibraryWorkers {
@@ -242,6 +242,7 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	t.Setenv("WATCHDOG_EXPORT_DIR", "/var/lib/watchdog/exports")
 	t.Setenv("WATCHDOG_EXPORT_WORKER_INTERVAL", "15s")
 	t.Setenv("WATCHDOG_EXPORT_WORKER_BATCH", "25")
+	t.Setenv("WATCHDOG_EXPORT_WORKER_CONCURRENCY", "4")
 	t.Setenv("WATCHDOG_EXPORT_METRIC", MetricSNMPIfOutBps)
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_DIR", "/var/lib/watchdog/address-artifacts")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", "1073741824")
@@ -270,7 +271,7 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	if cfg.VictoriaMetrics.BaseURL != "http://victoria:8428" {
 		t.Fatalf("VictoriaMetrics URL = %s", cfg.VictoriaMetrics.BaseURL)
 	}
-	if cfg.Export.Dir != "/var/lib/watchdog/exports" || cfg.Export.WorkerInterval != 15*time.Second || cfg.Export.WorkerBatch != 25 || cfg.Export.Metric != MetricSNMPIfOutBps {
+	if cfg.Export.Dir != "/var/lib/watchdog/exports" || cfg.Export.WorkerInterval != 15*time.Second || cfg.Export.WorkerBatch != 25 || cfg.Export.WorkerConcurrency != 4 || cfg.Export.Metric != MetricSNMPIfOutBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
 	if cfg.AddressLibrary.Dir != "/var/lib/watchdog/address-artifacts" || cfg.AddressLibrary.MaxUploadBytes != 1<<30 || cfg.AddressLibrary.ImportBatchSize != 2500 || cfg.AddressLibrary.WorkerConcurrency != 3 {

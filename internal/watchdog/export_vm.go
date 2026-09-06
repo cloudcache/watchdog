@@ -2,7 +2,10 @@ package watchdog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 	"time"
 )
 
@@ -12,6 +15,53 @@ type VictoriaMetricsExportDataProvider struct {
 	Network        NetworkRepository
 	CounterBits    int
 	CollectionStep time.Duration
+}
+
+// QueryGatewayExportDataProvider executes contract-v1 exports through the
+// same admission, tenant scoping, provider limits and typed compiler as the
+// interactive query API. The immutable query is read from the task snapshot;
+// no request is reconstructed from mutable UI fields at execution time.
+type QueryGatewayExportDataProvider struct {
+	Gateway *QueryGateway
+}
+
+func (p QueryGatewayExportDataProvider) LoadSamples(ctx context.Context, task ExportTask) ([]Sample, error) {
+	if p.Gateway == nil {
+		return nil, errors.New("export query gateway is required")
+	}
+	if err := validateExportExecutionTask(task); err != nil {
+		return nil, err
+	}
+	var snapshot exportQuerySnapshot
+	if err := decodeStrictJSON(task.QueryJSON, &snapshot); err != nil {
+		return nil, fmt.Errorf("decode export query: %w", err)
+	}
+	auth, ok := AuthFromContext(ctx)
+	if !ok || auth.TenantID != task.TenantID || auth.UserID != task.CreatedBy {
+		return nil, errors.New("current export authorization is required")
+	}
+	result, err := p.Gateway.Execute(ctx, auth, "export:"+string(task.ID), snapshot.Query)
+	if err != nil {
+		return nil, err
+	}
+	var response VictoriaMetricsResponse
+	if err := json.Unmarshal(result.Data, &response); err != nil {
+		return nil, fmt.Errorf("decode VictoriaMetrics export result: %w", err)
+	}
+	var parameters victoriaMetricsQueryParameters
+	if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil {
+		return nil, fmt.Errorf("decode export query parameters: %w", err)
+	}
+	var samples []Sample
+	if parameters.PortID == "" {
+		samples = samplesFromVMResponseSummed(response)
+	} else {
+		samples = samplesFromVMResponse(response)
+	}
+	if len(samples) == 0 {
+		return nil, errors.New("no export samples returned from query gateway")
+	}
+	return samples, nil
 }
 
 func (p VictoriaMetricsExportDataProvider) LoadSamples(ctx context.Context, task ExportTask) ([]Sample, error) {
@@ -127,6 +177,29 @@ func samplesFromVMResponse(response VictoriaMetricsResponse) []Sample {
 	return samples
 }
 
+// samplesFromVMResponseSummed collapses a target/device multi-series result
+// to one value per timestamp before P95/average/volume aggregation. Flattening
+// the series would calculate a percentile across individual ports, which is
+// not the target's traffic total.
+func samplesFromVMResponseSummed(response VictoriaMetricsResponse) []Sample {
+	values := make(map[time.Time]float64)
+	for _, result := range response.Data.Result {
+		for _, value := range result.Values {
+			values[value.Time] += value.Value
+		}
+	}
+	times := make([]time.Time, 0, len(values))
+	for timestamp := range values {
+		times = append(times, timestamp)
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	samples := make([]Sample, 0, len(times))
+	for _, timestamp := range times {
+		samples = append(samples, Sample{Time: timestamp, Value: values[timestamp]})
+	}
+	return samples
+}
+
 func aggregateExportSamples(task ExportTask, samples []Sample) ([]Sample, error) {
 	if task.Aggregation == "" {
 		return samples, nil
@@ -158,3 +231,4 @@ func aggregateExportSamples(task ExportTask, samples []Sample) ([]Sample, error)
 }
 
 var _ ExportDataProvider = (*VictoriaMetricsExportDataProvider)(nil)
+var _ ExportDataProvider = QueryGatewayExportDataProvider{}

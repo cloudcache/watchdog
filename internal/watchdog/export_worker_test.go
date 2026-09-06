@@ -69,7 +69,10 @@ func (w fakeExportFileWriter) WriteExport(context.Context, ExportTask, ExportCol
 	if w.err != nil {
 		return ExportArtifact{}, w.err
 	}
-	return ExportArtifact{FileRef: w.fileRef, Checksum: "abc", SizeBytes: 1}, nil
+	return ExportArtifact{
+		FileRef: w.fileRef, Checksum: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SizeBytes: 1, SchemaVersion: ExportArtifactSchemaVersion, ContentType: "text/csv", RowCount: 1,
+	}, nil
 }
 
 func TestExportWorkerCompletesTask(t *testing.T) {

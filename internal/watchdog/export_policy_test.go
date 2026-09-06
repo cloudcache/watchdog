@@ -81,3 +81,32 @@ func TestCanCreateRawAndBothExportRequireAdmin(t *testing.T) {
 		}
 	}
 }
+
+func TestCanCreateExportLayerUsesDedicatedSensitiveActions(t *testing.T) {
+	req := AccessRequest{
+		TenantID: "tenant-a", UserID: "user-a",
+		Resource: ResourceRef{Type: ResourcePort, ID: "port-a", ParentID: "target-a"},
+	}
+	for _, test := range []struct {
+		layer  QueryValueLayer
+		action Action
+	}{
+		{QueryValueRaw, ActionExportRaw},
+		{QueryValueSupplier, ActionExportSupplier},
+		{QueryValueCustomer, ActionExportCustomer},
+	} {
+		grants := []Permission{{
+			TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+			ResourceType: ResourcePort, ResourceID: "port-a", Actions: []Action{test.action},
+		}}
+		if !CanCreateExportLayer(req, test.layer, grants, false) {
+			t.Fatalf("dedicated action %s did not grant %s export", test.action, test.layer)
+		}
+		if test.layer != QueryValueCustomer && CanCreateExportLayer(req, test.layer, []Permission{{
+			TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+			ResourceType: ResourcePort, ResourceID: "port-a", Actions: []Action{ActionExport},
+		}}, false) {
+			t.Fatalf("generic export unexpectedly granted %s", test.layer)
+		}
+	}
+}

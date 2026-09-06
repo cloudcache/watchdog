@@ -12,13 +12,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // exportArtifactFor stamps a produced export file with its sha256 checksum and
 // byte size for integrity verification on download.
-func exportArtifactFor(fileRef string, data []byte) ExportArtifact {
+func exportArtifactFor(fileRef, contentType string, rowCount uint64, data []byte) ExportArtifact {
 	sum := sha256.Sum256(data)
-	return ExportArtifact{FileRef: fileRef, Checksum: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data))}
+	return ExportArtifact{
+		FileRef: fileRef, Checksum: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data)),
+		SchemaVersion: ExportArtifactSchemaVersion, ContentType: contentType, RowCount: rowCount,
+	}
 }
 
 type CSVExportWriter struct {
@@ -38,7 +42,7 @@ func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, column
 	}
 	fileRef := fmt.Sprintf("exports/%s.csv", task.ID)
 	w.Files[fileRef] = data
-	return exportArtifactFor(fileRef, data), nil
+	return exportArtifactFor(fileRef, "text/csv; charset=utf-8", exportColumnRowCount(columns), data), nil
 }
 
 func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
@@ -52,25 +56,41 @@ func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte,
 	return data, "text/csv; charset=utf-8", nil
 }
 
-type DiskCSVExportStore struct {
+type DiskExportStore struct {
 	Dir string
 }
 
-func (s DiskCSVExportStore) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (ExportArtifact, error) {
-	if task.Format != "" && task.Format != ExportFormatCSV {
-		return ExportArtifact{}, errors.New("csv writer only supports csv export format")
-	}
+// DiskCSVExportStore remains as a source-compatible alias for callers that
+// predate Parquet support. DiskExportStore is the format-routing store.
+type DiskCSVExportStore = DiskExportStore
+
+func (s DiskExportStore) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (ExportArtifact, error) {
 	if s.Dir == "" {
 		return ExportArtifact{}, errors.New("export directory is required")
 	}
-	data, err := RenderCSVExportColumns(task, columns)
+	var (
+		data        []byte
+		contentType string
+		extension   string
+		err         error
+	)
+	switch task.Format {
+	case "", ExportFormatCSV:
+		data, err = RenderCSVExportColumns(task, columns)
+		contentType, extension = "text/csv; charset=utf-8", "csv"
+	case ExportFormatParquet:
+		data, err = RenderParquetExportColumns(task, columns)
+		contentType, extension = "application/vnd.apache.parquet", "parquet"
+	default:
+		return ExportArtifact{}, errors.New("unsupported export format")
+	}
 	if err != nil {
 		return ExportArtifact{}, err
 	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return ExportArtifact{}, err
 	}
-	fileName := string(task.ID) + ".csv"
+	fileName := string(task.ID) + "." + extension
 	if strings.Contains(fileName, "/") || strings.Contains(fileName, `\`) {
 		return ExportArtifact{}, errors.New("invalid export id")
 	}
@@ -78,10 +98,10 @@ func (s DiskCSVExportStore) WriteExport(_ context.Context, task ExportTask, colu
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return ExportArtifact{}, err
 	}
-	return exportArtifactFor("exports/"+fileName, data), nil
+	return exportArtifactFor("exports/"+fileName, contentType, exportColumnRowCount(columns), data), nil
 }
 
-func (s DiskCSVExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
+func (s DiskExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
 	if s.Dir == "" {
 		return nil, "", errors.New("export directory is required")
 	}
@@ -93,7 +113,13 @@ func (s DiskCSVExportStore) ReadExport(_ context.Context, fileRef string) ([]byt
 	if err != nil {
 		return nil, "", err
 	}
-	return data, "text/csv; charset=utf-8", nil
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(fileName, ".csv") {
+		contentType = "text/csv; charset=utf-8"
+	} else if strings.HasSuffix(fileName, ".parquet") {
+		contentType = "application/vnd.apache.parquet"
+	}
+	return data, contentType, nil
 }
 
 // RenderCSVExportColumns renders the aggregated export columns. Columns are
@@ -103,6 +129,25 @@ func (s DiskCSVExportStore) ReadExport(_ context.Context, fileRef string) ([]byt
 func RenderCSVExportColumns(task ExportTask, columns ExportColumns) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
+	if task.ContractVersion == ExportExecutionContractVersion {
+		rows, err := buildExportLogicalRows(task, columns)
+		if err != nil {
+			return nil, err
+		}
+		if err := writer.Write([]string{"timestamp", "value", "value_layer"}); err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if err := writer.Write([]string{
+				row.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
+				strconv.FormatFloat(row.Value, 'f', -1, 64), row.ValueLayer,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		writer.Flush()
+		return buf.Bytes(), writer.Error()
+	}
 	mode := task.ValueMode
 	if mode != ExportValueRaw && !columns.CorrectionApplied {
 		mode = ExportValueRaw
@@ -143,4 +188,32 @@ func RenderCSVExportColumns(task ExportTask, columns ExportColumns) ([]byte, err
 	}
 	writer.Flush()
 	return buf.Bytes(), writer.Error()
+}
+
+func exportColumnRowCount(columns ExportColumns) uint64 {
+	if columns.ValueLayer != "" || columns.Values != nil {
+		return uint64(len(columns.Values))
+	}
+	return uint64(len(columns.Raw))
+}
+
+type exportLogicalRow struct {
+	Timestamp  time.Time
+	Value      float64
+	ValueLayer string
+}
+
+func buildExportLogicalRows(task ExportTask, columns ExportColumns) ([]exportLogicalRow, error) {
+	layer := columns.ValueLayer
+	if layer == "" {
+		layer = task.ValueLayer
+	}
+	if layer != QueryValueRaw && layer != QueryValueSupplier && layer != QueryValueCustomer {
+		return nil, errors.New("export value layer is invalid")
+	}
+	rows := make([]exportLogicalRow, 0, len(columns.Values))
+	for _, sample := range columns.Values {
+		rows = append(rows, exportLogicalRow{Timestamp: sample.Time.UTC(), Value: sample.Value, ValueLayer: string(layer)})
+	}
+	return rows, nil
 }

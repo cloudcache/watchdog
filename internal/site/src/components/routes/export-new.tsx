@@ -147,6 +147,7 @@ export default memo(() => {
 					Step: Number(form.step),
 					Aggregation: form.aggregation,
 					ValueMode: form.valueMode,
+					ValueLayer: trafficView,
 					Format: form.format,
 				},
 			})
@@ -288,6 +289,7 @@ export default memo(() => {
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="csv">csv</SelectItem>
+							<SelectItem value="parquet">parquet</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>

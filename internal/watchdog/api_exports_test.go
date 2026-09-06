@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +94,28 @@ func TestAPIExportsCreateGeneratesID(t *testing.T) {
 	}
 }
 
+func TestAPIExportsCreateUsesContractV1WhenGatewayIsEnabled(t *testing.T) {
+	repo := &fakeExportRepository{}
+	gateway := newExportGatewayFixture(t, exportGatewayPolicy(QueryValueCustomer), &queryProviderStub{})
+	network := &fakeNetworkRepository{
+		devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		ports:   []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a"}},
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: exportTestAuth(true), Exports: repo, Network: network, QueryGateway: gateway,
+		ExportMetric: MetricSNMPIfInBps, ExportCollectionStep: time.Minute,
+	})
+	rec := httptest.NewRecorder()
+	body := `{"ID":"export-v1","TargetID":"target-a","PeriodType":"custom","RangeStart":"2026-06-01T00:00:00Z","RangeEnd":"2026-06-01T01:00:00Z","Step":300000000000,"Aggregation":"p95_5m","ValueMode":"corrected","ValueLayer":"customer","Format":"csv"}`
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/exports", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(repo.tasks) != 1 || repo.tasks[0].ContractVersion != ExportExecutionContractVersion || len(repo.tasks[0].QueryHash) != 64 {
+		t.Fatalf("tasks = %#v", repo.tasks)
+	}
+}
+
 func TestAPIExportsCreateResolvesTargetFromPort(t *testing.T) {
 	repo := &fakeExportRepository{}
 	router := NewAPIV1Router(APIV1RouterConfig{
@@ -160,6 +184,7 @@ func TestAPIExportsDownloadCompleteFile(t *testing.T) {
 		ID:        "export-a",
 		TenantID:  "tenant-a",
 		CreatedBy: "user-a",
+		TargetID:  "target-a",
 		Status:    ExportStatusComplete,
 		FileRef:   "exports/export-a.csv",
 	}}}
@@ -182,6 +207,7 @@ func TestAPIExportsDownloadRejectsPendingFile(t *testing.T) {
 		ID:        "export-a",
 		TenantID:  "tenant-a",
 		CreatedBy: "user-a",
+		TargetID:  "target-a",
 		Status:    ExportStatusPending,
 	}}}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo, ExportFiles: &CSVExportWriter{}})
@@ -192,11 +218,31 @@ func TestAPIExportsDownloadRejectsPendingFile(t *testing.T) {
 	}
 }
 
+func TestAPIExportsDownloadRejectsTamperedContractV1Artifact(t *testing.T) {
+	data := []byte("timestamp,customer_value\n")
+	sum := sha256.Sum256(data)
+	files := &CSVExportWriter{Files: map[string][]byte{"exports/export-a.csv": []byte("tampered")}}
+	repo := &fakeExportRepository{tasks: []ExportTask{{
+		ID: "export-a", TenantID: "tenant-a", CreatedBy: "user-a", TargetID: "target-a",
+		ContractVersion: ExportExecutionContractVersion, ValueLayer: QueryValueCustomer,
+		Status: ExportStatusComplete, Format: ExportFormatCSV, FileRef: "exports/export-a.csv",
+		Checksum: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data)),
+		ArtifactSchemaVersion: ExportArtifactSchemaVersion, ContentType: "text/csv; charset=utf-8", RowCount: 1,
+	}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo, ExportFiles: files})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/exports/export-a/download", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "export_integrity_failed") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAPIExportsRetryFailedTask(t *testing.T) {
 	repo := &fakeExportRepository{tasks: []ExportTask{{
 		ID:           "export-a",
 		TenantID:     "tenant-a",
 		CreatedBy:    "user-a",
+		TargetID:     "target-a",
 		Status:       ExportStatusFailed,
 		FileRef:      "exports/export-a.csv",
 		ErrorMessage: "vm unavailable",
@@ -209,6 +255,31 @@ func TestAPIExportsRetryFailedTask(t *testing.T) {
 	}
 	if repo.tasks[0].Status != ExportStatusPending || repo.tasks[0].FileRef != "" || repo.tasks[0].ErrorMessage != "" {
 		t.Fatalf("task = %#v", repo.tasks[0])
+	}
+}
+
+type exportOperationJobRepository struct {
+	fakeOperationJobRepository
+	canceled ID
+}
+
+func (r *exportOperationJobRepository) RequestOperationJobCancel(_ context.Context, _ ID, jobID ID) error {
+	r.canceled = jobID
+	return nil
+}
+
+func TestAPIExportsCancelUsesLinkedOperationJob(t *testing.T) {
+	repo := &fakeExportRepository{tasks: []ExportTask{{
+		ID: "export-a", TenantID: "tenant-a", CreatedBy: "user-a", TargetID: "target-a",
+		ContractVersion: ExportExecutionContractVersion, ValueLayer: QueryValueCustomer,
+		Status: ExportStatusPending, OperationJobID: "job-a",
+	}}}
+	jobs := &exportOperationJobRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo, OperationJobs: jobs})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/exports/export-a/cancel", nil))
+	if rec.Code != http.StatusOK || jobs.canceled != "job-a" {
+		t.Fatalf("status=%d canceled=%s body=%s", rec.Code, jobs.canceled, rec.Body.String())
 	}
 }
 

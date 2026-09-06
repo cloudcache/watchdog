@@ -13,6 +13,7 @@ import {
 	exportDownloadURL,
 	exportID,
 	exportStatus as getExportStatus,
+	exportValueLayer,
 	formatExportRange,
 	type ExportTask,
 } from "./export-types"
@@ -136,11 +137,7 @@ export default memo(() => {
 									<TableCell className="font-mono text-xs">{task.PortID ?? task.port_id ?? "—"}</TableCell>
 									<TableCell>{formatExportRange(task)}</TableCell>
 									<TableCell>{task.Aggregation ?? task.aggregation ?? "—"}</TableCell>
-									<TableCell>
-										{trafficViewLabel(
-											trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation)
-										)}
-									</TableCell>
+									<TableCell>{trafficViewLabel(exportTrafficView(task))}</TableCell>
 									<TableCell>{task.ValueMode ?? task.value_mode ?? "corrected"}</TableCell>
 									<TableCell>{task.Format ?? task.format ?? "—"}</TableCell>
 									<TableCell className="text-right">
@@ -183,4 +180,10 @@ function downloadExport(task: ExportTask) {
 		return
 	}
 	globalThis.location.href = url
+}
+
+function exportTrafficView(task: ExportTask) {
+	const layer = exportValueLayer(task)
+	if (layer === "raw" || layer === "supplier" || layer === "customer") return layer
+	return trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation)
 }

@@ -2,6 +2,7 @@ package watchdog
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -241,6 +242,7 @@ const (
 	ExportStatusRunning  ExportStatus = "running"
 	ExportStatusComplete ExportStatus = "complete"
 	ExportStatusFailed   ExportStatus = "failed"
+	ExportStatusCanceled ExportStatus = "canceled"
 )
 
 type PeriodType string
@@ -263,38 +265,55 @@ const (
 type ExportFormat string
 
 const (
-	ExportFormatCSV ExportFormat = "csv"
+	ExportFormatCSV     ExportFormat = "csv"
+	ExportFormatParquet ExportFormat = "parquet"
 )
 
 type ExportTask struct {
-	ID           ID
-	TenantID     ID
-	CreatedBy    ID
-	TargetID     ID
-	PortID       ID
-	PeriodType   PeriodType
-	RangeStart   time.Time
-	RangeEnd     time.Time
-	Step         time.Duration
-	Aggregation  Aggregation
-	ValueMode    ExportValueMode
-	Format       ExportFormat
-	Status       ExportStatus
-	FileRef      string
-	Checksum     string
-	SizeBytes    int64
-	ExpiresAt    time.Time
-	ErrorMessage string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                    ID
+	TenantID              ID
+	CreatedBy             ID
+	ContractVersion       uint16
+	DatasetKey            string
+	QueryJSON             json.RawMessage
+	QueryHash             string
+	ValueLayer            QueryValueLayer
+	VersionsJSON          json.RawMessage
+	AuthorizationJSON     json.RawMessage
+	OperationJobID        ID
+	RetentionSeconds      uint32
+	ArtifactSchemaVersion uint16
+	ContentType           string
+	RowCount              uint64
+	TargetID              ID
+	PortID                ID
+	PeriodType            PeriodType
+	RangeStart            time.Time
+	RangeEnd              time.Time
+	Step                  time.Duration
+	Aggregation           Aggregation
+	ValueMode             ExportValueMode
+	Format                ExportFormat
+	Status                ExportStatus
+	FileRef               string
+	Checksum              string
+	SizeBytes             int64
+	ExpiresAt             time.Time
+	ErrorMessage          string
+	RowVersion            uint64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 // ExportArtifact is the produced file plus its integrity metadata, returned by
 // an export writer so the worker can persist the checksum and size.
 type ExportArtifact struct {
-	FileRef   string
-	Checksum  string // sha256 hex of the file bytes
-	SizeBytes int64
+	FileRef       string
+	Checksum      string // sha256 hex of the file bytes
+	SizeBytes     int64
+	SchemaVersion uint16
+	ContentType   string
+	RowCount      uint64
 }
 
 type BillingDirection string

@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowLeftIcon, DownloadIcon, FileDownIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
+import { ArrowLeftIcon, DownloadIcon, FileDownIcon, RefreshCwIcon, RotateCcwIcon, XCircleIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,7 @@ import {
 	exportDownloadURL,
 	exportID,
 	exportStatus,
+	exportValueLayer,
 	formatExportDate,
 	formatExportRange,
 	formatExportStep,
@@ -27,6 +28,7 @@ export default memo(({ id }: ExportDetailProps) => {
 	const [task, setTask] = useState<ExportTask | null>(null)
 	const [loading, setLoading] = useState(true)
 	const [retrying, setRetrying] = useState(false)
+	const [canceling, setCanceling] = useState(false)
 	const [error, setError] = useState("")
 
 	const refresh = useCallback(async () => {
@@ -49,10 +51,10 @@ export default memo(({ id }: ExportDetailProps) => {
 
 	const status = task ? exportStatus(task) : ""
 	const canDownload = task && status === "complete"
-	const canRetry = task && status === "failed"
-	const viewMode = task
-		? trafficViewLabel(trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation))
-		: "-"
+	const canRetry = task && (status === "failed" || status === "canceled")
+	const canCancel =
+		task && (status === "pending" || status === "running") && Boolean(task.OperationJobID ?? task.operation_job_id)
+	const viewMode = task ? trafficViewLabel(exportTrafficView(task)) : "-"
 
 	const retry = async () => {
 		if (!task) {
@@ -67,6 +69,20 @@ export default memo(({ id }: ExportDetailProps) => {
 			setError(err instanceof Error ? err.message : t`Failed to retry export`)
 		} finally {
 			setRetrying(false)
+		}
+	}
+
+	const cancel = async () => {
+		if (!task) return
+		setCanceling(true)
+		setError("")
+		try {
+			const data = await pb.send<ExportTask>(`/api/v1/exports/${exportID(task)}/cancel`, { method: "POST" })
+			setTask(data)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to cancel export`)
+		} finally {
+			setCanceling(false)
 		}
 	}
 
@@ -93,6 +109,10 @@ export default memo(({ id }: ExportDetailProps) => {
 						<RotateCcwIcon className="me-2 h-4 w-4" />
 						<Trans>Retry</Trans>
 					</Button>
+					<Button variant="outline" size="sm" disabled={!canCancel || canceling} onClick={cancel}>
+						<XCircleIcon className="me-2 h-4 w-4" />
+						<Trans>Cancel</Trans>
+					</Button>
 					<Button size="sm" disabled={!canDownload} onClick={() => task && downloadExport(task)}>
 						<DownloadIcon className="me-2 h-4 w-4" />
 						<Trans>Download</Trans>
@@ -112,6 +132,12 @@ export default memo(({ id }: ExportDetailProps) => {
 				<InfoCell label={t`View`} value={viewMode} />
 				<InfoCell label={t`Aggregation`} value={task?.Aggregation ?? task?.aggregation} />
 				<InfoCell label={t`Value`} value={task?.ValueMode ?? task?.value_mode ?? "corrected"} />
+				<InfoCell label={t`Query hash`} value={task?.QueryHash ?? task?.query_hash} mono wide />
+				<InfoCell label={t`Operation job`} value={task?.OperationJobID ?? task?.operation_job_id} mono wide />
+				<InfoCell label={t`Rows`} value={task?.RowCount ?? task?.row_count} />
+				<InfoCell label={t`Size`} value={formatBytes(task?.SizeBytes ?? task?.size_bytes)} />
+				<InfoCell label={t`Checksum`} value={task?.Checksum ?? task?.checksum} mono wide />
+				<InfoCell label={t`Expires`} value={formatExportDate(task?.ExpiresAt ?? task?.expires_at)} />
 				<InfoCell label={t`Step`} value={formatExportStep(task?.Step ?? task?.step)} mono />
 				<InfoCell label={t`Period`} value={task?.PeriodType ?? task?.period_type} />
 				<InfoCell label={t`Range`} value={task ? formatExportRange(task) : "-"} wide />
@@ -171,4 +197,17 @@ function downloadExport(task: ExportTask) {
 	if (url) {
 		globalThis.location.href = url
 	}
+}
+
+function exportTrafficView(task: ExportTask) {
+	const layer = exportValueLayer(task)
+	if (layer === "raw" || layer === "supplier" || layer === "customer") return layer
+	return trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation)
+}
+
+function formatBytes(value?: number) {
+	if (!value || value < 0) return "-"
+	if (value < 1024) return `${value} B`
+	if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
+	return `${(value / (1024 * 1024)).toFixed(1)} MiB`
 }

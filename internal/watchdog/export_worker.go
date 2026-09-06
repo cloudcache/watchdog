@@ -2,7 +2,9 @@ package watchdog
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -20,6 +22,8 @@ type ExportColumns struct {
 	Raw               []Sample
 	Corrected         []Sample
 	CorrectionApplied bool
+	ValueLayer        QueryValueLayer
+	Values            []Sample
 }
 
 type ExportFileWriter interface {
@@ -120,8 +124,20 @@ func (w ExportWorker) RunTask(ctx context.Context, task ExportTask) error {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err
 	}
-	if w.CompletenessPolicy != nil {
-		if _, err := VerifySampleCompleteness(samples, w.CompletenessPolicy(task)); err != nil {
+	var completenessPolicy *CompletenessPolicy
+	if task.ContractVersion == ExportExecutionContractVersion {
+		policy, err := exportCompletenessPolicyFromSnapshot(task)
+		if err != nil {
+			_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
+			return err
+		}
+		completenessPolicy = &policy
+	} else if w.CompletenessPolicy != nil {
+		policy := w.CompletenessPolicy(task)
+		completenessPolicy = &policy
+	}
+	if completenessPolicy != nil {
+		if _, err := VerifySampleCompleteness(samples, *completenessPolicy); err != nil {
 			_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 			return err
 		}
@@ -136,7 +152,35 @@ func (w ExportWorker) RunTask(ctx context.Context, task ExportTask) error {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err
 	}
-	return w.Repo.MarkExportComplete(ctx, task.TenantID, task.ID, artifact, time.Now().UTC().Add(exportArtifactTTL))
+	if err := validateExportArtifact(task, artifact); err != nil {
+		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
+		return err
+	}
+	ttl := exportArtifactTTL
+	if task.ContractVersion == ExportExecutionContractVersion && task.RetentionSeconds > 0 {
+		ttl = time.Duration(task.RetentionSeconds) * time.Second
+	}
+	return w.Repo.MarkExportComplete(ctx, task.TenantID, task.ID, artifact, time.Now().UTC().Add(ttl))
+}
+
+func validateExportArtifact(task ExportTask, artifact ExportArtifact) error {
+	if strings.TrimSpace(artifact.FileRef) == "" || artifact.SizeBytes <= 0 || artifact.RowCount == 0 {
+		return errors.New("export writer returned incomplete artifact metadata")
+	}
+	checksum, err := hex.DecodeString(artifact.Checksum)
+	if err != nil || len(checksum) != 32 {
+		return errors.New("export writer returned an invalid sha256 checksum")
+	}
+	if task.ContractVersion == ExportExecutionContractVersion {
+		if artifact.SchemaVersion != ExportArtifactSchemaVersion || strings.TrimSpace(artifact.ContentType) == "" {
+			return errors.New("export writer returned an unsupported artifact schema")
+		}
+		extension := "." + string(task.Format)
+		if !strings.HasSuffix(artifact.FileRef, extension) {
+			return errors.New("export artifact format does not match the task")
+		}
+	}
+	return nil
 }
 
 // buildColumns aggregates the raw samples and, when the task wants corrected
@@ -148,6 +192,9 @@ func (w ExportWorker) buildColumns(ctx context.Context, task ExportTask, samples
 	rawAggregated, err := aggregateExportSamples(task, samples)
 	if err != nil {
 		return ExportColumns{}, err
+	}
+	if task.ContractVersion == ExportExecutionContractVersion {
+		return ExportColumns{ValueLayer: task.ValueLayer, Values: rawAggregated}, nil
 	}
 	columns := ExportColumns{Raw: rawAggregated}
 	if task.ValueMode == ExportValueRaw {

@@ -35,10 +35,14 @@ func ValidateExportRequest(req ExportRequestValidation) error {
 	if !isExportAggregation(task.Aggregation) {
 		return errors.New("unsupported export aggregation")
 	}
-	if task.Format != ExportFormatCSV {
+	if task.Format != ExportFormatCSV && task.Format != ExportFormatParquet {
 		return errors.New("unsupported export format")
 	}
-	if !CanCreateExport(req.Access, task.ValueMode, req.Grants, req.IsAdmin) {
+	layer := task.ValueLayer
+	if layer == "" {
+		layer = inferExportValueLayer(task)
+	}
+	if !CanCreateExportLayer(req.Access, layer, req.Grants, req.IsAdmin) {
 		return errors.New("export permission denied")
 	}
 	return nil

@@ -31,6 +31,7 @@ export:
   dir: "exports"
   worker_interval: 30s
   worker_batch: 10
+  worker_concurrency: 2
   metric: "watchdog_snmp_if_in_bps"
 
 address_library:
