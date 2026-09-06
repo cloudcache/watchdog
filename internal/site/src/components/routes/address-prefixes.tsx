@@ -1,150 +1,290 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { GlobeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { GlobeIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PagedVTable } from "@/components/ui/paged-vtable"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { parsePrefixLabels } from "@/lib/address-set-form"
 import { pb } from "@/lib/api"
-import { cn } from "@/lib/utils"
 
 type AddressPrefix = {
 	id: string
 	cidr: string
+	family: number
+	prefix_length: number
 	labels: Record<string, string>
+	geo_leaf_id?: string
+	operator_id?: string
+	asn?: number
 	source: string
+	row_version: number
 }
 
-type AddressPrefixList = { items: AddressPrefix[] }
+type AddressPrefixList = { items?: AddressPrefix[]; next_cursor?: string }
+
+const pageSize = 100
 
 export default memo(function AddressPrefixes() {
 	const { t } = useLingui()
 	const [prefixes, setPrefixes] = useState<AddressPrefix[]>([])
+	const [nextCursor, setNextCursor] = useState("")
+	const [search, setSearch] = useState("")
+	const [debouncedSearch, setDebouncedSearch] = useState("")
+	const [family, setFamily] = useState("all")
+	const [source, setSource] = useState("")
 	const [loading, setLoading] = useState(true)
+	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
-	const [form, setForm] = useState({ cidr: "", labels: "" })
+	const [form, setForm] = useState({ cidr: "", labels: "", source: "manual", asn: "" })
 
-	const refresh = useCallback(async () => {
-		setLoading(true)
-		setError("")
-		try {
-			const data = await pb.send<AddressPrefixList>("/api/v1/address-prefixes", {})
-			setPrefixes(data.items ?? [])
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to load`)
-		}
-		setLoading(false)
-	}, [t])
+	useEffect(() => {
+		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
 
-	useEffect(() => { refresh() }, [refresh])
+	const fetchPage = useCallback(
+		async (cursor: string, append: boolean) => {
+			append ? setLoadingMore(true) : setLoading(true)
+			setError("")
+			try {
+				const data = await pb.send<AddressPrefixList>("/api/v1/address-prefixes", {
+					query: {
+						q: debouncedSearch || undefined,
+						family: family === "all" ? undefined : family,
+						source: source.trim() || undefined,
+						limit: pageSize,
+						cursor: cursor || undefined,
+					},
+				})
+				setPrefixes((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
+				setNextCursor(data.next_cursor ?? "")
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Failed to load`)
+			} finally {
+				append ? setLoadingMore(false) : setLoading(false)
+			}
+		},
+		[debouncedSearch, family, source, t]
+	)
+
+	useEffect(() => {
+		fetchPage("", false)
+	}, [fetchPage])
 
 	const add = async () => {
-		if (!form.cidr) return
-		const labels: Record<string, string> = {}
-		if (form.labels) {
-			for (const pair of form.labels.split(",")) {
-				const [k, v] = pair.trim().split("=")
-				if (k && v) labels[k.trim()] = v.trim()
-			}
-		}
+		if (!form.cidr.trim()) return
 		try {
+			const labels = parsePrefixLabels(form.labels)
+			const asn = form.asn.trim() ? Number(form.asn) : undefined
+			if (asn !== undefined && (!Number.isInteger(asn) || asn <= 0 || asn > 4_294_967_295)) {
+				throw new Error(t`ASN must be an integer between 1 and 4294967295`)
+			}
 			await pb.send("/api/v1/address-prefixes", {
 				method: "POST",
-				body: { cidr: form.cidr, labels },
+				body: { cidr: form.cidr.trim(), labels, source: form.source.trim() || "manual", asn },
 			})
-			setForm({ cidr: "", labels: "" })
+			setForm({ cidr: "", labels: "", source: "manual", asn: "" })
 			setShowForm(false)
-			await refresh()
+			await fetchPage("", false)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to create`)
 		}
 	}
 
-	const remove = async (id: string) => {
-		if (!confirm(t`Delete this prefix?`)) return
-		try {
-			await pb.send(`/api/v1/address-prefixes/${id}`, { method: "DELETE" })
-			await refresh()
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to delete`)
-		}
-	}
+	const remove = useCallback(
+		async (record: Record<string, unknown>) => {
+			const id = String(record.id ?? "")
+			const rowVersion = Number(record.rowVersion ?? 0)
+			if (!id || !rowVersion || !confirm(t`Delete this prefix?`)) return
+			try {
+				await pb.send(`/api/v1/address-prefixes/${id}`, {
+					method: "DELETE",
+					headers: { "If-Match": `"${rowVersion}"` },
+				})
+				await fetchPage("", false)
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Failed to delete`)
+			}
+		},
+		[fetchPage, t]
+	)
+
+	const records = useMemo(
+		() =>
+			prefixes.map((prefix) => ({
+				id: prefix.id,
+				cidr: prefix.cidr,
+				family: prefix.family ? `IPv${prefix.family}` : "—",
+				prefixLength: prefix.prefix_length ?? "—",
+				labels:
+					Object.entries(prefix.labels ?? {})
+						.map(([key, value]) => `${key}=${value}`)
+						.join(", ") || "—",
+				geo: prefix.geo_leaf_id || "—",
+				operator: prefix.operator_id || "—",
+				asn: prefix.asn ?? "—",
+				source: prefix.source,
+				action: t`Delete`,
+				rowVersion: prefix.row_version,
+			})),
+		[prefixes, t]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "cidr", title: t`CIDR`, width: 190, style: denseCellStyle() },
+			{ field: "family", title: t`Family`, width: 90, style: denseCellStyle() },
+			{ field: "labels", title: t`Labels`, width: 300, style: denseCellStyle() },
+			{ field: "geo", title: t`Geography`, width: 160, style: denseCellStyle() },
+			{ field: "operator", title: t`Operator`, width: 160, style: denseCellStyle() },
+			{ field: "asn", title: "ASN", width: 100, style: denseCellStyle() },
+			{ field: "source", title: t`Source`, width: 110, style: denseCellStyle() },
+			{
+				field: "action",
+				title: t`Actions`,
+				width: 90,
+				filter: false,
+				style: { ...denseCellStyle(), color: "#dc2626", cursor: "pointer" },
+			},
+		],
+		[t]
+	)
 
 	return (
 		<div className="grid gap-4">
-			<div className="flex items-center justify-between gap-3">
+			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<GlobeIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-					<h1 className="text-xl font-semibold tracking-normal"><Trans>Address Prefixes</Trans></h1>
+					<h1 className="text-xl font-semibold tracking-normal">
+						<Trans>Address Prefixes</Trans>
+					</h1>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={() => fetchPage("", false)} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
-					<Button size="sm" onClick={() => setShowForm(!showForm)}>
+					<Button size="sm" onClick={() => setShowForm((visible) => !visible)}>
 						<PlusIcon className="me-2 h-4 w-4" />
 						<Trans>Add Prefix</Trans>
 					</Button>
 				</div>
 			</div>
 
-			{showForm && (
-				<div className="grid gap-3 rounded-md border border-border bg-card p-4">
+			<div className="flex flex-wrap items-center gap-2">
+				<div className="relative min-w-64 max-w-sm flex-1">
+					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+					<Input
+						value={search}
+						onChange={(event) => setSearch(event.target.value)}
+						placeholder={t`Search CIDR or labels...`}
+						className="pl-9"
+					/>
+				</div>
+				<Select value={family} onValueChange={setFamily}>
+					<SelectTrigger className="w-32">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all">
+							<Trans>All families</Trans>
+						</SelectItem>
+						<SelectItem value="4">IPv4</SelectItem>
+						<SelectItem value="6">IPv6</SelectItem>
+					</SelectContent>
+				</Select>
+				<Input
+					className="w-40"
+					value={source}
+					onChange={(event) => setSource(event.target.value)}
+					placeholder={t`Source filter`}
+				/>
+			</div>
+
+			{showForm ? (
+				<div className="grid gap-3 rounded-md border border-border bg-card p-4 md:grid-cols-2">
 					<div className="grid gap-2">
-						<Label><Trans>CIDR</Trans></Label>
-						<Input value={form.cidr} onChange={(e) => setForm({ ...form, cidr: e.target.value })} placeholder="10.0.0.0/16" />
+						<Label>
+							<Trans>CIDR, IP, or range</Trans>
+						</Label>
+						<Input
+							value={form.cidr}
+							onChange={(event) => setForm({ ...form, cidr: event.target.value })}
+							placeholder="10.0.0.0/16"
+						/>
 					</div>
 					<div className="grid gap-2">
-						<Label><Trans>Labels</Trans> (key=value, comma separated)</Label>
-						<Input value={form.labels} onChange={(e) => setForm({ ...form, labels: e.target.value })} placeholder="region=杭州,type=客户,provider=电信" />
+						<Label>
+							<Trans>Source</Trans>
+						</Label>
+						<Input
+							value={form.source}
+							onChange={(event) => setForm({ ...form, source: event.target.value })}
+							placeholder="manual"
+						/>
 					</div>
-					<div className="flex gap-2">
-						<Button size="sm" onClick={add}><Trans>Add</Trans></Button>
-						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}><Trans>Cancel</Trans></Button>
+					<div className="grid gap-2">
+						<Label>
+							<Trans>Labels</Trans> (key=value, comma separated)
+						</Label>
+						<Input
+							value={form.labels}
+							onChange={(event) => setForm({ ...form, labels: event.target.value })}
+							placeholder="region=杭州,type=客户,provider=电信"
+						/>
+					</div>
+					<div className="grid gap-2">
+						<Label>
+							ASN (<Trans>optional</Trans>)
+						</Label>
+						<Input
+							inputMode="numeric"
+							value={form.asn}
+							onChange={(event) => setForm({ ...form, asn: event.target.value })}
+							placeholder="4134"
+						/>
+					</div>
+					<div className="flex gap-2 md:col-span-2">
+						<Button size="sm" onClick={add}>
+							<Trans>Add</Trans>
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>
+							<Trans>Cancel</Trans>
+						</Button>
 					</div>
 				</div>
-			)}
+			) : null}
 
-			{error && <div className="text-sm text-destructive">{error}</div>}
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
 
-			<div className="rounded-md border border-border bg-card overflow-hidden">
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead><Trans>CIDR</Trans></TableHead>
-							<TableHead><Trans>Labels</Trans></TableHead>
-							<TableHead><Trans>Source</Trans></TableHead>
-							<TableHead className="text-right"><Trans>Actions</Trans></TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{loading ? (
-							<TableRow><TableCell colSpan={4} className="text-muted-foreground"><Trans>Loading...</Trans></TableCell></TableRow>
-						) : prefixes.length === 0 ? (
-							<TableRow><TableCell colSpan={4} className="text-muted-foreground"><Trans>No prefixes found.</Trans></TableCell></TableRow>
-						) : (
-							prefixes.map((p) => (
-								<TableRow key={p.id}>
-									<TableCell className="font-mono text-sm">{p.cidr}</TableCell>
-									<TableCell className="text-sm">
-										{Object.entries(p.labels).map(([k, v]) => (
-											<span key={k} className="me-2 rounded bg-muted px-1.5 py-0.5 text-xs">{k}={v}</span>
-										))}
-									</TableCell>
-									<TableCell className="text-xs text-muted-foreground">{p.source}</TableCell>
-									<TableCell className="text-right">
-										<Button variant="ghost" size="sm" onClick={() => remove(p.id)}>
-											<Trash2Icon className="h-3.5 w-3.5" />
-										</Button>
-									</TableCell>
-								</TableRow>
-							))
-						)}
-					</TableBody>
-				</Table>
+			<div className="overflow-hidden rounded-md border border-border bg-card">
+				<PagedVTable
+					records={records}
+					columns={columns}
+					loading={loading}
+					emptyText={t`No prefixes found.`}
+					showSearch={false}
+					height={560}
+					onCellClick={(record, field) => {
+						if (field === "action") remove(record)
+					}}
+				/>
 			</div>
+			{nextCursor ? (
+				<div className="flex justify-center">
+					<Button variant="outline" size="sm" onClick={() => fetchPage(nextCursor, true)} disabled={loadingMore}>
+						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
+					</Button>
+				</div>
+			) : null}
 		</div>
 	)
 })
+
+function denseCellStyle() {
+	return { padding: [8, 10, 8, 10], textBaseline: "middle", autoWrapText: false }
+}

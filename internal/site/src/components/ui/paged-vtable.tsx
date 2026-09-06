@@ -14,6 +14,8 @@ export function PagedVTable({
 	height = 440,
 	rowHeight = 42,
 	onRowClick,
+	onCellClick,
+	showSearch = true,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -23,6 +25,8 @@ export function PagedVTable({
 	height?: number
 	rowHeight?: number
 	onRowClick?: (record: Record<string, unknown>) => void
+	onCellClick?: (record: Record<string, unknown>, field: string) => void
+	showSearch?: boolean
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -63,10 +67,12 @@ export function PagedVTable({
 			onFilterApplied: () => setPage(0),
 		})
 		tableInstance.current = table
-		if (onRowClick) {
+		if (onRowClick || onCellClick) {
 			table.on("click_cell", (args: { col: number; row: number }) => {
 				const record = getRowRecord(table, args) as Record<string, unknown> | null
-				if (record) onRowClick(record)
+				if (!record) return
+				onCellClick?.(record, String(columns[args.col]?.field ?? ""))
+				onRowClick?.(record)
 			})
 		}
 		return () => {
@@ -75,7 +81,7 @@ export function PagedVTable({
 			}
 			disposeTable(table)
 		}
-	}, [columns, loading, onRowClick, pageSize, rowHeight, searchedRecords])
+	}, [columns, loading, onCellClick, onRowClick, pageSize, rowHeight, searchedRecords])
 
 	useEffect(() => {
 		tableInstance.current?.updatePagination({ perPageCount: pageSize, currentPage: page, totalCount: filteredCount })
@@ -87,15 +93,19 @@ export function PagedVTable({
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="relative w-full max-w-sm">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						placeholder={searchPlaceholder}
-						className="pl-9"
-					/>
-				</div>
+				{showSearch ? (
+					<div className="relative w-full max-w-sm">
+						<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+						<Input
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+							placeholder={searchPlaceholder}
+							className="pl-9"
+						/>
+					</div>
+				) : (
+					<div />
+				)}
 				<div className="flex items-center gap-2 text-sm text-muted-foreground">
 					<span>{filteredCount} items</span>
 					<Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
