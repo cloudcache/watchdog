@@ -75,6 +75,11 @@
    - ✅ **字典机制已落地并 gated 验证**(migration `009_flow_address_dict_source.sql` + `address_dict_integration_test.go`)。源表 `flow_address_dict_source`(网段 → geo + `group_ids`,带 `dict_version`)进 migration;字典 `CREATE DICTIONARY … LAYOUT(IP_TRIE())` 因 source 要注入凭据在运行时建。验证结论:IPv4-mapped-IPv6 查(`tuple(toIPv6(ip))`)命中 IPv4 网段(与 `flow_records` 存 IPv6 一致);换 `dict_version` + reload 即按新定义现导,不动任何事实——**重分类 = 发新版本**。
    - ⏳ 待接:真实 geo 来源(PLAT-04D geo hierarchy + 管理员分组)→ 字典源的编译/发布链路,落在 `internal/watchdog` 稳定后接。
 2. **rollup 从原始按版本重算**:rollup 改成从原始 `dictGet` 现导再聚合(用字典版本),读侧不变(`max(generation)`)。gated CH 验:同一批原始 + 字典 → 聚合结果与旧 `GROUP BY` 一致;换字典版本 → 结果按新分类变。**此步之后重分类已经等于重跑 rollup。**
+   - ⚠️ **范围比"换 geo"大得多(实读 `rollup.go` ARRAY JOIN 后确认)**:现 rollup 的六维里 `category` / `business` / `business_direction`(哪端是 remote)/ `local_prefix`·`remote_prefix` / `address_set` **全是分类产物**,不是原始字段;连"哪端 local、哪端 remote"本身都是分类结果。要从原始 `src_ip`/`dst_ip` + 字典现导,等于把整个 `classify()`(方向判定 + category + business + prefix/组归属)搬进 SQL + 字典。这带来两个必须先定的设计点:
+     - **字典契约要扩大**:step 1 的字典只存 geo + `group_ids`;要支撑 step 2 得再编码"本租户 local 网段集 / prefix 标签 / business / category 判定所需属性",或把"哪端 local、方向怎么定"的逻辑留在 rollup SQL 里。二选一是设计决策。
+     - **与 `internal/watchdog` 分类逻辑走向耦合**:方向/category/business 的判定规则正是你在 `internal/watchdog` 重做的部分,字典要编码什么取决于那边定稿。
+   - **注意 geo 也不独立**:rollup 取的是 **remote 端** 的 geo/isp/asn,而"哪端是 remote"要先判 local-set 归属(也是地址库查),所以连"只改 geo"都得先有方向判定。真正不依赖分类的只有 src_ip/dst_ip/协议/端口/观测接口/字节包数(和原始 flow 自带的 src/dst ASN)。
+   - **因此 step 2 的干净拆分本身取决于 `internal/watchdog` 分类走向**——方向/local-set 判定放哪(SQL 还是字典)定了,才好定 2a 能先切哪几维。**建议 step 2 暂缓,等分类逻辑定稿**;step 1 的字典机制已独立可用、不阻塞。
 3. **查询按字典过滤/breakdown**:查询支持 `dictGet` 现导的组过滤 + 国家/ASN breakdown;实测原始表 ad-hoc 过滤成本,决定是否加 `PROJECTION`。
 4. **账单历史版本**:账单查询指定历史字典版本。
 5. **停写、删列**:确认 rollup/查询都不依赖 base 分类列后,worker 停写分类列,迁移删列。
