@@ -39,24 +39,36 @@ type DecodedBatch struct {
 	RecordMetadata      []DecodedRecordMetadata
 }
 
-// DecodedRecord is the lean carrier for one decoded flow record. It holds
-// exactly the fields the worker's mapFlowMessage reads and nothing else, so the
-// hot path never touches GoFlow2's protobuf FlowMessage (whose per-message state
-// machinery — Reset + atomic StoreMessageInfo — was a top decode cost). Field
-// names mirror goflowpb.FlowMessage so the mapping stays a field-for-field copy.
+// DecodedRecord is the carrier for one decoded flow record: a plain Go value
+// struct rather than GoFlow2's protobuf FlowMessage, so the hot path never pays
+// that message's per-record state machinery (Reset + atomic StoreMessageInfo,
+// once the top decode cost). It carries every field GoFlow2 produces for these
+// protocols that is meaningful network data — not just what mapFlowMessage reads
+// today — so no information is lost at the decode boundary (loss detection needs
+// SequenceNum, prefix work needs Src/DstNet, L2 needs VLANs, QoS needs IpTos,
+// etc.). Field names mirror goflowpb.FlowMessage so mapping stays a plain copy.
 // The slow path converts GoFlow2 messages into this via recordFromFlowMessage.
 type DecodedRecord struct {
-	Type            goflowpb.FlowMessage_FlowType
 	SrcAddr         []byte
 	DstAddr         []byte
+	NextHop         []byte
+	SamplerAddress  []byte
+	Type            goflowpb.FlowMessage_FlowType
 	SrcPort         uint32
 	DstPort         uint32
 	Proto           uint32
 	TcpFlags        uint32
+	IpTos           uint32
+	Etype           uint32
 	InIf            uint32
 	OutIf           uint32
 	SrcAs           uint32
 	DstAs           uint32
+	SrcNet          uint32
+	DstNet          uint32
+	SrcVlan         uint32
+	DstVlan         uint32
+	SequenceNum     uint32
 	Bytes           uint64
 	Packets         uint64
 	SamplingRate    uint64
@@ -65,16 +77,20 @@ type DecodedRecord struct {
 	TimeReceivedNs  uint64
 }
 
-// recordFromFlowMessage copies the fields the worker reads out of a GoFlow2
-// message (slow path: v9/IPFIX and sFlow fallback). Address slices reference the
-// pooled message and are valid only until the next Decode, per the contract.
+// recordFromFlowMessage copies the meaningful fields out of a GoFlow2 message
+// (slow path: v9/IPFIX and sFlow fallback). Address slices reference the pooled
+// message and are valid only until the next Decode, per the contract.
 func recordFromFlowMessage(dst *DecodedRecord, m *goflowpb.FlowMessage) {
 	dst.Type = m.Type
-	dst.SrcAddr, dst.DstAddr = m.SrcAddr, m.DstAddr
+	dst.SrcAddr, dst.DstAddr, dst.NextHop = m.SrcAddr, m.DstAddr, m.NextHop
+	dst.SamplerAddress = m.SamplerAddress
 	dst.SrcPort, dst.DstPort = m.SrcPort, m.DstPort
-	dst.Proto, dst.TcpFlags = m.Proto, m.TcpFlags
+	dst.Proto, dst.TcpFlags, dst.IpTos, dst.Etype = m.Proto, m.TcpFlags, m.IpTos, m.Etype
 	dst.InIf, dst.OutIf = m.InIf, m.OutIf
 	dst.SrcAs, dst.DstAs = m.SrcAs, m.DstAs
+	dst.SrcNet, dst.DstNet = m.SrcNet, m.DstNet
+	dst.SrcVlan, dst.DstVlan = m.SrcVlan, m.DstVlan
+	dst.SequenceNum = m.SequenceNum
 	dst.Bytes, dst.Packets = m.Bytes, m.Packets
 	dst.SamplingRate = m.SamplingRate
 	dst.TimeFlowStartNs, dst.TimeFlowEndNs, dst.TimeReceivedNs = m.TimeFlowStartNs, m.TimeFlowEndNs, m.TimeReceivedNs
@@ -114,8 +130,11 @@ type Decoder struct {
 	// rawScratch is the reused envelope target for DecodeValue's zero-copy parse.
 	rawScratch flowpb.RawFlow
 	// idIntern caches collector/listener identity strings so the envelope parse
-	// stops allocating them after warmup.
-	idIntern map[string]string
+	// stops allocating them after warmup. lastSampler* caches the per-datagram
+	// NetFlow sampler address (a partition serves one exporter) to keep it 0-alloc.
+	idIntern         map[string]string
+	lastSamplerAddr  netip.Addr
+	lastSamplerBytes []byte
 	// fastSFlow selects the hand-written sFlow v5 framing decoder. sflowHeader
 	// Scratch is the one GoFlow2 message reused only for SampledHeader records
 	// (fed to the hardened ParseSampledHeader). sflowMetadata / sflow{AgentIP,
@@ -200,6 +219,21 @@ func (d *Decoder) internID(data []byte) string {
 	return s
 }
 
+// samplerAddress returns the NetFlow exporter address bytes, matching GoFlow2's
+// SamplerAddress (source.Addr().Unmap().MarshalBinary()). It caches the last
+// result — a partition serves one exporter — so this allocates once per source,
+// not per datagram. A prior batch may still hold the previous slice; a source
+// change installs a fresh slice and never mutates it.
+func (d *Decoder) samplerAddress(source netip.AddrPort) []byte {
+	addr := source.Addr().Unmap()
+	if d.lastSamplerBytes == nil || addr != d.lastSamplerAddr {
+		encoded, _ := addr.MarshalBinary()
+		d.lastSamplerAddr = addr
+		d.lastSamplerBytes = encoded
+	}
+	return d.lastSamplerBytes
+}
+
 // recoverDecoderPanic runs the GoFlow2 pipe and converts a decoder panic on
 // crafted/malformed bytes into an error. The collector does not decode, so a
 // panic-triggering datagram reaches the worker undecoded; without this, one such
@@ -239,7 +273,7 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	// metadata or agent identity, so those batch fields are zero — matching what
 	// the slow path's metadataProducer sets for a non-sFlow packet.
 	if d.fastNetFlowV5 && flowType == goflowpb.FlowMessage_NETFLOW_V5 {
-		records, ferr := decodeNetFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano()), d.recordBacking)
+		records, ferr := decodeNetFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano()), d.samplerAddress(source), d.recordBacking)
 		if ferr != nil {
 			return DecodedBatch{}, ferr
 		}

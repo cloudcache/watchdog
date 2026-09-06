@@ -17,7 +17,7 @@ import (
 // record (a sampled raw packet) needs a full Ethernet/IP/TCP parse. This fast
 // path hand-writes only the framing — the reflection-heavy part (35 GoFlow2
 // call sites) — and hands the untrusted packet-header parse to GoFlow2's
-// hardened ParseSampledHeader. It produces FlowMessages and per-sample metadata
+// hardened ParseSampledHeader. It produces DecodedRecords and per-sample metadata
 // identical to GoFlow2's ProcessMessageSFlowConfig for the sample and record
 // types it handles, and returns errSFlowFallback (so the caller reruns GoFlow2)
 // for ExtendedGateway BGP records or an unknown sample format rather than
@@ -57,10 +57,10 @@ func (c *sflowCursor) take(n int) ([]byte, bool) {
 	return s, true
 }
 
-// decodeSFlowV5Fast decodes an sFlow v5 datagram into the decoder's reused sFlow
-// backing and metadata. On success the batch is read from d.sflowBacking /
-// d.sflowMetadata plus d.sflowAgentIP/SubAgent/Sequence. It returns
-// errSFlowFallback when it meets a construct it declines to fast-path.
+// decodeSFlowV5Fast decodes an sFlow v5 datagram into the decoder's reused
+// recordBacking and sflowMetadata. On success the batch is read from those plus
+// d.sflowAgentIP/SubAgent/Sequence. It returns errSFlowFallback when it meets a
+// construct it declines to fast-path.
 func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error {
 	c := sflowCursor{buf: payload}
 	version, ok := c.u32()
@@ -75,6 +75,7 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 		return errors.New("sflow: truncated agent IP version")
 	}
 	var agentIP netip.Addr
+	var agentBytes []byte // GoFlow2 sets SamplerAddress to these raw packet bytes.
 	switch ipVersion {
 	case 0:
 		agentIP = netip.Addr{}
@@ -83,12 +84,14 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 		if !ok {
 			return errors.New("sflow: truncated agent IPv4")
 		}
+		agentBytes = b
 		agentIP, _ = netip.AddrFromSlice(b)
 	case 2:
 		b, ok := c.take(16)
 		if !ok {
 			return errors.New("sflow: truncated agent IPv6")
 		}
+		agentBytes = b
 		agentIP, _ = netip.AddrFromSlice(b)
 	default:
 		return fmt.Errorf("sflow: unknown agent IP version %d", ipVersion)
@@ -126,6 +129,9 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 			if err != nil {
 				return err
 			}
+			// Datagram-level fields GoFlow2 stamps on every sFlow record.
+			record.SequenceNum = sequence
+			record.SamplerAddress = agentBytes
 			d.sflowMetadata = append(d.sflowMetadata, metadata)
 			out++
 		case sflow.SAMPLE_FORMAT_COUNTER, sflow.SAMPLE_FORMAT_EXPANDED_COUNTER, sflow.SAMPLE_FORMAT_DROP:
@@ -239,19 +245,17 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		}
 		record.Bytes = uint64(frameLength)
 		// The raw sampled packet's Ethernet/IP/TCP headers are parsed by GoFlow2's
-		// hardened ParseSampledHeader into a scratch message; copy the fields the
-		// worker reads. This is the only record type that still touches a protobuf
-		// message — and it already allocates inside ParseSampledHeader.
+		// hardened ParseSampledHeader into a scratch message; copy the packet-derived
+		// fields out. This is the only record type that still touches a protobuf
+		// message. Plain-zero the scratch (not scratch.Reset) to skip the protobuf
+		// state atomic — ParsePacket only writes fields, it never reflects/marshals.
 		scratch := &d.sflowHeaderScratch
-		scratch.Reset()
+		*scratch = protoproducer.ProtoProducerMessage{}
 		sampledHeader := sflow.SampledHeader{Protocol: protocol, FrameLength: frameLength, OriginalLength: headerLength, HeaderData: headerData}
 		if err := protoproducer.ParseSampledHeader(scratch, &sampledHeader); err != nil {
 			return fmt.Errorf("sflow sampled header: %w", err)
 		}
-		record.SrcAddr, record.DstAddr = scratch.SrcAddr, scratch.DstAddr
-		record.Proto = scratch.Proto
-		record.SrcPort, record.DstPort = scratch.SrcPort, scratch.DstPort
-		record.TcpFlags = scratch.TcpFlags
+		copyPacketFields(record, scratch)
 	case sflow.FLOW_TYPE_IPV4:
 		length, a := c.u32()
 		protocol, b := c.u32()
@@ -260,7 +264,7 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		srcPort, cc := c.u32()
 		dstPort, dd := c.u32()
 		_, e := c.u32() // TcpFlags: GoFlow2 decodes but does not map for SampledIPv4
-		_, f := c.u32() // Tos: not read by the worker
+		tos, f := c.u32()
 		if !a || !b || !okS || !okD || !cc || !dd || !e || !f {
 			return errSFlowTruncatedRecord
 		}
@@ -268,6 +272,8 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		record.Bytes = uint64(length)
 		record.Proto = protocol
 		record.SrcPort, record.DstPort = srcPort, dstPort
+		record.IpTos = tos
+		record.Etype = 0x800
 	case sflow.FLOW_TYPE_IPV6:
 		length, a := c.u32()
 		protocol, b := c.u32()
@@ -276,7 +282,7 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		srcPort, cc := c.u32()
 		dstPort, dd := c.u32()
 		_, e := c.u32() // TcpFlags: not mapped
-		_, f := c.u32() // Priority: not read by the worker
+		priority, f := c.u32()
 		if !a || !b || !okS || !okD || !cc || !dd || !e || !f {
 			return errSFlowTruncatedRecord
 		}
@@ -284,13 +290,70 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		record.Bytes = uint64(length)
 		record.Proto = protocol
 		record.SrcPort, record.DstPort = srcPort, dstPort
+		record.IpTos = priority
+		record.Etype = 0x86dd
+	case sflow.FLOW_TYPE_EXT_ROUTER:
+		nextHop, err := decodeSFlowIP(&c)
+		if err != nil {
+			return err
+		}
+		srcMask, a := c.u32()
+		dstMask, b := c.u32()
+		if !a || !b {
+			return errSFlowTruncatedRecord
+		}
+		record.NextHop = nextHop
+		record.SrcNet, record.DstNet = srcMask, dstMask
+	case sflow.FLOW_TYPE_EXT_SWITCH:
+		srcVlan, a := c.u32()
+		_, b := c.u32() // SrcPriority: not mapped
+		dstVlan, cc := c.u32()
+		_, dd := c.u32() // DstPriority: not mapped
+		if !a || !b || !cc || !dd {
+			return errSFlowTruncatedRecord
+		}
+		record.SrcVlan, record.DstVlan = srcVlan, dstVlan
 	case sflow.FLOW_TYPE_EXT_GATEWAY:
 		return errSFlowFallback // BGP AS-path/communities set SrcAs/DstAs — run GoFlow2.
 	default:
-		// ExtendedRouter/ExtendedSwitch and everything else (ETH, EgressQueue, ACL,
-		// Function, MPLS, …) map only to fields the worker never reads (NextHop/
-		// masks/VLANs/…), so the lean record ignores them. The record body was
-		// already consumed by the caller.
+		// ETH, EgressQueue, ACL, Function, MPLS, etc.: GoFlow2 decodes them but its
+		// producer maps no DecodedRecord field, so skipping (record already consumed)
+		// matches its output for well-formed datagrams.
 	}
 	return nil
+}
+
+// copyPacketFields copies the fields ParseSampledHeader derives from the sampled
+// packet into the record; sample/datagram-level fields are already set.
+func copyPacketFields(dst *DecodedRecord, m *protoproducer.ProtoProducerMessage) {
+	dst.SrcAddr, dst.DstAddr = m.SrcAddr, m.DstAddr
+	dst.Proto, dst.TcpFlags, dst.IpTos, dst.Etype = m.Proto, m.TcpFlags, m.IpTos, m.Etype
+	dst.SrcPort, dst.DstPort = m.SrcPort, m.DstPort
+	dst.SrcVlan, dst.DstVlan = m.SrcVlan, m.DstVlan
+}
+
+// decodeSFlowIP mirrors GoFlow2's DecodeIP: an IP-version word then 0/4/16 bytes.
+func decodeSFlowIP(c *sflowCursor) ([]byte, error) {
+	ipVersion, ok := c.u32()
+	if !ok {
+		return nil, errSFlowTruncatedRecord
+	}
+	switch ipVersion {
+	case 0:
+		return nil, nil
+	case 1:
+		b, ok := c.take(4)
+		if !ok {
+			return nil, errSFlowTruncatedRecord
+		}
+		return b, nil
+	case 2:
+		b, ok := c.take(16)
+		if !ok {
+			return nil, errSFlowTruncatedRecord
+		}
+		return b, nil
+	default:
+		return nil, fmt.Errorf("sflow: unknown router IP version %d", ipVersion)
+	}
 }

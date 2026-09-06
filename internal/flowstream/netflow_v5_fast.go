@@ -28,21 +28,21 @@ const (
 // valid for the batch's lifetime under the Decoder zero-copy contract, since the
 // worker copies them out before the next Decode. Returns the populated prefix.
 //
-// timeReceivedNs is datagram-level; GoFlow2 stamps it from the pipe's
-// ProduceArgs (packet receive time), so the fast path does too. Fields GoFlow2
-// sets but the worker never reads (NextHop/Etype/IpTos/SrcNet/DstNet/SequenceNum/
-// SamplerAddress) are dropped — the point of the lean DecodedRecord.
+// timeReceivedNs and samplerAddress are datagram-level; GoFlow2 stamps them from
+// the pipe's ProduceArgs (packet receive time, exporter source address), so the
+// fast path does too. All records share the one samplerAddress slice.
 //
 // It never reads past the payload: the header's record count is clamped to what
 // the buffer actually holds, so a malformed or hostile count cannot panic or
 // over-read.
-func decodeNetFlowV5Fast(payload []byte, timeReceivedNs uint64, dst []DecodedRecord) ([]DecodedRecord, error) {
+func decodeNetFlowV5Fast(payload []byte, timeReceivedNs uint64, samplerAddress []byte, dst []DecodedRecord) ([]DecodedRecord, error) {
 	if len(payload) < netflowV5HeaderSize {
 		return nil, errors.New("NetFlow v5 header is truncated")
 	}
 	count := int(binary.BigEndian.Uint16(payload[2:4]))
 	uptime := binary.BigEndian.Uint32(payload[4:8])
 	baseTime := uint64(binary.BigEndian.Uint32(payload[8:12]))*1_000_000_000 + uint64(binary.BigEndian.Uint32(payload[12:16]))
+	sequence := binary.BigEndian.Uint32(payload[16:20])
 	// The low 14 bits are the rate; the high 2 bits are the sampling mode.
 	samplingRate := uint64(binary.BigEndian.Uint16(payload[22:24]) & 0x3FFF)
 
@@ -57,13 +57,17 @@ func decodeNetFlowV5Fast(payload []byte, timeReceivedNs uint64, dst []DecodedRec
 		*r = DecodedRecord{
 			Type:         goflowpb.FlowMessage_NETFLOW_V5,
 			SamplingRate: samplingRate,
+			SequenceNum:  sequence,
 			// uint32 subtraction then uint64 nanosecond math, matching GoFlow2's
 			// wrapping behaviour exactly (First/Last are uptime-relative in ms).
 			TimeFlowStartNs: baseTime - uint64(uptime-binary.BigEndian.Uint32(record[24:28]))*1_000_000,
 			TimeFlowEndNs:   baseTime - uint64(uptime-binary.BigEndian.Uint32(record[28:32]))*1_000_000,
 			TimeReceivedNs:  timeReceivedNs,
+			SamplerAddress:  samplerAddress,
 			SrcAddr:         record[0:4],
 			DstAddr:         record[4:8],
+			NextHop:         record[8:12],
+			Etype:           0x800,
 			InIf:            uint32(binary.BigEndian.Uint16(record[12:14])),
 			OutIf:           uint32(binary.BigEndian.Uint16(record[14:16])),
 			Packets:         uint64(binary.BigEndian.Uint32(record[16:20])),
@@ -72,8 +76,11 @@ func decodeNetFlowV5Fast(payload []byte, timeReceivedNs uint64, dst []DecodedRec
 			DstPort:         uint32(binary.BigEndian.Uint16(record[34:36])),
 			TcpFlags:        uint32(record[37]),
 			Proto:           uint32(record[38]),
+			IpTos:           uint32(record[39]),
 			SrcAs:           uint32(binary.BigEndian.Uint16(record[40:42])),
 			DstAs:           uint32(binary.BigEndian.Uint16(record[42:44])),
+			SrcNet:          uint32(record[44]),
+			DstNet:          uint32(record[45]),
 		}
 	}
 	return dst[:count], nil
