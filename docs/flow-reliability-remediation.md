@@ -19,7 +19,7 @@
 - [ ] **F18-obs 汇总空洞可观测性** — `latestCompletedBucketUnix` 是滚动 max（掩盖中间空洞）；terminal `failed` 只增可重试计数器、不增 permanent（天然告警漏 F1）。→ 出专门的 terminal-failed 计数器 + per-tenant「最高连续完成桶」gauge。文件：`flowmetrics/rollup.go`、`flowch/rollup.go:143`。（先于 F1，让空洞可见）
 - [ ] **F1 汇总水位改「已完成」语义** 【需决策】 — 水位在 job 入队时推进；job 若 terminal `failed`（`MEMORY_LIMIT`/`TIMEOUT` 均可重试、重型租户确定性失败）则该桶永久静默缺失、无自愈。→ 推荐：另设完成水位（最高连续成功桶）+ reaper 重驱 enqueued-but-not-succeeded 的桶 + 允许对无 generation 的桶重排 gen-1。文件：`internal/watchdog/flow_rollup_jobs.go`（注意与 address 改动同包）。
 - [ ] **F2 接上迟到修复（`EnqueueFlowRollupRepair` 目前死代码）** 【需决策】 — 桶仅凭墙钟 `now−5min` 放行，迟到数据永不重算。→ 推荐：用 per-partition ingest 低水位放行桶 + 自动对最近关闭的一批桶跑 gen N+1（读侧已支持多 generation）。文件：`internal/watchdog/flow_rollup_jobs.go`。
-- [ ] **F3 数据层（raw/supplier）授权执行点** 【需决策·依赖查询网关】 — `CompileDetail` 直接接受客户端 `view`，`raw` 还移除可见性过滤。查询包当前无 HTTP 调用方。→ 推荐：给 `CompileDetail` 加 `allowedViews` 参数把执行点收进包内；建查询网关（PLAT-04H）时做「主体→允许 view 集合」映射。文件：`flowquery/detail.go:334`。
+- [x] **F3 数据层（raw/supplier）授权执行点**（flowquery 侧）✅ commit 14b1e8fc（PLAT-04H flowquery 半）— `Scope` 加 `AllowedViews`（fail-closed：nil=仅 customer 最低层，raw/supplier 需显式授予）；`CompileDetail` 按请求 view、customer-locked 的 aggregate/overseas/address-set 按 ViewCustomer 强制 `allowsView`；新 `ErrorPermissionDenied`。RBAC 单测 + gated CH（customer）绿。**余项（宿主，internal/watchdog）**：网关按主体权限构造 `Scope.AllowedViews`、module/dataset 注册、CH pool 注入、readiness/限流/error envelope。
 
 ## P1 · 可用性与规模（放大 P0 的引擎）
 
