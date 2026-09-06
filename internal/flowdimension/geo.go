@@ -416,6 +416,7 @@ func (c *GeoCatalog) load(path string, limits GeoLoadLimits, activate bool) (boo
 	if activate {
 		next.active = index
 	}
+	capHistoricalGeoVersions(next, defaultMaxHistoricalGeoVersions)
 	c.state.Store(next)
 	return true, nil
 }
@@ -457,6 +458,50 @@ func (c *GeoCatalog) RetainVersions(versions []string) int {
 	}
 	c.state.Store(next)
 	return removed
+}
+
+// defaultMaxHistoricalGeoVersions bounds how many geo index versions a catalog
+// retains. Geo versions are published rarely (only when the hierarchy changes),
+// so this is a generous safety backstop, not the precise retention policy —
+// enough to cover any realistic event-time replay window while preventing a
+// long-running process that reloads on every publish from leaking versions
+// without bound (RetainVersions has no caller yet).
+const defaultMaxHistoricalGeoVersions = 128
+
+// capHistoricalGeoVersions keeps the active version and the most recent versions
+// by EffectiveFrom, dropping the oldest beyond max. Dropped-away old events
+// resolve to ErrNoGeoIndex via Select, never to the wrong version. Precise
+// event-time retention remains the caller's RetainVersions; this only caps the
+// leak.
+func capHistoricalGeoVersions(state *geoCatalogState, max int) {
+	if max <= 0 || len(state.byEffective) <= max {
+		return
+	}
+	kept := make([]*GeoIndex, 0, max)
+	for index := len(state.byEffective) - 1; index >= 0 && len(kept) < max; index-- {
+		kept = append(kept, state.byEffective[index])
+	}
+	if state.active != nil {
+		activeKept := false
+		for _, index := range kept {
+			if index == state.active {
+				activeKept = true
+				break
+			}
+		}
+		if !activeKept {
+			kept[len(kept)-1] = state.active
+		}
+	}
+	sort.Slice(kept, func(left, right int) bool {
+		return kept[left].metadata.EffectiveFrom.Before(kept[right].metadata.EffectiveFrom)
+	})
+	byVersion := make(map[string]*GeoIndex, len(kept))
+	for _, index := range kept {
+		byVersion[index.metadata.Version] = index
+	}
+	state.byVersion = byVersion
+	state.byEffective = kept
 }
 
 func LoadGeoIndex(path string, limits GeoLoadLimits) (*GeoIndex, error) {

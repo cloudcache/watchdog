@@ -659,3 +659,57 @@ func replaceTestSymlink(t *testing.T, link, target string) {
 		t.Fatal(err)
 	}
 }
+
+func geoStateForCap(active string, versions ...string) *geoCatalogState {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	state := &geoCatalogState{byVersion: map[string]*GeoIndex{}}
+	for index, version := range versions {
+		entry := &GeoIndex{metadata: GeoIndexMetadata{Version: version, EffectiveFrom: base.Add(time.Duration(index) * time.Hour)}}
+		state.byVersion[version] = entry
+		state.byEffective = append(state.byEffective, entry)
+		if version == active {
+			state.active = entry
+		}
+	}
+	return state
+}
+
+func TestCapHistoricalGeoVersionsKeepsMostRecentAndActive(t *testing.T) {
+	state := geoStateForCap("v4", "v0", "v1", "v2", "v3", "v4")
+	capHistoricalGeoVersions(state, 3)
+	if len(state.byEffective) != 3 || len(state.byVersion) != 3 {
+		t.Fatalf("kept %d versions, want 3", len(state.byVersion))
+	}
+	for _, want := range []string{"v2", "v3", "v4"} {
+		if _, ok := state.byVersion[want]; !ok {
+			t.Fatalf("recent version %s was pruned", want)
+		}
+	}
+	if _, ok := state.byVersion["v0"]; ok {
+		t.Fatal("oldest version v0 should have been pruned")
+	}
+	if state.byEffective[0].metadata.Version != "v2" || state.byEffective[2].metadata.Version != "v4" {
+		t.Fatal("byEffective is not sorted ascending after capping")
+	}
+}
+
+func TestCapHistoricalGeoVersionsAlwaysRetainsActive(t *testing.T) {
+	// After a rollback the active version can be older than the newest N; it must
+	// still survive the cap so the currently-published version never disappears.
+	state := geoStateForCap("v0", "v0", "v1", "v2", "v3", "v4")
+	capHistoricalGeoVersions(state, 3)
+	if _, ok := state.byVersion["v0"]; !ok {
+		t.Fatal("active version v0 was pruned by the cap")
+	}
+	if len(state.byEffective) != 3 || state.active.metadata.Version != "v0" {
+		t.Fatalf("kept=%d active=%s", len(state.byEffective), state.active.metadata.Version)
+	}
+}
+
+func TestCapHistoricalGeoVersionsNoOpUnderCap(t *testing.T) {
+	state := geoStateForCap("v1", "v0", "v1")
+	capHistoricalGeoVersions(state, 128)
+	if len(state.byEffective) != 2 || len(state.byVersion) != 2 {
+		t.Fatalf("cap should be a no-op below the limit, got %d", len(state.byVersion))
+	}
+}
