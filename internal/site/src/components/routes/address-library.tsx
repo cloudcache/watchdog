@@ -8,10 +8,21 @@ import AddressImports from "./address-imports"
 import AddressMath from "./address-math"
 import AddressPublications from "./address-publications"
 import AddressPrefixes from "./address-prefixes"
+import AddressRevisions from "./address-revisions"
 import AddressSets from "./address-sets"
 import AddressTaxonomy from "./address-taxonomy"
 
-const sections = ["imports", "prefixes", "sets", "tools", "publications", "geography", "operators", "lines"] as const
+const sections = [
+	"imports",
+	"prefixes",
+	"sets",
+	"tools",
+	"batch",
+	"publications",
+	"geography",
+	"operators",
+	"lines",
+] as const
 type AddressLibrarySection = (typeof sections)[number]
 
 function normalizeSection(value: string): AddressLibrarySection {
@@ -45,6 +56,9 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 					<TabsTrigger value="tools">
 						<Trans>Set Tools</Trans>
 					</TabsTrigger>
+					<TabsTrigger value="batch">
+						<Trans>Batch Apply</Trans>
+					</TabsTrigger>
 					<TabsTrigger value="publications">
 						<Trans>Publications</Trans>
 					</TabsTrigger>
@@ -63,6 +77,7 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 			{active === "prefixes" ? <AddressPrefixes /> : null}
 			{active === "sets" ? <AddressSets /> : null}
 			{active === "tools" ? <AddressMath /> : null}
+			{active === "batch" ? <AddressRevisions /> : null}
 			{active === "publications" ? <AddressPublications /> : null}
 			{active === "geography" ? <AddressTaxonomy kind="geography" /> : null}
 			{active === "operators" ? <AddressTaxonomy kind="operators" /> : null}
