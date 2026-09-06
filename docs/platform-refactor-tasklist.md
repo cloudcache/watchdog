@@ -59,10 +59,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `045`：`045_query_gateway_policy.sql` 已提交（`13669321`）；001–045 首次迁移、045 直接重放及 fresh-install parity 已在真实 MySQL 9.6 通过。
+- 当前迁移头为 `046`：`046_export_execution_contract.sql` 已在真实 MySQL 完成 001–046 空库、直接双重 replay、旧 export row backfill 及 fresh-install parity（`af631b7c`）。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 由 PLAT-04H QueryGateway policy 独占。下一个持久化工作从 `046` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占。下一个持久化工作从 `047` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -75,7 +75,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `043` | Dimension lifecycle correction | 解除 snapshot RESTRICT 对 tenant CASCADE 的阻断；保留应用层单 snapshot 回收门禁 | 已提交 `c53b90f5`，不改 042 checksum |
 | `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 已提交 `178e0ced`、`d2cf66f4`；真实 MySQL 门禁通过 |
 | `045` | QueryGateway policy | tenant dataset enablement、raw/supplier/customer 双门禁、并发/范围/行数/超时预算；provider endpoint/凭据/全局启停留在部署配置 | schema/fresh-init/真实 MySQL 门禁 `13669321`；backend `00448c68` |
-| `046` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `045` 提交后开工 |
+| `046` | Export execution | immutable query/version/authorization snapshot、operation job 关联、CSV/Parquet format contract、artifact schema/content/row count/retention | schema/fresh-init/旧行 backfill/真实 MySQL replay 已提交 `af631b7c`；执行面 `942e5086` |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 
@@ -85,7 +85,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [ ] **Frontend/VTable**：Dashboard 列表、编辑器、panel 布局/引用选择、preview/missing-reference 展示；必须直接消费服务端分页/filter/ETag，不得重新全量拉取后在浏览器过滤。
 - [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。
   - [x] Network Devices 表首个服务端驱动样板（q/status/sort/offset + 聚合计数，列白名单防注入，本地 MySQL 实跑，commit d6de03b2）；Hosts 表 load-more（commit 24739658）；Core (BGP) 表服务端 search/state/sort + total/established 计数（INET6_NTOA 搜 peer、授权按 device.target 下推，commit 9b121983）。audit-logs / operation-jobs 表此前已 keyset 服务端分页+筛选；Agent Runs 历史加 keyset load-more（(ended_at,id) 游标，本地 MySQL 实跑，commit c243b622）。**主要 VTable（targets/devices/BGP/agent-runs + audit/jobs）已全部服务端化**。余项：`agents` 注册表（有界，暂不需）、popover portal/collision（UI 打磨）。
-- [ ] Export job 统一 CSV/Parquet、快照、权限复核、checksum、TTL、下载审计和失败重试。**已落地**：migration 034 给 `export_tasks` 加 `checksum(sha256)/size_bytes/expires_at`，worker 产物写入并回填校验和/大小、7 天 TTL；download handler 拒绝过期产物（410 Gone）、回写 `X-Checksum-SHA256`+`Content-Length`、写 `export.downloaded` 审计（commit d03e53ac）；周期维护新增 `expired_exports` reaper 删除过期行（文件按对象存储/磁盘 lifecycle 老化），gated MySQL 证明只删过期完成态（commit c4e5eba6）。**余项**：Parquet（需新依赖）、快照隔离和失败重试仍待做。
+- [ ] Export job 统一 CSV/Parquet、快照、权限复核、checksum、TTL、下载审计和失败重试。**已落地**：migration 034 给 `export_tasks` 加 `checksum(sha256)/size_bytes/expires_at`，worker 产物写入并回填校验和/大小、7 天 TTL；download handler 拒绝过期产物（410 Gone）、回写 `X-Checksum-SHA256`+`Content-Length`、写 `export.downloaded` 审计（commit d03e53ac）；周期维护新增 `expired_exports` reaper 删除过期行（文件按对象存储/磁盘 lifecycle 老化），gated MySQL 证明只删过期完成态（commit c4e5eba6）。migration 046 冻结 contract v1 的 canonical query/hash、dataset/version/authorization snapshot、operation job 关联、CSV/Parquet、retention 和 artifact schema/content/row count，旧行显式 backfill 为不完整 contract v0（`af631b7c`）。执行面现由唯一的 `operation_jobs` 状态机驱动，创建/执行/下载/重试/取消均复核当前 value-layer 权限；QueryGateway VM adapter 读取不可变 query，目标级多序列先按时间戳求和再统计，完整率使用冻结参数；CSV/Parquet 共享逻辑 schema，Parquet 已真读回验证；前端显式提交层并支持 Parquet、取消及产物元数据（`942e5086`）。**余项**：服务端分页/search/sort/filter VTable、终态 delete/文件删除、过期清理审计与对象生命周期闭环。
 
 
 
@@ -120,7 +120,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [ ] **前端**：导入/active slot/导入前缀浏览、prefix/set、地域字典、运营商、线路组合和 publication preview/publish 均已组织为 Address Library，列表使用带搜索/列 filter 的分页 VTable（commits `59a6e5aa`、`87a98e83`、`3a7db545`）；集合运算工作台支持严格 merge、并/交/差、有限补集、overlap 和显式 cover 扩大量（commit `9c613c10`）；prefix/set 已补齐 If-Match 编辑表单及 typed selector 字段（commit `1d442dfa`）；Batch Apply 页支持带 filter/search 的旧前缀选择、CIDR/IP/range replacement、持久 preview、ETag 原子 apply、revision 历史/变更明细 VTable（commit `c241358a`）。余项是 searchable Geo/operator/set 引用选择以及 retire/rollback/worker 状态页面。
   - [ ] **集成/变更测试**：真实 MySQL 上传→job→批量入库→active generation CAS，以及 typed CRUD/DAG/引用保护/并发 ETag/批量 apply 已通过；001–043 空库迁移/二次零变更/fresh-init parity，以及两版本签名审批→激活→退休→回滚→失败/成功 ACK→reference merge→tenant cascade 已通过。余项是百万行/崩溃接管、旧 selector 兼容、base overlay、真实 worker install ack、安全回收和 API RBAC E2E。
   - [ ] **性能/回归**：百万级 MMDB/IPDB 导入吞吐/内存、50k 输入集合运算、最坏 overlap/DAG、API body/结果上限；全库 race/vet/test、前端 typecheck/build、fresh-install parity。
-  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）、`1d442dfa`（prefix/set 编辑闭环）、`e8775c76`（migration 041）、`acbdd4a7`（batch revision backend）、`c241358a`（Batch Apply UI）、`d89efae9`（migration 042）、`c53b90f5`（migration 043）、`8b86d829`（publication lifecycle repository）；整项尚有上列门禁。当前 MySQL migration head 为 **045**，下一个 backend P2 migration 必须从 **046** 顺序追加。
+  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）、`1d442dfa`（prefix/set 编辑闭环）、`e8775c76`（migration 041）、`acbdd4a7`（batch revision backend）、`c241358a`（Batch Apply UI）、`d89efae9`（migration 042）、`c53b90f5`（migration 043）、`8b86d829`（publication lifecycle repository）；整项尚有上列门禁。当前 MySQL migration head 为 **046**，下一个 backend P2 migration 必须从 **047** 顺序追加。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。

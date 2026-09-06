@@ -783,6 +783,8 @@ status, row_version, created_by, expires_at
 
 raw/supplier/customer 创建、执行和下载分别用 `export_raw/export_supplier/export_customer` 复核当前权限；`authorization_json` 只保存当时的决定证据，不能替代当前授权。产物以 schema version、content type、row count、size 和 SHA-256 自描述；下载校验元数据并写审计，过期删除也写审计。CSV 与 Parquet 共享同一逻辑 row schema，格式 writer 不得各自重新计算查询或修正规则。
 
+当前 SNMP interface dataset 尚未拥有可按版本重放的 immutable adjustment publication，因此 contract v1 对参与计算的端口策略保存 canonical fingerprint：执行或自动重试前重新计算 fingerprint，不一致就终态失败并要求创建新导出，禁止拿当前策略静默重解释旧任务。VM provider 的 completeness 元数据为 unknown，导出执行不能把 unknown 当 complete；任务创建时冻结实际 query step 与容许缺失率，worker 对按时间戳合并后的样本执行 expected-sample 校验。目标级查询返回多端口 series 时必须先在同一 timestamp 求和，再计算 P95/平均/总量，禁止把各端口样本铺平后做 percentile。
+
 ```text
 POST                     /api/v1/query
 POST                     /api/v1/exports
