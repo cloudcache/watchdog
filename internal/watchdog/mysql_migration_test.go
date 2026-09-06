@@ -42,6 +42,7 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"geo_lines",
 		"billing_accounts",
 		"permissions",
+		"query_dataset_policies",
 		"audit_logs",
 		"operation_job_schedules",
 		"operation_job_scheduler_state",
@@ -94,20 +95,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "044" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "045" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "044" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "045" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -291,12 +292,44 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 44 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "044" {
+	if len(migrations) != 45 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "045" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func TestQueryGatewayPolicyMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "045_query_gateway_policy.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists query_dataset_policies",
+		"primary key (tenant_id, dataset_key)",
+		"allow_raw boolean not null default false",
+		"allow_supplier boolean not null default false",
+		"allow_customer boolean not null default true",
+		"max_range_seconds int unsigned",
+		"max_concurrent smallint unsigned",
+		"max_result_rows int unsigned",
+		"query_timeout_ms int unsigned",
+		"row_version bigint unsigned",
+		"on delete cascade",
+		"on delete set null",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("query gateway policy migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"clickhouse_password", "provider_url", "drop table", "delete from"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("query gateway policy migration unexpectedly contains %q", forbidden)
 		}
 	}
 }

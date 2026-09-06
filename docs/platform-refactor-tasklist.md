@@ -62,7 +62,7 @@
 - 当前迁移头为 `044`：`044_operation_scheduler.sql` 的 schema/fresh-install/迁移门禁（`178e0ced`）及通用 scheduler backend（`d2cf66f4`）均已提交；001–044 首次迁移、044 直接重放及 fresh-install parity 已在真实 MySQL 9.6 通过。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占。下一个持久化工作从 `045` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 由 PLAT-04H QueryGateway policy 独占。下一个持久化工作从 `046` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -74,7 +74,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `042` | Dimension publication lifecycle | approval/signature、event-time activation/rollback、ACK 失败态、事实引用保留/安全回收 | 已提交 `d89efae9` |
 | `043` | Dimension lifecycle correction | 解除 snapshot RESTRICT 对 tenant CASCADE 的阻断；保留应用层单 snapshot 回收门禁 | 已提交 `c53b90f5`，不改 042 checksum |
 | `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 已提交 `178e0ced`、`d2cf66f4`；真实 MySQL 门禁通过 |
-| `045` | QueryGateway policy | dataset/provider enablement、raw/supplier/customer action、tenant 并发/范围预算 | 待 `044` 提交后开工 |
+| `045` | QueryGateway policy | tenant dataset enablement、raw/supplier/customer 双门禁、并发/范围/行数/超时预算；provider endpoint/凭据/全局启停留在部署配置 | 实现中（schema 已冻结） |
 | `046` | Export execution | immutable query snapshot、attempt/retry、artifact format/retention 与下载授权快照 | 待 `045` 提交后开工 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。

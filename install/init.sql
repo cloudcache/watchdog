@@ -1310,6 +1310,31 @@ CREATE TABLE IF NOT EXISTS `quiet_hours` (
   CONSTRAINT `chk_quiet_hours_type` CHECK ((`window_type` in ('daily','one-time')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `query_dataset_policies` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dataset_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `allow_raw` tinyint(1) NOT NULL DEFAULT '0',
+  `allow_supplier` tinyint(1) NOT NULL DEFAULT '0',
+  `allow_customer` tinyint(1) NOT NULL DEFAULT '1',
+  `max_range_seconds` int unsigned NOT NULL DEFAULT '34560000',
+  `max_concurrent` smallint unsigned NOT NULL DEFAULT '4',
+  `max_result_rows` int unsigned NOT NULL DEFAULT '250000',
+  `query_timeout_ms` int unsigned NOT NULL DEFAULT '90000',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `updated_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`,`dataset_key`),
+  KEY `fk_query_dataset_policies_actor` (`updated_by`),
+  CONSTRAINT `fk_query_dataset_policies_actor` FOREIGN KEY (`updated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_query_dataset_policies_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_query_dataset_policy_range` CHECK ((`max_range_seconds` between 60 and 315360000)),
+  CONSTRAINT `chk_query_dataset_policy_concurrent` CHECK ((`max_concurrent` between 1 and 1024)),
+  CONSTRAINT `chk_query_dataset_policy_rows` CHECK ((`max_result_rows` between 1 and 10000000)),
+  CONSTRAINT `chk_query_dataset_policy_timeout` CHECK ((`query_timeout_ms` between 100 and 3600000))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `roles` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
