@@ -14,6 +14,9 @@ import (
 type fakeNetworkRepository struct {
 	devices      []NetworkDevice
 	ports        []NetworkPort
+	portQuery    NetworkPortQuery
+	portTotal    int
+	portCounts   NetworkPortCounts
 	addresses    []NetworkInterfaceAddress
 	transceiver  NetworkPortTransceiver
 	sensors      []NetworkDeviceSensor
@@ -127,10 +130,33 @@ func (r *fakeNetworkRepository) ListPorts(_ context.Context, _ ID, deviceID ID) 
 	return ports, nil
 }
 
+func (r *fakeNetworkRepository) ListDevicePortsPage(_ context.Context, _ ID, _ ID, query NetworkPortQuery) ([]NetworkPort, int, error) {
+	r.portQuery = query
+	return r.ports, r.portTotal, nil
+}
+
+func (r *fakeNetworkRepository) CountDevicePorts(_ context.Context, _ ID, _ ID) (NetworkPortCounts, error) {
+	return r.portCounts, nil
+}
+
 func (r *fakeNetworkRepository) ListInterfaceAddresses(_ context.Context, _ ID, deviceID ID) ([]NetworkInterfaceAddress, error) {
 	var addresses []NetworkInterfaceAddress
 	for _, address := range r.addresses {
 		if address.DeviceID == deviceID {
+			addresses = append(addresses, address)
+		}
+	}
+	return addresses, nil
+}
+
+func (r *fakeNetworkRepository) ListInterfaceAddressesByPorts(_ context.Context, _ ID, portIDs []ID) ([]NetworkInterfaceAddress, error) {
+	wanted := make(map[ID]struct{}, len(portIDs))
+	for _, portID := range portIDs {
+		wanted[portID] = struct{}{}
+	}
+	addresses := make([]NetworkInterfaceAddress, 0)
+	for _, address := range r.addresses {
+		if _, ok := wanted[address.PortID]; ok {
 			addresses = append(addresses, address)
 		}
 	}

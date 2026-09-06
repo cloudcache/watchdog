@@ -160,7 +160,10 @@ type NetworkRepository interface {
 	UpsertDevice(ctx context.Context, device NetworkDevice) (NetworkDevice, error)
 	DeleteDevice(ctx context.Context, tenantID, deviceID ID) error
 	ListPorts(ctx context.Context, tenantID, deviceID ID) ([]NetworkPort, error)
+	ListDevicePortsPage(ctx context.Context, tenantID, deviceID ID, query NetworkPortQuery) ([]NetworkPort, int, error)
+	CountDevicePorts(ctx context.Context, tenantID, deviceID ID) (NetworkPortCounts, error)
 	ListInterfaceAddresses(ctx context.Context, tenantID, deviceID ID) ([]NetworkInterfaceAddress, error)
+	ListInterfaceAddressesByPorts(ctx context.Context, tenantID ID, portIDs []ID) ([]NetworkInterfaceAddress, error)
 	GetPort(ctx context.Context, tenantID, portID ID) (NetworkPort, error)
 	UpsertPorts(ctx context.Context, ports []NetworkPort) error
 	ReplaceInterfaceAddresses(ctx context.Context, tenantID, deviceID ID, addresses []NetworkInterfaceAddress) error
@@ -242,6 +245,23 @@ type DeviceSensorQuery struct {
 type DeviceSensorCounts struct {
 	Total    int `json:"total"`
 	Problems int `json:"problems"`
+}
+
+type NetworkPortQuery struct {
+	Search        string
+	AdminStatus   string
+	OperStatus    string
+	AddressFamily string
+	Sort          string
+	Desc          bool
+	Limit         int
+	Offset        int
+}
+
+type NetworkPortCounts struct {
+	Total int `json:"total"`
+	Up    int `json:"up"`
+	Down  int `json:"down"`
 }
 
 type RetentionRepository interface {

@@ -368,6 +368,96 @@ func (s *MySQLStore) ListPorts(ctx context.Context, tenantID, deviceID ID) ([]Ne
 	return ports, rows.Err()
 }
 
+var networkPortSortColumns = map[string]string{
+	"":             "p.if_index",
+	"if_index":     "p.if_index",
+	"name":         "p.if_name",
+	"alias":        "p.if_alias",
+	"admin_status": "p.admin_status",
+	"oper_status":  "p.oper_status",
+	"speed":        "p.speed_bps",
+}
+
+func (s *MySQLStore) ListDevicePortsPage(ctx context.Context, tenantID, deviceID ID, q NetworkPortQuery) ([]NetworkPort, int, error) {
+	limit, offset := boundedPage(q.Limit, q.Offset)
+	where := ` WHERE p.tenant_id = ? AND p.device_id = ?`
+	args := []any{tenantID, deviceID}
+	if search := strings.TrimSpace(q.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (CAST(p.if_index AS CHAR) LIKE ? OR p.if_name LIKE ? OR p.if_alias LIKE ? OR p.if_descr LIKE ? OR p.admin_status LIKE ? OR p.oper_status LIKE ? OR EXISTS (
+			SELECT 1 FROM network_interface_addresses a
+			WHERE a.tenant_id = p.tenant_id AND a.port_id = p.id
+			  AND (INET6_NTOA(a.address) LIKE ? OR a.family LIKE ?)
+		))`
+		args = append(args, like, like, like, like, like, like, like, like)
+	}
+	where, args = appendNetworkPortStatusFilter(where, args, "p.admin_status", q.AdminStatus)
+	where, args = appendNetworkPortStatusFilter(where, args, "p.oper_status", q.OperStatus)
+	if q.AddressFamily != "" {
+		where += ` AND EXISTS (
+			SELECT 1 FROM network_interface_addresses a
+			WHERE a.tenant_id = p.tenant_id AND a.port_id = p.id AND a.family = ?
+		)`
+		args = append(args, q.AddressFamily)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_ports p`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	sortColumn := networkPortSortColumns[q.Sort]
+	if sortColumn == "" {
+		sortColumn = "p.if_index"
+	}
+	query := `
+		SELECT p.id, p.tenant_id, p.device_id, p.if_index, p.if_name, p.if_alias, p.if_descr,
+		       p.admin_status, p.oper_status, p.speed_bps, p.metadata_json, p.updated_at
+		FROM network_ports p` + where + fmt.Sprintf(" ORDER BY %s %s, p.if_index %s, p.id %s LIMIT ? OFFSET ?", sortColumn, dir, dir, dir)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	ports := make([]NetworkPort, 0, min(limit, total))
+	for rows.Next() {
+		port, err := scanNetworkPort(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		ports = append(ports, port)
+	}
+	return ports, total, rows.Err()
+}
+
+func appendNetworkPortStatusFilter(where string, args []any, column, status string) (string, []any) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "":
+		return where, args
+	case "up":
+		return where + ` AND LOWER(TRIM(` + column + `)) IN ('up', '1')`, args
+	case "down":
+		return where + ` AND LOWER(TRIM(` + column + `)) IN ('down', '2')`, args
+	default:
+		return where + ` AND ` + column + ` = ?`, append(args, status)
+	}
+}
+
+func (s *MySQLStore) CountDevicePorts(ctx context.Context, tenantID, deviceID ID) (NetworkPortCounts, error) {
+	var counts NetworkPortCounts
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN LOWER(TRIM(oper_status)) IN ('up', '1') THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN LOWER(TRIM(oper_status)) IN ('down', '2') THEN 1 ELSE 0 END), 0)
+		FROM network_ports
+		WHERE tenant_id = ? AND device_id = ?
+	`, tenantID, deviceID).Scan(&counts.Total, &counts.Up, &counts.Down)
+	return counts, err
+}
+
 func (s *MySQLStore) ListInterfaceAddresses(ctx context.Context, tenantID, deviceID ID) ([]NetworkInterfaceAddress, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, tenant_id, device_id, COALESCE(port_id, ''), if_index,
@@ -381,6 +471,37 @@ func (s *MySQLStore) ListInterfaceAddresses(ctx context.Context, tenantID, devic
 	}
 	defer rows.Close()
 	var addresses []NetworkInterfaceAddress
+	for rows.Next() {
+		address, err := scanNetworkInterfaceAddress(rows)
+		if err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses, rows.Err()
+}
+
+func (s *MySQLStore) ListInterfaceAddressesByPorts(ctx context.Context, tenantID ID, portIDs []ID) ([]NetworkInterfaceAddress, error) {
+	if len(portIDs) == 0 {
+		return []NetworkInterfaceAddress{}, nil
+	}
+	args := make([]any, 0, len(portIDs)+1)
+	args = append(args, tenantID)
+	for _, portID := range portIDs {
+		args = append(args, portID)
+	}
+	query := `
+		SELECT id, tenant_id, device_id, COALESCE(port_id, ''), if_index,
+		       address, family, prefix_length, origin, context_name, updated_at
+		FROM network_interface_addresses
+		WHERE tenant_id = ? AND port_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(portIDs)), ",") + `)
+		ORDER BY if_index, family, address`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	addresses := make([]NetworkInterfaceAddress, 0)
 	for rows.Next() {
 		address, err := scanNetworkInterfaceAddress(rows)
 		if err != nil {

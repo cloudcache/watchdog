@@ -6,8 +6,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
+
+type networkPortListItem struct {
+	NetworkPort
+	Addresses []NetworkInterfaceAddress
+}
 
 func registerPortRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo NetworkRepository, portDeletePreview PortDeletePreviewRepository, operationJobs OperationJobRepository, cleaner SeriesCleaner) {
 	api := networkAPI{repo: repo, portDeletePreview: portDeletePreview, operationJobs: operationJobs, seriesCleaner: cleaner}
@@ -31,6 +39,38 @@ func (api networkAPI) listPorts(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	values := r.URL.Query()
+	if hasNetworkPortPageParams(values) {
+		query, err := parseNetworkPortPage(values)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		ports, total, err := api.repo.ListDevicePortsPage(r.Context(), auth.TenantID, device.ID, query)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		portIDs := make([]ID, 0, len(ports))
+		for _, port := range ports {
+			portIDs = append(portIDs, port.ID)
+		}
+		addresses, err := api.repo.ListInterfaceAddressesByPorts(r.Context(), auth.TenantID, portIDs)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		counts, err := api.repo.CountDevicePorts(r.Context(), auth.TenantID, device.ID)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{
+			"items": joinNetworkPortAddresses(ports, addresses), "total": total, "counts": counts,
+			"limit": query.Limit, "offset": query.Offset,
+		})
+		return
+	}
 	ports, err := api.repo.ListPorts(r.Context(), auth.TenantID, device.ID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -41,19 +81,71 @@ func (api networkAPI) listPorts(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": joinNetworkPortAddresses(ports, addresses)})
+}
+
+func joinNetworkPortAddresses(ports []NetworkPort, addresses []NetworkInterfaceAddress) []networkPortListItem {
 	byPort := make(map[ID][]NetworkInterfaceAddress, len(ports))
 	for _, address := range addresses {
 		byPort[address.PortID] = append(byPort[address.PortID], address)
 	}
-	type portListItem struct {
-		NetworkPort
-		Addresses []NetworkInterfaceAddress
-	}
-	items := make([]portListItem, 0, len(ports))
+	items := make([]networkPortListItem, 0, len(ports))
 	for _, port := range ports {
-		items = append(items, portListItem{NetworkPort: port, Addresses: byPort[port.ID]})
+		items = append(items, networkPortListItem{NetworkPort: port, Addresses: byPort[port.ID]})
 	}
-	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+	return items
+}
+
+func hasNetworkPortPageParams(values url.Values) bool {
+	return values.Get("limit") != "" || values.Get("offset") != "" || values.Get("q") != "" ||
+		values.Get("admin_status") != "" || values.Get("oper_status") != "" || values.Get("address_family") != "" ||
+		values.Get("sort") != "" || values.Get("order") != ""
+}
+
+func parseNetworkPortPage(values url.Values) (NetworkPortQuery, error) {
+	query := NetworkPortQuery{
+		Search:        strings.TrimSpace(values.Get("q")),
+		AdminStatus:   strings.ToLower(strings.TrimSpace(values.Get("admin_status"))),
+		OperStatus:    strings.ToLower(strings.TrimSpace(values.Get("oper_status"))),
+		AddressFamily: strings.ToLower(strings.TrimSpace(values.Get("address_family"))),
+		Sort:          strings.TrimSpace(values.Get("sort")),
+	}
+	if len(query.Search) > 256 || len(query.AdminStatus) > 32 || len(query.OperStatus) > 32 {
+		return NetworkPortQuery{}, fmt.Errorf("port filter is too long")
+	}
+	if query.AdminStatus == "all" {
+		query.AdminStatus = ""
+	}
+	if query.OperStatus == "all" {
+		query.OperStatus = ""
+	}
+	if query.AddressFamily == "all" {
+		query.AddressFamily = ""
+	}
+	if query.AddressFamily != "" && query.AddressFamily != "ipv4" && query.AddressFamily != "ipv6" {
+		return NetworkPortQuery{}, fmt.Errorf("address_family must be all, ipv4, or ipv6")
+	}
+	if query.Sort == "" {
+		query.Sort = "if_index"
+	}
+	if _, ok := networkPortSortColumns[query.Sort]; !ok {
+		return NetworkPortQuery{}, fmt.Errorf("invalid port sort")
+	}
+	order := strings.ToLower(strings.TrimSpace(values.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		return NetworkPortQuery{}, fmt.Errorf("order must be asc or desc")
+	}
+	query.Desc = order == "desc"
+	var err error
+	query.Limit, err = parseNetworkInventoryInteger(values.Get("limit"), 100, 1, 500)
+	if err != nil {
+		return NetworkPortQuery{}, fmt.Errorf("limit must be between 1 and 500")
+	}
+	query.Offset, err = parseNetworkInventoryInteger(values.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		return NetworkPortQuery{}, fmt.Errorf("offset must be zero or greater")
+	}
+	return query, nil
 }
 
 func (api networkAPI) getPort(w http.ResponseWriter, r *http.Request) {

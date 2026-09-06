@@ -109,7 +109,11 @@ type NetworkInterfaceAddress = {
 
 type NetworkPortsResponse = {
 	items?: NetworkPort[]
+	total?: number
+	counts?: PortCounts
 }
+
+type PortCounts = { total: number; up: number; down: number }
 
 type TargetRecord = {
 	ID?: string
@@ -619,12 +623,9 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="ports">
-						<PortsTable
-							loading={loading}
-							ports={ports}
+						<DevicePortsTable
+							deviceId={id}
 							portTraffic={portTraffic}
-							deviceID={deviceID}
-							targetID={targetID}
 							trafficView={trafficView}
 						/>
 					</TabsContent>
@@ -1066,22 +1067,72 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 	)
 }
 
-function PortsTable({
-	loading,
-	ports,
+function DevicePortsTable({
+	deviceId,
 	portTraffic,
-	deviceID: _deviceID,
-	targetID: _targetID,
 	trafficView,
 }: {
-	loading: boolean
-	ports: NetworkPort[]
+	deviceId: string
 	portTraffic: Record<string, { in?: number; out?: number }>
-	deviceID: string
-	targetID: string
 	trafficView: TrafficViewMode
 }) {
 	const { t } = useLingui()
+	const [ports, setPorts] = useState<NetworkPort[]>([])
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [operStatus, setOperStatus] = useState("all")
+	const [addressFamily, setAddressFamily] = useState("all")
+	const [sort, setSort] = useState("if_index:asc")
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [total, setTotal] = useState(0)
+	const [counts, setCounts] = useState<PortCounts>({ total: 0, up: 0, down: 0 })
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${deviceId}/ports`, {
+				query: {
+					q: query || undefined,
+					oper_status: operStatus === "all" ? undefined : operStatus,
+					address_family: addressFamily === "all" ? undefined : addressFamily,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setPorts(data.items ?? [])
+			setTotal(data.total ?? 0)
+			if (data.counts) setCounts(data.counts)
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setPorts([])
+			setTotal(0)
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [addressFamily, deviceId, operStatus, page, pageSize, query, sort])
+
+	useEffect(() => {
+		load()
+	}, [load])
 	const records = useMemo(
 		() =>
 			ports.map((port) => {
@@ -1130,15 +1181,79 @@ function PortsTable({
 		if (record.id) navigate(getPagePath($router, "network_port", { id: String(record.id) }))
 	}, [])
 	return (
-		<PagedVTable
-			records={records}
-			columns={columns}
-			loading={loading}
-			emptyText={t`No ports found.`}
-			searchPlaceholder={t`Search ports, addresses...`}
-			height={560}
-			onRowClick={openPort}
-		/>
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center gap-2">
+				<Select
+					value={operStatus}
+					onValueChange={(value) => {
+						setOperStatus(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all"><Trans>All states</Trans></SelectItem>
+						<SelectItem value="up"><Trans>Up</Trans></SelectItem>
+						<SelectItem value="down"><Trans>Down</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Select
+					value={addressFamily}
+					onValueChange={(value) => {
+						setAddressFamily(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all"><Trans>All addresses</Trans></SelectItem>
+						<SelectItem value="ipv4">IPv4</SelectItem>
+						<SelectItem value="ipv6">IPv6</SelectItem>
+					</SelectContent>
+				</Select>
+				<Select
+					value={sort}
+					onValueChange={(value) => {
+						setSort(value)
+						setPage(0)
+					}}
+				>
+					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="if_index:asc"><Trans>Index ascending</Trans></SelectItem>
+						<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
+						<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
+						<SelectItem value="speed:desc"><Trans>Speed descending</Trans></SelectItem>
+						<SelectItem value="oper_status:asc"><Trans>Status ascending</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+				<Badge variant={counts.down > 0 ? "secondary" : "success"}>
+					{counts.up}/{counts.total} <Trans>up</Trans>
+				</Badge>
+			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={t`No ports found.`}
+				searchPlaceholder={t`Search ports, addresses...`}
+				searchValue={search}
+				onSearchChange={setSearch}
+				height={560}
+				onRowClick={openPort}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
+				}}
+			/>
+		</div>
 	)
 }
 
