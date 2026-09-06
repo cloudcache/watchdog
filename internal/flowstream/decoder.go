@@ -20,7 +20,6 @@ import (
 	"github.com/netsampler/goflow2/v3/utils/store/samplingrate"
 	"github.com/netsampler/goflow2/v3/utils/store/templates"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"google.golang.org/protobuf/proto"
 )
 
 const defaultDecoderStateTTL = 30 * time.Minute
@@ -60,6 +59,8 @@ type Decoder struct {
 	// reflection-based pipe. netflowV5Backing is its reused message array.
 	fastNetFlowV5    bool
 	netflowV5Backing []goflowpb.FlowMessage
+	// rawScratch is the reused envelope target for DecodeValue's zero-copy parse.
+	rawScratch flowpb.RawFlow
 }
 
 func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
@@ -100,11 +101,14 @@ func (d *Decoder) DecodeValue(value []byte) (DecodedBatch, error) {
 	if d == nil || d.pipe == nil {
 		return DecodedBatch{}, errors.New("GoFlow2 decoder is not initialized")
 	}
-	var raw flowpb.RawFlow
-	if err := proto.Unmarshal(value, &raw); err != nil {
-		return DecodedBatch{}, fmt.Errorf("unmarshal raw flow: %w", err)
+	// Zero-copy envelope parse: Payload and SourceAddress slice value directly
+	// rather than being copied by proto.Unmarshal, and d.rawScratch is reused
+	// across calls. The returned batch never retains d.rawScratch, only slices of
+	// value — valid until the next Decode under the Decoder zero-copy contract.
+	if err := parseRawFlowInto(value, &d.rawScratch); err != nil {
+		return DecodedBatch{}, fmt.Errorf("parse raw flow: %w", err)
 	}
-	return d.Decode(&raw)
+	return d.Decode(&d.rawScratch)
 }
 
 // recoverDecoderPanic runs the GoFlow2 pipe and converts a decoder panic on
