@@ -48,13 +48,105 @@ func TestLabelSelectorAcceptsExistingStringAndArrayShapes(t *testing.T) {
   "prefixes":[{"id":"remote","cidr":"203.0.113.0/24","labels":{"provider":"isp-a","region":"east"}}],
   "address_sets":[{"id":"set-a","selector":{"labels":{"provider":"isp-a","region":["east","west"]}},"match_direction":"both","enabled":true}]
 }`)
-	if _, err := DecodeAndCompileBundle(data, bundleChecksum(data), CompileLimits{}); err != nil {
+	legacy, err := DecodeAndCompileBundle(data, bundleChecksum(data), CompileLimits{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if legacy.Metadata().SchemaVersion != 1 || legacy.Metadata().OperatorCount != 0 {
+		t.Fatalf("legacy metadata = %+v", legacy.Metadata())
 	}
 
 	bad := strings.Replace(string(data), `"selector":{"labels":`, `"selector":{"unknown":true,"labels":`, 1)
 	if _, err := DecodeAndCompileBundle([]byte(bad), bundleChecksum([]byte(bad)), CompileLimits{}); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("selector unknown field error = %v", err)
+	}
+}
+
+func TestCompileBundleCarriesImmutableTenantOperatorDefinitions(t *testing.T) {
+	bundle := testBundle("snapshot-operators", 1, testMinute(12, 0))
+	bundle.Operators = []OperatorDefinition{
+		{ID: "operator-telecom", FlowISPID: 3, Code: "CT", Name: "China Telecom", ShortName: "Telecom", Category: "carrier", ASNs: []uint32{4134, 4809}, Enabled: true},
+		{ID: "operator-disabled", FlowISPID: 9, Code: "LAB", Name: "Lab Network", Category: "other", ASNs: []uint32{}, Enabled: false},
+	}
+	snapshot, err := CompileBundle(bundle, CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata := snapshot.Metadata(); metadata.SchemaVersion != BundleSchemaVersion || metadata.OperatorCount != 2 {
+		t.Fatalf("operator metadata = %+v", metadata)
+	}
+	byID, ok := snapshot.OperatorByID("operator-telecom")
+	if !ok || byID.FlowISPID != 3 || len(byID.ASNs) != 2 {
+		t.Fatalf("operator by id = %+v, %t", byID, ok)
+	}
+	byFlowID, ok := snapshot.OperatorByFlowISPID(3)
+	if !ok || byFlowID.ID != byID.ID {
+		t.Fatalf("operator by Flow ISP id = %+v, %t", byFlowID, ok)
+	}
+	definitions := snapshot.OperatorDefinitions()
+	definitions[0].ASNs[0] = 1
+	byID.ASNs[0] = 2
+	again, _ := snapshot.OperatorByFlowISPID(3)
+	if again.ASNs[0] != 4134 {
+		t.Fatalf("compiled operator storage was exposed: %+v", again)
+	}
+	if _, ok := snapshot.OperatorByFlowISPID(0); ok {
+		t.Fatal("reserved unknown Flow ISP id resolved")
+	}
+}
+
+func TestCompileBundleRejectsInvalidOperatorDefinitions(t *testing.T) {
+	valid := OperatorDefinition{ID: "operator-a", FlowISPID: 1, Code: "A", Name: "Operator A", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}
+	for name, mutate := range map[string]func(*SnapshotBundle){
+		"schema v1 content": func(bundle *SnapshotBundle) {
+			bundle.SchemaVersion = 1
+			bundle.Operators = []OperatorDefinition{valid}
+		},
+		"zero Flow ISP id": func(bundle *SnapshotBundle) {
+			item := valid
+			item.FlowISPID = 0
+			bundle.Operators = []OperatorDefinition{item}
+		},
+		"duplicate management id": func(bundle *SnapshotBundle) {
+			other := valid
+			other.FlowISPID = 2
+			bundle.Operators = []OperatorDefinition{valid, other}
+		},
+		"duplicate Flow ISP id": func(bundle *SnapshotBundle) {
+			other := valid
+			other.ID = "operator-b"
+			bundle.Operators = []OperatorDefinition{valid, other}
+		},
+		"ASN zero": func(bundle *SnapshotBundle) {
+			item := valid
+			item.ASNs = []uint32{0}
+			bundle.Operators = []OperatorDefinition{item}
+		},
+		"ASN not canonical": func(bundle *SnapshotBundle) {
+			item := valid
+			item.ASNs = []uint32{64501, 64500}
+			bundle.Operators = []OperatorDefinition{item}
+		},
+		"operator order not canonical": func(bundle *SnapshotBundle) {
+			other := valid
+			other.ID = "operator-b"
+			other.FlowISPID = 2
+			bundle.Operators = []OperatorDefinition{other, valid}
+		},
+		"ASN assigned twice": func(bundle *SnapshotBundle) {
+			other := valid
+			other.ID = "operator-b"
+			other.FlowISPID = 2
+			bundle.Operators = []OperatorDefinition{valid, other}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bundle := testBundle("snapshot-invalid-operator", 1, testMinute(12, 0))
+			mutate(&bundle)
+			if _, err := CompileBundle(bundle, CompileLimits{}); err == nil {
+				t.Fatal("invalid operator definition was accepted")
+			}
+		})
 	}
 }
 

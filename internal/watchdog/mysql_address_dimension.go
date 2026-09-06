@@ -93,7 +93,7 @@ func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Con
 		DraftDigest: digest, BundleSchemaVersion: flowdimension.BundleSchemaVersion, EffectiveFrom: effectiveFrom.UTC(),
 		SourceManifestVersion: AddressDimensionSourceManifestV1,
 		SourceManifest:        append([]AddressDimensionSource(nil), draft.Sources...), SourcePrefixCount: sourcePrefixCount,
-		PrefixCount: uint64(len(draft.Prefixes)), AddressSetCount: uint64(len(draft.AddressSets)),
+		PrefixCount: uint64(len(draft.Prefixes)), AddressSetCount: uint64(len(draft.AddressSets)), OperatorCount: uint64(len(draft.Operators)),
 		EnabledAddressSetCount: uint64(metadata.EnabledAddressSetCount), MaxAddressSetsPerRecord: uint32(metadata.MaxAddressSetsPerRecord),
 		EstimatedBundleBytes: uint64(len(data)),
 	}, nil
@@ -165,7 +165,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 	`, snapshotID, tenantID, AddressDimensionModuleKey, AddressDimensionKey, version, request.EffectiveFrom.UTC(),
 		object.Ref, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
-		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets),
+		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets)+len(draft.Operators),
 		len(draft.Prefixes), len(draft.AddressSets), metadata.MaxAddressSetsPerRecord, actorID)
 	if err != nil {
 		var mysqlErr *mysqldriver.MySQLError

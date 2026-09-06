@@ -29,6 +29,7 @@ type AddressDimensionPreview = {
 	effective_from: string
 	prefix_count: number
 	address_set_count: number
+	operator_count?: number
 	enabled_address_set_count: number
 	max_address_sets_per_record: number
 	estimated_bundle_bytes: number
@@ -185,8 +186,9 @@ export default memo(function AddressPublications() {
 					</Button>
 				</div>
 				{preview ? (
-					<div className="grid gap-2 text-sm md:col-span-3 sm:grid-cols-2 lg:grid-cols-5">
+					<div className="grid gap-2 text-sm md:col-span-3 sm:grid-cols-2 lg:grid-cols-6">
 						<PreviewStat label={t`Prefixes`} value={preview.prefix_count.toLocaleString()} />
+						<PreviewStat label={t`Operators`} value={(preview.operator_count ?? 0).toLocaleString()} />
 						<PreviewStat
 							label={t`Enabled sets`}
 							value={`${preview.enabled_address_set_count}/${preview.address_set_count}`}

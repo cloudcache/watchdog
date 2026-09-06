@@ -46,9 +46,15 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id) VALUES (?, ?, 'dimension@test.invalid', 'Dimension', 'active', 'test', 'dimension-test')`, userID, tenantID); err != nil {
 		t.Fatal(err)
 	}
+	operator, err := store.CreateISPOperator(ctx, ISPOperator{
+		TenantID: tenantID, Code: "CT", Name: "China Telecom", Category: "carrier", ASNs: []uint32{4809, 4134}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	prefix, err := store.UpsertAddressPrefix(ctx, AddressPrefix{
 		ID: "00000000-0000-4000-8000-000000000001", TenantID: tenantID, CIDR: "10.0.0.0/8",
-		Labels: map[string]string{"flow": "local", "business": "private"}, Source: "test",
+		OperatorID: operator.ID, Labels: map[string]string{"flow": "local", "business": "private"}, Source: "test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +90,9 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if preview.OperatorCount != 1 || preview.BundleSchemaVersion != flowdimension.BundleSchemaVersion {
+		t.Fatalf("preview operator contract = %#v", preview)
+	}
 	prefix.Labels["business"] = "changed"
 	prefix, err = store.UpdateAddressPrefix(ctx, prefix, prefix.RowVersion)
 	if err != nil {
@@ -96,11 +105,23 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	operator.Name = "China Telecom updated"
+	operator, err = store.UpdateISPOperator(ctx, operator, operator.RowVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.PublishAddressDimension(ctx, tenantID, userID, AddressDimensionPublishRequest{EffectiveFrom: effective, PreviewDigest: preview.DraftDigest}); !errors.Is(err, ErrAddressDimensionDraftChanged) {
+		t.Fatalf("operator update did not invalidate preview: %v", err)
+	}
+	preview, err = publisher.PreviewAddressDimension(ctx, tenantID, effective)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := publisher.PublishAddressDimension(ctx, tenantID, userID, AddressDimensionPublishRequest{EffectiveFrom: effective, PreviewDigest: preview.DraftDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Version != 1 || snapshot.PrefixCount != 1 || snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending {
+	if snapshot.Version != 1 || snapshot.PrefixCount != 1 || snapshot.EntryCount != 2 || snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if snapshot.SourcePrefixCount != 7 || len(snapshot.SourceManifest) != 1 || snapshot.SourceManifest[0].ImportID != baseImport1 || snapshot.SourceManifest[0].SlotRowVersion != baseSlot.RowVersion {
@@ -117,6 +138,10 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	compiled, err := flowdimension.DecodeAndCompileBundle(data, snapshot.Checksum, flowdimension.CompileLimits{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	compiledOperator, ok := compiled.OperatorByFlowISPID(operator.FlowISPID)
+	if !ok || compiledOperator.ID != string(operator.ID) || compiledOperator.Name != "China Telecom updated" || len(compiledOperator.ASNs) != 2 || compiled.Metadata().OperatorCount != 1 {
+		t.Fatalf("published operator definition = %#v, %t; metadata=%+v", compiledOperator, ok, compiled.Metadata())
 	}
 	classified := compiled.ClassifyEndpoints(netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.7"))
 	if classified.Direction != flowdimension.DirectionOut || classified.Business != "changed" {

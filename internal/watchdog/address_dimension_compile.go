@@ -25,6 +25,7 @@ type AddressDimensionDraftSource struct {
 type AddressDimensionDraft struct {
 	Prefixes    []flowdimension.PrefixDefinition     `json:"prefixes"`
 	AddressSets []flowdimension.AddressSetDefinition `json:"address_sets"`
+	Operators   []flowdimension.OperatorDefinition   `json:"operators"`
 	Sources     []AddressDimensionSource             `json:"sources,omitempty"`
 }
 
@@ -33,16 +34,19 @@ func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDi
 	for _, item := range source.Geography {
 		geography[item.ID] = item
 	}
-	operators := make(map[ID]ISPOperator, len(source.Operators))
-	for _, item := range source.Operators {
-		operators[item.ID] = item
-	}
-
 	draft := AddressDimensionDraft{
 		Prefixes:    make([]flowdimension.PrefixDefinition, 0, len(source.Prefixes)),
 		AddressSets: make([]flowdimension.AddressSetDefinition, 0, len(source.Sets)),
 	}
 	var err error
+	draft.Operators, err = canonicalAddressDimensionOperators(source.Operators)
+	if err != nil {
+		return AddressDimensionDraft{}, "", err
+	}
+	operators := make(map[ID]ISPOperator, len(source.Operators))
+	for _, item := range source.Operators {
+		operators[item.ID] = item
+	}
 	draft.Sources, err = canonicalAddressDimensionSources(source.Sources)
 	if err != nil {
 		return AddressDimensionDraft{}, "", err
@@ -76,6 +80,51 @@ func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDi
 	}
 	digest := sha256.Sum256(data)
 	return draft, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func canonicalAddressDimensionOperators(items []ISPOperator) ([]flowdimension.OperatorDefinition, error) {
+	definitions := make([]flowdimension.OperatorDefinition, 0, len(items))
+	seenIDs := make(map[ID]struct{}, len(items))
+	seenFlowIDs := make(map[uint16]struct{}, len(items))
+	enabledASNOwners := make(map[uint32]ID)
+	for _, item := range items {
+		if item.ID == "" || item.FlowISPID == 0 {
+			return nil, fmt.Errorf("%w: operator identity and non-zero Flow ISP id are required", ErrAddressDimensionInvalid)
+		}
+		if _, exists := seenIDs[item.ID]; exists {
+			return nil, fmt.Errorf("%w: duplicate operator id %s", ErrAddressDimensionInvalid, item.ID)
+		}
+		if _, exists := seenFlowIDs[item.FlowISPID]; exists {
+			return nil, fmt.Errorf("%w: duplicate Flow ISP id %d", ErrAddressDimensionInvalid, item.FlowISPID)
+		}
+		item.ASNs = append([]uint32(nil), item.ASNs...)
+		normalized, err := normalizeISPOperator(item)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrAddressDimensionInvalid, err)
+		}
+		if normalized.Enabled {
+			for _, asn := range normalized.ASNs {
+				if owner, exists := enabledASNOwners[asn]; exists {
+					return nil, fmt.Errorf("%w: ASN %d is assigned to enabled operators %s and %s", ErrAddressDimensionInvalid, asn, owner, normalized.ID)
+				}
+				enabledASNOwners[asn] = normalized.ID
+			}
+		}
+		definitions = append(definitions, flowdimension.OperatorDefinition{
+			ID: string(normalized.ID), FlowISPID: normalized.FlowISPID, Code: normalized.Code,
+			Name: normalized.Name, ShortName: normalized.ShortName, Category: normalized.Category,
+			ASNs: append(make([]uint32, 0, len(normalized.ASNs)), normalized.ASNs...), Enabled: normalized.Enabled,
+		})
+		seenIDs[item.ID] = struct{}{}
+		seenFlowIDs[item.FlowISPID] = struct{}{}
+	}
+	sort.Slice(definitions, func(i, j int) bool {
+		if definitions[i].FlowISPID != definitions[j].FlowISPID {
+			return definitions[i].FlowISPID < definitions[j].FlowISPID
+		}
+		return definitions[i].ID < definitions[j].ID
+	})
+	return definitions, nil
 }
 
 func canonicalAddressDimensionSources(sources []AddressDimensionSource) ([]AddressDimensionSource, error) {
@@ -228,6 +277,7 @@ func encodeAddressDimensionBundle(draft AddressDimensionDraft, snapshotID, tenan
 	bundle := flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: tenantID,
 		Version: version, EffectiveFrom: effectiveFrom.UTC(), Prefixes: draft.Prefixes, AddressSets: draft.AddressSets,
+		Operators: draft.Operators,
 	}
 	data, err := json.Marshal(bundle)
 	if err != nil {

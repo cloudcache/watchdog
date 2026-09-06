@@ -20,15 +20,18 @@ import (
 )
 
 const (
-	BundleSchemaVersion       = 1
-	UnassignedDimensionID     = "_unassigned"
-	defaultMaxBundleBytes     = 64 << 20
-	defaultMaxPrefixes        = 1_000_000
-	defaultMaxAddressSets     = 10_000
-	defaultMaxSetsPerRecord   = 32
-	defaultMaxSetEvaluations  = 50_000_000
-	maxLabelsPerPrefix        = 64
-	maxSelectorValuesPerLabel = 256
+	BundleSchemaVersion        = 2
+	minimumBundleSchemaVersion = 1
+	UnassignedDimensionID      = "_unassigned"
+	defaultMaxBundleBytes      = 64 << 20
+	defaultMaxPrefixes         = 1_000_000
+	defaultMaxAddressSets      = 10_000
+	defaultMaxSetsPerRecord    = 32
+	defaultMaxSetEvaluations   = 50_000_000
+	maxLabelsPerPrefix         = 64
+	maxSelectorValuesPerLabel  = 256
+	maxOperatorDefinitions     = 65_535
+	maxASNsPerOperator         = 10_000
 )
 
 var ErrNoDimensionSnapshot = errors.New("no dimension snapshot for event time")
@@ -49,6 +52,22 @@ type SnapshotBundle struct {
 	EffectiveFrom time.Time              `json:"effective_from"`
 	Prefixes      []PrefixDefinition     `json:"prefixes"`
 	AddressSets   []AddressSetDefinition `json:"address_sets"`
+	Operators     []OperatorDefinition   `json:"operators,omitempty"`
+}
+
+// OperatorDefinition is the tenant-stable management identity embedded in a
+// signed dimension object. It does not replace a supplier Geo operator ID;
+// the index builder must bind both namespaces when materializing one index
+// generation.
+type OperatorDefinition struct {
+	ID        string   `json:"id"`
+	FlowISPID uint16   `json:"flow_isp_id"`
+	Code      string   `json:"code"`
+	Name      string   `json:"name"`
+	ShortName string   `json:"short_name,omitempty"`
+	Category  string   `json:"category"`
+	ASNs      []uint32 `json:"asns"`
+	Enabled   bool     `json:"enabled"`
 }
 
 type PrefixDefinition struct {
@@ -111,21 +130,26 @@ func (s LabelSelector) MarshalJSON() ([]byte, error) {
 }
 
 type SnapshotMetadata struct {
+	SchemaVersion           uint32
 	SnapshotID              string
 	TenantID                string
 	Version                 uint64
 	EffectiveFrom           time.Time
 	Checksum                string
 	PrefixCount             int
+	OperatorCount           int
 	EnabledAddressSetCount  int
 	MaxAddressSetsPerRecord int
 }
 
 type CompiledSnapshot struct {
-	metadata     SnapshotMetadata
-	prefixes     *bart.Table[compiledPrefix]
-	addressSets  *bart.Table[compiledAddressSetMembership]
-	geoOverrides *bart.Table[compiledGeoOverride]
+	metadata          SnapshotMetadata
+	prefixes          *bart.Table[compiledPrefix]
+	addressSets       *bart.Table[compiledAddressSetMembership]
+	geoOverrides      *bart.Table[compiledGeoOverride]
+	operators         []OperatorDefinition
+	operatorsByID     map[string]int
+	operatorsByFlowID map[uint16]int
 }
 
 type compiledPrefix struct {
@@ -206,8 +230,11 @@ func CompileBundle(bundle SnapshotBundle, limits CompileLimits) (*CompiledSnapsh
 }
 
 func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits) (*CompiledSnapshot, error) {
-	if bundle.SchemaVersion != BundleSchemaVersion {
+	if bundle.SchemaVersion < minimumBundleSchemaVersion || bundle.SchemaVersion > BundleSchemaVersion {
 		return nil, fmt.Errorf("unsupported dimension bundle schema_version %d", bundle.SchemaVersion)
+	}
+	if bundle.SchemaVersion == 1 && len(bundle.Operators) != 0 {
+		return nil, errors.New("dimension bundle schema_version 1 does not support operators")
 	}
 	if !validIdentifier(bundle.SnapshotID, 64) || !validIdentifier(bundle.TenantID, 64) || bundle.Version == 0 {
 		return nil, errors.New("dimension bundle identity and version are required")
@@ -222,6 +249,10 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	}
 	if len(bundle.AddressSets) > limits.MaxAddressSets {
 		return nil, fmt.Errorf("dimension bundle has %d address sets, limit is %d", len(bundle.AddressSets), limits.MaxAddressSets)
+	}
+	operators, operatorsByID, operatorsByFlowID, err := compileOperatorDefinitions(bundle.Operators)
+	if err != nil {
+		return nil, err
 	}
 
 	prefixIDs := make(map[string]struct{}, len(bundle.Prefixes))
@@ -284,12 +315,60 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	}
 	return &CompiledSnapshot{
 		metadata: SnapshotMetadata{
-			SnapshotID: bundle.SnapshotID, TenantID: bundle.TenantID, Version: bundle.Version,
+			SchemaVersion: bundle.SchemaVersion, SnapshotID: bundle.SnapshotID, TenantID: bundle.TenantID, Version: bundle.Version,
 			EffectiveFrom: effectiveFrom, Checksum: checksum, PrefixCount: len(compiledPrefixes),
-			EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
+			OperatorCount: len(operators), EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
 		},
 		prefixes: tree, addressSets: addressSets, geoOverrides: geoOverrides,
+		operators: operators, operatorsByID: operatorsByID, operatorsByFlowID: operatorsByFlowID,
 	}, nil
+}
+
+func compileOperatorDefinitions(definitions []OperatorDefinition) ([]OperatorDefinition, map[string]int, map[uint16]int, error) {
+	if len(definitions) > maxOperatorDefinitions {
+		return nil, nil, nil, fmt.Errorf("dimension bundle has %d operators, limit is %d", len(definitions), maxOperatorDefinitions)
+	}
+	operators := make([]OperatorDefinition, len(definitions))
+	byID := make(map[string]int, len(definitions))
+	byFlowID := make(map[uint16]int, len(definitions))
+	enabledASNOwners := make(map[uint32]uint16)
+	for index, definition := range definitions {
+		if !validIdentifier(definition.ID, 128) || definition.FlowISPID == 0 ||
+			!validText(definition.Code, 64) || !validText(definition.Name, 190) ||
+			(definition.ShortName != "" && !validText(definition.ShortName, 190)) || !validText(definition.Category, 32) {
+			return nil, nil, nil, fmt.Errorf("operators[%d] has invalid identity or text fields", index)
+		}
+		if len(definition.ASNs) > maxASNsPerOperator {
+			return nil, nil, nil, fmt.Errorf("operators[%d] has more than %d ASNs", index, maxASNsPerOperator)
+		}
+		for position, asn := range definition.ASNs {
+			if asn == 0 || (position > 0 && definition.ASNs[position-1] >= asn) {
+				return nil, nil, nil, fmt.Errorf("operators[%d].asns must be sorted unique non-zero values", index)
+			}
+		}
+		if _, exists := byID[definition.ID]; exists {
+			return nil, nil, nil, fmt.Errorf("operators[%d] duplicates id %q", index, definition.ID)
+		}
+		if _, exists := byFlowID[definition.FlowISPID]; exists {
+			return nil, nil, nil, fmt.Errorf("operators[%d] duplicates flow_isp_id %d", index, definition.FlowISPID)
+		}
+		if index > 0 && definitions[index-1].FlowISPID > definition.FlowISPID {
+			return nil, nil, nil, fmt.Errorf("operators must be sorted by flow_isp_id")
+		}
+		if definition.Enabled {
+			for _, asn := range definition.ASNs {
+				if owner, exists := enabledASNOwners[asn]; exists {
+					return nil, nil, nil, fmt.Errorf("operators[%d].asns contains ASN %d already assigned to enabled flow_isp_id %d", index, asn, owner)
+				}
+				enabledASNOwners[asn] = definition.FlowISPID
+			}
+		}
+		definition.ASNs = append([]uint32(nil), definition.ASNs...)
+		operators[index] = definition
+		byID[definition.ID] = index
+		byFlowID[definition.FlowISPID] = index
+	}
+	return operators, byID, byFlowID, nil
 }
 
 // inheritPrefixLabels compiles nested CIDRs into one effective label set per
@@ -378,6 +457,47 @@ func (s *CompiledSnapshot) Metadata() SnapshotMetadata {
 		return SnapshotMetadata{}
 	}
 	return s.metadata
+}
+
+// OperatorDefinitions returns the canonical tenant operator definitions from
+// this immutable snapshot. Supplier Geo IDs remain a separate namespace until
+// an index generation explicitly binds them.
+func (s *CompiledSnapshot) OperatorDefinitions() []OperatorDefinition {
+	if s == nil || len(s.operators) == 0 {
+		return nil
+	}
+	result := make([]OperatorDefinition, len(s.operators))
+	for index, definition := range s.operators {
+		definition.ASNs = append([]uint32(nil), definition.ASNs...)
+		result[index] = definition
+	}
+	return result
+}
+
+func (s *CompiledSnapshot) OperatorByID(id string) (OperatorDefinition, bool) {
+	if s == nil {
+		return OperatorDefinition{}, false
+	}
+	index, exists := s.operatorsByID[id]
+	if !exists {
+		return OperatorDefinition{}, false
+	}
+	definition := s.operators[index]
+	definition.ASNs = append([]uint32(nil), definition.ASNs...)
+	return definition, true
+}
+
+func (s *CompiledSnapshot) OperatorByFlowISPID(id uint16) (OperatorDefinition, bool) {
+	if s == nil {
+		return OperatorDefinition{}, false
+	}
+	index, exists := s.operatorsByFlowID[id]
+	if !exists {
+		return OperatorDefinition{}, false
+	}
+	definition := s.operators[index]
+	definition.ASNs = append([]uint32(nil), definition.ASNs...)
+	return definition, true
 }
 
 func (s *CompiledSnapshot) lookup(addr netip.Addr) (compiledPrefix, bool) {

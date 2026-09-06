@@ -34,6 +34,9 @@ func TestCompileAddressDimensionDraftResolvesTypedTaxonomy(t *testing.T) {
 	if len(draft.Prefixes) != 1 || len(draft.AddressSets) != 1 || digest[:7] != "sha256:" {
 		t.Fatalf("unexpected draft: %#v %s", draft, digest)
 	}
+	if len(draft.Operators) != 1 || draft.Operators[0].FlowISPID != 3 || draft.Operators[0].ID != "operator-telecom" {
+		t.Fatalf("operator definitions = %#v", draft.Operators)
+	}
 	labels := draft.Prefixes[0].Labels
 	for key, want := range map[string]string{
 		"geo.continent_id": "geo-continent", "geo.country_id": "geo-country-cn", "geo.province_id": "geo-province-zj",
@@ -51,6 +54,49 @@ func TestCompileAddressDimensionDraftResolvesTypedTaxonomy(t *testing.T) {
 	result := compiled.ClassifyEndpoints(netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("203.0.113.10"))
 	if result.Direction != "out" || result.Business != "office" || result.Local.AddressSets.Count() != 1 {
 		t.Fatalf("unexpected classification: %#v", result)
+	}
+}
+
+func TestCompileAddressDimensionDraftCanonicalizesOperators(t *testing.T) {
+	first := ISPOperator{ID: "operator-first", FlowISPID: 2, Code: "FIRST", Name: "First", Category: "carrier", ASNs: []uint32{64501, 64500, 64501}, Enabled: true}
+	second := ISPOperator{ID: "operator-second", FlowISPID: 1, Code: "SECOND", Name: "Second", Category: "other", Enabled: false}
+	left, leftDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{first, second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, rightDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{second, first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftDigest != rightDigest || len(left.Operators) != 2 || left.Operators[0].FlowISPID != 1 || right.Operators[1].FlowISPID != 2 {
+		t.Fatalf("operator draft is not deterministic: %#v %#v %s %s", left.Operators, right.Operators, leftDigest, rightDigest)
+	}
+	if got := left.Operators[1].ASNs; len(got) != 2 || got[0] != 64500 || got[1] != 64501 {
+		t.Fatalf("operator ASNs are not canonical: %v", got)
+	}
+	changed := second
+	changed.Name = "Second renamed"
+	_, changedDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{first, changed}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedDigest == leftDigest {
+		t.Fatal("operator change did not invalidate the draft digest")
+	}
+	first.FlowISPID = 0
+	if _, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{first}}); err == nil {
+		t.Fatal("zero Flow ISP id was accepted")
+	}
+	first.FlowISPID = 2
+	second.FlowISPID = 2
+	if _, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{first, second}}); err == nil {
+		t.Fatal("duplicate Flow ISP id was accepted")
+	}
+	second.FlowISPID = 1
+	second.Enabled = true
+	second.ASNs = []uint32{64500}
+	if _, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Operators: []ISPOperator{first, second}}); err == nil {
+		t.Fatal("ASN assigned to two enabled operators was accepted")
 	}
 }
 

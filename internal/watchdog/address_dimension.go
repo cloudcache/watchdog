@@ -71,6 +71,7 @@ type AddressDimensionPreview struct {
 	EffectiveFrom           time.Time                `json:"effective_from"`
 	PrefixCount             uint64                   `json:"prefix_count"`
 	AddressSetCount         uint64                   `json:"address_set_count"`
+	OperatorCount           uint64                   `json:"operator_count"`
 	EnabledAddressSetCount  uint64                   `json:"enabled_address_set_count"`
 	MaxAddressSetsPerRecord uint32                   `json:"max_address_sets_per_record"`
 	EstimatedBundleBytes    uint64                   `json:"estimated_bundle_bytes"`

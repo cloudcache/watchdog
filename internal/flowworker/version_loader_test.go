@@ -73,6 +73,37 @@ func TestVersionLoaderCompilesPublishesAndAcknowledgesExactPair(t *testing.T) {
 	}
 }
 
+func TestVersionLoaderKeepsDimensionBundleSchemaV1Readable(t *testing.T) {
+	publication, source := testVersionPublication(t, 1, testMinute(12, 0), "dimension-legacy")
+	var bundle flowdimension.SnapshotBundle
+	if err := json.Unmarshal(source.objects[publication.Dimension.ObjectRef], &bundle); err != nil {
+		t.Fatal(err)
+	}
+	bundle.SchemaVersion = 1
+	bundle.Operators = nil
+	legacyData, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.objects[publication.Dimension.ObjectRef] = legacyData
+	publication.Dimension.Checksum = versionObjectChecksum(legacyData)
+	catalog, _ := NewEnrichmentVersionCatalog()
+	acks := &recordingVersionAcknowledger{}
+	loader, err := NewVersionLoader(source, acks, catalog, VersionWorkerIdentity{
+		WorkerID: "worker-legacy", BootID: "boot-legacy", SoftwareVersion: "1.2.3",
+	}, VersionLoaderLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loader.Install(context.Background(), publication); err != nil {
+		t.Fatal(err)
+	}
+	installed, exists := catalog.DimensionVersion("tenant-a", 1)
+	if !exists || installed.Metadata().SchemaVersion != 1 || len(acks.acks) != 1 {
+		t.Fatalf("legacy bundle was not installed and acknowledged: exists=%t metadata=%+v acks=%d", exists, installed.Metadata(), len(acks.acks))
+	}
+}
+
 func TestVersionLoaderDoesNotExposePartiallyValidatedPublication(t *testing.T) {
 	publication, source := testVersionPublication(t, 2, testMinute(13, 0), "dimension-2")
 	publication.ClassificationVersion++

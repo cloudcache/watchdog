@@ -1,6 +1,6 @@
 # Flow 地址/分类改为查询时过滤 —— 方案
 
-状态:提议。§4 是带理由的推荐决策,可逐条否;确认后修订 `flow-pipeline-adr.md`。
+状态:已采纳，按 §6 分步实施；每一步必须独立守恒并通过发布门禁。
 
 ## 1. 现在怎么做(问题)
 
@@ -73,7 +73,8 @@
 
 1. **发字典**:flowdimension 编译成 CH `IP_TRIE` 字典 + 版本发布,不动写入——只多一份可查产物。gated CH 验 `dictGet` 结果与 flowdimension 一致。
    - ✅ **字典机制已落地并 gated 验证**(migration `009_flow_address_dict_source.sql` + `address_dict_integration_test.go`)。源表 `flow_address_dict_source`(网段 → geo + `group_ids`,带 `dict_version`)进 migration;字典 `CREATE DICTIONARY … LAYOUT(IP_TRIE())` 因 source 要注入凭据在运行时建。验证结论:IPv4-mapped-IPv6 查(`tuple(toIPv6(ip))`)命中 IPv4 网段(与 `flow_records` 存 IPv6 一致);换 `dict_version` + reload 即按新定义现导,不动任何事实——**重分类 = 发新版本**。
-   - ⏳ 待接:真实 geo 来源(PLAT-04D geo hierarchy + 管理员分组)→ 字典源的编译/发布链路,落在 `internal/watchdog` 稳定后接。
+   - ✅ **平台输入契约已分层**:MySQL migration 051 提供 tenant 内稳定且不可复用的 `flow_isp_id`;dimension bundle schema v2 把 tenant operator 定义放入同 snapshot 的校验/签名对象，并兼容读取旧 schema v1。它只交付 index-builder 的确定输入，不直接写 `flow.geo.isp_id`、不切查询口径。
+   - ⏳ **待接 Flow index-builder**:读取同一 snapshot 的真实 geo source manifest + schema v2 definition object；用下一条 CH forward migration 将 009 的过渡单一 `isp_id UInt32` 拆成 supplier ISP 与 `customer_isp_id UInt16`。人工 prefix 按 operator ID 精确绑定，base range 只按非零 ASN 命中唯一 enabled tenant operator；缺失/未配置为 0，不按可变 name/code 猜测，交叠组合走 address set。生成同 generation 的运营商与 IP_TRIE range 行后，只有 activation/rollback/ACK 固定到同一 snapshot/checksum 才能切换查询。不得让平台发布器直接连 CH。
 2. **rollup 从原始按版本重算**:rollup 改成从原始 `dictGet` 现导再聚合(用字典版本),读侧不变(`max(generation)`)。gated CH 验:同一批原始 + 字典 → 聚合结果与旧 `GROUP BY` 一致;换字典版本 → 结果按新分类变。**此步之后重分类已经等于重跑 rollup。**
    - ⚠️ **范围比"换 geo"大得多(实读 `rollup.go` ARRAY JOIN 后确认)**:现 rollup 的六维里 `category` / `business` / `business_direction`(哪端是 remote)/ `local_prefix`·`remote_prefix` / `address_set` **全是分类产物**,不是原始字段;连"哪端 local、哪端 remote"本身都是分类结果。要从原始 `src_ip`/`dst_ip` + 字典现导,等于把整个 `classify()`(方向判定 + category + business + prefix/组归属)搬进 SQL + 字典。这带来两个必须先定的设计点:
      - **字典契约要扩大**:step 1 的字典只存 geo + `group_ids`;要支撑 step 2 得再编码"本租户 local 网段集 / prefix 标签 / business / category 判定所需属性",或把"哪端 local、方向怎么定"的逻辑留在 rollup SQL 里。二选一是设计决策。
