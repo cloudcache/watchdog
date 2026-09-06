@@ -639,23 +639,45 @@ CREATE TABLE dimension_snapshots (
   effective_from DATETIME(3) NOT NULL,
   object_ref VARCHAR(512) NOT NULL,
   checksum VARCHAR(128) NOT NULL,
+  draft_digest CHAR(71) NOT NULL,
+  bundle_schema_version INT UNSIGNED NOT NULL,
   entry_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  status VARCHAR(16) NOT NULL DEFAULT 'draft',
-  created_by CHAR(26) NOT NULL,
-  published_by CHAR(26) NULL,
+  prefix_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  address_set_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  max_address_sets_per_record INT UNSIGNED NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  row_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_by CHAR(26) NULL,
+  retired_by CHAR(26) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  published_at DATETIME(3) NULL,
+  retired_at DATETIME(3) NULL,
+  UNIQUE KEY uq_dimension_snapshot_tenant_id (tenant_id, id),
   UNIQUE KEY uq_dimension_version
     (tenant_id, module_key, dimension_key, version),
+  UNIQUE KEY uq_dimension_effective
+    (tenant_id, module_key, dimension_key, effective_from),
   KEY idx_dimension_effective
     (tenant_id, module_key, dimension_key, status, effective_from),
   CONSTRAINT fk_dimension_snapshot_tenant
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  CHECK (status IN ('draft','active','retired'))
+  CHECK (status IN ('active','retired'))
+);
+
+CREATE TABLE dimension_snapshot_acks (
+  tenant_id CHAR(26) NOT NULL,
+  snapshot_id CHAR(26) NOT NULL,
+  worker_id VARCHAR(128) NOT NULL,
+  boot_id VARCHAR(128) NOT NULL,
+  software_version VARCHAR(64) NOT NULL,
+  checksum VARCHAR(128) NOT NULL,
+  installed_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (tenant_id, snapshot_id, worker_id),
+  FOREIGN KEY (tenant_id, snapshot_id)
+    REFERENCES dimension_snapshots(tenant_id, id) ON DELETE CASCADE
 );
 ```
 
-发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 bundle；worker 通过 `object_ref+checksum` 加载并构建 LPM/selector 索引。配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的分钟边界生效。排队记录按 `event_time` 选择当时有效版本，而不是按实际消费时间套用最新配置。
+发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 bundle；worker 通过 `object_ref+checksum` 加载并构建 LPM/selector 索引。配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的分钟边界生效。排队记录按 `event_time` 选择当时有效版本，而不是按实际消费时间套用最新配置。migration 040、manual prefix/set compiler、语义 digest CAS、不可覆盖对象、异步 operation job 及版本管理页已在 `3a7db545` 落地；active base overlay、签名/approve、retire/rollback、worker download/ack 和引用保留仍是交付门禁，不能因表已存在就宣称 PLAT-04A 完成。
 
 地址统计有两种不同口径：
 
@@ -684,7 +706,7 @@ GET/POST/PATCH/DELETE    /api/v1/network/operators[/{id}]
 GET/POST/PATCH/DELETE    /api/v1/geo/lines[/{id}]
 POST                     /api/v1/dimensions/address/preview
 POST                     /api/v1/dimensions/address/publish
-GET                      /api/v1/dimensions/address/versions/{version}
+GET                      /api/v1/dimensions/address/versions/{snapshot_id}
 POST                     /api/v1/dimensions/address/versions/{version}/retire
 GET                      /api/v1/dimensions/address/workers/status
 ```

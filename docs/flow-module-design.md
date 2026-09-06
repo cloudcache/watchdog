@@ -31,7 +31,7 @@ router/switch
 
 ### 1.3 复用平台能力
 
-复用平台已落地的 `users/roles/permissions`、tenant scope、target/device/port、collector registry、签名 plan、`address_prefixes/address_sets`、`operation_jobs` handler registry、export、visualization 和 audit。immutable dimension publication 仍是平台待办 PLAT-04A；PLAT-04B 的剩余项是通用 per-tenant 周期触发和跨类型扫描背压，不得把已经存在的 lease/heartbeat/cancel/retry/typed payload registry 描述成未实现。Flow 不复制通用 CRUD、身份或任务引擎；平台缺陷登记在 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)，除非阻断当前 Flow 切片，否则不得顺手重构平台。
+复用平台已落地的 `users/roles/permissions`、tenant scope、target/device/port、collector registry、签名 plan、`address_prefixes/address_sets`、`operation_jobs` handler registry、export、visualization 和 audit。PLAT-04A 已落地人工 prefix/set 的 immutable preview/publish 基座与 migration 040，但 active MMDB/IPDB base overlay、签名/approve、retire/rollback、worker install ack 和引用保留仍是平台前置；PLAT-04B 的剩余项是通用 per-tenant 周期触发和跨类型扫描背压，不得把已经存在的 lease/heartbeat/cancel/retry/typed payload registry 描述成未实现。Flow 不复制通用 CRUD、身份或任务引擎；平台缺陷登记在 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)，除非阻断当前 Flow 切片，否则不得顺手重构平台。
 
 ### 1.4 正确性不变量
 
