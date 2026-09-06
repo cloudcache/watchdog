@@ -354,7 +354,7 @@ Migration `018_collector_registry_expand.sql` 已创建上述三表，并把现�
 
 plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须是单一 JSON object、最大 4 MiB，并先规范化键顺序/空白再计算 SHA-256；签名载荷固定绑定 envelope version、plan/tenant/collector ID、config/schema version、spec hash、signing key ID、毫秒精度有效期和 supersedes version。只有 Ed25519 验证函数生成的内部 proof 才能 create，验证后再修改 spec、signature 或任一载荷字段会在入库前失效。create 只接受 `validated`，且 schema 必须位于 agent 声明区间、version 必须高于当前 head、supersedes 必须精确等于当前 head。activate 以 collector `row_version` 和 plan `row_version` 双乐观锁，在同一 transaction 中 retire 旧 active、激活新 revision、推进 collector head 并写审计；单 active unique key 是最后防线。activation/ACK 时间由服务端生成，API/agent 不得传入安全时间。ACK 必须与当前 active plan 的 version/hash/expiry 同时相符，只推进 `acknowledged_config_version/last_good_config_version` 和 observed 字段，不推进管理 `row_version`；重复 ACK 幂等且只在首次推进时审计。MySQL JSON 回读必须重新 canonicalize 后校验 hash，不能比较 MySQL 自行格式化的 JSON 原始字节。
 
-这里的 Ed25519 public key 必须由 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、本地多 key bundle 的 overlap/retiring/revoked 执行、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；PLAT-03 管理面 key registry、bundle 签名分发/本地防回滚代际、fleet ACK 与 rollout/canary 尚未完成。
+这里的 Ed25519 public key 必须由 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、本地多 key bundle 的 overlap/retiring/revoked 执行、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；管理面 key registry、bundle 分发/本地防回滚代际、operator plan revision API 以及 fleet rollout create/preview 已完成，canary 激活、fleet ACK 汇聚和回滚仍按平台 tasklist 推进。
 
 Migration `019_collector_ownership_evidence.sql` 历史上为旧 collector 数据面补过三类机器事实；收敛后只保留仍属于管理面的 principal 与 ownership transfer：
 
@@ -434,7 +434,7 @@ type AnalyzerDescriptor struct {
 - analyzer 只输出观察事实和 `verdict_candidate`，最终 finding verdict 仍由 watchdog 的版本化 evidence policy 合并；插件不能直接改 MySQL finding、扩大 scope 或访问其他 tenant；
 - 新 analyzer 必须具有 manifest、golden pcap/handshake fixture、正常业务误报集、超时/取消/资源上限和结果兼容测试，按 experimental→canary→GA 发布。二进制由既有 systemd/Kubernetes/制品系统灰度，不把 watchdog 做成软件分发器；watchdog 负责兼容检查、drift、plan rollout 和回滚。
 
-plan 发布流程固定为 `draft → preview/validate → validated → active → retired`；preview 不写状态，validate 固化校验结果和签名。批量 rollout 复用公共异步 job，先按 agent label/版本选择 canary，观察 plan apply、拒绝率、crash、CPU/RSS、probe 误报和 spool 后再扩大。rollback 生成新的递增 revision；scope 收缩、凭据撤销和 kill switch 属紧急配置，立即停止新任务并请求取消不再合法的 inflight job。
+单 collector plan 发布流程固定为 `draft → preview/validate → validated → active → retired`；preview 不写 plan 状态，validate 固化校验结果和签名。批量 rollout 的 Phase 2 create/preview 已由 migration 053 固化：selector/spec/strategy canonical hash，preview 在事务内一次性物化 per-target ledger，按 ID 分 canary/wave，schema 不兼容只标 skipped，且不创建 revision、不激活。后续 canary/advance 才复用公共异步 job，观察 plan apply、拒绝率、crash、CPU/RSS、probe 误报和 spool 后再扩大。rollback 生成新的递增 revision；scope 收缩、凭据撤销和 kill switch 属紧急配置，立即停止新任务并请求取消不再合法的 inflight job。
 
 ### 6.4 Collector API
 
@@ -456,6 +456,8 @@ GET                      /api/v1/collectors/{id}/capabilities
 GET                      /api/v1/collectors/{id}/plan-revisions?limit=&cursor=
 POST                     /api/v1/collectors/{id}/plan-revisions
 POST                     /api/v1/collectors/{id}/plan-revisions/{version}/activate
+POST                     /api/v1/plan-rollouts
+POST                     /api/v1/plan-rollouts/{rollout_id}/preview
 POST                     /api/v1/collectors/{id}/plans:preview
 POST                     /api/v1/collectors/{id}/plans/{version}:validate
 POST                     /api/v1/collectors/{id}/plans/{version}:rollback

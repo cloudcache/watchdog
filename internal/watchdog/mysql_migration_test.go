@@ -56,6 +56,8 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"collector_plan_revisions",
 		"collector_plan_signing_keys",
 		"collector_plan_trust_state",
+		"collector_plan_rollouts",
+		"collector_plan_rollout_targets",
 		"collector_service_principals",
 		"collector_ownership_transfers",
 	} {
@@ -99,20 +101,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "052" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "053" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "052" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "053" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_plan_rollouts", "collector_plan_rollout_targets", "collector_service_principals", "collector_ownership_transfers"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -435,6 +437,33 @@ func TestCollectorPlanTrustMigrationOwnsCompleteContract(t *testing.T) {
 	for _, forbidden := range []string{"private_key", "drop table", "truncate table", "delete from"} {
 		if strings.Contains(sqlText, forbidden) {
 			t.Fatalf("collector plan trust migration unexpectedly contains %q", forbidden)
+		}
+	}
+}
+
+func TestCollectorPlanRolloutMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "053_collector_plan_rollouts.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists collector_plan_rollouts",
+		"rollout_schema_version smallint unsigned not null default 1",
+		"selector_json json not null", "selector_hash char(64)",
+		"strategy_json json not null", "strategy_hash char(64)",
+		"create table if not exists collector_plan_rollout_targets",
+		"wave int unsigned not null",
+		"primary key (rollout_id, collector_id)",
+		"references collector_plan_revisions(tenant_id, collector_id, config_version)",
+		"status in ('draft','previewed','canarying','rolling','paused'",
+		"status in ('pending','revision_created','activated','acked','failed'",
+		"status in ('failed','skipped') and failure_reason is not null",
+		"on delete restrict",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("collector plan rollout migration missing %q", required)
 		}
 	}
 }

@@ -50,6 +50,7 @@ type BackendRuntime struct {
 	CollectorPlanTrust  CollectorPlanTrustBundleController
 	CollectorPlanSigner CollectorPlanSigner
 	PlanManagement      CollectorPlanManagementController
+	PlanRollouts        CollectorPlanRolloutController
 	FlowRollupRunner    FlowBucketRollupRunner
 	FlowRollupService   *FlowRollupService
 	MetricProviders     *RuntimeMetricsRegistry
@@ -138,6 +139,11 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	collectorPlanRollouts, err := NewCollectorPlanRolloutService(store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	var flowGeo *FlowGeoService
 	if cfg.FlowGeo.Path != "" {
 		flowGeo = NewFlowGeoService(cfg.FlowGeo.Path)
@@ -169,6 +175,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		CollectorPlanTrust:  collectorPlanTrust,
 		CollectorPlanSigner: collectorPlanSigner,
 		PlanManagement:      collectorPlanManagement,
+		PlanRollouts:        collectorPlanRollouts,
 		MetricProviders:     NewRuntimeMetricsRegistry(),
 		QueryProviders:      NewQueryProviderRegistry(),
 	}
@@ -382,6 +389,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		CollectorPlans:         r.CollectorPlans,
 		CollectorPlanTrust:     r.CollectorPlanTrust,
 		PlanManagement:         r.PlanManagement,
+		PlanRollouts:           r.PlanRollouts,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,

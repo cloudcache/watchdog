@@ -45,10 +45,18 @@
     - [x] **编码**：runtime 接入 management service；collector 行锁串行分配版本，active signing-key 行锁覆盖签名与 INSERT；clone 只复制 immutable spec/schema；list/get 均 tenant+collector 绑定；创建/激活写既有 audit。
     - [x] **单元测试**：严格 JSON/未知字段与签名注入拒绝、身份注入、响应脱敏、权限、游标、双锁、错误映射和 signer 缺失 fail-closed 均覆盖。
     - [x] **集成测试**：隔离真实 MySQL 同 collector 8 并发创建得到连续唯一 1–8；验证两页无重叠、clone 为 9 且 hash/schema 一致、激活成功、stale 再激活 412 语义及审计计数；临时库和误写 dev key 均已删除。
-    - [x] **变更设计/测试**：复用 `collector_agents`、`collector_plan_revisions`、`audit_logs` 与 052 trust 表，不创建空 migration，下一持久化编号仍为 053；无 signer 时 list/activate 和既有 machine delivery 不受影响，create 返回 503。
+    - [x] **变更设计/测试**：复用 `collector_agents`、`collector_plan_revisions`、`audit_logs` 与 052 trust 表，不创建空 migration；该阶段交付时下一编号为 053（现已由 Phase 2 使用，当前为 054）。无 signer 时 list/activate 和既有 machine delivery 不受影响，create 返回 503。
     - [x] **回归测试**：定向 watchdog、真实 MySQL、全库 test/race/vet/build 后提交；不夹带 Flow 数据面与并行 maintenance/delete-preview 文件。
     - [x] **已提交门禁**：代码、测试、设计与任务清单由本提交原子交付；不夹带 Flow 数据面与并行 maintenance/delete-preview 工作区。
-  - [ ] **Fleet Phase 2–5 rollout/canary**：preview/canary/manual waves/rollback/kill/expiry/scheduler；开始 Phase 2 前冻结健康信号、selector、config_version 命名空间和 best-effort revert 四项决策。
+  - [x] **Fleet Phase 2 rollout create/preview**：migration 053 + 严格 create DTO + tenant `operate`/`If-Match` preview；selector 在创建时冻结、preview 时一次性物化为 target ledger，按 collector ID 确定 canary/wave，schema 不兼容写 skipped，绝不创建 revision/激活或推进 collector head。详见 [collector-fleet-rollout-design.md](collector-fleet-rollout-design.md)。
+    - [x] **设计**：冻结 module_key + optional agent_type + active/pending + optional explicit IDs 的 AND selector、单 collector `config_version` 命名空间、1s–7d soak、严格小于 canary/wave 的绝对 failure budget、跳过 wave sentinel 和同步 preview 边界。
+    - [x] **编码**：新增 `collector_plan_rollouts/targets`、canonical selector/spec/strategy hash、create/audit、事务行锁 preview、MySQL 8 window function 确定波次、JSON_TABLE 显式集合交集及 collation 契约、runtime/API 接线；响应不返回 plan spec。
+    - [x] **单元测试**：规范化/排序、重复 ID、非法状态/策略/expiry/spec、身份注入、未知字段、权限、If-Match、响应脱敏和稳定错误映射均覆盖。
+    - [x] **集成测试**：隔离真实 MySQL 验证筛选交集、5 个 compatible + 1 个 incompatible 的 3 波分类、explicit IDs、空集合整事务回滚、stale replay、审计以及 revision/head 零变化；用例连续执行两次可重复。
+    - [x] **变更设计/测试**：053 与 install/init 同步并通过 001–053 顺序迁移、checksum、fresh-install 结构 parity；MySQL JSON 回读重新 canonicalize 后验 hash，不比较数据库格式化后的原始字节。
+    - [x] **回归测试**：watchdog 单测、真实 MySQL migration/repository/parity、全库 race/vet/build 纳入提交前门禁；不夹带 Flow 数据面与既有 maintenance/delete-preview 工作区。
+    - [x] **已提交门禁**：migration/init/checksum、domain/repository/API/runtime、测试、设计与任务清单必须由同一独立提交原子交付，提交后才允许 Phase 3 使用两张表。
+  - [ ] **Fleet Phase 3–5 rollout/canary**：canary/manual waves/status、rollback/kill/expiry/scheduler；Phase 3 前冻结健康信号，Phase 4 前冻结 best-effort revert 与离线 collector 终态语义。
 - [x] target 名称与 host 身份分离；网络 target 以 `(tenant, kind, host)` 唯一，display name 可选。
 - [x] SNMP profile/community 在新建与编辑可配置，sysName/sysDescr 为采集结果而非输入必填。
 - [x] Target/Network Device/Port/BGP/Inventory/Event/Alert 生命周期、分页、搜索、VTable filter 和稳定 ETag/If-Match 已闭环；Target/Device/Port 等人工管理对象提供 CRUD+并发控制，BGP/Inventory/Event/Alert 等 SNMP 事实只读、由 discovery/retention 管理，禁止伪造人工写 API。
@@ -81,10 +89,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `052`：`051_isp_operator_flow_identity.sql` 固定运营商 Flow UInt16 身份；`052_collector_plan_trust_keys.sql` 固定 control-plane 公钥生命周期和单调 trust bundle generation。001–052 空库、checksum drift 关闭及 fresh-install parity 已通过真实 MySQL 门禁。
+- 当前迁移头为 `053`：`052_collector_plan_trust_keys.sql` 固定 control-plane 公钥生命周期和单调 trust bundle generation；`053_collector_plan_rollouts.sql` 固定 fleet rollout 与 per-target ledger。001–053 空库、checksum drift 关闭及 fresh-install parity 已通过真实 MySQL 门禁；下一持久化工作从 `054` 领取。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占；`051` 已由 PLAT-04C4a 稳定 Flow ISP 身份独占；`052` 已由 Fleet Phase 0 signer/trust lifecycle 独占。下一个持久化工作从 `053` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占；`051` 已由 PLAT-04C4a 稳定 Flow ISP 身份独占；`052` 已由 Fleet Phase 0 signer/trust lifecycle 独占；`053` 已由 Fleet Phase 2 rollout create/preview 独占。下一个持久化工作从 `054` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -104,6 +112,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `050` | SNMP Event/Alert query | `(tenant,device,severity,event-time,id)` 与 `(tenant,device,event_type,event-time,id)`，保障筛选后的 keyset 扫描 | migration/init/checksum/API/repository/frontend/真实 MySQL parity 同工作包提交 |
 | `051` | Stable Flow ISP identity | tenant 内 UInt16 单调分配、删除后不可复用 ledger | 已提交；真实 MySQL 回填/并发/parity 完成 |
 | `052` | Collector plan signer trust | 全局 Ed25519 公钥 active/retiring/revoked ledger、canonical bundle/checksum/单调 generation | Phase 0 本提交；真实 MySQL rotate/revoke/expiry/parity 完成 |
+| `053` | Collector fleet rollout preview | rollout immutable selector/spec/strategy hash 与 per-target wave/progress ledger | Phase 2 同提交；真实 MySQL selection/rollback/replay/parity 完成 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 
@@ -214,11 +223,11 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **C4a 管理身份设计/编码**：migration 051 为每个 tenant 建立 `1..65535` 的单调分配序列与不随运营商删除而删除的 allocation ledger；`0` 永远表示 unknown。既有运营商按 `created_at,id` 确定性回填；新增运营商以单语句原子 UPSERT 分配，ledger 与业务行同事务提交；名称/code/ASN 可编辑，`flow_isp_id` 只读、唯一、不可复用。管理 API/VTable 返回该值；在 C4b 建立统一发布命名空间前，人工地址段只保留管理 `operator.id/code/category`，禁止提前写 Flow `isp_id`。
   - [x] **C4a 单元/集成/变更测试**：覆盖 API 字段、24 并发分配无重复/耗尽不回绕、旧数据确定性回填、migration 二次重放、删除后新建不复用，以及 fresh-init 与 001–051 migration schema parity。
   - [x] **C4a 已提交门禁**：migration/checksum/init、仓储/API/UI、编译契约、测试和设计由同一提交交付；全库 test/vet/build、前端 test/build、真实 MySQL migration/parity/并发门禁与 8090 页面/控制台回归均已通过，且未夹带 Flow 数据面或既有 maintenance/delete-preview 文件。
-  - [x] **C4b1 平台 definition object**：dimension bundle schema v2 把 tenant operator 的管理 ID、稳定 `flow_isp_id`、code/name/category、ASN 集合和 enabled 状态规范排序后放入同一 immutable/checksummed/signed 小型定义对象；发布编译拒绝 0、重复 ID、重复 Flow ID、非规范 ASN，以及同一 ASN 归属多个 enabled operator（重叠组合必须建 address set，不能破坏单值 ISP 维度）。reader 保留 schema v1 兼容，v1 不得夹带 v2 字段。operator 变更进入 draft digest，真实 MySQL 已验证旧 preview CAS 失败、重新预览后对象可按 ID/Flow ID 读取；worker schema v1 install/ACK、定向 race、全库 test/vet/build 和前端 test/build 均通过。该切片不改变事实写入和查询口径，只改版本化对象协议和 preview，因此未创建空 MySQL migration；后续 052 已由 Fleet Phase 0 领取，当前下一持久化 migration 为 053。代码/测试/设计由同一提交交付且不夹带 maintenance/delete-preview 工作区。
+  - [x] **C4b1 平台 definition object**：dimension bundle schema v2 把 tenant operator 的管理 ID、稳定 `flow_isp_id`、code/name/category、ASN 集合和 enabled 状态规范排序后放入同一 immutable/checksummed/signed 小型定义对象；发布编译拒绝 0、重复 ID、重复 Flow ID、非规范 ASN，以及同一 ASN 归属多个 enabled operator（重叠组合必须建 address set，不能破坏单值 ISP 维度）。reader 保留 schema v1 兼容，v1 不得夹带 v2 字段。operator 变更进入 draft digest，真实 MySQL 已验证旧 preview CAS 失败、重新预览后对象可按 ID/Flow ID 读取；worker schema v1 install/ACK、定向 race、全库 test/vet/build 和前端 test/build 均通过。该切片不改变事实写入和查询口径，只改版本化对象协议和 preview，因此未创建空 MySQL migration；后续 052/053 已分别由 Fleet Phase 0/2 领取，当前下一持久化 migration 为 054。代码/测试/设计由同一提交交付且不夹带 maintenance/delete-preview 工作区。
   - [ ] **C4b2 Flow index generation 运营商绑定**：Flow index-builder 必须消费同一已签名 snapshot 的 source manifest + schema v2 definition object。最终字典明确分离 `supplier_isp_id/name` 与 tenant `customer_isp_id UInt16`，禁止复用一个 `isp_id` 混淆两种口径；人工 prefix 的 `operator_id` 直接映射稳定 Flow ID，base range 仅可按非零 ASN 精确命中唯一 enabled operator，ASN 缺失/未配置则 customer=0，禁止按可变 name/code 模糊猜测。现有 CH migration 009 的单一 `isp_id UInt32` 是过渡结构，不得回改，须由下一条 CH forward migration 升级。index-builder 生成同 generation 的运营商表和 range，验证所有引用、0 保留及 UInt16 边界；activation/rollback/ACK 固定同一 snapshot/checksum。失败不得改变 active generation，旧 generation 在事实保留期内可解析。本项属于 Flow 数据面，不在平台发布器中连接 ClickHouse 或复制 operation-job 状态机。
   - [ ] **C4c 查询切换**：只有 event-time snapshot 的 index-builder ACK 可查询后，便捷运营商筛选才能从 ASN fallback 切到 typed `remote_isp_id`；请求/缓存/审计必须固定 snapshot/generation，跨版本按稳定身份拆分，不能用当前名称或当前映射重写历史。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
-- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；`052` 已用于 Fleet Phase 0 signer/trust lifecycle，下一持久化 migration 从 `053` 开始。
+- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；`052/053` 已用于 Fleet Phase 0/2，下一持久化 migration 从 `054` 开始。
 - [x] **Address Library 入口与页面 smoke 回归**：补齐 `/address-library` 根入口并默认展示 Imports，避免直接访问落入 404；真实 8090 会话逐页验证 imports/prefixes/sets/tools/batch/publications/geography/operators/lines 及新增表单，所有页面均结束 Loading、空集合显示明确 empty state、非空 prefix/set 列表正常呈现，浏览器控制台无错误。复用既有 API/表，无 schema 变化、不创建空 migration。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
 - [x] 旧 `sflow_collector` VM 聚合原型已独立退役：命令、平台配置、环境变量、安装项和实现均已删除，仓库生产代码零引用；RawFlow sFlow5 接收链继续保留且不与旧原型共端口（commits `52b9d3f2`、`5039ee77`）。

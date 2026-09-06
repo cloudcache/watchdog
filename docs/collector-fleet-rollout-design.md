@@ -1,6 +1,6 @@
 # Collector Fleet Rollout / Canary — Design
 
-Status: **Phases 0–1 implemented; Phases 2–5 proposed**. Owner: platform. Tracks
+Status: **Phases 0–2 implemented; Phases 3–5 proposed**. Owner: platform. Tracks
 tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环".
 
 ## 1. Where we are (the gap)
@@ -14,10 +14,10 @@ The plan model today is strictly **per-collector**:
   `ActivateCollectorPlanRevision` (guarded by `ExpectedCollectorRowVersion` +
   `ExpectedPlanRowVersion`), `AcknowledgeCollectorPlan`,
   `RecordCollectorPlanFailure`, `GetActiveCollectorPlan`.
-- Delivery is collector-facing only: `GET /collectors/{id}/plan` (fetch my
-  active plan) + `POST /collectors/{id}/plan-ack`. **There is no operator-facing
-  plan-management API** — no way to create/validate/activate a revision, and no
-  concept of applying one change across many collectors.
+- Delivery remains collector-facing: `GET /collectors/{id}/plan` (fetch my
+  active plan) + `POST /collectors/{id}/plan-ack`. Phase 1 added the independent
+  operator create/list/activate API; Phase 2 adds fleet rollout create/preview
+  without changing machine delivery or activating anything during preview.
 - The repository deliberately accepts only a revision carrying an internal
   proof produced after Ed25519 verification. Phase 0 now supplies the runtime
   signer and trust-key registry; the remaining gap is the operator-facing API
@@ -93,11 +93,12 @@ One row per rollout.
 | `id` CHAR(26) PK | |
 | `tenant_id` | FK tenants |
 | `module_key` | the module the plan spec is for |
+| `rollout_schema_version` | server-owned rollout contract version; v1 is `1` |
 | `selector_json` | fleet selection (see §4) — frozen at create time |
 | `spec_json` / `spec_hash` | the desired new spec applied to every target |
 | `plan_schema_version` | validated against each target's capability range |
 | `strategy_json` | canary %, wave size, min-soak, failure budget (see §5) |
-| `status` | `draft \| previewing \| canarying \| rolling \| paused \| completed \| rolled_back \| killed` |
+| `status` | `draft \| previewed \| canarying \| rolling \| paused \| completed \| rolled_back \| killed` |
 | `expires_at` | rollout auto-pauses if not complete by this time |
 | `created_by` / `updated_by` | |
 | `row_version` BIGINT | optimistic concurrency on control ops |
@@ -109,7 +110,7 @@ One row per (rollout, collector) — the per-collector progress ledger.
 | column | notes |
 |---|---|
 | `rollout_id` + `collector_id` | composite PK; FK rollout (CASCADE), FK collector_agents |
-| `wave` SMALLINT | which wave this target is in (0 = canary) |
+| `wave` INT UNSIGNED | which wave this target is in (0 = canary); `4294967295` is reserved for skipped targets |
 | `config_version` | the revision created for this collector by the rollout |
 | `prior_config_version` | what it was active on before — the rollback target |
 | `status` | `pending \| revision_created \| activated \| acked \| failed \| reverted \| skipped` |
@@ -122,8 +123,9 @@ mismatch) and is excluded from the rollout rather than blocking it.
 
 ## 4. Fleet selection
 
-`selector_json` is a typed, frozen selector evaluated **once at create time**
-into the target set (so the fleet can't drift mid-rollout). v1 axes, all
+`selector_json` is typed and frozen at create time, then evaluated **once by
+preview** into the durable target ledger (so the fleet cannot drift after an
+operator has reviewed the preview). v1 axes, all
 `AND`-combined, all already columns on `collector_agents`:
 
 ```
@@ -138,16 +140,20 @@ a follow-up), dynamic re-evaluation.
 
 `strategy_json`:
 ```
-{ "canary_count": 1,        // or canary_percent
+{ "canary_count": 1,
   "wave_size": 10,          // collectors advanced per wave after canary
-  "min_soak": "10m",        // healthy dwell before advancing
+  "min_soak_seconds": 600,  // healthy dwell before advancing; 1s..7d
   "failure_budget": 0 }     // failed targets tolerated before auto-pause
 ```
+
+`canary_count` and `wave_size` are 1..10,000. `failure_budget` is an absolute
+per-wave count and must be smaller than both values, so an all-failed canary or
+wave can never qualify to advance.
 
 **Rollout lifecycle** (operator- or scheduler-driven transitions):
 
 ```
-draft ──preview──▶ previewing ──ok──▶ canarying ──advance──▶ rolling ──▶ completed
+draft ──preview──▶ previewed ──start──▶ canarying ──advance──▶ rolling ──▶ completed
   │                    │                  │                     │
   └── (edit spec) ◀────┘             (pause/kill)          (pause/kill)
                                           │                     │
@@ -157,7 +163,8 @@ draft ──preview──▶ previewing ──ok──▶ canarying ──advanc
                                    (resume / rollback / kill)
 ```
 
-- **preview**: for each selected collector, run the same validation the plan
+- **preview**: in one transaction, materialize the tenant/module/type/status/ID
+  intersection in deterministic collector-ID order and run the same validation the plan
   create path runs (schema range vs. the collector's declared capability range,
   spec well-formedness). Targets that fail → `skipped`. No revisions created,
   nothing activated. Result: "N will apply, M will be skipped, here's why."
@@ -205,14 +212,23 @@ reuses `collector_agents`, `collector_plan_revisions`, `audit_logs` and the Phas
 0 key tables; it intentionally creates no migration and leaves machine plan
 delivery unchanged.
 
-Rollouts:
-- `POST /api/v1/plan-rollouts` — create (module, selector, spec, strategy, expiry) → `draft`.
-- `POST /api/v1/plan-rollouts/{id}/preview` — run §5 preview.
+Rollouts (Phase 2 implemented):
+- `POST /api/v1/plan-rollouts` — create strict
+  `{selector,plan_schema_version,spec,strategy,expires_at}` → `draft`; tenant,
+  actor, status, IDs and all hashes are server-derived. The response deliberately
+  omits `spec`, returning only its hash plus normalized selector/strategy.
+- `POST /api/v1/plan-rollouts/{id}/preview` — run §5 preview, requires quoted
+  rollout `row_version` in `If-Match`, returns matched/eligible/skipped/wave
+  counts and advances the rollout row to `previewed` without creating a plan
+  revision or changing any collector head.
+
+Rollouts (Phase 3+ planned):
 - `GET /api/v1/plan-rollouts` / `GET /api/v1/plan-rollouts/{id}` — status + per-target progress (paged).
 - `POST /api/v1/plan-rollouts/{id}/advance|pause|resume|rollback|kill` — control, `If-Match` on rollout row_version.
 
-Permissions: rollout create/control require collector `configure`/`admin` on the
-tenant; preview/get require `view`. Reuses the existing permission model.
+Permissions: create requires tenant `configure`; preview and future lifecycle
+controls require tenant `operate`; future read/list endpoints require `view`.
+Reuses the existing permission model.
 
 ## 7. Integration with what exists
 
@@ -244,26 +260,30 @@ tenant; preview/get require `view`. Reuses the existing permission model.
    signer is the only signing capability; version allocation and active-key
    fencing occur in the repository transaction. API/unit tests plus an isolated
    real-MySQL concurrent create→clone→list→activate test are the delivery gate.
-2. **Rollout tables + create + preview** — migration for the two tables, create
-   endpoint, preview (validation-only, no activation). Gated MySQL for selection
-   + preview skip/apply classification.
+2. **[done] Rollout tables + create + preview** — migration 053 owns the two
+   tables; strict create and optimistic-lock preview are wired into production.
+   Real MySQL tests cover selector intersection, deterministic canary/waves,
+   schema-incompatible skip, empty-result rollback, stale replay, no revision or
+   collector-head mutation, audit, migration replay and fresh-install parity.
 3. **Canary + manual advance + status** — activate wave 0, read acks/failures,
    advance/pause, per-target ledger, status endpoint + frontend rollout view.
 4. **Kill switch + rollback + expiry reaper** — revert semantics + the reaper task.
 5. **(later) Scheduler-driven advance** — once PLAT-04G lands; label selectors.
 
-## 9. Open decisions (need a call before building past phase 1)
+## 9. Frozen and open decisions
 
 - **Canary health signal**: ack + absence-of-failure only, or also require a
   fresh healthy heartbeat / a metrics threshold before advancing?
-- **Selector v1**: is module_key + agent_type + status + explicit list enough, or
-  are labels needed on day one (adds a column + management UI)?
-- **Config_version namespace**: rollout-created revisions share the collector's
-  single `config_version` sequence — confirm that's fine vs. a separate lane.
+- **Frozen in Phase 2 — selector v1**: module_key + optional agent_type +
+  active/pending status + optional explicit collector allowlist, all intersected;
+  labels require a later indexed management contract.
+- **Frozen in Phase 2 — config version**: rollout-created revisions share each
+  collector's single monotonic `config_version` sequence; rollout targets only
+  record the resulting version and never create a second version lane.
 - **Kill revert atomicity**: best-effort per-target revert (some may already be
   offline) — is "reverted where reachable, flagged where not" acceptable?
 
-Phases 0–1 are no longer open product decisions: they implement the existing
+Phases 0–2 are no longer open product decisions: they implement the existing
 repository trust and per-collector lifecycle boundaries. The
 implemented secret backend is an owner-only file; a future KMS/Vault adapter may
 replace only that loader without changing key state, bundle or signer contracts.

@@ -68,6 +68,7 @@ type APIV1RouterConfig struct {
 	CollectorPlans         CollectorPlanDeliveryController
 	CollectorPlanTrust     CollectorPlanTrustBundleController
 	PlanManagement         CollectorPlanManagementController
+	PlanRollouts           CollectorPlanRolloutController
 }
 
 type SNMPDeviceDiscoverer interface {
@@ -195,6 +196,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.PlanManagement != nil {
 		registerCollectorPlanManagementRoutes(mux, auth, cfg.PlanManagement)
+	}
+	if cfg.PlanRollouts != nil {
+		registerCollectorPlanRolloutRoutes(mux, auth, cfg.PlanRollouts)
 	}
 	if cfg.CollectorPrincipals != nil {
 		registerCollectorPrincipalRoutes(mux, auth, cfg.CollectorPrincipals)
