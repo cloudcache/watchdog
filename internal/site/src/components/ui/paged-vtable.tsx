@@ -16,6 +16,9 @@ export function PagedVTable({
 	onRowClick,
 	onCellClick,
 	showSearch = true,
+	serverPagination,
+	searchValue,
+	onSearchChange,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -27,6 +30,15 @@ export function PagedVTable({
 	onRowClick?: (record: Record<string, unknown>) => void
 	onCellClick?: (record: Record<string, unknown>, field: string) => void
 	showSearch?: boolean
+	serverPagination?: {
+		page: number
+		pageSize: number
+		totalCount: number
+		onPageChange: (page: number) => void
+		onPageSizeChange: (pageSize: number) => void
+	}
+	searchValue?: string
+	onSearchChange?: (value: string) => void
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -35,20 +47,26 @@ export function PagedVTable({
 	const [page, setPage] = useState(0)
 	const [filteredCount, setFilteredCount] = useState(records.length)
 
+	const serverMode = Boolean(serverPagination)
+	const effectiveSearch = searchValue ?? search
+	const effectivePageSize = serverPagination?.pageSize ?? pageSize
+	const effectivePage = serverPagination?.page ?? page
+	const totalCount = serverPagination?.totalCount ?? filteredCount
 	const searchedRecords = useMemo(() => {
-		const query = search.trim().toLocaleLowerCase()
+		if (serverMode) return records
+		const query = effectiveSearch.trim().toLocaleLowerCase()
 		if (!query) return records
 		return records.filter((record) =>
 			String(record.searchText ?? Object.values(record).join(" "))
 				.toLocaleLowerCase()
 				.includes(query)
 		)
-	}, [records, search])
+	}, [effectiveSearch, records, serverMode])
 
 	useEffect(() => {
-		setPage(0)
+		if (!serverMode) setPage(0)
 		setFilteredCount(searchedRecords.length)
-	}, [searchedRecords, pageSize])
+	}, [searchedRecords, effectivePageSize, serverMode])
 
 	useEffect(() => {
 		if (!tableRef.current || loading || searchedRecords.length === 0) return
@@ -62,9 +80,15 @@ export function PagedVTable({
 			rowHeight,
 			headerRowHeight: 38,
 			widthMode: "adaptive",
-			pagination: { perPageCount: pageSize, currentPage: 0, totalCount: searchedRecords.length },
+			pagination: {
+				perPageCount: serverMode ? Math.max(1, searchedRecords.length) : effectivePageSize,
+				currentPage: 0,
+				totalCount: searchedRecords.length,
+			},
 			onFilteredCountChange: setFilteredCount,
-			onFilterApplied: () => setPage(0),
+			onFilterApplied: () => {
+				if (!serverMode) setPage(0)
+			},
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
@@ -81,14 +105,18 @@ export function PagedVTable({
 			}
 			disposeTable(table)
 		}
-	}, [columns, loading, onCellClick, onRowClick, pageSize, rowHeight, searchedRecords])
+	}, [columns, effectivePageSize, loading, onCellClick, onRowClick, rowHeight, searchedRecords, serverMode])
 
 	useEffect(() => {
-		tableInstance.current?.updatePagination({ perPageCount: pageSize, currentPage: page, totalCount: filteredCount })
-	}, [filteredCount, page, pageSize])
+		tableInstance.current?.updatePagination({
+			perPageCount: serverMode ? Math.max(1, searchedRecords.length) : effectivePageSize,
+			currentPage: serverMode ? 0 : effectivePage,
+			totalCount: serverMode ? searchedRecords.length : filteredCount,
+		})
+	}, [effectivePage, effectivePageSize, filteredCount, searchedRecords.length, serverMode])
 
-	const pageCount = Math.max(1, Math.ceil(filteredCount / pageSize))
-	const safePage = Math.min(page, pageCount - 1)
+	const pageCount = Math.max(1, Math.ceil(totalCount / effectivePageSize))
+	const safePage = Math.min(effectivePage, pageCount - 1)
 
 	return (
 		<div className="grid gap-3">
@@ -97,8 +125,11 @@ export function PagedVTable({
 					<div className="relative w-full max-w-sm">
 						<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
-							value={search}
-							onChange={(event) => setSearch(event.target.value)}
+							value={effectiveSearch}
+							onChange={(event) => {
+								if (onSearchChange) onSearchChange(event.target.value)
+								else setSearch(event.target.value)
+							}}
 							placeholder={searchPlaceholder}
 							className="pl-9"
 						/>
@@ -107,8 +138,15 @@ export function PagedVTable({
 					<div />
 				)}
 				<div className="flex items-center gap-2 text-sm text-muted-foreground">
-					<span>{filteredCount} items</span>
-					<Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
+					<span>{totalCount} items</span>
+					<Select
+						value={String(effectivePageSize)}
+						onValueChange={(value) => {
+							const next = Number(value)
+							if (serverPagination) serverPagination.onPageSizeChange(next)
+							else setPageSize(next)
+						}}
+					>
 						<SelectTrigger className="h-9 w-24">
 							<SelectValue />
 						</SelectTrigger>
@@ -137,7 +175,10 @@ export function PagedVTable({
 						variant="outline"
 						size="sm"
 						disabled={safePage === 0}
-						onClick={() => setPage((value) => Math.max(0, value - 1))}
+						onClick={() => {
+							if (serverPagination) serverPagination.onPageChange(Math.max(0, safePage - 1))
+							else setPage((value) => Math.max(0, value - 1))
+						}}
 					>
 						Previous
 					</Button>
@@ -148,7 +189,10 @@ export function PagedVTable({
 						variant="outline"
 						size="sm"
 						disabled={safePage + 1 >= pageCount}
-						onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}
+						onClick={() => {
+							if (serverPagination) serverPagination.onPageChange(Math.min(pageCount - 1, safePage + 1))
+							else setPage((value) => Math.min(pageCount - 1, value + 1))
+						}}
 					>
 						Next
 					</Button>

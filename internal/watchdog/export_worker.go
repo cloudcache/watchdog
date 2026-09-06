@@ -38,6 +38,10 @@ type ExportFileReader interface {
 	ReadExport(ctx context.Context, fileRef string) ([]byte, string, error)
 }
 
+type ExportFileDeleter interface {
+	DeleteExport(ctx context.Context, fileRef string) error
+}
+
 type PendingExportRepository interface {
 	ListPendingExportTasks(ctx context.Context, limit int) ([]ExportTask, error)
 }

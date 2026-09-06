@@ -1,18 +1,19 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { DownloadIcon, FileDownIcon, RefreshCwIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
-import { $router, Link } from "@/components/router"
-import { Badge } from "@/components/ui/badge"
+import { FileDownIcon, RefreshCwIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PagedVTable } from "@/components/ui/paged-vtable"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { pb } from "@/lib/api"
 import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
+import type { ColumnDefine } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
 import {
 	exportDownloadURL,
 	exportID,
-	exportStatus as getExportStatus,
+	exportStatus,
 	exportValueLayer,
 	formatExportRange,
 	type ExportTask,
@@ -20,11 +21,22 @@ import {
 
 type ExportTasksResponse = {
 	items?: ExportTask[]
+	total?: number
+	limit?: number
+	offset?: number
 }
 
 export default memo(() => {
 	const { t } = useLingui()
 	const [tasks, setTasks] = useState<ExportTask[]>([])
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [status, setStatus] = useState("all")
+	const [valueLayer, setValueLayer] = useState("all")
+	const [format, setFormat] = useState("all")
+	const [sort, setSort] = useState("created_at:desc")
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 
@@ -32,19 +44,70 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ExportTasksResponse>("/api/v1/exports", {})
+			const [sortBy, sortDirection] = sort.split(":")
+			const query = new URLSearchParams({
+				limit: String(pageSize),
+				offset: String(page * pageSize),
+				sort_by: sortBy,
+				sort_direction: sortDirection,
+			})
+			if (search.trim()) query.set("q", search.trim())
+			if (status !== "all") query.set("status", status)
+			if (valueLayer !== "all") query.set("value_layer", valueLayer)
+			if (format !== "all") query.set("format", format)
+			const data = await pb.send<ExportTasksResponse>(`/api/v1/exports?${query}`, {})
 			setTasks(data.items ?? [])
+			setTotal(data.total ?? 0)
 		} catch (err) {
+			setTasks([])
+			setTotal(0)
 			setError(err instanceof Error ? err.message : t`Failed to load exports`)
 		} finally {
 			setLoading(false)
 		}
-	}, [t])
+	}, [format, page, pageSize, search, sort, status, t, valueLayer])
 
 	useEffect(() => {
 		document.title = `${t`Exports`} / Watchdog`
 		refresh()
 	}, [refresh, t])
+
+	const records = useMemo(
+		() =>
+			tasks.map((task) => ({
+				id: exportID(task),
+				status: exportStatus(task) || "—",
+				target: task.TargetID ?? task.target_id ?? "—",
+				port: task.PortID ?? task.port_id ?? "—",
+				range: formatExportRange(task),
+				aggregation: task.Aggregation ?? task.aggregation ?? "—",
+				view: trafficViewLabel(exportTrafficView(task)),
+				value: task.ValueMode ?? task.value_mode ?? "corrected",
+				format: task.Format ?? task.format ?? "—",
+				action: exportStatus(task) === "complete" ? "Download" : "Open",
+				task,
+			})),
+		[tasks]
+	)
+	const columns = useMemo<ColumnDefine[]>(
+		() => [
+			{ field: "status", title: t`Status`, width: 110, style: denseCellStyle() },
+			{ field: "target", title: t`Target`, width: 180, style: denseCellStyle() },
+			{ field: "port", title: t`Port`, width: 180, style: denseCellStyle() },
+			{ field: "range", title: t`Range`, width: 270, style: denseCellStyle() },
+			{ field: "aggregation", title: t`Aggregation`, width: 130, style: denseCellStyle() },
+			{ field: "view", title: t`View`, width: 110, style: denseCellStyle() },
+			{ field: "value", title: t`Value`, width: 110, style: denseCellStyle() },
+			{ field: "format", title: t`Format`, width: 100, style: denseCellStyle() },
+			{ field: "action", title: t`Actions`, width: 110, filter: false, style: denseCellStyle() },
+		],
+		[t]
+	)
+
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
 
 	return (
 		<div className="grid gap-4">
@@ -52,14 +115,11 @@ export default memo(() => {
 				<div className="flex items-center gap-2">
 					<FileDownIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
 					<h1 className="text-xl font-semibold tracking-normal">
-						<Trans>Exports</Trans>
+						<Trans>Exports</Trans> ({total})
 					</h1>
 				</div>
 				<div className="flex items-center gap-2">
-					<Link
-						href={getPagePath($router, "export_new")}
-						className={cn(buttonVariants({ variant: "default", size: "sm" }))}
-					>
+					<Link href={getPagePath($router, "export_new")} className={cn(buttonVariants({ size: "sm" }))}>
 						<FileDownIcon className="me-2 h-4 w-4" />
 						<Trans>Create</Trans>
 					</Link>
@@ -70,120 +130,118 @@ export default memo(() => {
 				</div>
 			</div>
 
-			<div className="rounded-md border border-border bg-card">
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead>
-								<Trans>Status</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Target</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Port</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Range</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Aggregation</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>View</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Value</Trans>
-							</TableHead>
-							<TableHead>
-								<Trans>Format</Trans>
-							</TableHead>
-							<TableHead className="text-right">
-								<Trans>Actions</Trans>
-							</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{loading ? (
-							<TableRow>
-								<TableCell colSpan={9} className="text-muted-foreground">
-									<Trans>Loading...</Trans>
-								</TableCell>
-							</TableRow>
-						) : error ? (
-							<TableRow>
-								<TableCell colSpan={9} className="text-destructive">
-									{error}
-								</TableCell>
-							</TableRow>
-						) : tasks.length === 0 ? (
-							<TableRow>
-								<TableCell colSpan={9} className="text-muted-foreground">
-									<Trans>No exports found.</Trans>
-								</TableCell>
-							</TableRow>
-						) : (
-							tasks.map((task) => (
-								<TableRow key={task.ID ?? task.id}>
-									<TableCell>
-										<Link
-											className="hover:underline"
-											href={getPagePath($router, "export_detail", { id: exportID(task) })}
-										>
-											<ExportStatus value={getExportStatus(task)} />
-										</Link>
-									</TableCell>
-									<TableCell className="font-mono text-xs">{task.TargetID ?? task.target_id ?? "—"}</TableCell>
-									<TableCell className="font-mono text-xs">{task.PortID ?? task.port_id ?? "—"}</TableCell>
-									<TableCell>{formatExportRange(task)}</TableCell>
-									<TableCell>{task.Aggregation ?? task.aggregation ?? "—"}</TableCell>
-									<TableCell>{trafficViewLabel(exportTrafficView(task))}</TableCell>
-									<TableCell>{task.ValueMode ?? task.value_mode ?? "corrected"}</TableCell>
-									<TableCell>{task.Format ?? task.format ?? "—"}</TableCell>
-									<TableCell className="text-right">
-										<Button
-											variant="ghost"
-											size="icon"
-											disabled={getExportStatus(task) !== "complete"}
-											onClick={() => downloadExport(task)}
-											aria-label={t`Download`}
-										>
-											<DownloadIcon className="h-4 w-4" />
-										</Button>
-									</TableCell>
-								</TableRow>
-							))
-						)}
-					</TableBody>
-				</Table>
+			<div className="flex flex-wrap gap-2">
+				<ExportFilter value={status} onChange={(value) => resetPage(() => setStatus(value))} label={t`Status`}>
+					<SelectItem value="all">
+						<Trans>All</Trans>
+					</SelectItem>
+					{["pending", "running", "complete", "failed", "canceled"].map((value) => (
+						<SelectItem key={value} value={value}>
+							{value}
+						</SelectItem>
+					))}
+				</ExportFilter>
+				<ExportFilter value={valueLayer} onChange={(value) => resetPage(() => setValueLayer(value))} label={t`View`}>
+					<SelectItem value="all">
+						<Trans>All</Trans>
+					</SelectItem>
+					{["raw", "supplier", "customer"].map((value) => (
+						<SelectItem key={value} value={value}>
+							{value}
+						</SelectItem>
+					))}
+				</ExportFilter>
+				<ExportFilter value={format} onChange={(value) => resetPage(() => setFormat(value))} label={t`Format`}>
+					<SelectItem value="all">
+						<Trans>All</Trans>
+					</SelectItem>
+					<SelectItem value="csv">csv</SelectItem>
+					<SelectItem value="parquet">parquet</SelectItem>
+				</ExportFilter>
+				<ExportFilter value={sort} onChange={(value) => resetPage(() => setSort(value))} label={t`Sort`} wide>
+					<SelectItem value="created_at:desc">
+						<Trans>Newest first</Trans>
+					</SelectItem>
+					<SelectItem value="created_at:asc">
+						<Trans>Oldest first</Trans>
+					</SelectItem>
+					<SelectItem value="status:asc">
+						<Trans>Status</Trans>
+					</SelectItem>
+					<SelectItem value="target_id:asc">
+						<Trans>Target</Trans>
+					</SelectItem>
+				</ExportFilter>
+			</div>
+
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
+			<div className="overflow-hidden rounded-md border border-border bg-card">
+				<PagedVTable
+					records={records}
+					columns={columns}
+					loading={loading}
+					emptyText={t`No exports found.`}
+					searchPlaceholder={t`Search export, target, port, or dataset...`}
+					searchValue={search}
+					onSearchChange={(value) => resetPage(() => setSearch(value))}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => {
+							setPage(0)
+							setPageSize(value)
+						},
+					}}
+					height={560}
+					onCellClick={(record, field) => {
+						const task = record.task as ExportTask
+						if (field === "action" && exportStatus(task) === "complete") downloadExport(task)
+						else navigate(getPagePath($router, "export_detail", { id: exportID(task) }))
+					}}
+				/>
 			</div>
 		</div>
 	)
 })
 
-function ExportStatus({ value }: { value?: string }) {
-	const normalized = value?.toLowerCase() ?? ""
-	const variant: "success" | "danger" | "warning" | "outline" =
-		normalized === "complete"
-			? "success"
-			: normalized === "failed"
-				? "danger"
-				: normalized === "running"
-					? "warning"
-					: "outline"
-	return <Badge variant={variant}>{value || "—"}</Badge>
-}
-
-function downloadExport(task: ExportTask) {
-	const url = exportDownloadURL(task)
-	if (!url) {
-		return
-	}
-	globalThis.location.href = url
+function ExportFilter({
+	value,
+	onChange,
+	label,
+	children,
+	wide = false,
+}: {
+	value: string
+	onChange: (value: string) => void
+	label: string
+	children: React.ReactNode
+	wide?: boolean
+}) {
+	return (
+		<Select value={value} onValueChange={onChange}>
+			<SelectTrigger className={wide ? "w-44" : "w-36"} aria-label={label}>
+				<SelectValue placeholder={label} />
+			</SelectTrigger>
+			<SelectContent>{children}</SelectContent>
+		</Select>
+	)
 }
 
 function exportTrafficView(task: ExportTask) {
 	const layer = exportValueLayer(task)
 	if (layer === "raw" || layer === "supplier" || layer === "customer") return layer
 	return trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation)
+}
+
+function downloadExport(task: ExportTask) {
+	const url = exportDownloadURL(task)
+	if (url) globalThis.location.href = url
+}
+
+function denseCellStyle() {
+	return { padding: [8, 10, 8, 10], textBaseline: "middle", autoWrapText: false }
 }

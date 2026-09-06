@@ -18,6 +18,16 @@ type fakeMaintenanceRepo struct {
 	exports     atomic.Int64
 }
 
+type fakeQueuedExportMaintenanceRepo struct {
+	*fakeMaintenanceRepo
+	queued atomic.Int64
+}
+
+func (f *fakeQueuedExportMaintenanceRepo) QueueExpiredExportDeletes(context.Context, time.Time, int) (int64, error) {
+	f.queued.Add(1)
+	return 0, nil
+}
+
 func (f *fakeMaintenanceRepo) PurgeExpiredQuietHours(context.Context, time.Time, int) (int64, error) {
 	f.quiet.Add(1)
 	return 0, nil
@@ -55,6 +65,24 @@ func TestNewStoreMaintenanceRegistersExpectedTasks(t *testing.T) {
 			t.Fatalf("missing maintenance task %q; got %v", want, names)
 		}
 	}
+}
+
+func TestNewStoreMaintenancePrefersDurableExportExpiryQueue(t *testing.T) {
+	repo := &fakeQueuedExportMaintenanceRepo{fakeMaintenanceRepo: &fakeMaintenanceRepo{}}
+	m := NewStoreMaintenance(repo, nil)
+	for _, task := range m.tasks {
+		if task.Name != "expired_exports" {
+			continue
+		}
+		if _, err := task.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if repo.queued.Load() != 1 || repo.exports.Load() != 0 {
+			t.Fatalf("queued=%d direct_purge=%d", repo.queued.Load(), repo.exports.Load())
+		}
+		return
+	}
+	t.Fatal("expired_exports task not registered")
 }
 
 func TestPeriodicMaintenanceRunsRegisteredTasks(t *testing.T) {

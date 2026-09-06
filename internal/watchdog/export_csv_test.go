@@ -224,4 +224,13 @@ func TestDiskExportStoreWritesAndReadsParquet(t *testing.T) {
 	if contentType != artifact.ContentType || !bytes.Equal(data[:4], []byte("PAR1")) {
 		t.Fatalf("contentType=%q data=%x", contentType, data)
 	}
+	if err := store.DeleteExport(context.Background(), artifact.FileRef); err != nil {
+		t.Fatalf("DeleteExport() error = %v", err)
+	}
+	if err := store.DeleteExport(context.Background(), artifact.FileRef); err != nil {
+		t.Fatalf("idempotent DeleteExport() error = %v", err)
+	}
+	if _, _, err := store.ReadExport(context.Background(), artifact.FileRef); err == nil {
+		t.Fatal("expected deleted artifact to be unreadable")
+	}
 }

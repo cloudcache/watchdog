@@ -56,6 +56,13 @@ func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte,
 	return data, "text/csv; charset=utf-8", nil
 }
 
+func (w *CSVExportWriter) DeleteExport(_ context.Context, fileRef string) error {
+	if w != nil && w.Files != nil {
+		delete(w.Files, fileRef)
+	}
+	return nil
+}
+
 type DiskExportStore struct {
 	Dir string
 }
@@ -120,6 +127,20 @@ func (s DiskExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, 
 		contentType = "application/vnd.apache.parquet"
 	}
 	return data, contentType, nil
+}
+
+func (s DiskExportStore) DeleteExport(_ context.Context, fileRef string) error {
+	if s.Dir == "" {
+		return errors.New("export directory is required")
+	}
+	fileName := strings.TrimPrefix(fileRef, "exports/")
+	if fileName == "" || strings.Contains(fileName, "/") || strings.Contains(fileName, `\`) {
+		return errors.New("export file not found")
+	}
+	if err := os.Remove(filepath.Join(s.Dir, fileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // RenderCSVExportColumns renders the aggregated export columns. Columns are

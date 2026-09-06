@@ -492,6 +492,14 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 				return err
 			}
 		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     ExportDeleteJobType,
+			Handler:     NewExportDeleteJobHandler(r.Store, r.ExportStore, r.Store),
+			Concurrency: r.Config.Export.WorkerConcurrency, LeaseFor: 5 * time.Minute,
+			MaxAttempts: 5, RetryBase: 30 * time.Second,
+		}); err != nil {
+			return err
+		}
 		if r.FlowRollupRunner != nil {
 			if err := registry.Register(OperationJobRegistration{
 				JobType: FlowRollupJobType, Handler: NewFlowRollupJobHandler(r.FlowRollupRunner),

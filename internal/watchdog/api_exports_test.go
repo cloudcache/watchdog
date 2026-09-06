@@ -15,6 +15,16 @@ type fakeExportRepository struct {
 	tasks []ExportTask
 }
 
+type fakePagedExportRepository struct {
+	*fakeExportRepository
+	filter ExportTaskListFilter
+}
+
+func (r *fakePagedExportRepository) ListExportTasksPage(_ context.Context, _ ID, filter ExportTaskListFilter) ([]ExportTask, int64, error) {
+	r.filter = filter
+	return r.tasks, int64(len(r.tasks)), nil
+}
+
 func (r *fakeExportRepository) CreateExportTask(_ context.Context, task ExportTask) (ExportTask, error) {
 	task = normalizeExportTask(task)
 	r.tasks = append(r.tasks, task)
@@ -178,6 +188,33 @@ func TestAPIExportsListOnlyCurrentUserUnlessAdminTenantScope(t *testing.T) {
 	}
 }
 
+func TestAPIExportsListUsesServerPaginationAndFilters(t *testing.T) {
+	repo := &fakePagedExportRepository{fakeExportRepository: &fakeExportRepository{tasks: []ExportTask{{ID: "export-a"}}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/exports?limit=50&offset=100&q=target-a&status=failed&value_layer=raw&format=parquet&sort_by=status&sort_direction=asc", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":1`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.filter.CreatedBy != "user-a" || repo.filter.Limit != 50 || repo.filter.Offset != 100 ||
+		repo.filter.Search != "target-a" || repo.filter.Status != ExportStatusFailed ||
+		repo.filter.ValueLayer != QueryValueRaw || repo.filter.Format != ExportFormatParquet ||
+		repo.filter.SortBy != "status" || repo.filter.SortDirection != "ASC" {
+		t.Fatalf("filter = %+v", repo.filter)
+	}
+}
+
+func TestAPIExportsListRejectsInvalidServerFilter(t *testing.T) {
+	repo := &fakePagedExportRepository{fakeExportRepository: &fakeExportRepository{}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/exports?status=bogus", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAPIExportsDownloadCompleteFile(t *testing.T) {
 	files := &CSVExportWriter{Files: map[string][]byte{"exports/export-a.csv": []byte("timestamp,corrected_value\n")}}
 	repo := &fakeExportRepository{tasks: []ExportTask{{
@@ -261,6 +298,14 @@ func TestAPIExportsRetryFailedTask(t *testing.T) {
 type exportOperationJobRepository struct {
 	fakeOperationJobRepository
 	canceled ID
+	enqueued OperationJob
+}
+
+func (r *exportOperationJobRepository) EnqueueOperationJob(_ context.Context, job OperationJob) (OperationJob, error) {
+	r.enqueued = job
+	job.ID = "job-delete"
+	job.Status = OperationJobStatusQueued
+	return job, nil
 }
 
 func (r *exportOperationJobRepository) RequestOperationJobCancel(_ context.Context, _ ID, jobID ID) error {
@@ -280,6 +325,33 @@ func TestAPIExportsCancelUsesLinkedOperationJob(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/exports/export-a/cancel", nil))
 	if rec.Code != http.StatusOK || jobs.canceled != "job-a" {
 		t.Fatalf("status=%d canceled=%s body=%s", rec.Code, jobs.canceled, rec.Body.String())
+	}
+}
+
+func TestAPIExportsDeleteEnqueuesTerminalArtifactCleanup(t *testing.T) {
+	repo := &fakeExportRepository{tasks: []ExportTask{{
+		ID: "export-a", TenantID: "tenant-a", CreatedBy: "user-a", TargetID: "target-a",
+		Status: ExportStatusComplete, FileRef: "exports/export-a.csv", Checksum: strings.Repeat("a", 64),
+	}}}
+	jobs := &exportOperationJobRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo, OperationJobs: jobs})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/exports/export-a", nil))
+	if rec.Code != http.StatusAccepted || jobs.enqueued.JobType != ExportDeleteJobType ||
+		jobs.enqueued.IdempotencyKey != "export-delete:export-a" || len(jobs.enqueued.RequestHash) != 64 {
+		t.Fatalf("status=%d job=%+v body=%s", rec.Code, jobs.enqueued, rec.Body.String())
+	}
+}
+
+func TestAPIExportsDeleteRejectsRunningTask(t *testing.T) {
+	repo := &fakeExportRepository{tasks: []ExportTask{{
+		ID: "export-a", TenantID: "tenant-a", CreatedBy: "user-a", TargetID: "target-a", Status: ExportStatusRunning,
+	}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: exportTestAuth(false), Exports: repo, OperationJobs: &exportOperationJobRepository{}})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/exports/export-a", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

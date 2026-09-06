@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -116,5 +118,62 @@ func TestMySQLExportExecutionAtomicCreateCancelRetryAndProjection(t *testing.T) 
 	}
 	if completed.Status != ExportStatusComplete || completed.FileRef != artifact.FileRef || completed.RowCount != 5 || completed.ContentType != artifact.ContentType {
 		t.Fatalf("completed = %+v", completed)
+	}
+	page, total, err := store.ListExportTasksPage(ctx, tenantID, ExportTaskListFilter{
+		CreatedBy: userID, Search: "target_export", Status: ExportStatusComplete,
+		ValueLayer: QueryValueRaw, Format: ExportFormatCSV, SortBy: "status", SortDirection: "asc",
+		Limit: 25,
+	})
+	if err != nil || total != 1 || len(page) != 1 || page[0].ID != task.ID {
+		t.Fatalf("filtered export page=%+v total=%d err=%v", page, total, err)
+	}
+
+	// Expiry only enqueues the same durable deletion lifecycle used by the API;
+	// it does not delete the row behind the artifact store's back.
+	if _, err := db.ExecContext(ctx, `UPDATE export_tasks SET expires_at = ? WHERE tenant_id = ? AND id = ?`, time.Now().UTC().Add(-time.Minute), tenantID, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := store.QueueExpiredExportDeletes(ctx, time.Now().UTC(), 100); err != nil || queued != 1 {
+		t.Fatalf("QueueExpiredExportDeletes() queued=%d err=%v", queued, err)
+	}
+	if queued, err := store.QueueExpiredExportDeletes(ctx, time.Now().UTC(), 100); err != nil || queued != 0 {
+		t.Fatalf("duplicate expiry scan queued=%d err=%v", queued, err)
+	}
+	deleteJob, err := store.LeaseNextOperationJob(ctx, ExportDeleteJobType, "export-delete-test", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &CSVExportWriter{Files: map[string][]byte{artifact.FileRef: []byte("artifact")}}
+	result, err := NewExportDeleteJobHandler(store, files, store)(ctx, deleteJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteOperationJobSucceeded(ctx, deleteJob.ID, deleteJob.LeaseToken, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetExportTask(ctx, tenantID, task.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted export lookup error = %v", err)
+	}
+	if _, exists := files.Files[artifact.FileRef]; exists {
+		t.Fatal("expired export artifact still exists")
+	}
+	var receiptCount int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM audit_logs
+		WHERE tenant_id = ? AND action = 'export_task.destroyed' AND resource_id = ?
+	`, tenantID, task.ID).Scan(&receiptCount); err != nil || receiptCount != 1 {
+		t.Fatalf("destruction receipts=%d err=%v", receiptCount, err)
+	}
+}
+
+func TestValidateExportTaskListFilter(t *testing.T) {
+	for _, filter := range []ExportTaskListFilter{
+		{Limit: 101}, {Limit: 25, Offset: -1}, {Limit: 25, Status: "bogus"},
+		{Limit: 25, ValueLayer: "bogus"}, {Limit: 25, Format: "json"},
+		{Limit: 25, SortBy: "tenant_id"}, {Limit: 25, SortDirection: "sideways"},
+	} {
+		if err := validateExportTaskListFilter(&filter); err == nil {
+			t.Fatalf("expected invalid filter: %+v", filter)
+		}
 	}
 }

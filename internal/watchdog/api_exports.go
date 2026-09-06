@@ -46,6 +46,7 @@ func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handl
 	mux.Handle("POST /api/v1/exports/{export_id}/cancel", auth(http.HandlerFunc(api.cancel)))
 	mux.Handle("POST /api/v1/exports/{export_id}/retry", auth(http.HandlerFunc(api.retry)))
 	mux.Handle("GET /api/v1/exports/{export_id}/download", auth(http.HandlerFunc(api.download)))
+	mux.Handle("DELETE /api/v1/exports/{export_id}", auth(http.HandlerFunc(api.delete)))
 }
 
 func (api exportAPI) create(w http.ResponseWriter, r *http.Request) {
@@ -127,12 +128,58 @@ func (api exportAPI) list(w http.ResponseWriter, r *http.Request) {
 	if auth.IsAdmin && r.URL.Query().Get("scope") == "tenant" {
 		createdBy = ""
 	}
+	if pageRepo, ok := api.repo.(ExportPageRepository); ok {
+		filter, err := parseExportTaskListFilter(r)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		filter.CreatedBy = createdBy
+		tasks, total, err := pageRepo.ListExportTasksPage(r.Context(), auth.TenantID, filter)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": tasks, "total": total, "limit": filter.Limit, "offset": filter.Offset})
+		return
+	}
 	tasks, err := api.repo.ListExportTasks(r.Context(), auth.TenantID, createdBy)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": tasks})
+}
+
+func parseExportTaskListFilter(r *http.Request) (ExportTaskListFilter, error) {
+	query := r.URL.Query()
+	filter := ExportTaskListFilter{
+		Search: strings.TrimSpace(query.Get("q")), Status: ExportStatus(query.Get("status")),
+		ValueLayer: QueryValueLayer(query.Get("value_layer")), Format: ExportFormat(query.Get("format")),
+		SortBy: strings.TrimSpace(query.Get("sort_by")), SortDirection: strings.TrimSpace(query.Get("sort_direction")),
+	}
+	var err error
+	if filter.Limit, err = parseExportListInteger(query.Get("limit"), 25); err != nil {
+		return ExportTaskListFilter{}, err
+	}
+	if filter.Offset, err = parseExportListInteger(query.Get("offset"), 0); err != nil {
+		return ExportTaskListFilter{}, err
+	}
+	if err := validateExportTaskListFilter(&filter); err != nil {
+		return ExportTaskListFilter{}, err
+	}
+	return filter, nil
+}
+
+func parseExportListInteger(raw string, defaultValue int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.New("export list limit and offset must be integers")
+	}
+	return value, nil
 }
 
 func (api exportAPI) get(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +254,43 @@ func (api exportAPI) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteAPIJSON(w, http.StatusOK, updated)
+}
+
+func (api exportAPI) delete(w http.ResponseWriter, r *http.Request) {
+	if api.jobs == nil {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Export deletion is not configured", nil)
+		return
+	}
+	auth, _ := AuthFromContext(r.Context())
+	task, err := api.repo.GetExportTask(r.Context(), auth.TenantID, ID(r.PathValue("export_id")))
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export not found", nil)
+		return
+	}
+	if !api.authorizeCurrent(auth, task) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	if task.Status != ExportStatusComplete && task.Status != ExportStatusFailed && task.Status != ExportStatusCanceled {
+		WriteAPIError(w, http.StatusConflict, APIErrorInvalidRequest, "Cancel the export before deleting it", nil)
+		return
+	}
+	payload, requestHash, err := EncodeExportDeletePayload(task)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	job, err := api.jobs.EnqueueOperationJob(r.Context(), OperationJob{
+		TenantID: auth.TenantID, ScopeType: OperationJobScopeTenant, JobType: ExportDeleteJobType,
+		IdempotencyKey: "export-delete:" + string(task.ID), RequestHash: requestHash,
+		CheckpointJSON: payload, CreatedBy: auth.UserID,
+	})
+	if err != nil {
+		WriteAPIError(w, http.StatusConflict, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	api.recordAudit(r.Context(), auth, "export.delete_requested", task.ID, map[string]any{"operation_job_id": job.ID})
+	WriteAPIJSON(w, http.StatusAccepted, job)
 }
 
 func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {

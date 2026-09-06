@@ -1,8 +1,26 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowLeftIcon, DownloadIcon, FileDownIcon, RefreshCwIcon, RotateCcwIcon, XCircleIcon } from "lucide-react"
+import {
+	ArrowLeftIcon,
+	DownloadIcon,
+	FileDownIcon,
+	RefreshCwIcon,
+	RotateCcwIcon,
+	Trash2Icon,
+	XCircleIcon,
+} from "lucide-react"
 import { memo, useCallback, useEffect, useState } from "react"
-import { $router, Link } from "@/components/router"
+import { $router, Link, navigate } from "@/components/router"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { pb } from "@/lib/api"
@@ -29,6 +47,8 @@ export default memo(({ id }: ExportDetailProps) => {
 	const [loading, setLoading] = useState(true)
 	const [retrying, setRetrying] = useState(false)
 	const [canceling, setCanceling] = useState(false)
+	const [deleting, setDeleting] = useState(false)
+	const [deleteOpen, setDeleteOpen] = useState(false)
 	const [error, setError] = useState("")
 
 	const refresh = useCallback(async () => {
@@ -54,6 +74,7 @@ export default memo(({ id }: ExportDetailProps) => {
 	const canRetry = task && (status === "failed" || status === "canceled")
 	const canCancel =
 		task && (status === "pending" || status === "running") && Boolean(task.OperationJobID ?? task.operation_job_id)
+	const canDelete = task && (status === "complete" || status === "failed" || status === "canceled")
 	const viewMode = task ? trafficViewLabel(exportTrafficView(task)) : "-"
 
 	const retry = async () => {
@@ -86,6 +107,35 @@ export default memo(({ id }: ExportDetailProps) => {
 		}
 	}
 
+	const deleteExport = async () => {
+		if (!task) return
+		setDeleteOpen(false)
+		setDeleting(true)
+		setError("")
+		try {
+			const response = await pb.send<{ id?: string }>(`/api/v1/exports/${exportID(task)}`, { method: "DELETE" })
+			if (!response.id) throw new Error(t`Export deletion did not return an operation job`)
+			for (let attempt = 0; attempt < 120; attempt++) {
+				const job = await pb.send<{ status?: string; last_error_detail?: string }>(
+					`/api/v1/operation-jobs/${response.id}`,
+					{}
+				)
+				if (job.status === "succeeded") {
+					navigate(getPagePath($router, "exports"))
+					return
+				}
+				if (job.status === "failed" || job.status === "canceled") {
+					throw new Error(job.last_error_detail || t`Failed to delete export`)
+				}
+				await new Promise((resolve) => globalThis.setTimeout(resolve, 1000))
+			}
+			throw new Error(t`Export deletion is still running`)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to delete export`)
+			setDeleting(false)
+		}
+	}
+
 	return (
 		<div className="grid gap-4">
 			<div className="flex items-center justify-between gap-3">
@@ -112,6 +162,16 @@ export default memo(({ id }: ExportDetailProps) => {
 					<Button variant="outline" size="sm" disabled={!canCancel || canceling} onClick={cancel}>
 						<XCircleIcon className="me-2 h-4 w-4" />
 						<Trans>Cancel</Trans>
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={!canDelete || deleting}
+						onClick={() => setDeleteOpen(true)}
+						className="text-destructive"
+					>
+						<Trash2Icon className="me-2 h-4 w-4" />
+						<Trans>Delete</Trans>
 					</Button>
 					<Button size="sm" disabled={!canDownload} onClick={() => task && downloadExport(task)}>
 						<DownloadIcon className="me-2 h-4 w-4" />
@@ -156,6 +216,27 @@ export default memo(({ id }: ExportDetailProps) => {
 					</div>
 				</div>
 			) : null}
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							<Trans>Delete export?</Trans>
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							<Trans>The export record and generated file will be permanently deleted.</Trans>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							<Trans>Cancel</Trans>
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={deleteExport} className="bg-destructive text-destructive-foreground">
+							<Trans>Delete</Trans>
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	)
 })

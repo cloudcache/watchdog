@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
+
+var ErrExportNotTerminal = errors.New("only terminal exports can be deleted")
 
 func (s *MySQLStore) CreateExportTask(ctx context.Context, task ExportTask) (ExportTask, error) {
 	task = normalizeExportTask(task)
@@ -117,6 +120,102 @@ func (s *MySQLStore) ListExportTasks(ctx context.Context, tenantID ID, createdBy
 	return tasks, rows.Err()
 }
 
+func (s *MySQLStore) ListExportTasksPage(ctx context.Context, tenantID ID, filter ExportTaskListFilter) ([]ExportTask, int64, error) {
+	if err := validateExportTaskListFilter(&filter); err != nil {
+		return nil, 0, err
+	}
+	where, args := exportTaskListWhere(tenantID, filter)
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM export_tasks e
+		LEFT JOIN operation_jobs oj ON oj.id = e.operation_job_id
+		WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumn := map[string]string{
+		"created_at": "e.created_at", "updated_at": "e.updated_at", "range_start": "e.range_start",
+		"target_id": "e.target_id", "value_layer": "e.value_layer", "format": "e.format",
+		"status": exportTaskStatusExpression(),
+	}[filter.SortBy]
+	queryArgs := append(append([]any(nil), args...), filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, exportTaskSelect()+` WHERE `+where+`
+		ORDER BY `+sortColumn+` `+filter.SortDirection+`, e.id `+filter.SortDirection+`
+		LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	tasks := make([]ExportTask, 0, filter.Limit)
+	for rows.Next() {
+		task, err := scanExportTask(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, total, rows.Err()
+}
+
+func validateExportTaskListFilter(filter *ExportTaskListFilter) error {
+	if filter.Limit == 0 {
+		filter.Limit = 25
+	}
+	if filter.Limit < 1 || filter.Limit > 100 || filter.Offset < 0 || filter.Offset > 10_000_000 {
+		return errors.New("export list limit must be 1..100 and offset must be 0..10000000")
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	if len(filter.Search) > 200 {
+		return errors.New("export list search is too long")
+	}
+	if filter.Status != "" && filter.Status != ExportStatusPending && filter.Status != ExportStatusRunning &&
+		filter.Status != ExportStatusComplete && filter.Status != ExportStatusFailed && filter.Status != ExportStatusCanceled {
+		return errors.New("export list status is invalid")
+	}
+	if filter.ValueLayer != "" && filter.ValueLayer != QueryValueRaw && filter.ValueLayer != QueryValueSupplier && filter.ValueLayer != QueryValueCustomer {
+		return errors.New("export list value_layer is invalid")
+	}
+	if filter.Format != "" && filter.Format != ExportFormatCSV && filter.Format != ExportFormatParquet {
+		return errors.New("export list format is invalid")
+	}
+	if filter.SortBy == "" {
+		filter.SortBy = "created_at"
+	}
+	if _, ok := map[string]struct{}{"created_at": {}, "updated_at": {}, "range_start": {}, "target_id": {}, "value_layer": {}, "format": {}, "status": {}}[filter.SortBy]; !ok {
+		return errors.New("export list sort_by is invalid")
+	}
+	filter.SortDirection = strings.ToUpper(strings.TrimSpace(filter.SortDirection))
+	if filter.SortDirection == "" {
+		filter.SortDirection = "DESC"
+	}
+	if filter.SortDirection != "ASC" && filter.SortDirection != "DESC" {
+		return errors.New("export list sort_direction is invalid")
+	}
+	return nil
+}
+
+func exportTaskListWhere(tenantID ID, filter ExportTaskListFilter) (string, []any) {
+	clauses := []string{"e.tenant_id = ?"}
+	args := []any{tenantID}
+	if filter.CreatedBy != "" {
+		clauses, args = append(clauses, "e.created_by = ?"), append(args, filter.CreatedBy)
+	}
+	if filter.Search != "" {
+		pattern := "%" + filter.Search + "%"
+		clauses = append(clauses, `(e.id LIKE ? OR COALESCE(e.target_id, '') LIKE ? OR COALESCE(e.port_id, '') LIKE ? OR e.dataset_key LIKE ?)`)
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	if filter.Status != "" {
+		clauses, args = append(clauses, exportTaskStatusExpression()+" = ?"), append(args, filter.Status)
+	}
+	if filter.ValueLayer != "" {
+		clauses, args = append(clauses, "e.value_layer = ?"), append(args, filter.ValueLayer)
+	}
+	if filter.Format != "" {
+		clauses, args = append(clauses, "e.format = ?"), append(args, filter.Format)
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
 func (s *MySQLStore) ListPendingExportTasks(ctx context.Context, limit int) ([]ExportTask, error) {
 	if limit <= 0 {
 		limit = 10
@@ -200,6 +299,91 @@ func (s *MySQLStore) MarkExportFailed(ctx context.Context, tenantID, taskID ID, 
 	return requireOneExportRow(result, err)
 }
 
+func (s *MySQLStore) DeleteExportTask(ctx context.Context, tenantID, taskID ID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var contractVersion uint16
+	var storedStatus ExportStatus
+	var operationJobID ID
+	if err := tx.QueryRowContext(ctx, `
+		SELECT contract_version, status, COALESCE(operation_job_id, '')
+		FROM export_tasks WHERE tenant_id = ? AND id = ? FOR UPDATE
+	`, tenantID, taskID).Scan(&contractVersion, &storedStatus, &operationJobID); err != nil {
+		return err
+	}
+	effectiveStatus := storedStatus
+	if contractVersion == ExportExecutionContractVersion && operationJobID != "" {
+		var jobStatus string
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM operation_jobs WHERE tenant_id = ? AND id = ?`, tenantID, operationJobID).Scan(&jobStatus); err != nil {
+			return err
+		}
+		effectiveStatus = exportStatusFromOperationJob(jobStatus, storedStatus)
+	}
+	if effectiveStatus != ExportStatusComplete && effectiveStatus != ExportStatusFailed && effectiveStatus != ExportStatusCanceled {
+		return ErrExportNotTerminal
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM export_tasks WHERE tenant_id = ? AND id = ?`, tenantID, taskID)
+	if err := requireOneExportRow(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// QueueExpiredExportDeletes snapshots artifact metadata into the durable job
+// payload before any row is removed. The anti-join makes drainPurge advance to
+// the next batch and the job idempotency key also closes concurrent scans.
+func (s *MySQLStore) QueueExpiredExportDeletes(ctx context.Context, now time.Time, limit int) (int64, error) {
+	if limit <= 0 || limit > maintenancePurgeBatch {
+		limit = maintenancePurgeBatch
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, e.tenant_id, COALESCE(e.file_ref, ''), COALESCE(e.checksum, ''),
+		       COALESCE(e.row_count, 0), COALESCE(e.size_bytes, 0)
+		FROM export_tasks e
+		LEFT JOIN operation_jobs deletion
+		  ON deletion.tenant_id = e.tenant_id
+		 AND deletion.job_type = 'export_delete'
+		 AND deletion.idempotency_key = CONCAT('export-delete:', e.id)
+		WHERE e.expires_at IS NOT NULL AND e.expires_at <= ? AND deletion.id IS NULL
+		ORDER BY e.expires_at, e.id
+		LIMIT ?
+	`, now.UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var tasks []ExportTask
+	for rows.Next() {
+		var task ExportTask
+		if err := rows.Scan(&task.ID, &task.TenantID, &task.FileRef, &task.Checksum, &task.RowCount, &task.SizeBytes); err != nil {
+			return 0, err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	var enqueued int64
+	for _, task := range tasks {
+		payload, requestHash, err := EncodeExportDeletePayload(task)
+		if err != nil {
+			return enqueued, err
+		}
+		if _, err := s.EnqueueOperationJob(ctx, OperationJob{
+			TenantID: task.TenantID, ScopeType: OperationJobScopeTenant, JobType: ExportDeleteJobType,
+			IdempotencyKey: "export-delete:" + string(task.ID), RequestHash: requestHash,
+			CheckpointJSON: payload,
+		}); err != nil {
+			return enqueued, err
+		}
+		enqueued++
+	}
+	return enqueued, nil
+}
+
 func normalizeExportTask(task ExportTask) ExportTask {
 	if task.PeriodType == "" {
 		task.PeriodType = PeriodCustom
@@ -237,17 +421,7 @@ func exportTaskSelect() string {
 		       COALESCE(e.row_count, 0), COALESCE(e.target_id, ''), COALESCE(e.port_id, ''),
 		       e.period_type, e.range_start, e.range_end, e.step_seconds, e.aggregation, e.value_mode,
 		       e.format,
-		       CASE WHEN e.contract_version = 1 THEN
-		         CASE oj.status
-		           WHEN 'queued' THEN 'pending'
-		           WHEN 'running' THEN 'running'
-		           WHEN 'cancel_requested' THEN 'running'
-		           WHEN 'succeeded' THEN 'complete'
-		           WHEN 'failed' THEN 'failed'
-		           WHEN 'canceled' THEN 'canceled'
-		           ELSE e.status
-		         END
-		       ELSE e.status END,
+		       ` + exportTaskStatusExpression() + `,
 		       COALESCE(e.file_ref, ''), COALESCE(e.checksum, ''), COALESCE(e.size_bytes, 0), e.expires_at,
 		       CASE WHEN e.contract_version = 1 AND oj.last_error_detail IS NOT NULL
 		         THEN oj.last_error_detail ELSE COALESCE(e.error_message, '') END,
@@ -255,6 +429,37 @@ func exportTaskSelect() string {
 		FROM export_tasks e
 		LEFT JOIN operation_jobs oj ON oj.id = e.operation_job_id
 	`
+}
+
+func exportTaskStatusExpression() string {
+	return `CASE WHEN e.contract_version = 1 THEN
+		CASE oj.status
+			WHEN 'queued' THEN 'pending'
+			WHEN 'running' THEN 'running'
+			WHEN 'cancel_requested' THEN 'running'
+			WHEN 'succeeded' THEN 'complete'
+			WHEN 'failed' THEN 'failed'
+			WHEN 'canceled' THEN 'canceled'
+			ELSE e.status
+		END
+	ELSE e.status END`
+}
+
+func exportStatusFromOperationJob(jobStatus string, fallback ExportStatus) ExportStatus {
+	switch jobStatus {
+	case OperationJobStatusQueued:
+		return ExportStatusPending
+	case OperationJobStatusRunning, OperationJobStatusCancelRequested:
+		return ExportStatusRunning
+	case OperationJobStatusSucceeded:
+		return ExportStatusComplete
+	case OperationJobStatusFailed:
+		return ExportStatusFailed
+	case OperationJobStatusCanceled:
+		return ExportStatusCanceled
+	default:
+		return fallback
+	}
 }
 
 func scanExportTask(row rowScanner) (ExportTask, error) {
@@ -398,5 +603,7 @@ func requireOneExportRow(result sql.Result, err error) error {
 }
 
 var _ ExportRepository = (*MySQLStore)(nil)
+var _ ExportPageRepository = (*MySQLStore)(nil)
+var _ ExportDeletionRepository = (*MySQLStore)(nil)
 var _ PendingExportRepository = (*MySQLStore)(nil)
 var _ = sql.ErrNoRows

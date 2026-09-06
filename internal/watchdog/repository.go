@@ -203,6 +203,26 @@ type ExportRepository interface {
 	MarkExportFailed(ctx context.Context, tenantID, taskID ID, message string) error
 }
 
+type ExportTaskListFilter struct {
+	CreatedBy     ID
+	Search        string
+	Status        ExportStatus
+	ValueLayer    QueryValueLayer
+	Format        ExportFormat
+	SortBy        string
+	SortDirection string
+	Limit         int
+	Offset        int
+}
+
+type ExportPageRepository interface {
+	ListExportTasksPage(ctx context.Context, tenantID ID, filter ExportTaskListFilter) ([]ExportTask, int64, error)
+}
+
+type ExportDeletionRepository interface {
+	DeleteExportTask(ctx context.Context, tenantID, taskID ID) error
+}
+
 type AuditRepository interface {
 	CreateAuditLog(ctx context.Context, log AuditLog) error
 }

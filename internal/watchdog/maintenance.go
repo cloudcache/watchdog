@@ -22,6 +22,13 @@ type MaintenanceRepository interface {
 	PurgeExpiredExports(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
+// ExportExpiryQueue replaces direct row purging when the repository supports
+// the durable export_delete lifecycle. Each call enqueues a bounded batch;
+// already queued exports are excluded by the implementation.
+type ExportExpiryQueue interface {
+	QueueExpiredExportDeletes(ctx context.Context, now time.Time, limit int) (int64, error)
+}
+
 const (
 	maintenancePurgeBatch     = 1000
 	operationJobRetention     = 14 * 24 * time.Hour
@@ -189,13 +196,23 @@ func NewStoreMaintenance(repo MaintenanceRepository, logf func(string, ...any)) 
 			return repo.PurgeExpiredQuietHours(ctx, time.Now().UTC(), maintenancePurgeBatch)
 		}),
 	})
-	m.Register(MaintenanceTask{
-		Name:     "expired_exports",
-		Interval: time.Hour,
-		Run: drainPurge(func(ctx context.Context) (int64, error) {
-			return repo.PurgeExpiredExports(ctx, time.Now().UTC(), maintenancePurgeBatch)
-		}),
-	})
+	if queue, ok := repo.(ExportExpiryQueue); ok {
+		m.Register(MaintenanceTask{
+			Name:     "expired_exports",
+			Interval: time.Hour,
+			Run: drainPurge(func(ctx context.Context) (int64, error) {
+				return queue.QueueExpiredExportDeletes(ctx, time.Now().UTC(), maintenancePurgeBatch)
+			}),
+		})
+	} else {
+		m.Register(MaintenanceTask{
+			Name:     "expired_exports",
+			Interval: time.Hour,
+			Run: drainPurge(func(ctx context.Context) (int64, error) {
+				return repo.PurgeExpiredExports(ctx, time.Now().UTC(), maintenancePurgeBatch)
+			}),
+		})
+	}
 	return m
 }
 
