@@ -30,6 +30,7 @@ func registerAddressSetRoutes(mux *http.ServeMux, auth func(http.Handler) http.H
 	mux.Handle("PATCH /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.updateSet))))
 	mux.Handle("DELETE /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.deleteSet))))
 	mux.Handle("POST /api/v1/address-sets/actions/preview", auth(configureTenant(http.HandlerFunc(api.previewOperation))))
+	registerAddressDraftRevisionRoutes(mux, auth, repo)
 }
 
 func (api addressSetAPI) previewOperation(w http.ResponseWriter, r *http.Request) {
