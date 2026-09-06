@@ -886,10 +886,12 @@ CREATE TABLE IF NOT EXISTS `operation_job_watermarks` (
 
 CREATE TABLE IF NOT EXISTS `operation_jobs` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `scope_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'tenant',
   `job_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'queued',
   `idempotency_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `idempotency_domain` char(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (coalesce(`tenant_id`,_utf8mb4'__system__')) VIRTUAL,
   `request_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `progress_total` bigint unsigned DEFAULT NULL,
   `progress_done` bigint unsigned NOT NULL DEFAULT '0',
@@ -912,7 +914,7 @@ CREATE TABLE IF NOT EXISTS `operation_jobs` (
   `expires_at` datetime(3) DEFAULT NULL,
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_operation_jobs_idempotency` (`tenant_id`,`job_type`,`idempotency_key`),
+  UNIQUE KEY `uq_operation_jobs_idem_domain` (`idempotency_domain`,`job_type`,`idempotency_key`),
   KEY `idx_operation_jobs_due` (`job_type`,`status`,`next_attempt_at`,`lease_expires_at`,`id`),
   KEY `idx_operation_jobs_tenant_created` (`tenant_id`,`job_type`,`created_at`,`id`),
   KEY `fk_operation_jobs_creator` (`created_by`),
@@ -923,7 +925,8 @@ CREATE TABLE IF NOT EXISTS `operation_jobs` (
   CONSTRAINT `operation_jobs_chk_3` CHECK (((`lease_owner` is null) = (`lease_token` is null))),
   CONSTRAINT `operation_jobs_chk_4` CHECK (((`lease_owner` is null) = (`lease_expires_at` is null))),
   CONSTRAINT `operation_jobs_chk_5` CHECK (((`status` in ('running','validating','cancel_requested')) = (`lease_owner` is not null))),
-  CONSTRAINT `operation_jobs_chk_6` CHECK (((`status` in ('succeeded','failed','canceled')) = (`finished_at` is not null)))
+  CONSTRAINT `operation_jobs_chk_6` CHECK (((`status` in ('succeeded','failed','canceled')) = (`finished_at` is not null))),
+  CONSTRAINT `operation_jobs_chk_scope` CHECK (((`scope_type` = 'tenant') and (`tenant_id` is not null)) or ((`scope_type` = 'system') and (`tenant_id` is null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `permissions` (

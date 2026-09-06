@@ -82,14 +82,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "036" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "037" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "036" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "037" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -272,7 +272,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 36 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "036" {
+	if len(migrations) != 37 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "037" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {

@@ -32,9 +32,23 @@ const (
 	OperationJobStatusCanceled        = "canceled"
 )
 
+const (
+	// OperationJobScopeTenant is the default: the job belongs to one tenant and
+	// its tenant_id foreign key is enforced.
+	OperationJobScopeTenant = "tenant"
+	// OperationJobScopeSystem is a platform-level job with no owning tenant
+	// (Kafka partition maintenance, global retention, cross-tenant receipts).
+	// Its tenant_id is NULL — no fabricated "system tenant" — and its
+	// idempotency key lives in a dedicated naming domain so system keys dedupe
+	// among themselves without colliding with any tenant's keys. It leases,
+	// retries and reports through the very same state machine as a tenant job.
+	OperationJobScopeSystem = "system"
+)
+
 type OperationJob struct {
 	ID                ID              `json:"id"`
-	TenantID          ID              `json:"tenant_id"`
+	TenantID          ID              `json:"tenant_id,omitempty"`
+	ScopeType         string          `json:"scope_type,omitempty"`
 	JobType           string          `json:"job_type"`
 	Status            string          `json:"status"`
 	IdempotencyKey    string          `json:"idempotency_key"`
@@ -100,20 +114,23 @@ const operationJobColumns = `
 	progress_done, checkpoint_json, COALESCE(result_ref, ''),
 	COALESCE(lease_owner, ''), COALESCE(lease_token, ''), lease_expires_at,
 	next_attempt_at, attempt_count, COALESCE(last_error_code, ''), COALESCE(last_error_detail, ''),
-	row_version, COALESCE(created_by, ''), created_at, started_at, cancel_requested_at, finished_at`
+	row_version, COALESCE(created_by, ''), created_at, started_at, cancel_requested_at, finished_at, scope_type`
 
 func scanOperationJob(row rowScanner) (OperationJob, error) {
 	var job OperationJob
+	var tenantID sql.NullString
 	var leaseExpires, startedAt, cancelAt, finishedAt sql.NullTime
 	var checkpoint []byte
-	err := row.Scan(&job.ID, &job.TenantID, &job.JobType, &job.Status, &job.IdempotencyKey, &job.RequestHash,
+	err := row.Scan(&job.ID, &tenantID, &job.JobType, &job.Status, &job.IdempotencyKey, &job.RequestHash,
 		&job.ProgressDone, &checkpoint, &job.ResultRef,
 		&job.LeaseOwner, &job.LeaseToken, &leaseExpires,
 		&job.NextAttemptAt, &job.AttemptCount, &job.LastErrorCode, &job.LastErrorDetail,
-		&job.RowVersion, &job.CreatedBy, &job.CreatedAt, &startedAt, &cancelAt, &finishedAt)
+		&job.RowVersion, &job.CreatedBy, &job.CreatedAt, &startedAt, &cancelAt, &finishedAt, &job.ScopeType)
 	if err != nil {
 		return OperationJob{}, err
 	}
+	// tenant_id is NULL for system-scope jobs.
+	job.TenantID = ID(tenantID.String)
 	job.CheckpointJSON = checkpoint
 	if leaseExpires.Valid {
 		job.LeaseExpiresAt = leaseExpires.Time
@@ -131,8 +148,24 @@ func scanOperationJob(row rowScanner) (OperationJob, error) {
 }
 
 func (s *MySQLStore) EnqueueOperationJob(ctx context.Context, job OperationJob) (OperationJob, error) {
-	if job.TenantID == "" || job.JobType == "" || job.IdempotencyKey == "" || len(job.RequestHash) != 64 {
-		return OperationJob{}, errors.New("operation job tenant, type, idempotency key and request hash are required")
+	scope := job.ScopeType
+	if scope == "" {
+		scope = OperationJobScopeTenant
+	}
+	switch scope {
+	case OperationJobScopeTenant:
+		if job.TenantID == "" {
+			return OperationJob{}, errors.New("tenant-scope operation job requires a tenant")
+		}
+	case OperationJobScopeSystem:
+		if job.TenantID != "" {
+			return OperationJob{}, errors.New("system-scope operation job must not carry a tenant")
+		}
+	default:
+		return OperationJob{}, errors.New("operation job scope must be tenant or system")
+	}
+	if job.JobType == "" || job.IdempotencyKey == "" || len(job.RequestHash) != 64 {
+		return OperationJob{}, errors.New("operation job type, idempotency key and request hash are required")
 	}
 	if job.ID == "" {
 		id, err := newIdentityID()
@@ -145,21 +178,27 @@ func (s *MySQLStore) EnqueueOperationJob(ctx context.Context, job OperationJob) 
 	if len(checkpoint) == 0 {
 		checkpoint = json.RawMessage("{}")
 	}
+	// A system job stores tenant_id NULL; the generated idempotency_domain gives
+	// it its own dedup namespace. The re-select uses <=> so NULL matches NULL.
+	var tenantArg any
+	if job.TenantID != "" {
+		tenantArg = job.TenantID
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO operation_jobs (
-			id, tenant_id, job_type, status, idempotency_key, request_hash,
+			id, tenant_id, scope_type, job_type, status, idempotency_key, request_hash,
 			checkpoint_json, created_by, next_attempt_at
-		) VALUES (?, ?, ?, 'queued', ?, ?, ?, NULLIF(?, ''), ?)
+		) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, NULLIF(?, ''), ?)
 		ON DUPLICATE KEY UPDATE id = id
-	`, job.ID, job.TenantID, job.JobType, job.IdempotencyKey, job.RequestHash,
+	`, job.ID, tenantArg, scope, job.JobType, job.IdempotencyKey, job.RequestHash,
 		string(checkpoint), job.CreatedBy, time.Now().UTC()); err != nil {
 		return OperationJob{}, err
 	}
 	stored, err := scanOperationJob(s.db.QueryRowContext(ctx, `
 		SELECT `+operationJobColumns+`
 		FROM operation_jobs
-		WHERE tenant_id = ? AND job_type = ? AND idempotency_key = ?
-	`, job.TenantID, job.JobType, job.IdempotencyKey))
+		WHERE tenant_id <=> ? AND job_type = ? AND idempotency_key = ?
+	`, tenantArg, job.JobType, job.IdempotencyKey))
 	if err != nil {
 		return OperationJob{}, err
 	}
@@ -167,6 +206,17 @@ func (s *MySQLStore) EnqueueOperationJob(ctx context.Context, job OperationJob) 
 		return OperationJob{}, ErrOperationJobHashMismatch
 	}
 	return stored, nil
+}
+
+// GetSystemOperationJob reads a system-scope job by id. System jobs have no
+// tenant, so they are addressed by id alone; the scope filter keeps a tenant's
+// job id from resolving here.
+func (s *MySQLStore) GetSystemOperationJob(ctx context.Context, jobID ID) (OperationJob, error) {
+	return scanOperationJob(s.db.QueryRowContext(ctx, `
+		SELECT `+operationJobColumns+`
+		FROM operation_jobs
+		WHERE id = ? AND scope_type = 'system'
+	`, jobID))
 }
 
 func (s *MySQLStore) GetOperationJob(ctx context.Context, tenantID, jobID ID) (OperationJob, error) {
