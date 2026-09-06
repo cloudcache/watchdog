@@ -72,6 +72,8 @@
 ## 6. 分步落地(每步独立可验证、不推翻前一步)
 
 1. **发字典**:flowdimension 编译成 CH `IP_TRIE` 字典 + 版本发布,不动写入——只多一份可查产物。gated CH 验 `dictGet` 结果与 flowdimension 一致。
+   - ✅ **字典机制已落地并 gated 验证**(migration `009_flow_address_dict_source.sql` + `address_dict_integration_test.go`)。源表 `flow_address_dict_source`(网段 → geo + `group_ids`,带 `dict_version`)进 migration;字典 `CREATE DICTIONARY … LAYOUT(IP_TRIE())` 因 source 要注入凭据在运行时建。验证结论:IPv4-mapped-IPv6 查(`tuple(toIPv6(ip))`)命中 IPv4 网段(与 `flow_records` 存 IPv6 一致);换 `dict_version` + reload 即按新定义现导,不动任何事实——**重分类 = 发新版本**。
+   - ⏳ 待接:真实 geo 来源(PLAT-04D geo hierarchy + 管理员分组)→ 字典源的编译/发布链路,落在 `internal/watchdog` 稳定后接。
 2. **rollup 从原始按版本重算**:rollup 改成从原始 `dictGet` 现导再聚合(用字典版本),读侧不变(`max(generation)`)。gated CH 验:同一批原始 + 字典 → 聚合结果与旧 `GROUP BY` 一致;换字典版本 → 结果按新分类变。**此步之后重分类已经等于重跑 rollup。**
 3. **查询按字典过滤/breakdown**:查询支持 `dictGet` 现导的组过滤 + 国家/ASN breakdown;实测原始表 ad-hoc 过滤成本,决定是否加 `PROJECTION`。
 4. **账单历史版本**:账单查询指定历史字典版本。

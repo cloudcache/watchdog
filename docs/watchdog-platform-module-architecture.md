@@ -686,6 +686,8 @@ CREATE TABLE dimension_snapshot_acks (
 
 发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 definition bundle；配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的 UTC 分钟边界生效。Flow index-builder 通过 `object_ref+checksum` 获取版本，在 CH 中异步构建/切换该版本的字典或预配置地址段索引，安装完成后 ACK；失败继续使用上一可查询版本。原始 Flow 事实不写 publication version 计算出的分类字段，账单/审计查询显式指定 definition version，探索查询默认当前版本。平台只管理定义、签名、版本、引用和 ACK，不复制 CH 连接池、DDL 或查询 compiler。现行数据面决策见 [Flow 地址查询方案](flow-address-query-plan.md)。
 
+审批信任链按 `(tenant_id, signing_key_id)` 隔离：部署配置 `address_library.trusted_keys[]` 只引用 Ed25519 SubjectPublicKeyInfo PEM 公钥文件，启动时一次性加载且坏文件失败关闭；审批私钥由外部发布审批流程持有，绝不上传 Watchdog。approve 请求提交 `signing_key_id`、UTC `signed_at` 和标准 base64 `signature`，签名覆盖 snapshot/tenant/module/dimension/version/effective time/object ref/checksum/draft digest/schema version。所有人工状态迁移要求 tenant `operate` 权限与 quoted `If-Match`；400 表示 key/签名/参数无效，409 表示当前状态不允许，412 表示 snapshot row version 已变化。轮换时并列配置新旧 key；旧公钥至少保留到引用该 key 的 snapshot 结束在线 retention，snapshot 自身继续保存 key ID 与签名证据。
+
 地址统计有两种不同口径：
 
 - `primary_prefix`：每个 endpoint 只取最长前缀，一个 address role 内互斥且可加总；未命中进入 `_unassigned`，保证守恒；
@@ -714,7 +716,11 @@ GET/POST/PATCH/DELETE    /api/v1/geo/lines[/{id}]
 POST                     /api/v1/dimensions/address/preview
 POST                     /api/v1/dimensions/address/publish
 GET                      /api/v1/dimensions/address/versions/{snapshot_id}
-POST                     /api/v1/dimensions/address/versions/{version}/retire
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/approve   (If-Match)
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/reject    (If-Match)
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/activate  (If-Match)
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/rollback  (If-Match)
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/retire    (If-Match)
 GET                      /api/v1/dimensions/address/workers/status
 ```
 
