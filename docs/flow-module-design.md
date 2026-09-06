@@ -174,9 +174,11 @@ receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当�
 | 计数 | raw bytes/packets、valid estimated bytes/packets、valid-estimate records | 对应 `sum`，estimated 三项只统计 `estimated_valid` |
 | 内容 | checksum | 按 `(kafka_offset, record_index)` 重建与 Go 端完全相同的 big-endian SHA-256 字节流 |
 
+判定内核只接收已按 `record_id` 选择最大 `ingest_generation` 的事实与 v2 receipt，不拥有 Kafka 水位、TTL、cursor、job 或 metric 状态。输入先受 batch/fact 硬上限约束，并拒绝重复 receipt、重复去重后 record、空身份和 UInt64 累加溢出；checksum 与 writer 共用同一字段顺序契约，`estimated_valid=false` 的 bytes/packets 仍参与内容 checksum，但不进入 estimated counters。每个 batch 只输出一个主 reason，优先级固定为 `missing_receipt > missing_records > identity > count > counter > checksum`，避免一处根因把指标重复放大。详细 expected/actual counters 与 checksum 留给 operation audit，低基数指标只汇总 reason。
+
 指标不使用会重复累加的 counter，而由最后一次**完整、成功**的有界扫描替换 gauge 快照：`watchdog_flow_ingest_reconciliation_mismatches{reason}`，`reason` 固定为 `missing_receipt|missing_records|identity_mismatch|count_mismatch|counter_mismatch|checksum_mismatch`，同一 batch 多项失败时按该顺序只计第一个 reason，详细证据仍全部保留。同时暴露 `watchdog_flow_ingest_reconciliation_last_success_timestamp_seconds` 和 `watchdog_flow_ingest_reconciliation_scan_complete`；超时、超预算、Kafka/CH 不可用或仅扫了一部分时保留上次快照并将 complete 置 0，不得发布伪零。内部 topic/partition/offset/batch ID 可进 job payload/checkpoint 和审计明细，不作 metric label。
 
-扫描按 `(topic, partition, offset)` keyset 接续，必须同时限制 partitions、offset span、batch IDs、fact rows、CH read bytes 和 wall time。先做 count/counter 便宜核对，checksum 在同一持久水位下分批覆盖全部 batch，不在 worker 热路径执行。执行必须复用 `operation_jobs` 的 lease/cancel/retry，但现有 job 强制 tenant，receipt 却可跨 tenant；全局/system scope job 契约已登记 PLAT-04F，未落地前 Flow 不伪造 tenant 也不另建状态机。
+扫描按 `(topic, partition, offset)` keyset 接续，必须同时限制 partitions、offset span、batch IDs、fact rows、CH read bytes 和 wall time。CH scanner 先做 count/counter 便宜核对，只为通过前置核对的 batch 拉取有序事实重建 checksum，不在 worker 热路径执行。执行必须复用 `operation_jobs` 的 lease/cancel/retry，但现有 job 强制 tenant，receipt 却可跨 tenant；全局/system scope job 契约已登记 PLAT-04F，未落地前 Flow 不伪造 tenant 也不另建状态机。
 
 已发布的 `flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor。migration 004 因此不改 001，而是增加 `receipt_schema`、排序去重的 `tenant_ids`、`min/max_event_time`、raw/estimated packet 数和 valid-estimate record 数；旧行为 schema 1，新 writer 显式写 schema 2。missing-records 只在 `now < min_event_time + base_fact_ttl - ttl_merge_grace` 时才可判定，否则该 batch 超出对账资格。变更顺序固定为 migration 004 → 所有 worker 升级为 receipt v2 → 以每 partition 当时 committed offset 记录 reconciliation cutover → 启用 job；不回填 v1 receipt，混跑期低于 cutover 的 v1 行不进完整性分母。
 

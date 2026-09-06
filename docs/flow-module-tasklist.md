@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C3B2 — bounded ingest reconciliation scanner core。** receipt audit projection 的 DDL、存量 materialize、EXPLAIN/read_rows/read_bytes 容量证据已经关闭。当前只实现无调度状态的 typed scanner：固定 cursor/window/budget、receipt/fact cheap counters、checksum 第二阶段和完整/不完整结果；平台 global/system-scope job 仍由 PLAT-04F 承载，不在 Flow 内另造 job 或水位状态机。
+**活动切片：FLOW-04C3B2B — bounded ingest reconciliation ClickHouse scanner。** receipt audit projection 与无状态判定内核已经关闭。当前只实现 CH 输入边界：固定 cursor/window/budget，先读 receipt/fact cheap counters，再仅为候选 batch 拉取 checksum 行并返回完整/不完整结果；平台 global/system-scope job 仍由 PLAT-04F 承载，不在 Flow 内另造 job、水位或 metric 状态机。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -60,6 +60,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C worker strong-kill：`7cb8ef41 test(flow): recover after production worker kill`；A/B 先稳定为 2+2，随后对 A 执行 `Process.Kill`，不提供 revoke/commit 机会；Kafka session 失效后 B 第二次 assignment 并接管 4 个 partition，新 flow 后 broker committed=end=8、lag=0，template missing/rejected=0，CH 事实继续收敛。被杀进程内存已不存在，因此不伪造其 `lost_partitions_total`，以 broker ownership/offset 和存活 worker assignment 为权威。
 - FLOW-04C broker restart：`0b141b3b test(flow): recover production worker after broker restart`；四协议 production harness 在 committed-next-offset=1 后实际 restart 隔离 Kafka，保留 topic/group 数据，原 worker 不退出且 offset 不回退，随后继续通过 CH 中断恢复、四协议收敛、2+2 rebalance 与 SIGKILL takeover。测试同时修正公共 franz-go 配置遗漏的 `AlwaysRetryEOF`：启动 Ping 已先验证配置，后续替换连接的首请求 EOF 按 broker restart/load 恢复，不误报 TLS 并终止 worker。
 - FLOW-04C3B1 ingest-audit projection：`3f3501d8 feat(flow): add bounded ingest audit projection`；migration 006 保留 base tenant/time 排序，新增 offset-ordered narrow projection 并以 `rebuild` 维护 ReplacingMergeTree 一致性，存量同步 materialize。真实 200 万行前后结果一致；read rows `2,000,000→16,384`、read bytes `183,630,373→552,673`，EXPLAIN 命中 projection；表空间 `175,078,419→264,954,749`。Bloom probe 即使只查单 batch 仍读 434,176 rows/17,309,576 bytes，已排除。全套 CH 数据集成测试在 001..006 上通过；这不冒充固定硬件容量/N+1。
+- FLOW-04C3B2A compare core：`1f00d551 feat(flow): compare ingest audit evidence`；typed receipt/fact/counter/mismatch 结构和无状态 comparator 已提交，固定六类单一 reason 优先级、writer 同字节序 checksum、invalid estimated 计数语义、batch/fact 硬上限、重复 identity 与溢出拒绝。单元直接从 production `PrepareBlocks` 生成证据，证明 comparator checksum 与写入 receipt 一致；全库 test/vet 与 flowch race 通过。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
@@ -170,7 +171,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-04C3A 变更设计/测试**：001 不改，旧行 `receipt_schema=1`，新行显式为 2；发布顺序为 004 → 全 worker v2 → 记录 per-partition cutover offset → 启用对账，不对旧 receipt 猜缺失字段。schema contract 已锁定 migration 顺序和 v2 native input。
 - [x] **FLOW-04C3B1 访问路径设计/编码**：migration 006 增加唯一 `flow_ingest_audit_v1` narrow projection；显式 `deduplicate_merge_projection_mode='rebuild'`，存量 `MATERIALIZE ... mutations_sync=2`，审计用 offset window + `argMax(..., ingest_generation)` 去重，禁止会退回 base scan 的 `FINAL`。证据 `3f3501d8`。
 - [x] **FLOW-04C3B1 单元/集成/变更/回归**：schema/embedded migration 锁定 001..006；真实 200 万存量事实先基线再应用 006，验证结果一致、EXPLAIN 选中 projection、rows 至少 100×/bytes 至少 50× 裁剪并记录磁盘增量；全部 CH data integration、Flow race/vet、全库 test/vet 通过。上线需预留 projection+merge 空间并调 migration timeout；失败 inspect/resume，撤销只允许新 forward migration。
-- [ ] **FLOW-04C3B2 scanner 编码/单元/集成**：实现无状态 typed reconciliation scanner；固定 receipt cursor、Kafka close watermark、TTL eligibility、partitions/offset span/batch/fact rows/read bytes/wall-time 预算，先 counters 后 checksum；不完整扫描不发布伪零。
+- [x] **FLOW-04C3B2A comparator 编码/单元/已提交**：无状态 typed comparator 拒绝超限、重复/空 identity 和计数溢出；固定 `missing_receipt→missing_records→identity→count→counter→checksum` 单一主因，并以 production block 验证 checksum/estimated 语义。证据 `1f00d551`。
+- [ ] **FLOW-04C3B2B CH scanner 编码/单元/集成**：固定 receipt cursor、Kafka close watermark、TTL eligibility、partitions/offset span/batch/fact rows/read bytes/wall-time 预算，先 counters 后 checksum；只向 comparator 提供 generation-deduplicated facts，不完整扫描不发布伪零。
 - [ ] **FLOW-04C3B3 job/指标接线**：复用平台 global/system-scope `operation_jobs` 运行 scanner、持久 checkpoint 与完整快照，受 PLAT-04F 阻塞；Flow 不伪造 tenant、不另建状态机。
 - [ ] **FLOW-04C3 已提交**：只有审计元数据、runner、指标、job 接线和对应测试都进入可复现提交后才可勾选；仅文档审计不冒充功能完成。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
