@@ -123,6 +123,16 @@ func WriteAPIJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+// WriteAPIJSONRaw writes an already-encoded JSON document as the response body.
+// It avoids a decode+re-encode when a downstream layer (e.g. a query provider)
+// has already produced the exact JSON to return. The caller must ensure data is
+// valid JSON.
+func WriteAPIJSONRaw(w http.ResponseWriter, status int, data json.RawMessage) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+}
+
 func WriteAPIError(w http.ResponseWriter, status int, code APIErrorCode, message string, details map[string]any) {
 	WriteAPIJSON(w, status, apiErrorResponse{Error: APIError{
 		Code:    code,

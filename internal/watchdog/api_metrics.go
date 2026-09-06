@@ -66,13 +66,13 @@ func (api metricsAPI) query(w http.ResponseWriter, r *http.Request) {
 	// interface in a single query.
 	perPort := r.URL.Query().Get("per_port") == "1"
 	if api.gateway != nil {
-		response, result, err := api.queryThroughGateway(r.Context(), auth, req, perPort)
+		result, err := api.queryThroughGateway(r.Context(), auth, req, perPort)
 		if err != nil {
 			writeQueryGatewayError(w, err)
 			return
 		}
 		api.auditSensitiveGatewayQuery(r.Context(), auth, result, req.Metric, r.URL.Path)
-		WriteAPIJSON(w, http.StatusOK, response)
+		WriteAPIJSONRaw(w, http.StatusOK, result.Data)
 		return
 	}
 	if isSNMPTrafficBpsMetric(req.Metric) && !perPort && (req.TrafficView == TrafficViewSupplier || req.TrafficView == TrafficViewCustomer) && req.PortID == "" {
@@ -133,13 +133,13 @@ func (api metricsAPI) aggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if api.gateway != nil {
-		response, result, err := api.aggregateThroughGateway(r.Context(), auth, req)
+		result, err := api.aggregateThroughGateway(r.Context(), auth, req)
 		if err != nil {
 			writeQueryGatewayError(w, err)
 			return
 		}
 		api.auditSensitiveGatewayQuery(r.Context(), auth, result, req.Query.Metric, r.URL.Path)
-		WriteAPIJSON(w, http.StatusOK, response)
+		WriteAPIJSONRaw(w, http.StatusOK, result.Data)
 		return
 	}
 	selector := aggregateMetricsSelector(req)
@@ -162,10 +162,10 @@ func (api metricsAPI) aggregate(w http.ResponseWriter, r *http.Request) {
 	WriteAPIJSON(w, http.StatusOK, response)
 }
 
-func (api metricsAPI) queryThroughGateway(ctx context.Context, auth AuthContext, req MetricsQueryRequest, perPort bool) (VictoriaMetricsResponse, QueryResult, error) {
+func (api metricsAPI) queryThroughGateway(ctx context.Context, auth AuthContext, req MetricsQueryRequest, perPort bool) (QueryResult, error) {
 	dataset, err := api.metricsDataset(req.Metric)
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
 	mode := valueModeOrDefault(req.ValueMode)
 	view := normalizeTrafficView(req.TrafficView)
@@ -179,26 +179,29 @@ func (api metricsAPI) queryThroughGateway(ctx context.Context, auth AuthContext,
 		Function: req.Func, ValueMode: mode, TrafficView: view, PerPort: perPort,
 	})
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
 	result, err := api.gateway.executeCompatibility(ctx, auth, RequestIDFromContext(ctx), QueryRequest{
 		Dataset: dataset.Key, From: req.Start, To: req.End, StepSeconds: uint32(req.Step / time.Second),
 		ValueLayer: legacyMetricsValueLayer(mode, view), Parameters: parameters,
 	})
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
-	var response VictoriaMetricsResponse
-	if err := json.Unmarshal(result.Data, &response); err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response", Cause: err}
+	// The provider already serialized the VictoriaMetrics response; forward the
+	// bytes verbatim (WriteAPIJSONRaw) instead of decoding into a struct only to
+	// re-encode it. json.Valid keeps the original guard against a provider whose
+	// output is not usable JSON, without the per-datapoint decode+encode cost.
+	if !json.Valid(result.Data) {
+		return QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response"}
 	}
-	return response, result, nil
+	return result, nil
 }
 
-func (api metricsAPI) aggregateThroughGateway(ctx context.Context, auth AuthContext, req MetricsAggregateRequest) (VictoriaMetricsResponse, QueryResult, error) {
+func (api metricsAPI) aggregateThroughGateway(ctx context.Context, auth AuthContext, req MetricsAggregateRequest) (QueryResult, error) {
 	dataset, err := api.metricsDataset(req.Query.Metric)
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
 	mode := valueModeOrDefault(req.Query.ValueMode)
 	view := normalizeTrafficView(req.Query.TrafficView)
@@ -210,20 +213,20 @@ func (api metricsAPI) aggregateThroughGateway(ctx context.Context, auth AuthCont
 		Function: req.Query.Func, Aggregation: req.Method, ValueMode: mode, TrafficView: view,
 	})
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
 	result, err := api.gateway.executeCompatibility(ctx, auth, RequestIDFromContext(ctx), QueryRequest{
 		Dataset: dataset.Key, From: req.Query.Start, To: req.Query.End, StepSeconds: uint32(req.Query.Step / time.Second),
 		ValueLayer: legacyMetricsValueLayer(mode, view), Parameters: parameters,
 	})
 	if err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, err
+		return QueryResult{}, err
 	}
-	var response VictoriaMetricsResponse
-	if err := json.Unmarshal(result.Data, &response); err != nil {
-		return VictoriaMetricsResponse{}, QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response", Cause: err}
+	// See queryThroughGateway: forward the provider's already-serialized bytes.
+	if !json.Valid(result.Data) {
+		return QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response"}
 	}
-	return response, result, nil
+	return result, nil
 }
 
 func (api metricsAPI) metricsDataset(metric string) (DatasetDescriptor, error) {
