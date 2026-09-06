@@ -38,14 +38,14 @@ DecodeValue(value []byte)
 
 ### 2.1 Zero-copy 生命周期契约(关键,审计必读)
 
-`Decode` 返回的 `DecodedBatch.Records`(`[]*goflowpb.FlowMessage`)以及其中的地址 `[]byte`,**引用**三类可复用/借来的内存,而非拷贝:
+`Decode` 返回的 `DecodedBatch.Records`(`[]DecodedRecord`,§2.2)以及其中的地址 `[]byte`,**引用**可复用/借来的内存,而非深拷:
 
 | 引用对象 | 后备 | 何时失效 |
 |---|---|---|
-| FlowMessage(NetFlow v5) | `netflowV5Backing` 复用数组 | 下次 `Decode` 覆写 |
-| FlowMessage(sFlow) | `sflowBacking` 复用数组 | 下次 `Decode` 覆写 |
-| record 指针切片 | `recordPtrs` 复用 | 下次 `Decode` 覆写 |
-| 地址/Payload `[]byte` | 切 Kafka `value` buffer | value 被 franz-go 复用/回收 |
+| DecodedRecord(所有路径) | `recordBacking` 复用值数组 | 下次 `Decode` 覆写 |
+| 地址 `[]byte`(NetFlow/sFlow IPv4/6) | 切 Kafka `value` buffer(payload) | value 被 franz-go 复用/回收 |
+| 地址 `[]byte`(sFlow SampledHeader) | GoFlow2 `ParseSampledHeader` 产出 | 下次 SampledHeader Reset scratch |
+| 地址 `[]byte`(慢路径 v9/IPFIX) | GoFlow2 池化 buffer | 下次 `Decode` 回收 |
 
 **契约:调用方必须在下一次 `Decode` 之前,把每个 batch map 进自有内存。** 每分区一个 `Decoder`(单 goroutine),worker 逐条 record 先 `adapter.Map`(标量按值拷、地址经 `canonicalAddress16` 深拷)再解下一条 → 天然满足。并发解码共享 GoFlow2 全局 `sync.Pool` 也安全:延迟回收(`recyclePending` 在下次 Decode 开头)使「在用」消息始终 checked-out。
 
@@ -53,15 +53,19 @@ DecodeValue(value []byte)
 > `TestPartitionDecodersProcessPartitionsConcurrently`(8 分区读记录内容 + `-race`,
 > 已用「改回立即回收即 FAIL」反证有效)。
 
+### 2.2 精简载体 `DecodedRecord`(commit `16ca927a`)
+
+batch 载体是**精简值结构 `DecodedRecord`**,只含下游 `flowworker/decode_adapter.go` 的 `mapFlowMessage` 真正读的 17 个字段(Type、Src/DstAddr、Src/DstPort、Proto、TcpFlags、In/OutIf、Src/DstAs、Bytes、Packets、SamplingRate、TimeFlow{Start,End}/ReceivedNs),**不用** GoFlow2 的 protobuf `FlowMessage`(其 `Reset` 每消息走 atomic,曾是解码 #1 开销)。字段名与 `FlowMessage` 对齐,故 adapter 函数体不变。GoFlow2 设但下游不读的字段(NextHop/Etype/IpTos/SrcNet/DstNet/SrcVlan/DstVlan/SequenceNum/SamplerAddress)一律丢弃——这也让 sFlow 快路径不必解 ExtendedRouter/Switch、NetFlow 去掉 sampler-address 缓存。慢路径(v9/IPFIX、sFlow 回落)用 `recordFromFlowMessage` 把 GoFlow2 消息转成 `DecodedRecord`。
+
 ---
 
 ## 3. NetFlow v5 定长快解码器(`netflow_v5_fast.go`)
 
 NetFlow v5 是**定长**:24B 头 + N×48B 记录。按固定偏移直解,零反射、零中间 struct、零逐记录分配。
 
-- 字段映射逐字段对齐 GoFlow2 `ConvertNetFlowLegacyRecord` + `ProcessMessageNetFlowLegacy`(采样率 = `SamplingInterval & 0x3FFF`;`baseTime = UnixSecs*1e9 + UnixNSecs`;时间戳 uint32 wrap 语义一致)。
-- 地址(SrcAddr/DstAddr/NextHop)**切 payload**——GoFlow2 也是把 uint32 big-endian 回写,字节完全相同。
-- pipe 层补的 `TimeReceivedNs`(= 收包时间)、`SamplerAddress`(= 源地址 `MarshalBinary`)也补上——差分测试抓出来的。
+- 字段映射逐字段对齐 GoFlow2 `ConvertNetFlowLegacyRecord` + `ProcessMessageNetFlowLegacy`(采样率 = `SamplingInterval & 0x3FFF`;`baseTime = UnixSecs*1e9 + UnixNSecs`;时间戳 uint32 wrap 语义一致),但只填 `DecodedRecord` 的 17 字段。
+- 地址(SrcAddr/DstAddr)**切 payload**——GoFlow2 也是把 uint32 big-endian 回写,字节完全相同。
+- pipe 层补的 `TimeReceivedNs`(= 收包时间)也补上(差分测试抓出来的);`SamplerAddress`/`SequenceNum`/`NextHop`/`Etype` 等下游不读的字段直接丢弃(§2.2)。
 - 恶意/截断:header count 钳到 payload 实有记录数,GoFlow2 会吐幻影零记录,快路径不吐(**更安全的有意分歧**,`TestNetFlowV5FastClampsTruncatedCount` 锁定)。
 
 ---
@@ -72,12 +76,11 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 
 **策略:只自研 framing,抓包解析复用 GoFlow2 加固的 `ParseSampledHeader`**(不在攻击面最大的路径上重写以太网/IP 解析)。
 
-- 后备 `[]protoproducer.ProtoProducerMessage`(内嵌 FlowMessage),以便调 `ParseSampledHeader(&msg, &sh)`;batch 取 `&backing[i].FlowMessage`。
-- **处理**:FlowSample(1)/ExpandedFlowSample(3) → 一样本一 FlowMessage + 一条 metadata;record 类型 RAW→`ParseSampledHeader`、IPv4/IPv6/ExtendedRouter/ExtendedSwitch 直接映射。
-- **跳过**:Counter(2/4)/Drop(5) 样本(GoFlow2 producer 也不映射);ETH/EgressQueue/ACL/Function/MPLS 等 record(按长度跳过)。
-- **回落**:ExtendedGateway(1003,BGP AS-path/communities)或未知 sample format → `errSFlowFallback`。
-- 数据报级字段 `SequenceNum`(= 包序列)、`SamplerAddress`(= **包内 agent IP**,非源地址——与 NetFlow 不同!)每消息补上。
-- `TimeReceivedNs = TimeFlowStartNs = TimeFlowEndNs = tr`(sFlow 特有,GoFlow2 enrich 如此)。
+- 输出到复用的 `[]DecodedRecord`(§2.2)。**只有 RAW/SampledHeader** 还需一个复用的 scratch `ProtoProducerMessage` 调 `ParseSampledHeader(&scratch, &sh)`,解完把抓包 5 元组字段拷进 `DecodedRecord`——这是唯一还碰 protobuf 的记录类型(那 30 allocs 也在这)。
+- **处理**:FlowSample(1)/ExpandedFlowSample(3) → 一样本一 `DecodedRecord` + 一条 metadata;record 类型 RAW→`ParseSampledHeader`、IPv4/IPv6 直接填 5 元组。
+- **跳过**:Counter(2/4)/Drop(5) 样本(GoFlow2 producer 也不映射);**ExtendedRouter/ExtendedSwitch** 及 ETH/EgressQueue/ACL/Function/MPLS 等 record——它们只映射到下游不读的字段(NextHop/masks/VLAN),精简载体一律忽略(按长度跳过)。
+- **回落**:ExtendedGateway(1003,BGP,设 SrcAs/DstAs 是下游要读的)或未知 sample format → `errSFlowFallback`。
+- `TimeReceivedNs = TimeFlowStartNs = TimeFlowEndNs = tr`(sFlow 特有,GoFlow2 enrich 如此)。`SequenceNum`/`SamplerAddress`(GoFlow2 设为包内 agent IP)下游不读 → 丢弃(§2.2)。
 - **安全**:每次读都 bounds-check(`sflowCursor`);整个快路径包在 `recoverDecoderPanic` 里(`ParseSampledHeader` 解不可信字节,可能 panic)。`samplesCount`/`recordsCount` 各钳 1000(对齐 GoFlow2 DDoS 护栏)。
 
 `bytes` = FrameLength(RAW)/Length(IPv4/6);`packets` 恒为 1(GoFlow2 如此)。
@@ -99,28 +102,26 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 | 池 | 字段 | 说明 |
 |---|---|---|
 | 信封目标 | `rawScratch` | 复用,不每包分配 |
-| record 指针切片 | `recordPtrs` | 两路共用,复用 |
+| DecodedRecord 数组 | `recordBacking` | 三路共用(§2.2),复用 |
 | 身份串 | `idIntern` | 驻留,warmup 后零分配 |
-| sampler 地址(NetFlow) | `lastSampler{Addr,Bytes}` | 按源缓存 |
-| FlowMessage(NetFlow) | `netflowV5Backing` | 复用 |
-| FlowMessage(sFlow) | `sflowBacking` | 复用 |
 | metadata(sFlow) | `sflowMetadata` | 复用 |
+| SampledHeader scratch | `sflowHeaderScratch` | 仅 RAW 记录用,复用 |
 | 错误 | 包级 `errSFlow*` sentinel | **不在热路径 `errors.New`**(曾漏 1 alloc/样本) |
 
 ---
 
 ## 7. 正确性:差分门禁
 
-**原则:任何快路径,输出必须与 GoFlow2 逐字段 `proto.Equal`。** 不自说自话。
+**原则:任何快路径,输出必须与 GoFlow2 逐字段相等。** 不自说自话。载体换精简 struct 后,比较由 `reflect.DeepEqual(DecodedRecord)` 做——慢路径把 GoFlow2 消息 `recordFromFlowMessage` 转成 `DecodedRecord`,故仍是「快路径 vs GoFlow2」。只比下游真正消费的字段,正是**恰当**的严格度(不读的字段不影响管线输出)。
 
 | 测试 | 覆盖 |
 |---|---|
-| `TestNetFlowV5FastMatchesGoFlow2` | single/many/时间 wrap/饱和/空;逐记录 `proto.Equal` + batch 身份 |
-| `TestSFlowFastMatchesGoFlow2` | IPv4/IPv6/抓包头/expanded/router/switch/计数跳过/多样本/IPv6 agent/gateway 回落;`proto.Equal` + metadata |
+| `TestNetFlowV5FastMatchesGoFlow2` | single/many/时间 wrap/饱和/空;逐记录 `DeepEqual` + batch 身份 |
+| `TestSFlowFastMatchesGoFlow2` | IPv4/IPv6/抓包头/expanded/router/switch/计数跳过/多样本/IPv6 agent/gateway 回落;`DeepEqual` + metadata |
 | `TestRawFlowZeroCopyParseMatchesProto` | 信封 vs `proto.Unmarshal`(含跳过字段、饱和标量) |
 | `*ClampsTruncatedCount` / `*HandlesTruncatedSafely` / `*RejectsTruncated` | 恶意/截断:不 panic、不过读 |
 
-差分法已两次证明其价值:抓出 NetFlow v5 漏设的 `TimeReceivedNs`/`SamplerAddress`,以及 sFlow 漏设的 `SequenceNum`/`SamplerAddress`。
+差分法已三次证明其价值:抓出 NetFlow v5 漏设的 `TimeReceivedNs`/`SamplerAddress`、sFlow 漏设的 `SequenceNum`/`SamplerAddress`(换精简 struct 后这两个字段确认下游不读、已一并丢弃)。
 
 ---
 
@@ -142,50 +143,50 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 
 ### 8.2 相对提升(同机 A/B vs GoFlow2,应满足)
 
-| 路径 | 期望 ≥ |
-|---|---|
-| NetFlow v5 | 10× |
-| sFlow SampledIPv4 | 6× |
-| sFlow SampledHeader | 3× |
+| 路径 | 期望 ≥ | 当前 |
+|---|---|---|
+| NetFlow v5 | 15× | 21.8× |
+| sFlow SampledIPv4 | 8× | 10.8× |
+| sFlow SampledHeader | 3× | 3.9× |
 
 ### 8.3 本会话参考绝对值(machine-dependent,Apple Silicon,`-8`)
 
-| 路径 | GoFlow2 | 快路径 | 提升 | 每记录 | 吞吐 |
+载体为**精简 `DecodedRecord` 值结构**(§2.2),非 protobuf `FlowMessage`。
+
+| 路径 | GoFlow2 | 快路径(精简 struct) | 提升 | 每记录 | 吞吐 |
 |---|---|---|---|---|---|
-| NetFlow v5(30 rec) | 8,800 ns / 110 allocs / 5,309 B | **706 ns / 0 / 0** | 12.5× | ~24 ns | 42.5M/s |
-| sFlow IPv4(30 样本) | 13,980 ns / 229 / 13,014 B | **1,791 ns / 0 / 0** | 7.8× | ~60 ns | 16.7M/s |
-| sFlow Header(30 样本) | 15,580 ns / 259 / 13,974 B | **3,932 ns / 30 / 240 B** | 4.0× | ~131 ns | 7.6M/s |
+| NetFlow v5(30 rec) | 8,800 ns / 110 allocs / 5,309 B | **404 ns / 0 / 0** | 21.8× | ~13 ns | 74M/s |
+| sFlow IPv4(30 样本) | 13,573 ns / 229 / 13,014 B | **1,254 ns / 0 / 0** | 10.8× | ~42 ns | 24M/s |
+| sFlow Header(30 样本) | 16,055 ns / 259 / 13,974 B | **4,162 ns / 30 / 240 B** | 3.9× | ~139 ns | 7.2M/s |
 | 信封解析(单独) | 344 ns / 5 / 1,744 B | **83 ns / 2 / 16 B** | 4× | — | — |
 
-> **注意 per-record**:NetFlow v5(~24ns)比 sFlow(~60/131ns)更便宜——sFlow 每样本自带一圈框架(采样率/池/丢弃/进出口/source id/序列 + TLV 导航),SampledHeader 还多一层抓包解析。**sFlow 的「更省」体现在设备侧(无状态采样)与每 Gbps(1:N 采样 → 记录更少),不在单条 collector 解码成本上。**
+> **精简 struct 的收益**:NetFlow v5 由换载体前的 706ns 降到 404ns(−43%)——去掉 protobuf `FlowMessage.Reset` 的每消息 atomic、更小的清零(17 字段 vs 40+)、少写 7 个下游不读的字段、缓存局部性更好。sFlow IPv4 1,791→1,254ns(−30%)。SampledHeader 不变(受 `ParseSampledHeader` 抓包解析主导)。
+>
+> **注意 per-record**:NetFlow v5(~13ns)比 sFlow(~42/139ns)更便宜——sFlow 每样本自带一圈框架(采样率/池/丢弃/进出口/source id/序列 + TLV 导航),SampledHeader 还多一层抓包解析。**sFlow 的「更省」体现在设备侧(无状态采样)与每 Gbps(1:N 采样 → 记录更少),不在单条 collector 解码成本上。**
 
 ---
 
 ## 9. 剩余瓶颈地图(供进一步审计)
 
-CPU profile(`-cpuprofile`,`go tool pprof -top`)显示快路径内的热点:
+CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**的热点。`FlowMessage.Reset` 已从两路 profile 消失(这是之前的 #1 杠杆,已做)。现在时间主要花在**真实解析工作**上,而非机制开销——健康的 profile。
 
-### NetFlow v5(~706ns)
+### NetFlow v5(~404ns)
 | 函数 | flat / cum | 性质 |
 |---|---|---|
-| `decodeNetFlowV5Fast` | 33% | 实际字段解析(binary reads) |
-| **`FlowMessage.Reset` + `StoreMessageInfo` + `atomic.StorePointer`** | **~39% cum** | **protobuf 消息状态机(每消息 atomic)——#1 可优化点** |
-| `parseRawFlowInto` | 11% | 信封 |
-| binary reads(Uint16/32/Uvarint) | ~7% | 已内联 |
+| `decodeNetFlowV5Fast` | **64%** | 实际字段解析 + 填 struct(binary reads)——已是真实工作 |
+| `parseRawFlowInto` | 18% cum | 信封 wire 解析 |
+| binary reads(Uint16/Uvarint) | ~10% | 已内联 |
+| `internOrCopy` | 5% | 身份串 intern 查表 |
 
-### sFlow IPv4(~1,791ns)
-| 函数 | flat / cum | 性质 |
-|---|---|---|
-| **`sflowCursor.u32`** | **43%** | 逐字段 bounds-checked 读——TLV 固有(每样本 ~10-14 次 u32) |
-| `decodeSFlowFlowSample` | 13% | 样本头/字段 |
-| `mapSFlowRecord` | 19% cum | 记录映射 |
-| `FlowMessage.Reset` | ~13% cum | 同上,protobuf 状态机 |
+### sFlow IPv4(~1,254ns)
+`FlowMessage.Reset` 已消失(IPv4 记录不再碰 protobuf)。剩余由 `sflowCursor.u32`(逐字段 bounds-checked 读,TLV 固有,每样本 ~10-14 次)+ 记录映射主导。SampledHeader 例外——仍走 `ParseSampledHeader`(唯一还碰 protobuf 的记录类型,那 30 allocs 也在这)。
 
-### 审计建议(候选,未做)
-1. **`FlowMessage.Reset` 是两路的共同大头**(NetFlow ~39%、sFlow ~13%)。根因是用 protobuf `goflowpb.FlowMessage` 当载体,其状态机每次 Reset 走 atomic。**最大的下一步杠杆**:换成**精简 Go struct**(只含下游 `adapter.Map` 读的字段)当 batch 载体,消掉 protobuf 状态机开销。代价:改动 `DecodedBatch.Records` 类型 + `flowworker/decode_adapter.go` 的 `mapFlowMessage`(涉及 flowworker,需同样差分验证)。预估两路各再省 15–40%。
-2. **sFlow `u32` 占 43%**:已内联、已 bounds-check,进一步只能靠「一次校验一段、批量读」或 unsafe,收益/风险比一般。可先不动。
-3. **SampledHeader 的 30 allocs**:全在 GoFlow2 `ParseSampledHeader`。要清零须自研零拷贝抓包解析器——**不建议**(安全敏感,收益不抵风险)。
-4. **v9/IPFIX 仍走 GoFlow2**(反射 + 模板)。若这两协议进入主力流量,是下一个自研目标(模板状态机较难)。
+### 审计建议(剩余,收益递减)
+1. ~~换精简 struct 载体~~ **已做**(commit `16ca927a`):NetFlow v5 −43%、sFlow IPv4 −30%。两路的 `FlowMessage.Reset` 大头已消除。
+2. **NetFlow v5 现在 64% 在 `decodeNetFlowV5Fast`(真实 binary 解析)**:已内联、无分配,进一步只能靠 SIMD/unsafe 批量读定长记录,收益/风险比一般。
+3. **信封 18%**:`parseRawFlowInto` 已是 wire-level partial parse,难再压。`internOrCopy` 5% 若 collector/listener 预解析成 id 可省,但 collision 与改动面不值。
+4. **SampledHeader 的 30 allocs**:全在 GoFlow2 `ParseSampledHeader`(唯一还碰 protobuf 的路径)。要清零须自研零拷贝抓包解析器——**不建议**(安全敏感,收益不抵风险)。
+5. **v9/IPFIX 仍走 GoFlow2**(反射 + 模板)。若这两协议进入主力流量,是下一个自研目标(模板状态机较难)。
 
 ---
 
@@ -200,8 +201,9 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示快路径内的热点:
 
 ## 11. 提交
 
+- `93fa3e92` NetFlow v5 定长快解码器
 - `1cc27c90` zero-copy 信封解析
 - `649001c9` NetFlow v5 零分配(池化最后 3 处)
-- `93fa3e92` NetFlow v5 定长快解码器
 - `11e4dc08` sFlow v5 framing 快解码器
+- `16ca927a` 精简 `DecodedRecord` 载体(去掉热路径的 protobuf `FlowMessage`;NetFlow v5 −43%、sFlow IPv4 −30%)
 - 关联可靠性条目见 `flow-reliability-remediation.md` F15/F15b/F15c/F15d。
