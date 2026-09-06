@@ -59,6 +59,20 @@ batch 载体是**值结构 `DecodedRecord`**(**不是** GoFlow2 的 protobuf `Fl
 >
 > **教训**:第一版精简到「只含当前读的 17 字段」是**过度精简**——把 GoFlow2 产的 9 个字段丢了。「今天没人读」≠「不需要」。已改回全字段(代价:NetFlow +~170ns、sFlow IPv4 +~226ns,仍远快于 protobuf 载体)。
 
+```go
+type DecodedRecord struct {
+    SrcAddr, DstAddr, NextHop, SamplerAddress []byte // 地址:切 payload / GoFlow2 buffer,零拷贝
+    Type                                      goflowpb.FlowMessage_FlowType
+    SrcPort, DstPort, Proto, TcpFlags, IpTos, Etype  uint32
+    InIf, OutIf, SrcAs, DstAs, SrcNet, DstNet, SrcVlan, DstVlan, SequenceNum uint32
+    Bytes, Packets, SamplingRate                     uint64
+    TimeFlowStartNs, TimeFlowEndNs, TimeReceivedNs   uint64
+}
+// 慢路径转换(v9/IPFIX、sFlow 回落):recordFromFlowMessage(dst, m) 逐字段拷这 26 个。
+// 字段名与 goflowpb.FlowMessage 对齐 → flowworker/decode_adapter.go 的 mapFlowMessage 函数体不变,
+// 只把参数类型 *goflowpb.FlowMessage 改成 *flowstream.DecodedRecord。
+```
+
 ---
 
 ## 3. NetFlow v5 定长快解码器(`netflow_v5_fast.go`)
@@ -69,6 +83,33 @@ NetFlow v5 是**定长**:24B 头 + N×48B 记录。按固定偏移直解,零反�
 - 地址(SrcAddr/DstAddr)**切 payload**——GoFlow2 也是把 uint32 big-endian 回写,字节完全相同。
 - pipe 层补的 `TimeReceivedNs`(= 收包时间)、`SamplerAddress`(= 源地址 `MarshalBinary`,按源缓存 0-alloc)也补上——差分测试抓出来的。
 - 恶意/截断:header count 钳到 payload 实有记录数,GoFlow2 会吐幻影零记录,快路径不吐(**更安全的有意分歧**,`TestNetFlowV5FastClampsTruncatedCount` 锁定)。
+
+### 3.1 wire 布局与映射(代码级)
+
+**头(24B)**:`[0:2]` version=5、`[2:4]` count、`[4:8]` SysUptime(=uptime)、`[8:12]` UnixSecs、`[12:16]` UnixNSecs、`[16:20]` FlowSequence、`[22:24]` SamplingInterval。
+`baseTime = UnixSecs*1e9 + UnixNSecs`;`samplingRate = SamplingInterval & 0x3FFF`(高 2 位是采样模式)。
+
+**记录(48B,`decodeNetFlowV5Fast` 一次性 `*r = DecodedRecord{…}` 填满)**:
+
+| off | 宽 | 源 | → DecodedRecord |
+|---|---|---|---|
+| 0 / 4 / 8 | 4 | SrcAddr / DstAddr / NextHop | `record[0:4]`/`[4:8]`/`[8:12]`(**切片,零拷贝**) |
+| 12 / 14 | 2 | Input / Output | `InIf` / `OutIf` |
+| 16 / 20 | 4 | dPkts / dOctets | `Packets` / `Bytes` |
+| 24 / 28 | 4 | First / Last | → 时间戳(下) |
+| 32 / 34 | 2 | SrcPort / DstPort | `SrcPort` / `DstPort` |
+| 37 / 38 / 39 | 1 | TCPFlags / Proto / Tos | `TcpFlags` / `Proto` / `IpTos` |
+| 40 / 42 | 2 | SrcAS / DstAS | `SrcAs` / `DstAs` |
+| 44 / 45 | 1 | SrcMask / DstMask | `SrcNet` / `DstNet` |
+
+常量:`Type=NETFLOW_V5`、`Etype=0x800`、`SequenceNum=header.FlowSequence`;`TimeReceivedNs`(收包时间)与 `SamplerAddress`(源地址 `MarshalBinary`,按源缓存)由 pipe 层语义补上。
+
+**时间戳(与 GoFlow2 逐位一致的 uint32 回绕)**:
+```go
+// First/Last 是相对 uptime 的毫秒;uint32 减法可回绕,×1e6 转 ns。BE = binary.BigEndian
+r.TimeFlowStartNs = baseTime - uint64(uptime-BE.Uint32(record[24:28]))*1_000_000
+r.TimeFlowEndNs   = baseTime - uint64(uptime-BE.Uint32(record[28:32]))*1_000_000
+```
 
 ---
 
@@ -88,6 +129,37 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 
 `bytes` = FrameLength(RAW)/Length(IPv4/6);`packets` 恒为 1(GoFlow2 如此)。
 
+### 4.1 批量读 idiom 与 wire 布局(代码级)
+
+**批量读**(§8/§9 的核心加速):一组定长字段一次 `remaining()` 守卫,转定长数组指针,再按常量偏移读——编译器省掉逐字段边界检查:
+```go
+if c.remaining() < 32 { return DecodedRecordMetadata{}, errSFlowTruncatedSample }
+w := (*[32]byte)(c.buf[c.off:]) // 定长数组指针:一次长度检查(被上面 remaining() 覆盖)
+c.off += 32
+samplingRate := binary.BigEndian.Uint32(w[8:12]) // 常量索引进 [32]byte → 无逐字段边界检查
+```
+
+**wire**:
+- **datagram 头**:version(4)、agentIPType(4)+agentIP(0/4/16),然后 16B 窗口 = subAgentId(4)+sequence(4)+uptime(4)+samplesCount(4)。
+- **每 sample**:`format(4)+length(4)` → body = length 字节。format 1/3=Flow/ExpandedFlow(处理)、2/4=Counter/ExpCounter、5=Drop(跳过)、其它→回落。
+- **FlowSample(1) 定长前缀 32B**:seq、sourceId(**交错**:type=高8位、value=低24位)、samplingRate、samplePool、drops、input、output、recordsCount。**ExpandedFlowSample(3) 44B**:多 in/outIfFormat 各 4B(跳过)。
+- **每 record**:`dataFormat(4)+length(4)` → body。`SampledIPv4(3)` 32B(srcIP=w[8:12]、dstIP=w[12:16] 切片,`Etype=0x800`);`SampledIPv6(4)` 56B(srcIP=w[8:24]、dstIP=w[24:40],`IpTos=priority`、`Etype=0x86dd`);`ExtendedRouter(1002)`=DecodeIP+srcMask+dstMask→NextHop/Src/DstNet;`ExtendedSwitch(1001)`=srcVlan/dstVlan;`ExtendedGateway(1003)`/未知→`errSFlowFallback`;其余(ETH/ACL/…)按长度跳过。
+
+### 4.2 SampledHeader 抓包快提取(`parseSampledPacket`,代码级)
+
+无标签 Ethernet/IPv4-6/TCP-UDP 定长切 5 元组(全 bounds-checked,地址切帧):
+```
+Ethernet:  frame[12:14]=etype;== 0x8100(VLAN)→ 回落
+IPv4(0x0800): l3=frame[14:]; IHL=l3[0]&0xF(≠5=options→回落); 分片(l3[6]&0x3F || l3[7]→回落)
+              IpTos=l3[1]; Proto=l3[9]; SrcAddr=l3[12:16]; DstAddr=l3[16:20]; L4=l3[20:]
+IPv6(0x86dd): IpTos=(l3[0]&0xF)<<4 | l3[1]>>4; Proto=l3[6](扩展头→在 L4 处回落)
+              SrcAddr=l3[8:24]; DstAddr=l3[24:40]; L4=l3[40:]
+L4  TCP(6):   SrcPort=[0:2]; DstPort=[2:4]; TcpFlags=[13]
+    UDP(17):  SrcPort=[0:2]; DstPort=[2:4]
+    其它:     仅 IP 层字段(与 GoFlow2 一致)
+```
+必须匹配 GoFlow2 `ParsePacket` 两个 quirk:**Etype = 外层 ethertype**、**IPv4 固定按 20B 头**(所以 IHL≠5 回落)。任一读越界或遇不理解的构造 → 返回 false → 回落 `ParseSampledHeader`(那 30 allocs 在此,仅回落路径)。
+
 ---
 
 ## 5. Zero-copy Kafka 信封解析(`rawflow_fast.go`)
@@ -97,6 +169,25 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 - `Payload`/`SourceAddress` **切 value 不拷**;`CollectorId`/`ListenerId` 经 `internID` 驻留(每分区一个 exporter,小固定集,warmup 后零分配;上限 `maxInternedIDs=1024` 防敌意膨胀)。
 - 目标 `RawFlow`(`rawScratch`)跨调用复用。
 - 未知字段(6/7/8 `TimestampSource`/`DecapsulationProtocol`/`RateLimit`,解码器不读,proto3 零值 0 字节)按 wire type 跳过 → 前向兼容。
+
+### 5.1 wire 解析循环(代码级)
+
+protobuf wire:每字段 `tag = fieldNum<<3 | wireType`(varint)。`parseRawFlowInto` 手写这个循环,只认解码器要的字段号:
+```go
+for len(value) > 0 {
+    tag, n := binary.Uvarint(value); value = value[n:]
+    field := tag >> 3
+    switch tag & 0x7 {
+    case 0: // varint: 1=TimeReceived 4=UseSourceAddress 5=Decoder 11=SourcePort 12=RegistryVersion
+    case 2: // length-delimited:
+        //   2=Payload / 3=SourceAddress → data := value[:length](切 value buffer,零拷贝)
+        //   9=CollectorId / 10=ListenerId → internID(data)(驻留,warmup 后零分配)
+    case 1: value = value[8:] // 64-bit:跳过
+    case 5: value = value[4:] // 32-bit:跳过(未知字段 6/7/8 等)
+    }
+}
+```
+`Payload`/`SourceAddress` 直接切 `value`(Kafka record bytes),整个 flow payload(~1.5KB)不拷贝;身份串经 `internID` 用 `map[string]string` 驻留(`m[string(data)]` 查表不分配),上限 `maxInternedIDs=1024`。
 
 ---
 
@@ -176,7 +267,7 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 
 CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**的热点。`FlowMessage.Reset` 已从两路 profile 消失(这是之前的 #1 杠杆,已做)。现在时间主要花在**真实解析工作**上,而非机制开销——健康的 profile。
 
-### NetFlow v5(~404ns)
+### NetFlow v5(~575ns)
 | 函数 | flat / cum | 性质 |
 |---|---|---|
 | `decodeNetFlowV5Fast` | **64%** | 实际字段解析 + 填 struct(binary reads)——已是真实工作 |
@@ -206,7 +297,36 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**
 
 ---
 
-## 11. 提交
+## 11. SIMD 可行性研究(结论:暂不采用,触发条件见 §11.4)
+
+### 11.1 背景:decode 还剩什么可能被 SIMD 加速
+
+优化到现在,decode 的 CPU 都花在**真实二进制解析**上(§9):NetFlow v5 ~64% 在 `decodeNetFlowV5Fast` 的逐字段读——每个 `binary.BigEndian.Uint16/Uint32(record[k:])` = 一次 load + 一次 **BSWAP**(大端→小端);sFlow 批量读后也是内联 `Uint32`。理论上 SIMD 能**一条指令批量翻转字节序**:如 AVX2 `VPSHUFB` 配一个 shuffle mask,一次翻转 16–32 字节里的 4–8 个 u32,替掉逐字段的 load+BSWAP。
+
+### 11.2 三条路线(附链接调研)
+
+| 路线 | 实现 | 覆盖 | 平台 | 成熟度 | 对本用途 |
+|---|---|---|---|---|---|
+| **Go 官方实验性 `simd` 包**<br>[Callista 博客 2025-10](https://callistaenterprise.se/blogg/teknik/2025/10/20/trying-out-go-simd-support/) | 原生 intrinsics,可内联;`dev.simd` 分支 / `gotip` / `GOEXPERIMENT=simd` / build tag `goexperiment.simd && amd64` | `Load/Add/Store` 等向量运算 | **仅 amd64** | 实验性,预计 ~Go 1.26 转正,无自动向量化 | 长期最有希望;best-case u8 向量加 inlined 0.48ns vs 朴素 17.48ns(~36×)。**但现在仅 amd64 + gotip** |
+| [stuartcarnie/go-simd](https://github.com/stuartcarnie/go-simd) | 运行时按 CPU 选 SSE4/AVX2 汇编 + clang 自动向量化 C + Go 循环展开 | **聚合类**:`SumFloat64`、UTF-8/ASCII 校验 | x86-64 + 泛型 fallback | 25 commits,偏参考实现 | **不匹配**:无字节序翻转/定长整数解析 |
+| [alivanz/go-simd](https://github.com/alivanz/go-simd) | `linkname` 绕过 cgo(~33.6 GB/s vs cgo 7.9)的 NEON intrinsics | 向量加/乘等 | **仅 ARM NEON**(x86 在做) | 71 commits,早期 | **不匹配**:无大端处理、无网络包解析,且非 amd64 |
+
+### 11.3 适用性分析(为什么现在 ROI 为负)
+
+1. **收益上限有限**:decode 已 ~19–32 ns/记录,大概率 **memory-bound**——load 才是主成本,BSWAP 现代 CPU ~1 cycle。SIMD 只省 BSWAP 那一小块。
+2. **extract 省不掉**:即便一条指令翻转整条记录,**仍要逐字段从 SIMD 寄存器 extract 进 `DecodedRecord`**(标量活)。NetFlow v5 字段宽度**异构**(u16 口/if、u32 址/计数、u8 flags/proto),extract 无法向量化。
+3. **地址本就零拷贝**:IP 地址是**切片**(保持网络字节序的 `[]byte`,§2.1),根本不翻转——SIMD 对最大的字段(地址)无用。
+4. **工具链/可移植性**:官方 `simd` 实验性且**仅 amd64**,而基线机器是 **arm64(Apple Silicon)**;两个第三方库一个只做聚合、一个只 ARM。任何 SIMD 都要 per-arch 实现 + 标量 fallback,维护面 ×N,还破坏「纯 Go、易审计」。
+
+### 11.4 结论与触发条件
+
+**结论:暂不采用。** decode 现在 20–75M 记录/秒/核、零分配、纯 Go 可审计;SIMD 目标的 BSWAP 只是其中一小块,且要 experimental/不匹配的工具,ROI 为负。
+
+**何时重启**:同时满足 (1) 官方 `simd` 包**转正(~Go 1.26)且支持 arm64**;(2) 生产压测证明 decode 是**实测吞吐瓶颈**(目前远不是)。届时最小切入:给 NetFlow v5 定长记录写一个**批量大端翻转 primitive**(官方 `simd`,或 `avo` 生成汇编——博客里 AVO 版向量加 2.7ns),置于 build tag 之后 + 差分门禁验证,**标量版永远作为 fallback**。不引第三方库。
+
+---
+
+## 12. 提交
 
 - `93fa3e92` NetFlow v5 定长快解码器
 - `1cc27c90` zero-copy 信封解析
@@ -216,4 +336,4 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**
 - `c19106be` `DecodedRecord` 改回含全部有意义字段(修过度精简)+ 修 sFlow header path;NetFlow v5 −19%、sFlow IPv4 −17%,均零分配
 - `1646540a` sFlow SampledHeader 定长 5 元组抓包快解析器(无标签 Ethernet/IPv4-6/TCP-UDP 零拷贝零分配,VLAN/options 回落);修 fixture `OriginalLength` bug;真帧 48µs/1039allocs → 1.37µs/0(35×)
 - `adcd9fbc` sFlow TLV 批量读(`(*[N]byte)` 数组指针省逐字段边界检查);sFlow IPv4 −47%(→781ns/19.7×)、Header −29%(→971ns/50×),均零分配
-- 关联可靠性条目见 `flow-reliability-remediation.md` F15/F15b/F15c/F15d。
+- 关联可靠性条目见 `flow-reliability-remediation.md` F15/F15b/F15c/F15d/F15e。
