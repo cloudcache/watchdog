@@ -1,10 +1,15 @@
 package watchdog
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"testing"
@@ -99,6 +104,18 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keyResolver, err := NewStaticAddressDimensionPublicKeyResolver([]AddressDimensionTrustedPublicKey{{
+		TenantID: tenantID, KeyID: "dimension-test-key", Key: publicKey,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: tenantID, UserID: userID, IsAdmin: true}, nil
+		},
+		AddressDimensions: publisher, DimensionLifecycle: publisher, DimensionKeys: keyResolver,
+	})
 	approve := func(item AddressDimensionSnapshot) AddressDimensionSnapshot {
 		t.Helper()
 		signedAt := time.Now().UTC().Add(time.Second).Truncate(time.Millisecond)
@@ -106,13 +123,23 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 		if payloadErr != nil {
 			t.Fatal(payloadErr)
 		}
-		approval, verifyErr := VerifyAddressDimensionApproval(item, "dimension-test-key", signedAt, ed25519.Sign(privateKey, payload), publicKey)
-		if verifyErr != nil {
-			t.Fatal(verifyErr)
+		body, marshalErr := json.Marshal(map[string]any{
+			"signing_key_id": "dimension-test-key", "signed_at": signedAt,
+			"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload)),
+		})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
 		}
-		approved, approveErr := publisher.ApproveAddressDimension(ctx, tenantID, userID, item.RowVersion, approval)
-		if approveErr != nil {
-			t.Fatal(approveErr)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/versions/"+string(item.ID)+"/actions/approve", bytes.NewReader(body))
+		request.Header.Set("If-Match", quotedRowVersion(item.RowVersion))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("approve API = %d %s", response.Code, response.Body.String())
+		}
+		var approved AddressDimensionSnapshot
+		if decodeErr := json.Unmarshal(response.Body.Bytes(), &approved); decodeErr != nil {
+			t.Fatal(decodeErr)
 		}
 		return approved
 	}
@@ -249,6 +276,9 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	snapshot3, err = publisher.RejectAddressDimension(ctx, tenantID, userID, snapshot3.ID, snapshot3.RowVersion, "review failed")
 	if err != nil || snapshot3.ApprovalState != AddressDimensionApprovalRejected || snapshot3.DecisionReason != "review failed" {
 		t.Fatalf("rejected snapshot = %#v, %v", snapshot3, err)
+	}
+	if _, err := publisher.RejectAddressDimension(ctx, tenantID, userID, snapshot3.ID, snapshot3.RowVersion, "reject twice"); !errors.Is(err, ErrAddressDimensionInvalidTransition) {
+		t.Fatalf("repeated rejection error = %v", err)
 	}
 	var auditCount int
 	if err := store.db.QueryRowContext(ctx, `

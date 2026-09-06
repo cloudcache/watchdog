@@ -39,6 +39,12 @@ address_library:
   max_upload_bytes: 2147483648
   import_batch_size: 1000
   worker_concurrency: 1
+  # Approval private keys stay outside Watchdog. This process loads only the
+  # tenant-scoped Ed25519 public keys at startup (SubjectPublicKeyInfo PEM).
+  trusted_keys: []
+  # - tenant_id: "tenant_example"
+  #   key_id: "address-publisher-2026"
+  #   public_key_file: "/etc/watchdog/address-publisher-2026.pub.pem"
 
 snmp_collector:
   tenant_id: "tenant_dev"

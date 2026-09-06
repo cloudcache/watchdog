@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -59,7 +60,7 @@ func VerifyAddressDimensionApproval(snapshot AddressDimensionSnapshot, signingKe
 		return AddressDimensionApproval{}, err
 	}
 	if len(publicKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, payload, signature) {
-		return AddressDimensionApproval{}, errors.New("address dimension signature verification failed")
+		return AddressDimensionApproval{}, fmt.Errorf("%w: signature verification failed", ErrAddressDimensionInvalid)
 	}
 	approval.verifiedEnvelopeSHA256 = addressDimensionApprovalDigest(payload, signature)
 	return approval, nil

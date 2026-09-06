@@ -169,10 +169,17 @@ type ExportConfig struct {
 }
 
 type AddressLibraryConfig struct {
-	Dir               string `yaml:"dir"`
-	MaxUploadBytes    int64  `yaml:"max_upload_bytes"`
-	ImportBatchSize   int    `yaml:"import_batch_size"`
-	WorkerConcurrency int    `yaml:"worker_concurrency"`
+	Dir               string                             `yaml:"dir"`
+	MaxUploadBytes    int64                              `yaml:"max_upload_bytes"`
+	ImportBatchSize   int                                `yaml:"import_batch_size"`
+	WorkerConcurrency int                                `yaml:"worker_concurrency"`
+	TrustedKeys       []AddressDimensionTrustedKeyConfig `yaml:"trusted_keys"`
+}
+
+type AddressDimensionTrustedKeyConfig struct {
+	TenantID      ID     `yaml:"tenant_id"`
+	KeyID         string `yaml:"key_id"`
+	PublicKeyFile string `yaml:"public_key_file"`
 }
 
 type SNMPCollectorConfig struct {
@@ -647,6 +654,12 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.Export.Dir = strings.TrimSpace(cfg.Export.Dir)
 	cfg.Export.Metric = strings.TrimSpace(cfg.Export.Metric)
 	cfg.AddressLibrary.Dir = strings.TrimSpace(cfg.AddressLibrary.Dir)
+	for index := range cfg.AddressLibrary.TrustedKeys {
+		key := &cfg.AddressLibrary.TrustedKeys[index]
+		key.TenantID = ID(strings.TrimSpace(string(key.TenantID)))
+		key.KeyID = strings.TrimSpace(key.KeyID)
+		key.PublicKeyFile = cleanOptionalConfigPath(key.PublicKeyFile)
+	}
 	cfg.SNMPCollector.TenantID = ID(strings.TrimSpace(string(cfg.SNMPCollector.TenantID)))
 	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
 	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
@@ -764,6 +777,17 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 		cfg.AddressLibrary.ImportBatchSize <= 0 || cfg.AddressLibrary.ImportBatchSize > maxAddressImportBatch ||
 		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 {
 		return errors.New("address_library dir, upload limit, batch size, and worker concurrency are invalid")
+	}
+	trustedKeys := make(map[string]struct{}, len(cfg.AddressLibrary.TrustedKeys))
+	for _, key := range cfg.AddressLibrary.TrustedKeys {
+		if key.TenantID == "" || key.KeyID == "" || len(key.KeyID) > 128 || key.PublicKeyFile == "" {
+			return errors.New("address_library.trusted_keys require tenant_id, key_id, and public_key_file")
+		}
+		lookup := addressDimensionTrustedKeyLookup(key.TenantID, key.KeyID)
+		if _, exists := trustedKeys[lookup]; exists {
+			return fmt.Errorf("address_library.trusted_keys contains duplicate key_id %q for tenant %q", key.KeyID, key.TenantID)
+		}
+		trustedKeys[lookup] = struct{}{}
 	}
 	if cfg.SNMPCollector.Interval <= 0 || cfg.SNMPCollector.PollLimit <= 0 || cfg.SNMPCollector.DiscoveryInterval <= 0 || cfg.SNMPCollector.DiscoveryBatch <= 0 {
 		return errors.New("snmp_collector interval, limit, and batch values must be positive")

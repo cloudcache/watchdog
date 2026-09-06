@@ -97,6 +97,25 @@ func TestQueryGatewayConfigRejectsInvalidConcurrency(t *testing.T) {
 	}
 }
 
+func TestAddressLibraryTrustedKeysAreNormalizedAndTenantScoped(t *testing.T) {
+	cfg := defaultBackendConfig()
+	cfg.AddressLibrary.TrustedKeys = []AddressDimensionTrustedKeyConfig{{
+		TenantID: " tenant-a ", KeyID: " publisher-2026 ", PublicKeyFile: " /etc/watchdog/publisher.pem ",
+	}}
+	normalizeBackendConfig(&cfg)
+	key := cfg.AddressLibrary.TrustedKeys[0]
+	if key.TenantID != "tenant-a" || key.KeyID != "publisher-2026" || key.PublicKeyFile != "/etc/watchdog/publisher.pem" {
+		t.Fatalf("normalized trusted key = %#v", key)
+	}
+	if err := validateWatchdogConfig(cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg.AddressLibrary.TrustedKeys = append(cfg.AddressLibrary.TrustedKeys, key)
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate trusted key error = %v", err)
+	}
+}
+
 func TestLoadWatchdogConfigMetricsScrapeEnvironment(t *testing.T) {
 	t.Setenv("WATCHDOG_METRICS_SCRAPE_ENABLED", "true")
 	t.Setenv("WATCHDOG_METRICS_SCRAPE_TOKEN_FILE", " /run/secrets/watchdog-metrics ")

@@ -71,11 +71,20 @@ func (p *MySQLAddressDimensionPublisher) RejectAddressDimension(ctx context.Cont
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
+	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, snapshotID, true)
+	if err != nil {
+		return AddressDimensionSnapshot{}, err
+	}
+	if snapshot.RowVersion != expectedRowVersion {
+		return AddressDimensionSnapshot{}, ErrAddressDimensionConflict
+	}
+	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending || snapshot.ObjectDeletedAt != nil {
+		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalidTransition
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET approval_state = 'rejected', decided_by = ?, decided_at = ?, decision_reason = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND status = 'active' AND approval_state = 'pending'
-		  AND object_deleted_at IS NULL AND row_version = ?
+		WHERE tenant_id = ? AND id = ? AND row_version = ?
 	`, actorID, decidedAt, reason, tenantID, snapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err

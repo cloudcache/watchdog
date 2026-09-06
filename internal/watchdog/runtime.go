@@ -37,6 +37,7 @@ type BackendRuntime struct {
 	AddressArtifacts   DiskAddressArtifactStore
 	DimensionObjects   DiskDimensionObjectStore
 	AddressDimensions  *MySQLAddressDimensionPublisher
+	DimensionKeys      AddressDimensionPublicKeyResolver
 	ExportWorker       ExportWorker
 	SNMPCollector      SNMPPollRunner
 	SNMPDiscovery      SNMPDiscoveryEngine
@@ -89,6 +90,11 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	addressDimensionKeys, err := LoadAddressDimensionPublicKeyResolver(cfg.AddressLibrary.TrustedKeys)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("load address dimension trusted keys: %w", err)
+	}
 	collectorAuthenticator, err := NewMySQLCollectorMachineAuthenticator(store.db)
 	if err != nil {
 		_ = store.Close()
@@ -129,6 +135,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		AddressArtifacts:  addressArtifacts,
 		DimensionObjects:  dimensionObjects,
 		AddressDimensions: addressDimensions,
+		DimensionKeys:     addressDimensionKeys,
 		CollectorEvidence: collectorEvidence,
 		CollectorPlans:    collectorPlans,
 		MetricProviders:   NewRuntimeMetricsRegistry(),
@@ -303,6 +310,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressArtifacts:       r.AddressArtifacts,
 		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,
 		AddressDimensions:      r.AddressDimensions,
+		DimensionLifecycle:     r.AddressDimensions,
+		DimensionKeys:          r.DimensionKeys,
 		OperationJobs:          r.Store,
 		OperationJobSchedules:  r.Store,
 		QueryGateway:           r.QueryGateway,
