@@ -78,8 +78,8 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 
 **策略:只自研 framing,抓包解析复用 GoFlow2 加固的 `ParseSampledHeader`**(不在攻击面最大的路径上重写以太网/IP 解析)。
 
-- 输出到复用的 `[]DecodedRecord`(§2.2)。**只有 RAW/SampledHeader** 还需一个复用的 scratch `ProtoProducerMessage` 调 `ParseSampledHeader(&scratch, &sh)`,解完把抓包 5 元组字段拷进 `DecodedRecord`——这是唯一还碰 protobuf 的记录类型(那 30 allocs 也在这)。
-- **处理**:FlowSample(1)/ExpandedFlowSample(3) → 一样本一 `DecodedRecord` + 一条 metadata;record 类型 RAW→`ParseSampledHeader`(scratch **plain-zero** 免 atomic,解完 `copyPacketFields` 拷出)、IPv4/IPv6 填 5 元组+IpTos+Etype、ExtendedRouter 填 NextHop/Src/DstNet、ExtendedSwitch 填 Src/DstVlan。
+- 输出到复用的 `[]DecodedRecord`(§2.2)。**RAW/SampledHeader**(抓包)先试 `parseSampledPacket`——对无标签 Ethernet/IPv4-6/TCP-UDP **按固定偏移直接切 5 元组**(零拷贝零分配,匹配 GoFlow2 `ParsePacket`:Etype=外层 ethertype、IPv4 定长 20B);VLAN/IP options/IPv6 扩展头/分片/异常 ethertype **回落**到复用 scratch + GoFlow2 加固 `ParseSampledHeader`(scratch **plain-zero** 免 atomic,`copyPacketFields` 拷出)。`ParsePacket` 对真帧 51% CPU + ~35 allocs/包,这是 sFlow 唯一还碰 protobuf 的路径。
+- **处理**:FlowSample(1)/ExpandedFlowSample(3) → 一样本一 `DecodedRecord` + 一条 metadata;record 类型 RAW→上述抓包快路径、IPv4/IPv6 填 5 元组+IpTos+Etype、ExtendedRouter 填 NextHop/Src/DstNet、ExtendedSwitch 填 Src/DstVlan。
 - **跳过**:Counter(2/4)/Drop(5) 样本(GoFlow2 producer 也不映射);ETH/EgressQueue/ACL/Function/MPLS 等 record(GoFlow2 也不映射任何 `DecodedRecord` 字段,按长度跳过)。
 - **回落**:ExtendedGateway(1003,BGP,设 SrcAs/DstAs 是下游要读的)或未知 sample format → `errSFlowFallback`。
 - `TimeReceivedNs = TimeFlowStartNs = TimeFlowEndNs = tr`(sFlow 特有,GoFlow2 enrich 如此)。`SequenceNum`(= 包序列)、`SamplerAddress`(= **包内 agent IP**,非源地址——与 NetFlow 不同!)每记录补上。
@@ -123,7 +123,9 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 | `TestRawFlowZeroCopyParseMatchesProto` | 信封 vs `proto.Unmarshal`(含跳过字段、饱和标量) |
 | `*ClampsTruncatedCount` / `*HandlesTruncatedSafely` / `*RejectsTruncated` | 恶意/截断:不 panic、不过读 |
 
-差分法已三次证明其价值:抓出 NetFlow v5 漏设的 `TimeReceivedNs`/`SamplerAddress`、sFlow 漏设的 `SequenceNum`/`SamplerAddress`。
+差分法已多次证明其价值:抓出 NetFlow v5 漏设的 `TimeReceivedNs`/`SamplerAddress`、sFlow 漏设的 `SequenceNum`/`SamplerAddress`。
+
+> **陷阱(教训)**:差分「两路一致」只保证**相对**正确,不保证**绝对**正确——若 fixture 本身喂了垃圾,两路可能一致地产生垃圾。实例:`SampledHeader` fixture 曾漏设 `OriginalLength`(sFlow 编码器把它当 XDR opaque 长度写),导致编码出**空帧**,两路都解出空 → 差分通过、但抓包解析其实**从没被真正测过**。补上 `OriginalLength` 后才暴露真实的 `ParsePacket` 成本(48µs/1039 allocs)与快路径收益(35×)。**写差分 fixture 时务必确认 fixture 编码出的是真实数据。**
 
 ---
 
@@ -138,7 +140,8 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 |---|---|---|
 | NetFlow v5 | **0** | 稳态零分配 |
 | sFlow SampledIPv4/IPv6 | **0** | 稳态零分配 |
-| sFlow SampledHeader | **≤ 30**(1/样本) | 全在复用的 `ParseSampledHeader` 内,非本包代码 |
+| sFlow SampledHeader(常见:无标签 IPv4/6+TCP/UDP) | **0** | `parseSampledPacket` 直接切帧,零拷贝 |
+| sFlow SampledHeader(回落:VLAN/IP options/IPv6 ext/分片) | GoFlow2 `ParsePacket`(~35/包) | 少见路径,用加固解析器 |
 | 信封 payload | **永不拷贝** | 切 value buffer |
 
 > **任何令上述三条「0」变非 0 的改动,即视为回归**(通常是热路径里新引入的 `errors.New`/`make`/`append` 扩容/`MarshalBinary`)。
@@ -149,7 +152,7 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 |---|---|---|
 | NetFlow v5 | 12× | 15.3× |
 | sFlow SampledIPv4 | 7× | 9.2× |
-| sFlow SampledHeader | 3× | 4.1× |
+| sFlow SampledHeader(无标签常见) | 15× | 35× |
 
 ### 8.3 本会话参考绝对值(machine-dependent,Apple Silicon,`-8`)
 
@@ -159,12 +162,12 @@ sFlow 是 **TLV**(datagram 头 → 变长 samples → 变长 records),最常见�
 |---|---|---|---|---|---|
 | NetFlow v5(30 rec) | 8,800 ns / 110 allocs / 5,309 B | **575 ns / 0 / 0** | 15.3× | ~19 ns | 52M/s |
 | sFlow IPv4(30 样本) | 13,573 ns / 229 / 13,014 B | **1,480 ns / 0 / 0** | 9.2× | ~49 ns | 20M/s |
-| sFlow Header(30 样本) | 16,055 ns / 259 / 13,974 B | **3,868 ns / 30 / 240 B** | 4.1× | ~129 ns | 7.8M/s |
+| sFlow Header 无标签(30 样本) | 48,093 ns / 1,039 / 31,510 B | **1,374 ns / 0 / 0** | **35×** | ~46 ns | 22M/s |
 | 信封解析(单独) | 344 ns / 5 / 1,744 B | **83 ns / 2 / 16 B** | 4× | — | — |
 
-> **值结构 vs protobuf 载体的收益**:去掉 protobuf `FlowMessage.Reset` 的每消息 atomic + 更小清零(26 字段 vs 40+ 且无状态机)+ 缓存局部性。NetFlow v5 706→**575ns(−19%)**、sFlow IPv4 1,791→**1,480ns(−17%)**,均含全字段、零分配。SampledHeader 3,932→**3,868ns**:scratch 由 `Reset()`(atomic)改 **plain-zero** 后,反比换载体前更快(修了第一版引入的回归)。
+> **值结构 vs protobuf 载体的收益**:去掉 protobuf `FlowMessage.Reset` 的每消息 atomic + 更小清零(26 字段 vs 40+ 且无状态机)+ 缓存局部性。NetFlow v5 706→**575ns(−19%)**、sFlow IPv4 1,791→**1,480ns(−17%)**,均含全字段、零分配。SampledHeader 见下方 §8.3.1。
 >
-> **注意 per-record**:NetFlow v5(~19ns)比 sFlow(~49/129ns)更便宜——sFlow 每样本自带一圈框架(采样率/池/丢弃/进出口/source id/序列 + TLV 导航),SampledHeader 还多一层抓包解析。**sFlow 的「更省」体现在设备侧(无状态采样)与每 Gbps(1:N 采样 → 记录更少),不在单条 collector 解码成本上。**
+> **注意 per-record**:NetFlow v5(~19ns)比 sFlow(~46/49ns)更便宜——sFlow 每样本自带一圈框架(采样率/池/丢弃/进出口/source id/序列 + TLV 导航),SampledHeader 还多一层抓包解析。**sFlow 的「更省」体现在设备侧(无状态采样)与每 Gbps(1:N 采样 → 记录更少),不在单条 collector 解码成本上。**
 
 ---
 
@@ -187,7 +190,7 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**
 1. ~~换值结构载体~~ **已做**(commit `16ca927a` + `c19106be`):NetFlow v5 −19%、sFlow IPv4 −17%(含全字段)。两路的 `FlowMessage.Reset` 大头已消除。第一版曾过度精简丢字段,已改回(§2.2 教训)。
 2. **NetFlow v5 现在 64% 在 `decodeNetFlowV5Fast`(真实 binary 解析)**:已内联、无分配,进一步只能靠 SIMD/unsafe 批量读定长记录,收益/风险比一般。
 3. **信封 18%**:`parseRawFlowInto` 已是 wire-level partial parse,难再压。`internOrCopy` 5% 若 collector/listener 预解析成 id 可省,但 collision 与改动面不值。
-4. **SampledHeader 的 30 allocs**:全在 GoFlow2 `ParseSampledHeader`(唯一还碰 protobuf 的路径)。要清零须自研零拷贝抓包解析器——**不建议**(安全敏感,收益不抵风险)。
+4. ~~SampledHeader 的 allocs 在 GoFlow2 `ParsePacket`~~ **已做**(commit `1646540a`):`parseSampledPacket` 对无标签 Ethernet/IPv4-6/TCP-UDP 定长切 5 元组,零拷贝零分配,VLAN/options/ext/分片回落加固解析器。实测 GoFlow2 `ParsePacket`(真帧)48,093ns/1,039 allocs → **1,374ns/0(35×)**。差分门禁覆盖 IPv4/TCP、IPv4/UDP、IPv6/TCP、VLAN回落。
 5. **v9/IPFIX 仍走 GoFlow2**(反射 + 模板)。若这两协议进入主力流量,是下一个自研目标(模板状态机较难)。
 
 ---
@@ -209,4 +212,5 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**
 - `11e4dc08` sFlow v5 framing 快解码器
 - `16ca927a` `DecodedRecord` 值载体(去掉热路径的 protobuf `FlowMessage`)
 - `c19106be` `DecodedRecord` 改回含全部有意义字段(修过度精简)+ 修 sFlow header path;NetFlow v5 −19%、sFlow IPv4 −17%,均零分配
+- `1646540a` sFlow SampledHeader 定长 5 元组抓包快解析器(无标签 Ethernet/IPv4-6/TCP-UDP 零拷贝零分配,VLAN/options 回落);修 fixture `OriginalLength` bug;真帧 48µs/1039allocs → 1.37µs/0(35×)
 - 关联可靠性条目见 `flow-reliability-remediation.md` F15/F15b/F15c/F15d。
