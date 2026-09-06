@@ -63,6 +63,34 @@ type FlowGeoStatus struct {
 	Operators   uint64    `json:"operators"`
 }
 
+type FlowGeoLabel struct {
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	Breadcrumb []string `json:"breadcrumb"`
+}
+
+// Label resolves display metadata from the immutable dictionary version that
+// classified the Flow row. It never falls back to the active version because
+// doing so would silently relabel historical traffic after a publication.
+func (s *FlowGeoService) Label(version, code string) (FlowGeoLabel, bool) {
+	if s == nil || s.catalog == nil || version == "" || code == "" {
+		return FlowGeoLabel{}, false
+	}
+	index, ok := s.catalog.Get(version)
+	if !ok || index == nil {
+		return FlowGeoLabel{}, false
+	}
+	entries, ok := index.GeoBreadcrumb(code)
+	if !ok || len(entries) == 0 {
+		return FlowGeoLabel{}, false
+	}
+	path := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		path = append(path, entry.Name)
+	}
+	return FlowGeoLabel{Code: code, Name: entries[len(entries)-1].Name, Breadcrumb: path}, true
+}
+
 func (s *FlowGeoService) Status() FlowGeoStatus {
 	status := FlowGeoStatus{Path: s.Path}
 	if message := s.lastErr.Load(); message != nil {

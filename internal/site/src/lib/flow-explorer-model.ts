@@ -191,6 +191,23 @@ export function resolveFlowTimeRange(
 	return { start: new Date(end.getTime() - selected.durationMs).toISOString(), end: end.toISOString() }
 }
 
+export function resolveOverseasRange(
+	startValue: string,
+	endValue: string
+): { start: string; end: string; bucket: "1m" | "1h" } {
+	const start = new Date(startValue)
+	const end = new Date(endValue)
+	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+		throw new Error("Start and end must define a valid overseas range")
+	}
+	const bucket: "1m" | "1h" = end.getTime() - start.getTime() <= 7 * 24 * 60 * 60_000 ? "1m" : "1h"
+	const bucketMilliseconds = bucket === "1m" ? 60_000 : 3_600_000
+	const alignedStart = new Date(Math.floor(start.getTime() / bucketMilliseconds) * bucketMilliseconds)
+	const alignedEnd = new Date(Math.floor(end.getTime() / bucketMilliseconds) * bucketMilliseconds)
+	if (alignedEnd <= alignedStart) throw new Error("Overseas range contains no closed bucket")
+	return { start: alignedStart.toISOString(), end: alignedEnd.toISOString(), bucket }
+}
+
 export function parseFlowFilter(expression: string): FlowFilterExpression | undefined {
 	if (!expression.trim()) return undefined
 	return new FlowFilterParser(tokenizeFlowFilter(expression)).parse()

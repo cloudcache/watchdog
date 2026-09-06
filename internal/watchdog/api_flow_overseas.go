@@ -17,6 +17,7 @@ type flowOverseasAPI struct {
 	runner  flowOverseasRunner
 	network NetworkRepository
 	audit   AuditRepository
+	geo     *FlowGeoService
 	now     func() time.Time
 }
 
@@ -26,9 +27,10 @@ func registerFlowOverseasRoutes(
 	runner flowOverseasRunner,
 	network NetworkRepository,
 	audit AuditRepository,
+	geo *FlowGeoService,
 	now func() time.Time,
 ) {
-	api := flowOverseasAPI{runner: runner, network: network, audit: audit, now: now}
+	api := flowOverseasAPI{runner: runner, network: network, audit: audit, geo: geo, now: now}
 	mux.Handle("POST /api/v1/flow/overseas/query", auth(http.HandlerFunc(api.query)))
 }
 
@@ -81,8 +83,26 @@ func (api flowOverseasAPI) query(w http.ResponseWriter, r *http.Request) {
 			"source":       input.Bucket,
 			"step_seconds": uint32(compiled.BucketDuration / time.Second),
 			"sort":         "bucket:asc,kind:asc,direction:asc,value:desc",
+			"geo_labels":   api.geoLabels(result),
 		},
 	})
+}
+
+func (api flowOverseasAPI) geoLabels(result flowquery.OverseasResult) map[string]FlowGeoLabel {
+	labels := make(map[string]FlowGeoLabel)
+	for _, point := range result.Points {
+		if point.Kind != flowquery.OverseasRowGeo || point.GeoValue == "" || point.Other {
+			continue
+		}
+		key := point.GeoVersion + ":" + point.GeoValue
+		if _, exists := labels[key]; exists {
+			continue
+		}
+		if label, ok := api.geo.Label(point.GeoVersion, point.GeoValue); ok {
+			labels[key] = label
+		}
+	}
+	return labels
 }
 
 func (api flowOverseasAPI) currentTime() time.Time {

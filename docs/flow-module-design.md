@@ -709,6 +709,8 @@ CH native result contract 不接受把 `LowCardinality(String)` 隐式当作 `St
 
 境外专题只读 1m/1h aggregate 的最新 generation，不同步扫描 `flow_records`，也不增加第二张境外事实表。`category=overseas` 是数据面按事件时间 classification snapshot 生成的唯一境外权威；查询层不得再次用国家名称、ISO 字符串或当前港澳台设置重判历史。`geo_level` 首发只接受 `country/region`，分别固定读取 `geo.country/geo.region` rollup；Geo 名称和 breadcrumb 由结果行自己的 `geo_version` 在共享 `flowdimension.GeoCatalog` 中解析，不能跨版本按名称合并。
 
+境外页将通用 Explorer 与专题 aggregate 明确分层：专题区展示入/出 KPI 与趋势、观测境外 IP/本地主机、country/region TopN、采样未知比例、闭桶覆盖率和版本混用告警；查询跨度不超过 7 天时使用闭合 UTC `1m` 桶，更长跨度使用闭合 UTC `1h` 桶。专题 schema v1 只能下推 direction/business/resource，因此设备筛选可直接生效，而国家/省/市/运营商的交叉条件必须交给下方 bounded Explorer；界面必须提示这一口径差异，不得把分别查询的边际分布拼成联合结果。Geo 展示键为 `geo_version:geo_value`，后端在同版本发布目录解析名称和 breadcrumb，解析失败时显示稳定 ID，绝不回退到当前 active version。
+
 同一个 latest-generation 查询返回两类行：
 
 - `kind=kpi`：对 `category=overseas` 的流量返回 `in/out/combined × ipv4/ipv6/unknown/all`。业务方向决定远端和本地端：入向的远端/本地分别是 `src_ip/dst_ip`，出向分别是 `dst_ip/src_ip`；复用现有 endpoint rollup，不新增冗余的 local/remote IP 高基数维度。查询同时聚合远端和本地两条镜像计数并校验 metric、received、unknown-sampling、quality 四组总数完全一致，不一致时 provider 整体失败，禁止只显示其中一侧。

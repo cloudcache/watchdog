@@ -101,6 +101,13 @@ func TestFlowGeoServiceReloadLookupStatus(t *testing.T) {
 	if !found || info.Country != "CN" || info.AdminCode != "810000" {
 		t.Fatalf("lookup = %+v found=%v", info, found)
 	}
+	label, found := service.Label("test-1", "810000")
+	if !found || label.Name != "香港" || len(label.Breadcrumb) != 1 || label.Breadcrumb[0] != "香港" {
+		t.Fatalf("label = %+v found=%v", label, found)
+	}
+	if _, found := service.Label("missing-version", "810000"); found {
+		t.Fatal("label must not fall back across dictionary versions")
+	}
 	if _, found := service.Lookup(netip.MustParseAddr("203.0.113.1")); found {
 		t.Fatal("uncovered address must not resolve")
 	}

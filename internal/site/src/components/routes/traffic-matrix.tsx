@@ -19,6 +19,7 @@ import {
 	flowSurfacePreset,
 	mergeFlowFilters,
 	parseFlowFilter,
+	resolveOverseasRange,
 	resolveFlowTimeRange,
 	type FlowFilters,
 	type FlowFilterExpression,
@@ -49,6 +50,44 @@ type FlowQueryResponse = {
 		timezone?: string
 		step_seconds?: number
 		completeness?: { complete_ratio: number; partial: boolean; unknown_ratio: number; warnings?: string[] }
+	}
+}
+
+type OverseasPoint = {
+	bucket: string
+	kind: "kpi" | "geo"
+	geo_scope: "overseas" | "unknown_geo" | ""
+	direction: "in" | "out" | "combined"
+	ip_family: "ipv4" | "ipv6" | "unknown" | "all"
+	geo_value?: string
+	other: boolean
+	dimension_snapshot_id: string
+	geo_version: string
+	classification_version: number
+	value: number
+	observed_remote_ips: number
+	observed_local_hosts: number
+	received_records: number
+	unknown_sampling_records: number
+	quality_records: number
+	generated_at: string
+}
+
+type OverseasQueryResponse = {
+	data: {
+		points: OverseasPoint[] | null
+		metric: { name: string; unit: string }
+		geo_level?: "country" | "region"
+		top_n?: number
+		include_other?: boolean
+		rollup_completeness: { expected_buckets: number; covered_buckets: number; ratio: number; complete: boolean }
+		mixed_versions: boolean
+		version_count: number
+	}
+	meta: {
+		source: "1m" | "1h"
+		step_seconds: number
+		geo_labels?: Record<string, { code: string; name: string; breadcrumb: string[] }>
 	}
 }
 
@@ -190,6 +229,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [series, setSeries] = useState<FlowSeries[]>([])
 	const [selectedDetailIP, setSelectedDetailIP] = useState("")
 	const [response, setResponse] = useState<FlowQueryResponse | null>(null)
+	const [overseasResponse, setOverseasResponse] = useState<OverseasQueryResponse | null>(null)
+	const [overseasError, setOverseasError] = useState("")
+	const [overseasGeoLevel, setOverseasGeoLevel] = useState(() => queryState("geo_level", "country"))
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState("")
 	const [referenceError, setReferenceError] = useState("")
@@ -264,6 +306,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		async (modeOverride?: QueryMode) => {
 			setLoading(true)
 			setError("")
+			setOverseasError("")
 			try {
 				const activeMode = modeOverride ?? queryMode
 				const { start, end } = resolveFlowTimeRange(timeRange, customStart, customEnd)
@@ -358,6 +401,31 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						? buildFlowJointSeries((query.data.points ?? []) as FlowJointPoint[], query.data.plan, queryUnit)
 						: buildFlowSeries((query.data?.points ?? []) as FlowPoint[], query.data?.plan, queryUnit)
 				)
+				if (surface === "overseas") {
+					try {
+						const overseasRange = resolveOverseasRange(start, end)
+						const overseas = await pb.send<OverseasQueryResponse>("/api/v1/flow/overseas/query", {
+							method: "POST",
+							body: {
+								from: overseasRange.start,
+								to: overseasRange.end,
+								bucket: overseasRange.bucket,
+								metric,
+								geo_level: overseasGeoLevel,
+								view: "customer",
+								top_n: Math.max(1, Math.min(100, topN)),
+								include_other: includeOther,
+								filters: selectedDevice === "all" ? {} : { device_ids: [selectedDevice] },
+							},
+						})
+						setOverseasResponse(overseas)
+					} catch (overseasRequestError) {
+						setOverseasResponse(null)
+						setOverseasError(
+							overseasRequestError instanceof Error ? overseasRequestError.message : t`Failed to load overseas summary`
+						)
+					}
+				}
 				persistQueryState({
 					analysis: activeMode,
 					range: timeRange,
@@ -379,6 +447,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					operator: selectedOperator,
 					set: selectedSet,
 					device: selectedDevice,
+					geo_level: overseasGeoLevel,
 				})
 			} catch (err) {
 				setError(err instanceof Error ? err.message : t`Failed to load`)
@@ -411,6 +480,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			selectedOperator,
 			selectedSet,
 			selectedDevice,
+			overseasGeoLevel,
+			surface,
 			t,
 		]
 	)
@@ -604,6 +675,23 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					<Trans>Refresh</Trans>
 				</Button>
 			</div>
+
+			{surface === "overseas" && (
+				<OverseasSummary
+					response={overseasResponse}
+					error={overseasError}
+					geoLevel={overseasGeoLevel}
+					onGeoLevelChange={setOverseasGeoLevel}
+					onRefresh={() => refresh()}
+					loading={loading}
+					isNarrowed={
+						selectedCountry !== "all" ||
+						selectedProvince !== "all" ||
+						selectedCity !== "all" ||
+						selectedOperator !== "all"
+					}
+				/>
+			)}
 
 			<div className="grid gap-4 rounded-md border border-border bg-card p-4">
 				<div>
@@ -954,6 +1042,225 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		</div>
 	)
 })
+
+function OverseasSummary({
+	response,
+	error,
+	geoLevel,
+	onGeoLevelChange,
+	onRefresh,
+	loading,
+	isNarrowed,
+}: {
+	response: OverseasQueryResponse | null
+	error: string
+	geoLevel: string
+	onGeoLevelChange: (value: string) => void
+	onRefresh: () => void
+	loading: boolean
+	isNarrowed: boolean
+}) {
+	const chartRef = useRef<HTMLDivElement>(null)
+	const chartInstance = useRef<ReturnType<typeof createFlowExplorerChart> | null>(null)
+	const points = response?.data.points ?? []
+	const unit = response?.data.metric.unit ?? ""
+	const directionSeries = useMemo(() => {
+		const source = points.filter(
+			(point) =>
+				point.kind === "kpi" && point.ip_family === "all" && (point.direction === "in" || point.direction === "out")
+		)
+		const grouped = new Map<string, FlowPoint>()
+		for (const point of source) {
+			const key = `${point.bucket}:${point.direction}`
+			const current = grouped.get(key)
+			grouped.set(key, {
+				bucket: point.bucket,
+				dimension_value: point.direction === "in" ? "Inbound" : "Outbound",
+				other: false,
+				value: (current?.value ?? 0) + point.value,
+				dimension_snapshot_id: current?.dimension_snapshot_id ?? point.dimension_snapshot_id,
+				geo_version: current?.geo_version ?? point.geo_version,
+				classification_version: current?.classification_version ?? point.classification_version,
+				received_records: (current?.received_records ?? 0) + point.received_records,
+				unknown_sampling_records: (current?.unknown_sampling_records ?? 0) + point.unknown_sampling_records,
+				quality_records: (current?.quality_records ?? 0) + point.quality_records,
+				generated_at: current?.generated_at ?? point.generated_at,
+			})
+		}
+		const rows = [...grouped.values()]
+		if (rows.length === 0) return []
+		const stepSeconds = response?.meta.step_seconds ?? 60
+		const start = rows.reduce((minimum, row) => Math.min(minimum, Date.parse(row.bucket)), Number.POSITIVE_INFINITY)
+		const last = rows.reduce((maximum, row) => Math.max(maximum, Date.parse(row.bucket)), Number.NEGATIVE_INFINITY)
+		const plan: FlowPlan = {
+			requested_from: new Date(start).toISOString(),
+			requested_to: new Date(last + stepSeconds * 1000).toISOString(),
+			effective_from: new Date(start).toISOString(),
+			effective_to: new Date(last + stepSeconds * 1000).toISOString(),
+			source: response?.meta.source ?? "1m",
+			source_seconds: stepSeconds,
+			step_seconds: stepSeconds,
+			target_points: rows.length,
+		}
+		return buildFlowSeries(rows, plan, unit)
+	}, [points, response?.meta.source, response?.meta.step_seconds, unit])
+
+	useEffect(() => {
+		disposeChart(chartInstance.current)
+		chartInstance.current = null
+		if (chartRef.current && directionSeries.length > 0) {
+			chartInstance.current = createFlowExplorerChart(chartRef.current, "lines", directionSeries, (value) =>
+				formatFlowValue(value, unit)
+			)
+		}
+		return () => {
+			disposeChart(chartInstance.current)
+			chartInstance.current = null
+		}
+	}, [directionSeries, unit])
+
+	const latestBucket = points
+		.filter((point) => point.kind === "kpi" && point.ip_family === "all")
+		.reduce((latest, point) => (point.bucket > latest ? point.bucket : latest), "")
+	const latestKPI = points.filter(
+		(point) => point.kind === "kpi" && point.ip_family === "all" && point.bucket === latestBucket
+	)
+	const sumLatest = (selector: (point: OverseasPoint) => number) =>
+		latestKPI.reduce((sum, point) => sum + selector(point), 0)
+	const directionValue = (direction: "in" | "out") =>
+		latestKPI.filter((point) => point.direction === direction).reduce((sum, point) => sum + point.value, 0)
+	const combined = latestKPI.filter((point) => point.direction === "combined")
+	const observedRemoteIPs = combined.reduce((sum, point) => sum + point.observed_remote_ips, 0)
+	const observedLocalHosts = combined.reduce((sum, point) => sum + point.observed_local_hosts, 0)
+	const receivedRecords = sumLatest((point) => (point.direction === "combined" ? point.received_records : 0))
+	const unknownSamplingRecords = sumLatest((point) =>
+		point.direction === "combined" ? point.unknown_sampling_records : 0
+	)
+	const latestGeoBucket = points
+		.filter((point) => point.kind === "geo" && point.direction === "combined")
+		.reduce((latest, point) => (point.bucket > latest ? point.bucket : latest), "")
+	const geoRows = points
+		.filter((point) => point.kind === "geo" && point.direction === "combined" && point.bucket === latestGeoBucket)
+		.sort((left, right) => right.value - left.value)
+	const geoLabel = (point: OverseasPoint) => {
+		if (point.geo_scope === "unknown_geo") return "Unknown geography"
+		if (point.other) return "Other"
+		return response?.meta.geo_labels?.[`${point.geo_version}:${point.geo_value}`]?.name ?? point.geo_value ?? "Unknown"
+	}
+
+	return (
+		<section className="grid gap-4 rounded-md border border-border bg-card p-4">
+			<div className="flex flex-wrap items-end justify-between gap-3">
+				<div>
+					<h2 className="font-medium">
+						<Trans>Overseas summary</Trans>
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						<Trans>Inbound and outbound traffic from the published overseas rollup.</Trans>
+					</p>
+				</div>
+				<div className="flex items-end gap-2">
+					<OptionSelect
+						label="Geo level"
+						value={geoLevel}
+						onChange={onGeoLevelChange}
+						options={[
+							{ value: "country", label: "Country" },
+							{ value: "region", label: "Region" },
+						]}
+						width="w-40"
+					/>
+					<Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+						<RefreshCwIcon className="me-2 h-4 w-4" />
+						<Trans>Refresh</Trans>
+					</Button>
+				</div>
+			</div>
+
+			{isNarrowed && (
+				<p className="rounded-md border border-yellow-300 bg-yellow-50 p-2 text-xs text-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-100">
+					<Trans>
+						This summary applies the selected device only. Country, province, city and operator filters apply to the
+						Explorer below because the overseas rollup does not contain cross-dimension tuples.
+					</Trans>
+				</p>
+			)}
+			{error && (
+				<p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>
+			)}
+
+			{response && (
+				<>
+					<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+						<Badge variant={response.data.rollup_completeness.complete ? "success" : "warning"}>
+							{(response.data.rollup_completeness.ratio * 100).toFixed(1)}% complete
+						</Badge>
+						<Badge variant="outline">{response.meta.source} source</Badge>
+						{response.data.mixed_versions && <Badge variant="warning">Mixed classification versions</Badge>}
+						{latestBucket && <span>{new Date(latestBucket).toLocaleString()}</span>}
+					</div>
+					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+						<FlowMetricCard label="Inbound" value={formatFlowValue(directionValue("in"), unit)} />
+						<FlowMetricCard label="Outbound" value={formatFlowValue(directionValue("out"), unit)} />
+						<FlowMetricCard label="Observed remote IPs" value={observedRemoteIPs.toLocaleString()} />
+						<FlowMetricCard label="Observed local hosts" value={observedLocalHosts.toLocaleString()} />
+					</div>
+					<div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+						<span>{receivedRecords.toLocaleString()} sampled records</span>
+						<span>{ratio(unknownSamplingRecords, receivedRecords)} unknown sampling</span>
+					</div>
+					<div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+						<div className="rounded-md border border-border p-3">
+							<h3 className="mb-2 text-sm font-medium">Traffic trend</h3>
+							{directionSeries.length === 0 && !loading ? (
+								<div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+									No overseas points found
+								</div>
+							) : null}
+							<div ref={chartRef} className={directionSeries.length > 0 ? "h-72" : "h-0"} />
+						</div>
+						<div className="rounded-md border border-border p-3">
+							<h3 className="mb-2 text-sm font-medium">Top {geoLevel === "country" ? "countries" : "regions"}</h3>
+							{geoRows.length === 0 ? (
+								<p className="py-8 text-center text-sm text-muted-foreground">No geography points found</p>
+							) : (
+								<div className="grid gap-2">
+									{geoRows.map((point, index) => {
+										const label = response.meta.geo_labels?.[`${point.geo_version}:${point.geo_value}`]
+										return (
+											<div
+												key={`${point.geo_version}:${point.geo_value}:${point.other}`}
+												className="flex items-center justify-between gap-3 text-sm"
+												title={label?.breadcrumb.join(" / ")}
+											>
+												<span className="min-w-0 truncate text-muted-foreground">
+													{index + 1}. {geoLabel(point)}
+												</span>
+												<span className="shrink-0 font-medium tabular-nums">{formatFlowValue(point.value, unit)}</span>
+											</div>
+										)
+									})}
+								</div>
+							)}
+						</div>
+					</div>
+				</>
+			)}
+			{!response && !error && !loading && (
+				<p className="py-8 text-center text-sm text-muted-foreground">No overseas result loaded</p>
+			)}
+		</section>
+	)
+}
+
+function FlowMetricCard({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="rounded-md border border-border p-3">
+			<p className="text-xs text-muted-foreground">{label}</p>
+			<p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+		</div>
+	)
+}
 
 function OptionSelect({
 	label,

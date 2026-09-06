@@ -8,6 +8,7 @@ import {
 	FLOW_SURFACE_PRESETS,
 	flowSurfacePreset,
 	parseFlowFilter,
+	resolveOverseasRange,
 	resolveFlowTimeRange,
 } from "./flow-explorer-model.ts"
 
@@ -43,6 +44,20 @@ test("flow ranges are independent presets and custom ranges are minute-aligned",
 		start: "2026-09-06T10:03:00.000Z",
 		end: "2026-09-06T11:04:00.000Z",
 	})
+})
+
+test("overseas ranges select a physical rollup and align closed UTC buckets", () => {
+	assert.deepEqual(resolveOverseasRange("2026-09-06T10:03:49Z", "2026-09-06T11:04:59Z"), {
+		start: "2026-09-06T10:03:00.000Z",
+		end: "2026-09-06T11:04:00.000Z",
+		bucket: "1m",
+	})
+	assert.deepEqual(resolveOverseasRange("2026-08-01T10:03:49Z", "2026-09-06T11:04:59Z"), {
+		start: "2026-08-01T10:00:00.000Z",
+		end: "2026-09-06T11:00:00.000Z",
+		bucket: "1h",
+	})
+	assert.throws(() => resolveOverseasRange("invalid", "2026-09-06T11:04:59Z"), /valid overseas range/)
 })
 
 test("flow filter expression parses precedence, typed operators and IP/CIDR values", () => {
