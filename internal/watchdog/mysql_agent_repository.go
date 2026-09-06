@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -76,6 +77,112 @@ func (s *MySQLStore) ListAgents(ctx context.Context, tenantID ID) ([]SNMPAgentCo
 		agents = append(agents, NormalizeAgentConfig(agent))
 	}
 	return agents, rows.Err()
+}
+
+var agentPageSortColumns = map[string]string{
+	"":              "updated_at",
+	"id":            "id",
+	"target_id":     "target_id",
+	"agent_type":    "agent_type",
+	"mode":          "mode",
+	"status":        "status",
+	"last_seen_at":  "last_seen_at",
+	"updated_at":    "updated_at",
+	"run_count":     "run_count",
+	"failure_count": "failure_count",
+}
+
+// ListAgentsPage returns one permission-scoped Agent Registry page and the
+// total for the same search/filter. Query values never become SQL identifiers;
+// sort keys are resolved through agentPageSortColumns.
+func (s *MySQLStore) ListAgentsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, filter AgentPageFilter) ([]SNMPAgentConfig, int, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 25
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if !all && len(allowedTargetIDs) == 0 {
+		return nil, 0, nil
+	}
+
+	where := ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if !all {
+		where += ` AND target_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedTargetIDs)), ",") + `)`
+		for _, id := range allowedTargetIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.AgentType != "" {
+		where += ` AND agent_type = ?`
+		args = append(args, filter.AgentType)
+	}
+	if filter.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (id LIKE ? OR target_id LIKE ? OR agent_type LIKE ? OR mode LIKE ? OR COALESCE(endpoint, '') LIKE ? OR COALESCE(last_error, '') LIKE ?)`
+		for range 6 {
+			args = append(args, like)
+		}
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM target_agents`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumn := agentPageSortColumns[filter.Sort]
+	if sortColumn == "" {
+		sortColumn = agentPageSortColumns[""]
+	}
+	direction := "ASC"
+	if filter.Desc || filter.Sort == "" {
+		direction = "DESC"
+	}
+	query := `
+		SELECT id, tenant_id, target_id, agent_type, mode, COALESCE(endpoint, ''), token_hash, status,
+			last_seen_at, last_run_at, last_success_at, last_error, run_count, failure_count, created_at, updated_at
+		FROM target_agents` + where + fmt.Sprintf(` ORDER BY %s %s, id %s LIMIT ? OFFSET ?`, sortColumn, direction, direction)
+	pageArgs := append(append([]any(nil), args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	agents := make([]SNMPAgentConfig, 0, min(limit, total))
+	for rows.Next() {
+		var agent SNMPAgentConfig
+		var lastSeen, lastRun, lastSuccess sql.NullTime
+		var lastError sql.NullString
+		if err := rows.Scan(
+			&agent.ID, &agent.TenantID, &agent.TargetID, &agent.AgentType, &agent.Mode, &agent.Endpoint, &agent.TokenHash, &agent.Status,
+			&lastSeen, &lastRun, &lastSuccess, &lastError, &agent.RunCount, &agent.FailureCount, &agent.CreatedAt, &agent.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		if lastSeen.Valid {
+			agent.LastSeen = lastSeen.Time
+		}
+		if lastRun.Valid {
+			agent.LastRun = lastRun.Time
+		}
+		if lastSuccess.Valid {
+			agent.LastSuccess = lastSuccess.Time
+		}
+		if lastError.Valid {
+			agent.LastError = lastError.String
+		}
+		agents = append(agents, NormalizeAgentConfig(agent))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return agents, total, nil
 }
 
 func (s *MySQLStore) UpsertAgent(ctx context.Context, agent SNMPAgentConfig) (SNMPAgentConfig, error) {

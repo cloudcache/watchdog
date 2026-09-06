@@ -89,6 +89,7 @@ type NetworkTargetProvisioner interface {
 type AgentRepository interface {
 	GetAgent(ctx context.Context, agentID ID) (SNMPAgentConfig, error)
 	ListAgents(ctx context.Context, tenantID ID) ([]SNMPAgentConfig, error)
+	ListAgentsPage(ctx context.Context, tenantID ID, all bool, allowedTargetIDs []ID, filter AgentPageFilter) ([]SNMPAgentConfig, int, error)
 	UpsertAgent(ctx context.Context, agent SNMPAgentConfig) (SNMPAgentConfig, error)
 	DeleteAgent(ctx context.Context, tenantID, agentID ID) error
 	MarkAgentSeen(ctx context.Context, agentID ID) error
@@ -97,6 +98,19 @@ type AgentRepository interface {
 	// ListAgentRunsPage returns a keyset page of an agent's runs (newest first)
 	// and a next_cursor, so the UI can page beyond the initial window.
 	ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error)
+}
+
+// AgentPageFilter drives the server-side Agent Registry table. Offset paging
+// is intentional here: the UI needs a stable total and direct previous/next
+// navigation while the sortable result set is bounded by tenant and grants.
+type AgentPageFilter struct {
+	Search    string
+	AgentType AgentType
+	Status    string
+	Sort      string
+	Desc      bool
+	Limit     int
+	Offset    int
 }
 
 type CollectorPlanRepository interface {

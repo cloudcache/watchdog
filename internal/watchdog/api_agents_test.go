@@ -11,12 +11,16 @@ import (
 )
 
 type fakeAgentRepository struct {
-	agent     SNMPAgentConfig
-	deleted   ID
-	run       AgentRunReport
-	runs      []AgentRunHistory
-	runFilter AgentRunPageFilter
-	runNext   string
+	agent      SNMPAgentConfig
+	deleted    ID
+	run        AgentRunReport
+	runs       []AgentRunHistory
+	runFilter  AgentRunPageFilter
+	runNext    string
+	pageFilter AgentPageFilter
+	pageAll    bool
+	pageIDs    []ID
+	pageTotal  int
 }
 
 func (r *fakeAgentRepository) ListAgentRunsPage(_ context.Context, _, _ ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error) {
@@ -30,6 +34,13 @@ func (r *fakeAgentRepository) GetAgent(context.Context, ID) (SNMPAgentConfig, er
 
 func (r *fakeAgentRepository) ListAgents(context.Context, ID) ([]SNMPAgentConfig, error) {
 	return []SNMPAgentConfig{r.agent}, nil
+}
+
+func (r *fakeAgentRepository) ListAgentsPage(_ context.Context, _ ID, all bool, allowedTargetIDs []ID, filter AgentPageFilter) ([]SNMPAgentConfig, int, error) {
+	r.pageFilter = filter
+	r.pageAll = all
+	r.pageIDs = append([]ID(nil), allowedTargetIDs...)
+	return []SNMPAgentConfig{r.agent}, r.pageTotal, nil
 }
 
 func (r *fakeAgentRepository) UpsertAgent(_ context.Context, agent SNMPAgentConfig) (SNMPAgentConfig, error) {
@@ -246,6 +257,38 @@ func TestAPIAgentRegistryListAllowsViewOnlyTenant(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "agent-a") {
 		t.Fatalf("body missing agent-a: %s", rec.Body.String())
+	}
+}
+
+func TestAPIAgentRegistryListPageMapsServerQuery(t *testing.T) {
+	repo := &fakeAgentRepository{
+		agent:     SNMPAgentConfig{ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a"},
+		pageTotal: 37,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry?q=edge&agent_type=snmp&status=up&sort=target_id&order=asc&limit=10&offset=20", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !repo.pageAll || repo.pageFilter.Search != "edge" || repo.pageFilter.AgentType != AgentTypeSNMP || repo.pageFilter.Status != AgentStatusUp || repo.pageFilter.Sort != "target_id" || repo.pageFilter.Desc || repo.pageFilter.Limit != 10 || repo.pageFilter.Offset != 20 {
+		t.Fatalf("page query not mapped: all=%v ids=%v filter=%+v", repo.pageAll, repo.pageIDs, repo.pageFilter)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"total":37`) || !strings.Contains(body, `"limit":10`) || !strings.Contains(body, `"offset":20`) || !strings.Contains(body, `"ID":"agent-a"`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAPIAgentRegistryListPageRejectsInvalidQuery(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: &fakeAgentRepository{}})
+	for _, query := range []string{
+		"limit=0", "limit=501", "offset=-1", "agent_type=flow", "status=healthy", "sort=token_hash", "order=sideways",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, body = %s", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 

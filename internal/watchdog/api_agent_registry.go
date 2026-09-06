@@ -80,6 +80,10 @@ func registerAgentRegistryRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 
 func (api agentRegistryAPI) list(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
+	if hasAgentPageQuery(r) {
+		api.listPage(w, r, auth)
+		return
+	}
 	agents, err := api.repo.ListAgents(r.Context(), auth.TenantID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
@@ -92,6 +96,80 @@ func (api agentRegistryAPI) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": visible})
+}
+
+func hasAgentPageQuery(r *http.Request) bool {
+	query := r.URL.Query()
+	for _, key := range []string{"q", "agent_type", "status", "sort", "order", "limit", "offset"} {
+		if query.Has(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func (api agentRegistryAPI) listPage(w http.ResponseWriter, r *http.Request, auth AuthContext) {
+	query := r.URL.Query()
+	filter := AgentPageFilter{
+		Search:    strings.TrimSpace(query.Get("q")),
+		AgentType: AgentType(strings.TrimSpace(query.Get("agent_type"))),
+		Status:    strings.TrimSpace(query.Get("status")),
+		Sort:      strings.TrimSpace(query.Get("sort")),
+		Desc:      strings.EqualFold(strings.TrimSpace(query.Get("order")), "desc"),
+	}
+	if filter.AgentType != "" && filter.AgentType != AgentTypeSNMP && filter.AgentType != AgentTypeSystem {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "agent_type must be snmp or system", nil)
+		return
+	}
+	switch filter.Status {
+	case "", AgentStatusPending, AgentStatusUp, AgentStatusDown, AgentStatusError, AgentStatusDisabled:
+	default:
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid agent status", nil)
+		return
+	}
+	if _, ok := agentPageSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid agent sort", nil)
+		return
+	}
+	if order := strings.TrimSpace(query.Get("order")); order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 25, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	all, allowedTargetIDs := visibleDeviceScope(auth)
+	agents, total, err := api.repo.ListAgentsPage(r.Context(), auth.TenantID, all, allowedTargetIDs, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	items := make([]agentRegistryResponse, 0, len(agents))
+	for _, agent := range agents {
+		items = append(items, agentRegistryDTO(agent))
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{
+		"items": items, "total": total, "limit": filter.Limit, "offset": filter.Offset,
+	})
+}
+
+func parseAgentPageInteger(raw string, fallback, minimum, maximum int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minimum || value > maximum {
+		return 0, errors.New("integer is outside the allowed range")
+	}
+	return value, nil
 }
 
 func (api agentRegistryAPI) get(w http.ResponseWriter, r *http.Request) {
