@@ -35,7 +35,9 @@
 ## P2 · 正确性边角 · 资源 · 卫生
 
 - [x] **F11 内网向流 address-set 归属恒空** ✅ commit 8747ef85（决策=in/out 并集）— 编译期预计算 `internal` 并集字段（每匹配集恰一次），classify 时零拷贝 alias（保零分配）；per-record 展开上限计入 2*maxLocalInternal。单测断言内网流 local 端携带集归属。 — `endpoint()` switch 无 `DirectionInternal` 分支 → 内网流量丢客户归属。→ 补分支（推荐 in/out 并集）；与产品确认语义。文件：`flowdimension/classify.go:102`。验证：内网 10.x↔10.x 流命中 `both` 集合。
-- [ ] **F12 历史 GeoIndex 版本不回收（`RetainVersions` 无调用方）** 【需 hub 侧接线】 — 长期运行内存缓慢泄漏。→ 把 `RetainVersions` 接进 reload/保留策略（只留事件时间重放窗口内版本）。文件：`flowdimension/geo.go`、`internal/watchdog/flow_geo.go`。
+- [~] **F12 历史 GeoIndex 版本不回收（`RetainVersions` 无调用方）** — 长期运行内存缓慢泄漏。
+  - ✅ **泄漏已封顶**(commit afa5ae64,自包含、不需 hub 接线):`GeoCatalog.load()` 装入版本后调 `capHistoricalGeoVersions`,保留 active + 按 EffectiveFrom 最近的若干版本(默认 128,geo 发布稀少故足够宽),裁掉更老的;早于保留窗口的事件经 `Select` 返回 `ErrNoGeoIndex`,不会选到错版本。单测覆盖保最近/回滚保 active/未超限 no-op。
+  - ⏳ **待补(hub 侧,可选)**:按「事件时间重放窗口」的精确保留仍是 `RetainVersions` 的活,等 hub `FlowGeoService.Reload` 接线时接上;当前 cap 只是防泄漏兜底。文件:`flowdimension/geo.go`、`internal/watchdog/flow_geo.go`。
   - 精确机制（复核后）：`GeoCatalog.load()` 每装入一个新 version 就把它加进 `byVersion` 且从不裁剪。两个 caller 里——**worker**（`cmd/watchdog-flow-worker/main.go:344` 一次性按 CLI bundle 列表装载，**有界、不泄漏**）；**hub** `FlowGeoService.Reload()`（`internal/watchdog/flow_geo.go`，每次 geo 重发布调用一次，**会随发布次数无界累积** = 真正泄漏路径）。
   - `RetainVersions` 本身已有基础单测（geo_test.go:423/429），逻辑正确、只是没 caller。修复=在 hub 的周期重载点用「active.EffectiveFrom − 事件重放窗口」算出需保留版本集并调用 `RetainVersions`。该点在 `internal/watchdog`（当前热区，且与正在重做的地址/分类发布链路相关），留给该链路定稿时一并接。
 - [x] **F16 VPN 打分器每规则预分配 signals 切片** ✅ commit（本轮）— `make([]string,0,12)` 改 `var signals []string`，首检失败即零分配。AllocsPerRun 断言早退零分配。 — 每窗口约 5000 万次废弃分配。→ signals 延迟到首个成功信号才分配。文件：`flowvpn/scorer.go:401`。验证：alloc 基准显著下降。
