@@ -97,13 +97,16 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 	default:
 		return fmt.Errorf("sflow: unknown agent IP version %d", ipVersion)
 	}
-	subAgentID, ok1 := c.u32()
-	sequence, ok2 := c.u32()
-	_, ok3 := c.u32() // uptime: advance past, not mapped
-	samplesCount, ok4 := c.u32()
-	if !ok1 || !ok2 || !ok3 || !ok4 {
+	// subAgentId, sequence, uptime, samplesCount — one bounds-checked window.
+	if c.remaining() < 16 {
 		return errors.New("sflow: truncated datagram header")
 	}
+	h := (*[16]byte)(c.buf[c.off:])
+	c.off += 16
+	subAgentID := binary.BigEndian.Uint32(h[0:4])
+	sequence := binary.BigEndian.Uint32(h[4:8])
+	// h[8:12] uptime: not mapped.
+	samplesCount := binary.BigEndian.Uint32(h[12:16])
 	if samplesCount > 1000 { // match GoFlow2's DDoS guard
 		return fmt.Errorf("sflow: too many samples: %d", samplesCount)
 	}
@@ -116,8 +119,10 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 
 	out := 0
 	for i := 0; i < int(samplesCount) && c.remaining() >= 8; i++ {
-		format, _ := c.u32()
-		length, _ := c.u32()
+		h := (*[8]byte)(c.buf[c.off:]) // loop guard ensures >= 8 bytes
+		c.off += 8
+		format := binary.BigEndian.Uint32(h[0:4])
+		length := binary.BigEndian.Uint32(h[4:8])
 		if int(length) > c.remaining() {
 			break
 		}
@@ -146,55 +151,43 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 }
 
 func (d *Decoder) decodeSFlowFlowSample(c sflowCursor, record *DecodedRecord, format, subAgentID uint32, timeReceivedNs uint64, sampleIndex int) (DecodedRecordMetadata, error) {
-	sequence, ok := c.u32()
-	if !ok {
-		return DecodedRecordMetadata{}, errSFlowTruncatedSample
-	}
-	var sourceIDType, sourceIDValue uint32
+	// Batch-read the sample's fixed prefix in one bounds-checked window instead of
+	// a per-field u32() each (~46% of this path's CPU). Slicing a fixed-size array
+	// pointer lets the compiler drop the per-field bounds check.
+	var sequence, sourceIDType, sourceIDValue, samplingRate, samplePool, drops, inIf, outIf, recordsCount uint32
 	if format == sflow.SAMPLE_FORMAT_FLOW {
-		sid, ok := c.u32() // interlaced: type in the top byte, value in the low 24 bits
-		if !ok {
+		// seq, interlaced source-id, rate, pool, drops, input, output, records.
+		if c.remaining() < 32 {
 			return DecodedRecordMetadata{}, errSFlowTruncatedSample
 		}
+		w := (*[32]byte)(c.buf[c.off:])
+		c.off += 32
+		sequence = binary.BigEndian.Uint32(w[0:4])
+		sid := binary.BigEndian.Uint32(w[4:8]) // type in the top byte, value in the low 24 bits
 		sourceIDType, sourceIDValue = sid>>24, sid&0x00ffffff
+		samplingRate = binary.BigEndian.Uint32(w[8:12])
+		samplePool = binary.BigEndian.Uint32(w[12:16])
+		drops = binary.BigEndian.Uint32(w[16:20])
+		inIf = binary.BigEndian.Uint32(w[20:24])
+		outIf = binary.BigEndian.Uint32(w[24:28])
+		recordsCount = binary.BigEndian.Uint32(w[28:32])
 	} else {
-		var okA, okB bool
-		sourceIDType, okA = c.u32()
-		sourceIDValue, okB = c.u32()
-		if !okA || !okB {
+		// Expanded: seq, sourceIdType, sourceIdValue, rate, pool, drops,
+		// inputFmt, inputVal, outputFmt, outputVal, records. Only values map.
+		if c.remaining() < 44 {
 			return DecodedRecordMetadata{}, errSFlowTruncatedSample
 		}
-	}
-
-	var samplingRate, samplePool, drops, inIf, outIf, recordsCount uint32
-	oks := make([]bool, 0, 8)
-	if format == sflow.SAMPLE_FORMAT_FLOW {
-		var a, b, cc, dd, e, f bool
-		samplingRate, a = c.u32()
-		samplePool, b = c.u32()
-		drops, cc = c.u32()
-		inIf, dd = c.u32()
-		outIf, e = c.u32()
-		recordsCount, f = c.u32()
-		oks = append(oks, a, b, cc, dd, e, f)
-	} else {
-		// Expanded: SamplingRate, SamplePool, Drops, InputIfFormat, InputIfValue,
-		// OutputIfFormat, OutputIfValue, FlowRecordsCount. Only the values map.
-		var a, b, cc, dd, e, f, g, h bool
-		samplingRate, a = c.u32()
-		samplePool, b = c.u32()
-		drops, cc = c.u32()
-		_, dd = c.u32()
-		inIf, e = c.u32()
-		_, f = c.u32()
-		outIf, g = c.u32()
-		recordsCount, h = c.u32()
-		oks = append(oks, a, b, cc, dd, e, f, g, h)
-	}
-	for _, o := range oks {
-		if !o {
-			return DecodedRecordMetadata{}, errSFlowTruncatedSample
-		}
+		w := (*[44]byte)(c.buf[c.off:])
+		c.off += 44
+		sequence = binary.BigEndian.Uint32(w[0:4])
+		sourceIDType = binary.BigEndian.Uint32(w[4:8])
+		sourceIDValue = binary.BigEndian.Uint32(w[8:12])
+		samplingRate = binary.BigEndian.Uint32(w[12:16])
+		samplePool = binary.BigEndian.Uint32(w[16:20])
+		drops = binary.BigEndian.Uint32(w[20:24])
+		inIf = binary.BigEndian.Uint32(w[28:32])  // skip inputFmt at [24:28]
+		outIf = binary.BigEndian.Uint32(w[36:40]) // skip outputFmt at [32:36]
+		recordsCount = binary.BigEndian.Uint32(w[40:44])
 	}
 	if recordsCount > 1000 {
 		return DecodedRecordMetadata{}, fmt.Errorf("sflow: too many flow records: %d", recordsCount)
@@ -210,8 +203,10 @@ func (d *Decoder) decodeSFlowFlowSample(c sflowCursor, record *DecodedRecord, fo
 	record.TimeFlowEndNs = timeReceivedNs
 
 	for r := 0; r < int(recordsCount) && c.remaining() >= 8; r++ {
-		dataFormat, _ := c.u32()
-		recLen, _ := c.u32()
+		h := (*[8]byte)(c.buf[c.off:]) // loop guard ensures >= 8 bytes
+		c.off += 8
+		dataFormat := binary.BigEndian.Uint32(h[0:4])
+		recLen := binary.BigEndian.Uint32(h[4:8])
 		if int(recLen) > c.remaining() {
 			break
 		}
@@ -264,40 +259,36 @@ func (d *Decoder) mapSFlowRecord(record *DecodedRecord, dataFormat uint32, data 
 		}
 		copyPacketFields(record, scratch)
 	case sflow.FLOW_TYPE_IPV4:
-		length, a := c.u32()
-		protocol, b := c.u32()
-		src, okS := c.take(4)
-		dst, okD := c.take(4)
-		srcPort, cc := c.u32()
-		dstPort, dd := c.u32()
-		_, e := c.u32() // TcpFlags: GoFlow2 decodes but does not map for SampledIPv4
-		tos, f := c.u32()
-		if !a || !b || !okS || !okD || !cc || !dd || !e || !f {
+		// length, protocol, srcIP(4), dstIP(4), srcPort, dstPort, tcpFlags, tos.
+		if c.remaining() < 32 {
 			return errSFlowTruncatedRecord
 		}
-		record.SrcAddr, record.DstAddr = src, dst
-		record.Bytes = uint64(length)
-		record.Proto = protocol
-		record.SrcPort, record.DstPort = srcPort, dstPort
-		record.IpTos = tos
+		w := (*[32]byte)(c.buf[c.off:])
+		c.off += 32
+		record.Bytes = uint64(binary.BigEndian.Uint32(w[0:4]))
+		record.Proto = binary.BigEndian.Uint32(w[4:8])
+		record.SrcAddr = w[8:12]
+		record.DstAddr = w[12:16]
+		record.SrcPort = binary.BigEndian.Uint32(w[16:20])
+		record.DstPort = binary.BigEndian.Uint32(w[20:24])
+		// w[24:28] TcpFlags: GoFlow2 decodes but does not map for SampledIPv4.
+		record.IpTos = binary.BigEndian.Uint32(w[28:32])
 		record.Etype = 0x800
 	case sflow.FLOW_TYPE_IPV6:
-		length, a := c.u32()
-		protocol, b := c.u32()
-		src, okS := c.take(16)
-		dst, okD := c.take(16)
-		srcPort, cc := c.u32()
-		dstPort, dd := c.u32()
-		_, e := c.u32() // TcpFlags: not mapped
-		priority, f := c.u32()
-		if !a || !b || !okS || !okD || !cc || !dd || !e || !f {
+		// length, protocol, srcIP(16), dstIP(16), srcPort, dstPort, tcpFlags, priority.
+		if c.remaining() < 56 {
 			return errSFlowTruncatedRecord
 		}
-		record.SrcAddr, record.DstAddr = src, dst
-		record.Bytes = uint64(length)
-		record.Proto = protocol
-		record.SrcPort, record.DstPort = srcPort, dstPort
-		record.IpTos = priority
+		w := (*[56]byte)(c.buf[c.off:])
+		c.off += 56
+		record.Bytes = uint64(binary.BigEndian.Uint32(w[0:4]))
+		record.Proto = binary.BigEndian.Uint32(w[4:8])
+		record.SrcAddr = w[8:24]
+		record.DstAddr = w[24:40]
+		record.SrcPort = binary.BigEndian.Uint32(w[40:44])
+		record.DstPort = binary.BigEndian.Uint32(w[44:48])
+		// w[48:52] TcpFlags: not mapped.
+		record.IpTos = binary.BigEndian.Uint32(w[52:56]) // priority
 		record.Etype = 0x86dd
 	case sflow.FLOW_TYPE_EXT_ROUTER:
 		nextHop, err := decodeSFlowIP(&c)
