@@ -46,9 +46,12 @@ func TestMySQLListAgentRunsPage(t *testing.T) {
 	var got []ID
 	cursor := ""
 	for i := 0; ; i++ {
-		page, next, err := store.ListAgentRunsPage(ctx, tenant, "agent_run", AgentRunPageFilter{Limit: 2, Cursor: cursor})
+		page, next, total, err := store.ListAgentRunsPage(ctx, tenant, "agent_run", AgentRunPageFilter{Limit: 2, Cursor: cursor})
 		if err != nil {
 			t.Fatalf("page: %v", err)
+		}
+		if total != len(want) {
+			t.Fatalf("total = %d, want %d", total, len(want))
 		}
 		for _, run := range page {
 			got = append(got, run.ID)
@@ -66,8 +69,28 @@ func TestMySQLListAgentRunsPage(t *testing.T) {
 	}
 
 	// A different agent's runs are not returned.
-	other, _, err := store.ListAgentRunsPage(ctx, tenant, "agent_missing", AgentRunPageFilter{Limit: 10})
-	if err != nil || len(other) != 0 {
-		t.Fatalf("other agent = %v err=%v", other, err)
+	other, _, otherTotal, err := store.ListAgentRunsPage(ctx, tenant, "agent_missing", AgentRunPageFilter{Limit: 10})
+	if err != nil || len(other) != 0 || otherTotal != 0 {
+		t.Fatalf("other agent = %v total=%d err=%v", other, otherTotal, err)
 	}
+
+	seen := false
+	filtered, next, total, err := store.ListAgentRunsPage(ctx, tenant, "agent_run", AgentRunPageFilter{
+		Search: "run_0", Status: AgentRunFailure, Seen: &seen, Sort: "duration", Desc: false,
+		Limit: 2, Offset: 1, TableMode: true,
+	})
+	if err != nil {
+		t.Fatalf("table page: %v", err)
+	}
+	if next != "" || total != 3 || len(filtered) != 2 || filtered[0].ID != "run_02" || filtered[1].ID != "run_04" {
+		t.Fatalf("table page = %v next=%q total=%d", runIDs(filtered), next, total)
+	}
+}
+
+func runIDs(runs []AgentRunHistory) []ID {
+	ids := make([]ID, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, run.ID)
+	}
+	return ids
 }

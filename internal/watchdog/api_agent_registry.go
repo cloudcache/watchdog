@@ -198,16 +198,67 @@ func (api agentRegistryAPI) listRuns(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
-	filter := AgentRunPageFilter{Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be positive", nil)
+	query := r.URL.Query()
+	for key := range query {
+		switch key {
+		case "q", "status", "seen", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
 			return
 		}
-		filter.Limit = parsed
 	}
-	runs, nextCursor, err := api.repo.ListAgentRunsPage(r.Context(), auth.TenantID, agent.ID, filter)
+	filter := AgentRunPageFilter{
+		Search: strings.TrimSpace(query.Get("q")),
+		Status: AgentRunStatus(strings.ToLower(strings.TrimSpace(query.Get("status")))),
+		Sort:   strings.TrimSpace(query.Get("sort")),
+		Cursor: strings.TrimSpace(query.Get("cursor")),
+	}
+	filter.TableMode = query.Has("q") || query.Has("status") || query.Has("seen") || query.Has("sort") ||
+		query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if len(filter.Search) > 256 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "q must be at most 256 characters", nil)
+		return
+	}
+	if filter.Status == "all" {
+		filter.Status = ""
+	}
+	if filter.Status != "" && filter.Status != AgentRunSuccess && filter.Status != AgentRunFailure {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "status must be success or failure", nil)
+		return
+	}
+	if raw := strings.ToLower(strings.TrimSpace(query.Get("seen"))); raw != "" && raw != "all" {
+		if raw != "true" && raw != "false" {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "seen must be true or false", nil)
+			return
+		}
+		seen := raw == "true"
+		filter.Seen = &seen
+	}
+	if _, ok := agentRunSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid agent run sort", nil)
+		return
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc" || order == ""
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	runs, nextCursor, total, err := api.repo.ListAgentRunsPage(r.Context(), auth.TenantID, agent.ID, filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -216,7 +267,11 @@ func (api agentRegistryAPI) listRuns(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		items = append(items, agentRunHistoryResponse(run))
 	}
-	response := map[string]any{"items": items}
+	response := map[string]any{"items": items, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if nextCursor != "" {
 		response["next_cursor"] = nextCursor
 	}

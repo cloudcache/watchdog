@@ -503,56 +503,111 @@ func (s *MySQLStore) ListAgentRuns(ctx context.Context, tenantID, agentID ID, li
 	return runs, rows.Err()
 }
 
-// AgentRunPageFilter requests a keyset page of an agent's run history ordered by
-// (ended_at, id) descending (newest first).
+// AgentRunPageFilter drives both the legacy keyset API and the server-driven
+// Agent Runs table. TableMode uses offset paging plus typed filters/sorts;
+// otherwise (ended_at,id) keyset paging remains backward compatible.
 type AgentRunPageFilter struct {
-	Limit  int
-	Cursor string
+	Search    string
+	Status    AgentRunStatus
+	Seen      *bool
+	Sort      string
+	Desc      bool
+	Limit     int
+	Offset    int
+	Cursor    string
+	TableMode bool
 }
 
-// ListAgentRunsPage returns a keyset page of one agent's runs and a next_cursor
-// ("" on the last page), so the UI can page beyond the initial window.
-func (s *MySQLStore) ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error) {
+var agentRunSortColumns = map[string]string{
+	"":         "ended_at",
+	"ended":    "ended_at",
+	"started":  "started_at",
+	"duration": "duration_ms",
+	"status":   "status",
+	"seen":     "seen",
+	"id":       "id",
+}
+
+func applyAgentRunFilters(query string, args []any, filter AgentRunPageFilter) (string, []any) {
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		query += ` AND (id LIKE ? OR COALESCE(error, '') LIKE ?)`
+		args = append(args, like, like)
+	}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.Seen != nil {
+		query += ` AND seen = ?`
+		args = append(args, *filter.Seen)
+	}
+	return query, args
+}
+
+// ListAgentRunsPage returns one filtered page and its total. Legacy callers
+// without TableMode retain next_cursor keyset pagination.
+func (s *MySQLStore) ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, int, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := agentRunSelect + ` WHERE tenant_id = ? AND agent_id = ?`
+	where := ` WHERE tenant_id = ? AND agent_id = ?`
 	args := []any{tenantID, agentID}
+	where, args = applyAgentRunFilters(where, args, filter)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_run_history`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+
+	query := agentRunSelect + where
 	if filter.Cursor != "" {
 		endedAt, id, err := decodeAuditCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND (ended_at < ? OR (ended_at = ? AND id < ?))`
 		args = append(args, endedAt.UTC(), endedAt.UTC(), id)
 	}
-	query += ` ORDER BY ended_at DESC, id DESC LIMIT ?`
-	args = append(args, limit+1)
+	if filter.TableMode {
+		sortColumn := agentRunSortColumns[filter.Sort]
+		if sortColumn == "" {
+			sortColumn = "ended_at"
+		}
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		args = append(args, limit, filter.Offset)
+	} else {
+		query += ` ORDER BY ended_at DESC, id DESC LIMIT ?`
+		args = append(args, limit+1)
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	var runs []AgentRunHistory
 	for rows.Next() {
 		run, err := scanAgentRun(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		runs = append(runs, run)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	nextCursor := ""
-	if len(runs) > limit {
+	if !filter.TableMode && len(runs) > limit {
 		runs = runs[:limit]
 		last := runs[limit-1]
 		nextCursor = encodeAuditCursor(last.EndedAt, last.ID)
 	}
-	return runs, nextCursor, nil
+	return runs, nextCursor, total, nil
 }
 
 var _ AgentRepository = (*MySQLStore)(nil)

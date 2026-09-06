@@ -110,9 +110,9 @@ type AgentRepository interface {
 	MarkAgentSeen(ctx context.Context, agentID ID) error
 	RecordAgentRun(ctx context.Context, report AgentRunReport) error
 	ListAgentRuns(ctx context.Context, tenantID, agentID ID, limit int) ([]AgentRunHistory, error)
-	// ListAgentRunsPage returns a keyset page of an agent's runs (newest first)
-	// and a next_cursor, so the UI can page beyond the initial window.
-	ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error)
+	// ListAgentRunsPage returns a filtered server page, optional compatibility
+	// keyset cursor, and the filtered total for the Agent Runs table.
+	ListAgentRunsPage(ctx context.Context, tenantID, agentID ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, int, error)
 }
 
 // AgentPageFilter drives the server-side Agent Registry table. Offset paging

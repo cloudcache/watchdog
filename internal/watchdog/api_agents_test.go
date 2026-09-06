@@ -17,15 +17,16 @@ type fakeAgentRepository struct {
 	runs       []AgentRunHistory
 	runFilter  AgentRunPageFilter
 	runNext    string
+	runTotal   int
 	pageFilter AgentPageFilter
 	pageAll    bool
 	pageIDs    []ID
 	pageTotal  int
 }
 
-func (r *fakeAgentRepository) ListAgentRunsPage(_ context.Context, _, _ ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, error) {
+func (r *fakeAgentRepository) ListAgentRunsPage(_ context.Context, _, _ ID, filter AgentRunPageFilter) ([]AgentRunHistory, string, int, error) {
 	r.runFilter = filter
-	return r.runs, r.runNext, nil
+	return r.runs, r.runNext, r.runTotal, nil
 }
 
 func (r *fakeAgentRepository) GetAgent(context.Context, ID) (SNMPAgentConfig, error) {
@@ -77,7 +78,8 @@ func TestAPIAgentRegistryListsRuns(t *testing.T) {
 			Status:   AgentRunFailure,
 			Error:    "snmp timeout",
 		}},
-		runNext: "CURSOR2",
+		runNext:  "CURSOR2",
+		runTotal: 1,
 	}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
 	rec := httptest.NewRecorder()
@@ -95,6 +97,48 @@ func TestAPIAgentRegistryListsRuns(t *testing.T) {
 	}
 	if !strings.Contains(body, `"next_cursor":"CURSOR2"`) {
 		t.Fatalf("expected next_cursor: %s", body)
+	}
+	if !strings.Contains(body, `"total":1`) {
+		t.Fatalf("expected total: %s", body)
+	}
+}
+
+func TestAPIAgentRegistryListsRunsServerTable(t *testing.T) {
+	repo := &fakeAgentRepository{
+		agent:    SNMPAgentConfig{ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a"},
+		runTotal: 7,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/agent-registry/agent-a/runs?q=timeout&status=failure&seen=false&sort=duration&order=asc&limit=25&offset=50", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !repo.runFilter.TableMode || repo.runFilter.Search != "timeout" || repo.runFilter.Status != AgentRunFailure ||
+		repo.runFilter.Seen == nil || *repo.runFilter.Seen || repo.runFilter.Sort != "duration" || repo.runFilter.Desc ||
+		repo.runFilter.Limit != 25 || repo.runFilter.Offset != 50 {
+		t.Fatalf("table filter not threaded: %+v", repo.runFilter)
+	}
+	if !strings.Contains(rec.Body.String(), `"total":7`) || !strings.Contains(rec.Body.String(), `"offset":50`) {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+}
+
+func TestAPIAgentRegistryRejectsInvalidRunQueries(t *testing.T) {
+	for _, query := range []string{
+		"unknown=1", "status=pending", "seen=maybe", "sort=error", "order=sideways", "limit=0", "limit=501", "offset=-1",
+		"cursor=abc&sort=ended",
+	} {
+		t.Run(query, func(t *testing.T) {
+			repo := &fakeAgentRepository{agent: SNMPAgentConfig{ID: "agent-a", TenantID: "tenant-a", TargetID: "target-a"}}
+			router := NewAPIV1Router(APIV1RouterConfig{Auth: billingTestAuth(true), Agents: repo})
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/agent-registry/agent-a/runs?"+query, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("query %q status = %d, body = %s", query, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

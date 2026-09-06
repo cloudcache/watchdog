@@ -1,11 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, PencilIcon, PlugZapIcon, RefreshCwIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
+import { PagedVTable } from "@/components/ui/paged-vtable"
 import { pb } from "@/lib/api"
-import { createListTable, disposeTable, type ListTable } from "@/lib/vtable"
+import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
 	ID?: string
@@ -47,65 +48,77 @@ type AgentRunsProps = {
 	id: string
 }
 
-const RUNS_PAGE_SIZE = 200
-
 export default memo(({ id }: AgentRunsProps) => {
 	const { t } = useLingui()
-	const tableRef = useRef<HTMLDivElement>(null)
-	const tableInstance = useRef<ListTable | null>(null)
 	const [agent, setAgent] = useState<AgentRecord | null>(null)
 	const [runs, setRuns] = useState<AgentRunRecord[]>([])
-	const [cursor, setCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [debouncedSearch, setDebouncedSearch] = useState("")
+	const [statusFilter, setStatusFilter] = useState("")
+	const [seenFilter, setSeenFilter] = useState("")
+	const [sort, setSort] = useState("ended:desc")
+	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
 
-	type RunsResponse = { items?: AgentRunRecord[]; next_cursor?: string }
+	type RunsResponse = { items?: AgentRunRecord[]; total?: number }
 
-	const refresh = useCallback(async () => {
-		setLoading(true)
-		setError("")
-		try {
-			const [agentData, runData] = await Promise.all([
-				pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {}),
-				pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, { query: { limit: RUNS_PAGE_SIZE } }),
-			])
-			setAgent(agentData)
-			setRuns(runData.items ?? [])
-			setCursor(runData.next_cursor ?? "")
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to load agent runs`)
-		} finally {
-			setLoading(false)
-		}
-	}, [id, t])
-
-	const loadMore = useCallback(async () => {
-		if (!cursor || loadingMore) return
-		setLoadingMore(true)
-		try {
-			const data = await pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
-				query: { limit: RUNS_PAGE_SIZE, cursor },
-			})
-			setRuns((current) => [...current, ...(data.items ?? [])])
-			setCursor(data.next_cursor ?? "")
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to load agent runs`)
-		} finally {
-			setLoadingMore(false)
-		}
-	}, [cursor, id, loadingMore, t])
+	useEffect(() => {
+		const handle = setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
+		return () => clearTimeout(handle)
+	}, [search])
 
 	useEffect(() => {
 		document.title = `${id} / ${t`Agent Runs`} / Watchdog`
-		refresh()
-	}, [id, refresh, t])
+		pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
+			.then(setAgent)
+			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load agent runs`))
+	}, [id, reloadKey, t])
+
+	useEffect(() => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
+			query: {
+				q: debouncedSearch || undefined,
+				status: statusFilter || undefined,
+				seen: seenFilter || undefined,
+				sort: sortField,
+				order,
+				limit: pageSize,
+				offset: page * pageSize || undefined,
+			},
+		})
+			.then((data) => {
+				if (sequence !== requestSequence.current) return
+				setRuns(data.items ?? [])
+				setTotal(data.total ?? 0)
+			})
+			.catch((err) => {
+				if (sequence !== requestSequence.current) return
+				setRuns([])
+				setTotal(0)
+				setError(err instanceof Error ? err.message : t`Failed to load agent runs`)
+			})
+			.finally(() => {
+				if (sequence === requestSequence.current) setLoading(false)
+			})
+	}, [debouncedSearch, id, page, pageSize, reloadKey, seenFilter, sort, statusFilter, t])
 
 	const records = useMemo(
 		() =>
 			runs.map((run) => ({
 				id: run.ID ?? run.id ?? "",
-				status: localizedStatus(run.Status ?? run.status ?? ""),
+				status: run.Status ?? run.status ?? "-",
 				seen: (run.Seen ?? run.seen) ? t`yes` : t`no`,
 				started: formatDate(run.StartedAt ?? run.started_at),
 				ended: formatDate(run.EndedAt ?? run.ended_at),
@@ -114,28 +127,64 @@ export default memo(({ id }: AgentRunsProps) => {
 			})),
 		[runs, t]
 	)
-
-	useEffect(() => {
-		if (!tableRef.current || loading || error) {
-			return
-		}
-		disposeTable(tableInstance.current)
-		tableInstance.current = createListTable(tableRef.current, {
-			records,
-			rowHeight: 46,
-			headerRowHeight: 38,
-			widthMode: "adaptive",
-			columns: [
-				{ field: "status", title: t`Status`, width: 120 },
-				{ field: "ended", title: t`Ended`, width: 190 },
-				{ field: "duration", title: t`Duration`, width: 110 },
-				{ field: "seen", title: t`Seen`, width: 90 },
-				{ field: "error", title: t`Error`, width: 520 },
-				{ field: "id", title: "ID", width: 180 },
-			],
-		})
-		return () => disposeTable(tableInstance.current)
-	}, [error, loading, records, t])
+	const columns = useMemo<ColumnDefine[]>(
+		() => [
+			{ field: "status", title: t`Status`, width: 120 },
+			{ field: "started", title: t`Started`, width: 190 },
+			{ field: "ended", title: t`Ended`, width: 190 },
+			{ field: "duration", title: t`Duration`, width: 110 },
+			{ field: "seen", title: t`Seen`, width: 90 },
+			{ field: "error", title: t`Error`, width: 420 },
+			{ field: "id", title: "ID", width: 180 },
+		],
+		[t]
+	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				status: [{ value: "success" }, { value: "failure" }],
+				seen: [
+					{ value: "true", label: t`yes` },
+					{ value: "false", label: t`no` },
+				],
+			},
+			selected: { status: statusFilter ? [statusFilter] : [], seen: seenFilter ? [seenFilter] : [] },
+			selection: { status: "single" as const, seen: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) =>
+				resetPage(() => {
+					const value = values.length > 0 ? String(values[0]) : ""
+					if (field === "status") setStatusFilter(value)
+					if (field === "seen") setSeenFilter(value)
+				}),
+			onClearAll: () =>
+				resetPage(() => {
+					setStatusFilter("")
+					setSeenFilter("")
+				}),
+		}),
+		[seenFilter, statusFilter, t]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				status: "status",
+				started: "started",
+				ended: "ended",
+				duration: "duration",
+				seen: "seen",
+				id: "id",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	const status = agent?.Status ?? agent?.status ?? "-"
 	const targetID = agent?.TargetID ?? agent?.target_id ?? "-"
@@ -157,7 +206,7 @@ export default memo(({ id }: AgentRunsProps) => {
 						<PencilIcon className="me-2 h-4 w-4" />
 						<Trans>Edit</Trans>
 					</Button>
-					<Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
@@ -174,28 +223,29 @@ export default memo(({ id }: AgentRunsProps) => {
 				/>
 			</div>
 
-			<div className="rounded-md border border-border bg-card">
-				{loading ? (
-					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>Loading...</Trans>
-					</div>
-				) : null}
+			<div className="rounded-md border border-border bg-card p-3">
 				{error ? <div className="p-3 text-sm text-destructive">{error}</div> : null}
-				{!loading && !error && runs.length === 0 ? (
-					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>No agent runs found.</Trans>
-					</div>
-				) : null}
-				<div ref={tableRef} className="h-[560px] w-full" />
+				<PagedVTable
+					records={records}
+					columns={columns}
+					loading={loading}
+					emptyText={t`No agent runs found.`}
+					searchPlaceholder={t`Search by run ID or error...`}
+					height={560}
+					rowHeight={46}
+					searchValue={search}
+					onSearchChange={setSearch}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+					}}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
+				/>
 			</div>
-
-			{cursor ? (
-				<div className="flex justify-center">
-					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
-						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-					</Button>
-				</div>
-			) : null}
 		</div>
 	)
 })
