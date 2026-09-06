@@ -144,6 +144,52 @@ export default memo(() => {
 		setPage(0)
 		update()
 	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				agentType: ["snmp", "system"].map((value) => ({ value })),
+				status: ["pending", "up", "down", "error", "disabled"].map((value) => ({ value })),
+			},
+			selected: {
+				agentType: agentType === "all" ? [] : [agentType],
+				status: status === "all" ? [] : [status],
+			},
+			selection: { agentType: "single" as const, status: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				const value = values.length > 0 ? String(values[0]) : "all"
+				resetPage(() => {
+					if (field === "agentType") setAgentType(value)
+					if (field === "status") setStatus(value)
+				})
+			},
+			onClearAll: () =>
+				resetPage(() => {
+					setAgentType("all")
+					setStatus("all")
+				}),
+		}),
+		[agentType, status]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				id: "id",
+				agentType: "agent_type",
+				target: "target_id",
+				mode: "mode",
+				status: "status",
+				lastSeen: "last_seen_at",
+				runCount: "run_count",
+				failureCount: "failure_count",
+				updated: "updated_at",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -202,6 +248,8 @@ export default memo(() => {
 					searchPlaceholder={t`Search agent, target, endpoint, or error...`}
 					searchValue={search}
 					onSearchChange={setSearch}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
 					serverPagination={{
 						page,
 						pageSize,

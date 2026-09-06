@@ -136,6 +136,29 @@ export default memo(() => {
 		setPage(0)
 		update()
 	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				owner: identity.current?.userID ? [{ value: identity.current.userID, label: t`Me` }] : [],
+			},
+			selected: { owner: owner === "mine" && identity.current?.userID ? [identity.current.userID] : [] },
+			selection: { owner: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setOwner(values.length > 0 ? "mine" : "all")),
+			onClearAll: () => resetPage(() => setOwner("all")),
+		}),
+		[identity.current?.userID, owner, t]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { name: "name", owner: "owner_id", version: "version", updated: "updated_at" },
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -195,6 +218,8 @@ export default memo(() => {
 					searchPlaceholder={t`Search dashboard name or description...`}
 					searchValue={search}
 					onSearchChange={setSearch}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
 					serverPagination={{
 						page,
 						pageSize,

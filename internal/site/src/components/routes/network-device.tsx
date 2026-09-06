@@ -988,6 +988,7 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 				const value = formatSensorValue(sensor)
 				return {
 					id: sensor.ID ?? sensor.id ?? "",
+					health: ["", "ok", "up", "normal", "1"].includes(status.trim().toLowerCase()) ? "healthy" : "problem",
 					sensorClass,
 					name,
 					status,
@@ -999,6 +1000,7 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 	)
 	const columns = useMemo(
 		() => [
+			{ field: "health", title: t`Health`, width: 120, style: denseCellStyle() },
 			{ field: "sensorClass", title: t`Class`, width: 130, style: denseCellStyle() },
 			{ field: "name", title: t`Sensor`, width: 340, style: denseCellStyle() },
 			{ field: "status", title: t`Status`, width: 130, style: denseCellStyle() },
@@ -1006,6 +1008,23 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
+	const serverFiltering = useMemo(() => ({
+		options: { health: ["healthy", "problem"].map((value) => ({ value })) },
+		selected: { health: health === "all" ? [] : [health] },
+		selection: { health: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) => {
+			setHealth(values.length > 0 ? String(values[0]) : "all")
+			setPage(0)
+		},
+		onClearAll: () => { setHealth("all"); setPage(0) },
+	}), [health])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { sensorClass: "class", name: "name", status: "status", value: "value" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1052,6 +1071,8 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 				searchPlaceholder={t`Search sensors...`}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
@@ -1080,6 +1101,7 @@ function DevicePortsTable({
 	const [ports, setPorts] = useState<NetworkPort[]>([])
 	const [search, setSearch] = useState("")
 	const [query, setQuery] = useState("")
+	const [adminStatus, setAdminStatus] = useState("all")
 	const [operStatus, setOperStatus] = useState("all")
 	const [addressFamily, setAddressFamily] = useState("all")
 	const [sort, setSort] = useState("if_index:asc")
@@ -1108,6 +1130,7 @@ function DevicePortsTable({
 			const data = await pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${deviceId}/ports`, {
 				query: {
 					q: query || undefined,
+					admin_status: adminStatus === "all" ? undefined : adminStatus,
 					oper_status: operStatus === "all" ? undefined : operStatus,
 					address_family: addressFamily === "all" ? undefined : addressFamily,
 					sort: sortField,
@@ -1128,7 +1151,7 @@ function DevicePortsTable({
 		} finally {
 			if (sequence === requestSequence.current) setLoading(false)
 		}
-	}, [addressFamily, deviceId, operStatus, page, pageSize, query, sort])
+	}, [addressFamily, adminStatus, deviceId, operStatus, page, pageSize, query, sort])
 
 	useEffect(() => {
 		load()
@@ -1180,6 +1203,32 @@ function DevicePortsTable({
 	const openPort = useCallback((record: Record<string, unknown>) => {
 		if (record.id) navigate(getPagePath($router, "network_port", { id: String(record.id) }))
 	}, [])
+	const portStates = ["up", "down"]
+	const serverFiltering = useMemo(() => ({
+		options: {
+			admin: portStates.map((value) => ({ value })),
+			oper: portStates.map((value) => ({ value })),
+		},
+		selected: {
+			admin: adminStatus === "all" ? [] : [adminStatus],
+			oper: operStatus === "all" ? [] : [operStatus],
+		},
+		selection: { admin: "single" as const, oper: "single" as const },
+		onColumnFilterChange: (field: string, values: unknown[]) => {
+			const value = values.length > 0 ? String(values[0]) : "all"
+			if (field === "admin") setAdminStatus(value)
+			if (field === "oper") setOperStatus(value)
+			setPage(0)
+		},
+		onClearAll: () => { setAdminStatus("all"); setOperStatus("all"); setPage(0) },
+	}), [adminStatus, operStatus])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { name: "name", alias: "alias", admin: "admin_status", oper: "oper_status", speed: "speed" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1240,6 +1289,8 @@ function DevicePortsTable({
 				searchPlaceholder={t`Search ports, addresses...`}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				height={560}
 				onRowClick={openPort}
 				serverPagination={{
@@ -1356,6 +1407,23 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
+	const serverFiltering = useMemo(() => ({
+		options: { state: ["established", "idle", "active", "connect"].map((value) => ({ value })) },
+		selected: { state: state === "all" ? [] : [state] },
+		selection: { state: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) => {
+			setState(values.length > 0 ? String(values[0]) : "all")
+			setPage(0)
+		},
+		onClearAll: () => { setState("all"); setPage(0) },
+	}), [state])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { peer: "peer", peerAS: "peer_as", state: "state" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1404,6 +1472,8 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 				searchPlaceholder={t`Search BGP peers or AS numbers...`}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
@@ -1758,6 +1828,23 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
+	const serverFiltering = useMemo(() => ({
+		options: { status: [{ value: "active" }] },
+		selected: { status: status === "all" ? [] : [status] },
+		selection: { status: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) => {
+			setStatus(values.length > 0 ? String(values[0]) : "all")
+			setPage(0)
+		},
+		onClearAll: () => { setStatus("all"); setPage(0) },
+	}), [status])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { vlanID: "vlan_id", name: "name", status: "status" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
@@ -1803,6 +1890,8 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 				height={300}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
@@ -1895,6 +1984,23 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
+	const serverFiltering = useMemo(() => ({
+		options: { mode: ["lacp", "active", "passive", "unknown"].map((value) => ({ value })) },
+		selected: { mode: mode === "all" ? [] : [mode] },
+		selection: { mode: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) => {
+			setMode(values.length > 0 ? String(values[0]) : "all")
+			setPage(0)
+		},
+		onClearAll: () => { setMode("all"); setPage(0) },
+	}), [mode])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { aggregate: "aggregate_index", mac: "mac_address", mode: "mode" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
@@ -1943,6 +2049,8 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 				height={300}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
@@ -2066,6 +2174,17 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 	const emptyText = alertOnly
 		? t`No active warning, error, or critical events.`
 		: t`No events yet. Events appear on interface status changes and SNMP traps.`
+	const serverFiltering = useMemo(() => ({
+		options: alertOnly ? {} : { severity: ["info", "warning", "error", "critical"].map((value) => ({ value })) },
+		selected: { severity: severity === "all" ? [] : [severity] },
+		selection: { severity: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) => {
+			setSeverity(values.length > 0 ? String(values[0]) : "all")
+			setPage(0)
+			setCursors([""])
+		},
+		onClearAll: () => { setSeverity("all"); setPage(0); setCursors([""]) },
+	}), [alertOnly, severity])
 	return (
 		<div className="grid gap-3">
 		<div className="flex flex-wrap items-center gap-2">
@@ -2115,6 +2234,7 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 				emptyText={emptyText}
 				showSearch={false}
 				showPagination={false}
+				serverFiltering={serverFiltering}
 			/>
 			<div className="flex flex-wrap items-center justify-end gap-2 text-sm">
 				<span className="text-muted-foreground"><Trans>Page {page + 1}</Trans></span>
@@ -2256,6 +2376,24 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 		setPage(0)
 		update()
 	}
+	const serverFiltering = useMemo(() => ({
+		options: { fru: [{ value: "true", label: t`Yes` }, { value: "false", label: t`No` }] },
+		selected: { fru: fru === "all" ? [] : [fru] },
+		selection: { fru: "single" as const },
+		onColumnFilterChange: (_field: string, values: unknown[]) =>
+			resetPage(() => setFRU(values.length > 0 ? String(values[0]) : "all")),
+		onClearAll: () => resetPage(() => setFRU("all")),
+	}), [fru, t])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: {
+			index: "entity_index", name: "name", entityClass: "class",
+			model: "model", serial: "serial", manufacturer: "manufacturer",
+		},
+		onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap gap-2">
@@ -2298,6 +2436,8 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 				searchPlaceholder={t`Search inventory...`}
 				searchValue={search}
 				onSearchChange={setSearch}
+				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
