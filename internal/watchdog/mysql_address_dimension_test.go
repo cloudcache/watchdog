@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if _, err := ApplyMySQLMigrations(ctx, store.db); err != nil {
 		t.Fatal(err)
 	}
+	runEmbeddedMigrationAgain(t, store.db, "047")
 	tenantID := ID("01JADDRESSDIMENSIONTENANT1")
 	userID := ID("01JADDRESSDIMENSIONUSER001")
 	_, _ = store.db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID)
@@ -47,6 +49,27 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 		ID: "00000000-0000-4000-8000-000000000001", TenantID: tenantID, CIDR: "10.0.0.0/8",
 		Labels: map[string]string{"flow": "local", "business": "private"}, Source: "test",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createBaseImport := func(checksum string, rowCountV4, rowCountV6 uint64) ID {
+		t.Helper()
+		importID, idErr := newIdentityID()
+		if idErr != nil {
+			t.Fatal(idErr)
+		}
+		if _, insertErr := store.db.ExecContext(ctx, `
+			INSERT INTO address_imports (
+				id, tenant_id, source_slot, format, original_name, artifact_ref,
+				checksum_sha256, size_bytes, status, row_count_v4, row_count_v6, created_by
+			) VALUES (?, ?, 'combined', 'mmdb', 'base.mmdb', 'address-import://base', ?, 1, 'ready', ?, ?, ?)
+		`, importID, tenantID, checksum, rowCountV4, rowCountV6, userID); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return importID
+	}
+	baseImport1 := createBaseImport("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 5, 2)
+	baseSlot, err := store.ActivateAddressImport(ctx, tenantID, baseImport1, userID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +101,9 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	}
 	if snapshot.Version != 1 || snapshot.PrefixCount != 1 || snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+	if snapshot.SourcePrefixCount != 7 || len(snapshot.SourceManifest) != 1 || snapshot.SourceManifest[0].ImportID != baseImport1 || snapshot.SourceManifest[0].SlotRowVersion != baseSlot.RowVersion {
+		t.Fatalf("snapshot source manifest = %#v count=%d", snapshot.SourceManifest, snapshot.SourcePrefixCount)
 	}
 	path, err := objects.ResolveDimensionObject(snapshot.ObjectRef)
 	if err != nil {
@@ -176,9 +202,54 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseImport2 := createBaseImport("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 8, 3)
+	lockTx, err := store.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback()
+	if _, err := loadAddressDimensionSources(ctx, lockTx, tenantID, true); err != nil {
+		t.Fatal(err)
+	}
+	type activationResult struct {
+		slot AddressImportSlot
+		err  error
+	}
+	activationDone := make(chan activationResult, 1)
+	go func() {
+		slot, activateErr := store.ActivateAddressImport(ctx, tenantID, baseImport2, userID, baseSlot.RowVersion)
+		activationDone <- activationResult{slot: slot, err: activateErr}
+	}()
+	select {
+	case result := <-activationDone:
+		t.Fatalf("source activation bypassed publication lock: %#v, %v", result.slot, result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lockTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-activationDone:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		baseSlot = result.slot
+	case <-time.After(5 * time.Second):
+		t.Fatal("source activation remained blocked after publication lock released")
+	}
+	if _, err := publisher.PublishAddressDimension(ctx, tenantID, userID, AddressDimensionPublishRequest{EffectiveFrom: effective2, PreviewDigest: preview2.DraftDigest}); !errors.Is(err, ErrAddressDimensionDraftChanged) {
+		t.Fatalf("active import switch did not invalidate preview: %v", err)
+	}
+	preview2, err = publisher.PreviewAddressDimension(ctx, tenantID, effective2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot2, err := publisher.PublishAddressDimension(ctx, tenantID, userID, AddressDimensionPublishRequest{EffectiveFrom: effective2, PreviewDigest: preview2.DraftDigest})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if snapshot2.SourcePrefixCount != 11 || len(snapshot2.SourceManifest) != 1 || snapshot2.SourceManifest[0].ImportID != baseImport2 || snapshot2.SourceManifest[0].SlotRowVersion != baseSlot.RowVersion {
+		t.Fatalf("snapshot2 source manifest = %#v count=%d", snapshot2.SourceManifest, snapshot2.SourcePrefixCount)
 	}
 	if _, err := publisher.ActivateAddressDimension(ctx, tenantID, userID, AddressDimensionActivationRequest{
 		SnapshotID: snapshot2.ID, EffectiveFrom: effective2, ExpectedRowVersion: snapshot2.RowVersion,

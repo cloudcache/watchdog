@@ -122,8 +122,10 @@ func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var exportMigration MySQLMigration
 	for _, migration := range migrations {
 		if migration.Version == "046" {
+			exportMigration = migration
 			break
 		}
 		for index, statement := range SplitSQLStatements(migration.SQL) {
@@ -131,6 +133,9 @@ func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
 				t.Fatalf("apply %s statement %d: %v", migration.Name, index+1, err)
 			}
 		}
+	}
+	if exportMigration.Version == "" {
+		t.Fatal("migration 046 not found")
 	}
 	const tenantID, userID, exportID = "tenant_export_legacy", "user_export_legacy", "export_legacy_046"
 	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Legacy Export', 'active')", tenantID); err != nil {
@@ -149,7 +154,7 @@ func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	for replay := 0; replay < 2; replay++ {
-		for index, statement := range SplitSQLStatements(migrations[len(migrations)-1].SQL) {
+		for index, statement := range SplitSQLStatements(exportMigration.SQL) {
 			if _, err := db.ExecContext(ctx, statement); err != nil {
 				t.Fatalf("replay 046 pass %d statement %d: %v", replay+1, index+1, err)
 			}
@@ -177,6 +182,87 @@ func TestExportExecutionMigrationBackfillsLegacyRows(t *testing.T) {
 	}
 	if !strings.Contains(versionsJSON, `"snapshot_complete": false`) || !strings.Contains(authorizationJSON, `"required_action": "export_raw"`) {
 		t.Fatalf("versions=%s authorization=%s", versionsJSON, authorizationJSON)
+	}
+}
+
+func TestDimensionSourceManifestMigrationBackfillsLegacySnapshots(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_dimension_legacy_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	migrations, err := EmbeddedMySQLMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceManifestMigration MySQLMigration
+	for _, migration := range migrations {
+		if migration.Version == "047" {
+			sourceManifestMigration = migration
+			break
+		}
+		for index, statement := range SplitSQLStatements(migration.SQL) {
+			if _, err := conn.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("apply %s statement %d: %v", migration.Name, index+1, err)
+			}
+		}
+	}
+	if sourceManifestMigration.Version == "" {
+		t.Fatal("migration 047 not found")
+	}
+	const tenantID, userID, snapshotID = "tenant_dimension_legacy", "user_dimension_legacy", "snapshot_dimension_legacy"
+	if _, err := conn.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Legacy Dimension', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, "INSERT INTO users (id, tenant_id, email, name, status) VALUES (?, ?, 'legacy-dimension@watchdog.local', 'Legacy Dimension', 'active')", userID, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO dimension_snapshots (
+			id, tenant_id, module_key, dimension_key, version, effective_from,
+			object_ref, checksum, draft_digest, bundle_schema_version, created_by
+		) VALUES (?, ?, 'flow', 'address', 1, '2026-09-01 00:00:00.000',
+			'dimension/legacy.json', ?, ?, 1, ?)
+	`, snapshotID, tenantID, "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), userID); err != nil {
+		t.Fatal(err)
+	}
+	for replay := 0; replay < 2; replay++ {
+		for index, statement := range SplitSQLStatements(sourceManifestMigration.SQL) {
+			if _, err := conn.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("replay 047 pass %d statement %d: %v", replay+1, index+1, err)
+			}
+		}
+	}
+	var manifestVersion uint16
+	var manifest string
+	var prefixCount uint64
+	if err := conn.QueryRowContext(ctx, `
+		SELECT source_manifest_version, CAST(source_manifest AS CHAR), source_prefix_count
+		FROM dimension_snapshots WHERE id = ?
+	`, snapshotID).Scan(&manifestVersion, &manifest, &prefixCount); err != nil {
+		t.Fatal(err)
+	}
+	if manifestVersion != 0 || manifest != "[]" || prefixCount != 0 {
+		t.Fatalf("legacy source manifest version=%d manifest=%s prefix_count=%d", manifestVersion, manifest, prefixCount)
 	}
 }
 

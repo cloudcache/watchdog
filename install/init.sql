@@ -308,6 +308,9 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   `object_ref` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
   `checksum` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `draft_digest` char(71) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_manifest_version` smallint unsigned NOT NULL DEFAULT '0',
+  `source_manifest` json NOT NULL,
+  `source_prefix_count` bigint unsigned NOT NULL DEFAULT '0',
   `bundle_schema_version` int unsigned NOT NULL,
   `entry_count` bigint unsigned NOT NULL DEFAULT '0',
   `prefix_count` bigint unsigned NOT NULL DEFAULT '0',
@@ -347,7 +350,8 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   CONSTRAINT `dimension_snapshots_chk_2` CHECK ((`version` > 0)),
   CONSTRAINT `dimension_snapshots_chk_3` CHECK ((`bundle_schema_version` > 0)),
   CONSTRAINT `dimension_snapshots_chk_approval` CHECK ((`approval_state` in ('pending','approved','rejected'))),
-  CONSTRAINT `dimension_snapshots_chk_signature` CHECK (((`signature` is null) and (`signature_algorithm` is null) and (`signing_key_id` is null) and (`signed_at` is null)) or ((`signature` is not null) and (`signature_algorithm` is not null) and (`signing_key_id` is not null) and (`signed_at` is not null)))
+  CONSTRAINT `dimension_snapshots_chk_signature` CHECK (((`signature` is null) and (`signature_algorithm` is null) and (`signing_key_id` is null) and (`signed_at` is null)) or ((`signature` is not null) and (`signature_algorithm` is not null) and (`signing_key_id` is not null) and (`signed_at` is not null))),
+  CONSTRAINT `chk_dimension_snapshot_source_manifest` CHECK (((`source_manifest_version` in (0,1)) and (json_type(`source_manifest`) = _utf8mb4'ARRAY') and ((`source_manifest_version` <> 0) or (json_length(`source_manifest`) = 0))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `dimension_snapshot_activations` (

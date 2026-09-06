@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +37,7 @@ func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Con
 		return AddressDimensionPreview{}, err
 	}
 	defer tx.Rollback()
-	draft, digest, err := loadAddressDimensionDraft(ctx, tx, tenantID)
+	draft, digest, err := loadAddressDimensionDraft(ctx, tx, tenantID, false)
 	if err != nil {
 		return AddressDimensionPreview{}, err
 	}
@@ -47,8 +49,14 @@ func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Con
 		return AddressDimensionPreview{}, err
 	}
 	metadata := compiled.Metadata()
+	sourcePrefixCount, err := countAddressDimensionSourcePrefixes(draft.Sources)
+	if err != nil {
+		return AddressDimensionPreview{}, err
+	}
 	return AddressDimensionPreview{
 		DraftDigest: digest, BundleSchemaVersion: flowdimension.BundleSchemaVersion, EffectiveFrom: effectiveFrom.UTC(),
+		SourceManifestVersion: AddressDimensionSourceManifestV1,
+		SourceManifest:        append([]AddressDimensionSource(nil), draft.Sources...), SourcePrefixCount: sourcePrefixCount,
 		PrefixCount: uint64(len(draft.Prefixes)), AddressSetCount: uint64(len(draft.AddressSets)),
 		EnabledAddressSetCount: uint64(metadata.EnabledAddressSetCount), MaxAddressSetsPerRecord: uint32(metadata.MaxAddressSetsPerRecord),
 		EstimatedBundleBytes: uint64(len(data)),
@@ -75,7 +83,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 	`, tenantID, AddressDimensionModuleKey, AddressDimensionKey).Scan(&version); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	draft, digest, err := loadAddressDimensionDraft(ctx, tx, tenantID)
+	draft, digest, err := loadAddressDimensionDraft(ctx, tx, tenantID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -104,14 +112,24 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 		return AddressDimensionSnapshot{}, errors.New("dimension object checksum changed while saving")
 	}
 	metadata := compiled.Metadata()
+	sourceManifest, err := json.Marshal(draft.Sources)
+	if err != nil {
+		return AddressDimensionSnapshot{}, err
+	}
+	sourcePrefixCount, err := countAddressDimensionSourcePrefixes(draft.Sources)
+	if err != nil {
+		return AddressDimensionSnapshot{}, err
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO dimension_snapshots (
 			id, tenant_id, module_key, dimension_key, version, effective_from,
-			object_ref, checksum, draft_digest, bundle_schema_version, entry_count,
-			prefix_count, address_set_count, max_address_sets_per_record, status, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+			object_ref, checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count,
+			bundle_schema_version, entry_count, prefix_count, address_set_count,
+			max_address_sets_per_record, status, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 	`, snapshotID, tenantID, AddressDimensionModuleKey, AddressDimensionKey, version, request.EffectiveFrom.UTC(),
-		object.Ref, checksum, digest, flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets),
+		object.Ref, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
+		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets),
 		len(draft.Prefixes), len(draft.AddressSets), metadata.MaxAddressSetsPerRecord, actorID)
 	if err != nil {
 		var mysqlErr *mysqldriver.MySQLError
@@ -127,12 +145,16 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 	return p.GetAddressDimensionSnapshot(ctx, tenantID, snapshotID)
 }
 
-func loadAddressDimensionDraft(ctx context.Context, tx *sql.Tx, tenantID ID) (AddressDimensionDraft, string, error) {
+func loadAddressDimensionDraft(ctx context.Context, tx *sql.Tx, tenantID ID, lockSources bool) (AddressDimensionDraft, string, error) {
+	sources, err := loadAddressDimensionSources(ctx, tx, tenantID, lockSources)
+	if err != nil {
+		return AddressDimensionDraft{}, "", err
+	}
 	prefixRows, err := tx.QueryContext(ctx, `SELECT `+addressPrefixColumns+` FROM address_prefixes WHERE tenant_id = ? ORDER BY cidr`, tenantID)
 	if err != nil {
 		return AddressDimensionDraft{}, "", err
 	}
-	var source AddressDimensionDraftSource
+	source := AddressDimensionDraftSource{Sources: sources}
 	for prefixRows.Next() {
 		item, scanErr := scanAddressPrefix(prefixRows)
 		if scanErr != nil {
@@ -270,7 +292,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx conte
 
 const addressDimensionSnapshotColumns = `
 	id, tenant_id, module_key, dimension_key, version, effective_from, object_ref,
-	checksum, draft_digest, bundle_schema_version, entry_count, prefix_count,
+	checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count, bundle_schema_version, entry_count, prefix_count,
 	address_set_count, max_address_sets_per_record, status, approval_state,
 	COALESCE(decided_by, ''), decided_at, COALESCE(decision_reason, ''),
 	COALESCE(signature_algorithm, ''), COALESCE(signing_key_id, ''), signature,
@@ -279,14 +301,74 @@ const addressDimensionSnapshotColumns = `
 
 func scanAddressDimensionSnapshot(row rowScanner) (AddressDimensionSnapshot, error) {
 	var item AddressDimensionSnapshot
+	var sourceManifest []byte
 	err := row.Scan(&item.ID, &item.TenantID, &item.ModuleKey, &item.DimensionKey, &item.Version,
-		&item.EffectiveFrom, &item.ObjectRef, &item.Checksum, &item.DraftDigest, &item.BundleSchemaVersion,
+		&item.EffectiveFrom, &item.ObjectRef, &item.Checksum, &item.DraftDigest, &item.SourceManifestVersion, &sourceManifest, &item.SourcePrefixCount, &item.BundleSchemaVersion,
 		&item.EntryCount, &item.PrefixCount, &item.AddressSetCount, &item.MaxAddressSetsPerRecord,
 		&item.Status, &item.ApprovalState, &item.DecidedBy, &item.DecidedAt, &item.DecisionReason,
 		&item.SignatureAlgorithm, &item.SigningKeyID, &item.Signature, &item.SignedAt,
 		&item.RetentionUntil, &item.ObjectDeletedAt, &item.RowVersion, &item.CreatedBy,
 		&item.RetiredBy, &item.CreatedAt, &item.RetiredAt)
-	return item, err
+	if err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal(sourceManifest, &item.SourceManifest); err != nil {
+		return AddressDimensionSnapshot{}, err
+	}
+	if item.SourceManifest == nil {
+		item.SourceManifest = []AddressDimensionSource{}
+	}
+	return item, nil
+}
+
+func loadAddressDimensionSources(ctx context.Context, tx *sql.Tx, tenantID ID, lock bool) ([]AddressDimensionSource, error) {
+	query := `
+		SELECT slots.source_slot, slots.import_id, slots.row_version,
+		       imports.checksum_sha256, imports.row_count_v4, imports.row_count_v6, imports.status
+		FROM address_import_slots AS slots
+		JOIN address_imports AS imports
+		  ON imports.tenant_id = slots.tenant_id AND imports.id = slots.import_id
+		WHERE slots.tenant_id = ?
+	`
+	if lock {
+		query += ` FOR SHARE`
+	}
+	rows, err := tx.QueryContext(ctx, query, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sources []AddressDimensionSource
+	for rows.Next() {
+		var source AddressDimensionSource
+		var status string
+		if err := rows.Scan(&source.Slot, &source.ImportID, &source.SlotRowVersion, &source.ChecksumSHA256, &source.RowCountV4, &source.RowCountV6, &status); err != nil {
+			return nil, err
+		}
+		if status != AddressImportStatusReady {
+			return nil, fmt.Errorf("%w: active address import %s is not ready", ErrAddressDimensionInvalid, source.ImportID)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return canonicalAddressDimensionSources(sources)
+}
+
+func countAddressDimensionSourcePrefixes(sources []AddressDimensionSource) (uint64, error) {
+	var count uint64
+	for _, source := range sources {
+		if ^uint64(0)-count < source.RowCountV4 {
+			return 0, fmt.Errorf("%w: address import source prefix count overflow", ErrAddressDimensionInvalid)
+		}
+		count += source.RowCountV4
+		if ^uint64(0)-count < source.RowCountV6 {
+			return 0, fmt.Errorf("%w: address import source prefix count overflow", ErrAddressDimensionInvalid)
+		}
+		count += source.RowCountV6
+	}
+	return count, nil
 }
 
 func isUTCMinute(value time.Time) bool {

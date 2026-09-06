@@ -95,14 +95,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "046" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "047" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "046" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "047" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -264,6 +264,11 @@ func assertOperationJobWatermarkForwardFill(t *testing.T, db *sql.DB, tenantID s
 
 func runEmbeddedMigrationAgain(t *testing.T, db *sql.DB, version string) {
 	t.Helper()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
 	migrations, err := EmbeddedMySQLMigrations()
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +278,7 @@ func runEmbeddedMigrationAgain(t *testing.T, db *sql.DB, version string) {
 			continue
 		}
 		for statementIndex, statement := range SplitSQLStatements(migration.SQL) {
-			if _, err := db.Exec(statement); err != nil {
+			if _, err := conn.ExecContext(context.Background(), statement); err != nil {
 				t.Fatalf("repeat migration %s statement %d: %v", migration.Name, statementIndex+1, err)
 			}
 		}
@@ -292,12 +297,29 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 46 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "046" {
+	if len(migrations) != 47 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "047" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
 		if len(migration.Checksum) != 64 || migration.SQL == "" {
 			t.Fatalf("invalid migration %d: %#v", i, migration)
+		}
+	}
+}
+
+func TestDimensionSourceManifestMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "047_dimension_source_manifest.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"source_manifest_version smallint unsigned", "source_manifest json",
+		"source_prefix_count bigint unsigned", "json_type(source_manifest)",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("dimension source manifest migration missing %q", required)
 		}
 	}
 }

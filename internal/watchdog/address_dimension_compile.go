@@ -19,11 +19,13 @@ type AddressDimensionDraftSource struct {
 	Sets      []AddressSet
 	Geography []GeoDictionaryNode
 	Operators []ISPOperator
+	Sources   []AddressDimensionSource
 }
 
 type AddressDimensionDraft struct {
 	Prefixes    []flowdimension.PrefixDefinition     `json:"prefixes"`
 	AddressSets []flowdimension.AddressSetDefinition `json:"address_sets"`
+	Sources     []AddressDimensionSource             `json:"sources,omitempty"`
 }
 
 func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDimensionDraft, string, error) {
@@ -39,6 +41,11 @@ func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDi
 	draft := AddressDimensionDraft{
 		Prefixes:    make([]flowdimension.PrefixDefinition, 0, len(source.Prefixes)),
 		AddressSets: make([]flowdimension.AddressSetDefinition, 0, len(source.Sets)),
+	}
+	var err error
+	draft.Sources, err = canonicalAddressDimensionSources(source.Sources)
+	if err != nil {
+		return AddressDimensionDraft{}, "", err
 	}
 	for _, prefix := range source.Prefixes {
 		definition, err := compileAddressPrefixDefinition(prefix, geography, operators)
@@ -69,6 +76,44 @@ func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDi
 	}
 	digest := sha256.Sum256(data)
 	return draft, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func canonicalAddressDimensionSources(sources []AddressDimensionSource) ([]AddressDimensionSource, error) {
+	result := append(make([]AddressDimensionSource, 0, len(sources)), sources...)
+	sort.Slice(result, func(i, j int) bool {
+		return addressDimensionSourceRank(result[i].Slot) < addressDimensionSourceRank(result[j].Slot)
+	})
+	seen := make(map[string]struct{}, len(result))
+	for _, source := range result {
+		if addressDimensionSourceRank(source.Slot) < 0 || source.ImportID == "" || source.SlotRowVersion == 0 ||
+			len(source.ChecksumSHA256) != 64 || strings.ToLower(source.ChecksumSHA256) != source.ChecksumSHA256 {
+			return nil, fmt.Errorf("%w: invalid address import source manifest", ErrAddressDimensionInvalid)
+		}
+		if decoded, err := hex.DecodeString(source.ChecksumSHA256); err != nil || len(decoded) != sha256.Size {
+			return nil, fmt.Errorf("%w: invalid address import source checksum", ErrAddressDimensionInvalid)
+		}
+		if _, exists := seen[source.Slot]; exists {
+			return nil, fmt.Errorf("%w: duplicate address import source slot %s", ErrAddressDimensionInvalid, source.Slot)
+		}
+		seen[source.Slot] = struct{}{}
+	}
+	return result, nil
+}
+
+// Sources are ordered from the broad fallback to the dimension-specific
+// generations. A consumer overlays combined, then geo/asn in their respective
+// label domains, then the manual Prefixes in this draft.
+func addressDimensionSourceRank(slot string) int {
+	switch slot {
+	case AddressImportSlotCombined:
+		return 0
+	case AddressImportSlotGeo:
+		return 1
+	case AddressImportSlotASN:
+		return 2
+	default:
+		return -1
+	}
 }
 
 func compileAddressPrefixDefinition(prefix AddressPrefix, geography map[ID]GeoDictionaryNode, operators map[ID]ISPOperator) (flowdimension.PrefixDefinition, error) {

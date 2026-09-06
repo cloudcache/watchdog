@@ -73,6 +73,62 @@ func TestCompileAddressDimensionDraftIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCompileAddressDimensionDraftPinsAndOrdersActiveImportSources(t *testing.T) {
+	combined := AddressDimensionSource{
+		Slot: AddressImportSlotCombined, ImportID: "import-combined", SlotRowVersion: 2,
+		ChecksumSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RowCountV4: 10, RowCountV6: 2,
+	}
+	geo := AddressDimensionSource{
+		Slot: AddressImportSlotGeo, ImportID: "import-geo", SlotRowVersion: 3,
+		ChecksumSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", RowCountV4: 20,
+	}
+	asn := AddressDimensionSource{
+		Slot: AddressImportSlotASN, ImportID: "import-asn", SlotRowVersion: 4,
+		ChecksumSHA256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", RowCountV6: 30,
+	}
+	left, leftDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Sources: []AddressDimensionSource{asn, combined, geo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, rightDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Sources: []AddressDimensionSource{geo, asn, combined}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftDigest != rightDigest || len(left.Sources) != 3 || left.Sources[0].Slot != AddressImportSlotCombined || left.Sources[1].Slot != AddressImportSlotGeo || left.Sources[2].Slot != AddressImportSlotASN {
+		t.Fatalf("source manifest is not deterministic: %#v %#v %s %s", left.Sources, right.Sources, leftDigest, rightDigest)
+	}
+	changed := right.Sources
+	changed[0].SlotRowVersion++
+	_, changedDigest, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Sources: changed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedDigest == leftDigest {
+		t.Fatal("slot version change did not invalidate the preview digest")
+	}
+	if count, err := countAddressDimensionSourcePrefixes(left.Sources); err != nil || count != 62 {
+		t.Fatalf("source prefix count = %d, %v", count, err)
+	}
+}
+
+func TestCompileAddressDimensionDraftRejectsInvalidSourceManifest(t *testing.T) {
+	valid := AddressDimensionSource{
+		Slot: AddressImportSlotGeo, ImportID: "import-geo", SlotRowVersion: 1,
+		ChecksumSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	for name, sources := range map[string][]AddressDimensionSource{
+		"duplicate slot": {valid, valid},
+		"unknown slot":   {{Slot: "other", ImportID: "import-other", SlotRowVersion: 1, ChecksumSHA256: valid.ChecksumSHA256}},
+		"bad checksum":   {{Slot: AddressImportSlotGeo, ImportID: "import-geo", SlotRowVersion: 1, ChecksumSHA256: "bad"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Sources: sources}); err == nil {
+				t.Fatal("invalid source manifest was accepted")
+			}
+		})
+	}
+}
+
 func TestCompileAddressDimensionDraftRejectsDisabledReferences(t *testing.T) {
 	_, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{
 		Geography: []GeoDictionaryNode{{ID: "geo-disabled", Kind: GeoKindCountry, Code: "CN", Name: "China", Enabled: false}},

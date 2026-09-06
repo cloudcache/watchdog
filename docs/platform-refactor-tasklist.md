@@ -59,10 +59,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `046`：`046_export_execution_contract.sql` 已在真实 MySQL 完成 001–046 空库、直接双重 replay、旧 export row backfill 及 fresh-install parity（`af631b7c`）。
+- 当前迁移头为 `047`：`046_export_execution_contract.sql` 已在真实 MySQL 完成旧 export row backfill；`047_dimension_source_manifest.sql` 前向增加 publication 输入 generation manifest/count，不修改旧 checksum。001–047 空库、直接 replay、旧行 backfill 及 fresh-install parity 是 A2b 的提交门禁。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占。下一个持久化工作从 `047` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占。下一个持久化工作从 `048` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -76,6 +76,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `044` | Operation scheduler | per-tenant/system trigger、持久公平扫描游标、system watermark 与背压预算 | 已提交 `178e0ced`、`d2cf66f4`；真实 MySQL 门禁通过 |
 | `045` | QueryGateway policy | tenant dataset enablement、raw/supplier/customer 双门禁、并发/范围/行数/超时预算；provider endpoint/凭据/全局启停留在部署配置 | schema/fresh-init/真实 MySQL 门禁 `13669321`；backend `00448c68` |
 | `046` | Export execution | immutable query/version/authorization snapshot、operation job 关联、CSV/Parquet format contract、artifact schema/content/row count/retention | schema/fresh-init/旧行 backfill/真实 MySQL replay 已提交 `af631b7c`；执行面 `942e5086` |
+| `047` | Address publication source manifest | snapshot 固定 active import IDs/checksum/slot row version/v4-v6 row count，签名覆盖完整来源血缘 | 本提交包含 schema/backend/init/docs/tests；真实 MySQL 门禁完成 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 
@@ -115,7 +116,14 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **变更设计/测试**：允许同租户并列配置新旧 key 做滚动轮换；坏/缺失 PEM 启动失败关闭；已有签名 snapshot 自带 `signing_key_id+signature`，旧公钥至少保留到引用该 key 的 snapshot 结束在线 retention。
     - [x] **回归测试**：`go test ./internal/watchdog`、目标 race、vet/build、隔离 MySQL gated lifecycle 均通过。
     - [x] **已提交门禁**：代码、配置示例和测试同 commit `a36983e2`；未夹带 Flow CH 009 migration 或既有未提交文件。
-  - [ ] **PLAT-04A2b base + override 确定性 overlay**：把当前 active MMDB/IPDB Geo+ASN generation 与人工 prefix/set/geo/operator/line 合成为同一 immutable definition；冻结 precedence、来源血缘、冲突明细、输入 generation IDs 和 digest，失败不得生成半成品。
+  - [x] **PLAT-04A2b immutable composite source manifest**：按 [Flow 地址查询方案](flow-address-query-plan.md) 修正旧“平台同步展开百万行 overlay”设计。平台快照由“钉住的 active MMDB/IPDB generation manifest + 小型人工 prefix/set definition object”组成；真实 base overlay/IP_TRIE 物化由 Flow index-builder 异步执行，平台不连接 CH、不复制百万行。
+    - [x] **设计**：冻结 manifest v1、`combined → geo/asn 各自字段域 → manual explicit fields` precedence、source slot/import ID/slot row version/artifact checksum/v4-v6 row count 血缘；同 slot 重复、非 ready import、坏 checksum 和计数溢出 fail closed。base 间前缀重叠是最长前缀/字段域覆盖输入，不冒充管理冲突；人工集合 DAG/预算冲突继续由既有 compiler 拒绝。
+    - [x] **编码**：preview 在同一事务读取 active slots，canonical 排序后把 manifest 纳入 draft digest；publish 以 locking read 重新读取并 CAS digest，active generation 变化使旧 preview 失效，且并发 activation 必须等待 snapshot 的来源选择提交；snapshot 保存 `source_manifest_version/source_manifest/source_prefix_count`，definition object 仍只保存小型人工层。
+    - [x] **单元测试**：manifest 顺序确定性、slot row version 改变 digest、非法/重复 slot、checksum、计数、签名 payload v2 绑定 generation、未知/不一致 manifest version 均覆盖。
+    - [x] **集成测试**：真实 MySQL 验证 import1 preview/publish 后切 import2 令旧 preview 失败，新 snapshot 分别固定正确 generation/count；并发 activation 被 publish source lock 阻塞并在提交后恢复；approve/activate/rollback 生命周期保持通过。
+    - [x] **变更设计/测试**：migration 047 仅前向加列；旧 snapshot 回填 version 0 + `[]` + count 0；三列分别幂等处理部分执行，直接 replay 两次、001–047 空库与 fresh-install schema parity 均通过。
+    - [x] **回归测试**：`go test ./internal/watchdog`、目标 race、vet/build 与真实 MySQL gated 测试通过。
+    - [x] **已提交门禁**：代码、migration、init snapshot、设计和测试由本提交原子交付，未夹带 Flow 数据面或既有工作区文件。
   - [ ] **PLAT-04A2c consumer/index-builder 状态读取**：提供 snapshot activation、worker/index-builder ACK/失败/版本漂移和可查询性汇总 API；平台不连接 CH，也不冒充消费侧索引已就绪。
   - [ ] **PLAT-04A2d 安全 object GC**：按 activation、retention、事实 reference 和 consumer ACK 计算可删候选，经 operation job 执行“对象幂等删除→DB 标记→destruction audit”；补 crash/retry、并发引用和回滚窗口测试。
 - [x] **PLAT-04B operation job registry/scheduler**：受控 handler registry、每类并发 worker、typed payload、attempt-scoped progress、周期 reaper 和 tenant watermark 已分别提交（`18fde3a3`、`43b6675a`、`f0fb1444`、`75a258a6`、migration 028）。migration 044 与 backend 再完成 tenant/system cron trigger、服务端 CRUD/filter/ETag/audit、持久 wrap-around 扫描游标、单 schedule `max_inflight` + 注册 job type concurrency 双层背压、稳定 `schedule:<id>:<due>` 幂等键、未知 handler 延迟而不丢 trigger、坏 cron/timezone fail-closed，以及 runtime 与原 worker registry 的同源接线（`178e0ced`、`d2cf66f4`）。调度器只创建普通 `operation_jobs`，没有复制 lease/retry 状态机；迟到 cron 合并为一次并从当前时刻计算下一次，不做无界追赶。API 仅开放 tenant schedule；system schedule 供受控模块调用。单元、API、真实 MySQL 迁移重放/CRUD/CAS/背压/续扫/水位/历史保留及全库 test/vet/build 通过。

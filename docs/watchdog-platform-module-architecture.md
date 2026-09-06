@@ -620,7 +620,9 @@ POST /api/v1/query
 | draft override/set | `address_prefixes` 人工修正层、typed `address_sets`、`geo_dict/isp_operators/geo_lines` | 平台 typed CRUD + ETag；所有大批量变更先 preview 再原子 apply | 可编辑 draft，完整审计；不直接影响 worker |
 | publication | `dimension_snapshots` 引用的签名 bundle | validate/approve/publish；从明确 UTC 分钟生效 | immutable；按事实引用保留，可 retire/rollback |
 
-MMDB 使用成熟 Go reader 顺序枚举 network；IPDB reader负责格式/字段/语言校验，平台 importer 按其 trie 网络边界枚举，不以逐 IP 查询生成库。Geo 与 ASN 可各自拥有独立 active generation，也可上传 combined 库；发布编译器按两边区间边界做线性 overlay 后输出统一记录，不把两个来源的版本切换强绑成一次大事务。IPDB 的 `country_code/continent_code/china_admin_code/region_name/city_name/isp_domain/asn` 只写存在的 typed 字段，不用显示名冒充稳定 ID。上传请求本身不解析百万行、不持有数据库事务；operation job 按批次 checkpoint，最终切换 active import 的事务只包含状态和指针更新。
+MMDB 使用成熟 Go reader 顺序枚举 network；IPDB reader负责格式/字段/语言校验，平台 importer 按其 trie 网络边界枚举，不以逐 IP 查询生成库。Geo 与 ASN 可各自拥有独立 active generation，也可上传 combined 库；平台发布不再同步读取并复制这些百万行，而是在 snapshot 中固定每个 active slot 的 `import_id/slot_row_version/artifact checksum/v4-v6 row count`。IPDB 的 `country_code/continent_code/china_admin_code/region_name/city_name/isp_domain/asn` 只写存在的 typed 字段，不用显示名冒充稳定 ID。上传请求本身不解析百万行、不持有数据库事务；operation job 按批次 checkpoint，最终切换 active import 的事务只包含状态和指针更新。
+
+publication 是不可变复合输入而不是单个大 JSON：`object_ref+checksum` 指向小型人工 prefix/set definition，`source_manifest_version=1 + source_manifest` 钉住不可变 base generations。preview 在只读一致性事务中读取 active slots；publish 使用 locking read 再算 digest，使并发 activation 等待来源选择提交。manifest 参与 `draft_digest`，所以 preview 后切换任一 generation 会得到 412 型 draft changed，而不会发布混合代次。固定合成顺序为：`combined` 提供 broad fallback；`geo` 只覆盖 Geo 字段域；`asn` 只覆盖 ASN/operator 字段域；人工 prefix 最后只覆盖其显式声明字段。不同长度前缀按最长前缀命中；同 slot 重复、非 ready generation、坏 checksum、row-count overflow 或人工集合 DAG/预算失败均不得产生 snapshot。Flow index-builder 必须按 manifest 分页读取指定 `import_id`，复核 checksum/count 后异步生成该版本的 CH IP_TRIE/预配置索引，成功后才 ACK 可查询；平台不以 snapshot 创建成功冒充索引已就绪。
 
 所有地址输入共用一个服务端数学内核，接受 canonical/non-canonical CIDR、裸 IP 和 `start-end`，持久化前统一输出最小 canonical CIDR 集。任一坏值整体拒绝，禁止像旧 EdgeManager `filter_map` 一样静默丢行。运算语义固定为：
 
@@ -647,6 +649,9 @@ CREATE TABLE dimension_snapshots (
   object_ref VARCHAR(512) NOT NULL,
   checksum VARCHAR(128) NOT NULL,
   draft_digest CHAR(71) NOT NULL,
+  source_manifest_version SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  source_manifest JSON NOT NULL,
+  source_prefix_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
   bundle_schema_version INT UNSIGNED NOT NULL,
   entry_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
   prefix_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -684,9 +689,9 @@ CREATE TABLE dimension_snapshot_acks (
 );
 ```
 
-发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 definition bundle；配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的 UTC 分钟边界生效。Flow index-builder 通过 `object_ref+checksum` 获取版本，在 CH 中异步构建/切换该版本的字典或预配置地址段索引，安装完成后 ACK；失败继续使用上一可查询版本。原始 Flow 事实不写 publication version 计算出的分类字段，账单/审计查询显式指定 definition version，探索查询默认当前版本。平台只管理定义、签名、版本、引用和 ACK，不复制 CH 连接池、DDL 或查询 compiler。现行数据面决策见 [Flow 地址查询方案](flow-address-query-plan.md)。
+发布动作把当前 prefixes、labels、sets、selector、direction 和 active import manifest 固化为同一 version；配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的 UTC 分钟边界生效。Flow index-builder 通过 `object_ref+checksum+source_manifest` 获取完整复合输入，在 CH 中异步构建/切换该版本的字典或预配置地址段索引，安装完成后 ACK；失败继续使用上一可查询版本。原始 Flow 事实不写 publication version 计算出的分类字段，账单/审计查询显式指定 definition version，探索查询默认当前版本。平台只管理定义、签名、版本、引用和 ACK，不复制 CH 连接池、DDL 或查询 compiler。现行数据面决策见 [Flow 地址查询方案](flow-address-query-plan.md)。
 
-审批信任链按 `(tenant_id, signing_key_id)` 隔离：部署配置 `address_library.trusted_keys[]` 只引用 Ed25519 SubjectPublicKeyInfo PEM 公钥文件，启动时一次性加载且坏文件失败关闭；审批私钥由外部发布审批流程持有，绝不上传 Watchdog。approve 请求提交 `signing_key_id`、UTC `signed_at` 和标准 base64 `signature`，签名覆盖 snapshot/tenant/module/dimension/version/effective time/object ref/checksum/draft digest/schema version。所有人工状态迁移要求 tenant `operate` 权限与 quoted `If-Match`；400 表示 key/签名/参数无效，409 表示当前状态不允许，412 表示 snapshot row version 已变化。轮换时并列配置新旧 key；旧公钥至少保留到引用该 key 的 snapshot 结束在线 retention，snapshot 自身继续保存 key ID 与签名证据。
+审批信任链按 `(tenant_id, signing_key_id)` 隔离：部署配置 `address_library.trusted_keys[]` 只引用 Ed25519 SubjectPublicKeyInfo PEM 公钥文件，启动时一次性加载且坏文件失败关闭；审批私钥由外部发布审批流程持有，绝不上传 Watchdog。approve 请求提交 `signing_key_id`、UTC `signed_at` 和标准 base64 `signature`；签名 payload v2 覆盖 snapshot/tenant/module/dimension/version/effective time/object ref/checksum/draft digest、source manifest version/entries/count、bundle schema version。v2 是显式协议升级，审批器不得用旧 v1 字节为含 source manifest 的新 snapshot 签名。所有人工状态迁移要求 tenant `operate` 权限与 quoted `If-Match`；400 表示 key/签名/参数无效，409 表示当前状态不允许，412 表示 snapshot row version 已变化。轮换时并列配置新旧 key；旧公钥至少保留到引用该 key 的 snapshot 结束在线 retention，snapshot 自身继续保存 key ID 与签名证据。
 
 地址统计有两种不同口径：
 
@@ -890,7 +895,7 @@ active policy 不允许 PATCH 原地改变公式；修改动作创建下一 vers
 | aggregate_graph_data | statistics snapshot | 冻结用途，禁止作为通用时序库 |
 | export_tasks | core export | 增加 dataset/query/layer/version；旧 target/port 列作为兼容投影 |
 | port_policies/traffic_policy_defaults | legacy correction | 迁移到 adjustment policy，停止随机修正 |
-| dimension_snapshots | core dimension | 新增；保存 prefix/set 等不可变发布版本、effective time、bundle checksum 和归档引用 |
+| dimension_snapshots | core dimension | 保存人工 definition object 与 active base generation manifest 组成的不可变发布版本、effective time、checksum 和归档引用 |
 | audit_logs | core audit | 保留并增加 request/correlation ID、before/after checksum |
 | tenant_modules | core module | 新增，保存 enabled/config version/status |
 

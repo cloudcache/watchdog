@@ -73,25 +73,42 @@ func AddressDimensionSigningPayload(snapshot AddressDimensionSnapshot, signingKe
 		signingKeyID == "" || len(signingKeyID) > 128 || signedAt.IsZero() || signedAt.Location() != time.UTC || signedAt.Nanosecond()%int(time.Millisecond) != 0 {
 		return nil, ErrAddressDimensionInvalid
 	}
+	sources, err := canonicalAddressDimensionSources(snapshot.SourceManifest)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.SourceManifestVersion > AddressDimensionSourceManifestV1 ||
+		(snapshot.SourceManifestVersion == 0 && len(sources) != 0) {
+		return nil, ErrAddressDimensionInvalid
+	}
+	sourcePrefixCount, err := countAddressDimensionSourcePrefixes(sources)
+	if err != nil || sourcePrefixCount != snapshot.SourcePrefixCount {
+		return nil, ErrAddressDimensionInvalid
+	}
 	payload := struct {
-		SchemaVersion       uint16 `json:"schema_version"`
-		SnapshotID          ID     `json:"snapshot_id"`
-		TenantID            ID     `json:"tenant_id"`
-		ModuleKey           string `json:"module_key"`
-		DimensionKey        string `json:"dimension_key"`
-		Version             uint64 `json:"version"`
-		EffectiveUnixMilli  int64  `json:"effective_unix_milli"`
-		ObjectRef           string `json:"object_ref"`
-		Checksum            string `json:"checksum"`
-		DraftDigest         string `json:"draft_digest"`
-		BundleSchemaVersion uint32 `json:"bundle_schema_version"`
-		SigningKeyID        string `json:"signing_key_id"`
-		SignedAtUnixMilli   int64  `json:"signed_at_unix_milli"`
+		SchemaVersion         uint16                   `json:"schema_version"`
+		SnapshotID            ID                       `json:"snapshot_id"`
+		TenantID              ID                       `json:"tenant_id"`
+		ModuleKey             string                   `json:"module_key"`
+		DimensionKey          string                   `json:"dimension_key"`
+		Version               uint64                   `json:"version"`
+		EffectiveUnixMilli    int64                    `json:"effective_unix_milli"`
+		ObjectRef             string                   `json:"object_ref"`
+		Checksum              string                   `json:"checksum"`
+		DraftDigest           string                   `json:"draft_digest"`
+		SourceManifestVersion uint16                   `json:"source_manifest_version"`
+		SourceManifest        []AddressDimensionSource `json:"source_manifest"`
+		SourcePrefixCount     uint64                   `json:"source_prefix_count"`
+		BundleSchemaVersion   uint32                   `json:"bundle_schema_version"`
+		SigningKeyID          string                   `json:"signing_key_id"`
+		SignedAtUnixMilli     int64                    `json:"signed_at_unix_milli"`
 	}{
-		SchemaVersion: 1, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
+		SchemaVersion: AddressDimensionSigningPayloadV2, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
 		ModuleKey: snapshot.ModuleKey, DimensionKey: snapshot.DimensionKey,
 		Version: snapshot.Version, EffectiveUnixMilli: snapshot.EffectiveFrom.UTC().UnixMilli(),
 		ObjectRef: snapshot.ObjectRef, Checksum: snapshot.Checksum, DraftDigest: snapshot.DraftDigest,
+		SourceManifestVersion: snapshot.SourceManifestVersion,
+		SourceManifest:        sources, SourcePrefixCount: sourcePrefixCount,
 		BundleSchemaVersion: snapshot.BundleSchemaVersion, SigningKeyID: signingKeyID,
 		SignedAtUnixMilli: signedAt.UnixMilli(),
 	}

@@ -3,6 +3,7 @@ package watchdog
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -18,6 +19,19 @@ func TestAddressDimensionApprovalProofBindsImmutableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var envelope struct {
+		SchemaVersion         uint16                   `json:"schema_version"`
+		SourceManifestVersion uint16                   `json:"source_manifest_version"`
+		SourceManifest        []AddressDimensionSource `json:"source_manifest"`
+		SourcePrefixCount     uint64                   `json:"source_prefix_count"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != AddressDimensionSigningPayloadV2 || envelope.SourceManifestVersion != AddressDimensionSourceManifestV1 ||
+		len(envelope.SourceManifest) != 1 || envelope.SourcePrefixCount != 12 {
+		t.Fatalf("unexpected signing envelope: %#v", envelope)
+	}
 	approval, err := VerifyAddressDimensionApproval(snapshot, "dimension-key-1", signedAt, ed25519.Sign(privateKey, payload), publicKey)
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +43,12 @@ func TestAddressDimensionApprovalProofBindsImmutableSnapshot(t *testing.T) {
 	tampered.Version++
 	if err := validateVerifiedAddressDimensionApproval(tampered, approval); err == nil {
 		t.Fatal("approval proof accepted a different snapshot version")
+	}
+	tampered = snapshot
+	tampered.SourceManifest = append([]AddressDimensionSource(nil), snapshot.SourceManifest...)
+	tampered.SourceManifest[0].ImportID = "01JOTHERIMPORT000000000001"
+	if err := validateVerifiedAddressDimensionApproval(tampered, approval); err == nil {
+		t.Fatal("approval proof accepted a different source generation")
 	}
 	approval.Signature[0] ^= 0xff
 	if err := validateVerifiedAddressDimensionApproval(snapshot, approval); err == nil {
@@ -54,6 +74,23 @@ func addressDimensionSignatureFixture() AddressDimensionSnapshot {
 		ModuleKey: AddressDimensionModuleKey, DimensionKey: AddressDimensionKey,
 		Version: 7, EffectiveFrom: time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC),
 		ObjectRef: "dimension/tenant/snapshot.json", Checksum: digest, DraftDigest: digest,
-		BundleSchemaVersion: 2,
+		SourceManifestVersion: AddressDimensionSourceManifestV1,
+		SourceManifest: []AddressDimensionSource{{
+			Slot: AddressImportSlotGeo, ImportID: "01JADDRESSIMPORT0000000001", SlotRowVersion: 3,
+			ChecksumSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RowCountV4: 10, RowCountV6: 2,
+		}},
+		SourcePrefixCount: 12, BundleSchemaVersion: 2,
+	}
+}
+
+func TestAddressDimensionSigningPayloadRejectsInvalidSourceManifestVersion(t *testing.T) {
+	snapshot := addressDimensionSignatureFixture()
+	snapshot.SourceManifestVersion = 0
+	if _, err := AddressDimensionSigningPayload(snapshot, "dimension-key-1", time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC)); err == nil {
+		t.Fatal("version zero accepted a non-empty source manifest")
+	}
+	snapshot.SourceManifestVersion = AddressDimensionSourceManifestV1 + 1
+	if _, err := AddressDimensionSigningPayload(snapshot, "dimension-key-1", time.Date(2026, 9, 2, 1, 2, 3, 0, time.UTC)); err == nil {
+		t.Fatal("unsupported source manifest version was accepted")
 	}
 }
