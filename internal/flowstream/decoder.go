@@ -110,6 +110,21 @@ func (d *Decoder) DecodeValue(value []byte) (DecodedBatch, error) {
 	return d.Decode(&raw)
 }
 
+// recoverDecoderPanic runs the GoFlow2 pipe and converts a decoder panic on
+// crafted/malformed bytes into an error. The collector does not decode, so a
+// panic-triggering datagram reaches the worker undecoded; without this, one such
+// packet crashes the process, replays from its uncommitted offset, and crashes
+// again — a permanent poison-pill loop. Turning the panic into a skippable
+// decode error lets the offset advance and the partition keep making progress.
+func recoverDecoderPanic(run func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("goflow2 decoder panic: %v", r)
+		}
+	}()
+	return run()
+}
+
 func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	if err := validateRawFlow(raw); err != nil {
 		return DecodedBatch{}, err
@@ -124,17 +139,19 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	message := &utils.Message{Src: source, Payload: raw.Payload, Received: receivedAt}
 
 	d.sink.records = d.sink.records[:0]
-	err = nil
-	switch raw.Decoder {
-	case flowpb.RawFlow_DECODER_NETFLOW:
-		err = d.pipe.NetFlowPipe.DecodeFlow(message)
-	case flowpb.RawFlow_DECODER_SFLOW:
-		err = d.pipe.SFlowPipe.DecodeFlow(message)
-	default:
-		err = errors.New("unsupported raw flow decoder")
-	}
+	err = recoverDecoderPanic(func() error {
+		switch raw.Decoder {
+		case flowpb.RawFlow_DECODER_NETFLOW:
+			return d.pipe.NetFlowPipe.DecodeFlow(message)
+		case flowpb.RawFlow_DECODER_SFLOW:
+			return d.pipe.SFlowPipe.DecodeFlow(message)
+		default:
+			return errors.New("unsupported raw flow decoder")
+		}
+	})
 	if err != nil {
 		d.sink.records = d.sink.records[:0]
+		d.metadata.records = d.metadata.records[:0]
 		return DecodedBatch{}, err
 	}
 	records := append([]*goflowpb.FlowMessage(nil), d.sink.records...)

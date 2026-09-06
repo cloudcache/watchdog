@@ -332,3 +332,20 @@ func addressFromBytes(t testing.TB, value []byte) netip.Addr {
 	}
 	return address.Unmap()
 }
+
+func TestRecoverDecoderPanicConvertsPanicToError(t *testing.T) {
+	// A GoFlow2 decoder panic on crafted bytes must surface as an error so the
+	// worker skips the datagram and advances the offset — never crash-loop.
+	if err := recoverDecoderPanic(func() error { panic("crafted netflow template") }); err == nil {
+		t.Fatal("expected a recovered panic to return an error")
+	}
+	// A normal decode error passes through unchanged.
+	sentinel := errors.New("bad datagram")
+	if got := recoverDecoderPanic(func() error { return sentinel }); !errors.Is(got, sentinel) {
+		t.Fatalf("decode error not passed through: %v", got)
+	}
+	// Success returns nil.
+	if got := recoverDecoderPanic(func() error { return nil }); got != nil {
+		t.Fatalf("success path returned %v", got)
+	}
+}
