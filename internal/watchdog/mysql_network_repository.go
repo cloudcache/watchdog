@@ -604,13 +604,86 @@ func (s *MySQLStore) ListDevicePhysicalEntities(ctx context.Context, tenantID, d
 	defer rows.Close()
 	var entities []PhysicalEntity
 	for rows.Next() {
-		var e PhysicalEntity
-		if err := rows.Scan(&e.Index, &e.Name, &e.Description, &e.Class, &e.VendorType, &e.ContainedIn, &e.HardwareRevision, &e.SerialNumber, &e.ManufacturerName, &e.ModelName, &e.IsFRU); err != nil {
+		e, err := scanPhysicalEntity(rows)
+		if err != nil {
 			return nil, err
 		}
 		entities = append(entities, e)
 	}
 	return entities, rows.Err()
+}
+
+var physicalEntitySortColumns = map[string]string{
+	"":             "entity_index",
+	"entity_index": "entity_index",
+	"name":         "name",
+	"class":        "class",
+	"manufacturer": "manufacturer_name",
+	"model":        "model_name",
+	"serial":       "serial_number",
+	"contained_in": "contained_in",
+}
+
+func (s *MySQLStore) ListDevicePhysicalEntitiesPage(ctx context.Context, tenantID, deviceID ID, query PhysicalEntityQuery) ([]PhysicalEntity, int, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 25
+	}
+	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	where := ` WHERE tenant_id = ? AND device_id = ?`
+	args := []any{tenantID, deviceID}
+	if class := strings.TrimSpace(query.Class); class != "" {
+		where += ` AND class = ?`
+		args = append(args, class)
+	}
+	if query.FRU != nil {
+		where += ` AND is_fru = ?`
+		args = append(args, *query.FRU)
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (name LIKE ? OR description LIKE ? OR class LIKE ? OR vendor_type LIKE ? OR hardware_revision LIKE ? OR serial_number LIKE ? OR manufacturer_name LIKE ? OR model_name LIKE ?)`
+		for range 8 {
+			args = append(args, like)
+		}
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_physical_entities`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumn := physicalEntitySortColumns[query.Sort]
+	if sortColumn == "" {
+		sortColumn = physicalEntitySortColumns[""]
+	}
+	direction := "ASC"
+	if query.Desc {
+		direction = "DESC"
+	}
+	statement := `
+		SELECT entity_index, name, description, class, vendor_type, contained_in,
+		       hardware_revision, serial_number, manufacturer_name, model_name, is_fru
+		FROM device_physical_entities` + where + fmt.Sprintf(` ORDER BY %s %s, entity_index %s LIMIT ? OFFSET ?`, sortColumn, direction, direction)
+	pageArgs := append(append([]any(nil), args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, statement, pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	entities := make([]PhysicalEntity, 0, min(limit, total))
+	for rows.Next() {
+		entity, err := scanPhysicalEntity(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		entities = append(entities, entity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return entities, total, nil
 }
 
 func (s *MySQLStore) UpsertDevicePhysicalEntities(ctx context.Context, tenantID, deviceID ID, entities []PhysicalEntity) error {
@@ -1163,6 +1236,16 @@ func scanNetworkDeviceSensor(row rowScanner) (NetworkDeviceSensor, error) {
 	}
 	sensor.Metadata = metadata
 	return sensor, nil
+}
+
+func scanPhysicalEntity(row rowScanner) (PhysicalEntity, error) {
+	var entity PhysicalEntity
+	err := row.Scan(
+		&entity.Index, &entity.Name, &entity.Description, &entity.Class, &entity.VendorType,
+		&entity.ContainedIn, &entity.HardwareRevision, &entity.SerialNumber,
+		&entity.ManufacturerName, &entity.ModelName, &entity.IsFRU,
+	)
+	return entity, err
 }
 
 func scanBGPSession(row rowScanner) (BGPSession, error) {

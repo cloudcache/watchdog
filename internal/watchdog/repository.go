@@ -170,6 +170,7 @@ type NetworkRepository interface {
 	ListDeviceSensors(ctx context.Context, tenantID, deviceID ID) ([]NetworkDeviceSensor, error)
 	UpsertDeviceSensors(ctx context.Context, sensors []NetworkDeviceSensor) error
 	ListDevicePhysicalEntities(ctx context.Context, tenantID, deviceID ID) ([]PhysicalEntity, error)
+	ListDevicePhysicalEntitiesPage(ctx context.Context, tenantID, deviceID ID, query PhysicalEntityQuery) ([]PhysicalEntity, int, error)
 	UpsertDevicePhysicalEntities(ctx context.Context, tenantID, deviceID ID, entities []PhysicalEntity) error
 	ListDeviceVLANs(ctx context.Context, tenantID, deviceID ID) ([]DeviceVLAN, error)
 	UpsertDeviceVLANs(ctx context.Context, tenantID, deviceID ID, vlans []DeviceVLAN) error
@@ -189,6 +190,18 @@ type NetworkRepository interface {
 	UpsertPortPolicy(ctx context.Context, policy PortPolicy) (PortPolicy, error)
 	GetTrafficPolicyDefaults(ctx context.Context, tenantID ID) (TrafficPolicyDefaults, error)
 	UpsertTrafficPolicyDefault(ctx context.Context, policyDefault TrafficPolicyDefault) (TrafficPolicyDefault, error)
+}
+
+// PhysicalEntityQuery drives the device Inventory tab over ENTITY-MIB rows.
+// FRU is nil for all rows and otherwise selects entPhysicalIsFRU.
+type PhysicalEntityQuery struct {
+	Search string
+	Class  string
+	FRU    *bool
+	Sort   string
+	Desc   bool
+	Limit  int
+	Offset int
 }
 
 type RetentionRepository interface {

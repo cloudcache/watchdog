@@ -10,7 +10,7 @@ import {
 	SlidersHorizontalIcon,
 	Trash2Icon,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -24,6 +24,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -1315,6 +1316,7 @@ function createAggregateGraphID() {
 }
 
 type PhysicalEntity = {
+	Index?: number
 	Name?: string
 	Description?: string
 	Class?: string
@@ -1547,29 +1549,65 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 function DeviceInventory({ deviceId }: { deviceId: string }) {
 	const { t } = useLingui()
 	const [entities, setEntities] = useState<PhysicalEntity[]>([])
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [entityClass, setEntityClass] = useState("")
+	const [classQuery, setClassQuery] = useState("")
+	const [fru, setFRU] = useState("all")
+	const [sort, setSort] = useState("entity_index:asc")
 	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		let cancelled = false
-		const load = async () => {
-			try {
-				const data = await pb.send<{ items?: PhysicalEntity[] }>(`/api/v1/network/devices/${deviceId}/inventory`, {})
-				if (!cancelled) {
-					setEntities(data.items ?? [])
-				}
-			} catch {
-				if (!cancelled) setEntities([])
-			} finally {
-				if (!cancelled) setLoading(false)
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+			setClassQuery(entityClass.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [entityClass, search])
+
+	const load = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		setLoading(true)
+		setError("")
+		try {
+			const [sortColumn, order] = sort.split(":")
+			const params = new URLSearchParams({
+				limit: String(pageSize),
+				offset: String(page * pageSize),
+				sort: sortColumn,
+				order,
+			})
+			if (query) params.set("q", query)
+			if (classQuery) params.set("class", classQuery)
+			if (fru !== "all") params.set("fru", fru)
+			const data = await pb.send<{ items?: PhysicalEntity[]; total?: number }>(
+				`/api/v1/network/devices/${deviceId}/inventory?${params}`,
+				{}
+			)
+			if (sequence === requestSequence.current) {
+				setEntities(data.items ?? [])
+				setTotal(data.total ?? 0)
 			}
+		} catch (err) {
+			if (sequence === requestSequence.current) {
+				setEntities([])
+				setTotal(0)
+				setError(err instanceof Error ? err.message : t`Failed to load inventory`)
+			}
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
 		}
-		load().catch(() => {
-			if (!cancelled) setLoading(false)
-		})
-		return () => {
-			cancelled = true
-		}
-	}, [deviceId])
+	}, [classQuery, deviceId, fru, page, pageSize, query, sort, t])
+
+	useEffect(() => {
+		load()
+	}, [load])
 
 	const records = useMemo(
 		() =>
@@ -1581,37 +1619,91 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 				const manufacturer = entity.ManufacturerName || "—"
 				const hardwareRevision = entity.HardwareRevision || "—"
 				return {
-					id: String(index),
+					id: String(entity.Index ?? index),
+					index: entity.Index ?? "—",
 					name,
 					entityClass,
 					model,
 					serial,
 					manufacturer,
 					hardwareRevision,
+					fru: entity.IsFRU ? t`Yes` : t`No`,
 					searchText: `${name} ${entityClass} ${model} ${serial} ${manufacturer} ${hardwareRevision}`.toLowerCase(),
 				}
 			}),
-		[entities]
+		[entities, t]
 	)
 	const columns = useMemo(
 		() => [
+			{ field: "index", title: t`Index`, width: 90, style: denseCellStyle() },
 			{ field: "name", title: t`Name`, width: 300, style: denseCellStyle() },
 			{ field: "entityClass", title: t`Class`, width: 140, style: denseCellStyle() },
 			{ field: "model", title: t`Model`, width: 180, style: denseCellStyle() },
 			{ field: "serial", title: t`Serial`, width: 190, style: denseCellStyle() },
 			{ field: "manufacturer", title: t`Manufacturer`, width: 180, style: denseCellStyle() },
 			{ field: "hardwareRevision", title: t`HW Rev`, width: 130, style: denseCellStyle() },
+			{ field: "fru", title: "FRU", width: 90, style: denseCellStyle() },
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
 	return (
-		<PagedVTable
-			records={records}
-			columns={columns}
-			loading={loading}
-			emptyText={t`No physical entities discovered. Click Rediscover to probe ENTITY-MIB.`}
-			searchPlaceholder={t`Search inventory...`}
-		/>
+		<div className="grid gap-3">
+			<div className="flex flex-wrap gap-2">
+				<Input
+					value={entityClass}
+					onChange={(event) => setEntityClass(event.target.value)}
+					placeholder={t`Class (exact)`}
+					aria-label={t`Inventory class`}
+					className="w-44"
+				/>
+				<Select value={fru} onValueChange={(value) => resetPage(() => setFRU(value))}>
+					<SelectTrigger className="w-36" aria-label="FRU">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all">{t`All inventory`}</SelectItem>
+						<SelectItem value="true">{t`FRU only`}</SelectItem>
+						<SelectItem value="false">{t`Non-FRU only`}</SelectItem>
+					</SelectContent>
+				</Select>
+				<Select value={sort} onValueChange={(value) => resetPage(() => setSort(value))}>
+					<SelectTrigger className="w-44" aria-label={t`Sort inventory`}>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="entity_index:asc">{t`Index ascending`}</SelectItem>
+						<SelectItem value="name:asc">{t`Name A–Z`}</SelectItem>
+						<SelectItem value="class:asc">{t`Class A–Z`}</SelectItem>
+						<SelectItem value="manufacturer:asc">{t`Manufacturer A–Z`}</SelectItem>
+						<SelectItem value="serial:asc">{t`Serial A–Z`}</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={t`No physical entities discovered. Click Rediscover to probe ENTITY-MIB.`}
+				searchPlaceholder={t`Search inventory...`}
+				searchValue={search}
+				onSearchChange={setSearch}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => {
+						setPage(0)
+						setPageSize(value)
+					},
+				}}
+			/>
+		</div>
 	)
 }
 

@@ -27,15 +27,17 @@ type fakeNetworkRepository struct {
 	deletedPort  ID
 	deletedPorts []ID
 	// captured by ListDevicesPage / ListDeviceSummaryDevicesPage for assertions
-	pagedCalled  bool
-	pagedAll     bool
-	pagedAllowed []ID
-	pagedFilter  NetworkDevicePageFilter
-	pageNext     string
-	summaryQuery DeviceSummaryQuery
-	statusCounts DeviceStatusCounts
-	bgpQuery     BGPSessionQuery
-	bgpCounts    BGPSessionCounts
+	pagedCalled    bool
+	pagedAll       bool
+	pagedAllowed   []ID
+	pagedFilter    NetworkDevicePageFilter
+	pageNext       string
+	summaryQuery   DeviceSummaryQuery
+	statusCounts   DeviceStatusCounts
+	bgpQuery       BGPSessionQuery
+	bgpCounts      BGPSessionCounts
+	inventoryQuery PhysicalEntityQuery
+	inventoryTotal int
 }
 
 func (r *fakeNetworkRepository) ListDeviceSummaryDevicesPage(_ context.Context, _ ID, all bool, allowedTargetIDs []ID, q DeviceSummaryQuery) ([]NetworkDevice, error) {
@@ -205,6 +207,11 @@ func (r *fakeNetworkRepository) UpsertDeviceSensors(_ context.Context, sensors [
 
 func (r *fakeNetworkRepository) ListDevicePhysicalEntities(_ context.Context, _ ID, _ ID) ([]PhysicalEntity, error) {
 	return r.physical, nil
+}
+
+func (r *fakeNetworkRepository) ListDevicePhysicalEntitiesPage(_ context.Context, _ ID, _ ID, query PhysicalEntityQuery) ([]PhysicalEntity, int, error) {
+	r.inventoryQuery = query
+	return r.physical, r.inventoryTotal, nil
 }
 
 func (r *fakeNetworkRepository) UpsertDevicePhysicalEntities(_ context.Context, _ ID, _ ID, entities []PhysicalEntity) error {
@@ -624,6 +631,39 @@ func TestAPINetworkDeviceSensorsList(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "sensor-a") || !strings.Contains(body, "Temp sensor") {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAPINetworkDeviceInventoryPageMapsQuery(t *testing.T) {
+	repo := &fakeNetworkRepository{
+		devices:        []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		physical:       []PhysicalEntity{{Index: 7, Name: "PSU-A", Class: "powerSupply", IsFRU: true}},
+		inventoryTotal: 42,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/device-a/inventory?q=psu&class=powerSupply&fru=true&sort=manufacturer&order=desc&limit=10&offset=20", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	query := repo.inventoryQuery
+	if query.Search != "psu" || query.Class != "powerSupply" || query.FRU == nil || !*query.FRU || query.Sort != "manufacturer" || !query.Desc || query.Limit != 10 || query.Offset != 20 {
+		t.Fatalf("inventory query not mapped: %+v", query)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"total":42`) || !strings.Contains(body, `"Name":"PSU-A"`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAPINetworkDeviceInventoryPageRejectsInvalidQuery(t *testing.T) {
+	repo := &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
+	for _, query := range []string{"limit=0", "limit=501", "offset=-1", "fru=yes", "sort=vendor_type", "order=sideways"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/device-a/inventory?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, body = %s", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 

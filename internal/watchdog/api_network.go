@@ -466,12 +466,77 @@ func (api networkAPI) listDeviceInventory(w http.ResponseWriter, r *http.Request
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
 		return
 	}
+	query := r.URL.Query()
+	if query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" || query.Get("class") != "" || query.Get("fru") != "" || query.Get("sort") != "" || query.Get("order") != "" {
+		api.listDeviceInventoryPage(w, r, auth, device)
+		return
+	}
 	entities, err := api.repo.ListDevicePhysicalEntities(r.Context(), auth.TenantID, device.ID)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": entities})
+}
+
+func (api networkAPI) listDeviceInventoryPage(w http.ResponseWriter, r *http.Request, auth AuthContext, device NetworkDevice) {
+	values := r.URL.Query()
+	query := PhysicalEntityQuery{
+		Search: strings.TrimSpace(values.Get("q")),
+		Class:  strings.TrimSpace(values.Get("class")),
+		Sort:   strings.TrimSpace(values.Get("sort")),
+		Desc:   strings.EqualFold(strings.TrimSpace(values.Get("order")), "desc"),
+	}
+	if _, ok := physicalEntitySortColumns[query.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid inventory sort", nil)
+		return
+	}
+	if order := strings.TrimSpace(values.Get("order")); order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	switch fru := strings.TrimSpace(values.Get("fru")); fru {
+	case "", "all":
+	case "true", "false":
+		selected := fru == "true"
+		query.FRU = &selected
+	default:
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "fru must be all, true, or false", nil)
+		return
+	}
+	var err error
+	query.Limit, err = parseNetworkInventoryInteger(values.Get("limit"), 25, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
+	}
+	query.Offset, err = parseNetworkInventoryInteger(values.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	entities, total, err := api.repo.ListDevicePhysicalEntitiesPage(r.Context(), auth.TenantID, device.ID, query)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if entities == nil {
+		entities = []PhysicalEntity{}
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{
+		"items": entities, "total": total, "limit": query.Limit, "offset": query.Offset,
+	})
+}
+
+func parseNetworkInventoryInteger(raw string, fallback, minimum, maximum int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minimum || value > maximum {
+		return 0, errors.New("integer is outside the allowed range")
+	}
+	return value, nil
 }
 
 func (api networkAPI) listDeviceVLANs(w http.ResponseWriter, r *http.Request) {
