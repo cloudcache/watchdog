@@ -35,6 +35,7 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	runEmbeddedMigrationAgain(t, store.db, "047")
+	runEmbeddedMigrationAgain(t, store.db, "048")
 	tenantID := ID("01JADDRESSDIMENSIONTENANT1")
 	userID := ID("01JADDRESSDIMENSIONUSER001")
 	_, _ = store.db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID)
@@ -140,7 +141,7 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 		Auth: func(*http.Request) (AuthContext, error) {
 			return AuthContext{TenantID: tenantID, UserID: userID, IsAdmin: true}, nil
 		},
-		AddressDimensions: publisher, DimensionLifecycle: publisher, DimensionKeys: keyResolver,
+		AddressDimensions: publisher, DimensionLifecycle: publisher, DimensionConsumers: publisher, DimensionKeys: keyResolver,
 	})
 	approve := func(item AddressDimensionSnapshot) AddressDimensionSnapshot {
 		t.Helper()
@@ -318,6 +319,41 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 		SoftwareVersion: "1.0.0", Checksum: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", State: AddressDimensionAckInstalled,
 	}); !errors.Is(err, ErrAddressDimensionInvalid) {
 		t.Fatalf("mismatched ack checksum error = %v", err)
+	}
+	if _, err := publisher.ReportAddressDimensionAcknowledgement(ctx, AddressDimensionAcknowledgement{
+		TenantID: tenantID, SnapshotID: snapshot2.ID, WorkerID: "worker-b", BootID: "boot-b",
+		SoftwareVersion: "1.1.0", Checksum: snapshot2.Checksum, State: AddressDimensionAckInstalled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := publisher.GetAddressDimensionConsumerSummary(ctx, tenantID, snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Scope != AddressDimensionConsumerScopeObserved || summary.Queryability != AddressDimensionQueryabilityPartial || summary.Observed != 2 || summary.Ready != 1 || summary.Current != 1 || summary.Ahead != 1 {
+		t.Fatalf("consumer summary = %#v", summary)
+	}
+	statusResponse := httptest.NewRecorder()
+	router.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/dimensions/address/status?at="+rollbackAt.Format(time.RFC3339), nil))
+	if statusResponse.Code != http.StatusOK || !bytes.Contains(statusResponse.Body.Bytes(), []byte(`"queryability":"partial_observed"`)) {
+		t.Fatalf("consumer runtime status = %d %s", statusResponse.Code, statusResponse.Body.String())
+	}
+	consumerResponse := httptest.NewRecorder()
+	router.ServeHTTP(consumerResponse, httptest.NewRequest(http.MethodGet, "/api/v1/dimensions/address/versions/"+string(snapshot.ID)+"/consumers?state=unreported&drift=ahead", nil))
+	if consumerResponse.Code != http.StatusOK || !bytes.Contains(consumerResponse.Body.Bytes(), []byte(`"worker_id":"worker-b"`)) {
+		t.Fatalf("consumer status list = %d %s", consumerResponse.Code, consumerResponse.Body.String())
+	}
+	ahead, cursor, err := publisher.ListAddressDimensionConsumers(ctx, tenantID, snapshot.ID, AddressDimensionConsumerFilter{Drift: AddressDimensionDriftAhead, Limit: 10})
+	if err != nil || cursor != "" || len(ahead) != 1 || ahead[0].WorkerID != "worker-b" || ahead[0].TargetState != AddressDimensionConsumerUnreported || ahead[0].LatestInstalledSnapshot != snapshot2.ID {
+		t.Fatalf("ahead consumers = %#v cursor=%q err=%v", ahead, cursor, err)
+	}
+	firstPage, cursor, err := publisher.ListAddressDimensionConsumers(ctx, tenantID, snapshot.ID, AddressDimensionConsumerFilter{Limit: 1})
+	if err != nil || len(firstPage) != 1 || cursor == "" {
+		t.Fatalf("consumer first page = %#v cursor=%q err=%v", firstPage, cursor, err)
+	}
+	secondPage, next, err := publisher.ListAddressDimensionConsumers(ctx, tenantID, snapshot.ID, AddressDimensionConsumerFilter{Limit: 1, Cursor: cursor})
+	if err != nil || len(secondPage) != 1 || next != "" || secondPage[0].WorkerID == firstPage[0].WorkerID {
+		t.Fatalf("consumer second page = %#v next=%q err=%v", secondPage, next, err)
 	}
 
 	reference, err := publisher.ReportAddressDimensionReference(ctx, AddressDimensionReference{

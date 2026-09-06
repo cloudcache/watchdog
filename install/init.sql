@@ -414,6 +414,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshot_acks` (
   PRIMARY KEY (`tenant_id`,`snapshot_id`,`worker_id`),
   KEY `idx_dimension_snapshot_acks_worker` (`tenant_id`,`worker_id`,`installed_at`),
   KEY `idx_dimension_snapshot_acks_state` (`tenant_id`,`snapshot_id`,`state`,`attempted_at`),
+  KEY `idx_dimension_snapshot_acks_observed` (`tenant_id`,`worker_id`,`attempted_at`,`snapshot_id`),
   CONSTRAINT `fk_dimension_snapshot_acks_snapshot` FOREIGN KEY (`tenant_id`, `snapshot_id`) REFERENCES `dimension_snapshots` (`tenant_id`, `id`) ON DELETE CASCADE,
   CONSTRAINT `fk_dimension_snapshot_acks_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
   CONSTRAINT `dimension_snapshot_acks_chk_state` CHECK ((`state` in ('downloaded','installed','failed'))),

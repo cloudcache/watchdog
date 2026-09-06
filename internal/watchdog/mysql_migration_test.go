@@ -95,14 +95,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "047" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "048" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "047" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "048" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -297,7 +297,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 47 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "047" {
+	if len(migrations) != 48 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "048" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
@@ -320,6 +320,22 @@ func TestDimensionSourceManifestMigrationOwnsCompleteContract(t *testing.T) {
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Fatalf("dimension source manifest migration missing %q", required)
+		}
+	}
+}
+
+func TestDimensionConsumerStatusIndexMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "048_dimension_consumer_status_index.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"idx_dimension_snapshot_acks_observed", "tenant_id, worker_id, attempted_at, snapshot_id",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("dimension consumer status index migration missing %q", required)
 		}
 	}
 }

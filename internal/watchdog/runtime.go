@@ -311,6 +311,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,
 		AddressDimensions:      r.AddressDimensions,
 		DimensionLifecycle:     r.AddressDimensions,
+		DimensionConsumers:     r.AddressDimensions,
 		DimensionKeys:          r.DimensionKeys,
 		OperationJobs:          r.Store,
 		OperationJobSchedules:  r.Store,
