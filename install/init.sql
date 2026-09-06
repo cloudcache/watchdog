@@ -151,6 +151,43 @@ CREATE TABLE IF NOT EXISTS `address_sets` (
   CONSTRAINT `address_sets_chk_1` CHECK ((`match_direction` in ('in','out','both')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `address_draft_revisions` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `base_digest` char(71) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_digest` char(71) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `result_digest` char(71) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `operations_json` json NOT NULL,
+  `preview_json` json NOT NULL,
+  `operation_count` int unsigned NOT NULL,
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'prepared',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `applied_by` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `expires_at` datetime(3) NOT NULL,
+  `applied_at` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_address_draft_revisions_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_address_draft_revisions_request` (`tenant_id`,`request_digest`),
+  KEY `idx_address_draft_revisions_status` (`tenant_id`,`status`,`created_at`,`id`),
+  KEY `idx_address_draft_revisions_expiry` (`status`,`expires_at`),
+  KEY `fk_address_draft_revisions_created_by` (`created_by`),
+  KEY `fk_address_draft_revisions_applied_by` (`applied_by`),
+  CONSTRAINT `fk_address_draft_revisions_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_address_draft_revisions_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_address_draft_revisions_applied_by` FOREIGN KEY (`applied_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `address_draft_revisions_chk_1` CHECK ((`scope` in ('prefix','set','mixed'))),
+  CONSTRAINT `address_draft_revisions_chk_2` CHECK ((`status` in ('prepared','applied','superseded','cancelled'))),
+  CONSTRAINT `address_draft_revisions_chk_3` CHECK ((`operation_count` > 0)),
+  CONSTRAINT `address_draft_revisions_chk_4` CHECK (((`base_digest` like 'sha256:%') and (char_length(`base_digest`) = 71))),
+  CONSTRAINT `address_draft_revisions_chk_5` CHECK (((`request_digest` like 'sha256:%') and (char_length(`request_digest`) = 71))),
+  CONSTRAINT `address_draft_revisions_chk_6` CHECK (((`result_digest` is null) or ((`result_digest` like 'sha256:%') and (char_length(`result_digest`) = 71)))),
+  CONSTRAINT `address_draft_revisions_chk_7` CHECK ((`expires_at` > `created_at`)),
+  CONSTRAINT `address_draft_revisions_chk_8` CHECK ((((`status` = 'applied') and (`applied_at` is not null) and (`result_digest` is not null)) or ((`status` <> 'applied') and (`applied_at` is null) and (`result_digest` is null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `agent_run_history` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
