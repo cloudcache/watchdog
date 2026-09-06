@@ -49,6 +49,7 @@ type OperationJob struct {
 	ID                ID              `json:"id"`
 	TenantID          ID              `json:"tenant_id,omitempty"`
 	ScopeType         string          `json:"scope_type,omitempty"`
+	ScheduleID        ID              `json:"schedule_id,omitempty"`
 	JobType           string          `json:"job_type"`
 	Status            string          `json:"status"`
 	IdempotencyKey    string          `json:"idempotency_key"`
@@ -110,7 +111,7 @@ func newOperationJobToken() (string, error) {
 }
 
 const operationJobColumns = `
-	id, tenant_id, job_type, status, idempotency_key, request_hash,
+	id, tenant_id, schedule_id, job_type, status, idempotency_key, request_hash,
 	progress_done, checkpoint_json, COALESCE(result_ref, ''),
 	COALESCE(lease_owner, ''), COALESCE(lease_token, ''), lease_expires_at,
 	next_attempt_at, attempt_count, COALESCE(last_error_code, ''), COALESCE(last_error_detail, ''),
@@ -118,10 +119,10 @@ const operationJobColumns = `
 
 func scanOperationJob(row rowScanner) (OperationJob, error) {
 	var job OperationJob
-	var tenantID sql.NullString
+	var tenantID, scheduleID sql.NullString
 	var leaseExpires, startedAt, cancelAt, finishedAt sql.NullTime
 	var checkpoint []byte
-	err := row.Scan(&job.ID, &tenantID, &job.JobType, &job.Status, &job.IdempotencyKey, &job.RequestHash,
+	err := row.Scan(&job.ID, &tenantID, &scheduleID, &job.JobType, &job.Status, &job.IdempotencyKey, &job.RequestHash,
 		&job.ProgressDone, &checkpoint, &job.ResultRef,
 		&job.LeaseOwner, &job.LeaseToken, &leaseExpires,
 		&job.NextAttemptAt, &job.AttemptCount, &job.LastErrorCode, &job.LastErrorDetail,
@@ -131,6 +132,7 @@ func scanOperationJob(row rowScanner) (OperationJob, error) {
 	}
 	// tenant_id is NULL for system-scope jobs.
 	job.TenantID = ID(tenantID.String)
+	job.ScheduleID = ID(scheduleID.String)
 	job.CheckpointJSON = checkpoint
 	if leaseExpires.Valid {
 		job.LeaseExpiresAt = leaseExpires.Time
@@ -184,13 +186,17 @@ func (s *MySQLStore) EnqueueOperationJob(ctx context.Context, job OperationJob) 
 	if job.TenantID != "" {
 		tenantArg = job.TenantID
 	}
+	var scheduleArg any
+	if job.ScheduleID != "" {
+		scheduleArg = job.ScheduleID
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO operation_jobs (
-			id, tenant_id, scope_type, job_type, status, idempotency_key, request_hash,
+			id, tenant_id, scope_type, schedule_id, job_type, status, idempotency_key, request_hash,
 			checkpoint_json, created_by, next_attempt_at
-		) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, NULLIF(?, ''), ?)
+		) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, NULLIF(?, ''), ?)
 		ON DUPLICATE KEY UPDATE id = id
-	`, job.ID, tenantArg, scope, job.JobType, job.IdempotencyKey, job.RequestHash,
+	`, job.ID, tenantArg, scope, scheduleArg, job.JobType, job.IdempotencyKey, job.RequestHash,
 		string(checkpoint), job.CreatedBy, time.Now().UTC()); err != nil {
 		return OperationJob{}, err
 	}

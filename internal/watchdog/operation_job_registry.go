@@ -66,6 +66,17 @@ func (r *OperationJobHandlerRegistry) registrations() []OperationJobRegistration
 	return out
 }
 
+func (r *OperationJobHandlerRegistry) concurrencyBudgets() map[string]int {
+	budgets := make(map[string]int)
+	if r == nil {
+		return budgets
+	}
+	for _, registration := range r.registrations() {
+		budgets[registration.JobType] = registration.Concurrency
+	}
+	return budgets
+}
+
 // StartOperationJobScheduler launches, per registered type, `Concurrency`
 // workers that share the type's lease/retry policy. Each worker gets a
 // distinct owner so lease ownership is unambiguous across the pool. It returns

@@ -284,6 +284,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,
 		AddressDimensions:      r.AddressDimensions,
 		OperationJobs:          r.Store,
+		OperationJobSchedules:  r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,
 		RuntimeHealth:          r.Health,
@@ -464,6 +465,11 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			}
 		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
+		go (OperationJobScheduleDispatcher{
+			Repository: r.Store,
+			Registry:   registry,
+			Logf:       log.Printf,
+		}).Run(ctx)
 		if r.FlowRollupService != nil {
 			r.FlowRollupService.Logf = log.Printf
 			go r.FlowRollupService.Run(ctx)
