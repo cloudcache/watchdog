@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -99,13 +100,20 @@ func run(opt options) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := producer.Close(closeCtx); err != nil {
-			log.Printf("flush RawFlow Kafka producer: %v", err)
-		}
-	}()
+	// closeProducer flushes and closes the Kafka producer exactly once. It backs
+	// both the early-error defer below and the concurrent close in the shutdown
+	// path; sync.Once makes the two callers safe.
+	var closeProducerOnce sync.Once
+	closeProducer := func() {
+		closeProducerOnce.Do(func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := producer.Close(closeCtx); err != nil {
+				log.Printf("flush RawFlow Kafka producer: %v", err)
+			}
+		})
+	}
+	defer closeProducer()
 	pingCtx, cancelPing := context.WithTimeout(ctx, 10*time.Second)
 	err = producer.Ping(pingCtx)
 	cancelPing()
@@ -183,9 +191,24 @@ func run(opt options) error {
 	case <-ctx.Done():
 	}
 	cancelRun()
+	// A receiver can be parked in a full-buffer Produce, which uses a background
+	// context and only unblocks when the producer client is closed. Close the
+	// producer concurrently with the receiver join — not via the deferred close,
+	// which runs only after this function returns. Otherwise the join waits on a
+	// receiver that waits on a close that never happens: a shutdown deadlock
+	// until SIGKILL, which drops the whole buffer instead of flushing it. The
+	// Flush inside Close drains the buffer and releases the parked receivers; we
+	// wait for both the join and the close before returning so the flush is not
+	// truncated by process exit.
+	closeDone := make(chan struct{})
+	go func() {
+		closeProducer()
+		close(closeDone)
+	}()
 	for count := receiverResults; count < running; count++ {
 		first = errors.Join(first, <-errCh)
 	}
+	<-closeDone
 	return first
 }
 
