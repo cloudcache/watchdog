@@ -68,10 +68,37 @@ func ensureAddressJSONEOF(decoder *json.Decoder) error {
 func (api addressSetAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	query := r.URL.Query()
-	filter := AddressPrefixListFilter{
-		Search: query.Get("q"), Source: query.Get("source"), GeoLeafID: ID(query.Get("geo_leaf_id")),
-		OperatorID: ID(query.Get("operator_id")), Cursor: query.Get("cursor"),
+	for key := range query {
+		switch key {
+		case "q", "family", "source", "geo_leaf_id", "operator_id", "asn", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
 	}
+	filter := AddressPrefixListFilter{
+		Search: strings.TrimSpace(query.Get("q")), Source: strings.TrimSpace(query.Get("source")), GeoLeafID: ID(strings.TrimSpace(query.Get("geo_leaf_id"))),
+		OperatorID: ID(strings.TrimSpace(query.Get("operator_id"))), Cursor: strings.TrimSpace(query.Get("cursor")), Sort: strings.TrimSpace(query.Get("sort")),
+	}
+	if len(filter.Search) > 255 || len(filter.Source) > 32 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "address prefix search or source is too long", nil)
+		return
+	}
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if _, ok := addressPrefixSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid address prefix sort", nil)
+		return
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc"
 	if raw := strings.TrimSpace(query.Get("family")); raw != "" {
 		family, err := strconv.ParseUint(raw, 10, 8)
 		if err != nil || (family != 4 && family != 6) {
@@ -89,15 +116,18 @@ func (api addressSetAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {
 		value := uint32(asn)
 		filter.ASN = &value
 	}
-	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
-			return
-		}
-		filter.Limit = limit
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
 	}
-	prefixes, cursor, err := api.repo.ListAddressPrefixesPage(r.Context(), auth.TenantID, filter)
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	prefixes, cursor, total, err := api.repo.ListAddressPrefixesPage(r.Context(), auth.TenantID, filter)
 	if err != nil {
 		writeAddressTaxonomyError(w, err)
 		return
@@ -105,7 +135,11 @@ func (api addressSetAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {
 	if prefixes == nil {
 		prefixes = []AddressPrefix{}
 	}
-	response := map[string]any{"items": prefixes}
+	response := map[string]any{"items": prefixes, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}
@@ -219,9 +253,41 @@ func (api addressSetAPI) deletePrefix(w http.ResponseWriter, r *http.Request) {
 func (api addressSetAPI) listSets(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	query := r.URL.Query()
-	filter := AddressSetListFilter{
-		Search: query.Get("q"), MatchDirection: query.Get("match_direction"), Cursor: query.Get("cursor"),
+	for key := range query {
+		switch key {
+		case "q", "match_direction", "enabled", "sort", "order", "limit", "offset", "cursor":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
 	}
+	filter := AddressSetListFilter{
+		Search: strings.TrimSpace(query.Get("q")), MatchDirection: strings.ToLower(strings.TrimSpace(query.Get("match_direction"))),
+		Cursor: strings.TrimSpace(query.Get("cursor")), Sort: strings.TrimSpace(query.Get("sort")),
+	}
+	if len(filter.Search) > 255 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "q must be at most 255 characters", nil)
+		return
+	}
+	if filter.MatchDirection != "" && filter.MatchDirection != "in" && filter.MatchDirection != "out" && filter.MatchDirection != "both" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "match_direction must be in, out, or both", nil)
+		return
+	}
+	filter.TableMode = query.Has("sort") || query.Has("order") || query.Has("offset")
+	if filter.Cursor != "" && filter.TableMode {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "cursor cannot be combined with table query parameters", nil)
+		return
+	}
+	if _, ok := addressSetSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "invalid address set sort", nil)
+		return
+	}
+	order := strings.ToLower(strings.TrimSpace(query.Get("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	filter.Desc = order == "desc"
 	if raw := strings.TrimSpace(query.Get("enabled")); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -230,15 +296,18 @@ func (api addressSetAPI) listSets(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.Enabled = &enabled
 	}
-	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
-			return
-		}
-		filter.Limit = limit
+	var err error
+	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+		return
 	}
-	sets, cursor, err := api.repo.ListAddressSetsPage(r.Context(), auth.TenantID, filter)
+	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
+		return
+	}
+	sets, cursor, total, err := api.repo.ListAddressSetsPage(r.Context(), auth.TenantID, filter)
 	if err != nil {
 		writeAddressTaxonomyError(w, err)
 		return
@@ -246,7 +315,11 @@ func (api addressSetAPI) listSets(w http.ResponseWriter, r *http.Request) {
 	if sets == nil {
 		sets = []AddressSet{}
 	}
-	response := map[string]any{"items": sets}
+	response := map[string]any{"items": sets, "total": total}
+	if filter.TableMode {
+		response["limit"] = filter.Limit
+		response["offset"] = filter.Offset
+	}
 	if cursor != "" {
 		response["next_cursor"] = cursor
 	}

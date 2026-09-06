@@ -68,20 +68,17 @@ func (s *MySQLStore) ListAddressPrefixes(ctx context.Context, tenantID ID) ([]Ad
 	return prefixes, rows.Err()
 }
 
-func (s *MySQLStore) ListAddressPrefixesPage(ctx context.Context, tenantID ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, error) {
-	if filter.Limit <= 0 {
-		filter.Limit = 100
-	}
-	if filter.Limit > 500 {
-		filter.Limit = 500
-	}
-	filter.Search = strings.TrimSpace(filter.Search)
-	filter.Source = strings.TrimSpace(filter.Source)
-	if len(filter.Search) > 255 || len(filter.Source) > 32 || (filter.Family != 0 && filter.Family != 4 && filter.Family != 6) {
-		return nil, "", fmt.Errorf("%w: invalid address prefix filter", ErrAddressTaxonomyInvalid)
-	}
-	query := `SELECT ` + addressPrefixColumns + ` FROM address_prefixes WHERE tenant_id = ?`
-	args := []any{tenantID}
+var addressPrefixSortColumns = map[string]string{
+	"":              "cidr",
+	"cidr":          "cidr",
+	"family":        "family",
+	"prefix_length": "prefix_length",
+	"asn":           "asn",
+	"source":        "source",
+	"updated":       "updated_at",
+}
+
+func applyAddressPrefixListFilters(query string, args []any, filter AddressPrefixListFilter) (string, []any) {
 	if filter.Search != "" {
 		like := "%" + escapeSQLLike(filter.Search) + "%"
 		query += ` AND (cidr LIKE ? OR CAST(labels AS CHAR) LIKE ?)`
@@ -107,39 +104,77 @@ func (s *MySQLStore) ListAddressPrefixesPage(ctx context.Context, tenantID ID, f
 		query += ` AND asn = ?`
 		args = append(args, *filter.ASN)
 	}
+	return query, args
+}
+
+func (s *MySQLStore) ListAddressPrefixesPage(ctx context.Context, tenantID ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, int, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 500 {
+		filter.Limit = 500
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.Source = strings.TrimSpace(filter.Source)
+	_, validSort := addressPrefixSortColumns[filter.Sort]
+	if len(filter.Search) > 255 || len(filter.Source) > 32 || filter.Offset < 0 || !validSort || (filter.Family != 0 && filter.Family != 4 && filter.Family != 6) {
+		return nil, "", 0, fmt.Errorf("%w: invalid address prefix filter", ErrAddressTaxonomyInvalid)
+	}
+	where := ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	where, args = applyAddressPrefixListFilters(where, args, filter)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_prefixes`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressPrefixColumns + ` FROM address_prefixes` + where
 	if filter.Cursor != "" {
 		cidr, id, err := decodeStringCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND (cidr > ? OR (cidr = ? AND id > ?))`
 		args = append(args, cidr, cidr, id)
 	}
-	query += ` ORDER BY cidr, id LIMIT ?`
-	args = append(args, filter.Limit+1)
+	if filter.TableMode {
+		sortColumn := addressPrefixSortColumns[filter.Sort]
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		if sortColumn == "cidr" {
+			query += fmt.Sprintf(" ORDER BY family %s, ip_start %s, prefix_length %s, id %s LIMIT ? OFFSET ?", direction, direction, direction, direction)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		}
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY cidr, id LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressPrefix, 0, filter.Limit)
 	for rows.Next() {
 		item, err := scanAddressPrefix(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	nextCursor := ""
-	if len(items) > filter.Limit {
+	if !filter.TableMode && len(items) > filter.Limit {
 		items = items[:filter.Limit]
 		last := items[len(items)-1]
 		nextCursor = encodeStringCursor(last.CIDR, ID(last.ID))
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, total, nil
 }
 
 func (s *MySQLStore) GetAddressPrefix(ctx context.Context, tenantID ID, prefixID string) (AddressPrefix, error) {
@@ -245,20 +280,15 @@ func (s *MySQLStore) ListAddressSets(ctx context.Context, tenantID ID) ([]Addres
 	return sets, rows.Err()
 }
 
-func (s *MySQLStore) ListAddressSetsPage(ctx context.Context, tenantID ID, filter AddressSetListFilter) ([]AddressSet, string, error) {
-	if filter.Limit <= 0 {
-		filter.Limit = 100
-	}
-	if filter.Limit > 500 {
-		filter.Limit = 500
-	}
-	filter.Search = strings.TrimSpace(filter.Search)
-	filter.MatchDirection = strings.ToLower(strings.TrimSpace(filter.MatchDirection))
-	if len(filter.Search) > 255 || (filter.MatchDirection != "" && filter.MatchDirection != "in" && filter.MatchDirection != "out" && filter.MatchDirection != "both") {
-		return nil, "", fmt.Errorf("%w: invalid address set filter", ErrAddressTaxonomyInvalid)
-	}
-	query := `SELECT ` + addressSetColumns + ` FROM address_sets WHERE tenant_id = ?`
-	args := []any{tenantID}
+var addressSetSortColumns = map[string]string{
+	"":          "name",
+	"name":      "name",
+	"direction": "match_direction",
+	"enabled":   "enabled",
+	"updated":   "updated_at",
+}
+
+func applyAddressSetListFilters(query string, args []any, filter AddressSetListFilter) (string, []any) {
 	if filter.Search != "" {
 		like := "%" + escapeSQLLike(filter.Search) + "%"
 		query += ` AND (name LIKE ? OR COALESCE(description, '') LIKE ?)`
@@ -272,39 +302,73 @@ func (s *MySQLStore) ListAddressSetsPage(ctx context.Context, tenantID ID, filte
 		query += ` AND enabled = ?`
 		args = append(args, *filter.Enabled)
 	}
+	return query, args
+}
+
+func (s *MySQLStore) ListAddressSetsPage(ctx context.Context, tenantID ID, filter AddressSetListFilter) ([]AddressSet, string, int, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 500 {
+		filter.Limit = 500
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.MatchDirection = strings.ToLower(strings.TrimSpace(filter.MatchDirection))
+	_, validSort := addressSetSortColumns[filter.Sort]
+	if len(filter.Search) > 255 || filter.Offset < 0 || !validSort || (filter.MatchDirection != "" && filter.MatchDirection != "in" && filter.MatchDirection != "out" && filter.MatchDirection != "both") {
+		return nil, "", 0, fmt.Errorf("%w: invalid address set filter", ErrAddressTaxonomyInvalid)
+	}
+	where := ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	where, args = applyAddressSetListFilters(where, args, filter)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_sets`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressSetColumns + ` FROM address_sets` + where
 	if filter.Cursor != "" {
 		name, id, err := decodeStringCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND (name > ? OR (name = ? AND id > ?))`
 		args = append(args, name, name, id)
 	}
-	query += ` ORDER BY name, id LIMIT ?`
-	args = append(args, filter.Limit+1)
+	if filter.TableMode {
+		sortColumn := addressSetSortColumns[filter.Sort]
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY name, id LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressSet, 0, filter.Limit)
 	for rows.Next() {
 		item, err := scanAddressSet(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	nextCursor := ""
-	if len(items) > filter.Limit {
+	if !filter.TableMode && len(items) > filter.Limit {
 		items = items[:filter.Limit]
 		last := items[len(items)-1]
 		nextCursor = encodeStringCursor(last.Name, ID(last.ID))
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, total, nil
 }
 
 func (s *MySQLStore) GetAddressSet(ctx context.Context, tenantID ID, setID string) (AddressSet, error) {

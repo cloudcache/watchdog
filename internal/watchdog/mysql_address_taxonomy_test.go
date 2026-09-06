@@ -141,9 +141,13 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sets, _, err := store.ListAddressSetsPage(ctx, tenantID, AddressSetListFilter{Search: "Dependent", MatchDirection: "in", Enabled: func() *bool { value := false; return &value }(), Limit: 10})
-	if err != nil || len(sets) != 1 || sets[0].ID != dependentSet.ID || sets[0].Enabled {
-		t.Fatalf("address sets=%#v err=%v", sets, err)
+	sets, _, setTotal, err := store.ListAddressSetsPage(ctx, tenantID, AddressSetListFilter{Search: "Dependent", MatchDirection: "in", Enabled: func() *bool { value := false; return &value }(), Limit: 10})
+	if err != nil || len(sets) != 1 || setTotal != 1 || sets[0].ID != dependentSet.ID || sets[0].Enabled {
+		t.Fatalf("address sets=%#v total=%d err=%v", sets, setTotal, err)
+	}
+	sets, cursor, setTotal, err = store.ListAddressSetsPage(ctx, tenantID, AddressSetListFilter{Sort: "enabled", Desc: true, Limit: 1, Offset: 1, TableMode: true})
+	if err != nil || cursor != "" || len(sets) != 1 || setTotal != 2 || sets[0].Enabled {
+		t.Fatalf("address set table page=%#v cursor=%q total=%d err=%v", sets, cursor, setTotal, err)
 	}
 	set.IncludeSetIDs = []string{dependentSet.ID}
 	if _, err := store.UpdateAddressSet(ctx, set, set.RowVersion); !errors.Is(err, ErrAddressTaxonomyCycle) {
@@ -182,11 +186,17 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	if err != nil || prefix.CIDR != "192.0.2.0/24" || prefix.Family != 4 || prefix.PrefixLength != 24 || prefix.RowVersion != 1 {
 		t.Fatalf("prefix=%#v err=%v", prefix, err)
 	}
-	prefixes, _, err := store.ListAddressPrefixesPage(ctx, tenantID, AddressPrefixListFilter{
+	prefixes, _, prefixTotal, err := store.ListAddressPrefixesPage(ctx, tenantID, AddressPrefixListFilter{
 		Search: "customer", Family: 4, Source: "customer", GeoLeafID: country.ID, OperatorID: operator.ID, ASN: &asn, Limit: 10,
 	})
-	if err != nil || len(prefixes) != 1 || prefixes[0].ID != prefix.ID {
-		t.Fatalf("prefixes=%#v err=%v", prefixes, err)
+	if err != nil || len(prefixes) != 1 || prefixTotal != 1 || prefixes[0].ID != prefix.ID {
+		t.Fatalf("prefixes=%#v total=%d err=%v", prefixes, prefixTotal, err)
+	}
+	prefixes, cursor, prefixTotal, err = store.ListAddressPrefixesPage(ctx, tenantID, AddressPrefixListFilter{
+		Family: 4, Sort: "prefix_length", Desc: true, Limit: 1, TableMode: true,
+	})
+	if err != nil || cursor != "" || len(prefixes) != 1 || prefixTotal != 1 || prefixes[0].ID != prefix.ID {
+		t.Fatalf("prefix table page=%#v cursor=%q total=%d err=%v", prefixes, cursor, prefixTotal, err)
 	}
 	prefix.Labels["tier"] = "gold"
 	prefix, err = store.UpdateAddressPrefix(ctx, prefix, prefix.RowVersion)

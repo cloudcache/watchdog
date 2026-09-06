@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { LayersIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { LayersIcon, PencilIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,9 +36,8 @@ type AddressSet = {
 	row_version: number
 }
 
-type AddressSetList = { items?: AddressSet[]; next_cursor?: string }
+type AddressSetList = { items?: AddressSet[]; total?: number }
 
-const pageSize = 100
 const emptyForm = {
 	id: "",
 	rowVersion: 0,
@@ -60,49 +59,61 @@ const emptyForm = {
 export default memo(function AddressSets() {
 	const { t } = useLingui()
 	const [sets, setSets] = useState<AddressSet[]>([])
-	const [nextCursor, setNextCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
-	const [direction, setDirection] = useState("all")
-	const [enabled, setEnabled] = useState("all")
+	const [direction, setDirection] = useState("")
+	const [enabled, setEnabled] = useState("")
+	const [sort, setSort] = useState("name:asc")
+	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState(emptyForm)
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
 
-	const fetchPage = useCallback(
-		async (cursor: string, append: boolean) => {
-			append ? setLoadingMore(true) : setLoading(true)
-			setError("")
-			try {
-				const data = await pb.send<AddressSetList>("/api/v1/address-sets", {
-					query: {
-						q: debouncedSearch || undefined,
-						match_direction: direction === "all" ? undefined : direction,
-						enabled: enabled === "all" ? undefined : enabled,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setSets((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load`)
-			} finally {
-				append ? setLoadingMore(false) : setLoading(false)
-			}
-		},
-		[debouncedSearch, direction, enabled, t]
-	)
+	const fetchPage = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<AddressSetList>("/api/v1/address-sets", {
+				query: {
+					q: debouncedSearch || undefined,
+					match_direction: direction || undefined,
+					enabled: enabled || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setSets(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setSets([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [debouncedSearch, direction, enabled, page, pageSize, reloadKey, sort, t])
 
 	useEffect(() => {
-		fetchPage("", false)
+		fetchPage()
 	}, [fetchPage])
 
 	const save = async () => {
@@ -136,7 +147,7 @@ export default memo(function AddressSets() {
 			})
 			setForm(emptyForm)
 			setShowForm(false)
-			await fetchPage("", false)
+			await fetchPage()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save`)
 		}
@@ -176,7 +187,7 @@ export default memo(function AddressSets() {
 					method: "DELETE",
 					headers: { "If-Match": `"${rowVersion}"` },
 				})
-				await fetchPage("", false)
+				await fetchPage()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : t`Failed to delete`)
 			}
@@ -233,6 +244,45 @@ export default memo(function AddressSets() {
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				direction: [{ value: "in" }, { value: "out" }, { value: "both" }],
+				status: [
+					{ value: "true", label: t`Enabled` },
+					{ value: "false", label: t`Disabled` },
+				],
+			},
+			selected: { direction: direction ? [direction] : [], status: enabled ? [enabled] : [] },
+			selection: { direction: "single" as const, status: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) =>
+				resetPage(() => {
+					const value = values.length > 0 ? String(values[0]) : ""
+					if (field === "direction") setDirection(value)
+					if (field === "status") setEnabled(value)
+				}),
+			onClearAll: () =>
+				resetPage(() => {
+					setDirection("")
+					setEnabled("")
+				}),
+		}),
+		[direction, enabled, t]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { name: "name", direction: "direction", status: "enabled" },
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -244,7 +294,7 @@ export default memo(function AddressSets() {
 					</h1>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm" onClick={() => fetchPage("", false)} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
@@ -259,53 +309,6 @@ export default memo(function AddressSets() {
 						<Trans>Add Set</Trans>
 					</Button>
 				</div>
-			</div>
-
-			<div className="flex flex-wrap items-center gap-2">
-				<div className="relative min-w-64 max-w-sm flex-1">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						placeholder={t`Search name or description...`}
-						className="pl-9"
-					/>
-				</div>
-				<Select value={direction} onValueChange={setDirection}>
-					<SelectTrigger className="w-36">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All directions</Trans>
-						</SelectItem>
-						<SelectItem value="in">
-							<Trans>In</Trans>
-						</SelectItem>
-						<SelectItem value="out">
-							<Trans>Out</Trans>
-						</SelectItem>
-						<SelectItem value="both">
-							<Trans>Both</Trans>
-						</SelectItem>
-					</SelectContent>
-				</Select>
-				<Select value={enabled} onValueChange={setEnabled}>
-					<SelectTrigger className="w-32">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All states</Trans>
-						</SelectItem>
-						<SelectItem value="true">
-							<Trans>Enabled</Trans>
-						</SelectItem>
-						<SelectItem value="false">
-							<Trans>Disabled</Trans>
-						</SelectItem>
-					</SelectContent>
-				</Select>
 			</div>
 
 			{showForm ? (
@@ -496,21 +499,25 @@ export default memo(function AddressSets() {
 					columns={columns}
 					loading={loading}
 					emptyText={t`No address sets found.`}
-					showSearch={false}
+					searchValue={search}
+					onSearchChange={setSearch}
+					searchPlaceholder={t`Search name or description...`}
 					height={560}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+					}}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
 					onCellClick={(record, field) => {
 						if (field === "edit") edit(record)
 						if (field === "remove") remove(record)
 					}}
 				/>
 			</div>
-			{nextCursor ? (
-				<div className="flex justify-center">
-					<Button variant="outline" size="sm" onClick={() => fetchPage(nextCursor, true)} disabled={loadingMore}>
-						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-					</Button>
-				</div>
-			) : null}
 		</div>
 	)
 })

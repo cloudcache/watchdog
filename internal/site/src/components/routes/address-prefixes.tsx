@@ -1,12 +1,11 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { parsePrefixLabels } from "@/lib/address-set-form"
 import { pb } from "@/lib/api"
 
@@ -23,9 +22,8 @@ type AddressPrefix = {
 	row_version: number
 }
 
-type AddressPrefixList = { items?: AddressPrefix[]; next_cursor?: string }
+type AddressPrefixList = { items?: AddressPrefix[]; total?: number }
 
-const pageSize = 100
 const emptyForm = {
 	id: "",
 	rowVersion: 0,
@@ -40,49 +38,61 @@ const emptyForm = {
 export default memo(function AddressPrefixes() {
 	const { t } = useLingui()
 	const [prefixes, setPrefixes] = useState<AddressPrefix[]>([])
-	const [nextCursor, setNextCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
-	const [family, setFamily] = useState("all")
+	const [family, setFamily] = useState("")
 	const [source, setSource] = useState("")
+	const [sort, setSort] = useState("cidr:asc")
+	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState(emptyForm)
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
 
-	const fetchPage = useCallback(
-		async (cursor: string, append: boolean) => {
-			append ? setLoadingMore(true) : setLoading(true)
-			setError("")
-			try {
-				const data = await pb.send<AddressPrefixList>("/api/v1/address-prefixes", {
-					query: {
-						q: debouncedSearch || undefined,
-						family: family === "all" ? undefined : family,
-						source: source.trim() || undefined,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setPrefixes((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setNextCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load`)
-			} finally {
-				append ? setLoadingMore(false) : setLoading(false)
-			}
-		},
-		[debouncedSearch, family, source, t]
-	)
+	const fetchPage = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		const [sortField, order] = sort.split(":")
+		setLoading(true)
+		setError("")
+		try {
+			const data = await pb.send<AddressPrefixList>("/api/v1/address-prefixes", {
+				query: {
+					q: debouncedSearch || undefined,
+					family: family || undefined,
+					source: source.trim() || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: sortField,
+					order,
+				},
+			})
+			if (sequence !== requestSequence.current) return
+			setPrefixes(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setPrefixes([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load`)
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [debouncedSearch, family, page, pageSize, reloadKey, sort, source, t])
 
 	useEffect(() => {
-		fetchPage("", false)
+		fetchPage()
 	}, [fetchPage])
 
 	const save = async () => {
@@ -107,7 +117,7 @@ export default memo(function AddressPrefixes() {
 			})
 			setForm(emptyForm)
 			setShowForm(false)
-			await fetchPage("", false)
+			await fetchPage()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save`)
 		}
@@ -142,7 +152,7 @@ export default memo(function AddressPrefixes() {
 					method: "DELETE",
 					headers: { "If-Match": `"${rowVersion}"` },
 				})
-				await fetchPage("", false)
+				await fetchPage()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : t`Failed to delete`)
 			}
@@ -198,6 +208,42 @@ export default memo(function AddressPrefixes() {
 		],
 		[t]
 	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				family: [
+					{ value: "4", label: "IPv4" },
+					{ value: "6", label: "IPv6" },
+				],
+			},
+			selected: { family: family ? [family] : [] },
+			selection: { family: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setFamily(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetPage(() => setFamily("")),
+		}),
+		[family]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				cidr: "cidr",
+				family: "family",
+				prefixLength: "prefix_length",
+				asn: "asn",
+				source: "source",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -209,7 +255,7 @@ export default memo(function AddressPrefixes() {
 					</h1>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm" onClick={() => fetchPage("", false)} disabled={loading}>
+					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
 					</Button>
@@ -226,32 +272,11 @@ export default memo(function AddressPrefixes() {
 				</div>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-2">
-				<div className="relative min-w-64 max-w-sm flex-1">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						placeholder={t`Search CIDR or labels...`}
-						className="pl-9"
-					/>
-				</div>
-				<Select value={family} onValueChange={setFamily}>
-					<SelectTrigger className="w-32">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">
-							<Trans>All families</Trans>
-						</SelectItem>
-						<SelectItem value="4">IPv4</SelectItem>
-						<SelectItem value="6">IPv6</SelectItem>
-					</SelectContent>
-				</Select>
+			<div className="flex flex-wrap items-center justify-end gap-2">
 				<Input
 					className="w-40"
 					value={source}
-					onChange={(event) => setSource(event.target.value)}
+					onChange={(event) => resetPage(() => setSource(event.target.value))}
 					placeholder={t`Source filter`}
 				/>
 			</div>
@@ -353,21 +378,25 @@ export default memo(function AddressPrefixes() {
 					columns={columns}
 					loading={loading}
 					emptyText={t`No prefixes found.`}
-					showSearch={false}
+					searchValue={search}
+					onSearchChange={setSearch}
+					searchPlaceholder={t`Search CIDR or labels...`}
 					height={560}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+					}}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
 					onCellClick={(record, field) => {
 						if (field === "edit") edit(record)
 						if (field === "remove") remove(record)
 					}}
 				/>
 			</div>
-			{nextCursor ? (
-				<div className="flex justify-center">
-					<Button variant="outline" size="sm" onClick={() => fetchPage(nextCursor, true)} disabled={loadingMore}>
-						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-					</Button>
-				</div>
-			) : null}
 		</div>
 	)
 })

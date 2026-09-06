@@ -20,11 +20,13 @@ type fakeAddressSetRepository struct {
 	updatedSet      AddressSet
 	expectedVersion uint64
 	deletedVersion  uint64
+	prefixTotal     int
+	setTotal        int
 }
 
-func (r *fakeAddressSetRepository) ListAddressPrefixesPage(_ context.Context, _ ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, error) {
+func (r *fakeAddressSetRepository) ListAddressPrefixesPage(_ context.Context, _ ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, int, error) {
 	r.prefixFilter = filter
-	return []AddressPrefix{{ID: "prefix-a", CIDR: "192.0.2.0/24", Family: 4, RowVersion: 1}}, "next-prefix", nil
+	return []AddressPrefix{{ID: "prefix-a", CIDR: "192.0.2.0/24", Family: 4, RowVersion: 1}}, "next-prefix", r.prefixTotal, nil
 }
 
 func (r *fakeAddressSetRepository) GetAddressPrefix(_ context.Context, tenantID ID, prefixID string) (AddressPrefix, error) {
@@ -44,9 +46,9 @@ func (r *fakeAddressSetRepository) UpdateAddressPrefix(_ context.Context, prefix
 	return prefix, nil
 }
 
-func (r *fakeAddressSetRepository) ListAddressSetsPage(_ context.Context, _ ID, filter AddressSetListFilter) ([]AddressSet, string, error) {
+func (r *fakeAddressSetRepository) ListAddressSetsPage(_ context.Context, _ ID, filter AddressSetListFilter) ([]AddressSet, string, int, error) {
 	r.setFilter = filter
-	return []AddressSet{{ID: "set-a", Name: "Customer", RowVersion: 1}}, "next", nil
+	return []AddressSet{{ID: "set-a", Name: "Customer", RowVersion: 1}}, "next", r.setTotal, nil
 }
 
 func (r *fakeAddressSetRepository) GetAddressSet(_ context.Context, tenantID ID, setID string) (AddressSet, error) {
@@ -75,7 +77,7 @@ func (r *fakeAddressSetRepository) DeleteAddressSetVersion(_ context.Context, _ 
 }
 
 func TestAddressSetListParsesServerSideFilters(t *testing.T) {
-	repo := &fakeAddressSetRepository{}
+	repo := &fakeAddressSetRepository{setTotal: 3}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressSets: repo})
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-sets?q=customer&match_direction=in&enabled=false&limit=25&cursor=cursor-a", nil)
 	response := httptest.NewRecorder()
@@ -90,14 +92,15 @@ func TestAddressSetListParsesServerSideFilters(t *testing.T) {
 	var result struct {
 		Items      []AddressSet `json:"items"`
 		NextCursor string       `json:"next_cursor"`
+		Total      int          `json:"total"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" {
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" || result.Total != 3 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }
 
 func TestAddressPrefixListParsesServerSideFilters(t *testing.T) {
-	repo := &fakeAddressSetRepository{}
+	repo := &fakeAddressSetRepository{prefixTotal: 4}
 	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressSets: repo})
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes?q=customer&family=4&source=manual&geo_leaf_id=geo-a&operator_id=operator-a&asn=4134&limit=25&cursor=cursor-a", nil)
 	response := httptest.NewRecorder()
@@ -112,9 +115,71 @@ func TestAddressPrefixListParsesServerSideFilters(t *testing.T) {
 	var result struct {
 		Items      []AddressPrefix `json:"items"`
 		NextCursor string          `json:"next_cursor"`
+		Total      int             `json:"total"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next-prefix" {
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next-prefix" || result.Total != 4 {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestAddressListsParseServerTableContract(t *testing.T) {
+	repo := &fakeAddressSetRepository{prefixTotal: 8, setTotal: 9}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressSets: repo})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/v1/address-prefixes?q=customer&family=6&source=vendor&sort=prefix_length&order=desc&limit=25&offset=50", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("prefix status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := repo.prefixFilter; !filter.TableMode || filter.Search != "customer" || filter.Family != 6 || filter.Source != "vendor" ||
+		filter.Sort != "prefix_length" || !filter.Desc || filter.Limit != 25 || filter.Offset != 50 || filter.Cursor != "" {
+		t.Fatalf("prefix table filter=%#v", filter)
+	}
+	if !strings.Contains(response.Body.String(), `"total":8`) || !strings.Contains(response.Body.String(), `"offset":50`) {
+		t.Fatalf("prefix response=%s", response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/v1/address-sets?q=customer&match_direction=out&enabled=true&sort=enabled&order=asc&limit=50&offset=100", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("set status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := repo.setFilter; !filter.TableMode || filter.Search != "customer" || filter.MatchDirection != "out" || filter.Enabled == nil ||
+		!*filter.Enabled || filter.Sort != "enabled" || filter.Desc || filter.Limit != 50 || filter.Offset != 100 || filter.Cursor != "" {
+		t.Fatalf("set table filter=%#v", filter)
+	}
+	if !strings.Contains(response.Body.String(), `"total":9`) || !strings.Contains(response.Body.String(), `"offset":100`) {
+		t.Fatalf("set response=%s", response.Body.String())
+	}
+}
+
+func TestAddressListsRejectInvalidServerTableQueries(t *testing.T) {
+	repo := &fakeAddressSetRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressSets: repo})
+	queries := []string{
+		"/api/v1/address-prefixes?unknown=1",
+		"/api/v1/address-prefixes?sort=labels",
+		"/api/v1/address-prefixes?order=sideways",
+		"/api/v1/address-prefixes?limit=501",
+		"/api/v1/address-prefixes?offset=-1",
+		"/api/v1/address-prefixes?cursor=abc&sort=cidr",
+		"/api/v1/address-sets?unknown=1",
+		"/api/v1/address-sets?match_direction=sideways",
+		"/api/v1/address-sets?enabled=maybe",
+		"/api/v1/address-sets?sort=selector",
+		"/api/v1/address-sets?order=sideways",
+		"/api/v1/address-sets?cursor=abc&offset=1",
+	}
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, query, nil))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

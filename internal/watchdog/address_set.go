@@ -34,7 +34,11 @@ type AddressPrefixListFilter struct {
 	OperatorID ID
 	ASN        *uint32
 	Limit      int
+	Offset     int
 	Cursor     string
+	Sort       string
+	Desc       bool
+	TableMode  bool
 }
 
 type AddressSet struct {
@@ -59,19 +63,23 @@ type AddressSetListFilter struct {
 	MatchDirection string
 	Enabled        *bool
 	Limit          int
+	Offset         int
 	Cursor         string
+	Sort           string
+	Desc           bool
+	TableMode      bool
 }
 
 type AddressSetRepository interface {
 	ListAddressPrefixes(ctx context.Context, tenantID ID) ([]AddressPrefix, error)
-	ListAddressPrefixesPage(ctx context.Context, tenantID ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, error)
+	ListAddressPrefixesPage(ctx context.Context, tenantID ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, int, error)
 	GetAddressPrefix(ctx context.Context, tenantID ID, prefixID string) (AddressPrefix, error)
 	UpsertAddressPrefix(ctx context.Context, prefix AddressPrefix) (AddressPrefix, error)
 	UpdateAddressPrefix(ctx context.Context, prefix AddressPrefix, expectedVersion uint64) (AddressPrefix, error)
 	DeleteAddressPrefix(ctx context.Context, tenantID ID, prefixID string) error
 	DeleteAddressPrefixVersion(ctx context.Context, tenantID ID, prefixID string, expectedVersion uint64) error
 	ListAddressSets(ctx context.Context, tenantID ID) ([]AddressSet, error)
-	ListAddressSetsPage(ctx context.Context, tenantID ID, filter AddressSetListFilter) ([]AddressSet, string, error)
+	ListAddressSetsPage(ctx context.Context, tenantID ID, filter AddressSetListFilter) ([]AddressSet, string, int, error)
 	GetAddressSet(ctx context.Context, tenantID ID, setID string) (AddressSet, error)
 	UpsertAddressSet(ctx context.Context, set AddressSet) (AddressSet, error)
 	UpdateAddressSet(ctx context.Context, set AddressSet, expectedVersion uint64) (AddressSet, error)
