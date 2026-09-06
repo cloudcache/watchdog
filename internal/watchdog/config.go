@@ -54,6 +54,7 @@ const (
 type BackendConfig struct {
 	MySQL           MySQLConfig           `yaml:"mysql"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
+	MetricsScrape   MetricsScrapeConfig   `yaml:"metrics_scrape"`
 	Export          ExportConfig          `yaml:"export"`
 	AddressLibrary  AddressLibraryConfig  `yaml:"address_library"`
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
@@ -67,6 +68,15 @@ type BackendConfig struct {
 	SNMP           SNMPConfig           `yaml:"snmp"`
 	SNMPTrapAgent  SNMPTrapAgentConfig  `yaml:"snmp_trap_agent"`
 	Agent          AgentClientConfig    `yaml:"agent"`
+}
+
+// MetricsScrapeConfig exposes the composed hub metrics on the existing HTTP
+// listener. TokenFile is used instead of an inline token so production secrets
+// do not enter YAML, process arguments, or environment values.
+type MetricsScrapeConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	TokenFile    string   `yaml:"token_file"`
+	AllowedCIDRs []string `yaml:"allowed_cidrs"`
 }
 
 type FlowRollupConfig struct {
@@ -325,6 +335,11 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	cfg.VictoriaMetrics.BaseURL = getEnv("WATCHDOG_VICTORIAMETRICS_URL", cfg.VictoriaMetrics.BaseURL)
+	if cfg.MetricsScrape.Enabled, err = getEnvBool("WATCHDOG_METRICS_SCRAPE_ENABLED", cfg.MetricsScrape.Enabled); err != nil {
+		return err
+	}
+	cfg.MetricsScrape.TokenFile = getEnv("WATCHDOG_METRICS_SCRAPE_TOKEN_FILE", cfg.MetricsScrape.TokenFile)
+	cfg.MetricsScrape.AllowedCIDRs = getEnvCommaList("WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS", cfg.MetricsScrape.AllowedCIDRs)
 	cfg.FlowGeo.Path = getEnv("WATCHDOG_FLOW_GEO_PATH", cfg.FlowGeo.Path)
 	if cfg.FlowRollup.Enabled, err = getEnvBool("WATCHDOG_FLOW_ROLLUP_ENABLED", cfg.FlowRollup.Enabled); err != nil {
 		return err
@@ -566,8 +581,21 @@ func getEnvStringList(key string, fallback []string) []string {
 	return out
 }
 
+func getEnvCommaList(key string, fallback []string) []string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	return splitConfigList(value)
+}
+
 func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.VictoriaMetrics.BaseURL = normalizeBaseURL(cfg.VictoriaMetrics.BaseURL)
+	cfg.MetricsScrape.TokenFile = cleanOptionalConfigPath(cfg.MetricsScrape.TokenFile)
+	cfg.MetricsScrape.AllowedCIDRs = normalizeStringList(cfg.MetricsScrape.AllowedCIDRs)
 	cfg.FlowRollup.ClickHouseAddress = strings.TrimSpace(cfg.FlowRollup.ClickHouseAddress)
 	cfg.FlowRollup.ClickHouseDatabase = strings.TrimSpace(cfg.FlowRollup.ClickHouseDatabase)
 	cfg.FlowRollup.ClickHouseUser = strings.TrimSpace(cfg.FlowRollup.ClickHouseUser)
@@ -663,6 +691,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateHTTPBaseURL("victoriametrics.base_url", cfg.VictoriaMetrics.BaseURL, true); err != nil {
 		return err
 	}
+	if err := validateMetricsScrapeConfig(cfg.MetricsScrape); err != nil {
+		return err
+	}
 	if err := validateListenAddress("sflow_collector.listen", cfg.SFlowCollector.Listen); err != nil {
 		return err
 	}
@@ -705,6 +736,24 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.Agent.Interval <= 0 {
 		return errors.New("agent.interval must be positive")
+	}
+	return nil
+}
+
+func validateMetricsScrapeConfig(cfg MetricsScrapeConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.TokenFile == "" {
+		return errors.New("enabled metrics_scrape requires token_file")
+	}
+	if len(cfg.AllowedCIDRs) == 0 {
+		return errors.New("enabled metrics_scrape requires at least one allowed_cidrs entry")
+	}
+	for _, value := range cfg.AllowedCIDRs {
+		if _, _, err := net.ParseCIDR(value); err != nil {
+			return fmt.Errorf("metrics_scrape.allowed_cidrs contains invalid CIDR %q", value)
+		}
 	}
 	return nil
 }

@@ -22,6 +22,9 @@ func (h *Hub) registerPlatformRoutes(se *core.ServeEvent) error {
 	tenantDiscovery := platform.NewIdentityTenantDiscoveryAdapter(authenticate, h.backend.Store)
 	handler := h.backend.Router(auth, tenantDiscovery)
 	mountPlatformHandler(se.Router, handler)
+	if metrics := h.backend.MetricsScrapeHandler(); metrics != nil {
+		mountPlatformMetricsHandler(se.Router, metrics)
+	}
 	return nil
 }
 
@@ -31,6 +34,12 @@ func mountPlatformHandler(router *pbrouter.Router[*core.RequestEvent], handler h
 		router.Route(method, "/api/v1", wrapped)
 		router.Route(method, "/api/v1/{path...}", wrapped)
 	}
+}
+
+func mountPlatformMetricsHandler(router *pbrouter.Router[*core.RequestEvent], handler http.Handler) {
+	wrapped := apis.WrapStdHandler(handler)
+	router.Route(http.MethodGet, "/metrics", wrapped)
+	router.Route(http.MethodHead, "/metrics", wrapped)
 }
 
 func NewPocketBaseIdentityAuthenticator(app core.App) platform.ExternalIdentityAuthenticator {

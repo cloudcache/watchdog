@@ -46,11 +46,13 @@ type BackendRuntime struct {
 	CollectorPlans     CollectorPlanDeliveryController
 	FlowRollupRunner   FlowBucketRollupRunner
 	FlowRollupService  *FlowRollupService
+	MetricProviders    *RuntimeMetricsRegistry
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
 	flowRollupNative           interface{ Close() }
 	flowRollupMetrics          flowRollupRuntimeMetrics
+	metricsScrapeHandler       http.Handler
 
 	trapDispatcherFn  func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	backgroundMu      sync.Mutex
@@ -127,6 +129,11 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		AddressDimensions: addressDimensions,
 		CollectorEvidence: collectorEvidence,
 		CollectorPlans:    collectorPlans,
+		MetricProviders:   NewRuntimeMetricsRegistry(),
+	}
+	if err := runtime.MetricProviders.Register("collector_principal_provider", runtimeMetricsProviderFunc(runtime.collectorPrincipalMetrics)); err != nil {
+		_ = runtime.Close()
+		return nil, err
 	}
 	if cfg.CollectorPrincipalProvider.Enabled {
 		provider, err := NewRemoteCollectorPrincipalProvider(cfg.CollectorPrincipalProvider)
@@ -217,6 +224,15 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 			_ = store.Close()
 			return nil, fmt.Errorf("initialize flow rollup metrics: %w", err)
 		}
+		if err := runtime.MetricProviders.Register("flow_rollup", runtime.flowRollupMetrics); err != nil {
+			_ = runtime.Close()
+			return nil, err
+		}
+	}
+	runtime.metricsScrapeHandler, err = NewMetricsScrapeHandler(cfg.MetricsScrape, runtime.RuntimeMetrics)
+	if err != nil {
+		_ = runtime.Close()
+		return nil, fmt.Errorf("initialize metrics scrape endpoint: %w", err)
 	}
 	return runtime, nil
 }
@@ -293,6 +309,19 @@ func (r *BackendRuntime) Health() PlatformRuntimeHealth {
 }
 
 func (r *BackendRuntime) RuntimeMetrics() []byte {
+	if r != nil && r.MetricProviders != nil {
+		return r.MetricProviders.PrometheusText()
+	}
+	// Compatibility for small unit fixtures that construct BackendRuntime
+	// directly instead of through NewBackendRuntime.
+	metrics := r.collectorPrincipalMetrics()
+	if r != nil && r.flowRollupMetrics != nil {
+		metrics = append(metrics, r.flowRollupMetrics.PrometheusText()...)
+	}
+	return metrics
+}
+
+func (r *BackendRuntime) collectorPrincipalMetrics() []byte {
 	metrics := make([]byte, 0, 2048)
 	if r == nil || !r.Config.CollectorPrincipalProvider.Enabled {
 		metrics = append(metrics, "# TYPE watchdog_collector_principal_provider_enabled gauge\nwatchdog_collector_principal_provider_enabled 0\n"...)
@@ -304,10 +333,16 @@ func (r *BackendRuntime) RuntimeMetrics() []byte {
 			metrics = append(metrics, r.collectorPrincipalProvider.PrometheusText()...)
 		}
 	}
-	if r != nil && r.flowRollupMetrics != nil {
-		metrics = append(metrics, r.flowRollupMetrics.PrometheusText()...)
-	}
 	return metrics
+}
+
+// MetricsScrapeHandler is nil when machine scraping is disabled. Production
+// hub mounts a non-nil handler at /metrics on its existing listener.
+func (r *BackendRuntime) MetricsScrapeHandler() http.Handler {
+	if r == nil {
+		return nil
+	}
+	return r.metricsScrapeHandler
 }
 
 func (r *BackendRuntime) RunExportWorker(ctx context.Context) error {

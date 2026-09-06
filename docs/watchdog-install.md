@@ -57,6 +57,7 @@ HTTP base URLs are normalized by trimming surrounding whitespace and trailing sl
 | Config file | `WATCHDOG_CONFIG` |
 | MySQL | `WATCHDOG_MYSQL_DSN`, `WATCHDOG_MYSQL_MAX_OPEN_CONNS`, `WATCHDOG_MYSQL_MAX_IDLE_CONNS`, `WATCHDOG_MYSQL_CONN_MAX_LIFETIME` |
 | VictoriaMetrics | `WATCHDOG_VICTORIAMETRICS_URL` |
+| Hub metrics scrape | `WATCHDOG_METRICS_SCRAPE_ENABLED`, `WATCHDOG_METRICS_SCRAPE_TOKEN_FILE`, `WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS` |
 | Export worker | `WATCHDOG_EXPORT_DIR`, `WATCHDOG_EXPORT_WORKER_INTERVAL`, `WATCHDOG_EXPORT_WORKER_BATCH`, `WATCHDOG_EXPORT_METRIC` |
 | SNMP collector / discovery | `WATCHDOG_SNMP_COLLECTOR_TENANT_ID`, `WATCHDOG_SNMP_COLLECTOR_INTERVAL`, `WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT`, `WATCHDOG_SNMP_DISCOVERY_INTERVAL`, `WATCHDOG_SNMP_DISCOVERY_BATCH` |
 | SNMP MIBs | `WATCHDOG_SNMP_MIB_DIRS`, `WATCHDOG_SNMP_MIBS` |
@@ -82,6 +83,8 @@ go run ./cmd/watchdog-identity-link \
 The production frontend sends the PocketBase auth token on same-origin `/api/v1` calls. A user with more than one active tenant projection must also select a tenant; the client persists that selection per PocketBase subject and sends it as `X-Watchdog-Tenant-ID`. The server validates membership on every request and never accepts tenant identity from the header alone.
 
 Liveness is exposed at `/api/v1/health/live`. Readiness is exposed at `/api/v1/health/ready` and returns 503 until MySQL responds and every embedded migration version/checksum matches the ledger.
+
+Prometheus-compatible hub metrics can be exposed at `/metrics` by enabling `metrics_scrape`. This route is mounted on the existing hub listener (there is no extra metrics server), does not use an interactive PocketBase login, and requires both a bearer token loaded from `token_file` and a direct-peer match in `allowed_cidrs`. `X-Forwarded-For` is ignored. TLS therefore follows the hub listener or its trusted reverse proxy; when a proxy is used, allow the proxy's source CIDR and keep the proxy-to-hub hop private. A missing/unreadable/short token stops startup. Rotate the token file with a controlled hub restart. VictoriaMetrics or vmagent should send `Authorization: Bearer …`; GET and HEAD are the only accepted methods.
 
 Keep DSNs and tokens in a process secret, root-readable environment file, or secret manager instead of committing production values to YAML. The example values are placeholders.
 

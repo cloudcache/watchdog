@@ -45,6 +45,9 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.VictoriaMetrics.BaseURL != defaultVictoriaMetricsURL {
 		t.Fatalf("VictoriaMetrics URL = %s", cfg.VictoriaMetrics.BaseURL)
 	}
+	if cfg.MetricsScrape.Enabled || cfg.MetricsScrape.TokenFile != "" || len(cfg.MetricsScrape.AllowedCIDRs) != 0 {
+		t.Fatalf("metrics scrape defaults = %#v", cfg.MetricsScrape)
+	}
 	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.Metric != MetricSNMPIfInBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
@@ -59,6 +62,33 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	}
 	if cfg.FlowRollup.Enabled || cfg.FlowRollup.ScanInterval != defaultFlowRollupScanInterval || cfg.FlowRollup.LateArrivalWindow != defaultFlowRollupLateWindow || cfg.FlowRollup.WorkerConcurrency != defaultFlowRollupWorkerConcurrency {
 		t.Fatalf("flow rollup defaults = %#v", cfg.FlowRollup)
+	}
+}
+
+func TestLoadWatchdogConfigMetricsScrapeEnvironment(t *testing.T) {
+	t.Setenv("WATCHDOG_METRICS_SCRAPE_ENABLED", "true")
+	t.Setenv("WATCHDOG_METRICS_SCRAPE_TOKEN_FILE", " /run/secrets/watchdog-metrics ")
+	t.Setenv("WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS", "127.0.0.0/8, 10.20.0.0/16, 2001:db8::/32")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MetricsScrape.Enabled || cfg.MetricsScrape.TokenFile != "/run/secrets/watchdog-metrics" ||
+		len(cfg.MetricsScrape.AllowedCIDRs) != 3 || cfg.MetricsScrape.AllowedCIDRs[1] != "10.20.0.0/16" ||
+		cfg.MetricsScrape.AllowedCIDRs[2] != "2001:db8::/32" {
+		t.Fatalf("metrics scrape config = %#v", cfg.MetricsScrape)
+	}
+}
+
+func TestMetricsScrapeConfigRejectsOpenOrInvalidAccess(t *testing.T) {
+	for _, cfg := range []MetricsScrapeConfig{
+		{Enabled: true, AllowedCIDRs: []string{"127.0.0.0/8"}},
+		{Enabled: true, TokenFile: "/run/token"},
+		{Enabled: true, TokenFile: "/run/token", AllowedCIDRs: []string{"not-a-cidr"}},
+	} {
+		if err := validateMetricsScrapeConfig(cfg); err == nil {
+			t.Fatalf("invalid config was accepted: %#v", cfg)
+		}
 	}
 }
 

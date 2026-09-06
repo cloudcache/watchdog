@@ -7,6 +7,16 @@ mysql:
 victoriametrics:
   base_url: "http://127.0.0.1:8428"
 
+# Optional machine-only Prometheus endpoint at /metrics on the hub's existing
+# listener. The bearer value is read once from the file at startup. ACL checks
+# the direct TCP peer and deliberately ignores forwarding headers.
+metrics_scrape:
+  enabled: false
+  token_file: "/run/secrets/watchdog-metrics-token"
+  allowed_cidrs:
+    - "127.0.0.0/8"
+    - "::1/128"
+
 export:
   dir: "exports"
   worker_interval: 30s
