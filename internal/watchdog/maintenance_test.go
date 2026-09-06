@@ -258,6 +258,12 @@ func TestMySQLMaintenancePurges(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM export_tasks WHERE tenant_id = ?", tenant).Scan(&exportsLeft); err != nil || exportsLeft != 2 {
 		t.Fatalf("exports left=%d err=%v", exportsLeft, err)
 	}
+	// export_tasks pins its created_by user with ON DELETE RESTRICT, which would
+	// block the shared test tenant's cleanup cascade; drop the rows now that the
+	// assertion has run.
+	if _, err := db.ExecContext(ctx, "DELETE FROM export_tasks WHERE tenant_id = ?", tenant); err != nil {
+		t.Fatal(err)
+	}
 
 	// drainPurge clears a backlog larger than one batch (seed batch+2 expired
 	// idempotency rows, purge in batches of `maintenancePurgeBatch`).

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,74 @@ import (
 // requested or its lease is lost — a handler that observes ctx promptly keeps
 // takeover and cancel semantics tight.
 type OperationJobHandler func(ctx context.Context, job OperationJob) (resultRef string, err error)
+
+// OperationJobReporter is the attempt-scoped handle a handler uses to publish
+// progress and resumable checkpoints while it runs. It is bound to one lease
+// (job ID + lease token), so every write is fenced: once the lease is lost to
+// takeover or expiry the write is rejected (ErrOperationJobLeaseLost) and the
+// handler learns it must abandon the attempt. Progress is monotonic — a value
+// below what was already reported is ignored — and a nil checkpoint advances
+// progress without disturbing the stored checkpoint. A handler retrieves it
+// with OperationJobReporterFromContext; a handler invoked directly (e.g. in a
+// unit test) gets nil and Report is then a safe no-op.
+type OperationJobReporter struct {
+	repo       OperationJobRepository
+	jobID      ID
+	leaseToken string
+	leaseFor   time.Duration
+
+	mu         sync.Mutex
+	progress   uint64
+	checkpoint json.RawMessage
+}
+
+// Report records progress (monotonic) and, when non-nil, the latest resumable
+// checkpoint, then persists both under the lease. ErrOperationJobLeaseLost
+// means the lease is gone and the handler should stop; the attempt-scoped
+// binding guarantees a superseded attempt cannot overwrite the new owner's
+// state.
+func (r *OperationJobReporter) Report(ctx context.Context, done uint64, checkpoint json.RawMessage) error {
+	if r == nil {
+		return nil
+	}
+	_, err := r.persist(ctx, done, checkpoint)
+	return err
+}
+
+// persist merges done/checkpoint into the reporter's state under the mutex and
+// flushes the whole state in one fenced heartbeat. It returns whether
+// cancellation has been requested so the worker's background heartbeat can
+// drive handler cancellation from the same write. Serializing every write
+// through the mutex keeps progress monotonic even though the handler and the
+// heartbeat ticker flush concurrently.
+func (r *OperationJobReporter) persist(ctx context.Context, done uint64, checkpoint json.RawMessage) (bool, error) {
+	r.mu.Lock()
+	if done > r.progress {
+		r.progress = done
+	}
+	if len(checkpoint) > 0 {
+		r.checkpoint = checkpoint
+	}
+	progress, cp := r.progress, r.checkpoint
+	r.mu.Unlock()
+	return r.repo.HeartbeatOperationJob(ctx, r.jobID, r.leaseToken, r.leaseFor, progress, cp)
+}
+
+// flush persists the reporter's current state without advancing it — the
+// worker's heartbeat ticker uses it to keep the lease alive and push the
+// handler's latest reported progress/checkpoint.
+func (r *OperationJobReporter) flush(ctx context.Context) (bool, error) {
+	return r.persist(ctx, 0, nil)
+}
+
+type operationJobReporterKey struct{}
+
+// OperationJobReporterFromContext returns the running attempt's progress
+// reporter, or nil when none is installed.
+func OperationJobReporterFromContext(ctx context.Context) *OperationJobReporter {
+	reporter, _ := ctx.Value(operationJobReporterKey{}).(*OperationJobReporter)
+	return reporter
+}
 
 type OperationJobWorker struct {
 	Repo         OperationJobRepository
@@ -74,6 +143,19 @@ func (w *OperationJobWorker) runAttempt(ctx context.Context, job OperationJob) {
 	handlerCtx, cancelHandler := context.WithCancel(ctx)
 	defer cancelHandler()
 
+	// The reporter starts at the leased job's persisted progress/checkpoint so a
+	// takeover resumes forward from where the previous owner left off, and is
+	// fenced by this attempt's lease token.
+	reporter := &OperationJobReporter{
+		repo:       w.Repo,
+		jobID:      job.ID,
+		leaseToken: job.LeaseToken,
+		leaseFor:   w.leaseFor(),
+		progress:   job.ProgressDone,
+		checkpoint: job.CheckpointJSON,
+	}
+	handlerCtx = context.WithValue(handlerCtx, operationJobReporterKey{}, reporter)
+
 	type attemptResult struct {
 		resultRef string
 		err       error
@@ -101,7 +183,10 @@ func (w *OperationJobWorker) runAttempt(ctx context.Context, job OperationJob) {
 	for {
 		select {
 		case <-ticker.C:
-			requested, err := w.Repo.HeartbeatOperationJob(ctx, job.ID, job.LeaseToken, w.leaseFor(), job.ProgressDone, nil)
+			// Flush the reporter's latest state rather than the job's static
+			// snapshot, so progress and checkpoints the handler published are
+			// persisted and the lease stays alive.
+			requested, err := reporter.flush(ctx)
 			if errors.Is(err, ErrOperationJobLeaseLost) {
 				leaseLost = true
 				cancelHandler()
