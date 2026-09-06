@@ -180,7 +180,9 @@ receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当�
 
 已发布的 `flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor。migration 004 因此不改 001，而是增加 `receipt_schema`、排序去重的 `tenant_ids`、`min/max_event_time`、raw/estimated packet 数和 valid-estimate record 数；旧行为 schema 1，新 writer 显式写 schema 2。missing-records 只在 `now < min_event_time + base_fact_ttl - ttl_merge_grace` 时才可判定，否则该 batch 超出对账资格。变更顺序固定为 migration 004 → 所有 worker 升级为 receipt v2 → 以每 partition 当时 committed offset 记录 reconciliation cutover → 启用 job；不回填 v1 receipt，混跑期低于 cutover 的 v1 行不进完整性分母。
 
-`flow_records` 的 ORDER BY 不支持便宜的 batch/offset 反查；先在真实 CH 上以 EXPLAIN 和 read_rows/read_bytes 对比 skipping index、projection 与窄审计投影，通过容量门禁后再选一种，不在文档中猜 DDL 性能。
+`flow_records` 的 tenant/time 主排序继续服务用户查询，审计固定读取 migration 006 的窄 `flow_ingest_audit_v1` projection；不新增第六张 audit 表，也不以 bloom skipping index 代替。projection 保存 checksum/identity 所需字段，并按 `(kafka_topic,kafka_partition,kafka_offset,record_index,record_id)` 排序。`ReplacingMergeTree` 显式设置 `deduplicate_merge_projection_mode='rebuild'`，已有 parts 以 `mutations_sync=2` 同步 materialize 后 migration 才完成。审计查询禁止 `FINAL`：真实执行计划证明 `FINAL` 会退回 base table；必须先在 topic/partition/offset/event-time 窗内按 `record_id` 执行 `argMax(tuple(...), ingest_generation)`，再聚合 batch 并重建 checksum，既保留逻辑去重又命中 projection。
+
+访问路径门禁在 ClickHouse 26.3.29.7 上先执行 001..005、写入 2,000,000 条存量事实，再应用 006；前后结果均为 1,000 records/100,000 raw bytes。相同审计窗口的 progress 从 2,000,000 rows/183,630,373 bytes 降为 16,384 rows/552,673 bytes，`EXPLAIN projections=1,indexes=1` 明确选择 `flow_ingest_audit_v1`；表磁盘从 175,078,419 增至 264,954,749 bytes。该结果只证明访问路径与单机裁剪，不是生产容量或 N+1 结论。上线前必须按 retained facts 预估 projection + merge 临时空间并调大 migration operation timeout；失败保持 migration dirty 后 inspect/resume，不能跳过 materialize。需撤销时先停 reconciliation，再新增 forward migration drop projection/修改 setting，禁止改写 006 或回退到不认识 schema 6 的旧二进制。
 
 NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已提交。每次 partition assignment 因此从原 committed offset 向前回放固定数量的 RawFlow record：旧窗口参与解码和幂等 CH 写入以重建模板，但提交水位绝不能低于 assignment 前的 committed offset；到达旧水位后才正常前进。`template_replay_records` 必须为正且有硬上限，并按“单 partition 在 exporter 最大模板刷新间隔内的 record 数 + 裕量”定容。exporter 必须周期刷新模板；未满足此前置条件时显示 template-missing/partial，不能声称完整，也不能用猜测字段解码。
 
@@ -420,7 +422,7 @@ Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 op
 
 ## 7. ClickHouse 5 张表
 
-完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据，005 前向保留 supplier/customer 双层事实 provenance。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
+完整、可执行且唯一权威的单节点 DDL 是 [`deploy/migration/clickhouse/`](../deploy/migration/clickhouse/) 下按文件名顺序执行的 migration：001 建立基线，002 向前增加 Geo v2 五级稳定 ID 和 ASN 来源枚举，003 完成 VPN candidate provenance 与 generation marker，004 增加 ingest receipt v2 审计元数据，005 前向保留 supplier/customer 双层事实 provenance，006 增加可同步物化、按 Kafka offset 排序的窄 ingest-audit projection。设计文档不再复制一份会漂移的 SQL。生产集群只允许由后续 migration 生成 Replicated/Distributed 变体，不在运行时拼 DDL。
 
 CH migration 文件名固定为连续的 `NNN_lower_snake.sql`，单文件不超过 4 MiB、必须是无 BOM/NUL 的 UTF-8；SHA-256 覆盖精确文件字节，已发布文件连注释和空白都禁止修改。loader 只在引号/反引号/行注释/块注释之外按分号拆 statement，避免把 enum 默认值中的分号误拆。planner 将本地清单与 CH 最新状态按 version/name/checksum 对齐：缺号、重复、数据库超前、checksum 漂移、未知状态全部 fail-closed；`applying/failed` 是 dirty，普通 apply 禁止隐式重放，只有显式 resume 且 dirty 是最后一条记录时才从该版本继续。08A1 只冻结纯 loader/planner；状态表、并发锁、inspect/apply/resume CLI 和真实 CH 故障恢复由 08A2 完成，worker/hub 启动永不隐式改 schema。
 
