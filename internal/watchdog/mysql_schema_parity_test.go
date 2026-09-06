@@ -301,6 +301,102 @@ func TestDimensionSourceManifestMigrationBackfillsLegacySnapshots(t *testing.T) 
 	}
 }
 
+func TestISPOperatorFlowIdentityMigrationBackfillReplayAndNoReuse(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_operator_identity_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	migrations, err := EmbeddedMySQLMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identityMigration MySQLMigration
+	for _, migration := range migrations {
+		if migration.Version == "051" {
+			identityMigration = migration
+			break
+		}
+		for index, statement := range SplitSQLStatements(migration.SQL) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("apply %s statement %d: %v", migration.Name, index+1, err)
+			}
+		}
+	}
+	if identityMigration.Version == "" {
+		t.Fatal("migration 051 not found")
+	}
+	const tenantID = ID("tenant_operator_identity")
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Operator Identity', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	for _, values := range [][]any{
+		{"operator_identity_a", "alpha", "Alpha"},
+		{"operator_identity_b", "beta", "Beta"},
+	} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO isp_operators (id, tenant_id, code, name, asns)
+			VALUES (?, ?, ?, ?, JSON_ARRAY())
+		`, values[0], tenantID, values[1], values[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for replay := 0; replay < 2; replay++ {
+		for index, statement := range SplitSQLStatements(identityMigration.SQL) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("replay 051 pass %d statement %d: %v", replay+1, index+1, err)
+			}
+		}
+	}
+	var firstID, secondID uint16
+	if err := db.QueryRowContext(ctx, "SELECT flow_isp_id FROM isp_operators WHERE id = 'operator_identity_a'").Scan(&firstID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT flow_isp_id FROM isp_operators WHERE id = 'operator_identity_b'").Scan(&secondID); err != nil {
+		t.Fatal(err)
+	}
+	if firstID != 1 || secondID != 2 {
+		t.Fatalf("backfilled Flow ISP ids = %d, %d", firstID, secondID)
+	}
+
+	store := NewMySQLStore(db)
+	created, err := store.CreateISPOperator(ctx, ISPOperator{TenantID: tenantID, Code: "gamma", Name: "Gamma", Enabled: true})
+	if err != nil || created.FlowISPID != 3 {
+		t.Fatalf("created operator = %#v, err = %v", created, err)
+	}
+	if err := store.DeleteISPOperator(ctx, tenantID, created.ID, created.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.CreateISPOperator(ctx, ISPOperator{TenantID: tenantID, Code: "delta", Name: "Delta", Enabled: true})
+	if err != nil || replacement.FlowISPID != 4 {
+		t.Fatalf("replacement operator = %#v, err = %v", replacement, err)
+	}
+	var retained int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM isp_operator_flow_ids
+		WHERE tenant_id = ? AND flow_isp_id = 3 AND operator_id = ?
+	`, tenantID, created.ID).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained != 1 {
+		t.Fatal("deleted operator Flow ISP identity was not retained")
+	}
+}
+
 func randomSchemaSuffix(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)

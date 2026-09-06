@@ -65,10 +65,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `050`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引；`049_dimension_object_gc.sql` 固定安全 GC 扫描索引和删除 marker 约束；`050_snmp_event_query_indexes.sql` 固定设备事件按 severity/event_type + 时间游标的有界扫描索引。001–050 空库、直接 replay、旧行兼容及 fresh-install parity 已通过真实 MySQL 门禁。
+- 当前迁移头为 `051`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引；`049_dimension_object_gc.sql` 固定安全 GC 扫描索引和删除 marker 约束；`050_snmp_event_query_indexes.sql` 固定设备事件查询索引；`051_isp_operator_flow_identity.sql` 固定运营商 Flow UInt16 身份、序列与不可复用 ledger。001–051 空库、051 直接 replay/旧行回填及 fresh-install parity 已通过真实 MySQL 门禁。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占。下一个持久化工作从 `051` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占；`051` 已由 PLAT-04C4a 稳定 Flow ISP 身份独占。下一个持久化工作从 `052` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -179,7 +179,6 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **旧数据运行态兼容**：MySQL 读边界把历史 `selector.labels` 标量规范化为数组，前端同时容忍滚动升级期间的标量/数组响应；真实旧记录、九个子页及新增表单逐页回归，Address Sets 不再因单条旧数据整页白屏且控制台无错误。
   - [x] **已提交门禁**：组件、表单接线、单元、设计和任务清单由同一提交交付；无 migration，未夹带 Flow 数据面及既有 maintenance/delete-preview 工作区文件。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
-- [ ] **PLAT-04C4 运营商发布身份**：冻结 MySQL `isp_operators` 与 Flow `operators.json` UInt16 `isp_id` 的稳定映射、唯一性、不可复用、导入/发布/回滚和引用保护；完成前便捷 Flow 查询只按运营商已配置 ASN 集合过滤，禁止把管理 ULID/code 当 `remote_isp_id`。
   - [x] **C3a 编译路径基线**（commit `2b762ec5`，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie、选择器集合、DAG/per-address overlap benchmark + 常驻内存 tripwire；prefix 与 set 编译均线性、无二次爆炸、约 74 B/prefix；`MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32，在编译期封顶展开。
   - [x] **C3c 管理集合运算/API 预算**：独立认证，不修改 C1 生产实现。
     - [x] **设计**：冻结 50,000 输入表达式、200,000 结果前缀、1,000 overlap 明细和 4 MiB HTTP body 四道互不替代的门；完整 overlap 总数必须保留，明细截断必须显式标记。
@@ -193,8 +192,14 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **C3b-IPDB 变更/回归**：本机 darwin/arm64 + MySQL 9.6，8,389,532-byte artifact，含 retry 的业务阶段 2m02.177s（8,582 rows/s）、peak heap 35.0 MiB；门禁 4 分钟/4k rows/s/512 MiB。tenant cascade 后 prefix/job 均为 0，显式 scratch database 已删除。无 schema 变化，不创建空 migration，下一持久化 migration 仍为 050；全库 test/race/vet/build 后提交。
     - [x] **C3b-IPDB 已提交门禁**：bulk upsert、合法 corpus、真实 MySQL 故障续跑测试、报告与清单由本提交原子交付，不夹带 Flow 数据面或既有 maintenance/config 工作区文件。
     - [ ] **C3b-MMDB**：以真实生产级百万记录 MMDB 重跑同一吞吐/峰值内存、job crash/resume、ready/count/cleanup 门禁；当前仓库只有 MaxMind 小型测试库，禁止循环读取小 fixture 或复制回调计数冒充百万数据。
+- [ ] **PLAT-04C4 运营商发布身份**：冻结 MySQL `isp_operators` 与 Flow `operators.json` UInt16 `isp_id` 的稳定映射、唯一性、不可复用、导入/发布/回滚和引用保护；完成前便捷 Flow 查询只按运营商已配置 ASN 集合过滤，禁止把管理 ULID/code 当 `remote_isp_id`。
+  - [x] **C4a 管理身份设计/编码**：migration 051 为每个 tenant 建立 `1..65535` 的单调分配序列与不随运营商删除而删除的 allocation ledger；`0` 永远表示 unknown。既有运营商按 `created_at,id` 确定性回填；新增运营商以单语句原子 UPSERT 分配，ledger 与业务行同事务提交；名称/code/ASN 可编辑，`flow_isp_id` 只读、唯一、不可复用。管理 API/VTable 返回该值；在 C4b 建立统一发布命名空间前，人工地址段只保留管理 `operator.id/code/category`，禁止提前写 Flow `isp_id`。
+  - [x] **C4a 单元/集成/变更测试**：覆盖 API 字段、24 并发分配无重复/耗尽不回绕、旧数据确定性回填、migration 二次重放、删除后新建不复用，以及 fresh-init 与 001–051 migration schema parity。
+  - [x] **C4a 已提交门禁**：migration/checksum/init、仓储/API/UI、编译契约、测试和设计由同一提交交付；全库 test/vet/build、前端 test/build、真实 MySQL migration/parity/并发门禁与 8090 页面/控制台回归均已通过，且未夹带 Flow 数据面或既有 maintenance/delete-preview 文件。
+  - [ ] **C4b index generation 运营商绑定**：Flow index-builder 必须消费同一已签名 snapshot 的 source manifest + definition object，把供应商 operator 身份与 tenant `flow_isp_id` 显式映射后生成同 generation 的运营商表和 range `isp_id`；验证 0 保留、UInt16 唯一、所有 range 引用完整及 supplier/tenant 不碰撞。activation/rollback/ACK 固定同一 snapshot/checksum；失败构建不得改变 active generation，旧 generation 在事实保留期内可解析。
+  - [ ] **C4c 查询切换**：只有 event-time snapshot 的 index-builder ACK 可查询后，便捷运营商筛选才能从 ASN fallback 切到 typed `remote_isp_id`；请求/缓存/审计必须固定 snapshot/generation，跨版本按稳定身份拆分，不能用当前名称或当前映射重写历史。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
-- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；不创建空 migration，下一持久化 migration 仍为 050。
+- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；`051` 已用于 PLAT-04C4a，下一持久化 migration 从 `052` 开始。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
 - [x] 旧 `sflow_collector` VM 聚合原型已独立退役：命令、平台配置、环境变量、安装项和实现均已删除，仓库生产代码零引用；RawFlow sFlow5 接收链继续保留且不与旧原型共端口（commits `52b9d3f2`、`5039ee77`）。
 - [x] 默认 `go vet ./...` 会编译 `internal/hub_test`，但 `GetHubWithUser` 只在 `testing` tag 可见；已按既有约定给 `api_test.go`/`platform_backend_test.go` 补 `//go:build testing`，默认与 `-tags=testing` 两种 vet 均通过，tagged hub 套件通过（commit a549a602）。

@@ -28,6 +28,7 @@ type GeoNode = {
 
 type Operator = {
 	id: string
+	flow_isp_id: number
 	code: string
 	name: string
 	short_name?: string
@@ -58,6 +59,7 @@ type ListResponse<T> = { items?: T[]; next_cursor?: string }
 type TaxonomyForm = {
 	id: string
 	rowVersion: number
+	flowISPID: number
 	code: string
 	name: string
 	shortName: string
@@ -78,6 +80,7 @@ const pageSize = 100
 const emptyForm: TaxonomyForm = {
 	id: "",
 	rowVersion: 0,
+	flowISPID: 0,
 	code: "",
 	name: "",
 	shortName: "",
@@ -195,6 +198,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					...emptyForm,
 					id: operator.id,
 					rowVersion: operator.row_version,
+					flowISPID: operator.flow_isp_id,
 					code: operator.code,
 					name: operator.name,
 					shortName: operator.short_name ?? "",
@@ -328,6 +332,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					const operator = item as Operator
 					return {
 						id: operator.id,
+						flowISPID: operator.flow_isp_id,
 						code: operator.code,
 						name: operator.name,
 						category: operator.category,
@@ -543,6 +548,12 @@ function TaxonomyEditor({
 			{kind === "operators" ? (
 				<>
 					<FormInput
+						label="Flow ISP ID"
+						value={form.flowISPID ? String(form.flowISPID) : "Assigned on create"}
+						onChange={() => undefined}
+						readOnly
+					/>
+					<FormInput
 						label="Short name"
 						value={form.shortName}
 						onChange={(shortName) => setForm({ ...form, shortName })}
@@ -644,16 +655,23 @@ function FormInput({
 	value,
 	onChange,
 	inputMode,
+	readOnly = false,
 }: {
 	label: string
 	value: string
 	onChange: (value: string) => void
 	inputMode?: "numeric"
+	readOnly?: boolean
 }) {
 	return (
 		<div className="grid gap-2">
 			<Label>{label}</Label>
-			<Input value={value} inputMode={inputMode} onChange={(event) => onChange(event.target.value)} />
+			<Input
+				value={value}
+				inputMode={inputMode}
+				readOnly={readOnly}
+				onChange={(event) => onChange(event.target.value)}
+			/>
 		</div>
 	)
 }
@@ -727,6 +745,7 @@ function taxonomyColumns(kind: TaxonomyKind, t: (message: TemplateStringsArray) 
 				]
 			: kind === "operators"
 				? [
+						{ field: "flowISPID", title: "Flow ISP ID", width: 120, style: denseCellStyle() },
 						{ field: "category", title: t`Category`, width: 130, style: denseCellStyle() },
 						{ field: "asns", title: "ASNs", width: 260, style: denseCellStyle() },
 					]

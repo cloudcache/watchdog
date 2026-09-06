@@ -17,6 +17,13 @@ type fakeAddressTaxonomyRepository struct {
 	expectedVersion uint64
 }
 
+func (r *fakeAddressTaxonomyRepository) ListISPOperators(_ context.Context, tenantID ID, filter AddressTaxonomyListFilter) ([]ISPOperator, string, error) {
+	return []ISPOperator{{
+		ID: "operator-a", TenantID: tenantID, FlowISPID: 7, Code: "telecom", Name: "Telecom",
+		Category: "carrier", ASNs: []uint32{4134}, Enabled: true, RowVersion: 1,
+	}}, "", nil
+}
+
 func (r *fakeAddressTaxonomyRepository) ListGeoDictionary(_ context.Context, _ ID, filter AddressTaxonomyListFilter) ([]GeoDictionaryNode, string, error) {
 	r.geoFilter = filter
 	return []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindCountry, Code: "CN", Name: "China", RowVersion: 1}}, "next", nil
@@ -94,5 +101,22 @@ func TestAddressTaxonomyGeoPatchRequiresAndUsesETag(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"4"` || repo.expectedVersion != 3 || repo.updatedGeo.Name != "China mainland" || repo.updatedGeo.Enabled {
 		t.Fatalf("status=%d etag=%q expected=%d updated=%#v body=%s", response.Code, response.Header().Get("ETag"), repo.expectedVersion, repo.updatedGeo, response.Body.String())
+	}
+}
+
+func TestAddressTaxonomyOperatorListExposesStableFlowISPID(t *testing.T) {
+	repo := &fakeAddressTaxonomyRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressTaxonomy: repo})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/network/operators?limit=25", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Items []ISPOperator `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.Items[0].FlowISPID != 7 {
+		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }

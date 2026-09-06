@@ -39,6 +39,8 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"dimension_snapshot_references",
 		"geo_dict",
 		"isp_operators",
+		"isp_operator_flow_ids",
+		"isp_operator_flow_id_sequences",
 		"geo_lines",
 		"billing_accounts",
 		"permissions",
@@ -95,14 +97,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "050" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "051" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "050" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "051" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {

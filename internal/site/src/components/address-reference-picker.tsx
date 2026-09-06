@@ -17,6 +17,7 @@ export type AddressReferenceKind = "geography" | "operator" | "line" | "address-
 
 type ReferenceItem = {
 	id: string
+	flow_isp_id?: number
 	name: string
 	code?: string
 	kind?: string
@@ -276,7 +277,11 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 })
 
 function toReferenceOption(kind: AddressReferenceKind, item: ReferenceItem): AddressReferenceOption {
-	const details = [kind === "geography" ? item.kind : kind === "operator" ? item.category : "", item.code]
+	const details = [
+		kind === "geography" ? item.kind : kind === "operator" ? item.category : "",
+		kind === "operator" && item.flow_isp_id ? `ISP ${item.flow_isp_id}` : "",
+		item.code,
+	]
 		.filter(Boolean)
 		.join(" · ")
 	return {

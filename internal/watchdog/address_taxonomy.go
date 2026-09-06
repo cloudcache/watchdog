@@ -42,6 +42,7 @@ type GeoDictionaryNode struct {
 type ISPOperator struct {
 	ID         ID        `json:"id"`
 	TenantID   ID        `json:"tenant_id"`
+	FlowISPID  uint16    `json:"flow_isp_id"`
 	Code       string    `json:"code"`
 	Name       string    `json:"name"`
 	ShortName  string    `json:"short_name,omitempty"`

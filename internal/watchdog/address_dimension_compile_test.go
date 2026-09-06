@@ -14,7 +14,7 @@ func TestCompileAddressDimensionDraftResolvesTypedTaxonomy(t *testing.T) {
 			{ID: "geo-country-cn", Kind: GeoKindCountry, Code: "CN", ParentID: "geo-continent", Name: "China", Enabled: true},
 			{ID: "geo-province-zj", Kind: GeoKindProvince, Code: "330000", ParentID: "geo-country-cn", Name: "Zhejiang", Enabled: true},
 		},
-		Operators: []ISPOperator{{ID: "operator-telecom", Code: "CT", Name: "China Telecom", Category: "carrier", Enabled: true}},
+		Operators: []ISPOperator{{ID: "operator-telecom", FlowISPID: 3, Code: "CT", Name: "China Telecom", Category: "carrier", Enabled: true}},
 		Prefixes: []AddressPrefix{{
 			ID: "prefix-hangzhou", CIDR: "192.0.2.0/24", GeoLeafID: "geo-province-zj",
 			OperatorID: "operator-telecom", ASN: &asn, Labels: map[string]string{"flow": "local", "business": "office"},

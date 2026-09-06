@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -120,7 +122,7 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	}
 
 	operator, err := store.CreateISPOperator(ctx, ISPOperator{TenantID: tenantID, Code: "china-telecom", Name: "China Telecom", Category: "carrier", ASNs: []uint32{4809, 4134, 4134}, Enabled: true})
-	if err != nil || len(operator.ASNs) != 2 {
+	if err != nil || operator.FlowISPID == 0 || len(operator.ASNs) != 2 {
 		t.Fatalf("operator=%#v err=%v", operator, err)
 	}
 	operators, _, err := store.ListISPOperators(ctx, tenantID, AddressTaxonomyListFilter{Search: "telecom", Limit: 10})
@@ -202,5 +204,77 @@ func TestMySQLAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 	}
 	if err := store.DeleteAddressSet(ctx, tenantID, set.ID); !errors.Is(err, ErrAddressTaxonomyInUse) {
 		t.Fatalf("referenced address set deletion error = %v", err)
+	}
+}
+
+func TestMySQLISPOperatorFlowIdentityConcurrentAllocation(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_MYSQL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set WATCHDOG_MYSQL_TEST_DSN to run operator identity integration test")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const tenantID = ID("tenant_op_concurrency_01")
+	_, _ = db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID)
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants (id, name, status) VALUES (?, 'Operator concurrency', 'active')`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID); err != nil {
+			t.Errorf("tenant cascade cleanup: %v", err)
+		}
+	}()
+
+	const workers = 24
+	store := NewMySQLStore(db)
+	results := make(chan ISPOperator, workers)
+	errResults := make(chan error, workers)
+	var group sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			operator, err := store.CreateISPOperator(ctx, ISPOperator{
+				TenantID: tenantID, Code: fmt.Sprintf("operator-%02d", index), Name: fmt.Sprintf("Operator %02d", index), Enabled: true,
+			})
+			if err != nil {
+				errResults <- err
+				return
+			}
+			results <- operator
+		}(index)
+	}
+	group.Wait()
+	close(results)
+	close(errResults)
+	for err := range errResults {
+		t.Errorf("create operator: %v", err)
+	}
+	seen := make(map[uint16]bool, workers)
+	for operator := range results {
+		if operator.FlowISPID == 0 || seen[operator.FlowISPID] {
+			t.Errorf("invalid or duplicate Flow ISP id: %d", operator.FlowISPID)
+		}
+		seen[operator.FlowISPID] = true
+	}
+	if len(seen) != workers {
+		t.Fatalf("allocated %d unique ids, want %d", len(seen), workers)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE isp_operator_flow_id_sequences SET next_flow_isp_id = 65536 WHERE tenant_id = ?
+	`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateISPOperator(ctx, ISPOperator{
+		TenantID: tenantID, Code: "operator-exhausted", Name: "Operator exhausted", Enabled: true,
+	}); !errors.Is(err, ErrAddressTaxonomyInvalid) {
+		t.Fatalf("exhausted allocation error = %v, want ErrAddressTaxonomyInvalid", err)
 	}
 }

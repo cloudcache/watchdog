@@ -221,13 +221,13 @@ func (s *MySQLStore) DeleteGeoDictionary(ctx context.Context, tenantID, id ID, e
 }
 
 const ispOperatorColumns = `
-	id, tenant_id, code, name, COALESCE(short_name, ''), category, asns,
+	id, tenant_id, flow_isp_id, code, name, COALESCE(short_name, ''), category, asns,
 	sort_order, enabled, row_version, created_at, updated_at`
 
 func scanISPOperator(row rowScanner) (ISPOperator, error) {
 	var item ISPOperator
 	var asns []byte
-	if err := row.Scan(&item.ID, &item.TenantID, &item.Code, &item.Name, &item.ShortName, &item.Category,
+	if err := row.Scan(&item.ID, &item.TenantID, &item.FlowISPID, &item.Code, &item.Name, &item.ShortName, &item.Category,
 		&asns, &item.SortOrder, &item.Enabled, &item.RowVersion, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return ISPOperator{}, err
 	}
@@ -295,12 +295,43 @@ func (s *MySQLStore) CreateISPOperator(ctx context.Context, operator ISPOperator
 			return ISPOperator{}, err
 		}
 	}
-	asns, _ := json.Marshal(operator.ASNs)
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO isp_operators (id, tenant_id, code, name, short_name, category, asns, sort_order, enabled)
-		VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
-	`, operator.ID, operator.TenantID, operator.Code, operator.Name, operator.ShortName, operator.Category, asns, operator.SortOrder, operator.Enabled)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return ISPOperator{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO isp_operator_flow_id_sequences (tenant_id, next_flow_isp_id)
+		VALUES (?, LAST_INSERT_ID(2))
+		ON DUPLICATE KEY UPDATE next_flow_isp_id = CASE
+			WHEN next_flow_isp_id < 65536 THEN LAST_INSERT_ID(next_flow_isp_id + 1)
+			ELSE next_flow_isp_id + (0 * LAST_INSERT_ID(65537))
+		END
+	`, operator.TenantID); err != nil {
+		return ISPOperator{}, err
+	}
+	var nextID uint32
+	if err := tx.QueryRowContext(ctx, `SELECT LAST_INSERT_ID() - 1`).Scan(&nextID); err != nil {
+		return ISPOperator{}, err
+	}
+	if nextID == 0 || nextID > 65_535 {
+		return ISPOperator{}, fmt.Errorf("%w: Flow ISP id space is exhausted", ErrAddressTaxonomyInvalid)
+	}
+	operator.FlowISPID = uint16(nextID)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO isp_operator_flow_ids (tenant_id, flow_isp_id, operator_id)
+		VALUES (?, ?, ?)
+	`, operator.TenantID, operator.FlowISPID, operator.ID); err != nil {
+		return ISPOperator{}, err
+	}
+	asns, _ := json.Marshal(operator.ASNs)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO isp_operators (id, tenant_id, flow_isp_id, code, name, short_name, category, asns, sort_order, enabled)
+		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
+	`, operator.ID, operator.TenantID, operator.FlowISPID, operator.Code, operator.Name, operator.ShortName, operator.Category, asns, operator.SortOrder, operator.Enabled); err != nil {
+		return ISPOperator{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return ISPOperator{}, err
 	}
 	return s.GetISPOperator(ctx, operator.TenantID, operator.ID)
@@ -338,8 +369,10 @@ func (s *MySQLStore) DeleteISPOperator(ctx context.Context, tenantID, id ID, exp
 		SELECT EXISTS(
 			SELECT 1 FROM geo_lines WHERE tenant_id = ? AND operator_id = ?
 			UNION ALL SELECT 1 FROM address_prefixes WHERE tenant_id = ? AND operator_id = ?
+			UNION ALL SELECT 1 FROM address_sets WHERE tenant_id = ?
+				AND JSON_CONTAINS(selector, JSON_QUOTE(?), '$.operator_ids')
 		)
-	`, tenantID, id, tenantID, id)
+	`, tenantID, id, tenantID, id, tenantID, string(id))
 }
 
 const geoLineColumns = `

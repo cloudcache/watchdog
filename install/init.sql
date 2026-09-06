@@ -971,6 +971,27 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
   CONSTRAINT `fk_idempotency_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `isp_operator_flow_id_sequences` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `next_flow_isp_id` int unsigned NOT NULL DEFAULT '1',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`),
+  CONSTRAINT `fk_isp_operator_flow_sequences_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `isp_operator_flow_id_sequences_chk_1` CHECK ((`next_flow_isp_id` between 1 and 65536))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `isp_operator_flow_ids` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_isp_id` smallint unsigned NOT NULL,
+  `operator_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `allocated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`,`flow_isp_id`),
+  UNIQUE KEY `uq_isp_operator_flow_ids_operator` (`tenant_id`,`operator_id`),
+  UNIQUE KEY `uq_isp_operator_flow_ids_reference` (`tenant_id`,`operator_id`,`flow_isp_id`),
+  CONSTRAINT `fk_isp_operator_flow_ids_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `isp_operator_flow_ids_chk_1` CHECK ((`flow_isp_id` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `isp_operators` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -978,6 +999,7 @@ CREATE TABLE IF NOT EXISTS `isp_operators` (
   `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
   `short_name` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'other',
+  `flow_isp_id` smallint unsigned NOT NULL,
   `asns` json NOT NULL,
   `sort_order` int NOT NULL DEFAULT '0',
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
@@ -988,7 +1010,9 @@ CREATE TABLE IF NOT EXISTS `isp_operators` (
   UNIQUE KEY `uq_isp_operators_tenant_id` (`tenant_id`,`id`),
   UNIQUE KEY `uq_isp_operators_code` (`tenant_id`,`code`),
   UNIQUE KEY `uq_isp_operators_name` (`tenant_id`,`name`),
+  UNIQUE KEY `uq_isp_operators_flow_isp_id` (`tenant_id`,`flow_isp_id`),
   KEY `idx_isp_operators_category` (`tenant_id`,`category`,`sort_order`,`name`),
+  CONSTRAINT `fk_isp_operators_flow_identity` FOREIGN KEY (`tenant_id`,`id`,`flow_isp_id`) REFERENCES `isp_operator_flow_ids` (`tenant_id`,`operator_id`,`flow_isp_id`),
   CONSTRAINT `fk_isp_operators_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
