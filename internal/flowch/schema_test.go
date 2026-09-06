@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 8 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" {
+	if len(paths) != 9 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
@@ -34,11 +34,12 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 5 {
-		t.Fatalf("ClickHouse flow table count=%d, want 5", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 6 {
+		t.Fatalf("ClickHouse flow table count=%d, want 6", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
+		"flow_address_dict_source", "dict_version UInt64", "group_ids Array(String)",
 		"record_id FixedString(32)", "quality_flags UInt64", "estimated_valid Bool",
 		"'on_net_local_city'=1", "'off_net_in_province'=4", "remote_geo_continent_id", "remote_geo_region_id",
 		"remote_geo_country_id", "remote_geo_province_id", "remote_geo_city_id", "'flow-geo-v2'=4",
