@@ -19,6 +19,7 @@ type MaintenanceRepository interface {
 	PurgeExpiredEnrollmentSecrets(ctx context.Context, now time.Time, limit int) (int64, error)
 	PurgeTerminalOperationJobs(ctx context.Context, before time.Time, limit int) (int64, error)
 	PurgeExpiredQuietHours(ctx context.Context, now time.Time, limit int) (int64, error)
+	PurgeExpiredExports(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
 const (
@@ -68,6 +69,22 @@ func (s *MySQLStore) PurgeTerminalOperationJobs(ctx context.Context, before time
 func (s *MySQLStore) PurgeExpiredQuietHours(ctx context.Context, now time.Time, limit int) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `
 		DELETE FROM quiet_hours WHERE window_type = 'one-time' AND end_at <= ? LIMIT ?
+	`, now.UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// PurgeExpiredExports reaps completed export tasks whose download TTL has
+// passed. Only completed tasks carry a non-NULL expires_at, so pending/running
+// tasks are never touched. The download handler already refuses an expired
+// artifact (410) before it is reaped; this drops the now-unreachable row. The
+// stored file itself is aged out by the object store / disk lifecycle keyed on
+// the same TTL, not by this DB purge.
+func (s *MySQLStore) PurgeExpiredExports(ctx context.Context, now time.Time, limit int) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM export_tasks WHERE expires_at IS NOT NULL AND expires_at <= ? LIMIT ?
 	`, now.UTC(), limit)
 	if err != nil {
 		return 0, err
@@ -170,6 +187,13 @@ func NewStoreMaintenance(repo MaintenanceRepository, logf func(string, ...any)) 
 		Interval: time.Hour,
 		Run: drainPurge(func(ctx context.Context) (int64, error) {
 			return repo.PurgeExpiredQuietHours(ctx, time.Now().UTC(), maintenancePurgeBatch)
+		}),
+	})
+	m.Register(MaintenanceTask{
+		Name:     "expired_exports",
+		Interval: time.Hour,
+		Run: drainPurge(func(ctx context.Context) (int64, error) {
+			return repo.PurgeExpiredExports(ctx, time.Now().UTC(), maintenancePurgeBatch)
 		}),
 	})
 	return m

@@ -15,10 +15,16 @@ type fakeMaintenanceRepo struct {
 	enrollment  atomic.Int64
 	jobs        atomic.Int64
 	quiet       atomic.Int64
+	exports     atomic.Int64
 }
 
 func (f *fakeMaintenanceRepo) PurgeExpiredQuietHours(context.Context, time.Time, int) (int64, error) {
 	f.quiet.Add(1)
+	return 0, nil
+}
+
+func (f *fakeMaintenanceRepo) PurgeExpiredExports(context.Context, time.Time, int) (int64, error) {
+	f.exports.Add(1)
 	return 0, nil
 }
 
@@ -44,7 +50,7 @@ func TestNewStoreMaintenanceRegistersExpectedTasks(t *testing.T) {
 			t.Fatalf("task %q misconfigured: interval=%v run-nil=%t", task.Name, task.Interval, task.Run == nil)
 		}
 	}
-	for _, want := range []string{"idempotency_records", "enrollment_secrets", "operation_jobs", "quiet_hours"} {
+	for _, want := range []string{"idempotency_records", "enrollment_secrets", "operation_jobs", "quiet_hours", "expired_exports"} {
 		if !names[want] {
 			t.Fatalf("missing maintenance task %q; got %v", want, names)
 		}
@@ -229,6 +235,28 @@ func TestMySQLMaintenancePurges(t *testing.T) {
 	var quietLeft int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quiet_hours WHERE tenant_id = ?", tenant).Scan(&quietLeft); err != nil || quietLeft != 2 {
 		t.Fatalf("quiet hours left=%d err=%v", quietLeft, err)
+	}
+
+	// export_tasks: a completed export past its TTL is purged; a completed
+	// export with a future TTL and a pending export (NULL expires_at) are kept.
+	seedExport := func(id, status string, expires any) {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO export_tasks (id, tenant_id, created_by, period_type, range_start, range_end, aggregation, value_mode, format, status, expires_at)
+			VALUES (?, ?, 'user_maint_qh', 'fixed', ?, ?, 'p95_5m', 'raw', 'csv', ?, ?)
+		`, id, tenant, now.Add(-time.Hour), now, status, expires); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedExport("exp_expired", "complete", now.Add(-time.Hour))
+	seedExport("exp_future", "complete", now.Add(time.Hour))
+	seedExport("exp_pending", "pending", nil)
+	removed, err = store.PurgeExpiredExports(ctx, now, 1000)
+	if err != nil || removed != 1 {
+		t.Fatalf("export purge removed=%d err=%v", removed, err)
+	}
+	var exportsLeft int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM export_tasks WHERE tenant_id = ?", tenant).Scan(&exportsLeft); err != nil || exportsLeft != 2 {
+		t.Fatalf("exports left=%d err=%v", exportsLeft, err)
 	}
 
 	// drainPurge clears a backlog larger than one batch (seed batch+2 expired
