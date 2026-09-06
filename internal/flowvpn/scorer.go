@@ -398,7 +398,11 @@ func canonicalMatch(input Match) (Match, error) {
 }
 
 func matches(match Match, candidate Candidate, symmetry, dominance float64) (bool, []string) {
-	signals := make([]string, 0, 12)
+	// signals is returned only when the rule fully matches; every early reject
+	// returns (false, nil). Start nil so a rule that fails its first
+	// discriminating check — the common case across many rules per candidate —
+	// allocates nothing (previously an eager make([]string,0,12) per call).
+	var signals []string
 	if len(match.RemotePorts) > 0 {
 		if !contains(match.RemotePorts, candidate.PrimaryRemotePort) {
 			return false, nil

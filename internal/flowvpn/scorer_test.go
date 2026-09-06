@@ -334,3 +334,18 @@ func validCandidate() Candidate {
 		DimensionSnapshotID: "snapshot-1", GeoVersion: "geo-1", ClassificationVersion: 1,
 	}
 }
+
+func TestMatchesEarlyRejectDoesNotAllocate(t *testing.T) {
+	// The common case — a rule that fails its first discriminating check — must
+	// allocate nothing; matches() is called for every rule of every candidate,
+	// up to maxRules x MaxScoredCandidates per window.
+	match := Match{RemotePorts: []uint16{443}}
+	candidate := Candidate{PrimaryRemotePort: 80}
+	if allocs := testing.AllocsPerRun(200, func() {
+		if ok, _ := matches(match, candidate, 0, 0); ok {
+			t.Fatal("candidate must not match")
+		}
+	}); allocs != 0 {
+		t.Fatalf("early-reject matches allocated %v/op, want 0", allocs)
+	}
+}
