@@ -136,3 +136,32 @@ func testEnrichedRecord(index byte, rawBytes, estimatedBytes uint64) flowworker.
 		ClassificationVersion:   1,
 	}
 }
+
+func TestPrepareBlocksCapsPartitionDays(t *testing.T) {
+	// Four records on four distinct UTC days (a replay/backfill shape); with a
+	// 2-day cap they must split into two blocks so no insert exceeds
+	// max_partitions_per_insert_block.
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	batches := make([]*flowworker.EnrichedBatch, 0, 4)
+	for i := 0; i < 4; i++ {
+		record := testEnrichedRecord(byte(i+1), 100, 1000)
+		record.EventTime = base.AddDate(0, 0, i)
+		batches = append(batches, testEnrichedBatch(int64(10+i), record))
+	}
+	blocks, err := PrepareBlocks(batches, BatchLimits{MaxRows: 100, MaxApproxBytes: 1 << 20, MaxPartitionDays: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks=%d, want 2 (4 distinct days capped at 2/block)", len(blocks))
+	}
+	for _, block := range blocks {
+		days := map[int32]struct{}{}
+		for _, ref := range block.Records {
+			days[int32(ref.Record.EventTime.UTC().Unix()/86400)] = struct{}{}
+		}
+		if len(days) > 2 {
+			t.Fatalf("block touches %d partition days, want <= 2", len(days))
+		}
+	}
+}

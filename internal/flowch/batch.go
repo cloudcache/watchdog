@@ -22,13 +22,20 @@ const (
 	defaultMaxBytes     = 64 << 20
 	hardMaxRows         = 1_000_000
 	hardMaxBytes        = 1 << 30
+	// A block may not touch more distinct event-time days (toYYYYMMDD partitions)
+	// than this; ClickHouse rejects an insert exceeding max_partitions_per_insert_
+	// block (default 100), and that error is retryable, so a replay/backfill block
+	// spanning many days would otherwise retry forever and stall the partition.
+	defaultMaxPartitionDays = 90
+	hardMaxPartitionDays    = 100
 )
 
 var ErrInvalidBatchGroup = errors.New("invalid ClickHouse flow batch group")
 
 type BatchLimits struct {
-	MaxRows        int
-	MaxApproxBytes int
+	MaxRows          int
+	MaxApproxBytes   int
+	MaxPartitionDays int
 }
 
 type RecordRef struct {
@@ -68,6 +75,7 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 	blocks := make([]PreparedBlock, 0, 1)
 	current := PreparedBlock{KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
 	currentTenants := make(map[string]struct{})
+	currentDays := make(map[int32]struct{})
 	currentOffset := int64(-1)
 	flush := func() error {
 		if len(current.Records) == 0 {
@@ -83,6 +91,7 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 		blocks = append(blocks, current)
 		current = PreparedBlock{KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
 		clear(currentTenants)
+		clear(currentDays)
 		currentOffset = -1
 		return nil
 	}
@@ -94,7 +103,14 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			if recordBytes > limits.MaxApproxBytes {
 				return nil, fmt.Errorf("%w: record %x exceeds block byte limit", ErrInvalidBatchGroup, record.SourceRecordID[:8])
 			}
-			if len(current.Records) > 0 && (len(current.Records) == limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-recordBytes) {
+			eventTime := record.EventTime.UTC()
+			// toYYYYMMDD partitions on UTC calendar days; bound the distinct days a
+			// single insert block may touch so it can never exceed ClickHouse's
+			// max_partitions_per_insert_block.
+			partitionDay := int32(eventTime.Unix() / 86400)
+			_, sameDay := currentDays[partitionDay]
+			exceedsPartitionDays := !sameDay && len(currentDays) >= limits.MaxPartitionDays
+			if len(current.Records) > 0 && (len(current.Records) == limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-recordBytes || exceedsPartitionDays) {
 				if err := flush(); err != nil {
 					return nil, err
 				}
@@ -127,13 +143,13 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 				current.EstimatedPackets += record.EstimatedPackets
 				current.EstimatedValidRecords++
 			}
-			eventTime := record.EventTime.UTC()
 			if current.MinEventTime.IsZero() || eventTime.Before(current.MinEventTime) {
 				current.MinEventTime = eventTime
 			}
 			if eventTime.After(current.MaxEventTime) {
 				current.MaxEventTime = eventTime
 			}
+			currentDays[partitionDay] = struct{}{}
 			current.ApproxBytes += recordBytes
 			current.Records = append(current.Records, RecordRef{Batch: batch, Record: record})
 		}
@@ -151,8 +167,14 @@ func normalizeLimits(limits BatchLimits) (BatchLimits, error) {
 	if limits.MaxApproxBytes == 0 {
 		limits.MaxApproxBytes = defaultMaxBytes
 	}
+	if limits.MaxPartitionDays == 0 {
+		limits.MaxPartitionDays = defaultMaxPartitionDays
+	}
 	if limits.MaxRows < 1 || limits.MaxRows > hardMaxRows || limits.MaxApproxBytes < 1 || limits.MaxApproxBytes > hardMaxBytes {
 		return BatchLimits{}, fmt.Errorf("%w: rows must be 1..%d and bytes 1..%d", ErrInvalidBatchGroup, hardMaxRows, hardMaxBytes)
+	}
+	if limits.MaxPartitionDays < 1 || limits.MaxPartitionDays > hardMaxPartitionDays {
+		return BatchLimits{}, fmt.Errorf("%w: partition days must be 1..%d", ErrInvalidBatchGroup, hardMaxPartitionDays)
 	}
 	return limits, nil
 }
