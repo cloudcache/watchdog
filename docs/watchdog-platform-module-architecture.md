@@ -453,12 +453,11 @@ POST                     /api/v1/collectors/{id}/purge
 GET/PUT                  /api/v1/collectors/{id}/bindings
 GET                      /api/v1/collectors/{id}/health
 GET                      /api/v1/collectors/{id}/capabilities
-GET                      /api/v1/collectors/{id}/plans
-GET                      /api/v1/collectors/{id}/plans/{version}
+GET                      /api/v1/collectors/{id}/plan-revisions?limit=&cursor=
+POST                     /api/v1/collectors/{id}/plan-revisions
+POST                     /api/v1/collectors/{id}/plan-revisions/{version}/activate
 POST                     /api/v1/collectors/{id}/plans:preview
-POST                     /api/v1/collectors/{id}/plans
 POST                     /api/v1/collectors/{id}/plans/{version}:validate
-POST                     /api/v1/collectors/{id}/plans/{version}:activate
 POST                     /api/v1/collectors/{id}/plans/{version}:rollback
 POST                     /api/v1/collectors/{id}/service-principals
 POST                     /api/v1/collectors/{id}/service-principals/{principal_id}/actions/revoke-write

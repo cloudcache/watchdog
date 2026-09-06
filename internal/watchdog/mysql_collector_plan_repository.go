@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"database/sql"
@@ -57,32 +58,7 @@ func (s *MySQLStore) CreateCollectorPlanRevision(ctx context.Context, plan Colle
 		return CollectorPlanRevision{}, ErrCollectorPlanInvalidTransition
 	}
 
-	var validation any
-	if len(plan.ValidationJSON) != 0 {
-		validation = string(plan.ValidationJSON)
-	}
-	var notBefore any
-	if !plan.NotBefore.IsZero() {
-		notBefore = plan.NotBefore.UTC()
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO collector_plan_revisions (
-			id, tenant_id, collector_id, config_version, plan_schema_version,
-			status, spec_json, spec_hash, signing_key_id, signature,
-			validation_json, not_before, expires_at, supersedes_config_version,
-			created_by, updated_by
-		) VALUES (?, ?, ?, ?, ?, 'validated', ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?)
-	`, plan.ID, plan.TenantID, plan.CollectorID, plan.ConfigVersion, plan.PlanSchemaVersion,
-		string(plan.SpecJSON), plan.SpecHash, plan.SigningKeyID, plan.Signature,
-		validation, notBefore, plan.ExpiresAt.UTC(), plan.SupersedesConfigVersion,
-		plan.CreatedBy, plan.CreatedBy)
-	if err != nil {
-		return CollectorPlanRevision{}, err
-	}
-	if err := insertCollectorPlanAudit(ctx, tx, plan.TenantID, plan.CreatedBy, plan.ID, "collector.plan.created", map[string]any{
-		"collector_id": plan.CollectorID, "config_version": plan.ConfigVersion,
-		"plan_schema_version": plan.PlanSchemaVersion, "spec_hash": plan.SpecHash,
-	}); err != nil {
+	if err := insertCollectorPlanRevisionTx(ctx, tx, plan); err != nil {
 		return CollectorPlanRevision{}, err
 	}
 	created, err := getCollectorPlanRevisionTx(ctx, tx, plan.TenantID, plan.CollectorID, plan.ConfigVersion, false)
@@ -93,6 +69,204 @@ func (s *MySQLStore) CreateCollectorPlanRevision(ctx context.Context, plan Colle
 		return CollectorPlanRevision{}, err
 	}
 	return created, nil
+}
+
+// CreateNextCollectorPlanRevision is the operator creation path. The collector
+// lock serializes version allocation, and the signing-key lock fences a
+// concurrent rotate/revoke across signing and INSERT.
+func (s *MySQLStore) CreateNextCollectorPlanRevision(ctx context.Context, request CollectorPlanCreateRequest, signer CollectorPlanSigner) (CollectorPlanRevision, error) {
+	if signer == nil {
+		return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
+	}
+	transactionSigner, ok := signer.(collectorPlanTransactionSigner)
+	if !ok {
+		return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
+	}
+	if err := validateCollectorPlanCreateRequest(request, time.Now().UTC()); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	canonical, hash, err := canonicalCollectorPlanCreateSpec(request)
+	if err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	defer tx.Rollback()
+
+	var currentVersion uint64
+	var schemaMin, schemaMax uint16
+	var collectorStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT config_version, plan_schema_min, plan_schema_max, status
+		FROM collector_agents
+		WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+		FOR UPDATE
+	`, request.CollectorID, request.TenantID).Scan(&currentVersion, &schemaMin, &schemaMax, &collectorStatus); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	if collectorStatus == "revoked" || collectorStatus == "deleted" {
+		return CollectorPlanRevision{}, ErrCollectorPlanInvalidTransition
+	}
+
+	planSchemaVersion := request.PlanSchemaVersion
+	if request.FromConfigVersion != 0 {
+		source, err := getCollectorPlanRevisionTx(ctx, tx, request.TenantID, request.CollectorID, request.FromConfigVersion, false)
+		if err != nil {
+			return CollectorPlanRevision{}, err
+		}
+		canonical = append(json.RawMessage(nil), source.SpecJSON...)
+		hash = source.SpecHash
+		planSchemaVersion = source.PlanSchemaVersion
+	}
+	if planSchemaVersion < schemaMin || planSchemaVersion > schemaMax {
+		return CollectorPlanRevision{}, ErrCollectorPlanInvalidTransition
+	}
+
+	var maxVersion uint64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(config_version), 0)
+		FROM collector_plan_revisions
+		WHERE tenant_id = ? AND collector_id = ?
+	`, request.TenantID, request.CollectorID).Scan(&maxVersion); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	if currentVersion > maxVersion {
+		maxVersion = currentVersion
+	}
+	if maxVersion == ^uint64(0) {
+		return CollectorPlanRevision{}, ErrCollectorPlanInvalidTransition
+	}
+	planID, err := newIdentityID()
+	if err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	plan := CollectorPlanRevision{
+		ID: planID, TenantID: request.TenantID, CollectorID: request.CollectorID,
+		ConfigVersion: maxVersion + 1, PlanSchemaVersion: planSchemaVersion,
+		Status: CollectorPlanValidated, SpecJSON: canonical, SpecHash: hash,
+		NotBefore: request.NotBefore.UTC(), ExpiresAt: request.ExpiresAt.UTC(),
+		SupersedesConfigVersion: currentVersion, CreatedBy: request.ActorID, UpdatedBy: request.ActorID,
+	}
+	registered, err := getCollectorPlanSigningKeyTx(ctx, tx, signer.KeyID(), true)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
+		}
+		return CollectorPlanRevision{}, err
+	}
+	if registered.Status != CollectorPlanSigningKeyActive || !bytes.Equal(registered.PublicKey, signer.PublicKey()) {
+		return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
+	}
+	plan, err = transactionSigner.signVerified(plan)
+	if err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	if err := ValidateNewCollectorPlanRevision(plan); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	if err := insertCollectorPlanRevisionTx(ctx, tx, plan); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	created, err := getCollectorPlanRevisionTx(ctx, tx, plan.TenantID, plan.CollectorID, plan.ConfigVersion, false)
+	if err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CollectorPlanRevision{}, err
+	}
+	return created, nil
+}
+
+func canonicalCollectorPlanCreateSpec(request CollectorPlanCreateRequest) (json.RawMessage, string, error) {
+	if request.FromConfigVersion != 0 {
+		return nil, "", nil
+	}
+	canonical, hash, err := CanonicalCollectorPlanJSON(request.SpecJSON)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrCollectorPlanInvalidRequest, err)
+	}
+	return canonical, hash, nil
+}
+
+func insertCollectorPlanRevisionTx(ctx context.Context, tx *sql.Tx, plan CollectorPlanRevision) error {
+	var validation any
+	if len(plan.ValidationJSON) != 0 {
+		validation = string(plan.ValidationJSON)
+	}
+	var notBefore any
+	if !plan.NotBefore.IsZero() {
+		notBefore = plan.NotBefore.UTC()
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO collector_plan_revisions (
+			id, tenant_id, collector_id, config_version, plan_schema_version,
+			status, spec_json, spec_hash, signing_key_id, signature,
+			validation_json, not_before, expires_at, supersedes_config_version,
+			created_by, updated_by
+		) VALUES (?, ?, ?, ?, ?, 'validated', ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?)
+	`, plan.ID, plan.TenantID, plan.CollectorID, plan.ConfigVersion, plan.PlanSchemaVersion,
+		string(plan.SpecJSON), plan.SpecHash, plan.SigningKeyID, plan.Signature,
+		validation, notBefore, plan.ExpiresAt.UTC(), plan.SupersedesConfigVersion,
+		plan.CreatedBy, plan.CreatedBy); err != nil {
+		return err
+	}
+	return insertCollectorPlanAudit(ctx, tx, plan.TenantID, plan.CreatedBy, plan.ID, "collector.plan.created", map[string]any{
+		"collector_id": plan.CollectorID, "config_version": plan.ConfigVersion,
+		"plan_schema_version": plan.PlanSchemaVersion, "spec_hash": plan.SpecHash,
+	})
+}
+
+func (s *MySQLStore) ListCollectorPlanRevisions(ctx context.Context, tenantID, collectorID ID, filter CollectorPlanPageFilter) ([]CollectorPlanRevision, string, error) {
+	if tenantID == "" || collectorID == "" {
+		return nil, "", ErrCollectorPlanInvalidRequest
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 50
+	}
+	if filter.Limit > 200 {
+		filter.Limit = 200
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT 1 FROM collector_agents
+		WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+	`, tenantID, collectorID).Scan(&exists); err != nil {
+		return nil, "", err
+	}
+	query := `SELECT ` + collectorPlanSelectColumns + `
+		FROM collector_plan_revisions
+		WHERE tenant_id = ? AND collector_id = ?`
+	args := []any{tenantID, collectorID}
+	if filter.BeforeVersion != 0 {
+		query += ` AND config_version < ?`
+		args = append(args, filter.BeforeVersion)
+	}
+	query += ` ORDER BY config_version DESC LIMIT ?`
+	args = append(args, filter.Limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	items := make([]CollectorPlanRevision, 0, filter.Limit+1)
+	for rows.Next() {
+		plan, err := scanCollectorPlanRevision(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(items) > filter.Limit {
+		items = items[:filter.Limit]
+		next = encodeCollectorPlanCursor(items[len(items)-1].ConfigVersion)
+	}
+	return items, next, nil
 }
 
 func (s *MySQLStore) GetCollectorPlanRevision(ctx context.Context, tenantID, collectorID ID, configVersion uint64) (CollectorPlanRevision, error) {

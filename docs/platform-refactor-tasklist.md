@@ -40,7 +40,14 @@
     - [x] **变更设计/测试**：配置两字段原子启停；同 key 幂等启动不增 generation；轮换部署只接受新 key ID；无 signer 时既有 plan delivery 与平台启动不受影响。
     - [x] **回归测试**：001–052 顺序迁移、fresh init parity、checksum 漂移 fail-closed、全库 test、定向 race、vet、build 通过；专用临时库已删除。
     - [x] **已提交门禁**：migration/init/checksum、runtime/API、agent trust、测试、设计与任务清单由本提交原子交付，不夹带并行 Flow 数据面和既有 maintenance/delete-preview 文件。
-  - [ ] **Fleet Phase 1 plan-revision 管理 API**：实现 create/clone、keyset list、activate；所有 create/clone 只能调用 runtime `CollectorPlanSigner` 生成 repository 所需的内部验证 proof，禁收客户端公钥/签名，禁在 HTTP 层伪造 proof。详见 [collector-fleet-rollout-design.md](collector-fleet-rollout-design.md)。
+  - [x] **Fleet Phase 1 plan-revision 管理 API**：create/clone、keyset list、activate 已闭环；所有 create/clone 只能调用 runtime `CollectorPlanSigner`，HTTP DTO 禁止 tenant/actor/version/status/hash/key/signature/proof 输入，响应也不返回 spec/signature。详见 [collector-fleet-rollout-design.md](collector-fleet-rollout-design.md)。
+    - [x] **设计**：冻结 spec/clone 互斥 DTO、服务端 `max(version)+1`、1–200 opaque keyset、configure/view/operate 权限，以及 plan `If-Match` + collector row version 双 guard。
+    - [x] **编码**：runtime 接入 management service；collector 行锁串行分配版本，active signing-key 行锁覆盖签名与 INSERT；clone 只复制 immutable spec/schema；list/get 均 tenant+collector 绑定；创建/激活写既有 audit。
+    - [x] **单元测试**：严格 JSON/未知字段与签名注入拒绝、身份注入、响应脱敏、权限、游标、双锁、错误映射和 signer 缺失 fail-closed 均覆盖。
+    - [x] **集成测试**：隔离真实 MySQL 同 collector 8 并发创建得到连续唯一 1–8；验证两页无重叠、clone 为 9 且 hash/schema 一致、激活成功、stale 再激活 412 语义及审计计数；临时库和误写 dev key 均已删除。
+    - [x] **变更设计/测试**：复用 `collector_agents`、`collector_plan_revisions`、`audit_logs` 与 052 trust 表，不创建空 migration，下一持久化编号仍为 053；无 signer 时 list/activate 和既有 machine delivery 不受影响，create 返回 503。
+    - [x] **回归测试**：定向 watchdog、真实 MySQL、全库 test/race/vet/build 后提交；不夹带 Flow 数据面与并行 maintenance/delete-preview 文件。
+    - [x] **已提交门禁**：代码、测试、设计与任务清单由本提交原子交付；不夹带 Flow 数据面与并行 maintenance/delete-preview 工作区。
   - [ ] **Fleet Phase 2–5 rollout/canary**：preview/canary/manual waves/rollback/kill/expiry/scheduler；开始 Phase 2 前冻结健康信号、selector、config_version 命名空间和 best-effort revert 四项决策。
 - [x] target 名称与 host 身份分离；网络 target 以 `(tenant, kind, host)` 唯一，display name 可选。
 - [x] SNMP profile/community 在新建与编辑可配置，sysName/sysDescr 为采集结果而非输入必填。

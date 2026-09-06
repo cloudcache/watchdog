@@ -69,6 +69,15 @@ type CollectorPlanSigner interface {
 	Sign(context.Context, CollectorPlanRevision) (CollectorPlanRevision, error)
 }
 
+// collectorPlanTransactionSigner lets the MySQL repository sign only after it
+// has locked and revalidated the registered key in the same transaction. It is
+// intentionally package-private so HTTP adapters and external implementations
+// cannot bypass CollectorPlanSigner.Sign's trust-state check.
+type collectorPlanTransactionSigner interface {
+	CollectorPlanSigner
+	signVerified(CollectorPlanRevision) (CollectorPlanRevision, error)
+}
+
 type ed25519CollectorPlanSigner struct {
 	keyID      string
 	privateKey ed25519.PrivateKey
@@ -105,6 +114,13 @@ func (s *ed25519CollectorPlanSigner) Sign(ctx context.Context, plan CollectorPla
 		return CollectorPlanRevision{}, fmt.Errorf("read collector plan signing key state: %w", err)
 	}
 	if registered.Status != CollectorPlanSigningKeyActive || !bytes.Equal(registered.PublicKey, s.publicKey) {
+		return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
+	}
+	return s.signVerified(plan)
+}
+
+func (s *ed25519CollectorPlanSigner) signVerified(plan CollectorPlanRevision) (CollectorPlanRevision, error) {
+	if s == nil || len(s.privateKey) != ed25519.PrivateKeySize || len(s.publicKey) != ed25519.PublicKeySize {
 		return CollectorPlanRevision{}, ErrCollectorPlanSigningKeyUnavailable
 	}
 	plan.SigningKeyID = s.keyID
@@ -251,4 +267,5 @@ func NewCollectorPlanTrustMaintenance(repository CollectorPlanTrustRepository, l
 }
 
 var _ CollectorPlanSigner = (*ed25519CollectorPlanSigner)(nil)
+var _ collectorPlanTransactionSigner = (*ed25519CollectorPlanSigner)(nil)
 var _ CollectorPlanTrustBundleController = (*CollectorPlanTrustBundleService)(nil)

@@ -115,6 +115,8 @@ type AgentPageFilter struct {
 
 type CollectorPlanRepository interface {
 	CreateCollectorPlanRevision(ctx context.Context, plan CollectorPlanRevision) (CollectorPlanRevision, error)
+	CreateNextCollectorPlanRevision(ctx context.Context, request CollectorPlanCreateRequest, signer CollectorPlanSigner) (CollectorPlanRevision, error)
+	ListCollectorPlanRevisions(ctx context.Context, tenantID, collectorID ID, filter CollectorPlanPageFilter) ([]CollectorPlanRevision, string, error)
 	GetCollectorPlanRevision(ctx context.Context, tenantID, collectorID ID, configVersion uint64) (CollectorPlanRevision, error)
 	ActivateCollectorPlanRevision(ctx context.Context, activation CollectorPlanActivation) (CollectorPlanRevision, error)
 	AcknowledgeCollectorPlan(ctx context.Context, acknowledgement CollectorPlanAcknowledgement) error

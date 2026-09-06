@@ -1,6 +1,6 @@
 # Collector Fleet Rollout / Canary — Design
 
-Status: **Phase 0 implemented; Phases 1–5 proposed**. Owner: platform. Tracks
+Status: **Phases 0–1 implemented; Phases 2–5 proposed**. Owner: platform. Tracks
 tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环".
 
 ## 1. Where we are (the gap)
@@ -181,14 +181,29 @@ operators can't drive it concurrently, and writes an audit event.
 
 ## 6. API surface (operator-facing, new)
 
-Plan management (the missing base layer):
-- `POST /api/v1/collectors/{id}/plan-revisions` — create a draft revision from a
-  spec (validate, sign). **Copy old spec → higher version** is this endpoint with
-  `{ "from_config_version": N }`: clone that revision's spec into a new draft at
-  `max(config_version)+1`.
-- `GET /api/v1/collectors/{id}/plan-revisions` — list revisions (keyset paged).
+Plan management (implemented in Phase 1):
+- `POST /api/v1/collectors/{id}/plan-revisions` — validate and sign a new
+  immutable `validated` revision. The body is exactly one of
+  `{plan_schema_version,spec,expires_at,not_before?}` or
+  `{from_config_version,expires_at,not_before?}`. Clone copies only the source
+  spec and schema; it receives a new ID, signature and
+  `max(existing config_version, collector head)+1`. Tenant, collector, actor,
+  status, hashes, signing key and signature are server-derived; unknown fields
+  are rejected and the response deliberately omits spec/signature material.
+- `GET /api/v1/collectors/{id}/plan-revisions?limit=&cursor=` — revisions newest
+  first with an opaque `config_version` keyset cursor; limit is 1–200.
 - `POST /api/v1/collectors/{id}/plan-revisions/{v}/activate` — activate one
-  (single-collector path; wraps `ActivateCollectorPlanRevision`).
+  revision. `If-Match` carries the quoted plan `row_version`; body
+  `{collector_row_version}` supplies the independently-read collector guard.
+  A stale guard is 412; an invalid lifecycle/schema/time transition is 409.
+
+Creation is serialized by the collector row lock. The active signing-key row is
+then locked and checked against the runtime signer before the signature and
+insert occur, so concurrent creates allocate distinct versions and a concurrent
+key rotation/revocation cannot race a now-retiring key into storage. This phase
+reuses `collector_agents`, `collector_plan_revisions`, `audit_logs` and the Phase
+0 key tables; it intentionally creates no migration and leaves machine plan
+delivery unchanged.
 
 Rollouts:
 - `POST /api/v1/plan-rollouts` — create (module, selector, spec, strategy, expiry) → `draft`.
@@ -224,9 +239,11 @@ tenant; preview/get require `view`. Reuses the existing permission model.
    MySQL plan rows, API DTOs, logs, or audit detail. Real tests cover rotation,
    retiring overlap, revoked-key rejection, missing key fail-closed and agent
    bundle generation rollback rejection.
-1. **Plan-revision management API** — after Phase 0, create (incl. clone `from_config_version`),
-   list, activate. Pure reuse of existing repo methods + a new operator API +
-   gated MySQL/API tests. *Unblocks everything and is useful on its own.*
+1. **[done] Plan-revision management API** — create (including clone
+   `from_config_version`), keyset list and dual-guard activate. The runtime
+   signer is the only signing capability; version allocation and active-key
+   fencing occur in the repository transaction. API/unit tests plus an isolated
+   real-MySQL concurrent create→clone→list→activate test are the delivery gate.
 2. **Rollout tables + create + preview** — migration for the two tables, create
    endpoint, preview (validation-only, no activation). Gated MySQL for selection
    + preview skip/apply classification.
@@ -246,7 +263,7 @@ tenant; preview/get require `view`. Reuses the existing permission model.
 - **Kill revert atomicity**: best-effort per-target revert (some may already be
   offline) — is "reverted where reachable, flagged where not" acceptable?
 
-Phase 0 is not an open product decision: it is required by the already-enforced
-repository trust boundary and is now the prerequisite consumed by Phase 1. The
+Phases 0–1 are no longer open product decisions: they implement the existing
+repository trust and per-collector lifecycle boundaries. The
 implemented secret backend is an owner-only file; a future KMS/Vault adapter may
 replace only that loader without changing key state, bundle or signer contracts.
