@@ -34,6 +34,7 @@ type BackendRuntime struct {
 	FlowGeo            *FlowGeoService
 	MetricsClient      VictoriaMetricsClient
 	ExportStore        DiskCSVExportStore
+	AddressArtifacts   DiskAddressArtifactStore
 	ExportWorker       ExportWorker
 	SNMPCollector      SNMPPollRunner
 	SNMPDiscovery      SNMPDiscoveryEngine
@@ -75,6 +76,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	}
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
 	exportStore := DiskCSVExportStore{Dir: cfg.Export.Dir}
+	addressArtifacts := DiskAddressArtifactStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxUploadBytes}
 	collectorAuthenticator, err := NewMySQLCollectorMachineAuthenticator(store.db)
 	if err != nil {
 		_ = store.Close()
@@ -112,6 +114,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		FlowGeo:           flowGeo,
 		MetricsClient:     metricsClient,
 		ExportStore:       exportStore,
+		AddressArtifacts:  addressArtifacts,
 		CollectorEvidence: collectorEvidence,
 		CollectorPlans:    collectorPlans,
 	}
@@ -248,6 +251,10 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		TrapDispatcher:         r.trapDispatcherFn,
 		Audit:                  r.Store,
 		AddressSets:            r.Store,
+		AddressImports:         r.Store,
+		AddressArtifacts:       r.AddressArtifacts,
+		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,
+		OperationJobs:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,
 		RuntimeHealth:          r.Health,
@@ -380,6 +387,16 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			JobType:     CollectorDeleteJobType,
 			Handler:     NewCollectorDeleteJobHandler(r.Store, r.Store),
 			Concurrency: 1,
+		}); err != nil {
+			return err
+		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     AddressImportJobType,
+			Handler:     NewAddressImportJobHandler(r.Store, r.AddressArtifacts, r.Config.AddressLibrary.ImportBatchSize),
+			Concurrency: r.Config.AddressLibrary.WorkerConcurrency,
+			LeaseFor:    2 * time.Minute,
+			MaxAttempts: 5,
+			RetryBase:   30 * time.Second,
 		}); err != nil {
 			return err
 		}

@@ -13,6 +13,12 @@ export:
   worker_batch: 10
   metric: "watchdog_snmp_if_in_bps"
 
+address_library:
+  dir: "address-artifacts"
+  max_upload_bytes: 2147483648
+  import_batch_size: 1000
+  worker_concurrency: 1
+
 snmp_collector:
   tenant_id: "tenant_dev"
   interval: 1m

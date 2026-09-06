@@ -43,6 +43,9 @@ type APIV1RouterConfig struct {
 	TrapDispatcher         func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	Audit                  AuditRepository
 	AddressSets            AddressSetRepository
+	AddressImports         AddressImportRepository
+	AddressArtifacts       AddressArtifactStore
+	AddressImportMaxBytes  int64
 	Tenants                TenantRepository
 	Readiness              func(context.Context) error
 	RuntimeHealth          func() PlatformRuntimeHealth
@@ -207,6 +210,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	registerMetricsRoutes(mux, auth, cfg.Metrics, cfg.Network)
 	if cfg.AddressSets != nil {
 		registerAddressSetRoutes(mux, auth, cfg.AddressSets)
+	}
+	if cfg.AddressImports != nil {
+		registerAddressImportRoutes(mux, auth, cfg.AddressImports, cfg.AddressArtifacts, cfg.OperationJobs, cfg.AddressImportMaxBytes)
 	}
 	return RequestIDMiddleware(withJSONAPINotFound(mux))
 }

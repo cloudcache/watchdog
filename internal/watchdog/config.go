@@ -46,12 +46,16 @@ const (
 	defaultFlowRollupLease             = 2 * time.Minute
 	defaultFlowRollupMaxAttempts       = uint32(5)
 	defaultFlowRollupRetryBase         = 30 * time.Second
+	defaultAddressLibraryDir           = "address-artifacts"
+	defaultAddressLibraryBatchSize     = 1_000
+	defaultAddressLibraryWorkers       = 1
 )
 
 type BackendConfig struct {
 	MySQL           MySQLConfig           `yaml:"mysql"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
 	Export          ExportConfig          `yaml:"export"`
+	AddressLibrary  AddressLibraryConfig  `yaml:"address_library"`
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
 	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
 	FlowGeo         FlowGeoConfig         `yaml:"flow_geo"`
@@ -136,6 +140,13 @@ type ExportConfig struct {
 	WorkerInterval time.Duration `yaml:"worker_interval"`
 	WorkerBatch    int           `yaml:"worker_batch"`
 	Metric         string        `yaml:"metric"`
+}
+
+type AddressLibraryConfig struct {
+	Dir               string `yaml:"dir"`
+	MaxUploadBytes    int64  `yaml:"max_upload_bytes"`
+	ImportBatchSize   int    `yaml:"import_batch_size"`
+	WorkerConcurrency int    `yaml:"worker_concurrency"`
 }
 
 type SNMPCollectorConfig struct {
@@ -228,6 +239,10 @@ func defaultBackendConfig() BackendConfig {
 			WorkerInterval: defaultExportWorkerInterval,
 			WorkerBatch:    defaultExportWorkerBatch,
 			Metric:         MetricSNMPIfInBps,
+		},
+		AddressLibrary: AddressLibraryConfig{
+			Dir: defaultAddressLibraryDir, MaxUploadBytes: DefaultAddressArtifactMaxBytes,
+			ImportBatchSize: defaultAddressLibraryBatchSize, WorkerConcurrency: defaultAddressLibraryWorkers,
 		},
 		SNMPCollector: SNMPCollectorConfig{
 			TenantID:          "tenant_dev",
@@ -410,6 +425,16 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	cfg.Export.Metric = getEnv("WATCHDOG_EXPORT_METRIC", cfg.Export.Metric)
+	cfg.AddressLibrary.Dir = getEnv("WATCHDOG_ADDRESS_LIBRARY_DIR", cfg.AddressLibrary.Dir)
+	if cfg.AddressLibrary.MaxUploadBytes, err = getEnvInt64("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", cfg.AddressLibrary.MaxUploadBytes, 1); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.ImportBatchSize, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_IMPORT_BATCH_SIZE", cfg.AddressLibrary.ImportBatchSize, 1); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.WorkerConcurrency, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_WORKER_CONCURRENCY", cfg.AddressLibrary.WorkerConcurrency, 1); err != nil {
+		return err
+	}
 	if tid, ok := os.LookupEnv("WATCHDOG_SNMP_COLLECTOR_TENANT_ID"); ok {
 		cfg.SNMPCollector.TenantID = ID(tid)
 	}
@@ -457,6 +482,18 @@ func getEnvInt(key string, fallback, minimum int) (int, error) {
 		return fallback, nil
 	}
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < minimum {
+		return fallback, fmt.Errorf("%s must be an integer >= %d", key, minimum)
+	}
+	return parsed, nil
+}
+
+func getEnvInt64(key string, fallback, minimum int64) (int64, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || parsed < minimum {
 		return fallback, fmt.Errorf("%s must be an integer >= %d", key, minimum)
 	}
@@ -541,6 +578,7 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.FlowRollup.ClickHouseServerName = strings.TrimSpace(cfg.FlowRollup.ClickHouseServerName)
 	cfg.Export.Dir = strings.TrimSpace(cfg.Export.Dir)
 	cfg.Export.Metric = strings.TrimSpace(cfg.Export.Metric)
+	cfg.AddressLibrary.Dir = strings.TrimSpace(cfg.AddressLibrary.Dir)
 	cfg.SNMPCollector.TenantID = ID(strings.TrimSpace(string(cfg.SNMPCollector.TenantID)))
 	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
 	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
@@ -644,6 +682,11 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.Export.Metric != MetricSNMPIfInBps && cfg.Export.Metric != MetricSNMPIfOutBps {
 		return fmt.Errorf("export.metric must be %q or %q", MetricSNMPIfInBps, MetricSNMPIfOutBps)
+	}
+	if cfg.AddressLibrary.Dir == "" || cfg.AddressLibrary.MaxUploadBytes <= 0 || cfg.AddressLibrary.MaxUploadBytes > 16<<30 ||
+		cfg.AddressLibrary.ImportBatchSize <= 0 || cfg.AddressLibrary.ImportBatchSize > maxAddressImportBatch ||
+		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 {
+		return errors.New("address_library dir, upload limit, batch size, and worker concurrency are invalid")
 	}
 	if cfg.SNMPCollector.Interval <= 0 || cfg.SNMPCollector.PollLimit <= 0 || cfg.SNMPCollector.DiscoveryInterval <= 0 || cfg.SNMPCollector.DiscoveryBatch <= 0 {
 		return errors.New("snmp_collector interval, limit, and batch values must be positive")
