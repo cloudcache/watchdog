@@ -468,8 +468,6 @@ func TestLoadWatchdogConfigRejectsRemovedVictoriaLogsYAML(t *testing.T) {
 }
 
 func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *testing.T) {
-	t.Setenv("WATCHDOG_SFLOW_AGG_INTERVAL", "15s")
-	t.Setenv("WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL", "45s")
 	t.Setenv("WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL", "2m")
 	t.Setenv("WATCHDOG_SNMP_COLLECTOR_TENANT_ID", " tenant-a ")
 	t.Setenv("WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT", "42")
@@ -481,9 +479,6 @@ func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *test
 	cfg, err := LoadWatchdogConfig("")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.SFlowCollector.AggInterval != 15*time.Second || cfg.SFlowCollector.PrefixSyncInterval != 45*time.Second {
-		t.Fatalf("sflow intervals = %#v", cfg.SFlowCollector)
 	}
 	if cfg.AggregateGraph.RollupInterval != 2*time.Minute {
 		t.Fatalf("aggregate graph config = %#v", cfg.AggregateGraph)
@@ -554,9 +549,6 @@ func TestWatchdogExampleConfigsMatchSchemaAndValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := ValidateSNMPCollectorConfig(cfg.SNMPCollector); err != nil {
-				t.Fatal(err)
-			}
-			if err := ValidateSFlowCollectorConfig(cfg.SFlowCollector); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := NormalizeAndValidateAgentClientConfig(cfg.Agent); err != nil {

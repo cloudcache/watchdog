@@ -25,7 +25,6 @@ dockerfile_agent_dev
 # watchdog: ad-hoc build outputs at repo root (cmd/ sources stay tracked)
 /watchdog-snmp-collector
 /watchdog-librenms-extract
-/watchdog-sflow-collector
 # watchdog: runtime artifacts and local caches
 .watchdog*.lock
 exports/

@@ -27,7 +27,6 @@ The same config flag is accepted by:
 
 - `cmd/watchdog-export-worker`
 - `cmd/watchdog-snmp-collector`
-- `cmd/watchdog-sflow-collector`
 - `cmd/watchdog-aggregate-rollup`
 - `cmd/watchdog-system-agent`
 - `cmd/watchdog-snmp-agent`
@@ -60,7 +59,6 @@ HTTP base URLs are normalized by trimming surrounding whitespace and trailing sl
 | Export worker | `WATCHDOG_EXPORT_DIR`, `WATCHDOG_EXPORT_WORKER_INTERVAL`, `WATCHDOG_EXPORT_WORKER_BATCH`（仅 legacy v0 扫描）, `WATCHDOG_EXPORT_WORKER_CONCURRENCY`（contract v1 operation jobs）, `WATCHDOG_EXPORT_METRIC` |
 | SNMP collector / discovery | `WATCHDOG_SNMP_COLLECTOR_TENANT_ID`, `WATCHDOG_SNMP_COLLECTOR_INTERVAL`, `WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT`, `WATCHDOG_SNMP_DISCOVERY_INTERVAL`, `WATCHDOG_SNMP_DISCOVERY_BATCH` |
 | SNMP MIBs | `WATCHDOG_SNMP_MIB_DIRS`, `WATCHDOG_SNMP_MIBS` |
-| sFlow collector | `WATCHDOG_SFLOW_LISTEN`, `WATCHDOG_SFLOW_TENANT_ID`, `WATCHDOG_SFLOW_AGG_INTERVAL`, `WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL` |
 | Aggregate graph rollup | `WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL` |
 | SNMP trap agent | `WATCHDOG_SNMP_TRAP_API_URL`, `WATCHDOG_SNMP_TRAP_TOKEN`, `WATCHDOG_SNMP_TRAP_LISTEN` |
 | System agent | `WATCHDOG_AGENT_HUB_URL`, `WATCHDOG_AGENT_ID`, `WATCHDOG_AGENT_TOKEN`, `WATCHDOG_AGENT_INTERVAL` |

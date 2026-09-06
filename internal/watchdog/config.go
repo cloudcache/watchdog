@@ -28,9 +28,6 @@ const (
 	defaultSNMPCollectorPollLimit      = 500
 	defaultSNMPDiscoveryInterval       = 30 * time.Second
 	defaultSNMPDiscoveryBatch          = 10
-	defaultSFlowListen                 = ":6343"
-	defaultSFlowAggInterval            = time.Minute
-	defaultSFlowPrefixSync             = 5 * time.Minute
 	defaultSNMPTrapListen              = ":162"
 	defaultAgentInterval               = time.Minute
 	defaultPrincipalRequestTimeout     = 10 * time.Second
@@ -64,7 +61,6 @@ type BackendConfig struct {
 	Export          ExportConfig          `yaml:"export"`
 	AddressLibrary  AddressLibraryConfig  `yaml:"address_library"`
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
-	SFlowCollector  SFlowCollectorConfig  `yaml:"sflow_collector"`
 	FlowGeo         FlowGeoConfig         `yaml:"flow_geo"`
 	FlowRollup      FlowRollupConfig      `yaml:"flow_rollup"`
 	QueryGateway    QueryGatewayConfig    `yaml:"query_gateway"`
@@ -154,13 +150,6 @@ type MySQLConfig struct {
 
 type VictoriaMetricsConfig struct {
 	BaseURL string `yaml:"base_url"`
-}
-
-type SFlowCollectorConfig struct {
-	Listen             string        `yaml:"listen"`
-	TenantID           ID            `yaml:"tenant_id"`
-	AggInterval        time.Duration `yaml:"agg_interval"`
-	PrefixSyncInterval time.Duration `yaml:"prefix_sync_interval"`
 }
 
 type ExportConfig struct {
@@ -297,11 +286,6 @@ func defaultBackendConfig() BackendConfig {
 			PollLimit:         defaultSNMPCollectorPollLimit,
 			DiscoveryInterval: defaultSNMPDiscoveryInterval,
 			DiscoveryBatch:    defaultSNMPDiscoveryBatch,
-		},
-		SFlowCollector: SFlowCollectorConfig{
-			Listen:             defaultSFlowListen,
-			AggInterval:        defaultSFlowAggInterval,
-			PrefixSyncInterval: defaultSFlowPrefixSync,
 		},
 		CollectorPrincipalProvider: RemoteCollectorPrincipalProviderConfig{
 			RequestTimeout:        defaultPrincipalRequestTimeout,
@@ -452,16 +436,6 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.FlowRollup.ClickHouseCertFile = getEnv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_TLS_CERT", cfg.FlowRollup.ClickHouseCertFile)
 	cfg.FlowRollup.ClickHouseKeyFile = getEnv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_TLS_KEY", cfg.FlowRollup.ClickHouseKeyFile)
 	cfg.FlowRollup.ClickHouseServerName = getEnv("WATCHDOG_FLOW_ROLLUP_CLICKHOUSE_TLS_SERVER_NAME", cfg.FlowRollup.ClickHouseServerName)
-	cfg.SFlowCollector.Listen = getEnv("WATCHDOG_SFLOW_LISTEN", cfg.SFlowCollector.Listen)
-	if tid, ok := os.LookupEnv("WATCHDOG_SFLOW_TENANT_ID"); ok {
-		cfg.SFlowCollector.TenantID = ID(tid)
-	}
-	if cfg.SFlowCollector.AggInterval, err = getEnvDuration("WATCHDOG_SFLOW_AGG_INTERVAL", cfg.SFlowCollector.AggInterval); err != nil {
-		return err
-	}
-	if cfg.SFlowCollector.PrefixSyncInterval, err = getEnvDuration("WATCHDOG_SFLOW_PREFIX_SYNC_INTERVAL", cfg.SFlowCollector.PrefixSyncInterval); err != nil {
-		return err
-	}
 	if cfg.CollectorPrincipalProvider.Enabled, err = getEnvBool("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_ENABLED", cfg.CollectorPrincipalProvider.Enabled); err != nil {
 		return err
 	}
@@ -678,8 +652,6 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 		key.PublicKeyFile = cleanOptionalConfigPath(key.PublicKeyFile)
 	}
 	cfg.SNMPCollector.TenantID = ID(strings.TrimSpace(string(cfg.SNMPCollector.TenantID)))
-	cfg.SFlowCollector.Listen = strings.TrimSpace(cfg.SFlowCollector.Listen)
-	cfg.SFlowCollector.TenantID = ID(strings.TrimSpace(string(cfg.SFlowCollector.TenantID)))
 	cfg.CollectorPrincipalProvider.Name = strings.TrimSpace(cfg.CollectorPrincipalProvider.Name)
 	cfg.CollectorPrincipalProvider.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.CollectorPrincipalProvider.BaseURL), "/")
 	cfg.CollectorPrincipalProvider.PolicyRevision = strings.TrimSpace(cfg.CollectorPrincipalProvider.PolicyRevision)
@@ -767,14 +739,8 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateQueryGatewayConfig(cfg.QueryGateway); err != nil {
 		return err
 	}
-	if err := validateListenAddress("sflow_collector.listen", cfg.SFlowCollector.Listen); err != nil {
-		return err
-	}
 	if err := validateFlowRollupConfig(cfg.FlowRollup); err != nil {
 		return err
-	}
-	if cfg.SFlowCollector.AggInterval <= 0 || cfg.SFlowCollector.PrefixSyncInterval <= 0 {
-		return errors.New("sflow_collector intervals must be positive")
 	}
 	if cfg.CollectorPrincipalProvider.Enabled {
 		if err := validateRemoteCollectorPrincipalProviderConfig(cfg.CollectorPrincipalProvider); err != nil {
@@ -940,13 +906,6 @@ func NormalizeAndValidateSNMPTrapAgentConfig(cfg SNMPTrapAgentConfig) (SNMPTrapA
 		return cfg, err
 	}
 	return cfg, nil
-}
-
-func ValidateSFlowCollectorConfig(cfg SFlowCollectorConfig) error {
-	if cfg.TenantID == "" {
-		return errors.New("sflow_collector.tenant_id is required")
-	}
-	return nil
 }
 
 func ValidateSNMPCollectorConfig(cfg SNMPCollectorConfig) error {

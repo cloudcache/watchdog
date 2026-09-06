@@ -56,15 +56,8 @@ snmp_collector:
   discovery_interval: 30s
   discovery_batch: 10
 
-sflow_collector:
-  listen: ":6343"
-  tenant_id: "tenant_dev"
-  agg_interval: 1m
-  prefix_sync_interval: 5m
-
 # Formal flow data plane. tenant/exporter bindings are supplied only by the
-# signed plan; unlike the legacy sflow_collector, no tenant is trusted from YAML
-# or a datagram. Do not bind the legacy and formal collectors to the same port.
+# signed plan; no tenant is trusted from YAML or a datagram.
 collector_principal_provider:
   enabled: false
   name: "enterprise-kafka"
