@@ -43,10 +43,11 @@ type DecodedBatch struct {
 // Decoder owns one GoFlow2 template and sampling state set. It is not safe for
 // concurrent use and must be assigned to exactly one Kafka partition worker.
 //
-// Zero-copy contract: Decode returns FlowMessage pointers that reference
-// GoFlow2's pooled decode buffers directly, without marshalling. Those buffers
-// stay valid only until the NEXT Decode call on this decoder, which recycles
-// the previous batch back to the pool before decoding into it again. The caller
+// Zero-copy contract: Decode returns FlowMessage pointers that reference either
+// GoFlow2's pooled decode buffers (slow path) or the decoder's reused NetFlow v5
+// backing array (fast path), plus addresses that slice the source payload —
+// none marshalled or copied. All stay valid only until the NEXT Decode call on
+// this decoder, which recycles/overwrites them before decoding again. The caller
 // MUST fully consume (map into its own structs) each returned batch before it
 // calls Decode again on the same decoder. The per-partition worker satisfies
 // this by mapping every record of a batch before decoding the next record.
@@ -55,6 +56,10 @@ type Decoder struct {
 	producer  producer.ProducerInterface
 	metadata  *metadataProducer
 	templates *templates.TemplateFlowStore
+	// fastNetFlowV5 selects the fixed-offset NetFlow v5 decoder over GoFlow2's
+	// reflection-based pipe. netflowV5Backing is its reused message array.
+	fastNetFlowV5    bool
+	netflowV5Backing []goflowpb.FlowMessage
 }
 
 func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
@@ -78,7 +83,7 @@ func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
 		return nil, fmt.Errorf("create GoFlow2 producer: %w", err)
 	}
 	metadata := newMetadataProducer(protoProducer, stateTTL)
-	decoder := &Decoder{producer: metadata, metadata: metadata, templates: templateStore}
+	decoder := &Decoder{producer: metadata, metadata: metadata, templates: templateStore, fastNetFlowV5: true}
 	// No Format/Transport: with a nil format the pipe's formatSend is a no-op, so
 	// the pooled decode buffers are never marshalled. Decode reads them directly
 	// from the producer (zero-copy) instead of unmarshalling a transport payload.
@@ -128,12 +133,33 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	address, _ := netip.AddrFromSlice(raw.SourceAddress)
 	source := netip.AddrPortFrom(address.Unmap(), uint16(raw.SourcePort))
 	receivedAt := time.Unix(int64(raw.TimeReceived), 0).UTC()
-	message := &utils.Message{Src: source, Payload: raw.Payload, Received: receivedAt}
 
 	// Recycle the previous batch's pooled buffers before decoding into them
 	// again. Safe under the zero-copy contract: the caller has finished mapping
 	// the prior batch by the time it asks for the next one.
 	d.metadata.recyclePending()
+
+	// Fast path: NetFlow v5 has a fixed wire layout, decoded at fixed offsets
+	// without GoFlow2's reflection reader, intermediate struct, or per-record
+	// allocation. It produces FlowMessages identical to the slow path
+	// (TestNetFlowV5FastMatchesGoFlow2). NetFlow v5 carries no sFlow sample
+	// metadata or agent identity, so those batch fields are zero — matching what
+	// the slow path's metadataProducer sets for a non-sFlow packet.
+	if d.fastNetFlowV5 && flowType == goflowpb.FlowMessage_NETFLOW_V5 {
+		samplerAddress, _ := source.Addr().Unmap().MarshalBinary()
+		backing, ferr := decodeNetFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano()), samplerAddress, d.netflowV5Backing)
+		if ferr != nil {
+			return DecodedBatch{}, ferr
+		}
+		d.netflowV5Backing = backing
+		records := make([]*goflowpb.FlowMessage, len(backing))
+		for index := range backing {
+			records[index] = &backing[index]
+		}
+		return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, 0, 0, netip.Addr{}, records, nil), nil
+	}
+
+	message := &utils.Message{Src: source, Payload: raw.Payload, Received: receivedAt}
 	err = recoverDecoderPanic(func() error {
 		switch raw.Decoder {
 		case flowpb.RawFlow_DECODER_NETFLOW:
@@ -165,6 +191,10 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	if flowType == goflowpb.FlowMessage_SFLOW_5 && len(records) != len(metadata) {
 		return DecodedBatch{}, errors.New("GoFlow2 sFlow records and sample metadata are inconsistent")
 	}
+	return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.metadata.subAgentID, d.metadata.datagramSequence, d.metadata.agentIP, records, metadata), nil
+}
+
+func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, receivedAt time.Time, flowType goflowpb.FlowMessage_FlowType, observationDomainID uint64, subAgentID, datagramSequence uint32, agentIP netip.Addr, records []*goflowpb.FlowMessage, metadata []DecodedRecordMetadata) DecodedBatch {
 	return DecodedBatch{
 		CollectorID:         raw.CollectorId,
 		ListenerID:          raw.ListenerId,
@@ -173,12 +203,12 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 		Source:              source,
 		FlowType:            flowType,
 		ObservationDomainID: observationDomainID,
-		SubAgentID:          d.metadata.subAgentID,
-		DatagramSequence:    d.metadata.datagramSequence,
-		AgentIP:             d.metadata.agentIP,
+		SubAgentID:          subAgentID,
+		DatagramSequence:    datagramSequence,
+		AgentIP:             agentIP,
 		Records:             records,
 		RecordMetadata:      metadata,
-	}, nil
+	}
 }
 
 func inspectFlowProtocol(decoder flowpb.RawFlow_Decoder, payload []byte) (goflowpb.FlowMessage_FlowType, uint64, error) {
