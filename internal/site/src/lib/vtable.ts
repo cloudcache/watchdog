@@ -125,20 +125,21 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 	}
 	const columns = options.columns.map((column, index) => {
 		const { filter: filterEnabled = true, filterField, ...tableColumn } = column
-		const field = String(filterField ?? tableColumn.field ?? "")
-		const filterAvailable = !options.serverFiltering || Object.hasOwn(options.serverFiltering.options, field)
-		const sortField = options.serverSorting?.fields[field]
+		const tableField = String(tableColumn.field ?? "")
+		const filterKey = String(filterField ?? tableField)
+		const filterAvailable = !options.serverFiltering || Object.hasOwn(options.serverFiltering.options, filterKey)
+		const sortField = options.serverSorting?.fields[tableField]
 		const resolvedColumn = options.serverSorting ? { ...tableColumn, sort: Boolean(sortField) } : tableColumn
-		if (!filterEnabled || !field || !filterAvailable) {
+		if (!filterEnabled || !filterKey || !filterAvailable) {
 			return resolvedColumn
 		}
-		filterColumns[index] = { field, title: String(tableColumn.title ?? field) }
+		filterColumns[index] = { field: filterKey, title: String(tableColumn.title ?? filterKey) }
 		return {
 			...resolvedColumn,
 			headerIcon: (args: any) =>
 				appendHeaderIcon(
 					typeof tableColumn.headerIcon === "function" ? tableColumn.headerIcon(args) : tableColumn.headerIcon,
-					activeFilters.has(field) ? activeFilterIcon : filterIcon
+					activeFilters.has(filterKey) ? activeFilterIcon : filterIcon
 				),
 		}
 	})

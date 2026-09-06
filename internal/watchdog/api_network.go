@@ -155,8 +155,7 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 	// The server-driven table is opt-in: any of limit/offset/q/status/sort
 	// switches to the paged path. Without them the endpoint keeps its full-list
 	// behavior for any other caller, so nothing regresses.
-	if query.Get("limit") != "" || query.Get("offset") != "" || query.Get("q") != "" ||
-		query.Get("status") != "" || query.Get("sort") != "" {
+	if len(query) > 0 {
 		api.listDeviceSummariesPaged(w, r, auth, query)
 		return
 	}
@@ -241,6 +240,14 @@ func (api networkAPI) listDeviceSummaries(w http.ResponseWriter, r *http.Request
 // one grant-scoped aggregate. So a large fleet fetches and enriches only the
 // visible page, not the whole set.
 func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	for key := range query {
+		switch key {
+		case "q", "status", "sort", "order", "limit", "offset":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
+	}
 	q := DeviceSummaryQuery{
 		Search: strings.TrimSpace(query.Get("q")),
 		Status: strings.TrimSpace(query.Get("status")),
@@ -250,10 +257,26 @@ func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Re
 	if q.Status == "all" {
 		q.Status = ""
 	}
+	if len(q.Search) > 200 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "q must be at most 200 characters", nil)
+		return
+	}
+	if q.Status != "" && q.Status != "up" && q.Status != "down" && q.Status != "pending" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "status must be up, down, or pending", nil)
+		return
+	}
+	if _, ok := deviceSummarySortColumns[q.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "sort must be name, host, status, vendor, or os", nil)
+		return
+	}
+	if order := strings.TrimSpace(query.Get("order")); order != "" && !strings.EqualFold(order, "asc") && !strings.EqualFold(order, "desc") {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
 	if raw := query.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+		if err != nil || limit <= 0 || limit > 500 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 			return
 		}
 		q.Limit = limit
@@ -314,17 +337,21 @@ func (api networkAPI) listDeviceSummariesPaged(w http.ResponseWriter, r *http.Re
 		items = append(items, summary)
 	}
 
-	response := map[string]any{"items": items}
-	// The badge totals do not change between pages, so compute them only for the
-	// first page and let the client keep them.
-	if q.Offset == 0 {
-		counts, err := api.repo.CountDeviceStatuses(r.Context(), auth.TenantID, all, allowedTargetIDs, q.Search)
-		if err != nil {
-			WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
-			return
-		}
-		response["counts"] = counts
+	counts, err := api.repo.CountDeviceStatuses(r.Context(), auth.TenantID, all, allowedTargetIDs, q.Search)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
 	}
+	total := counts.Total
+	switch q.Status {
+	case "up":
+		total = counts.Up
+	case "down":
+		total = counts.Down
+	case "pending":
+		total = counts.Pending
+	}
+	response := map[string]any{"items": items, "counts": counts, "total": total}
 	WriteAPIJSON(w, http.StatusOK, response)
 }
 

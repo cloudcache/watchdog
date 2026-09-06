@@ -1,15 +1,15 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowDownIcon, ArrowUpIcon, NetworkIcon, PlusIcon, RadarIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useRef, useState } from "react"
+import { NetworkIcon, PlusIcon, RadarIcon, RefreshCwIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { pb } from "@/lib/api"
 import { vendorLogoFor } from "@/lib/vendor-logos"
-import { createListTable, disposeTable, getRowRecord, type ListTable } from "@/lib/vtable"
+import type { ColumnDefine } from "@/lib/vtable"
 type NetworkDevice = {
 	ID?: string
 	id?: string
@@ -75,12 +75,11 @@ type NetworkDeviceSummary = {
 
 type NetworkDeviceSummariesResponse = {
 	items?: NetworkDeviceSummary[]
+	total?: number
 }
 
 type DeviceCounts = { total: number; up: number; down: number; pending: number }
 type DeviceSummariesResponse = NetworkDeviceSummariesResponse & { counts?: DeviceCounts }
-
-const PAGE_SIZE = 100
 
 type AgentRecord = {
 	ID?: string
@@ -122,128 +121,122 @@ type DeviceTableRecord = {
 
 export default memo(() => {
 	const { t } = useLingui()
-	const tableRef = useRef<HTMLDivElement>(null)
-	const tableInstance = useRef<ListTable | null>(null)
 	const [records, setRecords] = useState<DeviceTableRecord[]>([])
 	const [counts, setCounts] = useState<DeviceCounts>({ total: 0, up: 0, down: 0, pending: 0 })
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
 	const [statusFilter, setStatusFilter] = useState("all")
-	const [sortField, setSortField] = useState("name")
-	const [sortDesc, setSortDesc] = useState(false)
+	const [sort, setSort] = useState("name:asc")
 	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
-	const [hasMore, setHasMore] = useState(false)
 	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
 
 	// Debounce the search box so typing does not fire a request per keystroke.
 	useEffect(() => {
-		const handle = setTimeout(() => setDebouncedSearch(search), 300)
+		const handle = setTimeout(() => {
+			setPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => clearTimeout(handle)
 	}, [search])
 
 	// Search, status filter, sort and paging all happen server-side; the table
 	// shows exactly the returned page.
-	const buildQuery = useCallback(
-		(offset: number) => ({
+	const buildQuery = useCallback(() => {
+		const [sortField, sortDirection] = sort.split(":")
+		return {
 			q: debouncedSearch.trim() || undefined,
 			status: statusFilter !== "all" ? statusFilter : undefined,
 			sort: sortField,
-			order: sortDesc ? "desc" : "asc",
-			limit: PAGE_SIZE,
-			offset: offset || undefined,
-		}),
-		[debouncedSearch, statusFilter, sortField, sortDesc]
-	)
+			order: sortDirection,
+			limit: pageSize,
+			offset: page * pageSize || undefined,
+		}
+	}, [debouncedSearch, page, pageSize, sort, statusFilter])
 
-	// Refetch from the top when the query changes or Refresh is clicked. The
-	// cancelled flag drops a stale response if a newer query started meanwhile.
+	// Refetch the requested page when the query changes or Refresh is clicked.
+	// A sequence guard prevents an older response from replacing newer state.
 	useEffect(() => {
 		document.title = `${t`Network Devices`} / Watchdog`
-		let cancelled = false
+		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery(0) })
+		pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery() })
 			.then((data) => {
-				if (cancelled) return
-				const items = (data.items ?? []).map(toTableRecord)
-				setRecords(items)
+				if (sequence !== requestSequence.current) return
+				setRecords((data.items ?? []).map(toTableRecord))
 				if (data.counts) setCounts(data.counts)
-				setHasMore(items.length === PAGE_SIZE)
+				setTotal(data.total ?? 0)
 			})
 			.catch((err) => {
-				if (!cancelled) setError(err instanceof Error ? err.message : t`Failed to load network devices`)
+				if (sequence !== requestSequence.current) return
+				setRecords([])
+				setTotal(0)
+				setError(err instanceof Error ? err.message : t`Failed to load network devices`)
 			})
 			.finally(() => {
-				if (!cancelled) setLoading(false)
+				if (sequence === requestSequence.current) setLoading(false)
 			})
-		return () => {
-			cancelled = true
-		}
 	}, [buildQuery, reloadKey, t])
 
-	const loadMore = useCallback(async () => {
-		if (loadingMore || !hasMore) return
-		setLoadingMore(true)
-		try {
-			const data = await pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", {
-				query: buildQuery(records.length),
-			})
-			const items = (data.items ?? []).map(toTableRecord)
-			setRecords((current) => [...current, ...items])
-			setHasMore(items.length === PAGE_SIZE)
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to load network devices`)
-		} finally {
-			setLoadingMore(false)
-		}
-	}, [buildQuery, hasMore, loadingMore, records.length, t])
-
 	const refresh = useCallback(() => setReloadKey((key) => key + 1), [])
+	const columns = useMemo<ColumnDefine[]>(
+		() => [
+			{
+				field: "vendorLogo",
+				title: t`Vendor`,
+				width: 80,
+				cellType: "image",
+				imageAutoSizing: false,
+				keepAspectRatio: true,
+				style: { margin: 14, textAlign: "center", textBaseline: "middle" },
+			},
+			{ field: "target", filterField: "status", title: t`Device`, width: 280, style: denseCellStyle() },
+			{ field: "metrics", title: t`Ports`, width: 120, style: denseCellStyle() },
+			{ field: "os", title: t`OS`, width: 200, style: denseCellStyle() },
+			{ field: "uptime", title: t`Uptime`, width: 120, style: denseCellStyle() },
+			{ field: "lastSeen", title: t`Last Seen`, width: 130, style: denseCellStyle() },
+			{ field: "location", title: t`Location`, width: 150, style: denseCellStyle() },
+		],
+		[t]
+	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				status: [
+					{ value: "up", label: t`Up`, count: counts.up },
+					{ value: "down", label: t`Down`, count: counts.down },
+					{ value: "pending", label: t`Pending`, count: counts.pending },
+				],
+			},
+			selected: { status: statusFilter === "all" ? [] : [statusFilter] },
+			selection: { status: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setStatusFilter(values.length > 0 ? String(values[0]) : "all")),
+			onClearAll: () => resetPage(() => setStatusFilter("all")),
+		}),
+		[counts, statusFilter, t]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { vendorLogo: "vendor", target: "name", os: "os" },
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
-	useEffect(() => {
-		if (!tableRef.current || loading || error) {
-			return
-		}
-		disposeTable(tableInstance.current)
-		tableInstance.current = createListTable(tableRef.current, {
-			records,
-			rowHeight: 56,
-			headerRowHeight: 38,
-			widthMode: "adaptive",
-			columns: [
-				{
-					field: "vendorLogo",
-					filterField: "vendor",
-					title: t`Vendor`,
-					width: 80,
-					cellType: "image",
-					imageAutoSizing: false,
-					keepAspectRatio: true,
-					style: { margin: 14, textAlign: "center", textBaseline: "middle" },
-				},
-				{ field: "target", title: t`Device`, width: 280, style: denseCellStyle() },
-				{ field: "metrics", title: t`Ports`, width: 120, style: denseCellStyle() },
-				{ field: "os", title: t`OS`, width: 200, style: denseCellStyle() },
-				{ field: "uptime", title: t`Uptime`, width: 120, style: denseCellStyle() },
-				{ field: "lastSeen", title: t`Last Seen`, width: 130, style: denseCellStyle() },
-				{ field: "location", title: t`Location`, width: 150, style: denseCellStyle() },
-			],
-		})
-		tableInstance.current.on("click_cell", (args: { col: number; row: number }) => {
-			const record = getRowRecord(tableInstance.current, args) as DeviceTableRecord | null
-			if (!record?.id) return
-			navigate(
-				record.deviceID
-					? getPagePath($router, "network_device", { id: record.deviceID })
-					: getPagePath($router, "target_detail", { id: record.id })
-			)
-		})
-		return () => disposeTable(tableInstance.current)
-	}, [error, loading, records, t])
-
-	const { total, up: upCount, down: downCount } = counts
+	const { up: upCount, down: downCount } = counts
 
 	return (
 		<div className="grid gap-4">
@@ -272,22 +265,13 @@ export default memo(() => {
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2">
-				<div className="relative max-w-sm flex-1">
-					<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						placeholder={t`Search by name, host, vendor...`}
-						className="pl-9"
-					/>
-				</div>
-				<Select value={statusFilter} onValueChange={setStatusFilter}>
+				<Select value={statusFilter} onValueChange={(value) => resetPage(() => setStatusFilter(value))}>
 					<SelectTrigger className="w-32">
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">
-							{t`All`} ({total})
+							{t`All`} ({counts.total})
 						</SelectItem>
 						<SelectItem value="up">
 							{t`Up`} ({upCount})
@@ -298,27 +282,6 @@ export default memo(() => {
 						<SelectItem value="pending">{t`Pending`}</SelectItem>
 					</SelectContent>
 				</Select>
-				<Select value={sortField} onValueChange={setSortField}>
-					<SelectTrigger className="w-32">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="name">{t`Name`}</SelectItem>
-						<SelectItem value="host">{t`Host`}</SelectItem>
-						<SelectItem value="vendor">{t`Vendor`}</SelectItem>
-						<SelectItem value="os">{t`OS`}</SelectItem>
-						<SelectItem value="status">{t`Status`}</SelectItem>
-					</SelectContent>
-				</Select>
-				<Button
-					variant="outline"
-					size="icon"
-					className="size-9 shrink-0"
-					onClick={() => setSortDesc((desc) => !desc)}
-					title={sortDesc ? t`Descending` : t`Ascending`}
-				>
-					{sortDesc ? <ArrowDownIcon className="h-4 w-4" /> : <ArrowUpIcon className="h-4 w-4" />}
-				</Button>
 				<div className="flex items-center gap-1.5">
 					<Badge variant={upCount > 0 ? "success" : "outline"}>
 						{upCount} <Trans>up</Trans>
@@ -333,35 +296,41 @@ export default memo(() => {
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
 			) : null}
 
-			<div className="overflow-hidden rounded-md bg-card">
-				{loading ? (
-					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>Loading...</Trans>
-					</div>
-				) : null}
-				{!loading && !error && records.length === 0 ? (
-					<div className="flex items-center justify-between gap-3 p-3">
-						<div className="text-sm text-muted-foreground">
-							{search || statusFilter !== "all" ? t`No devices match the filter.` : t`No network targets found.`}
-						</div>
-						{!search && statusFilter === "all" ? (
-							<Button variant="outline" size="sm" onClick={() => navigate(getPagePath($router, "network_discover"))}>
-								<RadarIcon className="me-2 h-4 w-4" />
-								<Trans>Discover</Trans>
-							</Button>
-						) : null}
-					</div>
-				) : null}
-				<div ref={tableRef} className="h-[620px] w-full" />
+			<div className="overflow-hidden rounded-md border border-border bg-card p-3">
+				<PagedVTable
+					records={records}
+					columns={columns}
+					loading={loading}
+					emptyText={search || statusFilter !== "all" ? t`No devices match the filter.` : t`No network targets found.`}
+					searchPlaceholder={t`Search by name, host, vendor...`}
+					searchValue={search}
+					onSearchChange={setSearch}
+					height={620}
+					rowHeight={56}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => {
+							setPage(0)
+							setPageSize(value)
+						},
+					}}
+					onRowClick={(record) => {
+						const id = String(record.id ?? "")
+						const deviceID = String(record.deviceID ?? "")
+						if (!id) return
+						navigate(
+							deviceID
+								? getPagePath($router, "network_device", { id: deviceID })
+								: getPagePath($router, "target_detail", { id })
+						)
+					}}
+				/>
 			</div>
-
-			{hasMore ? (
-				<div className="flex justify-center">
-					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
-						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-					</Button>
-				</div>
-			) : null}
 		</div>
 	)
 })

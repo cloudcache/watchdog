@@ -642,10 +642,12 @@ func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
 		t.Fatalf("paged summary body = %s", body)
 	}
 
-	// Later pages (offset > 0) omit counts; the client keeps them.
+	// Every page carries the stable searched-set counts and the active filter's
+	// total so a server-driven table can render exact pagination after refresh.
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?limit=25&offset=25", nil))
-	if repo.summaryQuery.Offset != 25 || strings.Contains(rec.Body.String(), "counts") {
+	if repo.summaryQuery.Offset != 25 || !strings.Contains(rec.Body.String(), `"total":7`) ||
+		!strings.Contains(rec.Body.String(), `"counts"`) {
 		t.Fatalf("offset page: offset=%d body=%s", repo.summaryQuery.Offset, rec.Body.String())
 	}
 
@@ -654,6 +656,16 @@ func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?status=all", nil))
 	if repo.summaryQuery.Status != "" {
 		t.Fatalf("status=all must clear the filter, got %q", repo.summaryQuery.Status)
+	}
+
+	for _, query := range []string{
+		"status=broken", "sort=raw_sql", "order=sideways", "limit=0", "limit=501", "offset=-1", "unknown=1",
+	} {
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/devices/summary?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query=%q status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 
