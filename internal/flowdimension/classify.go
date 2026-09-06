@@ -123,6 +123,10 @@ func (s *CompiledSnapshot) endpoint(ip netip.Addr, side EndpointSide, prefix com
 				endpoint.AddressSets.ids = membership.in
 			case DirectionOut:
 				endpoint.AddressSets.ids = membership.out
+			case DirectionInternal:
+				// Internal (local<->local) flows carry the union of in+out so
+				// intra-network traffic keeps its address-set/customer attribution.
+				endpoint.AddressSets.ids = membership.internal
 			}
 		}
 	}

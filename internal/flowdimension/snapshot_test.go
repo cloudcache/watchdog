@@ -213,8 +213,12 @@ func TestCompiledSnapshotClassifiesNonBusinessTopologies(t *testing.T) {
 	if internal.Direction != DirectionInternal || internal.Local.Side != EndpointSrc || internal.Remote.Side != EndpointDst || internal.Business != "customer" {
 		t.Fatalf("unexpected internal result: %+v", internal)
 	}
-	if internal.Local.AddressSets.Count() != 0 || internal.Remote.AddressSets.Count() != 0 {
-		t.Fatalf("internal address sets must not enter in/out address dimensions: %+v", internal)
+	// An internal (local<->local) flow carries the union of in+out membership so
+	// intra-network traffic keeps its address-set attribution (F11). The local
+	// endpoint (10.1.2.3 in 10.1.0.0/16) is in set-local-business; the remote
+	// endpoint (10.2.3.4 in the 10.0.0.0/8 root) is not in that set's prefix.
+	if internal.Local.AddressSets.Count() != 1 || internal.Remote.AddressSets.Count() != 0 {
+		t.Fatalf("internal flow local endpoint must carry union address-set membership: %+v", internal)
 	}
 	transit := snapshot.ClassifyEndpoints(netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("198.51.100.1"))
 	if transit.Direction != DirectionTransit || transit.Local.IP.IsValid() || transit.Remote.IP.IsValid() {

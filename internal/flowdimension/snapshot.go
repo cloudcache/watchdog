@@ -137,6 +137,10 @@ type compiledPrefix struct {
 type compiledAddressSetMembership struct {
 	in  []string
 	out []string
+	// internal is the union of in+out (every matched set regardless of
+	// direction), precomputed so an internal (local<->local) flow can alias it
+	// zero-copy on both endpoints instead of getting empty membership.
+	internal []string
 }
 
 type GeoOverrideFields uint8

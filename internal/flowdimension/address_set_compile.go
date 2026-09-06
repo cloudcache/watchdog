@@ -218,6 +218,7 @@ func compileAddressSetMemberships(
 
 	maxLocalIn, maxLocalOut := 0, 0
 	maxRemoteIn, maxRemoteOut := 0, 0
+	maxLocalInternal := 0
 	var evaluations int64
 	base := make([]bool, len(sets))
 	directExclude := make([]bool, len(sets))
@@ -296,6 +297,9 @@ func compileAddressSetMemberships(
 			if !member {
 				continue
 			}
+			// Every matched set joins the internal union exactly once (each
+			// setIndex is visited once), regardless of its direction.
+			value.internal = append(value.internal, sets[setIndex].id)
 			switch sets[setIndex].direction {
 			case DirectionIn:
 				value.in = append(value.in, sets[setIndex].id)
@@ -314,12 +318,14 @@ func compileAddressSetMemberships(
 		if local {
 			maxLocalIn = max(maxLocalIn, len(value.in))
 			maxLocalOut = max(maxLocalOut, len(value.out))
+			maxLocalInternal = max(maxLocalInternal, len(value.internal))
 		} else {
 			maxRemoteIn = max(maxRemoteIn, len(value.in))
 			maxRemoteOut = max(maxRemoteOut, len(value.out))
 		}
 	}
-	maximum := max(maxLocalIn+maxRemoteIn, maxLocalOut+maxRemoteOut)
+	// An internal flow is local<->local, so both endpoints expand via internal.
+	maximum := max(maxLocalIn+maxRemoteIn, maxLocalOut+maxRemoteOut, 2*maxLocalInternal)
 	if maximum > endpointLimit {
 		return nil, 0, fmt.Errorf("dimension bundle address-set expansion %d exceeds per-record limit %d", maximum, endpointLimit)
 	}
