@@ -13,14 +13,15 @@ import (
 )
 
 const (
-	MinJointDimensions = 2
+	MinJointDimensions = 1
 	MaxJointDimensions = 4
 	MaxJointRange      = 24 * time.Hour
 )
 
-// JointRequest queries ordered dimension tuples from the same base facts. It
-// is deliberately separate from Request: a single-dimension rollup cannot
-// reconstruct correlations between independently aggregated dimensions.
+// JointRequest queries one or more ordered dimensions from the same base
+// facts. It is deliberately separate from Request: a single-dimension rollup
+// cannot reconstruct correlations or apply filters on dimensions it did not
+// materialize.
 type JointRequest struct {
 	From         time.Time
 	To           time.Time
@@ -29,6 +30,7 @@ type JointRequest struct {
 	Metric       Metric
 	Dimensions   []Dimension
 	Filters      Filters
+	Filter       *FilterExpression
 	View         View
 	TopN         uint16
 	IncludeOther bool
@@ -83,9 +85,6 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	if request.TopN < 1 || request.TopN > maxTopN {
 		return CompiledJoint{}, requestError("top_n", ErrorLimitExceeded, "top_n must be 1..100")
 	}
-	if len(request.Filters.DimensionValues) > 0 {
-		return CompiledJoint{}, requestError("filters.dimension_values", ErrorUnsupported, "a joint query must filter a named dimension; the single dimension_values filter is ambiguous")
-	}
 	from, to := request.From.UTC(), request.To.UTC()
 	if from.IsZero() || to.IsZero() {
 		return CompiledJoint{}, requestError("from/to", ErrorRequired, "from and to are required")
@@ -139,7 +138,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
 	}
-	conditions, filterParameters, err := compileFilters(request.Filters)
+	conditions, filterParameters, err := compileBaseFilters(request.Filters, expressions, request.Filter)
 	if err != nil {
 		return CompiledJoint{}, err
 	}
@@ -188,7 +187,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 
 func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string, error) {
 	if len(input) < MinJointDimensions || len(input) > MaxJointDimensions {
-		return nil, nil, requestError("dimensions", ErrorLimitExceeded, "joint dimensions must contain 2..4 ordered entries")
+		return nil, nil, requestError("dimensions", ErrorLimitExceeded, "base-fact dimensions must contain 1..4 ordered entries")
 	}
 	seen := make(map[Dimension]struct{}, len(input))
 	definitions := make([]DimensionDefinition, 0, len(input))
@@ -201,6 +200,9 @@ func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string,
 		if _, exists := seen[dimension]; exists {
 			return nil, nil, requestError("dimensions", ErrorInvalid, "joint dimensions cannot contain duplicates")
 		}
+		if dimension == DimensionTotal && len(input) != 1 {
+			return nil, nil, requestError("dimensions", ErrorUnsupported, "total is only valid as the sole base-fact result dimension")
+		}
 		seen[dimension] = struct{}{}
 		expression, exists := jointDimensionExpressions[dimension]
 		if !exists {
@@ -212,7 +214,45 @@ func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string,
 	return definitions, expressions, nil
 }
 
+func compileBaseFilters(filters Filters, dimensionExpressions []string, filter *FilterExpression) ([]string, []proto.Parameter, error) {
+	dimensionValues := filters.DimensionValues
+	filters.DimensionValues = nil
+	conditions, parameters, err := compileFilters(filters)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(dimensionValues) > 0 {
+		if len(dimensionExpressions) != 1 {
+			return nil, nil, requestError("filters.dimension_values", ErrorUnsupported, "dimension_values is ambiguous for a multi-dimension base query")
+		}
+		if len(dimensionValues) > maxValuesPerFilter {
+			return nil, nil, requestError("filters.dimension_values", ErrorLimitExceeded, "too many filter values")
+		}
+		values, err := normalizeStrings("filters.dimension_values", dimensionValues, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		placeholders := make([]string, 0, len(values))
+		for index, value := range values {
+			key := fmt.Sprintf("base_dimension_value_%d", index)
+			placeholders = append(placeholders, fmt.Sprintf("{%s:String}", key))
+			parameters = append(parameters, stringParameter(key, value))
+		}
+		conditions = append(conditions, fmt.Sprintf("AND (%s) IN (%s)", dimensionExpressions[0], strings.Join(placeholders, ", ")))
+	}
+	if filter != nil {
+		expression, typedParameters, err := compileBaseFilter(*filter)
+		if err != nil {
+			return nil, nil, err
+		}
+		conditions = append(conditions, "AND ("+expression+")")
+		parameters = append(parameters, typedParameters...)
+	}
+	return conditions, parameters, nil
+}
+
 var jointDimensionExpressions = map[Dimension]string{
+	DimensionTotal:                "'total'",
 	DimensionCategory:             "toString(category)",
 	DimensionGeoContinent:         "if(empty(remote_geo_continent_id), '_unassigned', remote_geo_continent_id)",
 	DimensionGeoRegion:            "if(empty(remote_geo_region_id), '_unassigned', remote_geo_region_id)",

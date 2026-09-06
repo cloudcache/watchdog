@@ -65,6 +65,42 @@ export type FlowFilters = {
 	dimension_values?: string[]
 }
 
+export type FlowFilterOperator = "eq" | "ne" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte"
+
+export type FlowFilterExpression = {
+	op: "and" | "or" | "not" | "predicate"
+	args?: FlowFilterExpression[]
+	field?: string
+	operator?: FlowFilterOperator
+	values?: string[]
+}
+
+const FLOW_FILTER_FIELDS = new Set([
+	"direction",
+	"category",
+	"business",
+	"target",
+	"device",
+	"exporter",
+	"src_ip",
+	"dst_ip",
+	"local_ip",
+	"remote_ip",
+	"asn",
+	"isp",
+	"geo.continent",
+	"geo.region",
+	"geo.country",
+	"geo.province",
+	"geo.city",
+	"local_prefix",
+	"remote_prefix",
+	"local_port",
+	"remote_port",
+	"protocol",
+	"observation_interface",
+])
+
 export const FLOW_TIME_PRESETS = [
 	{ value: "5m", label: "Last 5 minutes", durationMs: 5 * 60_000 },
 	{ value: "15m", label: "Last 15 minutes", durationMs: 15 * 60_000 },
@@ -103,35 +139,9 @@ export function resolveFlowTimeRange(
 	return { start: new Date(end.getTime() - selected.durationMs).toISOString(), end: end.toISOString() }
 }
 
-export function parseFlowFilter(expression: string): FlowFilters {
-	const result: FlowFilters = {}
-	if (!expression.trim()) return result
-	const fieldMap: Record<string, keyof FlowFilters> = {
-		direction: "directions",
-		category: "categories",
-		business: "businesses",
-		target: "target_ids",
-		device: "device_ids",
-		exporter: "exporter_ids",
-		dimension: "dimension_values",
-	}
-	for (const clause of splitOutside(expression, "AND")) {
-		const match = clause.match(/^([a-z_]+)\s*(=|IN)\s*(.+)$/i)
-		if (!match) throw new Error(`Invalid filter clause: ${clause}`)
-		const key = fieldMap[match[1].toLowerCase()]
-		if (!key) throw new Error(`Unsupported filter field: ${match[1]}`)
-		const operation = match[2].toUpperCase()
-		let source = match[3].trim()
-		if (operation === "IN") {
-			if (!source.startsWith("(") || !source.endsWith(")")) throw new Error(`IN requires parentheses: ${clause}`)
-			source = source.slice(1, -1)
-		}
-		const values = operation === "IN" ? splitOutside(source, ",") : [source]
-		const normalized = values.map(unquote).filter(Boolean)
-		if (normalized.length === 0) throw new Error(`Filter has no values: ${clause}`)
-		result[key] = unique([...(result[key] ?? []), ...normalized])
-	}
-	return result
+export function parseFlowFilter(expression: string): FlowFilterExpression | undefined {
+	if (!expression.trim()) return undefined
+	return new FlowFilterParser(tokenizeFlowFilter(expression)).parse()
 }
 
 export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFilters {
@@ -248,43 +258,157 @@ function unique(values: string[]) {
 	return [...new Set(values)]
 }
 
-function unquote(value: string) {
-	const trimmed = value.trim()
-	if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-		return trimmed.slice(1, -1).replace(/\\([\\'"])/g, "$1")
-	}
-	return trimmed
-}
+type FlowFilterToken = { kind: "word" | "string" | "operator" | "left" | "right" | "comma"; value: string }
 
-function splitOutside(value: string, separator: string) {
-	const result: string[] = []
-	let quote = ""
-	let depth = 0
-	let start = 0
-	for (let index = 0; index < value.length; index += 1) {
-		const current = value[index]
-		if (quote) {
-			if (current === "\\") index += 1
-			else if (current === quote) quote = ""
+function tokenizeFlowFilter(input: string): FlowFilterToken[] {
+	const tokens: FlowFilterToken[] = []
+	for (let index = 0; index < input.length; ) {
+		const current = input[index]
+		if (/\s/.test(current)) {
+			index += 1
+			continue
+		}
+		if (current === "(" || current === ")" || current === ",") {
+			tokens.push({ kind: current === "(" ? "left" : current === ")" ? "right" : "comma", value: current })
+			index += 1
+			continue
+		}
+		if (current === "=" || current === "!" || current === ">" || current === "<") {
+			const pair = input.slice(index, index + 2)
+			const value = pair === "!=" || pair === ">=" || pair === "<=" ? pair : current
+			if (value === "!") throw new Error(`Invalid filter operator at position ${index + 1}`)
+			tokens.push({ kind: "operator", value })
+			index += value.length
 			continue
 		}
 		if (current === "'" || current === '"') {
-			quote = current
+			const quote = current
+			let value = ""
+			index += 1
+			let closed = false
+			while (index < input.length) {
+				const character = input[index]
+				if (character === "\\") {
+					index += 1
+					if (index >= input.length) break
+					value += input[index]
+					index += 1
+				} else if (character === quote) {
+					index += 1
+					closed = true
+					break
+				} else {
+					value += character
+					index += 1
+				}
+			}
+			if (!closed) throw new Error("Unterminated quoted filter value")
+			tokens.push({ kind: "string", value })
 			continue
 		}
-		if (current === "(") depth += 1
-		else if (current === ")") depth -= 1
-		if (depth < 0) throw new Error("Unbalanced filter parentheses")
-		const candidate = value.slice(index, index + separator.length)
-		const wordBoundary =
-			separator !== "AND" || (/\s/.test(value[index - 1] ?? " ") && /\s/.test(value[index + separator.length] ?? " "))
-		if (depth === 0 && candidate.toUpperCase() === separator && wordBoundary) {
-			result.push(value.slice(start, index).trim())
-			start = index + separator.length
-			index += separator.length - 1
-		}
+		const start = index
+		while (index < input.length && !/[\s(),!<>=]/.test(input[index])) index += 1
+		if (start === index) throw new Error(`Invalid filter token at position ${index + 1}`)
+		tokens.push({ kind: "word", value: input.slice(start, index) })
 	}
-	if (quote || depth !== 0) throw new Error("Unterminated quote or parentheses in filter")
-	result.push(value.slice(start).trim())
-	return result.filter(Boolean)
+	return tokens
+}
+
+class FlowFilterParser {
+	private index = 0
+	private readonly tokens: FlowFilterToken[]
+
+	constructor(tokens: FlowFilterToken[]) {
+		this.tokens = tokens
+	}
+
+	parse(): FlowFilterExpression {
+		const expression = this.parseOr()
+		if (this.peek()) throw new Error(`Unexpected filter token: ${this.peek()?.value}`)
+		return expression
+	}
+
+	private parseOr(): FlowFilterExpression {
+		const args = [this.parseAnd()]
+		while (this.matchWord("OR")) args.push(this.parseAnd())
+		return args.length === 1 ? args[0] : { op: "or", args }
+	}
+
+	private parseAnd(): FlowFilterExpression {
+		const args = [this.parseUnary()]
+		while (this.matchWord("AND")) args.push(this.parseUnary())
+		return args.length === 1 ? args[0] : { op: "and", args }
+	}
+
+	private parseUnary(): FlowFilterExpression {
+		if (this.matchWord("NOT")) return { op: "not", args: [this.parseUnary()] }
+		if (this.match("left")) {
+			const expression = this.parseOr()
+			this.require("right", "Expected ')' in filter")
+			return expression
+		}
+		return this.parsePredicate()
+	}
+
+	private parsePredicate(): FlowFilterExpression {
+		const fieldToken = this.require("word", "Expected filter field")
+		const field = fieldToken.value.toLowerCase()
+		if (!FLOW_FILTER_FIELDS.has(field)) throw new Error(`Unsupported filter field: ${fieldToken.value}`)
+		let operator: FlowFilterOperator
+		const symbol = this.match("operator")
+		if (symbol) {
+			operator = ({ "=": "eq", "!=": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte" } as const)[
+				symbol.value as "=" | "!=" | ">" | ">=" | "<" | "<="
+			]
+		} else if (this.matchWord("IN")) {
+			operator = "in"
+		} else if (this.matchWord("NOT")) {
+			if (!this.matchWord("IN")) throw new Error(`Expected IN after NOT for ${field}`)
+			operator = "not_in"
+		} else {
+			throw new Error(`Expected an operator after ${field}`)
+		}
+		const values: string[] = []
+		if (operator === "in" || operator === "not_in") {
+			this.require("left", `${operator.toUpperCase()} requires parentheses`)
+			values.push(this.parseValue())
+			while (this.match("comma")) values.push(this.parseValue())
+			this.require("right", "Expected ')' after filter values")
+		} else {
+			values.push(this.parseValue())
+		}
+		return { op: "predicate", field, operator, values }
+	}
+
+	private parseValue() {
+		const token = this.peek()
+		if (!token || (token.kind !== "word" && token.kind !== "string")) throw new Error("Expected filter value")
+		this.index += 1
+		if (!token.value) throw new Error("Filter value cannot be empty")
+		return token.value
+	}
+
+	private require(kind: FlowFilterToken["kind"], message: string) {
+		const token = this.match(kind)
+		if (!token) throw new Error(message)
+		return token
+	}
+
+	private match(kind: FlowFilterToken["kind"]) {
+		const token = this.peek()
+		if (!token || token.kind !== kind) return undefined
+		this.index += 1
+		return token
+	}
+
+	private matchWord(value: string) {
+		const token = this.peek()
+		if (!token || token.kind !== "word" || token.value.toUpperCase() !== value) return false
+		this.index += 1
+		return true
+	}
+
+	private peek() {
+		return this.tokens[this.index]
+	}
 }

@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；2–4 维短窗已从同一 base fact 返回真实 tuple 和桑基，当前继续预配置异步联合索引、服务端过滤生命周期和生产 HTTP/RBAC 页面验收。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；不同切片的文件不得混入同一提交。
+**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；2–4 维短窗已从同一 base fact 返回真实 tuple 和桑基；服务端 typed filter validate/complete/canonical、跨维字段的 24h base 路由和 Explorer 表达式已完成本地实现，当前关闭真实生产页面验收后继续保存/共享过滤器与预配置异步联合索引。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；不同切片的文件不得混入同一提交。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -229,13 +229,15 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 
 - [x] **设计**：冻结 `range ≠ display step ≠ source resolution`；`target_points` 驱动自动 planner，显式 step 也只控制展示；响应回传 requested/effective range、source、source/display seconds。冻结折线/堆叠/热力/表格先消费单维序列，桑基只能消费真实联合维度 tuple，禁止多次单维查询拼接。
 - [x] **编码（自动 planner/单维查询）**：`PlanAggregate` 支持 5..2000 目标点、1m..30d 显式展示步长、1m/1h 自动选源和各自扫描预算；aggregate compiler 以 effective-from 为锚点二次汇聚 source bucket，provider 回传实际 step/source；QueryGateway metadata 使用 provider 实际 step。
-- [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、`=/IN` typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
+- [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
 - [x] **单元**：planner 覆盖 5m/1h/6h/24h/7d/30d/1y、显式 15m、未来/非法密度/两类源扫描超限；compiler/runner 覆盖 source completeness 与展示桶对齐；前端覆盖预设/自定义、typed filter、末桶 total 和三种 chart spec。
 - [x] **集成（真实 CH）**：独立库在两个完整 1m source bucket 上以 15m 展示步长查询，末桶仅覆盖 120 秒；bps 使用实际 120 秒且 completeness 仍为 2/2 source marker。既有 repair/多 block/cancel 门禁同测通过。
 - [x] **联合维度/桑基（有界 base）**：独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成 2–4 维有序 tuple、稳定 tuple TopN/Other、折线/堆叠/热力/表格和桑基；同步范围限 24h，固定 typed expression registry 和 CH 扫描/时间/内存硬限，拒绝歧义 `dimension_values`、重复维度及重叠 address-set；runner 多 block 全有或全无。没有新增表，因此本项不伪造空 migration。
 - [x] **联合维度集成（真实 CH）**：隔离库写入两组 `geo.city × ASN` 事实，以 `TopN=1 + Other` 验证 `geo-city-b/4837=550`、other=300；真实 HTTP gateway 同时覆盖空结果 array wire type、自动步长、`source=flow_records` 和 coverage warning。
 - [ ] **异步联合索引**：冻结 publication/config/index generation 和 operation-job payload；常用组合及 address-set path 走异步索引，使 >24h 查询可用。索引缺失/过期只能显式拒绝或标 degraded，不能回退成伪联合单维结果。
-- [ ] **过滤生命周期**：把当前前端 `=/IN` 子集提升为服务端 validate/complete/canonical AST，补 IP/CIDR/ASN/Geo/ISP/端口/协议操作符、保存/共享/权限；任何表达式仍不得直拼 SQL。
+- [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
+- [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。
+- [ ] **保存/共享过滤器**：新增唯一管理库 migration，冻结 owner/share scope/If-Match/软删除/audit/RBAC/引用保护和 CRUD/list/filter；不得把保存状态放入 Flow worker/CH 或再造管理库。
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。

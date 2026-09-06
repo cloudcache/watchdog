@@ -128,14 +128,15 @@ type Request struct {
 	// serve 5m/15m graph points and a 1h table can serve day/week points.
 	// A zero interval preserves the historical one-point-per-source-bucket
 	// contract.
-	Interval     time.Duration `json:"-"`
-	Metric       Metric        `json:"metric"`
-	Dimension    Dimension     `json:"dimension"`
-	Filters      Filters       `json:"filters,omitempty"`
-	View         View          `json:"view"`
-	TopN         uint16        `json:"top_n"`
-	IncludeOther bool          `json:"include_other"`
-	Timezone     string        `json:"timezone,omitempty"`
+	Interval     time.Duration     `json:"-"`
+	Metric       Metric            `json:"metric"`
+	Dimension    Dimension         `json:"dimension"`
+	Filters      Filters           `json:"filters,omitempty"`
+	Filter       *FilterExpression `json:"filter,omitempty"`
+	View         View              `json:"view"`
+	TopN         uint16            `json:"top_n"`
+	IncludeOther bool              `json:"include_other"`
+	Timezone     string            `json:"timezone,omitempty"`
 }
 
 type DimensionDefinition struct {
@@ -377,6 +378,21 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		return Compiled{}, err
 	}
 	parameters = append(parameters, filterParameters...)
+	if request.Filter != nil {
+		supported, err := AggregateFilterSupported(*request.Filter)
+		if err != nil {
+			return Compiled{}, err
+		}
+		if !supported {
+			return Compiled{}, requestError("filter", ErrorUnsupported, "filter requires the bounded base-fact query path")
+		}
+		expression, typedParameters, err := compileBaseFilter(*request.Filter)
+		if err != nil {
+			return Compiled{}, err
+		}
+		conditions = append(conditions, "AND ("+expression+")")
+		parameters = append(parameters, typedParameters...)
+	}
 
 	valueExpression := fmt.Sprintf("toFloat64(sum(%s))", metric.column)
 	if metric.rate {

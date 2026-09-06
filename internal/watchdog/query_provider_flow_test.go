@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,6 +167,36 @@ func TestClickHouseFlowQueryProviderRunsBoundedTrueJointQuery(t *testing.T) {
 	}
 }
 
+func TestClickHouseFlowQueryProviderRoutesCrossDimensionFilterToSingleDimensionBaseQuery(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	joint := &flowJointRunnerStub{result: flowquery.JointResult{
+		Metric:     flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.DimensionASN, Additive: true}},
+		Plan: flowquery.JointPlan{
+			RequestedFrom: now.Add(-time.Hour), RequestedTo: now, EffectiveFrom: now.Add(-time.Hour), EffectiveTo: now,
+			Source: "flow_records", StepSeconds: 60, TargetPoints: 300, MaxRangeSeconds: 86_400,
+		},
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: &flowAggregateRunnerStub{}, JointRunner: joint, Readiness: flowReadinessStub{}, Now: func() time.Time { return now },
+	}
+	_, err := provider.Query(context.Background(), QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: now.Add(-time.Hour), To: now,
+		Limit: 10_000, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","dimension":"asn","top_n":20,"include_other":true,"target_points":300,
+			"filter":{"op":"predicate","field":"src_ip","operator":"in","values":["203.0.113.0/24"]}
+		}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(joint.compiled.Dimensions) != 1 || joint.compiled.Dimensions[0].Kind != flowquery.DimensionASN ||
+		!strings.Contains(joint.compiled.Query.Body, "isIPAddressInRange(toString(src_ip)") {
+		t.Fatalf("compiled=%+v", joint.compiled)
+	}
+}
+
 func TestClickHouseFlowQueryProviderReadinessAndResourceAuthorization(t *testing.T) {
 	want := errors.New("clickhouse unavailable")
 	provider := ClickHouseFlowQueryProvider{Runner: &flowAggregateRunnerStub{}, Readiness: flowReadinessStub{err: want}}
@@ -183,6 +214,30 @@ func TestClickHouseFlowQueryProviderReadinessAndResourceAuthorization(t *testing
 	request.Parameters = json.RawMessage(`{"metric":"estimated_bps","dimension":"category","filters":{"target_ids":["target-b"]},"top_n":1}`)
 	if err := provider.AuthorizeQuery(context.Background(), auth, request); queryErrorCode(err) != QueryErrorPermissionDenied {
 		t.Fatalf("unauthorized target error = %#v", err)
+	}
+	request.Parameters = json.RawMessage(`{
+		"metric":"estimated_bps","dimension":"category","top_n":1,
+		"filter":{"op":"predicate","field":"target","operator":"eq","values":["target-a"]}
+	}`)
+	if err := provider.AuthorizeQuery(context.Background(), auth, request); queryErrorCode(err) != QueryErrorPermissionDenied {
+		t.Fatalf("typed resource filter error = %#v", err)
+	}
+}
+
+func TestDecodeFlowQueryRequiresCanonicalFilter(t *testing.T) {
+	_, err := decodeFlowAggregateQueryParameters(json.RawMessage(`{
+		"metric":"estimated_bps","dimension":"category","top_n":1,
+		"filter":{"op":"predicate","field":"protocol","operator":"in","values":["UDP","tcp"]}
+	}`))
+	if queryErrorCode(err) != QueryErrorInvalidRequest {
+		t.Fatalf("non-canonical filter error = %#v", err)
+	}
+	parameters, err := decodeFlowAggregateQueryParameters(json.RawMessage(`{
+		"metric":"estimated_bps","dimension":"category","top_n":1,
+		"filter":{"op":"predicate","field":"protocol","operator":"in","values":["6","17"]}
+	}`))
+	if err != nil || parameters.Filter == nil {
+		t.Fatalf("canonical filter parameters=%+v error=%v", parameters, err)
 	}
 }
 

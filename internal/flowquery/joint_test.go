@@ -62,7 +62,7 @@ func TestCompileJointRejectsAmbiguousOrUnboundedRequests(t *testing.T) {
 		code  ErrorCode
 		edit  func(*JointRequest)
 	}{
-		{"one dimension", "dimensions", ErrorLimitExceeded, func(r *JointRequest) { r.Dimensions = r.Dimensions[:1] }},
+		{"no dimensions", "dimensions", ErrorLimitExceeded, func(r *JointRequest) { r.Dimensions = nil }},
 		{"duplicate", "dimensions", ErrorInvalid, func(r *JointRequest) { r.Dimensions[1] = r.Dimensions[0] }},
 		{"total", "dimensions", ErrorUnsupported, func(r *JointRequest) { r.Dimensions[1] = DimensionTotal }},
 		{"overlapping address set", "dimensions", ErrorUnsupported, func(r *JointRequest) { r.Dimensions[1] = DimensionAddressSet }},
@@ -80,6 +80,47 @@ func TestCompileJointRejectsAmbiguousOrUnboundedRequests(t *testing.T) {
 				t.Fatalf("error=%v, want %s/%s", err, test.field, test.code)
 			}
 		})
+	}
+}
+
+func TestCompileJointSupportsTypedFilterOnSingleDimensionBasePath(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	request := validJointRequest(now)
+	request.Dimensions = []Dimension{DimensionASN}
+	request.Filter = &FilterExpression{Op: FilterAnd, Args: []FilterExpression{
+		{Op: FilterPredicate, Field: "src_ip", Operator: FilterIn, Values: []string{"203.0.113.0/24"}},
+		{Op: FilterPredicate, Field: "remote_port", Operator: FilterGreaterThanOrEqual, Values: []string{"443"}},
+	}}
+	compiled, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.Dimensions) != 1 || compiled.Dimensions[0].Kind != DimensionASN {
+		t.Fatalf("dimensions=%+v", compiled.Dimensions)
+	}
+	for _, fragment := range []string{
+		"isIPAddressInRange(toString(src_ip), {typed_filter_", "remote_port >= {typed_filter_",
+	} {
+		if !strings.Contains(compiled.Query.Body, fragment) {
+			t.Fatalf("query missing %q:\n%s", fragment, compiled.Query.Body)
+		}
+	}
+}
+
+func TestCompileJointSupportsFilteredTotalOnBasePath(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	request := validJointRequest(now)
+	request.Dimensions = []Dimension{DimensionTotal}
+	request.TopN = 1
+	request.IncludeOther = false
+	request.Filter = &FilterExpression{Op: FilterPredicate, Field: "src_ip", Operator: FilterIn, Values: []string{"203.0.113.0/24"}}
+	compiled, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.Dimensions) != 1 || compiled.Dimensions[0].Kind != DimensionTotal ||
+		!strings.Contains(compiled.Query.Body, "'total'") || !strings.Contains(compiled.Query.Body, "] AS source_dimensions") {
+		t.Fatalf("compiled=%+v query=%s", compiled, compiled.Query.Body)
 	}
 }
 

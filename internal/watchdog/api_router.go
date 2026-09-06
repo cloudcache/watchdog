@@ -208,6 +208,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.QueryGateway != nil {
 		registerQueryGatewayRoutes(mux, auth, cfg.QueryGateway, cfg.Audit)
+		registerFlowFilterRoutes(mux, auth)
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)

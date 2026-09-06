@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -39,14 +40,15 @@ type ClickHouseFlowQueryProvider struct {
 }
 
 type flowAggregateQueryParameters struct {
-	Metric       flowquery.Metric      `json:"metric"`
-	Dimension    flowquery.Dimension   `json:"dimension,omitempty"`
-	Dimensions   []flowquery.Dimension `json:"dimensions,omitempty"`
-	Filters      flowquery.Filters     `json:"filters,omitempty"`
-	TopN         uint16                `json:"top_n"`
-	IncludeOther bool                  `json:"include_other"`
-	Timezone     string                `json:"timezone,omitempty"`
-	TargetPoints uint16                `json:"target_points,omitempty"`
+	Metric       flowquery.Metric            `json:"metric"`
+	Dimension    flowquery.Dimension         `json:"dimension,omitempty"`
+	Dimensions   []flowquery.Dimension       `json:"dimensions,omitempty"`
+	Filters      flowquery.Filters           `json:"filters,omitempty"`
+	Filter       *flowquery.FilterExpression `json:"filter,omitempty"`
+	TopN         uint16                      `json:"top_n"`
+	IncludeOther bool                        `json:"include_other"`
+	Timezone     string                      `json:"timezone,omitempty"`
+	TargetPoints uint16                      `json:"target_points,omitempty"`
 }
 
 func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
@@ -71,7 +73,15 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if err != nil {
 		return QueryProviderResult{}, err
 	}
-	if len(parameters.Dimensions) > 0 {
+	baseFilter := false
+	if parameters.Filter != nil {
+		aggregateSupported, supportErr := flowquery.AggregateFilterSupported(*parameters.Filter)
+		if supportErr != nil {
+			return QueryProviderResult{}, mapFlowQueryError(supportErr)
+		}
+		baseFilter = !aggregateSupported
+	}
+	if len(parameters.Dimensions) > 0 || baseFilter {
 		return p.queryJoint(ctx, request, parameters, view)
 	}
 	plan, err := flowquery.PlanAggregate(
@@ -84,7 +94,8 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval, Metric: parameters.Metric,
 		Dimension: parameters.Dimension, Filters: parameters.Filters, View: view,
-		TopN: parameters.TopN, IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
+		Filter: parameters.Filter,
+		TopN:   parameters.TopN, IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
 	}, p.now())
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
@@ -145,8 +156,8 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 		TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view},
 	}, flowquery.JointRequest{
 		From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
-		TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: parameters.Dimensions,
-		Filters: parameters.Filters, View: view, TopN: parameters.TopN,
+		TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: flowBaseDimensions(parameters),
+		Filters: parameters.Filters, Filter: parameters.Filter, View: view, TopN: parameters.TopN,
 		IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
 	}, p.now())
 	if err != nil {
@@ -181,6 +192,13 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 	}, nil
 }
 
+func flowBaseDimensions(parameters flowAggregateQueryParameters) []flowquery.Dimension {
+	if len(parameters.Dimensions) > 0 {
+		return parameters.Dimensions
+	}
+	return []flowquery.Dimension{parameters.Dimension}
+}
+
 func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth AuthContext, request QueryProviderRequest) error {
 	if auth.IsAdmin {
 		return nil
@@ -206,6 +224,21 @@ func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth Au
 	if len(parameters.Filters.ExporterIDs) > 0 {
 		return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "exporter-scoped queries require administrator access"}
 	}
+	if parameters.Filter != nil {
+		fields, fieldErr := flowquery.FilterFields(*parameters.Filter)
+		if fieldErr != nil {
+			return mapFlowQueryError(fieldErr)
+		}
+		for _, field := range fields {
+			switch field {
+			case "target", "device", "exporter":
+				return &QueryGatewayError{
+					Code:    QueryErrorPermissionDenied,
+					Message: "resource fields in typed filters require administrator access; use the authorized resource selector",
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -221,6 +254,18 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 	}
 	if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "exactly one of dimension or dimensions is required"}
+	}
+	if parameters.Filter != nil {
+		canonical, err := flowquery.CanonicalFilter(*parameters.Filter)
+		if err != nil {
+			return parameters, mapFlowQueryError(err)
+		}
+		if !reflect.DeepEqual(canonical, *parameters.Filter) {
+			return parameters, &QueryGatewayError{
+				Code:    QueryErrorInvalidRequest,
+				Message: "filter must use the canonical AST returned by POST /api/v1/flow/filters/validate",
+			}
+		}
 	}
 	return parameters, nil
 }

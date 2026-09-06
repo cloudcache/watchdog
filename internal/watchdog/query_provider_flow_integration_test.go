@@ -133,4 +133,50 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		!jointResponse.Meta.Partial || jointResponse.Meta.Source != "clickhouse" {
 		t.Fatalf("joint response=%+v", jointResponse)
 	}
+
+	validateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(validateRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/filters/validate", strings.NewReader(`{
+		"filter":{"op":"and","args":[
+			{"op":"predicate","field":"protocol","operator":"in","values":["UDP","tcp"]},
+			{"op":"predicate","field":"src_ip","operator":"in","values":["10.0.0.9/8"]}
+		]}}
+	`)))
+	if validateRecorder.Code != http.StatusOK {
+		t.Fatalf("filter validate status=%d body=%s", validateRecorder.Code, validateRecorder.Body.String())
+	}
+	var validated struct {
+		Filter flowquery.FilterExpression `json:"filter"`
+	}
+	if err := json.Unmarshal(validateRecorder.Body.Bytes(), &validated); err != nil {
+		t.Fatal(err)
+	}
+	typedBody := map[string]any{
+		"dataset": FlowTrafficDataset, "from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:02:00Z",
+		"step_seconds": 0, "limit": 10, "value_layer": "customer",
+		"parameters": map[string]any{
+			"metric": "estimated_bps", "dimension": "geo.country", "top_n": 2,
+			"include_other": true, "timezone": "UTC", "target_points": 300, "filter": validated.Filter,
+		},
+	}
+	encoded, err = json.Marshal(typedBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/query", bytes.NewReader(encoded)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("typed filter status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var typedResponse struct {
+		Data flowquery.JointResult `json:"data"`
+		Meta QueryResultMeta       `json:"meta"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &typedResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(typedResponse.Data.Points) != 0 || typedResponse.Data.Plan.Source != "flow_records" ||
+		typedResponse.Data.Plan.StepSeconds != 60 || typedResponse.Meta.StepSeconds != 60 ||
+		!typedResponse.Meta.Partial || typedResponse.Meta.Source != "clickhouse" {
+		t.Fatalf("typed filter response=%+v", typedResponse)
+	}
 }

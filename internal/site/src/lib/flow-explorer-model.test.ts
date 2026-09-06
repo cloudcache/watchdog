@@ -14,13 +14,39 @@ test("flow ranges are independent presets and custom ranges are minute-aligned",
 	})
 })
 
-test("flow filter expression compiles to the typed provider filter", () => {
-	assert.deepEqual(parseFlowFilter(`direction IN (in, out) AND category=overseas AND business="customer and cache"`), {
-		directions: ["in", "out"],
-		categories: ["overseas"],
-		businesses: ["customer and cache"],
-	})
-	assert.throws(() => parseFlowFilter("src_ip=203.0.113.1"), /Unsupported filter field/)
+test("flow filter expression parses precedence, typed operators and IP/CIDR values", () => {
+	assert.deepEqual(
+		parseFlowFilter(
+			`(geo.country=CN OR asn IN (AS4134, 4837)) AND NOT remote_ip IN (203.0.113.0/24, 2001:db8::1) AND protocol!=udp`
+		),
+		{
+			op: "and",
+			args: [
+				{
+					op: "or",
+					args: [
+						{ op: "predicate", field: "geo.country", operator: "eq", values: ["CN"] },
+						{ op: "predicate", field: "asn", operator: "in", values: ["AS4134", "4837"] },
+					],
+				},
+				{
+					op: "not",
+					args: [
+						{
+							op: "predicate",
+							field: "remote_ip",
+							operator: "in",
+							values: ["203.0.113.0/24", "2001:db8::1"],
+						},
+					],
+				},
+				{ op: "predicate", field: "protocol", operator: "ne", values: ["udp"] },
+			],
+		}
+	)
+	assert.throws(() => parseFlowFilter("raw_sql=1"), /Unsupported filter field/)
+	assert.throws(() => parseFlowFilter("src_ip IN 203.0.113.1"), /requires parentheses/)
+	assert.equal(parseFlowFilter(""), undefined)
 })
 
 test("flow series statistics use actual final bucket duration", () => {

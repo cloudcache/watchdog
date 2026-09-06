@@ -17,6 +17,7 @@ import {
 	parseFlowFilter,
 	resolveFlowTimeRange,
 	type FlowFilters,
+	type FlowFilterExpression,
 	type FlowJointPoint,
 	type FlowPlan,
 	type FlowPoint,
@@ -155,11 +156,18 @@ export default memo(function TrafficMatrix() {
 				selectedDimensions.push(dimension4)
 			const joint = selectedDimensions.length > 1
 			const selectedTopN = selectedDimension === "total" ? 1 : Math.max(1, Math.min(100, topN))
-			const expressionFilters = parseFlowFilter(filterExpression)
+			let canonicalFilter = parseFlowFilter(filterExpression)
+			if (canonicalFilter) {
+				const validated = await pb.send<{ valid: boolean; filter: FlowFilterExpression }>(
+					"/api/v1/flow/filters/validate",
+					{ method: "POST", body: { filter: canonicalFilter } }
+				)
+				canonicalFilter = validated.filter
+			}
 			const selectionFilters: FlowFilters = {}
 			if (selectedDevice !== "all") selectionFilters.device_ids = [selectedDevice]
 			if (selectedSet !== "all") selectionFilters.dimension_values = [selectedSet]
-			const filters = mergeFlowFilters(expressionFilters, selectionFilters)
+			const filters = mergeFlowFilters({}, selectionFilters)
 			const grouping = joint ? { dimensions: selectedDimensions } : { dimension: selectedDimension }
 			const query = await pb.send<FlowQueryResponse>("/api/v1/query", {
 				method: "POST",
@@ -176,6 +184,7 @@ export default memo(function TrafficMatrix() {
 						metric,
 						...grouping,
 						filters,
+						filter: canonicalFilter,
 						top_n: selectedTopN,
 						include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
 						target_points: targetPoints,
@@ -487,7 +496,7 @@ export default memo(function TrafficMatrix() {
 							onKeyDown={(event) => {
 								if ((event.ctrlKey || event.metaKey) && event.key === "Enter") refresh().catch(() => {})
 							}}
-							placeholder='direction IN (in, out) AND category=overseas AND business="cdn"'
+							placeholder="(geo.country=CN OR asn IN (4134, 4837)) AND remote_ip IN (203.0.113.0/24)"
 						/>
 					</div>
 					<Button onClick={refresh} disabled={loading}>
@@ -496,10 +505,18 @@ export default memo(function TrafficMatrix() {
 				</div>
 				<p className="text-xs text-muted-foreground">
 					<Trans>
-						Filter fields: direction, category, business, target, device, exporter, dimension. Operators: = and IN
-						(...). Press Ctrl/Cmd+Enter to apply.
+						Filter fields include IP/CIDR, ASN, ISP, Geo, ports, protocol, direction and resources. Operators: =, !=,
+						IN, NOT IN, &gt;, &gt;=, &lt;, &lt;= with AND/OR/NOT and parentheses. Press Ctrl/Cmd+Enter to apply.
 					</Trans>
 				</p>
+				{filterExpression.trim() && (
+					<p className="text-xs text-muted-foreground">
+						<Trans>
+							Filters on fields not present in the 1m/1h rollups use the bounded base-fact path and are limited to 24
+							hours until a matching asynchronous index is published.
+						</Trans>
+					</p>
+				)}
 				{jointSelected && (
 					<p className="text-xs text-muted-foreground">
 						<Trans>

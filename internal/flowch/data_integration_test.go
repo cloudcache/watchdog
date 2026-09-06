@@ -93,6 +93,50 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 		!jointResult.Points[1].Other || jointResult.Points[1].Value != 300 {
 		t.Fatalf("true joint tuple result=%+v", jointResult)
 	}
+	typedFilterQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
+		Dimensions: []flowquery.Dimension{flowquery.DimensionGeoCity},
+		Filter: &flowquery.FilterExpression{Op: flowquery.FilterAnd, Args: []flowquery.FilterExpression{
+			{Op: flowquery.FilterPredicate, Field: "src_ip", Operator: flowquery.FilterIn, Values: []string{"10.0.0.0/8"}},
+			{Op: flowquery.FilterPredicate, Field: "asn", Operator: flowquery.FilterGreaterThanOrEqual, Values: []string{"4837"}},
+		}},
+		View: flowquery.ViewCustomer, TopN: 10, IncludeOther: true, TargetPoints: 300, Timezone: "UTC",
+	}, bucket.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	typedFilterResult, err := jointRunner.Run(ctx, typedFilterQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(typedFilterResult.Points) != 1 || typedFilterResult.Points[0].DimensionValues[0] != "geo-city-b" ||
+		typedFilterResult.Points[0].Value != 550 {
+		t.Fatalf("typed base filter result=%+v", typedFilterResult)
+	}
+	typedTotalQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
+		Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},
+		Filter: &flowquery.FilterExpression{Op: flowquery.FilterPredicate, Field: "src_ip", Operator: flowquery.FilterIn,
+			Values: []string{"10.0.0.0/8"}},
+		View: flowquery.ViewCustomer, TopN: 1, TargetPoints: 300, Timezone: "UTC",
+	}, bucket.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	typedTotalResult, err := jointRunner.Run(ctx, typedTotalQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var typedTotalValue float64
+	for _, point := range typedTotalResult.Points {
+		if len(point.DimensionValues) != 1 || point.DimensionValues[0] != "total" {
+			t.Fatalf("typed total dimension=%+v", point)
+		}
+		typedTotalValue += point.Value
+	}
+	if typedTotalValue != 850 {
+		t.Fatalf("typed total result=%+v", typedTotalResult)
+	}
 	repair := initial
 	repair.Generation = 2
 	repair.GeneratedAt = bucket.Add(5 * time.Minute)
