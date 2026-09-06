@@ -634,7 +634,7 @@ MMDB 使用成熟 Go reader 顺序枚举 network；IPDB reader负责格式/字�
 
 `address_sets.match_direction` 唯一允许 `in/out/both`，与 Flow 已归一化的业务方向一致；migration 038 将旧 `source` 显式迁移为 `out`、将手工 schema 中可能存在的 `destination` 迁移为 `in`。它不表示报文原始 src/dst，查询端若需要原始端点必须使用独立的 endpoint filter，禁止混用两套方向语义。
 
-地域/线路模型沿用 EdgeManager 已验证的稳定引用思路，但不连接或回写 EdgeManager：`geo_dict` 保存 `continent → region → country → province → city` 邻接树；稳定主键为 `id`，`(tenant, kind, code)` 是自然唯一键，允许不同层级复用诸如 `AS` 的代码。`isp_operators` 保存运营商/教育网/云/搜索等稳定 ID 与 ASN 列表，`geo_lines` 保存父子线路节点及可空的 `geo_selector/operator_id/address_set_id` 组合。线路选择器按根到叶累积约束，查询/发布按稳定 ID，名称只负责显示。地址库发布仍导出 watchdog 自己的 immutable bundle；Flow 热路径只加载 bundle 做内存 LPM/range lookup。
+地域/线路模型沿用 EdgeManager 已验证的稳定引用思路，但不连接或回写 EdgeManager：`geo_dict` 保存 `continent → region → country → province → city` 邻接树；稳定主键为 `id`，`(tenant, kind, code)` 是自然唯一键，允许不同层级复用诸如 `AS` 的代码。`isp_operators` 保存运营商/教育网/云/搜索等稳定 ID 与 ASN 列表，`geo_lines` 保存父子线路节点及可空的 `geo_selector/operator_id/address_set_id` 组合。线路选择器按根到叶累积约束，查询/发布按稳定 ID，名称只负责显示。地址库发布导出 watchdog 自己的 immutable definition bundle；Flow 写入热路径不加载管理库或逐条固化分类，Flow 侧按发布版本异步生成 ClickHouse 字典/预配置地址段索引。
 
 ```sql
 CREATE TABLE dimension_snapshots (
@@ -684,14 +684,14 @@ CREATE TABLE dimension_snapshot_acks (
 );
 ```
 
-发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 bundle；worker 通过 `object_ref+checksum` 加载并构建 LPM/selector 索引。配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的分钟边界生效。排队记录按 `event_time` 选择当时有效版本，而不是按实际消费时间套用最新配置。migration 040、manual prefix/set compiler、语义 digest CAS、不可覆盖对象、异步 operation job 及版本管理页已在 `3a7db545` 落地；active base overlay、签名/approve、retire/rollback、worker download/ack 和引用保留仍是交付门禁，不能因表已存在就宣称 PLAT-04A 完成。
+发布动作把当前 prefixes、labels、sets、selector 和 direction 固化为校验过的 definition bundle；配置 CRUD 只改变 draft，`publish` 才生成递增 version，并从声明的 UTC 分钟边界生效。Flow index-builder 通过 `object_ref+checksum` 获取版本，在 CH 中异步构建/切换该版本的字典或预配置地址段索引，安装完成后 ACK；失败继续使用上一可查询版本。原始 Flow 事实不写 publication version 计算出的分类字段，账单/审计查询显式指定 definition version，探索查询默认当前版本。平台只管理定义、签名、版本、引用和 ACK，不复制 CH 连接池、DDL 或查询 compiler。现行数据面决策见 [Flow 地址查询方案](flow-address-query-plan.md)。
 
 地址统计有两种不同口径：
 
 - `primary_prefix`：每个 endpoint 只取最长前缀，一个 address role 内互斥且可加总；未命中进入 `_unassigned`，保证守恒；
 - `address_set`：prefix labels 可命中多个 selector，属于非互斥 tag 统计；单个 set 内可汇总，但不同 set 之间禁止相加，响应必须返回 `additive=false`。
 
-flow-collect 只把 UDP datagram 封装为 RawFlow 写入唯一 Kafka topic；独立 flow-worker 按 partition 用 GoFlow2 解码，再按 event-time snapshot 异步完成 local/remote、primary prefix、address set、Geo/ASN、业务、六维和 CH 批次。执行采用固定 partition worker 和有界 batch，不允许逐 flow 启动 goroutine。worker/CH 故障形成 RawFlow lag；Kafka 生产故障最终形成显式 UDP data-loss interval。重分类在 RawFlow retention 内可重放，超出后只能使用仍在 TTL 内、包含 IP 与版本字段的 CH base fact。
+flow-collect 只把 UDP datagram 封装为 RawFlow 写入唯一 Kafka topic；独立 flow-worker 按 partition 用 GoFlow2 解码、完成采样归一并批量写 CH 原始事实，不在写入路径展开地址组、地域、运营商、业务或六维分类。地址条件查询直接读有界时间范围内的原始事实；租户预配置地址段及常用 breakdown 由独立异步索引/rollup 从原始事实按 definition version 计算，可丢弃重建。执行采用固定 partition worker 和有界 batch，不允许逐 flow 启动 goroutine。worker/CH 故障形成 RawFlow lag；Kafka 生产故障最终形成显式 UDP data-loss interval。定义变化只重建受影响的派生索引，不重写原始事实。
 
 ```text
 GET                      /api/v1/dimensions/address/versions
@@ -896,7 +896,8 @@ active policy 不允许 PATCH 原地改变公式；修改动作创建下一 vers
 
 - Kafka 是强制依赖，只有 `watchdog.flow.raw-v1` 一个 Flow 数据 topic；
 - collector 只做 UDP、来源准入、RawFlow 和 Kafka，不连接 MySQL/CH/VM；
-- worker 在 Kafka partition 内用 GoFlow2 有序解码、归类和批写 CH，成功后提交 offset；
+- worker 在 Kafka partition 内用 GoFlow2 有序解码、采样归一和批写 CH 原始事实，成功后提交 offset；
+- 地址归属/集合/地域分类按查询条件解析；预配置地址段另由异步 CH index/rollup 加速并按 definition version 可重建，禁止在写入路径逐 flow 固化；
 - 平台只提供 identity/RBAC、collector/exporter、签名 plan、snapshot、query/export/job/audit；
 - 禁止恢复 collector WAL、normalized/collect-state topic、state restore/cleanup API 或 Flow VM 双写。
 
