@@ -410,6 +410,50 @@ func TestAPINetworkDevicesListPagedGuards(t *testing.T) {
 	}
 }
 
+func TestAPIDeviceEventsPushesSearchAndAlertSeveritiesToRepository(t *testing.T) {
+	collector := &fakeSNMPCollectorRepository{events: []SNMPEvent{{ID: "event-a", Severity: "warning"}}}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:          networkTestAuth,
+		Network:       &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}},
+		SNMPCollector: collector,
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/device-a/events?q=peer%201&severity=warning,error,critical&event_type=bgp&limit=25", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	filter := collector.eventFilter
+	if filter.Search != "peer 1" || filter.EventType != "bgp" || filter.Limit != 25 ||
+		len(filter.Severities) != 3 || filter.Severities[0] != "warning" || filter.Severities[1] != "error" || filter.Severities[2] != "critical" {
+		t.Fatalf("filter = %+v", filter)
+	}
+}
+
+func TestAPIDeviceEventsRejectsInvalidFilters(t *testing.T) {
+	collector := &fakeSNMPCollectorRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:          networkTestAuth,
+		Network:       &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}},
+		SNMPCollector: collector,
+	})
+	for _, query := range []string{
+		"limit=0",
+		"limit=501",
+		"limit=nope",
+		"severity=warning,,critical",
+		"severity=a,b,c,d,e,f,g,h,i",
+		"cursor=not-a-cursor",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/v1/network/devices/device-a/events?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d body = %s", query, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestAPIBGPSessionsPaged(t *testing.T) {
 	// Server-driven opt-in: search/state/sort/offset thread into the query, the
 	// grant scope is pushed down, and the first page carries the badge counts.

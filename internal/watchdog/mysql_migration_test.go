@@ -95,14 +95,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "049" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "050" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "049" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "050" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -385,6 +385,23 @@ func TestDimensionObjectGCMigrationOwnsCompleteContract(t *testing.T) {
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Fatalf("dimension object GC migration missing %q", required)
+		}
+	}
+}
+
+func TestSNMPEventQueryIndexMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "050_snmp_event_query_indexes.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"idx_snmp_events_device_severity_time", "tenant_id, device_id, severity, occurred_at, id",
+		"idx_snmp_events_device_type_time", "tenant_id, device_id, event_type, occurred_at, id",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("SNMP event query index migration missing %q", required)
 		}
 	}
 }

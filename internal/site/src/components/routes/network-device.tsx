@@ -1459,39 +1459,60 @@ function DeviceAlertLog({ deviceId, targetID: _targetID }: { deviceId: string; t
 function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnly: boolean }) {
 	const { t } = useLingui()
 	const [events, setEvents] = useState<SNMPEventEntry[]>([])
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [eventType, setEventType] = useState("")
+	const [eventTypeQuery, setEventTypeQuery] = useState("")
+	const [severity, setSeverity] = useState("all")
+	const [pageSize, setPageSize] = useState(100)
+	const [page, setPage] = useState(0)
+	const [cursors, setCursors] = useState<string[]>([""])
 	const [loading, setLoading] = useState(true)
 	const [nextCursor, setNextCursor] = useState("")
-
-	const fetchEvents = useCallback(
-		async (cursor: string, append: boolean) => {
-			setLoading(true)
-			try {
-				const params = new URLSearchParams({ limit: "200" })
-				if (cursor) {
-					params.set("cursor", cursor)
-				}
-				const data = await pb.send<{ items?: SNMPEventEntry[]; next_cursor?: string }>(
-					`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
-					{}
-				)
-				const items = (data.items ?? []).filter((event) =>
-					alertOnly ? ["warning", "error", "critical"].includes((event.Severity ?? "").toLowerCase()) : true
-				)
-				setEvents((current) => (append ? [...current, ...items] : items))
-				setNextCursor(data.next_cursor ?? "")
-			} catch {
-				if (!append) {
-					setEvents([])
-				}
-			} finally {
-				setLoading(false)
-			}
-		},
-		[alertOnly, deviceId]
-	)
+	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
 
 	useEffect(() => {
-		fetchEvents("", false)
+		const timer = window.setTimeout(() => {
+			setQuery(search.trim())
+			setEventTypeQuery(eventType.trim())
+			setPage(0)
+			setCursors([""])
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [eventType, search])
+
+	const cursor = cursors[page] ?? ""
+	const fetchEvents = useCallback(async () => {
+		const sequence = ++requestSequence.current
+		setLoading(true)
+		setError("")
+		try {
+			const params = new URLSearchParams({ limit: String(pageSize) })
+			if (cursor) params.set("cursor", cursor)
+			if (query) params.set("q", query)
+			if (eventTypeQuery) params.set("event_type", eventTypeQuery)
+			if (alertOnly) params.set("severity", "warning,error,critical")
+			else if (severity !== "all") params.set("severity", severity)
+			const data = await pb.send<{ items?: SNMPEventEntry[]; next_cursor?: string }>(
+				`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
+				{}
+			)
+			if (sequence !== requestSequence.current) return
+			setEvents(data.items ?? [])
+			setNextCursor(data.next_cursor ?? "")
+		} catch (requestError) {
+			if (sequence !== requestSequence.current) return
+			setEvents([])
+			setNextCursor("")
+			setError(requestError instanceof Error ? requestError.message : String(requestError))
+		} finally {
+			if (sequence === requestSequence.current) setLoading(false)
+		}
+	}, [alertOnly, cursor, deviceId, eventTypeQuery, pageSize, query, severity])
+
+	useEffect(() => {
+		fetchEvents()
 	}, [fetchEvents])
 	const records = useMemo(
 		() =>
@@ -1528,20 +1549,86 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 		: t`No events yet. Events appear on interface status changes and SNMP traps.`
 	return (
 		<div className="grid gap-3">
+		<div className="flex flex-wrap items-center gap-2">
+			<Input
+				value={search}
+				onChange={(event) => setSearch(event.target.value)}
+				placeholder={alertOnly ? t`Search alerts...` : t`Search events...`}
+				className="w-full max-w-sm"
+			/>
+			<Input
+				value={eventType}
+				onChange={(event) => setEventType(event.target.value)}
+				placeholder={t`Exact event type`}
+				className="w-full max-w-52"
+			/>
+			{alertOnly ? (
+				<Badge variant="secondary">
+					<Trans>Warning, error, critical</Trans>
+				</Badge>
+			) : (
+				<Select
+					value={severity}
+					onValueChange={(value) => {
+						setSeverity(value)
+						setPage(0)
+						setCursors([""])
+					}}
+				>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all"><Trans>All severities</Trans></SelectItem>
+						<SelectItem value="info"><Trans>Info</Trans></SelectItem>
+						<SelectItem value="warning"><Trans>Warning</Trans></SelectItem>
+						<SelectItem value="error"><Trans>Error</Trans></SelectItem>
+						<SelectItem value="critical"><Trans>Critical</Trans></SelectItem>
+					</SelectContent>
+				</Select>
+			)}
+		</div>
+		{error ? <div className="text-sm text-destructive">{error}</div> : null}
 			<PagedVTable
 				records={records}
 				columns={columns}
 				loading={loading}
 				emptyText={emptyText}
-				searchPlaceholder={alertOnly ? t`Search alerts...` : t`Search events...`}
+				showSearch={false}
+				showPagination={false}
 			/>
-			{nextCursor ? (
-				<div>
-					<Button variant="outline" size="sm" onClick={() => fetchEvents(nextCursor, true)} disabled={loading}>
-						<Trans>Load more</Trans>
-					</Button>
-				</div>
-			) : null}
+			<div className="flex flex-wrap items-center justify-end gap-2 text-sm">
+				<span className="text-muted-foreground"><Trans>Page {page + 1}</Trans></span>
+				<Select
+					value={String(pageSize)}
+					onValueChange={(value) => {
+						setPageSize(Number(value))
+						setPage(0)
+						setCursors([""])
+					}}
+				>
+					<SelectTrigger className="h-9 w-24"><SelectValue /></SelectTrigger>
+					<SelectContent>
+						<SelectItem value="25">25 / page</SelectItem>
+						<SelectItem value="50">50 / page</SelectItem>
+						<SelectItem value="100">100 / page</SelectItem>
+					</SelectContent>
+				</Select>
+				<Button variant="outline" size="sm" disabled={loading || page === 0} onClick={() => setPage((value) => value - 1)}>
+					<Trans>Previous</Trans>
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={loading || !nextCursor}
+					onClick={() => {
+						setCursors((current) => [...current.slice(0, page + 1), nextCursor])
+						setPage((value) => value + 1)
+					}}
+				>
+					<Trans>Next</Trans>
+				</Button>
+			</div>
 		</div>
 	)
 }

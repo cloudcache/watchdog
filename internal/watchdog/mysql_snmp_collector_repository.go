@@ -411,14 +411,15 @@ func (s *MySQLStore) PruneSNMPCollectionRecipes(ctx context.Context, tenantID, d
 // SNMPEventFilter narrows and pages device events. Cursor is the opaque value
 // from the previous page; events are ordered newest-occurred first.
 type SNMPEventFilter struct {
-	Severity  string
-	EventType string
-	Limit     int
-	Cursor    string
+	Search     string
+	Severities []string
+	EventType  string
+	Limit      int
+	Cursor     string
 }
 
 // ListSNMPEventsPaged returns a device's events with keyset pagination and
-// optional severity/event_type filters. The device scoping and permission
+// optional search/severity/event_type filters. The device scoping and permission
 // check happen at the API layer, so this query is a clean tenant+device keyset.
 func (s *MySQLStore) ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID ID, filter SNMPEventFilter) ([]SNMPEvent, string, error) {
 	limit := filter.Limit
@@ -430,9 +431,16 @@ func (s *MySQLStore) ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID
 		FROM snmp_events
 		WHERE tenant_id = ? AND device_id = ?`
 	args := []any{tenantID, deviceID}
-	if filter.Severity != "" {
-		query += ` AND severity = ?`
-		args = append(args, filter.Severity)
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		query += ` AND (source LIKE ? OR severity LIKE ? OR event_type LIKE ? OR message LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+	if len(filter.Severities) > 0 {
+		query += ` AND severity IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.Severities)), ",") + `)`
+		for _, severity := range filter.Severities {
+			args = append(args, severity)
+		}
 	}
 	if filter.EventType != "" {
 		query += ` AND event_type = ?`

@@ -8,7 +8,7 @@ import (
 )
 
 // TestMySQLListSNMPEventsPaged proves keyset pagination (newest-first, no
-// overlap) and severity/event_type filters over a device's events.
+// overlap) and search/severity/event_type filters over a device's events.
 func TestMySQLListSNMPEventsPaged(t *testing.T) {
 	db, tenant := operationJobTestDB(t)
 	store := NewMySQLStore(db)
@@ -60,13 +60,36 @@ func TestMySQLListSNMPEventsPaged(t *testing.T) {
 	}
 
 	// Severity filter: only the 3 critical events (ev_00, ev_02, ev_04).
-	critical, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{Severity: "critical", Limit: 100})
+	critical, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{Severities: []string{"critical"}, Limit: 100})
 	if err != nil || len(critical) != 3 {
 		t.Fatalf("critical filter = %d err=%v", len(critical), err)
 	}
-	// event_type filter composes with severity.
-	linkInfo, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{EventType: "link", Limit: 100})
+	// Multi-severity is a server-side OR, while event_type composes as AND.
+	allSeverities, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{Severities: []string{"critical", "info"}, Limit: 100})
+	if err != nil || len(allSeverities) != 5 {
+		t.Fatalf("multi-severity filter = %d err=%v", len(allSeverities), err)
+	}
+	linkInfo, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{EventType: "link", Severities: []string{"info"}, Limit: 100})
 	if err != nil || len(linkInfo) != 2 {
 		t.Fatalf("event_type filter = %d err=%v", len(linkInfo), err)
+	}
+	matched, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{Search: "event 4", Limit: 100})
+	if err != nil || len(matched) != 1 || matched[0].ID != "ev_04" {
+		t.Fatalf("search filter = %+v err=%v", matched, err)
+	}
+	// LIKE wildcards in user input are literals, not an accidental match-all.
+	wildcard, _, err := store.ListSNMPEventsPaged(ctx, tenant, device, SNMPEventFilter{Search: "%", Limit: 100})
+	if err != nil || len(wildcard) != 0 {
+		t.Fatalf("escaped search filter = %+v err=%v", wildcard, err)
+	}
+
+	for _, indexName := range []string{"idx_snmp_events_device_severity_time", "idx_snmp_events_device_type_time"} {
+		var count int
+		if err := db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM information_schema.statistics
+			WHERE table_schema = DATABASE() AND table_name = 'snmp_events' AND index_name = ?
+		`, indexName).Scan(&count); err != nil || count == 0 {
+			t.Fatalf("index %s count=%d err=%v", indexName, count, err)
+		}
 	}
 }

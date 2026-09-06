@@ -44,6 +44,7 @@
   - [x] Network Devices 主表接入渐进分页（B 前端）：`/summary` 加 opt-in keyset 路径（limit/cursor）——复用 `ListDevicesPage`（授权下推）+ `fillDeviceSummary`，**只富集当前页**的 ports/BGP/last-seen，避免单请求对全 fleet 逐设备扇出（大规模易超时），缺省仍全量。前端 network-devices.tsx 改为渐进加载：首页立即渲染、其余追加，客户端 search/status/上下行计数在累积集上不变（无需服务端 search，零回归）。无新 repo/migration。API 测试证明 opt-in/授权下推/富集页/next_cursor（commit 799de1a4）。
   - [x] **device 表服务端 search/filter/sort + 聚合计数**：`/summary` opt-in 加 q/status/sort/order/limit/offset——`ListDeviceSummaryDevicesPage` JOIN targets 做跨列 ci 搜索（name/host/sys_name/vendor/location/os）、status 过滤（down=非 up 与徽章一致）、白名单排序列（防注入）、offset 分页，仅富集当前页；`GetTargetsByIDs` 批量取页内 target；`CountDeviceStatuses` 返回授权域徽章计数（仅首页）；授权经 visibleDeviceScope 下推。前端 network-devices.tsx 改服务端驱动：防抖搜索 + status + 新排序控件触发从头刷新、Load more 按 offset 追加、徽章/计数来自响应。device SELECT 抽共享 aliased const 防漂移。API 透传 + gated MySQL（搜索全列/status 含 down=非up/排序升降/offset/授权下推/计数，**本地 MySQL 实跑**，并顺带修早先 device-page 测试坏 seed）（commit d6de03b2）。
   - [x] **Inventory tab 服务端查询闭环**：`GET /network/devices/{id}/inventory` 保留无参数全量兼容，opt-in 支持 `q/class/fru/sort/order/limit/offset` 并返回 `total`；SQL 固定 tenant+device 域、白名单排序和稳定 `entity_index` tie-breaker。前端只在进入 Inventory tab 后读取当前页，300ms 防抖搜索/精确 class/FRU/排序均回到服务端，陈旧响应不覆盖新查询，统一 `PagedVTable` 分页及列 filter。复用 `device_physical_entities` 与 `(tenant_id,device_id)` 索引，无 schema 变化、不创建空 migration；API 参数/错误单元、真实 MySQL 搜索/组合筛选/排序/分页、前端 lint/test/build 与全库回归后提交。
+  - [x] **Events/Alerts tab 服务端查询闭环**：修复 Alerts 先取 200 条全事件再在浏览器剔除 info 导致的假空页/漏页；`severity` 支持最多 8 个去重值，Alerts 固定下推 `warning,error,critical`，`q/event_type/severity` 在 tenant+device 范围内组合后再进行 `(occurred_at,id)` keyset 分页；limit/cursor/长度参数 fail-closed。前端不再累积全量或双重分页，改为每页独立请求、游标历史支持前后翻页、300ms 服务端搜索、精确事件类型、严重级别筛选、陈旧响应丢弃和错误可见，表格保留 VTable 列 filter。migration 050 补 severity/type 时间游标索引并同步 init/checksum；API 单元、真实 MySQL 多 severity/组合/search/通配符转义/index、001–050 fresh parity、前端 lint/test/build 与全库回归后提交。
   - [x] 可写资源 ETag/If-Match 补齐：SNMP profiles（92707f8e）、aggregate graphs（46095baf）、billing accounts（bcfb0963）、agent registry（23199320）——GET 发弱 ETag、PATCH/DELETE 载入当前版本 CheckIfMatch 陈旧则 412（缺 If-Match 仍放行），各配 API 测试。users/roles/targets/device/port 此前已有。**所有可写资源已覆盖。**
   - 余项：BGP/inventory 为只读 GET（ETag 仅版本戳、无写入并发，价值边际）；address-sets ETag 归 PLAT-04C；其余表 server VTable 化见下方独立项。
   - [x] 前端 ETag 端到端接线：`sendWatchdogAPI` 加非破坏 `onResponse` 钩子暴露响应头（ETag），编辑表单加载捕获 ETag、保存带 `If-Match`，并发编辑得 412（"resource changed"）而非静默覆盖——targets（42f81e0c）、aggregate graphs（b4e07085）、billing accounts（1ab7b3fc）、network device→target（本轮）、network port（24e6a1a4）**全部单资源编辑表单已接**。余：users 走列表内联编辑（无单条 GET 捕 ETag，需重构 edit flow）、device/snmp 与 port/policy 子资源 PATCH（价值边际），暂缓。
@@ -60,10 +61,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `049`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引；`049_dimension_object_gc.sql` 固定安全 GC 扫描索引和删除 marker 约束。001–049 空库、直接 replay、旧行兼容及 fresh-install parity 已通过真实 MySQL 门禁。
+- 当前迁移头为 `050`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引；`049_dimension_object_gc.sql` 固定安全 GC 扫描索引和删除 marker 约束；`050_snmp_event_query_indexes.sql` 固定设备事件按 severity/event_type + 时间游标的有界扫描索引。001–050 空库、直接 replay、旧行兼容及 fresh-install parity 已通过真实 MySQL 门禁。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占。下一个持久化工作从 `050` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占。下一个持久化工作从 `051` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -80,6 +81,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `047` | Address publication source manifest | snapshot 固定 active import IDs/checksum/slot row version/v4-v6 row count，签名覆盖完整来源血缘 | 已提交 `04668394`；真实 MySQL 门禁完成 |
 | `048` | Address consumer status index | observed worker 的目标版本 ACK 与最新 installed version 分离查询；tenant/worker/attempt/snapshot 有界索引 | 已提交 `03bd71fd`；真实 MySQL 门禁完成 |
 | `049` | Address dimension object GC | tenant 有界候选索引；删除 marker 只能出现在退役且 retention 到期的 snapshot | 本提交包含 migration/backend/API/runtime/init/docs/tests；真实 MySQL 重放与 parity 完成 |
+| `050` | SNMP Event/Alert query | `(tenant,device,severity,event-time,id)` 与 `(tenant,device,event_type,event-time,id)`，保障筛选后的 keyset 扫描 | migration/init/checksum/API/repository/frontend/真实 MySQL parity 同工作包提交 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 

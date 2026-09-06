@@ -1451,6 +1451,8 @@ CREATE TABLE IF NOT EXISTS `snmp_events` (
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_snmp_events_device_time` (`tenant_id`,`device_id`,`occurred_at`),
+  KEY `idx_snmp_events_device_severity_time` (`tenant_id`,`device_id`,`severity`,`occurred_at`,`id`),
+  KEY `idx_snmp_events_device_type_time` (`tenant_id`,`device_id`,`event_type`,`occurred_at`,`id`),
   KEY `idx_snmp_events_entity_time` (`tenant_id`,`entity_type`,`entity_id`,`occurred_at`),
   KEY `fk_snmp_events_device` (`device_id`),
   CONSTRAINT `fk_snmp_events_device` FOREIGN KEY (`device_id`) REFERENCES `network_devices` (`id`) ON DELETE CASCADE,

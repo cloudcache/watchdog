@@ -16,6 +16,7 @@ export function PagedVTable({
 	onRowClick,
 	onCellClick,
 	showSearch = true,
+	showPagination = true,
 	serverPagination,
 	searchValue,
 	onSearchChange,
@@ -30,6 +31,7 @@ export function PagedVTable({
 	onRowClick?: (record: Record<string, unknown>) => void
 	onCellClick?: (record: Record<string, unknown>, field: string) => void
 	showSearch?: boolean
+	showPagination?: boolean
 	serverPagination?: {
 		page: number
 		pageSize: number
@@ -169,7 +171,7 @@ export function PagedVTable({
 					style={{ height: searchedRecords.length > 0 && !loading ? height : 0 }}
 				/>
 			</div>
-			{searchedRecords.length > 0 ? (
+			{showPagination && searchedRecords.length > 0 ? (
 				<div className="flex items-center justify-end gap-2 text-sm">
 					<Button
 						variant="outline"

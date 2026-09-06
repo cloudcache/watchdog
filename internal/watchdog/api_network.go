@@ -772,12 +772,12 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	events, nextCursor, err := api.collector.ListSNMPEventsPaged(r.Context(), auth.TenantID, device.ID, SNMPEventFilter{
-		Severity:  query.Get("severity"),
-		EventType: query.Get("event_type"),
-		Limit:     parsePositiveInt(query.Get("limit")),
-		Cursor:    query.Get("cursor"),
-	})
+	filter, err := parseSNMPEventFilter(query)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	events, nextCursor, err := api.collector.ListSNMPEventsPaged(r.Context(), auth.TenantID, device.ID, filter)
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
 		return
@@ -790,6 +790,50 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		response["next_cursor"] = nextCursor
 	}
 	WriteAPIJSON(w, http.StatusOK, response)
+}
+
+func parseSNMPEventFilter(query url.Values) (SNMPEventFilter, error) {
+	filter := SNMPEventFilter{
+		Search:    strings.TrimSpace(query.Get("q")),
+		EventType: strings.TrimSpace(query.Get("event_type")),
+		Cursor:    strings.TrimSpace(query.Get("cursor")),
+	}
+	if len(filter.Search) > 256 {
+		return SNMPEventFilter{}, fmt.Errorf("q must be at most 256 characters")
+	}
+	if len(filter.EventType) > 96 {
+		return SNMPEventFilter{}, fmt.Errorf("event_type must be at most 96 characters")
+	}
+	if raw := strings.TrimSpace(query.Get("severity")); raw != "" {
+		seen := make(map[string]struct{})
+		for _, value := range strings.Split(raw, ",") {
+			severity := strings.ToLower(strings.TrimSpace(value))
+			if severity == "" || len(severity) > 32 {
+				return SNMPEventFilter{}, fmt.Errorf("severity must be a comma-separated list of non-empty values up to 32 characters")
+			}
+			if _, ok := seen[severity]; ok {
+				continue
+			}
+			seen[severity] = struct{}{}
+			filter.Severities = append(filter.Severities, severity)
+			if len(filter.Severities) > 8 {
+				return SNMPEventFilter{}, fmt.Errorf("severity accepts at most 8 values")
+			}
+		}
+	}
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 500 {
+			return SNMPEventFilter{}, fmt.Errorf("limit must be between 1 and 500")
+		}
+		filter.Limit = limit
+	}
+	if filter.Cursor != "" {
+		if _, _, err := decodeAuditCursor(filter.Cursor); err != nil {
+			return SNMPEventFilter{}, fmt.Errorf("cursor is invalid")
+		}
+	}
+	return filter, nil
 }
 
 func (api networkAPI) discoverDeviceSNMP(w http.ResponseWriter, r *http.Request) {
