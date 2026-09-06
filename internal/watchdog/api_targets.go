@@ -48,10 +48,14 @@ func registerTargetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handl
 func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
 	auth, _ := AuthFromContext(r.Context())
 	query := r.URL.Query()
-	// Pagination is opt-in: only when limit or cursor is present. Without them
-	// the endpoint keeps returning the full tenant-visible list, because many
-	// callers use it as a complete dropdown source and count its length.
-	if query.Get("limit") != "" || query.Get("cursor") != "" {
+	if query.Get("q") != "" || query.Get("status") != "" || query.Get("kind") != "" ||
+		query.Get("sort") != "" || query.Get("order") != "" || query.Get("offset") != "" {
+		api.listTable(w, r, auth, query)
+		return
+	}
+	// Any remaining query is the compatibility keyset path. A request without
+	// query parameters keeps the complete dropdown behavior.
+	if len(query) > 0 {
 		api.listPaged(w, r, auth, query)
 		return
 	}
@@ -69,15 +73,100 @@ func (api targetAPI) list(w http.ResponseWriter, r *http.Request) {
 	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": visible})
 }
 
+func (api targetAPI) listTable(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	for key := range query {
+		switch key {
+		case "q", "kind", "exclude_kind", "status", "sort", "order", "limit", "offset":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
+	}
+	filter := TargetTableQuery{
+		Search: strings.TrimSpace(query.Get("q")), Kind: strings.TrimSpace(query.Get("kind")),
+		ExcludeKind: strings.TrimSpace(query.Get("exclude_kind")), Status: strings.TrimSpace(query.Get("status")),
+		Sort: strings.TrimSpace(query.Get("sort")), Desc: strings.EqualFold(strings.TrimSpace(query.Get("order")), "desc"),
+		Limit: 100,
+	}
+	if len(filter.Search) > 200 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "q must be at most 200 characters", nil)
+		return
+	}
+	for field, value := range map[string]string{"kind": filter.Kind, "exclude_kind": filter.ExcludeKind, "status": filter.Status} {
+		if len(value) > 32 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, field+" must be at most 32 characters", nil)
+			return
+		}
+	}
+	if filter.Kind != "" && filter.Kind != string(TargetKindSystem) && filter.Kind != string(TargetKindNetwork) {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "kind must be system or network", nil)
+		return
+	}
+	if filter.ExcludeKind != "" && filter.ExcludeKind != string(TargetKindSystem) && filter.ExcludeKind != string(TargetKindNetwork) {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "exclude_kind must be system or network", nil)
+		return
+	}
+	if filter.Status != "" && filter.Status != "pending" && filter.Status != "up" && filter.Status != "down" && filter.Status != "paused" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "status must be pending, up, down, or paused", nil)
+		return
+	}
+	if _, ok := targetTableSortColumns[filter.Sort]; !ok {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "sort must be name, kind, host, status, or updated_at", nil)
+		return
+	}
+	if order := strings.TrimSpace(query.Get("order")); order != "" && !strings.EqualFold(order, "asc") && !strings.EqualFold(order, "desc") {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
+		return
+	}
+	if raw := query.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 500 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	if raw := query.Get("offset"); raw != "" {
+		offset, err := strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be a non-negative integer", nil)
+			return
+		}
+		filter.Offset = offset
+	}
+	all, allowedIDs := visibleTargetScope(auth)
+	targets, total, err := api.repo.ListTargetsTablePage(r.Context(), auth.TenantID, all, allowedIDs, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if targets == nil {
+		targets = []Target{}
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": targets, "total": total, "limit": filter.Limit, "offset": filter.Offset})
+}
+
 func (api targetAPI) listPaged(w http.ResponseWriter, r *http.Request, auth AuthContext, query url.Values) {
+	for key := range query {
+		switch key {
+		case "limit", "cursor", "exclude_kind":
+		default:
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "unsupported query parameter: "+key, nil)
+			return
+		}
+	}
 	filter := TargetPageFilter{
 		Cursor:      strings.TrimSpace(query.Get("cursor")),
 		ExcludeKind: strings.TrimSpace(query.Get("exclude_kind")),
 	}
+	if filter.ExcludeKind != "" && filter.ExcludeKind != string(TargetKindSystem) && filter.ExcludeKind != string(TargetKindNetwork) {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "exclude_kind must be system or network", nil)
+		return
+	}
 	if raw := query.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit <= 0 {
-			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+		if err != nil || limit <= 0 || limit > 500 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 			return
 		}
 		filter.Limit = limit

@@ -64,6 +64,20 @@ type TargetPageFilter struct {
 	ExcludeKind string
 }
 
+// TargetTableQuery is the offset-paged, server-driven Hosts table contract.
+// It is separate from TargetPageFilter so existing keyset dropdown callers do
+// not inherit mutable search/sort semantics.
+type TargetTableQuery struct {
+	Search      string
+	Kind        string
+	ExcludeKind string
+	Status      string
+	Sort        string
+	Desc        bool
+	Limit       int
+	Offset      int
+}
+
 type TargetRepository interface {
 	ListTargets(ctx context.Context, tenantID ID) ([]Target, error)
 	// ListTargetsPage returns a keyset page. When all is true the whole tenant
@@ -71,6 +85,7 @@ type TargetRepository interface {
 	// returned (per-target view grants pushed into SQL). Returns the page and a
 	// next_cursor ("" on the last page).
 	ListTargetsPage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, filter TargetPageFilter) ([]Target, string, error)
+	ListTargetsTablePage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, query TargetTableQuery) ([]Target, int, error)
 	GetTarget(ctx context.Context, tenantID, targetID ID) (Target, error)
 	// GetTargetsByIDs batch-loads targets by id (for a page of device summaries).
 	GetTargetsByIDs(ctx context.Context, tenantID ID, ids []ID) (map[ID]Target, error)

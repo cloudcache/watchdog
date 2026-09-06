@@ -36,11 +36,11 @@ func TestMySQLListTargetsPage(t *testing.T) {
 	seed := []struct {
 		id, name, host string
 	}{
-		{"tgt_page_1", "dup", "h1"},
-		{"tgt_page_2", "dup", "h2"},
-		{"tgt_page_3", "m", "h3"},
-		{"tgt_page_4", "x", "h4"},
-		{"tgt_page_5", "z", "h5"},
+		{"tgt_page_1", "dup", "192.0.2.1"},
+		{"tgt_page_2", "dup", "192.0.2.2"},
+		{"tgt_page_3", "m", "192.0.2.3"},
+		{"tgt_page_4", "x", "192.0.2.4"},
+		{"tgt_page_5", "z", "192.0.2.5"},
 	}
 	for _, s := range seed {
 		if _, err := store.CreateTarget(ctx, Target{ID: ID(s.id), TenantID: tenant, Name: s.name, Kind: TargetKindSystem, Host: s.host}); err != nil {
@@ -94,7 +94,7 @@ func TestMySQLListTargetsPage(t *testing.T) {
 	// exclude_kind omits network targets (the Hosts view). Seed a network
 	// target, then page with ExcludeKind=network and confirm it is absent while
 	// the five system targets remain.
-	if _, err := store.CreateTarget(ctx, Target{ID: "tgt_page_net", TenantID: tenant, Name: "aaa-net", Kind: TargetKindNetwork, Host: "h-net"}); err != nil {
+	if _, err := store.CreateTarget(ctx, Target{ID: "tgt_page_net", TenantID: tenant, Name: "aaa-net", Kind: TargetKindNetwork, Host: "198.51.100.1"}); err != nil {
 		t.Fatal(err)
 	}
 	hosts := collect(true, nil, 100)
@@ -112,6 +112,22 @@ func TestMySQLListTargetsPage(t *testing.T) {
 	}
 	if len(filtered) != len(wantOrder) {
 		t.Fatalf("exclude_kind page = %d, want %d system targets", len(filtered), len(wantOrder))
+	}
+
+	if _, err := db.Exec(`UPDATE targets SET status = CASE id WHEN 'tgt_page_1' THEN 'up' WHEN 'tgt_page_2' THEN 'down' ELSE status END WHERE tenant_id = ?`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	tablePage, total, err := store.ListTargetsTablePage(ctx, tenant, true, nil, TargetTableQuery{
+		Search: "192.0.2", Status: "pending", ExcludeKind: string(TargetKindNetwork), Sort: "host", Desc: true, Limit: 2, Offset: 1,
+	})
+	if err != nil || total != 3 || len(tablePage) != 2 || tablePage[0].ID != "tgt_page_4" || tablePage[1].ID != "tgt_page_3" {
+		t.Fatalf("server table page=%v total=%d err=%v", tablePage, total, err)
+	}
+	scopedPage, scopedTotal, err := store.ListTargetsTablePage(ctx, tenant, false, []ID{"tgt_page_3", "tgt_page_5"}, TargetTableQuery{
+		ExcludeKind: string(TargetKindNetwork), Sort: "name", Limit: 25,
+	})
+	if err != nil || scopedTotal != 2 || len(scopedPage) != 2 || scopedPage[0].ID != "tgt_page_3" || scopedPage[1].ID != "tgt_page_5" {
+		t.Fatalf("scoped server table page=%v total=%d err=%v", scopedPage, scopedTotal, err)
 	}
 }
 

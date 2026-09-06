@@ -1,97 +1,121 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { PlusIcon, RefreshCwIcon, ServerIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
+import { PagedVTable } from "@/components/ui/paged-vtable"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { fetchTargetsPage, type TargetListItem } from "@/lib/api"
-import { createListTable, disposeTable, getRowRecord, type ListTable } from "@/lib/vtable"
+import type { ColumnDefine } from "@/lib/vtable"
 
 // Network targets live on the Network page (device view); the Hosts list
 // excludes them server-side so pagination pages over host targets only.
-const PAGE_SIZE = 200
 
 export default memo(() => {
 	const { t } = useLingui()
-	const tableRef = useRef<HTMLDivElement>(null)
-	const tableInstance = useRef<ListTable | null>(null)
 	const [targets, setTargets] = useState<TargetListItem[]>([])
-	const [cursor, setCursor] = useState("")
+	const [total, setTotal] = useState(0)
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(25)
+	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
+	const [status, setStatus] = useState("all")
+	const [sort, setSort] = useState("name:asc")
 	const [loading, setLoading] = useState(true)
-	const [loadingMore, setLoadingMore] = useState(false)
 	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
 
 	const refresh = useCallback(async () => {
+		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
 		try {
-			const { items, nextCursor } = await fetchTargetsPage({ limit: PAGE_SIZE, excludeKind: "network" })
+			const [sortField, order] = sort.split(":") as [string, "asc" | "desc"]
+			const { items, total: responseTotal } = await fetchTargetsPage({
+				limit: pageSize,
+				offset: page * pageSize,
+				excludeKind: "network",
+				search: query,
+				status: status === "all" ? undefined : status,
+				sort: sortField,
+				order,
+			})
+			if (sequence !== requestSequence.current) return
 			setTargets(items)
-			setCursor(nextCursor)
+			setTotal(responseTotal ?? 0)
 		} catch (err) {
+			if (sequence !== requestSequence.current) return
+			setTargets([])
+			setTotal(0)
 			setError(err instanceof Error ? err.message : t`Failed to load targets`)
 		} finally {
-			setLoading(false)
+			if (sequence === requestSequence.current) setLoading(false)
 		}
-	}, [t])
-
-	const loadMore = useCallback(async () => {
-		if (!cursor || loadingMore) {
-			return
-		}
-		setLoadingMore(true)
-		try {
-			const { items, nextCursor } = await fetchTargetsPage({ limit: PAGE_SIZE, cursor, excludeKind: "network" })
-			setTargets((current) => [...current, ...items])
-			setCursor(nextCursor)
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to load targets`)
-		} finally {
-			setLoadingMore(false)
-		}
-	}, [cursor, loadingMore])
+	}, [page, pageSize, query, sort, status, t])
 
 	useEffect(() => {
 		document.title = `${t`Hosts`} / Watchdog`
 		refresh()
 	}, [refresh, t])
 
-	useEffect(() => {
-		if (!tableRef.current || loading || error) {
-			return
-		}
-		const records = targets.map((target) => {
-			const id = target.id
-			return {
-				id,
+	const records = useMemo(
+		() =>
+			targets.map((target) => ({
+				id: target.id,
 				name: target.name || "—",
 				type: target.kind || "—",
 				host: target.host || "—",
 				status: target.status || "—",
 				labels: formatLabels(target.labels),
 				updated: target.updated_at || "—",
-			}
-		})
-		disposeTable(tableInstance.current)
-		tableInstance.current = createListTable(tableRef.current, {
-			records,
-			columns: [
-				{ field: "name", title: t`Name`, width: 220 },
-				{ field: "type", title: t`Type`, width: 120 },
-				{ field: "host", title: t`Host`, width: 220 },
-				{ field: "status", title: t`Status`, width: 120 },
-				{ field: "labels", title: t`Labels`, width: 260 },
-				{ field: "updated", title: t`Updated`, width: 220 },
-			],
-		})
-		tableInstance.current.on("click_cell", (args: { col: number; row: number }) => {
-			const record = getRowRecord(tableInstance.current, args)
-			if (record?.id) {
-				navigate(getPagePath($router, "target_detail", { id: record.id }))
-			}
-		})
-		return () => disposeTable(tableInstance.current)
-	}, [error, loading, t, targets])
+			})),
+		[targets]
+	)
+	const columns = useMemo<ColumnDefine[]>(
+		() => [
+			{ field: "name", title: t`Name`, width: 220 },
+			{ field: "type", title: t`Type`, width: 120 },
+			{ field: "host", title: t`Host`, width: 220 },
+			{ field: "status", title: t`Status`, width: 120 },
+			{ field: "labels", title: t`Labels`, width: 260 },
+			{ field: "updated", title: t`Updated`, width: 220 },
+		],
+		[t]
+	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: { status: ["pending", "up", "down", "paused"].map((value) => ({ value })) },
+			selected: { status: status === "all" ? [] : [status] },
+			selection: { status: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setStatus(values.length > 0 ? String(values[0]) : "all")),
+			onClearAll: () => resetPage(() => setStatus("all")),
+		}),
+		[status]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { name: "name", type: "kind", host: "host", status: "status", updated: "updated_at" },
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -113,29 +137,53 @@ export default memo(() => {
 					</Button>
 				</div>
 			</div>
-
-			<div className="rounded-md border border-border bg-card">
-				{loading ? (
-					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>Loading...</Trans>
-					</div>
-				) : null}
-				{error ? <div className="p-3 text-sm text-destructive">{error}</div> : null}
-				{!loading && !error && targets.length === 0 ? (
-					<div className="p-3 text-sm text-muted-foreground">
-						<Trans>No hosts found.</Trans>
-					</div>
-				) : null}
-				<div ref={tableRef} className="h-[520px] w-full" />
+			<div className="flex flex-wrap gap-2">
+				<Select value={status} onValueChange={(value) => resetPage(() => setStatus(value))}>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all">{t`All statuses`}</SelectItem>
+						{["pending", "up", "down", "paused"].map((value) => (
+							<SelectItem key={value} value={value}>
+								{value}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			</div>
 
-			{cursor ? (
-				<div className="flex justify-center">
-					<Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
-						{loadingMore ? <Trans>Loading...</Trans> : <Trans>Load more</Trans>}
-					</Button>
-				</div>
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
 			) : null}
+			<div className="rounded-md border border-border bg-card p-3">
+				<PagedVTable
+					records={records}
+					columns={columns}
+					loading={loading}
+					emptyText={t`No hosts found.`}
+					searchPlaceholder={t`Search hosts by name, host, type, or status...`}
+					searchValue={search}
+					onSearchChange={setSearch}
+					height={520}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
+					serverPagination={{
+						page,
+						pageSize,
+						totalCount: total,
+						onPageChange: setPage,
+						onPageSizeChange: (value) => {
+							setPage(0)
+							setPageSize(value)
+						},
+					}}
+					onRowClick={(record) => {
+						const id = String(record.id ?? "")
+						if (id) navigate(getPagePath($router, "target_detail", { id }))
+					}}
+				/>
+			</div>
 		</div>
 	)
 })

@@ -20,6 +20,8 @@ type fakeTargetRepository struct {
 	pagedFilter  TargetPageFilter
 	pagedCalled  bool
 	pageNext     string
+	tableFilter  TargetTableQuery
+	tableTotal   int
 }
 
 func (r *fakeTargetRepository) ListTargets(context.Context, ID) ([]Target, error) {
@@ -32,6 +34,18 @@ func (r *fakeTargetRepository) ListTargetsPage(_ context.Context, _ ID, all bool
 	r.pagedAllowed = allowedIDs
 	r.pagedFilter = filter
 	return r.targets, r.pageNext, nil
+}
+
+func (r *fakeTargetRepository) ListTargetsTablePage(_ context.Context, _ ID, all bool, allowedIDs []ID, filter TargetTableQuery) ([]Target, int, error) {
+	r.pagedCalled = true
+	r.pagedAll = all
+	r.pagedAllowed = allowedIDs
+	r.tableFilter = filter
+	total := r.tableTotal
+	if total == 0 {
+		total = len(r.targets)
+	}
+	return r.targets, total, nil
 }
 
 func (r *fakeTargetRepository) GetTargetsByIDs(_ context.Context, _ ID, ids []ID) (map[ID]Target, error) {
@@ -164,6 +178,43 @@ func TestAPITargetsListPagedRejectsBadLimit(t *testing.T) {
 		}
 		if repo.pagedCalled {
 			t.Fatalf("limit=%q must be rejected before the repo", bad)
+		}
+	}
+}
+
+func TestAPITargetsListServerTable(t *testing.T) {
+	repo := &fakeTargetRepository{
+		targets:    []Target{{ID: "target-a", TenantID: "tenant-a", Name: "Host A", Kind: TargetKindSystem, Host: "10.0.0.1", Status: "up"}},
+		tableTotal: 7,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: targetTestAuth, Targets: repo})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/targets?q=host&status=up&exclude_kind=network&sort=updated_at&order=desc&limit=25&offset=50", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.tableFilter.Search != "host" || repo.tableFilter.Status != "up" ||
+		repo.tableFilter.ExcludeKind != "network" || repo.tableFilter.Sort != "updated_at" ||
+		!repo.tableFilter.Desc || repo.tableFilter.Limit != 25 || repo.tableFilter.Offset != 50 {
+		t.Fatalf("table filter=%+v", repo.tableFilter)
+	}
+	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
+		t.Fatalf("scope all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
+	}
+	if !strings.Contains(rec.Body.String(), `"total":7`) || !strings.Contains(rec.Body.String(), `"limit":25`) ||
+		!strings.Contains(rec.Body.String(), `"offset":50`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+
+	for _, query := range []string{
+		"q=x&cursor=bad", "kind=broken", "exclude_kind=broken", "status=broken", "sort=raw_sql", "order=sideways",
+		"limit=501&sort=name", "offset=-1", "unknown=1&q=x",
+	} {
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query=%q status=%d body=%s", query, rec.Code, rec.Body.String())
 		}
 	}
 }

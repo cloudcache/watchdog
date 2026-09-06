@@ -509,7 +509,7 @@ type TargetKindDescriptor struct {
 core API 保持资源导向：
 
 ```text
-GET/POST                 /api/v1/targets
+GET/POST                 /api/v1/targets?q=&kind=&exclude_kind=&status=&sort=&order=&limit=&offset=
 GET/PATCH/DELETE         /api/v1/targets/{id}
 GET                      /api/v1/targets/{id}/summary
 GET                      /api/v1/targets/{id}/resources

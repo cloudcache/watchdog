@@ -88,6 +88,83 @@ func (s *MySQLStore) ListTargetsPage(ctx context.Context, tenantID ID, all bool,
 	return targets, nextCursor, nil
 }
 
+var targetTableSortColumns = map[string]string{
+	"":           "name",
+	"name":       "name",
+	"kind":       "kind",
+	"host":       "host",
+	"status":     "status",
+	"updated_at": "updated_at",
+}
+
+func (s *MySQLStore) ListTargetsTablePage(ctx context.Context, tenantID ID, all bool, allowedIDs []ID, filter TargetTableQuery) ([]Target, int, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if !all && len(allowedIDs) == 0 {
+		return nil, 0, nil
+	}
+	where, args := targetTableWhere(tenantID, all, allowedIDs, filter)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM targets`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumn := targetTableSortColumns[filter.Sort]
+	if sortColumn == "" {
+		sortColumn = "name"
+	}
+	direction := "ASC"
+	if filter.Desc {
+		direction = "DESC"
+	}
+	query := targetSelect() + where + ` ORDER BY ` + sortColumn + ` ` + direction + `, id ` + direction + ` LIMIT ? OFFSET ?`
+	pageArgs := append(append([]any{}, args...), limit, max(0, filter.Offset))
+	rows, err := s.db.QueryContext(ctx, query, pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	targets := make([]Target, 0, min(limit, total))
+	for rows.Next() {
+		target, err := scanTarget(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, total, rows.Err()
+}
+
+func targetTableWhere(tenantID ID, all bool, allowedIDs []ID, filter TargetTableQuery) (string, []any) {
+	where := ` WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if !all {
+		where += ` AND id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(allowedIDs)), ",") + `)`
+		for _, id := range allowedIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.ExcludeKind != "" {
+		where += ` AND kind <> ?`
+		args = append(args, filter.ExcludeKind)
+	}
+	if filter.Kind != "" {
+		where += ` AND kind = ?`
+		args = append(args, filter.Kind)
+	}
+	if filter.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		where += ` AND (name LIKE ? OR host LIKE ? OR kind LIKE ? OR status LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+	return where, args
+}
+
 // GetTargetsByIDs batch-loads targets by id for a page of device summaries,
 // avoiding a per-row lookup. Missing ids are simply absent from the map.
 func (s *MySQLStore) GetTargetsByIDs(ctx context.Context, tenantID ID, ids []ID) (map[ID]Target, error) {

@@ -354,15 +354,27 @@ export async function fetchTargetsPage(opts: {
 	limit?: number
 	cursor?: string
 	excludeKind?: string
-}): Promise<{ items: TargetListItem[]; nextCursor: string }> {
-	const res = await pb.send<{ items?: TargetListItem[]; next_cursor?: string }>("/api/v1/targets", {
+	search?: string
+	status?: string
+	kind?: string
+	sort?: string
+	order?: "asc" | "desc"
+	offset?: number
+}): Promise<{ items: TargetListItem[]; nextCursor: string; total?: number }> {
+	const res = await pb.send<{ items?: TargetListItem[]; next_cursor?: string; total?: number }>("/api/v1/targets", {
 		query: {
 			limit: opts.limit ?? 100,
 			cursor: opts.cursor || undefined,
 			exclude_kind: opts.excludeKind || undefined,
+			q: opts.search || undefined,
+			status: opts.status || undefined,
+			kind: opts.kind || undefined,
+			sort: opts.sort || undefined,
+			order: opts.order || undefined,
+			offset: opts.offset || undefined,
 		},
 	})
-	return { items: res.items ?? [], nextCursor: res.next_cursor ?? "" }
+	return { items: res.items ?? [], nextCursor: res.next_cursor ?? "", total: res.total }
 }
 
 export function getPbTimestamp(timeString: ChartTimes, d?: Date) {
