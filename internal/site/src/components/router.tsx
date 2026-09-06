@@ -55,6 +55,7 @@ const routes = {
 	target_edit: "/targets/:id/edit",
 	target_detail: "/targets/:id",
 	traffic_defaults: "/network/traffic-defaults",
+	address_library_root: "/address-library",
 	address_library: "/address-library/:section",
 	address_prefixes: "/address-prefixes",
 	address_sets: "/address-sets",
