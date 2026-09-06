@@ -231,6 +231,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **设计**：冻结 `range ≠ display step ≠ source resolution`；`target_points` 驱动自动 planner，显式 step 也只控制展示；响应回传 requested/effective range、source、source/display seconds。冻结折线/堆叠/热力/表格先消费单维序列，桑基只能消费真实联合维度 tuple，禁止多次单维查询拼接。
 - [x] **编码（自动 planner/单维查询）**：`PlanAggregate` 支持 5..2000 目标点、1m..30d 显式展示步长、1m/1h 自动选源和各自扫描预算；aggregate compiler 以 effective-from 为锚点二次汇聚 source bucket，provider 回传实际 step/source；QueryGateway metadata 使用 provider 实际 step。
 - [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
+- [x] **编码（便捷分析层）**：同页默认提供国家→省→市、运营商、时间、metric 和分析类型选择；覆盖真实入/出方向、协议、TOP 源/目的 IP、TOP 本地/远端网段，运营商严格按已配置 ASN 集合过滤；高级 Explorer 折叠保留且不复制查询后端。
+- [x] **当前结果导出**：CSV 导出当前查询返回的 bucket、序列、原值、单位、min/max/last/avg/p95/total 和 sampling/quality 计数，包含 UTF-8 BOM、标准引号转义与公式注入防护；明确不冒充 FLOW-06C 全量异步导出。
 - [x] **单元**：planner 覆盖 5m/1h/6h/24h/7d/30d/1y、显式 15m、未来/非法密度/两类源扫描超限；compiler/runner 覆盖 source completeness 与展示桶对齐；前端覆盖预设/自定义、typed filter、末桶 total 和三种 chart spec。
 - [x] **集成（真实 CH）**：独立库在两个完整 1m source bucket 上以 15m 展示步长查询，末桶仅覆盖 120 秒；bps 使用实际 120 秒且 completeness 仍为 2/2 source marker。既有 repair/多 block/cancel 门禁同测通过。
 - [x] **联合维度/桑基（有界 base）**：独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成 2–4 维有序 tuple、稳定 tuple TopN/Other、折线/堆叠/热力/表格和桑基；同步范围限 24h，固定 typed expression registry 和 CH 扫描/时间/内存硬限，拒绝歧义 `dimension_values`、重复维度及重叠 address-set；runner 多 block 全有或全无。没有新增表，因此本项不伪造空 migration。
@@ -241,9 +243,11 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **保存/共享过滤器**：新增唯一管理库 migration，冻结 owner/share scope/If-Match/软删除/audit/RBAC/引用保护和 CRUD/list/filter；不得把保存状态放入 Flow worker/CH 或再造管理库。
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
 - [x] **集成（typed filter 增量）**：真实 HTTP 覆盖 validate/规范 AST/base-fact 空结果及 source/step/partial metadata；生产 8090 浏览器覆盖完整时间预设、CIDR+ASN 表达式、24h 提示、`flow_records source` 和空结果，无 `Failed to fetch`。其余四视图/RBAC/故障组合仍由上一项承载。
+- [ ] **集成（便捷分析增量）**：生产 8090 登录态验证默认便捷筛选、高级区折叠、方向双查询、协议/TOP 切换、URL 重放、级联地域/运营商映射、空结果/错误和 CSV 下载；完成后记录制品与提交证据。
+- [x] **回归（便捷分析增量）**：前端 28 项 model/chart test、定向 Biome、Vite production build 和全库 `go test ./...` 通过；8090 最终制品验证默认便捷层、方向空结果、协议/TOP 选择和高级区展开，无前端异常。本地库无 Flow 点且 Geo/operator 字典为空，因此真实非空 CSV 下载、地域级联和运营商 ASN 选择仍留在上一集成门禁，未冒充完成。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
-- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC 和滚动升级门禁仍保持未完成。
+- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成和滚动升级门禁仍保持未完成。
 
 ### FLOW-06 Correction/Reclass/Export
 

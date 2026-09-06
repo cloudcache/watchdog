@@ -178,6 +178,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **变更/回归**：窄屏 360×480 实测 modal 为 328px 宽、左右各留 16px，高 384px 且 `overflow-y:auto`；桌面 1280×720 为 576×437px，未越界。前端定向 Biome、单测、Lingui compile/Vite production build 和全库回归通过。
   - [x] **已提交门禁**：组件、表单接线、单元、设计和任务清单由同一提交交付；无 migration，未夹带 Flow 数据面及既有 maintenance/delete-preview 工作区文件。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
+- [ ] **PLAT-04C4 运营商发布身份**：冻结 MySQL `isp_operators` 与 Flow `operators.json` UInt16 `isp_id` 的稳定映射、唯一性、不可复用、导入/发布/回滚和引用保护；完成前便捷 Flow 查询只按运营商已配置 ASN 集合过滤，禁止把管理 ULID/code 当 `remote_isp_id`。
   - [x] **C3a 编译路径基线**（commit `2b762ec5`，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie、选择器集合、DAG/per-address overlap benchmark + 常驻内存 tripwire；prefix 与 set 编译均线性、无二次爆炸、约 74 B/prefix；`MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32，在编译期封顶展开。
   - [x] **C3c 管理集合运算/API 预算**：独立认证，不修改 C1 生产实现。
     - [x] **设计**：冻结 50,000 输入表达式、200,000 结果前缀、1,000 overlap 明细和 4 MiB HTTP body 四道互不替代的门；完整 overlap 总数必须保留，明细截断必须显式标记。
