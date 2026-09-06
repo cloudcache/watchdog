@@ -35,11 +35,11 @@
 - [x] **F11 内网向流 address-set 归属恒空** ✅ commit 8747ef85（决策=in/out 并集）— 编译期预计算 `internal` 并集字段（每匹配集恰一次），classify 时零拷贝 alias（保零分配）；per-record 展开上限计入 2*maxLocalInternal。单测断言内网流 local 端携带集归属。 — `endpoint()` switch 无 `DirectionInternal` 分支 → 内网流量丢客户归属。→ 补分支（推荐 in/out 并集）；与产品确认语义。文件：`flowdimension/classify.go:102`。验证：内网 10.x↔10.x 流命中 `both` 集合。
 - [ ] **F12 历史 GeoIndex 版本不回收（`RetainVersions` 无调用方）** — 长期运行内存缓慢泄漏。→ 把 `RetainVersions` 接进 reload/保留策略（只留事件时间重放窗口内版本）。文件：`flowdimension/geo.go:427`、`internal/watchdog/flow_geo.go`。
 - [x] **F16 VPN 打分器每规则预分配 signals 切片** ✅ commit（本轮）— `make([]string,0,12)` 改 `var signals []string`，首检失败即零分配。AllocsPerRun 断言早退零分配。 — 每窗口约 5000 万次废弃分配。→ signals 延迟到首个成功信号才分配。文件：`flowvpn/scorer.go:401`。验证：alloc 基准显著下降。
-- [ ] **F15 解码热路径多一次 proto marshal→unmarshal + 分配** — 全系统最高频操作。→ 直接捕获内嵌 `FlowMessage`，去 format+transport 往返。文件：`flowstream/decoder.go:56`。验证：alloc 基准 + 解码正确性回归。
+- [ ] **F15 解码热路径多一次 proto marshal→unmarshal + 分配** — 全系统最高频操作。→ 直接捕获内嵌 `FlowMessage`，去 format+transport 往返。文件：`flowstream/decoder.go:56`。**暂缓（有池化风险）**：当前 `captureTransport.Send` 是 unmarshal 到新 `FlowMessage`（防御性拷贝），直接捕获 `&m.FlowMessage` 会 alias 被 `Commit` 回收复用的池化消息 → `DecodedBatch` 指针可能失效、热路径数据损坏。需先厘清 pool/Commit 生命周期（或对捕获做浅拷贝），作为专门 perf 切片再做；纯 perf 非可靠性。
 - [ ] **F14 汇总租户公平性游标按「列出」推进** — 追赶期头几个租户耗尽预算、其余饥饿。→ 游标只推进到实际处理的最后一个租户。文件：`internal/watchdog/flow_rollup_jobs.go:139`。
-- [ ] **F17 全表无压缩 CODEC** 【CH 迁移】 — 时间/计数/IPv6 列均落默认 LZ4。→ 只进 `MODIFY COLUMN … CODEC(...)` 迁移（Delta/DoubleDelta/T64/Gorilla/ZSTD）。文件：`deploy/migration/clickhouse/`。
+- [x] **F17 全表无压缩 CODEC** 【CH 迁移】 ✅ commit cfc2cef8 — migration 007 给 flow_records 关键列加 CODEC：时间/单调 offset→DoubleDelta,ZSTD；计数→T64,ZSTD；IPv6→ZSTD。MODIFY COLUMN 元数据级、在线。gated CH 迁移链应用绿；loader/canonical-set 断言升到 7。聚合表 CODEC 留后续。 — 时间/计数/IPv6 列均落默认 LZ4。→ 只进 `MODIFY COLUMN … CODEC(...)` 迁移（Delta/DoubleDelta/T64/Gorilla/ZSTD）。文件：`deploy/migration/clickhouse/`。
 - [ ] **F18-mig 迁移 006 会在有数据集群超时** 【CH 运维】 — `MATERIALIZE PROJECTION … mutations_sync=2` 阻塞全表 mutation > 默认 5min。→ 为 006 配大 timeout 或轮询 `system.mutations`。
-- [ ] **F18-block 回放块跨 >100 event-time 日触分区上限卡死** — `max_partitions_per_insert_block` 未归类 permanent → 无限重试。→ 按分区日切块 + event_time 合理性窗口。文件：`flowch/batch.go:90`。
+- [x] **F18-block 回放块跨 >100 event-time 日触分区上限卡死** ✅ commit 21fa59d7 — PrepareBlocks 跟踪当前块 distinct partition-day，超 `MaxPartitionDays`(默认90,硬顶100) 前先 flush，数据保留（尾部起新块）。单测证 4 天在 2 天上限下分 2 块。 — `max_partitions_per_insert_block` 未归类 permanent → 无限重试。→ 按分区日切块 + event_time 合理性窗口。文件：`flowch/batch.go:90`。
 - [ ] **F18-est 行数估计忽略 version 元组乘数** — 混版本长范围抛原始 CH overflow 而非 typed 错误。→ 把版本多重性纳入估计，或翻译 overflow 回 `ErrorLimitExceeded`。文件：`flowquery/query.go:277`。
 - [ ] **F13 遗留 `watchdog-sflow-collector` 下线** 【需决策】 — 逐包 DB I/O、静默丢包、关闭挂起、60s 丢数窗口。→ 推荐以 flowstream Receiver 取代后删除；若须保留则内存缓存 device/port + `SetReadBuffer` + 丢包指标 + ctx 关 conn + 退出前 flush。文件：`internal/watchdog/sflow_collector.go`。
 
