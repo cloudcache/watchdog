@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { EyeIcon, RefreshCwIcon, ReplaceIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -371,16 +372,28 @@ export default memo(function AddressRevisions() {
 						<FormInput label={t`Labels`} value={form.labels} onChange={(value) => updateForm({ labels: value })} />
 						<FormInput label={t`Source`} value={form.source} onChange={(value) => updateForm({ source: value })} />
 						<FormInput label="ASN" value={form.asn} onChange={(value) => updateForm({ asn: value })} />
-						<FormInput
-							label={t`Geography node ID`}
-							value={form.geoLeafID}
-							onChange={(value) => updateForm({ geoLeafID: value })}
-						/>
-						<FormInput
-							label={t`Operator ID`}
-							value={form.operatorID}
-							onChange={(value) => updateForm({ operatorID: value })}
-						/>
+						<div className="grid gap-2">
+							<Label>
+								<Trans>Geography</Trans>
+							</Label>
+							<AddressReferencePicker
+								kind="geography"
+								value={form.geoLeafID ? [form.geoLeafID] : []}
+								onChange={(value) => updateForm({ geoLeafID: value[0] ?? "" })}
+								placeholder={t`Choose geography`}
+							/>
+						</div>
+						<div className="grid gap-2">
+							<Label>
+								<Trans>Operator</Trans>
+							</Label>
+							<AddressReferencePicker
+								kind="operator"
+								value={form.operatorID ? [form.operatorID] : []}
+								onChange={(value) => updateForm({ operatorID: value[0] ?? "" })}
+								placeholder={t`Choose operator`}
+							/>
+						</div>
 						<div className="rounded border p-2 text-sm">
 							<div className="text-xs text-muted-foreground">
 								<Trans>Selected old prefixes</Trans>

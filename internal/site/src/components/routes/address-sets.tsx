@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { LayersIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,14 +39,14 @@ const emptyForm = {
 	name: "",
 	description: "",
 	labels: "",
-	geoNodeIDs: "",
-	operatorIDs: "",
+	geoNodeIDs: [] as string[],
+	operatorIDs: [] as string[],
 	asns: "",
 	families: "",
 	members: "",
 	excludeMembers: "",
-	includeSetIDs: "",
-	excludeSetIDs: "",
+	includeSetIDs: [] as string[],
+	excludeSetIDs: [] as string[],
 	direction: "both" as "in" | "out" | "both",
 	enabled: true,
 }
@@ -107,10 +108,8 @@ export default memo(function AddressSets() {
 			if (families.some((family) => family !== 4 && family !== 6)) throw new Error(t`IP families must be 4 or 6`)
 			const selector = {
 				...(Object.keys(labels).length ? { labels } : {}),
-				...(parseAddressEntries(form.geoNodeIDs).length ? { geo_node_ids: parseAddressEntries(form.geoNodeIDs) } : {}),
-				...(parseAddressEntries(form.operatorIDs).length
-					? { operator_ids: parseAddressEntries(form.operatorIDs) }
-					: {}),
+				...(form.geoNodeIDs.length ? { geo_node_ids: form.geoNodeIDs } : {}),
+				...(form.operatorIDs.length ? { operator_ids: form.operatorIDs } : {}),
 				...(asns.length ? { asns } : {}),
 				...(families.length ? { families } : {}),
 			}
@@ -123,8 +122,8 @@ export default memo(function AddressSets() {
 					selector,
 					explicit_members: parseAddressEntries(form.members),
 					explicit_exclude_members: parseAddressEntries(form.excludeMembers),
-					include_set_ids: parseAddressEntries(form.includeSetIDs),
-					exclude_set_ids: parseAddressEntries(form.excludeSetIDs),
+					include_set_ids: form.includeSetIDs,
+					exclude_set_ids: form.excludeSetIDs,
 					match_direction: form.direction,
 					enabled: form.enabled,
 				},
@@ -148,14 +147,14 @@ export default memo(function AddressSets() {
 			labels: Object.entries(item.selector.labels ?? {})
 				.map(([key, values]) => `${key}=${values.join("|")}`)
 				.join(","),
-			geoNodeIDs: (item.selector.geo_node_ids ?? []).join(","),
-			operatorIDs: (item.selector.operator_ids ?? []).join(","),
+			geoNodeIDs: item.selector.geo_node_ids ?? [],
+			operatorIDs: item.selector.operator_ids ?? [],
 			asns: (item.selector.asns ?? []).join(","),
 			families: (item.selector.families ?? []).join(","),
 			members: (item.explicit_members ?? []).join("\n"),
 			excludeMembers: (item.explicit_exclude_members ?? []).join("\n"),
-			includeSetIDs: (item.include_set_ids ?? []).join(","),
-			excludeSetIDs: (item.exclude_set_ids ?? []).join(","),
+			includeSetIDs: item.include_set_ids ?? [],
+			excludeSetIDs: item.exclude_set_ids ?? [],
 			direction: item.match_direction,
 			enabled: item.enabled,
 		})
@@ -323,22 +322,26 @@ export default memo(function AddressSets() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Geography node IDs</Trans>
+							<Trans>Geographies</Trans>
 						</Label>
-						<Input
+						<AddressReferencePicker
+							kind="geography"
 							value={form.geoNodeIDs}
-							onChange={(event) => setForm({ ...form, geoNodeIDs: event.target.value })}
-							placeholder="geo node IDs, comma separated"
+							onChange={(geoNodeIDs) => setForm({ ...form, geoNodeIDs })}
+							placeholder={t`Choose geographies`}
+							multiple
 						/>
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Operator IDs</Trans>
+							<Trans>Operators</Trans>
 						</Label>
-						<Input
+						<AddressReferencePicker
+							kind="operator"
 							value={form.operatorIDs}
-							onChange={(event) => setForm({ ...form, operatorIDs: event.target.value })}
-							placeholder="operator IDs, comma separated"
+							onChange={(operatorIDs) => setForm({ ...form, operatorIDs })}
+							placeholder={t`Choose operators`}
+							multiple
 						/>
 					</div>
 					<div className="grid gap-2">
@@ -401,20 +404,28 @@ export default memo(function AddressSets() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Included set IDs</Trans>
+							<Trans>Included sets</Trans>
 						</Label>
-						<Input
+						<AddressReferencePicker
+							kind="address-set"
 							value={form.includeSetIDs}
-							onChange={(event) => setForm({ ...form, includeSetIDs: event.target.value })}
+							onChange={(includeSetIDs) => setForm({ ...form, includeSetIDs })}
+							placeholder={t`Choose included sets`}
+							multiple
+							excludeIDs={form.id ? [form.id] : []}
 						/>
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Excluded set IDs</Trans>
+							<Trans>Excluded sets</Trans>
 						</Label>
-						<Input
+						<AddressReferencePicker
+							kind="address-set"
 							value={form.excludeSetIDs}
-							onChange={(event) => setForm({ ...form, excludeSetIDs: event.target.value })}
+							onChange={(excludeSetIDs) => setForm({ ...form, excludeSetIDs })}
+							placeholder={t`Choose excluded sets`}
+							multiple
+							excludeIDs={form.id ? [form.id] : []}
 						/>
 					</div>
 					<div className="grid gap-2">

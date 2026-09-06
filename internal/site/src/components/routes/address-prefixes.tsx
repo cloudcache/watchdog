@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -304,15 +305,25 @@ export default memo(function AddressPrefixes() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Geography node ID</Trans> (<Trans>optional</Trans>)
+							<Trans>Geography</Trans> (<Trans>optional</Trans>)
 						</Label>
-						<Input value={form.geoLeafID} onChange={(event) => setForm({ ...form, geoLeafID: event.target.value })} />
+						<AddressReferencePicker
+							kind="geography"
+							value={form.geoLeafID ? [form.geoLeafID] : []}
+							onChange={(value) => setForm({ ...form, geoLeafID: value[0] ?? "" })}
+							placeholder={t`Choose geography`}
+						/>
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Operator ID</Trans> (<Trans>optional</Trans>)
+							<Trans>Operator</Trans> (<Trans>optional</Trans>)
 						</Label>
-						<Input value={form.operatorID} onChange={(event) => setForm({ ...form, operatorID: event.target.value })} />
+						<AddressReferencePicker
+							kind="operator"
+							value={form.operatorID ? [form.operatorID] : []}
+							onChange={(value) => setForm({ ...form, operatorID: value[0] ?? "" })}
+							placeholder={t`Choose operator`}
+						/>
 					</div>
 					<div className="flex gap-2 md:col-span-2">
 						<Button size="sm" onClick={save}>

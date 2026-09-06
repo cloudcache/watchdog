@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { GitBranchIcon, MapIcon, NetworkIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -519,13 +520,18 @@ function TaxonomyEditor({
 							</SelectContent>
 						</Select>
 					</div>
-					<SelectField
+					<ReferenceField
 						label="Parent geography"
+						kind="geography"
 						value={form.parentID}
-						options={geoOptions
-							.filter((item) => item.id !== form.id)
-							.map((item) => ({ id: item.id, name: `${item.kind} · ${item.name}` }))}
 						onChange={(parentID) => setForm({ ...form, parentID })}
+						placeholder="Choose parent geography"
+						options={geoOptions.map((item) => ({
+							id: item.id,
+							label: `${item.kind} · ${item.name}`,
+							description: item.code,
+						}))}
+						excludeIDs={form.id ? [form.id] : []}
 					/>
 					<FormInput
 						label="Short name"
@@ -547,25 +553,30 @@ function TaxonomyEditor({
 			) : null}
 			{kind === "lines" ? (
 				<>
-					<SelectField
+					<ReferenceField
 						label="Parent line"
+						kind="line"
 						value={form.parentID}
-						options={lineOptions
-							.filter((item) => item.id !== form.id)
-							.map((item) => ({ id: item.id, name: item.name }))}
 						onChange={(parentID) => setForm({ ...form, parentID })}
+						placeholder="Choose parent line"
+						options={lineOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
+						excludeIDs={form.id ? [form.id] : []}
 					/>
-					<SelectField
+					<ReferenceField
 						label="Operator"
+						kind="operator"
 						value={form.operatorID}
-						options={operatorOptions.map((item) => ({ id: item.id, name: item.name }))}
 						onChange={(operatorID) => setForm({ ...form, operatorID })}
+						placeholder="Choose operator"
+						options={operatorOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
 					/>
-					<SelectField
+					<ReferenceField
 						label="Address set"
+						kind="address-set"
 						value={form.addressSetID}
-						options={setOptions}
 						onChange={(addressSetID) => setForm({ ...form, addressSetID })}
+						placeholder="Choose address set"
+						options={setOptions.map((item) => ({ id: item.id, label: item.name }))}
 					/>
 					<div className="grid gap-2 md:col-span-3">
 						<Label>
@@ -580,18 +591,18 @@ function TaxonomyEditor({
 						<Label>
 							<Trans>Geography combination</Trans>
 						</Label>
-						<div className="grid max-h-48 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-3">
-							{geoOptions.map((item) => (
-								<CheckOption
-									key={item.id}
-									checked={form.geoNodeIDs.includes(item.id)}
-									label={`${item.kind} · ${item.name}`}
-									onChange={(checked) =>
-										setForm({ ...form, geoNodeIDs: toggleListValue(form.geoNodeIDs, item.id, checked) })
-									}
-								/>
-							))}
-						</div>
+						<AddressReferencePicker
+							kind="geography"
+							value={form.geoNodeIDs}
+							onChange={(geoNodeIDs) => setForm({ ...form, geoNodeIDs })}
+							placeholder="Choose geography combination"
+							multiple
+							initialOptions={geoOptions.map((item) => ({
+								id: item.id,
+								label: `${item.kind} · ${item.name}`,
+								description: item.code,
+							}))}
+						/>
 					</div>
 					<div className="grid content-start gap-2">
 						<Label>
@@ -647,35 +658,34 @@ function FormInput({
 	)
 }
 
-function SelectField({
+function ReferenceField({
 	label,
+	kind,
 	value,
 	options,
 	onChange,
+	placeholder,
+	excludeIDs,
 }: {
 	label: string
+	kind: "geography" | "operator" | "line" | "address-set"
 	value: string
-	options: Array<{ id: string; name: string }>
+	options: Array<{ id: string; label: string; description?: string }>
 	onChange: (value: string) => void
+	placeholder: string
+	excludeIDs?: string[]
 }) {
 	return (
 		<div className="grid gap-2">
 			<Label>{label}</Label>
-			<Select value={value || "none"} onValueChange={(next) => onChange(next === "none" ? "" : next)}>
-				<SelectTrigger>
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent>
-					<SelectItem value="none">
-						<Trans>None</Trans>
-					</SelectItem>
-					{options.map((option) => (
-						<SelectItem key={option.id} value={option.id}>
-							{option.name}
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
+			<AddressReferencePicker
+				kind={kind}
+				value={value ? [value] : []}
+				onChange={(selected) => onChange(selected[0] ?? "")}
+				placeholder={placeholder}
+				initialOptions={options}
+				excludeIDs={excludeIDs}
+			/>
 		</div>
 	)
 }

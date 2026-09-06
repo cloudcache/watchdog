@@ -165,7 +165,12 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **前端（管理闭环）**：Address Library 已包含导入/active slot/base 浏览、prefix/set、地域、运营商、线路、集合运算和 Batch Apply；列表均为搜索/列 filter 的分页 VTable，prefix/set 编辑使用 If-Match（`59a6e5aa`、`87a98e83`、`9c613c10`、`1d442dfa`、`c241358a`）。
   - [x] **集成/变更/回归**：真实 MySQL 上传→job→入库→active generation CAS、typed CRUD/DAG/引用保护/ETag/batch apply及 001–043 空库重放/parity 已覆盖。发布 overlay/API/GC 的测试归 A2，不再混入 C1。
   - [x] **已提交门禁**：`f44d1978`、`4a079e4a`、`78a388b0`、`a4d7a823`、`f34b9786`、`59a6e5aa`、`87a98e83`、`9c613c10`、`1d442dfa`、`e8775c76`、`acbdd4a7`、`c241358a`。
-- [ ] **PLAT-04C2 Address Library 引用选择 UX**：把 Geo/operator/set 的原始 ID 输入改为服务端 searchable reference picker；不改表、不改 Flow 协议，独立做 UI/可用性验收，不能再反向打开 C1。
+- [x] **PLAT-04C2 Address Library 引用选择 UX**：把 Geo/operator/set 的原始 ID 输入改为服务端 searchable reference picker；不改表、不改 Flow 协议，独立做 UI/可用性验收，不能再反向打开 C1。
+  - [x] **设计**：统一单选/多选契约，显示业务名称但提交稳定 ID；300ms 服务端搜索、50 条 keyset page/`next_cursor`、旧响应隔离、已有引用按单项 GET 补名、自引用候选排除；portal modal 固定视口边界，低高度时自身滚动。
+  - [x] **编码**：prefix 编辑、原子 Batch Apply、set 的 Geo/operator/include/exclude，以及 Geo/line 的 parent/operator/address-set/Geo combination 均复用 `AddressReferencePicker`；原请求字段、ETag、tenant scope、C1 校验及 Flow 协议未变。
+  - [x] **单元/集成**：前端单元覆盖分页结果按 ID 合并、单/多选去重/删除及未解析 ID 不泄露；既有 API 用例覆盖 `q/limit/cursor` 下推和 `next_cursor`，本轮不复制后端测试桩。
+  - [x] **变更/回归**：窄屏 360×480 实测 modal 为 328px 宽、左右各留 16px，高 384px 且 `overflow-y:auto`；桌面 1280×720 为 576×437px，未越界。前端定向 Biome、单测、Lingui compile/Vite production build 和全库回归通过。
+  - [x] **已提交门禁**：组件、表单接线、单元、设计和任务清单由同一提交交付；无 migration，未夹带 Flow 数据面及既有 maintenance/delete-preview 工作区文件。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
   - [x] **C3a 编译路径基线**（commit `2b762ec5`，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie、选择器集合、DAG/per-address overlap benchmark + 常驻内存 tripwire；prefix 与 set 编译均线性、无二次爆炸、约 74 B/prefix；`MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32，在编译期封顶展开。
   - [x] **C3c 管理集合运算/API 预算**：独立认证，不修改 C1 生产实现。

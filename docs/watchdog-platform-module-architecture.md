@@ -648,6 +648,8 @@ publication 是不可变复合输入而不是单个大 JSON：`object_ref+checks
 
 地域/线路模型沿用 EdgeManager 已验证的稳定引用思路，但不连接或回写 EdgeManager：`geo_dict` 保存 `continent → region → country → province → city` 邻接树；稳定主键为 `id`，`(tenant, kind, code)` 是自然唯一键，允许不同层级复用诸如 `AS` 的代码。`isp_operators` 保存运营商/教育网/云/搜索等稳定 ID 与 ASN 列表，`geo_lines` 保存父子线路节点及可空的 `geo_selector/operator_id/address_set_id` 组合。线路选择器按根到叶累积约束，查询/发布按稳定 ID，名称只负责显示。地址库发布导出 watchdog 自己的 immutable definition bundle；Flow 写入热路径不加载管理库或逐条固化分类，Flow 侧按发布版本异步生成 ClickHouse 字典/预配置地址段索引。
 
+地址库管理界面不得要求用户抄写上述稳定 ID。prefix、批量替换、set selector/include/exclude、Geo 父级和线路组合统一使用同一个 reference picker：输入停顿 300ms 后把 `q` 发送给既有 tenant-scoped 列表 API，每页 50 条并原样消费 `next_cursor`；“加载更多”继续 keyset page，查询切换时丢弃旧响应。单选、多选都只把稳定 ID 写回原有请求字段，按钮、已选项和结果行显示名称、层级/分类及 code；编辑已有对象时通过既有单项 GET 补齐所选名称，失效引用不回退成可编辑的裸 ID。父级和 set 自引用在候选侧排除，最终仍由服务端 DAG/FK 校验兜底。选择器用 portal modal，宽度限制在 `viewport - 2rem`、高度不超过 `80dvh`，低高度时对话框自身滚动，不能被表格/card 的 overflow 裁切或越出视口。该 UX 不新增表、管理 API 或 Flow 协议，也不在浏览器重做权限、引用有效性或集合运算。
+
 ```sql
 CREATE TABLE dimension_snapshots (
   id CHAR(26) PRIMARY KEY,
