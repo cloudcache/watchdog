@@ -35,3 +35,20 @@ func TestAddressSetOperationPreviewEndpointIsStrictAndBounded(t *testing.T) {
 		t.Fatalf("strict status = %d, want 400", response.Code)
 	}
 }
+
+func TestAddressSetOperationPreviewEndpointRejectsOversizeBody(t *testing.T) {
+	body := `{"operation":"normalize","left":["` + strings.Repeat("1", (4<<20)+1) + `"]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/address-sets/actions/preview", strings.NewReader(body))
+	response := httptest.NewRecorder()
+	(addressSetAPI{}).previewOperation(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	var envelope apiErrorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(envelope.Error.Message), "body") {
+		t.Fatalf("error = %#v", envelope.Error)
+	}
+}

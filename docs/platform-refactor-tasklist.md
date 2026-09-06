@@ -167,8 +167,14 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **已提交门禁**：`f44d1978`、`4a079e4a`、`78a388b0`、`a4d7a823`、`f34b9786`、`59a6e5aa`、`87a98e83`、`9c613c10`、`1d442dfa`、`e8775c76`、`acbdd4a7`、`c241358a`。
 - [ ] **PLAT-04C2 Address Library 引用选择 UX**：把 Geo/operator/set 的原始 ID 输入改为服务端 searchable reference picker；不改表、不改 Flow 协议，独立做 UI/可用性验收，不能再反向打开 C1。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
-  - ✅ **编译路径已基线**（commit 2b762ec5，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie / 选择器集合 / per-address overlap benchmark + 常驻内存 tripwire；结论 prefix 与 set 编译均线性、无二次爆炸、~74 B/prefix；发现 `MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32（overlap 编译期封顶）。
-  - ⏳ **余项**：MMDB/IPDB 真实导入吞吐/峰值内存（导入解析在别处）、API body/result limit、真实百万级 corpus 端到端。
+  - [x] **C3a 编译路径基线**（commit `2b762ec5`，[flow-address-library-scale-baseline.md](flow-address-library-scale-baseline.md)）：`CompileBundle` 的 prefix trie、选择器集合、DAG/per-address overlap benchmark + 常驻内存 tripwire；prefix 与 set 编译均线性、无二次爆炸、约 74 B/prefix；`MaxAddressSets` 默认 10k、`MaxAddressSetsPerRecord` 默认 32，在编译期封顶展开。
+  - [x] **C3c 管理集合运算/API 预算**：独立认证，不修改 C1 生产实现。
+    - [x] **设计**：冻结 50,000 输入表达式、200,000 结果前缀、1,000 overlap 明细和 4 MiB HTTP body 四道互不替代的门；完整 overlap 总数必须保留，明细截断必须显式标记。
+    - [x] **编码/单元**：新增 opt-in 规模 tripwire；普通单测经真实 preview handler 证明超 4 MiB 请求被拒绝且返回标准错误 envelope。
+    - [x] **集成**：真实算法以 50k 不相邻地址跑满输入上限并守恒；50k 完全重叠精确计得 1,249,975,000 对、明细限 1,000；20k 隔离范围展开超过 200k 时整体失败、无部分结果。
+    - [x] **变更设计/测试**：10s/512 MiB 是跨机器宽松退化阈值，不把本机数字硬编码成产品 SLA；本机 darwin/arm64 分别为 28ms/55.6 MiB、9ms/34.7 MiB、结果门禁 21ms/29.9 MiB。无 schema/状态变化，不创建空 migration，下一持久化 migration 仍为 050。
+    - [x] **回归/已提交门禁**：opt-in scale、watchdog、全库、race/vet/build 通过；测试、报告和清单由本提交原子交付，不夹带 Flow 数据面或既有 maintenance/delete-preview 文件。
+  - [ ] **C3b 导入端到端规模认证**：使用真实 MMDB 和 IPDB 各自验证解析→operation job 分批/checkpoint→MySQL ready 的吞吐、峰值内存、crash/resume 和百万级 corpus；测试数据必须是合法数据库格式，不能把重复读取小 fixture 冒充百万条。产出隔离临时 tenant/import 并清理。当前缺生产级百万记录 MMDB/IPDB corpus，不影响 C3a/C3c 已完成边界。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
