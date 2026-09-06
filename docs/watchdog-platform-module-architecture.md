@@ -615,6 +615,8 @@ POST /api/v1/query
 
 PLAT-04H2 真实依赖门禁使用 `WATCHDOG_QUERY_VM_INTEGRATION=1 WATCHDOG_VICTORIAMETRICS_URL=http://127.0.0.1:8428 go test ./internal/watchdog -run '^TestQueryGatewayVictoriaMetricsIntegration$' -count=1 -v`。测试向真实 VM 写入唯一 tenant/target series 并精确清理；真实查询验证 unknown completeness 与 `require_complete`，故障代理验证 cancel、policy timeout、503 中断及恢复。partial/complete 分支由 provider 可控的单元测试覆盖，因为 VictoriaMetrics provider 本身无法声称预期样本完整度。该工作只改变执行适配和静态 registry，不增加持久字段、状态或 secret，因此复用 migration 045，不创建空迁移，下一持久化 migration 仍为 050。
 
+PLAT-04E 的 hub 自监控复用生产 listener 上唯一 `/metrics` 路由：机器身份由启动时读取的 Bearer token 与直接 peer CIDR 共同确定，不复用浏览器/PocketBase 登录，也不接受转发头作为 ACL 证据。TLS 可由 hub 或可信反代终止；反代场景的 `allowed_cidrs` 必须配置代理到 hub 的源地址。token 是不可变启动快照，文件替换后由受控 runtime restart 生效。部署门禁 `WATCHDOG_PLATFORM_METRICS_INTEGRATION=1 go test ./internal/hub -run '^TestPlatformMetricsVictoriaMetricsPullLifecycle$' -count=1 -v` 使用实际生产路由、TLS 反代和隔离 VM promscrape，同时验证 old/new token、401、代理源 403、restart 恢复、`up` 及业务 metric；动态端口和临时容器保证不修改常驻 VM。此契约无持久数据，不占 migration。
+
 ### 8.2 地址统计维度快照与异步汇聚
 
 `address_prefixes/address_sets` 是管理态，不能由采集热路径逐条查询 MySQL，也不能在配置修改时原地改变排队中 flow 的语义。core 增加不可变 dimension snapshot：

@@ -87,6 +87,35 @@ The unified query endpoint is enabled by default. `query_gateway` controls provi
 
 Prometheus-compatible hub metrics can be exposed at `/metrics` by enabling `metrics_scrape`. This route is mounted on the existing hub listener (there is no extra metrics server), does not use an interactive PocketBase login, and requires both a bearer token loaded from `token_file` and a direct-peer match in `allowed_cidrs`. `X-Forwarded-For` is ignored. TLS therefore follows the hub listener or its trusted reverse proxy; when a proxy is used, allow the proxy's source CIDR and keep the proxy-to-hub hop private. A missing/unreadable/short token stops startup. Rotate the token file with a controlled hub restart. VictoriaMetrics or vmagent should send `Authorization: Bearer …`; GET and HEAD are the only accepted methods.
 
+For a TLS reverse proxy on the same host, keep the hub private and make the three configurations agree. The hub ACL contains the proxy-to-hub source (`127.0.0.1/32` below), not the VictoriaMetrics source and not an `X-Forwarded-For` value:
+
+```yaml
+# watchdog.yaml
+metrics_scrape:
+  enabled: true
+  token_file: /run/secrets/watchdog-metrics-token
+  allowed_cidrs: [127.0.0.1/32]
+```
+
+```nginx
+location = /metrics {
+    proxy_pass http://127.0.0.1:8090/metrics;
+    proxy_set_header Authorization $http_authorization;
+}
+```
+
+```yaml
+# VictoriaMetrics -promscrape.config
+scrape_configs:
+  - job_name: watchdog-hub
+    scheme: https
+    bearer_token_file: /run/secrets/watchdog-metrics-token
+    static_configs:
+      - targets: [watchdog.example.net]
+```
+
+Token rotation is a coordinated operation: atomically replace the hub and scraper secret files, then perform a controlled hub runtime restart (and reload/restart the scraper if its secret mount is not live). Expect at most one scrape interval of `up=0`; rollback restores both previous secret files and restarts the same two consumers. A direct request through the proxy must return 200 with the new token, 401 with the old token, and 403 when the proxy source is removed from `allowed_cidrs`.
+
 Keep DSNs and tokens in a process secret, root-readable environment file, or secret manager instead of committing production values to YAML. The example values are placeholders.
 
 Windows agents do not download or embed `smartctl.exe` from a product-owned domain. Install the official smartmontools package or place `smartctl.exe` on `PATH` before enabling S.M.A.R.T. disk-health collection.
