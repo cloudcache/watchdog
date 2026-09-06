@@ -23,7 +23,6 @@ agent/lhm/bin
 dockerfile_agent_dev
 
 # watchdog: ad-hoc build outputs at repo root (cmd/ sources stay tracked)
-/watchdog-dev-server
 /watchdog-snmp-collector
 /watchdog-librenms-extract
 /watchdog-sflow-collector

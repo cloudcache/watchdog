@@ -5,8 +5,7 @@ Watchdog backend processes share one YAML config file. Copy `config/watchdog.exa
 ```bash
 cp config/watchdog.example.yaml config/watchdog.yaml
 go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock
-go run ./cmd/watchdog-dev-server --config config/watchdog.yaml
-# Production Hub serves PocketBase auth, the SPA, and /api/v1 on one origin.
+# Hub serves PocketBase auth, the SPA, and /api/v1 on one origin.
 go run ./internal/cmd/hub serve --watchdog-config config/watchdog.yaml
 # Independent SNMP discovery/polling data plane (run as a supervised service).
 go run ./cmd/watchdog-snmp-collector --config config/watchdog.yaml --loop
@@ -26,7 +25,6 @@ The installer and embedded migration runner are intentionally idempotent:
 
 The same config flag is accepted by:
 
-- `cmd/watchdog-dev-server`
 - `cmd/watchdog-export-worker`
 - `cmd/watchdog-snmp-collector`
 - `cmd/watchdog-sflow-collector`

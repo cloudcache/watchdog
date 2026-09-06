@@ -1,7 +1,8 @@
 # Watchdog Local Dev Startup
 
-This project currently has several Watchdog helper commands under `cmd/`.
-For local UI/API testing, use these three entry points:
+Local UI/API development runs the unified **Hub on `:8090`** — one process
+(`internal/cmd/hub`) that serves the built frontend, PocketBase auth, and
+`/api/v1` — plus an optional Vite dev server for frontend hot-reload.
 
 1. Initialize MySQL:
 
@@ -13,33 +14,25 @@ This creates the database, runs `cmd/watchdog-install` with
 `config/watchdog.dev.yaml`, writes `.watchdog-dev.lock`, and applies the local
 seed data.
 
-2. Start the Watchdog dev API:
+2. Start the dev stack (Hub + frontend + agent):
 
 ```bash
-make watchdog-dev-api
+make dev
 ```
 
-The API listens on:
+`make dev` runs three pieces together:
 
-```text
-http://127.0.0.1:8091
-```
+- `make dev-hub` — the Hub (`internal/cmd/hub`) on `http://127.0.0.1:8090`,
+  serving the built frontend, PocketBase auth, and `/api/v1`.
+- `make dev-server` — the Vite frontend dev server on `http://127.0.0.1:5173`
+  for hot-reload; it proxies `/api/v1` to the Hub on `:8090`.
+- `make dev-agent` — the local agent.
 
-3. In another terminal, start the web UI:
+Open `http://127.0.0.1:8090` for the integrated Hub, or `http://127.0.0.1:5173`
+for the hot-reloading frontend (both use the Hub's `/api/v1` on `:8090`). Run a
+single piece with `make dev-hub`, `make dev-server`, or `make dev-agent`.
 
-```bash
-make watchdog-dev-web
-```
-
-The UI listens on:
-
-```text
-http://127.0.0.1:5173
-```
-
-The Vite dev server proxies `/api/v1` to `http://127.0.0.1:8091`.
-
-4. When testing SNMP, run the independent collector/discovery worker in another terminal:
+3. When testing SNMP, run the independent collector/discovery worker in another terminal:
 
 ```bash
 go run ./cmd/watchdog-snmp-collector \
@@ -79,14 +72,14 @@ WATCHDOG_MYSQL_DB=watchdog_dev \
 make watchdog-dev-db
 ```
 
-Use the same variables for `make watchdog-dev-api`, or set the full DSN:
+Use the same variables for `make dev` (or `make dev-hub`), or set the full DSN:
 
 ```bash
 export WATCHDOG_MYSQL_DSN='root:your-password@tcp(127.0.0.1:3306)/watchdog_dev?parseTime=true&multiStatements=true'
-make watchdog-dev-api
+make dev-hub
 ```
 
-The API script passes `--config config/watchdog.dev.yaml`. Environment
+The Hub reads `config/watchdog.dev.yaml` (via `--watchdog-config`). Environment
 variables override the YAML values, so changing `WATCHDOG_MYSQL_DSN` or
 `WATCHDOG_VICTORIAMETRICS_URL` is enough for local testing.
 Invalid or unknown configuration now fails startup instead of falling back
@@ -95,7 +88,7 @@ silently; the complete override list and precedence are in
 
 ## Commands
 
-- `cmd/watchdog-dev-server`: local dev API with admin dev auth.
+- `internal/cmd/hub`: the unified Hub (built frontend + PocketBase auth + `/api/v1`) on `:8090`.
 - `cmd/watchdog-install`: fresh MySQL installer using `install/init.sql` and a local lock file.
 - `cmd/watchdog-export-worker`: async CSV export worker.
 - `cmd/watchdog-snmp-collector`: SNMP discovery, recipe import, and raw sample polling.

@@ -41,7 +41,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales watchdog-dev-db watchdog-dev-api watchdog-dev-web watchdog-install watchdog-dev-install flow-dev-up flow-dev-down flow-dev-status
+.PHONY: tidy build-agent build-hub build-hub-dev build clean lint dev-server dev-agent dev-hub dev generate-locales watchdog-dev-db watchdog-install watchdog-dev-install flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
 
 clean:
@@ -124,12 +124,6 @@ dev-agent:
 
 watchdog-dev-db:
 	./scripts/watchdog-dev-db.sh
-
-watchdog-dev-api:
-	./scripts/watchdog-dev-api.sh
-
-watchdog-dev-web:
-	./scripts/watchdog-dev-web.sh
 
 watchdog-install:
 	go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock

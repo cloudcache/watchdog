@@ -24,7 +24,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "", "path to watchdog YAML config")
-	apiURL := flag.String("api", "", "watchdog API base URL (e.g. http://127.0.0.1:8091)")
+	apiURL := flag.String("api", "", "watchdog API base URL (e.g. http://127.0.0.1:8090)")
 	token := flag.String("token", "", "watchdog API auth token")
 	listen := flag.String("listen", "", "UDP listen address for SNMP traps")
 	flag.Parse()

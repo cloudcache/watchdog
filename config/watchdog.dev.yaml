@@ -62,12 +62,12 @@ snmp:
   mib_load: ""
 
 snmp_trap_agent:
-  api_url: "http://127.0.0.1:8091"
+  api_url: "http://127.0.0.1:8090"
   token: "dev-agent-token"
   listen: ":1162"
 
 agent:
-  hub_url: "http://127.0.0.1:8091"
+  hub_url: "http://127.0.0.1:8090"
   agent_id: "agent_dev_snmp"
   token: "dev-agent-token"
   interval: 1m
