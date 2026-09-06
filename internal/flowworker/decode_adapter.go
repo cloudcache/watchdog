@@ -96,7 +96,8 @@ func (a DecodeAdapter) Map(kafkaRecord *kgo.Record, decoded flowstream.DecodedBa
 	if decoded.AgentIP.IsValid() {
 		result.AgentIP = canonicalAddressBytes(decoded.AgentIP)
 	}
-	for index, message := range decoded.Records {
+	for index := range decoded.Records {
+		message := &decoded.Records[index]
 		var metadata flowstream.DecodedRecordMetadata
 		if index < len(decoded.RecordMetadata) {
 			metadata = decoded.RecordMetadata[index]
@@ -125,7 +126,7 @@ func workerProtocol(flowType goflowpb.FlowMessage_FlowType) (flowplan.Protocol, 
 	}
 }
 
-func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBatch, metadata flowstream.DecodedRecordMetadata, index uint32, message *goflowpb.FlowMessage) (*Record, error) {
+func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBatch, metadata flowstream.DecodedRecordMetadata, index uint32, message *flowstream.DecodedRecord) (*Record, error) {
 	if message == nil || message.Type != decoded.FlowType {
 		return nil, errors.New("message protocol differs from datagram")
 	}
@@ -166,7 +167,7 @@ func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBa
 	}, nil
 }
 
-func flowTimes(message *goflowpb.FlowMessage, receivedAt time.Time) (time.Time, uint64, uint64) {
+func flowTimes(message *flowstream.DecodedRecord, receivedAt time.Time) (time.Time, uint64, uint64) {
 	eventTime := receivedAt.UTC()
 	quality := uint64(QualityEventTimeFallback)
 	if message.TimeFlowEndNs > 0 && message.TimeFlowEndNs <= math.MaxInt64 {
@@ -203,7 +204,7 @@ func observation(binding flowplan.SourceBinding, inIf, outIf uint32) (uint32, ui
 	return outIf, uint32(ObservationUnknown), 0
 }
 
-func normalizeDecodedCounters(binding flowplan.SourceBinding, observationDomainID uint64, metadata flowstream.DecodedRecordMetadata, message *goflowpb.FlowMessage) (mode uint32, rate uint64, source uint32, estimatedBytes uint64, estimatedPackets uint64, valid bool, quality uint64) {
+func normalizeDecodedCounters(binding flowplan.SourceBinding, observationDomainID uint64, metadata flowstream.DecodedRecordMetadata, message *flowstream.DecodedRecord) (mode uint32, rate uint64, source uint32, estimatedBytes uint64, estimatedPackets uint64, valid bool, quality uint64) {
 	if binding.SamplingMode == flowplan.SamplingModePreScaled {
 		if message.SamplingRate > 1 {
 			quality |= QualitySamplingConflict

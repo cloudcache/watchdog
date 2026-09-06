@@ -35,51 +35,97 @@ type DecodedBatch struct {
 	SubAgentID          uint32
 	DatagramSequence    uint32
 	AgentIP             netip.Addr
-	Records             []*goflowpb.FlowMessage
+	Records             []DecodedRecord
 	RecordMetadata      []DecodedRecordMetadata
+}
+
+// DecodedRecord is the lean carrier for one decoded flow record. It holds
+// exactly the fields the worker's mapFlowMessage reads and nothing else, so the
+// hot path never touches GoFlow2's protobuf FlowMessage (whose per-message state
+// machinery — Reset + atomic StoreMessageInfo — was a top decode cost). Field
+// names mirror goflowpb.FlowMessage so the mapping stays a field-for-field copy.
+// The slow path converts GoFlow2 messages into this via recordFromFlowMessage.
+type DecodedRecord struct {
+	Type            goflowpb.FlowMessage_FlowType
+	SrcAddr         []byte
+	DstAddr         []byte
+	SrcPort         uint32
+	DstPort         uint32
+	Proto           uint32
+	TcpFlags        uint32
+	InIf            uint32
+	OutIf           uint32
+	SrcAs           uint32
+	DstAs           uint32
+	Bytes           uint64
+	Packets         uint64
+	SamplingRate    uint64
+	TimeFlowStartNs uint64
+	TimeFlowEndNs   uint64
+	TimeReceivedNs  uint64
+}
+
+// recordFromFlowMessage copies the fields the worker reads out of a GoFlow2
+// message (slow path: v9/IPFIX and sFlow fallback). Address slices reference the
+// pooled message and are valid only until the next Decode, per the contract.
+func recordFromFlowMessage(dst *DecodedRecord, m *goflowpb.FlowMessage) {
+	dst.Type = m.Type
+	dst.SrcAddr, dst.DstAddr = m.SrcAddr, m.DstAddr
+	dst.SrcPort, dst.DstPort = m.SrcPort, m.DstPort
+	dst.Proto, dst.TcpFlags = m.Proto, m.TcpFlags
+	dst.InIf, dst.OutIf = m.InIf, m.OutIf
+	dst.SrcAs, dst.DstAs = m.SrcAs, m.DstAs
+	dst.Bytes, dst.Packets = m.Bytes, m.Packets
+	dst.SamplingRate = m.SamplingRate
+	dst.TimeFlowStartNs, dst.TimeFlowEndNs, dst.TimeReceivedNs = m.TimeFlowStartNs, m.TimeFlowEndNs, m.TimeReceivedNs
+}
+
+func growRecords(dst []DecodedRecord, n int) []DecodedRecord {
+	if cap(dst) >= n {
+		return dst[:n]
+	}
+	return make([]DecodedRecord, n)
 }
 
 // Decoder owns one GoFlow2 template and sampling state set. It is not safe for
 // concurrent use and must be assigned to exactly one Kafka partition worker.
 //
-// Zero-copy contract: Decode returns FlowMessage pointers that reference either
-// GoFlow2's pooled decode buffers (slow path) or the decoder's reused NetFlow v5
-// backing array (fast path), plus addresses that slice the source payload —
-// none marshalled or copied. All stay valid only until the NEXT Decode call on
-// this decoder, which recycles/overwrites them before decoding again. The caller
-// MUST fully consume (map into its own structs) each returned batch before it
-// calls Decode again on the same decoder. The per-partition worker satisfies
-// this by mapping every record of a batch before decoding the next record.
+// Zero-copy contract: Decode returns DecodedRecords in the decoder's reused
+// recordBacking array, whose address []byte fields slice either the source
+// payload (fast paths) or GoFlow2's pooled buffers (slow path) — none marshalled
+// or deep-copied. All stay valid only until the NEXT Decode call on this decoder,
+// which overwrites recordBacking (and recycles the pooled buffers) before
+// decoding again. The caller MUST fully consume (map into its own structs) each
+// returned batch before it calls Decode again on the same decoder. The
+// per-partition worker satisfies this by mapping every record of a batch before
+// decoding the next record.
 type Decoder struct {
 	pipe      *utils.AutoFlowPipe
 	producer  producer.ProducerInterface
 	metadata  *metadataProducer
 	templates *templates.TemplateFlowStore
-	// fastNetFlowV5 selects the fixed-offset NetFlow v5 decoder over GoFlow2's
-	// reflection-based pipe. netflowV5Backing is its reused message array.
-	fastNetFlowV5    bool
-	netflowV5Backing []goflowpb.FlowMessage
+	// recordBacking is the reused DecodedRecord array returned as
+	// DecodedBatch.Records by every path (fast NetFlow v5, fast sFlow, and the
+	// GoFlow2 slow path via recordFromFlowMessage). Valid only until the next
+	// Decode, per the zero-copy contract.
+	recordBacking []DecodedRecord
+	// fastNetFlowV5 selects the fixed-offset NetFlow v5 decoder over GoFlow2's pipe.
+	fastNetFlowV5 bool
 	// rawScratch is the reused envelope target for DecodeValue's zero-copy parse.
 	rawScratch flowpb.RawFlow
-	// recordPtrs is the reused pointer slice returned as DecodedBatch.Records
-	// (both paths). idIntern caches collector/listener identity strings so the
-	// envelope parse stops allocating them after warmup. lastSampler* caches the
-	// per-datagram sampler address for a stable exporter source. All are valid
-	// only until the next Decode, per the zero-copy contract.
-	recordPtrs       []*goflowpb.FlowMessage
-	idIntern         map[string]string
-	lastSamplerAddr  netip.Addr
-	lastSamplerBytes []byte
-	// fastSFlow selects the hand-written sFlow v5 framing decoder (reusing
-	// GoFlow2's ParseSampledHeader for the packet parse) over GoFlow2's pipe.
-	// sflowBacking/sflowMetadata are its reused outputs; sflow{AgentIP,SubAgent,
-	// Sequence} carry the datagram identity for the batch.
-	fastSFlow      bool
-	sflowBacking   []protoproducer.ProtoProducerMessage
-	sflowMetadata  []DecodedRecordMetadata
-	sflowAgentIP   netip.Addr
-	sflowSubAgent  uint32
-	sflowSequence  uint32
+	// idIntern caches collector/listener identity strings so the envelope parse
+	// stops allocating them after warmup.
+	idIntern map[string]string
+	// fastSFlow selects the hand-written sFlow v5 framing decoder. sflowHeader
+	// Scratch is the one GoFlow2 message reused only for SampledHeader records
+	// (fed to the hardened ParseSampledHeader). sflowMetadata / sflow{AgentIP,
+	// SubAgent,Sequence} are its reused outputs and datagram identity.
+	fastSFlow          bool
+	sflowHeaderScratch protoproducer.ProtoProducerMessage
+	sflowMetadata      []DecodedRecordMetadata
+	sflowAgentIP       netip.Addr
+	sflowSubAgent      uint32
+	sflowSequence      uint32
 }
 
 // maxInternedIDs bounds the collector/listener identity cache so hostile input
@@ -154,21 +200,6 @@ func (d *Decoder) internID(data []byte) string {
 	return s
 }
 
-// samplerAddress returns the exporter's address bytes for the datagram, matching
-// GoFlow2's SamplerAddress (source.Addr().Unmap().MarshalBinary()). It caches the
-// last result: a partition's datagrams come from one exporter, so this allocates
-// once per source rather than once per datagram. A prior batch may still hold the
-// previous slice; a source change installs a fresh slice and never mutates it.
-func (d *Decoder) samplerAddress(source netip.AddrPort) []byte {
-	addr := source.Addr().Unmap()
-	if d.lastSamplerBytes == nil || addr != d.lastSamplerAddr {
-		encoded, _ := addr.MarshalBinary()
-		d.lastSamplerAddr = addr
-		d.lastSamplerBytes = encoded
-	}
-	return d.lastSamplerBytes
-}
-
 // recoverDecoderPanic runs the GoFlow2 pipe and converts a decoder panic on
 // crafted/malformed bytes into an error. The collector does not decode, so a
 // panic-triggering datagram reaches the worker undecoded; without this, one such
@@ -208,35 +239,25 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	// metadata or agent identity, so those batch fields are zero — matching what
 	// the slow path's metadataProducer sets for a non-sFlow packet.
 	if d.fastNetFlowV5 && flowType == goflowpb.FlowMessage_NETFLOW_V5 {
-		backing, ferr := decodeNetFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano()), d.samplerAddress(source), d.netflowV5Backing)
+		records, ferr := decodeNetFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano()), d.recordBacking)
 		if ferr != nil {
 			return DecodedBatch{}, ferr
 		}
-		d.netflowV5Backing = backing
-		records := d.recordPtrs[:0]
-		for index := range backing {
-			records = append(records, &backing[index])
-		}
-		d.recordPtrs = records
+		d.recordBacking = records
 		return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, 0, 0, netip.Addr{}, records, nil), nil
 	}
 
 	// Fast path: hand-written sFlow v5 framing decoder, reusing GoFlow2's hardened
 	// ParseSampledHeader for the untrusted packet parse. Produces the same
-	// FlowMessages + sample metadata as the slow path (TestSFlowFastMatchesGoFlow2)
+	// DecodedRecords + sample metadata as the slow path (TestSFlowFastMatchesGoFlow2)
 	// for the handled record types, and falls back to GoFlow2 for the rest.
 	if d.fastSFlow && flowType == goflowpb.FlowMessage_SFLOW_5 {
 		err = recoverDecoderPanic(func() error { return d.decodeSFlowV5Fast(raw.Payload, uint64(receivedAt.UnixNano())) })
 		if err == nil {
-			records := d.recordPtrs[:0]
-			for index := range d.sflowBacking {
-				records = append(records, &d.sflowBacking[index].FlowMessage)
-			}
-			d.recordPtrs = records
-			if len(records) != len(d.sflowMetadata) {
+			if len(d.recordBacking) != len(d.sflowMetadata) {
 				return DecodedBatch{}, errors.New("sflow fast path records and sample metadata are inconsistent")
 			}
-			return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.sflowSubAgent, d.sflowSequence, d.sflowAgentIP, records, d.sflowMetadata), nil
+			return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.sflowSubAgent, d.sflowSequence, d.sflowAgentIP, d.recordBacking, d.sflowMetadata), nil
 		}
 		if !errors.Is(err, errSFlowFallback) {
 			return DecodedBatch{}, err
@@ -260,19 +281,18 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 		// buffers to recyclePending; the next Decode returns them to the pool.
 		return DecodedBatch{}, err
 	}
-	// Zero-copy: reference the pooled FlowMessages the producer just filled,
-	// rather than unmarshalling a marshalled transport payload. Only the pointer
-	// slice is owned by the batch; the messages live in the pool until the next
-	// Decode recycles them (see the Decoder contract).
-	records := d.recordPtrs[:0]
-	for _, msg := range d.metadata.pending {
+	// Slow path (v9/IPFIX, sFlow fallback): convert each pooled GoFlow2 message
+	// into a DecodedRecord. The address slices still reference the pooled buffers,
+	// valid until the next Decode recycles them (see the Decoder contract).
+	records := growRecords(d.recordBacking, len(d.metadata.pending))
+	for index, msg := range d.metadata.pending {
 		ppm, ok := msg.(*protoproducer.ProtoProducerMessage)
 		if !ok {
 			return DecodedBatch{}, fmt.Errorf("unexpected GoFlow2 message type %T", msg)
 		}
-		records = append(records, &ppm.FlowMessage)
+		recordFromFlowMessage(&records[index], &ppm.FlowMessage)
 	}
-	d.recordPtrs = records
+	d.recordBacking = records
 	metadata := append([]DecodedRecordMetadata(nil), d.metadata.records...)
 	if flowType == goflowpb.FlowMessage_SFLOW_5 && len(records) != len(metadata) {
 		return DecodedBatch{}, errors.New("GoFlow2 sFlow records and sample metadata are inconsistent")
@@ -280,7 +300,7 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.metadata.subAgentID, d.metadata.datagramSequence, d.metadata.agentIP, records, metadata), nil
 }
 
-func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, receivedAt time.Time, flowType goflowpb.FlowMessage_FlowType, observationDomainID uint64, subAgentID, datagramSequence uint32, agentIP netip.Addr, records []*goflowpb.FlowMessage, metadata []DecodedRecordMetadata) DecodedBatch {
+func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, receivedAt time.Time, flowType goflowpb.FlowMessage_FlowType, observationDomainID uint64, subAgentID, datagramSequence uint32, agentIP netip.Addr, records []DecodedRecord, metadata []DecodedRecordMetadata) DecodedBatch {
 	return DecodedBatch{
 		CollectorID:         raw.CollectorId,
 		ListenerID:          raw.ListenerId,

@@ -262,7 +262,7 @@ func decodedFixture(receivedAt time.Time) flowstream.DecodedBatch {
 	return flowstream.DecodedBatch{
 		CollectorID: "collector-a", RegistryVersion: 7, ReceivedAt: receivedAt,
 		Source: netip.MustParseAddrPort("192.0.2.1:9999"), FlowType: goflowpb.FlowMessage_NETFLOW_V9,
-		Records: []*goflowpb.FlowMessage{{
+		Records: []flowstream.DecodedRecord{{
 			Type: goflowpb.FlowMessage_NETFLOW_V9, TimeReceivedNs: uint64(receivedAt.UnixNano()),
 			SrcAddr: netip.MustParseAddr("10.0.0.1").AsSlice(), DstAddr: netip.MustParseAddr("203.0.113.2").AsSlice(),
 			SrcPort: 12345, DstPort: 443, Proto: 6, TcpFlags: 0x12, InIf: 3, OutIf: 4,

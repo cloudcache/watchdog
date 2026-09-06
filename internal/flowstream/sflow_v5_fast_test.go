@@ -11,14 +11,13 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
 	"github.com/netsampler/goflow2/v3/decoders/sflow"
 	decoderutils "github.com/netsampler/goflow2/v3/decoders/utils"
-	"google.golang.org/protobuf/proto"
 )
 
 // TestSFlowFastMatchesGoFlow2 is the correctness gate for the sFlow fast path. It
 // decodes a corpus covering every handled record type — plus counter-sample
 // skipping, expanded samples, an IPv6 agent, and an ExtendedGateway that must
 // fall back to GoFlow2 — with BOTH the fast path and GoFlow2, and asserts the
-// resulting FlowMessages are proto-equal and the per-sample metadata matches.
+// resulting DecodedRecords are equal and the per-sample metadata matches.
 func TestSFlowFastMatchesGoFlow2(t *testing.T) {
 	fast, err := NewDecoder(time.Minute)
 	if err != nil {
@@ -51,7 +50,7 @@ func TestSFlowFastMatchesGoFlow2(t *testing.T) {
 				t.Fatalf("record count: fast=%d slow=%d", len(fastBatch.Records), len(slowBatch.Records))
 			}
 			for i := range fastBatch.Records {
-				if !proto.Equal(fastBatch.Records[i], slowBatch.Records[i]) {
+				if !reflect.DeepEqual(fastBatch.Records[i], slowBatch.Records[i]) {
 					t.Fatalf("record %d differs:\nfast=%v\nslow=%v", i, fastBatch.Records[i], slowBatch.Records[i])
 				}
 			}
@@ -97,15 +96,15 @@ func sflowCorpus(t *testing.T) map[string][]byte {
 	gateway := sflow.FlowRecord{Data: sflow.ExtendedGateway{NextHopIPVersion: 1, NextHop: decoderutils.IPAddress{192, 0, 2, 1}, AS: 64512, SrcAS: 64513}}
 
 	return map[string][]byte{
-		"ipv4":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 99, Uptime: 1000, Samples: []interface{}{flowSample(12, 44, ipv4Rec)}}),
-		"ipv6":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 100, Uptime: 1000, Samples: []interface{}{flowSample(13, 44, ipv6Rec)}}),
-		"sampledHeader": build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 101, Uptime: 1000, Samples: []interface{}{flowSample(14, 44, headerRec)}}),
-		"expanded":      build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 102, Uptime: 1000, Samples: []interface{}{expandedSample}}),
-		"router":        build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 103, Uptime: 1000, Samples: []interface{}{flowSample(15, 44, ipv4Rec, routerRec)}}),
-		"switch":        build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 104, Uptime: 1000, Samples: []interface{}{flowSample(16, 44, ipv4Rec, switchRec)}}),
-		"counterSkip":   build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 105, Uptime: 1000, Samples: []interface{}{flowSample(17, 44, ipv4Rec), counter, flowSample(18, 44, ipv6Rec)}}),
-		"multiSample":   build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 106, Uptime: 1000, Samples: []interface{}{flowSample(19, 1, ipv4Rec), flowSample(20, 2, ipv6Rec), flowSample(21, 3, ipv4Rec, routerRec)}}),
-		"agentIPv6":     build(sflow.Packet{IPVersion: 2, AgentIP: decoderutils.IPAddress{0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9}, SubAgentId: 3, SequenceNumber: 107, Uptime: 1000, Samples: []interface{}{flowSample(22, 44, ipv4Rec)}}),
+		"ipv4":            build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 99, Uptime: 1000, Samples: []interface{}{flowSample(12, 44, ipv4Rec)}}),
+		"ipv6":            build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 100, Uptime: 1000, Samples: []interface{}{flowSample(13, 44, ipv6Rec)}}),
+		"sampledHeader":   build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 101, Uptime: 1000, Samples: []interface{}{flowSample(14, 44, headerRec)}}),
+		"expanded":        build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 102, Uptime: 1000, Samples: []interface{}{expandedSample}}),
+		"router":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 103, Uptime: 1000, Samples: []interface{}{flowSample(15, 44, ipv4Rec, routerRec)}}),
+		"switch":          build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 104, Uptime: 1000, Samples: []interface{}{flowSample(16, 44, ipv4Rec, switchRec)}}),
+		"counterSkip":     build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 105, Uptime: 1000, Samples: []interface{}{flowSample(17, 44, ipv4Rec), counter, flowSample(18, 44, ipv6Rec)}}),
+		"multiSample":     build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 106, Uptime: 1000, Samples: []interface{}{flowSample(19, 1, ipv4Rec), flowSample(20, 2, ipv6Rec), flowSample(21, 3, ipv4Rec, routerRec)}}),
+		"agentIPv6":       build(sflow.Packet{IPVersion: 2, AgentIP: decoderutils.IPAddress{0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9}, SubAgentId: 3, SequenceNumber: 107, Uptime: 1000, Samples: []interface{}{flowSample(22, 44, ipv4Rec)}}),
 		"gatewayFallback": build(sflow.Packet{IPVersion: 1, AgentIP: agent, SubAgentId: 7, SequenceNumber: 108, Uptime: 1000, Samples: []interface{}{flowSample(23, 44, ipv4Rec, gateway)}}),
 	}
 }

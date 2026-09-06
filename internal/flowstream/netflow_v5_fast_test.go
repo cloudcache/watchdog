@@ -10,14 +10,14 @@ import (
 
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
 	"github.com/netsampler/goflow2/v3/decoders/netflowlegacy"
-	"google.golang.org/protobuf/proto"
+	"reflect"
 )
 
 // TestNetFlowV5FastMatchesGoFlow2 is the correctness gate for the fast path. It
 // decodes a corpus of well-formed NetFlow v5 datagrams with BOTH the fast path
-// and GoFlow2's reflection pipe and asserts the resulting FlowMessages are
-// proto-equal field for field, plus the batch-level identity fields. If the
-// fast path ever diverges from GoFlow2's output, this fails.
+// and GoFlow2's reflection pipe and asserts the resulting DecodedRecords are
+// equal field for field (reflect.DeepEqual), plus the batch-level identity
+// fields. If the fast path ever diverges from GoFlow2's output, this fails.
 func TestNetFlowV5FastMatchesGoFlow2(t *testing.T) {
 	fast, err := NewDecoder(time.Minute)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestNetFlowV5FastMatchesGoFlow2(t *testing.T) {
 				t.Fatalf("record count: fast=%d slow=%d", len(fastBatch.Records), len(slowBatch.Records))
 			}
 			for i := range fastBatch.Records {
-				if !proto.Equal(fastBatch.Records[i], slowBatch.Records[i]) {
+				if !reflect.DeepEqual(fastBatch.Records[i], slowBatch.Records[i]) {
 					t.Fatalf("record %d differs:\nfast=%v\nslow=%v", i, fastBatch.Records[i], slowBatch.Records[i])
 				}
 			}
