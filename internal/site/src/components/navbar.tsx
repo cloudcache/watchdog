@@ -2,6 +2,7 @@ import { Trans } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath } from "@nanostores/router"
 import {
+	ActivityIcon,
 	BarChart3Icon,
 	Building2Icon,
 	ContainerIcon,
@@ -157,6 +158,11 @@ export default function Navbar() {
 						<AnalysisItems />
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel>
+							<Trans>Flow</Trans>
+						</DropdownMenuLabel>
+						<FlowItems />
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel>
 							<Trans>Data</Trans>
 						</DropdownMenuLabel>
 						<NavItem href={getPagePath($router, "exports")} icon={FileDownIcon}>
@@ -197,6 +203,9 @@ export default function Navbar() {
 				</DesktopNavMenu>
 				<DesktopNavMenu label={<Trans>Analysis</Trans>} icon={BarChart3Icon}>
 					<AnalysisItems />
+				</DesktopNavMenu>
+				<DesktopNavMenu label={<Trans>Flow</Trans>} icon={ActivityIcon}>
+					<FlowItems />
 				</DesktopNavMenu>
 				<Link
 					href={getPagePath($router, "exports")}
@@ -262,6 +271,22 @@ function AnalysisItems() {
 			</NavItem>
 			<NavItem href={getPagePath($router, "aggregate_graphs")} icon={LibraryIcon}>
 				<Trans>Saved Graphs</Trans>
+			</NavItem>
+		</DropdownMenuGroup>
+	)
+}
+
+// Flow is a primary, user-facing section (the traffic analysis surface), not an
+// admin setting. Traffic Matrix is the first page; the total / multi-dimension /
+// source-IP / destination-IP / overseas / VPN pages land here as they ship.
+function FlowItems() {
+	return (
+		<DropdownMenuGroup>
+			<NavItem href={getPagePath($router, "traffic_matrix")} icon={BarChart3Icon}>
+				<Trans>Traffic Matrix</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
+				<Trans>Address Library</Trans>
 			</NavItem>
 		</DropdownMenuGroup>
 	)
@@ -362,16 +387,10 @@ function AdminDropdownContent() {
 			<NavItem href={getPagePath($router, "traffic_defaults")} icon={GaugeIcon}>
 				<Trans>Traffic Defaults</Trans>
 			</NavItem>
-			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
-				<Trans>Address Library</Trans>
-			</NavItem>
 			<DropdownMenuSeparator />
 			<DropdownMenuLabel>
-				<Trans>Flow & Data</Trans>
+				<Trans>Data Management</Trans>
 			</DropdownMenuLabel>
-			<NavItem href={getPagePath($router, "traffic_matrix")} icon={BarChart3Icon}>
-				<Trans>Traffic Matrix</Trans>
-			</NavItem>
 			<NavItem href={getPagePath($router, "retention")} icon={DatabaseIcon}>
 				<Trans>Retention</Trans>
 			</NavItem>
