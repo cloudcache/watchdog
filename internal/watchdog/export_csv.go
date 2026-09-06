@@ -3,7 +3,9 @@ package watchdog
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -12,24 +14,31 @@ import (
 	"strings"
 )
 
+// exportArtifactFor stamps a produced export file with its sha256 checksum and
+// byte size for integrity verification on download.
+func exportArtifactFor(fileRef string, data []byte) ExportArtifact {
+	sum := sha256.Sum256(data)
+	return ExportArtifact{FileRef: fileRef, Checksum: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data))}
+}
+
 type CSVExportWriter struct {
 	Files map[string][]byte
 }
 
-func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (string, error) {
+func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (ExportArtifact, error) {
 	if task.Format != "" && task.Format != ExportFormatCSV {
-		return "", errors.New("csv writer only supports csv export format")
+		return ExportArtifact{}, errors.New("csv writer only supports csv export format")
 	}
 	if w.Files == nil {
 		w.Files = make(map[string][]byte)
 	}
 	data, err := RenderCSVExportColumns(task, columns)
 	if err != nil {
-		return "", err
+		return ExportArtifact{}, err
 	}
 	fileRef := fmt.Sprintf("exports/%s.csv", task.ID)
 	w.Files[fileRef] = data
-	return fileRef, nil
+	return exportArtifactFor(fileRef, data), nil
 }
 
 func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
@@ -47,29 +56,29 @@ type DiskCSVExportStore struct {
 	Dir string
 }
 
-func (s DiskCSVExportStore) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (string, error) {
+func (s DiskCSVExportStore) WriteExport(_ context.Context, task ExportTask, columns ExportColumns) (ExportArtifact, error) {
 	if task.Format != "" && task.Format != ExportFormatCSV {
-		return "", errors.New("csv writer only supports csv export format")
+		return ExportArtifact{}, errors.New("csv writer only supports csv export format")
 	}
 	if s.Dir == "" {
-		return "", errors.New("export directory is required")
+		return ExportArtifact{}, errors.New("export directory is required")
 	}
 	data, err := RenderCSVExportColumns(task, columns)
 	if err != nil {
-		return "", err
+		return ExportArtifact{}, err
 	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return "", err
+		return ExportArtifact{}, err
 	}
 	fileName := string(task.ID) + ".csv"
 	if strings.Contains(fileName, "/") || strings.Contains(fileName, `\`) {
-		return "", errors.New("invalid export id")
+		return ExportArtifact{}, errors.New("invalid export id")
 	}
 	path := filepath.Join(s.Dir, fileName)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", err
+		return ExportArtifact{}, err
 	}
-	return "exports/" + fileName, nil
+	return exportArtifactFor("exports/"+fileName, data), nil
 }
 
 func (s DiskCSVExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {

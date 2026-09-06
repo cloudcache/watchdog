@@ -36,7 +36,8 @@ func (r *fakeExportWorkerRepo) MarkExportRunning(context.Context, ID, ID) error 
 func (*fakeExportWorkerRepo) RetryExportTask(context.Context, ID, ID) error {
 	return nil
 }
-func (r *fakeExportWorkerRepo) MarkExportComplete(_ context.Context, _ ID, _ ID, fileRef string) error {
+func (r *fakeExportWorkerRepo) MarkExportComplete(_ context.Context, _ ID, _ ID, artifact ExportArtifact, _ time.Time) error {
+	fileRef := artifact.FileRef
 	r.complete = true
 	r.fileRef = fileRef
 	return nil
@@ -64,8 +65,11 @@ type fakeExportFileWriter struct {
 	err     error
 }
 
-func (w fakeExportFileWriter) WriteExport(context.Context, ExportTask, ExportColumns) (string, error) {
-	return w.fileRef, w.err
+func (w fakeExportFileWriter) WriteExport(context.Context, ExportTask, ExportColumns) (ExportArtifact, error) {
+	if w.err != nil {
+		return ExportArtifact{}, w.err
+	}
+	return ExportArtifact{FileRef: w.fileRef, Checksum: "abc", SizeBytes: 1}, nil
 }
 
 func TestExportWorkerCompletesTask(t *testing.T) {

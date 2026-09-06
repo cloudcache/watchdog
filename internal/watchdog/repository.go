@@ -198,7 +198,7 @@ type ExportRepository interface {
 	ListExportTasks(ctx context.Context, tenantID ID, createdBy ID) ([]ExportTask, error)
 	RetryExportTask(ctx context.Context, tenantID, taskID ID) error
 	MarkExportRunning(ctx context.Context, tenantID, taskID ID) error
-	MarkExportComplete(ctx context.Context, tenantID, taskID ID, fileRef string) error
+	MarkExportComplete(ctx context.Context, tenantID, taskID ID, artifact ExportArtifact, expiresAt time.Time) error
 	MarkExportFailed(ctx context.Context, tenantID, taskID ID, message string) error
 }
 
@@ -281,9 +281,20 @@ type ExportTask struct {
 	Format       ExportFormat
 	Status       ExportStatus
 	FileRef      string
+	Checksum     string
+	SizeBytes    int64
+	ExpiresAt    time.Time
 	ErrorMessage string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// ExportArtifact is the produced file plus its integrity metadata, returned by
+// an export writer so the worker can persist the checksum and size.
+type ExportArtifact struct {
+	FileRef   string
+	Checksum  string // sha256 hex of the file bytes
+	SizeBytes int64
 }
 
 type BillingDirection string

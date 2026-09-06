@@ -23,8 +23,12 @@ type ExportColumns struct {
 }
 
 type ExportFileWriter interface {
-	WriteExport(ctx context.Context, task ExportTask, columns ExportColumns) (string, error)
+	WriteExport(ctx context.Context, task ExportTask, columns ExportColumns) (ExportArtifact, error)
 }
+
+// exportArtifactTTL is how long a produced export file is downloadable before it
+// is considered stale (download refuses it, and the reaper deletes it).
+const exportArtifactTTL = 7 * 24 * time.Hour
 
 type ExportFileReader interface {
 	ReadExport(ctx context.Context, fileRef string) ([]byte, string, error)
@@ -127,12 +131,12 @@ func (w ExportWorker) RunTask(ctx context.Context, task ExportTask) error {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err
 	}
-	fileRef, err := w.Writer.WriteExport(ctx, task, columns)
+	artifact, err := w.Writer.WriteExport(ctx, task, columns)
 	if err != nil {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err
 	}
-	return w.Repo.MarkExportComplete(ctx, task.TenantID, task.ID, fileRef)
+	return w.Repo.MarkExportComplete(ctx, task.TenantID, task.ID, artifact, time.Now().UTC().Add(exportArtifactTTL))
 }
 
 // buildColumns aggregates the raw samples and, when the task wants corrected

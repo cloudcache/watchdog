@@ -56,7 +56,7 @@ func (r *fakeExportRepository) RetryExportTask(_ context.Context, _ ID, taskID I
 	return nil
 }
 
-func (*fakeExportRepository) MarkExportComplete(context.Context, ID, ID, string) error {
+func (*fakeExportRepository) MarkExportComplete(context.Context, ID, ID, ExportArtifact, time.Time) error {
 	return nil
 }
 

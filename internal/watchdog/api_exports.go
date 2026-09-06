@@ -1,11 +1,13 @@
 package watchdog
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -15,10 +17,21 @@ type exportAPI struct {
 	repo    ExportRepository
 	files   ExportFileReader
 	network NetworkRepository
+	audit   AuditRepository
 }
 
-func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository) {
-	api := exportAPI{repo: repo, files: files, network: network}
+func (api exportAPI) recordAudit(ctx context.Context, auth AuthContext, action string, exportID ID, details map[string]any) {
+	if api.audit == nil {
+		return
+	}
+	_ = api.audit.CreateAuditLog(ctx, AuditLog{
+		TenantID: auth.TenantID, ActorID: auth.UserID, Action: action,
+		ResourceType: ResourceExportTask, ResourceID: exportID, Detail: details,
+	})
+}
+
+func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository, audit AuditRepository) {
+	api := exportAPI{repo: repo, files: files, network: network, audit: audit}
 	mux.Handle("POST /api/v1/exports", auth(http.HandlerFunc(api.create)))
 	mux.Handle("GET /api/v1/exports", auth(http.HandlerFunc(api.list)))
 	mux.Handle("GET /api/v1/exports/{export_id}", auth(http.HandlerFunc(api.get)))
@@ -163,6 +176,10 @@ func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "Export file is not ready", nil)
 		return
 	}
+	if !task.ExpiresAt.IsZero() && time.Now().After(task.ExpiresAt) {
+		WriteAPIError(w, http.StatusGone, APIErrorCode("export_expired"), "Export file has expired", nil)
+		return
+	}
 	data, contentType, err := api.files.ReadExport(r.Context(), task.FileRef)
 	if err != nil {
 		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Export file not found", nil)
@@ -171,8 +188,14 @@ func (api exportAPI) download(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	// Record who downloaded which export (download audit trail).
+	api.recordAudit(r.Context(), auth, "export.downloaded", task.ID, nil)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+string(task.ID)+`.csv"`)
+	if task.Checksum != "" {
+		w.Header().Set("X-Checksum-SHA256", task.Checksum)
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

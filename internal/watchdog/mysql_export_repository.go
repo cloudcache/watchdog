@@ -97,12 +97,12 @@ func (s *MySQLStore) RetryExportTask(ctx context.Context, tenantID, taskID ID) e
 	return err
 }
 
-func (s *MySQLStore) MarkExportComplete(ctx context.Context, tenantID, taskID ID, fileRef string) error {
+func (s *MySQLStore) MarkExportComplete(ctx context.Context, tenantID, taskID ID, artifact ExportArtifact, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE export_tasks
-		SET status = ?, file_ref = ?, error_message = NULL, updated_at = CURRENT_TIMESTAMP(3)
+		SET status = ?, file_ref = ?, checksum = ?, size_bytes = ?, expires_at = ?, error_message = NULL, updated_at = CURRENT_TIMESTAMP(3)
 		WHERE tenant_id = ? AND id = ?
-	`, ExportStatusComplete, fileRef, tenantID, taskID)
+	`, ExportStatusComplete, artifact.FileRef, artifact.Checksum, artifact.SizeBytes, expiresAt.UTC(), tenantID, taskID)
 	return err
 }
 
@@ -138,8 +138,9 @@ func exportTaskSelect() string {
 	return `
 		SELECT id, tenant_id, created_by, COALESCE(target_id, ''), COALESCE(port_id, ''),
 		       period_type, range_start, range_end, step_seconds, aggregation, value_mode,
-		       format, status, COALESCE(file_ref, ''), COALESCE(error_message, ''),
-		       created_at, updated_at
+		       format, status, COALESCE(file_ref, ''),
+		       COALESCE(checksum, ''), COALESCE(size_bytes, 0), expires_at,
+		       COALESCE(error_message, ''), created_at, updated_at
 		FROM export_tasks
 	`
 }
@@ -147,6 +148,7 @@ func exportTaskSelect() string {
 func scanExportTask(row rowScanner) (ExportTask, error) {
 	var task ExportTask
 	var stepSeconds uint32
+	var expiresAt sql.NullTime
 	err := row.Scan(
 		&task.ID,
 		&task.TenantID,
@@ -162,12 +164,18 @@ func scanExportTask(row rowScanner) (ExportTask, error) {
 		&task.Format,
 		&task.Status,
 		&task.FileRef,
+		&task.Checksum,
+		&task.SizeBytes,
+		&expiresAt,
 		&task.ErrorMessage,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 	)
 	if err != nil {
 		return task, err
+	}
+	if expiresAt.Valid {
+		task.ExpiresAt = expiresAt.Time
 	}
 	task.Step = time.Duration(stepSeconds) * time.Second
 	return task, nil

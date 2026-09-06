@@ -128,7 +128,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		registerGraphRoutes(mux, auth, cfg.Network)
 	}
 	if cfg.Exports != nil {
-		registerExportRoutes(mux, auth, cfg.Exports, cfg.ExportFiles, cfg.Network)
+		registerExportRoutes(mux, auth, cfg.Exports, cfg.ExportFiles, cfg.Network, cfg.Audit)
 	}
 	if cfg.Billing != nil {
 		registerBillingRoutes(mux, auth, cfg.Billing, cfg.Network, cfg.Metrics)

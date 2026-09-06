@@ -128,34 +128,40 @@ func (f fakeExportPolicyNetwork) GetPortPolicy(context.Context, ID, ID) (PortPol
 
 func TestCSVExportWriterStoresFileRef(t *testing.T) {
 	writer := &CSVExportWriter{}
-	fileRef, err := writer.WriteExport(context.Background(), ExportTask{ID: "export-a", Format: ExportFormatCSV}, ExportColumns{Raw: []Sample{{
+	artifact, err := writer.WriteExport(context.Background(), ExportTask{ID: "export-a", Format: ExportFormatCSV}, ExportColumns{Raw: []Sample{{
 		Time:  time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 		Value: 1,
 	}}})
 	if err != nil {
 		t.Fatalf("WriteExport() error = %v", err)
 	}
-	if fileRef != "exports/export-a.csv" {
-		t.Fatalf("fileRef = %s", fileRef)
+	if artifact.FileRef != "exports/export-a.csv" {
+		t.Fatalf("fileRef = %s", artifact.FileRef)
 	}
-	if len(writer.Files[fileRef]) == 0 {
+	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 {
+		t.Fatalf("artifact metadata = %+v", artifact)
+	}
+	if len(writer.Files[artifact.FileRef]) == 0 {
 		t.Fatal("expected stored csv data")
 	}
 }
 
 func TestDiskCSVExportStoreWritesAndReadsFile(t *testing.T) {
 	store := DiskCSVExportStore{Dir: t.TempDir()}
-	fileRef, err := store.WriteExport(context.Background(), ExportTask{ID: "export-a", Format: ExportFormatCSV}, ExportColumns{Raw: []Sample{{
+	artifact, err := store.WriteExport(context.Background(), ExportTask{ID: "export-a", Format: ExportFormatCSV}, ExportColumns{Raw: []Sample{{
 		Time:  time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 		Value: 42,
 	}}})
 	if err != nil {
 		t.Fatalf("WriteExport() error = %v", err)
 	}
-	if fileRef != "exports/export-a.csv" {
-		t.Fatalf("fileRef = %q", fileRef)
+	if artifact.FileRef != "exports/export-a.csv" {
+		t.Fatalf("fileRef = %q", artifact.FileRef)
 	}
-	data, contentType, err := store.ReadExport(context.Background(), fileRef)
+	if len(artifact.Checksum) != 64 || artifact.SizeBytes == 0 {
+		t.Fatalf("artifact metadata = %+v", artifact)
+	}
+	data, contentType, err := store.ReadExport(context.Background(), artifact.FileRef)
 	if err != nil {
 		t.Fatalf("ReadExport() error = %v", err)
 	}
