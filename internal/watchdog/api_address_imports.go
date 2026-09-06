@@ -27,8 +27,111 @@ func registerAddressImportRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("GET /api/v1/address-imports", auth(viewTenant(http.HandlerFunc(api.list))))
 	mux.Handle("POST /api/v1/address-imports", auth(configureTenant(http.HandlerFunc(api.upload))))
 	mux.Handle("GET /api/v1/address-imports/{import_id}", auth(viewTenant(http.HandlerFunc(api.get))))
+	mux.Handle("GET /api/v1/address-imports/{import_id}/prefixes", auth(viewTenant(http.HandlerFunc(api.listPrefixes))))
+	mux.Handle("GET /api/v1/address-imports/{import_id}/lookup", auth(viewTenant(http.HandlerFunc(api.lookupPrefix))))
 	mux.Handle("POST /api/v1/address-imports/{import_id}/actions/activate", auth(configureTenant(http.HandlerFunc(api.activate))))
 	mux.Handle("GET /api/v1/address-import-slots/{source_slot}", auth(viewTenant(http.HandlerFunc(api.getSlot))))
+}
+
+func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	importID := ID(r.PathValue("import_id"))
+	if !api.addressImportExists(w, r, auth.TenantID, importID) {
+		return
+	}
+	query := r.URL.Query()
+	filter := AddressBasePrefixFilter{
+		CountryCode: strings.TrimSpace(query.Get("country_code")),
+		Operator:    strings.TrimSpace(query.Get("operator")),
+		Search:      strings.TrimSpace(query.Get("q")),
+		Cursor:      strings.TrimSpace(query.Get("cursor")),
+	}
+	if len(filter.CountryCode) > 2 || len(filter.Operator) > 255 || len(filter.Search) > 255 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "address prefix filter is too long", nil)
+		return
+	}
+	if raw := strings.TrimSpace(query.Get("family")); raw != "" {
+		family, err := strconv.ParseUint(raw, 10, 8)
+		if err != nil || (family != 4 && family != 6) {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "family must be 4 or 6", nil)
+			return
+		}
+		filter.Family = uint8(family)
+	}
+	if raw := strings.TrimSpace(query.Get("asn")); raw != "" {
+		asn, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "asn must be an unsigned 32-bit integer", nil)
+			return
+		}
+		value := uint32(asn)
+		filter.ASN = &value
+	}
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	items, cursor, err := api.repo.ListAddressBasePrefixes(r.Context(), auth.TenantID, importID, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if items == nil {
+		items = []AddressBasePrefix{}
+	}
+	response := map[string]any{"items": items}
+	if cursor != "" {
+		response["next_cursor"] = cursor
+	}
+	WriteAPIJSON(w, http.StatusOK, response)
+}
+
+func (api addressImportAPI) lookupPrefix(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	importID := ID(r.PathValue("import_id"))
+	if !api.addressImportExists(w, r, auth.TenantID, importID) {
+		return
+	}
+	value := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if value == "" {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "ip is required", nil)
+		return
+	}
+	limit := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be a positive integer", nil)
+			return
+		}
+		limit = parsed
+	}
+	items, err := api.repo.LookupAddressBasePrefixes(r.Context(), auth.TenantID, importID, value, limit)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if items == nil {
+		items = []AddressBasePrefix{}
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (api addressImportAPI) addressImportExists(w http.ResponseWriter, r *http.Request, tenantID, importID ID) bool {
+	_, err := api.repo.GetAddressImport(r.Context(), tenantID, importID)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Address import not found", nil)
+		return false
+	}
+	WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, err.Error(), nil)
+	return false
 }
 
 func (api addressImportAPI) list(w http.ResponseWriter, r *http.Request) {

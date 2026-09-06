@@ -72,6 +72,38 @@ type AddressImportListFilter struct {
 	Cursor     string
 }
 
+type AddressBasePrefix struct {
+	ID              uint64            `json:"id"`
+	TenantID        ID                `json:"tenant_id"`
+	ImportID        ID                `json:"import_id"`
+	Family          uint8             `json:"family"`
+	PrefixLength    uint8             `json:"prefix_length"`
+	CIDR            string            `json:"cidr"`
+	ContinentCode   string            `json:"continent_code,omitempty"`
+	CountryCode     string            `json:"country_code,omitempty"`
+	CountryName     string            `json:"country_name,omitempty"`
+	SubdivisionCode string            `json:"subdivision_code,omitempty"`
+	SubdivisionName string            `json:"subdivision_name,omitempty"`
+	CityCode        string            `json:"city_code,omitempty"`
+	CityName        string            `json:"city_name,omitempty"`
+	ASN             *uint32           `json:"asn,omitempty"`
+	OperatorName    string            `json:"operator_name,omitempty"`
+	Latitude        *float64          `json:"latitude,omitempty"`
+	Longitude       *float64          `json:"longitude,omitempty"`
+	Labels          map[string]string `json:"labels"`
+	CreatedAt       time.Time         `json:"created_at"`
+}
+
+type AddressBasePrefixFilter struct {
+	Family      uint8
+	CountryCode string
+	ASN         *uint32
+	Operator    string
+	Search      string
+	Limit       int
+	Cursor      string
+}
+
 type AddressImportRepository interface {
 	CreateAddressImport(context.Context, AddressImport) (AddressImport, error)
 	GetAddressImport(ctx context.Context, tenantID, importID ID) (AddressImport, error)
@@ -82,4 +114,6 @@ type AddressImportRepository interface {
 	FailAddressImport(ctx context.Context, tenantID, importID ID, code, detail string) error
 	GetAddressImportSlot(ctx context.Context, tenantID ID, sourceSlot string) (AddressImportSlot, error)
 	ActivateAddressImport(ctx context.Context, tenantID, importID, actorID ID, expectedVersion uint64) (AddressImportSlot, error)
+	ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error)
+	LookupAddressBasePrefixes(ctx context.Context, tenantID, importID ID, address string, limit int) ([]AddressBasePrefix, error)
 }

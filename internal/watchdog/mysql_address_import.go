@@ -3,11 +3,13 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 )
 
@@ -454,3 +456,162 @@ func (s *MySQLStore) ActivateAddressImport(ctx context.Context, tenantID, import
 }
 
 var _ AddressImportRepository = (*MySQLStore)(nil)
+
+const addressBasePrefixColumns = `
+	id, tenant_id, import_id, family, prefix_length, cidr,
+	COALESCE(continent_code, ''), COALESCE(country_code, ''), COALESCE(country_name, ''),
+	COALESCE(subdivision_code, ''), COALESCE(subdivision_name, ''),
+	COALESCE(city_code, ''), COALESCE(city_name, ''), asn,
+	COALESCE(operator_name, ''), latitude, longitude, labels, created_at`
+
+func scanAddressBasePrefix(row rowScanner) (AddressBasePrefix, error) {
+	var item AddressBasePrefix
+	var asn sql.NullInt64
+	var latitude, longitude sql.NullFloat64
+	var labels []byte
+	if err := row.Scan(
+		&item.ID, &item.TenantID, &item.ImportID, &item.Family, &item.PrefixLength, &item.CIDR,
+		&item.ContinentCode, &item.CountryCode, &item.CountryName,
+		&item.SubdivisionCode, &item.SubdivisionName, &item.CityCode, &item.CityName, &asn,
+		&item.OperatorName, &latitude, &longitude, &labels, &item.CreatedAt,
+	); err != nil {
+		return AddressBasePrefix{}, err
+	}
+	if asn.Valid {
+		value := uint32(asn.Int64)
+		item.ASN = &value
+	}
+	if latitude.Valid {
+		value := latitude.Float64
+		item.Latitude = &value
+	}
+	if longitude.Valid {
+		value := longitude.Float64
+		item.Longitude = &value
+	}
+	item.Labels = map[string]string{}
+	if err := json.Unmarshal(labels, &item.Labels); err != nil {
+		return AddressBasePrefix{}, fmt.Errorf("decode address base labels: %w", err)
+	}
+	return item, nil
+}
+
+func (s *MySQLStore) ListAddressBasePrefixes(ctx context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if filter.Family != 0 && filter.Family != 4 && filter.Family != 6 {
+		return nil, "", fmt.Errorf("%w: family must be 4 or 6", ErrAddressImportInvalid)
+	}
+	query := `SELECT ` + addressBasePrefixColumns + ` FROM address_base_prefixes WHERE tenant_id = ? AND import_id = ?`
+	args := []any{tenantID, importID}
+	if filter.Family != 0 {
+		query += ` AND family = ?`
+		args = append(args, filter.Family)
+	}
+	if filter.CountryCode != "" {
+		query += ` AND country_code = ?`
+		args = append(args, strings.ToUpper(strings.TrimSpace(filter.CountryCode)))
+	}
+	if filter.ASN != nil {
+		query += ` AND asn = ?`
+		args = append(args, *filter.ASN)
+	}
+	if filter.Operator != "" {
+		query += ` AND operator_name = ?`
+		args = append(args, strings.TrimSpace(filter.Operator))
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeSQLLike(search) + "%"
+		query += ` AND (cidr LIKE ? OR COALESCE(country_name, '') LIKE ? OR COALESCE(subdivision_name, '') LIKE ? OR COALESCE(city_name, '') LIKE ? OR COALESCE(operator_name, '') LIKE ? OR CAST(asn AS CHAR) LIKE ?)`
+		args = append(args, like, like, like, like, like, like)
+	}
+	if filter.Cursor != "" {
+		cursor, err := decodeAddressBaseCursor(filter.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` AND id > ?`
+		args = append(args, cursor)
+	}
+	query += ` ORDER BY id LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	items := make([]AddressBasePrefix, 0, limit)
+	for rows.Next() {
+		item, err := scanAddressBasePrefix(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor = encodeAddressBaseCursor(items[len(items)-1].ID)
+	}
+	return items, nextCursor, nil
+}
+
+func (s *MySQLStore) LookupAddressBasePrefixes(ctx context.Context, tenantID, importID ID, value string, limit int) ([]AddressBasePrefix, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid lookup IP", ErrAddressImportInvalid)
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	family := uint8(6)
+	if address.Is4() {
+		family = 4
+	}
+	encoded := addressNumberBytes(addressNumberFromAddr(address))
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+addressBasePrefixColumns+` FROM address_base_prefixes
+		WHERE tenant_id = ? AND import_id = ? AND family = ? AND ip_start <= ? AND ip_end >= ?
+		ORDER BY prefix_length DESC, id LIMIT ?
+	`, tenantID, importID, family, encoded[:], encoded[:], limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]AddressBasePrefix, 0)
+	for rows.Next() {
+		item, err := scanAddressBasePrefix(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func encodeAddressBaseCursor(id uint64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatUint(id, 10)))
+}
+
+func decodeAddressBaseCursor(cursor string) (uint64, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid address prefix cursor", ErrAddressImportInvalid)
+	}
+	id, err := strconv.ParseUint(string(decoded), 10, 64)
+	if err != nil || id == 0 {
+		return 0, fmt.Errorf("%w: invalid address prefix cursor", ErrAddressImportInvalid)
+	}
+	return id, nil
+}

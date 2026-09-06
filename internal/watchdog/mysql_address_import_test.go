@@ -88,7 +88,8 @@ func TestMySQLAddressImportGenerationLifecycleAndCAS(t *testing.T) {
 		t.Fatalf("repeat begin: %v", err)
 	}
 	records := []AddressImportRecord{
-		{Prefix: "192.0.2.0/24", CountryCode: "CN", CountryName: "China", ASN: 4134, Operator: "China Telecom", Source: "mmdb"},
+		{Prefix: "192.0.2.0/24", CountryCode: "CN", CountryName: "China", SubdivisionCode: "BJ", SubdivisionName: "Beijing", CityName: "Beijing", ASN: 4134, Operator: "China Telecom", Source: "mmdb"},
+		{Prefix: "192.0.2.0/25", CountryCode: "CN", CountryName: "China", SubdivisionCode: "BJ", SubdivisionName: "Beijing", CityName: "Haidian", ASN: 4134, Operator: "China Telecom", Source: "mmdb"},
 		{Prefix: "2001:db8::/126", CountryCode: "US", ASN: 64496, Source: "mmdb"},
 	}
 	if err := store.InsertAddressImportBatch(ctx, tenantID, first.ID, records); err != nil {
@@ -102,8 +103,23 @@ func TestMySQLAddressImportGenerationLifecycleAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Status != AddressImportStatusReady || first.RowCountV4 != 1 || first.RowCountV6 != 1 || first.BuildEpoch == nil || *first.BuildEpoch != 1_700_000_000 {
+	if first.Status != AddressImportStatusReady || first.RowCountV4 != 2 || first.RowCountV6 != 1 || first.BuildEpoch == nil || *first.BuildEpoch != 1_700_000_000 {
 		t.Fatalf("completed import = %#v", first)
+	}
+	asn := uint32(4134)
+	prefixes, prefixCursor, err := store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{
+		Family: 4, CountryCode: "cn", ASN: &asn, Operator: "China Telecom", Search: "Beijing", Limit: 1,
+	})
+	if err != nil || len(prefixes) != 1 || prefixCursor == "" || prefixes[0].Labels["source"] != "mmdb" {
+		t.Fatalf("prefix first page=%#v cursor=%q err=%v", prefixes, prefixCursor, err)
+	}
+	prefixes, _, err = store.ListAddressBasePrefixes(ctx, tenantID, first.ID, AddressBasePrefixFilter{Family: 4, Cursor: prefixCursor, Limit: 1})
+	if err != nil || len(prefixes) != 1 {
+		t.Fatalf("prefix second page=%#v err=%v", prefixes, err)
+	}
+	matches, err := store.LookupAddressBasePrefixes(ctx, tenantID, first.ID, "192.0.2.42", 20)
+	if err != nil || len(matches) != 2 || matches[0].CIDR != "192.0.2.0/25" || matches[1].CIDR != "192.0.2.0/24" {
+		t.Fatalf("lookup matches=%#v err=%v", matches, err)
 	}
 	if err := store.InsertAddressImportBatch(ctx, tenantID, first.ID, records[:1]); !errors.Is(err, ErrAddressImportNotWritable) {
 		t.Fatalf("write after ready error = %v", err)

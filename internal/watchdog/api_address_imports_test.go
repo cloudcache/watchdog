@@ -22,6 +22,8 @@ type fakeAddressImportAPIRepository struct {
 	created         AddressImport
 	activatedImport ID
 	expectedVersion uint64
+	prefixFilter    AddressBasePrefixFilter
+	lookupIP        string
 }
 
 func (r *fakeAddressImportAPIRepository) CreateAddressImport(_ context.Context, item AddressImport) (AddressImport, error) {
@@ -37,6 +39,20 @@ func (r *fakeAddressImportAPIRepository) ActivateAddressImport(_ context.Context
 	r.activatedImport = importID
 	r.expectedVersion = expected
 	return AddressImportSlot{TenantID: tenantID, SourceSlot: AddressImportSlotGeo, ImportID: importID, RowVersion: expected + 1, ActivatedBy: actorID}, nil
+}
+
+func (r *fakeAddressImportAPIRepository) GetAddressImport(_ context.Context, tenantID, importID ID) (AddressImport, error) {
+	return AddressImport{ID: importID, TenantID: tenantID, Status: AddressImportStatusReady}, nil
+}
+
+func (r *fakeAddressImportAPIRepository) ListAddressBasePrefixes(_ context.Context, tenantID, importID ID, filter AddressBasePrefixFilter) ([]AddressBasePrefix, string, error) {
+	r.prefixFilter = filter
+	return []AddressBasePrefix{{ID: 7, TenantID: tenantID, ImportID: importID, Family: 4, PrefixLength: 24, CIDR: "192.0.2.0/24"}}, "next", nil
+}
+
+func (r *fakeAddressImportAPIRepository) LookupAddressBasePrefixes(_ context.Context, tenantID, importID ID, ip string, _ int) ([]AddressBasePrefix, error) {
+	r.lookupIP = ip
+	return []AddressBasePrefix{{ID: 7, TenantID: tenantID, ImportID: importID, Family: 4, PrefixLength: 24, CIDR: "192.0.2.0/24"}}, nil
 }
 
 type fakeAddressArtifactAPIStore struct {
@@ -131,6 +147,42 @@ func TestAddressImportActivateUsesSlotETag(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"8"` || repo.activatedImport != "import-a" || repo.expectedVersion != 7 {
 		t.Fatalf("status=%d etag=%q import=%q expected=%d body=%s", response.Code, response.Header().Get("ETag"), repo.activatedImport, repo.expectedVersion, response.Body.String())
+	}
+}
+
+func TestAddressImportPrefixListParsesServerSideFilters(t *testing.T) {
+	repo := &fakeAddressImportAPIRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressImports: repo})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-imports/import-a/prefixes?family=4&country_code=cn&asn=4134&operator=China+Telecom&q=Beijing&limit=25", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repo.prefixFilter.Family != 4 || repo.prefixFilter.CountryCode != "cn" || repo.prefixFilter.ASN == nil || *repo.prefixFilter.ASN != 4134 || repo.prefixFilter.Operator != "China Telecom" || repo.prefixFilter.Search != "Beijing" || repo.prefixFilter.Limit != 25 {
+		t.Fatalf("filter = %#v", repo.prefixFilter)
+	}
+	var result struct {
+		Items      []AddressBasePrefix `json:"items"`
+		NextCursor string              `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Items) != 1 || result.NextCursor != "next" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestAddressImportPrefixLookupRequiresAnIP(t *testing.T) {
+	repo := &fakeAddressImportAPIRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressImports: repo})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-imports/import-a/lookup", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("missing IP status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-imports/import-a/lookup?ip=192.0.2.7", nil))
+	if response.Code != http.StatusOK || repo.lookupIP != "192.0.2.7" {
+		t.Fatalf("lookup status=%d ip=%q body=%s", response.Code, repo.lookupIP, response.Body.String())
 	}
 }
 
