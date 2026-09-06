@@ -1,6 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { buildFlowJointSeries, buildFlowSeries, parseFlowFilter, resolveFlowTimeRange } from "./flow-explorer-model.ts"
+import {
+	buildFlowCSV,
+	buildFlowJointSeries,
+	buildFlowQuickFilter,
+	buildFlowSeries,
+	parseFlowFilter,
+	resolveFlowTimeRange,
+} from "./flow-explorer-model.ts"
 
 test("flow ranges are independent presets and custom ranges are minute-aligned", () => {
 	const now = new Date("2026-09-06T12:37:45Z")
@@ -49,6 +56,27 @@ test("flow filter expression parses precedence, typed operators and IP/CIDR valu
 	assert.equal(parseFlowFilter(""), undefined)
 })
 
+test("quick filters use published geo codes and the operator ASN set", () => {
+	assert.deepEqual(
+		buildFlowQuickFilter({
+			countryCode: "CN",
+			provinceCode: "330000",
+			cityCode: "330100",
+			operatorASNs: [4837, 4134, 4837, 0],
+		}),
+		{
+			op: "and",
+			args: [
+				{ op: "predicate", field: "geo.country", operator: "eq", values: ["CN"] },
+				{ op: "predicate", field: "geo.province", operator: "eq", values: ["330000"] },
+				{ op: "predicate", field: "geo.city", operator: "eq", values: ["330100"] },
+				{ op: "predicate", field: "asn", operator: "in", values: ["4134", "4837"] },
+			],
+		}
+	)
+	assert.equal(buildFlowQuickFilter({}), undefined)
+})
+
 test("flow series statistics use actual final bucket duration", () => {
 	const base = {
 		other: false,
@@ -82,6 +110,11 @@ test("flow series statistics use actual final bucket duration", () => {
 	assert.equal(series.maximum, 800)
 	assert.equal(series.last, 400)
 	assert.equal(series.p95, 800)
+})
+
+test("null wire points are treated as an empty Flow result", () => {
+	assert.deepEqual(buildFlowSeries(null, undefined, "bits_per_second"), [])
+	assert.deepEqual(buildFlowJointSeries(undefined, undefined, "bits_per_second"), [])
 })
 
 test("joint series preserves ordered tuple paths from the same facts", () => {
@@ -153,4 +186,32 @@ test("missing tuple buckets are zero-filled for last and weighted average", () =
 	assert.equal(series.last, 0)
 	assert.equal(series.average, 400)
 	assert.equal(series.sankeyValue, 400)
+})
+
+test("current result CSV includes time-series and summary values and neutralizes formulas", () => {
+	const csv = buildFlowCSV(
+		[
+			{
+				name: "formula",
+				label: "=cmd|'/C calc'!A0,\"quoted\"",
+				path: ["formula"],
+				values: [{ time: Date.parse("2026-09-06T10:00:00Z"), value: 42 }],
+				minimum: 1,
+				maximum: 50,
+				last: 42,
+				average: 20,
+				p95: 45,
+				total: 120,
+				receivedRecords: 8,
+				unknownSamplingRecords: 2,
+				qualityRecords: 1,
+				sankeyValue: 20,
+			},
+		],
+		"bits_per_second"
+	)
+	assert.match(csv, /^"series","bucket","value"/)
+	assert.match(csv, /"'=cmd\|'\/C calc'!A0,""quoted"""/)
+	assert.match(csv, /"2026-09-06T10:00:00\.000Z","42","bits_per_second"/)
+	assert.match(csv, /"8","2","1"$/)
 })

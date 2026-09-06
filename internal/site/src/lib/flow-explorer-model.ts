@@ -75,6 +75,13 @@ export type FlowFilterExpression = {
 	values?: string[]
 }
 
+export type FlowQuickFilterInput = {
+	countryCode?: string
+	provinceCode?: string
+	cityCode?: string
+	operatorASNs?: number[]
+}
+
 const FLOW_FILTER_FIELDS = new Set([
 	"direction",
 	"category",
@@ -153,17 +160,87 @@ export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFil
 	return result
 }
 
-export function buildFlowSeries(points: FlowPoint[], plan: FlowPlan | undefined, unit: string): FlowSeries[] {
+export function buildFlowQuickFilter(input: FlowQuickFilterInput): FlowFilterExpression | undefined {
+	const predicates: FlowFilterExpression[] = []
+	for (const [field, value] of [
+		["geo.country", input.countryCode],
+		["geo.province", input.provinceCode],
+		["geo.city", input.cityCode],
+	] as const) {
+		if (value) predicates.push({ op: "predicate", field, operator: "eq", values: [value] })
+	}
+	const asns = [...new Set((input.operatorASNs ?? []).filter((asn) => Number.isInteger(asn) && asn > 0))].sort(
+		(a, b) => a - b
+	)
+	if (asns.length > 0) {
+		predicates.push({ op: "predicate", field: "asn", operator: "in", values: asns.map(String) })
+	}
+	if (predicates.length === 0) return undefined
+	return predicates.length === 1 ? predicates[0] : { op: "and", args: predicates }
+}
+
+export function buildFlowCSV(series: FlowSeries[], unit: string): string {
+	const rows: (string | number)[][] = [
+		[
+			"series",
+			"bucket",
+			"value",
+			"unit",
+			"minimum",
+			"maximum",
+			"last",
+			"average",
+			"p95",
+			"total",
+			"received_records",
+			"unknown_sampling_records",
+			"quality_records",
+		],
+	]
+	for (const item of series) {
+		for (const point of item.values) {
+			rows.push([
+				item.label,
+				new Date(point.time).toISOString(),
+				point.value,
+				unit,
+				item.minimum,
+				item.maximum,
+				item.last,
+				item.average,
+				item.p95,
+				item.total,
+				item.receivedRecords,
+				item.unknownSamplingRecords,
+				item.qualityRecords,
+			])
+		}
+	}
+	return rows.map((row) => row.map(csvCell).join(",")).join("\n")
+}
+
+export function buildFlowSeries(
+	points: FlowPoint[] | null | undefined,
+	plan: FlowPlan | undefined,
+	unit: string
+): FlowSeries[] {
 	return buildSeries(
-		points.map((point) => ({ ...point, path: [point.other ? "Other" : point.dimension_value] })),
+		(points ?? []).map((point) => ({ ...point, path: [point.other ? "Other" : point.dimension_value] })),
 		plan,
 		unit
 	)
 }
 
-export function buildFlowJointSeries(points: FlowJointPoint[], plan: FlowPlan | undefined, unit: string): FlowSeries[] {
+export function buildFlowJointSeries(
+	points: FlowJointPoint[] | null | undefined,
+	plan: FlowPlan | undefined,
+	unit: string
+): FlowSeries[] {
 	return buildSeries(
-		points.map((point) => ({ ...point, path: point.dimension_values.map((value) => (point.other ? "Other" : value)) })),
+		(points ?? []).map((point) => ({
+			...point,
+			path: point.dimension_values.map((value) => (point.other ? "Other" : value)),
+		})),
 		plan,
 		unit
 	)
@@ -256,6 +333,12 @@ function percentile(values: number[], ratio: number) {
 
 function unique(values: string[]) {
 	return [...new Set(values)]
+}
+
+function csvCell(value: string | number) {
+	let text = String(value)
+	if (/^[=+\-@]/.test(text)) text = `'${text}`
+	return `"${text.replaceAll('"', '""')}"`
 }
 
 type FlowFilterToken = { kind: "word" | "string" | "operator" | "left" | "right" | "comma"; value: string }
