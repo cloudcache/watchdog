@@ -3,7 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { createListTable, disposeTable, getRowRecord, type ColumnDefine, type ListTable } from "@/lib/vtable"
+import {
+	createListTable,
+	disposeTable,
+	getRowRecord,
+	type ColumnDefine,
+	type ListTable,
+	type ServerFiltering,
+} from "@/lib/vtable"
 
 export function PagedVTable({
 	records,
@@ -20,6 +27,8 @@ export function PagedVTable({
 	serverPagination,
 	searchValue,
 	onSearchChange,
+	onSearchSubmit,
+	serverFiltering,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -35,12 +44,15 @@ export function PagedVTable({
 	serverPagination?: {
 		page: number
 		pageSize: number
-		totalCount: number
+		totalCount?: number
+		hasNextPage?: boolean
 		onPageChange: (page: number) => void
 		onPageSizeChange: (pageSize: number) => void
 	}
 	searchValue?: string
 	onSearchChange?: (value: string) => void
+	onSearchSubmit?: (value: string) => void
+	serverFiltering?: ServerFiltering
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -53,7 +65,7 @@ export function PagedVTable({
 	const effectiveSearch = searchValue ?? search
 	const effectivePageSize = serverPagination?.pageSize ?? pageSize
 	const effectivePage = serverPagination?.page ?? page
-	const totalCount = serverPagination?.totalCount ?? filteredCount
+	const totalCount = serverMode ? serverPagination?.totalCount : filteredCount
 	const searchedRecords = useMemo(() => {
 		if (serverMode) return records
 		const query = effectiveSearch.trim().toLocaleLowerCase()
@@ -91,6 +103,7 @@ export function PagedVTable({
 			onFilterApplied: () => {
 				if (!serverMode) setPage(0)
 			},
+			serverFiltering,
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
@@ -107,7 +120,17 @@ export function PagedVTable({
 			}
 			disposeTable(table)
 		}
-	}, [columns, effectivePageSize, loading, onCellClick, onRowClick, rowHeight, searchedRecords, serverMode])
+	}, [
+		columns,
+		effectivePageSize,
+		loading,
+		onCellClick,
+		onRowClick,
+		rowHeight,
+		searchedRecords,
+		serverFiltering,
+		serverMode,
+	])
 
 	useEffect(() => {
 		tableInstance.current?.updatePagination({
@@ -117,7 +140,10 @@ export function PagedVTable({
 		})
 	}, [effectivePage, effectivePageSize, filteredCount, searchedRecords.length, serverMode])
 
-	const pageCount = Math.max(1, Math.ceil(totalCount / effectivePageSize))
+	const pageCount =
+		totalCount == null
+			? Math.max(1, effectivePage + 1 + (serverPagination?.hasNextPage ? 1 : 0))
+			: Math.max(1, Math.ceil(totalCount / effectivePageSize))
 	const safePage = Math.min(effectivePage, pageCount - 1)
 
 	return (
@@ -132,6 +158,9 @@ export function PagedVTable({
 								if (onSearchChange) onSearchChange(event.target.value)
 								else setSearch(event.target.value)
 							}}
+							onKeyDown={(event) => {
+								if (event.key === "Enter") onSearchSubmit?.(effectiveSearch)
+							}}
 							placeholder={searchPlaceholder}
 							className="pl-9"
 						/>
@@ -140,7 +169,7 @@ export function PagedVTable({
 					<div />
 				)}
 				<div className="flex items-center gap-2 text-sm text-muted-foreground">
-					<span>{totalCount} items</span>
+					<span>{totalCount == null ? `${records.length} items on this page` : `${totalCount} items`}</span>
 					<Select
 						value={String(effectivePageSize)}
 						onValueChange={(value) => {
@@ -190,7 +219,7 @@ export function PagedVTable({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={safePage + 1 >= pageCount}
+						disabled={totalCount == null ? !serverPagination?.hasNextPage : safePage + 1 >= pageCount}
 						onClick={() => {
 							if (serverPagination) serverPagination.onPageChange(Math.min(pageCount - 1, safePage + 1))
 							else setPage((value) => Math.min(pageCount - 1, value + 1))

@@ -658,6 +658,10 @@ provider 使用与 field mask 对应的 typed ch-go columns 消费任意多个 d
 
 生产 HTTP 适配器固定为 `POST /api/v1/flow/records/search`，并以 `GET /api/v1/flow/records/capabilities` 暴露同一字段/视图 registry。适配器不得接受 tenant 字段；它从登录上下文注入 tenant，把 raw/supplier/customer 映射到平台 `view_raw/view_supplier/view_customer` grant，并用聚合查询相同的 target/device/exporter 资源授权器。响应为 `{data: DetailResult, meta: {sort, page_size}}`，v1 `sort` 固定为 `event_time:desc,record_id:desc`，客户端不得把当前页重排后冒充服务端排序。每次成功查询（包括 customer）都按敏感 IP 查询记录审计，日志只保留 view/endpoint/has_more 等低基数信息，不写 IP、cursor 或完整过滤值。
 
+源 IP、目的 IP 页的明细 VTable 只消费上述 API：点击 Top IP 或输入精确 IPv4/IPv6 后发起查询；换页沿服务端 opaque cursor 链前进/后退，修改页大小、时间、端点或 column filter 必须清空 cursor 链并回到第一页；新请求必须取消旧请求，旧响应不得覆盖新状态。v1 可筛选列只有 capabilities 明确开放的 `business_direction/category`，全选或全不选统一规范化为“无该列约束”。其余列不显示假筛选入口，不能只过滤当前页。
+
+通用 VTable 的筛选浮层固定 portal 到 `document.body`，使用 viewport fixed 坐标；打开时做上下/左右 collision clamp，宽高受 viewport 限制、值列表内部滚动，页面/表格外部滚动、resize、Escape 或外部点击均关闭。这个 UI 基础能力不等于所有列表已经具备服务端筛选：每个调用点只有在其 list API 提供 typed filter、稳定 server sort 和 total/cursor pagination 后才能切到 server mode。明细 v1 的排序是 API 固定稳定序，不提供任意列排序；将来增加排序必须发布携带 sort identity 的新 cursor 版本，不能在当前页本地重排。
+
 ClickHouse 会在同一 SELECT 内做全局 alias substitution，因此 field mask 中的 `src_ip AS src_ip` 不能反向改变 WHERE 中的 IPv6 列类型。detail registry 只保存固定物理列名和结果类型，compiler 统一生成 `source.<column>` 及必要的 `CAST(... AS String)/toUInt64` 转换；`flow_records` 固定写成 `AS source FINAL`，tenant、时间、disposition、endpoint、filter、supplier evidence 和 cursor 全部显式引用 `source.*`。新增任意字段都必须通过同一路径，禁止重新放入任意 SQL expression。真实 CH 门禁必须同时验证 IPv4-mapped 规范化、相同毫秒 record ID 降序翻页、较新 ingest generation 覆盖旧物理行、首 block 取消和 deadline/扫描预算错误时零部分结果。
 
 所有 detail 动态字符串字段都显式 `CAST(source.<column> AS String)`，因为 `toString(LowCardinality(String))` 仍可能在 native wire 上保持 LowCardinality；supplier 内部 `_scope_match` 也必须 `CAST(... AS Bool)`，不能把比较表达式的 `UInt8` 交给 `ColBool`。真实 provenance 门禁包含人工写入的 `fact_schema=1` 和当前 writer 的 schema 2：raw 必须同时显示 count/drop 和两代事实，customer 必须排除 drop，supplier 在完整窗口含 schema 1 时返回 `ErrSupplierProvenanceUnavailable` 且零行；schema 2 子窗口、cursor 续页和合法空窗口分别返回完整证据。权限判定仍由宿主 RBAC 完成，不由数据测试冒充。

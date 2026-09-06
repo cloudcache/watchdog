@@ -2,6 +2,7 @@ import { Trans, useLingui } from "@lingui/react/macro"
 import { BarChart3Icon, DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
+import { FlowRecordTable } from "@/components/flow/flow-record-table"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -187,6 +188,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [selectedSet, setSelectedSet] = useState(() => queryState("set", "all"))
 	const [selectedDevice, setSelectedDevice] = useState(() => queryState("device", "all"))
 	const [series, setSeries] = useState<FlowSeries[]>([])
+	const [selectedDetailIP, setSelectedDetailIP] = useState("")
 	const [response, setResponse] = useState<FlowQueryResponse | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState("")
@@ -495,6 +497,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				.slice()
 				.sort((a, b) => b.maximum - a.maximum)
 				.map((item) => ({
+					ip: item.path[0] ?? "",
 					dimension: mixedVersions ? item.name : item.label,
 					last: formatFlowValue(item.last, unit),
 					average: formatFlowValue(item.average, unit),
@@ -557,6 +560,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const provinceOptions = referenceOptions(provinces, t`All provinces`)
 	const cityOptions = referenceOptions(cities, t`All cities`)
 	const operatorOptions = referenceOptions(operators, t`All operators`)
+	const detailRange = useMemo(() => {
+		try {
+			return resolveFlowTimeRange(timeRange, customStart, customEnd)
+		} catch {
+			return { start: "", end: "" }
+		}
+	}, [customEnd, customStart, timeRange])
 	const pageCopy = {
 		overview: {
 			title: t`Flow Overview`,
@@ -925,8 +935,23 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					emptyText={t`No Flow rows found`}
 					searchPlaceholder={t`Search Flow results...`}
 					height={420}
+					onRowClick={
+						surface === "source" || surface === "destination"
+							? (record) => setSelectedDetailIP(String(record.ip ?? ""))
+							: undefined
+					}
 				/>
 			</div>
+
+			{(surface === "source" || surface === "destination") && (
+				<FlowRecordTable
+					endpoint={surface}
+					selectedIP={selectedDetailIP}
+					onIPChange={setSelectedDetailIP}
+					from={detailRange.start}
+					to={detailRange.end}
+				/>
+			)}
 		</div>
 	)
 })

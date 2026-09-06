@@ -52,6 +52,10 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	detailRunner, err := flowquery.NewDetailRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registries, err := NewBuiltinPlatformRegistries()
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +76,10 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	auth := func(*http.Request) (AuthContext, error) {
 		return AuthContext{TenantID: "tenant-flow-http-it", UserID: "user-flow-http-it", IsAdmin: true}, nil
 	}
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: auth, QueryGateway: gateway})
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: auth, QueryGateway: gateway, FlowRecords: detailRunner,
+		FlowRecordNow: func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
+	})
 	body := map[string]any{
 		"dataset": FlowTrafficDataset, "from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:01:00Z",
 		"step_seconds": 0, "limit": 1, "value_layer": "customer",
@@ -178,5 +185,29 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		typedResponse.Data.Plan.StepSeconds != 60 || typedResponse.Meta.StepSeconds != 60 ||
 		!typedResponse.Meta.Partial || typedResponse.Meta.Source != "clickhouse" {
 		t.Fatalf("typed filter response=%+v", typedResponse)
+	}
+
+	detailRecorder := httptest.NewRecorder()
+	router.ServeHTTP(detailRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", strings.NewReader(`{
+		"ip":"203.0.113.1","endpoint":"source","from":"2020-01-01T00:00:00Z","to":"2020-01-01T00:01:00Z",
+		"view":"customer","fields":["src_ip","dst_ip","business_direction","category","estimated_bytes"],
+		"filters":{"directions":["in"],"categories":["overseas"]},"limit":25
+	}`)))
+	if detailRecorder.Code != http.StatusOK {
+		t.Fatalf("detail status=%d body=%s", detailRecorder.Code, detailRecorder.Body.String())
+	}
+	var detailResponse struct {
+		Data flowquery.DetailResult `json:"data"`
+		Meta struct {
+			Sort     string `json:"sort"`
+			PageSize uint16 `json:"page_size"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(detailResponse.Data.Rows) != 0 || detailResponse.Data.HasMore ||
+		detailResponse.Meta.Sort != "event_time:desc,record_id:desc" || detailResponse.Meta.PageSize != 25 {
+		t.Fatalf("detail response=%+v", detailResponse)
 	}
 }

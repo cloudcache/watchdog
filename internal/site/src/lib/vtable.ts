@@ -13,6 +13,16 @@ type FilterValue = {
 	key: string
 	label: string
 	count: number
+	raw: unknown
+}
+
+export type ServerFilterOption = { value: unknown; label?: string; count?: number }
+
+export type ServerFiltering = {
+	options: Record<string, ServerFilterOption[]>
+	selected: Record<string, unknown[]>
+	onColumnFilterChange: (field: string, values: unknown[]) => void
+	onClearAll: () => void
 }
 
 const tableCleanup = new WeakMap<ListTable, () => void>()
@@ -49,6 +59,7 @@ export interface CreateTableOptions {
 	pagination?: { totalCount?: number; perPageCount: number; currentPage?: number }
 	onFilteredCountChange?: (count: number) => void
 	onFilterApplied?: () => void
+	serverFiltering?: ServerFiltering
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -100,6 +111,9 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 	}
 	const filterColumns: FilterColumn[] = []
 	const activeFilters = new Map<string, Set<string>>()
+	for (const [field, values] of Object.entries(options.serverFiltering?.selected ?? {})) {
+		if (values.length > 0) activeFilters.set(field, new Set(values.map(filterValueKey)))
+	}
 	const columns = options.columns.map((column, index) => {
 		const { filter: filterEnabled = true, filterField, ...tableColumn } = column
 		const field = String(filterField ?? tableColumn.field ?? "")
@@ -139,7 +153,8 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 				filterColumns,
 				activeFilters,
 				options.onFilteredCountChange,
-				options.onFilterApplied
+				options.onFilterApplied,
+				options.serverFiltering
 			)
 		)
 	}
@@ -194,11 +209,17 @@ function enableColumnFilters(
 	columns: FilterColumn[],
 	activeFilters: Map<string, Set<string>>,
 	onFilteredCountChange?: (count: number) => void,
-	onFilterApplied?: () => void
+	onFilterApplied?: () => void,
+	serverFiltering?: ServerFiltering
 ): () => void {
 	let ownedClose: (() => void) | null = null
 
 	const applyFilters = () => {
+		if (serverFiltering) {
+			table.refreshHeader()
+			onFilterApplied?.()
+			return
+		}
 		if (activeFilters.size === 0) {
 			table.updateFilterRules([])
 			table.refreshHeader()
@@ -228,23 +249,44 @@ function enableColumnFilters(
 		ownedClose = openFilterPopover({
 			anchor: getFilterAnchor(dom, args),
 			column,
+			values: serverFiltering?.options[column.field]?.map((option) => ({
+				key: filterValueKey(option.value),
+				label: option.label ?? filterValueLabel(option.value),
+				count: option.count ?? -1,
+				raw: option.value,
+			})),
 			records: records.filter((record) => matchesFilters(record, activeFilters, column.field)),
 			selected: activeFilters.get(column.field),
 			hasAnyFilter: activeFilters.size > 0,
 			onApply: (selected, allValues) => {
-				if (selected.size === allValues.size) {
+				// An empty server-side array means "no constraint" in every list
+				// contract. Treat both zero and all selected as clearing this column
+				// so the UI cannot display an active filter while the API returns all.
+				const cleared = selected.size === 0 || selected.size === allValues.size
+				if (cleared) {
 					activeFilters.delete(column.field)
 				} else {
 					activeFilters.set(column.field, selected)
+				}
+				if (serverFiltering) {
+					const options = serverFiltering.options[column.field] ?? []
+					serverFiltering.onColumnFilterChange(
+						column.field,
+						cleared
+							? []
+							: options.filter((option) => selected.has(filterValueKey(option.value))).map((option) => option.value)
+					)
 				}
 				applyFilters()
 			},
 			onClear: () => {
 				activeFilters.delete(column.field)
+				serverFiltering?.onColumnFilterChange(column.field, [])
 				applyFilters()
 			},
 			onClearAll: () => {
 				activeFilters.clear()
+				serverFiltering?.onClearAll()
 				applyFilters()
 			},
 			onClose: () => {
@@ -279,7 +321,7 @@ function collectFilterValues(records: any[], field: string): FilterValue[] {
 		if (existing) {
 			existing.count++
 		} else {
-			values.set(key, { key, label: filterValueLabel(raw), count: 1 })
+			values.set(key, { key, label: filterValueLabel(raw), count: 1, raw })
 		}
 	}
 	return [...values.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
@@ -301,6 +343,7 @@ type OpenFilterPopoverOptions = {
 	anchor: { x: number; y: number }
 	column: FilterColumn
 	records: any[]
+	values?: FilterValue[]
 	selected?: Set<string>
 	hasAnyFilter: boolean
 	onApply: (selected: Set<string>, allValues: Set<string>) => void
@@ -310,7 +353,7 @@ type OpenFilterPopoverOptions = {
 }
 
 function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
-	const values = collectFilterValues(options.records, options.column.field)
+	const values = options.values ?? collectFilterValues(options.records, options.column.field)
 	const allValues = new Set(values.map((value) => value.key))
 	const selected = options.selected ? new Set(options.selected) : new Set(allValues)
 	const labels = filterLabels()
@@ -379,7 +422,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 			valueText.title = value.label
 			const count = document.createElement("span")
 			count.className = "vtable-filter-count"
-			count.textContent = String(value.count)
+			count.textContent = value.count >= 0 ? String(value.count) : ""
 			row.append(checkbox, valueText, count)
 			list.append(row)
 		}
