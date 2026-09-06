@@ -656,6 +656,8 @@ LIMIT {fetch_limit:UInt16}; -- requested limit + 1
 
 provider 使用与 field mask 对应的 typed ch-go columns 消费任意多个 data block，校验列等长、总行数不超过 `limit+1`、时间范围/毫秒精度、record ID canonical hex、IP 端点命中、游标边界以及跨 block 全局严格降序/唯一。任一结果畸形、取消或 CH 执行失败都丢弃累积行，响应全有或全无；只有真实读到额外一行才返回 `has_more=true + next_cursor`。
 
+生产 HTTP 适配器固定为 `POST /api/v1/flow/records/search`，并以 `GET /api/v1/flow/records/capabilities` 暴露同一字段/视图 registry。适配器不得接受 tenant 字段；它从登录上下文注入 tenant，把 raw/supplier/customer 映射到平台 `view_raw/view_supplier/view_customer` grant，并用聚合查询相同的 target/device/exporter 资源授权器。响应为 `{data: DetailResult, meta: {sort, page_size}}`，v1 `sort` 固定为 `event_time:desc,record_id:desc`，客户端不得把当前页重排后冒充服务端排序。每次成功查询（包括 customer）都按敏感 IP 查询记录审计，日志只保留 view/endpoint/has_more 等低基数信息，不写 IP、cursor 或完整过滤值。
+
 ClickHouse 会在同一 SELECT 内做全局 alias substitution，因此 field mask 中的 `src_ip AS src_ip` 不能反向改变 WHERE 中的 IPv6 列类型。detail registry 只保存固定物理列名和结果类型，compiler 统一生成 `source.<column>` 及必要的 `CAST(... AS String)/toUInt64` 转换；`flow_records` 固定写成 `AS source FINAL`，tenant、时间、disposition、endpoint、filter、supplier evidence 和 cursor 全部显式引用 `source.*`。新增任意字段都必须通过同一路径，禁止重新放入任意 SQL expression。真实 CH 门禁必须同时验证 IPv4-mapped 规范化、相同毫秒 record ID 降序翻页、较新 ingest generation 覆盖旧物理行、首 block 取消和 deadline/扫描预算错误时零部分结果。
 
 所有 detail 动态字符串字段都显式 `CAST(source.<column> AS String)`，因为 `toString(LowCardinality(String))` 仍可能在 native wire 上保持 LowCardinality；supplier 内部 `_scope_match` 也必须 `CAST(... AS Bool)`，不能把比较表达式的 `UInt8` 交给 `ColBool`。真实 provenance 门禁包含人工写入的 `fact_schema=1` 和当前 writer 的 schema 2：raw 必须同时显示 count/drop 和两代事实，customer 必须排除 drop，supplier 在完整窗口含 schema 1 时返回 `ErrSupplierProvenanceUnavailable` 且零行；schema 2 子窗口、cursor 续页和合法空窗口分别返回完整证据。权限判定仍由宿主 RBAC 完成，不由数据测试冒充。

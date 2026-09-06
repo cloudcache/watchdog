@@ -207,22 +207,8 @@ func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth Au
 	if err != nil {
 		return err
 	}
-	for _, targetID := range parameters.Filters.TargetIDs {
-		if !canAccessMetrics(auth, MetricsQueryRequest{TenantID: auth.TenantID, TargetID: ID(targetID)}) {
-			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied"}
-		}
-	}
-	for _, deviceID := range parameters.Filters.DeviceIDs {
-		if p.Network == nil {
-			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied"}
-		}
-		device, findErr := p.Network.GetDevice(ctx, auth.TenantID, ID(deviceID))
-		if findErr != nil || !canAccessMetrics(auth, MetricsQueryRequest{TenantID: auth.TenantID, TargetID: device.TargetID, DeviceID: device.ID}) {
-			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied", Cause: findErr}
-		}
-	}
-	if len(parameters.Filters.ExporterIDs) > 0 {
-		return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "exporter-scoped queries require administrator access"}
+	if err := authorizeFlowResourceFilters(ctx, auth, p.Network, parameters.Filters.TargetIDs, parameters.Filters.DeviceIDs, parameters.Filters.ExporterIDs); err != nil {
+		return err
 	}
 	if parameters.Filter != nil {
 		fields, fieldErr := flowquery.FilterFields(*parameters.Filter)
@@ -238,6 +224,30 @@ func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth Au
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func authorizeFlowResourceFilters(ctx context.Context, auth AuthContext, network NetworkRepository, targetIDs, deviceIDs, exporterIDs []string) error {
+	if auth.IsAdmin {
+		return nil
+	}
+	for _, targetID := range targetIDs {
+		if !canAccessMetrics(auth, MetricsQueryRequest{TenantID: auth.TenantID, TargetID: ID(targetID)}) {
+			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied"}
+		}
+	}
+	for _, deviceID := range deviceIDs {
+		if network == nil {
+			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied"}
+		}
+		device, err := network.GetDevice(ctx, auth.TenantID, ID(deviceID))
+		if err != nil || !canAccessMetrics(auth, MetricsQueryRequest{TenantID: auth.TenantID, TargetID: device.TargetID, DeviceID: device.ID}) {
+			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied", Cause: err}
+		}
+	}
+	if len(exporterIDs) > 0 {
+		return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "exporter-scoped queries require administrator access"}
 	}
 	return nil
 }

@@ -56,6 +56,7 @@ type BackendRuntime struct {
 	MetricProviders     *RuntimeMetricsRegistry
 	QueryProviders      *QueryProviderRegistry
 	QueryGateway        *QueryGateway
+	FlowRecords         flowDetailRunner
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
@@ -205,6 +206,12 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 				_ = runtime.Close()
 				return nil, fmt.Errorf("initialize Flow joint-query runner: %w", runnerErr)
 			}
+			detailRunner, runnerErr := flowquery.NewDetailRunner(runtime.flowClickHouseNative)
+			if runnerErr != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow detail-query runner: %w", runnerErr)
+			}
+			runtime.FlowRecords = detailRunner
 			if err := runtime.QueryProviders.Register(QueryProviderRegistration{
 				Kind: DatasetProviderClickHouse,
 				Provider: ClickHouseFlowQueryProvider{
@@ -379,6 +386,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		OperationJobs:          r.Store,
 		OperationJobSchedules:  r.Store,
 		QueryGateway:           r.QueryGateway,
+		FlowRecords:            r.FlowRecords,
 		QueryPolicies:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,

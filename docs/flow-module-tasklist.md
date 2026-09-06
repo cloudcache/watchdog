@@ -244,6 +244,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。
 - [ ] **保存/共享过滤器**：新增唯一管理库 migration，冻结 owner/share scope/If-Match/软删除/audit/RBAC/引用保护和 CRUD/list/filter；不得把保存状态放入 Flow worker/CH 或再造管理库。
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
+- [x] **IP 明细 HTTP 接线（第一片）**：生产 runtime 复用 shared CH pool 挂载 `/api/v1/flow/records/capabilities` 与 `/api/v1/flow/records/search`；tenant 只从认证上下文注入，raw/supplier/customer 复用 QueryGateway value-layer grant，target/device/exporter 复用同一资源授权，严格 JSON、cursor envelope、固定稳定排序和敏感访问审计已有 API 单元覆盖。源/目的页 VTable、真实 HTTP→CH、取消/故障与服务端 column-filter 仍在上一集成门禁中，未提前勾选。
 - [x] **集成（typed filter 增量）**：真实 HTTP 覆盖 validate/规范 AST/base-fact 空结果及 source/step/partial metadata；生产 8090 浏览器覆盖完整时间预设、CIDR+ASN 表达式、24h 提示、`flow_records source` 和空结果，无 `Failed to fetch`。其余四视图/RBAC/故障组合仍由上一项承载。
 - [ ] **集成（便捷分析增量）**：生产 8090 登录态验证默认便捷筛选、高级区折叠、方向双查询、协议/TOP 切换、URL 重放、级联地域/运营商映射、空结果/错误和 CSV 下载；完成后记录制品与提交证据。
 - [x] **回归（便捷分析增量）**：前端 28 项 model/chart test、定向 Biome、Vite production build 和全库 `go test ./...` 通过；8090 最终制品验证默认便捷层、方向空结果、协议/TOP 选择和高级区展开，无前端异常。本地库无 Flow 点且 Geo/operator 字典为空，因此真实非空 CSV 下载、地域级联和运营商 ASN 选择仍留在上一集成门禁，未冒充完成。

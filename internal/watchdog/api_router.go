@@ -35,6 +35,8 @@ type APIV1RouterConfig struct {
 	OperationJobs          OperationJobRepository
 	OperationJobSchedules  OperationJobScheduleRepository
 	QueryGateway           *QueryGateway
+	FlowRecords            flowDetailRunner
+	FlowRecordNow          func() time.Time
 	QueryPolicies          QueryDatasetPolicyRepository
 	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
@@ -221,6 +223,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.QueryGateway != nil {
 		registerQueryGatewayRoutes(mux, auth, cfg.QueryGateway, cfg.Audit)
 		registerFlowFilterRoutes(mux, auth)
+	}
+	if cfg.FlowRecords != nil {
+		registerFlowRecordRoutes(mux, auth, cfg.FlowRecords, cfg.Network, cfg.Audit, cfg.FlowRecordNow)
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)
