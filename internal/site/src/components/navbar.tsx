@@ -359,11 +359,8 @@ function AdminDropdownContent() {
 			<NavItem href={getPagePath($router, "traffic_defaults")} icon={GaugeIcon}>
 				<Trans>Traffic Defaults</Trans>
 			</NavItem>
-			<NavItem href={getPagePath($router, "address_prefixes")} icon={GlobeIcon}>
-				<Trans>Address Prefixes</Trans>
-			</NavItem>
-			<NavItem href={getPagePath($router, "address_sets")} icon={LayersIcon}>
-				<Trans>Address Sets</Trans>
+			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
+				<Trans>Address Library</Trans>
 			</NavItem>
 			<DropdownMenuSeparator />
 			<DropdownMenuLabel>

@@ -68,6 +68,7 @@ const TargetDetail = lazy(() => import("@/components/routes/target-detail.tsx"))
 const TargetForm = lazy(() => import("@/components/routes/target-form.tsx"))
 const Targets = lazy(() => import("@/components/routes/targets.tsx"))
 const TrafficDefaults = lazy(() => import("@/components/routes/traffic-defaults.tsx"))
+const AddressLibrary = lazy(() => import("@/components/routes/address-library.tsx"))
 const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.tsx"))
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
@@ -226,6 +227,8 @@ const App = memo(() => {
 		return <Settings />
 	} else if (page.route === "traffic_defaults") {
 		return <TrafficDefaults />
+	} else if (page.route === "address_library") {
+		return <AddressLibrary section={page.params.section} />
 	} else if (page.route === "address_prefixes") {
 		return <AddressPrefixes />
 	} else if (page.route === "address_sets") {
