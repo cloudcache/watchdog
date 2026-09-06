@@ -18,7 +18,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；2–4 维短窗已从同一 base fact 返回真实 tuple 和桑基；服务端 typed filter validate/complete/canonical、跨维字段的 24h base 路由和 Explorer 表达式已完成本地实现，当前关闭真实生产页面验收后继续保存/共享过滤器与预配置异步联合索引。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；不同切片的文件不得混入同一提交。
+**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；2–4 维短窗已从同一 base fact 返回真实 tuple 和桑基；服务端 typed filter validate/complete/canonical、跨维字段的 24h base 路由、Explorer 表达式和生产页面增量验收已完成，当前继续保存/共享过滤器与预配置异步联合索引。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；不同切片的文件不得混入同一提交。
 
 FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
 
@@ -59,6 +59,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - FLOW-04C worker rebalance：`013f3f9f test(flow): verify production worker rebalance`；同 group 的两个真实 worker 从 A 独占 4 个 partition 收敛为 2+2；追加流量后 broker group committed total=end=7、lag=0。优雅停止 A 后 B 第二次 assignment 并接管 4 个 partition，再追加流量后 committed=end=8、lag=0；两端 template missing/rejected 为 0，CH `FINAL` 保持四协议事实收敛。累计进程指标不作为 offset 权威，验收直接读取 broker group。
 - FLOW-04C worker strong-kill：`7cb8ef41 test(flow): recover after production worker kill`；A/B 先稳定为 2+2，随后对 A 执行 `Process.Kill`，不提供 revoke/commit 机会；Kafka session 失效后 B 第二次 assignment 并接管 4 个 partition，新 flow 后 broker committed=end=8、lag=0，template missing/rejected=0，CH 事实继续收敛。被杀进程内存已不存在，因此不伪造其 `lost_partitions_total`，以 broker ownership/offset 和存活 worker assignment 为权威。
 - FLOW-04C broker restart：`0b141b3b test(flow): recover production worker after broker restart`；四协议 production harness 在 committed-next-offset=1 后实际 restart 隔离 Kafka，保留 topic/group 数据，原 worker 不退出且 offset 不回退，随后继续通过 CH 中断恢复、四协议收敛、2+2 rebalance 与 SIGKILL takeover。测试同时修正公共 franz-go 配置遗漏的 `AlwaysRetryEOF`：启动 Ping 已先验证配置，后续替换连接的首请求 EOF 按 broker restart/load 恢复，不误报 TLS 并终止 worker。
+- FLOW-05F typed filter：`1ffb3939 feat(flow): add typed filter lifecycle`；authenticated catalog/validate/complete、canonical AST、前端 AND/OR/NOT parser、rollup/base 自动路由、单维 filtered total、资源字段 fail-closed 权限和 IPv4-mapped CIDR 已提交。真实 CH 验证 city/ASN/CIDR 与 filtered total，真实 HTTP 验证 validate→canonical query→base runner；8090 生产包浏览器验证 5m..1y/自定义预设及 `asn>=AS4134 AND src_ip IN (10.0.0.9/8)` 显示 `flow_records source`。
 - FLOW-04C3B1 ingest-audit projection：`3f3501d8 feat(flow): add bounded ingest audit projection`；migration 006 保留 base tenant/time 排序，新增 offset-ordered narrow projection 并以 `rebuild` 维护 ReplacingMergeTree 一致性，存量同步 materialize。真实 200 万行前后结果一致；read rows `2,000,000→16,384`、read bytes `183,630,373→552,673`，EXPLAIN 命中 projection；表空间 `175,078,419→264,954,749`。Bloom probe 即使只查单 batch 仍读 434,176 rows/17,309,576 bytes，已排除。全套 CH 数据集成测试在 001..006 上通过；这不冒充固定硬件容量/N+1。
 - FLOW-04C3B2A compare core：`1f00d551 feat(flow): compare ingest audit evidence`；typed receipt/fact/counter/mismatch 结构和无状态 comparator 已提交，固定六类单一 reason 优先级、writer 同字节序 checksum、invalid estimated 计数语义、batch/fact 硬上限、重复 identity 与溢出拒绝。单元直接从 production `PrepareBlocks` 生成证据，证明 comparator checksum 与写入 receipt 一致；全库 test/vet 与 flowch race 通过。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
@@ -239,9 +240,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。
 - [ ] **保存/共享过滤器**：新增唯一管理库 migration，冻结 owner/share scope/If-Match/软删除/audit/RBAC/引用保护和 CRUD/list/filter；不得把保存状态放入 Flow worker/CH 或再造管理库。
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
+- [x] **集成（typed filter 增量）**：真实 HTTP 覆盖 validate/规范 AST/base-fact 空结果及 source/step/partial metadata；生产 8090 浏览器覆盖完整时间预设、CIDR+ASN 表达式、24h 提示、`flow_records source` 和空结果，无 `Failed to fetch`。其余四视图/RBAC/故障组合仍由上一项承载。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
-- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基、真实 CH 集成和回归证据进入 `0751551a`。异步联合索引、服务端 filter 生命周期、生产浏览器和滚动升级门禁仍保持未完成，未因查询页面可打开而提前关闭。
+- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC 和滚动升级门禁仍保持未完成。
 
 ### FLOW-06 Correction/Reclass/Export
 
