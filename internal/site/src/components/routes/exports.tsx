@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { FileDownIcon, RefreshCwIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -33,39 +33,54 @@ export default memo(() => {
 	const [page, setPage] = useState(0)
 	const [pageSize, setPageSize] = useState(25)
 	const [search, setSearch] = useState("")
+	const [query, setQuery] = useState("")
 	const [status, setStatus] = useState("all")
 	const [valueLayer, setValueLayer] = useState("all")
 	const [format, setFormat] = useState("all")
 	const [sort, setSort] = useState("created_at:desc")
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setQuery(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
 
 	const refresh = useCallback(async () => {
+		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
 		try {
 			const [sortBy, sortDirection] = sort.split(":")
-			const query = new URLSearchParams({
+			const params = new URLSearchParams({
 				limit: String(pageSize),
 				offset: String(page * pageSize),
 				sort_by: sortBy,
 				sort_direction: sortDirection,
 			})
-			if (search.trim()) query.set("q", search.trim())
-			if (status !== "all") query.set("status", status)
-			if (valueLayer !== "all") query.set("value_layer", valueLayer)
-			if (format !== "all") query.set("format", format)
-			const data = await pb.send<ExportTasksResponse>(`/api/v1/exports?${query}`, {})
-			setTasks(data.items ?? [])
-			setTotal(data.total ?? 0)
+			if (query) params.set("q", query)
+			if (status !== "all") params.set("status", status)
+			if (valueLayer !== "all") params.set("value_layer", valueLayer)
+			if (format !== "all") params.set("format", format)
+			const data = await pb.send<ExportTasksResponse>(`/api/v1/exports?${params}`, {})
+			if (sequence === requestSequence.current) {
+				setTasks(data.items ?? [])
+				setTotal(data.total ?? 0)
+			}
 		} catch (err) {
-			setTasks([])
-			setTotal(0)
-			setError(err instanceof Error ? err.message : t`Failed to load exports`)
+			if (sequence === requestSequence.current) {
+				setTasks([])
+				setTotal(0)
+				setError(err instanceof Error ? err.message : t`Failed to load exports`)
+			}
 		} finally {
-			setLoading(false)
+			if (sequence === requestSequence.current) setLoading(false)
 		}
-	}, [format, page, pageSize, search, sort, status, t, valueLayer])
+	}, [format, page, pageSize, query, sort, status, t, valueLayer])
 
 	useEffect(() => {
 		document.title = `${t`Exports`} / Watchdog`
@@ -108,6 +123,52 @@ export default memo(() => {
 		setPage(0)
 		update()
 	}
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				status: ["pending", "running", "complete", "failed", "canceled"].map((value) => ({ value })),
+				view: ["raw", "supplier", "customer"].map((value) => ({ value })),
+				format: ["csv", "parquet"].map((value) => ({ value })),
+			},
+			selected: {
+				status: status === "all" ? [] : [status],
+				view: valueLayer === "all" ? [] : [valueLayer],
+				format: format === "all" ? [] : [format],
+			},
+			selection: { status: "single" as const, view: "single" as const, format: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				const value = values.length > 0 ? String(values[0]) : "all"
+				resetPage(() => {
+					if (field === "status") setStatus(value)
+					if (field === "view") setValueLayer(value)
+					if (field === "format") setFormat(value)
+				})
+			},
+			onClearAll: () =>
+				resetPage(() => {
+					setStatus("all")
+					setValueLayer("all")
+					setFormat("all")
+				}),
+		}),
+		[format, status, valueLayer]
+	)
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				status: "status",
+				target: "target_id",
+				range: "range_start",
+				view: "value_layer",
+				format: "format",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 
 	return (
 		<div className="grid gap-4">
@@ -186,6 +247,8 @@ export default memo(() => {
 					searchPlaceholder={t`Search export, target, port, or dataset...`}
 					searchValue={search}
 					onSearchChange={(value) => resetPage(() => setSearch(value))}
+					serverFiltering={serverFiltering}
+					serverSorting={serverSorting}
 					serverPagination={{
 						page,
 						pageSize,

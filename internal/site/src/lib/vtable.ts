@@ -21,8 +21,16 @@ export type ServerFilterOption = { value: unknown; label?: string; count?: numbe
 export type ServerFiltering = {
 	options: Record<string, ServerFilterOption[]>
 	selected: Record<string, unknown[]>
+	selection?: Record<string, "single" | "multiple">
 	onColumnFilterChange: (field: string, values: unknown[]) => void
 	onClearAll: () => void
+}
+
+export type ServerSorting = {
+	field: string
+	direction: "asc" | "desc"
+	fields: Record<string, string>
+	onSortChange: (field: string, direction: "asc" | "desc") => void
 }
 
 const tableCleanup = new WeakMap<ListTable, () => void>()
@@ -60,6 +68,7 @@ export interface CreateTableOptions {
 	onFilteredCountChange?: (count: number) => void
 	onFilterApplied?: () => void
 	serverFiltering?: ServerFiltering
+	serverSorting?: ServerSorting
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -117,12 +126,15 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 	const columns = options.columns.map((column, index) => {
 		const { filter: filterEnabled = true, filterField, ...tableColumn } = column
 		const field = String(filterField ?? tableColumn.field ?? "")
-		if (!filterEnabled || !field) {
-			return tableColumn
+		const filterAvailable = !options.serverFiltering || Object.hasOwn(options.serverFiltering.options, field)
+		const sortField = options.serverSorting?.fields[field]
+		const resolvedColumn = options.serverSorting ? { ...tableColumn, sort: Boolean(sortField) } : tableColumn
+		if (!filterEnabled || !field || !filterAvailable) {
+			return resolvedColumn
 		}
 		filterColumns[index] = { field, title: String(tableColumn.title ?? field) }
 		return {
-			...tableColumn,
+			...resolvedColumn,
 			headerIcon: (args: any) =>
 				appendHeaderIcon(
 					typeof tableColumn.headerIcon === "function" ? tableColumn.headerIcon(args) : tableColumn.headerIcon,
@@ -130,6 +142,11 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 				),
 		}
 	})
+	const activeSortField = options.serverSorting
+		? Object.entries(options.serverSorting.fields).find(
+				([, serverField]) => serverField === options.serverSorting?.field
+			)?.[0]
+		: undefined
 	const table = new VTable.ListTable({
 		container: dom,
 		records: options.records,
@@ -142,10 +159,14 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		autoFillWidth: true,
 		columnResizeMode: options.columnResize === false ? "none" : "all",
 		pagination: options.pagination,
+		sortState:
+			activeSortField && options.serverSorting
+				? { field: activeSortField, order: options.serverSorting.direction }
+				: undefined,
 	} as any)
+	const cleanups: (() => void)[] = []
 	if (filterColumns.some(Boolean)) {
-		tableCleanup.set(
-			table,
+		cleanups.push(
 			enableColumnFilters(
 				table,
 				dom,
@@ -158,7 +179,30 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 			)
 		)
 	}
+	if (options.serverSorting) {
+		cleanups.push(enableServerSorting(table, options.serverSorting))
+	}
+	if (cleanups.length > 0) {
+		tableCleanup.set(table, () => {
+			for (const cleanup of cleanups) cleanup()
+		})
+	}
 	return table
+}
+
+function enableServerSorting(table: ListTable, sorting: ServerSorting): () => void {
+	const handleSort = (state: { field?: unknown; order?: unknown }) => {
+		const tableField = String(state?.field ?? "")
+		const serverField = sorting.fields[tableField]
+		if (!serverField) return false
+		const direction = state.order === "desc" ? "desc" : "asc"
+		;(table as any).updateSortState?.({ field: tableField, order: direction }, false)
+		sorting.onSortChange(serverField, direction)
+		// Prevent VisActor from sorting only the currently loaded page.
+		return false
+	}
+	;(table as any).on?.("sort_click", handleSort)
+	return () => (table as any).off?.("sort_click", handleSort)
 }
 
 export function getRowRecord(table: ListTable | null, args: any): any | null {
@@ -245,6 +289,7 @@ function enableColumnFilters(
 		if (!column) {
 			return
 		}
+		const singleSelect = serverFiltering?.selection?.[column.field] === "single"
 		closeOpenFilter?.()
 		ownedClose = openFilterPopover({
 			anchor: getFilterAnchor(dom, args),
@@ -257,12 +302,13 @@ function enableColumnFilters(
 			})),
 			records: records.filter((record) => matchesFilters(record, activeFilters, column.field)),
 			selected: activeFilters.get(column.field),
+			singleSelect,
 			hasAnyFilter: activeFilters.size > 0,
 			onApply: (selected, allValues) => {
 				// An empty server-side array means "no constraint" in every list
 				// contract. Treat both zero and all selected as clearing this column
 				// so the UI cannot display an active filter while the API returns all.
-				const cleared = selected.size === 0 || selected.size === allValues.size
+				const cleared = selected.size === 0 || (!singleSelect && selected.size === allValues.size)
 				if (cleared) {
 					activeFilters.delete(column.field)
 				} else {
@@ -345,6 +391,7 @@ type OpenFilterPopoverOptions = {
 	records: any[]
 	values?: FilterValue[]
 	selected?: Set<string>
+	singleSelect?: boolean
 	hasAnyFilter: boolean
 	onApply: (selected: Set<string>, allValues: Set<string>) => void
 	onClear: () => void
@@ -355,7 +402,11 @@ type OpenFilterPopoverOptions = {
 function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	const values = options.values ?? collectFilterValues(options.records, options.column.field)
 	const allValues = new Set(values.map((value) => value.key))
-	const selected = options.selected ? new Set(options.selected) : new Set(allValues)
+	const selected = options.selected
+		? new Set(options.selected)
+		: options.singleSelect
+			? new Set<string>()
+			: new Set(allValues)
 	const labels = filterLabels()
 	const popover = document.createElement("div")
 	popover.className = "vtable-filter-popover"
@@ -382,6 +433,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	const selectAllText = document.createElement("span")
 	selectAllText.textContent = labels.selectAll
 	selectAllRow.append(selectAll, selectAllText)
+	if (options.singleSelect) selectAllRow.hidden = true
 
 	const list = document.createElement("div")
 	list.className = "vtable-filter-options"
@@ -412,9 +464,11 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 			checkbox.type = "checkbox"
 			checkbox.checked = selected.has(value.key)
 			checkbox.addEventListener("change", () => {
-				if (checkbox.checked) selected.add(value.key)
-				else selected.delete(value.key)
-				updateSummary()
+				if (checkbox.checked) {
+					if (options.singleSelect) selected.clear()
+					selected.add(value.key)
+				} else selected.delete(value.key)
+				renderOptions()
 			})
 			const valueText = document.createElement("span")
 			valueText.className = "vtable-filter-option-label"

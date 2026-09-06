@@ -10,6 +10,7 @@ import {
 	type ColumnDefine,
 	type ListTable,
 	type ServerFiltering,
+	type ServerSorting,
 } from "@/lib/vtable"
 
 export function PagedVTable({
@@ -29,6 +30,7 @@ export function PagedVTable({
 	onSearchChange,
 	onSearchSubmit,
 	serverFiltering,
+	serverSorting,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -53,6 +55,7 @@ export function PagedVTable({
 	onSearchChange?: (value: string) => void
 	onSearchSubmit?: (value: string) => void
 	serverFiltering?: ServerFiltering
+	serverSorting?: ServerSorting
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -104,6 +107,7 @@ export function PagedVTable({
 				if (!serverMode) setPage(0)
 			},
 			serverFiltering,
+			serverSorting,
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
@@ -129,6 +133,7 @@ export function PagedVTable({
 		rowHeight,
 		searchedRecords,
 		serverFiltering,
+		serverSorting,
 		serverMode,
 	])
 
