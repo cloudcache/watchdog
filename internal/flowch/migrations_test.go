@@ -17,7 +17,7 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 5 || migrations[0].Name != "001_flow_schema.sql" || migrations[4].Name != "005_flow_fact_provenance.sql" {
+	if len(migrations) != 6 || migrations[0].Name != "001_flow_schema.sql" || migrations[5].Name != "006_flow_ingest_audit_projection.sql" {
 		t.Fatalf("migrations=%+v", migrations)
 	}
 	for _, migration := range migrations {
