@@ -1,9 +1,11 @@
 package watchdog
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -341,5 +343,189 @@ func metricsTestAuth(admin bool) AuthContextAdapter {
 				Actions:      []Action{ActionView},
 			}},
 		}, nil
+	}
+}
+
+func newMetricsGatewayForTest(t *testing.T, client MetricsQueryClient, network NetworkRepository, policies *queryPolicyMemoryRepository) *QueryGateway {
+	t.Helper()
+	registries, err := NewBuiltinPlatformRegistries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := NewQueryProviderRegistry()
+	if err := providers.Register(QueryProviderRegistration{
+		Kind: DatasetProviderVM, Provider: VictoriaMetricsQueryProvider{Client: client, Network: network}, Enabled: true, MaxConcurrent: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if policies == nil {
+		policies = &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	}
+	gateway, err := NewQueryGateway(registries, nil, policies, providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gateway
+}
+
+func TestAPIMetricsGatewayPreservesLegacyQueryAndAggregateResponses(t *testing.T) {
+	response := vmResponseForMetricsTest(42)
+	requests := []string{
+		"/api/v1/metrics/query?target_id=target-a&metric=watchdog_system_cpu_percent&time_mode=custom&start=2026-06-01T00:00:00Z&end=2026-06-01T01:00:00Z&step=300",
+		"/api/v1/metrics/aggregate?target_ids=target-a,target-b&metric=watchdog_system_cpu_percent&aggregate=sum&time_mode=custom&start=2026-06-01T00:00:00Z&end=2026-06-01T01:00:00Z&step=300",
+	}
+	for _, path := range requests {
+		t.Run(strings.Split(path, "?")[0], func(t *testing.T) {
+			directClient := &fakeMetricsQueryClient{response: response}
+			direct := NewAPIV1Router(APIV1RouterConfig{Auth: metricsTestAuth(true), Metrics: MetricsService{Client: directClient}})
+			directResponse := httptest.NewRecorder()
+			direct.ServeHTTP(directResponse, httptest.NewRequest(http.MethodGet, path, nil))
+
+			gatewayClient := &fakeMetricsQueryClient{response: response}
+			gateway := newMetricsGatewayForTest(t, gatewayClient, nil, nil)
+			migrated := NewAPIV1Router(APIV1RouterConfig{
+				Auth: metricsTestAuth(true), Metrics: MetricsService{Client: gatewayClient}, QueryGateway: gateway,
+			})
+			migratedResponse := httptest.NewRecorder()
+			migrated.ServeHTTP(migratedResponse, httptest.NewRequest(http.MethodGet, path, nil))
+
+			if directResponse.Code != http.StatusOK || migratedResponse.Code != http.StatusOK {
+				t.Fatalf("direct=%d %s migrated=%d %s", directResponse.Code, directResponse.Body.String(), migratedResponse.Code, migratedResponse.Body.String())
+			}
+			var directBody, migratedBody VictoriaMetricsResponse
+			if err := json.Unmarshal(directResponse.Body.Bytes(), &directBody); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(migratedResponse.Body.Bytes(), &migratedBody); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(directBody, migratedBody) {
+				t.Fatalf("legacy response changed:\ndirect=%#v\nmigrated=%#v", directBody, migratedBody)
+			}
+			if directClient.query.Query != gatewayClient.query.Query || directClient.query.Step != gatewayClient.query.Step {
+				t.Fatalf("VM request changed: direct=%#v migrated=%#v", directClient.query, gatewayClient.query)
+			}
+		})
+	}
+}
+
+func TestAPIMetricsGatewayPreservesSNMPTrafficCorrection(t *testing.T) {
+	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	vmResponse := VictoriaMetricsResponse{Status: "success"}
+	vmResponse.Data.ResultType = "matrix"
+	vmResponse.Data.Result = []VMRangeQueryItem{{
+		Metric: map[string]string{"port_id": "port-a"},
+		Values: []VMValue{{Time: start, Value: 1_000}, {Time: start.Add(time.Minute), Value: 7_000}},
+	}}
+	network := &fakeNetworkRepository{
+		devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		ports:   []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", IfIndex: 101}},
+		policy: PortPolicy{
+			PortID: "port-a", Enabled: true, CorrectionDirection: CorrectionUp, CorrectionMin: 10, CorrectionMax: 10,
+		},
+	}
+	path := "/api/v1/metrics/query?target_id=target-a&port_id=port-a&metric=watchdog_snmp_if_in_bps&value_mode=corrected&traffic_view=raw&time_mode=custom&start=2026-06-01T00:00:00Z&end=2026-06-01T00:05:00Z&step=60"
+
+	directClient := &fakeMetricsQueryClient{response: vmResponse}
+	direct := NewAPIV1Router(APIV1RouterConfig{Auth: metricsTestAuth(true), Metrics: MetricsService{Client: directClient}, Network: network})
+	directResponse := httptest.NewRecorder()
+	direct.ServeHTTP(directResponse, httptest.NewRequest(http.MethodGet, path, nil))
+
+	gatewayClient := &fakeMetricsQueryClient{response: vmResponse}
+	migrated := NewAPIV1Router(APIV1RouterConfig{
+		Auth: metricsTestAuth(true), Metrics: MetricsService{Client: gatewayClient}, Network: network,
+		QueryGateway: newMetricsGatewayForTest(t, gatewayClient, network, nil),
+	})
+	migratedResponse := httptest.NewRecorder()
+	migrated.ServeHTTP(migratedResponse, httptest.NewRequest(http.MethodGet, path, nil))
+
+	var directBody, migratedBody VictoriaMetricsResponse
+	if directResponse.Code != http.StatusOK || migratedResponse.Code != http.StatusOK ||
+		json.Unmarshal(directResponse.Body.Bytes(), &directBody) != nil || json.Unmarshal(migratedResponse.Body.Bytes(), &migratedBody) != nil {
+		t.Fatalf("direct=%d %s migrated=%d %s", directResponse.Code, directResponse.Body.String(), migratedResponse.Code, migratedResponse.Body.String())
+	}
+	if !reflect.DeepEqual(directBody, migratedBody) || directClient.query.Query != gatewayClient.query.Query {
+		t.Fatalf("SNMP compatibility changed: direct=%#v (%s) migrated=%#v (%s)", directBody, directClient.query.Query, migratedBody, gatewayClient.query.Query)
+	}
+}
+
+func TestAPIMetricsGatewayAdmitsDeviceSideTrafficBeforeExecution(t *testing.T) {
+	client := &fakeMetricsQueryClient{response: vmResponseForMetricsTest(1)}
+	network := &fakeNetworkRepository{
+		devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},
+		ports:   []NetworkPort{{ID: "port-a", TenantID: "tenant-a", DeviceID: "device-a", IfIndex: 101}},
+		policy:  PortPolicy{PortID: "port-a", SideType: PortSideCustomer},
+	}
+	policies := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	policy := QueryDatasetPolicy{
+		TenantID: "tenant-a", DatasetKey: "network.snmp_interface", Enabled: true, AllowCustomer: false,
+		MaxRangeSeconds: 86_400, MaxConcurrent: 2, MaxResultRows: 100, QueryTimeoutMS: 5_000,
+	}
+	policies.policies[policies.key(policy.TenantID, policy.DatasetKey)] = policy
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: metricsTestAuth(true), Metrics: MetricsService{Client: client}, Network: network,
+		QueryGateway: newMetricsGatewayForTest(t, client, network, policies),
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/query?target_id=target-a&device_id=device-a&metric=watchdog_snmp_if_in_bps&traffic_view=customer&time_mode=custom&start=2026-06-01T00:00:00Z&end=2026-06-01T01:00:00Z&step=300", nil))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), string(QueryErrorDatasetDisabled)) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(client.queries) != 0 {
+		t.Fatalf("side traffic bypassed gateway admission: %#v", client.queries)
+	}
+}
+
+func TestAPIMetricsGatewayAppliesDatasetPolicyAndAuditsSensitiveCompatibilityQuery(t *testing.T) {
+	client := &fakeMetricsQueryClient{response: vmResponseForMetricsTest(7)}
+	policies := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	policy := QueryDatasetPolicy{
+		TenantID: "tenant-a", DatasetKey: "network.snmp_interface", Enabled: true, AllowRaw: true, AllowCustomer: true,
+		MaxRangeSeconds: 86_400, MaxConcurrent: 2, MaxResultRows: 100, QueryTimeoutMS: 5_000, RowVersion: 4,
+	}
+	policies.policies[policies.key(policy.TenantID, policy.DatasetKey)] = policy
+	audit := &recordingAuditRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: metricsTestAuth(true), Metrics: MetricsService{Client: client},
+		QueryGateway: newMetricsGatewayForTest(t, client, nil, policies), Audit: audit,
+	})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/query?target_id=target-a&metric=watchdog_snmp_if_in_octets_total&value_mode=raw&time_mode=custom&start=2026-06-01T00:00:00Z&end=2026-06-01T01:00:00Z&step=300", nil)
+	request.Header.Set(RequestIDHeader, "legacy-sensitive-a")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(audit.logs) != 1 || audit.logs[0].Action != "query.sensitive_viewed" ||
+		audit.logs[0].ResourceID != "network.snmp_interface" || audit.logs[0].Detail["compatibility_endpoint"] != "/api/v1/metrics/query" {
+		t.Fatalf("audit logs = %#v", audit.logs)
+	}
+	if audit.logs[0].Detail["query_hash"] == "" {
+		t.Fatalf("audit detail = %#v", audit.logs[0].Detail)
+	}
+
+	policy.AllowRaw = false
+	policies.policies[policies.key(policy.TenantID, policy.DatasetKey)] = policy
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, request.Clone(context.Background()))
+	if denied.Code != http.StatusConflict || !strings.Contains(denied.Body.String(), string(QueryErrorDatasetDisabled)) {
+		t.Fatalf("disabled raw policy status=%d body=%s", denied.Code, denied.Body.String())
+	}
+}
+
+func TestAPIMetricsVMQueryAuditsHashWithoutQueryText(t *testing.T) {
+	client := &fakeMetricsQueryClient{response: vmResponseForMetricsTest(1)}
+	audit := &recordingAuditRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: metricsTestAuth(true), Metrics: MetricsService{Client: client}, Audit: audit})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/vmquery?query=up%7Btenant_id%3D%22tenant-a%22%7D&start=2026-06-01T00:00:00Z&end=2026-06-01T01:00:00Z", nil))
+	if response.Code != http.StatusOK || len(audit.logs) != 1 {
+		t.Fatalf("status=%d body=%s audits=%#v", response.Code, response.Body.String(), audit.logs)
+	}
+	if audit.logs[0].Action != "metrics.vmquery.sensitive_viewed" || audit.logs[0].Detail["query_hash"] == "" {
+		t.Fatalf("audit = %#v", audit.logs[0])
+	}
+	if strings.Contains(audit.logs[0].Detail["query_hash"].(string), "tenant-a") {
+		t.Fatalf("audit leaked query text: %#v", audit.logs[0].Detail)
 	}
 }

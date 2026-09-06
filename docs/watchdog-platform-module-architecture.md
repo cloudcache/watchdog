@@ -603,9 +603,17 @@ POST /api/v1/query
 
 平台 QueryGateway 固定拥有 tenant/user 注入、module enablement、dataset policy、value-layer RBAC、tenant+dataset 并发、provider 全局并发、时间/行数/timeout/cancel 与错误 envelope；provider 只接收已收敛的 `QueryProviderRequest`，不得从 `parameters` 接收 tenant、任意 SQL 或 MetricsQL。provider 返回 JSON data 和统一 `request_id/schema_version/query_hash/as_of/source/value_layer/unit/timezone/step_seconds/policy_version/versions/completeness/next_cursor` 元数据。`require_complete=true` 时，partial、unknown、late 或 `complete_ratio != 1` 均拒绝返回，禁止用未知完整性冒充完整结果。
 
+内置 VictoriaMetrics 数据集必须覆盖整个 `MetricCatalog` 且每个 metric 只能有一个 owner：`host.agent_metrics` 归 host module，包含 system/GPU/container 的 target 指标，只开放 customer layer；`network.snmp_interface` 归 network module，包含接口流量/状态/错误、光模块、设备健康和 BGP 指标，开放 raw/supplier/customer layer。registry 单测对“遗漏或重复归属”失败关闭，旧 metrics API 不再维护第二张 metric→provider 映射表。
+
 `query_dataset_policies` 是 tenant+dataset 的唯一持久 admission policy：dataset/layer enablement 与 `view_raw/view_supplier/view_customer` 授权是两个独立门，任一不满足即 fail closed；export 对应使用独立 `export_raw/export_supplier/export_customer` action。默认策略只开放 customer 层。provider endpoint/凭据和 provider-global 并发留在部署配置，避免把基础设施 secret 写进管理库。当前 VM adapter 只接受注册 metric 和 target/device/port typed selector，复用现有资源解析及三层流量视图；VM 无法证明期望样本完整性，因此返回 unknown completeness。Flow ClickHouse adapter 由 Flow 工作包按同一 contract 注册并复用现有 CH pool，平台不得再建第二个连接池。
 
+查询授权按三道互不替代的门执行：tenant dataset policy 先决定数据集和 layer 是否启用；tenant 级 `view_raw/view_supplier/view_customer` 再决定主体是否可读该值层；最后由 typed provider authorizer 解析受控的 target/device/port（含聚合列表）并检查资源 `view` 权限。管理员可以越过 RBAC，但不能越过 tenant dataset policy。provider authorizer 只理解本 provider 的 typed 参数，QueryGateway 不解析 opaque JSON，也不允许 provider 从参数接收 tenant。
+
 管理 API 为 `GET/PUT/DELETE /api/v1/query-policies[/{dataset_key}]`；PUT/DELETE 必须带强 `If-Match`，并写审计。统一查询为 `POST /api/v1/query`；raw/supplier 成功读取另写敏感访问审计。保留现有 metrics API 一个兼容版本，内部迁移到同一 gateway 后才能删除旧路径。
+
+兼容版本的 `/api/v1/metrics/realtime|query|range` 和 `/api/v1/metrics/aggregate` 保留原 query string、VM selector、流量计数器 rate、per-port 修正、supplier/customer 分侧及原始 `VictoriaMetricsResponse` 响应体，但执行统一进入 QueryGateway。旧接口没有总行数参数，因此使用当前 tenant policy 的 `max_result_rows` 作为实际 provider 上限；新 `/api/v1/query` 缺省仍为 1000，二者都不能越过 policy。raw/supplier 兼容查询写同一 `query.sensitive_viewed` 审计，并标记 compatibility endpoint。`/api/v1/metrics/vmquery` 是唯一例外：它允许管理员提交任意 MetricsQL，不能伪装成 typed gateway 查询，继续作为独立诊断接口并只审计 query SHA-256、时间范围和 step，禁止把查询正文写入审计。
+
+PLAT-04H2 真实依赖门禁使用 `WATCHDOG_QUERY_VM_INTEGRATION=1 WATCHDOG_VICTORIAMETRICS_URL=http://127.0.0.1:8428 go test ./internal/watchdog -run '^TestQueryGatewayVictoriaMetricsIntegration$' -count=1 -v`。测试向真实 VM 写入唯一 tenant/target series 并精确清理；真实查询验证 unknown completeness 与 `require_complete`，故障代理验证 cancel、policy timeout、503 中断及恢复。partial/complete 分支由 provider 可控的单元测试覆盖，因为 VictoriaMetrics provider 本身无法声称预期样本完整度。该工作只改变执行适配和静态 registry，不增加持久字段、状态或 secret，因此复用 migration 045，不创建空迁移，下一持久化 migration 仍为 050。
 
 ### 8.2 地址统计维度快照与异步汇聚
 

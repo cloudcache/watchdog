@@ -65,6 +65,58 @@ func TestVictoriaMetricsQueryProviderRejectsUnknownParametersAndExcessRows(t *te
 	}
 }
 
+func TestVictoriaMetricsGatewayRequiresLayerAndResourcePermissions(t *testing.T) {
+	client := &fakeMetricsQueryClient{response: vmResponseForMetricsTest(1)}
+	gateway := newMetricsGatewayForTest(t, client, nil, nil)
+	request := QueryRequest{
+		Dataset:    "host.agent_metrics",
+		From:       time.Date(2026, 8, 24, 11, 0, 0, 0, time.UTC),
+		To:         time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+		ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{"metric":"watchdog_system_cpu_percent","target_id":"target-a"}`),
+	}
+	auth := AuthContext{
+		TenantID: "tenant-a", UserID: "user-a",
+		Grants: []Permission{{
+			TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+			ResourceType: ResourceTenant, ResourceID: "tenant-a", Actions: []Action{ActionViewCustomer},
+		}},
+	}
+	_, err := gateway.Execute(context.Background(), auth, "permission-a", request)
+	var queryErr *QueryGatewayError
+	if !errors.As(err, &queryErr) || queryErr.Code != QueryErrorPermissionDenied {
+		t.Fatalf("missing resource permission error = %#v", err)
+	}
+	auth.Grants = append(auth.Grants, Permission{
+		TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+		ResourceType: ResourceTarget, ResourceID: "target-a", Actions: []Action{ActionView},
+	})
+	if _, err := gateway.Execute(context.Background(), auth, "permission-b", request); err != nil {
+		t.Fatalf("three-gate query failed: %v", err)
+	}
+}
+
+func TestVictoriaMetricsProviderRejectsLayerParameterBypass(t *testing.T) {
+	provider := VictoriaMetricsQueryProvider{Client: &fakeMetricsQueryClient{}}
+	base := QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Metrics: []string{MetricSNMPIfInBps}},
+		From: time.Now().Add(-time.Hour), To: time.Now(), StepSeconds: 60, Limit: 10,
+		ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{"metric":"watchdog_snmp_if_in_bps","target_id":"target-a","value_mode":"raw"}`),
+	}
+	_, err := provider.Query(context.Background(), base)
+	var queryErr *QueryGatewayError
+	if !errors.As(err, &queryErr) || queryErr.Code != QueryErrorInvalidRequest {
+		t.Fatalf("customer-to-raw bypass error = %#v", err)
+	}
+	base.ValueLayer = QueryValueSupplier
+	base.Parameters = json.RawMessage(`{"metric":"watchdog_snmp_if_in_bps","target_id":"target-a","traffic_view":"customer"}`)
+	_, err = provider.Query(context.Background(), base)
+	if !errors.As(err, &queryErr) || queryErr.Code != QueryErrorInvalidRequest {
+		t.Fatalf("supplier-to-customer bypass error = %#v", err)
+	}
+}
+
 func TestVictoriaMetricsClientReadiness(t *testing.T) {
 	client := VictoriaMetricsClient{BaseURL: "http://victoria.test:8428", HTTPClient: &http.Client{Transport: queryRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/health" {

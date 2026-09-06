@@ -81,6 +81,21 @@ func (hostModule) RegisterTargetKinds(registry *TargetKindRegistry) error {
 	})
 }
 
+func (hostModule) RegisterDatasets(registry *DatasetRegistry) error {
+	return registry.Register(DatasetDescriptor{
+		Key:           "host.agent_metrics",
+		ModuleKey:     "host",
+		Provider:      DatasetProviderVM,
+		TimeField:     "time",
+		Metrics:       metricNamesForFamilies("system", "gpu", "container"),
+		GroupByFields: []string{"target_id"},
+		FilterFields:  []string{"target_id"},
+		ValueLayers:   []QueryValueLayer{QueryValueCustomer},
+		MaxRangeDays:  400,
+		MaxResultRows: 250_000,
+	})
+}
+
 type edgeModule struct{ baseModule }
 
 func newEdgeModule() edgeModule {
@@ -153,13 +168,27 @@ func (networkModule) RegisterDatasets(registry *DatasetRegistry) error {
 		ModuleKey:     "network",
 		Provider:      DatasetProviderVM,
 		TimeField:     "time",
-		Metrics:       []string{MetricSNMPIfInBps, MetricSNMPIfOutBps, MetricSNMPIfInOctetsTotal, MetricSNMPIfOutOctetsTotal},
+		Metrics:       metricNamesForFamilies("snmp_interface", "snmp_optics", "snmp_device", "bgp"),
 		GroupByFields: []string{"device_id", "port_id", "if_name"},
 		FilterFields:  []string{"target_id", "device_id", "port_id"},
 		ValueLayers:   []QueryValueLayer{QueryValueRaw, QueryValueSupplier, QueryValueCustomer},
 		MaxRangeDays:  400,
 		MaxResultRows: 250_000,
 	})
+}
+
+func metricNamesForFamilies(families ...string) []string {
+	allowed := make(map[string]struct{}, len(families))
+	for _, family := range families {
+		allowed[family] = struct{}{}
+	}
+	metrics := make([]string, 0, len(MetricCatalog))
+	for _, metric := range MetricCatalog {
+		if _, ok := allowed[metric.Family]; ok {
+			metrics = append(metrics, metric.Name)
+		}
+	}
+	return metrics
 }
 
 // NewBuiltinPlatformRegistries builds the registries with every builtin

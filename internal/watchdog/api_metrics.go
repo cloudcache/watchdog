@@ -2,6 +2,9 @@ package watchdog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,8 +12,8 @@ import (
 	"time"
 )
 
-func registerMetricsRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, service MetricsService, network NetworkRepository) {
-	api := metricsAPI{service: service, network: network}
+func registerMetricsRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, service MetricsService, network NetworkRepository, gateway *QueryGateway, audit AuditRepository) {
+	api := metricsAPI{service: service, network: network, gateway: gateway, audit: audit}
 	handler := http.HandlerFunc(api.query)
 	mux.Handle("GET /api/v1/metrics/catalog", auth(http.HandlerFunc(api.catalog)))
 	mux.Handle("GET /api/v1/metrics/realtime", auth(handler))
@@ -23,6 +26,8 @@ func registerMetricsRoutes(mux *http.ServeMux, auth func(http.Handler) http.Hand
 type metricsAPI struct {
 	service MetricsService
 	network NetworkRepository
+	gateway *QueryGateway
+	audit   AuditRepository
 }
 
 func (api metricsAPI) catalog(w http.ResponseWriter, _ *http.Request) {
@@ -60,6 +65,16 @@ func (api metricsAPI) query(w http.ResponseWriter, r *http.Request) {
 	// with its own policy) — the ports table needs current values for every
 	// interface in a single query.
 	perPort := r.URL.Query().Get("per_port") == "1"
+	if api.gateway != nil {
+		response, result, err := api.queryThroughGateway(r.Context(), auth, req, perPort)
+		if err != nil {
+			writeQueryGatewayError(w, err)
+			return
+		}
+		api.auditSensitiveGatewayQuery(r.Context(), auth, result, req.Metric, r.URL.Path)
+		WriteAPIJSON(w, http.StatusOK, response)
+		return
+	}
 	if isSNMPTrafficBpsMetric(req.Metric) && !perPort && (req.TrafficView == TrafficViewSupplier || req.TrafficView == TrafficViewCustomer) && req.PortID == "" {
 		api.queryTrafficViewBySide(w, r, auth, req)
 		return
@@ -117,6 +132,16 @@ func (api metricsAPI) aggregate(w http.ResponseWriter, r *http.Request) {
 		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, err.Error(), nil)
 		return
 	}
+	if api.gateway != nil {
+		response, result, err := api.aggregateThroughGateway(r.Context(), auth, req)
+		if err != nil {
+			writeQueryGatewayError(w, err)
+			return
+		}
+		api.auditSensitiveGatewayQuery(r.Context(), auth, result, req.Query.Metric, r.URL.Path)
+		WriteAPIJSON(w, http.StatusOK, response)
+		return
+	}
 	selector := aggregateMetricsSelector(req)
 	if api.service.Client == nil {
 		WriteAPIJSON(w, http.StatusOK, map[string]any{"query": req, "selector": selector})
@@ -135,6 +160,115 @@ func (api metricsAPI) aggregate(w http.ResponseWriter, r *http.Request) {
 	}
 	response = applyTrafficViewResponse(req.Query, response)
 	WriteAPIJSON(w, http.StatusOK, response)
+}
+
+func (api metricsAPI) queryThroughGateway(ctx context.Context, auth AuthContext, req MetricsQueryRequest, perPort bool) (VictoriaMetricsResponse, QueryResult, error) {
+	dataset, err := api.metricsDataset(req.Metric)
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	mode := valueModeOrDefault(req.ValueMode)
+	view := normalizeTrafficView(req.TrafficView)
+	if view == "" {
+		// The legacy default had no traffic re-bucketing. "raw" here names
+		// that view granularity; raw value access remains controlled by mode.
+		view = TrafficViewRaw
+	}
+	parameters, err := json.Marshal(victoriaMetricsQueryParameters{
+		Metric: req.Metric, TargetID: req.TargetID, DeviceID: req.DeviceID, PortID: req.PortID,
+		Function: req.Func, ValueMode: mode, TrafficView: view, PerPort: perPort,
+	})
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	result, err := api.gateway.executeCompatibility(ctx, auth, RequestIDFromContext(ctx), QueryRequest{
+		Dataset: dataset.Key, From: req.Start, To: req.End, StepSeconds: uint32(req.Step / time.Second),
+		ValueLayer: legacyMetricsValueLayer(mode, view), Parameters: parameters,
+	})
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	var response VictoriaMetricsResponse
+	if err := json.Unmarshal(result.Data, &response); err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response", Cause: err}
+	}
+	return response, result, nil
+}
+
+func (api metricsAPI) aggregateThroughGateway(ctx context.Context, auth AuthContext, req MetricsAggregateRequest) (VictoriaMetricsResponse, QueryResult, error) {
+	dataset, err := api.metricsDataset(req.Query.Metric)
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	mode := valueModeOrDefault(req.Query.ValueMode)
+	view := normalizeTrafficView(req.Query.TrafficView)
+	if view == "" {
+		view = TrafficViewRaw
+	}
+	parameters, err := json.Marshal(victoriaMetricsQueryParameters{
+		Metric: req.Query.Metric, TargetIDs: req.TargetIDs, PortIDs: req.PortIDs,
+		Function: req.Query.Func, Aggregation: req.Method, ValueMode: mode, TrafficView: view,
+	})
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	result, err := api.gateway.executeCompatibility(ctx, auth, RequestIDFromContext(ctx), QueryRequest{
+		Dataset: dataset.Key, From: req.Query.Start, To: req.Query.End, StepSeconds: uint32(req.Query.Step / time.Second),
+		ValueLayer: legacyMetricsValueLayer(mode, view), Parameters: parameters,
+	})
+	if err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, err
+	}
+	var response VictoriaMetricsResponse
+	if err := json.Unmarshal(result.Data, &response); err != nil {
+		return VictoriaMetricsResponse{}, QueryResult{}, &QueryGatewayError{Code: QueryErrorProviderFailure, Message: "query provider returned an incompatible metrics response", Cause: err}
+	}
+	return response, result, nil
+}
+
+func (api metricsAPI) metricsDataset(metric string) (DatasetDescriptor, error) {
+	if api.gateway == nil || api.gateway.Datasets == nil {
+		return DatasetDescriptor{}, &QueryGatewayError{Code: QueryErrorDatasetNotFound, Message: "metrics dataset is not registered"}
+	}
+	var found DatasetDescriptor
+	for _, dataset := range api.gateway.Datasets.List() {
+		for _, candidate := range dataset.Metrics {
+			if candidate != metric {
+				continue
+			}
+			if found.Key != "" {
+				return DatasetDescriptor{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "metric is registered by multiple datasets"}
+			}
+			found = dataset
+		}
+	}
+	if found.Key == "" {
+		return DatasetDescriptor{}, &QueryGatewayError{Code: QueryErrorDatasetNotFound, Message: "metrics dataset is not registered"}
+	}
+	return found, nil
+}
+
+func legacyMetricsValueLayer(mode MetricValueMode, view TrafficViewMode) QueryValueLayer {
+	if mode == MetricValueRaw || mode == MetricValueBoth {
+		return QueryValueRaw
+	}
+	if view == TrafficViewSupplier {
+		return QueryValueSupplier
+	}
+	return QueryValueCustomer
+}
+
+func (api metricsAPI) auditSensitiveGatewayQuery(ctx context.Context, auth AuthContext, result QueryResult, metric, endpoint string) {
+	if result.Meta.ValueLayer != QueryValueRaw && result.Meta.ValueLayer != QueryValueSupplier {
+		return
+	}
+	dataset, err := api.metricsDataset(metric)
+	if err != nil {
+		return
+	}
+	(queryGatewayAPI{audit: api.audit}).recordAudit(ctx, auth, "query.sensitive_viewed", dataset.Key, map[string]any{
+		"value_layer": result.Meta.ValueLayer, "query_hash": result.Meta.QueryHash, "compatibility_endpoint": endpoint,
+	})
 }
 
 var errMetricsResourceNotFound = errors.New("metrics resource not found")
@@ -634,6 +768,16 @@ func (api metricsAPI) vmQuery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
+	}
+	if api.audit != nil {
+		sum := sha256.Sum256([]byte(query))
+		_ = api.audit.CreateAuditLog(r.Context(), AuditLog{
+			TenantID: auth.TenantID, ActorID: auth.UserID, Action: "metrics.vmquery.sensitive_viewed",
+			ResourceType: "dataset", ResourceID: "victoriametrics.raw_query",
+			Detail: map[string]any{
+				"query_hash": hex.EncodeToString(sum[:]), "start": start, "end": end, "step_seconds": uint64(stepDur / time.Second),
+			},
+		})
 	}
 	WriteAPIJSON(w, http.StatusOK, resp)
 }

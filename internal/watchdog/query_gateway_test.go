@@ -186,6 +186,32 @@ func TestQueryGatewayInjectsTenantAndReturnsCanonicalMetadata(t *testing.T) {
 	}
 }
 
+func TestQueryGatewayCompatibilityUsesTenantPolicyAsLegacyRowBound(t *testing.T) {
+	repo := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	var received QueryProviderRequest
+	provider := &queryProviderStub{query: func(_ context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
+		received = request
+		return QueryProviderResult{Data: json.RawMessage(`[]`)}, nil
+	}}
+	gateway, auth := newQueryGatewayFixture(t, repo, nil, provider, 2)
+	repo.policies[repo.key(auth.TenantID, "query.test")] = QueryDatasetPolicy{
+		TenantID: auth.TenantID, DatasetKey: "query.test", Enabled: true, AllowCustomer: true,
+		MaxRangeSeconds: 86_400, MaxConcurrent: 1, MaxResultRows: 1_700, QueryTimeoutMS: 1_000,
+	}
+	if _, err := gateway.executeCompatibility(context.Background(), auth, "compatibility-a", validQueryRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if received.Limit != 1_700 {
+		t.Fatalf("compatibility limit = %d, want tenant policy maximum 1700", received.Limit)
+	}
+	if _, err := gateway.Execute(context.Background(), auth, "query-a", validQueryRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if received.Limit != defaultQueryLimit {
+		t.Fatalf("public query limit = %d, want default %d", received.Limit, defaultQueryLimit)
+	}
+}
+
 func TestQueryGatewayValueLayerNeedsPolicyAndRBAC(t *testing.T) {
 	repo := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
 	gateway, auth := newQueryGatewayFixture(t, repo, nil, &queryProviderStub{}, 2)

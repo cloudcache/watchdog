@@ -19,11 +19,17 @@ type VictoriaMetricsQueryProvider struct {
 }
 
 type victoriaMetricsQueryParameters struct {
-	Metric   string `json:"metric"`
-	TargetID ID     `json:"target_id,omitempty"`
-	DeviceID ID     `json:"device_id,omitempty"`
-	PortID   ID     `json:"port_id,omitempty"`
-	Function string `json:"function,omitempty"`
+	Metric      string          `json:"metric"`
+	TargetID    ID              `json:"target_id,omitempty"`
+	DeviceID    ID              `json:"device_id,omitempty"`
+	PortID      ID              `json:"port_id,omitempty"`
+	TargetIDs   []ID            `json:"target_ids,omitempty"`
+	PortIDs     []ID            `json:"port_ids,omitempty"`
+	Function    string          `json:"function,omitempty"`
+	Aggregation string          `json:"aggregation,omitempty"`
+	ValueMode   MetricValueMode `json:"value_mode,omitempty"`
+	TrafficView TrafficViewMode `json:"traffic_view,omitempty"`
+	PerPort     bool            `json:"per_port,omitempty"`
 }
 
 func (p VictoriaMetricsQueryProvider) Ready(ctx context.Context) error {
@@ -40,62 +46,75 @@ func (p VictoriaMetricsQueryProvider) Query(ctx context.Context, request QueryPr
 	if p.Client == nil {
 		return QueryProviderResult{}, ErrQueryProviderUnavailable
 	}
-	var parameters victoriaMetricsQueryParameters
-	decoder := json.NewDecoder(bytes.NewReader(request.Parameters))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&parameters); err != nil {
-		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid VictoriaMetrics query parameters", Cause: err}
-	}
-	if err := ensureDashboardJSONEOF(decoder); err != nil {
-		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid VictoriaMetrics query parameters", Cause: err}
+	parameters, err := decodeVictoriaMetricsQueryParameters(request.Parameters)
+	if err != nil {
+		return QueryProviderResult{}, err
 	}
 	if !slices.Contains(request.Dataset.Metrics, parameters.Metric) {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "metric is not registered for this dataset"}
 	}
-	if parameters.TargetID == "" && parameters.DeviceID == "" && parameters.PortID == "" {
-		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "target_id, device_id or port_id is required"}
-	}
 	if parameters.Function != "" && parameters.Function != "rate" {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "function must be empty or rate"}
+	}
+	valueMode, trafficView, err := normalizeVictoriaMetricsValueSelection(request.ValueLayer, parameters)
+	if err != nil {
+		return QueryProviderResult{}, err
 	}
 	metricRequest := MetricsQueryRequest{
 		TenantID: request.TenantID, TargetID: parameters.TargetID, DeviceID: parameters.DeviceID, PortID: parameters.PortID,
 		Metric: parameters.Metric, Start: request.From, End: request.To, Step: time.Duration(request.StepSeconds) * time.Second,
 		TimeMode: TimeModeCustom, MaxDataPoints: int(request.Limit), Func: parameters.Function,
+		ValueMode: valueMode, TrafficView: trafficView,
 	}
-	switch request.ValueLayer {
-	case QueryValueRaw:
-		metricRequest.ValueMode, metricRequest.TrafficView = MetricValueRaw, TrafficViewRaw
-	case QueryValueSupplier:
-		metricRequest.ValueMode, metricRequest.TrafficView = MetricValueCorrected, TrafficViewSupplier
-	case QueryValueCustomer:
-		metricRequest.ValueMode, metricRequest.TrafficView = MetricValueCorrected, TrafficViewCustomer
-	default:
-		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unsupported value layer"}
-	}
-	resolved, err := (metricsAPI{network: p.Network}).resolveMetricsResource(ctx, AuthContext{TenantID: request.TenantID}, metricRequest)
-	if err != nil {
-		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "metric resource is invalid", Cause: err}
-	}
-	resolved = normalizeMetricsQueryTime(resolved)
-	if err := ValidateMetricsQuery(resolved, true); err != nil {
+	metricRequest = normalizeMetricsQueryTime(metricRequest)
+	if err := ValidateMetricsQuery(metricRequest, true); err != nil {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: err.Error(), Cause: err}
 	}
 
 	service := MetricsService{Client: p.Client}
 	var response VictoriaMetricsResponse
-	if isSNMPTrafficBpsMetric(resolved.Metric) && resolved.PortID == "" &&
-		(resolved.TrafficView == TrafficViewSupplier || resolved.TrafficView == TrafficViewCustomer) {
-		response, err = p.queryTrafficSide(ctx, service, resolved)
+	if parameters.Aggregation != "" {
+		if parameters.PerPort || parameters.TargetID != "" || parameters.DeviceID != "" || parameters.PortID != "" ||
+			(len(parameters.TargetIDs) == 0 && len(parameters.PortIDs) == 0) || !isSupportedPromAggregate(parameters.Aggregation) {
+			return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid aggregate query parameters"}
+		}
+		aggregateRequest := MetricsAggregateRequest{
+			Query: metricRequest, TargetIDs: parameters.TargetIDs, PortIDs: parameters.PortIDs, Method: parameters.Aggregation,
+		}
+		response, err = aggregatePortSeries(ctx, p.Network, service, aggregateRequest)
+		if err == nil {
+			response = applyTrafficViewResponse(metricRequest, response)
+		}
 	} else {
-		response, err = service.QueryRange(ctx, resolved, metricsSelector(resolved), true)
-		if err == nil && isSNMPTrafficBpsMetric(resolved.Metric) {
-			response = applyCounterRateToVMResponse(response)
-			if resolved.PortID != "" && resolved.ValueMode != MetricValueRaw {
-				policy := loadPortPolicy(ctx, p.Network, request.TenantID, resolved.PortID)
-				response, _ = TransformVMRangeValues(response, resolved.ValueMode, policy, nil)
+		if len(parameters.TargetIDs) != 0 || len(parameters.PortIDs) != 0 ||
+			(parameters.TargetID == "" && parameters.DeviceID == "" && parameters.PortID == "") {
+			return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "target_id, device_id or port_id is required"}
+		}
+		resolved, resolveErr := (metricsAPI{network: p.Network}).resolveMetricsResource(ctx, AuthContext{TenantID: request.TenantID}, metricRequest)
+		if resolveErr != nil {
+			return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "metric resource is invalid", Cause: resolveErr}
+		}
+		metricRequest = resolved
+		if isSNMPTrafficBpsMetric(metricRequest.Metric) && metricRequest.PortID == "" && !parameters.PerPort &&
+			(metricRequest.TrafficView == TrafficViewSupplier || metricRequest.TrafficView == TrafficViewCustomer) {
+			response, err = p.queryTrafficSide(ctx, service, metricRequest)
+		} else {
+			if isSNMPTrafficBpsMetric(metricRequest.Metric) && metricRequest.ValueMode != MetricValueRaw && metricRequest.PortID == "" &&
+				!(parameters.PerPort && metricRequest.DeviceID != "") {
+				return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "corrected traffic values require port_id or aggregate graph scope"}
 			}
-			response = applyTrafficViewResponse(resolved, response)
+			response, err = service.QueryRange(ctx, metricRequest, metricsSelector(metricRequest), true)
+		}
+		if err == nil && isSNMPTrafficBpsMetric(metricRequest.Metric) &&
+			!(metricRequest.PortID == "" && !parameters.PerPort && (metricRequest.TrafficView == TrafficViewSupplier || metricRequest.TrafficView == TrafficViewCustomer)) {
+			response = applyCounterRateToVMResponse(response)
+			if metricRequest.PortID != "" && metricRequest.ValueMode != MetricValueRaw {
+				policy := loadPortPolicy(ctx, p.Network, request.TenantID, metricRequest.PortID)
+				response, _ = TransformVMRangeValues(response, metricRequest.ValueMode, policy, nil)
+			} else if parameters.PerPort && metricRequest.DeviceID != "" && metricRequest.ValueMode != MetricValueRaw {
+				response = transformVMRangePerPort(ctx, p.Network, request.TenantID, metricRequest.DeviceID, response)
+			}
+			response = applyTrafficViewResponse(metricRequest, response)
 		}
 	}
 	if err != nil {
@@ -116,7 +135,7 @@ func (p VictoriaMetricsQueryProvider) Query(ctx context.Context, request QueryPr
 	}
 	unit := ""
 	for _, definition := range MetricCatalog {
-		if definition.Name == resolved.Metric {
+		if definition.Name == metricRequest.Metric {
 			unit = definition.Unit
 			break
 		}
@@ -129,6 +148,92 @@ func (p VictoriaMetricsQueryProvider) Query(ctx context.Context, request QueryPr
 			Warnings: []string{"VictoriaMetrics does not expose expected-sample completeness for this dataset"},
 		},
 	}, nil
+}
+
+func decodeVictoriaMetricsQueryParameters(raw json.RawMessage) (victoriaMetricsQueryParameters, error) {
+	var parameters victoriaMetricsQueryParameters
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parameters); err != nil {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid VictoriaMetrics query parameters", Cause: err}
+	}
+	if err := ensureDashboardJSONEOF(decoder); err != nil {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid VictoriaMetrics query parameters", Cause: err}
+	}
+	return parameters, nil
+}
+
+func normalizeVictoriaMetricsValueSelection(layer QueryValueLayer, parameters victoriaMetricsQueryParameters) (MetricValueMode, TrafficViewMode, error) {
+	mode, view := parameters.ValueMode, parameters.TrafficView
+	switch layer {
+	case QueryValueRaw:
+		if mode == "" {
+			mode = MetricValueRaw
+		}
+		if view == "" {
+			view = TrafficViewRaw
+		}
+	case QueryValueSupplier:
+		if mode == "" {
+			mode = MetricValueCorrected
+		}
+		if view == "" {
+			view = TrafficViewSupplier
+		}
+		if mode != MetricValueCorrected || view != TrafficViewSupplier {
+			return "", "", &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "supplier layer requires corrected supplier values"}
+		}
+	case QueryValueCustomer:
+		if mode == "" {
+			mode = MetricValueCorrected
+		}
+		if view == "" {
+			view = TrafficViewCustomer
+		}
+		if mode != MetricValueCorrected || view == TrafficViewSupplier {
+			return "", "", &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "customer layer cannot request raw or supplier values"}
+		}
+	default:
+		return "", "", &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unsupported value layer"}
+	}
+	if mode != MetricValueRaw && mode != MetricValueCorrected && mode != MetricValueBoth {
+		return "", "", &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unsupported metric value mode"}
+	}
+	if normalized := normalizeTrafficView(view); normalized == "" {
+		return "", "", &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unsupported traffic view"}
+	}
+	return mode, view, nil
+}
+
+// AuthorizeQuery is the VM dataset's third admission gate: after tenant
+// dataset policy and value-layer RBAC, every typed target/port selector must
+// also be visible to the principal.
+func (p VictoriaMetricsQueryProvider) AuthorizeQuery(ctx context.Context, auth AuthContext, request QueryProviderRequest) error {
+	if auth.IsAdmin {
+		return nil
+	}
+	parameters, err := decodeVictoriaMetricsQueryParameters(request.Parameters)
+	if err != nil {
+		return err
+	}
+	api := metricsAPI{network: p.Network}
+	if parameters.Aggregation != "" {
+		aggregate := MetricsAggregateRequest{
+			Query: MetricsQueryRequest{TenantID: auth.TenantID}, TargetIDs: parameters.TargetIDs, PortIDs: parameters.PortIDs,
+		}
+		if err := api.authorizeAggregate(ctx, auth, aggregate); err != nil {
+			return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied", Cause: err}
+		}
+		return nil
+	}
+	query := MetricsQueryRequest{
+		TenantID: auth.TenantID, TargetID: parameters.TargetID, DeviceID: parameters.DeviceID, PortID: parameters.PortID,
+	}
+	resolved, err := api.resolveMetricsResource(ctx, auth, query)
+	if err != nil || !canAccessMetrics(auth, resolved) {
+		return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "query resource permission denied", Cause: err}
+	}
+	return nil
 }
 
 func (p VictoriaMetricsQueryProvider) queryTrafficSide(ctx context.Context, service MetricsService, request MetricsQueryRequest) (VictoriaMetricsResponse, error) {

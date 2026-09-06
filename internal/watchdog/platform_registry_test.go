@@ -159,6 +159,23 @@ func TestBuiltinPlatformRegistriesComposeFiveKinds(t *testing.T) {
 	if _, ok := registries.Datasets.Get("network.snmp_interface"); !ok {
 		t.Fatal("network dataset must be registered")
 	}
+	if _, ok := registries.Datasets.Get("host.agent_metrics"); !ok {
+		t.Fatal("host metrics dataset must be registered")
+	}
+	metricOwners := map[string]string{}
+	for _, dataset := range registries.Datasets.List() {
+		for _, metric := range dataset.Metrics {
+			if owner := metricOwners[metric]; owner != "" {
+				t.Fatalf("metric %q is registered by both %q and %q", metric, owner, dataset.Key)
+			}
+			metricOwners[metric] = dataset.Key
+		}
+	}
+	for _, metric := range MetricCatalog {
+		if metricOwners[metric.Name] == "" {
+			t.Fatalf("catalog metric %q has no query dataset", metric.Name)
+		}
+	}
 }
 
 type fakeTenantModuleRepository struct {

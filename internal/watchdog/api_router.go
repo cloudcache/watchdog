@@ -232,7 +232,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		})
 	}
 	registerHistoricalRoutes(mux, auth)
-	registerMetricsRoutes(mux, auth, cfg.Metrics, cfg.Network)
+	registerMetricsRoutes(mux, auth, cfg.Metrics, cfg.Network, cfg.QueryGateway, cfg.Audit)
 	if cfg.AddressSets != nil {
 		registerAddressSetRoutes(mux, auth, cfg.AddressSets)
 	}

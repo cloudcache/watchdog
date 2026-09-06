@@ -193,6 +193,15 @@ type QueryDatasetProvider interface {
 	Ready(context.Context) error
 }
 
+// QueryDatasetAuthorizer is implemented by providers whose typed parameters
+// name tenant resources. QueryGateway owns dataset policy and value-layer
+// admission; the provider adapter owns the parameter grammar needed to enforce
+// the final resource-level view permission without exposing opaque parameters
+// to the platform core.
+type QueryDatasetAuthorizer interface {
+	AuthorizeQuery(context.Context, AuthContext, QueryProviderRequest) error
+}
+
 type QueryProviderRegistration struct {
 	Kind          DatasetProviderKind
 	Provider      QueryDatasetProvider
@@ -385,6 +394,18 @@ func NewQueryGateway(registries *PlatformRegistries, modules TenantModuleReposit
 }
 
 func (g *QueryGateway) Execute(ctx context.Context, auth AuthContext, requestID string, request QueryRequest) (QueryResult, error) {
+	return g.execute(ctx, auth, requestID, request, false)
+}
+
+// executeCompatibility preserves legacy metrics endpoints, which had no
+// caller-visible total-row limit. The tenant policy maximum becomes their
+// effective bound; the provider still enforces it after execution. New query
+// clients retain the deliberately smaller defaultQueryLimit.
+func (g *QueryGateway) executeCompatibility(ctx context.Context, auth AuthContext, requestID string, request QueryRequest) (QueryResult, error) {
+	return g.execute(ctx, auth, requestID, request, true)
+}
+
+func (g *QueryGateway) execute(ctx context.Context, auth AuthContext, requestID string, request QueryRequest, usePolicyLimit bool) (QueryResult, error) {
 	if auth.TenantID == "" || auth.UserID == "" {
 		return QueryResult{}, queryError(QueryErrorPermissionDenied, "authenticated tenant and user are required", false, nil)
 	}
@@ -427,6 +448,9 @@ func (g *QueryGateway) Execute(ctx context.Context, auth AuthContext, requestID 
 	}
 	if request.Limit == 0 {
 		request.Limit = min(defaultQueryLimit, policy.MaxResultRows)
+		if usePolicyLimit {
+			request.Limit = policy.MaxResultRows
+		}
 	}
 	if request.Limit > policy.MaxResultRows {
 		return QueryResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "query limit exceeds the dataset policy", Details: map[string]any{"max_result_rows": policy.MaxResultRows}}
@@ -452,6 +476,21 @@ func (g *QueryGateway) Execute(ctx context.Context, auth AuthContext, requestID 
 		From: request.From, To: request.To, StepSeconds: request.StepSeconds, Limit: request.Limit,
 		Cursor: request.Cursor, ValueLayer: request.ValueLayer, RequireComplete: request.RequireComplete,
 		Parameters: request.Parameters,
+	}
+	if authorizer, ok := provider.(QueryDatasetAuthorizer); ok {
+		if err := authorizer.AuthorizeQuery(queryCtx, auth, providerRequest); err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return QueryResult{}, queryError(QueryErrorCanceled, "query was canceled", false, err)
+			}
+			if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return QueryResult{}, queryError(QueryErrorTimeout, "query authorization timed out", true, err)
+			}
+			var gatewayErr *QueryGatewayError
+			if errors.As(err, &gatewayErr) {
+				return QueryResult{}, gatewayErr
+			}
+			return QueryResult{}, queryError(QueryErrorPermissionDenied, "query resource permission denied", false, err)
+		}
 	}
 	providerResult, err := provider.Query(queryCtx, providerRequest)
 	if err != nil {
