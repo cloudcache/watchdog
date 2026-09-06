@@ -56,7 +56,15 @@
     - [x] **变更设计/测试**：053 与 install/init 同步并通过 001–053 顺序迁移、checksum、fresh-install 结构 parity；MySQL JSON 回读重新 canonicalize 后验 hash，不比较数据库格式化后的原始字节。
     - [x] **回归测试**：watchdog 单测、真实 MySQL migration/repository/parity、全库 race/vet/build 纳入提交前门禁；不夹带 Flow 数据面与既有 maintenance/delete-preview 工作区。
     - [x] **已提交门禁**：migration/init/checksum、domain/repository/API/runtime、测试、设计与任务清单必须由同一独立提交原子交付，提交后才允许 Phase 3 使用两张表。
-  - [ ] **Fleet Phase 3–5 rollout/canary**：canary/manual waves/status、rollback/kill/expiry/scheduler；Phase 3 前冻结健康信号，Phase 4 前冻结 best-effort revert 与离线 collector 终态语义。
+  - [x] **Fleet Phase 3A rollout 只读观测**：rollout 列表/详情/target ledger 查询先独立闭环，不与 canary 写状态机混交；复用 053 两表及索引，无持久化契约变化，不创建空 migration。响应不返回 `spec_json`，详情提供全 target 状态汇总，target 行明确区分历史 ledger 版本与 collector 当前健康/config/last-seen。详见 [collector-fleet-rollout-design.md](collector-fleet-rollout-design.md)。
+    - [x] **设计**：冻结 tenant `view`、1–200 limit/有界 offset、文本/module/status/current-health/wave 筛选、固定 sort allowlist、`canary`/`skipped` wave 别名、详情 ETag 和 spec 脱敏契约。
+    - [x] **编码**：repository/service/API 实现 rollout list/detail/summary 与 target server-side paging/filter；所有查询先绑定 tenant，target 查询先验证 rollout 归属，动态 ORDER BY 只取服务端白名单列。
+    - [x] **单元测试**：覆盖 filter 规范化与边界、view 权限、参数透传、非法 status/health/wave/sort/limit/order、404/稳定错误映射及响应不泄漏 spec。
+    - [x] **集成测试**：隔离真实 MySQL 验证 rollout 两页无重复、详情/空 draft 汇总、target 名称/状态/健康/wave 筛选与分页，以及跨 tenant 读取返回 no rows。
+    - [x] **变更设计/测试**：只复用 `collector_plan_rollouts`、`collector_plan_rollout_targets`、`collector_agents`，不改变 schema；后续持久化 migration 仍从 054 领取。
+    - [x] **回归测试**：定向 watchdog、真实 MySQL、全库 test/race/vet/build 纳入提交前门禁；不夹带 Flow 数据面与既有 maintenance/delete-preview 工作区。
+    - [x] **已提交门禁**：代码、测试、设计与任务清单由同一独立提交原子交付；Phase 3B 不依赖工作区中的未提交接口。
+  - [ ] **Fleet Phase 3B–5 rollout/canary**：canary/manual waves、rollback/kill/expiry/scheduler；Phase 3B 前冻结健康信号，Phase 4 前冻结 best-effort revert 与离线 collector 终态语义。
 - [x] target 名称与 host 身份分离；网络 target 以 `(tenant, kind, host)` 唯一，display name 可选。
 - [x] SNMP profile/community 在新建与编辑可配置，sysName/sysDescr 为采集结果而非输入必填。
 - [x] Target/Network Device/Port/BGP/Inventory/Event/Alert 生命周期、分页、搜索、VTable filter 和稳定 ETag/If-Match 已闭环；Target/Device/Port 等人工管理对象提供 CRUD+并发控制，BGP/Inventory/Event/Alert 等 SNMP 事实只读、由 discovery/retention 管理，禁止伪造人工写 API。

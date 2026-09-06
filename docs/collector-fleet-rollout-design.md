@@ -1,6 +1,6 @@
 # Collector Fleet Rollout / Canary — Design
 
-Status: **Phases 0–2 implemented; Phases 3–5 proposed**. Owner: platform. Tracks
+Status: **Phases 0–2 and 3A implemented; Phases 3B–5 proposed**. Owner: platform. Tracks
 tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环".
 
 ## 1. Where we are (the gap)
@@ -222,12 +222,24 @@ Rollouts (Phase 2 implemented):
   counts and advances the rollout row to `previewed` without creating a plan
   revision or changing any collector head.
 
-Rollouts (Phase 3+ planned):
-- `GET /api/v1/plan-rollouts` / `GET /api/v1/plan-rollouts/{id}` — status + per-target progress (paged).
+Rollouts (Phase 3A implemented):
+- `GET /api/v1/plan-rollouts` — tenant-scoped offset paging (`limit` 1–200,
+  bounded `offset`), text/module/status filters and a fixed sort allowlist. The
+  response omits the plan spec and returns its hash only.
+- `GET /api/v1/plan-rollouts/{id}` — rollout metadata plus counts for matched,
+  eligible and every target lifecycle state; returns the rollout `row_version`
+  as `ETag`.
+- `GET /api/v1/plan-rollouts/{id}/targets` — server-side paging/search and
+  status/current-health/wave filters, including `canary` and `skipped` wave
+  aliases. Each row joins the target ledger to the collector's current name,
+  type, health, last-seen and config-version facts; the immutable historical
+  `prior_config_version` remains sourced from the ledger.
+
+Rollouts (Phase 3B+ planned):
 - `POST /api/v1/plan-rollouts/{id}/advance|pause|resume|rollback|kill` — control, `If-Match` on rollout row_version.
 
 Permissions: create requires tenant `configure`; preview and future lifecycle
-controls require tenant `operate`; future read/list endpoints require `view`.
+controls require tenant `operate`; read/list endpoints require tenant `view`.
 Reuses the existing permission model.
 
 ## 7. Integration with what exists
@@ -265,8 +277,16 @@ Reuses the existing permission model.
    Real MySQL tests cover selector intersection, deterministic canary/waves,
    schema-incompatible skip, empty-result rollback, stale replay, no revision or
    collector-head mutation, audit, migration replay and fresh-install parity.
-3. **Canary + manual advance + status** — activate wave 0, read acks/failures,
-   advance/pause, per-target ledger, status endpoint + frontend rollout view.
+3A. **[done] Read-only rollout observability** — rollout list/detail and
+   per-target list provide tenant-scoped bounded paging, allowlisted
+   filter/sort fields, lifecycle summaries and current collector health without
+   returning `spec_json`. This slice reuses migration 053 tables and their
+   indexes, so it intentionally creates no empty migration. Unit/API tests and
+   isolated real-MySQL paging/filter/summary/tenant-isolation scenarios are the
+   delivery gate.
+3B. **Canary + manual advance** — create/activate wave 0 revisions, reconcile
+   acks/failures, then advance/pause under optimistic locking; frontend rollout
+   view consumes the Phase 3A read contract.
 4. **Kill switch + rollback + expiry reaper** — revert semantics + the reaper task.
 5. **(later) Scheduler-driven advance** — once PLAT-04G lands; label selectors.
 

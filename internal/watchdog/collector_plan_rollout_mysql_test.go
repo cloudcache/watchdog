@@ -159,6 +159,55 @@ func TestMySQLCollectorPlanRolloutCreatePreviewAndRollback(t *testing.T) {
 	if status != "draft" || rowVersion != 1 || targetCount != 0 {
 		t.Fatalf("empty preview persisted status=%s row_version=%d targets=%d", status, rowVersion, targetCount)
 	}
+
+	rollouts, total, err := service.ListCollectorPlanRollouts(ctx, tenantID, CollectorPlanRolloutListFilter{
+		ModuleKey: "flow", Status: CollectorPlanRolloutPreviewed,
+		Sort: "created_at", Limit: 1,
+	})
+	if err != nil || total != 2 || len(rollouts) != 1 || rollouts[0].Status != CollectorPlanRolloutPreviewed {
+		t.Fatalf("rollout first page=%+v total=%d err=%v", rollouts, total, err)
+	}
+	firstPageID := rollouts[0].ID
+	rollouts, total, err = service.ListCollectorPlanRollouts(ctx, tenantID, CollectorPlanRolloutListFilter{
+		ModuleKey: "flow", Status: CollectorPlanRolloutPreviewed,
+		Sort: "created_at", Limit: 1, Offset: 1,
+	})
+	if err != nil || total != 2 || len(rollouts) != 1 || rollouts[0].ID == firstPageID {
+		t.Fatalf("rollout second page=%+v total=%d err=%v", rollouts, total, err)
+	}
+	listed, summary, err := service.GetCollectorPlanRollout(ctx, tenantID, created.ID)
+	if err != nil || listed.ID != created.ID || summary.Matched != 6 || summary.Eligible != 5 || summary.Pending != 5 || summary.Skipped != 1 {
+		t.Fatalf("rollout detail=%+v summary=%+v err=%v", listed, summary, err)
+	}
+	_, emptySummary, err := service.GetCollectorPlanRollout(ctx, tenantID, emptyRollout.ID)
+	if err != nil || emptySummary != (CollectorPlanRolloutSummary{}) {
+		t.Fatalf("empty rollout summary=%+v err=%v", emptySummary, err)
+	}
+	assertCollectorPlanRolloutTargetFilter(t, service, tenantID, created.ID,
+		CollectorPlanRolloutTargetListFilter{Query: "rollout-test-a", Sort: "collector", Limit: 50},
+		1, []ID{"collector-rollout-0001"})
+	assertCollectorPlanRolloutTargetFilter(t, service, tenantID, created.ID,
+		CollectorPlanRolloutTargetListFilter{Status: CollectorPlanRolloutTargetSkipped, Sort: "collector", Limit: 50},
+		1, []ID{"collector-rollout-0006"})
+	assertCollectorPlanRolloutTargetFilter(t, service, tenantID, created.ID,
+		CollectorPlanRolloutTargetListFilter{Health: "healthy", Sort: "collector", Limit: 50},
+		6, []ID{
+			"collector-rollout-0001", "collector-rollout-0002", "collector-rollout-0003",
+			"collector-rollout-0004", "collector-rollout-0005", "collector-rollout-0006",
+		})
+	wave := uint32(1)
+	assertCollectorPlanRolloutTargetFilter(t, service, tenantID, created.ID,
+		CollectorPlanRolloutTargetListFilter{Wave: &wave, Sort: "collector", Limit: 50},
+		2, []ID{"collector-rollout-0003", "collector-rollout-0004"})
+	assertCollectorPlanRolloutTargetFilter(t, service, tenantID, created.ID,
+		CollectorPlanRolloutTargetListFilter{Sort: "collector", Limit: 1, Offset: 1},
+		6, []ID{"collector-rollout-0002"})
+	if _, _, err := service.GetCollectorPlanRollout(ctx, "tenant_rollout_other", created.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("cross-tenant rollout detail error=%v", err)
+	}
+	if _, _, err := service.ListCollectorPlanRolloutTargets(ctx, "tenant_rollout_other", created.ID, CollectorPlanRolloutTargetListFilter{Limit: 50}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("cross-tenant rollout targets error=%v", err)
+	}
 	var revisionCount int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM collector_plan_revisions WHERE tenant_id = ?", tenantID).Scan(&revisionCount); err != nil || revisionCount != 0 {
 		t.Fatalf("plan revisions=%d err=%v", revisionCount, err)
@@ -170,6 +219,21 @@ func TestMySQLCollectorPlanRolloutCreatePreviewAndRollback(t *testing.T) {
 	var auditCount int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_logs WHERE tenant_id = ? AND resource_type = 'collector_plan_rollout'", tenantID).Scan(&auditCount); err != nil || auditCount != 5 {
 		t.Fatalf("audit count=%d err=%v", auditCount, err)
+	}
+}
+
+func assertCollectorPlanRolloutTargetFilter(t *testing.T, service *CollectorPlanRolloutService, tenantID, rolloutID ID, filter CollectorPlanRolloutTargetListFilter, wantTotal int64, wantIDs []ID) {
+	t.Helper()
+	targets, total, err := service.ListCollectorPlanRolloutTargets(context.Background(), tenantID, rolloutID, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]ID, len(targets))
+	for index := range targets {
+		gotIDs[index] = targets[index].CollectorID
+	}
+	if total != wantTotal || !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("target filter=%+v total=%d ids=%v want total=%d ids=%v", filter, total, gotIDs, wantTotal, wantIDs)
 	}
 }
 

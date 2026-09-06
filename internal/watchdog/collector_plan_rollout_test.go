@@ -29,6 +29,18 @@ func (r *collectorPlanRolloutRepositoryStub) PreviewCollectorPlanRollout(_ conte
 	return r.preview, nil
 }
 
+func (*collectorPlanRolloutRepositoryStub) ListCollectorPlanRollouts(context.Context, ID, CollectorPlanRolloutListFilter) ([]CollectorPlanRollout, int64, error) {
+	return nil, 0, nil
+}
+
+func (*collectorPlanRolloutRepositoryStub) GetCollectorPlanRollout(context.Context, ID, ID) (CollectorPlanRollout, CollectorPlanRolloutSummary, error) {
+	return CollectorPlanRollout{}, CollectorPlanRolloutSummary{}, nil
+}
+
+func (*collectorPlanRolloutRepositoryStub) ListCollectorPlanRolloutTargets(context.Context, ID, ID, CollectorPlanRolloutTargetListFilter) ([]CollectorPlanRolloutTarget, int64, error) {
+	return nil, 0, nil
+}
+
 func TestCollectorPlanRolloutServiceNormalizesBeforeRepository(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	repository := &collectorPlanRolloutRepositoryStub{}
@@ -114,5 +126,43 @@ func TestCollectorPlanRolloutPreviewRequiresIdentityAndVersion(t *testing.T) {
 	request.ExpectedRowVersion = 0
 	if _, err := service.PreviewCollectorPlanRollout(context.Background(), request); !errors.Is(err, ErrCollectorPlanRolloutInvalid) || repository.previewCalls != 1 {
 		t.Fatalf("invalid preview err=%v calls=%d", err, repository.previewCalls)
+	}
+}
+
+func TestCollectorPlanRolloutReadFiltersAreBoundedAndTyped(t *testing.T) {
+	rollout, err := normalizeCollectorPlanRolloutListFilter(CollectorPlanRolloutListFilter{
+		Query: "  abc  ", ModuleKey: " FLOW ", Status: "PREVIEWED",
+		Sort: "EXPIRES_AT", Desc: true, Limit: 100, Offset: 25,
+	})
+	if err != nil || rollout.Query != "abc" || rollout.ModuleKey != "flow" || rollout.Status != CollectorPlanRolloutPreviewed || rollout.Sort != "expires_at" || !rollout.Desc {
+		t.Fatalf("rollout filter=%+v err=%v", rollout, err)
+	}
+	wave := uint32(1)
+	target, err := normalizeCollectorPlanRolloutTargetListFilter(CollectorPlanRolloutTargetListFilter{
+		Query: " collector ", Status: "ACKED", Health: "HEALTHY",
+		Wave: &wave, Sort: "AGENT_TYPE", Limit: 50,
+	})
+	if err != nil || target.Query != "collector" || target.Status != CollectorPlanRolloutTargetACKed || target.Health != "healthy" || target.Sort != "agent_type" || target.Wave == nil || *target.Wave != 1 {
+		t.Fatalf("target filter=%+v err=%v", target, err)
+	}
+	for index, invalid := range []CollectorPlanRolloutListFilter{
+		{Status: "unknown", Limit: 50},
+		{Sort: "spec_json", Limit: 50},
+		{Limit: 201},
+		{Limit: 50, Offset: 1_000_001},
+	} {
+		if _, err := normalizeCollectorPlanRolloutListFilter(invalid); !errors.Is(err, ErrCollectorPlanRolloutInvalid) {
+			t.Fatalf("rollout case %d error=%v", index, err)
+		}
+	}
+	for index, invalid := range []CollectorPlanRolloutTargetListFilter{
+		{Status: "unknown", Limit: 50},
+		{Health: "up", Limit: 50},
+		{Sort: "failure_reason", Limit: 50},
+		{Limit: 0},
+	} {
+		if _, err := normalizeCollectorPlanRolloutTargetListFilter(invalid); !errors.Is(err, ErrCollectorPlanRolloutInvalid) {
+			t.Fatalf("target case %d error=%v", index, err)
+		}
 	}
 }

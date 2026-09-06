@@ -154,6 +154,206 @@ func (s *MySQLStore) PreviewCollectorPlanRollout(ctx context.Context, request Co
 	}, nil
 }
 
+func (s *MySQLStore) ListCollectorPlanRollouts(ctx context.Context, tenantID ID, filter CollectorPlanRolloutListFilter) ([]CollectorPlanRollout, int64, error) {
+	if !validCollectorEvidenceID(tenantID) {
+		return nil, 0, ErrCollectorPlanRolloutInvalid
+	}
+	filter, err := normalizeCollectorPlanRolloutListFilter(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	where := ` FROM collector_plan_rollouts WHERE tenant_id = ?`
+	args := []any{tenantID}
+	if filter.Query != "" {
+		like := "%" + escapeSQLLike(filter.Query) + "%"
+		where += ` AND (id LIKE ? OR module_key LIKE ? OR spec_hash LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	if filter.ModuleKey != "" {
+		where += ` AND module_key = ?`
+		args = append(args, filter.ModuleKey)
+	}
+	if filter.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumns := map[string]string{
+		"module_key": "module_key", "status": "status", "expires_at": "expires_at",
+		"created_at": "created_at", "updated_at": "updated_at",
+	}
+	direction := "ASC"
+	if filter.Desc {
+		direction = "DESC"
+	}
+	queryArgs := append(append([]any(nil), args...), filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+collectorPlanRolloutSelectColumns+where+
+		` ORDER BY `+sortColumns[filter.Sort]+` `+direction+`, id `+direction+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	rollouts := make([]CollectorPlanRollout, 0, filter.Limit)
+	for rows.Next() {
+		rollout, err := scanCollectorPlanRollout(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		rollouts = append(rollouts, rollout)
+	}
+	return rollouts, total, rows.Err()
+}
+
+func (s *MySQLStore) GetCollectorPlanRollout(ctx context.Context, tenantID, rolloutID ID) (CollectorPlanRollout, CollectorPlanRolloutSummary, error) {
+	if !validCollectorEvidenceID(tenantID) || !validCollectorEvidenceID(rolloutID) {
+		return CollectorPlanRollout{}, CollectorPlanRolloutSummary{}, ErrCollectorPlanRolloutInvalid
+	}
+	rollout, err := scanCollectorPlanRollout(s.db.QueryRowContext(ctx, `
+		SELECT `+collectorPlanRolloutSelectColumns+`
+		FROM collector_plan_rollouts WHERE tenant_id = ? AND id = ?
+	`, tenantID, rolloutID))
+	if err != nil {
+		return CollectorPlanRollout{}, CollectorPlanRolloutSummary{}, err
+	}
+	var summary CollectorPlanRolloutSummary
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(status <> 'skipped'), 0),
+			COALESCE(SUM(status = 'pending'), 0),
+			COALESCE(SUM(status = 'revision_created'), 0),
+			COALESCE(SUM(status = 'activated'), 0),
+			COALESCE(SUM(status = 'acked'), 0),
+			COALESCE(SUM(status = 'failed'), 0),
+			COALESCE(SUM(status = 'reverted'), 0),
+			COALESCE(SUM(status = 'skipped'), 0)
+		FROM collector_plan_rollout_targets
+		WHERE tenant_id = ? AND rollout_id = ?
+	`, tenantID, rolloutID).Scan(
+		&summary.Matched, &summary.Eligible, &summary.Pending,
+		&summary.RevisionCreated, &summary.Activated, &summary.ACKed,
+		&summary.Failed, &summary.Reverted, &summary.Skipped,
+	); err != nil {
+		return CollectorPlanRollout{}, CollectorPlanRolloutSummary{}, err
+	}
+	return rollout, summary, nil
+}
+
+func (s *MySQLStore) ListCollectorPlanRolloutTargets(ctx context.Context, tenantID, rolloutID ID, filter CollectorPlanRolloutTargetListFilter) ([]CollectorPlanRolloutTarget, int64, error) {
+	if !validCollectorEvidenceID(tenantID) || !validCollectorEvidenceID(rolloutID) {
+		return nil, 0, ErrCollectorPlanRolloutInvalid
+	}
+	filter, err := normalizeCollectorPlanRolloutTargetListFilter(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT 1 FROM collector_plan_rollouts WHERE tenant_id = ? AND id = ?
+	`, tenantID, rolloutID).Scan(&exists); err != nil {
+		return nil, 0, err
+	}
+	where := `
+		FROM collector_plan_rollout_targets AS target
+		JOIN collector_agents AS collector
+		  ON collector.tenant_id = target.tenant_id AND collector.id = target.collector_id
+		WHERE target.tenant_id = ? AND target.rollout_id = ?`
+	args := []any{tenantID, rolloutID}
+	if filter.Query != "" {
+		like := "%" + escapeSQLLike(filter.Query) + "%"
+		where += ` AND (collector.id LIKE ? OR collector.name LIKE ? OR collector.agent_type LIKE ? OR COALESCE(target.failure_reason, '') LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+	if filter.Status != "" {
+		where += ` AND target.status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.Health != "" {
+		where += ` AND collector.observed_health = ?`
+		args = append(args, filter.Health)
+	}
+	if filter.Wave != nil {
+		where += ` AND target.wave = ?`
+		args = append(args, *filter.Wave)
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	sortColumns := map[string]string{
+		"collector": "collector.name", "agent_type": "collector.agent_type",
+		"wave": "target.wave", "status": "target.status",
+		"health": "collector.observed_health", "updated_at": "target.updated_at",
+	}
+	direction := "ASC"
+	if filter.Desc {
+		direction = "DESC"
+	}
+	queryArgs := append(append([]any(nil), args...), filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target.tenant_id, target.rollout_id, target.collector_id,
+			collector.name, collector.agent_type, collector.status,
+			collector.observed_health, collector.config_version,
+			collector.acknowledged_config_version, collector.last_good_config_version,
+			collector.last_seen_at, target.wave, target.config_version,
+			target.prior_config_version, target.status, target.failure_reason,
+			target.activated_at, target.acked_at, target.row_version,
+			target.created_at, target.updated_at
+	`+where+` ORDER BY `+sortColumns[filter.Sort]+` `+direction+
+		`, collector.id `+direction+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	targets := make([]CollectorPlanRolloutTarget, 0, filter.Limit)
+	for rows.Next() {
+		target, err := scanCollectorPlanRolloutTarget(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, total, rows.Err()
+}
+
+func scanCollectorPlanRolloutTarget(row collectorPlanRow) (CollectorPlanRolloutTarget, error) {
+	var target CollectorPlanRolloutTarget
+	var status string
+	var configVersion sql.NullInt64
+	var lastSeenAt, activatedAt, ackedAt sql.NullTime
+	var failureReason sql.NullString
+	if err := row.Scan(
+		&target.TenantID, &target.RolloutID, &target.CollectorID,
+		&target.CollectorName, &target.AgentType, &target.CollectorStatus,
+		&target.ObservedHealth, &target.CollectorConfigVersion,
+		&target.AcknowledgedConfigVersion, &target.LastGoodConfigVersion,
+		&lastSeenAt, &target.Wave, &configVersion, &target.PriorConfigVersion,
+		&status, &failureReason, &activatedAt, &ackedAt, &target.RowVersion,
+		&target.CreatedAt, &target.UpdatedAt,
+	); err != nil {
+		return CollectorPlanRolloutTarget{}, err
+	}
+	target.Status = CollectorPlanRolloutTargetStatus(status)
+	target.LastSeenAt = lastSeenAt.Time
+	target.ActivatedAt = activatedAt.Time
+	target.ACKedAt = ackedAt.Time
+	if configVersion.Valid {
+		target.ConfigVersion = uint64(configVersion.Int64)
+	}
+	if failureReason.Valid {
+		target.FailureReason = failureReason.String
+	}
+	if !validCollectorEvidenceID(target.TenantID) || !validCollectorEvidenceID(target.RolloutID) ||
+		!validCollectorEvidenceID(target.CollectorID) || target.CollectorName == "" ||
+		!validCollectorPlanRolloutTargetStatus(target.Status) || target.RowVersion == 0 ||
+		target.CreatedAt.IsZero() || target.UpdatedAt.Before(target.CreatedAt) {
+		return CollectorPlanRolloutTarget{}, errors.New("stored collector plan rollout target is invalid")
+	}
+	return target, nil
+}
+
 func insertCollectorPlanRolloutTargets(ctx context.Context, tx *sql.Tx, rollout CollectorPlanRollout, selector CollectorPlanRolloutSelector, strategy CollectorPlanRolloutStrategy) (sql.Result, error) {
 	selectedJoin := ""
 	args := []any{

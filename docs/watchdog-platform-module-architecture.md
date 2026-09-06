@@ -354,7 +354,7 @@ Migration `018_collector_registry_expand.sql` 已创建上述三表，并把现�
 
 plan repository core 已实现以下不能由 API 绕过的门禁：spec 必须是单一 JSON object、最大 4 MiB，并先规范化键顺序/空白再计算 SHA-256；签名载荷固定绑定 envelope version、plan/tenant/collector ID、config/schema version、spec hash、signing key ID、毫秒精度有效期和 supersedes version。只有 Ed25519 验证函数生成的内部 proof 才能 create，验证后再修改 spec、signature 或任一载荷字段会在入库前失效。create 只接受 `validated`，且 schema 必须位于 agent 声明区间、version 必须高于当前 head、supersedes 必须精确等于当前 head。activate 以 collector `row_version` 和 plan `row_version` 双乐观锁，在同一 transaction 中 retire 旧 active、激活新 revision、推进 collector head 并写审计；单 active unique key 是最后防线。activation/ACK 时间由服务端生成，API/agent 不得传入安全时间。ACK 必须与当前 active plan 的 version/hash/expiry 同时相符，只推进 `acknowledged_config_version/last_good_config_version` 和 observed 字段，不推进管理 `row_version`；重复 ACK 幂等且只在首次推进时审计。MySQL JSON 回读必须重新 canonicalize 后校验 hash，不能比较 MySQL 自行格式化的 JSON 原始字节。
 
-这里的 Ed25519 public key 必须由 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、本地多 key bundle 的 overlap/retiring/revoked 执行、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；管理面 key registry、bundle 分发/本地防回滚代际、operator plan revision API 以及 fleet rollout create/preview 已完成，canary 激活、fleet ACK 汇聚和回滚仍按平台 tasklist 推进。
+这里的 Ed25519 public key 必须由 trust-bundle/key registry 按 `signing_key_id` 解析；repository 接收的是已由该 registry 验证出的值，不允许 HTTP DTO 直接构造内部 proof。agent-side v2 signature 验证、本地多 key bundle 的 overlap/retiring/revoked 执行、失败 ACK 保留 LKG 和 exact 成功 ACK 已完成；管理面 key registry、bundle 分发/本地防回滚代际、operator plan revision API、fleet rollout create/preview 以及 rollout/target 只读观测已完成，canary 激活、fleet ACK 汇聚和回滚仍按平台 tasklist 推进。
 
 Migration `019_collector_ownership_evidence.sql` 历史上为旧 collector 数据面补过三类机器事实；收敛后只保留仍属于管理面的 principal 与 ownership transfer：
 
@@ -457,6 +457,9 @@ GET                      /api/v1/collectors/{id}/plan-revisions?limit=&cursor=
 POST                     /api/v1/collectors/{id}/plan-revisions
 POST                     /api/v1/collectors/{id}/plan-revisions/{version}/activate
 POST                     /api/v1/plan-rollouts
+GET                      /api/v1/plan-rollouts?limit=&offset=&q=&module_key=&status=&sort=&order=
+GET                      /api/v1/plan-rollouts/{rollout_id}
+GET                      /api/v1/plan-rollouts/{rollout_id}/targets?limit=&offset=&q=&status=&health=&wave=&sort=&order=
 POST                     /api/v1/plan-rollouts/{rollout_id}/preview
 POST                     /api/v1/collectors/{id}/plans:preview
 POST                     /api/v1/collectors/{id}/plans/{version}:validate
