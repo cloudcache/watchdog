@@ -119,7 +119,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **本轮证据**：`go test`、`go test -race` 与 `go vet` 已覆盖 flowdimension/flowworker/flowch/collector/worker；集合设计已对照 EdgeManager `geo/setops.rs`、`geo/build.rs`、`dns/engine.rs`。
 - [x] **编码（publication 集合编译）**：扩展 members/exclude_members/include_set_ids/exclude_set_ids；完成 v4/v6 canonical CIDR、引用 DAG、排除优先、边界 LPM、不可变 membership 和 endpoint/fact 展开量拒绝。热路径固定两次 LPM，不逐 flow 扫组或追引用。
 - [x] **单元（publication 集合编译）**：覆盖同字段 OR/跨字段 AND、include/exclude、排除优先、依赖环/悬空或禁用引用、v4/v6 边界、有限全集 `/0`、无主前缀成员、重叠组及最大展开量。
-- [x] **管理面集合运算/预览**：平台共享内核和 API 已实现 v4/v6 并、交、差、显式 universe 的有限补集、严格 normalize/merge、重叠检测、128-bit 计数及显式 cover 扩大量（commit `f44d1978`）；管理页工作台已提交 `9c613c10`。批量 apply 仍在 PLAT-04C 单独保留，Flow 数据面不复制 CRUD。
+- [x] **管理面集合运算/预览**：平台共享内核和 API 已实现 v4/v6 并、交、差、显式 universe 的有限补集、严格 normalize/merge、重叠检测、128-bit 计数及显式 cover 扩大量（commit `f44d1978`）；管理页工作台已提交 `9c613c10`。平台 PLAT-04C 已通过 migration 041 + `acbdd4a7` 落地 prefix batch revision 的 preview digest/原子删旧建新/逐操作审计，Batch Apply 管理页已提交 `c241358a`；Flow 数据面不复制 CRUD。
 - [x] **编码/单元（查询谓词）**：`include_any/include_all/exclude_any` 编译为有界不可变谓词；已验证 A∪B 中同时属于 A/B 的 fact 只计一次、交集/排除和非法/超量 ID。
 - [x] **编码/单元（Geo 包）**：`flow-geo-v2` 每个不重叠地址区间引用一个 `geo_leaf_code`；loader 从 `geo_dict.parent_code` 预编译 continent/region/country/province/city 稳定 ID，并拒绝缺父、环、重复层、非法层序、禁用祖先及 range/path 冲突；v1 继续可读。
 - [x] **编码/单元（事实/汇总）**：base fact 一行保存五级 Geo ID、唯一 primary prefix ID 和 address-set ID 数组；顺序 migration 002、native encoder/schema contract 和 rollup 已增加 `geo.continent` 至 `geo.city`，缺失层进入 `_unassigned`，不复制 base flow；ASN 来源保留 v1/v2 provenance。
