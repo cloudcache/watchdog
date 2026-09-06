@@ -404,11 +404,17 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 		document.removeEventListener("pointerdown", handleOutsidePointer)
 		document.removeEventListener("keydown", handleKeydown)
 		window.removeEventListener("resize", close)
-		window.removeEventListener("scroll", close, true)
+		window.removeEventListener("scroll", handleOutsideScroll, true)
 		if (closeOpenFilter === close) closeOpenFilter = null
 		options.onClose()
 	}
 	const handleOutsidePointer = (event: Event) => {
+		if (!popover.contains(event.target as Node)) close()
+	}
+	// Close when the page or table scrolls out from under the popover, but not
+	// when the user scrolls the popover's own (overflow: auto) option list —
+	// the capture-phase listener sees those inner scrolls too.
+	const handleOutsideScroll = (event: Event) => {
 		if (!popover.contains(event.target as Node)) close()
 	}
 	const handleKeydown = (event: KeyboardEvent) => {
@@ -446,7 +452,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	document.addEventListener("pointerdown", handleOutsidePointer)
 	document.addEventListener("keydown", handleKeydown)
 	window.addEventListener("resize", close)
-	window.addEventListener("scroll", close, true)
+	window.addEventListener("scroll", handleOutsideScroll, true)
 	queueMicrotask(() => search.focus())
 	return close
 }
