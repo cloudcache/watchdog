@@ -57,6 +57,13 @@
 
 ## P2 Query、图表、统计与导出
 
+### P2 MySQL migration 门禁
+
+- 已提交的迁移头为 `040`：`038_address_taxonomy.sql`（`f34b9786`）、`039_dashboards.sql` 与 `040_dimension_snapshots.sql`（`3a7db545`）都必须和 fresh-install 的 `install/init.sql` 保持一致。
+- 后续**新增或改变持久化契约**的 backend P2 工作必须先从 `041` 顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
+- 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
+- 当前编号分配：`041` 预留给 PLAT-04C draft revision/batch apply；其后的 publication lifecycle、export snapshot/retry 等持久化改动在开工时按迁移头顺序领取，禁止并行工作包自行猜号。
+
 - [ ] Provider-neutral QueryRequest/QueryResult，统一 VM/CH 的 tenant scope、时间、bucket、limit、cancel 和 completeness。
 - [ ] Visualization CRUD、版本/owner、series、布局、预览和 dashboard 引用。
 - [ ] 所有 VTable 统一 server pagination/search/sort/filter；popover portal + collision handling。
@@ -88,10 +95,10 @@
   - [ ] **编码（MMDB/IPDB）**：有界 multipart 落盘+sha256、官方 reader 校验/流式 trie 枚举、`address_import` job 批量幂等写入、lease-fenced ordinal checkpoint、ready 后冻结及显式 CAS 激活、导入/active slot/前缀浏览管理页已落地，真实 MySQL 上传→job→入库→激活 E2E 通过（commits `f44d1978`、`78a388b0`、`87a98e83`）；City+ASN 双 active generation 区间 overlay 尚未实现。
   - [ ] **编码（typed CRUD/apply）**：prefix/set/dictionary/operator/line 的 tenant-scoped keyset 分页、搜索/filter、严格输入、members/exclude/include DAG、防环/预算、ETag/If-Match、启停语义、稳定 ID 和引用删除保护已落地（commit `f34b9786`）；集合方向与 Flow 编译契约统一为 `in/out/both`。余项是批量 apply 的 preview digest/原子提交与逐操作审计。
   - [ ] **编码（validate/publish）**：人工 override+sets+Geo/operator 标签的 compiler、DAG/最坏 membership 预算、语义 digest CAS、UTC 分钟生效、异步 immutable publish 和版本查询已落地（commit `3a7db545`）。余项是 active base overlay、Geo/line 显示字典固化、签名/approve、retire/rollback、worker ack 和引用保留。
-  - [ ] **前端**：导入/active slot/导入前缀浏览、prefix/set、地域字典、运营商、线路组合和 publication preview/publish 均已组织为 Address Library，列表使用带搜索/列 filter 的分页 VTable（commits `59a6e5aa`、`87a98e83`、`3a7db545`）；集合运算工作台支持严格 merge、并/交/差、有限补集、overlap 和显式 cover 扩大量（commit `9c613c10`）。余项是 batch apply/retire/rollback/worker 状态页面。
+  - [ ] **前端**：导入/active slot/导入前缀浏览、prefix/set、地域字典、运营商、线路组合和 publication preview/publish 均已组织为 Address Library，列表使用带搜索/列 filter 的分页 VTable（commits `59a6e5aa`、`87a98e83`、`3a7db545`）；集合运算工作台支持严格 merge、并/交/差、有限补集、overlap 和显式 cover 扩大量（commit `9c613c10`）；prefix/set 已补齐 If-Match 编辑表单及 typed selector 字段（commit `1d442dfa`）。余项是 searchable Geo/operator/set 引用选择、batch apply/retire/rollback/worker 状态页面。
   - [ ] **集成/变更测试**：真实 MySQL 上传→job→批量入库→active generation CAS，以及 typed prefix/set/Geo/operator/line CRUD、层级/DAG、防环、引用保护、并发 ETag、租户级联清理已通过；001–040 空库迁移/重放及 publication draft CAS/object reload/classify 已通过（commits `78a388b0`、`f34b9786`、`3a7db545`）。余项是百万行/崩溃接管、旧 selector 兼容、批量 apply、base overlay、publish→worker ack、retire/rollback 和 API RBAC E2E。
   - [ ] **性能/回归**：百万级 MMDB/IPDB 导入吞吐/内存、50k 输入集合运算、最坏 overlap/DAG、API body/结果上限；全库 race/vet/test、前端 typecheck/build、fresh-install parity。
-  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）；整项尚有上列门禁，工作区堆积或仅 `go build` 通过不得勾选完成。当前 MySQL migration head 为 **040**，后续后端 P2 migration 必须从 **041** 顺序追加。
+  - [ ] **已提交门禁**：已提交 `f44d1978`（reader/math/preview）、`4a079e4a`（generation repository/schema）、`78a388b0`（upload/job/runtime）、`a4d7a823`（base prefix browse/LPM lookup）、`f34b9786`（typed taxonomy/prefix/set CRUD）、`59a6e5aa`（prefix/set VTable）、`87a98e83`（import/taxonomy UI）、`3a7db545`（migration 039/040 + immutable address publication）、`9c613c10`（集合运算工作台）、`1d442dfa`（prefix/set 编辑闭环）；整项尚有上列门禁，工作区堆积或仅 `go build` 通过不得勾选完成。当前 MySQL migration head 为 **040**，后续后端 P2 migration 必须从 **041** 顺序追加。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
 - [ ] 删除历史 migration 不能改 checksum；废弃对象必须用后续 migration 删除并同步 fresh-install schema。本轮 Flow cleanup 已由 migration 027 示范。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
