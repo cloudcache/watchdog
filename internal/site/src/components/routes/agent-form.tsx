@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, PlugZapIcon, SaveIcon, Trash2Icon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -67,6 +67,9 @@ export default memo(({ id }: AgentFormProps) => {
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
+	// Weak ETag from the last load, echoed as If-Match on save (optimistic
+	// concurrency): a concurrent edit is rejected (412), not overwritten.
+	const etagRef = useRef("")
 
 	const load = useCallback(async () => {
 		setLoading(true)
@@ -82,7 +85,11 @@ export default memo(({ id }: AgentFormProps) => {
 				}))
 				return
 			}
-			const agent = await pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
+			const agent = await pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			setForm({
 				id: agent.ID ?? agent.id ?? id,
 				agentType: agent.AgentType ?? agent.agent_type ?? "snmp",
@@ -119,6 +126,7 @@ export default memo(({ id }: AgentFormProps) => {
 			}
 			const saved = await pb.send<AgentRecord>(id ? `/api/v1/agent-registry/${id}` : "/api/v1/agent-registry", {
 				method: id ? "PATCH" : "POST",
+				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
 			})
 			navigate(getPagePath($router, "agent_edit", { id: saved.ID ?? saved.id ?? form.id }))

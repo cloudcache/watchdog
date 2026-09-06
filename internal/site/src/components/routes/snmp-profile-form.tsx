@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, SaveIcon, SlidersHorizontalIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,6 +53,9 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 	const [loading, setLoading] = useState(Boolean(id))
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
+	// Weak ETag from the last load, echoed as If-Match on save (optimistic
+	// concurrency): a concurrent edit is rejected (412), not overwritten.
+	const etagRef = useRef("")
 
 	const loadProfile = useCallback(async () => {
 		if (!id) {
@@ -61,7 +64,11 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const profile = await pb.send<SNMPProfile>(`/api/v1/snmp/profiles/${id}`, {})
+			const profile = await pb.send<SNMPProfile>(`/api/v1/snmp/profiles/${id}`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			setForm({
 				id: profile.ID ?? profile.id ?? id,
 				name: profile.Name ?? profile.name ?? "",
@@ -99,6 +106,7 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 			}
 			const saved = await pb.send<SNMPProfile>(id ? `/api/v1/snmp/profiles/${id}` : "/api/v1/snmp/profiles", {
 				method: id ? "PATCH" : "POST",
+				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
 			})
 			navigate(getPagePath($router, "snmp_profile_edit", { id: saved.ID ?? saved.id ?? form.id }))
