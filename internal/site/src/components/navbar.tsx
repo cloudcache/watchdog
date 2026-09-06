@@ -276,15 +276,28 @@ function AnalysisItems() {
 	)
 }
 
-// Flow is a primary, user-facing section (the traffic analysis surface), not an
-// admin setting. Flow Explorer is the first page; the total / multi-dimension /
-// source-IP / destination-IP / overseas / VPN pages land here as they ship.
 function FlowItems() {
 	return (
 		<DropdownMenuGroup>
-			<NavItem href={getPagePath($router, "traffic_matrix")} icon={BarChart3Icon}>
-				<Trans>Flow Explorer</Trans>
+			<NavItem href={getPagePath($router, "flow_overview")} icon={ActivityIcon}>
+				<Trans>Flow Overview</Trans>
 			</NavItem>
+			<NavItem href={getPagePath($router, "flow_dimensions")} icon={BarChart3Icon}>
+				<Trans>Multi-dimensional Analysis</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "flow_source")} icon={SearchIcon}>
+				<Trans>Source IP Analysis</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "flow_destination")} icon={CrosshairIcon}>
+				<Trans>Destination IP Analysis</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "flow_overseas")} icon={GlobeIcon}>
+				<Trans>Overseas Traffic</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "flow_vpn")} icon={ShieldCheckIcon}>
+				<Trans>VPN Risk</Trans>
+			</NavItem>
+			<DropdownMenuSeparator />
 			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
 				<Trans>Address Library</Trans>
 			</NavItem>

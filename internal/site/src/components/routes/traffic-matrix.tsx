@@ -15,6 +15,7 @@ import {
 	buildFlowQuickFilter,
 	buildFlowSeries,
 	FLOW_TIME_PRESETS,
+	flowSurfacePreset,
 	mergeFlowFilters,
 	parseFlowFilter,
 	resolveFlowTimeRange,
@@ -24,6 +25,7 @@ import {
 	type FlowPlan,
 	type FlowPoint,
 	type FlowSeries,
+	type FlowTrafficSurface,
 } from "@/lib/flow-explorer-model"
 import { pb } from "@/lib/api"
 import { disposeChart } from "@/lib/vchart"
@@ -148,20 +150,22 @@ function isQuickAnalysisMode(value: string): value is QuickAnalysisMode {
 	return QUICK_ANALYSIS_OPTIONS.some((option) => option.value === value)
 }
 
-export default memo(function TrafficMatrix() {
+export default memo(function TrafficMatrix({ surface = "overview" }: { surface?: FlowTrafficSurface }) {
 	const { t } = useLingui()
-	const initialMode = queryState("analysis", "direction")
+	const surfacePreset = flowSurfacePreset(surface)
+	const presetMode = surfacePreset.queryMode as QueryMode
+	const initialMode = queryState("analysis", presetMode)
 	const [quickAnalysis, setQuickAnalysis] = useState<QuickAnalysisMode>(() =>
-		isQuickAnalysisMode(initialMode) ? initialMode : "direction"
+		isQuickAnalysisMode(initialMode) ? initialMode : isQuickAnalysisMode(presetMode) ? presetMode : "direction"
 	)
 	const [queryMode, setQueryMode] = useState<QueryMode>(() =>
-		initialMode === "advanced" || isQuickAnalysisMode(initialMode) ? initialMode : "direction"
+		initialMode === "advanced" || isQuickAnalysisMode(initialMode) ? initialMode : presetMode
 	)
 	const [timeRange, setTimeRange] = useState(() => queryState("range", "1h"))
 	const [customStart, setCustomStart] = useState(() => queryState("start", ""))
 	const [customEnd, setCustomEnd] = useState(() => queryState("end", ""))
 	const [metric, setMetric] = useState(() => queryState("metric", "estimated_bps"))
-	const [dimension, setDimension] = useState(() => queryState("dimension", "category"))
+	const [dimension, setDimension] = useState(() => queryState("dimension", surfacePreset.dimension))
 	const [dimension2, setDimension2] = useState(() => queryState("dimension2", "none"))
 	const [dimension3, setDimension3] = useState(() => queryState("dimension3", "none"))
 	const [dimension4, setDimension4] = useState(() => queryState("dimension4", "none"))
@@ -169,7 +173,7 @@ export default memo(function TrafficMatrix() {
 	const [targetPoints, setTargetPoints] = useState(() => Number(queryState("points", "300")))
 	const [topN, setTopN] = useState(() => Number(queryState("top", "20")))
 	const [includeOther, setIncludeOther] = useState(() => queryState("other", "1") !== "0")
-	const [filterExpression, setFilterExpression] = useState(() => queryState("filter", ""))
+	const [filterExpression, setFilterExpression] = useState(() => queryState("filter", surfacePreset.filter))
 	const [addressSets, setAddressSets] = useState<AddressSetItem[]>([])
 	const [devices, setDevices] = useState<DeviceItem[]>([])
 	const [countries, setCountries] = useState<GeoNode[]>([])
@@ -553,15 +557,38 @@ export default memo(function TrafficMatrix() {
 	const provinceOptions = referenceOptions(provinces, t`All provinces`)
 	const cityOptions = referenceOptions(cities, t`All cities`)
 	const operatorOptions = referenceOptions(operators, t`All operators`)
+	const pageCopy = {
+		overview: {
+			title: t`Flow Overview`,
+			description: t`Traffic direction, category, completeness and current trends.`,
+		},
+		dimensions: {
+			title: t`Multi-dimensional Flow Analysis`,
+			description: t`Explore one to four dimensions with typed filters and true tuple aggregation.`,
+		},
+		source: {
+			title: t`Source IP Analysis`,
+			description: t`Find top source addresses, trends and related dimensions.`,
+		},
+		destination: {
+			title: t`Destination IP Analysis`,
+			description: t`Find top destination addresses, trends and related dimensions.`,
+		},
+		overseas: {
+			title: t`Overseas Traffic`,
+			description: t`Analyze overseas traffic by direction, location, operator and protocol.`,
+		},
+	}[surface]
 
 	return (
 		<div className="grid gap-4">
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<BarChart3Icon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-					<h1 className="text-xl font-semibold tracking-normal">
-						<Trans>Flow Traffic Analysis</Trans>
-					</h1>
+					<div>
+						<h1 className="text-xl font-semibold tracking-normal">{pageCopy.title}</h1>
+						<p className="text-sm text-muted-foreground">{pageCopy.description}</p>
+					</div>
 				</div>
 				<Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
 					<RefreshCwIcon className="me-2 h-4 w-4" />
@@ -680,7 +707,7 @@ export default memo(function TrafficMatrix() {
 				{referenceError && <p className="text-xs text-destructive">{referenceError}</p>}
 			</div>
 
-			<details className="rounded-md border border-border bg-card">
+			<details className="rounded-md border border-border bg-card" defaultOpen={surfacePreset.advancedOpen}>
 				<summary className="flex cursor-pointer list-none items-center gap-2 p-4 font-medium">
 					<SlidersHorizontalIcon className="h-4 w-4 text-muted-foreground" />
 					<Trans>Advanced Flow Explorer</Trans>

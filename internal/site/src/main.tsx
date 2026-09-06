@@ -74,6 +74,7 @@ const AddressLibrary = lazy(() => import("@/components/routes/address-library.ts
 const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.tsx"))
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
+const FlowVPN = lazy(() => import("@/components/routes/flow-vpn.tsx"))
 const CopyToClipboardDialog = lazy(() => import("@/components/copy-to-clipboard.tsx"))
 
 const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
@@ -243,8 +244,18 @@ const App = memo(() => {
 		return <AddressPrefixes />
 	} else if (page.route === "address_sets") {
 		return <AddressSets />
-	} else if (page.route === "traffic_matrix") {
-		return <TrafficMatrix />
+	} else if (page.route === "flow_overview" || page.route === "traffic_matrix") {
+		return <TrafficMatrix key="overview" surface="overview" />
+	} else if (page.route === "flow_dimensions") {
+		return <TrafficMatrix key="dimensions" surface="dimensions" />
+	} else if (page.route === "flow_source") {
+		return <TrafficMatrix key="source" surface="source" />
+	} else if (page.route === "flow_destination") {
+		return <TrafficMatrix key="destination" surface="destination" />
+	} else if (page.route === "flow_overseas") {
+		return <TrafficMatrix key="overseas" surface="overseas" />
+	} else if (page.route === "flow_vpn") {
+		return <FlowVPN />
 	}
 })
 

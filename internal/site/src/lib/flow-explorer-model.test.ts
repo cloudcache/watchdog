@@ -5,9 +5,33 @@ import {
 	buildFlowJointSeries,
 	buildFlowQuickFilter,
 	buildFlowSeries,
+	FLOW_SURFACE_PRESETS,
+	flowSurfacePreset,
 	parseFlowFilter,
 	resolveFlowTimeRange,
 } from "./flow-explorer-model.ts"
+
+test("six Flow surfaces have stable unique paths and query defaults", () => {
+	assert.deepEqual(Object.keys(FLOW_SURFACE_PRESETS), [
+		"overview",
+		"dimensions",
+		"source",
+		"destination",
+		"overseas",
+		"vpn",
+	])
+	assert.equal(new Set(Object.values(FLOW_SURFACE_PRESETS).map((preset) => preset.path)).size, 6)
+	assert.equal(flowSurfacePreset("source").queryMode, "src_ip")
+	assert.equal(flowSurfacePreset("destination").queryMode, "dst_ip")
+	assert.deepEqual(flowSurfacePreset("overseas"), {
+		path: "/flow/overseas",
+		queryMode: "advanced",
+		dimension: "geo.country",
+		filter: "category = overseas",
+		advancedOpen: true,
+	})
+	assert.equal(flowSurfacePreset("vpn").queryMode, "vpn")
+})
 
 test("flow ranges are independent presets and custom ranges are minute-aligned", () => {
 	const now = new Date("2026-09-06T12:37:45Z")

@@ -82,6 +82,51 @@ export type FlowQuickFilterInput = {
 	operatorASNs?: number[]
 }
 
+export type FlowTrafficSurface = "overview" | "dimensions" | "source" | "destination" | "overseas"
+export type FlowSurface = FlowTrafficSurface | "vpn"
+export type FlowSurfaceQueryMode = "direction" | "src_ip" | "dst_ip" | "advanced" | "vpn"
+
+export type FlowSurfacePreset = {
+	path: string
+	queryMode: FlowSurfaceQueryMode
+	dimension: string
+	filter: string
+	advancedOpen: boolean
+}
+
+// These presets define navigation and query defaults only. They deliberately
+// do not duplicate the QueryGateway request schema owned by the Flow provider.
+export const FLOW_SURFACE_PRESETS: Record<FlowSurface, FlowSurfacePreset> = {
+	overview: { path: "/flow", queryMode: "direction", dimension: "category", filter: "", advancedOpen: false },
+	dimensions: {
+		path: "/flow/dimensions",
+		queryMode: "advanced",
+		dimension: "category",
+		filter: "",
+		advancedOpen: true,
+	},
+	source: { path: "/flow/source", queryMode: "src_ip", dimension: "src_ip", filter: "", advancedOpen: false },
+	destination: {
+		path: "/flow/destination",
+		queryMode: "dst_ip",
+		dimension: "dst_ip",
+		filter: "",
+		advancedOpen: false,
+	},
+	overseas: {
+		path: "/flow/overseas",
+		queryMode: "advanced",
+		dimension: "geo.country",
+		filter: "category = overseas",
+		advancedOpen: true,
+	},
+	vpn: { path: "/flow/vpn", queryMode: "vpn", dimension: "", filter: "", advancedOpen: false },
+}
+
+export function flowSurfacePreset(surface: FlowSurface): FlowSurfacePreset {
+	return FLOW_SURFACE_PRESETS[surface]
+}
+
 const FLOW_FILTER_FIELDS = new Set([
 	"direction",
 	"category",
