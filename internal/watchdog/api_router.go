@@ -43,6 +43,7 @@ type APIV1RouterConfig struct {
 	TrapDispatcher         func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	Audit                  AuditRepository
 	AddressSets            AddressSetRepository
+	AddressTaxonomy        AddressTaxonomyRepository
 	AddressImports         AddressImportRepository
 	AddressArtifacts       AddressArtifactStore
 	AddressImportMaxBytes  int64
@@ -210,6 +211,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	registerMetricsRoutes(mux, auth, cfg.Metrics, cfg.Network)
 	if cfg.AddressSets != nil {
 		registerAddressSetRoutes(mux, auth, cfg.AddressSets)
+	}
+	if cfg.AddressTaxonomy != nil {
+		registerAddressTaxonomyRoutes(mux, auth, cfg.AddressTaxonomy)
 	}
 	if cfg.AddressImports != nil {
 		registerAddressImportRoutes(mux, auth, cfg.AddressImports, cfg.AddressArtifacts, cfg.OperationJobs, cfg.AddressImportMaxBytes)

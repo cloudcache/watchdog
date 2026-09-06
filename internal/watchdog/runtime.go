@@ -251,6 +251,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		TrapDispatcher:         r.trapDispatcherFn,
 		Audit:                  r.Store,
 		AddressSets:            r.Store,
+		AddressTaxonomy:        r.Store,
 		AddressImports:         r.Store,
 		AddressArtifacts:       r.AddressArtifacts,
 		AddressImportMaxBytes:  r.Config.AddressLibrary.MaxUploadBytes,

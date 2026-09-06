@@ -102,14 +102,30 @@ CREATE TABLE IF NOT EXISTS `address_prefixes` (
   `id` char(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `cidr` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `family` tinyint unsigned DEFAULT NULL,
+  `prefix_length` tinyint unsigned DEFAULT NULL,
+  `ip_start` binary(16) DEFAULT NULL,
+  `ip_end` binary(16) DEFAULT NULL,
   `labels` json NOT NULL,
+  `geo_leaf_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `operator_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `asn` bigint unsigned DEFAULT NULL,
   `source` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_address_prefix` (`tenant_id`,`cidr`),
   KEY `idx_address_prefix_tenant` (`tenant_id`),
-  CONSTRAINT `fk_address_prefix_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+  KEY `idx_address_prefix_lookup` (`tenant_id`,`family`,`ip_start`),
+  KEY `idx_address_prefix_geo` (`tenant_id`,`geo_leaf_id`),
+  KEY `idx_address_prefix_operator` (`tenant_id`,`operator_id`),
+  CONSTRAINT `fk_address_prefix_geo` FOREIGN KEY (`tenant_id`,`geo_leaf_id`) REFERENCES `geo_dict` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_address_prefix_operator` FOREIGN KEY (`tenant_id`,`operator_id`) REFERENCES `isp_operators` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_address_prefix_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `address_prefixes_chk_1` CHECK (((`family` is null) or (`family` in (4,6)))),
+  CONSTRAINT `address_prefixes_chk_2` CHECK (((`family` is null) or ((`family` = 4) and (`prefix_length` <= 32)) or ((`family` = 6) and (`prefix_length` <= 128)))),
+  CONSTRAINT `address_prefixes_chk_3` CHECK (((`ip_start` is null) or (`ip_end` is null) or (`ip_start` <= `ip_end`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `address_sets` (
@@ -118,14 +134,21 @@ CREATE TABLE IF NOT EXISTS `address_sets` (
   `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `selector` json NOT NULL,
+  `explicit_members` json NOT NULL,
+  `explicit_exclude_members` json NOT NULL,
+  `include_set_ids` json NOT NULL,
+  `exclude_set_ids` json NOT NULL,
   `match_direction` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'both',
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_address_set` (`tenant_id`,`name`),
+  UNIQUE KEY `uq_address_sets_tenant_id` (`tenant_id`,`id`),
   KEY `idx_address_set_tenant` (`tenant_id`),
-  CONSTRAINT `fk_address_set_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_address_set_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `address_sets_chk_1` CHECK ((`match_direction` in ('in','out','both')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `agent_run_history` (
@@ -689,6 +712,55 @@ CREATE TABLE IF NOT EXISTS `export_tasks` (
   CONSTRAINT `export_tasks_chk_4` CHECK ((`format` = 'csv'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `geo_dict` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `parent_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `short_name` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_geo_dict_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_geo_dict_kind_code` (`tenant_id`,`kind`,`code`),
+  KEY `idx_geo_dict_parent` (`tenant_id`,`parent_id`,`sort_order`,`name`),
+  CONSTRAINT `fk_geo_dict_parent` FOREIGN KEY (`tenant_id`,`parent_id`) REFERENCES `geo_dict` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_geo_dict_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `geo_dict_chk_1` CHECK ((`kind` in ('continent','region','country','province','city')))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `geo_lines` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `parent_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `geo_selector` json NOT NULL,
+  `operator_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `address_set_id` char(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_geo_lines_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_geo_lines_code` (`tenant_id`,`code`),
+  KEY `idx_geo_lines_parent` (`tenant_id`,`parent_id`,`sort_order`,`name`),
+  KEY `idx_geo_lines_operator` (`tenant_id`,`operator_id`),
+  KEY `idx_geo_lines_address_set` (`tenant_id`,`address_set_id`),
+  CONSTRAINT `fk_geo_lines_address_set` FOREIGN KEY (`tenant_id`,`address_set_id`) REFERENCES `address_sets` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_geo_lines_operator` FOREIGN KEY (`tenant_id`,`operator_id`) REFERENCES `isp_operators` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_geo_lines_parent` FOREIGN KEY (`tenant_id`,`parent_id`) REFERENCES `geo_lines` (`tenant_id`,`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_geo_lines_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `idempotency_key` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -700,6 +772,27 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
   PRIMARY KEY (`tenant_id`,`idempotency_key`),
   KEY `idx_idempotency_expiry` (`expires_at`),
   CONSTRAINT `fk_idempotency_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `isp_operators` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `short_name` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'other',
+  `asns` json NOT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_isp_operators_tenant_id` (`tenant_id`,`id`),
+  UNIQUE KEY `uq_isp_operators_code` (`tenant_id`,`code`),
+  UNIQUE KEY `uq_isp_operators_name` (`tenant_id`,`name`),
+  KEY `idx_isp_operators_category` (`tenant_id`,`category`,`sort_order`,`name`),
+  CONSTRAINT `fk_isp_operators_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `metric_retention_policies` (
