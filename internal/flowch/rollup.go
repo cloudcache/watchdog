@@ -225,6 +225,13 @@ func ValidateRollupRequest(request RollupRequest) error {
 	return nil
 }
 
+// rollupIPTopN caps how many distinct src_ip/dst_ip values a rollup group keeps
+// (ranked by estimated_bytes); the long tail beyond it is folded into a single
+// _other bucket. These per-IP dimensions otherwise materialize at ~raw
+// cardinality into the 180/400-day aggregate tables. It is a package var so a
+// test can lower it; wire it to config when per-tenant tuning is needed.
+var rollupIPTopN uint32 = 1000
+
 func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 	duration, table, err := rollupTarget(request.Resolution)
 	if err != nil {
@@ -243,7 +250,7 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 		Parameters: ch.Parameters(map[string]any{
 			"tenant": request.TenantID, "bucket_start": bucket.Format("2006-01-02 15:04:05"),
 			"bucket_end": end.Format("2006-01-02 15:04:05"), "generation": request.Generation,
-			"generated_at": generatedAt.Format("2006-01-02 15:04:05.000"),
+			"generated_at": generatedAt.Format("2006-01-02 15:04:05.000"), "top_n": rollupIPTopN,
 		}),
 		Settings: []ch.Setting{
 			{Key: "async_insert", Value: "0", Important: true},
@@ -299,61 +306,100 @@ WITH
   {bucket_start:DateTime('UTC')} AS rollup_start,
   {bucket_end:DateTime('UTC')} AS rollup_end,
   {generation:UInt64} AS rollup_generation,
-  {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at
+  {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
+  {top_n:UInt32} AS rollup_top_n
 SELECT
-  rollup_start AS bucket,
-  tenant_id,
-  target_id,
-  device_id,
-  exporter_id,
-  toString(business_direction) AS business_direction,
-  toString(category) AS category,
-  business,
-  tupleElement(dimension, 1) AS dimension_kind,
-  tupleElement(dimension, 2) AS dimension_value,
-  dimension_snapshot_id,
-  geo_version,
-  classification_version,
+  bucket, tenant_id, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind,
+  -- Fold the per-IP long tail (beyond the top-N by traffic) into one _other
+  -- bucket so src_ip/dst_ip do not materialize at ~raw cardinality into the
+  -- 180/400-day aggregate tables. Non-IP kinds have ip_rank = 0 and pass through.
+  if(dimension_kind IN ('src_ip', 'dst_ip') AND ip_rank > rollup_top_n, '_other', dimension_value) AS dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
   sum(raw_bytes) AS raw_bytes,
   sum(raw_packets) AS raw_packets,
   sum(estimated_bytes) AS estimated_bytes,
   sum(estimated_packets) AS estimated_packets,
-  count() AS received_records,
-  countIf(NOT estimated_valid) AS unknown_sampling_records,
-  countIf(quality_flags != 0) AS quality_records,
-  rollup_generation AS generation,
-  rollup_generated_at AS generated_at
-FROM flow_records FINAL
-ARRAY JOIN arrayFilter(item -> tupleElement(item, 2) != '', arrayConcat(
-  [
-    tuple('total', 'total'),
-    tuple('category', toString(category)),
-    tuple('geo.continent', if(empty(remote_geo_continent_id), '_unassigned', remote_geo_continent_id)),
-    tuple('geo.region', if(empty(remote_geo_region_id), '_unassigned', remote_geo_region_id)),
-    tuple('geo.country', if(empty(remote_geo_country_id), '_unassigned', remote_geo_country_id)),
-    tuple('geo.province', if(empty(remote_geo_province_id), '_unassigned', remote_geo_province_id)),
-    tuple('geo.city', if(empty(remote_geo_city_id), '_unassigned', remote_geo_city_id)),
-    tuple('isp', if(remote_isp_id = 0, '_unassigned', toString(remote_isp_id))),
-    tuple('asn', if(remote_asn = 0, '_unassigned', toString(remote_asn))),
-    tuple('business', if(empty(business), '_unassigned', business)),
-    tuple('local_prefix', if(empty(local_prefix_id), '_unassigned', local_prefix_id)),
-    tuple('remote_prefix', if(empty(remote_prefix_id), '_unassigned', remote_prefix_id)),
-    tuple('src_ip', toString(src_ip)),
-    tuple('dst_ip', toString(dst_ip)),
-    tuple('remote_port', if(remote_port = 0, '_unassigned', toString(remote_port))),
-    tuple('protocol', toString(ip_protocol)),
-    tuple('observation_interface', if(observation_if_index = 0, '_unassigned', toString(observation_if_index)))
-  ],
-  arrayMap(value -> tuple('address_set', value), arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids)))
-)) AS dimension
-WHERE tenant_id = {tenant:String}
-  AND event_time >= rollup_start
-  AND event_time < rollup_end
-  AND disposition = 'count'
+  sum(received_records) AS received_records,
+  sum(unknown_sampling_records) AS unknown_sampling_records,
+  sum(quality_records) AS quality_records,
+  generation, generated_at
+FROM (
+  SELECT
+    bucket, tenant_id, target_id, device_id, exporter_id,
+    business_direction, category, business, dimension_kind, dimension_value,
+    dimension_snapshot_id, geo_version, classification_version,
+    raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+    received_records, unknown_sampling_records, quality_records,
+    generation, generated_at,
+    if(dimension_kind IN ('src_ip', 'dst_ip'),
+       row_number() OVER (
+         PARTITION BY tenant_id, target_id, device_id, exporter_id,
+           business_direction, category, business, dimension_kind,
+           dimension_snapshot_id, geo_version, classification_version
+         ORDER BY estimated_bytes DESC, dimension_value ASC),
+       0) AS ip_rank
+  FROM (
+    SELECT
+      rollup_start AS bucket,
+      tenant_id,
+      target_id,
+      device_id,
+      exporter_id,
+      toString(business_direction) AS business_direction,
+      toString(category) AS category,
+      business,
+      tupleElement(dimension, 1) AS dimension_kind,
+      tupleElement(dimension, 2) AS dimension_value,
+      dimension_snapshot_id,
+      geo_version,
+      classification_version,
+      sum(raw_bytes) AS raw_bytes,
+      sum(raw_packets) AS raw_packets,
+      sum(estimated_bytes) AS estimated_bytes,
+      sum(estimated_packets) AS estimated_packets,
+      count() AS received_records,
+      countIf(NOT estimated_valid) AS unknown_sampling_records,
+      countIf(quality_flags != 0) AS quality_records,
+      rollup_generation AS generation,
+      rollup_generated_at AS generated_at
+    FROM flow_records FINAL
+    ARRAY JOIN arrayFilter(item -> tupleElement(item, 2) != '', arrayConcat(
+      [
+        tuple('total', 'total'),
+        tuple('category', toString(category)),
+        tuple('geo.continent', if(empty(remote_geo_continent_id), '_unassigned', remote_geo_continent_id)),
+        tuple('geo.region', if(empty(remote_geo_region_id), '_unassigned', remote_geo_region_id)),
+        tuple('geo.country', if(empty(remote_geo_country_id), '_unassigned', remote_geo_country_id)),
+        tuple('geo.province', if(empty(remote_geo_province_id), '_unassigned', remote_geo_province_id)),
+        tuple('geo.city', if(empty(remote_geo_city_id), '_unassigned', remote_geo_city_id)),
+        tuple('isp', if(remote_isp_id = 0, '_unassigned', toString(remote_isp_id))),
+        tuple('asn', if(remote_asn = 0, '_unassigned', toString(remote_asn))),
+        tuple('business', if(empty(business), '_unassigned', business)),
+        tuple('local_prefix', if(empty(local_prefix_id), '_unassigned', local_prefix_id)),
+        tuple('remote_prefix', if(empty(remote_prefix_id), '_unassigned', remote_prefix_id)),
+        tuple('src_ip', toString(src_ip)),
+        tuple('dst_ip', toString(dst_ip)),
+        tuple('remote_port', if(remote_port = 0, '_unassigned', toString(remote_port))),
+        tuple('protocol', toString(ip_protocol)),
+        tuple('observation_interface', if(observation_if_index = 0, '_unassigned', toString(observation_if_index)))
+      ],
+      arrayMap(value -> tuple('address_set', value), arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids)))
+    )) AS dimension
+    WHERE tenant_id = {tenant:String}
+      AND event_time >= rollup_start
+      AND event_time < rollup_end
+      AND disposition = 'count'
+    GROUP BY
+      tenant_id, target_id, device_id, exporter_id, business_direction, category,
+      business, dimension_kind, dimension_value, dimension_snapshot_id,
+      geo_version, classification_version
+  )
+)
 GROUP BY
-  tenant_id, target_id, device_id, exporter_id, business_direction, category,
+  bucket, tenant_id, target_id, device_id, exporter_id, business_direction, category,
   business, dimension_kind, dimension_value, dimension_snapshot_id,
-  geo_version, classification_version
+  geo_version, classification_version, generation, generated_at
 UNION ALL
 SELECT
   rollup_start, {tenant:String}, '', '', '', 'ambiguous', 'unknown', '',

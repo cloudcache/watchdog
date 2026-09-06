@@ -521,3 +521,49 @@ func (e *integrationBlockExecutor) Do(ctx context.Context, query ch.Query) error
 	}
 	return e.executor.Do(queryContext, query)
 }
+
+// TestRealClickHouseRollupCapsPerIPDimension proves the rollup folds the per-IP
+// long tail beyond top-N (by traffic) into a single _other bucket, so src_ip /
+// dst_ip do not materialize at ~raw cardinality (F6).
+func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_rollup_topn")
+
+	// Cap at top-2 so a four-IP fixture exercises the fold.
+	saved := rollupIPTopN
+	rollupIPTopN = 2
+	t.Cleanup(func() { rollupIPTopN = saved })
+
+	bucket := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
+	records := make([]flowworker.EnrichedRecord, 0, 4)
+	for i, rawBytes := range []uint64{40, 30, 20, 10} {
+		record := integrationRecord(byte(i+1), bucket.Add(time.Duration(i+1)*time.Second), "", rawBytes)
+		record.SourceIP = netip.MustParseAddr(fmt.Sprintf("10.9.0.%d", i+1))
+		records = append(records, record)
+	}
+	insertIntegrationBatch(t, ctx, native, integrationBatch(20, bucket.Add(2*time.Minute), records...))
+
+	runner, err := NewRollupRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx, RollupRequest{
+		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Generation: 1, GeneratedAt: bucket.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	queryRunner, err := flowquery.NewRunner(native.executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A high query top-N returns the aggregate rows unfolded, so we observe the
+	// rollup's own capping: the two heaviest IPs stay, 10.9.0.3 (200) + 10.9.0.4
+	// (100) fold into _other.
+	result := runIntegrationAggregate(t, ctx, queryRunner, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionSourceIP, 100, false)
+	assertAggregatePoints(t, result, map[string]aggregateWant{
+		"::ffff:10.9.0.1": {value: 40, records: 1},
+		"::ffff:10.9.0.2": {value: 30, records: 1},
+		"_other":          {value: 30, records: 2},
+	})
+}
