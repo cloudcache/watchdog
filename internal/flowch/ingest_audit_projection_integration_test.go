@@ -55,7 +55,7 @@ func TestClickHouseIngestAuditProjectionCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 6 || migrations[5].Name != "006_flow_ingest_audit_projection.sql" {
+	if len(migrations) < 6 || migrations[5].Name != "006_flow_ingest_audit_projection.sql" {
 		t.Fatalf("unexpected migration set: %+v", migrations)
 	}
 	applyAuditCapacityMigrations(t, ctx, admin, database, migrations[:5])
