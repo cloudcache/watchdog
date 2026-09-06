@@ -232,6 +232,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **编码（自动 planner/单维查询）**：`PlanAggregate` 支持 5..2000 目标点、1m..30d 显式展示步长、1m/1h 自动选源和各自扫描预算；aggregate compiler 以 effective-from 为锚点二次汇聚 source bucket，provider 回传实际 step/source；QueryGateway metadata 使用 provider 实际 step。
 - [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
 - [x] **六页入口/共享预设（第一片）**：增加 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn` 六个稳定入口与导航；前五页复用同一 QueryGateway/typed-filter/URL-state 实现并按页面装载查询预设，旧 `/traffic-matrix` 保留为总览兼容入口。VPN 只在 findings/rule publication API 尚未接线时显示明确 unavailable 状态，不发不存在的请求、不伪造 finding；因此上层“六页和 query/search/export API”仍保持未完成。
+- [x] **Flow 专用查询入口/境外 HTTP（第三片）**：`POST /api/v1/flow/query` 在统一 QueryGateway 上固定 `flow.traffic` dataset，拒绝客户端切换 dataset；`POST /api/v1/flow/overseas/query` 复用 shared CH pool 和既有 overseas compiler/runner，tenant/view/resource grant 由 hub 注入并记录低基数审计。API 单元与真实 HTTP→CH 空窗契约已覆盖；境外专题 UI、带数据集成和异步全量导出仍保持未完成。
 - [x] **编码（便捷分析层）**：同页默认提供国家→省→市、运营商、时间、metric 和分析类型选择；覆盖真实入/出方向、协议、TOP 源/目的 IP、TOP 本地/远端网段，运营商严格按已配置 ASN 集合过滤；高级 Explorer 折叠保留且不复制查询后端。
 - [x] **当前结果导出**：CSV 导出当前查询返回的 bucket、序列、原值、单位、min/max/last/avg/p95/total 和 sampling/quality 计数，包含 UTF-8 BOM、标准引号转义与公式注入防护；明确不冒充 FLOW-06C 全量异步导出。
 - [x] **单元**：planner 覆盖 5m/1h/6h/24h/7d/30d/1y、显式 15m、未来/非法密度/两类源扫描超限；compiler/runner 覆盖 source completeness 与展示桶对齐；前端覆盖预设/自定义、typed filter、末桶 total 和三种 chart spec。

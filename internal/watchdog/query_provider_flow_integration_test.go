@@ -56,6 +56,10 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	overseasRunner, err := flowquery.NewOverseasRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registries, err := NewBuiltinPlatformRegistries()
 	if err != nil {
 		t.Fatal(err)
@@ -77,11 +81,12 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		return AuthContext{TenantID: "tenant-flow-http-it", UserID: "user-flow-http-it", IsAdmin: true}, nil
 	}
 	router := NewAPIV1Router(APIV1RouterConfig{
-		Auth: auth, QueryGateway: gateway, FlowRecords: detailRunner,
-		FlowRecordNow: func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
+		Auth: auth, QueryGateway: gateway, FlowRecords: detailRunner, FlowOverseas: overseasRunner,
+		FlowRecordNow:   func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
+		FlowOverseasNow: func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
 	})
 	body := map[string]any{
-		"dataset": FlowTrafficDataset, "from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:01:00Z",
+		"from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:01:00Z",
 		"step_seconds": 0, "limit": 1, "value_layer": "customer",
 		"parameters": map[string]any{
 			"metric": "estimated_bps", "dimension": "total", "top_n": 1,
@@ -93,7 +98,7 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/query", bytes.NewReader(encoded)))
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/query", bytes.NewReader(encoded)))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -209,5 +214,29 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	if len(detailResponse.Data.Rows) != 0 || detailResponse.Data.HasMore ||
 		detailResponse.Meta.Sort != "event_time:desc,record_id:desc" || detailResponse.Meta.PageSize != 25 {
 		t.Fatalf("detail response=%+v", detailResponse)
+	}
+
+	overseasRecorder := httptest.NewRecorder()
+	router.ServeHTTP(overseasRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/overseas/query", strings.NewReader(`{
+		"from":"2020-01-01T00:00:00Z","to":"2020-01-01T00:01:00Z","bucket":"1m",
+		"metric":"estimated_bps","geo_level":"country","view":"customer","top_n":20,"include_other":true
+	}`)))
+	if overseasRecorder.Code != http.StatusOK {
+		t.Fatalf("overseas status=%d body=%s", overseasRecorder.Code, overseasRecorder.Body.String())
+	}
+	var overseasResponse struct {
+		Data flowquery.OverseasResult `json:"data"`
+		Meta struct {
+			Source      string `json:"source"`
+			StepSeconds uint32 `json:"step_seconds"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(overseasRecorder.Body.Bytes(), &overseasResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(overseasResponse.Data.Points) != 0 || overseasResponse.Data.RollupCompleteness.ExpectedBuckets != 1 ||
+		overseasResponse.Data.RollupCompleteness.CoveredBuckets != 0 || overseasResponse.Meta.Source != "1m" ||
+		overseasResponse.Meta.StepSeconds != 60 {
+		t.Fatalf("overseas response=%+v", overseasResponse)
 	}
 }

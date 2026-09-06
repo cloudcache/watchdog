@@ -50,6 +50,46 @@ func TestQueryGatewayAPIUsesStableEnvelopeAndRequestID(t *testing.T) {
 	}
 }
 
+func TestFlowQueryAPIInjectsTheFlowDatasetAndRejectsOtherDatasets(t *testing.T) {
+	repo := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	provider := &queryProviderStub{query: func(_ context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
+		if request.Dataset.Key != FlowTrafficDataset || request.TenantID != "tenant-a" {
+			t.Fatalf("provider request = %#v", request)
+		}
+		return QueryProviderResult{Data: json.RawMessage(`[]`)}, nil
+	}}
+	registries, err := NewBuiltinPlatformRegistries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := NewQueryProviderRegistry()
+	if err := providers.Register(QueryProviderRegistration{Kind: DatasetProviderClickHouse, Provider: provider, Enabled: true, MaxConcurrent: 2}); err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := NewQueryGateway(registries, nil, repo, providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
+		},
+		QueryGateway: gateway,
+	})
+	body := `{"from":"2026-08-24T11:00:00Z","to":"2026-08-24T12:00:00Z","value_layer":"customer","parameters":{"dimension":"category"}}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/flow/query", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	wrong := httptest.NewRecorder()
+	router.ServeHTTP(wrong, httptest.NewRequest(http.MethodPost, "/api/v1/flow/query", strings.NewReader(strings.Replace(body, `"from":`, `"dataset":"query.test","from":`, 1))))
+	if wrong.Code != http.StatusBadRequest || !strings.Contains(wrong.Body.String(), "QUERY_INVALID") {
+		t.Fatalf("wrong dataset status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+}
+
 func TestQueryDatasetPolicyAPICRUDUsesETagAndRegisteredDataset(t *testing.T) {
 	repo := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
 	gateway, _ := newQueryGatewayFixture(t, repo, nil, &queryProviderStub{}, 2)

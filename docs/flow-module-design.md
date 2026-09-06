@@ -739,6 +739,7 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | `POST /flow/dimensions/actions/evaluate` | configure | 预览组并/交/差/有限补集、规范化 CIDR、重叠、依赖 DAG 和最坏展开量；不写入 |
 | `GET /flow/dimensions/geo/{version}/children` | view | 按 parent ID 分页返回直属子节点和 breadcrumb，拒绝跨版本引用 |
 | `POST /flow/query` | view | 统一趋势/TopN/统计查询 |
+| `POST /flow/overseas/query` | view | 境外 KPI、country/region TopN 与采样完整性；只读 aggregate |
 | `POST /flow/records/search` | sensitive_view | 分页源/目的明细 |
 | `GET/POST /flow/vpn/rules` | view/configure | 规则列表/创建 |
 | `GET/PATCH/DELETE /flow/vpn/rules/{id}` | view/configure | 版本化修改/退役 |

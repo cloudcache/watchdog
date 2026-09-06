@@ -17,9 +17,18 @@ type queryGatewayAPI struct {
 func registerQueryGatewayRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, gateway *QueryGateway, audit AuditRepository) {
 	api := queryGatewayAPI{gateway: gateway, audit: audit}
 	mux.Handle("POST /api/v1/query", auth(http.HandlerFunc(api.query)))
+	mux.Handle("POST /api/v1/flow/query", auth(http.HandlerFunc(api.flowQuery)))
 }
 
 func (api queryGatewayAPI) query(w http.ResponseWriter, r *http.Request) {
+	api.execute(w, r, "")
+}
+
+func (api queryGatewayAPI) flowQuery(w http.ResponseWriter, r *http.Request) {
+	api.execute(w, r, FlowTrafficDataset)
+}
+
+func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixedDataset string) {
 	var request QueryRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxQueryParameterBytes+16<<10))
 	decoder.DisallowUnknownFields()
@@ -30,6 +39,13 @@ func (api queryGatewayAPI) query(w http.ResponseWriter, r *http.Request) {
 	if err := ensureDashboardJSONEOF(decoder); err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorCode(QueryErrorInvalidRequest), err.Error(), nil)
 		return
+	}
+	if fixedDataset != "" {
+		if request.Dataset != "" && request.Dataset != fixedDataset {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorCode(QueryErrorInvalidRequest), "dataset does not match the Flow query endpoint", nil)
+			return
+		}
+		request.Dataset = fixedDataset
 	}
 	auth, _ := AuthFromContext(r.Context())
 	result, err := api.gateway.Execute(r.Context(), auth, RequestIDFromContext(r.Context()), request)

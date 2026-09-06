@@ -317,10 +317,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				const grouping =
 					selectedDimensions.length > 1 ? { dimensions: selectedDimensions } : { dimension: selectedDimension }
 				const sendQuery = (queryFilters: FlowFilters) =>
-					pb.send<FlowQueryResponse>("/api/v1/query", {
+					pb.send<FlowQueryResponse>("/api/v1/flow/query", {
 						method: "POST",
 						body: {
-							dataset: "flow.traffic",
 							from: start,
 							to: end,
 							// Zero means auto: the Flow provider chooses graph interval and
