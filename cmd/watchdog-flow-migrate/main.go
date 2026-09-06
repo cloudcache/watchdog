@@ -55,7 +55,16 @@ func main() {
 	flag.StringVar(&opt.passwordFile, "clickhouse-password-file", "", "file containing the ClickHouse password")
 	flag.DurationVar(&opt.dialTimeout, "clickhouse-dial-timeout", 3*time.Second, "ClickHouse connection timeout")
 	flag.DurationVar(&opt.readTimeout, "clickhouse-read-timeout", 30*time.Second, "ClickHouse packet polling interval")
-	flag.DurationVar(&opt.operationTimeout, "clickhouse-operation-timeout", 5*time.Minute, "maximum duration of one ClickHouse migration operation")
+	// This bounds every single migration statement. Some statements run a
+	// synchronous full-table mutation (migration 006 MATERIALIZE PROJECTION
+	// with mutations_sync=2) whose duration scales with retained flow_records
+	// volume; on an upgrade of a data-bearing cluster it can far exceed a few
+	// minutes. The default is generous because this is a one-shot,
+	// operator-supervised tool (interruptible with Ctrl-C / SIGTERM), so the
+	// larger risk is silently killing a legitimate long migration, not waiting
+	// too long. Size it to the largest expected mutation; lower it for
+	// environments that prefer fast failure on a hung connection.
+	flag.DurationVar(&opt.operationTimeout, "clickhouse-operation-timeout", time.Hour, "maximum duration of one ClickHouse migration statement (size to the largest MATERIALIZE/ALTER mutation on existing data)")
 	flag.BoolVar(&opt.tlsEnabled, "clickhouse-tls", false, "enable ClickHouse TLS")
 	flag.StringVar(&opt.caFile, "clickhouse-tls-ca", "", "ClickHouse TLS CA file")
 	flag.StringVar(&opt.certFile, "clickhouse-tls-cert", "", "ClickHouse TLS client certificate file")
