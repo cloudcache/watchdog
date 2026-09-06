@@ -97,6 +97,13 @@ func TestFlowRecordSearchEnforcesLayerPermissionAndStrictInput(t *testing.T) {
 		t.Fatalf("unknown status=%d body=%s", unknown.Code, unknown.Body.String())
 	}
 
+	sorted := httptest.NewRecorder()
+	router.ServeHTTP(sorted, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", strings.NewReader(requestBody("customer", `,"fields":["src_ip"],"sort":{"field":"src_ip","direction":"asc"}`))))
+	if sorted.Code != http.StatusOK || runner.compiled.Sort.Field != "src_ip" || runner.compiled.Sort.Direction != "asc" ||
+		!strings.Contains(sorted.Body.String(), `"sort":"src_ip:asc,event_time:asc,record_id:asc"`) {
+		t.Fatalf("sorted status=%d body=%s compiled=%+v", sorted.Code, sorted.Body.String(), runner.compiled)
+	}
+
 	capabilities := httptest.NewRecorder()
 	router.ServeHTTP(capabilities, httptest.NewRequest(http.MethodGet, "/api/v1/flow/records/capabilities", nil))
 	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"default_fields"`) {

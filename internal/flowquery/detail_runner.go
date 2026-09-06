@@ -50,7 +50,8 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 	}
 	if ctx == nil || compiled.Query.Body == "" || !compiled.To.After(compiled.From) || !compiled.IP.IsValid() ||
 		!validDetailView(compiled.View) || !validDetailEndpoint(compiled.Endpoint) || compiled.Limit < 1 || compiled.Limit > maxDetailLimit ||
-		compiled.MaxResultRows != uint64(compiled.Limit)+1 {
+		compiled.MaxResultRows != uint64(compiled.Limit)+1 || compiled.Sort.Field == "" ||
+		(compiled.Sort.Direction != "asc" && compiled.Sort.Direction != "desc") {
 		return DetailResult{}, errors.New("compiled Flow detail query is invalid")
 	}
 	columns, err := newDetailResultColumns(compiled.View, compiled.Fields)
@@ -88,7 +89,7 @@ func (r *DetailRunner) Run(ctx context.Context, compiled CompiledDetail) (Detail
 		result.HasMore = true
 		result.Rows = result.Rows[:compiled.Limit]
 		last := result.Rows[len(result.Rows)-1]
-		result.NextCursor, err = EncodeDetailCursor(last.EventTime, last.RecordID)
+		result.NextCursor, err = encodeDetailCursorForRow(compiled, last)
 		if err != nil {
 			return DetailResult{}, fmt.Errorf("encode Flow detail cursor: %w", err)
 		}
@@ -205,11 +206,17 @@ type detailResultKey struct {
 	recordID [32]byte
 }
 
+type detailSortKey struct {
+	value     any
+	eventTime time.Time
+	recordID  [32]byte
+}
+
 type detailResultState struct {
 	compiled            CompiledDetail
 	rows                []DetailRow
 	seen                map[detailResultKey]struct{}
-	previous            *detailResultKey
+	previous            *detailSortKey
 	minimumFactSchema   uint16
 	hasSupplierEvidence bool
 	err                 error
@@ -245,17 +252,21 @@ func (s *detailResultState) consume(columns *detailResultColumns) error {
 		if _, exists := s.seen[key]; exists {
 			return errors.New("invalid ClickHouse Flow detail result: duplicate cursor key")
 		}
-		if s.previous != nil && !detailKeyBefore(key, *s.previous) {
-			return errors.New("invalid ClickHouse Flow detail result: rows are not strictly descending by event_time and record_id")
+		sortKey, err := detailSortKeyForRow(s.compiled, row, key)
+		if err != nil {
+			return err
+		}
+		if s.previous != nil && !detailSortKeyAfter(sortKey, *s.previous, s.compiled.Sort.Direction) {
+			return errors.New("invalid ClickHouse Flow detail result: rows do not follow the requested stable sort")
 		}
 		if s.compiled.cursor != nil {
-			boundary := detailResultKey{millis: s.compiled.cursor.eventTime.UnixMilli(), recordID: s.compiled.cursor.recordID}
-			if !detailKeyBefore(key, boundary) {
+			boundary := detailSortKey{value: s.compiled.cursor.sortValue, eventTime: s.compiled.cursor.eventTime, recordID: s.compiled.cursor.recordID}
+			if !detailSortKeyAfter(sortKey, boundary, s.compiled.Sort.Direction) {
 				return errors.New("invalid ClickHouse Flow detail result: row does not follow the requested cursor")
 			}
 		}
 		s.seen[key] = struct{}{}
-		current := key
+		current := sortKey
 		s.previous = &current
 		s.rows = append(s.rows, row)
 	}
@@ -311,8 +322,80 @@ func parseResultIP(value string) (netip.Addr, error) {
 	return ip.Unmap(), nil
 }
 
-func detailKeyBefore(left, right detailResultKey) bool {
-	return left.millis < right.millis || (left.millis == right.millis && bytes.Compare(left.recordID[:], right.recordID[:]) < 0)
+func detailSortKeyForRow(compiled CompiledDetail, row DetailRow, key detailResultKey) (detailSortKey, error) {
+	value := any(row.EventTime)
+	if compiled.Sort.Field != "event_time" {
+		var exists bool
+		value, exists = row.Values[DetailField(compiled.Sort.Field)]
+		if !exists {
+			return detailSortKey{}, fmt.Errorf("invalid ClickHouse Flow detail result: sort field %s is missing", compiled.Sort.Field)
+		}
+	}
+	spec, _, _, err := normalizeDetailSort(compiled.View, compiled.Fields, compiled.Sort)
+	if err != nil {
+		return detailSortKey{}, fmt.Errorf("invalid ClickHouse Flow detail result: %w", err)
+	}
+	if _, err := formatDetailCursorValue(spec, value); err != nil {
+		return detailSortKey{}, fmt.Errorf("invalid ClickHouse Flow detail result: %w", err)
+	}
+	return detailSortKey{value: value, eventTime: row.EventTime, recordID: key.recordID}, nil
+}
+
+func detailSortKeyAfter(left, right detailSortKey, direction string) bool {
+	comparison := compareDetailSortValue(left.value, right.value)
+	if comparison == 0 {
+		if left.eventTime.Before(right.eventTime) {
+			comparison = -1
+		} else if left.eventTime.After(right.eventTime) {
+			comparison = 1
+		} else {
+			comparison = bytes.Compare(left.recordID[:], right.recordID[:])
+		}
+	}
+	if direction == "asc" {
+		return comparison > 0
+	}
+	return comparison < 0
+}
+
+func compareDetailSortValue(left, right any) int {
+	switch l := left.(type) {
+	case string:
+		r, ok := right.(string)
+		if !ok {
+			return 0
+		}
+		return bytes.Compare([]byte(l), []byte(r))
+	case uint64:
+		r, ok := right.(uint64)
+		if !ok || l == r {
+			return 0
+		}
+		if l < r {
+			return -1
+		}
+		return 1
+	case bool:
+		r, ok := right.(bool)
+		if !ok || l == r {
+			return 0
+		}
+		if !l && r {
+			return -1
+		}
+		return 1
+	case time.Time:
+		r, ok := right.(time.Time)
+		if !ok || l.Equal(r) {
+			return 0
+		}
+		if l.Before(r) {
+			return -1
+		}
+		return 1
+	default:
+		return 0
+	}
 }
 
 func validDetailEndpoint(value DetailEndpoint) bool {

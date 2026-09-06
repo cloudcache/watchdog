@@ -343,6 +343,49 @@ func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 	}
 }
 
+func TestCompileDetailUsesWhitelistedStableSortAndBoundCursor(t *testing.T) {
+	request := validDetailRequest()
+	request.Fields = []DetailField{DetailFieldRawBytes, DetailFieldSourceIP}
+	request.Sort = DetailSort{Field: string(DetailFieldRawBytes), Direction: "asc"}
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.Sort != request.Sort || !strings.Contains(compiled.Query.Body, "ORDER BY raw_bytes ASC, event_time ASC, record_id ASC") {
+		t.Fatalf("compiled sort=%+v query=\n%s", compiled.Sort, compiled.Query.Body)
+	}
+	row := DetailRow{
+		EventTime: request.From.Add(30 * time.Minute), RecordID: strings.Repeat("ab", 32),
+		Values: map[DetailField]any{DetailFieldRawBytes: uint64(123)},
+	}
+	cursor, err := encodeDetailCursorForRow(compiled, row)
+	if err != nil || !strings.HasPrefix(cursor, detailSortCursorPrefix) {
+		t.Fatalf("cursor=%q error=%v", cursor, err)
+	}
+	request.Cursor = cursor
+	next, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"toUInt64(source.raw_bytes) > {cursor_sort_value:UInt64}",
+		"source.event_time > {cursor_time:DateTime64(3, 'UTC')}",
+		"source.record_id > unhex({cursor_record_id:String})",
+	} {
+		if !strings.Contains(next.Query.Body, required) {
+			t.Fatalf("next query missing %q:\n%s", required, next.Query.Body)
+		}
+	}
+	if queryParameter(next.Query, "cursor_sort_value") != "'123'" || queryParameter(next.Query, "cursor_record_id") != "'"+row.RecordID+"'" {
+		t.Fatalf("cursor parameters=%+v", next.Query.Parameters)
+	}
+
+	request.Sort.Direction = "desc"
+	if _, err := CompileDetail(fullScope("tenant-a"), request, detailNow()); !IsRequestError(err, "cursor", ErrorInvalid) {
+		t.Fatalf("mismatched cursor error=%v", err)
+	}
+}
+
 func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -376,6 +419,12 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		{"precision", "from/to", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.From = request.From.Add(time.Microsecond) }},
 		{"limit", "limit", ErrorLimitExceeded, func(_ *Scope, request *DetailRequest) { request.Limit = 501 }},
 		{"field injection", "fields", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Fields = []DetailField{"raw_bytes, sleep(1)"} }},
+		{"sort injection", "sort.field", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Sort.Field = "raw_bytes DESC" }},
+		{"sort direction", "sort.direction", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Sort.Direction = "sideways" }},
+		{"sort not selected", "sort.field", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
+			request.Fields = []DetailField{DetailFieldSourceIP}
+			request.Sort.Field = string(DetailFieldRawBytes)
+		}},
 		{"filter", "filters.directions", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.Filters.Directions = []string{"sideways"} }},
 		{"filter limit", "filters.target_ids", ErrorLimitExceeded, func(_ *Scope, request *DetailRequest) {
 			request.Filters.TargetIDs = make([]string, maxDetailValuesPerFilter+1)

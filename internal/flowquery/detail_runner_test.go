@@ -126,6 +126,60 @@ func TestDetailRunnerReturnsCompleteShortOrEmptyPageWithoutCursor(t *testing.T) 
 	}
 }
 
+func TestDetailRunnerUsesAscendingFieldSortAndV2Cursor(t *testing.T) {
+	request := validDetailRequest()
+	request.Fields = []DetailField{DetailFieldRawBytes}
+	request.Sort = DetailSort{Field: string(DetailFieldRawBytes), Direction: "asc"}
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled.Limit, compiled.MaxResultRows = 2, 3
+	instant := request.From.Add(30 * time.Minute)
+	rows := []fakeDetailRow{
+		detailDataRow(instant, 1),
+		detailDataRow(instant, 2),
+		detailDataRow(instant.Add(-time.Minute), 3),
+	}
+	rows[0].values[DetailFieldRawBytes] = uint64(10)
+	rows[1].values[DetailFieldRawBytes] = uint64(10)
+	rows[2].values[DetailFieldRawBytes] = uint64(20)
+	runner, err := NewDetailRunner(fakeDetailExecutor{blocks: [][]fakeDetailRow{{rows[0]}, {rows[1], rows[2]}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.HasMore || !strings.HasPrefix(result.NextCursor, detailSortCursorPrefix) || len(result.Rows) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	request.Cursor = result.NextCursor
+	next, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := detailDataRow(instant.Add(time.Millisecond), 1)
+	valid.values[DetailFieldRawBytes] = uint64(10)
+	invalid := detailDataRow(instant, 1)
+	invalid.values[DetailFieldRawBytes] = uint64(10)
+	for _, row := range []fakeDetailRow{valid, invalid} {
+		check, createErr := NewDetailRunner(fakeDetailExecutor{blocks: [][]fakeDetailRow{{row}}})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		got, runErr := check.Run(context.Background(), next)
+		if row.recordID == invalid.recordID && row.eventTime.Equal(invalid.eventTime) {
+			if runErr == nil || len(got.Rows) != 0 {
+				t.Fatalf("cursor predecessor accepted result=%+v error=%v", got, runErr)
+			}
+		} else if runErr != nil || len(got.Rows) != 1 {
+			t.Fatalf("cursor successor rejected result=%+v error=%v", got, runErr)
+		}
+	}
+}
+
 func TestSupplierDetailRunnerRequiresFullScopeProvenance(t *testing.T) {
 	request := validDetailRequest()
 	request.View = ViewSupplier

@@ -80,11 +80,17 @@ func (api flowRecordAPI) search(w http.ResponseWriter, r *http.Request) {
 	}
 	(queryGatewayAPI{audit: api.audit}).recordAudit(r.Context(), auth, "query.sensitive_viewed", "flow.records", map[string]any{
 		"value_layer": input.View, "endpoint": input.Endpoint, "has_more": result.HasMore,
+		"sort_field": compiled.Sort.Field, "sort_direction": compiled.Sort.Direction,
 	})
+	sortDescription := compiled.Sort.Field + ":" + compiled.Sort.Direction
+	if compiled.Sort.Field != "event_time" {
+		sortDescription += ",event_time:" + compiled.Sort.Direction
+	}
+	sortDescription += ",record_id:" + compiled.Sort.Direction
 	WriteAPIJSON(w, http.StatusOK, map[string]any{
 		"data": result,
 		"meta": map[string]any{
-			"sort": "event_time:desc,record_id:desc", "page_size": input.Limit,
+			"sort": sortDescription, "page_size": input.Limit,
 		},
 	})
 }

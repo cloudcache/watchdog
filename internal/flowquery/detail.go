@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -25,6 +26,7 @@ const (
 	maxDetailFilterValues     = 256
 	detailCursorPrefix        = "v1."
 	detailCursorPayloadSize   = 8 + 32
+	detailSortCursorPrefix    = "v2."
 	minimumSupplierFactSchema = 2
 )
 
@@ -262,11 +264,26 @@ type DetailRequest struct {
 	Filters  DetailFilters  `json:"filters,omitempty"`
 	Limit    uint16         `json:"limit"`
 	Cursor   string         `json:"cursor,omitempty"`
+	Sort     DetailSort     `json:"sort,omitempty"`
+}
+
+type DetailSort struct {
+	Field     string `json:"field,omitempty"`
+	Direction string `json:"direction,omitempty"`
 }
 
 type detailCursorKey struct {
 	eventTime time.Time
 	recordID  [32]byte
+	sortValue any
+}
+
+type detailSortCursorPayload struct {
+	Field     string `json:"f"`
+	Direction string `json:"d"`
+	Value     string `json:"v"`
+	EventMS   int64  `json:"t"`
+	RecordID  string `json:"r"`
 }
 
 type CompiledDetail struct {
@@ -279,6 +296,7 @@ type CompiledDetail struct {
 	Fields        []DetailField
 	Limit         uint16
 	MaxResultRows uint64
+	Sort          DetailSort
 	cursor        *detailCursorKey
 }
 
@@ -368,6 +386,11 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if err != nil {
 		return CompiledDetail{}, err
 	}
+	sortSpec, sortField, sortDirection, err := normalizeDetailSort(request.View, fields, request.Sort)
+	if err != nil {
+		return CompiledDetail{}, err
+	}
+	request.Sort = DetailSort{Field: sortField, Direction: sortDirection}
 	conditions, filterParameters, err := compileDetailFiltersForSource(request.View, request.Filters)
 	if err != nil {
 		return CompiledDetail{}, err
@@ -389,7 +412,7 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	}
 	var cursor *detailCursorKey
 	if request.Cursor != "" {
-		decoded, err := decodeDetailCursor(request.Cursor)
+		decoded, err := decodeDetailCursorForSort(request.Cursor, request.Sort, sortSpec)
 		if err != nil {
 			return CompiledDetail{}, requestError("cursor", ErrorInvalid, err.Error())
 		}
@@ -401,6 +424,9 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 			stringParameter("cursor_time", formatDateTime64(decoded.eventTime)),
 			stringParameter("cursor_record_id", hex.EncodeToString(decoded.recordID[:])),
 		)
+		if sortField != "event_time" {
+			parameters = append(parameters, detailSortCursorParameter(sortSpec, decoded.sortValue))
+		}
 	}
 	selectFields := make([]string, 0, len(fields))
 	for _, field := range fields {
@@ -411,9 +437,13 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if request.View == ViewRaw {
 		visibilityCondition = ""
 	}
+	sortExpression := detailSortExpression(sortSpec)
+	sortAlias := sortField
+	orderBy := detailOrderBy(sortAlias, sortDirection, "event_time", "record_id")
+	sourceOrderBy := detailOrderBy(sortExpression, sortDirection, "source.event_time", "source.record_id")
 	cursorCondition := ""
 	if cursor != nil {
-		cursorCondition = "AND (source.event_time < {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id < unhex({cursor_record_id:String})))"
+		cursorCondition = "AND " + detailCursorCondition(sortExpression, sortDirection)
 	}
 	var body string
 	if request.View == ViewSupplier {
@@ -423,12 +453,12 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		}
 		cursorExpression := "true"
 		if cursor != nil {
-			cursorExpression = "(source.event_time < {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id < unhex({cursor_record_id:String})))"
+			cursorExpression = detailCursorCondition(sortExpression, sortDirection)
 		}
-		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
+		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, sourceOrderBy, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "), orderByForSupplier(orderBy))
 	} else {
 		conditions = append(conditions, cursorCondition)
-		body = fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "))
+		body = fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "), orderBy)
 	}
 	maxRows := uint64(request.Limit) + 1
 	query := ch.Query{
@@ -448,8 +478,99 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	}
 	return CompiledDetail{
 		Query: query, View: request.View, From: from, To: to, IP: ip, Endpoint: request.Endpoint,
-		Fields: fields, Limit: request.Limit, MaxResultRows: maxRows, cursor: cursor,
+		Fields: fields, Limit: request.Limit, MaxResultRows: maxRows, Sort: request.Sort, cursor: cursor,
 	}, nil
+}
+
+func normalizeDetailSort(view View, fields []DetailField, input DetailSort) (detailFieldSpec, string, string, error) {
+	field := strings.TrimSpace(input.Field)
+	if field == "" {
+		field = "event_time"
+	}
+	direction := strings.ToLower(strings.TrimSpace(input.Direction))
+	if direction == "" {
+		direction = "desc"
+	}
+	if direction != "asc" && direction != "desc" {
+		return detailFieldSpec{}, "", "", requestError("sort.direction", ErrorUnsupported, "sort direction must be asc or desc")
+	}
+	if field == "event_time" {
+		return detailFieldSpec{field: DetailField("event_time"), column: "event_time", kind: detailKindTime}, field, direction, nil
+	}
+	detailField := DetailField(field)
+	_, exists := detailFieldRegistry[detailField]
+	if !exists {
+		return detailFieldSpec{}, "", "", requestError("sort.field", ErrorUnsupported, fmt.Sprintf("sort field %q is not in the detail registry", field))
+	}
+	viewSpec := detailViewRegistry[view]
+	if viewSpec.fields != nil {
+		if _, allowed := viewSpec.fields[detailField]; !allowed {
+			return detailFieldSpec{}, "", "", requestError("sort.field", ErrorUnsupported, fmt.Sprintf("sort field %q is not available in %s view", field, view))
+		}
+	}
+	selected := false
+	for _, candidate := range fields {
+		if candidate == detailField {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return detailFieldSpec{}, "", "", requestError("sort.field", ErrorInvalid, "sort field must be included in fields")
+	}
+	return detailFieldSpecForView(view, detailField), field, direction, nil
+}
+
+func detailSortExpression(spec detailFieldSpec) string {
+	return detailFieldExpression(spec)
+}
+
+func detailOrderBy(primary, direction, eventTime, recordID string) string {
+	upper := strings.ToUpper(direction)
+	if primary == eventTime || primary == "event_time" && eventTime == "source.event_time" {
+		return fmt.Sprintf("%s %s, %s %s", eventTime, upper, recordID, upper)
+	}
+	return fmt.Sprintf("%s %s, %s %s, %s %s", primary, upper, eventTime, upper, recordID, upper)
+}
+
+func orderByForSupplier(orderBy string) string {
+	return "_scope_match DESC, " + strings.ReplaceAll(orderBy, "record_id", "_record_id")
+}
+
+func detailCursorCondition(sortExpression, direction string) string {
+	operator := "<"
+	if direction == "asc" {
+		operator = ">"
+	}
+	if sortExpression == "source.event_time" {
+		return fmt.Sprintf("(source.event_time %[1]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id %[1]s unhex({cursor_record_id:String})))", operator)
+	}
+	sortPlaceholder := "{cursor_sort_value:String}"
+	if strings.Contains(sortExpression, "toUInt64(") {
+		sortPlaceholder = "{cursor_sort_value:UInt64}"
+	} else if strings.Contains(sortExpression, "DateTime") || strings.HasSuffix(sortExpression, ".event_time") || strings.HasSuffix(sortExpression, ".received_time") {
+		sortPlaceholder = "{cursor_sort_value:DateTime64(3, 'UTC')}"
+	} else if strings.HasSuffix(sortExpression, ".estimated_valid") {
+		sortExpression = "toUInt8(" + sortExpression + ")"
+		sortPlaceholder = "{cursor_sort_value:UInt8}"
+	}
+	return fmt.Sprintf("(%[1]s %[2]s %[3]s OR (%[1]s = %[3]s AND (source.event_time %[2]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id %[2]s unhex({cursor_record_id:String})))))", sortExpression, operator, sortPlaceholder)
+}
+
+func detailSortCursorParameter(spec detailFieldSpec, value any) proto.Parameter {
+	switch spec.kind {
+	case detailKindUInt64:
+		return uintParameter("cursor_sort_value", value.(uint64))
+	case detailKindBool:
+		if value.(bool) {
+			return uintParameter("cursor_sort_value", 1)
+		}
+		return uintParameter("cursor_sort_value", 0)
+	case detailKindTime:
+		return stringParameter("cursor_sort_value", formatDateTime64(value.(time.Time)))
+	default:
+		return stringParameter("cursor_sort_value", value.(string))
+	}
 }
 
 func normalizeDetailFields(view View, input []DetailField) ([]DetailField, error) {
@@ -621,8 +742,152 @@ func decodeDetailCursor(value string) (detailCursorKey, error) {
 		return detailCursorKey{}, fmt.Errorf("cursor time is invalid")
 	}
 	key := detailCursorKey{eventTime: time.UnixMilli(int64(millis)).UTC()}
+	key.sortValue = key.eventTime
 	copy(key.recordID[:], payload[8:])
 	return key, nil
+}
+
+func decodeDetailCursorForSort(value string, sort DetailSort, spec detailFieldSpec) (detailCursorKey, error) {
+	if strings.HasPrefix(value, detailCursorPrefix) {
+		if sort.Field != "event_time" || sort.Direction != "desc" {
+			return detailCursorKey{}, fmt.Errorf("v1 cursor only supports event_time descending sort")
+		}
+		return decodeDetailCursor(value)
+	}
+	if !strings.HasPrefix(value, detailSortCursorPrefix) {
+		return detailCursorKey{}, fmt.Errorf("cursor version is unsupported")
+	}
+	encoded := strings.TrimPrefix(value, detailSortCursorPrefix)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || base64.RawURLEncoding.EncodeToString(payloadBytes) != encoded {
+		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
+	}
+	var payload detailSortCursorPayload
+	decoder := json.NewDecoder(strings.NewReader(string(payloadBytes)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
+	}
+	if decoder.Decode(&struct{}{}) == nil {
+		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
+	}
+	canonical, err := json.Marshal(payload)
+	if err != nil || string(canonical) != string(payloadBytes) {
+		return detailCursorKey{}, fmt.Errorf("cursor payload is not canonical")
+	}
+	if payload.Field != sort.Field || payload.Direction != sort.Direction {
+		return detailCursorKey{}, fmt.Errorf("cursor sort does not match the request")
+	}
+	if payload.EventMS < 0 {
+		return detailCursorKey{}, fmt.Errorf("cursor time is invalid")
+	}
+	recordID, err := hex.DecodeString(payload.RecordID)
+	if err != nil || len(recordID) != 32 || hex.EncodeToString(recordID) != payload.RecordID {
+		return detailCursorKey{}, fmt.Errorf("cursor record id is invalid")
+	}
+	sortValue, err := parseDetailCursorValue(spec, payload.Value)
+	if err != nil {
+		return detailCursorKey{}, err
+	}
+	key := detailCursorKey{eventTime: time.UnixMilli(payload.EventMS).UTC(), sortValue: sortValue}
+	copy(key.recordID[:], recordID)
+	return key, nil
+}
+
+func encodeDetailCursorForRow(compiled CompiledDetail, row DetailRow) (string, error) {
+	if compiled.Sort.Field == "event_time" && compiled.Sort.Direction == "desc" {
+		return EncodeDetailCursor(row.EventTime, row.RecordID)
+	}
+	spec, _, _, err := normalizeDetailSort(compiled.View, compiled.Fields, compiled.Sort)
+	if err != nil {
+		return "", err
+	}
+	value := any(row.EventTime)
+	if compiled.Sort.Field != "event_time" {
+		var exists bool
+		value, exists = row.Values[DetailField(compiled.Sort.Field)]
+		if !exists {
+			return "", requestError("cursor", ErrorInvalid, "sort field value is missing from the result row")
+		}
+	}
+	encodedValue, err := formatDetailCursorValue(spec, value)
+	if err != nil {
+		return "", err
+	}
+	if row.EventTime.IsZero() || row.EventTime.UnixMilli() < 0 || row.EventTime.Nanosecond()%int(time.Millisecond) != 0 {
+		return "", requestError("cursor", ErrorInvalid, "cursor event time must be millisecond-aligned")
+	}
+	recordID, err := hex.DecodeString(row.RecordID)
+	if err != nil || len(recordID) != 32 || hex.EncodeToString(recordID) != row.RecordID {
+		return "", requestError("cursor", ErrorInvalid, "cursor record id must be canonical lowercase hexadecimal")
+	}
+	payload := detailSortCursorPayload{
+		Field: compiled.Sort.Field, Direction: compiled.Sort.Direction, Value: encodedValue,
+		EventMS: row.EventTime.UTC().UnixMilli(), RecordID: row.RecordID,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", requestError("cursor", ErrorInvalid, "cursor payload cannot be encoded")
+	}
+	return detailSortCursorPrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func formatDetailCursorValue(spec detailFieldSpec, value any) (string, error) {
+	switch spec.kind {
+	case detailKindString:
+		text, ok := value.(string)
+		if !ok {
+			return "", requestError("cursor", ErrorInvalid, "cursor sort value is not a string")
+		}
+		return text, nil
+	case detailKindUInt64:
+		number, ok := value.(uint64)
+		if !ok {
+			return "", requestError("cursor", ErrorInvalid, "cursor sort value is not an unsigned integer")
+		}
+		return strconv.FormatUint(number, 10), nil
+	case detailKindBool:
+		flag, ok := value.(bool)
+		if !ok {
+			return "", requestError("cursor", ErrorInvalid, "cursor sort value is not boolean")
+		}
+		return strconv.FormatBool(flag), nil
+	case detailKindTime:
+		instant, ok := value.(time.Time)
+		if !ok || instant.IsZero() || instant.Nanosecond()%int(time.Millisecond) != 0 {
+			return "", requestError("cursor", ErrorInvalid, "cursor sort value is not a millisecond-aligned timestamp")
+		}
+		return instant.UTC().Format("2006-01-02T15:04:05.000Z"), nil
+	default:
+		return "", requestError("cursor", ErrorInvalid, "cursor sort value type is unsupported")
+	}
+}
+
+func parseDetailCursorValue(spec detailFieldSpec, value string) (any, error) {
+	switch spec.kind {
+	case detailKindString:
+		return value, nil
+	case detailKindUInt64:
+		number, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || strconv.FormatUint(number, 10) != value {
+			return nil, fmt.Errorf("cursor sort value is not a canonical unsigned integer")
+		}
+		return number, nil
+	case detailKindBool:
+		flag, err := strconv.ParseBool(value)
+		if err != nil || strconv.FormatBool(flag) != value {
+			return nil, fmt.Errorf("cursor sort value is not canonical boolean")
+		}
+		return flag, nil
+	case detailKindTime:
+		instant, err := time.Parse("2006-01-02T15:04:05.000Z", value)
+		if err != nil || instant.Nanosecond()%int(time.Millisecond) != 0 {
+			return nil, fmt.Errorf("cursor sort value is not a canonical millisecond timestamp")
+		}
+		return instant.UTC(), nil
+	default:
+		return nil, fmt.Errorf("cursor sort value type is unsupported")
+	}
 }
 
 func formatDateTime64(value time.Time) string {
@@ -641,7 +906,7 @@ WHERE source.tenant_id = {tenant:String}
   %s
   AND %s
   %s
-ORDER BY event_time DESC, record_id DESC
+ORDER BY %s
 LIMIT {fetch_limit:UInt16}`
 
 // Supplier completeness is computed before the cursor predicate. Every data
@@ -665,7 +930,7 @@ FROM (
 %s,
     CAST(%s AS Bool) AS _scope_match,
     min(source.fact_schema) OVER () AS _minimum_fact_schema,
-    row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row
+    row_number() OVER (ORDER BY %s) AS _scope_row
   FROM flow_records AS source FINAL
   WHERE source.tenant_id = {tenant:String}
     AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
@@ -674,5 +939,5 @@ FROM (
     %s
 )
 WHERE _scope_match OR _scope_row = 1
-ORDER BY _scope_match DESC, event_time DESC, _record_id DESC
+ORDER BY %s
 LIMIT {fetch_limit:UInt16}`

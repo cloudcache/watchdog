@@ -59,6 +59,8 @@ export function FlowRecordTable({
 	const [search, setSearch] = useState(selectedIP)
 	const [directions, setDirections] = useState<string[]>([])
 	const [categories, setCategories] = useState<string[]>([])
+	const [sortField, setSortField] = useState("event_time")
+	const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
 	const [page, setPage] = useState(0)
 	const [pageSize, setPageSize] = useState(25)
 	const [rows, setRows] = useState<FlowRecordRow[]>([])
@@ -99,6 +101,7 @@ export function FlowRecordTable({
 							directions: directions.length === 0 ? undefined : directions,
 							categories: categories.length === 0 ? undefined : categories,
 						},
+						sort: { field: sortField, direction: sortDirection },
 						limit: pageSize,
 						cursor,
 					},
@@ -120,7 +123,7 @@ export function FlowRecordTable({
 				}
 			}
 		},
-		[categories, directions, endpoint, from, pageSize, selectedIP, t, to]
+		[categories, directions, endpoint, from, pageSize, selectedIP, sortDirection, sortField, t, to]
 	)
 
 	useEffect(() => {
@@ -167,6 +170,34 @@ export function FlowRecordTable({
 		}),
 		[categories, directions]
 	)
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				event_time: "event_time",
+				src_ip: "src_ip",
+				src_port: "src_port",
+				dst_ip: "dst_ip",
+				dst_port: "dst_port",
+				protocol: "ip_protocol",
+				direction: "business_direction",
+				category: "category",
+				remote_asn: "remote_asn",
+				country: "remote_country",
+				estimated_bytes: "estimated_bytes",
+				sampling_rate: "sampling_rate",
+				quality_flags: "quality_flags",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				cursors.current = [""]
+				setPage(0)
+				setSortField(field)
+				setSortDirection(direction)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	const submitSearch = (value: string) => {
 		const normalized = value.trim()
 		cursors.current = [""]
@@ -198,6 +229,7 @@ export function FlowRecordTable({
 				onSearchChange={setSearch}
 				onSearchSubmit={submitSearch}
 				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
 				serverPagination={{
 					page,
 					pageSize,
