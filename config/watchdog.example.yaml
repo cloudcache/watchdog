@@ -72,6 +72,15 @@ collector_principal_provider:
   tls_key_file: "/etc/watchdog/provider/control-plane.key"
   tls_server_name: "kafka-credential-provider.watchdog.internal"
 
+# Optional control-plane Ed25519 signer for collector plans. The public key and
+# monotonic trust bundle are persisted in MySQL; the private key remains only in
+# this owner-readable file. Set both fields or leave both empty.
+collector_plan_signing:
+  key_id: ""
+  private_key_file: ""
+# key_id: "collector-plan-2026-01"
+# private_key_file: "/run/secrets/watchdog-collector-plan-ed25519"
+
 aggregate_graph:
   rollup_interval: 5m
 

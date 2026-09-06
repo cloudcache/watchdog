@@ -30,28 +30,30 @@ type PlatformRuntimeHealth struct {
 }
 
 type BackendRuntime struct {
-	Config             BackendConfig
-	Store              *MySQLStore
-	Registries         *PlatformRegistries
-	FlowGeo            *FlowGeoService
-	MetricsClient      VictoriaMetricsClient
-	ExportStore        DiskExportStore
-	AddressArtifacts   DiskAddressArtifactStore
-	DimensionObjects   DiskDimensionObjectStore
-	AddressDimensions  *MySQLAddressDimensionPublisher
-	DimensionKeys      AddressDimensionPublicKeyResolver
-	ExportWorker       ExportWorker
-	SNMPCollector      SNMPPollRunner
-	SNMPDiscovery      SNMPDiscoveryEngine
-	AggregateRollup    AggregateGraphRollup
-	DiscoveryScheduler DiscoveryScheduler
-	CollectorEvidence  CollectorEvidenceController
-	CollectorPlans     CollectorPlanDeliveryController
-	FlowRollupRunner   FlowBucketRollupRunner
-	FlowRollupService  *FlowRollupService
-	MetricProviders    *RuntimeMetricsRegistry
-	QueryProviders     *QueryProviderRegistry
-	QueryGateway       *QueryGateway
+	Config              BackendConfig
+	Store               *MySQLStore
+	Registries          *PlatformRegistries
+	FlowGeo             *FlowGeoService
+	MetricsClient       VictoriaMetricsClient
+	ExportStore         DiskExportStore
+	AddressArtifacts    DiskAddressArtifactStore
+	DimensionObjects    DiskDimensionObjectStore
+	AddressDimensions   *MySQLAddressDimensionPublisher
+	DimensionKeys       AddressDimensionPublicKeyResolver
+	ExportWorker        ExportWorker
+	SNMPCollector       SNMPPollRunner
+	SNMPDiscovery       SNMPDiscoveryEngine
+	AggregateRollup     AggregateGraphRollup
+	DiscoveryScheduler  DiscoveryScheduler
+	CollectorEvidence   CollectorEvidenceController
+	CollectorPlans      CollectorPlanDeliveryController
+	CollectorPlanTrust  CollectorPlanTrustBundleController
+	CollectorPlanSigner CollectorPlanSigner
+	FlowRollupRunner    FlowBucketRollupRunner
+	FlowRollupService   *FlowRollupService
+	MetricProviders     *RuntimeMetricsRegistry
+	QueryProviders      *QueryProviderRegistry
+	QueryGateway        *QueryGateway
 
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
@@ -113,6 +115,23 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	collectorPlanTrust, err := NewCollectorPlanTrustBundleService(collectorAuthenticator, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	var collectorPlanSigner CollectorPlanSigner
+	if cfg.CollectorPlanSigning.KeyID != "" {
+		collectorPlanSigner, err = LoadCollectorPlanSigner(cfg.CollectorPlanSigning, store)
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		if _, err := store.ActivateCollectorPlanSigningKey(ctx, collectorPlanSigner.KeyID(), collectorPlanSigner.PublicKey(), time.Now()); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("activate collector plan signing key: %w", err)
+		}
+	}
 	var flowGeo *FlowGeoService
 	if cfg.FlowGeo.Path != "" {
 		flowGeo = NewFlowGeoService(cfg.FlowGeo.Path)
@@ -129,20 +148,22 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		return nil, fmt.Errorf("register builtin platform modules: %w", err)
 	}
 	runtime := &BackendRuntime{
-		Config:            cfg,
-		Store:             store,
-		Registries:        registries,
-		FlowGeo:           flowGeo,
-		MetricsClient:     metricsClient,
-		ExportStore:       exportStore,
-		AddressArtifacts:  addressArtifacts,
-		DimensionObjects:  dimensionObjects,
-		AddressDimensions: addressDimensions,
-		DimensionKeys:     addressDimensionKeys,
-		CollectorEvidence: collectorEvidence,
-		CollectorPlans:    collectorPlans,
-		MetricProviders:   NewRuntimeMetricsRegistry(),
-		QueryProviders:    NewQueryProviderRegistry(),
+		Config:              cfg,
+		Store:               store,
+		Registries:          registries,
+		FlowGeo:             flowGeo,
+		MetricsClient:       metricsClient,
+		ExportStore:         exportStore,
+		AddressArtifacts:    addressArtifacts,
+		DimensionObjects:    dimensionObjects,
+		AddressDimensions:   addressDimensions,
+		DimensionKeys:       addressDimensionKeys,
+		CollectorEvidence:   collectorEvidence,
+		CollectorPlans:      collectorPlans,
+		CollectorPlanTrust:  collectorPlanTrust,
+		CollectorPlanSigner: collectorPlanSigner,
+		MetricProviders:     NewRuntimeMetricsRegistry(),
+		QueryProviders:      NewQueryProviderRegistry(),
 	}
 	if cfg.FlowRollup.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
 		runtime.flowClickHouseNative, err = newFlowClickHouseNative(ctx, cfg.FlowRollup)
@@ -352,6 +373,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		CollectorEvidence:      r.CollectorEvidence,
 		CollectorPrincipals:    r.CollectorPrincipals,
 		CollectorPlans:         r.CollectorPlans,
+		CollectorPlanTrust:     r.CollectorPlanTrust,
 		Metrics: MetricsService{
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
@@ -570,6 +592,7 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			go r.FlowRollupService.Run(ctx)
 		}
 		NewStoreMaintenance(r.Store, nil).Start(ctx)
+		NewCollectorPlanTrustMaintenance(r.Store, nil).Start(ctx)
 	}
 	return nil
 }

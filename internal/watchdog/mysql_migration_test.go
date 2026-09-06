@@ -54,6 +54,8 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"collector_agents",
 		"collector_bindings",
 		"collector_plan_revisions",
+		"collector_plan_signing_keys",
+		"collector_plan_trust_state",
 		"collector_service_principals",
 		"collector_ownership_transfers",
 	} {
@@ -97,20 +99,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "051" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "052" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "051" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "052" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_service_principals", "collector_ownership_transfers"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -404,6 +406,35 @@ func TestSNMPEventQueryIndexMigrationOwnsCompleteContract(t *testing.T) {
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Fatalf("SNMP event query index migration missing %q", required)
+		}
+	}
+}
+
+func TestCollectorPlanTrustMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "052_collector_plan_trust_keys.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists collector_plan_signing_keys",
+		"public_key varbinary(32)", "public_key_sha256 char(64)",
+		"character set ascii collate ascii_bin", "check (algorithm = 'ed25519')",
+		"unique key uq_collector_plan_signing_public_key",
+		"unique key uq_collector_plan_signing_active",
+		"status in ('active','retiring','revoked')",
+		"create table if not exists collector_plan_trust_state",
+		"generation bigint unsigned", "bundle_json json", "checksum_sha256 char(64)",
+		"check ((generation = 0 and issued_at is null) or (generation > 0 and issued_at is not null))",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("collector plan trust migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"private_key", "drop table", "truncate table", "delete from"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Fatalf("collector plan trust migration unexpectedly contains %q", forbidden)
 		}
 	}
 }

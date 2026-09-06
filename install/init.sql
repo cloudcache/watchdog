@@ -735,6 +735,44 @@ CREATE TABLE IF NOT EXISTS `collector_plan_revisions` (
   CONSTRAINT `collector_plan_revisions_chk_7` CHECK (((`supersedes_config_version` is null) or (`supersedes_config_version` < `config_version`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `collector_plan_signing_keys` (
+  `key_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `algorithm` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'ed25519',
+  `public_key` varbinary(32) NOT NULL,
+  `public_key_sha256` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `status` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `activated_at` datetime(3) NOT NULL,
+  `retiring_at` datetime(3) DEFAULT NULL,
+  `trust_until` datetime(3) DEFAULT NULL,
+  `revoked_at` datetime(3) DEFAULT NULL,
+  `revocation_reason` varchar(512) DEFAULT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `active_identity` tinyint GENERATED ALWAYS AS (if((`status` = 'active'),1,NULL)) STORED,
+  PRIMARY KEY (`key_id`),
+  UNIQUE KEY `uq_collector_plan_signing_public_key` (`public_key_sha256`),
+  UNIQUE KEY `uq_collector_plan_signing_active` (`active_identity`),
+  KEY `idx_collector_plan_signing_lifecycle` (`status`,`trust_until`,`key_id`),
+  CHECK ((`algorithm` = 'ed25519')),
+  CHECK ((`status` in ('active','retiring','revoked'))),
+  CHECK ((((`status` = 'active') and (`retiring_at` is null) and (`trust_until` is null) and (`revoked_at` is null) and (`revocation_reason` is null)) or ((`status` = 'retiring') and (`retiring_at` is not null) and (`trust_until` is not null) and (`trust_until` >= `retiring_at`) and (`revoked_at` is null) and (`revocation_reason` is null)) or ((`status` = 'revoked') and (`retiring_at` is not null) and (`trust_until` is not null) and (`revoked_at` is not null) and (`revocation_reason` is not null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `collector_plan_trust_state` (
+  `singleton_id` tinyint unsigned NOT NULL,
+  `generation` bigint unsigned NOT NULL,
+  `bundle_json` json NOT NULL,
+  `checksum_sha256` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `issued_at` datetime(3) DEFAULT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`singleton_id`),
+  CHECK ((`singleton_id` = 1)),
+  CHECK ((json_type(`bundle_json`) = 'OBJECT')),
+  CHECK ((((`generation` = 0) and (`issued_at` is null)) or ((`generation` > 0) and (`issued_at` is not null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `collector_service_principals` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

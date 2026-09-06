@@ -52,6 +52,10 @@ collector_principal_provider:
   tls_key_file: ""
   tls_server_name: ""
 
+collector_plan_signing:
+  key_id: ""
+  private_key_file: ""
+
 aggregate_graph:
   rollup_interval: 5m
 

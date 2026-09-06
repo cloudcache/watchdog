@@ -1,9 +1,7 @@
 # Collector Fleet Rollout / Canary — Design
 
-Status: **proposal** (design only; not implemented). Owner: platform. Tracks
-tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环 → 余项:
-fleet rollout/canary (preview/canary/rollback, copy old spec → higher version,
-expiry/kill switch)".
+Status: **Phase 0 implemented; Phases 1–5 proposed**. Owner: platform. Tracks
+tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环".
 
 ## 1. Where we are (the gap)
 
@@ -21,11 +19,11 @@ The plan model today is strictly **per-collector**:
   plan-management API** — no way to create/validate/activate a revision, and no
   concept of applying one change across many collectors.
 - The repository deliberately accepts only a revision carrying an internal
-  proof produced after Ed25519 verification. The runtime has no control-plane
-  signer or trusted-key registry yet. An HTTP handler cannot safely construct
-  this proof, accept an arbitrary client public key, or store a private key in
-  `collector_plan_revisions`; signer/key lifecycle is therefore Phase 0, not an
-  implementation detail of the create endpoint.
+  proof produced after Ed25519 verification. Phase 0 now supplies the runtime
+  signer and trust-key registry; the remaining gap is the operator-facing API
+  that validates input and invokes that signer. An HTTP handler must never
+  construct the proof itself, accept a client public key as a trust root, or
+  place private key material in `collector_plan_revisions`.
 - `collector_agents` selection axes that already exist: `tenant_id`,
   `module_key`, `agent_type`, `status`, `config_version`, capabilities. There is
   **no** tags/labels column and no fleet/group entity.
@@ -47,6 +45,41 @@ session having to guess the contract.
   bypasses them.
 - **Idempotent, resumable, killable.** A rollout is a long-running controlled
   process: it must survive restarts, never double-apply, and stop instantly.
+
+### 2.1 Phase 0 signer/trust contract (implemented)
+
+- Scope is platform-global, while every signed plan payload still binds
+  `tenant_id + collector_id + config_version + spec_hash + validity window`.
+  A key therefore cannot move a signed plan between tenants or collectors.
+- Deployment config is an atomic pair:
+  `collector_plan_signing.key_id` and `private_key_file` (or
+  `WATCHDOG_COLLECTOR_PLAN_SIGNING_KEY_ID` and
+  `WATCHDOG_COLLECTOR_PLAN_SIGNING_PRIVATE_KEY_FILE`). Empty disables plan
+  creation without breaking existing plan delivery. The Ed25519 private key
+  file must be regular and owner-only; only the signing capability is exposed
+  through `CollectorPlanSigner`.
+- Migration `052_collector_plan_trust_keys.sql` adds two platform tables:
+  `collector_plan_signing_keys` is the immutable public-key/lifecycle ledger
+  (`active | retiring | revoked`, one active key, public material never reused),
+  and singleton `collector_plan_trust_state` stores canonical bundle JSON,
+  checksum and monotonically increasing generation. No private key, secret
+  reference, tenant credential or plan payload is stored in either table.
+- Startup atomically activates the configured public key. A new key retires the
+  previous active key through `MAX(expires_at)` of its still-startable
+  `validated|active` plans; with no such plan it is revoked immediately. A
+  background `PeriodicMaintenance` task compacts expired retiring keys to
+  revoked. Rolling back a deployment to a used/retiring/revoked key ID fails
+  closed; rollback requires a fresh key ID.
+- Authenticated collectors fetch
+  `GET /api/v1/collectors/{collector_id}/trust-bundle`. The exact canonical JSON
+  is returned with `ETag`, `X-Watchdog-Trust-Generation` and checksum; identical
+  `If-None-Match` returns 304. Collector `flowplan.TrustStore` atomically accepts
+  a higher generation, permits identical replay, rejects rollback/conflict and
+  refuses a retiring key at `trust_until` even if a stale bundle remains cached.
+- Key changes do not rewrite historical plans. New signing checks the key is
+  still active and its public material still matches MySQL; a concurrent rotate
+  or revoke therefore fences an already-running signer before it can create a
+  new revision.
 
 ## 3. Data model (new)
 
@@ -183,7 +216,7 @@ tenant; preview/get require `view`. Reuses the existing permission model.
 
 ## 8. Phasing (independently shippable slices)
 
-0. **Control-plane signer and trust-key lifecycle** — resolve an active signing
+0. **[done] Control-plane signer and trust-key lifecycle** — resolve an active signing
    key by stable key ID from a secret reference, keep public keys in
    active/retiring/revoked states, publish a monotonically-versioned agent trust
    bundle with overlap at least as long as the longest still-startable plan, and
@@ -214,6 +247,6 @@ tenant; preview/get require `view`. Reuses the existing permission model.
   offline) — is "reverted where reachable, flagged where not" acceptable?
 
 Phase 0 is not an open product decision: it is required by the already-enforced
-repository trust boundary. A deployment may choose the secret backend (file,
-KMS, Vault), but the signer/key-state/bundle contract and fail-closed behavior
-must exist before any operator create/clone endpoint is enabled.
+repository trust boundary and is now the prerequisite consumed by Phase 1. The
+implemented secret backend is an owner-only file; a future KMS/Vault adapter may
+replace only that loader without changing key state, bundle or signer contracts.

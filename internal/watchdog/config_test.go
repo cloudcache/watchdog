@@ -252,6 +252,35 @@ func TestCollectorPrincipalProviderConfigRejectsUnsafeTransport(t *testing.T) {
 	}
 }
 
+func TestCollectorPlanSigningConfigIsOptionalAndAtomic(t *testing.T) {
+	cfg := defaultBackendConfig()
+	if err := validateWatchdogConfig(cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, signing := range []CollectorPlanSigningConfig{
+		{KeyID: "plan-key-1"},
+		{PrivateKeyFile: "/run/secrets/plan-key"},
+		{KeyID: "bad key", PrivateKeyFile: "/run/secrets/plan-key"},
+	} {
+		cfg.CollectorPlanSigning = signing
+		if err := validateWatchdogConfig(cfg, false); err == nil {
+			t.Fatalf("invalid signing config was accepted: %#v", signing)
+		}
+	}
+}
+
+func TestLoadWatchdogConfigCollectorPlanSigningEnvironment(t *testing.T) {
+	t.Setenv("WATCHDOG_COLLECTOR_PLAN_SIGNING_KEY_ID", " plan-key-2026 ")
+	t.Setenv("WATCHDOG_COLLECTOR_PLAN_SIGNING_PRIVATE_KEY_FILE", " /run/secrets/plan-key ")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CollectorPlanSigning.KeyID != "plan-key-2026" || cfg.CollectorPlanSigning.PrivateKeyFile != "/run/secrets/plan-key" {
+		t.Fatalf("collector plan signing config = %#v", cfg.CollectorPlanSigning)
+	}
+}
+
 func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	t.Setenv("WATCHDOG_MYSQL_DSN", "dsn")
 	t.Setenv("WATCHDOG_MYSQL_MAX_OPEN_CONNS", "50")

@@ -66,6 +66,7 @@ type BackendConfig struct {
 	QueryGateway    QueryGatewayConfig    `yaml:"query_gateway"`
 
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
+	CollectorPlanSigning       CollectorPlanSigningConfig             `yaml:"collector_plan_signing"`
 
 	AggregateGraph AggregateGraphConfig `yaml:"aggregate_graph"`
 	SNMP           SNMPConfig           `yaml:"snmp"`
@@ -135,6 +136,13 @@ type RemoteCollectorPrincipalProviderConfig struct {
 	TLSCertFile           string        `yaml:"tls_cert_file"`
 	TLSKeyFile            string        `yaml:"tls_key_file"`
 	TLSServerName         string        `yaml:"tls_server_name"`
+}
+
+// CollectorPlanSigningConfig identifies the platform-global signing key. The
+// private key is loaded from an owner-only file and never stored in MySQL.
+type CollectorPlanSigningConfig struct {
+	KeyID          string `yaml:"key_id"`
+	PrivateKeyFile string `yaml:"private_key_file"`
 }
 
 type MySQLConfig struct {
@@ -458,6 +466,8 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.CollectorPrincipalProvider.TLSCertFile = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_CERT_FILE", cfg.CollectorPrincipalProvider.TLSCertFile)
 	cfg.CollectorPrincipalProvider.TLSKeyFile = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_KEY_FILE", cfg.CollectorPrincipalProvider.TLSKeyFile)
 	cfg.CollectorPrincipalProvider.TLSServerName = getEnv("WATCHDOG_COLLECTOR_PRINCIPAL_PROVIDER_TLS_SERVER_NAME", cfg.CollectorPrincipalProvider.TLSServerName)
+	cfg.CollectorPlanSigning.KeyID = getEnv("WATCHDOG_COLLECTOR_PLAN_SIGNING_KEY_ID", cfg.CollectorPlanSigning.KeyID)
+	cfg.CollectorPlanSigning.PrivateKeyFile = getEnv("WATCHDOG_COLLECTOR_PLAN_SIGNING_PRIVATE_KEY_FILE", cfg.CollectorPlanSigning.PrivateKeyFile)
 	cfg.Export.Dir = getEnv("WATCHDOG_EXPORT_DIR", cfg.Export.Dir)
 	if cfg.Export.WorkerInterval, err = getEnvDuration("WATCHDOG_EXPORT_WORKER_INTERVAL", cfg.Export.WorkerInterval); err != nil {
 		return err
@@ -659,6 +669,8 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.CollectorPrincipalProvider.TLSCertFile = cleanOptionalConfigPath(cfg.CollectorPrincipalProvider.TLSCertFile)
 	cfg.CollectorPrincipalProvider.TLSKeyFile = cleanOptionalConfigPath(cfg.CollectorPrincipalProvider.TLSKeyFile)
 	cfg.CollectorPrincipalProvider.TLSServerName = strings.TrimSpace(cfg.CollectorPrincipalProvider.TLSServerName)
+	cfg.CollectorPlanSigning.KeyID = strings.TrimSpace(cfg.CollectorPlanSigning.KeyID)
+	cfg.CollectorPlanSigning.PrivateKeyFile = cleanOptionalConfigPath(cfg.CollectorPlanSigning.PrivateKeyFile)
 	cfg.SNMP.MIBDirs = normalizeStringPaths(cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = strings.TrimSpace(cfg.SNMP.MIBLoad)
 	cfg.SNMPTrapAgent.APIURL = normalizeBaseURL(cfg.SNMPTrapAgent.APIURL)
@@ -746,6 +758,12 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 		if err := validateRemoteCollectorPrincipalProviderConfig(cfg.CollectorPrincipalProvider); err != nil {
 			return err
 		}
+	}
+	if (cfg.CollectorPlanSigning.KeyID == "") != (cfg.CollectorPlanSigning.PrivateKeyFile == "") {
+		return errors.New("collector_plan_signing.key_id and private_key_file must be configured together")
+	}
+	if cfg.CollectorPlanSigning.KeyID != "" && !validCollectorPlanSigningKeyID(cfg.CollectorPlanSigning.KeyID) {
+		return errors.New("collector_plan_signing.key_id is invalid")
 	}
 	if cfg.Export.Dir == "" || cfg.Export.WorkerInterval <= 0 || cfg.Export.WorkerBatch <= 0 {
 		return errors.New("export dir, worker_interval, and worker_batch must be configured with positive worker values")
