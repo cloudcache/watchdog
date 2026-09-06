@@ -271,7 +271,7 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	snapshot, err = publisher.RetireAddressDimension(ctx, tenantID, userID, AddressDimensionRetireRequest{
 		SnapshotID: snapshot.ID, ExpectedRowVersion: snapshot.RowVersion, Reason: "superseded",
 	})
-	if err != nil || snapshot.Status != AddressDimensionStatusRetired {
+	if err != nil || snapshot.Status != AddressDimensionStatusRetired || snapshot.RetentionUntil == nil {
 		t.Fatalf("retire old snapshot = %#v, %v", snapshot, err)
 	}
 	rollbackAt := effective2.Add(time.Hour)
@@ -284,12 +284,16 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	if rollback.Reason != AddressDimensionActivationRollback || rollback.RollbackOfSnapshotID != snapshot2.ID {
 		t.Fatalf("rollback activation = %#v", rollback)
 	}
+	snapshot, err = publisher.GetAddressDimensionSnapshot(ctx, tenantID, snapshot.ID)
+	if err != nil || snapshot.RetentionUntil != nil || snapshot.Status != AddressDimensionStatusActive {
+		t.Fatalf("rollback must cancel object retention: %#v, %v", snapshot, err)
+	}
 	selected, err = publisher.GetAddressDimensionActivationAt(ctx, tenantID, rollbackAt)
 	if err != nil || selected.SnapshotID != snapshot.ID {
 		t.Fatalf("rollback selection = %#v, %v", selected, err)
 	}
 	if _, err := publisher.RetireAddressDimension(ctx, tenantID, userID, AddressDimensionRetireRequest{
-		SnapshotID: snapshot.ID, ExpectedRowVersion: snapshot.RowVersion + 1, Reason: "must replace latest first",
+		SnapshotID: snapshot.ID, ExpectedRowVersion: snapshot.RowVersion, Reason: "must replace latest first",
 	}); !errors.Is(err, ErrAddressDimensionInvalidTransition) {
 		t.Fatalf("retire latest activation error = %v", err)
 	}

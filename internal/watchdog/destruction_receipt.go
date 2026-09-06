@@ -2,6 +2,7 @@ package watchdog
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -27,6 +28,15 @@ type DestructionReceiptRecorder interface {
 }
 
 func (s *MySQLStore) RecordDestructionReceipt(ctx context.Context, receipt DestructionReceipt) error {
+	return recordDestructionReceipt(ctx, s.db, receipt)
+}
+
+type destructionReceiptSQL interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func recordDestructionReceipt(ctx context.Context, database destructionReceiptSQL, receipt DestructionReceipt) error {
 	detail := map[string]any{
 		"job_id":       string(receipt.JobID),
 		"destroyed_at": receipt.DestroyedAt.UTC().Format(time.RFC3339Nano),
@@ -42,7 +52,7 @@ func (s *MySQLStore) RecordDestructionReceipt(ctx context.Context, receipt Destr
 	actorID := receipt.ActorID
 	if actorID != "" {
 		var exists int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ?`, actorID).Scan(&exists); err != nil {
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ?`, actorID).Scan(&exists); err != nil {
 			return err
 		}
 		if exists == 0 {
@@ -56,7 +66,7 @@ func (s *MySQLStore) RecordDestructionReceipt(ctx context.Context, receipt Destr
 	}
 	// Idempotent by construction: the id is deterministic from the job, so a
 	// retried job's second receipt collapses onto the first.
-	_, err = s.db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, tenant_id, actor_id, action, resource_type, resource_id, detail_json, created_at)
 		VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?)
 		ON DUPLICATE KEY UPDATE id = id

@@ -57,6 +57,7 @@ type APIV1RouterConfig struct {
 	AddressDimensions      AddressDimensionPublisher
 	DimensionLifecycle     AddressDimensionLifecycle
 	DimensionConsumers     AddressDimensionConsumerStatusReader
+	DimensionGC            AddressDimensionGCRepository
 	DimensionKeys          AddressDimensionPublicKeyResolver
 	Tenants                TenantRepository
 	Readiness              func(context.Context) error
@@ -246,6 +247,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.AddressDimensions != nil && cfg.DimensionLifecycle != nil && cfg.DimensionConsumers != nil {
 		registerAddressDimensionConsumerRoutes(mux, auth, cfg.AddressDimensions, cfg.DimensionLifecycle, cfg.DimensionConsumers)
+	}
+	if cfg.DimensionGC != nil {
+		registerAddressDimensionGCRoutes(mux, auth, cfg.DimensionGC)
 	}
 	return RequestIDMiddleware(withJSONAPINotFound(mux))
 }

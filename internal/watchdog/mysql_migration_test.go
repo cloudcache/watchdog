@@ -95,14 +95,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "048" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "049" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "048" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "049" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -297,7 +297,7 @@ func TestEmbeddedMySQLMigrationsAreOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 48 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "048" {
+	if len(migrations) != 49 || migrations[0].Version != "001" || migrations[len(migrations)-1].Version != "049" {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, migration := range migrations {
@@ -336,6 +336,23 @@ func TestDimensionConsumerStatusIndexMigrationOwnsCompleteContract(t *testing.T)
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Fatalf("dimension consumer status index migration missing %q", required)
+		}
+	}
+}
+
+func TestDimensionObjectGCMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "049_dimension_object_gc.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"idx_dimension_snapshot_gc", "object_deleted_at", "retention_until",
+		"chk_dimension_snapshot_object_gc", "status = ''retired''",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("dimension object GC migration missing %q", required)
 		}
 	}
 }

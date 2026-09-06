@@ -56,7 +56,7 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.WorkerConcurrency != defaultExportWorkerConcurrency || cfg.Export.Metric != MetricSNMPIfInBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
-	if cfg.AddressLibrary.Dir != defaultAddressLibraryDir || cfg.AddressLibrary.MaxUploadBytes != DefaultAddressArtifactMaxBytes || cfg.AddressLibrary.ImportBatchSize != defaultAddressLibraryBatchSize || cfg.AddressLibrary.WorkerConcurrency != defaultAddressLibraryWorkers {
+	if cfg.AddressLibrary.Dir != defaultAddressLibraryDir || cfg.AddressLibrary.MaxUploadBytes != DefaultAddressArtifactMaxBytes || cfg.AddressLibrary.ImportBatchSize != defaultAddressLibraryBatchSize || cfg.AddressLibrary.WorkerConcurrency != defaultAddressLibraryWorkers || cfg.AddressLibrary.ObjectRetention != defaultAddressObjectRetention || cfg.AddressLibrary.ObjectGCInterval != defaultAddressObjectGCInterval || cfg.AddressLibrary.ObjectGCBatch != defaultAddressObjectGCBatch {
 		t.Fatalf("address library config = %#v", cfg.AddressLibrary)
 	}
 	if cfg.SNMPCollector.Interval != defaultSNMPCollectorInterval {
@@ -267,6 +267,9 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", "1073741824")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_IMPORT_BATCH_SIZE", "2500")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_WORKER_CONCURRENCY", "3")
+	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_OBJECT_RETENTION", "168h")
+	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_OBJECT_GC_INTERVAL", "2m")
+	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_OBJECT_GC_BATCH", "75")
 	t.Setenv("WATCHDOG_SNMP_COLLECTOR_INTERVAL", "20s")
 	t.Setenv("WATCHDOG_SNMP_MIB_DIRS", "/opt/librenms/mibs,/opt/vendor-mibs")
 	t.Setenv("WATCHDOG_SNMP_MIBS", "ALL")
@@ -293,7 +296,7 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	if cfg.Export.Dir != "/var/lib/watchdog/exports" || cfg.Export.WorkerInterval != 15*time.Second || cfg.Export.WorkerBatch != 25 || cfg.Export.WorkerConcurrency != 4 || cfg.Export.Metric != MetricSNMPIfOutBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
-	if cfg.AddressLibrary.Dir != "/var/lib/watchdog/address-artifacts" || cfg.AddressLibrary.MaxUploadBytes != 1<<30 || cfg.AddressLibrary.ImportBatchSize != 2500 || cfg.AddressLibrary.WorkerConcurrency != 3 {
+	if cfg.AddressLibrary.Dir != "/var/lib/watchdog/address-artifacts" || cfg.AddressLibrary.MaxUploadBytes != 1<<30 || cfg.AddressLibrary.ImportBatchSize != 2500 || cfg.AddressLibrary.WorkerConcurrency != 3 || cfg.AddressLibrary.ObjectRetention != 168*time.Hour || cfg.AddressLibrary.ObjectGCInterval != 2*time.Minute || cfg.AddressLibrary.ObjectGCBatch != 75 {
 		t.Fatalf("address library config = %#v", cfg.AddressLibrary)
 	}
 	if cfg.SNMPCollector.Interval != 20*time.Second {

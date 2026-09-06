@@ -704,6 +704,8 @@ CREATE TABLE dimension_snapshot_acks (
 
 consumer 状态读取严格区分“目标 snapshot 是否可查”和“worker 最新安装到哪个 version”。前者只看该 worker 对目标 snapshot 的 `installed` ACK；后者从其最新 installed ACK 计算 `current/behind/ahead/uninstalled`，因此 worker 同时保留历史版本并安装新版本不会把历史查询误报为不可用。当前没有 expected-worker registry，汇总的 `scope` 固定为 `observed_only`：未出现过 ACK 返回 `unknown`，全部已观察 worker 对目标版本 installed 才返回 `ready_observed`，部分为 `partial_observed`，无人 ready 为 `unavailable_observed`。这些值都不是全局集群健康承诺；只有 Flow index-builder 的真实 ACK 能改变 readiness，平台不探测 CH 代替 ACK。
 
+publication 对象回收是控制面短事务，不扫描或修改 CH。retire 时写入 `retention_until = max(retired_at + address_library.object_retention, snapshot references.retain_until)`；rollback 会取消旧回收期限。周期 producer 按 `object_gc_interval/object_gc_batch` 只把安全候选写入 `operation_jobs`，不自建 lease/retry 状态机。候选要求 snapshot 已退役且期限已到、不是查询时刻的当前 activation、没有未来 activation、没有未到期事实 reference，并且不存在任一 observed worker 仍将它作为最新 installed version。job identity 与 versioned payload 同时绑定 snapshot、object ref/checksum 和 retention generation；暂时性文件/DB 错误复用公共 capped backoff 持续重试，管理员延长期限会形成新 generation，旧 payload 因 retention 不匹配终态失败。GC handler 在 tenant→snapshot 锁内重新验证全部条件，随后幂等删除对象，并在同一 MySQL 事务内写 `object_deleted_at` 与 job-ID 唯一的 `dimension_object.destroyed` receipt；短提交段有 30 秒硬上限，但不因已到达的 cancel/lease takeover 留下半完成 marker。文件删除后事务失败可重试，receipt 失败会连同 marker 一起回滚。retention 到期后新 rollback/ACK/reference fail closed，使扫描与执行之间不会重新获得引用；旧 snapshot 的空 retention 不自动回填，须由管理员用 `schedule-gc` 明确补设或延长，避免升级后意外删除历史对象。
+
 地址统计有两种不同口径：
 
 - `primary_prefix`：每个 endpoint 只取最长前缀，一个 address role 内互斥且可加总；未命中进入 `_unassigned`，保证守恒；
@@ -739,6 +741,8 @@ POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actio
 POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/retire    (If-Match)
 GET                      /api/v1/dimensions/address/status?at=RFC3339
 GET                      /api/v1/dimensions/address/versions/{snapshot_id}/consumers?q=&state=&drift=&cursor=&limit=
+GET                      /api/v1/dimensions/address/gc/candidates?cursor=&limit=
+POST                     /api/v1/dimensions/address/versions/{snapshot_id}/actions/schedule-gc (If-Match)
 ```
 
 ### 8.3 可视化模型

@@ -18,6 +18,9 @@ address_library:
   max_upload_bytes: 2147483648
   import_batch_size: 1000
   worker_concurrency: 1
+  object_retention: 720h
+  object_gc_interval: 5m
+  object_gc_batch: 100
 
 snmp_collector:
   tenant_id: "tenant_dev"

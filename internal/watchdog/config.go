@@ -50,6 +50,9 @@ const (
 	defaultAddressLibraryDir           = "address-artifacts"
 	defaultAddressLibraryBatchSize     = 1_000
 	defaultAddressLibraryWorkers       = 1
+	defaultAddressObjectRetention      = 30 * 24 * time.Hour
+	defaultAddressObjectGCInterval     = 5 * time.Minute
+	defaultAddressObjectGCBatch        = 100
 	defaultQueryVMMaxConcurrent        = 8
 	defaultQueryCHMaxConcurrent        = 16
 )
@@ -173,6 +176,9 @@ type AddressLibraryConfig struct {
 	MaxUploadBytes    int64                              `yaml:"max_upload_bytes"`
 	ImportBatchSize   int                                `yaml:"import_batch_size"`
 	WorkerConcurrency int                                `yaml:"worker_concurrency"`
+	ObjectRetention   time.Duration                      `yaml:"object_retention"`
+	ObjectGCInterval  time.Duration                      `yaml:"object_gc_interval"`
+	ObjectGCBatch     int                                `yaml:"object_gc_batch"`
 	TrustedKeys       []AddressDimensionTrustedKeyConfig `yaml:"trusted_keys"`
 }
 
@@ -282,6 +288,8 @@ func defaultBackendConfig() BackendConfig {
 		AddressLibrary: AddressLibraryConfig{
 			Dir: defaultAddressLibraryDir, MaxUploadBytes: DefaultAddressArtifactMaxBytes,
 			ImportBatchSize: defaultAddressLibraryBatchSize, WorkerConcurrency: defaultAddressLibraryWorkers,
+			ObjectRetention: defaultAddressObjectRetention, ObjectGCInterval: defaultAddressObjectGCInterval,
+			ObjectGCBatch: defaultAddressObjectGCBatch,
 		},
 		SNMPCollector: SNMPCollectorConfig{
 			TenantID:          "tenant_dev",
@@ -495,6 +503,15 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	if cfg.AddressLibrary.WorkerConcurrency, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_WORKER_CONCURRENCY", cfg.AddressLibrary.WorkerConcurrency, 1); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.ObjectRetention, err = getEnvDuration("WATCHDOG_ADDRESS_LIBRARY_OBJECT_RETENTION", cfg.AddressLibrary.ObjectRetention); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.ObjectGCInterval, err = getEnvDuration("WATCHDOG_ADDRESS_LIBRARY_OBJECT_GC_INTERVAL", cfg.AddressLibrary.ObjectGCInterval); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.ObjectGCBatch, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_OBJECT_GC_BATCH", cfg.AddressLibrary.ObjectGCBatch, 1); err != nil {
 		return err
 	}
 	if tid, ok := os.LookupEnv("WATCHDOG_SNMP_COLLECTOR_TENANT_ID"); ok {
@@ -775,7 +792,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.AddressLibrary.Dir == "" || cfg.AddressLibrary.MaxUploadBytes <= 0 || cfg.AddressLibrary.MaxUploadBytes > 16<<30 ||
 		cfg.AddressLibrary.ImportBatchSize <= 0 || cfg.AddressLibrary.ImportBatchSize > maxAddressImportBatch ||
-		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 {
+		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 ||
+		cfg.AddressLibrary.ObjectRetention <= 0 || cfg.AddressLibrary.ObjectGCInterval <= 0 ||
+		cfg.AddressLibrary.ObjectGCBatch <= 0 || cfg.AddressLibrary.ObjectGCBatch > 1_000 {
 		return errors.New("address_library dir, upload limit, batch size, and worker concurrency are invalid")
 	}
 	trustedKeys := make(map[string]struct{}, len(cfg.AddressLibrary.TrustedKeys))

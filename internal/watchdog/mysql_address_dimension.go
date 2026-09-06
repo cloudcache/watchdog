@@ -17,15 +17,51 @@ import (
 )
 
 type MySQLAddressDimensionPublisher struct {
-	store   *MySQLStore
-	objects DimensionObjectStore
+	store           *MySQLStore
+	objects         DimensionObjectStore
+	objectRetention time.Duration
+	now             func() time.Time
 }
 
-func NewMySQLAddressDimensionPublisher(store *MySQLStore, objects DimensionObjectStore) (*MySQLAddressDimensionPublisher, error) {
+type AddressDimensionPublisherOption func(*MySQLAddressDimensionPublisher) error
+
+func WithAddressDimensionObjectRetention(retention time.Duration) AddressDimensionPublisherOption {
+	return func(publisher *MySQLAddressDimensionPublisher) error {
+		if retention <= 0 {
+			return errors.New("address dimension object retention must be positive")
+		}
+		publisher.objectRetention = retention
+		return nil
+	}
+}
+
+func withAddressDimensionClock(now func() time.Time) AddressDimensionPublisherOption {
+	return func(publisher *MySQLAddressDimensionPublisher) error {
+		if now == nil {
+			return errors.New("address dimension clock is required")
+		}
+		publisher.now = now
+		return nil
+	}
+}
+
+func NewMySQLAddressDimensionPublisher(store *MySQLStore, objects DimensionObjectStore, options ...AddressDimensionPublisherOption) (*MySQLAddressDimensionPublisher, error) {
 	if store == nil || store.db == nil || objects == nil {
 		return nil, errors.New("MySQL store and dimension object store are required")
 	}
-	return &MySQLAddressDimensionPublisher{store: store, objects: objects}, nil
+	publisher := &MySQLAddressDimensionPublisher{
+		store: store, objects: objects, objectRetention: defaultAddressObjectRetention,
+		now: func() time.Time { return time.Now().UTC() },
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("address dimension publisher option is required")
+		}
+		if err := option(publisher); err != nil {
+			return nil, err
+		}
+	}
+	return publisher, nil
 }
 
 func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Context, tenantID ID, effectiveFrom time.Time) (AddressDimensionPreview, error) {

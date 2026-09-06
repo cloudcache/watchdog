@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   KEY `idx_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`status`,`effective_from`),
   KEY `idx_dimension_snapshot_approval` (`tenant_id`,`module_key`,`dimension_key`,`approval_state`,`version`),
   KEY `idx_dimension_snapshot_retention` (`status`,`retention_until`,`object_deleted_at`),
+  KEY `idx_dimension_snapshot_gc` (`tenant_id`,`module_key`,`dimension_key`,`status`,`object_deleted_at`,`retention_until`,`id`),
   KEY `fk_dimension_snapshot_creator` (`created_by`),
   KEY `fk_dimension_snapshot_retired_by` (`retired_by`),
   KEY `fk_dimension_snapshot_decider` (`decided_by`),
@@ -351,6 +352,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   CONSTRAINT `dimension_snapshots_chk_3` CHECK ((`bundle_schema_version` > 0)),
   CONSTRAINT `dimension_snapshots_chk_approval` CHECK ((`approval_state` in ('pending','approved','rejected'))),
   CONSTRAINT `dimension_snapshots_chk_signature` CHECK (((`signature` is null) and (`signature_algorithm` is null) and (`signing_key_id` is null) and (`signed_at` is null)) or ((`signature` is not null) and (`signature_algorithm` is not null) and (`signing_key_id` is not null) and (`signed_at` is not null))),
+  CONSTRAINT `chk_dimension_snapshot_object_gc` CHECK (((`object_deleted_at` is null) or ((`status` = _utf8mb4'retired') and (`retention_until` is not null) and (`object_deleted_at` >= `retention_until`)))),
   CONSTRAINT `chk_dimension_snapshot_source_manifest` CHECK (((`source_manifest_version` in (0,1)) and (json_type(`source_manifest`) = _utf8mb4'ARRAY') and ((`source_manifest_version` <> 0) or (json_length(`source_manifest`) = 0))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

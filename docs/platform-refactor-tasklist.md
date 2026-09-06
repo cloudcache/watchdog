@@ -59,10 +59,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `048`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引。001–048 空库、直接 replay、旧行 backfill 及 fresh-install parity 已通过真实 MySQL 门禁。
+- 当前迁移头为 `049`：`047_dimension_source_manifest.sql` 固定 publication 输入 generation；`048_dimension_consumer_status_index.sql` 为 observed-consumer readiness/drift 读取增加有界索引；`049_dimension_object_gc.sql` 固定安全 GC 扫描索引和删除 marker 约束。001–049 空库、直接 replay、旧行兼容及 fresh-install parity 已通过真实 MySQL 门禁。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占。下一个持久化工作从 `049` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占。下一个持久化工作从 `050` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -77,7 +77,8 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `045` | QueryGateway policy | tenant dataset enablement、raw/supplier/customer 双门禁、并发/范围/行数/超时预算；provider endpoint/凭据/全局启停留在部署配置 | schema/fresh-init/真实 MySQL 门禁 `13669321`；backend `00448c68` |
 | `046` | Export execution | immutable query/version/authorization snapshot、operation job 关联、CSV/Parquet format contract、artifact schema/content/row count/retention | schema/fresh-init/旧行 backfill/真实 MySQL replay 已提交 `af631b7c`；执行面 `942e5086` |
 | `047` | Address publication source manifest | snapshot 固定 active import IDs/checksum/slot row version/v4-v6 row count，签名覆盖完整来源血缘 | 已提交 `04668394`；真实 MySQL 门禁完成 |
-| `048` | Address consumer status index | observed worker 的目标版本 ACK 与最新 installed version 分离查询；tenant/worker/attempt/snapshot 有界索引 | 本提交包含 index/backend/API/init/docs/tests；真实 MySQL 门禁完成 |
+| `048` | Address consumer status index | observed worker 的目标版本 ACK 与最新 installed version 分离查询；tenant/worker/attempt/snapshot 有界索引 | 已提交 `03bd71fd`；真实 MySQL 门禁完成 |
+| `049` | Address dimension object GC | tenant 有界候选索引；删除 marker 只能出现在退役且 retention 到期的 snapshot | 本提交包含 migration/backend/API/runtime/init/docs/tests；真实 MySQL 重放与 parity 完成 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 
@@ -108,7 +109,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 - [ ] **PLAT-04F2 system job 管理 API**：只剩 system list/cancel HTTP 面，显式依赖 platform-admin/system-role。当前只有 tenant-admin，PB superuser 又被正确拒绝进入平台 API；在该角色建立前禁止用任一租户管理员冒充全局管理员。此依赖单独登记，不再让已经完成的 F1 长期显示未完成。
 - [ ] **PLAT-04E hub metrics scrape 契约**：平台已选择并实现同一 hub listener 的 machine-auth `/metrics`，不另起第三个 HTTP server；启动时加载 token file（缺失/过短失败关闭）、constant-time Bearer 校验、direct-peer CIDR ACL（拒绝信任转发头）、GET/HEAD 限制、确定性 provider registry/重复注册拒绝、PocketBase SPA 之前的生产路由挂载均已落地。TLS 继承 hub 或其可信反代，配置/环境变量及 VM/vmagent 接入方式已写入安装文档；无持久状态，明确不占 migration 044。单元覆盖 token/CIDR/IPv4/v6/HEAD/method/route precedence/provider ordering；`go test ./internal/watchdog ./internal/hub` 通过。**余项**：使用实际 hub TLS/反代配置让当前 VictoriaMetrics 主动 pull 并验证重启/token rotation/ACL 拒绝；完成该部署门禁后才能勾整项。
 - [x] **PLAT-04A1 immutable dimension 仓储/作业内核**：migration 040/042/043 已完成 snapshot、preview→异步 publish、pending/approve/signature、append-only activation/rollback、ACK、事实引用窗口及 tenant lifecycle；仓储实现 Ed25519 verification proof、ETag、激活/退休约束、ACK checksum、引用单调合并和逐动作审计，真实 MySQL 两版本 E2E 已通过（`3a7db545`、`d89efae9`、`c53b90f5`、`8b86d829`）。
-- [ ] **PLAT-04A2 publication 控制面闭环**：只做平台职责；已拆成 A2a–A2d 四个可独立提交/回归的切片，禁止再次把 overlay、HTTP、consumer status 和 GC 混成一个长期不闭环的大项。消费侧不要求 flow-worker 逐 flow 装载 Go LPM；发布物供 Flow 侧生成/切换版本化 CH 字典或预配置地址段异步索引，ACK 表示该版本索引可查询。
+- [x] **PLAT-04A2 publication 控制面闭环**：只做平台职责；已拆成 A2a–A2d 四个可独立提交/回归的切片，禁止再次把 overlay、HTTP、consumer status 和 GC 混成一个长期不闭环的大项。消费侧不要求 flow-worker 逐 flow 装载 Go LPM；发布物供 Flow 侧生成/切换版本化 CH 字典或预配置地址段异步索引，ACK 表示该版本索引可查询。
   - [x] **PLAT-04A2a 人工生命周期 API 与信任链**（`a36983e2`）。
     - [x] **设计**：冻结 `POST .../actions/{approve,reject,activate,rollback,retire}`、强制 quoted `If-Match`、`operate` 权限、标准 base64 签名和 tenant+key-id 信任域；平台只装载 Ed25519 公钥，私钥永不进入平台。
     - [x] **编码**：按租户从 SubjectPublicKeyInfo PEM 启动加载只读 trusted-key resolver；API 复用 migration 042/043 的唯一事务状态机和审计，不新增表/空 migration；未知 key/坏签名/非法状态/版本冲突分别稳定映射 400/409/412。
@@ -133,7 +134,13 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **变更设计/测试**：migration 048 只补 `(tenant_id,worker_id,attempted_at,snapshot_id)` 读取索引，不新增 worker registry/状态机；直接 replay、001–048 与 fresh-install parity 通过。
     - [x] **回归测试**：`go test ./internal/watchdog`、目标 race、vet/build 与真实 MySQL gated 测试通过。
     - [x] **已提交门禁**：代码、migration、init、设计与测试由本提交原子交付；提交前核对不得夹带 Flow 数据面或既有工作区文件。
-  - [ ] **PLAT-04A2d 安全 object GC**：按 activation、retention、事实 reference 和 consumer ACK 计算可删候选，经 operation job 执行“对象幂等删除→DB 标记→destruction audit”；补 crash/retry、并发引用和回滚窗口测试。
+  - [x] **PLAT-04A2d 安全 object GC**：按 activation、retention、事实 reference 和 consumer ACK 计算可删候选，经 operation job 执行“对象幂等删除→DB 标记→destruction audit”；补 crash/retry、并发引用和回滚窗口测试。
+    - [x] **设计**：候选必须同时满足 retired、显式 `retention_until <= now`、非 event-time 当前版本、无未来 activation、无未到期事实 reference、无 observed worker 仍以该 snapshot 为最新 installed。ACK 是“最新已安装版本”保护，不要求永久删除历史 ACK；没有 expected-worker registry 时不冒充全集群确认。
+    - [x] **编码**：retire 自动写 `max(retired_at + object_retention, latest reference retain_until)`；rollback 清除旧回收计划，retention 到期后禁止新 rollback/ACK/reference；`schedule-gc` 只允许 retired snapshot 以 `If-Match` 补设或延长期限。周期 producer 只扫描/幂等 enqueue，job identity/payload 固定 snapshot+retention generation，实际删除复用唯一 `operation_jobs` handler，严格执行“幂等删对象→CAS DB marker→幂等 destruction receipt”；暂时性对象存储/DB 错误持续按公共 backoff 重试，人工延期产生新 generation，坏/旧 payload 终态失败。
+    - [x] **并发/失败语义**：GC、activation/rollback、ACK/reference 统一先锁 tenant 再锁 snapshot；对象删除后的取消/lease takeover 使用 30s 上限的短不可取消提交段，旧 attempt 与新 owner 的重复删除安全。`object_deleted_at` 与 destruction receipt 在同一 MySQL 事务提交，故 receipt 失败不会留下“已标记但无证明”；文件已删而事务未提交由同 payload 重试收敛；payload object ref/checksum 不匹配 fail closed。
+    - [x] **管理/API/配置**：`GET /dimensions/address/gc/candidates` 提供 tenant-scoped keyset 预览；`POST .../actions/schedule-gc` 强制 operate+ETag；`address_library.object_retention/object_gc_interval/object_gc_batch` 及 WATCHDOG 环境变量控制保留期和扫描预算。
+    - [x] **迁移/测试**：migration 049 前向增加 GC 候选索引和 object marker CHECK，不回填/提前清理旧 snapshot；真实 MySQL 覆盖 activation/reference/latest-installed 三重阻断、ACK 前移后放行、crash/retry、审计唯一、过期回滚拒绝和迟到 reference 锁竞争；001–049 重放、049 replay、fresh-init parity 通过。
+    - [x] **已提交门禁**：代码、migration、init、配置、设计和测试由本提交原子交付，不夹带 Flow 数据面及既有未提交删除预览/maintenance 文件。
 - [x] **PLAT-04B operation job registry/scheduler**：受控 handler registry、每类并发 worker、typed payload、attempt-scoped progress、周期 reaper 和 tenant watermark 已分别提交（`18fde3a3`、`43b6675a`、`f0fb1444`、`75a258a6`、migration 028）。migration 044 与 backend 再完成 tenant/system cron trigger、服务端 CRUD/filter/ETag/audit、持久 wrap-around 扫描游标、单 schedule `max_inflight` + 注册 job type concurrency 双层背压、稳定 `schedule:<id>:<due>` 幂等键、未知 handler 延迟而不丢 trigger、坏 cron/timezone fail-closed，以及 runtime 与原 worker registry 的同源接线（`178e0ced`、`d2cf66f4`）。调度器只创建普通 `operation_jobs`，没有复制 lease/retry 状态机；迟到 cron 合并为一次并从当前时刻计算下一次，不做无界追赶。API 仅开放 tenant schedule；system schedule 供受控模块调用。单元、API、真实 MySQL 迁移重放/CRUD/CAS/背压/续扫/水位/历史保留及全库 test/vet/build 通过。
 - [x] **PLAT-04C1 address-prefix/set 管理内核**：typed schema/CRUD、canonical CIDR/IPv6、members/exclude/include DAG、集合并交差/显式 universe 有限补集、冲突/最坏展开量 preview、draft revision 原子 apply、分页/filter、ETag/审计与管理 VTable 已形成一个已提交闭环；Flow 不复制 CRUD。
   - [x] **设计（集合数学）**：冻结 CIDR/裸 IP/start-end 全量校验、v4/v6 分族并交差、显式 universe 有限补集、重叠 lint、结果/地址量上限；普通 merge 保持集合完全相等，可能扩大的 `/24` 整理独立为 `cover + added-address preview + confirm`。

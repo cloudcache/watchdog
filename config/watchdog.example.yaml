@@ -39,6 +39,9 @@ address_library:
   max_upload_bytes: 2147483648
   import_batch_size: 1000
   worker_concurrency: 1
+  object_retention: 720h
+  object_gc_interval: 5m
+  object_gc_batch: 100
   # Approval private keys stay outside Watchdog. This process loads only the
   # tenant-scoped Ed25519 public keys at startup (SubjectPublicKeyInfo PEM).
   trusted_keys: []

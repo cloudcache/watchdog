@@ -85,7 +85,8 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	exportStore := DiskExportStore{Dir: cfg.Export.Dir}
 	addressArtifacts := DiskAddressArtifactStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxUploadBytes}
 	dimensionObjects := DiskDimensionObjectStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: 64 << 20}
-	addressDimensions, err := NewMySQLAddressDimensionPublisher(store, dimensionObjects)
+	addressDimensions, err := NewMySQLAddressDimensionPublisher(store, dimensionObjects,
+		WithAddressDimensionObjectRetention(cfg.AddressLibrary.ObjectRetention))
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -312,6 +313,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		AddressDimensions:      r.AddressDimensions,
 		DimensionLifecycle:     r.AddressDimensions,
 		DimensionConsumers:     r.AddressDimensions,
+		DimensionGC:            r.AddressDimensions,
 		DimensionKeys:          r.DimensionKeys,
 		OperationJobs:          r.Store,
 		OperationJobSchedules:  r.Store,
@@ -487,6 +489,13 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType:     AddressDimensionObjectGCJob,
+			Handler:     NewAddressDimensionObjectGCJobHandler(r.AddressDimensions, nil),
+			Concurrency: 1, LeaseFor: 30 * time.Second, MaxAttempts: AddressDimensionObjectGCMaxAttempts, RetryBase: 30 * time.Second,
+		}); err != nil {
+			return err
+		}
 		if r.QueryGateway != nil {
 			if err := registry.Register(OperationJobRegistration{
 				JobType: ExportExecutionJobType,
@@ -520,6 +529,11 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			}
 		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
+		go (AddressDimensionGCProducer{
+			Repository: r.AddressDimensions, Jobs: r.Store,
+			Interval: r.Config.AddressLibrary.ObjectGCInterval,
+			Batch:    r.Config.AddressLibrary.ObjectGCBatch, Logf: log.Printf,
+		}).Run(ctx)
 		go (OperationJobScheduleDispatcher{
 			Repository: r.Store,
 			Registry:   registry,
