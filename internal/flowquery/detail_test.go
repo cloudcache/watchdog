@@ -20,7 +20,7 @@ func TestDetailRegistryAndDefaultMaskAreFixed(t *testing.T) {
 			t.Fatalf("registry is not strictly sorted: %q then %q", fields[index-1], fields[index])
 		}
 	}
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, validDetailRequest(), detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), validDetailRequest(), detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestDetailCapabilitiesShareValidationRegistryAndReturnCopies(t *testing.T) 
 			allowedFields[field] = struct{}{}
 			request := validDetailRequest()
 			request.View, request.Fields = capability.View, []DetailField{field}
-			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err != nil {
+			if _, err := CompileDetail(fullScope("tenant-a"), request, detailNow()); err != nil {
 				t.Fatalf("advertised %s field %s was rejected: %v", capability.View, field, err)
 			}
 		}
@@ -63,7 +63,7 @@ func TestDetailCapabilitiesShareValidationRegistryAndReturnCopies(t *testing.T) 
 			request := validDetailRequest()
 			request.View = capability.View
 			setDetailFilter(&request.Filters, filter)
-			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err != nil {
+			if _, err := CompileDetail(fullScope("tenant-a"), request, detailNow()); err != nil {
 				t.Fatalf("advertised %s filter %s was rejected: %v", capability.View, filter, err)
 			}
 		}
@@ -101,7 +101,7 @@ func TestDetailCapabilitiesDoNotAdvertiseUnsupportedFieldsOrFilters(t *testing.T
 			}
 			request := validDetailRequest()
 			request.View, request.Fields = capability.View, []DetailField{field}
-			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err == nil {
+			if _, err := CompileDetail(fullScope("tenant-a"), request, detailNow()); err == nil {
 				t.Fatalf("unadvertised %s field %s was accepted", capability.View, field)
 			}
 		}
@@ -116,7 +116,7 @@ func TestDetailCapabilitiesDoNotAdvertiseUnsupportedFieldsOrFilters(t *testing.T
 			request := validDetailRequest()
 			request.View = capability.View
 			setDetailFilter(&request.Filters, filter)
-			if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow()); err == nil {
+			if _, err := CompileDetail(fullScope("tenant-a"), request, detailNow()); err == nil {
 				t.Fatalf("unadvertised %s filter %s was accepted", capability.View, filter)
 			}
 		}
@@ -132,11 +132,11 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 		Directions: []string{"out", "in", "out"}, Businesses: []string{"customer's"},
 		TargetIDs: []string{"target-b", "target-a", "target-a"},
 	}
-	first, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	first, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	second, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
 		DetailFieldObservationDirection, DetailFieldRawBytes, DetailFieldEstimatedValid,
 	}
 	request.Filters = DetailFilters{TargetIDs: []string{"target-a"}, ExporterIDs: []string{"exporter-a"}}
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestCompileDetailRawViewUsesOnlyProtocolFacts(t *testing.T) {
 	}
 
 	request.Fields = nil
-	defaults, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	defaults, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Cursor = cursor
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 	}
 
 	request.Cursor, request.Fields, request.Filters = "", nil, DetailFilters{}
-	defaults, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	defaults, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestCompileDetailUsesEndpointSpecificPredicatesForIPv4AndIPv6(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			request := validDetailRequest()
 			request.IP, request.Endpoint = test.ip, test.endpoint
-			compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+			compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -320,7 +320,7 @@ func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 	}
 	request := validDetailRequest()
 	request.Cursor = cursor
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 		t.Fatalf("cursor boundary query=%s parameters=%+v", compiled.Query.Body, compiled.Query.Parameters)
 	}
 	request.Fields = []DetailField{DetailFieldCategory, DetailFieldRemoteASN}
-	changedMask, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	changedMask, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scope := Scope{TenantID: "tenant-a"}
+			scope := fullScope("tenant-a")
 			request := validDetailRequest()
 			test.apply(&scope, &request)
 			_, err := CompileDetail(scope, request, detailNow())
@@ -452,5 +452,35 @@ func setDetailFilter(filters *DetailFilters, filter DetailFilter) {
 		filters.ExporterIDs = []string{"exporter-a"}
 	default:
 		panic("unknown detail filter " + filter)
+	}
+}
+
+// fullScope grants every value-layer view — detail data tests exercise view
+// behavior, not authorization.
+func fullScope(tenant string) Scope {
+	return Scope{TenantID: tenant, AllowedViews: []View{ViewRaw, ViewSupplier, ViewCustomer}}
+}
+
+// TestCompileDetailEnforcesValueLayerEntitlement is the value-layer RBAC gate
+// (review F3 / PLAT-04H): a principal must be entitled to the requested view.
+func TestCompileDetailEnforcesValueLayerEntitlement(t *testing.T) {
+	customerOnly := Scope{TenantID: "tenant-a"} // nil AllowedViews => customer-only
+	for _, view := range []View{ViewRaw, ViewSupplier} {
+		request := validDetailRequest()
+		request.View = view
+		if _, err := CompileDetail(customerOnly, request, detailNow()); !IsRequestError(err, "view", ErrorPermissionDenied) {
+			t.Fatalf("customer-only principal requesting %q: err=%v, want permission_denied", view, err)
+		}
+	}
+	// The customer view is permitted by the default scope.
+	if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, validDetailRequest(), detailNow()); err != nil {
+		t.Fatalf("customer view under default scope: %v", err)
+	}
+	// An explicit grant unlocks the privileged view.
+	granted := Scope{TenantID: "tenant-a", AllowedViews: []View{ViewCustomer, ViewSupplier}}
+	request := validDetailRequest()
+	request.View = ViewSupplier
+	if _, err := CompileDetail(granted, request, detailNow()); err != nil {
+		t.Fatalf("supplier view with grant: %v", err)
 	}
 }

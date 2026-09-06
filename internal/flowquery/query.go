@@ -82,6 +82,28 @@ const (
 
 type Scope struct {
 	TenantID string
+	// AllowedViews is the set of value-layer views (raw/supplier/customer) the
+	// authenticated principal is entitled to. It is the enforcement point for
+	// value-layer RBAC: the query gateway builds it from the principal's
+	// permissions, and the compiler refuses a request for any view not in it.
+	// The zero value (nil) is fail-closed to customer-only — the least-privileged
+	// view — so a caller that forgets to populate it can never expose the raw or
+	// supplier layers, which requires an explicit grant.
+	AllowedViews []View
+}
+
+// allowsView reports whether the principal may query the given value-layer view.
+// An empty AllowedViews permits only the customer view.
+func (s Scope) allowsView(view View) bool {
+	if len(s.AllowedViews) == 0 {
+		return view == ViewCustomer
+	}
+	for _, allowed := range s.AllowedViews {
+		if allowed == view {
+			return true
+		}
+	}
+	return false
 }
 
 type Filters struct {
@@ -136,11 +158,12 @@ type Compiled struct {
 type ErrorCode string
 
 const (
-	ErrorRequired        ErrorCode = "required"
-	ErrorInvalid         ErrorCode = "invalid"
-	ErrorUnsupported     ErrorCode = "unsupported"
-	ErrorLimitExceeded   ErrorCode = "limit_exceeded"
-	ErrorIncompleteRange ErrorCode = "incomplete_range"
+	ErrorRequired         ErrorCode = "required"
+	ErrorInvalid          ErrorCode = "invalid"
+	ErrorUnsupported      ErrorCode = "unsupported"
+	ErrorLimitExceeded    ErrorCode = "limit_exceeded"
+	ErrorIncompleteRange  ErrorCode = "incomplete_range"
+	ErrorPermissionDenied ErrorCode = "permission_denied"
 )
 
 type RequestError struct {
@@ -247,6 +270,9 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	}
 	if request.View != ViewCustomer {
 		return Compiled{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in aggregate schema v1")
+	}
+	if !scope.allowsView(ViewCustomer) {
+		return Compiled{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
 	}
 	if request.TopN < 1 || request.TopN > maxTopN {
 		return Compiled{}, requestError("top_n", ErrorLimitExceeded, "top_n must be 1..100")

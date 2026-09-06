@@ -93,7 +93,7 @@ func TestDetailRunnerDecodesMultipleBlocksAndBuildsStableNextCursor(t *testing.T
 	}
 	request := validDetailRequest()
 	request.Cursor = result.NextCursor
-	next, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	next, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSupplierDetailRunnerRequiresFullScopeProvenance(t *testing.T) {
 	request := validDetailRequest()
 	request.View = ViewSupplier
 	request.Fields = []DetailField{DetailFieldCategory, DetailFieldRemoteASN}
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestSupplierDetailRunnerRejectsInconsistentOrMissingEvidence(t *testing.T) 
 	request := validDetailRequest()
 	request.View = ViewSupplier
 	request.Fields = []DetailField{DetailFieldRawBytes}
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestDetailRunnerEnforcesCursorAcrossBlocks(t *testing.T) {
 	}
 	request.Cursor = cursor
 	request.Fields = []DetailField{DetailFieldRawBytes}
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func compiledDetailQuery(t *testing.T, fields []DetailField) CompiledDetail {
 	t.Helper()
 	request := validDetailRequest()
 	request.Fields = fields
-	compiled, err := CompileDetail(Scope{TenantID: "tenant-a"}, request, detailNow())
+	compiled, err := CompileDetail(fullScope("tenant-a"), request, detailNow())
 	if err != nil {
 		t.Fatal(err)
 	}

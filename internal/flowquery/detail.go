@@ -337,6 +337,12 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	if _, ok := detailViewRegistry[request.View]; !ok {
 		return CompiledDetail{}, requestError("view", ErrorUnsupported, "detail schema v2 supports raw, supplier, and customer views")
 	}
+	// Value-layer RBAC: raw drops the visibility filter and supplier exposes
+	// supplier-private columns, so the principal must be entitled to the
+	// requested view. Without this gate any caller could select raw/supplier.
+	if !scope.allowsView(request.View) {
+		return CompiledDetail{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
+	}
 	ip, err := netip.ParseAddr(request.IP)
 	if err != nil || ip.Zone() != "" {
 		return CompiledDetail{}, requestError("ip", ErrorInvalid, "ip must be an IPv4 or IPv6 address without a zone")

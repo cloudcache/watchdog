@@ -69,6 +69,9 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 	if request.View != ViewCustomer {
 		return CompiledOverseas{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in overseas schema v1")
 	}
+	if !scope.allowsView(ViewCustomer) {
+		return CompiledOverseas{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
+	}
 	metric, exists := metricRegistry[request.Metric]
 	if !exists {
 		return CompiledOverseas{}, requestError("metric", ErrorUnsupported, "metric is not in the Flow registry")

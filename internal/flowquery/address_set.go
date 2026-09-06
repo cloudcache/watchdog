@@ -61,6 +61,9 @@ func CompileAddressSet(scope Scope, request AddressSetRequest, now time.Time) (C
 	if request.View != ViewCustomer {
 		return CompiledAddressSet{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in address-set schema v1")
 	}
+	if !scope.allowsView(ViewCustomer) {
+		return CompiledAddressSet{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
+	}
 	metric, exists := metricRegistry[request.Metric]
 	if !exists {
 		return CompiledAddressSet{}, requestError("metric", ErrorUnsupported, "metric is not in the Flow registry")
