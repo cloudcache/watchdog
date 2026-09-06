@@ -137,6 +137,7 @@ func CompileAddressSet(scope Scope, request AddressSetRequest, now time.Time) (C
 			{Key: "max_rows_to_read", Value: "5000000", Important: true},
 			{Key: "max_bytes_to_read", Value: "1073741824", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
+			{Key: "max_memory_usage", Value: "2147483648", Important: true},
 		},
 	}
 	return CompiledAddressSet{

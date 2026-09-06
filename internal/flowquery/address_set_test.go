@@ -60,7 +60,7 @@ func TestCompileAddressSetBuildsDeterministicDeduplicatedBaseQuery(t *testing.T)
 		queryParameter(first.Query, "address_include_all_0") != "'set-c'" || queryParameter(first.Query, "address_exclude_any_0") != "'set-d'" {
 		t.Fatalf("set parameters=%+v", first.Query.Parameters)
 	}
-	if setting(first.Query, "max_rows_to_read") != "5000000" || setting(first.Query, "max_bytes_to_read") != "1073741824" || setting(first.Query, "max_result_rows") != "10000" {
+	if setting(first.Query, "max_rows_to_read") != "5000000" || setting(first.Query, "max_bytes_to_read") != "1073741824" || setting(first.Query, "max_result_rows") != "10000" || setting(first.Query, "max_memory_usage") == "" {
 		t.Fatalf("address-set query budgets=%+v", first.Query.Settings)
 	}
 	request.Sets.IncludeAny[0] = "mutated"

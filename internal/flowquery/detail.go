@@ -434,6 +434,10 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 			{Key: "max_rows_to_read", Value: "5000000", Important: true},
 			{Key: "max_bytes_to_read", Value: "1073741824", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
+			// The supplier view materializes window functions over the whole
+			// scope; bound memory (2x the byte ceiling for FINAL/window headroom)
+			// so it throws rather than spiking shared-server memory.
+			{Key: "max_memory_usage", Value: "2147483648", Important: true},
 		},
 	}
 	return CompiledDetail{

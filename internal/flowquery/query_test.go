@@ -86,6 +86,11 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 	if setting(first.Query, "max_result_rows") != "250000" || setting(first.Query, "read_overflow_mode") != "throw" {
 		t.Fatalf("query safety settings=%+v", first.Query.Settings)
 	}
+	// The heaviest reader must carry both a byte and a memory ceiling so a wide
+	// query throws rather than starving the shared server.
+	if setting(first.Query, "max_bytes_to_read") == "" || setting(first.Query, "max_memory_usage") == "" {
+		t.Fatalf("query missing byte/memory guards: %+v", first.Query.Settings)
+	}
 }
 
 func TestCompileRejectsUnsupportedUnsafeOrIncompleteRequests(t *testing.T) {

@@ -84,6 +84,11 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	if setting(first, "async_insert") != "0" || setting(first, "insert_deduplication_token") == "" {
 		t.Fatal("rollup insert is not synchronous and replay-stable")
 	}
+	// A heavy tenant-hour must spill to disk (external group by) under a memory
+	// ceiling rather than fail with retryable MEMORY_LIMIT_EXCEEDED.
+	if setting(first, "max_bytes_before_external_group_by") == "" || setting(first, "max_memory_usage") == "" {
+		t.Fatalf("rollup missing memory spill/ceiling guards: %+v", first.Settings)
+	}
 	if got := parameter(first, "tenant"); got != "'tenant-a'" {
 		t.Fatalf("tenant parameter=%q", got)
 	}

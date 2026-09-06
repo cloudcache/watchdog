@@ -326,7 +326,12 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
 			{Key: "max_rows_to_read", Value: "50000000", Important: true},
+			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
+			// This is the heaviest reader (two FINAL scans + a tuple(...) IN
+			// semi-join); cap memory so a wide/high-cardinality query throws
+			// rather than starving other tenants on the shared server.
+			{Key: "max_memory_usage", Value: "4294967296", Important: true},
 		},
 	}
 	return Compiled{

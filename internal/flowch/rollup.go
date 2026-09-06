@@ -249,6 +249,11 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 			{Key: "async_insert", Value: "0", Important: true},
 			{Key: "wait_for_async_insert", Value: "1", Important: true},
 			{Key: "insert_deduplication_token", Value: hex.EncodeToString(token[:]), Important: true},
+			// A heavy tenant-hour GROUP BY must spill to disk rather than OOM:
+			// MEMORY_LIMIT_EXCEEDED is classified retryable, so an unguarded
+			// rollup fails deterministically and the bucket is never aggregated.
+			{Key: "max_bytes_before_external_group_by", Value: "4294967296", Important: true},
+			{Key: "max_memory_usage", Value: "10737418240", Important: true},
 		},
 	}
 	return query, nil

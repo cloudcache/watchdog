@@ -175,7 +175,7 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 		queryParameter(first.Query, "detail_target_0") != "'target-a'" || queryParameter(first.Query, "detail_target_1") != "'target-b'" {
 		t.Fatalf("detail parameters=%+v", first.Query.Parameters)
 	}
-	if setting(first.Query, "max_result_rows") != "3" || setting(first.Query, "max_rows_to_read") != "5000000" || setting(first.Query, "max_bytes_to_read") != "1073741824" {
+	if setting(first.Query, "max_result_rows") != "3" || setting(first.Query, "max_rows_to_read") != "5000000" || setting(first.Query, "max_bytes_to_read") != "1073741824" || setting(first.Query, "max_memory_usage") == "" {
 		t.Fatalf("detail query budgets=%+v", first.Query.Settings)
 	}
 }
