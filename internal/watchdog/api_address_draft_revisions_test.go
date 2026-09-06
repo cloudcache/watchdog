@@ -26,13 +26,19 @@ func (r *fakeAddressDraftRevisionRepository) PrepareAddressPrefixRevision(_ cont
 	return AddressDraftRevision{ID: "revision-a", TenantID: tenantID, Scope: "prefix", Status: "prepared", RowVersion: 1}, nil
 }
 
-func (r *fakeAddressDraftRevisionRepository) ListAddressDraftRevisions(_ context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, error) {
+func (r *fakeAddressDraftRevisionRepository) ListAddressDraftRevisions(_ context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, int, error) {
 	r.filter = filter
-	return []AddressDraftRevision{{ID: "revision-a", TenantID: tenantID, Status: "prepared"}}, "next", nil
+	return []AddressDraftRevision{{ID: "revision-a", TenantID: tenantID, Status: "prepared"}}, "next", 3, nil
 }
 
 func (r *fakeAddressDraftRevisionRepository) GetAddressDraftRevision(_ context.Context, tenantID, revisionID ID) (AddressDraftRevision, error) {
-	return AddressDraftRevision{ID: revisionID, TenantID: tenantID, Status: "prepared", RowVersion: 1}, nil
+	return AddressDraftRevision{
+		ID: revisionID, TenantID: tenantID, Status: "prepared", RowVersion: 1,
+		Preview: AddressPrefixBatchPreview{Changes: []AddressPrefixBatchChange{
+			{Action: "delete", CIDR: "192.0.2.0/24", PrefixID: "prefix-a"},
+			{Action: "create", CIDR: "198.51.100.0/24", PrefixID: "prefix-b"},
+		}},
+	}, nil
 }
 
 func (r *fakeAddressDraftRevisionRepository) ApplyAddressDraftRevision(_ context.Context, tenantID, actorID, revisionID ID, expectedVersion uint64) (AddressDraftRevision, error) {
@@ -91,5 +97,30 @@ func TestAddressDraftRevisionAPIRejectsUnknownFieldsAndMissingIfMatch(t *testing
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/address-draft-revisions/revision-a/apply", nil))
 	if response.Code != http.StatusPreconditionRequired {
 		t.Fatalf("missing If-Match status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAddressDraftRevisionServerTables(t *testing.T) {
+	repo := &fakeAddressDraftRevisionRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: addressImportTestAuth, AddressSets: repo})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-draft-revisions?q=revision&status=prepared&sort=operations&order=desc&limit=25&offset=50", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+	}
+	if filter := repo.filter; !filter.TableMode || filter.Search != "revision" || filter.Status != "prepared" || filter.Sort != "operations" || !filter.Desc || filter.Limit != 25 || filter.Offset != 50 {
+		t.Fatalf("filter=%#v", filter)
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-draft-revisions/revision-a/changes?q=198.51&action=create&sort=cidr&order=desc&limit=25&offset=0", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("changes status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Items []addressDraftRevisionChangeItem `json:"items"`
+		Total int                              `json:"total"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Total != 1 || len(result.Items) != 1 || result.Items[0].Index != 2 {
+		t.Fatalf("changes=%#v err=%v", result, err)
 	}
 }

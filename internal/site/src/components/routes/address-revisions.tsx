@@ -1,12 +1,11 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { EyeIcon, RefreshCwIcon, ReplaceIcon, SearchIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { EyeIcon, RefreshCwIcon, ReplaceIcon } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { buildAddressPrefixRevisionOperations, type AddressPrefixRevisionForm } from "@/lib/address-revision-form"
 import { pb } from "@/lib/api"
@@ -23,7 +22,7 @@ type AddressPrefix = {
 	row_version: number
 }
 
-type RevisionChange = { action: string; prefix_id: string; cidr: string }
+type RevisionChange = { index: number; action: string; prefix_id: string; cidr: string }
 type AddressDraftRevision = {
 	id: string
 	scope: string
@@ -46,10 +45,10 @@ type AddressDraftRevision = {
 	}
 }
 
-type PrefixList = { items?: AddressPrefix[]; next_cursor?: string }
-type RevisionList = { items?: AddressDraftRevision[]; next_cursor?: string }
+type PrefixList = { items?: AddressPrefix[]; total?: number }
+type RevisionList = { items?: AddressDraftRevision[]; total?: number }
+type RevisionChangeList = { items?: RevisionChange[]; total?: number }
 
-const pageSize = 100
 const emptyBatch: AddressPrefixRevisionForm = {
 	cidrs: "",
 	labels: "",
@@ -62,70 +61,156 @@ const emptyBatch: AddressPrefixRevisionForm = {
 export default memo(function AddressRevisions() {
 	const { t } = useLingui()
 	const [prefixes, setPrefixes] = useState<AddressPrefix[]>([])
-	const [prefixCursor, setPrefixCursor] = useState("")
+	const [prefixTotal, setPrefixTotal] = useState(0)
+	const [prefixPage, setPrefixPage] = useState(0)
+	const [prefixPageSize, setPrefixPageSize] = useState(25)
+	const [prefixSort, setPrefixSort] = useState("cidr:asc")
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
-	const [family, setFamily] = useState("all")
+	const [family, setFamily] = useState("")
 	const [selected, setSelected] = useState<Record<string, AddressPrefix>>({})
 	const [form, setForm] = useState(emptyBatch)
 	const [revision, setRevision] = useState<AddressDraftRevision | null>(null)
 	const [revisionETag, setRevisionETag] = useState("")
 	const [revisions, setRevisions] = useState<AddressDraftRevision[]>([])
-	const [revisionCursor, setRevisionCursor] = useState("")
-	const [status, setStatus] = useState("all")
+	const [revisionTotal, setRevisionTotal] = useState(0)
+	const [revisionPage, setRevisionPage] = useState(0)
+	const [revisionPageSize, setRevisionPageSize] = useState(25)
+	const [revisionSearch, setRevisionSearch] = useState("")
+	const [debouncedRevisionSearch, setDebouncedRevisionSearch] = useState("")
+	const [revisionSort, setRevisionSort] = useState("created:desc")
+	const [status, setStatus] = useState("")
+	const [changes, setChanges] = useState<RevisionChange[]>([])
+	const [changeTotal, setChangeTotal] = useState(0)
+	const [changePage, setChangePage] = useState(0)
+	const [changePageSize, setChangePageSize] = useState(25)
+	const [changeSearch, setChangeSearch] = useState("")
+	const [debouncedChangeSearch, setDebouncedChangeSearch] = useState("")
+	const [changeAction, setChangeAction] = useState("")
+	const [changeSort, setChangeSort] = useState("index:asc")
+	const [loadingChanges, setLoadingChanges] = useState(false)
 	const [loadingPrefixes, setLoadingPrefixes] = useState(true)
 	const [loadingRevisions, setLoadingRevisions] = useState(true)
 	const [working, setWorking] = useState(false)
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
+	const prefixRequestSequence = useRef(0)
+	const revisionRequestSequence = useRef(0)
+	const changeRequestSequence = useRef(0)
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+		const timer = window.setTimeout(() => {
+			setPrefixPage(0)
+			setDebouncedSearch(search.trim())
+		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setRevisionPage(0)
+			setDebouncedRevisionSearch(revisionSearch.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [revisionSearch])
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setChangePage(0)
+			setDebouncedChangeSearch(changeSearch.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [changeSearch])
 
-	const fetchPrefixes = useCallback(
-		async (cursor = "", append = false) => {
-			setLoadingPrefixes(true)
-			setError("")
-			try {
-				const data = await pb.send<PrefixList>("/api/v1/address-prefixes", {
-					query: {
-						q: debouncedSearch || undefined,
-						family: family === "all" ? undefined : family,
-						limit: pageSize,
-						cursor: cursor || undefined,
-					},
-				})
-				setPrefixes((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setPrefixCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load prefixes`)
-			} finally {
-				setLoadingPrefixes(false)
-			}
-		},
-		[debouncedSearch, family, t]
-	)
+	const fetchPrefixes = useCallback(async () => {
+		const sequence = ++prefixRequestSequence.current
+		const [sort, order] = prefixSort.split(":")
+		setLoadingPrefixes(true)
+		setError("")
+		try {
+			const data = await pb.send<PrefixList>("/api/v1/address-prefixes", {
+				query: {
+					q: debouncedSearch || undefined,
+					family: family || undefined,
+					limit: prefixPageSize,
+					offset: prefixPage * prefixPageSize || undefined,
+					sort,
+					order,
+				},
+			})
+			if (sequence !== prefixRequestSequence.current) return
+			setPrefixes(data.items ?? [])
+			setPrefixTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== prefixRequestSequence.current) return
+			setPrefixes([])
+			setPrefixTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load prefixes`)
+		} finally {
+			if (sequence === prefixRequestSequence.current) setLoadingPrefixes(false)
+		}
+	}, [debouncedSearch, family, prefixPage, prefixPageSize, prefixSort, t])
 
-	const fetchRevisions = useCallback(
-		async (cursor = "", append = false) => {
-			setLoadingRevisions(true)
-			setError("")
-			try {
-				const data = await pb.send<RevisionList>("/api/v1/address-draft-revisions", {
-					query: { status: status === "all" ? undefined : status, limit: pageSize, cursor: cursor || undefined },
-				})
-				setRevisions((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
-				setRevisionCursor(data.next_cursor ?? "")
-			} catch (err) {
-				setError(err instanceof Error ? err.message : t`Failed to load revisions`)
-			} finally {
-				setLoadingRevisions(false)
-			}
-		},
-		[status, t]
-	)
+	const fetchRevisions = useCallback(async () => {
+		const sequence = ++revisionRequestSequence.current
+		const [sort, order] = revisionSort.split(":")
+		setLoadingRevisions(true)
+		setError("")
+		try {
+			const data = await pb.send<RevisionList>("/api/v1/address-draft-revisions", {
+				query: {
+					q: debouncedRevisionSearch || undefined,
+					status: status || undefined,
+					limit: revisionPageSize,
+					offset: revisionPage * revisionPageSize || undefined,
+					sort,
+					order,
+				},
+			})
+			if (sequence !== revisionRequestSequence.current) return
+			setRevisions(data.items ?? [])
+			setRevisionTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== revisionRequestSequence.current) return
+			setRevisions([])
+			setRevisionTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load revisions`)
+		} finally {
+			if (sequence === revisionRequestSequence.current) setLoadingRevisions(false)
+		}
+	}, [debouncedRevisionSearch, revisionPage, revisionPageSize, revisionSort, status, t])
+
+	const fetchChanges = useCallback(async () => {
+		if (!revision?.id) {
+			setChanges([])
+			setChangeTotal(0)
+			return
+		}
+		const sequence = ++changeRequestSequence.current
+		const [sort, order] = changeSort.split(":")
+		setLoadingChanges(true)
+		setError("")
+		try {
+			const data = await pb.send<RevisionChangeList>(`/api/v1/address-draft-revisions/${revision.id}/changes`, {
+				query: {
+					q: debouncedChangeSearch || undefined,
+					action: changeAction || undefined,
+					limit: changePageSize,
+					offset: changePage * changePageSize || undefined,
+					sort,
+					order,
+				},
+			})
+			if (sequence !== changeRequestSequence.current) return
+			setChanges(data.items ?? [])
+			setChangeTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== changeRequestSequence.current) return
+			setChanges([])
+			setChangeTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load revision changes`)
+		} finally {
+			if (sequence === changeRequestSequence.current) setLoadingChanges(false)
+		}
+	}, [changeAction, changePage, changePageSize, changeSort, debouncedChangeSearch, revision?.id, t])
 
 	useEffect(() => {
 		fetchPrefixes()
@@ -133,6 +218,9 @@ export default memo(function AddressRevisions() {
 	useEffect(() => {
 		fetchRevisions()
 	}, [fetchRevisions])
+	useEffect(() => {
+		fetchChanges()
+	}, [fetchChanges])
 
 	const invalidatePreview = () => {
 		setRevision(null)
@@ -172,6 +260,10 @@ export default memo(function AddressRevisions() {
 					etag = response.headers.get("ETag") ?? ""
 				},
 			})
+			setChangePage(0)
+			setChangeSearch("")
+			setChangeAction("")
+			setChangeSort("index:asc")
 			setRevision(item)
 			setRevisionETag(etag || `"${item.row_version}"`)
 		} catch (err) {
@@ -228,6 +320,10 @@ export default memo(function AddressRevisions() {
 						etag = response.headers.get("ETag") ?? ""
 					},
 				})
+				setChangePage(0)
+				setChangeSearch("")
+				setChangeAction("")
+				setChangeSort("index:asc")
 				setRevision(item)
 				setRevisionETag(etag || `"${item.row_version}"`)
 			} catch (err) {
@@ -315,13 +411,13 @@ export default memo(function AddressRevisions() {
 	)
 	const changeRecords = useMemo(
 		() =>
-			(revision?.preview.changes ?? []).map((change, index) => ({
-				index: index + 1,
+			changes.map((change) => ({
+				index: change.index,
 				action: change.action,
 				cidr: change.cidr,
 				prefixID: change.prefix_id,
 			})),
-		[revision]
+		[changes]
 	)
 	const changeColumns = useMemo(
 		() => [
@@ -331,6 +427,105 @@ export default memo(function AddressRevisions() {
 			{ field: "prefixID", title: t`Prefix ID`, width: 320, style: denseCellStyle() },
 		],
 		[t]
+	)
+	const resetPrefixPage = (update: () => void) => {
+		setPrefixPage(0)
+		update()
+	}
+	const prefixFiltering = useMemo(
+		() => ({
+			options: {
+				family: [
+					{ value: "4", label: "IPv4" },
+					{ value: "6", label: "IPv6" },
+				],
+			},
+			selected: { family: family ? [family] : [] },
+			selection: { family: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPrefixPage(() => setFamily(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetPrefixPage(() => setFamily("")),
+		}),
+		[family]
+	)
+	const [prefixSortField, prefixSortDirection] = prefixSort.split(":") as [string, "asc" | "desc"]
+	const prefixSorting = useMemo(
+		() => ({
+			field: prefixSortField,
+			direction: prefixSortDirection,
+			fields: { cidr: "cidr", family: "family", asn: "asn", source: "source" },
+			onSortChange: (field: string, direction: "asc" | "desc") =>
+				resetPrefixPage(() => setPrefixSort(`${field}:${direction}`)),
+		}),
+		[prefixSortDirection, prefixSortField]
+	)
+	const resetRevisionPage = (update: () => void) => {
+		setRevisionPage(0)
+		update()
+	}
+	const revisionFiltering = useMemo(
+		() => ({
+			options: {
+				status: ["prepared", "applied", "superseded", "cancelled"].map((value) => ({ value, label: value })),
+			},
+			selected: { status: status ? [status] : [] },
+			selection: { status: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetRevisionPage(() => setStatus(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetRevisionPage(() => setStatus("")),
+		}),
+		[status]
+	)
+	const [revisionSortField, revisionSortDirection] = revisionSort.split(":") as [string, "asc" | "desc"]
+	const revisionSorting = useMemo(
+		() => ({
+			field: revisionSortField,
+			direction: revisionSortDirection,
+			fields: {
+				status: "status",
+				operations: "operations",
+				creates: "creates",
+				deletes: "deletes",
+				before: "before",
+				after: "after",
+				created: "created",
+				expires: "expires",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") =>
+				resetRevisionPage(() => setRevisionSort(`${field}:${direction}`)),
+		}),
+		[revisionSortDirection, revisionSortField]
+	)
+	const resetChangePage = (update: () => void) => {
+		setChangePage(0)
+		update()
+	}
+	const changeFiltering = useMemo(
+		() => ({
+			options: {
+				action: [
+					{ value: "create", label: "create" },
+					{ value: "delete", label: "delete" },
+				],
+			},
+			selected: { action: changeAction ? [changeAction] : [] },
+			selection: { action: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetChangePage(() => setChangeAction(values.length > 0 ? String(values[0]) : "")),
+			onClearAll: () => resetChangePage(() => setChangeAction("")),
+		}),
+		[changeAction]
+	)
+	const [changeSortField, changeSortDirection] = changeSort.split(":") as [string, "asc" | "desc"]
+	const changeSorting = useMemo(
+		() => ({
+			field: changeSortField,
+			direction: changeSortDirection,
+			fields: { index: "index", action: "action", cidr: "cidr", prefixID: "prefix_id" },
+			onSortChange: (field: string, direction: "asc" | "desc") =>
+				resetChangePage(() => setChangeSort(`${field}:${direction}`)),
+		}),
+		[changeSortDirection, changeSortField]
 	)
 
 	return (
@@ -447,9 +642,21 @@ export default memo(function AddressRevisions() {
 					<PagedVTable
 						records={changeRecords}
 						columns={changeColumns}
+						loading={loadingChanges}
 						emptyText={t`No changes in this revision.`}
 						searchPlaceholder={t`Search revision changes...`}
+						searchValue={changeSearch}
+						onSearchChange={setChangeSearch}
 						height={320}
+						serverPagination={{
+							page: changePage,
+							pageSize: changePageSize,
+							totalCount: changeTotal,
+							onPageChange: setChangePage,
+							onPageSizeChange: (value) => resetChangePage(() => setChangePageSize(value)),
+						}}
+						serverFiltering={changeFiltering}
+						serverSorting={changeSorting}
 					/>
 				</div>
 			) : null}
@@ -458,47 +665,30 @@ export default memo(function AddressRevisions() {
 				<h3 className="font-medium">
 					<Trans>Select Existing Prefixes</Trans>
 				</h3>
-				<div className="flex flex-wrap gap-2">
-					<div className="relative min-w-64 max-w-sm flex-1">
-						<SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							value={search}
-							onChange={(event) => setSearch(event.target.value)}
-							placeholder={t`Search CIDR or labels...`}
-							className="pl-9"
-						/>
-					</div>
-					<Select value={family} onValueChange={setFamily}>
-						<SelectTrigger className="w-32">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">
-								<Trans>All families</Trans>
-							</SelectItem>
-							<SelectItem value="4">IPv4</SelectItem>
-							<SelectItem value="6">IPv6</SelectItem>
-						</SelectContent>
-					</Select>
-				</div>
 				<div className="overflow-hidden rounded-md border border-border bg-card">
 					<PagedVTable
 						records={prefixRecords}
 						columns={prefixColumns}
 						loading={loadingPrefixes}
 						emptyText={t`No prefixes found.`}
-						showSearch={false}
+						searchValue={search}
+						onSearchChange={setSearch}
+						searchPlaceholder={t`Search CIDR or labels...`}
 						height={420}
+						serverPagination={{
+							page: prefixPage,
+							pageSize: prefixPageSize,
+							totalCount: prefixTotal,
+							onPageChange: setPrefixPage,
+							onPageSizeChange: (value) => resetPrefixPage(() => setPrefixPageSize(value)),
+						}}
+						serverFiltering={prefixFiltering}
+						serverSorting={prefixSorting}
 						onCellClick={(record, field) => {
 							if (field === "selected") togglePrefix(record)
 						}}
 					/>
 				</div>
-				{prefixCursor ? (
-					<Button variant="outline" onClick={() => fetchPrefixes(prefixCursor, true)}>
-						<Trans>Load more</Trans>
-					</Button>
-				) : null}
 			</div>
 
 			<div className="grid gap-3">
@@ -506,18 +696,6 @@ export default memo(function AddressRevisions() {
 					<h3 className="font-medium">
 						<Trans>Revision History</Trans>
 					</h3>
-					<Select value={status} onValueChange={setStatus}>
-						<SelectTrigger className="w-44">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{["all", "prepared", "applied", "superseded", "cancelled"].map((value) => (
-								<SelectItem key={value} value={value}>
-									{value}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
 				</div>
 				<PagedVTable
 					records={revisionRecords}
@@ -525,16 +703,22 @@ export default memo(function AddressRevisions() {
 					loading={loadingRevisions}
 					emptyText={t`No revisions found.`}
 					searchPlaceholder={t`Search revisions...`}
+					searchValue={revisionSearch}
+					onSearchChange={setRevisionSearch}
 					height={360}
+					serverPagination={{
+						page: revisionPage,
+						pageSize: revisionPageSize,
+						totalCount: revisionTotal,
+						onPageChange: setRevisionPage,
+						onPageSizeChange: (value) => resetRevisionPage(() => setRevisionPageSize(value)),
+					}}
+					serverFiltering={revisionFiltering}
+					serverSorting={revisionSorting}
 					onCellClick={(record, field) => {
 						if (field === "view") viewRevision(record)
 					}}
 				/>
-				{revisionCursor ? (
-					<Button variant="outline" onClick={() => fetchRevisions(revisionCursor, true)}>
-						<Trans>Load more</Trans>
-					</Button>
-				) : null}
 			</div>
 		</div>
 	)

@@ -77,9 +77,14 @@ type AddressDraftRevision struct {
 }
 
 type AddressDraftRevisionListFilter struct {
-	Status string
-	Limit  int
-	Cursor string
+	Status    string
+	Search    string
+	Sort      string
+	Desc      bool
+	Limit     int
+	Offset    int
+	Cursor    string
+	TableMode bool
 }
 
 type preparedAddressPrefixRevision struct {

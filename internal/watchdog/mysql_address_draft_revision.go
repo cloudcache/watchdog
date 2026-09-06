@@ -79,10 +79,23 @@ func (s *MySQLStore) PrepareAddressPrefixRevision(ctx context.Context, tenantID,
 	return s.GetAddressDraftRevision(ctx, tenantID, revisionID)
 }
 
-func (s *MySQLStore) ListAddressDraftRevisions(ctx context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, error) {
+var addressDraftRevisionSortColumns = map[string]string{
+	"":           "created_at",
+	"status":     "status",
+	"operations": "operation_count",
+	"creates":    "CAST(JSON_UNQUOTE(JSON_EXTRACT(preview_json, '$.create_count')) AS UNSIGNED)",
+	"deletes":    "CAST(JSON_UNQUOTE(JSON_EXTRACT(preview_json, '$.delete_count')) AS UNSIGNED)",
+	"before":     "CAST(JSON_UNQUOTE(JSON_EXTRACT(preview_json, '$.before_prefix_count')) AS UNSIGNED)",
+	"after":      "CAST(JSON_UNQUOTE(JSON_EXTRACT(preview_json, '$.after_prefix_count')) AS UNSIGNED)",
+	"created":    "created_at",
+	"expires":    "expires_at",
+}
+
+func (s *MySQLStore) ListAddressDraftRevisions(ctx context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, int, error) {
 	filter.Status = strings.ToLower(strings.TrimSpace(filter.Status))
+	filter.Search = strings.TrimSpace(filter.Search)
 	if filter.Status != "" && !validAddressDraftRevisionStatus(filter.Status) {
-		return nil, "", ErrAddressDraftRevisionInvalid
+		return nil, "", 0, ErrAddressDraftRevisionInvalid
 	}
 	if filter.Limit <= 0 {
 		filter.Limit = 100
@@ -90,45 +103,68 @@ func (s *MySQLStore) ListAddressDraftRevisions(ctx context.Context, tenantID ID,
 	if filter.Limit > 500 {
 		filter.Limit = 500
 	}
-	query := `SELECT ` + addressDraftRevisionColumns + ` FROM address_draft_revisions WHERE tenant_id = ?`
+	sortColumn, validSort := addressDraftRevisionSortColumns[filter.Sort]
+	if len(filter.Search) > 255 || filter.Offset < 0 || !validSort {
+		return nil, "", 0, ErrAddressDraftRevisionInvalid
+	}
+	where := ` WHERE tenant_id = ?`
 	args := []any{tenantID}
 	if filter.Status != "" {
-		query += ` AND status = ?`
+		where += ` AND status = ?`
 		args = append(args, filter.Status)
 	}
+	if filter.Search != "" {
+		like := "%" + escapeSQLLike(filter.Search) + "%"
+		where += ` AND (id LIKE ? OR base_digest LIKE ? OR request_digest LIKE ? OR COALESCE(result_digest, '') LIKE ? OR COALESCE(created_by, '') LIKE ?)`
+		args = append(args, like, like, like, like, like)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_draft_revisions`+where, args...).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+	query := `SELECT ` + addressDraftRevisionColumns + ` FROM address_draft_revisions` + where
 	if filter.Cursor != "" {
 		createdAt, id, err := decodeAuditCursor(filter.Cursor)
 		if err != nil {
-			return nil, "", ErrAddressDraftRevisionInvalid
+			return nil, "", 0, ErrAddressDraftRevisionInvalid
 		}
 		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
 		args = append(args, createdAt, createdAt, id)
 	}
-	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	args = append(args, filter.Limit+1)
+	if filter.TableMode {
+		direction := "ASC"
+		if filter.Desc {
+			direction = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id %s LIMIT ? OFFSET ?", sortColumn, direction, direction)
+		args = append(args, filter.Limit, filter.Offset)
+	} else {
+		query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+		args = append(args, filter.Limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer rows.Close()
 	items := make([]AddressDraftRevision, 0, filter.Limit)
 	for rows.Next() {
 		item, scanErr := scanAddressDraftRevision(rows)
 		if scanErr != nil {
-			return nil, "", scanErr
+			return nil, "", 0, scanErr
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	next := ""
-	if len(items) > filter.Limit {
+	if !filter.TableMode && len(items) > filter.Limit {
 		items = items[:filter.Limit]
 		last := items[len(items)-1]
 		next = encodeAuditCursor(last.CreatedAt, last.ID)
 	}
-	return items, next, nil
+	return items, next, total, nil
 }
 
 func (s *MySQLStore) GetAddressDraftRevision(ctx context.Context, tenantID, revisionID ID) (AddressDraftRevision, error) {

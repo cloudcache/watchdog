@@ -74,9 +74,15 @@ func TestMySQLAddressDraftRevisionPrepareCASApplyAndAudit(t *testing.T) {
 		t.Fatalf("refreshed preview = %#v err=%v", refreshed, err)
 	}
 	revision = refreshed
-	items, cursor, err := store.ListAddressDraftRevisions(ctx, tenantID, AddressDraftRevisionListFilter{Status: "prepared", Limit: 10})
+	items, cursor, _, err := store.ListAddressDraftRevisions(ctx, tenantID, AddressDraftRevisionListFilter{Status: "prepared", Limit: 10})
 	if err != nil || cursor != "" || len(items) != 1 || items[0].ID != revision.ID {
 		t.Fatalf("prepared list=%#v cursor=%q err=%v", items, cursor, err)
+	}
+	items, cursor, total, err := store.ListAddressDraftRevisions(ctx, tenantID, AddressDraftRevisionListFilter{
+		Search: string(revision.ID), Status: "prepared", Sort: "operations", Desc: true, Limit: 25, TableMode: true,
+	})
+	if err != nil || cursor != "" || total != 1 || len(items) != 1 || items[0].ID != revision.ID {
+		t.Fatalf("server list=%#v cursor=%q total=%d err=%v", items, cursor, total, err)
 	}
 
 	keep.Labels["state"] = "changed-after-preview"

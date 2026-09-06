@@ -86,7 +86,7 @@ type AddressSetRepository interface {
 	DeleteAddressSet(ctx context.Context, tenantID ID, setID string) error
 	DeleteAddressSetVersion(ctx context.Context, tenantID ID, setID string, expectedVersion uint64) error
 	PrepareAddressPrefixRevision(ctx context.Context, tenantID, actorID ID, operations []AddressPrefixBatchOperation) (AddressDraftRevision, error)
-	ListAddressDraftRevisions(ctx context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, error)
+	ListAddressDraftRevisions(ctx context.Context, tenantID ID, filter AddressDraftRevisionListFilter) ([]AddressDraftRevision, string, int, error)
 	GetAddressDraftRevision(ctx context.Context, tenantID, revisionID ID) (AddressDraftRevision, error)
 	ApplyAddressDraftRevision(ctx context.Context, tenantID, actorID, revisionID ID, expectedVersion uint64) (AddressDraftRevision, error)
 }
