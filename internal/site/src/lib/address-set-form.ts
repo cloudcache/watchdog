@@ -28,6 +28,52 @@ export function parseUnsignedIntegerEntries(value: string, minimum: number, maxi
 	})
 }
 
+export function formatSetLabelSelector(value: unknown): string {
+	if (!isRecord(value)) return ""
+	return Object.entries(value)
+		.flatMap(([key, rawValues]) => {
+			const values = toStringList(rawValues)
+			return values.length ? [`${key}=${values.join("|")}`] : []
+		})
+		.join(",")
+}
+
+export function formatAddressSetSelector(value: unknown): string {
+	if (!isRecord(value)) return "—"
+	const parts: string[] = []
+	const labels = formatSetLabelSelector(value.labels)
+	if (labels) parts.push(labels)
+	appendSelectorPart(parts, "geo", value.geo_node_ids)
+	appendSelectorPart(parts, "operator", value.operator_ids)
+	appendSelectorPart(parts, "asn", value.asns)
+	const families = toScalarList(value.families)
+	if (families.length) parts.push(`IPv${families.join("|IPv")}`)
+	return parts.join(", ") || "—"
+}
+
+function appendSelectorPart(parts: string[], label: string, value: unknown) {
+	const values = toScalarList(value)
+	if (values.length) parts.push(`${label}:${values.join("|")}`)
+}
+
+function toStringList(value: unknown): string[] {
+	if (typeof value === "string") return value ? [value] : []
+	if (!Array.isArray(value)) return []
+	return value.filter((item): item is string => typeof item === "string" && item.length > 0)
+}
+
+function toScalarList(value: unknown): Array<string | number> {
+	if (!Array.isArray(value)) return []
+	return value.filter(
+		(item): item is string | number =>
+			(typeof item === "string" && item.length > 0) || (typeof item === "number" && Number.isFinite(item))
+	)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function parseLabelAssignments(value: string, allowMany: boolean): Record<string, string[]> {
 	const labels: Record<string, string[]> = {}
 	for (const rawPair of value.split(",")) {

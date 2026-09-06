@@ -176,6 +176,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **编码**：prefix 编辑、原子 Batch Apply、set 的 Geo/operator/include/exclude，以及 Geo/line 的 parent/operator/address-set/Geo combination 均复用 `AddressReferencePicker`；原请求字段、ETag、tenant scope、C1 校验及 Flow 协议未变。
   - [x] **单元/集成**：前端单元覆盖分页结果按 ID 合并、单/多选去重/删除及未解析 ID 不泄露；既有 API 用例覆盖 `q/limit/cursor` 下推和 `next_cursor`，本轮不复制后端测试桩。
   - [x] **变更/回归**：窄屏 360×480 实测 modal 为 328px 宽、左右各留 16px，高 384px 且 `overflow-y:auto`；桌面 1280×720 为 576×437px，未越界。前端定向 Biome、单测、Lingui compile/Vite production build 和全库回归通过。
+  - [x] **旧数据运行态兼容**：MySQL 读边界把历史 `selector.labels` 标量规范化为数组，前端同时容忍滚动升级期间的标量/数组响应；真实旧记录、九个子页及新增表单逐页回归，Address Sets 不再因单条旧数据整页白屏且控制台无错误。
   - [x] **已提交门禁**：组件、表单接线、单元、设计和任务清单由同一提交交付；无 migration，未夹带 Flow 数据面及既有 maintenance/delete-preview 工作区文件。
 - [ ] **PLAT-04C3 地址管理规模认证**：独立跑百万级 MMDB/IPDB 导入吞吐/峰值内存、50k 输入集合运算、最坏 overlap/DAG 和 API body/result limit；形成基线报告及回归阈值，不借机改数据面。
 - [ ] **PLAT-04C4 运营商发布身份**：冻结 MySQL `isp_operators` 与 Flow `operators.json` UInt16 `isp_id` 的稳定映射、唯一性、不可复用、导入/发布/回滚和引用保护；完成前便捷 Flow 查询只按运营商已配置 ASN 集合过滤，禁止把管理 ULID/code 当 `remote_isp_id`。

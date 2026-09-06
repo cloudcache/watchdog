@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+	formatAddressSetSelector,
+	formatSetLabelSelector,
 	parseAddressEntries,
 	parsePrefixLabels,
 	parseSetLabelSelector,
@@ -21,6 +23,19 @@ test("address form parsers normalize and deduplicate typed values", () => {
 		type: ["customer"],
 	})
 	assert.deepEqual(parseUnsignedIntegerEntries("64512, 64513,64512", 1, 4_294_967_295, "ASN"), [64512, 64513])
+})
+
+test("address set formatters tolerate legacy scalar label selectors", () => {
+	assert.equal(
+		formatSetLabelSelector({ type: "customer", provider: ["telecom", "mobile"] }),
+		"type=customer,provider=telecom|mobile"
+	)
+	assert.equal(
+		formatAddressSetSelector({ labels: { type: "customer" }, geo_node_ids: ["cn"], asns: [4134], families: [4, 6] }),
+		"type=customer, geo:cn, asn:4134, IPv4|IPv6"
+	)
+	assert.equal(formatAddressSetSelector({ labels: { malformed: 7 }, families: null }), "—")
+	assert.equal(formatAddressSetSelector(null), "—")
 })
 
 test("address form parsers reject malformed or duplicate labels", () => {

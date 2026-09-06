@@ -7,7 +7,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { parseAddressEntries, parseSetLabelSelector, parseUnsignedIntegerEntries } from "@/lib/address-set-form"
+import {
+	formatAddressSetSelector,
+	formatSetLabelSelector,
+	parseAddressEntries,
+	parseSetLabelSelector,
+	parseUnsignedIntegerEntries,
+} from "@/lib/address-set-form"
 import { pb } from "@/lib/api"
 
 type AddressSet = {
@@ -15,7 +21,7 @@ type AddressSet = {
 	name: string
 	description: string
 	selector: {
-		labels?: Record<string, string[]>
+		labels?: Record<string, string | string[]>
 		geo_node_ids?: string[]
 		operator_ids?: string[]
 		asns?: number[]
@@ -144,9 +150,7 @@ export default memo(function AddressSets() {
 			rowVersion: item.row_version,
 			name: item.name,
 			description: item.description ?? "",
-			labels: Object.entries(item.selector.labels ?? {})
-				.map(([key, values]) => `${key}=${values.join("|")}`)
-				.join(","),
+			labels: formatSetLabelSelector(item.selector.labels),
 			geoNodeIDs: item.selector.geo_node_ids ?? [],
 			operatorIDs: item.selector.operator_ids ?? [],
 			asns: (item.selector.asns ?? []).join(","),
@@ -186,7 +190,7 @@ export default memo(function AddressSets() {
 				id: set.id,
 				name: set.name,
 				description: set.description || "—",
-				selector: formatSelector(set.selector),
+				selector: formatAddressSetSelector(set.selector),
 				members: set.explicit_members?.join(", ") || "—",
 				excludes:
 					[...(set.explicit_exclude_members ?? []), ...(set.exclude_set_ids ?? []).map((id) => `set:${id}`)].join(
@@ -510,16 +514,6 @@ export default memo(function AddressSets() {
 		</div>
 	)
 })
-
-function formatSelector(selector: AddressSet["selector"]) {
-	const parts: string[] = []
-	for (const [key, values] of Object.entries(selector.labels ?? {})) parts.push(`${key}=${values.join("|")}`)
-	if (selector.geo_node_ids?.length) parts.push(`geo:${selector.geo_node_ids.join("|")}`)
-	if (selector.operator_ids?.length) parts.push(`operator:${selector.operator_ids.join("|")}`)
-	if (selector.asns?.length) parts.push(`asn:${selector.asns.join("|")}`)
-	if (selector.families?.length) parts.push(`IPv${selector.families.join("|IPv")}`)
-	return parts.join(", ") || "—"
-}
 
 function denseCellStyle() {
 	return { padding: [8, 10, 8, 10], textBaseline: "middle", autoWrapText: false }

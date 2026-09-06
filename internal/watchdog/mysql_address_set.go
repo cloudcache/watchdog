@@ -509,6 +509,11 @@ func scanAddressSet(row rowScanner) (AddressSet, error) {
 	if err := json.Unmarshal(selectorJSON, &set.Selector); err != nil {
 		return set, err
 	}
+	selector, err := normalizeAddressSetSelector(set.Selector)
+	if err != nil {
+		return set, fmt.Errorf("address set %s selector: %w", set.ID, err)
+	}
+	set.Selector = selector
 	if err := json.Unmarshal(explicitMembers, &set.ExplicitMembers); err != nil {
 		return set, err
 	}

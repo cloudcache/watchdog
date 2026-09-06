@@ -45,6 +45,14 @@ func TestNormalizeAddressTaxonomyInputs(t *testing.T) {
 	if got := set.Selector["asns"].([]uint32); len(got) != 2 || got[0] != 4134 || got[1] != 4809 {
 		t.Fatalf("normalized ASNs = %#v", got)
 	}
+	legacySelector, err := normalizeAddressSetSelector(map[string]any{"labels": map[string]any{"type": "customer"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyLabels := legacySelector["labels"].(map[string]any)
+	if got := legacyLabels["type"].([]string); len(got) != 1 || got[0] != "customer" {
+		t.Fatalf("normalized legacy label = %#v", got)
+	}
 	if _, err := normalizeAddressSet(AddressSet{Name: "bad selector", Selector: map[string]any{"labels": map[string]any{"region": 7}}}); !errors.Is(err, ErrAddressTaxonomyInvalid) {
 		t.Fatalf("invalid selector value error = %v", err)
 	}
