@@ -271,7 +271,9 @@ func loadAddressDimensionDraft(ctx context.Context, tx *sql.Tx, tenantID ID, loc
 
 func (p *MySQLAddressDimensionPublisher) GetAddressDimensionSnapshot(ctx context.Context, tenantID, snapshotID ID) (AddressDimensionSnapshot, error) {
 	return scanAddressDimensionSnapshot(p.store.db.QueryRowContext(ctx, `SELECT `+addressDimensionSnapshotColumns+`
-		FROM dimension_snapshots WHERE tenant_id = ? AND id = ?`, tenantID, snapshotID))
+		FROM dimension_snapshots
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ?`,
+		tenantID, AddressDimensionModuleKey, AddressDimensionKey, snapshotID))
 }
 
 var addressDimensionSnapshotSortColumns = map[string]string{

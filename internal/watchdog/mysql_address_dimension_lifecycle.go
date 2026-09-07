@@ -381,11 +381,13 @@ func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionReference(ctx con
 }
 
 func getAddressDimensionSnapshotTx(ctx context.Context, tx *sql.Tx, tenantID, snapshotID ID, lock bool) (AddressDimensionSnapshot, error) {
-	query := `SELECT ` + addressDimensionSnapshotColumns + ` FROM dimension_snapshots WHERE tenant_id = ? AND id = ?`
+	query := `SELECT ` + addressDimensionSnapshotColumns + ` FROM dimension_snapshots
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ?`
 	if lock {
 		query += ` FOR UPDATE`
 	}
-	return scanAddressDimensionSnapshot(tx.QueryRowContext(ctx, query, tenantID, snapshotID))
+	return scanAddressDimensionSnapshot(tx.QueryRowContext(ctx, query,
+		tenantID, AddressDimensionModuleKey, AddressDimensionKey, snapshotID))
 }
 
 func lockAddressDimensionTenant(ctx context.Context, tx *sql.Tx, tenantID ID) error {

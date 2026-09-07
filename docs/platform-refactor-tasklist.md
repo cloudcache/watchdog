@@ -225,6 +225,11 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
     - [x] **迁移/测试**：migration 049 前向增加 GC 候选索引和 object marker CHECK，不回填/提前清理旧 snapshot；真实 MySQL 覆盖 activation/reference/latest-installed 三重阻断、ACK 前移后放行、crash/retry、审计唯一、过期回滚拒绝和迟到 reference 锁竞争；001–049 重放、049 replay、fresh-init parity 通过。
     - [x] **已提交门禁**：代码、migration、init、配置、设计和测试由本提交原子交付，不夹带 Flow 数据面及既有未提交删除预览/maintenance 文件。
 - [x] **PLAT-04B operation job registry/scheduler**：受控 handler registry、每类并发 worker、typed payload、attempt-scoped progress、周期 reaper 和 tenant watermark 已分别提交（`18fde3a3`、`43b6675a`、`f0fb1444`、`75a258a6`、migration 028）。migration 044 与 backend 再完成 tenant/system cron trigger、服务端 CRUD/filter/ETag/audit、持久 wrap-around 扫描游标、单 schedule `max_inflight` + 注册 job type concurrency 双层背压、稳定 `schedule:<id>:<due>` 幂等键、未知 handler 延迟而不丢 trigger、坏 cron/timezone fail-closed，以及 runtime 与原 worker registry 的同源接线（`178e0ced`、`d2cf66f4`）。调度器只创建普通 `operation_jobs`，没有复制 lease/retry 状态机；迟到 cron 合并为一次并从当前时刻计算下一次，不做无界追赶。API 仅开放 tenant schedule；system schedule 供受控模块调用。单元、API、真实 MySQL 迁移重放/CRUD/CAS/背压/续扫/水位/历史保留及全库 test/vet/build 通过。
+- [x] **PLAT-04A2e publication kind 范围隔离**：通用 `dimension_snapshots` 开始承载第二种 object 前，封闭地址 API 按 ID 越界读取/操作其他 `module_key + dimension_key` 的缺口。
+  - [x] **设计/编码**：地址 snapshot 单项读取和所有事务生命周期入口统一固定 `(tenant_id, module_key='flow', dimension_key='address', id)`；列表、时间线、consumer 与 GC 的既有 scope 不变，不复制状态机、不增加 migration。
+  - [x] **单元/集成**：现有地址仓储/API 套件通过；隔离真实 MySQL 注入同租户 `flow/vpn_rule_set` 快照，证明地址 get 与 reject 生命周期均返回 no rows，异类对象保持未修改。
+  - [x] **变更/回归**：地址 snapshot ID、响应和签名 wire schema 不变；全库 test、Watchdog race、vet/build 与 diff check 作为提交门禁，既有生产地址发布无需迁移。
+  - [x] **已提交门禁**：范围修复、真实 MySQL 测试与任务清单由本独立提交原子交付，不夹带 Flow writer/rollup 或用户已有 maintenance/delete-preview 文件。
 - [x] **PLAT-04C1 address-prefix/set 管理内核**：typed schema/CRUD、canonical CIDR/IPv6、members/exclude/include DAG、集合并交差/显式 universe 有限补集、冲突/最坏展开量 preview、draft revision 原子 apply、分页/filter、ETag/审计与管理 VTable 已形成一个已提交闭环；Flow 不复制 CRUD。
   - [x] **设计（集合数学）**：冻结 CIDR/裸 IP/start-end 全量校验、v4/v6 分族并交差、显式 universe 有限补集、重叠 lint、结果/地址量上限；普通 merge 保持集合完全相等，可能扩大的 `/24` 整理独立为 `cover + added-address preview + confirm`。
   - [x] **编码/单元（集合数学）**：平台共享 Go 内核已实现规范化、并/交/差/有限补集、overlap 有界明细、128-bit 地址计数和 cover 扩大量；纯计算 preview API 已接入，非法/未知字段整体 400；全库测试通过（commit `f44d1978`）。
