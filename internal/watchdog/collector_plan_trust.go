@@ -69,6 +69,15 @@ type CollectorPlanSigner interface {
 	Sign(context.Context, CollectorPlanRevision) (CollectorPlanRevision, error)
 }
 
+// ControlPlanePayloadSigner reuses the platform signing key for small,
+// canonical control-plane payloads such as an enrichment version pair. It does
+// not expose private key bytes or create a second trust lifecycle.
+type ControlPlanePayloadSigner interface {
+	KeyID() string
+	PublicKey() ed25519.PublicKey
+	SignControlPlanePayload(context.Context, []byte) ([]byte, error)
+}
+
 // collectorPlanTransactionSigner lets the MySQL repository sign only after it
 // has locked and revalidated the registered key in the same transaction. It is
 // intentionally package-private so HTTP adapters and external implementations
@@ -76,6 +85,11 @@ type CollectorPlanSigner interface {
 type collectorPlanTransactionSigner interface {
 	CollectorPlanSigner
 	signVerified(CollectorPlanRevision) (CollectorPlanRevision, error)
+}
+
+type controlPlanePayloadTransactionSigner interface {
+	ControlPlanePayloadSigner
+	signControlPlanePayloadVerified([]byte) ([]byte, error)
 }
 
 type ed25519CollectorPlanSigner struct {
@@ -136,6 +150,27 @@ func (s *ed25519CollectorPlanSigner) signVerified(plan CollectorPlanRevision) (C
 		return CollectorPlanRevision{}, err
 	}
 	return verified, nil
+}
+
+func (s *ed25519CollectorPlanSigner) SignControlPlanePayload(ctx context.Context, payload []byte) ([]byte, error) {
+	if s == nil || ctx == nil || len(s.privateKey) != ed25519.PrivateKeySize || len(s.publicKey) != ed25519.PublicKeySize {
+		return nil, ErrCollectorPlanSigningKeyUnavailable
+	}
+	registered, err := s.trust.GetCollectorPlanSigningKey(ctx, s.keyID)
+	if err != nil {
+		return nil, fmt.Errorf("read control-plane signing key state: %w", err)
+	}
+	if registered.Status != CollectorPlanSigningKeyActive || !bytes.Equal(registered.PublicKey, s.publicKey) {
+		return nil, ErrCollectorPlanSigningKeyUnavailable
+	}
+	return s.signControlPlanePayloadVerified(payload)
+}
+
+func (s *ed25519CollectorPlanSigner) signControlPlanePayloadVerified(payload []byte) ([]byte, error) {
+	if s == nil || len(s.privateKey) != ed25519.PrivateKeySize || len(s.publicKey) != ed25519.PublicKeySize || len(payload) == 0 || len(payload) > 64<<10 {
+		return nil, ErrCollectorPlanSigningKeyUnavailable
+	}
+	return ed25519.Sign(s.privateKey, payload), nil
 }
 
 type CollectorPlanTrustBundleDelivery struct {
@@ -268,4 +303,6 @@ func NewCollectorPlanTrustMaintenance(repository CollectorPlanTrustRepository, l
 
 var _ CollectorPlanSigner = (*ed25519CollectorPlanSigner)(nil)
 var _ collectorPlanTransactionSigner = (*ed25519CollectorPlanSigner)(nil)
+var _ ControlPlanePayloadSigner = (*ed25519CollectorPlanSigner)(nil)
+var _ controlPlanePayloadTransactionSigner = (*ed25519CollectorPlanSigner)(nil)
 var _ CollectorPlanTrustBundleController = (*CollectorPlanTrustBundleService)(nil)

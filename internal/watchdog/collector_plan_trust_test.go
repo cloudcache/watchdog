@@ -83,9 +83,24 @@ func TestCollectorPlanSignerLoadsOwnerOnlyFileAndChecksActiveKey(t *testing.T) {
 	if signed.SigningKeyID != "plan-key-1" || len(signed.Signature) != ed25519.SignatureSize || ValidateNewCollectorPlanRevision(signed) != nil {
 		t.Fatalf("signed plan = %+v", signed)
 	}
+	payloadSigner, ok := signer.(ControlPlanePayloadSigner)
+	if !ok {
+		t.Fatal("collector plan signer does not expose the shared control-plane payload capability")
+	}
+	payload := []byte(`{"schema_version":1}`)
+	payloadSignature, err := payloadSigner.SignControlPlanePayload(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ed25519.Verify(publicKey, payload, payloadSignature) {
+		t.Fatal("control-plane payload signature did not verify")
+	}
 	repository.key.Status = CollectorPlanSigningKeyRetiring
 	if _, err := signer.Sign(context.Background(), plan); !errors.Is(err, ErrCollectorPlanSigningKeyUnavailable) {
 		t.Fatalf("retiring signer error = %v", err)
+	}
+	if _, err := payloadSigner.SignControlPlanePayload(context.Background(), payload); !errors.Is(err, ErrCollectorPlanSigningKeyUnavailable) {
+		t.Fatalf("retiring payload signer error = %v", err)
 	}
 	repository.key.Status = CollectorPlanSigningKeyActive
 	repository.key.PublicKey = append(ed25519.PublicKey(nil), publicKey...)

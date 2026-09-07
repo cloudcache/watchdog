@@ -284,6 +284,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [x] **机器身份前置**：平台复用 `collector_agents`/一次性 enrollment/credential rotation 注册独立 `flow_worker/pull` 身份；collector 与 worker 认证策略严格互斥，未放宽既有 plan/evidence API，也未增加重复 registry 或空 migration。desired pair、对象下载和 ACK 仍由本项后续切片关闭。
   - [ ] **集成（loader）**：reader core 已覆盖 WADS 无 GeoCatalog enrichment、旧 JSON 兼容、非法 format/version 预取前拒绝、SHA/CRC/预算、ACK retry 与 catalog 原子性；仍需真实无 MySQL/CH cold start + LKG、部分下载/坏签名/重启/回滚、Kafka partition 缺版本暂停且不误用 current。
   - [x] **平台版本对 schema**：migration 059 仅保存 classification profile、不可变 event-time dimension+classification pair 元数据及 worker ACK 里程碑；AddressSnap/classification 大对象继续位于有界 object store。真实 MySQL 已通过迁移重复执行、tenant cascade 与 `init.sql` parity。该项不包含 profile 编译/签名、机器下载或 LKG，后续子项未完成前不得切换生产 worker。
+  - [x] **签名 envelope core**：canonical wire v1 将两对象完整元数据/ref/checksum 绑定为一个 Ed25519 install unit；复用 collector-plan monotonic trust bundle 与 active/retiring/revoked 语义，不新建 trust root。篡改、未知字段、非 canonical payload、过期 key 均 fail closed；平台 HTTP desired/object/ACK 和 worker LKG 仍未完成。
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
   - [ ] **性能**：固定真实 corpus 记录 object size/build RSS/lookup p95-p99/swap pause/多 tenant；只有 BART 不达标且共享基库容量成立才引入 DIR-24-8。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
