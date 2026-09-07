@@ -7,11 +7,12 @@ import {
 	type PlatformPermission,
 	type PlatformTenant,
 } from "./platform-auth"
+import { resolveAPIBase, responseFilename } from "./api-transport"
 import { $alerts, $allSystemsById, $allSystemsByName, $userSettings } from "./stores"
 import { chartTimeData } from "./utils"
 
 /** PocketBase JS Client */
-export const pb = new PocketBase(globalThis.WATCHDOG?.API_URL?.trim() || basePath)
+export const pb = new PocketBase(resolveAPIBase(globalThis.WATCHDOG?.API_URL, basePath))
 
 const pocketBaseSend = pb.send.bind(pb)
 
@@ -116,10 +117,7 @@ function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformA
 	}
 }
 
-async function sendWatchdogAPI<T>(
-	path: string,
-	options: WatchdogAPIOptions = {}
-): Promise<T> {
+async function sendWatchdogAPI<T>(path: string, options: WatchdogAPIOptions = {}): Promise<T> {
 	const response = await fetchWatchdogAPI(path, options)
 	if (!response.ok) {
 		const message = await readAPIErrorMessage(response)
@@ -188,19 +186,6 @@ export async function downloadWatchdogFile(path: string) {
 	link.click()
 	link.remove()
 	URL.revokeObjectURL(blobURL)
-}
-
-function responseFilename(disposition: string | null) {
-	if (!disposition) return ""
-	const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-	if (encoded) {
-		try {
-			return decodeURIComponent(encoded)
-		} catch {
-			return encoded
-		}
-	}
-	return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? ""
 }
 
 async function readAPIErrorMessage(response: Response) {

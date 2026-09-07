@@ -565,6 +565,9 @@ func TestApiRoutesAuthentication(t *testing.T) {
 			ExpectedStatus:  200,
 			ExpectedContent: []string{"\"key\":", "\"v\":"},
 			TestAppFactory:  testAppFactory,
+			AfterTestFunc: func(t testing.TB, _ *pbTests.TestApp, res *http.Response) {
+				require.Equal(t, "ETag, Content-Disposition, X-Request-ID", res.Header.Get("Access-Control-Expose-Headers"))
+			},
 		},
 		{
 			Name:            "GET /first-run - no auth should succeed",

@@ -76,7 +76,7 @@ const routes = {
  * The base path of the application.
  * This is used to prepend the base path to all routes.
  */
-export const basePath = WATCHDOG?.BASE_PATH || ""
+export const basePath = globalThis.WATCHDOG?.BASE_PATH || ""
 
 /**
  * Prepends the base path to the given path.
@@ -102,8 +102,10 @@ export const navigate = (urlString: string) => {
 
 export function Link(props: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: the anchor is the navigation control and always receives a route href from callers.
 		<a
 			{...props}
+			// biome-ignore lint/a11y/useValidAnchor: this anchor delegates same-document navigation to nanostores while retaining an href.
 			onClick={(e) => {
 				e.preventDefault()
 				const href = props.href || ""
