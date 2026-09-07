@@ -147,5 +147,6 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 - worker：无 MySQL/CH 连接也能 cold start/LKG restore，下载中断、坏签名、坏对象、构建 OOM 预算、ACK 失败、回滚和原子可见性；
 - performance：固定硬件记录 build time、object size、peak RSS、单核/multicore lookup throughput、p95/p99、atomic swap pause，并覆盖多 tenant；BART 与 DIR-24-8 只用同 corpus 决策；
 - integration：管理 draft → build job → approve/sign → activate → worker download/install/ACK → Kafka 四协议 → CH fact version → query；失败路径证明旧版本持续服务；
+- lifecycle fault gate：真实 MySQL 上模拟 builder 在 object/snapshot 已提交、operation job 终态未写时崩溃，过期 lease 由第二 owner 以同一 job/snapshot identity 收敛；同一链路继续验证 WADS approve/activate、retire/rollback 清除 retention，以及回切版本经 GC job 删除对象并只写一份 destruction receipt；
 - reclassification：源/目标版本、重试/takeover/cancel、count/counter 守恒、generation 原子切换和 raw 不可用拒绝；
 - regression：Flow/Watchdog 全库 test/race/vet/build、真实 MySQL/CH/Kafka 组合门禁和 rolling upgrade。
