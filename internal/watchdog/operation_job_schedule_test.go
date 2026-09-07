@@ -49,6 +49,17 @@ func TestNormalizeOperationJobScheduleRejectsInvalidScopeAndPayload(t *testing.T
 	}
 }
 
+func TestOperationJobSchedulePayloadEqualIgnoresMySQLJSONFormatting(t *testing.T) {
+	stored := json.RawMessage(`{"payload": {"version": 1}, "schema_version": 1}`)
+	desired := json.RawMessage(`{"schema_version":1,"payload":{"version":1}}`)
+	if !operationJobSchedulePayloadEqual(stored, desired) {
+		t.Fatal("semantically equal JSON payloads were treated as different")
+	}
+	if operationJobSchedulePayloadEqual(stored, json.RawMessage(`{"schema_version":1,"payload":{"version":2}}`)) {
+		t.Fatal("different JSON payloads were treated as equal")
+	}
+}
+
 func TestScheduledOperationJobRequestHashIsStableAndContentBound(t *testing.T) {
 	schedule := OperationJobSchedule{
 		ID: "schedule-a", JobType: "cleanup", PartitionKey: "p0",
@@ -195,6 +206,46 @@ func TestMySQLOperationJobScheduleCRUDDispatchAndWatermark(t *testing.T) {
 	if err != nil || watermark != 20 {
 		t.Fatalf("watermark=%d err=%v", watermark, err)
 	}
+	if value, known, err := store.LookupSystemOperationJobWatermark(ctx, "reconcile", "never-written"); err != nil || known || value != 0 {
+		t.Fatalf("missing watermark value=%d known=%t err=%v", value, known, err)
+	}
+	if value, known, err := store.LookupSystemOperationJobWatermark(ctx, "reconcile", "partition-1"); err != nil || !known || value != 20 {
+		t.Fatalf("stored watermark value=%d known=%t err=%v", value, known, err)
+	}
+
+	systemPartition := "system-" + string(tenantID)
+	desiredSystem := OperationJobSchedule{Name: "System reconcile", JobType: "system_reconcile_test", PartitionKey: systemPartition,
+		CronExpression: "@hourly", Timezone: "UTC", PayloadJSON: json.RawMessage(`{"schema_version":1,"payload":{"version":1}}`), Enabled: true, MaxInflight: 1}
+	systemFirst, err := store.EnsureSystemOperationJobSchedule(ctx, desiredSystem)
+	if err != nil || systemFirst.ScopeType != OperationJobScopeSystem || systemFirst.TenantID != "" {
+		t.Fatalf("system schedule=%#v err=%v", systemFirst, err)
+	}
+	systemSame, err := store.EnsureSystemOperationJobSchedule(ctx, desiredSystem)
+	if err != nil || systemSame.ID != systemFirst.ID || systemSame.RowVersion != systemFirst.RowVersion || !systemSame.NextRunAt.Equal(systemFirst.NextRunAt) {
+		t.Fatalf("unchanged system schedule first=%#v same=%#v err=%v", systemFirst, systemSame, err)
+	}
+	desiredSystem.PayloadJSON = json.RawMessage(`{"schema_version":1,"payload":{"version":2}}`)
+	systemUpdated, err := store.EnsureSystemOperationJobSchedule(ctx, desiredSystem)
+	if err != nil || systemUpdated.ID != systemFirst.ID || systemUpdated.RowVersion != systemFirst.RowVersion+1 {
+		t.Fatalf("updated system schedule=%#v err=%v", systemUpdated, err)
+	}
+	stale, err := store.CreateOperationJobSchedule(ctx, OperationJobSchedule{ScopeType: OperationJobScopeSystem,
+		Name: "Stale system reconcile", JobType: desiredSystem.JobType, PartitionKey: systemPartition + "-old",
+		CronExpression: "@hourly", Timezone: "UTC", PayloadJSON: json.RawMessage(`{"schema_version":1}`), Enabled: true, MaxInflight: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DisableSystemOperationJobSchedulesExcept(ctx, desiredSystem.JobType, systemUpdated.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleStored, err := getOperationJobScheduleByScope(ctx, db, OperationJobScopeSystem, "", stale.ID)
+	if err != nil || staleStored.Enabled {
+		t.Fatalf("stale schedule=%#v err=%v", staleStored, err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM operation_job_schedules WHERE id IN (?, ?)`, systemFirst.ID, stale.ID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM operation_job_system_watermarks WHERE job_type = 'reconcile' AND partition_key IN ('partition-1','never-written')`)
+	})
 
 	latestFirst, err := store.GetOperationJobSchedule(ctx, tenantID, first.ID)
 	if err != nil {

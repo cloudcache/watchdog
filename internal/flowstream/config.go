@@ -51,6 +51,11 @@ type KafkaConfig struct {
 	SASL     SASLConfig
 }
 
+// Validate checks broker transport and identity without constructing a
+// producer or consumer. Management-plane users such as reconciliation share
+// exactly the same TLS/SASL contract as the Flow data-plane clients.
+func (c KafkaConfig) Validate() error { return c.validate() }
+
 type ProducerConfig struct {
 	Kafka       KafkaConfig
 	QueueSize   int

@@ -116,6 +116,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 | CH 自然坐标表、逐消息 receipt、无固定 TTL、legacy 保留 | `deploy/migration/clickhouse/011_flow_storage_v2.sql` | 维护窗口执行；worker readiness 拒绝 V1/V2 混用 |
 | worker `source_stream_id`、自然坐标写入、无逐记录 hash | `cmd/watchdog-flow-worker`、`internal/flowworker`、`internal/flowch` | production 必须显式提供 stream incarnation ID |
 | count/counter reconciliation | `internal/flowch/reconciliation*.go` | 调用方必须提供 Kafka committed-next-offset；扫描有界且不完整不报伪零 |
+| system reconciliation job | `internal/flowstream/committed_offsets.go`、`internal/watchdog/flow_reconciliation_*` | franz-go 向真实 group coordinator 读稳定水位；显式 cutover、冻结快照、checkpoint/system watermark 与五类 gauge；不解锁 raw delete |
 | 策略、UTC 日状态、水位和 CAS API | MySQL migration 056、`internal/watchdog/*flow_storage*` | `raw_delete_enabled=true` 稳定拒绝 |
 | aging/downsample operation job | `internal/watchdog/flow_storage_jobs.go`、`internal/flowch/rollup.go` | 只写 1h archive；守恒不通过进入 failed/repair |
 | raw/archive 混合查询 | `internal/flowquery`、`internal/watchdog/query_provider_flow*.go`、`api_flow_overseas.go` | 只采用连续 reconciled boundary；1m/raw 与 1h/hybrid 语义分开 |
@@ -157,6 +158,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 ### V2-C 查询、导出与对账
 
 - [x] **编码**：自然坐标 cursor；逐 committed offset 的 message receipt scanner；删除 Flow query 热路径 hash，保留 artifact checksum。
+- [x] **编码（system job）**：真实 Kafka OffsetFetch、system schedule/lease/checkpoint/watermark 和完整 gauge 快照已接线；没有使用 CH 最大 offset、SNMP 或进程内水位替代。
 - [x] **单元**：多字段稳定翻页、同毫秒多 partition、cursor 过期、完全空洞和五类 mismatch 优先级。
 - [x] **集成（CH）**：真实 CH 验证 1h archive + raw 互斥拼接、全局 TopN、1m raw-only、境外查询和 generation 守恒。
 - [ ] **集成（端到端）**：分页无重/漏；receipt coverage 到 Kafka committed-next-offset；导出与在线查询同参数同总量。

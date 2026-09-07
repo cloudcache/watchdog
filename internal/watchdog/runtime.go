@@ -13,6 +13,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowmetrics"
 	"github.com/cloudcache/watchdog/internal/flowquery"
+	"github.com/cloudcache/watchdog/internal/flowstream"
 )
 
 type collectorPrincipalRuntimeProvider interface {
@@ -55,6 +56,7 @@ type BackendRuntime struct {
 	FlowRollupService   *FlowRollupService
 	FlowStorageRunner   FlowStorageDayRunner
 	FlowStorageService  *FlowStorageLifecycleService
+	FlowReconciliation  flowReconciliationScanner
 	MetricProviders     *RuntimeMetricsRegistry
 	QueryProviders      *QueryProviderRegistry
 	QueryGateway        *QueryGateway
@@ -64,6 +66,8 @@ type BackendRuntime struct {
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
 	flowClickHouseNative       *flowch.NativeInserter
+	flowReconciliationOffsets  *flowstream.CommittedOffsetReader
+	flowReconciliationMetrics  *flowmetrics.Reconciliation
 	flowRollupMetrics          flowRollupRuntimeMetrics
 	metricsScrapeHandler       http.Handler
 
@@ -183,7 +187,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		MetricProviders:     NewRuntimeMetricsRegistry(),
 		QueryProviders:      NewQueryProviderRegistry(),
 	}
-	if cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
+	if cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || cfg.FlowReconciliation.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
 		runtime.flowClickHouseNative, err = newFlowClickHouseNative(ctx, cfg.FlowRollup)
 		if err != nil {
 			_ = runtime.Close()
@@ -351,6 +355,18 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 			Store: store, Interval: cfg.FlowStorage.ScanInterval,
 			MaxPoliciesPerScan:   cfg.FlowStorage.MaxPoliciesPerScan,
 			MaxPartitionsPerScan: cfg.FlowStorage.MaxPartitionsPerScan,
+		}
+	}
+	if cfg.FlowReconciliation.Enabled {
+		runtime.flowReconciliationOffsets, runtime.FlowReconciliation, runtime.flowReconciliationMetrics, err =
+			newFlowReconciliationRuntime(ctx, cfg.FlowReconciliation, runtime.flowClickHouseNative)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, fmt.Errorf("initialize Flow ingest reconciliation: %w", err)
+		}
+		if err := runtime.MetricProviders.Register("flow_ingest_reconciliation", runtime.flowReconciliationMetrics); err != nil {
+			_ = runtime.Close()
+			return nil, err
 		}
 	}
 	runtime.metricsScrapeHandler, err = NewMetricsScrapeHandler(cfg.MetricsScrape, runtime.RuntimeMetrics)
@@ -656,6 +672,21 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 				return err
 			}
 		}
+		if r.FlowReconciliation != nil {
+			if err := registry.Register(OperationJobRegistration{
+				JobType:     FlowReconciliationJobType,
+				Handler:     NewFlowReconciliationJobHandler(r.flowReconciliationOffsets, r.FlowReconciliation, r.Store, r.flowReconciliationMetrics),
+				Concurrency: 1, LeaseFor: r.Config.FlowReconciliation.LeaseFor,
+				MaxAttempts: r.Config.FlowReconciliation.MaxAttempts, RetryBase: r.Config.FlowReconciliation.RetryBase,
+			}); err != nil {
+				return err
+			}
+			if err := ensureFlowReconciliationSchedule(ctx, r.Store, r.Config.FlowReconciliation); err != nil {
+				return fmt.Errorf("ensure Flow reconciliation schedule: %w", err)
+			}
+		} else if err := r.Store.DisableSystemOperationJobSchedulesExcept(ctx, FlowReconciliationJobType, ""); err != nil {
+			return fmt.Errorf("disable Flow reconciliation schedules: %w", err)
+		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
 		go (AddressDimensionGCProducer{
 			Repository: r.AddressDimensions, Jobs: r.Store,
@@ -691,6 +722,9 @@ func (r *BackendRuntime) Close() error {
 		r.backgroundMu.Unlock()
 		if r.collectorPrincipalProvider != nil {
 			r.collectorPrincipalProvider.CloseIdleConnections()
+		}
+		if r.flowReconciliationOffsets != nil {
+			r.flowReconciliationOffsets.Close()
 		}
 		if r.flowClickHouseNative != nil {
 			r.flowClickHouseNative.Close()

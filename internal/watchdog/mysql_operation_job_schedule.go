@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -143,6 +144,82 @@ func (s *MySQLStore) CreateOperationJobSchedule(ctx context.Context, item Operat
 		return OperationJobSchedule{}, normalizeOperationJobScheduleWriteError(err)
 	}
 	return getOperationJobScheduleByScope(ctx, s.db, item.ScopeType, item.TenantID, item.ID)
+}
+
+// EnsureSystemOperationJobSchedule creates or converges one runtime-owned
+// system schedule. It preserves next_run_at when the desired definition is
+// unchanged, so a hub restart cannot postpone already due work.
+func (s *MySQLStore) EnsureSystemOperationJobSchedule(ctx context.Context, desired OperationJobSchedule) (OperationJobSchedule, error) {
+	desired.ScopeType, desired.TenantID = OperationJobScopeSystem, ""
+	var err error
+	desired, err = normalizeOperationJobSchedule(desired, time.Now())
+	if err != nil {
+		return OperationJobSchedule{}, err
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := scanOperationJobSchedule(s.db.QueryRowContext(ctx, `
+			SELECT `+operationJobScheduleColumns+`
+			FROM operation_job_schedules
+			WHERE tenant_id IS NULL AND scope_type = 'system' AND job_type = ? AND partition_key = ?
+		`, desired.JobType, desired.PartitionKey))
+		if errors.Is(err, sql.ErrNoRows) {
+			created, createErr := s.CreateOperationJobSchedule(ctx, desired)
+			if errors.Is(createErr, ErrOperationJobScheduleExists) {
+				continue
+			}
+			return created, createErr
+		}
+		if err != nil {
+			return OperationJobSchedule{}, err
+		}
+		if current.Name == desired.Name && current.CronExpression == desired.CronExpression && current.Timezone == desired.Timezone &&
+			operationJobSchedulePayloadEqual(current.PayloadJSON, desired.PayloadJSON) && current.Enabled == desired.Enabled && current.MaxInflight == desired.MaxInflight {
+			return current, nil
+		}
+		desired.ID = current.ID
+		updated, updateErr := s.UpdateOperationJobSchedule(ctx, desired, current.RowVersion)
+		if errors.Is(updateErr, ErrOperationJobScheduleConflict) {
+			continue
+		}
+		return updated, updateErr
+	}
+	return OperationJobSchedule{}, ErrOperationJobScheduleConflict
+}
+
+func operationJobSchedulePayloadEqual(left, right json.RawMessage) bool {
+	decode := func(raw json.RawMessage) (any, error) {
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
+	leftValue, leftErr := decode(left)
+	rightValue, rightErr := decode(right)
+	return leftErr == nil && rightErr == nil && reflect.DeepEqual(leftValue, rightValue)
+}
+
+// DisableSystemOperationJobSchedulesExcept retires stale runtime-owned system
+// schedules after a stream/config replacement. Passing an empty keep ID
+// disables the job type entirely.
+func (s *MySQLStore) DisableSystemOperationJobSchedulesExcept(ctx context.Context, jobType string, keep ID) error {
+	jobType = strings.TrimSpace(jobType)
+	if jobType == "" {
+		return errors.New("system operation schedule job type is required")
+	}
+	query := `UPDATE operation_job_schedules
+		SET enabled = 0, last_error_detail = 'disabled by runtime configuration',
+			row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP(3)
+		WHERE tenant_id IS NULL AND scope_type = 'system' AND job_type = ? AND enabled = 1`
+	args := []any{jobType}
+	if keep != "" {
+		query += ` AND id <> ?`
+		args = append(args, keep)
+	}
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
 }
 
 func (s *MySQLStore) UpdateOperationJobSchedule(ctx context.Context, item OperationJobSchedule, expectedVersion uint64) (OperationJobSchedule, error) {
@@ -445,8 +522,17 @@ func scheduledOperationJobRequestHash(schedule OperationJobSchedule) (string, er
 }
 
 func (s *MySQLStore) GetSystemOperationJobWatermark(ctx context.Context, jobType, partitionKey string) (uint64, error) {
+	value, _, err := s.LookupSystemOperationJobWatermark(ctx, jobType, partitionKey)
+	return value, err
+}
+
+// LookupSystemOperationJobWatermark distinguishes a persisted zero from no
+// watermark. Reconciliation needs that distinction: silently treating a
+// missing cutover as offset zero creates false loss alarms for an established
+// consumer group.
+func (s *MySQLStore) LookupSystemOperationJobWatermark(ctx context.Context, jobType, partitionKey string) (uint64, bool, error) {
 	if strings.TrimSpace(jobType) == "" || strings.TrimSpace(partitionKey) == "" {
-		return 0, errors.New("system operation job watermark type and partition are required")
+		return 0, false, errors.New("system operation job watermark type and partition are required")
 	}
 	var value uint64
 	err := s.db.QueryRowContext(ctx, `
@@ -454,9 +540,9 @@ func (s *MySQLStore) GetSystemOperationJobWatermark(ctx context.Context, jobType
 		WHERE job_type = ? AND partition_key = ?
 	`, jobType, partitionKey).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+		return 0, false, nil
 	}
-	return value, err
+	return value, err == nil, err
 }
 
 func (s *MySQLStore) AdvanceSystemOperationJobWatermark(ctx context.Context, jobType, partitionKey string, value uint64) error {

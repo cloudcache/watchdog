@@ -183,30 +183,27 @@ plan 的 `default_sampling_rate` 只作为 exporter 最后兜底；pre-scaled �
 
 #### 3.4.1 Ingest receipt 对账契约
 
-receipt 是一个 ClickHouse block 的审计摘要，不是 tenant 资源。当前 block 只保证来自同一 Kafka topic/partition，一次 fetch 可以含多个 exporter 和 tenant；因此不得把 tenant 补进 receipt 权威键，也不得用按 tenant 分片的 rollup 水位代替分区对账。`ingest_batch_id` 为 `SHA-256(v1, topic, partition, first_offset, last_offset, checksum)`；权威身份是 `(topic, partition, first_offset, last_offset, ingest_batch_id)`，`generation` 只是 ReplacingMergeTree 版本。fact 一侧先以 `record_id` 去重，再按 `ingest_batch_id` 核对，不得对物理重放行直接求和。
+Storage V2 的 receipt 是**每个允许提交的 Kafka message 一条回执**，不是 CH block 摘要，也不是 tenant 资源。权威身份为 `(source_stream_id, kafka_partition, kafka_offset)`；topic 只作诊断，`source_stream_id` 表示不可复用的 Kafka cluster/topic incarnation。每个 message 无论产生事实、模板缺失、零行或被确定性拒绝，都必须写入相应 disposition 的 receipt 后才允许提交 offset。事实以 `(source_stream_id, partition, offset, record_index)` 自然坐标和最大 `ingest_generation` 收敛，不再生成 `record_id`、`ingest_batch_id` 或内容 checksum。
 
-一次对账先从 Kafka consumer group 取得同一时点的 `committed_next_offset`，只检查 `last_offset < committed_next_offset - safety_lag` 的闭合范围。records 已写而 receipt 尚未写的热路径窗口记为 pending，不报 mismatch。模板缺失、拒绝或解码后零行的 Kafka offset 可以合法提交且没有 receipt，所以不得从“offset 已提交”推断“每个 offset 必须有 receipt”；同时缺 fact 和 receipt 无法仅从 CH 证明，需要 Kafka RawFlow 重放/离线核验。
+对账右边界只能由配置的 worker consumer group 向**真实 Kafka broker**读取 `committed_next_offset`；禁止以 CH 最大 offset、receipt 最大 offset、worker 内存 lag 或 SNMP counter 冒充。`CommittedOffsetReader` 不加入消费组、不消费也不提交记录，使用稳定 OffsetFetch 并要求 exact topic metadata 存在且至少有一个 partition；未提交的 partition（offset `-1`）没有闭合窗口，不纳入当次扫描。
 
-对每个已闭合 batch 比较下列值：
+每次 system job 第一次 attempt 原子冻结所有已提交 partition 的 close offset，之后 crash/retry 只能继续同一快照，不能刷新右边界造成移动目标。左边界优先读取 `operation_job_system_watermarks`；不存在时必须由 `flow_reconciliation.bootstrap_offsets` 显式给出每个已提交 partition 的上线 cutover。缺 cutover、partition 负数或 committed offset 小于既有水位均终态失败，绝不从 CH min/max 推断，也不静默把当前 committed offset 当起点。topic 重建必须换新的 `source_stream_id`。
 
-| 项目 | receipt 权威值 | `flow_records FINAL` 复算 |
+scanner 逐一枚举连续的 `[next_offset, committed_next_offset)`，即使 receipt 与事实同时消失也能发现空洞。每个 chunk 同时受 message 数、事实行数和 CH read bytes 限制，cursor 不前进立即终态失败，避免预算过小造成死循环。比较口径如下：
+
+| 项目 | receipt 权威值 | `flow_records` 最新 generation 复算 |
 |---|---|---|
-| 身份 | topic/partition/first/last/batch ID | topic/partition 必须唯一，offset 取 min/max，batch ID 必须唯一 |
-| 规模 | source batch count/record count | `uniqExact(kafka_offset)` / 去重行数 |
-| 计数 | raw bytes/packets、valid estimated bytes/packets、valid-estimate records | 对应 `sum`，estimated 三项只统计 `estimated_valid` |
-| 内容 | checksum | 按 `(kafka_offset, record_index)` 重建与 Go 端完全相同的 big-endian SHA-256 字节流 |
+| message 身份 | stream/partition/offset/topic/disposition | topic 唯一；`record_index` 从 0 连续且无重复 |
+| 规模 | `record_count` | generation 去重后的记录数 |
+| 计数 | raw bytes/packets、estimated bytes/packets、estimated-valid records | 对应 `sum`；estimated 三项只统计 `estimated_valid` |
 
-判定内核只接收已按 `record_id` 选择最大 `ingest_generation` 的事实与 v2 receipt，不拥有 Kafka 水位、TTL、cursor、job 或 metric 状态。输入先受 batch/fact 硬上限约束，并拒绝重复 receipt、重复去重后 record、空身份和 UInt64 累加溢出；checksum 与 writer 共用同一字段顺序契约，`estimated_valid=false` 的 bytes/packets 仍参与内容 checksum，但不进入 estimated counters。每个 batch 只输出一个主 reason，优先级固定为 `missing_receipt > missing_records > identity > count > counter > checksum`，避免一处根因把指标重复放大。详细 expected/actual counters 与 checksum 留给 operation audit，低基数指标只汇总 reason。
+固定且互斥的主 reason 为 `missing_receipt > missing_records > identity_mismatch > count_mismatch > counter_mismatch`。删除 checksum 后明确不再承诺发现“行数和所有计数总和不变、但非计数字段被改写”的业务语义腐败；介质损坏由 CH part checksum 处理，字段映射准确性由 decoder 差分 corpus、schema contract、抽样明细回放和版本化 repair 测试承担。这一取舍让 Flow 写路径逐记录 hash 清零，而丢消息、丢/重事实和总量漂移仍可检测。
 
-指标不使用会重复累加的 counter，而由最后一次**完整、成功**的有界扫描替换 gauge 快照：`watchdog_flow_ingest_reconciliation_mismatches{reason}`，`reason` 固定为 `missing_receipt|missing_records|identity_mismatch|count_mismatch|counter_mismatch|checksum_mismatch`，同一 batch 多项失败时按该顺序只计第一个 reason，详细证据仍全部保留。同时暴露 `watchdog_flow_ingest_reconciliation_last_success_timestamp_seconds` 和 `watchdog_flow_ingest_reconciliation_scan_complete`；超时、超预算、Kafka/CH 不可用或仅扫了一部分时保留上次快照并将 complete 置 0，不得发布伪零。内部 topic/partition/offset/batch ID 可进 job payload/checkpoint 和审计明细，不作 metric label。
+执行复用平台 `operation_jobs` 唯一状态机：job scope 为 `system`，system schedule `max_inflight=1`，公共 worker 提供 lease/heartbeat/cancel/takeover/retry；Flow handler 只冻结 Kafka 快照、分块调用 scanner、通过 attempt-scoped reporter 保存完整 checkpoint，并在 partition 完成后推进系统水位。持久化顺序固定为“先 report 完成 partition 的 checkpoint，再 advance watermark”；若两步间崩溃，takeover 从 checkpoint 重放幂等 advance，不会跳过未保存的扫描。配置替换只保留当前 source-stream schedule，关闭功能会禁用该 job type 的遗留 system schedule。
 
-扫描按 `(topic, partition, offset)` keyset 接续，必须同时限制 partitions、offset span、batch IDs、fact rows、CH read bytes 和 wall time。CH scanner 先做 count/counter 便宜核对，只为通过前置核对的 batch 拉取有序事实重建 checksum，不在 worker 热路径执行。执行必须复用 `operation_jobs` 的 lease/cancel/retry，但现有 job 强制 tenant，receipt 却可跨 tenant；全局/system scope job 契约已登记 PLAT-04F，未落地前 Flow 不伪造 tenant 也不另建状态机。
+指标由最后一次**完整扫描**原子替换：`watchdog_flow_ingest_reconciliation_mismatches{reason}` 只含上述五种固定 reason，另有 `watchdog_flow_ingest_reconciliation_last_success_timestamp_seconds` 和 `watchdog_flow_ingest_reconciliation_scan_complete`。新扫描一开始 complete 立即变 0；超时、预算、Kafka/CH/MySQL 或租约失败时保留上一份 mismatch 数值，禁止发布伪零。topic/partition/offset/stream/job 不作 metric label；完整 partition/offset/count/fact/reason 汇总保存在 job checkpoint/result 中。
 
-已发布的 `flow_ingest_batches.inserted_at` 实际是 block 内最大 `RawFlow.received_at`，不是 CH 落盘时间，不能用作扫描 cursor。migration 004 因此不改 001，而是增加 `receipt_schema`、排序去重的 `tenant_ids`、`min/max_event_time`、raw/estimated packet 数和 valid-estimate record 数；旧行为 schema 1，新 writer 显式写 schema 2。missing-records 只在 `now < min_event_time + base_fact_ttl - ttl_merge_grace` 时才可判定，否则该 batch 超出对账资格。变更顺序固定为 migration 004 → 所有 worker 升级为 receipt v2 → 以每 partition 当时 committed offset 记录 reconciliation cutover → 启用 job；不回填 v1 receipt，混跑期低于 cutover 的 v1 行不进完整性分母。
-
-`flow_records` 的 tenant/time 主排序继续服务用户查询，审计固定读取 migration 006 的窄 `flow_ingest_audit_v1` projection；不新增第六张 audit 表，也不以 bloom skipping index 代替。projection 保存 checksum/identity 所需字段，并按 `(kafka_topic,kafka_partition,kafka_offset,record_index,record_id)` 排序。`ReplacingMergeTree` 显式设置 `deduplicate_merge_projection_mode='rebuild'`，已有 parts 以 `mutations_sync=2` 同步 materialize 后 migration 才完成。审计查询禁止 `FINAL`：真实执行计划证明 `FINAL` 会退回 base table；必须先在 topic/partition/offset/event-time 窗内按 `record_id` 执行 `argMax(tuple(...), ingest_generation)`，再聚合 batch 并重建 checksum，既保留逻辑去重又命中 projection。
-
-访问路径门禁在 ClickHouse 26.3.29.7 上先执行 001..005、写入 2,000,000 条存量事实，再应用 006；前后结果均为 1,000 records/100,000 raw bytes。相同审计窗口的 progress 从 2,000,000 rows/183,630,373 bytes 降为 16,384 rows/552,673 bytes，`EXPLAIN projections=1,indexes=1` 明确选择 `flow_ingest_audit_v1`；表磁盘从 175,078,419 增至 264,954,749 bytes。该结果只证明访问路径与单机裁剪，不是生产容量或 N+1 结论。上线前必须按 retained facts 预估 projection + merge 临时空间并调大 migration operation timeout；失败保持 migration dirty 后 inspect/resume，不能跳过 materialize。需撤销时先停 reconciliation，再新增 forward migration drop projection/修改 setting，禁止改写 006 或回退到不认识 schema 6 的旧二进制。
+migration 011 的 `flow_ingest_audit_v2` projection 按 `(source_stream_id,kafka_partition,kafka_offset,record_index)` 服务这条窄扫描路径；001–010 的 block receipt、hash 列和 `flow_ingest_audit_v1` 只存在于 `_legacy_hash_v1` 回滚表。当前 system scanner 的落地只关闭“真实 Kafka 水位→CH 对账”门禁，**不会自动解锁 raw physical delete**：生命周期删除还必须另有按 UTC 日持久化的完整、无 mismatch 覆盖证明、delete grace、审计和故障恢复测试。
 
 NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已提交。每次 partition assignment 因此从原 committed offset 向前回放固定数量的 RawFlow record：旧窗口参与解码和幂等 CH 写入以重建模板，但提交水位绝不能低于 assignment 前的 committed offset；到达旧水位后才正常前进。`template_replay_records` 必须为正且有硬上限，并按“单 partition 在 exporter 最大模板刷新间隔内的 record 数 + 裕量”定容。exporter 必须周期刷新模板；未满足此前置条件时显示 template-missing/partial，不能声称完整，也不能用猜测字段解码。
 
@@ -509,6 +506,7 @@ DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_pr
 | worker | `watchdog_flow_worker_sampling_unknown_records_total` / `sampling_conflict_records_total` / `snapshot_miss_total` | counter/record,event | 仅在 durable 后计采样质量；snapshot 缺失按被阻塞 enrich 尝试计 |
 | CH | `watchdog_flow_clickhouse_insert_attempts_total` / `insert_errors_total{class="retryable|permanent"}` / `insert_retries_total` | counter/attempt | 每次真实 insert 调用、固定两类失败和实际 backoff 后的重试 |
 | CH | `watchdog_flow_clickhouse_blocks_total` / `rows_total` / `insert_duration_seconds_total` | counter/block,row,second | records+receipt durable block、行数和所有 insert attempt 累计耗时 |
+| reconciliation | `watchdog_flow_ingest_reconciliation_mismatches{reason}` / `last_success_timestamp_seconds` / `scan_complete` | gauge/window,timestamp,bool | 最后一次完整 Kafka committed-offset 快照的五类守恒结果；不完整时保留数值并置 complete=0 |
 | rollup | `watchdog_flow_rollup_attempts_total` / `success_total` / `errors_total{resolution,class}` | counter/attempt | 真实 CH rebuild 调用、成功和固定 retryable/permanent 失败；resolution 仅 `1m/1h` |
 | rollup | `watchdog_flow_rollup_rebuilds_total{resolution,kind}` | counter/rebuild | 成功的 initial/repair；`generation=1` 为 initial，更大 generation 为 repair |
 | rollup | `watchdog_flow_rollup_last_success_timestamp_seconds` / `completed_bucket_known` / `completed_bucket_age_seconds` | gauge | 当前 hub 进程最近成功时间与完成的最大 bucket end；无成功样本以 known=0 表示，age 零值不可单独解释 |
@@ -517,7 +515,7 @@ DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_pr
 
 counter 只用 atomic 单调累加；gauge 来自单次一致快照。worker lag 在 assignment 后、首次 high-watermark fetch 前是 unknown，必须用 `lag_known_partitions < assigned_partitions` 表达不完整，禁止填成零。模板有界 replay 期间，低于原 committed floor 的 record 不更新 lag；到达原水位后才更新。当前 consumer 没有 pause/resume 状态，CH/dimension 暂时失败直接不提交并退出等待编排重启，因此不暴露恒为零的伪 pause 指标。rollup 指标在真正调用 CH 的 runner 内计 attempt/error/success，repair 只按已验证 request 的 generation 判定；latest completed bucket 取本进程成功集合的最大 bucket end，旧桶 repair 不使 age 倒退，也不声称代表每个 tenant 的覆盖率。
 
-禁止用 tenant、IP、ASN、prefix、port、topic、partition、bucket、job ID、generation 或 exporter 原始地址作 metric label。高基数分析只进 CH。rollup provider 已组合进 hub 现有 runtime Prometheus 文本，但该路由当前依赖交互登录，不能直接冒充 VM scrape target；统一 machine scrape/TLS/ACL 生命周期登记为平台 PLAT-04E，Flow 不另起第三个 HTTP server。ingest receipt mismatch 仍须由真实 reconciliation 产生，不能在当前 worker 猜测或为了指标另建巡检状态机。
+禁止用 tenant、IP、ASN、prefix、port、topic、partition、bucket、job ID、generation 或 exporter 原始地址作 metric label。高基数分析只进 CH。rollup 与 reconciliation provider 均组合进 hub 现有 runtime Prometheus 文本；统一 machine scrape/TLS/ACL 使用平台 PLAT-04E 的同一 listener，Flow 不另起第三个 HTTP server。ingest receipt mismatch 只由真实 Kafka OffsetFetch + CH scanner 产生，不能在 worker 猜测或为了指标另建巡检状态机。
 
 告警至少同时判断 scrape `up`、`watchdog_flow_process_stats_up`、UDP kernel drop 增量、Kafka publish error/buffer、`lag_known_partitions/assigned_partitions`、lag 增长、template/snapshot miss、CH retryable/permanent error。任何未知覆盖率或缺失分区必须显示 incomplete，不得按零流量处理。
 

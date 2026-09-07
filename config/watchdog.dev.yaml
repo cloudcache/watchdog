@@ -117,3 +117,30 @@ flow_storage:
   lease_for: 30m
   max_attempts: 5
   retry_base: 1m
+
+flow_reconciliation:
+  # Enable only with the exact source-stream incarnation used by the worker.
+  # First activation also requires one explicit partition: offset cutover per
+  # already-committed Kafka partition; later scans resume MySQL watermarks.
+  enabled: false
+  source_stream_id: ""
+  kafka_brokers: ["127.0.0.1:9092"]
+  kafka_topic: "watchdog.flow.raw-v1"
+  kafka_consumer_group: "watchdog-flow-worker-v1"
+  kafka_client_id: "watchdog-flow-reconciliation"
+  schedule_cron: "*/5 * * * *"
+  bootstrap_offsets: {}
+  max_batches: 5000
+  max_fact_rows: 500000
+  max_read_bytes: 536870912
+  lease_for: 5m
+  max_attempts: 5
+  retry_base: 30s
+  kafka_tls: false
+  kafka_tls_ca: ""
+  kafka_tls_cert: ""
+  kafka_tls_key: ""
+  kafka_tls_server_name: ""
+  kafka_sasl_mechanism: "none"
+  kafka_sasl_username: ""
+  kafka_sasl_password_file: ""

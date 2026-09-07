@@ -152,6 +152,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 
 ## 平台缺陷登记
 
+- [ ] **PLAT-DEV-01 单进程本地启动契约**：当前 `make dev-hub` 使用 development-tag/Vite 代理，隐式依赖已按要求停掉的 5173；同时未把 `config/watchdog.dev.yaml` 与 ClickHouse QueryGateway opt-in secret 作为同一启动契约，容易出现页面可开但 `dataset provider is disabled or unavailable`。本轮已用 production/integrated hub + 显式 config/secret 恢复 8090，不在 FLOW-04C3 中改 Makefile；平台切片需补单进程 target、readiness smoke 和“5173 未运行也可用”的回归。
 - [x] **PLAT-DB-01 tenant cascade 与运营商 Flow identity 外键冲突**：migration 054 将 `isp_operators → isp_operator_flow_ids` 的引用前向改为 `ON DELETE CASCADE`，使 tenant 删除时 ledger 父行可安全级联设备侧 operator；普通 operator 删除方向不变，历史 ledger 继续保留且后续分配不复用。migration 可重放，fresh `install/init.sql` 与 checksum 已同步；真实 MySQL 临时 schema 覆盖有/无运营商 tenant delete、普通 operator 删除后 ledger 保留、ID 不复用、两次 replay 和 init/migration 完整结构 parity。独立提交 `9351ee48`。
 - [x] **PLAT-04H1 QueryGateway 平台契约**：provider-neutral request/result、双层并发预算、tenant dataset policy、value-layer 双门、错误/完整性、timeout/cancel/限流、provider lifecycle/readiness、VM typed provider、policy CRUD+ETag+审计及权限路由均已完成；migration 045 + fresh-init + 真实 MySQL CAS/lifecycle 已提交（`13669321`、`00448c68`）。平台不接受任意 SQL/MetricsQL，也不从参数读取 tenant。
 - [x] **PLAT-04H2 QueryGateway 兼容与真实依赖验收**：现有 metrics API 已内部迁同一 gateway并验证前后结果；真实 VM 已验取消、超时、partial/unknown、provider 中断恢复及三层授权/敏感访问审计（本提交）。Flow CH provider、地址条件查询和异步索引属于 [Flow 地址查询方案](flow-address-query-plan.md) 与 Flow tasklist，不再阻塞 H1，也不在平台侧复制 CH pool/compiler。

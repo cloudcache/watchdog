@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowstream"
+	"github.com/cloudcache/watchdog/internal/flowworker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -55,6 +57,13 @@ const (
 	defaultFlowStorageLease            = 30 * time.Minute
 	defaultFlowStorageMaxAttempts      = uint32(5)
 	defaultFlowStorageRetryBase        = time.Minute
+	defaultFlowReconciliationCron      = "*/5 * * * *"
+	defaultFlowReconciliationBatches   = 5_000
+	defaultFlowReconciliationFacts     = 500_000
+	defaultFlowReconciliationReadBytes = uint64(512 << 20)
+	defaultFlowReconciliationLease     = 5 * time.Minute
+	defaultFlowReconciliationAttempts  = uint32(5)
+	defaultFlowReconciliationRetryBase = 30 * time.Second
 	defaultAddressLibraryDir           = "address-artifacts"
 	defaultAddressLibraryBatchSize     = 1_000
 	defaultAddressLibraryWorkers       = 1
@@ -66,16 +75,17 @@ const (
 )
 
 type BackendConfig struct {
-	MySQL           MySQLConfig           `yaml:"mysql"`
-	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriametrics"`
-	MetricsScrape   MetricsScrapeConfig   `yaml:"metrics_scrape"`
-	Export          ExportConfig          `yaml:"export"`
-	AddressLibrary  AddressLibraryConfig  `yaml:"address_library"`
-	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
-	FlowGeo         FlowGeoConfig         `yaml:"flow_geo"`
-	FlowRollup      FlowRollupConfig      `yaml:"flow_rollup"`
-	FlowStorage     FlowStorageConfig     `yaml:"flow_storage"`
-	QueryGateway    QueryGatewayConfig    `yaml:"query_gateway"`
+	MySQL              MySQLConfig              `yaml:"mysql"`
+	VictoriaMetrics    VictoriaMetricsConfig    `yaml:"victoriametrics"`
+	MetricsScrape      MetricsScrapeConfig      `yaml:"metrics_scrape"`
+	Export             ExportConfig             `yaml:"export"`
+	AddressLibrary     AddressLibraryConfig     `yaml:"address_library"`
+	SNMPCollector      SNMPCollectorConfig      `yaml:"snmp_collector"`
+	FlowGeo            FlowGeoConfig            `yaml:"flow_geo"`
+	FlowRollup         FlowRollupConfig         `yaml:"flow_rollup"`
+	FlowStorage        FlowStorageConfig        `yaml:"flow_storage"`
+	FlowReconciliation FlowReconciliationConfig `yaml:"flow_reconciliation"`
+	QueryGateway       QueryGatewayConfig       `yaml:"query_gateway"`
 
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
 	CollectorPlanSigning       CollectorPlanSigningConfig             `yaml:"collector_plan_signing"`
@@ -155,6 +165,34 @@ type FlowStorageConfig struct {
 	LeaseFor             time.Duration `yaml:"lease_for"`
 	MaxAttempts          uint32        `yaml:"max_attempts"`
 	RetryBase            time.Duration `yaml:"retry_base"`
+}
+
+// FlowReconciliationConfig owns only the system-scope Kafka→ClickHouse audit.
+// ClickHouse connectivity is shared with flow_rollup; Kafka secrets remain in
+// owner-only files and are loaded once at startup.
+type FlowReconciliationConfig struct {
+	Enabled               bool             `yaml:"enabled"`
+	SourceStreamID        string           `yaml:"source_stream_id"`
+	KafkaBrokers          []string         `yaml:"kafka_brokers"`
+	KafkaTopic            string           `yaml:"kafka_topic"`
+	KafkaConsumerGroup    string           `yaml:"kafka_consumer_group"`
+	KafkaClientID         string           `yaml:"kafka_client_id"`
+	ScheduleCron          string           `yaml:"schedule_cron"`
+	BootstrapOffsets      map[int32]uint64 `yaml:"bootstrap_offsets"`
+	MaxBatches            int              `yaml:"max_batches"`
+	MaxFactRows           int              `yaml:"max_fact_rows"`
+	MaxReadBytes          uint64           `yaml:"max_read_bytes"`
+	LeaseFor              time.Duration    `yaml:"lease_for"`
+	MaxAttempts           uint32           `yaml:"max_attempts"`
+	RetryBase             time.Duration    `yaml:"retry_base"`
+	KafkaTLS              bool             `yaml:"kafka_tls"`
+	KafkaCAFile           string           `yaml:"kafka_tls_ca"`
+	KafkaCertFile         string           `yaml:"kafka_tls_cert"`
+	KafkaKeyFile          string           `yaml:"kafka_tls_key"`
+	KafkaServerName       string           `yaml:"kafka_tls_server_name"`
+	KafkaSASLMechanism    string           `yaml:"kafka_sasl_mechanism"`
+	KafkaSASLUsername     string           `yaml:"kafka_sasl_username"`
+	KafkaSASLPasswordFile string           `yaml:"kafka_sasl_password_file"`
 }
 
 type RemoteCollectorPrincipalProviderConfig struct {
@@ -353,6 +391,15 @@ func defaultBackendConfig() BackendConfig {
 			MaxPartitionsPerScan: defaultFlowStoragePartitionBudget, WorkerConcurrency: defaultFlowStorageConcurrency,
 			LeaseFor: defaultFlowStorageLease, MaxAttempts: defaultFlowStorageMaxAttempts, RetryBase: defaultFlowStorageRetryBase,
 		},
+		FlowReconciliation: FlowReconciliationConfig{
+			KafkaBrokers: []string{"127.0.0.1:9092"}, KafkaTopic: "watchdog.flow.raw-v1",
+			KafkaConsumerGroup: "watchdog-flow-worker-v1", KafkaClientID: "watchdog-flow-reconciliation",
+			ScheduleCron: defaultFlowReconciliationCron, BootstrapOffsets: map[int32]uint64{},
+			MaxBatches: defaultFlowReconciliationBatches, MaxFactRows: defaultFlowReconciliationFacts,
+			MaxReadBytes: defaultFlowReconciliationReadBytes, LeaseFor: defaultFlowReconciliationLease,
+			MaxAttempts: defaultFlowReconciliationAttempts, RetryBase: defaultFlowReconciliationRetryBase,
+			KafkaSASLMechanism: string(flowstream.SASLNone),
+		},
 
 		AggregateGraph: AggregateGraphConfig{
 			RollupInterval: defaultAggregateGraphRollupInterval,
@@ -453,6 +500,46 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	if cfg.FlowStorage.RetryBase, err = getEnvDuration("WATCHDOG_FLOW_STORAGE_RETRY_BASE", cfg.FlowStorage.RetryBase); err != nil {
 		return err
 	}
+	if cfg.FlowReconciliation.Enabled, err = getEnvBool("WATCHDOG_FLOW_RECONCILIATION_ENABLED", cfg.FlowReconciliation.Enabled); err != nil {
+		return err
+	}
+	cfg.FlowReconciliation.SourceStreamID = getEnv("WATCHDOG_FLOW_RECONCILIATION_SOURCE_STREAM_ID", cfg.FlowReconciliation.SourceStreamID)
+	cfg.FlowReconciliation.KafkaBrokers = getEnvCommaList("WATCHDOG_FLOW_RECONCILIATION_KAFKA_BROKERS", cfg.FlowReconciliation.KafkaBrokers)
+	cfg.FlowReconciliation.KafkaTopic = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TOPIC", cfg.FlowReconciliation.KafkaTopic)
+	cfg.FlowReconciliation.KafkaConsumerGroup = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_CONSUMER_GROUP", cfg.FlowReconciliation.KafkaConsumerGroup)
+	cfg.FlowReconciliation.KafkaClientID = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_CLIENT_ID", cfg.FlowReconciliation.KafkaClientID)
+	cfg.FlowReconciliation.ScheduleCron = getEnv("WATCHDOG_FLOW_RECONCILIATION_SCHEDULE_CRON", cfg.FlowReconciliation.ScheduleCron)
+	if cfg.FlowReconciliation.BootstrapOffsets, err = getEnvPartitionOffsets("WATCHDOG_FLOW_RECONCILIATION_BOOTSTRAP_OFFSETS", cfg.FlowReconciliation.BootstrapOffsets); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.MaxBatches, err = getEnvInt("WATCHDOG_FLOW_RECONCILIATION_MAX_BATCHES", cfg.FlowReconciliation.MaxBatches, 1); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.MaxFactRows, err = getEnvInt("WATCHDOG_FLOW_RECONCILIATION_MAX_FACT_ROWS", cfg.FlowReconciliation.MaxFactRows, 1); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.MaxReadBytes, err = getEnvUint64("WATCHDOG_FLOW_RECONCILIATION_MAX_READ_BYTES", cfg.FlowReconciliation.MaxReadBytes, 1); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.LeaseFor, err = getEnvDuration("WATCHDOG_FLOW_RECONCILIATION_LEASE_FOR", cfg.FlowReconciliation.LeaseFor); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.MaxAttempts, err = getEnvUint32("WATCHDOG_FLOW_RECONCILIATION_MAX_ATTEMPTS", cfg.FlowReconciliation.MaxAttempts); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.RetryBase, err = getEnvDuration("WATCHDOG_FLOW_RECONCILIATION_RETRY_BASE", cfg.FlowReconciliation.RetryBase); err != nil {
+		return err
+	}
+	if cfg.FlowReconciliation.KafkaTLS, err = getEnvBool("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TLS", cfg.FlowReconciliation.KafkaTLS); err != nil {
+		return err
+	}
+	cfg.FlowReconciliation.KafkaCAFile = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TLS_CA", cfg.FlowReconciliation.KafkaCAFile)
+	cfg.FlowReconciliation.KafkaCertFile = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TLS_CERT", cfg.FlowReconciliation.KafkaCertFile)
+	cfg.FlowReconciliation.KafkaKeyFile = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TLS_KEY", cfg.FlowReconciliation.KafkaKeyFile)
+	cfg.FlowReconciliation.KafkaServerName = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TLS_SERVER_NAME", cfg.FlowReconciliation.KafkaServerName)
+	cfg.FlowReconciliation.KafkaSASLMechanism = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_SASL_MECHANISM", cfg.FlowReconciliation.KafkaSASLMechanism)
+	cfg.FlowReconciliation.KafkaSASLUsername = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_SASL_USERNAME", cfg.FlowReconciliation.KafkaSASLUsername)
+	cfg.FlowReconciliation.KafkaSASLPasswordFile = getEnv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_SASL_PASSWORD_FILE", cfg.FlowReconciliation.KafkaSASLPasswordFile)
 	if cfg.FlowRollup.ScanInterval, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_SCAN_INTERVAL", cfg.FlowRollup.ScanInterval); err != nil {
 		return err
 	}
@@ -681,6 +768,45 @@ func getEnvUint32(key string, fallback uint32) (uint32, error) {
 	return uint32(parsed), nil
 }
 
+func getEnvUint64(key string, fallback, minimum uint64) (uint64, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	if err != nil || parsed < minimum {
+		return fallback, fmt.Errorf("%s must be an integer >= %d", key, minimum)
+	}
+	return parsed, nil
+}
+
+func getEnvPartitionOffsets(key string, fallback map[int32]uint64) (map[int32]uint64, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	result := make(map[int32]uint64)
+	if strings.TrimSpace(value) == "" {
+		return result, nil
+	}
+	for _, part := range splitConfigList(value) {
+		pair := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(pair) != 2 {
+			return fallback, fmt.Errorf("%s must use partition=offset pairs", key)
+		}
+		partition, partitionErr := strconv.ParseInt(strings.TrimSpace(pair[0]), 10, 32)
+		offset, offsetErr := strconv.ParseUint(strings.TrimSpace(pair[1]), 10, 64)
+		if partitionErr != nil || partition < 0 || offsetErr != nil {
+			return fallback, fmt.Errorf("%s contains invalid partition=offset pair %q", key, part)
+		}
+		if _, exists := result[int32(partition)]; exists {
+			return fallback, fmt.Errorf("%s contains duplicate partition %d", key, partition)
+		}
+		result[int32(partition)] = offset
+	}
+	return result, nil
+}
+
 func splitConfigList(value string) []string {
 	return strings.FieldsFunc(value, func(char rune) bool { return char == ',' || char == ';' })
 }
@@ -729,6 +855,19 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.FlowRollup.ClickHouseCertFile = cleanOptionalConfigPath(cfg.FlowRollup.ClickHouseCertFile)
 	cfg.FlowRollup.ClickHouseKeyFile = cleanOptionalConfigPath(cfg.FlowRollup.ClickHouseKeyFile)
 	cfg.FlowRollup.ClickHouseServerName = strings.TrimSpace(cfg.FlowRollup.ClickHouseServerName)
+	cfg.FlowReconciliation.SourceStreamID = strings.TrimSpace(cfg.FlowReconciliation.SourceStreamID)
+	cfg.FlowReconciliation.KafkaBrokers = normalizeStringList(cfg.FlowReconciliation.KafkaBrokers)
+	cfg.FlowReconciliation.KafkaTopic = strings.TrimSpace(cfg.FlowReconciliation.KafkaTopic)
+	cfg.FlowReconciliation.KafkaConsumerGroup = strings.TrimSpace(cfg.FlowReconciliation.KafkaConsumerGroup)
+	cfg.FlowReconciliation.KafkaClientID = strings.TrimSpace(cfg.FlowReconciliation.KafkaClientID)
+	cfg.FlowReconciliation.ScheduleCron = strings.TrimSpace(cfg.FlowReconciliation.ScheduleCron)
+	cfg.FlowReconciliation.KafkaCAFile = cleanOptionalConfigPath(cfg.FlowReconciliation.KafkaCAFile)
+	cfg.FlowReconciliation.KafkaCertFile = cleanOptionalConfigPath(cfg.FlowReconciliation.KafkaCertFile)
+	cfg.FlowReconciliation.KafkaKeyFile = cleanOptionalConfigPath(cfg.FlowReconciliation.KafkaKeyFile)
+	cfg.FlowReconciliation.KafkaServerName = strings.TrimSpace(cfg.FlowReconciliation.KafkaServerName)
+	cfg.FlowReconciliation.KafkaSASLMechanism = strings.TrimSpace(cfg.FlowReconciliation.KafkaSASLMechanism)
+	cfg.FlowReconciliation.KafkaSASLUsername = strings.TrimSpace(cfg.FlowReconciliation.KafkaSASLUsername)
+	cfg.FlowReconciliation.KafkaSASLPasswordFile = cleanOptionalConfigPath(cfg.FlowReconciliation.KafkaSASLPasswordFile)
 	cfg.Export.Dir = strings.TrimSpace(cfg.Export.Dir)
 	cfg.Export.Metric = strings.TrimSpace(cfg.Export.Metric)
 	cfg.AddressLibrary.Dir = strings.TrimSpace(cfg.AddressLibrary.Dir)
@@ -828,10 +967,13 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateQueryGatewayConfig(cfg.QueryGateway); err != nil {
 		return err
 	}
-	if err := validateFlowRollupConfig(cfg.FlowRollup, cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled)); err != nil {
+	if err := validateFlowRollupConfig(cfg.FlowRollup, cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || cfg.FlowReconciliation.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled)); err != nil {
 		return err
 	}
 	if err := validateFlowStorageConfig(cfg.FlowStorage); err != nil {
+		return err
+	}
+	if err := validateFlowReconciliationConfig(cfg.FlowReconciliation); err != nil {
 		return err
 	}
 	if cfg.FlowRollup.Enabled && cfg.FlowStorage.Enabled {
@@ -953,6 +1095,47 @@ func validateFlowStorageConfig(cfg FlowStorageConfig) error {
 		cfg.WorkerConcurrency < 1 || cfg.WorkerConcurrency > 128 || cfg.LeaseFor < time.Minute ||
 		cfg.MaxAttempts < 1 || cfg.MaxAttempts > 100 || cfg.RetryBase <= 0 {
 		return errors.New("flow_storage scan, budget, concurrency, lease, and retry values are invalid")
+	}
+	return nil
+}
+
+func validateFlowReconciliationConfig(cfg FlowReconciliationConfig) error {
+	if cfg.MaxBatches < 1 || cfg.MaxBatches > 10_000 || cfg.MaxFactRows < 1 || cfg.MaxFactRows > 1_000_000 ||
+		cfg.MaxReadBytes < 1 || cfg.LeaseFor < time.Minute || cfg.MaxAttempts < 1 || cfg.MaxAttempts > 100 || cfg.RetryBase <= 0 {
+		return errors.New("flow_reconciliation scan budgets, lease, and retry values are invalid")
+	}
+	if _, err := nextOperationJobScheduleTime(cfg.ScheduleCron, "UTC", time.Now()); err != nil {
+		return fmt.Errorf("flow_reconciliation.schedule_cron: %w", err)
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	if !flowworker.ValidSourceStreamID(cfg.SourceStreamID) {
+		return errors.New("enabled flow_reconciliation requires a valid source_stream_id")
+	}
+	if cfg.KafkaSASLMechanism == "" {
+		cfg.KafkaSASLMechanism = string(flowstream.SASLNone)
+	}
+	password := ""
+	if cfg.KafkaSASLPasswordFile != "" {
+		password = "configured-in-secret-file"
+	}
+	kafka := flowstream.KafkaConfig{
+		Brokers: cfg.KafkaBrokers, Topic: cfg.KafkaTopic, ClientID: cfg.KafkaClientID,
+		TLS: flowstream.TLSConfig{Enabled: cfg.KafkaTLS, CAFile: cfg.KafkaCAFile, CertFile: cfg.KafkaCertFile,
+			KeyFile: cfg.KafkaKeyFile, ServerName: cfg.KafkaServerName},
+		SASL: flowstream.SASLConfig{Mechanism: flowstream.SASLMechanism(cfg.KafkaSASLMechanism), Username: cfg.KafkaSASLUsername, Password: password},
+	}
+	if err := kafka.Validate(); err != nil {
+		return fmt.Errorf("flow_reconciliation Kafka: %w", err)
+	}
+	if strings.TrimSpace(cfg.KafkaConsumerGroup) == "" || len(cfg.KafkaConsumerGroup) > 255 {
+		return errors.New("enabled flow_reconciliation requires a valid kafka_consumer_group")
+	}
+	for partition := range cfg.BootstrapOffsets {
+		if partition < 0 {
+			return errors.New("flow_reconciliation bootstrap partition must not be negative")
+		}
 	}
 	return nil
 }

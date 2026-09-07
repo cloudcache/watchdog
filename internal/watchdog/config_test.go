@@ -74,6 +74,13 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 		cfg.FlowStorage.WorkerConcurrency != defaultFlowStorageConcurrency {
 		t.Fatalf("flow storage defaults = %#v", cfg.FlowStorage)
 	}
+	if cfg.FlowReconciliation.Enabled || cfg.FlowReconciliation.KafkaTopic != "watchdog.flow.raw-v1" ||
+		cfg.FlowReconciliation.ScheduleCron != defaultFlowReconciliationCron ||
+		cfg.FlowReconciliation.MaxBatches != defaultFlowReconciliationBatches ||
+		cfg.FlowReconciliation.MaxFactRows != defaultFlowReconciliationFacts ||
+		cfg.FlowReconciliation.MaxReadBytes != defaultFlowReconciliationReadBytes {
+		t.Fatalf("flow reconciliation defaults = %#v", cfg.FlowReconciliation)
+	}
 }
 
 func TestLoadWatchdogConfigQueryGatewayEnvironment(t *testing.T) {
@@ -258,6 +265,66 @@ func TestFlowStorageConfigRejectsUnsafeOrUnboundedValues(t *testing.T) {
 			t.Fatalf("invalid Flow storage config accepted: %#v", cfg)
 		}
 	}
+}
+
+func TestLoadWatchdogConfigFlowReconciliationEnvironment(t *testing.T) {
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_ENABLED", "true")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_SOURCE_STREAM_ID", " cluster-a:raw-v1:incarnation-1 ")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_BROKERS", "kafka-a:9092,kafka-b:9092")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_TOPIC", " watchdog.flow.raw-v1 ")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_KAFKA_CONSUMER_GROUP", " watchdog-flow-worker-v1 ")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_BOOTSTRAP_OFFSETS", "0=10,3=42")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_MAX_BATCHES", "4000")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_MAX_FACT_ROWS", "400000")
+	t.Setenv("WATCHDOG_FLOW_RECONCILIATION_MAX_READ_BYTES", "268435456")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconcile := cfg.FlowReconciliation
+	if !reconcile.Enabled || reconcile.SourceStreamID != "cluster-a:raw-v1:incarnation-1" || len(reconcile.KafkaBrokers) != 2 ||
+		reconcile.KafkaTopic != "watchdog.flow.raw-v1" || reconcile.KafkaConsumerGroup != "watchdog-flow-worker-v1" ||
+		reconcile.BootstrapOffsets[0] != 10 || reconcile.BootstrapOffsets[3] != 42 || reconcile.MaxBatches != 4000 ||
+		reconcile.MaxFactRows != 400000 || reconcile.MaxReadBytes != 268435456 {
+		t.Fatalf("flow reconciliation config = %#v", reconcile)
+	}
+}
+
+func TestFlowReconciliationConfigRejectsUnsafeOrAmbiguousCutover(t *testing.T) {
+	for _, mutate := range []func(*FlowReconciliationConfig){
+		func(value *FlowReconciliationConfig) { value.Enabled = true; value.SourceStreamID = "" },
+		func(value *FlowReconciliationConfig) { value.MaxBatches = 10_001 },
+		func(value *FlowReconciliationConfig) { value.MaxFactRows = 1_000_001 },
+		func(value *FlowReconciliationConfig) { value.ScheduleCron = "bad cron" },
+		func(value *FlowReconciliationConfig) {
+			value.Enabled = true
+			value.BootstrapOffsets = map[int32]uint64{-1: 0}
+			value.SourceStreamID = "stream-a"
+		},
+		func(value *FlowReconciliationConfig) {
+			value.Enabled = true
+			value.SourceStreamID = "stream-a"
+			value.KafkaSASLMechanism = "plain"
+			value.KafkaSASLUsername = "worker"
+			value.KafkaSASLPasswordFile = ""
+		},
+	} {
+		cfg := defaultBackendConfig().FlowReconciliation
+		mutate(&cfg)
+		if err := validateFlowReconciliationConfig(cfg); err == nil {
+			t.Fatalf("invalid Flow reconciliation config accepted: %#v", cfg)
+		}
+	}
+	if _, err := getEnvPartitionOffsetsForTest(t, "0=1,0=2"); err == nil {
+		t.Fatal("duplicate bootstrap partition accepted")
+	}
+}
+
+func getEnvPartitionOffsetsForTest(t *testing.T, value string) (map[int32]uint64, error) {
+	t.Helper()
+	const key = "WATCHDOG_TEST_FLOW_BOOTSTRAP_OFFSETS"
+	t.Setenv(key, value)
+	return getEnvPartitionOffsets(key, nil)
 }
 
 func TestWatchdogConfigRejectsConcurrentLegacyRollupAndStorageV2(t *testing.T) {
