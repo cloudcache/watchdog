@@ -12,6 +12,9 @@ func TestStaticCacheControl(t *testing.T) {
 	}{
 		{path: "/assets/index-abc123.js", want: "public, max-age=31536000, immutable", matched: true},
 		{path: "/static/icon.svg", want: "no-cache", matched: true},
+		{path: "/favicon.ico", want: "no-cache", matched: true},
+		{path: "/watchdog/favicon.ico", want: "no-cache", matched: true},
+		{path: "/favicon.ico/route", matched: false},
 		{path: "/network", matched: false},
 	}
 	for _, test := range tests {

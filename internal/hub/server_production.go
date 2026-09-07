@@ -45,5 +45,11 @@ func staticCacheControl(requestPath string) (string, bool) {
 	if strings.Contains(requestPath, "/static/") {
 		return "no-cache", true
 	}
+	// favicon.ico has a stable name at the root (or under a configured base
+	// path), so serve the file and revalidate it instead of falling through to
+	// the SPA index route.
+	if strings.HasSuffix(requestPath, "/favicon.ico") {
+		return "no-cache", true
+	}
 	return "", false
 }
