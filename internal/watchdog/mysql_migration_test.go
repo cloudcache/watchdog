@@ -36,6 +36,9 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"flow_storage_policy_revisions",
 		"flow_storage_partition_states",
 		"flow_saved_filters",
+		"flow_classification_profiles",
+		"flow_enrichment_publications",
+		"flow_enrichment_publication_acks",
 		"dashboards",
 		"address_draft_revisions",
 		"address_supplier_operators",
@@ -108,14 +111,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "058" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "059" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "058" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "059" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
