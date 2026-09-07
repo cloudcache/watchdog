@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 9 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" {
+	if len(paths) != 10 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" || filepath.Base(paths[9]) != "010_flow_aggregate_reorder.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
