@@ -274,6 +274,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **单元测试（codec）**：覆盖 golden SHA/round-trip/determinism、截断/尾随/CRC/版本/flag/压缩与解压内存预算、v4/v6 边界、Geo parent、operator ASN、set/value 引用、range 重叠和非规范字典。
   - [x] **定义输入 v3**：在 v2 operator 契约之上固化人工 Geo `id/kind/code/name/parent/enabled` 和 address-set name；编译器规范排序并校验 Geo 图，preview/digest/entry count 覆盖新增语义。v1/v2 继续可读但不得夹带 v3 字段；无新表字段，不制造 migration。
   - [x] **定义输入 v3 单元/变更测试**：覆盖历史显示元数据不可变副本、乱序/缺父/逆级/禁用父/重复 kind-code 拒绝、v1/v2 兼容和管理草稿输入顺序确定性。
+  - [x] **编码（builder core）**：实现 source `combined → geo/asn 字段域 → manual` 的确定性区间合成；两遍扫描先建 string/value dictionary，再输出相邻同值合并的 v4/v6 ranges，base source 始终保持区间而不展开单 IP。supplier/customer Geo 与 ISP 独立 namespace，Geo 关系按稳定 ID 而非 code，customer ASN 映射和显式 operator 绑定不按名称猜测；输出立即 WADS round-trip。
+  - [x] **单元测试（builder core）**：覆盖 v4/v6、source 字段域优先级、人工 Geo/operator/ASN、地址组、本地业务、输入顺序确定性、source generation 改变 checksum、行数/重叠/预算拒绝，以及 dangling Geo/operator/set 引用 fail closed。
   - [ ] **编码（builder）**：operation job 分页读取 pinned import，合并 base + manual explicit fields，写临时 object，round-trip 后提交 pending snapshot；retry/takeover 生成同 checksum。
   - [ ] **单元/集成（builder）**：真实 MMDB/IPDB + MySQL，source checksum/count、优先级、operator 绑定、crash/checkpoint/cancel、失败不切 active。
   - [ ] **编码（loader）**：认证下载、LKG 原子文件、外部 SHA/签名与内部 CRC 双校验、离线构建现有 BART/二分 catalog、event-time atomic install/ACK；删除 worker MySQL 装载依赖。

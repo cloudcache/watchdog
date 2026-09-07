@@ -40,7 +40,7 @@ func TestAddressSnapshotBinaryRoundTripIsDeterministic(t *testing.T) {
 	}
 
 	digest := sha256.Sum256(first)
-	if got, want := hex.EncodeToString(digest[:]), "18d1cb90fc857384421eebbc6913eea9e0f9d432365a662b46d13ce979c70136"; got != want {
+	if got, want := hex.EncodeToString(digest[:]), "3876577010db180969a01e923ac5642cbc9d93eca018d41871b268d653d1c5a6"; got != want {
 		t.Fatalf("WADS v1 fixture sha256 = %s, want %s", got, want)
 	}
 }
@@ -120,13 +120,22 @@ func TestAddressSnapshotBinaryRejectsNonCanonicalOrDanglingTables(t *testing.T) 
 			snapshot.Sources[0].ChecksumSHA256 = addressSnapshotStringIndex(t, snapshot.Strings, "private")
 		}},
 		{name: "Geo parent", mutate: func(snapshot *AddressSnapshotArtifact) {
-			snapshot.GeoNodes[1].ParentCode = addressSnapshotStringIndex(t, snapshot.Strings, "missing-parent")
+			snapshot.GeoNodes[1].ParentID = addressSnapshotStringIndex(t, snapshot.Strings, "missing-parent")
+		}},
+		{name: "Geo value", mutate: func(snapshot *AddressSnapshotArtifact) {
+			snapshot.Values[1].CustomerGeo.CountryID = addressSnapshotStringIndex(t, snapshot.Strings, "missing-parent")
 		}},
 		{name: "operator ASN order", mutate: func(snapshot *AddressSnapshotArtifact) {
 			snapshot.Operators[0].ASNs = []uint32{9808, 4134}
 		}},
+		{name: "unknown operator ID", mutate: func(snapshot *AddressSnapshotArtifact) {
+			snapshot.Values[1].SupplierISPID = 42
+		}},
 		{name: "unknown address set", mutate: func(snapshot *AddressSnapshotArtifact) {
 			snapshot.Values[1].InAddressSetIDs = []uint32{addressSnapshotStringIndex(t, snapshot.Strings, "private")}
+		}},
+		{name: "disabled address set", mutate: func(snapshot *AddressSnapshotArtifact) {
+			snapshot.AddressSets[0].Enabled = false
 		}},
 		{name: "value order", mutate: func(snapshot *AddressSnapshotArtifact) {
 			other := snapshot.Values[1]
@@ -179,8 +188,8 @@ func addressSnapshotBinaryFixture(t *testing.T) AddressSnapshotArtifact {
 	t.Helper()
 	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	strings, err := CanonicalAddressSnapshotStrings(
-		"10.0.0.0/8", "110000", "AS", "Beijing", "CN", "China", "China Mobile", "China Mobile Customer",
-		"carrier", "combined", "country", "customer-mobile", "customer-mobile-code", "prefix-a", "private", "province",
+		"10.0.0.0/8", "110000", "AS", "Asia", "Beijing", "CN", "China", "China Mobile", "China Mobile Customer",
+		"carrier", "combined", "continent", "country", "customer-mobile", "customer-mobile-code", "geo-continent-asia", "geo-country-cn", "geo-province-beijing", "prefix-a", "private", "province",
 		"missing-parent", "set-a", "set-one", checksum, "source-import-a", "supplier-mobile", "supplier-mobile-code",
 	)
 	if err != nil {
@@ -189,7 +198,7 @@ func addressSnapshotBinaryFixture(t *testing.T) AddressSnapshotArtifact {
 	index := func(value string) uint32 { return addressSnapshotStringIndex(t, strings, value) }
 	geo := AddressSnapshotGeoValue{
 		CountryCode: index("CN"), AdminCode: index("110000"), Subdivision: index("Beijing"), City: index("Beijing"),
-		ContinentID: index("AS"), CountryID: index("CN"), ProvinceID: index("110000"),
+		ContinentID: index("geo-continent-asia"), CountryID: index("geo-country-cn"), ProvinceID: index("geo-province-beijing"),
 	}
 	v4, err := AddressSnapshotIPv4(netip.MustParseAddr("10.0.0.0"), netip.MustParseAddr("10.255.255.255"), 1)
 	if err != nil {
@@ -208,14 +217,18 @@ func addressSnapshotBinaryFixture(t *testing.T) AddressSnapshotArtifact {
 			SlotRowVersion: 3, RowCountV4: 1, RowCountV6: 1,
 		}},
 		GeoNodes: []AddressSnapshotGeoNode{
-			{Kind: index("country"), Code: index("CN"), Name: index("China"), Enabled: true},
-			{Kind: index("province"), Code: index("110000"), Name: index("Beijing"), ParentCode: index("CN"), Enabled: true},
+			{Namespace: AddressSnapshotGeoSupplier, ID: index("geo-continent-asia"), Kind: index("continent"), Code: index("AS"), Name: index("Asia"), Enabled: true},
+			{Namespace: AddressSnapshotGeoSupplier, ID: index("geo-country-cn"), Kind: index("country"), Code: index("CN"), Name: index("China"), ParentID: index("geo-continent-asia"), Enabled: true},
+			{Namespace: AddressSnapshotGeoSupplier, ID: index("geo-province-beijing"), Kind: index("province"), Code: index("110000"), Name: index("Beijing"), ParentID: index("geo-country-cn"), Enabled: true},
+			{Namespace: AddressSnapshotGeoCustomer, ID: index("geo-continent-asia"), Kind: index("continent"), Code: index("AS"), Name: index("Asia"), Enabled: true},
+			{Namespace: AddressSnapshotGeoCustomer, ID: index("geo-country-cn"), Kind: index("country"), Code: index("CN"), Name: index("China"), ParentID: index("geo-continent-asia"), Enabled: true},
+			{Namespace: AddressSnapshotGeoCustomer, ID: index("geo-province-beijing"), Kind: index("province"), Code: index("110000"), Name: index("Beijing"), ParentID: index("geo-country-cn"), Enabled: true},
 		},
 		Operators: []AddressSnapshotOperator{
 			{Namespace: AddressSnapshotOperatorSupplier, ID: 1, StableID: index("supplier-mobile"), Code: index("supplier-mobile-code"), Name: index("China Mobile"), Category: index("carrier"), ASNs: []uint32{9808}, Enabled: true},
 			{Namespace: AddressSnapshotOperatorCustomer, ID: 1, StableID: index("customer-mobile"), Code: index("customer-mobile-code"), Name: index("China Mobile Customer"), Category: index("carrier"), ASNs: []uint32{9808}, Enabled: true},
 		},
-		AddressSets: []AddressSnapshotSet{{ID: index("set-a"), Name: index("set-one")}},
+		AddressSets: []AddressSnapshotSet{{ID: index("set-a"), Name: index("set-one"), Enabled: true}},
 		Values: []AddressSnapshotValue{{}, {
 			SupplierGeo: geo, CustomerGeo: geo, SupplierISPID: 1, CustomerISPID: 1, SupplierASN: 9808, CustomerASN: 9808,
 			CustomerOverrideBits: uint8(GeoOverrideAdminCode), Local: true,

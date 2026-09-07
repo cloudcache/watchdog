@@ -59,7 +59,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 - string/value dictionary：稳定 Geo code/path、supplier ISP、customer ISP、ASN、primary prefix、business 和 address-set membership 只存一次；名称是显示元数据，事实身份只用稳定 ID；
 - IPv4 ranges：按 start 严格递增且互不重叠，固定宽度 start/end/value-index；
 - IPv6 ranges：16-byte start/end/value-index，同样有序且不重叠；
-- address-set/operator tables：排序去重的稳定 ID 与 bitmap/offset list；`supplier_isp_id` 和 tenant `customer_isp_id` 分属两个命名空间，`0=unknown`；
+- Geo/address-set/operator tables：Geo 同时保存 namespace、稳定 `id/parent_id` 与可变 `kind/code/name`；身份与关系只按 namespaced ID，code 不作为全局键，允许不同分支/层级以及 supplier/customer 两个命名空间重用 code/ID。集合保存稳定 ID、name、enabled，运营商保存稳定 ID 与数值 ID；`supplier_isp_id` 和 tenant `customer_isp_id` 分属两个命名空间，`0=unknown`；
 - optional diagnostics：构建统计，不进入热路径语义。
 
 单个地址可同时拥有 continent/region/country/province/city 五级路径、一个 primary prefix 和多个非互斥 address sets。范围行引用一个字典值，不复制五行 Geo，也不要求存在 ASN。
@@ -81,6 +81,8 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 7. rollback 只切 activation 指针。旧 object 按事实/修复引用、未来 activation、worker LKG 和显式 retention 共同保护后再经 operation job GC。
 
 构建 job 复用平台唯一 `operation_jobs` lease/heartbeat/cancel/retry/checkpoint；不得在 Flow worker 内再造任务状态机。checkpoint 只能落在确定分页边界，重试相同 generation 必须生成相同 bytes/checksum。
+
+合成 core 不把 CIDR 展开为地址：每个 source generation 必须提供按 family/start 排序且内部不重叠的 inclusive ranges，builder 以多路边界 sweep 叠加 combined、Geo、ASN 与已编译 manual range。第一遍只收集去重 string/value dictionary，第二遍输出 value index 并合并相邻同值范围，额外内存随“不同值和输出范围”增长而不是随地址空间增长。source 声明的 v4/v6 row count 必须与 durable rows 精确相等；任一重叠、乱序、悬空 Geo/operator/set 引用或预算超限整体失败。
 
 ## 5. 分发与 worker 加载
 

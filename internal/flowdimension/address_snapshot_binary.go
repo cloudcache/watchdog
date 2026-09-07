@@ -92,12 +92,19 @@ type AddressSnapshotSource struct {
 }
 
 type AddressSnapshotGeoNode struct {
-	Kind       uint32
-	Code       uint32
-	Name       uint32
-	ParentCode uint32
-	Enabled    bool
+	Namespace uint8
+	ID        uint32
+	Kind      uint32
+	Code      uint32
+	Name      uint32
+	ParentID  uint32
+	Enabled   bool
 }
+
+const (
+	AddressSnapshotGeoSupplier = uint8(1)
+	AddressSnapshotGeoCustomer = uint8(2)
+)
 
 const (
 	AddressSnapshotOperatorSupplier = uint8(1)
@@ -117,8 +124,9 @@ type AddressSnapshotOperator struct {
 }
 
 type AddressSnapshotSet struct {
-	ID   uint32
-	Name uint32
+	ID      uint32
+	Name    uint32
+	Enabled bool
 }
 
 // AddressSnapshotGeoValue stores both legacy display codes and stable
@@ -345,13 +353,20 @@ func validateAddressSnapshot(snapshot AddressSnapshotArtifact, limits AddressSna
 
 	for index, source := range snapshot.Sources {
 		if source.Slot == 0 || source.ImportID == 0 || source.ChecksumSHA256 == 0 || !validRef(source.Slot) || !validRef(source.ImportID) || !validRef(source.ChecksumSHA256) || source.SlotRowVersion == 0 || !validSnapshotSHA256(snapshot.Strings[source.ChecksumSHA256]) ||
-			(index > 0 && snapshot.Strings[snapshot.Sources[index-1].Slot] >= snapshot.Strings[source.Slot]) {
+			addressSnapshotSourceRank(snapshot.Strings[source.Slot]) < 0 ||
+			(index > 0 && addressSnapshotSourceRank(snapshot.Strings[snapshot.Sources[index-1].Slot]) >= addressSnapshotSourceRank(snapshot.Strings[source.Slot])) {
 			return fmt.Errorf("%w: source table is not canonical at %d", ErrInvalidAddressSnapshot, index)
 		}
 	}
-	if err := validateAddressSnapshotGeoNodes(snapshot.GeoNodes, snapshot.Strings, validRef); err != nil {
+	geoNodes, err := validateAddressSnapshotGeoNodes(snapshot.GeoNodes, snapshot.Strings, validRef)
+	if err != nil {
 		return err
 	}
+	operatorIDs := map[uint8]map[uint16]struct{}{
+		AddressSnapshotOperatorSupplier: {},
+		AddressSnapshotOperatorCustomer: {},
+	}
+	operatorStableIDs := make(map[[2]uint32]struct{}, len(snapshot.Operators))
 	for index, operator := range snapshot.Operators {
 		if (operator.Namespace != AddressSnapshotOperatorSupplier && operator.Namespace != AddressSnapshotOperatorCustomer) || operator.ID == 0 ||
 			!validRef(operator.StableID) || !validRef(operator.Code) || !validRef(operator.Name) || !validRef(operator.ShortName) || !validRef(operator.Category) ||
@@ -360,6 +375,12 @@ func validateAddressSnapshot(snapshot AddressSnapshotArtifact, limits AddressSna
 			(index > 0 && !addressSnapshotOperatorLess(snapshot.Operators[index-1], operator)) {
 			return fmt.Errorf("%w: operator table is not canonical at %d", ErrInvalidAddressSnapshot, index)
 		}
+		stableKey := [2]uint32{uint32(operator.Namespace), operator.StableID}
+		if _, exists := operatorStableIDs[stableKey]; exists {
+			return fmt.Errorf("%w: duplicate namespaced operator stable id", ErrInvalidAddressSnapshot)
+		}
+		operatorStableIDs[stableKey] = struct{}{}
+		operatorIDs[operator.Namespace][operator.ID] = struct{}{}
 		for position, asn := range operator.ASNs {
 			if asn == 0 || (position > 0 && operator.ASNs[position-1] >= asn) {
 				return fmt.Errorf("%w: operator ASN table is not canonical", ErrInvalidAddressSnapshot)
@@ -371,10 +392,12 @@ func validateAddressSnapshot(snapshot AddressSnapshotArtifact, limits AddressSna
 		if set.ID == 0 || !validRef(set.ID) || !validRef(set.Name) || (index > 0 && snapshot.AddressSets[index-1].ID >= set.ID) {
 			return fmt.Errorf("%w: address-set table is not canonical at %d", ErrInvalidAddressSnapshot, index)
 		}
-		setIDs[set.ID] = struct{}{}
+		if set.Enabled {
+			setIDs[set.ID] = struct{}{}
+		}
 	}
 	for index, value := range snapshot.Values {
-		if err := validateAddressSnapshotValue(value, validRef, setIDs, limits.MaxSetsPerValue); err != nil {
+		if err := validateAddressSnapshotValue(value, validRef, setIDs, operatorIDs, geoNodes, snapshot.GeoNodes, snapshot.Strings, limits.MaxSetsPerValue); err != nil {
 			return fmt.Errorf("%w: value %d: %v", ErrInvalidAddressSnapshot, index, err)
 		}
 		if index > 1 && bytes.Compare(marshalAddressSnapshotValue(snapshot.Values[index-1]), marshalAddressSnapshotValue(value)) >= 0 {
@@ -390,17 +413,29 @@ func validateAddressSnapshot(snapshot AddressSnapshotArtifact, limits AddressSna
 	return nil
 }
 
-func validateAddressSnapshotGeoNodes(nodes []AddressSnapshotGeoNode, dictionary []string, validRef func(uint32) bool) error {
-	codeOwners := make(map[uint32]int, len(nodes))
+type addressSnapshotGeoNodeKey struct {
+	namespace uint8
+	id        uint32
+}
+
+func validateAddressSnapshotGeoNodes(nodes []AddressSnapshotGeoNode, dictionary []string, validRef func(uint32) bool) (map[addressSnapshotGeoNodeKey]int, error) {
+	type namespacedID struct {
+		namespace uint8
+		value     uint32
+	}
+	idOwners := make(map[namespacedID]int, len(nodes))
+	result := make(map[addressSnapshotGeoNodeKey]int, len(nodes))
 	for index, node := range nodes {
-		if node.Kind == 0 || node.Code == 0 || node.Name == 0 || !validRef(node.Kind) || !validRef(node.Code) || !validRef(node.Name) || !validRef(node.ParentCode) ||
+		if (node.Namespace != AddressSnapshotGeoSupplier && node.Namespace != AddressSnapshotGeoCustomer) || node.ID == 0 || node.Kind == 0 || node.Code == 0 || node.Name == 0 || !validRef(node.ID) || !validRef(node.Kind) || !validRef(node.Code) || !validRef(node.Name) || !validRef(node.ParentID) ||
 			(index > 0 && !addressSnapshotGeoNodeLess(nodes[index-1], node)) {
-			return fmt.Errorf("%w: Geo node table is not canonical at %d", ErrInvalidAddressSnapshot, index)
+			return nil, fmt.Errorf("%w: Geo node table is not canonical at %d", ErrInvalidAddressSnapshot, index)
 		}
-		if _, exists := codeOwners[node.Code]; exists {
-			return fmt.Errorf("%w: duplicate Geo code %q", ErrInvalidAddressSnapshot, dictionary[node.Code])
+		id := namespacedID{namespace: node.Namespace, value: node.ID}
+		if _, exists := idOwners[id]; exists {
+			return nil, fmt.Errorf("%w: duplicate Geo id %q", ErrInvalidAddressSnapshot, dictionary[node.ID])
 		}
-		codeOwners[node.Code] = index
+		idOwners[id] = index
+		result[addressSnapshotGeoNodeKey{namespace: node.Namespace, id: node.ID}] = index
 	}
 	states := make([]uint8, len(nodes))
 	var visit func(int) error
@@ -412,11 +447,17 @@ func validateAddressSnapshotGeoNodes(nodes []AddressSnapshotGeoNode, dictionary 
 			return nil
 		}
 		states[index] = 1
-		parent := nodes[index].ParentCode
+		parent := nodes[index].ParentID
 		if parent != 0 {
-			parentIndex, exists := codeOwners[parent]
-			if !exists || parent == nodes[index].Code {
+			parentIndex, exists := idOwners[namespacedID{namespace: nodes[index].Namespace, value: parent}]
+			if !exists || parent == nodes[index].ID {
 				return fmt.Errorf("%w: Geo parent is missing or self-referential", ErrInvalidAddressSnapshot)
+			}
+			if geoDefinitionKindRank(dictionary[nodes[parentIndex].Kind]) >= geoDefinitionKindRank(dictionary[nodes[index].Kind]) {
+				return fmt.Errorf("%w: Geo parent hierarchy is not descending", ErrInvalidAddressSnapshot)
+			}
+			if nodes[index].Enabled && !nodes[parentIndex].Enabled {
+				return fmt.Errorf("%w: enabled Geo node has disabled parent", ErrInvalidAddressSnapshot)
 			}
 			if err := visit(parentIndex); err != nil {
 				return err
@@ -427,13 +468,13 @@ func validateAddressSnapshotGeoNodes(nodes []AddressSnapshotGeoNode, dictionary 
 	}
 	for index := range nodes {
 		if err := visit(index); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return result, nil
 }
 
-func validateAddressSnapshotValue(value AddressSnapshotValue, validRef func(uint32) bool, setIDs map[uint32]struct{}, maxSets int) error {
+func validateAddressSnapshotValue(value AddressSnapshotValue, validRef func(uint32) bool, setIDs map[uint32]struct{}, operatorIDs map[uint8]map[uint16]struct{}, geoNodes map[addressSnapshotGeoNodeKey]int, nodes []AddressSnapshotGeoNode, dictionary []string, maxSets int) error {
 	for _, geo := range []AddressSnapshotGeoValue{value.SupplierGeo, value.CustomerGeo} {
 		for _, reference := range []uint32{geo.CountryCode, geo.AdminCode, geo.Subdivision, geo.City, geo.ContinentID, geo.RegionID, geo.CountryID, geo.ProvinceID, geo.CityID} {
 			if !validRef(reference) {
@@ -441,9 +482,19 @@ func validateAddressSnapshotValue(value AddressSnapshotValue, validRef func(uint
 			}
 		}
 	}
+	if err := validateAddressSnapshotGeoValue(value.SupplierGeo, AddressSnapshotGeoSupplier, geoNodes, nodes, dictionary); err != nil {
+		return err
+	}
+	if err := validateAddressSnapshotGeoValue(value.CustomerGeo, AddressSnapshotGeoCustomer, geoNodes, nodes, dictionary); err != nil {
+		return err
+	}
 	if !validRef(value.PrimaryPrefixID) || !validRef(value.PrimaryPrefixCIDR) || !validRef(value.Business) ||
 		value.CustomerOverrideBits&^uint8(GeoOverrideKnownFields) != 0 || len(value.InAddressSetIDs) > maxSets || len(value.OutAddressSetIDs) > maxSets {
 		return errors.New("scalar field or set count is invalid")
+	}
+	if (value.SupplierISPID != 0 && !addressSnapshotOperatorIDExists(operatorIDs, AddressSnapshotOperatorSupplier, value.SupplierISPID)) ||
+		(value.CustomerISPID != 0 && !addressSnapshotOperatorIDExists(operatorIDs, AddressSnapshotOperatorCustomer, value.CustomerISPID)) {
+		return errors.New("ISP value references an unknown operator namespace or ID")
 	}
 	for _, memberships := range [][]uint32{value.InAddressSetIDs, value.OutAddressSetIDs} {
 		for index, setID := range memberships {
@@ -453,6 +504,45 @@ func validateAddressSnapshotValue(value AddressSnapshotValue, validRef func(uint
 		}
 	}
 	return nil
+}
+
+func addressSnapshotOperatorIDExists(values map[uint8]map[uint16]struct{}, namespace uint8, id uint16) bool {
+	_, exists := values[namespace][id]
+	return exists
+}
+
+func validateAddressSnapshotGeoValue(value AddressSnapshotGeoValue, namespace uint8, nodeIndexes map[addressSnapshotGeoNodeKey]int, nodes []AddressSnapshotGeoNode, dictionary []string) error {
+	ids := []uint32{value.ContinentID, value.RegionID, value.CountryID, value.ProvinceID, value.CityID}
+	kinds := []string{"continent", "region", "country", "province", "city"}
+	lastNode := -1
+	for position, id := range ids {
+		if id == 0 {
+			continue
+		}
+		nodeIndex, exists := nodeIndexes[addressSnapshotGeoNodeKey{namespace: namespace, id: id}]
+		if !exists || dictionary[nodes[nodeIndex].Kind] != kinds[position] || !nodes[nodeIndex].Enabled {
+			return errors.New("Geo path references a missing, disabled, or wrong-kind node")
+		}
+		if lastNode >= 0 && !addressSnapshotGeoAncestor(nodeIndexes, nodes, lastNode, nodeIndex, namespace) {
+			return errors.New("Geo path nodes do not form one ancestry chain")
+		}
+		lastNode = nodeIndex
+	}
+	return nil
+}
+
+func addressSnapshotGeoAncestor(nodeIndexes map[addressSnapshotGeoNodeKey]int, nodes []AddressSnapshotGeoNode, ancestor, descendant int, namespace uint8) bool {
+	for parentID := nodes[descendant].ParentID; parentID != 0; {
+		parent, exists := nodeIndexes[addressSnapshotGeoNodeKey{namespace: namespace, id: parentID}]
+		if !exists {
+			return false
+		}
+		if parent == ancestor {
+			return true
+		}
+		parentID = nodes[parent].ParentID
+	}
+	return false
 }
 
 func validateAddressSnapshotIPv4Ranges(ranges []AddressSnapshotIPv4Range, values int) error {
@@ -493,10 +583,10 @@ func zeroAddressSnapshotValue(value AddressSnapshotValue) bool {
 }
 
 func addressSnapshotGeoNodeLess(left, right AddressSnapshotGeoNode) bool {
-	if left.Kind != right.Kind {
-		return left.Kind < right.Kind
+	if left.Namespace != right.Namespace {
+		return left.Namespace < right.Namespace
 	}
-	return left.Code < right.Code
+	return left.ID < right.ID
 }
 
 func addressSnapshotOperatorLess(left, right AddressSnapshotOperator) bool {
@@ -529,10 +619,12 @@ func marshalAddressSnapshotPayload(snapshot AddressSnapshotArtifact, limits Addr
 		writer.u64(source.RowCountV6)
 	}
 	for _, node := range snapshot.GeoNodes {
+		writer.u8(node.Namespace)
+		writer.u32(node.ID)
 		writer.u32(node.Kind)
 		writer.u32(node.Code)
 		writer.u32(node.Name)
-		writer.u32(node.ParentCode)
+		writer.u32(node.ParentID)
 		writer.boolean(node.Enabled)
 	}
 	for _, operator := range snapshot.Operators {
@@ -552,6 +644,7 @@ func marshalAddressSnapshotPayload(snapshot AddressSnapshotArtifact, limits Addr
 	for _, set := range snapshot.AddressSets {
 		writer.u32(set.ID)
 		writer.u32(set.Name)
+		writer.boolean(set.Enabled)
 	}
 	for _, value := range snapshot.Values {
 		writer.bytes(marshalAddressSnapshotValue(value))
@@ -621,12 +714,12 @@ func unmarshalAddressSnapshotPayload(payload []byte, limits AddressSnapshotLimit
 	if reader.err != nil {
 		return AddressSnapshotArtifact{}, reader.err
 	}
-	minimumEncodedBytes := uint64(counts[0])*4 + uint64(counts[1])*36 + uint64(counts[2])*17 + uint64(counts[3])*28 +
-		uint64(counts[4])*8 + uint64(counts[5])*106 + uint64(counts[6])*12 + uint64(counts[7])*36
+	minimumEncodedBytes := uint64(counts[0])*4 + uint64(counts[1])*36 + uint64(counts[2])*22 + uint64(counts[3])*28 +
+		uint64(counts[4])*9 + uint64(counts[5])*106 + uint64(counts[6])*12 + uint64(counts[7])*36
 	if minimumEncodedBytes > uint64(len(payload)-reader.position) {
 		return AddressSnapshotArtifact{}, fmt.Errorf("%w: declared tables exceed payload", ErrInvalidAddressSnapshot)
 	}
-	estimatedDecodedMemory := uint64(len(payload))*2 + uint64(counts[0])*16 + uint64(counts[1])*40 + uint64(counts[2])*20 +
+	estimatedDecodedMemory := uint64(len(payload))*2 + uint64(counts[0])*16 + uint64(counts[1])*40 + uint64(counts[2])*32 +
 		uint64(counts[3])*64 + uint64(counts[4])*8 + uint64(counts[5])*176 + uint64(counts[6])*12 + uint64(counts[7])*36
 	if estimatedDecodedMemory > limits.MaxDecodedMemoryBytes {
 		return AddressSnapshotArtifact{}, fmt.Errorf("%w: decoded memory estimate exceeds limit", ErrInvalidAddressSnapshot)
@@ -649,7 +742,8 @@ func unmarshalAddressSnapshotPayload(payload []byte, limits AddressSnapshotLimit
 	snapshot.GeoNodes = make([]AddressSnapshotGeoNode, counts[2])
 	for index := range snapshot.GeoNodes {
 		item := &snapshot.GeoNodes[index]
-		item.Kind, item.Code, item.Name, item.ParentCode = reader.u32(), reader.u32(), reader.u32(), reader.u32()
+		item.Namespace = reader.u8()
+		item.ID, item.Kind, item.Code, item.Name, item.ParentID = reader.u32(), reader.u32(), reader.u32(), reader.u32(), reader.u32()
 		item.Enabled = reader.boolean()
 	}
 	snapshot.Operators = make([]AddressSnapshotOperator, counts[3])
@@ -669,7 +763,7 @@ func unmarshalAddressSnapshotPayload(payload []byte, limits AddressSnapshotLimit
 	}
 	snapshot.AddressSets = make([]AddressSnapshotSet, counts[4])
 	for index := range snapshot.AddressSets {
-		snapshot.AddressSets[index] = AddressSnapshotSet{ID: reader.u32(), Name: reader.u32()}
+		snapshot.AddressSets[index] = AddressSnapshotSet{ID: reader.u32(), Name: reader.u32(), Enabled: reader.boolean()}
 	}
 	snapshot.Values = make([]AddressSnapshotValue, counts[5])
 	for index := range snapshot.Values {
