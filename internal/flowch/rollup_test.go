@@ -163,6 +163,23 @@ func TestRollupRunnerStatsSeparateResolutionRepairAndFailureClass(t *testing.T) 
 	}
 }
 
+func TestRecordTerminalFailureCountsByClass(t *testing.T) {
+	runner := &RollupRunner{}
+	runner.RecordTerminalFailure(false) // permanent classification
+	runner.RecordTerminalFailure(true)  // retry budget exhausted
+	runner.RecordTerminalFailure(true)
+	stats := runner.Stats()
+	if stats.TerminalPermanentFailures != 1 || stats.TerminalExhaustedFailures != 2 {
+		t.Fatalf("terminal failures permanent=%d exhausted=%d, want 1/2", stats.TerminalPermanentFailures, stats.TerminalExhaustedFailures)
+	}
+	// A nil runner must be a no-op, not a panic: the wiring is best-effort.
+	var nilRunner *RollupRunner
+	nilRunner.RecordTerminalFailure(true)
+	if got := nilRunner.Stats(); got.TerminalExhaustedFailures != 0 {
+		t.Fatalf("nil runner stats=%+v", got)
+	}
+}
+
 func TestRollupRunnerClassifiesPermanentAndRetryableFailures(t *testing.T) {
 	request := RollupRequest{
 		TenantID: "tenant-a", Resolution: RollupOneMinute,

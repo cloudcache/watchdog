@@ -95,7 +95,18 @@ type OperationJobWorker struct {
 	MaxAttempts  uint32        // default 5
 	RetryBase    time.Duration // default 30s, doubled per attempt, capped 10m
 	Logf         func(format string, args ...any)
+	// OnTerminalFailure, when set, fires once after a job of this type is durably
+	// recorded as terminally failed — retry budget exhausted, or a non-retryable
+	// error. It is the only signal that the job will never succeed; the worker is
+	// otherwise silent on terminal failure. code is OperationJobCodeTerminal for a
+	// non-retryable error, otherwise the retryable code that exhausted the budget.
+	OnTerminalFailure func(job OperationJob, code string)
 }
+
+// OperationJobCodeTerminal is the failure code recorded when a handler error is
+// non-retryable, as distinct from a retryable error that exhausted its attempt
+// budget. OnTerminalFailure callbacks compare against it to classify the two.
+const OperationJobCodeTerminal = "TERMINAL"
 
 func (w *OperationJobWorker) logf(format string, args ...any) {
 	if w.Logf != nil {
@@ -232,12 +243,19 @@ func (w *OperationJobWorker) finishAttempt(ctx context.Context, job OperationJob
 		retry := job.AttemptCount < maxAttempts
 		if IsTerminalJobError(handlerErr) {
 			retry = false
-			code = "TERMINAL"
+			code = OperationJobCodeTerminal
 		}
 		retryAt := time.Now().UTC().Add(w.retryBackoff(job.AttemptCount))
 		detail := fmt.Sprintf("attempt %d: %v", job.AttemptCount, handlerErr)
 		if err := w.Repo.CompleteOperationJobFailed(ctx, job.ID, job.LeaseToken, code, detail, retry, retryAt); err != nil {
 			w.logf("operation job %s failure finish: %v", job.ID, err)
+			return
+		}
+		// Fire only after the terminal state is durably recorded: a failed write
+		// leaves the lease to expire and another worker to retry, so the job is
+		// not yet terminal and must not be counted as a permanent gap.
+		if !retry && w.OnTerminalFailure != nil {
+			w.OnTerminalFailure(job, code)
 		}
 	}
 }

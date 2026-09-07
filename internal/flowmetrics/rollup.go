@@ -46,6 +46,9 @@ func (m *Rollup) PrometheusText() []byte {
 		rollupClassSample("1m", "permanent", stats.OneMinute.PermanentErrors),
 		rollupClassSample("1h", "retryable", stats.OneHour.RetryableErrors),
 		rollupClassSample("1h", "permanent", stats.OneHour.PermanentErrors))
+	writeFamily(&output, "watchdog_flow_rollup_terminal_failed_total", "Rollup buckets abandoned with no successful generation; the scheduled watermark advanced past a permanent gap in the aggregates.", "counter",
+		sample{labels: `{class="permanent"}`, value: uintValue(stats.TerminalPermanentFailures)},
+		sample{labels: `{class="exhausted"}`, value: uintValue(stats.TerminalExhaustedFailures)})
 	writeFamily(&output, "watchdog_flow_rollup_rebuilds_total", "Successful initial and repair rollup rebuilds.", "counter",
 		rollupKindSample("1m", "initial", stats.OneMinute.InitialRebuilds),
 		rollupKindSample("1m", "repair", stats.OneMinute.RepairRebuilds),

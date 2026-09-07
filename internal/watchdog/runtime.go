@@ -600,10 +600,19 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 			return err
 		}
 		if r.FlowRollupRunner != nil {
+			// A terminally failed bucket is a permanent gap once the scheduled
+			// watermark advances past it: surface it so the silent hole alarms.
+			var onTerminal func(OperationJob, string)
+			if recorder, ok := r.FlowRollupRunner.(interface{ RecordTerminalFailure(bool) }); ok {
+				onTerminal = func(_ OperationJob, code string) {
+					recorder.RecordTerminalFailure(code != OperationJobCodeTerminal)
+				}
+			}
 			if err := registry.Register(OperationJobRegistration{
 				JobType: FlowRollupJobType, Handler: NewFlowRollupJobHandler(r.FlowRollupRunner),
 				Concurrency: r.Config.FlowRollup.WorkerConcurrency, LeaseFor: r.Config.FlowRollup.LeaseFor,
 				MaxAttempts: r.Config.FlowRollup.MaxAttempts, RetryBase: r.Config.FlowRollup.RetryBase,
+				OnTerminalFailure: onTerminal,
 			}); err != nil {
 				return err
 			}

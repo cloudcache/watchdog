@@ -35,7 +35,19 @@ type RollupRequest struct {
 type RollupRunner struct {
 	executor queryExecutor
 	stats    [2]rollupCounters
+	terminal terminalCounters
 	now      func() time.Time
+}
+
+// terminalCounters count rollup jobs that ended with no successful generation.
+// The operation-job worker owns terminal-ness — retry-budget exhaustion in
+// particular is invisible to Run, which only ever sees each retryable attempt —
+// so it reports the final outcome here. A terminal failure leaves a permanent
+// gap once the scheduled watermark advances past the bucket (the F1 hole), so
+// this is the signal an operator alerts on.
+type terminalCounters struct {
+	permanent atomic.Uint64
+	exhausted atomic.Uint64
 }
 
 type RollupResolutionStats struct {
@@ -52,6 +64,14 @@ type RollupResolutionStats struct {
 type RollupStats struct {
 	OneMinute RollupResolutionStats
 	OneHour   RollupResolutionStats
+	// TerminalPermanentFailures counts buckets abandoned on a non-retryable
+	// (permanent) classification; TerminalExhaustedFailures counts buckets whose
+	// retryable error (e.g. MEMORY_LIMIT) ran out of attempts. Both mean the
+	// bucket has no successful generation and the aggregate has a permanent gap.
+	// Resolution-agnostic: the worker reports terminal-ness without decoding the
+	// job payload.
+	TerminalPermanentFailures uint64
+	TerminalExhaustedFailures uint64
 }
 
 type rollupCounters struct {
@@ -169,9 +189,26 @@ func (r *RollupRunner) Stats() RollupStats {
 		return RollupStats{}
 	}
 	return RollupStats{
-		OneMinute: snapshotRollupCounters(&r.stats[0]),
-		OneHour:   snapshotRollupCounters(&r.stats[1]),
+		OneMinute:                 snapshotRollupCounters(&r.stats[0]),
+		OneHour:                   snapshotRollupCounters(&r.stats[1]),
+		TerminalPermanentFailures: r.terminal.permanent.Load(),
+		TerminalExhaustedFailures: r.terminal.exhausted.Load(),
 	}
+}
+
+// RecordTerminalFailure counts a rollup job the worker gave up on with no
+// successful generation. exhausted distinguishes a retry-budget exhaustion
+// (a retryable error that ran out of attempts) from a non-retryable (permanent)
+// classification. Safe for concurrent callers; a nil runner is a no-op.
+func (r *RollupRunner) RecordTerminalFailure(exhausted bool) {
+	if r == nil {
+		return
+	}
+	if exhausted {
+		r.terminal.exhausted.Add(1)
+		return
+	}
+	r.terminal.permanent.Add(1)
 }
 
 func snapshotRollupCounters(value *rollupCounters) RollupResolutionStats {

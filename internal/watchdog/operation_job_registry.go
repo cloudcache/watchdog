@@ -22,6 +22,10 @@ type OperationJobRegistration struct {
 	LeaseFor    time.Duration // default 30s
 	MaxAttempts uint32        // default 5
 	RetryBase   time.Duration // default 30s
+	// OnTerminalFailure, when set, fires when a job of this type finishes
+	// terminally (no further retries). Optional; used for terminal-failure
+	// observability such as the flow rollup silent-gap alarm.
+	OnTerminalFailure func(job OperationJob, code string)
 }
 
 type OperationJobHandlerRegistry struct {
@@ -92,14 +96,15 @@ func StartOperationJobScheduler(ctx context.Context, repo OperationJobRepository
 	for _, reg := range registry.registrations() {
 		for i := 0; i < reg.Concurrency; i++ {
 			worker := &OperationJobWorker{
-				Repo:        repo,
-				JobType:     reg.JobType,
-				Owner:       fmt.Sprintf("%s/%s/%d", ownerBase, reg.JobType, i),
-				Handler:     reg.Handler,
-				LeaseFor:    reg.LeaseFor,
-				MaxAttempts: reg.MaxAttempts,
-				RetryBase:   reg.RetryBase,
-				Logf:        logf,
+				Repo:              repo,
+				JobType:           reg.JobType,
+				Owner:             fmt.Sprintf("%s/%s/%d", ownerBase, reg.JobType, i),
+				Handler:           reg.Handler,
+				LeaseFor:          reg.LeaseFor,
+				MaxAttempts:       reg.MaxAttempts,
+				RetryBase:         reg.RetryBase,
+				Logf:              logf,
+				OnTerminalFailure: reg.OnTerminalFailure,
 			}
 			go worker.Run(ctx)
 			started++
