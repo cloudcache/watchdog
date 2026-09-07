@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06C4-R2-B — VPN rule 页面浏览器/真实 MySQL 门禁。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail 与 FLOW-06C3 VPN findings 异步导出已经分别闭环；C4-D/R1 及 R2 的代码、单元和构建已完成。下一轮只验证 8090→Hub 的列表/筛选/创建/编辑/CAS/删除和真实 MySQL 持久化，不提前进入 C4-P immutable rule-set publication；原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
+**活动切片：FLOW-06C4-P-D — immutable VPN rule-set publication 详细设计。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail、FLOW-06C3 VPN findings 导出以及 C4-D/R1/R2 已分别闭环；下一轮先冻结 VPN object schema、thresholds、preview digest、平台通用 publication 复用边界、审批/激活/回滚与引用保留，再开始持久化/API 编码。原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -91,6 +91,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - FLOW-08A3 partial response：`ffcc64e3 test(flow): reject partial ClickHouse responses`；透明代理在服务端响应第 64 byte 截断 TCP，production executor 必须立即返回 transport/decode error，不等内部 operation deadline、不暴露半条 result、不在连接层重试；新连接池随后恢复。三种代理故障组合真实 CH race 连续 5 次通过。
 - FLOW-08A3 dedup-window-independent replay：`33c3f95f test(flow): verify replay beyond dedup window`；隔离表显式设置 `non_replicated_deduplication_window=0` 并停止 merge，同一 block 完整写两次后物理层为 4 facts/2 receipts，证明未借助短期 server dedup；`FINAL` 仍收敛为 2 facts/1 receipt、900 raw bytes/2 packets 和精确 checksum。四类 CH 故障/幂等门禁组合 race 连续 5 次通过。
 - FLOW-08A3 Kafka worker 恢复：`11cd81b0 test(flow): verify Kafka template replay recovery`；同一真实 consumer group 先提交 v9/IPFIX 模板和数据至 offset 4，新数据不带模板；全新 worker 经 assignment 有界回放后能解码新数据，注入 durable failure 时 committed offset 保持 4，下一全新 worker 再次接管并精确推进至 6。真实 Kafka 连续 5 次及正常 corpus 组合 race 2 次通过，隔离 topic 已清理。
+- FLOW-06C4-R1/R2：`dab020b3 feat(flow): add VPN rule draft management`；typed draft CRUD、专用权限、ETag/audit、服务端 VTable 和完整 schema v1 表单已提交。隔离真实 MySQL CRUD/CAS/tenant-scope 通过；8090→8091 浏览器完成创建、编辑、双会话 stale 412、软删、服务端搜索与列筛选弹窗边界，活动数据恢复为空且控制台无应用错误。
 - 尚未具备的证据：Linux `SO_RXQ_OVFL` 压力、实际 worker/CH restart 与组合故障、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点证据替代。
 
 ## 3. 已完成实现与证据
@@ -323,12 +324,12 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [x] **C4-D 现状对账/变更设计**：平台 PLAT-04A2a–A2d 已真实提供 trusted-key、RBAC、If-Match、签名审批、event-time activation/rollback、consumer ACK/status 和安全 object GC；旧 FLOW-07A 文案声称这些能力缺失已判定过期。未完成面明确拆为 VPN rule-set 编译/发布、Flow worker 下载安装和 supplier/customer adjustment publication；地址 snapshot 的 Flow index generation 属 C4b2/地址 index-builder，不在规则 CRUD 中改 CH。
     - [x] **C4-R1 VPN rule typed draft CRUD**：复用 migration 055 的 `flow_vpn_rules`，新增 `GET/POST /flow/vpn/rules` 与 `GET/PATCH/DELETE /flow/vpn/rules/{id}`；list 为 tenant-scoped 服务端搜索/分页/typed kind/effect/status filter/稳定排序，mutation 使用专用 `configure_adjustment`、严格 JSON、quoted If-Match、软删和逐动作审计。match 直接复用 `flowvpn.NormalizeRule` 的固定 schema v1 canonical validator，API 不暴露尚无数据面语义的 behavior/intelligence/probe JSON 保留列，避免保存“看似可配但永不生效”的字段。复用既有表，故无 migration 058。
     - [x] **C4-R1 单元/集成/变更测试**：覆盖 snake_case wire schema、去重排序、空 match、terminal weight、未知字段/tenant 注入、权限、ETag/audit、tenant 隔离、服务端筛选、name conflict、CAS 和软删；真实 MySQL 用例沿用 `WATCHDOG_TEST_MYSQL_DSN` 门禁，无实例时明确 skip。旧 scorer 构造方式与规则求值语义不变。
-    - [x] **C4-R1 已提交门禁**：代码、测试、设计和任务清单由同一独立提交交付，不夹带用户已有 maintenance/delete-preview 工作区。
-    - [ ] **C4-R2 VPN rule VTable/form**：列表必须服务端分页/搜索/排序/column filter，filter popover 使用公共 portal/collision；表单只显示 schema v1 真正生效字段，编辑/删除发送最新 ETag，未发布状态明确显示为 draft 管理态。
+    - [x] **C4-R1 已提交门禁**：代码、测试、设计和任务清单由独立提交 `dab020b3` 交付，不夹带用户已有 maintenance/delete-preview 工作区。
+    - [x] **C4-R2 VPN rule VTable/form**：列表必须服务端分页/搜索/排序/column filter，filter popover 使用公共 portal/collision；表单只显示 schema v1 真正生效字段，编辑/删除发送最新 ETag，未发布状态明确显示为 draft 管理态。
       - [x] **设计/编码**：新增独立 `/flow/vpn/rules`，findings 与规则页互相跳转；PagedVTable 下推 q/kind/effect/status/sort/page，300ms 搜索和旧请求隔离；表单覆盖全部十二类 schema v1 match signal，TLS/QUIC 明示为上游 hint，不由端口猜测；编辑/删除使用行内 row_version 生成 quoted If-Match。
       - [x] **单元/回归**：前端 parser 覆盖整数集合去重排序、标识符规范化、正值和比例边界；定向 Biome、41 项前端测试、production build、全库 Go test、Flow/Watchdog race、vet/build 和 diff check 通过。
-      - [ ] **集成/变更测试**：真实 MySQL 门禁已加入但本机未配置 `WATCHDOG_TEST_MYSQL_DSN` 而明确 skip；仍须用 8090 浏览器完成列表/filter popover 边界、创建→编辑→stale ETag 412→删除和刷新持久化，且确认无控制台错误。
-      - [x] **已提交门禁（代码范围）**：页面、模型测试、路由、权限入口与 R1 backend 同一切片提交；未夹带用户已有 maintenance/delete-preview 文件。浏览器/真实 MySQL 证据未完成，故 R2 父项保持未勾选。
+      - [x] **集成/变更测试**：隔离真实 MySQL 运行 CRUD/CAS/tenant-scope 门禁通过；`npm run dev :8090 → API_URL :8091` 的真实浏览器完成创建、编辑、双会话 stale ETag 412、软删及刷新持久化，Kind 列 filter popover 未溢出、服务端搜索归零，控制台无应用错误。浏览器测试记录最终为 `deleted/row_version=4`，活动列表恢复为空。
+      - [x] **已提交门禁**：页面、模型测试、路由、权限入口与 R1 backend 由 `dab020b3` 同一切片提交；真实 MySQL/浏览器证据由本清单验收提交补记，均未夹带用户已有 maintenance/delete-preview 文件。
     - [ ] **C4-P immutable VPN rule-set publication**：冻结 thresholds + canonical active rules 的 object schema、preview digest、审批/激活/回滚和引用保留；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。若需新持久字段从 migration 058 领取并同步 fresh-init/checksum/replay。
     - [ ] **C4-W worker 安装/ACK**：worker 只下载已批准且 event-time active 的 rule-set object，校验 checksum/schema/版本后原子切换 scorer catalog，再写 downloaded/installed/failed ACK；失败保持上一 generation。
     - [ ] **C4-A supplier/customer adjustment publication**：归属平台 P3 adjustment policy，不与 VPN rule-set 共表或共享含义；raw 永不可修正，查询/导出固定 policy version，历史重分类复用 FLOW-06B。
