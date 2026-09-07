@@ -22,6 +22,7 @@ const (
 var (
 	ErrInvalidVersionPublication = errors.New("invalid enrichment version publication")
 	ErrVersionObjectUnavailable  = errors.New("enrichment version object unavailable")
+	ErrVersionObjectIntegrity    = errors.New("enrichment version object integrity failure")
 	ErrVersionPersistence        = errors.New("enrichment version persistence failed")
 	ErrVersionAcknowledgement    = errors.New("enrichment version acknowledgement failed")
 )

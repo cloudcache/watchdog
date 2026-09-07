@@ -142,7 +142,7 @@ func (s *DiskVersionLKG) StoreObject(ctx context.Context, objectRef, checksum st
 	path := s.objectPath(checksum)
 	if data, err := readVersionFile(path, maxBytes); err == nil {
 		if versionObjectDigest(data) != checksum {
-			return errors.New("cached enrichment object checksum mismatch")
+			return fmt.Errorf("%w: cached object checksum mismatch", ErrVersionObjectIntegrity)
 		}
 		return s.registerObjectReference(objectRef, checksum)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -164,14 +164,14 @@ func (s *DiskVersionLKG) StoreObject(ctx context.Context, objectRef, checksum st
 	hash := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(&contextVersionReader{ctx: ctx, reader: source}, int64(maxBytes)+1))
 	if copyErr == nil && written > int64(maxBytes) {
-		copyErr = fmt.Errorf("enrichment object exceeds %d bytes", maxBytes)
+		copyErr = fmt.Errorf("%w: object exceeds %d bytes", ErrVersionObjectIntegrity, maxBytes)
 	}
 	if copyErr == nil && written == 0 {
-		copyErr = errors.New("enrichment object is empty")
+		copyErr = fmt.Errorf("%w: object is empty", ErrVersionObjectIntegrity)
 	}
 	actualChecksum := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 	if copyErr == nil && actualChecksum != checksum {
-		copyErr = errors.New("enrichment object checksum mismatch")
+		copyErr = fmt.Errorf("%w: object checksum mismatch", ErrVersionObjectIntegrity)
 	}
 	if copyErr == nil {
 		copyErr = temporary.Sync()
@@ -189,13 +189,45 @@ func (s *DiskVersionLKG) StoreObject(ctx context.Context, objectRef, checksum st
 		}
 		data, readErr := readVersionFile(path, maxBytes)
 		if readErr != nil || versionObjectDigest(data) != checksum {
-			return errors.New("immutable enrichment object collision")
+			return fmt.Errorf("%w: immutable object collision", ErrVersionObjectIntegrity)
 		}
 	}
 	if err := syncVersionDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
 	return s.registerObjectReference(objectRef, checksum)
+}
+
+// objectAvailable validates an already downloaded content-addressed object so
+// ACK retries do not transfer it again. Missing is not an error; corruption is.
+func (s *DiskVersionLKG) objectAvailable(ctx context.Context, checksum string, maxBytes int) (bool, error) {
+	if s == nil || ctx == nil || !validSHA256(checksum) || maxBytes < 1 {
+		return false, errors.New("version LKG object request is invalid")
+	}
+	file, err := os.Open(s.objectPath(checksum))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > int64(maxBytes) {
+		return false, fmt.Errorf("%w: cached object size is invalid", ErrVersionObjectIntegrity)
+	}
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(&contextVersionReader{ctx: ctx, reader: file}, int64(maxBytes)+1))
+	if err != nil {
+		return false, err
+	}
+	if written != info.Size() || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != checksum {
+		return false, fmt.Errorf("%w: cached object checksum mismatch", ErrVersionObjectIntegrity)
+	}
+	return true, nil
 }
 
 func (s *DiskVersionLKG) Fetch(ctx context.Context, objectRef string, maxBytes int) ([]byte, error) {
@@ -216,7 +248,7 @@ func (s *DiskVersionLKG) Fetch(ctx context.Context, objectRef string, maxBytes i
 		return nil, err
 	}
 	if versionObjectDigest(data) != checksum {
-		return nil, errors.New("cached enrichment object checksum mismatch")
+		return nil, fmt.Errorf("%w: cached object checksum mismatch", ErrVersionObjectIntegrity)
 	}
 	return data, nil
 }
