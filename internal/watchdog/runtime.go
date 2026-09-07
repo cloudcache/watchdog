@@ -284,7 +284,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		Client: metricsClient, Metric: cfg.Export.Metric, Network: store, CollectionStep: cfg.SNMPCollector.Interval,
 	}
 	var exportData ExportDataProvider = QueryGatewayExportDataProvider{
-		Gateway: runtime.QueryGateway, VPNFindings: store, Fallback: legacyExportData,
+		Gateway: runtime.QueryGateway, FlowRecords: runtime.FlowRecords, VPNFindings: store, Fallback: legacyExportData,
 	}
 	runtime.ExportWorker = ExportWorker{
 		Repo:    store,

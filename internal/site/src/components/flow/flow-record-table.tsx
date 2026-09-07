@@ -1,6 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro"
+import { getPagePath } from "@nanostores/router"
+import { DownloadIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { $router, navigate } from "@/components/router"
+import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { toast } from "@/components/ui/use-toast"
 import { pb } from "@/lib/api"
 import {
 	buildFlowRecordRows,
@@ -11,6 +17,8 @@ import {
 } from "@/lib/flow-record-model"
 
 type FlowRecordEndpoint = "source" | "destination"
+type FlowRecordView = "customer" | "supplier" | "raw"
+const FLOW_DETAIL_EXPORT_PAGE_SIZE = 500
 
 type FlowRecordSearchResponse = {
 	data: {
@@ -27,36 +35,56 @@ type FlowRecordFacetResponse = {
 	}
 }
 
-const DETAIL_FIELDS = [
-	"src_ip",
-	"dst_ip",
-	"src_port",
-	"dst_port",
-	"ip_protocol",
-	"business_direction",
-	"category",
-	"remote_asn",
-	"remote_country",
-	"estimated_bytes",
-	"sampling_rate",
-	"quality_flags",
-]
+const DETAIL_FIELDS: Record<FlowRecordView, string[]> = {
+	customer: [
+		"src_ip",
+		"dst_ip",
+		"src_port",
+		"dst_port",
+		"ip_protocol",
+		"business_direction",
+		"category",
+		"remote_asn",
+		"remote_country",
+		"estimated_bytes",
+		"sampling_rate",
+		"quality_flags",
+	],
+	supplier: [
+		"src_ip",
+		"dst_ip",
+		"src_port",
+		"dst_port",
+		"ip_protocol",
+		"business_direction",
+		"category",
+		"remote_asn",
+		"remote_country",
+		"raw_bytes",
+		"estimated_bytes",
+		"sampling_rate",
+		"quality_flags",
+	],
+	raw: [
+		"src_ip",
+		"dst_ip",
+		"src_port",
+		"dst_port",
+		"ip_protocol",
+		"source_asn",
+		"destination_asn",
+		"raw_bytes",
+		"estimated_bytes",
+		"sampling_rate",
+		"quality_flags",
+	],
+}
 
-const FILTER_FIELDS = [
-	"event_time",
-	"src_ip",
-	"src_port",
-	"dst_ip",
-	"dst_port",
-	"ip_protocol",
-	"business_direction",
-	"category",
-	"remote_asn",
-	"remote_country",
-	"estimated_bytes",
-	"sampling_rate",
-	"quality_flags",
-]
+const FILTER_FIELDS: Record<FlowRecordView, string[]> = {
+	customer: ["event_time", ...DETAIL_FIELDS.customer],
+	supplier: ["event_time", ...DETAIL_FIELDS.supplier],
+	raw: ["event_time", ...DETAIL_FIELDS.raw],
+}
 
 export function FlowRecordTable({
 	endpoint,
@@ -73,6 +101,7 @@ export function FlowRecordTable({
 }) {
 	const { t } = useLingui()
 	const [search, setSearch] = useState(selectedIP)
+	const [view, setView] = useState<FlowRecordView>("customer")
 	const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
 	const [sortField, setSortField] = useState("event_time")
 	const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
@@ -81,6 +110,7 @@ export function FlowRecordTable({
 	const [rows, setRows] = useState<FlowRecordRow[]>([])
 	const [hasMore, setHasMore] = useState(false)
 	const [loading, setLoading] = useState(false)
+	const [exporting, setExporting] = useState(false)
 	const [error, setError] = useState("")
 	const cursors = useRef<string[]>([""])
 	const activeRequest = useRef<AbortController | null>(null)
@@ -110,8 +140,8 @@ export function FlowRecordTable({
 						endpoint,
 						from,
 						to,
-						view: "customer",
-						fields: DETAIL_FIELDS,
+						view,
+						fields: DETAIL_FIELDS[view],
 						column_filters: Object.entries(columnFilters).map(([field, values]) => ({ field, values })),
 						sort: { field: sortField, direction: sortDirection },
 						limit: pageSize,
@@ -135,7 +165,7 @@ export function FlowRecordTable({
 				}
 			}
 		},
-		[columnFilters, endpoint, from, pageSize, selectedIP, sortDirection, sortField, t, to]
+		[columnFilters, endpoint, from, pageSize, selectedIP, sortDirection, sortField, t, to, view]
 	)
 
 	useEffect(() => {
@@ -145,28 +175,41 @@ export function FlowRecordTable({
 	}, [loadPage])
 
 	const records = useMemo(() => buildFlowRecordRows(rows), [rows])
-	const columns = useMemo(
-		() => [
+	const columns = useMemo(() => {
+		const common = [
 			{ field: "event_time", title: t`Event time`, width: 180 },
 			{ field: "src_ip", title: t`Source IP`, width: 170 },
 			{ field: "src_port", title: t`Source port`, width: 100 },
 			{ field: "dst_ip", title: t`Destination IP`, width: 170 },
 			{ field: "dst_port", title: t`Destination port`, width: 110 },
 			{ field: "protocol", filterField: "ip_protocol", title: t`Protocol`, width: 100 },
-			{ field: "direction", filterField: "business_direction", title: t`Direction`, width: 110 },
-			{ field: "category", title: t`Category`, width: 170 },
-			{ field: "remote_asn", title: t`Remote ASN`, width: 110 },
-			{ field: "country", filterField: "remote_country", title: t`Country`, width: 110 },
+		]
+		const tail =
+			view === "raw"
+				? [
+						{ field: "source_asn", title: t`Source ASN`, width: 110 },
+						{ field: "destination_asn", title: t`Destination ASN`, width: 120 },
+						{ field: "raw_bytes", title: t`Raw bytes`, width: 120 },
+					]
+				: [
+						{ field: "direction", filterField: "business_direction", title: t`Direction`, width: 110 },
+						{ field: "category", title: t`Category`, width: 170 },
+						{ field: "remote_asn", title: t`Remote ASN`, width: 110 },
+						{ field: "country", filterField: "remote_country", title: t`Country`, width: 110 },
+						...(view === "supplier" ? [{ field: "raw_bytes", title: t`Raw bytes`, width: 120 }] : []),
+					]
+		return [
+			...common,
+			...tail,
 			{ field: "estimated_bytes", title: t`Estimated bytes`, width: 130 },
 			{ field: "sampling_rate", title: t`Sampling rate`, width: 110 },
 			{ field: "quality_flags", title: t`Quality flags`, width: 110 },
-		],
-		[t]
-	)
+		]
+	}, [t, view])
 	const serverFiltering = useMemo(
 		() => ({
 			options: Object.fromEntries(
-				FILTER_FIELDS.map((field) => [field, (columnFilters[field] ?? []).map((value) => ({ value }))])
+				FILTER_FIELDS[view].map((field) => [field, (columnFilters[field] ?? []).map((value) => ({ value }))])
 			),
 			selected: columnFilters,
 			loadOptions: async (field: string, searchText: string, signal: AbortSignal) => {
@@ -179,7 +222,7 @@ export function FlowRecordTable({
 						endpoint,
 						from,
 						to,
-						view: "customer",
+						view,
 						field,
 						search: searchText || undefined,
 						column_filters: Object.entries(columnFilters).map(([filterField, values]) => ({
@@ -205,7 +248,7 @@ export function FlowRecordTable({
 			},
 			onClearAll: () => setColumnFilters({}),
 		}),
-		[columnFilters, endpoint, from, selectedIP, to]
+		[columnFilters, endpoint, from, selectedIP, to, view]
 	)
 	const serverSorting = useMemo(
 		() => ({
@@ -220,8 +263,11 @@ export function FlowRecordTable({
 				protocol: "ip_protocol",
 				direction: "business_direction",
 				category: "category",
+				source_asn: "source_asn",
+				destination_asn: "destination_asn",
 				remote_asn: "remote_asn",
 				country: "remote_country",
+				raw_bytes: "raw_bytes",
 				estimated_bytes: "estimated_bytes",
 				sampling_rate: "sampling_rate",
 				quality_flags: "quality_flags",
@@ -244,16 +290,87 @@ export function FlowRecordTable({
 		}
 		onIPChange(normalized)
 	}
+	const changeView = (next: FlowRecordView) => {
+		cursors.current = [""]
+		setColumnFilters({})
+		setSortField("event_time")
+		setSortDirection("desc")
+		setPage(0)
+		setView(next)
+	}
+	const exportDetails = async () => {
+		if (!selectedIP || view === "customer") return
+		setExporting(true)
+		try {
+			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/records/exports", {
+				method: "POST",
+				body: {
+					query: {
+						ip: selectedIP,
+						endpoint,
+						from,
+						to,
+						view,
+						fields: DETAIL_FIELDS[view],
+						column_filters: Object.entries(columnFilters).map(([field, values]) => ({ field, values })),
+						sort: { field: sortField, direction: sortDirection },
+						limit: FLOW_DETAIL_EXPORT_PAGE_SIZE,
+					},
+					format: "csv",
+				},
+			})
+			const id = task.ID ?? task.id ?? ""
+			toast({ title: t`Flow detail export queued` })
+			navigate(id ? getPagePath($router, "export_detail", { id }) : getPagePath($router, "exports"))
+		} catch (reason) {
+			toast({
+				title: reason instanceof Error ? reason.message : t`Failed to create Flow detail export`,
+				variant: "destructive",
+			})
+		} finally {
+			setExporting(false)
+		}
+	}
 
 	return (
 		<div className="grid gap-3 rounded-md border border-border bg-card p-3">
-			<div>
-				<h2 className="font-medium">
-					<Trans>Flow record details</Trans>
-				</h2>
-				<p className="text-xs text-muted-foreground">
-					<Trans>Select a Top IP row or enter an exact IPv4/IPv6 address and press Enter.</Trans>
-				</p>
+			<div className="flex flex-wrap items-start justify-between gap-3">
+				<div>
+					<h2 className="font-medium">
+						<Trans>Flow record details</Trans>
+					</h2>
+					<p className="text-xs text-muted-foreground">
+						<Trans>Select a Top IP row or enter an exact IPv4/IPv6 address and press Enter.</Trans>
+					</p>
+				</div>
+				<div className="flex items-center gap-2">
+					<Select value={view} onValueChange={(value) => changeView(value as FlowRecordView)}>
+						<SelectTrigger className="w-36" aria-label={t`Value layer`}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="customer">
+								<Trans>Customer</Trans>
+							</SelectItem>
+							<SelectItem value="supplier">
+								<Trans>Supplier</Trans>
+							</SelectItem>
+							<SelectItem value="raw">
+								<Trans>Raw</Trans>
+							</SelectItem>
+						</SelectContent>
+					</Select>
+					{view !== "customer" && (
+						<Button
+							variant="outline"
+							onClick={() => exportDetails().catch(() => {})}
+							disabled={!selectedIP || exporting}
+						>
+							<DownloadIcon className="me-2 h-4 w-4" />
+							{exporting ? <Trans>Queuing...</Trans> : <Trans>Export CSV</Trans>}
+						</Button>
+					)}
+				</div>
 			</div>
 			{error && <div className="text-sm text-destructive">{error}</div>}
 			<PagedVTable
@@ -286,7 +403,7 @@ export function FlowRecordTable({
 
 function flowFacetLabel(field: string, value: string) {
 	if (field === "ip_protocol") return flowProtocolLabel(value)
-	if (field === "estimated_bytes") return formatFlowBytes(value)
+	if (field === "estimated_bytes" || field === "raw_bytes") return formatFlowBytes(value)
 	if (field === "event_time") {
 		const instant = new Date(value)
 		if (!Number.isNaN(instant.valueOf())) return instant.toLocaleString()

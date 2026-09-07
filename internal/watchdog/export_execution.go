@@ -225,6 +225,10 @@ func validateExportExecutionTask(task ExportTask) error {
 		if err != nil || parameters.Table != nil {
 			return errors.New("Flow export query parameters are invalid")
 		}
+	case FlowRecordDetailDataset:
+		if err := validateFlowDetailExportSnapshot(task, snapshot); err != nil {
+			return err
+		}
 	case FlowVPNFindingsDataset:
 		if task.ValueLayer != QueryValueCustomer || task.TargetID != "" || task.PortID != "" || task.Step != 0 ||
 			snapshot.Query.StepSeconds != 0 || snapshot.Query.Cursor != "" {
@@ -262,6 +266,10 @@ func validateExportExecutionTask(task ExportTask) error {
 		if versions.CompletenessMode != flowExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" {
 			return errors.New("Flow export completeness snapshot is invalid")
 		}
+	case FlowRecordDetailDataset:
+		if versions.CompletenessMode != flowDetailExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" || versions.QueryPolicyVersion != 0 {
+			return errors.New("Flow detail export version snapshot is invalid")
+		}
 	case FlowVPNFindingsDataset:
 		if versions.CompletenessMode != vpnFindingExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" || versions.QueryPolicyVersion != 0 {
 			return errors.New("VPN finding export version snapshot is invalid")
@@ -287,7 +295,7 @@ func exportCompletenessPolicyFromSnapshot(task ExportTask) (CompletenessPolicy, 
 	if task.ContractVersion != ExportExecutionContractVersion {
 		return CompletenessPolicy{}, errors.New("export completeness snapshot requires contract version 1")
 	}
-	if task.DatasetKey == FlowTrafficDataset {
+	if task.DatasetKey == FlowTrafficDataset || task.DatasetKey == FlowRecordDetailDataset {
 		return CompletenessPolicy{}, errors.New("Flow exports use query-result completeness")
 	}
 	var versions exportVersionSnapshot
@@ -551,6 +559,12 @@ func verifyExportCorrectionSnapshot(ctx context.Context, network NetworkReposito
 	if task.DatasetKey == FlowTrafficDataset {
 		if versions.CompletenessMode != flowExportCompletenessMode || versions.CorrectionSnapshotHash != "" {
 			return errors.New("Flow export version snapshot is invalid")
+		}
+		return nil
+	}
+	if task.DatasetKey == FlowRecordDetailDataset {
+		if versions.CompletenessMode != flowDetailExportCompletenessMode || versions.CorrectionSnapshotHash != "" {
+			return errors.New("Flow detail export version snapshot is invalid")
 		}
 		return nil
 	}

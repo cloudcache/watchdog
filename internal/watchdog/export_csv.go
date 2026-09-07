@@ -46,7 +46,7 @@ func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, column
 }
 
 func (w *CSVExportWriter) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
-	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowVPNFindingsDataset {
+	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowRecordDetailDataset && task.DatasetKey != FlowVPNFindingsDataset {
 		return ExportArtifact{}, false, nil
 	}
 	if task.Format != ExportFormatCSV {
@@ -57,7 +57,12 @@ func (w *CSVExportWriter) WriteExportRows(_ context.Context, task ExportTask, ro
 	}
 	var data []byte
 	var err error
-	if task.DatasetKey == FlowVPNFindingsDataset {
+	if task.DatasetKey == FlowRecordDetailDataset {
+		if rows.FlowDetails == nil {
+			return ExportArtifact{}, true, errors.New("Flow detail export rows are required")
+		}
+		data, err = RenderFlowDetailCSV(*rows.FlowDetails)
+	} else if task.DatasetKey == FlowVPNFindingsDataset {
 		data, err = RenderVPNFindingCSV(rows.VPNFindings)
 	} else {
 		data, err = RenderCSVExportRows(rows)
@@ -134,7 +139,7 @@ func (s DiskExportStore) WriteExport(_ context.Context, task ExportTask, columns
 }
 
 func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
-	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowVPNFindingsDataset {
+	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowRecordDetailDataset && task.DatasetKey != FlowVPNFindingsDataset {
 		return ExportArtifact{}, false, nil
 	}
 	if s.Dir == "" {
@@ -145,14 +150,24 @@ func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, row
 	var err error
 	switch task.Format {
 	case ExportFormatCSV:
-		if task.DatasetKey == FlowVPNFindingsDataset {
+		if task.DatasetKey == FlowRecordDetailDataset {
+			if rows.FlowDetails == nil {
+				return ExportArtifact{}, true, errors.New("Flow detail export rows are required")
+			}
+			data, err = RenderFlowDetailCSV(*rows.FlowDetails)
+		} else if task.DatasetKey == FlowVPNFindingsDataset {
 			data, err = RenderVPNFindingCSV(rows.VPNFindings)
 		} else {
 			data, err = RenderCSVExportRows(rows)
 		}
 		contentType, extension = "text/csv; charset=utf-8", "csv"
 	case ExportFormatParquet:
-		if task.DatasetKey == FlowVPNFindingsDataset {
+		if task.DatasetKey == FlowRecordDetailDataset {
+			if rows.FlowDetails == nil {
+				return ExportArtifact{}, true, errors.New("Flow detail export rows are required")
+			}
+			data, err = RenderFlowDetailParquet(*rows.FlowDetails)
+		} else if task.DatasetKey == FlowVPNFindingsDataset {
 			data, err = RenderVPNFindingParquet(rows.VPNFindings)
 		} else {
 			data, err = RenderParquetExportRows(rows)
@@ -178,6 +193,9 @@ func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, row
 }
 
 func exportRowsCount(task ExportTask, rows ExportRows) uint64 {
+	if task.DatasetKey == FlowRecordDetailDataset && rows.FlowDetails != nil {
+		return uint64(len(rows.FlowDetails.Rows))
+	}
 	if task.DatasetKey == FlowVPNFindingsDataset {
 		return uint64(len(rows.VPNFindings))
 	}

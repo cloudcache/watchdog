@@ -840,7 +840,7 @@ status, row_version, created_by, expires_at
 
 raw/supplier/customer 创建、执行和下载分别用 `export_raw/export_supplier/export_customer` 复核当前权限；`authorization_json` 只保存当时的决定证据，不能替代当前授权。产物以 schema version、content type、row count、size 和 SHA-256 自描述；下载校验元数据并写审计，过期删除也写审计。CSV 与 Parquet 共享同一逻辑 row schema，格式 writer 不得各自重新计算查询或修正规则。
 
-模块可以在同一 export pipeline 注册独立表格 dataset，但必须提供专用逻辑 row schema、冻结查询验证和权限 action。`flow.vpn_findings` 使用 `vpn_view + vpn_export` 创建并在执行/下载时复核 `vpn_export`；它只读 MySQL 的有界 tenant snapshot，不能为了接入导出再建表、队列或 worker。完整 evidence/probe payload、conversation key、处置备注/actor 和 tenant identity 不进入制品。
+模块可以在同一 export pipeline 注册独立表格 dataset，但必须提供专用逻辑 row schema、冻结查询验证和权限 action。`flow.vpn_findings` 使用 `vpn_view + vpn_export` 创建并在执行/下载时复核 `vpn_export`；它只读 MySQL 的有界 tenant snapshot，不能为了接入导出再建表、队列或 worker。完整 evidence/probe payload、conversation key、处置备注/actor 和 tenant identity 不进入制品。`flow.records` 同样不新建任务系统：raw/supplier 创建、执行和下载分别要求对应 `view_* + export_*`，按冻结的 detail capability、字段/filter/sort 和 Kafka 坐标 cursor 逐页读取；总行数有界，cursor 不前进、超限或 supplier provenance 不完整时整体失败，禁止悄悄截断或回填 customer 值。CSV/Parquet 共享动态字段契约并保留可追溯坐标。
 
 当前 SNMP interface dataset 尚未拥有可按版本重放的 immutable adjustment publication，因此 contract v1 对参与计算的端口策略保存 canonical fingerprint：执行或自动重试前重新计算 fingerprint，不一致就终态失败并要求创建新导出，禁止拿当前策略静默重解释旧任务。VM provider 的 completeness 元数据为 unknown，导出执行不能把 unknown 当 complete；任务创建时冻结实际 query step 与容许缺失率，worker 对按时间戳合并后的样本执行 expected-sample 校验。目标级查询返回多端口 series 时必须先在同一 timestamp 求和，再计算 P95/平均/总量，禁止把各端口样本铺平后做 percentile。
 

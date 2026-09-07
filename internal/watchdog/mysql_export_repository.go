@@ -388,7 +388,7 @@ func normalizeExportTask(task ExportTask) ExportTask {
 	if task.PeriodType == "" {
 		task.PeriodType = PeriodCustom
 	}
-	if task.Step == 0 && task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowVPNFindingsDataset {
+	if task.Step == 0 && task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowRecordDetailDataset && task.DatasetKey != FlowVPNFindingsDataset {
 		task.Step = 5 * time.Minute
 	}
 	if task.ValueMode == "" {

@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06C2-D — raw/supplier 明细导出设计。** FLOW-06C1 customer aggregate 与 FLOW-06C3 VPN findings 异步导出已经分别闭环；下一轮冻结 raw/supplier 明细字段、QueryGateway detail cursor 全量遍历、敏感字段脱敏和独立权限，不把 detail 明细伪装成 aggregate，也不改 Flow writer/rollup。publication CRUD/审批仍留在 FLOW-06C4；原始数据物理删除和异步联合索引不与本切片混改。
+**活动切片：FLOW-06C4-D — publication 管理设计。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail 与 FLOW-06C3 VPN findings 异步导出已经分别闭环；下一轮只审查现有 immutable publication/审批/If-Match/worker ACK 能否承载 Flow 规则与修正发布，不复制地址库 CRUD，也不改 Flow writer/rollup。原始数据物理删除和异步联合索引不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -309,7 +309,11 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，自然 Kafka 坐标覆盖、record count、raw/estimated counters 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、Storage V2 原始/归档边界、失败续跑和回退；原始已销毁且无可验证 Kafka 重放源时必须拒绝。
 - [ ] **FLOW-06C 管理/导出**：按 06C1–06C4 独立交付；父项在 raw/supplier 明细和 publication 生命周期都关闭前保持未完成，不复制地址库 CRUD 或平台任务状态机。
   - [x] **FLOW-06C1 customer aggregate export**：复用平台 `export_tasks + operation_jobs` 完成策略有界的完整查询 CSV/Parquet、query/policy/auth 快照、权限复核、取消/重试/下载/过期销毁；提交 `a9fc7622`。
-  - [ ] **FLOW-06C2 raw/supplier detail export**：必须使用 detail schema/capability 和 cursor 逐页读取；分别要求 `view_raw+export_raw`、`view_supplier+export_supplier`，冻结字段、filter、排序和 provenance。禁止复用 aggregate row schema、当前页导出或 customer 补值。
+  - [x] **FLOW-06C2 raw/supplier detail export**：使用独立 `flow.records` detail schema/capability 和 Kafka 坐标 cursor 逐页读取；分别要求 `view_raw+export_raw`、`view_supplier+export_supplier`，冻结字段、filter、排序和 provenance。禁止复用 aggregate row schema、当前页导出或 customer 补值。
+    - [x] **设计/编码**：专用 create API 冻结 exact IP/endpoint/24h range/compiler-resolved fields/filter/sort、500 行 page 和最多 250,000 行总上限；worker 紧凑累计动态值并检查取消、cursor 前进、页契约、总上限与 supplier `fact_schema >= 2` provenance；CSV/Parquet 输出 Kafka 坐标及所选 typed fields。源/目的页面增加 customer/raw/supplier 切换，raw/supplier 从当前筛选/排序创建后台 CSV 任务。
+    - [x] **单元/集成**：覆盖默认 sort/字段冻结、raw 双权限、customer 拒绝、双页 cursor、CSV formula 防护、动态 Parquet schema、operation handler 完成及执行期 view/export 权限撤销；真实 MySQL task+job 原子创建加入 gated suite，本机无 MySQL 时明确 skip。既有 detail runner 的真实 CH provenance/cursor 门禁继续作为数据读取集成前置，不复制第二套 CH SQL。
+    - [x] **变更设计/测试**：复用 046 `export_tasks` 与 `operation_jobs`，`dataset_key` 已是扩展字段，故不占 migration；通用 normalizer 保留 detail `step=0`，legacy VM、aggregate 与 VPN provider 分支保持兼容。空结果、超限或页契约异常均失败，不生成部分文件。
+    - [x] **回归/已提交门禁**：Watchdog/全库/race/vet/build、前端 39 tests/定向 Biome/build 与 diff check 已通过；真实 MySQL gated 用例因本机未配置 `WATCHDOG_COLLECTOR_MYSQL_TEST_DSN` 明确 skip。生产代码、UI、测试与契约文档由本提交原子交付，未夹带并行 maintenance/delete-preview 文件。
   - [x] **FLOW-06C3 VPN findings export**：复用已有 `export_tasks + operation_jobs`，新增 `flow.vpn_findings` dataset 与 `vpn_export` 权限；创建同时要求 `vpn_view`，执行/下载复核当前 `vpn_export`。冻结 90 天内时间窗、搜索、column filters、稳定排序和最多 250,000 行，MySQL 单次有界查询取 `limit+1`，超限整体失败；CSV/Parquet 共用脱敏 row schema，排除 tenant、conversation key、完整 evidence/probe result、处置备注/actor，只输出 evidence/probe 是否存在。无新表、migration、MQ 或状态机。
     - [x] **设计/编码**：专用 create API、权限、canonical query/version/auth snapshot、provider、CSV/Parquet writer、页面“Export CSV”入口和 legacy VM export fallback 已完成。
     - [x] **单元/集成**：覆盖双权限创建、客户端 tenant 注入拒绝、冻结筛选、limit+1 拒绝、CSV 注入防护、Parquet magic、当前权限复核及现有 operation-job handler 端到端完成；真实 MySQL 用例已加入 gated suite，本机当前无 MySQL 实例时明确 skip。

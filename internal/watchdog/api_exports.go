@@ -24,6 +24,7 @@ type exportAPI struct {
 	audit   AuditRepository
 	jobs    OperationJobRepository
 	gateway *QueryGateway
+	now     func() time.Time
 	metric  string
 	step    time.Duration
 }
@@ -38,10 +39,13 @@ func (api exportAPI) recordAudit(ctx context.Context, auth AuthContext, action s
 	})
 }
 
-func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository, audit AuditRepository, jobs OperationJobRepository, gateway *QueryGateway, metric string, collectionStep time.Duration) {
-	api := exportAPI{repo: repo, files: files, network: network, audit: audit, jobs: jobs, gateway: gateway, metric: metric, step: collectionStep}
+func registerExportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo ExportRepository, files ExportFileReader, network NetworkRepository, audit AuditRepository, jobs OperationJobRepository, gateway *QueryGateway, detail flowDetailRunner, now func() time.Time, metric string, collectionStep time.Duration) {
+	api := exportAPI{repo: repo, files: files, network: network, audit: audit, jobs: jobs, gateway: gateway, now: now, metric: metric, step: collectionStep}
 	mux.Handle("POST /api/v1/exports", auth(http.HandlerFunc(api.create)))
 	mux.Handle("POST /api/v1/flow/exports", auth(http.HandlerFunc(api.createFlow)))
+	if detail != nil {
+		mux.Handle("POST /api/v1/flow/records/exports", auth(http.HandlerFunc(api.createFlowDetail)))
+	}
 	mux.Handle("GET /api/v1/exports", auth(http.HandlerFunc(api.list)))
 	mux.Handle("GET /api/v1/exports/{export_id}", auth(http.HandlerFunc(api.get)))
 	mux.Handle("POST /api/v1/exports/{export_id}/cancel", auth(http.HandlerFunc(api.cancel)))
@@ -404,7 +408,7 @@ func newExportTaskID() (ID, error) {
 
 func exportAccessRequest(auth AuthContext, task ExportTask) AccessRequest {
 	resource := ResourceRef{Type: ResourceTarget, ID: task.TargetID}
-	if task.DatasetKey == FlowTrafficDataset || task.DatasetKey == FlowVPNFindingsDataset {
+	if task.DatasetKey == FlowTrafficDataset || task.DatasetKey == FlowRecordDetailDataset || task.DatasetKey == FlowVPNFindingsDataset {
 		resource = ResourceRef{Type: ResourceTenant, ID: auth.TenantID}
 	} else if task.PortID != "" {
 		resource = ResourceRef{Type: ResourcePort, ID: task.PortID, ParentID: task.TargetID}

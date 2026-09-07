@@ -32,6 +32,10 @@ func canExecuteExportTask(auth AuthContext, task ExportTask) bool {
 	if task.DatasetKey == FlowVPNFindingsDataset {
 		return canExportVPNFindings(auth)
 	}
+	if task.DatasetKey == FlowRecordDetailDataset {
+		return queryLayerAuthorized(auth, task.ValueLayer) &&
+			CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin)
+	}
 	return CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin)
 }
 

@@ -23,6 +23,7 @@ const flowExportCompletenessMode = "query_result"
 type ExportRows struct {
 	Rows        []FlowExportRow
 	VPNFindings []VPNFindingExportRow
+	FlowDetails *FlowDetailExportRows
 }
 
 type FlowExportRow struct {
@@ -170,6 +171,17 @@ func prepareFlowExportExecutionTask(ctx context.Context, gateway *QueryGateway, 
 }
 
 func (p QueryGatewayExportDataProvider) LoadExportRows(ctx context.Context, task ExportTask) (ExportRows, bool, error) {
+	if task.DatasetKey == FlowRecordDetailDataset {
+		if err := validateExportExecutionTask(task); err != nil {
+			return ExportRows{}, true, err
+		}
+		auth, ok := AuthFromContext(ctx)
+		if !ok || auth.TenantID != task.TenantID || auth.UserID != task.CreatedBy {
+			return ExportRows{}, true, errors.New("current export authorization is required")
+		}
+		rows, err := p.loadFlowDetailExportRows(ctx, task)
+		return rows, true, err
+	}
 	if task.DatasetKey == FlowVPNFindingsDataset {
 		if err := validateExportExecutionTask(task); err != nil {
 			return ExportRows{}, true, err

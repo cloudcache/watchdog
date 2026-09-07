@@ -763,6 +763,14 @@ VPN finding 是 MySQL 中的低容量管理/处置对象，不经 ClickHouse agg
 
 该表格型 dataset 的 query step 固定为 0；通用 export normalizer 不允许把它改成 5 分钟。`avg_5m` 仅作为既有非空 aggregation 存储字段的兼容占位，不参与查询或制品计算。旧 `contract_version=0` VictoriaMetrics 导出仍走显式 fallback；QueryGateway 未启用不阻断 VPN findings 从 MySQL 导出。
 
+### 9.8 raw/supplier Flow 明细异步导出
+
+`flow.records` 是独立的明细导出 dataset，不复用 `flow.traffic` 聚合行结构。创建请求只接受 `raw` 或 `supplier` detail query，并冻结精确 IP、source/destination/either 端点、最长 24 小时时间窗、compiler-resolved fields、typed/column filters、稳定 sort、每页 500 行以及最多 250,000 行的任务总上限；客户端 cursor 必须为空。创建、执行、重试和下载 raw 任务同时要求 `view_raw + export_raw`，supplier 同时要求 `view_supplier + export_supplier`。target/device/exporter selector 仍走统一资源授权，tenant 只取认证上下文。
+
+worker 使用已冻结的 detail schema 和 Kafka 坐标 cursor 逐页读取，不构造 offset page，也不走 aggregate QueryGateway row schema。每页必须返回相同 view/fields；`has_more=true` 必须携带前进的新 cursor；达到总上限仍有下一页、字段缺失、类型漂移、取消或 supplier 的全窗 `fact_schema >= 2` provenance 证据不完整，均整体失败且不产生截断制品。结果在内存中压成字段顺序一致的 value slice，避免为每个累计行保留 map；operation job context 在每页前检查取消。该上限是有界完整导出，不是无限 dump。
+
+CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offset/record_index + 冻结字段`。动态 Parquet schema 保留 string/uint64/bool/timestamp 类型；CSV 对所有字符串继续做 spreadsheet formula 防护。任务、lease、heartbeat、retry/cancel、产物 checksum/size/row_count、下载鉴权、保留期和销毁完全复用平台 `export_tasks + operation_jobs`，没有新 migration、MQ 或状态机。源/目的 IP 页面默认仍为 customer 明细，但可切换 raw/supplier，并从同一筛选/排序状态创建后台 CSV 导出。
+
 ## 10. API
 
 所有路径在 `/api/v1` 下，统一 tenant/RBAC、cursor/page、sort、filter、field mask、ETag、idempotency、audit 和错误 envelope。
@@ -793,6 +801,7 @@ VPN finding 是 MySQL 中的低容量管理/处置对象，不经 ClickHouse agg
 | `POST /flow/vpn/findings/{id}/actions/probe` | probe | 创建受控异步 job |
 | `POST /flow/reclass-jobs` | configure | 复用 operation job 创建回算 |
 | `GET /flow/reclass-jobs/{id}` | view | 进度、范围、版本、校验 |
+| `POST /flow/records/exports` | view_raw + export_raw 或 view_supplier + export_supplier | 冻结 detail schema/filter/sort，按 Kafka 坐标 cursor 创建有界完整 CSV/Parquet 异步导出 |
 | `POST /flow/exports` | customer query + customer export | 创建策略有界的异步 CSV/Parquet 完整查询导出；冻结 query/policy/auth 快照 |
 | `GET /exports/{id}` | export task owner/admin | 复用平台导出状态、取消、失败原因和过期时间 |
 | `GET /exports/{id}/download` | export task owner/admin | 下载非空且校验通过的制品；过期后拒绝 |

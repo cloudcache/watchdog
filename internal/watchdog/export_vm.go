@@ -23,6 +23,7 @@ type VictoriaMetricsExportDataProvider struct {
 // no request is reconstructed from mutable UI fields at execution time.
 type QueryGatewayExportDataProvider struct {
 	Gateway     *QueryGateway
+	FlowRecords flowDetailRunner
 	VPNFindings VPNFindingExportRepository
 	Fallback    ExportDataProvider
 }
