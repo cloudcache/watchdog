@@ -8,7 +8,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -135,11 +137,28 @@ func (s *MySQLStore) GetCollectorPlanTrustBundle(ctx context.Context) (Collector
 	if publication.Generation == 0 {
 		return CollectorPlanTrustBundlePublication{}, ErrCollectorPlanTrustBundleUnavailable
 	}
-	_, checksum, err := flowplan.ParseTrustBundle(publication.BundleJSON)
+	canonical, checksum, err := canonicalStoredCollectorPlanTrustBundle(publication.BundleJSON)
 	if err != nil || checksum != publication.Checksum {
 		return CollectorPlanTrustBundlePublication{}, errors.New("stored collector plan trust bundle integrity check failed")
 	}
+	publication.BundleJSON = canonical
 	return publication, nil
+}
+
+// MySQL's native JSON type preserves the value but not the original lexical
+// representation. Rebuild canonical bytes after a strict semantic decode,
+// then compare the checksum that was calculated at publication time.
+func canonicalStoredCollectorPlanTrustBundle(data []byte) ([]byte, string, error) {
+	var bundle flowplan.TrustBundle
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&bundle); err != nil {
+		return nil, "", err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, "", errors.New("stored collector plan trust bundle must contain one JSON document")
+	}
+	return flowplan.MarshalTrustBundle(bundle)
 }
 
 func (s *MySQLStore) RevokeCollectorPlanSigningKey(ctx context.Context, keyID, reason string, revokedAt time.Time) (CollectorPlanTrustBundlePublication, error) {

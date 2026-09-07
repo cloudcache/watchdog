@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,28 @@ func TestCollectorPlanSignerLoadsOwnerOnlyFileAndChecksActiveKey(t *testing.T) {
 	repository.key.PublicKey[0] ^= 0xff
 	if _, err := signer.Sign(context.Background(), plan); !errors.Is(err, ErrCollectorPlanSigningKeyUnavailable) {
 		t.Fatalf("mismatched signer error = %v", err)
+	}
+}
+
+func TestStoredCollectorPlanTrustBundleCanonicalizesMySQLJSON(t *testing.T) {
+	bundle := flowplan.TrustBundle{
+		SchemaVersion: flowplan.TrustBundleSchemaVersion, Generation: 1,
+		IssuedAtUnixMilli: time.Now().UTC().UnixMilli(), Keys: []flowplan.TrustBundleKey{}, RevokedKeyIDs: []string{},
+	}
+	canonical, checksum, err := flowplan.MarshalTrustBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mysqlJSON := []byte(`{ "keys": [], "generation": 1, "issued_at_unix_ms": ` + fmt.Sprint(bundle.IssuedAtUnixMilli) + `, "revoked_key_ids": [], "schema_version": 1 }`)
+	restored, restoredChecksum, err := canonicalStoredCollectorPlanTrustBundle(mysqlJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != string(canonical) || restoredChecksum != checksum {
+		t.Fatalf("restored=%s checksum=%s", restored, restoredChecksum)
+	}
+	if _, _, err := canonicalStoredCollectorPlanTrustBundle([]byte(`{"schema_version":1,"generation":1,"issued_at_unix_ms":1,"keys":[],"revoked_key_ids":[],"unknown":true}`)); err == nil {
+		t.Fatal("unknown stored trust field was accepted")
 	}
 }
 
