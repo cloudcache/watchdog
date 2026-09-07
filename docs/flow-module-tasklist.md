@@ -1,6 +1,6 @@
 # Flow 模块执行清单
 
-> **当前最高优先级重大变更**：[Flow Storage V2 重大变更设计与实施计划](flow-storage-v2-change-plan.md)。涉及 30 天 TTL→策略驱动 downsample、自然 Kafka 坐标去重、message receipt、零 Flow 热路径 hash、cursor/查询/导出切换。V2-A～V2-D 未闭环前，不得继续按旧实时 rollup/hash 契约新增代码；完成必须同时满足代码、迁移、测试证据和已提交门禁。
+> **当前 Storage V2 基线**：[Flow Storage V2 重大变更设计与实施计划](flow-storage-v2-change-plan.md) 已完成生产实现并提交。未勾选项仅保留真实组合故障、维护窗口、固定硬件性能和物理删除等发布/破坏性门禁；它们继续 fail closed，但不阻塞使用现行 V2 契约推进独立查询切片。禁止恢复旧 30 天 TTL、实时 rollup 或逐记录 hash 契约。
 
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
 
@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-04C3 — system-scope Kafka→ClickHouse reconciliation。** 当前只收口真实 broker committed-next-offset、显式 bootstrap cutover、冻结扫描快照、operation job checkpoint/system watermark、固定五类指标和变更/回归/提交门禁。原始数据物理删除、Explorer 保存/共享过滤器、联合索引和六页 UI 不与本提交混改。
+**活动切片：FLOW-03B-Q — Geo/address-set 查询 API 与显示契约。** FLOW-04C3 的真实 broker committed-next-offset、显式 bootstrap cutover、冻结扫描快照、operation job checkpoint/system watermark、固定五类指标和提交门禁已完成。当前只收口单 Geo level 的版本化目录、address-set `include_any/include_all/exclude_any` 去重查询、`additive/completeness/version` 返回与前后端接线；原始数据物理删除、异步联合索引和保存/共享过滤器不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -30,10 +30,10 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 
 | 工作包 | 设计 | 编码 | 单元 | 集成 | 变更设计 | 变更测试 | 回归 | 已提交 | 状态 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| V2-A schema/cutover | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [ ] | 维护窗口/回滚演练待完成 |
-| V2-B writer/receipt | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | Kafka+CH 故障矩阵待重跑 |
-| V2-C query/reconcile/export | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | CH hybrid 已过，端到端待完成 |
-| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [ ] | 非破坏路径闭环；delete 锁定 |
+| V2-A schema/cutover | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | 实现已提交；维护窗口/回滚演练待完成 |
+| V2-B writer/receipt | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；组合故障/性能门禁待完成 |
+| V2-C query/reconcile/export | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；端到端同参数对账待完成 |
+| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | 非破坏路径已提交；物理删除保持锁定 |
 
 详细可勾选项与未满足门禁只维护在 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) §8；本页不复制第二套状态。
 
@@ -48,7 +48,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | FLOW-07 overseas/VPN | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
 | FLOW-08 HA/lifecycle/release | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
 
-“已提交”只在该阶段当前声明为完成的交付范围全部进入可复现提交后勾选；阶段仍有后续切片时，不得因为其中一部分已经提交而提前勾选整行。
+“已提交”表示当前已有实现和证据已进入可复现提交，不等于该行全部发布门禁已经完成；只有设计、编码、单元、集成、变更和回归各列全部为 `[x]` 时，阶段才算完全关闭。父项只要仍有一个明确子门禁未满足就保持 `[ ]`，并必须在同一行写明剩余条件。
 
 ### 2.1 本轮提交与可复现证据
 
@@ -192,7 +192,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **变更设计/测试**：功能默认关闭；YAML/env 配置提供 broker/topic/group/stream、TLS/SASL secret file、scan/lease/retry 预算和 `partition=offset` cutover；关闭功能会禁用遗留 schedule。冷管理面 watermark key 使用有界摘要，不属于逐记录热路径 hash。旧 job payload 版本终态拒绝；system scanner 完成不自动解锁 raw delete。
   - [x] **回归**：`go test ./...`、`go vet ./...`、`go build ./...`、Flow collector/worker + flowstream/flowmetrics/flowch/watchdog 目标 race、config known-fields、`git diff --check` 均通过；真实 Kafka 4.3.1、MySQL、ClickHouse 26.3 集成门禁通过。
   - [x] **已提交门禁**：实现、测试、设计和清单已进入独立提交 `e70e3751 feat(flow): reconcile Kafka commits with ClickHouse`；提交后工作区只剩用户既有 maintenance/delete-preview/备份文件和本条验收回填。
-- [x] **FLOW-04C3 Storage V2 已提交**：`a9fc7622 feat(flow): implement storage v2 lifecycle`；包含 migration 011、自然坐标/逐消息 receipt、count/counter scanner、生命周期策略与非破坏 downsample、混合查询和完整异步导出。system-scope Kafka 水位及删除门禁仍未关闭。
+- [x] **FLOW-04C3 Storage V2 已提交**：`a9fc7622 feat(flow): implement storage v2 lifecycle`；包含 migration 011、自然坐标/逐消息 receipt、count/counter scanner、生命周期策略与非破坏 downsample、混合查询和完整异步导出。system-scope Kafka 水位已由 `e70e3751` 关闭；仍未关闭的仅是独立的 durable 日覆盖与物理删除门禁。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
 ### FLOW-05 Query/API/UI
