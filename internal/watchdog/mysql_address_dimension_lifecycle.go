@@ -13,7 +13,7 @@ import (
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
-func (p *MySQLAddressDimensionPublisher) ApproveAddressDimension(ctx context.Context, tenantID, actorID ID, expectedRowVersion uint64, approval AddressDimensionApproval) (AddressDimensionSnapshot, error) {
+func (p *MySQLDimensionPublicationStore) ApproveDimensionPublication(ctx context.Context, tenantID, actorID ID, expectedRowVersion uint64, approval DimensionPublicationApproval) (DimensionPublicationSnapshot, error) {
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || expectedRowVersion == 0 || approval.SnapshotID == "" {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
 	}
@@ -22,7 +22,7 @@ func (p *MySQLAddressDimensionPublisher) ApproveAddressDimension(ctx context.Con
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, approval.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, approval.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -32,7 +32,7 @@ func (p *MySQLAddressDimensionPublisher) ApproveAddressDimension(ctx context.Con
 	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending || snapshot.ObjectDeletedAt != nil {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalidTransition
 	}
-	if err := validateVerifiedAddressDimensionApproval(snapshot, approval); err != nil {
+	if err := validateVerifiedDimensionPublicationApproval(snapshot, approval); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -40,9 +40,9 @@ func (p *MySQLAddressDimensionPublisher) ApproveAddressDimension(ctx context.Con
 		SET approval_state = 'approved', decided_by = ?, decided_at = ?,
 		    decision_reason = NULL, signature_algorithm = ?, signing_key_id = ?,
 		    signature = ?, signed_at = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND row_version = ?
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
 	`, actorID, approval.SignedAt, AddressDimensionSignatureAlgorithm, approval.SigningKeyID,
-		approval.Signature, approval.SignedAt, tenantID, approval.SnapshotID, expectedRowVersion)
+		approval.Signature, approval.SignedAt, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, approval.SnapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -57,10 +57,10 @@ func (p *MySQLAddressDimensionPublisher) ApproveAddressDimension(ctx context.Con
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	return p.GetAddressDimensionSnapshot(ctx, tenantID, snapshot.ID)
+	return p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshot.ID)
 }
 
-func (p *MySQLAddressDimensionPublisher) RejectAddressDimension(ctx context.Context, tenantID, actorID, snapshotID ID, expectedRowVersion uint64, reason string) (AddressDimensionSnapshot, error) {
+func (p *MySQLDimensionPublicationStore) RejectDimensionPublication(ctx context.Context, tenantID, actorID, snapshotID ID, expectedRowVersion uint64, reason string) (DimensionPublicationSnapshot, error) {
 	reason = strings.TrimSpace(reason)
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || snapshotID == "" || expectedRowVersion == 0 || reason == "" || len(reason) > 512 {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
@@ -71,7 +71,7 @@ func (p *MySQLAddressDimensionPublisher) RejectAddressDimension(ctx context.Cont
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, snapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, snapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -84,8 +84,8 @@ func (p *MySQLAddressDimensionPublisher) RejectAddressDimension(ctx context.Cont
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET approval_state = 'rejected', decided_by = ?, decided_at = ?, decision_reason = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND row_version = ?
-	`, actorID, decidedAt, reason, tenantID, snapshotID, expectedRowVersion)
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
+	`, actorID, decidedAt, reason, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -98,10 +98,10 @@ func (p *MySQLAddressDimensionPublisher) RejectAddressDimension(ctx context.Cont
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	return p.GetAddressDimensionSnapshot(ctx, tenantID, snapshotID)
+	return p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshotID)
 }
 
-func (p *MySQLAddressDimensionPublisher) ActivateAddressDimension(ctx context.Context, tenantID, actorID ID, request AddressDimensionActivationRequest) (AddressDimensionActivation, error) {
+func (p *MySQLDimensionPublicationStore) ActivateDimensionPublication(ctx context.Context, tenantID, actorID ID, request DimensionPublicationActivationRequest) (DimensionPublicationActivation, error) {
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || request.SnapshotID == "" || request.ExpectedRowVersion == 0 || !isUTCMinute(request.EffectiveFrom) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalid
 	}
@@ -110,24 +110,26 @@ func (p *MySQLAddressDimensionPublisher) ActivateAddressDimension(ctx context.Co
 		return AddressDimensionActivation{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, tenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, tenantID); err != nil {
 		return AddressDimensionActivation{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, request.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, request.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
 	if snapshot.RowVersion != request.ExpectedRowVersion {
 		return AddressDimensionActivation{}, ErrAddressDimensionConflict
 	}
-	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalApproved || snapshot.ObjectDeletedAt != nil || !snapshot.EffectiveFrom.Equal(request.EffectiveFrom) || !addressDimensionSnapshotHasTrustedApproval(snapshot) {
+	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalApproved || snapshot.ObjectDeletedAt != nil || !snapshot.EffectiveFrom.Equal(request.EffectiveFrom) || !dimensionPublicationSnapshotHasTrustedApproval(snapshot) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalidTransition
 	}
-	activation, err := insertAddressDimensionActivation(ctx, tx, snapshot, actorID, request.EffectiveFrom, AddressDimensionActivationPublish, "")
+	activation, err := insertDimensionPublicationActivation(ctx, tx, snapshot, actorID, request.EffectiveFrom, AddressDimensionActivationPublish, "")
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE dimension_snapshots SET row_version = row_version + 1 WHERE tenant_id = ? AND id = ? AND row_version = ?`, tenantID, snapshot.ID, request.ExpectedRowVersion)
+	result, err := tx.ExecContext(ctx, `UPDATE dimension_snapshots SET row_version = row_version + 1
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?`,
+		tenantID, p.scope.ModuleKey, p.scope.DimensionKey, snapshot.ID, request.ExpectedRowVersion)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
@@ -145,7 +147,7 @@ func (p *MySQLAddressDimensionPublisher) ActivateAddressDimension(ctx context.Co
 	return activation, nil
 }
 
-func (p *MySQLAddressDimensionPublisher) RollbackAddressDimension(ctx context.Context, tenantID, actorID ID, request AddressDimensionRollbackRequest) (AddressDimensionActivation, error) {
+func (p *MySQLDimensionPublicationStore) RollbackDimensionPublication(ctx context.Context, tenantID, actorID ID, request DimensionPublicationRollbackRequest) (DimensionPublicationActivation, error) {
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || request.SnapshotID == "" || request.ExpectedRowVersion == 0 || !isUTCMinute(request.EffectiveFrom) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalid
 	}
@@ -154,10 +156,10 @@ func (p *MySQLAddressDimensionPublisher) RollbackAddressDimension(ctx context.Co
 		return AddressDimensionActivation{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, tenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, tenantID); err != nil {
 		return AddressDimensionActivation{}, err
 	}
-	target, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, request.SnapshotID, true)
+	target, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, request.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
@@ -167,17 +169,17 @@ func (p *MySQLAddressDimensionPublisher) RollbackAddressDimension(ctx context.Co
 	now := p.now().UTC()
 	if target.ApprovalState != AddressDimensionApprovalApproved || target.ObjectDeletedAt != nil ||
 		(target.Status == AddressDimensionStatusRetired && target.RetentionUntil != nil && !now.Before(*target.RetentionUntil)) ||
-		request.EffectiveFrom.Before(target.EffectiveFrom) || !addressDimensionSnapshotHasTrustedApproval(target) {
+		request.EffectiveFrom.Before(target.EffectiveFrom) || !dimensionPublicationSnapshotHasTrustedApproval(target) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalidTransition
 	}
-	current, err := getAddressDimensionActivationBeforeTx(ctx, tx, tenantID, request.EffectiveFrom)
+	current, err := getDimensionPublicationActivationBeforeTx(ctx, tx, p.scope, tenantID, request.EffectiveFrom)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
 	if current.SnapshotID == target.ID {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalidTransition
 	}
-	activation, err := insertAddressDimensionActivation(ctx, tx, target, actorID, request.EffectiveFrom, AddressDimensionActivationRollback, current.SnapshotID)
+	activation, err := insertDimensionPublicationActivation(ctx, tx, target, actorID, request.EffectiveFrom, AddressDimensionActivationRollback, current.SnapshotID)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
@@ -185,8 +187,8 @@ func (p *MySQLAddressDimensionPublisher) RollbackAddressDimension(ctx context.Co
 		UPDATE dimension_snapshots
 		SET status = 'active', retired_by = NULL, retired_at = NULL,
 		    retention_until = NULL, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND row_version = ?
-	`, tenantID, target.ID, request.ExpectedRowVersion)
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
+	`, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, target.ID, request.ExpectedRowVersion)
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
@@ -205,7 +207,7 @@ func (p *MySQLAddressDimensionPublisher) RollbackAddressDimension(ctx context.Co
 	return activation, nil
 }
 
-func (p *MySQLAddressDimensionPublisher) RetireAddressDimension(ctx context.Context, tenantID, actorID ID, request AddressDimensionRetireRequest) (AddressDimensionSnapshot, error) {
+func (p *MySQLDimensionPublicationStore) RetireDimensionPublication(ctx context.Context, tenantID, actorID ID, request DimensionPublicationRetireRequest) (DimensionPublicationSnapshot, error) {
 	request.Reason = strings.TrimSpace(request.Reason)
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || request.SnapshotID == "" || request.ExpectedRowVersion == 0 || len(request.Reason) > 512 {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
@@ -215,10 +217,10 @@ func (p *MySQLAddressDimensionPublisher) RetireAddressDimension(ctx context.Cont
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, tenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, tenantID); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, request.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, request.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -228,7 +230,7 @@ func (p *MySQLAddressDimensionPublisher) RetireAddressDimension(ctx context.Cont
 	if snapshot.Status != AddressDimensionStatusActive {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalidTransition
 	}
-	latest, err := getLatestAddressDimensionActivationTx(ctx, tx, tenantID)
+	latest, err := getLatestDimensionPublicationActivationTx(ctx, tx, p.scope, tenantID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -250,8 +252,8 @@ func (p *MySQLAddressDimensionPublisher) RetireAddressDimension(ctx context.Cont
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET status = 'retired', retired_by = ?, retired_at = ?, retention_until = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND row_version = ?
-	`, actorID, retiredAt, retentionUntil, tenantID, snapshot.ID, request.ExpectedRowVersion)
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
+	`, actorID, retiredAt, retentionUntil, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, snapshot.ID, request.ExpectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -266,23 +268,23 @@ func (p *MySQLAddressDimensionPublisher) RetireAddressDimension(ctx context.Cont
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	return p.GetAddressDimensionSnapshot(ctx, tenantID, snapshot.ID)
+	return p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshot.ID)
 }
 
-func (p *MySQLAddressDimensionPublisher) GetAddressDimensionActivationAt(ctx context.Context, tenantID ID, eventTime time.Time) (AddressDimensionActivation, error) {
+func (p *MySQLDimensionPublicationStore) GetDimensionPublicationActivationAt(ctx context.Context, tenantID ID, eventTime time.Time) (DimensionPublicationActivation, error) {
 	if p == nil || p.store == nil || tenantID == "" || eventTime.IsZero() {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalid
 	}
-	return scanAddressDimensionActivation(p.store.db.QueryRowContext(ctx, `
+	return scanDimensionPublicationActivation(p.store.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, module_key, dimension_key, snapshot_id, effective_from,
 		       reason, COALESCE(rollback_of_snapshot_id, ''), COALESCE(created_by, ''), created_at
 		FROM dimension_snapshot_activations
 		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND effective_from <= ?
 		ORDER BY effective_from DESC LIMIT 1
-	`, tenantID, AddressDimensionModuleKey, AddressDimensionKey, eventTime.UTC()))
+	`, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, eventTime.UTC()))
 }
 
-func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionAcknowledgement(ctx context.Context, acknowledgement AddressDimensionAcknowledgement) (AddressDimensionAcknowledgement, error) {
+func (p *MySQLDimensionPublicationStore) ReportDimensionPublicationAcknowledgement(ctx context.Context, acknowledgement DimensionPublicationAcknowledgement) (DimensionPublicationAcknowledgement, error) {
 	acknowledgement.WorkerID = strings.TrimSpace(acknowledgement.WorkerID)
 	acknowledgement.BootID = strings.TrimSpace(acknowledgement.BootID)
 	acknowledgement.SoftwareVersion = strings.TrimSpace(acknowledgement.SoftwareVersion)
@@ -298,10 +300,10 @@ func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionAcknowledgement(c
 		return AddressDimensionAcknowledgement{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, acknowledgement.TenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, acknowledgement.TenantID); err != nil {
 		return AddressDimensionAcknowledgement{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, acknowledgement.TenantID, acknowledgement.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, acknowledgement.TenantID, acknowledgement.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionAcknowledgement{}, err
 	}
@@ -332,10 +334,10 @@ func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionAcknowledgement(c
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionAcknowledgement{}, err
 	}
-	return p.getAddressDimensionAcknowledgement(ctx, acknowledgement.TenantID, acknowledgement.SnapshotID, acknowledgement.WorkerID)
+	return p.getDimensionPublicationAcknowledgement(ctx, acknowledgement.TenantID, acknowledgement.SnapshotID, acknowledgement.WorkerID)
 }
 
-func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionReference(ctx context.Context, reference AddressDimensionReference) (AddressDimensionReference, error) {
+func (p *MySQLDimensionPublicationStore) ReportDimensionPublicationReference(ctx context.Context, reference DimensionPublicationReference) (DimensionPublicationReference, error) {
 	reference.ConsumerKind = strings.TrimSpace(reference.ConsumerKind)
 	reference.ConsumerID = strings.TrimSpace(reference.ConsumerID)
 	if p == nil || p.store == nil || reference.TenantID == "" || reference.SnapshotID == "" || reference.ConsumerKind == "" || len(reference.ConsumerKind) > 32 || reference.ConsumerID == "" || len(reference.ConsumerID) > 190 || reference.MinEventTime.IsZero() || reference.MaxEventTime.Before(reference.MinEventTime) || reference.RetainUntil.Before(reference.MaxEventTime) {
@@ -347,10 +349,10 @@ func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionReference(ctx con
 		return AddressDimensionReference{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, reference.TenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, reference.TenantID); err != nil {
 		return AddressDimensionReference{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, reference.TenantID, reference.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, reference.TenantID, reference.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionReference{}, err
 	}
@@ -377,25 +379,28 @@ func (p *MySQLAddressDimensionPublisher) ReportAddressDimensionReference(ctx con
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionReference{}, err
 	}
-	return p.getAddressDimensionReference(ctx, reference.TenantID, reference.SnapshotID, reference.ConsumerKind, reference.ConsumerID)
+	return p.getDimensionPublicationReference(ctx, reference.TenantID, reference.SnapshotID, reference.ConsumerKind, reference.ConsumerID)
 }
 
-func getAddressDimensionSnapshotTx(ctx context.Context, tx *sql.Tx, tenantID, snapshotID ID, lock bool) (AddressDimensionSnapshot, error) {
+func getDimensionPublicationSnapshotTx(ctx context.Context, tx *sql.Tx, scope DimensionPublicationScope, tenantID, snapshotID ID, lock bool) (DimensionPublicationSnapshot, error) {
+	if scope.validate() != nil {
+		return DimensionPublicationSnapshot{}, ErrAddressDimensionInvalid
+	}
 	query := `SELECT ` + addressDimensionSnapshotColumns + ` FROM dimension_snapshots
 		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ?`
 	if lock {
 		query += ` FOR UPDATE`
 	}
 	return scanAddressDimensionSnapshot(tx.QueryRowContext(ctx, query,
-		tenantID, AddressDimensionModuleKey, AddressDimensionKey, snapshotID))
+		tenantID, scope.ModuleKey, scope.DimensionKey, snapshotID))
 }
 
-func lockAddressDimensionTenant(ctx context.Context, tx *sql.Tx, tenantID ID) error {
+func lockDimensionPublicationTenant(ctx context.Context, tx *sql.Tx, tenantID ID) error {
 	var locked ID
 	return tx.QueryRowContext(ctx, `SELECT id FROM tenants WHERE id = ? FOR UPDATE`, tenantID).Scan(&locked)
 }
 
-func insertAddressDimensionActivation(ctx context.Context, tx *sql.Tx, snapshot AddressDimensionSnapshot, actorID ID, effectiveFrom time.Time, reason string, rollbackOf ID) (AddressDimensionActivation, error) {
+func insertDimensionPublicationActivation(ctx context.Context, tx *sql.Tx, snapshot DimensionPublicationSnapshot, actorID ID, effectiveFrom time.Time, reason string, rollbackOf ID) (DimensionPublicationActivation, error) {
 	id, err := newIdentityID()
 	if err != nil {
 		return AddressDimensionActivation{}, err
@@ -423,35 +428,35 @@ func insertAddressDimensionActivation(ctx context.Context, tx *sql.Tx, snapshot 
 	return activation, nil
 }
 
-func getAddressDimensionActivationBeforeTx(ctx context.Context, tx *sql.Tx, tenantID ID, effectiveFrom time.Time) (AddressDimensionActivation, error) {
-	return scanAddressDimensionActivation(tx.QueryRowContext(ctx, `
+func getDimensionPublicationActivationBeforeTx(ctx context.Context, tx *sql.Tx, scope DimensionPublicationScope, tenantID ID, effectiveFrom time.Time) (DimensionPublicationActivation, error) {
+	return scanDimensionPublicationActivation(tx.QueryRowContext(ctx, `
 		SELECT id, tenant_id, module_key, dimension_key, snapshot_id, effective_from,
 		       reason, COALESCE(rollback_of_snapshot_id, ''), COALESCE(created_by, ''), created_at
 		FROM dimension_snapshot_activations
 		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND effective_from < ?
 		ORDER BY effective_from DESC LIMIT 1 FOR UPDATE
-	`, tenantID, AddressDimensionModuleKey, AddressDimensionKey, effectiveFrom.UTC()))
+	`, tenantID, scope.ModuleKey, scope.DimensionKey, effectiveFrom.UTC()))
 }
 
-func getLatestAddressDimensionActivationTx(ctx context.Context, tx *sql.Tx, tenantID ID) (AddressDimensionActivation, error) {
-	return scanAddressDimensionActivation(tx.QueryRowContext(ctx, `
+func getLatestDimensionPublicationActivationTx(ctx context.Context, tx *sql.Tx, scope DimensionPublicationScope, tenantID ID) (DimensionPublicationActivation, error) {
+	return scanDimensionPublicationActivation(tx.QueryRowContext(ctx, `
 		SELECT id, tenant_id, module_key, dimension_key, snapshot_id, effective_from,
 		       reason, COALESCE(rollback_of_snapshot_id, ''), COALESCE(created_by, ''), created_at
 		FROM dimension_snapshot_activations
 		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ?
 		ORDER BY effective_from DESC LIMIT 1 FOR UPDATE
-	`, tenantID, AddressDimensionModuleKey, AddressDimensionKey))
+	`, tenantID, scope.ModuleKey, scope.DimensionKey))
 }
 
-func scanAddressDimensionActivation(row rowScanner) (AddressDimensionActivation, error) {
-	var activation AddressDimensionActivation
+func scanDimensionPublicationActivation(row rowScanner) (DimensionPublicationActivation, error) {
+	var activation DimensionPublicationActivation
 	err := row.Scan(&activation.ID, &activation.TenantID, &activation.ModuleKey, &activation.DimensionKey,
 		&activation.SnapshotID, &activation.EffectiveFrom, &activation.Reason,
 		&activation.RollbackOfSnapshotID, &activation.CreatedBy, &activation.CreatedAt)
 	return activation, err
 }
 
-func addressDimensionSnapshotHasTrustedApproval(snapshot AddressDimensionSnapshot) bool {
+func dimensionPublicationSnapshotHasTrustedApproval(snapshot DimensionPublicationSnapshot) bool {
 	return snapshot.ApprovalState == AddressDimensionApprovalApproved &&
 		((snapshot.DecidedAt == nil && len(snapshot.Signature) == 0) ||
 			(snapshot.DecidedAt != nil && snapshot.SignedAt != nil && snapshot.SignatureAlgorithm == AddressDimensionSignatureAlgorithm && snapshot.SigningKeyID != "" && len(snapshot.Signature) == ed25519.SignatureSize))
@@ -461,26 +466,36 @@ func validAddressDimensionAckState(state string) bool {
 	return state == AddressDimensionAckDownloaded || state == AddressDimensionAckInstalled || state == AddressDimensionAckFailed
 }
 
-func (p *MySQLAddressDimensionPublisher) getAddressDimensionAcknowledgement(ctx context.Context, tenantID, snapshotID ID, workerID string) (AddressDimensionAcknowledgement, error) {
+func (p *MySQLDimensionPublicationStore) getDimensionPublicationAcknowledgement(ctx context.Context, tenantID, snapshotID ID, workerID string) (DimensionPublicationAcknowledgement, error) {
 	var item AddressDimensionAcknowledgement
 	err := p.store.db.QueryRowContext(ctx, `
-		SELECT tenant_id, snapshot_id, worker_id, boot_id, software_version, checksum,
-		       state, attempted_at, installed_at, COALESCE(error_code, ''), COALESCE(error_message, ''), row_version
-		FROM dimension_snapshot_acks WHERE tenant_id = ? AND snapshot_id = ? AND worker_id = ?
-	`, tenantID, snapshotID, workerID).Scan(&item.TenantID, &item.SnapshotID, &item.WorkerID,
+		SELECT acknowledgement.tenant_id, acknowledgement.snapshot_id, acknowledgement.worker_id,
+		       acknowledgement.boot_id, acknowledgement.software_version, acknowledgement.checksum,
+		       acknowledgement.state, acknowledgement.attempted_at, acknowledgement.installed_at,
+		       COALESCE(acknowledgement.error_code, ''), COALESCE(acknowledgement.error_message, ''), acknowledgement.row_version
+		FROM dimension_snapshot_acks AS acknowledgement
+		JOIN dimension_snapshots AS snapshot
+		  ON snapshot.tenant_id = acknowledgement.tenant_id AND snapshot.id = acknowledgement.snapshot_id
+		WHERE acknowledgement.tenant_id = ? AND acknowledgement.snapshot_id = ? AND acknowledgement.worker_id = ?
+		  AND snapshot.module_key = ? AND snapshot.dimension_key = ?
+	`, tenantID, snapshotID, workerID, p.scope.ModuleKey, p.scope.DimensionKey).Scan(&item.TenantID, &item.SnapshotID, &item.WorkerID,
 		&item.BootID, &item.SoftwareVersion, &item.Checksum, &item.State, &item.AttemptedAt,
 		&item.InstalledAt, &item.ErrorCode, &item.ErrorMessage, &item.RowVersion)
 	return item, err
 }
 
-func (p *MySQLAddressDimensionPublisher) getAddressDimensionReference(ctx context.Context, tenantID, snapshotID ID, consumerKind, consumerID string) (AddressDimensionReference, error) {
+func (p *MySQLDimensionPublicationStore) getDimensionPublicationReference(ctx context.Context, tenantID, snapshotID ID, consumerKind, consumerID string) (DimensionPublicationReference, error) {
 	var item AddressDimensionReference
 	err := p.store.db.QueryRowContext(ctx, `
-		SELECT tenant_id, snapshot_id, consumer_kind, consumer_id, min_event_time,
-		       max_event_time, retain_until, last_observed_at, row_version
-		FROM dimension_snapshot_references
-		WHERE tenant_id = ? AND snapshot_id = ? AND consumer_kind = ? AND consumer_id = ?
-	`, tenantID, snapshotID, consumerKind, consumerID).Scan(&item.TenantID, &item.SnapshotID,
+		SELECT reference.tenant_id, reference.snapshot_id, reference.consumer_kind, reference.consumer_id,
+		       reference.min_event_time, reference.max_event_time, reference.retain_until,
+		       reference.last_observed_at, reference.row_version
+		FROM dimension_snapshot_references AS reference
+		JOIN dimension_snapshots AS snapshot
+		  ON snapshot.tenant_id = reference.tenant_id AND snapshot.id = reference.snapshot_id
+		WHERE reference.tenant_id = ? AND reference.snapshot_id = ? AND reference.consumer_kind = ? AND reference.consumer_id = ?
+		  AND snapshot.module_key = ? AND snapshot.dimension_key = ?
+	`, tenantID, snapshotID, consumerKind, consumerID, p.scope.ModuleKey, p.scope.DimensionKey).Scan(&item.TenantID, &item.SnapshotID,
 		&item.ConsumerKind, &item.ConsumerID, &item.MinEventTime, &item.MaxEventTime,
 		&item.RetainUntil, &item.LastObservedAt, &item.RowVersion)
 	return item, err
@@ -515,5 +530,3 @@ func insertAddressDimensionAudit(ctx context.Context, tx *sql.Tx, tenantID, acto
 	}
 	return nil
 }
-
-var _ AddressDimensionLifecycle = (*MySQLAddressDimensionPublisher)(nil)

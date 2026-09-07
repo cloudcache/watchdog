@@ -65,7 +65,7 @@ const addressDimensionGCCandidateSafety = `
 		  )
 	)`
 
-func (p *MySQLAddressDimensionPublisher) ScheduleAddressDimensionObjectGC(ctx context.Context, tenantID, actorID, snapshotID ID, expectedRowVersion uint64, retentionUntil time.Time) (AddressDimensionSnapshot, error) {
+func (p *MySQLDimensionPublicationStore) ScheduleDimensionPublicationObjectGC(ctx context.Context, tenantID, actorID, snapshotID ID, expectedRowVersion uint64, retentionUntil time.Time) (DimensionPublicationSnapshot, error) {
 	if p == nil || p.store == nil || tenantID == "" || actorID == "" || snapshotID == "" || expectedRowVersion == 0 || retentionUntil.IsZero() || retentionUntil.Nanosecond()%int(time.Millisecond) != 0 {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
 	}
@@ -79,10 +79,10 @@ func (p *MySQLAddressDimensionPublisher) ScheduleAddressDimensionObjectGC(ctx co
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, tenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, tenantID); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, snapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, snapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -105,8 +105,8 @@ func (p *MySQLAddressDimensionPublisher) ScheduleAddressDimensionObjectGC(ctx co
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET retention_until = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND row_version = ? AND object_deleted_at IS NULL
-	`, retentionUntil, tenantID, snapshotID, expectedRowVersion)
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND row_version = ? AND object_deleted_at IS NULL
+	`, retentionUntil, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -121,10 +121,10 @@ func (p *MySQLAddressDimensionPublisher) ScheduleAddressDimensionObjectGC(ctx co
 	if err := tx.Commit(); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
-	return p.GetAddressDimensionSnapshot(ctx, tenantID, snapshotID)
+	return p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshotID)
 }
 
-func (p *MySQLAddressDimensionPublisher) ListAddressDimensionGCCandidates(ctx context.Context, tenantID ID, asOf time.Time, filter AddressDimensionGCFilter) ([]AddressDimensionGCCandidate, string, error) {
+func (p *MySQLDimensionPublicationStore) ListDimensionPublicationGCCandidates(ctx context.Context, tenantID ID, asOf time.Time, filter DimensionPublicationGCFilter) ([]DimensionPublicationGCCandidate, string, error) {
 	if p == nil || p.store == nil || tenantID == "" || asOf.IsZero() {
 		return nil, "", ErrAddressDimensionInvalid
 	}
@@ -138,7 +138,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionGCCandidates(ctx co
 		SELECT s.tenant_id, s.id, s.version, s.object_ref, s.checksum, s.retention_until, s.retired_at
 		FROM dimension_snapshots AS s
 		WHERE s.tenant_id = ? AND s.module_key = ? AND s.dimension_key = ? AND ` + addressDimensionGCCandidateSafety
-	args := []any{tenantID, AddressDimensionModuleKey, AddressDimensionKey, asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC()}
+	args := []any{tenantID, p.scope.ModuleKey, p.scope.DimensionKey, asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC()}
 	if filter.Cursor != "" {
 		cursorTenant, cursorSnapshot, err := decodeStringCursor(filter.Cursor)
 		if err != nil || ID(cursorTenant) != tenantID || cursorSnapshot == "" {
@@ -149,7 +149,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionGCCandidates(ctx co
 	}
 	query += ` ORDER BY s.id LIMIT ?`
 	args = append(args, filter.Limit+1)
-	items, err := p.scanAddressDimensionGCCandidates(ctx, query, args...)
+	items, err := p.scanDimensionPublicationGCCandidates(ctx, query, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -162,7 +162,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionGCCandidates(ctx co
 	return items, next, nil
 }
 
-func (p *MySQLAddressDimensionPublisher) ListAllAddressDimensionGCCandidates(ctx context.Context, asOf time.Time, limit int) ([]AddressDimensionGCCandidate, error) {
+func (p *MySQLDimensionPublicationStore) ListAllDimensionPublicationGCCandidates(ctx context.Context, asOf time.Time, limit int) ([]DimensionPublicationGCCandidate, error) {
 	if p == nil || p.store == nil || asOf.IsZero() || limit <= 0 || limit > 1_000 {
 		return nil, ErrAddressDimensionInvalid
 	}
@@ -171,13 +171,13 @@ func (p *MySQLAddressDimensionPublisher) ListAllAddressDimensionGCCandidates(ctx
 		FROM dimension_snapshots AS s
 		WHERE s.module_key = ? AND s.dimension_key = ? AND ` + addressDimensionGCCandidateSafety + `
 		ORDER BY s.tenant_id, s.id LIMIT ?`
-	return p.scanAddressDimensionGCCandidates(ctx, query,
-		AddressDimensionModuleKey, AddressDimensionKey,
+	return p.scanDimensionPublicationGCCandidates(ctx, query,
+		p.scope.ModuleKey, p.scope.DimensionKey,
 		asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC(), asOf.UTC(), limit,
 	)
 }
 
-func (p *MySQLAddressDimensionPublisher) scanAddressDimensionGCCandidates(ctx context.Context, query string, args ...any) ([]AddressDimensionGCCandidate, error) {
+func (p *MySQLDimensionPublicationStore) scanDimensionPublicationGCCandidates(ctx context.Context, query string, args ...any) ([]DimensionPublicationGCCandidate, error) {
 	rows, err := p.store.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ func (p *MySQLAddressDimensionPublisher) scanAddressDimensionGCCandidates(ctx co
 	return items, rows.Err()
 }
 
-func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx context.Context, tenantID, snapshotID, jobID, actorID ID, expectedObjectRef, expectedChecksum string, expectedRetention, asOf time.Time) (AddressDimensionObjectDeletion, error) {
+func (p *MySQLDimensionPublicationStore) DeleteDimensionPublicationObject(ctx context.Context, tenantID, snapshotID, jobID, actorID ID, expectedObjectRef, expectedChecksum string, expectedRetention, asOf time.Time) (DimensionPublicationObjectDeletion, error) {
 	if p == nil || p.store == nil || tenantID == "" || snapshotID == "" || jobID == "" || expectedObjectRef == "" || !validSHA256Digest(expectedChecksum) || expectedRetention.IsZero() || asOf.IsZero() {
 		return AddressDimensionObjectDeletion{}, ErrAddressDimensionInvalid
 	}
@@ -203,10 +203,10 @@ func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx contex
 		return AddressDimensionObjectDeletion{}, err
 	}
 	defer tx.Rollback()
-	if err := lockAddressDimensionTenant(ctx, tx, tenantID); err != nil {
+	if err := lockDimensionPublicationTenant(ctx, tx, tenantID); err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
-	snapshot, err := getAddressDimensionSnapshotTx(ctx, tx, tenantID, snapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, tenantID, snapshotID, true)
 	if err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
@@ -214,7 +214,7 @@ func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx contex
 		return AddressDimensionObjectDeletion{}, ErrAddressDimensionConflict
 	}
 	if snapshot.ObjectDeletedAt != nil {
-		if err := recordAddressDimensionObjectDestruction(ctx, tx, snapshot, jobID, actorID, snapshot.ObjectDeletedAt.UTC()); err != nil {
+		if err := recordDimensionPublicationObjectDestruction(ctx, tx, snapshot, jobID, actorID, snapshot.ObjectDeletedAt.UTC()); err != nil {
 			return AddressDimensionObjectDeletion{}, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -222,7 +222,7 @@ func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx contex
 		}
 		return AddressDimensionObjectDeletion{SnapshotID: snapshot.ID, ObjectRef: snapshot.ObjectRef, DeletedAt: snapshot.ObjectDeletedAt.UTC()}, nil
 	}
-	eligible, err := addressDimensionObjectGCEligibleTx(ctx, tx, snapshot, asOf.UTC())
+	eligible, err := dimensionPublicationObjectGCEligibleTx(ctx, tx, snapshot, asOf.UTC())
 	if err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
@@ -236,15 +236,15 @@ func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx contex
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET object_deleted_at = ?, row_version = row_version + 1
-		WHERE tenant_id = ? AND id = ? AND object_deleted_at IS NULL
-	`, deletedAt, tenantID, snapshotID)
+		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ? AND object_deleted_at IS NULL
+	`, deletedAt, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID)
 	if err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
 	if err := requireOneAddressDimensionRow(result); err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
-	if err := recordAddressDimensionObjectDestruction(ctx, tx, snapshot, jobID, actorID, deletedAt); err != nil {
+	if err := recordDimensionPublicationObjectDestruction(ctx, tx, snapshot, jobID, actorID, deletedAt); err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -253,7 +253,7 @@ func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx contex
 	return AddressDimensionObjectDeletion{SnapshotID: snapshot.ID, ObjectRef: snapshot.ObjectRef, DeletedAt: deletedAt}, nil
 }
 
-func recordAddressDimensionObjectDestruction(ctx context.Context, tx *sql.Tx, snapshot AddressDimensionSnapshot, jobID, actorID ID, deletedAt time.Time) error {
+func recordDimensionPublicationObjectDestruction(ctx context.Context, tx *sql.Tx, snapshot DimensionPublicationSnapshot, jobID, actorID ID, deletedAt time.Time) error {
 	return recordDestructionReceipt(ctx, tx, DestructionReceipt{
 		TenantID: snapshot.TenantID, JobID: jobID, ResourceType: "dimension_object",
 		ResourceID: snapshot.ID, ActorID: actorID,
@@ -261,7 +261,7 @@ func recordAddressDimensionObjectDestruction(ctx context.Context, tx *sql.Tx, sn
 	})
 }
 
-func addressDimensionObjectGCEligibleTx(ctx context.Context, tx *sql.Tx, snapshot AddressDimensionSnapshot, asOf time.Time) (bool, error) {
+func dimensionPublicationObjectGCEligibleTx(ctx context.Context, tx *sql.Tx, snapshot DimensionPublicationSnapshot, asOf time.Time) (bool, error) {
 	if snapshot.Status != AddressDimensionStatusRetired || snapshot.RetiredAt == nil || snapshot.RetentionUntil == nil || asOf.Before(*snapshot.RetentionUntil) {
 		return false, nil
 	}
@@ -314,6 +314,34 @@ func addressDimensionObjectGCEligibleTx(ctx context.Context, tx *sql.Tx, snapsho
 		return false, err
 	}
 	return true, nil
+}
+
+func (p *MySQLAddressDimensionPublisher) ScheduleAddressDimensionObjectGC(ctx context.Context, tenantID, actorID, snapshotID ID, expectedRowVersion uint64, retentionUntil time.Time) (AddressDimensionSnapshot, error) {
+	if p == nil || p.MySQLDimensionPublicationStore == nil {
+		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
+	}
+	return p.ScheduleDimensionPublicationObjectGC(ctx, tenantID, actorID, snapshotID, expectedRowVersion, retentionUntil)
+}
+
+func (p *MySQLAddressDimensionPublisher) ListAddressDimensionGCCandidates(ctx context.Context, tenantID ID, asOf time.Time, filter AddressDimensionGCFilter) ([]AddressDimensionGCCandidate, string, error) {
+	if p == nil || p.MySQLDimensionPublicationStore == nil {
+		return nil, "", ErrAddressDimensionInvalid
+	}
+	return p.ListDimensionPublicationGCCandidates(ctx, tenantID, asOf, filter)
+}
+
+func (p *MySQLAddressDimensionPublisher) ListAllAddressDimensionGCCandidates(ctx context.Context, asOf time.Time, limit int) ([]AddressDimensionGCCandidate, error) {
+	if p == nil || p.MySQLDimensionPublicationStore == nil {
+		return nil, ErrAddressDimensionInvalid
+	}
+	return p.ListAllDimensionPublicationGCCandidates(ctx, asOf, limit)
+}
+
+func (p *MySQLAddressDimensionPublisher) DeleteAddressDimensionObject(ctx context.Context, tenantID, snapshotID, jobID, actorID ID, expectedObjectRef, expectedChecksum string, expectedRetention, asOf time.Time) (AddressDimensionObjectDeletion, error) {
+	if p == nil || p.MySQLDimensionPublicationStore == nil {
+		return AddressDimensionObjectDeletion{}, ErrAddressDimensionInvalid
+	}
+	return p.DeleteDimensionPublicationObject(ctx, tenantID, snapshotID, jobID, actorID, expectedObjectRef, expectedChecksum, expectedRetention, asOf)
 }
 
 var _ AddressDimensionGCRepository = (*MySQLAddressDimensionPublisher)(nil)

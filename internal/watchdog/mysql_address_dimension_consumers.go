@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const addressDimensionConsumerCTE = `
+const dimensionPublicationConsumerCTE = `
 	WITH target AS (
 		SELECT ? AS snapshot_id, ? AS version
 	), ranked_attempts AS (
@@ -21,8 +21,8 @@ const addressDimensionConsumerCTE = `
 		  ON snapshots.tenant_id = acknowledgements.tenant_id
 		 AND snapshots.id = acknowledgements.snapshot_id
 		WHERE acknowledgements.tenant_id = ?
-		  AND snapshots.module_key = 'flow'
-		  AND snapshots.dimension_key = 'address'
+		  AND snapshots.module_key = ?
+		  AND snapshots.dimension_key = ?
 	), latest_attempts AS (
 		SELECT * FROM ranked_attempts WHERE rank_number = 1
 	), ranked_installed AS (
@@ -40,8 +40,8 @@ const addressDimensionConsumerCTE = `
 		 AND snapshots.id = acknowledgements.snapshot_id
 		WHERE acknowledgements.tenant_id = ?
 		  AND acknowledgements.state = 'installed'
-		  AND snapshots.module_key = 'flow'
-		  AND snapshots.dimension_key = 'address'
+		  AND snapshots.module_key = ?
+		  AND snapshots.dimension_key = ?
 	), latest_installed AS (
 		SELECT * FROM ranked_installed WHERE rank_number = 1
 	), target_acknowledgements AS (
@@ -87,11 +87,11 @@ const addressDimensionConsumerColumns = `
 	target_installed_at, target_error_code, target_error_message,
 	latest_installed_snapshot_id, latest_installed_version, latest_installed_at, drift`
 
-func (p *MySQLAddressDimensionPublisher) GetAddressDimensionConsumerSummary(ctx context.Context, tenantID, snapshotID ID) (AddressDimensionConsumerSummary, error) {
+func (p *MySQLDimensionPublicationStore) GetDimensionPublicationConsumerSummary(ctx context.Context, tenantID, snapshotID ID) (AddressDimensionConsumerSummary, error) {
 	if p == nil || p.store == nil || tenantID == "" || snapshotID == "" {
 		return AddressDimensionConsumerSummary{}, ErrAddressDimensionInvalid
 	}
-	snapshot, err := p.GetAddressDimensionSnapshot(ctx, tenantID, snapshotID)
+	snapshot, err := p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshotID)
 	if err != nil {
 		return AddressDimensionConsumerSummary{}, err
 	}
@@ -101,7 +101,7 @@ func (p *MySQLAddressDimensionPublisher) GetAddressDimensionConsumerSummary(ctx 
 		Scope:        AddressDimensionConsumerScopeObserved,
 		Queryability: AddressDimensionQueryabilityUnknown,
 	}
-	err = p.store.db.QueryRowContext(ctx, addressDimensionConsumerCTE+`
+	err = p.store.db.QueryRowContext(ctx, dimensionPublicationConsumerCTE+`
 		SELECT COUNT(*),
 		       COALESCE(SUM(target_state = 'ready'), 0),
 		       COALESCE(SUM(target_state = 'downloaded'), 0),
@@ -112,7 +112,10 @@ func (p *MySQLAddressDimensionPublisher) GetAddressDimensionConsumerSummary(ctx 
 		       COALESCE(SUM(drift = 'ahead'), 0),
 		       COALESCE(SUM(drift = 'uninstalled'), 0)
 		FROM consumers
-	`, snapshot.ID, snapshot.Version, tenantID, tenantID, tenantID).Scan(
+	`, snapshot.ID, snapshot.Version,
+		tenantID, p.scope.ModuleKey, p.scope.DimensionKey,
+		tenantID, p.scope.ModuleKey, p.scope.DimensionKey,
+		tenantID).Scan(
 		&summary.Observed, &summary.Ready, &summary.Downloaded, &summary.Failed,
 		&summary.Unreported, &summary.Current, &summary.Behind, &summary.Ahead, &summary.Uninstalled,
 	)
@@ -123,7 +126,7 @@ func (p *MySQLAddressDimensionPublisher) GetAddressDimensionConsumerSummary(ctx 
 	return summary, nil
 }
 
-func (p *MySQLAddressDimensionPublisher) ListAddressDimensionConsumers(ctx context.Context, tenantID, snapshotID ID, filter AddressDimensionConsumerFilter) ([]AddressDimensionConsumerStatus, string, error) {
+func (p *MySQLDimensionPublicationStore) ListDimensionPublicationConsumers(ctx context.Context, tenantID, snapshotID ID, filter AddressDimensionConsumerFilter) ([]AddressDimensionConsumerStatus, string, error) {
 	if p == nil || p.store == nil || tenantID == "" || snapshotID == "" {
 		return nil, "", ErrAddressDimensionInvalid
 	}
@@ -139,12 +142,15 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionConsumers(ctx conte
 	if filter.Limit > 500 {
 		filter.Limit = 500
 	}
-	snapshot, err := p.GetAddressDimensionSnapshot(ctx, tenantID, snapshotID)
+	snapshot, err := p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshotID)
 	if err != nil {
 		return nil, "", err
 	}
-	query := addressDimensionConsumerCTE + `SELECT ` + addressDimensionConsumerColumns + ` FROM consumers WHERE 1 = 1`
-	args := []any{snapshot.ID, snapshot.Version, tenantID, tenantID, tenantID}
+	query := dimensionPublicationConsumerCTE + `SELECT ` + addressDimensionConsumerColumns + ` FROM consumers WHERE 1 = 1`
+	args := []any{snapshot.ID, snapshot.Version,
+		tenantID, p.scope.ModuleKey, p.scope.DimensionKey,
+		tenantID, p.scope.ModuleKey, p.scope.DimensionKey,
+		tenantID}
 	if filter.Cursor != "" {
 		workerID, cursorID, err := decodeStringCursor(filter.Cursor)
 		if err != nil || workerID == "" || string(cursorID) != workerID {
@@ -219,6 +225,20 @@ func validAddressDimensionConsumerStateFilter(state string) bool {
 func validAddressDimensionDriftFilter(drift string) bool {
 	return drift == "" || drift == AddressDimensionDriftCurrent || drift == AddressDimensionDriftBehind ||
 		drift == AddressDimensionDriftAhead || drift == AddressDimensionDriftUninstalled
+}
+
+func (p *MySQLAddressDimensionPublisher) GetAddressDimensionConsumerSummary(ctx context.Context, tenantID, snapshotID ID) (AddressDimensionConsumerSummary, error) {
+	if p == nil {
+		return AddressDimensionConsumerSummary{}, ErrAddressDimensionInvalid
+	}
+	return p.GetDimensionPublicationConsumerSummary(ctx, tenantID, snapshotID)
+}
+
+func (p *MySQLAddressDimensionPublisher) ListAddressDimensionConsumers(ctx context.Context, tenantID, snapshotID ID, filter AddressDimensionConsumerFilter) ([]AddressDimensionConsumerStatus, string, error) {
+	if p == nil {
+		return nil, "", ErrAddressDimensionInvalid
+	}
+	return p.ListDimensionPublicationConsumers(ctx, tenantID, snapshotID, filter)
 }
 
 var _ AddressDimensionConsumerStatusReader = (*MySQLAddressDimensionPublisher)(nil)

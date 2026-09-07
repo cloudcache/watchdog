@@ -17,10 +17,7 @@ import (
 )
 
 type MySQLAddressDimensionPublisher struct {
-	store           *MySQLStore
-	objects         DimensionObjectStore
-	objectRetention time.Duration
-	now             func() time.Time
+	*MySQLDimensionPublicationStore
 }
 
 type AddressDimensionPublisherOption func(*MySQLAddressDimensionPublisher) error
@@ -46,13 +43,11 @@ func withAddressDimensionClock(now func() time.Time) AddressDimensionPublisherOp
 }
 
 func NewMySQLAddressDimensionPublisher(store *MySQLStore, objects DimensionObjectStore, options ...AddressDimensionPublisherOption) (*MySQLAddressDimensionPublisher, error) {
-	if store == nil || store.db == nil || objects == nil {
-		return nil, errors.New("MySQL store and dimension object store are required")
+	publication, err := newMySQLDimensionPublicationStore(store, objects, addressDimensionPublicationScope)
+	if err != nil {
+		return nil, err
 	}
-	publisher := &MySQLAddressDimensionPublisher{
-		store: store, objects: objects, objectRetention: defaultAddressObjectRetention,
-		now: func() time.Time { return time.Now().UTC() },
-	}
+	publisher := &MySQLAddressDimensionPublisher{MySQLDimensionPublicationStore: publication}
 	for _, option := range options {
 		if option == nil {
 			return nil, errors.New("address dimension publisher option is required")
@@ -116,7 +111,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(version), 0) + 1 FROM dimension_snapshots
 		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ?
-	`, tenantID, AddressDimensionModuleKey, AddressDimensionKey).Scan(&version); err != nil {
+	`, tenantID, p.scope.ModuleKey, p.scope.DimensionKey).Scan(&version); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
 	draft, digest, err := loadAddressDimensionDraft(ctx, tx, tenantID, true)
@@ -163,7 +158,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 			bundle_schema_version, entry_count, prefix_count, address_set_count,
 			max_address_sets_per_record, status, created_by
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
-	`, snapshotID, tenantID, AddressDimensionModuleKey, AddressDimensionKey, version, request.EffectiveFrom.UTC(),
+	`, snapshotID, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, version, request.EffectiveFrom.UTC(),
 		object.Ref, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
 		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets)+len(draft.Operators),
 		len(draft.Prefixes), len(draft.AddressSets), metadata.MaxAddressSetsPerRecord, actorID)
@@ -270,10 +265,10 @@ func loadAddressDimensionDraft(ctx context.Context, tx *sql.Tx, tenantID ID, loc
 }
 
 func (p *MySQLAddressDimensionPublisher) GetAddressDimensionSnapshot(ctx context.Context, tenantID, snapshotID ID) (AddressDimensionSnapshot, error) {
-	return scanAddressDimensionSnapshot(p.store.db.QueryRowContext(ctx, `SELECT `+addressDimensionSnapshotColumns+`
-		FROM dimension_snapshots
-		WHERE tenant_id = ? AND module_key = ? AND dimension_key = ? AND id = ?`,
-		tenantID, AddressDimensionModuleKey, AddressDimensionKey, snapshotID))
+	if p == nil {
+		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
+	}
+	return p.GetDimensionPublicationSnapshot(ctx, tenantID, snapshotID)
 }
 
 var addressDimensionSnapshotSortColumns = map[string]string{
@@ -306,7 +301,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx conte
 		return nil, "", 0, ErrAddressDimensionInvalid
 	}
 	where := ` WHERE tenant_id = ? AND module_key = ? AND dimension_key = ?`
-	args := []any{tenantID, AddressDimensionModuleKey, AddressDimensionKey}
+	args := []any{tenantID, p.scope.ModuleKey, p.scope.DimensionKey}
 	if filter.Status != "" {
 		where += ` AND status = ?`
 		args = append(args, filter.Status)

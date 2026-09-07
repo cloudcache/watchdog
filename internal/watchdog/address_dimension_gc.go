@@ -20,7 +20,7 @@ const (
 
 var ErrAddressDimensionGCNotEligible = errors.New("address dimension object is not eligible for deletion")
 
-type AddressDimensionGCCandidate struct {
+type DimensionPublicationGCCandidate struct {
 	TenantID       ID        `json:"tenant_id"`
 	SnapshotID     ID        `json:"snapshot_id"`
 	Version        uint64    `json:"version"`
@@ -30,16 +30,22 @@ type AddressDimensionGCCandidate struct {
 	RetiredAt      time.Time `json:"retired_at"`
 }
 
-type AddressDimensionGCFilter struct {
+type AddressDimensionGCCandidate = DimensionPublicationGCCandidate
+
+type DimensionPublicationGCFilter struct {
 	Limit  int
 	Cursor string
 }
 
-type AddressDimensionObjectDeletion struct {
+type AddressDimensionGCFilter = DimensionPublicationGCFilter
+
+type DimensionPublicationObjectDeletion struct {
 	SnapshotID ID
 	ObjectRef  string
 	DeletedAt  time.Time
 }
+
+type AddressDimensionObjectDeletion = DimensionPublicationObjectDeletion
 
 // AddressDimensionGCRepository owns the management-plane eligibility rules.
 // The operation-job handler never infers safety from its payload alone.

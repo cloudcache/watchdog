@@ -7,17 +7,18 @@ import (
 )
 
 const (
-	AddressDimensionModuleKey        = "flow"
-	AddressDimensionKey              = "address"
-	AddressDimensionPublishJob       = "address_dimension_publish"
-	AddressDimensionPayloadV1        = 1
-	AddressDimensionStatusActive     = "active"
-	AddressDimensionStatusRetired    = "retired"
-	AddressDimensionApprovalPending  = "pending"
-	AddressDimensionApprovalApproved = "approved"
-	AddressDimensionApprovalRejected = "rejected"
-	AddressDimensionSourceManifestV1 = uint16(1)
-	AddressDimensionSigningPayloadV2 = uint16(2)
+	AddressDimensionModuleKey            = "flow"
+	AddressDimensionKey                  = "address"
+	AddressDimensionPublishJob           = "address_dimension_publish"
+	AddressDimensionPayloadV1            = 1
+	AddressDimensionStatusActive         = "active"
+	AddressDimensionStatusRetired        = "retired"
+	AddressDimensionApprovalPending      = "pending"
+	AddressDimensionApprovalApproved     = "approved"
+	AddressDimensionApprovalRejected     = "rejected"
+	AddressDimensionSourceManifestV1     = uint16(1)
+	DimensionPublicationSigningPayloadV2 = uint16(2)
+	AddressDimensionSigningPayloadV2     = DimensionPublicationSigningPayloadV2
 )
 
 var (
@@ -26,7 +27,7 @@ var (
 	ErrAddressDimensionConflict     = errors.New("address dimension publication conflicts with another version")
 )
 
-type AddressDimensionSnapshot struct {
+type DimensionPublicationSnapshot struct {
 	ID                      ID                       `json:"id"`
 	TenantID                ID                       `json:"tenant_id"`
 	ModuleKey               string                   `json:"module_key"`
@@ -61,6 +62,8 @@ type AddressDimensionSnapshot struct {
 	CreatedAt               time.Time                `json:"created_at"`
 	RetiredAt               *time.Time               `json:"retired_at,omitempty"`
 }
+
+type AddressDimensionSnapshot = DimensionPublicationSnapshot
 
 type AddressDimensionPreview struct {
 	DraftDigest             string                   `json:"draft_digest"`
@@ -105,7 +108,7 @@ type AddressDimensionListFilter struct {
 	TableMode bool
 }
 
-type AddressDimensionActivation struct {
+type DimensionPublicationActivation struct {
 	ID                   ID        `json:"id"`
 	TenantID             ID        `json:"tenant_id"`
 	ModuleKey            string    `json:"module_key"`
@@ -118,7 +121,9 @@ type AddressDimensionActivation struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
-type AddressDimensionAcknowledgement struct {
+type AddressDimensionActivation = DimensionPublicationActivation
+
+type DimensionPublicationAcknowledgement struct {
 	TenantID        ID         `json:"tenant_id"`
 	SnapshotID      ID         `json:"snapshot_id"`
 	WorkerID        string     `json:"worker_id"`
@@ -133,7 +138,9 @@ type AddressDimensionAcknowledgement struct {
 	RowVersion      uint64     `json:"row_version"`
 }
 
-type AddressDimensionReference struct {
+type AddressDimensionAcknowledgement = DimensionPublicationAcknowledgement
+
+type DimensionPublicationReference struct {
 	TenantID       ID        `json:"tenant_id"`
 	SnapshotID     ID        `json:"snapshot_id"`
 	ConsumerKind   string    `json:"consumer_kind"`
@@ -144,6 +151,8 @@ type AddressDimensionReference struct {
 	LastObservedAt time.Time `json:"last_observed_at"`
 	RowVersion     uint64    `json:"row_version"`
 }
+
+type AddressDimensionReference = DimensionPublicationReference
 
 type AddressDimensionPublisher interface {
 	PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error)

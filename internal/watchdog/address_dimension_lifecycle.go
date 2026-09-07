@@ -11,20 +11,28 @@ import (
 )
 
 const (
-	AddressDimensionSignatureAlgorithm = "ed25519"
-	AddressDimensionActivationPublish  = "publish"
-	AddressDimensionActivationRollback = "rollback"
-	AddressDimensionAckDownloaded      = "downloaded"
-	AddressDimensionAckInstalled       = "installed"
-	AddressDimensionAckFailed          = "failed"
+	DimensionPublicationSignatureAlgorithm = "ed25519"
+	DimensionPublicationActivationPublish  = "publish"
+	DimensionPublicationActivationRollback = "rollback"
+	DimensionPublicationAckDownloaded      = "downloaded"
+	DimensionPublicationAckInstalled       = "installed"
+	DimensionPublicationAckFailed          = "failed"
+
+	AddressDimensionSignatureAlgorithm = DimensionPublicationSignatureAlgorithm
+	AddressDimensionActivationPublish  = DimensionPublicationActivationPublish
+	AddressDimensionActivationRollback = DimensionPublicationActivationRollback
+	AddressDimensionAckDownloaded      = DimensionPublicationAckDownloaded
+	AddressDimensionAckInstalled       = DimensionPublicationAckInstalled
+	AddressDimensionAckFailed          = DimensionPublicationAckFailed
 )
 
 var ErrAddressDimensionInvalidTransition = errors.New("address dimension lifecycle transition is invalid")
 
-// AddressDimensionApproval can only be persisted after VerifyAddressDimensionApproval
-// has bound its signature to the immutable snapshot metadata. The private proof
-// prevents an HTTP decoder or another package from asserting verification.
-type AddressDimensionApproval struct {
+// DimensionPublicationApproval can only be persisted after
+// VerifyDimensionPublicationApproval has bound its signature to the immutable
+// snapshot metadata. The private proof prevents an HTTP decoder or another
+// package from asserting verification.
+type DimensionPublicationApproval struct {
 	SnapshotID             ID
 	SigningKeyID           string
 	SignedAt               time.Time
@@ -32,41 +40,57 @@ type AddressDimensionApproval struct {
 	verifiedEnvelopeSHA256 [sha256.Size]byte
 }
 
-type AddressDimensionActivationRequest struct {
+type AddressDimensionApproval = DimensionPublicationApproval
+
+type DimensionPublicationActivationRequest struct {
 	SnapshotID         ID
 	EffectiveFrom      time.Time
 	ExpectedRowVersion uint64
 }
 
-type AddressDimensionRollbackRequest struct {
+type AddressDimensionActivationRequest = DimensionPublicationActivationRequest
+
+type DimensionPublicationRollbackRequest struct {
 	SnapshotID         ID
 	EffectiveFrom      time.Time
 	ExpectedRowVersion uint64
 }
 
-type AddressDimensionRetireRequest struct {
+type AddressDimensionRollbackRequest = DimensionPublicationRollbackRequest
+
+type DimensionPublicationRetireRequest struct {
 	SnapshotID         ID
 	ExpectedRowVersion uint64
 	Reason             string
 }
 
+type AddressDimensionRetireRequest = DimensionPublicationRetireRequest
+
 func VerifyAddressDimensionApproval(snapshot AddressDimensionSnapshot, signingKeyID string, signedAt time.Time, signature []byte, publicKey ed25519.PublicKey) (AddressDimensionApproval, error) {
-	approval := AddressDimensionApproval{
+	return VerifyDimensionPublicationApproval(snapshot, signingKeyID, signedAt, signature, publicKey)
+}
+
+func VerifyDimensionPublicationApproval(snapshot DimensionPublicationSnapshot, signingKeyID string, signedAt time.Time, signature []byte, publicKey ed25519.PublicKey) (DimensionPublicationApproval, error) {
+	approval := DimensionPublicationApproval{
 		SnapshotID: snapshot.ID, SigningKeyID: strings.TrimSpace(signingKeyID),
 		SignedAt: signedAt.UTC(), Signature: append([]byte(nil), signature...),
 	}
-	payload, err := AddressDimensionSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
+	payload, err := DimensionPublicationSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
 	if err != nil {
-		return AddressDimensionApproval{}, err
+		return DimensionPublicationApproval{}, err
 	}
 	if len(publicKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, payload, signature) {
-		return AddressDimensionApproval{}, fmt.Errorf("%w: signature verification failed", ErrAddressDimensionInvalid)
+		return DimensionPublicationApproval{}, fmt.Errorf("%w: signature verification failed", ErrAddressDimensionInvalid)
 	}
 	approval.verifiedEnvelopeSHA256 = addressDimensionApprovalDigest(payload, signature)
 	return approval, nil
 }
 
 func AddressDimensionSigningPayload(snapshot AddressDimensionSnapshot, signingKeyID string, signedAt time.Time) ([]byte, error) {
+	return DimensionPublicationSigningPayload(snapshot, signingKeyID, signedAt)
+}
+
+func DimensionPublicationSigningPayload(snapshot DimensionPublicationSnapshot, signingKeyID string, signedAt time.Time) ([]byte, error) {
 	signingKeyID = strings.TrimSpace(signingKeyID)
 	if snapshot.ID == "" || snapshot.TenantID == "" || snapshot.ModuleKey == "" || snapshot.DimensionKey == "" || snapshot.Version == 0 ||
 		snapshot.ObjectRef == "" || !validSHA256Digest(snapshot.Checksum) || !validSHA256Digest(snapshot.DraftDigest) || snapshot.BundleSchemaVersion == 0 ||
@@ -103,7 +127,7 @@ func AddressDimensionSigningPayload(snapshot AddressDimensionSnapshot, signingKe
 		SigningKeyID          string                   `json:"signing_key_id"`
 		SignedAtUnixMilli     int64                    `json:"signed_at_unix_milli"`
 	}{
-		SchemaVersion: AddressDimensionSigningPayloadV2, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
+		SchemaVersion: DimensionPublicationSigningPayloadV2, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
 		ModuleKey: snapshot.ModuleKey, DimensionKey: snapshot.DimensionKey,
 		Version: snapshot.Version, EffectiveUnixMilli: snapshot.EffectiveFrom.UTC().UnixMilli(),
 		ObjectRef: snapshot.ObjectRef, Checksum: snapshot.Checksum, DraftDigest: snapshot.DraftDigest,
@@ -115,11 +139,11 @@ func AddressDimensionSigningPayload(snapshot AddressDimensionSnapshot, signingKe
 	return json.Marshal(payload)
 }
 
-func validateVerifiedAddressDimensionApproval(snapshot AddressDimensionSnapshot, approval AddressDimensionApproval) error {
+func validateVerifiedDimensionPublicationApproval(snapshot DimensionPublicationSnapshot, approval DimensionPublicationApproval) error {
 	if approval.SnapshotID != snapshot.ID || approval.SigningKeyID == "" || len(approval.Signature) != ed25519.SignatureSize {
 		return ErrAddressDimensionInvalid
 	}
-	payload, err := AddressDimensionSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
+	payload, err := DimensionPublicationSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
 	if err != nil {
 		return err
 	}
@@ -127,6 +151,10 @@ func validateVerifiedAddressDimensionApproval(snapshot AddressDimensionSnapshot,
 		return errors.New("address dimension signature was not cryptographically verified")
 	}
 	return nil
+}
+
+func validateVerifiedAddressDimensionApproval(snapshot AddressDimensionSnapshot, approval AddressDimensionApproval) error {
+	return validateVerifiedDimensionPublicationApproval(snapshot, approval)
 }
 
 func addressDimensionApprovalDigest(payload, signature []byte) [sha256.Size]byte {
