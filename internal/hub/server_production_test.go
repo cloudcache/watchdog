@@ -2,7 +2,22 @@
 
 package hub
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestStandaloneRuntimeConfigurationUsesHubURLAsAPIURL(t *testing.T) {
+	hub := &Hub{appURL: "https://api.watchdog.example/base"}
+	info := getPublicAppInfo(hub)
+	if info.API_URL != hub.appURL || info.BASE_PATH != "/base/" {
+		t.Fatalf("unexpected public app info: %#v", info)
+	}
+	html := modifyIndexHTML(hub, []byte(`<script>globalThis.WATCHDOG = "{info}"</script>`))
+	if !strings.Contains(html, `"API_URL":"https://api.watchdog.example/base"`) {
+		t.Fatalf("API URL was not injected: %s", html)
+	}
+}
 
 func TestStaticCacheControl(t *testing.T) {
 	tests := []struct {

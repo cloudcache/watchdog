@@ -6,7 +6,7 @@ import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { downloadWatchdogFile, pb } from "@/lib/api"
 import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
 import type { ColumnDefine } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
@@ -262,7 +262,9 @@ export default memo(() => {
 					height={560}
 					onCellClick={(record, field) => {
 						const task = record.task as ExportTask
-						if (field === "action" && exportStatus(task) === "complete") downloadExport(task)
+						if (field === "action" && exportStatus(task) === "complete") {
+							void downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
+						}
 						else navigate(getPagePath($router, "export_detail", { id: exportID(task) }))
 					}}
 				/>
@@ -300,9 +302,9 @@ function exportTrafficView(task: ExportTask) {
 	return trafficViewFromValue(task.ValueMode ?? task.value_mode, task.Aggregation ?? task.aggregation)
 }
 
-function downloadExport(task: ExportTask) {
+async function downloadExport(task: ExportTask) {
 	const url = exportDownloadURL(task)
-	if (url) globalThis.location.href = url
+	if (url) await downloadWatchdogFile(url)
 }
 
 function denseCellStyle() {

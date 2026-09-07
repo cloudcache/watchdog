@@ -13,7 +13,7 @@ import (
 type PublicAppInfo struct {
 	BASE_PATH           string
 	HUB_VERSION         string
-	HUB_URL             string
+	API_URL             string
 	OAUTH_DISABLE_POPUP bool `json:"OAUTH_DISABLE_POPUP,omitempty"`
 }
 
@@ -33,7 +33,7 @@ func getPublicAppInfo(hub *Hub) PublicAppInfo {
 	info := PublicAppInfo{
 		BASE_PATH:   strings.TrimSuffix(parsedURL.Path, "/") + "/",
 		HUB_VERSION: watchdog.Version,
-		HUB_URL:     hub.appURL,
+		API_URL:     hub.appURL,
 	}
 	if val, _ := utils.GetEnv("OAUTH_DISABLE_POPUP"); val == "true" {
 		info.OAUTH_DISABLE_POPUP = true

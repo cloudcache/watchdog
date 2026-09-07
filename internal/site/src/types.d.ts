@@ -6,9 +6,10 @@ declare global {
 	var WATCHDOG: {
 		BASE_PATH: string
 		HUB_VERSION: string
-		HUB_URL: string
+		API_URL: string
 		OAUTH_DISABLE_POPUP: boolean
 	}
+	var WATCHDOG_CONFIG: Partial<typeof WATCHDOG>
 }
 
 export interface FingerprintRecord extends RecordModel {

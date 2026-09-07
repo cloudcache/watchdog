@@ -378,7 +378,7 @@ export const generateToken = () => {
 }
 
 /** Get the hub URL from the global WATCHDOG object */
-export const getHubURL = () => globalThis.WATCHDOG?.HUB_URL || window.location.origin
+export const getHubURL = () => globalThis.WATCHDOG?.API_URL || window.location.origin
 
 /** Map of target/system IDs to their corresponding agent registration tokens */
 export const tokenMap = new Map<SystemRecord["id"], FingerprintRecord["token"]>()

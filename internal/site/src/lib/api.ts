@@ -1,5 +1,5 @@
 import PocketBase from "pocketbase"
-import { basePath, prependBasePath } from "@/components/router"
+import { basePath } from "@/components/router"
 import type { ChartTimes, UserSettings } from "@/types"
 import {
 	$platformIdentity,
@@ -11,7 +11,7 @@ import { $alerts, $allSystemsById, $allSystemsByName, $userSettings } from "./st
 import { chartTimeData } from "./utils"
 
 /** PocketBase JS Client */
-export const pb = new PocketBase(basePath)
+export const pb = new PocketBase(globalThis.WATCHDOG?.API_URL?.trim() || basePath)
 
 const pocketBaseSend = pb.send.bind(pb)
 
@@ -118,14 +118,27 @@ function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformA
 
 async function sendWatchdogAPI<T>(
 	path: string,
-	options: RequestInit & {
-		body?: unknown
-		query?: Record<string, string | number | boolean | undefined>
-		// onResponse exposes the raw response (headers) so callers can read the
-		// ETag for optimistic-concurrency edits.
-		onResponse?: (response: Response) => void
-	} = {}
+	options: WatchdogAPIOptions = {}
 ): Promise<T> {
+	const response = await fetchWatchdogAPI(path, options)
+	if (!response.ok) {
+		const message = await readAPIErrorMessage(response)
+		throw new Error(message || `Request failed with status ${response.status}`)
+	}
+	if (response.status === 204) {
+		return undefined as T
+	}
+	return response.json() as Promise<T>
+}
+
+type WatchdogAPIOptions = RequestInit & {
+	body?: unknown
+	query?: Record<string, string | number | boolean | undefined>
+	// onResponse exposes raw headers such as ETag for optimistic concurrency.
+	onResponse?: (response: Response) => void
+}
+
+export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions = {}) {
 	const headers = new Headers(options.headers)
 	if (!headers.has("X-Request-ID")) {
 		headers.set("X-Request-ID", crypto.randomUUID())
@@ -140,7 +153,7 @@ async function sendWatchdogAPI<T>(
 			headers.set("X-Watchdog-Tenant-ID", tenantID)
 		}
 	}
-	const url = new URL(prependBasePath(path), window.location.origin)
+	const url = new URL(pb.buildURL(path))
 	for (const [key, value] of Object.entries(options.query ?? {})) {
 		if (value !== undefined) {
 			url.searchParams.set(key, String(value))
@@ -158,14 +171,36 @@ async function sendWatchdogAPI<T>(
 	}
 	const response = await fetch(url, init)
 	options.onResponse?.(response)
+	return response
+}
+
+export async function downloadWatchdogFile(path: string) {
+	const response = await fetchWatchdogAPI(path)
 	if (!response.ok) {
 		const message = await readAPIErrorMessage(response)
-		throw new Error(message || `Request failed with status ${response.status}`)
+		throw new Error(message || `Download failed with status ${response.status}`)
 	}
-	if (response.status === 204) {
-		return undefined as T
+	const blobURL = URL.createObjectURL(await response.blob())
+	const link = document.createElement("a")
+	link.href = blobURL
+	link.download = responseFilename(response.headers.get("Content-Disposition"))
+	document.body.append(link)
+	link.click()
+	link.remove()
+	URL.revokeObjectURL(blobURL)
+}
+
+function responseFilename(disposition: string | null) {
+	if (!disposition) return ""
+	const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+	if (encoded) {
+		try {
+			return decodeURIComponent(encoded)
+		} catch {
+			return encoded
+		}
 	}
-	return response.json() as Promise<T>
+	return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? ""
 }
 
 async function readAPIErrorMessage(response: Response) {

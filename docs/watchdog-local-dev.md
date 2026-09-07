@@ -1,8 +1,9 @@
 # Watchdog Local Dev Startup
 
-Local UI/API development currently runs the unified **Hub on `:8090`**. The
-frontend is installed and built only through npm, then embedded in the Hub;
-there is no Vite runtime server or `:5173` dependency.
+Local development runs the Vite frontend and the API/Auth Hub as two processes.
+The browser reads the single `API_URL` from `watchdog-config.js` and talks to
+the Hub directly. There is no API proxy, custom Node static server, nginx, or
+`:5173` dependency.
 
 1. Initialize MySQL:
 
@@ -14,18 +15,28 @@ This creates the database, runs `cmd/watchdog-install` with
 `config/watchdog.dev.yaml`, writes `.watchdog-dev.lock`, and applies the local
 seed data.
 
-2. Build the frontend and start the Hub:
+2. Start the API/Auth Hub:
 
 ```bash
 make dev-hub
 ```
 
-`make dev-hub` runs `npm install` and `npm run build`, then starts the production
-Hub entrypoint with `config/watchdog.dev.yaml`. Open
-`http://127.0.0.1:8090`. Start the optional local agent separately with
-`make dev-agent`.
+This starts the production Hub entrypoint with `config/watchdog.dev.yaml` on
+`127.0.0.1:8091` and permits the local frontend origin explicitly.
 
-3. When testing SNMP, run the independent collector/discovery worker in another terminal:
+3. Start the frontend in another terminal:
+
+```bash
+cd internal/site
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:8090`. Vite only serves frontend assets during local
+development; `/api/*` is not proxied. Start the optional local agent separately
+with `make dev-agent`.
+
+4. When testing SNMP, run the independent collector/discovery worker in another terminal:
 
 ```bash
 go run ./cmd/watchdog-snmp-collector \
@@ -79,9 +90,27 @@ Invalid or unknown configuration now fails startup instead of falling back
 silently; the complete override list and precedence are in
 [`watchdog-install.md`](watchdog-install.md).
 
+## Frontend API configuration
+
+`internal/site/public/watchdog-config.js` contains the frontend's only backend
+address. Its checked-in value points local development at `127.0.0.1:8091`.
+Set it to the externally reachable Hub address before a standalone build:
+
+```js
+globalThis.WATCHDOG_CONFIG = {
+	API_URL: "https://api.watchdog.example",
+}
+```
+
+`API_URL` is used by every browser API/auth/SSE/download request and by
+generated agent installation commands. The Hub must be started with the exact
+frontend origin in PocketBase's `--origins` allowlist.
+
 ## Commands
 
-- `internal/cmd/hub`: the unified Hub (built frontend + PocketBase auth + `/api/v1`) on `:8090`.
+- `npm run dev` in `internal/site`: local frontend on `127.0.0.1:8090`, without an API proxy.
+- `npm run build` in `internal/site`: frontend build output in `internal/site/dist`.
+- `internal/cmd/hub`: PocketBase auth + `/api/v1` on `127.0.0.1:8091`. Its embedded UI remains a compatibility path.
 - `cmd/watchdog-install`: fresh MySQL installer using `install/init.sql` and a local lock file.
 - `cmd/watchdog-export-worker`: async CSV export worker.
 - `cmd/watchdog-snmp-collector`: SNMP discovery, recipe import, and raw sample polling.

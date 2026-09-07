@@ -4,6 +4,7 @@
 	"version": "0.18.7",
 	"type": "module",
 	"scripts": {
+		"dev": "vite --host 127.0.0.1 --port 8090 --strictPort",
 		"build": "lingui compile && vite build",
 		"test": "node --experimental-strip-types --test src/lib/*.test.ts",
 		"sync": "lingui extract --overwrite && lingui compile",

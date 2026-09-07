@@ -152,8 +152,13 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 
 ## 平台缺陷登记
 
-- [x] **PLAT-DEV-01 npm-only 本地启动契约**：删除 Bun lock/CI/Makefile 分支、`vite dev/preview` 脚本、development-tag 代理和全部 `:5173` 运行时代码；`make dev-hub` 只用 npm 安装/构建静态制品，再以 production Hub 入口和 `config/watchdog.dev.yaml` 启动 `:8090`。Vite仅是 `npm run build` 内部编译器，不是服务或部署组件。前端/Hub 独立进程与反代边界另列 PLAT-WEB-01，不用本项伪装完成。
-- [ ] **PLAT-WEB-01 前后端独立部署边界**：交付 npm 启动的静态 Web 进程（外部 `:8090`）与 API/Auth Hub（内部 `:8091`）；Web 只服务 `dist`、注入公开运行时配置并同源反代 `/api/*`（含流式响应/upgrade），Hub 保留短期集成静态模式用于滚动回退。冻结 health/readiness、缓存/CSP、base path、真实登录/登出/OAuth/SSE、API 故障恢复及旧单体→双进程→回退测试；完成后再从 Hub 删除静态职责，禁止引入 Vite runtime。
+- [x] **PLAT-DEV-01 npm-only 本地启动契约**：删除 Bun lock/CI/Makefile 分支、development-tag 代理、custom static server 和全部 `:5173` 运行时代码；前端用 `npm run dev` 固定启动 `:8090`，Hub 用 `make dev-hub` 启动 `:8091`。Vite仅承担本地前端开发和 `npm run build`，不代理 API。
+- [ ] **PLAT-WEB-01 前后端独立运行边界**：前端运行时只配置一个 `API_URL` 并由浏览器直连 API/Auth Hub，禁止内置 API 代理。Hub 用 allowlist CORS 开放所需 method/header/exposed header；覆盖登录/登出、OAuth、SSE、下载、base path、API 故障恢复和旧单体兼容。镜像、nginx 和静态托管不在本任务范围。
+  - [x] **设计/编码**：`watchdog-config.js` 只有一个 `API_URL`，浏览器 API/auth/SSE/download 与生成的 agent 命令全部使用它；PocketBase client 和 `/api/v1` raw fetch 共用同一 API base；本地前端只通过 `npm run dev` 启动，Vite 无 proxy；Hub 响应暴露 ETag/Content-Disposition/X-Request-ID，origin admission 使用显式 `serve --origins`。
+  - [ ] **单元/进程内集成**：补 runtime config 合并/API base、单体同源兼容和跨源下载测试。
+  - [ ] **真实协议集成**：`8090→API_URL:8091` 完成登录/登出、OAuth、PocketBase SSE、Flow/平台下载和 backend stop/recover；浏览器控制台无 CORS/混合内容错误。
+  - [ ] **变更测试**：旧单体→双进程→单体回退、base path、CORS 拒绝非 allowlist origin 和 SIGTERM drain。
+  - [ ] **回归/已提交门禁**：前端 test/build、Hub test、全库 build/vet 与独立提交完成。
 - [x] **PLAT-DB-01 tenant cascade 与运营商 Flow identity 外键冲突**：migration 054 将 `isp_operators → isp_operator_flow_ids` 的引用前向改为 `ON DELETE CASCADE`，使 tenant 删除时 ledger 父行可安全级联设备侧 operator；普通 operator 删除方向不变，历史 ledger 继续保留且后续分配不复用。migration 可重放，fresh `install/init.sql` 与 checksum 已同步；真实 MySQL 临时 schema 覆盖有/无运营商 tenant delete、普通 operator 删除后 ledger 保留、ID 不复用、两次 replay 和 init/migration 完整结构 parity。独立提交 `9351ee48`。
 - [x] **PLAT-04H1 QueryGateway 平台契约**：provider-neutral request/result、双层并发预算、tenant dataset policy、value-layer 双门、错误/完整性、timeout/cancel/限流、provider lifecycle/readiness、VM typed provider、policy CRUD+ETag+审计及权限路由均已完成；migration 045 + fresh-init + 真实 MySQL CAS/lifecycle 已提交（`13669321`、`00448c68`）。平台不接受任意 SQL/MetricsQL，也不从参数读取 tenant。
 - [x] **PLAT-04H2 QueryGateway 兼容与真实依赖验收**：现有 metrics API 已内部迁同一 gateway并验证前后结果；真实 VM 已验取消、超时、partial/unknown、provider 中断恢复及三层授权/敏感访问审计（本提交）。Flow CH provider、地址条件查询和异步索引属于 [Flow 地址查询方案](flow-address-query-plan.md) 与 Flow tasklist，不再阻塞 H1，也不在平台侧复制 CH pool/compiler。

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { pb } from "@/lib/api"
+import { downloadWatchdogFile, pb } from "@/lib/api"
 import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
 import { cn } from "@/lib/utils"
 import {
@@ -173,7 +173,14 @@ export default memo(({ id }: ExportDetailProps) => {
 						<Trash2Icon className="me-2 h-4 w-4" />
 						<Trans>Delete</Trans>
 					</Button>
-					<Button size="sm" disabled={!canDownload} onClick={() => task && downloadExport(task)}>
+					<Button
+						size="sm"
+						disabled={!canDownload}
+						onClick={() =>
+							task &&
+							void downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
+						}
+					>
 						<DownloadIcon className="me-2 h-4 w-4" />
 						<Trans>Download</Trans>
 					</Button>
@@ -273,11 +280,9 @@ function InfoCell({
 	)
 }
 
-function downloadExport(task: ExportTask) {
+async function downloadExport(task: ExportTask) {
 	const url = exportDownloadURL(task)
-	if (url) {
-		globalThis.location.href = url
-	}
+	if (url) await downloadWatchdogFile(url)
 }
 
 function exportTrafficView(task: ExportTask) {

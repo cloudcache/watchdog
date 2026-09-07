@@ -89,11 +89,11 @@ generate-locales:
 		npm install --prefix ./internal/site && npm run --prefix ./internal/site sync; \
 	fi
 
-dev-hub: build-web-ui
+dev-hub:
 	@if command -v entr >/dev/null 2>&1; then \
-		find ./internal -type f -name '*.go' | entr -r -s "go run ./internal/cmd/hub serve --http 0.0.0.0:8090 --watchdog-config config/watchdog.dev.yaml"; \
+		find ./internal -type f -name '*.go' | entr -r -s "APP_URL=http://127.0.0.1:8091 go run ./internal/cmd/hub serve --http 127.0.0.1:8091 --origins=http://127.0.0.1:8090 --watchdog-config config/watchdog.dev.yaml"; \
 	else \
-		go run ./internal/cmd/hub serve --http 0.0.0.0:8090 --watchdog-config config/watchdog.dev.yaml; \
+		APP_URL=http://127.0.0.1:8091 go run ./internal/cmd/hub serve --http 127.0.0.1:8091 --origins=http://127.0.0.1:8090 --watchdog-config config/watchdog.dev.yaml; \
 	fi
 
 dev-agent:

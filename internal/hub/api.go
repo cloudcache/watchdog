@@ -55,6 +55,14 @@ func customAuthMiddleware(fn func(*core.RequestEvent) bool) func(*core.RequestEv
 
 // registerMiddlewares registers custom middlewares
 func (h *Hub) registerMiddlewares(se *core.ServeEvent) {
+	// A separately hosted frontend reads optimistic-concurrency and download
+	// metadata from these response headers. Origin admission remains owned by
+	// PocketBase's explicit serve --origins allowlist.
+	se.Router.BindFunc(func(e *core.RequestEvent) error {
+		e.Response.Header().Set("Access-Control-Expose-Headers", "ETag, Content-Disposition, X-Request-ID")
+		return e.Next()
+	})
+
 	// authorizes request with user matching the provided email
 	authorizeRequestWithEmail := func(e *core.RequestEvent, email string) (err error) {
 		if e.Auth != nil || email == "" {
