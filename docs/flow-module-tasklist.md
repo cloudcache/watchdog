@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05C-H — QueryGateway 生产接线验收。** FLOW-03B-Q Geo/address-set 查询 API 与显示契约已经独立收口；下一轮只核对并补齐现有 hub tenant/RBAC、共享 CH/Geo、错误/完整性、限流/超时/审计与生产 HTTP/UI 证据。原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改；发现平台通用问题只登记到平台清单。
+**活动切片：FLOW-06A2-H — value-layer 平台接线验收。** FLOW-05C-H 的 hub QueryGateway、可选 Geo 失败隔离和地址集合生产 HTTP/UI 证据已独立收口；下一轮只补齐 raw/customer 权限拒绝、敏感查询审计和稳定 HTTP envelope 的端到端门禁。原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改；发现平台通用问题只登记到平台清单。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -218,7 +218,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-04B/05A/05B 外部证据已提交**：真实 CH 数据链路、查询修复与隔离集成测试进入提交 `27278350`；测试只创建并清理 `watchdog_flow_it_rollup_query`，不修改现有开发库。
 - [x] **FLOW-05A 版本/预算证据已提交**：跨版本、tie-break、服务端扫描/结果预算门禁进入 `c876e974`；测试只创建并清理 `watchdog_flow_it_query_versions`。
 - [x] **FLOW-05C 前置审计**：确认 compiler/runner 已隔离 tenant scope 和 typed 参数，但宿主尚无可执行 QueryGateway；Flow module/dataset 未注册，value-layer action 缺失，CH pool 私绑 rollup enablement，Flow readiness/限流/错误映射未装配。平台缺口已登记 PLAT-04H。
-- [ ] **FLOW-05C（平台依赖解除后）**：接入 hub tenant/RBAC、共享 Geo catalog、API envelope、限流/超时/审计；不得复制 Geo loader、身份逻辑、CH pool 或 rate limiter。
+- [x] **FLOW-05C 平台接线**：Flow provider 已接入 hub 同一 tenant/RBAC、QueryGateway envelope、共享 CH pool、双层并发/timeout/cancel、readiness 和敏感 value-layer 审计；Geo catalog 复用 `flowdimension.GeoCatalog`。本轮补齐“未配置 Geo 仍挂载路由并明确返回 503”、Geo/运营商独立失败隔离，以及 `flow_records source` 与 `1m display` 不混淆的 UI 口径。真实 CH HTTP 已覆盖 aggregate/address-set/joint/typed/detail；全页面带非空数据的浏览器验收仍由下方生产 HTTP/UI 门禁承载，不在此项冒充完成。
 - [x] **FLOW-05C1 设计/编码**：从 Flow 固定 registry 导出 aggregate customer view 与 detail raw/supplier/customer 的允许字段、默认字段和过滤器；compiler/runner 验证改为消费同一 view registry，hub/UI 不再需要复制白名单。
 - [x] **FLOW-05C1 单元/变更测试**：逐 view 验证全部已声明字段/filter 可编译、全部未声明项被拒绝、顺序稳定、默认字段属于允许集合、返回切片修改不污染 registry、未知 view fail-closed；aggregate 仍只声明 customer。
 - [x] **FLOW-05C1 回归**：`internal/flowquery` race/vet、全库 test/vet 与 diff check 全过。

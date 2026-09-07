@@ -254,3 +254,17 @@ func TestFlowGeoCatalogAPIValidatesAndReturnsPublishedCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestFlowGeoCatalogAPIReturnsUnavailableWithoutConfiguredBundle(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
+		},
+		FlowGeo: NewFlowGeoService(""),
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/flow/geo/catalog?level=country", nil))
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), string(APIErrorServiceUnavailable)) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}

@@ -283,7 +283,7 @@ v1 的 range 行只有扁平 country/admin/city，不能完整表达“洲 → �
 
 同一不可变 `GeoIndex` 也是查询面的树语义权威：按稳定 code 返回节点和 root-to-node breadcrumb，按 parent 返回已启用直属 children，按 ancestor + 目标 kind 展开排序去重且有硬上限的 descendant codes。展开只允许 `flow-geo-v2`，一次请求固定一个 `geo_version`；不得跨版本按名称拼树，也不得由 hub 复制一套 loader/遍历算法。
 
-loader 流程：在临时目录验证 manifest/schema/size/checksum/row count → 检查区间、外键、枚举、Geo 树和 IPv4/IPv6 → 构建不可变 range index + 预编译路径 → 原子交换指针。失败保留当前版本并告警。至少保留覆盖 Kafka retention、base 重分类窗口的旧版本；event time 选择 `effective_from <= event_time` 的最新版本。v2 loader、EdgeManager 导出脚本、worker 事实字段和 CH 002 向前迁移已经完成。Hub 先加载 `flow_geo.path` 的 active bundle，再加载 `flow_geo.historical_paths`；查询目录和结果标签都委托同一个 `flowdimension.GeoCatalog`，按事实自身 `geo_version` 解析，缺失历史版本时显示稳定 ID 并明确缺少显示元数据，绝不回退 active 名称。
+loader 流程：在临时目录验证 manifest/schema/size/checksum/row count → 检查区间、外键、枚举、Geo 树和 IPv4/IPv6 → 构建不可变 range index + 预编译路径 → 原子交换指针。失败保留当前版本并告警。至少保留覆盖 Kafka retention、base 重分类窗口的旧版本；event time 选择 `effective_from <= event_time` 的最新版本。v2 loader、EdgeManager 导出脚本、worker 事实字段和 CH 002 向前迁移已经完成。Hub 始终挂载 Geo catalog 路由：先加载 `flow_geo.path` 的 active bundle，再加载 `flow_geo.historical_paths`；路径为空或 active bundle 未就绪时返回明确的 `503 service_unavailable`，不能表现为路由不存在，也不能连带清空独立加载的运营商/地址集合。查询目录和结果标签都委托同一个 `flowdimension.GeoCatalog`，按事实自身 `geo_version` 解析，缺失历史版本时显示稳定 ID 并明确缺少显示元数据，绝不回退 active 名称。查询结果的 source 徽标必须显示物理来源（`flow_records`、`1m` 或 `1h`），display 徽标才显示 bucket 步长，禁止用 `source_seconds` 把 base-fact 查询伪装成 rollup。
 
 ### 4.2 三种地址归属语义
 

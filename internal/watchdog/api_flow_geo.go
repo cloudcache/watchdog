@@ -7,8 +7,9 @@ import (
 	"strconv"
 )
 
-// FlowGeoConfig points the runtime at a flow-geo-v1 bundle directory (usually
-// the exporter's `current` symlink). Empty path disables the service.
+// FlowGeoConfig points the runtime at a flow-geo-v2 bundle directory (usually
+// the exporter's `current` symlink). Empty path leaves the routes available but
+// returns service_unavailable until a bundle is configured.
 type FlowGeoConfig struct {
 	Path            string   `yaml:"path"`
 	HistoricalPaths []string `yaml:"historical_paths"`

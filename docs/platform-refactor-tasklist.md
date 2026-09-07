@@ -163,6 +163,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 - [ ] **PLAT-WEB-01 前后端独立运行边界**：前端运行时只配置一个 `API_URL` 并由浏览器直连 API/Auth Hub，禁止内置 API 代理。Hub 用 allowlist CORS 开放所需 method/header/exposed header；覆盖登录/登出、OAuth、SSE、下载、base path、API 故障恢复和旧单体兼容。镜像、nginx 和静态托管不在本任务范围。
   - [x] **设计/编码**：`watchdog-config.js` 只有一个 `API_URL`，浏览器 API/auth/SSE/download 与生成的 agent 命令全部使用它；PocketBase client 和 `/api/v1` raw fetch 共用同一 API base；本地前端只通过 `npm run dev` 启动，Vite 无 proxy；Hub 响应暴露 ETag/Content-Disposition/X-Request-ID，origin admission 使用显式 `serve --origins`。
   - [x] **单元/进程内集成**：runtime config 合并、单一 API base 的单体同源/独立跨源选择、Content-Disposition 下载文件名和 Hub exposed headers 已覆盖；不以进程内测试冒充浏览器 CORS admission。
+  - [x] **真实浏览器增量**：本地 `npm run dev :8090` 通过唯一 `API_URL` 直连 Hub `:8091`，现有登录态下平台引用数据、Flow QueryGateway 与地址集合查询均成功；允许源 preflight/响应暴露头已用真实 HTTP 核对，浏览器无应用 CORS/混合内容错误。未执行的登录/登出、OAuth、SSE、下载及 stop/recover 仍保留在下一门禁。
   - [ ] **真实协议集成**：`8090→API_URL:8091` 完成登录/登出、OAuth、PocketBase SSE、Flow/平台下载和 backend stop/recover；浏览器控制台无 CORS/混合内容错误。
   - [ ] **变更测试**：旧单体→双进程→单体回退、base path、CORS 拒绝非 allowlist origin 和 SIGTERM drain。
   - [ ] **回归/已提交门禁**：前端 test/build、Hub test、全库 build/vet 与独立提交完成。

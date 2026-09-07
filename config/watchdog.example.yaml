@@ -110,7 +110,8 @@ agent:
 # Offline flow-geo-v2 bundle (EdgeManager merged+corrected geo library) used
 # by Flow query labels and the IP-library lookup API. Historical bundles keep
 # old facts explainable and must precede the active bundle's effective time.
-# Export with scripts/edgemanager-geo-export.py; empty path disables the service.
+# Export with scripts/edgemanager-geo-export.py; an empty path keeps the API
+# mounted but reports the optional Geo catalog as unavailable.
 flow_geo:
   path: ""
   historical_paths: []

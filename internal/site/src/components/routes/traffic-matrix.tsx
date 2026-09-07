@@ -286,6 +286,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [topN, setTopN] = useState(() => Number(queryState("top", "20")))
 	const [includeOther, setIncludeOther] = useState(() => queryState("other", "1") !== "0")
 	const [filterExpression, setFilterExpression] = useState(() => queryState("filter", surfacePreset.filter))
+	const [advancedOpen, setAdvancedOpen] = useState(surfacePreset.advancedOpen)
 	const [addressSets, setAddressSets] = useState<AddressSetItem[]>([])
 	const [devices, setDevices] = useState<DeviceItem[]>([])
 	const [countries, setCountries] = useState<GeoNode[]>([])
@@ -336,7 +337,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	}, [])
 
 	useEffect(() => {
-		Promise.all([
+		Promise.allSettled([
 			pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
 				query: { level: "country", limit: 500 },
 			}),
@@ -345,12 +346,25 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			}),
 		])
 			.then(([geo, networkOperators]) => {
-				setCountries(sortReferences(geo.items ?? []))
-				setGeoVersion(geo.version)
-				setOperators(sortReferences(networkOperators.items ?? []))
-				setReferenceError("")
+				const errors: string[] = []
+				if (geo.status === "fulfilled") {
+					setCountries(sortReferences(geo.value.items ?? []))
+					setGeoVersion(geo.value.version)
+				} else {
+					setCountries([])
+					setGeoVersion("")
+					errors.push(geo.reason instanceof Error ? geo.reason.message : t`Failed to load Geo catalog`)
+				}
+				if (networkOperators.status === "fulfilled") {
+					setOperators(sortReferences(networkOperators.value.items ?? []))
+				} else {
+					setOperators([])
+					errors.push(
+						networkOperators.reason instanceof Error ? networkOperators.reason.message : t`Failed to load operators`
+					)
+				}
+				setReferenceError(errors.join("; "))
 			})
-			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load filters`))
 			.finally(() => setReferencesLoaded(true))
 	}, [t])
 
@@ -985,7 +999,11 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				{referenceError && <p className="text-xs text-destructive">{referenceError}</p>}
 			</div>
 
-			<details className="rounded-md border border-border bg-card" defaultOpen={surfacePreset.advancedOpen}>
+			<details
+				className="rounded-md border border-border bg-card"
+				open={advancedOpen}
+				onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+			>
 				<summary className="flex cursor-pointer list-none items-center gap-2 p-4 font-medium">
 					<SlidersHorizontalIcon className="h-4 w-4 text-muted-foreground" />
 					<Trans>Advanced Flow Explorer</Trans>
@@ -1193,9 +1211,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				{plan && (
 					<>
-						<Badge variant="outline">
-							{plan.source_seconds ? formatDuration(plan.source_seconds) : plan.source} source
-						</Badge>
+						<Badge variant="outline">{plan.source} source</Badge>
 						<Badge variant="outline">{formatDuration(plan.step_seconds)} display</Badge>
 						<span>{formatRange(plan.effective_from, plan.effective_to)}</span>
 					</>
