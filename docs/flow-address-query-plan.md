@@ -6,7 +6,7 @@
 
 - `flow-collect` 只接收 UDP 并写 Kafka，不做地址分类。
 - `flow-worker` 已在 Kafka 后使用 `gaissmai/bart` LPM 与 Geo 有序区间二分完成分类；`snapshot.go` 的 lookup 和 `enrich.go` 的 enrichment 每条 flow **不访问 MySQL、ClickHouse 或 HTTP**。
-- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。尚未完成的是认证控制面下载、publication 签名验证与磁盘 LKG 恢复，不能把本地文件 bootstrap 冒充完整分发生命周期。
+- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。平台已完成 classification profile CAS、不可变 classification object、dimension+classification pair 元数据和复用全局 trust bundle 的 Ed25519 envelope；尚未完成的是认证 desired/object/ACK HTTP、磁盘 LKG 与 cold-start 恢复，不能把本地文件 bootstrap 冒充完整分发生命周期。
 - CH migration 009 的 `flow_address_dict_source` 和 `IP_TRIE` 集成测试证明过 ClickHouse 字典能力，但没有接入生产 worker/rollup/query。它是历史实验，不是继续演进的架构基础。
 
 因此本次修正不再“把分类从 worker 搬到 ClickHouse”，而是把**索引的发布来源**从运行时批量装载管理数据，改成经审批、可校验、可回滚的二进制 `AddressSnap`。
@@ -95,6 +95,8 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 gossip 可作为后续低延迟提示，只传播 `(scope,version,checksum,control endpoint)`；权威 metadata、认证下载和 ACK 仍在平台。它不是 v1 的前置条件。
 
+控制面版本对由 migration 059 保存：`flow_classification_profiles` 是 tenant 单行编辑态，`flow_enrichment_publications` 是不可变 event-time pair，`flow_enrichment_publication_acks` 保存每个注册 worker 的 downloaded/installed/failed 里程碑。MySQL 只保存 profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。publish 在 tenant lock 内选择 `effective_from <= 请求时间` 的最新 address activation，且只接受已审批签名、未删除的 WADS/1；classification version/effective time 严格单调。分类对象和完整 pair 使用同一个 active 平台 Ed25519 key 签名，worker 复用 collector-plan monotonic trust bundle，不建立第二套 key 表。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
+
 ## 6. 写入、查询与历史修正
 
 ### 6.1 写入
@@ -125,7 +127,7 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 1. 先发布 AddressSnap v1 codec/builder 和双读 worker；旧 JSON dimension + Geo 目录仍可启动。
 2. 用同一真实 corpus 做旧 loader 与 AddressSnap lookup 全字段 parity，覆盖 v4/v6 边界、嵌套 override、多组、无 ASN 和 supplier/customer ISP 分离。
 3. 部署全部 reader 后才允许平台写 AddressSnap；worker ACK 达标后切 activation。
-4. MySQL migration 058 只增加 publication object format/version/builder/build-job 元数据和 supplier ISP 稳定 ID ledger；MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
+4. MySQL migration 058 增加 publication object format/version/builder/build-job 元数据和 supplier ISP 稳定 ID ledger；059 增加 classification profile、不可变版本对 metadata 与 worker ACK。MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
 5. 停止 worker 的 MySQL/目录装载入口并保留 LKG/rollback 窗口。
 6. migration 009 和 `address_dict_integration_test.go` 标注为历史 CH 字典实验；不回改历史 migration，也不新增“拆 IP_TRIE 字段”的 migration。待兼容窗口结束再以前向清理移除未使用对象。
 

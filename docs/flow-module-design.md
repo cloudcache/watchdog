@@ -442,12 +442,13 @@ VPN 规则升级/回滚不修改事实或旧候选：同一 conversation 在不�
 
 ## 6. MySQL 管理契约
 
-Flow 管理面最终只拥有四张域表；reclass/probe/export 复用平台 operation_jobs，地址规则复用 address_prefixes/address_sets，审计复用 audit_logs。四表当前尚未进入 migration，不能把本文当作已部署 schema；实施时只在新的顺序 migration 中建表，并同步 fresh-install、repository、API、迁移和回滚测试。
+Flow 管理面复用平台 `collector_agents`、dimension publication、`operation_jobs`、地址规则和 `audit_logs`，只为无法由这些通用对象表达的域状态建表。下表以当前已部署 migration 为准；不存在的旧草案 `flow_exporters/flow_settings` 不再作为实现目标，exporter/worker 身份由 collector registry 承载，分类编辑态与不可变版本对由 migration 059 承载。
 
 | 表 | 必需字段 | 唯一身份与索引 | 生命周期 |
 |---|---|---|---|
-| flow_exporters | tenant/collector/target/device、source IP、protocol、observation domain、counter/sampling/reconcile policy、generation/observed generation、row version | 活跃记录按 tenant + protocol + source_ip + domain 唯一；按 collector/target+status 查询 | pending -> active <-> suspended -> retired -> deleted；软删后异步清理 |
-| flow_settings | home country/province/city、home ISP/ASN、港澳台口径、internal/transit policy、active publication、classification version、row version | tenant 主键 | publication 验证通过后原子切换；历史版本保留到无事实引用 |
+| flow_classification_profiles | tenant、home province/city、home ISP/ASN、港澳台口径、internal/transit policy、definition digest、row version | tenant 主键 | 单行 CAS 编辑态；数组规范排序/去重，发布时由统一 compiler 再校验 |
+| flow_enrichment_publications | classification version/effective time/profile version、WADS snapshot/version/effective/ref/checksum、classification ref/checksum、Ed25519 key/signature | tenant+classification version 与 tenant+effective time 唯一 | metadata/version pair 不可变；签名 key 轮换时允许重新 attestation，不改对象与版本 |
+| flow_enrichment_publication_acks | publication、worker、boot/software、download/install milestone、最后 attempt/error、row version | tenant+publication+worker 主键；按 worker/state 查询 | downloaded -> installed；后续失败保留既有成功 milestone，不把失败尝试伪装成卸载 |
 | flow_vpn_rules | kind、versioned selectors/behavior/intelligence/probe policy、weight、status、row version | 活跃名称按 tenant 唯一；按 tenant+status 查询 | draft -> active <-> suspended -> retired -> deleted |
 | flow_vpn_findings | window/conversation、双向 bytes、协议/端口、score/level/verdict/disposition、evidence/rule version、probe result、snapshot/geo version、expiry | tenant + window + conversation + rule_set_version 唯一；按 level/probe status 查询 | 机器 verdict 与人工 disposition 独立；TTL 后可验证销毁 |
 

@@ -42,6 +42,37 @@ func TestDecodeAndCompileClassificationBundleVerifiesWireContract(t *testing.T) 
 	}
 }
 
+func TestEncodeClassificationBundleCanonicalizesSets(t *testing.T) {
+	definition := testClassificationDefinition(7, testMinute(12, 0), "snapshot-7")
+	definition.HomeISPIDs = []uint16{9, 3, 4}
+	definition.HomeASNs = []uint32{4837, 4134}
+	data, checksum, err := EncodeClassificationBundle(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.HomeISPIDs = []uint16{4, 9, 3}
+	definition.HomeASNs = []uint32{4134, 4837}
+	reordered, reorderedChecksum, err := EncodeClassificationBundle(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(reordered) || checksum != reorderedChecksum {
+		t.Fatalf("classification object changed with input order:\n%s\n%s", data, reordered)
+	}
+	if _, err := DecodeAndCompileClassificationBundle(data, checksum, ClassificationCompileLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	definition.HomeISPIDs = nil
+	definition.HomeASNs = nil
+	empty, _, err := EncodeClassificationBundle(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(empty), `"home_isp_ids":[]`) || !strings.Contains(string(empty), `"home_asns":[]`) {
+		t.Fatalf("empty classification sets are not JSON arrays: %s", empty)
+	}
+}
+
 func TestClassificationCatalogSelectsImmutableEventTimeProfiles(t *testing.T) {
 	definition := testClassificationDefinition(1, testMinute(12, 0), "snapshot-1")
 	first, err := CompileClassification(definition)

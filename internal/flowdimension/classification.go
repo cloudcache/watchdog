@@ -81,6 +81,38 @@ type ClassificationMetadata struct {
 	Checksum            string
 }
 
+// EncodeClassificationBundle validates and canonicalizes the control-plane
+// definition before producing the immutable worker object.
+func EncodeClassificationBundle(definition ClassificationDefinition) ([]byte, string, error) {
+	if _, err := CompileClassification(definition); err != nil {
+		return nil, "", err
+	}
+	ispIDs := append([]uint16(nil), definition.HomeISPIDs...)
+	if ispIDs == nil {
+		ispIDs = []uint16{}
+	}
+	sort.Slice(ispIDs, func(left, right int) bool { return ispIDs[left] < ispIDs[right] })
+	asns := append([]uint32(nil), definition.HomeASNs...)
+	if asns == nil {
+		asns = []uint32{}
+	}
+	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
+	bundle := ClassificationBundle{
+		SchemaVersion: ClassificationSchemaVersion, TenantID: definition.TenantID,
+		Version: definition.Version, EffectiveFrom: definition.EffectiveFrom.UTC(),
+		DimensionSnapshotID: definition.DimensionSnapshotID,
+		HomeProvince:        definition.HomeProvince, HomeCity: definition.HomeCity,
+		HomeISPIDs: ispIDs, HomeASNs: asns, OverseasIncludesHMT: definition.OverseasIncludesHMT,
+		InternalPolicy: definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		return nil, "", err
+	}
+	digest := sha256.Sum256(data)
+	return data, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
 // ClassificationSnapshot is immutable and is selected using the flow record's
 // event time. Its dimension reference makes an incomplete control-plane
 // publication fail closed instead of mixing independently current versions.

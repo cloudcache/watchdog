@@ -1,13 +1,32 @@
 package watchdog
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowdimension"
+	"github.com/cloudcache/watchdog/internal/flowplan"
+	"github.com/cloudcache/watchdog/internal/flowworker"
 )
+
+type recordingDimensionObjectStore struct {
+	DiskDimensionObjectStore
+	saved []DimensionObject
+}
+
+func (s *recordingDimensionObjectStore) SaveDimensionObject(ctx context.Context, tenantID, snapshotID ID, data []byte) (DimensionObject, error) {
+	object, err := s.DiskDimensionObjectStore.SaveDimensionObject(ctx, tenantID, snapshotID, data)
+	if err == nil {
+		s.saved = append(s.saved, object)
+	}
+	return object, err
+}
 
 func TestFlowEnrichmentPublicationMigrationLifecycle(t *testing.T) {
 	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
@@ -151,5 +170,157 @@ func TestFlowEnrichmentPublicationMigrationLifecycle(t *testing.T) {
 		if count != 0 {
 			t.Fatalf("%s retained %d rows after tenant delete", table, count)
 		}
+	}
+}
+
+func TestMySQLFlowEnrichmentPublisherBuildsSignedImmutablePair(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_enrichment_repo_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		tenantID   = ID("tenant_enrichment_repo")
+		actorID    = ID("actor_enrichment_repo")
+		snapshotID = ID("snapshot_enrich_repo")
+	)
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants (id, name, status) VALUES (?, 'Flow Enrichment Repo', 'active')`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
+		VALUES (?, ?, 'enrichment-repo@test.invalid', 'Flow Enrichment', 'active', 'test', 'enrichment-repo')
+	`, actorID, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMySQLStore(db)
+	signer := newCollectorPlanSignerForTest(t, store, "enrichment-repo-key")
+	base := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	if _, err := store.ActivateCollectorPlanSigningKey(ctx, signer.KeyID(), signer.PublicKey(), base.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	payloadSigner, ok := signer.(ControlPlanePayloadSigner)
+	if !ok {
+		t.Fatal("test signer does not implement ControlPlanePayloadSigner")
+	}
+	objects := &recordingDimensionObjectStore{DiskDimensionObjectStore: DiskDimensionObjectStore{Dir: t.TempDir(), MaxBytes: 1 << 20}}
+	dimensionObject, err := objects.SaveDimensionObject(ctx, tenantID, snapshotID, []byte("WADS-test-address-snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decidedAt := base.Add(-30 * time.Minute)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO dimension_snapshots (
+			id, tenant_id, module_key, dimension_key, version, effective_from,
+			object_ref, object_format, object_format_version, builder_version, build_job_id,
+			checksum, draft_digest, source_manifest_version, source_manifest,
+			bundle_schema_version, entry_count, status, approval_state,
+			decided_by, decided_at, signature_algorithm, signing_key_id, signature, signed_at, created_by
+		) VALUES (?, ?, 'flow', 'address', 7, ?, ?, 'wads', 1, 'watchdog-test',
+			'build_enrich_repo', ?, ?, 0, JSON_ARRAY(), 1, 1, 'active', 'approved',
+			?, ?, 'ed25519', 'address-approval-key', ?, ?, ?)
+	`, snapshotID, tenantID, base, dimensionObject.Ref, dimensionObject.Checksum,
+		"sha256:"+strings.Repeat("d", 64), actorID, decidedAt, bytes.Repeat([]byte{1}, 64), decidedAt, actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO dimension_snapshot_activations (
+			id, tenant_id, module_key, dimension_key, snapshot_id, effective_from, reason, created_by
+		) VALUES ('activate_enrich_repo', ?, 'flow', 'address', ?, ?, 'publish', ?)
+	`, tenantID, snapshotID, base, actorID); err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := NewMySQLFlowEnrichmentPublisher(store, objects, payloadSigner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher.now = func() time.Time { return base.Add(30 * time.Minute) }
+	profile, err := publisher.PutClassificationProfile(ctx, tenantID, actorID, 0, FlowClassificationProfileDraft{
+		HomeProvince: "110000", HomeCity: "110100",
+		HomeISPIDs: []uint16{9, 3, 9}, HomeASNs: []uint32{4837, 4134, 4837},
+		OverseasIncludesHMT: true, InternalPolicy: flowdimension.RecordPolicyCount,
+		TransitPolicy: flowdimension.RecordPolicyDrop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.RowVersion != 1 || len(profile.Draft.HomeISPIDs) != 2 || profile.Draft.HomeISPIDs[0] != 3 ||
+		len(profile.Draft.HomeASNs) != 2 || profile.Draft.HomeASNs[0] != 4134 || len(profile.DefinitionDigest) != 64 {
+		t.Fatalf("canonical profile = %+v", profile)
+	}
+	if _, err := publisher.PutClassificationProfile(ctx, tenantID, actorID, 9, profile.Draft); !errors.Is(err, ErrFlowEnrichmentConflict) {
+		t.Fatalf("stale profile CAS error = %v", err)
+	}
+
+	effectiveFrom := base.Add(time.Hour)
+	publication, err := publisher.Publish(ctx, tenantID, actorID, FlowEnrichmentPublishRequest{EffectiveFrom: effectiveFrom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publication.PairSchemaVersion != 1 || publication.ClassificationVersion != 1 || publication.DimensionSnapshotID != snapshotID ||
+		publication.DimensionChecksum != dimensionObject.Checksum || publication.ProfileRowVersion != profile.RowVersion || len(publication.Signature) != 64 {
+		t.Fatalf("publication = %+v", publication)
+	}
+	classificationPath, err := objects.ResolveDimensionObject(publication.ClassificationObjectRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classificationData, err := os.ReadFile(classificationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := flowdimension.DecodeAndCompileClassificationBundle(classificationData, publication.ClassificationChecksum, flowdimension.ClassificationCompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata := compiled.Metadata(); metadata.Version != 1 || metadata.DimensionSnapshotID != string(snapshotID) || !metadata.EffectiveFrom.Equal(effectiveFrom) {
+		t.Fatalf("classification metadata = %+v", metadata)
+	}
+	trustPublication, err := store.GetCollectorPlanTrustBundle(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := &flowplan.TrustStore{}
+	if err := trust.Install(trustPublication.BundleJSON); err != nil {
+		t.Fatal(err)
+	}
+	envelopeData, err := flowworker.MarshalSignedEnrichmentVersionPublication(publication.SignedEnvelope())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flowworker.VerifySignedEnrichmentVersionPublication(envelopeData, trust, base.Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.Publish(ctx, tenantID, actorID, FlowEnrichmentPublishRequest{EffectiveFrom: effectiveFrom}); !errors.Is(err, ErrFlowEnrichmentConflict) {
+		t.Fatalf("duplicate effective-time error = %v", err)
+	}
+	if _, err := store.RevokeCollectorPlanSigningKey(ctx, signer.KeyID(), "test failed publication cleanup", base.Add(40*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.Publish(ctx, tenantID, actorID, FlowEnrichmentPublishRequest{EffectiveFrom: effectiveFrom.Add(time.Minute)}); !errors.Is(err, ErrCollectorPlanSigningKeyUnavailable) {
+		t.Fatalf("revoked signer publication error = %v", err)
+	}
+	if len(objects.saved) != 3 {
+		t.Fatalf("saved objects = %d, want dimension + committed classification + failed classification", len(objects.saved))
+	}
+	if _, err := objects.ResolveDimensionObject(objects.saved[2].Ref); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed publication object was not cleaned up: %v", err)
 	}
 }
