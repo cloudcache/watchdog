@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
@@ -51,6 +51,7 @@ export default memo(function AddressPrefixes() {
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState(emptyForm)
+	const [selected, setSelected] = useState<{ id: string; rowVersion: number }[]>([])
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
@@ -208,6 +209,30 @@ export default memo(function AddressPrefixes() {
 	)
 	const editable = useMemo(() => ({ fields: ["asn", "source"], onEdit: editCell }), [editCell])
 
+	const removeSelected = useCallback(async () => {
+		if (selected.length === 0 || !confirm(t`Delete ${selected.length} selected prefixes?`)) return
+		try {
+			for (const { id, rowVersion } of selected) {
+				await pb.send(`/api/v1/address-prefixes/${id}`, {
+					method: "DELETE",
+					headers: { "If-Match": `"${rowVersion}"` },
+				})
+			}
+			setSelected([])
+			await fetchPage()
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to delete`)
+			await fetchPage()
+		}
+	}, [selected, fetchPage, t])
+	const selectable = useMemo(
+		() => ({
+			onSelectionChange: (records: Record<string, unknown>[]) =>
+				setSelected(records.map((record) => ({ id: String(record.id), rowVersion: Number(record.rowVersion) }))),
+		}),
+		[]
+	)
+
 	const records = useMemo(
 		() =>
 			prefixes.map((prefix) => ({
@@ -303,6 +328,12 @@ export default memo(function AddressPrefixes() {
 					</h1>
 				</div>
 				<div className="flex gap-2">
+					{selected.length > 0 ? (
+						<Button variant="destructive" size="sm" onClick={removeSelected}>
+							<Trash2Icon className="me-2 h-4 w-4" />
+							<Trans>Delete selected</Trans> ({selected.length})
+						</Button>
+					) : null}
 					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}>
 						<RefreshCwIcon className="me-2 h-4 w-4" />
 						<Trans>Refresh</Trans>
@@ -440,6 +471,7 @@ export default memo(function AddressPrefixes() {
 					serverFiltering={serverFiltering}
 					serverSorting={serverSorting}
 					editable={editable}
+					selectable={selectable}
 					onCellClick={(record, field) => {
 						if (field === "edit") edit(record)
 						if (field === "remove") remove(record)

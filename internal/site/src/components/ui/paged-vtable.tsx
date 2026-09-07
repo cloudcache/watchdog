@@ -7,9 +7,11 @@ import {
 	createListTable,
 	disposeTable,
 	getRowRecord,
+	SELECTION_FIELD,
 	type ColumnDefine,
 	type EditableOptions,
 	type ListTable,
+	type SelectableOptions,
 	type ServerFiltering,
 	type ServerSorting,
 } from "@/lib/vtable"
@@ -33,6 +35,7 @@ export function PagedVTable({
 	serverFiltering,
 	serverSorting,
 	editable,
+	selectable,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -59,6 +62,7 @@ export function PagedVTable({
 	serverFiltering?: ServerFiltering
 	serverSorting?: ServerSorting
 	editable?: EditableOptions
+	selectable?: SelectableOptions
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -83,6 +87,24 @@ export function PagedVTable({
 		)
 	}, [effectiveSearch, records, serverMode])
 
+	const effectiveColumns = useMemo(
+		() =>
+			selectable
+				? [
+						{
+							field: SELECTION_FIELD,
+							title: "",
+							width: 44,
+							cellType: "checkbox",
+							headerType: "checkbox",
+							filter: false,
+						},
+						...columns,
+					]
+				: columns,
+		[columns, selectable]
+	)
+
 	useEffect(() => {
 		if (!serverMode) setPage(0)
 		setFilteredCount(searchedRecords.length)
@@ -96,7 +118,7 @@ export function PagedVTable({
 		}
 		const table = createListTable(tableRef.current, {
 			records: searchedRecords,
-			columns,
+			columns: effectiveColumns,
 			rowHeight,
 			headerRowHeight: 38,
 			widthMode: "adaptive",
@@ -112,13 +134,14 @@ export function PagedVTable({
 			serverFiltering,
 			serverSorting,
 			editable,
+			selectable,
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
 			table.on("click_cell", (args: { col: number; row: number }) => {
 				const record = getRowRecord(table, args) as Record<string, unknown> | null
 				if (!record) return
-				onCellClick?.(record, String(columns[args.col]?.field ?? ""))
+				onCellClick?.(record, String(effectiveColumns[args.col]?.field ?? ""))
 				onRowClick?.(record)
 			})
 		}
@@ -129,7 +152,7 @@ export function PagedVTable({
 			disposeTable(table)
 		}
 	}, [
-		columns,
+		effectiveColumns,
 		effectivePageSize,
 		loading,
 		onCellClick,
@@ -140,6 +163,7 @@ export function PagedVTable({
 		serverSorting,
 		serverMode,
 		editable,
+		selectable,
 	])
 
 	useEffect(() => {

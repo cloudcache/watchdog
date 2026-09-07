@@ -18,6 +18,14 @@ export type EditableOptions = {
 	fields: string[]
 	onEdit: (record: Record<string, unknown>, field: string, value: string) => void
 }
+
+// Row multi-select via a checkbox column. The caller prepends the checkbox
+// column (field "__selected"); this binds the toggle event and reports the
+// currently checked records so a bulk action (e.g. delete) can act on them.
+export const SELECTION_FIELD = "__selected"
+export type SelectableOptions = {
+	onSelectionChange: (records: Record<string, unknown>[]) => void
+}
 export type ColumnDefine = any
 
 type FilterColumn = {
@@ -87,6 +95,7 @@ export interface CreateTableOptions {
 	serverFiltering?: ServerFiltering
 	serverSorting?: ServerSorting
 	editable?: EditableOptions
+	selectable?: SelectableOptions
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -204,6 +213,15 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		}
 		;(table as any).on?.("change_cell_value", handleCellEdit)
 		cleanups.push(() => (table as any).off?.("change_cell_value", handleCellEdit))
+	}
+	if (options.selectable) {
+		const selectable = options.selectable
+		const handleCheckbox = () => {
+			const checked = ((table as any).getCheckboxState?.(SELECTION_FIELD) ?? []) as Record<string, unknown>[]
+			selectable.onSelectionChange(checked)
+		}
+		;(table as any).on?.("checkbox_state_change", handleCheckbox)
+		cleanups.push(() => (table as any).off?.("checkbox_state_change", handleCheckbox))
 	}
 	if (filterColumns.some(Boolean)) {
 		cleanups.push(
