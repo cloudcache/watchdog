@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：PLAT-04A2f → FLOW-06C4-P-S — scoped publication 内核与 VPN publisher。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail、FLOW-06C3 VPN findings 导出、C4-D/R1/R2 以及 C4-P 的详细设计/immutable bundle 已分别闭环；下一轮先把地址命名的生命周期仓储提取为 scope 参数内核并保持地址 wire 兼容，再实现 VPN preview/publish adapter。原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
+**活动切片：PLAT-04A2f → FLOW-03C AddressSnap。** 先关闭 scoped publication 内核且保持地址 wire 兼容，再交付 AddressSnap 格式/codec；随后才接异步 builder、worker loader 和 VPN preview/publish adapter。当前 ingest 分类已经是纯内存，不做“移除分类/改 CH dictGet”的重复改造；原始数据物理删除与 rollup 不和本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -267,7 +267,18 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **联合维度/桑基（有界 base）**：独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成 2–4 维有序 tuple、稳定 tuple TopN/Other、折线/堆叠/热力/表格和桑基；同步范围限 24h，固定 typed expression registry 和 CH 扫描/时间/内存硬限，拒绝歧义 `dimension_values`、重复维度及重叠 address-set；runner 多 block 全有或全无。没有新增表，因此本项不伪造空 migration。
 - [x] **联合维度集成（真实 CH）**：隔离库写入两组 `geo.city × ASN` 事实，以 `TopN=1 + Other` 验证 `geo-city-b/4837=550`、other=300；真实 HTTP gateway 同时覆盖空结果 array wire type、自动步长、`source=flow_records` 和 coverage warning。
 - [ ] **异步联合索引**：冻结 publication/config/index generation 和 operation-job payload；常用组合及 address-set path 走异步索引，使 >24h 查询可用。索引缺失/过期只能显式拒绝或标 degraded，不能回退成伪联合单维结果。
-- [ ] **地址字典生产 index-builder**：消费平台同一已签名 address snapshot 的 source manifest 与 schema v2 operator definition object，校验 source checksum/row count 和 tenant `flow_isp_id`；追加 CH forward migration（不得修改 009）将过渡的单一 `isp_id UInt32` 拆为 supplier ISP 与 `customer_isp_id UInt16`。人工 prefix 按 operator ID 精确绑定，base range 只按非零 ASN 命中唯一 enabled tenant operator；缺失/未配置为 0，不按 name/code 猜测，交叠组合走 address set。生成同一 `dict_version` 的运营商表与 IPv4/IPv6 IP_TRIE source，复用 `operation_jobs` 的 lease/checkpoint/retry/cancel；构建失败保持当前 generation，ACK 固定 snapshot/checksum/dict generation，旧 generation 保留到事实/账单解析窗口结束。平台 C4b1 只提供确定输入，不替代本项。
+- [ ] **FLOW-03C AddressSnap 二进制发布链**：替代“CH IP_TRIE index-builder”。平台 MySQL 只保存编辑态/血缘；异步 job 将 pinned source manifest + schema v2 definition 编译为单一签名不可变对象；worker 无 DB 加载到内存并 atomic swap，ingest 继续写 raw + 派生维度/version。
+  - [x] **变更设计**：冻结正式方向、写入/默认查询/as-of 修正语义、多租户内存边界及从 CH 009 实验迁移路径；详见 `flow-address-query-plan.md`。
+  - [x] **设计**：冻结 WADS v1 字节协议、顺序 section/value dictionary、v4/v6 ranges、supplier/customer ISP、地址组有序 offset list、zstd/CRC/SHA/signature、资源硬限和稳定错误边界；详细契约见 `flow-address-query-plan.md`。
+  - [x] **编码（codec）**：`flowdimension` 已实现确定性 WADS encoder、严格 bounded decoder、metadata/source/Geo/operator/set/value/range 全引用校验、CRC32C 和未知版本/flag 拒绝；只提供 codec/helper，尚未接生产 writer。
+  - [x] **单元测试（codec）**：覆盖 golden SHA/round-trip/determinism、截断/尾随/CRC/版本/flag/压缩与解压内存预算、v4/v6 边界、Geo parent、operator ASN、set/value 引用、range 重叠和非规范字典。
+  - [ ] **编码（builder）**：operation job 分页读取 pinned import，合并 base + manual explicit fields，写临时 object，round-trip 后提交 pending snapshot；retry/takeover 生成同 checksum。
+  - [ ] **单元/集成（builder）**：真实 MMDB/IPDB + MySQL，source checksum/count、优先级、operator 绑定、crash/checkpoint/cancel、失败不切 active。
+  - [ ] **编码（loader）**：认证下载、LKG 原子文件、外部 SHA/签名与内部 CRC 双校验、离线构建现有 BART/二分 catalog、event-time atomic install/ACK；删除 worker MySQL 装载依赖。
+  - [ ] **集成（loader）**：无 MySQL/CH cold start、坏对象/部分下载/ACK 失败/重启/回滚、Kafka partition 缺版本暂停且不误用 current。
+  - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
+  - [ ] **性能**：固定真实 corpus 记录 object size/build RSS/lookup p95-p99/swap pause/多 tenant；只有 BART 不达标且共享基库容量成立才引入 DIR-24-8。
+  - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。
 - [x] **FLOW-05F-S 保存/共享过滤器**：作为冷管理对象只存唯一 MySQL 管理库；查询/导出按值复制 canonical AST，不持有可变 filter ID；target/device/exporter 继续走每次查询的授权 selector，禁止保存进 AST。不得把保存状态放入 Flow worker/CH 或再造管理库。
@@ -320,8 +331,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [x] **单元/集成**：覆盖双权限创建、客户端 tenant 注入拒绝、冻结筛选、limit+1 拒绝、CSV 注入防护、Parquet magic、当前权限复核及现有 operation-job handler 端到端完成；真实 MySQL 用例已加入 gated suite，本机当前无 MySQL 实例时明确 skip。
     - [x] **变更设计/测试**：`dataset_key` 为扩展字段，既有 046 表/operation job 足够，故不占 migration；旧 contract-0 VM 任务通过显式 fallback 保持兼容，VPN 的 `step=0` 不再被通用归一化改成 5 分钟。
     - [x] **回归/已提交门禁**：Watchdog/全库/race/vet/build、前端 test/定向 Biome/build 和 diff check 通过后由本提交原子交付，不夹带并行 maintenance/delete-preview 文件。
-  - [ ] **FLOW-06C4 publication 管理**：按 C4-D/R1/R2/P/W/A 拆分交付，避免把 VPN 草稿、修正规则、不可变发布和 Flow index-builder 再揉成一个长期半成品；复用平台 immutable publication，不复制地址库 CRUD。
-    - [x] **C4-D 现状对账/变更设计**：平台 PLAT-04A2a–A2d 已真实提供 trusted-key、RBAC、If-Match、签名审批、event-time activation/rollback、consumer ACK/status 和安全 object GC；旧 FLOW-07A 文案声称这些能力缺失已判定过期。未完成面明确拆为 VPN rule-set 编译/发布、Flow worker 下载安装和 supplier/customer adjustment publication；地址 snapshot 的 Flow index generation 属 C4b2/地址 index-builder，不在规则 CRUD 中改 CH。
+  - [ ] **FLOW-06C4 publication 管理**：按 C4-D/R1/R2/P/W/A 拆分交付，避免把 VPN 草稿、修正规则、不可变发布和 AddressSnap builder 再揉成一个长期半成品；复用平台 immutable publication，不复制地址库 CRUD。
+    - [x] **C4-D 现状对账/变更设计**：平台 PLAT-04A2a–A2d 已真实提供 trusted-key、RBAC、If-Match、签名审批、event-time activation/rollback、consumer ACK/status 和安全 object GC；旧 FLOW-07A 文案声称这些能力缺失已判定过期。未完成面明确拆为 VPN rule-set 编译/发布、Flow worker 下载安装和 supplier/customer adjustment publication；地址发布链属于 FLOW-03C AddressSnap，不在规则 CRUD 中改 CH。
     - [x] **C4-R1 VPN rule typed draft CRUD**：复用 migration 055 的 `flow_vpn_rules`，新增 `GET/POST /flow/vpn/rules` 与 `GET/PATCH/DELETE /flow/vpn/rules/{id}`；list 为 tenant-scoped 服务端搜索/分页/typed kind/effect/status filter/稳定排序，mutation 使用专用 `configure_adjustment`、严格 JSON、quoted If-Match、软删和逐动作审计。match 直接复用 `flowvpn.NormalizeRule` 的固定 schema v1 canonical validator，API 不暴露尚无数据面语义的 behavior/intelligence/probe JSON 保留列，避免保存“看似可配但永不生效”的字段。复用既有表，故无 migration 058。
     - [x] **C4-R1 单元/集成/变更测试**：覆盖 snake_case wire schema、去重排序、空 match、terminal weight、未知字段/tenant 注入、权限、ETag/audit、tenant 隔离、服务端筛选、name conflict、CAS 和软删；真实 MySQL 用例沿用 `WATCHDOG_TEST_MYSQL_DSN` 门禁，无实例时明确 skip。旧 scorer 构造方式与规则求值语义不变。
     - [x] **C4-R1 已提交门禁**：代码、测试、设计和任务清单由独立提交 `dab020b3` 交付，不夹带用户已有 maintenance/delete-preview 工作区。

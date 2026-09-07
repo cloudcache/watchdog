@@ -275,7 +275,7 @@ flow-geo-v1/
 
 这只完成管理身份（PLAT-04C4a），不等于发布绑定完成。dimension bundle schema v2（PLAT-04C4b1）把 tenant operator 的管理 ID、稳定 Flow ID、显示字段、ASN 集合和启用状态纳入同一个 immutable/checksummed/signed 小型 definition object；发布前做规范排序并拒绝 0、重复 ID、重复 Flow ID、ASN 0/重复/乱序，以及同一 ASN 同时归属多个 enabled operator。ISP 是单值可加维度；需要交叠、层级或组合展示时使用 address set，不能让一个 ASN 随查询随机落入多个 ISP。旧 schema v1 对象继续可读，但不能夹带 v2 operators。该对象协议升级不增加管理表字段，所以不制造空 migration；新发布的 `entry_count` 是 prefix + set + operator 定义总数，preview 另返回 `operator_count`。
 
-供应商 Geo bundle 与 tenant operator 当前都使用 UInt16，但尚无统一命名空间；即使 schema v2 已携带 tenant 定义，也不能直接覆盖供应商数字 ID，否则会把同一个数字的不同运营商合并。C4b2 的字典必须分开保存 supplier ISP 与 tenant customer ISP：人工 prefix 的 `operator_id` 直接解析为稳定 Flow ID；base range 只按非零 ASN 精确命中唯一 enabled tenant operator，缺 ASN/未配置时 customer ISP 为 0，禁止按可变 name/code 模糊猜测。现行 CH migration 009 的单一 `isp_id UInt32` 只是过渡结构，历史 migration 不回改，由下一条 CH forward migration 拆成 `supplier_isp_id/name` 与 `customer_isp_id UInt16`。Flow index-builder 消费同一 snapshot 已签名的 source manifest 与 schema v2 definition object，在同一不可变 index generation 内生成运营商表和 range，验证 `1..65535`、唯一性和所有引用完整，并让 activation/rollback/ACK 固定到同一 snapshot/checksum；旧 generation 必须在其事实保留期内继续解析。C4b2 及 index-builder ACK 完成前，便捷查询仍按 `isp_operators.asns` 生成 ASN 谓词，禁止提前改用 `remote_isp_id`。
+供应商 Geo bundle 与 tenant operator 当前都使用 UInt16，但尚无统一命名空间；即使 schema v2 已携带 tenant 定义，也不能直接覆盖供应商数字 ID，否则会把同一个数字的不同运营商合并。C4b2 的 AddressSnap 必须分开保存 supplier ISP 与 tenant customer ISP：人工 prefix 的 `operator_id` 直接解析为稳定 Flow ID；base range 只按非零 ASN 精确命中唯一 enabled tenant operator，缺 ASN/未配置时 customer ISP 为 0，禁止按可变 name/code 模糊猜测。平台的异步 builder 消费 pinned source manifest + schema v2 definition object，合成为同一签名、不可变二进制 generation，并验证 `1..65535`、唯一性和所有引用完整；activation/rollback/consumer ACK 固定同一 snapshot/checksum。worker 只拉取该对象并离线构建内存索引，不连接 MySQL/CH。现行 CH migration 009 的单一 `isp_id UInt32` 和 IP_TRIE 仅为未接入生产的历史实验，不回改，也不再以前向 migration 扩展。C4b2 ACK 完成前，便捷查询仍按 `isp_operators.asns` 生成 ASN 谓词，禁止提前改用 `remote_isp_id`。
 
 v1 的 range 行只有扁平 country/admin/city，不能完整表达“洲 → 区域 → 国家 → 省 → 市”。`flow-geo-v2` 保持四个文件和 manifest 校验机制，只给 range CSV 增加必需的 `geo_leaf_code`。每个展平后的不重叠 IP 区间只引用一个最具体 Geo 节点；`geo_dict.json` 保存邻接树，允许的产品层级固定为 `continent/region/country/province/city`。每个 code 在一个 bundle 内全局唯一、至多一个 parent；loader 拒绝缺父、环、同一路径重复 kind、逆序层级、禁用叶/祖先和超过五层的路径。节点名称只用于显示，事实和关系都引用稳定 code。
 
@@ -298,6 +298,10 @@ loader 流程：在临时目录验证 manifest/schema/size/checksum/row count �
 MySQL 管理态保存 CIDR、labels、组 ID/名称和 selector；immutable publication 将名称之外的稳定 ID/规则编译给 worker。名称可改但 ID 不变，历史显示按记录引用的 dimension/Geo version 解析，不能用当前名称篡改历史语义。
 
 base fact 一条 flow 只写一行：保存唯一 `local_prefix_id/remote_prefix_id`、去重后的 `*_address_set_ids`，以及 `remote_geo_continent_id/region_id/country_id/province_id/city_id`。不为五级 Geo 复制五条 base fact。异步 rollup 才将同一计数展开为五种独立 `dimension_kind`；每次查询必须选定一个 kind。地址段流量归类必定异步：collector 只送 raw datagram；worker 使用已加载内存快照做 LPM/Geo range lookup；CH rollup 从 base 的稳定 ID 汇总。禁止 UDP 热路径访问 MySQL、文件或 HTTP。
+
+这里的“异步”指分类位于 Kafka 后的 worker，而不是推迟到查询：ingest 分类当前已经是 BART LPM + Geo 二分的纯内存实现，每条 flow 零 DB 查询。需要替换的是索引装载来源。正式发布物为 `AddressSnap`：平台 operation job 将钉住的 Geo/ASN import generation 与人工 prefix/set/operator 定义合成一个 dictionary-coded、v4/v6 有序区间的 zstd 二进制对象；object SHA 被审批签名覆盖，对象内部另有固定 header、section 边界和 CRC32C。worker 有界下载、验证、离线建 catalog 后一次 atomic swap，失败保留 last-known-good 并 ACK failed。第一版继续使用现有 BART/二分；约 64 MiB 一级表的 DIR-24-8 只有在固定硬件基准证明必要且多租户共享基库容量成立时才可引入，禁止直接按租户复制。
+
+默认查询使用 fact 已存的派生稳定 ID 与其 snapshot/classification version，原始 `src_ip/dst_ip` 始终保留。按新地址定义重看历史通过 operation job 加载明确 AddressSnap 版本并从 raw fact 写新的派生 generation；以 Kafka 自然坐标、record count、raw/estimated byte/packet counter 守恒后才切换。查询、rollup 和修正均不使用 CH `dictGet`，也不以当前名称覆盖历史显示。完整格式、发布、迁移和验收见 [Flow 地址发布与查询计划](flow-address-query-plan.md)。
 
 真实 CH 五级守恒门禁使用独立数据库顺序执行 001..005，同一闭合 1m 桶只写三条 base fact，分别落到两个国家、两个省和三个城市；一次 rollup 后分别查询 `geo.continent/region/country/province/city`。每一级都必须保持 600 raw bytes、3 received records，同一级稳定 ID 唯一，父级值等于其叶节点之和；这只证明“每条 fact 每级一次”，协议输入链路由下述 Kafka 四协议 corpus 门禁独立证明。
 

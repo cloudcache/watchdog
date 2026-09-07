@@ -6,11 +6,11 @@
 生效日期：2026-09-05
 关系：本文记录数据面决策；`flow-module-design.md` 和 `flow-module-tasklist.md` 已同步为同一架构，不再保留冲突方案。
 
-> **修订(2026-09)——分类模型**:分类从"ingest 时用 flowdimension 把六维烘进 `flow_records`"改为"`flow_records` 只存原始字段;分类改成一份**版本化的 ClickHouse `IP_TRIE` 字典**,写入不算分类,rollup 和查询都 `dictGet` 现导;定义改了 = 换字典版本 + 重跑受影响的聚合(重分类 = 重跑 rollup),不再单独建重新分类子系统。地址组本阶段由**管理员基于已就绪 geo 规划**(不开放用户自定义地址段)。详见 [flow-address-query-plan.md](flow-address-query-plan.md)。本文下述"地址库/六维在 Kafka 后烘进 CH base"的段落(§1 流水线图 dimensions、§4 维度与事实提交)按该方案修订;**传输 / Kafka / GoFlow2 解码 / RawFlow 契约决策不变**。
+> **修订(2026-09)——分类模型**：入库分类保持 Kafka 后的纯内存模型：worker 使用已安装的版本化 `AddressSnap`（BART LPM + Geo 有序区间）计算六维并把 raw endpoint、派生稳定 ID 和版本共同写入 `flow_records`；每条 flow 零 DB/HTTP 查询。平台以异步 operation job 把 pinned source manifest + 人工定义编译成签名、紧凑的不可变二进制对象，worker 拉取校验并原子切换，不再从 MySQL 批量构建，也不使用 ClickHouse `IP_TRIE/dictGet`。默认查询读 fact 已存维度；按新定义查看历史走有守恒门禁的异步 reclassification。详见 [flow-address-query-plan.md](flow-address-query-plan.md)。**传输 / Kafka / GoFlow2 解码 / RawFlow 契约不变**。
 
 > **修订(2026-09)——保留与降精度(downsample)模型**：原始/全精度是在线主查询面，时长由 tenant policy 决定，不固化 30 天或 1 年。整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 后才生成 1h archive；1m 查询继续读 raw，不再持续物化 1m。标准 1h 查询按已核验的连续 archive boundary 读取 `archive + raw` 互斥区间并在 union 后统一 TopN；联合维度在专用异步索引发布前仍读 raw。事实与 receipt 使用 Kafka 自然坐标，详情见 Storage V2 设计。
 >
-> **不变**:传输 / Kafka / GoFlow2 解码 / RawFlow 契约 / 分类字典(IP_TRIE `dictGet`)模型。
+> **不变**：传输 / Kafka / GoFlow2 解码 / RawFlow 契约 / Storage V2 自然坐标与 count/counter 对账模型。
 
 ## 1. 决策
 
