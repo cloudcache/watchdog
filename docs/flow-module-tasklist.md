@@ -185,7 +185,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-04C3 Storage V2 变更设计/编码**：migration 011 将 V1 block receipt/projection 保留在 legacy 表，正式表改为逐 Kafka message receipt 和自然坐标 audit projection；scanner 逐一枚举 `[next_offset, committed_next_offset)`，只做 identity/count/counter 守恒，不再读内容 checksum，也不再按 TTL 猜 eligibility。
 - [x] **FLOW-04C3 comparator/scanner 单元与 CH 集成**：覆盖完全空洞、receipt/fact 单边缺失、record index 不连续、count/counter mismatch、budget/cursor、invalid estimated 语义和 generation 去重；不完整扫描不发布伪零。
 - [ ] **FLOW-04C3 system-scope job/指标接线**：复用平台 global/system-scope `operation_jobs` 持久化 Kafka watermark、scanner checkpoint 与完整快照；必须从真实 broker 读取 committed-next-offset，不能用 CH 最大 offset 冒充。
-- [ ] **FLOW-04C3 Storage V2 已提交**：随本次 Storage V2 可复现提交关闭；旧 004/006/checksum 的已提交历史不等于新契约完成。
+- [x] **FLOW-04C3 Storage V2 已提交**：`a9fc7622 feat(flow): implement storage v2 lifecycle`；包含 migration 011、自然坐标/逐消息 receipt、count/counter scanner、生命周期策略与非破坏 downsample、混合查询和完整异步导出。system-scope Kafka 水位及删除门禁仍未关闭。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
 ### FLOW-05 Query/API/UI
@@ -268,7 +268,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **回归（便捷分析增量）**：前端 28 项 model/chart test、定向 Biome、Vite production build 和全库 `go test ./...` 通过；8090 最终制品验证默认便捷层、方向空结果、协议/TOP 选择和高级区展开，无前端异常。本地库无 Flow 点且 Geo/operator 字典为空，因此真实非空 CSV 下载、地域级联和运营商 ASN 选择仍留在上一集成门禁，未冒充完成。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
-- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`；统计结果 VTable 与方向单请求进入 `eb71d49c`；IP 明细稳定 server sort 与 v2 cursor 进入 `9b62adb8`，全列 typed filter/facet 与远程 popover loader 进入 `3c05bfad`；VPN schema 进入 `70af16a1`，findings API/UI 进入 `178e5eff`。异步完整查询导出等待本切片提交后补记 commit；异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成、规则 publication/关闭窗口 findings 和滚动升级门禁仍保持未完成。
+- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`；统计结果 VTable 与方向单请求进入 `eb71d49c`；IP 明细稳定 server sort 与 v2 cursor 进入 `9b62adb8`，全列 typed filter/facet 与远程 popover loader 进入 `3c05bfad`；VPN schema 进入 `70af16a1`，findings API/UI 进入 `178e5eff`；异步完整查询导出进入 `a9fc7622`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成、规则 publication/关闭窗口 findings 和滚动升级门禁仍保持未完成。
 
 ### FLOW-06 Correction/Reclass/Export
 

@@ -169,7 +169,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [ ] **编码/集成（破坏路径）**：接入 durable Kafka 日覆盖证据后实现显式 raw/archive delete handler；故障、取消或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [ ] **已提交门禁**：本次 Storage V2 必须有可复现 commit、测试证据和任务单回填；工作区堆积不算完成。
+- [x] **已提交门禁**：实现、迁移、测试和本变更计划已进入 `a9fc7622 feat(flow): implement storage v2 lifecycle`；DDL 不确定 ACK、维护窗口/回滚、组合故障、system-scope Kafka 水位和物理删除仍按各自未勾选门禁保持锁定。
 
 ## 9. 本次验证证据（2026-09-07）
 
@@ -178,6 +178,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 | 静态/全库 | `go test ./...`、`go vet ./...`、`git diff --check` | 通过 |
 | 并发 | `go test -race ./internal/flowch ./internal/flowquery ./internal/flowworker ./internal/watchdog` | 通过 |
 | 前端契约 | `npm --prefix internal/site test`（33 项）、production build | 通过；仅保留既有大 chunk 警告 |
+| 可复现交付 | `a9fc7622 feat(flow): implement storage v2 lifecycle` | 87 个 Storage V2 文件；不包含平台格式化噪声和本地数据库备份 |
 | MySQL | policy CRUD/publish、operation job/state/repair、archive boundary、`install/init.sql` parity | 真实 MySQL 通过 |
 | ClickHouse 迁移 | 001–010 存量→011、回填、multi-table rename、legacy 保留、24h 1h archive 守恒、hybrid/raw/overseas 查询 | ClickHouse 26.3.29.7 通过 |
 | Kafka 数据面 | Akvorado NetFlow v5/v9、IPFIX、sFlow corpus 经 Kafka 4.3.1→worker→Storage V2 CH | 通过 |
