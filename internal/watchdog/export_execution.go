@@ -215,7 +215,8 @@ func validateExportExecutionTask(task ExportTask) error {
 		snapshot.Aggregation != task.Aggregation {
 		return errors.New("export query snapshot does not match the task projection")
 	}
-	if task.DatasetKey == FlowTrafficDataset {
+	switch task.DatasetKey {
+	case FlowTrafficDataset:
 		if task.ValueLayer != QueryValueCustomer || task.TargetID != "" || task.PortID != "" ||
 			task.Step != time.Duration(snapshot.Query.StepSeconds)*time.Second {
 			return errors.New("Flow export task projection is invalid")
@@ -224,7 +225,23 @@ func validateExportExecutionTask(task ExportTask) error {
 		if err != nil || parameters.Table != nil {
 			return errors.New("Flow export query parameters are invalid")
 		}
-	} else {
+	case FlowVPNFindingsDataset:
+		if task.ValueLayer != QueryValueCustomer || task.TargetID != "" || task.PortID != "" || task.Step != 0 ||
+			snapshot.Query.StepSeconds != 0 || snapshot.Query.Cursor != "" {
+			return errors.New("VPN finding export task projection is invalid")
+		}
+		var parameters vpnFindingExportParameters
+		if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil {
+			return errors.New("VPN finding export query parameters are invalid")
+		}
+		if _, _, err := normalizeVPNFindingExportParameters(parameters); err != nil {
+			return errors.New("VPN finding export query parameters are invalid")
+		}
+		if snapshot.Query.Limit == 0 || snapshot.Query.Limit > maxVPNFindingExportRows ||
+			validateVPNFindingRange(snapshot.Query.From, snapshot.Query.To) != nil {
+			return errors.New("VPN finding export query range or limit is invalid")
+		}
+	default:
 		if snapshot.Query.StepSeconds == 0 {
 			return errors.New("export query snapshot step is required")
 		}
@@ -240,16 +257,23 @@ func validateExportExecutionTask(task ExportTask) error {
 	if len(versions.DatasetDescriptorHash) != 64 || versions.CompletenessStepSeconds != snapshot.Query.StepSeconds {
 		return errors.New("export completeness snapshot does not match its query")
 	}
-	if task.DatasetKey == FlowTrafficDataset {
+	switch task.DatasetKey {
+	case FlowTrafficDataset:
 		if versions.CompletenessMode != flowExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" {
 			return errors.New("Flow export completeness snapshot is invalid")
 		}
-	} else if (versions.CompletenessMode != "" && versions.CompletenessMode != "sample_series") || versions.CompletenessMissingRatio != "0.3" {
-		return errors.New("export sample completeness snapshot is invalid")
+	case FlowVPNFindingsDataset:
+		if versions.CompletenessMode != vpnFindingExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" || versions.QueryPolicyVersion != 0 {
+			return errors.New("VPN finding export version snapshot is invalid")
+		}
+	default:
+		if (versions.CompletenessMode != "" && versions.CompletenessMode != "sample_series") || versions.CompletenessMissingRatio != "0.3" {
+			return errors.New("export sample completeness snapshot is invalid")
+		}
 	}
 	var authorization exportAuthorizationSnapshot
 	if err := decodeStrictJSON(task.AuthorizationJSON, &authorization); err != nil || authorization.SchemaVersion != 1 ||
-		authorization.SubjectID != task.CreatedBy || authorization.RequiredAction != exportLayerAction(task.ValueLayer) {
+		authorization.SubjectID != task.CreatedBy || authorization.RequiredAction != exportRequiredAction(task) {
 		return errors.New("export authorization snapshot does not match the task")
 	}
 	wantResource := exportAccessRequest(AuthContext{TenantID: task.TenantID, UserID: task.CreatedBy}, task).Resource
@@ -404,7 +428,7 @@ func NewExportExecutionJobHandler(repo ExportRepository, worker ExportWorker, de
 		if err != nil {
 			return "", err
 		}
-		if !CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin) {
+		if !canExecuteExportTask(auth, task) {
 			return "", TerminalJobError(errors.New("export permission has been revoked"))
 		}
 		if err := verifyExportCorrectionSnapshot(ctx, deps.Network, task); err != nil {
@@ -527,6 +551,12 @@ func verifyExportCorrectionSnapshot(ctx context.Context, network NetworkReposito
 	if task.DatasetKey == FlowTrafficDataset {
 		if versions.CompletenessMode != flowExportCompletenessMode || versions.CorrectionSnapshotHash != "" {
 			return errors.New("Flow export version snapshot is invalid")
+		}
+		return nil
+	}
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		if versions.CompletenessMode != vpnFindingExportCompletenessMode || versions.CorrectionSnapshotHash != "" {
+			return errors.New("VPN finding export version snapshot is invalid")
 		}
 		return nil
 	}

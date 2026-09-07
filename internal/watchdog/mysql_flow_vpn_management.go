@@ -96,6 +96,37 @@ func (s *MySQLStore) ListVPNFindingsPage(ctx context.Context, tenantID ID, filte
 	return items, total, rows.Err()
 }
 
+func (s *MySQLStore) ListVPNFindingsForExport(ctx context.Context, tenantID ID, filter VPNFindingListFilter, limit uint32) ([]VPNFinding, error) {
+	if limit == 0 || limit > maxVPNFindingExportRows {
+		return nil, errors.New("VPN finding export limit must be 1..250000")
+	}
+	filter.Limit, filter.Offset = 100, 0
+	if err := validateVPNFindingListFilter(&filter); err != nil {
+		return nil, err
+	}
+	where, args, err := vpnFindingWhere(tenantID, filter.Search, filter.From, filter.To, filter.ColumnFilters, "")
+	if err != nil {
+		return nil, err
+	}
+	orderColumn := vpnFindingColumnExpressions[filter.SortBy]
+	queryArgs := append(append([]any(nil), args...), uint64(limit)+1)
+	rows, err := s.db.QueryContext(ctx, vpnFindingSelect()+" WHERE "+where+
+		" ORDER BY "+orderColumn+" "+filter.SortDirection+", f.id "+filter.SortDirection+" LIMIT ?", queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]VPNFinding, 0, min(int(limit)+1, 4096))
+	for rows.Next() {
+		item, err := scanVPNFinding(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *MySQLStore) ListVPNFindingFacets(ctx context.Context, tenantID ID, filter VPNFindingFacetFilter) ([]VPNFindingFacet, error) {
 	if err := validateVPNFindingFacetFilter(&filter); err != nil {
 		return nil, err

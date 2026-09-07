@@ -46,7 +46,7 @@ func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, column
 }
 
 func (w *CSVExportWriter) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
-	if task.DatasetKey != FlowTrafficDataset {
+	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowVPNFindingsDataset {
 		return ExportArtifact{}, false, nil
 	}
 	if task.Format != ExportFormatCSV {
@@ -55,13 +55,19 @@ func (w *CSVExportWriter) WriteExportRows(_ context.Context, task ExportTask, ro
 	if w.Files == nil {
 		w.Files = make(map[string][]byte)
 	}
-	data, err := RenderCSVExportRows(rows)
+	var data []byte
+	var err error
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		data, err = RenderVPNFindingCSV(rows.VPNFindings)
+	} else {
+		data, err = RenderCSVExportRows(rows)
+	}
 	if err != nil {
 		return ExportArtifact{}, true, err
 	}
 	fileRef := fmt.Sprintf("exports/%s.csv", task.ID)
 	w.Files[fileRef] = data
-	return exportArtifactFor(fileRef, "text/csv; charset=utf-8", uint64(len(rows.Rows)), data), true, nil
+	return exportArtifactFor(fileRef, "text/csv; charset=utf-8", exportRowsCount(task, rows), data), true, nil
 }
 
 func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
@@ -128,7 +134,7 @@ func (s DiskExportStore) WriteExport(_ context.Context, task ExportTask, columns
 }
 
 func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
-	if task.DatasetKey != FlowTrafficDataset {
+	if task.DatasetKey != FlowTrafficDataset && task.DatasetKey != FlowVPNFindingsDataset {
 		return ExportArtifact{}, false, nil
 	}
 	if s.Dir == "" {
@@ -139,10 +145,18 @@ func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, row
 	var err error
 	switch task.Format {
 	case ExportFormatCSV:
-		data, err = RenderCSVExportRows(rows)
+		if task.DatasetKey == FlowVPNFindingsDataset {
+			data, err = RenderVPNFindingCSV(rows.VPNFindings)
+		} else {
+			data, err = RenderCSVExportRows(rows)
+		}
 		contentType, extension = "text/csv; charset=utf-8", "csv"
 	case ExportFormatParquet:
-		data, err = RenderParquetExportRows(rows)
+		if task.DatasetKey == FlowVPNFindingsDataset {
+			data, err = RenderVPNFindingParquet(rows.VPNFindings)
+		} else {
+			data, err = RenderParquetExportRows(rows)
+		}
 		contentType, extension = "application/vnd.apache.parquet", "parquet"
 	default:
 		return ExportArtifact{}, true, errors.New("unsupported Flow export format")
@@ -160,7 +174,14 @@ func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, row
 	if err := os.WriteFile(filepath.Join(s.Dir, fileName), data, 0o600); err != nil {
 		return ExportArtifact{}, true, err
 	}
-	return exportArtifactFor("exports/"+fileName, contentType, uint64(len(rows.Rows)), data), true, nil
+	return exportArtifactFor("exports/"+fileName, contentType, exportRowsCount(task, rows), data), true, nil
+}
+
+func exportRowsCount(task ExportTask, rows ExportRows) uint64 {
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		return uint64(len(rows.VPNFindings))
+	}
+	return uint64(len(rows.Rows))
 }
 
 func (s DiskExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {

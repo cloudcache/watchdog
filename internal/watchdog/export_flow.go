@@ -21,7 +21,8 @@ const flowExportCompletenessMode = "query_result"
 // results are not scalar time series. Flow keeps every selected dimension and
 // the provenance/quality counters needed to interpret each exported value.
 type ExportRows struct {
-	Rows []FlowExportRow
+	Rows        []FlowExportRow
+	VPNFindings []VPNFindingExportRow
 }
 
 type FlowExportRow struct {
@@ -169,6 +170,17 @@ func prepareFlowExportExecutionTask(ctx context.Context, gateway *QueryGateway, 
 }
 
 func (p QueryGatewayExportDataProvider) LoadExportRows(ctx context.Context, task ExportTask) (ExportRows, bool, error) {
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		if err := validateExportExecutionTask(task); err != nil {
+			return ExportRows{}, true, err
+		}
+		auth, ok := AuthFromContext(ctx)
+		if !ok || auth.TenantID != task.TenantID || auth.UserID != task.CreatedBy {
+			return ExportRows{}, true, errors.New("current export authorization is required")
+		}
+		rows, err := p.loadVPNFindingExportRows(ctx, task)
+		return rows, true, err
+	}
 	if task.DatasetKey != FlowTrafficDataset {
 		return ExportRows{}, false, nil
 	}

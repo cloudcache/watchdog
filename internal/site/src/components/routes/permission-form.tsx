@@ -56,6 +56,7 @@ const availableActions = [
 	"export_supplier",
 	"export_customer",
 	"vpn_view",
+	"vpn_export",
 	"vpn_triage",
 	"probe",
 ]

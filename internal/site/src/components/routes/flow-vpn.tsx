@@ -1,11 +1,14 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { RefreshCwIcon, SaveIcon, ShieldCheckIcon } from "lucide-react"
+import { getPagePath } from "@nanostores/router"
+import { DownloadIcon, RefreshCwIcon, SaveIcon, ShieldCheckIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { toast } from "@/components/ui/use-toast"
 import { pb } from "@/lib/api"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
 
@@ -101,6 +104,7 @@ export default memo(() => {
 	const [disposition, setDisposition] = useState("unreviewed")
 	const [note, setNote] = useState("")
 	const [saving, setSaving] = useState(false)
+	const [exporting, setExporting] = useState(false)
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 	const requestSequence = useRef(0)
@@ -297,6 +301,35 @@ export default memo(() => {
 		}
 	}
 
+	const exportCurrent = async () => {
+		setExporting(true)
+		setError("")
+		try {
+			const frozenFilters = Object.fromEntries(
+				Object.entries(columnFilters).map(([field, values]) => [field, values.map(String)])
+			)
+			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/vpn/findings/exports", {
+				method: "POST",
+				body: {
+					from: selectedRange.from.toISOString(),
+					to: selectedRange.to.toISOString(),
+					search: query,
+					column_filters: frozenFilters,
+					sort_by: sortField,
+					sort_direction: sortDirection,
+					format: "csv",
+				},
+			})
+			const id = task.ID ?? task.id ?? ""
+			toast({ title: t`VPN finding export queued` })
+			navigate(id ? getPagePath($router, "export_detail", { id }) : getPagePath($router, "exports"))
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : t`Failed to export VPN findings`)
+		} finally {
+			setExporting(false)
+		}
+	}
+
 	return (
 		<div className="grid gap-4">
 			<div className="flex flex-wrap items-center justify-between gap-3">
@@ -336,6 +369,10 @@ export default memo(() => {
 							</SelectContent>
 						</Select>
 					</div>
+					<Button variant="outline" onClick={exportCurrent} disabled={loading || exporting || total === 0}>
+						<DownloadIcon className="me-2 h-4 w-4" />
+						<Trans>Export CSV</Trans>
+					</Button>
 					<Button
 						variant="outline"
 						onClick={() => {

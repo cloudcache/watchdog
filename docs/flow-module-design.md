@@ -755,6 +755,14 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 
 真实 CH 集成门禁使用独立数据库顺序执行 001..005，并写入同一闭合 1m 桶的入向 IPv4、出向 IPv4、出向 IPv6 和双端未知地址事实：generation 1 同时校验 `in/out/combined × ipv4/ipv6/unknown/all`、远端/本地镜像计数、country/region `TopN=1 + other + unknown_geo` 与总量守恒；随后写入迟到 IPv6 事实并以 generation 2 重建，查询只能看到新 generation，TopN 排序和 other 必须随之收敛。测试库退出时清理。该门禁验证的是 Flow 数据面与查询契约，不替代 hub API、tenant/RBAC 和 UI 验收。
 
+### 9.7 VPN findings 异步导出
+
+VPN finding 是 MySQL 中的低容量管理/处置对象，不经 ClickHouse aggregate compiler。`POST /api/v1/flow/vpn/findings/exports` 只创建任务：请求冻结 `from/to`、全文搜索、typed column filters、`sort_by/sort_direction`、行数上限和格式，tenant/actor 只取认证上下文；创建同时要求 `vpn_view + vpn_export`，执行、下载和重试继续复核当前 `vpn_export`。时间窗最多 90 天，默认/硬上限 250,000 行。
+
+执行复用已有 `export_tasks + operation_jobs`。provider 对冻结条件执行一条 tenant-scoped MySQL 查询并读取 `limit+1`；多出一行就整体失败，禁止产生无提示截断文件。CSV 与 Parquet 共用独立的 finding export row schema；不得复用 Flow aggregate schema，也不得新增导出状态机、消息队列或表。产物保留窗口、两端 IP/端口、双向计数、ASN/国家/prefix、score/risk/verdict、规则和事实版本、人工 disposition、probe status 以及 `evidence_present/probe_result_present`，但明确排除 `tenant_id`、`conversation_key`、完整 `evidence/probe_result`、`disposition_note/disposition_by`。CSV 文本字段继续做 spreadsheet formula 防护。
+
+该表格型 dataset 的 query step 固定为 0；通用 export normalizer 不允许把它改成 5 分钟。`avg_5m` 仅作为既有非空 aggregation 存储字段的兼容占位，不参与查询或制品计算。旧 `contract_version=0` VictoriaMetrics 导出仍走显式 fallback；QueryGateway 未启用不阻断 VPN findings 从 MySQL 导出。
+
 ## 10. API
 
 所有路径在 `/api/v1` 下，统一 tenant/RBAC、cursor/page、sort、filter、field mask、ETag、idempotency、audit 和错误 envelope。
@@ -781,6 +789,7 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | `GET /flow/vpn/findings/facets` | vpn_view | 指定展示列的有界远程候选；继承时间/搜索/其它列筛选并排除本列自身条件 |
 | `GET /flow/vpn/findings/{id}` | vpn_view | 完整证据链 |
 | `POST /flow/vpn/findings/{id}/actions/disposition` | vpn_triage | 人工处置，要求 If-Match |
+| `POST /flow/vpn/findings/exports` | vpn_view + vpn_export | 冻结当前服务端筛选/排序，创建有界脱敏 CSV/Parquet 异步导出 |
 | `POST /flow/vpn/findings/{id}/actions/probe` | probe | 创建受控异步 job |
 | `POST /flow/reclass-jobs` | configure | 复用 operation job 创建回算 |
 | `GET /flow/reclass-jobs/{id}` | view | 进度、范围、版本、校验 |
@@ -800,7 +809,7 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 5. **境外流量**：流入/流出、境外 IP、本地主机、地区/ASN/端口/协议。
 6. **VPN 风险**：candidate/finding、score、证据、probe timeline、处置。
 
-页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。VPN findings 读取/筛选/处置已经挂载；规则 publication、关闭窗口写入和 probe 编排不可用时必须分别显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
+页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。VPN findings 读取/筛选/处置和异步 CSV 导出已经挂载，导出必须原样冻结页面的时间、搜索、column filter 与排序；规则 publication、关闭窗口写入和 probe 编排不可用时必须分别显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
 
 所有 VTable 都必须具备服务端分页、搜索、排序和 column filter；filter popover 使用 portal、collision detection、viewport max-height 和滚动，不得溢出或错位。公共 VTable 只给 list API 明确声明的 typed filter/sort 列显示入口，未声明列不得退化为当前页本地筛选或排序；筛选、排序、搜索或页大小变化必须回到第一页，并丢弃已发出的旧响应。Geo 表每行显示当前层名称、完整路径和稳定 ID tooltip，并可进入 children；图例只包含当前 level。地址组用多值 chips/独立 TopN，明确重叠口径。页面保留 query state 到 URL，支持取消过期请求；大数据只显示 TopN + other，不渲染无限序列。每张图支持创建/修改/复制/删除保存视图，保存的是 versioned QueryRequest，不保存 SQL。
 

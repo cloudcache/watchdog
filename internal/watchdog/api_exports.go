@@ -391,7 +391,7 @@ func (api exportAPI) authorizeCurrent(auth AuthContext, task ExportTask) bool {
 	if task.ValueLayer == "" {
 		task.ValueLayer = inferExportValueLayer(task)
 	}
-	return CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin)
+	return canExecuteExportTask(auth, task)
 }
 
 func newExportTaskID() (ID, error) {
@@ -404,7 +404,7 @@ func newExportTaskID() (ID, error) {
 
 func exportAccessRequest(auth AuthContext, task ExportTask) AccessRequest {
 	resource := ResourceRef{Type: ResourceTarget, ID: task.TargetID}
-	if task.DatasetKey == FlowTrafficDataset {
+	if task.DatasetKey == FlowTrafficDataset || task.DatasetKey == FlowVPNFindingsDataset {
 		resource = ResourceRef{Type: ResourceTenant, ID: auth.TenantID}
 	} else if task.PortID != "" {
 		resource = ResourceRef{Type: ResourcePort, ID: task.PortID, ParentID: task.TargetID}

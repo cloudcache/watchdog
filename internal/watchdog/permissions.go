@@ -15,6 +15,7 @@ const (
 	ActionExportSupplier Action = "export_supplier"
 	ActionExportCustomer Action = "export_customer"
 	ActionVPNView        Action = "vpn_view"
+	ActionVPNExport      Action = "vpn_export"
 	ActionVPNTriage      Action = "vpn_triage"
 	ActionVPNProbe       Action = "probe"
 )

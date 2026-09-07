@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,20 +125,87 @@ func TestFlowVPNFindingQueryRejectsUnknownAndInvalidFilters(t *testing.T) {
 }
 
 func TestFlowVPNPermissionActionsAreAccepted(t *testing.T) {
-	for _, action := range []Action{ActionVPNView, ActionVPNTriage, ActionVPNProbe} {
+	for _, action := range []Action{ActionVPNView, ActionVPNExport, ActionVPNTriage, ActionVPNProbe} {
 		if normalized, err := normalizePermissionActions([]Action{action}); err != nil || len(normalized) != 1 || normalized[0] != action {
 			t.Fatalf("action=%q normalized=%v err=%v", action, normalized, err)
 		}
 	}
 }
 
-func flowVPNTestAuth(action Action) AuthContextAdapter {
+func TestFlowVPNFindingExportCreatesFrozenTenantTask(t *testing.T) {
+	repo := &fakeExportRepository{}
+	audit := &recordingAuditRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: flowVPNTestAuth(ActionVPNView, ActionVPNExport), FlowVPNFindings: &flowVPNFindingRepositoryStub{},
+		Exports: repo, Audit: audit,
+	})
+	body := `{"from":"2026-09-06T00:00:00Z","to":"2026-09-07T00:00:00Z","search":" 192.0.2 ","column_filters":{"risk_level":["high","critical","high"]},"sort_by":"score","sort_direction":"asc","limit":500,"format":"csv"}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/flow/vpn/findings/exports", strings.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(repo.tasks) != 1 {
+		t.Fatalf("tasks=%+v", repo.tasks)
+	}
+	task := repo.tasks[0]
+	if task.DatasetKey != FlowVPNFindingsDataset || task.TenantID != "tenant-vpn" || task.CreatedBy != "user-vpn" ||
+		task.ValueLayer != QueryValueCustomer || task.Step != 0 || task.ContractVersion != ExportExecutionContractVersion {
+		t.Fatalf("task=%+v", task)
+	}
+	var snapshot exportQuerySnapshot
+	if err := json.Unmarshal(task.QueryJSON, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var parameters vpnFindingExportParameters
+	if err := json.Unmarshal(snapshot.Query.Parameters, &parameters); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Query.Limit != 500 || parameters.Search != "192.0.2" || parameters.SortBy != "score" ||
+		parameters.SortDirection != "ASC" || len(parameters.ColumnFilters["risk_level"]) != 2 {
+		t.Fatalf("snapshot=%+v parameters=%+v", snapshot, parameters)
+	}
+	var authorization exportAuthorizationSnapshot
+	if err := json.Unmarshal(task.AuthorizationJSON, &authorization); err != nil {
+		t.Fatal(err)
+	}
+	if authorization.RequiredAction != ActionVPNExport || authorization.ResourceType != ResourceTenant || authorization.ResourceID != "tenant-vpn" {
+		t.Fatalf("authorization=%+v", authorization)
+	}
+	if len(audit.logs) != 1 || audit.logs[0].Action != "flow.vpn_findings.export_created" || audit.logs[0].ResourceID != task.ID {
+		t.Fatalf("audit=%+v", audit.logs)
+	}
+}
+
+func TestFlowVPNFindingExportRejectsMissingPermissionAndUnknownInput(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		auth       AuthContextAdapter
+		body       string
+		wantStatus int
+	}{
+		"missing export": {flowVPNTestAuth(ActionVPNView), `{"from":"2026-09-06T00:00:00Z","to":"2026-09-07T00:00:00Z","format":"csv"}`, http.StatusForbidden},
+		"missing view":   {flowVPNTestAuth(ActionVPNExport), `{"from":"2026-09-06T00:00:00Z","to":"2026-09-07T00:00:00Z","format":"csv"}`, http.StatusForbidden},
+		"unknown":        {flowVPNTestAuth(ActionVPNView, ActionVPNExport), `{"from":"2026-09-06T00:00:00Z","to":"2026-09-07T00:00:00Z","format":"csv","tenant_id":"other"}`, http.StatusBadRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &fakeExportRepository{}
+			router := NewAPIV1Router(APIV1RouterConfig{Auth: testCase.auth, FlowVPNFindings: &flowVPNFindingRepositoryStub{}, Exports: repo})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/flow/vpn/findings/exports", strings.NewReader(testCase.body)))
+			if response.Code != testCase.wantStatus || len(repo.tasks) != 0 {
+				t.Fatalf("status=%d tasks=%+v body=%s", response.Code, repo.tasks, response.Body.String())
+			}
+		})
+	}
+}
+
+func flowVPNTestAuth(actions ...Action) AuthContextAdapter {
 	return func(*http.Request) (AuthContext, error) {
 		return AuthContext{
 			TenantID: "tenant-vpn", UserID: "user-vpn",
 			Grants: []Permission{{
 				TenantID: "tenant-vpn", SubjectType: SubjectUser, SubjectID: "user-vpn",
-				ResourceType: ResourceTenant, ResourceID: "tenant-vpn", Actions: []Action{action},
+				ResourceType: ResourceTenant, ResourceID: "tenant-vpn", Actions: actions,
 			}},
 		}, nil
 	}

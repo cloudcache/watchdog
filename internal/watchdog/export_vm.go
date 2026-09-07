@@ -22,10 +22,15 @@ type VictoriaMetricsExportDataProvider struct {
 // interactive query API. The immutable query is read from the task snapshot;
 // no request is reconstructed from mutable UI fields at execution time.
 type QueryGatewayExportDataProvider struct {
-	Gateway *QueryGateway
+	Gateway     *QueryGateway
+	VPNFindings VPNFindingExportRepository
+	Fallback    ExportDataProvider
 }
 
 func (p QueryGatewayExportDataProvider) LoadSamples(ctx context.Context, task ExportTask) ([]Sample, error) {
+	if task.ContractVersion == 0 && p.Fallback != nil {
+		return p.Fallback.LoadSamples(ctx, task)
+	}
 	if p.Gateway == nil {
 		return nil, errors.New("export query gateway is required")
 	}

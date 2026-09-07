@@ -11,18 +11,35 @@ import (
 )
 
 type flowVPNManagementAPI struct {
-	repo  VPNFindingRepository
-	audit AuditRepository
+	repo    VPNFindingRepository
+	exports ExportRepository
+	audit   AuditRepository
 }
 
-func registerFlowVPNManagementRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo VPNFindingRepository, audit AuditRepository) {
-	api := flowVPNManagementAPI{repo: repo, audit: audit}
+func registerFlowVPNManagementRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo VPNFindingRepository, exports ExportRepository, audit AuditRepository) {
+	api := flowVPNManagementAPI{repo: repo, exports: exports, audit: audit}
 	view := RequirePermission(ActionVPNView, TenantResource)
 	triage := RequirePermission(ActionVPNTriage, TenantResource)
 	mux.Handle("GET /api/v1/flow/vpn/findings", auth(view(http.HandlerFunc(api.list))))
 	mux.Handle("GET /api/v1/flow/vpn/findings/facets", auth(view(http.HandlerFunc(api.facets))))
 	mux.Handle("GET /api/v1/flow/vpn/findings/{finding_id}", auth(view(http.HandlerFunc(api.get))))
 	mux.Handle("POST /api/v1/flow/vpn/findings/{finding_id}/actions/disposition", auth(triage(http.HandlerFunc(api.disposition))))
+	if exports != nil {
+		export := RequirePermission(ActionVPNExport, TenantResource)
+		mux.Handle("POST /api/v1/flow/vpn/findings/exports", auth(view(export(http.HandlerFunc(api.createExport)))))
+	}
+}
+
+type flowVPNFindingExportCreateRequest struct {
+	From             time.Time           `json:"from"`
+	To               time.Time           `json:"to"`
+	Search           string              `json:"search,omitempty"`
+	ColumnFilters    map[string][]string `json:"column_filters,omitempty"`
+	SortBy           string              `json:"sort_by,omitempty"`
+	SortDirection    string              `json:"sort_direction,omitempty"`
+	Limit            uint32              `json:"limit,omitempty"`
+	Format           ExportFormat        `json:"format"`
+	RetentionSeconds uint32              `json:"retention_seconds,omitempty"`
 }
 
 func (api flowVPNManagementAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +90,47 @@ func (api flowVPNManagementAPI) get(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", quotedRowVersion(item.RowVersion))
 	WriteAPIJSON(w, http.StatusOK, item)
+}
+
+func (api flowVPNManagementAPI) createExport(w http.ResponseWriter, r *http.Request) {
+	var input flowVPNFindingExportCreateRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if err := ensureDashboardJSONEOF(decoder); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	auth, _ := AuthFromContext(r.Context())
+	task, err := prepareVPNFindingExportTask(auth, input)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	task.ID, err = newExportTaskID()
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorServiceUnavailable, "VPN finding export ID generation failed", nil)
+		return
+	}
+	created, err := api.exports.CreateExportTask(r.Context(), task)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if api.audit != nil {
+		_ = api.audit.CreateAuditLog(r.Context(), AuditLog{
+			TenantID: auth.TenantID, ActorID: auth.UserID, Action: "flow.vpn_findings.export_created",
+			ResourceType: ResourceExportTask, ResourceID: created.ID,
+			Detail: map[string]any{
+				"dataset_key": created.DatasetKey, "format": created.Format,
+				"query_hash": created.QueryHash, "operation_job_id": created.OperationJobID,
+			},
+		})
+	}
+	WriteAPIJSON(w, http.StatusCreated, created)
 }
 
 func (api flowVPNManagementAPI) disposition(w http.ResponseWriter, r *http.Request) {

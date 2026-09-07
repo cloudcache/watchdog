@@ -27,3 +27,17 @@ func CanCreateExportLayer(req AccessRequest, layer QueryValueLayer, grants []Per
 	}
 	return false
 }
+
+func canExecuteExportTask(auth AuthContext, task ExportTask) bool {
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		return canExportVPNFindings(auth)
+	}
+	return CanCreateExportLayer(exportAccessRequest(auth, task), task.ValueLayer, auth.Grants, auth.IsAdmin)
+}
+
+func exportRequiredAction(task ExportTask) Action {
+	if task.DatasetKey == FlowVPNFindingsDataset {
+		return ActionVPNExport
+	}
+	return exportLayerAction(task.ValueLayer)
+}

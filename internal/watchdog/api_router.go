@@ -240,7 +240,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		registerFlowOverseasRoutes(mux, auth, cfg.FlowOverseas, cfg.Network, cfg.FlowStorageQuery, cfg.Audit, cfg.FlowGeo, cfg.FlowOverseasNow)
 	}
 	if cfg.FlowVPNFindings != nil {
-		registerFlowVPNManagementRoutes(mux, auth, cfg.FlowVPNFindings, cfg.Audit)
+		registerFlowVPNManagementRoutes(mux, auth, cfg.FlowVPNFindings, cfg.Exports, cfg.Audit)
 	}
 	if cfg.FlowStorage != nil {
 		registerFlowStorageLifecycleRoutes(mux, auth, cfg.FlowStorage, cfg.Audit)

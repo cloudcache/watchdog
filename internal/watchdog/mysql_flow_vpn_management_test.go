@@ -52,6 +52,13 @@ func TestMySQLFlowVPNFindingPagingFacetsAndDispositionCAS(t *testing.T) {
 	if err != nil || total != 1 || len(items) != 1 || items[0].RemoteIP != "192.0.2.1" || items[0].LocalIP != "10.0.0.1" {
 		t.Fatalf("searched page=%+v total=%d err=%v", items, total, err)
 	}
+	exportItems, err := store.ListVPNFindingsForExport(ctx, tenantID, VPNFindingListFilter{
+		From: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC),
+		ColumnFilters: map[string][]string{"risk_level": {"high", "critical"}}, SortBy: "score", SortDirection: "DESC",
+	}, 1)
+	if err != nil || len(exportItems) != 2 || exportItems[0].ID != "finding_vpn_repo_000002" || exportItems[1].ID != "finding_vpn_repo_000001" {
+		t.Fatalf("export items=%+v err=%v", exportItems, err)
+	}
 
 	facets, err := store.ListVPNFindingFacets(ctx, tenantID, VPNFindingFacetFilter{
 		Field: "risk_level", ColumnFilters: map[string][]string{"risk_level": {"high"}, "disposition": {"unreviewed"}}, Limit: 10,

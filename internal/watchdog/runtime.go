@@ -280,11 +280,11 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		runtime.CollectorPrincipals = principalService
 		runtime.collectorPrincipalProvider, _ = provider.(collectorPrincipalRuntimeProvider)
 	}
-	var exportData ExportDataProvider = VictoriaMetricsExportDataProvider{
+	legacyExportData := VictoriaMetricsExportDataProvider{
 		Client: metricsClient, Metric: cfg.Export.Metric, Network: store, CollectionStep: cfg.SNMPCollector.Interval,
 	}
-	if runtime.QueryGateway != nil {
-		exportData = QueryGatewayExportDataProvider{Gateway: runtime.QueryGateway}
+	var exportData ExportDataProvider = QueryGatewayExportDataProvider{
+		Gateway: runtime.QueryGateway, VPNFindings: store, Fallback: legacyExportData,
 	}
 	runtime.ExportWorker = ExportWorker{
 		Repo:    store,
