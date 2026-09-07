@@ -6,6 +6,8 @@
 
 每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。`PLAT-04` 只作为计划编号，不再作为一个永远无法勾选的总任务；A–H 必须继续拆成可独立提交、独立验收的子项。只有代码、真实依赖集成、回归和 commit 四项同时存在才可标 `[x]`，不得用“大部分已实现”代替闭环。
 
+**当前活动切片：PLAT-04A2f scoped publication 通用内核。** 只把现有地址 publication 的仓储、签名、生命周期、ACK/reference/GC scope 条件参数化，地址 API/DTO/config 保持兼容；随后由 Flow C4-P-S 增加 `flow/vpn_rule_set` adapter。不新增表、MQ、服务或第二套状态机。
+
 ## P0 生产入口、身份与存储收敛
 
 - [x] Hub 挂载 `/api/v1`，前端同源访问；登录只在主动登录或访问受控数据时被动触发。
@@ -230,6 +232,13 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **单元/集成**：现有地址仓储/API 套件通过；隔离真实 MySQL 注入同租户 `flow/vpn_rule_set` 快照，证明地址 get 与 reject 生命周期均返回 no rows，异类对象保持未修改。
   - [x] **变更/回归**：地址 snapshot ID、响应和签名 wire schema 不变；全库 test、Watchdog race、vet/build 与 diff check 作为提交门禁，既有生产地址发布无需迁移。
   - [x] **已提交门禁**：范围修复、真实 MySQL 测试与任务清单由本独立提交原子交付，不夹带 Flow writer/rollup 或用户已有 maintenance/delete-preview 文件。
+- [ ] **PLAT-04A2f scoped publication 通用内核**：为第二种 immutable object 提取现有四表生命周期，保持单实现、双 typed adapter；不复制地址仓储，不让 VPN 借用 address/EdgeManager 命名。
+  - [x] **详细设计**：scope 是必填 `(module_key, dimension_key)` 值对象并由服务端构造；所有 snapshot/version/effective-time/activation/ACK/reference/consumer/GC SQL 都同时绑定 tenant+scope，snapshot ID 虽全局唯一也不能代替授权范围。通用 metadata 使用既有列；无 source 的 object 固定 manifest v0/空数组和地址 count=0。地址签名 payload v2 wire 保持不变，内部 verifier/persistence 接收 scope；trusted-key 部署入口提升为 `publication.trusted_keys[]`，旧 address 配置只作地址 scope 的兼容别名。
+  - [ ] **编码**：提取 scope-parametric repository/lifecycle/signing/consumer/GC 内核；`AddressDimensionPublisher` 和现有 `/dimensions/address/**` 作为无 wire 变化 adapter。任何空/未知 scope fail closed；generic API 不对外暴露任意 module/dimension 输入。
+  - [ ] **单元**：覆盖 scope validation、签名绑定 scope、同租户同 ID/同 version 的异类访问拒绝、ACK/reference/activation/GC 不跨 kind、旧地址签名 bytes 与错误映射不变。
+  - [ ] **集成**：真实 MySQL 同租户并置 `flow/address` 与 `flow/vpn_rule_set` 两条 timeline，验证 version/effective uniqueness 分离、并发 lifecycle 隔离、ACK/reference 和 GC 只影响目标 scope。
+  - [ ] **变更设计/测试**：复用 040/042/043/047/048/049 四表和 operation jobs，不新增 migration；配置兼容期、旧地址对象/签名、运行中 job 和 rolling upgrade 全部回归。若数据库约束证明不能表达双 kind 才允许从 migration 058 前向修复，禁止预占空迁移。
+  - [ ] **回归/已提交门禁**：地址 API/MySQL E2E、Watchdog/全库/race/vet/build、fresh init/checksum 均通过并独立提交；不得夹带 Flow writer/rollup 或用户已有 maintenance/delete-preview 文件。
 - [x] **PLAT-04C1 address-prefix/set 管理内核**：typed schema/CRUD、canonical CIDR/IPv6、members/exclude/include DAG、集合并交差/显式 universe 有限补集、冲突/最坏展开量 preview、draft revision 原子 apply、分页/filter、ETag/审计与管理 VTable 已形成一个已提交闭环；Flow 不复制 CRUD。
   - [x] **设计（集合数学）**：冻结 CIDR/裸 IP/start-end 全量校验、v4/v6 分族并交差、显式 universe 有限补集、重叠 lint、结果/地址量上限；普通 merge 保持集合完全相等，可能扩大的 `/24` 整理独立为 `cover + added-address preview + confirm`。
   - [x] **编码/单元（集合数学）**：平台共享 Go 内核已实现规范化、并/交/差/有限补集、overlap 有界明细、128-bit 地址计数和 cover 扩大量；纯计算 preview API 已接入，非法/未知字段整体 400；全库测试通过（commit `f44d1978`）。

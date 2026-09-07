@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06C4-P-D — immutable VPN rule-set publication 详细设计。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail、FLOW-06C3 VPN findings 导出以及 C4-D/R1/R2 已分别闭环；下一轮先冻结 VPN object schema、thresholds、preview digest、平台通用 publication 复用边界、审批/激活/回滚与引用保留，再开始持久化/API 编码。原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
+**活动切片：PLAT-04A2f → FLOW-06C4-P-S — scoped publication 内核与 VPN publisher。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail、FLOW-06C3 VPN findings 导出、C4-D/R1/R2 以及 C4-P 的详细设计/immutable bundle 已分别闭环；下一轮先把地址命名的生命周期仓储提取为 scope 参数内核并保持地址 wire 兼容，再实现 VPN preview/publish adapter。原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -330,7 +330,13 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
       - [x] **单元/回归**：前端 parser 覆盖整数集合去重排序、标识符规范化、正值和比例边界；定向 Biome、41 项前端测试、production build、全库 Go test、Flow/Watchdog race、vet/build 和 diff check 通过。
       - [x] **集成/变更测试**：隔离真实 MySQL 运行 CRUD/CAS/tenant-scope 门禁通过；`npm run dev :8090 → API_URL :8091` 的真实浏览器完成创建、编辑、双会话 stale ETag 412、软删及刷新持久化，Kind 列 filter popover 未溢出、服务端搜索归零，控制台无应用错误。浏览器测试记录最终为 `deleted/row_version=4`，活动列表恢复为空。
       - [x] **已提交门禁**：页面、模型测试、路由、权限入口与 R1 backend 由 `dab020b3` 同一切片提交；真实 MySQL/浏览器证据由本清单验收提交补记，均未夹带用户已有 maintenance/delete-preview 文件。
-    - [ ] **C4-P immutable VPN rule-set publication**：冻结 thresholds + canonical active rules 的 object schema、preview digest、审批/激活/回滚和引用保留；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。若需新持久字段从 migration 058 领取并同步 fresh-init/checksum/replay。
+    - [ ] **C4-P immutable VPN rule-set publication**：按 P-D/P-B/P-S/P-L/P-UI 拆分；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。现有四张 publication 表足以承载 `flow/vpn_rule_set`，当前不创建空 migration；若实现发现真实新持久字段才从 migration 058 领取并同步 fresh-init/checksum/replay。
+      - [x] **C4-P-D 详细设计**：冻结 bundle schema v1、阈值、历史 name/kind 解释、canonical active rule digest、4 MiB 预算、tenant-local version、UTC minute、发布重试幂等、API/RBAC、签名、event-time activation/rollback、finding reference/GC 和 rolling-upgrade 失败语义。明确对象级 SHA-256 只发生在低频管理发布，不进入逐 flow 写路径。
+      - [x] **C4-P-B immutable bundle 编码/单元/变更测试**：`flowvpn` 增加 canonical encoder 与 strict decoder/compiler；object 固定 snapshot/tenant/version/effective time、五个 threshold 和带历史 name/kind 的规则，规则按 ID 排序并复用 scorer validator；拒绝 checksum/schema/unknown field/trailing JSON/noncanonical bytes/超限/非法 identity/time/threshold/rule/name/kind/duplicate。scorer 继续只消费执行字段，既有 draft 常量改为复用同一 kind enum；FlowVPN/Watchdog 单元通过。
+      - [x] **C4-P-B 回归/已提交门禁**：FlowVPN/Watchdog、全库 test、FlowVPN race、vet/build 与 diff check 通过后由本提交独立交付；不夹带用户已有 maintenance/delete-preview 和 Flow writer/rollup 工作区。
+      - [ ] **C4-P-S scoped publisher/operation job**：先完成 PLAT-04A2f，再以 `(flow,vpn_rule_set)` 读取 active draft、计算语义 digest、preview、锁内复核、保存对象和插入 pending snapshot；commit 后重试返回同一 snapshot，同分钟不同内容 conflict；复用 operation job lease/retry/cancel，不复制规则 JSON或状态机。
+      - [ ] **C4-P-L lifecycle/API**：list/get/approve/reject/activate/rollback/retire/consumer status/reference/GC 全部走 scope 内核；GET 使用 `vpn_view`，preview 用 `configure_adjustment`，publish/lifecycle 用 `operate`，mutation 强制 If-Match，跨 tenant/scope ID fail closed。
+      - [ ] **C4-P-UI publication VTable**：规则页与 publication 页双向入口；版本列表服务端分页/搜索/排序/column filter，popover portal+collision；详情展示审批、activation timeline、worker ACK/drift、引用/retention，不把创建或 activation 显示成 ready。
     - [ ] **C4-W worker 安装/ACK**：worker 只下载已批准且 event-time active 的 rule-set object，校验 checksum/schema/版本后原子切换 scorer catalog，再写 downloaded/installed/failed ACK；失败保持上一 generation。
     - [ ] **C4-A supplier/customer adjustment publication**：归属平台 P3 adjustment policy，不与 VPN rule-set 共表或共享含义；raw 永不可修正，查询/导出固定 policy version，历史重分类复用 FLOW-06B。
 

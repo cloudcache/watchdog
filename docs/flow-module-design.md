@@ -822,6 +822,35 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 
 VPN 规则管理分为“可编辑 draft”和“不可变 rule-set publication”两层。draft API 只暴露评分器 schema v1 已实际消费的 `name/kind/match/effect/weight/priority/status`；`match` 由 `flowvpn.NormalizeRule` 与数据面共用同一 canonical validator，数组排序去重后持久化。migration 055 中预留但尚无执行语义的 `behavior_json/intelligence_json/probe_policy_json` 不进入 API，直到对应 analyzer/probe contract 冻结，避免接受不会生效的配置。创建、编辑、软删要求 tenant `configure_adjustment`，GET 要求 `vpn_view`；PATCH/DELETE 强制 quoted `If-Match`，name 冲突返回 409，row-version 冲突返回 412，所有 mutation 写审计。draft 的 `active` 仅表示下一次 rule-set 编译的纳入候选，不是 worker 已安装证明；只有后续签名 publication 完成 activation 且 worker 回报 installed ACK，页面才能显示该 rule-set 可用。
 
+### 11.1 VPN rule-set publication 契约
+
+VPN 发布不是另一套配置 CRUD 或状态机。它复用平台 `dimension_snapshots`、`dimension_snapshot_activations`、`dimension_snapshot_acks`、`dimension_snapshot_references` 和 `operation_jobs`，固定 scope 为 `(module_key='flow', dimension_key='vpn_rule_set')`；地址库继续使用 `flow/address`。平台仓储和生命周期必须先提取为显式 scope 参数的内部通用内核，地址和 VPN API 只做 typed adapter，任何按 ID 的读、审批、激活、ACK、引用和 GC 都必须同时匹配 tenant/module/dimension。现有四张表已能承载该类型：VPN 行使用 `source_manifest_version=0`、`source_manifest=[]`，`entry_count=rule_count`，地址专属的三个 count 均为 0，因此不创建空 migration；只有发现真实新持久字段时才从当前 migration head 领取编号。
+
+不可变 object 的唯一 schema v1 为：
+
+| 字段 | 约束与含义 |
+| --- | --- |
+| `schema_version` | 固定 `1`；未知版本 fail closed |
+| `snapshot_id/tenant_id/version` | snapshot ID 是 finding 中的 `rule_set_version`；version 只是同租户发布序号 |
+| `effective_from` | UTC 分钟边界，并与 snapshot/activation 元数据完全相同 |
+| `medium/high/critical_threshold` | `0 < medium < high < critical <= 100` |
+| `probe_threshold/minimum_completeness` | probe 为 1..100；完整度为有限数且在 `[0,1]` |
+| `rules[]` | 只含发布时 `status=active AND deleted_at IS NULL` 的规则，按稳定 ID 排序，1..1000 条 |
+| `rules[].id/name/kind` | ID 唯一；name trim 后 1..190；kind 固定 `passive/intelligence/probe`，用于历史解释 |
+| `rules[].effect/weight/priority/match` | 与 scorer schema v1 同一 validator；列表排序去重，禁止未知字段 |
+
+encoder 只生成无额外空白的 canonical JSON；decoder 先限制 4 MiB，再校验对象级 `sha256:<lowerhex>`、严格 JSON/EOF/schema/identity/time/rule budget，重新编码后要求逐字节相等，最后才构造不可变 scorer。名称和类别进入 object/checksum/signature，以便历史 finding 从产生它的 bundle 还原解释；评分器只接收执行字段。这里的 SHA-256 每次小型管理对象发布计算一次，用于下载完整性和审批签名，不在 Kafka/ClickHouse 逐 flow 写路径上，不恢复已废除的 per-record hash。
+
+preview 输入为 `effective_from` 及五个 threshold，响应包含 canonical `draft_digest`、rule count、estimated object bytes 和具体 validation error。digest 覆盖 schema、threshold 及所有 active published rule 字段，但不包含尚未分配的 snapshot ID/version；inactive/suspended/retired/deleted draft 不影响它。publish job payload v1 只保存 effective time、thresholds 和 preview digest，不复制规则 JSON。handler 在同一 repeatable-read 事务中锁 tenant，重新读取 active rows、规范化并复算 digest；不一致终态返回 draft-changed，避免 preview 后静默发布另一批规则。
+
+发布成功顺序固定为：分配该 scope 的下一 version/snapshot ID → 编码对象 → 保存对象并核对 checksum → 插入 pending snapshot 与 audit → 提交。失败时清除尚未被 snapshot 引用的对象。重试先按 `(tenant, scope, effective_from)` 查询：digest、threshold/object checksum 都相同则返回原 snapshot；同一生效分钟但内容不同返回 conflict，保证“DB 已提交但 job 结果未写”重试不会创建第二版本或把成功任务误报失败。operation job idempotency key 绑定 tenant、scope、effective minute 和 preview digest；lease/retry/cancel 沿用平台实现。
+
+HTTP 固定为 `POST /api/v1/flow/vpn/rule-sets/preview`、`POST .../publish`、`GET /api/v1/flow/vpn/rule-sets`、`GET .../{snapshot_id}` 以及 `approve/reject/activate/rollback/retire` actions。preview 要求 `configure_adjustment`，publish/lifecycle 要求 tenant `operate`，list/get 要求 `vpn_view`；所有状态修改使用 quoted `If-Match`。规则页面只表示 draft，publication 页面显示 pending/approved/rejected、event-time activation、worker downloaded/installed/failed、drift、引用和对象回收状态，不能把 snapshot 创建或 activation 冒充 worker ready。
+
+审批继续使用 Ed25519 且签名覆盖 tenant/scope/snapshot/version/effective time/object ref+checksum/draft digest/schema。trusted-key resolver 应提升为平台 publication 公共能力；部署键使用 `publication.trusted_keys[]`，旧 `address_library.trusted_keys[]` 仅作为 `flow/address` 的一个发布窗口兼容输入，VPN 不借用 EdgeManager/address 命名。私钥仍在外部审批方。激活和回滚只追加 event-time timeline，不修改历史 finding；worker 依据事件时间选择版本，下载/校验成功后原子替换 catalog 并 ACK，失败继续使用上一已安装 generation。
+
+finding 落库时必须同时延长相应 rule-set reference，consumer key 使用有界的 `vpn_findings:<UTC-day>` 聚合而非每 finding 一行，`retain_until` 至少覆盖该日 findings 的最大 `expires_at`。关闭窗口写 finding 与 reference 必须同一 MySQL 事务，失败整体回滚；这样 retire/GC 不会删除仍可查询 finding 的解释对象。升级门禁覆盖旧 worker 拒绝未知 schema、新旧 worker 并存、publish commit 后 crash/retry、坏对象/签名、ACK 失败保持旧 scorer、同分钟冲突、跨 tenant/scope ID、回滚、引用与 GC 竞态。C4-P 只交付 publication；安装/ACK 属 C4-W，主动探测授权仍属 FLOW-07B。
+
 所有 VTable 都必须具备服务端分页、搜索、排序和 column filter；filter popover 使用 portal、collision detection、viewport max-height 和滚动，不得溢出或错位。公共 VTable 只给 list API 明确声明的 typed filter/sort 列显示入口，未声明列不得退化为当前页本地筛选或排序；筛选、排序、搜索或页大小变化必须回到第一页，并丢弃已发出的旧响应。Geo 表每行显示当前层名称、完整路径和稳定 ID tooltip，并可进入 children；图例只包含当前 level。地址组用多值 chips/独立 TopN，明确重叠口径。页面保留 query state 到 URL，支持取消过期请求；大数据只显示 TopN + other，不渲染无限序列。每张图支持创建/修改/复制/删除保存视图，保存的是 versioned QueryRequest，不保存 SQL。
 
 ## 12. 性能、容量与故障

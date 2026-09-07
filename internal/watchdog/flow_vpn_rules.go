@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	VPNRuleKindPassive      = "passive"
-	VPNRuleKindIntelligence = "intelligence"
-	VPNRuleKindProbe        = "probe"
+	VPNRuleKindPassive      = string(flowvpn.RuleKindPassive)
+	VPNRuleKindIntelligence = string(flowvpn.RuleKindIntelligence)
+	VPNRuleKindProbe        = string(flowvpn.RuleKindProbe)
 
 	VPNRuleStatusDraft     = "draft"
 	VPNRuleStatusActive    = "active"
