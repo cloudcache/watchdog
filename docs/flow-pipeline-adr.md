@@ -6,6 +6,14 @@
 
 > **修订(2026-09)——分类模型**:分类从"ingest 时用 flowdimension 把六维烘进 `flow_records`"改为"`flow_records` 只存原始字段;分类改成一份**版本化的 ClickHouse `IP_TRIE` 字典**,写入不算分类,rollup 和查询都 `dictGet` 现导;定义改了 = 换字典版本 + 重跑受影响的聚合(重分类 = 重跑 rollup),不再单独建重新分类子系统。地址组本阶段由**管理员基于已就绪 geo 规划**(不开放用户自定义地址段)。详见 [flow-address-query-plan.md](flow-address-query-plan.md)。本文下述"地址库/六维在 Kafka 后烘进 CH base"的段落(§1 流水线图 dimensions、§4 维度与事实提交)按该方案修订;**传输 / Kafka / GoFlow2 解码 / RawFlow 契约决策不变**。
 
+> **修订(2026-09)——保留与降精度(downsample)模型**:数据生命周期改为网络监控的标准分层 —— **原始/全精度在线保留约 1 年、作为 1 年窗口内的主查询面(直接查 `flow_records`);满 1 年后才 downsample 成粗粒度聚合归档**,不再从写入第一分钟就并行物化 1m/1h。原先"`flow_records` TTL 只覆盖在线重分类窗口(短,~30 天)+ rollup/备份承担长期派生"的分层(见 §9 观测与容量里 base TTL 的表述、§1 图中 `rebuildable rollups`)作废:那是 web 分析式模型,原始太短、rollup 太早。**影响**:
+> 1. 原始成为查询面 → **原始表查询效率是第一位**:排序键 / projection 须按真实高频过滤/聚合维度(ASN / geo / prefix / port / business …),不能只 `(tenant_id, toStartOfHour(event_time), record_id)` —— `record_id` 高基随机,按维度过滤裁不了 granule,直查会扫满整个 tenant-时段。
+> 2. 1m/1h rollup **重定位为"满 1 年后的老化 downsample"**,不再实时并跑;[flow-reliability-remediation.md](flow-reliability-remediation.md) 的 F1/F2 完成水位/reaper 语义从"每分钟即时"改为"老化触发",F9"只把 `hour` 换 `5min`"作废、改为按查询维度重排原始表布局。
+> 3. 保留期具体天数、降精度层级与 CH 容量属**运维/配置**,不在本文固化;本次只改**应用侧的查询/写入效率与 downsample 时机**。
+> 4. **待定(需产品确认)**:1 年窗口是纯直查原始(rollup 仅承担归档)还是保留一层轻聚合;原始表排序键/projection 的**维度主序**(决定物理布局)。
+>
+> **不变**:传输 / Kafka / GoFlow2 解码 / RawFlow 契约 / 分类字典(IP_TRIE `dictGet`)模型。
+
 ## 1. 决策
 
 数据面固定为两个可独立扩容的进程角色：

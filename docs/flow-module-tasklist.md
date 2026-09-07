@@ -2,6 +2,8 @@
 
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
 
+> **修订(2026-09)——保留与降精度模型(重定向后续查询/rollup 切片)**:按 [flow-pipeline-adr.md](flow-pipeline-adr.md)「保留与降精度(downsample)模型」修订块 —— 原始/全精度约留 1 年、作为 1 年窗口内**主查询面(直接查 `flow_records`)**;1m/1h rollup 重定位为**满 1 年后的老化 downsample**。因此:「1m/1h 物理源路由」等查询切片重点转为**原始表按查询维度的排序键/projection 直查效率**;[flow-reliability-remediation.md](flow-reliability-remediation.md) 的 F7 保留、F9 改为"按维度重排原始表"、F1/F2 水位/reaper 改"老化触发"语义。保留天数属运维配置。**待定(需产品确认)**:1 年窗口纯直查原始还是保留一层轻聚合;原始表排序键维度主序。
+
 ## 1. 自动循环协议
 
 每次“继续”以及一个切片完成后，都执行同一状态机：

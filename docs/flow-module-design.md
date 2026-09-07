@@ -2,6 +2,8 @@
 
 > 状态：现行。本文只定义当前实现契约；需求口径见 [flow-direction-requirements.md](flow-direction-requirements.md)，架构取舍和废弃方案见 [flow-pipeline-adr.md](flow-pipeline-adr.md)，唯一执行状态见 [flow-module-tasklist.md](flow-module-tasklist.md)。完成历史不得回填到本文。
 
+> **修订(2026-09)——保留与降精度模型**:按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 的「保留与降精度(downsample)模型」修订块 —— 原始/全精度约留 1 年、作为 1 年窗口内的**主查询面(直接查 `flow_records`)**;1m/1h rollup 重定位为**满 1 年后的老化 downsample**,不再实时并跑。故本文 §1.1 图中的 `asynchronous rollups`、以及"原始短保留 + 派生长期"的表述以 ADR 修订块为准;重点转为**原始表按查询维度的排序键/projection**(不是只 `toStartOfHour`+`record_id`)。保留天数属运维配置。
+
 ## 1. 冻结边界
 
 ### 1.1 唯一数据链路
