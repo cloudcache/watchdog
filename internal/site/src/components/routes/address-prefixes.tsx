@@ -160,6 +160,54 @@ export default memo(function AddressPrefixes() {
 		[fetchPage, t]
 	)
 
+	const editCell = useCallback(
+		async (record: Record<string, unknown>, field: string, value: string) => {
+			const prefix = record.item as AddressPrefix | undefined
+			if (!prefix) return
+			let asn = prefix.asn ?? 0
+			let source = prefix.source
+			if (field === "asn") {
+				const trimmed = value.trim()
+				if (trimmed === "" || trimmed === "—") {
+					asn = 0
+				} else {
+					const parsed = Number(trimmed)
+					if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 4_294_967_295) {
+						setError(t`ASN must be an integer between 1 and 4294967295`)
+						await fetchPage()
+						return
+					}
+					asn = parsed
+				}
+			} else if (field === "source") {
+				source = value.trim() || "manual"
+			} else {
+				return
+			}
+			try {
+				const updated = await pb.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
+					method: "PATCH",
+					headers: { "If-Match": `"${prefix.row_version}"` },
+					body: {
+						cidr: prefix.cidr,
+						labels: prefix.labels ?? {},
+						source,
+						asn,
+						geo_leaf_id: prefix.geo_leaf_id ?? "",
+						operator_id: prefix.operator_id ?? "",
+					},
+				})
+				setError("")
+				setPrefixes((prev) => prev.map((item) => (item.id === prefix.id ? { ...item, ...updated } : item)))
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Failed to save`)
+				await fetchPage()
+			}
+		},
+		[fetchPage, t]
+	)
+	const editable = useMemo(() => ({ fields: ["asn", "source"], onEdit: editCell }), [editCell])
+
 	const records = useMemo(
 		() =>
 			prefixes.map((prefix) => ({
@@ -391,6 +439,7 @@ export default memo(function AddressPrefixes() {
 					}}
 					serverFiltering={serverFiltering}
 					serverSorting={serverSorting}
+					editable={editable}
 					onCellClick={(record, field) => {
 						if (field === "edit") edit(record)
 						if (field === "remove") remove(record)

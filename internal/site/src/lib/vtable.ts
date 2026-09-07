@@ -1,7 +1,23 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: VisActor VTable option and event types are unstable across minor versions.
 import * as VTable from "@visactor/vtable"
+import { InputEditor } from "@visactor/vtable-editors"
 
 export type ListTable = InstanceType<typeof VTable.ListTable>
+
+// Inline cell editing (EdgeManager-style double-click editing). Register the
+// text editor once; columns opt in via `editable.fields` and commits arrive on
+// the change_cell_value event, which the caller turns into a PATCH.
+let editorsRegistered = false
+function ensureEditorsRegistered() {
+	if (editorsRegistered) return
+	editorsRegistered = true
+	;(VTable.register as any).editor("watchdog-input", new InputEditor({}))
+}
+
+export type EditableOptions = {
+	fields: string[]
+	onEdit: (record: Record<string, unknown>, field: string, value: string) => void
+}
 export type ColumnDefine = any
 
 type FilterColumn = {
@@ -70,6 +86,7 @@ export interface CreateTableOptions {
 	onFilterApplied?: () => void
 	serverFiltering?: ServerFiltering
 	serverSorting?: ServerSorting
+	editable?: EditableOptions
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -149,6 +166,15 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 				([, serverField]) => serverField === options.serverSorting?.field
 			)?.[0]
 		: undefined
+	if (options.editable) {
+		ensureEditorsRegistered()
+		const editSet = new Set(options.editable.fields)
+		for (const column of columns) {
+			if (column && editSet.has(String((column as any).field))) {
+				;(column as any).editor = "watchdog-input"
+			}
+		}
+	}
 	const table = new VTable.ListTable({
 		container: dom,
 		records: options.records,
@@ -160,6 +186,7 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		widthMode: options.widthMode ?? "adaptive",
 		autoFillWidth: true,
 		columnResizeMode: options.columnResize === false ? "none" : "all",
+		editCellTrigger: options.editable ? "doubleclick" : undefined,
 		pagination: options.pagination,
 		sortState:
 			activeSortField && options.serverSorting
@@ -167,6 +194,17 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 				: undefined,
 	} as any)
 	const cleanups: (() => void)[] = []
+	if (options.editable) {
+		const editable = options.editable
+		const handleCellEdit = (arg: any) => {
+			const record = getRowRecord(table, arg) as Record<string, unknown> | null
+			const field = String(columns[arg?.col]?.field ?? "")
+			if (!record || !editable.fields.includes(field)) return
+			editable.onEdit(record, field, String(arg?.changedValue ?? arg?.currentValue ?? ""))
+		}
+		;(table as any).on?.("change_cell_value", handleCellEdit)
+		cleanups.push(() => (table as any).off?.("change_cell_value", handleCellEdit))
+	}
 	if (filterColumns.some(Boolean)) {
 		cleanups.push(
 			enableColumnFilters(

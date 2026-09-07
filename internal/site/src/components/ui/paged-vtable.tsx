@@ -8,6 +8,7 @@ import {
 	disposeTable,
 	getRowRecord,
 	type ColumnDefine,
+	type EditableOptions,
 	type ListTable,
 	type ServerFiltering,
 	type ServerSorting,
@@ -31,6 +32,7 @@ export function PagedVTable({
 	onSearchSubmit,
 	serverFiltering,
 	serverSorting,
+	editable,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -56,6 +58,7 @@ export function PagedVTable({
 	onSearchSubmit?: (value: string) => void
 	serverFiltering?: ServerFiltering
 	serverSorting?: ServerSorting
+	editable?: EditableOptions
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -108,6 +111,7 @@ export function PagedVTable({
 			},
 			serverFiltering,
 			serverSorting,
+			editable,
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
@@ -135,6 +139,7 @@ export function PagedVTable({
 		serverFiltering,
 		serverSorting,
 		serverMode,
+		editable,
 	])
 
 	useEffect(() => {
