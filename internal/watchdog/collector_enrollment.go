@@ -19,6 +19,14 @@ var (
 )
 
 const (
+	flowMachineModuleKey   = "flow"
+	flowCollectorAgentType = "flow_collect"
+	flowWorkerAgentType    = "flow_worker"
+	flowCollectorAgentMode = "listen"
+	flowWorkerAgentMode    = "pull"
+)
+
+const (
 	enrollmentSecretDefaultTTL = time.Hour
 	enrollmentSecretMaxTTL     = 24 * time.Hour
 )
@@ -81,6 +89,9 @@ type CollectorEnrollmentRepository interface {
 }
 
 func (s *MySQLStore) CreateEnrollmentSecret(ctx context.Context, secret CollectorEnrollmentSecret, secretHash string) (CollectorEnrollmentSecret, error) {
+	if err := validateMachinePrincipalProfile(secret.ModuleKey, secret.AgentType, secret.Mode); err != nil {
+		return CollectorEnrollmentSecret{}, err
+	}
 	if secret.ID == "" {
 		id, err := newIdentityID()
 		if err != nil {
@@ -178,6 +189,9 @@ func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, v
 	if err != nil {
 		return CollectorEnrollmentResult{}, err
 	}
+	if err := validateMachinePrincipalProfile(secret.ModuleKey, secret.AgentType, secret.Mode); err != nil {
+		return CollectorEnrollmentResult{}, ErrEnrollmentSecretInvalid
+	}
 	// A wrong secret value must leave the row unused: verification failure
 	// rolls back without touching used_at.
 	if !verify(secretHash) {
@@ -232,4 +246,23 @@ func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, v
 		ModuleKey: secret.ModuleKey, AgentType: secret.AgentType,
 		PlanSchemaMin: planSchemaMin, PlanSchemaMax: planSchemaMax,
 	}, nil
+}
+
+func validateMachinePrincipalProfile(moduleKey, agentType, mode string) error {
+	if moduleKey != flowMachineModuleKey {
+		return errors.New("machine principal module is unsupported")
+	}
+	switch agentType {
+	case flowCollectorAgentType:
+		if mode != flowCollectorAgentMode {
+			return errors.New("flow collector machine principal must use listen mode")
+		}
+	case flowWorkerAgentType:
+		if mode != flowWorkerAgentMode {
+			return errors.New("flow worker machine principal must use pull mode")
+		}
+	default:
+		return errors.New("machine principal agent type is unsupported")
+	}
+	return nil
 }

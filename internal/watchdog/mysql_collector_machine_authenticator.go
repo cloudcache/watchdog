@@ -11,14 +11,31 @@ import (
 )
 
 type MySQLCollectorMachineAuthenticator struct {
-	db *sql.DB
+	db     *sql.DB
+	policy machinePrincipalPolicy
+}
+
+type machinePrincipalPolicy struct {
+	moduleKey string
+	agentType string
 }
 
 func NewMySQLCollectorMachineAuthenticator(db *sql.DB) (*MySQLCollectorMachineAuthenticator, error) {
+	return newMySQLMachineAuthenticator(db, machinePrincipalPolicy{moduleKey: flowMachineModuleKey, agentType: flowCollectorAgentType})
+}
+
+func NewMySQLFlowWorkerMachineAuthenticator(db *sql.DB) (*MySQLCollectorMachineAuthenticator, error) {
+	return newMySQLMachineAuthenticator(db, machinePrincipalPolicy{moduleKey: flowMachineModuleKey, agentType: flowWorkerAgentType})
+}
+
+func newMySQLMachineAuthenticator(db *sql.DB, policy machinePrincipalPolicy) (*MySQLCollectorMachineAuthenticator, error) {
 	if db == nil {
 		return nil, errors.New("collector machine authentication database is required")
 	}
-	return &MySQLCollectorMachineAuthenticator{db: db}, nil
+	if policy.moduleKey != flowMachineModuleKey || (policy.agentType != flowCollectorAgentType && policy.agentType != flowWorkerAgentType) {
+		return nil, errors.New("machine authentication policy is invalid")
+	}
+	return &MySQLCollectorMachineAuthenticator{db: db, policy: policy}, nil
 }
 
 func (a *MySQLCollectorMachineAuthenticator) AuthenticateCollector(ctx context.Context, collectorID ID, credential CollectorMachineCredential) (CollectorMachineIdentity, error) {
@@ -47,7 +64,7 @@ func (a *MySQLCollectorMachineAuthenticator) AuthenticateCollector(ctx context.C
 	if err != nil {
 		return CollectorMachineIdentity{}, err
 	}
-	if identity.CollectorID != collectorID || identity.TenantID == "" || agentType != "flow_collect" || moduleKey != "flow" || status != "active" {
+	if identity.CollectorID != collectorID || identity.TenantID == "" || agentType != a.policy.agentType || moduleKey != a.policy.moduleKey || status != "active" {
 		return CollectorMachineIdentity{}, ErrCollectorMachineUnauthorized
 	}
 	// PLAT-03C2 dual window: an unexpired staged credential authenticates

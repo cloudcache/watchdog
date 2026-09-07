@@ -57,14 +57,18 @@ func (api collectorEnrollmentAPI) create(w http.ResponseWriter, r *http.Request)
 	req.ModuleKey = strings.TrimSpace(strings.ToLower(req.ModuleKey))
 	req.AgentType = strings.TrimSpace(strings.ToLower(req.AgentType))
 	if req.Mode == "" {
-		req.Mode = "listen"
+		if req.AgentType == flowWorkerAgentType {
+			req.Mode = flowWorkerAgentMode
+		} else {
+			req.Mode = flowCollectorAgentMode
+		}
 	}
 	if req.CollectorName == "" || req.ModuleKey == "" || req.AgentType == "" {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "collector_name, module_key and agent_type are required", nil)
 		return
 	}
-	if req.Mode != "push" && req.Mode != "pull" && req.Mode != "listen" {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "mode must be push, pull or listen", nil)
+	if err := validateMachinePrincipalProfile(req.ModuleKey, req.AgentType, req.Mode); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
 	}
 	ttl := enrollmentSecretDefaultTTL

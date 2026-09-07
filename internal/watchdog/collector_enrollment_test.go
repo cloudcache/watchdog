@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,6 +105,42 @@ func TestCollectorEnrollmentSecretMintAndExchange(t *testing.T) {
 		strings.NewReader(`{"secret_id":"`+string(minted.ID)+`","secret":"wde_wrong"}`)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong secret status = %d", rec.Code)
+	}
+}
+
+func TestCollectorEnrollmentAllowsOnlyServerOwnedMachineProfiles(t *testing.T) {
+	repo := &fakeEnrollmentRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(true), CollectorEnrollment: repo})
+	tests := []struct {
+		name string
+		body string
+		want int
+		mode string
+	}{
+		{name: "collector default", body: `{"collector_name":"collector-a","module_key":"flow","agent_type":"flow_collect"}`, want: http.StatusCreated, mode: flowCollectorAgentMode},
+		{name: "worker default", body: `{"collector_name":"worker-a","module_key":"flow","agent_type":"flow_worker"}`, want: http.StatusCreated, mode: flowWorkerAgentMode},
+		{name: "worker cannot listen", body: `{"collector_name":"worker-b","module_key":"flow","agent_type":"flow_worker","mode":"listen"}`, want: http.StatusBadRequest},
+		{name: "collector cannot pull", body: `{"collector_name":"collector-b","module_key":"flow","agent_type":"flow_collect","mode":"pull"}`, want: http.StatusBadRequest},
+		{name: "unknown type", body: `{"collector_name":"unknown","module_key":"flow","agent_type":"other"}`, want: http.StatusBadRequest},
+		{name: "wrong module", body: `{"collector_name":"worker-c","module_key":"network","agent_type":"flow_worker"}`, want: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/collector-enrollment-secrets", strings.NewReader(test.body)))
+			if rec.Code != test.want {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if test.want == http.StatusCreated {
+				var created CollectorEnrollmentSecret
+				if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+					t.Fatal(err)
+				}
+				if created.Mode != test.mode {
+					t.Fatalf("mode = %q, want %q", created.Mode, test.mode)
+				}
+			}
+		})
 	}
 }
 
@@ -238,13 +275,41 @@ func TestMySQLCollectorEnrollmentLifecycle(t *testing.T) {
 	if err != nil || identity.TenantID != tenant {
 		t.Fatalf("enrolled collector auth identity=%+v err=%v", identity, err)
 	}
+	workerSecret, err := store.CreateEnrollmentSecret(ctx, CollectorEnrollmentSecret{
+		TenantID: tenant, ModuleKey: flowMachineModuleKey, AgentType: flowWorkerAgentType, Mode: flowWorkerAgentMode,
+		CollectorName: "worker-enroll-1", ExpiresAt: time.Now().UTC().Add(time.Hour), CreatedBy: "user_registry_admin",
+	}, NewAgentTokenHash("wde_worker_enroll_secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerToken := "wdc_worker_initial_token"
+	workerResult, err := store.ConsumeEnrollmentSecret(ctx, workerSecret.ID, func(hash string) bool {
+		return AgentTokenMatches("wde_worker_enroll_secret", hash)
+	}, NewAgentTokenHash(workerToken), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerAuthenticator, err := NewMySQLFlowWorkerMachineAuthenticator(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerIdentity, err := workerAuthenticator.AuthenticateCollector(ctx, workerResult.CollectorID, CollectorMachineCredential{Token: workerToken})
+	if err != nil || workerIdentity.TenantID != tenant {
+		t.Fatalf("enrolled worker auth identity=%+v err=%v", workerIdentity, err)
+	}
+	if _, err := authenticator.AuthenticateCollector(ctx, workerResult.CollectorID, CollectorMachineCredential{Token: workerToken}); !errors.Is(err, ErrCollectorMachineUnauthorized) {
+		t.Fatalf("collector authenticator accepted worker: %v", err)
+	}
+	if _, err := workerAuthenticator.AuthenticateCollector(ctx, result.CollectorID, CollectorMachineCredential{Token: initialToken}); !errors.Is(err, ErrCollectorMachineUnauthorized) {
+		t.Fatalf("worker authenticator accepted collector: %v", err)
+	}
 
 	// Replay of the consumed secret mints nothing.
 	if _, err := store.ConsumeEnrollmentSecret(ctx, secret.ID, verifyRight, NewAgentTokenHash("wdc_second"), nil); err == nil {
 		t.Fatal("replayed secret must be rejected")
 	}
 	var collectorCount int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM collector_agents WHERE tenant_id = ?", tenant).Scan(&collectorCount); err != nil || collectorCount != 1 {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM collector_agents WHERE tenant_id = ?", tenant).Scan(&collectorCount); err != nil || collectorCount != 2 {
 		t.Fatalf("collector count after replay = %d, err = %v", collectorCount, err)
 	}
 
