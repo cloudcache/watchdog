@@ -63,6 +63,9 @@ type BackendRuntime struct {
 	FlowRecords         flowDetailRunner
 	FlowOverseas        flowOverseasRunner
 
+	FlowWorkerTrust        CollectorPlanTrustBundleController
+	FlowEnrichmentDelivery FlowEnrichmentDeliveryController
+
 	CollectorPrincipals        CollectorPrincipalController
 	collectorPrincipalProvider collectorPrincipalRuntimeProvider
 	flowClickHouseNative       *flowch.NativeInserter
@@ -130,6 +133,21 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		_ = store.Close()
 		return nil, err
 	}
+	flowWorkerAuthenticator, err := NewMySQLFlowWorkerMachineAuthenticator(store.db)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	flowWorkerTrust, err := NewCollectorPlanTrustBundleService(flowWorkerAuthenticator, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	flowEnrichmentDelivery, err := NewFlowEnrichmentDeliveryService(flowWorkerAuthenticator, store, dimensionObjects, int64(cfg.AddressLibrary.MaxSnapshotBytes))
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	var collectorPlanSigner CollectorPlanSigner
 	if cfg.CollectorPlanSigning.KeyID != "" {
 		collectorPlanSigner, err = LoadCollectorPlanSigner(cfg.CollectorPlanSigning, store)
@@ -191,6 +209,9 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		PlanRollouts:        collectorPlanRollouts,
 		MetricProviders:     NewRuntimeMetricsRegistry(),
 		QueryProviders:      NewQueryProviderRegistry(),
+
+		FlowWorkerTrust:        flowWorkerTrust,
+		FlowEnrichmentDelivery: flowEnrichmentDelivery,
 	}
 	if cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || cfg.FlowReconciliation.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
 		runtime.flowClickHouseNative, err = newFlowClickHouseNative(ctx, cfg.FlowRollup)
@@ -458,6 +479,8 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		CollectorPrincipals:    r.CollectorPrincipals,
 		CollectorPlans:         r.CollectorPlans,
 		CollectorPlanTrust:     r.CollectorPlanTrust,
+		FlowWorkerTrust:        r.FlowWorkerTrust,
+		FlowEnrichmentDelivery: r.FlowEnrichmentDelivery,
 		PlanManagement:         r.PlanManagement,
 		PlanRollouts:           r.PlanRollouts,
 		Metrics: MetricsService{

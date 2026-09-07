@@ -67,3 +67,23 @@ func TestCollectorPlanTrustAPIRejectsBadIdentityAndMapsUnavailable(t *testing.T)
 		t.Fatalf("unavailable status=%d calls=%d body=%s", rec.Code, controller.calls, rec.Body.String())
 	}
 }
+
+func TestFlowWorkerTrustAPIUsesDistinctMachineRoute(t *testing.T) {
+	controller := &collectorPlanTrustControllerStub{delivery: CollectorPlanTrustBundleDelivery{
+		Payload: []byte(`{"schema_version":1,"generation":4}`), ETag: `"g4-deadbeef"`, Generation: 4, Checksum: "deadbeef",
+	}}
+	router := NewAPIV1Router(APIV1RouterConfig{FlowWorkerTrust: controller})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/flow-workers/worker-a/trust-bundle", nil)
+	req.Header.Set("X-Watchdog-Agent-Token", "worker-secret")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK || controller.collectorID != "worker-a" || controller.credential.Token != "worker-secret" || recorder.Body.String() != string(controller.delivery.Payload) {
+		t.Fatalf("status=%d controller=%+v body=%s", recorder.Code, controller, recorder.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/flow-workers/worker-a/trust-bundle", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized || recorder.Header().Get("WWW-Authenticate") != "Watchdog-Flow-Worker" {
+		t.Fatalf("unauthorized status=%d headers=%v body=%s", recorder.Code, recorder.Header(), recorder.Body.String())
+	}
+}

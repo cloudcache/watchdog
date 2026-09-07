@@ -76,6 +76,8 @@ type APIV1RouterConfig struct {
 	CollectorPrincipals    CollectorPrincipalController
 	CollectorPlans         CollectorPlanDeliveryController
 	CollectorPlanTrust     CollectorPlanTrustBundleController
+	FlowWorkerTrust        CollectorPlanTrustBundleController
+	FlowEnrichmentDelivery FlowEnrichmentDeliveryController
 	PlanManagement         CollectorPlanManagementController
 	PlanRollouts           CollectorPlanRolloutController
 }
@@ -202,6 +204,12 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.CollectorPlanTrust != nil {
 		registerCollectorPlanTrustRoutes(mux, cfg.CollectorPlanTrust)
+	}
+	if cfg.FlowWorkerTrust != nil {
+		registerFlowWorkerTrustRoutes(mux, cfg.FlowWorkerTrust)
+	}
+	if cfg.FlowEnrichmentDelivery != nil {
+		registerFlowEnrichmentDeliveryRoutes(mux, cfg.FlowEnrichmentDelivery)
 	}
 	if cfg.PlanManagement != nil {
 		registerCollectorPlanManagementRoutes(mux, auth, cfg.PlanManagement)

@@ -813,6 +813,10 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 | `POST /flow/reclass-jobs` | configure | 复用 operation job 创建回算 |
 | `GET /flow/reclass-jobs/{id}` | view | 进度、范围、版本、校验 |
 | `POST /flow/records/exports` | view_raw + export_raw 或 view_supplier + export_supplier | 冻结 detail schema/filter/sort，按 Kafka 坐标 cursor 创建有界完整 CSV/Parquet 异步导出 |
+| `GET /flow-workers/{worker_id}/trust-bundle` | flow_worker machine credential | 拉取与 collector plan 共用的单调 Ed25519 trust bundle；collector 凭据拒绝 |
+| `GET /flow-workers/{worker_id}/enrichment-publications` | flow_worker machine credential | 按 `after_version` 升序分页拉取 signed dimension+classification envelope；tenant 只取机器 identity |
+| `GET /flow-workers/{worker_id}/enrichment-publications/{publication_id}/objects/{kind}` | flow_worker machine credential | 由服务端按 publication 与 `dimension/classification` 解析 immutable object；有界 Range 下载，禁止客户端 object ref |
+| `POST /flow-workers/{worker_id}/enrichment-publications/{publication_id}/ack` | flow_worker machine credential | 上报 downloaded/installed/failed；pair metadata 必须精确一致，里程碑不因后续失败回退 |
 | `POST /flow/exports` | customer query + customer export | 创建策略有界的异步 CSV/Parquet 完整查询导出；冻结 query/policy/auth 快照 |
 | `GET /exports/{id}` | export task owner/admin | 复用平台导出状态、取消、失败原因和过期时间 |
 | `GET /exports/{id}/download` | export task owner/admin | 下载非空且校验通过的制品；过期后拒绝 |

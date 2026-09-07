@@ -7,28 +7,36 @@ import (
 )
 
 type collectorPlanTrustAPI struct {
-	controller CollectorPlanTrustBundleController
+	controller   CollectorPlanTrustBundleController
+	principal    string
+	authenticate string
+	idParameter  string
 }
 
 func registerCollectorPlanTrustRoutes(mux *http.ServeMux, controller CollectorPlanTrustBundleController) {
-	api := collectorPlanTrustAPI{controller: controller}
+	api := collectorPlanTrustAPI{controller: controller, principal: "Collector", authenticate: "Watchdog-Collector", idParameter: "collector_id"}
 	mux.HandleFunc("GET /api/v1/collectors/{collector_id}/trust-bundle", api.fetch)
 }
 
+func registerFlowWorkerTrustRoutes(mux *http.ServeMux, controller CollectorPlanTrustBundleController) {
+	api := collectorPlanTrustAPI{controller: controller, principal: "Flow worker", authenticate: "Watchdog-Flow-Worker", idParameter: "worker_id"}
+	mux.HandleFunc("GET /api/v1/flow-workers/{worker_id}/trust-bundle", api.fetch)
+}
+
 func (api collectorPlanTrustAPI) fetch(w http.ResponseWriter, r *http.Request) {
-	collectorID := ID(r.PathValue("collector_id"))
+	collectorID := ID(r.PathValue(api.idParameter))
 	if !validCollectorEvidenceID(collectorID) {
-		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "collector_id is required", nil)
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, api.idParameter+" is required", nil)
 		return
 	}
 	credential, err := collectorMachineCredentialFromRequest(r)
 	if err != nil {
-		writeCollectorPlanTrustError(w, err)
+		api.writeError(w, err)
 		return
 	}
 	delivery, err := api.controller.FetchTrustBundle(r.Context(), collectorID, credential)
 	if err != nil {
-		writeCollectorPlanTrustError(w, err)
+		api.writeError(w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -45,11 +53,11 @@ func (api collectorPlanTrustAPI) fetch(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(delivery.Payload)
 }
 
-func writeCollectorPlanTrustError(w http.ResponseWriter, err error) {
+func (api collectorPlanTrustAPI) writeError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrCollectorMachineUnauthorized) {
-		w.Header().Set("WWW-Authenticate", "Watchdog-Collector")
-		WriteAPIError(w, http.StatusUnauthorized, APIErrorUnauthorized, "Collector authentication failed", nil)
+		w.Header().Set("WWW-Authenticate", api.authenticate)
+		WriteAPIError(w, http.StatusUnauthorized, APIErrorUnauthorized, api.principal+" authentication failed", nil)
 		return
 	}
-	WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Collector plan trust bundle is unavailable", nil)
+	WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, api.principal+" trust bundle is unavailable", nil)
 }

@@ -269,6 +269,139 @@ func (p *MySQLFlowEnrichmentPublisher) GetPublication(ctx context.Context, tenan
 		FROM flow_enrichment_publications WHERE tenant_id = ? AND id = ?`, tenantID, publicationID))
 }
 
+func (s *MySQLStore) ListFlowEnrichmentPublications(ctx context.Context, tenantID ID, afterVersion uint32, limit int) (FlowEnrichmentPublicationPage, error) {
+	if s == nil || s.db == nil || ctx == nil || !validCollectorEvidenceID(tenantID) || limit < 1 || limit > flowEnrichmentPublicationPageLimit {
+		return FlowEnrichmentPublicationPage{}, ErrFlowEnrichmentDeliveryInvalid
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+flowEnrichmentPublicationColumns+`
+		FROM flow_enrichment_publications
+		WHERE tenant_id = ? AND classification_version > ?
+		ORDER BY classification_version ASC
+		LIMIT ?`, tenantID, afterVersion, limit+1)
+	if err != nil {
+		return FlowEnrichmentPublicationPage{}, err
+	}
+	defer rows.Close()
+	items := make([]FlowEnrichmentPublication, 0, limit)
+	for rows.Next() {
+		publication, err := scanFlowEnrichmentPublication(rows)
+		if err != nil {
+			return FlowEnrichmentPublicationPage{}, err
+		}
+		items = append(items, publication)
+	}
+	if err := rows.Err(); err != nil {
+		return FlowEnrichmentPublicationPage{}, err
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return FlowEnrichmentPublicationPage{Items: items, HasMore: hasMore}, nil
+}
+
+func (s *MySQLStore) GetFlowEnrichmentPublication(ctx context.Context, tenantID, publicationID ID) (FlowEnrichmentPublication, error) {
+	if s == nil || s.db == nil || ctx == nil || !validCollectorEvidenceID(tenantID) || !validCollectorEvidenceID(publicationID) {
+		return FlowEnrichmentPublication{}, ErrFlowEnrichmentDeliveryInvalid
+	}
+	return scanFlowEnrichmentPublication(s.db.QueryRowContext(ctx, `SELECT `+flowEnrichmentPublicationColumns+`
+		FROM flow_enrichment_publications WHERE tenant_id = ? AND id = ?`, tenantID, publicationID))
+}
+
+func (s *MySQLStore) RecordFlowEnrichmentAcknowledgement(ctx context.Context, acknowledgement FlowEnrichmentAcknowledgement) error {
+	if s == nil || s.db == nil || ctx == nil || !validCollectorEvidenceID(acknowledgement.TenantID) ||
+		!validCollectorEvidenceID(acknowledgement.PublicationID) || !validCollectorEvidenceID(acknowledgement.WorkerID) ||
+		acknowledgement.AttemptedAt.IsZero() || validateFlowEnrichmentAcknowledgementReport(acknowledgement.FlowEnrichmentAcknowledgementReport) != nil {
+		return ErrFlowEnrichmentDeliveryInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	publication, err := scanFlowEnrichmentPublication(tx.QueryRowContext(ctx, `SELECT `+flowEnrichmentPublicationColumns+`
+		FROM flow_enrichment_publications
+		WHERE tenant_id = ? AND id = ?
+		FOR UPDATE`, acknowledgement.TenantID, acknowledgement.PublicationID))
+	if err != nil {
+		return err
+	}
+	if publication.DimensionSnapshotID != acknowledgement.DimensionSnapshotID ||
+		publication.DimensionVersion != acknowledgement.DimensionVersion || publication.DimensionChecksum != acknowledgement.DimensionChecksum ||
+		publication.ClassificationVersion != acknowledgement.ClassificationVersion || publication.ClassificationChecksum != acknowledgement.ClassificationChecksum {
+		return ErrFlowEnrichmentAckConflict
+	}
+	var agentType, moduleKey, status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT agent_type, module_key, status
+		FROM collector_agents
+		WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+		FOR UPDATE
+	`, acknowledgement.TenantID, acknowledgement.WorkerID).Scan(&agentType, &moduleKey, &status); err != nil {
+		return err
+	}
+	if agentType != flowWorkerAgentType || moduleKey != flowMachineModuleKey || status != "active" {
+		return ErrCollectorMachineUnauthorized
+	}
+
+	var existingAttemptedAt time.Time
+	var downloadedAt, installedAt sql.NullTime
+	var existingState string
+	err = tx.QueryRowContext(ctx, `
+		SELECT state, attempted_at, downloaded_at, installed_at
+		FROM flow_enrichment_publication_acks
+		WHERE tenant_id = ? AND publication_id = ? AND worker_id = ?
+		FOR UPDATE
+	`, acknowledgement.TenantID, acknowledgement.PublicationID, acknowledgement.WorkerID).Scan(&existingState, &existingAttemptedAt, &downloadedAt, &installedAt)
+	exists := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	attemptedAt := acknowledgement.AttemptedAt.UTC().Truncate(time.Millisecond)
+	if exists && !attemptedAt.After(existingAttemptedAt) {
+		attemptedAt = existingAttemptedAt.UTC().Add(time.Millisecond)
+	}
+	if acknowledgement.State == FlowEnrichmentAckDownloaded || acknowledgement.State == FlowEnrichmentAckInstalled {
+		if !downloadedAt.Valid {
+			downloadedAt = sql.NullTime{Time: attemptedAt, Valid: true}
+		}
+	}
+	if acknowledgement.State == FlowEnrichmentAckInstalled && !installedAt.Valid {
+		installedAt = sql.NullTime{Time: attemptedAt, Valid: true}
+	}
+	var errorCode, errorMessage any
+	if acknowledgement.State == FlowEnrichmentAckFailed {
+		errorCode = acknowledgement.FailureStage + ":" + acknowledgement.FailureCode
+		if acknowledgement.FailureMessage != "" {
+			errorMessage = acknowledgement.FailureMessage
+		}
+	}
+	if !exists {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO flow_enrichment_publication_acks (
+				tenant_id, publication_id, worker_id, boot_id, software_version,
+				state, attempted_at, downloaded_at, installed_at, error_code, error_message
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, acknowledgement.TenantID, acknowledgement.PublicationID, acknowledgement.WorkerID,
+			acknowledgement.BootID, acknowledgement.SoftwareVersion, acknowledgement.State,
+			attemptedAt, downloadedAt, installedAt, errorCode, errorMessage)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE flow_enrichment_publication_acks
+			SET boot_id = ?, software_version = ?, state = ?, attempted_at = ?,
+				downloaded_at = ?, installed_at = ?, error_code = ?, error_message = ?,
+				row_version = row_version + 1
+			WHERE tenant_id = ? AND publication_id = ? AND worker_id = ?
+		`, acknowledgement.BootID, acknowledgement.SoftwareVersion, acknowledgement.State,
+			attemptedAt, downloadedAt, installedAt, errorCode, errorMessage,
+			acknowledgement.TenantID, acknowledgement.PublicationID, acknowledgement.WorkerID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func getActiveFlowAddressSnapshotTx(ctx context.Context, tx *sql.Tx, tenantID ID, effectiveFrom time.Time) (DimensionPublicationSnapshot, error) {
 	var snapshotID ID
 	if err := tx.QueryRowContext(ctx, `

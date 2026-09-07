@@ -6,7 +6,7 @@
 
 - `flow-collect` 只接收 UDP 并写 Kafka，不做地址分类。
 - `flow-worker` 已在 Kafka 后使用 `gaissmai/bart` LPM 与 Geo 有序区间二分完成分类；`snapshot.go` 的 lookup 和 `enrich.go` 的 enrichment 每条 flow **不访问 MySQL、ClickHouse 或 HTTP**。
-- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。平台已完成 classification profile CAS、不可变 classification object、dimension+classification pair 元数据和复用全局 trust bundle 的 Ed25519 envelope；尚未完成的是认证 desired/object/ACK HTTP、磁盘 LKG 与 cold-start 恢复，不能把本地文件 bootstrap 冒充完整分发生命周期。
+- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。平台已完成 classification profile CAS、不可变 classification object、dimension+classification pair 元数据、复用全局 trust bundle 的 Ed25519 envelope，以及 `flow_worker` 专属认证的 desired/object/ACK HTTP；尚未完成的是 worker HTTP client、磁盘 LKG 与 cold-start 恢复，不能把本地文件 bootstrap 冒充完整分发生命周期。
 - CH migration 009 的 `flow_address_dict_source` 和 `IP_TRIE` 集成测试证明过 ClickHouse 字典能力，但没有接入生产 worker/rollup/query。它是历史实验，不是继续演进的架构基础。
 
 因此本次修正不再“把分类从 worker 搬到 ClickHouse”，而是把**索引的发布来源**从运行时批量装载管理数据，改成经审批、可校验、可回滚的二进制 `AddressSnap`。
@@ -86,9 +86,10 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 ## 5. 分发与 worker 加载
 
-- 第一阶段由 worker 通过认证 API 获取“本 scope 的 desired activation metadata”，使用 object ref 拉取 AddressSnap；Kafka 不承载大对象。
+- 第一阶段由 worker 通过认证 API 获取“本 scope 的 desired activation metadata”，使用 publication ID + 服务端拥有的 object kind 拉取 AddressSnap；Kafka 不承载大对象。机器路由固定为 `GET /api/v1/flow-workers/{worker_id}/trust-bundle`、`GET /api/v1/flow-workers/{worker_id}/enrichment-publications?after_version=&limit=`、`GET /api/v1/flow-workers/{worker_id}/enrichment-publications/{publication_id}/objects/{dimension|classification}` 和 `POST .../{publication_id}/ack`。全部路由使用独立 `flow_worker/pull` authenticator，tenant 只从 registry identity 取得；`flow_collect/listen` 凭据不能调用，object ref 也不接受客户端输入。desired 按 classification version 升序、最多 100 个 signed envelope 分页；对象 GET 有服务端大小上限、checksum/ETag、Range 和 immutable private cache header。
 - 本地以 `tenant/snapshot/checksum` 保存 last-known-good 文件：下载到临时文件，`fsync + atomic rename` 后才可成为 LKG。启动时可从 LKG 恢复，但仍要校验签名、SHA、header/CRC 和 metadata。
 - 解码、索引构建在热路径之外完成；新 catalog 完全构建成功后以单次 atomic swap 可见。失败继续使用旧版本并上报稳定错误码，不允许空表替换。
+- ACK 请求必须回显 publication 内的 dimension snapshot/version/checksum 与 classification version/checksum，服务端在锁内与不可变 pair 逐字段核对，并再次确认 registry 行仍为 active `flow_worker`。`downloaded_at`、`installed_at` 是不可逆里程碑：后续 failed 可以成为最新 attempt state，但不得清空此前的 downloaded/installed 时间。`attempted_at` 由服务端生成并在并发/时钟回退时单调推进。`boot_id` 记录哪次进程尝试，不宣称进程 lease fencing；在 worker heartbeat/session contract 落地前，查询切换只能按明确的 installed milestone 与部署策略判断，不能把“最新 state 非 failed”误当额外保证。
 - reader 双读已经落地：`object_format` 为空或 `json/0` 时保留旧 definition + GeoCatalog 语义，`wads/1` 时 Geo、supplier/customer ISP/ASN、prefix、business 和 sets 全部来自同一对象；未知组合在读取对象前即拒绝。WADS value/range/string 引用在安装前预解析，逐 flow 只做 v4/v6 二分和不可变切片读取；WADS-only 构造器允许 GeoCatalog 为空，若事件时间实际选中旧 JSON 版本则以 `dependency=geo` 暂停而非误用当前值。
 - 同一 event time 必须选 `effective_from <= event_time` 的最新已安装版本；缺版本暂停对应 Kafka partition，不回退到当前版本误分类。
 - 现阶段继续使用已验证的 BART LPM + Geo 有序区间二分。EdgeManager 的 DIR-24-8 是候选优化，不是默认实现：IPv4 一级表约 64 MiB，若按 tenant 复制会线性放大。只有固定硬件上 BART 不达 SLA，且“共享 supplier 基库 + tenant 稀疏 overlay”容量模型成立时才可切换。

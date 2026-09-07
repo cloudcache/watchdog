@@ -308,6 +308,85 @@ func TestMySQLFlowEnrichmentPublisherBuildsSignedImmutablePair(t *testing.T) {
 	if _, err := flowworker.VerifySignedEnrichmentVersionPublication(envelopeData, trust, base.Add(31*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	const (
+		workerID    = ID("worker_enrichment_repo")
+		collectorID = ID("collect_enrichment_repo")
+	)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO collector_agents (
+			id, tenant_id, module_key, name, agent_type, mode, status,
+			observed_health, auth_type, token_hash, created_by, updated_by
+		) VALUES
+			(?, ?, 'flow', 'worker', 'flow_worker', 'pull', 'active', 'healthy', 'token', 'unused', ?, ?),
+			(?, ?, 'flow', 'collector', 'flow_collect', 'listen', 'active', 'healthy', 'token', 'unused', ?, ?)
+	`, workerID, tenantID, actorID, actorID, collectorID, tenantID, actorID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ListFlowEnrichmentPublications(ctx, tenantID, 0, 1)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != publication.ID || page.HasMore {
+		t.Fatalf("publication page=%+v err=%v", page, err)
+	}
+	acknowledgement := FlowEnrichmentAcknowledgement{
+		TenantID: tenantID, PublicationID: publication.ID, WorkerID: workerID,
+		FlowEnrichmentAcknowledgementReport: FlowEnrichmentAcknowledgementReport{
+			State: FlowEnrichmentAckDownloaded, BootID: "boot-download", SoftwareVersion: "1.0.0",
+			DimensionSnapshotID: publication.DimensionSnapshotID, DimensionVersion: publication.DimensionVersion,
+			DimensionChecksum: publication.DimensionChecksum, ClassificationVersion: publication.ClassificationVersion,
+			ClassificationChecksum: publication.ClassificationChecksum,
+		},
+		AttemptedAt: base.Add(32 * time.Minute),
+	}
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, acknowledgement); err != nil {
+		t.Fatal(err)
+	}
+	acknowledgement.State = FlowEnrichmentAckFailed
+	acknowledgement.BootID = "boot-failed"
+	acknowledgement.FailureStage = "verify"
+	acknowledgement.FailureCode = "CHECKSUM_MISMATCH"
+	acknowledgement.FailureMessage = "downloaded object did not match the signed checksum"
+	acknowledgement.AttemptedAt = base.Add(33 * time.Minute)
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, acknowledgement); err != nil {
+		t.Fatal(err)
+	}
+	acknowledgement.State = FlowEnrichmentAckInstalled
+	acknowledgement.BootID = "boot-installed"
+	acknowledgement.FailureStage, acknowledgement.FailureCode, acknowledgement.FailureMessage = "", "", ""
+	acknowledgement.AttemptedAt = base.Add(34 * time.Minute)
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, acknowledgement); err != nil {
+		t.Fatal(err)
+	}
+	acknowledgement.State = FlowEnrichmentAckFailed
+	acknowledgement.FailureStage = "activate"
+	acknowledgement.FailureCode = "RUNTIME_SWAP_FAILED"
+	acknowledgement.FailureMessage = "runtime rejected the prepared catalog"
+	acknowledgement.AttemptedAt = base.Add(35 * time.Minute)
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, acknowledgement); err != nil {
+		t.Fatal(err)
+	}
+	var ackState, ackBootID, ackErrorCode string
+	var downloadedAt, installedAt time.Time
+	var ackRowVersion uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT state, boot_id, error_code, downloaded_at, installed_at, row_version
+		FROM flow_enrichment_publication_acks
+		WHERE tenant_id = ? AND publication_id = ? AND worker_id = ?
+	`, tenantID, publication.ID, workerID).Scan(&ackState, &ackBootID, &ackErrorCode, &downloadedAt, &installedAt, &ackRowVersion); err != nil {
+		t.Fatal(err)
+	}
+	if ackState != FlowEnrichmentAckFailed || ackBootID != "boot-installed" || ackErrorCode != "activate:RUNTIME_SWAP_FAILED" ||
+		!downloadedAt.Equal(base.Add(32*time.Minute)) || !installedAt.Equal(base.Add(34*time.Minute)) || ackRowVersion != 4 {
+		t.Fatalf("ack state=%s boot=%s code=%s downloaded=%s installed=%s version=%d", ackState, ackBootID, ackErrorCode, downloadedAt, installedAt, ackRowVersion)
+	}
+	wrongPair := acknowledgement
+	wrongPair.DimensionChecksum = "sha256:" + strings.Repeat("f", 64)
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, wrongPair); !errors.Is(err, ErrFlowEnrichmentAckConflict) {
+		t.Fatalf("wrong pair acknowledgement error=%v", err)
+	}
+	collectorAck := acknowledgement
+	collectorAck.WorkerID = collectorID
+	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, collectorAck); !errors.Is(err, ErrCollectorMachineUnauthorized) {
+		t.Fatalf("collector identity acknowledgement error=%v", err)
+	}
 	if _, err := publisher.Publish(ctx, tenantID, actorID, FlowEnrichmentPublishRequest{EffectiveFrom: effectiveFrom}); !errors.Is(err, ErrFlowEnrichmentConflict) {
 		t.Fatalf("duplicate effective-time error = %v", err)
 	}
