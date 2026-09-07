@@ -286,6 +286,9 @@ func (s *DiskVersionLKG) Restore(ctx context.Context, trust *flowplan.TrustStore
 		return VersionLKGRestoreResult{}, err
 	}
 	if len(paths) == 0 || len(paths) > versionLKGMaxPublicationCount {
+		if len(paths) == 0 {
+			return VersionLKGRestoreResult{}, ErrNoVersionLKG
+		}
 		return VersionLKGRestoreResult{}, errors.New("version LKG publication count is invalid")
 	}
 	sort.Strings(paths)

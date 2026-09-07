@@ -6,13 +6,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,6 +30,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowplan"
 	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/flowworker"
+	"github.com/google/uuid"
 )
 
 const maxPublicationBytes = 256 << 10
@@ -43,8 +48,12 @@ func (values *stringList) Set(value string) error {
 }
 
 type options struct {
-	planFiles, versionPublications, geoBundles stringList
-	planPublicKey, workerID                    string
+	planFiles, versionPublications, geoBundles                    stringList
+	planPublicKey, workerID                                       string
+	controlPlaneURL, agentTokenFile, versionLKGDir                string
+	controlPlaneCAFile, controlPlaneCertFile, controlPlaneKeyFile string
+	controlPlaneServerName                                        string
+	controlPlaneTimeout, versionRefreshInterval                   time.Duration
 
 	brokers, topic, sourceStreamID, clientID, consumerGroup string
 	kafkaCAFile, kafkaCertFile, kafkaKeyFile                string
@@ -73,6 +82,15 @@ func main() {
 	flag.Var(&opt.versionPublications, "bootstrap-version-publication", "dimension/classification publication JSON; repeat for retained event-time versions")
 	flag.Var(&opt.geoBundles, "geo-bundle", "legacy JSON dimension Geo bundle directory; optional for WADS-only bootstrap, repeat oldest to newest")
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
+	flag.StringVar(&opt.controlPlaneURL, "control-plane-url", "", "Watchdog API base URL for signed enrichment publications")
+	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_worker machine token")
+	flag.StringVar(&opt.versionLKGDir, "version-lkg-dir", "", "durable directory for signed enrichment publication LKG")
+	flag.DurationVar(&opt.versionRefreshInterval, "version-refresh-interval", time.Minute, "signed enrichment publication refresh interval")
+	flag.DurationVar(&opt.controlPlaneTimeout, "control-plane-timeout", 2*time.Minute, "timeout for one control-plane request")
+	flag.StringVar(&opt.controlPlaneCAFile, "control-plane-tls-ca", "", "control-plane TLS CA file")
+	flag.StringVar(&opt.controlPlaneCertFile, "control-plane-tls-cert", "", "control-plane mTLS client certificate file")
+	flag.StringVar(&opt.controlPlaneKeyFile, "control-plane-tls-key", "", "control-plane mTLS client key file")
+	flag.StringVar(&opt.controlPlaneServerName, "control-plane-tls-server-name", "", "control-plane TLS server name")
 
 	flag.StringVar(&opt.brokers, "kafka-brokers", "127.0.0.1:9092", "comma-separated Kafka brokers")
 	flag.StringVar(&opt.topic, "kafka-topic", "watchdog.flow.raw", "RawFlow Kafka topic base; schema suffix is automatic")
@@ -132,7 +150,10 @@ func run(opt options) error {
 	if err != nil {
 		return err
 	}
-	plans, versions, geo, err := loadBootstrap(ctx, opt)
+	identity := flowworker.VersionWorkerIdentity{
+		WorkerID: strings.TrimSpace(opt.workerID), BootID: uuid.NewString(), SoftwareVersion: "watchdog-flow-worker-v1",
+	}
+	plans, versions, geo, versionSync, versionCursor, err := loadBootstrap(ctx, opt, identity)
 	if err != nil {
 		return err
 	}
@@ -146,7 +167,7 @@ func run(opt options) error {
 		return errors.New("ClickHouse block limits are invalid")
 	}
 	if opt.check {
-		log.Printf("flow-worker configuration valid: plans=%d versions=%d geo_versions=%d group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), consumerConfig.ConsumerGroup)
+		log.Printf("flow-worker configuration valid: plans=%d bootstrap_versions=%d geo_versions=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
 		return nil
 	}
 
@@ -211,8 +232,14 @@ func run(opt options) error {
 		metricsErrCh = result
 		log.Printf("flow-worker metrics listening: address=%s", metricsServer.Address())
 	}
-	log.Printf("flow-worker started: plans=%d versions=%d geo_versions=%d group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), consumerConfig.ConsumerGroup)
+	log.Printf("flow-worker started: plans=%d bootstrap_versions=%d geo_versions=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
 	runCtx, cancelRun := context.WithCancel(ctx)
+	var versionSyncDone <-chan struct{}
+	if versionSync != nil {
+		done := make(chan struct{})
+		versionSyncDone = done
+		go runVersionSyncLoop(runCtx, versionSync, versionCursor, opt.versionRefreshInterval, done)
+	}
 	consumerErrCh := make(chan error, 1)
 	go func() { consumerErrCh <- consumer.RunPartitionBatches(runCtx, processor.HandleRecords) }()
 	select {
@@ -225,6 +252,9 @@ func run(opt options) error {
 		err = <-consumerErrCh
 	}
 	cancelRun()
+	if versionSyncDone != nil {
+		<-versionSyncDone
+	}
 	stats := processor.Stats()
 	log.Printf("flow-worker stopped: datagrams=%d records=%d template_missing=%d rejected=%d retryable_errors=%d", stats.Datagrams, stats.Records, stats.TemplateMissing, stats.Rejected, stats.RetryableErrors)
 	return err
@@ -307,42 +337,56 @@ func buildClickHouseConfig(opt options) (flowch.NativeConfig, error) {
 	}, nil
 }
 
-func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowworker.EnrichmentVersionCatalog, *flowdimension.GeoCatalog, error) {
-	if len(opt.planFiles) == 0 || strings.TrimSpace(opt.planPublicKey) == "" || len(opt.versionPublications) == 0 {
-		return nil, nil, nil, errors.New("at least one bootstrap plan and version publication plus the plan public key are required")
+func loadBootstrap(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowplan.Catalog, *flowworker.EnrichmentVersionCatalog, *flowdimension.GeoCatalog, *flowworker.RemoteVersionSync, uint32, error) {
+	if len(opt.planFiles) == 0 || strings.TrimSpace(opt.planPublicKey) == "" {
+		return nil, nil, nil, nil, 0, errors.New("at least one bootstrap plan plus the plan public key are required")
 	}
 	plans, err := flowplan.NewCatalog()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, 0, err
 	}
 	for _, path := range opt.planFiles {
 		registry, err := flowplan.LoadHistoricalSignedPlan(path, opt.planPublicKey)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("load bootstrap plan %s: %w", filepath.Base(path), err)
+			return nil, nil, nil, nil, 0, fmt.Errorf("load bootstrap plan %s: %w", filepath.Base(path), err)
 		}
 		if err := plans.Install(registry); err != nil {
-			return nil, nil, nil, fmt.Errorf("install bootstrap plan %s: %w", filepath.Base(path), err)
+			return nil, nil, nil, nil, 0, fmt.Errorf("install bootstrap plan %s: %w", filepath.Base(path), err)
 		}
 	}
 
+	if strings.TrimSpace(opt.controlPlaneURL) != "" {
+		if len(opt.versionPublications) != 0 || len(opt.geoBundles) != 0 {
+			return nil, nil, nil, nil, 0, errors.New("remote enrichment versions cannot be combined with bootstrap version or Geo files")
+		}
+		versions, syncer, cursor, err := loadRemoteVersions(ctx, opt, identity)
+		if err != nil {
+			return nil, nil, nil, nil, 0, err
+		}
+		return plans, versions, nil, syncer, cursor, nil
+	}
+	if hasRemoteVersionOptions(opt) {
+		return nil, nil, nil, nil, 0, errors.New("control-plane URL is required when remote enrichment options are configured")
+	}
+	if len(opt.versionPublications) == 0 {
+		return nil, nil, nil, nil, 0, errors.New("at least one bootstrap version publication is required when remote enrichment is disabled")
+	}
 	versions, err := flowworker.NewEnrichmentVersionCatalog()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, 0, err
 	}
-	loader, err := flowworker.NewVersionLoader(fileObjectSource{}, discardAcknowledgement{}, versions, flowworker.VersionWorkerIdentity{
-		WorkerID: strings.TrimSpace(opt.workerID), BootID: fmt.Sprintf("bootstrap-%d", os.Getpid()), SoftwareVersion: "watchdog-flow-worker-v1",
-	}, flowworker.VersionLoaderLimits{})
+	loader, err := flowworker.NewVersionLoader(fileObjectSource{}, discardAcknowledgement{}, versions, identity, flowworker.VersionLoaderLimits{})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, 0, err
 	}
 	needsLegacyGeo := false
 	for _, path := range opt.versionPublications {
 		publication, err := loadPublication(path)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, 0, err
 		}
 		if err := loader.Install(ctx, publication); err != nil {
-			return nil, nil, nil, fmt.Errorf("install bootstrap version %s: %w", filepath.Base(path), err)
+			return nil, nil, nil, nil, 0, fmt.Errorf("install bootstrap version %s: %w", filepath.Base(path), err)
 		}
 		if publication.Dimension.ObjectFormat != flowworker.VersionObjectFormatWADS {
 			needsLegacyGeo = true
@@ -351,21 +395,170 @@ func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowwo
 
 	if len(opt.geoBundles) == 0 {
 		if needsLegacyGeo {
-			return nil, nil, nil, errors.New("a Geo bundle is required while a legacy JSON dimension publication is retained")
+			return nil, nil, nil, nil, 0, errors.New("a Geo bundle is required while a legacy JSON dimension publication is retained")
 		}
-		return plans, versions, nil, nil
+		return plans, versions, nil, nil, 0, nil
 	}
 	geo := flowdimension.NewGeoCatalog()
 	activeGeo := opt.geoBundles[len(opt.geoBundles)-1]
 	if _, err := geo.Reload(activeGeo, flowdimension.GeoLoadLimits{}); err != nil {
-		return nil, nil, nil, fmt.Errorf("load active Geo bundle %s: %w", filepath.Base(activeGeo), err)
+		return nil, nil, nil, nil, 0, fmt.Errorf("load active Geo bundle %s: %w", filepath.Base(activeGeo), err)
 	}
 	for _, path := range opt.geoBundles[:len(opt.geoBundles)-1] {
 		if _, err := geo.LoadHistorical(path, flowdimension.GeoLoadLimits{}); err != nil {
-			return nil, nil, nil, fmt.Errorf("load historical Geo bundle %s: %w", filepath.Base(path), err)
+			return nil, nil, nil, nil, 0, fmt.Errorf("load historical Geo bundle %s: %w", filepath.Base(path), err)
 		}
 	}
-	return plans, versions, geo, nil
+	return plans, versions, geo, nil, 0, nil
+}
+
+func loadRemoteVersions(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowworker.EnrichmentVersionCatalog, *flowworker.RemoteVersionSync, uint32, error) {
+	if strings.TrimSpace(opt.versionLKGDir) == "" || opt.versionRefreshInterval < 5*time.Second || opt.versionRefreshInterval > time.Hour {
+		return nil, nil, 0, errors.New("remote enrichment requires an LKG directory and refresh interval of 5s..1h")
+	}
+	client, err := buildVersionHTTPClient(opt, identity)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	lkg, err := flowworker.NewDiskVersionLKG(opt.versionLKGDir)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	trust := &flowplan.TrustStore{}
+	versions, err := flowworker.NewEnrichmentVersionCatalog()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	restored := flowworker.VersionLKGRestoreResult{}
+	if _, err := lkg.LoadTrustBundle(); err == nil {
+		restored, err = lkg.Restore(ctx, trust, versions, identity, flowworker.VersionLoaderLimits{}, time.Now().UTC())
+		if err != nil && !errors.Is(err, flowworker.ErrNoVersionLKG) {
+			return nil, nil, 0, fmt.Errorf("restore enrichment LKG: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, 0, fmt.Errorf("read enrichment LKG trust bundle: %w", err)
+	}
+	syncer, err := flowworker.NewRemoteVersionSync(client, lkg, trust, versions, flowworker.VersionLoaderLimits{})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if opt.check {
+		return versions, syncer, restored.HighestVersion, nil
+	}
+	result, syncErr := syncer.SyncOnce(ctx, restored.HighestVersion)
+	if syncErr != nil {
+		if restored.PublicationCount == 0 {
+			return nil, nil, 0, fmt.Errorf("initial enrichment sync without LKG: %w", syncErr)
+		}
+		log.Printf("flow-worker enrichment sync unavailable; using LKG version %d: %v", restored.HighestVersion, syncErr)
+		return versions, syncer, restored.HighestVersion, nil
+	}
+	if result.HighestVersion == 0 {
+		return nil, nil, 0, errors.New("control plane returned no enrichment version and no LKG is installed")
+	}
+	return versions, syncer, result.HighestVersion, nil
+}
+
+func buildVersionHTTPClient(opt options, identity flowworker.VersionWorkerIdentity) (*flowworker.VersionHTTPClient, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(opt.controlPlaneURL))
+	if err != nil || endpoint == nil || endpoint.Host == "" {
+		return nil, errors.New("control-plane URL is invalid")
+	}
+	if opt.controlPlaneTimeout < 5*time.Second || opt.controlPlaneTimeout > 10*time.Minute {
+		return nil, errors.New("control-plane timeout must be 5s..10m")
+	}
+	certificateConfigured := strings.TrimSpace(opt.controlPlaneCertFile) != "" || strings.TrimSpace(opt.controlPlaneKeyFile) != ""
+	if (strings.TrimSpace(opt.controlPlaneCertFile) == "") != (strings.TrimSpace(opt.controlPlaneKeyFile) == "") {
+		return nil, errors.New("control-plane TLS certificate and key must be configured together")
+	}
+	tlsConfigured := strings.TrimSpace(opt.controlPlaneCAFile) != "" || certificateConfigured || strings.TrimSpace(opt.controlPlaneServerName) != ""
+	if endpoint.Scheme != "https" && tlsConfigured {
+		return nil, errors.New("control-plane TLS options require an https URL")
+	}
+	if endpoint.Scheme == "http" && !isLoopbackControlPlane(endpoint.Hostname()) {
+		return nil, errors.New("cleartext control-plane URL is allowed only on loopback")
+	}
+	token := ""
+	if strings.TrimSpace(opt.agentTokenFile) != "" {
+		token, err = flowstream.ReadSecretFile(opt.agentTokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("flow worker agent token: %w", err)
+		}
+	}
+	if (token != "") == certificateConfigured {
+		return nil, errors.New("configure exactly one of flow worker agent token or mTLS certificate")
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if endpoint.Scheme == "https" {
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load control-plane system CA pool: %w", err)
+		}
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if strings.TrimSpace(opt.controlPlaneCAFile) != "" {
+			pem, err := os.ReadFile(opt.controlPlaneCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("read control-plane TLS CA: %w", err)
+			}
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil, errors.New("control-plane TLS CA contains no certificate")
+			}
+		}
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, ServerName: strings.TrimSpace(opt.controlPlaneServerName)}
+		if certificateConfigured {
+			certificate, err := tls.LoadX509KeyPair(opt.controlPlaneCertFile, opt.controlPlaneKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("load control-plane TLS client certificate: %w", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{certificate}
+		}
+		transport.TLSClientConfig = tlsConfig
+	}
+	return flowworker.NewVersionHTTPClient(flowworker.VersionHTTPClientConfig{
+		BaseURL: strings.TrimSpace(opt.controlPlaneURL), AgentToken: token, MutualTLS: certificateConfigured,
+		Identity: identity, Client: &http.Client{Transport: transport, Timeout: opt.controlPlaneTimeout},
+	})
+}
+
+func hasRemoteVersionOptions(opt options) bool {
+	return strings.TrimSpace(opt.agentTokenFile) != "" || strings.TrimSpace(opt.versionLKGDir) != "" ||
+		strings.TrimSpace(opt.controlPlaneCAFile) != "" || strings.TrimSpace(opt.controlPlaneCertFile) != "" ||
+		strings.TrimSpace(opt.controlPlaneKeyFile) != "" || strings.TrimSpace(opt.controlPlaneServerName) != ""
+}
+
+func isLoopbackControlPlane(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSync, cursor uint32, interval time.Duration, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			result, err := syncer.SyncOnce(ctx, cursor)
+			if err != nil {
+				if !errors.Is(err, context.Canceled) {
+					log.Printf("flow-worker enrichment sync failed; retaining version %d: %v", cursor, err)
+				}
+				continue
+			}
+			if result.HighestVersion > cursor {
+				log.Printf("flow-worker enrichment version advanced: from=%d to=%d count=%d", cursor, result.HighestVersion, result.Installed)
+				cursor = result.HighestVersion
+			}
+		}
+	}
 }
 
 type fileObjectSource struct{}

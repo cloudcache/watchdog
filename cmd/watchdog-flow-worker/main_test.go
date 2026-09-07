@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -94,5 +95,34 @@ func TestLoadPublicationIsStrictAndResolvesObjectPaths(t *testing.T) {
 	}
 	if _, err := loadPublication(path); err == nil {
 		t.Fatal("unknown publication field was accepted")
+	}
+}
+
+func TestLoadRemoteVersionsCheckIsOffline(t *testing.T) {
+	directory := t.TempDir()
+	token := filepath.Join(directory, "agent-token")
+	if err := os.WriteFile(token, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	versions, syncer, cursor, err := loadRemoteVersions(context.Background(), options{
+		controlPlaneURL: "http://127.0.0.1:1", agentTokenFile: token,
+		versionLKGDir: filepath.Join(directory, "lkg"), versionRefreshInterval: time.Minute,
+		controlPlaneTimeout: 5 * time.Second, check: true,
+	}, flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"})
+	if err != nil || versions == nil || syncer == nil || cursor != 0 {
+		t.Fatalf("versions=%v syncer=%v cursor=%d error=%v", versions, syncer, cursor, err)
+	}
+}
+
+func TestBuildVersionHTTPClientRejectsCleartextRemoteHost(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "agent-token")
+	if err := os.WriteFile(token, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := buildVersionHTTPClient(options{
+		controlPlaneURL: "http://watchdog.example", agentTokenFile: token, controlPlaneTimeout: 5 * time.Second,
+	}, flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"})
+	if err == nil {
+		t.Fatal("cleartext non-loopback control plane was accepted")
 	}
 }

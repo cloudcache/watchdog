@@ -31,6 +31,7 @@ var (
 type VersionHTTPClientConfig struct {
 	BaseURL    string
 	AgentToken string
+	MutualTLS  bool
 	Identity   VersionWorkerIdentity
 	Client     *http.Client
 }
@@ -68,8 +69,9 @@ func NewVersionHTTPClient(config VersionHTTPClientConfig) (*VersionHTTPClient, e
 		base.User != nil || base.RawQuery != "" || base.Fragment != "" || base.Opaque != "" {
 		return nil, errors.New("flow enrichment control-plane base URL is invalid")
 	}
+	validToken := config.AgentToken != "" && validASCII(config.AgentToken, 256)
 	if !validIdentifier(config.Identity.WorkerID, 26) || !validASCII(config.Identity.BootID, 64) ||
-		!validASCII(config.Identity.SoftwareVersion, 64) || !validASCII(config.AgentToken, 256) {
+		!validASCII(config.Identity.SoftwareVersion, 64) || validToken == config.MutualTLS {
 		return nil, errors.New("flow worker HTTP identity or token is invalid")
 	}
 	client := config.Client
@@ -254,7 +256,9 @@ func (c *VersionHTTPClient) newRequest(ctx context.Context, method string, query
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("X-Watchdog-Agent-Token", c.token)
+	if c.token != "" {
+		request.Header.Set("X-Watchdog-Agent-Token", c.token)
+	}
 	request.Header.Set("Accept", "application/json")
 	return request, nil
 }

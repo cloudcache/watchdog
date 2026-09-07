@@ -25,6 +25,7 @@ var (
 	ErrVersionObjectIntegrity    = errors.New("enrichment version object integrity failure")
 	ErrVersionPersistence        = errors.New("enrichment version persistence failed")
 	ErrVersionAcknowledgement    = errors.New("enrichment version acknowledgement failed")
+	ErrNoVersionLKG              = errors.New("no enrichment version LKG is available")
 )
 
 type VersionObjectReference struct {

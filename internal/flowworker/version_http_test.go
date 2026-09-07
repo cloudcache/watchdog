@@ -210,6 +210,28 @@ func TestVersionHTTPClientRejectsRedirectWithoutForwardingToken(t *testing.T) {
 	}
 }
 
+func TestVersionHTTPClientRequiresExactlyOneMachineCredential(t *testing.T) {
+	base := VersionHTTPClientConfig{
+		BaseURL: "https://watchdog.example", Identity: VersionWorkerIdentity{
+			WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "1.2.3",
+		},
+	}
+	if _, err := NewVersionHTTPClient(base); err == nil {
+		t.Fatal("client without token or mTLS was accepted")
+	}
+	both := base
+	both.AgentToken = "secret"
+	both.MutualTLS = true
+	if _, err := NewVersionHTTPClient(both); err == nil {
+		t.Fatal("client with token and mTLS was accepted")
+	}
+	mtls := base
+	mtls.MutualTLS = true
+	if _, err := NewVersionHTTPClient(mtls); err != nil {
+		t.Fatalf("mTLS-only client: %v", err)
+	}
+}
+
 func newTestVersionHTTPClient(t testing.TB, baseURL string, transport *http.Client) *VersionHTTPClient {
 	t.Helper()
 	client, err := NewVersionHTTPClient(VersionHTTPClientConfig{
