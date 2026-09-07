@@ -70,6 +70,25 @@ func TestEnrichmentVersionCatalogRejectsInvalidOrNonMonotonicPairs(t *testing.T)
 	}
 }
 
+func TestEnrichmentVersionCatalogAllowsOlderDimensionAtRetainedHistoryHorizon(t *testing.T) {
+	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
+	classification := compileClassification(t, 1, testMinute(13, 0), "dimension-1", "count", "count")
+	catalog, err := NewEnrichmentVersionCatalog(EnrichmentVersion{Dimension: dimension, Classification: classification})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Select("tenant-a", testMinute(12, 59)); !errors.Is(err, ErrNoEnrichmentVersion) {
+		t.Fatalf("pre-horizon selection error=%v", err)
+	}
+	selected, err := catalog.Select("tenant-a", testMinute(13, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata := selected.Metadata(); metadata.DimensionVersion != 1 || metadata.ClassificationVersion != 1 {
+		t.Fatalf("retained horizon pair=%+v", metadata)
+	}
+}
+
 func TestEnrichmentVersionCatalogReadersNeverObserveMixedPair(t *testing.T) {
 	dimensionV1 := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
 	classificationV1 := compileClassification(t, 1, testMinute(12, 0), "dimension-1", "count", "count")

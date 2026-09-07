@@ -139,7 +139,12 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 			return errors.New("enrichment versions and effective_from are not monotonic")
 		}
 	}
-	if !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
+	// A cold catalog may start at a retained classification horizon whose
+	// AddressSnap became active earlier. There is no usable pair before that
+	// first classification, so Select still fails closed for older events. Once
+	// tenant history exists, a newly introduced dimension must be paired at its
+	// own activation boundary to avoid silently extending the previous one.
+	if len(items) != 0 && !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
 		return errors.New("a new dimension snapshot must become effective with its classification")
 	}
 	if installedDimension != nil {

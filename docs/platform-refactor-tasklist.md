@@ -6,7 +6,7 @@
 
 每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。`PLAT-04` 只作为计划编号，不再作为一个永远无法勾选的总任务；A–H 必须继续拆成可独立提交、独立验收的子项。只有代码、真实依赖集成、回归和 commit 四项同时存在才可标 `[x]`，不得用“大部分已实现”代替闭环。
 
-**当前活动切片：PLAT-04C4c AddressSnap 进程级验收。** writer、worker reader、机器 HTTP、LKG、远端 sync 和生产命令生命周期均已编码；真实 Kafka 已关闭“缺 event-time 版本不回退 current、不写 CH、不提交 offset”门禁，下一步只做真实 MySQL identity/repository + 独立 OS worker 的故障/回滚联测。查询口径与历史重分类在 installed ACK 前不切换。
+**当前活动切片：PLAT-04C4c installed ACK 查询切换。** AddressSnap writer、worker reader、机器 HTTP、LKG、远端 sync、生产命令生命周期及真实 Kafka/MySQL/独立 OS 进程故障恢复已关闭；下一步只处理 installed ACK 后便捷运营商查询从 ASN fallback 切换 typed `remote_isp_id` 的版本化门禁。历史重分类仍留在 FLOW-06B，不和本切片混改。
 
 ## P0 生产入口、身份与存储收敛
 
@@ -297,7 +297,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
       - [x] **C4c3 签名 wire 内核**：版本对 envelope schema v1 以 canonical JSON 覆盖 publication/tenant、两对象 identity/version/effective time/ref/format/checksum、key ID 与签发时间；worker 通过既有 monotonic trust bundle 校验 Ed25519，拒绝未知字段、非 canonical JSON、篡改、撤销或超期 retiring key。平台 signer 新增受 active-key 状态约束的小 payload 能力，但不改变既有 plan signer 接口或复制密钥表；HTTP delivery 尚未因此完成。
       - [x] **C4c4 profile/版本对 writer**：tenant profile 以 CAS 保存并规范排序/去重 ISP/ASN，复用 `flowdimension` 校验行政区和处置策略；publish 在 tenant lock 内按 event time 选择已激活、已签名、对象仍存在的 WADS，单调分配 classification version，编码不可变 classification object，并在同一事务锁 active 平台 key、签完整 pair、写 audit。真实 MySQL 已验证 profile CAS、对象/metadata 一致、trust bundle 验签及同 effective time 冲突；worker client/LKG 仍由后续子项完成。
       - [x] **C4c5 machine HTTP/ACK**：production router/runtime 已接 worker 专属 trust/desired/object/ACK controller；严格 query/JSON DTO、认证隔离、tenant scope、对象大小/路径归属、pair ACK 一致性和 milestone-preserving upsert 均有单元与真实 MySQL 证据；复用 migration 059，不创建空 migration。
-    - [ ] **C4c-distribution/LKG/ACK**：平台机器 HTTP/ACK、worker 内容寻址 LKG、严格 trust/desired/object/ACK sync 及生产命令的冷恢复/首次和周期同步/退出协同均已完成；token-file 与 mTLS 二选一，非 loopback 明文拒绝，`--check` 无网络副作用。生产 router 的真实 wire 已与 worker sync/WADS/LKG 串联；剩余真实 MySQL 身份/repository + 独立 OS worker 的故障/回滚进程级联测。installed ACK 前禁止查询从 ASN fallback 切换 typed ISP。
+    - [x] **C4c-distribution/LKG/ACK**：平台机器 HTTP/ACK、worker 内容寻址 LKG、严格 trust/desired/object/ACK sync 及生产命令的冷恢复/首次和周期同步/退出协同均已完成；token-file 与 mTLS 二选一，非 loopback 明文拒绝，`--check` 无网络副作用。生产 router wire 已与真实 MySQL identity/repository 串联，独立 OS worker 验证 v1 installed ACK、损坏 v2 failed ACK 且 v1 LKG 不被替换、控制面离线重启；真实 Kafka 验证缺 event-time 版本不回退 current、不写 CH、不提交 offset。首个保留 pair 可从较早 AddressSnap 建立 classification horizon，已有历史后的新 dimension 仍须同刻配对。查询切换仍由 C4c 父项单独关闭。
       - [x] **C4c6 production runtime**：remote 与静态 version/Geo bootstrap 互斥，启动在 CH/Kafka 前确认 remote 或完整 LKG 至少提供一个版本；控制面短暂故障只允许 LKG 降级，周期失败保留 cursor/catalog，shutdown 取消并等待同步。命令定向测试覆盖离线 check 和明文远端拒绝；没有新增 schema/migration。
       - [x] **C4c7 production router wire**：`NewAPIV1Router` 的真实 worker trust/desired/object/ACK 路由驱动同一 HTTP client/sync 安装真实 WADS，核对 downloaded→installed 顺序，关闭 HTTP 后从磁盘 LKG 恢复同版本。该测试关闭路由/DTO/header/stream 边界，不冒充尚未执行的真实 MySQL/OS process 故障矩阵。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
