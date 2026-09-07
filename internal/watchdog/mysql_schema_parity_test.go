@@ -397,6 +397,102 @@ func TestISPOperatorFlowIdentityMigrationBackfillReplayAndNoReuse(t *testing.T) 
 	}
 }
 
+func TestISPOperatorFlowIdentityTenantCascadeAndOperatorRetention(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_operator_cascade_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	for replay := 0; replay < 2; replay++ {
+		runEmbeddedMigrationAgain(t, db, "054")
+	}
+
+	var deleteRule string
+	if err := db.QueryRowContext(ctx, `
+		SELECT delete_rule FROM information_schema.referential_constraints
+		WHERE constraint_schema = DATABASE()
+		  AND table_name = 'isp_operators'
+		  AND constraint_name = 'fk_isp_operators_flow_identity'
+	`).Scan(&deleteRule); err != nil {
+		t.Fatal(err)
+	}
+	if deleteRule != "CASCADE" {
+		t.Fatalf("operator identity delete rule = %q, want CASCADE", deleteRule)
+	}
+
+	const tenantID = ID("tenant_operator_cascade")
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Operator Cascade', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMySQLStore(db)
+	operator, err := store.CreateISPOperator(ctx, ISPOperator{
+		TenantID: tenantID, Code: "operator-cascade", Name: "Operator Cascade", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteISPOperator(ctx, tenantID, operator.ID, operator.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM isp_operator_flow_ids
+		WHERE tenant_id = ? AND operator_id = ? AND flow_isp_id = ?
+	`, tenantID, operator.ID, operator.FlowISPID).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained != 1 {
+		t.Fatal("ordinary operator deletion must retain its Flow identity allocation")
+	}
+
+	replacement, err := store.CreateISPOperator(ctx, ISPOperator{
+		TenantID: tenantID, Code: "operator-replacement", Name: "Operator Replacement", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.FlowISPID == operator.FlowISPID {
+		t.Fatal("deleted operator Flow identity was reused")
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM tenants WHERE id = ?", tenantID); err != nil {
+		t.Fatalf("delete tenant with operator identities: %v", err)
+	}
+	for _, table := range []string{"isp_operators", "isp_operator_flow_ids", "isp_operator_flow_id_sequences"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE tenant_id = ?", tenantID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows after tenant cascade = %d, want 0", table, count)
+		}
+	}
+
+	const emptyTenantID = ID("tenant_operator_empty")
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Empty Cascade', 'active')", emptyTenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM tenants WHERE id = ?", emptyTenantID); err != nil {
+		t.Fatalf("delete tenant without operator identities: %v", err)
+	}
+}
+
 func randomSchemaSuffix(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)

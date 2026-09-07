@@ -1118,7 +1118,7 @@ CREATE TABLE IF NOT EXISTS `isp_operators` (
   UNIQUE KEY `uq_isp_operators_name` (`tenant_id`,`name`),
   UNIQUE KEY `uq_isp_operators_flow_isp_id` (`tenant_id`,`flow_isp_id`),
   KEY `idx_isp_operators_category` (`tenant_id`,`category`,`sort_order`,`name`),
-  CONSTRAINT `fk_isp_operators_flow_identity` FOREIGN KEY (`tenant_id`,`id`,`flow_isp_id`) REFERENCES `isp_operator_flow_ids` (`tenant_id`,`operator_id`,`flow_isp_id`),
+  CONSTRAINT `fk_isp_operators_flow_identity` FOREIGN KEY (`tenant_id`,`id`,`flow_isp_id`) REFERENCES `isp_operator_flow_ids` (`tenant_id`,`operator_id`,`flow_isp_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_isp_operators_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
