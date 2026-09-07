@@ -22,6 +22,7 @@ const (
 var (
 	ErrInvalidVersionPublication = errors.New("invalid enrichment version publication")
 	ErrVersionObjectUnavailable  = errors.New("enrichment version object unavailable")
+	ErrVersionPersistence        = errors.New("enrichment version persistence failed")
 	ErrVersionAcknowledgement    = errors.New("enrichment version acknowledgement failed")
 )
 
@@ -80,6 +81,10 @@ type EnrichmentVersionAcknowledger interface {
 	Acknowledge(ctx context.Context, acknowledgement EnrichmentVersionAcknowledgement) error
 }
 
+type EnrichmentVersionPersistence interface {
+	PersistVersion(ctx context.Context, publication EnrichmentVersionPublication) error
+}
+
 type VersionLoaderLimits struct {
 	MaxDimensionObjectBytes       int
 	MaxAddressSnapshotObjectBytes int
@@ -94,10 +99,22 @@ type VersionLoader struct {
 	catalog  *EnrichmentVersionCatalog
 	identity VersionWorkerIdentity
 	limits   VersionLoaderLimits
+	persist  EnrichmentVersionPersistence
 	now      func() time.Time
 }
 
 func NewVersionLoader(source VersionObjectSource, acks EnrichmentVersionAcknowledger, catalog *EnrichmentVersionCatalog, identity VersionWorkerIdentity, limits VersionLoaderLimits) (*VersionLoader, error) {
+	return newVersionLoader(source, acks, catalog, identity, limits, nil)
+}
+
+func NewPersistentVersionLoader(source VersionObjectSource, acks EnrichmentVersionAcknowledger, catalog *EnrichmentVersionCatalog, identity VersionWorkerIdentity, limits VersionLoaderLimits, persistence EnrichmentVersionPersistence) (*VersionLoader, error) {
+	if persistence == nil {
+		return nil, errors.New("version persistence is required")
+	}
+	return newVersionLoader(source, acks, catalog, identity, limits, persistence)
+}
+
+func newVersionLoader(source VersionObjectSource, acks EnrichmentVersionAcknowledger, catalog *EnrichmentVersionCatalog, identity VersionWorkerIdentity, limits VersionLoaderLimits, persistence EnrichmentVersionPersistence) (*VersionLoader, error) {
 	if source == nil || acks == nil || catalog == nil {
 		return nil, errors.New("version object source, acknowledger, and catalog are required")
 	}
@@ -122,10 +139,11 @@ func NewVersionLoader(source VersionObjectSource, acks EnrichmentVersionAcknowle
 	if limits.DimensionCompile.MaxBundleBytes == 0 || limits.DimensionCompile.MaxBundleBytes > limits.MaxDimensionObjectBytes {
 		limits.DimensionCompile.MaxBundleBytes = limits.MaxDimensionObjectBytes
 	}
-	return &VersionLoader{source: source, acks: acks, catalog: catalog, identity: identity, limits: limits, now: time.Now}, nil
+	return &VersionLoader{source: source, acks: acks, catalog: catalog, identity: identity, limits: limits, persist: persistence, now: time.Now}, nil
 }
 
-// Install downloads and compiles both objects before one catalog CAS. The ACK
+// Install downloads and compiles both objects before one atomic catalog
+// publication. The ACK
 // follows local visibility. If ACK transport fails, retrying Install is safe:
 // checksummed pairs install idempotently and the ACK is attempted again.
 func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersionPublication) error {
@@ -137,6 +155,9 @@ func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersi
 	}
 	if installed, exists := l.catalog.ClassificationVersion(publication.TenantID, publication.ClassificationVersion); exists {
 		if err := matchPublicationMetadata(publication, installed.Dimension.Metadata(), installed.Classification.Metadata()); err != nil {
+			return err
+		}
+		if err := l.persistVersion(ctx, publication); err != nil {
 			return err
 		}
 		return l.acknowledge(ctx, publication)
@@ -191,10 +212,25 @@ func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersi
 	if err := matchPublicationMetadata(publication, dimension.Metadata(), classification.Metadata()); err != nil {
 		return err
 	}
-	if err := l.catalog.Install(EnrichmentVersion{Dimension: dimension, Classification: classification}); err != nil {
+	if err := l.catalog.installPrepared(EnrichmentVersion{Dimension: dimension, Classification: classification}, func() error {
+		return l.persistVersion(ctx, publication)
+	}); err != nil {
+		if errors.Is(err, ErrVersionPersistence) {
+			return err
+		}
 		return fmt.Errorf("%w: install version pair: %w", ErrInvalidVersionPublication, err)
 	}
 	return l.acknowledge(ctx, publication)
+}
+
+func (l *VersionLoader) persistVersion(ctx context.Context, publication EnrichmentVersionPublication) error {
+	if l.persist == nil {
+		return nil
+	}
+	if err := l.persist.PersistVersion(ctx, publication); err != nil {
+		return fmt.Errorf("%w: %w", ErrVersionPersistence, err)
+	}
+	return nil
 }
 
 func (l *VersionLoader) acknowledge(ctx context.Context, publication EnrichmentVersionPublication) error {

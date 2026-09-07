@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,11 +49,13 @@ func (v EnrichmentVersion) Metadata() EnrichmentVersionMetadata {
 	}
 }
 
-// EnrichmentVersionCatalog publishes a complete version pair with one CAS.
+// EnrichmentVersionCatalog publishes a complete version pair with one atomic
+// pointer store.
 // Readers can never observe a new dimension with an old classification (or
 // the reverse), and do not take a mutex on the per-record hot path.
 type EnrichmentVersionCatalog struct {
-	state atomic.Pointer[enrichmentVersionCatalogState]
+	installMu sync.Mutex
+	state     atomic.Pointer[enrichmentVersionCatalogState]
 }
 
 type enrichmentVersionCatalogState struct {
@@ -71,6 +74,17 @@ func NewEnrichmentVersionCatalog(versions ...EnrichmentVersion) (*EnrichmentVers
 }
 
 func (c *EnrichmentVersionCatalog) Install(version EnrichmentVersion) error {
+	return c.install(version, nil)
+}
+
+// installPrepared serializes the rare control-plane write path while readers
+// remain lock-free. beforePublish may durably persist the already validated
+// version; a persistence failure leaves the catalog pointer unchanged.
+func (c *EnrichmentVersionCatalog) installPrepared(version EnrichmentVersion, beforePublish func() error) error {
+	return c.install(version, beforePublish)
+}
+
+func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePublish func() error) error {
 	if c == nil || version.Dimension == nil || version.Classification == nil {
 		return errors.New("compiled dimension and classification snapshots are required")
 	}
@@ -82,60 +96,88 @@ func (c *EnrichmentVersionCatalog) Install(version EnrichmentVersion) error {
 	if dimension.EffectiveFrom.After(classification.EffectiveFrom) {
 		return errors.New("classification cannot become effective before its dimension snapshot")
 	}
-	for {
-		current := c.state.Load()
-		if current == nil {
-			current = &enrichmentVersionCatalogState{byTenant: map[string][]EnrichmentVersion{}}
-		}
-		next := &enrichmentVersionCatalogState{byTenant: make(map[string][]EnrichmentVersion, len(current.byTenant)+1)}
-		for tenantID, existing := range current.byTenant {
-			next.byTenant[tenantID] = append([]EnrichmentVersion(nil), existing...)
-		}
-		items := next.byTenant[classification.TenantID]
-		dimensionSeen := false
-		var installedDimension DimensionSnapshot
-		for _, existing := range items {
-			if sameEnrichmentVersion(existing, version) {
-				return nil
+	c.installMu.Lock()
+	defer c.installMu.Unlock()
+	current := c.state.Load()
+	if current == nil {
+		current = &enrichmentVersionCatalogState{byTenant: map[string][]EnrichmentVersion{}}
+	}
+	next := &enrichmentVersionCatalogState{byTenant: make(map[string][]EnrichmentVersion, len(current.byTenant)+1)}
+	for tenantID, existing := range current.byTenant {
+		next.byTenant[tenantID] = append([]EnrichmentVersion(nil), existing...)
+	}
+	items := next.byTenant[classification.TenantID]
+	dimensionSeen := false
+	var installedDimension DimensionSnapshot
+	for _, existing := range items {
+		if sameEnrichmentVersion(existing, version) {
+			if beforePublish != nil {
+				return beforePublish()
 			}
-			existingDimension := existing.Dimension.Metadata()
-			existingClassification := existing.Classification.Metadata()
-			if sameDimensionReference(existing.Dimension, version.Dimension) {
-				dimensionSeen = true
-				installedDimension = existing.Dimension
-			}
-			if existingClassification.Version == classification.Version {
-				return errors.New("classification version is immutable")
-			}
-			if existingClassification.EffectiveFrom.Equal(classification.EffectiveFrom) {
-				return errors.New("enrichment version effective_from already exists")
-			}
-			if existingDimension.Version == dimension.Version && !sameDimensionReference(existing.Dimension, version.Dimension) {
-				return errors.New("dimension version is immutable")
-			}
-			if existingClassification.EffectiveFrom.Before(classification.EffectiveFrom) {
-				if existingClassification.Version > classification.Version || existingDimension.Version > dimension.Version {
-					return errors.New("enrichment versions and effective_from are not monotonic")
-				}
-			} else if existingClassification.Version < classification.Version || existingDimension.Version < dimension.Version {
-				return errors.New("enrichment versions and effective_from are not monotonic")
-			}
-		}
-		if !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
-			return errors.New("a new dimension snapshot must become effective with its classification")
-		}
-		if installedDimension != nil {
-			version.Dimension = installedDimension
-		}
-		items = append(items, version)
-		sort.Slice(items, func(left, right int) bool {
-			return items[left].Classification.Metadata().EffectiveFrom.Before(items[right].Classification.Metadata().EffectiveFrom)
-		})
-		next.byTenant[classification.TenantID] = items
-		if c.state.CompareAndSwap(current, next) {
 			return nil
 		}
+		existingDimension := existing.Dimension.Metadata()
+		existingClassification := existing.Classification.Metadata()
+		if sameDimensionReference(existing.Dimension, version.Dimension) {
+			dimensionSeen = true
+			installedDimension = existing.Dimension
+		}
+		if existingClassification.Version == classification.Version {
+			return errors.New("classification version is immutable")
+		}
+		if existingClassification.EffectiveFrom.Equal(classification.EffectiveFrom) {
+			return errors.New("enrichment version effective_from already exists")
+		}
+		if existingDimension.Version == dimension.Version && !sameDimensionReference(existing.Dimension, version.Dimension) {
+			return errors.New("dimension version is immutable")
+		}
+		if existingClassification.EffectiveFrom.Before(classification.EffectiveFrom) {
+			if existingClassification.Version > classification.Version || existingDimension.Version > dimension.Version {
+				return errors.New("enrichment versions and effective_from are not monotonic")
+			}
+		} else if existingClassification.Version < classification.Version || existingDimension.Version < dimension.Version {
+			return errors.New("enrichment versions and effective_from are not monotonic")
+		}
 	}
+	if !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
+		return errors.New("a new dimension snapshot must become effective with its classification")
+	}
+	if installedDimension != nil {
+		version.Dimension = installedDimension
+	}
+	items = append(items, version)
+	sort.Slice(items, func(left, right int) bool {
+		return items[left].Classification.Metadata().EffectiveFrom.Before(items[right].Classification.Metadata().EffectiveFrom)
+	})
+	next.byTenant[classification.TenantID] = items
+	if beforePublish != nil {
+		if err := beforePublish(); err != nil {
+			return err
+		}
+	}
+	c.state.Store(next)
+	return nil
+}
+
+// publishRestored atomically exposes a fully validated cold-start catalog. It
+// deliberately refuses to replace a live catalog; remote updates must use
+// Install so their monotonicity checks remain in force.
+func (c *EnrichmentVersionCatalog) publishRestored(staged *EnrichmentVersionCatalog) error {
+	if c == nil || staged == nil {
+		return errors.New("restored enrichment version catalog is required")
+	}
+	restored := staged.state.Load()
+	if restored == nil || len(restored.byTenant) == 0 {
+		return errors.New("restored enrichment version catalog is empty")
+	}
+	c.installMu.Lock()
+	defer c.installMu.Unlock()
+	current := c.state.Load()
+	if current != nil && len(current.byTenant) != 0 {
+		return errors.New("cannot restore over a live enrichment version catalog")
+	}
+	c.state.Store(restored)
+	return nil
 }
 
 func (c *EnrichmentVersionCatalog) ClassificationVersion(tenantID string, version uint32) (EnrichmentVersion, bool) {
