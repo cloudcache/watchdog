@@ -83,6 +83,37 @@ func TestMySQLListSNMPEventsPaged(t *testing.T) {
 		t.Fatalf("escaped search filter = %+v err=%v", wildcard, err)
 	}
 
+	// The VTable contract sorts and filters the full result before applying the
+	// offset, and returns the filtered total independently of the page.
+	tablePage, total, err := store.ListSNMPEventTable(ctx, tenant, device, SNMPEventTableQuery{
+		Severities: []string{"critical"}, SortBy: "occurred_at", SortDirection: "DESC", Limit: 2, Offset: 1,
+	})
+	if err != nil || total != 3 || len(tablePage) != 2 || tablePage[0].ID != "ev_02" || tablePage[1].ID != "ev_00" {
+		t.Fatalf("table page=%+v total=%d err=%v", tablePage, total, err)
+	}
+	byMessage, total, err := store.ListSNMPEventTable(ctx, tenant, device, SNMPEventTableQuery{
+		SortBy: "message", SortDirection: "ASC", Limit: 2, Offset: 2,
+	})
+	if err != nil || total != 5 || len(byMessage) != 2 || byMessage[0].ID != "ev_02" || byMessage[1].ID != "ev_03" {
+		t.Fatalf("message page=%+v total=%d err=%v", byMessage, total, err)
+	}
+	facets, err := store.ListSNMPEventFacets(ctx, tenant, device, SNMPEventFacetQuery{
+		SNMPEventTableQuery: SNMPEventTableQuery{
+			Severities: []string{"critical"}, EventTypes: []string{"link"}, SortBy: "occurred_at", SortDirection: "DESC", Limit: 10,
+		},
+		Field: "event_type",
+	})
+	if err != nil || len(facets) != 1 || facets[0].Value != "bgp" || facets[0].Count != 3 {
+		t.Fatalf("facets=%+v err=%v", facets, err)
+	}
+	wildcardFacets, err := store.ListSNMPEventFacets(ctx, tenant, device, SNMPEventFacetQuery{
+		SNMPEventTableQuery: SNMPEventTableQuery{SortBy: "occurred_at", SortDirection: "DESC", Limit: 10},
+		Field:               "source", FacetSearch: "%",
+	})
+	if err != nil || len(wildcardFacets) != 0 {
+		t.Fatalf("escaped facets=%+v err=%v", wildcardFacets, err)
+	}
+
 	for _, indexName := range []string{"idx_snmp_events_device_severity_time", "idx_snmp_events_device_type_time"} {
 		var count int
 		if err := db.QueryRowContext(ctx, `

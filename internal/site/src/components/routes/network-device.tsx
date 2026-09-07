@@ -2086,57 +2086,61 @@ function DeviceAlertLog({ deviceId, targetID: _targetID }: { deviceId: string; t
 function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnly: boolean }) {
 	const { t } = useLingui()
 	const [events, setEvents] = useState<SNMPEventEntry[]>([])
+	const [total, setTotal] = useState(0)
 	const [search, setSearch] = useState("")
 	const [query, setQuery] = useState("")
-	const [eventType, setEventType] = useState("")
-	const [eventTypeQuery, setEventTypeQuery] = useState("")
-	const [severity, setSeverity] = useState("all")
-	const [pageSize, setPageSize] = useState(100)
+	const [columnFilters, setColumnFilters] = useState<Record<string, unknown[]>>({})
+	const [sort, setSort] = useState("occurred_at:desc")
+	const [pageSize, setPageSize] = useState(25)
 	const [page, setPage] = useState(0)
-	const [cursors, setCursors] = useState<string[]>([""])
 	const [loading, setLoading] = useState(true)
-	const [nextCursor, setNextCursor] = useState("")
 	const [error, setError] = useState("")
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
 			setQuery(search.trim())
-			setEventTypeQuery(eventType.trim())
 			setPage(0)
-			setCursors([""])
 		}, 300)
 		return () => window.clearTimeout(timer)
-	}, [eventType, search])
+	}, [search])
 
-	const cursor = cursors[page] ?? ""
 	const fetchEvents = useCallback(async () => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
 		try {
-			const params = new URLSearchParams({ limit: String(pageSize) })
-			if (cursor) params.set("cursor", cursor)
+			const [sortField, sortDirection] = sort.split(":")
+			const params = new URLSearchParams({
+				limit: String(pageSize),
+				offset: String(page * pageSize),
+				sort: sortField,
+				order: sortDirection,
+			})
 			if (query) params.set("q", query)
-			if (eventTypeQuery) params.set("event_type", eventTypeQuery)
-			if (alertOnly) params.set("severity", "warning,error,critical")
-			else if (severity !== "all") params.set("severity", severity)
-			const data = await pb.send<{ items?: SNMPEventEntry[]; next_cursor?: string }>(
+			for (const field of ["severity", "event_type", "source"]) {
+				const selected = columnFilters[field]?.map(String) ?? []
+				const values = field === "severity" && alertOnly && selected.length === 0
+					? ["warning", "error", "critical"]
+					: selected
+				if (values.length > 0) params.set(`filter.${field}`, values.join(","))
+			}
+			const data = await pb.send<{ items?: SNMPEventEntry[]; total?: number }>(
 				`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
 				{}
 			)
 			if (sequence !== requestSequence.current) return
 			setEvents(data.items ?? [])
-			setNextCursor(data.next_cursor ?? "")
+			setTotal(data.total ?? 0)
 		} catch (requestError) {
 			if (sequence !== requestSequence.current) return
 			setEvents([])
-			setNextCursor("")
+			setTotal(0)
 			setError(requestError instanceof Error ? requestError.message : String(requestError))
 		} finally {
 			if (sequence === requestSequence.current) setLoading(false)
 		}
-	}, [alertOnly, cursor, deviceId, eventTypeQuery, pageSize, query, severity])
+	}, [alertOnly, columnFilters, deviceId, page, pageSize, query, sort])
 
 	useEffect(() => {
 		fetchEvents()
@@ -2163,11 +2167,11 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 	)
 	const columns = useMemo(
 		() => [
-			{ field: "time", title: t`Time`, width: 190, style: denseCellStyle() },
+			{ field: "time", title: t`Time`, width: 190, filter: false, style: denseCellStyle() },
 			{ field: "severity", title: t`Severity`, width: 120, style: denseCellStyle() },
-			{ field: "type", title: t`Type`, width: 180, style: denseCellStyle() },
+			{ field: "type", filterField: "event_type", title: t`Type`, width: 180, style: denseCellStyle() },
 			{ field: "source", title: t`Source`, width: 130, style: denseCellStyle() },
-			{ field: "message", title: t`Message`, width: 520, style: denseCellStyle() },
+			{ field: "message", title: t`Message`, width: 520, filter: false, style: denseCellStyle() },
 		],
 		[t]
 	)
@@ -2175,99 +2179,75 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 		? t`No active warning, error, or critical events.`
 		: t`No events yet. Events appear on interface status changes and SNMP traps.`
 	const serverFiltering = useMemo(() => ({
-		options: alertOnly ? {} : { severity: ["info", "warning", "error", "critical"].map((value) => ({ value })) },
-		selected: { severity: severity === "all" ? [] : [severity] },
-		selection: { severity: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) => {
-			setSeverity(values.length > 0 ? String(values[0]) : "all")
-			setPage(0)
-			setCursors([""])
+		options: {
+			severity: (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"])
+				.map((value) => ({ value })),
+			event_type: [],
+			source: [],
 		},
-		onClearAll: () => { setSeverity("all"); setPage(0); setCursors([""]) },
-	}), [alertOnly, severity])
+		selected: columnFilters,
+		selection: { severity: "multiple" as const, event_type: "multiple" as const, source: "multiple" as const },
+		loadOptions: async (field: string, facetSearch: string, signal: AbortSignal) => {
+			if (field === "severity") {
+				return (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"])
+					.filter((value) => value.includes(facetSearch.toLowerCase()))
+					.map((value) => ({ value }))
+			}
+			const params = new URLSearchParams({ field, q: facetSearch, limit: "100" })
+			if (query) params.set("search", query)
+			for (const filterField of ["severity", "event_type", "source"]) {
+				if (filterField === field) continue
+				const selected = columnFilters[filterField]?.map(String) ?? []
+				const values = filterField === "severity" && alertOnly && selected.length === 0
+					? ["warning", "error", "critical"]
+					: selected
+				if (values.length > 0) params.set(`filter.${filterField}`, values.join(","))
+			}
+			const data = await pb.send<{ items?: { value: string; count: number }[] }>(
+				`/api/v1/network/devices/${deviceId}/events/facets?${params.toString()}`,
+				{ signal }
+			)
+			return (data.items ?? []).map((item) => ({ value: item.value, count: item.count }))
+		},
+		onColumnFilterChange: (field: string, values: unknown[]) => {
+			setColumnFilters((current) => {
+				const next = { ...current }
+				if (values.length > 0) next[field] = values
+				else delete next[field]
+				return next
+			})
+			setPage(0)
+		},
+		onClearAll: () => { setColumnFilters({}); setPage(0) },
+	}), [alertOnly, columnFilters, deviceId, query])
+	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
+	const serverSorting = useMemo(() => ({
+		field: sortField,
+		direction: sortDirection,
+		fields: { time: "occurred_at", severity: "severity", type: "event_type", source: "source", message: "message" },
+		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
+	}), [sortDirection, sortField])
 	return (
 		<div className="grid gap-3">
-		<div className="flex flex-wrap items-center gap-2">
-			<Input
-				value={search}
-				onChange={(event) => setSearch(event.target.value)}
-				placeholder={alertOnly ? t`Search alerts...` : t`Search events...`}
-				className="w-full max-w-sm"
-			/>
-			<Input
-				value={eventType}
-				onChange={(event) => setEventType(event.target.value)}
-				placeholder={t`Exact event type`}
-				className="w-full max-w-52"
-			/>
-			{alertOnly ? (
-				<Badge variant="secondary">
-					<Trans>Warning, error, critical</Trans>
-				</Badge>
-			) : (
-				<Select
-					value={severity}
-					onValueChange={(value) => {
-						setSeverity(value)
-						setPage(0)
-						setCursors([""])
-					}}
-				>
-					<SelectTrigger className="w-40">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all"><Trans>All severities</Trans></SelectItem>
-						<SelectItem value="info"><Trans>Info</Trans></SelectItem>
-						<SelectItem value="warning"><Trans>Warning</Trans></SelectItem>
-						<SelectItem value="error"><Trans>Error</Trans></SelectItem>
-						<SelectItem value="critical"><Trans>Critical</Trans></SelectItem>
-					</SelectContent>
-				</Select>
-			)}
-		</div>
 		{error ? <div className="text-sm text-destructive">{error}</div> : null}
 			<PagedVTable
 				records={records}
 				columns={columns}
 				loading={loading}
 				emptyText={emptyText}
-				showSearch={false}
-				showPagination={false}
+				searchPlaceholder={alertOnly ? t`Search alerts...` : t`Search events...`}
+				searchValue={search}
+				onSearchChange={setSearch}
 				serverFiltering={serverFiltering}
+				serverSorting={serverSorting}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => { setPageSize(value); setPage(0) },
+				}}
 			/>
-			<div className="flex flex-wrap items-center justify-end gap-2 text-sm">
-				<span className="text-muted-foreground"><Trans>Page {page + 1}</Trans></span>
-				<Select
-					value={String(pageSize)}
-					onValueChange={(value) => {
-						setPageSize(Number(value))
-						setPage(0)
-						setCursors([""])
-					}}
-				>
-					<SelectTrigger className="h-9 w-24"><SelectValue /></SelectTrigger>
-					<SelectContent>
-						<SelectItem value="25">25 / page</SelectItem>
-						<SelectItem value="50">50 / page</SelectItem>
-						<SelectItem value="100">100 / page</SelectItem>
-					</SelectContent>
-				</Select>
-				<Button variant="outline" size="sm" disabled={loading || page === 0} onClick={() => setPage((value) => value - 1)}>
-					<Trans>Previous</Trans>
-				</Button>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={loading || !nextCursor}
-					onClick={() => {
-						setCursors((current) => [...current.slice(0, page + 1), nextCursor])
-						setPage((value) => value + 1)
-					}}
-				>
-					<Trans>Next</Trans>
-				</Button>
-			</div>
 		</div>
 	)
 }

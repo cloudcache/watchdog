@@ -25,3 +25,33 @@ type SNMPCollectorRepository interface {
 	ListSNMPEvents(ctx context.Context, tenantID, deviceID ID, limit int) ([]SNMPEvent, error)
 	ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID ID, filter SNMPEventFilter) ([]SNMPEvent, string, error)
 }
+
+// SNMPEventTableRepository is the optional management-query surface used by
+// the Events and Alerts VTables. It is separate from the collector write
+// contract so collectors and discovery runners do not acquire UI concerns.
+type SNMPEventTableRepository interface {
+	ListSNMPEventTable(ctx context.Context, tenantID, deviceID ID, query SNMPEventTableQuery) ([]SNMPEvent, int64, error)
+	ListSNMPEventFacets(ctx context.Context, tenantID, deviceID ID, query SNMPEventFacetQuery) ([]SNMPEventFacet, error)
+}
+
+type SNMPEventTableQuery struct {
+	Search        string
+	Severities    []string
+	EventTypes    []string
+	Sources       []string
+	SortBy        string
+	SortDirection string
+	Limit         int
+	Offset        int
+}
+
+type SNMPEventFacetQuery struct {
+	SNMPEventTableQuery
+	Field       string
+	FacetSearch string
+}
+
+type SNMPEventFacet struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}

@@ -62,6 +62,7 @@ func registerNetworkRoutes(mux *http.ServeMux, auth func(http.Handler) http.Hand
 	mux.Handle("PATCH /api/v1/network/devices/{device_id}/snmp", auth(http.HandlerFunc(api.patchDeviceSNMP)))
 	mux.Handle("POST /api/v1/network/devices/{device_id}/snmp/discover", auth(http.HandlerFunc(api.discoverDeviceSNMP)))
 	mux.Handle("GET /api/v1/network/devices/{device_id}/events", auth(http.HandlerFunc(api.listDeviceEvents)))
+	mux.Handle("GET /api/v1/network/devices/{device_id}/events/facets", auth(http.HandlerFunc(api.listDeviceEventFacets)))
 	mux.Handle("GET /api/v1/network/traffic-policy-defaults", auth(configureTenant(http.HandlerFunc(api.getTrafficPolicyDefaults))))
 	mux.Handle("PUT /api/v1/network/traffic-policy-defaults", auth(configureTenant(http.HandlerFunc(api.putTrafficPolicyDefaults))))
 }
@@ -964,6 +965,31 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
+	if snmpEventTableMode(query) {
+		repository, ok := api.collector.(SNMPEventTableRepository)
+		if !ok {
+			WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Event table query is not configured", nil)
+			return
+		}
+		filter, err := parseSNMPEventTableQuery(query)
+		if err != nil {
+			WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+			return
+		}
+		events, total, err := repository.ListSNMPEventTable(r.Context(), auth.TenantID, device.ID, filter)
+		if err != nil {
+			WriteAPIError(w, http.StatusInternalServerError, APIErrorServiceUnavailable, "Event table query failed", nil)
+			return
+		}
+		if events == nil {
+			events = []SNMPEvent{}
+		}
+		WriteAPIJSON(w, http.StatusOK, map[string]any{
+			"items": events, "total": total, "limit": filter.Limit, "offset": filter.Offset,
+			"meta": map[string]any{"sort": filter.SortBy + ":" + strings.ToLower(filter.SortDirection)},
+		})
+		return
+	}
 	filter, err := parseSNMPEventFilter(query)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
@@ -982,6 +1008,148 @@ func (api networkAPI) listDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		response["next_cursor"] = nextCursor
 	}
 	WriteAPIJSON(w, http.StatusOK, response)
+}
+
+func (api networkAPI) listDeviceEventFacets(w http.ResponseWriter, r *http.Request) {
+	auth, _ := AuthFromContext(r.Context())
+	repository, ok := api.collector.(SNMPEventTableRepository)
+	if api.collector == nil || !ok {
+		WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Event facet query is not configured", nil)
+		return
+	}
+	device, err := api.repo.GetDevice(r.Context(), auth.TenantID, ID(r.PathValue("device_id")))
+	if err != nil {
+		WriteAPIError(w, http.StatusNotFound, APIErrorNotFound, "Network device not found", nil)
+		return
+	}
+	if !canAccessTarget(auth, device.TargetID, ActionView) {
+		WriteAPIError(w, http.StatusForbidden, APIErrorPermissionDenied, "Permission denied", nil)
+		return
+	}
+	filter, err := parseSNMPEventFacetQuery(r.URL.Query())
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	items, err := repository.ListSNMPEventFacets(r.Context(), auth.TenantID, device.ID, filter)
+	if err != nil {
+		WriteAPIError(w, http.StatusInternalServerError, APIErrorServiceUnavailable, "Event facet query failed", nil)
+		return
+	}
+	if items == nil {
+		items = []SNMPEventFacet{}
+	}
+	WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items), "field": filter.Field})
+}
+
+func snmpEventTableMode(query url.Values) bool {
+	for _, key := range []string{"offset", "sort", "order", "filter.severity", "filter.event_type", "filter.source"} {
+		if query.Has(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseSNMPEventTableQuery(query url.Values) (SNMPEventTableQuery, error) {
+	allowed := map[string]struct{}{
+		"q": {}, "sort": {}, "order": {}, "limit": {}, "offset": {},
+		"filter.severity": {}, "filter.event_type": {}, "filter.source": {},
+	}
+	for key := range query {
+		if _, ok := allowed[key]; !ok {
+			return SNMPEventTableQuery{}, fmt.Errorf("unknown query parameter %q", key)
+		}
+	}
+	filter := SNMPEventTableQuery{
+		Search: strings.TrimSpace(query.Get("q")), SortBy: strings.TrimSpace(query.Get("sort")),
+		SortDirection: strings.ToUpper(strings.TrimSpace(query.Get("order"))),
+	}
+	if filter.SortBy == "" {
+		filter.SortBy = "occurred_at"
+	}
+	if filter.SortDirection == "" {
+		filter.SortDirection = "DESC"
+	}
+	var err error
+	if filter.Limit, err = parseNetworkInventoryInteger(query.Get("limit"), 25, 1, 100); err != nil {
+		return SNMPEventTableQuery{}, fmt.Errorf("limit must be between 1 and 100")
+	}
+	if filter.Offset, err = parseNetworkInventoryInteger(query.Get("offset"), 0, 0, 100_000); err != nil {
+		return SNMPEventTableQuery{}, fmt.Errorf("offset must be between 0 and 100000")
+	}
+	if filter.Severities, err = parseSNMPEventValues(query.Get("filter.severity"), "filter.severity"); err != nil {
+		return SNMPEventTableQuery{}, err
+	}
+	if filter.EventTypes, err = parseSNMPEventValues(query.Get("filter.event_type"), "filter.event_type"); err != nil {
+		return SNMPEventTableQuery{}, err
+	}
+	if filter.Sources, err = parseSNMPEventValues(query.Get("filter.source"), "filter.source"); err != nil {
+		return SNMPEventTableQuery{}, err
+	}
+	if err := validateSNMPEventTableQuery(filter); err != nil {
+		return SNMPEventTableQuery{}, err
+	}
+	return filter, nil
+}
+
+func parseSNMPEventFacetQuery(query url.Values) (SNMPEventFacetQuery, error) {
+	allowed := map[string]struct{}{
+		"field": {}, "q": {}, "search": {}, "limit": {},
+		"filter.severity": {}, "filter.event_type": {}, "filter.source": {},
+	}
+	for key := range query {
+		if _, ok := allowed[key]; !ok {
+			return SNMPEventFacetQuery{}, fmt.Errorf("unknown query parameter %q", key)
+		}
+	}
+	base := url.Values{}
+	base.Set("q", query.Get("search"))
+	base.Set("limit", query.Get("limit"))
+	base.Set("sort", "occurred_at")
+	base.Set("order", "desc")
+	base.Set("offset", "0")
+	for _, key := range []string{"filter.severity", "filter.event_type", "filter.source"} {
+		if value := query.Get(key); value != "" {
+			base.Set(key, value)
+		}
+	}
+	filter, err := parseSNMPEventTableQuery(base)
+	if err != nil {
+		return SNMPEventFacetQuery{}, err
+	}
+	result := SNMPEventFacetQuery{
+		SNMPEventTableQuery: filter,
+		Field:               strings.TrimSpace(query.Get("field")),
+		FacetSearch:         strings.TrimSpace(query.Get("q")),
+	}
+	if err := validateSNMPEventFacetQuery(result); err != nil {
+		return SNMPEventFacetQuery{}, err
+	}
+	return result, nil
+}
+
+func parseSNMPEventValues(raw, field string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	values := make([]string, 0, 4)
+	for _, rawValue := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(rawValue)
+		if value == "" || len(value) > 96 {
+			return nil, fmt.Errorf("%s values must contain 1..96 characters", field)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+		if len(values) > 8 {
+			return nil, fmt.Errorf("%s accepts at most 8 values", field)
+		}
+	}
+	return values, nil
 }
 
 func parseSNMPEventFilter(query url.Values) (SNMPEventFilter, error) {

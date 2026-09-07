@@ -515,6 +515,68 @@ func TestAPIDeviceEventsRejectsInvalidFilters(t *testing.T) {
 	}
 }
 
+func TestAPIDeviceEventTablePushesPagingSortingAndFilters(t *testing.T) {
+	collector := &fakeSNMPCollectorRepository{
+		events: []SNMPEvent{{ID: "event-a", Severity: "warning"}}, eventTotal: 42,
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:          networkTestAuth,
+		Network:       &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}},
+		SNMPCollector: collector,
+	})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/device-a/events?q=peer&sort=source&order=asc&limit=25&offset=25&filter.severity=warning,error&filter.event_type=bgp,link&filter.source=trap", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":42`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	query := collector.eventTableQuery
+	if query.Search != "peer" || query.SortBy != "source" || query.SortDirection != "ASC" || query.Limit != 25 || query.Offset != 25 ||
+		len(query.Severities) != 2 || len(query.EventTypes) != 2 || len(query.Sources) != 1 {
+		t.Fatalf("query=%+v", query)
+	}
+
+	collector.eventFacets = []SNMPEventFacet{{Value: "trap", Count: 7}}
+	facets := httptest.NewRecorder()
+	router.ServeHTTP(facets, httptest.NewRequest(http.MethodGet,
+		"/api/v1/network/devices/device-a/events/facets?field=source&q=tr&search=peer&limit=50&filter.severity=warning,error&filter.source=trap", nil))
+	if facets.Code != http.StatusOK || !strings.Contains(facets.Body.String(), `"value":"trap"`) {
+		t.Fatalf("facet status=%d body=%s", facets.Code, facets.Body.String())
+	}
+	facetQuery := collector.eventFacetQuery
+	if facetQuery.Field != "source" || facetQuery.FacetSearch != "tr" || facetQuery.Search != "peer" || facetQuery.Limit != 50 || len(facetQuery.Severities) != 2 {
+		t.Fatalf("facet query=%+v", facetQuery)
+	}
+}
+
+func TestAPIDeviceEventTableRejectsUnknownAndMixedPagination(t *testing.T) {
+	collector := &fakeSNMPCollectorRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth:          networkTestAuth,
+		Network:       &fakeNetworkRepository{devices: []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}}},
+		SNMPCollector: collector,
+	})
+	for _, query := range []string{
+		"sort=unknown&offset=0", "sort=source&order=sideways", "sort=source&offset=-1",
+		"sort=source&offset=0&cursor=legacy", "sort=source&offset=0&filter.source=a,b,c,d,e,f,g,h,i",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/v1/network/devices/device-a/events?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query=%q status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
+	}
+	for _, query := range []string{"field=message", "field=source&unknown=1", "field=source&q=" + strings.Repeat("x", 129)} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/v1/network/devices/device-a/events/facets?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("facet query=%q status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestAPIDeviceSwitchingPagesPushFiltersAndReturnTotals(t *testing.T) {
 	repo := &fakeNetworkRepository{
 		devices:   []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a"}},

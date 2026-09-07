@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -480,6 +481,154 @@ func (s *MySQLStore) ListSNMPEventsPaged(ctx context.Context, tenantID, deviceID
 		nextCursor = encodeAuditCursor(last.OccurredAt, last.ID)
 	}
 	return events, nextCursor, nil
+}
+
+var snmpEventSortColumns = map[string]string{
+	"occurred_at": "occurred_at",
+	"severity":    "severity",
+	"event_type":  "event_type",
+	"source":      "source",
+	"message":     "message",
+}
+
+var snmpEventFacetColumns = map[string]string{
+	"severity":   "severity",
+	"event_type": "event_type",
+	"source":     "source",
+}
+
+// ListSNMPEventTable serves the offset-paged management table. The legacy
+// keyset method above remains unchanged for existing API consumers.
+func (s *MySQLStore) ListSNMPEventTable(ctx context.Context, tenantID, deviceID ID, filter SNMPEventTableQuery) ([]SNMPEvent, int64, error) {
+	if err := validateSNMPEventTableQuery(filter); err != nil {
+		return nil, 0, err
+	}
+	where, args := snmpEventTableWhere(tenantID, deviceID, filter, "")
+	var total int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM snmp_events WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	orderColumn := snmpEventSortColumns[filter.SortBy]
+	orderSuffix := ", occurred_at DESC, id DESC"
+	if orderColumn == "occurred_at" {
+		orderSuffix = ", id DESC"
+	}
+	queryArgs := append(append([]any(nil), args...), filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, device_id, entity_type, entity_id, source, severity, event_type, message, occurred_at
+		FROM snmp_events WHERE `+where+`
+		ORDER BY `+orderColumn+` `+filter.SortDirection+orderSuffix+`
+		LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	events := make([]SNMPEvent, 0, filter.Limit)
+	for rows.Next() {
+		var event SNMPEvent
+		if err := rows.Scan(&event.ID, &event.TenantID, &event.DeviceID, &event.EntityType, &event.EntityID, &event.Source, &event.Severity, &event.EventType, &event.Message, &event.OccurredAt); err != nil {
+			return nil, 0, err
+		}
+		events = append(events, event)
+	}
+	return events, total, rows.Err()
+}
+
+// ListSNMPEventFacets returns bounded, full-result column values while
+// excluding the selected facet's own filter. This lets a user replace or clear
+// one filter without the candidate list collapsing to its current value.
+func (s *MySQLStore) ListSNMPEventFacets(ctx context.Context, tenantID, deviceID ID, filter SNMPEventFacetQuery) ([]SNMPEventFacet, error) {
+	if err := validateSNMPEventFacetQuery(filter); err != nil {
+		return nil, err
+	}
+	where, args := snmpEventTableWhere(tenantID, deviceID, filter.SNMPEventTableQuery, filter.Field)
+	column := snmpEventFacetColumns[filter.Field]
+	expression := "COALESCE(NULLIF(" + column + ", ''), '_unknown')"
+	if filter.FacetSearch != "" {
+		where += " AND " + expression + " LIKE ? ESCAPE '\\\\'"
+		args = append(args, "%"+escapeSQLLike(filter.FacetSearch)+"%")
+	}
+	args = append(args, filter.Limit)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+expression+", COUNT(*) FROM snmp_events WHERE "+where+
+		" GROUP BY "+expression+" ORDER BY COUNT(*) DESC, "+expression+" ASC LIMIT ?", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]SNMPEventFacet, 0, filter.Limit)
+	for rows.Next() {
+		var item SNMPEventFacet
+		if err := rows.Scan(&item.Value, &item.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func validateSNMPEventTableQuery(filter SNMPEventTableQuery) error {
+	if _, ok := snmpEventSortColumns[filter.SortBy]; !ok {
+		return fmt.Errorf("sort must be occurred_at, severity, event_type, source, or message")
+	}
+	if filter.SortDirection != "ASC" && filter.SortDirection != "DESC" {
+		return fmt.Errorf("order must be asc or desc")
+	}
+	if filter.Limit < 1 || filter.Limit > 100 {
+		return fmt.Errorf("limit must be between 1 and 100")
+	}
+	if filter.Offset < 0 || filter.Offset > 100_000 {
+		return fmt.Errorf("offset must be between 0 and 100000")
+	}
+	if len(filter.Search) > 256 {
+		return fmt.Errorf("q must be at most 256 characters")
+	}
+	for field, values := range map[string][]string{"severity": filter.Severities, "event_type": filter.EventTypes, "source": filter.Sources} {
+		if len(values) > 8 {
+			return fmt.Errorf("filter.%s accepts at most 8 values", field)
+		}
+		for _, value := range values {
+			if value == "" || len(value) > 96 {
+				return fmt.Errorf("filter.%s values must contain 1..96 characters", field)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSNMPEventFacetQuery(filter SNMPEventFacetQuery) error {
+	if err := validateSNMPEventTableQuery(filter.SNMPEventTableQuery); err != nil {
+		return err
+	}
+	if _, ok := snmpEventFacetColumns[filter.Field]; !ok {
+		return fmt.Errorf("field must be severity, event_type, or source")
+	}
+	if len(filter.FacetSearch) > 128 {
+		return fmt.Errorf("facet q must be at most 128 characters")
+	}
+	return nil
+}
+
+func snmpEventTableWhere(tenantID, deviceID ID, filter SNMPEventTableQuery, excludeField string) (string, []any) {
+	where := "tenant_id = ? AND device_id = ?"
+	args := []any{tenantID, deviceID}
+	if filter.Search != "" {
+		like := "%" + escapeSQLLike(filter.Search) + "%"
+		where += ` AND (source LIKE ? ESCAPE '\\' OR severity LIKE ? ESCAPE '\\' OR event_type LIKE ? ESCAPE '\\' OR message LIKE ? ESCAPE '\\')`
+		args = append(args, like, like, like, like)
+	}
+	appendFilter := func(field, column string, values []string) {
+		if field == excludeField || len(values) == 0 {
+			return
+		}
+		where += " AND COALESCE(NULLIF(" + column + ", ''), '_unknown') IN (" + strings.TrimSuffix(strings.Repeat("?,", len(values)), ",") + ")"
+		for _, value := range values {
+			args = append(args, value)
+		}
+	}
+	appendFilter("severity", "severity", filter.Severities)
+	appendFilter("event_type", "event_type", filter.EventTypes)
+	appendFilter("source", "source", filter.Sources)
+	return where, args
 }
 
 func (s *MySQLStore) ListSNMPEvents(ctx context.Context, tenantID, deviceID ID, limit int) ([]SNMPEvent, error) {

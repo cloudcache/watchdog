@@ -1,10 +1,9 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { CalculatorIcon, CopyIcon, RefreshCwIcon } from "lucide-react"
-import { memo, useMemo, useState } from "react"
+import { memo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { parseAddressEntries } from "@/lib/address-set-form"
@@ -94,24 +93,6 @@ export default memo(function AddressMath() {
 			setError(err instanceof Error ? err.message : t`Copy failed`)
 		}
 	}
-
-	const overlaps = useMemo(
-		() =>
-			(preview?.overlaps ?? []).map((item, index) => ({
-				index: index + 1,
-				left: `${item.left_operand}[${item.left_index}]`,
-				right: `${item.right_operand}[${item.right_index}]`,
-			})),
-		[preview]
-	)
-	const overlapColumns = useMemo(
-		() => [
-			{ field: "index", title: "#", width: 70, style: denseCellStyle() },
-			{ field: "left", title: t`Left range`, width: 320, style: denseCellStyle() },
-			{ field: "right", title: t`Right range`, width: 320, style: denseCellStyle() },
-		],
-		[t]
-	)
 
 	return (
 		<div className="grid gap-4">
@@ -269,13 +250,30 @@ export default memo(function AddressMath() {
 									<Trans>Only the bounded first results are shown.</Trans>
 								</div>
 							) : null}
-							<PagedVTable
-								records={overlaps}
-								columns={overlapColumns}
-								emptyText={t`No overlaps found.`}
-								searchPlaceholder={t`Search overlaps...`}
-								height={320}
-							/>
+							<div className="max-h-80 overflow-auto rounded-md border border-border">
+								<table className="w-full min-w-[44rem] table-fixed text-sm">
+									<thead className="sticky top-0 bg-muted/95 text-left">
+										<tr>
+											<th className="w-16 px-3 py-2 font-medium">#</th>
+											<th className="px-3 py-2 font-medium"><Trans>Left range</Trans></th>
+											<th className="px-3 py-2 font-medium"><Trans>Right range</Trans></th>
+										</tr>
+									</thead>
+									<tbody>
+										{(preview.overlaps ?? []).map((item, index) => (
+											<tr key={`${item.left_operand}:${item.left_index}:${item.right_operand}:${item.right_index}`} className="border-t border-border">
+												<td className="px-3 py-2 tabular-nums">{index + 1}</td>
+												<td className="truncate px-3 py-2 font-mono text-xs" title={`${item.left_operand}[${item.left_index}]`}>
+													{item.left_operand}[{item.left_index}]
+												</td>
+												<td className="truncate px-3 py-2 font-mono text-xs" title={`${item.right_operand}[${item.right_index}]`}>
+													{item.right_operand}[{item.right_index}]
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
 						</div>
 					) : null}
 				</div>
@@ -326,8 +324,4 @@ function operationLabel(operation: AddressOperation) {
 		complement: "Finite complement (universe - left)",
 		cover: "Cover / prefix expansion",
 	}[operation]
-}
-
-function denseCellStyle() {
-	return { padding: [8, 10, 8, 10] as [number, number, number, number], fontSize: 13 }
 }

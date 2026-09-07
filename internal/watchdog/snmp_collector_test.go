@@ -1122,6 +1122,10 @@ type fakeSNMPCollectorRepository struct {
 	trapHandlers      []SNMPTrapHandlerDefinition
 	events            []SNMPEvent
 	eventFilter       SNMPEventFilter
+	eventTableQuery   SNMPEventTableQuery
+	eventFacetQuery   SNMPEventFacetQuery
+	eventFacets       []SNMPEventFacet
+	eventTotal        int64
 }
 
 func (r *fakeSNMPCollectorRepository) ListSNMPOSDefinitions(_ context.Context) ([]SNMPCollectorOSDefinition, error) {
@@ -1253,6 +1257,16 @@ func (r *fakeSNMPCollectorRepository) ListSNMPEvents(_ context.Context, _ ID, _ 
 func (r *fakeSNMPCollectorRepository) ListSNMPEventsPaged(_ context.Context, _ ID, _ ID, filter SNMPEventFilter) ([]SNMPEvent, string, error) {
 	r.eventFilter = filter
 	return r.events, "", nil
+}
+
+func (r *fakeSNMPCollectorRepository) ListSNMPEventTable(_ context.Context, _ ID, _ ID, query SNMPEventTableQuery) ([]SNMPEvent, int64, error) {
+	r.eventTableQuery = query
+	return r.events, r.eventTotal, nil
+}
+
+func (r *fakeSNMPCollectorRepository) ListSNMPEventFacets(_ context.Context, _ ID, _ ID, query SNMPEventFacetQuery) ([]SNMPEventFacet, error) {
+	r.eventFacetQuery = query
+	return r.eventFacets, nil
 }
 
 func (r *fakeSNMPCollectorRepository) CreateSNMPEvent(_ context.Context, event SNMPEvent) error {
