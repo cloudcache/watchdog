@@ -395,6 +395,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		QueryGateway:           r.QueryGateway,
 		FlowRecords:            r.FlowRecords,
 		FlowOverseas:           r.FlowOverseas,
+		FlowVPNFindings:        r.Store,
 		QueryPolicies:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,

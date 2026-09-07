@@ -39,6 +39,7 @@ type APIV1RouterConfig struct {
 	FlowRecordNow          func() time.Time
 	FlowOverseas           flowOverseasRunner
 	FlowOverseasNow        func() time.Time
+	FlowVPNFindings        VPNFindingRepository
 	QueryPolicies          QueryDatasetPolicyRepository
 	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
@@ -231,6 +232,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.FlowOverseas != nil {
 		registerFlowOverseasRoutes(mux, auth, cfg.FlowOverseas, cfg.Network, cfg.Audit, cfg.FlowGeo, cfg.FlowOverseasNow)
+	}
+	if cfg.FlowVPNFindings != nil {
+		registerFlowVPNManagementRoutes(mux, auth, cfg.FlowVPNFindings, cfg.Audit)
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)

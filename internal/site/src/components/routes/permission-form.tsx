@@ -55,6 +55,9 @@ const availableActions = [
 	"export_raw",
 	"export_supplier",
 	"export_customer",
+	"vpn_view",
+	"vpn_triage",
+	"probe",
 ]
 
 export default memo(({ id }: PermissionFormProps) => {

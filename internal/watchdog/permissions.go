@@ -14,6 +14,9 @@ const (
 	ActionExportRaw      Action = "export_raw"
 	ActionExportSupplier Action = "export_supplier"
 	ActionExportCustomer Action = "export_customer"
+	ActionVPNView        Action = "vpn_view"
+	ActionVPNTriage      Action = "vpn_triage"
+	ActionVPNProbe       Action = "probe"
 )
 
 type SubjectType string
@@ -32,6 +35,7 @@ const (
 	ResourceExportTask     ResourceType = "export_task"
 	ResourceBillingAccount ResourceType = "billing_account"
 	ResourceBillingPeriod  ResourceType = "billing_period"
+	ResourceVPNFinding     ResourceType = "vpn_finding"
 )
 
 type Permission struct {
