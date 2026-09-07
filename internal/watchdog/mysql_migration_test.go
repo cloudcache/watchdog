@@ -31,6 +31,8 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"snmp_profiles",
 		"bgp_sessions",
 		"export_tasks",
+		"flow_vpn_rules",
+		"flow_vpn_findings",
 		"dashboards",
 		"address_draft_revisions",
 		"dimension_snapshots",
@@ -101,20 +103,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "054" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "055" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "054" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "055" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_plan_rollouts", "collector_plan_rollout_targets", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "flow_vpn_rules", "flow_vpn_findings", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_plan_rollouts", "collector_plan_rollout_targets", "collector_service_principals", "collector_ownership_transfers"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)

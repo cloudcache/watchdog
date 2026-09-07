@@ -493,6 +493,91 @@ func TestISPOperatorFlowIdentityTenantCascadeAndOperatorRetention(t *testing.T) 
 	}
 }
 
+func TestFlowVPNManagementMigrationReplayAndLifecycle(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_flow_vpn_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	for replay := 0; replay < 2; replay++ {
+		runEmbeddedMigrationAgain(t, db, "055")
+	}
+
+	var historyFKs int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.referential_constraints
+		WHERE constraint_schema = DATABASE()
+		  AND table_name = 'flow_vpn_findings'
+		  AND constraint_name IN ('fk_flow_vpn_findings_disposition_by', 'fk_flow_vpn_findings_probe_job')
+	`).Scan(&historyFKs); err != nil {
+		t.Fatal(err)
+	}
+	if historyFKs != 0 {
+		t.Fatalf("VPN finding historical actor/job foreign keys = %d, want 0", historyFKs)
+	}
+
+	const tenantID = ID("tenant_flow_vpn_lifecycle")
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'Flow VPN Lifecycle', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO flow_vpn_rules
+			(id, tenant_id, name, match_json, effect, behavior_json, intelligence_json, probe_policy_json, created_by, updated_by)
+		VALUES
+			('vpn_rule_lifecycle_000001', ?, 'Lifecycle rule', '{}', 'score', '{}', '{}', '{}', 'removed_actor_00000000001', 'removed_actor_00000000001')
+	`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO flow_vpn_findings (
+			id, tenant_id, window_start, window_end, conversation_key,
+			local_ip, remote_ip, primary_protocol, primary_local_port, primary_remote_port,
+			local_to_remote_bytes, remote_to_local_bytes, flow_record_count, active_bucket_count, max_duration_ms,
+			complete_ratio, score, risk_level, verdict, evidence_json, rule_set_version,
+			dimension_snapshot_id, geo_version, classification_version, source_generation, generated_at,
+			disposition, disposition_by, disposition_at, probe_status, probe_job_id, probe_result_json, expires_at
+		) VALUES (
+			'vpn_finding_lifecycle_001', ?, '2026-09-07 00:00:00.000', '2026-09-07 00:05:00.000', UNHEX(REPEAT('11', 32)),
+			UNHEX('00000000000000000000ffff0a000001'), UNHEX('00000000000000000000ffffc0000201'), 6, 54321, 443,
+			1000, 900, 2, 1, 60000,
+			1, 85, 'high', 'probe_candidate', '{}', 'rules-v1',
+			'dimensions-v1', 'geo-v1', 1, 1, '2026-09-07 00:05:01.000',
+			'confirmed', 'removed_actor_00000000001', '2026-09-07 00:06:00.000', 'queued', 'removed_job_0000000000001', '{}', '2026-10-07 00:00:00.000'
+		)
+	`, tenantID); err != nil {
+		t.Fatalf("insert finding with retained actor/job identities: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM tenants WHERE id = ?", tenantID); err != nil {
+		t.Fatalf("delete tenant with VPN management rows: %v", err)
+	}
+	for _, table := range []string{"flow_vpn_rules", "flow_vpn_findings"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE tenant_id = ?", tenantID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows after tenant cascade = %d, want 0", table, count)
+		}
+	}
+}
+
 func randomSchemaSuffix(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)
