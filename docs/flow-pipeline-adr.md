@@ -26,7 +26,7 @@ network device
   -> ClickHouse enriched base + rebuildable rollups
 ```
 
-采用 Akvorado 的 raw-flow-before-decode 分层和 Kafka producer/consumer 生命周期；Kafka 客户端使用 Akvorado 当前采用的 `franz-go`。GoFlow2 继续作为 sFlow v5、NetFlow v5/v9 和 IPFIX 解码器。地址库、ASN/Geo、六维、业务和 VPN 规则全部在 Kafka 后异步执行。
+采用 Akvorado 的 raw-flow-before-decode 分层和 Kafka producer/consumer 生命周期；Kafka 客户端使用 Akvorado 当前采用的 `franz-go`。**NetFlow v5 与 sFlow v5 已改为自研定长/TLV 快解码器**(零反射、零分配、对 GoFlow2 逐字段差分验证;sFlow 抓包头复用 GoFlow2 已加固的 `ParseSampledHeader`,ExtendedGateway/未知记录格式回落 GoFlow2);GoFlow2 仅作为 **NetFlow v9 / IPFIX** 解码器及 sFlow 未覆盖记录的回落,并继续提供 template/sampling store。详见 [flow-decode-fastpath.md](flow-decode-fastpath.md)。地址库、ASN/Geo、六维、业务和 VPN 规则全部在 Kafka 后异步执行。
 
 `flow-collect` 不连接 MySQL、ClickHouse、VictoriaMetrics，不维护本地 raw WAL，不做协议解码、采样放大、维度查询、分钟聚合或跨节点模板状态恢复。Kafka 是唯一排队和短期重放边界。
 

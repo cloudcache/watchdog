@@ -4,6 +4,8 @@
 
 > **修订(2026-09)——保留与降精度模型**:按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 的「保留与降精度(downsample)模型」修订块 —— 原始/全精度约留 1 年、作为 1 年窗口内的**主查询面(直接查 `flow_records`)**;1m/1h rollup 重定位为**满 1 年后的老化 downsample**,不再实时并跑。故本文 §1.1 图中的 `asynchronous rollups`、以及"原始短保留 + 派生长期"的表述以 ADR 修订块为准;重点转为**原始表按查询维度的排序键/projection**(不是只 `toStartOfHour`+`record_id`)。保留天数属运维配置。
 
+> **修订(2026-09)——自研 v5 快解码器**:**NetFlow v5 与 sFlow v5 已由自研定长/TLV 快解码器处理**(零反射、零分配、对 GoFlow2 逐字段差分验证);GoFlow2 仅剩 **NetFlow v9 / IPFIX** 与 sFlow 未覆盖记录的回落。因此本文 §1.1 图的 decode 步、以及 §「采样与旁带元数据」中"sFlow 的 sub-agent/source-id/sample-pool/drop 靠 GoFlow2 producer 同序旁带保留"仅对 **GoFlow2 路径(v9/IPFIX)** 成立;**sFlow v5 快路径直接在自研解码器内复刻这些字段**。NetFlow v9/IPFIX 的 GoFlow2 template/sampling store 语义不变。详见 [flow-decode-fastpath.md](flow-decode-fastpath.md)。
+
 ## 1. 冻结边界
 
 ### 1.1 唯一数据链路
@@ -14,7 +16,7 @@ router/switch
        UDP receive -> source-prefix admission -> RawFlow protobuf -> Kafka
   -> watchdog.flow.raw-v1
   -> watchdog-flow-worker
-       partition-ordered GoFlow2 decode -> sampling -> dimensions -> CH batches
+       partition-ordered decode (自研 NetFlow v5/sFlow v5 快路径 + GoFlow2 v9/IPFIX) -> sampling -> dimensions -> CH batches
   -> ClickHouse base + asynchronous rollups
   -> authenticated query/export API
   -> six product views
@@ -546,7 +548,7 @@ tenant 不属于客户端 QueryRequest，由已认证 scope 单独注入 compile
 
 Flow Explorer 的查询状态包含 range/custom start-end、metric、1–4 个 ordered dimensions、typed filter、TopN/Other、target points、graph type 和 value layer，并编码进 URL。单维查询读 1m/1h aggregate，支持折线/堆叠/热力/表格；2–4 维查询由独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成真实有序 tuple，支持同样的时间序列和桑基，绝不把多次单维 TopN 在浏览器拼接。同步 joint v1 固定为 customer/count、UTC 分钟边界、最长 24h、TopN 1..100、最多 4 维和 5,000 万扫描行/4 GiB 扫描/4 GiB 内存/15 秒；`total` 只允许作为唯一 base 结果维度，用于“总流量 + 跨维过滤”，加入多维 tuple 时因无信息增益而拒绝；`address_set` 的重叠多归属必须由显式异步索引定义。长于 24h 或需要 address-set path 的查询必须命中未来的预配置异步联合索引，否则稳定拒绝，不能静默换成单维口径。joint 响应声明 `source=flow_records`，并因 base 尚无独立闭桶 coverage marker 而返回 partial warning，不能伪报端到端完整。其新增仅为查询代码，不新增状态或表，故本切片没有伪造一个空 migration；联合索引落地时必须用独立 forward-only migration。
 
-生产入口默认展示同一 QueryGateway 上的便捷分析层，而不是先要求用户编写表达式：国家→省→市按 `geo_dictionary.parent_id` 级联选择，查询谓词必须使用发布到 Flow snapshot 的稳定 `code`，管理库 ULID 只用于界面选中态；运营商管理模型已经分配只读 `flow_isp_id`，但在 `operators.json`/range/activation/rollback 的同 snapshot 发布绑定（PLAT-04C4b）和 worker ACK 完成前，运营商选择仍使用 `isp_operators.asns` 生成规范 `asn IN (...)`，禁止把 operator ULID、自由文本 code 或尚未发布的 ID 冒充 `remote_isp_id`。流向视图在一次受 QueryGateway 鉴权、策略、并发和 timeout 约束的请求内执行 `dimension=total + directions=in/out` 两个 rollup 子查询，按最差 completeness 合并，只展示入/出两条真实总量序列；浏览器不得再分别发起请求后拼接。国家/省/市/运营商等跨维谓词仍将两个方向一起切换到最长 24 小时的 bounded base-fact 路径，不得为服务端分页退化成错误的 rollup 交集。协议、TOP 源/目的 IP、TOP 本地/远端网段直接选择公开 dimension。时间预设、自定义时间、metric、TopN、图形和筛选状态进入 URL；下载仅导出当前已返回的时间序列与统计值并做 CSV 公式注入转义，不冒充后台全量异步导出。原 1–4 维、typed filter、address set、device、Sankey 能力折叠为高级 Flow Explorer，仍遵守跨维最长 24h、权限、预算和异步联合索引前置条件。
+生产入口默认展示同一 QueryGateway 上的便捷分析层，而不是先要求用户编写表达式：国家→省→市按 `geo_dictionary.parent_id` 级联选择，查询谓词必须使用发布到 Flow snapshot 的稳定 `code`，管理库 ULID 只用于界面选中态；运营商管理模型已经分配只读 `flow_isp_id`，但在 `operators.json`/range/activation/rollback 的同 snapshot 发布绑定（PLAT-04C4b）和 worker ACK 完成前，运营商选择仍使用 `isp_operators.asns` 生成规范 `asn IN (...)`，禁止把 operator ULID、自由文本 code 或尚未发布的 ID 冒充 `remote_isp_id`。流向视图在一次受 QueryGateway 鉴权、策略、并发和 timeout 约束的请求内执行 `dimension=total + directions=in/out` 两个 rollup 子查询，按最差 completeness 合并，只展示入/出两条真实总量序列；浏览器不得再分别发起请求后拼接。国家/省/市/运营商等跨维谓词仍将两个方向一起切换到最长 24 小时的 bounded base-fact 路径，不得为服务端分页退化成错误的 rollup 交集。协议、TOP 源/目的 IP、TOP 本地/远端网段直接选择公开 dimension。时间预设、自定义时间、metric、TopN、图形和筛选状态进入 URL；后台导出冻结同一份规范化 QueryRequest，去掉交互 VTable 当前页 projection 后通过平台 operation job 执行，并受相同数据集策略的范围、行数、超时和并发限制。原 1–4 维、typed filter、address set、device、Sankey 能力折叠为高级 Flow Explorer，仍遵守跨维最长 24h、权限、预算和异步联合索引前置条件。
 
 Flow 查询参数可选携带 `table={search,sort_by,sort_direction,limit,offset,filters}`，由同一 provider 在已受 TopN/扫描预算限制的完整查询结果上生成统计投影。允许排序和筛选的固定字段只有 `dimension/last/average/p95/maximum/minimum/total/records/unknown/quality`；页大小 1..100、offset 最大 10,000、搜索和单值最大 256 字节、每列最多 100 个选择，总选择最多 1,000，未知字段/方向/重复筛选值 fail closed。provider 必须在分页前按 `path + dimension_snapshot_id + geo_version + classification_version` 分组，按 effective range 零填缺桶，并使用和图表一致的末桶覆盖秒数计算 bps/pps total、区间 average、exact-nearest-rank p95、last/min/max、记录数和质量比例；然后才执行全局搜索、AND-across-columns/OR-within-column 筛选、稳定排序和分页。`filter_options` 从完整 TopN 结果而非当前页生成，UI 所有十列均进入 VTable server mode；搜索、筛选、排序和页大小变化回到第一页，陈旧响应按请求序号丢弃。该投影无持久状态且不新增数据库对象，所以不伪造空 migration；未携带 `table` 的旧客户端响应保持不变，旧 hub 对新字段按 strict JSON 明确拒绝，发布必须保证 hub 先于新 UI。
 
@@ -757,8 +759,9 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | `POST /flow/vpn/findings/{id}/actions/probe` | probe | 创建受控异步 job |
 | `POST /flow/reclass-jobs` | configure | 复用 operation job 创建回算 |
 | `GET /flow/reclass-jobs/{id}` | view | 进度、范围、版本、校验 |
-| `POST /flow/exports` | export | 创建异步 CSV/Parquet 导出 |
-| `GET /flow/exports/{id}` | export | 状态、过期下载引用 |
+| `POST /flow/exports` | customer query + customer export | 创建策略有界的异步 CSV/Parquet 完整查询导出；冻结 query/policy/auth 快照 |
+| `GET /exports/{id}` | export task owner/admin | 复用平台导出状态、取消、失败原因和过期时间 |
+| `GET /exports/{id}/download` | export task owner/admin | 下载非空且校验通过的制品；过期后拒绝 |
 | `GET /flow/health` | operate | 分层 readiness/lag/completeness |
 
 输入错误 400，未认证 401，权限/范围 403，不存在 404，ETag/幂等冲突 409/412，限流 429，依赖不可用 503。响应必须区分 `complete/partial/unavailable`，包含 data watermark、版本和警告；依赖故障不能返回成功的空数组。
