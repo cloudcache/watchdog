@@ -59,6 +59,7 @@ const availableActions = [
 	"vpn_export",
 	"vpn_triage",
 	"probe",
+	"configure_adjustment",
 ]
 
 export default memo(({ id }: PermissionFormProps) => {

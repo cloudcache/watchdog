@@ -109,6 +109,7 @@ func normalizePermissionActions(actions []Action) ([]Action, error) {
 		ActionViewRaw: true, ActionViewSupplier: true, ActionViewCustomer: true,
 		ActionExportRaw: true, ActionExportSupplier: true, ActionExportCustomer: true,
 		ActionVPNView: true, ActionVPNExport: true, ActionVPNTriage: true, ActionVPNProbe: true,
+		ActionConfigureAdjustment: true,
 	}
 	seen := make(map[Action]bool, len(actions))
 	normalized := make([]Action, 0, len(actions))

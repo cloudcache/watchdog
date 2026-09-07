@@ -3,21 +3,22 @@ package watchdog
 type Action string
 
 const (
-	ActionView           Action = "view"
-	ActionConfigure      Action = "configure"
-	ActionOperate        Action = "operate"
-	ActionExport         Action = "export"
-	ActionAdmin          Action = "admin"
-	ActionViewRaw        Action = "view_raw"
-	ActionViewSupplier   Action = "view_supplier"
-	ActionViewCustomer   Action = "view_customer"
-	ActionExportRaw      Action = "export_raw"
-	ActionExportSupplier Action = "export_supplier"
-	ActionExportCustomer Action = "export_customer"
-	ActionVPNView        Action = "vpn_view"
-	ActionVPNExport      Action = "vpn_export"
-	ActionVPNTriage      Action = "vpn_triage"
-	ActionVPNProbe       Action = "probe"
+	ActionView                Action = "view"
+	ActionConfigure           Action = "configure"
+	ActionOperate             Action = "operate"
+	ActionExport              Action = "export"
+	ActionAdmin               Action = "admin"
+	ActionViewRaw             Action = "view_raw"
+	ActionViewSupplier        Action = "view_supplier"
+	ActionViewCustomer        Action = "view_customer"
+	ActionExportRaw           Action = "export_raw"
+	ActionExportSupplier      Action = "export_supplier"
+	ActionExportCustomer      Action = "export_customer"
+	ActionVPNView             Action = "vpn_view"
+	ActionVPNExport           Action = "vpn_export"
+	ActionVPNTriage           Action = "vpn_triage"
+	ActionVPNProbe            Action = "probe"
+	ActionConfigureAdjustment Action = "configure_adjustment"
 )
 
 type SubjectType string
@@ -37,6 +38,7 @@ const (
 	ResourceBillingAccount ResourceType = "billing_account"
 	ResourceBillingPeriod  ResourceType = "billing_period"
 	ResourceVPNFinding     ResourceType = "vpn_finding"
+	ResourceVPNRule        ResourceType = "vpn_rule"
 )
 
 type Permission struct {

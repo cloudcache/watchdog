@@ -156,6 +156,8 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 - [ ] 查询时应用与批量物化边界、冲突优先级、effective time、血缘和回滚。
 - [ ] 修正前后对账、审计、导出视图和租户级权限。
 
+- [x] **PLAT-P3A0 权限与边界前置**：新增 tenant-scoped `configure_adjustment` action，不能再以宽泛 `configure`/`operate` 隐式授权规则修改；权限 API 与管理表单可分配该 action。VPN rule draft 先复用 migration 055 的既有表闭环 CRUD，supplier/customer adjustment 仍等待上述三项完整数据契约，二者不共表、不互相冒充 publication。
+
 - [x] 审计读取面：`GET /api/v1/audit-logs`（tenant admin）keyset 游标分页 + resource/actor/action 前缀筛选；/audit-logs 管理页（筛选+加载更多）。同时修复两类静默丢失的审计写入：无 ID 记录被拒（api 层全部 recordAudit）、非 users 表 actor 触发 FK 丢弃（system:enrollment 等，现保留于 detail.actor）。gated MySQL + API 测试（commit 578a4061）。
 
 ## 平台缺陷登记

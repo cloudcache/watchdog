@@ -1,9 +1,9 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { DownloadIcon, RefreshCwIcon, SaveIcon, ShieldCheckIcon } from "lucide-react"
+import { DownloadIcon, ListChecksIcon, RefreshCwIcon, SaveIcon, ShieldCheckIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { $router, navigate } from "@/components/router"
-import { Button } from "@/components/ui/button"
+import { $router, Link, navigate } from "@/components/router"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/components/ui/use-toast"
 import { pb } from "@/lib/api"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
+import { cn } from "@/lib/utils"
 
 type VPNFinding = {
 	id: string
@@ -345,6 +346,10 @@ export default memo(() => {
 					</div>
 				</div>
 				<div className="flex items-end gap-2">
+					<Link className={cn(buttonVariants({ variant: "outline" }))} href={getPagePath($router, "flow_vpn_rules")}>
+						<ListChecksIcon className="me-2 h-4 w-4" />
+						<Trans>Rules</Trans>
+					</Link>
 					<div className="grid gap-1">
 						<Label className="text-xs">
 							<Trans>Time range</Trans>

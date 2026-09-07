@@ -790,8 +790,8 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 | `POST /flow/query` | view | 统一趋势/TopN/统计查询；地址集合组合从 base 去重、同步窗口最多 1h |
 | `POST /flow/overseas/query` | view | 境外 KPI、country/region TopN 与采样完整性；只读 aggregate |
 | `POST /flow/records/search` | sensitive_view | 分页源/目的明细 |
-| `GET/POST /flow/vpn/rules` | view/configure | 规则列表/创建 |
-| `GET/PATCH/DELETE /flow/vpn/rules/{id}` | view/configure | 版本化修改/退役 |
+| `GET/POST /flow/vpn/rules` | vpn_view/configure_adjustment | tenant-scoped 服务端列表/创建 draft |
+| `GET/PATCH/DELETE /flow/vpn/rules/{id}` | vpn_view/configure_adjustment | 查看、If-Match 修改/软删 draft |
 | `POST /flow/vpn/rules/{id}/actions/preview` | configure | 候选量、成本、误报预览 |
 | `GET /flow/vpn/findings` | vpn_view | 分页/筛选/搜索 |
 | `GET /flow/vpn/findings/facets` | vpn_view | 指定展示列的有界远程候选；继承时间/搜索/其它列筛选并排除本列自身条件 |
@@ -819,6 +819,8 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 6. **VPN 风险**：candidate/finding、score、证据、probe timeline、处置。
 
 页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。VPN findings 读取/筛选/处置和异步 CSV 导出已经挂载，导出必须原样冻结页面的时间、搜索、column filter 与排序；规则 publication、关闭窗口写入和 probe 编排不可用时必须分别显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
+
+VPN 规则管理分为“可编辑 draft”和“不可变 rule-set publication”两层。draft API 只暴露评分器 schema v1 已实际消费的 `name/kind/match/effect/weight/priority/status`；`match` 由 `flowvpn.NormalizeRule` 与数据面共用同一 canonical validator，数组排序去重后持久化。migration 055 中预留但尚无执行语义的 `behavior_json/intelligence_json/probe_policy_json` 不进入 API，直到对应 analyzer/probe contract 冻结，避免接受不会生效的配置。创建、编辑、软删要求 tenant `configure_adjustment`，GET 要求 `vpn_view`；PATCH/DELETE 强制 quoted `If-Match`，name 冲突返回 409，row-version 冲突返回 412，所有 mutation 写审计。draft 的 `active` 仅表示下一次 rule-set 编译的纳入候选，不是 worker 已安装证明；只有后续签名 publication 完成 activation 且 worker 回报 installed ACK，页面才能显示该 rule-set 可用。
 
 所有 VTable 都必须具备服务端分页、搜索、排序和 column filter；filter popover 使用 portal、collision detection、viewport max-height 和滚动，不得溢出或错位。公共 VTable 只给 list API 明确声明的 typed filter/sort 列显示入口，未声明列不得退化为当前页本地筛选或排序；筛选、排序、搜索或页大小变化必须回到第一页，并丢弃已发出的旧响应。Geo 表每行显示当前层名称、完整路径和稳定 ID tooltip，并可进入 children；图例只包含当前 level。地址组用多值 chips/独立 TopN，明确重叠口径。页面保留 query state 到 URL，支持取消过期请求；大数据只显示 TopN + other，不渲染无限序列。每张图支持创建/修改/复制/删除保存视图，保存的是 versioned QueryRequest，不保存 SQL。
 

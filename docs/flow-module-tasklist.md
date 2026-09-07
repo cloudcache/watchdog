@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06C4-D — publication 管理设计。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail 与 FLOW-06C3 VPN findings 异步导出已经分别闭环；下一轮只审查现有 immutable publication/审批/If-Match/worker ACK 能否承载 Flow 规则与修正发布，不复制地址库 CRUD，也不改 Flow writer/rollup。原始数据物理删除和异步联合索引不与本切片混改。
+**活动切片：FLOW-06C4-R2-B — VPN rule 页面浏览器/真实 MySQL 门禁。** FLOW-06C1 customer aggregate、FLOW-06C2 raw/supplier detail 与 FLOW-06C3 VPN findings 异步导出已经分别闭环；C4-D/R1 及 R2 的代码、单元和构建已完成。下一轮只验证 8090→Hub 的列表/筛选/创建/编辑/CAS/删除和真实 MySQL 持久化，不提前进入 C4-P immutable rule-set publication；原始数据物理删除、Flow writer/rollup 和地址 index-builder 不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -305,7 +305,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-06A3 已提交**：生产代码、测试与契约文档已进入独立提交 `d56bc3f6`；工作区不再残留该切片生产文件。
 - [x] **FLOW-06A2/06A3 外部证据已提交**：真实 provenance 数据门禁、String/Bool wire type 修复和对应单元契约进入提交 `b2c07af9`；平台权限项未被错误勾选。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
-- [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
+- [x] **FLOW-06B1 平台前置已解除**：PLAT-04G 已提供 lease-token fenced、单调 progress/checkpoint reporter、heartbeat flush 和 takeover 续跑，并由 commit `f0fb1444` 关闭。FLOW-06B 仍须另行冻结 CH 派生投影与容量门禁，不能因平台原语完成而自动勾选历史重分类。
 - [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，自然 Kafka 坐标覆盖、record count、raw/estimated counters 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、Storage V2 原始/归档边界、失败续跑和回退；原始已销毁且无可验证 Kafka 重放源时必须拒绝。
 - [ ] **FLOW-06C 管理/导出**：按 06C1–06C4 独立交付；父项在 raw/supplier 明细和 publication 生命周期都关闭前保持未完成，不复制地址库 CRUD 或平台任务状态机。
   - [x] **FLOW-06C1 customer aggregate export**：复用平台 `export_tasks + operation_jobs` 完成策略有界的完整查询 CSV/Parquet、query/policy/auth 快照、权限复核、取消/重试/下载/过期销毁；提交 `a9fc7622`。
@@ -319,7 +319,19 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [x] **单元/集成**：覆盖双权限创建、客户端 tenant 注入拒绝、冻结筛选、limit+1 拒绝、CSV 注入防护、Parquet magic、当前权限复核及现有 operation-job handler 端到端完成；真实 MySQL 用例已加入 gated suite，本机当前无 MySQL 实例时明确 skip。
     - [x] **变更设计/测试**：`dataset_key` 为扩展字段，既有 046 表/operation job 足够，故不占 migration；旧 contract-0 VM 任务通过显式 fallback 保持兼容，VPN 的 `step=0` 不再被通用归一化改成 5 分钟。
     - [x] **回归/已提交门禁**：Watchdog/全库/race/vet/build、前端 test/定向 Biome/build 和 diff check 通过后由本提交原子交付，不夹带并行 maintenance/delete-preview 文件。
-  - [ ] **FLOW-06C4 publication 管理**：规则/修正 publication typed CRUD、审批、If-Match、审计和 worker 安装 ACK；复用平台 immutable publication，不复制地址库 CRUD。
+  - [ ] **FLOW-06C4 publication 管理**：按 C4-D/R1/R2/P/W/A 拆分交付，避免把 VPN 草稿、修正规则、不可变发布和 Flow index-builder 再揉成一个长期半成品；复用平台 immutable publication，不复制地址库 CRUD。
+    - [x] **C4-D 现状对账/变更设计**：平台 PLAT-04A2a–A2d 已真实提供 trusted-key、RBAC、If-Match、签名审批、event-time activation/rollback、consumer ACK/status 和安全 object GC；旧 FLOW-07A 文案声称这些能力缺失已判定过期。未完成面明确拆为 VPN rule-set 编译/发布、Flow worker 下载安装和 supplier/customer adjustment publication；地址 snapshot 的 Flow index generation 属 C4b2/地址 index-builder，不在规则 CRUD 中改 CH。
+    - [x] **C4-R1 VPN rule typed draft CRUD**：复用 migration 055 的 `flow_vpn_rules`，新增 `GET/POST /flow/vpn/rules` 与 `GET/PATCH/DELETE /flow/vpn/rules/{id}`；list 为 tenant-scoped 服务端搜索/分页/typed kind/effect/status filter/稳定排序，mutation 使用专用 `configure_adjustment`、严格 JSON、quoted If-Match、软删和逐动作审计。match 直接复用 `flowvpn.NormalizeRule` 的固定 schema v1 canonical validator，API 不暴露尚无数据面语义的 behavior/intelligence/probe JSON 保留列，避免保存“看似可配但永不生效”的字段。复用既有表，故无 migration 058。
+    - [x] **C4-R1 单元/集成/变更测试**：覆盖 snake_case wire schema、去重排序、空 match、terminal weight、未知字段/tenant 注入、权限、ETag/audit、tenant 隔离、服务端筛选、name conflict、CAS 和软删；真实 MySQL 用例沿用 `WATCHDOG_TEST_MYSQL_DSN` 门禁，无实例时明确 skip。旧 scorer 构造方式与规则求值语义不变。
+    - [x] **C4-R1 已提交门禁**：代码、测试、设计和任务清单由同一独立提交交付，不夹带用户已有 maintenance/delete-preview 工作区。
+    - [ ] **C4-R2 VPN rule VTable/form**：列表必须服务端分页/搜索/排序/column filter，filter popover 使用公共 portal/collision；表单只显示 schema v1 真正生效字段，编辑/删除发送最新 ETag，未发布状态明确显示为 draft 管理态。
+      - [x] **设计/编码**：新增独立 `/flow/vpn/rules`，findings 与规则页互相跳转；PagedVTable 下推 q/kind/effect/status/sort/page，300ms 搜索和旧请求隔离；表单覆盖全部十二类 schema v1 match signal，TLS/QUIC 明示为上游 hint，不由端口猜测；编辑/删除使用行内 row_version 生成 quoted If-Match。
+      - [x] **单元/回归**：前端 parser 覆盖整数集合去重排序、标识符规范化、正值和比例边界；定向 Biome、41 项前端测试、production build、全库 Go test、Flow/Watchdog race、vet/build 和 diff check 通过。
+      - [ ] **集成/变更测试**：真实 MySQL 门禁已加入但本机未配置 `WATCHDOG_TEST_MYSQL_DSN` 而明确 skip；仍须用 8090 浏览器完成列表/filter popover 边界、创建→编辑→stale ETag 412→删除和刷新持久化，且确认无控制台错误。
+      - [x] **已提交门禁（代码范围）**：页面、模型测试、路由、权限入口与 R1 backend 同一切片提交；未夹带用户已有 maintenance/delete-preview 文件。浏览器/真实 MySQL 证据未完成，故 R2 父项保持未勾选。
+    - [ ] **C4-P immutable VPN rule-set publication**：冻结 thresholds + canonical active rules 的 object schema、preview digest、审批/激活/回滚和引用保留；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。若需新持久字段从 migration 058 领取并同步 fresh-init/checksum/replay。
+    - [ ] **C4-W worker 安装/ACK**：worker 只下载已批准且 event-time active 的 rule-set object，校验 checksum/schema/版本后原子切换 scorer catalog，再写 downloaded/installed/failed ACK；失败保持上一 generation。
+    - [ ] **C4-A supplier/customer adjustment publication**：归属平台 P3 adjustment policy，不与 VPN rule-set 共表或共享含义；raw 永不可修正，查询/导出固定 policy version，历史重分类复用 FLOW-06B。
 
 ### FLOW-07 Overseas/VPN
 
@@ -329,7 +341,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-07A 集成（数据面）**：真实 CH 顺序 migration、base writer、两个 1m rollup、candidate materializer 和 scorer 串联；验证反向原始流归一为同一 local/remote 会话、稳定 SHA-256 key、count/quality/coverage 完整度、迟到 generation 2 和 generation 3 权威空修复。finding/MySQL/probe 编排仍属平台侧。
 - [x] **FLOW-07A 变更设计**：candidate/评分结果携带 dimension snapshot、Geo、classification 和 rule-set 四类版本；规则升级生成新 generation/result，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
 - [x] **FLOW-07A 数据面变更测试**：确定性 evidence/score、未知 schema、规则顺序/输入修改、dimension/Geo/classification 跨版本 CH 物化，以及 immutable rule-set v1→v2→回切 v1 的 generation/result 隔离均已覆盖；证据提交 `a7ea3f2d`。
-- [ ] **FLOW-07A 管理面 publication 门禁**：平台 migrations 042/043 与 `8b86d829` 已提供签名审批 proof、If-Match、event-time activate/rollback、retire、ACK/reference 和审计仓储；仍缺 trusted-key/RBAC API、真实 worker 下载/安装 ACK 与安全 object GC。上述能力继续由 PLAT-04A/04C 承载；数据面直接选取已编译 immutable rule set 的测试不能替代。
+- [ ] **FLOW-07A 管理面 publication 门禁**：平台 PLAT-04A2a–A2d（migrations 042/043/047/048/049）已关闭 trusted-key/RBAC API、签名审批、If-Match、event-time activate/rollback、ACK/status/reference 和安全 object GC。当前阻断只剩 FLOW-06C4-P/W 的 VPN rule-set 专用 object compiler、发布适配和真实 worker 安装 ACK；数据面直接选取已编译 immutable rule set 的测试不能替代。
 - [x] **FLOW-07A2 schema 门禁**：003 前向增加 `remote_prefix_id/geo_version/classification_version/row_kind` 并扩展 replacement key；001/002 未回改，旧行默认 candidate，新读取契约只接受有 marker 的 generation。
 - [x] **FLOW-07A2 materializer**：单条同步 `INSERT SELECT ... UNION ALL` 写候选和 `_generation`；空修复可推进 generation，版本不互相覆盖，同请求 dedup token 稳定；未知采样不混 raw/estimated，443 不推断 TLS/QUIC。
 - [x] **FLOW-07A2 单元/变更测试**：覆盖 UTC/闭窗/1m..24h、安全标识符、原子 marker、稳定主 tuple、双向计数、rollup/sampling 完整度、四类版本、永久/暂时 CH 错误和 authoritative generation read。

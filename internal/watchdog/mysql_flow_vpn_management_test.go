@@ -8,7 +8,91 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowvpn"
 )
+
+func TestMySQLFlowVPNRuleCRUDCanonicalCASAndTenantScope(t *testing.T) {
+	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.PingContext(ctx); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+
+	schema := "watchdog_vpn_rule_repo_" + randomSchemaSuffix(t)
+	createScratchSchema(ctx, t, server, schema)
+	db := openScratchSchema(t, dsn, schema)
+	defer db.Close()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const tenantID = ID("tenant_vpn_rule_repo")
+	if _, err := db.ExecContext(ctx, "INSERT INTO tenants (id, name, status) VALUES (?, 'VPN Rule Repository', 'active')", tenantID); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMySQLStore(db)
+	ruleID, err := newIdentityID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateVPNRule(ctx, VPNRule{
+		ID: ruleID, TenantID: tenantID, Name: "  Risk Rule  ", Kind: VPNRuleKindPassive,
+		Match:  flowvpn.Match{RemotePorts: []uint16{8443, 443, 443}, RemoteCountries: []string{"US"}},
+		Effect: flowvpn.EffectScore, Weight: 25, Priority: 9, Status: VPNRuleStatusDraft,
+		CreatedBy: "actor_vpn_rule_repo", UpdatedBy: "actor_vpn_rule_repo",
+	})
+	if err != nil || created.Name != "Risk Rule" || created.RowVersion != 1 || len(created.Match.RemotePorts) != 2 || created.Match.RemotePorts[0] != 443 {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	otherTenant, err := store.GetVPNRule(ctx, "tenant_other", created.ID)
+	if !errors.Is(err, sql.ErrNoRows) || otherTenant.ID != "" {
+		t.Fatalf("cross-tenant item=%+v err=%v", otherTenant, err)
+	}
+	items, total, err := store.ListVPNRules(ctx, tenantID, VPNRuleListFilter{
+		Search: "risk", Kind: VPNRuleKindPassive, Effect: string(flowvpn.EffectScore),
+		Status: VPNRuleStatusDraft, SortBy: "priority", Limit: 10,
+	})
+	if err != nil || total != 1 || len(items) != 1 || items[0].ID != created.ID {
+		t.Fatalf("items=%+v total=%d err=%v", items, total, err)
+	}
+	created.Name = "Allow Rule"
+	created.Kind = VPNRuleKindIntelligence
+	created.Match = flowvpn.Match{RemoteASNs: []uint32{64512}}
+	created.Effect = flowvpn.EffectAllow
+	created.Weight = 0
+	created.Status = VPNRuleStatusActive
+	created.UpdatedBy = "actor_vpn_rule_update"
+	updated, err := store.UpdateVPNRule(ctx, created, 1)
+	if err != nil || updated.RowVersion != 2 || updated.Effect != flowvpn.EffectAllow || updated.CreatedBy != "actor_vpn_rule_repo" {
+		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	if _, err := store.UpdateVPNRule(ctx, created, 1); !errors.Is(err, ErrVPNRuleVersionConflict) {
+		t.Fatalf("stale update err=%v", err)
+	}
+	duplicateID, _ := newIdentityID()
+	created.ID, created.Name, created.CreatedBy = duplicateID, updated.Name, "actor_vpn_rule_repo"
+	if _, err := store.CreateVPNRule(ctx, created); !errors.Is(err, ErrVPNRuleNameConflict) {
+		t.Fatalf("duplicate name err=%v", err)
+	}
+	if err := store.DeleteVPNRule(ctx, tenantID, updated.ID, "actor_vpn_rule_delete", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetVPNRule(ctx, tenantID, updated.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("get deleted err=%v", err)
+	}
+	if err := store.DeleteVPNRule(ctx, tenantID, updated.ID, "actor_vpn_rule_delete", 2); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("delete deleted err=%v", err)
+	}
+}
 
 func TestMySQLFlowVPNFindingPagingFacetsAndDispositionCAS(t *testing.T) {
 	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")

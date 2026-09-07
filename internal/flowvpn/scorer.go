@@ -82,26 +82,26 @@ type Candidate struct {
 }
 
 type Match struct {
-	RemotePorts       []uint16
-	Protocols         []uint8
-	RemoteASNs        []uint32
-	RemotePrefixIDs   []string
-	RemoteCountries   []string
-	TransportHints    []TransportHint
-	MinDurationMS     *uint64
-	MinTotalBytes     *uint64
-	MinFlowRecords    *uint64
-	MinActiveBuckets  *uint32
-	MinSymmetryRatio  *float64
-	MinDominanceRatio *float64
+	RemotePorts       []uint16        `json:"remote_ports,omitempty"`
+	Protocols         []uint8         `json:"protocols,omitempty"`
+	RemoteASNs        []uint32        `json:"remote_asns,omitempty"`
+	RemotePrefixIDs   []string        `json:"remote_prefix_ids,omitempty"`
+	RemoteCountries   []string        `json:"remote_countries,omitempty"`
+	TransportHints    []TransportHint `json:"transport_hints,omitempty"`
+	MinDurationMS     *uint64         `json:"min_duration_ms,omitempty"`
+	MinTotalBytes     *uint64         `json:"min_total_bytes,omitempty"`
+	MinFlowRecords    *uint64         `json:"min_flow_records,omitempty"`
+	MinActiveBuckets  *uint32         `json:"min_active_buckets,omitempty"`
+	MinSymmetryRatio  *float64        `json:"min_symmetry_ratio,omitempty"`
+	MinDominanceRatio *float64        `json:"min_dominance_ratio,omitempty"`
 }
 
 type Rule struct {
-	ID       string
-	Effect   RuleEffect
-	Weight   uint16
-	Priority uint16
-	Match    Match
+	ID       string     `json:"id"`
+	Effect   RuleEffect `json:"effect"`
+	Weight   uint16     `json:"weight"`
+	Priority uint16     `json:"priority"`
+	Match    Match      `json:"match"`
 }
 
 type RuleSet struct {
@@ -179,28 +179,40 @@ func CompileRuleSet(input RuleSet) (CompiledRuleSet, error) {
 	}
 	seen := make(map[string]struct{}, len(input.Rules))
 	for _, rule := range input.Rules {
-		if !validIdentifier(rule.ID) {
-			return CompiledRuleSet{}, errors.New("VPN rule ID is invalid")
+		var err error
+		rule, err = NormalizeRule(rule)
+		if err != nil {
+			return CompiledRuleSet{}, err
 		}
 		if _, exists := seen[rule.ID]; exists {
 			return CompiledRuleSet{}, fmt.Errorf("VPN rule ID %q is duplicated", rule.ID)
 		}
 		seen[rule.ID] = struct{}{}
-		if rule.Effect != EffectScore && rule.Effect != EffectAllow && rule.Effect != EffectSuppress {
-			return CompiledRuleSet{}, fmt.Errorf("VPN rule %q has an unsupported effect", rule.ID)
-		}
-		if (rule.Effect == EffectScore && (rule.Weight == 0 || rule.Weight > 100)) || (rule.Effect != EffectScore && rule.Weight != 0) {
-			return CompiledRuleSet{}, fmt.Errorf("VPN rule %q has an invalid weight for its effect", rule.ID)
-		}
-		canonical, err := canonicalMatch(rule.Match)
-		if err != nil {
-			return CompiledRuleSet{}, fmt.Errorf("VPN rule %q: %w", rule.ID, err)
-		}
-		rule.Match = canonical
 		compiled.rules = append(compiled.rules, compiledRule{rule: rule})
 	}
 	sort.Slice(compiled.rules, func(i, j int) bool { return compiled.rules[i].rule.ID < compiled.rules[j].rule.ID })
 	return compiled, nil
+}
+
+// NormalizeRule validates one editable rule and returns the same canonical
+// representation used by CompileRuleSet. Management APIs use this boundary so
+// semantically equivalent drafts cannot produce different publication bytes.
+func NormalizeRule(rule Rule) (Rule, error) {
+	if !validIdentifier(rule.ID) {
+		return Rule{}, errors.New("VPN rule ID is invalid")
+	}
+	if rule.Effect != EffectScore && rule.Effect != EffectAllow && rule.Effect != EffectSuppress {
+		return Rule{}, fmt.Errorf("VPN rule %q has an unsupported effect", rule.ID)
+	}
+	if (rule.Effect == EffectScore && (rule.Weight == 0 || rule.Weight > 100)) || (rule.Effect != EffectScore && rule.Weight != 0) {
+		return Rule{}, fmt.Errorf("VPN rule %q has an invalid weight for its effect", rule.ID)
+	}
+	canonical, err := canonicalMatch(rule.Match)
+	if err != nil {
+		return Rule{}, fmt.Errorf("VPN rule %q: %w", rule.ID, err)
+	}
+	rule.Match = canonical
+	return rule, nil
 }
 
 func (r CompiledRuleSet) Evaluate(candidate Candidate) (Result, error) {

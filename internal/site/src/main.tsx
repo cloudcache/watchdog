@@ -75,6 +75,7 @@ const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
 const FlowVPN = lazy(() => import("@/components/routes/flow-vpn.tsx"))
+const FlowVPNRules = lazy(() => import("@/components/routes/flow-vpn-rules.tsx"))
 const FlowSavedFilters = lazy(() => import("@/components/routes/flow-saved-filters.tsx"))
 const CopyToClipboardDialog = lazy(() => import("@/components/copy-to-clipboard.tsx"))
 
@@ -257,6 +258,8 @@ const App = memo(() => {
 		return <TrafficMatrix key="overseas" surface="overseas" />
 	} else if (page.route === "flow_vpn") {
 		return <FlowVPN />
+	} else if (page.route === "flow_vpn_rules") {
+		return <FlowVPNRules />
 	} else if (page.route === "flow_filters") {
 		return <FlowSavedFilters />
 	}

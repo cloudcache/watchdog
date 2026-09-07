@@ -41,6 +41,7 @@ type APIV1RouterConfig struct {
 	FlowOverseasNow        func() time.Time
 	FlowStorageQuery       FlowStorageArchiveBoundaryRepository
 	FlowVPNFindings        VPNFindingRepository
+	FlowVPNRules           VPNRuleRepository
 	FlowStorage            FlowStorageLifecycleRepository
 	FlowSavedFilters       FlowSavedFilterRepository
 	QueryPolicies          QueryDatasetPolicyRepository
@@ -241,6 +242,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.FlowVPNFindings != nil {
 		registerFlowVPNManagementRoutes(mux, auth, cfg.FlowVPNFindings, cfg.Exports, cfg.Audit)
+	}
+	if cfg.FlowVPNRules != nil {
+		registerFlowVPNRuleRoutes(mux, auth, cfg.FlowVPNRules, cfg.Audit)
 	}
 	if cfg.FlowStorage != nil {
 		registerFlowStorageLifecycleRoutes(mux, auth, cfg.FlowStorage, cfg.Audit)

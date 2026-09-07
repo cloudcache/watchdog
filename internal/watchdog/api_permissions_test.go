@@ -69,6 +69,7 @@ func TestAPIPermissionsPutValidatesValueLayerActions(t *testing.T) {
 		status  int
 	}{
 		{name: "value layers", actions: `"view_raw","view_supplier","view_customer","export_raw","export_supplier","export_customer"`, status: http.StatusOK},
+		{name: "adjustment", actions: `"configure_adjustment"`, status: http.StatusOK},
 		{name: "unknown", actions: `"view_raw","generated_action"`, status: http.StatusBadRequest},
 		{name: "empty", actions: ``, status: http.StatusBadRequest},
 	} {
