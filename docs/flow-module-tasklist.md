@@ -184,14 +184,14 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-04C2 单元/变更/回归/已提交**：覆盖 resolution、失败分类、repair、未来 age clamp、从未成功 unknown、高基数标签禁止和 hub provider 组合；定向 race/vet 与全库 test 通过，提交 `041eebf4`。
 - [x] **FLOW-04C3 Storage V2 变更设计/编码**：migration 011 将 V1 block receipt/projection 保留在 legacy 表，正式表改为逐 Kafka message receipt 和自然坐标 audit projection；scanner 逐一枚举 `[next_offset, committed_next_offset)`，只做 identity/count/counter 守恒，不再读内容 checksum，也不再按 TTL 猜 eligibility。
 - [x] **FLOW-04C3 comparator/scanner 单元与 CH 集成**：覆盖完全空洞、receipt/fact 单边缺失、record index 不连续、count/counter mismatch、budget/cursor、invalid estimated 语义和 generation 去重；不完整扫描不发布伪零。
-- [ ] **FLOW-04C3 system-scope job/指标接线**：复用平台 global/system-scope `operation_jobs` 持久化 Kafka watermark、scanner checkpoint 与完整快照；必须从真实 broker 读取 committed-next-offset，不能用 CH 最大 offset 冒充。
+- [x] **FLOW-04C3 system-scope job/指标接线**：复用平台 global/system-scope `operation_jobs` 持久化 Kafka watermark、scanner checkpoint 与完整快照；必须从真实 broker 读取 committed-next-offset，不能用 CH 最大 offset 冒充。
   - [x] **设计**：冻结 exact topic + consumer group + 不可复用 `source_stream_id`；OffsetFetch 的 `committed_next_offset` 是唯一右边界，首次每个已提交 partition 必须有显式 bootstrap 或既有 system watermark；每个 job 首次 attempt 冻结全 partition 快照，topic typo、offset 回退和缺 cutover 均 fail closed。
   - [x] **编码**：新增不入组/不消费/不提交的 franz-go committed-offset reader；复用 system schedule `max_inflight=1`、公共 lease/heartbeat/cancel/retry、attempt reporter 和 `operation_job_system_watermarks`；checkpoint→watermark 顺序可由 takeover 幂等恢复，配置替换禁用旧 schedule。CH scanner 仍只读 migration 011 的 message receipt/audit projection，未新增状态机、topic、表或服务。
   - [x] **单元**：覆盖 Kafka group/partition error、未提交 offset、排序/重复/负值；缺 bootstrap、committed 回退、分块 cursor、无进展预算、完整 checkpoint、完成 partition crash-resume、水位推进；指标验证 partial 保留上次 snapshot 且 complete=0。
   - [x] **集成**：Kafka 4.3.1 真实 group coordinator 经生产消费/提交后 OffsetFetch 取得准确 next offset；真实 MySQL 验 system lease→checkpoint→success→known watermark；ClickHouse 26.3.29.7 真实 migration 001–011 scanner 覆盖 clean、count、missing facts、双空洞、receipt-only 与 message budget。
   - [x] **变更设计/测试**：功能默认关闭；YAML/env 配置提供 broker/topic/group/stream、TLS/SASL secret file、scan/lease/retry 预算和 `partition=offset` cutover；关闭功能会禁用遗留 schedule。冷管理面 watermark key 使用有界摘要，不属于逐记录热路径 hash。旧 job payload 版本终态拒绝；system scanner 完成不自动解锁 raw delete。
   - [x] **回归**：`go test ./...`、`go vet ./...`、`go build ./...`、Flow collector/worker + flowstream/flowmetrics/flowch/watchdog 目标 race、config known-fields、`git diff --check` 均通过；真实 Kafka 4.3.1、MySQL、ClickHouse 26.3 集成门禁通过。
-  - [ ] **已提交门禁**：实现、测试、设计和清单必须进入独立提交；提交后回填 hash，并确认工作区只剩用户既有 maintenance/delete-preview/备份文件。
+  - [x] **已提交门禁**：实现、测试、设计和清单已进入独立提交 `e70e3751 feat(flow): reconcile Kafka commits with ClickHouse`；提交后工作区只剩用户既有 maintenance/delete-preview/备份文件和本条验收回填。
 - [x] **FLOW-04C3 Storage V2 已提交**：`a9fc7622 feat(flow): implement storage v2 lifecycle`；包含 migration 011、自然坐标/逐消息 receipt、count/counter scanner、生命周期策略与非破坏 downsample、混合查询和完整异步导出。system-scope Kafka 水位及删除门禁仍未关闭。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
