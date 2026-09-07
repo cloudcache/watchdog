@@ -171,8 +171,8 @@ func NewEnricher(dimensions *flowdimension.SnapshotCatalog, geo *flowdimension.G
 // atomically published dimension/classification pairs. NewEnricher is retained
 // for callers that still own the two legacy catalogs independently.
 func NewEnricherWithVersionCatalog(versions *EnrichmentVersionCatalog, geo *flowdimension.GeoCatalog, limits EnrichmentLimits) (*Enricher, error) {
-	if versions == nil || geo == nil {
-		return nil, errors.New("enrichment version and Geo catalogs are required")
+	if versions == nil {
+		return nil, errors.New("enrichment version catalog is required")
 	}
 	limits, err := normalizeEnrichmentLimits(limits)
 	if err != nil {
@@ -215,7 +215,7 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	if result == nil {
 		return invalid("enriched batch destination is required")
 	}
-	if e == nil || e.geo == nil || (e.versions == nil && (e.dimensions == nil || e.classification == nil)) {
+	if e == nil || (e.versions == nil && (e.geo == nil || e.dimensions == nil || e.classification == nil)) {
 		result.Records = result.Records[:0]
 		return invalid("enricher is not initialized")
 	}
@@ -268,23 +268,51 @@ func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition 
 	if classificationMetadata.DimensionSnapshotID != dimensionMetadata.SnapshotID {
 		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
 	}
-	geoIndex, err := e.geo.Select(eventTime)
-	if err != nil {
-		return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
-	}
-
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
-	geoMetadata := geoIndex.Metadata()
-	supplierRemoteGeo := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
+	var supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
+	var overrideFields flowdimension.GeoOverrideFields
 	geoMatched := false
-	if dimensions.Remote.IP.IsValid() {
-		if resolved, matched := geoIndex.Lookup(dimensions.Remote.IP); matched {
-			supplierRemoteGeo, geoMatched = resolved, true
+	addressSnapshotResolved := false
+	if addressSnapshot, ok := dimensionSnapshot.(interface {
+		ResolveAddress(netip.Addr) (flowdimension.AddressSnapshotResolution, bool)
+	}); ok {
+		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: dimensionMetadata.SnapshotID, Source: flowdimension.GeoSchemaV2}
+		remoteGeo = supplierRemoteGeo
+		if dimensions.Remote.IP.IsValid() {
+			if resolved, matched := addressSnapshot.ResolveAddress(dimensions.Remote.IP); matched {
+				supplierRemoteGeo, remoteGeo = resolved.SupplierGeo, resolved.CustomerGeo
+				overrideFields, geoMatched, addressSnapshotResolved = resolved.CustomerOverrideFields, true, true
+			}
 		}
+	} else {
+		if e.geo == nil {
+			return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, flowdimension.ErrNoGeoIndex)
+		}
+		geoIndex, err := e.geo.Select(eventTime)
+		if err != nil {
+			return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
+		}
+		geoMetadata := geoIndex.Metadata()
+		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
+		if dimensions.Remote.IP.IsValid() {
+			if resolved, matched := geoIndex.Lookup(dimensions.Remote.IP); matched {
+				supplierRemoteGeo, geoMatched = resolved, true
+			}
+		}
+		legacySnapshot, ok := dimensionSnapshot.(*flowdimension.CompiledSnapshot)
+		if !ok {
+			return EnrichedRecord{}, blocked("dimension", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
+		}
+		remoteGeo, overrideFields, _ = legacySnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
 	}
 	supplierRemoteASN, supplierRemoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, supplierRemoteGeo, geoMatched, 0)
-	remoteGeo, overrideFields, _ := dimensionSnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
-	remoteASN, remoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, remoteGeo, geoMatched, overrideFields)
+	remoteGeoForASN := remoteGeo
+	if addressSnapshotResolved && overrideFields&flowdimension.GeoOverrideASN == 0 {
+		// A customer Geo/ISP correction must not hide the inherited WADS ASN's
+		// supplier-derived provenance.
+		remoteGeoForASN.Source = flowdimension.GeoSchemaV2
+	}
+	remoteASN, remoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, remoteGeoForASN, geoMatched, overrideFields)
 	localPort, remotePort := endpointPorts(decoded, dimensions)
 	record := EnrichedRecord{
 		RecordIndex: decoded.RecordIndex, EventTime: eventTime, TargetID: decoded.TargetID, DeviceID: decoded.DeviceID,
@@ -312,7 +340,7 @@ func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition 
 	return record, nil
 }
 
-func (e *Enricher) selectVersions(tenantID string, eventTime time.Time) (*flowdimension.CompiledSnapshot, *flowdimension.ClassificationSnapshot, string, error) {
+func (e *Enricher) selectVersions(tenantID string, eventTime time.Time) (DimensionSnapshot, *flowdimension.ClassificationSnapshot, string, error) {
 	if e.versions != nil {
 		version, err := e.versions.Select(tenantID, eventTime)
 		if err != nil {

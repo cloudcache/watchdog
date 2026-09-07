@@ -6,7 +6,7 @@
 
 - `flow-collect` 只接收 UDP 并写 Kafka，不做地址分类。
 - `flow-worker` 已在 Kafka 后使用 `gaissmai/bart` LPM 与 Geo 有序区间二分完成分类；`snapshot.go` 的 lookup 和 `enrich.go` 的 enrichment 每条 flow **不访问 MySQL、ClickHouse 或 HTTP**。
-- worker 当前仍从 MySQL 发布记录指向的小型人工 definition object，以及独立 Geo 文件装载运行时索引。也就是说，热路径已经是纯内存，但还没有一个把 pinned source manifest、base Geo/ASN 和人工定义合成在一起的紧凑、不可变二进制发布物。
+- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。尚未完成的是认证控制面下载、publication 签名验证与磁盘 LKG 恢复，不能把本地文件 bootstrap 冒充完整分发生命周期。
 - CH migration 009 的 `flow_address_dict_source` 和 `IP_TRIE` 集成测试证明过 ClickHouse 字典能力，但没有接入生产 worker/rollup/query。它是历史实验，不是继续演进的架构基础。
 
 因此本次修正不再“把分类从 worker 搬到 ClickHouse”，而是把**索引的发布来源**从运行时批量装载管理数据，改成经审批、可校验、可回滚的二进制 `AddressSnap`。
@@ -89,6 +89,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 - 第一阶段由 worker 通过认证 API 获取“本 scope 的 desired activation metadata”，使用 object ref 拉取 AddressSnap；Kafka 不承载大对象。
 - 本地以 `tenant/snapshot/checksum` 保存 last-known-good 文件：下载到临时文件，`fsync + atomic rename` 后才可成为 LKG。启动时可从 LKG 恢复，但仍要校验签名、SHA、header/CRC 和 metadata。
 - 解码、索引构建在热路径之外完成；新 catalog 完全构建成功后以单次 atomic swap 可见。失败继续使用旧版本并上报稳定错误码，不允许空表替换。
+- reader 双读已经落地：`object_format` 为空或 `json/0` 时保留旧 definition + GeoCatalog 语义，`wads/1` 时 Geo、supplier/customer ISP/ASN、prefix、business 和 sets 全部来自同一对象；未知组合在读取对象前即拒绝。WADS value/range/string 引用在安装前预解析，逐 flow 只做 v4/v6 二分和不可变切片读取；WADS-only 构造器允许 GeoCatalog 为空，若事件时间实际选中旧 JSON 版本则以 `dependency=geo` 暂停而非误用当前值。
 - 同一 event time 必须选 `effective_from <= event_time` 的最新已安装版本；缺版本暂停对应 Kafka partition，不回退到当前版本误分类。
 - 现阶段继续使用已验证的 BART LPM + Geo 有序区间二分。EdgeManager 的 DIR-24-8 是候选优化，不是默认实现：IPv4 一级表约 64 MiB，若按 tenant 复制会线性放大。只有固定硬件上 BART 不达 SLA，且“共享 supplier 基库 + tenant 稀疏 overlay”容量模型成立时才可切换。
 

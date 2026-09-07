@@ -71,7 +71,7 @@ func main() {
 	flag.Var(&opt.planFiles, "bootstrap-plan", "signed plan file; repeat for every registry revision retained in Kafka")
 	flag.StringVar(&opt.planPublicKey, "plan-public-key", "", "Ed25519 plan public key file")
 	flag.Var(&opt.versionPublications, "bootstrap-version-publication", "dimension/classification publication JSON; repeat for retained event-time versions")
-	flag.Var(&opt.geoBundles, "geo-bundle", "flow-geo-v1 or flow-geo-v2 bundle directory; repeat oldest to newest, with the last bundle active")
+	flag.Var(&opt.geoBundles, "geo-bundle", "legacy JSON dimension Geo bundle directory; optional for WADS-only bootstrap, repeat oldest to newest")
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
 
 	flag.StringVar(&opt.brokers, "kafka-brokers", "127.0.0.1:9092", "comma-separated Kafka brokers")
@@ -308,8 +308,8 @@ func buildClickHouseConfig(opt options) (flowch.NativeConfig, error) {
 }
 
 func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowworker.EnrichmentVersionCatalog, *flowdimension.GeoCatalog, error) {
-	if len(opt.planFiles) == 0 || strings.TrimSpace(opt.planPublicKey) == "" || len(opt.versionPublications) == 0 || len(opt.geoBundles) == 0 {
-		return nil, nil, nil, errors.New("at least one bootstrap plan, version publication, and Geo bundle plus the plan public key are required")
+	if len(opt.planFiles) == 0 || strings.TrimSpace(opt.planPublicKey) == "" || len(opt.versionPublications) == 0 {
+		return nil, nil, nil, errors.New("at least one bootstrap plan and version publication plus the plan public key are required")
 	}
 	plans, err := flowplan.NewCatalog()
 	if err != nil {
@@ -335,6 +335,7 @@ func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowwo
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	needsLegacyGeo := false
 	for _, path := range opt.versionPublications {
 		publication, err := loadPublication(path)
 		if err != nil {
@@ -343,8 +344,17 @@ func loadBootstrap(ctx context.Context, opt options) (*flowplan.Catalog, *flowwo
 		if err := loader.Install(ctx, publication); err != nil {
 			return nil, nil, nil, fmt.Errorf("install bootstrap version %s: %w", filepath.Base(path), err)
 		}
+		if publication.Dimension.ObjectFormat != flowworker.VersionObjectFormatWADS {
+			needsLegacyGeo = true
+		}
 	}
 
+	if len(opt.geoBundles) == 0 {
+		if needsLegacyGeo {
+			return nil, nil, nil, errors.New("a Geo bundle is required while a legacy JSON dimension publication is retained")
+		}
+		return plans, versions, nil, nil
+	}
 	geo := flowdimension.NewGeoCatalog()
 	activeGeo := opt.geoBundles[len(opt.geoBundles)-1]
 	if _, err := geo.Reload(activeGeo, flowdimension.GeoLoadLimits{}); err != nil {

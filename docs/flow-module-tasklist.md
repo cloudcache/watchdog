@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03C AddressSnap builder。** scoped publication 内核、WADS v1 codec 和 definition schema v3 已分别关闭；当前接异步 builder，随后才接 worker loader 和 VPN preview/publish adapter。现有 ingest 分类已经是纯内存，不做“移除分类/改 CH dictGet”的重复改造；原始数据物理删除与 rollup 不和本切片混改。
+**活动切片：FLOW-03C AddressSnap worker 安装。** scoped publication、WADS v1、definition v3、异步 builder/writer 已关闭；当前先关闭 worker 双读/纯内存索引，再做签名控制面下载、磁盘 LKG 和完整 ACK。现有 ingest 分类已经是纯内存，不做“移除分类/改 CH dictGet”的重复改造；原始数据物理删除与 rollup 不和本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -270,7 +270,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **FLOW-03C AddressSnap 二进制发布链**：替代“CH IP_TRIE index-builder”。平台 MySQL 只保存编辑态/血缘；异步 job 将 pinned source manifest + schema v3 definition 编译为单一签名不可变对象；worker 无 DB 加载到内存并 atomic swap，ingest 继续写 raw + 派生维度/version。
   - [x] **变更设计**：冻结正式方向、写入/默认查询/as-of 修正语义、多租户内存边界及从 CH 009 实验迁移路径；详见 `flow-address-query-plan.md`。
   - [x] **设计**：冻结 WADS v1 字节协议、顺序 section/value dictionary、v4/v6 ranges、supplier/customer ISP、地址组有序 offset list、zstd/CRC/SHA/signature、资源硬限和稳定错误边界；详细契约见 `flow-address-query-plan.md`。
-  - [x] **编码（codec）**：`flowdimension` 已实现确定性 WADS encoder、严格 bounded decoder、metadata/source/Geo/operator/set/value/range 全引用校验、CRC32C 和未知版本/flag 拒绝；只提供 codec/helper，尚未接生产 writer。
+  - [x] **编码（codec）**：`flowdimension` 已实现确定性 WADS encoder、严格 bounded decoder、metadata/source/Geo/operator/set/value/range 全引用校验、CRC32C 和未知版本/flag 拒绝；writer/loader 接线状态由下列独立门禁记录。
   - [x] **单元测试（codec）**：覆盖 golden SHA/round-trip/determinism、截断/尾随/CRC/版本/flag/压缩与解压内存预算、v4/v6 边界、Geo parent、operator ASN、set/value 引用、range 重叠和非规范字典。
   - [x] **定义输入 v3**：在 v2 operator 契约之上固化人工 Geo `id/kind/code/name/parent/enabled` 和 address-set name；编译器规范排序并校验 Geo 图，preview/digest/entry count 覆盖新增语义。v1/v2 继续可读但不得夹带 v3 字段；无新表字段，不制造 migration。
   - [x] **定义输入 v3 单元/变更测试**：覆盖历史显示元数据不可变副本、乱序/缺父/逆级/禁用父/重复 kind-code 拒绝、v1/v2 兼容和管理草稿输入顺序确定性。
@@ -278,8 +278,10 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **单元测试（builder core）**：覆盖 v4/v6、source 字段域优先级、人工 Geo/operator/ASN、地址组、本地业务、输入顺序确定性、source generation 改变 checksum、行数/重叠/预算拒绝，以及 dangling Geo/operator/set 引用 fail closed。
   - [x] **编码（builder writer）**：`address_snapshot_build` 已接生产 scheduler/API；job ID 固定 snapshot identity，keyset 分页读取与核对 pinned source 原始 count/CIDR/binary bounds，source 内嵌套 CIDR 以最长前缀展平；精确 supplier-name UInt16 ledger 与 customer ASN/人工 operator 分命名空间；context cancel/progress、确定性 WADS、幂等 immutable save、提交前 draft/source/version 二次校验和 pending-approval 短事务已接通。migration 058 持久化 format/version/builder/build-job 与 supplier identity，签名 v3 覆盖这些字段，旧 JSON job/signing v2 兼容。
   - [ ] **单元/集成（builder）**：codec/builder/cancel/LPM 展平/Geo hierarchy/supplier identity/签名篡改、repository v4/v6 import→真实 MySQL→WADS→同 job 幂等及跨 generation supplier ID 稳定已覆盖；生产级真实 MMDB/IPDB、operation worker crash/takeover、approve/activate/rollback/orphan-GC 全链和失败注入仍待完成。
-  - [ ] **编码（loader）**：认证下载、LKG 原子文件、外部 SHA/签名与内部 CRC 双校验、离线构建现有 BART/二分 catalog、event-time atomic install/ACK；删除 worker MySQL 装载依赖。
-  - [ ] **集成（loader）**：无 MySQL/CH cold start、坏对象/部分下载/ACK 失败/重启/回滚、Kafka partition 缺版本暂停且不误用 current。
+  - [x] **编码（loader reader core）**：`VersionObjectReference` 已严格双读 legacy `json/0` 与 `wads/1`；WADS reader 在 catalog CAS 前校验外部 SHA、header/CRC/zstd/全引用与常驻内存预算，并预解析 v4/v6 range、五级 Geo、supplier/customer ISP/ASN、prefix/business/set membership。version catalog 以同一接口原子安装两种 immutable snapshot；WADS-only bootstrap 不要求 Geo bundle，选中旧 JSON 且没有 GeoCatalog 时按 `dependency=geo` fail closed。热路径无 DB/file/network 且定向 allocation 门禁为 0。
+  - [x] **单元/变更/回归（loader reader core）**：覆盖 v4/v6/Geo-only/无 ASN、internal set union、supplier/customer namespace、外部 SHA、常驻内存边界、非法 format/version 预取前拒绝、WADS 无 GeoCatalog enrichment、旧 JSON 兼容/缺 Geo 暂停、ACK retry 与 atomic catalog；Flow 定向 race、全库 test/vet/build 通过。reader-first 不改 CH schema/查询口径且不创建空 migration，本提交只包含该闭环与清单。
+  - [ ] **编码（loader distribution/LKG）**：接平台认证 desired-publication/object API 与 Ed25519 envelope verifier；bounded streaming 临时文件、`fsync+rename` LKG、启动恢复、downloaded/installed/failed ACK 和失败保留上一 generation。当前本地 file source + discard ACK 只用于 bootstrap，不能冒充完成。
+  - [ ] **集成（loader）**：reader core 已覆盖 WADS 无 GeoCatalog enrichment、旧 JSON 兼容、非法 format/version 预取前拒绝、SHA/CRC/预算、ACK retry 与 catalog 原子性；仍需真实无 MySQL/CH cold start + LKG、部分下载/坏签名/重启/回滚、Kafka partition 缺版本暂停且不误用 current。
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
   - [ ] **性能**：固定真实 corpus 记录 object size/build RSS/lookup p95-p99/swap pause/多 tenant；只有 BART 不达标且共享基库容量成立才引入 DIR-24-8。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。

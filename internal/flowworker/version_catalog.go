@@ -2,6 +2,7 @@ package flowworker
 
 import (
 	"errors"
+	"net/netip"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -11,11 +12,18 @@ import (
 
 var ErrNoEnrichmentVersion = errors.New("no dimension and classification version pair for event time")
 
+// DimensionSnapshot is the immutable hot-path contract shared by legacy JSON
+// dimensions and the compiled WADS AddressSnap index.
+type DimensionSnapshot interface {
+	Metadata() flowdimension.SnapshotMetadata
+	ClassifyEndpoints(source, destination netip.Addr) flowdimension.ClassifiedEndpoints
+}
+
 // EnrichmentVersion is an immutable, validated dimension/classification pair.
 // The classification effective time is the pair's activation boundary. A
 // Home-only change may therefore reference an older dimension snapshot.
 type EnrichmentVersion struct {
-	Dimension      *flowdimension.CompiledSnapshot
+	Dimension      DimensionSnapshot
 	Classification *flowdimension.ClassificationSnapshot
 }
 
@@ -85,7 +93,7 @@ func (c *EnrichmentVersionCatalog) Install(version EnrichmentVersion) error {
 		}
 		items := next.byTenant[classification.TenantID]
 		dimensionSeen := false
-		var installedDimension *flowdimension.CompiledSnapshot
+		var installedDimension DimensionSnapshot
 		for _, existing := range items {
 			if sameEnrichmentVersion(existing, version) {
 				return nil
@@ -146,7 +154,7 @@ func (c *EnrichmentVersionCatalog) ClassificationVersion(tenantID string, versio
 	return EnrichmentVersion{}, false
 }
 
-func (c *EnrichmentVersionCatalog) DimensionVersion(tenantID string, version uint64) (*flowdimension.CompiledSnapshot, bool) {
+func (c *EnrichmentVersionCatalog) DimensionVersion(tenantID string, version uint64) (DimensionSnapshot, bool) {
 	if c == nil || !validIdentifier(tenantID, 64) || version == 0 {
 		return nil, false
 	}
@@ -193,7 +201,7 @@ func sameEnrichmentVersion(left, right EnrichmentVersion) bool {
 		leftDimension.Checksum != "" && rightDimension.Checksum != ""
 }
 
-func sameDimensionReference(left, right *flowdimension.CompiledSnapshot) bool {
+func sameDimensionReference(left, right DimensionSnapshot) bool {
 	if left == right {
 		return true
 	}

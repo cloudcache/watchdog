@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +103,121 @@ func TestVersionLoaderKeepsDimensionBundleSchemaV1Readable(t *testing.T) {
 	installed, exists := catalog.DimensionVersion("tenant-a", 1)
 	if !exists || installed.Metadata().SchemaVersion != 1 || len(acks.acks) != 1 {
 		t.Fatalf("legacy bundle was not installed and acknowledged: exists=%t metadata=%+v acks=%d", exists, installed.Metadata(), len(acks.acks))
+	}
+}
+
+func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
+	publication, source := testVersionPublication(t, 1, testMinute(12, 0), "dimension-wads")
+	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: publication.DimensionSnapshotID,
+		TenantID: publication.TenantID, Version: publication.DimensionVersion, EffectiveFrom: publication.DimensionEffectiveFrom,
+		GeoNodes: []flowdimension.GeoNodeDefinition{
+			{ID: "city-hangzhou", Kind: "city", Code: "330100", Name: "Hangzhou", ParentID: "province-zhejiang", Enabled: true},
+			{ID: "continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},
+			{ID: "country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "continent-asia", Enabled: true},
+			{ID: "province-zhejiang", Kind: "province", Code: "330000", Name: "Zhejiang", ParentID: "country-cn", Enabled: true},
+		},
+		Operators: []flowdimension.OperatorDefinition{{ID: "customer-carrier", FlowISPID: 3, Code: "CUSTOMER", Name: "Customer Carrier", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}},
+		Prefixes: []flowdimension.PrefixDefinition{
+			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "customer"}},
+			{ID: "remote", CIDR: "203.0.113.0/24", Labels: map[string]string{
+				"geo.continent": "AS", "geo.continent_id": "continent-asia", "geo.country": "CN", "geo.country_id": "country-cn",
+				"geo.province": "330000", "geo.province_id": "province-zhejiang", "geo.city": "330100", "geo.city_id": "city-hangzhou",
+			}},
+		},
+		AddressSets: []flowdimension.AddressSetDefinition{{ID: "remote-set", Name: "Remote", Members: []string{"203.0.113.0/24"}, MatchDirection: "both", Enabled: true}},
+	}, flowdimension.CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := flowdimension.BuildAddressSnapshot(flowdimension.AddressSnapshotBuildInput{
+		Definition: definition, BuilderVersion: "watchdog-test-1",
+		SupplierOperators: []flowdimension.AddressSnapshotBuildOperator{{ID: 9, StableID: "supplier-carrier", Code: "SUPPLIER", Name: "Supplier Carrier", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}},
+		Sources: []flowdimension.AddressSnapshotBuildSource{{
+			Slot: flowdimension.AddressSnapshotSourceCombined, ImportID: "import-1", ChecksumSHA256: "sha256:" + strings.Repeat("a", 64), SlotRowVersion: 1, RowCountV4: 1,
+			Ranges: []flowdimension.AddressSnapshotBuildRange{{Start: netip.MustParseAddr("203.0.113.0"), End: netip.MustParseAddr("203.0.113.255"), Geo: flowdimension.AddressSnapshotBuildGeo{CountryCode: "CN", AdminCode: "330100", Subdivision: "Zhejiang", City: "Hangzhou"}, ISPID: 9, ASN: 64500}},
+		}},
+	}, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(source.objects, publication.Dimension.ObjectRef)
+	publication.Dimension = VersionObjectReference{
+		ObjectRef: "objects/dimension-wads/address-snapshot.wads", Checksum: built.ChecksumSHA256,
+		ObjectFormat: VersionObjectFormatWADS, ObjectFormatVersion: flowdimension.AddressSnapshotFormatVersion,
+	}
+	source.objects[publication.Dimension.ObjectRef] = built.Data
+
+	catalog, _ := NewEnrichmentVersionCatalog()
+	acks := &recordingVersionAcknowledger{}
+	loader, err := NewVersionLoader(source, acks, catalog, VersionWorkerIdentity{WorkerID: "worker-wads", BootID: "boot-wads", SoftwareVersion: "1.2.3"}, VersionLoaderLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loader.Install(context.Background(), publication); err != nil {
+		t.Fatal(err)
+	}
+	installed, exists := catalog.DimensionVersion("tenant-a", 1)
+	if _, ok := installed.(*flowdimension.AddressSnapshotIndex); !exists || !ok || len(acks.acks) != 1 {
+		t.Fatalf("WADS install: exists=%t type=%T acks=%d", exists, installed, len(acks.acks))
+	}
+	enricher, err := NewEnricherWithVersionCatalog(catalog, nil, EnrichmentLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := enricher.EnrichBatch(testBatch(testMinute(12, 30)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := result.Records[0]
+	if record.Category != flowdimension.CategoryOnNetLocalCity || record.SupplierCategory != flowdimension.CategoryOffNetInProvince ||
+		record.RemoteGeo.ISPID != 3 || record.SupplierRemoteGeo.ISPID != 9 || record.RemoteASN != 64500 || record.RemoteASNSource != ASNSourceGeoV2 ||
+		record.RemoteGeo.Version != "dimension-wads" || record.Dimensions.Remote.AddressSets.Count() != 1 {
+		t.Fatalf("WADS enrichment = %+v", record)
+	}
+}
+
+func TestVersionLoaderRejectsUnsupportedObjectFormatBeforeFetch(t *testing.T) {
+	for _, mutate := range []func(*EnrichmentVersionPublication){
+		func(publication *EnrichmentVersionPublication) {
+			publication.Dimension.ObjectFormat = VersionObjectFormatWADS
+		},
+		func(publication *EnrichmentVersionPublication) {
+			publication.Dimension.ObjectFormat = VersionObjectFormatWADS
+			publication.Dimension.ObjectFormatVersion = flowdimension.AddressSnapshotFormatVersion + 1
+		},
+		func(publication *EnrichmentVersionPublication) {
+			publication.Classification.ObjectFormat = VersionObjectFormatWADS
+		},
+	} {
+		publication, source := testVersionPublication(t, 1, testMinute(12, 0), "dimension-format")
+		mutate(&publication)
+		catalog, _ := NewEnrichmentVersionCatalog()
+		loader, _ := NewVersionLoader(source, &recordingVersionAcknowledger{}, catalog, VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "1.2.3"}, VersionLoaderLimits{})
+		if err := loader.Install(context.Background(), publication); !errors.Is(err, ErrInvalidVersionPublication) {
+			t.Fatalf("format error = %v", err)
+		}
+		if len(source.calls) != 0 {
+			t.Fatalf("invalid format fetched objects: %v", source.calls)
+		}
+	}
+}
+
+func TestLegacyJSONVersionWithoutGeoCatalogFailsClosedAtEventTime(t *testing.T) {
+	publication, source := testVersionPublication(t, 1, testMinute(12, 0), "dimension-json")
+	catalog, _ := NewEnrichmentVersionCatalog()
+	loader, _ := NewVersionLoader(source, &recordingVersionAcknowledger{}, catalog, VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "1.2.3"}, VersionLoaderLimits{})
+	if err := loader.Install(context.Background(), publication); err != nil {
+		t.Fatal(err)
+	}
+	enricher, err := NewEnricherWithVersionCatalog(catalog, nil, EnrichmentLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = enricher.EnrichBatch(testBatch(testMinute(12, 30)))
+	var blocked *VersionBlockedError
+	if !errors.As(err, &blocked) || blocked.Dependency != "geo" || !errors.Is(blocked.Cause, flowdimension.ErrNoGeoIndex) {
+		t.Fatalf("legacy missing Geo error = %v", err)
 	}
 }
 

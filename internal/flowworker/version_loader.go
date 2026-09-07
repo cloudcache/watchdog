@@ -12,8 +12,11 @@ import (
 )
 
 const (
-	defaultMaxDimensionObjectBytes      = 64 << 20
-	defaultMaxClassificationObjectBytes = 64 << 10
+	defaultMaxDimensionObjectBytes       = 64 << 20
+	defaultMaxAddressSnapshotObjectBytes = 512 << 20
+	defaultMaxClassificationObjectBytes  = 64 << 10
+	VersionObjectFormatJSON              = "json"
+	VersionObjectFormatWADS              = "wads"
 )
 
 var (
@@ -23,8 +26,10 @@ var (
 )
 
 type VersionObjectReference struct {
-	ObjectRef string `json:"object_ref"`
-	Checksum  string `json:"checksum"`
+	ObjectRef           string `json:"object_ref"`
+	Checksum            string `json:"checksum"`
+	ObjectFormat        string `json:"object_format,omitempty"`
+	ObjectFormatVersion uint16 `json:"object_format_version,omitempty"`
 }
 
 // EnrichmentVersionPublication is the least-privilege PLAT-04A contract used
@@ -76,9 +81,11 @@ type EnrichmentVersionAcknowledger interface {
 }
 
 type VersionLoaderLimits struct {
-	MaxDimensionObjectBytes      int
-	MaxClassificationObjectBytes int
-	DimensionCompile             flowdimension.CompileLimits
+	MaxDimensionObjectBytes       int
+	MaxAddressSnapshotObjectBytes int
+	MaxClassificationObjectBytes  int
+	DimensionCompile              flowdimension.CompileLimits
+	AddressSnapshot               flowdimension.AddressSnapshotLimits
 }
 
 type VersionLoader struct {
@@ -100,10 +107,13 @@ func NewVersionLoader(source VersionObjectSource, acks EnrichmentVersionAcknowle
 	if limits.MaxDimensionObjectBytes == 0 {
 		limits.MaxDimensionObjectBytes = defaultMaxDimensionObjectBytes
 	}
+	if limits.MaxAddressSnapshotObjectBytes == 0 {
+		limits.MaxAddressSnapshotObjectBytes = defaultMaxAddressSnapshotObjectBytes
+	}
 	if limits.MaxClassificationObjectBytes == 0 {
 		limits.MaxClassificationObjectBytes = defaultMaxClassificationObjectBytes
 	}
-	if limits.MaxDimensionObjectBytes < 1 || limits.MaxClassificationObjectBytes < 1 {
+	if limits.MaxDimensionObjectBytes < 1 || limits.MaxAddressSnapshotObjectBytes < 1 || limits.MaxClassificationObjectBytes < 1 {
 		return nil, errors.New("version object byte limits must be positive")
 	}
 	if limits.DimensionCompile.MaxBundleBytes < 0 {
@@ -132,21 +142,32 @@ func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersi
 		return l.acknowledge(ctx, publication)
 	}
 
-	var dimension *flowdimension.CompiledSnapshot
+	var dimension DimensionSnapshot
 	if installed, exists := l.catalog.DimensionVersion(publication.TenantID, publication.DimensionVersion); exists {
 		if err := matchDimensionMetadata(publication, installed.Metadata()); err != nil {
 			return err
 		}
 		dimension = installed
 	} else {
-		dimensionData, err := l.source.Fetch(ctx, publication.Dimension.ObjectRef, l.limits.MaxDimensionObjectBytes)
+		maxDimensionBytes := l.limits.MaxDimensionObjectBytes
+		if publication.Dimension.ObjectFormat == VersionObjectFormatWADS {
+			maxDimensionBytes = l.limits.MaxAddressSnapshotObjectBytes
+		}
+		dimensionData, err := l.source.Fetch(ctx, publication.Dimension.ObjectRef, maxDimensionBytes)
 		if err != nil {
 			return fmt.Errorf("%w: dimension: %w", ErrVersionObjectUnavailable, err)
 		}
-		if len(dimensionData) == 0 || len(dimensionData) > l.limits.MaxDimensionObjectBytes {
+		if len(dimensionData) == 0 || len(dimensionData) > maxDimensionBytes {
 			return fmt.Errorf("%w: dimension object exceeds byte boundary", ErrVersionObjectUnavailable)
 		}
-		dimension, err = flowdimension.DecodeAndCompileBundle(dimensionData, publication.Dimension.Checksum, l.limits.DimensionCompile)
+		switch publication.Dimension.ObjectFormat {
+		case "", VersionObjectFormatJSON:
+			dimension, err = flowdimension.DecodeAndCompileBundle(dimensionData, publication.Dimension.Checksum, l.limits.DimensionCompile)
+		case VersionObjectFormatWADS:
+			dimension, err = flowdimension.DecodeAndCompileAddressSnapshot(dimensionData, publication.Dimension.Checksum, l.limits.AddressSnapshot)
+		default:
+			err = fmt.Errorf("unsupported dimension object format %q", publication.Dimension.ObjectFormat)
+		}
 		if err != nil {
 			return fmt.Errorf("%w: compile dimension: %w", ErrInvalidVersionPublication, err)
 		}
@@ -206,7 +227,25 @@ func validateVersionPublication(publication EnrichmentVersionPublication) error 
 			return fmt.Errorf("%w: %s object ref or checksum is invalid", ErrInvalidVersionPublication, name)
 		}
 	}
+	if !validDimensionObjectFormat(publication.Dimension) || !validJSONReference(publication.Classification) {
+		return fmt.Errorf("%w: object format or format version is invalid", ErrInvalidVersionPublication)
+	}
 	return nil
+}
+
+func validDimensionObjectFormat(reference VersionObjectReference) bool {
+	switch reference.ObjectFormat {
+	case "", VersionObjectFormatJSON:
+		return reference.ObjectFormatVersion == 0
+	case VersionObjectFormatWADS:
+		return reference.ObjectFormatVersion == flowdimension.AddressSnapshotFormatVersion
+	default:
+		return false
+	}
+}
+
+func validJSONReference(reference VersionObjectReference) bool {
+	return (reference.ObjectFormat == "" || reference.ObjectFormat == VersionObjectFormatJSON) && reference.ObjectFormatVersion == 0
 }
 
 func matchPublicationMetadata(publication EnrichmentVersionPublication, dimension flowdimension.SnapshotMetadata, classification flowdimension.ClassificationMetadata) error {
