@@ -21,15 +21,24 @@ func (h *Hub) registerPlatformRoutes(se *core.ServeEvent) error {
 	auth := platform.NewIdentityAuthContextAdapter(authenticate, h.backend.Store)
 	tenantDiscovery := platform.NewIdentityTenantDiscoveryAdapter(authenticate, h.backend.Store)
 	handler := h.backend.Router(auth, tenantDiscovery)
-	mountPlatformHandler(se.Router, handler)
+	mountPlatformHandler(se.Router, handler, h.backend.Config.AddressLibrary.MaxUploadBytes)
 	if metrics := h.backend.MetricsScrapeHandler(); metrics != nil {
 		mountPlatformMetricsHandler(se.Router, metrics)
 	}
 	return nil
 }
 
-func mountPlatformHandler(router *pbrouter.Router[*core.RequestEvent], handler http.Handler) {
+func mountPlatformHandler(router *pbrouter.Router[*core.RequestEvent], handler http.Handler, uploadMaxBytes int64) {
 	wrapped := apis.WrapStdHandler(handler)
+	// The MMDB/IPDB address-database upload can far exceed PocketBase's 32 MB
+	// default body limit (a MaxMind City DB is 60–100 MB), which otherwise rejects
+	// the multipart POST with 413 before it reaches the handler's own 2 GB guard.
+	// Give just that one route a ceiling matching the configured upload limit; a
+	// static path outranks the "{path...}" catch-all in net/http's ServeMux, so
+	// every other /api/v1 route keeps the 32 MB default.
+	if uploadMaxBytes > 0 {
+		router.Route(http.MethodPost, "/api/v1/address-imports", wrapped).Bind(apis.BodyLimit(uploadMaxBytes + (1 << 20)))
+	}
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		router.Route(method, "/api/v1", wrapped)
 		router.Route(method, "/api/v1/{path...}", wrapped)
