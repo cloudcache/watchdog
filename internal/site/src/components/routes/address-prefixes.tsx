@@ -24,6 +24,13 @@ type AddressPrefix = {
 
 type AddressPrefixList = { items?: AddressPrefix[]; total?: number }
 
+type AddressOperationPreview = {
+	result: string[]
+	result_prefixes: number
+	added_addresses_v4: string
+	added_addresses_v6: string
+}
+
 const emptyForm = {
 	id: "",
 	rowVersion: 0,
@@ -51,7 +58,9 @@ export default memo(function AddressPrefixes() {
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState(emptyForm)
-	const [selected, setSelected] = useState<{ id: string; rowVersion: number }[]>([])
+	const [selected, setSelected] = useState<{ id: string; rowVersion: number; cidr: string }[]>([])
+	const [coverPreview, setCoverPreview] = useState<AddressOperationPreview | null>(null)
+	const [coverWorking, setCoverWorking] = useState(false)
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
@@ -228,10 +237,56 @@ export default memo(function AddressPrefixes() {
 	const selectable = useMemo(
 		() => ({
 			onSelectionChange: (records: Record<string, unknown>[]) =>
-				setSelected(records.map((record) => ({ id: String(record.id), rowVersion: Number(record.rowVersion) }))),
+				setSelected(
+					records.map((record) => ({
+						id: String(record.id),
+						rowVersion: Number(record.rowVersion),
+						cidr: String(record.cidr ?? ""),
+					}))
+				),
 		}),
 		[]
 	)
+
+	const previewCover = useCallback(async () => {
+		const cidrs = selected.map((entry) => entry.cidr).filter(Boolean)
+		if (cidrs.length < 2) return
+		setCoverWorking(true)
+		setError("")
+		try {
+			const preview = await pb.send<AddressOperationPreview>("/api/v1/address-sets/actions/preview", {
+				method: "POST",
+				body: { operation: "cover", left: cidrs },
+			})
+			setCoverPreview(preview)
+		} catch (err) {
+			setCoverPreview(null)
+			setError(err instanceof Error ? err.message : t`Preview failed`)
+		} finally {
+			setCoverWorking(false)
+		}
+	}, [selected, t])
+
+	const confirmCover = useCallback(async () => {
+		if (!coverPreview || coverPreview.result.length === 0) return
+		setCoverWorking(true)
+		setError("")
+		try {
+			for (const cidr of coverPreview.result) {
+				await pb.send("/api/v1/address-prefixes", {
+					method: "POST",
+					body: { cidr, labels: {}, source: "manual", asn: 0, geo_leaf_id: "", operator_id: "" },
+				})
+			}
+			setCoverPreview(null)
+			setSelected([])
+			await fetchPage()
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to save`)
+		} finally {
+			setCoverWorking(false)
+		}
+	}, [coverPreview, fetchPage, t])
 
 	const records = useMemo(
 		() =>
@@ -328,6 +383,11 @@ export default memo(function AddressPrefixes() {
 					</h1>
 				</div>
 				<div className="flex gap-2">
+					{selected.length >= 2 ? (
+						<Button variant="outline" size="sm" onClick={previewCover} disabled={coverWorking}>
+							<Trans>Cover selected</Trans> ({selected.length})
+						</Button>
+					) : null}
 					{selected.length > 0 ? (
 						<Button variant="destructive" size="sm" onClick={removeSelected}>
 							<Trash2Icon className="me-2 h-4 w-4" />
@@ -449,6 +509,34 @@ export default memo(function AddressPrefixes() {
 
 			{error ? (
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
+
+			{coverPreview ? (
+				<div className="grid gap-3 rounded-md border border-border bg-card p-4">
+					<div className="font-medium">
+						<Trans>Cover prefix preview</Trans>
+					</div>
+					<div className="text-sm text-muted-foreground">
+						<Trans>Covering CIDR</Trans>: {coverPreview.result.join(", ") || "—"}
+						{" · "}
+						<Trans>added addresses</Trans> IPv4 {coverPreview.added_addresses_v4}, IPv6{" "}
+						{coverPreview.added_addresses_v6}
+					</div>
+					<div className="text-xs text-muted-foreground">
+						<Trans>
+							Creates a new manual prefix covering the selection; the selected prefixes are kept. Set its
+							geography/operator inline afterward.
+						</Trans>
+					</div>
+					<div className="flex gap-2">
+						<Button size="sm" onClick={confirmCover} disabled={coverWorking}>
+							<Trans>Create cover prefix</Trans>
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setCoverPreview(null)} disabled={coverWorking}>
+							<Trans>Cancel</Trans>
+						</Button>
+					</div>
+				</div>
 			) : null}
 
 			<div className="overflow-hidden rounded-md border border-border bg-card">
