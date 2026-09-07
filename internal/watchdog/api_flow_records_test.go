@@ -121,6 +121,86 @@ func TestFlowRecordSearchEnforcesLayerPermissionAndStrictInput(t *testing.T) {
 	}
 }
 
+func TestFlowRecordSearchValueLayerPermissionAuditAndEnvelope(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	requestBody := func(view string) string {
+		return `{"ip":"203.0.113.1","endpoint":"either","from":"2026-09-07T11:00:00Z","to":"2026-09-07T12:00:00Z","view":"` + view + `","fields":["src_ip"],"limit":50}`
+	}
+	for _, test := range []struct {
+		name   string
+		view   flowquery.View
+		action Action
+	}{
+		{name: "customer", view: flowquery.ViewCustomer, action: ActionViewCustomer},
+		{name: "raw", view: flowquery.ViewRaw, action: ActionViewRaw},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &flowDetailAPIRunnerStub{result: flowquery.DetailResult{
+				View: test.view, Fields: []flowquery.DetailField{flowquery.DetailFieldSourceIP}, Rows: []flowquery.DetailRow{},
+			}}
+			audit := &recordingAuditRepository{}
+			auth := func(*http.Request) (AuthContext, error) {
+				return AuthContext{
+					TenantID: "tenant-a", UserID: "user-a",
+					Grants: []Permission{{
+						TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+						ResourceType: ResourceTenant, ResourceID: "tenant-a", Actions: []Action{test.action},
+					}},
+				}, nil
+			}
+			router := NewAPIV1Router(APIV1RouterConfig{
+				Auth: auth, FlowRecords: runner, FlowRecordNow: func() time.Time { return now }, Audit: audit,
+			})
+
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", strings.NewReader(requestBody(string(test.view))))
+			request.Header.Set(RequestIDHeader, "flow-detail-"+test.name)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || response.Header().Get(RequestIDHeader) != "flow-detail-"+test.name ||
+				response.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("status=%d request-id=%q content-type=%q body=%s", response.Code, response.Header().Get(RequestIDHeader), response.Header().Get("Content-Type"), response.Body.String())
+			}
+			tenantParameter := ""
+			for _, parameter := range runner.compiled.Query.Parameters {
+				if parameter.Key == "tenant" {
+					tenantParameter = parameter.Value
+				}
+			}
+			if tenantParameter != `'tenant-a'` || runner.compiled.View != test.view ||
+				!strings.Contains(response.Body.String(), `"data"`) || !strings.Contains(response.Body.String(), `"meta"`) {
+				t.Fatalf("compiled=%+v body=%s", runner.compiled, response.Body.String())
+			}
+			if len(audit.logs) != 1 || audit.logs[0].TenantID != "tenant-a" || audit.logs[0].Action != "query.sensitive_viewed" ||
+				audit.logs[0].ResourceID != "flow.records" || audit.logs[0].Detail["value_layer"] != test.view {
+				t.Fatalf("audit=%+v", audit.logs)
+			}
+			for _, forbidden := range []string{"ip", "cursor", "search", "filter"} {
+				if _, exists := audit.logs[0].Detail[forbidden]; exists {
+					t.Fatalf("audit detail leaked %s: %+v", forbidden, audit.logs[0].Detail)
+				}
+			}
+		})
+	}
+
+	runner := &flowDetailAPIRunnerStub{}
+	audit := &recordingAuditRepository{}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", Grants: []Permission{{
+				TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+				ResourceType: ResourceTenant, ResourceID: "tenant-a", Actions: []Action{ActionViewCustomer},
+			}}}, nil
+		},
+		FlowRecords: runner, FlowRecordNow: func() time.Time { return now }, Audit: audit,
+	})
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", strings.NewReader(requestBody("raw"))))
+	if denied.Code != http.StatusForbidden || runner.compiled.Query.Body != "" || len(audit.logs) != 0 ||
+		!strings.Contains(denied.Body.String(), string(APIErrorPermissionDenied)) {
+		t.Fatalf("denied status=%d body=%s compiled=%+v audit=%+v", denied.Code, denied.Body.String(), runner.compiled, audit.logs)
+	}
+}
+
 func TestFlowRecordFacetsInjectTenantAndAuthorizeColumnResources(t *testing.T) {
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	runner := &flowDetailAPIRunnerStub{items: flowquery.DetailFacetResult{

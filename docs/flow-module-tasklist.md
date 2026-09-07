@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-06A2-H — value-layer 平台接线验收。** FLOW-05C-H 的 hub QueryGateway、可选 Geo 失败隔离和地址集合生产 HTTP/UI 证据已独立收口；下一轮只补齐 raw/customer 权限拒绝、敏感查询审计和稳定 HTTP envelope 的端到端门禁。原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改；发现平台通用问题只登记到平台清单。
+**活动切片：FLOW-06C-E — 分权导出边界审计。** FLOW-06A2-H 的 raw/customer tenant 注入、独立 grant、成功敏感审计、拒绝零执行/零审计和稳定 HTTP envelope 已收口；下一轮只审查既有 export pipeline 能否安全承载 raw/supplier 与 VPN findings，不改 Flow writer/rollup，也不复制平台导出状态机。原始数据物理删除和异步联合索引不与本切片混改；发现平台通用问题只登记到平台清单。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -296,7 +296,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-06A2 raw detail 设计**：raw 对全部 fact schema 可用，只包含协议 tuple/采样/质量/资源/observation 字段，不应用 customer disposition；customer-derived 字段及 direction/category/business filters 在 raw view 稳定拒绝，supplier 继续关闭。
 - [x] **FLOW-06A2 编码/单元/变更测试**：detail schema v2 增加显式 raw/customer view；view 进入 compiled/result contract，raw 使用独立默认/允许字段集和资源过滤器；覆盖参数化 SQL、无 customer/supplier 泄漏、drop fact 可审计、非法字段/过滤器/view 及 runner fail-closed。
 - [x] **FLOW-06A2 集成（数据语义）**：真实 CH 用含 count/drop 和 fact schema 1/2 的数据核对 raw/customer 行集及同毫秒翻页；raw 保留 drop/旧事实，customer 只返回 count，均不重不漏。
-- [ ] **FLOW-06A2 集成（平台接线）**：raw/customer 权限、审计和 HTTP envelope 仍随 FLOW-05C 宿主 QueryGateway 接入完成；不在 Flow provider 内复制身份/RBAC。
+- [x] **FLOW-06A2 集成（平台接线）**：生产 runtime 复用 shared CH pool；search/facet 从认证上下文注入 tenant，raw/customer 使用平台 `view_raw/view_customer` 独立 grant，资源过滤复用同一授权器。API 契约测试覆盖两层成功执行、低基数敏感审计、拒绝时零 runner/零审计、请求 ID、JSON `data/meta` envelope 和禁止客户端 tenant 注入；未复制身份、RBAC、CH pool 或审计实现。
 - [x] **FLOW-06A2 回归/已提交**：提交 `d00b620a`；Flow race/vet、全库 test/vet 与 diff check 全过，工作区不再残留该切片生产文件。
 - [x] **FLOW-06A3 设计/编码**：固定 supplier 字段映射、direction/supplier-category/resource filters，并用 cursor 前的 full-scope window evidence 证明 `min(fact_schema)>=2`；metadata-only 行覆盖 cursor 排除全部数据的情况，不双扫 base。
 - [x] **FLOW-06A3 单元/变更测试**：覆盖 supplier Geo/ASN/ISP/category/version 映射、customer business/prefix 拒绝、typed filters/default fields、schema 1 unavailable、metadata-only、缺失/跨 block 矛盾 evidence 和 all-or-nothing runner。
