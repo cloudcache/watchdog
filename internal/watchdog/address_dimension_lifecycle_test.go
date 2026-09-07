@@ -94,3 +94,49 @@ func TestAddressDimensionSigningPayloadRejectsInvalidSourceManifestVersion(t *te
 		t.Fatal("unsupported source manifest version was accepted")
 	}
 }
+
+func TestAddressSnapshotSigningPayloadBindsBinaryArtifactMetadata(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := addressDimensionSignatureFixture()
+	snapshot.ObjectRef = "dimension-snapshots/tenant/snapshot/address-snapshot.wads"
+	snapshot.ObjectFormat = AddressSnapshotObjectFormat
+	snapshot.ObjectFormatVersion = 1
+	snapshot.BuilderVersion = AddressSnapshotBuilderVersion
+	snapshot.BuildJobID = snapshot.ID
+	signedAt := time.Date(2026, 9, 7, 2, 0, 0, 0, time.UTC)
+	payload, err := AddressDimensionSigningPayload(snapshot, "dimension-key-1", signedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		SchemaVersion       uint16 `json:"schema_version"`
+		ObjectFormat        string `json:"object_format"`
+		ObjectFormatVersion uint16 `json:"object_format_version"`
+		BuilderVersion      string `json:"builder_version"`
+		BuildJobID          ID     `json:"build_job_id"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != DimensionPublicationSigningPayloadV3 || envelope.ObjectFormat != AddressSnapshotObjectFormat || envelope.ObjectFormatVersion != 1 || envelope.BuilderVersion != AddressSnapshotBuilderVersion || envelope.BuildJobID != snapshot.ID {
+		t.Fatalf("AddressSnap signing envelope = %#v", envelope)
+	}
+	approval, err := VerifyAddressDimensionApproval(snapshot, "dimension-key-1", signedAt, ed25519.Sign(privateKey, payload), publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*AddressDimensionSnapshot){
+		func(item *AddressDimensionSnapshot) { item.ObjectFormatVersion++ },
+		func(item *AddressDimensionSnapshot) { item.BuilderVersion += "-changed" },
+		func(item *AddressDimensionSnapshot) { item.BuildJobID = "01JOTHERBUILDJOB000000001" },
+	} {
+		tampered := snapshot
+		mutate(&tampered)
+		if err := validateVerifiedAddressDimensionApproval(tampered, approval); err == nil {
+			t.Fatal("approval proof accepted changed AddressSnap artifact metadata")
+		}
+	}
+}

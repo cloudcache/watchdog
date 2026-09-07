@@ -10,7 +10,10 @@ const (
 	AddressDimensionModuleKey            = "flow"
 	AddressDimensionKey                  = "address"
 	AddressDimensionPublishJob           = "address_dimension_publish"
+	AddressSnapshotBuildJob              = "address_snapshot_build"
 	AddressDimensionPayloadV1            = 1
+	AddressSnapshotObjectFormat          = "wads"
+	AddressSnapshotBuilderVersion        = "watchdog-addresssnap-v1"
 	AddressDimensionStatusActive         = "active"
 	AddressDimensionStatusRetired        = "retired"
 	AddressDimensionApprovalPending      = "pending"
@@ -18,7 +21,9 @@ const (
 	AddressDimensionApprovalRejected     = "rejected"
 	AddressDimensionSourceManifestV1     = uint16(1)
 	DimensionPublicationSigningPayloadV2 = uint16(2)
+	DimensionPublicationSigningPayloadV3 = uint16(3)
 	AddressDimensionSigningPayloadV2     = DimensionPublicationSigningPayloadV2
+	AddressDimensionSigningPayloadV3     = DimensionPublicationSigningPayloadV3
 )
 
 var (
@@ -35,6 +40,10 @@ type DimensionPublicationSnapshot struct {
 	Version                 uint64                   `json:"version"`
 	EffectiveFrom           time.Time                `json:"effective_from"`
 	ObjectRef               string                   `json:"object_ref"`
+	ObjectFormat            string                   `json:"object_format"`
+	ObjectFormatVersion     uint16                   `json:"object_format_version"`
+	BuilderVersion          string                   `json:"builder_version,omitempty"`
+	BuildJobID              ID                       `json:"build_job_id,omitempty"`
 	Checksum                string                   `json:"checksum"`
 	DraftDigest             string                   `json:"draft_digest"`
 	SourceManifestVersion   uint16                   `json:"source_manifest_version"`
@@ -78,7 +87,7 @@ type AddressDimensionPreview struct {
 	GeoNodeCount            uint64                   `json:"geo_node_count"`
 	EnabledAddressSetCount  uint64                   `json:"enabled_address_set_count"`
 	MaxAddressSetsPerRecord uint32                   `json:"max_address_sets_per_record"`
-	EstimatedBundleBytes    uint64                   `json:"estimated_bundle_bytes"`
+	DefinitionBytes         uint64                   `json:"definition_bytes"`
 }
 
 // AddressDimensionSource pins one active immutable import generation. The

@@ -96,7 +96,7 @@ func TestAddressDimensionPreviewAndAsyncPublishAPI(t *testing.T) {
 	if publish.Code != http.StatusAccepted {
 		t.Fatalf("publish = %d %s", publish.Code, publish.Body.String())
 	}
-	if jobs.job.JobType != AddressDimensionPublishJob || jobs.job.TenantID != "tenant-dimension" || jobs.job.CreatedBy != "user-dimension" {
+	if jobs.job.JobType != AddressSnapshotBuildJob || jobs.job.TenantID != "tenant-dimension" || jobs.job.CreatedBy != "user-dimension" {
 		t.Fatalf("unexpected job: %#v", jobs.job)
 	}
 	if !strings.HasSuffix(jobs.job.IdempotencyKey, strings.TrimPrefix(digest, "sha256:")) {

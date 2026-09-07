@@ -15,6 +15,22 @@ type fakeAddressDimensionPublisher struct {
 	filter   AddressDimensionListFilter
 }
 
+type fakeAddressSnapshotBuildPublisher struct {
+	tenantID ID
+	actorID  ID
+	jobID    ID
+	request  AddressDimensionPublishRequest
+	err      error
+}
+
+func (p *fakeAddressSnapshotBuildPublisher) BuildAddressSnapshotPublication(_ context.Context, tenantID, actorID, jobID ID, request AddressDimensionPublishRequest) (AddressDimensionSnapshot, error) {
+	p.tenantID, p.actorID, p.jobID, p.request = tenantID, actorID, jobID, request
+	if p.err != nil {
+		return AddressDimensionSnapshot{}, p.err
+	}
+	return AddressDimensionSnapshot{ID: jobID}, nil
+}
+
 func (p *fakeAddressDimensionPublisher) PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error) {
 	return p.preview, nil
 }
@@ -58,5 +74,42 @@ func TestAddressDimensionPublishJobRejectsInvalidPayload(t *testing.T) {
 	})
 	if err == nil || !IsTerminalJobError(err) {
 		t.Fatalf("expected terminal payload error, got %v", err)
+	}
+}
+
+func TestAddressSnapshotBuildJobUsesJobIDAsSnapshotIdentity(t *testing.T) {
+	effective := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	payload, err := EncodeAddressDimensionPublishJobPayload(AddressDimensionPublishRequest{EffectiveFrom: effective, PreviewDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &fakeAddressSnapshotBuildPublisher{}
+	result, err := NewAddressSnapshotBuildJobHandler(publisher)(context.Background(), OperationJob{
+		ID: "01JADDRESSSNAPSHOTJOB00001", TenantID: "tenant-a", CreatedBy: "user-a", CheckpointJSON: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "dimension-snapshot:01JADDRESSSNAPSHOTJOB00001" || publisher.jobID != "01JADDRESSSNAPSHOTJOB00001" || publisher.tenantID != "tenant-a" || publisher.request.PreviewDigest != digest {
+		t.Fatalf("snapshot build call = %q %#v", result, publisher)
+	}
+}
+
+func TestAddressSnapshotBuildJobClassifiesRetryableAndTerminalFailures(t *testing.T) {
+	effective := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	payload, err := EncodeAddressDimensionPublishJobPayload(AddressDimensionPublishRequest{EffectiveFrom: effective, PreviewDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := OperationJob{ID: "01JADDRESSSNAPSHOTJOB00002", TenantID: "tenant-a", CreatedBy: "user-a", CheckpointJSON: payload}
+	_, err = NewAddressSnapshotBuildJobHandler(&fakeAddressSnapshotBuildPublisher{err: ErrAddressSnapshotBuildRace})(context.Background(), job)
+	if err == nil || IsTerminalJobError(err) {
+		t.Fatalf("version race must retry, got %v", err)
+	}
+	_, err = NewAddressSnapshotBuildJobHandler(&fakeAddressSnapshotBuildPublisher{err: ErrAddressDimensionDraftChanged})(context.Background(), job)
+	if err == nil || !IsTerminalJobError(err) {
+		t.Fatalf("changed preview must fail terminally, got %v", err)
 	}
 }

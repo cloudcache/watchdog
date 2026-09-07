@@ -142,7 +142,7 @@ func (api addressDimensionAPI) publish(w http.ResponseWriter, r *http.Request) {
 	}
 	hash := sha256.Sum256(payload)
 	job, err := api.jobs.EnqueueOperationJob(r.Context(), OperationJob{
-		TenantID: auth.TenantID, JobType: AddressDimensionPublishJob,
+		TenantID: auth.TenantID, JobType: AddressSnapshotBuildJob,
 		// Include the semantic draft digest so a stale-preview terminal job does
 		// not prevent a corrected draft from using the same effective minute.
 		IdempotencyKey: "address-dimension:" + request.EffectiveFrom.UTC().Format(time.RFC3339) + ":" + strings.TrimPrefix(request.PreviewDigest, "sha256:"),

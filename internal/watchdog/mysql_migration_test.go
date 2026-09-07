@@ -38,6 +38,8 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 		"flow_saved_filters",
 		"dashboards",
 		"address_draft_revisions",
+		"address_supplier_operators",
+		"address_supplier_operator_sequences",
 		"dimension_snapshots",
 		"dimension_snapshot_activations",
 		"dimension_snapshot_acks",
@@ -106,20 +108,20 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "057" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "058" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "057" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "058" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "flow_vpn_rules", "flow_vpn_findings", "flow_storage_policy_revisions", "flow_storage_partition_states", "flow_saved_filters", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_plan_rollouts", "collector_plan_rollout_targets", "collector_service_principals", "collector_ownership_transfers"} {
+	for _, table := range []string{"network_devices", "network_ports", "network_interface_addresses", "traffic_policy_defaults", "export_tasks", "flow_vpn_rules", "flow_vpn_findings", "flow_storage_policy_revisions", "flow_storage_partition_states", "flow_saved_filters", "query_dataset_policies", "operation_jobs", "operation_job_watermarks", "operation_job_schedules", "operation_job_scheduler_state", "operation_job_system_watermarks", "collector_agents", "collector_bindings", "collector_plan_revisions", "collector_plan_signing_keys", "collector_plan_trust_state", "collector_plan_rollouts", "collector_plan_rollout_targets", "collector_service_principals", "collector_ownership_transfers", "address_supplier_operators", "address_supplier_operator_sequences"} {
 		var name string
 		if err := db.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("table %s not found after migration: %v", table, err)
@@ -363,6 +365,27 @@ func TestDimensionSourceManifestMigrationOwnsCompleteContract(t *testing.T) {
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Fatalf("dimension source manifest migration missing %q", required)
+		}
+	}
+}
+
+func TestAddressSnapshotArtifactMigrationOwnsCompleteContract(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "058_address_snapshot_artifacts.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"object_format varchar(16)", "object_format_version smallint unsigned",
+		"builder_version varchar(64)", "build_job_id char(26)",
+		"uq_dimension_snapshot_build_job", "chk_dimension_snapshot_object_format",
+		"create table if not exists address_supplier_operator_sequences",
+		"create table if not exists address_supplier_operators",
+		"uq_address_supplier_operator_flow_id",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("address snapshot artifact migration missing %q", required)
 		}
 	}
 }

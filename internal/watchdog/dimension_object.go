@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,11 @@ func (s DiskDimensionObjectStore) SaveDimensionObject(ctx context.Context, tenan
 	if len(data) == 0 || len(data) > maximum {
 		return DimensionObject{}, fmt.Errorf("dimension object size must be 1..%d bytes", maximum)
 	}
-	ref := filepath.ToSlash(filepath.Join("dimension-snapshots", string(tenantID), string(snapshotID), "bundle.json"))
+	filename := "bundle.json"
+	if len(data) >= 4 && string(data[:4]) == "WADS" {
+		filename = "address-snapshot.wads"
+	}
+	ref := filepath.ToSlash(filepath.Join("dimension-snapshots", string(tenantID), string(snapshotID), filename))
 	path, err := s.dimensionObjectPath(ref)
 	if err != nil {
 		return DimensionObject{}, err
@@ -71,7 +76,16 @@ func (s DiskDimensionObjectStore) SaveDimensionObject(ctx context.Context, tenan
 	// Link instead of rename so a repeated snapshot ID can never replace an
 	// immutable object that has already been published.
 	if err := os.Link(temporaryPath, path); err != nil {
-		return DimensionObject{}, err
+		if !errors.Is(err, os.ErrExist) {
+			return DimensionObject{}, err
+		}
+		matches, verifyErr := dimensionObjectMatches(path, data)
+		if verifyErr != nil {
+			return DimensionObject{}, verifyErr
+		}
+		if !matches {
+			return DimensionObject{}, errors.New("immutable dimension object already exists with different content")
+		}
 	}
 	digest := sha256.Sum256(data)
 	return DimensionObject{Ref: ref, Checksum: "sha256:" + hex.EncodeToString(digest[:]), Size: uint64(len(data))}, nil
@@ -108,7 +122,7 @@ func (s DiskDimensionObjectStore) dimensionObjectPath(ref string) (string, error
 		return "", errors.New("dimension object directory is required")
 	}
 	parts := strings.Split(filepath.ToSlash(ref), "/")
-	if len(parts) != 4 || parts[0] != "dimension-snapshots" || !safeAddressArtifactID(parts[1]) || !safeAddressArtifactID(parts[2]) || parts[3] != "bundle.json" {
+	if len(parts) != 4 || parts[0] != "dimension-snapshots" || !safeAddressArtifactID(parts[1]) || !safeAddressArtifactID(parts[2]) || (parts[3] != "bundle.json" && parts[3] != "address-snapshot.wads") {
 		return "", errors.New("invalid dimension object reference")
 	}
 	root, err := filepath.Abs(s.Dir)
@@ -121,4 +135,25 @@ func (s DiskDimensionObjectStore) dimensionObjectPath(ref string) (string, error
 		return "", errors.New("dimension object reference escapes its directory")
 	}
 	return path, nil
+}
+
+func dimensionObjectMatches(path string, expected []byte) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != int64(len(expected)) {
+		return false, nil
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return false, err
+	}
+	digest := sha256.Sum256(expected)
+	return string(hash.Sum(nil)) == string(digest[:]), nil
 }

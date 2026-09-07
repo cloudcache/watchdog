@@ -91,7 +91,7 @@ func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Con
 		PrefixCount: uint64(len(draft.Prefixes)), AddressSetCount: uint64(len(draft.AddressSets)), OperatorCount: uint64(len(draft.Operators)),
 		GeoNodeCount:           uint64(len(draft.GeoNodes)),
 		EnabledAddressSetCount: uint64(metadata.EnabledAddressSetCount), MaxAddressSetsPerRecord: uint32(metadata.MaxAddressSetsPerRecord),
-		EstimatedBundleBytes: uint64(len(data)),
+		DefinitionBytes: uint64(len(data)),
 	}, nil
 }
 
@@ -155,12 +155,12 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO dimension_snapshots (
 			id, tenant_id, module_key, dimension_key, version, effective_from,
-			object_ref, checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count,
+			object_ref, object_format, object_format_version, checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count,
 			bundle_schema_version, entry_count, prefix_count, address_set_count,
 			max_address_sets_per_record, status, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 'json', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 	`, snapshotID, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, version, request.EffectiveFrom.UTC(),
-		object.Ref, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
+		object.Ref, flowdimension.BundleSchemaVersion, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
 		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets)+len(draft.Operators)+len(draft.GeoNodes),
 		len(draft.Prefixes), len(draft.AddressSets), metadata.MaxAddressSetsPerRecord, actorID)
 	if err != nil {
@@ -362,6 +362,7 @@ func (p *MySQLAddressDimensionPublisher) ListAddressDimensionSnapshots(ctx conte
 
 const addressDimensionSnapshotColumns = `
 	id, tenant_id, module_key, dimension_key, version, effective_from, object_ref,
+	object_format, object_format_version, builder_version, COALESCE(build_job_id, ''),
 	checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count, bundle_schema_version, entry_count, prefix_count,
 	address_set_count, max_address_sets_per_record, status, approval_state,
 	COALESCE(decided_by, ''), decided_at, COALESCE(decision_reason, ''),
@@ -373,7 +374,8 @@ func scanAddressDimensionSnapshot(row rowScanner) (AddressDimensionSnapshot, err
 	var item AddressDimensionSnapshot
 	var sourceManifest []byte
 	err := row.Scan(&item.ID, &item.TenantID, &item.ModuleKey, &item.DimensionKey, &item.Version,
-		&item.EffectiveFrom, &item.ObjectRef, &item.Checksum, &item.DraftDigest, &item.SourceManifestVersion, &sourceManifest, &item.SourcePrefixCount, &item.BundleSchemaVersion,
+		&item.EffectiveFrom, &item.ObjectRef, &item.ObjectFormat, &item.ObjectFormatVersion, &item.BuilderVersion, &item.BuildJobID,
+		&item.Checksum, &item.DraftDigest, &item.SourceManifestVersion, &sourceManifest, &item.SourcePrefixCount, &item.BundleSchemaVersion,
 		&item.EntryCount, &item.PrefixCount, &item.AddressSetCount, &item.MaxAddressSetsPerRecord,
 		&item.Status, &item.ApprovalState, &item.DecidedBy, &item.DecidedAt, &item.DecisionReason,
 		&item.SignatureAlgorithm, &item.SigningKeyID, &item.Signature, &item.SignedAt,

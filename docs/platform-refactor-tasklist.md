@@ -6,7 +6,7 @@
 
 每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。`PLAT-04` 只作为计划编号，不再作为一个永远无法勾选的总任务；A–H 必须继续拆成可独立提交、独立验收的子项。只有代码、真实依赖集成、回归和 commit 四项同时存在才可标 `[x]`，不得用“大部分已实现”代替闭环。
 
-**当前活动切片：PLAT-04A2f scoped publication 通用内核。** 只把现有地址 publication 的仓储、签名、生命周期、ACK/reference/GC scope 条件参数化，地址 API/DTO/config 保持兼容；随后由 Flow C4-P-S 增加 `flow/vpn_rule_set` adapter。不新增表、MQ、服务或第二套状态机。
+**当前活动切片：PLAT-04C4c AddressSnap worker 安装。** C4b2 writer 已能从 pinned MySQL generation 异步生成 WADS；下一步只做 worker 无 DB 下载/验签/预算校验、LKG、event-time atomic install 与 ACK，再用真实 corpus 做旧 loader/WADS parity。查询口径与历史重分类在 installed ACK 前不切换。
 
 ## P0 生产入口、身份与存储收敛
 
@@ -166,6 +166,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 
 - [x] **PLAT-DEV-01 npm-only 本地启动契约**：删除 Bun lock/CI/Makefile 分支、development-tag 代理、custom static server 和全部 `:5173` 运行时代码；前端用 `npm run dev` 固定启动 `:8090`，Hub 用 `make dev-hub` 启动 `:8091`。Vite仅承担本地前端开发和 `npm run build`，不代理 API。
 - [ ] **PLAT-FE-01 前端静态检查基线**：全量 Biome 仍有历史问题（最近审计 52 errors/45 warnings，集中在非本轮 router/types/login 等文件）；后续按目录建立 no-new-error 门禁并分片清零。当前工作包只要求变更文件定向 lint 通过，禁止借 Flow 功能提交做全局格式重写。
+- [ ] **PLAT-FE-02 Node 25 VTable 测试依赖兼容**：`npm test` 当前 37/38 通过，`src/lib/vtable.test.ts` 在 Node 25 加载 `@visactor/vtable-editors` 时因包内 `es/index.js` 无扩展导入 `es/input-editor` 报 `ERR_MODULE_NOT_FOUND`；Vite production build 与本轮变更文件 Biome 均通过。平台侧应冻结受支持 Node 版本或升级/patch 上游包并恢复完整测试门禁，禁止在 Flow 提交里改写依赖解析。
 - [ ] **PLAT-WEB-01 前后端独立运行边界**：前端运行时只配置一个 `API_URL` 并由浏览器直连 API/Auth Hub，禁止内置 API 代理。Hub 用 allowlist CORS 开放所需 method/header/exposed header；覆盖登录/登出、OAuth、SSE、下载、base path、API 故障恢复和旧单体兼容。镜像、nginx 和静态托管不在本任务范围。
   - [x] **设计/编码**：`watchdog-config.js` 只有一个 `API_URL`，浏览器 API/auth/SSE/download 与生成的 agent 命令全部使用它；PocketBase client 和 `/api/v1` raw fetch 共用同一 API base；本地前端只通过 `npm run dev` 启动，Vite 无 proxy；Hub 响应暴露 ETag/Content-Disposition/X-Request-ID，origin admission 使用显式 `serve --origins`。
   - [x] **单元/进程内集成**：runtime config 合并、单一 API base 的单体同源/独立跨源选择、Content-Disposition 下载文件名和 Hub exposed headers 已覆盖；不以进程内测试冒充浏览器 CORS admission。
@@ -282,14 +283,15 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [ ] **C4b2 AddressSnap 异步编译与发布**：由地址模块注册 `address_snapshot_build` operation handler，消费同一 preview 固定的 source manifest + schema v3 definition object，分页读取 immutable import rows，按既定字段域优先级合成为单一紧凑二进制对象。产物分离 supplier ISP 与 tenant `customer_isp_id UInt16`，人工 prefix 只按稳定 operator ID 绑定，base range 只按非零 ASN 精确命中唯一 enabled operator；缺失为 0，禁止按 name/code 猜测。builder 必须有 checkpoint/预算/确定性/round-trip 门禁，临时对象验证成功后才创建 pending snapshot；失败不得改变 active。平台不连接 CH，migration 009 IP_TRIE 是历史实验且不再扩展。
     - [x] **设计**：冻结 WADS magic/version、固定 endian、zstd/CRC32C、外部 SHA+Ed25519、连续 section/字典/range schema、source provenance、上限、幂等 generation 与错误码；详细契约及迁移顺序见 `flow-address-query-plan.md`。
     - [x] **纯 builder core**：已实现不展开单 IP 的 v4/v6 区间 sweep、source 字段域 overlay、manual LPM/set overlay、supplier/customer Geo/ISP namespace、稳定 ID 字典、相邻同值合并和构建后 WADS round-trip；source 行数、重叠、引用与范围预算 fail closed。该项不宣称 operation job/MySQL/object commit 已完成。
-    - [ ] **编码**：builder + object commit + pending snapshot 事务边界；复用 operation job reporter，支持 cancel/retry/takeover；不在 API 线程展开数据。
-    - [ ] **单元测试**：deterministic/golden/round-trip、v4/v6/嵌套 override、多组/无 ASN、ISP 命名空间、截断/篡改/未知版本/zstd bomb/预算。
-    - [ ] **集成测试**：真实 MMDB/IPDB import + MySQL 分页 + object store，crash/resume 后同 generation 同 checksum，approve/activate/rollback/GC 全生命周期。
+    - [x] **编码（writer/commit）**：API 已只 enqueue `address_snapshot_build`；升级前 `address_dimension_publish` 队列仍可消费。job ID 即 snapshot/build ID，按 `(family,ip_start,prefix_length,id)` keyset 分页读取 pinned import，原始 count/CIDR/二进制边界 fail-closed，合法嵌套 source CIDR 按 LPM 展平；两遍 builder 支持 context cancel，progress 在页边界单调上报。WADS round-trip 后经不可覆盖、同内容可幂等重试的 object store 落盘，短事务重新锁 tenant 并复核 draft/source/version 后插入 pending-approval row；失败不改 activation，commit 失败保留同 job 的 CAS object 供 takeover 重用，旧 attempt 禁止删除新 owner 可能已提交的对象。
+    - [x] **编码（身份/迁移）**：migration 058 + fresh init 增加 object format/version、builder version、build job fence；supplier source name 进入独立精确规范化 key 的单调 UInt16 ledger，永不与 customer operator 猜测合并或复用。审批 signing payload v3 绑定上述 WADS 元数据，旧 JSON signing v2 wire 保持不变；对象上限由 `max_snapshot_bytes` 配置（默认 512 MiB）。
+    - [x] **单元测试**：固定 SHA golden/deterministic/round-trip、v4/v6/嵌套 override、多组/无 ASN、supplier/customer 同数值 ID 命名空间、截断/篡改/未知版本/zstd window/解码内存与 range 预算均已覆盖；context cancel、签名元数据篡改和 immutable object retry 另有定向用例。
+    - [ ] **集成测试**：repository 写入的 nested v4/v6 import + 真实 MySQL 分页 + WADS object store、同 job 重试单行/同 checksum、跨 generation supplier ID 稳定、migration/fresh-init parity 已通过；生产级真实 MMDB/IPDB artifact、worker takeover/crash、approve/activate/rollback/orphan-GC 串联仍未完成，不冒充关闭。
     - [ ] **变更设计/测试**：先 reader 后 writer；旧 JSON+Geo loader 双读，真实 corpus parity 后切换；旧 CH 009 不回改，后续只以前向清理移除实验对象。
     - [ ] **回归/已提交门禁**：平台/Flow 全库、race/vet/build、固定硬件规模基线、工作区零残留并记录 commit。
   - [ ] **C4c worker 安装与查询切换**：worker 不连 MySQL/CH，认证拉取 AddressSnap，校验签名/SHA/header/CRC/预算，离线构建 BART/Geo range 并 atomic swap/LKG restore/ACK。只有 event-time snapshot 的 installed ACK 后，便捷运营商筛选才可从 ASN fallback 切到 typed `remote_isp_id`；请求/缓存/审计固定 snapshot/generation，跨版本按稳定身份拆分，不能用当前名称重写历史。
 - [x] **PLAT-04D Geo lookup 收敛**：hub 的 434 行重复 flow-geo-v1 loader（FlowGeoService/FlowGeoIndex/LoadFlowGeoBundle/二分区间）已删，FlowGeoService 收敛为 ~80 行薄适配器委托 `flowdimension.GeoCatalog`（Reload 委托并保留失败前索引、Lookup 查 active、Status 取 metadata）。`/api/v1/flow/geo/*` 形状不变（前端无消费者），loader 校验现只在 flowdimension 测一次。确认无其他 hub 代码依赖被删类型（sflow prefix matcher 用 bart 树非 geo）。适配器测试用 flowdimension 导出格式建 bundle 验 reload/lookup/status + 失败保留（commit c7681f6d）。
-- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；`052/053` 已用于 Fleet Phase 0/2，下一持久化 migration 从 `054` 开始。
+- [x] **历史 migration 不可变/fresh-install 对等门禁**：`deploy/migration/mysql/checksums.sha256` 固定已发布 migration 的精确字节 SHA-256；单测要求 migration 与 manifest 双向完备且 checksum 相同，新版本只能追加。真实 MySQL 测试同时证明数据库 ledger checksum 漂移会让 readiness/apply 均 fail closed，既有 `TestInitSQLMatchesEmbeddedMigrations` 继续验证 `install/init.sql` 与全量 migration 的表结构完全一致。废弃对象必须用后续 migration 删除，027/043 已分别示范删除与 forward-fix；当前 migration head 为 `058`，后续持久化变更从 `059` 开始。
 - [x] **Address Library 入口与页面 smoke 回归**：补齐 `/address-library` 根入口并默认展示 Imports，避免直接访问落入 404；真实 8090 会话逐页验证 imports/prefixes/sets/tools/batch/publications/geography/operators/lines 及新增表单，所有页面均结束 Loading、空集合显示明确 empty state、非空 prefix/set 列表正常呈现，浏览器控制台无错误。复用既有 API/表，无 schema 变化、不创建空 migration。
 - [x] `watchdog-platform-module-architecture.md` 的旧 Flow WAL/normalized/restore 章节已收敛为平台边界并链接 Flow ADR，不再复制数据面设计。
 - [x] 旧 `sflow_collector` VM 聚合原型已独立退役：命令、平台配置、环境变量、安装项和实现均已删除，仓库生产代码零引用；RawFlow sFlow5 接收链继续保留且不与旧原型共端口（commits `52b9d3f2`、`5039ee77`）。

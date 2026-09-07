@@ -49,7 +49,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 | tenant/snapshot/version/effective_from | 与外层 publication metadata 完全一致 |
 | section counts/boundaries | v1 按固定顺序连续编码；计数必须能由剩余字节完整承载，解码结束禁止尾随字节 |
 | payload_crc32c | 快速发现传输/磁盘损坏，不作为信任依据 |
-| object SHA-256 | 由 object metadata 保存，并被平台审批签名覆盖 |
+| object SHA-256 | 由 object metadata 保存，并与 object format/version、builder version、build job ID 一起被平台审批签名 v3 覆盖；旧 JSON publication 继续使用兼容的签名 v2 wire |
 
 下载时先校验对象大小和 SHA-256，再做有上限的 zstd 解压，随后校验 header、CRC、section 边界和声明计数。审批签名覆盖 tenant/scope/version/effective time/object ref/SHA/source manifest；CRC 只负责廉价损坏检测，不能替代签名或 SHA。
 
@@ -59,7 +59,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 - string/value dictionary：稳定 Geo code/path、supplier ISP、customer ISP、ASN、primary prefix、business 和 address-set membership 只存一次；名称是显示元数据，事实身份只用稳定 ID；
 - IPv4 ranges：按 start 严格递增且互不重叠，固定宽度 start/end/value-index；
 - IPv6 ranges：16-byte start/end/value-index，同样有序且不重叠；
-- Geo/address-set/operator tables：Geo 同时保存 namespace、稳定 `id/parent_id` 与可变 `kind/code/name`；身份与关系只按 namespaced ID，code 不作为全局键，允许不同分支/层级以及 supplier/customer 两个命名空间重用 code/ID。集合保存稳定 ID、name、enabled，运营商保存稳定 ID 与数值 ID；`supplier_isp_id` 和 tenant `customer_isp_id` 分属两个命名空间，`0=unknown`；
+- Geo/address-set/operator tables：Geo 同时保存 namespace、稳定 `id/parent_id` 与可变 `kind/code/name`；身份与关系只按 namespaced ID，code 不作为全局键，允许不同分支/层级以及 supplier/customer 两个命名空间重用 code/ID。集合保存稳定 ID、name、enabled，运营商保存稳定 ID 与数值 ID；`supplier_isp_id` 和 tenant `customer_isp_id` 分属两个命名空间，`0=unknown`。供应商只按 pinned source 中的精确规范化名称分配独立、单调且永不复用的 UInt16 ID，不与 tenant 运营商模糊对齐；tenant/customer ISP 仍只按非零 ASN 精确映射或人工稳定 operator ID 覆盖；
 - optional diagnostics：构建统计，不进入热路径语义。
 
 单个地址可同时拥有 continent/region/country/province/city 五级路径、一个 primary prefix 和多个非互斥 address sets。范围行引用一个字典值，不复制五行 Geo，也不要求存在 ASN。
@@ -72,17 +72,17 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 ## 4. 异步构建与发布生命周期
 
-1. preview 在一致性事务中固定 active import slot、row version、artifact checksum/row count 与 schema v3 draft digest；该 digest 已覆盖 operator、人工 Geo 节点及 address-set 显示元数据。
-2. publish 只创建 `address_snapshot_build` operation job；payload 固定 tenant、draft revision/digest、source manifest、target format/builder version 和幂等 generation。
-3. builder 按主键分页读取 pinned `import_id`，分别校验文件/行 checksum 与计数；使用 `combined -> geo/asn 字段域 -> manual explicit fields` 的既定优先级合成不重叠区间。
-4. builder 写临时文件，重新从文件 decode 并做全量 invariant/parity sample；成功后才原子保存 object，并创建 pending snapshot。失败不能修改当前 active snapshot。
+1. preview 在一致性事务中固定 active import slot、row version、artifact checksum/row count 与 schema v3 draft digest；该 digest 已覆盖 operator、人工 Geo 节点及 address-set 显示元数据。preview 返回的 `definition_bytes` 只表示该小型定义对象的规范编码大小；最终 WADS 包含 pinned source，构建前不能伪装成精确 bundle 大小。
+2. publish 只创建 `address_snapshot_build` operation job；tenant 来自认证上下文，payload 固定 effective minute 与覆盖 source manifest 的 draft digest，operation job ID 同时作为幂等 snapshot/build identity；format/builder version 由服务端常量拥有，客户端不得注入。
+3. builder 按 `(family,ip_start,prefix_length,id)` keyset 分页读取 pinned `import_id`，核对实际读取 v4/v6 原始行数与 manifest，并逐行验证 CIDR、family、prefix length、持久化 start/end 一致；同一 source 内合法嵌套 CIDR 先按最长前缀语义展平为不重叠区间，再使用 `combined -> geo/asn 字段域 -> manual explicit fields` 的既定优先级合成。source artifact SHA 是 immutable generation 身份，不冒充数据库逐行 checksum。
+4. builder 写临时文件，重新从文件 decode 并做全量 invariant/parity sample；成功后才原子保存 object，并创建 pending snapshot。失败不能修改当前 active snapshot。object 路径由 job/snapshot ID 确定且内容不可覆盖；commit 失败时旧 attempt 不得删除该路径（新 owner 可能已复用/提交），无引用对象统一交给 fenced orphan-GC。
 5. approve 的 Ed25519 签名绑定 object SHA 和 source manifest；activate 只改变 event-time timeline。
 6. consumer 分别上报 `downloaded/installed/failed`。只有 `installed` ACK 才表示该 worker 可使用目标版本；平台不能用“快照已创建”冒充数据面就绪。
 7. rollback 只切 activation 指针。旧 object 按事实/修复引用、未来 activation、worker LKG 和显式 retention 共同保护后再经 operation job GC。
 
-构建 job 复用平台唯一 `operation_jobs` lease/heartbeat/cancel/retry/checkpoint；不得在 Flow worker 内再造任务状态机。checkpoint 只能落在确定分页边界，重试相同 generation 必须生成相同 bytes/checksum。
+构建 job 复用平台唯一 `operation_jobs` lease/heartbeat/cancel/retry；分页边界上报单调 progress，job payload 始终保留为不可变 checkpoint，重试/接管从 pinned generation 重新流式读取并以同一 job/snapshot ID 生成相同 bytes/checksum，不另存第二套 builder 状态。读取和两遍合成周期检查取消；zstd 单次压缩完成后再次检查并由 lease fence 决定是否可提交。
 
-合成 core 不把 CIDR 展开为地址：每个 source generation 必须提供按 family/start 排序且内部不重叠的 inclusive ranges，builder 以多路边界 sweep 叠加 combined、Geo、ASN 与已编译 manual range。第一遍只收集去重 string/value dictionary，第二遍输出 value index 并合并相邻同值范围，额外内存随“不同值和输出范围”增长而不是随地址空间增长。source 声明的 v4/v6 row count 必须与 durable rows 精确相等；任一重叠、乱序、悬空 Geo/operator/set 引用或预算超限整体失败。
+合成 core 不把 CIDR 展开为地址：repository adapter 将 raw rows 以最长前缀语义规范化为按 family/start 排序且内部不重叠的 inclusive ranges，builder 再以多路边界 sweep 叠加 combined、Geo、ASN 与已编译 manual range。第一遍只收集去重 string/value dictionary，第二遍输出 value index 并合并相邻同值范围，额外内存随“输入 prefix、边界、不同值和输出范围”增长而不是随地址空间增长。source 声明的 v4/v6 row count 必须与实际读取 durable rows 精确相等；原始行数不能错误地等同于规范化 range 数（嵌套可能拆分或合并）。任一持久化边界不一致、规范化后重叠、悬空 Geo/operator/set 引用或预算超限整体失败。
 
 ## 5. 分发与 worker 加载
 
@@ -124,8 +124,9 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 1. 先发布 AddressSnap v1 codec/builder 和双读 worker；旧 JSON dimension + Geo 目录仍可启动。
 2. 用同一真实 corpus 做旧 loader 与 AddressSnap lookup 全字段 parity，覆盖 v4/v6 边界、嵌套 override、多组、无 ASN 和 supplier/customer ISP 分离。
 3. 部署全部 reader 后才允许平台写 AddressSnap；worker ACK 达标后切 activation。
-4. 停止 worker 的 MySQL/目录装载入口并保留 LKG/rollback 窗口。
-5. migration 009 和 `address_dict_integration_test.go` 标注为历史 CH 字典实验；不回改历史 migration，也不新增“拆 IP_TRIE 字段”的 migration。待兼容窗口结束再以前向清理移除未使用对象。
+4. MySQL migration 058 只增加 publication object format/version/builder/build-job 元数据和 supplier ISP 稳定 ID ledger；MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
+5. 停止 worker 的 MySQL/目录装载入口并保留 LKG/rollback 窗口。
+6. migration 009 和 `address_dict_integration_test.go` 标注为历史 CH 字典实验；不回改历史 migration，也不新增“拆 IP_TRIE 字段”的 migration。待兼容窗口结束再以前向清理移除未使用对象。
 
 本变更不删除 `flow_records` 已有派生列，也不恢复固定 30 天 TTL、持续 1m rollup 或逐记录 hash。Storage V2 的原始保留、日归档和 Kafka 坐标对账契约保持不变。
 

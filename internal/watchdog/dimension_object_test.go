@@ -42,3 +42,22 @@ func TestDiskDimensionObjectStoreEnforcesSizeLimit(t *testing.T) {
 		t.Fatal("expected oversized dimension object to fail")
 	}
 }
+
+func TestDiskDimensionObjectStoreWritesAndRetriesAddressSnapshot(t *testing.T) {
+	store := DiskDimensionObjectStore{Dir: t.TempDir(), MaxBytes: 1024}
+	data := []byte("WADS-binary-fixture")
+	first, err := store.SaveDimensionObject(context.Background(), "tenant-a", "snapshot-wads", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Ref != "dimension-snapshots/tenant-a/snapshot-wads/address-snapshot.wads" {
+		t.Fatalf("WADS object ref = %q", first.Ref)
+	}
+	second, err := store.SaveDimensionObject(context.Background(), "tenant-a", "snapshot-wads", data)
+	if err != nil || second != first {
+		t.Fatalf("idempotent WADS save = %#v, %v", second, err)
+	}
+	if _, err := store.SaveDimensionObject(context.Background(), "tenant-a", "snapshot-wads", []byte("WADS-different")); err == nil {
+		t.Fatal("different retry content must not replace immutable WADS object")
+	}
+}

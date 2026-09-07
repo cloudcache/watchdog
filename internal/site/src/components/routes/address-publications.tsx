@@ -31,7 +31,7 @@ type AddressDimensionPreview = {
 	operator_count?: number
 	enabled_address_set_count: number
 	max_address_sets_per_record: number
-	estimated_bundle_bytes: number
+	definition_bytes: number
 }
 
 type ListResponse = { items?: AddressDimensionSnapshot[]; total?: number }
@@ -257,7 +257,7 @@ export default memo(function AddressPublications() {
 							value={`${preview.enabled_address_set_count}/${preview.address_set_count}`}
 						/>
 						<PreviewStat label={t`Max memberships`} value={String(preview.max_address_sets_per_record)} />
-						<PreviewStat label={t`Estimated size`} value={formatBytes(preview.estimated_bundle_bytes)} />
+						<PreviewStat label={t`Definition size`} value={formatBytes(preview.definition_bytes)} />
 						<PreviewStat label={t`Draft digest`} value={preview.draft_digest} />
 					</div>
 				) : null}

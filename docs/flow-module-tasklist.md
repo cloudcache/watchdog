@@ -276,8 +276,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **定义输入 v3 单元/变更测试**：覆盖历史显示元数据不可变副本、乱序/缺父/逆级/禁用父/重复 kind-code 拒绝、v1/v2 兼容和管理草稿输入顺序确定性。
   - [x] **编码（builder core）**：实现 source `combined → geo/asn 字段域 → manual` 的确定性区间合成；两遍扫描先建 string/value dictionary，再输出相邻同值合并的 v4/v6 ranges，base source 始终保持区间而不展开单 IP。supplier/customer Geo 与 ISP 独立 namespace，Geo 关系按稳定 ID 而非 code，customer ASN 映射和显式 operator 绑定不按名称猜测；输出立即 WADS round-trip。
   - [x] **单元测试（builder core）**：覆盖 v4/v6、source 字段域优先级、人工 Geo/operator/ASN、地址组、本地业务、输入顺序确定性、source generation 改变 checksum、行数/重叠/预算拒绝，以及 dangling Geo/operator/set 引用 fail closed。
-  - [ ] **编码（builder）**：operation job 分页读取 pinned import，合并 base + manual explicit fields，写临时 object，round-trip 后提交 pending snapshot；retry/takeover 生成同 checksum。
-  - [ ] **单元/集成（builder）**：真实 MMDB/IPDB + MySQL，source checksum/count、优先级、operator 绑定、crash/checkpoint/cancel、失败不切 active。
+  - [x] **编码（builder writer）**：`address_snapshot_build` 已接生产 scheduler/API；job ID 固定 snapshot identity，keyset 分页读取与核对 pinned source 原始 count/CIDR/binary bounds，source 内嵌套 CIDR 以最长前缀展平；精确 supplier-name UInt16 ledger 与 customer ASN/人工 operator 分命名空间；context cancel/progress、确定性 WADS、幂等 immutable save、提交前 draft/source/version 二次校验和 pending-approval 短事务已接通。migration 058 持久化 format/version/builder/build-job 与 supplier identity，签名 v3 覆盖这些字段，旧 JSON job/signing v2 兼容。
+  - [ ] **单元/集成（builder）**：codec/builder/cancel/LPM 展平/Geo hierarchy/supplier identity/签名篡改、repository v4/v6 import→真实 MySQL→WADS→同 job 幂等及跨 generation supplier ID 稳定已覆盖；生产级真实 MMDB/IPDB、operation worker crash/takeover、approve/activate/rollback/orphan-GC 全链和失败注入仍待完成。
   - [ ] **编码（loader）**：认证下载、LKG 原子文件、外部 SHA/签名与内部 CRC 双校验、离线构建现有 BART/二分 catalog、event-time atomic install/ACK；删除 worker MySQL 装载依赖。
   - [ ] **集成（loader）**：无 MySQL/CH cold start、坏对象/部分下载/ACK 失败/重启/回滚、Kafka partition 缺版本暂停且不误用 current。
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。

@@ -98,7 +98,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 	metricsClient := VictoriaMetricsClient{BaseURL: cfg.VictoriaMetrics.BaseURL}
 	exportStore := DiskExportStore{Dir: cfg.Export.Dir}
 	addressArtifacts := DiskAddressArtifactStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxUploadBytes}
-	dimensionObjects := DiskDimensionObjectStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: 64 << 20}
+	dimensionObjects := DiskDimensionObjectStore{Dir: cfg.AddressLibrary.Dir, MaxBytes: cfg.AddressLibrary.MaxSnapshotBytes}
 	addressDimensions, err := NewMySQLAddressDimensionPublisher(store, dimensionObjects,
 		WithAddressDimensionObjectRetention(cfg.AddressLibrary.ObjectRetention))
 	if err != nil {
@@ -624,6 +624,12 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		if err := registry.Register(OperationJobRegistration{
 			JobType: AddressDimensionPublishJob, Handler: NewAddressDimensionPublishJobHandler(r.AddressDimensions),
 			Concurrency: 1, LeaseFor: 5 * time.Minute, MaxAttempts: 3, RetryBase: 30 * time.Second,
+		}); err != nil {
+			return err
+		}
+		if err := registry.Register(OperationJobRegistration{
+			JobType: AddressSnapshotBuildJob, Handler: NewAddressSnapshotBuildJobHandler(r.AddressDimensions),
+			Concurrency: 1, LeaseFor: 10 * time.Minute, MaxAttempts: 5, RetryBase: 30 * time.Second,
 		}); err != nil {
 			return err
 		}

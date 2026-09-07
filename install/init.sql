@@ -98,6 +98,26 @@ CREATE TABLE IF NOT EXISTS `address_import_slots` (
   CONSTRAINT `address_import_slots_chk_1` CHECK ((`source_slot` in ('geo','asn','combined')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `address_supplier_operator_sequences` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `next_flow_isp_id` int unsigned NOT NULL DEFAULT '1',
+  PRIMARY KEY (`tenant_id`),
+  CONSTRAINT `fk_address_supplier_operator_sequence_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `address_supplier_operator_sequences_chk_1` CHECK ((`next_flow_isp_id` between 1 and 65536))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `address_supplier_operators` (
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `supplier_key` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `flow_isp_id` smallint unsigned NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`tenant_id`,`supplier_key`),
+  UNIQUE KEY `uq_address_supplier_operator_flow_id` (`tenant_id`,`flow_isp_id`),
+  CONSTRAINT `fk_address_supplier_operator_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `address_supplier_operators_chk_1` CHECK ((`flow_isp_id` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `address_prefixes` (
   `id` char(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -306,6 +326,10 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   `version` bigint unsigned NOT NULL,
   `effective_from` datetime(3) NOT NULL,
   `object_ref` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `object_format` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'json',
+  `object_format_version` smallint unsigned NOT NULL DEFAULT '0',
+  `builder_version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `build_job_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `checksum` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `draft_digest` char(71) COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_manifest_version` smallint unsigned NOT NULL DEFAULT '0',
@@ -336,6 +360,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   UNIQUE KEY `uq_dimension_snapshot_tenant_id` (`tenant_id`,`id`),
   UNIQUE KEY `uq_dimension_version` (`tenant_id`,`module_key`,`dimension_key`,`version`),
   UNIQUE KEY `uq_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`effective_from`),
+  UNIQUE KEY `uq_dimension_snapshot_build_job` (`tenant_id`,`module_key`,`dimension_key`,`build_job_id`),
   KEY `idx_dimension_effective` (`tenant_id`,`module_key`,`dimension_key`,`status`,`effective_from`),
   KEY `idx_dimension_snapshot_approval` (`tenant_id`,`module_key`,`dimension_key`,`approval_state`,`version`),
   KEY `idx_dimension_snapshot_retention` (`status`,`retention_until`,`object_deleted_at`),
@@ -354,6 +379,7 @@ CREATE TABLE IF NOT EXISTS `dimension_snapshots` (
   CONSTRAINT `dimension_snapshots_chk_signature` CHECK (((`signature` is null) and (`signature_algorithm` is null) and (`signing_key_id` is null) and (`signed_at` is null)) or ((`signature` is not null) and (`signature_algorithm` is not null) and (`signing_key_id` is not null) and (`signed_at` is not null))),
   CONSTRAINT `chk_dimension_snapshot_object_gc` CHECK (((`object_deleted_at` is null) or ((`status` = _utf8mb4'retired') and (`retention_until` is not null) and (`object_deleted_at` >= `retention_until`)))),
   CONSTRAINT `chk_dimension_snapshot_source_manifest` CHECK (((`source_manifest_version` in (0,1)) and (json_type(`source_manifest`) = _utf8mb4'ARRAY') and ((`source_manifest_version` <> 0) or (json_length(`source_manifest`) = 0))))
+  ,CONSTRAINT `chk_dimension_snapshot_object_format` CHECK ((`object_format` = _utf8mb4'json') or ((`object_format` = _utf8mb4'wads') and (`object_format_version` = 1) and (`builder_version` <> _utf8mb4'') and (`build_job_id` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `dimension_snapshot_activations` (

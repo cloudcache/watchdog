@@ -67,6 +67,7 @@ const (
 	defaultAddressLibraryDir           = "address-artifacts"
 	defaultAddressLibraryBatchSize     = 1_000
 	defaultAddressLibraryWorkers       = 1
+	defaultAddressSnapshotMaxBytes     = 512 << 20
 	defaultAddressObjectRetention      = 30 * 24 * time.Hour
 	defaultAddressObjectGCInterval     = 5 * time.Minute
 	defaultAddressObjectGCBatch        = 100
@@ -243,6 +244,7 @@ type ExportConfig struct {
 type AddressLibraryConfig struct {
 	Dir               string                             `yaml:"dir"`
 	MaxUploadBytes    int64                              `yaml:"max_upload_bytes"`
+	MaxSnapshotBytes  int                                `yaml:"max_snapshot_bytes"`
 	ImportBatchSize   int                                `yaml:"import_batch_size"`
 	WorkerConcurrency int                                `yaml:"worker_concurrency"`
 	ObjectRetention   time.Duration                      `yaml:"object_retention"`
@@ -356,7 +358,8 @@ func defaultBackendConfig() BackendConfig {
 		},
 		AddressLibrary: AddressLibraryConfig{
 			Dir: defaultAddressLibraryDir, MaxUploadBytes: DefaultAddressArtifactMaxBytes,
-			ImportBatchSize: defaultAddressLibraryBatchSize, WorkerConcurrency: defaultAddressLibraryWorkers,
+			MaxSnapshotBytes: defaultAddressSnapshotMaxBytes,
+			ImportBatchSize:  defaultAddressLibraryBatchSize, WorkerConcurrency: defaultAddressLibraryWorkers,
 			ObjectRetention: defaultAddressObjectRetention, ObjectGCInterval: defaultAddressObjectGCInterval,
 			ObjectGCBatch: defaultAddressObjectGCBatch,
 		},
@@ -646,6 +649,9 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.Export.Metric = getEnv("WATCHDOG_EXPORT_METRIC", cfg.Export.Metric)
 	cfg.AddressLibrary.Dir = getEnv("WATCHDOG_ADDRESS_LIBRARY_DIR", cfg.AddressLibrary.Dir)
 	if cfg.AddressLibrary.MaxUploadBytes, err = getEnvInt64("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", cfg.AddressLibrary.MaxUploadBytes, 1); err != nil {
+		return err
+	}
+	if cfg.AddressLibrary.MaxSnapshotBytes, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES", cfg.AddressLibrary.MaxSnapshotBytes, 1); err != nil {
 		return err
 	}
 	if cfg.AddressLibrary.ImportBatchSize, err = getEnvInt("WATCHDOG_ADDRESS_LIBRARY_IMPORT_BATCH_SIZE", cfg.AddressLibrary.ImportBatchSize, 1); err != nil {
@@ -1001,6 +1007,7 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 		return fmt.Errorf("export.metric must be %q or %q", MetricSNMPIfInBps, MetricSNMPIfOutBps)
 	}
 	if cfg.AddressLibrary.Dir == "" || cfg.AddressLibrary.MaxUploadBytes <= 0 || cfg.AddressLibrary.MaxUploadBytes > 16<<30 ||
+		cfg.AddressLibrary.MaxSnapshotBytes <= 0 || int64(cfg.AddressLibrary.MaxSnapshotBytes) > 4<<30 ||
 		cfg.AddressLibrary.ImportBatchSize <= 0 || cfg.AddressLibrary.ImportBatchSize > maxAddressImportBatch ||
 		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 ||
 		cfg.AddressLibrary.ObjectRetention <= 0 || cfg.AddressLibrary.ObjectGCInterval <= 0 ||

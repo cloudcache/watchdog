@@ -5,12 +5,22 @@ package flowdimension
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"net/netip"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestBuildAddressSnapshotContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := BuildAddressSnapshotContext(ctx, addressSnapshotBuildFixture(t), AddressSnapshotLimits{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled build error = %v", err)
+	}
+}
 
 func TestBuildAddressSnapshotMergesSourcesAndManualDefinition(t *testing.T) {
 	input := addressSnapshotBuildFixture(t)
@@ -25,7 +35,7 @@ func TestBuildAddressSnapshotMergesSourcesAndManualDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Sources) != 3 || len(decoded.IPv4Ranges) != 5 || len(decoded.IPv6Ranges) != 1 {
+	if len(decoded.Sources) != 3 || len(decoded.IPv4Ranges) != 6 || len(decoded.IPv6Ranges) != 1 {
 		t.Fatalf("artifact counts: sources=%d v4=%d v6=%d", len(decoded.Sources), len(decoded.IPv4Ranges), len(decoded.IPv6Ranges))
 	}
 
@@ -37,31 +47,37 @@ func TestBuildAddressSnapshotMergesSourcesAndManualDefinition(t *testing.T) {
 
 	combined := lookupAddressSnapshotValue(t, decoded, "203.0.113.10")
 	if addressSnapshotText(t, decoded, combined.SupplierGeo.CountryID) != "supplier-country-cn" || combined.SupplierASN != 64500 || combined.SupplierISPID != 1 ||
-		addressSnapshotText(t, decoded, combined.CustomerGeo.CountryID) != "supplier-country-cn" || combined.CustomerISPID != 2 ||
-		!addressSnapshotSetContains(t, decoded, combined.InAddressSetIDs, "set-remote") {
+		addressSnapshotText(t, decoded, combined.CustomerGeo.CountryID) != "supplier-country-cn" || combined.CustomerISPID != 1 ||
+		!addressSnapshotSetContains(t, decoded, combined.InAddressSetIDs, "set-remote") ||
+		!addressSnapshotSetContains(t, decoded, combined.InAddressSetIDs, "set-shared") {
 		t.Fatalf("combined value = %#v", combined)
 	}
 
 	geoOverride := lookupAddressSnapshotValue(t, decoded, "203.0.113.100")
-	if addressSnapshotText(t, decoded, geoOverride.SupplierGeo.CountryID) != "supplier-country-us" || geoOverride.SupplierASN != 64500 || geoOverride.CustomerISPID != 2 {
+	if addressSnapshotText(t, decoded, geoOverride.SupplierGeo.CountryID) != "supplier-country-us" || geoOverride.SupplierASN != 64500 || geoOverride.CustomerISPID != 1 {
 		t.Fatalf("Geo source overlay = %#v", geoOverride)
 	}
 
 	manual := lookupAddressSnapshotValue(t, decoded, "203.0.113.150")
 	if addressSnapshotText(t, decoded, manual.CustomerGeo.CountryID) != "customer-country-cn" ||
 		addressSnapshotText(t, decoded, manual.CustomerGeo.ProvinceID) != "customer-province-zhejiang" ||
-		manual.CustomerISPID != 2 || manual.CustomerASN != 64500 || manual.CustomerOverrideBits == 0 ||
+		manual.CustomerISPID != 1 || manual.CustomerASN != 64500 || manual.CustomerOverrideBits == 0 ||
 		addressSnapshotText(t, decoded, manual.PrimaryPrefixID) != "prefix-zhejiang" {
 		t.Fatalf("manual overlay = %#v", manual)
 	}
 
 	asnOverride := lookupAddressSnapshotValue(t, decoded, "203.0.113.220")
-	if asnOverride.SupplierASN != 64501 || asnOverride.SupplierISPID != 3 || asnOverride.CustomerASN != 64500 || asnOverride.CustomerISPID != 2 {
+	if asnOverride.SupplierASN != 64501 || asnOverride.SupplierISPID != 3 || asnOverride.CustomerASN != 64500 || asnOverride.CustomerISPID != 1 {
 		t.Fatalf("ASN/manual precedence = %#v", asnOverride)
 	}
 	ipv6 := lookupAddressSnapshotValue(t, decoded, "2001:db8::42")
-	if ipv6.SupplierASN != 64500 || ipv6.CustomerISPID != 2 || addressSnapshotText(t, decoded, ipv6.SupplierGeo.CountryID) != "supplier-country-cn" {
+	if ipv6.SupplierASN != 64500 || ipv6.CustomerISPID != 1 || addressSnapshotText(t, decoded, ipv6.SupplierGeo.CountryID) != "supplier-country-cn" {
 		t.Fatalf("IPv6 value = %#v", ipv6)
+	}
+	withoutASN := lookupAddressSnapshotValue(t, decoded, "198.51.100.10")
+	if withoutASN.SupplierASN != 0 || withoutASN.SupplierISPID != 0 || withoutASN.CustomerASN != 0 || withoutASN.CustomerISPID != 0 ||
+		addressSnapshotText(t, decoded, withoutASN.SupplierGeo.CountryID) != "supplier-country-us" {
+		t.Fatalf("Geo-only value = %#v", withoutASN)
 	}
 }
 
@@ -92,13 +108,12 @@ func TestBuildAddressSnapshotIsDeterministicAndManifestSensitive(t *testing.T) {
 	}
 }
 
-func TestBuildAddressSnapshotRejectsIncompleteOrOverlappingSources(t *testing.T) {
+func TestBuildAddressSnapshotRejectsInvalidOrOverlappingSources(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*AddressSnapshotBuildInput)
 		want   string
 	}{
-		{name: "row count", mutate: func(input *AddressSnapshotBuildInput) { input.Sources[0].RowCountV4++ }, want: "row count mismatch"},
 		{name: "overlap", mutate: func(input *AddressSnapshotBuildInput) {
 			input.Sources[0].Ranges = append(input.Sources[0].Ranges, AddressSnapshotBuildRange{Start: netip.MustParseAddr("203.0.113.200"), End: netip.MustParseAddr("203.0.113.250")})
 			input.Sources[0].RowCountV4++
@@ -131,7 +146,7 @@ func addressSnapshotBuildFixture(t *testing.T) AddressSnapshotBuildInput {
 			{ID: "customer-country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "customer-continent-asia", Enabled: true},
 			{ID: "customer-province-zhejiang", Kind: "province", Code: "330000", Name: "Zhejiang", ParentID: "customer-country-cn", Enabled: true},
 		},
-		Operators: []OperatorDefinition{{ID: "customer-telecom", FlowISPID: 2, Code: "CT", Name: "China Telecom", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}},
+		Operators: []OperatorDefinition{{ID: "customer-telecom", FlowISPID: 1, Code: "CT", Name: "China Telecom", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}},
 		Prefixes: []PrefixDefinition{
 			{ID: "prefix-local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "corp"}},
 			{ID: "prefix-zhejiang", CIDR: "203.0.113.128/25", Labels: map[string]string{
@@ -142,6 +157,7 @@ func addressSnapshotBuildFixture(t *testing.T) AddressSnapshotBuildInput {
 		AddressSets: []AddressSetDefinition{
 			{ID: "set-local", Name: "Local", Selector: LabelSelector{Labels: map[string][]string{"business": {"corp"}}}, MatchDirection: "both", Enabled: true},
 			{ID: "set-remote", Name: "Remote", Members: []string{"203.0.113.0/24"}, MatchDirection: "both", Enabled: true},
+			{ID: "set-shared", Name: "Shared", Members: []string{"203.0.113.0/25"}, MatchDirection: "both", Enabled: true},
 			{ID: "set-disabled", Name: "Disabled", Members: []string{"198.51.100.0/24"}, MatchDirection: "both", Enabled: false},
 		},
 	}
@@ -163,7 +179,11 @@ func addressSnapshotBuildFixture(t *testing.T) AddressSnapshotBuildInput {
 			{ID: 3, StableID: "supplier-other", Code: "OTHER", Name: "Other Carrier", Category: "carrier", ASNs: []uint32{64501}, Enabled: true},
 		},
 		Sources: []AddressSnapshotBuildSource{
-			{Slot: AddressSnapshotSourceCombined, ImportID: "import-combined", ChecksumSHA256: checksum("a"), SlotRowVersion: 1, RowCountV4: 1, RowCountV6: 1, Ranges: []AddressSnapshotBuildRange{
+			{Slot: AddressSnapshotSourceCombined, ImportID: "import-combined", ChecksumSHA256: checksum("a"), SlotRowVersion: 1, RowCountV4: 2, RowCountV6: 1, Ranges: []AddressSnapshotBuildRange{
+				{
+					Start: netip.MustParseAddr("198.51.100.0"), End: netip.MustParseAddr("198.51.100.255"),
+					Geo: AddressSnapshotBuildGeo{CountryCode: "US", ContinentID: "supplier-continent-na", CountryID: "supplier-country-us"},
+				},
 				{
 					Start: netip.MustParseAddr("203.0.113.0"), End: netip.MustParseAddr("203.0.113.255"), ISPID: 1, ASN: 64500,
 					Geo: AddressSnapshotBuildGeo{CountryCode: "CN", ContinentID: "supplier-continent-asia", CountryID: "supplier-country-cn"},

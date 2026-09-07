@@ -109,6 +109,18 @@ func DimensionPublicationSigningPayload(snapshot DimensionPublicationSnapshot, s
 	if err != nil || sourcePrefixCount != snapshot.SourcePrefixCount {
 		return nil, ErrAddressDimensionInvalid
 	}
+	schemaVersion := DimensionPublicationSigningPayloadV2
+	objectFormat, objectFormatVersion, builderVersion, buildJobID := "", uint16(0), "", ID("")
+	if snapshot.ObjectFormat == AddressSnapshotObjectFormat {
+		if snapshot.ObjectFormatVersion != 1 || snapshot.BuilderVersion == "" || snapshot.BuildJobID == "" {
+			return nil, ErrAddressDimensionInvalid
+		}
+		schemaVersion = DimensionPublicationSigningPayloadV3
+		objectFormat, objectFormatVersion = snapshot.ObjectFormat, snapshot.ObjectFormatVersion
+		builderVersion, buildJobID = snapshot.BuilderVersion, snapshot.BuildJobID
+	} else if snapshot.ObjectFormat != "" && snapshot.ObjectFormat != "json" {
+		return nil, ErrAddressDimensionInvalid
+	}
 	payload := struct {
 		SchemaVersion         uint16                   `json:"schema_version"`
 		SnapshotID            ID                       `json:"snapshot_id"`
@@ -118,6 +130,10 @@ func DimensionPublicationSigningPayload(snapshot DimensionPublicationSnapshot, s
 		Version               uint64                   `json:"version"`
 		EffectiveUnixMilli    int64                    `json:"effective_unix_milli"`
 		ObjectRef             string                   `json:"object_ref"`
+		ObjectFormat          string                   `json:"object_format,omitempty"`
+		ObjectFormatVersion   uint16                   `json:"object_format_version,omitempty"`
+		BuilderVersion        string                   `json:"builder_version,omitempty"`
+		BuildJobID            ID                       `json:"build_job_id,omitempty"`
 		Checksum              string                   `json:"checksum"`
 		DraftDigest           string                   `json:"draft_digest"`
 		SourceManifestVersion uint16                   `json:"source_manifest_version"`
@@ -127,10 +143,12 @@ func DimensionPublicationSigningPayload(snapshot DimensionPublicationSnapshot, s
 		SigningKeyID          string                   `json:"signing_key_id"`
 		SignedAtUnixMilli     int64                    `json:"signed_at_unix_milli"`
 	}{
-		SchemaVersion: DimensionPublicationSigningPayloadV2, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
+		SchemaVersion: schemaVersion, SnapshotID: snapshot.ID, TenantID: snapshot.TenantID,
 		ModuleKey: snapshot.ModuleKey, DimensionKey: snapshot.DimensionKey,
 		Version: snapshot.Version, EffectiveUnixMilli: snapshot.EffectiveFrom.UTC().UnixMilli(),
-		ObjectRef: snapshot.ObjectRef, Checksum: snapshot.Checksum, DraftDigest: snapshot.DraftDigest,
+		ObjectRef: snapshot.ObjectRef, ObjectFormat: objectFormat, ObjectFormatVersion: objectFormatVersion,
+		BuilderVersion: builderVersion, BuildJobID: buildJobID,
+		Checksum: snapshot.Checksum, DraftDigest: snapshot.DraftDigest,
 		SourceManifestVersion: snapshot.SourceManifestVersion,
 		SourceManifest:        sources, SourcePrefixCount: sourcePrefixCount,
 		BundleSchemaVersion: snapshot.BundleSchemaVersion, SigningKeyID: signingKeyID,

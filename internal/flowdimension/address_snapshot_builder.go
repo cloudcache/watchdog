@@ -5,9 +5,11 @@ package flowdimension
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -95,6 +97,19 @@ type AddressSnapshotBuildResult struct {
 // pass discovers the string/value dictionaries; the second emits coalesced
 // ranges. Large base sources are never expanded to individual addresses.
 func BuildAddressSnapshot(input AddressSnapshotBuildInput, limits AddressSnapshotLimits) (AddressSnapshotBuildResult, error) {
+	return BuildAddressSnapshotContext(context.Background(), input, limits)
+}
+
+// BuildAddressSnapshotContext is the operation-job entry point. It checks
+// cancellation between bounded build chunks; the non-context wrapper remains
+// for deterministic tooling and tests.
+func BuildAddressSnapshotContext(ctx context.Context, input AddressSnapshotBuildInput, limits AddressSnapshotLimits) (AddressSnapshotBuildResult, error) {
+	if ctx == nil {
+		return AddressSnapshotBuildResult{}, errors.New("address snapshot build context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return AddressSnapshotBuildResult{}, err
+	}
 	limits, err := normalizeAddressSnapshotLimits(limits)
 	if err != nil {
 		return AddressSnapshotBuildResult{}, err
@@ -102,7 +117,7 @@ func BuildAddressSnapshot(input AddressSnapshotBuildInput, limits AddressSnapsho
 	if input.Definition == nil || input.Definition.metadata.SchemaVersion < 3 || !validText(input.BuilderVersion, 64) {
 		return AddressSnapshotBuildResult{}, fmt.Errorf("%w: schema v3 definition and builder version are required", ErrInvalidAddressSnapshot)
 	}
-	sources, layers, err := prepareAddressSnapshotBuildSources(input.Sources)
+	sources, layers, err := prepareAddressSnapshotBuildSources(ctx, input.Sources)
 	if err != nil {
 		return AddressSnapshotBuildResult{}, err
 	}
@@ -154,6 +169,11 @@ func BuildAddressSnapshot(input AddressSnapshotBuildInput, limits AddressSnapsho
 	values := make(map[addressSnapshotTextValue]struct{})
 	segmentCountV4, segmentCountV6 := 0, 0
 	firstPass := func(family int, start, end netip.Addr, active []*addressSnapshotBuildLayerRange) error {
+		if (segmentCountV4+segmentCountV6)&4095 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		value, err := composeAddressSnapshotTextValue(active, customerByID, customerByFlowID, customerByASN)
 		if err != nil {
 			return err
@@ -212,7 +232,14 @@ func BuildAddressSnapshot(input AddressSnapshotBuildInput, limits AddressSnapsho
 		encoded []byte
 	}
 	encodedValues := make([]encodedValue, 0, len(values))
+	valueOrdinal := 0
 	for value := range values {
+		if valueOrdinal&4095 == 0 {
+			if err := ctx.Err(); err != nil {
+				return AddressSnapshotBuildResult{}, err
+			}
+		}
+		valueOrdinal++
 		encoded, err := value.encode(stringIndexes)
 		if err != nil {
 			return AddressSnapshotBuildResult{}, err
@@ -230,6 +257,11 @@ func BuildAddressSnapshot(input AddressSnapshotBuildInput, limits AddressSnapsho
 	}
 
 	secondPass := func(family int, start, end netip.Addr, active []*addressSnapshotBuildLayerRange) error {
+		if (len(artifact.IPv4Ranges)+len(artifact.IPv6Ranges))&4095 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		value, err := composeAddressSnapshotTextValue(active, customerByID, customerByFlowID, customerByASN)
 		if err != nil || value.zero() {
 			return err
@@ -293,7 +325,7 @@ type addressSnapshotBuildLayerRange struct {
 	manual addressSnapshotManualValue
 }
 
-func prepareAddressSnapshotBuildSources(input []AddressSnapshotBuildSource) ([]addressSnapshotPreparedSource, addressSnapshotBuildLayers, error) {
+func prepareAddressSnapshotBuildSources(ctx context.Context, input []AddressSnapshotBuildSource) ([]addressSnapshotPreparedSource, addressSnapshotBuildLayers, error) {
 	sources := append([]AddressSnapshotBuildSource(nil), input...)
 	sort.Slice(sources, func(i, j int) bool {
 		return addressSnapshotSourceRank(sources[i].Slot) < addressSnapshotSourceRank(sources[j].Slot)
@@ -309,6 +341,11 @@ func prepareAddressSnapshotBuildSources(input []AddressSnapshotBuildSource) ([]a
 		var last4, last6 netip.Addr
 		seenV6 := false
 		for rangeIndex, item := range source.Ranges {
+			if rangeIndex&4095 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, addressSnapshotBuildLayers{}, err
+				}
+			}
 			start, end := item.Start.Unmap(), item.End.Unmap()
 			if !start.IsValid() || !end.IsValid() || start.BitLen() != end.BitLen() || start.Compare(end) > 0 {
 				return nil, addressSnapshotBuildLayers{}, fmt.Errorf("%w: source %s range %d is invalid", ErrInvalidAddressSnapshot, source.Slot, rangeIndex)
@@ -329,9 +366,10 @@ func prepareAddressSnapshotBuildSources(input []AddressSnapshotBuildSource) ([]a
 				v6 = append(v6, layer)
 			}
 		}
-		if uint64(len(v4)) != source.RowCountV4 || uint64(len(v6)) != source.RowCountV6 {
-			return nil, addressSnapshotBuildLayers{}, fmt.Errorf("%w: source %s row count mismatch", ErrInvalidAddressSnapshot, source.Slot)
-		}
+		// RowCountV4/V6 are provenance counts for the immutable import, not
+		// canonical range counts: longest-prefix normalization can both split and
+		// coalesce source rows. The repository adapter verifies the exact input
+		// counts before the normalized ranges enter this pure builder.
 		prepared = append(prepared, addressSnapshotPreparedSource{
 			Slot: source.Slot, ImportID: source.ImportID, ChecksumSHA256: source.ChecksumSHA256,
 			SlotRowVersion: source.SlotRowVersion, RowCountV4: source.RowCountV4, RowCountV6: source.RowCountV6,
