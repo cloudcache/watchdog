@@ -749,6 +749,7 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | `GET/PATCH/DELETE /flow/vpn/rules/{id}` | view/configure | 版本化修改/退役 |
 | `POST /flow/vpn/rules/{id}/actions/preview` | configure | 候选量、成本、误报预览 |
 | `GET /flow/vpn/findings` | vpn_view | 分页/筛选/搜索 |
+| `GET /flow/vpn/findings/facets` | vpn_view | 指定展示列的有界远程候选；继承时间/搜索/其它列筛选并排除本列自身条件 |
 | `GET /flow/vpn/findings/{id}` | vpn_view | 完整证据链 |
 | `POST /flow/vpn/findings/{id}/actions/disposition` | vpn_triage | 人工处置，要求 If-Match |
 | `POST /flow/vpn/findings/{id}/actions/probe` | probe | 创建受控异步 job |
@@ -769,7 +770,7 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 5. **境外流量**：流入/流出、境外 IP、本地主机、地区/ASN/端口/协议。
 6. **VPN 风险**：candidate/finding、score、证据、probe timeline、处置。
 
-页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。若专题所需的 typed 生产 API 尚未挂载（当前为 VPN findings/rule publication），页面必须显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
+页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。VPN findings 读取/筛选/处置已经挂载；规则 publication、关闭窗口写入和 probe 编排不可用时必须分别显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
 
 所有 VTable 都必须具备服务端分页、搜索、排序和 column filter；filter popover 使用 portal、collision detection、viewport max-height 和滚动，不得溢出或错位。公共 VTable 只给 list API 明确声明的 typed filter/sort 列显示入口，未声明列不得退化为当前页本地筛选或排序；筛选、排序、搜索或页大小变化必须回到第一页，并丢弃已发出的旧响应。Geo 表每行显示当前层名称、完整路径和稳定 ID tooltip，并可进入 children；图例只包含当前 level。地址组用多值 chips/独立 TopN，明确重叠口径。页面保留 query state 到 URL，支持取消过期请求；大数据只显示 TopN + other，不渲染无限序列。每张图支持创建/修改/复制/删除保存视图，保存的是 versioned QueryRequest，不保存 SQL。
 
