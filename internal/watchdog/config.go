@@ -40,6 +40,10 @@ const (
 	defaultFlowRollupTenantScanLimit   = 500
 	defaultFlowRollupSeriesScanLimit   = 500
 	defaultFlowRollupScanLimit         = 5_000
+	defaultFlowRollupReaperInterval    = time.Minute
+	defaultFlowRollupReaperBucketScan  = 720
+	defaultFlowRollupReaperRetryCap    = uint32(5)
+	defaultFlowRollupReaperReconcile   = 2 * time.Hour
 	defaultFlowRollupWorkerConcurrency = 2
 	defaultFlowRollupLease             = 2 * time.Minute
 	defaultFlowRollupMaxAttempts       = uint32(5)
@@ -106,6 +110,13 @@ type FlowRollupConfig struct {
 	LeaseFor                time.Duration `yaml:"lease_for"`
 	MaxAttempts             uint32        `yaml:"max_attempts"`
 	RetryBase               time.Duration `yaml:"retry_base"`
+
+	// Reaper (F1/F2): the completion-watermark loop that re-drives failed/missing
+	// buckets and reconciles late base data. ReaperInterval <= 0 disables it.
+	ReaperInterval          time.Duration `yaml:"reaper_interval"`
+	ReaperMaxBucketsPerScan int           `yaml:"reaper_max_buckets_per_scan"`
+	ReaperRetryCap          uint32        `yaml:"reaper_retry_cap"`
+	ReaperReconcileWindow   time.Duration `yaml:"reaper_reconcile_window"`
 
 	ClickHouseAddress          string        `yaml:"clickhouse_address"`
 	ClickHouseDatabase         string        `yaml:"clickhouse_database"`
@@ -305,6 +316,8 @@ func defaultBackendConfig() BackendConfig {
 			ScanInterval: defaultFlowRollupScanInterval, LateArrivalWindow: defaultFlowRollupLateWindow,
 			BootstrapLookback: defaultFlowRollupBootstrapLookback, MaxTenantsPerScan: defaultFlowRollupTenantScanLimit,
 			MaxBucketsPerSeriesScan: defaultFlowRollupSeriesScanLimit, MaxBucketsPerScan: defaultFlowRollupScanLimit,
+			ReaperInterval: defaultFlowRollupReaperInterval, ReaperMaxBucketsPerScan: defaultFlowRollupReaperBucketScan,
+			ReaperRetryCap: defaultFlowRollupReaperRetryCap, ReaperReconcileWindow: defaultFlowRollupReaperReconcile,
 			WorkerConcurrency: defaultFlowRollupWorkerConcurrency, LeaseFor: defaultFlowRollupLease,
 			MaxAttempts: defaultFlowRollupMaxAttempts, RetryBase: defaultFlowRollupRetryBase,
 			ClickHouseAddress: "127.0.0.1:9000", ClickHouseDatabase: "watchdog_flow", ClickHouseUser: "default",
@@ -404,6 +417,18 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 		return err
 	}
 	if cfg.FlowRollup.MaxBucketsPerScan, err = getEnvInt("WATCHDOG_FLOW_ROLLUP_MAX_BUCKETS_PER_SCAN", cfg.FlowRollup.MaxBucketsPerScan, 1); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.ReaperInterval, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_REAPER_INTERVAL", cfg.FlowRollup.ReaperInterval); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.ReaperMaxBucketsPerScan, err = getEnvInt("WATCHDOG_FLOW_ROLLUP_REAPER_MAX_BUCKETS_PER_SCAN", cfg.FlowRollup.ReaperMaxBucketsPerScan, 1); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.ReaperRetryCap, err = getEnvUint32("WATCHDOG_FLOW_ROLLUP_REAPER_RETRY_CAP", cfg.FlowRollup.ReaperRetryCap); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.ReaperReconcileWindow, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_REAPER_RECONCILE_WINDOW", cfg.FlowRollup.ReaperReconcileWindow); err != nil {
 		return err
 	}
 	if cfg.FlowRollup.WorkerConcurrency, err = getEnvInt("WATCHDOG_FLOW_ROLLUP_WORKER_CONCURRENCY", cfg.FlowRollup.WorkerConcurrency, 1); err != nil {

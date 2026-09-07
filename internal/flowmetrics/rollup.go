@@ -49,6 +49,12 @@ func (m *Rollup) PrometheusText() []byte {
 	writeFamily(&output, "watchdog_flow_rollup_terminal_failed_total", "Rollup buckets abandoned with no successful generation; the scheduled watermark advanced past a permanent gap in the aggregates.", "counter",
 		sample{labels: `{class="permanent"}`, value: uintValue(stats.TerminalPermanentFailures)},
 		sample{labels: `{class="exhausted"}`, value: uintValue(stats.TerminalExhaustedFailures)})
+	writeFamily(&output, "watchdog_flow_rollup_reaper_repairs_total", "Buckets the completion-watermark reaper re-enqueued as the next generation, by reason.", "counter",
+		sample{labels: `{reason="gap"}`, value: uintValue(stats.ReaperRepairsGap)},
+		sample{labels: `{reason="failed"}`, value: uintValue(stats.ReaperRepairsFailed)},
+		sample{labels: `{reason="late"}`, value: uintValue(stats.ReaperRepairsLate)})
+	writeFamily(&output, "watchdog_flow_rollup_permanent_gaps_total", "Buckets the reaper abandoned after exhausting its retry cap; a counted, non-silent hole in the aggregates.", "counter",
+		sample{labels: ``, value: uintValue(stats.PermanentGaps)})
 	writeFamily(&output, "watchdog_flow_rollup_rebuilds_total", "Successful initial and repair rollup rebuilds.", "counter",
 		rollupKindSample("1m", "initial", stats.OneMinute.InitialRebuilds),
 		rollupKindSample("1m", "repair", stats.OneMinute.RepairRebuilds),

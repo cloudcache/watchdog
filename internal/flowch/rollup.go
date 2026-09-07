@@ -36,7 +36,19 @@ type RollupRunner struct {
 	executor queryExecutor
 	stats    [2]rollupCounters
 	terminal terminalCounters
+	reaper   reaperCounters
 	now      func() time.Time
+}
+
+// reaperCounters track the completion-watermark reaper (F1/F2): buckets it
+// re-enqueued by reason, and buckets it abandoned after exhausting its retry cap
+// (a counted, no-longer-silent permanent gap). Distinct from terminalCounters,
+// which the worker bumps per terminal attempt; the reaper acts across attempts.
+type reaperCounters struct {
+	repairsGap    atomic.Uint64
+	repairsFailed atomic.Uint64
+	repairsLate   atomic.Uint64
+	permanentGaps atomic.Uint64
 }
 
 // terminalCounters count rollup jobs that ended with no successful generation.
@@ -72,6 +84,16 @@ type RollupStats struct {
 	// job payload.
 	TerminalPermanentFailures uint64
 	TerminalExhaustedFailures uint64
+	// Reaper activity (F1/F2). ReaperRepairs* count buckets the reaper re-enqueued
+	// as the next generation: Gap = a bucket below the scheduled watermark with no
+	// job at all, Failed = a bucket whose attempts were all terminal, Late =
+	// a succeeded bucket whose base row count no longer matches its aggregate.
+	// PermanentGaps counts buckets abandoned after the reaper's retry cap — the
+	// honest, alarmable "we lost this bucket" signal (no longer a silent hole).
+	ReaperRepairsGap    uint64
+	ReaperRepairsFailed uint64
+	ReaperRepairsLate   uint64
+	PermanentGaps       uint64
 }
 
 type rollupCounters struct {
@@ -138,6 +160,86 @@ WHERE tenant_id = {tenant:String}
 	return generation, nil
 }
 
+// BucketNeedsRepair reports whether a bucket's latest rolled generation no
+// longer reflects its base data: the number of base records now in flow_records
+// for the bucket differs from the received_records its aggregate recorded. Base
+// records that arrived after the rollup ran are the common cause (F2). The
+// reaper calls it only for buckets that already have a successful generation, so
+// the aggregate side is populated. Both sides read FINAL and filter
+// disposition/dimension exactly as the rollup did, so the counts are comparable.
+func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, tenantID string, resolution RollupResolution, bucket time.Time) (bool, error) {
+	duration, table, err := rollupTarget(resolution)
+	if err != nil {
+		return false, Permanent(err)
+	}
+	if r == nil || r.executor == nil {
+		return false, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	bucketUTC := bucket.UTC()
+	if bucketUTC.Truncate(duration) != bucketUTC {
+		return false, Permanent(fmt.Errorf("%s rollup bucket must be bucket-aligned", resolution))
+	}
+	end := bucketUTC.Add(duration)
+	bucketParam := bucketUTC.Format("2006-01-02 15:04:05")
+	stored, err := r.scalarUInt64(ctx, ch.Query{
+		Body: fmt.Sprintf(`SELECT sum(received_records) AS value
+FROM %s FINAL
+WHERE tenant_id = {tenant:String}
+  AND bucket = {bucket:DateTime('UTC')}
+  AND dimension_kind = 'total'
+  AND generation = (
+    SELECT max(generation) FROM %s FINAL
+    WHERE tenant_id = {tenant:String} AND bucket = {bucket:DateTime('UTC')} AND dimension_kind = '_generation'
+  )`, table, table),
+		Parameters: ch.Parameters(map[string]any{"tenant": tenantID, "bucket": bucketParam}),
+	})
+	if err != nil {
+		return false, fmt.Errorf("read %s aggregate received_records: %w", resolution, err)
+	}
+	live, err := r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT count() AS value
+FROM flow_records FINAL
+WHERE tenant_id = {tenant:String}
+  AND event_time >= {start:DateTime('UTC')}
+  AND event_time < {end:DateTime('UTC')}
+  AND disposition = 'count'`,
+		Parameters: ch.Parameters(map[string]any{
+			"tenant": tenantID, "start": bucketParam, "end": end.Format("2006-01-02 15:04:05"),
+		}),
+	})
+	if err != nil {
+		return false, fmt.Errorf("read %s base record count: %w", resolution, err)
+	}
+	return live != stored, nil
+}
+
+// scalarUInt64 runs a query returning a single UInt64 column named "value" and
+// one row, classifying ClickHouse errors as retryable/permanent for the worker.
+func (r *RollupRunner) scalarUInt64(ctx context.Context, query ch.Query) (uint64, error) {
+	var column proto.ColUInt64
+	var value uint64
+	seen := false
+	query.Result = proto.Results{{Name: "value", Data: &column}}
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if block.Rows == 0 {
+			return nil
+		}
+		if block.Rows != 1 || column.Rows() != 1 || seen {
+			return Permanent(errors.New("ClickHouse scalar query returned an invalid row count"))
+		}
+		value = column[0]
+		seen = true
+		return nil
+	}
+	if err := r.executor.Do(ctx, query); err != nil {
+		return 0, classifyClickHouseError(err)
+	}
+	if !seen {
+		return 0, Permanent(errors.New("ClickHouse scalar query returned no result"))
+	}
+	return value, nil
+}
+
 func NewRollupRunner(native *NativeInserter) (*RollupRunner, error) {
 	if native == nil || native.executor == nil {
 		return nil, errors.New("ClickHouse native connection is required")
@@ -193,7 +295,44 @@ func (r *RollupRunner) Stats() RollupStats {
 		OneHour:                   snapshotRollupCounters(&r.stats[1]),
 		TerminalPermanentFailures: r.terminal.permanent.Load(),
 		TerminalExhaustedFailures: r.terminal.exhausted.Load(),
+		ReaperRepairsGap:          r.reaper.repairsGap.Load(),
+		ReaperRepairsFailed:       r.reaper.repairsFailed.Load(),
+		ReaperRepairsLate:         r.reaper.repairsLate.Load(),
+		PermanentGaps:             r.reaper.permanentGaps.Load(),
 	}
+}
+
+// RollupRepairGap, RollupRepairFailed, and RollupRepairLate name the reasons the
+// reaper re-enqueues a bucket, so its counters and logs stay consistent.
+const (
+	RollupRepairGap    = "gap"
+	RollupRepairFailed = "failed"
+	RollupRepairLate   = "late"
+)
+
+// RecordReaperRepair counts a bucket the reaper re-enqueued as the next
+// generation, by reason. Safe for concurrent callers; a nil runner is a no-op.
+func (r *RollupRunner) RecordReaperRepair(reason string) {
+	if r == nil {
+		return
+	}
+	switch reason {
+	case RollupRepairGap:
+		r.reaper.repairsGap.Add(1)
+	case RollupRepairFailed:
+		r.reaper.repairsFailed.Add(1)
+	case RollupRepairLate:
+		r.reaper.repairsLate.Add(1)
+	}
+}
+
+// RecordPermanentGap counts a bucket the reaper abandoned after exhausting its
+// retry cap. Safe for concurrent callers; a nil runner is a no-op.
+func (r *RollupRunner) RecordPermanentGap() {
+	if r == nil {
+		return
+	}
+	r.reaper.permanentGaps.Add(1)
 }
 
 // RecordTerminalFailure counts a rollup job the worker gave up on with no

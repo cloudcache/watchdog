@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowstream"
@@ -51,6 +52,19 @@ func newFlowRollupRuntime(store *MySQLStore, config FlowRollupConfig, native *fl
 	service := &FlowRollupService{
 		Scheduler: scheduler, Tenants: store, Interval: config.ScanInterval,
 		MaxTenantsPerScan: config.MaxTenantsPerScan,
+	}
+	if config.ReaperInterval > 0 {
+		service.Reaper = &FlowRollupReaper{
+			Store: store, Tenants: store, Runner: runner,
+			Config: FlowRollupReaperConfig{
+				Interval:          config.ReaperInterval,
+				MaxTenantsPerScan: config.MaxTenantsPerScan,
+				MaxBucketsPerScan: config.ReaperMaxBucketsPerScan,
+				RetryCap:          uint64(config.ReaperRetryCap),
+				ReconcileWindow:   config.ReaperReconcileWindow,
+			},
+			Logf: log.Printf,
+		}
 	}
 	return runner, service, nil
 }

@@ -180,6 +180,70 @@ func TestRecordTerminalFailureCountsByClass(t *testing.T) {
 	}
 }
 
+func TestRecordReaperRepairAndPermanentGapCount(t *testing.T) {
+	runner := &RollupRunner{}
+	runner.RecordReaperRepair(RollupRepairGap)
+	runner.RecordReaperRepair(RollupRepairFailed)
+	runner.RecordReaperRepair(RollupRepairLate)
+	runner.RecordReaperRepair(RollupRepairLate)
+	runner.RecordReaperRepair("unrecognized") // ignored, not miscounted
+	runner.RecordPermanentGap()
+	stats := runner.Stats()
+	if stats.ReaperRepairsGap != 1 || stats.ReaperRepairsFailed != 1 || stats.ReaperRepairsLate != 2 || stats.PermanentGaps != 1 {
+		t.Fatalf("reaper stats gap=%d failed=%d late=%d gaps=%d", stats.ReaperRepairsGap, stats.ReaperRepairsFailed, stats.ReaperRepairsLate, stats.PermanentGaps)
+	}
+	var nilRunner *RollupRunner
+	nilRunner.RecordReaperRepair(RollupRepairGap)
+	nilRunner.RecordPermanentGap()
+}
+
+// scalarSequenceExecutor returns one UInt64 per Do call, in order, so a test can
+// drive the two queries BucketNeedsRepair issues (stored total, then live count).
+type scalarSequenceExecutor struct {
+	values []uint64
+	index  int
+}
+
+func (e *scalarSequenceExecutor) Do(ctx context.Context, query ch.Query) error {
+	current := e.index
+	e.index++
+	results, ok := query.Result.(proto.Results)
+	if !ok || len(results) != 1 {
+		return errors.New("unexpected scalar result contract")
+	}
+	column, ok := results[0].Data.(*proto.ColUInt64)
+	if !ok {
+		return errors.New("unexpected scalar result column")
+	}
+	if err := query.OnResult(ctx, proto.Block{Columns: 1}); err != nil {
+		return err
+	}
+	value := uint64(0)
+	if current < len(e.values) {
+		value = e.values[current]
+	}
+	*column = append(*column, value)
+	return query.OnResult(ctx, proto.Block{Columns: 1, Rows: 1})
+}
+
+func TestBucketNeedsRepairComparesStoredAndLiveCounts(t *testing.T) {
+	bucket := time.Date(2026, 9, 7, 0, 5, 0, 0, time.UTC)
+	// stored == live: the aggregate still reflects the base data, no repair.
+	inSync := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 3}}}
+	if needs, err := inSync.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket); err != nil || needs {
+		t.Fatalf("in sync: needs=%v err=%v", needs, err)
+	}
+	// live > stored: base records arrived after the roll, repair needed.
+	late := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 4}}}
+	if needs, err := late.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket); err != nil || !needs {
+		t.Fatalf("late arrival: needs=%v err=%v", needs, err)
+	}
+	// An unaligned bucket is a permanent (programmer) error, not a silent false.
+	if _, err := inSync.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket.Add(30*time.Second)); err == nil {
+		t.Fatal("unaligned bucket accepted")
+	}
+}
+
 func TestRollupRunnerClassifiesPermanentAndRetryableFailures(t *testing.T) {
 	request := RollupRequest{
 		TenantID: "tenant-a", Resolution: RollupOneMinute,

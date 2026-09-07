@@ -22,6 +22,10 @@ func TestRollupMetricsExposeFixedResolutionFailureAndRepairContract(t *testing.T
 			},
 			TerminalPermanentFailures: 2,
 			TerminalExhaustedFailures: 3,
+			ReaperRepairsGap:          4,
+			ReaperRepairsFailed:       5,
+			ReaperRepairsLate:         6,
+			PermanentGaps:             7,
 		}
 	})
 	if err != nil {
@@ -42,6 +46,10 @@ func TestRollupMetricsExposeFixedResolutionFailureAndRepairContract(t *testing.T
 		`watchdog_flow_rollup_completed_bucket_age_seconds{resolution="1h"} 0`,
 		`watchdog_flow_rollup_terminal_failed_total{class="permanent"} 2`,
 		`watchdog_flow_rollup_terminal_failed_total{class="exhausted"} 3`,
+		`watchdog_flow_rollup_reaper_repairs_total{reason="gap"} 4`,
+		`watchdog_flow_rollup_reaper_repairs_total{reason="failed"} 5`,
+		`watchdog_flow_rollup_reaper_repairs_total{reason="late"} 6`,
+		`watchdog_flow_rollup_permanent_gaps_total 7`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("rollup metrics missing %q:\n%s", expected, body)

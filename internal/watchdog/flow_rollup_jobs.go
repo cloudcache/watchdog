@@ -75,6 +75,10 @@ type FlowRollupService struct {
 	Interval          time.Duration
 	MaxTenantsPerScan int
 	Logf              func(string, ...any)
+	// Reaper, when set, runs alongside the scheduler to close the silent-gap and
+	// late-arrival holes (F1/F2). It shares this service's lifecycle: Run starts
+	// it and it stops when ctx is done.
+	Reaper *FlowRollupReaper
 
 	tenantCursor ID
 }
@@ -107,6 +111,9 @@ func NewFlowRollupScheduler(store FlowRollupJobStore, config FlowRollupScheduleC
 func (s *FlowRollupService) Run(ctx context.Context) {
 	if s == nil || s.Scheduler == nil || s.Tenants == nil || s.Interval <= 0 || s.MaxTenantsPerScan <= 0 {
 		return
+	}
+	if s.Reaper != nil {
+		go s.Reaper.Run(ctx)
 	}
 	s.scan(ctx, time.Now())
 	ticker := time.NewTicker(s.Interval)
@@ -351,6 +358,90 @@ func (s *MySQLStore) AdvanceOperationJobWatermark(ctx context.Context, tenantID 
 	return err
 }
 
+// FlowRollupBucketState summarizes one bucket's flow_rollup jobs across all of
+// its generations: the greatest generation attempted, whether any generation
+// succeeded, and whether any attempt is still in flight. The reaper uses it to
+// decide whether a bucket is covered, still working, or needs re-driving.
+type FlowRollupBucketState struct {
+	BucketUnix    int64
+	MaxGeneration uint64
+	Succeeded     bool
+	Pending       bool
+}
+
+// ListFlowRollupBucketStates reduces the flow_rollup job ledger to one state per
+// bucket over [fromBucketUnix, toBucketUnixExclusive), for one tenant and
+// resolution. The idempotency key encodes resolution+bucket+generation, so a
+// range over it uses the (tenant_id, job_type, idempotency_key) unique index and
+// the reaper scans only its bounded recent window. Results are ordered by bucket.
+func (s *MySQLStore) ListFlowRollupBucketStates(ctx context.Context, tenantID ID, resolution flowch.RollupResolution, fromBucketUnix, toBucketUnixExclusive int64) ([]FlowRollupBucketState, error) {
+	if tenantID == "" || len(tenantID) > 26 {
+		return nil, errors.New("flow rollup bucket-state tenant is required")
+	}
+	if fromBucketUnix < 0 || toBucketUnixExclusive < fromBucketUnix {
+		return nil, errors.New("flow rollup bucket-state range is invalid")
+	}
+	low, err := flowRollupBucketKeyPrefix(resolution, time.Unix(fromBucketUnix, 0).UTC())
+	if err != nil {
+		return nil, err
+	}
+	high, err := flowRollupBucketKeyPrefix(resolution, time.Unix(toBucketUnixExclusive, 0).UTC())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT idempotency_key, status FROM operation_jobs
+		WHERE tenant_id = ? AND job_type = ?
+			AND idempotency_key >= ? AND idempotency_key < ?
+		ORDER BY idempotency_key
+	`, tenantID, FlowRollupJobType, low, high)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byBucket := make(map[int64]*FlowRollupBucketState)
+	order := make([]int64, 0, 16)
+	for rows.Next() {
+		var key, status string
+		if err := rows.Scan(&key, &status); err != nil {
+			return nil, err
+		}
+		res, bucket, generation, err := parseFlowRollupIdempotencyKey(key)
+		if err != nil || res != resolution {
+			continue
+		}
+		bucketUnix := bucket.Unix()
+		state, ok := byBucket[bucketUnix]
+		if !ok {
+			state = &FlowRollupBucketState{BucketUnix: bucketUnix}
+			byBucket[bucketUnix] = state
+			order = append(order, bucketUnix)
+		}
+		if generation > state.MaxGeneration {
+			state.MaxGeneration = generation
+		}
+		// Classify by terminal-ness: succeeded covers the bucket; failed/canceled
+		// are terminal non-successes; everything else (queued/running/paused/
+		// validating/cancel_requested) is still in flight, so the reaper waits.
+		switch status {
+		case OperationJobStatusSucceeded:
+			state.Succeeded = true
+		case OperationJobStatusFailed, OperationJobStatusCanceled:
+		default:
+			state.Pending = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	states := make([]FlowRollupBucketState, 0, len(order))
+	for _, bucketUnix := range order {
+		states = append(states, *byBucket[bucketUnix])
+	}
+	return states, nil
+}
+
 func (s *MySQLStore) ListFlowRollupTenantIDs(ctx context.Context, after ID, limit int) ([]ID, string, error) {
 	if limit <= 0 || limit > 10_000 {
 		return nil, "", errors.New("flow rollup tenant scan limit must be 1..10000")
@@ -429,6 +520,14 @@ func flowRollupKeyPrefix(resolution flowch.RollupResolution) (string, error) {
 
 func flowRollupWatermarkPartition(resolution flowch.RollupResolution) string {
 	return "v1:" + string(resolution)
+}
+
+// flowRollupCompletedPartition names the reaper's completion watermark: the
+// greatest bucket up to which every bucket has a successful (or reaper-abandoned)
+// generation. It is distinct from the scheduler's enqueue watermark, so the two
+// advance independently.
+func flowRollupCompletedPartition(resolution flowch.RollupResolution) string {
+	return "v1:done:" + string(resolution)
 }
 
 func flowRollupBucketKeyPrefix(resolution flowch.RollupResolution, bucket time.Time) (string, error) {
