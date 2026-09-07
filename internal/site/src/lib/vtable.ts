@@ -475,6 +475,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 	let loadTimer: ReturnType<typeof setTimeout> | undefined
 	let loadController: AbortController | undefined
 	let loadingValues = false
+	const reposition = () => positionFilterPopover(popover, options.anchor)
 	const renderOptions = () => {
 		const query = search.value.trim().toLocaleLowerCase()
 		visibleValues = options.loadValues
@@ -489,6 +490,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 			loading.textContent = labels.loading
 			list.append(loading)
 			updateSummary()
+			reposition()
 			return
 		}
 		for (const value of visibleValues) {
@@ -522,6 +524,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 			list.append(empty)
 		}
 		updateSummary()
+		reposition()
 	}
 	const updateSummary = () => {
 		const selectedVisible = visibleValues.filter((value) => selected.has(value.key)).length
@@ -617,7 +620,7 @@ function openFilterPopover(options: OpenFilterPopoverOptions): () => void {
 
 	if (options.loadValues) loadRemoteValues()
 	else renderOptions()
-	positionFilterPopover(popover, options.anchor)
+	if (options.loadValues) reposition()
 	document.addEventListener("pointerdown", handleOutsidePointer)
 	document.addEventListener("keydown", handleKeydown)
 	window.addEventListener("resize", close)
