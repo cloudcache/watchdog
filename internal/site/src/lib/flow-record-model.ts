@@ -1,6 +1,11 @@
 export type FlowRecordRow = {
 	event_time: string
-	record_id: string
+	source_coordinate: {
+		source_stream_id: string
+		kafka_partition: number
+		kafka_offset: number
+		record_index: number
+	}
 	values: Record<string, unknown>
 }
 
@@ -19,7 +24,7 @@ export function buildFlowRecordRows(rows: FlowRecordRow[]) {
 		estimated_bytes: formatFlowBytes(row.values.estimated_bytes),
 		sampling_rate: row.values.sampling_rate ?? "",
 		quality_flags: row.values.quality_flags ?? "",
-		record_id: row.record_id,
+		source_coordinate: `${row.source_coordinate.source_stream_id}/${row.source_coordinate.kafka_partition}/${row.source_coordinate.kafka_offset}/${row.source_coordinate.record_index}`,
 	}))
 }
 

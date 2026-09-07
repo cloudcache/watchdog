@@ -36,7 +36,7 @@ func TestQueryGatewayAPIUsesStableEnvelopeAndRequestID(t *testing.T) {
 	if response.Code != http.StatusOK || response.Header().Get(RequestIDHeader) != "query-request-a" {
 		t.Fatalf("status=%d request-id=%q body=%s", response.Code, response.Header().Get(RequestIDHeader), response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"schema_version":"query-result-v1"`) ||
+	if !strings.Contains(response.Body.String(), `"schema_version":"query-result-v2"`) ||
 		!strings.Contains(response.Body.String(), `"request_id":"query-request-a"`) ||
 		!strings.Contains(response.Body.String(), `"source":"clickhouse"`) {
 		t.Fatalf("body = %s", response.Body.String())

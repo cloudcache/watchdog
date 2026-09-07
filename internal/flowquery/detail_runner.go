@@ -6,10 +6,10 @@ package flowquery
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/ch-go/proto"
@@ -22,9 +22,32 @@ type DetailRunner struct {
 }
 
 type DetailRow struct {
-	EventTime time.Time           `json:"event_time"`
-	RecordID  string              `json:"record_id"`
-	Values    map[DetailField]any `json:"values"`
+	EventTime        time.Time           `json:"event_time"`
+	SourceCoordinate SourceCoordinate    `json:"source_coordinate"`
+	Values           map[DetailField]any `json:"values"`
+}
+
+// SourceCoordinate is the stable, traceable identity of a decoded Flow fact.
+// It is also the ClickHouse replacement key suffix and pagination tie-breaker;
+// no hashed surrogate identity is computed on the ingest or query path.
+type SourceCoordinate struct {
+	SourceStreamID string `json:"source_stream_id"`
+	KafkaPartition uint32 `json:"kafka_partition"`
+	KafkaOffset    uint64 `json:"kafka_offset"`
+	RecordIndex    uint32 `json:"record_index"`
+}
+
+func (c SourceCoordinate) validate() error {
+	if c.SourceStreamID == "" || len(c.SourceStreamID) > 128 || strings.TrimSpace(c.SourceStreamID) != c.SourceStreamID {
+		return errors.New("source_stream_id must be 1..128 characters without surrounding whitespace")
+	}
+	for _, value := range []byte(c.SourceStreamID) {
+		if !(value >= 'a' && value <= 'z') && !(value >= 'A' && value <= 'Z') &&
+			!(value >= '0' && value <= '9') && value != '.' && value != '_' && value != ':' && value != '-' {
+			return errors.New("source_stream_id contains unsupported characters")
+		}
+	}
+	return nil
 }
 
 type DetailResult struct {
@@ -104,13 +127,16 @@ type detailDynamicColumn struct {
 }
 
 type detailResultColumns struct {
-	eventTime     *proto.ColDateTime64
-	recordID      proto.ColStr
-	sourceIP      proto.ColStr
-	destinationIP proto.ColStr
-	dynamic       []detailDynamicColumn
-	scopeMatch    *proto.ColBool
-	minimumSchema *proto.ColUInt16
+	eventTime      *proto.ColDateTime64
+	sourceStreamID proto.ColStr
+	kafkaPartition proto.ColUInt32
+	kafkaOffset    proto.ColUInt64
+	recordIndex    proto.ColUInt32
+	sourceIP       proto.ColStr
+	destinationIP  proto.ColStr
+	dynamic        []detailDynamicColumn
+	scopeMatch     *proto.ColBool
+	minimumSchema  *proto.ColUInt16
 }
 
 func newDetailResultColumns(view View, fields []DetailField) (*detailResultColumns, error) {
@@ -160,7 +186,10 @@ func newDetailDynamicColumn(spec detailFieldSpec) (detailDynamicColumn, error) {
 func (c *detailResultColumns) results() proto.Results {
 	result := proto.Results{
 		{Name: "event_time", Data: c.eventTime},
-		{Name: "record_id", Data: &c.recordID},
+		{Name: "source_stream_id", Data: &c.sourceStreamID},
+		{Name: "kafka_partition", Data: &c.kafkaPartition},
+		{Name: "kafka_offset", Data: &c.kafkaOffset},
+		{Name: "record_index", Data: &c.recordIndex},
 		{Name: "_source_ip", Data: &c.sourceIP},
 		{Name: "_destination_ip", Data: &c.destinationIP},
 	}
@@ -182,7 +211,9 @@ func (c *detailResultColumns) rowCount() (int, error) {
 	}
 	want := c.eventTime.Rows()
 	for name, rows := range map[string]int{
-		"record_id": c.recordID.Rows(), "_source_ip": c.sourceIP.Rows(), "_destination_ip": c.destinationIP.Rows(),
+		"source_stream_id": c.sourceStreamID.Rows(), "kafka_partition": c.kafkaPartition.Rows(),
+		"kafka_offset": c.kafkaOffset.Rows(), "record_index": c.recordIndex.Rows(),
+		"_source_ip": c.sourceIP.Rows(), "_destination_ip": c.destinationIP.Rows(),
 	} {
 		if rows != want {
 			return 0, fmt.Errorf("invalid ClickHouse Flow detail result: column %s has %d rows, want %d", name, rows, want)
@@ -202,14 +233,14 @@ func (c *detailResultColumns) rowCount() (int, error) {
 }
 
 type detailResultKey struct {
-	millis   int64
-	recordID [32]byte
+	millis     int64
+	coordinate SourceCoordinate
 }
 
 type detailSortKey struct {
-	value     any
-	eventTime time.Time
-	recordID  [32]byte
+	value      any
+	eventTime  time.Time
+	coordinate SourceCoordinate
 }
 
 type detailResultState struct {
@@ -260,7 +291,10 @@ func (s *detailResultState) consume(columns *detailResultColumns) error {
 			return errors.New("invalid ClickHouse Flow detail result: rows do not follow the requested stable sort")
 		}
 		if s.compiled.cursor != nil {
-			boundary := detailSortKey{value: s.compiled.cursor.sortValue, eventTime: s.compiled.cursor.eventTime, recordID: s.compiled.cursor.recordID}
+			boundary := detailSortKey{value: s.compiled.cursor.sortValue, eventTime: s.compiled.cursor.eventTime, coordinate: SourceCoordinate{
+				SourceStreamID: s.compiled.cursor.sourceStreamID, KafkaPartition: s.compiled.cursor.kafkaPartition,
+				KafkaOffset: s.compiled.cursor.kafkaOffset, RecordIndex: s.compiled.cursor.recordIndex,
+			}}
 			if !detailSortKeyAfter(sortKey, boundary, s.compiled.Sort.Direction) {
 				return errors.New("invalid ClickHouse Flow detail result: row does not follow the requested cursor")
 			}
@@ -278,10 +312,12 @@ func (s *detailResultState) row(columns *detailResultColumns, index int) (Detail
 	if eventTime.Before(s.compiled.From) || !eventTime.Before(s.compiled.To) || eventTime.Nanosecond()%int(time.Millisecond) != 0 {
 		return DetailRow{}, detailResultKey{}, errors.New("invalid ClickHouse Flow detail result: event_time is outside or not millisecond-aligned")
 	}
-	recordIDText := columns.recordID.Row(index)
-	recordID, err := hex.DecodeString(recordIDText)
-	if err != nil || len(recordID) != 32 || hex.EncodeToString(recordID) != recordIDText {
-		return DetailRow{}, detailResultKey{}, errors.New("invalid ClickHouse Flow detail result: record_id is not canonical 64-character hexadecimal")
+	coordinate := SourceCoordinate{
+		SourceStreamID: columns.sourceStreamID.Row(index), KafkaPartition: columns.kafkaPartition.Row(index),
+		KafkaOffset: columns.kafkaOffset.Row(index), RecordIndex: columns.recordIndex.Row(index),
+	}
+	if err := coordinate.validate(); err != nil {
+		return DetailRow{}, detailResultKey{}, fmt.Errorf("invalid ClickHouse Flow detail result: source coordinate: %w", err)
 	}
 	sourceIP, err := parseResultIP(columns.sourceIP.Row(index))
 	if err != nil {
@@ -297,7 +333,7 @@ func (s *detailResultState) row(columns *detailResultColumns, index int) (Detail
 		(s.compiled.Endpoint == DetailEndpointEither && sourceIP != wanted && destinationIP != wanted) {
 		return DetailRow{}, detailResultKey{}, errors.New("invalid ClickHouse Flow detail result: row does not match the requested IP endpoint")
 	}
-	row := DetailRow{EventTime: eventTime, RecordID: recordIDText, Values: make(map[DetailField]any, len(columns.dynamic))}
+	row := DetailRow{EventTime: eventTime, SourceCoordinate: coordinate, Values: make(map[DetailField]any, len(columns.dynamic))}
 	for _, column := range columns.dynamic {
 		value := column.value(index)
 		if isDetailIPField(column.field) {
@@ -309,9 +345,7 @@ func (s *detailResultState) row(columns *detailResultColumns, index int) (Detail
 		}
 		row.Values[column.field] = value
 	}
-	key := detailResultKey{millis: eventTime.UnixMilli()}
-	copy(key.recordID[:], recordID)
-	return row, key, nil
+	return row, detailResultKey{millis: eventTime.UnixMilli(), coordinate: coordinate}, nil
 }
 
 func parseResultIP(value string) (netip.Addr, error) {
@@ -338,7 +372,7 @@ func detailSortKeyForRow(compiled CompiledDetail, row DetailRow, key detailResul
 	if _, err := formatDetailCursorValue(spec, value); err != nil {
 		return detailSortKey{}, fmt.Errorf("invalid ClickHouse Flow detail result: %w", err)
 	}
-	return detailSortKey{value: value, eventTime: row.EventTime, recordID: key.recordID}, nil
+	return detailSortKey{value: value, eventTime: row.EventTime, coordinate: key.coordinate}, nil
 }
 
 func detailSortKeyAfter(left, right detailSortKey, direction string) bool {
@@ -349,13 +383,38 @@ func detailSortKeyAfter(left, right detailSortKey, direction string) bool {
 		} else if left.eventTime.After(right.eventTime) {
 			comparison = 1
 		} else {
-			comparison = bytes.Compare(left.recordID[:], right.recordID[:])
+			comparison = compareSourceCoordinate(left.coordinate, right.coordinate)
 		}
 	}
 	if direction == "asc" {
 		return comparison > 0
 	}
 	return comparison < 0
+}
+
+func compareSourceCoordinate(left, right SourceCoordinate) int {
+	if comparison := strings.Compare(left.SourceStreamID, right.SourceStreamID); comparison != 0 {
+		return comparison
+	}
+	if left.KafkaPartition != right.KafkaPartition {
+		if left.KafkaPartition < right.KafkaPartition {
+			return -1
+		}
+		return 1
+	}
+	if left.KafkaOffset != right.KafkaOffset {
+		if left.KafkaOffset < right.KafkaOffset {
+			return -1
+		}
+		return 1
+	}
+	if left.RecordIndex != right.RecordIndex {
+		if left.RecordIndex < right.RecordIndex {
+			return -1
+		}
+		return 1
+	}
+	return 0
 }
 
 func compareDetailSortValue(left, right any) int {

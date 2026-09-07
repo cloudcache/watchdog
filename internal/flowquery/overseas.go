@@ -30,15 +30,17 @@ type OverseasFilters struct {
 }
 
 type OverseasRequest struct {
-	From         time.Time        `json:"from"`
-	To           time.Time        `json:"to"`
-	Bucket       Bucket           `json:"bucket"`
-	Metric       Metric           `json:"metric"`
-	GeoLevel     OverseasGeoLevel `json:"geo_level"`
-	View         View             `json:"view"`
-	TopN         uint16           `json:"top_n"`
-	IncludeOther bool             `json:"include_other"`
-	Filters      OverseasFilters  `json:"filters,omitempty"`
+	From           time.Time        `json:"from"`
+	To             time.Time        `json:"to"`
+	Bucket         Bucket           `json:"bucket"`
+	Metric         Metric           `json:"metric"`
+	GeoLevel       OverseasGeoLevel `json:"geo_level"`
+	View           View             `json:"view"`
+	TopN           uint16           `json:"top_n"`
+	IncludeOther   bool             `json:"include_other"`
+	Filters        OverseasFilters  `json:"filters,omitempty"`
+	StorageV2      bool             `json:"-"`
+	ArchiveThrough time.Time        `json:"-"`
 }
 
 type CompiledOverseas struct {
@@ -53,6 +55,8 @@ type CompiledOverseas struct {
 	IncludeOther   bool
 	EstimatedRows  uint64
 	MaxResultRows  uint64
+	UsesRawFacts   bool
+	ArchiveThrough time.Time
 }
 
 // CompileOverseas builds one latest-generation aggregate query for the
@@ -124,6 +128,30 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		uintParameter("bucket_seconds", uint64(duration/time.Second)),
 	}
 	parameters = append(parameters, filterParameters...)
+	template := overseasLegacySourceSQL + overseasAnalysisSQL
+	usesRawFacts := false
+	archiveThrough := time.Time{}
+	if request.StorageV2 {
+		archiveThrough = request.ArchiveThrough.UTC()
+		if archiveThrough.IsZero() {
+			archiveThrough = from
+		}
+		if archiveThrough.Before(from) || archiveThrough.After(to) || archiveThrough.Truncate(duration) != archiveThrough {
+			return CompiledOverseas{}, requestError("archive_through", ErrorInvalid, "archive boundary must be within the range and bucket-aligned")
+		}
+		if request.Bucket == BucketOneMinute && archiveThrough.After(from) {
+			return CompiledOverseas{}, requestError("archive_through", ErrorUnsupported, "Storage V2 has no one-minute overseas archive")
+		}
+		if archiveThrough.After(from) && archiveThrough.Before(to) && archiveThrough.Truncate(24*time.Hour) != archiveThrough {
+			return CompiledOverseas{}, requestError("archive_through", ErrorInvalid, "a Storage V2 overseas archive/raw split must be a UTC day boundary")
+		}
+		parameters = append(parameters,
+			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
+			uintParameter("source_seconds", uint64(duration/time.Second)),
+		)
+		template = overseasStorageV2SourceSQL + overseasAnalysisSQL
+		usesRawFacts = archiveThrough.Before(to)
+	}
 
 	valueExpression := "toFloat64(metric_total)"
 	if metric.rate {
@@ -138,7 +166,7 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		"{{FILTERS}}", strings.Join(filters, "\n      "),
 		"{{METRIC_COLUMN}}", metric.column,
 		"{{VALUE_EXPRESSION}}", valueExpression,
-	).Replace(overseasQuerySQL)
+	).Replace(template)
 	query := ch.Query{
 		Body: body, Parameters: parameters,
 		Settings: []ch.Setting{
@@ -156,6 +184,7 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		Query: query, From: from, To: to, Bucket: request.Bucket, BucketDuration: duration,
 		Metric: metric.definition, GeoLevel: request.GeoLevel, TopN: request.TopN,
 		IncludeOther: request.IncludeOther, EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,
+		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough,
 	}, nil
 }
 
@@ -188,7 +217,7 @@ func compileOverseasFilters(filters OverseasFilters) ([]string, []proto.Paramete
 	return conditions, parameters, nil
 }
 
-const overseasQuerySQL = `WITH
+const overseasLegacySourceSQL = `WITH
   latest AS (
     SELECT tenant_id, bucket, max(generation) AS generation
     FROM {{TABLE}} FINAL
@@ -204,10 +233,95 @@ const overseasQuerySQL = `WITH
     WHERE tenant_id = {tenant:String}
       AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND business_direction IN ('in', 'out')
-      AND dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
+	      AND dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
+	      {{FILTERS}}
+	  ),
+	  coverage AS (
+	    SELECT toUInt64(count()) AS covered_buckets FROM latest
+	  )`
+
+const overseasStorageV2SourceSQL = `WITH
+  archive_latest AS (
+    SELECT tenant_id, bucket, max(generation) AS generation
+    FROM {{TABLE}} FINAL
+    WHERE tenant_id = {tenant:String}
+      AND bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
+      AND dimension_kind = '_generation'
+    GROUP BY tenant_id, bucket
+  ),
+  archive_selected AS (
+    SELECT
+      source.bucket, source.target_id, source.device_id, source.exporter_id,
+      source.business_direction, source.category, source.business,
+      source.dimension_kind, source.dimension_value,
+      source.dimension_snapshot_id, source.geo_version, source.classification_version,
+      source.raw_bytes, source.raw_packets, source.estimated_bytes, source.estimated_packets,
+      source.received_records, source.unknown_sampling_records, source.quality_records,
+      source.generated_at
+    FROM {{TABLE}} AS source FINAL
+    INNER JOIN archive_latest USING (tenant_id, bucket, generation)
+    WHERE source.tenant_id = {tenant:String}
+      AND source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
+      AND source.dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
+  ),
+  raw_selected AS (
+    SELECT
+      toStartOfInterval(event_time, toIntervalSecond({source_seconds:UInt32}), 'UTC') AS bucket,
+      target_id, device_id, exporter_id,
+      toString(business_direction) AS business_direction,
+      toString(category) AS category,
+      business,
+      tupleElement(dimension, 1) AS dimension_kind,
+      tupleElement(dimension, 2) AS dimension_value,
+      CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
+      CAST(geo_version AS String) AS geo_version,
+      classification_version,
+      sum(raw_bytes) AS raw_bytes,
+      sum(raw_packets) AS raw_packets,
+      sum(estimated_bytes) AS estimated_bytes,
+      sum(estimated_packets) AS estimated_packets,
+      count() AS received_records,
+      countIf(NOT estimated_valid) AS unknown_sampling_records,
+      countIf(quality_flags != 0) AS quality_records,
+      max(received_time) AS generated_at
+    FROM flow_records FINAL
+    ARRAY JOIN [
+      tuple('src_ip', toString(src_ip)),
+      tuple('dst_ip', toString(dst_ip)),
+      tuple(
+        {geo_dimension:String},
+        if(
+          {geo_dimension:String} = 'geo.country',
+          if(empty(remote_geo_country_id), '_unassigned', remote_geo_country_id),
+          if(empty(remote_geo_region_id), '_unassigned', remote_geo_region_id)
+        )
+      )
+    ] AS dimension
+    WHERE tenant_id = {tenant:String}
+      AND event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+    GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
+      category, business, dimension_kind, dimension_value, dimension_snapshot_id,
+      geo_version, classification_version
+  ),
+  selected AS (
+    SELECT * FROM (
+      SELECT * FROM archive_selected
+      UNION ALL
+      SELECT * FROM raw_selected
+    )
+    WHERE business_direction IN ('in', 'out')
       {{FILTERS}}
   ),
-  remote_endpoints AS (
+  coverage AS (
+    SELECT assumeNotNull(
+      toUInt64((SELECT count() FROM archive_latest)) +
+      toUInt64(intDiv(dateDiff('second', {archive_through:DateTime('UTC')}, {to:DateTime('UTC')}), toInt64({source_seconds:UInt32})))
+    ) AS covered_buckets
+  )`
+
+const overseasAnalysisSQL = `,
+	  remote_endpoints AS (
     SELECT
       bucket, toString(business_direction) AS direction,
       multiIf(dimension_value = '::', 'unknown', startsWith(dimension_value, '::ffff:'), 'ipv4', 'ipv6') AS ip_family,
@@ -366,8 +480,8 @@ FROM (
     toDateTime(0, 'UTC'), '', '', '', '', '', toUInt8(0),
     '', '', toUInt32(0), toFloat64(0), toUInt64(0), toUInt64(0),
     toUInt64(0), toUInt64(0), toUInt64(0), toDateTime64(0, 3, 'UTC'),
-    toUInt8(0), toUInt8(1), toUInt64(count())
-  FROM latest
+	    toUInt8(0), toUInt8(1), any(covered_buckets)
+	  FROM coverage
 )
 ORDER BY
   is_metadata ASC, bucket ASC, row_kind ASC, geo_scope ASC,

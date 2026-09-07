@@ -194,7 +194,8 @@ WITH
       classification_version,
       argMax(
         tuple(ip_protocol, local_port, remote_port, remote_asn, remote_country, remote_prefix_id),
-        tuple(estimated_valid, estimated_bytes, raw_bytes, event_time, hex(record_id))) AS primary,
+        tuple(estimated_valid, estimated_bytes, raw_bytes, event_time,
+          source_stream_id, kafka_partition, kafka_offset, record_index)) AS primary,
       sumIf(estimated_bytes, estimated_valid AND business_direction = 'out') AS local_to_remote_bytes,
       sumIf(estimated_bytes, estimated_valid AND business_direction = 'in') AS remote_to_local_bytes,
       count() AS flow_record_count,

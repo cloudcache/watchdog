@@ -123,7 +123,10 @@ func (w *Writer) Write(ctx context.Context, batches []*flowworker.EnrichedBatch)
 	}
 	for index := range blocks {
 		if err := w.insertWithRetry(ctx, blocks[index]); err != nil {
-			return fmt.Errorf("insert ClickHouse flow block %x: %w", blocks[index].ID[:8], err)
+			return fmt.Errorf("insert ClickHouse flow block %s/%d/%d:%d-%d:%d: %w",
+				blocks[index].SourceStreamID, blocks[index].KafkaPartition,
+				blocks[index].FirstOffset, blocks[index].FirstRecordIndex,
+				blocks[index].LastOffset, blocks[index].LastRecordIndex, err)
 		}
 	}
 	return nil

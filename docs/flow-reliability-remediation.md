@@ -1,10 +1,12 @@
 # Flow 数据面性能与可靠性修复清单
 
+> **Storage V2 变更门禁**：F9/F19/F20 及所有 TTL/rollup 处置按 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) 执行。receipt 保留但改为逐 Kafka 消息的自然键与 count/counter 对账；不再保留 per-block 内容 checksum。
+
 > 来源：2026-09 Flow 模块复盘（采集→Kafka→分类→ClickHouse→查询/汇总，5 路并行子系统审查 + 交叉复核）。
 > 完整分级报告见 artifact：https://claude.ai/code/artifact/84cfbec6-aad8-4a2f-9888-5f709426b104
 > 结论：无 Critical；数据面按 Akvorado 派生模型构建且实现与设计吻合；可靠性风险集中在**汇总层**与几处**已实现未接线的原语**。
 
-> **修订(2026-09)——保留与降精度模型(重定向 F1/F2/F7/F9)**:数据生命周期改为网络监控标准分层 —— **原始/全精度约留 1 年、作 1 年窗口的主查询面(直查 `flow_records`)→ 满 1 年后才 downsample 归档**,详见 [flow-pipeline-adr.md](flow-pipeline-adr.md) 的「保留与降精度」修订块。对本清单的影响:**F18-obs / F1 / F2 / F7 已按现有 rollup 落地、不浪费**(rollup 保留为 >1 年归档层;F1/F2 的完成水位/reaper 语义后续从"每分钟即时"改为"老化触发",是换层不是废弃);**F9 从"细化时间分量"改为"原始表按查询维度重排 + projection"**(见下,细化时间只帮时间裁剪、帮不了维度);新增 **F19**(读路径 sha256 说明)。原始保留天数、降精度层级与 CH 容量属**运维/配置**,不在本清单固化。
+> **修订(2026-09)——Storage V2 落地状态**：原始在线时长由 tenant policy 决定；到龄 UTC 日才生成 1h archive。migration 011 已完成自然坐标表/无 TTL 换表，MySQL 056 与 `flow_storage_downsample` 已完成非破坏生命周期，标准/方向/境外查询已按连续 boundary 混合读取。legacy F1/F2 scheduler/reaper 只供回滚，不得与 `flow_storage` 同时启用。
 
 ## 执行规则
 
@@ -30,15 +32,11 @@
 - [~] **F10 卡住的 partition/块无死信**（无需决策的一半 ✅ commit a2ea5aaf；带设计的一半留后）— `insertWithRetry` 无限重试且 `RunPartitionBatches` 每轮等所有 partition goroutine + 一个 partition 失败会 `cancel()` 掉其它 → 一个卡住拖垮全 worker、且阻塞 rebalance。
   - ✅ 已做(ADR 兼容,不丢不死信,失败记录仍走 unmarked→重放):`Writer.RetryMaxElapsed`(默认 2m)给每块一个总重试预算,超时把块作为错误抛出让 barrier 排空、rebalance 能推进;`processFetches` 不再因一个 partition 失败取消健康 partition(健康的跑完并提交进度);新增 stuck 信号 `RetryingNow` gauge + `BudgetExceeded` counter → `watchdog_flow_clickhouse_blocks_retrying` / `..._insert_budget_exceeded_total`。文件:`flowch/writer.go`、`flowstream/consumer.go:319`、`flowmetrics/metrics.go`。
   - ⏳ 留后(带设计):真正的「会话内 per-partition 解耦」(健康 partition 不靠重启就持续前进)需要改提交模型做 per-partition offset 回退,是 F10 的设计决策部分。
-- [x] **F6 `src_ip`/`dst_ip` 维度基数爆炸** ✅ commit aa12f214（决策=rollup 期 top-N + _other）— rollup 查询包一层 rank-and-refold：按 estimated_bytes 对每组 src_ip/dst_ip 排名，留 top `rollupIPTopN`(默认1000)，长尾折进单个 `_other`（流量保留不丢）；非 IP 维 ip_rank=0 原样透传，`_generation` marker 不动。**注意**：存量桶需 repair（新 generation）才采纳。gated CH 证明 top-2 保留 + 尾部折 _other（含求和）。 — 以近乎原始基数物化进 180/400 天汇总表。→ 推荐：rollup 期对 IP 维度做 top-N + `_other`，或移独立短 TTL 表。文件：`flowch/rollup.go:336`、`001_flow_schema.sql:99`。
-- [x] **F7 汇总表排序键把 `dimension_kind` 排第 9 位** ✅ commit 7b1e2e10 — 迁移 010 用原子 `EXCHANGE TABLES` 换表,把 `flow_aggregate_1m/1h` 排序键重排为 `(tenant_id, bucket, dimension_kind, dimension_value, …)`（列集不变=ReplacingMergeTree 去重语义不变；列+codec 照 post-008 复刻），让强制的 `dimension_kind` 等值过滤能裁 granule。DDL/EXCHANGE 已对活 CH 26.3 验证；canonical 迁移集断言升到 10。**保留模型修订下仍有效**:聚合作为 >1 年归档层的读效率。 — 强制过滤无法裁剪，每查扫全部维度类。文件：`001_flow_schema.sql:125`。
-- [ ] **F9 原始表按查询维度重排(取代旧「1 分钟 60× 重扫」修法)** 【CH 迁移·重建表】【需决策:维度主序】 — **保留模型修订后**:`flow_records` 是 1 年窗口的主查询面,排序键 `(tenant_id, toStartOfHour(event_time), record_id)` 尾部 `record_id` 高基随机 → 按 ASN/geo/prefix/port 维度过滤裁不了 granule,直查扫满 tenant-时段。**原"加 `toStartOfFiveMinutes` 分量"作废**(只帮时间、不帮维度)。→ 按真实高频过滤/聚合维度重排序键 + 少数 projection;换表用 **copy-and-swap 保表名**(空表先 `EXCHANGE`→回填,不丢在途写入,**不动读/写端代码、零冲突**)。**去重安全性已验**:`record_id=sha256(sourceID,recordIndex)`、`event_time=解码 EventTimeUnixMS`(enrich.go:257),同 record_id 必同 event_time,细化时间分量不破 ReplacingMergeTree 去重。**待产品给维度主序**再落地。文件:`001_flow_schema.sql:95`。
-- [ ] **F19 读路径每查一次 sha256(请求指纹)** 【查询效率】 — 归入 F20 的读路径部分。实测 `hashQueryProviderRequest` **1628 ns / 704 B / 6 alloc** 每查询,其中单纯 sha256 仅 195 ns/0 alloc —— 88% 时间与全部分配来自为求指纹而做的 `json.Marshal`+`hex`,不是 hash 本身。gateway 的 `QueryHash` 前端未消费(前端只显示 export 任务的独立 `canonicalJSONHash`),可去。VM 审计 hash(api_metrics.go:776)仅审计开启时。
-- [ ] **F20 读写热路径消除 hash 计算** 【原则·跨切片】【需决策·跨 flowquery/前端/迁移】 — 原则:**逐项热路径不做 hash**。清单(按粒度):
-  - **写·逐记录/逐 datagram(热,删)**:`sourceRecordID=sha256(sourceID,recordIndex)`(enrich.go:523,每记录)、`kafkaSourceID=sha256(topic,partition,offset)`(decode_adapter.go:293,每 datagram)。两者只是把 `(topic,partition,offset,record_index)` 压成 32B `record_id` —— 而这些 Kafka 坐标**已作为 `kafka_topic/partition/offset/record_index` 列存在 `flow_records`**,hash 是对已存数据的冗余压缩。→ 用 `(kafka_partition,kafka_offset,record_index)`[+topic] 作记录身份/去重键,删两处 sha256。**连带**(`record_id` 不止去重键):`flow_records` 排序/去重键(迁移,配合 F9 一起重排)、worker 写入(native/enrich 不再算)、`flowquery/detail.go` 的排序 tiebreaker+分页 cursor、前端 `flow-record-model.ts`、`reconciliation_scanner.go` 的 `GROUP BY record_id`。
-  - **读·逐查询(热,去)**:gateway `QueryHash`(见 F19)。
-  - **写·逐批(非热,摊薄~千记录/批;默认保留)**:`ingest_batch_id`/`checksum`(batch.go)、reconciliation checksum、VPN candidate token —— 这些是**完整性校验/身份**,不随流量逐条增长,属另一成本量级;删除会移除 receipt/对账完整性,除非另有决定否则保留。
-  - **待确认**:"读写不做 hash" 指**逐项热路径**(逐记录/逐查询),per-batch 完整性 checksum/receipt 保留?
+- [x] **F6 `src_ip`/`dst_ip` 维度基数爆炸** ✅ commit aa12f214（决策=rollup 期 top-N + _other）— rollup 查询包一层 rank-and-refold：按 estimated_bytes 对每组 src_ip/dst_ip 排名，留 top `rollupIPTopN`(默认1000)，长尾折进单个 `_other`（流量保留不丢）；非 IP 维 ip_rank=0 原样透传，`_generation` marker 不动。**注意**：存量桶需 repair（新 generation）才采纳。gated CH 证明 top-2 保留 + 尾部折 `_other`（含求和）。该措施在 Storage V2 中只用于策略到龄后生成的 1h archive；旧 180/400 天是 V1 DDL 历史，不是当前保留策略。
+- [x] **F7 汇总表排序键把 `dimension_kind` 排第 9 位** ✅ commit 7b1e2e10 — 迁移 010 用原子 `EXCHANGE TABLES` 换表，把 `flow_aggregate_1m/1h` 排序键重排为 `(tenant_id, bucket, dimension_kind, dimension_value, …)`（列集不变=ReplacingMergeTree 去重语义不变；列+codec 照 post-008 复刻），让强制的 `dimension_kind` 等值过滤能裁 granule。DDL/EXCHANGE 已对活 CH 26.3 验证；canonical 迁移集断言升到 10。Storage V2 延续该键服务策略到龄后的 1h archive，不再假定固定一年保留期。
+- [x] **F9 原始表换表重排** ✅ Storage V2 migration 011 — 维护窗口创建 staging、按自然坐标回填，以单条 multi-table `RENAME` 原子切换并保留 `_legacy_hash_v1`；不用不确定 ACK 后重试会反向交换的 `EXCHANGE TABLES`。新键以 tenant/hour 先裁时间，以 `(source_stream_id,partition,offset,index)` 收敛重放；高频维度裁剪继续由 typed query、时间窗和受控 projection/异步索引演进，不把所有高基维度塞进主键。
+- [x] **F19 同步查询请求指纹移除** ✅ Storage V2 — query gateway 不再 `json.Marshal + sha256 + hex` 每个查询。异步 export、operation job、迁移和发布物 checksum 是低频控制面完整性，不属于此热路径。
+- [x] **F20 Flow 热路径 hash 清零** ✅ Storage V2 — 删除每 datagram `sourceID`、每 record `record_id/dimension_fingerprint` 和逐记录吸收的 block checksum；事实身份改为 Kafka 自然坐标，receipt 改为每 message 的 count/counter，detail cursor/reconciliation/前端模型同步使用 source coordinate。剩余 SHA-256 仅位于 migration/artifact/version 校验、异步 export、operation job、VPN maintenance token 等冷路径，不得因名称相同误删。
 
 ## P2 · 正确性边角 · 资源 · 卫生
 

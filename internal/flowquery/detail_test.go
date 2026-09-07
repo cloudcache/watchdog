@@ -152,14 +152,17 @@ func TestCompileDetailBuildsParameterizedFinalQuery(t *testing.T) {
 	}
 	for _, required := range []string{
 		"FROM flow_records AS source FINAL",
-		"lower(hex(source.record_id)) AS record_id",
+		"source.source_stream_id",
+		"source.kafka_partition",
+		"source.kafka_offset",
+		"source.record_index",
 		"toString(source.src_ip) AS _source_ip",
 		"source.estimated_valid AS estimated_valid",
 		"toUInt64(source.raw_bytes) AS raw_bytes",
 		"(source.src_ip = toIPv6({ip:String}) OR source.dst_ip = toIPv6({ip:String}))",
 		"AND source.disposition = 'count'",
 		"AND source.business_direction IN ({detail_direction_0:String}, {detail_direction_1:String})",
-		"ORDER BY event_time DESC, record_id DESC",
+		"ORDER BY event_time DESC, source_stream_id DESC, kafka_partition DESC, kafka_offset DESC, record_index DESC",
 		"LIMIT {fetch_limit:UInt16}",
 	} {
 		if !strings.Contains(first.Query.Body, required) {
@@ -231,7 +234,7 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 		DetailFieldGeoVersion, DetailFieldRemoteISPID, DetailFieldRemoteGeoCityID, DetailFieldDimensionSnapshotID,
 	}
 	request.Filters = DetailFilters{Directions: []string{"out"}, Categories: []string{"overseas"}, TargetIDs: []string{"target-a"}}
-	cursor, err := EncodeDetailCursor(request.From.Add(30*time.Minute), strings.Repeat("01", 32))
+	cursor, err := EncodeDetailCursor(request.From.Add(30*time.Minute), detailCoordinate(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +251,7 @@ func TestCompileDetailSupplierViewMapsBaselineAndChecksFullScope(t *testing.T) {
 		"CAST(source.supplier_remote_asn_source AS String) AS remote_asn_source", "CAST(source.supplier_remote_country AS String) AS remote_country",
 		"CAST(source.supplier_geo_version AS String) AS geo_version", "toUInt64(source.supplier_remote_isp_id) AS remote_isp_id",
 		"CAST(source.supplier_remote_geo_city_id AS String) AS remote_geo_city_id", "min(source.fact_schema) OVER () AS _minimum_fact_schema",
-		"row_number() OVER (ORDER BY source.event_time DESC, source.record_id DESC) AS _scope_row",
+		"row_number() OVER (ORDER BY source.event_time DESC, source.source_stream_id DESC, source.kafka_partition DESC, source.kafka_offset DESC, source.record_index DESC) AS _scope_row",
 		"CAST((source.event_time < {cursor_time:DateTime64(3, 'UTC')}", "AS Bool) AS _scope_match",
 		"AND source.supplier_category IN ({detail_category_0:String})", "WHERE _scope_match OR _scope_row = 1",
 	} {
@@ -309,12 +312,12 @@ func TestCompileDetailUsesEndpointSpecificPredicatesForIPv4AndIPv6(t *testing.T)
 
 func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 	eventTime := time.Date(2026, 9, 5, 10, 11, 12, 345_000_000, time.UTC)
-	recordID := strings.Repeat("ab", 32)
-	cursor, err := EncodeDetailCursor(eventTime, recordID)
+	coordinate := SourceCoordinate{SourceStreamID: "stream-a", KafkaPartition: 3, KafkaOffset: 99, RecordIndex: 7}
+	cursor, err := EncodeDetailCursor(eventTime, coordinate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const golden = "v1.AAABoHEM_1mrq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urqw"
+	const golden = "v3.eyJmIjoiZXZlbnRfdGltZSIsImQiOiJkZXNjIiwidiI6IjIwMjYtMDktMDVUMTA6MTE6MTIuMzQ1WiIsInQiOjE3ODg2MDMwNzIzNDUsInMiOiJzdHJlYW0tYSIsInAiOjMsIm8iOjk5LCJpIjo3fQ"
 	if cursor != golden {
 		t.Fatalf("cursor=%q, want %q", cursor, golden)
 	}
@@ -324,8 +327,12 @@ func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(compiled.Query.Body, "record_id < unhex({cursor_record_id:String})") ||
-		queryParameter(compiled.Query, "cursor_time") != "'2026-09-05 10:11:12.345'" || queryParameter(compiled.Query, "cursor_record_id") != "'"+recordID+"'" {
+	if !strings.Contains(compiled.Query.Body, "source.record_index < {cursor_record_index:UInt32}") ||
+		queryParameter(compiled.Query, "cursor_time") != "'2026-09-05 10:11:12.345'" ||
+		queryParameter(compiled.Query, "cursor_source_stream_id") != "'stream-a'" ||
+		queryParameter(compiled.Query, "cursor_kafka_partition") != "'3'" ||
+		queryParameter(compiled.Query, "cursor_kafka_offset") != "'99'" ||
+		queryParameter(compiled.Query, "cursor_record_index") != "'7'" {
 		t.Fatalf("cursor boundary query=%s parameters=%+v", compiled.Query.Body, compiled.Query.Parameters)
 	}
 	request.Fields = []DetailField{DetailFieldCategory, DetailFieldRemoteASN}
@@ -334,11 +341,12 @@ func TestDetailCursorGoldenAndBoundaryCompilation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if queryParameter(changedMask.Query, "cursor_time") != queryParameter(compiled.Query, "cursor_time") ||
-		queryParameter(changedMask.Query, "cursor_record_id") != queryParameter(compiled.Query, "cursor_record_id") {
-		t.Fatal("a v1 cursor changed meaning when the field mask changed")
+		queryParameter(changedMask.Query, "cursor_record_index") != queryParameter(compiled.Query, "cursor_record_index") {
+		t.Fatal("a v3 cursor changed meaning when the field mask changed")
 	}
 	decoded, err := decodeDetailCursor(cursor)
-	if err != nil || !decoded.eventTime.Equal(eventTime) || string(decoded.recordID[:]) != string([]byte(strings.Repeat("\xab", 32))) {
+	if err != nil || !decoded.eventTime.Equal(eventTime) || decoded.sourceStreamID != coordinate.SourceStreamID ||
+		decoded.kafkaPartition != coordinate.KafkaPartition || decoded.kafkaOffset != coordinate.KafkaOffset || decoded.recordIndex != coordinate.RecordIndex {
 		t.Fatalf("decoded=%+v error=%v", decoded, err)
 	}
 }
@@ -351,15 +359,15 @@ func TestCompileDetailUsesWhitelistedStableSortAndBoundCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compiled.Sort != request.Sort || !strings.Contains(compiled.Query.Body, "ORDER BY raw_bytes ASC, event_time ASC, record_id ASC") {
+	if compiled.Sort != request.Sort || !strings.Contains(compiled.Query.Body, "ORDER BY raw_bytes ASC, event_time ASC, source_stream_id ASC, kafka_partition ASC, kafka_offset ASC, record_index ASC") {
 		t.Fatalf("compiled sort=%+v query=\n%s", compiled.Sort, compiled.Query.Body)
 	}
 	row := DetailRow{
-		EventTime: request.From.Add(30 * time.Minute), RecordID: strings.Repeat("ab", 32),
+		EventTime: request.From.Add(30 * time.Minute), SourceCoordinate: detailCoordinate(7),
 		Values: map[DetailField]any{DetailFieldRawBytes: uint64(123)},
 	}
 	cursor, err := encodeDetailCursorForRow(compiled, row)
-	if err != nil || !strings.HasPrefix(cursor, detailSortCursorPrefix) {
+	if err != nil || !strings.HasPrefix(cursor, detailCursorPrefix) {
 		t.Fatalf("cursor=%q error=%v", cursor, err)
 	}
 	request.Cursor = cursor
@@ -370,13 +378,13 @@ func TestCompileDetailUsesWhitelistedStableSortAndBoundCursor(t *testing.T) {
 	for _, required := range []string{
 		"toUInt64(source.raw_bytes) > {cursor_sort_value:UInt64}",
 		"source.event_time > {cursor_time:DateTime64(3, 'UTC')}",
-		"source.record_id > unhex({cursor_record_id:String})",
+		"source.record_index > {cursor_record_index:UInt32}",
 	} {
 		if !strings.Contains(next.Query.Body, required) {
 			t.Fatalf("next query missing %q:\n%s", required, next.Query.Body)
 		}
 	}
-	if queryParameter(next.Query, "cursor_sort_value") != "'123'" || queryParameter(next.Query, "cursor_record_id") != "'"+row.RecordID+"'" {
+	if queryParameter(next.Query, "cursor_sort_value") != "'123'" || queryParameter(next.Query, "cursor_record_index") != "'7'" {
 		t.Fatalf("cursor parameters=%+v", next.Query.Parameters)
 	}
 
@@ -474,9 +482,9 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 			request.Filters.TargetIDs = make([]string, maxDetailValuesPerFilter+1)
 		}},
 		{"cursor version", "cursor", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.Cursor = "v2.bad" }},
-		{"cursor payload", "cursor", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.Cursor = "v1.bad=" }},
+		{"cursor payload", "cursor", ErrorInvalid, func(_ *Scope, request *DetailRequest) { request.Cursor = "v3.bad=" }},
 		{"cursor range", "cursor", ErrorInvalid, func(_ *Scope, request *DetailRequest) {
-			cursor, err := EncodeDetailCursor(request.From.Add(-time.Millisecond), strings.Repeat("01", 32))
+			cursor, err := EncodeDetailCursor(request.From.Add(-time.Millisecond), detailCoordinate(1))
 			if err != nil {
 				panic(err)
 			}
@@ -499,17 +507,17 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 func TestEncodeDetailCursorRejectsInvalidComponents(t *testing.T) {
 	validTime := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
-		name string
-		time time.Time
-		id   string
+		name       string
+		time       time.Time
+		coordinate SourceCoordinate
 	}{
-		{"sub-millisecond", validTime.Add(time.Microsecond), strings.Repeat("01", 32)},
-		{"pre-epoch", time.UnixMilli(-1), strings.Repeat("01", 32)},
-		{"short id", validTime, "01"},
-		{"non-hex", validTime, strings.Repeat("zz", 32)},
+		{"sub-millisecond", validTime.Add(time.Microsecond), detailCoordinate(1)},
+		{"pre-epoch", time.UnixMilli(-1), detailCoordinate(1)},
+		{"empty stream", validTime, SourceCoordinate{}},
+		{"invalid stream", validTime, SourceCoordinate{SourceStreamID: "bad stream"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := EncodeDetailCursor(test.time, test.id); !IsRequestError(err, "cursor", ErrorInvalid) {
+			if _, err := EncodeDetailCursor(test.time, test.coordinate); !IsRequestError(err, "cursor", ErrorInvalid) {
 				t.Fatalf("error=%v", err)
 			}
 		})

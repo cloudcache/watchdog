@@ -45,7 +45,6 @@ func TestProductionCollectorAndWorkerFourProtocolEndToEnd(t *testing.T) {
 	t.Setenv("WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION", "1")
 	database := fmt.Sprintf("watchdog_flow_it_process_%d", time.Now().UnixNano())
 	ctx, native := openDataIntegrationClickHouse(t, database)
-	removeCorpusTTLs(t, ctx, native)
 
 	kafkaAddress, kafkaContainer := startProductionKafka(t)
 	brokers := []string{kafkaAddress}

@@ -388,7 +388,7 @@ func normalizeExportTask(task ExportTask) ExportTask {
 	if task.PeriodType == "" {
 		task.PeriodType = PeriodCustom
 	}
-	if task.Step == 0 {
+	if task.Step == 0 && task.DatasetKey != FlowTrafficDataset {
 		task.Step = 5 * time.Minute
 	}
 	if task.ValueMode == "" {

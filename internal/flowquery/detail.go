@@ -5,8 +5,6 @@ package flowquery
 
 import (
 	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -24,9 +22,7 @@ const (
 	maxDetailLimit            = 500
 	maxDetailValuesPerFilter  = 100
 	maxDetailFilterValues     = 256
-	detailCursorPrefix        = "v1."
-	detailCursorPayloadSize   = 8 + 32
-	detailSortCursorPrefix    = "v2."
+	detailCursorPrefix        = "v3."
 	minimumSupplierFactSchema = 2
 )
 
@@ -279,17 +275,23 @@ type DetailSort struct {
 }
 
 type detailCursorKey struct {
-	eventTime time.Time
-	recordID  [32]byte
-	sortValue any
+	eventTime      time.Time
+	sourceStreamID string
+	kafkaPartition uint32
+	kafkaOffset    uint64
+	recordIndex    uint32
+	sortValue      any
 }
 
 type detailSortCursorPayload struct {
-	Field     string `json:"f"`
-	Direction string `json:"d"`
-	Value     string `json:"v"`
-	EventMS   int64  `json:"t"`
-	RecordID  string `json:"r"`
+	Field          string `json:"f"`
+	Direction      string `json:"d"`
+	Value          string `json:"v"`
+	EventMS        int64  `json:"t"`
+	SourceStreamID string `json:"s"`
+	KafkaPartition uint32 `json:"p"`
+	KafkaOffset    uint64 `json:"o"`
+	RecordIndex    uint32 `json:"i"`
 }
 
 type CompiledDetail struct {
@@ -434,7 +436,10 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		cursor = &decoded
 		parameters = append(parameters,
 			stringParameter("cursor_time", formatDateTime64(decoded.eventTime)),
-			stringParameter("cursor_record_id", hex.EncodeToString(decoded.recordID[:])),
+			stringParameter("cursor_source_stream_id", decoded.sourceStreamID),
+			uintParameter("cursor_kafka_partition", uint64(decoded.kafkaPartition)),
+			uintParameter("cursor_kafka_offset", decoded.kafkaOffset),
+			uintParameter("cursor_record_index", uint64(decoded.recordIndex)),
 		)
 		if sortField != "event_time" {
 			parameters = append(parameters, detailSortCursorParameter(sortSpec, decoded.sortValue))
@@ -451,8 +456,8 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	}
 	sortExpression := detailSortExpression(sortSpec)
 	sortAlias := sortField
-	orderBy := detailOrderBy(sortAlias, sortDirection, "event_time", "record_id")
-	sourceOrderBy := detailOrderBy(sortExpression, sortDirection, "source.event_time", "source.record_id")
+	orderBy := detailOrderBy(sortAlias, sortDirection, "event_time", "")
+	sourceOrderBy := detailOrderBy(sortExpression, sortDirection, "source.event_time", "source.")
 	cursorCondition := ""
 	if cursor != nil {
 		cursorCondition = "AND " + detailCursorCondition(sortExpression, sortDirection)
@@ -467,7 +472,7 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 		if cursor != nil {
 			cursorExpression = detailCursorCondition(sortExpression, sortDirection)
 		}
-		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, sourceOrderBy, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "), orderByForSupplier(orderBy))
+		body = fmt.Sprintf(supplierDetailQuerySQL, strings.Join(selectAliases, ",\n"), strings.Join(selectFields, ",\n"), cursorExpression, sourceOrderBy, visibilityCondition, matchCondition, strings.Join(conditions, "\n  "), detailOrderBy(sortAlias, sortDirection, "event_time", "_"))
 	} else {
 		conditions = append(conditions, cursorCondition)
 		body = fmt.Sprintf(detailQuerySQL, strings.Join(selectFields, ",\n"), visibilityCondition, matchCondition, strings.Join(conditions, "\n  "), orderBy)
@@ -537,16 +542,13 @@ func detailSortExpression(spec detailFieldSpec) string {
 	return detailFieldExpression(spec)
 }
 
-func detailOrderBy(primary, direction, eventTime, recordID string) string {
+func detailOrderBy(primary, direction, eventTime, coordinatePrefix string) string {
 	upper := strings.ToUpper(direction)
+	coordinate := fmt.Sprintf("%[1]ssource_stream_id %[2]s, %[1]skafka_partition %[2]s, %[1]skafka_offset %[2]s, %[1]srecord_index %[2]s", coordinatePrefix, upper)
 	if primary == eventTime || primary == "event_time" && eventTime == "source.event_time" {
-		return fmt.Sprintf("%s %s, %s %s", eventTime, upper, recordID, upper)
+		return fmt.Sprintf("%s %s, %s", eventTime, upper, coordinate)
 	}
-	return fmt.Sprintf("%s %s, %s %s, %s %s", primary, upper, eventTime, upper, recordID, upper)
-}
-
-func orderByForSupplier(orderBy string) string {
-	return "_scope_match DESC, " + strings.ReplaceAll(orderBy, "record_id", "_record_id")
+	return fmt.Sprintf("%s %s, %s %s, %s", primary, upper, eventTime, upper, coordinate)
 }
 
 func detailCursorCondition(sortExpression, direction string) string {
@@ -554,8 +556,9 @@ func detailCursorCondition(sortExpression, direction string) string {
 	if direction == "asc" {
 		operator = ">"
 	}
+	coordinateCondition := detailCoordinateCursorCondition(operator)
 	if sortExpression == "source.event_time" {
-		return fmt.Sprintf("(source.event_time %[1]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id %[1]s unhex({cursor_record_id:String})))", operator)
+		return fmt.Sprintf("(source.event_time %[1]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND %[2]s))", operator, coordinateCondition)
 	}
 	sortPlaceholder := "{cursor_sort_value:String}"
 	if strings.Contains(sortExpression, "toUInt64(") {
@@ -566,7 +569,16 @@ func detailCursorCondition(sortExpression, direction string) string {
 		sortExpression = "toUInt8(" + sortExpression + ")"
 		sortPlaceholder = "{cursor_sort_value:UInt8}"
 	}
-	return fmt.Sprintf("(%[1]s %[2]s %[3]s OR (%[1]s = %[3]s AND (source.event_time %[2]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND source.record_id %[2]s unhex({cursor_record_id:String})))))", sortExpression, operator, sortPlaceholder)
+	return fmt.Sprintf("(%[1]s %[2]s %[3]s OR (%[1]s = %[3]s AND (source.event_time %[2]s {cursor_time:DateTime64(3, 'UTC')} OR (source.event_time = {cursor_time:DateTime64(3, 'UTC')} AND %[4]s))))", sortExpression, operator, sortPlaceholder, coordinateCondition)
+}
+
+func detailCoordinateCursorCondition(operator string) string {
+	return fmt.Sprintf(`(source.source_stream_id %[1]s {cursor_source_stream_id:String}
+ OR (source.source_stream_id = {cursor_source_stream_id:String} AND
+   (source.kafka_partition %[1]s {cursor_kafka_partition:UInt32}
+    OR (source.kafka_partition = {cursor_kafka_partition:UInt32} AND
+      (source.kafka_offset %[1]s {cursor_kafka_offset:UInt64}
+       OR (source.kafka_offset = {cursor_kafka_offset:UInt64} AND source.record_index %[1]s {cursor_record_index:UInt32}))))))`, operator)
 }
 
 func detailSortCursorParameter(spec detailFieldSpec, value any) proto.Parameter {
@@ -726,50 +738,22 @@ func detailFieldExpression(spec detailFieldSpec) string {
 	}
 }
 
-func EncodeDetailCursor(eventTime time.Time, recordIDHex string) (string, error) {
-	if eventTime.IsZero() || eventTime.UnixMilli() < 0 || eventTime.Nanosecond()%int(time.Millisecond) != 0 {
-		return "", requestError("cursor", ErrorInvalid, "cursor event time must be millisecond-aligned")
-	}
-	recordID, err := hex.DecodeString(recordIDHex)
-	if err != nil || len(recordID) != 32 {
-		return "", requestError("cursor", ErrorInvalid, "cursor record id must be 64 hexadecimal characters")
-	}
-	payload := make([]byte, detailCursorPayloadSize)
-	binary.BigEndian.PutUint64(payload[:8], uint64(eventTime.UTC().UnixMilli()))
-	copy(payload[8:], recordID)
-	return detailCursorPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+func EncodeDetailCursor(eventTime time.Time, coordinate SourceCoordinate) (string, error) {
+	return encodeDetailCursor(DetailSort{Field: "event_time", Direction: "desc"},
+		detailFieldSpec{field: DetailField("event_time"), column: "event_time", kind: detailKindTime},
+		eventTime, eventTime, coordinate)
 }
 
 func decodeDetailCursor(value string) (detailCursorKey, error) {
-	if !strings.HasPrefix(value, detailCursorPrefix) {
-		return detailCursorKey{}, fmt.Errorf("cursor version is unsupported")
-	}
-	encoded := strings.TrimPrefix(value, detailCursorPrefix)
-	payload, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || len(payload) != detailCursorPayloadSize || base64.RawURLEncoding.EncodeToString(payload) != encoded {
-		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
-	}
-	millis := binary.BigEndian.Uint64(payload[:8])
-	if millis > uint64(^uint64(0)>>1) {
-		return detailCursorKey{}, fmt.Errorf("cursor time is invalid")
-	}
-	key := detailCursorKey{eventTime: time.UnixMilli(int64(millis)).UTC()}
-	key.sortValue = key.eventTime
-	copy(key.recordID[:], payload[8:])
-	return key, nil
+	return decodeDetailCursorForSort(value, DetailSort{Field: "event_time", Direction: "desc"},
+		detailFieldSpec{field: DetailField("event_time"), column: "event_time", kind: detailKindTime})
 }
 
 func decodeDetailCursorForSort(value string, sort DetailSort, spec detailFieldSpec) (detailCursorKey, error) {
-	if strings.HasPrefix(value, detailCursorPrefix) {
-		if sort.Field != "event_time" || sort.Direction != "desc" {
-			return detailCursorKey{}, fmt.Errorf("v1 cursor only supports event_time descending sort")
-		}
-		return decodeDetailCursor(value)
+	if !strings.HasPrefix(value, detailCursorPrefix) {
+		return detailCursorKey{}, fmt.Errorf("cursor version is unsupported; request a fresh page after the storage V2 upgrade")
 	}
-	if !strings.HasPrefix(value, detailSortCursorPrefix) {
-		return detailCursorKey{}, fmt.Errorf("cursor version is unsupported")
-	}
-	encoded := strings.TrimPrefix(value, detailSortCursorPrefix)
+	encoded := strings.TrimPrefix(value, detailCursorPrefix)
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || base64.RawURLEncoding.EncodeToString(payloadBytes) != encoded {
 		return detailCursorKey{}, fmt.Errorf("cursor payload is malformed")
@@ -793,23 +777,25 @@ func decodeDetailCursorForSort(value string, sort DetailSort, spec detailFieldSp
 	if payload.EventMS < 0 {
 		return detailCursorKey{}, fmt.Errorf("cursor time is invalid")
 	}
-	recordID, err := hex.DecodeString(payload.RecordID)
-	if err != nil || len(recordID) != 32 || hex.EncodeToString(recordID) != payload.RecordID {
-		return detailCursorKey{}, fmt.Errorf("cursor record id is invalid")
+	coordinate := SourceCoordinate{
+		SourceStreamID: payload.SourceStreamID, KafkaPartition: payload.KafkaPartition,
+		KafkaOffset: payload.KafkaOffset, RecordIndex: payload.RecordIndex,
+	}
+	if err := coordinate.validate(); err != nil {
+		return detailCursorKey{}, fmt.Errorf("cursor source coordinate is invalid: %w", err)
 	}
 	sortValue, err := parseDetailCursorValue(spec, payload.Value)
 	if err != nil {
 		return detailCursorKey{}, err
 	}
-	key := detailCursorKey{eventTime: time.UnixMilli(payload.EventMS).UTC(), sortValue: sortValue}
-	copy(key.recordID[:], recordID)
-	return key, nil
+	return detailCursorKey{
+		eventTime: time.UnixMilli(payload.EventMS).UTC(), sortValue: sortValue,
+		sourceStreamID: coordinate.SourceStreamID, kafkaPartition: coordinate.KafkaPartition,
+		kafkaOffset: coordinate.KafkaOffset, recordIndex: coordinate.RecordIndex,
+	}, nil
 }
 
 func encodeDetailCursorForRow(compiled CompiledDetail, row DetailRow) (string, error) {
-	if compiled.Sort.Field == "event_time" && compiled.Sort.Direction == "desc" {
-		return EncodeDetailCursor(row.EventTime, row.RecordID)
-	}
 	spec, _, _, err := normalizeDetailSort(compiled.View, compiled.Fields, compiled.Sort)
 	if err != nil {
 		return "", err
@@ -822,26 +808,31 @@ func encodeDetailCursorForRow(compiled CompiledDetail, row DetailRow) (string, e
 			return "", requestError("cursor", ErrorInvalid, "sort field value is missing from the result row")
 		}
 	}
+	return encodeDetailCursor(compiled.Sort, spec, row.EventTime, value, row.SourceCoordinate)
+}
+
+func encodeDetailCursor(sort DetailSort, spec detailFieldSpec, eventTime time.Time, value any, coordinate SourceCoordinate) (string, error) {
 	encodedValue, err := formatDetailCursorValue(spec, value)
 	if err != nil {
 		return "", err
 	}
-	if row.EventTime.IsZero() || row.EventTime.UnixMilli() < 0 || row.EventTime.Nanosecond()%int(time.Millisecond) != 0 {
+	if eventTime.IsZero() || eventTime.UnixMilli() < 0 || eventTime.Nanosecond()%int(time.Millisecond) != 0 {
 		return "", requestError("cursor", ErrorInvalid, "cursor event time must be millisecond-aligned")
 	}
-	recordID, err := hex.DecodeString(row.RecordID)
-	if err != nil || len(recordID) != 32 || hex.EncodeToString(recordID) != row.RecordID {
-		return "", requestError("cursor", ErrorInvalid, "cursor record id must be canonical lowercase hexadecimal")
+	if err := coordinate.validate(); err != nil {
+		return "", requestError("cursor", ErrorInvalid, "cursor source coordinate is invalid: "+err.Error())
 	}
 	payload := detailSortCursorPayload{
-		Field: compiled.Sort.Field, Direction: compiled.Sort.Direction, Value: encodedValue,
-		EventMS: row.EventTime.UTC().UnixMilli(), RecordID: row.RecordID,
+		Field: sort.Field, Direction: sort.Direction, Value: encodedValue,
+		EventMS: eventTime.UTC().UnixMilli(), SourceStreamID: coordinate.SourceStreamID,
+		KafkaPartition: coordinate.KafkaPartition, KafkaOffset: coordinate.KafkaOffset,
+		RecordIndex: coordinate.RecordIndex,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", requestError("cursor", ErrorInvalid, "cursor payload cannot be encoded")
 	}
-	return detailSortCursorPrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
+	return detailCursorPrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func formatDetailCursorValue(spec detailFieldSpec, value any) (string, error) {
@@ -908,7 +899,10 @@ func formatDateTime64(value time.Time) string {
 
 const detailQuerySQL = `SELECT
   source.event_time,
-  lower(hex(source.record_id)) AS record_id,
+  CAST(source.source_stream_id AS String) AS source_stream_id,
+  source.kafka_partition,
+  source.kafka_offset,
+  source.record_index,
   toString(source.src_ip) AS _source_ip,
   toString(source.dst_ip) AS _destination_ip,
 %s
@@ -927,7 +921,10 @@ LIMIT {fetch_limit:UInt16}`
 // cannot bypass old fact_schema=1 evidence with a forged/reused cursor.
 const supplierDetailQuerySQL = `SELECT
   event_time,
-  lower(hex(_record_id)) AS record_id,
+  CAST(_source_stream_id AS String) AS source_stream_id,
+  _kafka_partition AS kafka_partition,
+  _kafka_offset AS kafka_offset,
+  _record_index AS record_index,
   toString(_source_ip) AS _source_ip,
   toString(_destination_ip) AS _destination_ip,
 %s,
@@ -936,7 +933,10 @@ const supplierDetailQuerySQL = `SELECT
 FROM (
   SELECT
     source.event_time,
-    source.record_id AS _record_id,
+    source.source_stream_id AS _source_stream_id,
+    source.kafka_partition AS _kafka_partition,
+    source.kafka_offset AS _kafka_offset,
+    source.record_index AS _record_index,
     source.src_ip AS _source_ip,
     source.dst_ip AS _destination_ip,
 %s,

@@ -32,6 +32,19 @@ type RollupRequest struct {
 	GeneratedAt time.Time
 }
 
+// StorageCounters is the conservation tuple used when a sealed UTC day is
+// copied from raw records into the 1h archive. It intentionally contains no
+// content hash: record count plus byte/packet counters detect loss, duplicate
+// insertion, and counter drift without per-record CPU on the ingest path.
+type StorageCounters struct {
+	RecordCount           uint64
+	RawBytes              uint64
+	RawPackets            uint64
+	EstimatedBytes        uint64
+	EstimatedPackets      uint64
+	EstimatedValidRecords uint64
+}
+
 type RollupRunner struct {
 	executor queryExecutor
 	stats    [2]rollupCounters
@@ -247,6 +260,105 @@ func NewRollupRunner(native *NativeInserter) (*RollupRunner, error) {
 	return &RollupRunner{executor: native.executor, now: time.Now}, nil
 }
 
+// DayStorageCounters compares the raw source with the latest complete
+// generation of each 1h archive bucket in one UTC day. _generation marker rows
+// make an empty hour a complete hour; the archive side counts only public
+// dimension_kind='total' rows from each hour's greatest generation.
+func (r *RollupRunner) DayStorageCounters(ctx context.Context, tenantID string, sourceDate time.Time) (StorageCounters, StorageCounters, error) {
+	if r == nil || r.executor == nil {
+		return StorageCounters{}, StorageCounters{}, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	day := sourceDate.UTC()
+	if !validRollupTenant(tenantID) || day.IsZero() || day != day.Truncate(24*time.Hour) {
+		return StorageCounters{}, StorageCounters{}, Permanent(errors.New("storage counter tenant and UTC-aligned source date are required"))
+	}
+	end := day.Add(24 * time.Hour)
+	params := ch.Parameters(map[string]any{
+		"tenant": tenantID,
+		"start":  day.Format("2006-01-02 15:04:05"),
+		"end":    end.Format("2006-01-02 15:04:05"),
+	})
+	raw, err := r.storageCounters(ctx, ch.Query{
+		Body: `SELECT
+  count() AS record_count,
+  sum(raw_bytes) AS raw_bytes,
+  sum(raw_packets) AS raw_packets,
+  sumIf(estimated_bytes, estimated_valid) AS estimated_bytes,
+  sumIf(estimated_packets, estimated_valid) AS estimated_packets,
+  countIf(estimated_valid) AS estimated_valid_records
+FROM flow_records FINAL
+WHERE tenant_id = {tenant:String}
+  AND event_time >= {start:DateTime('UTC')}
+  AND event_time < {end:DateTime('UTC')}
+  AND disposition = 'count'`,
+		Parameters: params,
+	})
+	if err != nil {
+		return StorageCounters{}, StorageCounters{}, fmt.Errorf("read raw UTC-day counters: %w", err)
+	}
+	archive, err := r.storageCounters(ctx, ch.Query{
+		Body: `SELECT
+  sum(received_records) AS record_count,
+  sum(raw_bytes) AS raw_bytes,
+  sum(raw_packets) AS raw_packets,
+  sum(estimated_bytes) AS estimated_bytes,
+  sum(estimated_packets) AS estimated_packets,
+  toUInt64(sum(received_records) - sum(unknown_sampling_records)) AS estimated_valid_records
+FROM flow_aggregate_1h FINAL
+INNER JOIN (
+  SELECT bucket, max(generation) AS generation
+  FROM flow_aggregate_1h FINAL
+  WHERE tenant_id = {tenant:String}
+    AND bucket >= {start:DateTime('UTC')}
+    AND bucket < {end:DateTime('UTC')}
+    AND dimension_kind = '_generation'
+  GROUP BY bucket
+) AS latest USING (bucket, generation)
+WHERE tenant_id = {tenant:String}
+  AND bucket >= {start:DateTime('UTC')}
+  AND bucket < {end:DateTime('UTC')}
+  AND dimension_kind = 'total'`,
+		Parameters: params,
+	})
+	if err != nil {
+		return StorageCounters{}, StorageCounters{}, fmt.Errorf("read 1h archive UTC-day counters: %w", err)
+	}
+	return raw, archive, nil
+}
+
+func (r *RollupRunner) storageCounters(ctx context.Context, query ch.Query) (StorageCounters, error) {
+	var recordCount, rawBytes, rawPackets, estimatedBytes, estimatedPackets, estimatedValid proto.ColUInt64
+	var result StorageCounters
+	seen := false
+	query.Result = proto.Results{
+		{Name: "record_count", Data: &recordCount},
+		{Name: "raw_bytes", Data: &rawBytes},
+		{Name: "raw_packets", Data: &rawPackets},
+		{Name: "estimated_bytes", Data: &estimatedBytes},
+		{Name: "estimated_packets", Data: &estimatedPackets},
+		{Name: "estimated_valid_records", Data: &estimatedValid},
+	}
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if block.Rows == 0 {
+			return nil
+		}
+		if seen || block.Rows != 1 || recordCount.Rows() != 1 || rawBytes.Rows() != 1 || rawPackets.Rows() != 1 ||
+			estimatedBytes.Rows() != 1 || estimatedPackets.Rows() != 1 || estimatedValid.Rows() != 1 {
+			return Permanent(errors.New("ClickHouse storage counter query returned an invalid row count"))
+		}
+		seen = true
+		result = StorageCounters{recordCount[0], rawBytes[0], rawPackets[0], estimatedBytes[0], estimatedPackets[0], estimatedValid[0]}
+		return nil
+	}
+	if err := r.executor.Do(ctx, query); err != nil {
+		return StorageCounters{}, classifyClickHouseError(err)
+	}
+	if !seen {
+		return StorageCounters{}, Permanent(errors.New("ClickHouse storage counter query returned no result"))
+	}
+	return result, nil
+}
+
 // Run rebuilds one closed tenant bucket in one INSERT SELECT. Every public
 // dimension and an internal generation marker are inserted atomically. A
 // repair reuses the same request, or supplies a greater generation after late
@@ -403,9 +515,9 @@ func ValidateRollupRequest(request RollupRequest) error {
 
 // rollupIPTopN caps how many distinct src_ip/dst_ip values a rollup group keeps
 // (ranked by estimated_bytes); the long tail beyond it is folded into a single
-// _other bucket. These per-IP dimensions otherwise materialize at ~raw
-// cardinality into the 180/400-day aggregate tables. It is a package var so a
-// test can lower it; wire it to config when per-tenant tuning is needed.
+// _other bucket. These per-IP dimensions otherwise materialize at nearly raw
+// cardinality in every policy-aged archive generation. It is a package var so
+// a test can lower it; wire it to config when per-tenant tuning is needed.
 var rollupIPTopN uint32 = 1000
 
 func buildRollupQuery(request RollupRequest) (ch.Query, error) {

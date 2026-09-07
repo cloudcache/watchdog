@@ -48,6 +48,13 @@ const (
 	defaultFlowRollupLease             = 2 * time.Minute
 	defaultFlowRollupMaxAttempts       = uint32(5)
 	defaultFlowRollupRetryBase         = 30 * time.Second
+	defaultFlowStorageScanInterval     = 5 * time.Minute
+	defaultFlowStoragePolicyScanLimit  = 500
+	defaultFlowStoragePartitionBudget  = 100
+	defaultFlowStorageConcurrency      = 2
+	defaultFlowStorageLease            = 30 * time.Minute
+	defaultFlowStorageMaxAttempts      = uint32(5)
+	defaultFlowStorageRetryBase        = time.Minute
 	defaultAddressLibraryDir           = "address-artifacts"
 	defaultAddressLibraryBatchSize     = 1_000
 	defaultAddressLibraryWorkers       = 1
@@ -67,6 +74,7 @@ type BackendConfig struct {
 	SNMPCollector   SNMPCollectorConfig   `yaml:"snmp_collector"`
 	FlowGeo         FlowGeoConfig         `yaml:"flow_geo"`
 	FlowRollup      FlowRollupConfig      `yaml:"flow_rollup"`
+	FlowStorage     FlowStorageConfig     `yaml:"flow_storage"`
 	QueryGateway    QueryGatewayConfig    `yaml:"query_gateway"`
 
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
@@ -132,6 +140,21 @@ type FlowRollupConfig struct {
 	ClickHouseCertFile         string        `yaml:"clickhouse_tls_cert"`
 	ClickHouseKeyFile          string        `yaml:"clickhouse_tls_key"`
 	ClickHouseServerName       string        `yaml:"clickhouse_tls_server_name"`
+}
+
+// FlowStorageConfig controls only the sealed-day lifecycle. ClickHouse
+// connectivity remains in flow_rollup during the compatibility window so the
+// hub has one pool and one secret source; lifecycle policy values themselves
+// are tenant-owned immutable revisions in MySQL, not static config.
+type FlowStorageConfig struct {
+	Enabled              bool          `yaml:"enabled"`
+	ScanInterval         time.Duration `yaml:"scan_interval"`
+	MaxPoliciesPerScan   int           `yaml:"max_policies_per_scan"`
+	MaxPartitionsPerScan int           `yaml:"max_partitions_per_scan"`
+	WorkerConcurrency    int           `yaml:"worker_concurrency"`
+	LeaseFor             time.Duration `yaml:"lease_for"`
+	MaxAttempts          uint32        `yaml:"max_attempts"`
+	RetryBase            time.Duration `yaml:"retry_base"`
 }
 
 type RemoteCollectorPrincipalProviderConfig struct {
@@ -325,6 +348,11 @@ func defaultBackendConfig() BackendConfig {
 			ClickHouseDialTimeout: 3 * time.Second, ClickHouseReadTimeout: 90 * time.Second,
 			ClickHouseOperationTimeout: 5 * time.Minute,
 		},
+		FlowStorage: FlowStorageConfig{
+			ScanInterval: defaultFlowStorageScanInterval, MaxPoliciesPerScan: defaultFlowStoragePolicyScanLimit,
+			MaxPartitionsPerScan: defaultFlowStoragePartitionBudget, WorkerConcurrency: defaultFlowStorageConcurrency,
+			LeaseFor: defaultFlowStorageLease, MaxAttempts: defaultFlowStorageMaxAttempts, RetryBase: defaultFlowStorageRetryBase,
+		},
 
 		AggregateGraph: AggregateGraphConfig{
 			RollupInterval: defaultAggregateGraphRollupInterval,
@@ -399,6 +427,30 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.MetricsScrape.AllowedCIDRs = getEnvCommaList("WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS", cfg.MetricsScrape.AllowedCIDRs)
 	cfg.FlowGeo.Path = getEnv("WATCHDOG_FLOW_GEO_PATH", cfg.FlowGeo.Path)
 	if cfg.FlowRollup.Enabled, err = getEnvBool("WATCHDOG_FLOW_ROLLUP_ENABLED", cfg.FlowRollup.Enabled); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.Enabled, err = getEnvBool("WATCHDOG_FLOW_STORAGE_ENABLED", cfg.FlowStorage.Enabled); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.ScanInterval, err = getEnvDuration("WATCHDOG_FLOW_STORAGE_SCAN_INTERVAL", cfg.FlowStorage.ScanInterval); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.MaxPoliciesPerScan, err = getEnvInt("WATCHDOG_FLOW_STORAGE_MAX_POLICIES_PER_SCAN", cfg.FlowStorage.MaxPoliciesPerScan, 1); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.MaxPartitionsPerScan, err = getEnvInt("WATCHDOG_FLOW_STORAGE_MAX_PARTITIONS_PER_SCAN", cfg.FlowStorage.MaxPartitionsPerScan, 1); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.WorkerConcurrency, err = getEnvInt("WATCHDOG_FLOW_STORAGE_WORKER_CONCURRENCY", cfg.FlowStorage.WorkerConcurrency, 1); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.LeaseFor, err = getEnvDuration("WATCHDOG_FLOW_STORAGE_LEASE_FOR", cfg.FlowStorage.LeaseFor); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.MaxAttempts, err = getEnvUint32("WATCHDOG_FLOW_STORAGE_MAX_ATTEMPTS", cfg.FlowStorage.MaxAttempts); err != nil {
+		return err
+	}
+	if cfg.FlowStorage.RetryBase, err = getEnvDuration("WATCHDOG_FLOW_STORAGE_RETRY_BASE", cfg.FlowStorage.RetryBase); err != nil {
 		return err
 	}
 	if cfg.FlowRollup.ScanInterval, err = getEnvDuration("WATCHDOG_FLOW_ROLLUP_SCAN_INTERVAL", cfg.FlowRollup.ScanInterval); err != nil {
@@ -776,8 +828,14 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if err := validateQueryGatewayConfig(cfg.QueryGateway); err != nil {
 		return err
 	}
-	if err := validateFlowRollupConfig(cfg.FlowRollup, cfg.FlowRollup.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled)); err != nil {
+	if err := validateFlowRollupConfig(cfg.FlowRollup, cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled)); err != nil {
 		return err
+	}
+	if err := validateFlowStorageConfig(cfg.FlowStorage); err != nil {
+		return err
+	}
+	if cfg.FlowRollup.Enabled && cfg.FlowStorage.Enabled {
+		return errors.New("flow_rollup and flow_storage cannot be enabled together; complete the Storage V2 maintenance-window cutover first")
 	}
 	if cfg.CollectorPrincipalProvider.Enabled {
 		if err := validateRemoteCollectorPrincipalProviderConfig(cfg.CollectorPrincipalProvider); err != nil {
@@ -885,6 +943,16 @@ func validateFlowRollupConfig(cfg FlowRollupConfig, requireClickHouse bool) erro
 	}
 	if !cfg.ClickHouseTLS && (cfg.ClickHouseCAFile != "" || cfg.ClickHouseCertFile != "" || cfg.ClickHouseKeyFile != "" || cfg.ClickHouseServerName != "") {
 		return errors.New("flow_rollup ClickHouse TLS parameters require TLS to be enabled")
+	}
+	return nil
+}
+
+func validateFlowStorageConfig(cfg FlowStorageConfig) error {
+	if cfg.ScanInterval <= 0 || cfg.MaxPoliciesPerScan < 1 || cfg.MaxPoliciesPerScan > 10_000 ||
+		cfg.MaxPartitionsPerScan < 1 || cfg.MaxPartitionsPerScan > 100_000 ||
+		cfg.WorkerConcurrency < 1 || cfg.WorkerConcurrency > 128 || cfg.LeaseFor < time.Minute ||
+		cfg.MaxAttempts < 1 || cfg.MaxAttempts > 100 || cfg.RetryBase <= 0 {
+		return errors.New("flow_storage scan, budget, concurrency, lease, and retry values are invalid")
 	}
 	return nil
 }

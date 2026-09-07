@@ -32,11 +32,12 @@ type flowQueryReadiness interface {
 // Tenant, time range and value layer always come from the authenticated
 // envelope; clients cannot smuggle them through provider parameters.
 type ClickHouseFlowQueryProvider struct {
-	Runner      flowAggregateRunner
-	JointRunner flowJointRunner
-	Readiness   flowQueryReadiness
-	Network     NetworkRepository
-	Now         func() time.Time
+	Runner           flowAggregateRunner
+	JointRunner      flowJointRunner
+	Readiness        flowQueryReadiness
+	Network          NetworkRepository
+	StorageLifecycle FlowStorageArchiveBoundaryRepository
+	Now              func() time.Time
 }
 
 type flowAggregateQueryParameters struct {
@@ -96,12 +97,16 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
 	}
-	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, flowquery.Request{
+	flowRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval, Metric: parameters.Metric,
 		Dimension: parameters.Dimension, Filters: parameters.Filters, View: view,
 		Filter: parameters.Filter,
 		TopN:   parameters.TopN, IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
-	}, p.now())
+	}
+	if err := p.applyStorageV2Boundary(ctx, request.TenantID, plan, &flowRequest); err != nil {
+		return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", err)
+	}
+	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, flowRequest, p.now())
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
 	}
@@ -140,12 +145,32 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if result.MixedVersions {
 		completeness.Warnings = append(completeness.Warnings, "result contains multiple dimension or classification versions")
 	}
+	if compiled.UsesRawFacts {
+		completeness.Warnings = append(completeness.Warnings, "the raw portion is current data; Kafka receipt coverage is reported separately from query completeness")
+	}
 	return QueryProviderResult{
 		Data: data, Unit: result.Metric.Unit, Timezone: compiled.Timezone,
 		StepSeconds: plan.StepSeconds,
 		AsOf:        flowResultAsOf(result.Points, p.now()), Versions: flowResultVersions(result.Points),
 		Completeness: completeness,
 	}, nil
+}
+
+func (p ClickHouseFlowQueryProvider) applyStorageV2Boundary(ctx context.Context, tenantID ID, plan flowquery.AggregatePlan, request *flowquery.Request) error {
+	if p.StorageLifecycle == nil || request == nil {
+		return nil
+	}
+	request.StorageV2 = true
+	request.ArchiveThrough = plan.EffectiveFrom
+	if plan.Source != flowquery.BucketOneHour {
+		return nil
+	}
+	boundary, err := p.StorageLifecycle.FlowStorageArchiveThrough(ctx, tenantID, plan.EffectiveFrom, plan.EffectiveTo)
+	if err != nil {
+		return err
+	}
+	request.ArchiveThrough = boundary
+	return nil
 }
 
 func (p ClickHouseFlowQueryProvider) queryJoint(

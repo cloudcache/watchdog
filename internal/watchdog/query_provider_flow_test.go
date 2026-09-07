@@ -37,6 +37,15 @@ type flowReadinessStub struct{ err error }
 
 func (s flowReadinessStub) Ready(context.Context) error { return s.err }
 
+type flowStorageBoundaryStub struct {
+	boundary time.Time
+	err      error
+}
+
+func (stub flowStorageBoundaryStub) FlowStorageArchiveThrough(context.Context, ID, time.Time, time.Time) (time.Time, error) {
+	return stub.boundary, stub.err
+}
+
 func TestClickHouseFlowQueryProviderCompilesAuthenticatedEnvelopeAndMapsCompleteness(t *testing.T) {
 	from := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
@@ -125,6 +134,35 @@ func TestClickHouseFlowQueryProviderAutomaticallyPlansDisplayDensityAndSource(t 
 	}
 	if decoded.Plan == nil || decoded.Plan.Source != flowquery.BucketOneHour || decoded.Plan.StepSeconds != 3600 || decoded.Plan.TargetPoints != 300 {
 		t.Fatalf("response plan=%+v", decoded.Plan)
+	}
+}
+
+func TestClickHouseFlowQueryProviderAppliesVerifiedStorageBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	boundary := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	runner := &flowAggregateRunnerStub{result: flowquery.Result{
+		Metric:             flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimension:          flowquery.DimensionDefinition{Kind: flowquery.DimensionCategory, Additive: true},
+		RollupCompleteness: flowquery.RollupCompleteness{ExpectedBuckets: 168, CoveredBuckets: 168, Ratio: 1, Complete: true},
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: runner, Readiness: flowReadinessStub{}, StorageLifecycle: flowStorageBoundaryStub{boundary: boundary},
+		Now: func() time.Time { return now },
+	}
+	result, err := provider.Query(context.Background(), QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: now.Add(-7 * 24 * time.Hour), To: now,
+		Limit: 10_000, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{"metric":"estimated_bps","dimension":"category","top_n":3,"include_other":true,"target_points":300}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runner.compiled.UsesRawFacts || !runner.compiled.ArchiveThrough.Equal(boundary) ||
+		!strings.Contains(runner.compiled.Query.Body, "FROM flow_records FINAL") {
+		t.Fatalf("compiled=%+v", runner.compiled)
+	}
+	if len(result.Completeness.Warnings) != 1 || !strings.Contains(result.Completeness.Warnings[0], "raw portion") {
+		t.Fatalf("completeness=%+v", result.Completeness)
 	}
 }
 

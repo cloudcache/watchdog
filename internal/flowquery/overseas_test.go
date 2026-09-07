@@ -94,6 +94,34 @@ func TestCompileOverseasSupportsRegionHourlyAndNonRateMetric(t *testing.T) {
 	}
 }
 
+func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T) {
+	request := validOverseasRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.StorageV2 = true
+	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	compiled, err := CompileOverseas(Scope{TenantID: "tenant-a"}, request, overseasNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"FROM flow_records FINAL",
+		"event_time >= {archive_through:DateTime('UTC')}",
+		"SELECT * FROM archive_selected",
+		"SELECT * FROM raw_selected",
+		"FROM coverage",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("Storage V2 overseas query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if !compiled.UsesRawFacts || !compiled.ArchiveThrough.Equal(request.ArchiveThrough) ||
+		queryParameter(compiled.Query, "source_seconds") != "'3600'" {
+		t.Fatalf("compiled=%+v", compiled)
+	}
+}
+
 func TestCompileOverseasRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) {
 	tests := []struct {
 		name  string

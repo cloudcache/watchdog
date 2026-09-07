@@ -46,13 +46,13 @@ type options struct {
 	planFiles, versionPublications, geoBundles stringList
 	planPublicKey, workerID                    string
 
-	brokers, topic, clientID, consumerGroup  string
-	kafkaCAFile, kafkaCertFile, kafkaKeyFile string
-	kafkaServerName, saslMechanism           string
-	saslUsername, saslPasswordFile           string
-	kafkaTLS                                 bool
-	fetchMinBytes, templateReplayRecords     int64
-	fetchMaxWait, decoderStateTTL            time.Duration
+	brokers, topic, sourceStreamID, clientID, consumerGroup string
+	kafkaCAFile, kafkaCertFile, kafkaKeyFile                string
+	kafkaServerName, saslMechanism                          string
+	saslUsername, saslPasswordFile                          string
+	kafkaTLS                                                bool
+	fetchMinBytes, templateReplayRecords                    int64
+	fetchMaxWait, decoderStateTTL                           time.Duration
 
 	clickHouseAddress, clickHouseDatabase                                    string
 	clickHouseUser, clickHousePasswordFile                                   string
@@ -76,6 +76,7 @@ func main() {
 
 	flag.StringVar(&opt.brokers, "kafka-brokers", "127.0.0.1:9092", "comma-separated Kafka brokers")
 	flag.StringVar(&opt.topic, "kafka-topic", "watchdog.flow.raw", "RawFlow Kafka topic base; schema suffix is automatic")
+	flag.StringVar(&opt.sourceStreamID, "source-stream-id", "", "stable Kafka cluster/topic incarnation ID (required; never reuse after topic recreation)")
 	flag.StringVar(&opt.clientID, "kafka-client-id", "watchdog-flow-worker", "Kafka client ID")
 	flag.StringVar(&opt.consumerGroup, "kafka-consumer-group", "watchdog-flow-worker-v1", "Kafka consumer group")
 	flag.Int64Var(&opt.fetchMinBytes, "kafka-fetch-min-bytes", 1_000_000, "minimum Kafka fetch bytes")
@@ -138,6 +139,9 @@ func run(opt options) error {
 	if opt.decoderStateTTL < time.Minute || opt.decoderStateTTL > 24*time.Hour {
 		return errors.New("decoder state TTL must be 1m..24h")
 	}
+	if !flowworker.ValidSourceStreamID(opt.sourceStreamID) {
+		return errors.New("source stream ID is required and must contain only letters, digits, dot, underscore, colon, or dash")
+	}
 	if opt.blockMaxRows < 1 || opt.blockMaxRows > 1_000_000 || opt.blockMaxBytes < 1 || opt.blockMaxBytes > 1<<30 {
 		return errors.New("ClickHouse block limits are invalid")
 	}
@@ -155,6 +159,12 @@ func run(opt options) error {
 		return err
 	}
 	defer native.Close()
+	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
+	err = native.Ready(readyCtx)
+	cancelReady()
+	if err != nil {
+		return fmt.Errorf("verify Flow Storage V2 ClickHouse schema: %w", err)
+	}
 	writer, err := flowch.NewWriter(native, flowch.WriterConfig{Limits: flowch.BatchLimits{MaxRows: opt.blockMaxRows, MaxApproxBytes: opt.blockMaxBytes}})
 	if err != nil {
 		return err
@@ -163,7 +173,7 @@ func run(opt options) error {
 	if err != nil {
 		return err
 	}
-	processor, err := flowworker.NewBatchProcessor(opt.decoderStateTTL, plans.Resolve, pipeline.Handle, nil)
+	processor, err := flowworker.NewBatchProcessorForStream(opt.decoderStateTTL, opt.sourceStreamID, plans.Resolve, pipeline.Handle, nil)
 	if err != nil {
 		return err
 	}

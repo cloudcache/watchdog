@@ -34,6 +34,7 @@ type Processor struct {
 	adapter     DecodeAdapter
 	handleGroup BatchGroupHandler
 	onRejected  RejectObserver
+	now         func() time.Time
 	stats       processorStats
 	once        sync.Once
 }
@@ -69,14 +70,24 @@ func NewProcessor(stateTTL time.Duration, resolver BindingResolver, handleBatch 
 }
 
 func NewBatchProcessor(stateTTL time.Duration, resolver BindingResolver, handleGroup BatchGroupHandler, onRejected RejectObserver) (*Processor, error) {
+	return NewBatchProcessorForStream(stateTTL, "", resolver, handleGroup, onRejected)
+}
+
+// NewBatchProcessorForStream is the production V2 constructor. sourceStreamID
+// must be a stable, never-reused Kafka cluster/topic-incarnation identifier.
+func NewBatchProcessorForStream(stateTTL time.Duration, sourceStreamID string, resolver BindingResolver, handleGroup BatchGroupHandler, onRejected RejectObserver) (*Processor, error) {
 	if resolver == nil || handleGroup == nil {
 		return nil, errors.New("binding resolver and batch group handler are required")
 	}
+	if sourceStreamID != "" && !ValidSourceStreamID(sourceStreamID) {
+		return nil, errors.New("source stream ID is invalid")
+	}
 	return &Processor{
 		decoders:    flowstream.NewPartitionDecoders(stateTTL),
-		adapter:     DecodeAdapter{ResolveBinding: resolver},
+		adapter:     DecodeAdapter{ResolveBinding: resolver, SourceStreamID: sourceStreamID},
 		handleGroup: handleGroup,
 		onRejected:  onRejected,
+		now:         time.Now,
 	}, nil
 }
 
@@ -100,51 +111,67 @@ func (p *Processor) HandleRecords(ctx context.Context, records []*kgo.Record) er
 	}
 	batches := make([]*RecordBatch, 0, len(records))
 	for _, record := range records {
-		batch, accepted, err := p.decodeRecord(record)
+		batch, err := p.decodeRecord(record)
 		if err != nil {
 			return err
 		}
-		if accepted {
-			batches = append(batches, batch)
-		}
-	}
-	if len(batches) == 0 {
-		return nil
+		batches = append(batches, batch)
 	}
 	if err := p.handleGroup(ctx, batches); err != nil {
 		p.stats.retryableErrors.Add(1)
 		return fmt.Errorf("handle decoded flow batch group: %w", err)
 	}
 	for _, batch := range batches {
-		p.stats.records.Add(uint64(len(batch.Records)))
+		if batch.MessageDisposition == MessageDispositionPersisted {
+			p.stats.records.Add(uint64(len(batch.Records)))
+		}
 	}
 	return nil
 }
 
-func (p *Processor) decodeRecord(record *kgo.Record) (*RecordBatch, bool, error) {
+func (p *Processor) decodeRecord(record *kgo.Record) (*RecordBatch, error) {
 	decoded, err := p.decoders.DecodeRecord(record)
 	if err != nil {
 		if errors.Is(err, netflow.ErrorTemplateNotFound) {
 			p.stats.templateMissing.Add(1)
-			return nil, false, nil
+			return p.receiptBatch(record, MessageDispositionTemplateMissing, time.Time{}), nil
 		}
 		p.handleRejected(record, RejectDecode, err)
-		return nil, false, nil
+		return p.receiptBatch(record, MessageDispositionDecodeRejected, time.Time{}), nil
 	}
 	p.stats.datagrams.Add(1)
 	if len(decoded.Records) == 0 {
-		return nil, false, nil
+		return p.receiptBatch(record, MessageDispositionEmpty, decoded.ReceivedAt), nil
 	}
 	batch, err := p.adapter.Map(record, decoded)
 	if err != nil {
 		if errors.Is(err, ErrDecodedFlowInvalid) {
 			p.handleRejected(record, RejectMapping, err)
-			return nil, false, nil
+			return p.receiptBatch(record, MessageDispositionMappingRejected, decoded.ReceivedAt), nil
 		}
 		p.stats.retryableErrors.Add(1)
-		return nil, false, err
+		return nil, err
 	}
-	return batch, true, nil
+	return batch, nil
+}
+
+func (p *Processor) receiptBatch(record *kgo.Record, disposition MessageDisposition, decodedAt time.Time) *RecordBatch {
+	receivedAt := decodedAt.UTC()
+	if receivedAt.IsZero() && !record.Timestamp.IsZero() {
+		receivedAt = record.Timestamp.UTC()
+	}
+	if receivedAt.UnixMilli() <= 0 {
+		receivedAt = p.now().UTC()
+	}
+	sourceStreamID := p.adapter.SourceStreamID
+	if sourceStreamID == "" {
+		sourceStreamID = "legacy:" + record.Topic
+	}
+	return &RecordBatch{
+		BatchSchemaVersion: RecordBatchSchemaVersion, MessageDisposition: disposition,
+		SourceStreamID: sourceStreamID, KafkaTopic: record.Topic, KafkaPartition: record.Partition,
+		KafkaOffset: record.Offset, ReceivedAtUnixMS: receivedAt.UnixMilli(),
+	}
 }
 
 func validatePartitionRecords(records []*kgo.Record) error {

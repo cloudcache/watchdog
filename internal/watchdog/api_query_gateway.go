@@ -55,7 +55,7 @@ func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixed
 	}
 	if request.ValueLayer == QueryValueRaw || request.ValueLayer == QueryValueSupplier {
 		api.recordAudit(r.Context(), auth, "query.sensitive_viewed", request.Dataset, map[string]any{
-			"value_layer": request.ValueLayer, "query_hash": result.Meta.QueryHash,
+			"value_layer": request.ValueLayer, "request_id": result.Meta.RequestID,
 		})
 	}
 	WriteAPIJSON(w, http.StatusOK, result)

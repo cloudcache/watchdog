@@ -7,11 +7,11 @@ import {
 	updateFlowRecordCursors,
 } from "./flow-record-model.ts"
 
-test("Flow record rows preserve stable ids and format protocol and counters", () => {
+test("Flow record rows preserve source coordinates and format protocol and counters", () => {
 	const rows = buildFlowRecordRows([
 		{
 			event_time: "2026-09-07T11:59:00Z",
-			record_id: "record-a",
+			source_coordinate: { source_stream_id: "stream-a", kafka_partition: 1, kafka_offset: 42, record_index: 3 },
 			values: {
 				src_ip: "203.0.113.1",
 				dst_ip: "2001:db8::1",
@@ -21,7 +21,7 @@ test("Flow record rows preserve stable ids and format protocol and counters", ()
 			},
 		},
 	])
-	assert.equal(rows[0].record_id, "record-a")
+	assert.equal(rows[0].source_coordinate, "stream-a/1/42/3")
 	assert.equal(rows[0].src_ip, "203.0.113.1")
 	assert.equal(rows[0].dst_ip, "2001:db8::1")
 	assert.equal(rows[0].protocol, "TCP (6)")

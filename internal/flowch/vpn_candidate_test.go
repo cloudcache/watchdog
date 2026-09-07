@@ -35,7 +35,7 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 		"key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version",
 		"sumIf(estimated_bytes, estimated_valid AND business_direction = 'out')",
 		"sumIf(estimated_bytes, estimated_valid AND business_direction = 'in')",
-		"argMax(", "tuple(estimated_valid, estimated_bytes, raw_bytes, event_time, hex(record_id))",
+		"argMax(", "source_stream_id, kafka_partition, kafka_offset, record_index",
 		"if(has(observed_protocols, toUInt8(6)), ['tcp'], [])",
 		"toFloat64(covered_buckets) / toFloat64(expected_buckets)",
 		"toFloat64(estimated_valid_records) / toFloat64(flow_record_count)",

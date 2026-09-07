@@ -220,10 +220,10 @@ func TestRealClickHouseDetailPaginationAndLimits(t *testing.T) {
 	third := integrationDetailRecord(3, eventTime, wanted, netip.MustParseAddr("2001:db8::3"), 300)
 	insertIntegrationBatch(t, ctx, native, integrationBatch(20, eventTime.Add(time.Minute), first, second, third))
 
-	// A later generation for the same record identity must replace the first
-	// physical version when detail queries use FINAL.
+	// A replay of the same Kafka message with a later generation must replace
+	// every physical record version when detail queries use FINAL.
 	replacement := integrationDetailRecord(1, eventTime, wanted, netip.MustParseAddr("2001:db8::1"), 900)
-	insertIntegrationBatch(t, ctx, native, integrationBatch(21, eventTime.Add(2*time.Minute), replacement))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(20, eventTime.Add(2*time.Minute), replacement, second, third))
 
 	runner, err := flowquery.NewDetailRunner(&integrationBlockExecutor{executor: native.executor})
 	if err != nil {
@@ -480,9 +480,12 @@ func assertDetailPage(t *testing.T, result flowquery.DetailResult, ids []byte, r
 		t.Fatalf("detail page=%+v, ids=%v raw=%v has_more=%t", result, ids, rawBytes, hasMore)
 	}
 	for index, row := range result.Rows {
-		wantID := fmt.Sprintf("%064x", ids[index])
-		if row.RecordID != wantID || row.Values[flowquery.DetailFieldRawBytes] != rawBytes[index] {
-			t.Fatalf("detail row[%d]=%+v, want id=%s raw=%d", index, row, wantID, rawBytes[index])
+		wantCoordinate := flowquery.SourceCoordinate{
+			SourceStreamID: "cluster-a:raw-v1:incarnation-1", KafkaPartition: 3,
+			KafkaOffset: 20, RecordIndex: uint32(ids[index]),
+		}
+		if row.SourceCoordinate != wantCoordinate || row.Values[flowquery.DetailFieldRawBytes] != rawBytes[index] {
+			t.Fatalf("detail row[%d]=%+v, want coordinate=%+v raw=%d", index, row, wantCoordinate, rawBytes[index])
 		}
 		for _, field := range []flowquery.DetailField{flowquery.DetailFieldSourceIP, flowquery.DetailFieldDestinationIP} {
 			if _, err := netip.ParseAddr(row.Values[field].(string)); err != nil {

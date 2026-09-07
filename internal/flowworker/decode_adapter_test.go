@@ -32,8 +32,7 @@ func TestDecodeAdapterMapsBindingAndAuthoritativeCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSourceID := kafkaSourceID(kafkaRecord.Topic, kafkaRecord.Partition, kafkaRecord.Offset)
-	if string(batch.SourceID) != string(wantSourceID[:]) || batch.KafkaPartition != 3 || batch.KafkaOffset != 19 || batch.TenantID != "tenant-a" || batch.ExporterEpoch != 9 {
+	if batch.SourceStreamID != "legacy:watchdog.flow.raw-v1" || batch.KafkaPartition != 3 || batch.KafkaOffset != 19 || batch.TenantID != "tenant-a" || batch.ExporterEpoch != 9 {
 		t.Fatalf("unexpected batch identity: %+v", batch)
 	}
 	if len(batch.Records) != 1 {

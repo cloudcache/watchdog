@@ -21,7 +21,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 10 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" || filepath.Base(paths[9]) != "010_flow_aggregate_reorder.sql" {
+	if len(paths) != 11 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" || filepath.Base(paths[9]) != "010_flow_aggregate_reorder.sql" || filepath.Base(paths[10]) != "011_flow_storage_v2.sql" {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
 	}
 	var sql strings.Builder
@@ -64,6 +64,34 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	for _, obsolete := range []string{"record_id FixedString(64)", "quality_flags Array", "'onnet_local_city'", "'offnet_same_province'"} {
 		if strings.Contains(allSQL, obsolete) {
 			t.Fatalf("ClickHouse migration retained obsolete contract %q", obsolete)
+		}
+	}
+	v2Data, err := os.ReadFile(paths[10])
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := string(v2Data)
+	for _, required := range []string{
+		"source_stream_id LowCardinality(String)",
+		"PARTITION BY (tenant_id, toYYYYMMDD(event_time))",
+		"ORDER BY (\n  tenant_id, toStartOfHour(event_time), source_stream_id,\n  kafka_partition, kafka_offset, record_index)",
+		"flow_ingest_receipts_v2_staging", "receipt_schema UInt16 DEFAULT 4",
+		"message_disposition Enum8(", "'template_missing'=2", "'mapping_rejected'=5",
+		"ORDER BY (source_stream_id, kafka_partition, kafka_offset)",
+		"flow_records_legacy_hash_v1", "flow_ingest_batches_legacy_hash_v1",
+		"PARTITION BY (tenant_id, toYYYYMM(bucket))",
+		"flow_aggregate_1m_legacy_ttl_v1", "flow_aggregate_1h_legacy_ttl_v1",
+	} {
+		if !strings.Contains(v2, required) {
+			t.Fatalf("ClickHouse V2 migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"TTL event_time", "TTL inserted_at", "record_id FixedString", "ingest_batch_id FixedString",
+		"dimension_fingerprint UInt64", "checksum FixedString",
+	} {
+		if strings.Contains(v2, forbidden) {
+			t.Fatalf("ClickHouse V2 migration retained forbidden contract %q", forbidden)
 		}
 	}
 }

@@ -4,9 +4,6 @@
 package flowch
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -21,7 +18,6 @@ const (
 	MismatchIdentity       ReconciliationMismatchReason = "identity_mismatch"
 	MismatchCount          ReconciliationMismatchReason = "count_mismatch"
 	MismatchCounter        ReconciliationMismatchReason = "counter_mismatch"
-	MismatchChecksum       ReconciliationMismatchReason = "checksum_mismatch"
 	hardReconcileBatches                                = 10_000
 	hardReconcileFacts                                  = 1_000_000
 )
@@ -32,7 +28,6 @@ type ReconciliationCompareLimits struct {
 }
 
 type IngestAuditCounters struct {
-	SourceBatchCount      uint32
 	RecordCount           uint64
 	RawBytes              uint64
 	RawPackets            uint64
@@ -41,44 +36,46 @@ type IngestAuditCounters struct {
 	EstimatedValidRecords uint64
 }
 
-type IngestAuditReceipt struct {
-	BatchID        [32]byte
-	KafkaTopic     string
+type SourceMessageKey struct {
+	SourceStreamID string
 	KafkaPartition uint32
-	FirstOffset    uint64
-	LastOffset     uint64
-	Counters       IngestAuditCounters
-	Checksum       [32]byte
+	KafkaOffset    uint64
+}
+
+type IngestMessageDisposition string
+
+const (
+	IngestDispositionPersisted       IngestMessageDisposition = "persisted"
+	IngestDispositionTemplateMissing IngestMessageDisposition = "template_missing"
+	IngestDispositionEmpty           IngestMessageDisposition = "empty"
+	IngestDispositionDecodeRejected  IngestMessageDisposition = "decode_rejected"
+	IngestDispositionMappingRejected IngestMessageDisposition = "mapping_rejected"
+)
+
+type IngestAuditReceipt struct {
+	SourceMessageKey
+	KafkaTopic  string
+	Disposition IngestMessageDisposition
+	Counters    IngestAuditCounters
 }
 
 type IngestAuditFact struct {
-	RecordID              [32]byte
-	BatchID               [32]byte
-	KafkaTopic            string
-	KafkaPartition        uint32
-	KafkaOffset           uint64
-	RecordIndex           uint32
-	RawBytes              uint64
-	RawPackets            uint64
-	EstimatedValid        bool
-	EstimatedBytes        uint64
-	EstimatedPackets      uint64
-	QualityFlags          uint64
-	DimensionFingerprint  uint64
-	ClassificationVersion uint32
+	SourceMessageKey
+	KafkaTopic       string
+	RecordIndex      uint32
+	RawBytes         uint64
+	RawPackets       uint64
+	EstimatedValid   bool
+	EstimatedBytes   uint64
+	EstimatedPackets uint64
 }
 
 type IngestReconciliationMismatch struct {
-	Reason           ReconciliationMismatchReason
-	BatchID          [32]byte
-	KafkaTopic       string
-	KafkaPartition   uint32
-	FirstOffset      uint64
-	LastOffset       uint64
-	Expected         IngestAuditCounters
-	Actual           IngestAuditCounters
-	ExpectedChecksum [32]byte
-	ActualChecksum   [32]byte
+	Reason ReconciliationMismatchReason
+	SourceMessageKey
+	KafkaTopic string
+	Expected   IngestAuditCounters
+	Actual     IngestAuditCounters
 }
 
 type IngestReconciliationComparison struct {
@@ -87,8 +84,10 @@ type IngestReconciliationComparison struct {
 	Mismatches []IngestReconciliationMismatch
 }
 
-// CompareIngestAudit compares already generation-deduplicated facts with v2
-// receipts. It owns no cursor, Kafka watermark, TTL decision, or metric state.
+// CompareIngestAudit compares message receipts with already generation-
+// deduplicated facts. Count and counter conservation deliberately replace the
+// V1 record-content checksum; non-counter semantic mapping is tested by the
+// decoder/schema corpus instead of hashing every hot-path record.
 func CompareIngestAudit(receipts []IngestAuditReceipt, facts []IngestAuditFact, limits ReconciliationCompareLimits) (IngestReconciliationComparison, error) {
 	if err := validateReconciliationCompareLimits(limits); err != nil {
 		return IngestReconciliationComparison{}, err
@@ -97,81 +96,94 @@ func CompareIngestAudit(receipts []IngestAuditReceipt, facts []IngestAuditFact, 
 		return IngestReconciliationComparison{}, errors.New("ingest reconciliation input exceeds configured budget")
 	}
 
-	receiptsByBatch := make(map[[32]byte]IngestAuditReceipt, len(receipts))
+	receiptsByMessage := make(map[SourceMessageKey]IngestAuditReceipt, len(receipts))
 	for index, receipt := range receipts {
 		if err := validateAuditReceipt(receipt); err != nil {
 			return IngestReconciliationComparison{}, fmt.Errorf("invalid ingest receipt %d: %w", index, err)
 		}
-		if _, exists := receiptsByBatch[receipt.BatchID]; exists {
-			return IngestReconciliationComparison{}, fmt.Errorf("duplicate ingest receipt %x", receipt.BatchID[:8])
+		if _, exists := receiptsByMessage[receipt.SourceMessageKey]; exists {
+			return IngestReconciliationComparison{}, fmt.Errorf("duplicate ingest receipt %s/%d/%d", receipt.SourceStreamID, receipt.KafkaPartition, receipt.KafkaOffset)
 		}
-		receiptsByBatch[receipt.BatchID] = receipt
+		receiptsByMessage[receipt.SourceMessageKey] = receipt
 	}
 
-	factsByBatch := make(map[[32]byte][]IngestAuditFact)
-	seenRecords := make(map[[32]byte]struct{}, len(facts))
+	factsByMessage := make(map[SourceMessageKey][]IngestAuditFact)
+	seenRecords := make(map[struct {
+		SourceMessageKey
+		RecordIndex uint32
+	}]struct{}, len(facts))
 	for index, fact := range facts {
 		if err := validateAuditFact(fact); err != nil {
 			return IngestReconciliationComparison{}, fmt.Errorf("invalid ingest fact %d: %w", index, err)
 		}
-		if _, exists := seenRecords[fact.RecordID]; exists {
-			return IngestReconciliationComparison{}, fmt.Errorf("duplicate generation-deduplicated record %x", fact.RecordID[:8])
+		recordKey := struct {
+			SourceMessageKey
+			RecordIndex uint32
+		}{fact.SourceMessageKey, fact.RecordIndex}
+		if _, exists := seenRecords[recordKey]; exists {
+			return IngestReconciliationComparison{}, fmt.Errorf("duplicate generation-deduplicated record %s/%d/%d/%d", fact.SourceStreamID, fact.KafkaPartition, fact.KafkaOffset, fact.RecordIndex)
 		}
-		seenRecords[fact.RecordID] = struct{}{}
-		factsByBatch[fact.BatchID] = append(factsByBatch[fact.BatchID], fact)
+		seenRecords[recordKey] = struct{}{}
+		factsByMessage[fact.SourceMessageKey] = append(factsByMessage[fact.SourceMessageKey], fact)
 	}
-	batchIDs := make([][32]byte, 0, len(receiptsByBatch)+len(factsByBatch))
-	for batchID := range receiptsByBatch {
-		batchIDs = append(batchIDs, batchID)
-	}
-	for batchID := range factsByBatch {
-		if _, exists := receiptsByBatch[batchID]; !exists {
-			batchIDs = append(batchIDs, batchID)
-		}
-	}
-	if len(batchIDs) > limits.MaxBatches {
-		return IngestReconciliationComparison{}, errors.New("ingest reconciliation batch groups exceed configured budget")
-	}
-	sort.Slice(batchIDs, func(i, j int) bool { return bytes.Compare(batchIDs[i][:], batchIDs[j][:]) < 0 })
 
-	comparison := IngestReconciliationComparison{Batches: uint64(len(batchIDs)), Facts: uint64(len(facts))}
-	for _, batchID := range batchIDs {
-		receipt, hasReceipt := receiptsByBatch[batchID]
-		batchFacts := factsByBatch[batchID]
+	keys := make([]SourceMessageKey, 0, len(receiptsByMessage)+len(factsByMessage))
+	for key := range receiptsByMessage {
+		keys = append(keys, key)
+	}
+	for key := range factsByMessage {
+		if _, exists := receiptsByMessage[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) > limits.MaxBatches {
+		return IngestReconciliationComparison{}, errors.New("ingest reconciliation message groups exceed configured budget")
+	}
+	sort.Slice(keys, func(i, j int) bool { return sourceMessageKeyLess(keys[i], keys[j]) })
+
+	comparison := IngestReconciliationComparison{Batches: uint64(len(keys)), Facts: uint64(len(facts))}
+	for _, key := range keys {
+		receipt, hasReceipt := receiptsByMessage[key]
+		messageFacts := factsByMessage[key]
 		if !hasReceipt {
-			actual, checksum, topic, partition, first, last, err := summarizeAuditFacts(batchFacts)
+			actual, topic, _, err := summarizeAuditFacts(messageFacts)
 			if err != nil {
 				return IngestReconciliationComparison{}, err
 			}
 			comparison.Mismatches = append(comparison.Mismatches, IngestReconciliationMismatch{
-				Reason: MismatchMissingReceipt, BatchID: batchID, KafkaTopic: topic, KafkaPartition: partition,
-				FirstOffset: first, LastOffset: last, Actual: actual, ActualChecksum: checksum,
+				Reason: MismatchMissingReceipt, SourceMessageKey: key, KafkaTopic: topic, Actual: actual,
 			})
 			continue
 		}
-		if len(batchFacts) == 0 {
-			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}, [32]byte{}))
+		if receipt.Disposition != IngestDispositionPersisted {
+			if len(messageFacts) != 0 {
+				actual, _, _, err := summarizeAuditFacts(messageFacts)
+				if err != nil {
+					return IngestReconciliationComparison{}, err
+				}
+				comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchIdentity, receipt, actual))
+			}
 			continue
 		}
-		actual, checksum, topic, partition, first, last, err := summarizeAuditFacts(batchFacts)
+		if len(messageFacts) == 0 {
+			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}))
+			continue
+		}
+		actual, topic, contiguous, err := summarizeAuditFacts(messageFacts)
 		if err != nil {
 			return IngestReconciliationComparison{}, err
 		}
 		reason := ReconciliationMismatchReason("")
 		switch {
-		case topic != receipt.KafkaTopic || partition != receipt.KafkaPartition || first != receipt.FirstOffset || last != receipt.LastOffset:
+		case topic != receipt.KafkaTopic || !contiguous:
 			reason = MismatchIdentity
-		case actual.SourceBatchCount != receipt.Counters.SourceBatchCount || actual.RecordCount != receipt.Counters.RecordCount:
+		case actual.RecordCount != receipt.Counters.RecordCount:
 			reason = MismatchCount
-		case actual.RawBytes != receipt.Counters.RawBytes || actual.RawPackets != receipt.Counters.RawPackets ||
-			actual.EstimatedBytes != receipt.Counters.EstimatedBytes || actual.EstimatedPackets != receipt.Counters.EstimatedPackets ||
-			actual.EstimatedValidRecords != receipt.Counters.EstimatedValidRecords:
+		case !auditCountersEqual(actual, receipt.Counters):
 			reason = MismatchCounter
-		case checksum != receipt.Checksum:
-			reason = MismatchChecksum
 		}
 		if reason != "" {
-			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(reason, receipt, actual, checksum))
+			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(reason, receipt, actual))
 		}
 	}
 	return comparison, nil
@@ -188,100 +200,85 @@ func validateReconciliationCompareLimits(limits ReconciliationCompareLimits) err
 }
 
 func validateAuditReceipt(receipt IngestAuditReceipt) error {
-	if receipt.BatchID == ([32]byte{}) || receipt.Checksum == ([32]byte{}) || receipt.KafkaTopic == "" || receipt.FirstOffset > receipt.LastOffset {
+	if !validSourceMessageKey(receipt.SourceMessageKey) || receipt.KafkaTopic == "" {
 		return errors.New("receipt identity is incomplete")
 	}
-	if receipt.Counters.RecordCount == 0 || receipt.Counters.SourceBatchCount == 0 || uint64(receipt.Counters.SourceBatchCount) > receipt.Counters.RecordCount {
-		return errors.New("receipt counts are invalid")
+	if !validIngestDisposition(receipt.Disposition) {
+		return errors.New("receipt disposition is invalid")
+	}
+	if receipt.Disposition == IngestDispositionPersisted && receipt.Counters.RecordCount == 0 {
+		return errors.New("persisted receipt count is invalid")
+	}
+	if receipt.Disposition != IngestDispositionPersisted && receipt.Counters != (IngestAuditCounters{}) {
+		return errors.New("non-persisted receipt must have zero counters")
 	}
 	return nil
 }
 
+func validIngestDisposition(value IngestMessageDisposition) bool {
+	switch value {
+	case IngestDispositionPersisted, IngestDispositionTemplateMissing, IngestDispositionEmpty,
+		IngestDispositionDecodeRejected, IngestDispositionMappingRejected:
+		return true
+	default:
+		return false
+	}
+}
+
 func validateAuditFact(fact IngestAuditFact) error {
-	if fact.RecordID == ([32]byte{}) || fact.BatchID == ([32]byte{}) || fact.KafkaTopic == "" {
+	if !validSourceMessageKey(fact.SourceMessageKey) || fact.KafkaTopic == "" {
 		return errors.New("fact identity is incomplete")
 	}
 	return nil
 }
 
-func summarizeAuditFacts(facts []IngestAuditFact) (IngestAuditCounters, [32]byte, string, uint32, uint64, uint64, error) {
+func validSourceMessageKey(key SourceMessageKey) bool {
+	return key.SourceStreamID != ""
+}
+
+func summarizeAuditFacts(facts []IngestAuditFact) (IngestAuditCounters, string, bool, error) {
 	if len(facts) == 0 {
-		return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("cannot summarize empty ingest facts")
+		return IngestAuditCounters{}, "", false, errors.New("cannot summarize empty ingest facts")
 	}
 	ordered := append([]IngestAuditFact(nil), facts...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].KafkaOffset != ordered[j].KafkaOffset {
-			return ordered[i].KafkaOffset < ordered[j].KafkaOffset
-		}
-		if ordered[i].RecordIndex != ordered[j].RecordIndex {
-			return ordered[i].RecordIndex < ordered[j].RecordIndex
-		}
-		return bytes.Compare(ordered[i].RecordID[:], ordered[j].RecordID[:]) < 0
-	})
-	topic, partition := ordered[0].KafkaTopic, ordered[0].KafkaPartition
-	first, last := ordered[0].KafkaOffset, ordered[len(ordered)-1].KafkaOffset
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].RecordIndex < ordered[j].RecordIndex })
+	topic := ordered[0].KafkaTopic
 	counters := IngestAuditCounters{RecordCount: uint64(len(ordered))}
-	var previousOffset uint64
+	contiguous := true
 	for index, fact := range ordered {
-		if fact.KafkaTopic != topic || fact.KafkaPartition != partition {
-			topic = ""
-			partition = math.MaxUint32
+		if fact.KafkaTopic != topic || fact.SourceMessageKey != ordered[0].SourceMessageKey {
+			contiguous = false
 		}
-		if index == 0 || fact.KafkaOffset != previousOffset {
-			if counters.SourceBatchCount == math.MaxUint32 {
-				return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("ingest source batch count overflow")
-			}
-			counters.SourceBatchCount++
-			previousOffset = fact.KafkaOffset
+		if fact.RecordIndex != uint32(index) {
+			contiguous = false
 		}
 		var ok bool
 		if counters.RawBytes, ok = addAuditCounter(counters.RawBytes, fact.RawBytes); !ok {
-			return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("ingest raw byte counter overflow")
+			return IngestAuditCounters{}, "", false, errors.New("ingest raw byte counter overflow")
 		}
 		if counters.RawPackets, ok = addAuditCounter(counters.RawPackets, fact.RawPackets); !ok {
-			return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("ingest raw packet counter overflow")
+			return IngestAuditCounters{}, "", false, errors.New("ingest raw packet counter overflow")
 		}
 		if fact.EstimatedValid {
 			if counters.EstimatedBytes, ok = addAuditCounter(counters.EstimatedBytes, fact.EstimatedBytes); !ok {
-				return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("ingest estimated byte counter overflow")
+				return IngestAuditCounters{}, "", false, errors.New("ingest estimated byte counter overflow")
 			}
 			if counters.EstimatedPackets, ok = addAuditCounter(counters.EstimatedPackets, fact.EstimatedPackets); !ok {
-				return IngestAuditCounters{}, [32]byte{}, "", 0, 0, 0, errors.New("ingest estimated packet counter overflow")
+				return IngestAuditCounters{}, "", false, errors.New("ingest estimated packet counter overflow")
+			}
+			if counters.EstimatedValidRecords == math.MaxUint64 {
+				return IngestAuditCounters{}, "", false, errors.New("ingest estimated-valid count overflow")
 			}
 			counters.EstimatedValidRecords++
 		}
 	}
-	return counters, ingestAuditChecksum(ordered), topic, partition, first, last, nil
+	return counters, topic, contiguous, nil
 }
 
-func ingestAuditChecksum(facts []IngestAuditFact) [32]byte {
-	hash := sha256.New()
-	var number [8]byte
-	for _, fact := range facts {
-		hash.Write(fact.RecordID[:])
-		binary.BigEndian.PutUint64(number[:], fact.RawBytes)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint64(number[:], fact.RawPackets)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint64(number[:], fact.EstimatedBytes)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint64(number[:], fact.EstimatedPackets)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint64(number[:], fact.QualityFlags)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint64(number[:], fact.DimensionFingerprint)
-		hash.Write(number[:])
-		binary.BigEndian.PutUint32(number[:4], fact.ClassificationVersion)
-		hash.Write(number[:4])
-		if fact.EstimatedValid {
-			hash.Write([]byte{1})
-		} else {
-			hash.Write([]byte{0})
-		}
-	}
-	var checksum [32]byte
-	copy(checksum[:], hash.Sum(nil))
-	return checksum
+func auditCountersEqual(actual, expected IngestAuditCounters) bool {
+	return actual.RawBytes == expected.RawBytes && actual.RawPackets == expected.RawPackets &&
+		actual.EstimatedBytes == expected.EstimatedBytes && actual.EstimatedPackets == expected.EstimatedPackets &&
+		actual.EstimatedValidRecords == expected.EstimatedValidRecords
 }
 
 func addAuditCounter(current, value uint64) (uint64, bool) {
@@ -291,10 +288,19 @@ func addAuditCounter(current, value uint64) (uint64, bool) {
 	return current + value, true
 }
 
-func mismatchFromReceipt(reason ReconciliationMismatchReason, receipt IngestAuditReceipt, actual IngestAuditCounters, checksum [32]byte) IngestReconciliationMismatch {
+func mismatchFromReceipt(reason ReconciliationMismatchReason, receipt IngestAuditReceipt, actual IngestAuditCounters) IngestReconciliationMismatch {
 	return IngestReconciliationMismatch{
-		Reason: reason, BatchID: receipt.BatchID, KafkaTopic: receipt.KafkaTopic, KafkaPartition: receipt.KafkaPartition,
-		FirstOffset: receipt.FirstOffset, LastOffset: receipt.LastOffset,
-		Expected: receipt.Counters, Actual: actual, ExpectedChecksum: receipt.Checksum, ActualChecksum: checksum,
+		Reason: reason, SourceMessageKey: receipt.SourceMessageKey, KafkaTopic: receipt.KafkaTopic,
+		Expected: receipt.Counters, Actual: actual,
 	}
+}
+
+func sourceMessageKeyLess(left, right SourceMessageKey) bool {
+	if left.SourceStreamID != right.SourceStreamID {
+		return left.SourceStreamID < right.SourceStreamID
+	}
+	if left.KafkaPartition != right.KafkaPartition {
+		return left.KafkaPartition < right.KafkaPartition
+	}
+	return left.KafkaOffset < right.KafkaOffset
 }

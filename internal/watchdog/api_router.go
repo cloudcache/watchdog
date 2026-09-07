@@ -39,7 +39,9 @@ type APIV1RouterConfig struct {
 	FlowRecordNow          func() time.Time
 	FlowOverseas           flowOverseasRunner
 	FlowOverseasNow        func() time.Time
+	FlowStorageQuery       FlowStorageArchiveBoundaryRepository
 	FlowVPNFindings        VPNFindingRepository
+	FlowStorage            FlowStorageLifecycleRepository
 	QueryPolicies          QueryDatasetPolicyRepository
 	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
@@ -231,10 +233,13 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		registerFlowRecordRoutes(mux, auth, cfg.FlowRecords, cfg.Network, cfg.Audit, cfg.FlowRecordNow)
 	}
 	if cfg.FlowOverseas != nil {
-		registerFlowOverseasRoutes(mux, auth, cfg.FlowOverseas, cfg.Network, cfg.Audit, cfg.FlowGeo, cfg.FlowOverseasNow)
+		registerFlowOverseasRoutes(mux, auth, cfg.FlowOverseas, cfg.Network, cfg.FlowStorageQuery, cfg.Audit, cfg.FlowGeo, cfg.FlowOverseasNow)
 	}
 	if cfg.FlowVPNFindings != nil {
 		registerFlowVPNManagementRoutes(mux, auth, cfg.FlowVPNFindings, cfg.Audit)
+	}
+	if cfg.FlowStorage != nil {
+		registerFlowStorageLifecycleRoutes(mux, auth, cfg.FlowStorage, cfg.Audit)
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)

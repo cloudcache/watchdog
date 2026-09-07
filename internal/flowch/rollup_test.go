@@ -22,6 +22,33 @@ type rollupGenerationExecutor struct {
 	emit       bool
 }
 
+type storageCounterExecutor struct {
+	queries []ch.Query
+	values  []StorageCounters
+}
+
+func (executor *storageCounterExecutor) Do(ctx context.Context, query ch.Query) error {
+	index := len(executor.queries)
+	executor.queries = append(executor.queries, query)
+	if index >= len(executor.values) {
+		return errors.New("unexpected storage counter query")
+	}
+	results, ok := query.Result.(proto.Results)
+	if !ok || len(results) != 6 {
+		return errors.New("unexpected storage counter result contract")
+	}
+	value := executor.values[index]
+	columns := []uint64{value.RecordCount, value.RawBytes, value.RawPackets, value.EstimatedBytes, value.EstimatedPackets, value.EstimatedValidRecords}
+	for resultIndex, result := range results {
+		column, ok := result.Data.(*proto.ColUInt64)
+		if !ok {
+			return errors.New("unexpected storage counter result column")
+		}
+		*column = append(*column, columns[resultIndex])
+	}
+	return query.OnResult(ctx, proto.Block{Columns: 6, Rows: 1})
+}
+
 func (e *rollupGenerationExecutor) Do(ctx context.Context, query ch.Query) error {
 	e.query = query
 	if e.err != nil {
@@ -91,6 +118,40 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	}
 	if got := parameter(first, "tenant"); got != "'tenant-a'" {
 		t.Fatalf("tenant parameter=%q", got)
+	}
+}
+
+func TestDayStorageCountersUsesRawAndLatestCompleteHourlyGeneration(t *testing.T) {
+	raw := StorageCounters{RecordCount: 2, RawBytes: 30, RawPackets: 3, EstimatedBytes: 300, EstimatedPackets: 30, EstimatedValidRecords: 1}
+	archive := raw
+	executor := &storageCounterExecutor{values: []StorageCounters{raw, archive}}
+	runner := &RollupRunner{executor: executor}
+	day := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	gotRaw, gotArchive, err := runner.DayStorageCounters(context.Background(), "tenant-a", day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRaw != raw || gotArchive != archive || len(executor.queries) != 2 {
+		t.Fatalf("raw=%+v archive=%+v queries=%d", gotRaw, gotArchive, len(executor.queries))
+	}
+	if body := executor.queries[0].Body; !strings.Contains(body, "FROM flow_records FINAL") || !strings.Contains(body, "countIf(estimated_valid)") {
+		t.Fatalf("raw counter query=%s", body)
+	}
+	if body := executor.queries[1].Body; !strings.Contains(body, "dimension_kind = '_generation'") ||
+		!strings.Contains(body, "max(generation)") || !strings.Contains(body, "dimension_kind = 'total'") {
+		t.Fatalf("archive counter query=%s", body)
+	}
+}
+
+func TestDayStorageCountersRejectsNonUTCDay(t *testing.T) {
+	runner := &RollupRunner{executor: &storageCounterExecutor{}}
+	for _, day := range []time.Time{
+		time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 5, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)),
+	} {
+		if _, _, err := runner.DayStorageCounters(context.Background(), "tenant-a", day); err == nil {
+			t.Fatalf("invalid day accepted: %s", day)
+		}
 	}
 }
 

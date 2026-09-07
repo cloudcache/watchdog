@@ -1,6 +1,8 @@
 import { Trans, useLingui } from "@lingui/react/macro"
+import { getPagePath } from "@nanostores/router"
 import { BarChart3Icon, DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { $router, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { FlowRecordTable } from "@/components/flow/flow-record-table"
 import { Button } from "@/components/ui/button"
@@ -9,10 +11,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { toast } from "@/components/ui/use-toast"
 import { createFlowExplorerChart, type FlowGraphType } from "@/lib/flow-explorer-chart"
 import {
 	buildFlowJointSeries,
-	buildFlowCSV,
 	buildFlowQuickFilter,
 	buildFlowSeries,
 	FLOW_TIME_PRESETS,
@@ -85,6 +87,16 @@ type FlowQueryResponse = {
 		step_seconds?: number
 		completeness?: { complete_ratio: number; partial: boolean; unknown_ratio: number; warnings?: string[] }
 	}
+}
+
+type FlowQueryRequest = {
+	dataset: "flow.traffic"
+	from: string
+	to: string
+	step_seconds: number
+	limit: number
+	value_layer: "customer"
+	parameters: Record<string, unknown>
 }
 
 type OverseasPoint = {
@@ -278,6 +290,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [overseasError, setOverseasError] = useState("")
 	const [overseasGeoLevel, setOverseasGeoLevel] = useState(() => queryState("geo_level", "country"))
 	const [loading, setLoading] = useState(false)
+	const [exporting, setExporting] = useState(false)
 	const [error, setError] = useState("")
 	const [referenceError, setReferenceError] = useState("")
 	const [referencesLoaded, setReferencesLoaded] = useState(false)
@@ -287,6 +300,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const chartInstance = useRef<ReturnType<typeof createFlowExplorerChart> | null>(null)
 	const initialQuery = useRef(false)
 	const querySequence = useRef(0)
+	const lastQueryRequest = useRef<FlowQueryRequest | null>(null)
 
 	useEffect(() => {
 		Promise.all([
@@ -407,41 +421,46 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				}
 				const grouping =
 					selectedDimensions.length > 1 ? { dimensions: selectedDimensions } : { dimension: selectedDimension }
-				const sendQuery = (queryFilters: FlowFilters) =>
-					pb.send<FlowQueryResponse>("/api/v1/flow/query", {
-						method: "POST",
-						body: {
-							from: start,
-							to: end,
-							// Zero means auto: the Flow provider chooses graph interval and
-							// physical 1m/1h source independently from the selected range.
-							step_seconds: 0,
-							limit: 250_000,
-							value_layer: "customer",
-							parameters: {
-								metric,
-								...grouping,
-								filters: queryFilters,
-								filter: canonicalFilter,
-								top_n: selectedTopN,
-								include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
-								target_points: targetPoints,
-								timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-								direction_split: activeMode === "direction" || undefined,
-								table: {
-									search: activeTable.search || undefined,
-									sort_by: activeTable.sortBy,
-									sort_direction: activeTable.sortDirection,
-									limit: activeTable.pageSize,
-									offset: activeTable.page * activeTable.pageSize,
-									filters: activeTable.filters,
-								},
+				let submittedQuery: FlowQueryRequest | null = null
+				const sendQuery = (queryFilters: FlowFilters) => {
+					submittedQuery = {
+						dataset: "flow.traffic",
+						from: start,
+						to: end,
+						// Zero means auto: the Flow provider chooses graph interval and
+						// physical 1m/1h source independently from the selected range.
+						step_seconds: 0,
+						limit: 250_000,
+						value_layer: "customer",
+						parameters: {
+							metric,
+							...grouping,
+							filters: queryFilters,
+							filter: canonicalFilter,
+							top_n: selectedTopN,
+							include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
+							target_points: targetPoints,
+							timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+							direction_split: activeMode === "direction" || undefined,
+							table: {
+								search: activeTable.search || undefined,
+								sort_by: activeTable.sortBy,
+								sort_direction: activeTable.sortDirection,
+								limit: activeTable.pageSize,
+								offset: activeTable.page * activeTable.pageSize,
+								filters: activeTable.filters,
 							},
 						},
+					}
+					return pb.send<FlowQueryResponse>("/api/v1/flow/query", {
+						method: "POST",
+						body: submittedQuery,
 					})
+				}
 				let query = await sendQuery(filters)
 				if (activeMode === "protocol") query = labelProtocolPoints(query)
 				if (sequence !== querySequence.current) return
+				lastQueryRequest.current = submittedQuery
 				setResponse(query)
 				setQueryMode(activeMode)
 				const queryUnit = query.data?.metric?.unit ?? query.meta?.unit ?? ""
@@ -583,18 +602,26 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const unit = response?.data?.metric?.unit ?? response?.meta?.unit ?? ""
 	const mixedVersions = response?.data?.mixed_versions ?? false
 	const formatValue = useCallback((value: number) => formatFlowValue(value, unit), [unit])
-	const exportCurrent = useCallback(() => {
-		if (series.length === 0) return
-		const blob = new Blob(["\ufeff", buildFlowCSV(series, unit)], { type: "text/csv;charset=utf-8" })
-		const url = URL.createObjectURL(blob)
-		const link = document.createElement("a")
-		link.href = url
-		link.download = `watchdog-flow-${new Date().toISOString().replaceAll(":", "-")}.csv`
-		document.body.append(link)
-		link.click()
-		link.remove()
-		window.setTimeout(() => URL.revokeObjectURL(url), 0)
-	}, [series, unit])
+	const exportCurrent = useCallback(async () => {
+		if (!lastQueryRequest.current) return
+		setExporting(true)
+		try {
+			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/exports", {
+				method: "POST",
+				body: { query: lastQueryRequest.current, format: "csv" },
+			})
+			const id = task.ID ?? task.id ?? ""
+			toast({ title: t`Flow export queued` })
+			navigate(id ? getPagePath($router, "export_detail", { id }) : getPagePath($router, "exports"))
+		} catch (reason) {
+			toast({
+				title: reason instanceof Error ? reason.message : t`Failed to create Flow export`,
+				variant: "destructive",
+			})
+		} finally {
+			setExporting(false)
+		}
+	}, [t])
 
 	useEffect(() => {
 		disposeChart(chartInstance.current)
@@ -889,9 +916,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						<BarChart3Icon className="me-2 h-4 w-4" />
 						<Trans>Analyze</Trans>
 					</Button>
-					<Button variant="outline" onClick={exportCurrent} disabled={loading || series.length === 0}>
+					<Button variant="outline" onClick={exportCurrent} disabled={loading || exporting || series.length === 0}>
 						<DownloadIcon className="me-2 h-4 w-4" />
-						<Trans>Export current CSV</Trans>
+						<Trans>Export full query</Trans>
 					</Button>
 				</div>
 				<p className="text-xs text-muted-foreground">

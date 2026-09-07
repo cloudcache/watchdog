@@ -123,6 +123,30 @@ func (w ExportWorker) RunTask(ctx context.Context, task ExportTask) error {
 	if err := w.Repo.MarkExportRunning(ctx, task.TenantID, task.ID); err != nil {
 		return err
 	}
+	if rowProvider, ok := w.Data.(ExportRowsDataProvider); ok {
+		rows, handled, err := rowProvider.LoadExportRows(ctx, task)
+		if err != nil {
+			_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
+			return err
+		}
+		if handled {
+			rowWriter, ok := w.Writer.(ExportRowsWriter)
+			if !ok {
+				err := errors.New("export writer does not support tabular datasets")
+				_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
+				return err
+			}
+			artifact, writerHandled, err := rowWriter.WriteExportRows(ctx, task, rows)
+			if err == nil && !writerHandled {
+				err = errors.New("export writer did not handle the tabular dataset")
+			}
+			if err != nil {
+				_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
+				return err
+			}
+			return w.completeTask(ctx, task, artifact)
+		}
+	}
 	samples, err := w.Data.LoadSamples(ctx, task)
 	if err != nil {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
@@ -156,6 +180,10 @@ func (w ExportWorker) RunTask(ctx context.Context, task ExportTask) error {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err
 	}
+	return w.completeTask(ctx, task, artifact)
+}
+
+func (w ExportWorker) completeTask(ctx context.Context, task ExportTask, artifact ExportArtifact) error {
 	if err := validateExportArtifact(task, artifact); err != nil {
 		_ = w.Repo.MarkExportFailed(ctx, task.TenantID, task.ID, err.Error())
 		return err

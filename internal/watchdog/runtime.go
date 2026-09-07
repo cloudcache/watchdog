@@ -53,6 +53,8 @@ type BackendRuntime struct {
 	PlanRollouts        CollectorPlanRolloutController
 	FlowRollupRunner    FlowBucketRollupRunner
 	FlowRollupService   *FlowRollupService
+	FlowStorageRunner   FlowStorageDayRunner
+	FlowStorageService  *FlowStorageLifecycleService
 	MetricProviders     *RuntimeMetricsRegistry
 	QueryProviders      *QueryProviderRegistry
 	QueryGateway        *QueryGateway
@@ -181,7 +183,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		MetricProviders:     NewRuntimeMetricsRegistry(),
 		QueryProviders:      NewQueryProviderRegistry(),
 	}
-	if cfg.FlowRollup.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
+	if cfg.FlowRollup.Enabled || cfg.FlowStorage.Enabled || (cfg.QueryGateway.Enabled && cfg.QueryGateway.ClickHouseEnabled) {
 		runtime.flowClickHouseNative, err = newFlowClickHouseNative(ctx, cfg.FlowRollup)
 		if err != nil {
 			_ = runtime.Close()
@@ -219,12 +221,16 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 				return nil, fmt.Errorf("initialize Flow overseas-query runner: %w", runnerErr)
 			}
 			runtime.FlowOverseas = overseasRunner
+			provider := ClickHouseFlowQueryProvider{
+				Runner: runner, JointRunner: jointRunner, Readiness: runtime.flowClickHouseNative, Network: store,
+			}
+			if cfg.FlowStorage.Enabled {
+				provider.StorageLifecycle = store
+			}
 			if err := runtime.QueryProviders.Register(QueryProviderRegistration{
-				Kind: DatasetProviderClickHouse,
-				Provider: ClickHouseFlowQueryProvider{
-					Runner: runner, JointRunner: jointRunner, Readiness: runtime.flowClickHouseNative, Network: store,
-				},
-				Enabled: true, MaxConcurrent: uint32(cfg.QueryGateway.ClickHouseConcurrent),
+				Kind:     DatasetProviderClickHouse,
+				Provider: provider,
+				Enabled:  true, MaxConcurrent: uint32(cfg.QueryGateway.ClickHouseConcurrent),
 			}); err != nil {
 				_ = runtime.Close()
 				return nil, fmt.Errorf("initialize Flow ClickHouse query provider: %w", err)
@@ -312,6 +318,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		Collector: store,
 	}
 	runtime.trapDispatcherFn = runtime.buildTrapDispatcher()
+	var sharedRollupRunner *flowch.RollupRunner
 	if cfg.FlowRollup.Enabled {
 		runner, service, err := newFlowRollupRuntime(store, cfg.FlowRollup, runtime.flowClickHouseNative)
 		if err != nil {
@@ -320,6 +327,7 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		}
 		runtime.FlowRollupRunner = runner
 		runtime.FlowRollupService = service
+		sharedRollupRunner = runner
 		runtime.flowRollupMetrics, err = flowmetrics.NewRollup(runner.Stats)
 		if err != nil {
 			_ = runtime.Close()
@@ -328,6 +336,21 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		if err := runtime.MetricProviders.Register("flow_rollup", runtime.flowRollupMetrics); err != nil {
 			_ = runtime.Close()
 			return nil, err
+		}
+	}
+	if cfg.FlowStorage.Enabled {
+		if sharedRollupRunner == nil {
+			sharedRollupRunner, err = flowch.NewRollupRunner(runtime.flowClickHouseNative)
+			if err != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow storage downsample runner: %w", err)
+			}
+		}
+		runtime.FlowStorageRunner = sharedRollupRunner
+		runtime.FlowStorageService = &FlowStorageLifecycleService{
+			Store: store, Interval: cfg.FlowStorage.ScanInterval,
+			MaxPoliciesPerScan:   cfg.FlowStorage.MaxPoliciesPerScan,
+			MaxPartitionsPerScan: cfg.FlowStorage.MaxPartitionsPerScan,
 		}
 	}
 	runtime.metricsScrapeHandler, err = NewMetricsScrapeHandler(cfg.MetricsScrape, runtime.RuntimeMetrics)
@@ -343,7 +366,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 	if len(tenantDiscovery) > 0 && tenantDiscovery[0] != nil {
 		tenantDiscoveryAuth = tenantDiscovery[0]
 	}
-	return NewAPIV1Router(APIV1RouterConfig{
+	config := APIV1RouterConfig{
 		Auth:                   auth,
 		TenantDiscovery:        tenantDiscoveryAuth,
 		Targets:                r.Store,
@@ -396,6 +419,7 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		FlowRecords:            r.FlowRecords,
 		FlowOverseas:           r.FlowOverseas,
 		FlowVPNFindings:        r.Store,
+		FlowStorage:            r.Store,
 		QueryPolicies:          r.Store,
 		Tenants:                r.Store,
 		Readiness:              r.Ready,
@@ -411,7 +435,11 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 			Client:   r.MetricsClient,
 			Importer: r.MetricsClient,
 		},
-	})
+	}
+	if r.Config.FlowStorage.Enabled {
+		config.FlowStorageQuery = r.Store
+	}
+	return NewAPIV1Router(config)
 }
 
 func (r *BackendRuntime) Health() PlatformRuntimeHealth {
@@ -618,6 +646,16 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 				return err
 			}
 		}
+		if r.FlowStorageRunner != nil {
+			if err := registry.Register(OperationJobRegistration{
+				JobType:     FlowStorageDownsampleJobType,
+				Handler:     NewFlowStorageDownsampleJobHandler(r.Store, r.FlowStorageRunner),
+				Concurrency: r.Config.FlowStorage.WorkerConcurrency, LeaseFor: r.Config.FlowStorage.LeaseFor,
+				MaxAttempts: r.Config.FlowStorage.MaxAttempts, RetryBase: r.Config.FlowStorage.RetryBase,
+			}); err != nil {
+				return err
+			}
+		}
 		StartOperationJobScheduler(ctx, r.Store, registry, owner, nil)
 		go (AddressDimensionGCProducer{
 			Repository: r.AddressDimensions, Jobs: r.Store,
@@ -632,6 +670,10 @@ func (r *BackendRuntime) StartBackground(ctx context.Context) error {
 		if r.FlowRollupService != nil {
 			r.FlowRollupService.Logf = log.Printf
 			go r.FlowRollupService.Run(ctx)
+		}
+		if r.FlowStorageService != nil {
+			r.FlowStorageService.Logf = log.Printf
+			go r.FlowStorageService.Run(ctx)
 		}
 		NewStoreMaintenance(r.Store, nil).Start(ctx)
 		NewCollectorPlanTrustMaintenance(r.Store, nil).Start(ctx)

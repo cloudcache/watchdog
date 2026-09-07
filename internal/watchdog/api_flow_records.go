@@ -89,7 +89,10 @@ func (api flowRecordAPI) search(w http.ResponseWriter, r *http.Request) {
 	if compiled.Sort.Field != "event_time" {
 		sortDescription += ",event_time:" + compiled.Sort.Direction
 	}
-	sortDescription += ",record_id:" + compiled.Sort.Direction
+	sortDescription += ",source_stream_id:" + compiled.Sort.Direction +
+		",kafka_partition:" + compiled.Sort.Direction +
+		",kafka_offset:" + compiled.Sort.Direction +
+		",record_index:" + compiled.Sort.Direction
 	WriteAPIJSON(w, http.StatusOK, map[string]any{
 		"data": result,
 		"meta": map[string]any{

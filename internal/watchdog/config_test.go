@@ -68,6 +68,12 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.FlowRollup.Enabled || cfg.FlowRollup.ScanInterval != defaultFlowRollupScanInterval || cfg.FlowRollup.LateArrivalWindow != defaultFlowRollupLateWindow || cfg.FlowRollup.WorkerConcurrency != defaultFlowRollupWorkerConcurrency {
 		t.Fatalf("flow rollup defaults = %#v", cfg.FlowRollup)
 	}
+	if cfg.FlowStorage.Enabled || cfg.FlowStorage.ScanInterval != defaultFlowStorageScanInterval ||
+		cfg.FlowStorage.MaxPoliciesPerScan != defaultFlowStoragePolicyScanLimit ||
+		cfg.FlowStorage.MaxPartitionsPerScan != defaultFlowStoragePartitionBudget ||
+		cfg.FlowStorage.WorkerConcurrency != defaultFlowStorageConcurrency {
+		t.Fatalf("flow storage defaults = %#v", cfg.FlowStorage)
+	}
 }
 
 func TestLoadWatchdogConfigQueryGatewayEnvironment(t *testing.T) {
@@ -213,6 +219,53 @@ func TestFlowRollupConfigRejectsInlinePassword(t *testing.T) {
 	}
 	if _, err := LoadWatchdogConfig(path); err == nil || !strings.Contains(err.Error(), "clickhouse_password") {
 		t.Fatalf("inline ClickHouse password error=%v", err)
+	}
+}
+
+func TestLoadWatchdogConfigFlowStorageEnvironment(t *testing.T) {
+	t.Setenv("WATCHDOG_FLOW_STORAGE_ENABLED", "true")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_SCAN_INTERVAL", "10m")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_MAX_POLICIES_PER_SCAN", "100")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_MAX_PARTITIONS_PER_SCAN", "250")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_WORKER_CONCURRENCY", "4")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_LEASE_FOR", "45m")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_MAX_ATTEMPTS", "7")
+	t.Setenv("WATCHDOG_FLOW_STORAGE_RETRY_BASE", "2m")
+	cfg, err := LoadWatchdogConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage := cfg.FlowStorage
+	if !storage.Enabled || storage.ScanInterval != 10*time.Minute || storage.MaxPoliciesPerScan != 100 ||
+		storage.MaxPartitionsPerScan != 250 || storage.WorkerConcurrency != 4 || storage.LeaseFor != 45*time.Minute ||
+		storage.MaxAttempts != 7 || storage.RetryBase != 2*time.Minute {
+		t.Fatalf("flow storage config = %#v", storage)
+	}
+}
+
+func TestFlowStorageConfigRejectsUnsafeOrUnboundedValues(t *testing.T) {
+	for _, mutate := range []func(*FlowStorageConfig){
+		func(value *FlowStorageConfig) { value.ScanInterval = 0 },
+		func(value *FlowStorageConfig) { value.MaxPoliciesPerScan = 10_001 },
+		func(value *FlowStorageConfig) { value.MaxPartitionsPerScan = 100_001 },
+		func(value *FlowStorageConfig) { value.WorkerConcurrency = 129 },
+		func(value *FlowStorageConfig) { value.LeaseFor = 30 * time.Second },
+		func(value *FlowStorageConfig) { value.MaxAttempts = 0 },
+	} {
+		cfg := defaultBackendConfig().FlowStorage
+		mutate(&cfg)
+		if err := validateFlowStorageConfig(cfg); err == nil {
+			t.Fatalf("invalid Flow storage config accepted: %#v", cfg)
+		}
+	}
+}
+
+func TestWatchdogConfigRejectsConcurrentLegacyRollupAndStorageV2(t *testing.T) {
+	cfg := defaultBackendConfig()
+	cfg.FlowRollup.Enabled = true
+	cfg.FlowStorage.Enabled = true
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "cannot be enabled together") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

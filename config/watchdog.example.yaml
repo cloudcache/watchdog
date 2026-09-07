@@ -113,9 +113,10 @@ agent:
 flow_geo:
   path: ""
 
-# Closed-bucket Flow aggregation runs in the hub through operation_jobs.
-# Keep disabled until the ClickHouse migrations are applied. Secrets are read
-# from files; no inline ClickHouse password is accepted here.
+# Compatibility rollup and shared ClickHouse connection. The 1m/1h realtime
+# scheduler is legacy; leave enabled=false for Storage V2. Connection fields
+# remain here during the compatibility window and are also used by Flow query
+# and flow_storage. Secrets are file-backed only.
 flow_rollup:
   enabled: false
   scan_interval: 30s
@@ -143,3 +144,16 @@ flow_rollup:
   clickhouse_tls_cert: ""
   clickhouse_tls_key: ""
   clickhouse_tls_server_name: ""
+
+# Storage V2 sealed UTC-day downsample. Retention/lateness values are published
+# per tenant through /api/v1/flow/storage/policies; static config only bounds
+# the scheduler and operation-job workers. Raw deletion remains fail-closed.
+flow_storage:
+  enabled: false
+  scan_interval: 5m
+  max_policies_per_scan: 500
+  max_partitions_per_scan: 100
+  worker_concurrency: 2
+  lease_for: 30m
+  max_attempts: 5
+  retry_base: 1m

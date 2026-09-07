@@ -212,7 +212,7 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(detailResponse.Data.Rows) != 0 || detailResponse.Data.HasMore ||
-		detailResponse.Meta.Sort != "event_time:desc,record_id:desc" || detailResponse.Meta.PageSize != 25 {
+		detailResponse.Meta.Sort != "event_time:desc,source_stream_id:desc,kafka_partition:desc,kafka_offset:desc,record_index:desc" || detailResponse.Meta.PageSize != 25 {
 		t.Fatalf("detail response=%+v", detailResponse)
 	}
 	for _, field := range []string{

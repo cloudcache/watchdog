@@ -270,7 +270,7 @@ func (api metricsAPI) auditSensitiveGatewayQuery(ctx context.Context, auth AuthC
 		return
 	}
 	(queryGatewayAPI{audit: api.audit}).recordAudit(ctx, auth, "query.sensitive_viewed", dataset.Key, map[string]any{
-		"value_layer": result.Meta.ValueLayer, "query_hash": result.Meta.QueryHash, "compatibility_endpoint": endpoint,
+		"value_layer": result.Meta.ValueLayer, "request_id": result.Meta.RequestID, "compatibility_endpoint": endpoint,
 	})
 }
 

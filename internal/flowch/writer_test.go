@@ -84,13 +84,13 @@ type fakeBlockInserter struct {
 	mu       sync.Mutex
 	failures int
 	err      error
-	ids      [][32]byte
+	ids      []string
 }
 
 func (f *fakeBlockInserter) InsertFlowBlock(_ context.Context, block PreparedBlock) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.ids = append(f.ids, block.ID)
+	f.ids = append(f.ids, blockDeduplicationToken(block))
 	if f.failures > 0 {
 		f.failures--
 		return f.err
@@ -108,7 +108,7 @@ func TestWriterRetriesTheSameStableBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(inserter.ids) != 3 || inserter.ids[0] != inserter.ids[1] || inserter.ids[1] != inserter.ids[2] {
-		t.Fatalf("retry changed block identity: %x", inserter.ids)
+		t.Fatalf("retry changed block identity: %v", inserter.ids)
 	}
 	if stats := writer.Stats(); stats.InsertAttempts != 3 || stats.InsertErrors != 2 || stats.RetryableErrors != 2 ||
 		stats.Retries != 2 || stats.Blocks != 1 || stats.Rows != 1 || stats.PermanentErrors != 0 {

@@ -18,7 +18,7 @@ import (
 
 type fakeDetailRow struct {
 	eventTime     time.Time
-	recordID      string
+	coordinate    SourceCoordinate
 	sourceIP      string
 	destinationIP string
 	values        map[DetailField]any
@@ -84,7 +84,7 @@ func TestDetailRunnerDecodesMultipleBlocksAndBuildsStableNextCursor(t *testing.T
 	if result.View != ViewCustomer || len(result.Rows) != 2 || !result.HasMore || result.NextCursor == "" || !reflect.DeepEqual(result.Fields, compiled.Fields) {
 		t.Fatalf("detail result=%+v", result)
 	}
-	if result.Rows[0].RecordID != detailRecordID(3) || result.Rows[1].RecordID != detailRecordID(2) {
+	if result.Rows[0].SourceCoordinate != detailCoordinate(3) || result.Rows[1].SourceCoordinate != detailCoordinate(2) {
 		t.Fatalf("detail page order=%+v", result.Rows)
 	}
 	if result.Rows[0].Values[DetailFieldSourceIP] != "192.0.2.10" || result.Rows[0].Values[DetailFieldRawBytes] != uint64(100) ||
@@ -97,7 +97,9 @@ func TestDetailRunnerDecodesMultipleBlocksAndBuildsStableNextCursor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if queryParameter(next.Query, "cursor_time") != "'2026-09-05 10:30:00.123'" || queryParameter(next.Query, "cursor_record_id") != "'"+detailRecordID(2)+"'" {
+	if queryParameter(next.Query, "cursor_time") != "'2026-09-05 10:30:00.123'" ||
+		queryParameter(next.Query, "cursor_source_stream_id") != "'stream-a'" ||
+		queryParameter(next.Query, "cursor_record_index") != "'2'" {
 		t.Fatalf("next-page parameters=%+v", next.Query.Parameters)
 	}
 }
@@ -126,7 +128,7 @@ func TestDetailRunnerReturnsCompleteShortOrEmptyPageWithoutCursor(t *testing.T) 
 	}
 }
 
-func TestDetailRunnerUsesAscendingFieldSortAndV2Cursor(t *testing.T) {
+func TestDetailRunnerUsesAscendingFieldSortAndV3Cursor(t *testing.T) {
 	request := validDetailRequest()
 	request.Fields = []DetailField{DetailFieldRawBytes}
 	request.Sort = DetailSort{Field: string(DetailFieldRawBytes), Direction: "asc"}
@@ -152,7 +154,7 @@ func TestDetailRunnerUsesAscendingFieldSortAndV2Cursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.HasMore || !strings.HasPrefix(result.NextCursor, detailSortCursorPrefix) || len(result.Rows) != 2 {
+	if !result.HasMore || !strings.HasPrefix(result.NextCursor, detailCursorPrefix) || len(result.Rows) != 2 {
 		t.Fatalf("result=%+v", result)
 	}
 	request.Cursor = result.NextCursor
@@ -170,7 +172,7 @@ func TestDetailRunnerUsesAscendingFieldSortAndV2Cursor(t *testing.T) {
 			t.Fatal(createErr)
 		}
 		got, runErr := check.Run(context.Background(), next)
-		if row.recordID == invalid.recordID && row.eventTime.Equal(invalid.eventTime) {
+		if row.coordinate == invalid.coordinate && row.eventTime.Equal(invalid.eventTime) {
 			if runErr == nil || len(got.Rows) != 0 {
 				t.Fatalf("cursor predecessor accepted result=%+v error=%v", got, runErr)
 			}
@@ -265,7 +267,7 @@ func TestSupplierDetailRunnerRejectsInconsistentOrMissingEvidence(t *testing.T) 
 func TestDetailRunnerEnforcesCursorAcrossBlocks(t *testing.T) {
 	request := validDetailRequest()
 	boundaryTime := request.From.Add(30 * time.Minute)
-	cursor, err := EncodeDetailCursor(boundaryTime, detailRecordID(2))
+	cursor, err := EncodeDetailCursor(boundaryTime, detailCoordinate(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,11 +300,10 @@ func TestDetailRunnerRejectsMalformedUnorderedOrUnboundedResults(t *testing.T) {
 		mutate     func(*CompiledDetail)
 	}{
 		{"duplicate", [][]fakeDetailRow{{valid, valid}}, "", nil},
-		{"ascending id", [][]fakeDetailRow{{detailDataRow(valid.eventTime, 1), detailDataRow(valid.eventTime, 2)}}, "", nil},
+		{"ascending coordinate", [][]fakeDetailRow{{detailDataRow(valid.eventTime, 1), detailDataRow(valid.eventTime, 2)}}, "", nil},
 		{"ascending time", [][]fakeDetailRow{{valid, detailDataRow(valid.eventTime.Add(time.Millisecond), 2)}}, "", nil},
 		{"outside time", [][]fakeDetailRow{{detailDataRow(compiled.To, 1)}}, "", nil},
-		{"invalid id", [][]fakeDetailRow{{func() fakeDetailRow { row := valid; row.recordID = "bad"; return row }()}}, "", nil},
-		{"noncanonical id", [][]fakeDetailRow{{func() fakeDetailRow { row := valid; row.recordID = strings.ToUpper(detailRecordID(0xab)); return row }()}}, "", nil},
+		{"invalid coordinate", [][]fakeDetailRow{{func() fakeDetailRow { row := valid; row.coordinate.SourceStreamID = "bad stream"; return row }()}}, "", nil},
 		{"invalid source ip", [][]fakeDetailRow{{func() fakeDetailRow { row := valid; row.sourceIP = "bad"; return row }()}}, "", nil},
 		{"endpoint mismatch", [][]fakeDetailRow{{func() fakeDetailRow {
 			row := valid
@@ -379,15 +380,15 @@ func compiledDetailQuery(t *testing.T, fields []DetailField) CompiledDetail {
 
 func detailDataRow(eventTime time.Time, id byte) fakeDetailRow {
 	return fakeDetailRow{
-		eventTime: eventTime, recordID: detailRecordID(id),
+		eventTime: eventTime, coordinate: detailCoordinate(id),
 		sourceIP: "192.0.2.10", destinationIP: "198.51.100.20",
 		values:     map[DetailField]any{DetailFieldRawBytes: uint64(1), DetailFieldDestinationIP: "198.51.100.20"},
 		scopeMatch: true, minimumSchema: minimumSupplierFactSchema,
 	}
 }
 
-func detailRecordID(value byte) string {
-	return strings.Repeat(fmt.Sprintf("%02x", value), 32)
+func detailCoordinate(value byte) SourceCoordinate {
+	return SourceCoordinate{SourceStreamID: "stream-a", KafkaPartition: 1, KafkaOffset: 42, RecordIndex: uint32(value)}
 }
 
 func appendFakeDetailRow(results proto.Results, row fakeDetailRow, skipColumn string) {
@@ -398,8 +399,14 @@ func appendFakeDetailRow(results proto.Results, row fakeDetailRow, skipColumn st
 		switch result.Name {
 		case "event_time":
 			result.Data.(*proto.ColDateTime64).Append(row.eventTime)
-		case "record_id":
-			result.Data.(*proto.ColStr).Append(row.recordID)
+		case "source_stream_id":
+			result.Data.(*proto.ColStr).Append(row.coordinate.SourceStreamID)
+		case "kafka_partition":
+			result.Data.(*proto.ColUInt32).Append(row.coordinate.KafkaPartition)
+		case "kafka_offset":
+			result.Data.(*proto.ColUInt64).Append(row.coordinate.KafkaOffset)
+		case "record_index":
+			result.Data.(*proto.ColUInt32).Append(row.coordinate.RecordIndex)
 		case "_source_ip":
 			result.Data.(*proto.ColStr).Append(row.sourceIP)
 		case "_destination_ip":

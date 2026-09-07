@@ -5,7 +5,6 @@ package flowch
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/netip"
 	"testing"
@@ -118,7 +117,7 @@ func insertLegacyIntegrationBatch(t *testing.T, ctx context.Context, native *Nat
 	if len(blocks) != 1 || len(blocks[0].Records) != 1 {
 		t.Fatalf("legacy prepared blocks=%d records=%d, want 1/1", len(blocks), len(blocks[0].Records))
 	}
-	records, _, _, err := buildRecordInput(blocks[0])
+	records, err := buildRecordInput(blocks[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +126,7 @@ func insertLegacyIntegrationBatch(t *testing.T, ctx context.Context, native *Nat
 			records[index].Data = proto.ColUInt16{1}
 		}
 	}
-	token := hex.EncodeToString(blocks[0].ID[:]) + "-legacy-schema"
+	token := blockDeduplicationToken(blocks[0]) + ":legacy-schema"
 	if err := native.executor.Do(ctx, insertQuery(flowRecordsTable, token, records)); err != nil {
 		t.Fatal(err)
 	}

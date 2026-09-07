@@ -36,6 +36,7 @@ type exportVersionSnapshot struct {
 	CorrectionSnapshotHash   string `json:"correction_snapshot_hash,omitempty"`
 	CompletenessStepSeconds  uint32 `json:"completeness_step_seconds"`
 	CompletenessMissingRatio string `json:"completeness_missing_ratio"`
+	CompletenessMode         string `json:"completeness_mode,omitempty"`
 	SnapshotComplete         bool   `json:"snapshot_complete"`
 }
 
@@ -189,11 +190,15 @@ func validateExportExecutionTask(task ExportTask) error {
 	if task.RetentionSeconds < 3600 || task.RetentionSeconds > 31_536_000 {
 		return errors.New("export retention_seconds must be between 3600 and 31536000")
 	}
-	canonical, hash, err := canonicalJSONHash(json.RawMessage(task.QueryJSON))
+	_, hash, err := canonicalJSONHash(json.RawMessage(task.QueryJSON))
 	if err != nil {
 		return errors.New("export query_json must be valid JSON")
 	}
-	if string(canonical) != string(task.QueryJSON) || hash != task.QueryHash {
+	// MySQL's native JSON column preserves the value but is allowed to reorder
+	// object members and add whitespace when it is read back. Integrity is
+	// therefore defined by the canonical semantic hash, not byte-for-byte JSON
+	// formatting at the storage boundary.
+	if hash != task.QueryHash {
 		return errors.New("export query snapshot or hash is not canonical")
 	}
 	for name, raw := range map[string]json.RawMessage{"versions_json": task.VersionsJSON, "authorization_json": task.AuthorizationJSON} {
@@ -207,19 +212,40 @@ func validateExportExecutionTask(task ExportTask) error {
 	}
 	if snapshot.SchemaVersion != 1 || snapshot.Query.Dataset != task.DatasetKey || snapshot.Query.ValueLayer != task.ValueLayer ||
 		!snapshot.Query.From.Equal(task.RangeStart.UTC()) || !snapshot.Query.To.Equal(task.RangeEnd.UTC()) ||
-		snapshot.Query.StepSeconds == 0 || snapshot.Aggregation != task.Aggregation {
+		snapshot.Aggregation != task.Aggregation {
 		return errors.New("export query snapshot does not match the task projection")
 	}
-	var parameters victoriaMetricsQueryParameters
-	if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil || parameters.TargetID != task.TargetID || parameters.PortID != task.PortID {
-		return errors.New("export query resource does not match the task projection")
+	if task.DatasetKey == FlowTrafficDataset {
+		if task.ValueLayer != QueryValueCustomer || task.TargetID != "" || task.PortID != "" ||
+			task.Step != time.Duration(snapshot.Query.StepSeconds)*time.Second {
+			return errors.New("Flow export task projection is invalid")
+		}
+		parameters, err := decodeFlowAggregateQueryParameters(snapshot.Query.Parameters)
+		if err != nil || parameters.Table != nil {
+			return errors.New("Flow export query parameters are invalid")
+		}
+	} else {
+		if snapshot.Query.StepSeconds == 0 {
+			return errors.New("export query snapshot step is required")
+		}
+		var parameters victoriaMetricsQueryParameters
+		if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil || parameters.TargetID != task.TargetID || parameters.PortID != task.PortID {
+			return errors.New("export query resource does not match the task projection")
+		}
 	}
 	var versions exportVersionSnapshot
 	if err := decodeStrictJSON(task.VersionsJSON, &versions); err != nil || versions.SchemaVersion != 1 || !versions.SnapshotComplete {
 		return errors.New("export version snapshot is incomplete")
 	}
-	if len(versions.DatasetDescriptorHash) != 64 || versions.CompletenessStepSeconds != snapshot.Query.StepSeconds || versions.CompletenessMissingRatio != "0.3" {
+	if len(versions.DatasetDescriptorHash) != 64 || versions.CompletenessStepSeconds != snapshot.Query.StepSeconds {
 		return errors.New("export completeness snapshot does not match its query")
+	}
+	if task.DatasetKey == FlowTrafficDataset {
+		if versions.CompletenessMode != flowExportCompletenessMode || versions.CompletenessMissingRatio != "0" || versions.CorrectionSnapshotHash != "" {
+			return errors.New("Flow export completeness snapshot is invalid")
+		}
+	} else if (versions.CompletenessMode != "" && versions.CompletenessMode != "sample_series") || versions.CompletenessMissingRatio != "0.3" {
+		return errors.New("export sample completeness snapshot is invalid")
 	}
 	var authorization exportAuthorizationSnapshot
 	if err := decodeStrictJSON(task.AuthorizationJSON, &authorization); err != nil || authorization.SchemaVersion != 1 ||
@@ -236,6 +262,9 @@ func validateExportExecutionTask(task ExportTask) error {
 func exportCompletenessPolicyFromSnapshot(task ExportTask) (CompletenessPolicy, error) {
 	if task.ContractVersion != ExportExecutionContractVersion {
 		return CompletenessPolicy{}, errors.New("export completeness snapshot requires contract version 1")
+	}
+	if task.DatasetKey == FlowTrafficDataset {
+		return CompletenessPolicy{}, errors.New("Flow exports use query-result completeness")
 	}
 	var versions exportVersionSnapshot
 	if err := decodeStrictJSON(task.VersionsJSON, &versions); err != nil {
@@ -491,12 +520,18 @@ func verifyExportCorrectionSnapshot(ctx context.Context, network NetworkReposito
 	if err := decodeStrictJSON(task.QueryJSON, &querySnapshot); err != nil {
 		return err
 	}
-	var parameters victoriaMetricsQueryParameters
-	if err := decodeStrictJSON(querySnapshot.Query.Parameters, &parameters); err != nil {
-		return err
-	}
 	var versions exportVersionSnapshot
 	if err := decodeStrictJSON(task.VersionsJSON, &versions); err != nil {
+		return err
+	}
+	if task.DatasetKey == FlowTrafficDataset {
+		if versions.CompletenessMode != flowExportCompletenessMode || versions.CorrectionSnapshotHash != "" {
+			return errors.New("Flow export version snapshot is invalid")
+		}
+		return nil
+	}
+	var parameters victoriaMetricsQueryParameters
+	if err := decodeStrictJSON(querySnapshot.Query.Parameters, &parameters); err != nil {
 		return err
 	}
 	hash, err := exportCorrectionSnapshotHash(ctx, network, task.TenantID, parameters, task.ValueLayer)

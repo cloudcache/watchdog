@@ -7,7 +7,6 @@ package flowch
 import (
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -26,9 +25,9 @@ const (
 	defaultClickHouseDatabase = "watchdog_flow"
 	defaultOperationTimeout   = 2 * time.Minute
 	flowRecordsTable          = "flow_records"
-	flowReceiptsTable         = "flow_ingest_batches"
-	receiptSchemaVersion      = 2
-	factSchemaVersion         = 2
+	flowReceiptsTable         = "flow_ingest_receipts"
+	receiptSchemaVersion      = 4
+	factSchemaVersion         = 3
 )
 
 type NativeConfig struct {
@@ -134,10 +133,61 @@ func (n *NativeInserter) Do(ctx context.Context, query ch.Query) error {
 	return n.executor.Do(ctx, query)
 }
 
-// Ready verifies the selected database through the native protocol without
-// reading application data.
+// Ready verifies the selected database and the Flow Storage V2 contract without
+// reading application data. A V1 table must fail before a worker consumes Kafka
+// or the hub advertises a query provider as ready.
 func (n *NativeInserter) Ready(ctx context.Context) error {
-	return n.Do(ctx, ch.Query{Body: "SELECT 1 FORMAT Null"})
+	if n == nil || n.executor == nil {
+		return errors.New("ClickHouse native connection is not initialized")
+	}
+	var requiredRecords, requiredReceipts, forbiddenRecords, forbiddenReceipts proto.ColUInt64
+	seen := false
+	query := ch.Query{
+		Body: `SELECT
+  countIf(table = 'flow_records' AND name IN (
+    'source_stream_id', 'kafka_partition', 'kafka_offset', 'record_index', 'ingest_generation'
+  )) AS required_records,
+  countIf(table = 'flow_ingest_receipts' AND name IN (
+    'source_stream_id', 'kafka_partition', 'kafka_offset', 'message_disposition',
+    'record_count', 'raw_bytes', 'raw_packets', 'estimated_bytes',
+    'estimated_packets', 'estimated_valid_records', 'generation'
+  )) AS required_receipts,
+  countIf(table = 'flow_records' AND name IN ('record_id', 'ingest_batch_id', 'dimension_fingerprint')) AS forbidden_records,
+  countIf(table = 'flow_ingest_receipts' AND name IN ('ingest_batch_id', 'checksum', 'first_offset', 'last_offset')) AS forbidden_receipts
+FROM system.columns
+WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_receipts')`,
+		Result: proto.Results{
+			{Name: "required_records", Data: &requiredRecords},
+			{Name: "required_receipts", Data: &requiredReceipts},
+			{Name: "forbidden_records", Data: &forbiddenRecords},
+			{Name: "forbidden_receipts", Data: &forbiddenReceipts},
+		},
+	}
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if block.Rows == 0 {
+			return nil
+		}
+		if seen || block.Rows != 1 || requiredRecords.Rows() != 1 || requiredReceipts.Rows() != 1 || forbiddenRecords.Rows() != 1 || forbiddenReceipts.Rows() != 1 {
+			return errors.New("ClickHouse Flow schema readiness returned an invalid row count")
+		}
+		seen = true
+		return nil
+	}
+	if err := n.executor.Do(ctx, query); err != nil {
+		return fmt.Errorf("verify ClickHouse Flow Storage V2 schema: %w", err)
+	}
+	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 11 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
+		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/11 forbidden=%d/%d)",
+			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
+	}
+	return nil
+}
+
+func columnOrZero(column proto.ColUInt64) uint64 {
+	if column.Rows() == 0 {
+		return 0
+	}
+	return column[0]
 }
 
 // InsertFlowBlock is synchronous. A retry uses exactly the same block and
@@ -146,19 +196,33 @@ func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBloc
 	if n == nil || n.executor == nil {
 		return Permanent(errors.New("ClickHouse native inserter is not initialized"))
 	}
-	records, maxReceivedAt, generation, err := buildRecordInput(block)
-	if err != nil {
+	if err := validatePreparedReceipts(block); err != nil {
 		return Permanent(err)
 	}
-	token := hex.EncodeToString(block.ID[:])
-	if err := n.executor.Do(ctx, insertQuery(flowRecordsTable, token, records)); err != nil {
-		return classifyClickHouseError(fmt.Errorf("insert flow records: %w", err))
+	token := blockDeduplicationToken(block)
+	if len(block.Records) > 0 {
+		records, err := buildRecordInput(block)
+		if err != nil {
+			return Permanent(err)
+		}
+		if err := n.executor.Do(ctx, insertQuery(flowRecordsTable, token, records)); err != nil {
+			return classifyClickHouseError(fmt.Errorf("insert flow records: %w", err))
+		}
+	} else if len(block.Receipts) == 0 {
+		return Permanent(fmt.Errorf("%w: prepared block has neither records nor receipts", ErrInvalidBatchGroup))
 	}
-	receipt := buildReceiptInput(block, maxReceivedAt, generation)
-	if err := n.executor.Do(ctx, insertQuery(flowReceiptsTable, token+"-receipt", receipt)); err != nil {
-		return classifyClickHouseError(fmt.Errorf("insert flow receipt: %w", err))
+	if len(block.Receipts) > 0 {
+		receipt := buildReceiptInput(block)
+		if err := n.executor.Do(ctx, insertQuery(flowReceiptsTable, token+":receipts", receipt)); err != nil {
+			return classifyClickHouseError(fmt.Errorf("insert flow receipts: %w", err))
+		}
 	}
 	return nil
+}
+
+func blockDeduplicationToken(block PreparedBlock) string {
+	return fmt.Sprintf("flow-v2:%s:%d:%d:%d:%d:%d:%d:%d", block.SourceStreamID, block.KafkaPartition,
+		block.FirstOffset, block.FirstRecordIndex, block.LastOffset, block.LastRecordIndex, len(block.Records), len(block.Receipts))
 }
 
 func insertQuery(table, token string, input proto.Input) ch.Query {
@@ -173,15 +237,14 @@ func insertQuery(table, token string, input proto.Input) ch.Query {
 	}
 }
 
-func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, error) {
-	if block.ID == ([32]byte{}) || block.Checksum == ([32]byte{}) || len(block.Records) == 0 {
-		return nil, time.Time{}, 0, fmt.Errorf("%w: prepared block identity or records are missing", ErrInvalidBatchGroup)
+func buildRecordInput(block PreparedBlock) (proto.Input, error) {
+	if !flowworker.ValidSourceStreamID(block.SourceStreamID) || block.KafkaPartition < 0 || block.FirstOffset < 0 || block.LastOffset < block.FirstOffset || len(block.Records) == 0 {
+		return nil, fmt.Errorf("%w: prepared block identity or records are missing", ErrInvalidBatchGroup)
 	}
 	var (
 		eventTime                 = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
 		receivedTime              = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
-		recordID                  proto.ColFixedStr32
-		ingestBatchID             proto.ColFixedStr32
+		sourceStreamID            = new(proto.ColStr).LowCardinality()
 		ingestGeneration          proto.ColUInt64
 		kafkaTopic                = new(proto.ColStr).LowCardinality()
 		kafkaPartition            proto.ColUInt32
@@ -232,7 +295,6 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		qualityEpoch              proto.ColUInt64
 		dimensionSnapshotID       = new(proto.ColStr).LowCardinality()
 		dimensionVersion          proto.ColUInt64
-		dimensionFingerprint      proto.ColUInt64
 		businessDirection         proto.ColEnum
 		business                  = new(proto.ColStr).LowCardinality()
 		localIP                   proto.ColIPv6
@@ -279,65 +341,56 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		customerGeoOverrideFields proto.ColUInt8
 	)
 
-	var maxReceivedAt time.Time
-	var generation uint64
 	var localAddressSetScratch, remoteAddressSetScratch []string
 	for index, ref := range block.Records {
 		if ref.Batch == nil || ref.Record == nil || ref.Batch.ReceivedAt.UnixMilli() <= 0 || ref.Record.EventTime.UnixMilli() <= 0 {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has incomplete timestamps", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has incomplete timestamps", ErrInvalidBatchGroup, index)
 		}
 		observation, ok := observationDirectionName(ref.Record.ObservationDirection)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid observation direction", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid observation direction", ErrInvalidBatchGroup, index)
 		}
 		mode, ok := samplingModeName(ref.Record.SamplingMode)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid sampling mode", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid sampling mode", ErrInvalidBatchGroup, index)
 		}
 		source, ok := samplingSourceName(ref.Record.SamplingSource)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid sampling source", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid sampling source", ErrInvalidBatchGroup, index)
 		}
 		direction, ok := businessDirectionName(ref.Record.Dimensions.Direction)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid business direction", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid business direction", ErrInvalidBatchGroup, index)
 		}
 		customerCategoryName, ok := categoryName(ref.Record.Category)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid category", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid category", ErrInvalidBatchGroup, index)
 		}
 		dispositionName, ok := dispositionName(ref.Record.Disposition)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid disposition", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid disposition", ErrInvalidBatchGroup, index)
 		}
 		asnSource, ok := asnSourceName(ref.Record.RemoteASNSource)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid remote ASN source", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid remote ASN source", ErrInvalidBatchGroup, index)
 		}
 		supplierASNSource, ok := asnSourceName(ref.Record.SupplierRemoteASNSource)
 		if !ok || supplierASNSource == "flow_geo_override" {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid supplier remote ASN source", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid supplier remote ASN source", ErrInvalidBatchGroup, index)
 		}
 		supplierCategoryName, ok := categoryName(ref.Record.SupplierCategory)
 		if !ok {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid supplier category", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid supplier category", ErrInvalidBatchGroup, index)
 		}
 		if !ref.Record.CustomerGeoOverrideFields.Valid() {
-			return nil, time.Time{}, 0, fmt.Errorf("%w: record %d has invalid customer Geo override fields", ErrInvalidBatchGroup, index)
+			return nil, fmt.Errorf("%w: record %d has invalid customer Geo override fields", ErrInvalidBatchGroup, index)
 		}
 		received := ref.Batch.ReceivedAt.UTC()
 		rowGeneration := uint64(received.UnixMilli())
-		if received.After(maxReceivedAt) {
-			maxReceivedAt = received
-		}
-		if rowGeneration > generation {
-			generation = rowGeneration
-		}
 
 		eventTime.Append(ref.Record.EventTime.UTC())
 		receivedTime.Append(received)
-		recordID.Append(ref.Record.SourceRecordID)
-		ingestBatchID.Append(block.ID)
+		sourceStreamID.Append(ref.Batch.SourceStreamID)
 		ingestGeneration.Append(rowGeneration)
 		kafkaTopic.Append(ref.Batch.KafkaTopic)
 		kafkaPartition.Append(uint32(ref.Batch.KafkaPartition))
@@ -388,7 +441,6 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		qualityEpoch.Append(ref.Record.QualityEpoch)
 		dimensionSnapshotID.Append(ref.Record.Dimensions.SnapshotID)
 		dimensionVersion.Append(ref.Record.Dimensions.Version)
-		dimensionFingerprint.Append(ref.Record.DimensionFingerprint)
 		businessDirection.Append(direction)
 		business.Append(ref.Record.Dimensions.Business)
 		localIP.Append(clickHouseIP(ref.Record.Dimensions.Local.IP))
@@ -439,7 +491,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 
 	return proto.Input{
 		{Name: "event_time", Data: eventTime}, {Name: "received_time", Data: receivedTime},
-		{Name: "record_id", Data: recordID}, {Name: "ingest_batch_id", Data: ingestBatchID}, {Name: "ingest_generation", Data: ingestGeneration},
+		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "ingest_generation", Data: ingestGeneration},
 		{Name: "kafka_topic", Data: kafkaTopic}, {Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset}, {Name: "record_index", Data: recordIndex},
 		{Name: "tenant_id", Data: tenantID}, {Name: "collector_id", Data: collectorID}, {Name: "exporter_id", Data: exporterID}, {Name: "target_id", Data: targetID}, {Name: "device_id", Data: deviceID},
 		{Name: "registry_version", Data: registryVersion}, {Name: "exporter_epoch", Data: exporterEpoch}, {Name: "exporter_source_ip", Data: exporterSourceIP}, {Name: "flow_protocol", Data: flowProtocol},
@@ -451,7 +503,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		{Name: "estimated_valid", Data: estimatedValid}, {Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets},
 		{Name: "flow_duration_ms", Data: flowDurationMS}, {Name: "quality_flags", Data: qualityFlags}, {Name: "source_id_type", Data: sourceIDType}, {Name: "source_id_value", Data: sourceIDValue},
 		{Name: "sample_sequence", Data: sampleSequence}, {Name: "sample_pool", Data: samplePool}, {Name: "exporter_drops", Data: exporterDrops}, {Name: "sample_index", Data: sampleIndex}, {Name: "quality_epoch", Data: qualityEpoch},
-		{Name: "dimension_snapshot_id", Data: dimensionSnapshotID}, {Name: "dimension_version", Data: dimensionVersion}, {Name: "dimension_fingerprint", Data: dimensionFingerprint},
+		{Name: "dimension_snapshot_id", Data: dimensionSnapshotID}, {Name: "dimension_version", Data: dimensionVersion},
 		{Name: "business_direction", Data: &businessDirection}, {Name: "business", Data: business},
 		{Name: "local_ip", Data: localIP}, {Name: "local_ip_valid", Data: localIPValid}, {Name: "remote_ip", Data: remoteIP}, {Name: "remote_ip_valid", Data: remoteIPValid},
 		{Name: "local_port", Data: localPort}, {Name: "remote_port", Data: remotePort}, {Name: "local_prefix_id", Data: localPrefixID}, {Name: "remote_prefix_id", Data: remotePrefixID},
@@ -470,60 +522,97 @@ func buildRecordInput(block PreparedBlock) (proto.Input, time.Time, uint64, erro
 		{Name: "supplier_remote_asn", Data: supplierRemoteASN}, {Name: "supplier_remote_asn_source", Data: &supplierRemoteASNSource},
 		{Name: "supplier_geo_version", Data: supplierGeoVersion}, {Name: "supplier_category", Data: &supplierCategory},
 		{Name: "customer_geo_override_fields", Data: customerGeoOverrideFields},
-	}, maxReceivedAt, generation, nil
+	}, nil
 }
 
-func buildReceiptInput(block PreparedBlock, maxReceivedAt time.Time, generation uint64) proto.Input {
+func buildReceiptInput(block PreparedBlock) proto.Input {
 	var (
-		ingestBatchID    proto.ColFixedStr32
-		workerSchema     proto.ColUInt32
-		receiptSchema    proto.ColUInt16
-		tenantIDs        = new(proto.ColStr).Array()
-		kafkaTopic       = new(proto.ColStr).LowCardinality()
-		kafkaPartition   proto.ColUInt32
-		firstOffset      proto.ColUInt64
-		lastOffset       proto.ColUInt64
-		sourceBatchCount proto.ColUInt32
-		recordCount      proto.ColUInt64
-		rawBytes         proto.ColUInt64
-		rawPackets       proto.ColUInt64
-		estimatedBytes   proto.ColUInt64
-		estimatedPackets proto.ColUInt64
-		estimatedValid   proto.ColUInt64
-		minEventTime     = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
-		maxEventTime     = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
-		checksum         proto.ColFixedStr32
-		generationCol    proto.ColUInt64
-		legacyInsertedAt = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		sourceStreamID     = new(proto.ColStr).LowCardinality()
+		workerSchema       proto.ColUInt32
+		receiptSchema      proto.ColUInt16
+		receiptDisposition proto.ColEnum
+		tenantIDs          = new(proto.ColStr).Array()
+		kafkaTopic         = new(proto.ColStr).LowCardinality()
+		kafkaPartition     proto.ColUInt32
+		kafkaOffset        proto.ColUInt64
+		recordCount        proto.ColUInt64
+		rawBytes           proto.ColUInt64
+		rawPackets         proto.ColUInt64
+		estimatedBytes     proto.ColUInt64
+		estimatedPackets   proto.ColUInt64
+		estimatedValid     proto.ColUInt64
+		minEventTime       = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		maxEventTime       = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		generationCol      proto.ColUInt64
+		legacyInsertedAt   = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
 	)
-	ingestBatchID.Append(block.ID)
-	workerSchema.Append(WorkerSchemaVersion)
-	receiptSchema.Append(receiptSchemaVersion)
-	tenantIDs.Append(block.TenantIDs)
-	kafkaTopic.Append(block.KafkaTopic)
-	kafkaPartition.Append(uint32(block.KafkaPartition))
-	firstOffset.Append(uint64(block.FirstOffset))
-	lastOffset.Append(uint64(block.LastOffset))
-	sourceBatchCount.Append(block.SourceBatchCount)
-	recordCount.Append(uint64(len(block.Records)))
-	rawBytes.Append(block.RawBytes)
-	rawPackets.Append(block.RawPackets)
-	estimatedBytes.Append(block.EstimatedBytes)
-	estimatedPackets.Append(block.EstimatedPackets)
-	estimatedValid.Append(block.EstimatedValidRecords)
-	minEventTime.Append(block.MinEventTime.UTC())
-	maxEventTime.Append(block.MaxEventTime.UTC())
-	checksum.Append(block.Checksum)
-	generationCol.Append(generation)
-	// The published v1 column name is immutable; its value has always been the
-	// block's maximum source receive time, not the ClickHouse persistence time.
-	legacyInsertedAt.Append(maxReceivedAt.UTC())
+	for _, receipt := range block.Receipts {
+		disposition, _ := messageDispositionName(receipt.Disposition)
+		sourceStreamID.Append(receipt.SourceStreamID)
+		workerSchema.Append(WorkerSchemaVersion)
+		receiptSchema.Append(receiptSchemaVersion)
+		receiptDisposition.Append(disposition)
+		tenantIDs.Append(receipt.TenantIDs)
+		kafkaTopic.Append(receipt.KafkaTopic)
+		kafkaPartition.Append(uint32(receipt.KafkaPartition))
+		kafkaOffset.Append(uint64(receipt.KafkaOffset))
+		recordCount.Append(receipt.RecordCount)
+		rawBytes.Append(receipt.RawBytes)
+		rawPackets.Append(receipt.RawPackets)
+		estimatedBytes.Append(receipt.EstimatedBytes)
+		estimatedPackets.Append(receipt.EstimatedPackets)
+		estimatedValid.Append(receipt.EstimatedValidRecords)
+		minEventTime.Append(receipt.MinEventTime.UTC())
+		maxEventTime.Append(receipt.MaxEventTime.UTC())
+		rowGeneration := uint64(receipt.ReceivedAt.UnixMilli())
+		generationCol.Append(rowGeneration)
+		legacyInsertedAt.Append(receipt.ReceivedAt.UTC())
+	}
 	return proto.Input{
-		{Name: "ingest_batch_id", Data: ingestBatchID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "tenant_ids", Data: tenantIDs}, {Name: "kafka_topic", Data: kafkaTopic},
-		{Name: "kafka_partition", Data: kafkaPartition}, {Name: "first_offset", Data: firstOffset}, {Name: "last_offset", Data: lastOffset},
-		{Name: "source_batch_count", Data: sourceBatchCount}, {Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
+		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &receiptDisposition}, {Name: "tenant_ids", Data: tenantIDs}, {Name: "kafka_topic", Data: kafkaTopic},
+		{Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset},
+		{Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
 		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets}, {Name: "estimated_valid_records", Data: estimatedValid},
-		{Name: "min_event_time", Data: minEventTime}, {Name: "max_event_time", Data: maxEventTime}, {Name: "checksum", Data: checksum}, {Name: "generation", Data: generationCol}, {Name: "inserted_at", Data: legacyInsertedAt},
+		{Name: "min_event_time", Data: minEventTime}, {Name: "max_event_time", Data: maxEventTime}, {Name: "generation", Data: generationCol}, {Name: "inserted_at", Data: legacyInsertedAt},
+	}
+}
+
+func validatePreparedReceipts(block PreparedBlock) error {
+	if !flowworker.ValidSourceStreamID(block.SourceStreamID) || block.KafkaPartition < 0 || block.FirstOffset < 0 || block.LastOffset < block.FirstOffset {
+		return fmt.Errorf("%w: prepared block identity is invalid", ErrInvalidBatchGroup)
+	}
+	for index, receipt := range block.Receipts {
+		_, validDisposition := messageDispositionName(receipt.Disposition)
+		if !validDisposition || receipt.SourceStreamID != block.SourceStreamID || receipt.KafkaTopic != block.KafkaTopic ||
+			receipt.KafkaPartition != block.KafkaPartition || receipt.KafkaOffset < block.FirstOffset || receipt.KafkaOffset > block.LastOffset ||
+			receipt.ReceivedAt.UnixMilli() <= 0 {
+			return fmt.Errorf("%w: prepared receipt %d identity is invalid", ErrInvalidBatchGroup, index)
+		}
+		if receipt.Disposition == flowworker.MessageDispositionPersisted && receipt.RecordCount == 0 {
+			return fmt.Errorf("%w: persisted receipt %d has no records", ErrInvalidBatchGroup, index)
+		}
+		if receipt.Disposition != flowworker.MessageDispositionPersisted &&
+			(receipt.RecordCount != 0 || receipt.RawBytes != 0 || receipt.RawPackets != 0 || receipt.EstimatedBytes != 0 || receipt.EstimatedPackets != 0 || receipt.EstimatedValidRecords != 0) {
+			return fmt.Errorf("%w: non-persisted receipt %d has counters", ErrInvalidBatchGroup, index)
+		}
+	}
+	return nil
+}
+
+func messageDispositionName(value flowworker.MessageDisposition) (string, bool) {
+	switch value {
+	case flowworker.MessageDispositionPersisted:
+		return "persisted", true
+	case flowworker.MessageDispositionTemplateMissing:
+		return "template_missing", true
+	case flowworker.MessageDispositionEmpty:
+		return "empty", true
+	case flowworker.MessageDispositionDecodeRejected:
+		return "decode_rejected", true
+	case flowworker.MessageDispositionMappingRejected:
+		return "mapping_rejected", true
+	default:
+		return "", false
 	}
 }
 

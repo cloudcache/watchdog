@@ -63,12 +63,16 @@ func TestProcessorAdvancesMissingTemplateAndCountsRejectedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejectedCalls := 0
+	var dispositions []MessageDisposition
 	processor, err := NewProcessor(time.Minute,
 		func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
 			return bindingFixture(), nil
 		},
-		func(context.Context, *RecordBatch) error {
-			t.Fatal("rejected record reached batch handler")
+		func(_ context.Context, batch *RecordBatch) error {
+			dispositions = append(dispositions, batch.MessageDisposition)
+			if len(batch.Records) != 0 {
+				t.Fatal("non-persisted receipt batch carried records")
+			}
 			return nil
 		},
 		func(_ *kgo.Record, reason RejectReason, _ error) {
@@ -91,6 +95,9 @@ func TestProcessorAdvancesMissingTemplateAndCountsRejectedInput(t *testing.T) {
 	}
 	if rejectedCalls != 1 {
 		t.Fatalf("reject calls=%d", rejectedCalls)
+	}
+	if !reflect.DeepEqual(dispositions, []MessageDisposition{MessageDispositionTemplateMissing, MessageDispositionDecodeRejected}) {
+		t.Fatalf("receipt dispositions=%v", dispositions)
 	}
 	if stats := processor.Stats(); stats.TemplateMissing != 1 || stats.Rejected != 1 {
 		t.Fatalf("unexpected stats: %+v", stats)

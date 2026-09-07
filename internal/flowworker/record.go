@@ -1,10 +1,24 @@
 package flowworker
 
+import "strings"
+
+type MessageDisposition uint8
+
+const (
+	MessageDispositionUnknown MessageDisposition = iota
+	MessageDispositionPersisted
+	MessageDispositionTemplateMissing
+	MessageDispositionEmpty
+	MessageDispositionDecodeRejected
+	MessageDispositionMappingRejected
+)
+
 // RecordBatch is the in-memory handoff between RawFlow decode and enrichment.
 // It is not a Kafka schema and is never persisted independently of RawFlow.
 type RecordBatch struct {
 	BatchSchemaVersion  uint32
-	SourceID            []byte
+	MessageDisposition  MessageDisposition
+	SourceStreamID      string
 	KafkaTopic          string
 	KafkaPartition      int32
 	KafkaOffset         int64
@@ -21,6 +35,24 @@ type RecordBatch struct {
 	DatagramSequence    uint32
 	AgentIP             []byte
 	ExporterEpoch       uint64
+}
+
+// ValidSourceStreamID validates the operator-assigned Kafka cluster/topic
+// incarnation identifier used directly in the durable record identity. It is
+// deliberately printable and bounded because it is stored and indexed as-is,
+// not hidden behind a hash.
+func ValidSourceStreamID(value string) bool {
+	if !validText(value, 128) {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("._:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 type Record struct {

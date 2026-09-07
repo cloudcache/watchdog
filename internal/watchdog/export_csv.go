@@ -45,6 +45,25 @@ func (w *CSVExportWriter) WriteExport(_ context.Context, task ExportTask, column
 	return exportArtifactFor(fileRef, "text/csv; charset=utf-8", exportColumnRowCount(columns), data), nil
 }
 
+func (w *CSVExportWriter) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
+	if task.DatasetKey != FlowTrafficDataset {
+		return ExportArtifact{}, false, nil
+	}
+	if task.Format != ExportFormatCSV {
+		return ExportArtifact{}, true, errors.New("csv writer only supports csv export format")
+	}
+	if w.Files == nil {
+		w.Files = make(map[string][]byte)
+	}
+	data, err := RenderCSVExportRows(rows)
+	if err != nil {
+		return ExportArtifact{}, true, err
+	}
+	fileRef := fmt.Sprintf("exports/%s.csv", task.ID)
+	w.Files[fileRef] = data
+	return exportArtifactFor(fileRef, "text/csv; charset=utf-8", uint64(len(rows.Rows)), data), true, nil
+}
+
 func (w *CSVExportWriter) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {
 	if w == nil || w.Files == nil {
 		return nil, "", errors.New("export file not found")
@@ -106,6 +125,42 @@ func (s DiskExportStore) WriteExport(_ context.Context, task ExportTask, columns
 		return ExportArtifact{}, err
 	}
 	return exportArtifactFor("exports/"+fileName, contentType, exportColumnRowCount(columns), data), nil
+}
+
+func (s DiskExportStore) WriteExportRows(_ context.Context, task ExportTask, rows ExportRows) (ExportArtifact, bool, error) {
+	if task.DatasetKey != FlowTrafficDataset {
+		return ExportArtifact{}, false, nil
+	}
+	if s.Dir == "" {
+		return ExportArtifact{}, true, errors.New("export directory is required")
+	}
+	var data []byte
+	var contentType, extension string
+	var err error
+	switch task.Format {
+	case ExportFormatCSV:
+		data, err = RenderCSVExportRows(rows)
+		contentType, extension = "text/csv; charset=utf-8", "csv"
+	case ExportFormatParquet:
+		data, err = RenderParquetExportRows(rows)
+		contentType, extension = "application/vnd.apache.parquet", "parquet"
+	default:
+		return ExportArtifact{}, true, errors.New("unsupported Flow export format")
+	}
+	if err != nil {
+		return ExportArtifact{}, true, err
+	}
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return ExportArtifact{}, true, err
+	}
+	fileName := string(task.ID) + "." + extension
+	if strings.Contains(fileName, "/") || strings.Contains(fileName, `\`) {
+		return ExportArtifact{}, true, errors.New("invalid export id")
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, fileName), data, 0o600); err != nil {
+		return ExportArtifact{}, true, err
+	}
+	return exportArtifactFor("exports/"+fileName, contentType, uint64(len(rows.Rows)), data), true, nil
 }
 
 func (s DiskExportStore) ReadExport(_ context.Context, fileRef string) ([]byte, string, error) {

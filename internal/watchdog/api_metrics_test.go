@@ -500,7 +500,7 @@ func TestAPIMetricsGatewayAppliesDatasetPolicyAndAuditsSensitiveCompatibilityQue
 		audit.logs[0].ResourceID != "network.snmp_interface" || audit.logs[0].Detail["compatibility_endpoint"] != "/api/v1/metrics/query" {
 		t.Fatalf("audit logs = %#v", audit.logs)
 	}
-	if audit.logs[0].Detail["query_hash"] == "" {
+	if audit.logs[0].Detail["request_id"] != "legacy-sensitive-a" {
 		t.Fatalf("audit detail = %#v", audit.logs[0].Detail)
 	}
 

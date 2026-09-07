@@ -80,7 +80,7 @@ agent:
   interval: 1m
 
 flow_rollup:
-  # Enable only when local ClickHouse has deploy/migration/clickhouse applied.
+  # Legacy realtime rollup; Storage V2 uses flow_storage below.
   enabled: false
   scan_interval: 30s
   late_arrival_window: 5m
@@ -106,3 +106,14 @@ flow_rollup:
   clickhouse_tls_cert: ""
   clickhouse_tls_key: ""
   clickhouse_tls_server_name: ""
+
+flow_storage:
+  # Enable only after ClickHouse migration 011 and a tenant policy are published.
+  enabled: false
+  scan_interval: 5m
+  max_policies_per_scan: 500
+  max_partitions_per_scan: 100
+  worker_concurrency: 2
+  lease_for: 30m
+  max_attempts: 5
+  retry_base: 1m

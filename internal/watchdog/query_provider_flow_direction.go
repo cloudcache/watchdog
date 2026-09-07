@@ -40,25 +40,31 @@ func (p ClickHouseFlowQueryProvider) queryDirections(
 	}
 	first := true
 	timezone := parameters.Timezone
+	usesRawFacts := false
 	for _, part := range []struct {
 		direction string
 		label     string
 	}{{direction: "in", label: "Inbound"}, {direction: "out", label: "Outbound"}} {
 		filters := parameters.Filters
 		filters.Directions = []string{part.direction}
+		flowRequest := flowquery.Request{
+			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
+			Metric: parameters.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: parameters.Filter,
+			View: view, TopN: 1, IncludeOther: false, Timezone: parameters.Timezone,
+		}
+		if boundaryErr := p.applyStorageV2Boundary(ctx, request.TenantID, plan, &flowRequest); boundaryErr != nil {
+			return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", boundaryErr)
+		}
 		compiled, compileErr := flowquery.Compile(
 			flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}},
-			flowquery.Request{
-				From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
-				Metric: parameters.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: parameters.Filter,
-				View: view, TopN: 1, IncludeOther: false, Timezone: parameters.Timezone,
-			},
+			flowRequest,
 			p.now(),
 		)
 		if compileErr != nil {
 			return QueryProviderResult{}, mapFlowQueryError(compileErr)
 		}
 		timezone = compiled.Timezone
+		usesRawFacts = usesRawFacts || compiled.UsesRawFacts
 		publicRows := compiled.EstimatedRows
 		if publicRows > 0 {
 			publicRows--
@@ -115,6 +121,9 @@ func (p ClickHouseFlowQueryProvider) queryDirections(
 	}
 	if combined.MixedVersions {
 		completeness.Warnings = append(completeness.Warnings, "result contains multiple dimension or classification versions")
+	}
+	if usesRawFacts {
+		completeness.Warnings = append(completeness.Warnings, "the raw portion is current data; Kafka receipt coverage is reported separately from query completeness")
 	}
 	return QueryProviderResult{
 		Data: data, Unit: combined.Metric.Unit, Timezone: timezone, StepSeconds: plan.StepSeconds,

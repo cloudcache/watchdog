@@ -183,6 +183,66 @@ func TestCompileSeparatesSourceResolutionFromPresentationInterval(t *testing.T) 
 	}
 }
 
+func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testing.T) {
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = 6 * time.Hour
+	request.StorageV2 = true
+	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"bucket < {archive_through:DateTime('UTC')}",
+		"event_time >= {archive_through:DateTime('UTC')}",
+		"SELECT * FROM archive_rows",
+		"UNION ALL\n      SELECT * FROM raw_rows",
+		"FROM filtered",
+		"SELECT count() FROM archive_latest",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("Storage V2 query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if !compiled.UsesRawFacts || !compiled.ArchiveThrough.Equal(request.ArchiveThrough) ||
+		queryParameter(compiled.Query, "source_seconds") != "'3600'" {
+		t.Fatalf("compiled Storage V2 metadata=%+v", compiled)
+	}
+}
+
+func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.T) {
+	request := validRequest()
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.UsesRawFacts || queryParameter(compiled.Query, "source_seconds") != "'60'" ||
+		!strings.Contains(compiled.Query.Body, "FROM flow_records FINAL") {
+		t.Fatalf("compiled raw minute query=%+v", compiled)
+	}
+	request.ArchiveThrough = request.From.Add(time.Minute)
+	if _, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorUnsupported) {
+		t.Fatalf("minute archive error=%v", err)
+	}
+}
+
+func TestCompileStorageV2RejectsUnalignedSplit(t *testing.T) {
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From.Add(25 * time.Hour)
+	if _, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorInvalid) {
+		t.Fatalf("split error=%v", err)
+	}
+}
+
 func TestCompileRejectsPresentationIntervalFinerThanSource(t *testing.T) {
 	request := validRequest()
 	request.Bucket = BucketOneHour

@@ -1,8 +1,6 @@
 package flowworker
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -11,13 +9,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cespare/xxhash/v2"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 )
 
 const (
-	RecordBatchSchemaVersion   = 1
-	EnrichedBatchSchemaVersion = 3
+	RecordBatchSchemaVersion   = 3
+	EnrichedBatchSchemaVersion = 5
 	defaultMaxRecordsPerBatch  = 1_024
 	hardMaxRecordsPerBatch     = 65_535
 	defaultMaxFutureSkew       = 5 * time.Minute
@@ -63,7 +60,8 @@ type Enricher struct {
 
 type EnrichedBatch struct {
 	SchemaVersion       uint32
-	SourceID            [32]byte
+	MessageDisposition  MessageDisposition
+	SourceStreamID      string
 	KafkaTopic          string
 	KafkaPartition      int32
 	KafkaOffset         int64
@@ -83,7 +81,6 @@ type EnrichedBatch struct {
 }
 
 type EnrichedRecord struct {
-	SourceRecordID            [32]byte
 	RecordIndex               uint32
 	EventTime                 time.Time
 	TargetID                  string
@@ -131,19 +128,20 @@ type EnrichedRecord struct {
 	CustomerGeoOverrideFields flowdimension.GeoOverrideFields
 	Disposition               flowdimension.RecordDisposition
 	ClassificationVersion     uint32
-	DimensionFingerprint      uint64
 }
 
 // VersionBlockedError is the consumer-loop signal to pause a Kafka partition
 // without committing its offset. It contains only stable identifiers and never
 // causes a fallback to an active/current snapshot.
 type VersionBlockedError struct {
-	Dependency  string
-	TenantID    string
-	SourceID    [32]byte
-	RecordIndex uint32
-	EventTime   time.Time
-	Cause       error
+	Dependency     string
+	TenantID       string
+	SourceStreamID string
+	KafkaPartition int32
+	KafkaOffset    int64
+	RecordIndex    uint32
+	EventTime      time.Time
+	Cause          error
 }
 
 func (e *VersionBlockedError) Error() string {
@@ -228,8 +226,9 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	}
 	records := result.Records[:0]
 	*result = EnrichedBatch{
-		SchemaVersion: EnrichedBatchSchemaVersion,
-		SourceID:      validated.sourceID, KafkaTopic: batch.KafkaTopic,
+		SchemaVersion:      EnrichedBatchSchemaVersion,
+		MessageDisposition: batch.MessageDisposition,
+		SourceStreamID:     batch.SourceStreamID, KafkaTopic: batch.KafkaTopic,
 		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset,
 		TenantID: batch.TenantID, CollectorID: batch.CollectorID, ExporterID: batch.ExporterID,
 		RegistryVersion: batch.RegistryVersion, ReceivedAt: time.UnixMilli(batch.ReceivedAtUnixMS).UTC(),
@@ -239,11 +238,14 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 		AgentIP: validated.agentIP, ExporterEpoch: batch.ExporterEpoch,
 		Records: records,
 	}
+	if batch.MessageDisposition != MessageDispositionPersisted {
+		return nil
+	}
 	if cap(result.Records) < len(batch.Records) {
 		result.Records = make([]EnrichedRecord, 0, len(batch.Records))
 	}
 	for _, decoded := range batch.Records {
-		record, err := e.enrichRecord(batch.TenantID, validated.sourceID, decoded)
+		record, err := e.enrichRecord(batch.TenantID, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, decoded)
 		if err != nil {
 			result.Records = result.Records[:0]
 			return err
@@ -253,22 +255,22 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	return nil
 }
 
-func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Record) (EnrichedRecord, error) {
+func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition int32, kafkaOffset int64, decoded *Record) (EnrichedRecord, error) {
 	eventTime := time.UnixMilli(decoded.EventTimeUnixMS).UTC()
 	source, _ := parseAddress16(decoded.SourceIP)
 	destination, _ := parseAddress16(decoded.DestinationIP)
 	dimensionSnapshot, classificationSnapshot, dependency, err := e.selectVersions(tenantID, eventTime)
 	if err != nil {
-		return EnrichedRecord{}, blocked(dependency, tenantID, sourceID, decoded, eventTime, err)
+		return EnrichedRecord{}, blocked(dependency, tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
 	}
 	dimensionMetadata := dimensionSnapshot.Metadata()
 	classificationMetadata := classificationSnapshot.Metadata()
 	if classificationMetadata.DimensionSnapshotID != dimensionMetadata.SnapshotID {
-		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, sourceID, decoded, eventTime, ErrVersionSkew)
+		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
 	}
 	geoIndex, err := e.geo.Select(eventTime)
 	if err != nil {
-		return EnrichedRecord{}, blocked("geo", tenantID, sourceID, decoded, eventTime, err)
+		return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
 	}
 
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
@@ -285,8 +287,7 @@ func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Rec
 	remoteASN, remoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, remoteGeo, geoMatched, overrideFields)
 	localPort, remotePort := endpointPorts(decoded, dimensions)
 	record := EnrichedRecord{
-		SourceRecordID: sourceRecordID(sourceID, decoded.RecordIndex),
-		RecordIndex:    decoded.RecordIndex, EventTime: eventTime, TargetID: decoded.TargetID, DeviceID: decoded.DeviceID,
+		RecordIndex: decoded.RecordIndex, EventTime: eventTime, TargetID: decoded.TargetID, DeviceID: decoded.DeviceID,
 		ObservationIfIndex: decoded.ObservationIfIndex, ObservationDirection: ObservationDirection(decoded.ObservationDirection),
 		InIf: decoded.InIf, OutIf: decoded.OutIf, SourceIP: source, DestinationIP: destination,
 		SourcePort: uint16(decoded.SourcePort), DestinationPort: uint16(decoded.DestinationPort),
@@ -308,7 +309,6 @@ func (e *Enricher) enrichRecord(tenantID string, sourceID [32]byte, decoded *Rec
 		Disposition:           classificationSnapshot.Disposition(dimensions.Direction),
 		ClassificationVersion: classificationMetadata.Version,
 	}
-	record.DimensionFingerprint = dimensionFingerprint(record.Dimensions)
 	return record, nil
 }
 
@@ -332,7 +332,6 @@ func (e *Enricher) selectVersions(tenantID string, eventTime time.Time) (*flowdi
 }
 
 type validatedBatch struct {
-	sourceID [32]byte
 	sourceIP netip.Addr
 	agentIP  netip.Addr
 }
@@ -345,18 +344,26 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 	if batch.BatchSchemaVersion != RecordBatchSchemaVersion {
 		return result, invalid("unsupported batch schema version")
 	}
-	if len(batch.SourceID) != len(result.sourceID) {
-		return result, invalid("source ID must be 32 bytes")
-	}
-	copy(result.sourceID[:], batch.SourceID)
-	if !validText(batch.KafkaTopic, 249) || batch.KafkaPartition < 0 || batch.KafkaOffset < 0 {
+	if !ValidSourceStreamID(batch.SourceStreamID) || !validText(batch.KafkaTopic, 249) || batch.KafkaPartition < 0 || batch.KafkaOffset < 0 {
 		return result, invalid("Kafka source identity is invalid")
+	}
+	if batch.ReceivedAtUnixMS <= 0 {
+		return result, invalid("receive time is invalid")
+	}
+	if batch.MessageDisposition < MessageDispositionPersisted || batch.MessageDisposition > MessageDispositionMappingRejected {
+		return result, invalid("message disposition is invalid")
+	}
+	if batch.MessageDisposition != MessageDispositionPersisted {
+		if len(batch.Records) != 0 {
+			return result, invalid("non-persisted message must not carry records")
+		}
+		return result, nil
 	}
 	if !validIdentifier(batch.TenantID, 64) || !validIdentifier(batch.CollectorID, 128) || !validIdentifier(batch.ExporterID, 128) || batch.RegistryVersion == 0 {
 		return result, invalid("tenant, collector, exporter, and registry identity are required")
 	}
-	if batch.ReceivedAtUnixMS <= 0 || batch.Protocol < 1 || batch.Protocol > 4 {
-		return result, invalid("receive time or protocol is invalid")
+	if batch.Protocol < 1 || batch.Protocol > 4 {
+		return result, invalid("protocol is invalid")
 	}
 	var ok bool
 	if result.sourceIP, ok = parseAddress16(batch.SourceIP); !ok {
@@ -374,8 +381,8 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 		if err := validateRecord(batch, record, limits); err != nil {
 			return result, fmt.Errorf("%w: record[%d]: %v", ErrInvalidRecordBatch, position, err)
 		}
-		if position > 0 && batch.Records[position-1].RecordIndex >= record.RecordIndex {
-			return result, fmt.Errorf("%w: record_index must be strictly increasing", ErrInvalidRecordBatch)
+		if record.RecordIndex != uint32(position) {
+			return result, fmt.Errorf("%w: record_index must start at zero and be contiguous", ErrInvalidRecordBatch)
 		}
 	}
 	return result, nil
@@ -483,48 +490,8 @@ func selectRemoteASN(record *Record, side flowdimension.EndpointSide, geo flowdi
 	return 0, ASNSourceUnknown
 }
 
-func dimensionFingerprint(dimensions flowdimension.ClassifiedEndpoints) uint64 {
-	hash := xxhash.New()
-	writeHashString(hash, dimensions.SnapshotID)
-	writeHashUint64(hash, dimensions.Version)
-	writeHashString(hash, string(dimensions.Direction))
-	writeHashString(hash, dimensions.Business)
-	writeEndpointHash(hash, dimensions.Local)
-	writeEndpointHash(hash, dimensions.Remote)
-	return hash.Sum64()
-}
-
-func writeEndpointHash(hash *xxhash.Digest, endpoint flowdimension.EndpointDimension) {
-	writeHashString(hash, string(endpoint.Side))
-	writeHashString(hash, endpoint.PrefixID)
-	writeHashString(hash, endpoint.PrefixCIDR)
-	writeHashUint64(hash, uint64(endpoint.AddressSets.Count()))
-	for index := 0; index < endpoint.AddressSets.Count(); index++ {
-		id, _ := endpoint.AddressSets.At(index)
-		writeHashString(hash, id)
-	}
-}
-
-func writeHashString(hash *xxhash.Digest, value string) {
-	writeHashUint64(hash, uint64(len(value)))
-	_, _ = hash.WriteString(value)
-}
-
-func writeHashUint64(hash *xxhash.Digest, value uint64) {
-	var encoded [10]byte
-	length := binary.PutUvarint(encoded[:], value)
-	_, _ = hash.Write(encoded[:length])
-}
-
-func sourceRecordID(datagramID [32]byte, recordIndex uint32) [32]byte {
-	var input [36]byte
-	copy(input[:32], datagramID[:])
-	binary.BigEndian.PutUint32(input[32:], recordIndex)
-	return sha256.Sum256(input[:])
-}
-
-func blocked(dependency, tenantID string, sourceID [32]byte, record *Record, eventTime time.Time, cause error) error {
-	return &VersionBlockedError{Dependency: dependency, TenantID: tenantID, SourceID: sourceID, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
+func blocked(dependency, tenantID, sourceStreamID string, kafkaPartition int32, kafkaOffset int64, record *Record, eventTime time.Time, cause error) error {
+	return &VersionBlockedError{Dependency: dependency, TenantID: tenantID, SourceStreamID: sourceStreamID, KafkaPartition: kafkaPartition, KafkaOffset: kafkaOffset, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
 }
 
 func invalid(message string) error {

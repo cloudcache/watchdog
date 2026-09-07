@@ -1,8 +1,10 @@
 # Flow 模块详细设计
 
+> **Flow Storage V2 重大变更（唯一生效契约）**：原始事实取消硬编码 30 天 TTL、实时 rollup 改为策略驱动 aging/downsample、记录和回执改用 Kafka 自然坐标且移除 Flow 热路径 hash。详细切换、回滚、准确性边界和任务门禁见 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md)。本文后续与该设计冲突的旧 DDL、TTL、`record_id`、batch checksum、实时 1m/1h 描述均为历史基线，不可再作为实现依据；001–010 迁移仍保持不可修改。
+
 > 状态：现行。本文只定义当前实现契约；需求口径见 [flow-direction-requirements.md](flow-direction-requirements.md)，架构取舍和废弃方案见 [flow-pipeline-adr.md](flow-pipeline-adr.md)，唯一执行状态见 [flow-module-tasklist.md](flow-module-tasklist.md)。完成历史不得回填到本文。
 
-> **修订(2026-09)——保留与降精度模型**:按 [flow-pipeline-adr.md](flow-pipeline-adr.md) 的「保留与降精度(downsample)模型」修订块 —— 原始/全精度约留 1 年、作为 1 年窗口内的**主查询面(直接查 `flow_records`)**;1m/1h rollup 重定位为**满 1 年后的老化 downsample**,不再实时并跑。故本文 §1.1 图中的 `asynchronous rollups`、以及"原始短保留 + 派生长期"的表述以 ADR 修订块为准;重点转为**原始表按查询维度的排序键/projection**(不是只 `toStartOfHour`+`record_id`)。保留天数属运维配置。
+> **修订(2026-09)——保留与降精度模型**：原始/全精度是在线主查询面，保留时长完全来自 tenant Storage V2 policy，不写死 30 天或 1 年。只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 后才生成 1h archive；1m 不再持续物化。固定 TTL、实时双 rollup 和 hash 身份的后续旧段落仅保留为 V1 历史。
 
 > **修订(2026-09)——自研 v5 快解码器**:**NetFlow v5 与 sFlow v5 已由自研定长/TLV 快解码器处理**(零反射、零分配、对 GoFlow2 逐字段差分验证);GoFlow2 仅剩 **NetFlow v9 / IPFIX** 与 sFlow 未覆盖记录的回落。因此本文 §1.1 图的 decode 步、以及 §「采样与旁带元数据」中"sFlow 的 sub-agent/source-id/sample-pool/drop 靠 GoFlow2 producer 同序旁带保留"仅对 **GoFlow2 路径(v9/IPFIX)** 成立;**sFlow v5 快路径直接在自研解码器内复刻这些字段**。NetFlow v9/IPFIX 的 GoFlow2 template/sampling store 语义不变。详见 [flow-decode-fastpath.md](flow-decode-fastpath.md)。
 
@@ -17,7 +19,7 @@ router/switch
   -> watchdog.flow.raw-v1
   -> watchdog-flow-worker
        partition-ordered decode (自研 NetFlow v5/sFlow v5 快路径 + GoFlow2 v9/IPFIX) -> sampling -> dimensions -> CH batches
-  -> ClickHouse base + asynchronous rollups
+  -> ClickHouse raw facts + policy-aged 1h archive
   -> authenticated query/export API
   -> six product views
 ```
@@ -47,6 +49,20 @@ router/switch
 6. 主前缀最长匹配且互斥；address set 是可多归属标签，跨 set 不得相加当总量。
 7. 六类 + `internal/transit/unknown` 与 accepted base fact 守恒。
 8. 故障显示 incomplete/lag/loss interval，禁止伪装为 0 流量。
+
+### 1.5 Storage V2 生效架构
+
+| 层 | 唯一生效契约 |
+|---|---|
+| 事实身份 | `(source_stream_id, kafka_partition, kafka_offset, record_index)`；`source_stream_id` 表示 Kafka cluster/topic incarnation，topic 重建后禁止复用 |
+| 写入 | 大 columnar block 写事实，逐 Kafka message 写 receipt；无 `record_id`、`ingest_batch_id`、dimension fingerprint 或内容 checksum 热路径计算 |
+| 对账 | 由 Kafka `committed_next_offset` 给出闭合右边界；逐 offset 检查 receipt、连续 record index、count 及 raw/estimated bytes/packets |
+| 生命周期 | MySQL immutable policy + UTC 日状态；候选日必须越过 `max(raw_retention, late_arrival_window)`，再由 `operation_jobs` 写 24 个 1h bucket 并核对守恒 |
+| generation | `(policy_version << 32) | repair_attempt`；新策略和 repair 单调前进，不与 legacy generation 冲突 |
+| 查询 | 连续 reconciled 日之前读 1h archive，之后读 raw；两段互斥且 union 后再做全局 TopN。1m 和未物化的联合维度读 raw |
+| 删除 | 当前 fail closed；`raw_delete_enabled=true` 不可发布。只有 Kafka 日覆盖、delete grace、审计和故障恢复门禁完成后才新增显式 delete handler |
+
+管理 API 固定为 `GET/POST /api/v1/flow/storage/policies`、`GET/PATCH/DELETE /api/v1/flow/storage/policies/{id}`、`POST .../{id}/actions/publish` 和 `GET /api/v1/flow/storage/partitions`。修改/删除 draft 与发布均使用 row-version/`If-Match`，一个 tenant 同时只能有一个 published policy。静态 `flow_storage` 配置只控制扫描、并发、租约与重试预算；保留时长不写入进程配置。`flow_rollup.enabled` 与 `flow_storage.enabled` 互斥。
 
 ## 2. RawFlow、Kafka 与 collector
 
@@ -149,7 +165,9 @@ GoFlow2 内建 NetFlow sampling store 的键只有 `(exporter, version, observat
 
 plan 的 `default_sampling_rate` 只作为 exporter 最后兜底；pre-scaled 禁止配置该倍率。CLI 能对不同端口配置不同 rate，所以平台不能统一套一个采样率。每次配置变化生成新 registry version，历史事件仍按接收版本解释。
 
-### 3.4 ClickHouse 提交协议
+### 3.4 ClickHouse 提交协议（V1 历史基线，已由 §1.5/Storage V2 替代）
+
+> 本节至 3.4.1 记录迁移 001–010 的旧行为，仅用于理解 legacy 表和回滚。当前实现不得再生成 stable record hash、block receipt 或内容 checksum。
 
 1. consumer 把一次 fetch 按 partition 分组；partition 内顺序解码/富化，不跨 partition 混批；
 2. 一个 partition fetch 只调用一次 durable handler；snapshot/binding 不可用时整批不写、不标 offset；
@@ -194,7 +212,9 @@ NetFlow v9/IPFIX 模板状态位于 worker 内存，而模板 record 可能已�
 
 单节点真实 Kafka 恢复门禁固定检查 committed-next-offset，而不是仅看 handler 调用次数：同一 partition 先写入 v9/IPFIX 的 template+data 并提交到 4，再只追加无模板的 data。新的冷 processor assignment 后向前回放 4 条；当新 data 的 durable handler 被注入失败时 group offset 必须仍为 4，第三个冷 processor 再次接管后必须从回放窗口恢复两套模板、解码旧 data `1/3` 和新 data `4/5`，最终提交到 6。该门禁证明有界回放、水位不倒退和依赖恢复后的可重放性；它不模拟 broker 断网、`kill -9`、两个存活成员间的 partition 转移或 lag 时间序列，这些仍是独立故障门禁。
 
-### 3.5 FLOW-04B 关闭桶调度与 repair
+### 3.5 FLOW-04B 实时关闭桶调度（V1 回滚兼容，生产禁与 Storage V2 并启）
+
+> 下述 `flow_rollup` payload、水位与逐 1m/1h 关闭桶调度是 legacy rollback contract。Storage V2 使用 `flow_storage_downsample`、UTC 日、policy-version generation 和 §1.5 的 aging 条件；两者共享 CH rebuild primitive，不共享调度身份。
 
 rollup 不在 `flow-worker` 内执行。hub 复用平台 `operation_jobs` 的 handler registry，以 `flow_rollup` 类型领取任务；通用 worker 继续负责 lease、heartbeat、cancel、takeover、retry/backoff 和终态，Flow 只提供版本化 payload、关闭桶入队和 ClickHouse handler。这样 CH 聚合失败只形成 rollup stale，不阻塞 Kafka 消费或 base fact 写入。
 
@@ -353,7 +373,7 @@ Geo 不足得到 `unknown`。港澳台口径由 snapshot 固定。`home_isp_ids/
 
 `flow_records` 只保存一份原始 tuple/计数，同时保存 supplier 基线和 customer 最终值：`source_asn/destination_asn` 属于 raw；`supplier_remote_* / supplier_category / supplier_geo_version` 属于 supplier；现有 `remote_* / category / dimension_snapshot_id / classification_version` 属于 customer。`customer_geo_override_fields` 是稳定 bitset（country/admin/subdivision/city/isp/asn 分别为 bit 0..5），用于解释两个视图为何不同。`fact_schema=1` 的旧事实没有 supplier 基线，supplier 查询必须报告 unavailable/incomplete，禁止拿 customer 值冒充；migration 005 后由 worker 显式写 `fact_schema=2`。
 
-规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；新流量按事件时间选择已发布版本。历史修正必须复用 `operation_jobs`，输入固定为 tenant、时间窗、源/目标 publication、目标 view 和 generation；只从仍在 base TTL 内且具备所需 `fact_schema` 的事实重算。作业先写隔离的新 generation，再校验 record count、raw/estimated counter 和稳定 record-ID checksum 守恒，最后原子切换可见 generation；失败、取消或校验不通过继续读取旧 generation。禁止 `ALTER/UPDATE flow_records`、禁止复用 `ingest_generation` 表达分类版本，也禁止在请求线程扫描 base 做大范围修正。超出 base TTL 的请求只能从受控 raw archive 重放；没有 archive 证据时稳定拒绝，不能产生“部分已修正”的结果。
+规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；新流量按事件时间选择已发布版本。历史修正必须复用 `operation_jobs`，输入固定为 tenant、时间窗、源/目标 publication、目标 view 和 generation；只从仍在线的原始事实，或具有连续 Kafka 坐标与版本证据的授权重放源重算，不能从单维 1h archive 伪造记录级重分类。作业先写隔离的新 generation，再按自然 Kafka 坐标覆盖、record count 和 raw/estimated counters 守恒，最后原子切换可见 generation；失败、取消或校验不通过继续读取旧 generation。禁止 `ALTER/UPDATE flow_records`、禁止复用 `ingest_generation` 表达分类版本，也禁止在请求线程扫描原始事实做大范围修正。原始事实已经按策略销毁且没有可验证重放源时稳定拒绝，不能产生“部分已修正”的结果。
 
 本节冻结的是语义和事实 provenance。历史修正的派生投影/aggregate 写入契约必须在 FLOW-06B 通过真实 CH 容量测试后选定；在此之前不新增第六张高基数表，也不开放 supplier/raw aggregate API。这样 migration 005 是后续任何实现都必需的无损基线，不预埋未经验证的 overlay 状态机。
 
@@ -454,13 +474,13 @@ ClickHouse 时限必须拆成三类，不得把配置名当成库行为推断：
 
 | 表 | 角色 | 幂等/查询规则 |
 |---|---|---|
-| `flow_records` | 完整 enriched base fact | `record_id=32-byte SHA-256`；Replacing 收敛；base 查询去重 |
-| `flow_aggregate_1m` | 近期趋势/TopN | 关闭 bucket 异步重建；按 `generation` 取最新 |
-| `flow_aggregate_1h` | 长期趋势/TopN | 与 1m 同 schema，不从未关闭 1m 增量拼接 |
-| `flow_ingest_batches` | 每次 durable insert receipt | 不参与写前判断；v2 保留跨 tenant、event range、offset/count/counter/checksum 审计证据 |
+| `flow_records` | 完整 enriched base fact | Kafka 自然坐标 + `ingest_generation` 收敛；按 tenant/UTC 日分区；无固定 TTL |
+| `flow_aggregate_1m` | migration 兼容表 | Storage V2 不持续写；1m 查询直接读 raw |
+| `flow_aggregate_1h` | 策略老化后的归档 | 每个 tenant/UTC 日一次 operation job 写 24 桶；按 policy/repair generation 取最新 |
+| `flow_ingest_receipts` | 每个可提交 Kafka message 的回执 | 自然坐标唯一；保存 disposition/count/counter，不保存 batch hash/content checksum |
 | `flow_vpn_candidates` | 异步 VPN 候选 | 事实三版本 + 规则版本隔离；marker 选最新 generation，证据有 TTL |
 
-DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`record_id/batch_id` 保存原始 32 bytes 而不是 64 字节十六进制文本，`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001 仍保持已发布的 v1 基线，002 增加五级稳定 ID，003 只前向完成 candidate，004 只前向扩展 receipt，005 只前向增加 `fact_schema=2` supplier 基线；禁止原地篡改已部署 migration。
+DDL 使用代码里的准确枚举名（如 `on_net_local_city`、`off_net_in_province`），`quality_flags` 保存 UInt64 bitset，`estimated_valid` 与零值显式分离；这些字段由 migration contract test 按顺序合成最终 schema 后与 Go encoder/物化 SQL 核对。001–010 保持已发布的 V1 基线且禁止改写，011 在维护窗口换表到自然坐标/逐消息 receipt 并保留 legacy 表；以后只允许新增 forward migration。
 
 `dimension_kind` 的公开 registry 固定为 `total/category/geo.continent/geo.region/geo.country/geo.province/geo.city/isp/asn/business/local_prefix/remote_prefix/address_set/src_ip/dst_ip/remote_port/protocol/observation_interface`；`_generation` 是不可查询的内部 marker。每次查询必须选一个公开 kind。`primary_prefix` 和每个单独 Geo level 在包含 `_unassigned` 时可与 `total` 对账；`address_set` 是重叠标签统计，不能与 `total` 对账；不同 Geo level 也不能彼此相加。1m/1h rollup 由异步 job 对单个 `tenant + 已关闭 bucket` 发出一次原子 `INSERT SELECT`，同一 generation 同时生成全部维度和 marker；迟到/修正以更大 generation 完整重建。查询先按 `tenant+bucket`（包括 marker）求最新 generation，再只读该 generation 的公开 kind，不能逐 key `argMax`，否则新版本已消失的旧 key 会残留。IPv4 写 IPv4-mapped IPv6，API 还原文本。
 
@@ -635,16 +655,17 @@ IP 明细是 base fact 搜索，不复用 rollup，也不把 ASN 当作地址段
 - tenant 只从 authenticated scope 注入；`ip` 接受 IPv4/IPv6（拒绝 zone），内部规范化并与 IPv4-mapped IPv6 存储比较；`endpoint` 只能是 `source/destination/either`；
 - `view=customer` 读取已入库的客户视图并固定过滤 `disposition='count'`；`view=raw` 读取协议 tuple，不应用 customer disposition，因此被客户规则标记 drop 的事实仍可由具备 raw 权限的用户审计；`view=supplier` 读取 migration 005 的 `supplier_*` 基线列并使用 supplier category，同样遵守 count disposition；
 - `from/to` 是 UTC 左闭右开、毫秒精度，单次最多 24 小时且 `to` 不得在未来；`limit` 为 1..500，CH 实际读取 `limit+1`；
-- 默认排序仍为 `(event_time DESC, record_id DESC)`，旧 opaque cursor v1 由 8 字节大端 Unix 毫秒和 32 字节 record ID 组成并持续可读。任意展示字段排序使用 cursor v2，payload 绑定 `field/direction/typed field value/event_time/record_id`；主字段相等时统一以同方向的 event time、record ID 形成严格全序。续页只接受与请求排序身份完全一致的 cursor，避免把上一种排序的 cursor 用到新排序；next cursor 始终取已返回页最后一行而不是探测出的额外行；
-- cursor 版本、canonical base64/JSON、字段类型、record ID、时间范围和排序身份均严格检查。v1 只允许默认降序；v2 的 String/UInt64/Bool/DateTime64 值分别按 canonical wire value 解析，未知版本、非规范整数/时间或错配方向明确拒绝。客户端改变 IP、endpoint、时间、filter、sort 或 page size 必须清空 cursor 链；
-- 可选字段只能来自 provider 固定 registry；`event_time/record_id` 永远返回，内部还读取 src/dst IP 复核结果。raw 只开放协议/采样/质量/target/device/exporter/observation 字段，不开放 business/category/local/remote/Geo/ISP/customer snapshot 等派生字段。supplier 开放 raw 字段、direction/local/remote、supplier Geo/ASN/ISP/category 及其 dimension/classification provenance；不开放 customer business、prefix 或 override 值。地址集合数组不进入 field mask：重叠集合的并/交/差必须走 base membership 谓词和去重聚合，不能由明细数组在 UI 侧相加；
+- 默认排序为 `(event_time DESC, source_stream_id DESC, kafka_partition DESC, kafka_offset DESC, record_index DESC)`。任意展示字段排序使用 cursor v3，payload 绑定 `field/direction/typed field value/event_time/source coordinate`；主字段相等时统一以同方向的 event time 与自然坐标形成严格全序。next cursor 只取已返回页最后一行；
+- cursor 版本、canonical base64/JSON、字段类型、source stream、时间范围和排序身份均严格检查。旧 record-id cursor 明确过期并拒绝，不能静默从头翻页。String/UInt64/Bool/DateTime64 值分别按 canonical wire value 解析；客户端改变 IP、endpoint、时间、filter、sort 或 page size 必须清空 cursor 链；
+- 可选字段只能来自 provider 固定 registry；`event_time/source_coordinate` 永远返回，内部还读取 src/dst IP 复核结果。raw 只开放协议/采样/质量/target/device/exporter/observation 字段，不开放 business/category/local/remote/Geo/ISP/customer snapshot 等派生字段。supplier 开放 raw 字段、direction/local/remote、supplier Geo/ASN/ISP/category 及其 dimension/classification provenance；不开放 customer business、prefix 或 override 值。地址集合数组不进入 field mask：重叠集合的并/交/差必须走 base membership 谓词和去重聚合，不能由明细数组在 UI 侧相加；
 - customer filters 开放 `directions/categories/businesses/target_ids/device_ids/exporter_ids`；supplier 的 category 映射 `supplier_category`，但拒绝 customer business；raw 只开放后三种资源过滤器，若携带方向/category/business 立即稳定拒绝，而不是暗中按 customer 字段筛 raw。VTable 另用 `column_filters=[{field,values}]` 表达固定字段 registry 上的精确 OR、跨字段 AND；String/IP/UInt64/Bool/DateTime64 分别规范化并参数化，IP 用原生 IPv6 列与 `toIPv6` 比较，禁止以显示字符串比较 IPv4-mapped 地址。单字段最多 100 个、总值最多 256 个、字段最多 32 个；重复字段、与旧 typed filter 重复约束及空 values fail closed；
 - supplier 查询在 cursor 之前对完整过滤范围计算 `min(fact_schema) OVER ()`；每个数据行携带相同证据。若 cursor 排除了全部数据，查询仍用全范围第一行返回一个 `_scope_match=false` 的 metadata-only 行，runner 校验后丢弃。任何命中事实的 minimum 小于 2、跨 block 不一致或 metadata 列缺失，都返回 `ErrSupplierProvenanceUnavailable`/malformed 且整页清空；空范围合法返回 complete=true、minimum=0。这样 limit、旧 customer/raw cursor 或伪造 cursor 都不能绕过迁移完整性；
 - 查询使用 `flow_records FINAL` 收敛 at-least-once 物理重复，并设置 10 秒、`limit+1` 结果行、500 万扫描行、1 GiB 扫描字节硬限，所有 overflow mode 为 `throw`。超限/超时返回错误，不返回静默截断页。
 
 ```sql
 SELECT event_time,
-       lower(hex(record_id)) AS record_id,
+       CAST(source_stream_id AS String) AS source_stream_id,
+       kafka_partition, kafka_offset, record_index,
        toString(src_ip) AS _source_ip,
        toString(dst_ip) AS _destination_ip,
        /* fixed field-registry expressions */
@@ -653,14 +674,16 @@ WHERE tenant_id = {tenant:String}
   AND event_time >= {from:DateTime64(3,'UTC')} AND event_time < {to:DateTime64(3,'UTC')}
   /* customer only: AND disposition = 'count' */
   AND (src_ip = toIPv6({ip:String}) OR dst_ip = toIPv6({ip:String}))
-  AND (event_time < {cursor_time:DateTime64(3,'UTC')}
-       OR (event_time = {cursor_time:DateTime64(3,'UTC')}
-           AND record_id < unhex({cursor_record_id:String})))
-ORDER BY event_time DESC, record_id DESC
+  AND (event_time, source_stream_id, kafka_partition, kafka_offset, record_index)
+      < ({cursor_time:DateTime64(3,'UTC')}, {cursor_source_stream_id:String},
+         {cursor_kafka_partition:UInt32}, {cursor_kafka_offset:UInt64},
+         {cursor_record_index:UInt32})
+ORDER BY event_time DESC, source_stream_id DESC, kafka_partition DESC,
+         kafka_offset DESC, record_index DESC
 LIMIT {fetch_limit:UInt16}; -- requested limit + 1
 ```
 
-provider 使用与 field mask 对应的 typed ch-go columns 消费任意多个 data block，校验列等长、总行数不超过 `limit+1`、时间范围/毫秒精度、record ID canonical hex、IP 端点命中、游标边界以及跨 block 全局严格降序/唯一。任一结果畸形、取消或 CH 执行失败都丢弃累积行，响应全有或全无；只有真实读到额外一行才返回 `has_more=true + next_cursor`。
+provider 使用与 field mask 对应的 typed ch-go columns 消费任意多个 data block，校验列等长、总行数不超过 `limit+1`、时间范围/毫秒精度、source coordinate 合法、IP 端点命中、游标边界以及跨 block 全局严格排序/唯一。任一结果畸形、取消或 CH 执行失败都丢弃累积行，响应全有或全无；只有真实读到额外一行才返回 `has_more=true + next_cursor`。
 
 生产 HTTP 适配器固定为 `POST /api/v1/flow/records/search`，以 `POST /api/v1/flow/records/facets` 提供同范围的懒加载列值/计数，并以 `GET /api/v1/flow/records/capabilities` 暴露同一字段/视图 registry。适配器不得接受 tenant 字段；它从登录上下文注入 tenant，把 raw/supplier/customer 映射到平台 `view_raw/view_supplier/view_customer` grant，并用聚合查询相同的 target/device/exporter 资源授权器（包括 column filter 中的资源字段）。search 响应为 `{data: DetailResult, meta: {sort, page_size}}`，meta 返回实际主键和稳定 tie-break；客户端不得把当前页重排后冒充服务端排序。facet 限 1..100 个值、搜索限 128 字节、沿用 24h/500 万行/1 GiB/10 秒扫描预算，排除当前字段自身条件但保留其他条件；customer/raw 可用，supplier 在能证明全范围 provenance 前明确拒绝，不得把不完整基线聚合成候选值。成功查询都记录低基数敏感访问审计，不写 IP、cursor、搜索词或完整过滤值。
 
@@ -815,8 +838,9 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | 对象 | 创建/生效 | 保留 | 终止 |
 |---|---|---|---|
 | RawFlow Kafka | broker ACK 后 durable | 覆盖最大 worker/CH 故障窗口 | retention 自动删除 |
-| CH records | committed batch | 至少覆盖在线重分类 | TTL；删除前 rollup/备份验证 |
-| 1m/1h rollup | 关闭迟到窗口后生成 | 产品查询窗口 | TTL，可由 base 重建的范围明确 |
+| CH records | Kafka message receipt durable 后可提交 offset | tenant policy 的 raw online window；默认无限 | 当前禁止自动删除；未来须经 downsample 守恒、Kafka committed-offset 日覆盖和 delete grace 后由显式 job 删除 |
+| 1h archive | UTC 日越过 raw/late aging window 后生成 | tenant policy；0 表示无限 | 当前禁止自动删除；未来按月分区和显式 operation job 删除 |
+| 1m aggregate | V1 兼容表 | 不再新增 Storage V2 数据 | 回滚观察窗结束后只允许 forward migration 退役 |
 | Geo/dimension snapshot | validate + approve + publish | 不短于引用事实/Kafka | 无引用后清理 |
 | VPN finding/evidence | 规则窗口关闭/探测回传 | 风险策略 TTL | 审计后到期删除 |
 | export | 异步完成 | 短期、签名下载 | 到期删除并记录 |

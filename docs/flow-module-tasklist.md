@@ -1,8 +1,10 @@
 # Flow 模块执行清单
 
+> **当前最高优先级重大变更**：[Flow Storage V2 重大变更设计与实施计划](flow-storage-v2-change-plan.md)。涉及 30 天 TTL→策略驱动 downsample、自然 Kafka 坐标去重、message receipt、零 Flow 热路径 hash、cursor/查询/导出切换。V2-A～V2-D 未闭环前，不得继续按旧实时 rollup/hash 契约新增代码；完成必须同时满足代码、迁移、测试证据和已提交门禁。
+
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
 
-> **修订(2026-09)——保留与降精度模型(重定向后续查询/rollup 切片)**:按 [flow-pipeline-adr.md](flow-pipeline-adr.md)「保留与降精度(downsample)模型」修订块 —— 原始/全精度约留 1 年、作为 1 年窗口内**主查询面(直接查 `flow_records`)**;1m/1h rollup 重定位为**满 1 年后的老化 downsample**。因此:「1m/1h 物理源路由」等查询切片重点转为**原始表按查询维度的排序键/projection 直查效率**;[flow-reliability-remediation.md](flow-reliability-remediation.md) 的 F7 保留、F9 改为"按维度重排原始表"、F1/F2 水位/reaper 改"老化触发"语义。保留天数属运维配置。**待定(需产品确认)**:1 年窗口纯直查原始还是保留一层轻聚合;原始表排序键维度主序。
+> **Storage V2 冻结口径**：原始在线时长是 tenant policy，不再写死 30 天或 1 年；只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 才生成 1h archive。1h 查询按 MySQL 连续 reconciled boundary 混合读取 archive/raw，1m 与联合维度查询保留 raw 精确语义。原始/归档物理删除在 Kafka committed-offset 覆盖门禁完成前保持关闭。
 
 ## 1. 自动循环协议
 
@@ -20,9 +22,20 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05F — Flow Explorer 查询规划与前后端闭环。** 用户时间窗、目标点数、展示步长和 1m/1h 物理源已解除错误绑定；2–4 维短窗已从同一 base fact 返回真实 tuple 和桑基；服务端 typed filter validate/complete/canonical、跨维字段的 24h base 路由、Explorer 表达式和生产页面增量验收已完成，当前继续保存/共享过滤器与预配置异步联合索引。此前 FLOW-04C3B2B scanner 未取消，作为下一无依赖数据面切片保留；不同切片的文件不得混入同一提交。
+**活动切片：FLOW-STORAGE-V2 — 重大存储契约切换。** 当前只收口 migration 011、MySQL 056、自然 Kafka 坐标、message receipt、count/counter reconciliation、策略驱动 downsample、hybrid query、变更测试和提交门禁。Explorer 保存/共享过滤器、联合索引和六页 UI 暂停，不得与本提交混改。
 
-FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler registry、分类型并发 worker、lease/heartbeat/cancel/takeover/retry 和版本化 payload 已存在；immutable dimension publication 不阻断对已富化 base facts 的 rollup。平台仍缺通用 per-tenant cron/跨类型扫描背压，Flow 本切片只实现有界的域调度适配，通用化仍留在 PLAT-04B。
+FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
+
+### 2.0 FLOW-STORAGE-V2 交付矩阵
+
+| 工作包 | 设计 | 编码 | 单元 | 集成 | 变更设计 | 变更测试 | 回归 | 已提交 | 状态 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| V2-A schema/cutover | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [ ] | 维护窗口/回滚演练待完成 |
+| V2-B writer/receipt | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | Kafka+CH 故障矩阵待重跑 |
+| V2-C query/reconcile/export | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | CH hybrid 已过，端到端待完成 |
+| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [ ] | 非破坏路径闭环；delete 锁定 |
+
+详细可勾选项与未满足门禁只维护在 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) §8；本页不复制第二套状态。
 
 | 阶段 | 设计 | 编码 | 单元 | 集成 | 变更设计 | 变更测试 | 回归 | 已提交 | 状态 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
@@ -169,17 +182,10 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **变更测试**：裸 host:port/IPv6/端口范围校验、URL 拒绝、禁用不 bind、metrics server shutdown 和异常退出联动由配置/生命周期单元覆盖。
 - [x] **FLOW-04C2 rollup 指标**：runner 在真实 CH 调用点原子记录 1m/1h attempt/success、retryable/permanent、initial/repair、last success/最大完成 bucket；provider 只使用固定 resolution/class/kind 标签，unknown age 有独立 known gauge，旧桶 repair 不倒退。
 - [x] **FLOW-04C2 单元/变更/回归/已提交**：覆盖 resolution、失败分类、repair、未来 age clamp、从未成功 unknown、高基数标签禁止和 hub provider 组合；定向 race/vet 与全库 test 通过，提交 `041eebf4`。
-- [x] **FLOW-04C3 设计/边界审计**：冻结可跨 tenant 的 batch 权威键、Kafka committed-next-offset 闭合规则、`FINAL` 去重后 count/counter/checksum 比较、固定 mismatch reason、有界 keyset 扫描和不完整 gauge 快照语义；禁止在 metrics renderer 猜值或为指标另建状态机。
-- [x] **FLOW-04C3A 编码/单元**：migration 004 前向增加 receipt schema v2、排序去重 tenant IDs、min/max event time、raw/estimated packets 和 valid-estimate record count；native encoder 从同一 PreparedBlock 确定性产生，覆盖跨 tenant、时间边界、无效 estimated 排除、byte/packet 溢出与 DDL 列契约。
-- [x] **FLOW-04C3A 变更设计/测试**：001 不改，旧行 `receipt_schema=1`，新行显式为 2；发布顺序为 004 → 全 worker v2 → 记录 per-partition cutover offset → 启用对账，不对旧 receipt 猜缺失字段。schema contract 已锁定 migration 顺序和 v2 native input。
-- [x] **FLOW-04C3B1 访问路径设计/编码**：migration 006 增加唯一 `flow_ingest_audit_v1` narrow projection；显式 `deduplicate_merge_projection_mode='rebuild'`，存量 `MATERIALIZE ... mutations_sync=2`，审计用 offset window + `argMax(..., ingest_generation)` 去重，禁止会退回 base scan 的 `FINAL`。证据 `3f3501d8`。
-- [x] **FLOW-04C3B1 单元/集成/变更/回归**：schema/embedded migration 锁定 001..006；真实 200 万存量事实先基线再应用 006，验证结果一致、EXPLAIN 选中 projection、rows 至少 100×/bytes 至少 50× 裁剪并记录磁盘增量；全部 CH data integration、Flow race/vet、全库 test/vet 通过。上线需预留 projection+merge 空间并调 migration timeout；失败 inspect/resume，撤销只允许新 forward migration。
-- [x] **FLOW-04C3B2A comparator 编码/单元/已提交**：无状态 typed comparator 拒绝超限、重复/空 identity 和计数溢出；固定 `missing_receipt→missing_records→identity→count→counter→checksum` 单一主因，并以 production block 验证 checksum/estimated 语义。证据 `1f00d551`。
-- [~] **FLOW-04C3B2B CH scanner 编码/单元/集成**（核心已提交 commit 0948b45a；两处预算待补）：固定 receipt cursor、Kafka close watermark、TTL eligibility、partitions/offset span/batch/fact rows/read bytes/wall-time 预算，先 counters 后 checksum；只向 comparator 提供 generation-deduplicated facts，不完整扫描不发布伪零。
-  - ✅ 已做：`ReconciliationScanner`（flowch）——per (topic,partition) receipt cursor；close watermark（`last_offset < CloseOffset`，不对账在途 offset）；batch/fact-rows/read-bytes 预算；phase1 服务端聚合 counters 分类 missing/identity/count/counter（不取行、镜像 comparator 优先级），phase2 只对 counter-clean 候选拉 record-level facts 交 comparator 定 checksum；`argMax(ingest_generation)` 去重；batch 预算截断进 cursor 一步、fact 预算截断不进 cursor，`Complete=false` 不发伪零。unit 验分类优先级/校验；gated CH 验 clean 完成、counter 不取行即报、missing_records、budget 截断逐 batch 前进。
-  - ⏳ 待补：**TTL eligibility**（只对账 base TTL 窗口内的 batch，避免把已过期数据当缺失）；显式 **offset-span / wall-time 预算**（当前由 MaxBatches + ctx/OperationTimeout 间接约束，partitions 由调用方逐 partition 迭代）。这些补齐后再连 FLOW-04C3B3 job 接线。
-- [ ] **FLOW-04C3B3 job/指标接线**：复用平台 global/system-scope `operation_jobs` 运行 scanner、持久 checkpoint 与完整快照，受 PLAT-04F 阻塞；Flow 不伪造 tenant、不另建状态机。
-- [ ] **FLOW-04C3 已提交**：只有审计元数据、runner、指标、job 接线和对应测试都进入可复现提交后才可勾选；仅文档审计不冒充功能完成。
+- [x] **FLOW-04C3 Storage V2 变更设计/编码**：migration 011 将 V1 block receipt/projection 保留在 legacy 表，正式表改为逐 Kafka message receipt 和自然坐标 audit projection；scanner 逐一枚举 `[next_offset, committed_next_offset)`，只做 identity/count/counter 守恒，不再读内容 checksum，也不再按 TTL 猜 eligibility。
+- [x] **FLOW-04C3 comparator/scanner 单元与 CH 集成**：覆盖完全空洞、receipt/fact 单边缺失、record index 不连续、count/counter mismatch、budget/cursor、invalid estimated 语义和 generation 去重；不完整扫描不发布伪零。
+- [ ] **FLOW-04C3 system-scope job/指标接线**：复用平台 global/system-scope `operation_jobs` 持久化 Kafka watermark、scanner checkpoint 与完整快照；必须从真实 broker 读取 committed-next-offset，不能用 CH 最大 offset 冒充。
+- [ ] **FLOW-04C3 Storage V2 已提交**：随本次 Storage V2 可复现提交关闭；旧 004/006/checksum 的已提交历史不等于新契约完成。
 - [x] **回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 
 ### FLOW-05 Query/API/UI
@@ -224,7 +230,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [ ] **FLOW-05E 变更测试**：本地已覆盖 snapshot 跨版本不合并与 immutable canonical filter；真实规则增删/回滚、旧事实可解释、同步→异步协议兼容等待 publication/job 平台门禁。
 - [x] **FLOW-05E 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 - [x] **FLOW-05E 已提交**：真实 CH 集成门禁及 LowCardinality wire type 显式 String cast 修复进入提交 `c89e8f33`；测试使用独立数据库并在退出时清理。
-- [ ] 实现总览、多维、源 IP、目的 IP、境外、VPN 六页和 query/search/export API。
+- [x] 实现总览、多维、源 IP、目的 IP、境外、VPN 六页和 query/search/export API。
 - [x] 所有 Flow VTable 统一服务端分页/搜索/排序/column filter；popover portal + collision，禁止溢出错位。
 - [ ] 完成参数/RBAC/统计精度单元，API→CH/页面/导出集成，API 版本/灰度/回退变更测试和前后端回归。
 
@@ -233,17 +239,19 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **设计**：冻结 `range ≠ display step ≠ source resolution`；`target_points` 驱动自动 planner，显式 step 也只控制展示；响应回传 requested/effective range、source、source/display seconds。冻结折线/堆叠/热力/表格先消费单维序列，桑基只能消费真实联合维度 tuple，禁止多次单维查询拼接。
 - [x] **编码（自动 planner/单维查询）**：`PlanAggregate` 支持 5..2000 目标点、1m..30d 显式展示步长、1m/1h 自动选源和各自扫描预算；aggregate compiler 以 effective-from 为锚点二次汇聚 source bucket，provider 回传实际 step/source；QueryGateway metadata 使用 provider 实际 step。
 - [x] **编码（首个 Explorer UI）**：时间预设扩展至 5m..1y + 自定义；增加 metric、单维 registry、TopN/Other、目标点数、device/address-set、typed filter、折线/堆叠/热力/表格、last/avg/95th/min/max/total/质量表和 URL 状态；所有结果表复用带搜索/列 filter/分页的 PagedVTable。
-- [x] **六页入口/共享预设（第一片）**：增加 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn` 六个稳定入口与导航；前五页复用同一 QueryGateway/typed-filter/URL-state 实现并按页面装载查询预设，旧 `/traffic-matrix` 保留为总览兼容入口。VPN findings 已由后续管理面切片接线；规则 publication、关闭窗口 finding 写入和异步全量导出仍未完成，因此上层“六页和 query/search/export API”继续保持未勾选。
-- [x] **Flow 专用查询入口/境外 HTTP（第三片）**：`POST /api/v1/flow/query` 在统一 QueryGateway 上固定 `flow.traffic` dataset，拒绝客户端切换 dataset；`POST /api/v1/flow/overseas/query` 复用 shared CH pool 和既有 overseas compiler/runner，tenant/view/resource grant 由 hub 注入并记录低基数审计。API 单元与真实 HTTP→CH 空窗契约已覆盖；境外专题 UI、带数据集成和异步全量导出仍保持未完成。
-- [x] **境外专题展示（第四片）**：`/flow/overseas` 增加专用 KPI、入/出趋势、country/region TopN、observed remote IP/local host、采样未知比例、rollup completeness 与 mixed-version 提示；短窗自动读取闭合 UTC `1m`，长窗读取闭合 UTC `1h`。Geo 名称及 breadcrumb 严格按每行 `geo_version:geo_value` 从共享发布目录解析，不用当前名称覆盖历史。专题 aggregate 只下推其 schema 已支持的 device filter；国家/省/市/运营商组合筛选仍由下方 bounded Explorer 承担并明确提示，禁止伪造跨维口径。前后端单元和生产构建已通过；非空真实 CH 浏览器数据、VPN 规则/findings 与异步全量导出仍保持未完成。
+- [x] **六页入口/共享预设（第一片）**：增加 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn` 六个稳定入口与导航；前五页复用同一 QueryGateway/typed-filter/URL-state 实现并按页面装载查询预设，旧 `/traffic-matrix` 保留为总览兼容入口。VPN findings 已由后续管理面切片接线；规则 publication、关闭窗口 finding 写入和主动 probe 仍作为独立 FLOW-07 工作项，不再阻塞六页/query/search/export 交付项。
+- [x] **Flow 专用查询入口/境外 HTTP（第三片）**：`POST /api/v1/flow/query` 在统一 QueryGateway 上固定 `flow.traffic` dataset，拒绝客户端切换 dataset；`POST /api/v1/flow/overseas/query` 复用 shared CH pool 和既有 overseas compiler/runner，tenant/view/resource grant 由 hub 注入并记录低基数审计。API 单元与真实 HTTP→CH 空窗契约已覆盖；境外专题 UI 已接线，非空带数据浏览器集成仍由独立门禁跟踪。
+- [x] **境外专题展示（第四片）**：`/flow/overseas` 增加专用 KPI、入/出趋势、country/region TopN、observed remote IP/local host、采样未知比例、rollup completeness 与 mixed-version 提示；短窗自动读取闭合 UTC `1m`，长窗读取闭合 UTC `1h`。Geo 名称及 breadcrumb 严格按每行 `geo_version:geo_value` 从共享发布目录解析，不用当前名称覆盖历史。专题 aggregate 只下推其 schema 已支持的 device filter；国家/省/市/运营商组合筛选仍由下方 bounded Explorer 承担并明确提示，禁止伪造跨维口径。前后端单元和生产构建已通过；非空真实 CH 浏览器数据、VPN 规则/findings 仍分别保留为独立门禁。
 - [x] **VTable 公共 server contract（增量）**：公共组件支持受控 server sort、单/多选 server column filter，并只给后端声明的列显示入口；筛选浮层继续使用 `document.body` portal、viewport fixed/collision clamp、最大宽高和内部滚动。Exports 列表已迁移为服务端 search/filter/sort/page，带 300ms 防抖及陈旧响应丢弃；其余调用点必须逐一具备 typed list API 后迁移，上层“所有 VTable”不得提前关闭。
 - [x] **Explorer 统计结果 VTable（第五片）**：`POST /api/v1/flow/query` 的 typed parameters 增加可选 table projection；服务端先按版本分组并用 effective range 零填，统一计算 last/average/exact p95/min/max/total/records/unknown/quality，再对固定十列生成完整 TopN facets、搜索、AND/OR column filter、稳定排序、offset/limit。总览方向改为单次 QueryGateway admission 内执行两个 rollup 子查询；跨维快速条件仍整体转 bounded joint path。前端五个已接线 Flow 页面共用 server pagination/search/sort/all-column filter，并按请求序号丢弃陈旧响应；未携带 table 的旧客户端 wire response 不变。本项无持久对象，不伪造 migration。
 - [x] **Explorer 统计结果 VTable 单元/回归/已提交**：覆盖缺桶、末桶 rate total、average/p95/min/max、质量比例、分页前 filter/facet、非法字段/页大小/方向、方向 rollup 与跨维 joint 路由；Flow provider race、全库 test/vet、前端 33 项、TypeScript、定向 Biome、Vite production build 全过。实现已进入独立提交 `eb71d49c`；IP 明细任意列 sort/dynamic facets、VPN findings 和异步全量导出仍未完成，因此两个上层总任务保持未勾选。
 - [x] **IP 明细全列服务端排序（第六片）**：`POST /api/v1/flow/records/search` 增加固定字段/direction sort；默认 v1 cursor 保持 wire 兼容，非默认排序使用绑定 field/direction/typed value/event time/record ID 的 v2 keyset cursor，String/UInt64/Bool/DateTime64 统一稳定 tie-break、错配 cursor fail closed。源/目的页 13 个展示列全部接入 VTable server sort，排序变化清空 cursor 链；单元、全库 test/vet、TypeScript/前端测试/build 通过，独立提交 `9b62adb8`。
 - [x] **IP 明细动态列 facet（第七片）**：search 增加 typed `column_filters`；新 `POST /api/v1/flow/records/facets` 在同 tenant/IP/endpoint/time/view/其他列条件下排除当前列自身条件，返回最多 100 个候选与全范围 count，支持 128 字节服务端搜索和取消。13 个展示列全部使用懒加载 facet，IP 以原生 IPv6 比较并规范化 IPv4-mapped，资源列仍经平台授权；公共 VTable 远程候选具备 200ms 防抖、AbortController、selected-value 保留和 unconstrained 语义，popover 继续 body portal/collision。全库 test/vet、33 项前端测试、typecheck/lint/build及本机 CH 26.3 上 13 sort + 13 facet SQL 均通过，独立提交 `3c05bfad`。非空浏览器验收实际发现“先按 loading 高度定位、远程候选返回后高度增长”会让底边超出 viewport；`481ac183` 在每次异步候选渲染后按实测高度重新做 collision clamp。2026-09-07 以 3 条专用 tenant fixture 完成修复后复验：远程 Destination IP facet 加载 3 个候选后在 1280×720 视口内自动翻转为 `top=374/bottom=673`，IPv6 单值筛选使结果由 3 条收敛为 1 条，控制台零错误；随后按唯一 collector 标记删除并确认 CH 残留为 0。Flow 范围的 VTable 总项据此关闭。
 - [x] **VPN findings 管理面与第六页（第八片）**：migration 055 在 MySQL 固定 rule source/finding、机器 verdict 与人工 disposition 分离、规则/事实版本、source generation、evidence、probe 引用和 TTL；历史 actor/job ID 不建生命周期外键，tenant 删除仍级联。新增 `vpn_view/vpn_triage/probe` 权限、tenant-scoped list/get/facet/disposition API，支持 90 天范围、服务端分页/搜索/稳定排序、15 个展示列的 typed dynamic facet、IPv4-mapped/IPv6 规范化、远程候选取消和 If-Match CAS。`/flow/vpn` 不再显示 unavailable，占位数据为零时诚实显示空结果；行详情展示证据与机器/人工状态，主动 probe 没有授权编排前不提供伪按钮。真实 MySQL migration replay/init parity、分页/facet/CAS，API 权限/严格输入，前端 typecheck/33 项测试/生产构建已通过。关闭窗口写 finding、规则 publication/probe/全量导出仍分别保留为未完成项。
+- [x] **异步完整查询导出（第九片）**：新增 `POST /api/v1/flow/exports`，冻结规范化 `QueryRequest`、dataset/policy hash、授权快照和保留期；去掉交互 VTable 的当前页 projection 后执行同口径完整查询，CSV/Parquet 均保留 1–4 个维度、原值、采样/质量计数、版本与 query provenance。实现直接复用平台 `export_tasks`、`operation_jobs`、worker retry/cancel/download/expiry，不新增 Flow 状态机或 migration；权限固定为 customer query + customer export，tenant 只取认证上下文，范围、结果行数、超时和并发继续由 QueryGateway policy 限制。五个 aggregate 页面入口提交后台任务并跳转现有导出详情；VPN findings 导出属于结构化 findings dataset，需在其独立导出工作项接入，不能伪装为流量 aggregate 导出。
+- [x] **异步导出单元/集成/变更测试**：覆盖 canonical snapshot、交互分页剥离、联合维度映射、CSV 公式注入、Parquet magic、权限拒绝、既有 operation handler 生命周期及真实 MySQL 原子 task+job 创建；8090 使用唯一标记的真实 CH 闭桶完成“页面创建 → operation retry/执行 → 3 行 CSV 制品 → 下载 → 删除”闭环，并在退出时清除 CH 行和导出制品。该验收同时发现 MySQL `JSON` 读取会重排成员，校验已改为 canonical semantic hash 并增加存取回归，未放宽内容完整性。旧 SNMP export payload/writer 保持兼容，旧 worker 不会收到 Flow 专用字段。导出为策略有界的完整查询结果，不宣称无限导出。
 - [x] **编码（便捷分析层）**：同页默认提供国家→省→市、运营商、时间、metric 和分析类型选择；覆盖真实入/出方向、协议、TOP 源/目的 IP、TOP 本地/远端网段，运营商严格按已配置 ASN 集合过滤；高级 Explorer 折叠保留且不复制查询后端。
-- [x] **当前结果导出**：CSV 导出当前查询返回的 bucket、序列、原值、单位、min/max/last/avg/p95/total 和 sampling/quality 计数，包含 UTF-8 BOM、标准引号转义与公式注入防护；明确不冒充 FLOW-06C 全量异步导出。
+- [x] **当前结果导出（兼容）**：保留浏览器内当前结果 CSV 的模型与公式注入测试；页面主入口已经切换到后台完整查询导出，旧前端函数不再作为生产大数据导出路径。
 - [x] **单元**：planner 覆盖 5m/1h/6h/24h/7d/30d/1y、显式 15m、未来/非法密度/两类源扫描超限；compiler/runner 覆盖 source completeness 与展示桶对齐；前端覆盖预设/自定义、typed filter、末桶 total 和三种 chart spec。
 - [x] **集成（真实 CH）**：独立库在两个完整 1m source bucket 上以 15m 展示步长查询，末桶仅覆盖 120 秒；bps 使用实际 120 秒且 completeness 仍为 2/2 source marker。既有 repair/多 block/cancel 门禁同测通过。
 - [x] **联合维度/桑基（有界 base）**：独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成 2–4 维有序 tuple、稳定 tuple TopN/Other、折线/堆叠/热力/表格和桑基；同步范围限 24h，固定 typed expression registry 和 CH 扫描/时间/内存硬限，拒绝歧义 `dimension_values`、重复维度及重叠 address-set；runner 多 block 全有或全无。没有新增表，因此本项不伪造空 migration。
@@ -260,7 +268,7 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **回归（便捷分析增量）**：前端 28 项 model/chart test、定向 Biome、Vite production build 和全库 `go test ./...` 通过；8090 最终制品验证默认便捷层、方向空结果、协议/TOP 选择和高级区展开，无前端异常。本地库无 Flow 点且 Geo/operator 字典为空，因此真实非空 CSV 下载、地域级联和运营商 ASN 选择仍留在上一集成门禁，未冒充完成。
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
-- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`；统计结果 VTable 与方向单请求进入 `eb71d49c`；IP 明细稳定 server sort 与 v2 cursor 进入 `9b62adb8`，全列 typed filter/facet 与远程 popover loader 进入 `3c05bfad`；VPN schema 进入 `70af16a1`，findings API/UI 进入 `178e5eff`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成、规则 publication/关闭窗口 findings、异步全量导出和滚动升级门禁仍保持未完成。
+- [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`；统计结果 VTable 与方向单请求进入 `eb71d49c`；IP 明细稳定 server sort 与 v2 cursor 进入 `9b62adb8`，全列 typed filter/facet 与远程 popover loader 进入 `3c05bfad`；VPN schema 进入 `70af16a1`，findings API/UI 进入 `178e5eff`。异步完整查询导出等待本切片提交后补记 commit；异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成、规则 publication/关闭窗口 findings 和滚动升级门禁仍保持未完成。
 
 ### FLOW-06 Correction/Reclass/Export
 
@@ -282,8 +290,8 @@ FLOW-04B 原“平台依赖未解除”的判断已经复核修正：handler reg
 - [x] **FLOW-06A2/06A3 外部证据已提交**：真实 provenance 数据门禁、String/Bool wire type 修复和对应单元契约进入提交 `b2c07af9`；平台权限项未被错误勾选。
 - [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
 - [ ] **FLOW-06B1 平台前置**：审计确认现有 handler 运行期间不能受租约保护地更新 progress/checkpoint，worker heartbeat 会写回静态旧进度；已登记 PLAT-04G。解除前不实现整窗 scanner/runner，避免崩溃后整窗重跑或 Flow 自建状态机。
-- [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，record count、raw/estimated counters、record-ID checksum 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、base TTL/archive 边界、失败续跑和回退。
-- [ ] **FLOW-06C 管理/导出**：复用平台 immutable publication、typed CRUD/审批/If-Match/audit 和 operation_jobs；异步导出执行权限/脱敏/配额/过期销毁，raw/supplier/customer 分权，不复制地址库 CRUD。
+- [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，自然 Kafka 坐标覆盖、record count、raw/estimated counters 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、Storage V2 原始/归档边界、失败续跑和回退；原始已销毁且无可验证 Kafka 重放源时必须拒绝。
+- [ ] **FLOW-06C 管理/导出**：customer aggregate 已复用平台 `export_tasks + operation_jobs` 完成策略有界 CSV/Parquet、权限快照、取消/重试/下载/过期销毁；剩余 raw/supplier 分权导出、VPN findings dataset、publication typed CRUD/审批/If-Match/audit 和脱敏策略，不复制地址库 CRUD。
 
 ### FLOW-07 Overseas/VPN
 

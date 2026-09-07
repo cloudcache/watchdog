@@ -5,7 +5,6 @@ package flowch
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/netip"
 	"os"
@@ -30,6 +29,19 @@ type queryRecorder struct {
 
 type deadlineRecorder struct {
 	remaining time.Duration
+}
+
+type readinessExecutor struct {
+	requiredRecords, requiredReceipts   uint64
+	forbiddenRecords, forbiddenReceipts uint64
+}
+
+func (e readinessExecutor) Do(ctx context.Context, query ch.Query) error {
+	results := query.Result.(proto.Results)
+	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.forbiddenRecords, e.forbiddenReceipts} {
+		results[index].Data.(*proto.ColUInt64).Append(value)
+	}
+	return query.OnResult(ctx, proto.Block{Columns: 4, Rows: 1})
 }
 
 func (r *deadlineRecorder) Do(ctx context.Context, _ ch.Query) error {
@@ -74,6 +86,23 @@ func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) 
 	}
 }
 
+func TestNativeReadyRequiresStorageV2WithoutLegacyHashColumns(t *testing.T) {
+	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 11}}
+	if err := ready.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []readinessExecutor{
+		{requiredRecords: 4, requiredReceipts: 11},
+		{requiredRecords: 5, requiredReceipts: 10},
+		{requiredRecords: 5, requiredReceipts: 11, forbiddenRecords: 1},
+		{requiredRecords: 5, requiredReceipts: 11, forbiddenReceipts: 1},
+	} {
+		if err := (&NativeInserter{executor: test}).Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "not Storage V2") {
+			t.Fatalf("legacy/mixed schema was accepted: executor=%+v error=%v", test, err)
+		}
+	}
+}
+
 func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T) {
 	batch := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
 	batch.AgentIP = batch.SourceIP
@@ -97,11 +126,11 @@ func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T
 	if len(recorder.queries) != 2 {
 		t.Fatalf("queries=%d, want records and receipt", len(recorder.queries))
 	}
-	if !strings.HasPrefix(recorder.queries[0].Body, `INSERT INTO "flow_records"`) || !strings.HasPrefix(recorder.queries[1].Body, `INSERT INTO "flow_ingest_batches"`) {
+	if !strings.HasPrefix(recorder.queries[0].Body, `INSERT INTO "flow_records"`) || !strings.HasPrefix(recorder.queries[1].Body, `INSERT INTO "flow_ingest_receipts"`) {
 		t.Fatalf("unexpected insert sequence: %q then %q", recorder.queries[0].Body, recorder.queries[1].Body)
 	}
-	wantToken := hex.EncodeToString(blocks[0].ID[:])
-	if setting(recorder.queries[0], "insert_deduplication_token") != wantToken || setting(recorder.queries[1], "insert_deduplication_token") != wantToken+"-receipt" {
+	wantToken := blockDeduplicationToken(blocks[0])
+	if setting(recorder.queries[0], "insert_deduplication_token") != wantToken || setting(recorder.queries[1], "insert_deduplication_token") != wantToken+":receipts" {
 		t.Fatal("record and receipt tokens are not stable and distinct")
 	}
 	for _, query := range recorder.queries {
@@ -159,19 +188,41 @@ func TestNativeInserterRetriesUseIdenticalRecordBlock(t *testing.T) {
 	}
 }
 
+func TestNativeInserterWritesReceiptOnlyForNonPersistedMessage(t *testing.T) {
+	batch := testEnrichedBatch(10)
+	batch.MessageDisposition = flowworker.MessageDispositionDecodeRejected
+	batch.TenantID, batch.CollectorID, batch.ExporterID = "", "", ""
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &queryRecorder{}
+	inserter := &NativeInserter{executor: recorder}
+	if err := inserter.InsertFlowBlock(context.Background(), blocks[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.queries) != 1 || !strings.HasPrefix(recorder.queries[0].Body, `INSERT INTO "flow_ingest_receipts"`) {
+		t.Fatalf("receipt-only queries=%+v", recorder.queries)
+	}
+	assertEnumValue(t, recorder.queries[0].Input, "message_disposition", "decode_rejected")
+	if got := columnValue(recorder.queries[0].Input, "record_count").(proto.ColUInt64).Row(0); got != 0 {
+		t.Fatalf("receipt-only record_count=%d", got)
+	}
+}
+
 func TestNativeInputColumnsMatchAuthoritativeMigration(t *testing.T) {
 	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, maxReceivedAt, generation, err := buildRecordInput(blocks[0])
+	records, err := buildRecordInput(blocks[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildReceiptInput(blocks[0], maxReceivedAt, generation)
+	receipt := buildReceiptInput(blocks[0])
 	schema := readClickHouseMigrations(t)
 	assertColumnsMatchDDL(t, schema, "flow_records", records)
-	assertColumnsMatchDDL(t, schema, "flow_ingest_batches", receipt)
+	assertColumnsMatchDDL(t, schema, "flow_ingest_receipts", receipt)
 }
 
 func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
@@ -188,32 +239,33 @@ func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, maxReceivedAt, generation, err := buildRecordInput(blocks[0])
+	records, err := buildRecordInput(blocks[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildReceiptInput(blocks[0], maxReceivedAt, generation)
+	receipt := buildReceiptInput(blocks[0])
 	assertInputRows(t, records, 2)
-	assertInputRows(t, receipt, 1)
+	assertInputRows(t, receipt, 2)
 
 	if got := columnValue(receipt, "receipt_schema").(proto.ColUInt16).Row(0); got != receiptSchemaVersion {
 		t.Fatalf("receipt schema=%d", got)
 	}
-	if got := columnValue(receipt, "tenant_ids").(*proto.ColArr[string]).Row(0); !reflect.DeepEqual(got, []string{"tenant-a", "tenant-z"}) {
-		t.Fatalf("tenant IDs=%v", got)
+	if got := columnValue(receipt, "message_disposition").(*proto.ColEnum).Values; !reflect.DeepEqual(got, []string{"persisted", "persisted"}) {
+		t.Fatalf("receipt dispositions=%v", got)
 	}
-	for name, want := range map[string]uint64{
-		"raw_packets": 6, "estimated_packets": 10, "estimated_valid_records": 1,
-	} {
+	if firstTenant := columnValue(receipt, "tenant_ids").(*proto.ColArr[string]).Row(0); !reflect.DeepEqual(firstTenant, []string{"tenant-z"}) {
+		t.Fatalf("first receipt tenant IDs=%v", firstTenant)
+	}
+	for name, want := range map[string]uint64{"raw_packets": 2, "estimated_packets": 10, "estimated_valid_records": 1} {
 		if got := columnValue(receipt, name).(proto.ColUInt64).Row(0); got != want {
 			t.Fatalf("%s=%d want=%d", name, got, want)
 		}
 	}
-	if got := columnValue(receipt, "min_event_time").(*proto.ColDateTime64).Row(0); !got.Equal(second.Records[0].EventTime) {
-		t.Fatalf("min event time=%s", got)
+	if got := columnValue(receipt, "min_event_time").(*proto.ColDateTime64).Row(0); !got.Equal(first.Records[0].EventTime) {
+		t.Fatalf("first receipt min event time=%s", got)
 	}
-	if got := columnValue(receipt, "max_event_time").(*proto.ColDateTime64).Row(0); !got.Equal(first.Records[0].EventTime) {
-		t.Fatalf("max event time=%s", got)
+	if got := columnValue(receipt, "min_event_time").(*proto.ColDateTime64).Row(1); !got.Equal(second.Records[0].EventTime) {
+		t.Fatalf("second receipt min event time=%s", got)
 	}
 }
 
@@ -281,7 +333,8 @@ func TestClickHouseIPAndCountryNormalization(t *testing.T) {
 
 func assertColumnsMatchDDL(t *testing.T, schema, table string, input proto.Input) {
 	t.Helper()
-	start := strings.Index(schema, "CREATE TABLE IF NOT EXISTS watchdog_flow."+table+" (")
+	staging := table + "_v2_staging"
+	start := strings.Index(schema, "CREATE TABLE watchdog_flow."+staging+" (")
 	if start < 0 {
 		t.Fatalf("table %s not found", table)
 	}
@@ -294,25 +347,6 @@ func assertColumnsMatchDDL(t *testing.T, schema, table string, input proto.Input
 	want := make([]string, 0, len(matches))
 	for _, match := range matches {
 		want = append(want, match[1])
-	}
-	addColumnPattern := regexp.MustCompile(`(?m)ALTER TABLE watchdog_flow\.([a-z][a-z0-9_]*)\s+ADD COLUMN IF NOT EXISTS ([a-z][a-z0-9_]*) [^;\n]+ AFTER ([a-z][a-z0-9_]*);`)
-	for _, match := range addColumnPattern.FindAllStringSubmatch(schema, -1) {
-		if match[1] != table {
-			continue
-		}
-		position := -1
-		for index, column := range want {
-			if column == match[3] {
-				position = index + 1
-				break
-			}
-		}
-		if position < 0 {
-			t.Fatalf("migration adds %s after missing column %s", match[2], match[3])
-		}
-		want = append(want, "")
-		copy(want[position+1:], want[position:])
-		want[position] = match[2]
 	}
 	got := make([]string, 0, len(input))
 	for _, column := range input {

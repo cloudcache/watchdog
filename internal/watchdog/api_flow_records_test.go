@@ -34,8 +34,10 @@ func TestFlowRecordSearchInjectsTenantAndReturnsCursorEnvelope(t *testing.T) {
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	runner := &flowDetailAPIRunnerStub{result: flowquery.DetailResult{
 		View: flowquery.ViewCustomer, Fields: []flowquery.DetailField{flowquery.DetailFieldSourceIP},
-		Rows:    []flowquery.DetailRow{{EventTime: now.Add(-time.Minute), RecordID: strings.Repeat("a", 64), Values: map[flowquery.DetailField]any{flowquery.DetailFieldSourceIP: "203.0.113.1"}}},
-		HasMore: true, NextCursor: "v1.cursor",
+		Rows: []flowquery.DetailRow{{EventTime: now.Add(-time.Minute), SourceCoordinate: flowquery.SourceCoordinate{
+			SourceStreamID: "stream-a", KafkaPartition: 1, KafkaOffset: 42, RecordIndex: 0,
+		}, Values: map[flowquery.DetailField]any{flowquery.DetailFieldSourceIP: "203.0.113.1"}}},
+		HasMore: true, NextCursor: "v3.cursor",
 	}}
 	audit := &recordingAuditRepository{}
 	router := NewAPIV1Router(APIV1RouterConfig{
@@ -67,7 +69,8 @@ func TestFlowRecordSearchInjectsTenantAndReturnsCursorEnvelope(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if !envelope.Data.HasMore || envelope.Data.NextCursor != "v1.cursor" || envelope.Meta.PageSize != 100 || envelope.Meta.Sort != "event_time:desc,record_id:desc" {
+	if !envelope.Data.HasMore || envelope.Data.NextCursor != "v3.cursor" || envelope.Meta.PageSize != 100 ||
+		envelope.Meta.Sort != "event_time:desc,source_stream_id:desc,kafka_partition:desc,kafka_offset:desc,record_index:desc" {
 		t.Fatalf("envelope=%+v", envelope)
 	}
 	if len(audit.logs) != 1 || audit.logs[0].TenantID != "tenant-a" || audit.logs[0].Action != "query.sensitive_viewed" {
@@ -107,7 +110,7 @@ func TestFlowRecordSearchEnforcesLayerPermissionAndStrictInput(t *testing.T) {
 	sorted := httptest.NewRecorder()
 	router.ServeHTTP(sorted, httptest.NewRequest(http.MethodPost, "/api/v1/flow/records/search", strings.NewReader(requestBody("customer", `,"fields":["src_ip"],"sort":{"field":"src_ip","direction":"asc"}`))))
 	if sorted.Code != http.StatusOK || runner.compiled.Sort.Field != "src_ip" || runner.compiled.Sort.Direction != "asc" ||
-		!strings.Contains(sorted.Body.String(), `"sort":"src_ip:asc,event_time:asc,record_id:asc"`) {
+		!strings.Contains(sorted.Body.String(), `"sort":"src_ip:asc,event_time:asc,source_stream_id:asc,kafka_partition:asc,kafka_offset:asc,record_index:asc"`) {
 		t.Fatalf("sorted status=%d body=%s compiled=%+v", sorted.Code, sorted.Body.String(), runner.compiled)
 	}
 

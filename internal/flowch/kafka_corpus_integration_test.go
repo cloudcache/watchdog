@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -18,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -44,7 +46,6 @@ func TestRealKafkaFourProtocolCorpusToClickHouseFiveLevelRollup(t *testing.T) {
 	}
 	t.Setenv("WATCHDOG_FLOW_CLICKHOUSE_DATA_INTEGRATION", "1")
 	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_kafka_corpus")
-	removeCorpusTTLs(t, ctx, native)
 
 	enricher := newCorpusEnricher(t)
 	writer, err := NewWriter(native, WriterConfig{RetryInitial: 5 * time.Millisecond, RetryMax: 50 * time.Millisecond})
@@ -311,6 +312,22 @@ func waitForCorpusReceiver(t testing.TB, connection *net.UDPConn, invalid <-chan
 	defer ticker.Stop()
 	for {
 		if _, err := connection.Write([]byte{0}); err != nil {
+			// A connected UDP socket can surface the ICMP port-unreachable from
+			// an earlier readiness probe while Receiver.Run is still binding.
+			// This is not a receiver failure; keep probing until done/deadline.
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				select {
+				case err := <-done:
+					cancel()
+					t.Fatalf("UDP receiver failed before readiness: %v", err)
+				case <-deadline.C:
+					cancel()
+					<-done
+					t.Fatal("UDP receiver readiness timed out")
+				case <-ticker.C:
+				}
+				continue
+			}
 			cancel()
 			<-done
 			t.Fatal(err)
@@ -437,7 +454,7 @@ func corpusJSON(t testing.TB, value any) []byte {
 }
 
 type corpusFacts struct {
-	byBatch        map[[32]byte][]RecordRef
+	byMessage      map[SourceMessageKey][]RecordRef
 	records        int
 	rawBytes       uint64
 	rawPackets     uint64
@@ -451,14 +468,16 @@ type corpusFacts struct {
 func readAndAuditCorpusFacts(t testing.TB, ctx context.Context, native *NativeInserter, writer *Writer) corpusFacts {
 	t.Helper()
 	var (
-		batchIDs, recordIDs                   proto.ColFixedStr32
+		sourceStreamIDs                       = new(proto.ColStr).LowCardinality()
+		kafkaTopics                           = new(proto.ColStr).LowCardinality()
 		eventTimes                            = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli).WithLocation(time.UTC)
 		kafkaOffsets                          proto.ColUInt64
+		kafkaPartitions                       proto.ColUInt32
 		recordIndexes, classificationVersions proto.ColUInt32
 		flowProtocols                         proto.ColUInt8
 		rawBytes, rawPackets                  proto.ColUInt64
 		estimatedBytes, estimatedPackets      proto.ColUInt64
-		qualityFlags, dimensionFingerprints   proto.ColUInt64
+		qualityFlags                          proto.ColUInt64
 		estimatedValid                        proto.ColBool
 		continents                            = new(proto.ColStr).LowCardinality()
 		regions                               = new(proto.ColStr).LowCardinality()
@@ -467,52 +486,59 @@ func readAndAuditCorpusFacts(t testing.TB, ctx context.Context, native *NativeIn
 		cities                                = new(proto.ColStr).LowCardinality()
 		dispositions                          proto.ColStr
 	)
-	result := corpusFacts{byBatch: make(map[[32]byte][]RecordRef), buckets: make(map[time.Time]struct{}), protocols: make(map[uint8]struct{})}
-	seenRecords := make(map[[32]byte]struct{})
+	result := corpusFacts{byMessage: make(map[SourceMessageKey][]RecordRef), buckets: make(map[time.Time]struct{}), protocols: make(map[uint8]struct{})}
+	seenRecords := make(map[struct {
+		SourceMessageKey
+		RecordIndex uint32
+	}]struct{})
 	query := ch.Query{
-		Body: `SELECT ingest_batch_id, record_id, event_time, kafka_offset, record_index, flow_protocol,
+		Body: `SELECT source_stream_id, kafka_topic, kafka_partition, event_time, kafka_offset, record_index, flow_protocol,
        raw_bytes, raw_packets, estimated_bytes, estimated_packets, quality_flags,
-       dimension_fingerprint, classification_version, estimated_valid,
+       classification_version, estimated_valid,
        toString(remote_geo_continent_id) AS continent, toString(remote_geo_region_id) AS region,
        toString(remote_geo_country_id) AS country, toString(remote_geo_province_id) AS province,
        toString(remote_geo_city_id) AS city, toString(disposition) AS disposition
 FROM flow_records FINAL
 WHERE tenant_id = {tenant:String}
-ORDER BY ingest_batch_id, kafka_offset, record_index`,
+ORDER BY source_stream_id, kafka_partition, kafka_offset, record_index`,
 		Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
 		Result: proto.Results{
-			{Name: "ingest_batch_id", Data: &batchIDs}, {Name: "record_id", Data: &recordIDs}, {Name: "event_time", Data: eventTimes},
-			{Name: "kafka_offset", Data: &kafkaOffsets}, {Name: "record_index", Data: &recordIndexes}, {Name: "flow_protocol", Data: &flowProtocols},
+			{Name: "source_stream_id", Data: sourceStreamIDs}, {Name: "kafka_topic", Data: kafkaTopics}, {Name: "kafka_partition", Data: &kafkaPartitions},
+			{Name: "event_time", Data: eventTimes}, {Name: "kafka_offset", Data: &kafkaOffsets}, {Name: "record_index", Data: &recordIndexes}, {Name: "flow_protocol", Data: &flowProtocols},
 			{Name: "raw_bytes", Data: &rawBytes}, {Name: "raw_packets", Data: &rawPackets}, {Name: "estimated_bytes", Data: &estimatedBytes},
 			{Name: "estimated_packets", Data: &estimatedPackets}, {Name: "quality_flags", Data: &qualityFlags},
-			{Name: "dimension_fingerprint", Data: &dimensionFingerprints}, {Name: "classification_version", Data: &classificationVersions},
+			{Name: "classification_version", Data: &classificationVersions},
 			{Name: "estimated_valid", Data: &estimatedValid}, {Name: "continent", Data: continents}, {Name: "region", Data: regions},
 			{Name: "country", Data: countries}, {Name: "province", Data: provinces}, {Name: "city", Data: cities},
 			{Name: "disposition", Data: &dispositions},
 		},
 	}
 	query.OnResult = func(_ context.Context, block proto.Block) error {
-		columns := []int{batchIDs.Rows(), recordIDs.Rows(), eventTimes.Rows(), kafkaOffsets.Rows(), recordIndexes.Rows(), flowProtocols.Rows(), rawBytes.Rows(), rawPackets.Rows(), estimatedBytes.Rows(), estimatedPackets.Rows(), qualityFlags.Rows(), dimensionFingerprints.Rows(), classificationVersions.Rows(), estimatedValid.Rows(), continents.Rows(), regions.Rows(), countries.Rows(), provinces.Rows(), cities.Rows(), dispositions.Rows()}
+		columns := []int{sourceStreamIDs.Rows(), kafkaTopics.Rows(), kafkaPartitions.Rows(), eventTimes.Rows(), kafkaOffsets.Rows(), recordIndexes.Rows(), flowProtocols.Rows(), rawBytes.Rows(), rawPackets.Rows(), estimatedBytes.Rows(), estimatedPackets.Rows(), qualityFlags.Rows(), classificationVersions.Rows(), estimatedValid.Rows(), continents.Rows(), regions.Rows(), countries.Rows(), provinces.Rows(), cities.Rows(), dispositions.Rows()}
 		for _, rows := range columns {
 			if rows != block.Rows {
 				return fmt.Errorf("corpus fact column has %d rows, want %d", rows, block.Rows)
 			}
 		}
 		for index := 0; index < block.Rows; index++ {
-			if _, exists := seenRecords[recordIDs[index]]; exists {
-				return fmt.Errorf("duplicate corpus record id %x", recordIDs[index][:8])
+			messageKey := SourceMessageKey{SourceStreamID: sourceStreamIDs.Row(index), KafkaPartition: kafkaPartitions[index], KafkaOffset: kafkaOffsets[index]}
+			recordKey := struct {
+				SourceMessageKey
+				RecordIndex uint32
+			}{messageKey, recordIndexes[index]}
+			if _, exists := seenRecords[recordKey]; exists {
+				return fmt.Errorf("duplicate corpus record coordinate %+v", recordKey)
 			}
-			seenRecords[recordIDs[index]] = struct{}{}
+			seenRecords[recordKey] = struct{}{}
 			if continents.Row(index) != "Asia" || regions.Row(index) != "EastAsia" || countries.Row(index) != "CN" || provinces.Row(index) != "330000" || cities.Row(index) != "330100" || dispositions.Row(index) != "count" {
 				return fmt.Errorf("corpus fact has incomplete hierarchy or disposition at offset %d index %d", kafkaOffsets[index], recordIndexes[index])
 			}
 			record := &flowworker.EnrichedRecord{
-				SourceRecordID: recordIDs[index], RawBytes: rawBytes[index], RawPackets: rawPackets[index],
+				RecordIndex: recordIndexes[index], RawBytes: rawBytes[index], RawPackets: rawPackets[index],
 				EstimatedBytes: estimatedBytes[index], EstimatedPackets: estimatedPackets[index],
-				QualityFlags: qualityFlags[index], DimensionFingerprint: dimensionFingerprints[index],
-				ClassificationVersion: classificationVersions[index], EstimatedValid: estimatedValid[index],
+				QualityFlags: qualityFlags[index], ClassificationVersion: classificationVersions[index], EstimatedValid: estimatedValid[index],
 			}
-			result.byBatch[batchIDs[index]] = append(result.byBatch[batchIDs[index]], RecordRef{Record: record})
+			result.byMessage[messageKey] = append(result.byMessage[messageKey], RecordRef{Record: record, Batch: &flowworker.EnrichedBatch{KafkaTopic: kafkaTopics.Row(index)}})
 			result.records++
 			result.rawBytes += rawBytes[index]
 			result.rawPackets += rawPackets[index]
@@ -539,22 +565,26 @@ ORDER BY ingest_batch_id, kafka_offset, record_index`,
 func auditCorpusReceipts(t testing.TB, ctx context.Context, native *NativeInserter, facts corpusFacts, writer *Writer) {
 	t.Helper()
 	var (
-		batchIDs, checksums                              proto.ColFixedStr32
+		sourceStreamIDs                                  = new(proto.ColStr).LowCardinality()
+		kafkaTopics                                      = new(proto.ColStr).LowCardinality()
+		kafkaPartitions                                  proto.ColUInt32
+		kafkaOffsets                                     proto.ColUInt64
 		workerSchemas                                    proto.ColUInt32
 		receiptSchemas                                   proto.ColUInt16
 		recordCounts, rawBytes, rawPackets               proto.ColUInt64
 		estimatedBytes, estimatedPackets, estimatedValid proto.ColUInt64
 	)
-	seen := make(map[[32]byte]struct{})
+	seen := make(map[SourceMessageKey]struct{})
 	query := ch.Query{
-		Body: `SELECT ingest_batch_id, checksum, worker_schema, receipt_schema, record_count,
+		Body: `SELECT source_stream_id, kafka_topic, kafka_partition, kafka_offset, worker_schema, receipt_schema, record_count,
        raw_bytes, raw_packets, estimated_bytes, estimated_packets, estimated_valid_records
-FROM flow_ingest_batches FINAL
+FROM flow_ingest_receipts FINAL
 WHERE has(tenant_ids, {tenant:String})
-ORDER BY ingest_batch_id`,
+ORDER BY source_stream_id, kafka_partition, kafka_offset`,
 		Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
 		Result: proto.Results{
-			{Name: "ingest_batch_id", Data: &batchIDs}, {Name: "checksum", Data: &checksums},
+			{Name: "source_stream_id", Data: sourceStreamIDs}, {Name: "kafka_topic", Data: kafkaTopics},
+			{Name: "kafka_partition", Data: &kafkaPartitions}, {Name: "kafka_offset", Data: &kafkaOffsets},
 			{Name: "worker_schema", Data: &workerSchemas}, {Name: "receipt_schema", Data: &receiptSchemas},
 			{Name: "record_count", Data: &recordCounts}, {Name: "raw_bytes", Data: &rawBytes}, {Name: "raw_packets", Data: &rawPackets},
 			{Name: "estimated_bytes", Data: &estimatedBytes}, {Name: "estimated_packets", Data: &estimatedPackets},
@@ -563,14 +593,17 @@ ORDER BY ingest_batch_id`,
 	}
 	query.OnResult = func(_ context.Context, block proto.Block) error {
 		for index := 0; index < block.Rows; index++ {
-			id := batchIDs[index]
-			if _, exists := seen[id]; exists {
-				return fmt.Errorf("duplicate corpus receipt %x", id[:8])
+			key := SourceMessageKey{SourceStreamID: sourceStreamIDs.Row(index), KafkaPartition: kafkaPartitions[index], KafkaOffset: kafkaOffsets[index]}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate corpus receipt %+v", key)
 			}
-			seen[id] = struct{}{}
-			records, exists := facts.byBatch[id]
+			seen[key] = struct{}{}
+			records, exists := facts.byMessage[key]
 			if !exists {
-				return fmt.Errorf("receipt %x has no facts", id[:8])
+				return fmt.Errorf("receipt %+v has no facts", key)
+			}
+			if len(records) == 0 || records[0].Batch.KafkaTopic != kafkaTopics.Row(index) {
+				return fmt.Errorf("receipt %+v topic does not match facts", key)
 			}
 			var wantRawBytes, wantRawPackets, wantEstimatedBytes, wantEstimatedPackets, wantValid uint64
 			for _, ref := range records {
@@ -585,10 +618,7 @@ ORDER BY ingest_batch_id`,
 			if workerSchemas[index] != WorkerSchemaVersion || receiptSchemas[index] != receiptSchemaVersion ||
 				recordCounts[index] != uint64(len(records)) || rawBytes[index] != wantRawBytes || rawPackets[index] != wantRawPackets ||
 				estimatedBytes[index] != wantEstimatedBytes || estimatedPackets[index] != wantEstimatedPackets || estimatedValid[index] != wantValid {
-				return fmt.Errorf("receipt %x counters do not match %d facts", id[:8], len(records))
-			}
-			if want := blockChecksum(records); checksums[index] != want {
-				return fmt.Errorf("receipt %x checksum=%x want=%x", id[:8], checksums[index][:8], want[:8])
+				return fmt.Errorf("receipt %+v counters do not match %d facts", key, len(records))
 			}
 		}
 		return nil
@@ -596,8 +626,8 @@ ORDER BY ingest_batch_id`,
 	if err := native.executor.Do(ctx, query); err != nil {
 		t.Fatalf("audit corpus receipts: %v", err)
 	}
-	if len(seen) != len(facts.byBatch) || uint64(len(seen)) != writer.Stats().Blocks {
-		t.Fatalf("receipts=%d fact_batches=%d writer_blocks=%d", len(seen), len(facts.byBatch), writer.Stats().Blocks)
+	if len(seen) != len(facts.byMessage) || writer.Stats().Blocks == 0 || uint64(len(seen)) < writer.Stats().Blocks {
+		t.Fatalf("receipts=%d fact_messages=%d writer_blocks=%d", len(seen), len(facts.byMessage), writer.Stats().Blocks)
 	}
 }
 
@@ -684,15 +714,6 @@ ORDER BY dimension_kind`,
 		row, exists := got[kind]
 		if !exists || row.value != wantValue || row.rawBytes != facts.rawBytes || row.records != uint64(facts.records) || row.distinctValues != 1 {
 			t.Fatalf("Geo rollup %s=%+v, want value=%s raw=%d records=%d", kind, row, wantValue, facts.rawBytes, facts.records)
-		}
-	}
-}
-
-func removeCorpusTTLs(t testing.TB, ctx context.Context, native *NativeInserter) {
-	t.Helper()
-	for _, table := range []string{"flow_records", "flow_aggregate_1m"} {
-		if err := native.executor.Do(ctx, ch.Query{Body: "ALTER TABLE " + table + " REMOVE TTL"}); err != nil {
-			t.Fatalf("remove isolated test TTL from %s: %v", table, err)
 		}
 	}
 }

@@ -171,7 +171,7 @@ func TestQueryGatewayInjectsTenantAndReturnsCanonicalMetadata(t *testing.T) {
 		t.Fatalf("provider request = %#v", received)
 	}
 	if received.Limit != defaultQueryLimit || result.Meta.RequestID != "request-a" || result.Meta.Source != "clickhouse" ||
-		result.Meta.PolicyVersion != 0 || result.Meta.AsOf != fixedNow || result.Meta.StepSeconds != 300 || len(result.Meta.QueryHash) != 64 {
+		result.Meta.PolicyVersion != 0 || result.Meta.AsOf != fixedNow || result.Meta.StepSeconds != 300 || result.Meta.SchemaVersion != "query-result-v2" {
 		t.Fatalf("result meta = %#v", result.Meta)
 	}
 
@@ -181,8 +181,8 @@ func TestQueryGatewayInjectsTenantAndReturnsCanonicalMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Meta.QueryHash != second.Meta.QueryHash {
-		t.Fatalf("canonical hashes differ: %s != %s", result.Meta.QueryHash, second.Meta.QueryHash)
+	if second.Meta.RequestID != "request-b" || second.Meta.SchemaVersion != "query-result-v2" {
+		t.Fatalf("second result meta = %#v", second.Meta)
 	}
 }
 

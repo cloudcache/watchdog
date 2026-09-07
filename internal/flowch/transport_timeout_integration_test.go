@@ -5,7 +5,6 @@ package flowch
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -146,7 +145,7 @@ func TestRealClickHouseLostInsertResponseConvergesAfterReplay(t *testing.T) {
 	}
 	after := readReplayState(t, ctx, direct, block)
 	if after.factCount != uint64(len(block.Records)) || after.rawBytes != 300 || after.rawPackets != 2 ||
-		after.receiptCount != 1 || after.receiptChecksum != block.Checksum {
+		after.receiptCount != 1 {
 		t.Fatalf("replayed block did not converge: %+v", after)
 	}
 }
@@ -238,29 +237,28 @@ func TestRealClickHouseReplayConvergesWithoutServerDedup(t *testing.T) {
 	}
 	logical := readReplayState(t, ctx, native, blocks[0])
 	if logical.factCount != 2 || logical.rawBytes != 900 || logical.rawPackets != 2 ||
-		logical.receiptCount != 1 || logical.receiptChecksum != blocks[0].Checksum {
+		logical.receiptCount != 1 {
 		t.Fatalf("dedup-window-independent replay did not converge: %+v", logical)
 	}
 }
 
 type replayState struct {
-	factCount       uint64
-	rawBytes        uint64
-	rawPackets      uint64
-	receiptCount    uint64
-	receiptChecksum [32]byte
+	factCount    uint64
+	rawBytes     uint64
+	rawPackets   uint64
+	receiptCount uint64
 }
 
 func readReplayState(t testing.TB, ctx context.Context, native *NativeInserter, block PreparedBlock) replayState {
 	t.Helper()
-	id := hex.EncodeToString(block.ID[:])
 	state := replayState{}
 	var factCounts, rawBytes, rawPackets proto.ColUInt64
 	factQuery := ch.Query{
 		Body: `SELECT count(), sum(raw_bytes), sum(raw_packets)
 FROM flow_records FINAL
-WHERE ingest_batch_id = unhex({batch_id:String})`,
-		Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+WHERE source_stream_id = {stream:String} AND kafka_partition = {partition:UInt32}
+  AND kafka_offset >= {first:UInt64} AND kafka_offset <= {last:UInt64}`,
+		Parameters: ch.Parameters(map[string]any{"stream": block.SourceStreamID, "partition": uint32(block.KafkaPartition), "first": uint64(block.FirstOffset), "last": uint64(block.LastOffset)}),
 		Result: proto.Results{
 			{Name: "count()", Data: &factCounts},
 			{Name: "sum(raw_bytes)", Data: &rawBytes},
@@ -275,43 +273,38 @@ WHERE ingest_batch_id = unhex({batch_id:String})`,
 	}
 	state.factCount, state.rawBytes, state.rawPackets = factCounts[0], rawBytes[0], rawPackets[0]
 	var (
-		checksums proto.ColFixedStr32
-		counts    proto.ColUInt64
+		counts proto.ColUInt64
 	)
 	receiptQuery := ch.Query{
-		Body: `SELECT checksum, record_count
-FROM flow_ingest_batches FINAL
-WHERE ingest_batch_id = unhex({batch_id:String})`,
-		Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+		Body: `SELECT record_count
+FROM flow_ingest_receipts FINAL
+WHERE source_stream_id = {stream:String} AND kafka_partition = {partition:UInt32}
+  AND kafka_offset >= {first:UInt64} AND kafka_offset <= {last:UInt64}`,
+		Parameters: ch.Parameters(map[string]any{"stream": block.SourceStreamID, "partition": uint32(block.KafkaPartition), "first": uint64(block.FirstOffset), "last": uint64(block.LastOffset)}),
 		Result: proto.Results{
-			{Name: "checksum", Data: &checksums},
 			{Name: "record_count", Data: &counts},
 		},
 	}
 	if err := native.executor.Do(ctx, receiptQuery); err != nil {
 		t.Fatalf("read replay receipt: %v", err)
 	}
-	if len(checksums) != counts.Rows() || len(checksums) > 1 {
-		t.Fatalf("receipt rows checksum=%d count=%d", len(checksums), counts.Rows())
+	if len(counts) > len(block.Receipts) {
+		t.Fatalf("receipt rows=%d want<=%d", len(counts), len(block.Receipts))
 	}
-	state.receiptCount = uint64(len(checksums))
-	if len(checksums) == 1 {
-		if counts[0] != uint64(len(block.Records)) {
-			t.Fatalf("receipt record count=%d want=%d", counts[0], len(block.Records))
-		}
-		state.receiptChecksum = checksums[0]
+	state.receiptCount = uint64(len(counts))
+	if len(counts) == 1 && counts[0] != uint64(len(block.Records)) {
+		t.Fatalf("receipt record count=%d want=%d", counts[0], len(block.Records))
 	}
 	return state
 }
 
 func readReplayPhysicalCounts(t testing.TB, ctx context.Context, native *NativeInserter, block PreparedBlock) (uint64, uint64) {
 	t.Helper()
-	id := hex.EncodeToString(block.ID[:])
 	count := func(table string) uint64 {
 		var values proto.ColUInt64
 		query := ch.Query{
-			Body:       "SELECT count() FROM " + table + " WHERE ingest_batch_id = unhex({batch_id:String})",
-			Parameters: ch.Parameters(map[string]any{"batch_id": id}),
+			Body:       "SELECT count() FROM " + table + " WHERE source_stream_id = {stream:String} AND kafka_partition = {partition:UInt32} AND kafka_offset >= {first:UInt64} AND kafka_offset <= {last:UInt64}",
+			Parameters: ch.Parameters(map[string]any{"stream": block.SourceStreamID, "partition": uint32(block.KafkaPartition), "first": uint64(block.FirstOffset), "last": uint64(block.LastOffset)}),
 			Result:     proto.Results{{Name: "count()", Data: &values}},
 		}
 		if err := native.executor.Do(ctx, query); err != nil {

@@ -2,9 +2,7 @@ package watchdog
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -173,7 +171,6 @@ type QueryProviderResult struct {
 type QueryResultMeta struct {
 	RequestID     string            `json:"request_id"`
 	SchemaVersion string            `json:"schema_version"`
-	QueryHash     string            `json:"query_hash"`
 	AsOf          time.Time         `json:"as_of"`
 	Source        string            `json:"source"`
 	ValueLayer    QueryValueLayer   `json:"value_layer"`
@@ -519,12 +516,8 @@ func (g *QueryGateway) execute(ctx context.Context, auth AuthContext, requestID 
 	if providerResult.AsOf.IsZero() {
 		providerResult.AsOf = now
 	}
-	hash, err := hashQueryProviderRequest(providerRequest)
-	if err != nil {
-		return QueryResult{}, queryError(QueryErrorInvalidRequest, "query cannot be canonicalized", false, err)
-	}
 	return QueryResult{Data: providerResult.Data, Meta: QueryResultMeta{
-		RequestID: requestID, SchemaVersion: "query-result-v1", QueryHash: hash,
+		RequestID: requestID, SchemaVersion: "query-result-v2",
 		AsOf: providerResult.AsOf.UTC(), Source: string(descriptor.Provider), ValueLayer: request.ValueLayer,
 		Unit: providerResult.Unit, Timezone: providerResult.Timezone, StepSeconds: effectiveQueryStep(request.StepSeconds, providerResult.StepSeconds),
 		PolicyVersion: policy.RowVersion, Versions: providerResult.Versions, NextCursor: providerResult.NextCursor,
@@ -651,31 +644,6 @@ func queryLayerAuthorized(auth AuthContext, layer QueryValueLayer) bool {
 		TenantID: auth.TenantID, UserID: auth.UserID, RoleIDs: auth.RoleIDs, Action: action,
 		Resource: ResourceRef{Type: ResourceTenant, ID: auth.TenantID},
 	}, auth.Grants)
-}
-
-func hashQueryProviderRequest(request QueryProviderRequest) (string, error) {
-	canonical := struct {
-		TenantID        ID              `json:"tenant_id"`
-		Dataset         string          `json:"dataset"`
-		From            time.Time       `json:"from"`
-		To              time.Time       `json:"to"`
-		StepSeconds     uint32          `json:"step_seconds"`
-		Limit           uint32          `json:"limit"`
-		Cursor          string          `json:"cursor"`
-		ValueLayer      QueryValueLayer `json:"value_layer"`
-		RequireComplete bool            `json:"require_complete"`
-		Parameters      json.RawMessage `json:"parameters"`
-	}{
-		TenantID: request.TenantID, Dataset: request.Dataset.Key, From: request.From.UTC(), To: request.To.UTC(),
-		StepSeconds: request.StepSeconds, Limit: request.Limit, Cursor: request.Cursor,
-		ValueLayer: request.ValueLayer, RequireComplete: request.RequireComplete, Parameters: request.Parameters,
-	}
-	encoded, err := json.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func queryError(code QueryErrorCode, message string, retryable bool, cause error) *QueryGatewayError {

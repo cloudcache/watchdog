@@ -137,6 +137,11 @@ type Request struct {
 	TopN         uint16            `json:"top_n"`
 	IncludeOther bool              `json:"include_other"`
 	Timezone     string            `json:"timezone,omitempty"`
+	// StorageV2 switches the physical source from the legacy continuously
+	// maintained rollup to a disjoint union: reconciled archive before
+	// ArchiveThrough and raw facts from ArchiveThrough onward.
+	StorageV2      bool      `json:"-"`
+	ArchiveThrough time.Time `json:"-"`
 }
 
 type DimensionDefinition struct {
@@ -163,6 +168,8 @@ type Compiled struct {
 	Timezone             string
 	EstimatedRows        uint64
 	MaxResultRows        uint64
+	UsesRawFacts         bool
+	ArchiveThrough       time.Time
 }
 
 type ErrorCode string
@@ -407,6 +414,34 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		valueExpression = fmt.Sprintf("toFloat64(sum(%s)) * %d / %s", metric.column, multiplier, denominator)
 	}
 	body := fmt.Sprintf(querySQL, table, table, strings.Join(conditions, "\n    "), metric.column, valueExpression)
+	usesRawFacts := false
+	archiveThrough := time.Time{}
+	if request.StorageV2 {
+		archiveThrough = request.ArchiveThrough.UTC()
+		if archiveThrough.IsZero() {
+			archiveThrough = from
+		}
+		if archiveThrough.Before(from) || archiveThrough.After(to) || archiveThrough.Truncate(sourceDuration) != archiveThrough {
+			return Compiled{}, requestError("archive_through", ErrorInvalid, "archive boundary must be within the range and source-aligned")
+		}
+		if request.Bucket == BucketOneMinute && archiveThrough.After(from) {
+			return Compiled{}, requestError("archive_through", ErrorUnsupported, "Storage V2 has no one-minute archive; minute queries must use raw facts")
+		}
+		if archiveThrough.After(from) && archiveThrough.Before(to) && archiveThrough.Truncate(24*time.Hour) != archiveThrough {
+			return Compiled{}, requestError("archive_through", ErrorInvalid, "a Storage V2 archive/raw split must be a UTC day boundary")
+		}
+		dimensionExpression, expressionErr := rawAggregateDimensionExpression(request.Dimension)
+		if expressionErr != nil {
+			return Compiled{}, expressionErr
+		}
+		parameters = append(parameters,
+			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
+			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
+		)
+		body = fmt.Sprintf(storageV2QuerySQL, table, table, dimensionExpression,
+			strings.Join(conditions, "\n    "), metric.column, valueExpression)
+		usesRawFacts = archiveThrough.Before(to)
+	}
 	query := ch.Query{
 		Body:       body,
 		Parameters: parameters,
@@ -428,7 +463,19 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		SourceBucketDuration: sourceDuration, BucketDuration: interval,
 		Metric: metric.definition, Dimension: dimension, Timezone: timezone,
 		EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,
+		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough,
 	}, nil
+}
+
+func rawAggregateDimensionExpression(dimension Dimension) (string, error) {
+	if dimension == DimensionAddressSet {
+		return "arrayJoin(arrayFilter(value -> value != '', arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids))))", nil
+	}
+	expression, exists := jointDimensionExpressions[dimension]
+	if !exists {
+		return "", requestError("dimension", ErrorUnsupported, "dimension is not available from Storage V2 raw facts")
+	}
+	return expression, nil
 }
 
 func bucketSpec(bucket Bucket) (time.Duration, string, int, error) {
@@ -672,6 +719,123 @@ FROM (
     toUInt8(1), toUInt64(count())
   FROM latest
 )
+ORDER BY
+  is_metadata ASC, bucket ASC, is_other ASC, value DESC, dimension_value ASC,
+  dimension_snapshot_id ASC, geo_version ASC, classification_version ASC`
+
+const storageV2QuerySQL = `WITH
+  archive_latest AS (
+    SELECT tenant_id, bucket, max(generation) AS generation
+    FROM %s FINAL
+    WHERE tenant_id = {tenant:String}
+      AND bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
+      AND dimension_kind = '_generation'
+    GROUP BY tenant_id, bucket
+  ),
+  archive_rows AS (
+    SELECT
+      source.bucket, source.target_id, source.device_id, source.exporter_id,
+      source.business_direction, source.category, source.business,
+      source.dimension_value, source.dimension_snapshot_id, source.geo_version,
+      source.classification_version, source.raw_bytes, source.raw_packets,
+      source.estimated_bytes, source.estimated_packets, source.received_records,
+      source.unknown_sampling_records, source.quality_records, source.generated_at
+    FROM %s AS source FINAL
+    INNER JOIN archive_latest USING (tenant_id, bucket, generation)
+    WHERE source.tenant_id = {tenant:String}
+      AND source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
+      AND source.dimension_kind = {dimension:String}
+  ),
+  raw_rows AS (
+    SELECT
+      toStartOfInterval(event_time, toIntervalSecond({source_seconds:UInt32}), 'UTC') AS bucket,
+      target_id, device_id, exporter_id,
+      toString(business_direction) AS business_direction,
+      toString(category) AS category,
+      business,
+      CAST(%s AS String) AS dimension_value,
+      CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
+      CAST(geo_version AS String) AS geo_version,
+      classification_version,
+      sum(raw_bytes) AS raw_bytes,
+      sum(raw_packets) AS raw_packets,
+      sum(estimated_bytes) AS estimated_bytes,
+      sum(estimated_packets) AS estimated_packets,
+      count() AS received_records,
+      countIf(NOT estimated_valid) AS unknown_sampling_records,
+      countIf(quality_flags != 0) AS quality_records,
+      max(received_time) AS generated_at
+    FROM flow_records FINAL
+    WHERE tenant_id = {tenant:String}
+      AND event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+    GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
+      category, business, dimension_value, dimension_snapshot_id, geo_version,
+      classification_version
+  ),
+  filtered AS (
+    SELECT *
+    FROM (
+      SELECT * FROM archive_rows
+      UNION ALL
+      SELECT * FROM raw_rows
+    )
+    WHERE 1 = 1
+    %s
+  ),
+  top_series AS (
+    SELECT
+      dimension_value, dimension_snapshot_id, geo_version, classification_version,
+      sum(%s) AS rank_value
+    FROM filtered
+    GROUP BY dimension_value, dimension_snapshot_id, geo_version, classification_version
+    ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC
+    LIMIT {top_n:UInt16}
+  ),
+  tagged AS (
+    SELECT *, tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) IN (
+      SELECT tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) FROM top_series
+    ) AS is_top
+    FROM filtered
+  ),
+  series_rows AS (
+    SELECT
+      toDateTime(
+        toUnixTimestamp({from:DateTime('UTC')}) +
+        intDiv(toUnixTimestamp(bucket) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32}) * {bucket_seconds:UInt32},
+        'UTC'
+      ) AS output_bucket,
+      if(is_top, dimension_value, '_other') AS grouped_dimension_value,
+      if(is_top, toUInt8(0), toUInt8(1)) AS is_other,
+      dimension_snapshot_id, geo_version, classification_version,
+      %s AS value,
+      sum(received_records) AS received_records,
+      sum(unknown_sampling_records) AS unknown_sampling_records,
+      sum(quality_records) AS quality_records,
+      max(generated_at) AS generated_at
+    FROM tagged
+    WHERE {include_other:UInt8} = 1 OR is_top
+    GROUP BY output_bucket, is_top, grouped_dimension_value,
+      dimension_snapshot_id, geo_version, classification_version
+  )
+SELECT *
+FROM (
+  SELECT
+    output_bucket AS bucket, grouped_dimension_value AS dimension_value, is_other,
+    dimension_snapshot_id, geo_version, classification_version,
+    value, received_records, unknown_sampling_records, quality_records, generated_at,
+    toUInt8(0) AS is_metadata, toUInt64(0) AS covered_buckets
+  FROM series_rows
+  UNION ALL
+  SELECT
+    toDateTime(0, 'UTC'), '', toUInt8(0), '', '', toUInt32(0),
+    toFloat64(0), toUInt64(0), toUInt64(0), toUInt64(0), toDateTime64(0, 3, 'UTC'),
+    toUInt8(1),
+    assumeNotNull(
+      toUInt64((SELECT count() FROM archive_latest)) +
+      toUInt64(intDiv(dateDiff('second', {archive_through:DateTime('UTC')}, {to:DateTime('UTC')}), toInt64({source_seconds:UInt32})))
+    )
+  )
 ORDER BY
   is_metadata ASC, bucket ASC, is_other ASC, value DESC, dimension_value ASC,
   dimension_snapshot_id ASC, geo_version ASC, classification_version ASC`

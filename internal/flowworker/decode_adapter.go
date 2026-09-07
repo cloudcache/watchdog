@@ -1,8 +1,6 @@
 package flowworker
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -49,6 +47,10 @@ type BindingResolver func(collectorID string, registryVersion uint64, protocol f
 
 type DecodeAdapter struct {
 	ResolveBinding BindingResolver
+	// SourceStreamID identifies one Kafka cluster/topic incarnation. Production
+	// wiring must set it explicitly. The legacy fallback exists only so replay
+	// tools and pre-V2 fixtures map to the same ID used by migration 011.
+	SourceStreamID string
 }
 
 // Map converts one decoded RawFlow Kafka record into the worker's in-memory
@@ -72,11 +74,18 @@ func (a DecodeAdapter) Map(kafkaRecord *kgo.Record, decoded flowstream.DecodedBa
 		return nil, fmt.Errorf("%w: binding is disabled", ErrBindingUnavailable)
 	}
 
-	sourceID := kafkaSourceID(kafkaRecord.Topic, kafkaRecord.Partition, kafkaRecord.Offset)
+	sourceStreamID := a.SourceStreamID
+	if sourceStreamID == "" {
+		sourceStreamID = "legacy:" + kafkaRecord.Topic
+	}
+	if !ValidSourceStreamID(sourceStreamID) {
+		return nil, fmt.Errorf("%w: source stream identity", ErrDecodedFlowInvalid)
+	}
 	sourceAddress := canonicalAddressBytes(decoded.Source.Addr())
 	result := &RecordBatch{
 		BatchSchemaVersion:  RecordBatchSchemaVersion,
-		SourceID:            sourceID[:],
+		MessageDisposition:  MessageDispositionPersisted,
+		SourceStreamID:      sourceStreamID,
 		KafkaTopic:          kafkaRecord.Topic,
 		KafkaPartition:      kafkaRecord.Partition,
 		KafkaOffset:         kafkaRecord.Offset,
@@ -287,19 +296,6 @@ func selectSamplingRule(rules []flowplan.SamplingRule, observationDomainID uint6
 		}
 	}
 	return best, bestSpecificity >= 0, unavailable
-}
-
-func kafkaSourceID(topic string, partition int32, offset int64) [32]byte {
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(topic))
-	_, _ = hash.Write([]byte{0})
-	var encoded [12]byte
-	binary.BigEndian.PutUint32(encoded[:4], uint32(partition))
-	binary.BigEndian.PutUint64(encoded[4:], uint64(offset))
-	_, _ = hash.Write(encoded[:])
-	var result [32]byte
-	copy(result[:], hash.Sum(nil))
-	return result
 }
 
 func canonicalAddress16(value []byte) ([]byte, bool) {

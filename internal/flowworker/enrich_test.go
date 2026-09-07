@@ -37,7 +37,7 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 
 	batch := testBatch(testMinute(12, 30))
 	second := cloneRecord(batch.Records[0])
-	second.RecordIndex = 2
+	second.RecordIndex = 1
 	second.EventTimeUnixMS = testMinute(13, 30).UnixMilli()
 	batch.Records = append(batch.Records, second)
 	enriched, err := enricher.EnrichBatch(batch)
@@ -64,16 +64,26 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	if first.SourcePort != 12345 || first.DestinationPort != 443 || first.LocalPort != 12345 || first.RemotePort != 443 || first.SourceASN != 65001 || first.DestinationASN != 65002 {
 		t.Fatalf("normalized fields changed during enrichment: %+v", first)
 	}
-	if first.EstimatedBytes != batch.Records[0].EstimatedBytes || secondResult.EstimatedBytes != second.EstimatedBytes || first.DimensionFingerprint == secondResult.DimensionFingerprint {
-		t.Fatalf("counter conservation or version fingerprint failed: first=%+v second=%+v", first, secondResult)
+	if first.EstimatedBytes != batch.Records[0].EstimatedBytes || secondResult.EstimatedBytes != second.EstimatedBytes {
+		t.Fatalf("counter conservation failed: first=%+v second=%+v", first, secondResult)
 	}
 	replayed := cloneBatch(batch)
 	replayedResult, err := enricher.EnrichBatch(replayed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayedResult.Records[0].SourceRecordID != first.SourceRecordID || replayedResult.Records[0].DimensionFingerprint != first.DimensionFingerprint {
-		t.Fatal("stable record identity or dimension fingerprint changed on replay")
+	if replayedResult.SourceStreamID != enriched.SourceStreamID || replayedResult.KafkaPartition != enriched.KafkaPartition || replayedResult.KafkaOffset != enriched.KafkaOffset || replayedResult.Records[0].RecordIndex != first.RecordIndex {
+		t.Fatal("natural Kafka record identity changed on replay")
+	}
+	receiptOnly := &RecordBatch{
+		BatchSchemaVersion: RecordBatchSchemaVersion, MessageDisposition: MessageDispositionTemplateMissing,
+		SourceStreamID: batch.SourceStreamID, KafkaTopic: batch.KafkaTopic,
+		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset + 1,
+		ReceivedAtUnixMS: batch.ReceivedAtUnixMS,
+	}
+	receiptResult, err := enricher.EnrichBatch(receiptOnly)
+	if err != nil || receiptResult.MessageDisposition != MessageDispositionTemplateMissing || len(receiptResult.Records) != 0 {
+		t.Fatalf("receipt-only enrichment=%+v err=%v", receiptResult, err)
 	}
 }
 
@@ -226,7 +236,7 @@ func TestEnrichBatchIntoClearsPartialOutputOnBlockedRecord(t *testing.T) {
 	enricher := newTestEnricher(t, dimensions, geo, classifications)
 	batch := testBatch(testMinute(12, 30))
 	second := cloneRecord(batch.Records[0])
-	second.RecordIndex = 2
+	second.RecordIndex = 1
 	second.EventTimeUnixMS = testMinute(11, 30).UnixMilli()
 	batch.Records = append(batch.Records, second)
 	destination := &EnrichedBatch{Records: make([]EnrichedRecord, 1, 4)}
@@ -271,8 +281,8 @@ func TestEnrichBatchRejectsCorruptRecordBatchesBeforeLookup(t *testing.T) {
 		mutate func(*RecordBatch)
 		want   string
 	}{
-		{name: "schema", mutate: func(batch *RecordBatch) { batch.BatchSchemaVersion = 2 }, want: "schema"},
-		{name: "id", mutate: func(batch *RecordBatch) { batch.SourceID = batch.SourceID[:31] }, want: "32 bytes"},
+		{name: "schema", mutate: func(batch *RecordBatch) { batch.BatchSchemaVersion = 1 }, want: "schema"},
+		{name: "id", mutate: func(batch *RecordBatch) { batch.SourceStreamID = "bad stream" }, want: "Kafka source"},
 		{name: "partition", mutate: func(batch *RecordBatch) { batch.KafkaPartition = -1 }, want: "Kafka source"},
 		{name: "address", mutate: func(batch *RecordBatch) { batch.Records[0].SourceIP = []byte{1, 2, 3, 4} }, want: "16-byte"},
 		{name: "port", mutate: func(batch *RecordBatch) { batch.Records[0].DestinationPort = 65536 }, want: "port"},
@@ -280,7 +290,7 @@ func TestEnrichBatchRejectsCorruptRecordBatchesBeforeLookup(t *testing.T) {
 		{name: "counter", mutate: func(batch *RecordBatch) { batch.Records[0].EstimatedBytes++ }, want: "counters"},
 		{name: "duplicate", mutate: func(batch *RecordBatch) {
 			batch.Records = append(batch.Records, cloneRecord(batch.Records[0]))
-		}, want: "strictly increasing"},
+		}, want: "contiguous"},
 		{name: "future-time", mutate: func(batch *RecordBatch) {
 			batch.Records[0].EventTimeUnixMS = time.UnixMilli(batch.ReceivedAtUnixMS).Add(6 * time.Minute).UnixMilli()
 		}, want: "future skew"},
@@ -368,12 +378,13 @@ func newTestEnricher(t testing.TB, dimensions *flowdimension.SnapshotCatalog, ge
 
 func testBatch(eventTime time.Time) *RecordBatch {
 	return &RecordBatch{
-		BatchSchemaVersion: 1, SourceID: bytes.Repeat([]byte{0x22}, 32),
-		KafkaTopic: "watchdog.flow.raw-v1", KafkaPartition: 7, KafkaOffset: 42,
+		BatchSchemaVersion: RecordBatchSchemaVersion, MessageDisposition: MessageDispositionPersisted,
+		SourceStreamID: "cluster-a:raw-v1:incarnation-1",
+		KafkaTopic:     "watchdog.flow.raw-v1", KafkaPartition: 7, KafkaOffset: 42,
 		TenantID: "tenant-a", CollectorID: "collector-a", ExporterID: "exporter-a", RegistryVersion: 9,
 		ReceivedAtUnixMS: testMinute(14, 0).UnixMilli(), Protocol: 1, SourceIP: address16("192.0.2.10"),
 		Records: []*Record{{
-			RecordIndex: 1, EventTimeUnixMS: eventTime.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
+			RecordIndex: 0, EventTimeUnixMS: eventTime.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
 			ObservationIfIndex: 9, ObservationDirection: 1, InIf: 9, OutIf: 10,
 			SourceIP: address16("10.1.2.3"), DestinationIP: address16("203.0.113.20"), SourcePort: 12345, DestinationPort: 443, IPProtocol: 6, TCPFlags: 0x12,
 			SourceASN: 65001, DestinationASN: 65002, RawBytes: 100, RawPackets: 2, SamplingMode: 1, SamplingRate: 1000, EstimatedValid: true,
@@ -397,7 +408,6 @@ func cloneBatch(source *RecordBatch) *RecordBatch {
 		return nil
 	}
 	result := *source
-	result.SourceID = append([]byte(nil), source.SourceID...)
 	result.SourceIP = append([]byte(nil), source.SourceIP...)
 	result.AgentIP = append([]byte(nil), source.AgentIP...)
 	result.Records = make([]*Record, len(source.Records))
