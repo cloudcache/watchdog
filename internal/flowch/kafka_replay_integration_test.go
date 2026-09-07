@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/flowworker"
+	"github.com/netsampler/goflow2/v3/decoders/netflowlegacy"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
@@ -82,6 +84,103 @@ func TestRealKafkaTemplateReplaySurvivesDurableFailureAndWorkerRestart(t *testin
 	}
 	if want := []int64{1, 3, 4, 5}; !equalReplayOffsets(recoveredOffsets, want) {
 		t.Fatalf("recovered decoded data offsets=%v, want replay+new %v", recoveredOffsets, want)
+	}
+}
+
+// TestRealKafkaEventTimeVersionBlockDoesNotCommit proves the complete replay
+// boundary: a valid flow older than the first installed publication must not
+// use that newer "current" publication, reach ClickHouse, or advance Kafka.
+func TestRealKafkaEventTimeVersionBlockDoesNotCommit(t *testing.T) {
+	if os.Getenv("WATCHDOG_FLOW_KAFKA_CLICKHOUSE_INTEGRATION") != "1" {
+		t.Skip("set WATCHDOG_FLOW_KAFKA_CLICKHOUSE_INTEGRATION=1 to run")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	brokers := corpusKafkaBrokers()
+	topicBase := fmt.Sprintf("watchdog.flow.version-block.%d", time.Now().UnixNano())
+	topic := fmt.Sprintf("%s-v%d", topicBase, flowstream.SchemaVersion)
+	group := fmt.Sprintf("watchdog-flow-version-block-%d", time.Now().UnixNano())
+	admin := newCorpusKafkaAdmin(t, ctx, brokers)
+	createCorpusTopic(t, ctx, admin, topic, 1)
+	t.Cleanup(func() { deleteCorpusTopic(t, admin, topic) })
+
+	eventTime := time.Now().UTC().Truncate(time.Minute).Add(-time.Hour)
+	packet := netflowlegacy.PacketNetFlowV5{
+		Version: 5, UnixSecs: uint32(eventTime.Unix()), SamplingInterval: 1,
+		Records: []netflowlegacy.RecordsNetFlowV5{{
+			SrcAddr: 0x0a000001, DstAddr: 0xcb007102, Input: 3, Output: 4,
+			DPkts: 2, DOctets: 100, SrcPort: 12345, DstPort: 443, Proto: 6,
+		}},
+	}
+	payload, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishReplayDatagrams(t, ctx, brokers, topicBase, [][]byte{payload})
+
+	effectiveFrom := eventTime.Add(time.Hour)
+	dimension, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
+		SchemaVersion: flowdimension.BundleSchemaVersion,
+		SnapshotID:    "dimension-current",
+		TenantID:      corpusTenantID,
+		Version:       1,
+		EffectiveFrom: effectiveFrom,
+		Prefixes: []flowdimension.PrefixDefinition{
+			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local"}},
+		},
+	}, flowdimension.CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
+		TenantID: corpusTenantID, Version: 1, EffectiveFrom: effectiveFrom,
+		DimensionSnapshotID: "dimension-current",
+		InternalPolicy:      flowdimension.RecordPolicyCount,
+		TransitPolicy:       flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, err := flowworker.NewEnrichmentVersionCatalog(flowworker.EnrichmentVersion{
+		Dimension: dimension, Classification: classification,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enricher, err := flowworker.NewEnricherWithVersionCatalog(versions, nil, flowworker.EnrichmentLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := &recordingBatchWriter{}
+	pipeline := &Pipeline{enricher: enricher, writer: writer}
+	consumer, processor := newReplayConsumer(t, brokers, topicBase, group, func(batches []*flowworker.RecordBatch) error {
+		return pipeline.Handle(ctx, batches)
+	})
+	defer processor.Close()
+
+	runErr := consumer.RunPartitionBatches(ctx, processor.HandleRecords)
+	var blocked *flowworker.VersionBlockedError
+	if !errors.Is(runErr, flowworker.ErrVersionUnavailable) || !errors.As(runErr, &blocked) {
+		t.Fatalf("consumer error=%v, want version block", runErr)
+	}
+	if blocked.Dependency != "dimension_classification_pair" || blocked.TenantID != corpusTenantID || !blocked.EventTime.Before(effectiveFrom) {
+		t.Fatalf("blocked metadata=%+v effective_from=%s", blocked, effectiveFrom)
+	}
+	if len(writer.batches) != 0 {
+		t.Fatalf("version-blocked flow reached ClickHouse writer: %d batches", len(writer.batches))
+	}
+	if stats := consumer.Stats(); stats.Records != 0 || stats.Errors != 1 {
+		t.Fatalf("consumer stats=%+v", stats)
+	}
+	if stats := processor.Stats(); stats.RetryableErrors != 1 || stats.Records != 0 {
+		t.Fatalf("processor stats=%+v", stats)
+	}
+	if stats := pipeline.Stats(); stats.SnapshotMiss != 1 || stats.Records != 0 {
+		t.Fatalf("pipeline stats=%+v", stats)
+	}
+	if got := committedReplayOffset(t, ctx, admin, group, topic); got != -1 {
+		t.Fatalf("committed offset advanced across version block: got %d want -1", got)
 	}
 }
 

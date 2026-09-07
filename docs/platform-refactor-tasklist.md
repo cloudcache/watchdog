@@ -6,7 +6,7 @@
 
 每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。`PLAT-04` 只作为计划编号，不再作为一个永远无法勾选的总任务；A–H 必须继续拆成可独立提交、独立验收的子项。只有代码、真实依赖集成、回归和 commit 四项同时存在才可标 `[x]`，不得用“大部分已实现”代替闭环。
 
-**当前活动切片：PLAT-04C4c AddressSnap 进程级验收。** writer、worker reader、机器 HTTP、LKG、远端 sync 和生产命令生命周期均已编码；下一步只做真实 production router + worker 的故障/回滚联测及 Kafka 缺 event-time 版本暂停门禁。查询口径与历史重分类在 installed ACK 前不切换。
+**当前活动切片：PLAT-04C4c AddressSnap 进程级验收。** writer、worker reader、机器 HTTP、LKG、远端 sync 和生产命令生命周期均已编码；真实 Kafka 已关闭“缺 event-time 版本不回退 current、不写 CH、不提交 offset”门禁，下一步只做真实 MySQL identity/repository + 独立 OS worker 的故障/回滚联测。查询口径与历史重分类在 installed ACK 前不切换。
 
 ## P0 生产入口、身份与存储收敛
 
