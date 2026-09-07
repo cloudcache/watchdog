@@ -31,8 +31,11 @@ func TestCompileAddressDimensionDraftResolvesTypedTaxonomy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(draft.Prefixes) != 1 || len(draft.AddressSets) != 1 || digest[:7] != "sha256:" {
+	if len(draft.Prefixes) != 1 || len(draft.AddressSets) != 1 || len(draft.GeoNodes) != 3 || digest[:7] != "sha256:" {
 		t.Fatalf("unexpected draft: %#v %s", draft, digest)
+	}
+	if draft.AddressSets[0].Name != "Zhejiang Telecom" || draft.GeoNodes[0].ID != "geo-continent" || draft.GeoNodes[1].ParentID != "geo-continent" || draft.GeoNodes[2].Name != "Zhejiang" {
+		t.Fatalf("publication display metadata = sets %#v Geo %#v", draft.AddressSets, draft.GeoNodes)
 	}
 	if len(draft.Operators) != 1 || draft.Operators[0].FlowISPID != 3 || draft.Operators[0].ID != "operator-telecom" {
 		t.Fatalf("operator definitions = %#v", draft.Operators)
@@ -101,11 +104,20 @@ func TestCompileAddressDimensionDraftCanonicalizesOperators(t *testing.T) {
 }
 
 func TestCompileAddressDimensionDraftIsDeterministic(t *testing.T) {
-	left := AddressDimensionDraftSource{Prefixes: []AddressPrefix{
-		{ID: "prefix-b", CIDR: "2001:db8::/32", Labels: map[string]string{"flow": "local"}},
-		{ID: "prefix-a", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local"}},
-	}}
-	right := AddressDimensionDraftSource{Prefixes: []AddressPrefix{left.Prefixes[1], left.Prefixes[0]}}
+	left := AddressDimensionDraftSource{
+		Geography: []GeoDictionaryNode{
+			{ID: "geo-country-cn", Kind: GeoKindCountry, Code: "CN", ParentID: "geo-continent", Name: "China", Enabled: true},
+			{ID: "geo-continent", Kind: GeoKindContinent, Code: "AS", Name: "Asia", Enabled: true},
+		},
+		Prefixes: []AddressPrefix{
+			{ID: "prefix-b", CIDR: "2001:db8::/32", Labels: map[string]string{"flow": "local"}},
+			{ID: "prefix-a", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local"}},
+		},
+	}
+	right := AddressDimensionDraftSource{
+		Geography: []GeoDictionaryNode{left.Geography[1], left.Geography[0]},
+		Prefixes:  []AddressPrefix{left.Prefixes[1], left.Prefixes[0]},
+	}
 	leftDraft, leftDigest, err := CompileAddressDimensionDraft(left)
 	if err != nil {
 		t.Fatal(err)
@@ -114,9 +126,35 @@ func TestCompileAddressDimensionDraftIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leftDigest != rightDigest || leftDraft.Prefixes[0].CIDR != rightDraft.Prefixes[0].CIDR {
+	if leftDigest != rightDigest || leftDraft.Prefixes[0].CIDR != rightDraft.Prefixes[0].CIDR || leftDraft.GeoNodes[0].ID != rightDraft.GeoNodes[0].ID {
 		t.Fatalf("draft ordering is not deterministic: %s != %s", leftDigest, rightDigest)
 	}
+}
+
+func TestCompileAddressDimensionDraftRejectsInvalidGeoGraph(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []GeoDictionaryNode
+	}{
+		{name: "duplicate id", nodes: []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindCountry, Code: "CN", Name: "China"}, {ID: "geo-a", Kind: GeoKindCountry, Code: "US", Name: "United States"}}},
+		{name: "missing parent", nodes: []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindCountry, Code: "CN", ParentID: "missing", Name: "China", Enabled: true}}},
+		{name: "enabled below disabled", nodes: []GeoDictionaryNode{{ID: "geo-a", Kind: GeoKindContinent, Code: "AS", Name: "Asia", Enabled: false}, {ID: "geo-b", Kind: GeoKindCountry, Code: "CN", ParentID: "geo-a", Name: "China", Enabled: true}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			draft, _, err := CompileAddressDimensionDraft(AddressDimensionDraftSource{Geography: test.nodes})
+			if err == nil {
+				_, _, _, err = encodeAddressDimensionBundle(draft, "snapshot-invalid-geo", "tenant-a", 1, testMinuteUTC())
+			}
+			if err == nil {
+				t.Fatal("invalid Geo graph was accepted")
+			}
+		})
+	}
+}
+
+func testMinuteUTC() time.Time {
+	return time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 }
 
 func TestCompileAddressDimensionDraftPinsAndOrdersActiveImportSources(t *testing.T) {

@@ -13,11 +13,11 @@ func TestAddressSetCompilationAppliesSetAlgebraAtPrefixBoundaries(t *testing.T) 
 		{ID: "cn", CIDR: "203.0.0.0/16", Labels: map[string]string{"geo.country": "CN"}},
 	}
 	bundle.AddressSets = []AddressSetDefinition{
-		{ID: "set-a", Members: []string{"203.0.113.0/24", "2001:db8::/32"}, ExcludeMembers: []string{"203.0.113.128/25", "2001:db8:1::/48"}, MatchDirection: "both", Enabled: true},
-		{ID: "set-b", IncludeSetIDs: []string{"set-a"}, MatchDirection: "both", Enabled: true},
-		{ID: "set-c", Selector: LabelSelector{Labels: map[string][]string{"geo.country": {"CN"}}}, ExcludeSetIDs: []string{"set-a"}, MatchDirection: "both", Enabled: true},
-		{ID: "set-cn", Selector: LabelSelector{Labels: map[string][]string{"geo.country": {"CN"}}}, MatchDirection: "both", Enabled: true},
-		{ID: "set-external", Members: []string{"198.51.100.0/24"}, MatchDirection: "both", Enabled: true},
+		{ID: "set-a", Name: "Set A", Members: []string{"203.0.113.0/24", "2001:db8::/32"}, ExcludeMembers: []string{"203.0.113.128/25", "2001:db8:1::/48"}, MatchDirection: "both", Enabled: true},
+		{ID: "set-b", Name: "Set B", IncludeSetIDs: []string{"set-a"}, MatchDirection: "both", Enabled: true},
+		{ID: "set-c", Name: "Set C", Selector: LabelSelector{Labels: map[string][]string{"geo.country": {"CN"}}}, ExcludeSetIDs: []string{"set-a"}, MatchDirection: "both", Enabled: true},
+		{ID: "set-cn", Name: "China", Selector: LabelSelector{Labels: map[string][]string{"geo.country": {"CN"}}}, MatchDirection: "both", Enabled: true},
+		{ID: "set-external", Name: "External", Members: []string{"198.51.100.0/24"}, MatchDirection: "both", Enabled: true},
 	}
 
 	snapshot, err := CompileBundle(bundle, CompileLimits{})
@@ -44,7 +44,7 @@ func TestAddressSetCompilationAppliesSetAlgebraAtPrefixBoundaries(t *testing.T) 
 func TestAddressSetCompilationRejectsInvalidAlgebra(t *testing.T) {
 	deepChain := make([]AddressSetDefinition, maxAddressSetDependencyDepth+1)
 	for index := range deepChain {
-		deepChain[index] = AddressSetDefinition{ID: "depth-" + strings.Repeat("x", index+1), Enabled: true}
+		deepChain[index] = AddressSetDefinition{ID: "depth-" + strings.Repeat("x", index+1), Name: "Depth", Enabled: true}
 	}
 	for index := range deepChain {
 		if index == len(deepChain)-1 {
@@ -61,32 +61,32 @@ func TestAddressSetCompilationRejectsInvalidAlgebra(t *testing.T) {
 		{
 			name: "cycle",
 			sets: []AddressSetDefinition{
-				{ID: "a", IncludeSetIDs: []string{"b"}, Enabled: true},
-				{ID: "b", IncludeSetIDs: []string{"a"}, Enabled: true},
+				{ID: "a", Name: "A", IncludeSetIDs: []string{"b"}, Enabled: true},
+				{ID: "b", Name: "B", IncludeSetIDs: []string{"a"}, Enabled: true},
 			},
 			want: "dependency cycle",
 		},
 		{
 			name: "missing-reference",
-			sets: []AddressSetDefinition{{ID: "a", IncludeSetIDs: []string{"missing"}, Enabled: true}},
+			sets: []AddressSetDefinition{{ID: "a", Name: "A", IncludeSetIDs: []string{"missing"}, Enabled: true}},
 			want: "missing or disabled",
 		},
 		{
 			name: "disabled-reference",
 			sets: []AddressSetDefinition{
-				{ID: "a", IncludeSetIDs: []string{"b"}, Enabled: true},
-				{ID: "b", Members: []string{"192.0.2.0/24"}, Enabled: false},
+				{ID: "a", Name: "A", IncludeSetIDs: []string{"b"}, Enabled: true},
+				{ID: "b", Name: "B", Members: []string{"192.0.2.0/24"}, Enabled: false},
 			},
 			want: "missing or disabled",
 		},
 		{
 			name: "non-canonical-member",
-			sets: []AddressSetDefinition{{ID: "a", Members: []string{"192.0.2.1/24"}, Enabled: true}},
+			sets: []AddressSetDefinition{{ID: "a", Name: "A", Members: []string{"192.0.2.1/24"}, Enabled: true}},
 			want: "canonical IPv4 or IPv6 CIDRs",
 		},
 		{
 			name: "exclude-only",
-			sets: []AddressSetDefinition{{ID: "a", ExcludeMembers: []string{"192.0.2.0/24"}, Enabled: true}},
+			sets: []AddressSetDefinition{{ID: "a", Name: "A", ExcludeMembers: []string{"192.0.2.0/24"}, Enabled: true}},
 			want: "unless a member or included set is present",
 		},
 		{
@@ -111,8 +111,8 @@ func TestAddressSetCompilationRejectsInvalidAlgebra(t *testing.T) {
 func TestAddressSetCompilationEnforcesExpandedRecordLimit(t *testing.T) {
 	bundle := testBundle("snapshot-set-limit", 1, testMinute(12, 0))
 	bundle.AddressSets = []AddressSetDefinition{
-		{ID: "local-set", Members: []string{"10.0.0.0/8"}, Enabled: true},
-		{ID: "remote-set", Members: []string{"203.0.113.0/24"}, Enabled: true},
+		{ID: "local-set", Name: "Local", Members: []string{"10.0.0.0/8"}, Enabled: true},
+		{ID: "remote-set", Name: "Remote", Members: []string{"203.0.113.0/24"}, Enabled: true},
 	}
 	_, err := CompileBundle(bundle, CompileLimits{MaxAddressSetsPerRecord: 1})
 	if err == nil || !strings.Contains(err.Error(), "address-set expansion 2") {
@@ -126,8 +126,8 @@ func TestAddressSetCompilationSupportsFiniteIPv4AndIPv6Universes(t *testing.T) {
 		{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local"}},
 	}
 	bundle.AddressSets = []AddressSetDefinition{
-		{ID: "universe-v4", Members: []string{"0.0.0.0/0"}, ExcludeMembers: []string{"192.0.2.0/24"}, Enabled: true},
-		{ID: "universe-v6", Members: []string{"::/0"}, ExcludeMembers: []string{"2001:db8:dead::/48"}, Enabled: true},
+		{ID: "universe-v4", Name: "IPv4 universe", Members: []string{"0.0.0.0/0"}, ExcludeMembers: []string{"192.0.2.0/24"}, Enabled: true},
+		{ID: "universe-v6", Name: "IPv6 universe", Members: []string{"::/0"}, ExcludeMembers: []string{"2001:db8:dead::/48"}, Enabled: true},
 	}
 	snapshot, err := CompileBundle(bundle, CompileLimits{})
 	if err != nil {

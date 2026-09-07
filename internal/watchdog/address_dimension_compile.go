@@ -26,19 +26,21 @@ type AddressDimensionDraft struct {
 	Prefixes    []flowdimension.PrefixDefinition     `json:"prefixes"`
 	AddressSets []flowdimension.AddressSetDefinition `json:"address_sets"`
 	Operators   []flowdimension.OperatorDefinition   `json:"operators"`
+	GeoNodes    []flowdimension.GeoNodeDefinition    `json:"geo_nodes"`
 	Sources     []AddressDimensionSource             `json:"sources,omitempty"`
 }
 
 func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDimensionDraft, string, error) {
-	geography := make(map[ID]GeoDictionaryNode, len(source.Geography))
-	for _, item := range source.Geography {
-		geography[item.ID] = item
-	}
 	draft := AddressDimensionDraft{
 		Prefixes:    make([]flowdimension.PrefixDefinition, 0, len(source.Prefixes)),
 		AddressSets: make([]flowdimension.AddressSetDefinition, 0, len(source.Sets)),
 	}
+	var geography map[ID]GeoDictionaryNode
 	var err error
+	draft.GeoNodes, geography, err = canonicalAddressDimensionGeoNodes(source.Geography)
+	if err != nil {
+		return AddressDimensionDraft{}, "", err
+	}
 	draft.Operators, err = canonicalAddressDimensionOperators(source.Operators)
 	if err != nil {
 		return AddressDimensionDraft{}, "", err
@@ -80,6 +82,30 @@ func CompileAddressDimensionDraft(source AddressDimensionDraftSource) (AddressDi
 	}
 	digest := sha256.Sum256(data)
 	return draft, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func canonicalAddressDimensionGeoNodes(items []GeoDictionaryNode) ([]flowdimension.GeoNodeDefinition, map[ID]GeoDictionaryNode, error) {
+	definitions := make([]flowdimension.GeoNodeDefinition, 0, len(items))
+	lookup := make(map[ID]GeoDictionaryNode, len(items))
+	for _, item := range items {
+		if item.ID == "" {
+			return nil, nil, fmt.Errorf("%w: Geo node ID is required", ErrAddressDimensionInvalid)
+		}
+		if _, exists := lookup[item.ID]; exists {
+			return nil, nil, fmt.Errorf("%w: duplicate Geo node id %s", ErrAddressDimensionInvalid, item.ID)
+		}
+		normalized, err := normalizeGeoDictionaryNode(item)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %v", ErrAddressDimensionInvalid, err)
+		}
+		lookup[normalized.ID] = normalized
+		definitions = append(definitions, flowdimension.GeoNodeDefinition{
+			ID: string(normalized.ID), Kind: normalized.Kind, Code: normalized.Code,
+			Name: normalized.Name, ParentID: string(normalized.ParentID), Enabled: normalized.Enabled,
+		})
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].ID < definitions[j].ID })
+	return definitions, lookup, nil
 }
 
 func canonicalAddressDimensionOperators(items []ISPOperator) ([]flowdimension.OperatorDefinition, error) {
@@ -253,7 +279,7 @@ func compileAddressSetDefinition(set AddressSet, geography map[ID]GeoDictionaryN
 		labels[key] = compactDimensionStrings(values)
 	}
 	return flowdimension.AddressSetDefinition{
-		ID: set.ID, Selector: flowdimension.LabelSelector{Labels: labels},
+		ID: set.ID, Name: set.Name, Selector: flowdimension.LabelSelector{Labels: labels},
 		Members: append([]string(nil), set.ExplicitMembers...), ExcludeMembers: append([]string(nil), set.ExplicitExcludeMembers...),
 		IncludeSetIDs: append([]string(nil), set.IncludeSetIDs...), ExcludeSetIDs: append([]string(nil), set.ExcludeSetIDs...),
 		MatchDirection: set.MatchDirection, Enabled: set.Enabled,
@@ -277,7 +303,7 @@ func encodeAddressDimensionBundle(draft AddressDimensionDraft, snapshotID, tenan
 	bundle := flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: tenantID,
 		Version: version, EffectiveFrom: effectiveFrom.UTC(), Prefixes: draft.Prefixes, AddressSets: draft.AddressSets,
-		Operators: draft.Operators,
+		Operators: draft.Operators, GeoNodes: draft.GeoNodes,
 	}
 	data, err := json.Marshal(bundle)
 	if err != nil {

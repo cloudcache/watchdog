@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：PLAT-04A2f → FLOW-03C AddressSnap。** 先关闭 scoped publication 内核且保持地址 wire 兼容，再交付 AddressSnap 格式/codec；随后才接异步 builder、worker loader 和 VPN preview/publish adapter。当前 ingest 分类已经是纯内存，不做“移除分类/改 CH dictGet”的重复改造；原始数据物理删除与 rollup 不和本切片混改。
+**活动切片：FLOW-03C AddressSnap builder。** scoped publication 内核、WADS v1 codec 和 definition schema v3 已分别关闭；当前接异步 builder，随后才接 worker loader 和 VPN preview/publish adapter。现有 ingest 分类已经是纯内存，不做“移除分类/改 CH dictGet”的重复改造；原始数据物理删除与 rollup 不和本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -267,11 +267,13 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **联合维度/桑基（有界 base）**：独立 joint compiler/runner 从同一 `flow_records FINAL` 事实生成 2–4 维有序 tuple、稳定 tuple TopN/Other、折线/堆叠/热力/表格和桑基；同步范围限 24h，固定 typed expression registry 和 CH 扫描/时间/内存硬限，拒绝歧义 `dimension_values`、重复维度及重叠 address-set；runner 多 block 全有或全无。没有新增表，因此本项不伪造空 migration。
 - [x] **联合维度集成（真实 CH）**：隔离库写入两组 `geo.city × ASN` 事实，以 `TopN=1 + Other` 验证 `geo-city-b/4837=550`、other=300；真实 HTTP gateway 同时覆盖空结果 array wire type、自动步长、`source=flow_records` 和 coverage warning。
 - [ ] **异步联合索引**：冻结 publication/config/index generation 和 operation-job payload；常用组合及 address-set path 走异步索引，使 >24h 查询可用。索引缺失/过期只能显式拒绝或标 degraded，不能回退成伪联合单维结果。
-- [ ] **FLOW-03C AddressSnap 二进制发布链**：替代“CH IP_TRIE index-builder”。平台 MySQL 只保存编辑态/血缘；异步 job 将 pinned source manifest + schema v2 definition 编译为单一签名不可变对象；worker 无 DB 加载到内存并 atomic swap，ingest 继续写 raw + 派生维度/version。
+- [ ] **FLOW-03C AddressSnap 二进制发布链**：替代“CH IP_TRIE index-builder”。平台 MySQL 只保存编辑态/血缘；异步 job 将 pinned source manifest + schema v3 definition 编译为单一签名不可变对象；worker 无 DB 加载到内存并 atomic swap，ingest 继续写 raw + 派生维度/version。
   - [x] **变更设计**：冻结正式方向、写入/默认查询/as-of 修正语义、多租户内存边界及从 CH 009 实验迁移路径；详见 `flow-address-query-plan.md`。
   - [x] **设计**：冻结 WADS v1 字节协议、顺序 section/value dictionary、v4/v6 ranges、supplier/customer ISP、地址组有序 offset list、zstd/CRC/SHA/signature、资源硬限和稳定错误边界；详细契约见 `flow-address-query-plan.md`。
   - [x] **编码（codec）**：`flowdimension` 已实现确定性 WADS encoder、严格 bounded decoder、metadata/source/Geo/operator/set/value/range 全引用校验、CRC32C 和未知版本/flag 拒绝；只提供 codec/helper，尚未接生产 writer。
   - [x] **单元测试（codec）**：覆盖 golden SHA/round-trip/determinism、截断/尾随/CRC/版本/flag/压缩与解压内存预算、v4/v6 边界、Geo parent、operator ASN、set/value 引用、range 重叠和非规范字典。
+  - [x] **定义输入 v3**：在 v2 operator 契约之上固化人工 Geo `id/kind/code/name/parent/enabled` 和 address-set name；编译器规范排序并校验 Geo 图，preview/digest/entry count 覆盖新增语义。v1/v2 继续可读但不得夹带 v3 字段；无新表字段，不制造 migration。
+  - [x] **定义输入 v3 单元/变更测试**：覆盖历史显示元数据不可变副本、乱序/缺父/逆级/禁用父/重复 kind-code 拒绝、v1/v2 兼容和管理草稿输入顺序确定性。
   - [ ] **编码（builder）**：operation job 分页读取 pinned import，合并 base + manual explicit fields，写临时 object，round-trip 后提交 pending snapshot；retry/takeover 生成同 checksum。
   - [ ] **单元/集成（builder）**：真实 MMDB/IPDB + MySQL，source checksum/count、优先级、operator 绑定、crash/checkpoint/cancel、失败不切 active。
   - [ ] **编码（loader）**：认证下载、LKG 原子文件、外部 SHA/签名与内部 CRC 双校验、离线构建现有 BART/二分 catalog、event-time atomic install/ACK；删除 worker MySQL 装载依赖。

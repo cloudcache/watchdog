@@ -34,6 +34,8 @@ MySQL 管理态（import generation + draft prefix/set/operator）
 
 ## 3. AddressSnap v1 格式
 
+AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只冻结 tenant operator，仍会丢失人工 Geo 的名称/父子关系和 address-set 名称，不能独立重现历史显示；v3 因此把规范排序的 `geo_nodes(id/kind/code/name/parent_id/enabled)` 与 `address_sets.name` 一并纳入 immutable/checksummed/signed definition。reader 继续接受 v1/v2，但 v3 有地址组时名称必填，Geo 图必须满足 ID 与 kind/code 唯一、父节点存在且层级向下、启用节点不得挂在禁用父节点下。该升级复用已有对象字段，不增加 MySQL migration。
+
 ### 3.1 容器
 
 格式必须由 Watchdog 自己定义并提供 Go golden test，不能把 Rust `bincode` 内存布局直接当跨版本协议：
@@ -70,7 +72,7 @@ MySQL 管理态（import generation + draft prefix/set/operator）
 
 ## 4. 异步构建与发布生命周期
 
-1. preview 在一致性事务中固定 active import slot、row version、artifact checksum/row count 与 draft digest。
+1. preview 在一致性事务中固定 active import slot、row version、artifact checksum/row count 与 schema v3 draft digest；该 digest 已覆盖 operator、人工 Geo 节点及 address-set 显示元数据。
 2. publish 只创建 `address_snapshot_build` operation job；payload 固定 tenant、draft revision/digest、source manifest、target format/builder version 和幂等 generation。
 3. builder 按主键分页读取 pinned `import_id`，分别校验文件/行 checksum 与计数；使用 `combined -> geo/asn 字段域 -> manual explicit fields` 的既定优先级合成不重叠区间。
 4. builder 写临时文件，重新从文件 decode 并做全量 invariant/parity sample；成功后才原子保存 object，并创建 pending snapshot。失败不能修改当前 active snapshot。

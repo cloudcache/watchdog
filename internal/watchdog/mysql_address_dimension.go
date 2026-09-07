@@ -89,6 +89,7 @@ func (p *MySQLAddressDimensionPublisher) PreviewAddressDimension(ctx context.Con
 		SourceManifestVersion: AddressDimensionSourceManifestV1,
 		SourceManifest:        append([]AddressDimensionSource(nil), draft.Sources...), SourcePrefixCount: sourcePrefixCount,
 		PrefixCount: uint64(len(draft.Prefixes)), AddressSetCount: uint64(len(draft.AddressSets)), OperatorCount: uint64(len(draft.Operators)),
+		GeoNodeCount:           uint64(len(draft.GeoNodes)),
 		EnabledAddressSetCount: uint64(metadata.EnabledAddressSetCount), MaxAddressSetsPerRecord: uint32(metadata.MaxAddressSetsPerRecord),
 		EstimatedBundleBytes: uint64(len(data)),
 	}, nil
@@ -160,7 +161,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 	`, snapshotID, tenantID, p.scope.ModuleKey, p.scope.DimensionKey, version, request.EffectiveFrom.UTC(),
 		object.Ref, checksum, digest, AddressDimensionSourceManifestV1, sourceManifest, sourcePrefixCount,
-		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets)+len(draft.Operators),
+		flowdimension.BundleSchemaVersion, len(draft.Prefixes)+len(draft.AddressSets)+len(draft.Operators)+len(draft.GeoNodes),
 		len(draft.Prefixes), len(draft.AddressSets), metadata.MaxAddressSetsPerRecord, actorID)
 	if err != nil {
 		var mysqlErr *mysqldriver.MySQLError

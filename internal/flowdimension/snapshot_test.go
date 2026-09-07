@@ -95,6 +95,90 @@ func TestCompileBundleCarriesImmutableTenantOperatorDefinitions(t *testing.T) {
 	}
 }
 
+func TestCompileBundleCarriesImmutableGeoAndAddressSetMetadata(t *testing.T) {
+	bundle := testBundle("snapshot-display-metadata", 1, testMinute(12, 0))
+	bundle.GeoNodes = []GeoNodeDefinition{
+		{ID: "geo-city-hangzhou", Kind: "city", Code: "330100", Name: "Hangzhou", ParentID: "geo-province-zhejiang", Enabled: true},
+		{ID: "geo-continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},
+		{ID: "geo-country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "geo-continent-asia", Enabled: true},
+		{ID: "geo-province-zhejiang", Kind: "province", Code: "330000", Name: "Zhejiang", ParentID: "geo-country-cn", Enabled: true},
+	}
+	snapshot, err := CompileBundle(bundle, CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata := snapshot.Metadata(); metadata.GeoNodeCount != 4 {
+		t.Fatalf("Geo node metadata = %+v", metadata)
+	}
+	geoNodes := snapshot.GeoNodeDefinitions()
+	sets := snapshot.AddressSetMetadata()
+	if len(geoNodes) != 4 || geoNodes[0].Name != "Hangzhou" || geoNodes[0].ParentID != "geo-province-zhejiang" {
+		t.Fatalf("Geo definitions = %#v", geoNodes)
+	}
+	if len(sets) != len(bundle.AddressSets) || sets[0].ID != "set-out-region" || sets[0].Name != "Outbound east" || !sets[0].Enabled {
+		t.Fatalf("address-set metadata = %#v", sets)
+	}
+	geoNodes[0].Name = "mutated"
+	sets[0].Name = "mutated"
+	if snapshot.GeoNodeDefinitions()[0].Name != "Hangzhou" || snapshot.AddressSetMetadata()[0].Name != "Outbound east" {
+		t.Fatal("compiled display metadata storage was exposed")
+	}
+}
+
+func TestCompileBundlePreservesV1V2CompatibilityAndEnforcesV3Metadata(t *testing.T) {
+	version2 := testBundle("snapshot-v2", 1, testMinute(12, 0))
+	version2.SchemaVersion = 2
+	for index := range version2.AddressSets {
+		version2.AddressSets[index].Name = ""
+	}
+	if _, err := CompileBundle(version2, CompileLimits{}); err != nil {
+		t.Fatalf("schema v2 bundle: %v", err)
+	}
+	withV3Name := version2
+	withV3Name.AddressSets = append([]AddressSetDefinition(nil), version2.AddressSets...)
+	withV3Name.AddressSets[0].Name = "not supported"
+	if _, err := CompileBundle(withV3Name, CompileLimits{}); err == nil || !strings.Contains(err.Error(), "does not support address_sets") {
+		t.Fatalf("schema v2 name error = %v", err)
+	}
+	withV3Geo := version2
+	withV3Geo.GeoNodes = []GeoNodeDefinition{{ID: "geo-country-cn", Kind: "country", Code: "CN", Name: "China", Enabled: true}}
+	if _, err := CompileBundle(withV3Geo, CompileLimits{}); err == nil || !strings.Contains(err.Error(), "does not support geo_nodes") {
+		t.Fatalf("schema v2 Geo error = %v", err)
+	}
+	version3 := testBundle("snapshot-v3-missing-name", 1, testMinute(12, 0))
+	version3.AddressSets[0].Name = ""
+	if _, err := CompileBundle(version3, CompileLimits{}); err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("schema v3 missing name error = %v", err)
+	}
+}
+
+func TestCompileBundleRejectsInvalidGeoDefinitions(t *testing.T) {
+	valid := []GeoNodeDefinition{
+		{ID: "geo-continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},
+		{ID: "geo-country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "geo-continent-asia", Enabled: true},
+	}
+	tests := []struct {
+		name  string
+		nodes []GeoNodeDefinition
+		want  string
+	}{
+		{name: "non-canonical order", nodes: []GeoNodeDefinition{valid[1], valid[0]}, want: "canonically ordered"},
+		{name: "missing parent", nodes: []GeoNodeDefinition{{ID: "geo-country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "missing", Enabled: true}}, want: "missing, self, or non-ancestor"},
+		{name: "non-ancestor parent", nodes: []GeoNodeDefinition{{ID: "geo-city-a", Kind: "city", Code: "A", Name: "A", ParentID: "geo-city-b", Enabled: true}, {ID: "geo-city-b", Kind: "city", Code: "B", Name: "B", Enabled: true}}, want: "missing, self, or non-ancestor"},
+		{name: "enabled below disabled", nodes: []GeoNodeDefinition{{ID: "geo-continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: false}, {ID: "geo-country-cn", Kind: "country", Code: "CN", Name: "China", ParentID: "geo-continent-asia", Enabled: true}}, want: "disabled parent"},
+		{name: "duplicate kind code", nodes: []GeoNodeDefinition{{ID: "geo-country-cn-a", Kind: "country", Code: "CN", Name: "China A", Enabled: true}, {ID: "geo-country-cn-b", Kind: "country", Code: "CN", Name: "China B", Enabled: true}}, want: "duplicates kind/code"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bundle := testBundle("snapshot-invalid-geo", 1, testMinute(12, 0))
+			bundle.GeoNodes = test.nodes
+			if _, err := CompileBundle(bundle, CompileLimits{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestCompileBundleRejectsInvalidOperatorDefinitions(t *testing.T) {
 	valid := OperatorDefinition{ID: "operator-a", FlowISPID: 1, Code: "A", Name: "Operator A", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}
 	for name, mutate := range map[string]func(*SnapshotBundle){
@@ -241,7 +325,7 @@ func TestCompiledSnapshotClassifiesDirectionPrefixesAndSets(t *testing.T) {
 func TestAddressSetSelectorRequiresEveryLabel(t *testing.T) {
 	bundle := testBundle("snapshot-a", 1, testMinute(12, 0))
 	bundle.AddressSets = append(bundle.AddressSets, AddressSetDefinition{
-		ID: "set-and-miss", Selector: LabelSelector{Labels: map[string][]string{
+		ID: "set-and-miss", Name: "Missing conjunction", Selector: LabelSelector{Labels: map[string][]string{
 			"provider": {"isp-b"},
 			"region":   {"west"},
 		}}, MatchDirection: "both", Enabled: true,
@@ -269,10 +353,10 @@ func TestNestedPrefixesInheritHierarchyLabelsAndMultipleGroupsWithoutASN(t *test
 			{ID: "hangzhou", CIDR: "203.0.113.128/25", Labels: map[string]string{"province": "330000", "city": "330100", "flow.geo.city": "330100"}},
 		},
 		AddressSets: []AddressSetDefinition{
-			{ID: "group-asia", Selector: LabelSelector{Labels: map[string][]string{"continent": {"asia"}}}, MatchDirection: "both", Enabled: true},
-			{ID: "group-china", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}}}, MatchDirection: "both", Enabled: true},
-			{ID: "group-hangzhou", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}, "city": {"330100"}}}, MatchDirection: "both", Enabled: true},
-			{ID: "group-customer", Selector: LabelSelector{Labels: map[string][]string{"business": {"customer-a"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-asia", Name: "Asia", Selector: LabelSelector{Labels: map[string][]string{"continent": {"asia"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-china", Name: "China", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-hangzhou", Name: "Hangzhou", Selector: LabelSelector{Labels: map[string][]string{"country": {"CN"}, "city": {"330100"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "group-customer", Name: "Customer A", Selector: LabelSelector{Labels: map[string][]string{"business": {"customer-a"}}}, MatchDirection: "both", Enabled: true},
 		},
 	}
 	snapshot, err := CompileBundle(bundle, CompileLimits{})
@@ -499,11 +583,11 @@ func testBundle(snapshotID string, version uint64, effectiveFrom time.Time) Snap
 			{ID: "remote-v6", CIDR: "2001:db8:2::/48", Labels: map[string]string{"provider": "isp-v6"}},
 		},
 		AddressSets: []AddressSetDefinition{
-			{ID: "set-out-region", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "out", Enabled: true},
-			{ID: "set-in-region", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "in", Enabled: true},
-			{ID: "set-both-provider", Selector: LabelSelector{Labels: map[string][]string{"provider": {"isp-b"}}}, MatchDirection: "both", Enabled: true},
-			{ID: "set-local-business", Selector: LabelSelector{Labels: map[string][]string{"business": {"customer"}}}, MatchDirection: "both", Enabled: true},
-			{ID: "set-disabled", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "both", Enabled: false},
+			{ID: "set-out-region", Name: "Outbound east", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "out", Enabled: true},
+			{ID: "set-in-region", Name: "Inbound east", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "in", Enabled: true},
+			{ID: "set-both-provider", Name: "ISP B", Selector: LabelSelector{Labels: map[string][]string{"provider": {"isp-b"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "set-local-business", Name: "Customer", Selector: LabelSelector{Labels: map[string][]string{"business": {"customer"}}}, MatchDirection: "both", Enabled: true},
+			{ID: "set-disabled", Name: "Disabled", Selector: LabelSelector{Labels: map[string][]string{"region": {"east"}}}, MatchDirection: "both", Enabled: false},
 		},
 	}
 }

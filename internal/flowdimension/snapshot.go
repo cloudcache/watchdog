@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	BundleSchemaVersion        = 2
+	BundleSchemaVersion        = 3
 	minimumBundleSchemaVersion = 1
 	UnassignedDimensionID      = "_unassigned"
 	defaultMaxBundleBytes      = 64 << 20
@@ -32,6 +32,7 @@ const (
 	maxSelectorValuesPerLabel  = 256
 	maxOperatorDefinitions     = 65_535
 	maxASNsPerOperator         = 10_000
+	maxGeoNodeDefinitions      = 100_000
 )
 
 var ErrNoDimensionSnapshot = errors.New("no dimension snapshot for event time")
@@ -53,6 +54,19 @@ type SnapshotBundle struct {
 	Prefixes      []PrefixDefinition     `json:"prefixes"`
 	AddressSets   []AddressSetDefinition `json:"address_sets"`
 	Operators     []OperatorDefinition   `json:"operators,omitempty"`
+	GeoNodes      []GeoNodeDefinition    `json:"geo_nodes,omitempty"`
+}
+
+// GeoNodeDefinition preserves tenant-authored taxonomy display metadata in
+// the immutable object. Prefix labels alone are sufficient for classification
+// but cannot reproduce historical names or parentage after a draft edit.
+type GeoNodeDefinition struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	ParentID string `json:"parent_id,omitempty"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // OperatorDefinition is the tenant-stable management identity embedded in a
@@ -78,6 +92,7 @@ type PrefixDefinition struct {
 
 type AddressSetDefinition struct {
 	ID             string        `json:"id"`
+	Name           string        `json:"name,omitempty"`
 	Selector       LabelSelector `json:"selector"`
 	Members        []string      `json:"members,omitempty"`
 	ExcludeMembers []string      `json:"exclude_members,omitempty"`
@@ -138,18 +153,27 @@ type SnapshotMetadata struct {
 	Checksum                string
 	PrefixCount             int
 	OperatorCount           int
+	GeoNodeCount            int
 	EnabledAddressSetCount  int
 	MaxAddressSetsPerRecord int
 }
 
 type CompiledSnapshot struct {
-	metadata          SnapshotMetadata
-	prefixes          *bart.Table[compiledPrefix]
-	addressSets       *bart.Table[compiledAddressSetMembership]
-	geoOverrides      *bart.Table[compiledGeoOverride]
-	operators         []OperatorDefinition
-	operatorsByID     map[string]int
-	operatorsByFlowID map[uint16]int
+	metadata           SnapshotMetadata
+	prefixes           *bart.Table[compiledPrefix]
+	addressSets        *bart.Table[compiledAddressSetMembership]
+	geoOverrides       *bart.Table[compiledGeoOverride]
+	operators          []OperatorDefinition
+	operatorsByID      map[string]int
+	operatorsByFlowID  map[uint16]int
+	geoNodes           []GeoNodeDefinition
+	addressSetMetadata []AddressSetMetadata
+}
+
+type AddressSetMetadata struct {
+	ID      string
+	Name    string
+	Enabled bool
 }
 
 type compiledPrefix struct {
@@ -236,6 +260,16 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	if bundle.SchemaVersion == 1 && len(bundle.Operators) != 0 {
 		return nil, errors.New("dimension bundle schema_version 1 does not support operators")
 	}
+	if bundle.SchemaVersion < 3 {
+		if len(bundle.GeoNodes) != 0 {
+			return nil, fmt.Errorf("dimension bundle schema_version %d does not support geo_nodes", bundle.SchemaVersion)
+		}
+		for index := range bundle.AddressSets {
+			if bundle.AddressSets[index].Name != "" {
+				return nil, fmt.Errorf("dimension bundle schema_version %d does not support address_sets[%d].name", bundle.SchemaVersion, index)
+			}
+		}
+	}
 	if !validIdentifier(bundle.SnapshotID, 64) || !validIdentifier(bundle.TenantID, 64) || bundle.Version == 0 {
 		return nil, errors.New("dimension bundle identity and version are required")
 	}
@@ -253,6 +287,17 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	operators, operatorsByID, operatorsByFlowID, err := compileOperatorDefinitions(bundle.Operators)
 	if err != nil {
 		return nil, err
+	}
+	geoNodes, err := compileGeoNodeDefinitions(bundle.GeoNodes)
+	if err != nil {
+		return nil, err
+	}
+	addressSetMetadata := make([]AddressSetMetadata, len(bundle.AddressSets))
+	for index, definition := range bundle.AddressSets {
+		if bundle.SchemaVersion >= 3 && !validText(definition.Name, 190) {
+			return nil, fmt.Errorf("address_sets[%d].name is required by schema_version 3", index)
+		}
+		addressSetMetadata[index] = AddressSetMetadata{ID: definition.ID, Name: definition.Name, Enabled: definition.Enabled}
 	}
 
 	prefixIDs := make(map[string]struct{}, len(bundle.Prefixes))
@@ -317,11 +362,66 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 		metadata: SnapshotMetadata{
 			SchemaVersion: bundle.SchemaVersion, SnapshotID: bundle.SnapshotID, TenantID: bundle.TenantID, Version: bundle.Version,
 			EffectiveFrom: effectiveFrom, Checksum: checksum, PrefixCount: len(compiledPrefixes),
-			OperatorCount: len(operators), EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
+			OperatorCount: len(operators), GeoNodeCount: len(geoNodes), EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
 		},
 		prefixes: tree, addressSets: addressSets, geoOverrides: geoOverrides,
 		operators: operators, operatorsByID: operatorsByID, operatorsByFlowID: operatorsByFlowID,
+		geoNodes: geoNodes, addressSetMetadata: addressSetMetadata,
 	}, nil
+}
+
+func compileGeoNodeDefinitions(definitions []GeoNodeDefinition) ([]GeoNodeDefinition, error) {
+	if len(definitions) > maxGeoNodeDefinitions {
+		return nil, fmt.Errorf("dimension bundle has %d Geo nodes, limit is %d", len(definitions), maxGeoNodeDefinitions)
+	}
+	result := append([]GeoNodeDefinition(nil), definitions...)
+	byID := make(map[string]int, len(result))
+	byKindCode := make(map[string]string, len(result))
+	for index, definition := range result {
+		if !validIdentifier(definition.ID, 128) || !validText(definition.Code, 64) || !validText(definition.Name, 190) || geoDefinitionKindRank(definition.Kind) < 0 ||
+			(definition.ParentID != "" && !validIdentifier(definition.ParentID, 128)) || (index > 0 && result[index-1].ID >= definition.ID) {
+			return nil, fmt.Errorf("geo_nodes[%d] is invalid or not canonically ordered", index)
+		}
+		if _, exists := byID[definition.ID]; exists {
+			return nil, fmt.Errorf("geo_nodes[%d] duplicates id %q", index, definition.ID)
+		}
+		kindCode := definition.Kind + "\x00" + definition.Code
+		if owner, exists := byKindCode[kindCode]; exists {
+			return nil, fmt.Errorf("geo_nodes[%d] duplicates kind/code owned by %q", index, owner)
+		}
+		byID[definition.ID] = index
+		byKindCode[kindCode] = definition.ID
+	}
+	for index, definition := range result {
+		if definition.ParentID == "" {
+			continue
+		}
+		parentIndex, exists := byID[definition.ParentID]
+		if !exists || parentIndex == index || geoDefinitionKindRank(result[parentIndex].Kind) >= geoDefinitionKindRank(definition.Kind) {
+			return nil, fmt.Errorf("geo_nodes[%d] has a missing, self, or non-ancestor parent", index)
+		}
+		if definition.Enabled && !result[parentIndex].Enabled {
+			return nil, fmt.Errorf("geo_nodes[%d] is enabled below a disabled parent", index)
+		}
+	}
+	return result, nil
+}
+
+func geoDefinitionKindRank(kind string) int {
+	switch kind {
+	case "continent":
+		return 0
+	case "region":
+		return 1
+	case "country":
+		return 2
+	case "province":
+		return 3
+	case "city":
+		return 4
+	default:
+		return -1
+	}
 }
 
 func compileOperatorDefinitions(definitions []OperatorDefinition) ([]OperatorDefinition, map[string]int, map[uint16]int, error) {
@@ -498,6 +598,20 @@ func (s *CompiledSnapshot) OperatorByFlowISPID(id uint16) (OperatorDefinition, b
 	definition := s.operators[index]
 	definition.ASNs = append([]uint32(nil), definition.ASNs...)
 	return definition, true
+}
+
+func (s *CompiledSnapshot) GeoNodeDefinitions() []GeoNodeDefinition {
+	if s == nil {
+		return nil
+	}
+	return append([]GeoNodeDefinition(nil), s.geoNodes...)
+}
+
+func (s *CompiledSnapshot) AddressSetMetadata() []AddressSetMetadata {
+	if s == nil {
+		return nil
+	}
+	return append([]AddressSetMetadata(nil), s.addressSetMetadata...)
 }
 
 func (s *CompiledSnapshot) lookup(addr netip.Addr) (compiledPrefix, bool) {
