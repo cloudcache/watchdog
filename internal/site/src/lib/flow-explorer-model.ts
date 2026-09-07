@@ -213,6 +213,45 @@ export function parseFlowFilter(expression: string): FlowFilterExpression | unde
 	return new FlowFilterParser(tokenizeFlowFilter(expression)).parse()
 }
 
+export function formatFlowFilter(expression: FlowFilterExpression): string {
+	switch (expression.op) {
+		case "and":
+		case "or": {
+			const args = expression.args ?? []
+			if (args.length === 0) throw new Error(`${expression.op.toUpperCase()} filter requires arguments`)
+			return `(${args.map(formatFlowFilter).join(` ${expression.op.toUpperCase()} `)})`
+		}
+		case "not": {
+			const args = expression.args ?? []
+			if (args.length !== 1) throw new Error("NOT filter requires exactly one argument")
+			return `NOT (${formatFlowFilter(args[0])})`
+		}
+		case "predicate": {
+			if (!expression.field || !expression.operator || !FLOW_FILTER_FIELDS.has(expression.field)) {
+				throw new Error("Invalid Flow filter predicate")
+			}
+			const values = expression.values ?? []
+			if (values.length === 0) throw new Error("Flow filter predicate requires values")
+			const operator = {
+				eq: "=",
+				ne: "!=",
+				in: "IN",
+				not_in: "NOT IN",
+				gt: ">",
+				gte: ">=",
+				lt: "<",
+				lte: "<=",
+			}[expression.operator]
+			const formatted = values.map(formatFlowFilterValue)
+			return `${expression.field} ${operator} ${expression.operator === "in" || expression.operator === "not_in" ? `(${formatted.join(", ")})` : formatted[0]}`
+		}
+	}
+}
+
+function formatFlowFilterValue(value: string): string {
+	return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+}
+
 export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFilters {
 	const result: FlowFilters = {}
 	for (const key of Object.keys({ ...base, ...extra }) as (keyof FlowFilters)[]) {

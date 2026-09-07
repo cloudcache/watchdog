@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { BarChart3Icon, DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
+import { BarChart3Icon, BookmarkIcon, DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
@@ -1071,6 +1071,16 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						</div>
 						<Button onClick={() => refresh("advanced")} disabled={loading}>
 							<Trans>Apply</Trans>
+						</Button>
+						<Button
+							variant="outline"
+							onClick={() => {
+								const path = getPagePath($router, "flow_filters")
+								navigate(filterExpression.trim() ? `${path}?filter=${encodeURIComponent(filterExpression.trim())}` : path)
+							}}
+						>
+							<BookmarkIcon className="me-2 h-4 w-4" />
+							<Trans>Saved Filters</Trans>
 						</Button>
 					</div>
 					<p className="text-xs text-muted-foreground">

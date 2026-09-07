@@ -42,6 +42,7 @@ type APIV1RouterConfig struct {
 	FlowStorageQuery       FlowStorageArchiveBoundaryRepository
 	FlowVPNFindings        VPNFindingRepository
 	FlowStorage            FlowStorageLifecycleRepository
+	FlowSavedFilters       FlowSavedFilterRepository
 	QueryPolicies          QueryDatasetPolicyRepository
 	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
@@ -228,6 +229,9 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.QueryGateway != nil {
 		registerQueryGatewayRoutes(mux, auth, cfg.QueryGateway, cfg.Audit)
 		registerFlowFilterRoutes(mux, auth)
+	}
+	if cfg.FlowSavedFilters != nil {
+		registerFlowSavedFilterRoutes(mux, auth, cfg.FlowSavedFilters, cfg.Audit)
 	}
 	if cfg.FlowRecords != nil {
 		registerFlowRecordRoutes(mux, auth, cfg.FlowRecords, cfg.Network, cfg.Audit, cfg.FlowRecordNow)

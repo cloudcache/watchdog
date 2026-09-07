@@ -1921,6 +1921,29 @@ CREATE TABLE IF NOT EXISTS `watchdog_installation` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `flow_saved_filters` (
+  `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` char(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` varchar(1024) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `share_scope` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'private',
+  `filter_schema_version` smallint unsigned NOT NULL DEFAULT '1',
+  `filter_json` json NOT NULL,
+  `row_version` bigint unsigned NOT NULL DEFAULT '1',
+  `deleted_at` datetime(3) DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_flow_saved_filters_visible` (`tenant_id`,`deleted_at`,`share_scope`,`updated_at`,`id`),
+  KEY `idx_flow_saved_filters_owner` (`tenant_id`,`owner_user_id`,`deleted_at`,`updated_at`,`id`),
+  CONSTRAINT `fk_flow_saved_filters_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_flow_saved_filters_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `flow_saved_filters_chk_1` CHECK ((`share_scope` in (_utf8mb4'private',_utf8mb4'tenant'))),
+  CONSTRAINT `flow_saved_filters_chk_2` CHECK ((`filter_schema_version` = 1)),
+  CONSTRAINT `flow_saved_filters_chk_3` CHECK ((json_type(`filter_json`) = _utf8mb4'OBJECT'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `flow_storage_policy_revisions` (
   `id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tenant_id` char(26) COLLATE utf8mb4_unicode_ci NOT NULL,

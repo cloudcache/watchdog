@@ -97,10 +97,10 @@
 
 ### P2 MySQL migration 门禁
 
-- 当前迁移头为 `056`：`054_operator_identity_tenant_cascade.sql` 修复运营商稳定身份 tenant cascade；`055_flow_vpn_management.sql` 固定 VPN 规则与 finding 管理状态；`056_flow_storage_lifecycle.sql` 固定 Flow 存储策略与分区状态机。001–056 均已进入 checksum manifest 与 fresh-install schema；下一持久化工作从 `057` 领取。
+- 当前迁移头为 `057`：`054_operator_identity_tenant_cascade.sql` 修复运营商稳定身份 tenant cascade；`055_flow_vpn_management.sql` 固定 VPN 规则与 finding 管理状态；`056_flow_storage_lifecycle.sql` 固定 Flow 存储策略与分区状态机；`057_flow_saved_filters.sql` 固定保存/共享 Flow 过滤器管理对象。001–057 均已进入 checksum manifest 与 fresh-install schema；下一持久化工作从 `058` 领取。
 - 后续**新增或改变持久化契约**的 backend P2 工作必须从当前头之后顺序分配迁移，在同一工作包中更新 fresh-install schema、迁移当前版本断言并完成空库顺序执行/重放；迁移文件不得只留在未跟踪工作区，生产代码也不得引用尚未提交的表或字段。
 - 纯执行契约或查询适配（例如 provider-neutral QueryRequest）只有在完全复用既有表时才可标注“无迁移”；任务清单和提交说明必须写明复用的表及原因，不允许用空迁移占号。
-- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占；`051` 已由 PLAT-04C4a 稳定 Flow ISP 身份独占；`052` 已由 Fleet Phase 0 signer/trust lifecycle 独占；`053` 已由 Fleet Phase 2 rollout create/preview 独占；`054` 已用于 operator tenant cascade forward-fix；`055` 已用于 VPN management；`056` 已用于 Flow storage lifecycle。下一个持久化工作从 `057` 领取；禁止并行工作包自行猜号。
+- `041` 的 PLAT-04C draft revision/batch apply schema 与 backend 已分别提交（`e8775c76`、`acbdd4a7`）；`042/043` publication lifecycle schema 已提交；`044` 已由 PLAT-04B 独占；`045` 已由 PLAT-04H QueryGateway policy 独占；`046` 已由 Export execution 独占；`047` 已由 PLAT-04A2b source manifest 独占；`048` 已由 PLAT-04A2c consumer status 独占；`049` 已由 PLAT-04A2d object GC 独占；`050` 已由 SNMP Event/Alert 查询闭环独占；`051` 已由 PLAT-04C4a 稳定 Flow ISP 身份独占；`052` 已由 Fleet Phase 0 signer/trust lifecycle 独占；`053` 已由 Fleet Phase 2 rollout create/preview 独占；`054` 已用于 operator tenant cascade forward-fix；`055` 已用于 VPN management；`056` 已用于 Flow storage lifecycle；`057` 已用于 Flow saved/shared filters。下一个持久化工作从 `058` 领取；禁止并行工作包自行猜号。
 
 P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只有该包 schema、fresh-install parity、迁移测试一起提交后才推进 migration head：
 
@@ -124,6 +124,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 | `054` | Operator identity tenant cascade | 修复 tenant 删除链上的 operator identity 外键方向，保留普通 operator 删除后的 ID ledger | 已提交 `9351ee48`；真实 MySQL replay/parity 完成 |
 | `055` | Flow VPN management | VPN rule source、finding、人工 disposition 与 probe 引用 | 已提交 `70af16a1`；真实 MySQL replay/parity 完成 |
 | `056` | Flow storage lifecycle | 版本化 retention/downsample policy 与 tenant-day partition state | 已提交 `a9fc7622`；真实 MySQL replay/parity 完成 |
+| `057` | Flow saved/shared filters | canonical typed AST、owner/private/tenant scope、row version、软删除 | 本工作包；真实 MySQL lifecycle/可见性/replay/fresh parity 完成 |
 
 无新状态的 server VTable/filter、popover、QueryRequest 编译器和 metrics provider 代码必须明确复用现有表/配置；它们不允许创建空 migration，也不允许借机改变持久化契约。
 
@@ -158,6 +159,7 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 ## 平台缺陷登记
 
 - [x] **PLAT-DEV-01 npm-only 本地启动契约**：删除 Bun lock/CI/Makefile 分支、development-tag 代理、custom static server 和全部 `:5173` 运行时代码；前端用 `npm run dev` 固定启动 `:8090`，Hub 用 `make dev-hub` 启动 `:8091`。Vite仅承担本地前端开发和 `npm run build`，不代理 API。
+- [ ] **PLAT-FE-01 前端静态检查基线**：全量 Biome 仍有历史问题（最近审计 52 errors/45 warnings，集中在非本轮 router/types/login 等文件）；后续按目录建立 no-new-error 门禁并分片清零。当前工作包只要求变更文件定向 lint 通过，禁止借 Flow 功能提交做全局格式重写。
 - [ ] **PLAT-WEB-01 前后端独立运行边界**：前端运行时只配置一个 `API_URL` 并由浏览器直连 API/Auth Hub，禁止内置 API 代理。Hub 用 allowlist CORS 开放所需 method/header/exposed header；覆盖登录/登出、OAuth、SSE、下载、base path、API 故障恢复和旧单体兼容。镜像、nginx 和静态托管不在本任务范围。
   - [x] **设计/编码**：`watchdog-config.js` 只有一个 `API_URL`，浏览器 API/auth/SSE/download 与生成的 agent 命令全部使用它；PocketBase client 和 `/api/v1` raw fetch 共用同一 API base；本地前端只通过 `npm run dev` 启动，Vite 无 proxy；Hub 响应暴露 ETag/Content-Disposition/X-Request-ID，origin admission 使用显式 `serve --origins`。
   - [ ] **单元/进程内集成**：补 runtime config 合并/API base、单体同源兼容和跨源下载测试。

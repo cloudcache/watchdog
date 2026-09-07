@@ -7,6 +7,7 @@ import {
 	buildFlowSeries,
 	FLOW_SURFACE_PRESETS,
 	flowSurfacePreset,
+	formatFlowFilter,
 	parseFlowFilter,
 	resolveOverseasRange,
 	resolveFlowTimeRange,
@@ -93,6 +94,27 @@ test("flow filter expression parses precedence, typed operators and IP/CIDR valu
 	assert.throws(() => parseFlowFilter("raw_sql=1"), /Unsupported filter field/)
 	assert.throws(() => parseFlowFilter("src_ip IN 203.0.113.1"), /requires parentheses/)
 	assert.equal(parseFlowFilter(""), undefined)
+})
+
+test("canonical Flow filters format to a lossless editable expression", () => {
+	const filter = {
+		op: "and" as const,
+		args: [
+			{ op: "predicate" as const, field: "geo.country", operator: "eq" as const, values: ["CN"] },
+			{
+				op: "not" as const,
+				args: [
+					{
+						op: "predicate" as const,
+						field: "business",
+						operator: "in" as const,
+						values: ['customer "A"', "back\\bone"],
+					},
+				],
+			},
+		],
+	}
+	assert.deepEqual(parseFlowFilter(formatFlowFilter(filter)), filter)
 })
 
 test("quick filters use published geo codes and the operator ASN set", () => {

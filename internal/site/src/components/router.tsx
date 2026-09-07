@@ -65,6 +65,7 @@ const routes = {
 	flow_destination: "/flow/destination",
 	flow_overseas: "/flow/overseas",
 	flow_vpn: "/flow/vpn",
+	flow_filters: "/flow/filters",
 	traffic_matrix: "/traffic-matrix",
 	settings: `/settings/:name?`,
 	forgot_password: `/forgot-password`,

@@ -4,6 +4,7 @@ import { getPagePath } from "@nanostores/router"
 import {
 	ActivityIcon,
 	BarChart3Icon,
+	BookmarkIcon,
 	Building2Icon,
 	ContainerIcon,
 	CrosshairIcon,
@@ -296,6 +297,9 @@ function FlowItems() {
 			</NavItem>
 			<NavItem href={getPagePath($router, "flow_vpn")} icon={ShieldCheckIcon}>
 				<Trans>VPN Risk</Trans>
+			</NavItem>
+			<NavItem href={getPagePath($router, "flow_filters")} icon={BookmarkIcon}>
+				<Trans>Saved Filters</Trans>
 			</NavItem>
 			<DropdownMenuSeparator />
 			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>

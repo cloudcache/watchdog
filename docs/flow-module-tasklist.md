@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03B-Q — Geo/address-set 查询 API 与显示契约。** FLOW-04C3 的真实 broker committed-next-offset、显式 bootstrap cutover、冻结扫描快照、operation job checkpoint/system watermark、固定五类指标和提交门禁已完成。当前只收口单 Geo level 的版本化目录、address-set `include_any/include_all/exclude_any` 去重查询、`additive/completeness/version` 返回与前后端接线；原始数据物理删除、异步联合索引和保存/共享过滤器不与本切片混改。
+**活动切片：FLOW-03B-Q — Geo/address-set 查询 API 与显示契约。** FLOW-05F-S 保存/共享过滤器已作为独立管理面切片闭环，不再与地址查询反复混改。当前只收口单 Geo level 的版本化目录、address-set `include_any/include_all/exclude_any` 去重查询、`additive/completeness/version` 返回与前后端接线；原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -267,7 +267,14 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **地址字典生产 index-builder**：消费平台同一已签名 address snapshot 的 source manifest 与 schema v2 operator definition object，校验 source checksum/row count 和 tenant `flow_isp_id`；追加 CH forward migration（不得修改 009）将过渡的单一 `isp_id UInt32` 拆为 supplier ISP 与 `customer_isp_id UInt16`。人工 prefix 按 operator ID 精确绑定，base range 只按非零 ASN 命中唯一 enabled tenant operator；缺失/未配置为 0，不按 name/code 猜测，交叠组合走 address set。生成同一 `dict_version` 的运营商表与 IPv4/IPv6 IP_TRIE source，复用 `operation_jobs` 的 lease/checkpoint/retry/cancel；构建失败保持当前 generation，ACK 固定 snapshot/checksum/dict generation，旧 generation 保留到事实/账单解析窗口结束。平台 C4b1 只提供确定输入，不替代本项。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。
-- [ ] **保存/共享过滤器**：新增唯一管理库 migration，冻结 owner/share scope/If-Match/软删除/audit/RBAC/引用保护和 CRUD/list/filter；不得把保存状态放入 Flow worker/CH 或再造管理库。
+- [x] **FLOW-05F-S 保存/共享过滤器**：作为冷管理对象只存唯一 MySQL 管理库；查询/导出按值复制 canonical AST，不持有可变 filter ID；target/device/exporter 继续走每次查询的授权 selector，禁止保存进 AST。不得把保存状态放入 Flow worker/CH 或再造管理库。
+  - [x] **设计**：冻结 owner、`private/tenant` share scope、schema v1 canonical AST、soft delete、tenant cascade/owner `SET NULL`、row-version/quoted If-Match、审计和引用保护；共享对象只允许 tenant configure，私有对象只允许 owner 修改。
+  - [x] **编码**：migration 057 + fresh init/checksum/head；MySQL visible-list/get/create/CAS-update/soft-delete 与 owner remote facet；严格 CRUD/list/facet API；Flow 导航、Explorer“保存过滤器”入口及 Saved Filters PagedVTable/form/apply 页面。
+  - [x] **单元测试**：AST 规范化和可编辑表达式无损往返、资源 selector 拒绝、输入边界、权限/可见性、If-Match/412、审计和 route 响应均覆盖。
+  - [x] **集成测试**：真实 MySQL 验证私有隔离、共享可见、搜索/scope/owner、facet、CAS 冲突、软删除和 owner 删除后共享对象保留；001–057 fresh init 与 migrations 结构 parity 通过。
+  - [x] **变更设计/测试**：旧系统无该表时由 057 前向创建；删除 filter 不影响已按值冻结的 query/export；无 configure 用户不能新建或修改 tenant-shared 对象；旧 Flow query/filter URL 与无状态 AST API 不变。
+  - [x] **回归测试**：watchdog 定向/全包、全库 build/vet、前端 model tests、定向 Biome 与 Vite production build 纳入提交门禁；全量 Biome 的历史基线单列 PLAT-FE-01，不混入本切片。
+  - [x] **已提交门禁**：migration/init/checksum、domain/repository/API/runtime、UI、测试和 tasklist 由本工作包原子交付；提交后工作区不得残留本切片文件。
 - [ ] **集成（生产 HTTP/UI）**：登录 tenant/RBAC → `/api/v1/query` → shared CH pool → Explorer 四视图；覆盖自动 step metadata、取消/超时/partial/空结果/版本混合、URL 重放和 filter 错误。
 - [x] **IP 明细 HTTP 与源/目的页 VTable（第二片）**：生产 runtime 复用 shared CH pool 挂载 `/api/v1/flow/records/capabilities` 与 `/api/v1/flow/records/search`；tenant 只从认证上下文注入，raw/supplier/customer 复用 QueryGateway value-layer grant，target/device/exporter 复用同一资源授权，严格 JSON、cursor envelope、默认稳定排序和敏感访问审计已有 API 单元覆盖。源/目的页支持点击 Top IP 或精确 IPv4/IPv6 搜索、取消陈旧请求及 cursor 前后页/页大小重置；全列 sort/facet 后续由第六、七片完成。非空数据/错误/取消浏览器集成仍由上层未完成项承载。
 - [x] **集成（typed filter 增量）**：真实 HTTP 覆盖 validate/规范 AST/base-fact 空结果及 source/step/partial metadata；生产 8090 浏览器覆盖完整时间预设、CIDR+ASN 表达式、24h 提示、`flow_records source` 和空结果，无 `Failed to fetch`。其余四视图/RBAC/故障组合仍由上一项承载。
