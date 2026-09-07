@@ -1,8 +1,8 @@
 # Watchdog Local Dev Startup
 
-Local UI/API development runs the unified **Hub on `:8090`** — one process
-(`internal/cmd/hub`) that serves the built frontend, PocketBase auth, and
-`/api/v1` — plus an optional Vite dev server for frontend hot-reload.
+Local UI/API development currently runs the unified **Hub on `:8090`**. The
+frontend is installed and built only through npm, then embedded in the Hub;
+there is no Vite runtime server or `:5173` dependency.
 
 1. Initialize MySQL:
 
@@ -14,23 +14,16 @@ This creates the database, runs `cmd/watchdog-install` with
 `config/watchdog.dev.yaml`, writes `.watchdog-dev.lock`, and applies the local
 seed data.
 
-2. Start the dev stack (Hub + frontend + agent):
+2. Build the frontend and start the Hub:
 
 ```bash
-make dev
+make dev-hub
 ```
 
-`make dev` runs three pieces together:
-
-- `make dev-hub` — the Hub (`internal/cmd/hub`) on `http://127.0.0.1:8090`,
-  serving the built frontend, PocketBase auth, and `/api/v1`.
-- `make dev-server` — the Vite frontend dev server on `http://127.0.0.1:5173`
-  for hot-reload; it proxies `/api/v1` to the Hub on `:8090`.
-- `make dev-agent` — the local agent.
-
-Open `http://127.0.0.1:8090` for the integrated Hub, or `http://127.0.0.1:5173`
-for the hot-reloading frontend (both use the Hub's `/api/v1` on `:8090`). Run a
-single piece with `make dev-hub`, `make dev-server`, or `make dev-agent`.
+`make dev-hub` runs `npm install` and `npm run build`, then starts the production
+Hub entrypoint with `config/watchdog.dev.yaml`. Open
+`http://127.0.0.1:8090`. Start the optional local agent separately with
+`make dev-agent`.
 
 3. When testing SNMP, run the independent collector/discovery worker in another terminal:
 
@@ -72,7 +65,7 @@ WATCHDOG_MYSQL_DB=watchdog_dev \
 make watchdog-dev-db
 ```
 
-Use the same variables for `make dev` (or `make dev-hub`), or set the full DSN:
+Use the same variables for `make dev-hub`, or set the full DSN:
 
 ```bash
 export WATCHDOG_MYSQL_DSN='root:your-password@tcp(127.0.0.1:3306)/watchdog_dev?parseTime=true&multiStatements=true'

@@ -1,5 +1,3 @@
-//go:build !development
-
 package hub
 
 import (

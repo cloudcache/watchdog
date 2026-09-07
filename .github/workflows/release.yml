@@ -17,14 +17,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/site/package-lock.json
 
       - name: Install dependencies
-        run: bun install --no-save --cwd ./internal/site
+        run: npm ci --prefix ./internal/site
 
       - name: Build site
-        run: bun run --cwd ./internal/site build
+        run: npm run --prefix ./internal/site build
 
       - name: Set up Go
         uses: actions/setup-go@v5

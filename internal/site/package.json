@@ -4,9 +4,7 @@
 	"version": "0.18.7",
 	"type": "module",
 	"scripts": {
-		"dev": "vite --host",
-		"build": "lingui extract --overwrite && lingui compile && vite build",
-		"preview": "vite preview",
+		"build": "lingui compile && vite build",
 		"test": "node --experimental-strip-types --test src/lib/*.test.ts",
 		"sync": "lingui extract --overwrite && lingui compile",
 		"sync_no_compile": "lingui extract --overwrite --clean",
@@ -17,10 +15,8 @@
 		"check:fix": "biome check --fix ."
 	},
 	"dependencies": {
-		"@henrygd/queue": "^1.0.7",
-		"@henrygd/semaphore": "^0.0.2",
+		"@lingui/core": "^5.4.1",
 		"@lingui/detect-locale": "^5.4.1",
-		"@lingui/macro": "^5.4.1",
 		"@lingui/react": "^5.4.1",
 		"@nanostores/react": "^0.7.3",
 		"@nanostores/router": "^0.11.0",
@@ -62,9 +58,7 @@
 		"@lingui/cli": "^5.4.1",
 		"@lingui/swc-plugin": "^5.6.1",
 		"@lingui/vite-plugin": "^5.4.1",
-		"@tailwindcss/container-queries": "^0.1.1",
 		"@tailwindcss/vite": "^4.1.12",
-		"@types/bun": "^1.2.20",
 		"@types/react": "^19.1.11",
 		"@types/react-dom": "^19.1.7",
 		"@vitejs/plugin-react-swc": "^4.0.1",
@@ -77,8 +71,5 @@
 		"@nanostores/router": {
 			"nanostores": "^0.11.3"
 		}
-	},
-	"optionalDependencies": {
-		"@esbuild/linux-arm64": "^0.21.5"
 	}
 }

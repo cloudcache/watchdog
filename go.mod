@@ -5,7 +5,6 @@ go 1.26.3
 require (
 	github.com/ClickHouse/ch-go v0.72.0
 	github.com/blang/semver v3.5.1+incompatible
-	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/ebitengine/purego v0.10.0
 	github.com/fxamacker/cbor/v2 v2.9.0
@@ -46,6 +45,7 @@ require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/dmarkham/enumer v1.6.3 // indirect
