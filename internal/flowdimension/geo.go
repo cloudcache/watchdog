@@ -248,6 +248,47 @@ func (i *GeoIndex) GeoChildren(parentCode string) ([]GeoDictionaryEntry, bool) {
 	return result, true
 }
 
+// GeoNodes returns enabled nodes at exactly one hierarchy level. When
+// parentCode is set only direct children of that node are returned. Results
+// are stable-code ordered and fail instead of truncating at the caller's
+// bound, so a UI never mistakes an incomplete selector for a complete one.
+func (i *GeoIndex) GeoNodes(kind, parentCode string, maximum int) ([]GeoDictionaryEntry, error) {
+	if i == nil {
+		return nil, errors.New("geo index is required")
+	}
+	if i.metadata.Schema != GeoSchemaV2 {
+		return nil, errors.New("Geo hierarchy listing requires flow-geo-v2")
+	}
+	if _, ok := geoKindRank[kind]; !ok {
+		return nil, fmt.Errorf("unknown Geo kind %q", kind)
+	}
+	if maximum < 1 || maximum > hardMaxGeoDescendants {
+		return nil, fmt.Errorf("Geo node maximum must be 1..%d", hardMaxGeoDescendants)
+	}
+	if parentCode != "" {
+		parent, ok := i.nodes[parentCode]
+		if !ok || !i.paths[parentCode].enabled {
+			return nil, fmt.Errorf("unknown or disabled Geo parent code %q", parentCode)
+		}
+		if geoKindRank[kind] <= geoKindRank[parent.Kind] {
+			return nil, fmt.Errorf("Geo kind %q cannot be a child of %s", kind, parent.Kind)
+		}
+	}
+	result := make([]GeoDictionaryEntry, 0)
+	for code, entry := range i.nodes {
+		path := i.paths[code]
+		if entry.Kind != kind || (parentCode != "" && entry.ParentCode != parentCode) || !path.enabled {
+			continue
+		}
+		result = append(result, entry)
+		if len(result) > maximum {
+			return nil, fmt.Errorf("Geo node listing exceeds limit %d", maximum)
+		}
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].Code < result[right].Code })
+	return result, nil
+}
+
 // GeoDescendantCodes expands one v2 ancestor into enabled codes at exactly
 // targetKind. The result is sorted and bounded before it can become a query
 // predicate; callers must not mix codes from different bundle versions.

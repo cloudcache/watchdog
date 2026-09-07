@@ -4,9 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,14 +26,6 @@ import (
 
 func writeFlowGeoBundle(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	compress := func(csv string) []byte {
-		encoder, err := zstd.NewWriter(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return encoder.EncodeAll([]byte(csv), nil)
-	}
 	header := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn"
 	ipv4 := header + "\n" +
 		"1.96.0.0,1.96.255.255,CN,810000,,,1,4760\n" +
@@ -43,21 +39,52 @@ func writeFlowGeoBundle(t *testing.T) string {
 		{Kind: "province", Code: "810000", Name: "香港", Enabled: true},
 		{Kind: "province", Code: "440000", Name: "广东", Enabled: true},
 	})
+	return writeFlowGeoBundleData(t, flowdimension.GeoSchemaV1, "test-1", ipv4, ipv6, operators, dictionary,
+		time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC))
+}
+
+func writeFlowGeoV2Bundle(t *testing.T, version string, effectiveFrom time.Time) string {
+	t.Helper()
+	header := "ip_start,ip_end,country,admin_code,subdivision,city,isp_id,asn,geo_leaf_code"
+	ipv4 := header + "\n203.0.113.0,203.0.113.255,CN,330100,浙江省,杭州市,0,0,330100\n"
+	ipv6 := header + "\n2001:db8::,2001:db8::ffff,CN,330100,浙江省,杭州市,0,0,330100\n"
+	operators, _ := json.Marshal([]flowdimension.GeoOperator{})
+	dictionary, _ := json.Marshal([]flowdimension.GeoDictionaryEntry{
+		{Kind: "continent", Code: "Asia", Name: "亚洲", Enabled: true},
+		{Kind: "region", Code: "EastAsia", Name: "东亚", ParentCode: "Asia", Enabled: true},
+		{Kind: "country", Code: "CN", Name: "中国", ParentCode: "EastAsia", Enabled: true},
+		{Kind: "province", Code: "330000", Name: "浙江省", ParentCode: "CN", Enabled: true},
+		{Kind: "city", Code: "330100", Name: "杭州市", ParentCode: "330000", Enabled: true},
+		{Kind: "city", Code: "330200", Name: "宁波市", ParentCode: "330000", Enabled: true},
+	})
+	return writeFlowGeoBundleData(t, flowdimension.GeoSchemaV2, version, ipv4, ipv6, operators, dictionary, effectiveFrom)
+}
+
+func writeFlowGeoBundleData(t *testing.T, schema, version, ipv4, ipv6 string, operators, dictionary []byte, effectiveFrom time.Time) string {
+	t.Helper()
+	dir := t.TempDir()
+	compress := func(csv string) []byte {
+		encoder, err := zstd.NewWriter(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoder.EncodeAll([]byte(csv), nil)
+	}
 
 	files := map[string]struct {
 		data []byte
 		rows uint64
 	}{
-		"ipv4.csv.zst":   {compress(ipv4), 2},
-		"ipv6.csv.zst":   {compress(ipv6), 1},
-		"operators.json": {operators, 1},
-		"geo_dict.json":  {dictionary, 2},
+		"ipv4.csv.zst":   {compress(ipv4), uint64(len(geoCSVRows(ipv4)))},
+		"ipv6.csv.zst":   {compress(ipv6), uint64(len(geoCSVRows(ipv6)))},
+		"operators.json": {operators, uint64(len(mustGeoOperators(t, operators)))},
+		"geo_dict.json":  {dictionary, uint64(len(mustGeoDictionary(t, dictionary)))},
 	}
 	manifest := map[string]any{
-		"schema":            flowdimension.GeoSchemaV1,
-		"version":           "test-1",
+		"schema":            schema,
+		"version":           version,
 		"generated_at":      time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
-		"effective_from":    time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		"effective_from":    effectiveFrom,
 		"admin_code_system": flowdimension.GeoAdminCodeSystem,
 		"unknown_country":   flowdimension.GeoUnknownCountry,
 	}
@@ -75,6 +102,32 @@ func writeFlowGeoBundle(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func geoCSVRows(value string) []string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	return lines[1:]
+}
+
+func mustGeoOperators(t *testing.T, value []byte) []flowdimension.GeoOperator {
+	t.Helper()
+	var entries []flowdimension.GeoOperator
+	if err := json.Unmarshal(value, &entries); err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
+
+func mustGeoDictionary(t *testing.T, value []byte) []flowdimension.GeoDictionaryEntry {
+	t.Helper()
+	var entries []flowdimension.GeoDictionaryEntry
+	if err := json.Unmarshal(value, &entries); err != nil {
+		t.Fatal(err)
+	}
+	return entries
 }
 
 func TestFlowGeoServiceReloadLookupStatus(t *testing.T) {
@@ -133,5 +186,71 @@ func TestFlowGeoServiceKeepsServingAfterFailedReload(t *testing.T) {
 	}
 	if _, found := service.Lookup(netip.MustParseAddr("1.96.0.1")); !found {
 		t.Fatal("failed reload must keep the previous index serving")
+	}
+}
+
+func TestFlowGeoServiceCatalogKeepsVersionsSeparate(t *testing.T) {
+	oldPath := writeFlowGeoV2Bundle(t, "geo-old", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	activePath := writeFlowGeoV2Bundle(t, "geo-current", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	service := NewFlowGeoService(activePath)
+	if err := service.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.LoadHistorical(oldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := service.Catalog("", "city", "330000", 10)
+	if err != nil || current.Version != "geo-current" || current.ParentID != "330000" || current.Total != 2 {
+		t.Fatalf("current catalog = %+v, %v", current, err)
+	}
+	if current.Items[0].ID != "330100" || current.Items[0].Name != "杭州市" || !current.Items[0].Additive ||
+		len(current.Items[0].Path) != 5 || current.Items[0].Path[0].ID != "Asia" {
+		t.Fatalf("current item = %+v", current.Items[0])
+	}
+	historical, err := service.Catalog("geo-old", "country", "EastAsia", 10)
+	if err != nil || historical.Version != "geo-old" || historical.Total != 1 || historical.Items[0].ID != "CN" {
+		t.Fatalf("historical catalog = %+v, %v", historical, err)
+	}
+	if _, err := service.Catalog("missing", "country", "", 10); !errors.Is(err, ErrFlowGeoVersionNotFound) {
+		t.Fatalf("missing version error = %v", err)
+	}
+	if _, err := service.Catalog("", "city", "missing", 10); !errors.Is(err, ErrFlowGeoNodeNotFound) {
+		t.Fatalf("missing parent error = %v", err)
+	}
+}
+
+func TestFlowGeoCatalogAPIValidatesAndReturnsPublishedCodes(t *testing.T) {
+	service := NewFlowGeoService(writeFlowGeoV2Bundle(t, "geo-api", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)))
+	if err := service.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	router := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
+		},
+		FlowGeo: service,
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/flow/geo/catalog?level=city&parent=330000&limit=10", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"version":"geo-api"`) ||
+		!strings.Contains(recorder.Body.String(), `"id":"330100"`) || !strings.Contains(recorder.Body.String(), `"parent_id":"330000"`) {
+		t.Fatalf("catalog status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	for _, target := range []string{
+		"/api/v1/flow/geo/catalog?level=city&unknown=1",
+		"/api/v1/flow/geo/catalog?level=city&level=country",
+		"/api/v1/flow/geo/catalog?level=city&limit=5001",
+		"/api/v1/flow/geo/catalog?level=unknown",
+		"/api/v1/flow/geo/catalog?level=city&version=missing",
+	} {
+		recorder = httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		if recorder.Code < 400 {
+			t.Fatalf("%s status=%d body=%s", target, recorder.Code, recorder.Body.String())
+		}
 	}
 }

@@ -107,7 +107,7 @@ func (p ClickHouseFlowQueryProvider) queryDirections(
 	}
 	combined.VersionCount = uint64(len(versions))
 	combined.MixedVersions = len(versions) > 1
-	data, err := marshalFlowAggregateResult(combined, parameters.Table)
+	data, err := marshalFlowAggregateResult(combined, parameters.Table, p.FlowGeo)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow direction query result: %w", err)
 	}
@@ -193,7 +193,7 @@ func (p ClickHouseFlowQueryProvider) queryJointDirections(
 	}
 	combined.VersionCount = uint64(len(versions))
 	combined.MixedVersions = len(versions) > 1
-	data, err := marshalFlowJointResult(combined, parameters.Table)
+	data, err := marshalFlowJointResult(combined, parameters.Table, p.FlowGeo)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow direction joint-query result: %w", err)
 	}

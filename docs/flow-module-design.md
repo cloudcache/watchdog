@@ -283,7 +283,7 @@ v1 的 range 行只有扁平 country/admin/city，不能完整表达“洲 → �
 
 同一不可变 `GeoIndex` 也是查询面的树语义权威：按稳定 code 返回节点和 root-to-node breadcrumb，按 parent 返回已启用直属 children，按 ancestor + 目标 kind 展开排序去重且有硬上限的 descendant codes。展开只允许 `flow-geo-v2`，一次请求固定一个 `geo_version`；不得跨版本按名称拼树，也不得由 hub 复制一套 loader/遍历算法。
 
-loader 流程：在临时目录验证 manifest/schema/size/checksum/row count → 检查区间、外键、枚举、Geo 树和 IPv4/IPv6 → 构建不可变 range index + 预编译路径 → 原子交换指针。失败保留当前版本并告警。至少保留覆盖 Kafka retention、base 重分类窗口的旧版本；event time 选择 `effective_from <= event_time` 的最新版本。v2 loader、EdgeManager 导出脚本、worker 事实字段和 CH 002 向前迁移已经完成；查询 API 仍须按 `geo_version` 解析名称和树，完成前 UI 不得自行拼接 continent/region。
+loader 流程：在临时目录验证 manifest/schema/size/checksum/row count → 检查区间、外键、枚举、Geo 树和 IPv4/IPv6 → 构建不可变 range index + 预编译路径 → 原子交换指针。失败保留当前版本并告警。至少保留覆盖 Kafka retention、base 重分类窗口的旧版本；event time 选择 `effective_from <= event_time` 的最新版本。v2 loader、EdgeManager 导出脚本、worker 事实字段和 CH 002 向前迁移已经完成。Hub 先加载 `flow_geo.path` 的 active bundle，再加载 `flow_geo.historical_paths`；查询目录和结果标签都委托同一个 `flowdimension.GeoCatalog`，按事实自身 `geo_version` 解析，缺失历史版本时显示稳定 ID 并明确缺少显示元数据，绝不回退 active 名称。
 
 ### 4.2 三种地址归属语义
 
@@ -730,6 +730,10 @@ ORDER BY bucket, dimension_snapshot_id, geo_version, classification_version;
 
 CH native result contract 不接受把 `LowCardinality(String)` 隐式当作 `String`；`dimension_snapshot_id/geo_version` 必须在查询投影中显式 `CAST(... AS String)`，与 runner 的 `ColStr` 一致。真实集成数据必须至少包含同时属于 A/B、只属于 A、均不属于三类 fact，以及同 record ID 的较新 generation；分别核对 A∪B、A∩B、A−B，证明重叠 membership 不展开、不重复计数，raw/estimated counter、unknown sampling 和 quality record 同源守恒，并验证 deadline/扫描预算拒绝时不返回部分点。
 
+生产查询接线复用 `POST /api/v1/flow/query` 的认证、tenant/value-layer、并发和审计边界。地址集合组合请求固定 `dimension=address_set`、`top_n=1`、`include_other=false`，增加 `address_set_endpoint` 与上述 `address_set_filter`；当前同步路径只接受闭合且 UTC 分钟对齐的最长 1 小时窗口，并直接读取 `flow_records FINAL`。组合查询不能同时携带 joint dimensions、direction split、typed filter 或 aggregate dimension/version filter；超窗或不兼容组合稳定拒绝，等待异步联合索引，不能静默退回逐组 rollup 相加。响应回显 canonical filter/endpoint，`dimension.additive=false`、`plan.source=flow_records`，并把 base 去重准确性与尚未独立证明的端到端 ingest completeness 分开报告；空结果是成功的零点集合，不伪造 rollup coverage。
+
+Geo 选择目录为 `GET /api/v1/flow/geo/catalog?level=<country|province|city>&parent=<stable-code>&version=<immutable-version>&limit=<1..5000>`。一次响应只属于一个 version 和一个精确 level，parent 只取直属子级，返回稳定 `id/name/parent_id/path/additive`；未知版本/parent、重复或未知参数、超量结果全部 fail closed。Flow query 的 `dimension_labels` 用 `geo_version:dimension_value` 作键，携带同一结构与 version；事实 `dimension_value` 仍保持稳定 ID。便捷页从 active 目录选择 Geo 时必须同时提交该 `geo_version` 过滤条件，不能让 active code 无提示地命中其它 publication 的历史事实。
+
 95th 必须先生成等长 bucket 的 bps，再使用 `quantileExact(0.95)`；平均是 bucket 平均，不是不同 bucket 宽度混算。当前值必须标明最新完整 bucket，不能使用未关闭 bucket 冒充完整数据。
 
 ### 9.6 境外 KPI 与 country/region 查询
@@ -766,8 +770,8 @@ KPI 字段命名为 `observed_remote_ips/observed_local_hosts`：它们是在已
 | `POST /flow/dimensions/actions/publish` | approve | 原子发布新 snapshot |
 | `GET /flow/dimensions/lookup` | view | 按 IP + event time 返回唯一 prefix、Geo 完整 path、全部 address sets 及命中依据 |
 | `POST /flow/dimensions/actions/evaluate` | configure | 预览组并/交/差/有限补集、规范化 CIDR、重叠、依赖 DAG 和最坏展开量；不写入 |
-| `GET /flow/dimensions/geo/{version}/children` | view | 按 parent ID 分页返回直属子节点和 breadcrumb，拒绝跨版本引用 |
-| `POST /flow/query` | view | 统一趋势/TopN/统计查询 |
+| `GET /flow/geo/catalog` | view | 按 immutable version + exact level + parent 返回稳定 ID、直属节点和完整 path；拒绝跨版本/重复参数 |
+| `POST /flow/query` | view | 统一趋势/TopN/统计查询；地址集合组合从 base 去重、同步窗口最多 1h |
 | `POST /flow/overseas/query` | view | 境外 KPI、country/region TopN 与采样完整性；只读 aggregate |
 | `POST /flow/records/search` | sensitive_view | 分页源/目的明细 |
 | `GET/POST /flow/vpn/rules` | view/configure | 规则列表/创建 |

@@ -18,6 +18,8 @@ import {
 	buildFlowQuickFilter,
 	buildFlowSeries,
 	FLOW_TIME_PRESETS,
+	enrichFlowGeoPoints,
+	enrichFlowJointGeoPoints,
 	flowSurfacePreset,
 	mergeFlowFilters,
 	parseFlowFilter,
@@ -25,6 +27,7 @@ import {
 	resolveFlowTimeRange,
 	type FlowFilters,
 	type FlowFilterExpression,
+	type FlowDimensionLabel,
 	type FlowJointPoint,
 	type FlowPlan,
 	type FlowPoint,
@@ -44,6 +47,7 @@ type FlowAggregateResult = {
 	mixed_versions: boolean
 	version_count: number
 	table?: FlowTablePage
+	dimension_labels?: Record<string, FlowDimensionLabel>
 }
 
 type FlowTableRow = {
@@ -144,12 +148,10 @@ type DeviceList = { items: DeviceItem[] }
 type GeoNode = {
 	id: string
 	kind: string
-	code: string
 	parent_id?: string
 	name: string
-	short_name?: string
-	sort_order: number
-	enabled: boolean
+	path: Array<{ id: string; name: string; kind: string }>
+	additive: boolean
 }
 type NetworkOperator = {
 	id: string
@@ -161,6 +163,7 @@ type NetworkOperator = {
 	enabled: boolean
 }
 type ListResponse<T> = { items?: T[] }
+type FlowGeoCatalogResponse = ListResponse<GeoNode> & { version: string; total: number }
 
 type GraphMode = FlowGraphType | "table"
 type QuickAnalysisMode = "direction" | "protocol" | "src_ip" | "dst_ip" | "local_prefix" | "remote_prefix"
@@ -241,6 +244,20 @@ function queryState(name: string, fallback: string) {
 	return new URLSearchParams(window.location.search).get(name) || fallback
 }
 
+function queryListState(name: string, legacyName?: string) {
+	if (typeof window === "undefined") return []
+	const parameters = new URLSearchParams(window.location.search)
+	const value = parameters.get(name) || (legacyName ? parameters.get(legacyName) : "") || ""
+	return [
+		...new Set(
+			value
+				.split(",")
+				.map((item) => item.trim())
+				.filter((item) => item && item !== "all")
+		),
+	].sort()
+}
+
 function isQuickAnalysisMode(value: string): value is QuickAnalysisMode {
 	return QUICK_ANALYSIS_OPTIONS.some((option) => option.value === value)
 }
@@ -274,12 +291,16 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [countries, setCountries] = useState<GeoNode[]>([])
 	const [provinces, setProvinces] = useState<GeoNode[]>([])
 	const [cities, setCities] = useState<GeoNode[]>([])
+	const [geoVersion, setGeoVersion] = useState("")
 	const [operators, setOperators] = useState<NetworkOperator[]>([])
 	const [selectedCountry, setSelectedCountry] = useState(() => queryState("country", "all"))
 	const [selectedProvince, setSelectedProvince] = useState(() => queryState("province", "all"))
 	const [selectedCity, setSelectedCity] = useState(() => queryState("city", "all"))
 	const [selectedOperator, setSelectedOperator] = useState(() => queryState("operator", "all"))
-	const [selectedSet, setSelectedSet] = useState(() => queryState("set", "all"))
+	const [includeAnySets, setIncludeAnySets] = useState(() => queryListState("set_any", "set"))
+	const [includeAllSets, setIncludeAllSets] = useState(() => queryListState("set_all"))
+	const [excludeAnySets, setExcludeAnySets] = useState(() => queryListState("set_exclude"))
+	const [addressSetEndpoint, setAddressSetEndpoint] = useState(() => queryState("set_endpoint", "either"))
 	const [selectedDevice, setSelectedDevice] = useState(() => queryState("device", "all"))
 	const [series, setSeries] = useState<FlowSeries[]>([])
 	const [selectedDetailIP, setSelectedDetailIP] = useState("")
@@ -316,8 +337,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 
 	useEffect(() => {
 		Promise.all([
-			pb.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", {
-				query: { kind: "country", enabled: true, limit: 500 },
+			pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+				query: { level: "country", limit: 500 },
 			}),
 			pb.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
 				query: { enabled: true, limit: 500 },
@@ -325,6 +346,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		])
 			.then(([geo, networkOperators]) => {
 				setCountries(sortReferences(geo.items ?? []))
+				setGeoVersion(geo.version)
 				setOperators(sortReferences(networkOperators.items ?? []))
 				setReferenceError("")
 			})
@@ -339,13 +361,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setProvincesLoaded(true)
 			return
 		}
-		pb.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", {
-			query: { kind: "province", parent_id: selectedCountry, enabled: true, limit: 500 },
+		pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+			query: { level: "province", parent: selectedCountry, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setProvinces(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load provinces`))
 			.finally(() => setProvincesLoaded(true))
-	}, [selectedCountry, t])
+	}, [geoVersion, selectedCountry, t])
 
 	useEffect(() => {
 		setCitiesLoaded(false)
@@ -354,13 +376,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setCitiesLoaded(true)
 			return
 		}
-		pb.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", {
-			query: { kind: "city", parent_id: selectedProvince, enabled: true, limit: 500 },
+		pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+			query: { level: "city", parent: selectedProvince, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setCities(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load cities`))
 			.finally(() => setCitiesLoaded(true))
-	}, [selectedProvince, t])
+	}, [geoVersion, selectedProvince, t])
 
 	const refresh = useCallback(
 		async (modeOverride?: QueryMode, tableOverride?: FlowTableControl) => {
@@ -377,21 +399,28 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				let selectedTopN: number
 				let canonicalFilter: FlowFilterExpression | undefined
 				let filters: FlowFilters = {}
+				const addressSetSelectionActive = includeAnySets.length + includeAllSets.length > 0
+				if (!addressSetSelectionActive && excludeAnySets.length > 0) {
+					throw new Error("Address set exclusion requires an include-any or include-all selection")
+				}
 
 				if (activeMode === "advanced") {
-					selectedDimension = selectedSet === "all" ? dimension : "address_set"
+					selectedDimension = addressSetSelectionActive ? "address_set" : dimension
 					selectedDimensions = [selectedDimension]
 					const jointAllowed =
-						selectedSet === "all" && selectedDimension !== "total" && selectedDimension !== "address_set"
+						!addressSetSelectionActive && selectedDimension !== "total" && selectedDimension !== "address_set"
 					if (jointAllowed && dimension2 !== "none") selectedDimensions.push(dimension2)
 					if (jointAllowed && dimension2 !== "none" && dimension3 !== "none") selectedDimensions.push(dimension3)
 					if (jointAllowed && dimension2 !== "none" && dimension3 !== "none" && dimension4 !== "none")
 						selectedDimensions.push(dimension4)
-					selectedTopN = selectedDimension === "total" ? 1 : Math.max(1, Math.min(100, topN))
+					selectedTopN =
+						selectedDimension === "total" || addressSetSelectionActive ? 1 : Math.max(1, Math.min(100, topN))
 					canonicalFilter = parseFlowFilter(filterExpression)
+					if (addressSetSelectionActive && canonicalFilter) {
+						throw new Error("Address set combinations and typed filters are separate bounded query modes")
+					}
 					const selectionFilters: FlowFilters = {}
 					if (selectedDevice !== "all") selectionFilters.device_ids = [selectedDevice]
-					if (selectedSet !== "all") selectionFilters.dimension_values = [selectedSet]
 					filters = mergeFlowFilters({}, selectionFilters)
 				} else {
 					const country = selectedReference(countries, selectedCountry, "country")
@@ -402,11 +431,12 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						throw new Error(`${networkOperator.name} has no ASN mapping`)
 					}
 					canonicalFilter = buildFlowQuickFilter({
-						countryCode: country?.code,
-						provinceCode: province?.code,
-						cityCode: city?.code,
+						countryCode: country?.id,
+						provinceCode: province?.id,
+						cityCode: city?.id,
 						operatorASNs: networkOperator?.asns,
 					})
+					if ((country || province || city) && geoVersion) filters.geo_versions = [geoVersion]
 					selectedDimension = activeMode === "direction" ? "total" : QUICK_DIMENSIONS[activeMode]
 					selectedDimensions = [selectedDimension]
 					selectedTopN = activeMode === "direction" ? 1 : Math.max(1, Math.min(100, topN))
@@ -439,6 +469,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							filter: canonicalFilter,
 							top_n: selectedTopN,
 							include_other: selectedDimension !== "total" && selectedDimension !== "address_set" && includeOther,
+							address_set_endpoint: addressSetSelectionActive ? addressSetEndpoint : undefined,
+							address_set_filter: addressSetSelectionActive
+								? { include_any: includeAnySets, include_all: includeAllSets, exclude_any: excludeAnySets }
+								: undefined,
 							target_points: targetPoints,
 							timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 							direction_split: activeMode === "direction" || undefined,
@@ -466,8 +500,20 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				const queryUnit = query.data?.metric?.unit ?? query.meta?.unit ?? ""
 				setSeries(
 					query.data?.dimensions
-						? buildFlowJointSeries((query.data.points ?? []) as FlowJointPoint[], query.data.plan, queryUnit)
-						: buildFlowSeries((query.data?.points ?? []) as FlowPoint[], query.data?.plan, queryUnit)
+						? buildFlowJointSeries(
+								enrichFlowJointGeoPoints(
+									query.data.points as FlowJointPoint[] | null,
+									query.data.dimensions,
+									query.data.dimension_labels
+								),
+								query.data.plan,
+								queryUnit
+							)
+						: buildFlowSeries(
+								enrichFlowGeoPoints(query.data?.points as FlowPoint[] | null, query.data?.dimension_labels),
+								query.data?.plan,
+								queryUnit
+							)
 				)
 				if (surface === "overseas") {
 					try {
@@ -514,7 +560,11 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					province: selectedProvince,
 					city: selectedCity,
 					operator: selectedOperator,
-					set: selectedSet,
+					set: "",
+					set_any: includeAnySets.join(","),
+					set_all: includeAllSets.join(","),
+					set_exclude: excludeAnySets.join(","),
+					set_endpoint: addressSetEndpoint,
 					device: selectedDevice,
 					geo_level: overseasGeoLevel,
 				})
@@ -543,12 +593,16 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			countries,
 			provinces,
 			cities,
+			geoVersion,
 			operators,
 			selectedCountry,
 			selectedProvince,
 			selectedCity,
 			selectedOperator,
-			selectedSet,
+			includeAnySets,
+			includeAllSets,
+			excludeAnySets,
+			addressSetEndpoint,
 			selectedDevice,
 			overseasGeoLevel,
 			surface,
@@ -581,8 +635,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		selectedProvince,
 	])
 
+	const addressSetSelectionActive = includeAnySets.length + includeAllSets.length > 0
 	const jointSelected =
-		selectedSet === "all" && dimension !== "total" && dimension !== "address_set" && dimension2 !== "none"
+		!addressSetSelectionActive && dimension !== "total" && dimension !== "address_set" && dimension2 !== "none"
 	useEffect(() => {
 		if ((queryMode !== "advanced" || !jointSelected) && graphMode === "sankey") setGraphMode("lines")
 	}, [graphMode, jointSelected, queryMode])
@@ -944,7 +999,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							onChange={setDimension}
 							options={DIMENSION_OPTIONS}
 							width="w-52"
-							disabled={selectedSet !== "all"}
+							disabled={addressSetSelectionActive}
 						/>
 						<OptionSelect
 							label={t`Then by`}
@@ -958,7 +1013,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							}}
 							options={secondaryOptions}
 							width="w-52"
-							disabled={selectedSet !== "all" || dimension === "total" || dimension === "address_set"}
+							disabled={addressSetSelectionActive || dimension === "total" || dimension === "address_set"}
 						/>
 						<OptionSelect
 							label={t`Then by`}
@@ -1010,7 +1065,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 								max={100}
 								value={topN}
 								onChange={(event) => setTopN(Number(event.target.value))}
-								disabled={dimension === "total"}
+								disabled={addressSetSelectionActive || dimension === "total"}
 								className="w-24"
 							/>
 						</div>
@@ -1018,7 +1073,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							<Checkbox
 								id="flow-include-other"
 								checked={includeOther}
-								disabled={dimension === "total" || dimension === "address_set"}
+								disabled={addressSetSelectionActive || dimension === "total" || dimension === "address_set"}
 								onCheckedChange={(value) => setIncludeOther(value === true)}
 							/>
 							<Trans>Include Other</Trans>
@@ -1046,14 +1101,33 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 								})),
 							]}
 						/>
+						<AddressSetChecklist
+							label={t`Include any`}
+							items={addressSets}
+							value={includeAnySets}
+							onChange={setIncludeAnySets}
+						/>
+						<AddressSetChecklist
+							label={t`Include all`}
+							items={addressSets}
+							value={includeAllSets}
+							onChange={setIncludeAllSets}
+						/>
+						<AddressSetChecklist
+							label={t`Exclude any`}
+							items={addressSets}
+							value={excludeAnySets}
+							onChange={setExcludeAnySets}
+						/>
 						<OptionSelect
-							label={t`Address set`}
-							value={selectedSet}
-							onChange={setSelectedSet}
-							width="w-56"
+							label={t`Address side`}
+							value={addressSetEndpoint}
+							onChange={setAddressSetEndpoint}
+							width="w-40"
 							options={[
-								{ value: "all", label: t`All sets` },
-								...addressSets.map((item) => ({ value: item.id, label: item.name })),
+								{ value: "either", label: t`Either side` },
+								{ value: "local", label: t`Local side` },
+								{ value: "remote", label: t`Remote side` },
 							]}
 						/>
 						<div className="grid min-w-80 grow gap-1.5">
@@ -1076,7 +1150,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							variant="outline"
 							onClick={() => {
 								const path = getPagePath($router, "flow_filters")
-								navigate(filterExpression.trim() ? `${path}?filter=${encodeURIComponent(filterExpression.trim())}` : path)
+								navigate(
+									filterExpression.trim() ? `${path}?filter=${encodeURIComponent(filterExpression.trim())}` : path
+								)
 							}}
 						>
 							<BookmarkIcon className="me-2 h-4 w-4" />
@@ -1446,6 +1522,54 @@ function OptionSelect({
 	)
 }
 
+function AddressSetChecklist({
+	label,
+	items,
+	value,
+	onChange,
+}: {
+	label: string
+	items: AddressSetItem[]
+	value: string[]
+	onChange: (value: string[]) => void
+}) {
+	return (
+		<div className="grid w-48 gap-1.5">
+			<Label className="text-xs">
+				{label} ({value.length})
+			</Label>
+			<div className="h-28 overflow-y-auto rounded-md border border-input bg-background p-2">
+				{items.length === 0 ? (
+					<p className="text-xs text-muted-foreground">No address sets</p>
+				) : (
+					items.map((item, index) => (
+						<div key={item.id} className="flex items-center gap-2 py-1 text-xs">
+							<Checkbox
+								id={`flow-address-set-${label}-${index}`}
+								checked={value.includes(item.id)}
+								onCheckedChange={(checked) =>
+									onChange(
+										checked === true
+											? [...new Set([...value, item.id])].sort()
+											: value.filter((candidate) => candidate !== item.id)
+									)
+								}
+							/>
+							<Label
+								htmlFor={`flow-address-set-${label}-${index}`}
+								className="cursor-pointer truncate text-xs"
+								title={item.name}
+							>
+								{item.name}
+							</Label>
+						</div>
+					))
+				)}
+			</div>
+		</div>
+	)
+}
+
 function DateInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
 	return (
 		<div className="grid gap-1.5">
@@ -1455,8 +1579,15 @@ function DateInput({ label, value, onChange }: { label: string; value: string; o
 	)
 }
 
-function sortReferences<T extends { sort_order: number; name: string }>(items: T[]) {
-	return items.slice().sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name))
+function sortReferences<T extends { sort_order?: number; name: string; id?: string }>(items: T[]) {
+	return items
+		.slice()
+		.sort(
+			(left, right) =>
+				(left.sort_order ?? 0) - (right.sort_order ?? 0) ||
+				left.name.localeCompare(right.name) ||
+				(left.id ?? "").localeCompare(right.id ?? "")
+		)
 }
 
 function referenceOptions(items: Array<{ id: string; name: string; short_name?: string }>, allLabel: string) {

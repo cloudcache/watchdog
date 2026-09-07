@@ -158,6 +158,12 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 		if err := flowGeo.Reload(); err != nil {
 			log.Printf("watchdog flow geo bundle load failed (serving without geo until reload): %v", err)
 		} else {
+			for _, path := range cfg.FlowGeo.HistoricalPaths {
+				if err := flowGeo.LoadHistorical(path); err != nil {
+					_ = store.Close()
+					return nil, fmt.Errorf("load historical Flow Geo bundle %q: %w", path, err)
+				}
+			}
 			status := flowGeo.Status()
 			log.Printf("watchdog flow geo bundle loaded version=%s v4=%d v6=%d", status.Version, status.RowsV4, status.RowsV6)
 		}
@@ -213,6 +219,11 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 				_ = runtime.Close()
 				return nil, fmt.Errorf("initialize Flow joint-query runner: %w", runnerErr)
 			}
+			addressSetRunner, runnerErr := flowquery.NewAddressSetRunner(runtime.flowClickHouseNative)
+			if runnerErr != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("initialize Flow address-set query runner: %w", runnerErr)
+			}
 			detailRunner, runnerErr := flowquery.NewDetailRunner(runtime.flowClickHouseNative)
 			if runnerErr != nil {
 				_ = runtime.Close()
@@ -226,7 +237,8 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 			}
 			runtime.FlowOverseas = overseasRunner
 			provider := ClickHouseFlowQueryProvider{
-				Runner: runner, JointRunner: jointRunner, Readiness: runtime.flowClickHouseNative, Network: store,
+				Runner: runner, JointRunner: jointRunner, AddressSetRunner: addressSetRunner,
+				Readiness: runtime.flowClickHouseNative, Network: store, FlowGeo: flowGeo,
 			}
 			if cfg.FlowStorage.Enabled {
 				provider.StorageLifecycle = store

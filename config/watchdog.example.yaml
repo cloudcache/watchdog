@@ -107,11 +107,13 @@ agent:
   token: "change-me"
   interval: 1m
 
-# Offline flow-geo-v1 bundle (EdgeManager merged+corrected geo library) used
-# by the IP-library lookup API and future flow enrichment. Export with
-# scripts/edgemanager-geo-export.py; empty path disables the service.
+# Offline flow-geo-v2 bundle (EdgeManager merged+corrected geo library) used
+# by Flow query labels and the IP-library lookup API. Historical bundles keep
+# old facts explainable and must precede the active bundle's effective time.
+# Export with scripts/edgemanager-geo-export.py; empty path disables the service.
 flow_geo:
   path: ""
+  historical_paths: []
 
 # Compatibility rollup and shared ClickHouse connection. The 1m/1h realtime
 # scheduler is legacy; leave enabled=false for Storage V2. Connection fields

@@ -10,6 +10,19 @@ export type FlowPoint = {
 	unknown_sampling_records: number
 	quality_records: number
 	generated_at: string
+	dimension_name?: string
+	dimension_parent_id?: string
+	dimension_path?: string[]
+}
+
+export type FlowDimensionLabel = {
+	code: string
+	name: string
+	kind: string
+	parent_id?: string
+	path: Array<{ id: string; name: string; kind: string }>
+	additive: boolean
+	version: string
 }
 
 export type FlowJointPoint = {
@@ -24,6 +37,7 @@ export type FlowJointPoint = {
 	unknown_sampling_records: number
 	quality_records: number
 	observed_at: string
+	dimension_names?: string[]
 }
 
 export type FlowPlan = {
@@ -63,6 +77,7 @@ export type FlowFilters = {
 	device_ids?: string[]
 	exporter_ids?: string[]
 	dimension_values?: string[]
+	geo_versions?: string[]
 }
 
 export type FlowFilterOperator = "eq" | "ne" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte"
@@ -326,10 +341,29 @@ export function buildFlowSeries(
 	unit: string
 ): FlowSeries[] {
 	return buildSeries(
-		(points ?? []).map((point) => ({ ...point, path: [point.other ? "Other" : point.dimension_value] })),
+		(points ?? []).map((point) => ({
+			...point,
+			path: point.other ? ["Other"] : (point.dimension_path ?? [point.dimension_name ?? point.dimension_value]),
+		})),
 		plan,
 		unit
 	)
+}
+
+export function enrichFlowGeoPoints(
+	points: FlowPoint[] | null | undefined,
+	labels: Record<string, FlowDimensionLabel> | undefined
+): FlowPoint[] {
+	return (points ?? []).map((point) => {
+		const label = labels?.[`${point.geo_version}:${point.dimension_value}`]
+		if (!label) return point
+		return {
+			...point,
+			dimension_name: label.name,
+			dimension_parent_id: label.parent_id,
+			dimension_path: label.path.map((entry) => entry.name),
+		}
+	})
 }
 
 export function buildFlowJointSeries(
@@ -340,11 +374,25 @@ export function buildFlowJointSeries(
 	return buildSeries(
 		(points ?? []).map((point) => ({
 			...point,
-			path: point.dimension_values.map((value) => (point.other ? "Other" : value)),
+			path: (point.dimension_names ?? point.dimension_values).map((value) => (point.other ? "Other" : value)),
 		})),
 		plan,
 		unit
 	)
+}
+
+export function enrichFlowJointGeoPoints(
+	points: FlowJointPoint[] | null | undefined,
+	dimensions: Array<{ kind: string }> | undefined,
+	labels: Record<string, FlowDimensionLabel> | undefined
+): FlowJointPoint[] {
+	return (points ?? []).map((point) => ({
+		...point,
+		dimension_names: point.dimension_values.map((value, index) => {
+			if (!dimensions?.[index]?.kind.startsWith("geo.")) return value
+			return labels?.[`${point.geo_version}:${value}`]?.name ?? value
+		}),
+	}))
 }
 
 type SeriesPoint = Pick<

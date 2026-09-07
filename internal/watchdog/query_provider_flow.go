@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 )
 
@@ -23,6 +24,10 @@ type flowJointRunner interface {
 	Run(context.Context, flowquery.CompiledJoint) (flowquery.JointResult, error)
 }
 
+type flowAddressSetRunner interface {
+	Run(context.Context, flowquery.CompiledAddressSet) (flowquery.AddressSetResult, error)
+}
+
 type flowQueryReadiness interface {
 	Ready(context.Context) error
 }
@@ -34,24 +39,28 @@ type flowQueryReadiness interface {
 type ClickHouseFlowQueryProvider struct {
 	Runner           flowAggregateRunner
 	JointRunner      flowJointRunner
+	AddressSetRunner flowAddressSetRunner
 	Readiness        flowQueryReadiness
 	Network          NetworkRepository
 	StorageLifecycle FlowStorageArchiveBoundaryRepository
+	FlowGeo          *FlowGeoService
 	Now              func() time.Time
 }
 
 type flowAggregateQueryParameters struct {
-	Metric         flowquery.Metric            `json:"metric"`
-	Dimension      flowquery.Dimension         `json:"dimension,omitempty"`
-	Dimensions     []flowquery.Dimension       `json:"dimensions,omitempty"`
-	Filters        flowquery.Filters           `json:"filters,omitempty"`
-	Filter         *flowquery.FilterExpression `json:"filter,omitempty"`
-	TopN           uint16                      `json:"top_n"`
-	IncludeOther   bool                        `json:"include_other"`
-	Timezone       string                      `json:"timezone,omitempty"`
-	TargetPoints   uint16                      `json:"target_points,omitempty"`
-	DirectionSplit bool                        `json:"direction_split,omitempty"`
-	Table          *flowTableRequest           `json:"table,omitempty"`
+	Metric             flowquery.Metric               `json:"metric"`
+	Dimension          flowquery.Dimension            `json:"dimension,omitempty"`
+	Dimensions         []flowquery.Dimension          `json:"dimensions,omitempty"`
+	Filters            flowquery.Filters              `json:"filters,omitempty"`
+	Filter             *flowquery.FilterExpression    `json:"filter,omitempty"`
+	TopN               uint16                         `json:"top_n"`
+	IncludeOther       bool                           `json:"include_other"`
+	Timezone           string                         `json:"timezone,omitempty"`
+	TargetPoints       uint16                         `json:"target_points,omitempty"`
+	DirectionSplit     bool                           `json:"direction_split,omitempty"`
+	AddressSetFilter   flowdimension.AddressSetFilter `json:"address_set_filter,omitempty"`
+	AddressSetEndpoint flowquery.AddressSetEndpoint   `json:"address_set_endpoint,omitempty"`
+	Table              *flowTableRequest              `json:"table,omitempty"`
 }
 
 func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
@@ -75,6 +84,9 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	view, err := flowView(request.ValueLayer)
 	if err != nil {
 		return QueryProviderResult{}, err
+	}
+	if flowAddressSetFilterSelected(parameters.AddressSetFilter) {
+		return p.queryAddressSets(ctx, request, parameters, view)
 	}
 	if parameters.DirectionSplit {
 		return p.queryDirections(ctx, request, parameters, view)
@@ -128,7 +140,7 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "Flow result exceeds the query row limit"}
 	}
 	result.Plan = &plan
-	data, err := marshalFlowAggregateResult(result, parameters.Table)
+	data, err := marshalFlowAggregateResult(result, parameters.Table, p.FlowGeo)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow query result: %w", err)
 	}
@@ -206,7 +218,7 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 	if uint64(len(result.Points)) > uint64(request.Limit) {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorRowLimit, Message: "Flow joint result exceeds the query row limit"}
 	}
-	data, err := marshalFlowJointResult(result, parameters.Table)
+	data, err := marshalFlowJointResult(result, parameters.Table, p.FlowGeo)
 	if err != nil {
 		return QueryProviderResult{}, fmt.Errorf("marshal Flow joint-query result: %w", err)
 	}
@@ -299,6 +311,23 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 		parameters.TopN != 1 || parameters.IncludeOther || len(parameters.Filters.Directions) != 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter"}
 	}
+	addressSetSelected := flowAddressSetFilterSelected(parameters.AddressSetFilter)
+	if addressSetSelected {
+		if parameters.Dimension != flowquery.DimensionAddressSet || len(parameters.Dimensions) != 0 || parameters.DirectionSplit ||
+			parameters.TopN != 1 || parameters.IncludeOther || parameters.Filter != nil ||
+			parameters.AddressSetEndpoint == "" {
+			return parameters, &QueryGatewayError{
+				Code:    QueryErrorInvalidRequest,
+				Message: "address_set_filter requires dimension=address_set, address_set_endpoint, top_n=1, include_other=false, and no joint/direction/typed filter",
+			}
+		}
+		if len(parameters.Filters.DimensionValues) != 0 || len(parameters.Filters.DimensionSnapshotIDs) != 0 ||
+			len(parameters.Filters.GeoVersions) != 0 || len(parameters.Filters.ClassificationVersions) != 0 {
+			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "address-set combinations do not accept aggregate dimension/version filters"}
+		}
+	} else if parameters.AddressSetEndpoint != "" {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "address_set_endpoint requires address_set_filter"}
+	}
 	if err := normalizeFlowTableRequest(parameters.Table); err != nil {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: err.Error(), Cause: err}
 	}
@@ -315,6 +344,10 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 		}
 	}
 	return parameters, nil
+}
+
+func flowAddressSetFilterSelected(filter flowdimension.AddressSetFilter) bool {
+	return len(filter.IncludeAny)+len(filter.IncludeAll)+len(filter.ExcludeAny) > 0
 }
 
 func flowView(layer QueryValueLayer) (flowquery.View, error) {

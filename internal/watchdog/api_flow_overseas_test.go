@@ -53,7 +53,8 @@ func TestFlowOverseasQueryInjectsTenantAndReturnsTypedEnvelope(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `"source":"1m"`) || !strings.Contains(response.Body.String(), `"step_seconds":60`) {
 		t.Fatalf("body=%s", response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"test-1:810000":{"code":"810000","name":"香港","breadcrumb":["香港"]}`) {
+	if !strings.Contains(response.Body.String(), `"test-1:810000":{"code":"810000","name":"香港"`) ||
+		!strings.Contains(response.Body.String(), `"breadcrumb":["香港"]`) {
 		t.Fatalf("geo labels missing from body=%s", response.Body.String())
 	}
 	if len(audit.logs) != 1 || audit.logs[0].TenantID != "tenant-a" || audit.logs[0].Action != "query.executed" {

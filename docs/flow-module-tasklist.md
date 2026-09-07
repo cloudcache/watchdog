@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03B-Q — Geo/address-set 查询 API 与显示契约。** FLOW-05F-S 保存/共享过滤器已作为独立管理面切片闭环，不再与地址查询反复混改。当前只收口单 Geo level 的版本化目录、address-set `include_any/include_all/exclude_any` 去重查询、`additive/completeness/version` 返回与前后端接线；原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改。
+**活动切片：FLOW-05C-H — QueryGateway 生产接线验收。** FLOW-03B-Q Geo/address-set 查询 API 与显示契约已经独立收口；下一轮只核对并补齐现有 hub tenant/RBAC、共享 CH/Geo、错误/完整性、限流/超时/审计与生产 HTTP/UI 证据。原始数据物理删除、异步联合索引和 Flow 写入/rollup 不与本切片混改；发现平台通用问题只登记到平台清单。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -78,6 +78,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - FLOW-04C3B1 ingest-audit projection：`3f3501d8 feat(flow): add bounded ingest audit projection`；migration 006 保留 base tenant/time 排序，新增 offset-ordered narrow projection 并以 `rebuild` 维护 ReplacingMergeTree 一致性，存量同步 materialize。真实 200 万行前后结果一致；read rows `2,000,000→16,384`、read bytes `183,630,373→552,673`，EXPLAIN 命中 projection；表空间 `175,078,419→264,954,749`。Bloom probe 即使只查单 batch 仍读 434,176 rows/17,309,576 bytes，已排除。全套 CH 数据集成测试在 001..006 上通过；这不冒充固定硬件容量/N+1。
 - FLOW-04C3B2A compare core：`1f00d551 feat(flow): compare ingest audit evidence`；typed receipt/fact/counter/mismatch 结构和无状态 comparator 已提交，固定六类单一 reason 优先级、writer 同字节序 checksum、invalid estimated 计数语义、batch/fact 硬上限、重复 identity 与溢出拒绝。单元直接从 production `PrepareBlocks` 生成证据，证明 comparator checksum 与写入 receipt 一致；全库 test/vet 与 flowch race 通过。
 - FLOW-04C3 边界审计：receipt 是同 partition、可跨 tenant 的 block 摘要；不能复用 tenant rollup 水位。已冻结 Kafka committed-next-offset 闭合规则、`FINAL` 去重、count/counter/checksum 对账、固定 mismatch reason、有界 keyset 扫描和不完整时保留上次 gauge 快照。发现 legacy `inserted_at` 实为 source received time，不是落盘/cursor 时间；全局 operation job 登记为 PLAT-04F。
+- FLOW-03B-Q 查询接线：本提交新增单版本/单层级 `/api/v1/flow/geo/catalog`、按事实 `geo_version` 返回的 `dimension_labels`、active + 显式历史 bundle 装载，以及 QueryGateway 上 `include_any/include_all/exclude_any + local/remote/either` 的 base 去重地址集合查询；真实 HTTP→Gateway→ClickHouse 空窗和前后端构建已纳入门禁。本切片没有持久状态变化，不创建空 migration，也未修改 writer/rollup/TTL/hash。
 - FLOW-04C3A：`79400cc6 feat(flow): version ingest receipt audit metadata`；migration 004、receipt schema v2、跨 tenant/时间/packet 元数据和 native contract 已提交，Flow race/vet 与全库 test/vet 通过；scanner/全局 job/真实 CH 访问路径仍属 FLOW-04C3B。
 - FLOW-06A：`3d63a5a7 feat(flow): preserve supplier fact provenance`；migration 005、worker schema 3、supplier baseline/customer override bitset、native exact-column contract 已提交；Flow race/vet、全库 test/vet 与 diff check 通过，005 已在 ClickHouse 26.3 LTS 空库执行，mixed worker/cutover 数据门禁仍保留。
 - FLOW-06A2：`d00b620a feat(flow): expose raw fact detail view`；raw 明细不受 customer disposition 影响，只开放协议/采样/资源/observation 字段和资源过滤，view 进入 typed result；Flow race/vet 与全库 test/vet 通过。
@@ -140,14 +141,15 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **编码/单元（Geo 包）**：`flow-geo-v2` 每个不重叠地址区间引用一个 `geo_leaf_code`；loader 从 `geo_dict.parent_code` 预编译 continent/region/country/province/city 稳定 ID，并拒绝缺父、环、重复层、非法层序、禁用祖先及 range/path 冲突；v1 继续可读。
 - [x] **编码/单元（事实/汇总）**：base fact 一行保存五级 Geo ID、唯一 primary prefix ID 和 address-set ID 数组；顺序 migration 002、native encoder/schema contract 和 rollup 已增加 `geo.continent` 至 `geo.city`，缺失层进入 `_unassigned`，不复制 base flow；ASN 来源保留 v1/v2 provenance。
 - [x] **编码/单元（查询原语）**：共享 `GeoIndex` 按单一 bundle 版本提供稳定 code 节点、breadcrumb、启用的直属 children，以及有硬上限的目标层级 descendant code 展开；不让 hub/API 再实现第二套树遍历。
-- [ ] **查询 API/显示**：一次只选一个 Geo level，返回 id/name/parent/path/additive/completeness/version；地址组支持 include_any/include_all/exclude_any，组合值从 base 去重计算，单组 rollup 明确 `additive=false`。平台现存重复 v1 loader 的收敛登记在 PLAT-04D，本切片不直接改 hub。
+- [x] **查询 API/显示**：`/api/v1/flow/geo/catalog` 一次只返回一个 immutable version/Geo level 的 id/name/parent/path/additive；aggregate/joint 响应用 `geo_version:code` 返回版本化 `dimension_labels`，表格/图例显示 breadcrumb 但过滤键保持 stable code。地址组支持 include_any/include_all/exclude_any 与 local/remote/either，组合从 `flow_records FINAL` 去重计算，`dimension.additive=false`；QueryGateway completeness 明确 base 去重准确性不等于 ingest coverage。前端级联目录固定 active version，并把 Geo 快捷选择连同 `geo_versions` 提交。
 - [x] **集成（进程内）**：真实压缩 v4/v6 bundle、原子热加载、事件时间旧版本选择、Geo v2 → worker → CH native input/rollup 字段契约已覆盖；同一 base flow 只携带一组五级 ID。
 - [x] **集成（真实 CH）**：独立数据库顺序 migration、native writer、1m rollup 和五级 query 串联；同一组三条 base fact 在 continent/region/country/province/city 每级均保持 600 raw bytes/3 records，同层稳定 ID 无重复，父级与叶节点求和一致。证据提交 `66453df3`。
 - [x] **集成（Kafka corpus 重放）**：真实 sFlow v5、NetFlow v5/v9、IPFIX corpus 已经 production UDP Receiver、source admission、自动 decoder、RawFlow/Inlet、隔离 Kafka topic、partition worker 和 native CH writer；四协议均有 durable fact，template missing/reject/retry 为零；逐 receipt 重算 checksum 并核对 count/raw/estimated bytes/packets，真实 1m rollup 五级均与 base 守恒。测试由显式 `WATCHDOG_FLOW_KAFKA_CLICKHOUSE_INTEGRATION=1` 开启，只创建并清理隔离 topic/database。
 - [x] **变更设计/契约测试（数据面）**：v1/v2 bundle 并存读取，worker schema v2，CH 002 只向前增加字段/枚举且 migration contract 以顺序执行后的有效 schema 为准；客户 Geo 修正会清除不兼容的供应商路径 ID；导出版本 hash 覆盖 v4/v6、运营商和字典全部语义输入。
-- [ ] **变更设计/测试（查询面）**：旧 worker 对不兼容 publication 的拒绝/滚动升级、双版本查询窗口、回滚只切 publication 不改 base。
+- [ ] **变更设计/测试（查询面）**：目录和查询标签已覆盖 active+historical 双版本隔离、未知版本 fail closed、历史事实不回退 active 名称；剩余实际旧/新 worker 制品混跑、旧 worker 对不兼容 publication 的拒绝，以及真实 publication 回滚演练。
 - [x] **回归（本地）**：Flow 定向包/命令 race、vet、test，Geo 导出脚本/py_compile 与 CH schema contract 通过。
-- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览和查询 API/显示仍未提交，不因此关闭 FLOW-03B 剩余门禁。
+- [x] **已提交（数据面范围）**：`886ccb2b`；管理面集合预览已由平台独立提交。
+- [x] **已提交（FLOW-03B-Q 查询范围）**：版本化 Geo 目录/显示、base 去重地址集合 QueryGateway、前后端接线、单元/race/全库回归及真实 HTTP→ClickHouse 空窗由本提交原子交付；没有 migration，不夹带平台维护文件和本地数据库备份。
 - [x] **外部 CH 证据已提交**：五级 Geo 直计数与守恒门禁进入 `66453df3`；测试只创建并清理 `watchdog_flow_it_geo_hierarchy`，不修改已有开发数据。
 - [x] **外部 Kafka→CH 证据已提交**：四协议正常链路进入 `66c28373`，真实 UDP collector 与关停 flush 修复进入 `282e2a22`；连续执行及与其余八项真实 CH 数据门禁组合回归通过，测试结束只保留部署固定 topic `watchdog.flow.raw-v1`。
 

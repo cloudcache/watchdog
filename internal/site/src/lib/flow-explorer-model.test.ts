@@ -5,6 +5,8 @@ import {
 	buildFlowJointSeries,
 	buildFlowQuickFilter,
 	buildFlowSeries,
+	enrichFlowGeoPoints,
+	enrichFlowJointGeoPoints,
 	FLOW_SURFACE_PRESETS,
 	flowSurfacePreset,
 	formatFlowFilter,
@@ -178,23 +180,80 @@ test("null wire points are treated as an empty Flow result", () => {
 	assert.deepEqual(buildFlowJointSeries(undefined, undefined, "bits_per_second"), [])
 })
 
+test("Geo display labels preserve stable ids and use the row publication version", () => {
+	const point = {
+		bucket: "2026-09-06T10:00:00Z",
+		dimension_value: "330100",
+		other: false,
+		value: 10,
+		dimension_snapshot_id: "snapshot-1",
+		geo_version: "geo-old",
+		classification_version: 1,
+		received_records: 1,
+		unknown_sampling_records: 0,
+		quality_records: 0,
+		generated_at: "2026-09-06T10:01:00Z",
+	}
+	const enriched = enrichFlowGeoPoints([point], {
+		"geo-old:330100": {
+			code: "330100",
+			name: "杭州市（旧版）",
+			kind: "city",
+			parent_id: "330000",
+			path: [
+				{ id: "CN", name: "中国", kind: "country" },
+				{ id: "330000", name: "浙江省", kind: "province" },
+				{ id: "330100", name: "杭州市（旧版）", kind: "city" },
+			],
+			additive: true,
+			version: "geo-old",
+		},
+		"geo-current:330100": {
+			code: "330100",
+			name: "杭州",
+			kind: "city",
+			path: [],
+			additive: true,
+			version: "geo-current",
+		},
+	})
+	assert.equal(enriched[0].dimension_value, "330100")
+	assert.equal(enriched[0].dimension_name, "杭州市（旧版）")
+	assert.equal(enriched[0].dimension_parent_id, "330000")
+	assert.deepEqual(enriched[0].dimension_path, ["中国", "浙江省", "杭州市（旧版）"])
+	assert.equal(buildFlowSeries(enriched, undefined, "bytes")[0].label, "中国 → 浙江省 → 杭州市（旧版）")
+})
+
 test("joint series preserves ordered tuple paths from the same facts", () => {
+	const points = [
+		{
+			bucket: "2026-09-06T10:00:00Z",
+			dimension_values: ["CN", "4134"],
+			other: false,
+			value: 800,
+			dimension_snapshot_id: "snapshot-1",
+			geo_version: "geo-1",
+			classification_version: 1,
+			received_records: 2,
+			unknown_sampling_records: 0,
+			quality_records: 0,
+			observed_at: "2026-09-06T10:01:00Z",
+		},
+	]
+	const enriched = enrichFlowJointGeoPoints(points, [{ kind: "geo.country" }, { kind: "asn" }], {
+		"geo-1:CN": {
+			code: "CN",
+			name: "中国",
+			kind: "country",
+			path: [{ id: "CN", name: "中国", kind: "country" }],
+			additive: true,
+			version: "geo-1",
+		},
+	})
+	assert.deepEqual(points[0].dimension_values, ["CN", "4134"])
+	assert.deepEqual(enriched[0].dimension_names, ["中国", "4134"])
 	const series = buildFlowJointSeries(
-		[
-			{
-				bucket: "2026-09-06T10:00:00Z",
-				dimension_values: ["CN", "4134"],
-				other: false,
-				value: 800,
-				dimension_snapshot_id: "snapshot-1",
-				geo_version: "geo-1",
-				classification_version: 1,
-				received_records: 2,
-				unknown_sampling_records: 0,
-				quality_records: 0,
-				observed_at: "2026-09-06T10:01:00Z",
-			},
-		],
+		enriched,
 		{
 			requested_from: "2026-09-06T10:00:00Z",
 			requested_to: "2026-09-06T10:01:00Z",
@@ -206,8 +265,8 @@ test("joint series preserves ordered tuple paths from the same facts", () => {
 		},
 		"bits_per_second"
 	)[0]
-	assert.deepEqual(series.path, ["CN", "4134"])
-	assert.equal(series.label, "CN → 4134")
+	assert.deepEqual(series.path, ["中国", "4134"])
+	assert.equal(series.label, "中国 → 4134")
 	assert.equal(series.sankeyValue, 800)
 })
 

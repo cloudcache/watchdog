@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 )
 
@@ -133,22 +134,15 @@ type flowTablePlan struct {
 	step time.Duration
 }
 
-func marshalFlowAggregateResult(result flowquery.Result, request *flowTableRequest) ([]byte, error) {
+func marshalFlowAggregateResult(result flowquery.Result, request *flowTableRequest, geo *FlowGeoService) ([]byte, error) {
+	labels := flowAggregateGeoLabels(result, geo)
 	if request == nil {
-		return json.Marshal(result)
+		return json.Marshal(struct {
+			flowquery.Result
+			DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels,omitempty"`
+		}{Result: result, DimensionLabels: labels})
 	}
-	points := make([]flowTablePoint, 0, len(result.Points))
-	for _, point := range result.Points {
-		label := point.DimensionValue
-		if point.Other {
-			label = "Other"
-		}
-		points = append(points, flowTablePoint{
-			bucket: point.Bucket, path: []string{label}, dimensionSnapshotID: point.DimensionSnapshotID,
-			geoVersion: point.GeoVersion, classificationVersion: point.ClassificationVersion, value: point.Value,
-			received: point.ReceivedRecords, unknown: point.UnknownSamplingRecords, quality: point.QualityRecords,
-		})
-	}
+	points := flowAggregateTablePoints(result, labels)
 	plan := flowTablePlan{}
 	if result.Plan != nil {
 		plan = flowTablePlan{from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second}
@@ -156,13 +150,57 @@ func marshalFlowAggregateResult(result flowquery.Result, request *flowTableReque
 	table := buildFlowTable(points, plan, result.Metric.Unit, *request)
 	return json.Marshal(struct {
 		flowquery.Result
-		Table flowTablePage `json:"table"`
-	}{Result: result, Table: table})
+		DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels,omitempty"`
+		Table           flowTablePage           `json:"table"`
+	}{Result: result, DimensionLabels: labels, Table: table})
 }
 
-func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequest) ([]byte, error) {
+func flowAggregateTablePoints(result flowquery.Result, labels map[string]FlowGeoLabel) []flowTablePoint {
+	points := make([]flowTablePoint, 0, len(result.Points))
+	for _, point := range result.Points {
+		label := point.DimensionValue
+		path := []string{label}
+		if point.Other {
+			label = "Other"
+			path = []string{label}
+		} else if geoLabel, ok := labels[point.GeoVersion+":"+point.DimensionValue]; ok {
+			label = geoLabel.Name
+			path = append([]string(nil), geoLabel.Breadcrumb...)
+		}
+		points = append(points, flowTablePoint{
+			bucket: point.Bucket, path: path, dimensionSnapshotID: point.DimensionSnapshotID,
+			geoVersion: point.GeoVersion, classificationVersion: point.ClassificationVersion, value: point.Value,
+			received: point.ReceivedRecords, unknown: point.UnknownSamplingRecords, quality: point.QualityRecords,
+		})
+	}
+	return points
+}
+
+func marshalFlowAddressSetResult(result flowquery.Result, request *flowTableRequest, source flowquery.AddressSetResult) ([]byte, error) {
+	var table *flowTablePage
+	if request != nil {
+		plan := flowTablePlan{}
+		if result.Plan != nil {
+			plan = flowTablePlan{from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second}
+		}
+		built := buildFlowTable(flowAggregateTablePoints(result, nil), plan, result.Metric.Unit, *request)
+		table = &built
+	}
+	return json.Marshal(struct {
+		flowquery.Result
+		AddressSetFilter flowdimension.AddressSetFilter `json:"address_set_filter"`
+		Endpoint         flowquery.AddressSetEndpoint   `json:"address_set_endpoint"`
+		Table            *flowTablePage                 `json:"table,omitempty"`
+	}{Result: result, AddressSetFilter: source.Sets, Endpoint: source.Endpoint, Table: table})
+}
+
+func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequest, geo *FlowGeoService) ([]byte, error) {
+	labels := flowJointGeoLabels(result, geo)
 	if request == nil {
-		return json.Marshal(result)
+		return json.Marshal(struct {
+			flowquery.JointResult
+			DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels,omitempty"`
+		}{JointResult: result, DimensionLabels: labels})
 	}
 	points := make([]flowTablePoint, 0, len(result.Points))
 	for _, point := range result.Points {
@@ -170,6 +208,15 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 		if point.Other {
 			for index := range path {
 				path[index] = "Other"
+			}
+		} else {
+			for index, dimension := range result.Dimensions {
+				if index >= len(path) || !isFlowGeoDimension(dimension.Kind) {
+					continue
+				}
+				if label, ok := labels[point.GeoVersion+":"+path[index]]; ok {
+					path[index] = label.Name
+				}
 			}
 		}
 		points = append(points, flowTablePoint{
@@ -185,8 +232,68 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 	table := buildFlowTable(points, plan, result.Metric.Unit, *request)
 	return json.Marshal(struct {
 		flowquery.JointResult
-		Table flowTablePage `json:"table"`
-	}{JointResult: result, Table: table})
+		DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels,omitempty"`
+		Table           flowTablePage           `json:"table"`
+	}{JointResult: result, DimensionLabels: labels, Table: table})
+}
+
+func flowAggregateGeoLabels(result flowquery.Result, geo *FlowGeoService) map[string]FlowGeoLabel {
+	if geo == nil || !isFlowGeoDimension(result.Dimension.Kind) {
+		return nil
+	}
+	labels := make(map[string]FlowGeoLabel)
+	for _, point := range result.Points {
+		if point.Other || point.DimensionValue == "" || point.DimensionValue == "_unassigned" {
+			continue
+		}
+		key := point.GeoVersion + ":" + point.DimensionValue
+		if _, exists := labels[key]; exists {
+			continue
+		}
+		if label, ok := geo.Label(point.GeoVersion, point.DimensionValue); ok {
+			labels[key] = label
+		}
+	}
+	return labels
+}
+
+func flowJointGeoLabels(result flowquery.JointResult, geo *FlowGeoService) map[string]FlowGeoLabel {
+	if geo == nil {
+		return nil
+	}
+	labels := make(map[string]FlowGeoLabel)
+	for _, point := range result.Points {
+		if point.Other {
+			continue
+		}
+		for index, dimension := range result.Dimensions {
+			if index >= len(point.DimensionValues) || !isFlowGeoDimension(dimension.Kind) {
+				continue
+			}
+			value := point.DimensionValues[index]
+			if value == "" || value == "_unassigned" {
+				continue
+			}
+			key := point.GeoVersion + ":" + value
+			if _, exists := labels[key]; exists {
+				continue
+			}
+			if label, ok := geo.Label(point.GeoVersion, value); ok {
+				labels[key] = label
+			}
+		}
+	}
+	return labels
+}
+
+func isFlowGeoDimension(dimension flowquery.Dimension) bool {
+	switch dimension {
+	case flowquery.DimensionGeoContinent, flowquery.DimensionGeoRegion, flowquery.DimensionGeoCountry,
+		flowquery.DimensionGeoProvince, flowquery.DimensionGeoCity:
+		return true
+	default:
+		return false
+	}
 }
 
 func buildFlowTable(points []flowTablePoint, plan flowTablePlan, unit string, request flowTableRequest) flowTablePage {

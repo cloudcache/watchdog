@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 )
 
@@ -21,6 +22,17 @@ type flowJointRunnerStub struct {
 	compiled flowquery.CompiledJoint
 	result   flowquery.JointResult
 	err      error
+}
+
+type flowAddressSetRunnerStub struct {
+	compiled flowquery.CompiledAddressSet
+	result   flowquery.AddressSetResult
+	err      error
+}
+
+func (s *flowAddressSetRunnerStub) Run(_ context.Context, compiled flowquery.CompiledAddressSet) (flowquery.AddressSetResult, error) {
+	s.compiled = compiled
+	return s.result, s.err
 }
 
 func (s *flowJointRunnerStub) Run(_ context.Context, compiled flowquery.CompiledJoint) (flowquery.JointResult, error) {
@@ -134,6 +146,137 @@ func TestClickHouseFlowQueryProviderAutomaticallyPlansDisplayDensityAndSource(t 
 	}
 	if decoded.Plan == nil || decoded.Plan.Source != flowquery.BucketOneHour || decoded.Plan.StepSeconds != 3600 || decoded.Plan.TargetPoints != 300 {
 		t.Fatalf("response plan=%+v", decoded.Plan)
+	}
+}
+
+func TestClickHouseFlowQueryProviderLabelsGeoByFactVersion(t *testing.T) {
+	oldPath := writeFlowGeoV2Bundle(t, "geo-old", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	activePath := writeFlowGeoV2Bundle(t, "geo-current", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	geo := NewFlowGeoService(activePath)
+	if err := geo.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := geo.LoadHistorical(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	runner := &flowAggregateRunnerStub{result: flowquery.Result{
+		Points: []flowquery.Point{{
+			Bucket: from, DimensionValue: "330100", DimensionSnapshotID: "snapshot-old",
+			GeoVersion: "geo-old", ClassificationVersion: 1, Value: 800, ReceivedRecords: 1,
+		}},
+		Metric:             flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimension:          flowquery.DimensionDefinition{Kind: flowquery.DimensionGeoCity, Additive: true},
+		RollupCompleteness: flowquery.RollupCompleteness{ExpectedBuckets: 1, CoveredBuckets: 1, Ratio: 1, Complete: true},
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: runner, Readiness: flowReadinessStub{}, FlowGeo: geo,
+		Now: func() time.Time { return from.Add(2 * time.Hour) },
+	}
+	result, err := provider.Query(context.Background(), QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: from, To: from.Add(time.Minute),
+		StepSeconds: 60, Limit: 100, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","dimension":"geo.city","top_n":1,"include_other":false,
+			"table":{"sort_by":"maximum","sort_direction":"desc","limit":25}
+		}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		flowquery.Result
+		DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels"`
+		Table           flowTablePage           `json:"table"`
+	}
+	if err := json.Unmarshal(result.Data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	label := decoded.DimensionLabels["geo-old:330100"]
+	if label.Code != "330100" || label.Version != "geo-old" || label.Name != "杭州市" ||
+		len(label.Path) != 5 || label.Path[0].ID != "Asia" || len(decoded.Points) != 1 ||
+		decoded.Points[0].DimensionValue != "330100" || decoded.Table.Total != 1 ||
+		decoded.Table.Items[0].Label != "亚洲 → 东亚 → 中国 → 浙江省 → 杭州市" {
+		t.Fatalf("decoded geo result=%+v label=%+v", decoded, label)
+	}
+}
+
+func TestClickHouseFlowQueryProviderRunsDeduplicatedAddressSetCombination(t *testing.T) {
+	to := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-time.Hour)
+	runner := &flowAddressSetRunnerStub{result: flowquery.AddressSetResult{
+		Points: []flowquery.AddressSetPoint{{
+			Bucket: from, DimensionSnapshotID: "snapshot-1", GeoVersion: "geo-1", ClassificationVersion: 2,
+			Value: 800, ReceivedRecords: 10, UnknownSamplingRecords: 1, QualityRecords: 2,
+		}},
+		Metric:       flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Endpoint:     flowquery.AddressSetEndpointEither,
+		Sets:         flowdimension.AddressSetFilter{IncludeAny: []string{"set-a", "set-b"}, ExcludeAny: []string{"set-c"}},
+		VersionCount: 1,
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: &flowAggregateRunnerStub{}, AddressSetRunner: runner, Readiness: flowReadinessStub{},
+		Now: func() time.Time { return to },
+	}
+	result, err := provider.Query(context.Background(), QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: from, To: to,
+		Limit: 100, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","dimension":"address_set","top_n":1,"address_set_endpoint":"either",
+			"address_set_filter":{"include_any":["set-b","set-a"],"include_all":[],"exclude_any":["set-c"]},
+			"table":{"sort_by":"maximum","sort_direction":"desc","limit":25}
+		}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.compiled.Query.Body, "hasAny(arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids))") ||
+		!strings.Contains(runner.compiled.Query.Body, "NOT hasAny") || runner.compiled.Sets.IncludeAny[0] != "set-a" {
+		t.Fatalf("compiled address-set query=%s sets=%+v", runner.compiled.Query.Body, runner.compiled.Sets)
+	}
+	if !result.Completeness.Partial || result.Completeness.UnknownRatio != 0.1 || result.StepSeconds != 60 {
+		t.Fatalf("provider result=%+v", result)
+	}
+	var decoded struct {
+		flowquery.Result
+		AddressSetFilter flowdimension.AddressSetFilter `json:"address_set_filter"`
+		Endpoint         flowquery.AddressSetEndpoint   `json:"address_set_endpoint"`
+		Table            flowTablePage                  `json:"table"`
+	}
+	if err := json.Unmarshal(result.Data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Dimension.Kind != flowquery.DimensionAddressSet || decoded.Dimension.Additive ||
+		decoded.Plan == nil || decoded.Plan.Source != flowquery.BucketFlowRecords || decoded.Endpoint != flowquery.AddressSetEndpointEither ||
+		len(decoded.Points) != 1 || decoded.Points[0].DimensionValue != "address-set combination" || decoded.Table.Total != 1 {
+		t.Fatalf("decoded result=%+v", decoded)
+	}
+}
+
+func TestClickHouseFlowQueryProviderRejectsInvalidAddressSetEnvelope(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	provider := ClickHouseFlowQueryProvider{
+		Runner: &flowAggregateRunnerStub{}, AddressSetRunner: &flowAddressSetRunnerStub{},
+		Readiness: flowReadinessStub{}, Now: func() time.Time { return now },
+	}
+	base := QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: now.Add(-time.Hour), To: now,
+		Limit: 100, ValueLayer: QueryValueCustomer,
+	}
+	for _, raw := range []string{
+		`{"metric":"estimated_bps","dimension":"address_set","top_n":1,"address_set_filter":{"include_any":["set-a"]}}`,
+		`{"metric":"estimated_bps","dimension":"category","top_n":1,"address_set_endpoint":"either","address_set_filter":{"include_any":["set-a"]}}`,
+		`{"metric":"estimated_bps","dimension":"address_set","top_n":1,"address_set_endpoint":"either","filter":{"op":"predicate","field":"asn","operator":"eq","values":["4134"]},"address_set_filter":{"include_any":["set-a"]}}`,
+	} {
+		base.Parameters = json.RawMessage(raw)
+		if _, err := provider.Query(context.Background(), base); queryErrorCode(err) != QueryErrorInvalidRequest {
+			t.Fatalf("parameters=%s error=%#v", raw, err)
+		}
+	}
+	base.Parameters = json.RawMessage(`{"metric":"estimated_bps","dimension":"address_set","top_n":1,"address_set_endpoint":"either","address_set_filter":{"include_any":["set-a"]}}`)
+	base.StepSeconds = 300
+	if _, err := provider.Query(context.Background(), base); queryErrorCode(err) != QueryErrorInvalidRequest {
+		t.Fatalf("address-set step error=%#v", err)
 	}
 }
 

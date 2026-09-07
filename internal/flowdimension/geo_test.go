@@ -131,6 +131,20 @@ func TestLoadGeoV2IndexCompilesStableFiveLevelPath(t *testing.T) {
 	if _, err := index.GeoDescendantCodes("CN", "city", 0); err == nil {
 		t.Fatal("unbounded Geo descendant expansion succeeded")
 	}
+	countries, err := index.GeoNodes("country", "EastAsia", 10)
+	if err != nil || geoCodes(countries) != "CN" {
+		t.Fatalf("GeoNodes(country, EastAsia) = %+v, %v", countries, err)
+	}
+	cities, err := index.GeoNodes("city", "330000", 10)
+	if err != nil || geoCodes(cities) != "330100/330200" {
+		t.Fatalf("GeoNodes(city, 330000) = %+v, %v", cities, err)
+	}
+	if _, err := index.GeoNodes("city", "330000", 1); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("bounded GeoNodes error = %v", err)
+	}
+	if _, err := index.GeoNodes("country", "missing", 10); err == nil {
+		t.Fatal("GeoNodes accepted an unknown parent")
+	}
 }
 
 func TestLoadGeoV2IndexRejectsInvalidTreeAndRangeReferences(t *testing.T) {

@@ -31,8 +31,9 @@ const (
 type Bucket string
 
 const (
-	BucketOneMinute Bucket = "1m"
-	BucketOneHour   Bucket = "1h"
+	BucketOneMinute   Bucket = "1m"
+	BucketOneHour     Bucket = "1h"
+	BucketFlowRecords Bucket = "flow_records"
 )
 
 type Metric string

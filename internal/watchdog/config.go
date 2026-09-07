@@ -473,6 +473,7 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	cfg.MetricsScrape.TokenFile = getEnv("WATCHDOG_METRICS_SCRAPE_TOKEN_FILE", cfg.MetricsScrape.TokenFile)
 	cfg.MetricsScrape.AllowedCIDRs = getEnvCommaList("WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS", cfg.MetricsScrape.AllowedCIDRs)
 	cfg.FlowGeo.Path = getEnv("WATCHDOG_FLOW_GEO_PATH", cfg.FlowGeo.Path)
+	cfg.FlowGeo.HistoricalPaths = getEnvCommaList("WATCHDOG_FLOW_GEO_HISTORICAL_PATHS", cfg.FlowGeo.HistoricalPaths)
 	if cfg.FlowRollup.Enabled, err = getEnvBool("WATCHDOG_FLOW_ROLLUP_ENABLED", cfg.FlowRollup.Enabled); err != nil {
 		return err
 	}

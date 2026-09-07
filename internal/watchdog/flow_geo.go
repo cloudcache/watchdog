@@ -1,11 +1,19 @@
 package watchdog
 
 import (
+	"errors"
+	"fmt"
 	"net/netip"
 	"sync/atomic"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowdimension"
+)
+
+var (
+	ErrFlowGeoNotLoaded       = errors.New("Geo bundle is not loaded")
+	ErrFlowGeoVersionNotFound = errors.New("Geo bundle version was not found")
+	ErrFlowGeoNodeNotFound    = errors.New("Geo parent node was not found")
 )
 
 // PLAT-04D: the hub no longer maintains its own flow-geo-v1 loader. Geo lookups
@@ -38,6 +46,18 @@ func (s *FlowGeoService) Reload() error {
 	return nil
 }
 
+// LoadHistorical installs a validated bundle for historical result labels
+// without switching the active lookup version.
+func (s *FlowGeoService) LoadHistorical(path string) error {
+	if s == nil || s.catalog == nil {
+		return ErrFlowGeoNotLoaded
+	}
+	if _, err := s.catalog.LoadHistorical(path, flowdimension.GeoLoadLimits{}); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Lookup resolves an address against the active index. found is false when no
 // index is loaded or the address is not covered.
 func (s *FlowGeoService) Lookup(addr netip.Addr) (flowdimension.GeoInfo, bool) {
@@ -64,9 +84,38 @@ type FlowGeoStatus struct {
 }
 
 type FlowGeoLabel struct {
-	Code       string   `json:"code"`
-	Name       string   `json:"name"`
-	Breadcrumb []string `json:"breadcrumb"`
+	Code       string            `json:"code"`
+	Name       string            `json:"name"`
+	Kind       string            `json:"kind"`
+	ParentID   string            `json:"parent_id,omitempty"`
+	Path       []FlowGeoPathNode `json:"path"`
+	Breadcrumb []string          `json:"breadcrumb"`
+	Additive   bool              `json:"additive"`
+	Version    string            `json:"version"`
+}
+
+type FlowGeoPathNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+type FlowGeoCatalogItem struct {
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Kind     string            `json:"kind"`
+	ParentID string            `json:"parent_id,omitempty"`
+	Path     []FlowGeoPathNode `json:"path"`
+	Additive bool              `json:"additive"`
+}
+
+type FlowGeoCatalogResult struct {
+	Version       string               `json:"version"`
+	EffectiveFrom time.Time            `json:"effective_from"`
+	Level         string               `json:"level"`
+	ParentID      string               `json:"parent_id,omitempty"`
+	Items         []FlowGeoCatalogItem `json:"items"`
+	Total         int                  `json:"total"`
 }
 
 // Label resolves display metadata from the immutable dictionary version that
@@ -84,11 +133,69 @@ func (s *FlowGeoService) Label(version, code string) (FlowGeoLabel, bool) {
 	if !ok || len(entries) == 0 {
 		return FlowGeoLabel{}, false
 	}
-	path := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		path = append(path, entry.Name)
+	label := flowGeoLabel(version, entries)
+	return label, true
+}
+
+// Catalog lists one exact hierarchy level from one immutable publication.
+// Empty version selects the active publication; it never merges versions.
+func (s *FlowGeoService) Catalog(version, level, parentID string, maximum int) (FlowGeoCatalogResult, error) {
+	if s == nil || s.catalog == nil {
+		return FlowGeoCatalogResult{}, ErrFlowGeoNotLoaded
 	}
-	return FlowGeoLabel{Code: code, Name: entries[len(entries)-1].Name, Breadcrumb: path}, true
+	var index *flowdimension.GeoIndex
+	var ok bool
+	if version == "" {
+		index, ok = s.catalog.Active()
+	} else {
+		index, ok = s.catalog.Get(version)
+		if !ok {
+			return FlowGeoCatalogResult{}, fmt.Errorf("%w: %s", ErrFlowGeoVersionNotFound, version)
+		}
+	}
+	if !ok || index == nil {
+		return FlowGeoCatalogResult{}, ErrFlowGeoNotLoaded
+	}
+	nodes, err := index.GeoNodes(level, parentID, maximum)
+	if err != nil {
+		if parentID != "" {
+			if _, exists := index.GeoNode(parentID); !exists {
+				return FlowGeoCatalogResult{}, fmt.Errorf("%w: %s", ErrFlowGeoNodeNotFound, parentID)
+			}
+		}
+		return FlowGeoCatalogResult{}, err
+	}
+	metadata := index.Metadata()
+	result := FlowGeoCatalogResult{
+		Version: metadata.Version, EffectiveFrom: metadata.EffectiveFrom, Level: level, ParentID: parentID,
+		Items: make([]FlowGeoCatalogItem, 0, len(nodes)), Total: len(nodes),
+	}
+	for _, node := range nodes {
+		breadcrumb, exists := index.GeoBreadcrumb(node.Code)
+		if !exists {
+			return FlowGeoCatalogResult{}, fmt.Errorf("Geo path is unavailable for %s", node.Code)
+		}
+		label := flowGeoLabel(metadata.Version, breadcrumb)
+		result.Items = append(result.Items, FlowGeoCatalogItem{
+			ID: label.Code, Name: label.Name, Kind: label.Kind, ParentID: label.ParentID,
+			Path: label.Path, Additive: true,
+		})
+	}
+	return result, nil
+}
+
+func flowGeoLabel(version string, entries []flowdimension.GeoDictionaryEntry) FlowGeoLabel {
+	path := make([]FlowGeoPathNode, 0, len(entries))
+	breadcrumb := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		path = append(path, FlowGeoPathNode{ID: entry.Code, Name: entry.Name, Kind: entry.Kind})
+		breadcrumb = append(breadcrumb, entry.Name)
+	}
+	current := entries[len(entries)-1]
+	return FlowGeoLabel{
+		Code: current.Code, Name: current.Name, Kind: current.Kind, ParentID: current.ParentCode,
+		Path: path, Breadcrumb: breadcrumb, Additive: true, Version: version,
+	}
 }
 
 func (s *FlowGeoService) Status() FlowGeoStatus {
