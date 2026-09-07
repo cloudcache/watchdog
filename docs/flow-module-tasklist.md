@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03C AddressSnap 数据面绑定与查询切换。** scoped publication、WADS v1、definition v3、异步 builder/writer、worker 双读/纯内存索引、签名控制面下载、磁盘 LKG 和完整 ACK 已关闭；下一步以 installed ACK 为门禁关闭 supplier/customer ISP fact 与 typed query 口径，不做“移除分类/改 CH dictGet”的重复改造。原始数据物理删除、rollup 和 VPN publication 不和本切片混改。
+**活动切片：FLOW-03C AddressSnap 性能与变更回归。** scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK 以及便捷运营商 typed query 切换已关闭；下一步执行固定真实 corpus 的 object/build/lookup/swap/多租户基线和 reader-first→writer cutover 回归。历史重分类仍由 FLOW-06B 独立交付，不和本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -291,6 +291,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **签名 envelope core**：canonical wire v1 将两对象完整元数据/ref/checksum 绑定为一个 Ed25519 install unit；复用 collector-plan monotonic trust bundle 与 active/retiring/revoked 语义，不新建 trust root。篡改、未知字段、非 canonical payload、过期 key 均 fail closed；平台 HTTP desired/object/ACK 已完成，worker HTTP client/LKG 仍未完成。
   - [x] **classification profile 与 pair writer**：profile CAS 自动 trim、排序、去重并由统一 classification compiler 校验；发布事务按 event time 锁定 active signed WADS、profile row version、单调 classification version 与 active 平台 signing key，classification JSON 落不可变 object store 后写 pair metadata/audit。真实 MySQL 验证对象可解码且 envelope 可由已发布 trust bundle校验；不把管理写路径引入逐 flow ingest。
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
+    - [x] **当前事实/默认查询绑定**：WADS loader 已把 supplier/customer ISP 独立写入 fact；便捷运营商查询不再展开 ASN，只提交稳定 operator ID。服务端冻结 event-time publication/snapshot/classification 集合，要求全部 active flow worker 已 installed 后注入 customer `remote_isp_id` typed predicate；prepared 参数进入查询/导出 hash/provenance/audit，篡改、缺版本、零 worker或部分 ACK fail closed。真实 MySQL 与单元/前端门禁已覆盖，复用 059，无新 migration。
+    - [ ] **历史新口径绑定**：由 FLOW-06B reclassification generation 读取指定 AddressSnap 重算 raw 窗口，以 Kafka 坐标和 count/counter 守恒后切换；不在默认查询里临时改写历史。
   - [ ] **性能**：固定真实 corpus 记录 object size/build RSS/lookup p95-p99/swap pause/多 tenant；只有 BART 不达标且共享基库容量成立才引入 DIR-24-8。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。

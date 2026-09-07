@@ -377,6 +377,40 @@ func TestMySQLFlowEnrichmentPublisherBuildsSignedImmutablePair(t *testing.T) {
 		!downloadedAt.Equal(base.Add(32*time.Minute)) || !installedAt.Equal(base.Add(34*time.Minute)) || ackRowVersion != 4 {
 		t.Fatalf("ack state=%s boot=%s code=%s downloaded=%s installed=%s version=%d", ackState, ackBootID, ackErrorCode, downloadedAt, installedAt, ackRowVersion)
 	}
+	operator, err := store.CreateISPOperator(ctx, ISPOperator{
+		TenantID: tenantID, Code: "operator-query", Name: "Operator Query", Category: "carrier", ASNs: []uint32{4134}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.ResolveFlowOperatorQueryBinding(ctx, tenantID, operator.ID, effectiveFrom, effectiveFrom.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.OperatorID != operator.ID || binding.FlowISPID != operator.FlowISPID || binding.ExpectedWorkers != 1 ||
+		len(binding.PublicationIDs) != 1 || binding.PublicationIDs[0] != publication.ID ||
+		len(binding.DimensionSnapshotIDs) != 1 || binding.DimensionSnapshotIDs[0] != string(snapshotID) ||
+		len(binding.ClassificationVersions) != 1 || binding.ClassificationVersions[0] != publication.ClassificationVersion {
+		t.Fatalf("operator query binding = %+v", binding)
+	}
+	const pendingWorkerID = ID("pending_enrichment_repo")
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO collector_agents (
+			id, tenant_id, module_key, name, agent_type, mode, status,
+			observed_health, auth_type, token_hash, created_by, updated_by
+		) VALUES (?, ?, 'flow', 'pending-worker', 'flow_worker', 'pull', 'active', 'unknown', 'token', 'unused', ?, ?)
+	`, pendingWorkerID, tenantID, actorID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ResolveFlowOperatorQueryBinding(ctx, tenantID, operator.ID, effectiveFrom, effectiveFrom.Add(time.Hour)); !errors.Is(err, ErrFlowOperatorQueryUnavailable) {
+		t.Fatalf("missing active-worker ACK error = %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE collector_agents SET status = 'suspended' WHERE tenant_id = ? AND id = ?`, tenantID, pendingWorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ResolveFlowOperatorQueryBinding(ctx, tenantID, operator.ID, effectiveFrom.Add(-time.Minute), effectiveFrom.Add(time.Hour)); !errors.Is(err, ErrFlowOperatorQueryUnavailable) {
+		t.Fatalf("range before first publication error = %v", err)
+	}
 	wrongPair := acknowledgement
 	wrongPair.DimensionChecksum = "sha256:" + strings.Repeat("f", 64)
 	if err := store.RecordFlowEnrichmentAcknowledgement(ctx, wrongPair); !errors.Is(err, ErrFlowEnrichmentAckConflict) {

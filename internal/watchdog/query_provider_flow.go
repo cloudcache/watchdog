@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowdimension"
@@ -44,7 +45,17 @@ type ClickHouseFlowQueryProvider struct {
 	Network          NetworkRepository
 	StorageLifecycle FlowStorageArchiveBoundaryRepository
 	FlowGeo          *FlowGeoService
+	OperatorBindings FlowOperatorQueryBindingReader
 	Now              func() time.Time
+}
+
+type flowOperatorQuerySelection struct {
+	SchemaVersion          uint16   `json:"schema_version,omitempty"`
+	OperatorID             ID       `json:"operator_id"`
+	FlowISPID              uint16   `json:"flow_isp_id,omitempty"`
+	PublicationIDs         []ID     `json:"publication_ids,omitempty"`
+	DimensionSnapshotIDs   []string `json:"dimension_snapshot_ids,omitempty"`
+	ClassificationVersions []uint32 `json:"classification_versions,omitempty"`
 }
 
 type flowAggregateQueryParameters struct {
@@ -60,6 +71,7 @@ type flowAggregateQueryParameters struct {
 	DirectionSplit     bool                           `json:"direction_split,omitempty"`
 	AddressSetFilter   flowdimension.AddressSetFilter `json:"address_set_filter,omitempty"`
 	AddressSetEndpoint flowquery.AddressSetEndpoint   `json:"address_set_endpoint,omitempty"`
+	OperatorSelection  *flowOperatorQuerySelection    `json:"operator_selection,omitempty"`
 	Table              *flowTableRequest              `json:"table,omitempty"`
 }
 
@@ -68,6 +80,86 @@ func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
 		return errors.New("ClickHouse Flow query provider is not configured")
 	}
 	return p.Readiness.Ready(ctx)
+}
+
+func (p ClickHouseFlowQueryProvider) PrepareQuery(ctx context.Context, request QueryProviderRequest) (json.RawMessage, error) {
+	parameters, err := decodeFlowAggregateQueryParameters(request.Parameters)
+	if err != nil || parameters.OperatorSelection == nil {
+		return request.Parameters, err
+	}
+	if request.ValueLayer != QueryValueCustomer {
+		return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "operator selection requires the customer value layer"}
+	}
+	if p.OperatorBindings == nil {
+		return nil, &QueryGatewayError{
+			Code: QueryErrorProviderUnavailable, Message: "Flow operator classification readiness is unavailable", Retryable: true,
+		}
+	}
+	selection := parameters.OperatorSelection
+	prepared := selection.SchemaVersion == flowOperatorQueryBindingSchemaVersion
+	if selection.SchemaVersion != 0 && !prepared {
+		return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unsupported Flow operator selection schema"}
+	}
+	if !prepared && (selection.FlowISPID != 0 || len(selection.PublicationIDs) != 0 || len(selection.DimensionSnapshotIDs) != 0 || len(selection.ClassificationVersions) != 0) {
+		return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "unprepared Flow operator selection may only contain operator_id"}
+	}
+	binding, err := p.OperatorBindings.ResolveFlowOperatorQueryBinding(ctx, request.TenantID, selection.OperatorID, request.From, request.To)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrFlowOperatorQueryInvalid):
+			return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "Flow operator selection is invalid", Cause: err}
+		case errors.Is(err, ErrFlowOperatorQueryUnavailable):
+			return nil, &QueryGatewayError{
+				Code: QueryErrorIncomplete, Message: "Flow operator classification is not installed on every active worker for the requested range",
+				Retryable: true, Cause: err,
+			}
+		default:
+			return nil, &QueryGatewayError{Code: QueryErrorProviderUnavailable, Message: "Flow operator classification readiness is unavailable", Retryable: true, Cause: err}
+		}
+	}
+	expected := flowOperatorQuerySelection{
+		SchemaVersion: flowOperatorQueryBindingSchemaVersion, OperatorID: binding.OperatorID, FlowISPID: binding.FlowISPID,
+		PublicationIDs:         append([]ID(nil), binding.PublicationIDs...),
+		DimensionSnapshotIDs:   append([]string(nil), binding.DimensionSnapshotIDs...),
+		ClassificationVersions: append([]uint32(nil), binding.ClassificationVersions...),
+	}
+	if prepared && !reflect.DeepEqual(*selection, expected) {
+		return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "prepared Flow operator selection does not match the immutable publication timeline"}
+	}
+	if prepared {
+		if !reflect.DeepEqual(parameters.Filters.DimensionSnapshotIDs, expected.DimensionSnapshotIDs) ||
+			!reflect.DeepEqual(parameters.Filters.ClassificationVersions, expected.ClassificationVersions) ||
+			!flowFilterHasOnlyExpectedISP(parameters.Filter, expected.FlowISPID) {
+			return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "prepared Flow operator query constraints were changed"}
+		}
+	} else {
+		if len(parameters.Filters.DimensionSnapshotIDs) != 0 || len(parameters.Filters.ClassificationVersions) != 0 || flowFilterReferencesISP(parameters.Filter) {
+			return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "operator selection owns ISP and enrichment-version constraints"}
+		}
+		parameters.Filters.DimensionSnapshotIDs = append([]string(nil), expected.DimensionSnapshotIDs...)
+		parameters.Filters.ClassificationVersions = append([]uint32(nil), expected.ClassificationVersions...)
+		isp := flowquery.FilterExpression{
+			Op: flowquery.FilterPredicate, Field: "isp", Operator: flowquery.FilterEqual,
+			Values: []string{strconv.FormatUint(uint64(expected.FlowISPID), 10)},
+		}
+		if parameters.Filter == nil {
+			parameters.Filter = &isp
+		} else {
+			combined, canonicalErr := flowquery.CanonicalFilter(flowquery.FilterExpression{
+				Op: flowquery.FilterAnd, Args: []flowquery.FilterExpression{*parameters.Filter, isp},
+			})
+			if canonicalErr != nil {
+				return nil, mapFlowQueryError(canonicalErr)
+			}
+			parameters.Filter = &combined
+		}
+	}
+	parameters.OperatorSelection = &expected
+	canonical, err := json.Marshal(parameters)
+	if err != nil {
+		return nil, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "encode prepared Flow operator query", Cause: err}
+	}
+	return canonical, nil
 }
 
 func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
@@ -81,15 +173,23 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if err != nil {
 		return QueryProviderResult{}, err
 	}
+	if parameters.OperatorSelection != nil && parameters.OperatorSelection.SchemaVersion != flowOperatorQueryBindingSchemaVersion {
+		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "Flow operator selection was not prepared by the query gateway"}
+	}
 	view, err := flowView(request.ValueLayer)
 	if err != nil {
 		return QueryProviderResult{}, err
 	}
 	if flowAddressSetFilterSelected(parameters.AddressSetFilter) {
+		if parameters.OperatorSelection != nil {
+			return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "operator selection cannot be combined with address-set combinations"}
+		}
 		return p.queryAddressSets(ctx, request, parameters, view)
 	}
 	if parameters.DirectionSplit {
-		return p.queryDirections(ctx, request, parameters, view)
+		result, queryErr := p.queryDirections(ctx, request, parameters, view)
+		result.Versions = withFlowOperatorQueryVersions(result.Versions, parameters.OperatorSelection)
+		return result, queryErr
 	}
 	baseFilter := false
 	if parameters.Filter != nil {
@@ -100,7 +200,9 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 		baseFilter = !aggregateSupported
 	}
 	if len(parameters.Dimensions) > 0 || baseFilter {
-		return p.queryJoint(ctx, request, parameters, view)
+		result, queryErr := p.queryJoint(ctx, request, parameters, view)
+		result.Versions = withFlowOperatorQueryVersions(result.Versions, parameters.OperatorSelection)
+		return result, queryErr
 	}
 	plan, err := flowquery.PlanAggregate(
 		request.From, request.To, time.Duration(request.StepSeconds)*time.Second,
@@ -160,12 +262,14 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if compiled.UsesRawFacts {
 		completeness.Warnings = append(completeness.Warnings, "the raw portion is current data; Kafka receipt coverage is reported separately from query completeness")
 	}
-	return QueryProviderResult{
+	providerResult := QueryProviderResult{
 		Data: data, Unit: result.Metric.Unit, Timezone: compiled.Timezone,
 		StepSeconds: plan.StepSeconds,
 		AsOf:        flowResultAsOf(result.Points, p.now()), Versions: flowResultVersions(result.Points),
 		Completeness: completeness,
-	}, nil
+	}
+	providerResult.Versions = withFlowOperatorQueryVersions(providerResult.Versions, parameters.OperatorSelection)
+	return providerResult, nil
 }
 
 func (p ClickHouseFlowQueryProvider) applyStorageV2Boundary(ctx context.Context, tenantID ID, plan flowquery.AggregatePlan, request *flowquery.Request) error {
@@ -307,6 +411,12 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 	if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "exactly one of dimension or dimensions is required"}
 	}
+	if parameters.OperatorSelection != nil {
+		parameters.OperatorSelection.OperatorID = ID(strings.TrimSpace(string(parameters.OperatorSelection.OperatorID)))
+		if parameters.OperatorSelection.OperatorID == "" || len(parameters.OperatorSelection.OperatorID) > 64 {
+			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "operator_selection.operator_id is required"}
+		}
+	}
 	if parameters.DirectionSplit && (parameters.Dimension != flowquery.DimensionTotal || len(parameters.Dimensions) != 0 ||
 		parameters.TopN != 1 || parameters.IncludeOther || len(parameters.Filters.Directions) != 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter"}
@@ -344,6 +454,70 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 		}
 	}
 	return parameters, nil
+}
+
+func flowFilterReferencesISP(filter *flowquery.FilterExpression) bool {
+	if filter == nil {
+		return false
+	}
+	if filter.Op == flowquery.FilterPredicate {
+		return filter.Field == "isp"
+	}
+	for index := range filter.Args {
+		if flowFilterReferencesISP(&filter.Args[index]) {
+			return true
+		}
+	}
+	return false
+}
+
+func flowFilterHasOnlyExpectedISP(filter *flowquery.FilterExpression, flowISPID uint16) bool {
+	if filter == nil || flowISPID == 0 {
+		return false
+	}
+	want := strconv.FormatUint(uint64(flowISPID), 10)
+	count := 0
+	valid := true
+	var visit func(flowquery.FilterExpression)
+	visit = func(node flowquery.FilterExpression) {
+		if node.Op == flowquery.FilterPredicate {
+			if node.Field == "isp" {
+				count++
+				if node.Operator != flowquery.FilterEqual || len(node.Values) != 1 || node.Values[0] != want {
+					valid = false
+				}
+			}
+			return
+		}
+		for _, child := range node.Args {
+			visit(child)
+		}
+	}
+	visit(*filter)
+	return valid && count == 1
+}
+
+func withFlowOperatorQueryVersions(versions map[string]string, selection *flowOperatorQuerySelection) map[string]string {
+	if selection == nil {
+		return versions
+	}
+	if versions == nil {
+		versions = make(map[string]string, 5)
+	}
+	publicationIDs := make([]string, len(selection.PublicationIDs))
+	for index, id := range selection.PublicationIDs {
+		publicationIDs[index] = string(id)
+	}
+	classificationVersions := make([]string, len(selection.ClassificationVersions))
+	for index, version := range selection.ClassificationVersions {
+		classificationVersions[index] = strconv.FormatUint(uint64(version), 10)
+	}
+	versions["operator_id"] = string(selection.OperatorID)
+	versions["operator_flow_isp_id"] = strconv.FormatUint(uint64(selection.FlowISPID), 10)
+	versions["operator_publication_ids"] = strings.Join(publicationIDs, ",")
+	versions["operator_dimension_snapshot_ids"] = strings.Join(selection.DimensionSnapshotIDs, ",")
+	versions["operator_classification_versions"] = strings.Join(classificationVersions, ",")
+	return versions
 }
 
 func flowAddressSetFilterSelected(filter flowdimension.AddressSetFilter) bool {

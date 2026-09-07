@@ -111,6 +111,9 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 - 单维与常用预聚合按 fact 已存稳定 ID/version 汇总；显示名称按相同历史版本解析。
 - `primary_prefix` 在每个 endpoint role 内互斥可加；`address_set` 可重叠，响应必须标 `additive=false`。
 - 明细返回原始 endpoint 和 ingest-time 派生值/版本，不能用当前地址库覆盖历史字段。
+- 便捷运营商筛选只提交 tenant 内稳定 `operator_id`，不再把当前运营商的 ASN 列表展开到请求。QueryGateway 的 Flow preparer 在一个 MySQL repeatable-read 快照内解析只读 `flow_isp_id`、覆盖 `[from,to)` 的全部 enrichment publication，以及 active `flow_worker/pull` 注册集合；每个 publication 必须对每个 active worker 存在不可逆 `installed_at` 里程碑。无 worker、时间窗早于首个 publication、任一 ACK 缺失或运营商禁用均显式返回 `QUERY_INCOMPLETE/QUERY_INVALID`，绝不回退 ASN。
+- 门禁通过后，服务端把 `isp = flow_isp_id`、精确 `dimension_snapshot_ids` 和 `classification_versions` 注入 canonical provider parameters。`schema_version=1` 的 prepared `operator_selection` 保存 operator、UInt16 identity、publication IDs 和版本集合；交互执行、延迟导出 query hash、响应 provenance 与查询审计使用同一份参数。客户端伪造或修改任一 prepared 字段、ISP predicate 或版本集合都会拒绝。跨版本仍以稳定 UInt16 过滤，并由事实自身 snapshot/classification version 分行/展示，不用当前名称改写历史。
+- 这里的 expected fleet 是唯一 collector registry 中状态为 active 的 `flow/flow_worker/pull` 身份，不是 ACK 中“曾观察到的 worker”集合。后续 failed attempt 不清除此前 installed milestone；新注册 active worker 会暂时关闭门禁，直到它补装时间窗所需的历史版本。该控制面检查只在用户查询准备/导出创建时执行，不进入 Kafka 消费或逐 flow 热路径，也不新增表。
 
 ### 6.3 指定版本/as-of
 

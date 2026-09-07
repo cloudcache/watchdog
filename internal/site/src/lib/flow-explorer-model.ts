@@ -94,7 +94,6 @@ export type FlowQuickFilterInput = {
 	countryCode?: string
 	provinceCode?: string
 	cityCode?: string
-	operatorASNs?: number[]
 }
 
 export type FlowTrafficSurface = "overview" | "dimensions" | "source" | "destination" | "overseas"
@@ -284,12 +283,6 @@ export function buildFlowQuickFilter(input: FlowQuickFilterInput): FlowFilterExp
 		["geo.city", input.cityCode],
 	] as const) {
 		if (value) predicates.push({ op: "predicate", field, operator: "eq", values: [value] })
-	}
-	const asns = [...new Set((input.operatorASNs ?? []).filter((asn) => Number.isInteger(asn) && asn > 0))].sort(
-		(a, b) => a - b
-	)
-	if (asns.length > 0) {
-		predicates.push({ op: "predicate", field: "asn", operator: "in", values: asns.map(String) })
 	}
 	if (predicates.length === 0) return undefined
 	return predicates.length === 1 ? predicates[0] : { op: "and", args: predicates }

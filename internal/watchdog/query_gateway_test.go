@@ -92,9 +92,10 @@ func (queryModuleStates) SetTenantModuleEnabled(context.Context, ID, string, boo
 }
 
 type queryProviderStub struct {
-	query  func(context.Context, QueryProviderRequest) (QueryProviderResult, error)
-	ready  error
-	closed atomic.Bool
+	query   func(context.Context, QueryProviderRequest) (QueryProviderResult, error)
+	prepare func(context.Context, QueryProviderRequest) (json.RawMessage, error)
+	ready   error
+	closed  atomic.Bool
 }
 
 func (p *queryProviderStub) Query(ctx context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
@@ -105,9 +106,39 @@ func (p *queryProviderStub) Query(ctx context.Context, request QueryProviderRequ
 }
 
 func (p *queryProviderStub) Ready(context.Context) error { return p.ready }
+func (p *queryProviderStub) PrepareQuery(ctx context.Context, request QueryProviderRequest) (json.RawMessage, error) {
+	if p.prepare != nil {
+		return p.prepare(ctx, request)
+	}
+	return request.Parameters, nil
+}
 func (p *queryProviderStub) Close() error {
 	p.closed.Store(true)
 	return nil
+}
+
+func TestQueryGatewayUsesPreparedParametersForProviderExecution(t *testing.T) {
+	repo := &queryPolicyMemoryRepository{policies: map[string]QueryDatasetPolicy{}}
+	var received json.RawMessage
+	provider := &queryProviderStub{
+		prepare: func(_ context.Context, request QueryProviderRequest) (json.RawMessage, error) {
+			if request.TenantID != "tenant-a" || request.From.IsZero() || request.To.IsZero() {
+				t.Fatalf("prepare request = %+v", request)
+			}
+			return json.RawMessage(`{"a":1,"binding":{"generation":7}}`), nil
+		},
+		query: func(_ context.Context, request QueryProviderRequest) (QueryProviderResult, error) {
+			received = request.Parameters
+			return QueryProviderResult{Data: json.RawMessage(`[]`)}, nil
+		},
+	}
+	gateway, auth := newQueryGatewayFixture(t, repo, nil, provider, 2)
+	if _, err := gateway.Execute(context.Background(), auth, "prepared-a", validQueryRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if string(received) != `{"a":1,"binding":{"generation":7}}` {
+		t.Fatalf("provider parameters = %s", received)
+	}
 }
 
 func newQueryGatewayFixture(t *testing.T, policy *queryPolicyMemoryRepository, moduleStates TenantModuleRepository, provider *queryProviderStub, providerMax uint32) (*QueryGateway, AuthContext) {

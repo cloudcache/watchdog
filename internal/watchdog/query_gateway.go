@@ -193,6 +193,14 @@ type QueryDatasetProvider interface {
 	Ready(context.Context) error
 }
 
+// QueryDatasetRequestPreparer resolves provider-owned stable references before
+// authorization and execution. The returned parameters are the canonical
+// request identity used by delayed exports as well as interactive queries.
+// Tenant, user, time range and value layer remain immutable gateway fields.
+type QueryDatasetRequestPreparer interface {
+	PrepareQuery(context.Context, QueryProviderRequest) (json.RawMessage, error)
+}
+
 // QueryDatasetAuthorizer is implemented by providers whose typed parameters
 // name tenant resources. QueryGateway owns dataset policy and value-layer
 // admission; the provider adapter owns the parameter grammar needed to enforce
@@ -405,6 +413,40 @@ func (g *QueryGateway) executeCompatibility(ctx context.Context, auth AuthContex
 	return g.execute(ctx, auth, requestID, request, true)
 }
 
+func (g *QueryGateway) prepareDatasetParameters(ctx context.Context, auth AuthContext, request QueryRequest) (json.RawMessage, error) {
+	if g == nil || g.Datasets == nil || g.Providers == nil {
+		return nil, ErrQueryProviderUnavailable
+	}
+	descriptor, ok := g.Datasets.Get(request.Dataset)
+	if !ok {
+		return nil, queryError(QueryErrorDatasetNotFound, "dataset is not registered", false, nil)
+	}
+	provider, release, err := g.Providers.acquire(descriptor.Provider)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	preparer, ok := provider.(QueryDatasetRequestPreparer)
+	if !ok {
+		return request.Parameters, nil
+	}
+	parameters, err := preparer.PrepareQuery(ctx, QueryProviderRequest{
+		TenantID: auth.TenantID, UserID: auth.UserID, Dataset: descriptor,
+		From: request.From, To: request.To, StepSeconds: request.StepSeconds, Limit: request.Limit,
+		Cursor: request.Cursor, ValueLayer: request.ValueLayer, RequireComplete: request.RequireComplete,
+		Parameters: request.Parameters,
+	})
+	if err != nil {
+		return nil, err
+	}
+	request.Parameters = parameters
+	normalized, err := normalizeQueryRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	return normalized.Parameters, nil
+}
+
 func (g *QueryGateway) execute(ctx context.Context, auth AuthContext, requestID string, request QueryRequest, usePolicyLimit bool) (QueryResult, error) {
 	if auth.TenantID == "" || auth.UserID == "" {
 		return QueryResult{}, queryError(QueryErrorPermissionDenied, "authenticated tenant and user are required", false, nil)
@@ -476,6 +518,18 @@ func (g *QueryGateway) execute(ctx context.Context, auth AuthContext, requestID 
 		From: request.From, To: request.To, StepSeconds: request.StepSeconds, Limit: request.Limit,
 		Cursor: request.Cursor, ValueLayer: request.ValueLayer, RequireComplete: request.RequireComplete,
 		Parameters: request.Parameters,
+	}
+	if preparer, ok := provider.(QueryDatasetRequestPreparer); ok {
+		providerRequest.Parameters, err = preparer.PrepareQuery(queryCtx, providerRequest)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		request.Parameters = providerRequest.Parameters
+		request, err = normalizeQueryRequest(request)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		providerRequest.Parameters = request.Parameters
 	}
 	if authorizer, ok := provider.(QueryDatasetAuthorizer); ok {
 		if err := authorizer.AuthorizeQuery(queryCtx, auth, providerRequest); err != nil {

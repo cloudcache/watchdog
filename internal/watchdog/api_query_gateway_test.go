@@ -56,8 +56,12 @@ func TestFlowQueryAPIInjectsTheFlowDatasetAndRejectsOtherDatasets(t *testing.T) 
 		if request.Dataset.Key != FlowTrafficDataset || request.TenantID != "tenant-a" {
 			t.Fatalf("provider request = %#v", request)
 		}
-		return QueryProviderResult{Data: json.RawMessage(`[]`)}, nil
+		return QueryProviderResult{Data: json.RawMessage(`[]`), Versions: map[string]string{
+			"operator_id": "operator-a", "operator_flow_isp_id": "17", "operator_publication_ids": "publication-1",
+			"operator_dimension_snapshot_ids": "snapshot-1", "operator_classification_versions": "4",
+		}}, nil
 	}}
+	audit := &recordingAuditRepository{}
 	registries, err := NewBuiltinPlatformRegistries()
 	if err != nil {
 		t.Fatal(err)
@@ -74,13 +78,17 @@ func TestFlowQueryAPIInjectsTheFlowDatasetAndRejectsOtherDatasets(t *testing.T) 
 		Auth: func(*http.Request) (AuthContext, error) {
 			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
 		},
-		QueryGateway: gateway,
+		QueryGateway: gateway, Audit: audit,
 	})
 	body := `{"from":"2026-08-24T11:00:00Z","to":"2026-08-24T12:00:00Z","value_layer":"customer","parameters":{"dimension":"category"}}`
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/flow/query", strings.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(audit.logs) != 1 || audit.logs[0].Action != "query.executed" || audit.logs[0].Detail["operator_id"] != "operator-a" ||
+		audit.logs[0].Detail["operator_classification_versions"] != "4" {
+		t.Fatalf("operator query audit = %+v", audit.logs)
 	}
 
 	wrong := httptest.NewRecorder()

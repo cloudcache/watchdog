@@ -126,6 +126,10 @@ func prepareFlowExportExecutionTask(ctx context.Context, gateway *QueryGateway, 
 	if err != nil {
 		return ExportTask{}, err
 	}
+	query.Parameters, err = gateway.prepareDatasetParameters(ctx, auth, query)
+	if err != nil {
+		return ExportTask{}, fmt.Errorf("prepare Flow export query: %w", err)
+	}
 	query, err = normalizeQueryRequest(query)
 	if err != nil {
 		return ExportTask{}, err

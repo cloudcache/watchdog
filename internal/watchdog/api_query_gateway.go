@@ -58,6 +58,15 @@ func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixed
 			"value_layer": request.ValueLayer, "request_id": result.Meta.RequestID,
 		})
 	}
+	if operatorID := result.Meta.Versions["operator_id"]; operatorID != "" {
+		api.recordAudit(r.Context(), auth, "query.executed", request.Dataset, map[string]any{
+			"request_id": result.Meta.RequestID, "operator_id": operatorID,
+			"operator_flow_isp_id":             result.Meta.Versions["operator_flow_isp_id"],
+			"operator_publication_ids":         result.Meta.Versions["operator_publication_ids"],
+			"operator_dimension_snapshot_ids":  result.Meta.Versions["operator_dimension_snapshot_ids"],
+			"operator_classification_versions": result.Meta.Versions["operator_classification_versions"],
+		})
+	}
 	WriteAPIJSON(w, http.StatusOK, result)
 }
 

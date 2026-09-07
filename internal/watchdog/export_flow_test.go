@@ -86,6 +86,45 @@ func TestPrepareFlowExportFreezesFullQueryWithoutTableProjection(t *testing.T) {
 	}
 }
 
+func TestPrepareFlowExportFreezesProviderPreparedOperatorBinding(t *testing.T) {
+	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	provider := &queryProviderStub{prepare: func(_ context.Context, request QueryProviderRequest) (json.RawMessage, error) {
+		if request.TenantID != "tenant-a" || request.ValueLayer != QueryValueCustomer {
+			t.Fatalf("prepare request = %+v", request)
+		}
+		return json.RawMessage(`{
+			"metric":"estimated_bps","dimension":"category","top_n":20,"include_other":true,"target_points":300,"timezone":"UTC",
+			"filters":{"dimension_snapshot_ids":["snapshot-1"],"classification_versions":[7]},
+			"filter":{"op":"predicate","field":"isp","operator":"eq","values":["12"]},
+			"operator_selection":{"schema_version":1,"operator_id":"operator-a","flow_isp_id":12,"publication_ids":["publication-1"],"dimension_snapshot_ids":["snapshot-1"],"classification_versions":[7]}
+		}`), nil
+	}}
+	gateway := newFlowExportGatewayFixture(t, provider)
+	query := flowExportQuery(start)
+	var parameters map[string]any
+	if err := json.Unmarshal(query.Parameters, &parameters); err != nil {
+		t.Fatal(err)
+	}
+	parameters["operator_selection"] = map[string]any{"operator_id": "operator-a"}
+	query.Parameters, _ = json.Marshal(parameters)
+	task, err := prepareFlowExportExecutionTask(context.Background(), gateway, flowExportAuth(), query, ExportFormatCSV, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot exportQuerySnapshot
+	if err := decodeStrictJSON(task.QueryJSON, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var frozen flowAggregateQueryParameters
+	if err := decodeStrictJSON(snapshot.Query.Parameters, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	if frozen.OperatorSelection == nil || frozen.OperatorSelection.SchemaVersion != 1 || frozen.OperatorSelection.FlowISPID != 12 ||
+		len(frozen.OperatorSelection.PublicationIDs) != 1 || frozen.OperatorSelection.PublicationIDs[0] != "publication-1" || frozen.Table != nil {
+		t.Fatalf("frozen parameters = %+v", frozen)
+	}
+}
+
 func TestFlowExportProviderAndWriterPreserveJointRows(t *testing.T) {
 	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
 	result := flowquery.JointResult{

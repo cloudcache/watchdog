@@ -119,13 +119,12 @@ test("canonical Flow filters format to a lossless editable expression", () => {
 	assert.deepEqual(parseFlowFilter(formatFlowFilter(filter)), filter)
 })
 
-test("quick filters use published geo codes and the operator ASN set", () => {
+test("quick filters use published geo codes while operator identity is resolved by the server", () => {
 	assert.deepEqual(
 		buildFlowQuickFilter({
 			countryCode: "CN",
 			provinceCode: "330000",
 			cityCode: "330100",
-			operatorASNs: [4837, 4134, 4837, 0],
 		}),
 		{
 			op: "and",
@@ -133,7 +132,6 @@ test("quick filters use published geo codes and the operator ASN set", () => {
 				{ op: "predicate", field: "geo.country", operator: "eq", values: ["CN"] },
 				{ op: "predicate", field: "geo.province", operator: "eq", values: ["330000"] },
 				{ op: "predicate", field: "geo.city", operator: "eq", values: ["330100"] },
-				{ op: "predicate", field: "asn", operator: "in", values: ["4134", "4837"] },
 			],
 		}
 	)

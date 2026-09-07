@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,21 @@ type flowStorageBoundaryStub struct {
 	err      error
 }
 
+type flowOperatorBindingStub struct {
+	binding FlowOperatorQueryBinding
+	err     error
+	request struct {
+		tenantID, operatorID ID
+		from, to             time.Time
+	}
+}
+
+func (stub *flowOperatorBindingStub) ResolveFlowOperatorQueryBinding(_ context.Context, tenantID, operatorID ID, from, to time.Time) (FlowOperatorQueryBinding, error) {
+	stub.request.tenantID, stub.request.operatorID = tenantID, operatorID
+	stub.request.from, stub.request.to = from, to
+	return stub.binding, stub.err
+}
+
 func (stub flowStorageBoundaryStub) FlowStorageArchiveThrough(context.Context, ID, time.Time, time.Time) (time.Time, error) {
 	return stub.boundary, stub.err
 }
@@ -93,6 +109,76 @@ func TestClickHouseFlowQueryProviderCompilesAuthenticatedEnvelopeAndMapsComplete
 	var decoded flowquery.Result
 	if err := json.Unmarshal(result.Data, &decoded); err != nil || len(decoded.Points) != 1 || decoded.Points[0].DimensionValue != "overseas" {
 		t.Fatalf("data = %s, error = %v", result.Data, err)
+	}
+}
+
+func TestClickHouseFlowQueryProviderPreparesInstalledOperatorIdentity(t *testing.T) {
+	from := time.Date(2026, 9, 7, 9, 0, 0, 0, time.UTC)
+	bindings := &flowOperatorBindingStub{binding: FlowOperatorQueryBinding{
+		OperatorID: "operator-a", FlowISPID: 17, PublicationIDs: []ID{"publication-1", "publication-2"},
+		DimensionSnapshotIDs: []string{"snapshot-1", "snapshot-2"}, ClassificationVersions: []uint32{4, 5}, ExpectedWorkers: 2,
+	}}
+	joint := &flowJointRunnerStub{result: flowquery.JointResult{
+		Metric:     flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.DimensionCategory, Additive: true}},
+		Plan: flowquery.JointPlan{RequestedFrom: from, RequestedTo: from.Add(time.Hour), EffectiveFrom: from,
+			EffectiveTo: from.Add(time.Hour), Source: "flow_records", StepSeconds: 60, TargetPoints: 300, MaxRangeSeconds: 86_400},
+	}}
+	provider := ClickHouseFlowQueryProvider{
+		Runner: &flowAggregateRunnerStub{}, JointRunner: joint, Readiness: flowReadinessStub{}, OperatorBindings: bindings,
+		Now: func() time.Time { return from.Add(time.Hour) },
+	}
+	request := QueryProviderRequest{
+		TenantID: "tenant-a", Dataset: DatasetDescriptor{Key: FlowTrafficDataset}, From: from, To: from.Add(time.Hour),
+		Limit: 10_000, ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","dimension":"category","top_n":20,"include_other":true,"target_points":300,
+			"filter":{"op":"predicate","field":"geo.country","operator":"eq","values":["CN"]},
+			"operator_selection":{"operator_id":"operator-a"}
+		}`),
+	}
+	prepared, err := provider.PrepareQuery(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Parameters = prepared
+	parameters, err := decodeFlowAggregateQueryParameters(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parameters.OperatorSelection == nil || parameters.OperatorSelection.SchemaVersion != 1 ||
+		parameters.OperatorSelection.FlowISPID != 17 || len(parameters.OperatorSelection.PublicationIDs) != 2 ||
+		!flowFilterHasOnlyExpectedISP(parameters.Filter, 17) ||
+		!reflect.DeepEqual(parameters.Filters.DimensionSnapshotIDs, []string{"snapshot-1", "snapshot-2"}) ||
+		!reflect.DeepEqual(parameters.Filters.ClassificationVersions, []uint32{4, 5}) {
+		t.Fatalf("prepared parameters = %+v", parameters)
+	}
+	result, err := provider.Query(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(joint.compiled.Query.Body, "remote_isp_id =") ||
+		!strings.Contains(joint.compiled.Query.Body, "dimension_snapshot_id IN") ||
+		!strings.Contains(joint.compiled.Query.Body, "classification_version IN") {
+		t.Fatalf("compiled query = %s", joint.compiled.Query.Body)
+	}
+	if result.Versions["operator_id"] != "operator-a" || result.Versions["operator_flow_isp_id"] != "17" ||
+		result.Versions["operator_publication_ids"] != "publication-1,publication-2" {
+		t.Fatalf("operator provenance = %#v", result.Versions)
+	}
+	if bindings.request.tenantID != "tenant-a" || bindings.request.operatorID != "operator-a" ||
+		bindings.request.from != from || bindings.request.to != from.Add(time.Hour) {
+		t.Fatalf("binding request = %+v", bindings.request)
+	}
+
+	request.Parameters = json.RawMessage(`{"metric":"estimated_bps","dimension":"category","top_n":1,"filter":{"op":"predicate","field":"isp","operator":"eq","values":["17"]},"operator_selection":{"operator_id":"operator-a"}}`)
+	if _, err := provider.PrepareQuery(context.Background(), request); queryErrorCode(err) != QueryErrorInvalidRequest {
+		t.Fatalf("client-supplied ISP constraint error = %#v", err)
+	}
+	bindings.err = ErrFlowOperatorQueryUnavailable
+	request.Parameters = json.RawMessage(`{"metric":"estimated_bps","dimension":"category","top_n":1,"operator_selection":{"operator_id":"operator-a"}}`)
+	if _, err := provider.PrepareQuery(context.Background(), request); queryErrorCode(err) != QueryErrorIncomplete {
+		t.Fatalf("uninstalled operator binding error = %#v", err)
 	}
 }
 

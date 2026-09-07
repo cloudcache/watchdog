@@ -155,6 +155,7 @@ type GeoNode = {
 }
 type NetworkOperator = {
 	id: string
+	flow_isp_id: number
 	code: string
 	name: string
 	short_name?: string
@@ -413,6 +414,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				let selectedTopN: number
 				let canonicalFilter: FlowFilterExpression | undefined
 				let filters: FlowFilters = {}
+				let operatorID: string | undefined
 				const addressSetSelectionActive = includeAnySets.length + includeAllSets.length > 0
 				if (!addressSetSelectionActive && excludeAnySets.length > 0) {
 					throw new Error("Address set exclusion requires an include-any or include-all selection")
@@ -441,14 +443,11 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					const province = selectedReference(provinces, selectedProvince, "province")
 					const city = selectedReference(cities, selectedCity, "city")
 					const networkOperator = selectedReference(operators, selectedOperator, "operator")
-					if (networkOperator && networkOperator.asns.length === 0) {
-						throw new Error(`${networkOperator.name} has no ASN mapping`)
-					}
+					operatorID = networkOperator?.id
 					canonicalFilter = buildFlowQuickFilter({
 						countryCode: country?.id,
 						provinceCode: province?.id,
 						cityCode: city?.id,
-						operatorASNs: networkOperator?.asns,
 					})
 					if ((country || province || city) && geoVersion) filters.geo_versions = [geoVersion]
 					selectedDimension = activeMode === "direction" ? "total" : QUICK_DIMENSIONS[activeMode]
@@ -478,6 +477,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						value_layer: "customer",
 						parameters: {
 							metric,
+							operator_selection: operatorID ? { operator_id: operatorID } : undefined,
 							...grouping,
 							filters: queryFilters,
 							filter: canonicalFilter,
