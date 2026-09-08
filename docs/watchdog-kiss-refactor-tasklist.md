@@ -37,7 +37,7 @@
 #### KISS-01B MySQL 本地认证与纯 Go 入口
 
 - [ ] **设计**：冻结 v2 认证最小表白名单、FK/唯一键、ID、UTC 时间、row version、secret encryption、bcrypt、session/CSRF、首管理员初始化和 API error envelope；不复刻 PB OTP/OAuth/realtime collection。
-- [ ] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；纯 `net/http` server、body limit、CORS、SPA fallback、健康检查。
+- [ ] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；单一 Gin server、body limit、CORS、健康检查。前端独立运行，不由后端提供 static fallback。
 - [ ] **单元测试**：密码校验、session rotation/expiry/revoke、CSRF、禁用用户、RBAC、错误信封和敏感字段脱敏。
 - [ ] **集成测试**：空 MySQL 只初始化一个管理员；真实登录/登出/禁用/改密；纯 Go server 独立提供 API 和前端构建产物，全程不创建 PB SQLite、不读取 PB env。
 - [ ] **已提交门禁**：schema、server、auth 与测试形成可独立启动的提交。
@@ -67,6 +67,8 @@
 
 ### KISS-02 单域 RBAC 与设备根
 
+- [x] **KISS-02A 已完成纵向切片（2026-09-08，`e5848ade`）**：新 Gin 后端已接 `devices` 与 SNMP profile 的 list/get/create/patch/delete，host 唯一且 display name 可选；labels/SNMP override 不丢失，ETag 冲突检测、固定 sort 白名单、服务端分页/search/status filter、device/device-group scope 均已接 MySQL。现有 `/network/devices` 与 `/targets` 是同一 `device_id` 的临时 handler/DTO alias，兼容层仅做 `system -> host` 类型映射，不创建或写旧表；真实 MySQL 集成测试覆盖 CRUD、host 冲突、profile secret 脱敏及 summary/target alias。端口/IP/BGP/sensor/inventory/discovery 仍属下方 KISS-02 未完成项。
+
 - [ ] **设计**：以 LibreNMS role abilities + `devices_perms/ports_perms/bill_perms` 为基线，冻结“全局 action + 显式资源集合”双门、固定权限 key、默认角色和 device-group scope；设备侧按 LibreNMS 来，冻结 `devices` 与 `ports/interface_addresses/bgp_sessions/sensors/physical_entities/vlans/lag_groups/snmp_profiles` 契约，并将 `locations`（站点/POP）、`device_groups`（static/dynamic）、`device_group_members` 作为一等组织单位（服务导航分组、告警范围和批量授权）。
 - [ ] **编码**：删除 tenant context/header/selector；客户/供应商改为业务实体；合并 `targets + network_devices -> devices`，所有子表直接引用 device；设备以 host 唯一、display name 可选。
 - [ ] **API/UI**：users/roles/permissions/device/port 领域路由；设备详情各 VTable 保持服务端分页/搜索/排序/column filter；SNMP secret 编辑/继承和发现结果只读。
@@ -76,17 +78,24 @@
 - [ ] **回归测试**：SNMP discovery、所有设备详情页 VTable、角色边界、真实 MySQL、前端浏览器回归。
 - [ ] **已提交门禁**：schema/domain/API/UI/test 原子提交，工作区无旧 route 调用。
 
-### KISS-03 SNMP/system/agent 时序 sink 切换到 ClickHouse
+### KISS-03 SNMP/system/agent 时序统一写入并查询 ClickHouse
 
-- [ ] **设计**：明确“collector 不重写、只换 storage adapter”；冻结现有 SNMP metric/entity/timestamp/raw counter/interval/quality 输入契约，以及 `telemetry_samples`、`interface_traffic_5m`、optional `telemetry_events` DDL；自然幂等坐标、counter width/reset/wrap/gap、bucket、retention、query budget。
-- [ ] **编码**：保持现有 MIB discovery、OS/module definition、SNMP session、poll recipe、agent/collector 和 counter 语义不变；仅将 SNMP/system sink 改为批写 CH，实现 `MetricQueryService`、closed 5m、图表和 export，再删除 VM writer/client/provider/DeleteSeries/config。
-- [ ] **单元测试**：UInt64 精度、32/64-bit wrap、reset、乱序/重复、缺口、实际 poll interval、5m 边界、分页/filter 和 query limit。
-- [ ] **集成测试**：真实 SNMP -> collector -> CH raw -> 5m -> API/chart/export；进程 crash/retry 后自然坐标收敛；无 VM 容器仍全绿。
-- [ ] **变更设计/测试**：同一采集输入在旧 VM adapter 与新 CH adapter 的 metric/entity/timestamp/raw counter/interval/quality 逐字段一致；没有历史回填，仅验证切换前旧 DB 可整库回退。新部署配置拒绝 VM 字段，旧字段给出明确启动错误而非忽略。
-- [ ] **回归测试**：SNMP/agent、账单基础 rate、CH migration/fresh schema、race/vet/build、前端图表。
-- [ ] **已提交门禁**：CH DDL、writer/query/UI、VM 删除和测试在一个可启动提交中闭环。
+> 存储边界：MySQL 只保存 device/port/SNMP profile/MIB 配置等管理对象；SNMP 原始 counter、状态样本、派生速率、system/agent 时序、图表和导出全部以 ClickHouse 为唯一权威。不存在 VM 双写、VM 历史迁移或 VM 回退路径。
+
+- [ ] **设计**：明确“collector/MIB/OID 语义不重写，只换 writer/query”；冻结现有 `device_id/entity/metric/collected_at/poll_sequence/raw counter/counter width/interval/quality` 输入契约，以及 CH `telemetry_samples`、`interface_traffic_5m`、必要 `telemetry_events` DDL、自然幂等坐标、分区/排序键、codec、batch、TTL、closed-bucket 和查询预算。原始 32/64-bit counter 使用整数列，不经 Float64。
+- [ ] **编码—写入**：保持现有 MIB discovery、OS/module definition、SNMP v1/v2c/v3 session、poll recipe、IPv4/v6/BGP/sensor/inventory 和调度不变；将 SNMP/system/agent 样本通过有界批量 writer 直接写 CH，成功后才确认本批，失败执行有界 retry/backpressure，不逐指标查询 MySQL/CH。
+- [ ] **编码—派生**：在 CH 内从连续原始 counter 计算 rate/流量，显式处理 32/64-bit wrap、reset、乱序、重复、缺口和真实 poll interval；只生成已关闭的 5m bucket，保留原始 counter 作为审计依据。
+- [ ] **编码—查询**：实现唯一 `MetricQueryService`，设备详情、端口流量、系统/agent 图表、统计和导出全部直接查询 CH；API DTO 与现有 UI 契约保持不变，服务端分页/search/sort/filter 继续保留。
+- [ ] **编码—删除**：删除 VictoriaMetrics writer/client/provider/DeleteSeries、Prometheus remote-write/import 查询接线和 VM 配置；不保留 feature flag、双写 adapter 或 fallback。
+- [ ] **单元测试**：UInt64 精度、自然坐标幂等、batch retry、32/64-bit wrap、reset、乱序/重复、缺口、实际 interval、5m 边界、TTL、分页/filter 和 query budget。
+- [ ] **集成测试**：真实 SNMP -> collector -> CH raw -> closed 5m -> API/chart/export；进程 crash/retry 后自然坐标收敛；停止/不存在 VM 时完整链路正常。
+- [ ] **变更设计/测试**：没有历史数据，不做 VM 对比、backfill、shadow read 或整库回退；用固定 SNMP fixture 从采集输入直接核对 CH 原始行、派生 bucket、API 和导出守恒。旧 VM 配置必须报明确的 removed-field 启动错误。
+- [ ] **回归测试**：SNMP/agent、设备与端口页面、账单基础 rate、CH fresh schema、race/vet/build；不增加视觉测试。
+- [ ] **已提交门禁**：CH DDL、writer、rate/bucket、query/export、VM 删除与测试形成一个纵向闭环；运行代码中 SNMP/system/agent 数据路径不存在 VM。
 
 ### KISS-04 Agent registry 收敛
+
+- [x] **KISS-04A 已完成纵向切片（2026-09-08，`e5848ade`）**：新增全局 `agents/agent_credentials/agent_bindings/agent_runs/agent_enrollment_tokens/agent_plans/agent_plan_acks` v2 表；Gin 已接 registry CRUD、分页/search/sort/filter、token rotation、run 列表、一次性 enrollment、register、heartbeat/status/errors。secret 仅返回/输入一次、库内只存 SHA-256；真实 MySQL 测试覆盖手工注册、heartbeat/run、enrollment 消费与 replay 拒绝、错误 token、更新/删除。plan/ACK/LKG 与四种 agent 实进程验收仍未完成，不能把整个 KISS-04 标完。
 
 - [ ] **设计**：冻结 agent kind/capability schema、enrollment/token-or-mTLS、binding、immutable plan、ACK、heartbeat、revocation 和兼容版本矩阵。
 - [ ] **编码**：将 collector/target agent 多表收敛为 `agents/credentials/bindings/plans/acks/runs`；保留已有 plan 签名和 LKG 必要能力，删除 tenant ownership/provider/fleet 占位状态机。
@@ -108,16 +117,18 @@
 - [ ] **回归测试**：地址 UI/API、operation lifecycle、MySQL、Flow dimension parity、race/vet/build。
 - [ ] **已提交门禁**：全局发布链单独提交，不夹带 Flow query/report 改造。
 
-### KISS-06 Flow 单域化与查询收敛
+### KISS-06 Flow 单域化与 ClickHouse 查询收敛
 
-- [ ] **设计**：冻结现有 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template/fallback；冻结移除 tenant 后的 Kafka wire、CH sort/dedup、receipt/reconciliation、publication/classification version、typed query/export cursor；确认不改解码和计数语义。
-- [ ] **编码（数据面）**：从 Flow facts/receipts/aggregates/worker/config 移除 tenant；不得重写 decoder，保持 fast path、GoFlow2 template/sampling store、Kafka 坐标、batch insert、count/counter 对账、Storage V2 生命周期和 WADS 热路径。
-- [ ] **编码（查询）**：删除 generic DatasetProvider/QueryGateway policy；保留 Flow compiler/admission/report composer，形成单一 `FlowQueryService`；Explorer、六报表、detail/facet/export 共用 typed contract。
+> Flow 事实、receipt、archive/aggregate、VPN candidate 与现有查询本来就在 ClickHouse；本包不是“把 Flow 迁到 CH”，而是保持当前 CH 数据面不动，删除 tenant/provider/VM 外围依赖并统一查询入口。
+
+- [ ] **设计**：冻结现有 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template/fallback；冻结移除 tenant 后的 Kafka wire、CH sort/dedup、receipt/reconciliation、Storage V2 raw/archive、publication/classification version、typed query/export cursor；确认不改解码、计数、CH 写入和生命周期语义。
+- [ ] **编码（CH 写入保持）**：从 Flow facts/receipts/aggregates/worker/config 移除 tenant；不得重写 decoder 或另造存储，保持 fast path、GoFlow2 template/sampling store、Kafka 坐标、CH native batch insert、count/counter 对账、Storage V2 生命周期和 WADS 热路径。
+- [ ] **编码（CH 查询收敛）**：删除 generic DatasetProvider/QueryGateway policy 和任何 Flow→VM 查询接线；保留现有 CH compiler/admission/report composer，形成单一 `FlowQueryService`；Explorer、六报表、detail/facet/export 共用 typed contract 并直接查询 CH。
 - [ ] **单元测试**：Kafka coordinate dedup、sampling known/unknown、raw/supplier/customer、方向、publication as-of、cursor/filter/budget、report conservation。
 - [ ] **集成测试**：真实 sFlow/NetFlow/IPFIX -> Kafka -> worker -> CH -> Explorer/六页/明细/导出；crash/rebalance/fake ack/retry；count/counter reconciliation。
 - [ ] **变更设计/测试**：复跑 fast-vs-GoFlow2 差分、sFlow v5/NetFlow v5/v9/IPFIX pcap、现有吞吐、WADS、CH timeout/fault injection/Storage V2 门禁；无 tenant 的旧 wire 明确拒绝，不做静默混读。
 - [ ] **回归测试**：Flow 全库 test/race/vet/build、真实 Kafka+CH、前端浏览器六页和 Explorer。
-- [ ] **已提交门禁**：数据面单域化与查询切换可拆两个提交，但每个提交必须可构建、可运行且文档状态真实。
+- [ ] **已提交门禁**：数据面单域化与 CH 查询收敛可拆两个提交，但每个提交必须可构建、可运行且文档状态真实；运行代码中 Flow 业务数据的 writer/query 仅有 ClickHouse。
 
 ### KISS-07 Billing、三层修正与对账闭环
 

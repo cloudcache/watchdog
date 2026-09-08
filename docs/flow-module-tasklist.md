@@ -2,6 +2,8 @@
 
 > **平台变更边界（2026-09-08）：** 平台目标已切换到 [Watchdog KISS 架构](watchdog-kiss-architecture.md) 和 [KISS 重构清单](watchdog-kiss-refactor-tasklist.md)。当前 KISS-01 PocketBase 彻底移除为平台第一阻断项；其完成前 Flow 只允许修复不触及平台契约的紧急数据面缺陷。已验证的 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template fallback、Kafka/worker/ClickHouse/WADS 数据面继续保留；未完成项不得新增 PocketBase、tenant、VictoriaMetrics、DatasetProvider 或 target/network-device 双身份依赖。Flow 单域化和 QueryGateway 收敛只在 KISS-06 独立切片执行，禁止借机重写 decoder。
 
+> **存储归属更正：** Flow 业务事实的写入与查询已经以 ClickHouse 为唯一数据面，不存在 Flow 从 VM 迁移到 CH 的新任务。本文旧记录中已完成的 VictoriaMetrics 测试只代表当时 collector/worker 自监控指标的历史证据，不能继续作为目标架构或新增 VM 工作；所有未完成的 VM 集成项取消。SNMP/system/agent 时序写入与查询统一迁入 ClickHouse，由 KISS-03 承载；Flow 仅在 KISS-06 删除外围 provider/tenant 接线并保持现有 CH 契约。
+
 > **当前 Storage V2 基线**：[Flow Storage V2 重大变更设计与实施计划](flow-storage-v2-change-plan.md) 已完成生产实现并提交。未勾选项仅保留真实组合故障、维护窗口、固定硬件性能和物理删除等发布/破坏性门禁；它们继续 fail closed，但不阻塞使用现行 V2 契约推进独立查询切片。禁止恢复旧 30 天 TTL、实时 rollup 或逐记录 hash 契约。
 
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
