@@ -7,12 +7,13 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/gin-gonic/gin"
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
 // Server holds the runtime dependencies.
@@ -24,7 +25,10 @@ type Server struct {
 
 // New opens MySQL, applies the v2 baseline, and builds the router.
 func New(cfg Config) (*Server, error) {
-	db, err := sql.Open("mysql", cfg.MySQLDSN)
+	if err := ensureDatabase(cfg.MySQL.DSN); err != nil {
+		return nil, fmt.Errorf("ensure database: %w", err)
+	}
+	db, err := sql.Open("mysql", cfg.MySQL.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}
@@ -57,7 +61,7 @@ func New(cfg Config) (*Server, error) {
 
 // Run starts the HTTP listener (blocking).
 func (s *Server) Run() error {
-	return s.engine.Run(s.cfg.ListenAddr)
+	return s.engine.Run(s.cfg.Server.Listen)
 }
 
 // DB exposes the connection pool for the domain packages wired in later work packages.
@@ -65,3 +69,56 @@ func (s *Server) DB() *sql.DB { return s.db }
 
 // Close releases the database pool.
 func (s *Server) Close() error { return s.db.Close() }
+
+// ensureDatabase creates the target schema if it does not exist, so the server can
+// bootstrap from an empty MySQL instance ("空库启动") without a manual CREATE DATABASE.
+func ensureDatabase(dsn string) error {
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("parse dsn: %w", err)
+	}
+	if parsed.DBName == "" {
+		return nil
+	}
+	name := parsed.DBName
+	if !validDatabaseName(name) {
+		return fmt.Errorf("database name %q contains unsupported characters", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	target, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return err
+	}
+	err = target.PingContext(ctx)
+	_ = target.Close()
+	if err == nil {
+		return nil
+	}
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1049 {
+		return err
+	}
+
+	parsed.DBName = ""
+	admin, err := sql.Open("mysql", parsed.FormatDSN())
+	if err != nil {
+		return err
+	}
+	defer admin.Close()
+	_, err = admin.ExecContext(ctx,
+		"CREATE DATABASE IF NOT EXISTS `"+name+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	return err
+}
+
+func validDatabaseName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '$' {
+			return false
+		}
+	}
+	return true
+}

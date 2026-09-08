@@ -6,7 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -79,8 +79,8 @@ func (s *Server) setAuthCookies(c *gin.Context, token, csrf string) {
 	secure := c.Request.TLS != nil
 	maxAge := int(sessionTTL.Seconds())
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(sessionCookie, token, maxAge, "/", "", secure, true)  // HttpOnly
-	c.SetCookie(csrfCookie, csrf, maxAge, "/", "", secure, false)     // readable by JS (double-submit)
+	c.SetCookie(sessionCookie, token, maxAge, "/", "", secure, true) // HttpOnly
+	c.SetCookie(csrfCookie, csrf, maxAge, "/", "", secure, false)    // readable by JS (double-submit)
 }
 
 func (s *Server) clearAuthCookies(c *gin.Context) {
@@ -115,8 +115,11 @@ func (s *Server) EnsureFirstAdmin(ctx context.Context) error {
 	if bootstrapped {
 		return nil
 	}
-	username := getenv("WATCHDOG_ADMIN_USERNAME", "admin")
-	password := os.Getenv("WATCHDOG_ADMIN_PASSWORD")
+	username := strings.TrimSpace(s.cfg.Admin.Username)
+	if username == "" {
+		username = "admin"
+	}
+	password := s.cfg.Admin.Password
 	generated := false
 	if password == "" {
 		password = randomToken()[:16]

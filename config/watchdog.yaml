@@ -1,0 +1,37 @@
+# Watchdog v2 (KISS) configuration — single YAML shared by the server and flow workers.
+# Frontend and backend are separate builds: the server never serves static files.
+# Only two persistent authorities: MySQL (management) and ClickHouse (time-series + log/alert).
+# Kafka is RawFlow transport only. Secrets may be overridden by env (WATCHDOG_MYSQL_DSN,
+# WATCHDOG_ADMIN_PASSWORD) instead of being committed here.
+
+server:
+  listen: "127.0.0.1:8091"          # the single API_URL the frontend points at
+  origins:                          # CORS allowlist for the separate frontend build
+    - "http://127.0.0.1:8090"
+
+mysql:                              # the only mutable-management authority
+  dsn: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"
+
+clickhouse:                         # flow facts + SNMP/system time-series + log/alert
+  address: "127.0.0.1:9000"
+  database: "watchdog_flow"
+  username: "default"
+  password_file: ""                 # path to a file holding the CH password; empty for none
+
+kafka:                              # RawFlow transport (buffering/replay only)
+  brokers:
+    - "127.0.0.1:9092"
+  topic: "watchdog.flow.raw"
+  consumer_group: "watchdog-flow-worker"
+  sasl_username: ""
+  sasl_password_file: ""
+
+flow:                               # explicit global retention/downsample policy
+  retention_raw_days: 365           # keep raw flow at full precision (~1 year)
+  downsample_after_days: 365        # downsample only after this age (no hardcoded 30 days)
+  rollup_1m_days: 180
+  rollup_1h_days: 400
+
+admin:                              # first-run bootstrap only; ignored once an admin exists
+  username: "admin"
+  password: ""                      # empty -> a random password is generated and logged once

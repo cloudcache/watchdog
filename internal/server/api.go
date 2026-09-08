@@ -12,6 +12,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
+var errVersionConflict = errors.New("row version conflict")
+
 func pageParams(c *gin.Context) (int, int) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
@@ -50,6 +52,10 @@ func ifMatch(c *gin.Context) (uint64, bool, error) {
 }
 
 func writeSQLError(c *gin.Context, err error) {
+	if errors.Is(err, errVersionConflict) {
+		fail(c, http.StatusPreconditionFailed, "version_conflict", "record changed since it was loaded")
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		fail(c, http.StatusNotFound, "not_found", "record not found")
 		return
@@ -75,4 +81,3 @@ func principalUserID(c *gin.Context) any {
 	}
 	return nil
 }
-

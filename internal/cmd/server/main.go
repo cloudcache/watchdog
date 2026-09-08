@@ -4,19 +4,25 @@
 package main
 
 import (
+	"flag"
 	"log"
 
 	"github.com/cloudcache/watchdog/internal/server"
 )
 
 func main() {
-	cfg := server.LoadConfig()
+	configPath := flag.String("config", "", "path to watchdog server YAML configuration")
+	flag.Parse()
+	cfg, err := server.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("watchdog-server: configuration failed: %v", err)
+	}
 	srv, err := server.New(cfg)
 	if err != nil {
 		log.Fatalf("watchdog-server: startup failed: %v", err)
 	}
 	defer srv.Close()
-	log.Printf("watchdog-server listening on %s (mysql applied, install status ready)", cfg.ListenAddr)
+	log.Printf("watchdog-server listening on %s (mysql applied, install status ready)", cfg.Server.Listen)
 	if err := srv.Run(); err != nil {
 		log.Fatalf("watchdog-server: %v", err)
 	}

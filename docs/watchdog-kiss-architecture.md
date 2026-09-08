@@ -321,7 +321,10 @@ HTTP API 只按领域暴露：
 | `/api/v1/session/*` | login/logout/current/password change；无默认后台登录请求 |
 | `/api/v1/users`, `/roles`, `/permissions` | 全局 RBAC |
 | `/api/v1/devices/{id}/...` | device、port、IP、BGP、health、switching、inventory、events |
-| `/api/v1/agents/{id}/...` | enrollment、binding、plan、ack、runs |
+| `/api/v1/snmp/profiles` | SNMP profile CRUD；列表不返回 security，详情仅授权设备管理员读取 |
+| `/api/v1/agents`, `/api/v1/agents/{id}` | agent 管理 CRUD、binding 与 run 列表（用户 session + `agent.view/manage`） |
+| `/api/v1/agents/enrollment-tokens`, `/api/v1/agents/register` | 管理员签发一次性 enrollment secret；agent 消费后仅返回一次 machine token |
+| `/api/v1/agents/{id}/{heartbeat,status,errors}` | agent token/Bearer 认证的运行面入口，不接受用户 session 代替 machine credential |
 | `/api/v1/address-library/...` | import、draft、preview、publish、rollback、status |
 | `/api/v1/flow/query` | Explorer typed query |
 | `/api/v1/flow/reports/{overview,dimensions,source,destination,overseas,vpn}` | 固定运营报表 |
@@ -330,6 +333,8 @@ HTTP API 只按领域暴露：
 | `/api/v1/jobs`, `/audit`, `/exports` | 统一异步操作和审计 |
 
 删除通用 `/query` 的 `dataset/provider/tenant` envelope。保留现有 Flow typed compiler、能力白名单、扫描预算、全有或全无响应和 report composition；它们下沉为 Flow 域内部实现。设备指标使用固定 metric allowlist 的 `MetricQueryService`。
+
+设备管理的唯一权威路径是 `/api/v1/devices`，`host` 唯一且是创建时唯一必填身份字段。现有 UI 迁移期间的 `/api/v1/network/devices`、`/api/v1/targets` 和 `/api/v1/agent-registry` 仅为同一 Gin handler/repository 的 URL/DTO alias：其中 `target_id == device_id`，旧 `system` 类型只在 DTO 边界映射为新 `host`，不创建 `targets`、`network_devices` 或 `target_agents` 兼容表，也不双写。前端切换到 canonical path 后删除这些 alias。
 
 前端是独立 npm 构建，只读取一个 `WATCHDOG_CONFIG.API_URL`。`npm run dev` 直接调用配置的 API；生产是否由 Go 同进程提供 `dist` 只是部署便利，不引入第二个 HUB_URL、同源 proxy 或专用 static server。收到受控 API 的 401 或用户主动点击登录时才显示/提交登录，不在应用启动时尝试认证。去 PB 只替换 transport、auth state 和数据获取；现有路由、导航、页面布局、主题、组件、图标和交互保持不变。该切片只做 API/认证功能测试，不增加视觉测试。
 

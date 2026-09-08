@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -57,11 +56,22 @@ func (s *Server) newRouter() *gin.Engine {
 
 	auth.GET("/permissions", s.requirePermission("role.view"), s.listPermissions)
 
-	// --- scaffolds for later work packages (authenticated) ---
-	todoCRUD(auth.Group("/devices"), s)
+	// Inventory: a single device row is the root. The network/target aliases
+	// below serve the current UI while preserving that one identity in MySQL.
+	devices := auth.Group("/devices")
+	devices.GET("", s.requirePermission("device.view"), s.listDevices)
+	devices.POST("", s.requirePermission("device.create"), s.createDevice)
+	devices.GET("/:id", s.requirePermission("device.view"), s.getDevice)
+	devices.PATCH("/:id", s.requirePermission("device.update"), s.updateDevice)
+	devices.DELETE("/:id", s.requirePermission("device.delete"), s.deleteDevice)
 	todoCRUD(auth.Group("/device-groups"), s)
 	todoCRUD(auth.Group("/locations"), s)
-	todoCRUD(auth.Group("/snmp-profiles"), s)
+	profiles := auth.Group("/snmp-profiles")
+	profiles.GET("", s.requirePermission("device.view"), s.listSNMPProfiles)
+	profiles.POST("", s.requirePermission("device.update"), s.createSNMPProfile)
+	profiles.GET("/:id", s.requirePermission("device.update"), s.getSNMPProfile)
+	profiles.PATCH("/:id", s.requirePermission("device.update"), s.updateSNMPProfile)
+	profiles.DELETE("/:id", s.requirePermission("device.update"), s.deleteSNMPProfile)
 	dev := auth.Group("/devices/:id")
 	dev.GET("/ports", s.todo)
 	dev.GET("/addresses", s.todo)
@@ -70,16 +80,58 @@ func (s *Server) newRouter() *gin.Engine {
 	dev.GET("/events", s.todo)
 	todoCRUD(auth.Group("/billing/accounts"), s)
 	todoCRUD(auth.Group("/billing/parties"), s)
-	todoCRUD(auth.Group("/agents"), s)
+
+	// Agent registration and heartbeats use agent credentials, not a user
+	// session. Administrative registry operations remain RBAC protected.
+	api.POST("/agents/register", s.enrollAgent)
+	api.POST("/agents/:id/heartbeat", s.agentHeartbeat)
+	api.POST("/agents/:id/status", s.recordAgentStatus)
+	api.POST("/agents/:id/errors", s.recordAgentStatus)
+	agents := auth.Group("/agents")
+	agents.GET("", s.requirePermission("agent.view"), s.listAgents)
+	agents.POST("", s.requirePermission("agent.manage"), s.createAgent)
+	agents.POST("/enrollment-tokens", s.requirePermission("agent.manage"), s.createEnrollmentToken)
+	agents.GET("/:id", s.requirePermission("agent.view"), s.getAgent)
+	agents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
+	agents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
+	agents.GET("/:id/runs", s.requirePermission("agent.view"), s.listAgentRuns)
+
+	// Temporary URL/DTO aliases for the existing UI. They call the canonical
+	// repositories above and never touch the removed targets/target_agents tables.
+	legacyNetwork := auth.Group("/network/devices")
+	legacyNetwork.GET("", s.requirePermission("device.view"), s.listNetworkDevices)
+	legacyNetwork.POST("", s.requirePermission("device.create"), s.createDevice)
+	legacyNetwork.GET("/summary", s.requirePermission("device.view"), s.listDeviceSummaries)
+	legacyNetwork.GET("/:id", s.requirePermission("device.view"), s.getDevice)
+	legacyNetwork.PATCH("/:id", s.requirePermission("device.update"), s.updateDevice)
+	legacyNetwork.DELETE("/:id", s.requirePermission("device.delete"), s.deleteDevice)
+	legacyNetwork.GET("/:id/delete-preview", s.requirePermission("device.delete"), s.deviceDeletePreview)
+	legacyNetwork.PATCH("/:id/snmp", s.requirePermission("device.update"), s.patchDeviceSNMP)
+	targets := auth.Group("/targets")
+	targets.GET("", s.requirePermission("device.view"), s.listTargets)
+	targets.POST("", s.requirePermission("device.create"), s.createDevice)
+	targets.GET("/:id", s.requirePermission("device.view"), s.getTarget)
+	targets.PATCH("/:id", s.requirePermission("device.update"), s.updateTarget)
+	targets.DELETE("/:id", s.requirePermission("device.delete"), s.deleteDevice)
+	snmpProfiles := auth.Group("/snmp/profiles")
+	snmpProfiles.GET("", s.requirePermission("device.view"), s.listSNMPProfiles)
+	snmpProfiles.POST("", s.requirePermission("device.update"), s.createSNMPProfile)
+	snmpProfiles.GET("/:id", s.requirePermission("device.update"), s.getSNMPProfile)
+	snmpProfiles.PATCH("/:id", s.requirePermission("device.update"), s.updateSNMPProfile)
+	snmpProfiles.DELETE("/:id", s.requirePermission("device.update"), s.deleteSNMPProfile)
+	legacyAgents := auth.Group("/agent-registry")
+	legacyAgents.GET("", s.requirePermission("agent.view"), s.listAgents)
+	legacyAgents.POST("", s.requirePermission("agent.manage"), s.createAgent)
+	legacyAgents.GET("/:id", s.requirePermission("agent.view"), s.getAgent)
+	legacyAgents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
+	legacyAgents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
+	legacyAgents.GET("/:id/runs", s.requirePermission("agent.view"), s.listAgentRuns)
 	todoCRUD(auth.Group("/alerts/channels"), s)
 	todoCRUD(auth.Group("/alerts/quiet-hours"), s)
 	auth.GET("/jobs", s.todo)
 	auth.GET("/audit", s.todo)
 	auth.GET("/exports", s.todo)
 
-	if s.cfg.StaticDir != "" {
-		r.NoRoute(s.spaFallback)
-	}
 	return r
 }
 
@@ -117,13 +169,9 @@ func (s *Server) todo(c *gin.Context) {
 	})
 }
 
-func (s *Server) spaFallback(c *gin.Context) {
-	c.File(filepath.Join(s.cfg.StaticDir, "index.html"))
-}
-
 func (s *Server) cors() gin.HandlerFunc {
-	allowed := make(map[string]bool, len(s.cfg.AllowedOrigins))
-	for _, o := range s.cfg.AllowedOrigins {
+	allowed := make(map[string]bool, len(s.cfg.Server.Origins))
+	for _, o := range s.cfg.Server.Origins {
 		allowed[o] = true
 	}
 	return func(c *gin.Context) {
@@ -132,8 +180,8 @@ func (s *Server) cors() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, If-Match, X-CSRF-Token")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, X-CSRF-Token, X-Watchdog-Agent-Token, X-Request-ID")
 			c.Header("Access-Control-Expose-Headers", "ETag, X-Request-ID")
 		}
 		if c.Request.Method == http.MethodOptions {
