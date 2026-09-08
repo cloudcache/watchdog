@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03C AddressSnap builder 内存、swap 与多租户回归。** scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK、便捷运营商 typed query 以及真实 113 万行 GeoLite2-ASN object/build/lookup 基线均已关闭；下一步压缩仍为 1,015.8 MiB 的 builder 中间态，并补 atomic swap pause/多租户容量和 reader-first→writer cutover 回归。历史重分类仍由 FLOW-06B 独立交付，不和本切片混改。
+**活动切片：FLOW-05F 异步联合索引。** FLOW-03C 当前默认租户下的 AddressSnap 全局 owner/管理员权限、scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK、便捷运营商 typed query 和真实 113 万行性能门禁已关闭；错误的 per-tenant AddressSnap 容量假设已撤销。第二业务 tenant 的共享 dimension 引用是条件性前置，单列且不得复制 WADS。下一步只冻结长周期常用组合的 index generation/operation job/query fallback，不混入历史重分类。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -293,7 +293,10 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
     - [x] **当前事实/默认查询绑定**：WADS loader 已把 supplier/customer ISP 独立写入 fact；便捷运营商查询不再展开 ASN，只提交稳定 operator ID。服务端冻结 event-time publication/snapshot/classification 集合，要求全部 active flow worker 已 installed 后注入 customer `remote_isp_id` typed predicate；prepared 参数进入查询/导出 hash/provenance/audit，篡改、缺版本、零 worker或部分 ACK fail closed。真实 MySQL 与单元/前端门禁已覆盖，复用 059，无新 migration。
     - [ ] **历史新口径绑定**：由 FLOW-06B reclassification generation 读取指定 AddressSnap 重算 raw 窗口，以 Kafka 坐标和 count/counter 守恒后切换；不在默认查询里临时改写历史。
-  - [ ] **性能**：真实 GeoLite2-ASN 已记录 WADS 4,291,552 bytes、worker compile 85ms/71.5 MiB、lookup 9.59M/s、p95 375ns/p99 1.083µs，证明无需 DIR-24-8；builder 为 9m16.262s/1,015.8 MiB，单遍 canonical merge + layer 引用已较 1,630.7 MiB 降约 37.7%，仍须完成紧凑 source 中间表示/有界外排、atomic swap pause 与多 tenant 容量。
+  - [x] **性能（object/build/lookup）**：真实 GeoLite2-ASN 的 WADS 为 4,291,551 bytes，worker compile 82ms/75.6 MiB，lookup 10.25M/s、p95 292ns/p99 500ns，证明无需 DIR-24-8。builder 经单遍 canonical merge、layer 引用、共享 Geo 紧凑行、精确容量和 migration 060 keyset 索引，从 9m04.618s/1,630.7 MiB 降至 28.292s/457.5 MiB；嵌套 LPM、产物计数与抽样结果保持一致。
+  - [x] **性能（平台单例/swap）**：真实 WADS 只安装一份，retained heap 约 48.0 MiB；并发 ingest lookup 时 catalog install pointer pause 17.791µs，观测到的最大 lookup 64.25µs。AddressSnap 是全平台共享发布物，禁止按业务 tenant 复制，原 1/4/16 tenant 容量门禁已废除；swap <10ms、并发 lookup <100ms 的门禁保留。
+  - [x] **平台单例 owner/权限修正**：当前用户模型实际是多 tenant membership + tenant-scoped `admin`，尚无 platform-admin；`address_library.owner_tenant_id` 将管理表固定到当前默认 `tenant_dev` 全局命名空间。地址维护/运算 preview/发布/GC 只允许 owner admin，其他已认证用户统一只读 owner 数据，其他 tenant admin 写入 403；`/api/v1/me` 返回服务端派生的 `can_manage_address_library`，前端用同一能力隐藏入口并阻断所有维护页直达路由，后端仍是最终授权边界。trusted signing key 也必须属于 owner。配置、API 路由、共享 owner repository scope、前端 41 项单测及 production build 已覆盖，发布仍走可查询的异步 operation job。
+  - [ ] **第二业务 tenant 前置（不得冒充当前已完成）**：migration 059 的 `(tenant_id,dimension_snapshot_id)` 外键、pair 签名和 worker catalog 仍把 classification tenant 与 AddressSnap tenant 绑定。接入第二 tenant 前以前向 migration/wire 升级为“tenant classification 引用全局 owner snapshot”，同一进程只 decode/compile/retain 一份 WADS，多个 classification 引用该指针；ACK/查询版本门禁仍按 worker + pair。禁止复制同 checksum snapshot/WADS 规避关系模型。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。

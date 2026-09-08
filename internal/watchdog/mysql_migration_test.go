@@ -111,14 +111,14 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "059" {
+	if len(first.Applied) != len(readWatchdogMigrations(t)) || first.CurrentVersion != "060" {
 		t.Fatalf("first migration result = %#v", first)
 	}
 	second, err := ApplyMySQLMigrations(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Applied) != 0 || second.CurrentVersion != "059" {
+	if len(second.Applied) != 0 || second.CurrentVersion != "060" {
 		t.Fatalf("second migration result = %#v", second)
 	}
 	if err := CheckMySQLSchemaCurrent(context.Background(), db); err != nil {
@@ -175,6 +175,17 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	}
 	if hostIdentityIndexCount != 3 {
 		t.Fatalf("target host identity index column count = %d, want 3", hostIdentityIndexCount)
+	}
+	var addressPublishIndexColumns int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = 'address_base_prefixes'
+		  AND index_name = 'idx_address_base_publish_scan'
+	`).Scan(&addressPublishIndexColumns); err != nil {
+		t.Fatal(err)
+	}
+	if addressPublishIndexColumns != 6 {
+		t.Fatalf("AddressSnap publication scan index column count = %d, want 6", addressPublishIndexColumns)
 	}
 	for _, column := range []string{"auth_provider", "external_subject_id"} {
 		var nullable string

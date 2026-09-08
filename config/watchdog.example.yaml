@@ -36,6 +36,9 @@ export:
 
 address_library:
   dir: "address-artifacts"
+  # The address library is a platform singleton. Only this tenant's admin may
+  # edit/publish it; all authenticated tenants read the same published data.
+  owner_tenant_id: "tenant_dev"
   max_upload_bytes: 2147483648
   max_snapshot_bytes: 536870912
   import_batch_size: 1000
@@ -44,9 +47,9 @@ address_library:
   object_gc_interval: 5m
   object_gc_batch: 100
   # Approval private keys stay outside Watchdog. This process loads only the
-  # tenant-scoped Ed25519 public keys at startup (SubjectPublicKeyInfo PEM).
+  # owner-scoped Ed25519 public keys at startup (SubjectPublicKeyInfo PEM).
   trusted_keys: []
-  # - tenant_id: "tenant_example"
+  # - tenant_id: "tenant_dev"
   #   key_id: "address-publisher-2026"
   #   public_key_file: "/etc/watchdog/address-publisher-2026.pub.pem"
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { calculateFilterPopoverPosition } from "./vtable.ts"
+import { calculateFilterPopoverPosition } from "./vtable-position.ts"
 
 test("positions a filter below its header when there is room", () => {
 	assert.deepEqual(

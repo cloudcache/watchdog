@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS `address_base_prefixes` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_address_base_import_cidr` (`import_id`,`cidr`),
   KEY `idx_address_base_lookup` (`tenant_id`,`import_id`,`family`,`ip_start`),
+  KEY `idx_address_base_publish_scan` (`tenant_id`,`import_id`,`family`,`ip_start`,`prefix_length`,`id`),
   KEY `idx_address_base_country` (`tenant_id`,`import_id`,`country_code`,`family`,`ip_start`),
   KEY `idx_address_base_asn` (`tenant_id`,`import_id`,`asn`,`family`,`ip_start`),
   CONSTRAINT `fk_address_base_import` FOREIGN KEY (`tenant_id`,`import_id`) REFERENCES `address_imports` (`tenant_id`,`id`) ON DELETE CASCADE,

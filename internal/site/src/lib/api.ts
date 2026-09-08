@@ -26,6 +26,8 @@ pb.send = ((path: string, options = {}) => {
 const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
 
 export const isAdmin = () => watchdogDevAuth || $platformIdentity.get().current?.isAdmin === true
+export const canManageAddressLibrary = () =>
+	watchdogDevAuth || $platformIdentity.get().current?.canManageAddressLibrary === true
 export const isReadOnlyUser = () => {
 	if (watchdogDevAuth) {
 		return false
@@ -60,7 +62,14 @@ export async function refreshWatchdogIdentity() {
 		$platformIdentity.set({
 			ready: true,
 			tenants: [{ id: "development", name: "Development", status: "active" }],
-			current: { tenantID: "development", userID: "development", roleIDs: [], grants: [], isAdmin: true },
+			current: {
+				tenantID: "development",
+				userID: "development",
+				roleIDs: [],
+				grants: [],
+				isAdmin: true,
+				canManageAddressLibrary: true,
+			},
 		})
 		return
 	}
@@ -114,6 +123,7 @@ function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformA
 			})
 		),
 		isAdmin: Boolean(value.is_admin ?? value.IsAdmin),
+		canManageAddressLibrary: Boolean(value.can_manage_address_library ?? value.CanManageAddressLibrary),
 	}
 }
 

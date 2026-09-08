@@ -24,6 +24,7 @@ export:
 
 address_library:
   dir: "address-artifacts"
+  owner_tenant_id: "tenant_dev"
   max_upload_bytes: 2147483648
   max_snapshot_bytes: 536870912
   import_batch_size: 1000

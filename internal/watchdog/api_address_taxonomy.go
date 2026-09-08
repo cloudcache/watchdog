@@ -14,25 +14,25 @@ type addressTaxonomyAPI struct {
 	repo AddressTaxonomyRepository
 }
 
-func registerAddressTaxonomyRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo AddressTaxonomyRepository) {
+func registerAddressTaxonomyRoutes(mux *http.ServeMux, viewAuth, adminAuth func(http.Handler) http.Handler, repo AddressTaxonomyRepository) {
 	api := addressTaxonomyAPI{repo: repo}
 	view := RequirePermission(ActionView, TenantResource)
 	configure := RequirePermission(ActionConfigure, TenantResource)
-	mux.Handle("GET /api/v1/geo/dictionary", auth(view(http.HandlerFunc(api.listGeo))))
-	mux.Handle("POST /api/v1/geo/dictionary", auth(configure(http.HandlerFunc(api.createGeo))))
-	mux.Handle("GET /api/v1/geo/dictionary/{id}", auth(view(http.HandlerFunc(api.getGeo))))
-	mux.Handle("PATCH /api/v1/geo/dictionary/{id}", auth(configure(http.HandlerFunc(api.updateGeo))))
-	mux.Handle("DELETE /api/v1/geo/dictionary/{id}", auth(configure(http.HandlerFunc(api.deleteGeo))))
-	mux.Handle("GET /api/v1/network/operators", auth(view(http.HandlerFunc(api.listOperators))))
-	mux.Handle("POST /api/v1/network/operators", auth(configure(http.HandlerFunc(api.createOperator))))
-	mux.Handle("GET /api/v1/network/operators/{id}", auth(view(http.HandlerFunc(api.getOperator))))
-	mux.Handle("PATCH /api/v1/network/operators/{id}", auth(configure(http.HandlerFunc(api.updateOperator))))
-	mux.Handle("DELETE /api/v1/network/operators/{id}", auth(configure(http.HandlerFunc(api.deleteOperator))))
-	mux.Handle("GET /api/v1/geo/lines", auth(view(http.HandlerFunc(api.listLines))))
-	mux.Handle("POST /api/v1/geo/lines", auth(configure(http.HandlerFunc(api.createLine))))
-	mux.Handle("GET /api/v1/geo/lines/{id}", auth(view(http.HandlerFunc(api.getLine))))
-	mux.Handle("PATCH /api/v1/geo/lines/{id}", auth(configure(http.HandlerFunc(api.updateLine))))
-	mux.Handle("DELETE /api/v1/geo/lines/{id}", auth(configure(http.HandlerFunc(api.deleteLine))))
+	mux.Handle("GET /api/v1/geo/dictionary", viewAuth(view(http.HandlerFunc(api.listGeo))))
+	mux.Handle("POST /api/v1/geo/dictionary", adminAuth(configure(http.HandlerFunc(api.createGeo))))
+	mux.Handle("GET /api/v1/geo/dictionary/{id}", viewAuth(view(http.HandlerFunc(api.getGeo))))
+	mux.Handle("PATCH /api/v1/geo/dictionary/{id}", adminAuth(configure(http.HandlerFunc(api.updateGeo))))
+	mux.Handle("DELETE /api/v1/geo/dictionary/{id}", adminAuth(configure(http.HandlerFunc(api.deleteGeo))))
+	mux.Handle("GET /api/v1/network/operators", viewAuth(view(http.HandlerFunc(api.listOperators))))
+	mux.Handle("POST /api/v1/network/operators", adminAuth(configure(http.HandlerFunc(api.createOperator))))
+	mux.Handle("GET /api/v1/network/operators/{id}", viewAuth(view(http.HandlerFunc(api.getOperator))))
+	mux.Handle("PATCH /api/v1/network/operators/{id}", adminAuth(configure(http.HandlerFunc(api.updateOperator))))
+	mux.Handle("DELETE /api/v1/network/operators/{id}", adminAuth(configure(http.HandlerFunc(api.deleteOperator))))
+	mux.Handle("GET /api/v1/geo/lines", viewAuth(view(http.HandlerFunc(api.listLines))))
+	mux.Handle("POST /api/v1/geo/lines", adminAuth(configure(http.HandlerFunc(api.createLine))))
+	mux.Handle("GET /api/v1/geo/lines/{id}", viewAuth(view(http.HandlerFunc(api.getLine))))
+	mux.Handle("PATCH /api/v1/geo/lines/{id}", adminAuth(configure(http.HandlerFunc(api.updateLine))))
+	mux.Handle("DELETE /api/v1/geo/lines/{id}", adminAuth(configure(http.HandlerFunc(api.deleteLine))))
 }
 
 type geoDictionaryInput struct {

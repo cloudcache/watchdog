@@ -29,13 +29,14 @@ type apiErrorResponse struct {
 }
 
 type AuthContext struct {
-	TenantID         ID           `json:"tenant_id"`
-	UserID           ID           `json:"user_id"`
-	RoleIDs          []ID         `json:"role_ids"`
-	Grants           []Permission `json:"grants"`
-	IsAdmin          bool         `json:"is_admin"`
-	ExternalSubject  string       `json:"-"`
-	AvailableTenants []Tenant     `json:"-"`
+	TenantID                ID           `json:"tenant_id"`
+	UserID                  ID           `json:"user_id"`
+	RoleIDs                 []ID         `json:"role_ids"`
+	Grants                  []Permission `json:"grants"`
+	IsAdmin                 bool         `json:"is_admin"`
+	CanManageAddressLibrary bool         `json:"can_manage_address_library"`
+	ExternalSubject         string       `json:"-"`
+	AvailableTenants        []Tenant     `json:"-"`
 }
 
 type AuthAdapterError struct {
@@ -60,6 +61,39 @@ func AuthFromContext(ctx context.Context) (AuthContext, bool) {
 }
 
 type AuthContextAdapter func(*http.Request) (AuthContext, error)
+
+// addressLibraryAuthAdapters expose one platform AddressSnap through the
+// configured owner tenant. Every authenticated tenant may read the shared
+// taxonomy; only an admin of the owner tenant may mutate or publish it.
+func addressLibraryAuthAdapters(auth AuthContextAdapter, ownerTenantID ID) (AuthContextAdapter, AuthContextAdapter) {
+	if auth == nil || ownerTenantID == "" {
+		return auth, auth
+	}
+	view := func(r *http.Request) (AuthContext, error) {
+		selected, err := auth(r)
+		if err != nil {
+			return AuthContext{}, err
+		}
+		selected.TenantID = ownerTenantID
+		selected.IsAdmin = false
+		selected.Grants = append(append([]Permission(nil), selected.Grants...), Permission{
+			TenantID: ownerTenantID, SubjectType: SubjectUser, SubjectID: selected.UserID,
+			ResourceType: ResourceTenant, ResourceID: ownerTenantID, Actions: []Action{ActionView},
+		})
+		return selected, nil
+	}
+	admin := func(r *http.Request) (AuthContext, error) {
+		selected, err := auth(r)
+		if err != nil {
+			return AuthContext{}, err
+		}
+		if selected.TenantID != ownerTenantID || !selected.IsAdmin {
+			return AuthContext{}, authAdapterError(http.StatusForbidden, APIErrorPermissionDenied, "Address library owner administrator required")
+		}
+		return selected, nil
+	}
+	return view, admin
+}
 
 func AuthMiddleware(adapter AuthContextAdapter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

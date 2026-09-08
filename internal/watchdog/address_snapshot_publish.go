@@ -222,10 +222,22 @@ func getAddressSnapshotByBuildJobTx(ctx context.Context, tx *sql.Tx, scope Dimen
 
 type addressSnapshotImportPrefix struct {
 	id           uint64
-	prefix       netip.Prefix
+	bits         uint8
+	start        netip.Addr
+	end          netip.Addr
+	geo          *flowdimension.AddressSnapshotBuildGeo
 	supplierKey  string
 	supplierName string
-	value        flowdimension.AddressSnapshotBuildRange
+	ispID        uint16
+	asn          uint32
+}
+
+func (p addressSnapshotImportPrefix) buildRange() flowdimension.AddressSnapshotBuildRange {
+	value := flowdimension.AddressSnapshotBuildRange{Start: p.start, End: p.end, ISPID: p.ispID, ASN: p.asn}
+	if p.geo != nil {
+		value.Geo = *p.geo
+	}
+	return value
 }
 
 type addressSnapshotLoadedSource struct {
@@ -266,8 +278,8 @@ func (p *MySQLAddressDimensionPublisher) loadAddressSnapshotBuildSources(ctx con
 				if item.supplierName < evidence.name {
 					evidence.name = item.supplierName
 				}
-				if item.value.ASN != 0 {
-					evidence.asns[item.value.ASN] = struct{}{}
+				if item.asn != 0 {
+					evidence.asns[item.asn] = struct{}{}
 				}
 			}
 		}
@@ -281,7 +293,7 @@ func (p *MySQLAddressDimensionPublisher) loadAddressSnapshotBuildSources(ctx con
 	for _, source := range loaded {
 		for index := range source.prefixes {
 			if source.manifest.Slot != AddressImportSlotGeo && source.prefixes[index].supplierKey != "" {
-				source.prefixes[index].value.ISPID = supplierIDs[source.prefixes[index].supplierKey]
+				source.prefixes[index].ispID = supplierIDs[source.prefixes[index].supplierKey]
 			}
 		}
 		ranges, err := normalizeAddressSnapshotImportPrefixes(source.prefixes)
@@ -407,6 +419,7 @@ func (p *MySQLAddressDimensionPublisher) loadAddressSnapshotImportPrefixes(ctx c
 	var cursorBits uint8
 	var cursorID uint64
 	var count4, count6 uint64
+	geoValues := make(map[flowdimension.AddressSnapshotBuildGeo]*flowdimension.AddressSnapshotBuildGeo)
 	for {
 		query := `SELECT ` + columns + ` FROM address_base_prefixes WHERE tenant_id = ? AND import_id = ?`
 		args := []any{tenantID, source.ImportID}
@@ -438,11 +451,21 @@ func (p *MySQLAddressDimensionPublisher) loadAddressSnapshotImportPrefixes(ctx c
 				return nil, 0, 0, err
 			}
 			geo := registerAddressSnapshotSupplierGeo(geoNodes, continent, country, countryName, subdivision, subdivisionName, city, cityName)
+			var geoValue *flowdimension.AddressSnapshotBuildGeo
+			if geo != (flowdimension.AddressSnapshotBuildGeo{}) {
+				geoValue = geoValues[geo]
+				if geoValue == nil {
+					copy := geo
+					geoValue = &copy
+					geoValues[geo] = geoValue
+				}
+			}
 			start, end := addressSnapshotPrefixRange(prefix)
 			operatorName = strings.TrimSpace(operatorName)
-			all = append(all, addressSnapshotImportPrefix{id: id, prefix: prefix, supplierKey: canonicalAddressSnapshotSupplierKey(operatorName), supplierName: operatorName, value: flowdimension.AddressSnapshotBuildRange{
-				Start: start, End: end, Geo: geo, ASN: asn,
-			}})
+			all = append(all, addressSnapshotImportPrefix{
+				id: id, bits: bits, start: start, end: end, geo: geoValue,
+				supplierKey: canonicalAddressSnapshotSupplierKey(operatorName), supplierName: operatorName, asn: asn,
+			})
 			if family == 4 {
 				count4++
 			} else {
@@ -541,8 +564,8 @@ type addressSnapshotPrefixHeap struct {
 func (h addressSnapshotPrefixHeap) Len() int { return len(h.items) }
 func (h addressSnapshotPrefixHeap) Less(i, j int) bool {
 	left, right := h.prefixes[h.items[i]], h.prefixes[h.items[j]]
-	if left.prefix.Bits() != right.prefix.Bits() {
-		return left.prefix.Bits() > right.prefix.Bits()
+	if left.bits != right.bits {
+		return left.bits > right.bits
 	}
 	return left.id > right.id
 }
@@ -569,7 +592,7 @@ func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPref
 	for _, family4 := range []bool{true, false} {
 		var family []addressSnapshotImportPrefix
 		for _, item := range prefixes {
-			if item.prefix.Addr().Is4() == family4 {
+			if item.start.Is4() == family4 {
 				family = append(family, item)
 			}
 		}
@@ -578,8 +601,8 @@ func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPref
 		}
 		events := make([]addressSnapshotPrefixEvent, 0, len(family)*2)
 		for index, item := range family {
-			events = append(events, addressSnapshotPrefixEvent{address: item.value.Start, add: true, index: index})
-			if next := item.value.End.Next(); next.IsValid() {
+			events = append(events, addressSnapshotPrefixEvent{address: item.start, add: true, index: index})
+			if next := item.end.Next(); next.IsValid() {
 				events = append(events, addressSnapshotPrefixEvent{address: next, index: index})
 			}
 		}
@@ -597,7 +620,7 @@ func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPref
 		for offset := 0; offset < len(events); {
 			boundary := events[offset].address
 			if previous.IsValid() && previousTop >= 0 {
-				appendAddressSnapshotNormalizedRange(&result, previous, boundary.Prev(), family[previousTop].value)
+				appendAddressSnapshotNormalizedRange(&result, previous, boundary.Prev(), family[previousTop].buildRange())
 			}
 			for offset < len(events) && events[offset].address == boundary && !events[offset].add {
 				active[events[offset].index] = false
@@ -617,32 +640,46 @@ func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPref
 			}
 		}
 		if previous.IsValid() && previousTop >= 0 {
-			appendAddressSnapshotNormalizedRange(&result, previous, family[previousTop].value.End, family[previousTop].value)
+			appendAddressSnapshotNormalizedRange(&result, previous, family[previousTop].end, family[previousTop].buildRange())
 		}
 	}
 	return result, nil
 }
 
 func normalizeDisjointAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPrefix) ([]flowdimension.AddressSnapshotBuildRange, bool) {
-	result := make([]flowdimension.AddressSnapshotBuildRange, 0, len(prefixes))
+	mergedCount := 0
 	lastFamily := 0
 	var lastEnd netip.Addr
+	var lastValue flowdimension.AddressSnapshotBuildRange
 	for _, item := range prefixes {
-		family := item.prefix.Addr().BitLen()
+		family := item.start.BitLen()
 		if family != 32 && family != 128 {
 			return nil, false
 		}
-		if family < lastFamily || (family == lastFamily && lastEnd.IsValid() && lastEnd.Compare(item.value.Start) >= 0) {
+		if family < lastFamily || (family == lastFamily && lastEnd.IsValid() && lastEnd.Compare(item.start) >= 0) {
 			return nil, false
 		}
 		if family != lastFamily {
 			lastFamily = family
 			lastEnd = netip.Addr{}
 		}
-		appendAddressSnapshotNormalizedRange(&result, item.value.Start, item.value.End, item.value)
-		lastEnd = item.value.End
+		value := item.buildRange()
+		if !lastEnd.IsValid() || lastEnd.Next() != item.start || !sameAddressSnapshotBuildRangeValue(lastValue, value) {
+			mergedCount++
+		}
+		lastValue, lastEnd = value, item.end
+	}
+	result := make([]flowdimension.AddressSnapshotBuildRange, 0, mergedCount)
+	for _, item := range prefixes {
+		appendAddressSnapshotNormalizedRange(&result, item.start, item.end, item.buildRange())
 	}
 	return result, true
+}
+
+func sameAddressSnapshotBuildRangeValue(left, right flowdimension.AddressSnapshotBuildRange) bool {
+	left.Start, left.End = netip.Addr{}, netip.Addr{}
+	right.Start, right.End = netip.Addr{}, netip.Addr{}
+	return left == right
 }
 
 func appendAddressSnapshotNormalizedRange(result *[]flowdimension.AddressSnapshotBuildRange, start, end netip.Addr, source flowdimension.AddressSnapshotBuildRange) {
@@ -653,10 +690,7 @@ func appendAddressSnapshotNormalizedRange(result *[]flowdimension.AddressSnapsho
 	value.Start, value.End = start, end
 	if len(*result) != 0 {
 		last := &(*result)[len(*result)-1]
-		left, right := *last, value
-		left.Start, left.End = netip.Addr{}, netip.Addr{}
-		right.Start, right.End = netip.Addr{}, netip.Addr{}
-		if left == right && last.End.Next().IsValid() && last.End.Next() == start {
+		if sameAddressSnapshotBuildRangeValue(*last, value) && last.End.Next().IsValid() && last.End.Next() == start {
 			last.End = end
 			return
 		}

@@ -243,6 +243,7 @@ type ExportConfig struct {
 
 type AddressLibraryConfig struct {
 	Dir               string                             `yaml:"dir"`
+	OwnerTenantID     ID                                 `yaml:"owner_tenant_id"`
 	MaxUploadBytes    int64                              `yaml:"max_upload_bytes"`
 	MaxSnapshotBytes  int                                `yaml:"max_snapshot_bytes"`
 	ImportBatchSize   int                                `yaml:"import_batch_size"`
@@ -357,7 +358,7 @@ func defaultBackendConfig() BackendConfig {
 			Metric:            MetricSNMPIfInBps,
 		},
 		AddressLibrary: AddressLibraryConfig{
-			Dir: defaultAddressLibraryDir, MaxUploadBytes: DefaultAddressArtifactMaxBytes,
+			Dir: defaultAddressLibraryDir, OwnerTenantID: "tenant_dev", MaxUploadBytes: DefaultAddressArtifactMaxBytes,
 			MaxSnapshotBytes: defaultAddressSnapshotMaxBytes,
 			ImportBatchSize:  defaultAddressLibraryBatchSize, WorkerConcurrency: defaultAddressLibraryWorkers,
 			ObjectRetention: defaultAddressObjectRetention, ObjectGCInterval: defaultAddressObjectGCInterval,
@@ -648,6 +649,7 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	}
 	cfg.Export.Metric = getEnv("WATCHDOG_EXPORT_METRIC", cfg.Export.Metric)
 	cfg.AddressLibrary.Dir = getEnv("WATCHDOG_ADDRESS_LIBRARY_DIR", cfg.AddressLibrary.Dir)
+	cfg.AddressLibrary.OwnerTenantID = ID(getEnv("WATCHDOG_ADDRESS_LIBRARY_OWNER_TENANT_ID", string(cfg.AddressLibrary.OwnerTenantID)))
 	if cfg.AddressLibrary.MaxUploadBytes, err = getEnvInt64("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", cfg.AddressLibrary.MaxUploadBytes, 1); err != nil {
 		return err
 	}
@@ -878,6 +880,7 @@ func normalizeBackendConfig(cfg *BackendConfig) {
 	cfg.Export.Dir = strings.TrimSpace(cfg.Export.Dir)
 	cfg.Export.Metric = strings.TrimSpace(cfg.Export.Metric)
 	cfg.AddressLibrary.Dir = strings.TrimSpace(cfg.AddressLibrary.Dir)
+	cfg.AddressLibrary.OwnerTenantID = ID(strings.TrimSpace(string(cfg.AddressLibrary.OwnerTenantID)))
 	for index := range cfg.AddressLibrary.TrustedKeys {
 		key := &cfg.AddressLibrary.TrustedKeys[index]
 		key.TenantID = ID(strings.TrimSpace(string(key.TenantID)))
@@ -1006,7 +1009,7 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	if cfg.Export.Metric != MetricSNMPIfInBps && cfg.Export.Metric != MetricSNMPIfOutBps {
 		return fmt.Errorf("export.metric must be %q or %q", MetricSNMPIfInBps, MetricSNMPIfOutBps)
 	}
-	if cfg.AddressLibrary.Dir == "" || cfg.AddressLibrary.MaxUploadBytes <= 0 || cfg.AddressLibrary.MaxUploadBytes > 16<<30 ||
+	if cfg.AddressLibrary.Dir == "" || cfg.AddressLibrary.OwnerTenantID == "" || cfg.AddressLibrary.MaxUploadBytes <= 0 || cfg.AddressLibrary.MaxUploadBytes > 16<<30 ||
 		cfg.AddressLibrary.MaxSnapshotBytes <= 0 || int64(cfg.AddressLibrary.MaxSnapshotBytes) > 4<<30 ||
 		cfg.AddressLibrary.ImportBatchSize <= 0 || cfg.AddressLibrary.ImportBatchSize > maxAddressImportBatch ||
 		cfg.AddressLibrary.WorkerConcurrency <= 0 || cfg.AddressLibrary.WorkerConcurrency > 32 ||
@@ -1018,6 +1021,9 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	for _, key := range cfg.AddressLibrary.TrustedKeys {
 		if key.TenantID == "" || key.KeyID == "" || len(key.KeyID) > 128 || key.PublicKeyFile == "" {
 			return errors.New("address_library.trusted_keys require tenant_id, key_id, and public_key_file")
+		}
+		if key.TenantID != cfg.AddressLibrary.OwnerTenantID {
+			return fmt.Errorf("address_library.trusted_keys tenant %q must match owner_tenant_id %q", key.TenantID, cfg.AddressLibrary.OwnerTenantID)
 		}
 		lookup := addressDimensionTrustedKeyLookup(key.TenantID, key.KeyID)
 		if _, exists := trustedKeys[lookup]; exists {

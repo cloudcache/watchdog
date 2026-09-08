@@ -1,6 +1,9 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: VisActor VTable option and event types are unstable across minor versions.
 import * as VTable from "@visactor/vtable"
 import { InputEditor } from "@visactor/vtable-editors"
+import { calculateFilterPopoverPosition } from "./vtable-position"
+
+export { calculateFilterPopoverPosition } from "./vtable-position"
 
 export type ListTable = InstanceType<typeof VTable.ListTable>
 
@@ -713,22 +716,6 @@ function positionFilterPopover(popover: HTMLElement, anchor: { x: number; y: num
 	)
 	popover.style.left = `${Math.round(left)}px`
 	popover.style.top = `${Math.round(top)}px`
-}
-
-export function calculateFilterPopoverPosition(
-	anchor: { x: number; y: number },
-	popover: { width: number; height: number },
-	viewport: { width: number; height: number }
-): { left: number; top: number } {
-	const gutter = 8
-	const gap = 10
-	const maxLeft = Math.max(gutter, viewport.width - popover.width - gutter)
-	const left = Math.min(Math.max(gutter, anchor.x - popover.width + 20), maxLeft)
-	const below = anchor.y + gap
-	const above = anchor.y - popover.height - gap
-	const maxTop = Math.max(gutter, viewport.height - popover.height - gutter)
-	const top = below + popover.height <= viewport.height - gutter ? below : Math.min(Math.max(gutter, above), maxTop)
-	return { left, top }
 }
 
 function makeButton(text: string, className = ""): HTMLButtonElement {

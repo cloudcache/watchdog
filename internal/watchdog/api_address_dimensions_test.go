@@ -112,6 +112,41 @@ func TestAddressDimensionPreviewAndAsyncPublishAPI(t *testing.T) {
 	}
 }
 
+func TestAddressDimensionRoutesUseSharedOwnerAndOwnerAdminWrites(t *testing.T) {
+	effective := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	publisher := &fakeAddressDimensionPublisher{preview: AddressDimensionPreview{DraftDigest: digest, EffectiveFrom: effective}}
+	consumerRouter := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, nil
+		},
+		AddressLibraryOwner: "tenant-owner", AddressDimensions: publisher,
+	})
+	response := httptest.NewRecorder()
+	consumerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dimensions/address/versions", nil))
+	if response.Code != http.StatusOK || publisher.tenantID != "tenant-owner" {
+		t.Fatalf("shared owner read = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
+	}
+	publisher.tenantID = ""
+	response = httptest.NewRecorder()
+	consumerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/preview", strings.NewReader(`{"effective_from":"2026-09-07T00:00:00Z"}`)))
+	if response.Code != http.StatusForbidden || publisher.tenantID != "" {
+		t.Fatalf("consumer admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
+	}
+
+	ownerRouter := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+		},
+		AddressLibraryOwner: "tenant-owner", AddressDimensions: publisher,
+	})
+	response = httptest.NewRecorder()
+	ownerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/preview", strings.NewReader(`{"effective_from":"2026-09-07T00:00:00Z"}`)))
+	if response.Code != http.StatusOK || publisher.tenantID != "tenant-owner" {
+		t.Fatalf("owner admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
+	}
+}
+
 func TestAddressDimensionLifecycleAPIRequiresVerifiedTenantKeyAndIfMatch(t *testing.T) {
 	effective := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 	snapshot := AddressDimensionSnapshot{

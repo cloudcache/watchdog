@@ -21,7 +21,7 @@ func TestNormalizeAddressSnapshotImportPrefixesUsesLongestPrefix(t *testing.T) {
 	makePrefix := func(id uint64, cidr string, asn uint32) addressSnapshotImportPrefix {
 		prefix := netip.MustParsePrefix(cidr)
 		start, end := addressSnapshotPrefixRange(prefix)
-		return addressSnapshotImportPrefix{id: id, prefix: prefix, value: flowdimension.AddressSnapshotBuildRange{Start: start, End: end, ASN: asn}}
+		return addressSnapshotImportPrefix{id: id, bits: uint8(prefix.Bits()), start: start, end: end, asn: asn}
 	}
 	ranges, err := normalizeAddressSnapshotImportPrefixes([]addressSnapshotImportPrefix{
 		makePrefix(1, "192.0.2.0/24", 64500),
@@ -57,7 +57,7 @@ func TestNormalizeDisjointAddressSnapshotImportPrefixesCoalescesCanonicalInput(t
 	makePrefix := func(id uint64, cidr string, asn uint32) addressSnapshotImportPrefix {
 		prefix := netip.MustParsePrefix(cidr)
 		start, end := addressSnapshotPrefixRange(prefix)
-		return addressSnapshotImportPrefix{id: id, prefix: prefix, value: flowdimension.AddressSnapshotBuildRange{Start: start, End: end, ASN: asn}}
+		return addressSnapshotImportPrefix{id: id, bits: uint8(prefix.Bits()), start: start, end: end, asn: asn}
 	}
 	ranges, canonical := normalizeDisjointAddressSnapshotImportPrefixes([]addressSnapshotImportPrefix{
 		makePrefix(1, "192.0.2.0/25", 64500),
@@ -231,42 +231,6 @@ func TestMySQLAddressSnapshotBuildPublishesWADSIdempotently(t *testing.T) {
 		t.Fatalf("stable supplier operator count = %d, %v", count, err)
 	}
 
-	firstSupplierIDs := make(map[string]uint16, len(artifact.Operators))
-	for _, operator := range artifact.Operators {
-		firstSupplierIDs[artifact.Strings[operator.Code]] = operator.ID
-	}
-	secondJobID, _ := newIdentityID()
-	secondEffective := effective.Add(time.Minute)
-	secondPreview, err := publisher.PreviewAddressDimension(ctx, tenantID, secondEffective)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondSnapshot, err := publisher.BuildAddressSnapshotPublication(ctx, tenantID, actorID, secondJobID, AddressDimensionPublishRequest{
-		EffectiveFrom: secondEffective,
-		PreviewDigest: secondPreview.DraftDigest,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondPath, err := objects.ResolveDimensionObject(secondSnapshot.ObjectRef)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondData, err := os.ReadFile(secondPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondArtifact, err := flowdimension.DecodeAddressSnapshot(secondData, flowdimension.AddressSnapshotLimits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, operator := range secondArtifact.Operators {
-		code := secondArtifact.Strings[operator.Code]
-		if firstSupplierIDs[code] != operator.ID {
-			t.Fatalf("supplier operator %q changed ID from %d to %d", code, firstSupplierIDs[code], operator.ID)
-		}
-	}
-
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +264,66 @@ func TestMySQLAddressSnapshotBuildPublishesWADSIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	firstSupplierIDs := make(map[string]uint16, len(artifact.Operators))
+	for _, operator := range artifact.Operators {
+		firstSupplierIDs[artifact.Strings[operator.Code]] = operator.ID
+	}
+	if _, err := store.UpsertAddressPrefix(ctx, AddressPrefix{
+		ID: "00000000-0000-4000-8000-0000000000c4", TenantID: tenantID, CIDR: "192.0.2.128/25",
+		Labels: map[string]string{"flow": "local", "business": "publication-revision-2"}, Source: "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondJobID, _ := newIdentityID()
+	secondEffective := effective.Add(time.Minute)
+	staleJobID, _ := newIdentityID()
+	if _, err := publisher.BuildAddressSnapshotPublication(ctx, tenantID, actorID, staleJobID, AddressDimensionPublishRequest{
+		EffectiveFrom: secondEffective,
+		PreviewDigest: preview.DraftDigest,
+	}); !errors.Is(err, ErrAddressDimensionDraftChanged) {
+		t.Fatalf("edited draft accepted stale publication preview: %v", err)
+	}
+	secondPreview, err := publisher.PreviewAddressDimension(ctx, tenantID, secondEffective)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPreview.DraftDigest == preview.DraftDigest {
+		t.Fatal("address edit did not change the publication digest")
+	}
+	secondSnapshot, err := publisher.BuildAddressSnapshotPublication(ctx, tenantID, actorID, secondJobID, AddressDimensionPublishRequest{
+		EffectiveFrom: secondEffective,
+		PreviewDigest: secondPreview.DraftDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondSnapshot.Checksum == snapshot.Checksum {
+		t.Fatal("edited address library produced the previous WADS checksum")
+	}
+	stillActive, err := publisher.GetAddressDimensionSnapshot(ctx, tenantID, snapshot.ID)
+	if err != nil || stillActive.Status != AddressDimensionStatusActive {
+		t.Fatalf("building a revised publication changed the active snapshot: %+v err=%v", stillActive, err)
+	}
+	secondPath, err := objects.ResolveDimensionObject(secondSnapshot.ObjectRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondData, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondArtifact, err := flowdimension.DecodeAddressSnapshot(secondData, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operator := range secondArtifact.Operators {
+		code := secondArtifact.Strings[operator.Code]
+		if firstSupplierIDs[code] != operator.ID {
+			t.Fatalf("supplier operator %q changed ID from %d to %d", code, firstSupplierIDs[code], operator.ID)
+		}
+	}
+
 	secondSnapshot = approve(secondSnapshot)
 	if _, err := publisher.ActivateAddressDimension(ctx, tenantID, actorID, AddressDimensionActivationRequest{
 		SnapshotID: secondSnapshot.ID, EffectiveFrom: secondEffective, ExpectedRowVersion: secondSnapshot.RowVersion,

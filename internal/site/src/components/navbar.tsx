@@ -51,7 +51,7 @@ import {
 	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { isAdmin, isReadOnlyUser, logOut, pb, selectWatchdogTenant } from "@/lib/api"
+import { canManageAddressLibrary, isAdmin, isReadOnlyUser, logOut, pb, selectWatchdogTenant } from "@/lib/api"
 import { $platformIdentity } from "@/lib/platform-auth"
 import { cn, runOnce } from "@/lib/utils"
 import { $router, basePath, Link, navigate, prependBasePath } from "./router"
@@ -301,10 +301,14 @@ function FlowItems() {
 			<NavItem href={getPagePath($router, "flow_filters")} icon={BookmarkIcon}>
 				<Trans>Saved Filters</Trans>
 			</NavItem>
-			<DropdownMenuSeparator />
-			<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
-				<Trans>Address Library</Trans>
-			</NavItem>
+			{canManageAddressLibrary() ? (
+				<>
+					<DropdownMenuSeparator />
+					<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
+						<Trans>Address Library</Trans>
+					</NavItem>
+				</>
+			) : null}
 		</DropdownMenuGroup>
 	)
 }

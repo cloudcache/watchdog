@@ -18,20 +18,20 @@ type addressDimensionAPI struct {
 	jobs      OperationJobRepository
 }
 
-func registerAddressDimensionRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, publisher AddressDimensionPublisher, lifecycle AddressDimensionLifecycle, keys AddressDimensionPublicKeyResolver, jobs OperationJobRepository) {
+func registerAddressDimensionRoutes(mux *http.ServeMux, viewAuth, adminAuth func(http.Handler) http.Handler, publisher AddressDimensionPublisher, lifecycle AddressDimensionLifecycle, keys AddressDimensionPublicKeyResolver, jobs OperationJobRepository) {
 	api := addressDimensionAPI{publisher: publisher, lifecycle: lifecycle, keys: keys, jobs: jobs}
 	view := RequirePermission(ActionView, TenantResource)
 	configure := RequirePermission(ActionConfigure, TenantResource)
 	operate := RequirePermission(ActionOperate, TenantResource)
-	mux.Handle("GET /api/v1/dimensions/address/versions", auth(view(http.HandlerFunc(api.list))))
-	mux.Handle("GET /api/v1/dimensions/address/versions/{snapshot_id}", auth(view(http.HandlerFunc(api.get))))
-	mux.Handle("POST /api/v1/dimensions/address/preview", auth(configure(http.HandlerFunc(api.preview))))
-	mux.Handle("POST /api/v1/dimensions/address/publish", auth(operate(http.HandlerFunc(api.publish))))
-	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/approve", auth(operate(http.HandlerFunc(api.approve))))
-	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/reject", auth(operate(http.HandlerFunc(api.reject))))
-	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/activate", auth(operate(http.HandlerFunc(api.activate))))
-	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/rollback", auth(operate(http.HandlerFunc(api.rollback))))
-	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/retire", auth(operate(http.HandlerFunc(api.retire))))
+	mux.Handle("GET /api/v1/dimensions/address/versions", viewAuth(view(http.HandlerFunc(api.list))))
+	mux.Handle("GET /api/v1/dimensions/address/versions/{snapshot_id}", viewAuth(view(http.HandlerFunc(api.get))))
+	mux.Handle("POST /api/v1/dimensions/address/preview", adminAuth(configure(http.HandlerFunc(api.preview))))
+	mux.Handle("POST /api/v1/dimensions/address/publish", adminAuth(operate(http.HandlerFunc(api.publish))))
+	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/approve", adminAuth(operate(http.HandlerFunc(api.approve))))
+	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/reject", adminAuth(operate(http.HandlerFunc(api.reject))))
+	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/activate", adminAuth(operate(http.HandlerFunc(api.activate))))
+	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/rollback", adminAuth(operate(http.HandlerFunc(api.rollback))))
+	mux.Handle("POST /api/v1/dimensions/address/versions/{snapshot_id}/actions/retire", adminAuth(operate(http.HandlerFunc(api.retire))))
 }
 
 func (api addressDimensionAPI) list(w http.ResponseWriter, r *http.Request) {

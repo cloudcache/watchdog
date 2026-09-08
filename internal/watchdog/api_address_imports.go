@@ -20,17 +20,17 @@ type addressImportAPI struct {
 	maxUploadBytes int64
 }
 
-func registerAddressImportRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo AddressImportRepository, artifacts AddressArtifactStore, jobs OperationJobRepository, maxUploadBytes int64) {
+func registerAddressImportRoutes(mux *http.ServeMux, viewAuth, adminAuth func(http.Handler) http.Handler, repo AddressImportRepository, artifacts AddressArtifactStore, jobs OperationJobRepository, maxUploadBytes int64) {
 	api := addressImportAPI{repo: repo, artifacts: artifacts, jobs: jobs, maxUploadBytes: maxUploadBytes}
 	viewTenant := RequirePermission(ActionView, TenantResource)
 	configureTenant := RequirePermission(ActionConfigure, TenantResource)
-	mux.Handle("GET /api/v1/address-imports", auth(viewTenant(http.HandlerFunc(api.list))))
-	mux.Handle("POST /api/v1/address-imports", auth(configureTenant(http.HandlerFunc(api.upload))))
-	mux.Handle("GET /api/v1/address-imports/{import_id}", auth(viewTenant(http.HandlerFunc(api.get))))
-	mux.Handle("GET /api/v1/address-imports/{import_id}/prefixes", auth(viewTenant(http.HandlerFunc(api.listPrefixes))))
-	mux.Handle("GET /api/v1/address-imports/{import_id}/lookup", auth(viewTenant(http.HandlerFunc(api.lookupPrefix))))
-	mux.Handle("POST /api/v1/address-imports/{import_id}/actions/activate", auth(configureTenant(http.HandlerFunc(api.activate))))
-	mux.Handle("GET /api/v1/address-import-slots/{source_slot}", auth(viewTenant(http.HandlerFunc(api.getSlot))))
+	mux.Handle("GET /api/v1/address-imports", viewAuth(viewTenant(http.HandlerFunc(api.list))))
+	mux.Handle("POST /api/v1/address-imports", adminAuth(configureTenant(http.HandlerFunc(api.upload))))
+	mux.Handle("GET /api/v1/address-imports/{import_id}", viewAuth(viewTenant(http.HandlerFunc(api.get))))
+	mux.Handle("GET /api/v1/address-imports/{import_id}/prefixes", viewAuth(viewTenant(http.HandlerFunc(api.listPrefixes))))
+	mux.Handle("GET /api/v1/address-imports/{import_id}/lookup", viewAuth(viewTenant(http.HandlerFunc(api.lookupPrefix))))
+	mux.Handle("POST /api/v1/address-imports/{import_id}/actions/activate", adminAuth(configureTenant(http.HandlerFunc(api.activate))))
+	mux.Handle("GET /api/v1/address-import-slots/{source_slot}", viewAuth(viewTenant(http.HandlerFunc(api.getSlot))))
 }
 
 func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request) {

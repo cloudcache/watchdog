@@ -22,11 +22,52 @@ type fakeAddressSetRepository struct {
 	deletedVersion  uint64
 	prefixTotal     int
 	setTotal        int
+	lastTenant      ID
 }
 
-func (r *fakeAddressSetRepository) ListAddressPrefixesPage(_ context.Context, _ ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, int, error) {
+func (r *fakeAddressSetRepository) ListAddressPrefixesPage(_ context.Context, tenantID ID, filter AddressPrefixListFilter) ([]AddressPrefix, string, int, error) {
+	r.lastTenant = tenantID
 	r.prefixFilter = filter
 	return []AddressPrefix{{ID: "prefix-a", CIDR: "192.0.2.0/24", Family: 4, RowVersion: 1}}, "next-prefix", r.prefixTotal, nil
+}
+
+func TestAddressRoutesUseSharedOwnerAndRestrictMaintenanceToOwnerAdmin(t *testing.T) {
+	repo := &fakeAddressSetRepository{}
+	consumerRouter := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, nil
+		},
+		AddressLibraryOwner: "tenant-owner",
+		AddressSets:         repo,
+	})
+	response := httptest.NewRecorder()
+	consumerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil))
+	if response.Code != http.StatusOK || repo.lastTenant != "tenant-owner" {
+		t.Fatalf("shared owner read = %d tenant=%q body=%s", response.Code, repo.lastTenant, response.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes", strings.NewReader(`{"cidr":"192.0.2.0/24"}`)),
+		httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes/actions/merge-preview", strings.NewReader(`{"prefixes":[{"cidr":"192.0.2.0/25"},{"cidr":"192.0.2.128/25"}]}`)),
+	} {
+		response = httptest.NewRecorder()
+		consumerRouter.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("consumer maintenance %s = %d body=%s", request.URL.Path, response.Code, response.Body.String())
+		}
+	}
+
+	ownerRouter := NewAPIV1Router(APIV1RouterConfig{
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+		},
+		AddressLibraryOwner: "tenant-owner",
+		AddressSets:         repo,
+	})
+	response = httptest.NewRecorder()
+	ownerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes/actions/merge-preview", strings.NewReader(`{"prefixes":[{"cidr":"192.0.2.0/25"},{"cidr":"192.0.2.128/25"}]}`)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("owner merge preview = %d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func (r *fakeAddressSetRepository) GetAddressPrefix(_ context.Context, tenantID ID, prefixID string) (AddressPrefix, error) {

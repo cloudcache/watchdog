@@ -16,23 +16,23 @@ type addressSetAPI struct {
 	repo AddressSetRepository
 }
 
-func registerAddressSetRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, repo AddressSetRepository) {
+func registerAddressSetRoutes(mux *http.ServeMux, viewAuth, adminAuth func(http.Handler) http.Handler, repo AddressSetRepository) {
 	api := addressSetAPI{repo: repo}
 	viewTenant := RequirePermission(ActionView, TenantResource)
 	configureTenant := RequirePermission(ActionConfigure, TenantResource)
-	mux.Handle("GET /api/v1/address-prefixes", auth(viewTenant(http.HandlerFunc(api.listPrefixes))))
-	mux.Handle("POST /api/v1/address-prefixes", auth(configureTenant(http.HandlerFunc(api.upsertPrefix))))
-	mux.Handle("GET /api/v1/address-prefixes/{prefix_id}", auth(viewTenant(http.HandlerFunc(api.getPrefix))))
-	mux.Handle("PATCH /api/v1/address-prefixes/{prefix_id}", auth(configureTenant(http.HandlerFunc(api.updatePrefix))))
-	mux.Handle("DELETE /api/v1/address-prefixes/{prefix_id}", auth(configureTenant(http.HandlerFunc(api.deletePrefix))))
-	mux.Handle("POST /api/v1/address-prefixes/actions/merge-preview", auth(viewTenant(http.HandlerFunc(api.mergePreviewPrefixes))))
-	mux.Handle("GET /api/v1/address-sets", auth(viewTenant(http.HandlerFunc(api.listSets))))
-	mux.Handle("POST /api/v1/address-sets", auth(configureTenant(http.HandlerFunc(api.createSet))))
-	mux.Handle("GET /api/v1/address-sets/{set_id}", auth(viewTenant(http.HandlerFunc(api.getSet))))
-	mux.Handle("PATCH /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.updateSet))))
-	mux.Handle("DELETE /api/v1/address-sets/{set_id}", auth(configureTenant(http.HandlerFunc(api.deleteSet))))
-	mux.Handle("POST /api/v1/address-sets/actions/preview", auth(configureTenant(http.HandlerFunc(api.previewOperation))))
-	registerAddressDraftRevisionRoutes(mux, auth, repo)
+	mux.Handle("GET /api/v1/address-prefixes", viewAuth(viewTenant(http.HandlerFunc(api.listPrefixes))))
+	mux.Handle("POST /api/v1/address-prefixes", adminAuth(configureTenant(http.HandlerFunc(api.upsertPrefix))))
+	mux.Handle("GET /api/v1/address-prefixes/{prefix_id}", viewAuth(viewTenant(http.HandlerFunc(api.getPrefix))))
+	mux.Handle("PATCH /api/v1/address-prefixes/{prefix_id}", adminAuth(configureTenant(http.HandlerFunc(api.updatePrefix))))
+	mux.Handle("DELETE /api/v1/address-prefixes/{prefix_id}", adminAuth(configureTenant(http.HandlerFunc(api.deletePrefix))))
+	mux.Handle("POST /api/v1/address-prefixes/actions/merge-preview", adminAuth(configureTenant(http.HandlerFunc(api.mergePreviewPrefixes))))
+	mux.Handle("GET /api/v1/address-sets", viewAuth(viewTenant(http.HandlerFunc(api.listSets))))
+	mux.Handle("POST /api/v1/address-sets", adminAuth(configureTenant(http.HandlerFunc(api.createSet))))
+	mux.Handle("GET /api/v1/address-sets/{set_id}", viewAuth(viewTenant(http.HandlerFunc(api.getSet))))
+	mux.Handle("PATCH /api/v1/address-sets/{set_id}", adminAuth(configureTenant(http.HandlerFunc(api.updateSet))))
+	mux.Handle("DELETE /api/v1/address-sets/{set_id}", adminAuth(configureTenant(http.HandlerFunc(api.deleteSet))))
+	mux.Handle("POST /api/v1/address-sets/actions/preview", adminAuth(configureTenant(http.HandlerFunc(api.previewOperation))))
+	registerAddressDraftRevisionRoutes(mux, adminAuth, repo)
 }
 
 func (api addressSetAPI) previewOperation(w http.ResponseWriter, r *http.Request) {
@@ -69,9 +69,9 @@ type addressPrefixMergeRequest struct {
 }
 
 // mergePreviewPrefixes computes an attribution-preserving merge plan for a set
-// of prefixes (see PreviewAddressPrefixMerge). It is a pure computation over
-// the submitted prefixes — no persistence — so a read grant is sufficient; the
-// apply is ordinary create/delete under the configure grant.
+// of prefixes (see PreviewAddressPrefixMerge). It is a maintenance preview, so
+// the platform address-library administrator is required even though the
+// operation itself does not persist data.
 func (api addressSetAPI) mergePreviewPrefixes(w http.ResponseWriter, r *http.Request) {
 	var request addressPrefixMergeRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))

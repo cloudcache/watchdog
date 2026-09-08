@@ -56,7 +56,7 @@ func TestLoadBackendConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.Export.Dir != defaultExportDir || cfg.Export.WorkerInterval != defaultExportWorkerInterval || cfg.Export.WorkerBatch != defaultExportWorkerBatch || cfg.Export.WorkerConcurrency != defaultExportWorkerConcurrency || cfg.Export.Metric != MetricSNMPIfInBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
-	if cfg.AddressLibrary.Dir != defaultAddressLibraryDir || cfg.AddressLibrary.MaxUploadBytes != DefaultAddressArtifactMaxBytes || cfg.AddressLibrary.MaxSnapshotBytes != defaultAddressSnapshotMaxBytes || cfg.AddressLibrary.ImportBatchSize != defaultAddressLibraryBatchSize || cfg.AddressLibrary.WorkerConcurrency != defaultAddressLibraryWorkers || cfg.AddressLibrary.ObjectRetention != defaultAddressObjectRetention || cfg.AddressLibrary.ObjectGCInterval != defaultAddressObjectGCInterval || cfg.AddressLibrary.ObjectGCBatch != defaultAddressObjectGCBatch {
+	if cfg.AddressLibrary.Dir != defaultAddressLibraryDir || cfg.AddressLibrary.OwnerTenantID != "tenant_dev" || cfg.AddressLibrary.MaxUploadBytes != DefaultAddressArtifactMaxBytes || cfg.AddressLibrary.MaxSnapshotBytes != defaultAddressSnapshotMaxBytes || cfg.AddressLibrary.ImportBatchSize != defaultAddressLibraryBatchSize || cfg.AddressLibrary.WorkerConcurrency != defaultAddressLibraryWorkers || cfg.AddressLibrary.ObjectRetention != defaultAddressObjectRetention || cfg.AddressLibrary.ObjectGCInterval != defaultAddressObjectGCInterval || cfg.AddressLibrary.ObjectGCBatch != defaultAddressObjectGCBatch {
 		t.Fatalf("address library config = %#v", cfg.AddressLibrary)
 	}
 	if cfg.SNMPCollector.Interval != defaultSNMPCollectorInterval {
@@ -112,12 +112,13 @@ func TestQueryGatewayConfigRejectsInvalidConcurrency(t *testing.T) {
 
 func TestAddressLibraryTrustedKeysAreNormalizedAndTenantScoped(t *testing.T) {
 	cfg := defaultBackendConfig()
+	cfg.AddressLibrary.OwnerTenantID = " tenant-a "
 	cfg.AddressLibrary.TrustedKeys = []AddressDimensionTrustedKeyConfig{{
 		TenantID: " tenant-a ", KeyID: " publisher-2026 ", PublicKeyFile: " /etc/watchdog/publisher.pem ",
 	}}
 	normalizeBackendConfig(&cfg)
 	key := cfg.AddressLibrary.TrustedKeys[0]
-	if key.TenantID != "tenant-a" || key.KeyID != "publisher-2026" || key.PublicKeyFile != "/etc/watchdog/publisher.pem" {
+	if cfg.AddressLibrary.OwnerTenantID != "tenant-a" || key.TenantID != "tenant-a" || key.KeyID != "publisher-2026" || key.PublicKeyFile != "/etc/watchdog/publisher.pem" {
 		t.Fatalf("normalized trusted key = %#v", key)
 	}
 	if err := validateWatchdogConfig(cfg, false); err != nil {
@@ -126,6 +127,19 @@ func TestAddressLibraryTrustedKeysAreNormalizedAndTenantScoped(t *testing.T) {
 	cfg.AddressLibrary.TrustedKeys = append(cfg.AddressLibrary.TrustedKeys, key)
 	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate trusted key error = %v", err)
+	}
+	cfg = defaultBackendConfig()
+	cfg.AddressLibrary.TrustedKeys = []AddressDimensionTrustedKeyConfig{{TenantID: "tenant-other", KeyID: "key", PublicKeyFile: "/key"}}
+	if err := validateWatchdogConfig(cfg, false); err == nil || !strings.Contains(err.Error(), "owner_tenant_id") {
+		t.Fatalf("non-owner trusted key error = %v", err)
+	}
+}
+
+func TestAddressLibraryOwnerTenantIsRequired(t *testing.T) {
+	cfg := defaultBackendConfig()
+	cfg.AddressLibrary.OwnerTenantID = ""
+	if err := validateWatchdogConfig(cfg, false); err == nil {
+		t.Fatal("empty address-library owner tenant was accepted")
 	}
 }
 
@@ -413,6 +427,7 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	t.Setenv("WATCHDOG_EXPORT_WORKER_CONCURRENCY", "4")
 	t.Setenv("WATCHDOG_EXPORT_METRIC", MetricSNMPIfOutBps)
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_DIR", "/var/lib/watchdog/address-artifacts")
+	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_OWNER_TENANT_ID", "platform-owner")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_MAX_UPLOAD_BYTES", "1073741824")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES", "268435456")
 	t.Setenv("WATCHDOG_ADDRESS_LIBRARY_IMPORT_BATCH_SIZE", "2500")
@@ -446,7 +461,7 @@ func TestLoadBackendConfigFromEnvOverridesValues(t *testing.T) {
 	if cfg.Export.Dir != "/var/lib/watchdog/exports" || cfg.Export.WorkerInterval != 15*time.Second || cfg.Export.WorkerBatch != 25 || cfg.Export.WorkerConcurrency != 4 || cfg.Export.Metric != MetricSNMPIfOutBps {
 		t.Fatalf("export config = %#v", cfg.Export)
 	}
-	if cfg.AddressLibrary.Dir != "/var/lib/watchdog/address-artifacts" || cfg.AddressLibrary.MaxUploadBytes != 1<<30 || cfg.AddressLibrary.MaxSnapshotBytes != 256<<20 || cfg.AddressLibrary.ImportBatchSize != 2500 || cfg.AddressLibrary.WorkerConcurrency != 3 || cfg.AddressLibrary.ObjectRetention != 168*time.Hour || cfg.AddressLibrary.ObjectGCInterval != 2*time.Minute || cfg.AddressLibrary.ObjectGCBatch != 75 {
+	if cfg.AddressLibrary.Dir != "/var/lib/watchdog/address-artifacts" || cfg.AddressLibrary.OwnerTenantID != "platform-owner" || cfg.AddressLibrary.MaxUploadBytes != 1<<30 || cfg.AddressLibrary.MaxSnapshotBytes != 256<<20 || cfg.AddressLibrary.ImportBatchSize != 2500 || cfg.AddressLibrary.WorkerConcurrency != 3 || cfg.AddressLibrary.ObjectRetention != 168*time.Hour || cfg.AddressLibrary.ObjectGCInterval != 2*time.Minute || cfg.AddressLibrary.ObjectGCBatch != 75 {
 		t.Fatalf("address library config = %#v", cfg.AddressLibrary)
 	}
 	if cfg.SNMPCollector.Interval != 20*time.Second {

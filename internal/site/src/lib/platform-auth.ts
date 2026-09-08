@@ -16,6 +16,7 @@ export type PlatformAuthContext = {
 	roleIDs: string[]
 	grants: PlatformPermission[]
 	isAdmin: boolean
+	canManageAddressLibrary: boolean
 }
 
 export type PlatformIdentityState = {

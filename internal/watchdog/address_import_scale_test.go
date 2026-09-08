@@ -16,10 +16,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowdimension"
+	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
 const scaleIPDBPrefixCount = 1 << 20
@@ -390,11 +392,135 @@ func TestAddressImportProductionMMDBToWADS(t *testing.T) {
 	if lookupRate < 100_000 || p99 > time.Millisecond {
 		t.Fatalf("WADS lookup regression: rate=%.0f/s p99=%s", lookupRate, p99)
 	}
+	// The catalog measurement owns its compiled index. Release the earlier
+	// correctness index so it is not counted as a second published address
+	// library: the platform has one shared AddressSnap, not one per tenant.
+	index = nil
+	catalogScale := measureAddressSnapshotCatalogScale(t, artifact, samples)
 
 	t.Logf("production MMDB=%d bytes sha256=%s rows=%d (v4=%d v6=%d) distinct_asns=%d import=%s %.0f rows/s import_peak_heap=%.1f MiB retry_from=%d",
 		info.Size(), checksum, rows, item.RowCountV4, item.RowCountV6, distinctASNs, importElapsed.Round(time.Millisecond), float64(rows)/importElapsed.Seconds(), float64(importPeakHeap)/(1<<20), afterFailure.ProgressDone)
 	t.Logf("WADS=%d bytes ranges=%d/%d values=%d build=%s build_peak_heap=%.1f MiB compile=%s compile_peak_heap=%.1f MiB lookup=%.0f/s p95=%s p99=%s",
 		len(data), len(artifact.IPv4Ranges), len(artifact.IPv6Ranges), len(artifact.Values), buildElapsed.Round(time.Millisecond), float64(buildPeakHeap)/(1<<20), compileElapsed.Round(time.Millisecond), float64(compilePeakHeap)/(1<<20), lookupRate, p95, p99)
+	t.Logf("shared catalog retained_heap=%0.1f MiB swap=%s concurrent_lookup_max=%s",
+		float64(catalogScale.retainedHeap)/(1<<20), catalogScale.swapPause, catalogScale.concurrentLookupMax)
+}
+
+type addressSnapshotCatalogScale struct {
+	retainedHeap        uint64
+	swapPause           time.Duration
+	concurrentLookupMax time.Duration
+}
+
+func measureAddressSnapshotCatalogScale(t testing.TB, source flowdimension.AddressSnapshotArtifact, samples []mmdbLookupSample) addressSnapshotCatalogScale {
+	t.Helper()
+	runtime.GC()
+	var baseline runtime.MemStats
+	runtime.ReadMemStats(&baseline)
+	catalog, err := flowworker.NewEnrichmentVersionCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := addressSnapshotCatalogScale{}
+	data, err := flowdimension.EncodeAddressSnapshot(source, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	dimension, err := flowdimension.DecodeAndCompileAddressSnapshot(data, "sha256:"+hex.EncodeToString(digest[:]), flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
+		TenantID: source.TenantID, Version: 1, EffectiveFrom: source.EffectiveFrom, DimensionSnapshotID: source.SnapshotID,
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.Install(flowworker.EnrichmentVersion{Dimension: dimension, Classification: classification}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	var current runtime.MemStats
+	runtime.ReadMemStats(&current)
+	if current.HeapAlloc > baseline.HeapAlloc {
+		result.retainedHeap = current.HeapAlloc - baseline.HeapAlloc
+	}
+	if result.retainedHeap > 256<<20 {
+		t.Fatalf("shared catalog retained heap = %d", result.retainedHeap)
+	}
+
+	updateArtifact := source
+	updateArtifact.SnapshotID = "snapshot_c4b2_shared_v2"
+	updateArtifact.Version = 2
+	updateArtifact.EffectiveFrom = source.EffectiveFrom.Add(time.Minute)
+	updateData, err := flowdimension.EncodeAddressSnapshot(updateArtifact, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateDigest := sha256.Sum256(updateData)
+	updateDimension, err := flowdimension.DecodeAndCompileAddressSnapshot(updateData, "sha256:"+hex.EncodeToString(updateDigest[:]), flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateClassification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
+		TenantID: source.TenantID, Version: 2, EffectiveFrom: updateArtifact.EffectiveFrom, DimensionSnapshotID: updateArtifact.SnapshotID,
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stopReaders atomic.Bool
+	var readerError atomic.Bool
+	var readerOperations atomic.Uint64
+	var maximumLookupNS atomic.Int64
+	var readers sync.WaitGroup
+	for readerIndex := 0; readerIndex < 4; readerIndex++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for !stopReaders.Load() {
+				started := time.Now()
+				version, err := catalog.Select(source.TenantID, updateArtifact.EffectiveFrom.Add(time.Minute))
+				if err != nil {
+					readerError.Store(true)
+					return
+				}
+				version.Dimension.ClassifyEndpoints(samples[0].address, samples[len(samples)-1].address)
+				elapsed := time.Since(started).Nanoseconds()
+				for current := maximumLookupNS.Load(); elapsed > current && !maximumLookupNS.CompareAndSwap(current, elapsed); current = maximumLookupNS.Load() {
+				}
+				readerOperations.Add(1)
+			}
+		}()
+	}
+	deadline := time.Now().Add(time.Second)
+	for readerOperations.Load() < 10_000 && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	swapStarted := time.Now()
+	if err := catalog.Install(flowworker.EnrichmentVersion{Dimension: updateDimension, Classification: updateClassification}); err != nil {
+		stopReaders.Store(true)
+		readers.Wait()
+		t.Fatal(err)
+	}
+	result.swapPause = time.Since(swapStarted)
+	deadline = time.Now().Add(time.Second)
+	for readerOperations.Load() < 50_000 && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	stopReaders.Store(true)
+	readers.Wait()
+	if readerError.Load() || readerOperations.Load() < 10_000 {
+		t.Fatalf("catalog readers failed or made insufficient progress: failed=%v operations=%d", readerError.Load(), readerOperations.Load())
+	}
+	result.concurrentLookupMax = time.Duration(maximumLookupNS.Load())
+	if result.swapPause > 10*time.Millisecond || result.concurrentLookupMax > 100*time.Millisecond {
+		t.Fatalf("catalog swap regression: swap=%s max_lookup=%s", result.swapPause, result.concurrentLookupMax)
+	}
+	return result
 }
 
 type mmdbLookupSample struct {

@@ -28,6 +28,35 @@ func TestAuthMiddlewareInjectsAuthContext(t *testing.T) {
 	}
 }
 
+func TestAddressLibraryAuthUsesOneOwnerAndAdminOnlyWrites(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil)
+	auth := func(*http.Request) (AuthContext, error) {
+		return AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, nil
+	}
+	view, admin := addressLibraryAuthAdapters(auth, "tenant-owner")
+	selected, err := view(request)
+	if err != nil || selected.TenantID != "tenant-owner" || selected.IsAdmin {
+		t.Fatalf("shared address view = %+v err=%v", selected, err)
+	}
+	if !HasPermission(AccessRequest{
+		TenantID: selected.TenantID, UserID: selected.UserID, Action: ActionView,
+		Resource: ResourceRef{Type: ResourceTenant, ID: selected.TenantID},
+	}, selected.Grants) {
+		t.Fatal("shared address view did not receive read-only owner scope")
+	}
+	if _, err := admin(request); err == nil {
+		t.Fatal("admin of a consumer tenant could mutate the shared address library")
+	}
+
+	ownerAuth := func(*http.Request) (AuthContext, error) {
+		return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+	}
+	_, ownerAdmin := addressLibraryAuthAdapters(ownerAuth, "tenant-owner")
+	if selected, err := ownerAdmin(request); err != nil || selected.TenantID != "tenant-owner" || !selected.IsAdmin {
+		t.Fatalf("owner admin = %+v err=%v", selected, err)
+	}
+}
+
 func TestAuthMiddlewareRejectsMissingAuth(t *testing.T) {
 	middleware := AuthMiddleware(func(*http.Request) (AuthContext, error) {
 		return AuthContext{}, errors.New("missing")
@@ -99,22 +128,33 @@ func TestRequirePermissionRejectsMissingGrant(t *testing.T) {
 }
 
 func TestNewAPIV1RouterServesMe(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{
-		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{TenantID: "tenant-a", UserID: "user-a", IsAdmin: true}, nil
-		},
-	})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var body AuthContext
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.UserID != "user-a" {
-		t.Fatalf("user_id = %s", body.UserID)
+	for _, test := range []struct {
+		name      string
+		auth      AuthContext
+		canManage bool
+	}{
+		{name: "owner administrator", auth: AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, canManage: true},
+		{name: "owner member", auth: AuthContext{TenantID: "tenant-owner", UserID: "user-member"}},
+		{name: "other tenant administrator", auth: AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router := NewAPIV1Router(APIV1RouterConfig{
+				Auth:                func(*http.Request) (AuthContext, error) { return test.auth, nil },
+				AddressLibraryOwner: "tenant-owner",
+			})
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var body AuthContext
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body.UserID != test.auth.UserID || body.CanManageAddressLibrary != test.canManage {
+				t.Fatalf("body = %+v, want user %q can_manage_address_library=%v", body, test.auth.UserID, test.canManage)
+			}
+		})
 	}
 }
 

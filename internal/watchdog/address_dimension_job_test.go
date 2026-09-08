@@ -31,7 +31,8 @@ func (p *fakeAddressSnapshotBuildPublisher) BuildAddressSnapshotPublication(_ co
 	return AddressDimensionSnapshot{ID: jobID}, nil
 }
 
-func (p *fakeAddressDimensionPublisher) PreviewAddressDimension(context.Context, ID, time.Time) (AddressDimensionPreview, error) {
+func (p *fakeAddressDimensionPublisher) PreviewAddressDimension(_ context.Context, tenantID ID, _ time.Time) (AddressDimensionPreview, error) {
+	p.tenantID = tenantID
 	return p.preview, nil
 }
 

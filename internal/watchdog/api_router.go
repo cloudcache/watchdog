@@ -63,6 +63,7 @@ type APIV1RouterConfig struct {
 	AddressImports         AddressImportRepository
 	AddressArtifacts       AddressArtifactStore
 	AddressImportMaxBytes  int64
+	AddressLibraryOwner    ID
 	AddressDimensions      AddressDimensionPublisher
 	DimensionLifecycle     AddressDimensionLifecycle
 	DimensionConsumers     AddressDimensionConsumerStatusReader
@@ -89,6 +90,8 @@ type SNMPDeviceDiscoverer interface {
 func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	mux := http.NewServeMux()
 	auth := AuthMiddleware(cfg.Auth)
+	addressViewAdapter, addressAdminAdapter := addressLibraryAuthAdapters(cfg.Auth, cfg.AddressLibraryOwner)
+	addressViewAuth, addressAdminAuth := AuthMiddleware(addressViewAdapter), AuthMiddleware(addressAdminAdapter)
 	tenantDiscovery := auth
 	if cfg.TenantDiscovery != nil {
 		tenantDiscovery = AuthMiddleware(cfg.TenantDiscovery)
@@ -128,6 +131,7 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	})))
 	mux.Handle("GET /api/v1/me", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := AuthFromContext(r.Context())
+		user.CanManageAddressLibrary = user.IsAdmin && (cfg.AddressLibraryOwner == "" || user.TenantID == cfg.AddressLibraryOwner)
 		WriteAPIJSON(w, http.StatusOK, user)
 	})))
 	listTenants := tenantDiscovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -282,22 +286,22 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	registerHistoricalRoutes(mux, auth)
 	registerMetricsRoutes(mux, auth, cfg.Metrics, cfg.Network, cfg.QueryGateway, cfg.Audit)
 	if cfg.AddressSets != nil {
-		registerAddressSetRoutes(mux, auth, cfg.AddressSets)
+		registerAddressSetRoutes(mux, addressViewAuth, addressAdminAuth, cfg.AddressSets)
 	}
 	if cfg.AddressTaxonomy != nil {
-		registerAddressTaxonomyRoutes(mux, auth, cfg.AddressTaxonomy)
+		registerAddressTaxonomyRoutes(mux, addressViewAuth, addressAdminAuth, cfg.AddressTaxonomy)
 	}
 	if cfg.AddressImports != nil {
-		registerAddressImportRoutes(mux, auth, cfg.AddressImports, cfg.AddressArtifacts, cfg.OperationJobs, cfg.AddressImportMaxBytes)
+		registerAddressImportRoutes(mux, addressViewAuth, addressAdminAuth, cfg.AddressImports, cfg.AddressArtifacts, cfg.OperationJobs, cfg.AddressImportMaxBytes)
 	}
 	if cfg.AddressDimensions != nil {
-		registerAddressDimensionRoutes(mux, auth, cfg.AddressDimensions, cfg.DimensionLifecycle, cfg.DimensionKeys, cfg.OperationJobs)
+		registerAddressDimensionRoutes(mux, addressViewAuth, addressAdminAuth, cfg.AddressDimensions, cfg.DimensionLifecycle, cfg.DimensionKeys, cfg.OperationJobs)
 	}
 	if cfg.AddressDimensions != nil && cfg.DimensionLifecycle != nil && cfg.DimensionConsumers != nil {
-		registerAddressDimensionConsumerRoutes(mux, auth, cfg.AddressDimensions, cfg.DimensionLifecycle, cfg.DimensionConsumers)
+		registerAddressDimensionConsumerRoutes(mux, addressViewAuth, cfg.AddressDimensions, cfg.DimensionLifecycle, cfg.DimensionConsumers)
 	}
 	if cfg.DimensionGC != nil {
-		registerAddressDimensionGCRoutes(mux, auth, cfg.DimensionGC)
+		registerAddressDimensionGCRoutes(mux, addressAdminAuth, cfg.DimensionGC)
 	}
 	return RequestIDMiddleware(withJSONAPINotFound(mux))
 }

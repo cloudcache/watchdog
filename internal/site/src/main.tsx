@@ -1,6 +1,7 @@
 import "./index.css"
 import { i18n } from "@lingui/core"
 import { I18nProvider } from "@lingui/react"
+import { Trans } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { DirectionProvider } from "@radix-ui/react-direction"
 // import { Suspense, lazy, useEffect, StrictMode } from "react"
@@ -12,7 +13,7 @@ import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
 import { alertManager } from "@/lib/alerts"
-import { isAdmin, pb, refreshWatchdogIdentity, updateUserSettings } from "@/lib/api.ts"
+import { canManageAddressLibrary, isAdmin, pb, refreshWatchdogIdentity, updateUserSettings } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
@@ -125,6 +126,23 @@ const App = memo(() => {
 	}
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
+	} else if (
+		(page.route === "address_library_root" ||
+			page.route === "address_library" ||
+			page.route === "address_prefixes" ||
+			page.route === "address_sets") &&
+		!canManageAddressLibrary()
+	) {
+		return (
+			<div className="my-14 text-center">
+				<h1 className="text-2xl font-semibold">
+					<Trans>Permission denied</Trans>
+				</h1>
+				<p className="mt-2 text-sm text-muted-foreground">
+					<Trans>Address library maintenance requires an administrator.</Trans>
+				</p>
+			</div>
+		)
 	} else if (page.route === "aggregate_charts") {
 		return <AggregateCharts />
 	} else if (page.route === "aggregate_graphs") {
