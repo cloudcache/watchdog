@@ -57,6 +57,35 @@ func TestAddressLibraryAuthUsesOneOwnerAndAdminOnlyWrites(t *testing.T) {
 	}
 }
 
+func TestAddressLibraryOwnerAdminKeepsCapabilityWhenAnotherTenantIsSelected(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil)
+	auth := func(r *http.Request) (AuthContext, error) {
+		if r.Header.Get(TenantHeader) == "tenant-owner" {
+			return AuthContext{TenantID: "tenant-owner", UserID: "user-shared", IsAdmin: true}, nil
+		}
+		return AuthContext{TenantID: "tenant-consumer", UserID: "user-shared", IsAdmin: true}, nil
+	}
+	_, admin := addressLibraryAuthAdapters(auth, "tenant-owner")
+	selected, err := admin(request)
+	if err != nil || selected.TenantID != "tenant-owner" || !selected.IsAdmin {
+		t.Fatalf("owner capability from another selected tenant = %+v err=%v", selected, err)
+	}
+
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: auth, AddressLibraryOwner: "tenant-owner"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var identity AuthContext
+	if err := json.Unmarshal(response.Body.Bytes(), &identity); err != nil {
+		t.Fatal(err)
+	}
+	if !identity.CanManageAddressLibrary {
+		t.Fatalf("identity = %+v, want address-library management capability", identity)
+	}
+}
+
 func TestAuthMiddlewareRejectsMissingAuth(t *testing.T) {
 	middleware := AuthMiddleware(func(*http.Request) (AuthContext, error) {
 		return AuthContext{}, errors.New("missing")

@@ -73,7 +73,8 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 	if err := providers.Register(QueryProviderRegistration{
 		Kind: DatasetProviderClickHouse,
 		Provider: ClickHouseFlowQueryProvider{
-			Runner: runner, JointRunner: jointRunner, AddressSetRunner: addressSetRunner, Readiness: native,
+			Runner: runner, JointRunner: jointRunner, AddressSetRunner: addressSetRunner,
+			OverseasRunner: overseasRunner, Readiness: native,
 		},
 		Enabled: true, MaxConcurrent: 2,
 	}); err != nil {
@@ -325,5 +326,46 @@ func TestRealClickHouseFlowQueryGatewayHTTP(t *testing.T) {
 		overseasResponse.Data.RollupCompleteness.CoveredBuckets != 0 || overseasResponse.Meta.Source != "1m" ||
 		overseasResponse.Meta.StepSeconds != 60 {
 		t.Fatalf("overseas response=%+v", overseasResponse)
+	}
+
+	for _, report := range []struct {
+		name   string
+		metric string
+		spec   map[string]any
+	}{
+		{name: "overview", metric: "estimated_bps", spec: map[string]any{"schema_version": 1, "kind": "overview", "display_mode": "value"}},
+		{name: "dimensions", metric: "estimated_bps", spec: map[string]any{"schema_version": 1, "kind": "dimensions", "group_by": "category", "display_mode": "value"}},
+		{name: "source", metric: "estimated_bps", spec: map[string]any{"schema_version": 1, "kind": "endpoints", "side": "source", "display_mode": "value"}},
+		{name: "destination", metric: "estimated_bps", spec: map[string]any{"schema_version": 1, "kind": "endpoints", "side": "destination", "display_mode": "value"}},
+		{name: "overseas", metric: "estimated_bps", spec: map[string]any{"schema_version": 1, "kind": "overseas", "display_mode": "value"}},
+		{name: "vpn", metric: "estimated_bytes", spec: map[string]any{"schema_version": 1, "kind": "vpn", "display_mode": "value"}},
+	} {
+		t.Run("fixed-report-"+report.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"from": "2020-01-01T00:00:00Z", "to": "2020-01-01T00:01:00Z",
+				"limit": 10000, "value_layer": "customer", "metric": report.metric,
+				"top_n": 20, "include_other": true, "timezone": "UTC", "target_points": 300,
+				"report": report.spec,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/flow/reports/query", bytes.NewReader(body)))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			var response struct {
+				Data flowReportData  `json:"data"`
+				Meta QueryResultMeta `json:"meta"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Data.SchemaVersion != flowReportSchemaVersion || string(response.Data.Kind) != report.spec["kind"] ||
+				response.Data.Range.Timezone != "UTC" || response.Meta.Source != "clickhouse" || len(response.Data.Panels) == 0 {
+				t.Fatalf("response=%+v", response)
+			}
+		})
 	}
 }

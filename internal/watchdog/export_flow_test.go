@@ -86,6 +86,63 @@ func TestPrepareFlowExportFreezesFullQueryWithoutTableProjection(t *testing.T) {
 	}
 }
 
+func TestPrepareFlowReportExportFreezesPanelSelectionWithoutTableProjection(t *testing.T) {
+	gateway := newFlowExportGatewayFixture(t, &queryProviderStub{})
+	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	query := QueryRequest{
+		Dataset: FlowTrafficDataset, From: start, To: start.Add(time.Hour), Limit: 250_000,
+		ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","top_n":20,"timezone":"UTC",
+			"table":{"sort_by":"maximum","sort_direction":"desc","limit":25},
+			"report":{"schema_version":1,"kind":"endpoints","side":"source","panel_ids":["endpoint","endpoint_in"]}
+		}`),
+	}
+	task, err := prepareFlowExportExecutionTask(context.Background(), gateway, flowExportAuth(), query, ExportFormatCSV, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot exportQuerySnapshot
+	if err := decodeStrictJSON(task.QueryJSON, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var parameters flowAggregateQueryParameters
+	if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil {
+		t.Fatal(err)
+	}
+	if parameters.Table != nil || parameters.Report == nil || len(parameters.Report.PanelIDs) != 2 || parameters.Report.PanelIDs[0] != "endpoint" || parameters.Report.PanelIDs[1] != "endpoint_in" {
+		t.Fatalf("parameters = %+v", parameters)
+	}
+}
+
+func TestPrepareFlowReportExportDropsInteractiveReportTableProjection(t *testing.T) {
+	gateway := newFlowExportGatewayFixture(t, &queryProviderStub{})
+	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	query := QueryRequest{
+		Dataset: FlowTrafficDataset, From: start, To: start.Add(time.Hour), Limit: 250_000,
+		ValueLayer: QueryValueCustomer,
+		Parameters: json.RawMessage(`{
+			"metric":"estimated_bps","top_n":20,"timezone":"UTC",
+			"report":{"schema_version":1,"kind":"overview","tables":{"business_matrix":{"sort_by":"total","sort_direction":"desc","limit":25}}}
+		}`),
+	}
+	task, err := prepareFlowExportExecutionTask(context.Background(), gateway, flowExportAuth(), query, ExportFormatCSV, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot exportQuerySnapshot
+	if err := decodeStrictJSON(task.QueryJSON, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var parameters flowAggregateQueryParameters
+	if err := decodeStrictJSON(snapshot.Query.Parameters, &parameters); err != nil {
+		t.Fatal(err)
+	}
+	if parameters.Report == nil || parameters.Report.Tables != nil {
+		t.Fatalf("parameters = %+v", parameters)
+	}
+}
+
 func TestPrepareFlowExportFreezesProviderPreparedOperatorBinding(t *testing.T) {
 	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
 	provider := &queryProviderStub{prepare: func(_ context.Context, request QueryProviderRequest) (json.RawMessage, error) {
@@ -175,6 +232,82 @@ func TestFlowExportProviderAndWriterPreserveJointRows(t *testing.T) {
 	dataParquet, err := RenderParquetExportRows(rows)
 	if err != nil || !bytes.HasPrefix(dataParquet, []byte("PAR1")) || !bytes.HasSuffix(dataParquet, []byte("PAR1")) {
 		t.Fatalf("invalid parquet artifact: bytes=%d err=%v", len(dataParquet), err)
+	}
+}
+
+func TestFlowReportExportFlattensTypedPanelsAndUnavailableState(t *testing.T) {
+	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	aggregate, err := json.Marshal(flowquery.Result{
+		Metric:    flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bits_per_second"},
+		Dimension: flowquery.DimensionDefinition{Kind: flowquery.DimensionCategory, Additive: true},
+		Points: []flowquery.Point{{
+			Bucket: start, DimensionValue: "overseas", Value: 42,
+			DimensionSnapshotID: "snapshot-1", GeoVersion: "geo-1", ClassificationVersion: 7,
+			GeneratedAt: start.Add(time.Minute),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := json.Marshal(flowReportData{
+		SchemaVersion: 1, Kind: flowReportOverview, DisplayMode: flowReportValue,
+		Panels: []flowReportPanel{
+			{ID: "category_in", Status: "ready", Data: aggregate, Meta: flowReportPanelMeta{
+				Unit: "bits_per_second", StepSeconds: 60, AsOf: start.Add(time.Minute),
+				Completeness: QueryCompleteness{CompleteRatio: 1},
+			}},
+			{ID: "business_category_in", Status: "unavailable", Reason: "joint index is not published", Meta: flowReportPanelMeta{AsOf: start.Add(time.Minute)}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := flowExportRows(QueryResult{Data: report, Meta: QueryResultMeta{
+		Source: "clickhouse", PolicyVersion: 9, AsOf: start.Add(time.Minute),
+	}}, QueryValueCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows.Rows) != 2 || rows.Rows[0].ReportKind != "overview" || rows.Rows[0].ReportPanel != "category_in" ||
+		rows.Rows[0].ReportPanelStatus != "ready" || rows.Rows[1].Metric != "panel_status" ||
+		rows.Rows[1].ReportPanelReason != "joint index is not published" {
+		t.Fatalf("rows = %+v", rows.Rows)
+	}
+	data, err := RenderCSVExportRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(data)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 || records[0][len(records[0])-4] != "report_kind" || records[1][len(records[1])-3] != "category_in" {
+		t.Fatalf("records = %#v", records)
+	}
+}
+
+func TestFlowVPNReportExportPreservesKPIsTrendAndDistributions(t *testing.T) {
+	start := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(flowVPNReportSummary{
+		FindingCount: 2, SuspectedHosts: 1, HighRiskHosts: 1, ActivePorts: 1,
+		InboundBytes: 200, OutboundBytes: 100, TotalBytes: 300, MinimumCompleteRatio: .9,
+		Trend:            []flowVPNTrend{{Bucket: start, InboundBytes: 200, OutboundBytes: 100}},
+		PortDistribution: []flowReportCount{{Value: "443", Count: 2, Bytes: 300}},
+		TypeDistribution: []flowReportCount{{Value: "tls", Count: 2, Bytes: 300}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := flowVPNReportExportRows(data, flowExportDecoration{
+		ValueLayer: QueryValueCustomer, CompleteRatio: .9, AsOf: start.Add(time.Minute),
+		ReportKind: "vpn", ReportPanel: "vpn_findings", PanelStatus: "ready",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows.Rows) != 14 || rows.Rows[0].Metric != "finding_count" || rows.Rows[8].DimensionValues[0] != "trend" ||
+		rows.Rows[len(rows.Rows)-1].DimensionValues[0] != "type" {
+		t.Fatalf("rows = %+v", rows.Rows)
 	}
 }
 

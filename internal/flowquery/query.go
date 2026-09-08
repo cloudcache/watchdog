@@ -138,6 +138,7 @@ type Request struct {
 	TopN         uint16            `json:"top_n"`
 	IncludeOther bool              `json:"include_other"`
 	Timezone     string            `json:"timezone,omitempty"`
+	TimeWindows  []LocalTimeWindow `json:"time_windows,omitempty"`
 	// StorageV2 switches the physical source from the legacy continuously
 	// maintained rollup to a disjoint union: reconciled archive before
 	// ArchiveThrough and raw facts from ArchiveThrough onward.
@@ -386,6 +387,14 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		return Compiled{}, err
 	}
 	parameters = append(parameters, filterParameters...)
+	timeCondition, timeParameters, err := compileLocalTimeWindows(request.TimeWindows, timezone, "bucket")
+	if err != nil {
+		return Compiled{}, err
+	}
+	if timeCondition != "" {
+		conditions = append(conditions, timeCondition)
+		parameters = append(parameters, timeParameters...)
+	}
 	if request.Filter != nil {
 		supported, err := AggregateFilterSupported(*request.Filter)
 		if err != nil {

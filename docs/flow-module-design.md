@@ -313,7 +313,7 @@ base fact 一条 flow 只写一行：保存唯一 `local_prefix_id/remote_prefix
 
 平台 writer 使用 `address_snapshot_build` job，API 线程只入队。job ID 也是不可变 snapshot/build ID；handler 以 `(family,ip_start,prefix_length,id)` keyset 分页读取 preview digest 所固定的 import generations，核对 durable v4/v6 原始行数并验证 CIDR 与二进制 start/end 一致。同 source 的嵌套 CIDR 是合法输入，必须先按最长前缀语义展平成互斥区间，不能要求“原始行数 = 输出区间数”。构建在长事务外进行，最终短事务锁地址库 owner 并再次核对 draft/source/version 后才插入 approval pending publication；版本竞争重试，草稿变化终止，二者都不能改 activation。导入是低频后台资料装载，允许分钟级完成但必须 checkpoint/状态/结果可追溯；发布是平台管理员每次编辑修订后的常态操作，不能重新解析原始 MMDB/IPDB，必须直接读取已就绪 generation，且 operation job 的状态、进度、错误和结果引用均可查询。旧 active 在新对象 build、审批或 worker 安装失败时持续服务，只有新 publication 完成 activation/installed ACK 后才按 event time 生效。AddressSnap 是平台级单例，不是 tenant 自有对象；`address_library.owner_tenant_id` 只把现有 tenant-scoped 表固定为一个全局存储/授权命名空间，当前默认 `tenant_dev`。只有该命名空间的 tenant admin 能上传、编辑、做变更 preview 和发布；其他用户只能读，其他 tenant admin 也不能维护。未来业务 tenant 必须引用同一 publication，禁止复制 WADS。migration 058 记录 `object_format=wads`、format v1、builder version 与 build job fence，签名 payload v3 同时绑定这些元数据；旧 JSON publication 继续按 v2 验签。
 
-当前 AuthContext 已支持一个外部身份拥有多个 tenant membership，但 `IsAdmin` 是当前所选 tenant 的管理员标记，不是平台超级管理员。地址管理路由因此先完成普通认证，再把只读查询映射到 owner 命名空间；写路由则要求调用者本来就选择 owner tenant 且 `IsAdmin=true`，不能通过伪造 header 或在其他 tenant 获得 admin 绕过。`GET /api/v1/me` 服务端据此派生 `can_manage_address_library`；前端只用该能力控制维护入口和页面，真正授权仍由每个写 API 执行。现有 059 enrichment pair 仍以 `(tenant_id,dimension_snapshot_id)` 复合外键绑定同 tenant；当前单租户部署可用，但第二个业务 tenant 上线前必须以前向 migration 和 wire v2 将 classification tenant 与全局 dimension owner 解耦，并让 catalog 共享一份已编译 WADS 指针。该后续不应通过复制 snapshot、对象或索引实现。
+当前 AuthContext 已支持一个外部身份拥有多个 tenant membership，但 `IsAdmin` 是当前所选 tenant 的管理员标记，不是平台超级管理员。地址管理路由因此先完成普通认证，再把读写请求映射到 owner 命名空间，并用同一外部身份在 owner 下的权威 membership 重新鉴权；owner admin 即使当前选择了另一个业务 tenant 也保留全局地址库维护能力，其他 tenant 的 admin 仍不能借此获得权限，客户端伪造 header 也不会生效。`GET /api/v1/me` 使用同一服务端投影派生 `can_manage_address_library`；前端只用该能力控制维护入口和页面，真正授权仍由每个写 API 执行。现有 059 enrichment pair 仍以 `(tenant_id,dimension_snapshot_id)` 复合外键绑定同 tenant；当前单租户部署可用，但第二个业务 tenant 上线前必须以前向 migration 和 wire v2 将 classification tenant 与全局 dimension owner 解耦，并让 catalog 共享一份已编译 WADS 指针。该后续不应通过复制 snapshot、对象或索引实现。
 
 默认查询使用 fact 已存的派生稳定 ID 与其 snapshot/classification version，原始 `src_ip/dst_ip` 始终保留。按新地址定义重看历史通过 operation job 加载明确 AddressSnap 版本并从 raw fact 写新的派生 generation；以 Kafka 自然坐标、record count、raw/estimated byte/packet counter 守恒后才切换。查询、rollup 和修正均不使用 CH `dictGet`，也不以当前名称覆盖历史显示。完整格式、发布、迁移和验收见 [Flow 地址发布与查询计划](flow-address-query-plan.md)。
 
@@ -372,11 +372,11 @@ Geo 树也按集合化简：同层节点互斥；祖先包含后代。`parent �
 | 优先级 | category | 条件 |
 |---:|---|---|
 | 1 | `overseas` | remote 不属于中国口径 |
-| 2 | `onnet_local_city` | 本网、同城市 |
-| 3 | `onnet_cross_city` | 本网、同省不同城市 |
-| 4 | `onnet_other_province` | 本网、外省 |
-| 5 | `offnet_same_province` | 异网、同省 |
-| 6 | `offnet_other_province` | 异网、外省 |
+| 2 | `on_net_local_city` | 本网、同城市 |
+| 3 | `on_net_cross_city` | 本网、同省不同城市 |
+| 4 | `on_net_cross_province` | 本网、外省 |
+| 5 | `off_net_in_province` | 异网、同省 |
+| 6 | `off_net_cross_province` | 异网、外省 |
 
 Geo 不足得到 `unknown`。港澳台口径由 snapshot 固定。`home_isp_ids/home_asns` 分别匹配结构化 ISP ID/ASN，任一命中即为“本网”；只有远端具有与已配置集合可比较的身份时才判定异网，否则为 unknown，不以 ASN 名称字符串猜测。规则实现为纯函数，输入 record + immutable snapshot，输出 direction/category/provenance；property test 验证守恒和确定性。
 
@@ -809,6 +809,8 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 | `POST /flow/dimensions/actions/evaluate` | configure | 预览组并/交/差/有限补集、规范化 CIDR、重叠、依赖 DAG 和最坏展开量；不写入 |
 | `GET /flow/geo/catalog` | view | 按 immutable version + exact level + parent 返回稳定 ID、直属节点和完整 path；拒绝跨版本/重复参数 |
 | `POST /flow/query` | view | 统一趋势/TopN/统计查询；地址集合组合从 base 去重、同步窗口最多 1h |
+| `GET /flow/reports/capabilities` | view | 返回固定运营报表 kind、筛选、统计、panel 与导出能力；来自服务端同一 registry |
+| `POST /flow/reports/query` | view；VPN 同时要求 vpn_view | 一次冻结并组合 overview/dimensions/endpoints/overseas/vpn 固定报表；响应为 kind-specific typed union |
 | `POST /flow/overseas/query` | view | 境外 KPI、country/region TopN 与采样完整性；只读 aggregate |
 | `POST /flow/records/search` | sensitive_view | 分页源/目的明细 |
 | `GET/POST /flow/vpn/rules` | vpn_view/configure_adjustment | tenant-scoped 服务端列表/创建 draft |
@@ -834,20 +836,59 @@ CSV/Parquet 都输出 `event_time + source_stream_id/kafka_partition/kafka_offse
 
 输入错误 400，未认证 401，权限/范围 403，不存在 404，ETag/幂等冲突 409/412，限流 429，依赖不可用 503。响应必须区分 `complete/partial/unavailable`，包含 data watermark、版本和警告；依赖故障不能返回成功的空数组。
 
-## 11. 六个界面
+## 11. 固定运营报表与六个界面
 
-1. **Flow 总览**：总流量、上下行、六类卡片/占比/趋势、业务表、完整性。
-2. **多维分析**：流量值/占比/差值，六类/Geo 层级/ISP/ASN/业务/地址段/地址组/端口，95th/峰值/平均；Geo 用面包屑 + 当前节点直属子级下钻，地址组单独显示“可重叠，不可相加”。
-3. **源 IP 分析**：TopN、六类拆分、趋势、详情、修正入口。
-4. **目的 IP 分析**：与源 IP 同契约，独立权限和导出。
-5. **境外流量**：流入/流出、境外 IP、本地主机、地区/ASN/端口/协议。
-6. **VPN 风险**：candidate/finding、score、证据、probe timeline、处置。
+Flow 有两个并列而非互相替代的使用面：**固定运营报表**用于值班、汇报和导出，选择时间与少量业务条件即可得到稳定的一组 KPI、趋势、排名和表格；**Advanced Flow Explorer**用于临时选择 1–4 个维度、typed filter 和折线/堆叠/热力/桑基/数据表。固定报表不能只是给 Explorer 改默认参数，也不能复制一套 ClickHouse 查询实现；二者复用同一个 compiler/runner、QueryGateway、版本目录、资源授权和 export job。
 
-页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 仅作为总览的发布窗口兼容别名。入口和查询默认值由一个共享 preset registry 管理，页面不得各自复制 QueryGateway 请求模型。VPN findings 读取/筛选/处置和异步 CSV 导出已经挂载，导出必须原样冻结页面的时间、搜索、column filter 与排序；规则 publication、关闭窗口写入和 probe 编排不可用时必须分别显示 unavailable，禁止请求不存在的接口、从聚合结果猜测 finding 或用样例数据伪装成功。
+页面稳定入口分别为 `/flow`、`/flow/dimensions`、`/flow/source`、`/flow/destination`、`/flow/overseas`、`/flow/vpn`；`/traffic-matrix` 只作为总览的发布窗口兼容别名。已有六个 route/preset 只证明入口存在，不代表下列固定报表已经交付。
+
+### 11.1 固定报表的一致性与统计契约
+
+`POST /api/v1/flow/reports/query` 在顶层接收公共查询字段，并用 `report={schema_version,kind,...}` 作为 discriminated union；`report.kind=overview|dimensions|endpoints|overseas|vpn`，其中 `endpoints` 还必须指定 `report.side=source|destination`。公共请求只包含 `from/to/timezone`、固定 metric、显示模式、峰段、TopN/目标点、业务/Geo/运营商以及已经过资源授权的 target/device/exporter selector。tenant、角色、可见资源和敏感 value layer 只能来自认证上下文。kind-specific 字段对其它 kind 必须拒绝，禁止“忽略未知字段后猜默认”。`report.tables` 只承载固定报表 VTable 的服务端 search/sort/filter/page 投影；导出准备阶段必须去掉该交互页投影并冻结 panel selector，保证导出是同条件全量而不是当前页。
+
+报表服务在一次 QueryGateway admission 内冻结并回传：requested/effective range、source/display resolution、最新闭合桶、AddressSnap/classification/Geo 版本集合、数据 watermark、资源授权快照、查询计划和 completeness。一个报表的多个 panel 可由服务端执行多个 typed 子查询，但必须共享上述冻结上下文；前端不得分别发起若干普通 `/flow/query` 后把不同时刻、不同 publication 或不同水位的响应拼成一张报表。必需 panel 任一失败则整体失败且零部分数据；设计为可选的 VPN/probe 等 panel 可返回显式 `unavailable{code,reason}`，不能返回成功的空数组。
+
+统计口径固定如下：
+
+- `in/out` 始终站在已配置本网地址集合一侧观察，分别表示流入本网/流出本网，不使用设备 ingress/egress 字段直接冒充业务方向；
+- “当前”是最新**完整** source bucket；平均值是等宽展示桶平均；95th 是等宽展示桶 bps/pps 的 `quantileExact(0.95)`；峰值是同一桶序列最大值，禁止对未闭桶或不同宽度桶混算；
+- `display_mode=value` 返回原值，`share` 返回当前 series 占同 bucket、同方向、同 metric 权威总量的比例，`difference` 返回带符号的 `in - out`；零分母返回 unknown 而不是 0% 或 100%；
+- 六类业务分类是 `on_net_local_city/on_net_cross_city/on_net_cross_province/off_net_in_province/off_net_cross_province/overseas`，互斥且可相加；`unknown/internal/transit/ambiguous` 不得挪入六类，必须以残差和 `classified_coverage` 单独展示。六类卡片比例的分母是包含残差的同方向总量，因此六类之和允许小于 100%；占比图若只绘六类，旁边必须同时显示覆盖率；
+- 峰段是带时区的可复用本地墙钟窗口（工作日/星期集合、`start_local/end_local`），可跨午夜。服务端先按 timezone 判定桶是否入窗，再计算统计；UI 的“午高峰/晚高峰”只是命名配置，不能变成浏览器端删点；
+- TopN 永远带稳定 tie-break 和 `_other`；Geo 结果按事实自身的 immutable version/code 展示，运营商按发布后的稳定 operator ID；跨版本不得按显示名称合并；
+- 图、KPI、VTable 和导出都来自同一规范请求与同一 count/counter。报表导出冻结 report kind、请求、版本、水位和 panel selector，复用 `/flow/exports`、`export_tasks + operation_jobs` 输出 CSV/Parquet；全量导出不受当前页影响，超过同步预算创建可追溯任务而不截断。
+
+外层继续使用 QueryGateway 的 `{data,meta}` envelope；`data` 内的固定报表公共 metadata 至少为：
+
+```json
+{
+  "schema_version": 1,
+  "kind": "overview",
+  "display_mode": "value",
+  "range": {"requested_from": "...", "requested_to": "...", "effective_from": "...", "effective_to": "...", "timezone": "Asia/Shanghai"},
+  "plan": {"source": "1m", "source_seconds": 60, "display_seconds": 300},
+  "watermark": {"latest_complete_bucket": "...", "generated_at": "..."},
+  "versions": {"dimension_snapshot_id": "...", "geo_version": "...", "classification_version": "1"},
+  "completeness": {"complete_ratio": 1, "late_ratio": 0, "unknown_ratio": 0.003, "partial": false},
+  "panels": [{"id": "total", "status": "ready", "data": {}, "meta": {"unit": "bps", "step_seconds": 300, "as_of": "...", "versions": {}, "completeness": {"complete_ratio": 1, "late_ratio": 0, "unknown_ratio": 0, "partial": false}}}],
+  "warnings": []
+}
+```
+
+### 11.2 六套固定报表
+
+1. **Flow 总览**：总入/出与趋势；六类卡片分别显示入/出、sparkline 和占总量比例；六类占比；业务 × 总量/六类的入/出/占比矩阵；采样、质量、分类残差和版本完整性。卡片、图和矩阵必须逐方向与总量对账。
+2. **多维报表**：提供“默认六类、本网按省、异网运营商、境外、VPN”固定分组，分别绘制上行/下行趋势，并支持 value/share/signed `in-out`、当前/95th/峰值/平均。国家→省→市、运营商、业务和峰段是便捷筛选；任意 1–4 维、地址集合、热力和桑基保留在 Advanced Explorer。
+3. **源 IP 分析**：服务端 Top IP 表显示总入/出及 sparkline、六类入/出/占比、业务标签和明细入口；分页、搜索、排序、column filter 全部作用于完整服务端结果。管理员“修正归属地”只深链到地址库 draft 并预填 IP、时间、旧版本和命中证据，发布仍走地址库异步 job，报表不得直接改历史事实或 active snapshot。
+4. **目的 IP 分析**：与源 IP 使用同一 typed endpoint report，仅 `side` 不同；独立 URL、权限审计、详情状态和导出，禁止复制 SQL、字段 registry 或页面表格逻辑。
+5. **境外流量**：在现有入/出 KPI 与趋势、观测境外 IP/本地主机、country/region TopN 基础上，补齐 ASN、远端端口+协议、业务/运营商筛选、VPN 流量比例和明细入口。observed 唯一数不按采样率放大；unknown Geo、unknown sampling 与 mixed version 分开显示，不能猜测。
+6. **VPN 运营报表**：上层展示疑似主机、VPN 总流量/占比、活跃端口、高风险主机、入/出趋势、端口分布和 VPN 类型分布；下层才是 candidate/finding、score、证据、probe timeline 和人工处置。流量统计来自 Flow facts/candidate generation，findings 来自 MySQL 管理对象，二者以冻结窗口和规则/事实版本关联，不能把 findings 行数冒充流量或主机总数。
+
+所有报表 VTable 都必须具备服务端分页、搜索、稳定排序和 typed column filter；filter popover 使用 body portal、collision clamp、viewport max-height 和内部滚动。页面在 1280×720 和 1920×1080 下不得出现图例、tooltip 或筛选浮层溢出；查询条件进入 URL，切换条件取消旧请求，旧响应不得覆盖新结果。VPN findings 读取/筛选/处置和异步 CSV 导出已经挂载，但这只算 VPN 管理面片段；规则 publication、关闭窗口写入和 probe 编排不可用时必须逐 panel 显示 unavailable，禁止请求不存在的接口或用样例数据伪装成功。
 
 VPN 规则管理分为“可编辑 draft”和“不可变 rule-set publication”两层。draft API 只暴露评分器 schema v1 已实际消费的 `name/kind/match/effect/weight/priority/status`；`match` 由 `flowvpn.NormalizeRule` 与数据面共用同一 canonical validator，数组排序去重后持久化。migration 055 中预留但尚无执行语义的 `behavior_json/intelligence_json/probe_policy_json` 不进入 API，直到对应 analyzer/probe contract 冻结，避免接受不会生效的配置。创建、编辑、软删要求 tenant `configure_adjustment`，GET 要求 `vpn_view`；PATCH/DELETE 强制 quoted `If-Match`，name 冲突返回 409，row-version 冲突返回 412，所有 mutation 写审计。draft 的 `active` 仅表示下一次 rule-set 编译的纳入候选，不是 worker 已安装证明；只有后续签名 publication 完成 activation 且 worker 回报 installed ACK，页面才能显示该 rule-set 可用。
 
-### 11.1 VPN rule-set publication 契约
+### 11.3 VPN rule-set publication 契约
 
 VPN 发布不是另一套配置 CRUD 或状态机。它复用平台 `dimension_snapshots`、`dimension_snapshot_activations`、`dimension_snapshot_acks`、`dimension_snapshot_references` 和 `operation_jobs`，固定 scope 为 `(module_key='flow', dimension_key='vpn_rule_set')`；地址库继续使用 `flow/address`。平台仓储和生命周期必须先提取为显式 scope 参数的内部通用内核，地址和 VPN API 只做 typed adapter，任何按 ID 的读、审批、激活、ACK、引用和 GC 都必须同时匹配 tenant/module/dimension。现有四张表已能承载该类型：VPN 行使用 `source_manifest_version=0`、`source_manifest=[]`，`entry_count=rule_count`，地址专属的三个 count 均为 0，因此不创建空 migration；只有发现真实新持久字段时才从当前 migration head 领取编号。
 

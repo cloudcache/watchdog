@@ -491,6 +491,27 @@ func TestClickHouseFlowQueryProviderReadinessAndResourceAuthorization(t *testing
 	}
 }
 
+func TestClickHouseFlowQueryProviderRequiresVPNViewForVPNReport(t *testing.T) {
+	provider := ClickHouseFlowQueryProvider{}
+	request := QueryProviderRequest{Parameters: json.RawMessage(`{
+		"metric":"estimated_bytes","report":{"schema_version":1,"kind":"vpn"}
+	}`)}
+	auth := AuthContext{TenantID: "tenant-a", UserID: "user-a", Grants: []Permission{{
+		TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a", ResourceType: ResourceTenant,
+		ResourceID: "tenant-a", Actions: []Action{ActionViewCustomer},
+	}}}
+	if err := provider.AuthorizeQuery(context.Background(), auth, request); queryErrorCode(err) != QueryErrorPermissionDenied {
+		t.Fatalf("missing vpn_view error = %#v", err)
+	}
+	auth.Grants = append(auth.Grants, Permission{
+		TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a", ResourceType: ResourceTenant,
+		ResourceID: "tenant-a", Actions: []Action{ActionVPNView},
+	})
+	if err := provider.AuthorizeQuery(context.Background(), auth, request); err != nil {
+		t.Fatalf("vpn_view rejected: %v", err)
+	}
+}
+
 func TestDecodeFlowQueryRequiresCanonicalFilter(t *testing.T) {
 	_, err := decodeFlowAggregateQueryParameters(json.RawMessage(`{
 		"metric":"estimated_bps","dimension":"category","top_n":1,

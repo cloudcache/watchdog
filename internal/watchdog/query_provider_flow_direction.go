@@ -50,7 +50,7 @@ func (p ClickHouseFlowQueryProvider) queryDirections(
 		flowRequest := flowquery.Request{
 			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 			Metric: parameters.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: parameters.Filter,
-			View: view, TopN: 1, IncludeOther: false, Timezone: parameters.Timezone,
+			View: view, TopN: 1, IncludeOther: false, Timezone: parameters.Timezone, TimeWindows: parameters.TimeWindows,
 		}
 		if boundaryErr := p.applyStorageV2Boundary(ctx, request.TenantID, plan, &flowRequest); boundaryErr != nil {
 			return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", boundaryErr)
@@ -157,6 +157,7 @@ func (p ClickHouseFlowQueryProvider) queryJointDirections(
 				From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
 				TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},
 				Filters: filters, Filter: parameters.Filter, View: view, TopN: 1, IncludeOther: false, Timezone: parameters.Timezone,
+				TimeWindows: parameters.TimeWindows,
 			},
 			p.now(),
 		)

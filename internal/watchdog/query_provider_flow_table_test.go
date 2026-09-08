@@ -43,6 +43,26 @@ func TestBuildFlowTableUsesGraphStatisticsBeforeServerPaging(t *testing.T) {
 	}
 }
 
+func TestBuildFlowTableStatisticsUseOnlySelectedLocalTimeWindows(t *testing.T) {
+	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	points := []flowTablePoint{
+		{bucket: from, path: []string{"a"}, value: 80},
+		{bucket: from.Add(time.Hour), path: []string{"a"}, value: 160},
+		{bucket: from.Add(2 * time.Hour), path: []string{"a"}, value: 8000},
+	}
+	page := buildFlowTable(points, flowTablePlan{
+		from: from, to: from.Add(3 * time.Hour), step: time.Hour, timezone: "UTC",
+		timeWindows: []flowquery.LocalTimeWindow{{Days: []uint8{1}, StartLocal: "00:00", EndLocal: "02:00"}},
+	}, "bits_per_second", flowTableRequest{Limit: 10, SortBy: "maximum", SortDirection: "desc"})
+	if len(page.Items) != 1 {
+		t.Fatalf("items = %+v", page.Items)
+	}
+	row := page.Items[0]
+	if row.Last != 160 || row.Maximum != 160 || row.Average != 120 || row.Total != 108000 {
+		t.Fatalf("row = %+v", row)
+	}
+}
+
 type flowDirectionRunnerStub struct {
 	compiled []flowquery.Compiled
 	from     time.Time

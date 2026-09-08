@@ -87,10 +87,21 @@ func addressLibraryAuthAdapters(auth AuthContextAdapter, ownerTenantID ID) (Auth
 		if err != nil {
 			return AuthContext{}, err
 		}
-		if selected.TenantID != ownerTenantID || !selected.IsAdmin {
+		if selected.TenantID == ownerTenantID && selected.IsAdmin {
+			return selected, nil
+		}
+		// AddressSnap is platform-global. A user who is an owner-tenant admin
+		// keeps that capability while another tenant is selected for ordinary
+		// business data. Re-run the authoritative identity projection for the
+		// owner tenant instead of trusting or rewriting the selected context.
+		ownerRequest := r.Clone(r.Context())
+		ownerRequest.Header = r.Header.Clone()
+		ownerRequest.Header.Set(TenantHeader, string(ownerTenantID))
+		owner, ownerErr := auth(ownerRequest)
+		if ownerErr != nil || owner.TenantID != ownerTenantID || !owner.IsAdmin {
 			return AuthContext{}, authAdapterError(http.StatusForbidden, APIErrorPermissionDenied, "Address library owner administrator required")
 		}
-		return selected, nil
+		return owner, nil
 	}
 	return view, admin
 }

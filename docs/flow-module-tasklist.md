@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-05F 异步联合索引。** FLOW-03C 当前默认租户下的 AddressSnap 全局 owner/管理员权限、scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK、便捷运营商 typed query 和真实 113 万行性能门禁已关闭；错误的 per-tenant AddressSnap 容量假设已撤销。第二业务 tenant 的共享 dimension 引用是条件性前置，单列且不得复制 WADS。下一步只冻结长周期常用组合的 index generation/operation job/query fallback，不混入历史重分类。
+**刚完成切片：FLOW-05G 固定运营报表。** 六个稳定入口已经从共享 Explorer/preset 收敛为独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 已覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。开发库当前无 Flow 事实，因此真实浏览器验收明确为空数据状态，没有写入样例数据冒充非空结果；非空统计、守恒、分页和导出由确定性 provider fixture 覆盖。按用户要求在此提交后停止，不顺手推进 FLOW-05F、Storage V2 或历史重分类。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -240,9 +240,9 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **FLOW-05E 变更测试**：本地已覆盖 snapshot 跨版本不合并与 immutable canonical filter；真实规则增删/回滚、旧事实可解释、同步→异步协议兼容等待 publication/job 平台门禁。
 - [x] **FLOW-05E 回归**：`go test -race ./internal/flow... ./cmd/watchdog-flow-collect ./cmd/watchdog-flow-worker` 与同范围 `go vet` 通过。
 - [x] **FLOW-05E 已提交**：真实 CH 集成门禁及 LowCardinality wire type 显式 String cast 修复进入提交 `c89e8f33`；测试使用独立数据库并在退出时清理。
-- [x] 实现总览、多维、源 IP、目的 IP、境外、VPN 六页和 query/search/export API。
-- [x] 所有 Flow VTable 统一服务端分页/搜索/排序/column filter；popover portal + collision，禁止溢出错位。
-- [ ] 完成参数/RBAC/统计精度单元，API→CH/页面/导出集成，API 版本/灰度/回退变更测试和前后端回归。
+- [x] 实现总览、多维、源 IP、目的 IP、境外、VPN 六套固定运营报表和同口径 query/search/export API；固定报表复用 QueryGateway/provider/operation job，不再由六个路由和共享 Explorer preset 冒充完成，分项见 FLOW-05G。
+- [x] 已存在的 Explorer/IP 明细/VPN findings/导出 Flow VTable 已统一服务端分页/搜索/排序/column filter；popover portal + collision 已完成。固定报表新增 VTable 仍按 FLOW-05G 独立验收，不能由本项提前覆盖。
+- [x] 完成参数/RBAC/统计精度单元，API→CH/页面/导出集成，API 版本/灰度/回退变更测试和前后端回归；开发库无 Flow 事实时只验收真实空态，非空值由确定性 fixture 守恒测试覆盖。
 
 #### FLOW-05F Flow Explorer（Akvorado 查询模型对齐）
 
@@ -295,7 +295,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [ ] **历史新口径绑定**：由 FLOW-06B reclassification generation 读取指定 AddressSnap 重算 raw 窗口，以 Kafka 坐标和 count/counter 守恒后切换；不在默认查询里临时改写历史。
   - [x] **性能（object/build/lookup）**：真实 GeoLite2-ASN 的 WADS 为 4,291,551 bytes，worker compile 82ms/75.6 MiB，lookup 10.25M/s、p95 292ns/p99 500ns，证明无需 DIR-24-8。builder 经单遍 canonical merge、layer 引用、共享 Geo 紧凑行、精确容量和 migration 060 keyset 索引，从 9m04.618s/1,630.7 MiB 降至 28.292s/457.5 MiB；嵌套 LPM、产物计数与抽样结果保持一致。
   - [x] **性能（平台单例/swap）**：真实 WADS 只安装一份，retained heap 约 48.0 MiB；并发 ingest lookup 时 catalog install pointer pause 17.791µs，观测到的最大 lookup 64.25µs。AddressSnap 是全平台共享发布物，禁止按业务 tenant 复制，原 1/4/16 tenant 容量门禁已废除；swap <10ms、并发 lookup <100ms 的门禁保留。
-  - [x] **平台单例 owner/权限修正**：当前用户模型实际是多 tenant membership + tenant-scoped `admin`，尚无 platform-admin；`address_library.owner_tenant_id` 将管理表固定到当前默认 `tenant_dev` 全局命名空间。地址维护/运算 preview/发布/GC 只允许 owner admin，其他已认证用户统一只读 owner 数据，其他 tenant admin 写入 403；`/api/v1/me` 返回服务端派生的 `can_manage_address_library`，前端用同一能力隐藏入口并阻断所有维护页直达路由，后端仍是最终授权边界。trusted signing key 也必须属于 owner。配置、API 路由、共享 owner repository scope、前端 41 项单测及 production build 已覆盖，发布仍走可查询的异步 operation job。
+  - [x] **平台单例 owner/权限修正**：当前用户模型实际是多 tenant membership + tenant-scoped `admin`，尚无 platform-admin；`address_library.owner_tenant_id` 将管理表固定到当前默认 `tenant_dev` 全局命名空间。地址维护/运算 preview/发布/GC 只允许该外部身份在 owner 下的权威 membership 为 admin；能力不随当前选择的业务 tenant 丢失，其他 tenant admin 写入仍为 403。`/api/v1/me` 与写 API 使用同一 owner 投影派生/强制 `can_manage_address_library`，前端用该能力隐藏入口并阻断所有维护页直达路由，后端仍是最终授权边界。trusted signing key 也必须属于 owner。跨 tenant 选择态、配置、API 路由、共享 owner repository scope、前端单测及 production build 已覆盖，发布仍走可查询的异步 operation job。
   - [ ] **第二业务 tenant 前置（不得冒充当前已完成）**：migration 059 的 `(tenant_id,dimension_snapshot_id)` 外键、pair 签名和 worker catalog 仍把 classification tenant 与 AddressSnap tenant 绑定。接入第二 tenant 前以前向 migration/wire 升级为“tenant classification 引用全局 owner snapshot”，同一进程只 decode/compile/retain 一份 WADS，多个 classification 引用该指针；ACK/查询版本门禁仍按 worker + pair。禁止复制同 checksum snapshot/WADS 规避关系模型。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
@@ -316,6 +316,34 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **变更设计/测试**：旧显式 `60/3600` 请求保持兼容；新客户端默认 0/auto；滚动升级时旧 hub 对 auto 请求明确拒绝而非误查。联合索引缺失/过期回落必须显示 source/degraded，不静默换口径。
 - [x] **回归（联合维度增量）**：Flow/Watchdog 定向 race、全库 test/vet、前端 25 项 model/chart test + production build、真实 CH aggregate/joint data integration 和 gateway integration 均通过；登录 tenant/RBAC 浏览器验收仍由上一项单独保留，未冒充完成。
 - [x] **已提交（本切片范围）**：自动 planner、单维 provider/UI 进入 `157b070d`；真实联合维度、桑基和真实 CH 集成进入 `0751551a`；无状态 typed filter 生命周期、跨维 base 路由及生产页面增量验收进入 `1ffb3939`；默认便捷分析、方向/协议/TOP 查询和当前结果安全 CSV 进入 `33687c3a`；统计结果 VTable 与方向单请求进入 `eb71d49c`；IP 明细稳定 server sort 与 v2 cursor 进入 `9b62adb8`，全列 typed filter/facet 与远程 popover loader 进入 `3c05bfad`；VPN schema 进入 `70af16a1`，findings API/UI 进入 `178e5eff`；异步完整查询导出进入 `a9fc7622`。异步联合索引、保存/共享 filter、完整生产 HTTP/RBAC、带数据便捷分析集成、规则 publication/关闭窗口 findings 和滚动升级门禁仍保持未完成。
+
+#### FLOW-05G 固定运营报表（截图验收面）
+
+> 固定报表面向日常运营，一次选择即可得到成套且同口径的指标；Advanced Flow Explorer 面向临时探索。两者必须复用同一个 compiler/runner、QueryGateway、版本目录、资源授权和导出任务，禁止为报表复制 ClickHouse 查询引擎。已完成的路由或单个通用图表只计为前置，不计为本工作包交付。
+
+- [x] **R0 设计**：冻结 `report={schema_version,kind,...}` discriminated union、五类 report kind（overview/dimensions/endpoints/overseas/vpn）、source/destination side、时区与峰段、value/share/difference、上下行、最新完整桶/平均/exact 95th/峰值、六类残差、版本/水位/completeness 和全有或全无语义；tenant/权限不进入客户端请求。
+- [x] **R0 后端公共内核**：固定报表 composition service 在一次 QueryGateway admission 内冻结 effective range、source resolution、dimension/classification publication、资源授权和 watermark；各 panel 复用现有 typed provider，浏览器不并发拼接普通查询；无新增持久字段，未创建空 migration。
+- [x] **R0 API**：`GET /api/v1/flow/reports/capabilities` 与 `POST /api/v1/flow/reports/query` 已实现 strict JSON、kind-specific validation、稳定错误 envelope、取消/timeout/扫描预算、panel schema 和 warning；旧 `/flow/query`、`/flow/overseas/query` 保持原义。
+- [x] **R0 前端公共报表壳**：统一时间预设+自定义、时区、业务/地域/运营商/resource filters、峰段、metric、value/share/difference、TopN、请求取消、URL state、loading/partial/unavailable/empty 和数据导出；Advanced Explorer 为独立入口。
+- [x] **R0 单元/集成/变更/回归/已提交**：缺桶、零分母、残差、混合版本、可选/必需 panel、旧 API 并存、权限和故障零部分响应已有测试；真实 CH HTTP 六 kind、前端 45 项、production build、全库测试与浏览器回归纳入本原子提交。
+
+- [x] **R1 总览设计/编码**：总入/出 KPI 与趋势；六个互斥业务类卡片（本网本市、本网跨市、本网外省、异网本省、异网外省、境外）的入/出、sparkline、占总量比例；六类占比；业务 × 总量/六类的入/出/占比矩阵；`unknown/internal/transit/ambiguous` 作为显式完整性残差，禁止分摊或隐藏。
+- [x] **R1 总览测试/变更/回归/已提交**：六类+残差、两个方向、多个业务、采样未知、缺桶和版本 fixture 覆盖逐 panel/总量守恒；矩阵在服务端完整结果上过滤排序分页；页面与全量异步导出冻结同一请求，真实空库明确显示 No data。
+
+- [x] **R2 多维报表设计/编码**：固定“默认六类/本网按省/异网运营商/境外/VPN”快捷分组；上下行分图，value/share/signed `in-out` 三模式，当前/95th/峰值/平均；国家→省→市、运营商、业务、峰段筛选及 TopN+other。桑基/热力等任意组合继续进入 Advanced Explorer。
+- [x] **R2 多维测试/变更/回归/已提交**：同方向 share、零分母 unknown、差值符号、TopN+other、Geo/运营商稳定 ID、跨午夜峰段/时区、URL 重放和导出一致性均由 typed 单元/API 契约与真实 CH 空窗门禁覆盖。
+
+- [x] **R3/R4 源/目的 IP 设计/编码**：两页使用同一 typed endpoint report，仅 side 不同；Top IP 总入/出与 sparkline、六类入/出/占比列、业务标签、服务端 total/pagination/search/sort/column filter、点击进入明细。修正归属地只向管理员打开地址库 draft 深链并预填 IP/证据，不从报表直接篡改 published snapshot。
+- [x] **R3/R4 测试/变更/回归/已提交**：IPv4/v6 endpoint 身份、同值稳定分页、六类/残差、完整结果后置过滤、取消陈旧响应、管理员能力深链、filter collision 和全量导出已覆盖；唯一 owner admin 的地址库维护入口另由真实登录态浏览器复验。
+
+- [x] **R5 境外报表补齐**：在现有 KPI/入出趋势/country/region 基础上补齐 ASN、remote port+protocol、业务与运营商筛选、VPN 流量比例及明细入口；observed IP/host 与 estimated traffic 分开标注，unknown Geo/采样残差不猜测。
+- [x] **R5 测试/变更/回归/已提交**：country/region/ASN/端口/协议、IPv4/v6/unknown 口径、VPN 分子分母同窗同版本、observed 与 estimated 分离、旧 overseas API 兼容及导出 flatten 已覆盖；不可证明的 observed/typed-filter 组合显式 unavailable。
+
+- [x] **R6 VPN 运营报表设计/编码**：将流量分析与低容量 findings/处置表分层；提供疑似主机数、VPN 总流量/占比、活跃端口、高风险主机、入/出趋势、端口分布和 VPN 类型分布，向下链接 finding 证据。规则 publication、finding materialization 或 probe 不可用时逐 panel 标明原因，不生成样例数据。
+- [x] **R6 测试/变更/回归/已提交**：规则证据类型、端口、双向/单向 counter、规则版本、generation、完整度、空/partial/unavailable、RBAC、findings 联动、分布 VTable 和导出一致性已覆盖。主动 probe 和不可变 rule-set 的真实数据生成仍属于 FLOW-07C 上游工作，不阻塞报表对 unavailable 状态的正确呈现。
+
+- [x] **固定报表异步导出**：`/flow/exports` 冻结 report kind、规范请求和 panel selector；CSV/Parquet 复用 `export_tasks + operation_jobs`，不新建状态机。prepare 阶段删除交互 VTable page projection，因此全量导出不受当前页影响；unavailable panel 写明状态/原因而非伪造数据。
+- [x] **六页整体验收**：真实 8090 在 1280×720 与 1920×1080 均无页面横向 overflow，六路由均使用真实 ClickHouse provider 且控制台零错误；所有固定报表 VTable 使用服务端分页/搜索/稳定排序/column filter；必需 panel 失败为整请求失败，可选依赖失败显式 unavailable；真实 CH 空窗与确定性非空 fixture 共同覆盖页面/API/导出契约。
 
 ### FLOW-06 Correction/Reclass/Export
 

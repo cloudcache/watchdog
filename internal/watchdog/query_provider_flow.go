@@ -41,6 +41,8 @@ type ClickHouseFlowQueryProvider struct {
 	Runner           flowAggregateRunner
 	JointRunner      flowJointRunner
 	AddressSetRunner flowAddressSetRunner
+	OverseasRunner   flowOverseasRunner
+	VPNFindings      VPNFindingExportRepository
 	Readiness        flowQueryReadiness
 	Network          NetworkRepository
 	StorageLifecycle FlowStorageArchiveBoundaryRepository
@@ -68,11 +70,13 @@ type flowAggregateQueryParameters struct {
 	IncludeOther       bool                           `json:"include_other"`
 	Timezone           string                         `json:"timezone,omitempty"`
 	TargetPoints       uint16                         `json:"target_points,omitempty"`
+	TimeWindows        []flowquery.LocalTimeWindow    `json:"time_windows,omitempty"`
 	DirectionSplit     bool                           `json:"direction_split,omitempty"`
 	AddressSetFilter   flowdimension.AddressSetFilter `json:"address_set_filter,omitempty"`
 	AddressSetEndpoint flowquery.AddressSetEndpoint   `json:"address_set_endpoint,omitempty"`
 	OperatorSelection  *flowOperatorQuerySelection    `json:"operator_selection,omitempty"`
 	Table              *flowTableRequest              `json:"table,omitempty"`
+	Report             *flowReportSpec                `json:"report,omitempty"`
 }
 
 func (p ClickHouseFlowQueryProvider) Ready(ctx context.Context) error {
@@ -176,9 +180,20 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if parameters.OperatorSelection != nil && parameters.OperatorSelection.SchemaVersion != flowOperatorQueryBindingSchemaVersion {
 		return QueryProviderResult{}, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "Flow operator selection was not prepared by the query gateway"}
 	}
+	if parameters.Table != nil && len(parameters.TimeWindows) != 0 {
+		table := *parameters.Table
+		table.timeWindows = append([]flowquery.LocalTimeWindow(nil), parameters.TimeWindows...)
+		table.timezone = parameters.Timezone
+		parameters.Table = &table
+	}
 	view, err := flowView(request.ValueLayer)
 	if err != nil {
 		return QueryProviderResult{}, err
+	}
+	if parameters.Report != nil {
+		result, queryErr := p.queryReport(ctx, request, parameters)
+		result.Versions = withFlowOperatorQueryVersions(result.Versions, parameters.OperatorSelection)
+		return result, queryErr
 	}
 	if flowAddressSetFilterSelected(parameters.AddressSetFilter) {
 		if parameters.OperatorSelection != nil {
@@ -216,6 +231,7 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 		Dimension: parameters.Dimension, Filters: parameters.Filters, View: view,
 		Filter: parameters.Filter,
 		TopN:   parameters.TopN, IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
+		TimeWindows: parameters.TimeWindows,
 	}
 	if err := p.applyStorageV2Boundary(ctx, request.TenantID, plan, &flowRequest); err != nil {
 		return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", err)
@@ -304,7 +320,7 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 		From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
 		TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: flowBaseDimensions(parameters),
 		Filters: parameters.Filters, Filter: parameters.Filter, View: view, TopN: parameters.TopN,
-		IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone,
+		IncludeOther: parameters.IncludeOther, Timezone: parameters.Timezone, TimeWindows: parameters.TimeWindows,
 	}, p.now())
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
@@ -352,6 +368,14 @@ func (p ClickHouseFlowQueryProvider) AuthorizeQuery(ctx context.Context, auth Au
 	parameters, err := decodeFlowAggregateQueryParameters(request.Parameters)
 	if err != nil {
 		return err
+	}
+	needsVPNAccess := parameters.Report != nil && (parameters.Report.Kind == flowReportVPN ||
+		(parameters.Report.Kind == flowReportOverseas && flowReportPanelSelected(*parameters.Report, "vpn_share")))
+	if needsVPNAccess && !HasPermission(AccessRequest{
+		TenantID: auth.TenantID, UserID: auth.UserID, RoleIDs: auth.RoleIDs, Action: ActionVPNView,
+		Resource: ResourceRef{Type: ResourceTenant, ID: auth.TenantID},
+	}, auth.Grants) {
+		return &QueryGatewayError{Code: QueryErrorPermissionDenied, Message: "VPN reports require vpn_view permission"}
 	}
 	if err := authorizeFlowResourceFilters(ctx, auth, p.Network, parameters.Filters.TargetIDs, parameters.Filters.DeviceIDs, parameters.Filters.ExporterIDs); err != nil {
 		return err
@@ -408,7 +432,15 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 	if err := ensureDashboardJSONEOF(decoder); err != nil {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "invalid Flow query parameters", Cause: err}
 	}
-	if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
+	if parameters.Report != nil {
+		if parameters.Dimension != "" || len(parameters.Dimensions) != 0 || parameters.DirectionSplit ||
+			flowAddressSetFilterSelected(parameters.AddressSetFilter) || parameters.AddressSetEndpoint != "" || len(parameters.TimeWindows) != 0 {
+			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "report cannot be combined with dimension, dimensions, direction_split, or address-set mode"}
+		}
+		if err := normalizeFlowReportSpec(parameters.Report, &parameters); err != nil {
+			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: err.Error(), Cause: err}
+		}
+	} else if (parameters.Dimension == "") == (len(parameters.Dimensions) == 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "exactly one of dimension or dimensions is required"}
 	}
 	if parameters.OperatorSelection != nil {
@@ -417,12 +449,12 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "operator_selection.operator_id is required"}
 		}
 	}
-	if parameters.DirectionSplit && (parameters.Dimension != flowquery.DimensionTotal || len(parameters.Dimensions) != 0 ||
+	if parameters.Report == nil && parameters.DirectionSplit && (parameters.Dimension != flowquery.DimensionTotal || len(parameters.Dimensions) != 0 ||
 		parameters.TopN != 1 || parameters.IncludeOther || len(parameters.Filters.Directions) != 0) {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter"}
 	}
 	addressSetSelected := flowAddressSetFilterSelected(parameters.AddressSetFilter)
-	if addressSetSelected {
+	if parameters.Report == nil && addressSetSelected {
 		if parameters.Dimension != flowquery.DimensionAddressSet || len(parameters.Dimensions) != 0 || parameters.DirectionSplit ||
 			parameters.TopN != 1 || parameters.IncludeOther || parameters.Filter != nil ||
 			parameters.AddressSetEndpoint == "" {
@@ -435,11 +467,17 @@ func decodeFlowAggregateQueryParameters(raw json.RawMessage) (flowAggregateQuery
 			len(parameters.Filters.GeoVersions) != 0 || len(parameters.Filters.ClassificationVersions) != 0 {
 			return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "address-set combinations do not accept aggregate dimension/version filters"}
 		}
-	} else if parameters.AddressSetEndpoint != "" {
+	} else if parameters.Report == nil && parameters.AddressSetEndpoint != "" {
 		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: "address_set_endpoint requires address_set_filter"}
 	}
-	if err := normalizeFlowTableRequest(parameters.Table); err != nil {
-		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: err.Error(), Cause: err}
+	var tableErr error
+	if parameters.Report != nil && parameters.Report.Kind == flowReportEndpoints {
+		tableErr = normalizeFlowEndpointTableRequest(parameters.Table)
+	} else {
+		tableErr = normalizeFlowTableRequest(parameters.Table)
+	}
+	if tableErr != nil {
+		return parameters, &QueryGatewayError{Code: QueryErrorInvalidRequest, Message: tableErr.Error(), Cause: tableErr}
 	}
 	if parameters.Filter != nil {
 		canonical, err := flowquery.CanonicalFilter(*parameters.Filter)

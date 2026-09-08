@@ -27,6 +27,8 @@ type flowTableRequest struct {
 	Limit         uint16              `json:"limit"`
 	Offset        uint32              `json:"offset,omitempty"`
 	Filters       map[string][]string `json:"filters,omitempty"`
+	timeWindows   []flowquery.LocalTimeWindow
+	timezone      string
 }
 
 type flowTableRow struct {
@@ -48,6 +50,7 @@ type flowTableRow struct {
 
 type flowTableFilterOption struct {
 	Value string `json:"value"`
+	Label string `json:"label,omitempty"`
 	Count int    `json:"count"`
 }
 
@@ -65,6 +68,10 @@ var flowTableFields = map[string]struct{}{
 }
 
 func normalizeFlowTableRequest(request *flowTableRequest) error {
+	return normalizeFlowTableRequestWithFields(request, flowTableFields)
+}
+
+func normalizeFlowTableRequestWithFields(request *flowTableRequest, allowed map[string]struct{}) error {
 	if request == nil {
 		return nil
 	}
@@ -81,7 +88,7 @@ func normalizeFlowTableRequest(request *flowTableRequest) error {
 	if request.SortBy == "" {
 		request.SortBy = "maximum"
 	}
-	if _, ok := flowTableFields[request.SortBy]; !ok {
+	if _, ok := allowed[request.SortBy]; !ok {
 		return fmt.Errorf("unsupported Flow table sort field %q", request.SortBy)
 	}
 	if request.SortDirection == "" {
@@ -92,7 +99,7 @@ func normalizeFlowTableRequest(request *flowTableRequest) error {
 	}
 	total := 0
 	for field, values := range request.Filters {
-		if _, ok := flowTableFields[field]; !ok {
+		if _, ok := allowed[field]; !ok {
 			return fmt.Errorf("unsupported Flow table filter field %q", field)
 		}
 		if len(values) > flowTableMaximumPageSize {
@@ -129,9 +136,11 @@ type flowTablePoint struct {
 }
 
 type flowTablePlan struct {
-	from time.Time
-	to   time.Time
-	step time.Duration
+	from        time.Time
+	to          time.Time
+	step        time.Duration
+	timeWindows []flowquery.LocalTimeWindow
+	timezone    string
 }
 
 func marshalFlowAggregateResult(result flowquery.Result, request *flowTableRequest, geo *FlowGeoService) ([]byte, error) {
@@ -145,7 +154,10 @@ func marshalFlowAggregateResult(result flowquery.Result, request *flowTableReque
 	points := flowAggregateTablePoints(result, labels)
 	plan := flowTablePlan{}
 	if result.Plan != nil {
-		plan = flowTablePlan{from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second}
+		plan = flowTablePlan{
+			from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second,
+			timeWindows: request.timeWindows, timezone: request.timezone,
+		}
 	}
 	table := buildFlowTable(points, plan, result.Metric.Unit, *request)
 	return json.Marshal(struct {
@@ -181,7 +193,10 @@ func marshalFlowAddressSetResult(result flowquery.Result, request *flowTableRequ
 	if request != nil {
 		plan := flowTablePlan{}
 		if result.Plan != nil {
-			plan = flowTablePlan{from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second}
+			plan = flowTablePlan{
+				from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second,
+				timeWindows: request.timeWindows, timezone: request.timezone,
+			}
 		}
 		built := buildFlowTable(flowAggregateTablePoints(result, nil), plan, result.Metric.Unit, *request)
 		table = &built
@@ -227,7 +242,7 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 	}
 	plan := flowTablePlan{
 		from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo,
-		step: time.Duration(result.Plan.StepSeconds) * time.Second,
+		step: time.Duration(result.Plan.StepSeconds) * time.Second, timeWindows: request.timeWindows, timezone: request.timezone,
 	}
 	table := buildFlowTable(points, plan, result.Metric.Unit, *request)
 	return json.Marshal(struct {
@@ -319,6 +334,18 @@ func buildFlowTable(points []flowTablePoint, plan flowTablePlan, unit string, re
 	}
 	rows := make([]flowTableRow, 0, len(groups))
 	for _, current := range groups {
+		if len(plan.timeWindows) != 0 {
+			selected := current.rows[:0]
+			for _, point := range current.rows {
+				if flowquery.InLocalTimeWindows(point.bucket, plan.timeWindows, plan.timezone) {
+					selected = append(selected, point)
+				}
+			}
+			current.rows = selected
+			if len(current.rows) == 0 {
+				continue
+			}
+		}
 		sort.Slice(current.rows, func(i, j int) bool { return current.rows[i].bucket.Before(current.rows[j].bucket) })
 		values := flowTableValues(current.rows, plan)
 		total := flowTableTotal(current.rows, plan, unit)
@@ -386,6 +413,9 @@ func flowTableValues(rows []flowTablePoint, plan flowTablePlan) []float64 {
 	}
 	values := make([]float64, 0, int(plan.to.Sub(plan.from)/plan.step))
 	for bucket := plan.from; bucket.Before(plan.to); bucket = bucket.Add(plan.step) {
+		if !flowquery.InLocalTimeWindows(bucket, plan.timeWindows, plan.timezone) {
+			continue
+		}
 		values = append(values, existing[bucket.UnixMilli()])
 	}
 	if len(values) == 0 {
@@ -417,7 +447,7 @@ func flowTableTotal(rows []flowTablePoint, plan flowTablePlan, unit string) floa
 
 func flowTableAverage(values []float64, total float64, plan flowTablePlan, unit string) float64 {
 	if unit == "bits_per_second" || unit == "packets_per_second" {
-		seconds := max(1, plan.to.Sub(plan.from).Seconds())
+		seconds := max(1, flowTableSelectedDuration(plan).Seconds())
 		if unit == "bits_per_second" {
 			return total * 8 / seconds
 		}
@@ -428,6 +458,26 @@ func flowTableAverage(values []float64, total float64, plan flowTablePlan, unit 
 		totalValues += value
 	}
 	return totalValues / float64(max(1, len(values)))
+}
+
+func flowTableSelectedDuration(plan flowTablePlan) time.Duration {
+	if len(plan.timeWindows) == 0 || plan.step <= 0 {
+		return plan.to.Sub(plan.from)
+	}
+	var duration time.Duration
+	for bucket := plan.from; bucket.Before(plan.to); bucket = bucket.Add(plan.step) {
+		if !flowquery.InLocalTimeWindows(bucket, plan.timeWindows, plan.timezone) {
+			continue
+		}
+		covered := plan.step
+		if remaining := plan.to.Sub(bucket); remaining < covered {
+			covered = remaining
+		}
+		if covered > 0 {
+			duration += covered
+		}
+	}
+	return duration
 }
 
 func flowTablePercentile(values []float64, ratio float64) float64 {

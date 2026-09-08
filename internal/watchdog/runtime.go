@@ -258,7 +258,8 @@ func NewBackendRuntime(ctx context.Context, cfg BackendConfig) (*BackendRuntime,
 			runtime.FlowOverseas = overseasRunner
 			provider := ClickHouseFlowQueryProvider{
 				Runner: runner, JointRunner: jointRunner, AddressSetRunner: addressSetRunner,
-				Readiness: runtime.flowClickHouseNative, Network: store, FlowGeo: flowGeo, OperatorBindings: store,
+				OverseasRunner: overseasRunner, VPNFindings: store, Readiness: runtime.flowClickHouseNative,
+				Network: store, FlowGeo: flowGeo, OperatorBindings: store,
 			}
 			if cfg.FlowStorage.Enabled {
 				provider.StorageLifecycle = store

@@ -90,7 +90,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 导入与发布是两个不同 SLA。MMDB/IPDB 导入是低频、通常一次性的 operation job，允许分钟级后台运行；验收重点是持久状态、页级 checkpoint、失败原因、重试接管、行数/校验和与最终 generation 可追溯。发布是平台管理员每次地址、地域、运营商或集合编辑后的常态 operation job；API 只入队，job 状态、进度、错误和结果引用可查询，旧 active publication 在 build/审批/安装任一阶段失败时持续服务。preview digest 钉住本次草稿，编辑会使旧 preview 终止；重新 preview 后构建新的不可变对象，只有签名审批、activation 和 worker installed ACK 完整收敛后才切换。导入耗时不作为发布响应 SLA，也不能成为发布时重复解析原始文件的理由。
 
-地址库不是业务 tenant 数据。当前身份实现允许一个外部身份拥有多个 tenant membership，但 `admin` 仍是所选 tenant 内的角色，尚无 platform-admin。因此配置用 `address_library.owner_tenant_id` 把现有 tenant-scoped 管理表固定为一个全局存储/授权命名空间（当前默认 `tenant_dev`）：只有该命名空间的 admin 可上传、激活 import，编辑 prefix/set/Geo/operator/line，执行集合/合并 preview，以及 preview/publish/approve/activate/rollback/retire/GC AddressSnap；其他已认证用户只读同一命名空间，不能以“其他 tenant 的 admin”获得维护权限。`GET /api/v1/me` 按所选身份服务端派生 `can_manage_address_library`，UI 用它隐藏维护入口并阻断所有维护 URL；浏览器能力仅改善 UX，所有写 API 仍独立强制 owner-admin。这个 owner 是兼容现有表结构的实现锚点，不代表地址库按 tenant 分片。未来引入 platform-admin 时只替换授权来源，不迁移或复制地址数据。
+地址库不是业务 tenant 数据。当前身份实现允许一个外部身份拥有多个 tenant membership，但 `admin` 仍是 tenant 内角色，尚无 platform-admin。因此配置用 `address_library.owner_tenant_id` 把现有 tenant-scoped 管理表固定为一个全局存储/授权命名空间（当前默认 `tenant_dev`）：只有该外部身份在 owner 命名空间中的权威 membership 为 admin 时，才可上传、激活 import，编辑 prefix/set/Geo/operator/line，执行集合/合并 preview，以及 preview/publish/approve/activate/rollback/retire/GC AddressSnap；该能力不随当前 UI 选择的业务 tenant 丢失。其他已认证用户只读同一命名空间，不能以“其他 tenant 的 admin”获得维护权限。`GET /api/v1/me` 与写 API 都按 owner membership 服务端派生/强制 `can_manage_address_library`；浏览器能力仅改善 UX，客户端 tenant header 不能提升权限。这个 owner 是兼容现有表结构的实现锚点，不代表地址库按 tenant 分片。未来引入 platform-admin 时只替换授权来源，不迁移或复制地址数据。
 
 ## 5. 分发与 worker 加载
 

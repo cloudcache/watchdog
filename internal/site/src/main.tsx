@@ -75,6 +75,7 @@ const AddressLibrary = lazy(() => import("@/components/routes/address-library.ts
 const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.tsx"))
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
+const FlowReports = lazy(() => import("@/components/routes/flow-reports.tsx"))
 const FlowVPN = lazy(() => import("@/components/routes/flow-vpn.tsx"))
 const FlowVPNRules = lazy(() => import("@/components/routes/flow-vpn-rules.tsx"))
 const FlowSavedFilters = lazy(() => import("@/components/routes/flow-saved-filters.tsx"))
@@ -264,18 +265,25 @@ const App = memo(() => {
 		return <AddressPrefixes />
 	} else if (page.route === "address_sets") {
 		return <AddressSets />
-	} else if (page.route === "flow_overview" || page.route === "traffic_matrix") {
-		return <TrafficMatrix key="overview" surface="overview" />
+	} else if (page.route === "flow_overview") {
+		return <FlowReports surface="overview" />
+	} else if (page.route === "traffic_matrix") {
+		return <TrafficMatrix key="advanced" surface="overview" />
 	} else if (page.route === "flow_dimensions") {
-		return <TrafficMatrix key="dimensions" surface="dimensions" />
+		return <FlowReports surface="dimensions" />
 	} else if (page.route === "flow_source") {
-		return <TrafficMatrix key="source" surface="source" />
+		return <FlowReports surface="source" />
 	} else if (page.route === "flow_destination") {
-		return <TrafficMatrix key="destination" surface="destination" />
+		return <FlowReports surface="destination" />
 	} else if (page.route === "flow_overseas") {
-		return <TrafficMatrix key="overseas" surface="overseas" />
+		return <FlowReports surface="overseas" />
 	} else if (page.route === "flow_vpn") {
-		return <FlowVPN />
+		return (
+			<>
+				<FlowReports surface="vpn" />
+				<FlowVPN />
+			</>
+		)
 	} else if (page.route === "flow_vpn_rules") {
 		return <FlowVPNRules />
 	} else if (page.route === "flow_filters") {

@@ -131,7 +131,12 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	})))
 	mux.Handle("GET /api/v1/me", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := AuthFromContext(r.Context())
-		user.CanManageAddressLibrary = user.IsAdmin && (cfg.AddressLibraryOwner == "" || user.TenantID == cfg.AddressLibraryOwner)
+		if cfg.AddressLibraryOwner == "" {
+			user.CanManageAddressLibrary = user.IsAdmin
+		} else {
+			_, err := addressAdminAdapter(r)
+			user.CanManageAddressLibrary = err == nil
+		}
 		WriteAPIJSON(w, http.StatusOK, user)
 	})))
 	listTenants := tenantDiscovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

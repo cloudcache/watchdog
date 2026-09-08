@@ -7,6 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowquery"
 )
 
 type queryGatewayAPI struct {
@@ -18,6 +21,8 @@ func registerQueryGatewayRoutes(mux *http.ServeMux, auth func(http.Handler) http
 	api := queryGatewayAPI{gateway: gateway, audit: audit}
 	mux.Handle("POST /api/v1/query", auth(http.HandlerFunc(api.query)))
 	mux.Handle("POST /api/v1/flow/query", auth(http.HandlerFunc(api.flowQuery)))
+	mux.Handle("GET /api/v1/flow/reports/capabilities", auth(http.HandlerFunc(api.flowReportCapabilities)))
+	mux.Handle("POST /api/v1/flow/reports/query", auth(http.HandlerFunc(api.flowReportQuery)))
 }
 
 func (api queryGatewayAPI) query(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +31,64 @@ func (api queryGatewayAPI) query(w http.ResponseWriter, r *http.Request) {
 
 func (api queryGatewayAPI) flowQuery(w http.ResponseWriter, r *http.Request) {
 	api.execute(w, r, FlowTrafficDataset)
+}
+
+type flowReportQueryInput struct {
+	From            time.Time                   `json:"from"`
+	To              time.Time                   `json:"to"`
+	StepSeconds     uint32                      `json:"step_seconds,omitempty"`
+	Limit           uint32                      `json:"limit,omitempty"`
+	ValueLayer      QueryValueLayer             `json:"value_layer,omitempty"`
+	RequireComplete bool                        `json:"require_complete,omitempty"`
+	Metric          flowquery.Metric            `json:"metric,omitempty"`
+	Filters         flowquery.Filters           `json:"filters,omitempty"`
+	Filter          *flowquery.FilterExpression `json:"filter,omitempty"`
+	TopN            uint16                      `json:"top_n,omitempty"`
+	IncludeOther    bool                        `json:"include_other,omitempty"`
+	Timezone        string                      `json:"timezone,omitempty"`
+	TargetPoints    uint16                      `json:"target_points,omitempty"`
+	Operator        *flowOperatorQuerySelection `json:"operator_selection,omitempty"`
+	Table           *flowTableRequest           `json:"table,omitempty"`
+	Report          flowReportSpec              `json:"report"`
+}
+
+func (api queryGatewayAPI) flowReportCapabilities(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	WriteAPIJSON(w, http.StatusOK, currentFlowReportCapabilities())
+}
+
+func (api queryGatewayAPI) flowReportQuery(w http.ResponseWriter, r *http.Request) {
+	var input flowReportQueryInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxQueryParameterBytes+16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorCode(QueryErrorInvalidRequest), err.Error(), nil)
+		return
+	}
+	if err := ensureDashboardJSONEOF(decoder); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorCode(QueryErrorInvalidRequest), err.Error(), nil)
+		return
+	}
+	if input.ValueLayer == "" {
+		input.ValueLayer = QueryValueCustomer
+	}
+	if input.Limit == 0 {
+		input.Limit = defaultQueryMaxRows
+	}
+	parameters, err := json.Marshal(flowAggregateQueryParameters{
+		Metric: input.Metric, Filters: input.Filters, Filter: input.Filter, TopN: input.TopN,
+		IncludeOther: input.IncludeOther, Timezone: input.Timezone, TargetPoints: input.TargetPoints,
+		OperatorSelection: input.Operator, Table: input.Table, Report: &input.Report,
+	})
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorCode(QueryErrorInvalidRequest), "encode Flow report request", nil)
+		return
+	}
+	request := QueryRequest{
+		Dataset: FlowTrafficDataset, From: input.From, To: input.To, StepSeconds: input.StepSeconds,
+		Limit: input.Limit, ValueLayer: input.ValueLayer, RequireComplete: input.RequireComplete, Parameters: parameters,
+	}
+	api.executeRequest(w, r, request)
 }
 
 func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixedDataset string) {
@@ -47,6 +110,10 @@ func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixed
 		}
 		request.Dataset = fixedDataset
 	}
+	api.executeRequest(w, r, request)
+}
+
+func (api queryGatewayAPI) executeRequest(w http.ResponseWriter, r *http.Request, request QueryRequest) {
 	auth, _ := AuthFromContext(r.Context())
 	result, err := api.gateway.Execute(r.Context(), auth, RequestIDFromContext(r.Context()), request)
 	if err != nil {
@@ -67,6 +134,7 @@ func (api queryGatewayAPI) execute(w http.ResponseWriter, r *http.Request, fixed
 			"operator_classification_versions": result.Meta.Versions["operator_classification_versions"],
 		})
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	WriteAPIJSON(w, http.StatusOK, result)
 }
 

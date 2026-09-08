@@ -332,7 +332,7 @@ export default memo(() => {
 	}
 
 	return (
-		<div className="grid gap-4">
+		<div id="vpn-findings" className="grid scroll-mt-4 gap-4">
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<ShieldCheckIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />

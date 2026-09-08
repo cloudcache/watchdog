@@ -35,6 +35,7 @@ type JointRequest struct {
 	TopN         uint16
 	IncludeOther bool
 	Timezone     string
+	TimeWindows  []LocalTimeWindow
 }
 
 type JointPlan struct {
@@ -143,6 +144,14 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		return CompiledJoint{}, err
 	}
 	parameters = append(parameters, filterParameters...)
+	timeCondition, timeParameters, err := compileLocalTimeWindows(request.TimeWindows, timezone, "event_time")
+	if err != nil {
+		return CompiledJoint{}, err
+	}
+	if timeCondition != "" {
+		conditions = append(conditions, timeCondition)
+		parameters = append(parameters, timeParameters...)
+	}
 	valueExpression := fmt.Sprintf("toFloat64(sum(%s))", metric.column)
 	if metric.rate {
 		multiplier := uint64(1)

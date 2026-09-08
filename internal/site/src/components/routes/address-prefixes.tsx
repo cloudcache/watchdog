@@ -60,20 +60,21 @@ const emptyForm = {
 
 export default memo(function AddressPrefixes() {
 	const { t } = useLingui()
+	const correctionDraft = useMemo(() => readCorrectionDraft(), [])
 	const [prefixes, setPrefixes] = useState<AddressPrefix[]>([])
 	const [total, setTotal] = useState(0)
 	const [page, setPage] = useState(0)
 	const [pageSize, setPageSize] = useState(25)
-	const [search, setSearch] = useState("")
-	const [debouncedSearch, setDebouncedSearch] = useState("")
+	const [search, setSearch] = useState(correctionDraft.search)
+	const [debouncedSearch, setDebouncedSearch] = useState(correctionDraft.search)
 	const [family, setFamily] = useState("")
 	const [source, setSource] = useState("")
 	const [sort, setSort] = useState("cidr:asc")
 	const [reloadKey, setReloadKey] = useState(0)
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
-	const [showForm, setShowForm] = useState(false)
-	const [form, setForm] = useState(emptyForm)
+	const [showForm, setShowForm] = useState(correctionDraft.open)
+	const [form, setForm] = useState({ ...emptyForm, cidr: correctionDraft.ip, labels: correctionDraft.open ? "evidence=flow_report" : "" })
 	const [selected, setSelected] = useState<AddressPrefix[]>([])
 	const [coverPreview, setCoverPreview] = useState<AddressOperationPreview | null>(null)
 	const [coverWorking, setCoverWorking] = useState(false)
@@ -494,6 +495,11 @@ export default memo(function AddressPrefixes() {
 
 	return (
 		<div className="grid gap-4">
+			{correctionDraft.open ? (
+				<div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+					<Trans>Draft opened from a Flow report.</Trans> {correctionDraft.evidence}
+				</div>
+			) : null}
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<GlobeIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
@@ -752,4 +758,23 @@ export default memo(function AddressPrefixes() {
 
 function denseCellStyle() {
 	return { padding: [8, 10, 8, 10], textBaseline: "middle", autoWrapText: false }
+}
+
+function readCorrectionDraft() {
+	if (typeof window === "undefined") return { search: "", ip: "", open: false, evidence: "" }
+	const query = new URLSearchParams(window.location.search)
+	const ip = (query.get("ip") ?? "").trim()
+	const evidence = [
+		query.get("from") && `from=${query.get("from")}`,
+		query.get("to") && `to=${query.get("to")}`,
+		query.get("dimension_snapshot_id") && `snapshot=${query.get("dimension_snapshot_id")}`,
+		query.get("geo_version") && `geo=${query.get("geo_version")}`,
+		query.get("classification_version") && `classification=${query.get("classification_version")}`,
+	].filter(Boolean).join(" · ")
+	return {
+		search: (query.get("q") ?? ip).trim(),
+		ip,
+		open: query.get("draft") === "1" && ip !== "",
+		evidence,
+	}
 }

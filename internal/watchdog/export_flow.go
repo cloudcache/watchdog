@@ -54,6 +54,10 @@ type FlowExportRow struct {
 	QueryStepSeconds          uint32
 	QueryAsOf                 time.Time
 	QueryPolicyVersion        uint64
+	ReportKind                string
+	ReportPanel               string
+	ReportPanelStatus         string
+	ReportPanelReason         string
 }
 
 type ExportRowsDataProvider interface {
@@ -122,6 +126,9 @@ func prepareFlowExportExecutionTask(ctx context.Context, gateway *QueryGateway, 
 	// Interactive VTable paging is a response projection, not part of a full
 	// export. Freeze the same typed query without its current table page.
 	parameters.Table = nil
+	if parameters.Report != nil {
+		parameters.Report.Tables = nil
+	}
 	query.Parameters, err = json.Marshal(parameters)
 	if err != nil {
 		return ExportTask{}, err
@@ -229,28 +236,73 @@ func (p QueryGatewayExportDataProvider) LoadExportRows(ctx context.Context, task
 }
 
 func flowExportRows(result QueryResult, layer QueryValueLayer) (ExportRows, error) {
+	var reportProbe struct {
+		SchemaVersion uint16         `json:"schema_version"`
+		Kind          flowReportKind `json:"kind"`
+	}
+	if err := json.Unmarshal(result.Data, &reportProbe); err != nil {
+		return ExportRows{}, fmt.Errorf("decode Flow export result: %w", err)
+	}
+	if reportProbe.Kind != "" {
+		if reportProbe.SchemaVersion != flowReportSchemaVersion {
+			return ExportRows{}, fmt.Errorf("unsupported Flow report export schema %d", reportProbe.SchemaVersion)
+		}
+		var report flowReportData
+		if err := json.Unmarshal(result.Data, &report); err != nil {
+			return ExportRows{}, fmt.Errorf("decode Flow report export result: %w", err)
+		}
+		return flowReportExportRows(report, result.Meta, layer)
+	}
+	return flowExportPanelRows(result.Data, flowExportDecoration{
+		ValueLayer: layer, CompleteRatio: result.Meta.CompleteRatio, Partial: result.Meta.Partial,
+		UnknownRatio: result.Meta.UnknownRatio, Warnings: strings.Join(result.Meta.Warnings, "; "),
+		Source: result.Meta.Source, StepSeconds: result.Meta.StepSeconds, AsOf: result.Meta.AsOf,
+		PolicyVersion: result.Meta.PolicyVersion,
+	})
+}
+
+type flowExportDecoration struct {
+	ValueLayer    QueryValueLayer
+	CompleteRatio float64
+	Partial       bool
+	UnknownRatio  float64
+	Warnings      string
+	Source        string
+	StepSeconds   uint32
+	AsOf          time.Time
+	PolicyVersion uint64
+	ReportKind    string
+	ReportPanel   string
+	PanelStatus   string
+	PanelReason   string
+}
+
+func flowExportPanelRows(data json.RawMessage, decoration flowExportDecoration) (ExportRows, error) {
 	var envelope struct {
 		Points     json.RawMessage                 `json:"points"`
 		Metric     flowquery.MetricDefinition      `json:"metric"`
 		Dimension  flowquery.DimensionDefinition   `json:"dimension"`
 		Dimensions []flowquery.DimensionDefinition `json:"dimensions"`
 	}
-	if err := json.Unmarshal(result.Data, &envelope); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		return ExportRows{}, fmt.Errorf("decode Flow export result: %w", err)
 	}
-	warnings := strings.Join(result.Meta.Warnings, "; ")
 	decorate := func(row *FlowExportRow) {
 		row.Metric = string(envelope.Metric.Name)
 		row.Unit = envelope.Metric.Unit
-		row.ValueLayer = layer
-		row.QueryCompleteRatio = result.Meta.CompleteRatio
-		row.QueryPartial = result.Meta.Partial
-		row.QueryUnknownRatio = result.Meta.UnknownRatio
-		row.QueryWarnings = warnings
-		row.QuerySource = result.Meta.Source
-		row.QueryStepSeconds = result.Meta.StepSeconds
-		row.QueryAsOf = result.Meta.AsOf
-		row.QueryPolicyVersion = result.Meta.PolicyVersion
+		row.ValueLayer = decoration.ValueLayer
+		row.QueryCompleteRatio = decoration.CompleteRatio
+		row.QueryPartial = decoration.Partial
+		row.QueryUnknownRatio = decoration.UnknownRatio
+		row.QueryWarnings = decoration.Warnings
+		row.QuerySource = decoration.Source
+		row.QueryStepSeconds = decoration.StepSeconds
+		row.QueryAsOf = decoration.AsOf
+		row.QueryPolicyVersion = decoration.PolicyVersion
+		row.ReportKind = decoration.ReportKind
+		row.ReportPanel = decoration.ReportPanel
+		row.ReportPanelStatus = decoration.PanelStatus
+		row.ReportPanelReason = decoration.PanelReason
 	}
 	rows := ExportRows{}
 	if len(envelope.Dimensions) > 0 {
@@ -297,6 +349,178 @@ func flowExportRows(result QueryResult, layer QueryValueLayer) (ExportRows, erro
 	return rows, nil
 }
 
+func flowReportExportRows(report flowReportData, meta QueryResultMeta, layer QueryValueLayer) (ExportRows, error) {
+	rows := ExportRows{}
+	reportWarnings := append([]string(nil), report.Warnings...)
+	reportWarnings = append(reportWarnings, meta.Warnings...)
+	for _, panel := range report.Panels {
+		warnings := append([]string(nil), reportWarnings...)
+		warnings = append(warnings, panel.Meta.Completeness.Warnings...)
+		decoration := flowExportDecoration{
+			ValueLayer: layer, CompleteRatio: panel.Meta.Completeness.CompleteRatio,
+			Partial: panel.Meta.Completeness.Partial, UnknownRatio: panel.Meta.Completeness.UnknownRatio,
+			Warnings: strings.Join(uniqueSortedStrings(warnings), "; "), Source: meta.Source,
+			StepSeconds: panel.Meta.StepSeconds, AsOf: panel.Meta.AsOf, PolicyVersion: meta.PolicyVersion,
+			ReportKind: string(report.Kind), ReportPanel: panel.ID, PanelStatus: panel.Status, PanelReason: panel.Reason,
+		}
+		if panel.Status != "ready" {
+			rows.Rows = append(rows.Rows, FlowExportRow{
+				Bucket: panel.Meta.AsOf, Metric: "panel_status", Unit: "status", ValueLayer: layer,
+				QueryCompleteRatio: decoration.CompleteRatio, QueryPartial: true,
+				QueryUnknownRatio: decoration.UnknownRatio, QueryWarnings: decoration.Warnings,
+				QuerySource: decoration.Source, QueryStepSeconds: decoration.StepSeconds,
+				QueryAsOf: decoration.AsOf, QueryPolicyVersion: decoration.PolicyVersion,
+				ReportKind: decoration.ReportKind, ReportPanel: panel.ID,
+				ReportPanelStatus: panel.Status, ReportPanelReason: panel.Reason,
+			})
+			continue
+		}
+		var panelRows ExportRows
+		var err error
+		switch panel.ID {
+		case "observed":
+			panelRows, err = flowObservedReportExportRows(panel.Data, decoration)
+		case "vpn_share":
+			panelRows, err = flowOverseasVPNShareExportRows(panel.Data, decoration)
+		case "vpn_findings":
+			panelRows, err = flowVPNReportExportRows(panel.Data, decoration)
+		default:
+			panelRows, err = flowExportPanelRows(panel.Data, decoration)
+		}
+		if err != nil {
+			return ExportRows{}, fmt.Errorf("export Flow report panel %s: %w", panel.ID, err)
+		}
+		rows.Rows = append(rows.Rows, panelRows.Rows...)
+	}
+	return rows, nil
+}
+
+func flowOverseasVPNShareExportRows(data json.RawMessage, decoration flowExportDecoration) (ExportRows, error) {
+	var result struct {
+		Points []flowOverseasVPNSharePoint `json:"points"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return ExportRows{}, err
+	}
+	rows := ExportRows{}
+	for _, point := range result.Points {
+		appendRow := func(metric, unit string, value float64) {
+			row := FlowExportRow{
+				Bucket: point.GeneratedAt, Metric: metric, Unit: unit, Value: value,
+				DimensionNames: []string{"direction"}, DimensionValues: []string{point.Direction},
+			}
+			decorateFlowReportExportRow(&row, decoration)
+			rows.Rows = append(rows.Rows, row)
+		}
+		appendRow("vpn_bytes", "bytes", float64(point.VPNBytes))
+		appendRow("overseas_bytes", "bytes", point.TotalBytes)
+		appendRow("unknown_geo_bytes", "bytes", float64(point.UnknownGeo))
+		appendRow("finding_rows", "findings", float64(point.FindingRows))
+		if point.Ratio != nil {
+			appendRow("vpn_share", "ratio", *point.Ratio)
+		}
+	}
+	return rows, nil
+}
+
+func decorateFlowReportExportRow(row *FlowExportRow, decoration flowExportDecoration) {
+	row.ValueLayer = decoration.ValueLayer
+	row.QueryCompleteRatio = decoration.CompleteRatio
+	row.QueryPartial = decoration.Partial
+	row.QueryUnknownRatio = decoration.UnknownRatio
+	row.QueryWarnings = decoration.Warnings
+	row.QuerySource = decoration.Source
+	row.QueryStepSeconds = decoration.StepSeconds
+	row.QueryAsOf = decoration.AsOf
+	row.QueryPolicyVersion = decoration.PolicyVersion
+	row.ReportKind = decoration.ReportKind
+	row.ReportPanel = decoration.ReportPanel
+	row.ReportPanelStatus = decoration.PanelStatus
+	row.ReportPanelReason = decoration.PanelReason
+}
+
+func flowObservedReportExportRows(data json.RawMessage, decoration flowExportDecoration) (ExportRows, error) {
+	var result flowquery.OverseasResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return ExportRows{}, err
+	}
+	rows := ExportRows{Rows: make([]FlowExportRow, 0, len(result.Points)*3)}
+	for _, point := range result.Points {
+		base := FlowExportRow{
+			Bucket: point.Bucket, DimensionNames: []string{"geo_scope", "direction", "ip_family", "geo_value"},
+			DimensionValues: []string{string(point.GeoScope), string(point.Direction), string(point.IPFamily), point.GeoValue},
+			Other:           point.Other, ReceivedRecords: point.ReceivedRecords,
+			UnknownSamplingRecords: point.UnknownSamplingRecords, QualityRecords: point.QualityRecords,
+			SamplingCompleteness: point.SamplingCompleteness, SamplingCompletenessKnown: point.SamplingCompletenessKnown,
+			QualityRecordRatio: point.QualityRecordRatio, QualityRecordRatioKnown: point.QualityRecordRatioKnown,
+			DimensionSnapshotID: point.DimensionSnapshotID, GeoVersion: point.GeoVersion,
+			ClassificationVersion: point.ClassificationVersion, ObservedAt: point.GeneratedAt,
+		}
+		traffic := base
+		traffic.Metric, traffic.Unit, traffic.Value = string(result.Metric.Name), result.Metric.Unit, point.Value
+		decorateFlowReportExportRow(&traffic, decoration)
+		rows.Rows = append(rows.Rows, traffic)
+		for _, cardinality := range []struct {
+			metric string
+			unit   string
+			value  uint64
+		}{
+			{"observed_remote_ips", "addresses", point.ObservedRemoteIPs},
+			{"observed_local_hosts", "hosts", point.ObservedLocalHosts},
+		} {
+			row := base
+			row.Metric, row.Unit, row.Value = cardinality.metric, cardinality.unit, float64(cardinality.value)
+			decorateFlowReportExportRow(&row, decoration)
+			rows.Rows = append(rows.Rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func flowVPNReportExportRows(data json.RawMessage, decoration flowExportDecoration) (ExportRows, error) {
+	var summary flowVPNReportSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return ExportRows{}, err
+	}
+	rows := ExportRows{}
+	appendRow := func(bucket time.Time, metric, unit string, value float64, names, values []string) {
+		row := FlowExportRow{Bucket: bucket, Metric: metric, Unit: unit, Value: value, DimensionNames: names, DimensionValues: values}
+		decorateFlowReportExportRow(&row, decoration)
+		rows.Rows = append(rows.Rows, row)
+	}
+	asOf := decoration.AsOf
+	for _, item := range []struct {
+		metric string
+		unit   string
+		value  float64
+	}{
+		{"finding_count", "findings", float64(summary.FindingCount)},
+		{"suspected_hosts", "hosts", float64(summary.SuspectedHosts)},
+		{"high_risk_hosts", "hosts", float64(summary.HighRiskHosts)},
+		{"active_ports", "ports", float64(summary.ActivePorts)},
+		{"inbound_bytes", "bytes", float64(summary.InboundBytes)},
+		{"outbound_bytes", "bytes", float64(summary.OutboundBytes)},
+		{"total_bytes", "bytes", float64(summary.TotalBytes)},
+		{"minimum_complete_ratio", "ratio", summary.MinimumCompleteRatio},
+	} {
+		appendRow(asOf, item.metric, item.unit, item.value, nil, nil)
+	}
+	for _, point := range summary.Trend {
+		appendRow(point.Bucket, "inbound_bytes", "bytes", float64(point.InboundBytes), []string{"series"}, []string{"trend"})
+		appendRow(point.Bucket, "outbound_bytes", "bytes", float64(point.OutboundBytes), []string{"series"}, []string{"trend"})
+	}
+	for _, distribution := range []struct {
+		name  string
+		items []flowReportCount
+	}{{"port", summary.PortDistribution}, {"type", summary.TypeDistribution}} {
+		for _, item := range distribution.items {
+			appendRow(asOf, "finding_count", "findings", float64(item.Count), []string{"distribution", "value"}, []string{distribution.name, item.Value})
+			appendRow(asOf, "traffic_bytes", "bytes", float64(item.Bytes), []string{"distribution", "value"}, []string{distribution.name, item.Value})
+		}
+	}
+	return rows, nil
+}
+
 func flowExportDimensionNames(dimensions []flowquery.DimensionDefinition) []string {
 	names := make([]string, 0, len(dimensions))
 	for _, dimension := range dimensions {
@@ -312,6 +536,7 @@ var flowExportHeader = []string{
 	"quality_record_ratio", "quality_record_ratio_known", "dimension_snapshot_id", "geo_version", "classification_version",
 	"observed_at", "query_complete_ratio", "query_partial", "query_unknown_ratio", "query_warnings",
 	"query_source", "query_step_seconds", "query_as_of", "query_policy_version",
+	"report_kind", "report_panel", "report_panel_status", "report_panel_reason",
 }
 
 func RenderCSVExportRows(rows ExportRows) ([]byte, error) {
@@ -343,6 +568,8 @@ func RenderCSVExportRows(rows ExportRows) ([]byte, error) {
 			strconv.FormatBool(row.QueryPartial), strconv.FormatFloat(row.QueryUnknownRatio, 'f', -1, 64), safeSpreadsheetCell(row.QueryWarnings),
 			safeSpreadsheetCell(row.QuerySource), strconv.FormatUint(uint64(row.QueryStepSeconds), 10),
 			row.QueryAsOf.UTC().Format(time.RFC3339Nano), strconv.FormatUint(row.QueryPolicyVersion, 10),
+			safeSpreadsheetCell(row.ReportKind), safeSpreadsheetCell(row.ReportPanel),
+			safeSpreadsheetCell(row.ReportPanelStatus), safeSpreadsheetCell(row.ReportPanelReason),
 		}
 		if err := writer.Write(record); err != nil {
 			return nil, err
@@ -398,6 +625,10 @@ type flowExportParquetRow struct {
 	QueryStepSeconds          uint32  `parquet:"query_step_seconds"`
 	QueryAsOf                 int64   `parquet:"query_as_of,timestamp(millisecond:utc)"`
 	QueryPolicyVersion        uint64  `parquet:"query_policy_version"`
+	ReportKind                string  `parquet:"report_kind,dict"`
+	ReportPanel               string  `parquet:"report_panel,dict"`
+	ReportPanelStatus         string  `parquet:"report_panel_status,dict"`
+	ReportPanelReason         string  `parquet:"report_panel_reason"`
 }
 
 func RenderParquetExportRows(rows ExportRows) ([]byte, error) {
@@ -420,6 +651,8 @@ func RenderParquetExportRows(rows ExportRows) ([]byte, error) {
 			QueryUnknownRatio: row.QueryUnknownRatio, QueryWarnings: row.QueryWarnings,
 			QuerySource: row.QuerySource, QueryStepSeconds: row.QueryStepSeconds,
 			QueryAsOf: row.QueryAsOf.UnixMilli(), QueryPolicyVersion: row.QueryPolicyVersion,
+			ReportKind: row.ReportKind, ReportPanel: row.ReportPanel,
+			ReportPanelStatus: row.ReportPanelStatus, ReportPanelReason: row.ReportPanelReason,
 		})
 	}
 	var output bytes.Buffer
