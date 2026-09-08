@@ -14,17 +14,17 @@ import (
 )
 
 type deviceRecord struct {
-	ID, Host, DisplayName, Kind, Vendor, Model, Platform            string
-	SysName, SysDescr, SysObjectID, OS, OSVersion, Hardware, Serial string
-	Labels                                                          json.RawMessage
-	LocationID, LocationName, SNMPProfileID                         sql.NullString
-	SNMPPort                                                        sql.NullInt64
-	Status, StatusReason                                            string
-	Disabled, IgnoreAlerts                                          bool
-	UptimeSeconds, RowVersion                                       uint64
-	LastPolledAt                                                    sql.NullTime
-	CreatedAt, UpdatedAt                                            time.Time
-	PortCount, UpPorts, DownPorts, BGPSessions, EstablishedBGP      uint64
+	ID, Host, DisplayName, Kind, Vendor, Model, Platform                         string
+	SysName, SysDescr, SysLocation, SysObjectID, OS, OSVersion, Hardware, Serial string
+	Labels                                                                       json.RawMessage
+	LocationID, LocationName, SNMPProfileID                                      sql.NullString
+	SNMPPort                                                                     sql.NullInt64
+	Status, StatusReason                                                         string
+	Disabled, IgnoreAlerts                                                       bool
+	UptimeSeconds, RowVersion                                                    uint64
+	LastPolledAt                                                                 sql.NullTime
+	CreatedAt, UpdatedAt                                                         time.Time
+	PortCount, UpPorts, DownPorts, BGPSessions, EstablishedBGP                   uint64
 }
 
 type deviceDTO struct {
@@ -47,6 +47,7 @@ type deviceDTO struct {
 	Hardware      string            `json:"hardware"`
 	Serial        string            `json:"serial"`
 	LocationID    string            `json:"location_id,omitempty"`
+	LocationName  string            `json:"location_name,omitempty"`
 	SysLocation   string            `json:"sys_location,omitempty"`
 	SNMPProfileID string            `json:"snmp_profile_id,omitempty"`
 	SNMPPort      uint16            `json:"snmp_port,omitempty"`
@@ -81,7 +82,7 @@ func (r deviceRecord) dto() deviceDTO {
 		Labels: labels,
 		Vendor: r.Vendor, Model: r.Model, Platform: r.Platform, SysName: r.SysName, SysDescr: r.SysDescr,
 		SysObjectID: r.SysObjectID, OS: r.OS, OSName: r.OS, OSVersion: r.OSVersion, Hardware: r.Hardware,
-		Serial: r.Serial, LocationID: r.LocationID.String, SysLocation: r.LocationName.String,
+		Serial: r.Serial, LocationID: r.LocationID.String, LocationName: r.LocationName.String, SysLocation: r.SysLocation,
 		SNMPProfileID: r.SNMPProfileID.String, SNMPPort: port, Status: r.Status, StatusReason: r.StatusReason,
 		Disabled: r.Disabled, IgnoreAlerts: r.IgnoreAlerts, UptimeSeconds: r.UptimeSeconds,
 		Uptime: r.UptimeSeconds * uint64(time.Second), LastPolledAt: nullableTime(r.LastPolledAt),
@@ -240,7 +241,7 @@ func (s *Server) queryDevices(c *gin.Context, kind string) ([]deviceRecord, int,
 	if sortColumn == "" {
 		sortColumn = sorts[""]
 	}
-	query := `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at,
+	query := `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_location,d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at,
 		(SELECT COUNT(*) FROM ports p WHERE p.device_id=d.id),
 		(SELECT COUNT(*) FROM ports p WHERE p.device_id=d.id AND p.if_oper_status='up'),
 		(SELECT COUNT(*) FROM ports p WHERE p.device_id=d.id AND p.if_oper_status='down'),
@@ -256,7 +257,7 @@ func (s *Server) queryDevices(c *gin.Context, kind string) ([]deviceRecord, int,
 	items := make([]deviceRecord, 0, limit)
 	for rs.Next() {
 		var r deviceRecord
-		if err := rs.Scan(&r.ID, &r.Host, &r.DisplayName, &r.Labels, &r.Kind, &r.Vendor, &r.Model, &r.Platform, &r.SysName, &r.SysDescr, &r.SysObjectID, &r.OS, &r.OSVersion, &r.Hardware, &r.Serial, &r.LocationID, &r.LocationName, &r.SNMPProfileID, &r.SNMPPort, &r.Status, &r.StatusReason, &r.Disabled, &r.IgnoreAlerts, &r.UptimeSeconds, &r.LastPolledAt, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt, &r.PortCount, &r.UpPorts, &r.DownPorts, &r.BGPSessions, &r.EstablishedBGP); err != nil {
+		if err := rs.Scan(&r.ID, &r.Host, &r.DisplayName, &r.Labels, &r.Kind, &r.Vendor, &r.Model, &r.Platform, &r.SysName, &r.SysDescr, &r.SysLocation, &r.SysObjectID, &r.OS, &r.OSVersion, &r.Hardware, &r.Serial, &r.LocationID, &r.LocationName, &r.SNMPProfileID, &r.SNMPPort, &r.Status, &r.StatusReason, &r.Disabled, &r.IgnoreAlerts, &r.UptimeSeconds, &r.LastPolledAt, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt, &r.PortCount, &r.UpPorts, &r.DownPorts, &r.BGPSessions, &r.EstablishedBGP); err != nil {
 			return nil, 0, nil, err
 		}
 		items = append(items, r)
@@ -279,9 +280,9 @@ func (s *Server) getDevice(c *gin.Context) {
 
 func (s *Server) readDevice(c *gin.Context, id string) (deviceRecord, error) {
 	var r deviceRecord
-	err := s.db.QueryRowContext(c.Request.Context(), `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
+	err := s.db.QueryRowContext(c.Request.Context(), `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_location,d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
 		FROM devices d LEFT JOIN locations l ON l.id=d.location_id WHERE d.id=?`, id).Scan(
-		&r.ID, &r.Host, &r.DisplayName, &r.Labels, &r.Kind, &r.Vendor, &r.Model, &r.Platform, &r.SysName, &r.SysDescr, &r.SysObjectID, &r.OS, &r.OSVersion, &r.Hardware, &r.Serial, &r.LocationID, &r.LocationName, &r.SNMPProfileID, &r.SNMPPort, &r.Status, &r.StatusReason, &r.Disabled, &r.IgnoreAlerts, &r.UptimeSeconds, &r.LastPolledAt, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt)
+		&r.ID, &r.Host, &r.DisplayName, &r.Labels, &r.Kind, &r.Vendor, &r.Model, &r.Platform, &r.SysName, &r.SysDescr, &r.SysLocation, &r.SysObjectID, &r.OS, &r.OSVersion, &r.Hardware, &r.Serial, &r.LocationID, &r.LocationName, &r.SNMPProfileID, &r.SNMPPort, &r.Status, &r.StatusReason, &r.Disabled, &r.IgnoreAlerts, &r.UptimeSeconds, &r.LastPolledAt, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 

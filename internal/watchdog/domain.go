@@ -283,6 +283,7 @@ type AggregateGraphDataPoint struct {
 type SNMPVersion string
 
 const (
+	SNMPVersion1  SNMPVersion = "1"
 	SNMPVersion2c SNMPVersion = "2c"
 	SNMPVersion3  SNMPVersion = "3"
 )

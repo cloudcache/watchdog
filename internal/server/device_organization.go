@@ -552,7 +552,7 @@ func (s *Server) listDeviceGroupMembers(c *gin.Context) {
 		return
 	}
 	queryArgs := append(append([]any{}, args...), page.Limit, page.Offset)
-	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
+	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_location,d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
 		FROM device_group_members gm JOIN devices d ON d.id=gm.device_id LEFT JOIN locations l ON l.id=d.location_id`+clause+
 		fmt.Sprintf(" ORDER BY %s %s,d.id %s LIMIT ? OFFSET ?", page.Sort, page.Order, page.Order), queryArgs...)
 	if err != nil {
@@ -563,7 +563,7 @@ func (s *Server) listDeviceGroupMembers(c *gin.Context) {
 	items := []deviceDTO{}
 	for rows.Next() {
 		var value deviceRecord
-		if err := rows.Scan(&value.ID, &value.Host, &value.DisplayName, &value.Labels, &value.Kind, &value.Vendor, &value.Model, &value.Platform, &value.SysName, &value.SysDescr, &value.SysObjectID, &value.OS, &value.OSVersion, &value.Hardware, &value.Serial, &value.LocationID, &value.LocationName, &value.SNMPProfileID, &value.SNMPPort, &value.Status, &value.StatusReason, &value.Disabled, &value.IgnoreAlerts, &value.UptimeSeconds, &value.LastPolledAt, &value.RowVersion, &value.CreatedAt, &value.UpdatedAt); err != nil {
+		if err := rows.Scan(&value.ID, &value.Host, &value.DisplayName, &value.Labels, &value.Kind, &value.Vendor, &value.Model, &value.Platform, &value.SysName, &value.SysDescr, &value.SysLocation, &value.SysObjectID, &value.OS, &value.OSVersion, &value.Hardware, &value.Serial, &value.LocationID, &value.LocationName, &value.SNMPProfileID, &value.SNMPPort, &value.Status, &value.StatusReason, &value.Disabled, &value.IgnoreAlerts, &value.UptimeSeconds, &value.LastPolledAt, &value.RowVersion, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			writeSQLError(c, err)
 			return
 		}

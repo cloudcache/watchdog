@@ -18,9 +18,10 @@ import (
 
 // Server holds the runtime dependencies.
 type Server struct {
-	cfg    Config
-	db     *sql.DB
-	engine *gin.Engine
+	cfg           Config
+	db            *sql.DB
+	engine        *gin.Engine
+	snmpDiscovery snmpDiscoveryRunner
 }
 
 // New opens MySQL, applies the v2 baseline, and builds the router.
@@ -42,7 +43,12 @@ func New(cfg Config) (*Server, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
-	s := &Server{cfg: cfg, db: db}
+	discovery, err := newSNMPDiscoveryRunner(cfg.SNMP)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure snmp discovery: %w", err)
+	}
+	s := &Server{cfg: cfg, db: db, snmpDiscovery: discovery}
 	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)

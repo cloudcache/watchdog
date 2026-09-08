@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,25 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cloudcache/watchdog/internal/watchdog"
 )
+
+type fakeSNMPDiscoveryRunner struct {
+	results  []watchdog.SNMPCollectorDiscoveryResult
+	requests []watchdog.SNMPDiscoveryEngineRequest
+}
+
+func (f *fakeSNMPDiscoveryRunner) Discover(_ context.Context, request watchdog.SNMPDiscoveryEngineRequest) (watchdog.SNMPCollectorDiscoveryResult, error) {
+	f.requests = append(f.requests, request)
+	if len(f.results) == 0 {
+		return watchdog.SNMPCollectorDiscoveryResult{}, context.Canceled
+	}
+	result := f.results[0]
+	f.results = f.results[1:]
+	return result, nil
+}
 
 // TestDeviceAndAgentAPI exercises the complete management path against a real,
 // empty MySQL schema. It is opt-in so ordinary unit tests do not require MySQL.
@@ -96,6 +115,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("stale device update: status=%d body=%s", stale.Code, stale.Body.String())
 	}
 	exerciseDeviceOrganizationAPI(t, s, device.ID, patched.Header().Get("ETag"), authHeaders, cookies)
+	exerciseSNMPDiscoveryAPI(t, s, device.ID, authHeaders, cookies)
 
 	summary := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/summary?q=core-1", nil, nil, cookies...)
 	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), device.ID) {
@@ -573,6 +593,90 @@ func assertDeviceScope(t *testing.T, s *Server, deviceID string) {
 	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("viewer mutation: status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func exerciseSNMPDiscoveryAPI(t *testing.T, s *Server, deviceID string, authHeaders map[string]string, cookies []*http.Cookie) {
+	t.Helper()
+	first := watchdog.SNMPCollectorDiscoveryResult{
+		DeviceUpdates: watchdog.NetworkDevice{
+			Vendor: "Acme Networks", Model: "XR-1", OSName: "acmeos", OSVersion: "9.1",
+			SysName: "core-snmp.example.test", SysDescr: "Acme XR-1 Version 9.1",
+			SysLocation: "rack A7", SysObjectID: ".1.3.6.1.4.1.99999.1", Uptime: 48 * time.Hour,
+		},
+		CompletedModules: []string{"ports", "bgp", "sensors", "entity-physical", "vlans", "lags"},
+		Ports: []watchdog.NetworkPort{
+			{ID: "snmp_port_100", IfIndex: 100, IfName: "xe-0/0/0", IfDescr: "uplink", IfAlias: "transit", AdminStatus: "1", OperStatus: "1", SpeedBps: 100_000_000_000, Metadata: map[string]string{"if_type": "ethernetCsmacd"}},
+			{ID: "snmp_port_101", IfIndex: 101, IfName: "xe-0/0/1", IfDescr: "billable", AdminStatus: "1", OperStatus: "1", SpeedBps: 10_000_000_000},
+			{ID: "snmp_port_102", IfIndex: 102, IfName: "xe-0/0/2", IfDescr: "transient", AdminStatus: "1", OperStatus: "2", SpeedBps: 10_000_000_000},
+		},
+		InterfaceAddresses: []watchdog.NetworkInterfaceAddress{
+			{ID: "snmp_addr_v4", PortID: "snmp_port_100", IfIndex: 100, Address: "192.0.2.5", Family: "ipv4", PrefixLength: 31, Origin: "manual", ContextName: "default"},
+			{ID: "snmp_addr_v6", PortID: "snmp_port_100", IfIndex: 100, Address: "2001:db8:100::1", Family: "ipv6", PrefixLength: 127, Origin: "manual", ContextName: "default"},
+		},
+		BGPSessions: []watchdog.BGPSession{
+			{ID: "snmp_bgp_v4", PeerAddr: "198.51.100.1", PeerAS: 64501, LocalAS: 64500, AFI: "ipv4", SAFI: "unicast", State: "established", AcceptedPrefixes: 42, Uptime: time.Hour},
+			{ID: "snmp_bgp_v6", PeerAddr: "2001:db8:ffff::1", PeerAS: 64502, LocalAS: 64500, AFI: "ipv6", SAFI: "unicast", State: "established", AcceptedPrefixes: 84, Uptime: 2 * time.Hour},
+		},
+		Sensors:          []watchdog.NetworkDeviceSensor{{ID: "snmp_sensor_1", SensorIndex: 1, Class: "temperature", Name: "FPC", OID: ".1.3.6.1.4.1.1", Unit: "C", Value: 40, WarnLimit: 70, CritLimit: 80, Status: "ok"}},
+		PhysicalEntities: []watchdog.PhysicalEntity{{Index: 1, Name: "Chassis", Class: "chassis", SerialNumber: "SERIAL-1", ManufacturerName: "Acme", ModelName: "XR-1", IsFRU: true}},
+		VLANs:            []watchdog.DeviceVLAN{{VLANID: 100, Name: "users", Status: "active"}},
+		LAGs:             []watchdog.DeviceLAGGroup{{AggregateIndex: 500, MACAddress: "00:11:22:33:44:55", Mode: "lacp"}},
+	}
+	second := watchdog.SNMPCollectorDiscoveryResult{
+		DeviceUpdates:      first.DeviceUpdates,
+		CompletedModules:   []string{"ports"},
+		Ports:              first.Ports[:1],
+		InterfaceAddresses: first.InterfaceAddresses,
+	}
+	fake := &fakeSNMPDiscoveryRunner{results: []watchdog.SNMPCollectorDiscoveryResult{first, second}}
+	s.snmpDiscovery = fake
+
+	discovered := requestJSON(t, s, http.MethodPost, "/api/v1/network/devices/"+deviceID+"/snmp/discover", nil, authHeaders, cookies...)
+	if discovered.Code != http.StatusOK || !strings.Contains(discovered.Body.String(), `"ports":3`) || !strings.Contains(discovered.Body.String(), `"bgp_sessions":2`) {
+		t.Fatalf("SNMP discovery: status=%d body=%s", discovered.Code, discovered.Body.String())
+	}
+	if len(fake.requests) != 1 || fake.requests[0].Profile.Security["community"] != "device-private" || fake.requests[0].Target.Port != 161 {
+		t.Fatalf("SNMP profile/device override was not passed to discovery: %+v", fake.requests)
+	}
+	loaded := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID, nil, nil, cookies...)
+	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), `"sys_location":"rack A7"`) || !strings.Contains(loaded.Body.String(), `"os":"acmeos"`) {
+		t.Fatalf("discovered device fields: status=%d body=%s", loaded.Code, loaded.Body.String())
+	}
+	for path, expected := range map[string]string{
+		"/api/v1/devices/" + deviceID + "/addresses?family=ipv6": "2001:db8:100::1",
+		"/api/v1/devices/" + deviceID + "/bgp?afi=ipv6":          "2001:db8:ffff::1",
+		"/api/v1/devices/" + deviceID + "/sensors":               "snmp_sensor_1",
+		"/api/v1/devices/" + deviceID + "/inventory":             "SERIAL-1",
+		"/api/v1/devices/" + deviceID + "/vlans":                 `"VLANID":100`,
+		"/api/v1/devices/" + deviceID + "/lags":                  `"AggregateIndex":500`,
+	} {
+		response := requestJSON(t, s, http.MethodGet, path, nil, nil, cookies...)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("discovered inventory %s: status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO billing_accounts (id,name) VALUES ('bill_discovery_guard','Discovery guard')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO billing_account_ports (account_id,port_id) VALUES ('bill_discovery_guard','snmp_port_101')`); err != nil {
+		t.Fatal(err)
+	}
+	rediscovered := requestJSON(t, s, http.MethodPost, "/api/v1/devices/"+deviceID+"/snmp/discover", nil, authHeaders, cookies...)
+	if rediscovered.Code != http.StatusOK || !strings.Contains(rediscovered.Body.String(), `"deleted":1`) {
+		t.Fatalf("SNMP rediscovery prune: status=%d body=%s", rediscovered.Code, rediscovered.Body.String())
+	}
+	var guardedStatus string
+	if err := s.db.QueryRow(`SELECT if_oper_status FROM ports WHERE id='snmp_port_101'`).Scan(&guardedStatus); err != nil || guardedStatus != "notPresent" {
+		t.Fatalf("billing port was not retained as notPresent: status=%q err=%v", guardedStatus, err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM billing_accounts WHERE id='bill_discovery_guard'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"interface_addresses", "bgp_sessions", "sensors", "physical_entities", "vlans", "lag_groups", "ports"} {
+		if _, err := s.db.Exec("DELETE FROM "+table+" WHERE device_id=?", deviceID); err != nil {
+			t.Fatalf("clean discovery fixture %s: %v", table, err)
+		}
 	}
 }
 

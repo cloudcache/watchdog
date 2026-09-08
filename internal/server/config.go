@@ -18,6 +18,7 @@ type Config struct {
 	Kafka      KafkaConfig      `yaml:"kafka"`
 	Flow       FlowConfig       `yaml:"flow"`
 	Address    AddressConfig    `yaml:"address"`
+	SNMP       SNMPConfig       `yaml:"snmp"`
 	Admin      AdminConfig      `yaml:"admin"`
 }
 
@@ -60,6 +61,16 @@ type FlowConfig struct {
 type AddressConfig struct {
 	ArtifactDir    string `yaml:"artifact_dir"`     // local dir for uploaded source databases
 	MaxUploadBytes int64  `yaml:"max_upload_bytes"` // 0 -> 2 GiB default
+}
+
+// SNMPConfig layers optional LibreNMS definitions/vendor MIBs over the
+// collector's embedded standard MIB bundle. An empty definitions_dir keeps
+// generic IF/IP/BGP/ENTITY discovery available without OS-specific labels.
+type SNMPConfig struct {
+	DefinitionsDir     string   `yaml:"definitions_dir"`
+	DefinitionsVersion string   `yaml:"definitions_version"`
+	MIBDirs            []string `yaml:"mib_dirs"`
+	MIBLoad            string   `yaml:"mib_load"`
 }
 
 // AdminConfig is used only to bootstrap the first administrator on an empty install.

@@ -54,6 +54,9 @@ func (e SNMPDiscoveryEngine) Discover(ctx context.Context, req SNMPDiscoveryEngi
 	if osMatch.Vendor != "" {
 		device.Vendor = osMatch.Vendor
 	}
+	if osMatch.Model != "" {
+		device.Model = osMatch.Model
+	}
 	device.OSVersion = extractOSVersion(fingerprint.SysDescr)
 
 	osDiscovery := osDiscoveryDefinition(osDef.Definition)

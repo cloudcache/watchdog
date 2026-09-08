@@ -32,6 +32,12 @@ flow:                               # explicit global retention/downsample polic
   rollup_1m_days: 180
   rollup_1h_days: 400
 
+snmp:                               # generic standard MIB discovery works with empty values
+  definitions_dir: ""               # optional LibreNMS checkout for OS/vendor definitions
+  definitions_version: ""
+  mib_dirs: []                       # optional additional vendor MIB directories
+  mib_load: ""                       # optional module list or ALL
+
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"
   password: ""                      # empty -> a random password is generated and logged once

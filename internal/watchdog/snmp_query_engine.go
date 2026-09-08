@@ -93,6 +93,17 @@ func (e GoSNMPCollectorQueryEngine) Walk(ctx context.Context, req SNMPCollectorW
 }
 
 func (e GoSNMPCollectorQueryEngine) connect(ctx context.Context, target SNMPCollectorTarget, profile SNMPProfile, contextName string, flags SNMPCollectorQueryFlags) (*gosnmp.GoSNMP, error) {
+	session, err := newGoSNMPSession(ctx, target, profile, contextName, flags)
+	if err != nil {
+		return nil, err
+	}
+	if err := session.Connect(); err != nil {
+		return nil, fmt.Errorf("snmp connect %s:%d: %w", session.Target, session.Port, err)
+	}
+	return session, nil
+}
+
+func newGoSNMPSession(ctx context.Context, target SNMPCollectorTarget, profile SNMPProfile, contextName string, flags SNMPCollectorQueryFlags) (*gosnmp.GoSNMP, error) {
 	host := strings.TrimSpace(target.Host)
 	if host == "" {
 		return nil, errors.New("snmp target host is required")
@@ -126,6 +137,9 @@ func (e GoSNMPCollectorQueryEngine) connect(ctx context.Context, target SNMPColl
 	switch profile.Version {
 	case SNMPVersion3:
 		configureGoSNMPV3(session, profile.Security)
+	case SNMPVersion1:
+		session.Version = gosnmp.Version1
+		session.Community = profile.Security["community"]
 	case SNMPVersion2c, "":
 		session.Version = gosnmp.Version2c
 		session.Community = profile.Security["community"]
@@ -134,9 +148,6 @@ func (e GoSNMPCollectorQueryEngine) connect(ctx context.Context, target SNMPColl
 	}
 	if session.Retries == 0 {
 		session.Retries = 1
-	}
-	if err := session.Connect(); err != nil {
-		return nil, fmt.Errorf("snmp connect %s:%d: %w", host, port, err)
 	}
 	return session, nil
 }
