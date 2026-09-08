@@ -287,21 +287,17 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 						</Field>
 					) : null}
 					<Field label={t`Status`}>
-						{form.kind === "network" ? (
-							<Input value={form.status || "pending"} disabled />
-						) : (
-							<Select value={form.status} onValueChange={(status) => update({ status })} disabled={loading}>
-								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="pending">pending</SelectItem>
-									<SelectItem value="up">up</SelectItem>
-									<SelectItem value="down">down</SelectItem>
-									<SelectItem value="paused">paused</SelectItem>
-								</SelectContent>
-							</Select>
-						)}
+						<Select value={form.status} onValueChange={(status) => update({ status })} disabled={loading}>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="pending">pending</SelectItem>
+								<SelectItem value="up">up</SelectItem>
+								<SelectItem value="down">down</SelectItem>
+								<SelectItem value="paused">paused</SelectItem>
+							</SelectContent>
+						</Select>
 					</Field>
 				</div>
 				{provisioningSNMP && !profilesLoading && snmpProfiles.length === 0 ? (
