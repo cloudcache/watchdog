@@ -10,8 +10,7 @@ import (
 
 // PLAT P0 alert subsystem: notification channels (emails/webhooks) live in
 // MySQL. The management API replaces a user's channel set wholesale (matching
-// the frontend's emails[]/webhooks[] shape), and the alert delivery path reads
-// a user's channels by their PocketBase id via the identity projection.
+// the frontend's emails[]/webhooks[] shape).
 
 type NotificationChannels struct {
 	Emails   []string `json:"emails"`
@@ -21,10 +20,6 @@ type NotificationChannels struct {
 type NotificationChannelRepository interface {
 	GetNotificationChannels(ctx context.Context, tenantID, userID ID) (NotificationChannels, error)
 	ReplaceNotificationChannels(ctx context.Context, tenantID, userID ID, channels NotificationChannels) error
-	// NotificationChannelsForExternalSubject resolves a PocketBase user id to
-	// the MySQL user (users.external_subject_id) and returns their channels.
-	// This is the alert delivery read path.
-	NotificationChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) (NotificationChannels, error)
 }
 
 func (s *MySQLStore) GetNotificationChannels(ctx context.Context, tenantID, userID ID) (NotificationChannels, error) {
@@ -33,22 +28,6 @@ func (s *MySQLStore) GetNotificationChannels(ctx context.Context, tenantID, user
 		WHERE tenant_id = ? AND user_id = ? AND enabled = TRUE
 		ORDER BY channel_type, id
 	`, tenantID, userID)
-	return scanNotificationChannels(rows, err, s.encryptionKey)
-}
-
-func (s *MySQLStore) NotificationChannelsForExternalSubject(ctx context.Context, provider, externalSubject string) (NotificationChannels, error) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	externalSubject = strings.TrimSpace(externalSubject)
-	if provider == "" || externalSubject == "" {
-		return NotificationChannels{}, nil
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.channel_type, c.address
-		FROM notification_channels c
-		INNER JOIN users u ON u.id = c.user_id
-		WHERE u.auth_provider = ? AND u.external_subject_id = ? AND c.enabled = TRUE
-		ORDER BY c.channel_type, c.id
-	`, provider, externalSubject)
 	return scanNotificationChannels(rows, err, s.encryptionKey)
 }
 
@@ -64,7 +43,7 @@ func (s *MySQLStore) ReplaceNotificationChannels(ctx context.Context, tenantID, 
 		return err
 	}
 	insert := func(channelType, address string) error {
-		id, err := newIdentityID()
+		id, err := newManagementID()
 		if err != nil {
 			return err
 		}

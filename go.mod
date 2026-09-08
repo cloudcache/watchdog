@@ -9,6 +9,7 @@ require (
 	github.com/ebitengine/purego v0.10.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/gaissmai/bart v0.28.0
+	github.com/gin-gonic/gin v1.12.0
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-sql-driver/mysql v1.9.1
 	github.com/google/uuid v1.6.0
@@ -49,7 +50,6 @@ require (
 	github.com/dmarkham/enumer v1.6.3 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.12.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

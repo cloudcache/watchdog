@@ -63,11 +63,13 @@ func EmbeddedMySQLMigrations() ([]MySQLMigration, error) {
 		})
 	}
 	sort.Slice(migrations, func(i, j int) bool { return migrations[i].Version < migrations[j].Version })
-	for i, migration := range migrations {
+	previous := 0
+	for _, migration := range migrations {
 		number, err := strconv.Atoi(migration.Version)
-		if err != nil || number != i+1 {
-			return nil, fmt.Errorf("mysql migration sequence must be contiguous at %q", migration.Name)
+		if err != nil || number <= previous {
+			return nil, fmt.Errorf("mysql migration sequence must be strictly increasing at %q", migration.Name)
 		}
+		previous = number
 	}
 	if len(migrations) == 0 {
 		return nil, errors.New("no embedded MySQL migrations")

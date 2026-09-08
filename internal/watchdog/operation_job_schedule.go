@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pocketbase/pocketbase/tools/cron"
+	cron "github.com/robfig/cron/v3"
 )
 
 var (
@@ -142,26 +142,23 @@ func validateOperationJobSchedulePayload(raw json.RawMessage) error {
 	return nil
 }
 
-// nextOperationJobScheduleTime evaluates each absolute minute and converts it
-// into the requested timezone. That keeps DST gaps and repeated local minutes
-// deterministic without maintaining a second cron implementation.
+// nextOperationJobScheduleTime evaluates the five-field cron expression in the
+// requested timezone without depending on the removed legacy scheduler.
 func nextOperationJobScheduleTime(expression, timezone string, after time.Time) (time.Time, error) {
-	schedule, err := cron.NewSchedule(strings.TrimSpace(expression))
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid cron expression: %w", err)
-	}
 	location, err := time.LoadLocation(strings.TrimSpace(timezone))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid schedule timezone: %w", err)
 	}
-	candidate := after.UTC().Truncate(time.Minute).Add(time.Minute)
-	for i := 0; i < operationJobScheduleSearchMax; i++ {
-		if schedule.IsDue(cron.NewMoment(candidate.In(location))) {
-			return candidate, nil
-		}
-		candidate = candidate.Add(time.Minute)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	schedule, err := parser.Parse("CRON_TZ=" + location.String() + " " + strings.TrimSpace(expression))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid cron expression: %w", err)
 	}
-	return time.Time{}, errors.New("cron expression has no occurrence in the next five years")
+	next := schedule.Next(after.UTC()).UTC()
+	if next.IsZero() || next.After(after.UTC().Add(operationJobScheduleSearchMax*time.Minute)) {
+		return time.Time{}, errors.New("cron expression has no occurrence in the next five years")
+	}
+	return next, nil
 }
 
 type OperationJobScheduleDispatcher struct {

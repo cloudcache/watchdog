@@ -22,10 +22,6 @@ func (f *fakeNotificationChannelRepo) ReplaceNotificationChannels(_ context.Cont
 	f.channels = c
 	return nil
 }
-func (f *fakeNotificationChannelRepo) NotificationChannelsForExternalSubject(context.Context, string, string) (NotificationChannels, error) {
-	return f.channels, nil
-}
-
 func TestNotificationChannelsValidation(t *testing.T) {
 	ok, err := ValidateNotificationChannels(NotificationChannels{
 		Emails:   []string{" ops@example.com ", ""},
@@ -75,15 +71,14 @@ func TestNotificationChannelsAPI(t *testing.T) {
 	}
 }
 
-// TestMySQLNotificationChannelsLifecycle proves wholesale replace and the
-// alert-delivery read path that resolves a PocketBase user id to the MySQL user.
+// TestMySQLNotificationChannelsLifecycle proves per-user wholesale replace.
 func TestMySQLNotificationChannelsLifecycle(t *testing.T) {
 	db, tenant := operationJobTestDB(t)
 	store := NewMySQLStore(db)
 	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
-		VALUES ('user_nc_1', ?, 'nc@test.local', 'NC', 'active', 'pocketbase', 'pb_nc_1')
+		INSERT INTO users (id, tenant_id, email, name, status)
+		VALUES ('user_nc_1', ?, 'nc@test.local', 'NC', 'active')
 	`, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -100,12 +95,6 @@ func TestMySQLNotificationChannelsLifecycle(t *testing.T) {
 		t.Fatalf("get = %+v err=%v", got, err)
 	}
 
-	// The alert delivery read path resolves by PocketBase id (external subject).
-	byPB, err := store.NotificationChannelsForExternalSubject(ctx, "pocketbase", "pb_nc_1")
-	if err != nil || len(byPB.Emails) != 2 || byPB.Webhooks[0] != "https://hooks.example.com/a" {
-		t.Fatalf("by-external-subject = %+v err=%v", byPB, err)
-	}
-
 	// Replace is wholesale: fewer channels overwrites, not merges.
 	if err := store.ReplaceNotificationChannels(ctx, tenant, "user_nc_1", NotificationChannels{
 		Emails: []string{"only@example.com"},
@@ -117,11 +106,6 @@ func TestMySQLNotificationChannelsLifecycle(t *testing.T) {
 		t.Fatalf("wholesale replace = %+v", after)
 	}
 
-	// An unknown PocketBase subject resolves to empty (not an error).
-	empty, err := store.NotificationChannelsForExternalSubject(ctx, "pocketbase", "pb_unknown")
-	if err != nil || len(empty.Emails) != 0 || len(empty.Webhooks) != 0 {
-		t.Fatalf("unknown subject = %+v err=%v", empty, err)
-	}
 }
 
 // TestMySQLNotificationChannelsWebhookEncryption proves webhook URLs are
@@ -133,8 +117,8 @@ func TestMySQLNotificationChannelsWebhookEncryption(t *testing.T) {
 	store.encryptionKey = bytes.Repeat([]byte("k"), 32)
 	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
-		VALUES ('user_enc_1', ?, 'enc@test.local', 'Enc', 'active', 'pocketbase', 'pb_enc_1')
+		INSERT INTO users (id, tenant_id, email, name, status)
+		VALUES ('user_enc_1', ?, 'enc@test.local', 'Enc', 'active')
 	`, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -157,16 +141,11 @@ func TestMySQLNotificationChannelsWebhookEncryption(t *testing.T) {
 		t.Fatalf("webhook not encrypted at rest: %s", stored)
 	}
 
-	// Both read paths decrypt transparently.
+	// The user-scoped read path decrypts transparently.
 	got, err := store.GetNotificationChannels(ctx, tenant, "user_enc_1")
 	if err != nil || len(got.Webhooks) != 1 || got.Webhooks[0] != webhook {
 		t.Fatalf("get decrypted = %+v err=%v", got, err)
 	}
-	byPB, err := store.NotificationChannelsForExternalSubject(ctx, "pocketbase", "pb_enc_1")
-	if err != nil || len(byPB.Webhooks) != 1 || byPB.Webhooks[0] != webhook {
-		t.Fatalf("by-subject decrypted = %+v err=%v", byPB, err)
-	}
-
 	// A legacy plaintext row (written before encryption) reads back unchanged.
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO notification_channels (id, tenant_id, user_id, channel_type, address)

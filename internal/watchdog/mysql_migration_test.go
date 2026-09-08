@@ -77,20 +77,12 @@ func TestWatchdogMigrationContainsCoreTables(t *testing.T) {
 	}
 }
 
-func TestIdentityProjectionMigrationIsExpandOnly(t *testing.T) {
-	path := filepath.Join("..", "..", "deploy", "migration", "mysql", "011_identity_projection.sql")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlText := strings.ToLower(string(data))
-	for _, fragment := range []string{"add column auth_provider", "add column external_subject_id", "password_hash varchar(255) null", "uq_users_external_identity"} {
-		if !strings.Contains(sqlText, fragment) {
-			t.Fatalf("identity migration missing %q", fragment)
+func TestExternalIdentityMigrationsAreDeleted(t *testing.T) {
+	for _, name := range []string{"011_identity_projection.sql", "029_drop_user_password_hash.sql"} {
+		path := filepath.Join("..", "..", "deploy", "migration", "mysql", name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("legacy identity migration %s still exists or cannot be checked: %v", name, err)
 		}
-	}
-	if strings.Contains(sqlText, "drop column password_hash") {
-		t.Fatal("expand migration must retain password_hash for rollback")
 	}
 }
 
@@ -187,24 +179,6 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	if addressPublishIndexColumns != 6 {
 		t.Fatalf("AddressSnap publication scan index column count = %d, want 6", addressPublishIndexColumns)
 	}
-	for _, column := range []string{"auth_provider", "external_subject_id"} {
-		var nullable string
-		if err := db.QueryRow("SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?", column).Scan(&nullable); err != nil {
-			t.Fatalf("users.%s not found after migrations: %v", column, err)
-		}
-		if nullable != "YES" {
-			t.Fatalf("users.%s nullable = %s, want YES", column, nullable)
-		}
-	}
-	// Migration 029 drops password_hash: MySQL must hold no credential material,
-	// PocketBase is the sole authentication authority.
-	var passwordHashColumns int
-	if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'password_hash'").Scan(&passwordHashColumns); err != nil {
-		t.Fatal(err)
-	}
-	if passwordHashColumns != 0 {
-		t.Fatal("users.password_hash must be dropped after migrations; MySQL must store no credential material")
-	}
 	var scheduleColumnCount int
 	if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'operation_jobs' AND column_name = 'schedule_id'").Scan(&scheduleColumnCount); err != nil {
 		t.Fatal(err)
@@ -232,16 +206,6 @@ func TestWatchdogMigrationAppliesToMySQL(t *testing.T) {
 	}
 
 	store := NewMySQLStore(db)
-	if err := store.LinkExternalIdentity(context.Background(), tenantID, "user_identity_check", "pocketbase", "pb_identity_check"); err != nil {
-		t.Fatal(err)
-	}
-	projections, err := store.ListIdentityProjections(context.Background(), "pocketbase", "pb_identity_check")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projections) != 1 || projections[0].Tenant.ID != tenantID || projections[0].User.ID != "user_identity_check" {
-		t.Fatalf("projections = %#v", projections)
-	}
 	admin, err := store.IsUserTenantAdmin(context.Background(), tenantID, "user_identity_check")
 	if err != nil || !admin {
 		t.Fatalf("admin = %v, err = %v", admin, err)

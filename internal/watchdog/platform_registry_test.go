@@ -213,7 +213,9 @@ func newModuleTestRouter(t *testing.T, repo TenantModuleRepository) http.Handler
 		t.Fatal(err)
 	}
 	return NewAPIV1Router(APIV1RouterConfig{
-		Auth:          identityAdminTestAuth,
+		Auth: func(*http.Request) (AuthContext, error) {
+			return AuthContext{TenantID: "tenant-a", UserID: "admin-a", IsAdmin: true}, nil
+		},
 		Registries:    registries,
 		TenantModules: repo,
 		Audit:         &recordingAuditRepository{},

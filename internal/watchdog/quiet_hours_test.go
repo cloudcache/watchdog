@@ -33,10 +33,6 @@ func (f *fakeQuietHoursRepo) DeleteQuietHour(_ context.Context, _, _ ID, windowI
 	f.lastDelete = windowID
 	return nil
 }
-func (f *fakeQuietHoursRepo) QuietHoursForExternalSubject(context.Context, string, string, string) ([]QuietHourWindow, error) {
-	return f.windows, nil
-}
-
 func TestQuietHourValidation(t *testing.T) {
 	start := time.Date(2026, 1, 2, 9, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
@@ -101,15 +97,14 @@ func TestQuietHoursAPI(t *testing.T) {
 	}
 }
 
-// TestMySQLQuietHoursLifecycle proves per-user CRUD and the alert silencing read
-// path that resolves a PocketBase user id to the MySQL user and filters by system.
+// TestMySQLQuietHoursLifecycle proves per-user CRUD.
 func TestMySQLQuietHoursLifecycle(t *testing.T) {
 	db, tenant := operationJobTestDB(t)
 	store := NewMySQLStore(db)
 	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
-		VALUES ('user_qh_1', ?, 'qh@test.local', 'QH', 'active', 'pocketbase', 'pb_qh_1')
+		INSERT INTO users (id, tenant_id, email, name, status)
+		VALUES ('user_qh_1', ?, 'qh@test.local', 'QH', 'active')
 	`, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -128,17 +123,6 @@ func TestMySQLQuietHoursLifecycle(t *testing.T) {
 	list, err := store.ListQuietHours(ctx, tenant, "user_qh_1")
 	if err != nil || len(list) != 2 {
 		t.Fatalf("list = %+v err=%v", list, err)
-	}
-
-	// The alert path resolves by PocketBase id; sys_a sees global + its own window.
-	forA, err := store.QuietHoursForExternalSubject(ctx, "pocketbase", "pb_qh_1", "sys_a")
-	if err != nil || len(forA) != 2 {
-		t.Fatalf("for sys_a = %+v err=%v", forA, err)
-	}
-	// A different system sees only the global window.
-	forB, err := store.QuietHoursForExternalSubject(ctx, "pocketbase", "pb_qh_1", "sys_b")
-	if err != nil || len(forB) != 1 || forB[0].SystemID != "" {
-		t.Fatalf("for sys_b = %+v err=%v", forB, err)
 	}
 
 	// Update the global window's schedule.
@@ -162,9 +146,4 @@ func TestMySQLQuietHoursLifecycle(t *testing.T) {
 		t.Fatal("deleting unknown window must report no rows")
 	}
 
-	// An unknown PocketBase subject resolves to empty (not an error).
-	empty, err := store.QuietHoursForExternalSubject(ctx, "pocketbase", "pb_unknown", "sys_a")
-	if err != nil || len(empty) != 0 {
-		t.Fatalf("unknown subject = %+v err=%v", empty, err)
-	}
 }

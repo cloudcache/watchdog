@@ -4,13 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 )
 
-// PLAT P0 alert subsystem: quiet-hour windows live in MySQL. Users CRUD their
-// own windows; the alert silencing path reads a user's windows by their
-// PocketBase id (the identity projection's external subject).
+// Quiet-hour windows live in MySQL and users manage their own windows.
 
 type QuietHourWindow struct {
 	ID        ID        `json:"id"`
@@ -26,9 +23,6 @@ type QuietHoursRepository interface {
 	CreateQuietHour(ctx context.Context, tenantID, userID ID, window QuietHourWindow) (QuietHourWindow, error)
 	UpdateQuietHour(ctx context.Context, tenantID, userID ID, window QuietHourWindow) (QuietHourWindow, error)
 	DeleteQuietHour(ctx context.Context, tenantID, userID, windowID ID) error
-	// QuietHoursForExternalSubject resolves a PocketBase user id to the MySQL
-	// user and returns the windows relevant to a system (global + that system).
-	QuietHoursForExternalSubject(ctx context.Context, provider, externalSubject, systemID string) ([]QuietHourWindow, error)
 }
 
 func (s *MySQLStore) ListQuietHours(ctx context.Context, tenantID, userID ID) ([]QuietHourWindow, error) {
@@ -39,23 +33,8 @@ func (s *MySQLStore) ListQuietHours(ctx context.Context, tenantID, userID ID) ([
 	`, tenantID, userID))
 }
 
-func (s *MySQLStore) QuietHoursForExternalSubject(ctx context.Context, provider, externalSubject, systemID string) ([]QuietHourWindow, error) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	externalSubject = strings.TrimSpace(externalSubject)
-	if provider == "" || externalSubject == "" {
-		return nil, nil
-	}
-	return scanQuietHours(s.db.QueryContext(ctx, `
-		SELECT q.id, q.system_id, q.window_type, q.start_at, q.end_at, q.created_at
-		FROM quiet_hours q
-		INNER JOIN users u ON u.id = q.user_id
-		WHERE u.auth_provider = ? AND u.external_subject_id = ?
-			AND (q.system_id = '' OR q.system_id = ?)
-	`, provider, externalSubject, systemID))
-}
-
 func (s *MySQLStore) CreateQuietHour(ctx context.Context, tenantID, userID ID, window QuietHourWindow) (QuietHourWindow, error) {
-	id, err := newIdentityID()
+	id, err := newManagementID()
 	if err != nil {
 		return QuietHourWindow{}, err
 	}
