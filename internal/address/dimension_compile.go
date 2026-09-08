@@ -298,11 +298,17 @@ func compactDimensionStrings(values []string) []string {
 	return result
 }
 
+// addressBundleDomain is the single-domain identity written to the bundle's
+// TenantID field. flowdimension requires a non-empty identifier there (it is not
+// modified in this port); with no tenant, a fixed sentinel keeps the bundle valid
+// and its bytes deterministic.
+const addressBundleDomain = "default"
+
 // encodeAddressDimensionBundle serializes the compiled draft to the WADS input
-// bundle and compiles it. De-tenanted: the bundle TenantID is empty.
+// bundle and compiles it. De-tenanted: the bundle identity is the fixed domain.
 func encodeAddressDimensionBundle(draft AddressDimensionDraft, snapshotID string, version uint64, effectiveFrom time.Time) ([]byte, *flowdimension.CompiledSnapshot, string, error) {
 	bundle := flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: "",
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: addressBundleDomain,
 		Version: version, EffectiveFrom: effectiveFrom.UTC(), Prefixes: draft.Prefixes, AddressSets: draft.AddressSets,
 		Operators: draft.Operators, GeoNodes: draft.GeoNodes,
 	}
