@@ -101,6 +101,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("device summary: status=%d body=%s", summary.Code, summary.Body.String())
 	}
 	assertDeviceScope(t, s, device.ID)
+	exerciseDeviceInventoryAPI(t, s, device.ID, authHeaders, cookies)
 
 	// A disabled account immediately loses access even when it still has an
 	// unexpired session cookie.
@@ -441,6 +442,200 @@ func assertDeviceScope(t *testing.T, s *Server, deviceID string) {
 	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("viewer mutation: status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHeaders map[string]string, cookies []*http.Cookie) {
+	t.Helper()
+	for _, row := range []struct {
+		id      string
+		ifIndex int
+		name    string
+		oper    string
+	}{
+		{"port_api_test", 10, "xe-0/0/0", "up"},
+		{"port_scope_hidden", 11, "xe-0/0/1", "down"},
+		{"port_delete_test", 12, "xe-0/0/2", "down"},
+	} {
+		if _, err := s.db.Exec(`INSERT INTO ports
+			(id,device_id,if_index,if_name,if_descr,if_alias,if_speed,if_oper_status,if_admin_status,metadata_json)
+			VALUES (?,?,?,?,?,'',100000000000,?,'up',JSON_OBJECT('source','IF-MIB'))`, row.id, deviceID, row.ifIndex, row.name, "uplink "+row.name, row.oper); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, address := range []struct {
+		id, port, ip, context, origin string
+		family, prefix                int
+	}{
+		{"addr_v4_test", "port_api_test", "192.0.2.1", "default", "manual", 4, 31},
+		{"addr_v6_test", "port_api_test", "2001:db8::1", "default", "manual", 6, 127},
+		{"addr_hidden_test", "port_scope_hidden", "203.0.113.2", "default", "manual", 4, 31},
+		{"addr_delete_test", "port_delete_test", "198.51.100.1", "default", "manual", 4, 31},
+	} {
+		if _, err := s.db.Exec(`INSERT INTO interface_addresses
+			(id,device_id,port_id,if_index,family,address,prefix_len,context,origin)
+			VALUES (?,?,?,?,?,INET6_ATON(?),?,?,?)`, address.id, deviceID, address.port,
+			map[string]int{"port_api_test": 10, "port_scope_hidden": 11, "port_delete_test": 12}[address.port], address.family,
+			address.ip, address.prefix, address.context, address.origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, session := range []struct {
+		id, peer, afi string
+	}{
+		{"bgp_v4_test", "203.0.113.1", "ipv4"},
+		{"bgp_v6_test", "2001:db8:ffff::1", "ipv6"},
+	} {
+		if _, err := s.db.Exec(`INSERT INTO bgp_sessions
+			(id,device_id,peer_address,peer_as,local_as,afi,safi,state,prefixes,denied_prefixes,advertised_prefixes,uptime_seconds,metadata_json)
+			VALUES (?,?,?,64501,64500,?,'unicast','established',42,1,40,3600,JSON_OBJECT('source','BGP4-MIB'))`,
+			session.id, deviceID, session.peer, session.afi); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO sensors
+		(id,device_id,port_id,sensor_index,class,label,oid_index,oid,unit,value_num,warn_limit,crit_limit,status,metadata_json)
+		VALUES ('sensor_test',?,'port_api_test',1,'temperature','FPC temperature','1','.1.3.6.1.2.1','C',72,65,80,'warning',JSON_OBJECT('mib','ENTITY-SENSOR-MIB'))`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO physical_entities
+		(id,device_id,entity_index,name,description,class,vendor_type,contained_in,parent_rel_pos,hardware_revision,
+		 firmware_revision,software_revision,serial,manufacturer_name,model_name,alias,asset_id,is_fru)
+		VALUES ('entity_test',?,'1001','Power supply','PSU 0','powerSupply','.1.3.6',0,1,'A','1.0','1.0','PSU123','Juniper','JPSU','PSU0','asset-1',1)`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO vlans (id,device_id,vlan_id,name,status) VALUES ('vlan_test',?,100,'users','active')`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO lag_groups (id,device_id,lag_if_index,name,mac_address,mode) VALUES ('lag_test',?,500,'ae0','00:11:22:33:44:55','lacp')`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+
+	ports := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/ports?address_family=ipv6&q=2001:db8&sort=speed&order=desc&limit=10&offset=0", nil, nil, cookies...)
+	if ports.Code != http.StatusOK || !strings.Contains(ports.Body.String(), `"ID":"port_api_test"`) ||
+		!strings.Contains(ports.Body.String(), `"Family":"ipv6"`) || !strings.Contains(ports.Body.String(), `"counts":{"down":2,"total":3,"up":1}`) {
+		t.Fatalf("paged ports with IPv6: status=%d body=%s", ports.Code, ports.Body.String())
+	}
+	addresses := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/addresses?family=ipv6&q=2001:db8", nil, nil, cookies...)
+	if addresses.Code != http.StatusOK || !strings.Contains(addresses.Body.String(), "2001:db8::1") || strings.Contains(addresses.Body.String(), "192.0.2.1") {
+		t.Fatalf("IPv6 address list: status=%d body=%s", addresses.Code, addresses.Body.String())
+	}
+	loadedPort := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/port_api_test", nil, nil, cookies...)
+	if loadedPort.Code != http.StatusOK || loadedPort.Header().Get("ETag") == "" || !strings.Contains(loadedPort.Body.String(), `"source":"IF-MIB"`) {
+		t.Fatalf("get port: status=%d body=%s", loadedPort.Code, loadedPort.Body.String())
+	}
+	badPort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"AdminStatus": "fabricated"},
+		authHeaders, cookies...)
+	if badPort.Code != http.StatusBadRequest {
+		t.Fatalf("invalid port state accepted: status=%d body=%s", badPort.Code, badPort.Body.String())
+	}
+	updatedPort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"IfAlias": "customer-a"},
+		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": loadedPort.Header().Get("ETag")}, cookies...)
+	if updatedPort.Code != http.StatusOK || !strings.Contains(updatedPort.Body.String(), `"IfAlias":"customer-a"`) {
+		t.Fatalf("patch port: status=%d body=%s", updatedPort.Code, updatedPort.Body.String())
+	}
+	stalePort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"IfAlias": "stale"},
+		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": loadedPort.Header().Get("ETag")}, cookies...)
+	if stalePort.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale port update: status=%d body=%s", stalePort.Code, stalePort.Body.String())
+	}
+
+	bgp6 := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/bgp?afi=ipv6&q=2001:db8&limit=10", nil, nil, cookies...)
+	if bgp6.Code != http.StatusOK || !strings.Contains(bgp6.Body.String(), "2001:db8:ffff::1") || strings.Contains(bgp6.Body.String(), "203.0.113.1") {
+		t.Fatalf("IPv6 BGP list: status=%d body=%s", bgp6.Code, bgp6.Body.String())
+	}
+	allBGP := requestJSON(t, s, http.MethodGet, "/api/v1/bgp?sort=peer_as&order=desc&limit=10", nil, nil, cookies...)
+	if allBGP.Code != http.StatusOK || !strings.Contains(allBGP.Body.String(), "bgp_v4_test") || !strings.Contains(allBGP.Body.String(), "bgp_v6_test") {
+		t.Fatalf("global BGP list: status=%d body=%s", allBGP.Code, allBGP.Body.String())
+	}
+	sensors := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/sensors?health=problem&q=temp&sort=value&order=desc", nil, nil, cookies...)
+	if sensors.Code != http.StatusOK || !strings.Contains(sensors.Body.String(), `"Status":"warning"`) || !strings.Contains(sensors.Body.String(), `"problems":1`) {
+		t.Fatalf("sensor list: status=%d body=%s", sensors.Code, sensors.Body.String())
+	}
+	inventory := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/inventory?class=powerSupply&fru=true&q=PSU", nil, nil, cookies...)
+	if inventory.Code != http.StatusOK || !strings.Contains(inventory.Body.String(), `"SerialNumber":"PSU123"`) || !strings.Contains(inventory.Body.String(), `"IsFRU":true`) {
+		t.Fatalf("inventory list: status=%d body=%s", inventory.Code, inventory.Body.String())
+	}
+	vlans := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/vlans?status=active&q=user", nil, nil, cookies...)
+	if vlans.Code != http.StatusOK || !strings.Contains(vlans.Body.String(), `"VLANID":100`) {
+		t.Fatalf("VLAN list: status=%d body=%s", vlans.Code, vlans.Body.String())
+	}
+	lags := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/lags?mode=lacp&q=00:11", nil, nil, cookies...)
+	if lags.Code != http.StatusOK || !strings.Contains(lags.Body.String(), `"AggregateIndex":500`) {
+		t.Fatalf("LAG list: status=%d body=%s", lags.Code, lags.Body.String())
+	}
+
+	assertExplicitPortScope(t, s, deviceID, "port_api_test", "port_scope_hidden")
+
+	if _, err := s.db.Exec(`INSERT INTO billing_accounts (id,name) VALUES ('bill_port_delete','Port delete guard')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO billing_account_ports (account_id,port_id) VALUES ('bill_port_delete','port_delete_test')`); err != nil {
+		t.Fatal(err)
+	}
+	deletePreview := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/port_delete_test/delete-preview", nil, nil, cookies...)
+	if deletePreview.Code != http.StatusOK || !strings.Contains(deletePreview.Body.String(), `"resource_type":"billing_account"`) || !strings.Contains(deletePreview.Body.String(), `"behavior":"blocked"`) {
+		t.Fatalf("port delete preview: status=%d body=%s", deletePreview.Code, deletePreview.Body.String())
+	}
+	blocked := requestJSON(t, s, http.MethodDelete, "/api/v1/network/ports/port_delete_test", nil, authHeaders, cookies...)
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("billing port deletion was not blocked: status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+	if _, err := s.db.Exec(`DELETE FROM billing_accounts WHERE id='bill_port_delete'`); err != nil {
+		t.Fatal(err)
+	}
+	deleted := requestJSON(t, s, http.MethodDelete, "/api/v1/network/ports/port_delete_test", nil, authHeaders, cookies...)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete detached port: status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	var addressCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM interface_addresses WHERE id='addr_delete_test'`).Scan(&addressCount); err != nil || addressCount != 0 {
+		t.Fatalf("deleted port address count=%d err=%v", addressCount, err)
+	}
+}
+
+func assertExplicitPortScope(t *testing.T, s *Server, deviceID, grantedPortID, hiddenPortID string) {
+	t.Helper()
+	userID, roleID := newID(), newID()
+	hash, err := hashPassword("port-viewer-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO users (id,username,email,display_name,password_hash,status) VALUES (?, 'port-viewer','port-viewer@example.test','Port viewer',?,'active')`, userID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO roles (id,name,title) VALUES (?,'port-scope-test','Port scope test')`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO role_permissions (role_id,permission_id) SELECT ?,id FROM permissions WHERE ability='port.view'`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_roles (user_id,role_id) VALUES (?,?)`, userID, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_port_permissions (user_id,port_id) VALUES (?,?)`, userID, grantedPortID); err != nil {
+		t.Fatal(err)
+	}
+	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{"username": "port-viewer", "password": "port-viewer-password"}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("port viewer login: status=%d body=%s", login.Code, login.Body.String())
+	}
+	portCookies := login.Result().Cookies()
+	list := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/ports?limit=100", nil, nil, portCookies...)
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), grantedPortID) || strings.Contains(list.Body.String(), hiddenPortID) || !strings.Contains(list.Body.String(), `"total":1`) {
+		t.Fatalf("explicit port list scope: status=%d body=%s", list.Code, list.Body.String())
+	}
+	granted := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/"+grantedPortID, nil, nil, portCookies...)
+	if granted.Code != http.StatusOK {
+		t.Fatalf("explicit port grant: status=%d body=%s", granted.Code, granted.Body.String())
+	}
+	hidden := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/"+hiddenPortID, nil, nil, portCookies...)
+	if hidden.Code != http.StatusForbidden {
+		t.Fatalf("ungranted port: status=%d body=%s", hidden.Code, hidden.Body.String())
+	}
+	addresses := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/addresses?limit=100", nil, nil, portCookies...)
+	if addresses.Code != http.StatusOK || !strings.Contains(addresses.Body.String(), "192.0.2.1") || strings.Contains(addresses.Body.String(), "203.0.113.2") {
+		t.Fatalf("explicit port address scope: status=%d body=%s", addresses.Code, addresses.Body.String())
 	}
 }
 

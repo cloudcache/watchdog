@@ -180,6 +180,8 @@ allow = has(flow.view.<layer>)
 
 设备、端口、BGP、inventory 的服务端分页/搜索/排序/filter 继续保留；这是 UI 能力，不需要通用 resource registry。设备与端口的字段口径参考 LibreNMS（device: `host/sys_name/os/version/hardware/serial/sysObjectID/status/disabled/uptime/last_polled/location_id/kind`；port: `device_id/if_index/if_name/if_descr/if_alias/if_speed/if_oper_status/if_admin_status` 及 in/out octet 原值），但只保留产品实际使用的列。
 
+设备详情的 MySQL inventory API 固定为 `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags}`，同时在前端切换完成前保留等价 `/network/devices/:id/*` URL alias；alias 只复用同一 handler/表/ID，不设第二套 repository。端口 scope 使用两级并集：`device`/device-group grant 继承全部端口，显式 `user_port_permissions` 只放行指定端口。端口、接口地址、BGP 与硬件清单是当前发现状态；counter/rate、sensor 时序和事件/告警事实只进 ClickHouse，禁止在 MySQL 再造时序副本。
+
 SNMP 采集实现不是重构对象。现有 MIB 驱动发现、OS/module definition、v1/v2c/v3 会话、poll recipe、IPv4/IPv6/BGP/sensor/inventory 采集、counter 原值和 agent/collector 调度语义全部保留。平台重构只做两类机械接线：把管理外键从旧 target/device ID 改到唯一 `device_id`，把时序 writer/query 从 VictoriaMetrics 改到 ClickHouse；不得趁机改 OID 规则、设备识别、轮询频率或 counter 算法。
 
 ### 5.3 Agent：注册协议是唯一扩展点
