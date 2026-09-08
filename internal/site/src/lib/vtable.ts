@@ -96,6 +96,7 @@ export interface CreateTableOptions {
 	serverSorting?: ServerSorting
 	editable?: EditableOptions
 	selectable?: SelectableOptions
+	onCellDblClick?: (record: Record<string, unknown>, field: string) => void
 }
 
 export function createListTable(dom: HTMLElement, options: CreateTableOptions): ListTable {
@@ -222,6 +223,16 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		}
 		;(table as any).on?.("checkbox_state_change", handleCheckbox)
 		cleanups.push(() => (table as any).off?.("checkbox_state_change", handleCheckbox))
+	}
+	if (options.onCellDblClick) {
+		const onCellDblClick = options.onCellDblClick
+		const handleDblClick = (arg: any) => {
+			if (!arg || typeof arg.row !== "number" || arg.row < 1) return
+			const record = getRowRecord(table, arg) as Record<string, unknown> | null
+			if (record) onCellDblClick(record, String(columns[arg.col]?.field ?? ""))
+		}
+		;(table as any).on?.("dblclick_cell", handleDblClick)
+		cleanups.push(() => (table as any).off?.("dblclick_cell", handleDblClick))
 	}
 	if (filterColumns.some(Boolean)) {
 		cleanups.push(

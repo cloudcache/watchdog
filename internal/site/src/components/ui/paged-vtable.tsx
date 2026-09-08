@@ -36,6 +36,7 @@ export function PagedVTable({
 	serverSorting,
 	editable,
 	selectable,
+	onCellDblClick,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -63,6 +64,7 @@ export function PagedVTable({
 	serverSorting?: ServerSorting
 	editable?: EditableOptions
 	selectable?: SelectableOptions
+	onCellDblClick?: (record: Record<string, unknown>, field: string) => void
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -135,6 +137,7 @@ export function PagedVTable({
 			serverSorting,
 			editable,
 			selectable,
+			onCellDblClick,
 		})
 		tableInstance.current = table
 		if (onRowClick || onCellClick) {
@@ -164,6 +167,7 @@ export function PagedVTable({
 		serverMode,
 		editable,
 		selectable,
+		onCellDblClick,
 	])
 
 	useEffect(() => {

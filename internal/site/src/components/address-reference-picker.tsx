@@ -47,6 +47,8 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 	initialOptions = noInitialOptions,
 	excludeIDs = noExcludedIDs,
 	disabled = false,
+	autoOpen = false,
+	onClose,
 }: {
 	kind: AddressReferenceKind
 	value: string[]
@@ -56,9 +58,11 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 	initialOptions?: AddressReferenceOption[]
 	excludeIDs?: string[]
 	disabled?: boolean
+	autoOpen?: boolean
+	onClose?: () => void
 }) {
 	const { t } = useLingui()
-	const [open, setOpen] = useState(false)
+	const [open, setOpen] = useState(Boolean(autoOpen))
 	const [search, setSearch] = useState("")
 	const [debouncedSearch, setDebouncedSearch] = useState("")
 	const [options, setOptions] = useState<AddressReferenceOption[]>(initialOptions)
@@ -159,17 +163,25 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 
 	return (
 		<>
-			<Button
-				type="button"
-				variant="outline"
-				className="h-10 w-full min-w-0 justify-between px-3 font-normal"
-				disabled={disabled}
-				onClick={() => setOpen(true)}
+			{autoOpen ? null : (
+				<Button
+					type="button"
+					variant="outline"
+					className="h-10 w-full min-w-0 justify-between px-3 font-normal"
+					disabled={disabled}
+					onClick={() => setOpen(true)}
+				>
+					<span className={cn("truncate", !value.length && "text-muted-foreground")}>{summary}</span>
+					<ChevronsUpDownIcon className="ms-2 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			)}
+			<Dialog
+				open={open}
+				onOpenChange={(next) => {
+					setOpen(next)
+					if (!next) onClose?.()
+				}}
 			>
-				<span className={cn("truncate", !value.length && "text-muted-foreground")}>{summary}</span>
-				<ChevronsUpDownIcon className="ms-2 h-4 w-4 shrink-0 opacity-50" />
-			</Button>
-			<Dialog open={open} onOpenChange={setOpen}>
 				<DialogContent className="max-h-[min(80dvh,42rem)] w-[calc(100vw-2rem)] max-w-xl overflow-x-hidden overflow-y-auto p-0">
 					<DialogHeader className="border-b px-5 py-4 pe-12">
 						<DialogTitle>{placeholder}</DialogTitle>

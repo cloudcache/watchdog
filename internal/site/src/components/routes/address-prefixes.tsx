@@ -79,6 +79,7 @@ export default memo(function AddressPrefixes() {
 	const [coverWorking, setCoverWorking] = useState(false)
 	const [mergePreview, setMergePreview] = useState<AddressPrefixMergePreview | null>(null)
 	const [mergeWorking, setMergeWorking] = useState(false)
+	const [picker, setPicker] = useState<{ field: "geo" | "operator"; prefix: AddressPrefix } | null>(null)
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
@@ -235,6 +236,41 @@ export default memo(function AddressPrefixes() {
 		[fetchPage, t]
 	)
 	const editable = useMemo(() => ({ fields: ["asn", "source"], onEdit: editCell }), [editCell])
+
+	const handleCellDblClick = useCallback((record: Record<string, unknown>, field: string) => {
+		if (field !== "geo" && field !== "operator") return
+		const prefix = record.item as AddressPrefix | undefined
+		if (prefix) setPicker({ field, prefix })
+	}, [])
+
+	const applyReference = useCallback(
+		async (ids: string[]) => {
+			if (!picker) return
+			const { field, prefix } = picker
+			setPicker(null)
+			const referenceID = ids[0] ?? ""
+			try {
+				const updated = await pb.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
+					method: "PATCH",
+					headers: { "If-Match": `"${prefix.row_version}"` },
+					body: {
+						cidr: prefix.cidr,
+						labels: prefix.labels ?? {},
+						source: prefix.source,
+						asn: prefix.asn ?? 0,
+						geo_leaf_id: field === "geo" ? referenceID : (prefix.geo_leaf_id ?? ""),
+						operator_id: field === "operator" ? referenceID : (prefix.operator_id ?? ""),
+					},
+				})
+				setError("")
+				setPrefixes((prev) => prev.map((item) => (item.id === prefix.id ? { ...item, ...updated } : item)))
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Failed to save`)
+				await fetchPage()
+			}
+		},
+		[picker, fetchPage, t]
+	)
 
 	const removeSelected = useCallback(async () => {
 		if (selected.length === 0 || !confirm(t`Delete ${selected.length} selected prefixes?`)) return
@@ -683,12 +719,33 @@ export default memo(function AddressPrefixes() {
 					serverSorting={serverSorting}
 					editable={editable}
 					selectable={selectable}
+					onCellDblClick={handleCellDblClick}
 					onCellClick={(record, field) => {
 						if (field === "edit") edit(record)
 						if (field === "remove") remove(record)
 					}}
 				/>
 			</div>
+
+			{picker ? (
+				<AddressReferencePicker
+					key={`${picker.field}:${picker.prefix.id}`}
+					kind={picker.field === "geo" ? "geography" : "operator"}
+					value={
+						picker.field === "geo"
+							? picker.prefix.geo_leaf_id
+								? [picker.prefix.geo_leaf_id]
+								: []
+							: picker.prefix.operator_id
+								? [picker.prefix.operator_id]
+								: []
+					}
+					onChange={applyReference}
+					autoOpen
+					onClose={() => setPicker(null)}
+					placeholder={picker.field === "geo" ? t`Choose geography` : t`Choose operator`}
+				/>
+			) : null}
 		</div>
 	)
 })
