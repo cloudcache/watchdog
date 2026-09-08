@@ -88,6 +88,15 @@ func openAddressTestAdmin(t *testing.T, baseDSN string) *sql.DB {
 	return admin
 }
 
+// seedAddressTestUser inserts a minimal active v2 user so rows whose created_by /
+// actor column has an FK to users(id) can be written by tests.
+func seedAddressTestUser(t *testing.T, db *sql.DB, id ID) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO users (id, username, status) VALUES (?, ?, 'active')`, id, "user-"+string(id)); err != nil {
+		t.Fatalf("seed user %s: %v", id, err)
+	}
+}
+
 // applyAddressTestSchema applies the embedded v2 MySQL baseline in filename order
 // and seeds the singleton watchdog_installation row that the publication lock
 // depends on. It mirrors internal/server.ApplyMySQLSchema rather than calling it,
