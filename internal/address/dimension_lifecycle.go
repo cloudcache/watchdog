@@ -2,6 +2,7 @@ package address
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"errors"
 	"strings"
@@ -50,20 +51,21 @@ type DimensionPublicationRetireRequest struct {
 
 type AddressDimensionRetireRequest = DimensionPublicationRetireRequest
 
-// ApproveDimensionPublication moves a pending publication to approved. The
-// checksum-only build has no signature envelope; consumers authenticate the
-// object by its stored checksum.
-func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, snapshotID ID, expectedRowVersion uint64) (DimensionPublicationSnapshot, error) {
-	if p == nil || p.store == nil || actorID == "" || snapshotID == "" || expectedRowVersion == 0 {
+// ApproveDimensionPublication moves a pending publication to approved after its
+// ed25519 approval has been verified against the immutable snapshot metadata.
+// The approval carries a private proof (VerifyDimensionPublicationApproval); this
+// re-checks that proof, then persists the signature envelope. Faithful de-tenant
+// port of the legacy MySQLDimensionPublicationStore.ApproveDimensionPublication.
+func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID ID, approval DimensionPublicationApproval, expectedRowVersion uint64) (DimensionPublicationSnapshot, error) {
+	if p == nil || p.store == nil || actorID == "" || expectedRowVersion == 0 || approval.SnapshotID == "" {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
 	}
-	decidedAt := p.now().UTC()
 	tx, err := p.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, snapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, approval.SnapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -73,11 +75,17 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, sn
 	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending || snapshot.ObjectDeletedAt != nil {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalidTransition
 	}
+	if err := validateVerifiedDimensionPublicationApproval(snapshot, approval); err != nil {
+		return AddressDimensionSnapshot{}, err
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
-		SET approval_state = 'approved', decided_by = ?, decided_at = ?, decision_reason = NULL, row_version = row_version + 1
+		SET approval_state = 'approved', decided_by = ?, decided_at = ?,
+		    decision_reason = NULL, signature_algorithm = ?, signing_key_id = ?,
+		    signature = ?, signed_at = ?, row_version = row_version + 1
 		WHERE module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
-	`, actorID, decidedAt, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID, expectedRowVersion)
+	`, actorID, approval.SignedAt, AddressDimensionSignatureAlgorithm, approval.SigningKeyID,
+		approval.Signature, approval.SignedAt, p.scope.ModuleKey, p.scope.DimensionKey, approval.SnapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -85,7 +93,7 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, sn
 		return AddressDimensionSnapshot{}, err
 	}
 	if err := insertAddressDimensionAudit(ctx, tx, actorID, snapshot.ID, "dimension.snapshot.approved", map[string]any{
-		"version": snapshot.Version, "checksum": snapshot.Checksum,
+		"version": snapshot.Version, "checksum": snapshot.Checksum, "signing_key_id": approval.SigningKeyID,
 	}); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -93,6 +101,15 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, sn
 		return AddressDimensionSnapshot{}, err
 	}
 	return p.GetDimensionPublicationSnapshot(ctx, snapshot.ID)
+}
+
+// dimensionPublicationSnapshotHasTrustedApproval reports whether a snapshot may be
+// activated or rolled back to: it must be approved and carry either a legacy
+// unsigned approval or a complete ed25519 envelope. Faithful de-tenant port.
+func dimensionPublicationSnapshotHasTrustedApproval(snapshot DimensionPublicationSnapshot) bool {
+	return snapshot.ApprovalState == AddressDimensionApprovalApproved &&
+		((snapshot.DecidedAt == nil && len(snapshot.Signature) == 0) ||
+			(snapshot.DecidedAt != nil && snapshot.SignedAt != nil && snapshot.SignatureAlgorithm == AddressDimensionSignatureAlgorithm && snapshot.SigningKeyID != "" && len(snapshot.Signature) == ed25519.SignatureSize))
 }
 
 func (p *Publisher) RejectDimensionPublication(ctx context.Context, actorID, snapshotID ID, expectedRowVersion uint64, reason string) (DimensionPublicationSnapshot, error) {
@@ -155,7 +172,7 @@ func (p *Publisher) ActivateDimensionPublication(ctx context.Context, actorID ID
 	if snapshot.RowVersion != request.ExpectedRowVersion {
 		return AddressDimensionActivation{}, ErrAddressDimensionConflict
 	}
-	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalApproved || snapshot.ObjectDeletedAt != nil || !snapshot.EffectiveFrom.Equal(request.EffectiveFrom) {
+	if snapshot.Status != AddressDimensionStatusActive || !dimensionPublicationSnapshotHasTrustedApproval(snapshot) || snapshot.ObjectDeletedAt != nil || !snapshot.EffectiveFrom.Equal(request.EffectiveFrom) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalidTransition
 	}
 	activation, err := insertDimensionPublicationActivation(ctx, tx, snapshot, actorID, request.EffectiveFrom, AddressDimensionActivationPublish, "")
@@ -202,7 +219,7 @@ func (p *Publisher) RollbackDimensionPublication(ctx context.Context, actorID ID
 		return AddressDimensionActivation{}, ErrAddressDimensionConflict
 	}
 	now := p.now().UTC()
-	if target.ApprovalState != AddressDimensionApprovalApproved || target.ObjectDeletedAt != nil ||
+	if !dimensionPublicationSnapshotHasTrustedApproval(target) || target.ObjectDeletedAt != nil ||
 		(target.Status == AddressDimensionStatusRetired && target.RetentionUntil != nil && !now.Before(*target.RetentionUntil)) ||
 		request.EffectiveFrom.Before(target.EffectiveFrom) {
 		return AddressDimensionActivation{}, ErrAddressDimensionInvalidTransition

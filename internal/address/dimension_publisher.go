@@ -280,6 +280,7 @@ const addressDimensionSnapshotColumns = `
 	checksum, draft_digest, source_manifest_version, source_manifest, source_prefix_count, bundle_schema_version, entry_count, prefix_count,
 	address_set_count, max_address_sets_per_record, status, approval_state,
 	COALESCE(decided_by, ''), decided_at, COALESCE(decision_reason, ''),
+	COALESCE(signature_algorithm, ''), COALESCE(signing_key_id, ''), signature, signed_at,
 	retention_until, object_deleted_at, row_version,
 	COALESCE(created_by, ''), COALESCE(retired_by, ''), created_at, retired_at`
 
@@ -291,6 +292,7 @@ func scanAddressDimensionSnapshot(row rowScanner) (AddressDimensionSnapshot, err
 		&item.Checksum, &item.DraftDigest, &item.SourceManifestVersion, &sourceManifest, &item.SourcePrefixCount, &item.BundleSchemaVersion,
 		&item.EntryCount, &item.PrefixCount, &item.AddressSetCount, &item.MaxAddressSetsPerRecord,
 		&item.Status, &item.ApprovalState, &item.DecidedBy, &item.DecidedAt, &item.DecisionReason,
+		&item.SignatureAlgorithm, &item.SigningKeyID, &item.Signature, &item.SignedAt,
 		&item.RetentionUntil, &item.ObjectDeletedAt, &item.RowVersion, &item.CreatedBy,
 		&item.RetiredBy, &item.CreatedAt, &item.RetiredAt)
 	if err != nil {
