@@ -172,8 +172,9 @@ func (s *Server) newRouter() *gin.Engine {
 	todoCRUD(auth.Group("/alerts/channels"), s)
 	todoCRUD(auth.Group("/alerts/quiet-hours"), s)
 
-	// KISS-05 geo/address library (owned slice): editable CRUD/list now; import+publish next.
+	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports.
 	s.registerAddressRoutes(auth)
+	s.registerAddressImportRoutes(auth)
 
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)
@@ -199,6 +200,12 @@ func requestID() gin.HandlerFunc {
 
 func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// The address-database upload streams tens of MB to disk; it enforces its
+		// own cfg.Address.MaxUploadBytes ceiling, so the small JSON-body cap is skipped.
+		if c.Request.Method == http.MethodPost && c.FullPath() == "/api/v1/address-imports" {
+			c.Next()
+			return
+		}
 		if c.Request.ContentLength > maxBytes {
 			fail(c, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the configured limit")
 			return
