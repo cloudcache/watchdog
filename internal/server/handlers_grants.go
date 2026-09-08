@@ -60,8 +60,7 @@ func (s *Server) replaceUserAccess(c *gin.Context) {
 		PortIDs           []string `json:"port_ids"`
 		BillingAccountIDs []string `json:"billing_account_ids"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+	if !decodeStrictBody(c, &req) {
 		return
 	}
 	byField := map[string][]string{
@@ -71,6 +70,23 @@ func (s *Server) replaceUserAccess(c *gin.Context) {
 		"billing_account_ids": req.BillingAccountIDs,
 	}
 	ctx := c.Request.Context()
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=?)", id).Scan(&exists); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if !exists {
+		fail(c, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	for _, g := range accessGrantTables {
+		normalized, err := normalizeObjectIDs(g.field, byField[g.field], 10000)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		byField[g.field] = normalized
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", err.Error())
@@ -84,8 +100,7 @@ func (s *Server) replaceUserAccess(c *gin.Context) {
 		}
 		for _, rid := range byField[g.field] {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO "+g.table+" (user_id, "+g.column+") VALUES (?, ?)", id, rid); err != nil {
-				// FK violation → the granted object id does not exist
-				fail(c, http.StatusBadRequest, "invalid_request", "unknown "+g.column+": "+rid)
+				writeSQLError(c, err)
 				return
 			}
 		}

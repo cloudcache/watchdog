@@ -95,6 +95,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if stale.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale device update: status=%d body=%s", stale.Code, stale.Body.String())
 	}
+	exerciseDeviceOrganizationAPI(t, s, device.ID, patched.Header().Get("ETag"), authHeaders, cookies)
 
 	summary := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/summary?q=core-1", nil, nil, cookies...)
 	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), device.ID) {
@@ -395,6 +396,136 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	}
 	if _, err := s.db.Exec(`UPDATE schema_migrations SET checksum=? WHERE store='mysql' AND version='0001_baseline'`, originalChecksum); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func exerciseDeviceOrganizationAPI(t *testing.T, s *Server, deviceID, deviceETag string, authHeaders map[string]string, cookies []*http.Cookie) {
+	t.Helper()
+	locationCreated := requestJSON(t, s, http.MethodPost, "/api/v1/locations", map[string]any{
+		"name": "Singapore POP", "latitude": 1.3521, "longitude": 103.8198, "address": "Singapore",
+	}, authHeaders, cookies...)
+	if locationCreated.Code != http.StatusCreated {
+		t.Fatalf("create location: status=%d body=%s", locationCreated.Code, locationCreated.Body.String())
+	}
+	var location locationDTO
+	decodeJSON(t, locationCreated, &location)
+	devicePatched := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+deviceID,
+		map[string]any{"location_id": location.ID},
+		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": deviceETag}, cookies...)
+	if devicePatched.Code != http.StatusOK {
+		t.Fatalf("attach location: status=%d body=%s", devicePatched.Code, devicePatched.Body.String())
+	}
+	locations := requestJSON(t, s, http.MethodGet, "/api/v1/locations?q=singapore&sort=device_count&order=desc", nil, nil, cookies...)
+	if locations.Code != http.StatusOK || !strings.Contains(locations.Body.String(), `"device_count":1`) {
+		t.Fatalf("list locations: status=%d body=%s", locations.Code, locations.Body.String())
+	}
+
+	staticCreated := requestJSON(t, s, http.MethodPost, "/api/v1/device-groups", map[string]any{
+		"name": "Core routers", "kind": "static", "description": "Explicit core set",
+	}, authHeaders, cookies...)
+	if staticCreated.Code != http.StatusCreated {
+		t.Fatalf("create static group: status=%d body=%s", staticCreated.Code, staticCreated.Body.String())
+	}
+	var staticGroup deviceGroupDTO
+	decodeJSON(t, staticCreated, &staticGroup)
+	replaced := requestJSON(t, s, http.MethodPut, "/api/v1/device-groups/"+staticGroup.ID+"/members",
+		map[string]any{"device_ids": []string{deviceID, deviceID}}, authHeaders, cookies...)
+	if replaced.Code != http.StatusOK || !strings.Contains(replaced.Body.String(), `"total":1`) {
+		t.Fatalf("replace static members: status=%d body=%s", replaced.Code, replaced.Body.String())
+	}
+
+	dynamicCreated := requestJSON(t, s, http.MethodPost, "/api/v1/device-groups", map[string]any{
+		"name": "Singapore network", "kind": "dynamic",
+		"rule": map[string]any{"kind": []string{"network"}, "location_id": []string{location.ID}, "labels": map[string][]string{"site": {"dc-a"}}},
+	}, authHeaders, cookies...)
+	if dynamicCreated.Code != http.StatusCreated {
+		t.Fatalf("create dynamic group: status=%d body=%s", dynamicCreated.Code, dynamicCreated.Body.String())
+	}
+	var dynamicGroup deviceGroupDTO
+	decodeJSON(t, dynamicCreated, &dynamicGroup)
+	if dynamicGroup.MemberCount != 1 {
+		t.Fatalf("dynamic group member_count=%d, want 1", dynamicGroup.MemberCount)
+	}
+	manualDynamic := requestJSON(t, s, http.MethodPut, "/api/v1/device-groups/"+dynamicGroup.ID+"/members/"+deviceID, nil, authHeaders, cookies...)
+	if manualDynamic.Code != http.StatusConflict {
+		t.Fatalf("manual dynamic member accepted: status=%d body=%s", manualDynamic.Code, manualDynamic.Body.String())
+	}
+
+	changedLabels := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+deviceID,
+		map[string]any{"labels": map[string]string{"site": "dc-b"}},
+		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": devicePatched.Header().Get("ETag")}, cookies...)
+	if changedLabels.Code != http.StatusOK {
+		t.Fatalf("change dynamic selector field: status=%d body=%s", changedLabels.Code, changedLabels.Body.String())
+	}
+	dynamicMembers := requestJSON(t, s, http.MethodGet, "/api/v1/device-groups/"+dynamicGroup.ID+"/members", nil, nil, cookies...)
+	if dynamicMembers.Code != http.StatusOK || !strings.Contains(dynamicMembers.Body.String(), `"total":0`) {
+		t.Fatalf("dynamic membership did not refresh: status=%d body=%s", dynamicMembers.Code, dynamicMembers.Body.String())
+	}
+	restoredLabels := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+deviceID,
+		map[string]any{"labels": map[string]string{"site": "dc-a"}},
+		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": changedLabels.Header().Get("ETag")}, cookies...)
+	if restoredLabels.Code != http.StatusOK {
+		t.Fatalf("restore dynamic selector field: status=%d body=%s", restoredLabels.Code, restoredLabels.Body.String())
+	}
+
+	roleCreated := requestJSON(t, s, http.MethodPost, "/api/v1/roles", map[string]any{
+		"name": "scoped-device-view", "title": "Scoped device view", "permissions": []string{"device.view", "port.view", "flow.device.view"},
+	}, authHeaders, cookies...)
+	if roleCreated.Code != http.StatusCreated {
+		t.Fatalf("create scoped role: status=%d body=%s", roleCreated.Code, roleCreated.Body.String())
+	}
+	var role struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, roleCreated, &role)
+	userCreated := requestJSON(t, s, http.MethodPost, "/api/v1/users", map[string]any{
+		"username": "organization-viewer", "email": "organization-viewer@example.test", "password": "organization-password", "roles": []string{"scoped-device-view"},
+	}, authHeaders, cookies...)
+	if userCreated.Code != http.StatusCreated {
+		t.Fatalf("create scoped user: status=%d body=%s", userCreated.Code, userCreated.Body.String())
+	}
+	var user struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, userCreated, &user)
+	access := requestJSON(t, s, http.MethodPut, "/api/v1/users/"+user.ID+"/access", map[string]any{
+		"device_group_ids": []string{staticGroup.ID, staticGroup.ID},
+	}, authHeaders, cookies...)
+	if access.Code != http.StatusOK || strings.Count(access.Body.String(), staticGroup.ID) != 1 {
+		t.Fatalf("replace user access: status=%d body=%s", access.Code, access.Body.String())
+	}
+	badAccess := requestJSON(t, s, http.MethodPut, "/api/v1/users/"+user.ID+"/access", map[string]any{
+		"device_ids": []string{"missing-device"},
+	}, authHeaders, cookies...)
+	if badAccess.Code != http.StatusBadRequest {
+		t.Fatalf("unknown grant accepted: status=%d body=%s", badAccess.Code, badAccess.Body.String())
+	}
+	afterBadAccess := requestJSON(t, s, http.MethodGet, "/api/v1/users/"+user.ID+"/access", nil, nil, cookies...)
+	if afterBadAccess.Code != http.StatusOK || !strings.Contains(afterBadAccess.Body.String(), staticGroup.ID) {
+		t.Fatalf("failed access replacement was not atomic: status=%d body=%s", afterBadAccess.Code, afterBadAccess.Body.String())
+	}
+	viewerLogin := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{
+		"username": "organization-viewer", "password": "organization-password",
+	}, nil)
+	viewerCookies := viewerLogin.Result().Cookies()
+	viewerDevices := requestJSON(t, s, http.MethodGet, "/api/v1/devices", nil, nil, viewerCookies...)
+	viewerGroups := requestJSON(t, s, http.MethodGet, "/api/v1/device-groups", nil, nil, viewerCookies...)
+	viewerLocations := requestJSON(t, s, http.MethodGet, "/api/v1/locations", nil, nil, viewerCookies...)
+	if viewerLogin.Code != http.StatusOK || !strings.Contains(viewerDevices.Body.String(), deviceID) || !strings.Contains(viewerGroups.Body.String(), staticGroup.ID) || !strings.Contains(viewerLocations.Body.String(), location.ID) {
+		t.Fatalf("group inherited scope failed: login=%d devices=%s groups=%s locations=%s", viewerLogin.Code, viewerDevices.Body.String(), viewerGroups.Body.String(), viewerLocations.Body.String())
+	}
+
+	for path, expected := range map[string]int{
+		"/api/v1/users/" + user.ID:                 http.StatusNoContent,
+		"/api/v1/roles/" + role.ID:                 http.StatusNoContent,
+		"/api/v1/device-groups/" + dynamicGroup.ID: http.StatusNoContent,
+		"/api/v1/device-groups/" + staticGroup.ID:  http.StatusNoContent,
+		"/api/v1/locations/" + location.ID:         http.StatusNoContent,
+	} {
+		response := requestJSON(t, s, http.MethodDelete, path, nil, authHeaders, cookies...)
+		if response.Code != expected {
+			t.Fatalf("cleanup %s: status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 

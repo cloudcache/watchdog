@@ -322,8 +322,18 @@ func (s *Server) createDevice(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
+	if p := currentPrincipal(c); p != nil && !p.can("device.viewAll") {
+		if _, err := s.db.ExecContext(c.Request.Context(), `INSERT INTO user_device_permissions (user_id,device_id) VALUES (?,?) ON DUPLICATE KEY UPDATE device_id=device_id`, p.UserID, id); err != nil {
+			writeSQLError(c, err)
+			return
+		}
+	}
 	r, err := s.readDevice(c, id)
 	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if err := s.syncDynamicGroupsForDevice(c.Request.Context(), id); err != nil {
 		writeSQLError(c, err)
 		return
 	}
@@ -398,6 +408,10 @@ func (s *Server) updateDevice(c *gin.Context) {
 	}
 	r, err := s.readDevice(c, current.ID)
 	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if err := s.syncDynamicGroupsForDevice(c.Request.Context(), current.ID); err != nil {
 		writeSQLError(c, err)
 		return
 	}
