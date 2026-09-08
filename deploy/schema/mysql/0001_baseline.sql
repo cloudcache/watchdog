@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_username (username),
-  UNIQUE KEY uq_users_email (email)
+  KEY idx_users_email (email)   -- contact field; username is the unique login identity
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Server-side sessions: cookie holds an opaque token; we store only its SHA-256.

@@ -38,12 +38,19 @@ func New(cfg Config) (*Server, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
+	s := &Server{cfg: cfg, db: db}
 	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-
-	s := &Server{cfg: cfg, db: db}
+	if err := EnsureRBACSeed(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("seed rbac: %w", err)
+	}
+	if err := s.EnsureFirstAdmin(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("bootstrap admin: %w", err)
+	}
 	s.engine = s.newRouter()
 	return s, nil
 }
