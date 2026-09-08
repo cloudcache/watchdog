@@ -149,6 +149,9 @@ func (s *Server) newRouter() *gin.Engine {
 	// KISS-05 geo/address library (owned slice): editable CRUD/list now; import+publish next.
 	s.registerAddressRoutes(auth)
 
+	// Per-user resource-grant management (device/port/billing access rights).
+	s.registerAccessRoutes(auth)
+
 	auth.GET("/jobs", s.todo)
 	auth.GET("/audit", s.todo)
 	auth.GET("/exports", s.todo)
