@@ -17,8 +17,8 @@ const (
 	defaultAPIURL   = "https://api.github.com/repos/librenms/librenms/contents/html/images/os?ref=master"
 	defaultRawBase  = "https://raw.githubusercontent.com/librenms/librenms/master/html/images/os"
 	defaultVendors  = "huawei,cisco,junos,arista,zte"
-	defaultOutDir   = "internal/site/public/static/vendor-logos"
-	defaultManifest = "internal/site/src/lib/vendor-logos.ts"
+	defaultOutDir   = "frontend/public/static/vendor-logos"
+	defaultManifest = "frontend/src/lib/vendor-logos.ts"
 )
 
 type githubContent struct {

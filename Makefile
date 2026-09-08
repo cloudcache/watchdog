@@ -58,8 +58,8 @@ tidy:
 	go mod tidy
 
 build-web-ui:
-	npm install --prefix ./internal/site
-	npm run --prefix ./internal/site build
+	npm install --prefix ./frontend
+	npm run --prefix ./frontend build
 
 # Conditional .NET build - only for Windows
 build-dotnet-conditional:
@@ -84,9 +84,9 @@ build-hub: tidy $(if $(filter false,$(SKIP_WEB)),build-web-ui)
 build: build-agent build-hub
 
 generate-locales:
-	@if [ ! -f ./internal/site/src/locales/en/en.ts ]; then \
+	@if [ ! -f ./frontend/src/locales/en/en.ts ]; then \
 		echo "Generating locales..."; \
-		npm install --prefix ./internal/site && npm run --prefix ./internal/site sync; \
+		npm install --prefix ./frontend && npm run --prefix ./frontend sync; \
 	fi
 
 dev-hub:

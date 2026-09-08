@@ -159,13 +159,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: internal/site/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci --prefix ./internal/site
+        run: npm ci --prefix ./frontend
 
       - name: Build site
-        run: npm run --prefix ./internal/site build
+        run: npm run --prefix ./frontend build
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
