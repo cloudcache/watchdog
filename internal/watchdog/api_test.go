@@ -28,10 +28,10 @@ func TestAuthMiddlewareInjectsAuthContext(t *testing.T) {
 	}
 }
 
-func TestAddressLibraryAuthUsesOneOwnerAndAdminOnlyWrites(t *testing.T) {
+func TestAddressLibraryAuthUsesSharedScopeAndGlobalAdminWrites(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil)
 	auth := func(*http.Request) (AuthContext, error) {
-		return AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, nil
+		return AuthContext{TenantID: "legacy-scope", UserID: "user-consumer"}, nil
 	}
 	view, admin := addressLibraryAuthAdapters(auth, "tenant-owner")
 	selected, err := view(request)
@@ -45,11 +45,11 @@ func TestAddressLibraryAuthUsesOneOwnerAndAdminOnlyWrites(t *testing.T) {
 		t.Fatal("shared address view did not receive read-only owner scope")
 	}
 	if _, err := admin(request); err == nil {
-		t.Fatal("admin of a consumer tenant could mutate the shared address library")
+		t.Fatal("non-admin could mutate the shared address library")
 	}
 
 	ownerAuth := func(*http.Request) (AuthContext, error) {
-		return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+		return AuthContext{TenantID: "legacy-scope", UserID: "user-owner", IsAdmin: true}, nil
 	}
 	_, ownerAdmin := addressLibraryAuthAdapters(ownerAuth, "tenant-owner")
 	if selected, err := ownerAdmin(request); err != nil || selected.TenantID != "tenant-owner" || !selected.IsAdmin {
@@ -57,12 +57,9 @@ func TestAddressLibraryAuthUsesOneOwnerAndAdminOnlyWrites(t *testing.T) {
 	}
 }
 
-func TestAddressLibraryOwnerAdminKeepsCapabilityWhenAnotherTenantIsSelected(t *testing.T) {
+func TestAddressLibraryGlobalAdminKeepsCapabilityAcrossLegacyScope(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil)
-	auth := func(r *http.Request) (AuthContext, error) {
-		if r.Header.Get(TenantHeader) == "tenant-owner" {
-			return AuthContext{TenantID: "tenant-owner", UserID: "user-shared", IsAdmin: true}, nil
-		}
+	auth := func(*http.Request) (AuthContext, error) {
 		return AuthContext{TenantID: "tenant-consumer", UserID: "user-shared", IsAdmin: true}, nil
 	}
 	_, admin := addressLibraryAuthAdapters(auth, "tenant-owner")
@@ -164,7 +161,7 @@ func TestNewAPIV1RouterServesMe(t *testing.T) {
 	}{
 		{name: "owner administrator", auth: AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, canManage: true},
 		{name: "owner member", auth: AuthContext{TenantID: "tenant-owner", UserID: "user-member"}},
-		{name: "other tenant administrator", auth: AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}},
+		{name: "administrator in legacy scope", auth: AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, canManage: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			router := NewAPIV1Router(APIV1RouterConfig{
@@ -190,7 +187,7 @@ func TestNewAPIV1RouterServesMe(t *testing.T) {
 func TestNewAPIV1RouterUsesTenantDiscoveryAuth(t *testing.T) {
 	router := NewAPIV1Router(APIV1RouterConfig{
 		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{}, authAdapterError(http.StatusBadRequest, APIErrorInvalidRequest, TenantHeader+" is required")
+			return AuthContext{}, &AuthAdapterError{Status: http.StatusBadRequest, Code: APIErrorInvalidRequest, Message: "scope is required"}
 		},
 		TenantDiscovery: func(*http.Request) (AuthContext, error) {
 			return AuthContext{AvailableTenants: []Tenant{{ID: "tenant-a", Name: "Tenant A", Status: "active"}}}, nil

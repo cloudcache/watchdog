@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// PLAT P0: user preferences live in MySQL (was the PocketBase user_settings
+// PLAT P0: user preferences live in MySQL (replacing the legacy user_settings
 // collection). A user has at most one row; reads return an empty default
 // without writing, and writes create-or-update under optimistic concurrency.
 

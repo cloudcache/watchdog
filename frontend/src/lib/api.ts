@@ -2,7 +2,7 @@ import { basePath } from "@/components/router"
 import type { ChartTimes, UserSettings } from "@/types"
 import { $platformIdentity, type PlatformAuthContext } from "./platform-auth"
 import { resolveAPIBase, responseFilename } from "./api-transport"
-import { $alerts, $allSystemsById, $allSystemsByName, $authenticated, $authChecked, $userSettings } from "./stores"
+import { $allSystemsById, $allSystemsByName, $authenticated, $authChecked, $userSettings } from "./stores"
 import { chartTimeData } from "./utils"
 
 const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
@@ -245,14 +245,11 @@ export async function logOut() {
 	}
 	$allSystemsByName.set({})
 	$allSystemsById.set({})
-	$alerts.set({})
 	$userSettings.set({} as UserSettings)
 }
 
 // UI display preferences live in MySQL. row_version drives optimistic concurrency: it
-// comes back in the GET/PUT body and is echoed as the If-Match on the next
-// write. Notification channels (emails/webhooks) now live in MySQL too and the
-// alert delivery path reads them there (see saveNotificationSettings below).
+// comes back in the GET/PUT body and is echoed as the If-Match on the next write.
 let userPreferencesRowVersion = 0
 
 type UserPreferencesResponse = { settings?: UserSettings; row_version?: number }
@@ -280,7 +277,7 @@ function pickUIPreferences(settings: Partial<UserSettings>): Partial<UserSetting
 	return out
 }
 
-/** Load UI preferences and notification channels, both from MySQL. */
+/** Load UI display preferences from MySQL. */
 export async function updateUserSettings() {
 	const merged: Partial<UserSettings> = { ...$userSettings.get() }
 	try {
@@ -289,13 +286,6 @@ export async function updateUserSettings() {
 		Object.assign(merged, pickUIPreferences(res.settings ?? {}))
 	} catch (e) {
 		console.error("get preferences", e)
-	}
-	try {
-		const channels = await api.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {})
-		merged.emails = channels.emails ?? []
-		merged.webhooks = channels.webhooks ?? []
-	} catch (e) {
-		console.error("get notification channels", e)
 	}
 	$userSettings.set(merged as UserSettings)
 }
@@ -312,82 +302,6 @@ export async function saveUserPreferences(newSettings: Partial<UserSettings>): P
 	userPreferencesRowVersion = res.row_version ?? userPreferencesRowVersion
 	$userSettings.set(merged)
 	return merged
-}
-
-/** Persist notification channels (emails/webhooks) to MySQL, where the alert
- * delivery path reads them. */
-export async function saveNotificationSettings(channels: Pick<UserSettings, "emails" | "webhooks">): Promise<void> {
-	const saved = await api.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {
-		method: "PUT",
-		body: { emails: channels.emails ?? [], webhooks: channels.webhooks ?? [] },
-	})
-	$userSettings.set({ ...$userSettings.get(), emails: saved.emails ?? [], webhooks: saved.webhooks ?? [] })
-}
-
-// Quiet hours live in MySQL. `system` is the managed device id the window
-// applies to; "" means it is global (all devices).
-export interface QuietHourWindow {
-	id: string
-	system: string
-	type: "one-time" | "daily"
-	start: string
-	end: string
-}
-
-type QuietHourAPI = {
-	id: string
-	system_id?: string
-	type: "one-time" | "daily"
-	start: string
-	end: string
-}
-
-function fromQuietHourAPI(w: QuietHourAPI): QuietHourWindow {
-	return { id: w.id, system: w.system_id ?? "", type: w.type, start: w.start, end: w.end }
-}
-
-export async function fetchQuietHours(): Promise<QuietHourWindow[]> {
-	const res = await api.send<{ items?: QuietHourAPI[] }>("/api/v1/me/quiet-hours", {})
-	return (res.items ?? []).map(fromQuietHourAPI)
-}
-
-export async function saveQuietHour(input: {
-	id?: string
-	system: string
-	type: "one-time" | "daily"
-	start: string
-	end: string
-}): Promise<QuietHourWindow> {
-	const body = { system_id: input.system, type: input.type, start: input.start, end: input.end }
-	const saved = await api.send<QuietHourAPI>(
-		input.id ? `/api/v1/me/quiet-hours/${input.id}` : "/api/v1/me/quiet-hours",
-		{ method: input.id ? "PATCH" : "POST", body }
-	)
-	return fromQuietHourAPI(saved)
-}
-
-export async function deleteQuietHour(id: string): Promise<void> {
-	await api.send(`/api/v1/me/quiet-hours/${id}`, { method: "DELETE" })
-}
-
-// Alert history is user-scoped. `system` is the managed device id.
-export interface AlertHistoryEntry {
-	id: string
-	alert_id: string
-	system: string
-	name: string
-	value: number
-	created: string
-	resolved: string | null
-}
-
-export async function fetchAlertsHistory(limit = 200): Promise<AlertHistoryEntry[]> {
-	const res = await api.send<{ items?: AlertHistoryEntry[] }>("/api/v1/me/alerts-history", { query: { limit } })
-	return res.items ?? []
-}
-
-export async function deleteAlertHistory(id: string): Promise<void> {
-	await api.send(`/api/v1/me/alerts-history/${id}`, { method: "DELETE" })
 }
 
 // A page of the target list. GET /api/v1/targets paginates opt-in (only when a

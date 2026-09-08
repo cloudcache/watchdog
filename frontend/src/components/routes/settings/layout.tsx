@@ -2,7 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath, redirectPage } from "@nanostores/router"
-import { AlertOctagonIcon, BellIcon, HeartPulseIcon, SettingsIcon } from "lucide-react"
+import { HeartPulseIcon, SettingsIcon } from "lucide-react"
 import { lazy, useEffect } from "react"
 import { $router } from "@/components/router.tsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx"
@@ -14,13 +14,9 @@ import { Separator } from "../../ui/separator"
 import { SidebarNav } from "./sidebar-nav.tsx"
 
 const generalSettingsImport = () => import("./general.tsx")
-const notificationsSettingsImport = () => import("./notifications.tsx")
-const alertsHistoryDataTableSettingsImport = () => import("./alerts-history-data-table.tsx")
 const heartbeatSettingsImport = () => import("./heartbeat.tsx")
 
 const GeneralSettings = lazy(generalSettingsImport)
-const NotificationsSettings = lazy(notificationsSettingsImport)
-const AlertsHistoryDataTableSettings = lazy(alertsHistoryDataTableSettingsImport)
 const HeartbeatSettings = lazy(heartbeatSettingsImport)
 
 export async function saveSettings(newSettings: Partial<UserSettings>) {
@@ -50,18 +46,6 @@ export default function SettingsLayout() {
 			icon: SettingsIcon,
 		},
 		{
-			title: t`Notifications`,
-			href: getPagePath($router, "settings", { name: "notifications" }),
-			icon: BellIcon,
-			preload: notificationsSettingsImport,
-		},
-		{
-			title: t`Alert History`,
-			href: getPagePath($router, "settings", { name: "alert-history" }),
-			icon: AlertOctagonIcon,
-			preload: alertsHistoryDataTableSettingsImport,
-		},
-		{
 			title: t`Heartbeat`,
 			href: getPagePath($router, "settings", { name: "heartbeat" }),
 			icon: HeartPulseIcon,
@@ -88,7 +72,7 @@ export default function SettingsLayout() {
 					<Trans>Settings</Trans>
 				</CardTitle>
 				<CardDescription>
-					<Trans>Manage display and notification preferences.</Trans>
+					<Trans>Manage display preferences.</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
@@ -113,10 +97,6 @@ function SettingsContent({ name }: { name: string }) {
 	switch (name) {
 		case "general":
 			return <GeneralSettings userSettings={userSettings} />
-		case "notifications":
-			return <NotificationsSettings userSettings={userSettings} />
-		case "alert-history":
-			return <AlertsHistoryDataTableSettings />
 		case "heartbeat":
 			return <HeartbeatSettings />
 	}

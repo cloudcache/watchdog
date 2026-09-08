@@ -561,38 +561,3 @@ CREATE TABLE IF NOT EXISTS user_billing_permissions (
   CONSTRAINT fk_ubp_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_ubp_account FOREIGN KEY (account_id) REFERENCES billing_accounts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ---------------------------------------------------------------------------
--- Alert delivery config (MySQL side only; alert/log DATA lives in ClickHouse)
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS notification_channels (
-  id          CHAR(26)     NOT NULL,
-  name        VARCHAR(190) NOT NULL,
-  kind        VARCHAR(16)  NOT NULL,               -- email | webhook
-  address     VARCHAR(512) NOT NULL,               -- webhook URL encrypted at rest
-  enabled     TINYINT(1)   NOT NULL DEFAULT 1,
-  row_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-  created_by  CHAR(26)     NULL,
-  updated_by  CHAR(26)     NULL,
-  created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_notification_channels_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS quiet_hours (
-  id           CHAR(26)     NOT NULL,
-  name         VARCHAR(190) NOT NULL DEFAULT '',
-  window_type  VARCHAR(16)  NOT NULL DEFAULT 'daily',  -- daily | one-time
-  starts_at    VARCHAR(32)  NOT NULL DEFAULT '',        -- HH:MM or RFC3339 per type
-  ends_at      VARCHAR(32)  NOT NULL DEFAULT '',
-  device_group_id CHAR(26)  NULL,                       -- optional scope
-  enabled      TINYINT(1)   NOT NULL DEFAULT 1,
-  created_by   CHAR(26)     NULL,
-  created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  updated_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (id),
-  KEY idx_quiet_hours_group (device_group_id),
-  CONSTRAINT fk_quiet_hours_group FOREIGN KEY (device_group_id) REFERENCES device_groups(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

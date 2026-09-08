@@ -112,7 +112,7 @@ func TestAddressDimensionPreviewAndAsyncPublishAPI(t *testing.T) {
 	}
 }
 
-func TestAddressDimensionRoutesUseSharedOwnerAndOwnerAdminWrites(t *testing.T) {
+func TestAddressDimensionRoutesUseSharedScopeAndGlobalAdminWrites(t *testing.T) {
 	effective := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	publisher := &fakeAddressDimensionPublisher{preview: AddressDimensionPreview{DraftDigest: digest, EffectiveFrom: effective}}
@@ -130,20 +130,21 @@ func TestAddressDimensionRoutesUseSharedOwnerAndOwnerAdminWrites(t *testing.T) {
 	publisher.tenantID = ""
 	response = httptest.NewRecorder()
 	consumerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/preview", strings.NewReader(`{"effective_from":"2026-09-07T00:00:00Z"}`)))
-	if response.Code != http.StatusForbidden || publisher.tenantID != "" {
-		t.Fatalf("consumer admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
+	if response.Code != http.StatusOK || publisher.tenantID != "tenant-owner" {
+		t.Fatalf("global admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
 	}
 
-	ownerRouter := NewAPIV1Router(APIV1RouterConfig{
+	memberRouter := NewAPIV1Router(APIV1RouterConfig{
 		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+			return AuthContext{TenantID: "tenant-owner", UserID: "user-member"}, nil
 		},
 		AddressLibraryOwner: "tenant-owner", AddressDimensions: publisher,
 	})
+	publisher.tenantID = ""
 	response = httptest.NewRecorder()
-	ownerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/preview", strings.NewReader(`{"effective_from":"2026-09-07T00:00:00Z"}`)))
-	if response.Code != http.StatusOK || publisher.tenantID != "tenant-owner" {
-		t.Fatalf("owner admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
+	memberRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/dimensions/address/preview", strings.NewReader(`{"effective_from":"2026-09-07T00:00:00Z"}`)))
+	if response.Code != http.StatusForbidden || publisher.tenantID != "" {
+		t.Fatalf("non-admin write = %d tenant=%q body=%s", response.Code, publisher.tenantID, response.Body.String())
 	}
 }
 

@@ -18,7 +18,6 @@ type MaintenanceRepository interface {
 	PurgeExpiredIdempotencyRecords(ctx context.Context, now time.Time, limit int) (int64, error)
 	PurgeExpiredEnrollmentSecrets(ctx context.Context, now time.Time, limit int) (int64, error)
 	PurgeTerminalOperationJobs(ctx context.Context, before time.Time, limit int) (int64, error)
-	PurgeExpiredQuietHours(ctx context.Context, now time.Time, limit int) (int64, error)
 	PurgeExpiredExports(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
@@ -64,19 +63,6 @@ func (s *MySQLStore) PurgeTerminalOperationJobs(ctx context.Context, before time
 		WHERE status IN ('succeeded', 'failed', 'canceled')
 			AND finished_at IS NOT NULL AND finished_at <= ? LIMIT ?
 	`, before.UTC(), limit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-// PurgeExpiredQuietHours reaps one-time quiet-hour windows whose end has passed.
-// Daily windows recur and never expire; future one-time windows are kept. This
-// is the MySQL successor to the PocketBase deleteOldQuietHours cron.
-func (s *MySQLStore) PurgeExpiredQuietHours(ctx context.Context, now time.Time, limit int) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `
-		DELETE FROM quiet_hours WHERE window_type = 'one-time' AND end_at <= ? LIMIT ?
-	`, now.UTC(), limit)
 	if err != nil {
 		return 0, err
 	}
@@ -175,25 +161,22 @@ func NewStoreMaintenance(repo MaintenanceRepository, logf func(string, ...any)) 
 	m.Register(MaintenanceTask{
 		Name:     "idempotency_records",
 		Interval: time.Hour,
-		Run:      drainPurge(func(ctx context.Context) (int64, error) { return repo.PurgeExpiredIdempotencyRecords(ctx, time.Now().UTC(), maintenancePurgeBatch) }),
+		Run: drainPurge(func(ctx context.Context) (int64, error) {
+			return repo.PurgeExpiredIdempotencyRecords(ctx, time.Now().UTC(), maintenancePurgeBatch)
+		}),
 	})
 	m.Register(MaintenanceTask{
 		Name:     "enrollment_secrets",
 		Interval: time.Hour,
-		Run:      drainPurge(func(ctx context.Context) (int64, error) { return repo.PurgeExpiredEnrollmentSecrets(ctx, time.Now().UTC(), maintenancePurgeBatch) }),
+		Run: drainPurge(func(ctx context.Context) (int64, error) {
+			return repo.PurgeExpiredEnrollmentSecrets(ctx, time.Now().UTC(), maintenancePurgeBatch)
+		}),
 	})
 	m.Register(MaintenanceTask{
 		Name:     "operation_jobs",
 		Interval: 6 * time.Hour,
 		Run: drainPurge(func(ctx context.Context) (int64, error) {
 			return repo.PurgeTerminalOperationJobs(ctx, time.Now().UTC().Add(-operationJobRetention), maintenancePurgeBatch)
-		}),
-	})
-	m.Register(MaintenanceTask{
-		Name:     "quiet_hours",
-		Interval: time.Hour,
-		Run: drainPurge(func(ctx context.Context) (int64, error) {
-			return repo.PurgeExpiredQuietHours(ctx, time.Now().UTC(), maintenancePurgeBatch)
 		}),
 	})
 	if queue, ok := repo.(ExportExpiryQueue); ok {

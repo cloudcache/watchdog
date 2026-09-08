@@ -1,6 +1,5 @@
 import { useLingui } from "@lingui/react/macro"
 import { memo, Suspense, useEffect, useMemo } from "react"
-import { ActiveAlerts } from "@/components/active-alerts"
 import { FooterRepoLink } from "@/components/footer-repo-link"
 import Targets from "@/components/routes/targets"
 
@@ -15,7 +14,6 @@ export default memo(() => {
 		() => (
 			<>
 				<div className="flex flex-col gap-4">
-					<ActiveAlerts />
 					<Suspense>
 						<Targets />
 					</Suspense>

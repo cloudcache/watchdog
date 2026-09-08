@@ -188,8 +188,6 @@ func (s *Server) newRouter() *gin.Engine {
 	legacyAgents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
 	legacyAgents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
 	legacyAgents.GET("/:id/runs", s.requirePermission("agent.view"), s.listAgentRuns)
-	todoCRUD(auth.Group("/alerts/channels"), s)
-	todoCRUD(auth.Group("/alerts/quiet-hours"), s)
 
 	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports.
 	s.registerAddressRoutes(auth)

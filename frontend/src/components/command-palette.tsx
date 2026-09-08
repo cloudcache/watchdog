@@ -3,14 +3,12 @@ import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { DialogDescription } from "@radix-ui/react-dialog"
 import {
-	AlertOctagonIcon,
 	BookIcon,
 	ContainerIcon,
 	DatabaseBackupIcon,
 	FingerprintIcon,
 	HardDriveIcon,
 	LogsIcon,
-	MailIcon,
 	Server,
 	ServerIcon,
 	SettingsIcon,
@@ -135,19 +133,6 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							{SettingsShortcut}
 						</CommandItem>
 						<CommandItem
-							keywords={["alerts"]}
-							onSelect={() => {
-								navigate(getPagePath($router, "settings", { name: "notifications" }))
-								setOpen(false)
-							}}
-						>
-							<MailIcon className="me-2 size-4" />
-							<span>
-								<Trans>Notifications</Trans>
-							</span>
-							{SettingsShortcut}
-						</CommandItem>
-						<CommandItem
 							keywords={[t`Universal token`]}
 							onSelect={() => {
 								navigate(getPagePath($router, "settings", { name: "tokens" }))
@@ -157,18 +142,6 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<FingerprintIcon className="me-2 size-4" />
 							<span>
 								<Trans>Tokens & Fingerprints</Trans>
-							</span>
-							{SettingsShortcut}
-						</CommandItem>
-						<CommandItem
-							onSelect={() => {
-								navigate(getPagePath($router, "settings", { name: "alert-history" }))
-								setOpen(false)
-							}}
-						>
-							<AlertOctagonIcon className="me-2 size-4" />
-							<span>
-								<Trans>Alert History</Trans>
 							</span>
 							{SettingsShortcut}
 						</CommandItem>

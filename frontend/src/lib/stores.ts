@@ -1,5 +1,5 @@
 import { atom, computed, listenKeys, map, type ReadableAtom } from "nanostores"
-import type { AlertMap, ChartTimeRange, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
+import type { ChartTimeRange, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
 import { Unit } from "./enums"
 
 /** Default layout width. Used as fallback when user setting is unset. */
@@ -23,9 +23,6 @@ export const $downSystems = map<Record<string, SystemRecord>>({})
 export const $pausedSystems = map<Record<string, SystemRecord>>({})
 /** List of all system records */
 export const $systems: ReadableAtom<SystemRecord[]> = computed($allSystemsById, Object.values)
-
-/** Map of alert records by system id and alert name */
-export const $alerts = map<AlertMap>({})
 
 /** SSH public key */
 export const $publicKey = atom("")

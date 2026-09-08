@@ -31,9 +31,9 @@ func (r *fakeAddressSetRepository) ListAddressPrefixesPage(_ context.Context, te
 	return []AddressPrefix{{ID: "prefix-a", CIDR: "192.0.2.0/24", Family: 4, RowVersion: 1}}, "next-prefix", r.prefixTotal, nil
 }
 
-func TestAddressRoutesUseSharedOwnerAndRestrictMaintenanceToOwnerAdmin(t *testing.T) {
+func TestAddressRoutesUseSharedScopeAndRestrictMaintenanceToGlobalAdmin(t *testing.T) {
 	repo := &fakeAddressSetRepository{}
-	consumerRouter := NewAPIV1Router(APIV1RouterConfig{
+	adminRouter := NewAPIV1Router(APIV1RouterConfig{
 		Auth: func(*http.Request) (AuthContext, error) {
 			return AuthContext{TenantID: "tenant-consumer", UserID: "user-consumer", IsAdmin: true}, nil
 		},
@@ -41,7 +41,7 @@ func TestAddressRoutesUseSharedOwnerAndRestrictMaintenanceToOwnerAdmin(t *testin
 		AddressSets:         repo,
 	})
 	response := httptest.NewRecorder()
-	consumerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil))
+	adminRouter.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/address-prefixes", nil))
 	if response.Code != http.StatusOK || repo.lastTenant != "tenant-owner" {
 		t.Fatalf("shared owner read = %d tenant=%q body=%s", response.Code, repo.lastTenant, response.Body.String())
 	}
@@ -50,23 +50,23 @@ func TestAddressRoutesUseSharedOwnerAndRestrictMaintenanceToOwnerAdmin(t *testin
 		httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes/actions/merge-preview", strings.NewReader(`{"prefixes":[{"cidr":"192.0.2.0/25"},{"cidr":"192.0.2.128/25"}]}`)),
 	} {
 		response = httptest.NewRecorder()
-		consumerRouter.ServeHTTP(response, request)
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("consumer maintenance %s = %d body=%s", request.URL.Path, response.Code, response.Body.String())
+		adminRouter.ServeHTTP(response, request)
+		if response.Code < http.StatusOK || response.Code >= http.StatusMultipleChoices {
+			t.Fatalf("global admin maintenance %s = %d body=%s", request.URL.Path, response.Code, response.Body.String())
 		}
 	}
 
-	ownerRouter := NewAPIV1Router(APIV1RouterConfig{
+	memberRouter := NewAPIV1Router(APIV1RouterConfig{
 		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{TenantID: "tenant-owner", UserID: "user-owner", IsAdmin: true}, nil
+			return AuthContext{TenantID: "tenant-owner", UserID: "user-member"}, nil
 		},
 		AddressLibraryOwner: "tenant-owner",
 		AddressSets:         repo,
 	})
 	response = httptest.NewRecorder()
-	ownerRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes/actions/merge-preview", strings.NewReader(`{"prefixes":[{"cidr":"192.0.2.0/25"},{"cidr":"192.0.2.128/25"}]}`)))
-	if response.Code != http.StatusOK {
-		t.Fatalf("owner merge preview = %d body=%s", response.Code, response.Body.String())
+	memberRouter.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/address-prefixes/actions/merge-preview", strings.NewReader(`{"prefixes":[{"cidr":"192.0.2.0/25"},{"cidr":"192.0.2.128/25"}]}`)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin merge preview = %d body=%s", response.Code, response.Body.String())
 	}
 }
 

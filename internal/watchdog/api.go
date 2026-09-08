@@ -62,9 +62,10 @@ func AuthFromContext(ctx context.Context) (AuthContext, bool) {
 
 type AuthContextAdapter func(*http.Request) (AuthContext, error)
 
-// addressLibraryAuthAdapters expose one platform AddressSnap through the
-// configured owner tenant. Every authenticated tenant may read the shared
-// taxonomy; only an admin of the owner tenant may mutate or publish it.
+// addressLibraryAuthAdapters expose one platform-global AddressSnap. Every
+// authenticated user may read it; only a global administrator may mutate or
+// publish it. ownerScope is retained only while the legacy repositories still
+// require a non-empty scope key and is not an authorization boundary.
 func addressLibraryAuthAdapters(auth AuthContextAdapter, ownerTenantID ID) (AuthContextAdapter, AuthContextAdapter) {
 	if auth == nil || ownerTenantID == "" {
 		return auth, auth
@@ -87,21 +88,15 @@ func addressLibraryAuthAdapters(auth AuthContextAdapter, ownerTenantID ID) (Auth
 		if err != nil {
 			return AuthContext{}, err
 		}
-		if selected.TenantID == ownerTenantID && selected.IsAdmin {
-			return selected, nil
+		if !selected.IsAdmin {
+			return AuthContext{}, &AuthAdapterError{
+				Status:  http.StatusForbidden,
+				Code:    APIErrorPermissionDenied,
+				Message: "Platform administrator required",
+			}
 		}
-		// AddressSnap is platform-global. A user who is an owner-tenant admin
-		// keeps that capability while another tenant is selected for ordinary
-		// business data. Re-run the authoritative identity projection for the
-		// owner tenant instead of trusting or rewriting the selected context.
-		ownerRequest := r.Clone(r.Context())
-		ownerRequest.Header = r.Header.Clone()
-		ownerRequest.Header.Set(TenantHeader, string(ownerTenantID))
-		owner, ownerErr := auth(ownerRequest)
-		if ownerErr != nil || owner.TenantID != ownerTenantID || !owner.IsAdmin {
-			return AuthContext{}, authAdapterError(http.StatusForbidden, APIErrorPermissionDenied, "Address library owner administrator required")
-		}
-		return owner, nil
+		selected.TenantID = ownerTenantID
+		return selected, nil
 	}
 	return view, admin
 }

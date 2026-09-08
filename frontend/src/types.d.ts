@@ -230,31 +230,6 @@ export interface SystemStatsRecord extends APIRecord {
 	created: string | number
 }
 
-export interface AlertRecord extends APIRecord {
-	id: string
-	system: string
-	name: string
-	triggered: boolean
-	value: number
-	min: number
-	// user: string
-}
-
-export interface AlertsHistoryRecord extends APIRecord {
-	alert_id: string
-	system: string
-	name: string
-	value: number
-	created: string
-	resolved?: string | null
-	// system name is resolved client-side from the systems store at load time
-	expand?: {
-		system?: {
-			name?: string
-		}
-	}
-}
-
 export interface ContainerRecord extends APIRecord {
 	id: string
 	system: string
@@ -335,22 +310,6 @@ export interface ChartData {
 	domain: number[]
 	chartTime: ChartTimes
 }
-
-export interface AlertInfo {
-	name: () => string
-	unit: string
-	icon: any
-	desc: () => string
-	max?: number
-	min?: number
-	step?: number
-	start?: number
-	/** Single value description (when there's only one value, like status) */
-	singleDesc?: () => string
-	invert?: boolean
-}
-
-export type AlertMap = Record<string, Map<string, AlertRecord>>
 
 export interface SmartData {
 	/** model family */
