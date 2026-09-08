@@ -150,7 +150,16 @@ type flowExporterValues struct {
 }
 
 func (s *Server) listFlowExporters(c *gin.Context) {
-	limit, offset := pageParams(c)
+	page, ok := parseInventoryPage(c,
+		[]string{"device_id", "collector_agent_id", "protocol", "sampling_mode", "enabled", "deployment_state"},
+		map[string]string{
+			"id": "f.id", "device": "COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host)",
+			"device_host": "d.host", "source_prefix": "f.source_prefix", "protocol": "f.protocol",
+			"collector": "a.name", "sampling_mode": "f.sampling_mode", "enabled": "f.enabled", "updated_at": "f.updated_at",
+		}, "updated_at")
+	if !ok {
+		return
+	}
 	where := []string{"1=1"}
 	args := []any{}
 	if p := currentPrincipal(c); p != nil && !p.can("device.viewAll") {
@@ -226,24 +235,15 @@ func (s *Server) listFlowExporters(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	sorts := map[string]string{
-		"": "f.updated_at", "id": "f.id", "device": "COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host)",
-		"device_host": "d.host", "source_prefix": "f.source_prefix", "protocol": "f.protocol",
-		"collector": "a.name", "sampling_mode": "f.sampling_mode", "enabled": "f.enabled", "updated_at": "f.updated_at",
-	}
-	sortColumn := sorts[c.Query("sort")]
-	if sortColumn == "" {
-		sortColumn = sorts[""]
-	}
-	query := flowExporterSelect + clause + fmt.Sprintf(" ORDER BY %s %s, f.id %s LIMIT ? OFFSET ?", sortColumn, sortDirection(c), sortDirection(c))
-	queryArgs := append(append([]any{}, args...), limit, offset)
+	query := flowExporterSelect + clause + fmt.Sprintf(" ORDER BY %s %s, f.id %s LIMIT ? OFFSET ?", page.Sort, page.Order, page.Order)
+	queryArgs := append(append([]any{}, args...), page.Limit, page.Offset)
 	rows, err := s.db.QueryContext(c.Request.Context(), query, queryArgs...)
 	if err != nil {
 		writeSQLError(c, err)
 		return
 	}
 	defer rows.Close()
-	items := make([]flowExporterDTO, 0, limit)
+	items := make([]flowExporterDTO, 0, page.Limit)
 	for rows.Next() {
 		record, err := scanFlowExporter(rows)
 		if err != nil {
@@ -256,7 +256,7 @@ func (s *Server) listFlowExporters(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": page.Limit, "offset": page.Offset})
 }
 
 const flowExporterSelect = `SELECT f.id,f.device_id,d.host,COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host),

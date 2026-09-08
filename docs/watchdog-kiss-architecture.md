@@ -175,7 +175,7 @@ allow = has(flow.view.<layer>)
 **设备组织按 LibreNMS 来**（不只是权限，还服务于组织、地图和告警范围）：
 
 - `locations`：站点/POP（名称、经纬度、地址），`devices.location_id` 归属；
-- `device_groups`：`static`（显式成员）与 `dynamic`（按 os/type/location 等条件匹配）两类；用于导航分组、告警范围和权限授予的批量单位（对应 §5.1 的 `user_device_group_permissions`，把"授一个组"而不是"授 500 台设备"作为常规做法）；`device_group_members` 记录静态成员；
+- `device_groups`：`static`（显式成员）与 `dynamic`（按 kind/status/vendor/model/platform/os/location/label 的 typed rule 匹配）两类；用于导航分组、告警范围和权限授予的批量单位（对应 §5.1 的 `user_device_group_permissions`，把"授一个组"而不是"授 500 台设备"作为常规做法）；`device_group_members` 同时保存静态成员与动态规则的物化结果，设备变更和显式 refresh 都重算物化关系，读路径不解释任意 SQL/JSON 表达式；
 - 设备状态变化/发现/采集的**事件时间线（eventlog）与告警日志不放 MySQL**：它们属于后续单独实现的"日志与告警"子系统，按 LibreNMS 的 eventlog/alert 表结构落在 **ClickHouse**（高频、只追加），设备详情的历史视图查 CH（见 §6.2 与 §11 后续项）。
 
 设备、端口、BGP、inventory 的服务端分页/搜索/排序/filter 继续保留；这是 UI 能力，不需要通用 resource registry。设备与端口的字段口径参考 LibreNMS（device: `host/sys_name/os/version/hardware/serial/sysObjectID/status/disabled/uptime/last_polled/location_id/kind`；port: `device_id/if_index/if_name/if_descr/if_alias/if_speed/if_oper_status/if_admin_status` 及 in/out octet 原值），但只保留产品实际使用的列。
@@ -183,6 +183,10 @@ allow = has(flow.view.<layer>)
 设备详情的 MySQL inventory API 固定为 `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags}`，同时在前端切换完成前保留等价 `/network/devices/:id/*` URL alias；alias 只复用同一 handler/表/ID，不设第二套 repository。端口 scope 使用两级并集：`device`/device-group grant 继承全部端口，显式 `user_port_permissions` 只放行指定端口。端口、接口地址、BGP 与硬件清单是当前发现状态；counter/rate、sensor 时序和事件/告警事实只进 ClickHouse，禁止在 MySQL 再造时序副本。
 
 SNMP 采集实现不是重构对象。现有 MIB 驱动发现、OS/module definition、v1/v2c/v3 会话、poll recipe、IPv4/IPv6/BGP/sensor/inventory 采集、counter 原值和 agent/collector 调度语义全部保留。平台重构只做两类机械接线：把管理外键从旧 target/device ID 改到唯一 `device_id`，把时序 writer/query 从 VictoriaMetrics 改到 ClickHouse；不得趁机改 OID 规则、设备识别、轮询频率或 counter 算法。
+
+SNMP 手工发现入口固定为 `POST /api/v1/devices/:id/snmp/discover`。服务端按 profile 默认值与 device override 合并连接参数，然后调用上述既有 discovery engine；成功结果在一个 MySQL 事务内更新 device fingerprint 和当前态 ports/interface addresses/BGP/sensors/physical entities/VLAN/LAG。只有某模块明确进入 `completed_modules` 才替换/裁剪该模块结果，模块失败不能把上次有效清单误删。消失且未被引用的端口可删除；被 `billing_account_ports` 引用的端口必须保留并标记 `notPresent`。发现失败写 device status/reason 与 audit，不产生半批 inventory。poll recipe、counter/rate、事件和告警不在这里落 MySQL：recipe/agent 调度归 KISS-03/04 接线，时序及 eventlog/alerts 归 ClickHouse。
+
+`locations.name/address` 是管理员维护的站点/POP，`devices.sys_location` 是设备通过 SNMP 上报的原文；API 分别返回 `location_name` 与 `sys_location`，禁止用其中一个覆盖另一个。OS/vendor/model 只来自版本化 LibreNMS definition/MIB capability 与设备指纹，不按某个厂商在 handler 中拼接判断。未配置外部 definitions 时仍加载内嵌标准 MIB，保证 IF/IP/BGP/ENTITY 的通用发现；`snmp.definitions_dir` 与 `snmp.mib_dirs` 只负责叠加定义资产。
 
 ### 5.3 Agent：注册协议是唯一扩展点
 

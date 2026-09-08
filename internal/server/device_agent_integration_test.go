@@ -287,9 +287,16 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if flowList.Code != http.StatusOK || !strings.Contains(flowList.Body.String(), flowBinding.ID) || !strings.Contains(flowList.Body.String(), `"total":1`) {
 		t.Fatalf("list flow bindings: status=%d body=%s", flowList.Code, flowList.Body.String())
 	}
+	assertFlowDeviceScope(t, s, device.ID, flowBinding.ID, authHeaders, cookies)
 	invalidFlowFilter := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices?protocol=guess", nil, nil, cookies...)
 	if invalidFlowFilter.Code != http.StatusBadRequest {
 		t.Fatalf("invalid flow filter: status=%d body=%s", invalidFlowFilter.Code, invalidFlowFilter.Body.String())
+	}
+	for _, query := range []string{"sort=raw_sql", "unknown=value", "limit=501"} {
+		invalid := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices?"+query, nil, nil, cookies...)
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid flow list query %q: status=%d body=%s", query, invalid.Code, invalid.Body.String())
+		}
 	}
 	duplicateFlow := requestJSON(t, s, http.MethodPost, "/api/v1/flow/devices", map[string]any{
 		"device_id": device.ID, "source_prefix": "192.0.2.10/32", "protocol": "sflow5", "observation_domain_id": 7,
@@ -871,6 +878,63 @@ func assertExplicitPortScope(t *testing.T, s *Server, deviceID, grantedPortID, h
 	addresses := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/addresses?limit=100", nil, nil, portCookies...)
 	if addresses.Code != http.StatusOK || !strings.Contains(addresses.Body.String(), "192.0.2.1") || strings.Contains(addresses.Body.String(), "203.0.113.2") {
 		t.Fatalf("explicit port address scope: status=%d body=%s", addresses.Code, addresses.Body.String())
+	}
+}
+
+func assertFlowDeviceScope(t *testing.T, s *Server, deviceID, bindingID string, authHeaders map[string]string, adminCookies []*http.Cookie) {
+	t.Helper()
+	roleCreated := requestJSON(t, s, http.MethodPost, "/api/v1/roles", map[string]any{
+		"name": "flow-device-scope-test", "title": "Flow device scope test", "permissions": []string{"flow.device.view"},
+	}, authHeaders, adminCookies...)
+	if roleCreated.Code != http.StatusCreated {
+		t.Fatalf("create flow scope role: status=%d body=%s", roleCreated.Code, roleCreated.Body.String())
+	}
+	var role struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, roleCreated, &role)
+	userCreated := requestJSON(t, s, http.MethodPost, "/api/v1/users", map[string]any{
+		"username": "flow-device-scope-viewer", "email": "flow-device-scope@example.test",
+		"password": "flow-device-password", "roles": []string{"flow-device-scope-test"},
+	}, authHeaders, adminCookies...)
+	if userCreated.Code != http.StatusCreated {
+		t.Fatalf("create flow scope user: status=%d body=%s", userCreated.Code, userCreated.Body.String())
+	}
+	var user struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, userCreated, &user)
+	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{
+		"username": "flow-device-scope-viewer", "password": "flow-device-password",
+	}, nil)
+	viewerCookies := login.Result().Cookies()
+	before := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices", nil, nil, viewerCookies...)
+	directBefore := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices/"+bindingID, nil, nil, viewerCookies...)
+	if login.Code != http.StatusOK || before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"total":0`) || directBefore.Code != http.StatusForbidden {
+		t.Fatalf("empty flow scope did not fail closed: login=%d list=%s direct=%d/%s", login.Code, before.Body.String(), directBefore.Code, directBefore.Body.String())
+	}
+	grant := requestJSON(t, s, http.MethodPut, "/api/v1/users/"+user.ID+"/access", map[string]any{
+		"device_ids": []string{deviceID},
+	}, authHeaders, adminCookies...)
+	if grant.Code != http.StatusOK {
+		t.Fatalf("grant flow device scope: status=%d body=%s", grant.Code, grant.Body.String())
+	}
+	after := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices", nil, nil, viewerCookies...)
+	directAfter := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices/"+bindingID, nil, nil, viewerCookies...)
+	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), bindingID) || directAfter.Code != http.StatusOK {
+		t.Fatalf("granted flow device scope failed: list=%d/%s direct=%d/%s", after.Code, after.Body.String(), directAfter.Code, directAfter.Body.String())
+	}
+	viewerCSRF := cookieValue(viewerCookies, csrfCookie)
+	forbiddenUpdate := requestJSON(t, s, http.MethodPatch, "/api/v1/flow/devices/"+bindingID,
+		map[string]any{"enabled": false}, map[string]string{"X-CSRF-Token": viewerCSRF}, viewerCookies...)
+	if forbiddenUpdate.Code != http.StatusForbidden {
+		t.Fatalf("flow viewer mutation: status=%d body=%s", forbiddenUpdate.Code, forbiddenUpdate.Body.String())
+	}
+	for _, path := range []string{"/api/v1/users/" + user.ID, "/api/v1/roles/" + role.ID} {
+		response := requestJSON(t, s, http.MethodDelete, path, nil, authHeaders, adminCookies...)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("cleanup flow scope fixture %s: status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 
