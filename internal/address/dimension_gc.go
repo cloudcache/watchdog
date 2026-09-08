@@ -250,8 +250,9 @@ func (p *Publisher) DeleteAddressDimensionObject(ctx context.Context, snapshotID
 	if err := requireOneAddressDimensionRow(result); err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}
-	if err := insertAddressDimensionAudit(ctx, tx, actorID, snapshot.ID, "dimension.object.deleted", map[string]any{
-		"object_ref": snapshot.ObjectRef, "version": snapshot.Version, "job_id": jobID, "deleted_at": deletedAt,
+	if err := insertAddressDimensionResourceAudit(ctx, tx, actorID, "dimension_object", snapshot.ID, "dimension_object.destroyed", deletedAt, map[string]any{
+		"job_id": jobID, "object_ref": snapshot.ObjectRef, "version": snapshot.Version,
+		"impact": map[string]int{"objects": 1},
 	}); err != nil {
 		return AddressDimensionObjectDeletion{}, err
 	}

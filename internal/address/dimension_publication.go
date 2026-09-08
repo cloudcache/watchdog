@@ -59,6 +59,19 @@ func WithObjectRetention(retention time.Duration) PublisherOption {
 	}
 }
 
+// WithClock overrides the publisher clock so tests get deterministic
+// observed_at / attempted_at / retirement timestamps. Faithful de-tenant port of
+// the legacy withAddressDimensionClock option.
+func WithClock(now func() time.Time) PublisherOption {
+	return func(p *Publisher) error {
+		if now == nil {
+			return errors.New("address dimension publisher clock is required")
+		}
+		p.now = now
+		return nil
+	}
+}
+
 // NewPublisher builds the address dimension publisher over a Store and object store.
 func NewPublisher(store *Store, objects DimensionObjectStore, options ...PublisherOption) (*Publisher, error) {
 	if store == nil || store.db == nil || objects == nil {
@@ -108,6 +121,14 @@ func lockDimensionPublication(ctx context.Context, tx *sql.Tx) error {
 }
 
 func insertAddressDimensionAudit(ctx context.Context, tx *sql.Tx, actorID, snapshotID ID, action string, detail map[string]any) error {
+	return insertAddressDimensionResourceAudit(ctx, tx, actorID, "dimension_snapshot", snapshotID, action, time.Now().UTC(), detail)
+}
+
+// insertAddressDimensionResourceAudit writes an audit row with an explicit resource
+// type and occurrence time. The GC destruction receipt uses resource
+// "dimension_object" / action "dimension_object.destroyed" at the deletion instant,
+// faithfully mirroring the legacy recordDestructionReceipt.
+func insertAddressDimensionResourceAudit(ctx context.Context, tx *sql.Tx, actorID ID, resource, resourceID, action string, occurredAt time.Time, detail map[string]any) error {
 	payload, err := json.Marshal(detail)
 	if err != nil {
 		return err
@@ -118,8 +139,8 @@ func insertAddressDimensionAudit(ctx context.Context, tx *sql.Tx, actorID, snaps
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, actor_id, action, resource, resource_id, detail_json, occurred_at)
-		VALUES (?, NULLIF(?, ''), ?, 'dimension_snapshot', ?, ?, ?)
-	`, id, actorID, action, snapshotID, payload, time.Now().UTC()); err != nil {
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?)
+	`, id, actorID, action, resource, resourceID, payload, occurredAt); err != nil {
 		return fmt.Errorf("insert address dimension audit: %w", err)
 	}
 	return nil
