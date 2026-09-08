@@ -32,7 +32,7 @@ func (s *MySQLStore) CreateAddressImport(ctx context.Context, item AddressImport
 		return AddressImport{}, err
 	}
 	if item.ID == "" {
-		id, err := newIdentityID()
+		id, err := newManagementID()
 		if err != nil {
 			return AddressImport{}, err
 		}

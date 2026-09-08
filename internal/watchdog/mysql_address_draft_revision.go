@@ -44,7 +44,7 @@ func (s *MySQLStore) PrepareAddressPrefixRevision(ctx context.Context, tenantID,
 	if err != nil {
 		return AddressDraftRevision{}, err
 	}
-	revisionID, err := newIdentityID()
+	revisionID, err := newManagementID()
 	if err != nil {
 		return AddressDraftRevision{}, err
 	}
@@ -403,7 +403,7 @@ func insertAddressPrefixRevisionAudit(ctx context.Context, tx *sql.Tx, tenantID,
 		changes[change.Action+"\x00"+change.PrefixID] = change
 	}
 	for ordinal, operation := range operations {
-		auditID, err := newIdentityID()
+		auditID, err := newManagementID()
 		if err != nil {
 			return err
 		}

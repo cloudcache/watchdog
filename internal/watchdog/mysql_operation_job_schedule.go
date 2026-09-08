@@ -123,7 +123,7 @@ func (s *MySQLStore) CreateOperationJobSchedule(ctx context.Context, item Operat
 		return OperationJobSchedule{}, err
 	}
 	if item.ID == "" {
-		item.ID, err = newIdentityID()
+		item.ID, err = newManagementID()
 		if err != nil {
 			return OperationJobSchedule{}, err
 		}
@@ -468,7 +468,7 @@ func setOperationJobScheduleError(ctx context.Context, tx *sql.Tx, scheduleID ID
 }
 
 func enqueueScheduledOperationJob(ctx context.Context, tx *sql.Tx, schedule OperationJobSchedule, scheduledAt time.Time) error {
-	jobID, err := newIdentityID()
+	jobID, err := newManagementID()
 	if err != nil {
 		return err
 	}

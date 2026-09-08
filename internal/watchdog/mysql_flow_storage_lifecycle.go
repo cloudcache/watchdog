@@ -80,7 +80,7 @@ func (s *MySQLStore) CreateFlowStoragePolicyDraft(ctx context.Context, policy Fl
 		return FlowStoragePolicy{}, ErrFlowStorageRawDeleteLocked
 	}
 	if policy.ID == "" {
-		policy.ID, err = newIdentityID()
+		policy.ID, err = newManagementID()
 		if err != nil {
 			return FlowStoragePolicy{}, err
 		}

@@ -61,7 +61,7 @@ func (s *MySQLStore) createExportExecution(ctx context.Context, task ExportTask)
 	if err != nil {
 		return ExportTask{}, err
 	}
-	jobID, err := newIdentityID()
+	jobID, err := newManagementID()
 	if err != nil {
 		return ExportTask{}, err
 	}
@@ -554,7 +554,7 @@ func (s *MySQLStore) retryExportExecution(ctx context.Context, tenantID, taskID 
 	if err != nil {
 		return err
 	}
-	newJobID, err := newIdentityID()
+	newJobID, err := newManagementID()
 	if err != nil {
 		return err
 	}

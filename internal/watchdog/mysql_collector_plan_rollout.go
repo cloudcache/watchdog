@@ -31,7 +31,7 @@ func (s *MySQLStore) CreateCollectorPlanRollout(ctx context.Context, request Col
 	if err != nil {
 		return CollectorPlanRollout{}, ErrCollectorPlanRolloutInvalid
 	}
-	id, err := newIdentityID()
+	id, err := newManagementID()
 	if err != nil {
 		return CollectorPlanRollout{}, err
 	}

@@ -74,7 +74,7 @@ func (api flowVPNRuleAPI) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth, _ := AuthFromContext(r.Context())
-	ruleID, err := newIdentityID()
+	ruleID, err := newManagementID()
 	if err != nil {
 		writeVPNRuleError(w, err)
 		return

@@ -270,7 +270,7 @@ func (api addressImportAPI) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth, _ := AuthFromContext(r.Context())
-	importID, err := newIdentityID()
+	importID, err := newManagementID()
 	if err != nil {
 		WriteAPIError(w, http.StatusInternalServerError, APIErrorInvalidRequest, "Failed to allocate address import", nil)
 		return

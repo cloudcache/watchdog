@@ -99,9 +99,9 @@ func TestMySQLAddressSnapshotBuildPublishesWADSIdempotently(t *testing.T) {
 	if _, err := ApplyMySQLMigrations(ctx, store.db); err != nil {
 		t.Fatal(err)
 	}
-	tenantID, _ := newIdentityID()
-	actorID, _ := newIdentityID()
-	importID, _ := newIdentityID()
+	tenantID, _ := newManagementID()
+	actorID, _ := newManagementID()
+	importID, _ := newManagementID()
 	defer store.db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO tenants (id, name, status) VALUES (?, 'AddressSnap integration', 'active')`, tenantID); err != nil {
 		t.Fatal(err)
@@ -275,9 +275,9 @@ func TestMySQLAddressSnapshotBuildPublishesWADSIdempotently(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secondJobID, _ := newIdentityID()
+	secondJobID, _ := newManagementID()
 	secondEffective := effective.Add(time.Minute)
-	staleJobID, _ := newIdentityID()
+	staleJobID, _ := newManagementID()
 	if _, err := publisher.BuildAddressSnapshotPublication(ctx, tenantID, actorID, staleJobID, AddressDimensionPublishRequest{
 		EffectiveFrom: secondEffective,
 		PreviewDigest: preview.DraftDigest,

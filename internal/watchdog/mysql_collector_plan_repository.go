@@ -138,7 +138,7 @@ func (s *MySQLStore) CreateNextCollectorPlanRevision(ctx context.Context, reques
 	if maxVersion == ^uint64(0) {
 		return CollectorPlanRevision{}, ErrCollectorPlanInvalidTransition
 	}
-	planID, err := newIdentityID()
+	planID, err := newManagementID()
 	if err != nil {
 		return CollectorPlanRevision{}, err
 	}

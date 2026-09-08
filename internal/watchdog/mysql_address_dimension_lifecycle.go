@@ -401,7 +401,7 @@ func lockDimensionPublicationTenant(ctx context.Context, tx *sql.Tx, tenantID ID
 }
 
 func insertDimensionPublicationActivation(ctx context.Context, tx *sql.Tx, snapshot DimensionPublicationSnapshot, actorID ID, effectiveFrom time.Time, reason string, rollbackOf ID) (DimensionPublicationActivation, error) {
-	id, err := newIdentityID()
+	id, err := newManagementID()
 	if err != nil {
 		return AddressDimensionActivation{}, err
 	}
@@ -517,7 +517,7 @@ func insertAddressDimensionAudit(ctx context.Context, tx *sql.Tx, tenantID, acto
 	if err != nil {
 		return err
 	}
-	id, err := newIdentityID()
+	id, err := newManagementID()
 	if err != nil {
 		return err
 	}

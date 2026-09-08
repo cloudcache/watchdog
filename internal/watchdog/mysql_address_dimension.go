@@ -122,7 +122,7 @@ func (p *MySQLAddressDimensionPublisher) PublishAddressDimension(ctx context.Con
 	if digest != request.PreviewDigest {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionDraftChanged
 	}
-	snapshotID, err := newIdentityID()
+	snapshotID, err := newManagementID()
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}

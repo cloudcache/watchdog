@@ -117,7 +117,7 @@ func (s *MySQLStore) CreateDashboard(ctx context.Context, dashboard Dashboard) (
 		return Dashboard{}, err
 	}
 	if dashboard.ID == "" {
-		id, err := newIdentityID()
+		id, err := newManagementID()
 		if err != nil {
 			return Dashboard{}, err
 		}

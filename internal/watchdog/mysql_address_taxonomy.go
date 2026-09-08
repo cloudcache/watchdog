@@ -201,7 +201,7 @@ func (s *MySQLStore) CreateGeoDictionary(ctx context.Context, node GeoDictionary
 		return GeoDictionaryNode{}, err
 	}
 	if node.ID == "" {
-		node.ID, err = newIdentityID()
+		node.ID, err = newManagementID()
 		if err != nil {
 			return GeoDictionaryNode{}, err
 		}
@@ -373,7 +373,7 @@ func (s *MySQLStore) CreateISPOperator(ctx context.Context, operator ISPOperator
 		return ISPOperator{}, err
 	}
 	if operator.ID == "" {
-		operator.ID, err = newIdentityID()
+		operator.ID, err = newManagementID()
 		if err != nil {
 			return ISPOperator{}, err
 		}
@@ -555,7 +555,7 @@ func (s *MySQLStore) CreateGeoLine(ctx context.Context, line GeoLine) (GeoLine, 
 		return GeoLine{}, err
 	}
 	if line.ID == "" {
-		line.ID, err = newIdentityID()
+		line.ID, err = newManagementID()
 		if err != nil {
 			return GeoLine{}, err
 		}

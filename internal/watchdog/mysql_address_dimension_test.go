@@ -61,7 +61,7 @@ func TestMySQLAddressDimensionPreviewPublishAndDraftCAS(t *testing.T) {
 	}
 	createBaseImport := func(checksum string, rowCountV4, rowCountV6 uint64) ID {
 		t.Helper()
-		importID, idErr := newIdentityID()
+		importID, idErr := newManagementID()
 		if idErr != nil {
 			t.Fatal(idErr)
 		}

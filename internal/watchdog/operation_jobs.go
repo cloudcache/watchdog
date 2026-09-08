@@ -170,7 +170,7 @@ func (s *MySQLStore) EnqueueOperationJob(ctx context.Context, job OperationJob) 
 		return OperationJob{}, errors.New("operation job type, idempotency key and request hash are required")
 	}
 	if job.ID == "" {
-		id, err := newIdentityID()
+		id, err := newManagementID()
 		if err != nil {
 			return OperationJob{}, err
 		}

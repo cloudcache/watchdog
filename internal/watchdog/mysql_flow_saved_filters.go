@@ -151,7 +151,7 @@ func (s *MySQLStore) CreateFlowSavedFilter(ctx context.Context, item FlowSavedFi
 		return FlowSavedFilter{}, fmtFlowSavedFilterInvalid("tenant and owner are required")
 	}
 	if item.ID == "" {
-		item.ID, err = newIdentityID()
+		item.ID, err = newManagementID()
 		if err != nil {
 			return FlowSavedFilter{}, err
 		}

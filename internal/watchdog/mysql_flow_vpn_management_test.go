@@ -40,7 +40,7 @@ func TestMySQLFlowVPNRuleCRUDCanonicalCASAndTenantScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewMySQLStore(db)
-	ruleID, err := newIdentityID()
+	ruleID, err := newManagementID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestMySQLFlowVPNRuleCRUDCanonicalCASAndTenantScope(t *testing.T) {
 	if _, err := store.UpdateVPNRule(ctx, created, 1); !errors.Is(err, ErrVPNRuleVersionConflict) {
 		t.Fatalf("stale update err=%v", err)
 	}
-	duplicateID, _ := newIdentityID()
+	duplicateID, _ := newManagementID()
 	created.ID, created.Name, created.CreatedBy = duplicateID, updated.Name, "actor_vpn_rule_repo"
 	if _, err := store.CreateVPNRule(ctx, created); !errors.Is(err, ErrVPNRuleNameConflict) {
 		t.Fatalf("duplicate name err=%v", err)

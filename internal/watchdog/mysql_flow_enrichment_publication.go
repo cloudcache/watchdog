@@ -166,7 +166,7 @@ func (p *MySQLFlowEnrichmentPublisher) Publish(ctx context.Context, tenantID, ac
 	if currentVersion == ^uint32(0) || (latestEffective.Valid && !effectiveFrom.After(latestEffective.Time.UTC())) {
 		return FlowEnrichmentPublication{}, ErrFlowEnrichmentConflict
 	}
-	publicationID, err = newIdentityID()
+	publicationID, err = newManagementID()
 	if err != nil {
 		return FlowEnrichmentPublication{}, err
 	}
@@ -477,7 +477,7 @@ func insertFlowEnrichmentAudit(ctx context.Context, tx *sql.Tx, tenantID, actorI
 	if err != nil {
 		return err
 	}
-	id, err := newIdentityID()
+	id, err := newManagementID()
 	if err != nil {
 		return err
 	}

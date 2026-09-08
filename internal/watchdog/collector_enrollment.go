@@ -93,7 +93,7 @@ func (s *MySQLStore) CreateEnrollmentSecret(ctx context.Context, secret Collecto
 		return CollectorEnrollmentSecret{}, err
 	}
 	if secret.ID == "" {
-		id, err := newIdentityID()
+		id, err := newManagementID()
 		if err != nil {
 			return CollectorEnrollmentSecret{}, err
 		}
@@ -198,7 +198,7 @@ func (s *MySQLStore) ConsumeEnrollmentSecret(ctx context.Context, secretID ID, v
 		return CollectorEnrollmentResult{}, ErrEnrollmentSecretInvalid
 	}
 
-	collectorID, err := newIdentityID()
+	collectorID, err := newManagementID()
 	if err != nil {
 		return CollectorEnrollmentResult{}, err
 	}
