@@ -43,6 +43,13 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	sets.GET("/:id", view, s.getAddressSet)
 	sets.PATCH("/:id", manage, s.updateAddressSet)
 	sets.DELETE("/:id", manage, s.deleteAddressSet)
+
+	lines := auth.Group("/geo/lines")
+	lines.GET("", view, s.listGeoLines)
+	lines.POST("", manage, s.createGeoLine)
+	lines.GET("/:id", view, s.getGeoLine)
+	lines.PATCH("/:id", manage, s.updateGeoLine)
+	lines.DELETE("/:id", manage, s.deleteGeoLine)
 }
 
 // rawOrNull returns a JSON column value or the given default when empty/null.
@@ -519,6 +526,126 @@ func (s *Server) updateAddressSet(c *gin.Context) {
 }
 
 func (s *Server) deleteAddressSet(c *gin.Context) { s.deleteByID(c, "address_sets", "address_set") }
+
+// -------------------- geo_lines (线路) --------------------
+
+func (s *Server) listGeoLines(c *gin.Context) {
+	rows, err := s.db.QueryContext(c.Request.Context(), `
+		SELECT id, COALESCE(parent_id,''), code, name, COALESCE(description,''), geo_selector,
+		       COALESCE(operator_id,''), COALESCE(address_set_id,''), sort_order, enabled, row_version
+		FROM geo_lines ORDER BY sort_order, code`)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	defer rows.Close()
+	items := []gin.H{}
+	for rows.Next() {
+		var id, parent, code, name, desc, op, set string
+		var sortOrder int
+		var enabled bool
+		var rv uint64
+		var sel json.RawMessage
+		if err := rows.Scan(&id, &parent, &code, &name, &desc, &sel, &op, &set, &sortOrder, &enabled, &rv); err != nil {
+			fail(c, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		items = append(items, gin.H{"id": id, "parent_id": parent, "code": code, "name": name,
+			"description": desc, "geo_selector": rawOr(sel, "{}"), "operator_id": op, "address_set_id": set,
+			"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (s *Server) createGeoLine(c *gin.Context) {
+	var req struct {
+		Code, Name, Description, ParentID, OperatorID, AddressSetID string
+		GeoSelector                                                 json.RawMessage `json:"geo_selector"`
+		SortOrder                                                   int             `json:"sort_order"`
+		Enabled                                                     *bool
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" || req.Name == "" {
+		fail(c, http.StatusBadRequest, "invalid_request", "code and name are required")
+		return
+	}
+	id := newID()
+	if _, err := s.db.ExecContext(c.Request.Context(), `
+		INSERT INTO geo_lines (id, parent_id, code, name, description, geo_selector, operator_id, address_set_id, sort_order, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, nullIfEmpty(req.ParentID), req.Code, req.Name, nullIfEmpty(req.Description), string(rawOr(req.GeoSelector, "{}")),
+		nullIfEmpty(req.OperatorID), nullIfEmpty(req.AddressSetID), req.SortOrder, boolOrTrue(req.Enabled)); err != nil {
+		fail(c, http.StatusConflict, "conflict", "a line with this code already exists (or references an unknown operator/set)")
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geo_line.create", "geo_line", id)
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (s *Server) getGeoLine(c *gin.Context) {
+	var parent, code, name, desc, op, set string
+	var sortOrder int
+	var enabled bool
+	var rv uint64
+	var sel json.RawMessage
+	err := s.db.QueryRowContext(c.Request.Context(), `
+		SELECT COALESCE(parent_id,''), code, name, COALESCE(description,''), geo_selector,
+		       COALESCE(operator_id,''), COALESCE(address_set_id,''), sort_order, enabled, row_version
+		FROM geo_lines WHERE id = ?`, c.Param("id")).
+		Scan(&parent, &code, &name, &desc, &sel, &op, &set, &sortOrder, &enabled, &rv)
+	if err == sql.ErrNoRows {
+		fail(c, http.StatusNotFound, "not_found", "line not found")
+		return
+	}
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "parent_id": parent, "code": code, "name": name,
+		"description": desc, "geo_selector": rawOr(sel, "{}"), "operator_id": op, "address_set_id": set,
+		"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
+}
+
+func (s *Server) updateGeoLine(c *gin.Context) {
+	var req struct {
+		Name, Description *string
+		GeoSelector       json.RawMessage `json:"geo_selector"`
+		OperatorID        *string         `json:"operator_id"`
+		AddressSetID      *string         `json:"address_set_id"`
+		SortOrder         *int            `json:"sort_order"`
+		Enabled           *bool
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+		return
+	}
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if req.Name != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET name=?, row_version=row_version+1 WHERE id=?`, *req.Name, id)
+	}
+	if req.Description != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET description=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.Description), id)
+	}
+	if len(req.GeoSelector) > 0 {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET geo_selector=?, row_version=row_version+1 WHERE id=?`, string(req.GeoSelector), id)
+	}
+	if req.OperatorID != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET operator_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.OperatorID), id)
+	}
+	if req.AddressSetID != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET address_set_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.AddressSetID), id)
+	}
+	if req.SortOrder != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET sort_order=?, row_version=row_version+1 WHERE id=?`, *req.SortOrder, id)
+	}
+	if req.Enabled != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET enabled=?, row_version=row_version+1 WHERE id=?`, *req.Enabled, id)
+	}
+	s.audit(ctx, currentPrincipal(c).UserID, "geo_line.update", "geo_line", id)
+	s.getGeoLine(c)
+}
+
+func (s *Server) deleteGeoLine(c *gin.Context) { s.deleteByID(c, "geo_lines", "geo_line") }
 
 func boolOrTrue(b *bool) bool {
 	if b == nil {
