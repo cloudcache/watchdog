@@ -53,8 +53,8 @@ func (s *Server) createUser(c *gin.Context) {
 		Password    string   `json:"password"`
 		Roles       []string `json:"roles"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || len(req.Password) < 8 {
-		fail(c, http.StatusBadRequest, "invalid_request", "username and password (>=8 chars) required")
+	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || !validPassword(req.Password) {
+		fail(c, http.StatusBadRequest, "invalid_request", "username and password (8 to 72 bytes) required")
 		return
 	}
 	ctx := c.Request.Context()
@@ -164,8 +164,8 @@ func (s *Server) adminResetPassword(c *gin.Context) {
 	var req struct {
 		NewPassword string `json:"new_password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.NewPassword) < 8 {
-		fail(c, http.StatusBadRequest, "invalid_request", "new_password must be at least 8 characters")
+	if err := c.ShouldBindJSON(&req); err != nil || !validPassword(req.NewPassword) {
+		fail(c, http.StatusBadRequest, "invalid_request", "new_password must be 8 to 72 bytes")
 		return
 	}
 	if err := s.setUserPassword(c.Request.Context(), id, req.NewPassword); err != nil {

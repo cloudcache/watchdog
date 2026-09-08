@@ -39,32 +39,53 @@ func ApplyMySQLSchema(ctx context.Context, db *sql.DB, files fs.FS) error {
 	if err != nil {
 		return err
 	}
-	var latest string
+	type migration struct {
+		version  string
+		content  []byte
+		checksum string
+	}
+	migrations := make([]migration, 0, len(names))
+	known := make(map[string]string, len(names))
 	for _, name := range names {
 		version := strings.TrimSuffix(pathBase(name), ".sql")
 		content, err := fs.ReadFile(files, name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
-		latest = version
-		applied, err := versionApplied(ctx, db, "mysql", version)
-		if err != nil {
-			return err
+		sum := sha256.Sum256(content)
+		checksum := hex.EncodeToString(sum[:])
+		migrations = append(migrations, migration{version: version, content: content, checksum: checksum})
+		known[version] = checksum
+	}
+	applied, err := appliedSchemaVersions(ctx, db, "mysql")
+	if err != nil {
+		return err
+	}
+	for version, checksum := range applied {
+		expected, ok := known[version]
+		if !ok {
+			return fmt.Errorf("mysql schema contains unknown migration version %s", version)
 		}
-		if applied {
+		if checksum != expected {
+			return fmt.Errorf("mysql migration %s checksum mismatch", version)
+		}
+	}
+	var latest string
+	for _, migration := range migrations {
+		latest = migration.version
+		if _, ok := applied[migration.version]; ok {
 			continue
 		}
-		for _, stmt := range splitStatements(string(content)) {
+		for _, stmt := range splitStatements(string(migration.content)) {
 			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("apply %s: %w", version, err)
+				return fmt.Errorf("apply %s: %w", migration.version, err)
 			}
 		}
-		sum := sha256.Sum256(content)
 		if _, err := db.ExecContext(ctx,
 			`INSERT INTO schema_migrations (version, store, checksum) VALUES (?, 'mysql', ?)`,
-			version, hex.EncodeToString(sum[:]),
+			migration.version, migration.checksum,
 		); err != nil {
-			return fmt.Errorf("record %s: %w", version, err)
+			return fmt.Errorf("record %s: %w", migration.version, err)
 		}
 	}
 	if latest != "" {
@@ -113,11 +134,22 @@ func sortedSQL(files fs.FS, dir string) ([]string, error) {
 	return names, nil
 }
 
-func versionApplied(ctx context.Context, db *sql.DB, store, version string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM schema_migrations WHERE store = ? AND version = ?`, store, version).Scan(&n)
-	return n > 0, err
+func appliedSchemaVersions(ctx context.Context, db *sql.DB, store string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT version, checksum FROM schema_migrations WHERE store = ?`, store)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var version, checksum string
+		if err := rows.Scan(&version, &checksum); err != nil {
+			return nil, err
+		}
+		out[version] = checksum
+	}
+	return out, rows.Err()
 }
 
 func pathBase(name string) string {

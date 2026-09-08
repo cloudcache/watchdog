@@ -100,6 +100,41 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("device summary: status=%d body=%s", summary.Code, summary.Body.String())
 	}
 	assertDeviceScope(t, s, device.ID)
+
+	// A disabled account immediately loses access even when it still has an
+	// unexpired session cookie.
+	createdUser := requestJSON(t, s, http.MethodPost, "/api/v1/users", map[string]any{
+		"username": "disabled-session-user", "email": "disabled-session@example.test",
+		"display_name": "Disabled session", "password": "disabled-password", "roles": []string{"viewer"},
+	}, authHeaders, cookies...)
+	if createdUser.Code != http.StatusCreated {
+		t.Fatalf("create session test user: status=%d body=%s", createdUser.Code, createdUser.Body.String())
+	}
+	var createdUserBody struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, createdUser, &createdUserBody)
+	userLogin := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{
+		"username": "disabled-session-user", "password": "disabled-password",
+	}, nil)
+	if userLogin.Code != http.StatusOK {
+		t.Fatalf("session test login: status=%d body=%s", userLogin.Code, userLogin.Body.String())
+	}
+	userCookies := userLogin.Result().Cookies()
+	disabledUser := requestJSON(t, s, http.MethodPatch, "/api/v1/users/"+createdUserBody.ID,
+		map[string]any{"status": "disabled"}, authHeaders, cookies...)
+	if disabledUser.Code != http.StatusOK {
+		t.Fatalf("disable user: status=%d body=%s", disabledUser.Code, disabledUser.Body.String())
+	}
+	disabledCurrent := requestJSON(t, s, http.MethodGet, "/api/v1/session/current", nil, nil, userCookies...)
+	if disabledCurrent.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled session: status=%d body=%s", disabledCurrent.Code, disabledCurrent.Body.String())
+	}
+	deletedUser := requestJSON(t, s, http.MethodDelete, "/api/v1/users/"+createdUserBody.ID, nil, authHeaders, cookies...)
+	if deletedUser.Code != http.StatusNoContent {
+		t.Fatalf("delete session test user: status=%d body=%s", deletedUser.Code, deletedUser.Body.String())
+	}
+
 	systemCreated := requestJSON(t, s, http.MethodPost, "/api/v1/targets", map[string]any{
 		"host": "host.example.com", "name": "System host", "kind": "system",
 	}, authHeaders, cookies...)
@@ -211,6 +246,14 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if deletedProfile.Code != http.StatusNoContent {
 		t.Fatalf("delete SNMP profile: status=%d body=%s", deletedProfile.Code, deletedProfile.Body.String())
 	}
+	logout := requestJSON(t, s, http.MethodPost, "/api/v1/session/logout", nil, authHeaders, cookies...)
+	if logout.Code != http.StatusNoContent {
+		t.Fatalf("logout: status=%d body=%s", logout.Code, logout.Body.String())
+	}
+	loggedOutCurrent := requestJSON(t, s, http.MethodGet, "/api/v1/session/current", nil, nil, cookies...)
+	if loggedOutCurrent.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session: status=%d body=%s", loggedOutCurrent.Code, loggedOutCurrent.Body.String())
+	}
 
 	// A second startup must skip already-applied migrations and preserve the
 	// single bootstrap administrator instead of creating duplicates.
@@ -219,6 +262,40 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("second startup: %v", err)
 	}
 	_ = second.Close()
+	var bootstrapUserCount, administratorCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = 'api-test-admin'`).Scan(&bootstrapUserCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE r.name = 'administrator'
+	`).Scan(&administratorCount); err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapUserCount != 1 || administratorCount != 1 {
+		t.Fatalf("second startup bootstrap users=%d administrators=%d, want 1/1", bootstrapUserCount, administratorCount)
+	}
+
+	// An applied migration is immutable: startup must fail before serving when
+	// the recorded checksum no longer matches the embedded schema.
+	var originalChecksum string
+	if err := s.db.QueryRow(`SELECT checksum FROM schema_migrations WHERE store='mysql' AND version='0001_baseline'`).Scan(&originalChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE schema_migrations SET checksum=REPEAT('0',64) WHERE store='mysql' AND version='0001_baseline'`); err != nil {
+		t.Fatal(err)
+	}
+	if tampered, err := New(cfg); err == nil {
+		_ = tampered.Close()
+		t.Fatal("startup accepted a tampered schema migration checksum")
+	} else if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("unexpected tampered schema error: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE schema_migrations SET checksum=? WHERE store='mysql' AND version='0001_baseline'`, originalChecksum); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertDeviceScope(t *testing.T, s *Server, deviceID string) {

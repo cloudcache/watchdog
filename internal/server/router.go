@@ -3,19 +3,22 @@ package server
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
+const maxAPIRequestBytes int64 = 8 << 20
+
 // newRouter wires the KISS API surface by domain (docs/watchdog-kiss-architecture.md §7).
 // Auth/RBAC (session, profile, users, roles, permissions) is implemented; the remaining
 // domains are 501 scaffolds filled by their work packages (KISS-02 device, KISS-07 billing,
-// KISS-04 agent, KISS-L log/alert). No PocketBase, no tenant.
+// KISS-04 agent, KISS-L log/alert). No legacy management store and no tenant.
 func (s *Server) newRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.cors())
+	r.Use(gin.Recovery(), requestID(), requestBodyLimit(maxAPIRequestBytes), s.cors())
 
 	api := r.Group("/api/v1")
 
@@ -133,6 +136,29 @@ func (s *Server) newRouter() *gin.Engine {
 	auth.GET("/exports", s.todo)
 
 	return r
+}
+
+func requestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.GetHeader("X-Request-ID"))
+		if id == "" || len(id) > 128 {
+			id = newID()
+		}
+		c.Header("X-Request-ID", id)
+		c.Set("request_id", id)
+		c.Next()
+	}
+}
+
+func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.ContentLength > maxBytes {
+			fail(c, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the configured limit")
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
 }
 
 func todoCRUD(g *gin.RouterGroup, s *Server) {

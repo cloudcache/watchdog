@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	sessionCookie = "wd_session"
-	csrfCookie    = "wd_csrf"
-	sessionTTL    = 30 * 24 * time.Hour
-	resetTTL      = time.Hour
+	sessionCookie    = "wd_session"
+	csrfCookie       = "wd_csrf"
+	sessionTTL       = 30 * 24 * time.Hour
+	resetTTL         = time.Hour
+	minPasswordBytes = 8
+	maxPasswordBytes = 72
 )
 
 var errNoSession = errors.New("no session")
@@ -29,6 +31,11 @@ func hashPassword(pw string) (string, error) {
 
 func checkPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+}
+
+func validPassword(password string) bool {
+	length := len([]byte(password))
+	return length >= minPasswordBytes && length <= maxPasswordBytes
 }
 
 // authenticate validates the session cookie and builds the principal.

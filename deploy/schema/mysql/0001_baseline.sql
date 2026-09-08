@@ -1,4 +1,4 @@
--- Watchdog v2 MySQL baseline (KISS single-domain, no tenant, no PocketBase).
+-- Watchdog v2 MySQL baseline (KISS single-domain management store).
 -- Target architecture: docs/watchdog-kiss-architecture.md (ADR-KISS-001).
 -- Grounded in LibreNMS's user/role/permission/device/port/billing model, with the
 -- KISS three-layer billing evidence added. Time-series (SNMP/system) and log/alert

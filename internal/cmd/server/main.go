@@ -1,6 +1,6 @@
 // Command watchdog-server is the KISS single-domain HTTP service (Gin + MySQL + ClickHouse),
-// replacing the removed PocketBase hub. It applies the v2 baseline on startup and serves the
-// domain API and (optionally) the built UI.
+// replacing the removed legacy hub. It applies the v2 baseline on startup and serves only the
+// domain API; the frontend runs as a separate process.
 package main
 
 import (

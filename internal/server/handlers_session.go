@@ -83,8 +83,8 @@ func (s *Server) changeOwnPassword(c *gin.Context) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.NewPassword) < 8 {
-		fail(c, http.StatusBadRequest, "invalid_request", "new_password must be at least 8 characters")
+	if err := c.ShouldBindJSON(&req); err != nil || !validPassword(req.NewPassword) {
+		fail(c, http.StatusBadRequest, "invalid_request", "new_password must be 8 to 72 bytes")
 		return
 	}
 	var hash string
@@ -145,8 +145,8 @@ func (s *Server) resetPassword(c *gin.Context) {
 		Token       string `json:"token"`
 		NewPassword string `json:"new_password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" || len(req.NewPassword) < 8 {
-		fail(c, http.StatusBadRequest, "invalid_request", "token and new_password (>=8 chars) required")
+	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" || !validPassword(req.NewPassword) {
+		fail(c, http.StatusBadRequest, "invalid_request", "token and new_password (8 to 72 bytes) required")
 		return
 	}
 	userID, err := s.consumeResetToken(c.Request.Context(), req.Token)

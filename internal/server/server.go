@@ -1,6 +1,6 @@
 // Package server is the KISS watchdog-server: a pure Go (Gin) HTTP service backed by
 // MySQL (management authority) and ClickHouse (time-series + log/alert). It replaces the
-// removed PocketBase hub. On startup it applies the embedded v2 MySQL baseline and records
+// removed legacy hub. On startup it applies the embedded v2 MySQL baseline and records
 // a traceable install status, then serves the domain API (docs/watchdog-kiss-architecture.md).
 package server
 
