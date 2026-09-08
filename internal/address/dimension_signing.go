@@ -1,0 +1,162 @@
+package address
+
+import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Faithful de-tenant port of the ed25519 approval trust model from
+// internal/watchdog/address_dimension_lifecycle.go. The ONLY change is removing
+// the tenant_id field (legacy signed-payload field #3); the schema version
+// selection (V2 json / V3 wads), field order, precondition checks, verification,
+// the private verified-envelope proof, and the persist-time re-check are unchanged.
+// Removing tenant_id changes the signed bytes, so any pre-existing signatures /
+// trusted-key fixtures must be regenerated against this single-domain payload.
+
+const (
+	DimensionPublicationSignatureAlgorithm = "ed25519"
+	AddressDimensionSignatureAlgorithm     = DimensionPublicationSignatureAlgorithm
+
+	DimensionPublicationSigningPayloadV2 = uint16(2)
+	DimensionPublicationSigningPayloadV3 = uint16(3)
+
+	AddressDimensionSigningPayloadV2 = DimensionPublicationSigningPayloadV2
+	AddressDimensionSigningPayloadV3 = DimensionPublicationSigningPayloadV3
+)
+
+// DimensionPublicationApproval can only be persisted after
+// VerifyDimensionPublicationApproval has bound its signature to the immutable
+// snapshot metadata. The private proof prevents an HTTP decoder or another file
+// from asserting verification.
+type DimensionPublicationApproval struct {
+	SnapshotID             ID
+	SigningKeyID           string
+	SignedAt               time.Time
+	Signature              []byte
+	verifiedEnvelopeSHA256 [sha256.Size]byte
+}
+
+type AddressDimensionApproval = DimensionPublicationApproval
+
+func VerifyAddressDimensionApproval(snapshot AddressDimensionSnapshot, signingKeyID string, signedAt time.Time, signature []byte, publicKey ed25519.PublicKey) (AddressDimensionApproval, error) {
+	return VerifyDimensionPublicationApproval(snapshot, signingKeyID, signedAt, signature, publicKey)
+}
+
+func VerifyDimensionPublicationApproval(snapshot DimensionPublicationSnapshot, signingKeyID string, signedAt time.Time, signature []byte, publicKey ed25519.PublicKey) (DimensionPublicationApproval, error) {
+	approval := DimensionPublicationApproval{
+		SnapshotID: snapshot.ID, SigningKeyID: strings.TrimSpace(signingKeyID),
+		SignedAt: signedAt.UTC(), Signature: append([]byte(nil), signature...),
+	}
+	payload, err := DimensionPublicationSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
+	if err != nil {
+		return DimensionPublicationApproval{}, err
+	}
+	if len(publicKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, payload, signature) {
+		return DimensionPublicationApproval{}, fmt.Errorf("%w: signature verification failed", ErrAddressDimensionInvalid)
+	}
+	approval.verifiedEnvelopeSHA256 = addressDimensionApprovalDigest(payload, signature)
+	return approval, nil
+}
+
+func AddressDimensionSigningPayload(snapshot AddressDimensionSnapshot, signingKeyID string, signedAt time.Time) ([]byte, error) {
+	return DimensionPublicationSigningPayload(snapshot, signingKeyID, signedAt)
+}
+
+func DimensionPublicationSigningPayload(snapshot DimensionPublicationSnapshot, signingKeyID string, signedAt time.Time) ([]byte, error) {
+	signingKeyID = strings.TrimSpace(signingKeyID)
+	if snapshot.ID == "" || snapshot.ModuleKey == "" || snapshot.DimensionKey == "" || snapshot.Version == 0 ||
+		snapshot.ObjectRef == "" || !validSHA256Digest(snapshot.Checksum) || !validSHA256Digest(snapshot.DraftDigest) || snapshot.BundleSchemaVersion == 0 ||
+		signingKeyID == "" || len(signingKeyID) > 128 || signedAt.IsZero() || signedAt.Location() != time.UTC || signedAt.Nanosecond()%int(time.Millisecond) != 0 {
+		return nil, ErrAddressDimensionInvalid
+	}
+	sources, err := canonicalAddressDimensionSources(snapshot.SourceManifest)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.SourceManifestVersion > AddressDimensionSourceManifestV1 ||
+		(snapshot.SourceManifestVersion == 0 && len(sources) != 0) {
+		return nil, ErrAddressDimensionInvalid
+	}
+	sourcePrefixCount, err := countAddressDimensionSourcePrefixes(sources)
+	if err != nil || sourcePrefixCount != snapshot.SourcePrefixCount {
+		return nil, ErrAddressDimensionInvalid
+	}
+	schemaVersion := DimensionPublicationSigningPayloadV2
+	objectFormat, objectFormatVersion, builderVersion, buildJobID := "", uint16(0), "", ID("")
+	if snapshot.ObjectFormat == AddressSnapshotObjectFormat {
+		if snapshot.ObjectFormatVersion != 1 || snapshot.BuilderVersion == "" || snapshot.BuildJobID == "" {
+			return nil, ErrAddressDimensionInvalid
+		}
+		schemaVersion = DimensionPublicationSigningPayloadV3
+		objectFormat, objectFormatVersion = snapshot.ObjectFormat, snapshot.ObjectFormatVersion
+		builderVersion, buildJobID = snapshot.BuilderVersion, snapshot.BuildJobID
+	} else if snapshot.ObjectFormat != "" && snapshot.ObjectFormat != "json" {
+		return nil, ErrAddressDimensionInvalid
+	}
+	payload := struct {
+		SchemaVersion         uint16                   `json:"schema_version"`
+		SnapshotID            ID                       `json:"snapshot_id"`
+		ModuleKey             string                   `json:"module_key"`
+		DimensionKey          string                   `json:"dimension_key"`
+		Version               uint64                   `json:"version"`
+		EffectiveUnixMilli    int64                    `json:"effective_unix_milli"`
+		ObjectRef             string                   `json:"object_ref"`
+		ObjectFormat          string                   `json:"object_format,omitempty"`
+		ObjectFormatVersion   uint16                   `json:"object_format_version,omitempty"`
+		BuilderVersion        string                   `json:"builder_version,omitempty"`
+		BuildJobID            ID                       `json:"build_job_id,omitempty"`
+		Checksum              string                   `json:"checksum"`
+		DraftDigest           string                   `json:"draft_digest"`
+		SourceManifestVersion uint16                   `json:"source_manifest_version"`
+		SourceManifest        []AddressDimensionSource `json:"source_manifest"`
+		SourcePrefixCount     uint64                   `json:"source_prefix_count"`
+		BundleSchemaVersion   uint32                   `json:"bundle_schema_version"`
+		SigningKeyID          string                   `json:"signing_key_id"`
+		SignedAtUnixMilli     int64                    `json:"signed_at_unix_milli"`
+	}{
+		SchemaVersion: schemaVersion, SnapshotID: snapshot.ID,
+		ModuleKey: snapshot.ModuleKey, DimensionKey: snapshot.DimensionKey,
+		Version: snapshot.Version, EffectiveUnixMilli: snapshot.EffectiveFrom.UTC().UnixMilli(),
+		ObjectRef: snapshot.ObjectRef, ObjectFormat: objectFormat, ObjectFormatVersion: objectFormatVersion,
+		BuilderVersion: builderVersion, BuildJobID: buildJobID,
+		Checksum: snapshot.Checksum, DraftDigest: snapshot.DraftDigest,
+		SourceManifestVersion: snapshot.SourceManifestVersion,
+		SourceManifest:        sources, SourcePrefixCount: sourcePrefixCount,
+		BundleSchemaVersion: snapshot.BundleSchemaVersion, SigningKeyID: signingKeyID,
+		SignedAtUnixMilli: signedAt.UnixMilli(),
+	}
+	return json.Marshal(payload)
+}
+
+func validateVerifiedDimensionPublicationApproval(snapshot DimensionPublicationSnapshot, approval DimensionPublicationApproval) error {
+	if approval.SnapshotID != snapshot.ID || approval.SigningKeyID == "" || len(approval.Signature) != ed25519.SignatureSize {
+		return ErrAddressDimensionInvalid
+	}
+	payload, err := DimensionPublicationSigningPayload(snapshot, approval.SigningKeyID, approval.SignedAt)
+	if err != nil {
+		return err
+	}
+	if addressDimensionApprovalDigest(payload, approval.Signature) != approval.verifiedEnvelopeSHA256 {
+		return errors.New("address dimension signature was not cryptographically verified")
+	}
+	return nil
+}
+
+func validateVerifiedAddressDimensionApproval(snapshot AddressDimensionSnapshot, approval AddressDimensionApproval) error {
+	return validateVerifiedDimensionPublicationApproval(snapshot, approval)
+}
+
+func addressDimensionApprovalDigest(payload, signature []byte) [sha256.Size]byte {
+	digest := sha256.New()
+	_, _ = digest.Write(payload)
+	_, _ = digest.Write([]byte{0})
+	_, _ = digest.Write(signature)
+	var result [sha256.Size]byte
+	copy(result[:], digest.Sum(nil))
+	return result
+}
