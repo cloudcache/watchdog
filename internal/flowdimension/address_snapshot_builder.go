@@ -318,11 +318,16 @@ type addressSnapshotBuildLayers struct {
 }
 
 type addressSnapshotBuildLayerRange struct {
-	start  netip.Addr
-	end    netip.Addr
-	slot   string
-	source AddressSnapshotBuildRange
-	manual addressSnapshotManualValue
+	start netip.Addr
+	end   netip.Addr
+	slot  string
+	// Source ranges already live for the complete build. Referencing them avoids
+	// duplicating the comparatively wide Geo value into every prepared layer.
+	source *AddressSnapshotBuildRange
+	// Manual ranges are normally tiny relative to imported data. Keeping the
+	// optional value behind a pointer also avoids reserving maps/slices in every
+	// base source layer.
+	manual *addressSnapshotManualValue
 }
 
 func prepareAddressSnapshotBuildSources(ctx context.Context, input []AddressSnapshotBuildSource) ([]addressSnapshotPreparedSource, addressSnapshotBuildLayers, error) {
@@ -340,7 +345,8 @@ func prepareAddressSnapshotBuildSources(ctx context.Context, input []AddressSnap
 		v4, v6 := make([]addressSnapshotBuildLayerRange, 0), make([]addressSnapshotBuildLayerRange, 0)
 		var last4, last6 netip.Addr
 		seenV6 := false
-		for rangeIndex, item := range source.Ranges {
+		for rangeIndex := range source.Ranges {
+			item := &source.Ranges[rangeIndex]
 			if rangeIndex&4095 == 0 {
 				if err := ctx.Err(); err != nil {
 					return nil, addressSnapshotBuildLayers{}, err
@@ -440,7 +446,7 @@ func (s *CompiledSnapshot) addressSnapshotManualRanges() ([]addressSnapshotBuild
 			if index+1 < len(boundaries) {
 				end = boundaries[index+1].Prev()
 			}
-			manual := addressSnapshotManualValue{}
+			manual := &addressSnapshotManualValue{}
 			manual.prefix, manual.hasPrefix = s.prefixes.Lookup(start)
 			manual.membership, _ = s.addressSets.Lookup(start)
 			manual.override, manual.hasOverride = s.geoOverrides.Lookup(start)
@@ -549,14 +555,26 @@ func composeAddressSnapshotTextValue(active []*addressSnapshotBuildLayerRange, c
 		}
 		switch layer.slot {
 		case AddressSnapshotSourceCombined:
+			if layer.source == nil {
+				return addressSnapshotTextValue{}, fmt.Errorf("%w: combined layer has no source value", ErrInvalidAddressSnapshot)
+			}
 			value.SupplierGeo = addressSnapshotTextGeoFromBuild(layer.source.Geo)
 			value.SupplierISPID, value.SupplierASN = layer.source.ISPID, layer.source.ASN
 		case AddressSnapshotSourceGeo:
+			if layer.source == nil {
+				return addressSnapshotTextValue{}, fmt.Errorf("%w: Geo layer has no source value", ErrInvalidAddressSnapshot)
+			}
 			value.SupplierGeo = addressSnapshotTextGeoFromBuild(layer.source.Geo)
 		case AddressSnapshotSourceASN:
+			if layer.source == nil {
+				return addressSnapshotTextValue{}, fmt.Errorf("%w: ASN layer has no source value", ErrInvalidAddressSnapshot)
+			}
 			value.SupplierISPID, value.SupplierASN = layer.source.ISPID, layer.source.ASN
 		case "manual":
-			manual = &layer.manual
+			if layer.manual == nil {
+				return addressSnapshotTextValue{}, fmt.Errorf("%w: manual layer has no value", ErrInvalidAddressSnapshot)
+			}
+			manual = layer.manual
 		}
 	}
 	value.CustomerGeo = value.SupplierGeo

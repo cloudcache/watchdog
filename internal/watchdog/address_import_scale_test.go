@@ -8,12 +8,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowdimension"
 )
 
 const scaleIPDBPrefixCount = 1 << 20
@@ -165,6 +171,287 @@ func TestAddressImportMillionIPDBMySQLEndToEnd(t *testing.T) {
 	if peakHeap > 512<<20 {
 		t.Fatalf("IPDB import peak heap exceeds 512 MiB: %.1f MiB", float64(peakHeap)/(1<<20))
 	}
+}
+
+// TestAddressImportProductionMMDBToWADS exercises the real control-plane
+// boundary: a production-sized MMDB is streamed into MySQL by a resumable
+// operation job, then an independent operation job emits and reloads the
+// immutable WADS object consumed by flow workers. It is opt-in because it
+// deliberately writes more than a million rows and records a machine-specific
+// performance baseline.
+func TestAddressImportProductionMMDBToWADS(t *testing.T) {
+	if os.Getenv("WATCHDOG_ADDRESS_IMPORT_SCALE") != "1" {
+		t.Skip("set WATCHDOG_ADDRESS_IMPORT_SCALE=1 to run")
+	}
+	dsn := os.Getenv("WATCHDOG_MYSQL_TEST_DSN")
+	path := os.Getenv("WATCHDOG_ADDRESS_IMPORT_MMDB")
+	if dsn == "" || path == "" {
+		t.Fatal("WATCHDOG_MYSQL_TEST_DSN and WATCHDOG_ADDRESS_IMPORT_MMDB are required")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum, err := fileSHA256(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	if _, err := ApplyMySQLMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+
+	const tenantID = ID("tenant_c3b_mmdb_scale")
+	const actorID = ID("user_c3b_mmdb_scale")
+	const importID = ID("import_c3b_mmdb_scale")
+	cleanupAddressImportFixture(t, db, tenantID)
+	defer cleanupAddressImportFixture(t, db, tenantID)
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants (id, name, status) VALUES (?, 'C3b MMDB scale', 'active')`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (id, tenant_id, email, name, status, auth_provider, external_subject_id)
+		VALUES (?, ?, 'c3b-mmdb-scale@test.invalid', 'C3b MMDB scale', 'active', 'test', 'c3b-mmdb-scale')
+	`, actorID, tenantID); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMySQLStore(db)
+	item, err := store.CreateAddressImport(ctx, AddressImport{
+		ID: importID, TenantID: tenantID, SourceSlot: AddressImportSlotASN,
+		Format: AddressImportFormatMMDB, OriginalName: filepath.Base(path), ArtifactRef: "scale/production.mmdb",
+		ChecksumSHA256: checksum, SizeBytes: uint64(info.Size()), Status: AddressImportStatusQueued, CreatedBy: actorID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := EncodeAddressImportJobPayload(item.ID, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobHash := sha256.Sum256(checkpoint)
+	job, err := store.EnqueueOperationJob(ctx, OperationJob{
+		TenantID: tenantID, JobType: AddressImportJobType, IdempotencyKey: "c3b-mmdb-production",
+		RequestHash: hex.EncodeToString(jobHash[:]), CheckpointJSON: checkpoint, CreatedBy: actorID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repository := &failOnceAddressImportRepository{MySQLStore: store, failAfter: 100_000}
+	importWorker := OperationJobWorker{
+		Repo: store, JobType: AddressImportJobType, Owner: "c3b-mmdb-import",
+		Handler:  NewAddressImportJobHandler(repository, fixedAddressArtifactStore{path: path}, maxAddressImportBatch),
+		LeaseFor: 5 * time.Minute, RetryBase: time.Millisecond, MaxAttempts: 3,
+	}
+	stopImportHeap := startAddressImportHeapSampler()
+	importStarted := time.Now()
+	leased, err := store.LeaseNextOperationJob(ctx, AddressImportJobType, importWorker.Owner, importWorker.LeaseFor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importWorker.runAttempt(ctx, leased)
+	afterFailure, err := store.GetOperationJob(ctx, tenantID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFailure.Status != OperationJobStatusQueued || afterFailure.ProgressDone != repository.failAfter || !repository.failed {
+		t.Fatalf("failed attempt = status:%s progress:%d injected:%v", afterFailure.Status, afterFailure.ProgressDone, repository.failed)
+	}
+	leased = waitForAddressImportScaleLease(t, ctx, store, importWorker.Owner)
+	importWorker.runAttempt(ctx, leased)
+	importElapsed := time.Since(importStarted)
+	importPeakHeap := stopImportHeap()
+
+	job, err = store.GetOperationJob(ctx, tenantID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err = store.GetAddressImport(ctx, tenantID, importID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := item.RowCountV4 + item.RowCountV6
+	if job.Status != OperationJobStatusSucceeded || item.Status != AddressImportStatusReady || rows < 1_000_000 || job.ProgressDone != rows {
+		t.Fatalf("job=%s progress=%d import=%s rows=%d/%d", job.Status, job.ProgressDone, item.Status, item.RowCountV4, item.RowCountV6)
+	}
+	var storedRows, distinctASNs, supplierNames uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COUNT(DISTINCT NULLIF(asn, 0)),
+		       SUM(CASE WHEN COALESCE(operator_name, '') <> '' THEN 1 ELSE 0 END)
+		FROM address_base_prefixes WHERE tenant_id = ? AND import_id = ?
+	`, tenantID, importID).Scan(&storedRows, &distinctASNs, &supplierNames); err != nil {
+		t.Fatal(err)
+	}
+	asnOnly := strings.Contains(strings.ToLower(item.DatabaseType), "asn")
+	if storedRows != rows || (asnOnly && (distinctASNs == 0 || supplierNames != 0)) {
+		t.Fatalf("stored=%d rows=%d distinct_asns=%d supplier_names=%d", storedRows, rows, distinctASNs, supplierNames)
+	}
+	if _, err := store.ActivateAddressImport(ctx, tenantID, importID, actorID, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	objects := DiskDimensionObjectStore{Dir: t.TempDir(), MaxBytes: 512 << 20}
+	publisher, err := NewMySQLAddressDimensionPublisher(store, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+	preview, err := publisher.PreviewAddressDimension(ctx, tenantID, effective)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := EncodeAddressDimensionPublishJobPayload(AddressDimensionPublishRequest{EffectiveFrom: effective, PreviewDigest: preview.DraftDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildHash := sha256.Sum256(payload)
+	buildJob, err := store.EnqueueOperationJob(ctx, OperationJob{
+		TenantID: tenantID, JobType: AddressSnapshotBuildJob, IdempotencyKey: "c3b-mmdb-wads",
+		RequestHash: hex.EncodeToString(buildHash[:]), CheckpointJSON: payload, CreatedBy: actorID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildWorker := OperationJobWorker{
+		Repo: store, JobType: AddressSnapshotBuildJob, Owner: "c3b-mmdb-builder",
+		Handler: NewAddressSnapshotBuildJobHandler(publisher), LeaseFor: 10 * time.Minute, RetryBase: time.Millisecond, MaxAttempts: 1,
+	}
+	stopBuildHeap := startAddressImportHeapSampler()
+	buildStarted := time.Now()
+	leased, err = store.LeaseNextOperationJob(ctx, AddressSnapshotBuildJob, buildWorker.Owner, buildWorker.LeaseFor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildWorker.runAttempt(ctx, leased)
+	buildElapsed := time.Since(buildStarted)
+	buildPeakHeap := stopBuildHeap()
+	buildJob, err = store.GetOperationJob(ctx, tenantID, buildJob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildJob.Status != OperationJobStatusSucceeded {
+		t.Fatalf("WADS build job=%s code=%s detail=%s", buildJob.Status, buildJob.LastErrorCode, buildJob.LastErrorDetail)
+	}
+	snapshot, err := publisher.GetAddressDimensionSnapshot(ctx, tenantID, buildJob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectPath, err := objects.ResolveDimensionObject(snapshot.ObjectRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(objectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopCompileHeap := startAddressImportHeapSampler()
+	compileStarted := time.Now()
+	index, err := flowdimension.DecodeAndCompileAddressSnapshot(data, snapshot.Checksum, flowdimension.AddressSnapshotLimits{})
+	compileElapsed := time.Since(compileStarted)
+	compilePeakHeap := stopCompileHeap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := flowdimension.DecodeAddressSnapshot(data, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.SnapshotID != string(snapshot.ID) || len(artifact.IPv4Ranges)+len(artifact.IPv6Ranges) == 0 || (asnOnly && len(artifact.Operators) != 0) {
+		t.Fatalf("WADS identity/ranges/operators = %q %d/%d %d", artifact.SnapshotID, len(artifact.IPv4Ranges), len(artifact.IPv6Ranges), len(artifact.Operators))
+	}
+
+	samples := sampleMMDBAddresses(t, path, rows, 20_000)
+	latencies := make([]time.Duration, 0, len(samples))
+	for _, sample := range samples {
+		started := time.Now()
+		resolution, found := index.ResolveAddress(sample.address)
+		latencies = append(latencies, time.Since(started))
+		if !found || resolution.SupplierASN != sample.asn {
+			t.Fatalf("lookup %s = found:%v asn:%d, want %d", sample.address, found, resolution.SupplierASN, sample.asn)
+		}
+	}
+	sort.Slice(latencies, func(left, right int) bool { return latencies[left] < latencies[right] })
+	lookupStarted := time.Now()
+	const lookupCount = 1_000_000
+	for indexAt := 0; indexAt < lookupCount; indexAt++ {
+		index.ResolveAddress(samples[indexAt%len(samples)].address)
+	}
+	lookupElapsed := time.Since(lookupStarted)
+	lookupRate := float64(lookupCount) / lookupElapsed.Seconds()
+	p95, p99 := percentileDuration(latencies, 95), percentileDuration(latencies, 99)
+	if lookupRate < 100_000 || p99 > time.Millisecond {
+		t.Fatalf("WADS lookup regression: rate=%.0f/s p99=%s", lookupRate, p99)
+	}
+
+	t.Logf("production MMDB=%d bytes sha256=%s rows=%d (v4=%d v6=%d) distinct_asns=%d import=%s %.0f rows/s import_peak_heap=%.1f MiB retry_from=%d",
+		info.Size(), checksum, rows, item.RowCountV4, item.RowCountV6, distinctASNs, importElapsed.Round(time.Millisecond), float64(rows)/importElapsed.Seconds(), float64(importPeakHeap)/(1<<20), afterFailure.ProgressDone)
+	t.Logf("WADS=%d bytes ranges=%d/%d values=%d build=%s build_peak_heap=%.1f MiB compile=%s compile_peak_heap=%.1f MiB lookup=%.0f/s p95=%s p99=%s",
+		len(data), len(artifact.IPv4Ranges), len(artifact.IPv6Ranges), len(artifact.Values), buildElapsed.Round(time.Millisecond), float64(buildPeakHeap)/(1<<20), compileElapsed.Round(time.Millisecond), float64(compilePeakHeap)/(1<<20), lookupRate, p95, p99)
+}
+
+type mmdbLookupSample struct {
+	address netip.Addr
+	asn     uint32
+}
+
+func sampleMMDBAddresses(t testing.TB, path string, rows uint64, maximum int) []mmdbLookupSample {
+	t.Helper()
+	stride := rows / uint64(maximum)
+	if stride == 0 {
+		stride = 1
+	}
+	ordinal := uint64(0)
+	samples := make([]mmdbLookupSample, 0, maximum)
+	_, err := StreamMMDB(path, func(record AddressImportRecord) error {
+		if ordinal%stride == 0 && len(samples) < maximum {
+			prefix, err := netip.ParsePrefix(record.Prefix)
+			if err != nil {
+				return err
+			}
+			samples = append(samples, mmdbLookupSample{address: prefix.Addr(), asn: record.ASN})
+		}
+		ordinal++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) == 0 {
+		t.Fatal("production MMDB yielded no lookup samples")
+	}
+	return samples
+}
+
+func percentileDuration(values []time.Duration, percentile int) time.Duration {
+	if len(values) == 0 {
+		return 0
+	}
+	index := (len(values)*percentile + 99) / 100
+	if index > 0 {
+		index--
+	}
+	return values[index]
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func writeMillionIPv4IPDB(t testing.TB, path string) (int, string) {

@@ -22,7 +22,7 @@
 
 ## 2. 当前状态
 
-**活动切片：FLOW-03C AddressSnap 性能与变更回归。** scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK 以及便捷运营商 typed query 切换已关闭；下一步执行固定真实 corpus 的 object/build/lookup/swap/多租户基线和 reader-first→writer cutover 回归。历史重分类仍由 FLOW-06B 独立交付，不和本切片混改。
+**活动切片：FLOW-03C AddressSnap builder 内存、swap 与多租户回归。** scoped publication、WADS v1、异步 builder/writer、worker 双读/纯内存索引、签名分发/LKG/ACK、便捷运营商 typed query 以及真实 113 万行 GeoLite2-ASN object/build/lookup 基线均已关闭；下一步压缩仍为 1,015.8 MiB 的 builder 中间态，并补 atomic swap pause/多租户容量和 reader-first→writer cutover 回归。历史重分类仍由 FLOW-06B 独立交付，不和本切片混改。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -277,7 +277,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **编码（builder core）**：实现 source `combined → geo/asn 字段域 → manual` 的确定性区间合成；两遍扫描先建 string/value dictionary，再输出相邻同值合并的 v4/v6 ranges，base source 始终保持区间而不展开单 IP。supplier/customer Geo 与 ISP 独立 namespace，Geo 关系按稳定 ID 而非 code，customer ASN 映射和显式 operator 绑定不按名称猜测；输出立即 WADS round-trip。
   - [x] **单元测试（builder core）**：覆盖 v4/v6、source 字段域优先级、人工 Geo/operator/ASN、地址组、本地业务、输入顺序确定性、source generation 改变 checksum、行数/重叠/预算拒绝，以及 dangling Geo/operator/set 引用 fail closed。
   - [x] **编码（builder writer）**：`address_snapshot_build` 已接生产 scheduler/API；job ID 固定 snapshot identity，keyset 分页读取与核对 pinned source 原始 count/CIDR/binary bounds，source 内嵌套 CIDR 以最长前缀展平；精确 supplier-name UInt16 ledger 与 customer ASN/人工 operator 分命名空间；context cancel/progress、确定性 WADS、幂等 immutable save、提交前 draft/source/version 二次校验和 pending-approval 短事务已接通。migration 058 持久化 format/version/builder/build-job 与 supplier identity，签名 v3 覆盖这些字段，旧 JSON job/signing v2 兼容。
-  - [ ] **单元/集成（builder）**：codec/builder/cancel/LPM 展平/Geo hierarchy/supplier identity/签名篡改、repository v4/v6 import→真实 MySQL→WADS→同 job 幂等及跨 generation supplier ID 稳定已覆盖；生产级真实 MMDB/IPDB、operation worker crash/takeover、approve/activate/rollback/orphan-GC 全链和失败注入仍待完成。
+  - [x] **单元/集成（builder）**：codec/builder/cancel/LPM 展平/Geo hierarchy/supplier identity/签名篡改、repository v4/v6 import→真实 MySQL→WADS→同 job 幂等及跨 generation supplier ID 稳定已覆盖；真实百万 IPDB/GeoLite2-ASN、operation worker crash/takeover、approve/activate/rollback/orphan-GC 全链和失败注入均已完成。ASN organization 与 supplier ISP 分离，避免 81,399 ASN 名称错误挤入 UInt16 ISP namespace。
   - [x] **编码（loader reader core）**：`VersionObjectReference` 已严格双读 legacy `json/0` 与 `wads/1`；WADS reader 在 catalog CAS 前校验外部 SHA、header/CRC/zstd/全引用与常驻内存预算，并预解析 v4/v6 range、五级 Geo、supplier/customer ISP/ASN、prefix/business/set membership。version catalog 以同一接口原子安装两种 immutable snapshot；WADS-only bootstrap 不要求 Geo bundle，选中旧 JSON 且没有 GeoCatalog 时按 `dependency=geo` fail closed。热路径无 DB/file/network 且定向 allocation 门禁为 0。
   - [x] **单元/变更/回归（loader reader core）**：覆盖 v4/v6/Geo-only/无 ASN、internal set union、supplier/customer namespace、外部 SHA、常驻内存边界、非法 format/version 预取前拒绝、WADS 无 GeoCatalog enrichment、旧 JSON 兼容/缺 Geo 暂停、ACK retry 与 atomic catalog；另以同一 v4/v6 Geo-v2 corpus 对账旧 BART+Geo reader 与 WADS 的方向、prefix、set、五级 Geo、ISP/ASN 来源、customer override、分类/处置，只有统一发布物规定的 version identity 不同。Flow 定向 race、全库 test/vet/build 通过。reader-first 不改 CH schema/查询口径且不创建空 migration，本提交只包含该闭环与清单。
   - [x] **编码（loader distribution/LKG）**：平台认证 desired/object API、Ed25519 verifier、有界对象落盘/原子 LKG、downloaded/installed/failed ACK 已由同一 loader/sync 生命周期承载；生产命令已接冷恢复、首次同步、周期刷新和退出取消，失败保留上一 catalog generation。
@@ -293,7 +293,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
     - [x] **当前事实/默认查询绑定**：WADS loader 已把 supplier/customer ISP 独立写入 fact；便捷运营商查询不再展开 ASN，只提交稳定 operator ID。服务端冻结 event-time publication/snapshot/classification 集合，要求全部 active flow worker 已 installed 后注入 customer `remote_isp_id` typed predicate；prepared 参数进入查询/导出 hash/provenance/audit，篡改、缺版本、零 worker或部分 ACK fail closed。真实 MySQL 与单元/前端门禁已覆盖，复用 059，无新 migration。
     - [ ] **历史新口径绑定**：由 FLOW-06B reclassification generation 读取指定 AddressSnap 重算 raw 窗口，以 Kafka 坐标和 count/counter 守恒后切换；不在默认查询里临时改写历史。
-  - [ ] **性能**：固定真实 corpus 记录 object size/build RSS/lookup p95-p99/swap pause/多 tenant；只有 BART 不达标且共享基库容量成立才引入 DIR-24-8。
+  - [ ] **性能**：真实 GeoLite2-ASN 已记录 WADS 4,291,552 bytes、worker compile 85ms/71.5 MiB、lookup 9.59M/s、p95 375ns/p99 1.083µs，证明无需 DIR-24-8；builder 为 9m16.262s/1,015.8 MiB，单遍 canonical merge + layer 引用已较 1,630.7 MiB 降约 37.7%，仍须完成紧凑 source 中间表示/有界外排、atomic swap pause 与多 tenant 容量。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。

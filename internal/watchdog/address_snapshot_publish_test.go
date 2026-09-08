@@ -53,6 +53,27 @@ func TestNormalizeAddressSnapshotImportPrefixesUsesLongestPrefix(t *testing.T) {
 	}
 }
 
+func TestNormalizeDisjointAddressSnapshotImportPrefixesCoalescesCanonicalInput(t *testing.T) {
+	makePrefix := func(id uint64, cidr string, asn uint32) addressSnapshotImportPrefix {
+		prefix := netip.MustParsePrefix(cidr)
+		start, end := addressSnapshotPrefixRange(prefix)
+		return addressSnapshotImportPrefix{id: id, prefix: prefix, value: flowdimension.AddressSnapshotBuildRange{Start: start, End: end, ASN: asn}}
+	}
+	ranges, canonical := normalizeDisjointAddressSnapshotImportPrefixes([]addressSnapshotImportPrefix{
+		makePrefix(1, "192.0.2.0/25", 64500),
+		makePrefix(2, "192.0.2.128/25", 64500),
+		makePrefix(3, "2001:db8::/126", 64501),
+	})
+	if !canonical || len(ranges) != 2 || ranges[0].Start.String() != "192.0.2.0" || ranges[0].End.String() != "192.0.2.255" {
+		t.Fatalf("canonical ranges = %#v, canonical=%v", ranges, canonical)
+	}
+	if _, canonical := normalizeDisjointAddressSnapshotImportPrefixes([]addressSnapshotImportPrefix{
+		makePrefix(1, "192.0.2.0/24", 64500), makePrefix(2, "192.0.2.64/26", 64501),
+	}); canonical {
+		t.Fatal("nested prefixes must use the longest-prefix sweep")
+	}
+}
+
 func TestRegisterAddressSnapshotSupplierGeoKeepsStableHierarchy(t *testing.T) {
 	nodes := map[string]flowdimension.AddressSnapshotBuildGeoNode{}
 	geo := registerAddressSnapshotSupplierGeo(nodes, "AS", "CN", "China", "BJ", "Beijing", "1816670", "Beijing")

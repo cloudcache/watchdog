@@ -93,7 +93,12 @@ func StreamMMDB(path string, visit func(AddressImportRecord) error) (AddressImpo
 		record := AddressImportRecord{
 			Prefix: result.Prefix().Masked().String(), ContinentCode: strings.ToUpper(strings.TrimSpace(wire.Continent.Code)),
 			CountryCode: strings.ToUpper(strings.TrimSpace(wire.Country.ISOCode)), CountryName: preferredGeoName(wire.Country.Names),
-			ASN: wire.AutonomousSystemNumber, Operator: firstNonEmpty(wire.ISP, wire.Organization, wire.AutonomousSystemOrganization),
+			// An AS organization is the owner/name of an ASN, not an ISP
+			// classification. Folding it into Operator makes an ASN database
+			// allocate one supplier ISP identity per AS and can overflow the
+			// intentionally UInt16 ISP namespace. Preserve the ASN itself here;
+			// an AS-name catalog is a separate display concern.
+			ASN: wire.AutonomousSystemNumber, Operator: firstNonEmpty(wire.ISP, wire.Organization),
 			Latitude: wire.Location.Latitude, Longitude: wire.Location.Longitude, Source: "mmdb",
 		}
 		if len(wire.Subdivisions) != 0 {

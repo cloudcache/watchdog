@@ -29,6 +29,26 @@ func TestStreamMMDBReadsAkvoradoFixtures(t *testing.T) {
 	}
 }
 
+func TestStreamMMDBDoesNotTreatASNOrganizationAsISP(t *testing.T) {
+	path := filepath.Join("..", "..", "akvorado", "orchestrator", "geoip", "testdata", "GeoLite2-ASN-Test.mmdb")
+	foundASN := false
+	metadata, err := StreamMMDB(path, func(record AddressImportRecord) error {
+		if record.ASN != 0 {
+			foundASN = true
+			if record.Operator != "" {
+				t.Fatalf("ASN %d organization leaked into supplier ISP %q", record.ASN, record.Operator)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.DatabaseType != "GeoLite2-ASN" || !foundASN {
+		t.Fatalf("metadata=%#v found_asn=%v", metadata, foundASN)
+	}
+}
+
 func TestStreamIPDBEnumeratesTrieBoundaries(t *testing.T) {
 	file := syntheticIPv4IPDB(t)
 	path := filepath.Join(t.TempDir(), "test.ipdb")

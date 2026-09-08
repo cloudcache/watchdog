@@ -6,7 +6,7 @@
 
 - `flow-collect` 只接收 UDP 并写 Kafka，不做地址分类。
 - `flow-worker` 已在 Kafka 后使用 `gaissmai/bart` LPM 与 Geo 有序区间二分完成分类；`snapshot.go` 的 lookup 和 `enrich.go` 的 enrichment 每条 flow **不访问 MySQL、ClickHouse 或 HTTP**。
-- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。平台已完成 classification profile CAS、不可变 classification object、dimension+classification pair 元数据、复用全局 trust bundle 的 Ed25519 envelope，以及 `flow_worker` 专属认证的 desired/object/ACK HTTP；worker 已完成内容寻址 LKG、严格 HTTP client/sync，并接入生产命令的冷启动、首次同步、周期刷新和退出取消。尚未完成的是与平台 production router 的进程级故障/回滚联测及 Kafka 缺 event-time 版本暂停门禁，不能把单元/contract server 冒充完整生产验收。
+- 平台已经能把 pinned source manifest、base Geo/ASN 与人工 definition 异步编译为 WADS；worker reader 已能校验外部 SHA、WADS header/CRC/zstd/引用/驻留内存预算并直接构建不可变二分索引。WADS-only 本地启动不再要求独立 Geo bundle，旧 JSON publication 仍走原 GeoCatalog。平台已完成 classification profile CAS、不可变 classification object、dimension+classification pair 元数据、复用全局 trust bundle 的 Ed25519 envelope，以及 `flow_worker` 专属认证的 desired/object/ACK HTTP；worker 已完成内容寻址 LKG、严格 HTTP client/sync，并接入生产命令的冷启动、首次同步、周期刷新和退出取消。production router、进程恢复、坏对象保留 LKG、Kafka 缺 event-time version 暂停及 installed-ACK 查询切换均已有真实依赖门禁。
 - CH migration 009 的 `flow_address_dict_source` 和 `IP_TRIE` 集成测试证明过 ClickHouse 字典能力，但没有接入生产 worker/rollup/query。它是历史实验，不是继续演进的架构基础。
 
 因此本次修正不再“把分类从 worker 搬到 ClickHouse”，而是把**索引的发布来源**从运行时批量装载管理数据，改成经审批、可校验、可回滚的二进制 `AddressSnap`。
@@ -68,7 +68,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 同一组 pinned inputs 和 builder schema 必须 byte-for-byte 相同。builder 固定规范排序、字符串编码、空值、时间精度与压缩参数；拒绝重叠输出、悬空字典引用、重复稳定 ID、超限 set membership、计数不符和非规范地址。
 
-默认预算由配置给出但存在硬上限：compressed/uncompressed bytes、v4/v6 range count、dictionary entries、strings bytes、sets、每 endpoint membership、zstd window 和构建峰值 RSS。任何超限整体失败，不截断后发布。
+编码/reader 预算由配置给出且存在硬上限：compressed/uncompressed bytes、v4/v6 range count、dictionary entries、strings bytes、sets、每 endpoint membership、zstd window 和解码常驻内存估算；任何超限整体失败，不截断后发布。builder 峰值由固定生产 corpus 回归和部署进程内存限制共同约束，Go 进程内不能伪造可靠的 RSS hard-limit。触发 OOM/取消/超预算时 operation job 失败且不得改变 active snapshot。
 
 ## 4. 异步构建与发布生命周期
 
@@ -80,9 +80,13 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 6. consumer 分别上报 `downloaded/installed/failed`。只有 `installed` ACK 才表示该 worker 可使用目标版本；平台不能用“快照已创建”冒充数据面就绪。
 7. rollback 只切 activation 指针。旧 object 按事实/修复引用、未来 activation、worker LKG 和显式 retention 共同保护后再经 operation job GC。
 
-构建 job 复用平台唯一 `operation_jobs` lease/heartbeat/cancel/retry；分页边界上报单调 progress，job payload 始终保留为不可变 checkpoint，重试/接管从 pinned generation 重新流式读取并以同一 job/snapshot ID 生成相同 bytes/checksum，不另存第二套 builder 状态。读取和两遍合成周期检查取消；zstd 单次压缩完成后再次检查并由 lease fence 决定是否可提交。
+构建 job 复用平台唯一 `operation_jobs` lease/heartbeat/cancel/retry；分页边界上报单调 progress，job payload 始终保留为不可变 checkpoint，重试/接管从 pinned generation 重新分页读取并以同一 job/snapshot ID 生成相同 bytes/checksum，不另存第二套 builder 状态。读取和两遍合成周期检查取消；zstd 单次压缩完成后再次检查并由 lease fence 决定是否可提交。
 
 合成 core 不把 CIDR 展开为地址：repository adapter 将 raw rows 以最长前缀语义规范化为按 family/start 排序且内部不重叠的 inclusive ranges，builder 再以多路边界 sweep 叠加 combined、Geo、ASN 与已编译 manual range。第一遍只收集去重 string/value dictionary，第二遍输出 value index 并合并相邻同值范围，额外内存随“输入 prefix、边界、不同值和输出范围”增长而不是随地址空间增长。source 声明的 v4/v6 row count 必须与实际读取 durable rows 精确相等；原始行数不能错误地等同于规范化 range 数（嵌套可能拆分或合并）。任一持久化边界不一致、规范化后重叠、悬空 Geo/operator/set 引用或预算超限整体失败。
+
+2026-09-07 在 darwin/arm64、MySQL 9.6 上以真实 `GeoLite2-ASN.mmdb`（12,297,156 bytes，SHA-256 `dca4ada7f85870805b6033f9282561be375bb7ad02a7958fb3061ca3b2ee200a`）执行了完整门禁：1,130,749 条网络（v4 671,052 / v6 459,697）、81,399 个不同 ASN，在 100,000 durable rows 注入失败后由第二 attempt 从 checkpoint 恢复；导入 2m08.590s、8,793 rows/s、峰值 Go heap 15.0 MiB。WADS 为 4,291,552 bytes，合并成 v4 402,248 / v6 106,099 ranges 和 81,400 values；worker decode+compile 85ms、峰值增量 71.5 MiB，100 万次 lookup 约 9.59M/s，p95 375ns、p99 1.083µs。supplier operator 为 0：`autonomous_system_organization` 是 ASN 显示名称，不是 ISP，不能挤入 supplier UInt16 身份；ASN 数值仍完整进入 AddressSnap。
+
+同一语料暴露的管理面成本是 builder 9m16.262s、峰值增量 heap 1,015.8 MiB。已把有序无重叠 MMDB/IPDB 改为单遍合并（嵌套输入仍走 LPM sweep），并把 prepared layer 的宽 Geo/manual 值改为不可变引用；相对原始 1,630.7 MiB 峰值下降约 37.7%，产物 range/value 和 lookup 语义不变。该数据证明运行时产物/热路径达标，但 builder 仍需做更紧凑的 source 中间表示或有界外排；在固定多 tenant/swap 基线完成前不关闭 C4b2 性能父项。
 
 ## 5. 分发与 worker 加载
 

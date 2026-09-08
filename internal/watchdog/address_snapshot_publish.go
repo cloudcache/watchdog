@@ -556,6 +556,15 @@ func (h *addressSnapshotPrefixHeap) Pop() any {
 }
 
 func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPrefix) ([]flowdimension.AddressSnapshotBuildRange, error) {
+	// MMDB/IPDB readers normally emit an already ordered, non-overlapping
+	// partition. Preserve that common case in one pass: allocating two endpoint
+	// events per row and sorting them made a 1.13M-row ASN publication consume
+	// more than a gigabyte for no semantic benefit. Imported manual or vendor
+	// data may still contain nested CIDRs; those inputs deliberately fall through
+	// to the longest-prefix sweep below.
+	if ranges, canonical := normalizeDisjointAddressSnapshotImportPrefixes(prefixes); canonical {
+		return ranges, nil
+	}
 	var result []flowdimension.AddressSnapshotBuildRange
 	for _, family4 := range []bool{true, false} {
 		var family []addressSnapshotImportPrefix
@@ -612,6 +621,28 @@ func normalizeAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPref
 		}
 	}
 	return result, nil
+}
+
+func normalizeDisjointAddressSnapshotImportPrefixes(prefixes []addressSnapshotImportPrefix) ([]flowdimension.AddressSnapshotBuildRange, bool) {
+	result := make([]flowdimension.AddressSnapshotBuildRange, 0, len(prefixes))
+	lastFamily := 0
+	var lastEnd netip.Addr
+	for _, item := range prefixes {
+		family := item.prefix.Addr().BitLen()
+		if family != 32 && family != 128 {
+			return nil, false
+		}
+		if family < lastFamily || (family == lastFamily && lastEnd.IsValid() && lastEnd.Compare(item.value.Start) >= 0) {
+			return nil, false
+		}
+		if family != lastFamily {
+			lastFamily = family
+			lastEnd = netip.Addr{}
+		}
+		appendAddressSnapshotNormalizedRange(&result, item.value.Start, item.value.End, item.value)
+		lastEnd = item.value.End
+	}
+	return result, true
 }
 
 func appendAddressSnapshotNormalizedRange(result *[]flowdimension.AddressSnapshotBuildRange, start, end netip.Addr, source flowdimension.AddressSnapshotBuildRange) {
