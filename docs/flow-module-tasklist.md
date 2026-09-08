@@ -116,7 +116,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **单元测试**：IPv4/IPv6/IP/CIDR 规范化、协议/采样规则复用 production `flowplan` 校验、pre-scaled 禁止二次放大、部署态计算。
 - [x] **集成测试**：真实空 MySQL 覆盖同一 SNMP 设备挂 Flow、flow-collect 类型校验、CRUD/list/search/filter、domain 显式清空、重复 selector、stale ETag、设备删除阻断、已发布 binding 禁删、停用并确认撤销后删除；专用测试库已精确删除。
 - [ ] **发布接线**：由后续 Agent plan 工作包把 binding desired rows 编译进不可变 plan，成功 ACK 后原子推进 published versions；本项不改 fast decode、Kafka、worker 或 ClickHouse。
-- [ ] **已提交门禁**：代码、migration、设计、任务清单和测试证据须形成独立提交后再勾选。
+- [x] **已提交门禁**：`0625f6c6`；提交仅包含本工作包的代码、migration、设计、任务清单和测试证据，不包含并行的前端目录迁移或地址库/PB 改动。
 
 ### FLOW-02 Kafka worker 与 GoFlow2
 
