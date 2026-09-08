@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { parsePrefixLabels } from "@/lib/address-set-form"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressPrefix = {
 	id: string
@@ -97,7 +97,7 @@ export default memo(function AddressPrefixes() {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<AddressPrefixList>("/api/v1/address-prefixes", {
+			const data = await api.send<AddressPrefixList>("/api/v1/address-prefixes", {
 				query: {
 					q: debouncedSearch || undefined,
 					family: family || undefined,
@@ -133,7 +133,7 @@ export default memo(function AddressPrefixes() {
 			if (asn !== undefined && (!Number.isInteger(asn) || asn <= 0 || asn > 4_294_967_295)) {
 				throw new Error(t`ASN must be an integer between 1 and 4294967295`)
 			}
-			await pb.send(form.id ? `/api/v1/address-prefixes/${form.id}` : "/api/v1/address-prefixes", {
+			await api.send(form.id ? `/api/v1/address-prefixes/${form.id}` : "/api/v1/address-prefixes", {
 				method: form.id ? "PATCH" : "POST",
 				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
 				body: {
@@ -178,7 +178,7 @@ export default memo(function AddressPrefixes() {
 			const rowVersion = Number(record.rowVersion ?? 0)
 			if (!id || !rowVersion || !confirm(t`Delete this prefix?`)) return
 			try {
-				await pb.send(`/api/v1/address-prefixes/${id}`, {
+				await api.send(`/api/v1/address-prefixes/${id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${rowVersion}"` },
 				})
@@ -215,7 +215,7 @@ export default memo(function AddressPrefixes() {
 				return
 			}
 			try {
-				const updated = await pb.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
+				const updated = await api.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
 					method: "PATCH",
 					headers: { "If-Match": `"${prefix.row_version}"` },
 					body: {
@@ -251,7 +251,7 @@ export default memo(function AddressPrefixes() {
 			setPicker(null)
 			const referenceID = ids[0] ?? ""
 			try {
-				const updated = await pb.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
+				const updated = await api.send<AddressPrefix>(`/api/v1/address-prefixes/${prefix.id}`, {
 					method: "PATCH",
 					headers: { "If-Match": `"${prefix.row_version}"` },
 					body: {
@@ -277,7 +277,7 @@ export default memo(function AddressPrefixes() {
 		if (selected.length === 0 || !confirm(t`Delete ${selected.length} selected prefixes?`)) return
 		try {
 			for (const prefix of selected) {
-				await pb.send(`/api/v1/address-prefixes/${prefix.id}`, {
+				await api.send(`/api/v1/address-prefixes/${prefix.id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${prefix.row_version}"` },
 				})
@@ -303,7 +303,7 @@ export default memo(function AddressPrefixes() {
 		setCoverWorking(true)
 		setError("")
 		try {
-			const preview = await pb.send<AddressOperationPreview>("/api/v1/address-sets/actions/preview", {
+			const preview = await api.send<AddressOperationPreview>("/api/v1/address-sets/actions/preview", {
 				method: "POST",
 				body: { operation: "cover", left: cidrs },
 			})
@@ -322,7 +322,7 @@ export default memo(function AddressPrefixes() {
 		setError("")
 		try {
 			for (const cidr of coverPreview.result) {
-				await pb.send("/api/v1/address-prefixes", {
+				await api.send("/api/v1/address-prefixes", {
 					method: "POST",
 					body: { cidr, labels: {}, source: "manual", asn: 0, geo_leaf_id: "", operator_id: "" },
 				})
@@ -342,7 +342,7 @@ export default memo(function AddressPrefixes() {
 		setMergeWorking(true)
 		setError("")
 		try {
-			const preview = await pb.send<AddressPrefixMergePreview>("/api/v1/address-prefixes/actions/merge-preview", {
+			const preview = await api.send<AddressPrefixMergePreview>("/api/v1/address-prefixes/actions/merge-preview", {
 				method: "POST",
 				body: {
 					prefixes: selected.map((prefix) => ({
@@ -375,7 +375,7 @@ export default memo(function AddressPrefixes() {
 				// original before that original is deleted.
 				if (group.result_cidrs.length >= group.input_cidrs.length) continue
 				for (const cidr of group.result_cidrs) {
-					await pb.send("/api/v1/address-prefixes", {
+					await api.send("/api/v1/address-prefixes", {
 						method: "POST",
 						body: {
 							cidr,
@@ -390,7 +390,7 @@ export default memo(function AddressPrefixes() {
 				const inputSet = new Set(group.input_cidrs)
 				for (const prefix of selected) {
 					if (inputSet.has(prefix.cidr)) {
-						await pb.send(`/api/v1/address-prefixes/${prefix.id}`, {
+						await api.send(`/api/v1/address-prefixes/${prefix.id}`, {
 							method: "DELETE",
 							headers: { "If-Match": `"${prefix.row_version}"` },
 						})

@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type TargetRecord = {
@@ -83,7 +83,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const target = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {
+			const target = await api.send<TargetRecord>(`/api/v1/targets/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -119,7 +119,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		let cancelled = false
 		setProfilesLoading(true)
 		setProfilesError("")
-		pb.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
+		api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
 			.then((data) => {
 				if (cancelled) return
 				const profiles = data.items ?? []
@@ -158,7 +158,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 					body.snmp_security = { community: form.snmpCommunity }
 				}
 			}
-			const saved = await pb.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
+			const saved = await api.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,

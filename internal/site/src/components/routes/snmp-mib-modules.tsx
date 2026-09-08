@@ -6,7 +6,7 @@ import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type MIBModule = {
 	ID?: string
@@ -37,7 +37,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<MIBModulesResponse>("/api/v1/snmp/mib-modules", {})
+			const data = await api.send<MIBModulesResponse>("/api/v1/snmp/mib-modules", {})
 			setModules(data.items ?? [])
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load MIB modules`)
@@ -56,7 +56,7 @@ export default memo(() => {
 			return
 		}
 		try {
-			await pb.send(`/api/v1/snmp/mib-modules/${module.ID ?? module.id ?? ""}`, { method: "DELETE" })
+			await api.send(`/api/v1/snmp/mib-modules/${module.ID ?? module.id ?? ""}`, { method: "DELETE" })
 			await refresh()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete MIB module`)

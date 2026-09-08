@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import {
 	buildFlowRecordRows,
 	flowProtocolLabel,
@@ -132,7 +132,7 @@ export function FlowRecordTable({
 			setLoading(true)
 			setError("")
 			try {
-				const response = await pb.send<FlowRecordSearchResponse>("/api/v1/flow/records/search", {
+				const response = await api.send<FlowRecordSearchResponse>("/api/v1/flow/records/search", {
 					method: "POST",
 					signal: controller.signal,
 					body: {
@@ -214,7 +214,7 @@ export function FlowRecordTable({
 			selected: columnFilters,
 			loadOptions: async (field: string, searchText: string, signal: AbortSignal) => {
 				if (!selectedIP || !from || !to) return []
-				const response = await pb.send<FlowRecordFacetResponse>("/api/v1/flow/records/facets", {
+				const response = await api.send<FlowRecordFacetResponse>("/api/v1/flow/records/facets", {
 					method: "POST",
 					signal,
 					body: {
@@ -302,7 +302,7 @@ export function FlowRecordTable({
 		if (!selectedIP || view === "customer") return
 		setExporting(true)
 		try {
-			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/records/exports", {
+			const task = await api.send<{ ID?: string; id?: string }>("/api/v1/flow/records/exports", {
 				method: "POST",
 				body: {
 					query: {

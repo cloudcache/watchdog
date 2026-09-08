@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { isReadOnlyUser, pb } from "@/lib/api"
+import { isReadOnlyUser, api } from "@/lib/api"
 import {
 	addDashboardPanel,
 	type DashboardGraph,
@@ -73,7 +73,7 @@ export default memo(({ id }: DashboardFormProps) => {
 		if (!id) return
 		let cancelled = false
 		setLoading(true)
-		pb.send<DashboardPreview>(`/api/v1/dashboards/${id}/preview`, {
+		api.send<DashboardPreview>(`/api/v1/dashboards/${id}/preview`, {
 			onResponse: (response) => {
 				etagRef.current = response.headers.get("ETag") ?? ""
 			},
@@ -117,7 +117,7 @@ export default memo(({ id }: DashboardFormProps) => {
 		setPreviewing(true)
 		setError("")
 		try {
-			const data = await pb.send<DashboardPreview>("/api/v1/dashboards/actions/preview", {
+			const data = await api.send<DashboardPreview>("/api/v1/dashboards/actions/preview", {
 				method: "POST",
 				body: { name: name.trim(), description: description.trim(), layout },
 			})
@@ -138,7 +138,7 @@ export default memo(({ id }: DashboardFormProps) => {
 		try {
 			let saved: Dashboard
 			if (id) {
-				saved = await pb.send<Dashboard>(`/api/v1/dashboards/${id}`, {
+				saved = await api.send<Dashboard>(`/api/v1/dashboards/${id}`, {
 					method: "PATCH",
 					headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
 					body: { name: name.trim(), description: description.trim(), layout },
@@ -147,7 +147,7 @@ export default memo(({ id }: DashboardFormProps) => {
 					},
 				})
 			} else {
-				saved = await pb.send<Dashboard>("/api/v1/dashboards", {
+				saved = await api.send<Dashboard>("/api/v1/dashboards", {
 					method: "POST",
 					body: { name: name.trim(), description: description.trim(), layout },
 				})
@@ -413,7 +413,7 @@ function GraphPicker({
 		try {
 			const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) })
 			if (query) params.set("q", query)
-			const data = await pb.send<{ items?: DashboardGraph[]; total?: number }>(
+			const data = await api.send<{ items?: DashboardGraph[]; total?: number }>(
 				`/api/v1/dashboards/graph-options?${params}`,
 				{}
 			)

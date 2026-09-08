@@ -2,7 +2,7 @@ import { memo } from "react"
 import { copyToClipboard, getHubURL } from "@/lib/utils"
 import { DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu"
 
-// const isbeta = watchdog.hub_version.includes("beta")
+// const isbeta = watchdog.version.includes("beta")
 // const imagetag = isbeta ? ":edge" : ""
 
 const rawRepositoryURL = "https://raw.githubusercontent.com/cloudcache/watchdog/main/supplemental/scripts"

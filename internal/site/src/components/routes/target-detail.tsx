@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { formatMetricValue } from "@/lib/metric-format"
 import { cn } from "@/lib/utils"
 import { type createLineChart, disposeChart, updateLineChart } from "@/lib/vchart"
@@ -79,12 +79,12 @@ export default memo(({ id }: TargetDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetData = await pb.send<TargetRecord>(`/api/v1/targets/${id}`, {})
+			const targetData = await api.send<TargetRecord>(`/api/v1/targets/${id}`, {})
 			setTarget(targetData)
 			if (targetData.kind === "network") {
 				// The device page is the canonical view for network targets;
 				// this page only remains for network targets not yet discovered.
-				const devices = await pb.send<{
+				const devices = await api.send<{
 					items?: { ID?: string; id?: string; TargetID?: string; target_id?: string }[]
 				}>("/api/v1/network/devices", {})
 				const device = (devices.items ?? []).find((item) => (item.TargetID ?? item.target_id) === id)
@@ -102,7 +102,7 @@ export default memo(({ id }: TargetDetailProps) => {
 				})
 				const responses = await Promise.all(
 					networkCharts.map((chart) =>
-						pb.send<VMRangeResponse>(`/api/v1/metrics/aggregate?${params.toString()}&metric=${chart.name}`, {})
+						api.send<VMRangeResponse>(`/api/v1/metrics/aggregate?${params.toString()}&metric=${chart.name}`, {})
 					)
 				)
 				setSeries(
@@ -121,7 +121,7 @@ export default memo(({ id }: TargetDetailProps) => {
 				})
 				const responses = await Promise.all(
 					targetCharts.map((chart) =>
-						pb.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}&metric=${chart.name}`, {})
+						api.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}&metric=${chart.name}`, {})
 					)
 				)
 				setSeries(
@@ -142,7 +142,7 @@ export default memo(({ id }: TargetDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await pb.send<{ impacts?: DeleteImpact[] }>(`/api/v1/targets/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: DeleteImpact[] }>(`/api/v1/targets/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			// Preview is advisory; deletion still confirms with an empty list.
@@ -158,11 +158,11 @@ export default memo(({ id }: TargetDetailProps) => {
 		try {
 			// Deletion is asynchronous: the API answers 202 with a job id and a
 			// worker performs the cascade. Poll the job until it finishes.
-			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/targets/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/targets/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
-					const job = await pb.send<{ status?: string; last_error_detail?: string }>(
+					const job = await api.send<{ status?: string; last_error_detail?: string }>(
 						`/api/v1/operation-jobs/${jobID}`,
 						{}
 					)

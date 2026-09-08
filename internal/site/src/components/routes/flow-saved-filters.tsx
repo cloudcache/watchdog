@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import {
 	formatFlowFilter,
 	parseFlowFilter,
@@ -100,7 +100,7 @@ export default memo(function FlowSavedFilters() {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<FlowSavedFilterList>("/api/v1/flow/filters", {
+			const data = await api.send<FlowSavedFilterList>("/api/v1/flow/filters", {
 				query: {
 					q: debouncedSearch || undefined,
 					scope: scope || undefined,
@@ -156,7 +156,7 @@ export default memo(function FlowSavedFilters() {
 		try {
 			const filter = parseFlowFilter(form.expression)
 			if (!filter) throw new Error(t`Filter expression is required`)
-			const saved = await pb.send<FlowSavedFilter>(form.id ? `/api/v1/flow/filters/${form.id}` : "/api/v1/flow/filters", {
+			const saved = await api.send<FlowSavedFilter>(form.id ? `/api/v1/flow/filters/${form.id}` : "/api/v1/flow/filters", {
 				method: form.id ? "PATCH" : "POST",
 				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
 				body: {
@@ -180,7 +180,7 @@ export default memo(function FlowSavedFilters() {
 			if (!item.can_edit || !confirm(t`Delete this saved filter?`)) return
 			setError("")
 			try {
-				await pb.send(`/api/v1/flow/filters/${item.id}`, {
+				await api.send(`/api/v1/flow/filters/${item.id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${item.row_version}"` },
 				})
@@ -258,7 +258,7 @@ export default memo(function FlowSavedFilters() {
 						{ value: "tenant", label: t`Tenant shared` },
 					]
 				}
-				const data = await pb.send<OwnerFacetResponse>("/api/v1/flow/filters/facets/owners", {
+				const data = await api.send<OwnerFacetResponse>("/api/v1/flow/filters/facets/owners", {
 					query: { q: facetSearch || undefined, limit: 100 },
 					signal,
 				})

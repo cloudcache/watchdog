@@ -17,7 +17,7 @@ import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
 import { memo, type RefObject, useEffect, useRef, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { ContainerRecord } from "@/types"
 import { containerChartCols } from "@/components/containers-table/containers-table-columns"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -64,12 +64,11 @@ export default function ContainersTable({ systemId }: { systemId?: string }) {
 
 	useEffect(() => {
 		function fetchData(systemId?: string) {
-			pb.collection<ContainerRecord>("containers")
-				.getList(0, 2000, {
-					fields: "id,name,image,ports,cpu,memory,net,health,status,system,updated",
-					filter: systemId ? pb.filter("system={:system}", { system: systemId }) : undefined,
+			api
+				.send<{ items?: ContainerRecord[] }>("/api/v1/containers", {
+					query: { system_id: systemId, limit: 2000 },
 				})
-				.then(({ items }) => {
+				.then(({ items = [] }) => {
 					if (items.length === 0) {
 						setData((curItems) => {
 							if (systemId) {
@@ -97,6 +96,7 @@ export default function ContainersTable({ systemId }: { systemId?: string }) {
 						return newItems
 					})
 				})
+				.catch(() => setData([]))
 		}
 
 		// initial load
@@ -276,7 +276,7 @@ async function getLogsHtml(container: ContainerRecord): Promise<string> {
 	try {
 		const [{ highlighter }, logsHtml] = await Promise.all([
 			import("@/lib/shiki"),
-			pb.send<{ logs: string }>("/api/watchdog/containers/logs", {
+			api.send<{ logs: string }>("/api/v1/containers/logs", {
 				system: container.system,
 				container: container.id,
 			}),
@@ -292,7 +292,7 @@ async function getInfoHtml(container: ContainerRecord): Promise<string> {
 	try {
 		let [{ highlighter }, { info }] = await Promise.all([
 			import("@/lib/shiki"),
-			pb.send<{ info: string }>("/api/watchdog/containers/info", {
+			api.send<{ info: string }>("/api/v1/containers/info", {
 				system: container.system,
 				container: container.id,
 			}),
@@ -406,7 +406,7 @@ function ContainerSheet({
 							{ContainerHealthLabels[container.health as ContainerHealth]} */}
 						</SheetDescription>
 					</SheetHeader>
-					<div className="px-3 pb-3 -mt-4 flex flex-col gap-3 h-full items-start">
+					<div className="px-3 api-3 -mt-4 flex flex-col gap-3 h-full items-start">
 						<div className="flex items-center w-full">
 							<h3>{t`Logs`}</h3>
 							<Button

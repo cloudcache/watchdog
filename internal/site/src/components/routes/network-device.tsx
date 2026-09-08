@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import {
 	trafficViewLabel,
@@ -265,14 +265,14 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setError("")
 		try {
 			const [deviceData, portsData, bgpData, sensorData, targetsData, dashboardData] = await Promise.all([
-				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
-				pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
-				pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
-				pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
+				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				api.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
+				api.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
+				api.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
 					() => ({ items: [], counts: { total: 0, problems: 0 } })
 				),
-				pb.send<TargetsResponse>("/api/v1/targets", {}),
-				pb.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
+				api.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
 			])
 			setDevice(deviceData)
 			const targetID = deviceData.TargetID ?? deviceData.target_id ?? ""
@@ -349,7 +349,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setError("")
 		try {
 			const graphID = createAggregateGraphID()
-			await pb.send(`/api/v1/aggregate-graphs`, {
+			await api.send(`/api/v1/aggregate-graphs`, {
 				method: "POST",
 				body: {
 					id: graphID,
@@ -360,7 +360,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					Description: `Created from ${trafficViewLabel(trafficView)} view for device ${title} (${effectivePortIDs.length} ports)`,
 				},
 			})
-			await pb.send(`/api/v1/aggregate-graphs/${graphID}/items`, {
+			await api.send(`/api/v1/aggregate-graphs/${graphID}/items`, {
 				method: "PUT",
 				body: {
 					items: [
@@ -369,7 +369,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					],
 				},
 			})
-			await pb.send(`/api/v1/aggregate-graphs/${graphID}/ports`, {
+			await api.send(`/api/v1/aggregate-graphs/${graphID}/ports`, {
 				method: "PUT",
 				body: { ports: effectivePortIDs.map((portID) => ({ PortID: portID })) },
 			})
@@ -382,7 +382,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await pb.send<{ impacts?: DeviceDeleteImpact[] }>(`/api/v1/network/devices/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: DeviceDeleteImpact[] }>(`/api/v1/network/devices/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			setDeleteImpacts([])
@@ -395,11 +395,11 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/network/devices/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/network/devices/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
-					const job = await pb.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					const job = await api.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
 					if (job.status === "succeeded") {
 						break
 					}
@@ -420,7 +420,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setRediscovering(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/network/devices/${id}/snmp/discover`, { method: "POST" })
+			await api.send(`/api/v1/network/devices/${id}/snmp/discover`, { method: "POST" })
 			await refresh()
 			await refreshPortTraffic()
 		} catch (err) {
@@ -951,7 +951,7 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${deviceId}/sensors`, {
+			const data = await api.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${deviceId}/sensors`, {
 				query: {
 					q: query || undefined,
 					health: health === "all" ? undefined : health,
@@ -1127,7 +1127,7 @@ function DevicePortsTable({
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<NetworkPortsResponse>(`/api/v1/network/devices/${deviceId}/ports`, {
+			const data = await api.send<NetworkPortsResponse>(`/api/v1/network/devices/${deviceId}/ports`, {
 				query: {
 					q: query || undefined,
 					admin_status: adminStatus === "all" ? undefined : adminStatus,
@@ -1337,7 +1337,7 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<BGPSessionsResponse>(`/api/v1/network/devices/${deviceId}/bgp`, {
+			const data = await api.send<BGPSessionsResponse>(`/api/v1/network/devices/${deviceId}/bgp`, {
 				query: {
 					q: query || undefined,
 					state: state === "all" ? undefined : state,
@@ -1779,7 +1779,7 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<{ items?: DeviceVLAN[]; total?: number }>(
+			const data = await api.send<{ items?: DeviceVLAN[]; total?: number }>(
 				`/api/v1/network/devices/${deviceId}/vlans`,
 				{
 					query: {
@@ -1935,7 +1935,7 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<{ items?: DeviceLAGGroup[]; total?: number }>(
+			const data = await api.send<{ items?: DeviceLAGGroup[]; total?: number }>(
 				`/api/v1/network/devices/${deviceId}/lags`,
 				{
 					query: {
@@ -2125,7 +2125,7 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 					: selected
 				if (values.length > 0) params.set(`filter.${field}`, values.join(","))
 			}
-			const data = await pb.send<{ items?: SNMPEventEntry[]; total?: number }>(
+			const data = await api.send<{ items?: SNMPEventEntry[]; total?: number }>(
 				`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
 				{}
 			)
@@ -2203,7 +2203,7 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 					: selected
 				if (values.length > 0) params.set(`filter.${filterField}`, values.join(","))
 			}
-			const data = await pb.send<{ items?: { value: string; count: number }[] }>(
+			const data = await api.send<{ items?: { value: string; count: number }[] }>(
 				`/api/v1/network/devices/${deviceId}/events/facets?${params.toString()}`,
 				{ signal }
 			)
@@ -2292,7 +2292,7 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 			if (query) params.set("q", query)
 			if (classQuery) params.set("class", classQuery)
 			if (fru !== "all") params.set("fru", fru)
-			const data = await pb.send<{ items?: PhysicalEntity[]; total?: number }>(
+			const data = await api.send<{ items?: PhysicalEntity[]; total?: number }>(
 				`/api/v1/network/devices/${deviceId}/inventory?${params}`,
 				{}
 			)
@@ -2440,7 +2440,7 @@ function DeviceSavedGraphs({ deviceId }: { deviceId: string }) {
 
 	useEffect(() => {
 		let cancelled = false
-		pb.send<{ items?: { ID?: string; Name?: string; Devices?: { ID?: string }[] }[] }>("/api/v1/aggregate-graphs", {})
+		api.send<{ items?: { ID?: string; Name?: string; Devices?: { ID?: string }[] }[] }>("/api/v1/aggregate-graphs", {})
 			.then((data) => {
 				if (!cancelled) {
 					setGraphs((data.items ?? []).filter((graph) => (graph.Devices ?? []).some((d) => d.ID === deviceId)))
@@ -2516,7 +2516,7 @@ function denseCellStyle() {
 async function queryMetric(baseParams: URLSearchParams, metric: string) {
 	const params = new URLSearchParams(baseParams)
 	params.set("metric", metric)
-	return await pb.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}`, {})
+	return await api.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}`, {})
 }
 
 function latestPortValues(response: VMRangeResponse) {

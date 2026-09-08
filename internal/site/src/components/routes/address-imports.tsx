@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressImport = {
 	id: string
@@ -85,7 +85,7 @@ export default memo(function AddressImports() {
 		await Promise.all(
 			importSlots.map(async (slot) => {
 				try {
-					next[slot] = await pb.send<AddressImportSlot>(`/api/v1/address-import-slots/${slot}`, {})
+					next[slot] = await api.send<AddressImportSlot>(`/api/v1/address-import-slots/${slot}`, {})
 				} catch {
 					// A slot has no active generation until its first successful activation.
 				}
@@ -100,7 +100,7 @@ export default memo(function AddressImports() {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ListResponse<AddressImport>>("/api/v1/address-imports", {
+			const data = await api.send<ListResponse<AddressImport>>("/api/v1/address-imports", {
 				query: {
 					q: debouncedSearch || undefined,
 					source_slot: sourceSlot || undefined,
@@ -142,7 +142,7 @@ export default memo(function AddressImports() {
 			body.append("file", upload.file)
 			body.append("source_slot", upload.sourceSlot)
 			body.append("language", upload.language.trim())
-			const response = await pb.send<UploadResponse>("/api/v1/address-imports", { method: "POST", body })
+			const response = await api.send<UploadResponse>("/api/v1/address-imports", { method: "POST", body })
 			setSelected(response.import)
 			setShowUpload(false)
 			setUpload({ file: null, sourceSlot: "geo", language: "en" })
@@ -162,7 +162,7 @@ export default memo(function AddressImports() {
 			if (!confirm(t`Activate this immutable generation for its source slot?`)) return
 			setError("")
 			try {
-				await pb.send(`/api/v1/address-imports/${item.id}/actions/activate`, {
+				await api.send(`/api/v1/address-imports/${item.id}/actions/activate`, {
 					method: "POST",
 					headers: { "If-Match": `"${current?.row_version ?? 0}"` },
 				})
@@ -412,7 +412,7 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 			const parsedASN = asn.trim() ? Number(asn) : undefined
 			if (parsedASN !== undefined && (!Number.isInteger(parsedASN) || parsedASN <= 0))
 				throw new Error(t`ASN must be a positive integer`)
-			const data = await pb.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/prefixes`, {
+			const data = await api.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/prefixes`, {
 				query: {
 					q: debouncedSearch || undefined,
 					family: family || undefined,
@@ -448,7 +448,7 @@ function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/lookup`, {
+			const data = await api.send<ListResponse<ImportedPrefix>>(`/api/v1/address-imports/${item.id}/lookup`, {
 				query: { ip: lookupIP.trim(), limit: 100 },
 			})
 			if (sequence !== requestSequence.current) return

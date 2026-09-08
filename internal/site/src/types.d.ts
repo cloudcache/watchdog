@@ -1,18 +1,23 @@
-import type { RecordModel } from "pocketbase"
 import type { Unit, Os, BatteryState, HourFormat, ConnectionType, ServiceStatus, ServiceSubState } from "@/lib/enums"
+
+interface APIRecord {
+	id: string
+	created?: string
+	updated?: string
+}
 
 // global window properties
 declare global {
 	var WATCHDOG: {
 		BASE_PATH: string
-		HUB_VERSION: string
+		VERSION: string
 		API_URL: string
 		OAUTH_DISABLE_POPUP: boolean
 	}
 	var WATCHDOG_CONFIG: Partial<typeof WATCHDOG>
 }
 
-export interface FingerprintRecord extends RecordModel {
+export interface FingerprintRecord extends APIRecord {
 	id: string
 	system: string
 	fingerprint: string
@@ -24,7 +29,7 @@ export interface FingerprintRecord extends RecordModel {
 	}
 }
 
-export interface SystemRecord extends RecordModel {
+export interface SystemRecord extends APIRecord {
 	name: string
 	host: string
 	status: "up" | "down" | "paused" | "pending"
@@ -198,7 +203,7 @@ export interface ExtraFsStats {
 	diosm?: [number, number, number, number, number, number]
 }
 
-export interface ContainerStatsRecord extends RecordModel {
+export interface ContainerStatsRecord extends APIRecord {
 	system: string
 	stats: ContainerStats[]
 	created: string | number
@@ -219,13 +224,13 @@ interface ContainerStats {
 	b?: [number, number]
 }
 
-export interface SystemStatsRecord extends RecordModel {
+export interface SystemStatsRecord extends APIRecord {
 	system: string
 	stats: SystemStats
 	created: string | number
 }
 
-export interface AlertRecord extends RecordModel {
+export interface AlertRecord extends APIRecord {
 	id: string
 	system: string
 	name: string
@@ -235,7 +240,7 @@ export interface AlertRecord extends RecordModel {
 	// user: string
 }
 
-export interface AlertsHistoryRecord extends RecordModel {
+export interface AlertsHistoryRecord extends APIRecord {
 	alert_id: string
 	system: string
 	name: string
@@ -250,7 +255,7 @@ export interface AlertsHistoryRecord extends RecordModel {
 	}
 }
 
-export interface ContainerRecord extends RecordModel {
+export interface ContainerRecord extends APIRecord {
 	id: string
 	system: string
 	name: string
@@ -389,7 +394,7 @@ export interface SmartAttribute {
 	wf?: string
 }
 
-export interface SystemDetailsRecord extends RecordModel {
+export interface SystemDetailsRecord extends APIRecord {
 	system: string
 	hostname: string
 	kernel: string
@@ -402,7 +407,7 @@ export interface SystemDetailsRecord extends RecordModel {
 	podman: boolean
 }
 
-export interface SmartDeviceRecord extends RecordModel {
+export interface SmartDeviceRecord extends APIRecord {
 	id: string
 	system: string
 	name: string
@@ -419,7 +424,7 @@ export interface SmartDeviceRecord extends RecordModel {
 	updated: string
 }
 
-export interface SystemdRecord extends RecordModel {
+export interface SystemdRecord extends APIRecord {
 	system: string
 	name: string
 	state: ServiceStatus

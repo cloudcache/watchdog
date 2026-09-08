@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type SNMPProfile = {
@@ -64,7 +64,7 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const profile = await pb.send<SNMPProfile>(`/api/v1/snmp/profiles/${id}`, {
+			const profile = await api.send<SNMPProfile>(`/api/v1/snmp/profiles/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -104,7 +104,7 @@ export default memo(({ id }: SNMPProfileFormProps) => {
 				Timeout: Number(form.timeoutSeconds) * 1_000_000_000,
 				Retries: Number(form.retries),
 			}
-			const saved = await pb.send<SNMPProfile>(id ? `/api/v1/snmp/profiles/${id}` : "/api/v1/snmp/profiles", {
+			const saved = await api.send<SNMPProfile>(id ? `/api/v1/snmp/profiles/${id}` : "/api/v1/snmp/profiles", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,

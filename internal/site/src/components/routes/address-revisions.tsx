@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Textarea } from "@/components/ui/textarea"
 import { buildAddressPrefixRevisionOperations, type AddressPrefixRevisionForm } from "@/lib/address-revision-form"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressPrefix = {
 	id: string
@@ -126,7 +126,7 @@ export default memo(function AddressRevisions() {
 		setLoadingPrefixes(true)
 		setError("")
 		try {
-			const data = await pb.send<PrefixList>("/api/v1/address-prefixes", {
+			const data = await api.send<PrefixList>("/api/v1/address-prefixes", {
 				query: {
 					q: debouncedSearch || undefined,
 					family: family || undefined,
@@ -155,7 +155,7 @@ export default memo(function AddressRevisions() {
 		setLoadingRevisions(true)
 		setError("")
 		try {
-			const data = await pb.send<RevisionList>("/api/v1/address-draft-revisions", {
+			const data = await api.send<RevisionList>("/api/v1/address-draft-revisions", {
 				query: {
 					q: debouncedRevisionSearch || undefined,
 					status: status || undefined,
@@ -189,7 +189,7 @@ export default memo(function AddressRevisions() {
 		setLoadingChanges(true)
 		setError("")
 		try {
-			const data = await pb.send<RevisionChangeList>(`/api/v1/address-draft-revisions/${revision.id}/changes`, {
+			const data = await api.send<RevisionChangeList>(`/api/v1/address-draft-revisions/${revision.id}/changes`, {
 				query: {
 					q: debouncedChangeSearch || undefined,
 					action: changeAction || undefined,
@@ -253,7 +253,7 @@ export default memo(function AddressRevisions() {
 			const operations = buildAddressPrefixRevisionOperations(Object.values(selected), form)
 			if (!operations.length) throw new Error(t`Select old prefixes or enter new prefixes first`)
 			let etag = ""
-			const item = await pb.send<AddressDraftRevision>("/api/v1/address-draft-revisions/preview", {
+			const item = await api.send<AddressDraftRevision>("/api/v1/address-draft-revisions/preview", {
 				method: "POST",
 				body: { operations },
 				onResponse: (response) => {
@@ -287,7 +287,7 @@ export default memo(function AddressRevisions() {
 		setError("")
 		try {
 			let etag = ""
-			const applied = await pb.send<AddressDraftRevision>(`/api/v1/address-draft-revisions/${revision.id}/apply`, {
+			const applied = await api.send<AddressDraftRevision>(`/api/v1/address-draft-revisions/${revision.id}/apply`, {
 				method: "POST",
 				headers: { "If-Match": revisionETag },
 				onResponse: (response) => {
@@ -315,7 +315,7 @@ export default memo(function AddressRevisions() {
 			setError("")
 			try {
 				let etag = ""
-				const item = await pb.send<AddressDraftRevision>(`/api/v1/address-draft-revisions/${id}`, {
+				const item = await api.send<AddressDraftRevision>(`/api/v1/address-draft-revisions/${id}`, {
 					onResponse: (response) => {
 						etag = response.headers.get("ETag") ?? ""
 					},

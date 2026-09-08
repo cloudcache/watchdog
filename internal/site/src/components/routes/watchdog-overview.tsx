@@ -12,7 +12,7 @@ import {
 import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link } from "@/components/router"
 import { buttonVariants } from "@/components/ui/button"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type ListResponse = {
@@ -158,7 +158,7 @@ export default memo(() => {
 })
 
 async function countItems(path: string) {
-	const data = await pb.send<ListResponse>(path, {})
+	const data = await api.send<ListResponse>(path, {})
 	return data.items?.length ?? 0
 }
 

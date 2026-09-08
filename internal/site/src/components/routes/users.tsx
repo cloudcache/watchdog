@@ -8,7 +8,7 @@ import {
 	UserRoundXIcon,
 	UsersIcon,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -23,29 +23,29 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 
 type UserRecord = {
-	ID: string
-	Email: string
-	Name: string
-	Status: string
-	AuthProvider: string
-	ExternalSubjectID: string
+	id: string
+	username: string
+	email: string
+	display_name: string
+	status: string
+	roles: string[]
 }
 
 type RoleRecord = {
-	ID: string
-	Name: string
-	Scope: string
+	id: string
+	name: string
+	title: string
+	protected: boolean
 }
 
 export default memo(() => {
 	const { t } = useLingui()
 	const [users, setUsers] = useState<UserRecord[]>([])
 	const [roles, setRoles] = useState<RoleRecord[]>([])
-	const [rolesByUser, setRolesByUser] = useState<Record<string, string[]>>({})
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 	const [editing, setEditing] = useState<UserRecord | null>(null)
@@ -57,21 +57,11 @@ export default memo(() => {
 		setError("")
 		try {
 			const [userData, roleData] = await Promise.all([
-				pb.send<{ items?: UserRecord[] }>("/api/v1/users", {}),
-				pb.send<{ items?: RoleRecord[] }>("/api/v1/roles", {}),
+				api.send<{ items?: UserRecord[] }>("/api/v1/users", {}),
+				api.send<{ items?: RoleRecord[] }>("/api/v1/roles", {}),
 			])
-			const nextUsers = userData.items ?? []
-			setUsers(nextUsers)
+			setUsers(userData.items ?? [])
 			setRoles(roleData.items ?? [])
-			const memberships = await Promise.all(
-				nextUsers.map(async (user) => {
-					const data = await pb
-						.send<{ items?: string[] }>(`/api/v1/users/${user.ID}/roles`, {})
-						.catch(() => ({ items: [] as string[] }))
-					return [user.ID, data.items ?? []] as const
-				})
-			)
-			setRolesByUser(Object.fromEntries(memberships))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load users`)
 		} finally {
@@ -90,7 +80,7 @@ export default memo(() => {
 				return
 			}
 			try {
-				await pb.send(`/api/v1/users/${user.ID}`, { method: "DELETE" })
+				await api.send(`/api/v1/users/${user.id}`, { method: "PATCH", body: { status: "disabled" } })
 				toast({ title: t`User disabled` })
 				refresh()
 			} catch (err) {
@@ -106,7 +96,7 @@ export default memo(() => {
 			return
 		}
 		try {
-			await pb.send("/api/v1/roles", { method: "POST", body: { name } })
+			await api.send("/api/v1/roles", { method: "POST", body: { name } })
 			setNewRoleName("")
 			refresh()
 		} catch (err) {
@@ -120,7 +110,7 @@ export default memo(() => {
 				return
 			}
 			try {
-				await pb.send(`/api/v1/roles/${role.ID}`, { method: "DELETE" })
+				await api.send(`/api/v1/roles/${role.id}`, { method: "DELETE" })
 				refresh()
 			} catch (err) {
 				toast({ title: err instanceof Error ? err.message : t`Request failed`, variant: "destructive" })
@@ -128,8 +118,6 @@ export default memo(() => {
 		},
 		[refresh, t]
 	)
-
-	const roleName = (roleID: string) => roles.find((role) => role.ID === roleID)?.Name ?? roleID
 
 	return (
 		<div className="grid gap-4">
@@ -171,7 +159,7 @@ export default memo(() => {
 									<Trans>Roles</Trans>
 								</TableHead>
 								<TableHead>
-									<Trans>Identity</Trans>
+									<Trans>Username</Trans>
 								</TableHead>
 								<TableHead className="w-24" />
 							</TableRow>
@@ -185,28 +173,26 @@ export default memo(() => {
 								</TableRow>
 							) : null}
 							{users.map((user) => (
-								<TableRow key={user.ID}>
-									<TableCell className="font-medium">{user.Email}</TableCell>
-									<TableCell>{user.Name || "—"}</TableCell>
+								<TableRow key={user.id}>
+									<TableCell className="font-medium">{user.email}</TableCell>
+									<TableCell>{user.display_name || "—"}</TableCell>
 									<TableCell>
-										<Badge variant={user.Status === "active" ? "success" : "secondary"}>{user.Status}</Badge>
+										<Badge variant={user.status === "active" ? "success" : "secondary"}>{user.status}</Badge>
 									</TableCell>
 									<TableCell>
 										<div className="flex flex-wrap gap-1">
-											{(rolesByUser[user.ID] ?? []).length === 0 ? (
+											{user.roles.length === 0 ? (
 												<span className="text-muted-foreground">—</span>
 											) : (
-												(rolesByUser[user.ID] ?? []).map((roleID) => (
-													<Badge key={roleID} variant="outline" className="font-normal">
-														{roleName(roleID)}
+												user.roles.map((roleName) => (
+													<Badge key={roleName} variant="outline" className="font-normal">
+														{roleName}
 													</Badge>
 												))
 											)}
 										</div>
 									</TableCell>
-									<TableCell className="text-xs text-muted-foreground">
-										{user.AuthProvider ? `${user.AuthProvider}:${user.ExternalSubjectID}` : t`Not linked`}
-									</TableCell>
+									<TableCell className="text-xs text-muted-foreground">{user.username}</TableCell>
 									<TableCell>
 										<div className="flex items-center gap-1">
 											<Button variant="ghost" size="icon" aria-label={t`Edit user`} onClick={() => setEditing(user)}>
@@ -216,7 +202,7 @@ export default memo(() => {
 												variant="ghost"
 												size="icon"
 												aria-label={t`Disable user`}
-												disabled={user.Status !== "active"}
+												disabled={user.status !== "active"}
 												onClick={() => disableUser(user)}
 											>
 												<UserRoundXIcon className="h-4 w-4" />
@@ -252,16 +238,22 @@ export default memo(() => {
 							</div>
 						) : null}
 						{roles.map((role) => (
-							<div key={role.ID} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/60">
-								<span className="text-sm">{role.Name}</span>
-								<Button variant="ghost" size="icon" aria-label={t`Delete role`} onClick={() => deleteRole(role)}>
+							<div key={role.id} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/60">
+								<span className="text-sm">{role.title || role.name}</span>
+								<Button
+									variant="ghost"
+									size="icon"
+									aria-label={t`Delete role`}
+									disabled={role.protected}
+									onClick={() => deleteRole(role)}
+								>
 									<Trash2Icon className="h-4 w-4" />
 								</Button>
 							</div>
 						))}
 					</div>
 					<div className="text-xs text-muted-foreground">
-						<Trans>A role named "admin" grants tenant administration.</Trans>
+						<Trans>Built-in roles cannot be deleted.</Trans>
 					</div>
 				</div>
 			</div>
@@ -283,7 +275,7 @@ export default memo(() => {
 					title={t`Edit User`}
 					user={editing}
 					roles={roles}
-					initialRoles={rolesByUser[editing.ID] ?? []}
+					initialRoles={editing.roles}
 					onClose={() => setEditing(null)}
 					onSaved={() => {
 						setEditing(null)
@@ -311,50 +303,38 @@ function UserDialog({
 	onSaved: () => void
 }) {
 	const { t } = useLingui()
-	const [email, setEmail] = useState(user?.Email ?? "")
-	const [name, setName] = useState(user?.Name ?? "")
-	const [status, setStatus] = useState(user?.Status ?? "active")
-	const [authProvider, setAuthProvider] = useState(user?.AuthProvider ?? "")
-	const [externalSubject, setExternalSubject] = useState(user?.ExternalSubjectID ?? "")
+	const [username, setUsername] = useState(user?.username ?? "")
+	const [email, setEmail] = useState(user?.email ?? "")
+	const [name, setName] = useState(user?.display_name ?? "")
+	const [password, setPassword] = useState("")
+	const [status, setStatus] = useState(user?.status ?? "active")
 	const [selectedRoles, setSelectedRoles] = useState<string[]>(initialRoles)
 	const [saving, setSaving] = useState(false)
-
-	// The user list has no per-row ETag, so fetch the single user when the edit
-	// dialog opens to capture its weak ETag; it is echoed as If-Match on save so
-	// a concurrent edit is rejected (412) instead of silently overwritten.
-	const etagRef = useRef("")
-	useEffect(() => {
-		if (!user?.ID) return
-		pb.send<UserRecord>(`/api/v1/users/${user.ID}`, {
-			onResponse: (response) => {
-				etagRef.current = response.headers.get("ETag") ?? ""
-			},
-		}).catch(() => {})
-	}, [user?.ID])
 
 	const save = async () => {
 		setSaving(true)
 		try {
-			const body = {
-				email: email.trim(),
-				name: name.trim(),
-				status,
-				auth_provider: authProvider.trim(),
-				external_subject_id: externalSubject.trim(),
-			}
-			let userID = user?.ID
 			if (user) {
-				await pb.send(`/api/v1/users/${user.ID}`, {
+				await api.send(`/api/v1/users/${user.id}`, {
 					method: "PATCH",
-					headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
-					body,
+					body: {
+						email: email.trim(),
+						display_name: name.trim(),
+						status,
+						roles: selectedRoles,
+					},
 				})
 			} else {
-				const created = await pb.send<UserRecord>("/api/v1/users", { method: "POST", body })
-				userID = created.ID
-			}
-			if (userID) {
-				await pb.send(`/api/v1/users/${userID}/roles`, { method: "PUT", body: { role_ids: selectedRoles } })
+				await api.send("/api/v1/users", {
+					method: "POST",
+					body: {
+						username: username.trim(),
+						email: email.trim(),
+						display_name: name.trim(),
+						password,
+						roles: selectedRoles,
+					},
+				})
 			}
 			toast({ title: t`Saved` })
 			onSaved()
@@ -371,28 +351,59 @@ function UserDialog({
 				<DialogHeader>
 					<DialogTitle>{title}</DialogTitle>
 					<DialogDescription>
-						<Trans>Credentials live in the identity provider; this manages the authorization projection.</Trans>
+						<Trans>Manage the local account and its roles.</Trans>
 					</DialogDescription>
 				</DialogHeader>
 				<div className="grid gap-3">
-					<label className="grid gap-1.5 text-sm">
+					<label htmlFor="user-username" className="grid gap-1.5 text-sm">
+						<span className="text-muted-foreground">
+							<Trans>Username</Trans>
+						</span>
+						<Input
+							id="user-username"
+							value={username}
+							onChange={(event) => setUsername(event.target.value)}
+							disabled={Boolean(user)}
+							autoComplete="username"
+						/>
+					</label>
+					<label htmlFor="user-email" className="grid gap-1.5 text-sm">
 						<span className="text-muted-foreground">
 							<Trans>Email</Trans>
 						</span>
-						<Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="ops@example.com" />
+						<Input
+							id="user-email"
+							value={email}
+							onChange={(event) => setEmail(event.target.value)}
+							placeholder="ops@example.com"
+						/>
 					</label>
-					<label className="grid gap-1.5 text-sm">
+					<label htmlFor="user-display-name" className="grid gap-1.5 text-sm">
 						<span className="text-muted-foreground">
 							<Trans>Name</Trans>
 						</span>
-						<Input value={name} onChange={(event) => setName(event.target.value)} />
+						<Input id="user-display-name" value={name} onChange={(event) => setName(event.target.value)} />
 					</label>
-					<label className="grid gap-1.5 text-sm">
+					{!user ? (
+						<label htmlFor="user-password" className="grid gap-1.5 text-sm">
+							<span className="text-muted-foreground">
+								<Trans>Password</Trans>
+							</span>
+							<Input
+								id="user-password"
+								type="password"
+								value={password}
+								onChange={(event) => setPassword(event.target.value)}
+								autoComplete="new-password"
+							/>
+						</label>
+					) : null}
+					<label htmlFor="user-status" className="grid gap-1.5 text-sm">
 						<span className="text-muted-foreground">
 							<Trans>Status</Trans>
 						</span>
 						<Select value={status} onValueChange={setStatus}>
-							<SelectTrigger>
+							<SelectTrigger id="user-status">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -401,24 +412,6 @@ function UserDialog({
 							</SelectContent>
 						</Select>
 					</label>
-					<div className="grid grid-cols-2 gap-2">
-						<label className="grid gap-1.5 text-sm">
-							<span className="text-muted-foreground">
-								<Trans>Auth provider</Trans>
-							</span>
-							<Input
-								value={authProvider}
-								onChange={(event) => setAuthProvider(event.target.value)}
-								placeholder="pocketbase"
-							/>
-						</label>
-						<label className="grid gap-1.5 text-sm">
-							<span className="text-muted-foreground">
-								<Trans>External subject</Trans>
-							</span>
-							<Input value={externalSubject} onChange={(event) => setExternalSubject(event.target.value)} />
-						</label>
-					</div>
 					<div className="grid gap-1.5 text-sm">
 						<span className="text-muted-foreground">
 							<Trans>Roles</Trans>
@@ -432,16 +425,18 @@ function UserDialog({
 							{roles.map((role) => (
 								<button
 									type="button"
-									key={role.ID}
+									key={role.id}
 									className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-start hover:bg-muted/60"
 									onClick={() =>
 										setSelectedRoles((current) =>
-											current.includes(role.ID) ? current.filter((id) => id !== role.ID) : [...current, role.ID]
+											current.includes(role.name)
+												? current.filter((name) => name !== role.name)
+												: [...current, role.name]
 										)
 									}
 								>
-									<Checkbox className="pointer-events-none" checked={selectedRoles.includes(role.ID)} />
-									<span>{role.Name}</span>
+									<Checkbox className="pointer-events-none" checked={selectedRoles.includes(role.name)} />
+									<span>{role.title || role.name}</span>
 								</button>
 							))}
 						</div>
@@ -451,7 +446,10 @@ function UserDialog({
 					<Button variant="outline" onClick={onClose}>
 						<Trans>Cancel</Trans>
 					</Button>
-					<Button onClick={save} disabled={saving || !email.trim()}>
+					<Button
+						onClick={save}
+						disabled={saving || !email.trim() || (!user && (!username.trim() || password.length < 8))}
+					>
 						<Trans>Save</Trans>
 					</Button>
 				</DialogFooter>

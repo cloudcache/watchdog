@@ -5,7 +5,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
@@ -77,7 +77,7 @@ export default memo(({ id }: AgentRunsProps) => {
 
 	useEffect(() => {
 		document.title = `${id} / ${t`Agent Runs`} / Watchdog`
-		pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
+		api.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
 			.then(setAgent)
 			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load agent runs`))
 	}, [id, reloadKey, t])
@@ -87,7 +87,7 @@ export default memo(({ id }: AgentRunsProps) => {
 		const [sortField, order] = sort.split(":")
 		setLoading(true)
 		setError("")
-		pb.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
+		api.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
 			query: {
 				q: debouncedSearch || undefined,
 				status: statusFilter || undefined,

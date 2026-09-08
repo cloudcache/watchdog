@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { createContext, memo, useContext, useEffect, useRef, useState } from "react"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { trafficViewQueryStep, trafficViewRateBase, type TrafficViewMode } from "@/lib/traffic-view"
 import { createLineChart, disposeChart } from "@/lib/vchart"
@@ -262,7 +262,7 @@ async function execPanelQuery(
 		}
 		url = `/api/v1/metrics/query?${params.toString()}`
 	}
-	const data = await pb.send<VMRangeResponse>(url, {})
+	const data = await api.send<VMRangeResponse>(url, {})
 	let values = vmValues(data)
 	if (query.transform?.negative) {
 		values = values.map((point) => ({ time: point.time, value: -point.value }))

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
 
@@ -150,7 +150,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<FindingsResponse>(`/api/v1/flow/vpn/findings?${buildQuery(true)}`, {})
+			const data = await api.send<FindingsResponse>(`/api/v1/flow/vpn/findings?${buildQuery(true)}`, {})
 			if (sequence !== requestSequence.current) return
 			setFindings(data.items ?? [])
 			setTotal(data.total ?? 0)
@@ -223,7 +223,7 @@ export default memo(() => {
 				if (query) params.set("search", query)
 				params.set("q", facetSearch)
 				params.set("limit", "100")
-				const data = await pb.send<FacetsResponse>(`/api/v1/flow/vpn/findings/facets?${params}`, { signal })
+				const data = await api.send<FacetsResponse>(`/api/v1/flow/vpn/findings/facets?${params}`, { signal })
 				return (data.items ?? []).map((item) => ({
 					value: item.value,
 					label: facetLabel(field, item.value, t),
@@ -288,7 +288,7 @@ export default memo(() => {
 		setSaving(true)
 		setError("")
 		try {
-			const updated = await pb.send<VPNFinding>(`/api/v1/flow/vpn/findings/${selected.id}/actions/disposition`, {
+			const updated = await api.send<VPNFinding>(`/api/v1/flow/vpn/findings/${selected.id}/actions/disposition`, {
 				method: "POST",
 				headers: { "If-Match": `"${selected.row_version}"` },
 				body: { disposition, note },
@@ -309,7 +309,7 @@ export default memo(() => {
 			const frozenFilters = Object.fromEntries(
 				Object.entries(columnFilters).map(([field, values]) => [field, values.map(String)])
 			)
-			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/vpn/findings/exports", {
+			const task = await api.send<{ ID?: string; id?: string }>("/api/v1/flow/vpn/findings/exports", {
 				method: "POST",
 				body: {
 					from: selectedRange.from.toISOString(),

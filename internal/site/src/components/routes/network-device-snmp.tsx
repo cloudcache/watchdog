@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type NetworkDevice = {
@@ -86,9 +86,9 @@ export default memo(({ id }: DeviceSNMPProps) => {
 		setMessage("")
 		try {
 			const [deviceData, profilesData, targetsData] = await Promise.all([
-				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
-				pb.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}),
-				pb.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}),
+				api.send<TargetsResponse>("/api/v1/targets", {}),
 			])
 			setDevice(deviceData)
 			const targetID = deviceData.TargetID ?? deviceData.target_id ?? ""
@@ -124,7 +124,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 			if (snmpCommunity) {
 				body.SNMPSecurity = { community: snmpCommunity }
 			}
-			const updated = await pb.send<NetworkDevice>(`/api/v1/network/devices/${id}/snmp`, {
+			const updated = await api.send<NetworkDevice>(`/api/v1/network/devices/${id}/snmp`, {
 				method: "PATCH",
 				body,
 			})
@@ -142,7 +142,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 		setDiscovering(true)
 		setMessage("")
 		try {
-			const result = await pb.send<SNMPDiscoverResponse>(`/api/v1/network/devices/${id}/snmp/discover`, {
+			const result = await api.send<SNMPDiscoverResponse>(`/api/v1/network/devices/${id}/snmp/discover`, {
 				method: "POST",
 			})
 			setMessage(t`Discovered ${result.count ?? result.ports?.length ?? 0} interfaces`)

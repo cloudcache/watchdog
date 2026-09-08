@@ -37,7 +37,7 @@ export const ActiveAlerts = () => {
 		}
 		return (
 			<Card>
-				<CardHeader className="pb-4 px-2 sm:px-6 max-sm:pt-5 max-sm:pb-1">
+				<CardHeader className="api-4 px-2 sm:px-6 max-sm:pt-5 max-sm:api-1">
 					<div className="px-2 sm:px-1">
 						<CardTitle>
 							<Trans>Active Alerts</Trans>

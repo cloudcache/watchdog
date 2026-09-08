@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type MetricDefinition = {
@@ -128,8 +128,8 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 
 	const loadCatalog = useCallback(async () => {
 		const [metricData, deviceData] = await Promise.all([
-			pb.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
-			pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+			api.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
+			api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
 		])
 		setMetrics(metricData.items ?? [])
 		setDevices(deviceData.items ?? [])
@@ -143,7 +143,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				if (!deviceID) {
 					return [deviceID, []] as const
 				}
-				const data = await pb.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceID}/ports`, {})
+				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceID}/ports`, {})
 				return [deviceID, data.items ?? []] as const
 			})
 		)
@@ -167,13 +167,13 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				await loadAllPorts(deviceList)
 				if (id) {
 					const [graph, portLinks, itemLinks] = await Promise.all([
-						pb.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {
+						api.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {
 							onResponse: (response) => {
 								etagRef.current = response.headers.get("ETag") ?? ""
 							},
 						}),
-						pb.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
-						pb.send<{ items?: AggregateGraphItem[] }>(`/api/v1/aggregate-graphs/${id}/items`, {}),
+						api.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
+						api.send<{ items?: AggregateGraphItem[] }>(`/api/v1/aggregate-graphs/${id}/items`, {}),
 					])
 					if (cancelled) return
 					setForm({
@@ -274,15 +274,15 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				Description: form.description.trim(),
 			}
 			if (isEditing) {
-				await pb.send(`/api/v1/aggregate-graphs/${id}`, {
+				await api.send(`/api/v1/aggregate-graphs/${id}`, {
 					method: "PATCH",
 					headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
 					body,
 				})
 			} else {
-				await pb.send(`/api/v1/aggregate-graphs`, { method: "POST", body: { ...body, id: form.id } })
+				await api.send(`/api/v1/aggregate-graphs`, { method: "POST", body: { ...body, id: form.id } })
 			}
-			await pb.send(`/api/v1/aggregate-graphs/${form.id}/items`, {
+			await api.send(`/api/v1/aggregate-graphs/${form.id}/items`, {
 				method: "PUT",
 				body: {
 					items: items
@@ -296,7 +296,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 						})),
 				},
 			})
-			await pb.send(`/api/v1/aggregate-graphs/${form.id}/ports`, {
+			await api.send(`/api/v1/aggregate-graphs/${form.id}/ports`, {
 				method: "PUT",
 				body: { ports: selectedPorts.map((portID) => ({ PortID: portID })) },
 			})

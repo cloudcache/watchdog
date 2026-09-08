@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { vendorLogoFor } from "@/lib/vendor-logos"
 import type { ColumnDefine } from "@/lib/vtable"
 type NetworkDevice = {
@@ -165,7 +165,7 @@ export default memo(() => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		pb.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery() })
+		api.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery() })
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setRecords((data.items ?? []).map(toTableRecord))

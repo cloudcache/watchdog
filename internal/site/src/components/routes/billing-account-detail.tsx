@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type BillingAccount = {
@@ -87,11 +87,11 @@ export default memo(({ id }: BillingAccountDetailProps) => {
 		setMessage("")
 		try {
 			const [accountData, bindingData, deviceData] = await Promise.all([
-				pb.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {}),
-				pb
+				api.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {}),
+				api
 					.send<{ items?: BillingAccountPort[] }>(`/api/v1/billing/accounts/${id}/ports`, {})
 					.catch(() => ({ items: [] })),
-				pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+				api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
 			])
 			setAccount(accountData)
 			setDevices(deviceData.items ?? [])
@@ -103,7 +103,7 @@ export default memo(({ id }: BillingAccountDetailProps) => {
 			const loaded = await Promise.all(
 				(deviceData.items ?? []).map(async (device) => {
 					const deviceIDValue = deviceID(device)
-					const data = await pb.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceIDValue}/ports`, {})
+					const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceIDValue}/ports`, {})
 					return [deviceIDValue, data.items ?? []] as const
 				})
 			)
@@ -124,7 +124,7 @@ export default memo(({ id }: BillingAccountDetailProps) => {
 		setSavingPorts(true)
 		setMessage("")
 		try {
-			await pb.send(`/api/v1/billing/accounts/${id}/ports`, {
+			await api.send(`/api/v1/billing/accounts/${id}/ports`, {
 				method: "PUT",
 				body: {
 					ports: Object.entries(selectedPorts).map(([portID, direction]) => ({
@@ -145,7 +145,7 @@ export default memo(({ id }: BillingAccountDetailProps) => {
 		setCreatingPeriod(true)
 		setMessage("")
 		try {
-			await pb.send(`/api/v1/billing/accounts/${id}/periods`, {
+			await api.send(`/api/v1/billing/accounts/${id}/periods`, {
 				method: "POST",
 				body: {
 					ID: period.id.trim(),

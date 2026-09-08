@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type Permission = {
 	ID?: string
@@ -36,7 +36,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<PermissionsResponse>("/api/v1/permissions", {})
+			const data = await api.send<PermissionsResponse>("/api/v1/permissions", {})
 			setPermissions(data.items ?? [])
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load permissions`)
@@ -56,7 +56,7 @@ export default memo(() => {
 		}
 		const id = permission.ID ?? permission.id ?? ""
 		try {
-			await pb.send(`/api/v1/permissions/${id}`, {
+			await api.send(`/api/v1/permissions/${id}`, {
 				method: "DELETE",
 				body: permission,
 			})

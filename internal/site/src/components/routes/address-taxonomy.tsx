@@ -10,7 +10,7 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { parseASNList, toggleListValue } from "@/lib/address-taxonomy-form"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type TaxonomyKind = "geography" | "operators" | "lines"
 
@@ -135,10 +135,10 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 	const loadReferences = useCallback(async () => {
 		try {
 			const [geography, operators, lines, sets] = await Promise.all([
-				pb.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", { query: { limit: 500 } }),
-				pb.send<ListResponse<Operator>>("/api/v1/network/operators", { query: { limit: 500 } }),
-				pb.send<ListResponse<GeoLine>>("/api/v1/geo/lines", { query: { limit: 500 } }),
-				pb.send<ListResponse<{ id: string; name: string }>>("/api/v1/address-sets", { query: { limit: 500 } }),
+				api.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", { query: { limit: 500 } }),
+				api.send<ListResponse<Operator>>("/api/v1/network/operators", { query: { limit: 500 } }),
+				api.send<ListResponse<GeoLine>>("/api/v1/geo/lines", { query: { limit: 500 } }),
+				api.send<ListResponse<{ id: string; name: string }>>("/api/v1/address-sets", { query: { limit: 500 } }),
 			])
 			setGeoOptions(geography.items ?? [])
 			setOperatorOptions(operators.items ?? [])
@@ -155,7 +155,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ListResponse<TaxonomyItem>>(endpointByKind[kind], {
+			const data = await api.send<ListResponse<TaxonomyItem>>(endpointByKind[kind], {
 				query: {
 					q: debouncedSearch || undefined,
 					kind: kind === "geography" && geoKind ? geoKind : undefined,
@@ -289,7 +289,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					enabled: form.enabled,
 				}
 			}
-			await pb.send(form.id ? `${endpointByKind[kind]}/${form.id}` : endpointByKind[kind], {
+			await api.send(form.id ? `${endpointByKind[kind]}/${form.id}` : endpointByKind[kind], {
 				method: form.id ? "PATCH" : "POST",
 				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
 				body,
@@ -307,7 +307,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 			if (!confirm(t`Delete this address taxonomy item?`)) return
 			setError("")
 			try {
-				await pb.send(`${endpointByKind[kind]}/${item.id}`, {
+				await api.send(`${endpointByKind[kind]}/${item.id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${item.row_version}"` },
 				})

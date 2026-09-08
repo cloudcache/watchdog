@@ -1,29 +1,45 @@
-import PocketBase from "pocketbase"
 import { basePath } from "@/components/router"
 import type { ChartTimes, UserSettings } from "@/types"
-import {
-	$platformIdentity,
-	type PlatformAuthContext,
-	type PlatformPermission,
-	type PlatformTenant,
-} from "./platform-auth"
+import { $platformIdentity, type PlatformAuthContext } from "./platform-auth"
 import { resolveAPIBase, responseFilename } from "./api-transport"
-import { $alerts, $allSystemsById, $allSystemsByName, $userSettings } from "./stores"
+import { $alerts, $allSystemsById, $allSystemsByName, $authenticated, $authChecked, $userSettings } from "./stores"
 import { chartTimeData } from "./utils"
 
-/** PocketBase JS Client */
-export const pb = new PocketBase(resolveAPIBase(globalThis.WATCHDOG?.API_URL, basePath))
-
-const pocketBaseSend = pb.send.bind(pb)
-
-pb.send = ((path: string, options = {}) => {
-	if (path.startsWith("/api/v1")) {
-		return sendWatchdogAPI(path, options)
-	}
-	return pocketBaseSend(path, options)
-}) as typeof pb.send
-
 const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
+
+export type SessionUser = {
+	id: string
+	username: string
+	email: string
+	display_name: string
+	status: string
+	is_admin: boolean
+	roles: string[]
+	abilities: string[]
+}
+
+export class WatchdogAPIError extends Error {
+	status: number
+	code: string
+	data: { message: string }
+
+	constructor(status: number, code: string, message: string) {
+		super(message)
+		this.name = "WatchdogAPIError"
+		this.status = status
+		this.code = code
+		this.data = { message }
+	}
+}
+
+let sessionUser: SessionUser | undefined
+
+/** Native Watchdog HTTP client. Browser authentication is an HttpOnly session
+ * cookie; there is no token cache, collection API or realtime side channel. */
+export const api = {
+	send: sendWatchdogAPI,
+	buildURL: buildAPIURL,
+}
 
 export const isAdmin = () => watchdogDevAuth || $platformIdentity.get().current?.isAdmin === true
 export const canManageAddressLibrary = () =>
@@ -39,29 +55,20 @@ export const isReadOnlyUser = () => {
 	if (identity.current.isAdmin) {
 		return false
 	}
-	return !identity.current.grants.some((grant) =>
-		grant.actions.some((action) => action === "configure" || action === "operate" || action === "admin")
+	return !sessionUser?.abilities.some((ability) =>
+		/\.(create|update|delete|manage|publish|operate|configure)$/.test(ability)
 	)
 }
 
-export function setWatchdogTenant(tenantID: string) {
-	const subject = pb.authStore.record?.id
-	if (!subject) {
-		throw new Error("Cannot select a tenant before authentication")
-	}
-	const key = `watchdog.tenant.${subject}`
-	if (tenantID.trim()) {
-		localStorage.setItem(key, tenantID.trim())
-	} else {
-		localStorage.removeItem(key)
-	}
+export function currentSessionUser() {
+	return sessionUser
 }
 
 export async function refreshWatchdogIdentity() {
 	if (watchdogDevAuth) {
 		$platformIdentity.set({
 			ready: true,
-			tenants: [{ id: "development", name: "Development", status: "active" }],
+			tenants: [],
 			current: {
 				tenantID: "development",
 				userID: "development",
@@ -71,67 +78,69 @@ export async function refreshWatchdogIdentity() {
 				canManageAddressLibrary: true,
 			},
 		})
+		$authenticated.set(true)
 		return
 	}
-	const response = await pb.send<{ items?: unknown[] }>("/api/v1/me/tenants", {})
-	const tenants = (response.items ?? []).map(normalizePlatformTenant).filter((tenant) => tenant.id)
-	let tenantID = getWatchdogTenant()
-	if (!tenants.some((tenant) => tenant.id === tenantID)) {
-		tenantID = tenants.length === 1 ? tenants[0].id : ""
-		setWatchdogTenant(tenantID)
-	}
-	if (!tenantID) {
-		$platformIdentity.set({ ready: true, tenants })
-		return
-	}
-	const current = normalizePlatformAuthContext(await pb.send<Record<string, unknown>>("/api/v1/me", {}))
-	$platformIdentity.set({ ready: true, tenants, current })
+	const user = await api.send<SessionUser>("/api/v1/session/current", {})
+	setAuthenticatedUser(user)
 }
 
-export async function selectWatchdogTenant(tenantID: string) {
-	const tenant = $platformIdentity.get().tenants.find((item) => item.id === tenantID)
-	if (!tenant) {
-		throw new Error("Tenant access denied")
+export async function restoreSession() {
+	try {
+		await refreshWatchdogIdentity()
+		return true
+	} catch (error) {
+		if (error instanceof WatchdogAPIError && error.status === 401) {
+			clearAuthenticatedUser()
+			return false
+		}
+		throw error
 	}
-	setWatchdogTenant(tenant.id)
-	await refreshWatchdogIdentity()
 }
 
-function getWatchdogTenant() {
-	const subject = pb.authStore.record?.id
-	return subject ? localStorage.getItem(`watchdog.tenant.${subject}`) || "" : ""
+export async function login(username: string, password: string) {
+	const user = await api.send<SessionUser>("/api/v1/session/login", {
+		method: "POST",
+		body: { username, password },
+	})
+	setAuthenticatedUser(user)
+	return user
 }
 
-function normalizePlatformTenant(value: unknown): PlatformTenant {
-	const tenant = value as Record<string, unknown>
+function setAuthenticatedUser(user: SessionUser) {
+	sessionUser = user
+	const current = normalizePlatformAuthContext(user)
+	$platformIdentity.set({ ready: true, tenants: [], current })
+	$authenticated.set(true)
+	$authChecked.set(true)
+}
+
+function clearAuthenticatedUser() {
+	sessionUser = undefined
+	$platformIdentity.set({ ready: true, tenants: [] })
+	$authenticated.set(false)
+	$authChecked.set(true)
+}
+
+function normalizePlatformAuthContext(user: SessionUser): PlatformAuthContext {
 	return {
-		id: String(tenant.id ?? tenant.ID ?? ""),
-		name: String(tenant.name ?? tenant.Name ?? ""),
-		status: String(tenant.status ?? tenant.Status ?? ""),
-	}
-}
-
-function normalizePlatformAuthContext(value: Record<string, unknown>): PlatformAuthContext {
-	const rawGrants = (value.grants ?? value.Grants ?? []) as Array<Record<string, unknown>>
-	return {
-		tenantID: String(value.tenant_id ?? value.TenantID ?? ""),
-		userID: String(value.user_id ?? value.UserID ?? ""),
-		roleIDs: ((value.role_ids ?? value.RoleIDs ?? []) as unknown[]).map(String),
-		grants: rawGrants.map(
-			(grant): PlatformPermission => ({
-				actions: ((grant.actions ?? grant.Actions ?? []) as unknown[]).map(String),
-			})
-		),
-		isAdmin: Boolean(value.is_admin ?? value.IsAdmin),
-		canManageAddressLibrary: Boolean(value.can_manage_address_library ?? value.CanManageAddressLibrary),
+		tenantID: "",
+		userID: user.id,
+		roleIDs: user.roles ?? [],
+		grants: [{ actions: user.abilities ?? [] }],
+		isAdmin: user.is_admin,
+		canManageAddressLibrary: user.is_admin,
 	}
 }
 
 async function sendWatchdogAPI<T>(path: string, options: WatchdogAPIOptions = {}): Promise<T> {
 	const response = await fetchWatchdogAPI(path, options)
 	if (!response.ok) {
-		const message = await readAPIErrorMessage(response)
-		throw new Error(message || `Request failed with status ${response.status}`)
+		const error = await readAPIError(response)
+		if (response.status === 401) {
+			clearAuthenticatedUser()
+		}
+		throw error
 	}
 	if (response.status === 204) {
 		return undefined as T
@@ -151,17 +160,12 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 	if (!headers.has("X-Request-ID")) {
 		headers.set("X-Request-ID", crypto.randomUUID())
 	}
-	if (!headers.has("Authorization") && pb.authStore.token) {
-		headers.set("Authorization", pb.authStore.token)
+	const method = (options.method ?? "GET").toUpperCase()
+	if (!["GET", "HEAD", "OPTIONS"].includes(method) && !headers.has("X-CSRF-Token")) {
+		const csrf = readCookie("wd_csrf")
+		if (csrf) headers.set("X-CSRF-Token", csrf)
 	}
-	const subject = pb.authStore.record?.id
-	if (!headers.has("X-Watchdog-Tenant-ID") && subject) {
-		const tenantID = localStorage.getItem(`watchdog.tenant.${subject}`)
-		if (tenantID) {
-			headers.set("X-Watchdog-Tenant-ID", tenantID)
-		}
-	}
-	const url = new URL(pb.buildURL(path))
+	const url = new URL(buildAPIURL(path))
 	for (const [key, value] of Object.entries(options.query ?? {})) {
 		if (value !== undefined) {
 			url.searchParams.set(key, String(value))
@@ -170,6 +174,7 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 	const init: RequestInit = {
 		...options,
 		headers,
+		credentials: "include",
 	}
 	delete (init as RequestInit & { query?: unknown }).query
 	delete (init as RequestInit & { onResponse?: unknown }).onResponse
@@ -177,16 +182,33 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 		headers.set("Content-Type", "application/json")
 		init.body = JSON.stringify(options.body)
 	}
+	if (typeof options.body === "string" && options.body && !headers.has("Content-Type")) {
+		headers.set("Content-Type", "application/json")
+	}
 	const response = await fetch(url, init)
 	options.onResponse?.(response)
 	return response
 }
 
+function buildAPIURL(path: string) {
+	const configured = resolveAPIBase(globalThis.WATCHDOG?.API_URL, basePath)
+	const base = configured ? new URL(configured, window.location.origin) : new URL(window.location.origin)
+	return new URL(path, `${base.protocol}//${base.host}`).toString()
+}
+
+function readCookie(name: string) {
+	const prefix = `${encodeURIComponent(name)}=`
+	for (const part of document.cookie.split(";")) {
+		const item = part.trim()
+		if (item.startsWith(prefix)) return decodeURIComponent(item.slice(prefix.length))
+	}
+	return ""
+}
+
 export async function downloadWatchdogFile(path: string) {
 	const response = await fetchWatchdogAPI(path)
 	if (!response.ok) {
-		const message = await readAPIErrorMessage(response)
-		throw new Error(message || `Download failed with status ${response.status}`)
+		throw await readAPIError(response)
 	}
 	const blobURL = URL.createObjectURL(await response.blob())
 	const link = document.createElement("a")
@@ -198,32 +220,36 @@ export async function downloadWatchdogFile(path: string) {
 	URL.revokeObjectURL(blobURL)
 }
 
-async function readAPIErrorMessage(response: Response) {
+async function readAPIError(response: Response) {
 	const text = await response.text()
-	if (!text) {
-		return ""
-	}
+	let code = "request_failed"
+	let message = text || `Request failed with status ${response.status}`
 	try {
-		const data = JSON.parse(text) as { error?: { message?: string } }
-		return data.error?.message || text
+		const data = JSON.parse(text) as { error?: { code?: string; message?: string } }
+		code = data.error?.code || code
+		message = data.error?.message || message
 	} catch {
-		return text
+		// Keep the response text for non-JSON failures.
 	}
+	return new WatchdogAPIError(response.status, code, message)
 }
 
-/** Logs the user out by clearing the auth store and unsubscribing from realtime updates. */
-export function logOut() {
+/** Log out on explicit user action; no background login/refresh is performed. */
+export async function logOut() {
+	try {
+		if ($authenticated.get()) {
+			await api.send<void>("/api/v1/session/logout", { method: "POST" })
+		}
+	} finally {
+		clearAuthenticatedUser()
+	}
 	$allSystemsByName.set({})
 	$allSystemsById.set({})
 	$alerts.set({})
 	$userSettings.set({} as UserSettings)
-	$platformIdentity.set({ ready: false, tenants: [] })
-	pb.authStore.clear()
-	pb.realtime.unsubscribe()
 }
 
-// UI display preferences live in MySQL (was part of the PocketBase
-// user_settings collection). row_version drives optimistic concurrency: it
+// UI display preferences live in MySQL. row_version drives optimistic concurrency: it
 // comes back in the GET/PUT body and is echoed as the If-Match on the next
 // write. Notification channels (emails/webhooks) now live in MySQL too and the
 // alert delivery path reads them there (see saveNotificationSettings below).
@@ -258,14 +284,14 @@ function pickUIPreferences(settings: Partial<UserSettings>): Partial<UserSetting
 export async function updateUserSettings() {
 	const merged: Partial<UserSettings> = { ...$userSettings.get() }
 	try {
-		const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {})
+		const res = await api.send<UserPreferencesResponse>("/api/v1/me/preferences", {})
 		userPreferencesRowVersion = res.row_version ?? 0
 		Object.assign(merged, pickUIPreferences(res.settings ?? {}))
 	} catch (e) {
 		console.error("get preferences", e)
 	}
 	try {
-		const channels = await pb.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {})
+		const channels = await api.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {})
 		merged.emails = channels.emails ?? []
 		merged.webhooks = channels.webhooks ?? []
 	} catch (e) {
@@ -278,7 +304,7 @@ export async function updateUserSettings() {
 export async function saveUserPreferences(newSettings: Partial<UserSettings>): Promise<UserSettings> {
 	const merged = { ...$userSettings.get(), ...newSettings }
 	const uiOnly = pickUIPreferences(merged)
-	const res = await pb.send<UserPreferencesResponse>("/api/v1/me/preferences", {
+	const res = await api.send<UserPreferencesResponse>("/api/v1/me/preferences", {
 		method: "PUT",
 		headers: userPreferencesRowVersion > 0 ? { "If-Match": `"${userPreferencesRowVersion}"` } : {},
 		body: uiOnly,
@@ -291,17 +317,15 @@ export async function saveUserPreferences(newSettings: Partial<UserSettings>): P
 /** Persist notification channels (emails/webhooks) to MySQL, where the alert
  * delivery path reads them. */
 export async function saveNotificationSettings(channels: Pick<UserSettings, "emails" | "webhooks">): Promise<void> {
-	const saved = await pb.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {
+	const saved = await api.send<{ emails?: string[]; webhooks?: string[] }>("/api/v1/me/notification-channels", {
 		method: "PUT",
 		body: { emails: channels.emails ?? [], webhooks: channels.webhooks ?? [] },
 	})
 	$userSettings.set({ ...$userSettings.get(), emails: saved.emails ?? [], webhooks: saved.webhooks ?? [] })
 }
 
-// Quiet hours live in MySQL (was the PocketBase quiet_hours collection). The
-// alert silencing path reads a user's windows there by resolving the PocketBase
-// user id to the MySQL user. `system` is the PocketBase system id the window
-// applies to; "" means it is global (all systems).
+// Quiet hours live in MySQL. `system` is the managed device id the window
+// applies to; "" means it is global (all devices).
 export interface QuietHourWindow {
 	id: string
 	system: string
@@ -323,7 +347,7 @@ function fromQuietHourAPI(w: QuietHourAPI): QuietHourWindow {
 }
 
 export async function fetchQuietHours(): Promise<QuietHourWindow[]> {
-	const res = await pb.send<{ items?: QuietHourAPI[] }>("/api/v1/me/quiet-hours", {})
+	const res = await api.send<{ items?: QuietHourAPI[] }>("/api/v1/me/quiet-hours", {})
 	return (res.items ?? []).map(fromQuietHourAPI)
 }
 
@@ -335,7 +359,7 @@ export async function saveQuietHour(input: {
 	end: string
 }): Promise<QuietHourWindow> {
 	const body = { system_id: input.system, type: input.type, start: input.start, end: input.end }
-	const saved = await pb.send<QuietHourAPI>(
+	const saved = await api.send<QuietHourAPI>(
 		input.id ? `/api/v1/me/quiet-hours/${input.id}` : "/api/v1/me/quiet-hours",
 		{ method: input.id ? "PATCH" : "POST", body }
 	)
@@ -343,12 +367,10 @@ export async function saveQuietHour(input: {
 }
 
 export async function deleteQuietHour(id: string): Promise<void> {
-	await pb.send(`/api/v1/me/quiet-hours/${id}`, { method: "DELETE" })
+	await api.send(`/api/v1/me/quiet-hours/${id}`, { method: "DELETE" })
 }
 
-// Alert history lives in MySQL (was the PocketBase alerts_history collection).
-// The PocketBase alert engine writes it on trigger/resolve; a user reads and
-// deletes only their own entries. `system` is the PocketBase system id.
+// Alert history is user-scoped. `system` is the managed device id.
 export interface AlertHistoryEntry {
 	id: string
 	alert_id: string
@@ -360,12 +382,12 @@ export interface AlertHistoryEntry {
 }
 
 export async function fetchAlertsHistory(limit = 200): Promise<AlertHistoryEntry[]> {
-	const res = await pb.send<{ items?: AlertHistoryEntry[] }>("/api/v1/me/alerts-history", { query: { limit } })
+	const res = await api.send<{ items?: AlertHistoryEntry[] }>("/api/v1/me/alerts-history", { query: { limit } })
 	return res.items ?? []
 }
 
 export async function deleteAlertHistory(id: string): Promise<void> {
-	await pb.send(`/api/v1/me/alerts-history/${id}`, { method: "DELETE" })
+	await api.send(`/api/v1/me/alerts-history/${id}`, { method: "DELETE" })
 }
 
 // A page of the target list. GET /api/v1/targets paginates opt-in (only when a
@@ -391,7 +413,7 @@ export async function fetchTargetsPage(opts: {
 	order?: "asc" | "desc"
 	offset?: number
 }): Promise<{ items: TargetListItem[]; nextCursor: string; total?: number }> {
-	const res = await pb.send<{ items?: TargetListItem[]; next_cursor?: string; total?: number }>("/api/v1/targets", {
+	const res = await api.send<{ items?: TargetListItem[]; next_cursor?: string; total?: number }>("/api/v1/targets", {
 		query: {
 			limit: opts.limit ?? 100,
 			cursor: opts.cursor || undefined,

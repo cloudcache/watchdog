@@ -70,7 +70,6 @@ const routes = {
 	traffic_matrix: "/traffic-matrix",
 	settings: `/settings/:name?`,
 	forgot_password: `/forgot-password`,
-	request_otp: `/request-otp`,
 } as const
 
 /**

@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { isReadOnlyUser, pb } from "@/lib/api"
+import { isReadOnlyUser, api } from "@/lib/api"
 import type { SmartDeviceRecord, SmartAttribute } from "@/types"
 import {
 	formatBytes,
@@ -335,15 +335,14 @@ export default function DisksTable({ systemId }: { systemId?: string }) {
 	useEffect(() => {
 		const controller = new AbortController()
 
-		pb.collection<SmartDeviceRecord>("smart_devices")
-			.getFullList({
-				filter: systemId ? pb.filter("system = {:system}", { system: systemId }) : undefined,
-				fields: SMART_DEVICE_FIELDS,
+		api
+			.send<{ items?: SmartDeviceRecord[] }>("/api/v1/smart-devices", {
+				query: { system_id: systemId, fields: SMART_DEVICE_FIELDS },
 				signal: controller.signal,
 			})
-			.then(setSmartDevices)
+			.then(({ items = [] }) => setSmartDevices(items))
 			.catch((err) => {
-				if (!err.isAbort) {
+				if (err.name !== "AbortError") {
 					setSmartDevices([])
 				}
 			})
@@ -351,59 +350,11 @@ export default function DisksTable({ systemId }: { systemId?: string }) {
 		return () => controller.abort()
 	}, [systemId])
 
-	// Subscribe to updates
-	useEffect(() => {
-		let unsubscribe: (() => void) | undefined
-		const pbOptions = systemId
-			? { fields: SMART_DEVICE_FIELDS, filter: pb.filter("system = {:system}", { system: systemId }) }
-			: { fields: SMART_DEVICE_FIELDS }
-
-		;(async () => {
-			try {
-				unsubscribe = await pb.collection("smart_devices").subscribe(
-					"*",
-					(event) => {
-						const record = event.record as SmartDeviceRecord
-						setSmartDevices((currentDevices) => {
-							const devices = currentDevices ?? []
-							const matchesSystemScope = !systemId || record.system === systemId
-
-							if (event.action === "delete") {
-								return devices.filter((device) => device.id !== record.id)
-							}
-
-							if (!matchesSystemScope) {
-								// Record moved out of scope; ensure it disappears locally.
-								return devices.filter((device) => device.id !== record.id)
-							}
-
-							const existingIndex = devices.findIndex((device) => device.id === record.id)
-							if (existingIndex === -1) {
-								return [record, ...devices]
-							}
-
-							const next = [...devices]
-							next[existingIndex] = record
-							return next
-						})
-					},
-					pbOptions
-				)
-			} catch (error) {
-				console.error("Failed to subscribe to SMART device updates:", error)
-			}
-		})()
-
-		return () => {
-			unsubscribe?.()
-		}
-	}, [systemId])
-
 	const handleRowRefresh = useCallback(async (disk: SmartDeviceRecord) => {
 		if (!disk.system) return
 		setRowActionState({ type: "refresh", id: disk.id })
 		try {
-			await pb.send("/api/watchdog/smart/refresh", {
+			await api.send("/api/v1/smart-devices/refresh", {
 				method: "POST",
 				query: { system: disk.system },
 			})
@@ -417,8 +368,8 @@ export default function DisksTable({ systemId }: { systemId?: string }) {
 	const handleDeleteDevice = useCallback(async (disk: SmartDeviceRecord) => {
 		setRowActionState({ type: "delete", id: disk.id })
 		try {
-			await pb.collection("smart_devices").delete(disk.id)
-			// setSmartDevices((current) => current?.filter((device) => device.id !== disk.id))
+			await api.send(`/api/v1/smart-devices/${encodeURIComponent(disk.id)}`, { method: "DELETE" })
+			setSmartDevices((current) => current?.filter((device) => device.id !== disk.id))
 		} catch (error) {
 			console.error("Failed to delete SMART device:", error)
 		} finally {
@@ -704,8 +655,8 @@ function DiskSheet({
 		// Only fetch when opening, not when closing (keeps data visible during close animation)
 		if (!open) return
 		setIsLoading(true)
-		pb.collection<SmartDeviceRecord>("smart_devices")
-			.getOne(diskId)
+		api
+			.send<SmartDeviceRecord>(`/api/v1/smart-devices/${encodeURIComponent(diskId)}`)
 			.then(setDisk)
 			.catch(() => setDisk(null))
 			.finally(() => setIsLoading(false))
@@ -790,7 +741,7 @@ function DiskSheet({
 						</div>
 					) : (
 						<>
-							<Alert className="pb-3 shrink-0">
+							<Alert className="api-3 shrink-0">
 								{status === "PASSED" ? <CheckCircle2Icon className="size-4" /> : <XCircleIcon className="size-4" />}
 								<AlertTitle>
 									<Trans>S.M.A.R.T. Self-Test</Trans>: {status}

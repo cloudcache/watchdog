@@ -135,7 +135,7 @@ export default function InfoBar({
 
 	return (
 		<Card>
-			<div className="grid xl:flex xl:gap-4 px-4 sm:px-6 pt-3 sm:pt-4 pb-5">
+			<div className="grid xl:flex xl:gap-4 px-4 sm:px-6 pt-3 sm:pt-4 api-5">
 				<div className="min-w-0">
 					<h1 className="text-2xl sm:text-[1.6rem] font-semibold mb-1.5">{system.name}</h1>
 					<div className="flex xl:flex-wrap items-center py-4 xl:p-0 -mt-3 xl:mt-1 gap-3 text-sm text-nowrap opacity-90 overflow-x-auto scrollbar-hide -mx-4 px-4 xl:mx-0">
@@ -219,7 +219,7 @@ export default function InfoBar({
 							</DropdownMenuLabel>
 							<DropdownMenuSeparator />
 							<DropdownMenuRadioGroup
-								className="px-1 pb-1"
+								className="px-1 api-1"
 								value={displayMode}
 								onValueChange={(v) => setDisplayMode(v as "default" | "tabs")}
 							>
@@ -236,7 +236,7 @@ export default function InfoBar({
 							</DropdownMenuLabel>
 							<DropdownMenuSeparator />
 							<DropdownMenuRadioGroup
-								className="px-1 pb-1"
+								className="px-1 api-1"
 								value={grid ? "grid" : "full"}
 								onValueChange={(v) => setGrid(v === "grid")}
 							>

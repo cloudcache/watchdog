@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { formatBitsPerSecond, formatMetricValue } from "@/lib/metric-format"
 import {
 	trafficViewAggregate,
@@ -145,8 +145,8 @@ export default memo(() => {
 		setError("")
 		try {
 			const [deviceData, metricData] = await Promise.all([
-				pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
-				pb.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
+				api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+				api.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
 			])
 			const nextDevices = deviceData.items ?? []
 			setDevices(nextDevices)
@@ -154,7 +154,7 @@ export default memo(() => {
 			const loadedPorts = await Promise.all(
 				nextDevices.map(async (device) => {
 					const id = deviceID(device)
-					const data = await pb
+					const data = await api
 						.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
 						.catch(() => ({ items: [] as NetworkPort[] }))
 					return [id, data.items ?? []] as const
@@ -274,7 +274,7 @@ export default memo(() => {
 			const fallbackName = `${firstDevice ? deviceLabel(firstDevice) : "Aggregate"} aggregate`
 			const name = graphName.trim() || fallbackName
 			const graphID = createAggregateGraphID()
-			await pb.send(`/api/v1/aggregate-graphs`, {
+			await api.send(`/api/v1/aggregate-graphs`, {
 				method: "POST",
 				body: {
 					id: graphID,
@@ -294,9 +294,9 @@ export default memo(() => {
 					total: direction === "in" || direction === "out",
 				}
 			})
-			await pb.send(`/api/v1/aggregate-graphs/${graphID}/items`, { method: "PUT", body: { items } })
+			await api.send(`/api/v1/aggregate-graphs/${graphID}/items`, { method: "PUT", body: { items } })
 			if (portIDs.length > 0) {
-				await pb.send(`/api/v1/aggregate-graphs/${graphID}/ports`, {
+				await api.send(`/api/v1/aggregate-graphs/${graphID}/ports`, {
 					method: "PUT",
 					body: { ports: portIDs.map((id) => ({ PortID: id })) },
 				})
@@ -542,9 +542,9 @@ export default memo(() => {
 					</div>
 
 					<div className="rounded-md border border-border p-4">
-						{error ? <div className="pb-3 text-sm text-destructive">{error}</div> : null}
+						{error ? <div className="api-3 text-sm text-destructive">{error}</div> : null}
 						{chartLoading ? (
-							<div className="pb-3 text-sm text-muted-foreground">
+							<div className="api-3 text-sm text-muted-foreground">
 								<Trans>Loading...</Trans>
 							</div>
 						) : null}
@@ -803,7 +803,7 @@ async function queryAggregateMetric({
 	} else {
 		params.set("target_ids", targetIDs.join(","))
 	}
-	const data = await pb.send<VMRangeResponse>(`/api/v1/metrics/aggregate?${params.toString()}`, {})
+	const data = await api.send<VMRangeResponse>(`/api/v1/metrics/aggregate?${params.toString()}`, {})
 	return vmSeries(data)
 }
 

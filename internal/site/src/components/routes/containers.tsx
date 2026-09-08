@@ -3,7 +3,7 @@ import { ContainerIcon, RefreshCwIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { createLineChart, disposeChart } from "@/lib/vchart"
 
@@ -61,7 +61,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetData = await pb.send<TargetsResponse>("/api/v1/targets", {})
+			const targetData = await api.send<TargetsResponse>("/api/v1/targets", {})
 			const items = targetData.items ?? []
 			setTargets(items)
 			const selectedTargetID = targetID || items[0]?.ID || items[0]?.id || ""
@@ -193,7 +193,7 @@ function ChartPanel({ title, empty, children }: { title: string; empty: boolean;
 async function getMetric(metric: string, baseParams: URLSearchParams) {
 	const params = new URLSearchParams(baseParams)
 	params.set("metric", metric)
-	return await pb.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}`, {})
+	return await api.send<VMRangeResponse>(`/api/v1/metrics/query?${params.toString()}`, {})
 }
 
 function makeSeries(

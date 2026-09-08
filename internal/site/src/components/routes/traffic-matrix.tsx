@@ -34,7 +34,7 @@ import {
 	type FlowSeries,
 	type FlowTrafficSurface,
 } from "@/lib/flow-explorer-model"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { disposeChart } from "@/lib/vchart"
 
 type FlowAggregateResult = {
@@ -327,8 +327,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 
 	useEffect(() => {
 		Promise.all([
-			pb.send<AddressSetList>("/api/v1/address-sets", {}),
-			pb.send<DeviceList>("/api/v1/network/devices", {}),
+			api.send<AddressSetList>("/api/v1/address-sets", {}),
+			api.send<DeviceList>("/api/v1/network/devices", {}),
 		])
 			.then(([sets, devs]) => {
 				setAddressSets(sets.items ?? [])
@@ -339,10 +339,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 
 	useEffect(() => {
 		Promise.allSettled([
-			pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+			api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
 				query: { level: "country", limit: 500 },
 			}),
-			pb.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
+			api.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
 				query: { enabled: true, limit: 500 },
 			}),
 		])
@@ -376,7 +376,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setProvincesLoaded(true)
 			return
 		}
-		pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+		api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
 			query: { level: "province", parent: selectedCountry, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setProvinces(sortReferences(result.items ?? [])))
@@ -391,7 +391,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setCitiesLoaded(true)
 			return
 		}
-		pb.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+		api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
 			query: { level: "city", parent: selectedProvince, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setCities(sortReferences(result.items ?? [])))
@@ -456,7 +456,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				}
 
 				if (canonicalFilter) {
-					const validated = await pb.send<{ valid: boolean; filter: FlowFilterExpression }>(
+					const validated = await api.send<{ valid: boolean; filter: FlowFilterExpression }>(
 						"/api/v1/flow/filters/validate",
 						{ method: "POST", body: { filter: canonicalFilter } }
 					)
@@ -500,7 +500,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							},
 						},
 					}
-					return pb.send<FlowQueryResponse>("/api/v1/flow/query", {
+					return api.send<FlowQueryResponse>("/api/v1/flow/query", {
 						method: "POST",
 						body: submittedQuery,
 					})
@@ -532,7 +532,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				if (surface === "overseas") {
 					try {
 						const overseasRange = resolveOverseasRange(start, end)
-						const overseas = await pb.send<OverseasQueryResponse>("/api/v1/flow/overseas/query", {
+						const overseas = await api.send<OverseasQueryResponse>("/api/v1/flow/overseas/query", {
 							method: "POST",
 							body: {
 								from: overseasRange.start,
@@ -675,7 +675,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 		if (!lastQueryRequest.current) return
 		setExporting(true)
 		try {
-			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/exports", {
+			const task = await api.send<{ ID?: string; id?: string }>("/api/v1/flow/exports", {
 				method: "POST",
 				body: { query: lastQueryRequest.current, format: "csv" },
 			})

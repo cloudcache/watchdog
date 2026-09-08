@@ -7,7 +7,7 @@ import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { isReadOnlyUser, pb } from "@/lib/api"
+import { isReadOnlyUser, api } from "@/lib/api"
 import { normalizeDashboardLayout } from "@/lib/dashboard-ui"
 import { $platformIdentity } from "@/lib/platform-auth"
 import type { ColumnDefine } from "@/lib/vtable"
@@ -66,7 +66,7 @@ export default memo(() => {
 			})
 			if (query) params.set("q", query)
 			if (owner === "mine" && identity.current?.userID) params.set("owner_id", identity.current.userID)
-			const data = await pb.send<DashboardListResponse>(`/api/v1/dashboards?${params}`, {})
+			const data = await api.send<DashboardListResponse>(`/api/v1/dashboards?${params}`, {})
 			if (sequence === requestSequence.current) {
 				setItems(data.items ?? [])
 				setTotal(data.total ?? 0)
@@ -92,7 +92,7 @@ export default memo(() => {
 			if (!globalThis.confirm(t`Delete this dashboard?`)) return
 			setError("")
 			try {
-				await pb.send(`/api/v1/dashboards/${dashboard.id}`, {
+				await api.send(`/api/v1/dashboards/${dashboard.id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${dashboard.version}"` },
 				})

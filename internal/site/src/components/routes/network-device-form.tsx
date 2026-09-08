@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type NetworkDevice = {
@@ -131,8 +131,8 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				return
 			}
 			const [device, profilesResponse] = await Promise.all([
-				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
-				pb.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}).catch((err) => {
+				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}).catch((err) => {
 					setProfilesError(err instanceof Error ? err.message : t`Failed to load SNMP profiles`)
 					return { items: [] }
 				}),
@@ -142,7 +142,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 			const targetID = device.TargetID ?? device.target_id ?? ""
 			let target: TargetRecord = {}
 			if (targetID) {
-				target = await pb
+				target = await api
 					.send<TargetRecord>(`/api/v1/targets/${targetID}`, {
 						onResponse: (response) => {
 							targetEtagRef.current = response.headers.get("ETag") ?? ""
@@ -202,7 +202,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/targets/${form.targetID}`, {
+			await api.send(`/api/v1/targets/${form.targetID}`, {
 				method: "PATCH",
 				headers: targetEtagRef.current ? { "If-Match": targetEtagRef.current } : undefined,
 				body: {
@@ -238,11 +238,11 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				snmpBody.SNMPSecurity = { community: form.snmpCommunity }
 			}
 			const [saved] = await Promise.all([
-				pb.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {
+				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {
 					method: "PATCH",
 					body,
 				}),
-				pb.send(`/api/v1/network/devices/${id}/snmp`, {
+				api.send(`/api/v1/network/devices/${id}/snmp`, {
 					method: "PATCH",
 					body: snmpBody,
 				}),

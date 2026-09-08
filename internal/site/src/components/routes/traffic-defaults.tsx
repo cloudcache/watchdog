@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type TrafficPolicyDefault = {
 	ID?: string
@@ -47,7 +47,7 @@ export default memo(() => {
 		setLoading(true)
 		setMessage("")
 		try {
-			const data = await pb.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {})
+			const data = await api.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {})
 			setProvider(data.Provider ?? data.provider ?? { SideType: "provider" })
 			setCustomer(data.Customer ?? data.customer ?? { SideType: "customer" })
 		} catch (err) {
@@ -66,7 +66,7 @@ export default memo(() => {
 		setSaving(true)
 		setMessage("")
 		try {
-			const data = await pb.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {
+			const data = await api.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {
 				method: "PUT",
 				body: { Provider: provider, Customer: customer },
 			})

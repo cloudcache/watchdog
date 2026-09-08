@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type NetworkDevice = {
@@ -61,8 +61,8 @@ export default memo(() => {
 		setError("")
 		try {
 			const [deviceData, profileData] = await Promise.all([
-				pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
-				pb.send<{ items?: SNMPProfile[] }>("/api/v1/snmp/profiles", {}),
+				api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+				api.send<{ items?: SNMPProfile[] }>("/api/v1/snmp/profiles", {}),
 			])
 			const nextDevices = deviceData.items ?? []
 			const nextProfiles = profileData.items ?? []
@@ -108,7 +108,7 @@ export default memo(() => {
 		setError("")
 		setSummary("")
 		try {
-			await pb.send(`/api/v1/network/devices/${deviceID}/snmp`, {
+			await api.send(`/api/v1/network/devices/${deviceID}/snmp`, {
 				method: "PATCH",
 				body: {
 					SNMPProfileID: profileID,
@@ -116,7 +116,7 @@ export default memo(() => {
 					SNMPSecurity: community.trim() ? { community: community.trim() } : undefined,
 				},
 			})
-			const result = await pb.send<DiscoveryResult>(`/api/v1/network/devices/${deviceID}/snmp/discover`, { method: "POST" })
+			const result = await api.send<DiscoveryResult>(`/api/v1/network/devices/${deviceID}/snmp/discover`, { method: "POST" })
 			const ports = result.Ports ?? result.ports ?? []
 			const deleted = result.DeletedPorts ?? result.deleted_ports ?? 0
 			setSummary(t`${ports.length} ports imported, ${deleted} stale ports removed`)

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "@/components/ui/use-toast"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type OperationJob = {
 	id: string
@@ -57,7 +57,7 @@ export default memo(() => {
 				if (cursor) {
 					params.set("cursor", cursor)
 				}
-				const data = await pb.send<OperationJobsResponse>(`/api/v1/operation-jobs?${params.toString()}`, {})
+				const data = await api.send<OperationJobsResponse>(`/api/v1/operation-jobs?${params.toString()}`, {})
 				setItems((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
 				setNextCursor(data.next_cursor ?? "")
 			} catch (err) {
@@ -80,7 +80,7 @@ export default memo(() => {
 	const cancelJob = useCallback(
 		async (job: OperationJob) => {
 			try {
-				await pb.send(`/api/v1/operation-jobs/${job.id}/actions/cancel`, { method: "POST" })
+				await api.send(`/api/v1/operation-jobs/${job.id}/actions/cancel`, { method: "POST" })
 				fetchPage("", false)
 			} catch (err) {
 				toast({ title: err instanceof Error ? err.message : t`Request failed`, variant: "destructive" })

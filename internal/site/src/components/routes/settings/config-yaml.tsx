@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/use-toast"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 
 export default function ConfigYaml() {
 	const [configContent, setConfigContent] = useState<string>("")
@@ -21,7 +21,7 @@ export default function ConfigYaml() {
 	async function fetchConfig() {
 		try {
 			setIsLoading(true)
-			const { config } = await pb.send<{ config: string }>("/api/watchdog/config-yaml", {})
+			const { config } = await api.send<{ config: string }>("/api/v1/config", {})
 			setConfigContent(config)
 		} catch (error: any) {
 			toast({

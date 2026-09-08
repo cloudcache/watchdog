@@ -63,7 +63,7 @@ const SectionIntro = memo(() => {
 export default function AlertsHistoryDataTable() {
 	const [rows, setRows] = useState<AlertHistoryEntry[]>([])
 	const systemsById = useStore($allSystemsById)
-	// Resolve the system name client-side (was a PocketBase relation expand); this
+	// Resolve the system name client-side; this
 	// re-runs when the systems store finishes loading.
 	const data = useMemo<AlertsHistoryRecord[]>(
 		() =>

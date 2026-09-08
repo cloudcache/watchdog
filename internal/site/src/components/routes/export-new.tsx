@@ -7,7 +7,7 @@ import { TrafficViewSwitcher } from "@/components/traffic-view-switcher"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import {
 	trafficViewExportAggregation,
 	trafficViewExportStep,
@@ -74,8 +74,8 @@ export default memo(() => {
 	useEffect(() => {
 		document.title = `${t`Create Export`} / Watchdog`
 		Promise.all([
-			pb.send<TargetsResponse>("/api/v1/targets", {}),
-			pb.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+			api.send<TargetsResponse>("/api/v1/targets", {}),
+			api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
 		])
 			.then(([targetData, deviceData]) => {
 				setTargets(targetData.items ?? [])
@@ -115,7 +115,7 @@ export default memo(() => {
 		}
 		Promise.all(
 			missingDeviceIDs.map(async (id) => {
-				const data = await pb.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
+				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
 				return [id, data.items ?? []] as const
 			})
 		)
@@ -136,7 +136,7 @@ export default memo(() => {
 		setCreating(true)
 		setError("")
 		try {
-			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/exports", {
+			const task = await api.send<{ ID?: string; id?: string }>("/api/v1/exports", {
 				method: "POST",
 				body: {
 					TargetID: form.targetID,

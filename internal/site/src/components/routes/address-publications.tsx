@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressDimensionSnapshot = {
 	id: string
@@ -68,7 +68,7 @@ export default memo(function AddressPublications() {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ListResponse>("/api/v1/dimensions/address/versions", {
+			const data = await api.send<ListResponse>("/api/v1/dimensions/address/versions", {
 				query: {
 					q: debouncedSearch || undefined,
 					status: status || undefined,
@@ -102,7 +102,7 @@ export default memo(function AddressPublications() {
 		try {
 			const timestamp = parseEffectiveFrom(effectiveFrom)
 			setPreview(
-				await pb.send<AddressDimensionPreview>("/api/v1/dimensions/address/preview", {
+				await api.send<AddressDimensionPreview>("/api/v1/dimensions/address/preview", {
 					method: "POST",
 					body: { effective_from: timestamp },
 				})
@@ -120,7 +120,7 @@ export default memo(function AddressPublications() {
 		setWorking(true)
 		setError("")
 		try {
-			const response = await pb.send<{ job?: { id?: string } }>("/api/v1/dimensions/address/publish", {
+			const response = await api.send<{ job?: { id?: string } }>("/api/v1/dimensions/address/publish", {
 				method: "POST",
 				body: { effective_from: preview.effective_from, preview_digest: preview.draft_digest },
 			})

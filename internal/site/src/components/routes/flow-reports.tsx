@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
-import { canManageAddressLibrary, pb } from "@/lib/api"
+import { canManageAddressLibrary, api } from "@/lib/api"
 import type { FlowFilterExpression } from "@/lib/flow-explorer-model"
 import {
 	buildReportSeries,
@@ -207,9 +207,9 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 
 	useEffect(() => {
 		Promise.allSettled([
-			pb.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", { query: { level: "country", limit: 500 } }),
-			pb.send<ListResponse<OperatorItem>>("/api/v1/network/operators", { query: { enabled: true, limit: 500 } }),
-			pb.send<ListResponse<DeviceItem>>("/api/v1/network/devices", {}),
+			api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", { query: { level: "country", limit: 500 } }),
+			api.send<ListResponse<OperatorItem>>("/api/v1/network/operators", { query: { enabled: true, limit: 500 } }),
+			api.send<ListResponse<DeviceItem>>("/api/v1/network/devices", {}),
 		]).then(([geo, operatorResult, deviceResult]) => {
 			const warnings: string[] = []
 			if (geo.status === "fulfilled") {
@@ -229,7 +229,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			setProvinces([])
 			return
 		}
-		pb.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
+		api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
 			query: { level: "province", parent: country, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setProvinces(sortByName(result.items ?? [])))
@@ -241,7 +241,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			setCities([])
 			return
 		}
-		pb.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
+		api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
 			query: { level: "city", parent: province, version: geoVersion, limit: 500 },
 		})
 			.then((result) => setCities(sortByName(result.items ?? [])))
@@ -315,7 +315,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					}
 				}
 				const { from, to, step_seconds, limit, value_layer, ...parameters } = body
-				const result = await pb.send<FlowReportResponse>("/api/v1/flow/reports/query", {
+				const result = await api.send<FlowReportResponse>("/api/v1/flow/reports/query", {
 					method: "POST",
 					body,
 					signal: controller.signal,
@@ -415,7 +415,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 		if (!lastExportQuery.current) return
 		setExporting(true)
 		try {
-			const task = await pb.send<{ ID?: string; id?: string }>("/api/v1/flow/exports", {
+			const task = await api.send<{ ID?: string; id?: string }>("/api/v1/flow/exports", {
 				method: "POST",
 				body: { query: lastExportQuery.current, format: "csv" },
 			})
@@ -754,7 +754,7 @@ function CategoryCard({
 	const outStats = reportSeriesStats(outSeries)
 	return (
 		<Card>
-			<CardHeader className="pb-3">
+			<CardHeader className="api-3">
 				<CardTitle>{FLOW_REPORT_CATEGORY_LABELS[category] ?? category}</CardTitle>
 			</CardHeader>
 			<CardContent>
@@ -1468,7 +1468,7 @@ function DistributionTable({
 function MetricCard({ title, value, note }: { title: string; value: string; note: string }) {
 	return (
 		<Card>
-			<CardHeader className="pb-2">
+			<CardHeader className="api-2">
 				<CardDescription>{title}</CardDescription>
 				<CardTitle className="text-2xl">{value}</CardTitle>
 			</CardHeader>

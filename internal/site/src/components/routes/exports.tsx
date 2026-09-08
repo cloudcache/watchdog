@@ -6,7 +6,7 @@ import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { downloadWatchdogFile, pb } from "@/lib/api"
+import { downloadWatchdogFile, api } from "@/lib/api"
 import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
 import type { ColumnDefine } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
@@ -66,7 +66,7 @@ export default memo(() => {
 			if (status !== "all") params.set("status", status)
 			if (valueLayer !== "all") params.set("value_layer", valueLayer)
 			if (format !== "all") params.set("format", format)
-			const data = await pb.send<ExportTasksResponse>(`/api/v1/exports?${params}`, {})
+			const data = await api.send<ExportTasksResponse>(`/api/v1/exports?${params}`, {})
 			if (sequence === requestSequence.current) {
 				setTasks(data.items ?? [])
 				setTotal(data.total ?? 0)

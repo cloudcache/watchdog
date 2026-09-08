@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AuditLogItem = {
 	ID: string
@@ -49,7 +49,7 @@ export default memo(() => {
 				if (cursor) {
 					params.set("cursor", cursor)
 				}
-				const data = await pb.send<AuditLogsResponse>(`/api/v1/audit-logs?${params.toString()}`, {})
+				const data = await api.send<AuditLogsResponse>(`/api/v1/audit-logs?${params.toString()}`, {})
 				setItems((current) => (append ? [...current, ...(data.items ?? [])] : (data.items ?? [])))
 				setNextCursor(data.next_cursor ?? "")
 			} catch (err) {

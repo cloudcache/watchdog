@@ -22,7 +22,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { ServiceStatus, ServiceStatusLabels, type ServiceSubState, ServiceSubStateLabels } from "@/lib/enums"
 import { $allSystemsById } from "@/lib/stores"
 import { cn, decimalString, formatBytes, useBrowserStorage } from "@/lib/utils"
@@ -50,13 +50,12 @@ export default function SystemdTable({ systemId }: { systemId?: string }) {
 		const lastUpdated = data[0]?.updated ?? 0
 
 		function fetchData(systemId?: string) {
-			pb.collection<SystemdRecord>("systemd_services")
-				.getList(0, 2000, {
-					fields: "name,state,sub,cpu,cpuPeak,memory,memPeak,updated",
-					filter: systemId ? pb.filter("system={:system}", { system: systemId }) : undefined,
+			api
+				.send<{ items?: SystemdRecord[] }>("/api/v1/systemd-services", {
+					query: { system_id: systemId, limit: 2000 },
 				})
 				.then(
-					({ items }) =>
+					({ items = [] }) =>
 						items.length &&
 						setData((curItems) => {
 							const lastUpdated = Math.max(items[0].updated, items.at(-1)?.updated ?? 0)
@@ -76,6 +75,7 @@ export default function SystemdTable({ systemId }: { systemId?: string }) {
 							return newItems
 						})
 				)
+				.catch(() => setData([]))
 		}
 
 		// initial load
@@ -281,7 +281,7 @@ function SystemdSheet({
 		setDetails(null)
 		setIsLoading(true)
 
-		pb.send<{ details: SystemdServiceDetails }>("/api/watchdog/systemd/info", {
+		api.send<{ details: SystemdServiceDetails }>("/api/v1/systemd-services/info", {
 			query: {
 				system: systemId,
 				service: service.name,

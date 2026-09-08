@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type AgentRecord = {
@@ -75,7 +75,7 @@ export default memo(({ id }: AgentFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetsData = await pb.send<TargetsResponse>("/api/v1/targets", {})
+			const targetsData = await api.send<TargetsResponse>("/api/v1/targets", {})
 			const targetItems = targetsData.items ?? []
 			setTargets(targetItems)
 			if (!id) {
@@ -85,7 +85,7 @@ export default memo(({ id }: AgentFormProps) => {
 				}))
 				return
 			}
-			const agent = await pb.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {
+			const agent = await api.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -124,7 +124,7 @@ export default memo(({ id }: AgentFormProps) => {
 				Status: form.status,
 				Token: form.token,
 			}
-			const saved = await pb.send<AgentRecord>(id ? `/api/v1/agent-registry/${id}` : "/api/v1/agent-registry", {
+			const saved = await api.send<AgentRecord>(id ? `/api/v1/agent-registry/${id}` : "/api/v1/agent-registry", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
@@ -144,7 +144,7 @@ export default memo(({ id }: AgentFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/agent-registry/${id}`, { method: "DELETE" })
+			await api.send(`/api/v1/agent-registry/${id}`, { method: "DELETE" })
 			navigate(getPagePath($router, "agents"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete agent`)

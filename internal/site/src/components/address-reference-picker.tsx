@@ -10,7 +10,7 @@ import {
 	mergeAddressReferenceOptions,
 	toggleAddressReference,
 } from "@/lib/address-reference"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 export type AddressReferenceKind = "geography" | "operator" | "line" | "address-set"
@@ -92,7 +92,7 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 			append ? setLoadingMore(true) : setLoading(true)
 			setError("")
 			try {
-				const data = await pb.send<ReferenceList>(endpoint, {
+				const data = await api.send<ReferenceList>(endpoint, {
 					query: {
 						q: debouncedSearch || undefined,
 						limit: referencePageSize,
@@ -134,7 +134,7 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 				const chunk = await Promise.all(
 					missing.slice(offset, offset + 8).map(async (id) => {
 						try {
-							const item = await pb.send<ReferenceItem>(`${endpoint}/${encodeURIComponent(id)}`)
+							const item = await api.send<ReferenceItem>(`${endpoint}/${encodeURIComponent(id)}`)
 							return toReferenceOption(kind, item)
 						} catch {
 							return null
@@ -189,7 +189,7 @@ export const AddressReferencePicker = memo(function AddressReferencePicker({
 							<Trans>Searches the server and stores the stable reference ID.</Trans>
 						</DialogDescription>
 					</DialogHeader>
-					<div className="grid min-h-0 gap-3 px-5 pb-5">
+					<div className="grid min-h-0 gap-3 px-5 api-5">
 						<div className="relative">
 							<SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 							<Input

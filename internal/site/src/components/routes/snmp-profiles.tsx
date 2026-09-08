@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type SNMPProfile = {
 	ID?: string
@@ -34,7 +34,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
+			const data = await api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
 			setProfiles(data.items ?? [])
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load SNMP profiles`)
@@ -54,7 +54,7 @@ export default memo(() => {
 		}
 		const id = profile.ID ?? profile.id ?? ""
 		try {
-			await pb.send(`/api/v1/snmp/profiles/${id}`, { method: "DELETE" })
+			await api.send(`/api/v1/snmp/profiles/${id}`, { method: "DELETE" })
 			await refresh()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete SNMP profile`)

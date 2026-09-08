@@ -14,14 +14,14 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/use-toast"
 import { alertInfo } from "@/lib/alerts"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { $alerts, $systems } from "@/lib/stores"
 import { cn, debounce } from "@/lib/utils"
 import type { AlertInfo, AlertRecord, SystemRecord } from "@/types"
 
 const Slider = lazy(() => import("@/components/ui/slider"))
 
-const endpoint = "/api/watchdog/user-alerts"
+const endpoint = "/api/v1/alerts"
 
 const alertDebounce = 400
 
@@ -40,7 +40,7 @@ const failedUpdateToast = (error: unknown) => {
 const upsertAlerts = debounce(
 	async ({ name, value, min, systems }: { name: string; value: number; min: number; systems: string[] }) => {
 		try {
-			await pb.send<{ success: boolean }>(endpoint, {
+			await api.send<{ success: boolean }>(endpoint, {
 				method: "POST",
 				// overwrite is always true because we've done filtering client side
 				body: { name, value, min, systems, overwrite: true },
@@ -55,7 +55,7 @@ const upsertAlerts = debounce(
 /** Delete alerts for a given name and systems */
 const deleteAlerts = debounce(async ({ name, systems }: { name: string; systems: string[] }) => {
 	try {
-		await pb.send<{ success: boolean }>(endpoint, {
+		await api.send<{ success: boolean }>(endpoint, {
 			method: "DELETE",
 			body: { name, systems },
 		})
@@ -90,14 +90,14 @@ export const AlertDialogContent = memo(function AlertDialogContent({ system }: {
 			const namesToDelete = Array.from(currentTargetAlerts.keys()).filter((name) => !sourceAlerts.has(name))
 			await Promise.all([
 				...Array.from(sourceAlerts.values()).map(({ name, value, min }) =>
-					pb.send<{ success: boolean }>(endpoint, {
+					api.send<{ success: boolean }>(endpoint, {
 						method: "POST",
 						body: { name, value, min, systems: [system.id], overwrite: true },
 						requestKey: name,
 					})
 				),
 				...namesToDelete.map((name) =>
-					pb.send<{ success: boolean }>(endpoint, {
+					api.send<{ success: boolean }>(endpoint, {
 						method: "DELETE",
 						body: { name, systems: [system.id] },
 						requestKey: name,
@@ -277,7 +277,7 @@ export function AlertContent({
 			<label
 				htmlFor={`s${name}`}
 				className={cn("flex flex-row items-center justify-between gap-4 cursor-pointer p-4", {
-					"pb-0": checked,
+					"api-0": checked,
 				})}
 			>
 				<div className="grid gap-1 select-none">
@@ -308,7 +308,7 @@ export function AlertContent({
 				/>
 			</label>
 			{checked && (
-				<div className="grid sm:grid-cols-2 mt-1.5 gap-5 px-4 pb-5 tabular-nums text-muted-foreground">
+				<div className="grid sm:grid-cols-2 mt-1.5 gap-5 px-4 api-5 tabular-nums text-muted-foreground">
 					<Suspense fallback={<div className="h-10" />}>
 						{!singleDescription && (
 							<div>

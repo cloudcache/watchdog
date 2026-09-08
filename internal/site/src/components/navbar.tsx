@@ -5,7 +5,6 @@ import {
 	ActivityIcon,
 	BarChart3Icon,
 	BookmarkIcon,
-	Building2Icon,
 	ContainerIcon,
 	CrosshairIcon,
 	RouteIcon,
@@ -43,15 +42,13 @@ import {
 	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
-	DropdownMenuRadioGroup,
-	DropdownMenuRadioItem,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
 	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { canManageAddressLibrary, isAdmin, isReadOnlyUser, logOut, pb, selectWatchdogTenant } from "@/lib/api"
+import { canManageAddressLibrary, currentSessionUser, isAdmin, isReadOnlyUser, logOut } from "@/lib/api"
 import { $platformIdentity } from "@/lib/platform-auth"
 import { cn, runOnce } from "@/lib/utils"
 import { $router, basePath, Link, navigate, prependBasePath } from "./router"
@@ -170,7 +167,6 @@ export default function Navbar() {
 							<Trans>Exports</Trans>
 						</NavItem>
 						<DropdownMenuSeparator />
-						<TenantSelector />
 						<NavItem href={getPagePath($router, "settings", { name: "general" })} icon={SettingsIcon}>
 							<Trans>Settings</Trans>
 						</NavItem>
@@ -181,7 +177,7 @@ export default function Navbar() {
 							</NavItem>
 						)}
 						<DropdownMenuSeparator />
-						<DropdownMenuLabel className="max-w-52 truncate">{pb.authStore.record?.email}</DropdownMenuLabel>
+						<DropdownMenuLabel className="max-w-52 truncate">{currentSessionUser()?.username}</DropdownMenuLabel>
 						<DropdownMenuItem onSelect={logOut}>
 							<LogOutIcon className="me-2.5 h-4 w-4" />
 							<Trans>Log Out</Trans>
@@ -322,8 +318,7 @@ function UserMenu() {
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="min-w-52">
-				<DropdownMenuLabel className="max-w-52 truncate">{pb.authStore.record?.email}</DropdownMenuLabel>
-				<TenantSelector />
+				<DropdownMenuLabel className="max-w-52 truncate">{currentSessionUser()?.username}</DropdownMenuLabel>
 				<DropdownMenuSeparator />
 				<NavItem href={getPagePath($router, "settings", { name: "general" })} icon={SettingsIcon}>
 					<Trans>Settings</Trans>
@@ -336,36 +331,6 @@ function UserMenu() {
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
-	)
-}
-
-function TenantSelector() {
-	const identity = useStore($platformIdentity)
-	if (!identity.ready || identity.tenants.length === 0) {
-		return null
-	}
-	return (
-		<>
-			<DropdownMenuSeparator />
-			<DropdownMenuLabel className="flex items-center gap-2">
-				<Building2Icon className="h-4 w-4" />
-				<Trans>Tenant</Trans>
-			</DropdownMenuLabel>
-			<DropdownMenuRadioGroup
-				value={identity.current?.tenantID ?? ""}
-				onValueChange={(tenantID) => {
-					selectWatchdogTenant(tenantID)
-						.then(() => window.location.reload())
-						.catch((error) => console.error("select tenant", error))
-				}}
-			>
-				{identity.tenants.map((tenant) => (
-					<DropdownMenuRadioItem key={tenant.id} value={tenant.id}>
-						{tenant.name || tenant.id}
-					</DropdownMenuRadioItem>
-				))}
-			</DropdownMenuRadioGroup>
-		</>
 	)
 }
 

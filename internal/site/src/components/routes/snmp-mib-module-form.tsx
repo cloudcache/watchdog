@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type MIBModule = {
@@ -64,7 +64,7 @@ export default memo(({ id }: MIBModuleFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<MIBModulesResponse>("/api/v1/snmp/mib-modules", {})
+			const data = await api.send<MIBModulesResponse>("/api/v1/snmp/mib-modules", {})
 			const module = (data.items ?? []).find((item) => (item.ID ?? item.id) === id)
 			if (!module) {
 				throw new Error(t`MIB module not found`)
@@ -93,7 +93,7 @@ export default memo(({ id }: MIBModuleFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			const saved = await pb.send<MIBModule>("/api/v1/snmp/mib-modules", {
+			const saved = await api.send<MIBModule>("/api/v1/snmp/mib-modules", {
 				method: "PUT",
 				body: {
 					ID: form.id.trim(),

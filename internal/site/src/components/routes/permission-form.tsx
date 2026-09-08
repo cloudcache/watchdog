@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type Permission = {
@@ -84,7 +84,7 @@ export default memo(({ id }: PermissionFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<PermissionsResponse>("/api/v1/permissions", {})
+			const data = await api.send<PermissionsResponse>("/api/v1/permissions", {})
 			const permission = (data.items ?? []).find((item) => (item.ID ?? item.id) === id)
 			if (!permission) {
 				throw new Error(t`Permission not found`)
@@ -121,7 +121,7 @@ export default memo(({ id }: PermissionFormProps) => {
 				ResourceID: form.resourceID.trim(),
 				Actions: form.actions,
 			}
-			await pb.send("/api/v1/permissions", {
+			await api.send("/api/v1/permissions", {
 				method: "PUT",
 				body,
 			})

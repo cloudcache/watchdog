@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { cn } from "@/lib/utils"
 
@@ -90,8 +90,8 @@ export default memo(({ id }: PortPolicyProps) => {
 		setMessage("")
 		try {
 			const [portData, policyData] = await Promise.all([
-				pb.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
-				pb.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {}),
+				api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
+				api.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {}),
 			])
 			setPort(portData.port ?? null)
 			setDevice(portData.device ?? null)
@@ -115,7 +115,7 @@ export default memo(({ id }: PortPolicyProps) => {
 		setSaving(true)
 		setMessage("")
 		try {
-			const saved = await pb.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {
+			const saved = await api.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {
 				method: "PATCH",
 				body: normalizePolicy(policy, id),
 			})

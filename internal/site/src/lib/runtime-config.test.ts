@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../../public/watchdog-config.js", import.me
 
 test("runtime config preserves injected same-origin defaults", () => {
 	const context = {
-		WATCHDOG: { BASE_PATH: "/console/", HUB_VERSION: "test", API_URL: "https://same.example/console" },
+		WATCHDOG: { BASE_PATH: "/console/", VERSION: "test", API_URL: "https://same.example/console" },
 		location: { origin: "https://front.example" },
 	}
 	runInNewContext(source, context)

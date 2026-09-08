@@ -2,7 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath, redirectPage } from "@nanostores/router"
-import { AlertOctagonIcon, BellIcon, FingerprintIcon, HeartPulseIcon, SettingsIcon } from "lucide-react"
+import { AlertOctagonIcon, BellIcon, HeartPulseIcon, SettingsIcon } from "lucide-react"
 import { lazy, useEffect } from "react"
 import { $router } from "@/components/router.tsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx"
@@ -15,13 +15,11 @@ import { SidebarNav } from "./sidebar-nav.tsx"
 
 const generalSettingsImport = () => import("./general.tsx")
 const notificationsSettingsImport = () => import("./notifications.tsx")
-const fingerprintsSettingsImport = () => import("./tokens-fingerprints.tsx")
 const alertsHistoryDataTableSettingsImport = () => import("./alerts-history-data-table.tsx")
 const heartbeatSettingsImport = () => import("./heartbeat.tsx")
 
 const GeneralSettings = lazy(generalSettingsImport)
 const NotificationsSettings = lazy(notificationsSettingsImport)
-const FingerprintsSettings = lazy(fingerprintsSettingsImport)
 const AlertsHistoryDataTableSettings = lazy(alertsHistoryDataTableSettingsImport)
 const HeartbeatSettings = lazy(heartbeatSettingsImport)
 
@@ -58,13 +56,6 @@ export default function SettingsLayout() {
 			preload: notificationsSettingsImport,
 		},
 		{
-			title: t`Tokens & Fingerprints`,
-			href: getPagePath($router, "settings", { name: "tokens" }),
-			icon: FingerprintIcon,
-			noReadOnly: true,
-			preload: fingerprintsSettingsImport,
-		},
-		{
 			title: t`Alert History`,
 			href: getPagePath($router, "settings", { name: "alert-history" }),
 			icon: AlertOctagonIcon,
@@ -91,7 +82,7 @@ export default function SettingsLayout() {
 	}, [])
 
 	return (
-		<Card className="pt-5 px-4 pb-8 min-h-96 mb-14 sm:pt-6 sm:px-7">
+		<Card className="pt-5 px-4 api-8 min-h-96 mb-14 sm:pt-6 sm:px-7">
 			<CardHeader className="p-0">
 				<CardTitle className="mb-1">
 					<Trans>Settings</Trans>
@@ -124,8 +115,6 @@ function SettingsContent({ name }: { name: string }) {
 			return <GeneralSettings userSettings={userSettings} />
 		case "notifications":
 			return <NotificationsSettings userSettings={userSettings} />
-		case "tokens":
-			return <FingerprintsSettings />
 		case "alert-history":
 			return <AlertsHistoryDataTableSettings />
 		case "heartbeat":

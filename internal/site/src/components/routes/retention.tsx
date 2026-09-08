@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type TargetRecord = {
 	ID?: string
@@ -67,8 +67,8 @@ export default memo(() => {
 		setError("")
 		try {
 			const [targetData, retentionData] = await Promise.all([
-				pb.send<TargetsResponse>("/api/v1/targets", {}),
-				pb.send<RetentionPoliciesResponse>("/api/v1/retention/policies", {}),
+				api.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<RetentionPoliciesResponse>("/api/v1/retention/policies", {}),
 			])
 			setTargets(targetData.items ?? [])
 			setPolicies(retentionData.items ?? [])
@@ -102,7 +102,7 @@ export default memo(() => {
 		setSaving(true)
 		setError("")
 		try {
-			await pb.send<RetentionPolicy>("/api/v1/retention/policies", {
+			await api.send<RetentionPolicy>("/api/v1/retention/policies", {
 				method: "PUT",
 				body: {
 					ID: form.id,
@@ -127,7 +127,7 @@ export default memo(() => {
 			return
 		}
 		try {
-			await pb.send(`/api/v1/retention/policies/${id}`, { method: "DELETE" })
+			await api.send(`/api/v1/retention/policies/${id}`, { method: "DELETE" })
 			await refresh()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete retention policy`)

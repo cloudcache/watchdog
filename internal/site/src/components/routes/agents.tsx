@@ -6,7 +6,7 @@ import { $router, navigate } from "@/components/router"
 import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
@@ -81,7 +81,7 @@ export default memo(() => {
 			if (query) params.set("q", query)
 			if (agentType !== "all") params.set("agent_type", agentType)
 			if (status !== "all") params.set("status", status)
-			const data = await pb.send<AgentsResponse>(`/api/v1/agent-registry?${params}`, {})
+			const data = await api.send<AgentsResponse>(`/api/v1/agent-registry?${params}`, {})
 			if (sequence === requestSequence.current) {
 				setAgents(data.items ?? [])
 				setTotal(data.total ?? 0)

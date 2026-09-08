@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { parseAddressEntries } from "@/lib/address-set-form"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressOperation = "normalize" | "union" | "intersection" | "difference" | "complement" | "cover"
 
@@ -65,7 +65,7 @@ export default memo(function AddressMath() {
 				if (targetV6.trim()) body.target_prefix_v6 = parsePrefixLength(targetV6, 128, "IPv6")
 			}
 			setPreview(
-				await pb.send<AddressOperationPreview>("/api/v1/address-sets/actions/preview", { method: "POST", body })
+				await api.send<AddressOperationPreview>("/api/v1/address-sets/actions/preview", { method: "POST", body })
 			)
 		} catch (err) {
 			setPreview(null)

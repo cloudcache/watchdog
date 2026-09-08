@@ -6,7 +6,7 @@ import { $router, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type BillingAccount = {
 	ID?: string
@@ -39,7 +39,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<BillingAccountsResponse>("/api/v1/billing/accounts", {})
+			const data = await api.send<BillingAccountsResponse>("/api/v1/billing/accounts", {})
 			setAccounts(data.items ?? [])
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load billing accounts`)

@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type GraphDevice = {
@@ -59,7 +59,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<AggregateGraphsResponse>("/api/v1/aggregate-graphs", {})
+			const data = await api.send<AggregateGraphsResponse>("/api/v1/aggregate-graphs", {})
 			setGraphs(data.items ?? [])
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load aggregate graphs`)
@@ -78,7 +78,7 @@ export default memo(() => {
 			return
 		}
 		try {
-			await pb.send(`/api/v1/aggregate-graphs/${id}`, { method: "DELETE" })
+			await api.send(`/api/v1/aggregate-graphs/${id}`, { method: "DELETE" })
 			await refresh()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete aggregate graph`)

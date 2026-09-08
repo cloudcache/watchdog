@@ -2,7 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
 import { LoaderCircle, MailIcon, SendHorizonalIcon } from "lucide-react"
 import { useCallback, useState } from "react"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { buttonVariants } from "../ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog"
@@ -28,7 +28,7 @@ export default function ForgotPassword() {
 			setIsLoading(true)
 			try {
 				// console.log(email)
-				await pb.collection("users").requestPasswordReset(email)
+				await api.send("/api/v1/session/forgot", { method: "POST", body: { identifier: email } })
 				toast({
 					title: t`Password reset request received`,
 					description: t`Check ${email} for a reset link.`,

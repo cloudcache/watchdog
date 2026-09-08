@@ -1,10 +1,7 @@
 import { t } from "@lingui/core/macro"
 import { CpuIcon, HardDriveIcon, MemoryStickIcon, ServerIcon } from "lucide-react"
-import type { RecordSubscription } from "pocketbase"
 import { EthernetIcon, GpuIcon } from "@/components/ui/icons"
-import { $alerts } from "@/lib/stores"
-import type { AlertInfo, AlertRecord } from "@/types"
-import { pb } from "./api"
+import type { AlertInfo } from "@/types"
 import { ThermometerIcon, BatteryMediumIcon, HourglassIcon } from "@/components/ui/icons"
 
 /** Alert info for each alert type */
@@ -93,94 +90,3 @@ export const alertInfo: Record<string, AlertInfo> = {
 		invert: true,
 	},
 } as const
-
-/** Helper to manage user alerts */
-export const alertManager = (() => {
-	const collection = pb.collection<AlertRecord>("alerts")
-	let unsub: () => void
-
-	/** Fields to fetch from alerts collection */
-	const fields = "id,name,system,value,min,triggered"
-
-	/** Fetch alerts from collection */
-	async function fetchAlerts(): Promise<AlertRecord[]> {
-		return await collection.getFullList<AlertRecord>({ fields, sort: "updated" })
-	}
-
-	/** Format alerts into a map of system id to alert name to alert record */
-	function add(alerts: AlertRecord[]) {
-		for (const alert of alerts) {
-			const systemId = alert.system
-			const systemAlerts = $alerts.get()[systemId] ?? new Map()
-			const newAlerts = new Map(systemAlerts)
-			newAlerts.set(alert.name, alert)
-			$alerts.setKey(systemId, newAlerts)
-		}
-	}
-
-	function remove(alerts: Pick<AlertRecord, "name" | "system">[]) {
-		for (const alert of alerts) {
-			const systemId = alert.system
-			const systemAlerts = $alerts.get()[systemId]
-			const newAlerts = new Map(systemAlerts)
-			newAlerts.delete(alert.name)
-			$alerts.setKey(systemId, newAlerts)
-		}
-	}
-
-	const actionFns = {
-		create: add,
-		update: add,
-		delete: remove,
-	}
-
-	// batch alert updates to prevent unnecessary re-renders when adding many alerts at once
-	const batchUpdate = (() => {
-		const batch = new Map<string, RecordSubscription<AlertRecord>>()
-		let timeout: ReturnType<typeof setTimeout>
-
-		return (data: RecordSubscription<AlertRecord>) => {
-			const { record } = data
-			batch.set(`${record.system}${record.name}`, data)
-			clearTimeout(timeout)
-			timeout = setTimeout(() => {
-				const groups = { create: [], update: [], delete: [] } as Record<string, AlertRecord[]>
-				for (const { action, record } of batch.values()) {
-					groups[action]?.push(record)
-				}
-				for (const key in groups) {
-					if (groups[key].length) {
-						actionFns[key as keyof typeof actionFns]?.(groups[key])
-					}
-				}
-				batch.clear()
-			}, 50)
-		}
-	})()
-
-	async function subscribe() {
-		unsub = await collection.subscribe("*", batchUpdate, { fields })
-	}
-
-	function unsubscribe() {
-		unsub?.()
-	}
-
-	async function refresh() {
-		const records = await fetchAlerts()
-		add(records)
-	}
-
-	return {
-		/** Add alerts to store */
-		add,
-		/** Remove alerts from store */
-		remove,
-		/** Subscribe to alerts */
-		subscribe,
-		/** Unsubscribe from alerts */
-		unsubscribe,
-		/** Refresh alerts with latest data from hub */
-		refresh,
-	}
-})()

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type NetworkDevice = {
@@ -91,7 +91,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {
+			const data = await api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -125,7 +125,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			const saved = await pb.send<NetworkPort>(`/api/v1/network/ports/${id}`, {
+			const saved = await api.send<NetworkPort>(`/api/v1/network/ports/${id}`, {
 				method: "PATCH",
 				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body: {

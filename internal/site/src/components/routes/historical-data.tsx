@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type HistoricalPreview = {
 	EstimatedSamples?: number
@@ -48,7 +48,7 @@ export default memo(() => {
 		setMessage("")
 		setOperation(null)
 		try {
-			const data = await pb.send<HistoricalPreview>(`/api/v1/historical/preview?sample_step=${sampleStep}`, {
+			const data = await api.send<HistoricalPreview>(`/api/v1/historical/preview?sample_step=${sampleStep}`, {
 				method: "POST",
 				body: requestBody(),
 			})
@@ -66,7 +66,7 @@ export default memo(() => {
 		setPreview(null)
 		try {
 			const operationID = `hist-${Date.now()}`
-			const data = await pb.send<HistoricalOperation>(`/api/v1/historical/${action}?operation_id=${operationID}`, {
+			const data = await api.send<HistoricalOperation>(`/api/v1/historical/${action}?operation_id=${operationID}`, {
 				method: "POST",
 				body: requestBody(),
 			})

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type BillingAccount = {
@@ -73,7 +73,7 @@ export default memo(({ id }: BillingAccountFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const account = await pb.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {
+			const account = await api.send<BillingAccount>(`/api/v1/billing/accounts/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -114,7 +114,7 @@ export default memo(({ id }: BillingAccountFormProps) => {
 				QuotaBytes: Number(form.quotaBytes) || 0,
 				Notes: form.notes,
 			}
-			const saved = await pb.send<BillingAccount>(id ? `/api/v1/billing/accounts/${id}` : "/api/v1/billing/accounts", {
+			const saved = await api.send<BillingAccount>(id ? `/api/v1/billing/accounts/${id}` : "/api/v1/billing/accounts", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,

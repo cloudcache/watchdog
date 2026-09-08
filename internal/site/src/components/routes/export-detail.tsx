@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { downloadWatchdogFile, pb } from "@/lib/api"
+import { downloadWatchdogFile, api } from "@/lib/api"
 import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
 import { cn } from "@/lib/utils"
 import {
@@ -55,7 +55,7 @@ export default memo(({ id }: ExportDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<ExportTask>(`/api/v1/exports/${id}`, {})
+			const data = await api.send<ExportTask>(`/api/v1/exports/${id}`, {})
 			setTask(data)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load export`)
@@ -84,7 +84,7 @@ export default memo(({ id }: ExportDetailProps) => {
 		setRetrying(true)
 		setError("")
 		try {
-			const data = await pb.send<ExportTask>(`/api/v1/exports/${exportID(task)}/retry`, { method: "POST" })
+			const data = await api.send<ExportTask>(`/api/v1/exports/${exportID(task)}/retry`, { method: "POST" })
 			setTask(data)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to retry export`)
@@ -98,7 +98,7 @@ export default memo(({ id }: ExportDetailProps) => {
 		setCanceling(true)
 		setError("")
 		try {
-			const data = await pb.send<ExportTask>(`/api/v1/exports/${exportID(task)}/cancel`, { method: "POST" })
+			const data = await api.send<ExportTask>(`/api/v1/exports/${exportID(task)}/cancel`, { method: "POST" })
 			setTask(data)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to cancel export`)
@@ -113,10 +113,10 @@ export default memo(({ id }: ExportDetailProps) => {
 		setDeleting(true)
 		setError("")
 		try {
-			const response = await pb.send<{ id?: string }>(`/api/v1/exports/${exportID(task)}`, { method: "DELETE" })
+			const response = await api.send<{ id?: string }>(`/api/v1/exports/${exportID(task)}`, { method: "DELETE" })
 			if (!response.id) throw new Error(t`Export deletion did not return an operation job`)
 			for (let attempt = 0; attempt < 120; attempt++) {
-				const job = await pb.send<{ status?: string; last_error_detail?: string }>(
+				const job = await api.send<{ status?: string; last_error_detail?: string }>(
 					`/api/v1/operation-jobs/${response.id}`,
 					{}
 				)

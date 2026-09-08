@@ -17,7 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { cn } from "@/lib/utils"
 
@@ -134,8 +134,8 @@ export default memo(({ id }: PortDetailProps) => {
 		setError("")
 		try {
 			const [data, dashboardData] = await Promise.all([
-				pb.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
-				pb.send<GraphDashboard>(`/api/v1/graph/ports/${id}/overview`, {}).catch(() => null),
+				api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
+				api.send<GraphDashboard>(`/api/v1/graph/ports/${id}/overview`, {}).catch(() => null),
 			])
 			setPort(data.port ?? null)
 			setDevice(data.device ?? null)
@@ -160,7 +160,7 @@ export default memo(({ id }: PortDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await pb.send<{ impacts?: PortDeleteImpact[] }>(`/api/v1/network/ports/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: PortDeleteImpact[] }>(`/api/v1/network/ports/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			setDeleteImpacts([])
@@ -173,11 +173,11 @@ export default memo(({ id }: PortDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const response = await pb.send<{ job_id?: string } | null>(`/api/v1/network/ports/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/network/ports/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
-					const job = await pb.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					const job = await api.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
 					if (job.status === "succeeded") {
 						break
 					}

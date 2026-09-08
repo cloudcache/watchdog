@@ -12,20 +12,17 @@ import { $router } from "@/components/router.tsx"
 import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
-import { alertManager } from "@/lib/alerts"
-import { canManageAddressLibrary, isAdmin, pb, refreshWatchdogIdentity, updateUserSettings } from "@/lib/api.ts"
+import { canManageAddressLibrary, restoreSession } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
 	$authenticated,
+	$authChecked,
 	$copyContent,
 	$direction,
-	$newVersion,
-	$publicKey,
 	$userSettings,
 	defaultLayoutWidth,
 } from "@/lib/stores.ts"
-import type { WatchdogInfo, UpdateInfo } from "./types"
 
 const LoginPage = lazy(() => import("@/components/login/login.tsx"))
 const AggregateCharts = lazy(() => import("@/components/routes/aggregate-charts.tsx"))
@@ -87,38 +84,7 @@ const App = memo(() => {
 	const page = useStore($router)
 	const platformIdentity = useStore($platformIdentity)
 
-	useEffect(() => {
-		// change auth store on auth change
-		const unsubscribeAuth = pb.authStore.onChange(() => {
-			$authenticated.set(watchdogDevAuth || pb.authStore.isValid)
-		})
-		if (watchdogDevAuth) {
-			return () => unsubscribeAuth()
-		}
-		const identityReady = refreshWatchdogIdentity().catch((error) => {
-			console.error("initialize platform identity", error)
-		})
-		// get general info for authenticated users, such as public key and version
-		pb.send<WatchdogInfo>("/api/watchdog/info", {}).then((data) => {
-			$publicKey.set(data.key)
-			// Wait for the MySQL authorization projection before showing admin-only updates.
-			identityReady.then(() => {
-				if (data.cu && isAdmin()) {
-					pb.send<UpdateInfo>("/api/watchdog/update", {}).then($newVersion.set)
-				}
-			})
-		})
-		// get user settings
-		updateUserSettings()
-		alertManager.refresh().then(alertManager.subscribe)
-		return () => {
-			unsubscribeAuth()
-			alertManager.unsubscribe()
-		}
-	}, [])
-
-	// Tenant-scoped pages must not mount until identity discovery has replaced
-	// any stale tenant selection left by a previous login or migration.
+	// Authenticated pages mount only after the route-triggered session check.
 	if (!watchdogDevAuth && !platformIdentity.ready) {
 		return <div className="p-3 text-sm text-muted-foreground">Loading...</div>
 	}
@@ -293,6 +259,8 @@ const App = memo(() => {
 
 const Layout = () => {
 	const authenticated = useStore($authenticated)
+	const authChecked = useStore($authChecked)
+	const page = useStore($router)
 	const copyContent = useStore($copyContent)
 	const direction = useStore($direction)
 	const { layoutWidth } = useStore($userSettings, { keys: ["layoutWidth"] })
@@ -300,6 +268,21 @@ const Layout = () => {
 	useEffect(() => {
 		document.documentElement.dir = direction
 	}, [direction])
+
+	useEffect(() => {
+		if (watchdogDevAuth || authChecked) return
+		// Login/reset pages are passive: rendering them must not make an auth
+		// request. Every other route is controlled and may restore its session.
+		if (page?.route === "forgot_password") {
+			$authChecked.set(true)
+			return
+		}
+		restoreSession().catch(() => $authChecked.set(true))
+	}, [authChecked, page?.route])
+
+	if (!authChecked) {
+		return null
+	}
 
 	return (
 		<DirectionProvider dir={direction}>

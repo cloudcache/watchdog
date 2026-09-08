@@ -14,7 +14,7 @@ import {
 	parseSetLabelSelector,
 	parseUnsignedIntegerEntries,
 } from "@/lib/address-set-form"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 
 type AddressSet = {
 	id: string
@@ -89,7 +89,7 @@ export default memo(function AddressSets() {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await pb.send<AddressSetList>("/api/v1/address-sets", {
+			const data = await api.send<AddressSetList>("/api/v1/address-sets", {
 				query: {
 					q: debouncedSearch || undefined,
 					match_direction: direction || undefined,
@@ -131,7 +131,7 @@ export default memo(function AddressSets() {
 				...(asns.length ? { asns } : {}),
 				...(families.length ? { families } : {}),
 			}
-			await pb.send(form.id ? `/api/v1/address-sets/${form.id}` : "/api/v1/address-sets", {
+			await api.send(form.id ? `/api/v1/address-sets/${form.id}` : "/api/v1/address-sets", {
 				method: form.id ? "PATCH" : "POST",
 				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
 				body: {
@@ -184,7 +184,7 @@ export default memo(function AddressSets() {
 			const rowVersion = Number(record.rowVersion ?? 0)
 			if (!id || !rowVersion || !confirm(t`Delete this address set?`)) return
 			try {
-				await pb.send(`/api/v1/address-sets/${id}`, {
+				await api.send(`/api/v1/address-sets/${id}`, {
 					method: "DELETE",
 					headers: { "If-Match": `"${rowVersion}"` },
 				})
@@ -200,7 +200,7 @@ export default memo(function AddressSets() {
 		if (selected.length === 0 || !confirm(t`Delete ${selected.length} selected address sets?`)) return
 		try {
 			for (const { id, rowVersion } of selected) {
-				await pb.send(`/api/v1/address-sets/${id}`, { method: "DELETE", headers: { "If-Match": `"${rowVersion}"` } })
+				await api.send(`/api/v1/address-sets/${id}`, { method: "DELETE", headers: { "If-Match": `"${rowVersion}"` } })
 			}
 			setSelected([])
 			await fetchPage()
@@ -487,7 +487,7 @@ export default memo(function AddressSets() {
 							</SelectContent>
 						</Select>
 					</div>
-					<label className="flex items-center gap-2 self-end pb-2 text-sm">
+					<label className="flex items-center gap-2 self-end api-2 text-sm">
 						<input
 							type="checkbox"
 							checked={form.enabled}

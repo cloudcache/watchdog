@@ -1,400 +1,110 @@
 import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { KeyIcon, LoaderCircle, LockIcon, LogInIcon, MailIcon } from "lucide-react"
-import type { AuthMethodsList, AuthProviderInfo, OAuth2AuthConfig } from "pocketbase"
-import { useCallback, useEffect, useState } from "react"
+import { LoaderCircle, LockIcon, LogInIcon, UserIcon } from "lucide-react"
+import { useCallback, useState } from "react"
 import * as v from "valibot"
 import { buttonVariants } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { pb } from "@/lib/api"
-import { $authenticated } from "@/lib/stores"
+import { login } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { $router, Link, basePath, prependBasePath } from "../router"
+import { $router, Link } from "../router"
 import { toast } from "../ui/use-toast"
-import { OtpInputForm } from "./otp-forms"
 
-const honeypot = v.literal("")
-const emailSchema = v.pipe(v.string(), v.rfcEmail(t`Invalid email address.`))
-const passwordSchema = v.pipe(
-	v.string(),
-	v.minLength(8, t`Password must be at least 8 characters.`),
-	v.maxBytes(72, t`Password must be less than 72 bytes.`)
-)
-
-const LoginSchema = v.looseObject({
-	website: honeypot,
-	email: emailSchema,
-	password: passwordSchema,
+const LoginSchema = v.object({
+	username: v.pipe(v.string(), v.trim(), v.minLength(1, t`Username is required.`)),
+	password: v.pipe(
+		v.string(),
+		v.minLength(8, t`Password must be at least 8 characters.`),
+		v.maxBytes(72, t`Password must be less than 72 bytes.`)
+	),
 })
 
-const RegisterSchema = v.looseObject({
-	website: honeypot,
-	email: emailSchema,
-	password: passwordSchema,
-	passwordConfirm: passwordSchema,
-})
-
-export const showLoginFaliedToast = (description = t`Please check your credentials and try again`) => {
-	toast({
-		title: t`Login attempt failed`,
-		description,
-		variant: "destructive",
-	})
+export const showLoginFailedToast = (description = t`Please check your credentials and try again`) => {
+	toast({ title: t`Login attempt failed`, description, variant: "destructive" })
 }
 
-const getAuthProviderIcon = (provider: AuthProviderInfo) => {
-	let { name } = provider
-	if (name.startsWith("oidc")) {
-		name = "oidc"
-	}
-	return prependBasePath(`/_/images/oauth2/${name}.svg`)
-}
-
-export function UserAuthForm({
-	className,
-	isFirstRun,
-	authMethods,
-	...props
-}: {
-	className?: string
-	isFirstRun: boolean
-	authMethods: AuthMethodsList
-}) {
-	const [isLoading, setIsLoading] = useState<boolean>(false)
-	const [isOauthLoading, setIsOauthLoading] = useState<boolean>(false)
+export function UserAuthForm({ className, ...props }: { className?: string }) {
+	const [isLoading, setIsLoading] = useState(false)
 	const [errors, setErrors] = useState<Record<string, string | undefined>>({})
-	const [mfaId, setMfaId] = useState<string | undefined>()
-	const [otpId, setOtpId] = useState<string | undefined>()
 
-	const handleSubmit = useCallback(
-		async (e: React.FormEvent<HTMLFormElement>) => {
-			e.preventDefault()
-			setIsLoading(true)
-			// store email for later use if mfa is enabled
-			let email = ""
-			try {
-				const formData = new FormData(e.target as HTMLFormElement)
-				const data = Object.fromEntries(formData) as Record<string, any>
-				const Schema = isFirstRun ? RegisterSchema : LoginSchema
-				const result = v.safeParse(Schema, data)
-				if (!result.success) {
-					console.log(result)
-					const errors = {}
-					for (const issue of result.issues) {
-						// @ts-expect-error
-						errors[issue.path[0].key] = issue.message
-					}
-					setErrors(errors)
-					return
+	const handleSubmit = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+		event.preventDefault()
+		setIsLoading(true)
+		try {
+			const result = v.safeParse(LoginSchema, Object.fromEntries(new FormData(event.currentTarget)))
+			if (!result.success) {
+				const next: Record<string, string> = {}
+				for (const issue of result.issues) {
+					const key = issue.path?.[0]?.key
+					if (typeof key === "string") next[key] = issue.message
 				}
-				const { password, passwordConfirm } = result.output
-				email = result.output.email
-				if (isFirstRun) {
-					// check that passwords match
-					if (password !== passwordConfirm) {
-						const msg = "Passwords do not match"
-						setErrors({ passwordConfirm: msg })
-						return
-					}
-					await pb.send("/api/watchdog/create-user", {
-						method: "POST",
-						body: JSON.stringify({ email, password }),
-					})
-					await pb.collection("users").authWithPassword(email, password)
-				} else {
-					await pb.collection("users").authWithPassword(email, password)
-				}
-				$authenticated.set(true)
-			} catch (err: any) {
-				const mfaId = err?.response?.mfaId
-				if (!mfaId) {
-					showLoginFaliedToast()
-					throw err
-				}
-				setMfaId(mfaId)
-				try {
-					const { otpId } = await pb.collection("users").requestOTP(email)
-					setOtpId(otpId)
-				} catch (err) {
-					console.log({ err })
-					showLoginFaliedToast()
-				}
-			} finally {
-				setIsLoading(false)
-			}
-		},
-		[isFirstRun]
-	)
-
-	const authProviders = authMethods.oauth2.providers ?? []
-	const oauthEnabled = authMethods.oauth2.enabled && authProviders.length > 0
-	const passwordEnabled = authMethods.password.enabled
-	const otpEnabled = authMethods.otp.enabled
-	const mfaEnabled = authMethods.mfa.enabled
-
-	function loginWithOauth(provider: AuthProviderInfo, forcePopup = false) {
-		setIsOauthLoading(true)
-
-		if (globalThis.WATCHDOG.OAUTH_DISABLE_POPUP) {
-			redirectToOauthProvider(provider)
-			return
-		}
-
-		const oAuthOpts: OAuth2AuthConfig = {
-			provider: provider.name,
-		}
-		// https://github.com/pocketbase/pocketbase/discussions/2429#discussioncomment-5943061
-		if (forcePopup || navigator.userAgent.match(/iPhone|iPad|iPod/i)) {
-			const authWindow = window.open()
-			if (!authWindow) {
-				setIsOauthLoading(false)
-				showLoginFaliedToast(t`Please enable pop-ups for this site`)
+				setErrors(next)
 				return
 			}
-			oAuthOpts.urlCallback = (url) => {
-				authWindow.location.href = url
-			}
-		}
-		pb.collection("users")
-			.authWithOAuth2(oAuthOpts)
-			.then(() => {
-				$authenticated.set(pb.authStore.isValid)
-			})
-			.catch(showLoginFaliedToast)
-			.finally(() => {
-				setIsOauthLoading(false)
-			})
-	}
-
-	/**
-	 * Redirects the user to the OAuth provider's authentication page in the same window.
-	 * Requires the app's base URL to be registered as a redirect URI with the OAuth provider.
-	 */
-	function redirectToOauthProvider(provider: AuthProviderInfo) {
-		const url = new URL(provider.authURL)
-		// url.searchParams.set("redirect_uri", `${window.location.origin}${basePath}`)
-		sessionStorage.setItem("provider", JSON.stringify(provider))
-		window.location.href = url.toString()
-	}
-
-	useEffect(() => {
-		// Completing an OAuth redirect is the continuation of a login that the
-		// user already initiated. Merely rendering this form must never start or
-		// refresh a login request.
-		const params = new URLSearchParams(window.location.search)
-		const code = params.get("code")
-		if (code) {
-			const state = params.get("state")
-			const provider: AuthProviderInfo = JSON.parse(sessionStorage.getItem("provider") ?? "{}")
-			if (!state || provider.state !== state) {
-				showLoginFaliedToast()
-			} else {
-				setIsOauthLoading(true)
-				window.history.replaceState({}, "", window.location.pathname)
-				pb.collection("users")
-					.authWithOAuth2Code(provider.name, code, provider.codeVerifier, `${window.location.origin}${basePath}`)
-					.then(() => $authenticated.set(pb.authStore.isValid))
-					.catch((e: unknown) => showLoginFaliedToast((e as Error).message))
-					.finally(() => setIsOauthLoading(false))
-			}
+			await login(result.output.username, result.output.password)
+		} catch (error) {
+			showLoginFailedToast((error as Error).message)
+		} finally {
+			setIsLoading(false)
 		}
 	}, [])
 
-	if (!authMethods) {
-		return null
-	}
-
-	if (otpId && mfaId) {
-		return <OtpInputForm otpId={otpId} mfaId={mfaId} />
-	}
-
 	return (
 		<div className={cn("grid gap-6", className)} {...props}>
-			{passwordEnabled && (
-				<>
-					<form onSubmit={handleSubmit} onChange={() => setErrors({})}>
-						<div className="grid gap-2.5">
-							<div className="grid gap-1 relative">
-								<MailIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-								<Label className="sr-only" htmlFor="email">
-									<Trans>Email</Trans>
-								</Label>
-								<Input
-									id="email"
-									name="email"
-									required
-									placeholder="name@example.com"
-									type="text"
-									autoCapitalize="none"
-									autoComplete="email"
-									autoCorrect="off"
-									disabled={isLoading || isOauthLoading}
-									className={cn("ps-9", errors?.email && "border-red-500")}
-								/>
-								{errors?.email && <p className="px-1 text-xs text-red-600">{errors.email}</p>}
-							</div>
-							<div className="grid gap-1 relative">
-								<LockIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-								<Label className="sr-only" htmlFor="pass">
-									<Trans>Password</Trans>
-								</Label>
-								<Input
-									id="pass"
-									name="password"
-									placeholder={t`Password`}
-									required
-									type="password"
-									autoComplete="current-password"
-									disabled={isLoading || isOauthLoading}
-									className={cn("ps-9", errors?.password && "border-red-500")}
-								/>
-								{errors?.password && <p className="px-1 text-xs text-red-600">{errors.password}</p>}
-							</div>
-							{isFirstRun && (
-								<div className="grid gap-1 relative">
-									<LockIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-									<Label className="sr-only" htmlFor="pass2">
-										<Trans>Confirm password</Trans>
-									</Label>
-									<Input
-										id="pass2"
-										name="passwordConfirm"
-										placeholder={t`Confirm password`}
-										required
-										type="password"
-										autoComplete="current-password"
-										disabled={isLoading || isOauthLoading}
-										className={cn("ps-9", errors?.password && "border-red-500")}
-									/>
-									{errors?.passwordConfirm && <p className="px-1 text-xs text-red-600">{errors.passwordConfirm}</p>}
-								</div>
-							)}
-							<div className="sr-only">
-								{/* honeypot */}
-								<label htmlFor="website">Website</label>
-								<input
-									id="website"
-									type="text"
-									name="website"
-									tabIndex={-1}
-									autoComplete="off"
-									data-1p-ignore
-									data-lpignore="true"
-									data-bwignore
-									data-form-type="other"
-									data-protonpass-ignore
-								/>
-							</div>
-							<button className={cn(buttonVariants())} disabled={isLoading}>
-								{isLoading ? (
-									<LoaderCircle className="me-2 h-4 w-4 animate-spin" />
-								) : (
-									<LogInIcon className="me-2 h-4 w-4" />
-								)}
-								{isFirstRun ? t`Create account` : t`Sign in`}
-							</button>
-						</div>
-					</form>
-					{(isFirstRun || oauthEnabled || (otpEnabled && !mfaEnabled)) && (
-						// only show 'continue with' during onboarding or if we have auth providers
-						<div className="relative">
-							<div className="absolute inset-0 flex items-center">
-								<span className="w-full border-t" />
-							</div>
-							<div className="relative flex justify-center text-xs uppercase">
-								<span className="bg-background px-2 text-muted-foreground">
-									<Trans>Or continue with</Trans>
-								</span>
-							</div>
-						</div>
-					)}
-				</>
-			)}
-			{/* hide OTP button if MFA is enabled (it will be used as MFA) */}
-			{otpEnabled && !mfaEnabled && (
-				<div className="grid gap-2 -mt-1">
-					<Link href="/request-otp" type="button" className={cn(buttonVariants({ variant: "outline" }), "flex gap-2")}>
-						<KeyIcon className="size-4" />
-						<Trans>One-time password</Trans>
-					</Link>
+			<form onSubmit={handleSubmit} onChange={() => setErrors({})}>
+				<div className="grid gap-2.5">
+					<div className="grid gap-1 relative">
+						<UserIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+						<Label className="sr-only" htmlFor="username">
+							<Trans>Username</Trans>
+						</Label>
+						<Input
+							id="username"
+							name="username"
+							required
+							placeholder={t`Username`}
+							autoCapitalize="none"
+							autoComplete="username"
+							disabled={isLoading}
+							className={cn("ps-9", errors.username && "border-red-500")}
+						/>
+						{errors.username && <p className="px-1 text-xs text-red-600">{errors.username}</p>}
+					</div>
+					<div className="grid gap-1 relative">
+						<LockIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+						<Label className="sr-only" htmlFor="password">
+							<Trans>Password</Trans>
+						</Label>
+						<Input
+							id="password"
+							name="password"
+							placeholder={t`Password`}
+							required
+							type="password"
+							autoComplete="current-password"
+							disabled={isLoading}
+							className={cn("ps-9", errors.password && "border-red-500")}
+						/>
+						{errors.password && <p className="px-1 text-xs text-red-600">{errors.password}</p>}
+					</div>
+					<button className={cn(buttonVariants())} disabled={isLoading}>
+						{isLoading ? (
+							<LoaderCircle className="me-2 h-4 w-4 animate-spin" />
+						) : (
+							<LogInIcon className="me-2 h-4 w-4" />
+						)}
+						<Trans>Sign in</Trans>
+					</button>
 				</div>
-			)}
-			{oauthEnabled && (
-				<div className="grid gap-2 -mt-1">
-					{authMethods.oauth2.providers.map((provider) => (
-						<button
-							key={provider.name}
-							type="button"
-							className={cn(buttonVariants({ variant: "outline" }), {
-								"justify-self-center": !passwordEnabled,
-								"px-5": !passwordEnabled,
-							})}
-							onClick={() => loginWithOauth(provider)}
-							disabled={isLoading || isOauthLoading}
-						>
-							{isOauthLoading ? (
-								<LoaderCircle className="me-2 h-4 w-4 animate-spin" />
-							) : (
-								<img
-									className="me-2 h-4 w-4 dark:brightness-0 dark:invert"
-									src={getAuthProviderIcon(provider)}
-									alt=""
-									// onError={(e) => {
-									// 	e.currentTarget.src = "/static/lock.svg"
-									// }}
-								/>
-							)}
-							<span className="translate-y-px">{provider.displayName}</span>
-						</button>
-					))}
-				</div>
-			)}
-			{!oauthEnabled && isFirstRun && (
-				// only show GitHub button / dialog during onboarding
-				<Dialog>
-					<DialogTrigger asChild>
-						<button type="button" className={cn(buttonVariants({ variant: "outline" }))}>
-							<img className="me-2 h-4 w-4 dark:invert" src={prependBasePath("/_/images/oauth2/github.svg")} alt="" />
-							<span className="translate-y-px">GitHub</span>
-						</button>
-					</DialogTrigger>
-					<DialogContent style={{ maxWidth: 440, width: "90%" }}>
-						<DialogHeader>
-							<DialogTitle>
-								<Trans>OAuth 2 / OIDC support</Trans>
-							</DialogTitle>
-						</DialogHeader>
-						<div className="text-primary/70 text-[0.95em] contents">
-							<p>
-								<Trans>Watchdog supports OpenID Connect and many OAuth2 authentication providers.</Trans>
-							</p>
-							<p>
-								<Trans>
-									Please see{" "}
-									<a
-										href="https://github.com/cloudcache/watchdog/tree/main/docs"
-										className={cn(buttonVariants({ variant: "link" }), "p-0 h-auto")}
-									>
-										the documentation
-									</a>{" "}
-									for instructions.
-								</Trans>
-							</p>
-						</div>
-					</DialogContent>
-				</Dialog>
-			)}
-			{passwordEnabled && !isFirstRun && (
-				<Link
-					href={getPagePath($router, "forgot_password")}
-					className="text-sm mx-auto hover:text-brand underline underline-offset-4 opacity-70 hover:opacity-100 transition-opacity"
-				>
-					<Trans>Forgot password?</Trans>
-				</Link>
-			)}
+			</form>
+			<Link
+				href={getPagePath($router, "forgot_password")}
+				className="text-sm mx-auto hover:text-brand underline underline-offset-4 opacity-70 hover:opacity-100 transition-opacity"
+			>
+				<Trans>Forgot password?</Trans>
+			</Link>
 		</div>
 	)
 }

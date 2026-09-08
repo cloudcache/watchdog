@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "@/components/ui/use-toast"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { $platformIdentity } from "@/lib/platform-auth"
 
 type ModuleState = {
@@ -39,8 +39,8 @@ export default memo(() => {
 		setError("")
 		try {
 			const [moduleData, kindData] = await Promise.all([
-				pb.send<{ items?: ModuleState[] }>("/api/v1/modules", {}),
-				pb.send<{ items?: TargetKindItem[] }>("/api/v1/modules/target-kinds", {}),
+				api.send<{ items?: ModuleState[] }>("/api/v1/modules", {}),
+				api.send<{ items?: TargetKindItem[] }>("/api/v1/modules/target-kinds", {}),
 			])
 			setModules(moduleData.items ?? [])
 			setKinds(kindData.items ?? [])
@@ -64,7 +64,7 @@ export default memo(() => {
 				return
 			}
 			try {
-				await pb.send(`/api/v1/tenants/${tenantID}/modules`, {
+				await api.send(`/api/v1/tenants/${tenantID}/modules`, {
 					method: "PUT",
 					body: { modules: { [module.Key]: !module.Enabled } },
 				})

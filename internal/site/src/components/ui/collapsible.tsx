@@ -28,9 +28,9 @@ export function Collapsible({ title, children, description, defaultOpen = false,
 					})}
 				/>
 			</Button>
-			{description && <div className="px-4 pb-2 text-sm text-muted-foreground">{description}</div>}
+			{description && <div className="px-4 api-2 text-sm text-muted-foreground">{description}</div>}
 			{isOpen && (
-				<div className="px-4 pb-4">
+				<div className="px-4 api-4">
 					<div className="grid gap-3">{children}</div>
 				</div>
 			)}

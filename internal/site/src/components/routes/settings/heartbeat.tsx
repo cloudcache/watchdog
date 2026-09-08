@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 interface HeartbeatStatus {
@@ -35,7 +35,7 @@ export default function HeartbeatSettings() {
 	async function fetchStatus() {
 		try {
 			setIsLoading(true)
-			const res = await pb.send<HeartbeatStatus>("/api/watchdog/heartbeat-status", {})
+			const res = await api.send<HeartbeatStatus>("/api/v1/heartbeat/status", {})
 			setStatus(res)
 		} catch (error: unknown) {
 			toast({
@@ -51,7 +51,7 @@ export default function HeartbeatSettings() {
 	async function sendTestHeartbeat() {
 		setIsTesting(true)
 		try {
-			const res = await pb.send<{ err: string | false }>("/api/watchdog/test-heartbeat", {
+			const res = await api.send<{ err: string | false }>("/api/v1/heartbeat/test", {
 				method: "POST",
 			})
 			if ("err" in res && !res.err) {

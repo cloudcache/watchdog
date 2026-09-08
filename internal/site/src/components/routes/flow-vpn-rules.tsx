@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import {
 	optionalPositive,
 	optionalRatio,
@@ -125,7 +125,7 @@ export default memo(() => {
 			if (value) params.set(field, String(value))
 		}
 		try {
-			const data = await pb.send<RuleResponse>(`/api/v1/flow/vpn/rules?${params}`, {})
+			const data = await api.send<RuleResponse>(`/api/v1/flow/vpn/rules?${params}`, {})
 			if (sequence !== requestSequence.current) return
 			setRules(data.items ?? [])
 			setTotal(data.total ?? 0)
@@ -212,7 +212,7 @@ export default memo(() => {
 		setError("")
 		try {
 			const body = formToRequest(form)
-			await pb.send(editing ? `/api/v1/flow/vpn/rules/${editing.id}` : "/api/v1/flow/vpn/rules", {
+			await api.send(editing ? `/api/v1/flow/vpn/rules/${editing.id}` : "/api/v1/flow/vpn/rules", {
 				method: editing ? "PATCH" : "POST",
 				headers: editing ? { "If-Match": `"${editing.row_version}"` } : undefined,
 				body,
@@ -231,7 +231,7 @@ export default memo(() => {
 		setSaving(true)
 		setError("")
 		try {
-			await pb.send(`/api/v1/flow/vpn/rules/${editing.id}`, {
+			await api.send(`/api/v1/flow/vpn/rules/${editing.id}`, {
 				method: "DELETE",
 				headers: { "If-Match": `"${editing.row_version}"` },
 			})

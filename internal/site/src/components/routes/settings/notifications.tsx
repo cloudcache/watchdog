@@ -11,11 +11,10 @@ import { InputTags } from "@/components/ui/input-tags"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import type { UserSettings } from "@/types"
 import { saveNotificationSettings } from "@/lib/api"
 import { QuietHours } from "./quiet-hours"
-import type { ClientResponseError } from "pocketbase"
 
 interface ShoutrrrUrlCardProps {
 	url: string
@@ -196,7 +195,7 @@ const ShoutrrrUrlCard = ({ url, onUrlChange, onRemove }: ShoutrrrUrlCardProps) =
 	const sendTestNotification = async () => {
 		setIsLoading(true)
 		try {
-			const res = await pb.send("/api/watchdog/test-notification", { method: "POST", body: { url } })
+			const res = await api.send("/api/v1/me/notification-channels/test", { method: "POST", body: { url } })
 			if ("err" in res && !res.err) {
 				toast({
 					title: t`Test notification sent`,
@@ -206,7 +205,7 @@ const ShoutrrrUrlCard = ({ url, onUrlChange, onRemove }: ShoutrrrUrlCardProps) =
 				showTestNotificationError(res.err)
 			}
 		} catch (e: unknown) {
-			showTestNotificationError((e as ClientResponseError).data?.message)
+			showTestNotificationError((e as Error).message)
 		} finally {
 			setIsLoading(false)
 		}

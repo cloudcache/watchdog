@@ -190,7 +190,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<CommandSeparator className="mb-1.5" />
 							<CommandGroup heading={t`Admin`}>
 								<CommandItem
-									keywords={["pocketbase"]}
+									keywords={["database"]}
 									onSelect={() => {
 										setOpen(false)
 										window.open(prependBasePath("/_/"), "_blank")

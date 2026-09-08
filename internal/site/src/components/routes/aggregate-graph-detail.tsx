@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { isAdmin, pb } from "@/lib/api"
+import { isAdmin, api } from "@/lib/api"
 import { formatMetricValue } from "@/lib/metric-format"
 import { cn } from "@/lib/utils"
 import { createLineChart, disposeChart } from "@/lib/vchart"
@@ -108,9 +108,9 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 		setError("")
 		try {
 			const [graphData, linkData, itemData] = await Promise.all([
-				pb.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {}),
-				pb.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
-				pb
+				api.send<AggregateGraph>(`/api/v1/aggregate-graphs/${id}`, {}),
+				api.send<{ items?: AggregateGraphPort[] }>(`/api/v1/aggregate-graphs/${id}/ports`, {}),
+				api
 					.send<{ items?: { Metric?: string; metric?: string }[] }>(`/api/v1/aggregate-graphs/${id}/items`, {})
 					.catch(() => ({ items: [] })),
 			])
@@ -128,7 +128,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 			const portIDs = links.map((link) => link.PortID ?? link.port_id ?? "").filter(Boolean)
 			const resolved = await Promise.all(
 				portIDs.map((portID) =>
-					pb
+					api
 						// the endpoint wraps the row as { device, port }
 						.send<{ device?: PortDevice; port?: NetworkPort } & NetworkPort>(`/api/v1/network/ports/${portID}`, {})
 						.then((response): PortMember => ({ device: response.device, port: response.port ?? response }))
@@ -158,7 +158,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 			if (splitSideType) {
 				params.set("split_side_type", "true")
 			}
-			const data = await pb.send<VMRangeResponse>(`/api/v1/aggregate-graphs/${id}/series?${params.toString()}`, {})
+			const data = await api.send<VMRangeResponse>(`/api/v1/aggregate-graphs/${id}/series?${params.toString()}`, {})
 			setChartSeries(vmSeries(data))
 		} catch (err) {
 			setChartError(err instanceof Error ? err.message : t`Failed to load aggregate series`)
@@ -170,7 +170,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 	const refreshSummary = useCallback(async () => {
 		try {
 			const params = new URLSearchParams({ start: rangeStartForWindow(windowValue), end: new Date().toISOString() })
-			const data = await pb.send<AggregateGraphSummary>(
+			const data = await api.send<AggregateGraphSummary>(
 				`/api/v1/aggregate-graphs/${id}/summary?${params.toString()}`,
 				{}
 			)
@@ -250,7 +250,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 						onClick={async () => {
 							if (!globalThis.confirm(t`Delete this aggregate graph?`)) return
 							try {
-								await pb.send(`/api/v1/aggregate-graphs/${id}`, { method: "DELETE" })
+								await api.send(`/api/v1/aggregate-graphs/${id}`, { method: "DELETE" })
 								navigate(getPagePath($router, "aggregate_graphs"))
 							} catch (err) {
 								setError(err instanceof Error ? err.message : t`Failed to delete`)

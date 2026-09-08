@@ -1,59 +1,32 @@
 import { t } from "@lingui/core/macro"
 import { useStore } from "@nanostores/react"
-import type { AuthMethodsList } from "pocketbase"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo } from "react"
 import { UserAuthForm } from "@/components/login/auth-form"
-import { pb } from "@/lib/api"
 import { Logo } from "../logo"
 import { ModeToggle } from "../mode-toggle"
 import { $router } from "../router"
 import { useTheme } from "../theme-provider"
 import ForgotPassword from "./forgot-pass-form"
-import { OtpRequestForm } from "./otp-forms"
 
-export default function () {
+export default function Login() {
 	const page = useStore($router)
-	const [isFirstRun, setFirstRun] = useState(false)
-	const [authMethods, setAuthMethods] = useState<AuthMethodsList>()
 	const { theme } = useTheme()
 
 	useEffect(() => {
 		document.title = [t`Login`, "Watchdog"].join(" / ")
-
-		pb.send("/api/watchdog/first-run", {}).then(({ firstRun }) => {
-			setFirstRun(firstRun)
-		})
 	}, [])
 
-	useEffect(() => {
-		pb.collection("users")
-			.listAuthMethods()
-			.then((methods) => {
-				setAuthMethods(methods)
-			})
-	}, [])
-
-	const subtitle = useMemo(() => {
-		if (isFirstRun) {
-			return t`Please create an admin account`
-		} else if (page?.route === "forgot_password") {
-			return t`Enter email address to reset password`
-		} else if (page?.route === "request_otp") {
-			return t`Request a one-time password`
-		} else {
-			return t`Please sign in to your account`
-		}
-	}, [isFirstRun, page])
-
-	if (!authMethods) {
-		return null
-	}
+	const forgotPassword = page?.route === "forgot_password"
+	const subtitle = useMemo(
+		() => (forgotPassword ? t`Enter email address to reset password` : t`Please sign in to your account`),
+		[forgotPassword]
+	)
 
 	return (
 		<div className="min-h-svh grid items-center py-12">
 			<div
 				className="grid gap-5 w-full px-4 mx-auto"
-				// @ts-expect-error
+				// @ts-expect-error custom theme variable
 				style={{ maxWidth: "21.5em", "--border": theme === "light" ? "hsl(30, 8%, 70%)" : "hsl(220, 3%, 25%)" }}
 			>
 				<div className="absolute top-3 right-3">
@@ -65,13 +38,7 @@ export default function () {
 					</h1>
 					<p className="text-sm text-muted-foreground">{subtitle}</p>
 				</div>
-				{page?.route === "forgot_password" ? (
-					<ForgotPassword />
-				) : page?.route === "request_otp" ? (
-					<OtpRequestForm />
-				) : (
-					<UserAuthForm isFirstRun={isFirstRun} authMethods={authMethods} />
-				)}
+				{forgotPassword ? <ForgotPassword /> : <UserAuthForm />}
 			</div>
 		</div>
 	)

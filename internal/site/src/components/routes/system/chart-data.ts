@@ -1,5 +1,5 @@
 import { timeTicks } from "d3-time"
-import { pb } from "@/lib/api"
+import { api } from "@/lib/api"
 import { chartTimeData } from "@/lib/utils"
 import type { ChartData, ChartTimeRange, ChartTimes, ContainerStatsRecord, SystemStatsRecord } from "@/types"
 
@@ -188,7 +188,7 @@ async function getVMMetric(metric: string, baseParams: URLSearchParams, endpoint
 async function getVMMetricResponse(metric: string, baseParams: URLSearchParams, endpoint = "/api/v1/metrics/query") {
 	const params = new URLSearchParams(baseParams)
 	params.set("metric", metric)
-	return await pb.send<VMRangeResponse>(`${endpoint}?${params.toString()}`, {})
+	return await api.send<VMRangeResponse>(`${endpoint}?${params.toString()}`, {})
 }
 
 function makeSystemStatsFromVM(series: {

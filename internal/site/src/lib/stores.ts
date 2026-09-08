@@ -1,13 +1,15 @@
 import { atom, computed, listenKeys, map, type ReadableAtom } from "nanostores"
 import type { AlertMap, ChartTimeRange, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
-import { pb } from "./api"
 import { Unit } from "./enums"
 
 /** Default layout width. Used as fallback when user setting is unset. */
 export const defaultLayoutWidth = 1580
 
 /** Store if user is authenticated */
-export const $authenticated = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true" || pb.authStore.isValid)
+export const $authenticated = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true")
+/** Whether a protected-route session check has completed. Public login/reset
+ * pages never trigger this check themselves. */
+export const $authChecked = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true")
 
 /** Map of system records by name */
 export const $allSystemsByName = map<Record<string, SystemRecord>>({})
@@ -42,7 +44,7 @@ export const $maxValues = atom(false)
 
 // export const UserSettingsSchema = v.object({
 // 	chartTime: v.picklist(["1h", "12h", "24h", "1w", "30d"]),
-// 	emails: v.optional(v.array(v.pipe(v.string(), v.email())), [pb?.authStore?.record?.email ?? ""]),
+// 	emails: v.optional(v.array(v.pipe(v.string(), v.email())), []),
 // 	webhooks: v.optional(v.array(v.string())),
 // 	colorWarn: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(100))),
 // 	colorDanger: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(100))),
@@ -54,7 +56,7 @@ export const $maxValues = atom(false)
 /** User settings */
 export const $userSettings = map<UserSettings>({
 	chartTime: "1h",
-	emails: [pb.authStore.record?.email || ""],
+	emails: [],
 	unitNet: Unit.Bytes,
 	unitTemp: Unit.Celsius,
 })
