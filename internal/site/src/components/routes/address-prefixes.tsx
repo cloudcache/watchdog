@@ -31,6 +31,22 @@ type AddressOperationPreview = {
 	added_addresses_v6: string
 }
 
+type AddressPrefixMergeGroup = {
+	geo_leaf_id?: string
+	operator_id?: string
+	asn?: number
+	labels?: Record<string, string>
+	source: string
+	input_cidrs: string[]
+	result_cidrs: string[]
+}
+
+type AddressPrefixMergePreview = {
+	input_prefixes: number
+	result_prefixes: number
+	groups: AddressPrefixMergeGroup[]
+}
+
 const emptyForm = {
 	id: "",
 	rowVersion: 0,
@@ -58,9 +74,11 @@ export default memo(function AddressPrefixes() {
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(false)
 	const [form, setForm] = useState(emptyForm)
-	const [selected, setSelected] = useState<{ id: string; rowVersion: number; cidr: string }[]>([])
+	const [selected, setSelected] = useState<AddressPrefix[]>([])
 	const [coverPreview, setCoverPreview] = useState<AddressOperationPreview | null>(null)
 	const [coverWorking, setCoverWorking] = useState(false)
+	const [mergePreview, setMergePreview] = useState<AddressPrefixMergePreview | null>(null)
+	const [mergeWorking, setMergeWorking] = useState(false)
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
@@ -221,10 +239,10 @@ export default memo(function AddressPrefixes() {
 	const removeSelected = useCallback(async () => {
 		if (selected.length === 0 || !confirm(t`Delete ${selected.length} selected prefixes?`)) return
 		try {
-			for (const { id, rowVersion } of selected) {
-				await pb.send(`/api/v1/address-prefixes/${id}`, {
+			for (const prefix of selected) {
+				await pb.send(`/api/v1/address-prefixes/${prefix.id}`, {
 					method: "DELETE",
-					headers: { "If-Match": `"${rowVersion}"` },
+					headers: { "If-Match": `"${prefix.row_version}"` },
 				})
 			}
 			setSelected([])
@@ -237,13 +255,7 @@ export default memo(function AddressPrefixes() {
 	const selectable = useMemo(
 		() => ({
 			onSelectionChange: (records: Record<string, unknown>[]) =>
-				setSelected(
-					records.map((record) => ({
-						id: String(record.id),
-						rowVersion: Number(record.rowVersion),
-						cidr: String(record.cidr ?? ""),
-					}))
-				),
+				setSelected(records.map((record) => record.item as AddressPrefix).filter(Boolean)),
 		}),
 		[]
 	)
@@ -287,6 +299,77 @@ export default memo(function AddressPrefixes() {
 			setCoverWorking(false)
 		}
 	}, [coverPreview, fetchPage, t])
+
+	const previewMerge = useCallback(async () => {
+		if (selected.length < 2) return
+		setMergeWorking(true)
+		setError("")
+		try {
+			const preview = await pb.send<AddressPrefixMergePreview>("/api/v1/address-prefixes/actions/merge-preview", {
+				method: "POST",
+				body: {
+					prefixes: selected.map((prefix) => ({
+						cidr: prefix.cidr,
+						geo_leaf_id: prefix.geo_leaf_id ?? "",
+						operator_id: prefix.operator_id ?? "",
+						asn: prefix.asn,
+						labels: prefix.labels ?? {},
+						source: prefix.source,
+					})),
+				},
+			})
+			setMergePreview(preview)
+		} catch (err) {
+			setMergePreview(null)
+			setError(err instanceof Error ? err.message : t`Preview failed`)
+		} finally {
+			setMergeWorking(false)
+		}
+	}, [selected, t])
+
+	const confirmMerge = useCallback(async () => {
+		if (!mergePreview) return
+		setMergeWorking(true)
+		setError("")
+		try {
+			for (const group of mergePreview.groups) {
+				// Only groups whose CIDRs actually coalesced change; the coalesced
+				// result is coarser than any input, so it never collides with an
+				// original before that original is deleted.
+				if (group.result_cidrs.length >= group.input_cidrs.length) continue
+				for (const cidr of group.result_cidrs) {
+					await pb.send("/api/v1/address-prefixes", {
+						method: "POST",
+						body: {
+							cidr,
+							labels: group.labels ?? {},
+							source: group.source || "manual",
+							asn: group.asn ?? 0,
+							geo_leaf_id: group.geo_leaf_id ?? "",
+							operator_id: group.operator_id ?? "",
+						},
+					})
+				}
+				const inputSet = new Set(group.input_cidrs)
+				for (const prefix of selected) {
+					if (inputSet.has(prefix.cidr)) {
+						await pb.send(`/api/v1/address-prefixes/${prefix.id}`, {
+							method: "DELETE",
+							headers: { "If-Match": `"${prefix.row_version}"` },
+						})
+					}
+				}
+			}
+			setMergePreview(null)
+			setSelected([])
+			await fetchPage()
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to save`)
+			await fetchPage()
+		} finally {
+			setMergeWorking(false)
+		}
+	}, [mergePreview, selected, fetchPage, t])
 
 	const records = useMemo(
 		() =>
@@ -383,6 +466,11 @@ export default memo(function AddressPrefixes() {
 					</h1>
 				</div>
 				<div className="flex gap-2">
+					{selected.length >= 2 ? (
+						<Button variant="outline" size="sm" onClick={previewMerge} disabled={mergeWorking}>
+							<Trans>Merge selected</Trans> ({selected.length})
+						</Button>
+					) : null}
 					{selected.length >= 2 ? (
 						<Button variant="outline" size="sm" onClick={previewCover} disabled={coverWorking}>
 							<Trans>Cover selected</Trans> ({selected.length})
@@ -533,6 +621,41 @@ export default memo(function AddressPrefixes() {
 							<Trans>Create cover prefix</Trans>
 						</Button>
 						<Button variant="ghost" size="sm" onClick={() => setCoverPreview(null)} disabled={coverWorking}>
+							<Trans>Cancel</Trans>
+						</Button>
+					</div>
+				</div>
+			) : null}
+
+			{mergePreview ? (
+				<div className="grid gap-3 rounded-md border border-border bg-card p-4">
+					<div className="font-medium">
+						<Trans>Attribution-preserving merge</Trans>
+					</div>
+					<div className="text-sm text-muted-foreground">
+						{mergePreview.input_prefixes} → {mergePreview.result_prefixes} <Trans>prefixes</Trans>
+						{" · "}
+						{mergePreview.groups.length} <Trans>attribution group(s)</Trans>
+					</div>
+					<div className="text-xs text-muted-foreground">
+						<Trans>
+							Only prefixes with identical geography/operator/ASN/labels merge; coverage and attribution are preserved.
+						</Trans>
+					</div>
+					{mergePreview.result_prefixes >= mergePreview.input_prefixes ? (
+						<div className="text-xs text-muted-foreground">
+							<Trans>Nothing to merge — no adjacent prefixes share the same attribution.</Trans>
+						</div>
+					) : null}
+					<div className="flex gap-2">
+						<Button
+							size="sm"
+							onClick={confirmMerge}
+							disabled={mergeWorking || mergePreview.result_prefixes >= mergePreview.input_prefixes}
+						>
+							<Trans>Apply merge</Trans>
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setMergePreview(null)} disabled={mergeWorking}>
 							<Trans>Cancel</Trans>
 						</Button>
 					</div>
