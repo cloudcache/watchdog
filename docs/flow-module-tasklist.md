@@ -1,5 +1,7 @@
 # Flow 模块执行清单
 
+> **平台变更边界（2026-09-08）：** 平台目标已切换到 [Watchdog KISS 架构](watchdog-kiss-architecture.md) 和 [KISS 重构清单](watchdog-kiss-refactor-tasklist.md)。当前 KISS-01 PocketBase 彻底移除为平台第一阻断项；其完成前 Flow 只允许修复不触及平台契约的紧急数据面缺陷。已验证的 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template fallback、Kafka/worker/ClickHouse/WADS 数据面继续保留；未完成项不得新增 PocketBase、tenant、VictoriaMetrics、DatasetProvider 或 target/network-device 双身份依赖。Flow 单域化和 QueryGateway 收敛只在 KISS-06 独立切片执行，禁止借机重写 decoder。
+
 > **当前 Storage V2 基线**：[Flow Storage V2 重大变更设计与实施计划](flow-storage-v2-change-plan.md) 已完成生产实现并提交。未勾选项仅保留真实组合故障、维护窗口、固定硬件性能和物理删除等发布/破坏性门禁；它们继续 fail closed，但不阻塞使用现行 V2 契约推进独立查询切片。禁止恢复旧 30 天 TTL、实时 rollup 或逐记录 hash 契约。
 
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
@@ -296,7 +298,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **性能（object/build/lookup）**：真实 GeoLite2-ASN 的 WADS 为 4,291,551 bytes，worker compile 82ms/75.6 MiB，lookup 10.25M/s、p95 292ns/p99 500ns，证明无需 DIR-24-8。builder 经单遍 canonical merge、layer 引用、共享 Geo 紧凑行、精确容量和 migration 060 keyset 索引，从 9m04.618s/1,630.7 MiB 降至 28.292s/457.5 MiB；嵌套 LPM、产物计数与抽样结果保持一致。
   - [x] **性能（平台单例/swap）**：真实 WADS 只安装一份，retained heap 约 48.0 MiB；并发 ingest lookup 时 catalog install pointer pause 17.791µs，观测到的最大 lookup 64.25µs。AddressSnap 是全平台共享发布物，禁止按业务 tenant 复制，原 1/4/16 tenant 容量门禁已废除；swap <10ms、并发 lookup <100ms 的门禁保留。
   - [x] **平台单例 owner/权限修正**：当前用户模型实际是多 tenant membership + tenant-scoped `admin`，尚无 platform-admin；`address_library.owner_tenant_id` 将管理表固定到当前默认 `tenant_dev` 全局命名空间。地址维护/运算 preview/发布/GC 只允许该外部身份在 owner 下的权威 membership 为 admin；能力不随当前选择的业务 tenant 丢失，其他 tenant admin 写入仍为 403。`/api/v1/me` 与写 API 使用同一 owner 投影派生/强制 `can_manage_address_library`，前端用该能力隐藏入口并阻断所有维护页直达路由，后端仍是最终授权边界。trusted signing key 也必须属于 owner。跨 tenant 选择态、配置、API 路由、共享 owner repository scope、前端单测及 production build 已覆盖，发布仍走可查询的异步 operation job。
-  - [ ] **第二业务 tenant 前置（不得冒充当前已完成）**：migration 059 的 `(tenant_id,dimension_snapshot_id)` 外键、pair 签名和 worker catalog 仍把 classification tenant 与 AddressSnap tenant 绑定。接入第二 tenant 前以前向 migration/wire 升级为“tenant classification 引用全局 owner snapshot”，同一进程只 decode/compile/retain 一份 WADS，多个 classification 引用该指针；ACK/查询版本门禁仍按 worker + pair。禁止复制同 checksum snapshot/WADS 规避关系模型。
+- [x] **不再实施第二业务 tenant 前置**：ADR-KISS-001 已取消多租户，AddressSnap 永远只有一套全局发布物。KISS-05/06 只删除现有 `(tenant_id,dimension_snapshot_id)`、pair/catalog 中的 tenant 绑定，不改 MMDB/IPDB import、MySQL CRUD/list、WADS bytes、object store、worker LKG/ACK 或 lookup，也不复制 snapshot。
   - [ ] **变更/回归/已提交**：reader-first 双读 → parity → writer cutover → 旧 loader 退役；CH migration 009 不回改，后续以前向清理；全库/race/vet/build/Kafka+CH+MySQL 组合门禁和独立 commit。
 - [x] **过滤生命周期（无状态查询）**：服务端 catalog/validate/complete/canonical AST 与前端 AND/OR/NOT/括号 parser 已覆盖 IP/CIDR/ASN/Geo/ISP/prefix/端口/协议/interface 和 typed 操作符；只含 rollup 字段时保持 1m/1h，跨维字段强制最长 24h base-fact path。IPv4-mapped CIDR 已由真实 CH 门禁验证；字段/操作符只读 registry、值只走 typed parameter。
 - [x] **过滤权限/一致性**：查询只接受 validate 返回的 canonical AST，保障 hash/cache/audit/URL 重放稳定；非管理员不得用复杂 AST 绕过 target/device/exporter resource selector，未知字段/JSON、非规范 AST、预算超限均 fail closed。

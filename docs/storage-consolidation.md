@@ -1,5 +1,7 @@
 # 存储与管理面收敛详细设计
 
+> **历史文档 / 已被取代：** 2026-09-08 已冻结 [Watchdog KISS 目标架构](watchdog-kiss-architecture.md)：删除 PocketBase、多租户和 VictoriaMetrics，只保留 MySQL + ClickHouse。本文关于“PB 认证内核”和“VM/CH 不合并”的结论不再实施，仅保留历史审计证据。
+
 > 状态：ADR-SC-001，已评审修订；范围只覆盖 PocketBase、MySQL 与 VictoriaLogs。VictoriaMetrics 和 ClickHouse 的职责边界保持不变，见[平台架构](watchdog-platform-module-architecture.md)。平台实施见[平台重构 tasklist](platform-refactor-tasklist.md)，Flow 实施见[Flow tasklist](flow-module-tasklist.md)。
 
 > 实施状态（2026-09-03）：STORE-00 的 VictoriaLogs 止血，以及 STORE-01 的 migration/readiness、生产路由和身份投影最小闭环已完成；PB 业务集合迁移、完整 typed client、用户/角色 CRUD 和 STORE-02–05 尚未完成。细粒度完成项及证据以 tasklist 为准。

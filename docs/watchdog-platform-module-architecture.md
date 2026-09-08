@@ -1,5 +1,7 @@
 # watchdog 平台化与可插拔模块架构
 
+> **历史文档 / 已被取代：** 目标架构已收敛为 [单域、双存储 KISS 架构](watchdog-kiss-architecture.md)。本文的 tenant、module/resource/dataset registry、PocketBase 和 VictoriaMetrics 目标不再实施；已完成能力可作为代码证据，但新增工作必须进入 [KISS 重构清单](watchdog-kiss-refactor-tasklist.md)。
+
 本文定义 flow 模块实施前必须完成的 watchdog 宿主平台整理。目标不是把所有功能重写一遍，而是把当前已经存在但边界分散的 tenant、用户权限、agent、target、指标、图表、导出和流量修正能力整理成稳定契约，使 flow、SNMP、system agent 等模块共享同一套管理面。
 
 flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-direction-requirements.md) 与 [flow-module-design.md](flow-module-design.md)，可勾选的设计/编码/测试实施项及本轮完成证据见 [flow-module-tasklist.md](flow-module-tasklist.md)；经代码审查冻结的 PocketBase/MySQL/VictoriaLogs 收敛 ADR（PB 只保留认证、MySQL 唯一管理库、VLogs 完全裁撤、legacy system 域先迁后删）见 [storage-consolidation.md](storage-consolidation.md)。

@@ -1,12 +1,14 @@
 # Watchdog 平台架构重构 Tasklist
 
+> **已冻结，不再新增实施项：** 2026-09-08 起平台重构以 [Watchdog KISS Tasklist](watchdog-kiss-refactor-tasklist.md) 为唯一入口。本文保留既有提交证据；下述旧“当前活动切片”全部取消。当前唯一活动平台包是 **KISS-01 PocketBase 彻底移除**，完成前不得继续 PB 收缩、多租户、VM/provider、通用 module/target 旧路线。
+
 > 平台通用工作与 Flow 分离。Flow 只依赖这里已经落地的模块、身份、collector、target、query、export 与 correction 契约；非阻断平台缺陷不得混入 Flow 数据面 diff。
 
 ## 0. 执行规则
 
 每个切片执行：设计 → 编码 → 单元测试 → 集成测试 → 变更设计 → 变更测试 → 回归测试。完成后自动进入下一个；发现 Flow 专属问题则登记回 [flow-module-tasklist.md](flow-module-tasklist.md)。`PLAT-04` 只作为计划编号，不再作为一个永远无法勾选的总任务；A–H 必须继续拆成可独立提交、独立验收的子项。只有代码、真实依赖集成、回归和 commit 四项同时存在才可标 `[x]`，不得用“大部分已实现”代替闭环。
 
-**当前活动切片：PLAT-04A2f scoped publication 通用内核余项。** AddressSnap 当前单租户的全局 owner/管理员权限、operation lifecycle 和真实 113 万行 GeoLite2-ASN import→WADS→lookup/swap 已闭环；错误的 per-tenant WADS 容量假设已撤销。第二业务 tenant 的 global AddressSnap 引用是上线前条件性工作包，不以复制 WADS 处理，也不阻塞当前默认租户。下一步只完成 A2f 的部署配置、双 kind 隔离矩阵和完整生命周期，不混入 FLOW-06B。
+**历史活动切片（已取消，不再执行）：PLAT-04A2f scoped publication 通用内核余项。** AddressSnap 已有成果按 KISS-05 保留；per-tenant、第二业务 tenant、通用 publication 内核余项不再推进。当前工作状态只看新 KISS 清单。
 
 ## P0 生产入口、身份与存储收敛
 
