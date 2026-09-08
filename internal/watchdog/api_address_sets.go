@@ -3,6 +3,7 @@ package watchdog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -24,6 +25,7 @@ func registerAddressSetRoutes(mux *http.ServeMux, auth func(http.Handler) http.H
 	mux.Handle("GET /api/v1/address-prefixes/{prefix_id}", auth(viewTenant(http.HandlerFunc(api.getPrefix))))
 	mux.Handle("PATCH /api/v1/address-prefixes/{prefix_id}", auth(configureTenant(http.HandlerFunc(api.updatePrefix))))
 	mux.Handle("DELETE /api/v1/address-prefixes/{prefix_id}", auth(configureTenant(http.HandlerFunc(api.deletePrefix))))
+	mux.Handle("POST /api/v1/address-prefixes/actions/merge-preview", auth(viewTenant(http.HandlerFunc(api.mergePreviewPrefixes))))
 	mux.Handle("GET /api/v1/address-sets", auth(viewTenant(http.HandlerFunc(api.listSets))))
 	mux.Handle("POST /api/v1/address-sets", auth(configureTenant(http.HandlerFunc(api.createSet))))
 	mux.Handle("GET /api/v1/address-sets/{set_id}", auth(viewTenant(http.HandlerFunc(api.getSet))))
@@ -46,6 +48,58 @@ func (api addressSetAPI) previewOperation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	preview, err := PreviewAddressSetOperation(request)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	WriteAPIJSON(w, http.StatusOK, preview)
+}
+
+type addressPrefixMergeInput struct {
+	CIDR       string            `json:"cidr"`
+	GeoLeafID  ID                `json:"geo_leaf_id"`
+	OperatorID ID                `json:"operator_id"`
+	ASN        *uint32           `json:"asn"`
+	Labels     map[string]string `json:"labels"`
+	Source     string            `json:"source"`
+}
+
+type addressPrefixMergeRequest struct {
+	Prefixes []addressPrefixMergeInput `json:"prefixes"`
+}
+
+// mergePreviewPrefixes computes an attribution-preserving merge plan for a set
+// of prefixes (see PreviewAddressPrefixMerge). It is a pure computation over
+// the submitted prefixes — no persistence — so a read grant is sufficient; the
+// apply is ordinary create/delete under the configure grant.
+func (api addressSetAPI) mergePreviewPrefixes(w http.ResponseWriter, r *http.Request) {
+	var request addressPrefixMergeRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if err := ensureAddressJSONEOF(decoder); err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
+		return
+	}
+	if len(request.Prefixes) < 2 {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "at least two prefixes are required to merge", nil)
+		return
+	}
+	if len(request.Prefixes) > MaxAddressOperationInputs {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, fmt.Sprintf("merge accepts at most %d prefixes", MaxAddressOperationInputs), nil)
+		return
+	}
+	prefixes := make([]AddressPrefix, 0, len(request.Prefixes))
+	for _, input := range request.Prefixes {
+		prefixes = append(prefixes, AddressPrefix{
+			CIDR: input.CIDR, GeoLeafID: input.GeoLeafID, OperatorID: input.OperatorID,
+			ASN: input.ASN, Labels: input.Labels, Source: input.Source,
+		})
+	}
+	preview, err := PreviewAddressPrefixMerge(prefixes)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, err.Error(), nil)
 		return
