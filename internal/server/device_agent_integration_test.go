@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -151,6 +152,9 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if hosts.Code != http.StatusOK || !strings.Contains(hosts.Body.String(), systemDevice.ID) || strings.Contains(hosts.Body.String(), device.ID) {
 		t.Fatalf("target kind exclusion: status=%d body=%s", hosts.Code, hosts.Body.String())
 	}
+	if systemDevice.Kind != "system" {
+		t.Fatalf("target create returned canonical device kind %q instead of target kind system", systemDevice.Kind)
+	}
 
 	agentToken := "direct-agent-secret"
 	createdAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agent-registry", map[string]any{
@@ -230,6 +234,101 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if badHeartbeat.Code != http.StatusUnauthorized {
 		t.Fatalf("bad heartbeat: status=%d body=%s", badHeartbeat.Code, badHeartbeat.Body.String())
 	}
+
+	flowAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
+		"id": "flow_collect_api_test", "name": "Flow collector", "kind": "flow_collect", "mode": "push",
+		"token": "flow-collector-secret",
+	}, authHeaders, cookies...)
+	if flowAgent.Code != http.StatusCreated {
+		t.Fatalf("create flow collector: status=%d body=%s", flowAgent.Code, flowAgent.Body.String())
+	}
+	badFlowBinding := requestJSON(t, s, http.MethodPost, "/api/v1/flow/devices", map[string]any{
+		"device_id": device.ID, "collector_agent_id": "agent_api_test", "source_prefix": "192.0.2.10", "protocol": "sflow5",
+	}, authHeaders, cookies...)
+	if badFlowBinding.Code != http.StatusBadRequest {
+		t.Fatalf("non-flow collector accepted: status=%d body=%s", badFlowBinding.Code, badFlowBinding.Body.String())
+	}
+	flowCreated := requestJSON(t, s, http.MethodPost, "/api/v1/flow/devices", map[string]any{
+		"device_id": device.ID, "collector_agent_id": "flow_collect_api_test", "source_prefix": "192.0.2.10",
+		"protocol": "sflow5", "sampling_mode": "sampled", "default_sampling_rate": 1000,
+		"observation_domain_id": 7, "observations": map[string]any{"1": map[string]any{"direction": 1}},
+	}, authHeaders, cookies...)
+	if flowCreated.Code != http.StatusCreated {
+		t.Fatalf("create flow binding: status=%d body=%s", flowCreated.Code, flowCreated.Body.String())
+	}
+	var flowBinding flowExporterDTO
+	decodeJSON(t, flowCreated, &flowBinding)
+	if flowBinding.DeviceID != device.ID || flowBinding.SourcePrefix != "192.0.2.10/32" || flowBinding.DeploymentState != "unpublished" || flowBinding.ObservationDomainID == nil || *flowBinding.ObservationDomainID != 7 {
+		t.Fatalf("unexpected flow binding: %+v", flowBinding)
+	}
+	flowList := requestJSON(t, s, http.MethodGet, "/api/v1/flow/exporter-bindings?protocol=sflow5&q=core-1&enabled=true", nil, nil, cookies...)
+	if flowList.Code != http.StatusOK || !strings.Contains(flowList.Body.String(), flowBinding.ID) || !strings.Contains(flowList.Body.String(), `"total":1`) {
+		t.Fatalf("list flow bindings: status=%d body=%s", flowList.Code, flowList.Body.String())
+	}
+	invalidFlowFilter := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices?protocol=guess", nil, nil, cookies...)
+	if invalidFlowFilter.Code != http.StatusBadRequest {
+		t.Fatalf("invalid flow filter: status=%d body=%s", invalidFlowFilter.Code, invalidFlowFilter.Body.String())
+	}
+	duplicateFlow := requestJSON(t, s, http.MethodPost, "/api/v1/flow/devices", map[string]any{
+		"device_id": device.ID, "source_prefix": "192.0.2.10/32", "protocol": "sflow5", "observation_domain_id": 7,
+	}, authHeaders, cookies...)
+	if duplicateFlow.Code != http.StatusConflict {
+		t.Fatalf("duplicate flow selector: status=%d body=%s", duplicateFlow.Code, duplicateFlow.Body.String())
+	}
+	flowLoaded := requestJSON(t, s, http.MethodGet, "/api/v1/flow/devices/"+flowBinding.ID, nil, nil, cookies...)
+	flowPatched := requestJSON(t, s, http.MethodPatch, "/api/v1/flow/devices/"+flowBinding.ID, map[string]any{
+		"observation_domain_id": nil, "default_sampling_rate": 2000,
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": flowLoaded.Header().Get("ETag")}, cookies...)
+	if flowLoaded.Code != http.StatusOK || flowPatched.Code != http.StatusOK || !strings.Contains(flowPatched.Body.String(), `"observation_domain_id":null`) {
+		t.Fatalf("get/patch flow binding: get=%d patch=%d body=%s", flowLoaded.Code, flowPatched.Code, flowPatched.Body.String())
+	}
+	staleFlow := requestJSON(t, s, http.MethodPatch, "/api/v1/flow/devices/"+flowBinding.ID, map[string]any{
+		"default_sampling_rate": 3000,
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": flowLoaded.Header().Get("ETag")}, cookies...)
+	if staleFlow.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale flow binding update: status=%d body=%s", staleFlow.Code, staleFlow.Body.String())
+	}
+	preview := requestJSON(t, s, http.MethodGet, "/api/v1/targets/"+device.ID+"/delete-preview", nil, nil, cookies...)
+	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"resource_type":"flow_exporter_binding"`) || !strings.Contains(preview.Body.String(), `"behavior":"blocked"`) {
+		t.Fatalf("device delete preview omitted flow binding: status=%d body=%s", preview.Code, preview.Body.String())
+	}
+	blockedDeviceDelete := requestJSON(t, s, http.MethodDelete, "/api/v1/devices/"+device.ID, nil, authHeaders, cookies...)
+	if blockedDeviceDelete.Code != http.StatusConflict {
+		t.Fatalf("device with flow binding was deleted: status=%d body=%s", blockedDeviceDelete.Code, blockedDeviceDelete.Body.String())
+	}
+
+	var bindingVersion uint64
+	if err := s.db.QueryRow(`SELECT row_version FROM flow_exporter_bindings WHERE id=?`, flowBinding.ID).Scan(&bindingVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET published_row_version=row_version,published_plan_version=1 WHERE id=?`, flowBinding.ID); err != nil {
+		t.Fatal(err)
+	}
+	publishedDelete := requestJSON(t, s, http.MethodDelete, "/api/v1/flow/devices/"+flowBinding.ID, nil,
+		map[string]string{"X-CSRF-Token": csrf, "If-Match": `"` + strconv.FormatUint(bindingVersion, 10) + `"`}, cookies...)
+	if publishedDelete.Code != http.StatusConflict {
+		t.Fatalf("published enabled binding was deleted: status=%d body=%s", publishedDelete.Code, publishedDelete.Body.String())
+	}
+	disableFlow := requestJSON(t, s, http.MethodPatch, "/api/v1/flow/devices/"+flowBinding.ID, map[string]any{"enabled": false},
+		map[string]string{"X-CSRF-Token": csrf, "If-Match": `"` + strconv.FormatUint(bindingVersion, 10) + `"`}, cookies...)
+	if disableFlow.Code != http.StatusOK {
+		t.Fatalf("disable flow binding: status=%d body=%s", disableFlow.Code, disableFlow.Body.String())
+	}
+	var disabled flowExporterDTO
+	decodeJSON(t, disableFlow, &disabled)
+	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET published_row_version=row_version,published_plan_version=2 WHERE id=?`, flowBinding.ID); err != nil {
+		t.Fatal(err)
+	}
+	flowDeleted := requestJSON(t, s, http.MethodDelete, "/api/v1/flow/exporter-bindings/"+flowBinding.ID, nil,
+		map[string]string{"X-CSRF-Token": csrf, "If-Match": `"` + strconv.FormatUint(disabled.RowVersion, 10) + `"`}, cookies...)
+	if flowDeleted.Code != http.StatusNoContent {
+		t.Fatalf("delete withdrawn flow binding: status=%d body=%s", flowDeleted.Code, flowDeleted.Body.String())
+	}
+	flowAgentDeleted := requestJSON(t, s, http.MethodDelete, "/api/v1/agents/flow_collect_api_test", nil, authHeaders, cookies...)
+	if flowAgentDeleted.Code != http.StatusNoContent {
+		t.Fatalf("delete flow collector: status=%d body=%s", flowAgentDeleted.Code, flowAgentDeleted.Body.String())
+	}
+
 	deletedAgent := requestJSON(t, s, http.MethodDelete, "/api/v1/agents/agent_api_test", nil, authHeaders, cookies...)
 	if deletedAgent.Code != http.StatusNoContent {
 		t.Fatalf("delete agent: status=%d body=%s", deletedAgent.Code, deletedAgent.Body.String())

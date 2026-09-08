@@ -67,6 +67,7 @@ func (s *Server) newRouter() *gin.Engine {
 	devices.GET("/:id", s.requirePermission("device.view"), s.getDevice)
 	devices.PATCH("/:id", s.requirePermission("device.update"), s.updateDevice)
 	devices.DELETE("/:id", s.requirePermission("device.delete"), s.deleteDevice)
+	devices.GET("/:id/delete-preview", s.requirePermission("device.delete"), s.deviceDeletePreview)
 	todoCRUD(auth.Group("/device-groups"), s)
 	todoCRUD(auth.Group("/locations"), s)
 	profiles := auth.Group("/snmp-profiles")
@@ -112,10 +113,23 @@ func (s *Server) newRouter() *gin.Engine {
 	legacyNetwork.PATCH("/:id/snmp", s.requirePermission("device.update"), s.patchDeviceSNMP)
 	targets := auth.Group("/targets")
 	targets.GET("", s.requirePermission("device.view"), s.listTargets)
-	targets.POST("", s.requirePermission("device.create"), s.createDevice)
+	targets.POST("", s.requirePermission("device.create"), s.createTarget)
 	targets.GET("/:id", s.requirePermission("device.view"), s.getTarget)
 	targets.PATCH("/:id", s.requirePermission("device.update"), s.updateTarget)
 	targets.DELETE("/:id", s.requirePermission("device.delete"), s.deleteDevice)
+	targets.GET("/:id/delete-preview", s.requirePermission("device.delete"), s.deviceDeletePreview)
+
+	// A Flow device is an inventory device with one or more exporter bindings.
+	// Both URLs expose the same binding resource; /flow/devices is the UI-facing
+	// compatibility name while /flow/exporter-bindings states the data model.
+	for _, path := range []string{"/flow/devices", "/flow/exporter-bindings"} {
+		flowDevices := auth.Group(path)
+		flowDevices.GET("", s.requirePermission("flow.device.view"), s.listFlowExporters)
+		flowDevices.POST("", s.requirePermission("flow.device.manage"), s.createFlowExporter)
+		flowDevices.GET("/:id", s.requirePermission("flow.device.view"), s.getFlowExporter)
+		flowDevices.PATCH("/:id", s.requirePermission("flow.device.manage"), s.updateFlowExporter)
+		flowDevices.DELETE("/:id", s.requirePermission("flow.device.manage"), s.deleteFlowExporter)
+	}
 	snmpProfiles := auth.Group("/snmp/profiles")
 	snmpProfiles.GET("", s.requirePermission("device.view"), s.listSNMPProfiles)
 	snmpProfiles.POST("", s.requirePermission("device.update"), s.createSNMPProfile)

@@ -108,6 +108,16 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] 证据：`internal/flowstream/*_test.go`、`cmd/watchdog-flow-collect/main_test.go`、MySQL 001→028 前向迁移与 027 精确删除测试、Flow race/vet。
 - [x] **已提交**：`886ccb2b`；提交中不包含工作区原有 `dbbak-origin-20260824-035506.sql`。
 
+### FLOW-01C 设备与 exporter 管理面迁移
+
+- [x] **设计**：设备唯一根固定为全局 `devices`；SNMP 配置与一对多 `flow_exporter_bindings` 都依附同一 `device_id`。collector/agent 是进程身份，exporter binding 是发流配置，禁止复制成两套设备。
+- [x] **编码**：Gin 提供 `/api/v1/flow/devices` 与规范别名 `/api/v1/flow/exporter-bindings` 的 list/get/create/patch/delete；支持服务端分页、搜索、白名单排序、device/collector/protocol/sampling/enabled/deployment filter、设备授权下推、严格 JSON、ETag/CAS、审计和安全删除。Target/Device 别名返回一致类型，并补设备删除影响预览和外键冲突错误。
+- [x] **数据**：顺序 MySQL migration `0006_flow_exporter_bindings.sql` 只增加设备从表；source IP 自动规范为 `/32`/`/128`，CIDR masked；selector 唯一，device/collector 使用 FK。`published_row_version/published_plan_version` 将保存与实际发布分开，未发布配置不冒充已生效。
+- [x] **单元测试**：IPv4/IPv6/IP/CIDR 规范化、协议/采样规则复用 production `flowplan` 校验、pre-scaled 禁止二次放大、部署态计算。
+- [x] **集成测试**：真实空 MySQL 覆盖同一 SNMP 设备挂 Flow、flow-collect 类型校验、CRUD/list/search/filter、domain 显式清空、重复 selector、stale ETag、设备删除阻断、已发布 binding 禁删、停用并确认撤销后删除；专用测试库已精确删除。
+- [ ] **发布接线**：由后续 Agent plan 工作包把 binding desired rows 编译进不可变 plan，成功 ACK 后原子推进 published versions；本项不改 fast decode、Kafka、worker 或 ClickHouse。
+- [ ] **已提交门禁**：代码、migration、设计、任务清单和测试证据须形成独立提交后再勾选。
+
 ### FLOW-02 Kafka worker 与 GoFlow2
 
 - [x] partition 内串行、跨 partition 并行；成功 durable handler 后才 mark offset。

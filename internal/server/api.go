@@ -65,6 +65,14 @@ func writeSQLError(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "conflict", "record already exists")
 		return
 	}
+	if errors.As(err, &myErr) && myErr.Number == 1451 {
+		fail(c, http.StatusConflict, "resource_in_use", "record is referenced by another resource")
+		return
+	}
+	if errors.As(err, &myErr) && myErr.Number == 1452 {
+		fail(c, http.StatusBadRequest, "invalid_reference", "referenced record does not exist")
+		return
+	}
 	fail(c, http.StatusInternalServerError, "internal", err.Error())
 }
 

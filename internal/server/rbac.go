@@ -19,6 +19,7 @@ var abilityCatalog = []string{
 	"bill.calculate", "bill.reconcile", "bill.approve", "bill.export",
 	"flow.view.customer", "flow.view.supplier", "flow.view.raw",
 	"flow.export.customer", "flow.export.supplier", "flow.export.raw", "flow.reclassify", "flow.probe",
+	"flow.device.view", "flow.device.manage",
 	"agent.view", "agent.manage", "address.view", "address.manage", "address.publish",
 	"job.view", "job.manage", "audit.view",
 }
@@ -39,11 +40,13 @@ var defaultRoles = []defaultRole{
 		"device.view", "device.viewAll", "device.create", "device.update", "device.delete", "device.discover",
 		"port.view", "port.viewAll", "port.update",
 		"agent.view", "agent.manage", "job.view", "job.manage", "address.view", "audit.view",
+		"flow.device.view", "flow.device.manage",
 	}},
 	{"analyst", "Analyst", false, []string{
 		"device.view", "device.viewAll", "port.view", "port.viewAll",
 		"flow.view.customer", "flow.view.supplier", "flow.view.raw",
 		"flow.export.customer", "flow.export.supplier", "flow.export.raw",
+		"flow.device.view",
 		"bill.view", "audit.view",
 	}},
 	{"billing", "Billing", false, []string{

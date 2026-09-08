@@ -124,6 +124,9 @@ type deviceMutation struct {
 }
 
 func (s *Server) listDevices(c *gin.Context) {
+	if !validDeviceListFilters(c) {
+		return
+	}
 	rows, total, counts, err := s.queryDevices(c, c.Query("kind"))
 	if err != nil {
 		writeSQLError(c, err)
@@ -137,6 +140,9 @@ func (s *Server) listDevices(c *gin.Context) {
 }
 
 func (s *Server) listNetworkDevices(c *gin.Context) {
+	if !validDeviceListFilters(c) {
+		return
+	}
 	rows, total, counts, err := s.queryDevices(c, "network")
 	if err != nil {
 		writeSQLError(c, err)
@@ -150,6 +156,9 @@ func (s *Server) listNetworkDevices(c *gin.Context) {
 }
 
 func (s *Server) listDeviceSummaries(c *gin.Context) {
+	if !validDeviceListFilters(c) {
+		return
+	}
 	rows, total, counts, err := s.queryDevices(c, "network")
 	if err != nil {
 		writeSQLError(c, err)
@@ -193,6 +202,22 @@ func (s *Server) queryDevices(c *gin.Context, kind string) ([]deviceRecord, int,
 		where = append(where, "d.status = ?")
 		args = append(args, status)
 	}
+	for _, filter := range []struct {
+		param, column string
+	}{
+		{"vendor", "d.vendor"}, {"model", "d.model"}, {"platform", "d.platform"},
+		{"os", "d.os"}, {"location_id", "d.location_id"},
+	} {
+		if value := strings.TrimSpace(c.Query(filter.param)); value != "" {
+			where = append(where, filter.column+" = ?")
+			args = append(args, value)
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("disabled")); raw != "" {
+		disabled, _ := strconv.ParseBool(raw)
+		where = append(where, "d.disabled = ?")
+		args = append(args, disabled)
+	}
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		where = append(where, "(d.host LIKE ? OR d.display_name LIKE ? OR d.sys_name LIKE ? OR d.vendor LIKE ? OR d.model LIKE ? OR d.os LIKE ?)")
 		like := "%" + escapeLike(q) + "%"
@@ -210,7 +235,7 @@ func (s *Server) queryDevices(c *gin.Context, kind string) ([]deviceRecord, int,
 		return nil, 0, nil, err
 	}
 	counts := gin.H{"total": all, "up": up, "down": down, "pending": pending}
-	sorts := map[string]string{"": "d.updated_at", "id": "d.id", "name": "COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host)", "host": "d.host", "vendor": "d.vendor", "os": "d.os", "status": "d.status", "updated_at": "d.updated_at", "last_polled_at": "d.last_polled_at"}
+	sorts := map[string]string{"": "d.updated_at", "id": "d.id", "name": "COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host)", "host": "d.host", "vendor": "d.vendor", "model": "d.model", "platform": "d.platform", "os": "d.os", "status": "d.status", "disabled": "d.disabled", "location": "l.name", "uptime": "d.uptime_seconds", "updated_at": "d.updated_at", "last_polled_at": "d.last_polled_at"}
 	sortColumn := sorts[c.Query("sort")]
 	if sortColumn == "" {
 		sortColumn = sorts[""]
@@ -304,6 +329,12 @@ func (s *Server) createDevice(c *gin.Context) {
 	}
 	c.Header("ETag", etag(r.RowVersion))
 	c.Header("Location", "/api/v1/devices/"+id)
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "device.create", "device", id)
+	if targetResponse(c) {
+		c.Header("Location", "/api/v1/targets/"+id)
+		c.JSON(http.StatusCreated, targetDTO(r.dto()))
+		return
+	}
 	c.JSON(http.StatusCreated, r.dto())
 }
 
@@ -371,6 +402,11 @@ func (s *Server) updateDevice(c *gin.Context) {
 		return
 	}
 	c.Header("ETag", etag(r.RowVersion))
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "device.update", "device", current.ID)
+	if targetResponse(c) {
+		c.JSON(http.StatusOK, targetDTO(r.dto()))
+		return
+	}
 	c.JSON(http.StatusOK, r.dto())
 }
 
@@ -396,6 +432,7 @@ func (s *Server) deleteDevice(c *gin.Context) {
 		writeSQLError(c, sql.ErrNoRows)
 		return
 	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "device.delete", "device", current.ID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -403,11 +440,41 @@ func (s *Server) deviceDeletePreview(c *gin.Context) {
 	if !s.requireDeviceAccess(c, c.Param("id")) {
 		return
 	}
-	if _, err := s.readDevice(c, c.Param("id")); err != nil {
+	device, err := s.readDevice(c, c.Param("id"))
+	if err != nil {
 		writeSQLError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"impacts": []any{}})
+	type impact struct {
+		ResourceType string `json:"resource_type"`
+		Behavior     string `json:"behavior"`
+		Count        int    `json:"count"`
+		Detail       string `json:"detail,omitempty"`
+	}
+	impacts := []impact{}
+	for _, item := range []struct {
+		resourceType, behavior, detail, query string
+	}{
+		{"flow_exporter_binding", "blocked", "remove unpublished bindings or disable and publish active bindings before deleting the device", `SELECT COUNT(*) FROM flow_exporter_bindings WHERE device_id=?`},
+		{"port", "deleted", "", `SELECT COUNT(*) FROM ports WHERE device_id=?`},
+		{"interface_address", "deleted", "", `SELECT COUNT(*) FROM interface_addresses WHERE device_id=?`},
+		{"bgp_session", "deleted", "", `SELECT COUNT(*) FROM bgp_sessions WHERE device_id=?`},
+		{"sensor", "deleted", "", `SELECT COUNT(*) FROM sensors WHERE device_id=?`},
+		{"physical_entity", "deleted", "", `SELECT COUNT(*) FROM physical_entities WHERE device_id=?`},
+		{"vlan", "deleted", "", `SELECT COUNT(*) FROM vlans WHERE device_id=?`},
+		{"lag_group", "deleted", "", `SELECT COUNT(*) FROM lag_groups WHERE device_id=?`},
+		{"agent_binding", "detached", "agents remain registered and lose this device binding", `SELECT COUNT(*) FROM agent_bindings WHERE device_id=?`},
+	} {
+		var count int
+		if err := s.db.QueryRowContext(c.Request.Context(), item.query, device.ID).Scan(&count); err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		if count > 0 {
+			impacts = append(impacts, impact{item.resourceType, item.behavior, count, item.detail})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"device": device.dto(), "impacts": impacts})
 }
 
 func (s *Server) listTargets(c *gin.Context) {
@@ -438,7 +505,21 @@ func (s *Server) getTarget(c *gin.Context) {
 	c.JSON(http.StatusOK, targetDTO(d))
 }
 
-func (s *Server) updateTarget(c *gin.Context) { s.updateDevice(c) }
+func (s *Server) createTarget(c *gin.Context) {
+	c.Set("target_response", true)
+	s.createDevice(c)
+}
+
+func (s *Server) updateTarget(c *gin.Context) {
+	c.Set("target_response", true)
+	s.updateDevice(c)
+}
+
+func targetResponse(c *gin.Context) bool {
+	value, _ := c.Get("target_response")
+	result, _ := value.(bool)
+	return result
+}
 
 func (s *Server) patchDeviceSNMP(c *gin.Context) {
 	if !s.requireDeviceAccess(c, c.Param("id")) {
@@ -500,6 +581,26 @@ func targetDTO(d deviceDTO) gin.H {
 }
 func validDeviceStatus(v string) bool {
 	return v == "pending" || v == "up" || v == "down" || v == "paused"
+}
+
+func validDeviceListFilters(c *gin.Context) bool {
+	if status := strings.TrimSpace(c.Query("status")); status != "" && !validDeviceStatus(status) {
+		fail(c, http.StatusBadRequest, "invalid_filter", "invalid status")
+		return false
+	}
+	for _, field := range []string{"kind", "exclude_kind"} {
+		if kind := strings.TrimSpace(c.Query(field)); kind != "" && !validDeviceKind(canonicalDeviceKind(kind)) {
+			fail(c, http.StatusBadRequest, "invalid_filter", "invalid "+field)
+			return false
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("disabled")); raw != "" {
+		if _, err := strconv.ParseBool(raw); err != nil {
+			fail(c, http.StatusBadRequest, "invalid_filter", "disabled must be true or false")
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) requireDeviceAccess(c *gin.Context, deviceID string) bool {

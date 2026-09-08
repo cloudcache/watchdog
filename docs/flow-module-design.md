@@ -452,10 +452,11 @@ VPN 规则升级/回滚不修改事实或旧候选：同一 conversation 在不�
 
 ## 6. MySQL 管理契约
 
-Flow 管理面复用平台 `collector_agents`、dimension publication、`operation_jobs`、地址规则和 `audit_logs`，只为无法由这些通用对象表达的域状态建表。下表以当前已部署 migration 为准；不存在的旧草案 `flow_exporters/flow_settings` 不再作为实现目标，exporter/worker 身份由 collector registry 承载，分类编辑态与不可变版本对由 migration 059 承载。
+Flow exporter 不是 collector，也不是第二份设备。KISS 管理面以全局 `devices` 作为唯一设备根；SNMP 是设备配置，Flow 则由一对多 `flow_exporter_bindings` 从表表达。`agents(kind=flow_collect)` 表示接收进程，binding 才表示设备发流来源、协议、observation domain、采样和 collector 归属。`/api/v1/flow/devices` 是该关联的管理视图，不创建独立设备身份；只开 Flow 的设备同样先有 `devices` 行，SNMP 字段为空。旧 `collector_agents` 和 plan 中的 tenant 字段仅是 KISS-06 尚待移除的兼容数据面契约，不能反向污染新管理库。
 
 | 表 | 必需字段 | 唯一身份与索引 | 生命周期 |
 |---|---|---|---|
+| flow_exporter_bindings | device、可空 flow-collect agent、规范 source prefix、protocol、可空 observation domain、sampling mode/rules、observations、enabled、ownership epoch、row/published version | 稳定 binding ID；protocol+source prefix+domain 唯一；device/collector 索引 | 新增/编辑只改变 desired row；`published_row_version == row_version` 才表示对应配置已发布，enabled=false 且撤销版本已发布后才可物理删除 |
 | flow_classification_profiles | tenant、home province/city、home ISP/ASN、港澳台口径、internal/transit policy、definition digest、row version | tenant 主键 | 单行 CAS 编辑态；数组规范排序/去重，发布时由统一 compiler 再校验 |
 | flow_enrichment_publications | classification version/effective time/profile version、WADS snapshot/version/effective/ref/checksum、classification ref/checksum、Ed25519 key/signature | tenant+classification version 与 tenant+effective time 唯一 | metadata/version pair 不可变；签名 key 轮换时允许重新 attestation，不改对象与版本 |
 | flow_enrichment_publication_acks | publication、worker、boot/software、download/install milestone、最后 attempt/error、row version | tenant+publication+worker 主键；按 worker/state 查询 | downloaded -> installed；后续失败保留既有成功 milestone，不把失败尝试伪装成卸载 |
