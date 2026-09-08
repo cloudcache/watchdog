@@ -40,6 +40,7 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	sets := auth.Group("/address-sets")
 	sets.GET("", view, s.listAddressSets)
 	sets.POST("", manage, s.createAddressSet)
+	sets.POST("/actions/preview", view, s.previewAddressSetOperation) // set math: union/intersection/difference/cover/normalize
 	sets.GET("/:id", view, s.getAddressSet)
 	sets.PATCH("/:id", manage, s.updateAddressSet)
 	sets.DELETE("/:id", manage, s.deleteAddressSet)
@@ -646,6 +647,22 @@ func (s *Server) updateGeoLine(c *gin.Context) {
 }
 
 func (s *Server) deleteGeoLine(c *gin.Context) { s.deleteByID(c, "geo_lines", "geo_line") }
+
+// previewAddressSetOperation computes union/intersection/difference/complement/
+// cover/normalize over CIDR lists, reusing the exact address_math engine (no DB).
+func (s *Server) previewAddressSetOperation(c *gin.Context) {
+	var req AddressSetOperationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+		return
+	}
+	preview, err := PreviewAddressSetOperation(req)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
 
 func boolOrTrue(b *bool) bool {
 	if b == nil {
