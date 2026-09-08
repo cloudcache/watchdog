@@ -97,6 +97,23 @@ func TestMySQLOperationJobSystemScope(t *testing.T) {
 		t.Fatalf("tenant listing = %+v", listed)
 	}
 
+	// A tenant admin must not reach a system job through the tenant-scoped API
+	// surface either. Get-by-id and cancel are the only vectors the operation-job
+	// HTTP handlers expose, and both filter on tenant_id, so a real tenant can
+	// never resolve or cancel a system job (tenant_id=''). This is the guard that
+	// lets PLAT-04F2 (system job management API) stay deferred until a platform
+	// admin role exists: no tenant admin may impersonate a global admin meanwhile.
+	if _, err := store.GetOperationJob(ctx, tenant, sys.ID); err == nil {
+		t.Fatal("tenant-scoped get must not resolve a system job")
+	}
+	if err := store.RequestOperationJobCancel(ctx, tenant, sys.ID); err == nil {
+		t.Fatal("tenant-scoped cancel must not reach a system job")
+	}
+	// The tenant cancel attempt left the system job untouched.
+	if unchanged, err := store.GetSystemOperationJob(ctx, sys.ID); err != nil || unchanged.Status != OperationJobStatusQueued {
+		t.Fatalf("system job after tenant cancel = %+v err=%v", unchanged, err)
+	}
+
 	// GetSystemOperationJob resolves system jobs only.
 	got, err := store.GetSystemOperationJob(ctx, sys.ID)
 	if err != nil || got.ID != sys.ID {
