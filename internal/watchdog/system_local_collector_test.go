@@ -24,6 +24,13 @@ func TestSystemAgentClientEndpoints(t *testing.T) {
 	if endpoint != "http://127.0.0.1:8091/api/v1/system-agents/agent-system-a/samples" {
 		t.Fatalf("endpoint = %s", endpoint)
 	}
+	heartbeatEndpoint, err := client.genericAgentEndpoint("heartbeat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if heartbeatEndpoint != "http://127.0.0.1:8091/api/v1/agents/agent-system-a/heartbeat" {
+		t.Fatalf("heartbeat endpoint = %s", heartbeatEndpoint)
+	}
 	statusEndpoint, err := client.genericAgentEndpoint("status")
 	if err != nil {
 		t.Fatal(err)

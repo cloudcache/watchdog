@@ -177,14 +177,27 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if systemDevice.Kind != "system" {
 		t.Fatalf("target create returned canonical device kind %q instead of target kind system", systemDevice.Kind)
 	}
+	wrongSystemBinding := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
+		"id": "wrong_system_binding", "device_id": device.ID, "kind": "system", "mode": "push",
+		"token": "wrong-system-secret", "capabilities": []string{"system.samples/v1"},
+	}, authHeaders, cookies...)
+	if wrongSystemBinding.Code != http.StatusBadRequest || !strings.Contains(wrongSystemBinding.Body.String(), "invalid_binding") {
+		t.Fatalf("system agent accepted network device binding: status=%d body=%s", wrongSystemBinding.Code, wrongSystemBinding.Body.String())
+	}
 
 	agentToken := "direct-agent-secret"
-	createdAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agent-registry", map[string]any{
-		"ID": "agent_api_test", "TargetID": device.ID, "AgentType": "snmp", "Mode": "push",
-		"Endpoint": "udp://127.0.0.1:161", "Token": agentToken,
+	createdAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
+		"id": "agent_api_test", "device_id": device.ID, "kind": "snmp", "mode": "push",
+		"endpoint": "udp://127.0.0.1:161", "token": agentToken, "capabilities": []string{"snmp.poll/v2"},
 	}, authHeaders, cookies...)
 	if createdAgent.Code != http.StatusCreated || strings.Contains(createdAgent.Body.String(), agentToken) {
 		t.Fatalf("create agent: status=%d body=%s", createdAgent.Code, createdAgent.Body.String())
+	}
+	for _, query := range []string{"unknown=value", "sort=raw_sql", "limit=501", "kind=invalid"} {
+		invalid := requestJSON(t, s, http.MethodGet, "/api/v1/agents?"+query, nil, nil, cookies...)
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid agent list query %q: status=%d body=%s", query, invalid.Code, invalid.Body.String())
+		}
 	}
 	loadedAgent := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_api_test", nil, nil, cookies...)
 	if loadedAgent.Code != http.StatusOK || loadedAgent.Header().Get("ETag") == "" {
@@ -196,12 +209,51 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if updatedAgent.Code != http.StatusOK || !strings.Contains(updatedAgent.Body.String(), "1161") {
 		t.Fatalf("patch agent: status=%d body=%s", updatedAgent.Code, updatedAgent.Body.String())
 	}
+	staleAgent := requestJSON(t, s, http.MethodPatch, "/api/v1/agents/agent_api_test", map[string]any{
+		"endpoint": "udp://127.0.0.1:2161",
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": loadedAgent.Header().Get("ETag")}, cookies...)
+	if staleAgent.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale agent update: status=%d body=%s", staleAgent.Code, staleAgent.Body.String())
+	}
+	patchCredential := requestJSON(t, s, http.MethodPatch, "/api/v1/agents/agent_api_test", map[string]any{
+		"token": "must-use-rotate",
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": updatedAgent.Header().Get("ETag")}, cookies...)
+	if patchCredential.Code != http.StatusBadRequest || !strings.Contains(patchCredential.Body.String(), "use_credential_rotation") {
+		t.Fatalf("agent PATCH accepted a credential replacement: status=%d body=%s", patchCredential.Code, patchCredential.Body.String())
+	}
+	assertAgentDeviceScope(t, s, device.ID, "agent_api_test")
 
 	heartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", map[string]any{
 		"software_version": "1.2.3", "capabilities": []string{"snmp.poll/v2"},
 	}, map[string]string{"X-Watchdog-Agent-Token": agentToken})
 	if heartbeat.Code != http.StatusAccepted {
 		t.Fatalf("heartbeat: status=%d body=%s", heartbeat.Code, heartbeat.Body.String())
+	}
+	var firstHeartbeatVersion uint64
+	if err := s.db.QueryRow(`SELECT row_version FROM agents WHERE id='agent_api_test'`).Scan(&firstHeartbeatVersion); err != nil {
+		t.Fatal(err)
+	}
+	secondHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", map[string]any{
+		"software_version": "1.2.3", "capabilities": []string{"snmp.poll/v2"},
+	}, map[string]string{"X-Watchdog-Agent-Token": agentToken})
+	var secondHeartbeatVersion uint64
+	if err := s.db.QueryRow(`SELECT row_version FROM agents WHERE id='agent_api_test'`).Scan(&secondHeartbeatVersion); err != nil {
+		t.Fatal(err)
+	}
+	if secondHeartbeat.Code != http.StatusAccepted || secondHeartbeatVersion != firstHeartbeatVersion {
+		t.Fatalf("steady heartbeat changed configuration version: status=%d before=%d after=%d", secondHeartbeat.Code, firstHeartbeatVersion, secondHeartbeatVersion)
+	}
+	strictHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", map[string]any{
+		"software_version": "1.2.3", "unknown": true,
+	}, map[string]string{"X-Watchdog-Agent-Token": agentToken})
+	if strictHeartbeat.Code != http.StatusBadRequest {
+		t.Fatalf("heartbeat accepted unknown field: status=%d body=%s", strictHeartbeat.Code, strictHeartbeat.Body.String())
+	}
+	skewedHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", map[string]any{
+		"sent_at": time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano),
+	}, map[string]string{"X-Watchdog-Agent-Token": agentToken})
+	if skewedHeartbeat.Code != http.StatusBadRequest || !strings.Contains(skewedHeartbeat.Body.String(), "clock_skew") {
+		t.Fatalf("heartbeat clock skew: status=%d body=%s", skewedHeartbeat.Code, skewedHeartbeat.Body.String())
 	}
 	badRun := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/status", map[string]any{
 		"status": "arbitrary",
@@ -216,13 +268,46 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if run.Code != http.StatusAccepted {
 		t.Fatalf("run: status=%d body=%s", run.Code, run.Body.String())
 	}
-	runs := requestJSON(t, s, http.MethodGet, "/api/v1/agent-registry/agent_api_test/runs", nil, nil, cookies...)
+	var runVersion uint64
+	if err := s.db.QueryRow(`SELECT row_version FROM agents WHERE id='agent_api_test'`).Scan(&runVersion); err != nil {
+		t.Fatal(err)
+	}
+	if runVersion != secondHeartbeatVersion {
+		t.Fatalf("run telemetry changed configuration version: before=%d after=%d", secondHeartbeatVersion, runVersion)
+	}
+	runs := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_api_test/runs", nil, nil, cookies...)
 	if runs.Code != http.StatusOK || !strings.Contains(runs.Body.String(), `"duration_ms":42`) {
 		t.Fatalf("runs: status=%d body=%s", runs.Code, runs.Body.String())
 	}
+	badRunsQuery := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_api_test/runs?unknown=value", nil, nil, cookies...)
+	if badRunsQuery.Code != http.StatusBadRequest {
+		t.Fatalf("runs accepted unknown query: status=%d body=%s", badRunsQuery.Code, badRunsQuery.Body.String())
+	}
+
+	expiredEnrollment := requestJSON(t, s, http.MethodPost, "/api/v1/agents/enrollment-tokens", map[string]any{
+		"kind": "system", "expires_in_seconds": 300,
+	}, authHeaders, cookies...)
+	var expiredEnrollmentBody struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	decodeJSON(t, expiredEnrollment, &expiredEnrollmentBody)
+	if expiredEnrollment.Code != http.StatusCreated {
+		t.Fatalf("expired enrollment fixture: status=%d body=%s", expiredEnrollment.Code, expiredEnrollment.Body.String())
+	}
+	if _, err := s.db.Exec(`UPDATE agent_enrollment_tokens SET expires_at=DATE_SUB(NOW(3), INTERVAL 1 SECOND) WHERE id=?`, expiredEnrollmentBody.ID); err != nil {
+		t.Fatal(err)
+	}
+	expiredRegister := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"enrollment_token": expiredEnrollmentBody.Token, "name": "expired", "kind": "system",
+		"capabilities": []string{"system.samples/v1"},
+	}, nil)
+	if expiredRegister.Code != http.StatusUnauthorized {
+		t.Fatalf("expired enrollment accepted: status=%d body=%s", expiredRegister.Code, expiredRegister.Body.String())
+	}
 
 	enrollment := requestJSON(t, s, http.MethodPost, "/api/v1/agents/enrollment-tokens", map[string]any{
-		"kind": "system", "expires_in_seconds": 300,
+		"kind": "system", "device_id": systemDevice.ID, "expires_in_seconds": 300,
 	}, authHeaders, cookies...)
 	if enrollment.Code != http.StatusCreated {
 		t.Fatalf("enrollment token: status=%d body=%s", enrollment.Code, enrollment.Body.String())
@@ -233,9 +318,24 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	decodeJSON(t, enrollment, &enrollmentBody)
 	mismatched := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
 		"enrollment_token": enrollmentBody.Token, "name": "wrong-kind", "kind": "snmp",
+		"device_id": systemDevice.ID,
 	}, nil)
 	if mismatched.Code != http.StatusBadRequest {
 		t.Fatalf("enrollment kind mismatch: status=%d body=%s", mismatched.Code, mismatched.Body.String())
+	}
+	incompatible := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"enrollment_token": enrollmentBody.Token, "name": "wrong-capability", "kind": "system",
+		"device_id": systemDevice.ID, "capabilities": []string{"snmp.poll/v2"},
+	}, nil)
+	if incompatible.Code != http.StatusBadRequest {
+		t.Fatalf("enrollment capability mismatch: status=%d body=%s", incompatible.Code, incompatible.Body.String())
+	}
+	wrongEnrollmentBinding := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"enrollment_token": enrollmentBody.Token, "name": "wrong-device", "kind": "system",
+		"device_id": device.ID, "capabilities": []string{"system.samples/v1"},
+	}, nil)
+	if wrongEnrollmentBinding.Code != http.StatusBadRequest || !strings.Contains(wrongEnrollmentBinding.Body.String(), "does not allow this device binding") {
+		t.Fatalf("enrollment accepted the wrong device binding: status=%d body=%s", wrongEnrollmentBinding.Code, wrongEnrollmentBinding.Body.String())
 	}
 	enrolled := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
 		"enrollment_token": enrollmentBody.Token, "name": "system-agent", "kind": "system",
@@ -246,20 +346,52 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	}
 	reused := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
 		"enrollment_token": enrollmentBody.Token, "name": "replay", "kind": "system",
+		"device_id": systemDevice.ID, "capabilities": []string{"system.samples/v1"},
 	}, nil)
 	if reused.Code != http.StatusUnauthorized {
 		t.Fatalf("enrollment replay: status=%d body=%s", reused.Code, reused.Body.String())
 	}
-
 	badHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", nil,
 		map[string]string{"X-Watchdog-Agent-Token": "wrong"})
 	if badHeartbeat.Code != http.StatusUnauthorized {
 		t.Fatalf("bad heartbeat: status=%d body=%s", badHeartbeat.Code, badHeartbeat.Body.String())
 	}
+	preRotate := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_api_test", nil, nil, cookies...)
+	staleRotate := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/credentials/rotate", map[string]any{
+		"auth_type": "token",
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": `"1"`}, cookies...)
+	if staleRotate.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale credential rotation: status=%d body=%s", staleRotate.Code, staleRotate.Body.String())
+	}
+	rotated := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/credentials/rotate", map[string]any{
+		"auth_type": "token",
+	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": preRotate.Header().Get("ETag")}, cookies...)
+	var rotatedBody struct {
+		Token string `json:"token"`
+	}
+	decodeJSON(t, rotated, &rotatedBody)
+	if rotated.Code != http.StatusCreated || rotated.Header().Get("ETag") == "" || rotatedBody.Token == "" || strings.Contains(rotated.Body.String(), agentToken) {
+		t.Fatalf("rotate token: status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	oldTokenHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", nil,
+		map[string]string{"X-Watchdog-Agent-Token": agentToken})
+	newTokenHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", nil,
+		map[string]string{"X-Watchdog-Agent-Token": rotatedBody.Token})
+	if oldTokenHeartbeat.Code != http.StatusUnauthorized || newTokenHeartbeat.Code != http.StatusAccepted {
+		t.Fatalf("rotated token enforcement: old=%d/%s new=%d/%s", oldTokenHeartbeat.Code, oldTokenHeartbeat.Body.String(), newTokenHeartbeat.Code, newTokenHeartbeat.Body.String())
+	}
+	currentAgent := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_api_test", nil, nil, cookies...)
+	revoked := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/revoke", nil,
+		map[string]string{"X-CSRF-Token": csrf, "If-Match": currentAgent.Header().Get("ETag")}, cookies...)
+	revokedHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", nil,
+		map[string]string{"X-Watchdog-Agent-Token": rotatedBody.Token})
+	if currentAgent.Code != http.StatusOK || revoked.Code != http.StatusOK || revokedHeartbeat.Code != http.StatusUnauthorized {
+		t.Fatalf("agent revocation: get=%d revoke=%d/%s heartbeat=%d/%s", currentAgent.Code, revoked.Code, revoked.Body.String(), revokedHeartbeat.Code, revokedHeartbeat.Body.String())
+	}
 
 	flowAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": "flow_collect_api_test", "name": "Flow collector", "kind": "flow_collect", "mode": "push",
-		"token": "flow-collector-secret",
+		"token": "flow-collector-secret", "capabilities": []string{"flow.receive.sflow/v1"},
 	}, authHeaders, cookies...)
 	if flowAgent.Code != http.StatusCreated {
 		t.Fatalf("create flow collector: status=%d body=%s", flowAgent.Code, flowAgent.Body.String())
@@ -600,6 +732,47 @@ func assertDeviceScope(t *testing.T, s *Server, deviceID string) {
 	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("viewer mutation: status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func assertAgentDeviceScope(t *testing.T, s *Server, deviceID, agentID string) {
+	t.Helper()
+	userID, roleID := newID(), newID()
+	hash, err := hashPassword("agent-scope-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO users (id,username,email,display_name,password_hash,status) VALUES (?, 'agent-scope-viewer','agent-scope@example.test','Agent scope viewer',?,'active')`, userID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO roles (id,name,title) VALUES (?,'agent-scope-test','Agent scope test')`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO role_permissions (role_id,permission_id) SELECT ?,id FROM permissions WHERE ability='agent.view'`, roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_roles (user_id,role_id) VALUES (?,?)`, userID, roleID); err != nil {
+		t.Fatal(err)
+	}
+	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{
+		"username": "agent-scope-viewer", "password": "agent-scope-password",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("agent scope viewer login: status=%d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	before := requestJSON(t, s, http.MethodGet, "/api/v1/agents", nil, nil, cookies...)
+	directBefore := requestJSON(t, s, http.MethodGet, "/api/v1/agents/"+agentID, nil, nil, cookies...)
+	if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"total":0`) || directBefore.Code != http.StatusForbidden {
+		t.Fatalf("empty agent device scope did not fail closed: list=%d/%s direct=%d/%s", before.Code, before.Body.String(), directBefore.Code, directBefore.Body.String())
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_device_permissions (user_id,device_id) VALUES (?,?)`, userID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	after := requestJSON(t, s, http.MethodGet, "/api/v1/agents", nil, nil, cookies...)
+	directAfter := requestJSON(t, s, http.MethodGet, "/api/v1/agents/"+agentID, nil, nil, cookies...)
+	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), agentID) || directAfter.Code != http.StatusOK {
+		t.Fatalf("granted agent device scope failed: list=%d/%s direct=%d/%s", after.Code, after.Body.String(), directAfter.Code, directAfter.Body.String())
 	}
 }
 

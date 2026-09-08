@@ -262,8 +262,10 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.Network != nil && cfg.SNMPCollector != nil && cfg.TrapDispatcher != nil {
 		registerTrapRoutes(mux, auth, cfg.Network, cfg.SNMPCollector, cfg.TrapDispatcher, cfg.DiscoveryJobs)
 	}
+	// The legacy tenant-scoped registry CRUD has moved to Gin/MySQL. Keep the
+	// mature system plan/sample implementation until its ClickHouse sink is
+	// migrated as one vertical slice; deleting it here would discard behavior.
 	if cfg.Agents != nil {
-		registerAgentRegistryRoutes(mux, auth, cfg.Agents)
 		registerAgentRoutes(mux, AgentPlanService{
 			Agents:  cfg.Agents,
 			Targets: cfg.Targets,

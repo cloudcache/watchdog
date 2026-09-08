@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// AgentPlanService handles agent plan building, heartbeat/status reporting,
-// and push-mode sample/discovery import. SNMP pull-mode collection is handled
+// AgentPlanService handles system plan building and push-mode sample import.
+// Agent registration, heartbeat and run reporting are owned by the Gin server.
+// SNMP pull-mode collection is handled
 // by the SNMP collector engine (snmp_poller.go + snmp_collection_recipes).
 type AgentPlanService struct {
 	Agents  AgentRepository
@@ -46,45 +47,6 @@ func (s AgentPlanService) BuildSystemAgentPlan(ctx context.Context, agentID ID, 
 	}
 	plan := SystemAgentPlan{Agent: agent, HubURL: s.systemHubURL(), Interval: time.Minute}
 	return plan, nil
-}
-
-func (s AgentPlanService) MarkHeartbeat(ctx context.Context, agentID ID, token string) error {
-	if s.Agents == nil {
-		return errors.New("agent plan service is not configured")
-	}
-	agent, err := s.Agents.GetAgent(ctx, agentID)
-	if err != nil {
-		return err
-	}
-	if !AgentTokenMatches(token, agent.TokenHash) {
-		return errors.New("invalid agent token")
-	}
-	if err := validateRunnableAgent(agent); err != nil {
-		return err
-	}
-	return s.Agents.MarkAgentSeen(ctx, agentID)
-}
-
-func (s AgentPlanService) ReportStatus(ctx context.Context, agentID ID, token string, report AgentRunReport) error {
-	if s.Agents == nil {
-		return errors.New("agent plan service is not configured")
-	}
-	agent, err := s.Agents.GetAgent(ctx, agentID)
-	if err != nil {
-		return err
-	}
-	if !AgentTokenMatches(token, agent.TokenHash) {
-		return errors.New("invalid agent token")
-	}
-	if err := validateRunnableAgent(agent); err != nil {
-		return err
-	}
-	if report.Status != AgentRunSuccess && report.Status != AgentRunFailure {
-		return errors.New("agent run status must be success or failure")
-	}
-	report.AgentID = agentID
-	report.Seen = true
-	return s.Agents.RecordAgentRun(ctx, report)
 }
 
 func (s AgentPlanService) ImportSystemPush(ctx context.Context, agentID ID, token string, batch SystemSampleBatch) error {

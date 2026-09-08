@@ -205,6 +205,10 @@ Agent 固定使用以下生命周期：
 
 capability 是版本化字符串与有界 JSON 参数，例如 `snmp.poll/v2`、`flow.receive.sflow/v1`、`flow.write.clickhouse/v2`。控制面只有一个 `AgentKindAdapter` 代码接口负责 validate/plan/status；不为每个 agent kind 注册一套 dataset、resource、target 和菜单。
 
+注册/CRUD 第一纵向切片固定以下约束：agent kind 只有 `system/snmp/flow_collect/flow_worker/probe`；API version 当前只接受 `v1`，且 capability 必须包含与 kind 对应的版本化前缀。enrollment token 是一次性的，并固定允许的 kind 与可选 `device_id`；没有 `device.viewAll` 的管理者只能为自己有权访问的具体设备签发 token，不能签发可绑定任意设备的 token。`system` 只能绑定 host device，`snmp` 只能绑定 network device；collector/worker 可不绑定具体设备。machine token 仅在创建或轮换响应显示一次，MySQL 只保存 SHA-256；mTLS 只保存证书 SHA-256 fingerprint。
+
+`row_version` 表示管理配置版本：创建、编辑、凭证轮换、吊销以及首次 `registered -> active` 转换会改变它；稳定 heartbeat 和 run 上报不会每分钟制造配置冲突。轮换和吊销在同一事务内锁定 agent、复核版本并更新凭证；旧 credential 在新 credential 生效前已吊销。生产 machine API 只有 Gin `POST /api/v1/agents/register` 与 `/api/v1/agents/:id/{heartbeat,status,errors}`。历史 system plan/sample 暂留原实现，直到 KISS-03 把其输入输出逐项迁入 Gin+ClickHouse 后才删除。
+
 现有 fleet rollout 的复杂状态机不作为基础能力。批量下发先由一个 `operation_job` 对选定 agent 逐个创建 plan；只有出现真实的灰度发布需求和故障证据后，才增加 canary 数据模型。
 
 ### 5.4 Address/Geo：保留现有实现，只去 tenant
@@ -329,7 +333,7 @@ HTTP API 只按领域暴露：
 | `/api/v1/devices/{id}/...` | device、port、IP、BGP、health、switching、inventory、events |
 | `/api/v1/snmp/profiles` | SNMP profile CRUD；列表不返回 security，详情仅授权设备管理员读取 |
 | `/api/v1/agents`, `/api/v1/agents/{id}` | agent 管理 CRUD、binding 与 run 列表（用户 session + `agent.view/manage`） |
-| `/api/v1/agents/enrollment-tokens`, `/api/v1/agents/register` | 管理员签发一次性 enrollment secret；agent 消费后仅返回一次 machine token |
+| `/api/v1/agents/enrollment-tokens`, `/api/v1/agents/register` | 管理员签发固定 kind/可选 device scope 的一次性 enrollment secret；agent 消费后仅返回一次 machine token |
 | `/api/v1/agents/{id}/{heartbeat,status,errors}` | agent token/Bearer 认证的运行面入口，不接受用户 session 代替 machine credential |
 | `/api/v1/address-library/...` | import、draft、preview、publish、rollback、status |
 | `/api/v1/flow/query` | Explorer typed query |
@@ -340,7 +344,7 @@ HTTP API 只按领域暴露：
 
 删除通用 `/query` 的 `dataset/provider/tenant` envelope。保留现有 Flow typed compiler、能力白名单、扫描预算、全有或全无响应和 report composition；它们下沉为 Flow 域内部实现。设备指标使用固定 metric allowlist 的 `MetricQueryService`。
 
-设备管理的唯一权威路径是 `/api/v1/devices`，`host` 唯一且是创建时唯一必填身份字段。现有 UI 迁移期间的 `/api/v1/network/devices`、`/api/v1/targets` 和 `/api/v1/agent-registry` 仅为同一 Gin handler/repository 的 URL/DTO alias：其中 `target_id == device_id`，旧 `system` 类型只在 DTO 边界映射为新 `host`，不创建 `targets`、`network_devices` 或 `target_agents` 兼容表，也不双写。前端切换到 canonical path 后删除这些 alias。
+设备管理的唯一权威路径是 `/api/v1/devices`，`host` 唯一且是创建时唯一必填身份字段。现有 UI 迁移期间的 `/api/v1/network/devices` 和 `/api/v1/targets` 仅为同一 Gin handler/repository 的 URL/DTO alias：其中 `target_id == device_id`，旧 `system` 类型只在 DTO 边界映射为新 `host`，不创建 `targets`、`network_devices` 或 `target_agents` 兼容表，也不双写。前端切换到 canonical path 后删除这些 alias。Agent 不保留 `/api/v1/agent-registry` alias，前端与五类 agent 实进程只访问 canonical `/api/v1/agents...` Gin/MySQL 路径。
 
 前端是独立 npm 构建，只读取一个 `WATCHDOG_CONFIG.API_URL`。`npm run dev` 直接调用配置的 API；生产是否由 Go 同进程提供 `dist` 只是部署便利，不引入第二个 HUB_URL、同源 proxy 或专用 static server。收到受控 API 的 401 或用户主动点击登录时才显示/提交登录，不在应用启动时尝试认证。去 PB 只替换 transport、auth state 和数据获取；现有路由、导航、页面布局、主题、组件、图标和交互保持不变。该切片只做 API/认证功能测试，不增加视觉测试。
 

@@ -9,21 +9,13 @@ import { api } from "@/lib/api"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
-	ID?: string
-	id?: string
-	TargetID?: string
-	target_id?: string
-	Mode?: string
+	id: string
+	device_id?: string
 	mode?: string
-	Status?: string
-	status?: string
-	LastRun?: string
+	status: string
 	last_run?: string
-	LastError?: string
 	last_error?: string
-	RunCount?: number
 	run_count?: number
-	FailureCount?: number
 	failure_count?: number
 }
 
@@ -77,7 +69,8 @@ export default memo(({ id }: AgentRunsProps) => {
 
 	useEffect(() => {
 		document.title = `${id} / ${t`Agent Runs`} / Watchdog`
-		api.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {})
+		api
+			.send<AgentRecord>(`/api/v1/agents/${id}`, {})
 			.then(setAgent)
 			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load agent runs`))
 	}, [id, reloadKey, t])
@@ -87,17 +80,18 @@ export default memo(({ id }: AgentRunsProps) => {
 		const [sortField, order] = sort.split(":")
 		setLoading(true)
 		setError("")
-		api.send<RunsResponse>(`/api/v1/agent-registry/${id}/runs`, {
-			query: {
-				q: debouncedSearch || undefined,
-				status: statusFilter || undefined,
-				seen: seenFilter || undefined,
-				sort: sortField,
-				order,
-				limit: pageSize,
-				offset: page * pageSize || undefined,
-			},
-		})
+		api
+			.send<RunsResponse>(`/api/v1/agents/${id}/runs`, {
+				query: {
+					q: debouncedSearch || undefined,
+					status: statusFilter || undefined,
+					seen: seenFilter || undefined,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+				},
+			})
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setRuns(data.items ?? [])
@@ -185,9 +179,8 @@ export default memo(({ id }: AgentRunsProps) => {
 		}),
 		[sortDirection, sortField]
 	)
-
-	const status = agent?.Status ?? agent?.status ?? "-"
-	const targetID = agent?.TargetID ?? agent?.target_id ?? "-"
+	const status = agent?.status ?? "-"
+	const targetID = agent?.device_id ?? "-"
 
 	return (
 		<div className="grid gap-4">
@@ -217,10 +210,7 @@ export default memo(({ id }: AgentRunsProps) => {
 				<Summary label={t`Agent`} value={id} />
 				<Summary label={t`Target`} value={targetID} />
 				<Summary label={t`Status`} value={localizedStatus(status)} />
-				<Summary
-					label={t`Runs`}
-					value={`${agent?.RunCount ?? agent?.run_count ?? 0} / ${agent?.FailureCount ?? agent?.failure_count ?? 0}`}
-				/>
+				<Summary label={t`Runs`} value={`${agent?.run_count ?? 0} / ${agent?.failure_count ?? 0}`} />
 			</div>
 
 			<div className="rounded-md border border-border bg-card p-3">

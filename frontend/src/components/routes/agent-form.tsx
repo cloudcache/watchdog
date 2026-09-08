@@ -1,28 +1,23 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowLeftIcon, PlugZapIcon, SaveIcon, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, KeyRoundIcon, PlugZapIcon, SaveIcon, ShieldOffIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { InputCopy } from "@/components/ui/input-copy"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type AgentRecord = {
-	ID?: string
-	id?: string
-	TargetID?: string
-	target_id?: string
-	AgentType?: string
-	agent_type?: string
-	Mode?: string
+	id: string
+	device_id?: string
+	kind: string
 	mode?: string
-	Endpoint?: string
 	endpoint?: string
-	Status?: string
-	status?: string
+	status: string
 }
 
 type TargetRecord = {
@@ -61,12 +56,13 @@ export default memo(({ id }: AgentFormProps) => {
 		targetID: "",
 		mode: "push",
 		endpoint: "",
-		status: "pending",
+		status: "registered",
 		token: "",
 	}))
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
+	const [oneTimeToken, setOneTimeToken] = useState("")
 	// Weak ETag from the last load, echoed as If-Match on save (optimistic
 	// concurrency): a concurrent edit is rejected (412), not overwritten.
 	const etagRef = useRef("")
@@ -85,18 +81,18 @@ export default memo(({ id }: AgentFormProps) => {
 				}))
 				return
 			}
-			const agent = await api.send<AgentRecord>(`/api/v1/agent-registry/${id}`, {
+			const agent = await api.send<AgentRecord>(`/api/v1/agents/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
 			})
 			setForm({
-				id: agent.ID ?? agent.id ?? id,
-				agentType: agent.AgentType ?? agent.agent_type ?? "snmp",
-				targetID: agent.TargetID ?? agent.target_id ?? "",
-				mode: agent.Mode ?? agent.mode ?? "push",
-				endpoint: agent.Endpoint ?? agent.endpoint ?? "",
-				status: agent.Status ?? agent.status ?? "pending",
+				id: agent.id ?? id,
+				agentType: agent.kind ?? "snmp",
+				targetID: agent.device_id ?? "",
+				mode: agent.mode ?? "push",
+				endpoint: agent.endpoint ?? "",
+				status: agent.status ?? "registered",
 				token: "",
 			})
 		} catch (err) {
@@ -116,22 +112,63 @@ export default memo(({ id }: AgentFormProps) => {
 		setError("")
 		try {
 			const body = {
-				ID: form.id.trim(),
-				TargetID: form.targetID,
-				AgentType: form.agentType,
-				Mode: form.mode,
-				Endpoint: form.endpoint.trim(),
-				Status: form.status,
-				Token: form.token,
+				id: form.id.trim(),
+				device_id: form.targetID,
+				kind: form.agentType,
+				mode: form.mode,
+				endpoint: form.endpoint.trim(),
+				status: form.status,
+				token: isEditing ? undefined : form.token,
+				api_version: "v1",
+				capabilities: agentCapabilities(form.agentType),
 			}
-			const saved = await api.send<AgentRecord>(id ? `/api/v1/agent-registry/${id}` : "/api/v1/agent-registry", {
+			const saved = await api.send<AgentRecord>(id ? `/api/v1/agents/${id}` : "/api/v1/agents", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,
 			})
-			navigate(getPagePath($router, "agent_edit", { id: saved.ID ?? saved.id ?? form.id }))
+			navigate(getPagePath($router, "agent_edit", { id: saved.id ?? form.id }))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save agent`)
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	const rotateToken = async () => {
+		if (!id || !window.confirm(t`Rotate this agent token? The current token will stop working immediately.`)) return
+		setSaving(true)
+		setError("")
+		setOneTimeToken("")
+		try {
+			const result = await api.send<{ token: string }>(`/api/v1/agents/${id}/credentials/rotate`, {
+				method: "POST",
+				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
+				body: { auth_type: "token" },
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? etagRef.current
+				},
+			})
+			setOneTimeToken(result.token)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to rotate agent token`)
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	const revokeAgent = async () => {
+		if (!id || !window.confirm(t`Revoke this agent and all of its credentials?`)) return
+		setSaving(true)
+		setError("")
+		try {
+			await api.send(`/api/v1/agents/${id}/revoke`, {
+				method: "POST",
+				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
+			})
+			await load()
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Failed to revoke agent`)
 		} finally {
 			setSaving(false)
 		}
@@ -144,7 +181,10 @@ export default memo(({ id }: AgentFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			await api.send(`/api/v1/agent-registry/${id}`, { method: "DELETE" })
+			await api.send(`/api/v1/agents/${id}`, {
+				method: "DELETE",
+				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
+			})
 			navigate(getPagePath($router, "agents"))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to delete agent`)
@@ -155,7 +195,7 @@ export default memo(({ id }: AgentFormProps) => {
 
 	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
 	const targetOptions = targets.filter((target) => targetKind(target) === agentTargetKind(form.agentType))
-	const canSave = form.id.trim() && form.targetID && (isEditing || form.token.trim())
+	const canSave = form.id.trim() && (isEditing || form.token.trim())
 
 	return (
 		<div className="grid gap-4">
@@ -175,10 +215,30 @@ export default memo(({ id }: AgentFormProps) => {
 				</div>
 				<div className="flex items-center gap-2">
 					{isEditing ? (
-						<Button size="sm" variant="outline" onClick={deleteAgent} disabled={loading || saving}>
-							<Trash2Icon className="me-2 h-4 w-4" />
-							<Trans>Delete</Trans>
-						</Button>
+						<>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={rotateToken}
+								disabled={loading || saving || form.status === "revoked"}
+							>
+								<KeyRoundIcon className="me-2 h-4 w-4" />
+								<Trans>Rotate token</Trans>
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={revokeAgent}
+								disabled={loading || saving || form.status === "revoked"}
+							>
+								<ShieldOffIcon className="me-2 h-4 w-4" />
+								<Trans>Revoke</Trans>
+							</Button>
+							<Button size="sm" variant="outline" onClick={deleteAgent} disabled={loading || saving}>
+								<Trash2Icon className="me-2 h-4 w-4" />
+								<Trans>Delete</Trans>
+							</Button>
+						</>
 					) : null}
 					<Button size="sm" onClick={save} disabled={loading || saving || !canSave}>
 						<SaveIcon className="me-2 h-4 w-4" />
@@ -188,6 +248,17 @@ export default memo(({ id }: AgentFormProps) => {
 			</div>
 
 			{error ? <div className="rounded-md border border-border p-3 text-sm text-destructive">{error}</div> : null}
+			{oneTimeToken ? (
+				<div className="grid gap-2 rounded-md border border-border p-3">
+					<div className="text-sm font-medium">
+						<Trans>New agent token</Trans>
+					</div>
+					<div className="text-xs text-muted-foreground">
+						<Trans>Copy it now. It will not be shown again.</Trans>
+					</div>
+					<InputCopy id="rotated-agent-token" name="rotated-agent-token" value={oneTimeToken} />
+				</div>
+			) : null}
 
 			<div className="grid gap-4 rounded-md border border-border p-4">
 				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -210,15 +281,25 @@ export default memo(({ id }: AgentFormProps) => {
 							<SelectContent>
 								<SelectItem value="snmp">snmp</SelectItem>
 								<SelectItem value="system">system</SelectItem>
+								<SelectItem value="flow_collect">flow_collect</SelectItem>
+								<SelectItem value="flow_worker">flow_worker</SelectItem>
+								<SelectItem value="probe">probe</SelectItem>
 							</SelectContent>
 						</Select>
 					</Field>
 					<Field label={t`Target`}>
-						<Select value={form.targetID} onValueChange={(targetID) => update({ targetID })} disabled={loading}>
+						<Select
+							value={form.targetID || "__unbound__"}
+							onValueChange={(targetID) => update({ targetID: targetID === "__unbound__" ? "" : targetID })}
+							disabled={loading}
+						>
 							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
+								<SelectItem value="__unbound__">
+									<Trans>Unbound</Trans>
+								</SelectItem>
 								{targetOptions.map((target) => {
 									const targetID = target.ID ?? target.id ?? ""
 									return (
@@ -254,21 +335,23 @@ export default memo(({ id }: AgentFormProps) => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="pending">pending</SelectItem>
-								<SelectItem value="up">up</SelectItem>
-								<SelectItem value="down">down</SelectItem>
-								<SelectItem value="disabled">disabled</SelectItem>
+								<SelectItem value="registered">registered</SelectItem>
+								<SelectItem value="active">active</SelectItem>
+								<SelectItem value="draining">draining</SelectItem>
+								{form.status === "revoked" ? <SelectItem value="revoked">revoked</SelectItem> : null}
 							</SelectContent>
 						</Select>
 					</Field>
-					<Field label={isEditing ? t`Rotate Token` : t`Token`}>
-						<Input
-							type="password"
-							value={form.token}
-							onChange={(event) => update({ token: event.target.value })}
-							disabled={loading}
-						/>
-					</Field>
+					{!isEditing ? (
+						<Field label={t`Initial token`}>
+							<Input
+								type="password"
+								value={form.token}
+								onChange={(event) => update({ token: event.target.value })}
+								disabled={loading}
+							/>
+						</Field>
+					) : null}
 				</div>
 			</div>
 		</div>
@@ -295,10 +378,23 @@ function targetKind(target: TargetRecord) {
 }
 
 function agentTargetKind(agentType: string) {
-	return agentType === "system" ? "system" : "network"
+	if (agentType === "system") return "system"
+	if (agentType === "snmp") return "network"
+	return ""
 }
 
 function firstTargetIDForKind(targets: TargetRecord[], agentType: string) {
 	const target = targets.find((item) => targetKind(item) === agentTargetKind(agentType))
 	return target?.ID ?? target?.id ?? ""
+}
+
+function agentCapabilities(agentType: string) {
+	const values: Record<string, string[]> = {
+		system: ["system.samples/v1"],
+		snmp: ["snmp.poll/v2"],
+		flow_collect: ["flow.receive.sflow/v1", "flow.receive.netflow/v1"],
+		flow_worker: ["flow.write.clickhouse/v2"],
+		probe: ["probe.execute/v1"],
+	}
+	return values[agentType] ?? []
 }

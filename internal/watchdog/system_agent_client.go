@@ -26,7 +26,7 @@ func (c SystemAgentClient) FetchPlan(ctx context.Context) (SystemAgentPlan, erro
 }
 
 func (c SystemAgentClient) Heartbeat(ctx context.Context) error {
-	endpoint, err := c.endpoint("heartbeat")
+	endpoint, err := c.genericAgentEndpoint("heartbeat")
 	if err != nil {
 		return err
 	}

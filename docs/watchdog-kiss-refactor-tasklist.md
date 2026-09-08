@@ -51,10 +51,12 @@
 
 #### KISS-01D PB 剩余活入口迁移或删除
 
-- [ ] **编码**：agent 注册/心跳只迁移 KISS-04 真正需要的最小入口到 MySQL；SNMP/system 时序活数据直接接目标 ClickHouse sink；**PB 的告警 hook/collection/realtime 直接删除**——日志与告警作为后续单独的 ClickHouse 子系统重建（按 LibreNMS eventlog/alert 结构、无历史迁移），KISS-01 不保留任何 PB 告警路径。已确认的 systems、smart_devices、旧 realtime、hook、cron 和 collection 写链直接删除，不为历史数据造迁移器。
-- [ ] **单元/集成测试**：至少一个 agent 注册/心跳不经 PB；删除死亡入口（含全部 PB 告警 hook/collection）后不存在后台重试、静默写 SQLite 或前端 `Failed to fetch` 循环。
-- [ ] **变更设计/测试**：逐项核销 KISS-01A 的活依赖；功能若不在目标产品五项内，删除而不是搬家。
-- [ ] **已提交门禁**：活入口迁移与对应死链删除按可启动纵向切片提交，不允许“新入口 + 旧入口继续双写”。
+- [x] **编码**：agent 注册/心跳最小入口已由 KISS-04 Gin/MySQL 承接；**PB 的告警 hook/collection/realtime 直接删除**——日志与告警作为后续单独的 ClickHouse 子系统重建（按 LibreNMS eventlog/alert 结构、无历史迁移），KISS-01 不保留任何 PB 告警路径。已确认的 systems、smart_devices、旧 realtime、hook、cron 和 collection 写链均已删除，不为历史数据造迁移器。SNMP/system 时序改写 ClickHouse 属 KISS-03 存储纵向切片，不是 PB 入口的隐性前置。
+- [x] **单元/集成测试**：真实 MySQL 覆盖 agent enrollment/register/heartbeat；Gin 路由扫描和旧 watchdog router 反向测试覆盖 agent-registry、system-agent heartbeat、notification/quiet-hours/alerts-history 路径均不存在。前端删除 realtime/alert polling store 及相关 API，不再产生旧端点重试或 SQLite 写入。
+- [x] **变更设计/测试**：KISS-01A 清单中的 agent 运行入口迁 Gin/MySQL；告警、systems、smart_devices、realtime、hook、cron/collection 写链按非目标产品功能删除，无双写、无历史迁移器、无兼容 fallback。
+- [x] **已提交门禁**：活入口迁移与对应死链删除已形成可启动纵向切片，不存在“新入口 + 旧入口继续双写”。
+
+当前核销：生产 agent machine API 唯一路径是 Gin `agents/register|heartbeat|status|errors`，直写 v2 MySQL；旧 watchdog `/agent-registry` 和重复的 heartbeat/status/errors 路由已删除。尚待 KISS-03 等价迁入 Gin+ClickHouse 的历史 system plan/sample 实现及测试继续保留，它不是 PB 路径，也不与 Gin machine API 双写。旧 PB alerts hook/collection/realtime、systems/smart write chain、WebSocket hub、cron、external-subject identity/notification/quiet-hours bridge 已物理删除。
 
 #### KISS-01E 物理删除 PocketBase 与旧库
 
@@ -101,7 +103,17 @@
 
 ### KISS-04 Agent registry 收敛
 
-- [x] **KISS-04A 已完成纵向切片（2026-09-08，`e5848ade`）**：新增全局 `agents/agent_credentials/agent_bindings/agent_runs/agent_enrollment_tokens/agent_plans/agent_plan_acks` v2 表；Gin 已接 registry CRUD、分页/search/sort/filter、token rotation、run 列表、一次性 enrollment、register、heartbeat/status/errors。secret 仅返回/输入一次、库内只存 SHA-256；真实 MySQL 测试覆盖手工注册、heartbeat/run、enrollment 消费与 replay 拒绝、错误 token、更新/删除。plan/ACK/LKG 与四种 agent 实进程验收仍未完成，不能把整个 KISS-04 标完。
+- [x] **KISS-04A 注册/CRUD 纵向切片（基础提交 `e5848ade`，本次闭环提交见 Git history）**
+  - [x] **设计**：冻结 `system/snmp/flow_collect/flow_worker/probe` 五类、`registered -> active -> draining -> revoked`、`api_version=v1` 与版本化 capability；enrollment token 固定 kind 和可选 device，scope 用户不得签发任意设备 token；system/snmp 绑定分别校验 host/network device；管理配置 ETag 与高频 heartbeat/run 解耦。
+  - [x] **编码**：全局 `agents/agent_credentials/agent_bindings/agent_runs/agent_enrollment_tokens` 由 Gin+MySQL 唯一承载；注册、heartbeat/status/errors、token/mTLS 凭证、轮换、吊销、设备绑定和运行记录均无 PB/tenant；旧 `/agent-registry` 实现删除，system agent heartbeat 客户端改用 canonical Gin URL。
+  - [x] **API/UI**：canonical agent list/detail/create/update/delete/enroll/rotate/revoke/run 已接现有 Agents 页面；两张 VTable 使用服务端分页/search/sort/column filter；enrollment 可选目标设备，machine/enrollment secret 只显示一次；布局与样式未重写。
+  - [x] **单元测试**：kind/API/capability 兼容矩阵、字段上限、SHA-256 fingerprint、旧状态映射、active/draining 离线判定已覆盖。
+  - [x] **集成测试**：全新真实 MySQL 顺序应用 schema；覆盖手工注册、错误 kind/device、设备范围 RBAC、严格 body/query、heartbeat 时钟偏差、run、过期/错 kind/错 capability/错 device/replay enrollment、凭证 CAS 轮换、旧 token 失效、吊销和删除。
+  - [x] **变更设计/测试**：旧 `pending/up/down/disabled` 显式归一到新状态；system agent heartbeat/status/errors 保留请求兼容字段但改走 Gin；未等价迁移的 system plan/sample 原实现和测试保留到 KISS-03，不先删后重写。
+  - [x] **回归测试**：`go test ./...`、server/watchdog race、全库 vet/build、前端 45 单测、Agent 文件 Biome 和 production build 通过；未增加视觉测试。
+  - [x] **已提交门禁**：本纵向切片只提交 Agent schema/API/UI/test、旧 registry 删除和必要文档核销；地址库及其他并行 WIP 不进入提交。
+
+`KISS-04A` 完成不代表整个 `KISS-04` 完成。下面 plan/ACK/LKG/四类实进程闭环仍为待办：
 
 - [ ] **设计**：冻结 agent kind/capability schema、enrollment/token-or-mTLS、binding、immutable plan、ACK、heartbeat、revocation 和兼容版本矩阵。
 - [ ] **编码**：将 collector/target agent 多表收敛为 `agents/credentials/bindings/plans/acks/runs`；保留已有 plan 签名和 LKG 必要能力，删除 tenant ownership/provider/fleet 占位状态机。

@@ -128,6 +128,8 @@ func (s *Server) newRouter() *gin.Engine {
 	agents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
 	agents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
 	agents.GET("/:id/runs", s.requirePermission("agent.view"), s.listAgentRuns)
+	agents.POST("/:id/credentials/rotate", s.requirePermission("agent.manage"), s.rotateAgentCredential)
+	agents.POST("/:id/revoke", s.requirePermission("agent.manage"), s.revokeAgent)
 
 	// Temporary URL/DTO aliases for the existing UI. They call the canonical
 	// repositories above and never touch the removed targets/target_agents tables.
@@ -181,14 +183,6 @@ func (s *Server) newRouter() *gin.Engine {
 	snmpProfiles.GET("/:id", s.requirePermission("device.update"), s.getSNMPProfile)
 	snmpProfiles.PATCH("/:id", s.requirePermission("device.update"), s.updateSNMPProfile)
 	snmpProfiles.DELETE("/:id", s.requirePermission("device.update"), s.deleteSNMPProfile)
-	legacyAgents := auth.Group("/agent-registry")
-	legacyAgents.GET("", s.requirePermission("agent.view"), s.listAgents)
-	legacyAgents.POST("", s.requirePermission("agent.manage"), s.createAgent)
-	legacyAgents.GET("/:id", s.requirePermission("agent.view"), s.getAgent)
-	legacyAgents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
-	legacyAgents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
-	legacyAgents.GET("/:id/runs", s.requirePermission("agent.view"), s.listAgentRuns)
-
 	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports.
 	s.registerAddressRoutes(auth)
 	s.registerAddressImportRoutes(auth)
