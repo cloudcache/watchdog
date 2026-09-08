@@ -15,31 +15,31 @@ import (
 // defaultAddressArtifactMaxBytes caps an uploaded source database at 2 GiB.
 const defaultAddressArtifactMaxBytes int64 = 2 << 30
 
-type addressArtifact struct {
+type Artifact struct {
 	Ref            string
 	Format         string
 	ChecksumSHA256 string
 	SizeBytes      uint64
 }
 
-// diskAddressArtifactStore keeps uploaded MMDB/IPDB source files on local disk
+// DiskArtifactStore keeps uploaded MMDB/IPDB source files on local disk
 // under Dir. Refs are relative slash paths (address-imports/<importID>/source.<fmt>)
 // so ResolveArtifact can be sandboxed to Dir. De-tenanted port of the SaaS store.
-type diskAddressArtifactStore struct {
+type DiskArtifactStore struct {
 	Dir      string
 	MaxBytes int64
 }
 
-func (s diskAddressArtifactStore) SaveArtifact(ctx context.Context, importID, originalName string, source io.Reader) (addressArtifact, error) {
+func (s DiskArtifactStore) SaveArtifact(ctx context.Context, importID, originalName string, source io.Reader) (Artifact, error) {
 	if source == nil || !safeAddressArtifactID(importID) {
-		return addressArtifact{}, errors.New("address artifact import id and source are required")
+		return Artifact{}, errors.New("address artifact import id and source are required")
 	}
 	format := strings.TrimPrefix(strings.ToLower(filepath.Ext(strings.TrimSpace(originalName))), ".")
 	if format != AddressImportFormatMMDB && format != AddressImportFormatIPDB {
-		return addressArtifact{}, errors.New("address artifact must have a .mmdb or .ipdb extension")
+		return Artifact{}, errors.New("address artifact must have a .mmdb or .ipdb extension")
 	}
 	if strings.TrimSpace(s.Dir) == "" {
-		return addressArtifact{}, errors.New("address artifact directory is required")
+		return Artifact{}, errors.New("address artifact directory is required")
 	}
 	maxBytes := s.MaxBytes
 	if maxBytes <= 0 {
@@ -48,19 +48,19 @@ func (s diskAddressArtifactStore) SaveArtifact(ctx context.Context, importID, or
 	ref := filepath.ToSlash(filepath.Join("address-imports", importID, "source."+format))
 	path, err := s.artifactPath(ref)
 	if err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if _, err := os.Lstat(path); err == nil {
-		return addressArtifact{}, errors.New("address artifact already exists")
+		return Artifact{}, errors.New("address artifact already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".upload-*")
 	if err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	temporaryName := temporary.Name()
 	keep := false
@@ -73,25 +73,25 @@ func (s diskAddressArtifactStore) SaveArtifact(ctx context.Context, importID, or
 	hash := sha256.New()
 	written, err := copyAddressArtifact(ctx, io.MultiWriter(temporary, hash), source, maxBytes)
 	if err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if written == 0 {
-		return addressArtifact{}, errors.New("address artifact is empty")
+		return Artifact{}, errors.New("address artifact is empty")
 	}
 	if err := temporary.Sync(); err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if err := temporary.Close(); err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if err := os.Chmod(temporaryName, 0o600); err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	if err := os.Rename(temporaryName, path); err != nil {
-		return addressArtifact{}, err
+		return Artifact{}, err
 	}
 	keep = true
-	return addressArtifact{Ref: ref, Format: format, ChecksumSHA256: hex.EncodeToString(hash.Sum(nil)), SizeBytes: uint64(written)}, nil
+	return Artifact{Ref: ref, Format: format, ChecksumSHA256: hex.EncodeToString(hash.Sum(nil)), SizeBytes: uint64(written)}, nil
 }
 
 func copyAddressArtifact(ctx context.Context, destination io.Writer, source io.Reader, maxBytes int64) (int64, error) {
@@ -125,7 +125,7 @@ func copyAddressArtifact(ctx context.Context, destination io.Writer, source io.R
 	}
 }
 
-func (s diskAddressArtifactStore) ResolveArtifact(ref string) (string, error) {
+func (s DiskArtifactStore) ResolveArtifact(ref string) (string, error) {
 	path, err := s.artifactPath(ref)
 	if err != nil {
 		return "", err
@@ -140,7 +140,7 @@ func (s diskAddressArtifactStore) ResolveArtifact(ref string) (string, error) {
 	return path, nil
 }
 
-func (s diskAddressArtifactStore) RemoveArtifact(ref string) error {
+func (s DiskArtifactStore) RemoveArtifact(ref string) error {
 	path, err := s.artifactPath(ref)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func (s diskAddressArtifactStore) RemoveArtifact(ref string) error {
 	return nil
 }
 
-func (s diskAddressArtifactStore) artifactPath(ref string) (string, error) {
+func (s DiskArtifactStore) artifactPath(ref string) (string, error) {
 	parts := strings.Split(filepath.ToSlash(strings.TrimSpace(ref)), "/")
 	if len(parts) != 3 || parts[0] != "address-imports" || !safeAddressArtifactID(parts[1]) || (parts[2] != "source.mmdb" && parts[2] != "source.ipdb") {
 		return "", errors.New("invalid address artifact reference")
