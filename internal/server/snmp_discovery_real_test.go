@@ -84,4 +84,28 @@ func TestRealSNMPDiscovery(t *testing.T) {
 	if len(result.Ports) == 0 {
 		t.Fatal("real device returned no IF-MIB ports")
 	}
+	targetDSN := os.Getenv("WATCHDOG_TEST_SNMP_TARGET_DSN")
+	if targetDSN == "" {
+		return
+	}
+	target, err := New(Config{MySQL: MySQLConfig{DSN: targetDSN}, Admin: AdminConfig{Username: "snmp-hardware-admin", Password: "snmp-hardware-password"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if _, err := target.db.Exec(`INSERT INTO devices (id,host,kind,status) VALUES (?,?, 'network','pending')`, deviceID, targetHost); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := target.importSNMPDiscovery(ctx, deviceID, "", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedObjectID, status string
+	var storedPorts int
+	if err := target.db.QueryRow(`SELECT sys_object_id,status,(SELECT COUNT(*) FROM ports WHERE device_id=devices.id) FROM devices WHERE id=?`, deviceID).Scan(&storedObjectID, &status, &storedPorts); err != nil {
+		t.Fatal(err)
+	}
+	if storedObjectID == "" || status != "up" || storedPorts != imported.Ports || storedPorts == 0 {
+		t.Fatalf("real discovery persistence mismatch: object=%q status=%q ports=%d imported=%+v", storedObjectID, status, storedPorts, imported)
+	}
 }

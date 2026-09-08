@@ -67,16 +67,22 @@
 
 ### KISS-02 单域 RBAC 与设备根
 
-- [x] **KISS-02A 已完成纵向切片（2026-09-08，`e5848ade`）**：新 Gin 后端已接 `devices` 与 SNMP profile 的 list/get/create/patch/delete，host 唯一且 display name 可选；labels/SNMP override 不丢失，ETag 冲突检测、固定 sort 白名单、服务端分页/search/status filter、device/device-group scope 均已接 MySQL。现有 `/network/devices` 与 `/targets` 是同一 `device_id` 的临时 handler/DTO alias，兼容层仅做 `system -> host` 类型映射，不创建或写旧表；真实 MySQL 集成测试覆盖 CRUD、host 冲突、profile secret 脱敏及 summary/target alias。端口/IP/BGP/sensor/inventory/discovery 仍属下方 KISS-02 未完成项。
+- [x] **KISS-02A 已完成纵向切片（2026-09-08，`e5848ade`）**：新 Gin 后端已接 `devices` 与 SNMP profile 的 list/get/create/patch/delete，host 唯一且 display name 可选；labels/SNMP override 不丢失，ETag 冲突检测、固定 sort 白名单、服务端分页/search/status filter、device/device-group scope 均已接 MySQL。现有 `/network/devices` 与 `/targets` 是同一 `device_id` 的临时 handler/DTO alias，兼容层仅做 `system -> host` 类型映射，不创建或写旧表；真实 MySQL 集成测试覆盖 CRUD、host 冲突、profile secret 脱敏及 summary/target alias。
 
-- [ ] **设计**：以 LibreNMS role abilities + `devices_perms/ports_perms/bill_perms` 为基线，冻结“全局 action + 显式资源集合”双门、固定权限 key、默认角色和 device-group scope；设备侧按 LibreNMS 来，冻结 `devices` 与 `ports/interface_addresses/bgp_sessions/sensors/physical_entities/vlans/lag_groups/snmp_profiles` 契约，并将 `locations`（站点/POP）、`device_groups`（static/dynamic）、`device_group_members` 作为一等组织单位（服务导航分组、告警范围和批量授权）。
-- [ ] **编码**：删除 tenant context/header/selector；客户/供应商改为业务实体；合并 `targets + network_devices -> devices`，所有子表直接引用 device；设备以 host 唯一、display name 可选。
-- [ ] **API/UI**：users/roles/permissions/device/port 领域路由；设备详情各 VTable 保持服务端分页/搜索/排序/column filter；SNMP secret 编辑/继承和发现结果只读。
-- [ ] **单元测试**：role ability、device grant、port 显式 grant、端口继承 device、bill 独立 grant、Flow layer ability + device/port scope、update/delete/export 对象范围、空范围 fail-closed；host 规范化/冲突、SNMP v1/v2c/v3 输入、sysName/sysDescr 非必填、IPv4/v6/BGP 通用发现。
-- [ ] **集成测试**：空 MySQL 添加真实 SNMP 设备、发现并写设备/端口/IP/BGP/sensor/inventory；CRUD/ETag/delete-preview/job 全链。
-- [ ] **变更设计/测试**：建立旧 target/device route 的短期 301/compat DTO 清单；前端全部切换后删除 compat，不保留双 ID。
-- [ ] **回归测试**：SNMP discovery、所有设备详情页 VTable、角色边界、真实 MySQL、前端浏览器回归。
-- [ ] **已提交门禁**：schema/domain/API/UI/test 原子提交，工作区无旧 route 调用。
+- [x] **KISS-02B 设备子资源查询（`145842d3`）**：Gin/MySQL 已接 canonical `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags}`、`/ports/:id`、`/bgp` 及现有 `/network/*` alias；所有列表固定 SQL sort 白名单、严格分页/search/column filter，端口同时支持设备继承授权与显式 port grant。migration 0007 只补 MIB-neutral inventory 字段，SNMP/system 时序值仍归 ClickHouse；真实空 MySQL 覆盖双栈地址、BGP v4/v6、sensor/inventory/VLAN/LAG、端口 CAS、账单删除阻断和显式端口范围。
+
+- [x] **KISS-02C 组织与资源集合（`bfb47e02`）**：locations、static/dynamic device groups、物化 membership、refresh 和 delete-preview 已闭环；动态规则只允许固定字段/label，不接收 SQL。用户 access replace/get 覆盖 device/group/port/billing 四类 grant，先完整校验再同事务替换，重复 ID 归一化，未知对象不留下半批授权。
+
+- [x] **KISS-02D 通用 SNMP discovery 与 Flow device scope（`2cda16e8`、`ed7be0e2`）**：复用既有 MIB/definition engine 和 v1/v2c/v3 session，不在 handler 拼厂商；发现结果按 completed module 事务写当前 inventory，覆盖双栈 IP/BGP、sensor/entity/VLAN/LAG，失败不裁剪上次清单，账单端口仅标记 `notPresent`。Flow exporter binding 的 list/get/create/update/delete 均叠加 device scope，列表参数 fail-closed。
+
+- [x] **设计**：以 LibreNMS role abilities + `devices_perms/ports_perms/bill_perms` 为基线，冻结“全局 action + 显式资源集合”双门、固定权限 key、默认角色和 device-group scope；冻结唯一 device 根、子资源、locations 与 static/dynamic group 契约。动态组使用 typed rule + 物化成员；SNMP `sys_location` 与管理 `location_id/name` 分离。
+- [x] **编码**：新 Gin/MySQL 运行面无 tenant context/header/selector；客户/供应商是业务实体；`targets + network_devices` 已合并为 `devices`，所有子表和 Flow exporter binding 直接引用同一 `device_id`；host 唯一、display name 可选。
+- [x] **API/UI**：users/roles/permissions/device/group/location/port/SNMP/Flow-device 领域路由已接；既有 UI 继续用同 handler 的 alias，界面和风格不改。所有已迁设备 VTable 都是服务端分页/search/sort/column filter；SNMP profile 列表不出 secret，编辑和 device override 可维护，发现字段只读。
+- [x] **单元测试**：固定 role ability、动态组 typed rule、device/group grant、port 显式 grant与设备继承、billing 独立 grant校验、Flow-device ability + device scope、对象 update/delete 权限和空范围 fail-closed 已覆盖；host 规范化/冲突、SNMP v1/v2c/v3 session、sysName/sysDescr 非必填、双栈 IP/BGP 通用结果已覆盖。Flow 高基数记录层的 layer+device/port query/export 下推归 KISS-06，账单对象状态机归 KISS-07，不在本包伪造占位实现。
+- [x] **集成测试**：隔离空 MySQL 全链覆盖 device/profile/discovery/current inventory/organization/grants/Flow exporter/ETag/delete-preview/audit；确定性 fixture 覆盖所有双栈子资源和模块失败/裁剪边界；另对 `103.83.65.0` 完成真实 SNMP discovery 并把真实结果写入另一个空 v2 MySQL 验证。异步 poll plan/ACK 是 KISS-03/04，不为手工 discover 另造 job。
+- [x] **变更设计/测试**：canonical 路径与 `/network/devices`、`/targets`、`/network/ports` compat DTO 清单已冻结；alias 只转同一 handler、repository 和 ID，不建旧表、不双写。当前 UI 切换完成前保留 alias，最终物理删除归 KISS-08。
+- [x] **回归测试**：`go test ./...`、server/watchdog vet、`go build ./...`、45 个前端单测和 production build 通过；真实 MySQL、真实 SNMP、全部设备详情 VTable 和角色边界均有自动回归。按约束未修改视觉，不增加视觉测试。
+- [x] **已提交门禁**：schema/domain/API/test 分为可独立构建的纵向提交 `e5848ade`、`a17b313a`、`145842d3`、`bfb47e02`、`2cda16e8`、`ed7be0e2`；运行时只有一个 device ID/管理库。兼容 URL 的最终删除是 KISS-08 清理门，不再阻塞 KISS-02。
 
 ### KISS-03 SNMP/system/agent 时序统一写入并查询 ClickHouse
 
