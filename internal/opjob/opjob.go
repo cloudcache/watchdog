@@ -18,8 +18,10 @@ import (
 	"time"
 )
 
-// jobTable is the dedicated engine table (see deploy/schema/mysql/0010_async_jobs.sql).
-const jobTable = "async_jobs"
+// jobTable is the installation's only asynchronous operation state machine.
+// Migration 0014 retires the incomplete baseline draft and renames the complete
+// lease/retry/checkpoint engine created by 0010 to this canonical table name.
+const jobTable = "operation_jobs"
 
 var (
 	ErrLeaseLost    = errors.New("operation job lease is no longer held")
@@ -46,6 +48,7 @@ type Job struct {
 	Status            string          `json:"status"`
 	IdempotencyKey    string          `json:"idempotency_key"`
 	RequestHash       string          `json:"request_hash"`
+	ProgressTotal     uint64          `json:"progress_total"`
 	ProgressDone      uint64          `json:"progress_done"`
 	CheckpointJSON    json.RawMessage `json:"checkpoint,omitempty"`
 	ResultRef         string          `json:"result_ref,omitempty"`
@@ -125,7 +128,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 const jobColumns = `
 	id, job_type, status, idempotency_key, request_hash,
-	progress_done, checkpoint_json, COALESCE(result_ref, ''),
+	progress_total, progress_done, checkpoint_json, COALESCE(result_ref, ''),
 	COALESCE(lease_owner, ''), COALESCE(lease_token, ''), lease_expires_at,
 	next_attempt_at, attempt_count, COALESCE(last_error_code, ''), COALESCE(last_error_detail, ''),
 	row_version, COALESCE(created_by, ''), created_at, started_at, cancel_requested_at, finished_at`
@@ -135,7 +138,7 @@ func scanJob(row rowScanner) (Job, error) {
 	var leaseExpires, startedAt, cancelAt, finishedAt sql.NullTime
 	var checkpoint []byte
 	err := row.Scan(&job.ID, &job.JobType, &job.Status, &job.IdempotencyKey, &job.RequestHash,
-		&job.ProgressDone, &checkpoint, &job.ResultRef,
+		&job.ProgressTotal, &job.ProgressDone, &checkpoint, &job.ResultRef,
 		&job.LeaseOwner, &job.LeaseToken, &leaseExpires,
 		&job.NextAttemptAt, &job.AttemptCount, &job.LastErrorCode, &job.LastErrorDetail,
 		&job.RowVersion, &job.CreatedBy, &job.CreatedAt, &startedAt, &cancelAt, &finishedAt)
@@ -176,10 +179,10 @@ func (s *Store) Enqueue(ctx context.Context, job Job) (Job, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO `+jobTable+` (
 			id, job_type, status, idempotency_key, request_hash,
-			checkpoint_json, created_by, next_attempt_at
-		) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)
+			progress_total, checkpoint_json, created_by, next_attempt_at
+		) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE id = id
-	`, job.ID, job.JobType, job.IdempotencyKey, job.RequestHash,
+	`, job.ID, job.JobType, job.IdempotencyKey, job.RequestHash, job.ProgressTotal,
 		string(checkpoint), createdBy, time.Now().UTC()); err != nil {
 		return Job{}, err
 	}

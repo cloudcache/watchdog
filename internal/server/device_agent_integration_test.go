@@ -46,6 +46,14 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	var operationJobTables int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('operation_jobs','async_jobs')`).Scan(&operationJobTables); err != nil || operationJobTables != 1 {
+		t.Fatalf("operation job table convergence: count=%d err=%v", operationJobTables, err)
+	}
+	var asyncJobTables int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='async_jobs'`).Scan(&asyncJobTables); err != nil || asyncJobTables != 0 {
+		t.Fatalf("legacy async_jobs still exists: count=%d err=%v", asyncJobTables, err)
+	}
 
 	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{
 		"username": "api-test-admin", "password": "api-test-password",
