@@ -148,7 +148,7 @@ func (c Client) lkgETag() string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf(`"agent-plan-%d-%s"`, envelope.Metadata.PlanVersion, envelope.Metadata.PayloadSHA256)
+	return fmt.Sprintf(`"p%d-%s"`, envelope.Metadata.PlanVersion, envelope.Metadata.PayloadSHA256)
 }
 
 func (c Client) ack(ctx context.Context, metadata Metadata, status, code, detail string) error {

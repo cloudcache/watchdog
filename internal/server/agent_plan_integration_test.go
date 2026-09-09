@@ -102,7 +102,7 @@ func TestAgentPlanAPI(t *testing.T) {
 	if stale := machineRequest(t, s, http.MethodPost, "/api/v1/agents/agent_plan_test/plan-acks", agentToken, staleBody); stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "plan_downgrade") {
 		t.Fatalf("plan downgrade accepted: status=%d body=%s", stale.Code, stale.Body.String())
 	}
-	plans := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_plan_test/plans?q=plan-test-key&sort=plan_version&order=desc", nil, nil, cookies...)
+	plans := requestJSON(t, s, http.MethodGet, "/api/v1/agents/agent_plan_test/plans?q=plan-test-key&schema_version=1&signing_key_id=plan-test-key&sort=plan_version&order=desc", nil, nil, cookies...)
 	if plans.Code != http.StatusOK || !strings.Contains(plans.Body.String(), `"total":2`) {
 		t.Fatalf("plan VTable query: status=%d body=%s", plans.Code, plans.Body.String())
 	}

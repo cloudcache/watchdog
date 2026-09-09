@@ -108,6 +108,8 @@ func TestDiskLKGIsAtomicMonotonicAndHistorical(t *testing.T) {
 func TestClientRemoteACKOfflineLKGAndRevocation(t *testing.T) {
 	now := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
 	data, publicKey := signedTestPlan(t, "agent-test", "system", 1, 0, now)
+	metadata := EnvelopeMetadata(data)
+	expectedETag := `"p1-` + metadata.PayloadSHA256 + `"`
 	var mode atomic.Int32
 	var acknowledgements atomic.Int32
 	var conditionalFetches atomic.Int32
@@ -130,7 +132,11 @@ func TestClientRemoteACKOfflineLKGAndRevocation(t *testing.T) {
 			status, body = http.StatusConflict, nil
 		}
 		if status == http.StatusOK && mode.Load() == 4 {
-			status, body = http.StatusNotModified, nil
+			if request.Header.Get("If-None-Match") == expectedETag {
+				status, body = http.StatusNotModified, nil
+			} else {
+				status, body = http.StatusPreconditionFailed, nil
+			}
 		}
 		if status == http.StatusOK && request.Method == http.MethodPost {
 			acknowledgements.Add(1)

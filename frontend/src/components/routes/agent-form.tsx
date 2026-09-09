@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowLeftIcon, KeyRoundIcon, PlugZapIcon, SaveIcon, ShieldOffIcon, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, BracesIcon, KeyRoundIcon, PlugZapIcon, SaveIcon, ShieldOffIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -216,6 +216,14 @@ export default memo(({ id }: AgentFormProps) => {
 				<div className="flex items-center gap-2">
 					{isEditing ? (
 						<>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => navigate(getPagePath($router, "agent_plans", { id: id ?? form.id }))}
+							>
+								<BracesIcon className="me-2 h-4 w-4" />
+								<Trans>Plans</Trans>
+							</Button>
 							<Button
 								size="sm"
 								variant="outline"

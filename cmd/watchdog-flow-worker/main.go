@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowmetrics"
@@ -51,6 +52,7 @@ type options struct {
 	planFiles, versionPublications, geoBundles                    stringList
 	planPublicKey, workerID                                       string
 	controlPlaneURL, agentTokenFile, versionLKGDir                string
+	agentEnrollmentFile, agentPlanPublicKey, agentPlanLKG         string
 	controlPlaneCAFile, controlPlaneCertFile, controlPlaneKeyFile string
 	controlPlaneServerName                                        string
 	controlPlaneTimeout, versionRefreshInterval                   time.Duration
@@ -72,7 +74,7 @@ type options struct {
 	clickHouseDialTimeout, clickHouseReadTimeout, clickHouseOperationTimeout time.Duration
 	blockMaxRows, blockMaxBytes                                              int
 	metricsListen                                                            string
-	check                                                                    bool
+	check, agentPlanCheck                                                    bool
 }
 
 func main() {
@@ -84,6 +86,10 @@ func main() {
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
 	flag.StringVar(&opt.controlPlaneURL, "control-plane-url", "", "Watchdog API base URL for signed enrichment publications")
 	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_worker machine token")
+	flag.StringVar(&opt.agentEnrollmentFile, "agent-enrollment-token-file", "", "one-time enrollment token file")
+	flag.StringVar(&opt.agentPlanPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
+	flag.StringVar(&opt.agentPlanLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
+	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
 	flag.StringVar(&opt.versionLKGDir, "version-lkg-dir", "", "durable directory for signed enrichment publication LKG")
 	flag.DurationVar(&opt.versionRefreshInterval, "version-refresh-interval", time.Minute, "signed enrichment publication refresh interval")
 	flag.DurationVar(&opt.controlPlaneTimeout, "control-plane-timeout", 2*time.Minute, "timeout for one control-plane request")
@@ -138,7 +144,30 @@ func main() {
 func run(opt options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
+	identity := flowworker.VersionWorkerIdentity{
+		WorkerID: strings.TrimSpace(opt.workerID), BootID: uuid.NewString(), SoftwareVersion: "watchdog-flow-worker-v1",
+	}
+	agentRuntime := flowWorkerAgentRuntime(opt, identity.BootID)
+	if agentRuntime.Enabled() {
+		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
+			return applyFlowWorkerAgentPlan(&opt, spec)
+		})
+		if err != nil {
+			return err
+		}
+		log.Printf("flow-worker agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
+		if opt.agentPlanCheck {
+			return result.AckError
+		}
+		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+			log.Printf("flow-worker agent heartbeat: %v", err)
+			if errors.Is(err, agentplan.ErrUnauthorized) {
+				stop()
+			}
+		})
+	} else if opt.agentPlanCheck {
+		return errors.New("agent plan public key, LKG, and control-plane URL are required")
+	}
 	if err := flowmetrics.ValidateListenAddress(opt.metricsListen); err != nil {
 		return err
 	}
@@ -149,9 +178,6 @@ func run(opt options) error {
 	clickHouseConfig, err := buildClickHouseConfig(opt)
 	if err != nil {
 		return err
-	}
-	identity := flowworker.VersionWorkerIdentity{
-		WorkerID: strings.TrimSpace(opt.workerID), BootID: uuid.NewString(), SoftwareVersion: "watchdog-flow-worker-v1",
 	}
 	plans, versions, geo, versionSync, versionCursor, err := loadBootstrap(ctx, opt, identity)
 	if err != nil {
@@ -258,6 +284,52 @@ func run(opt options) error {
 	stats := processor.Stats()
 	log.Printf("flow-worker stopped: datagrams=%d records=%d template_missing=%d rejected=%d retryable_errors=%d", stats.Datagrams, stats.Records, stats.TemplateMissing, stats.Rejected, stats.RetryableErrors)
 	return err
+}
+
+type flowWorkerPlanConfig struct {
+	FetchMinBytes  *int64 `json:"kafka_fetch_min_bytes"`
+	FetchMaxWaitMS *int64 `json:"kafka_fetch_max_wait_ms"`
+	BlockMaxRows   *int   `json:"clickhouse_block_max_rows"`
+	BlockMaxBytes  *int   `json:"clickhouse_block_max_bytes"`
+}
+
+func applyFlowWorkerAgentPlan(opt *options, spec agentplan.Spec) error {
+	var config flowWorkerPlanConfig
+	if err := agentplan.DecodeConfig(spec, &config); err != nil {
+		return err
+	}
+	if config.FetchMinBytes != nil {
+		opt.fetchMinBytes = *config.FetchMinBytes
+	}
+	if config.FetchMaxWaitMS != nil {
+		opt.fetchMaxWait = time.Duration(*config.FetchMaxWaitMS) * time.Millisecond
+	}
+	if config.BlockMaxRows != nil {
+		opt.blockMaxRows = *config.BlockMaxRows
+	}
+	if config.BlockMaxBytes != nil {
+		opt.blockMaxBytes = *config.BlockMaxBytes
+	}
+	if opt.fetchMinBytes < 1 || opt.fetchMaxWait <= 0 || opt.fetchMaxWait > 5*time.Minute {
+		return errors.New("agent plan flow-worker Kafka fetch limits are invalid")
+	}
+	if opt.blockMaxRows < 1 || opt.blockMaxRows > 1_000_000 || opt.blockMaxBytes < 1 || opt.blockMaxBytes > 1<<30 {
+		return errors.New("agent plan flow-worker ClickHouse block limits are invalid")
+	}
+	return nil
+}
+
+func flowWorkerAgentRuntime(opt options, bootID string) agentplan.RuntimeConfig {
+	if strings.TrimSpace(opt.agentPlanPublicKey) == "" && strings.TrimSpace(opt.agentPlanLKG) == "" && strings.TrimSpace(opt.agentEnrollmentFile) == "" && !opt.agentPlanCheck {
+		return agentplan.RuntimeConfig{}
+	}
+	return agentplan.RuntimeConfig{
+		BaseURL: opt.controlPlaneURL, AgentID: strings.TrimSpace(opt.workerID), Name: strings.TrimSpace(opt.workerID),
+		Kind: "flow_worker", Role: "flow_worker", Mode: "push", SoftwareVersion: "watchdog-flow-worker-v1",
+		APIVersion: "v1", Capabilities: []string{"flow.write.clickhouse/v1"}, TokenFile: opt.agentTokenFile,
+		EnrollmentFile: opt.agentEnrollmentFile, PublicKeyFile: opt.agentPlanPublicKey,
+		LKGFile: opt.agentPlanLKG, BootID: bootID,
+	}
 }
 
 func startMetricsServer(address string, handler http.Handler) (*flowmetrics.Server, error) {

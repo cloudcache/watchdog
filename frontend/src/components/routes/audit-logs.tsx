@@ -23,7 +23,22 @@ type AuditLogsResponse = {
 	next_cursor?: string
 }
 
-const resourceTypes = ["", "user", "role", "target", "collector", "collector_plan", "collector_transfer", "tenant", "module"]
+const resourceTypes = [
+	"",
+	"user",
+	"role",
+	"device",
+	"port",
+	"location",
+	"device_group",
+	"agent",
+	"flow_exporter_binding",
+	"prefix",
+	"address_set",
+	"geography",
+	"operator",
+	"geo_line",
+]
 
 export default memo(() => {
 	const { t } = useLingui()

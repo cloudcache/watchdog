@@ -128,7 +128,7 @@ func (s *Server) listAgentPlans(c *gin.Context) {
 	if !s.requireAgentAccess(c, agent) {
 		return
 	}
-	page, ok := parseInventoryPage(c, nil, map[string]string{
+	page, ok := parseInventoryPage(c, []string{"schema_version", "signing_key_id"}, map[string]string{
 		"plan_version": "plan_version", "created_at": "created_at", "expires_at": "expires_at", "signing_key_id": "signing_key_id",
 	}, "plan_version")
 	if !ok {
@@ -136,6 +136,23 @@ func (s *Server) listAgentPlans(c *gin.Context) {
 	}
 	where := []string{"agent_id=?"}
 	args := []any{agent.ID}
+	if raw := strings.TrimSpace(c.Query("schema_version")); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 16)
+		if err != nil || value == 0 {
+			fail(c, http.StatusBadRequest, "invalid_filter", "schema_version must be a positive integer")
+			return
+		}
+		where = append(where, "schema_version=?")
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(c.Query("signing_key_id")); value != "" {
+		if len(value) > 64 {
+			fail(c, http.StatusBadRequest, "invalid_filter", "signing_key_id must not exceed 64 characters")
+			return
+		}
+		where = append(where, "signing_key_id=?")
+		args = append(args, value)
+	}
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		where = append(where, "(id LIKE ? OR payload_sha256 LIKE ? OR signing_key_id LIKE ?)")
 		like := "%" + escapeLike(q) + "%"

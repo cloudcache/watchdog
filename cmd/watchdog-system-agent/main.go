@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/google/uuid"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -22,6 +25,11 @@ func main() {
 	hubURL := flag.String("hub-url", "", "Watchdog Hub URL")
 	agentID := flag.String("agent-id", "", "Watchdog system agent ID")
 	agentToken := flag.String("agent-token", "", "Watchdog system agent token")
+	agentTokenFile := flag.String("agent-token-file", "", "file containing the system agent machine token")
+	agentEnrollmentFile := flag.String("agent-enrollment-token-file", "", "one-time enrollment token file")
+	agentPlanPublicKey := flag.String("agent-plan-public-key", "", "agent plan Ed25519 public key file")
+	agentPlanLKG := flag.String("agent-plan-lkg", "", "durable agent plan LKG file")
+	agentPlanCheck := flag.Bool("agent-plan-check", false, "register/sync/apply the agent plan, then exit")
 	interval := flag.Duration("interval", 0, "collection interval")
 	rootPath := flag.String("root-path", "/", "root filesystem path for disk usage")
 	once := flag.Bool("once", false, "collect once and exit")
@@ -30,6 +38,8 @@ func main() {
 		log.Fatal("interval must not be negative")
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	cfg, err := watchdog.LoadWatchdogConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
@@ -47,13 +57,35 @@ func main() {
 	if *interval > 0 {
 		agentCfg.Interval = *interval
 	}
+	agentRuntime := systemAgentRuntime(agentCfg.HubURL, string(agentCfg.AgentID), agentCfg.Token, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
+	if agentRuntime.Enabled() {
+		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
+			return applySystemAgentPlan(&agentCfg.Interval, rootPath, spec)
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		agentCfg.Token = token
+		log.Printf("system agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
+		if *agentPlanCheck {
+			if result.AckError != nil {
+				log.Fatal(result.AckError)
+			}
+			return
+		}
+		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+			log.Printf("system agent registry heartbeat: %v", err)
+			if errors.Is(err, agentplan.ErrUnauthorized) {
+				stop()
+			}
+		})
+	} else if *agentPlanCheck {
+		log.Fatal("agent plan public key, LKG, and hub URL are required")
+	}
 	agentCfg, err = watchdog.NormalizeAndValidateAgentClientConfig(agentCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	client := watchdog.SystemAgentClient{
 		HubURL:     agentCfg.HubURL,
@@ -69,6 +101,44 @@ func main() {
 	}
 	if err := run(ctx, client, collector, agentCfg.Interval); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
+	}
+}
+
+type systemAgentPlanConfig struct {
+	IntervalSeconds *int64  `json:"interval_seconds"`
+	RootPath        *string `json:"root_path"`
+}
+
+func applySystemAgentPlan(interval *time.Duration, rootPath *string, spec agentplan.Spec) error {
+	var config systemAgentPlanConfig
+	if err := agentplan.DecodeConfig(spec, &config); err != nil {
+		return err
+	}
+	if config.IntervalSeconds != nil {
+		if *config.IntervalSeconds < 5 || *config.IntervalSeconds > 3600 {
+			return errors.New("agent plan system interval must be 5..3600 seconds")
+		}
+		*interval = time.Duration(*config.IntervalSeconds) * time.Second
+	}
+	if config.RootPath != nil {
+		value := strings.TrimSpace(*config.RootPath)
+		if value == "" || !strings.HasPrefix(value, "/") {
+			return errors.New("agent plan system root_path must be absolute")
+		}
+		*rootPath = value
+	}
+	return nil
+}
+
+func systemAgentRuntime(baseURL, agentID, token, tokenFile, enrollmentFile, publicKey, lkg, bootID string) agentplan.RuntimeConfig {
+	if strings.TrimSpace(publicKey) == "" && strings.TrimSpace(lkg) == "" && strings.TrimSpace(enrollmentFile) == "" {
+		return agentplan.RuntimeConfig{}
+	}
+	return agentplan.RuntimeConfig{
+		BaseURL: baseURL, AgentID: strings.TrimSpace(agentID), Name: strings.TrimSpace(agentID), Kind: "system",
+		Role: "system", Mode: "push", SoftwareVersion: "watchdog-system-agent-v1", APIVersion: "v1",
+		Capabilities: []string{"system.samples/v1"}, Token: token, TokenFile: tokenFile,
+		EnrollmentFile: enrollmentFile, PublicKeyFile: publicKey, LKGFile: lkg, BootID: bootID,
 	}
 }
 

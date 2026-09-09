@@ -6,6 +6,7 @@ const routes = {
 	agent_new: "/agents/new",
 	agent_edit: "/agents/:id/edit",
 	agent_runs: "/agents/:id/runs",
+	agent_plans: "/agents/:id/plans",
 	aggregate_charts: "/aggregate-charts",
 	aggregate_graphs: "/aggregate-graphs",
 	aggregate_graph_new: "/aggregate-graphs/new",

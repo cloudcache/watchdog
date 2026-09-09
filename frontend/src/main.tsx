@@ -33,6 +33,7 @@ const Dashboards = lazy(() => import("@/components/routes/dashboards.tsx"))
 const DashboardForm = lazy(() => import("@/components/routes/dashboard-form.tsx"))
 const AgentForm = lazy(() => import("@/components/routes/agent-form.tsx"))
 const AgentRuns = lazy(() => import("@/components/routes/agent-runs.tsx"))
+const AgentPlans = lazy(() => import("@/components/routes/agent-plans.tsx"))
 const Agents = lazy(() => import("@/components/routes/agents.tsx"))
 const Billing = lazy(() => import("@/components/routes/billing.tsx"))
 const BillingAccountDetail = lazy(() => import("@/components/routes/billing-account-detail.tsx"))
@@ -134,6 +135,8 @@ const App = memo(() => {
 		return <AgentForm id={page.params.id} />
 	} else if (page.route === "agent_runs") {
 		return <AgentRuns id={page.params.id} />
+	} else if (page.route === "agent_plans") {
+		return <AgentPlans id={page.params.id} />
 	} else if (page.route === "billing") {
 		return <Billing />
 	} else if (page.route === "billing_new") {

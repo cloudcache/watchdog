@@ -18,21 +18,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/flowmetrics"
 	"github.com/cloudcache/watchdog/internal/flowplan"
 	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
+	"github.com/google/uuid"
 )
 
 type options struct {
-	planFile, planPublicKey                      string
-	brokers, topic, clientID, compression        string
-	kafkaCAFile, kafkaCertFile, kafkaKeyFile     string
-	kafkaServerName, saslMechanism, saslUsername string
-	saslPasswordFile, sflowListen, netflowListen string
-	metricsListen                                string
-	queueSize, sockets, receiveBuffer, maxUDP    int
-	kafkaTLS, check                              bool
+	planFile, planPublicKey                       string
+	brokers, topic, clientID, compression         string
+	kafkaCAFile, kafkaCertFile, kafkaKeyFile      string
+	kafkaServerName, saslMechanism, saslUsername  string
+	saslPasswordFile, sflowListen, netflowListen  string
+	metricsListen                                 string
+	agentControlURL, agentID, agentTokenFile      string
+	agentEnrollmentFile, agentPublicKey, agentLKG string
+	queueSize, sockets, receiveBuffer, maxUDP     int
+	kafkaTLS, check, agentPlanCheck               bool
 }
 
 func main() {
@@ -58,6 +62,13 @@ func main() {
 	flag.IntVar(&opt.sockets, "sockets", 1, "SO_REUSEPORT sockets per enabled listener")
 	flag.IntVar(&opt.receiveBuffer, "receive-buffer-bytes", 32<<20, "UDP socket receive buffer")
 	flag.IntVar(&opt.maxUDP, "max-datagram-bytes", 65535, "maximum accepted UDP datagram size")
+	flag.StringVar(&opt.agentControlURL, "control-plane-url", "", "Watchdog API base URL for agent management")
+	flag.StringVar(&opt.agentID, "agent-id", "watchdog-flow-collect", "registered flow_collect agent ID")
+	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_collect machine token")
+	flag.StringVar(&opt.agentEnrollmentFile, "agent-enrollment-token-file", "", "one-time enrollment token file")
+	flag.StringVar(&opt.agentPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
+	flag.StringVar(&opt.agentLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
+	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
 	flag.BoolVar(&opt.check, "check", false, "validate configuration and signed plan, then exit")
 	flag.Parse()
 
@@ -67,6 +78,29 @@ func main() {
 }
 
 func run(opt options) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	runtimeConfig := flowCollectAgentRuntime(opt)
+	if runtimeConfig.Enabled() {
+		result, token, err := runtimeConfig.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
+			return applyFlowCollectAgentPlan(&opt, spec)
+		})
+		if err != nil {
+			return err
+		}
+		log.Printf("flow-collect agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
+		if opt.agentPlanCheck {
+			return result.AckError
+		}
+		go runtimeConfig.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+			log.Printf("flow-collect agent heartbeat: %v", err)
+			if errors.Is(err, agentplan.ErrUnauthorized) {
+				stop()
+			}
+		})
+	} else if opt.agentPlanCheck {
+		return errors.New("-control-plane-url is required with -agent-plan-check")
+	}
 	if opt.planFile == "" || opt.planPublicKey == "" {
 		return errors.New("-plan and -plan-public-key are required")
 	}
@@ -94,8 +128,6 @@ func run(opt options) error {
 		return nil
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	producer, err := flowstream.NewProducer(producerConfig)
 	if err != nil {
 		return err
@@ -210,6 +242,53 @@ func run(opt options) error {
 	}
 	<-closeDone
 	return first
+}
+
+type flowCollectPlanConfig struct {
+	SFlowListen        *string `json:"sflow_listen"`
+	NetFlowListen      *string `json:"netflow_listen"`
+	Sockets            *int    `json:"sockets"`
+	ReceiveBufferBytes *int    `json:"receive_buffer_bytes"`
+	MaxDatagramBytes   *int    `json:"max_datagram_bytes"`
+}
+
+func applyFlowCollectAgentPlan(opt *options, spec agentplan.Spec) error {
+	var config flowCollectPlanConfig
+	if err := agentplan.DecodeConfig(spec, &config); err != nil {
+		return err
+	}
+	if config.SFlowListen != nil {
+		opt.sflowListen = strings.TrimSpace(*config.SFlowListen)
+	}
+	if config.NetFlowListen != nil {
+		opt.netflowListen = strings.TrimSpace(*config.NetFlowListen)
+	}
+	if config.Sockets != nil {
+		opt.sockets = *config.Sockets
+	}
+	if config.ReceiveBufferBytes != nil {
+		opt.receiveBuffer = *config.ReceiveBufferBytes
+	}
+	if config.MaxDatagramBytes != nil {
+		opt.maxUDP = *config.MaxDatagramBytes
+	}
+	if opt.sockets < 1 || opt.sockets > 128 || opt.receiveBuffer < 1 || opt.maxUDP < 512 || opt.maxUDP > 65535 {
+		return errors.New("agent plan flow-collect socket limits are invalid")
+	}
+	if opt.sflowListen == "" && opt.netflowListen == "" {
+		return errors.New("agent plan must leave at least one flow listener enabled")
+	}
+	return nil
+}
+
+func flowCollectAgentRuntime(opt options) agentplan.RuntimeConfig {
+	return agentplan.RuntimeConfig{
+		BaseURL: opt.agentControlURL, AgentID: strings.TrimSpace(opt.agentID), Name: strings.TrimSpace(opt.agentID),
+		Kind: "flow_collect", Role: "flow_collect", Mode: "push", SoftwareVersion: "watchdog-flow-collect-v1",
+		APIVersion: "v1", Capabilities: []string{"flow.receive.netflow/v1", "flow.receive.sflow/v1"},
+		TokenFile: opt.agentTokenFile, EnrollmentFile: opt.agentEnrollmentFile,
+		PublicKeyFile: opt.agentPublicKey, LKGFile: opt.agentLKG, BootID: uuid.NewString(),
+	}
 }
 
 func startMetricsServer(address string, handler http.Handler) (*flowmetrics.Server, error) {
