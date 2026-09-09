@@ -247,7 +247,7 @@ SELECT buckets.bucket_start bucket,
   sum(multiIf(scope.direction='in',values.in_bps,scope.direction='out',values.out_bps,values.in_bps+values.out_bps)) selected_bps,
   avg(if(values.port_id='',0,values.coverage)) coverage,
   max(values.reset_flag) reset_flag,
-  toUInt8(countIf(values.port_id!='')<count() OR max(values.gap_flag)>0) gap_flag,
+  toUInt8(countIf(values.port_id!='')<count() OR max(values.gap_flag)>0 OR min(if(values.port_id='',0,values.coverage))<0.999999) gap_flag,
   max(values.generation) generation,
   countIf(values.port_id!='') present_ports
 FROM buckets

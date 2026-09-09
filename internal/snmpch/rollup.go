@@ -48,7 +48,7 @@ WITH dedup AS (
   FROM snmp_samples FINAL
   WHERE entity_kind='port'
     AND metric IN ('watchdog_snmp_if_in_octets_total','watchdog_snmp_if_out_octets_total')
-    AND observed_at>=fromUnixTimestamp64Milli({lookback_ms:Int64}) AND observed_at<fromUnixTimestamp64Milli({end_ms:Int64})
+    AND observed_at>=fromUnixTimestamp64Milli({lookback_ms:Int64}) AND observed_at<=fromUnixTimestamp64Milli({end_ms:Int64})
   GROUP BY observed_at,device_id,entity_id,metric
 ), ordered AS (
   SELECT *,row_number() OVER w rn,
@@ -70,7 +70,7 @@ WITH dedup AS (
     countIf(rn>1 AND elapsed_ms>0 AND NOT forward AND NOT wrap32)>0 reset_flag,
     countIf(rn>1 AND elapsed_ms>greatest(toInt64(interval_ms)*3,900000))>0 gap_flag
   FROM segments
-  WHERE observed_at>=fromUnixTimestamp64Milli({bucket_ms:Int64}) AND observed_at<fromUnixTimestamp64Milli({end_ms:Int64})
+  WHERE previous_at>=fromUnixTimestamp64Milli({bucket_ms:Int64}) AND observed_at<=fromUnixTimestamp64Milli({end_ms:Int64})
   GROUP BY device_id,entity_id,metric
 )
 SELECT toDateTime(fromUnixTimestamp64Milli({bucket_ms:Int64})),'value',device_id,entity_id,

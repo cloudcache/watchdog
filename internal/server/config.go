@@ -21,6 +21,7 @@ type Config struct {
 	AgentPlans AgentPlansConfig `yaml:"agent_plans"`
 	Address    AddressConfig    `yaml:"address"`
 	SNMP       SNMPConfig       `yaml:"snmp"`
+	Billing    BillingConfig    `yaml:"billing"`
 	Admin      AdminConfig      `yaml:"admin"`
 }
 
@@ -97,6 +98,11 @@ type SNMPConfig struct {
 	ExportRetention    time.Duration `yaml:"export_retention"`
 }
 
+type BillingConfig struct {
+	ExportDir       string        `yaml:"export_dir"`
+	ExportRetention time.Duration `yaml:"export_retention"`
+}
+
 // AdminConfig is used only to bootstrap the first administrator on an empty install.
 type AdminConfig struct {
 	Username string `yaml:"username"`
@@ -116,6 +122,7 @@ func defaultConfig() Config {
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
+		Billing:    BillingConfig{ExportDir: "data/billing-exports", ExportRetention: 7 * 24 * time.Hour},
 		Admin:      AdminConfig{Username: "admin"},
 	}
 }

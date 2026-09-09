@@ -16,6 +16,7 @@ import (
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/cloudcache/watchdog/internal/agentplan"
+	"github.com/cloudcache/watchdog/internal/billing"
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/cloudcache/watchdog/internal/snmpch"
@@ -36,10 +37,13 @@ type Server struct {
 	addressObjects   address.DiskDimensionObjectStore
 	addressArtifacts address.DiskArtifactStore
 	jobs             *opjob.Store
+	billingStore     *billing.Store
+	billingService   *billing.Service
 	clickHouse       *flowch.NativeInserter
 	snmpMetrics      *snmpch.Store
 	workerCancel     context.CancelFunc
 	snmpExportCancel context.CancelFunc
+	billingCancel    context.CancelFunc
 
 	agentPlanSigner agentplan.Signer
 	agentPlanPublic ed25519.PublicKey
@@ -99,8 +103,26 @@ func New(cfg Config) (*Server, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("start SNMP exports: %w", err)
 	}
+	if err := s.startBilling(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("start billing: %w", err)
+	}
 	s.engine = s.newRouter()
 	return s, nil
+}
+
+func (s *Server) startBilling() error {
+	s.billingStore = billing.NewStore(s.db)
+	if s.snmpMetrics == nil || s.clickHouse == nil {
+		return nil
+	}
+	service, err := billing.NewService(s.billingStore, s.snmpMetrics, s.clickHouse)
+	if err != nil {
+		return err
+	}
+	s.billingService = service
+	s.startBillingJobs()
+	return nil
 }
 
 // startAddressLibrary wires the de-tenanted address publish chain (internal/address)
@@ -159,6 +181,9 @@ func (s *Server) Close() error {
 	}
 	if s.snmpExportCancel != nil {
 		s.snmpExportCancel()
+	}
+	if s.billingCancel != nil {
+		s.billingCancel()
 	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()

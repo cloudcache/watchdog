@@ -118,10 +118,7 @@ func (s *Server) newRouter() *gin.Engine {
 	bgp := auth.Group("/bgp")
 	bgp.GET("", s.requirePermission("device.view"), s.listAllBGP)
 	bgp.GET("/:session_id", s.requirePermission("device.view"), s.getBGP)
-	billing := auth.Group("/billing")
-	todoCRUD(billing.Group("/accounts"), s)
-	billing.GET("/accounts/:id/snmp-usage", s.requirePermission("bill.view"), s.readSNMPBilling)
-	todoCRUD(auth.Group("/billing/parties"), s)
+	s.registerBillingRoutes(auth)
 
 	// Agent registration and heartbeats use agent credentials, not a user
 	// session. Administrative registry operations remain RBAC protected.

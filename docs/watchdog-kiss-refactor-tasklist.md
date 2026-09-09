@@ -164,14 +164,16 @@
 
 ### KISS-07 Billing、三层修正与对账闭环
 
-- [ ] **设计**：冻结 party/account/port/period/value/adjustment/reconciliation 字段、状态机、95th/average/total 算法、时区、审批和不可变关闭语义。
-- [ ] **编码**：实现 raw/supplier/customer period values、SNMP interface total、外部账单导入、差异阈值/issues、adjustment/reversal、approve/close/export。
-- [ ] **API/UI**：bill CRUD、端口绑定、周期计算、三层对比、SNMP/Flow 对账、问题处理、审批和证据导出；列表均 server VTable。
-- [ ] **单元测试**：95th、缺桶、时区、方向、counter reset、sampling unknown、三层 delta、重复计算、stale approval、调整与 reversal。
-- [ ] **集成测试**：真实 CH fresh Flow + SNMP 数据算同一周期；重复运行确定；关闭后拒绝覆盖；CSV/Parquet 三层结果和 provenance 完整。
-- [ ] **变更设计/测试**：故意制造 exporter 缺流、采样率缺失、SNMP reset 和窗口偏移，确认只报差异、不自动调平。
-- [ ] **回归测试**：billing/RBAC/audit/job/export、MySQL+CH、前端和端到端。
-- [ ] **已提交门禁**：金额/带宽口径必须有独立 reviewer 可复算测试向量后提交。
+**状态 = 完成（2026-09-09）。** 详细冻结契约和复算向量见 `docs/kiss07-billing-design.md`。本包只新增单域 Billing 管理/证据链，复用 KISS-03 `snmpch`、现有 Flow ClickHouse facts 和平台 `operation_jobs`；未恢复 tenant/PB/VM/DatasetProvider，也未改 Flow decode/write。
+
+- [x] **设计**：已冻结 party/account/port/period/value/adjustment/reconciliation 字段、`open -> calculated -> approved -> closed` 状态机、nearest-rank 95th/average/total、IANA timezone + `billing_day` 默认周期、CAS 审批和关闭证据不可变语义；明确本期结算单位仅 bps/bytes，不虚构货币价格/税率。
+- [x] **编码**：MySQL 保存 raw/supplier/customer/snmp/external generation、account+party+port 快照、关闭 adjustment 快照、reconciliation/issues；ClickHouse reader 计算同一 scope 的 Flow 与 SNMP；实现 external evidence、阈值、append-only adjustment/reversal、approve/close 和确定性 CSV/Parquet export。
+- [x] **API/UI**：party/account CRUD、端口绑定、默认/自定义周期、异步 calculate/reconcile/export、五层对比、issue 处理、adjustment 审批/反转、period 审批/关闭和 evidence 下载已接 Gin/现有三页 UI；account/party/period/port/issues/adjustments/runs/exports 均使用服务端分页、搜索、排序和列过滤 VTable。
+- [x] **单元测试**：已覆盖 `[1..19,100] -> p95 19 / average 15`、total bytes、UTC 5m、DST/短月 billing day、共同完整桶、缺桶/gap/reset、direction、unknown sampling、三层 delta、external 一致性、重复 operation、stale approval、adjustment/reversal、CSV/Parquet 同行与 provenance、公式注入转义；无 timestamped `RateBuckets` 的 fallback 明确拒绝。
+- [x] **集成测试**：真实 MySQL + 临时 ClickHouse database 写 fresh Flow/SNMP 后，同端口 10 分钟四层均得到 `800 bps / 60000 bytes / 2 buckets`；重复 generation 数值确定；关闭后拒绝重算/导入/普通 adjustment，关闭 evidence 不受事后 reversal 影响；真实 Gin/MySQL operation job 覆盖 CRUD→计算→处理→审批→关闭→CSV/Parquet 下载和 artifact checksum/retention。
+- [x] **变更设计/测试**：已故意注入 Flow reader failure、unknown sampling、SNMP reset/gap、缺 bucket 和 reader window offset；均只产生/保留 evidence issue，不自动调平。window offset 形成幂等 critical run/issue/audit、零 value generation，并以 terminal error 停止重试。
+- [x] **回归测试**：billing/flowch/snmpch/server test+race+vet、`go build ./...`、真实 MySQL/CH、HTTP/RBAC/CSRF/CAS/audit/job/export、45 个前端单测、Billing Biome 和 production build 均通过。当前工作树另有未提交 KISS-06 migration 013 与其两份测试的并行不一致，不属于本提交；排除该 WIP 后 flow migrator 回归通过。
+- [x] **已提交门禁**：独立只读 reviewer 三轮复核并复算 95th/average/total、三层 delta、SNMP/Flow fixture 与 adjustment/reversal；前两轮 9 项阻断全部修复，第三轮结论 `PASS，无 blocking`，随后才允许本纵向切片提交。
 
 ### KISS-08 最终遗留清理与验收
 

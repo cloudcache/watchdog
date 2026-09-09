@@ -48,6 +48,9 @@ snmp:                               # generic standard MIB discovery works with 
   export_dir: "data/snmp-exports"    # async SNMP CSV artifacts; operation_jobs owns lifecycle state
   export_retention: "24h"            # expired artifacts are no longer downloadable
 
+billing:
+  export_dir: "data/billing-exports" # CSV/Parquet evidence artifacts; state stays in operation_jobs
+  export_retention: "168h"           # seven days; closed period evidence can be regenerated deterministically
 
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"
