@@ -435,7 +435,6 @@ func TestCompileDetailRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) 
 		code  ErrorCode
 		apply func(*Scope, *DetailRequest)
 	}{
-		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *DetailRequest) { scope.TenantID = "tenant'" }},
 		{"view", "view", ErrorUnsupported, func(_ *Scope, request *DetailRequest) { request.View = "invented" }},
 		{"raw customer field", "fields", ErrorUnsupported, func(_ *Scope, request *DetailRequest) {
 			request.View = ViewRaw
@@ -559,13 +558,13 @@ func setDetailFilter(filters *DetailFilters, filter DetailFilter) {
 // fullScope grants every value-layer view — detail data tests exercise view
 // behavior, not authorization.
 func fullScope(tenant string) Scope {
-	return Scope{TenantID: tenant, AllowedViews: []View{ViewRaw, ViewSupplier, ViewCustomer}}
+	return Scope{AllowedViews: []View{ViewRaw, ViewSupplier, ViewCustomer}}
 }
 
 // TestCompileDetailEnforcesValueLayerEntitlement is the value-layer RBAC gate
 // (review F3 / PLAT-04H): a principal must be entitled to the requested view.
 func TestCompileDetailEnforcesValueLayerEntitlement(t *testing.T) {
-	customerOnly := Scope{TenantID: "tenant-a"} // nil AllowedViews => customer-only
+	customerOnly := Scope{} // nil AllowedViews => customer-only
 	for _, view := range []View{ViewRaw, ViewSupplier} {
 		request := validDetailRequest()
 		request.View = view
@@ -574,11 +573,11 @@ func TestCompileDetailEnforcesValueLayerEntitlement(t *testing.T) {
 		}
 	}
 	// The customer view is permitted by the default scope.
-	if _, err := CompileDetail(Scope{TenantID: "tenant-a"}, validDetailRequest(), detailNow()); err != nil {
+	if _, err := CompileDetail(Scope{}, validDetailRequest(), detailNow()); err != nil {
 		t.Fatalf("customer view under default scope: %v", err)
 	}
 	// An explicit grant unlocks the privileged view.
-	granted := Scope{TenantID: "tenant-a", AllowedViews: []View{ViewCustomer, ViewSupplier}}
+	granted := Scope{AllowedViews: []View{ViewCustomer, ViewSupplier}}
 	request := validDetailRequest()
 	request.View = ViewSupplier
 	if _, err := CompileDetail(granted, request, detailNow()); err != nil {

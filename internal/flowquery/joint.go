@@ -63,9 +63,6 @@ type CompiledJoint struct {
 }
 
 func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoint, error) {
-	if !validTenant(scope.TenantID) {
-		return CompiledJoint{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
-	}
 	metric, exists := metricRegistry[request.Metric]
 	if !exists {
 		return CompiledJoint{}, requestError("metric", ErrorUnsupported, "metric is not in the Flow registry")
@@ -132,7 +129,6 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	}
 
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", from.Format("2006-01-02 15:04:05")),
 		stringParameter("to", to.Format("2006-01-02 15:04:05")),
 		uintParameter("top_n", uint64(request.TopN)),
@@ -303,8 +299,7 @@ const jointQuerySQL = `WITH
       countIf(quality_flags != 0) AS quality_records,
       max(received_time) AS observed_at
     FROM flow_records FINAL
-    WHERE tenant_id = {tenant:String}
-      AND event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+    WHERE event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
       %s
     GROUP BY output_bucket, source_dimensions, dimension_snapshot_id, geo_version, classification_version

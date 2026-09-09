@@ -94,7 +94,7 @@ func integrationOverseasRecord(index byte, eventTime time.Time, direction flowdi
 
 func runIntegrationOverseas(t *testing.T, ctx context.Context, runner *flowquery.OverseasRunner, bucket time.Time, level flowquery.OverseasGeoLevel) flowquery.OverseasResult {
 	t.Helper()
-	compiled, err := flowquery.CompileOverseas(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.OverseasRequest{
+	compiled, err := flowquery.CompileOverseas(flowquery.Scope{}, flowquery.OverseasRequest{
 		From: bucket, To: bucket.Add(time.Minute), Bucket: flowquery.BucketOneMinute,
 		Metric: flowquery.MetricRawBytes, GeoLevel: level, View: flowquery.ViewCustomer,
 		TopN: 1, IncludeOther: true,

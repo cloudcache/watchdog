@@ -104,7 +104,6 @@ func CompileDetailFacet(scope Scope, request DetailFacetRequest, now time.Time) 
 		conditions = append(conditions, "AND positionCaseInsensitiveUTF8("+valueExpression+", {facet_search:String}) > 0")
 	}
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", formatDateTime64(validated.From)),
 		stringParameter("to", formatDateTime64(validated.To)),
 		stringParameter("ip", validated.IP.String()),
@@ -191,8 +190,7 @@ const detailFacetQuerySQL = `SELECT
   %s AS value,
   count() AS count
 FROM flow_records AS source FINAL
-WHERE source.tenant_id = {tenant:String}
-  AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
+WHERE source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
   %s
   AND %s
   %s

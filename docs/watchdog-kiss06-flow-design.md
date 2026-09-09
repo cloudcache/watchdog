@@ -72,4 +72,22 @@
 
 ## 6. 非目标
 
-不改 decoder；不做存量数据迁移；不动 `flowstream`/`flowmetrics`；不修 `librenms→ln` 重命名遗留；不把 hub 物理删除（KISS-08 收尾），本包只退役其 flow 查询/投递接线并让 v2 承接。
+不改 decoder；不做存量数据迁移；不动 `flowstream`/`flowmetrics`（Prometheus 抓取目标保留）；不修 `librenms→ln` 重命名遗留；不重写 CH 查询编译器/report composer（复用 `internal/flowquery` 与 hub report 逻辑，仅去 tenant + 去 gateway 信封搬到 v2）。
+
+## 7. 范围扩展：Hub 退役并入 KISS-06（用户 2026-09-09 决策）
+
+用户选择把 `internal/watchdog` hub 的**整体退役**并入本轮，而非仅迁 flow。mapper 核查的关键约束：泛化 `QueryGateway`/`victoriametrics.go` 被 **非 flow** 代码（`snmp_raw_writer`/`aggregate_graph_rollup`/`billing_metrics`/`metrics_service`/`agent_plan`）经 `NewBackendRuntime` 使用，而 `NewBackendRuntime` 仍被**活的** worker（`watchdog-snmp-collector`/`aggregate-rollup`/`export-worker`）构造。故**不能**在迁 flow 时物理删除这些类型（会断活 worker）。退役只能**按依赖顺序分阶段剥离**，最后才删 hub。
+
+**Hub 退役依赖序（每阶段一个可构建提交，`./...` 全程 green）：**
+1. **Flow 剥离（KISS-06 本体，进行中）**：flowquery 去 tenant → `internal/server` 加 CH client + `FlowQueryService` + 迁全部 11 条 flow 路由到 Gin → flow 不再依赖 hub。
+2. **SNMP→CH（"下线VM"）**：SNMP 时序 + realtime/range/aggregate 从 VictoriaMetrics 迁到 ClickHouse（`snmp_raw_writer`/`metrics_service`/`aggregate_graph_rollup`/`api_metrics`）。
+3. **Billing 剥离（KISS-07）**：billing 脱 VM/hub。
+4. **Worker 改宿**：`watchdog-snmp-collector`/`aggregate-rollup`/`export-worker` 脱 `NewBackendRuntime`。
+5. **删除（KISS-08）**：`internal/watchdog` + `victoriametrics.go` + 泛化 gateway/DatasetProvider 栈，待无 import 后物理删。
+
+### 7.1 Phase 1 切片（flow 剥离）
+- **1a（本提交）**：`flowquery` 去 tenant（Scope.TenantID + 6 编译器 `validTenant` 闸 + `"tenant"` 参数 + `_generation`-latest CTE 的 `SELECT/GROUP BY/USING/WHERE tenant_id`）+ 有界编译修复其消费者（hub 7 文件的 `flowquery.Scope{TenantID}` 去字段、flowquery 自测、flowch 集成测试 Scope）。可构建可提交。
+- **1b（下一提交）**：`internal/server` 加 `*flowch.NativeInserter`（`ch-go` native pool，其 `.Do` 即 `flowquery.Executor`；`New()` 内构造，仿 `startAddressLibrary`；`ClickHouseConfig` 补 TLS/pool/timeout 字段，读密码走 secret 文件）+ `FlowQueryService`（直接调 `flowquery.New*Runner` + 移植 `ClickHouseFlowQueryProvider`/report composer，去 gateway/DatasetProvider 信封、去 VM）+ 迁查询核心路由（records/facets、overseas、reports、exports/detail-exports）到 Gin。
+- **1c**：迁 MySQL 后端管理路由（saved filters、VPN findings/rules、storage lifecycle、geo）+ enrichment delivery（**机器凭证**鉴权，非 session；移植后即可删 KISS-05 遗留 `internal/watchdog/address_*` 重复）。
+- **RBAC**：`internal/server/rbac.go` 已有 `flow.view.*`/`flow.export.*`/`flow.device.*`；补 `flow.vpn.*`、saved-filter、storage-lifecycle、geo-admin ability（重铸 hub 的 `Action*` 常量为 `flow.*` 串）。
+- 参照接线：`internal/watchdog/runtime.go:217-262`（单 `*flowch.NativeInserter` 喂所有 runner + provider）；`internal/server` 路由/handler/RBAC 模板见 `handlers_address.go` + `router.go:181-188`。

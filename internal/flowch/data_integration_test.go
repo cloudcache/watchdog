@@ -76,7 +76,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jointQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+	jointQuery, err := flowquery.CompileJoint(flowquery.Scope{}, flowquery.JointRequest{
 		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
 		Dimensions: []flowquery.Dimension{flowquery.DimensionGeoCity, flowquery.DimensionASN},
 		View:       flowquery.ViewCustomer, TopN: 1, IncludeOther: true, TargetPoints: 300, Timezone: "UTC",
@@ -93,7 +93,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 		!jointResult.Points[1].Other || jointResult.Points[1].Value != 300 {
 		t.Fatalf("true joint tuple result=%+v", jointResult)
 	}
-	typedFilterQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+	typedFilterQuery, err := flowquery.CompileJoint(flowquery.Scope{}, flowquery.JointRequest{
 		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
 		Dimensions: []flowquery.Dimension{flowquery.DimensionGeoCity},
 		Filter: &flowquery.FilterExpression{Op: flowquery.FilterAnd, Args: []flowquery.FilterExpression{
@@ -113,7 +113,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 		typedFilterResult.Points[0].Value != 550 {
 		t.Fatalf("typed base filter result=%+v", typedFilterResult)
 	}
-	typedTotalQuery, err := flowquery.CompileJoint(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.JointRequest{
+	typedTotalQuery, err := flowquery.CompileJoint(flowquery.Scope{}, flowquery.JointRequest{
 		From: bucket, To: bucket.Add(2 * time.Minute), Metric: flowquery.MetricRawBytes,
 		Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},
 		Filter: &flowquery.FilterExpression{Op: flowquery.FilterPredicate, Field: "src_ip", Operator: flowquery.FilterIn,
@@ -181,7 +181,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	// has two complete 1m source buckets but is shorter than the requested 15m
 	// display interval; the final bps point must divide by the actual 120
 	// seconds, while completeness still counts both source markers.
-	resampled, err := flowquery.Compile(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.Request{
+	resampled, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
 		From: bucket, To: emptyBucket.Add(time.Minute), Bucket: flowquery.BucketOneMinute,
 		Interval: 15 * time.Minute, Metric: flowquery.MetricRawBitsPerSecond,
 		Dimension: flowquery.DimensionTotal, View: flowquery.ViewCustomer, TopN: 1, Timezone: "UTC",
@@ -457,7 +457,7 @@ func integrationDetailRequest(eventTime time.Time, ip netip.Addr, endpoint flowq
 
 func compileIntegrationDetail(t *testing.T, request flowquery.DetailRequest) flowquery.CompiledDetail {
 	t.Helper()
-	compiled, err := flowquery.CompileDetail(flowquery.Scope{TenantID: "flow-it-tenant"}, request, request.To.Add(time.Hour))
+	compiled, err := flowquery.CompileDetail(flowquery.Scope{}, request, request.To.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func runIntegrationAggregate(t *testing.T, ctx context.Context, runner *flowquer
 
 func compileIntegrationAggregate(t *testing.T, from, to time.Time, bucket flowquery.Bucket, dimension flowquery.Dimension, topN uint16, includeOther bool) flowquery.Compiled {
 	t.Helper()
-	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.Request{
+	compiled, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
 		From: from, To: to, Bucket: bucket, Metric: flowquery.MetricRawBytes,
 		Dimension: dimension, View: flowquery.ViewCustomer, TopN: topN,
 		IncludeOther: includeOther, Timezone: "UTC",

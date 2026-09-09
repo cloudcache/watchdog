@@ -23,7 +23,7 @@ func (p ClickHouseFlowQueryProvider) queryAddressSets(
 		}
 	}
 	compiled, err := flowquery.CompileAddressSet(flowquery.Scope{
-		TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view},
+		AllowedViews: []flowquery.View{view},
 	}, flowquery.AddressSetRequest{
 		From: request.From, To: request.To, Bucket: flowquery.BucketOneMinute,
 		Metric: parameters.Metric, View: view, Endpoint: parameters.AddressSetEndpoint,

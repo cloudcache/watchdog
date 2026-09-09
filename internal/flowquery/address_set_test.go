@@ -18,11 +18,11 @@ func TestCompileAddressSetBuildsDeterministicDeduplicatedBaseQuery(t *testing.T)
 		IncludeAny: []string{"set-b", "set-a", "set-a"}, IncludeAll: []string{"set-c"}, ExcludeAny: []string{"set-d"},
 	}
 	request.Filters = DetailFilters{Directions: []string{"out", "in"}, Businesses: []string{"customer's"}}
-	first, err := CompileAddressSet(Scope{TenantID: "tenant-a"}, request, addressSetNow())
+	first, err := CompileAddressSet(Scope{}, request, addressSetNow())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := CompileAddressSet(Scope{TenantID: "tenant-a"}, request, addressSetNow())
+	second, err := CompileAddressSet(Scope{}, request, addressSetNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestCompileAddressSetEndpointAndMetricVariants(t *testing.T) {
 				request.From = time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
 				request.To = request.From.Add(time.Hour)
 			}
-			compiled, err := CompileAddressSet(Scope{TenantID: "tenant-a"}, request, addressSetNow())
+			compiled, err := CompileAddressSet(Scope{}, request, addressSetNow())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +108,6 @@ func TestCompileAddressSetRejectsUnsafeOrAsynchronousRequests(t *testing.T) {
 		code  ErrorCode
 		apply func(*Scope, *AddressSetRequest)
 	}{
-		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *AddressSetRequest) { scope.TenantID = "bad tenant" }},
 		{"view", "view", ErrorUnsupported, func(_ *Scope, request *AddressSetRequest) { request.View = "supplier" }},
 		{"metric", "metric", ErrorUnsupported, func(_ *Scope, request *AddressSetRequest) { request.Metric = "sql" }},
 		{"bucket", "bucket", ErrorUnsupported, func(_ *Scope, request *AddressSetRequest) { request.Bucket = "5m" }},
@@ -133,7 +132,7 @@ func TestCompileAddressSetRejectsUnsafeOrAsynchronousRequests(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scope := Scope{TenantID: "tenant-a"}
+			scope := Scope{}
 			request := validAddressSetRequest()
 			test.apply(&scope, &request)
 			_, err := CompileAddressSet(scope, request, addressSetNow())

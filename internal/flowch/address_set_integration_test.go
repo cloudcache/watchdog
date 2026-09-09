@@ -117,7 +117,7 @@ func integrationAddressSetRecord(index byte, eventTime time.Time, snapshot *flow
 
 func compileIntegrationAddressSet(t *testing.T, bucket time.Time, metric flowquery.Metric, sets flowdimension.AddressSetFilter) flowquery.CompiledAddressSet {
 	t.Helper()
-	compiled, err := flowquery.CompileAddressSet(flowquery.Scope{TenantID: "flow-it-tenant"}, flowquery.AddressSetRequest{
+	compiled, err := flowquery.CompileAddressSet(flowquery.Scope{}, flowquery.AddressSetRequest{
 		From: bucket, To: bucket.Add(time.Minute), Bucket: flowquery.BucketOneMinute,
 		Metric: metric, View: flowquery.ViewCustomer, Endpoint: flowquery.AddressSetEndpointRemote, Sets: sets,
 	}, bucket.Add(2*time.Minute))

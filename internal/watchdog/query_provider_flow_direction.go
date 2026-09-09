@@ -56,7 +56,7 @@ func (p ClickHouseFlowQueryProvider) queryDirections(
 			return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", boundaryErr)
 		}
 		compiled, compileErr := flowquery.Compile(
-			flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}},
+			flowquery.Scope{AllowedViews: []flowquery.View{view}},
 			flowRequest,
 			p.now(),
 		)
@@ -152,7 +152,7 @@ func (p ClickHouseFlowQueryProvider) queryJointDirections(
 		filters := parameters.Filters
 		filters.Directions = []string{part.direction}
 		compiled, compileErr := flowquery.CompileJoint(
-			flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}},
+			flowquery.Scope{AllowedViews: []flowquery.View{view}},
 			flowquery.JointRequest{
 				From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
 				TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},

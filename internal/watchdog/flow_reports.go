@@ -657,7 +657,7 @@ func (p ClickHouseFlowQueryProvider) overseasObservedReportPanel(
 		}
 	}
 	compiled, err := flowquery.CompileOverseas(
-		flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, overseasRequest, p.now(),
+		flowquery.Scope{AllowedViews: []flowquery.View{view}}, overseasRequest, p.now(),
 	)
 	if err != nil {
 		return flowReportPanel{}, mapFlowQueryError(err)

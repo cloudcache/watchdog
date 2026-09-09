@@ -70,7 +70,7 @@ func (api flowRecordAPI) search(w http.ResponseWriter, r *http.Request) {
 	}
 	input.View = view
 	compiled, err := flowquery.CompileDetail(flowquery.Scope{
-		TenantID: string(auth.TenantID), AllowedViews: []flowquery.View{view},
+		AllowedViews: []flowquery.View{view},
 	}, input, api.currentTime())
 	if err != nil {
 		writeFlowExecutionError(w, err)
@@ -131,7 +131,7 @@ func (api flowRecordAPI) facets(w http.ResponseWriter, r *http.Request) {
 	}
 	input.View = view
 	compiled, err := flowquery.CompileDetailFacet(flowquery.Scope{
-		TenantID: string(auth.TenantID), AllowedViews: []flowquery.View{view},
+		AllowedViews: []flowquery.View{view},
 	}, input, api.currentTime())
 	if err != nil {
 		writeFlowExecutionError(w, err)

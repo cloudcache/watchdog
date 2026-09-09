@@ -151,7 +151,7 @@ FROM flow_records FINAL`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiledHybrid, err := flowquery.Compile(flowquery.Scope{TenantID: "tenant-a"}, flowquery.Request{
+	compiledHybrid, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
 		From: day, To: day.Add(48 * time.Hour), Bucket: flowquery.BucketOneHour, Interval: 24 * time.Hour,
 		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal,
 		View: flowquery.ViewCustomer, TopN: 1, StorageV2: true, ArchiveThrough: day.Add(24 * time.Hour),
@@ -167,7 +167,7 @@ FROM flow_records FINAL`,
 		hybridResult.RollupCompleteness.ExpectedBuckets != 48 || hybridResult.RollupCompleteness.CoveredBuckets != 48 {
 		t.Fatalf("hybrid result=%+v", hybridResult)
 	}
-	compiledRaw, err := flowquery.Compile(flowquery.Scope{TenantID: "tenant-a"}, flowquery.Request{
+	compiledRaw, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
 		From: day.Add(2 * time.Hour), To: day.Add(3 * time.Hour), Bucket: flowquery.BucketOneMinute,
 		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal,
 		View: flowquery.ViewCustomer, TopN: 1, StorageV2: true, ArchiveThrough: day.Add(2 * time.Hour),
@@ -187,7 +187,7 @@ FROM flow_records FINAL`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiledOverseas, err := flowquery.CompileOverseas(flowquery.Scope{TenantID: "tenant-a"}, flowquery.OverseasRequest{
+	compiledOverseas, err := flowquery.CompileOverseas(flowquery.Scope{}, flowquery.OverseasRequest{
 		From: day, To: day.Add(48 * time.Hour), Bucket: flowquery.BucketOneHour,
 		Metric: flowquery.MetricEstimatedBytes, GeoLevel: flowquery.OverseasGeoCountry,
 		View: flowquery.ViewCustomer, TopN: 5, IncludeOther: true,

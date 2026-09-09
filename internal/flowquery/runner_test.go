@@ -128,7 +128,7 @@ func TestRunnerPreservesEmptyResultAndIncompleteRollup(t *testing.T) {
 func TestRunnerUsesSourceBucketsForCompletenessAndPresentationBucketsForAlignment(t *testing.T) {
 	request := validRequest()
 	request.Interval = 15 * time.Minute
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func compiledQuery(t *testing.T) Compiled {
 	t.Helper()
 	request := validRequest()
 	request.Dimension = DimensionASN
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

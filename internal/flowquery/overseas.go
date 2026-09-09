@@ -64,9 +64,6 @@ type CompiledOverseas struct {
 // classification result. A missing country/region is returned as unknown Geo
 // and is never inferred to be overseas by the query layer.
 func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (CompiledOverseas, error) {
-	if !validTenant(scope.TenantID) {
-		return CompiledOverseas{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
-	}
 	if request.View == "" {
 		return CompiledOverseas{}, requestError("view", ErrorRequired, "view is required")
 	}
@@ -119,7 +116,6 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		return CompiledOverseas{}, err
 	}
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", from.Format("2006-01-02 15:04:05")),
 		stringParameter("to", to.Format("2006-01-02 15:04:05")),
 		stringParameter("geo_dimension", string(geoDimension)),
@@ -219,19 +215,17 @@ func compileOverseasFilters(filters OverseasFilters) ([]string, []proto.Paramete
 
 const overseasLegacySourceSQL = `WITH
   latest AS (
-    SELECT tenant_id, bucket, max(generation) AS generation
+    SELECT bucket, max(generation) AS generation
     FROM {{TABLE}} FINAL
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = '_generation'
-    GROUP BY tenant_id, bucket
+    GROUP BY bucket
   ),
   selected AS (
     SELECT source.*
     FROM {{TABLE}} AS source FINAL
-    INNER JOIN latest USING (tenant_id, bucket, generation)
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
+    INNER JOIN latest USING (bucket, generation)
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND business_direction IN ('in', 'out')
 	      AND dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
 	      {{FILTERS}}
@@ -242,12 +236,11 @@ const overseasLegacySourceSQL = `WITH
 
 const overseasStorageV2SourceSQL = `WITH
   archive_latest AS (
-    SELECT tenant_id, bucket, max(generation) AS generation
+    SELECT bucket, max(generation) AS generation
     FROM {{TABLE}} FINAL
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
-    GROUP BY tenant_id, bucket
+    GROUP BY bucket
   ),
   archive_selected AS (
     SELECT
@@ -259,9 +252,8 @@ const overseasStorageV2SourceSQL = `WITH
       source.received_records, source.unknown_sampling_records, source.quality_records,
       source.generated_at
     FROM {{TABLE}} AS source FINAL
-    INNER JOIN archive_latest USING (tenant_id, bucket, generation)
-    WHERE source.tenant_id = {tenant:String}
-      AND source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
+    INNER JOIN archive_latest USING (bucket, generation)
+    WHERE source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
       AND source.dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
   ),
   raw_selected AS (
@@ -297,8 +289,7 @@ const overseasStorageV2SourceSQL = `WITH
         )
       )
     ] AS dimension
-    WHERE tenant_id = {tenant:String}
-      AND event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
     GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
       category, business, dimension_kind, dimension_value, dimension_snapshot_id,

@@ -52,9 +52,6 @@ type CompiledAddressSet struct {
 }
 
 func CompileAddressSet(scope Scope, request AddressSetRequest, now time.Time) (CompiledAddressSet, error) {
-	if !validTenant(scope.TenantID) {
-		return CompiledAddressSet{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
-	}
 	if request.View == "" {
 		return CompiledAddressSet{}, requestError("view", ErrorRequired, "view is required")
 	}
@@ -105,7 +102,6 @@ func CompileAddressSet(scope Scope, request AddressSetRequest, now time.Time) (C
 		return CompiledAddressSet{}, err
 	}
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", from.Format("2006-01-02 15:04:05")),
 		stringParameter("to", to.Format("2006-01-02 15:04:05")),
 		uintParameter("bucket_seconds", uint64(bucketDuration/time.Second)),
@@ -195,8 +191,7 @@ const addressSetQuerySQL = `SELECT
   countIf(NOT estimated_valid) AS unknown_sampling_records,
   countIf(quality_flags != 0) AS quality_records
 FROM flow_records FINAL
-WHERE tenant_id = {tenant:String}
-  AND event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+WHERE event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
   AND disposition = 'count'
   %s
 GROUP BY bucket, dimension_snapshot_id, geo_version, classification_version

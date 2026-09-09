@@ -164,7 +164,7 @@ func TestAddressSetRunnerRejectsMissingExecutorOrCompiledContract(t *testing.T) 
 
 func compiledAddressSetQuery(t *testing.T) CompiledAddressSet {
 	t.Helper()
-	compiled, err := CompileAddressSet(Scope{TenantID: "tenant-a"}, validAddressSetRequest(), addressSetNow())
+	compiled, err := CompileAddressSet(Scope{}, validAddressSetRequest(), addressSetNow())
 	if err != nil {
 		t.Fatal(err)
 	}

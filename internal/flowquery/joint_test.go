@@ -12,11 +12,11 @@ import (
 func TestCompileJointUsesSameFactForOrderedDimensionTuple(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	request := validJointRequest(now)
-	first, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	first, err := CompileJoint(Scope{}, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	second, err := CompileJoint(Scope{}, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestCompileJointRejectsAmbiguousOrUnboundedRequests(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			request := validJointRequest(now)
 			test.edit(&request)
-			_, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+			_, err := CompileJoint(Scope{}, request, now)
 			if !IsRequestError(err, test.field, test.code) {
 				t.Fatalf("error=%v, want %s/%s", err, test.field, test.code)
 			}
@@ -91,7 +91,7 @@ func TestCompileJointSupportsTypedFilterOnSingleDimensionBasePath(t *testing.T) 
 		{Op: FilterPredicate, Field: "src_ip", Operator: FilterIn, Values: []string{"203.0.113.0/24"}},
 		{Op: FilterPredicate, Field: "remote_port", Operator: FilterGreaterThanOrEqual, Values: []string{"443"}},
 	}}
-	compiled, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	compiled, err := CompileJoint(Scope{}, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestCompileJointSupportsFilteredTotalOnBasePath(t *testing.T) {
 	request.TopN = 1
 	request.IncludeOther = false
 	request.Filter = &FilterExpression{Op: FilterPredicate, Field: "src_ip", Operator: FilterIn, Values: []string{"203.0.113.0/24"}}
-	compiled, err := CompileJoint(Scope{TenantID: "tenant-a"}, request, now)
+	compiled, err := CompileJoint(Scope{}, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -93,7 +93,7 @@ func TestJointRunnerFailsClosedOnMalformedTupleOrExecutionFailure(t *testing.T) 
 func compiledJointQuery(t *testing.T) CompiledJoint {
 	t.Helper()
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	compiled, err := CompileJoint(Scope{TenantID: "tenant-a"}, validJointRequest(now), now)
+	compiled, err := CompileJoint(Scope{}, validJointRequest(now), now)
 	if err != nil {
 		t.Fatal(err)
 	}

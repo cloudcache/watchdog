@@ -42,11 +42,11 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 		Businesses: []string{"customer's"}, TargetIDs: []string{"target-b", "target-a", "target-a"},
 		DimensionValues: []string{"330100", "330200"}, ClassificationVersions: []uint32{7, 3, 7},
 	}
-	first, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	first, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	second, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 	for _, required := range []string{
 		"FROM flow_aggregate_1m FINAL",
 		"AND dimension_kind = '_generation'",
-		"INNER JOIN latest USING (tenant_id, bucket, generation)",
+		"INNER JOIN latest USING (bucket, generation)",
 		"AND dimension_kind = {dimension:String}",
 		"AND business_direction IN ({direction_0:String}, {direction_1:String})",
 		"ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC",
@@ -101,7 +101,6 @@ func TestCompileRejectsUnsupportedUnsafeOrIncompleteRequests(t *testing.T) {
 		code   ErrorCode
 		mutate func(*Scope, *Request)
 	}{
-		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *Request) { scope.TenantID = "tenant' OR 1=1" }},
 		{"metric", "metric", ErrorUnsupported, func(_ *Scope, request *Request) { request.Metric = "sql" }},
 		{"view", "view", ErrorUnsupported, func(_ *Scope, request *Request) { request.View = "supplier" }},
 		{"overlapping other", "include_other", ErrorInvalid, func(_ *Scope, request *Request) { request.Dimension = DimensionAddressSet }},
@@ -125,7 +124,7 @@ func TestCompileRejectsUnsupportedUnsafeOrIncompleteRequests(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scope := Scope{TenantID: "tenant-a"}
+			scope := Scope{}
 			request := validRequest()
 			test.mutate(&scope, &request)
 			_, err := Compile(scope, request, now)
@@ -144,7 +143,7 @@ func TestCompileOneHourNormalizesTimesAndDefaultsPresentationTimezone(t *testing
 	request.TopN = 2
 	request.IncludeOther = false
 	request.Timezone = ""
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +161,7 @@ func TestCompileSeparatesSourceResolutionFromPresentationInterval(t *testing.T) 
 	request.Interval = 15 * time.Minute
 	request.TopN = 2
 	request.IncludeOther = false
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +190,7 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 	request.Interval = 6 * time.Hour
 	request.StorageV2 = true
 	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +216,7 @@ func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.
 	request := validRequest()
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.
 		t.Fatalf("compiled raw minute query=%+v", compiled)
 	}
 	request.ArchiveThrough = request.From.Add(time.Minute)
-	if _, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorUnsupported) {
+	if _, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorUnsupported) {
 		t.Fatalf("minute archive error=%v", err)
 	}
 }
@@ -238,7 +237,7 @@ func TestCompileStorageV2RejectsUnalignedSplit(t *testing.T) {
 	request.Bucket = BucketOneHour
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.Add(25 * time.Hour)
-	if _, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorInvalid) {
+	if _, err := Compile(Scope{}, request, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorInvalid) {
 		t.Fatalf("split error=%v", err)
 	}
 }
@@ -249,7 +248,7 @@ func TestCompileRejectsPresentationIntervalFinerThanSource(t *testing.T) {
 	request.Interval = 15 * time.Minute
 	request.From = request.From.Truncate(time.Hour)
 	request.To = request.To.Truncate(time.Hour)
-	_, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	_, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if !IsRequestError(err, "interval", ErrorInvalid) {
 		t.Fatalf("error=%v, want invalid interval", err)
 	}

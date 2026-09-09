@@ -236,7 +236,7 @@ func (p ClickHouseFlowQueryProvider) Query(ctx context.Context, request QueryPro
 	if err := p.applyStorageV2Boundary(ctx, request.TenantID, plan, &flowRequest); err != nil {
 		return QueryProviderResult{}, fmt.Errorf("resolve Flow storage boundary: %w", err)
 	}
-	compiled, err := flowquery.Compile(flowquery.Scope{TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view}}, flowRequest, p.now())
+	compiled, err := flowquery.Compile(flowquery.Scope{AllowedViews: []flowquery.View{view}}, flowRequest, p.now())
 	if err != nil {
 		return QueryProviderResult{}, mapFlowQueryError(err)
 	}
@@ -315,7 +315,7 @@ func (p ClickHouseFlowQueryProvider) queryJoint(
 		return QueryProviderResult{}, ErrQueryProviderUnavailable
 	}
 	compiled, err := flowquery.CompileJoint(flowquery.Scope{
-		TenantID: string(request.TenantID), AllowedViews: []flowquery.View{view},
+		AllowedViews: []flowquery.View{view},
 	}, flowquery.JointRequest{
 		From: request.From, To: request.To, Interval: time.Duration(request.StepSeconds) * time.Second,
 		TargetPoints: parameters.TargetPoints, Metric: parameters.Metric, Dimensions: flowBaseDimensions(parameters),

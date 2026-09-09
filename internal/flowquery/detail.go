@@ -354,9 +354,6 @@ func DetailCapability(view View) (DetailViewCapability, error) {
 }
 
 func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledDetail, error) {
-	if !validTenant(scope.TenantID) {
-		return CompiledDetail{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
-	}
 	if request.View == "" {
 		return CompiledDetail{}, requestError("view", ErrorRequired, "view is required")
 	}
@@ -410,7 +407,6 @@ func CompileDetail(scope Scope, request DetailRequest, now time.Time) (CompiledD
 	conditions = append(conditions, columnConditions...)
 	filterParameters = append(filterParameters, columnParameters...)
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", formatDateTime64(from)),
 		stringParameter("to", formatDateTime64(to)),
 		stringParameter("ip", ip.String()),
@@ -907,8 +903,7 @@ const detailQuerySQL = `SELECT
   toString(source.dst_ip) AS _destination_ip,
 %s
 FROM flow_records AS source FINAL
-WHERE source.tenant_id = {tenant:String}
-  AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
+WHERE source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
   %s
   AND %s
   %s
@@ -944,8 +939,7 @@ FROM (
     min(source.fact_schema) OVER () AS _minimum_fact_schema,
     row_number() OVER (ORDER BY %s) AS _scope_row
   FROM flow_records AS source FINAL
-  WHERE source.tenant_id = {tenant:String}
-    AND source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
+  WHERE source.event_time >= {from:DateTime64(3, 'UTC')} AND source.event_time < {to:DateTime64(3, 'UTC')}
     %s
     AND %s
     %s

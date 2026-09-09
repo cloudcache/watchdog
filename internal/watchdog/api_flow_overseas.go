@@ -77,7 +77,7 @@ func (api flowOverseasAPI) query(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	compiled, err := flowquery.CompileOverseas(flowquery.Scope{
-		TenantID: string(auth.TenantID), AllowedViews: []flowquery.View{view},
+		AllowedViews: []flowquery.View{view},
 	}, input, api.currentTime())
 	if err != nil {
 		writeFlowExecutionError(w, err)

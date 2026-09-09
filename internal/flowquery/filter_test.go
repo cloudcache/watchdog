@@ -48,7 +48,7 @@ func TestAggregateFilterSupportKeepsMaterializedFieldsOnRollup(t *testing.T) {
 	}
 	request := validRequest()
 	request.Filter = &filter
-	compiled, err := Compile(Scope{TenantID: "tenant-a"}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

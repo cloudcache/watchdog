@@ -33,7 +33,7 @@ func TestInLocalTimeWindowsHandlesCrossMidnightAndISOWeekdays(t *testing.T) {
 func TestCompileFlowTimeWindowsUsesTypedTimezoneAndBucketColumns(t *testing.T) {
 	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 	windows := []LocalTimeWindow{{Days: []uint8{1, 2, 3, 4, 5}, StartLocal: "12:00", EndLocal: "14:00"}}
-	compiled, err := Compile(Scope{TenantID: "tenant-a", AllowedViews: []View{ViewCustomer}}, Request{
+	compiled, err := Compile(Scope{AllowedViews: []View{ViewCustomer}}, Request{
 		From: from, To: from.Add(time.Hour), Bucket: BucketOneMinute, Metric: MetricEstimatedBPS,
 		Dimension: DimensionCategory, View: ViewCustomer, TopN: 20, IncludeOther: true,
 		Timezone: "Asia/Singapore", TimeWindows: windows,
@@ -47,7 +47,7 @@ func TestCompileFlowTimeWindowsUsesTypedTimezoneAndBucketColumns(t *testing.T) {
 		t.Fatalf("query=%s parameters=%+v", compiled.Query.Body, compiled.Query.Parameters)
 	}
 
-	joint, err := CompileJoint(Scope{TenantID: "tenant-a", AllowedViews: []View{ViewCustomer}}, JointRequest{
+	joint, err := CompileJoint(Scope{AllowedViews: []View{ViewCustomer}}, JointRequest{
 		From: from, To: from.Add(time.Hour), Metric: MetricEstimatedBPS,
 		Dimensions: []Dimension{DimensionSourceIP}, View: ViewCustomer, TopN: 20, IncludeOther: true,
 		Timezone: "Asia/Singapore", TimeWindows: windows,
@@ -62,7 +62,7 @@ func TestCompileFlowTimeWindowsUsesTypedTimezoneAndBucketColumns(t *testing.T) {
 
 func TestCompileFlowTimeWindowsRejectsInvalidWindow(t *testing.T) {
 	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
-	_, err := Compile(Scope{TenantID: "tenant-a"}, Request{
+	_, err := Compile(Scope{}, Request{
 		From: from, To: from.Add(time.Hour), Bucket: BucketOneMinute, Metric: MetricEstimatedBPS,
 		Dimension: DimensionCategory, View: ViewCustomer, TopN: 20,
 		Timezone: "UTC", TimeWindows: []LocalTimeWindow{{Days: []uint8{1}, StartLocal: "12:00", EndLocal: "12:00"}},

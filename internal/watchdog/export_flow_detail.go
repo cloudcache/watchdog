@@ -82,7 +82,7 @@ func prepareFlowDetailExportTask(ctx context.Context, gateway *QueryGateway, aut
 
 	input.Query.Limit = flowDetailExportPageSize
 	compiled, err := flowquery.CompileDetail(flowquery.Scope{
-		TenantID: string(auth.TenantID), AllowedViews: []flowquery.View{input.Query.View},
+		AllowedViews: []flowquery.View{input.Query.View},
 	}, input.Query, now.UTC())
 	if err != nil {
 		return ExportTask{}, err
@@ -172,7 +172,7 @@ func validateFlowDetailExportSnapshot(task ExportTask, snapshot exportQuerySnaps
 		return errors.New("Flow detail export query parameters do not match the task")
 	}
 	compiled, err := flowquery.CompileDetail(flowquery.Scope{
-		TenantID: string(task.TenantID), AllowedViews: []flowquery.View{parameters.Detail.View},
+		AllowedViews: []flowquery.View{parameters.Detail.View},
 	}, parameters.Detail, snapshot.Query.To)
 	if err != nil || !slices.Equal(compiled.Fields, parameters.Detail.Fields) || compiled.Sort != parameters.Detail.Sort || compiled.IP.String() != parameters.Detail.IP {
 		return errors.New("Flow detail export query parameters are not compiler-normalized")
@@ -203,7 +203,7 @@ func (p QueryGatewayExportDataProvider) loadFlowDetailExportRows(ctx context.Con
 			return ExportRows{}, err
 		}
 		compiled, err := flowquery.CompileDetail(flowquery.Scope{
-			TenantID: string(task.TenantID), AllowedViews: []flowquery.View{request.View},
+			AllowedViews: []flowquery.View{request.View},
 		}, request, snapshot.Query.To)
 		if err != nil {
 			return ExportRows{}, err

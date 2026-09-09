@@ -16,11 +16,11 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 		Directions: []string{"out", "in", "out"}, Businesses: []string{"customer's"},
 		TargetIDs: []string{"target-b", "target-a", "target-a"},
 	}
-	first, err := CompileOverseas(Scope{TenantID: "tenant-a"}, request, overseasNow())
+	first, err := CompileOverseas(Scope{}, request, overseasNow())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := CompileOverseas(Scope{TenantID: "tenant-a"}, request, overseasNow())
+	second, err := CompileOverseas(Scope{}, request, overseasNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 	for _, required := range []string{
 		"FROM flow_aggregate_1m FINAL",
 		"AND dimension_kind = '_generation'",
-		"INNER JOIN latest USING (tenant_id, bucket, generation)",
+		"INNER JOIN latest USING (bucket, generation)",
 		"dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})",
 		"category = 'overseas'",
 		"business_direction = 'in' AND dimension_kind = 'src_ip'",
@@ -82,7 +82,7 @@ func TestCompileOverseasSupportsRegionHourlyAndNonRateMetric(t *testing.T) {
 	request.GeoLevel = OverseasGeoRegion
 	request.TopN = 2
 	request.IncludeOther = false
-	compiled, err := CompileOverseas(Scope{TenantID: "tenant-a"}, request, overseasNow())
+	compiled, err := CompileOverseas(Scope{}, request, overseasNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T)
 	request.Bucket = BucketOneHour
 	request.StorageV2 = true
 	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
-	compiled, err := CompileOverseas(Scope{TenantID: "tenant-a"}, request, overseasNow())
+	compiled, err := CompileOverseas(Scope{}, request, overseasNow())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,6 @@ func TestCompileOverseasRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T
 		code  ErrorCode
 		apply func(*Scope, *OverseasRequest)
 	}{
-		{"tenant", "scope.tenant_id", ErrorInvalid, func(scope *Scope, _ *OverseasRequest) { scope.TenantID = "bad tenant" }},
 		{"missing view", "view", ErrorRequired, func(_ *Scope, request *OverseasRequest) { request.View = "" }},
 		{"view", "view", ErrorUnsupported, func(_ *Scope, request *OverseasRequest) { request.View = "supplier" }},
 		{"metric", "metric", ErrorUnsupported, func(_ *Scope, request *OverseasRequest) { request.Metric = "sql" }},
@@ -152,7 +151,7 @@ func TestCompileOverseasRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scope := Scope{TenantID: "tenant-a"}
+			scope := Scope{}
 			request := validOverseasRequest()
 			test.apply(&scope, &request)
 			_, err := CompileOverseas(scope, request, overseasNow())

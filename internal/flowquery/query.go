@@ -82,7 +82,6 @@ const (
 )
 
 type Scope struct {
-	TenantID string
 	// AllowedViews is the set of value-layer views (raw/supplier/customer) the
 	// authenticated principal is entitled to. It is the enforcement point for
 	// value-layer RBAC: the query gateway builds it from the principal's
@@ -299,9 +298,6 @@ func AggregateViews() []View {
 }
 
 func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
-	if !validTenant(scope.TenantID) {
-		return Compiled{}, requestError("scope.tenant_id", ErrorInvalid, "authenticated tenant identity is invalid")
-	}
 	metric, exists := metricRegistry[request.Metric]
 	if !exists {
 		return Compiled{}, requestError("metric", ErrorUnsupported, "metric is not in the Flow registry")
@@ -374,7 +370,6 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	}
 
 	parameters := []proto.Parameter{
-		stringParameter("tenant", scope.TenantID),
 		stringParameter("from", from.Format("2006-01-02 15:04:05")),
 		stringParameter("to", to.Format("2006-01-02 15:04:05")),
 		stringParameter("dimension", string(request.Dimension)),
@@ -613,20 +608,6 @@ func compactVersions(input []uint32) []uint32 {
 	return result
 }
 
-func validTenant(value string) bool {
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || strings.ContainsRune("._:-", character) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 func stringParameter(key, value string) proto.Parameter {
 	escaped := strings.NewReplacer("\\", "\\\\", "'", "\\'").Replace(value)
 	return proto.Parameter{Key: key, Value: "'" + escaped + "'"}
@@ -658,19 +639,17 @@ func IsRequestError(err error, field string, code ErrorCode) bool {
 
 const querySQL = `WITH
   latest AS (
-    SELECT tenant_id, bucket, max(generation) AS generation
+    SELECT bucket, max(generation) AS generation
     FROM %s FINAL
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = '_generation'
-    GROUP BY tenant_id, bucket
+    GROUP BY bucket
   ),
   filtered AS (
     SELECT source.*
     FROM %s AS source FINAL
-    INNER JOIN latest USING (tenant_id, bucket, generation)
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
+    INNER JOIN latest USING (bucket, generation)
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = {dimension:String}
     %s
   ),
@@ -735,12 +714,11 @@ ORDER BY
 
 const storageV2QuerySQL = `WITH
   archive_latest AS (
-    SELECT tenant_id, bucket, max(generation) AS generation
+    SELECT bucket, max(generation) AS generation
     FROM %s FINAL
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
+    WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
-    GROUP BY tenant_id, bucket
+    GROUP BY bucket
   ),
   archive_rows AS (
     SELECT
@@ -751,9 +729,8 @@ const storageV2QuerySQL = `WITH
       source.estimated_bytes, source.estimated_packets, source.received_records,
       source.unknown_sampling_records, source.quality_records, source.generated_at
     FROM %s AS source FINAL
-    INNER JOIN archive_latest USING (tenant_id, bucket, generation)
-    WHERE source.tenant_id = {tenant:String}
-      AND source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
+    INNER JOIN archive_latest USING (bucket, generation)
+    WHERE source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
       AND source.dimension_kind = {dimension:String}
   ),
   raw_rows AS (
@@ -776,8 +753,7 @@ const storageV2QuerySQL = `WITH
       countIf(quality_flags != 0) AS quality_records,
       max(received_time) AS generated_at
     FROM flow_records FINAL
-    WHERE tenant_id = {tenant:String}
-      AND event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
     GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
       category, business, dimension_value, dimension_snapshot_id, geo_version,

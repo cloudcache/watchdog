@@ -206,7 +206,7 @@ func TestOverseasRunnerRejectsMissingExecutorOrCompiledContract(t *testing.T) {
 
 func compiledOverseasQuery(t *testing.T) CompiledOverseas {
 	t.Helper()
-	compiled, err := CompileOverseas(Scope{TenantID: "tenant-a"}, validOverseasRequest(), overseasNow())
+	compiled, err := CompileOverseas(Scope{}, validOverseasRequest(), overseasNow())
 	if err != nil {
 		t.Fatal(err)
 	}
