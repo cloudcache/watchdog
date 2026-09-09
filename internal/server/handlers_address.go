@@ -59,6 +59,8 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	lines.GET("/:id", view, s.getGeoLine)
 	lines.PATCH("/:id", manage, s.updateGeoLine)
 	lines.DELETE("/:id", manage, s.deleteGeoLine)
+
+	s.registerAddressDraftRoutes(auth)
 }
 
 // writeAddressError maps the internal/address CRUD errors to HTTP, faithfully

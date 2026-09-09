@@ -33,6 +33,10 @@ func (s *Server) registerAddressDimensionRoutes(auth *gin.RouterGroup) {
 	dim.POST("/versions/:id/actions/activate", publish, s.activateAddressDimension)
 	dim.POST("/versions/:id/actions/rollback", publish, s.rollbackAddressDimension)
 	dim.POST("/versions/:id/actions/retire", publish, s.retireAddressDimension)
+	dim.GET("/status", view, s.addressDimensionRuntimeStatus)
+	dim.GET("/versions/:id/consumers", view, s.listAddressDimensionConsumers)
+	dim.GET("/gc/candidates", view, s.listAddressDimensionGCCandidates)
+	dim.POST("/versions/:id/actions/schedule-gc", publish, s.scheduleAddressDimensionGC)
 }
 
 // writeAddressDimensionError maps the domain errors to HTTP status codes.
@@ -46,6 +50,8 @@ func writeAddressDimensionError(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "draft_changed", "address dimension draft changed after preview")
 	case errors.Is(err, address.ErrAddressDimensionInvalidTransition):
 		fail(c, http.StatusConflict, "invalid_transition", "address dimension lifecycle transition is invalid")
+	case errors.Is(err, address.ErrAddressDimensionGCNotEligible):
+		fail(c, http.StatusConflict, "gc_not_eligible", "address dimension object is not eligible for deletion")
 	case errors.Is(err, address.ErrAddressDimensionInvalid):
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
@@ -164,9 +170,8 @@ func (s *Server) downloadAddressDimensionObject(c *gin.Context) {
 }
 
 func (s *Server) approveAddressDimension(c *gin.Context) {
-	expected, supplied, err := ifMatch(c)
-	if err != nil || !supplied {
-		fail(c, http.StatusBadRequest, "invalid_if_match", "If-Match row version is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -209,9 +214,8 @@ func (s *Server) approveAddressDimension(c *gin.Context) {
 }
 
 func (s *Server) rejectAddressDimension(c *gin.Context) {
-	expected, supplied, err := ifMatch(c)
-	if err != nil || !supplied {
-		fail(c, http.StatusBadRequest, "invalid_if_match", "If-Match row version is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -228,9 +232,8 @@ func (s *Server) rejectAddressDimension(c *gin.Context) {
 }
 
 func (s *Server) activateAddressDimension(c *gin.Context) {
-	expected, supplied, err := ifMatch(c)
-	if err != nil || !supplied {
-		fail(c, http.StatusBadRequest, "invalid_if_match", "If-Match row version is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
@@ -250,9 +253,8 @@ func (s *Server) activateAddressDimension(c *gin.Context) {
 }
 
 func (s *Server) rollbackAddressDimension(c *gin.Context) {
-	expected, supplied, err := ifMatch(c)
-	if err != nil || !supplied {
-		fail(c, http.StatusBadRequest, "invalid_if_match", "If-Match row version is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -278,9 +280,8 @@ func (s *Server) rollbackAddressDimension(c *gin.Context) {
 }
 
 func (s *Server) retireAddressDimension(c *gin.Context) {
-	expected, supplied, err := ifMatch(c)
-	if err != nil || !supplied {
-		fail(c, http.StatusBadRequest, "invalid_if_match", "If-Match row version is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
 	var req struct {
