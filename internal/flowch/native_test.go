@@ -191,7 +191,7 @@ func TestNativeInserterRetriesUseIdenticalRecordBlock(t *testing.T) {
 func TestNativeInserterWritesReceiptOnlyForNonPersistedMessage(t *testing.T) {
 	batch := testEnrichedBatch(10)
 	batch.MessageDisposition = flowworker.MessageDispositionDecodeRejected
-	batch.TenantID, batch.CollectorID, batch.ExporterID = "", "", ""
+	batch.CollectorID, batch.ExporterID = "", ""
 	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
@@ -227,11 +227,9 @@ func TestNativeInputColumnsMatchAuthoritativeMigration(t *testing.T) {
 
 func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
 	first := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
-	first.TenantID = "tenant-z"
 	first.Records[0].RawPackets = 2
 	first.Records[0].EventTime = time.Date(2026, 9, 5, 1, 3, 0, 0, time.UTC)
 	second := testEnrichedBatch(11, testEnrichedRecord(2, 200, 2_000))
-	second.TenantID = "tenant-a"
 	second.Records[0].RawPackets = 4
 	second.Records[0].EstimatedValid = false
 	second.Records[0].EventTime = time.Date(2026, 9, 5, 1, 1, 0, 0, time.UTC)
@@ -252,9 +250,6 @@ func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
 	}
 	if got := columnValue(receipt, "message_disposition").(*proto.ColEnum).Values; !reflect.DeepEqual(got, []string{"persisted", "persisted"}) {
 		t.Fatalf("receipt dispositions=%v", got)
-	}
-	if firstTenant := columnValue(receipt, "tenant_ids").(*proto.ColArr[string]).Row(0); !reflect.DeepEqual(firstTenant, []string{"tenant-z"}) {
-		t.Fatalf("first receipt tenant IDs=%v", firstTenant)
 	}
 	for name, want := range map[string]uint64{"raw_packets": 2, "estimated_packets": 10, "estimated_valid_records": 1} {
 		if got := columnValue(receipt, name).(proto.ColUInt64).Row(0); got != want {

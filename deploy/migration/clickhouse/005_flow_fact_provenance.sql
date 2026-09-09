@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 Watchdog contributors
 -- SPDX-License-Identifier: AGPL-3.0-only
 
--- Preserve the supplier enrichment before tenant/customer overrides. Existing
+-- Preserve the supplier enrichment before customer overrides. Existing
 -- rows stay fact_schema=1 and must not be presented as supplier provenance.
 -- New workers explicitly write fact_schema=2 and every supplier_* column.
 ALTER TABLE watchdog_flow.flow_records

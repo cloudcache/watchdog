@@ -66,7 +66,7 @@ func TestMySQLCollectorOwnershipEvidenceLifecycle(t *testing.T) {
 	domainID := uint64(42)
 	oldSources := []flowplan.SourceBinding{{
 		Protocol: flowplan.ProtocolNetFlow9, SourcePrefix: "192.0.2.31/32",
-		ObservationDomainID: &domainID, TenantID: string(tenantID), ExporterID: string(exporterID),
+		ObservationDomainID: &domainID, ExporterID: string(exporterID),
 		TargetID: "target-flow-transfer", OwnershipEpoch: 5,
 		SamplingMode: flowplan.SamplingModeSampled, Enabled: true,
 	}}
@@ -272,7 +272,7 @@ func TestValidateFlowCollectorOwnershipPlanTransferRejectsSemanticGaps(t *testin
 	domainID := uint64(42)
 	oldSource := flowplan.SourceBinding{
 		Protocol: flowplan.ProtocolIPFIX, SourcePrefix: "192.0.2.8/32", ObservationDomainID: &domainID,
-		TenantID: string(tenantID), ExporterID: "exporter-semantic", TargetID: "target-semantic",
+		ExporterID: "exporter-semantic", TargetID: "target-semantic",
 		OwnershipEpoch: 7, SamplingMode: flowplan.SamplingModeSampled, Enabled: true,
 	}
 	newSource := oldSource

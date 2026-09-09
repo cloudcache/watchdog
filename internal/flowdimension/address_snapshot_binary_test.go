@@ -40,7 +40,7 @@ func TestAddressSnapshotBinaryRoundTripIsDeterministic(t *testing.T) {
 	}
 
 	digest := sha256.Sum256(first)
-	if got, want := hex.EncodeToString(digest[:]), "3876577010db180969a01e923ac5642cbc9d93eca018d41871b268d653d1c5a6"; got != want {
+	if got, want := hex.EncodeToString(digest[:]), "4489476d603efeac8c825ccfd58a20ed5a13e82bbd02c5de4542a6ba8b094e44"; got != want {
 		t.Fatalf("WADS v1 fixture sha256 = %s, want %s", got, want)
 	}
 }
@@ -209,7 +209,7 @@ func addressSnapshotBinaryFixture(t *testing.T) AddressSnapshotArtifact {
 		t.Fatal(err)
 	}
 	return AddressSnapshotArtifact{
-		SnapshotID: "snapshot-a", TenantID: "tenant-a", Version: 7,
+		SnapshotID: "snapshot-a", Version: 7,
 		EffectiveFrom: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC), BuilderVersion: "watchdog-1",
 		SourceManifestSHA256: checksum, Strings: strings,
 		Sources: []AddressSnapshotSource{{

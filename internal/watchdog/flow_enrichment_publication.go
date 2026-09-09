@@ -79,7 +79,7 @@ func (publication FlowEnrichmentPublication) SignedEnvelope() flowworker.SignedE
 	return flowworker.SignedEnrichmentVersionPublication{
 		SchemaVersion: flowworker.EnrichmentVersionEnvelopeSchemaVersion,
 		Publication: flowworker.EnrichmentVersionPublication{
-			PublicationID: string(publication.ID), TenantID: string(publication.TenantID),
+			PublicationID:       string(publication.ID),
 			DimensionSnapshotID: string(publication.DimensionSnapshotID), DimensionVersion: publication.DimensionVersion,
 			DimensionEffectiveFrom: publication.DimensionEffectiveFrom.UTC(),
 			Dimension: flowworker.VersionObjectReference{
@@ -104,7 +104,7 @@ func normalizeFlowClassificationProfile(tenantID ID, draft FlowClassificationPro
 	draft.HomeISPIDs = canonicalUint16Set(draft.HomeISPIDs)
 	draft.HomeASNs = canonicalUint32Set(draft.HomeASNs)
 	if _, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: string(tenantID), Version: 1,
+		Version:             1,
 		EffectiveFrom:       time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
 		DimensionSnapshotID: "profile-validation",
 		HomeProvince:        draft.HomeProvince, HomeCity: draft.HomeCity,

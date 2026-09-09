@@ -68,7 +68,7 @@ func TestLoadPublicationIsStrictAndResolvesObjectPaths(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "publication.json")
 	publication := flowworker.EnrichmentVersionPublication{
-		PublicationID: "publication-1", TenantID: "tenant-a", DimensionSnapshotID: "snapshot-a", DimensionVersion: 1,
+		PublicationID: "publication-1", DimensionSnapshotID: "snapshot-a", DimensionVersion: 1,
 		DimensionEffectiveFrom: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
 		Dimension:              flowworker.VersionObjectReference{ObjectRef: "dimension.json", Checksum: "sha256:" + string(make([]byte, 64))},
 		ClassificationVersion:  1, ClassificationEffectiveFrom: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),

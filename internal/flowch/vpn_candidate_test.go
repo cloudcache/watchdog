@@ -39,7 +39,7 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 		"if(has(observed_protocols, toUInt8(6)), ['tcp'], [])",
 		"toFloat64(covered_buckets) / toFloat64(expected_buckets)",
 		"toFloat64(estimated_valid_records) / toFloat64(flow_record_count)",
-		"{tenant:String}", "{rule_set_version:String}", "{generation:UInt64}",
+		"{rule_set_version:String}", "{generation:UInt64}",
 	} {
 		if !strings.Contains(first.Body, required) {
 			t.Fatalf("candidate query missing %q", required)
@@ -56,7 +56,7 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 	if setting(first, "async_insert") != "0" || setting(first, "wait_for_async_insert") != "1" || setting(first, "insert_deduplication_token") == "" {
 		t.Fatal("candidate materialization is not synchronous and replay-stable")
 	}
-	if parameter(first, "tenant") != "'tenant-a'" || parameter(first, "rule_set_version") != "'vpn-rules-1'" {
+	if parameter(first, "rule_set_version") != "'vpn-rules-1'" {
 		t.Fatalf("unexpected query parameters: %+v", first.Parameters)
 	}
 }
@@ -64,7 +64,6 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 func TestBuildVPNCandidateQueryRejectsOpenUnalignedOrUnsafeRequests(t *testing.T) {
 	valid := validVPNCandidateRequest()
 	for _, mutate := range []func(*VPNCandidateRequest){
-		func(value *VPNCandidateRequest) { value.TenantID = "tenant' OR 1=1" },
 		func(value *VPNCandidateRequest) { value.RuleSetVersion = "bad version" },
 		func(value *VPNCandidateRequest) { value.WindowStart = value.WindowStart.Add(time.Second) },
 		func(value *VPNCandidateRequest) { value.WindowEnd = value.WindowStart },
@@ -119,9 +118,9 @@ func TestVPNCandidateMaterializerReadsAuthoritativeMarker(t *testing.T) {
 
 func validVPNCandidateRequest() VPNCandidateRequest {
 	return VPNCandidateRequest{
-		TenantID: "tenant-a", RuleSetVersion: "vpn-rules-1",
-		WindowStart: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
-		WindowEnd:   time.Date(2026, 9, 5, 1, 15, 0, 0, time.UTC),
-		Generation:  7, GeneratedAt: time.Date(2026, 9, 5, 1, 16, 0, 0, time.UTC),
+		RuleSetVersion: "vpn-rules-1",
+		WindowStart:    time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
+		WindowEnd:      time.Date(2026, 9, 5, 1, 15, 0, 0, time.UTC),
+		Generation:     7, GeneratedAt: time.Date(2026, 9, 5, 1, 16, 0, 0, time.UTC),
 	}
 }

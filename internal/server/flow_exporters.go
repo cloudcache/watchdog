@@ -513,7 +513,7 @@ func validateFlowExporterValues(values flowExporterValues) (flowExporterValues, 
 		SchemaVersion: 2, Revision: 1, CollectorID: "validation", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute),
 		Sources: []flowplan.SourceBinding{{
 			Protocol: protocol, SourcePrefix: values.SourcePrefix, ObservationDomainID: values.ObservationDomainID,
-			TenantID: "global", ExporterID: "validation", TargetID: values.DeviceID, DeviceID: values.DeviceID,
+			ExporterID: "validation", TargetID: values.DeviceID, DeviceID: values.DeviceID,
 			OwnershipEpoch: values.OwnershipEpoch, SamplingMode: mode, DefaultSamplingRate: values.DefaultSamplingRate,
 			SamplingRules: rules, Observations: observations, Enabled: values.Enabled,
 		}},

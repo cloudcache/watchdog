@@ -29,7 +29,7 @@ func TestEnrichmentVersionCatalogSelectsAtomicPairsByEventTime(t *testing.T) {
 		{13, 0, 1, 2},
 		{14, 0, 2, 3},
 	} {
-		version, err := catalog.Select("tenant-a", testMinute(test.hour, test.minute))
+		version, err := catalog.Select(testMinute(test.hour, test.minute))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,7 +38,7 @@ func TestEnrichmentVersionCatalogSelectsAtomicPairsByEventTime(t *testing.T) {
 			t.Fatalf("selected = %+v", metadata)
 		}
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(11, 59)); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := catalog.Select(testMinute(11, 59)); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("pre-history error = %v", err)
 	}
 }
@@ -77,10 +77,10 @@ func TestEnrichmentVersionCatalogAllowsOlderDimensionAtRetainedHistoryHorizon(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(12, 59)); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := catalog.Select(testMinute(12, 59)); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("pre-horizon selection error=%v", err)
 	}
-	selected, err := catalog.Select("tenant-a", testMinute(13, 0))
+	selected, err := catalog.Select(testMinute(13, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestEnrichmentVersionCatalogReadersNeverObserveMixedPair(t *testing.T) {
 			defer readers.Done()
 			<-start
 			for iteration := 0; iteration < 1_000; iteration++ {
-				version, selectErr := catalog.Select("tenant-a", testMinute(13, 30))
+				version, selectErr := catalog.Select(testMinute(13, 30))
 				if selectErr != nil {
 					t.Errorf("select: %v", selectErr)
 					return

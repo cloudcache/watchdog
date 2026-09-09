@@ -7,9 +7,6 @@ ALTER TABLE watchdog_flow.flow_ingest_batches
   ADD COLUMN IF NOT EXISTS receipt_schema UInt16 DEFAULT 1 AFTER worker_schema;
 
 ALTER TABLE watchdog_flow.flow_ingest_batches
-  ADD COLUMN IF NOT EXISTS tenant_ids Array(String) AFTER receipt_schema;
-
-ALTER TABLE watchdog_flow.flow_ingest_batches
   ADD COLUMN IF NOT EXISTS raw_packets UInt64 AFTER raw_bytes;
 
 ALTER TABLE watchdog_flow.flow_ingest_batches

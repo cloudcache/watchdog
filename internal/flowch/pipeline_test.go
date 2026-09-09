@@ -67,7 +67,7 @@ func TestPipelineDoesNotWritePartiallyEnrichedGroup(t *testing.T) {
 		results: map[*flowworker.RecordBatch]*flowworker.EnrichedBatch{first: {KafkaOffset: 10}},
 		failOn:  second,
 		failErr: &flowworker.VersionBlockedError{
-			Dependency: "geo", TenantID: "tenant-a", Cause: flowworker.ErrVersionUnavailable,
+			Dependency: "geo", Cause: flowworker.ErrVersionUnavailable,
 		},
 	}
 	writer := &recordingBatchWriter{}

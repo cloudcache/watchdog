@@ -89,7 +89,6 @@ func (a DecodeAdapter) Map(kafkaRecord *kgo.Record, decoded flowstream.DecodedBa
 		KafkaTopic:          kafkaRecord.Topic,
 		KafkaPartition:      kafkaRecord.Partition,
 		KafkaOffset:         kafkaRecord.Offset,
-		TenantID:            binding.TenantID,
 		CollectorID:         decoded.CollectorID,
 		ExporterID:          binding.ExporterID,
 		RegistryVersion:     decoded.RegistryVersion,

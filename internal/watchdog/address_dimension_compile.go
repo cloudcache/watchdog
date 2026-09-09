@@ -301,7 +301,7 @@ func compactDimensionStrings(values []string) []string {
 
 func encodeAddressDimensionBundle(draft AddressDimensionDraft, snapshotID, tenantID string, version uint64, effectiveFrom time.Time) ([]byte, *flowdimension.CompiledSnapshot, string, error) {
 	bundle := flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: tenantID,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID,
 		Version: version, EffectiveFrom: effectiveFrom.UTC(), Prefixes: draft.Prefixes, AddressSets: draft.AddressSets,
 		Operators: draft.Operators, GeoNodes: draft.GeoNodes,
 	}

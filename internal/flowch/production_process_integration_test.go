@@ -300,7 +300,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 	directory := t.TempDir()
 	effectiveFrom := time.Unix(0, 0).UTC()
 	dimension := flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-process", TenantID: corpusTenantID,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-process",
 		Version: 1, EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{
 			{ID: "all_ipv4", CIDR: "0.0.0.0/0", Labels: map[string]string{"flow": "local", "business": "process"}},
@@ -308,7 +308,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 		},
 	}
 	classification := flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, TenantID: corpusTenantID, Version: 1,
+		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 1,
 		EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimension.SnapshotID,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	}
@@ -317,7 +317,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 	dimensionPath := writeProductionFile(t, directory, "dimension.json", dimensionData, 0o600)
 	classificationPath := writeProductionFile(t, directory, "classification.json", classificationData, 0o600)
 	publication := flowworker.EnrichmentVersionPublication{
-		PublicationID: "publication-process", TenantID: corpusTenantID, DimensionSnapshotID: dimension.SnapshotID,
+		PublicationID: "publication-process", DimensionSnapshotID: dimension.SnapshotID,
 		DimensionVersion: 1, DimensionEffectiveFrom: effectiveFrom,
 		Dimension:             flowworker.VersionObjectReference{ObjectRef: filepath.Base(dimensionPath), Checksum: productionChecksum(dimensionData)},
 		ClassificationVersion: 1, ClassificationEffectiveFrom: effectiveFrom,
@@ -329,7 +329,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 	sources := make([]flowplan.SourceBinding, 0, 4)
 	for _, protocol := range []flowplan.Protocol{flowplan.ProtocolSFlow5, flowplan.ProtocolNetFlow5, flowplan.ProtocolNetFlow9, flowplan.ProtocolIPFIX} {
 		sources = append(sources, flowplan.SourceBinding{
-			Protocol: protocol, SourcePrefix: "127.0.0.1/32", TenantID: corpusTenantID,
+			Protocol: protocol, SourcePrefix: "127.0.0.1/32",
 			ExporterID: fmt.Sprintf("exporter-%d", protocol), TargetID: "target-process", DeviceID: "device-process",
 			OwnershipEpoch: 1, SamplingMode: flowplan.SamplingModePreScaled, Enabled: true,
 		})
@@ -341,7 +341,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 	planData := productionJSON(t, plan)
 	planDigest := sha256.Sum256(planData)
 	metadata := flowplan.PlanSignatureMetadata{
-		PlanID: "plan-process", TenantID: corpusTenantID, CollectorID: plan.CollectorID,
+		PlanID: "plan-process", CollectorID: plan.CollectorID,
 		ConfigVersion: plan.Revision, PlanSchemaVersion: uint16(plan.SchemaVersion),
 		SpecHash: hex.EncodeToString(planDigest[:]), SigningKeyID: "process-key",
 		NotBeforeUnixMilli: plan.NotBefore.UnixMilli(), ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(),
@@ -678,16 +678,14 @@ func waitForProductionFacts(t testing.TB, ctx context.Context, native *NativeIns
 		var records proto.ColUInt64
 		var receipts proto.ColUInt64
 		factsQuery := ch.Query{
-			Body:       `SELECT uniqExact(flow_protocol), count() FROM flow_records FINAL WHERE tenant_id = {tenant:String}`,
-			Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
-			Result:     proto.Results{{Name: "uniqExact(flow_protocol)", Data: &protocols}, {Name: "count()", Data: &records}},
+			Body:   `SELECT uniqExact(flow_protocol), count() FROM flow_records FINAL`,
+			Result: proto.Results{{Name: "uniqExact(flow_protocol)", Data: &protocols}, {Name: "count()", Data: &records}},
 		}
 		err := native.executor.Do(ctx, factsQuery)
 		if err == nil {
 			receiptsQuery := ch.Query{
-				Body:       `SELECT count() FROM flow_ingest_batches FINAL WHERE has(tenant_ids, {tenant:String})`,
-				Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
-				Result:     proto.Results{{Name: "count()", Data: &receipts}},
+				Body:   `SELECT count() FROM flow_ingest_batches FINAL`,
+				Result: proto.Results{{Name: "count()", Data: &receipts}},
 			}
 			err = native.executor.Do(ctx, receiptsQuery)
 		}

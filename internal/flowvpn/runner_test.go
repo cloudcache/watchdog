@@ -86,7 +86,7 @@ func TestCandidateQueryUsesLatestMarkerAndBoundedTypedParameters(t *testing.T) {
 			t.Fatalf("candidate reader query contains forbidden literal %q", forbidden)
 		}
 	}
-	if candidateParameter(query, "tenant") != "'tenant-a'" || candidateParameter(query, "rule_set_version") != "'vpn-rules-1'" ||
+	if candidateParameter(query, "rule_set_version") != "'vpn-rules-1'" ||
 		candidateParameter(query, "read_limit") != "'3'" || candidateSetting(query, "max_result_rows") != "4" {
 		t.Fatalf("query limits or parameters are wrong: %+v %+v", query.Parameters, query.Settings)
 	}
@@ -176,7 +176,6 @@ func TestCandidateQueryRejectsInvalidScopeWindowRulesAndLimits(t *testing.T) {
 	valid := validScoreWindowRequest()
 	rules := compiledCandidateRules(t)
 	for _, mutate := range []func(*ScoreWindowRequest){
-		func(value *ScoreWindowRequest) { value.TenantID = "tenant' OR 1=1" },
 		func(value *ScoreWindowRequest) { value.WindowStart = value.WindowStart.Add(time.Second) },
 		func(value *ScoreWindowRequest) { value.WindowEnd = value.WindowStart },
 		func(value *ScoreWindowRequest) { value.WindowEnd = value.WindowStart.Add(25 * time.Hour) },
@@ -203,8 +202,8 @@ func TestCandidateQueryRejectsInvalidScopeWindowRulesAndLimits(t *testing.T) {
 
 func validScoreWindowRequest() ScoreWindowRequest {
 	return ScoreWindowRequest{
-		TenantID: "tenant-a", WindowStart: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
-		WindowEnd: time.Date(2026, 9, 5, 1, 15, 0, 0, time.UTC), MaxCandidates: 2,
+		WindowStart: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 9, 5, 1, 15, 0, 0, time.UTC), MaxCandidates: 2,
 	}
 }
 

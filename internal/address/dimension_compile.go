@@ -308,7 +308,7 @@ const addressBundleDomain = "default"
 // bundle and compiles it. De-tenanted: the bundle identity is the fixed domain.
 func encodeAddressDimensionBundle(draft AddressDimensionDraft, snapshotID string, version uint64, effectiveFrom time.Time) ([]byte, *flowdimension.CompiledSnapshot, string, error) {
 	bundle := flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, TenantID: addressBundleDomain,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID,
 		Version: version, EffectiveFrom: effectiveFrom.UTC(), Prefixes: draft.Prefixes, AddressSets: draft.AddressSets,
 		Operators: draft.Operators, GeoNodes: draft.GeoNodes,
 	}

@@ -25,7 +25,6 @@ type QueryExecutor interface {
 }
 
 type ScoreWindowRequest struct {
-	TenantID      string
 	WindowStart   time.Time
 	WindowEnd     time.Time
 	MaxCandidates uint32
@@ -122,7 +121,6 @@ func buildCandidateQuery(request ScoreWindowRequest, rules CompiledRuleSet) (ch.
 	return ch.Query{
 		Body: vpnCandidateReadSQL,
 		Parameters: ch.Parameters(map[string]any{
-			"tenant":           request.TenantID,
 			"window_start":     request.WindowStart.UTC().Format("2006-01-02 15:04:05"),
 			"window_end":       request.WindowEnd.UTC().Format("2006-01-02 15:04:05"),
 			"rule_set_version": rules.version,
@@ -136,8 +134,8 @@ func buildCandidateQuery(request ScoreWindowRequest, rules CompiledRuleSet) (ch.
 }
 
 func validateScoreWindowRequest(request ScoreWindowRequest, rules CompiledRuleSet) error {
-	if !validTenantID(request.TenantID) || rules.version == "" || len(rules.rules) == 0 {
-		return errors.New("VPN candidate tenant and compiled rule set are required")
+	if rules.version == "" || len(rules.rules) == 0 {
+		return errors.New("VPN candidate compiled rule set is required")
 	}
 	start, end := request.WindowStart.UTC(), request.WindowEnd.UTC()
 	_, startOffset := request.WindowStart.Zone()
@@ -152,10 +150,6 @@ func validateScoreWindowRequest(request ScoreWindowRequest, rules CompiledRuleSe
 		return fmt.Errorf("VPN candidate result limit must be 1..%d", MaxScoredCandidates)
 	}
 	return nil
-}
-
-func validTenantID(value string) bool {
-	return len(value) <= 64 && validIdentifier(value)
 }
 
 type candidateColumns struct {
@@ -378,8 +372,7 @@ const vpnCandidateReadSQL = `WITH
   latest AS (
     SELECT max(generation) AS latest_generation, count() AS marker_count
     FROM flow_vpn_candidates FINAL
-    WHERE tenant_id = {tenant:String}
-      AND window_start = {window_start:DateTime('UTC')}
+    WHERE window_start = {window_start:DateTime('UTC')}
       AND window_end = {window_end:DateTime('UTC')}
       AND rule_set_version = {rule_set_version:String}
       AND row_kind = '_generation'
@@ -395,8 +388,7 @@ const vpnCandidateReadSQL = `WITH
       classification_version, generation, generated_at
     FROM flow_vpn_candidates FINAL
     CROSS JOIN latest
-    WHERE tenant_id = {tenant:String}
-      AND window_start = {window_start:DateTime('UTC')}
+    WHERE window_start = {window_start:DateTime('UTC')}
       AND window_end = {window_end:DateTime('UTC')}
       AND rule_set_version = {rule_set_version:String}
       AND row_kind = 'candidate'

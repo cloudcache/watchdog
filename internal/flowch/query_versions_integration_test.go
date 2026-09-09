@@ -33,7 +33,7 @@ func TestRealClickHouseAggregateVersionsTieBreakAndLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := rollup.Run(ctx, RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Resolution: RollupOneMinute, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.Add(3 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)

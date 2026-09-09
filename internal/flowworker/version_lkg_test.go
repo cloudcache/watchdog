@@ -98,7 +98,7 @@ func TestPersistentVersionLoaderDoesNotPublishOrAcknowledgeOnPersistenceFailure(
 	if err := loader.Install(context.Background(), publication); !errors.Is(err, ErrVersionPersistence) {
 		t.Fatalf("persistence error = %v", err)
 	}
-	if _, err := catalog.Select(publication.TenantID, publication.ClassificationEffectiveFrom); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := catalog.Select(publication.ClassificationEffectiveFrom); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("non-durable version became visible: %v", err)
 	}
 	if len(acks.acks) != 0 {
@@ -153,7 +153,7 @@ func TestDiskVersionLKGRoundTripRestoresWithoutRemoteOrDatabase(t *testing.T) {
 	if result.PublicationCount != 1 || result.HighestVersion != 1 {
 		t.Fatalf("restore result = %+v", result)
 	}
-	version, err := restartedCatalog.Select(publication.TenantID, testMinute(12, 30))
+	version, err := restartedCatalog.Select(testMinute(12, 30))
 	if err != nil || version.Metadata().ClassificationChecksum != publication.Classification.Checksum {
 		t.Fatalf("restored version=%+v error=%v", version.Metadata(), err)
 	}
@@ -181,7 +181,7 @@ func TestDiskVersionLKGRestorePublishesAllOrNothing(t *testing.T) {
 	}, VersionLoaderLimits{}, signer.now); err == nil {
 		t.Fatal("corrupt LKG restore succeeded")
 	}
-	if _, err := restartedCatalog.Select(first.TenantID, testMinute(12, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := restartedCatalog.Select(testMinute(12, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("partially restored catalog became visible: %v", err)
 	}
 }

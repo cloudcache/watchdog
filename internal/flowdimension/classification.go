@@ -36,7 +36,6 @@ const (
 )
 
 type ClassificationDefinition struct {
-	TenantID            string
 	Version             uint32
 	EffectiveFrom       time.Time
 	DimensionSnapshotID string
@@ -54,7 +53,6 @@ type ClassificationDefinition struct {
 // schema version is never silently optional on the wire.
 type ClassificationBundle struct {
 	SchemaVersion       uint32       `json:"schema_version"`
-	TenantID            string       `json:"tenant_id"`
 	Version             uint32       `json:"version"`
 	EffectiveFrom       time.Time    `json:"effective_from"`
 	DimensionSnapshotID string       `json:"dimension_snapshot_id"`
@@ -72,7 +70,6 @@ type ClassificationCompileLimits struct {
 }
 
 type ClassificationMetadata struct {
-	TenantID            string
 	Version             uint32
 	EffectiveFrom       time.Time
 	DimensionSnapshotID string
@@ -98,8 +95,8 @@ func EncodeClassificationBundle(definition ClassificationDefinition) ([]byte, st
 	}
 	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
 	bundle := ClassificationBundle{
-		SchemaVersion: ClassificationSchemaVersion, TenantID: definition.TenantID,
-		Version: definition.Version, EffectiveFrom: definition.EffectiveFrom.UTC(),
+		SchemaVersion: ClassificationSchemaVersion,
+		Version:       definition.Version, EffectiveFrom: definition.EffectiveFrom.UTC(),
 		DimensionSnapshotID: definition.DimensionSnapshotID,
 		HomeProvince:        definition.HomeProvince, HomeCity: definition.HomeCity,
 		HomeISPIDs: ispIDs, HomeASNs: asns, OverseasIncludesHMT: definition.OverseasIncludesHMT,
@@ -154,7 +151,7 @@ func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, 
 		return nil, fmt.Errorf("unsupported classification bundle schema_version %d", bundle.SchemaVersion)
 	}
 	return compileClassification(ClassificationDefinition{
-		TenantID: bundle.TenantID, Version: bundle.Version, EffectiveFrom: bundle.EffectiveFrom,
+		Version: bundle.Version, EffectiveFrom: bundle.EffectiveFrom,
 		DimensionSnapshotID: bundle.DimensionSnapshotID, HomeProvince: bundle.HomeProvince,
 		HomeCity: bundle.HomeCity, HomeISPIDs: bundle.HomeISPIDs, HomeASNs: bundle.HomeASNs,
 		OverseasIncludesHMT: bundle.OverseasIncludesHMT,
@@ -163,8 +160,8 @@ func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, 
 }
 
 func compileClassification(definition ClassificationDefinition, checksum string) (*ClassificationSnapshot, error) {
-	if !validIdentifier(definition.TenantID, 64) || definition.Version == 0 || !validIdentifier(definition.DimensionSnapshotID, 64) {
-		return nil, errors.New("classification tenant, version, and dimension snapshot are required")
+	if definition.Version == 0 || !validIdentifier(definition.DimensionSnapshotID, 64) {
+		return nil, errors.New("classification version and dimension snapshot are required")
 	}
 	effectiveFrom := definition.EffectiveFrom.UTC()
 	_, offset := definition.EffectiveFrom.Zone()
@@ -212,7 +209,7 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 	}
 	return &ClassificationSnapshot{
 		metadata: ClassificationMetadata{
-			TenantID: definition.TenantID, Version: definition.Version, EffectiveFrom: effectiveFrom,
+			Version: definition.Version, EffectiveFrom: effectiveFrom,
 			DimensionSnapshotID: definition.DimensionSnapshotID,
 			InternalPolicy:      definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
 			Checksum: checksum,
@@ -260,12 +257,12 @@ type ClassificationCatalog struct {
 }
 
 type classificationCatalogState struct {
-	byTenant map[string][]*ClassificationSnapshot
+	versions []*ClassificationSnapshot
 }
 
 func NewClassificationCatalog(snapshots ...*ClassificationSnapshot) (*ClassificationCatalog, error) {
 	catalog := &ClassificationCatalog{}
-	catalog.state.Store(&classificationCatalogState{byTenant: map[string][]*ClassificationSnapshot{}})
+	catalog.state.Store(&classificationCatalogState{})
 	for _, snapshot := range snapshots {
 		if err := catalog.Install(snapshot); err != nil {
 			return nil, err
@@ -281,13 +278,9 @@ func (c *ClassificationCatalog) Install(snapshot *ClassificationSnapshot) error 
 	for {
 		current := c.state.Load()
 		if current == nil {
-			current = &classificationCatalogState{byTenant: map[string][]*ClassificationSnapshot{}}
+			current = &classificationCatalogState{}
 		}
-		next := &classificationCatalogState{byTenant: make(map[string][]*ClassificationSnapshot, len(current.byTenant)+1)}
-		for tenantID, existing := range current.byTenant {
-			next.byTenant[tenantID] = append([]*ClassificationSnapshot(nil), existing...)
-		}
-		items := next.byTenant[snapshot.metadata.TenantID]
+		items := append([]*ClassificationSnapshot(nil), current.versions...)
 		for _, existing := range items {
 			if existing == snapshot || sameClassification(existing, snapshot) {
 				return nil
@@ -307,22 +300,21 @@ func (c *ClassificationCatalog) Install(snapshot *ClassificationSnapshot) error 
 		sort.Slice(items, func(left, right int) bool {
 			return items[left].metadata.EffectiveFrom.Before(items[right].metadata.EffectiveFrom)
 		})
-		next.byTenant[snapshot.metadata.TenantID] = items
-		if c.state.CompareAndSwap(current, next) {
+		if c.state.CompareAndSwap(current, &classificationCatalogState{versions: items}) {
 			return nil
 		}
 	}
 }
 
-func (c *ClassificationCatalog) Select(tenantID string, eventTime time.Time) (*ClassificationSnapshot, error) {
-	if c == nil || !validIdentifier(tenantID, 64) || eventTime.IsZero() {
+func (c *ClassificationCatalog) Select(eventTime time.Time) (*ClassificationSnapshot, error) {
+	if c == nil || eventTime.IsZero() {
 		return nil, ErrNoClassificationSnapshot
 	}
 	state := c.state.Load()
 	if state == nil {
 		return nil, ErrNoClassificationSnapshot
 	}
-	items := state.byTenant[tenantID]
+	items := state.versions
 	position := sort.Search(len(items), func(position int) bool {
 		return items[position].metadata.EffectiveFrom.After(eventTime)
 	})

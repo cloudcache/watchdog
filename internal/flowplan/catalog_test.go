@@ -69,7 +69,7 @@ func compileCatalogPlan(t testing.TB, now time.Time, revision uint64, exporterID
 		SchemaVersion: 2, Revision: revision, CollectorID: "collector-a", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 		Sources: []SourceBinding{{
 			Protocol: ProtocolNetFlow9, SourcePrefix: "192.0.2.0/24", ObservationDomainID: &domain,
-			TenantID: "tenant-a", ExporterID: exporterID, TargetID: "target-a", OwnershipEpoch: 1,
+			ExporterID: exporterID, TargetID: "target-a", OwnershipEpoch: 1,
 			SamplingMode: SamplingModeSampled, Enabled: true,
 		}},
 	}, now)

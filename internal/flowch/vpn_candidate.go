@@ -19,7 +19,6 @@ import (
 const maxVPNCandidateWindow = 24 * time.Hour
 
 type VPNCandidateRequest struct {
-	TenantID       string
 	WindowStart    time.Time
 	WindowEnd      time.Time
 	RuleSetVersion string
@@ -70,8 +69,7 @@ func (m *VPNCandidateMaterializer) LatestGeneration(ctx context.Context, request
 	query := ch.Query{
 		Body: `SELECT max(generation) AS generation
 FROM flow_vpn_candidates FINAL
-WHERE tenant_id = {tenant:String}
-  AND window_start = {window_start:DateTime('UTC')}
+WHERE window_start = {window_start:DateTime('UTC')}
   AND window_end = {window_end:DateTime('UTC')}
   AND rule_set_version = {rule_set_version:String}
   AND row_kind = '_generation'`,
@@ -99,8 +97,8 @@ WHERE tenant_id = {tenant:String}
 }
 
 func ValidateVPNCandidateRequest(request VPNCandidateRequest) error {
-	if !validRollupTenant(request.TenantID) || !validCandidateIdentifier(request.RuleSetVersion) || request.Generation == 0 || request.GeneratedAt.IsZero() {
-		return errors.New("VPN candidate tenant, rule-set version, generation, and generated_at are required")
+	if !validCandidateIdentifier(request.RuleSetVersion) || request.Generation == 0 || request.GeneratedAt.IsZero() {
+		return errors.New("VPN candidate rule-set version, generation, and generated_at are required")
 	}
 	start, end := request.WindowStart.UTC(), request.WindowEnd.UTC()
 	_, startOffset := request.WindowStart.Zone()
@@ -124,8 +122,8 @@ func buildVPNCandidateQuery(request VPNCandidateRequest) (ch.Query, error) {
 	if err := ValidateVPNCandidateRequest(request); err != nil {
 		return ch.Query{}, err
 	}
-	tokenSource := fmt.Sprintf("watchdog-flow-vpn-candidate-v1\x00%s\x00%d\x00%d\x00%s\x00%d",
-		request.TenantID, request.WindowStart.Unix(), request.WindowEnd.Unix(), request.RuleSetVersion, request.Generation)
+	tokenSource := fmt.Sprintf("watchdog-flow-vpn-candidate-v1\x00%d\x00%d\x00%s\x00%d",
+		request.WindowStart.Unix(), request.WindowEnd.Unix(), request.RuleSetVersion, request.Generation)
 	token := sha256.Sum256([]byte(tokenSource))
 	return ch.Query{
 		Body:       vpnCandidateSQL,
@@ -140,7 +138,6 @@ func buildVPNCandidateQuery(request VPNCandidateRequest) (ch.Query, error) {
 
 func candidateParameters(request VPNCandidateRequest) []proto.Parameter {
 	return ch.Parameters(map[string]any{
-		"tenant":           request.TenantID,
 		"window_start":     request.WindowStart.UTC().Format("2006-01-02 15:04:05"),
 		"window_end":       request.WindowEnd.UTC().Format("2006-01-02 15:04:05"),
 		"rule_set_version": request.RuleSetVersion,
@@ -164,7 +161,7 @@ func validCandidateIdentifier(value string) bool {
 }
 
 const vpnCandidateSQL = `INSERT INTO flow_vpn_candidates (
-  window_start, window_end, tenant_id, row_kind, conversation_key,
+  window_start, window_end, row_kind, conversation_key,
   local_ip, remote_ip, primary_protocol, primary_local_port, primary_remote_port,
   local_to_remote_bytes, remote_to_local_bytes, flow_record_count,
   active_bucket_count, max_duration_ms, remote_asn, remote_country,
@@ -179,14 +176,12 @@ WITH
   coverage AS (
     SELECT count() AS covered_buckets
     FROM flow_aggregate_1m FINAL
-    WHERE tenant_id = {tenant:String}
-      AND bucket >= candidate_start
+    WHERE bucket >= candidate_start
       AND bucket < candidate_end
       AND dimension_kind = '_generation'
   ),
   candidates AS (
     SELECT
-      tenant_id,
       local_ip,
       remote_ip,
       dimension_snapshot_id,
@@ -205,22 +200,20 @@ WITH
       countIf(quality_flags != 0) AS quality_records,
       groupUniqArray(ip_protocol) AS observed_protocols
     FROM flow_records FINAL
-    WHERE tenant_id = {tenant:String}
-      AND event_time >= candidate_start
+    WHERE event_time >= candidate_start
       AND event_time < candidate_end
       AND disposition = 'count'
       AND business_direction IN ('in', 'out')
       AND local_ip_valid
       AND remote_ip_valid
-    GROUP BY tenant_id, local_ip, remote_ip,
+    GROUP BY local_ip, remote_ip,
       dimension_snapshot_id, geo_version, classification_version
   )
 SELECT
   candidate_start,
   candidate_end,
-  candidates.tenant_id,
   'candidate',
-  SHA256(concat(candidates.tenant_id, '\0', toString(local_ip), '\0', toString(remote_ip))),
+  SHA256(concat(toString(local_ip), '\0', toString(remote_ip))),
   local_ip,
   remote_ip,
   tupleElement(primary, 1),
@@ -257,7 +250,7 @@ FROM candidates
 CROSS JOIN coverage
 UNION ALL
 SELECT
-  candidate_start, candidate_end, {tenant:String}, '_generation',
+  candidate_start, candidate_end, '_generation',
   CAST('', 'FixedString(32)'), toIPv6('::'), toIPv6('::'), 0, 0, 0,
   0, 0, 0, 0, 0, 0, '', '', [], 0, '{"schema_version":1}',
   {rule_set_version:String}, '', '', 0, toUInt8(2), '', '', 0, {generation:UInt64},

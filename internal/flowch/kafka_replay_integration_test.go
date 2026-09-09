@@ -123,7 +123,6 @@ func TestRealKafkaEventTimeVersionBlockDoesNotCommit(t *testing.T) {
 	dimension, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion,
 		SnapshotID:    "dimension-current",
-		TenantID:      corpusTenantID,
 		Version:       1,
 		EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{
@@ -134,7 +133,7 @@ func TestRealKafkaEventTimeVersionBlockDoesNotCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: corpusTenantID, Version: 1, EffectiveFrom: effectiveFrom,
+		Version: 1, EffectiveFrom: effectiveFrom,
 		DimensionSnapshotID: "dimension-current",
 		InternalPolicy:      flowdimension.RecordPolicyCount,
 		TransitPolicy:       flowdimension.RecordPolicyCount,
@@ -164,7 +163,7 @@ func TestRealKafkaEventTimeVersionBlockDoesNotCommit(t *testing.T) {
 	if !errors.Is(runErr, flowworker.ErrVersionUnavailable) || !errors.As(runErr, &blocked) {
 		t.Fatalf("consumer error=%v, want version block", runErr)
 	}
-	if blocked.Dependency != "dimension_classification_pair" || blocked.TenantID != corpusTenantID || !blocked.EventTime.Before(effectiveFrom) {
+	if blocked.Dependency != "dimension_classification_pair" || !blocked.EventTime.Before(effectiveFrom) {
 		t.Fatalf("blocked metadata=%+v effective_from=%s", blocked, effectiveFrom)
 	}
 	if len(writer.batches) != 0 {

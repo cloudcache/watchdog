@@ -20,7 +20,7 @@ func TestAddressSnapshotIndexClassifiesAndResolvesBothFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := index.Metadata()
-	if metadata.SnapshotID != "snapshot-build" || metadata.TenantID != "tenant-build" || metadata.Version != 4 || metadata.Checksum != built.ChecksumSHA256 || metadata.PrefixCount != 2 || metadata.EnabledAddressSetCount != 3 {
+	if metadata.SnapshotID != "snapshot-build" || metadata.Version != 4 || metadata.Checksum != built.ChecksumSHA256 || metadata.PrefixCount != 2 || metadata.EnabledAddressSetCount != 3 {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 

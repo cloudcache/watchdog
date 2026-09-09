@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_records (
   kafka_partition UInt32,
   kafka_offset UInt64,
   record_index UInt32,
-  tenant_id LowCardinality(String),
   collector_id LowCardinality(String),
   exporter_id LowCardinality(String),
   target_id LowCardinality(String),
@@ -92,13 +91,12 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_records (
 )
 ENGINE = ReplacingMergeTree(ingest_generation)
 PARTITION BY toYYYYMMDD(event_time)
-ORDER BY (tenant_id, toStartOfHour(event_time), record_id)
+ORDER BY (toStartOfHour(event_time), record_id)
 TTL event_time + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1m (
   bucket DateTime('UTC'),
-  tenant_id LowCardinality(String),
   target_id LowCardinality(String),
   device_id LowCardinality(String),
   exporter_id LowCardinality(String),
@@ -123,14 +121,13 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1m (
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, target_id, device_id, exporter_id, business_direction,
+  bucket, target_id, device_id, exporter_id, business_direction,
   category, business, dimension_kind, dimension_value,
   dimension_snapshot_id, geo_version, classification_version)
 TTL bucket + INTERVAL 180 DAY;
 
 CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1h (
   bucket DateTime('UTC'),
-  tenant_id LowCardinality(String),
   target_id LowCardinality(String),
   device_id LowCardinality(String),
   exporter_id LowCardinality(String),
@@ -155,7 +152,7 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1h (
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, target_id, device_id, exporter_id, business_direction,
+  bucket, target_id, device_id, exporter_id, business_direction,
   category, business, dimension_kind, dimension_value,
   dimension_snapshot_id, geo_version, classification_version)
 TTL bucket + INTERVAL 400 DAY;
@@ -183,7 +180,6 @@ TTL inserted_at + INTERVAL 45 DAY;
 CREATE TABLE IF NOT EXISTS watchdog_flow.flow_vpn_candidates (
   window_start DateTime('UTC'),
   window_end DateTime('UTC'),
-  tenant_id LowCardinality(String),
   conversation_key FixedString(32),
   local_ip IPv6,
   remote_ip IPv6,
@@ -207,5 +203,5 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_vpn_candidates (
 )
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMMDD(window_start)
-ORDER BY (tenant_id, window_start, window_end, conversation_key, rule_set_version)
+ORDER BY (window_start, window_end, conversation_key, rule_set_version)
 TTL window_end + INTERVAL 90 DAY;

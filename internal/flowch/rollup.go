@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -25,7 +24,6 @@ const (
 )
 
 type RollupRequest struct {
-	TenantID    string
 	Resolution  RollupResolution
 	Bucket      time.Time
 	Generation  uint64
@@ -123,13 +121,13 @@ type rollupCounters struct {
 // LatestGeneration reads the authoritative generation marker from
 // ClickHouse. operation_jobs has finite retention, so historical repair must
 // not infer generations from old job rows.
-func (r *RollupRunner) LatestGeneration(ctx context.Context, tenantID string, resolution RollupResolution, bucket time.Time) (uint64, error) {
+func (r *RollupRunner) LatestGeneration(ctx context.Context, resolution RollupResolution, bucket time.Time) (uint64, error) {
 	duration, _, err := rollupTarget(resolution)
 	if err != nil {
 		return 0, Permanent(err)
 	}
 	request := RollupRequest{
-		TenantID: tenantID, Resolution: resolution, Bucket: bucket,
+		Resolution: resolution, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.UTC().Add(duration),
 	}
 	if err := ValidateRollupRequest(request); err != nil {
@@ -145,11 +143,10 @@ func (r *RollupRunner) LatestGeneration(ctx context.Context, tenantID string, re
 	query := ch.Query{
 		Body: fmt.Sprintf(`SELECT max(generation) AS generation
 FROM %s FINAL
-WHERE tenant_id = {tenant:String}
-  AND bucket = {bucket:DateTime('UTC')}
+WHERE bucket = {bucket:DateTime('UTC')}
   AND dimension_kind = '_generation'`, table),
 		Parameters: ch.Parameters(map[string]any{
-			"tenant": tenantID, "bucket": bucket.UTC().Format("2006-01-02 15:04:05"),
+			"bucket": bucket.UTC().Format("2006-01-02 15:04:05"),
 		}),
 		Result: proto.Results{{Name: "generation", Data: &generations}},
 	}
@@ -180,7 +177,7 @@ WHERE tenant_id = {tenant:String}
 // reaper calls it only for buckets that already have a successful generation, so
 // the aggregate side is populated. Both sides read FINAL and filter
 // disposition/dimension exactly as the rollup did, so the counts are comparable.
-func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, tenantID string, resolution RollupResolution, bucket time.Time) (bool, error) {
+func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, resolution RollupResolution, bucket time.Time) (bool, error) {
 	duration, table, err := rollupTarget(resolution)
 	if err != nil {
 		return false, Permanent(err)
@@ -197,14 +194,13 @@ func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, tenantID string, r
 	stored, err := r.scalarUInt64(ctx, ch.Query{
 		Body: fmt.Sprintf(`SELECT sum(received_records) AS value
 FROM %s FINAL
-WHERE tenant_id = {tenant:String}
-  AND bucket = {bucket:DateTime('UTC')}
+WHERE bucket = {bucket:DateTime('UTC')}
   AND dimension_kind = 'total'
   AND generation = (
     SELECT max(generation) FROM %s FINAL
-    WHERE tenant_id = {tenant:String} AND bucket = {bucket:DateTime('UTC')} AND dimension_kind = '_generation'
+    WHERE bucket = {bucket:DateTime('UTC')} AND dimension_kind = '_generation'
   )`, table, table),
-		Parameters: ch.Parameters(map[string]any{"tenant": tenantID, "bucket": bucketParam}),
+		Parameters: ch.Parameters(map[string]any{"bucket": bucketParam}),
 	})
 	if err != nil {
 		return false, fmt.Errorf("read %s aggregate received_records: %w", resolution, err)
@@ -212,12 +208,11 @@ WHERE tenant_id = {tenant:String}
 	live, err := r.scalarUInt64(ctx, ch.Query{
 		Body: `SELECT count() AS value
 FROM flow_records FINAL
-WHERE tenant_id = {tenant:String}
-  AND event_time >= {start:DateTime('UTC')}
+WHERE event_time >= {start:DateTime('UTC')}
   AND event_time < {end:DateTime('UTC')}
   AND disposition = 'count'`,
 		Parameters: ch.Parameters(map[string]any{
-			"tenant": tenantID, "start": bucketParam, "end": end.Format("2006-01-02 15:04:05"),
+			"start": bucketParam, "end": end.Format("2006-01-02 15:04:05"),
 		}),
 	})
 	if err != nil {
@@ -264,19 +259,18 @@ func NewRollupRunner(native *NativeInserter) (*RollupRunner, error) {
 // generation of each 1h archive bucket in one UTC day. _generation marker rows
 // make an empty hour a complete hour; the archive side counts only public
 // dimension_kind='total' rows from each hour's greatest generation.
-func (r *RollupRunner) DayStorageCounters(ctx context.Context, tenantID string, sourceDate time.Time) (StorageCounters, StorageCounters, error) {
+func (r *RollupRunner) DayStorageCounters(ctx context.Context, sourceDate time.Time) (StorageCounters, StorageCounters, error) {
 	if r == nil || r.executor == nil {
 		return StorageCounters{}, StorageCounters{}, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
 	}
 	day := sourceDate.UTC()
-	if !validRollupTenant(tenantID) || day.IsZero() || day != day.Truncate(24*time.Hour) {
-		return StorageCounters{}, StorageCounters{}, Permanent(errors.New("storage counter tenant and UTC-aligned source date are required"))
+	if day.IsZero() || day != day.Truncate(24*time.Hour) {
+		return StorageCounters{}, StorageCounters{}, Permanent(errors.New("storage counter UTC-aligned source date is required"))
 	}
 	end := day.Add(24 * time.Hour)
 	params := ch.Parameters(map[string]any{
-		"tenant": tenantID,
-		"start":  day.Format("2006-01-02 15:04:05"),
-		"end":    end.Format("2006-01-02 15:04:05"),
+		"start": day.Format("2006-01-02 15:04:05"),
+		"end":   end.Format("2006-01-02 15:04:05"),
 	})
 	raw, err := r.storageCounters(ctx, ch.Query{
 		Body: `SELECT
@@ -287,8 +281,7 @@ func (r *RollupRunner) DayStorageCounters(ctx context.Context, tenantID string, 
   sumIf(estimated_packets, estimated_valid) AS estimated_packets,
   countIf(estimated_valid) AS estimated_valid_records
 FROM flow_records FINAL
-WHERE tenant_id = {tenant:String}
-  AND event_time >= {start:DateTime('UTC')}
+WHERE event_time >= {start:DateTime('UTC')}
   AND event_time < {end:DateTime('UTC')}
   AND disposition = 'count'`,
 		Parameters: params,
@@ -308,14 +301,12 @@ FROM flow_aggregate_1h FINAL
 INNER JOIN (
   SELECT bucket, max(generation) AS generation
   FROM flow_aggregate_1h FINAL
-  WHERE tenant_id = {tenant:String}
-    AND bucket >= {start:DateTime('UTC')}
+  WHERE bucket >= {start:DateTime('UTC')}
     AND bucket < {end:DateTime('UTC')}
     AND dimension_kind = '_generation'
   GROUP BY bucket
 ) AS latest USING (bucket, generation)
-WHERE tenant_id = {tenant:String}
-  AND bucket >= {start:DateTime('UTC')}
+WHERE bucket >= {start:DateTime('UTC')}
   AND bucket < {end:DateTime('UTC')}
   AND dimension_kind = 'total'`,
 		Parameters: params,
@@ -359,7 +350,7 @@ func (r *RollupRunner) storageCounters(ctx context.Context, query ch.Query) (Sto
 	return result, nil
 }
 
-// Run rebuilds one closed tenant bucket in one INSERT SELECT. Every public
+// Run rebuilds one closed bucket in one INSERT SELECT. Every public
 // dimension and an internal generation marker are inserted atomically. A
 // repair reuses the same request, or supplies a greater generation after late
 // base records arrive.
@@ -494,8 +485,8 @@ func ValidateRollupRequest(request RollupRequest) error {
 	if err != nil {
 		return err
 	}
-	if !validRollupTenant(request.TenantID) || request.Generation == 0 || request.GeneratedAt.IsZero() {
-		return errors.New("rollup tenant, generation, and generated_at are required")
+	if request.Generation == 0 || request.GeneratedAt.IsZero() {
+		return errors.New("rollup generation and generated_at are required")
 	}
 	bucket := request.Bucket.UTC()
 	end := bucket.Add(duration)
@@ -517,7 +508,7 @@ func ValidateRollupRequest(request RollupRequest) error {
 // (ranked by estimated_bytes); the long tail beyond it is folded into a single
 // _other bucket. These per-IP dimensions otherwise materialize at nearly raw
 // cardinality in every policy-aged archive generation. It is a package var so
-// a test can lower it; wire it to config when per-tenant tuning is needed.
+// a test can lower it; wire it to config when deployment tuning is needed.
 var rollupIPTopN uint32 = 1000
 
 func buildRollupQuery(request RollupRequest) (ch.Query, error) {
@@ -531,20 +522,20 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 	bucket := request.Bucket.UTC()
 	generatedAt := request.GeneratedAt.UTC()
 	end := bucket.Add(duration)
-	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v1\x00%s\x00%s\x00%d\x00%d", request.TenantID, request.Resolution, bucket.Unix(), request.Generation)
+	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v1\x00%s\x00%d\x00%d", request.Resolution, bucket.Unix(), request.Generation)
 	token := sha256.Sum256([]byte(tokenInput))
 	query := ch.Query{
 		Body: fmt.Sprintf(rollupSQL, table),
 		Parameters: ch.Parameters(map[string]any{
-			"tenant": request.TenantID, "bucket_start": bucket.Format("2006-01-02 15:04:05"),
-			"bucket_end": end.Format("2006-01-02 15:04:05"), "generation": request.Generation,
+			"bucket_start": bucket.Format("2006-01-02 15:04:05"),
+			"bucket_end":   end.Format("2006-01-02 15:04:05"), "generation": request.Generation,
 			"generated_at": generatedAt.Format("2006-01-02 15:04:05.000"), "top_n": rollupIPTopN,
 		}),
 		Settings: []ch.Setting{
 			{Key: "async_insert", Value: "0", Important: true},
 			{Key: "wait_for_async_insert", Value: "1", Important: true},
 			{Key: "insert_deduplication_token", Value: hex.EncodeToString(token[:]), Important: true},
-			// A heavy tenant-hour GROUP BY must spill to disk rather than OOM:
+			// A heavy bucket GROUP BY must spill to disk rather than OOM:
 			// MEMORY_LIMIT_EXCEEDED is classified retryable, so an unguarded
 			// rollup fails deterministically and the bucket is never aggregated.
 			{Key: "max_bytes_before_external_group_by", Value: "4294967296", Important: true},
@@ -565,26 +556,12 @@ func rollupTarget(resolution RollupResolution) (time.Duration, string, error) {
 	}
 }
 
-func validRollupTenant(value string) bool {
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || strings.ContainsRune("._:-", character) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 // The marker row makes an empty repair visible as the latest complete
 // generation, so dimensions that disappeared do not leak from an older run.
 // Public queries must filter dimension_kind and select max(generation) per
-// tenant+bucket; _generation is internal and never exposed by the registry.
+// bucket; _generation is internal and never exposed by the registry.
 const rollupSQL = `INSERT INTO %s (
-  bucket, tenant_id, target_id, device_id, exporter_id,
+  bucket, target_id, device_id, exporter_id,
   business_direction, category, business, dimension_kind, dimension_value,
   dimension_snapshot_id, geo_version, classification_version,
   raw_bytes, raw_packets, estimated_bytes, estimated_packets,
@@ -597,7 +574,7 @@ WITH
   {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
   {top_n:UInt32} AS rollup_top_n
 SELECT
-  bucket, tenant_id, target_id, device_id, exporter_id,
+  bucket, target_id, device_id, exporter_id,
   business_direction, category, business, dimension_kind,
   -- Fold the per-IP long tail (beyond the top-N by traffic) into one _other
   -- bucket so src_ip/dst_ip do not materialize at ~raw cardinality into the
@@ -614,7 +591,7 @@ SELECT
   generation, generated_at
 FROM (
   SELECT
-    bucket, tenant_id, target_id, device_id, exporter_id,
+    bucket, target_id, device_id, exporter_id,
     business_direction, category, business, dimension_kind, dimension_value,
     dimension_snapshot_id, geo_version, classification_version,
     raw_bytes, raw_packets, estimated_bytes, estimated_packets,
@@ -622,7 +599,7 @@ FROM (
     generation, generated_at,
     if(dimension_kind IN ('src_ip', 'dst_ip'),
        row_number() OVER (
-         PARTITION BY tenant_id, target_id, device_id, exporter_id,
+         PARTITION BY target_id, device_id, exporter_id,
            business_direction, category, business, dimension_kind,
            dimension_snapshot_id, geo_version, classification_version
          ORDER BY estimated_bytes DESC, dimension_value ASC),
@@ -630,7 +607,6 @@ FROM (
   FROM (
     SELECT
       rollup_start AS bucket,
-      tenant_id,
       target_id,
       device_id,
       exporter_id,
@@ -674,22 +650,21 @@ FROM (
       ],
       arrayMap(value -> tuple('address_set', value), arrayDistinct(arrayConcat(local_address_set_ids, remote_address_set_ids)))
     )) AS dimension
-    WHERE tenant_id = {tenant:String}
-      AND event_time >= rollup_start
+    WHERE event_time >= rollup_start
       AND event_time < rollup_end
       AND disposition = 'count'
     GROUP BY
-      tenant_id, target_id, device_id, exporter_id, business_direction, category,
+      target_id, device_id, exporter_id, business_direction, category,
       business, dimension_kind, dimension_value, dimension_snapshot_id,
       geo_version, classification_version
   )
 )
 GROUP BY
-  bucket, tenant_id, target_id, device_id, exporter_id, business_direction, category,
+  bucket, target_id, device_id, exporter_id, business_direction, category,
   business, dimension_kind, dimension_value, dimension_snapshot_id,
   geo_version, classification_version, generation, generated_at
 UNION ALL
 SELECT
-  rollup_start, {tenant:String}, '', '', '', 'ambiguous', 'unknown', '',
+  rollup_start, '', '', '', 'ambiguous', 'unknown', '',
   '_generation', '', '', '', 0,
   0, 0, 0, 0, 0, 0, 0, rollup_generation, rollup_generated_at`

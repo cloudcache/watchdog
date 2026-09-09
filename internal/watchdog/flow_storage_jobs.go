@@ -27,7 +27,7 @@ type flowStorageDownsamplePayload struct {
 
 type FlowStorageDayRunner interface {
 	Run(context.Context, flowch.RollupRequest) error
-	DayStorageCounters(context.Context, string, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error)
+	DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error)
 }
 
 type FlowStorageDownsampleStore interface {
@@ -104,7 +104,7 @@ func NewFlowStorageDownsampleJobHandler(store FlowStorageDownsampleStore, runner
 		}
 		for hour := 0; hour < 24; hour++ {
 			bucket := day.Add(time.Duration(hour) * time.Hour)
-			if err := runner.Run(ctx, flowch.RollupRequest{TenantID: string(job.TenantID), Resolution: flowch.RollupOneHour,
+			if err := runner.Run(ctx, flowch.RollupRequest{Resolution: flowch.RollupOneHour,
 				Bucket: bucket, Generation: payload.Generation, GeneratedAt: generatedAt}); err != nil {
 				var permanent *flowch.PermanentError
 				if errors.As(err, &permanent) {
@@ -116,7 +116,7 @@ func NewFlowStorageDownsampleJobHandler(store FlowStorageDownsampleStore, runner
 		if _, err := store.MarkFlowStoragePartitionDownsampleWritten(ctx, policy, day, payload.Generation, job.ID, time.Now()); err != nil {
 			return "", err
 		}
-		raw, archive, err := runner.DayStorageCounters(ctx, string(job.TenantID), day)
+		raw, archive, err := runner.DayStorageCounters(ctx, day)
 		if err != nil {
 			return "", err
 		}

@@ -216,8 +216,8 @@ func BuildAddressSnapshotContext(ctx context.Context, input AddressSnapshotBuild
 		stringIndexes[value] = uint32(index)
 	}
 	artifact := AddressSnapshotArtifact{
-		SnapshotID: input.Definition.metadata.SnapshotID, TenantID: input.Definition.metadata.TenantID,
-		Version: input.Definition.metadata.Version, EffectiveFrom: input.Definition.metadata.EffectiveFrom,
+		SnapshotID: input.Definition.metadata.SnapshotID,
+		Version:    input.Definition.metadata.Version, EffectiveFrom: input.Definition.metadata.EffectiveFrom,
 		BuilderVersion: input.BuilderVersion, SourceManifestSHA256: addressSnapshotSourceManifestSHA256(sources), Strings: dictionary,
 		Sources:     encodeAddressSnapshotSources(sources, stringIndexes),
 		GeoNodes:    encodeAddressSnapshotGeoNodes(geoNodes, stringIndexes),

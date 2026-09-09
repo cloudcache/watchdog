@@ -24,7 +24,7 @@ import (
 // and a deep include-chain that would exceed 32 is rejected at compile, not at
 // query time. BenchmarkCompileAddressSetMaxOverlap measures compile at that
 // design ceiling; BenchmarkCompileAddressSetScale measures many mostly-disjoint
-// sets (the realistic large-tenant shape).
+// sets (the realistic large-deployment shape).
 
 // buildScalePrefixes returns n deterministically labeled /24 prefixes. Each gets
 // a unique "region" label so a selector set can address it disjointly, plus
@@ -49,7 +49,7 @@ func buildScalePrefixes(n int) []PrefixDefinition {
 
 // buildScaleDisjointSets returns m sets, each selecting one unique region, so
 // every prefix belongs to at most one set (expansion 1) — the realistic shape
-// of many mostly-disjoint tenant address groups.
+// of many mostly-disjoint address groups.
 func buildScaleDisjointSets(m int) []AddressSetDefinition {
 	sets := make([]AddressSetDefinition, m)
 	for j := range sets {
@@ -67,7 +67,6 @@ func scaleBundle(prefixes []PrefixDefinition, sets []AddressSetDefinition) Snaps
 	return SnapshotBundle{
 		SchemaVersion: 1,
 		SnapshotID:    "scale",
-		TenantID:      "scale-tenant",
 		Version:       1,
 		EffectiveFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		Prefixes:      prefixes,

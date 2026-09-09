@@ -62,7 +62,7 @@ func TestRealClickHouseStorageV2MigrationBackfill(t *testing.T) {
 	defer native.Close()
 	legacyInsert := `INSERT INTO flow_records (
   event_time, received_time, record_id, ingest_batch_id, ingest_generation,
-  kafka_topic, kafka_partition, kafka_offset, record_index, tenant_id,
+  kafka_topic, kafka_partition, kafka_offset, record_index,
   raw_bytes, raw_packets, estimated_valid, estimated_bytes, estimated_packets,
   dimension_snapshot_id, geo_version, business_direction, category, disposition,
   classification_version, fact_schema
@@ -70,7 +70,7 @@ func TestRealClickHouseStorageV2MigrationBackfill(t *testing.T) {
   toDateTime64('2026-09-05 02:03:04.005', 3, 'UTC'),
   toDateTime64('2026-09-05 02:03:05.000', 3, 'UTC'),
   unhex(repeat('01', 32)), unhex(repeat('02', 32)), 7,
-  'watchdog.flow.raw-v1', 3, 42, 0, 'tenant-a',
+  'watchdog.flow.raw-v1', 3, 42, 0,
   1234, 12, 1, 123400, 1200,
   'snapshot-a', 'geo-a', 'out', 'overseas', 'count', 9, 2
 )`
@@ -133,12 +133,12 @@ FROM flow_records FINAL`,
 	day := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
 	for hour := 0; hour < 24; hour++ {
 		bucket := day.Add(time.Duration(hour) * time.Hour)
-		if err := rollup.Run(ctx, RollupRequest{TenantID: "tenant-a", Resolution: RollupOneHour,
+		if err := rollup.Run(ctx, RollupRequest{Resolution: RollupOneHour,
 			Bucket: bucket, Generation: 1, GeneratedAt: day.Add(48 * time.Hour)}); err != nil {
 			t.Fatalf("rollup migrated V2 hour %d: %v", hour, err)
 		}
 	}
-	sourceCounters, archiveCounters, err := rollup.DayStorageCounters(ctx, "tenant-a", day)
+	sourceCounters, archiveCounters, err := rollup.DayStorageCounters(ctx, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +289,8 @@ ORDER BY name`,
 		t.Fatalf("live Storage V2 table rows=%d, want 3", partitionRows)
 	}
 	for index := 0; index < partitionRows; index++ {
-		if !strings.Contains(partitionKeys.Row(index), "tenant_id") || strings.Contains(strings.ToUpper(createQueries.Row(index)), " TTL ") {
-			t.Fatalf("table %s partition=%q retained fixed TTL: %s", tableNames.Row(index), partitionKeys.Row(index), createQueries.Row(index))
+		if strings.Contains(partitionKeys.Row(index), "tenant_id") || strings.Contains(strings.ToUpper(createQueries.Row(index)), " TTL ") {
+			t.Fatalf("table %s partition=%q retained tenant_id or fixed TTL: %s", tableNames.Row(index), partitionKeys.Row(index), createQueries.Row(index))
 		}
 	}
 }

@@ -38,7 +38,7 @@ func TestPrepareBlocksIsBoundedAndDeterministic(t *testing.T) {
 	if first[0].FirstOffset != 10 || first[0].LastOffset != 11 || first[0].SourceBatchCount != 2 || first[0].RawBytes != 300 || first[0].RawPackets != 2 || first[0].EstimatedBytes != 3_000 || first[0].EstimatedPackets != 20 || first[0].EstimatedValidRecords != 2 {
 		t.Fatalf("unexpected first receipt: %+v", first[0])
 	}
-	if !reflect.DeepEqual(first[0].TenantIDs, []string{"tenant-a"}) || !first[0].MinEventTime.Equal(time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC)) || !first[0].MaxEventTime.Equal(first[0].MinEventTime) {
+	if !first[0].MinEventTime.Equal(time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC)) || !first[0].MaxEventTime.Equal(first[0].MinEventTime) {
 		t.Fatalf("unexpected first audit metadata: %+v", first[0])
 	}
 	if blockDeduplicationToken(first[0]) == blockDeduplicationToken(first[1]) || len(first[0].Receipts) != 1 || len(first[1].Receipts) != 1 {
@@ -71,20 +71,18 @@ func TestPrepareBlocksReceiptIdentityDoesNotDependOnBlockBudget(t *testing.T) {
 	}
 }
 
-func TestPrepareBlocksCanonicalizesCrossTenantAuditMetadata(t *testing.T) {
+func TestPrepareBlocksCanonicalizesAuditMetadata(t *testing.T) {
 	first := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
-	first.TenantID = "tenant-z"
 	first.Records[0].EventTime = time.Date(2026, 9, 5, 1, 3, 0, 0, time.UTC)
 	second := testEnrichedBatch(11, testEnrichedRecord(2, 200, 2_000))
-	second.TenantID = "tenant-a"
 	second.Records[0].EventTime = time.Date(2026, 9, 5, 1, 1, 0, 0, time.UTC)
 
 	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != 1 || !reflect.DeepEqual(blocks[0].TenantIDs, []string{"tenant-a", "tenant-z"}) {
-		t.Fatalf("tenant IDs are not canonical: %+v", blocks)
+	if len(blocks) != 1 {
+		t.Fatalf("expected one merged block: %+v", blocks)
 	}
 	if !blocks[0].MinEventTime.Equal(second.Records[0].EventTime) || !blocks[0].MaxEventTime.Equal(first.Records[0].EventTime) {
 		t.Fatalf("event range=%s..%s", blocks[0].MinEventTime, blocks[0].MaxEventTime)
@@ -94,14 +92,13 @@ func TestPrepareBlocksCanonicalizesCrossTenantAuditMetadata(t *testing.T) {
 func TestPrepareBlocksRetainsNonPersistedMessageReceipt(t *testing.T) {
 	batch := testEnrichedBatch(10)
 	batch.MessageDisposition = flowworker.MessageDispositionTemplateMissing
-	batch.TenantID, batch.CollectorID, batch.ExporterID = "", "", ""
+	batch.CollectorID, batch.ExporterID = "", ""
 	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(blocks) != 1 || len(blocks[0].Records) != 0 || len(blocks[0].Receipts) != 1 ||
-		blocks[0].Receipts[0].Disposition != flowworker.MessageDispositionTemplateMissing || blocks[0].Receipts[0].RecordCount != 0 ||
-		len(blocks[0].Receipts[0].TenantIDs) != 0 {
+		blocks[0].Receipts[0].Disposition != flowworker.MessageDispositionTemplateMissing || blocks[0].Receipts[0].RecordCount != 0 {
 		t.Fatalf("receipt-only blocks=%+v", blocks)
 	}
 }
@@ -117,10 +114,9 @@ func TestPrepareBlocksRejectsMixedPartitionAndReceiptOverflow(t *testing.T) {
 	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{first, second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
 		t.Fatalf("overflow error=%v", err)
 	}
-	second = testEnrichedBatch(11, testEnrichedRecord(2, 1, 0))
-	second.TenantID = ""
-	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, testEnrichedRecord(1, 1, 0)), second}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
-		t.Fatalf("empty tenant error=%v", err)
+	empty := testEnrichedBatch(11)
+	if _, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, testEnrichedRecord(1, 1, 0)), empty}, BatchLimits{}); !errors.Is(err, ErrInvalidBatchGroup) {
+		t.Fatalf("persisted empty-records error=%v", err)
 	}
 }
 
@@ -146,7 +142,7 @@ func testEnrichedBatch(offset int64, records ...flowworker.EnrichedRecord) *flow
 	return &flowworker.EnrichedBatch{
 		SchemaVersion: flowworker.EnrichedBatchSchemaVersion, MessageDisposition: flowworker.MessageDispositionPersisted,
 		SourceStreamID: "cluster-a:raw-v1:incarnation-1", KafkaTopic: "watchdog.flow.raw-v1", KafkaPartition: 3, KafkaOffset: offset,
-		TenantID: "tenant-a", CollectorID: "collector-a", ExporterID: "exporter-a",
+		CollectorID: "collector-a", ExporterID: "exporter-a",
 		ReceivedAt: time.Date(2026, 9, 5, 1, 2, 3, 0, time.UTC), SourceIP: netip.MustParseAddr("192.0.2.1"),
 		Records: records,
 	}
@@ -204,14 +200,13 @@ func TestPrepareBlocksCapsPartitionDays(t *testing.T) {
 	}
 }
 
-func TestPrepareBlocksCapsTenantDayPartitions(t *testing.T) {
+func TestPrepareBlocksCapsDayPartitions(t *testing.T) {
 	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	batches := make([]*flowworker.EnrichedBatch, 0, 4)
 	for i := 0; i < 4; i++ {
 		record := testEnrichedRecord(byte(i+1), 100, 1000)
-		record.EventTime = base
+		record.EventTime = base.AddDate(0, 0, i)
 		batch := testEnrichedBatch(int64(10+i), record)
-		batch.TenantID = []string{"tenant-a", "tenant-b", "tenant-c", "tenant-d"}[i]
 		batches = append(batches, batch)
 	}
 	blocks, err := PrepareBlocks(batches, BatchLimits{MaxRows: 100, MaxApproxBytes: 1 << 20, MaxPartitionDays: 2})
@@ -219,15 +214,15 @@ func TestPrepareBlocksCapsTenantDayPartitions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(blocks) != 2 {
-		t.Fatalf("blocks=%d, want 2 for four tenant-day partitions capped at two", len(blocks))
+		t.Fatalf("blocks=%d, want 2 for four day partitions capped at two", len(blocks))
 	}
 	for _, block := range blocks {
 		partitions := map[string]struct{}{}
 		for _, ref := range block.Records {
-			partitions[ref.Batch.TenantID+"/"+ref.Record.EventTime.UTC().Format("20060102")] = struct{}{}
+			partitions[ref.Record.EventTime.UTC().Format("20060102")] = struct{}{}
 		}
 		if len(partitions) > 2 {
-			t.Fatalf("block touches %d tenant-day partitions, want <= 2", len(partitions))
+			t.Fatalf("block touches %d day partitions, want <= 2", len(partitions))
 		}
 	}
 }

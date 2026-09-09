@@ -342,7 +342,7 @@ func compileDimension(t testing.TB, id string, version uint64, effectiveFrom tim
 		remoteLabels[key] = value
 	}
 	snapshot, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: id, TenantID: "tenant-a", Version: version, EffectiveFrom: effectiveFrom,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: id, Version: version, EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{
 			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "customer"}},
 			{ID: "remote", CIDR: "203.0.113.0/24", Labels: remoteLabels},
@@ -357,7 +357,7 @@ func compileDimension(t testing.TB, id string, version uint64, effectiveFrom tim
 func compileClassification(t testing.TB, version uint32, effectiveFrom time.Time, dimensionID string, internal, transit flowdimension.RecordPolicy) *flowdimension.ClassificationSnapshot {
 	t.Helper()
 	snapshot, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: "tenant-a", Version: version, EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimensionID,
+		Version: version, EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimensionID,
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: internal, TransitPolicy: transit,
 	})
@@ -381,7 +381,7 @@ func testBatch(eventTime time.Time) *RecordBatch {
 		BatchSchemaVersion: RecordBatchSchemaVersion, MessageDisposition: MessageDispositionPersisted,
 		SourceStreamID: "cluster-a:raw-v1:incarnation-1",
 		KafkaTopic:     "watchdog.flow.raw-v1", KafkaPartition: 7, KafkaOffset: 42,
-		TenantID: "tenant-a", CollectorID: "collector-a", ExporterID: "exporter-a", RegistryVersion: 9,
+		CollectorID: "collector-a", ExporterID: "exporter-a", RegistryVersion: 9,
 		ReceivedAtUnixMS: testMinute(14, 0).UnixMilli(), Protocol: 1, SourceIP: address16("192.0.2.10"),
 		Records: []*Record{{
 			RecordIndex: 0, EventTimeUnixMS: eventTime.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",

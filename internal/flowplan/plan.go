@@ -33,7 +33,6 @@ type SourceBinding struct {
 	Protocol            Protocol `json:"protocol"`
 	SourcePrefix        string   `json:"source_prefix"`
 	ObservationDomainID *uint64  `json:"observation_domain_id,omitempty"`
-	TenantID            string   `json:"tenant_id"`
 	ExporterID          string   `json:"exporter_id"`
 	TargetID            string   `json:"target_id"`
 	DeviceID            string   `json:"device_id"`
@@ -115,8 +114,8 @@ func compilePlan(plan Plan, now time.Time, requireActive bool) (*Registry, error
 		if source.Protocol < ProtocolSFlow5 || source.Protocol > ProtocolIPFIX {
 			return nil, fmt.Errorf("sources[%d].protocol is invalid", i)
 		}
-		if strings.TrimSpace(source.TenantID) == "" || strings.TrimSpace(source.ExporterID) == "" || strings.TrimSpace(source.TargetID) == "" {
-			return nil, fmt.Errorf("sources[%d] tenant_id, exporter_id, and target_id are required", i)
+		if strings.TrimSpace(source.ExporterID) == "" || strings.TrimSpace(source.TargetID) == "" {
+			return nil, fmt.Errorf("sources[%d] exporter_id and target_id are required", i)
 		}
 		if plan.SchemaVersion >= 2 && source.OwnershipEpoch == 0 {
 			return nil, fmt.Errorf("sources[%d].ownership_epoch is required", i)

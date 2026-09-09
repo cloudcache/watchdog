@@ -22,7 +22,7 @@ type flowRollupReaperStore interface {
 // flowRollupReaperRunner is the ClickHouse-backed surface: late-data detection
 // plus the reaper's own metric counters. *flowch.RollupRunner satisfies it.
 type flowRollupReaperRunner interface {
-	BucketNeedsRepair(ctx context.Context, tenantID string, resolution flowch.RollupResolution, bucket time.Time) (bool, error)
+	BucketNeedsRepair(ctx context.Context, resolution flowch.RollupResolution, bucket time.Time) (bool, error)
 	RecordReaperRepair(reason string)
 	RecordPermanentGap()
 }
@@ -241,7 +241,7 @@ func (r *FlowRollupReaper) reapSeries(ctx context.Context, tenantID ID, resoluti
 // count no longer matches its aggregate (late arrivals, F2). Reconciliation
 // errors are logged, not fatal: they must not stall the frontier for the series.
 func (r *FlowRollupReaper) reconcile(ctx context.Context, tenantID ID, resolution flowch.RollupResolution, bucket time.Time, currentGeneration uint64) {
-	needs, err := r.Runner.BucketNeedsRepair(ctx, string(tenantID), resolution, bucket)
+	needs, err := r.Runner.BucketNeedsRepair(ctx, resolution, bucket)
 	if err != nil {
 		r.logf("flow rollup reaper reconcile %s tenant %s bucket %d failed: %v", resolution, tenantID, bucket.Unix(), err)
 		return

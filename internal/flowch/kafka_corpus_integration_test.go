@@ -224,8 +224,8 @@ func corpusBinding(_ string, _ uint64, protocol flowplan.Protocol, source netip.
 	}
 	return flowplan.SourceBinding{
 		Protocol: protocol, SourcePrefix: netip.PrefixFrom(source, bits).String(),
-		TenantID: corpusTenantID, ExporterID: fmt.Sprintf("exporter-%d", protocol),
-		TargetID: "target-corpus", DeviceID: "device-corpus", OwnershipEpoch: 1,
+		ExporterID: fmt.Sprintf("exporter-%d", protocol),
+		TargetID:   "target-corpus", DeviceID: "device-corpus", OwnershipEpoch: 1,
 		SamplingMode: flowplan.SamplingModePreScaled, Enabled: true,
 	}, nil
 }
@@ -351,7 +351,7 @@ func newCorpusEnricher(t testing.TB) *flowworker.Enricher {
 	t.Helper()
 	effectiveFrom := time.Unix(0, 0).UTC()
 	dimension, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-corpus", TenantID: corpusTenantID,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-corpus",
 		Version: 1, EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{
 			{ID: "all_ipv4", CIDR: "0.0.0.0/0", Labels: map[string]string{"flow": "local", "business": "corpus"}},
@@ -362,7 +362,7 @@ func newCorpusEnricher(t testing.TB) *flowworker.Enricher {
 		t.Fatal(err)
 	}
 	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: corpusTenantID, Version: 1, EffectiveFrom: effectiveFrom, DimensionSnapshotID: "dimension-corpus",
+		Version: 1, EffectiveFrom: effectiveFrom, DimensionSnapshotID: "dimension-corpus",
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
 	if err != nil {
@@ -499,9 +499,7 @@ func readAndAuditCorpusFacts(t testing.TB, ctx context.Context, native *NativeIn
        toString(remote_geo_country_id) AS country, toString(remote_geo_province_id) AS province,
        toString(remote_geo_city_id) AS city, toString(disposition) AS disposition
 FROM flow_records FINAL
-WHERE tenant_id = {tenant:String}
 ORDER BY source_stream_id, kafka_partition, kafka_offset, record_index`,
-		Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
 		Result: proto.Results{
 			{Name: "source_stream_id", Data: sourceStreamIDs}, {Name: "kafka_topic", Data: kafkaTopics}, {Name: "kafka_partition", Data: &kafkaPartitions},
 			{Name: "event_time", Data: eventTimes}, {Name: "kafka_offset", Data: &kafkaOffsets}, {Name: "record_index", Data: &recordIndexes}, {Name: "flow_protocol", Data: &flowProtocols},
@@ -579,9 +577,7 @@ func auditCorpusReceipts(t testing.TB, ctx context.Context, native *NativeInsert
 		Body: `SELECT source_stream_id, kafka_topic, kafka_partition, kafka_offset, worker_schema, receipt_schema, record_count,
        raw_bytes, raw_packets, estimated_bytes, estimated_packets, estimated_valid_records
 FROM flow_ingest_receipts FINAL
-WHERE has(tenant_ids, {tenant:String})
 ORDER BY source_stream_id, kafka_partition, kafka_offset`,
-		Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
 		Result: proto.Results{
 			{Name: "source_stream_id", Data: sourceStreamIDs}, {Name: "kafka_topic", Data: kafkaTopics},
 			{Name: "kafka_partition", Data: &kafkaPartitions}, {Name: "kafka_offset", Data: &kafkaOffsets},
@@ -657,7 +653,7 @@ func rollupAndAuditCorpus(t testing.TB, ctx context.Context, native *NativeInser
 	}
 	for bucket := range facts.buckets {
 		request := RollupRequest{
-			TenantID: corpusTenantID, Resolution: RollupOneMinute, Bucket: bucket,
+			Resolution: RollupOneMinute, Bucket: bucket,
 			Generation: 1, GeneratedAt: bucket.Add(2 * time.Minute),
 		}
 		if err := runner.Run(ctx, request); err != nil {
@@ -680,11 +676,9 @@ func rollupAndAuditCorpus(t testing.TB, ctx context.Context, native *NativeInser
        sum(raw_bytes) AS raw_bytes, sum(received_records) AS records,
        uniqExact(dimension_value) AS distinct_values
 FROM flow_aggregate_1m FINAL
-WHERE tenant_id = {tenant:String}
-  AND dimension_kind IN ('geo.continent', 'geo.region', 'geo.country', 'geo.province', 'geo.city')
+WHERE dimension_kind IN ('geo.continent', 'geo.region', 'geo.country', 'geo.province', 'geo.city')
 GROUP BY dimension_kind
 ORDER BY dimension_kind`,
-		Parameters: ch.Parameters(map[string]any{"tenant": corpusTenantID}),
 		Result: proto.Results{
 			{Name: "kind", Data: kinds}, {Name: "value", Data: &values}, {Name: "raw_bytes", Data: &rawBytes},
 			{Name: "records", Data: &records}, {Name: "distinct_values", Data: &distinctValues},

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowworker"
@@ -20,9 +19,9 @@ const (
 	defaultMaxBytes     = 64 << 20
 	hardMaxRows         = 1_000_000
 	hardMaxBytes        = 1 << 30
-	// A block may not touch more distinct tenant + UTC event-time day partitions
-	// than this; ClickHouse rejects an insert exceeding
-	// max_partitions_per_insert_block (default 100). A multi-tenant replay would
+	// A block may not touch more distinct UTC event-time day partitions than
+	// this; ClickHouse rejects an insert exceeding
+	// max_partitions_per_insert_block (default 100). A wide-span replay would
 	// otherwise retry forever and stall the Kafka partition.
 	defaultMaxPartitionDays = 90
 	hardMaxPartitionDays    = 100
@@ -50,7 +49,6 @@ type PreparedBlock struct {
 	LastOffset            int64
 	LastRecordIndex       uint32
 	SourceBatchCount      uint32
-	TenantIDs             []string
 	RawBytes              uint64
 	RawPackets            uint64
 	EstimatedBytes        uint64
@@ -72,7 +70,6 @@ type PreparedReceipt struct {
 	KafkaTopic            string
 	KafkaPartition        int32
 	KafkaOffset           int64
-	TenantIDs             []string
 	RecordCount           uint64
 	RawBytes              uint64
 	RawPackets            uint64
@@ -95,10 +92,8 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 
 	blocks := make([]PreparedBlock, 0, 1)
 	current := PreparedBlock{SourceStreamID: batches[0].SourceStreamID, KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
-	currentTenants := make(map[string]struct{})
 	type storagePartition struct {
-		tenantID string
-		day      int32
+		day int32
 	}
 	currentPartitions := make(map[storagePartition]struct{})
 	currentOffset := int64(-1)
@@ -107,14 +102,8 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 		if blockEmpty() {
 			return nil
 		}
-		current.TenantIDs = make([]string, 0, len(currentTenants))
-		for tenantID := range currentTenants {
-			current.TenantIDs = append(current.TenantIDs, tenantID)
-		}
-		sort.Strings(current.TenantIDs)
 		blocks = append(blocks, current)
 		current = PreparedBlock{SourceStreamID: batches[0].SourceStreamID, KafkaTopic: batches[0].KafkaTopic, KafkaPartition: batches[0].KafkaPartition}
-		clear(currentTenants)
 		clear(currentPartitions)
 		currentOffset = -1
 		return nil
@@ -154,9 +143,9 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 				return nil, fmt.Errorf("%w: record %s/%d/%d/%d exceeds block byte limit", ErrInvalidBatchGroup, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, record.RecordIndex)
 			}
 			eventTime := record.EventTime.UTC()
-			// Storage V2 partitions by (tenant_id, toYYYYMMDD(event_time)); bound
-			// that exact physical cardinality, not just distinct calendar days.
-			partition := storagePartition{tenantID: batch.TenantID, day: int32(eventTime.Unix() / 86400)}
+			// Storage V2 partitions by toYYYYMMDD(event_time); bound that exact
+			// physical cardinality, not just distinct calendar days.
+			partition := storagePartition{day: int32(eventTime.Unix() / 86400)}
 			_, samePartition := currentPartitions[partition]
 			exceedsPartitions := !samePartition && len(currentPartitions) >= limits.MaxPartitionDays
 			lastRecord := index == len(batch.Records)-1
@@ -180,7 +169,6 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			current.LastRecordIndex = record.RecordIndex
 			if currentOffset != batch.KafkaOffset {
 				current.SourceBatchCount++
-				currentTenants[batch.TenantID] = struct{}{}
 				currentOffset = batch.KafkaOffset
 			}
 			if current.RawBytes > math.MaxUint64-record.RawBytes {
@@ -250,8 +238,8 @@ func validateBatchGroup(batches []*flowworker.EnrichedBatch) error {
 		if batch == nil || batch.SchemaVersion != flowworker.EnrichedBatchSchemaVersion || batch.SourceStreamID != batches[0].SourceStreamID || batch.KafkaTopic != batches[0].KafkaTopic || batch.KafkaPartition != batches[0].KafkaPartition || batch.KafkaOffset < 0 || batch.ReceivedAt.UnixMilli() <= 0 || batch.MessageDisposition < flowworker.MessageDispositionPersisted || batch.MessageDisposition > flowworker.MessageDispositionMappingRejected {
 			return fmt.Errorf("%w: source batch %d has invalid identity or records", ErrInvalidBatchGroup, index)
 		}
-		if batch.MessageDisposition == flowworker.MessageDispositionPersisted && (batch.TenantID == "" || len(batch.Records) == 0) {
-			return fmt.Errorf("%w: persisted source batch %d requires tenant and records", ErrInvalidBatchGroup, index)
+		if batch.MessageDisposition == flowworker.MessageDispositionPersisted && len(batch.Records) == 0 {
+			return fmt.Errorf("%w: persisted source batch %d requires records", ErrInvalidBatchGroup, index)
 		}
 		if batch.MessageDisposition != flowworker.MessageDispositionPersisted && len(batch.Records) != 0 {
 			return fmt.Errorf("%w: non-persisted source batch %d carries records", ErrInvalidBatchGroup, index)
@@ -272,7 +260,7 @@ func validateBatchGroup(batches []*flowworker.EnrichedBatch) error {
 func approximateRecordBytes(batch *flowworker.EnrichedBatch, record *flowworker.EnrichedRecord) int {
 	// Fixed-width ClickHouse values, column offsets and conservative protocol
 	// overhead. Variable strings/arrays are counted exactly by byte length.
-	size := 512 + len(batch.KafkaTopic) + len(batch.TenantID) + len(batch.CollectorID) + len(batch.ExporterID)
+	size := 512 + len(batch.KafkaTopic) + len(batch.CollectorID) + len(batch.ExporterID)
 	size += len(record.TargetID) + len(record.DeviceID) + len(record.Dimensions.SnapshotID) + len(record.Dimensions.Business)
 	size += len(record.Dimensions.Local.PrefixID) + len(record.Dimensions.Remote.PrefixID)
 	size += len(record.RemoteGeo.Country) + len(record.RemoteGeo.AdminCode) + len(record.RemoteGeo.Subdivision) + len(record.RemoteGeo.City) + len(record.RemoteGeo.Version)
@@ -297,9 +285,6 @@ func prepareReceipt(batch *flowworker.EnrichedBatch) (PreparedReceipt, error) {
 		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset,
 		RecordCount: uint64(len(batch.Records)),
 		ReceivedAt:  batch.ReceivedAt.UTC(),
-	}
-	if batch.TenantID != "" {
-		receipt.TenantIDs = []string{batch.TenantID}
 	}
 	for _, record := range batch.Records {
 		if receipt.RawBytes > math.MaxUint64-record.RawBytes || receipt.RawPackets > math.MaxUint64-record.RawPackets {

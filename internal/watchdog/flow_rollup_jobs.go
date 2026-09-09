@@ -42,7 +42,7 @@ type FlowRollupJobStore interface {
 }
 
 type FlowRollupGenerationReader interface {
-	LatestGeneration(context.Context, string, flowch.RollupResolution, time.Time) (uint64, error)
+	LatestGeneration(context.Context, flowch.RollupResolution, time.Time) (uint64, error)
 }
 
 type FlowRollupScheduleConfig struct {
@@ -248,7 +248,7 @@ func EnqueueFlowRollupRepair(ctx context.Context, store FlowRollupJobStore, gene
 	if store == nil || generations == nil {
 		return OperationJob{}, errors.New("flow rollup job store and generation reader are required")
 	}
-	current, err := generations.LatestGeneration(ctx, string(tenantID), resolution, bucket)
+	current, err := generations.LatestGeneration(ctx, resolution, bucket)
 	if err != nil {
 		return OperationJob{}, err
 	}
@@ -280,7 +280,7 @@ func NewFlowRollupOperationJob(tenantID ID, resolution flowch.RollupResolution, 
 		generatedAt = bucket.Add(time.Hour).UTC()
 	}
 	request := flowch.RollupRequest{
-		TenantID: string(tenantID), Resolution: resolution, Bucket: bucket,
+		Resolution: resolution, Bucket: bucket,
 		Generation: generation, GeneratedAt: generatedAt,
 	}
 	if err := flowch.ValidateRollupRequest(request); err != nil {
@@ -313,8 +313,8 @@ func NewFlowRollupJobHandler(runner FlowBucketRollupRunner) OperationJobHandler 
 			return "", err
 		}
 		request := flowch.RollupRequest{
-			TenantID: string(job.TenantID), Resolution: payload.Resolution,
-			Bucket: time.Unix(payload.BucketUnix, 0).UTC(), Generation: payload.Generation,
+			Resolution: payload.Resolution,
+			Bucket:     time.Unix(payload.BucketUnix, 0).UTC(), Generation: payload.Generation,
 			GeneratedAt: job.CreatedAt.UTC(),
 		}
 		if err := flowch.ValidateRollupRequest(request); err != nil {

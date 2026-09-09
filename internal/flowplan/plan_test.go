@@ -13,7 +13,7 @@ func TestCompilePlanRejectsSampledFallbackWithoutRate(t *testing.T) {
 	_, err := CompilePlan(Plan{
 		SchemaVersion: 2, Revision: 1, CollectorID: "collector_test", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 		Sources: []SourceBinding{{
-			Protocol: ProtocolIPFIX, SourcePrefix: "192.0.2.0/24", TenantID: "tenant", ExporterID: "exporter", TargetID: "target",
+			Protocol: ProtocolIPFIX, SourcePrefix: "192.0.2.0/24", ExporterID: "exporter", TargetID: "target",
 			OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true,
 			SamplingRules: []SamplingRule{{ObservationDomainID: &domain, Mode: SamplingModeSampled}},
 		}},
@@ -28,7 +28,7 @@ func TestCompilePlanRejectsDefaultRateForPreScaledCounters(t *testing.T) {
 	_, err := CompilePlan(Plan{
 		SchemaVersion: 2, Revision: 1, CollectorID: "collector_test", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 		Sources: []SourceBinding{{
-			Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.0/24", TenantID: "tenant", ExporterID: "exporter", TargetID: "target",
+			Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.0/24", ExporterID: "exporter", TargetID: "target",
 			OwnershipEpoch: 1, SamplingMode: SamplingModePreScaled, DefaultSamplingRate: 1000, Enabled: true,
 		}},
 	}, now)
@@ -46,8 +46,8 @@ func TestAdmitSourceFamily(t *testing.T) {
 		NotBefore:     now.Add(-time.Minute),
 		ExpiresAt:     now.Add(time.Hour),
 		Sources: []SourceBinding{
-			{Protocol: ProtocolSFlow5, SourcePrefix: "192.0.2.0/24", TenantID: "tenant", ExporterID: "sflow", TargetID: "target", OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true},
-			{Protocol: ProtocolIPFIX, SourcePrefix: "2001:db8::/32", TenantID: "tenant", ExporterID: "ipfix", TargetID: "target", OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true},
+			{Protocol: ProtocolSFlow5, SourcePrefix: "192.0.2.0/24", ExporterID: "sflow", TargetID: "target", OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true},
+			{Protocol: ProtocolIPFIX, SourcePrefix: "2001:db8::/32", ExporterID: "ipfix", TargetID: "target", OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true},
 		},
 	}, now)
 	if err != nil {

@@ -2,13 +2,13 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 
 -- Reorder the aggregate sort keys so the forced dimension_kind filter prunes
--- (F7). Every read pins (tenant_id, bucket, dimension_kind) — see flowquery
+-- (F7). Every read pins (bucket, dimension_kind) — see flowquery
 -- query.go (dimension_kind = {dimension}) and the _generation lookup — but
--- dimension_kind sat at ORDER BY position 9, behind target/device/exporter/
+-- dimension_kind sat at ORDER BY position 8, behind target/device/exporter/
 -- business_direction/category/business, none of which a top-N query pins. The
--- primary index could prune only (tenant_id, bucket), then scanned every
+-- primary index could prune only (bucket), then scanned every
 -- dimension_kind. Moving dimension_kind + dimension_value directly after
--- (tenant_id, bucket) makes the equality filter a granule range, and puts the
+-- (bucket) makes the equality filter a granule range, and puts the
 -- grouped/ranked dimension_value next for scan locality.
 --
 -- MergeTree cannot ALTER ORDER BY, so each table is rebuilt: a reordered copy,
@@ -27,7 +27,6 @@ DROP TABLE IF EXISTS watchdog_flow.flow_aggregate_1m_reordered;
 
 CREATE TABLE watchdog_flow.flow_aggregate_1m_reordered (
   bucket DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
-  tenant_id LowCardinality(String),
   target_id LowCardinality(String),
   device_id LowCardinality(String),
   exporter_id LowCardinality(String),
@@ -52,7 +51,7 @@ CREATE TABLE watchdog_flow.flow_aggregate_1m_reordered (
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, dimension_kind, dimension_value,
+  bucket, dimension_kind, dimension_value,
   target_id, device_id, exporter_id, business_direction, category, business,
   dimension_snapshot_id, geo_version, classification_version)
 TTL bucket + INTERVAL 180 DAY
@@ -68,7 +67,6 @@ DROP TABLE IF EXISTS watchdog_flow.flow_aggregate_1h_reordered;
 
 CREATE TABLE watchdog_flow.flow_aggregate_1h_reordered (
   bucket DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
-  tenant_id LowCardinality(String),
   target_id LowCardinality(String),
   device_id LowCardinality(String),
   exporter_id LowCardinality(String),
@@ -93,7 +91,7 @@ CREATE TABLE watchdog_flow.flow_aggregate_1h_reordered (
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, dimension_kind, dimension_value,
+  bucket, dimension_kind, dimension_value,
   target_id, device_id, exporter_id, business_direction, category, business,
   dimension_snapshot_id, geo_version, classification_version)
 TTL bucket + INTERVAL 400 DAY

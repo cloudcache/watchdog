@@ -65,7 +65,6 @@ type AddressSnapshotLimits struct {
 
 type AddressSnapshotArtifact struct {
 	SnapshotID           string
-	TenantID             string
 	Version              uint64
 	EffectiveFrom        time.Time
 	BuilderVersion       string
@@ -144,7 +143,7 @@ type AddressSnapshotGeoValue struct {
 }
 
 // AddressSnapshotValue is dictionary encoded once and referenced by ranges.
-// Supplier and customer namespaces remain separate so a tenant correction can
+// Supplier and customer namespaces remain separate so an operator correction can
 // never overwrite supplier provenance merely because their numeric IDs match.
 type AddressSnapshotValue struct {
 	SupplierGeo          AddressSnapshotGeoValue
@@ -314,7 +313,7 @@ func normalizeAddressSnapshotLimits(limits AddressSnapshotLimits) (AddressSnapsh
 }
 
 func validateAddressSnapshot(snapshot AddressSnapshotArtifact, limits AddressSnapshotLimits) error {
-	if !validIdentifier(snapshot.SnapshotID, 128) || !validIdentifier(snapshot.TenantID, 64) || snapshot.Version == 0 || !validText(snapshot.BuilderVersion, 64) || !validSnapshotSHA256(snapshot.SourceManifestSHA256) {
+	if !validIdentifier(snapshot.SnapshotID, 128) || snapshot.Version == 0 || !validText(snapshot.BuilderVersion, 64) || !validSnapshotSHA256(snapshot.SourceManifestSHA256) {
 		return fmt.Errorf("%w: metadata is invalid", ErrInvalidAddressSnapshot)
 	}
 	_, offset := snapshot.EffectiveFrom.Zone()
@@ -599,7 +598,6 @@ func addressSnapshotOperatorLess(left, right AddressSnapshotOperator) bool {
 func marshalAddressSnapshotPayload(snapshot AddressSnapshotArtifact, limits AddressSnapshotLimits) ([]byte, error) {
 	writer := addressSnapshotWriter{data: make([]byte, 0, min(limits.MaxUncompressedBytes, 1<<20)), limit: limits.MaxUncompressedBytes}
 	writer.string16(snapshot.SnapshotID)
-	writer.string16(snapshot.TenantID)
 	writer.string16(snapshot.BuilderVersion)
 	writer.string16(snapshot.SourceManifestSHA256)
 	writer.u64(snapshot.Version)
@@ -696,7 +694,6 @@ func unmarshalAddressSnapshotPayload(payload []byte, limits AddressSnapshotLimit
 	reader := addressSnapshotReader{data: payload}
 	var snapshot AddressSnapshotArtifact
 	snapshot.SnapshotID = reader.string16()
-	snapshot.TenantID = reader.string16()
 	snapshot.BuilderVersion = reader.string16()
 	snapshot.SourceManifestSHA256 = reader.string16()
 	snapshot.Version = reader.u64()

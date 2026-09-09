@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 
 -- A narrow, offset-ordered copy for bounded receipt reconciliation. The base
--- table keeps its tenant/time order for user queries. ReplacingMergeTree must
+-- table keeps its time order for user queries. ReplacingMergeTree must
 -- rebuild this projection when it deduplicates parts; dropping it would make
 -- audit cost silently regress to a base-table scan.
 ALTER TABLE watchdog_flow.flow_records

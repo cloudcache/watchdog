@@ -432,7 +432,7 @@ func measureAddressSnapshotCatalogScale(t testing.TB, source flowdimension.Addre
 		t.Fatal(err)
 	}
 	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: source.TenantID, Version: 1, EffectiveFrom: source.EffectiveFrom, DimensionSnapshotID: source.SnapshotID,
+		Version: 1, EffectiveFrom: source.EffectiveFrom, DimensionSnapshotID: source.SnapshotID,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
 	if err != nil {
@@ -465,7 +465,7 @@ func measureAddressSnapshotCatalogScale(t testing.TB, source flowdimension.Addre
 		t.Fatal(err)
 	}
 	updateClassification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		TenantID: source.TenantID, Version: 2, EffectiveFrom: updateArtifact.EffectiveFrom, DimensionSnapshotID: updateArtifact.SnapshotID,
+		Version: 2, EffectiveFrom: updateArtifact.EffectiveFrom, DimensionSnapshotID: updateArtifact.SnapshotID,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
 	if err != nil {
@@ -483,7 +483,7 @@ func measureAddressSnapshotCatalogScale(t testing.TB, source flowdimension.Addre
 			defer readers.Done()
 			for !stopReaders.Load() {
 				started := time.Now()
-				version, err := catalog.Select(source.TenantID, updateArtifact.EffectiveFrom.Add(time.Minute))
+				version, err := catalog.Select(updateArtifact.EffectiveFrom.Add(time.Minute))
 				if err != nil {
 					readerError.Store(true)
 					return

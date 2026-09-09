@@ -43,12 +43,11 @@ type PublishedRule struct {
 }
 
 // RuleSetBundle is the immutable wire object installed by workers. SnapshotID
-// is the rule-set version written into findings; Version is the tenant-local
-// monotonic publication sequence.
+// is the rule-set version written into findings; Version is the monotonic
+// publication sequence.
 type RuleSetBundle struct {
 	SchemaVersion       uint32          `json:"schema_version"`
 	SnapshotID          string          `json:"snapshot_id"`
-	TenantID            string          `json:"tenant_id"`
 	Version             uint64          `json:"version"`
 	EffectiveFrom       time.Time       `json:"effective_from"`
 	MediumThreshold     uint16          `json:"medium_threshold"`
@@ -62,7 +61,6 @@ type RuleSetBundle struct {
 type RuleSetBundleMetadata struct {
 	SchemaVersion uint32
 	SnapshotID    string
-	TenantID      string
 	Version       uint64
 	EffectiveFrom time.Time
 	Checksum      string
@@ -124,7 +122,7 @@ func DecodeAndCompileRuleSetBundle(data []byte, expectedChecksum string) (Compil
 	}
 	return compiled, RuleSetBundleMetadata{
 		SchemaVersion: canonical.SchemaVersion, SnapshotID: canonical.SnapshotID,
-		TenantID: canonical.TenantID, Version: canonical.Version,
+		Version:       canonical.Version,
 		EffectiveFrom: canonical.EffectiveFrom, Checksum: expectedChecksum,
 		RuleCount: len(canonical.Rules),
 	}, nil
@@ -134,7 +132,7 @@ func canonicalRuleSetBundle(bundle RuleSetBundle) (RuleSetBundle, CompiledRuleSe
 	if bundle.SchemaVersion != RuleSetBundleSchemaV1 {
 		return RuleSetBundle{}, CompiledRuleSet{}, fmt.Errorf("unsupported VPN rule-set bundle schema version %d", bundle.SchemaVersion)
 	}
-	if !validIdentifier(bundle.SnapshotID) || !validIdentifier(bundle.TenantID) || bundle.Version == 0 {
+	if !validIdentifier(bundle.SnapshotID) || bundle.Version == 0 {
 		return RuleSetBundle{}, CompiledRuleSet{}, errors.New("VPN rule-set bundle identity and version are required")
 	}
 	effective := bundle.EffectiveFrom.UTC()

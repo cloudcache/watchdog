@@ -250,7 +250,6 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		kafkaPartition            proto.ColUInt32
 		kafkaOffset               proto.ColUInt64
 		recordIndex               proto.ColUInt32
-		tenantID                  = new(proto.ColStr).LowCardinality()
 		collectorID               = new(proto.ColStr).LowCardinality()
 		exporterID                = new(proto.ColStr).LowCardinality()
 		targetID                  = new(proto.ColStr).LowCardinality()
@@ -396,7 +395,6 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		kafkaPartition.Append(uint32(ref.Batch.KafkaPartition))
 		kafkaOffset.Append(uint64(ref.Batch.KafkaOffset))
 		recordIndex.Append(ref.Record.RecordIndex)
-		tenantID.Append(ref.Batch.TenantID)
 		collectorID.Append(ref.Batch.CollectorID)
 		exporterID.Append(ref.Batch.ExporterID)
 		targetID.Append(ref.Record.TargetID)
@@ -493,7 +491,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		{Name: "event_time", Data: eventTime}, {Name: "received_time", Data: receivedTime},
 		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "ingest_generation", Data: ingestGeneration},
 		{Name: "kafka_topic", Data: kafkaTopic}, {Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset}, {Name: "record_index", Data: recordIndex},
-		{Name: "tenant_id", Data: tenantID}, {Name: "collector_id", Data: collectorID}, {Name: "exporter_id", Data: exporterID}, {Name: "target_id", Data: targetID}, {Name: "device_id", Data: deviceID},
+		{Name: "collector_id", Data: collectorID}, {Name: "exporter_id", Data: exporterID}, {Name: "target_id", Data: targetID}, {Name: "device_id", Data: deviceID},
 		{Name: "registry_version", Data: registryVersion}, {Name: "exporter_epoch", Data: exporterEpoch}, {Name: "exporter_source_ip", Data: exporterSourceIP}, {Name: "flow_protocol", Data: flowProtocol},
 		{Name: "observation_domain_id", Data: observationDomainID}, {Name: "sub_agent_id", Data: subAgentID}, {Name: "datagram_sequence", Data: datagramSequence}, {Name: "agent_ip", Data: agentIP}, {Name: "agent_ip_valid", Data: agentIPValid},
 		{Name: "observation_if_index", Data: observationIfIndex}, {Name: "ingress_if_index", Data: ingressIfIndex}, {Name: "egress_if_index", Data: egressIfIndex}, {Name: "observation_direction", Data: &observationDirection},
@@ -531,7 +529,6 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		workerSchema       proto.ColUInt32
 		receiptSchema      proto.ColUInt16
 		receiptDisposition proto.ColEnum
-		tenantIDs          = new(proto.ColStr).Array()
 		kafkaTopic         = new(proto.ColStr).LowCardinality()
 		kafkaPartition     proto.ColUInt32
 		kafkaOffset        proto.ColUInt64
@@ -552,7 +549,6 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		workerSchema.Append(WorkerSchemaVersion)
 		receiptSchema.Append(receiptSchemaVersion)
 		receiptDisposition.Append(disposition)
-		tenantIDs.Append(receipt.TenantIDs)
 		kafkaTopic.Append(receipt.KafkaTopic)
 		kafkaPartition.Append(uint32(receipt.KafkaPartition))
 		kafkaOffset.Append(uint64(receipt.KafkaOffset))
@@ -569,7 +565,7 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		legacyInsertedAt.Append(receipt.ReceivedAt.UTC())
 	}
 	return proto.Input{
-		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &receiptDisposition}, {Name: "tenant_ids", Data: tenantIDs}, {Name: "kafka_topic", Data: kafkaTopic},
+		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &receiptDisposition}, {Name: "kafka_topic", Data: kafkaTopic},
 		{Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset},
 		{Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
 		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets}, {Name: "estimated_valid_records", Data: estimatedValid},

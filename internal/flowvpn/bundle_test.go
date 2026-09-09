@@ -51,7 +51,7 @@ func TestRuleSetBundleRejectsInvalidWireAndConfiguration(t *testing.T) {
 	if _, _, err := DecodeAndCompileRuleSetBundle(valid, badChecksum); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("checksum error = %v", err)
 	}
-	unknown := append(valid[:len(valid)-1], []byte(`,"unknown":true}`)...)
+	unknown := append(append([]byte(nil), valid[:len(valid)-1]...), []byte(`,"unknown":true}`)...)
 	if _, _, err := DecodeAndCompileRuleSetBundle(unknown, checksumForRuleSetTest(unknown)); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("unknown field error = %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRuleSetBundleRejectsInvalidWireAndConfiguration(t *testing.T) {
 
 func testRuleSetBundle() RuleSetBundle {
 	return RuleSetBundle{
-		SchemaVersion: RuleSetBundleSchemaV1, SnapshotID: "snapshot-vpn-7", TenantID: "tenant-vpn",
+		SchemaVersion: RuleSetBundleSchemaV1, SnapshotID: "snapshot-vpn-7",
 		Version: 7, EffectiveFrom: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC),
 		MediumThreshold: 20, HighThreshold: 50, CriticalThreshold: 80,
 		ProbeThreshold: 60, MinimumCompleteness: 0.9,

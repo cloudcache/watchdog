@@ -75,7 +75,7 @@ func TestTrustStoreRejectsRollbackConflictAndRevokedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := PlanSignatureMetadata{
-		PlanID: "plan-a", TenantID: "tenant-a", CollectorID: plan.CollectorID,
+		PlanID: "plan-a", CollectorID: plan.CollectorID,
 		ConfigVersion: plan.Revision, PlanSchemaVersion: uint16(plan.SchemaVersion),
 		SpecHash: trustTestPayloadHash(planJSON), SigningKeyID: "plan-key-2",
 		NotBeforeUnixMilli: plan.NotBefore.UnixMilli(), ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(),

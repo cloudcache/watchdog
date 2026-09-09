@@ -29,7 +29,6 @@ type EnrichmentVersion struct {
 }
 
 type EnrichmentVersionMetadata struct {
-	TenantID               string
 	EffectiveFrom          time.Time
 	DimensionSnapshotID    string
 	DimensionVersion       uint64
@@ -42,7 +41,7 @@ func (v EnrichmentVersion) Metadata() EnrichmentVersionMetadata {
 	dimension := v.Dimension.Metadata()
 	classification := v.Classification.Metadata()
 	return EnrichmentVersionMetadata{
-		TenantID: classification.TenantID, EffectiveFrom: classification.EffectiveFrom,
+		EffectiveFrom:       classification.EffectiveFrom,
 		DimensionSnapshotID: dimension.SnapshotID, DimensionVersion: dimension.Version,
 		DimensionChecksum: dimension.Checksum, ClassificationVersion: classification.Version,
 		ClassificationChecksum: classification.Checksum,
@@ -59,12 +58,12 @@ type EnrichmentVersionCatalog struct {
 }
 
 type enrichmentVersionCatalogState struct {
-	byTenant map[string][]EnrichmentVersion
+	versions []EnrichmentVersion
 }
 
 func NewEnrichmentVersionCatalog(versions ...EnrichmentVersion) (*EnrichmentVersionCatalog, error) {
 	catalog := &EnrichmentVersionCatalog{}
-	catalog.state.Store(&enrichmentVersionCatalogState{byTenant: map[string][]EnrichmentVersion{}})
+	catalog.state.Store(&enrichmentVersionCatalogState{})
 	for _, version := range versions {
 		if err := catalog.Install(version); err != nil {
 			return nil, err
@@ -90,7 +89,7 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 	}
 	dimension := version.Dimension.Metadata()
 	classification := version.Classification.Metadata()
-	if dimension.TenantID != classification.TenantID || dimension.SnapshotID != classification.DimensionSnapshotID {
+	if dimension.SnapshotID != classification.DimensionSnapshotID {
 		return errors.New("dimension and classification identities do not form a version pair")
 	}
 	if dimension.EffectiveFrom.After(classification.EffectiveFrom) {
@@ -100,13 +99,9 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 	defer c.installMu.Unlock()
 	current := c.state.Load()
 	if current == nil {
-		current = &enrichmentVersionCatalogState{byTenant: map[string][]EnrichmentVersion{}}
+		current = &enrichmentVersionCatalogState{}
 	}
-	next := &enrichmentVersionCatalogState{byTenant: make(map[string][]EnrichmentVersion, len(current.byTenant)+1)}
-	for tenantID, existing := range current.byTenant {
-		next.byTenant[tenantID] = append([]EnrichmentVersion(nil), existing...)
-	}
-	items := next.byTenant[classification.TenantID]
+	items := append([]EnrichmentVersion(nil), current.versions...)
 	dimensionSeen := false
 	var installedDimension DimensionSnapshot
 	for _, existing := range items {
@@ -142,7 +137,7 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 	// A cold catalog may start at a retained classification horizon whose
 	// AddressSnap became active earlier. There is no usable pair before that
 	// first classification, so Select still fails closed for older events. Once
-	// tenant history exists, a newly introduced dimension must be paired at its
+	// version history exists, a newly introduced dimension must be paired at its
 	// own activation boundary to avoid silently extending the previous one.
 	if len(items) != 0 && !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
 		return errors.New("a new dimension snapshot must become effective with its classification")
@@ -154,13 +149,12 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 	sort.Slice(items, func(left, right int) bool {
 		return items[left].Classification.Metadata().EffectiveFrom.Before(items[right].Classification.Metadata().EffectiveFrom)
 	})
-	next.byTenant[classification.TenantID] = items
 	if beforePublish != nil {
 		if err := beforePublish(); err != nil {
 			return err
 		}
 	}
-	c.state.Store(next)
+	c.state.Store(&enrichmentVersionCatalogState{versions: items})
 	return nil
 }
 
@@ -172,28 +166,28 @@ func (c *EnrichmentVersionCatalog) publishRestored(staged *EnrichmentVersionCata
 		return errors.New("restored enrichment version catalog is required")
 	}
 	restored := staged.state.Load()
-	if restored == nil || len(restored.byTenant) == 0 {
+	if restored == nil || len(restored.versions) == 0 {
 		return errors.New("restored enrichment version catalog is empty")
 	}
 	c.installMu.Lock()
 	defer c.installMu.Unlock()
 	current := c.state.Load()
-	if current != nil && len(current.byTenant) != 0 {
+	if current != nil && len(current.versions) != 0 {
 		return errors.New("cannot restore over a live enrichment version catalog")
 	}
 	c.state.Store(restored)
 	return nil
 }
 
-func (c *EnrichmentVersionCatalog) ClassificationVersion(tenantID string, version uint32) (EnrichmentVersion, bool) {
-	if c == nil || !validIdentifier(tenantID, 64) || version == 0 {
+func (c *EnrichmentVersionCatalog) ClassificationVersion(version uint32) (EnrichmentVersion, bool) {
+	if c == nil || version == 0 {
 		return EnrichmentVersion{}, false
 	}
 	state := c.state.Load()
 	if state == nil {
 		return EnrichmentVersion{}, false
 	}
-	for _, candidate := range state.byTenant[tenantID] {
+	for _, candidate := range state.versions {
 		if candidate.Classification.Metadata().Version == version {
 			return candidate, true
 		}
@@ -201,15 +195,15 @@ func (c *EnrichmentVersionCatalog) ClassificationVersion(tenantID string, versio
 	return EnrichmentVersion{}, false
 }
 
-func (c *EnrichmentVersionCatalog) DimensionVersion(tenantID string, version uint64) (DimensionSnapshot, bool) {
-	if c == nil || !validIdentifier(tenantID, 64) || version == 0 {
+func (c *EnrichmentVersionCatalog) DimensionVersion(version uint64) (DimensionSnapshot, bool) {
+	if c == nil || version == 0 {
 		return nil, false
 	}
 	state := c.state.Load()
 	if state == nil {
 		return nil, false
 	}
-	for _, candidate := range state.byTenant[tenantID] {
+	for _, candidate := range state.versions {
 		dimension := candidate.Dimension
 		if dimension.Metadata().Version == version {
 			return dimension, true
@@ -218,15 +212,15 @@ func (c *EnrichmentVersionCatalog) DimensionVersion(tenantID string, version uin
 	return nil, false
 }
 
-func (c *EnrichmentVersionCatalog) Select(tenantID string, eventTime time.Time) (EnrichmentVersion, error) {
-	if c == nil || !validIdentifier(tenantID, 64) || eventTime.IsZero() {
+func (c *EnrichmentVersionCatalog) Select(eventTime time.Time) (EnrichmentVersion, error) {
+	if c == nil || eventTime.IsZero() {
 		return EnrichmentVersion{}, ErrNoEnrichmentVersion
 	}
 	state := c.state.Load()
 	if state == nil {
 		return EnrichmentVersion{}, ErrNoEnrichmentVersion
 	}
-	items := state.byTenant[tenantID]
+	items := state.versions
 	position := sort.Search(len(items), func(position int) bool {
 		return items[position].Classification.Metadata().EffectiveFrom.After(eventTime)
 	})
@@ -254,7 +248,6 @@ func sameDimensionReference(left, right DimensionSnapshot) bool {
 	}
 	leftMetadata, rightMetadata := left.Metadata(), right.Metadata()
 	return leftMetadata.SnapshotID == rightMetadata.SnapshotID &&
-		leftMetadata.TenantID == rightMetadata.TenantID &&
 		leftMetadata.Version == rightMetadata.Version &&
 		leftMetadata.EffectiveFrom.Equal(rightMetadata.EffectiveFrom) &&
 		leftMetadata.Checksum != "" && leftMetadata.Checksum == rightMetadata.Checksum

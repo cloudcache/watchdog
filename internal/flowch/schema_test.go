@@ -47,7 +47,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"geo_version LowCardinality(String)", "classification_version UInt32",
 		"key_row_kind UInt8", "key_dimension_snapshot_id String", "key_geo_version String", "key_classification_version UInt32",
 		"key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version",
-		"receipt_schema UInt16 DEFAULT 1", "tenant_ids Array(String)",
+		"receipt_schema UInt16 DEFAULT 1",
 		"raw_packets UInt64", "estimated_packets UInt64", "estimated_valid_records UInt64",
 		"min_event_time DateTime64(3, 'UTC')", "max_event_time DateTime64(3, 'UTC')",
 		"fact_schema UInt16 DEFAULT 1", "supplier_remote_country FixedString(2)",
@@ -61,7 +61,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 			t.Fatalf("ClickHouse migration is missing %q", required)
 		}
 	}
-	for _, obsolete := range []string{"record_id FixedString(64)", "quality_flags Array", "'onnet_local_city'", "'offnet_same_province'"} {
+	for _, obsolete := range []string{"record_id FixedString(64)", "quality_flags Array", "'onnet_local_city'", "'offnet_same_province'", "tenant_id", "tenant_ids"} {
 		if strings.Contains(allSQL, obsolete) {
 			t.Fatalf("ClickHouse migration retained obsolete contract %q", obsolete)
 		}
@@ -73,13 +73,13 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	v2 := string(v2Data)
 	for _, required := range []string{
 		"source_stream_id LowCardinality(String)",
-		"PARTITION BY (tenant_id, toYYYYMMDD(event_time))",
-		"ORDER BY (\n  tenant_id, toStartOfHour(event_time), source_stream_id,\n  kafka_partition, kafka_offset, record_index)",
+		"PARTITION BY toYYYYMMDD(event_time)",
+		"ORDER BY (\n  toStartOfHour(event_time), source_stream_id,\n  kafka_partition, kafka_offset, record_index)",
 		"flow_ingest_receipts_v2_staging", "receipt_schema UInt16 DEFAULT 4",
 		"message_disposition Enum8(", "'template_missing'=2", "'mapping_rejected'=5",
 		"ORDER BY (source_stream_id, kafka_partition, kafka_offset)",
 		"flow_records_legacy_hash_v1", "flow_ingest_batches_legacy_hash_v1",
-		"PARTITION BY (tenant_id, toYYYYMM(bucket))",
+		"PARTITION BY toYYYYMM(bucket)",
 		"flow_aggregate_1m_legacy_ttl_v1", "flow_aggregate_1h_legacy_ttl_v1",
 	} {
 		if !strings.Contains(v2, required) {

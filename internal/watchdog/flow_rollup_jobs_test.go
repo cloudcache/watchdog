@@ -103,7 +103,7 @@ func (r *recordingFlowRollupRunner) Run(_ context.Context, request flowch.Rollup
 	return r.err
 }
 
-func (r *recordingFlowRollupRunner) LatestGeneration(_ context.Context, _ string, _ flowch.RollupResolution, _ time.Time) (uint64, error) {
+func (r *recordingFlowRollupRunner) LatestGeneration(_ context.Context, _ flowch.RollupResolution, _ time.Time) (uint64, error) {
 	return r.latestGeneration, r.err
 }
 
@@ -187,7 +187,7 @@ func TestFlowRollupHandlerUsesJobTenantAndStableCreationTime(t *testing.T) {
 		t.Fatalf("result=%q requests=%+v", result, runner.requests)
 	}
 	request := runner.requests[0]
-	if request.TenantID != "tenant-a" || !request.Bucket.Equal(bucket) || request.Generation != 3 || request.GeneratedAt.Location() != time.UTC {
+	if !request.Bucket.Equal(bucket) || request.Generation != 3 || request.GeneratedAt.Location() != time.UTC {
 		t.Fatalf("request=%+v", request)
 	}
 }

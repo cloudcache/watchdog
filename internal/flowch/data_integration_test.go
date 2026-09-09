@@ -34,7 +34,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	insertIntegrationBatch(t, ctx, native, integrationBatch(10, bucket.Add(2*time.Minute), first, second, third))
 
 	initial := RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Resolution: RollupOneMinute, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.Add(3 * time.Minute),
 	}
 	firstRunner, err := NewRollupRunner(native)
@@ -53,7 +53,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	if err := restartedRunner.Run(ctx, initial); err != nil {
 		t.Fatal(err)
 	}
-	assertGeneration(t, ctx, restartedRunner, "flow-it-tenant", RollupOneMinute, bucket, 1)
+	assertGeneration(t, ctx, restartedRunner, RollupOneMinute, bucket, 1)
 
 	multiBlockExecutor := &integrationBlockExecutor{executor: native.executor}
 	queryRunner, err := flowquery.NewRunner(multiBlockExecutor)
@@ -146,7 +146,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	if err := restartedRunner.Run(ctx, repair); err != nil {
 		t.Fatal(err)
 	}
-	assertGeneration(t, ctx, restartedRunner, "flow-it-tenant", RollupOneMinute, bucket, 2)
+	assertGeneration(t, ctx, restartedRunner, RollupOneMinute, bucket, 2)
 	afterRepair := runIntegrationAggregate(t, ctx, queryRunner, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionGeoCity, 1, true)
 	assertAggregatePoints(t, afterRepair, map[string]aggregateWant{
 		"geo-city-b": {value: 550, records: 2},
@@ -155,7 +155,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 
 	hourBucket := bucket.Truncate(time.Hour)
 	hour := RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneHour, Bucket: hourBucket,
+		Resolution: RollupOneHour, Bucket: hourBucket,
 		Generation: 1, GeneratedAt: hourBucket.Add(2 * time.Hour),
 	}
 	if err := restartedRunner.Run(ctx, hour); err != nil {
@@ -166,7 +166,7 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 
 	emptyBucket := bucket.Add(time.Minute)
 	empty := RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: emptyBucket,
+		Resolution: RollupOneMinute, Bucket: emptyBucket,
 		Generation: 1, GeneratedAt: emptyBucket.Add(2 * time.Minute),
 	}
 	if err := restartedRunner.Run(ctx, empty); err != nil {
@@ -291,7 +291,7 @@ func TestRealClickHouseConcurrentAggregateQueriesRemainIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := rollup.Run(ctx, RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Resolution: RollupOneMinute, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.Add(2 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)
@@ -420,7 +420,6 @@ func openDataIntegrationClickHouse(t *testing.T, database string) (context.Conte
 
 func integrationBatch(offset int64, receivedAt time.Time, records ...flowworker.EnrichedRecord) *flowworker.EnrichedBatch {
 	batch := testEnrichedBatch(offset, records...)
-	batch.TenantID = "flow-it-tenant"
 	batch.ReceivedAt = receivedAt
 	return batch
 }
@@ -509,9 +508,9 @@ func insertIntegrationBatch(t *testing.T, ctx context.Context, native *NativeIns
 	}
 }
 
-func assertGeneration(t *testing.T, ctx context.Context, runner *RollupRunner, tenant string, resolution RollupResolution, bucket time.Time, want uint64) {
+func assertGeneration(t *testing.T, ctx context.Context, runner *RollupRunner, resolution RollupResolution, bucket time.Time, want uint64) {
 	t.Helper()
-	generation, err := runner.LatestGeneration(ctx, tenant, resolution, bucket)
+	generation, err := runner.LatestGeneration(ctx, resolution, bucket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +637,7 @@ func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runner.Run(ctx, RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Resolution: RollupOneMinute, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.Add(3 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)

@@ -42,7 +42,6 @@ func TestLabelSelectorAcceptsExistingStringAndArrayShapes(t *testing.T) {
 	data := []byte(`{
   "schema_version":1,
   "snapshot_id":"snapshot-wire",
-  "tenant_id":"tenant-a",
   "version":1,
   "effective_from":"2026-09-05T12:00:00Z",
   "prefixes":[{"id":"remote","cidr":"203.0.113.0/24","labels":{"provider":"isp-a","region":"east"}}],
@@ -62,7 +61,7 @@ func TestLabelSelectorAcceptsExistingStringAndArrayShapes(t *testing.T) {
 	}
 }
 
-func TestCompileBundleCarriesImmutableTenantOperatorDefinitions(t *testing.T) {
+func TestCompileBundleCarriesImmutableOperatorDefinitions(t *testing.T) {
 	bundle := testBundle("snapshot-operators", 1, testMinute(12, 0))
 	bundle.Operators = []OperatorDefinition{
 		{ID: "operator-telecom", FlowISPID: 3, Code: "CT", Name: "China Telecom", ShortName: "Telecom", Category: "carrier", ASNs: []uint32{4134, 4809}, Enabled: true},
@@ -342,7 +341,6 @@ func TestNestedPrefixesInheritHierarchyLabelsAndMultipleGroupsWithoutASN(t *test
 	bundle := SnapshotBundle{
 		SchemaVersion: BundleSchemaVersion,
 		SnapshotID:    "snapshot-hierarchy",
-		TenantID:      "tenant-a",
 		Version:       1,
 		EffectiveFrom: testMinute(12, 0),
 		Prefixes: []PrefixDefinition{
@@ -518,19 +516,16 @@ func TestSnapshotCatalogSelectsByEventTime(t *testing.T) {
 	if err := catalog.Install(first); err != nil {
 		t.Fatalf("installing the same compiled snapshot should be idempotent: %v", err)
 	}
-	selected, err := catalog.Select("tenant-a", testMinute(12, 59))
+	selected, err := catalog.Select(testMinute(12, 59))
 	if err != nil || selected.Metadata().Version != 1 {
 		t.Fatalf("selected=%+v err=%v", selected.Metadata(), err)
 	}
-	classified, err := catalog.ClassifyAt("tenant-a", testMinute(13, 0), netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.200"))
+	classified, err := catalog.ClassifyAt(testMinute(13, 0), netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.200"))
 	if err != nil || classified.Version != 2 || classified.Business != "version-2" {
 		t.Fatalf("classification=%+v err=%v", classified, err)
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(11, 59)); err != ErrNoDimensionSnapshot {
+	if _, err := catalog.Select(testMinute(11, 59)); err != ErrNoDimensionSnapshot {
 		t.Fatalf("pre-history error = %v", err)
-	}
-	if _, err := catalog.Select("tenant-b", testMinute(13, 0)); err != ErrNoDimensionSnapshot {
-		t.Fatalf("cross-tenant error = %v", err)
 	}
 
 	sameEffective, _ := CompileBundle(testBundle("snapshot-3", 3, testMinute(13, 0)), CompileLimits{})
@@ -545,11 +540,11 @@ func TestSnapshotCatalogSelectsByEventTime(t *testing.T) {
 	if err := catalog.Install(nonMonotonic); err == nil || !strings.Contains(err.Error(), "not monotonic") {
 		t.Fatalf("non-monotonic error = %v", err)
 	}
-	crossTenantBundle := testBundle("snapshot-1", 1, testMinute(12, 0))
-	crossTenantBundle.TenantID = "tenant-b"
-	crossTenant, _ := CompileBundle(crossTenantBundle, CompileLimits{})
-	if err := catalog.Install(crossTenant); err == nil || !strings.Contains(err.Error(), "id is immutable") {
-		t.Fatalf("cross-tenant snapshot id error = %v", err)
+	conflictingBundle := testBundle("snapshot-1", 1, testMinute(12, 0))
+	conflictingBundle.Version = 9
+	conflicting, _ := CompileBundle(conflictingBundle, CompileLimits{})
+	if err := catalog.Install(conflicting); err == nil || !strings.Contains(err.Error(), "id is immutable") {
+		t.Fatalf("duplicate snapshot id error = %v", err)
 	}
 }
 
@@ -571,7 +566,6 @@ func testBundle(snapshotID string, version uint64, effectiveFrom time.Time) Snap
 	return SnapshotBundle{
 		SchemaVersion: BundleSchemaVersion,
 		SnapshotID:    snapshotID,
-		TenantID:      "tenant-a",
 		Version:       version,
 		EffectiveFrom: effectiveFrom,
 		Prefixes: []PrefixDefinition{

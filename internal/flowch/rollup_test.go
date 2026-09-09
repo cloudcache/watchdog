@@ -74,8 +74,8 @@ func (e *rollupGenerationExecutor) Do(ctx context.Context, query ch.Query) error
 
 func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	request := RollupRequest{
-		TenantID: "tenant-a", Resolution: RollupOneMinute,
-		Bucket: time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 17,
+		Resolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 17,
 		GeneratedAt: time.Date(2026, 9, 5, 1, 5, 0, 0, time.UTC),
 	}
 	first, err := buildRollupQuery(request)
@@ -91,7 +91,7 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	}
 	for _, required := range []string{
 		"INSERT INTO flow_aggregate_1m", "FROM flow_records FINAL", "ARRAY JOIN", "arrayDistinct",
-		"AND disposition = 'count'", "UNION ALL", "'_generation'", "{tenant:String}", "{generation:UInt64}",
+		"AND disposition = 'count'", "UNION ALL", "'_generation'", "{generation:UInt64}",
 		"'geo.continent'", "'geo.region'", "'geo.country'", "'geo.province'", "'geo.city'", "'_unassigned'",
 		"tuple('asn', if(remote_asn = 0, '_unassigned'", "tuple('business', if(empty(business), '_unassigned'",
 		"tuple('local_prefix', if(empty(local_prefix_id), '_unassigned'", "tuple('remote_port', if(remote_port = 0, '_unassigned'",
@@ -111,13 +111,10 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	if setting(first, "async_insert") != "0" || setting(first, "insert_deduplication_token") == "" {
 		t.Fatal("rollup insert is not synchronous and replay-stable")
 	}
-	// A heavy tenant-hour must spill to disk (external group by) under a memory
+	// A heavy bucket group must spill to disk (external group by) under a memory
 	// ceiling rather than fail with retryable MEMORY_LIMIT_EXCEEDED.
 	if setting(first, "max_bytes_before_external_group_by") == "" || setting(first, "max_memory_usage") == "" {
 		t.Fatalf("rollup missing memory spill/ceiling guards: %+v", first.Settings)
-	}
-	if got := parameter(first, "tenant"); got != "'tenant-a'" {
-		t.Fatalf("tenant parameter=%q", got)
 	}
 }
 
@@ -127,7 +124,7 @@ func TestDayStorageCountersUsesRawAndLatestCompleteHourlyGeneration(t *testing.T
 	executor := &storageCounterExecutor{values: []StorageCounters{raw, archive}}
 	runner := &RollupRunner{executor: executor}
 	day := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
-	gotRaw, gotArchive, err := runner.DayStorageCounters(context.Background(), "tenant-a", day)
+	gotRaw, gotArchive, err := runner.DayStorageCounters(context.Background(), day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +146,7 @@ func TestDayStorageCountersRejectsNonUTCDay(t *testing.T) {
 		time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
 		time.Date(2026, 9, 5, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)),
 	} {
-		if _, _, err := runner.DayStorageCounters(context.Background(), "tenant-a", day); err == nil {
+		if _, _, err := runner.DayStorageCounters(context.Background(), day); err == nil {
 			t.Fatalf("invalid day accepted: %s", day)
 		}
 	}
@@ -157,12 +154,11 @@ func TestDayStorageCountersRejectsNonUTCDay(t *testing.T) {
 
 func TestBuildRollupQueryRejectsUnalignedOrUnsafeRequests(t *testing.T) {
 	valid := RollupRequest{
-		TenantID: "tenant-a", Resolution: RollupOneHour,
-		Bucket: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 1,
+		Resolution: RollupOneHour,
+		Bucket:     time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 1,
 		GeneratedAt: time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC),
 	}
 	for _, mutate := range []func(*RollupRequest){
-		func(value *RollupRequest) { value.TenantID = "tenant' OR 1=1" },
 		func(value *RollupRequest) { value.Resolution = "5m" },
 		func(value *RollupRequest) { value.Bucket = value.Bucket.Add(time.Minute) },
 		func(value *RollupRequest) { value.Generation = 0 },
@@ -185,8 +181,8 @@ func TestRollupRunnerStatsSeparateResolutionRepairAndFailureClass(t *testing.T) 
 	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
 	runner := &RollupRunner{executor: &queryRecorder{}, now: func() time.Time { return now }}
 	minute := RollupRequest{
-		TenantID: "tenant-a", Resolution: RollupOneMinute,
-		Bucket: time.Date(2026, 9, 5, 2, 58, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
+		Resolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 5, 2, 58, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
 	}
 	if err := runner.Run(context.Background(), minute); err != nil {
 		t.Fatal(err)
@@ -196,8 +192,8 @@ func TestRollupRunnerStatsSeparateResolutionRepairAndFailureClass(t *testing.T) 
 		t.Fatal(err)
 	}
 	hour := RollupRequest{
-		TenantID: "tenant-a", Resolution: RollupOneHour,
-		Bucket: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
+		Resolution: RollupOneHour,
+		Bucket:     time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 1, GeneratedAt: now,
 	}
 	if err := runner.Run(context.Background(), hour); err != nil {
 		t.Fatal(err)
@@ -291,24 +287,24 @@ func TestBucketNeedsRepairComparesStoredAndLiveCounts(t *testing.T) {
 	bucket := time.Date(2026, 9, 7, 0, 5, 0, 0, time.UTC)
 	// stored == live: the aggregate still reflects the base data, no repair.
 	inSync := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 3}}}
-	if needs, err := inSync.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket); err != nil || needs {
+	if needs, err := inSync.BucketNeedsRepair(context.Background(), RollupOneMinute, bucket); err != nil || needs {
 		t.Fatalf("in sync: needs=%v err=%v", needs, err)
 	}
 	// live > stored: base records arrived after the roll, repair needed.
 	late := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 4}}}
-	if needs, err := late.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket); err != nil || !needs {
+	if needs, err := late.BucketNeedsRepair(context.Background(), RollupOneMinute, bucket); err != nil || !needs {
 		t.Fatalf("late arrival: needs=%v err=%v", needs, err)
 	}
 	// An unaligned bucket is a permanent (programmer) error, not a silent false.
-	if _, err := inSync.BucketNeedsRepair(context.Background(), "tenant-a", RollupOneMinute, bucket.Add(30*time.Second)); err == nil {
+	if _, err := inSync.BucketNeedsRepair(context.Background(), RollupOneMinute, bucket.Add(30*time.Second)); err == nil {
 		t.Fatal("unaligned bucket accepted")
 	}
 }
 
 func TestRollupRunnerClassifiesPermanentAndRetryableFailures(t *testing.T) {
 	request := RollupRequest{
-		TenantID: "tenant-a", Resolution: RollupOneMinute,
-		Bucket: time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 1,
+		Resolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 1,
 		GeneratedAt: time.Date(2026, 9, 5, 1, 5, 0, 0, time.UTC),
 	}
 	for _, test := range []struct {
@@ -330,19 +326,19 @@ func TestRollupRunnerClassifiesPermanentAndRetryableFailures(t *testing.T) {
 func TestRollupRunnerReadsAuthoritativeGenerationMarker(t *testing.T) {
 	bucket := time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC)
 	executor := &rollupGenerationExecutor{generation: 19, emit: true}
-	generation, err := (&RollupRunner{executor: executor}).LatestGeneration(context.Background(), "tenant-a", RollupOneHour, bucket)
+	generation, err := (&RollupRunner{executor: executor}).LatestGeneration(context.Background(), RollupOneHour, bucket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if generation != 19 || !strings.Contains(executor.query.Body, "FROM flow_aggregate_1h FINAL") ||
-		!strings.Contains(executor.query.Body, "dimension_kind = '_generation'") || parameter(executor.query, "tenant") != "'tenant-a'" {
+		!strings.Contains(executor.query.Body, "dimension_kind = '_generation'") {
 		t.Fatalf("generation=%d query=%q", generation, executor.query.Body)
 	}
-	if _, err := (&RollupRunner{executor: &rollupGenerationExecutor{}}).LatestGeneration(context.Background(), "tenant-a", RollupOneHour, bucket); err == nil {
+	if _, err := (&RollupRunner{executor: &rollupGenerationExecutor{}}).LatestGeneration(context.Background(), RollupOneHour, bucket); err == nil {
 		t.Fatal("missing ClickHouse result was accepted")
 	}
 	permanent := &rollupGenerationExecutor{err: &ch.Exception{Code: proto.ErrUnknownTable, Name: "UNKNOWN_TABLE"}}
-	_, err = (&RollupRunner{executor: permanent}).LatestGeneration(context.Background(), "tenant-a", RollupOneHour, bucket)
+	_, err = (&RollupRunner{executor: permanent}).LatestGeneration(context.Background(), RollupOneHour, bucket)
 	var permanentError *PermanentError
 	if !errors.As(err, &permanentError) {
 		t.Fatalf("schema error was not permanent: %v", err)

@@ -22,7 +22,7 @@ import (
 func TestAddressSnapshotMatchesLegacyReaderOnSharedCorpus(t *testing.T) {
 	effective := testMinute(12, 0)
 	dimension, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-parity", TenantID: "tenant-a", Version: 1, EffectiveFrom: effective,
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "dimension-parity", Version: 1, EffectiveFrom: effective,
 		Operators: []flowdimension.OperatorDefinition{
 			{ID: "customer-primary", FlowISPID: 3, Code: "PRIMARY", Name: "Primary", Category: "carrier", ASNs: []uint32{64500}, Enabled: true},
 			{ID: "customer-secondary", FlowISPID: 4, Code: "SECONDARY", Name: "Secondary", Category: "carrier", ASNs: []uint32{64501}, Enabled: true},
@@ -73,7 +73,7 @@ func TestAddressSnapshotMatchesLegacyReaderOnSharedCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	classificationData, err := json.Marshal(flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, TenantID: "tenant-a", Version: 1, EffectiveFrom: effective, DimensionSnapshotID: "dimension-parity",
+		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 1, EffectiveFrom: effective, DimensionSnapshotID: "dimension-parity",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
@@ -81,7 +81,7 @@ func TestAddressSnapshotMatchesLegacyReaderOnSharedCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	publication := EnrichmentVersionPublication{
-		PublicationID: "publication-parity", TenantID: "tenant-a", DimensionSnapshotID: "dimension-parity", DimensionVersion: 1, DimensionEffectiveFrom: effective,
+		PublicationID: "publication-parity", DimensionSnapshotID: "dimension-parity", DimensionVersion: 1, DimensionEffectiveFrom: effective,
 		Dimension:             VersionObjectReference{ObjectRef: "dimension.wads", Checksum: built.ChecksumSHA256, ObjectFormat: VersionObjectFormatWADS, ObjectFormatVersion: flowdimension.AddressSnapshotFormatVersion},
 		ClassificationVersion: 1, ClassificationEffectiveFrom: effective,
 		Classification: VersionObjectReference{ObjectRef: "classification.json", Checksum: versionObjectChecksum(classificationData)},

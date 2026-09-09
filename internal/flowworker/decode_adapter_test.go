@@ -32,7 +32,7 @@ func TestDecodeAdapterMapsBindingAndAuthoritativeCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.SourceStreamID != "legacy:watchdog.flow.raw-v1" || batch.KafkaPartition != 3 || batch.KafkaOffset != 19 || batch.TenantID != "tenant-a" || batch.ExporterEpoch != 9 {
+	if batch.SourceStreamID != "legacy:watchdog.flow.raw-v1" || batch.KafkaPartition != 3 || batch.KafkaOffset != 19 || batch.ExporterEpoch != 9 {
 		t.Fatalf("unexpected batch identity: %+v", batch)
 	}
 	if len(batch.Records) != 1 {
@@ -272,7 +272,7 @@ func decodedFixture(receivedAt time.Time) flowstream.DecodedBatch {
 
 func bindingFixture() flowplan.SourceBinding {
 	return flowplan.SourceBinding{
-		Enabled: true, TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a",
+		Enabled: true, ExporterID: "exporter-a", TargetID: "target-a", DeviceID: "device-a",
 		OwnershipEpoch: 9, SamplingMode: flowplan.SamplingModeSampled,
 		Observations: map[uint32]flowplan.Observation{3: {Direction: uint32(ObservationIngress)}},
 	}

@@ -48,7 +48,6 @@ type CompileLimits struct {
 type SnapshotBundle struct {
 	SchemaVersion uint32                 `json:"schema_version"`
 	SnapshotID    string                 `json:"snapshot_id"`
-	TenantID      string                 `json:"tenant_id"`
 	Version       uint64                 `json:"version"`
 	EffectiveFrom time.Time              `json:"effective_from"`
 	Prefixes      []PrefixDefinition     `json:"prefixes"`
@@ -57,7 +56,7 @@ type SnapshotBundle struct {
 	GeoNodes      []GeoNodeDefinition    `json:"geo_nodes,omitempty"`
 }
 
-// GeoNodeDefinition preserves tenant-authored taxonomy display metadata in
+// GeoNodeDefinition preserves operator-authored taxonomy display metadata in
 // the immutable object. Prefix labels alone are sufficient for classification
 // but cannot reproduce historical names or parentage after a draft edit.
 type GeoNodeDefinition struct {
@@ -69,7 +68,7 @@ type GeoNodeDefinition struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-// OperatorDefinition is the tenant-stable management identity embedded in a
+// OperatorDefinition is the operator-stable management identity embedded in a
 // signed dimension object. It does not replace a supplier Geo operator ID;
 // the index builder must bind both namespaces when materializing one index
 // generation.
@@ -147,7 +146,6 @@ func (s LabelSelector) MarshalJSON() ([]byte, error) {
 type SnapshotMetadata struct {
 	SchemaVersion           uint32
 	SnapshotID              string
-	TenantID                string
 	Version                 uint64
 	EffectiveFrom           time.Time
 	Checksum                string
@@ -270,7 +268,7 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 			}
 		}
 	}
-	if !validIdentifier(bundle.SnapshotID, 64) || !validIdentifier(bundle.TenantID, 64) || bundle.Version == 0 {
+	if !validIdentifier(bundle.SnapshotID, 64) || bundle.Version == 0 {
 		return nil, errors.New("dimension bundle identity and version are required")
 	}
 	effectiveFrom := bundle.EffectiveFrom.UTC()
@@ -360,7 +358,7 @@ func compileBundle(bundle SnapshotBundle, checksum string, limits CompileLimits)
 	}
 	return &CompiledSnapshot{
 		metadata: SnapshotMetadata{
-			SchemaVersion: bundle.SchemaVersion, SnapshotID: bundle.SnapshotID, TenantID: bundle.TenantID, Version: bundle.Version,
+			SchemaVersion: bundle.SchemaVersion, SnapshotID: bundle.SnapshotID, Version: bundle.Version,
 			EffectiveFrom: effectiveFrom, Checksum: checksum, PrefixCount: len(compiledPrefixes),
 			OperatorCount: len(operators), GeoNodeCount: len(geoNodes), EnabledAddressSetCount: len(sets), MaxAddressSetsPerRecord: maxExpansion,
 		},
@@ -503,7 +501,7 @@ func inheritPrefixLabels(prefixes []netip.Prefix, values []compiledPrefix) error
 	return nil
 }
 
-// ApplyGeoOverride overlays the most-specific tenant correction without
+// ApplyGeoOverride overlays the most-specific operator correction without
 // consulting mutable management state. The selected Geo version remains on
 // the result so event-time provenance is not lost.
 func (s *CompiledSnapshot) ApplyGeoOverride(address netip.Addr, base GeoInfo) (GeoInfo, GeoOverrideFields, bool) {
@@ -559,7 +557,7 @@ func (s *CompiledSnapshot) Metadata() SnapshotMetadata {
 	return s.metadata
 }
 
-// OperatorDefinitions returns the canonical tenant operator definitions from
+// OperatorDefinitions returns the canonical operator definitions from
 // this immutable snapshot. Supplier Geo IDs remain a separate namespace until
 // an index generation explicitly binds them.
 func (s *CompiledSnapshot) OperatorDefinitions() []OperatorDefinition {
@@ -626,13 +624,13 @@ type SnapshotCatalog struct {
 }
 
 type snapshotCatalogState struct {
-	byTenant map[string][]*CompiledSnapshot
-	byID     map[string]*CompiledSnapshot
+	ordered []*CompiledSnapshot
+	byID    map[string]*CompiledSnapshot
 }
 
 func NewSnapshotCatalog(snapshots ...*CompiledSnapshot) (*SnapshotCatalog, error) {
 	catalog := &SnapshotCatalog{}
-	catalog.state.Store(&snapshotCatalogState{byTenant: map[string][]*CompiledSnapshot{}, byID: map[string]*CompiledSnapshot{}})
+	catalog.state.Store(&snapshotCatalogState{byID: map[string]*CompiledSnapshot{}})
 	for _, snapshot := range snapshots {
 		if err := catalog.Install(snapshot); err != nil {
 			return nil, err
@@ -648,7 +646,7 @@ func (c *SnapshotCatalog) Install(snapshot *CompiledSnapshot) error {
 	for {
 		current := c.state.Load()
 		if current == nil {
-			current = &snapshotCatalogState{byTenant: map[string][]*CompiledSnapshot{}, byID: map[string]*CompiledSnapshot{}}
+			current = &snapshotCatalogState{byID: map[string]*CompiledSnapshot{}}
 		}
 		if existing, exists := current.byID[snapshot.metadata.SnapshotID]; exists {
 			if sameSnapshot(existing, snapshot) {
@@ -657,16 +655,12 @@ func (c *SnapshotCatalog) Install(snapshot *CompiledSnapshot) error {
 			return errors.New("dimension snapshot id is immutable")
 		}
 		next := &snapshotCatalogState{
-			byTenant: make(map[string][]*CompiledSnapshot, len(current.byTenant)+1),
-			byID:     make(map[string]*CompiledSnapshot, len(current.byID)+1),
-		}
-		for tenantID, existing := range current.byTenant {
-			next.byTenant[tenantID] = append([]*CompiledSnapshot(nil), existing...)
+			byID: make(map[string]*CompiledSnapshot, len(current.byID)+1),
 		}
 		for snapshotID, existing := range current.byID {
 			next.byID[snapshotID] = existing
 		}
-		items := next.byTenant[snapshot.metadata.TenantID]
+		items := append([]*CompiledSnapshot(nil), current.ordered...)
 		for _, existing := range items {
 			if existing.metadata.Version == snapshot.metadata.Version {
 				return errors.New("dimension snapshot version already exists")
@@ -683,7 +677,7 @@ func (c *SnapshotCatalog) Install(snapshot *CompiledSnapshot) error {
 		sort.Slice(items, func(i, j int) bool {
 			return items[i].metadata.EffectiveFrom.Before(items[j].metadata.EffectiveFrom)
 		})
-		next.byTenant[snapshot.metadata.TenantID] = items
+		next.ordered = items
 		next.byID[snapshot.metadata.SnapshotID] = snapshot
 		if c.state.CompareAndSwap(current, next) {
 			return nil
@@ -691,15 +685,15 @@ func (c *SnapshotCatalog) Install(snapshot *CompiledSnapshot) error {
 	}
 }
 
-func (c *SnapshotCatalog) Select(tenantID string, eventTime time.Time) (*CompiledSnapshot, error) {
-	if c == nil || !validIdentifier(tenantID, 64) || eventTime.IsZero() {
+func (c *SnapshotCatalog) Select(eventTime time.Time) (*CompiledSnapshot, error) {
+	if c == nil || eventTime.IsZero() {
 		return nil, ErrNoDimensionSnapshot
 	}
 	state := c.state.Load()
 	if state == nil {
 		return nil, ErrNoDimensionSnapshot
 	}
-	items := state.byTenant[tenantID]
+	items := state.ordered
 	index := sort.Search(len(items), func(index int) bool {
 		return items[index].metadata.EffectiveFrom.After(eventTime)
 	})
@@ -714,7 +708,6 @@ func sameSnapshot(left, right *CompiledSnapshot) bool {
 		return true
 	}
 	return left.metadata.SnapshotID == right.metadata.SnapshotID &&
-		left.metadata.TenantID == right.metadata.TenantID &&
 		left.metadata.Version == right.metadata.Version &&
 		left.metadata.EffectiveFrom.Equal(right.metadata.EffectiveFrom) &&
 		left.metadata.Checksum != "" && left.metadata.Checksum == right.metadata.Checksum

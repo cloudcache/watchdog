@@ -58,7 +58,7 @@ func TestVersionLoaderCompilesPublishesAndAcknowledgesExactPair(t *testing.T) {
 	if err := loader.Install(context.Background(), publication); err != nil {
 		t.Fatal(err)
 	}
-	version, err := catalog.Select("tenant-a", testMinute(12, 30))
+	version, err := catalog.Select(testMinute(12, 30))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestVersionLoaderKeepsDimensionBundleSchemaV1Readable(t *testing.T) {
 	if err := loader.Install(context.Background(), publication); err != nil {
 		t.Fatal(err)
 	}
-	installed, exists := catalog.DimensionVersion("tenant-a", 1)
+	installed, exists := catalog.DimensionVersion(1)
 	if !exists || installed.Metadata().SchemaVersion != 1 || len(acks.acks) != 1 {
 		t.Fatalf("legacy bundle was not installed and acknowledged: exists=%t metadata=%+v acks=%d", exists, installed.Metadata(), len(acks.acks))
 	}
@@ -110,7 +110,7 @@ func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
 	publication, source := testVersionPublication(t, 1, testMinute(12, 0), "dimension-wads")
 	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: publication.DimensionSnapshotID,
-		TenantID: publication.TenantID, Version: publication.DimensionVersion, EffectiveFrom: publication.DimensionEffectiveFrom,
+		Version: publication.DimensionVersion, EffectiveFrom: publication.DimensionEffectiveFrom,
 		GeoNodes: []flowdimension.GeoNodeDefinition{
 			{ID: "city-hangzhou", Kind: "city", Code: "330100", Name: "Hangzhou", ParentID: "province-zhejiang", Enabled: true},
 			{ID: "continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},
@@ -157,7 +157,7 @@ func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
 	if err := loader.Install(context.Background(), publication); err != nil {
 		t.Fatal(err)
 	}
-	installed, exists := catalog.DimensionVersion("tenant-a", 1)
+	installed, exists := catalog.DimensionVersion(1)
 	if _, ok := installed.(*flowdimension.AddressSnapshotIndex); !exists || !ok || len(acks.acks) != 1 {
 		t.Fatalf("WADS install: exists=%t type=%T acks=%d", exists, installed, len(acks.acks))
 	}
@@ -232,7 +232,7 @@ func TestVersionLoaderDoesNotExposePartiallyValidatedPublication(t *testing.T) {
 	if err := loader.Install(context.Background(), publication); !errors.Is(err, ErrInvalidVersionPublication) {
 		t.Fatalf("install error = %v", err)
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(13, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := catalog.Select(testMinute(13, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("partially installed publication = %v", err)
 	}
 	if len(acks.acks) != 0 {
@@ -250,7 +250,7 @@ func TestVersionLoaderRetriesAcknowledgementIdempotentlyAfterLocalInstall(t *tes
 	if err := loader.Install(context.Background(), publication); !errors.Is(err, ErrVersionAcknowledgement) {
 		t.Fatalf("first install error = %v", err)
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(12, 30)); err != nil {
+	if _, err := catalog.Select(testMinute(12, 30)); err != nil {
 		t.Fatalf("locally installed pair disappeared after ack failure: %v", err)
 	}
 	if err := loader.Install(context.Background(), publication); err != nil {
@@ -274,7 +274,7 @@ func TestVersionLoaderReusesInstalledDimensionForHomeOnlyPublication(t *testing.
 		t.Fatal(err)
 	}
 	classificationData, err := json.Marshal(flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, TenantID: "tenant-a", Version: 2,
+		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 2,
 		EffectiveFrom: testMinute(13, 0), DimensionSnapshotID: "dimension-1",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{4}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
@@ -291,8 +291,8 @@ func TestVersionLoaderReusesInstalledDimensionForHomeOnlyPublication(t *testing.
 	if err := loader.Install(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
-	version1, _ := catalog.ClassificationVersion("tenant-a", 1)
-	version2, _ := catalog.ClassificationVersion("tenant-a", 2)
+	version1, _ := catalog.ClassificationVersion(1)
+	version2, _ := catalog.ClassificationVersion(2)
 	if version1.Dimension != version2.Dimension {
 		t.Fatal("Home-only publication retained a duplicate dimension index")
 	}
@@ -351,14 +351,14 @@ func testVersionPublication(t testing.TB, version uint32, effectiveFrom time.Tim
 	t.Helper()
 	dimensionBundle := flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID,
-		TenantID: "tenant-a", Version: uint64(version), EffectiveFrom: effectiveFrom,
+		Version: uint64(version), EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{
 			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "customer"}},
 			{ID: "remote", CIDR: "203.0.113.0/24", Labels: map[string]string{"provider": "carrier-a"}},
 		},
 	}
 	classificationBundle := flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, TenantID: "tenant-a", Version: version,
+		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: version,
 		EffectiveFrom: effectiveFrom, DimensionSnapshotID: snapshotID,
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
@@ -374,7 +374,7 @@ func testVersionPublication(t testing.TB, version uint32, effectiveFrom time.Tim
 	dimensionRef := fmt.Sprintf("objects/%s/dimension.json", snapshotID)
 	classificationRef := fmt.Sprintf("objects/%s/classification.json", snapshotID)
 	publication := EnrichmentVersionPublication{
-		PublicationID: fmt.Sprintf("publication-%d", version), TenantID: "tenant-a",
+		PublicationID:       fmt.Sprintf("publication-%d", version),
 		DimensionSnapshotID: snapshotID, DimensionVersion: uint64(version), DimensionEffectiveFrom: effectiveFrom,
 		Dimension:             VersionObjectReference{ObjectRef: dimensionRef, Checksum: versionObjectChecksum(dimensionData)},
 		ClassificationVersion: version, ClassificationEffectiveFrom: effectiveFrom,

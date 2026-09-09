@@ -139,7 +139,7 @@ func TestBuildAddressSnapshotRejectsInvalidOrOverlappingSources(t *testing.T) {
 func addressSnapshotBuildFixture(t *testing.T) AddressSnapshotBuildInput {
 	t.Helper()
 	bundle := SnapshotBundle{
-		SchemaVersion: BundleSchemaVersion, SnapshotID: "snapshot-build", TenantID: "tenant-build", Version: 4,
+		SchemaVersion: BundleSchemaVersion, SnapshotID: "snapshot-build", Version: 4,
 		EffectiveFrom: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC),
 		GeoNodes: []GeoNodeDefinition{
 			{ID: "customer-continent-asia", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},

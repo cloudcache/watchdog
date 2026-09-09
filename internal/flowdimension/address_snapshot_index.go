@@ -179,7 +179,7 @@ func compileAddressSnapshotIndex(artifact AddressSnapshotArtifact, checksum stri
 	}
 	return &AddressSnapshotIndex{
 		metadata: SnapshotMetadata{
-			SchemaVersion: uint32(AddressSnapshotFormatVersion), SnapshotID: artifact.SnapshotID, TenantID: artifact.TenantID,
+			SchemaVersion: uint32(AddressSnapshotFormatVersion), SnapshotID: artifact.SnapshotID,
 			Version: artifact.Version, EffectiveFrom: artifact.EffectiveFrom, Checksum: checksum, PrefixCount: len(prefixes),
 			OperatorCount: len(artifact.Operators), GeoNodeCount: len(artifact.GeoNodes), EnabledAddressSetCount: enabledSets,
 			MaxAddressSetsPerRecord: maxSets,

@@ -286,18 +286,13 @@ func flowPlanFromCollectorRevision(revision CollectorPlanRevision) (flowplan.Pla
 	if _, err := flowplan.CompilePlan(plan, validationTime); err != nil {
 		return flowplan.Plan{}, err
 	}
-	for index, source := range plan.Sources {
-		if source.TenantID != string(revision.TenantID) {
-			return flowplan.Plan{}, fmt.Errorf("sources[%d] belongs to another tenant", index)
-		}
-	}
 	return plan, nil
 }
 
 func flowExporterSelectors(plan flowplan.Plan, tenantID, exporterID string, requiredEpoch uint64) (map[string]struct{}, error) {
 	selectors := make(map[string]struct{})
 	for _, source := range plan.Sources {
-		if !source.Enabled || source.TenantID != tenantID || source.ExporterID != exporterID {
+		if !source.Enabled || source.ExporterID != exporterID {
 			continue
 		}
 		if requiredEpoch != 0 && source.EffectiveOwnershipEpoch() != requiredEpoch {

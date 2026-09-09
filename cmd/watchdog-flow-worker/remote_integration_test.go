@@ -79,7 +79,7 @@ func TestProductionRouterAndWorkerSyncInstallWADSAndColdRestore(t *testing.T) {
 	now := time.Date(2026, 9, 7, 16, 0, 0, 0, time.UTC)
 	dimensionData, dimensionChecksum := buildWorkerIntegrationWADS(t, now)
 	classificationData, err := json.Marshal(flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, TenantID: "tenant-a", Version: 1,
+		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 1,
 		EffectiveFrom: now, DimensionSnapshotID: "snapshot-a", HomeProvince: "330000", HomeCity: "330100",
 		HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
@@ -88,7 +88,7 @@ func TestProductionRouterAndWorkerSyncInstallWADSAndColdRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	publication := flowworker.EnrichmentVersionPublication{
-		PublicationID: "publication-a", TenantID: "tenant-a", DimensionSnapshotID: "snapshot-a",
+		PublicationID: "publication-a", DimensionSnapshotID: "snapshot-a",
 		DimensionVersion: 1, DimensionEffectiveFrom: now,
 		Dimension: flowworker.VersionObjectReference{
 			ObjectRef: "objects/snapshot-a/address-snapshot.wads", Checksum: dimensionChecksum,
@@ -156,7 +156,7 @@ func TestProductionRouterAndWorkerSyncInstallWADSAndColdRestore(t *testing.T) {
 	if result.HighestVersion != 1 || result.Installed != 1 {
 		t.Fatalf("sync result = %+v", result)
 	}
-	installed, exists := catalog.DimensionVersion("tenant-a", 1)
+	installed, exists := catalog.DimensionVersion(1)
 	if !exists {
 		t.Fatal("WADS version was not installed")
 	}
@@ -179,7 +179,7 @@ func TestProductionRouterAndWorkerSyncInstallWADSAndColdRestore(t *testing.T) {
 	if restored.PublicationCount != 1 || restored.HighestVersion != 1 {
 		t.Fatalf("cold restore = %+v", restored)
 	}
-	if _, err := restartedCatalog.Select("tenant-a", now.Add(time.Minute)); err != nil {
+	if _, err := restartedCatalog.Select(now.Add(time.Minute)); err != nil {
 		t.Fatalf("cold-restored catalog is unavailable: %v", err)
 	}
 }
@@ -187,7 +187,7 @@ func TestProductionRouterAndWorkerSyncInstallWADSAndColdRestore(t *testing.T) {
 func buildWorkerIntegrationWADS(t testing.TB, effectiveFrom time.Time) ([]byte, string) {
 	t.Helper()
 	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
-		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "snapshot-a", TenantID: "tenant-a",
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "snapshot-a",
 		Version: 1, EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{{
 			ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "customer"},

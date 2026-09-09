@@ -89,7 +89,6 @@ func integrationAddressSetSnapshot(t *testing.T, effectiveFrom time.Time) *flowd
 	snapshot, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion,
 		SnapshotID:    "snapshot-sets",
-		TenantID:      "flow-it-tenant",
 		Version:       1,
 		EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{

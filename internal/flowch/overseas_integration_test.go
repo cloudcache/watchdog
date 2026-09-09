@@ -35,7 +35,7 @@ func TestRealClickHouseOverseasKPIAndRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+		Resolution: RollupOneMinute, Bucket: bucket,
 		Generation: 1, GeneratedAt: bucket.Add(3 * time.Minute),
 	}
 	if err := rollup.Run(ctx, request); err != nil {

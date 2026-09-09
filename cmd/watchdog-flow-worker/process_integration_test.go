@@ -285,8 +285,8 @@ func buildWorkerProcessWADS(t testing.TB, effectiveFrom time.Time) ([]byte, stri
 	t.Helper()
 	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
 		SchemaVersion: flowdimension.BundleSchemaVersion,
-		SnapshotID:    string(workerProcessSnapshotID), TenantID: string(workerProcessTenantID),
-		Version: 1, EffectiveFrom: effectiveFrom,
+		SnapshotID:    string(workerProcessSnapshotID),
+		Version:       1, EffectiveFrom: effectiveFrom,
 		Prefixes: []flowdimension.PrefixDefinition{{
 			ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local"},
 		}},
@@ -339,7 +339,7 @@ func writeWorkerProcessPlan(t testing.TB, directory string) (string, string) {
 		NotBefore: time.Now().UTC().Add(-time.Hour), ExpiresAt: time.Now().UTC().Add(time.Hour),
 		Sources: []flowplan.SourceBinding{{
 			Protocol: flowplan.ProtocolNetFlow5, SourcePrefix: "192.0.2.0/24",
-			TenantID: string(workerProcessTenantID), ExporterID: "exporter-process", TargetID: "target-process",
+			ExporterID: "exporter-process", TargetID: "target-process",
 			OwnershipEpoch: 1, SamplingMode: flowplan.SamplingModePreScaled, Enabled: true,
 		}},
 	})

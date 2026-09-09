@@ -37,7 +37,7 @@ func TestRealClickHouseVPNCandidateRepairAndScoring(t *testing.T) {
 	for offset := 0; offset < 2; offset++ {
 		bucket := windowStart.Add(time.Duration(offset) * time.Minute)
 		if err := rollup.Run(ctx, RollupRequest{
-			TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+			Resolution: RollupOneMinute, Bucket: bucket,
 			Generation: 1, GeneratedAt: windowEnd.Add(2 * time.Minute),
 		}); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func TestRealClickHouseVPNCandidateRepairAndScoring(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := VPNCandidateRequest{
-		TenantID: "flow-it-tenant", WindowStart: windowStart, WindowEnd: windowEnd,
+		WindowStart: windowStart, WindowEnd: windowEnd,
 		RuleSetVersion: "vpn-integration-v1", Generation: 1, GeneratedAt: windowEnd.Add(3 * time.Minute),
 	}
 	if err := materializer.Run(ctx, request); err != nil {
@@ -68,7 +68,7 @@ func TestRealClickHouseVPNCandidateRepairAndScoring(t *testing.T) {
 	late := integrationVPNRecord(4, windowStart.Add(time.Minute+45*time.Second), flowdimension.DirectionOut, local, remote, 700, true)
 	insertIntegrationBatch(t, ctx, native, integrationBatch(61, windowEnd.Add(4*time.Minute), late))
 	if err := rollup.Run(ctx, RollupRequest{
-		TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: windowStart.Add(time.Minute),
+		Resolution: RollupOneMinute, Bucket: windowStart.Add(time.Minute),
 		Generation: 2, GeneratedAt: windowEnd.Add(5 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestRealClickHouseVPNCandidateVersionUpgradeAndRollback(t *testing.T) {
 	for offset := 0; offset < 2; offset++ {
 		bucket := windowStart.Add(time.Duration(offset) * time.Minute)
 		if err := rollup.Run(ctx, RollupRequest{
-			TenantID: "flow-it-tenant", Resolution: RollupOneMinute, Bucket: bucket,
+			Resolution: RollupOneMinute, Bucket: bucket,
 			Generation: 1, GeneratedAt: windowEnd.Add(2 * time.Minute),
 		}); err != nil {
 			t.Fatal(err)
@@ -143,7 +143,7 @@ func TestRealClickHouseVPNCandidateVersionUpgradeAndRollback(t *testing.T) {
 	}
 	v1Rules := integrationVPNRulesVersion(t, "vpn-rules-v1", 20)
 	v1Request := VPNCandidateRequest{
-		TenantID: "flow-it-tenant", WindowStart: windowStart, WindowEnd: windowEnd,
+		WindowStart: windowStart, WindowEnd: windowEnd,
 		RuleSetVersion: "vpn-rules-v1", Generation: 1, GeneratedAt: windowEnd.Add(3 * time.Minute),
 	}
 	if err := materializer.Run(ctx, v1Request); err != nil {
@@ -263,8 +263,8 @@ func assertVPNVersionCandidates(t testing.TB, result flowvpn.ScoreWindowResult, 
 func runIntegrationVPNCandidates(t *testing.T, ctx context.Context, runner *flowvpn.CandidateRunner, request VPNCandidateRequest, rules flowvpn.CompiledRuleSet) flowvpn.ScoreWindowResult {
 	t.Helper()
 	result, err := runner.Run(ctx, flowvpn.ScoreWindowRequest{
-		TenantID: request.TenantID, WindowStart: request.WindowStart,
-		WindowEnd: request.WindowEnd, MaxCandidates: 10,
+		WindowStart: request.WindowStart,
+		WindowEnd:   request.WindowEnd, MaxCandidates: 10,
 	}, rules)
 	if err != nil {
 		t.Fatal(err)

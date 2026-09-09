@@ -32,7 +32,6 @@ CREATE TABLE watchdog_flow.flow_records_v2_staging (
   kafka_partition UInt32,
   kafka_offset UInt64 CODEC(DoubleDelta, ZSTD(1)),
   record_index UInt32,
-  tenant_id LowCardinality(String),
   collector_id LowCardinality(String),
   exporter_id LowCardinality(String),
   target_id LowCardinality(String),
@@ -138,9 +137,9 @@ CREATE TABLE watchdog_flow.flow_records_v2_staging (
   )
 )
 ENGINE = ReplacingMergeTree(ingest_generation)
-PARTITION BY (tenant_id, toYYYYMMDD(event_time))
+PARTITION BY toYYYYMMDD(event_time)
 ORDER BY (
-  tenant_id, toStartOfHour(event_time), source_stream_id,
+  toStartOfHour(event_time), source_stream_id,
   kafka_partition, kafka_offset, record_index)
 SETTINGS index_granularity = 8192, deduplicate_merge_projection_mode = 'rebuild';
 
@@ -148,7 +147,7 @@ INSERT INTO watchdog_flow.flow_records_v2_staging
 SELECT
   event_time, received_time, concat('legacy:', kafka_topic),
   ingest_generation, kafka_topic, kafka_partition, kafka_offset, record_index,
-  tenant_id, collector_id, exporter_id, target_id, device_id,
+  collector_id, exporter_id, target_id, device_id,
   registry_version, exporter_epoch, exporter_source_ip, flow_protocol,
   observation_domain_id, sub_agent_id, datagram_sequence, agent_ip,
   agent_ip_valid, observation_if_index, ingress_if_index, egress_if_index,
@@ -183,7 +182,6 @@ CREATE TABLE watchdog_flow.flow_ingest_receipts_v2_staging (
   message_disposition Enum8(
     'persisted'=1,'template_missing'=2,'empty'=3,
     'decode_rejected'=4,'mapping_rejected'=5),
-  tenant_ids Array(String),
   kafka_topic LowCardinality(String),
   kafka_partition UInt32,
   kafka_offset UInt64 CODEC(DoubleDelta, ZSTD(1)),
@@ -206,7 +204,7 @@ SETTINGS index_granularity = 8192;
 INSERT INTO watchdog_flow.flow_ingest_receipts_v2_staging
 SELECT
   concat('legacy:', kafka_topic), toUInt32(5), toUInt16(4), 'persisted',
-  arraySort(groupUniqArray(tenant_id)), kafka_topic, kafka_partition,
+  kafka_topic, kafka_partition,
   kafka_offset, count(), sum(raw_bytes), sum(raw_packets),
   sumIf(estimated_bytes, estimated_valid),
   sumIf(estimated_packets, estimated_valid), countIf(estimated_valid),
@@ -229,9 +227,9 @@ DROP TABLE IF EXISTS watchdog_flow.flow_aggregate_1m_v2_staging;
 CREATE TABLE watchdog_flow.flow_aggregate_1m_v2_staging
 AS watchdog_flow.flow_aggregate_1m
 ENGINE = ReplacingMergeTree(generation)
-PARTITION BY (tenant_id, toYYYYMM(bucket))
+PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, dimension_kind, dimension_value,
+  bucket, dimension_kind, dimension_value,
   target_id, device_id, exporter_id, business_direction,
   category, business, dimension_snapshot_id, geo_version,
   classification_version)
@@ -249,9 +247,9 @@ DROP TABLE IF EXISTS watchdog_flow.flow_aggregate_1h_v2_staging;
 CREATE TABLE watchdog_flow.flow_aggregate_1h_v2_staging
 AS watchdog_flow.flow_aggregate_1h
 ENGINE = ReplacingMergeTree(generation)
-PARTITION BY (tenant_id, toYYYYMM(bucket))
+PARTITION BY toYYYYMM(bucket)
 ORDER BY (
-  tenant_id, bucket, dimension_kind, dimension_value,
+  bucket, dimension_kind, dimension_value,
   target_id, device_id, exporter_id, business_direction,
   category, business, dimension_snapshot_id, geo_version,
   classification_version)

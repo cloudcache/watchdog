@@ -59,7 +59,6 @@ func insertReconcileReceipt(t *testing.T, ctx context.Context, native *NativeIns
 		workerSchema     proto.ColUInt32
 		receiptSchema    proto.ColUInt16
 		disposition      proto.ColEnum
-		tenantIDs        = new(proto.ColStr).Array()
 		kafkaTopic       = new(proto.ColStr).LowCardinality()
 		kafkaPartition   proto.ColUInt32
 		kafkaOffset      proto.ColUInt64
@@ -78,7 +77,6 @@ func insertReconcileReceipt(t *testing.T, ctx context.Context, native *NativeIns
 	workerSchema.Append(WorkerSchemaVersion)
 	receiptSchema.Append(receiptSchemaVersion)
 	disposition.Append(string(receipt.Disposition))
-	tenantIDs.Append([]string{"flow-it-tenant"})
 	kafkaTopic.Append(receipt.KafkaTopic)
 	kafkaPartition.Append(receipt.KafkaPartition)
 	kafkaOffset.Append(receipt.KafkaOffset)
@@ -94,7 +92,7 @@ func insertReconcileReceipt(t *testing.T, ctx context.Context, native *NativeIns
 	insertedAt.Append(eventTime)
 	input := proto.Input{
 		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "worker_schema", Data: workerSchema},
-		{Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &disposition}, {Name: "tenant_ids", Data: tenantIDs},
+		{Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &disposition},
 		{Name: "kafka_topic", Data: kafkaTopic}, {Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset},
 		{Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
 		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets},
@@ -171,7 +169,7 @@ func TestRealClickHouseReconciliationScannerDetectsAndBounds(t *testing.T) {
 		batch := integrationBatch(110, time.Date(2026, 9, 5, 1, 2, 3, 0, time.UTC))
 		batch.SourceStreamID = reconcileStream
 		batch.MessageDisposition = flowworker.MessageDispositionTemplateMissing
-		batch.TenantID, batch.CollectorID, batch.ExporterID = "", "", ""
+		batch.CollectorID, batch.ExporterID = "", ""
 		blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
 		if err != nil || len(blocks) != 1 {
 			t.Fatalf("prepare receipt-only block: blocks=%d err=%v", len(blocks), err)

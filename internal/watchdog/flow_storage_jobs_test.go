@@ -109,7 +109,7 @@ func (runner *recordingFlowStorageDayRunner) Run(_ context.Context, request flow
 	return runner.err
 }
 
-func (runner *recordingFlowStorageDayRunner) DayStorageCounters(context.Context, string, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error) {
+func (runner *recordingFlowStorageDayRunner) DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error) {
 	return runner.raw, runner.archive, runner.err
 }
 

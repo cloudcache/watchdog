@@ -5,7 +5,7 @@
 -- internal generation marker makes an empty repair authoritative without
 -- deleting historical parts.
 ALTER TABLE watchdog_flow.flow_vpn_candidates
-  ADD COLUMN IF NOT EXISTS row_kind Enum8('candidate'=1,'_generation'=2) DEFAULT 'candidate' AFTER tenant_id;
+  ADD COLUMN IF NOT EXISTS row_kind Enum8('candidate'=1,'_generation'=2) DEFAULT 'candidate' AFTER window_end;
 
 ALTER TABLE watchdog_flow.flow_vpn_candidates
   ADD COLUMN IF NOT EXISTS remote_prefix_id LowCardinality(String) AFTER remote_country;
@@ -27,5 +27,5 @@ ALTER TABLE watchdog_flow.flow_vpn_candidates
   ADD COLUMN IF NOT EXISTS key_geo_version String AFTER key_dimension_snapshot_id,
   ADD COLUMN IF NOT EXISTS key_classification_version UInt32 AFTER key_geo_version,
   MODIFY ORDER BY (
-    tenant_id, window_start, window_end, conversation_key, rule_set_version,
+    window_start, window_end, conversation_key, rule_set_version,
     key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version);

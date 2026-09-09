@@ -11,7 +11,7 @@ import (
 
 func TestDecodeAndCompileClassificationBundleVerifiesWireContract(t *testing.T) {
 	bundle := ClassificationBundle{
-		SchemaVersion: ClassificationSchemaVersion, TenantID: "tenant-a", Version: 7,
+		SchemaVersion: ClassificationSchemaVersion, Version: 7,
 		EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-7",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3, 4}, HomeASNs: []uint32{4134, 4812},
 		OverseasIncludesHMT: true, InternalPolicy: RecordPolicyDrop, TransitPolicy: RecordPolicyCount,
@@ -90,18 +90,18 @@ func TestClassificationCatalogSelectsImmutableEventTimeProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := catalog.Select("tenant-a", testMinute(12, 59))
+	selected, err := catalog.Select(testMinute(12, 59))
 	if err != nil || selected.Metadata().Version != 1 || selected.Metadata().DimensionSnapshotID != "snapshot-1" {
 		t.Fatalf("selected=%+v err=%v", selected.Metadata(), err)
 	}
 	if category := selected.Classify(DirectionOut, GeoInfo{Country: "CN", AdminCode: "330100", ISPID: 3}); category != CategoryOnNetLocalCity {
 		t.Fatalf("immutable profile category = %q", category)
 	}
-	selected, err = catalog.Select("tenant-a", testMinute(13, 0))
+	selected, err = catalog.Select(testMinute(13, 0))
 	if err != nil || selected.Metadata().Version != 2 {
 		t.Fatalf("selected=%+v err=%v", selected.Metadata(), err)
 	}
-	if _, err := catalog.Select("tenant-a", testMinute(11, 59)); err != ErrNoClassificationSnapshot {
+	if _, err := catalog.Select(testMinute(11, 59)); err != ErrNoClassificationSnapshot {
 		t.Fatalf("pre-history error = %v", err)
 	}
 	if err := catalog.Install(first); err != nil {
@@ -170,7 +170,7 @@ func TestClassificationCatalogRejectsConflictingTimeline(t *testing.T) {
 
 func testClassificationDefinition(version uint32, effectiveFrom time.Time, dimensionSnapshotID string) ClassificationDefinition {
 	return ClassificationDefinition{
-		TenantID: "tenant-a", Version: version, EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimensionSnapshotID,
+		Version: version, EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimensionSnapshotID,
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, HomeASNs: []uint32{4134}, OverseasIncludesHMT: true,
 		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
 	}

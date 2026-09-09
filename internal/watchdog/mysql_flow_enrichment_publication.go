@@ -172,7 +172,7 @@ func (p *MySQLFlowEnrichmentPublisher) Publish(ctx context.Context, tenantID, ac
 	}
 	classificationVersion := currentVersion + 1
 	classificationData, classificationChecksum, err := flowdimension.EncodeClassificationBundle(flowdimension.ClassificationDefinition{
-		TenantID: string(tenantID), Version: classificationVersion, EffectiveFrom: effectiveFrom,
+		Version: classificationVersion, EffectiveFrom: effectiveFrom,
 		DimensionSnapshotID: string(snapshot.ID), HomeProvince: profile.Draft.HomeProvince,
 		HomeCity: profile.Draft.HomeCity, HomeISPIDs: profile.Draft.HomeISPIDs, HomeASNs: profile.Draft.HomeASNs,
 		OverseasIncludesHMT: profile.Draft.OverseasIncludesHMT,

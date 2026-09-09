@@ -91,7 +91,7 @@ func TestRemoteVersionSyncRetriesACKWithoutRedownloadingObjects(t *testing.T) {
 	if _, err := syncer.SyncOnce(context.Background(), 0); !errors.Is(err, ErrVersionAcknowledgement) {
 		t.Fatalf("first sync error = %v", err)
 	}
-	if _, err := catalog.Select(publication.TenantID, testMinute(12, 30)); err != nil {
+	if _, err := catalog.Select(testMinute(12, 30)); err != nil {
 		t.Fatalf("locally durable publication disappeared after ACK failure: %v", err)
 	}
 	result, err := syncer.SyncOnce(context.Background(), 0)
@@ -145,7 +145,7 @@ func TestRemoteVersionSyncRejectsUnverifiedEnvelopeBeforeObjectOrACK(t *testing.
 	if len(requests) != 2 {
 		t.Fatalf("unverified publication triggered object/ACK request: %v", requests)
 	}
-	if _, err := catalog.Select(publication.TenantID, testMinute(12, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
+	if _, err := catalog.Select(testMinute(12, 30)); !errors.Is(err, ErrNoEnrichmentVersion) {
 		t.Fatalf("unverified publication became visible: %v", err)
 	}
 }

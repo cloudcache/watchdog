@@ -40,7 +40,6 @@ type VersionObjectReference struct {
 // objects before the pair becomes visible.
 type EnrichmentVersionPublication struct {
 	PublicationID               string                 `json:"publication_id"`
-	TenantID                    string                 `json:"tenant_id"`
 	DimensionSnapshotID         string                 `json:"dimension_snapshot_id"`
 	DimensionVersion            uint64                 `json:"dimension_version"`
 	DimensionEffectiveFrom      time.Time              `json:"dimension_effective_from"`
@@ -58,7 +57,6 @@ type VersionWorkerIdentity struct {
 
 type EnrichmentVersionAcknowledgement struct {
 	PublicationID               string    `json:"publication_id"`
-	TenantID                    string    `json:"tenant_id"`
 	WorkerID                    string    `json:"worker_id"`
 	BootID                      string    `json:"boot_id"`
 	SoftwareVersion             string    `json:"software_version"`
@@ -155,7 +153,7 @@ func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersi
 	if err := validateVersionPublication(publication); err != nil {
 		return err
 	}
-	if installed, exists := l.catalog.ClassificationVersion(publication.TenantID, publication.ClassificationVersion); exists {
+	if installed, exists := l.catalog.ClassificationVersion(publication.ClassificationVersion); exists {
 		if err := matchPublicationMetadata(publication, installed.Dimension.Metadata(), installed.Classification.Metadata()); err != nil {
 			return err
 		}
@@ -166,7 +164,7 @@ func (l *VersionLoader) Install(ctx context.Context, publication EnrichmentVersi
 	}
 
 	var dimension DimensionSnapshot
-	if installed, exists := l.catalog.DimensionVersion(publication.TenantID, publication.DimensionVersion); exists {
+	if installed, exists := l.catalog.DimensionVersion(publication.DimensionVersion); exists {
 		if err := matchDimensionMetadata(publication, installed.Metadata()); err != nil {
 			return err
 		}
@@ -237,8 +235,8 @@ func (l *VersionLoader) persistVersion(ctx context.Context, publication Enrichme
 
 func (l *VersionLoader) acknowledge(ctx context.Context, publication EnrichmentVersionPublication) error {
 	acknowledgement := EnrichmentVersionAcknowledgement{
-		PublicationID: publication.PublicationID, TenantID: publication.TenantID,
-		WorkerID: l.identity.WorkerID, BootID: l.identity.BootID, SoftwareVersion: l.identity.SoftwareVersion,
+		PublicationID: publication.PublicationID,
+		WorkerID:      l.identity.WorkerID, BootID: l.identity.BootID, SoftwareVersion: l.identity.SoftwareVersion,
 		DimensionSnapshotID: publication.DimensionSnapshotID, DimensionVersion: publication.DimensionVersion,
 		DimensionChecksum: publication.Dimension.Checksum, DimensionEffectiveFrom: publication.DimensionEffectiveFrom.UTC(),
 		ClassificationVersion:       publication.ClassificationVersion,
@@ -252,7 +250,7 @@ func (l *VersionLoader) acknowledge(ctx context.Context, publication EnrichmentV
 }
 
 func validateVersionPublication(publication EnrichmentVersionPublication) error {
-	if !validIdentifier(publication.PublicationID, 128) || !validIdentifier(publication.TenantID, 64) ||
+	if !validIdentifier(publication.PublicationID, 128) ||
 		!validIdentifier(publication.DimensionSnapshotID, 64) || publication.DimensionVersion == 0 || publication.ClassificationVersion == 0 {
 		return fmt.Errorf("%w: identity and versions are required", ErrInvalidVersionPublication)
 	}
@@ -290,7 +288,7 @@ func matchPublicationMetadata(publication EnrichmentVersionPublication, dimensio
 	if err := matchDimensionMetadata(publication, dimension); err != nil {
 		return err
 	}
-	if classification.TenantID != publication.TenantID || classification.Version != publication.ClassificationVersion ||
+	if classification.Version != publication.ClassificationVersion ||
 		!classification.EffectiveFrom.Equal(publication.ClassificationEffectiveFrom) ||
 		classification.DimensionSnapshotID != publication.DimensionSnapshotID || classification.Checksum != publication.Classification.Checksum {
 		return fmt.Errorf("%w: classification metadata differs from publication", ErrInvalidVersionPublication)
@@ -299,7 +297,7 @@ func matchPublicationMetadata(publication EnrichmentVersionPublication, dimensio
 }
 
 func matchDimensionMetadata(publication EnrichmentVersionPublication, dimension flowdimension.SnapshotMetadata) error {
-	if dimension.SnapshotID != publication.DimensionSnapshotID || dimension.TenantID != publication.TenantID ||
+	if dimension.SnapshotID != publication.DimensionSnapshotID ||
 		dimension.Version != publication.DimensionVersion || !dimension.EffectiveFrom.Equal(publication.DimensionEffectiveFrom) ||
 		dimension.Checksum != publication.Dimension.Checksum {
 		return fmt.Errorf("%w: dimension metadata differs from publication", ErrInvalidVersionPublication)

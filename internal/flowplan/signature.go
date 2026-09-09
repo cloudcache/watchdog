@@ -24,7 +24,6 @@ type signedPlanEnvelope struct {
 	Payload                 string `json:"payload"`
 	Signature               string `json:"signature"`
 	PlanID                  string `json:"plan_id,omitempty"`
-	TenantID                string `json:"tenant_id,omitempty"`
 	CollectorID             string `json:"collector_id,omitempty"`
 	ConfigVersion           uint64 `json:"config_version,omitempty"`
 	PlanSchemaVersion       uint16 `json:"plan_schema_version,omitempty"`
@@ -37,7 +36,6 @@ type signedPlanEnvelope struct {
 
 type PlanSignatureMetadata struct {
 	PlanID                  string
-	TenantID                string
 	CollectorID             string
 	ConfigVersion           uint64
 	PlanSchemaVersion       uint16
@@ -187,7 +185,6 @@ func BuildPlanSignaturePayload(metadata PlanSignatureMetadata) ([]byte, error) {
 	payload := struct {
 		EnvelopeVersion         uint16 `json:"envelope_version"`
 		PlanID                  string `json:"plan_id"`
-		TenantID                string `json:"tenant_id"`
 		CollectorID             string `json:"collector_id"`
 		ConfigVersion           uint64 `json:"config_version"`
 		PlanSchemaVersion       uint16 `json:"plan_schema_version"`
@@ -197,7 +194,7 @@ func BuildPlanSignaturePayload(metadata PlanSignatureMetadata) ([]byte, error) {
 		ExpiresAtUnixMilli      int64  `json:"expires_at_unix_ms"`
 		SupersedesConfigVersion uint64 `json:"supersedes_config_version"`
 	}{
-		EnvelopeVersion: 1, PlanID: metadata.PlanID, TenantID: metadata.TenantID,
+		EnvelopeVersion: 1, PlanID: metadata.PlanID,
 		CollectorID: metadata.CollectorID, ConfigVersion: metadata.ConfigVersion,
 		PlanSchemaVersion: metadata.PlanSchemaVersion, SpecHash: metadata.SpecHash,
 		SigningKeyID: metadata.SigningKeyID, NotBeforeUnixMilli: metadata.NotBeforeUnixMilli,
@@ -224,7 +221,7 @@ func MarshalControlPlaneSignedPlan(metadata PlanSignatureMetadata, planJSON, sig
 	}
 	envelope := signedPlanEnvelope{
 		SchemaVersion: 2, Payload: base64.StdEncoding.EncodeToString(planJSON), Signature: base64.StdEncoding.EncodeToString(signature),
-		PlanID: metadata.PlanID, TenantID: metadata.TenantID, CollectorID: metadata.CollectorID,
+		PlanID: metadata.PlanID, CollectorID: metadata.CollectorID,
 		ConfigVersion: metadata.ConfigVersion, PlanSchemaVersion: metadata.PlanSchemaVersion,
 		SpecHash: metadata.SpecHash, SigningKeyID: metadata.SigningKeyID,
 		NotBeforeUnixMilli: metadata.NotBeforeUnixMilli, ExpiresAtUnixMilli: metadata.ExpiresAtUnixMilli,
@@ -235,7 +232,7 @@ func MarshalControlPlaneSignedPlan(metadata PlanSignatureMetadata, planJSON, sig
 
 func planEnvelopeMetadata(envelope signedPlanEnvelope) PlanSignatureMetadata {
 	return PlanSignatureMetadata{
-		PlanID: envelope.PlanID, TenantID: envelope.TenantID, CollectorID: envelope.CollectorID,
+		PlanID: envelope.PlanID, CollectorID: envelope.CollectorID,
 		ConfigVersion: envelope.ConfigVersion, PlanSchemaVersion: envelope.PlanSchemaVersion,
 		SpecHash: envelope.SpecHash, SigningKeyID: envelope.SigningKeyID,
 		NotBeforeUnixMilli: envelope.NotBeforeUnixMilli, ExpiresAtUnixMilli: envelope.ExpiresAtUnixMilli,
@@ -244,7 +241,7 @@ func planEnvelopeMetadata(envelope signedPlanEnvelope) PlanSignatureMetadata {
 }
 
 func validatePlanSignatureMetadata(metadata PlanSignatureMetadata) error {
-	if !validPlanEnvelopeID(metadata.PlanID) || !validPlanEnvelopeID(metadata.TenantID) || !validPlanEnvelopeID(metadata.CollectorID) || metadata.ConfigVersion == 0 || metadata.PlanSchemaVersion == 0 {
+	if !validPlanEnvelopeID(metadata.PlanID) || !validPlanEnvelopeID(metadata.CollectorID) || metadata.ConfigVersion == 0 || metadata.PlanSchemaVersion == 0 {
 		return errors.New("control-plane plan identity and versions are invalid")
 	}
 	if strings.TrimSpace(metadata.SigningKeyID) != metadata.SigningKeyID || metadata.SigningKeyID == "" || len(metadata.SigningKeyID) > 64 {
@@ -283,7 +280,7 @@ func validateControlPlanePlanPayload(metadata PlanSignatureMetadata, payload []b
 }
 
 func controlPlaneEnvelopeFieldsPresent(envelope signedPlanEnvelope) bool {
-	return envelope.PlanID != "" || envelope.TenantID != "" || envelope.CollectorID != "" || envelope.ConfigVersion != 0 || envelope.PlanSchemaVersion != 0 || envelope.SpecHash != "" || envelope.SigningKeyID != "" || envelope.NotBeforeUnixMilli != 0 || envelope.ExpiresAtUnixMilli != 0 || envelope.SupersedesConfigVersion != 0
+	return envelope.PlanID != "" || envelope.CollectorID != "" || envelope.ConfigVersion != 0 || envelope.PlanSchemaVersion != 0 || envelope.SpecHash != "" || envelope.SigningKeyID != "" || envelope.NotBeforeUnixMilli != 0 || envelope.ExpiresAtUnixMilli != 0 || envelope.SupersedesConfigVersion != 0
 }
 
 func validPlanEnvelopeID(value string) bool {

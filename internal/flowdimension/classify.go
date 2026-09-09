@@ -140,8 +140,8 @@ func businessLabel(prefix compiledPrefix) string {
 	return UnassignedDimensionID
 }
 
-func (c *SnapshotCatalog) ClassifyAt(tenantID string, eventTime time.Time, source, destination netip.Addr) (ClassifiedEndpoints, error) {
-	snapshot, err := c.Select(tenantID, eventTime)
+func (c *SnapshotCatalog) ClassifyAt(eventTime time.Time, source, destination netip.Addr) (ClassifiedEndpoints, error) {
+	snapshot, err := c.Select(eventTime)
 	if err != nil {
 		return ClassifiedEndpoints{}, err
 	}

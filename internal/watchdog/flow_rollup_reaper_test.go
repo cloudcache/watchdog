@@ -60,7 +60,7 @@ type fakeReaperRunner struct {
 	permanentGaps int
 }
 
-func (f *fakeReaperRunner) BucketNeedsRepair(_ context.Context, _ string, _ flowch.RollupResolution, bucket time.Time) (bool, error) {
+func (f *fakeReaperRunner) BucketNeedsRepair(_ context.Context, _ flowch.RollupResolution, bucket time.Time) (bool, error) {
 	return f.needsRepair[bucket.Unix()], nil
 }
 

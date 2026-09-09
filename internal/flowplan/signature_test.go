@@ -21,7 +21,7 @@ func TestHistoricalSignedPlanAllowsExpiredReplayButStillRequiresSignature(t *tes
 		NotBefore: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 		ExpiresAt: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
 		Sources: []SourceBinding{{
-			Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.0/24", TenantID: "tenant-a", ExporterID: "exporter-a", TargetID: "target-a",
+			Protocol: ProtocolNetFlow5, SourcePrefix: "192.0.2.0/24", ExporterID: "exporter-a", TargetID: "target-a",
 			OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, Enabled: true,
 		}},
 	}

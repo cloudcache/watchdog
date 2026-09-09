@@ -37,7 +37,7 @@ func TestSignedEnrichmentVersionPublicationUsesMonotonicTrustBundle(t *testing.T
 	envelope := SignedEnrichmentVersionPublication{
 		SchemaVersion: EnrichmentVersionEnvelopeSchemaVersion,
 		Publication: EnrichmentVersionPublication{
-			PublicationID: "publication-1", TenantID: "tenant-1",
+			PublicationID:       "publication-1",
 			DimensionSnapshotID: "snapshot-1", DimensionVersion: 7,
 			DimensionEffectiveFrom: now.Add(-2 * time.Hour),
 			Dimension: VersionObjectReference{

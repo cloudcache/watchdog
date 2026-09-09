@@ -76,7 +76,7 @@ func (s *CollectorPlanDeliveryService) Fetch(ctx context.Context, collectorID ID
 		return CollectorPlanDelivery{}, ErrCollectorPlanUnavailable
 	}
 	metadata := flowplan.PlanSignatureMetadata{
-		PlanID: string(plan.ID), TenantID: string(plan.TenantID), CollectorID: string(plan.CollectorID),
+		PlanID: string(plan.ID), CollectorID: string(plan.CollectorID),
 		ConfigVersion: plan.ConfigVersion, PlanSchemaVersion: plan.PlanSchemaVersion,
 		SpecHash: plan.SpecHash, SigningKeyID: plan.SigningKeyID,
 		ExpiresAtUnixMilli: plan.ExpiresAt.UnixMilli(), SupersedesConfigVersion: plan.SupersedesConfigVersion,

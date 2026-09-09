@@ -65,7 +65,6 @@ type EnrichedBatch struct {
 	KafkaTopic          string
 	KafkaPartition      int32
 	KafkaOffset         int64
-	TenantID            string
 	CollectorID         string
 	ExporterID          string
 	RegistryVersion     uint64
@@ -135,7 +134,6 @@ type EnrichedRecord struct {
 // causes a fallback to an active/current snapshot.
 type VersionBlockedError struct {
 	Dependency     string
-	TenantID       string
 	SourceStreamID string
 	KafkaPartition int32
 	KafkaOffset    int64
@@ -145,7 +143,7 @@ type VersionBlockedError struct {
 }
 
 func (e *VersionBlockedError) Error() string {
-	return fmt.Sprintf("%s: dependency=%s tenant=%s record=%d event_time=%s", ErrVersionUnavailable, e.Dependency, e.TenantID, e.RecordIndex, e.EventTime.UTC().Format(time.RFC3339Nano))
+	return fmt.Sprintf("%s: dependency=%s record=%d event_time=%s", ErrVersionUnavailable, e.Dependency, e.RecordIndex, e.EventTime.UTC().Format(time.RFC3339Nano))
 }
 
 func (e *VersionBlockedError) Unwrap() error {
@@ -230,7 +228,7 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 		MessageDisposition: batch.MessageDisposition,
 		SourceStreamID:     batch.SourceStreamID, KafkaTopic: batch.KafkaTopic,
 		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset,
-		TenantID: batch.TenantID, CollectorID: batch.CollectorID, ExporterID: batch.ExporterID,
+		CollectorID: batch.CollectorID, ExporterID: batch.ExporterID,
 		RegistryVersion: batch.RegistryVersion, ReceivedAt: time.UnixMilli(batch.ReceivedAtUnixMS).UTC(),
 		Protocol: uint8(batch.Protocol), SourceIP: validated.sourceIP,
 		ObservationDomainID: batch.ObservationDomainID,
@@ -245,7 +243,7 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 		result.Records = make([]EnrichedRecord, 0, len(batch.Records))
 	}
 	for _, decoded := range batch.Records {
-		record, err := e.enrichRecord(batch.TenantID, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, decoded)
+		record, err := e.enrichRecord(batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, decoded)
 		if err != nil {
 			result.Records = result.Records[:0]
 			return err
@@ -255,18 +253,18 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	return nil
 }
 
-func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition int32, kafkaOffset int64, decoded *Record) (EnrichedRecord, error) {
+func (e *Enricher) enrichRecord(sourceStreamID string, kafkaPartition int32, kafkaOffset int64, decoded *Record) (EnrichedRecord, error) {
 	eventTime := time.UnixMilli(decoded.EventTimeUnixMS).UTC()
 	source, _ := parseAddress16(decoded.SourceIP)
 	destination, _ := parseAddress16(decoded.DestinationIP)
-	dimensionSnapshot, classificationSnapshot, dependency, err := e.selectVersions(tenantID, eventTime)
+	dimensionSnapshot, classificationSnapshot, dependency, err := e.selectVersions(eventTime)
 	if err != nil {
-		return EnrichedRecord{}, blocked(dependency, tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
+		return EnrichedRecord{}, blocked(dependency, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
 	}
 	dimensionMetadata := dimensionSnapshot.Metadata()
 	classificationMetadata := classificationSnapshot.Metadata()
 	if classificationMetadata.DimensionSnapshotID != dimensionMetadata.SnapshotID {
-		return EnrichedRecord{}, blocked("classification_dimension_pair", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
+		return EnrichedRecord{}, blocked("classification_dimension_pair", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
 	}
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
 	var supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
@@ -286,11 +284,11 @@ func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition 
 		}
 	} else {
 		if e.geo == nil {
-			return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, flowdimension.ErrNoGeoIndex)
+			return EnrichedRecord{}, blocked("geo", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, flowdimension.ErrNoGeoIndex)
 		}
 		geoIndex, err := e.geo.Select(eventTime)
 		if err != nil {
-			return EnrichedRecord{}, blocked("geo", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
+			return EnrichedRecord{}, blocked("geo", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
 		}
 		geoMetadata := geoIndex.Metadata()
 		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
@@ -301,7 +299,7 @@ func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition 
 		}
 		legacySnapshot, ok := dimensionSnapshot.(*flowdimension.CompiledSnapshot)
 		if !ok {
-			return EnrichedRecord{}, blocked("dimension", tenantID, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
+			return EnrichedRecord{}, blocked("dimension", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
 		}
 		remoteGeo, overrideFields, _ = legacySnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
 	}
@@ -340,19 +338,19 @@ func (e *Enricher) enrichRecord(tenantID, sourceStreamID string, kafkaPartition 
 	return record, nil
 }
 
-func (e *Enricher) selectVersions(tenantID string, eventTime time.Time) (DimensionSnapshot, *flowdimension.ClassificationSnapshot, string, error) {
+func (e *Enricher) selectVersions(eventTime time.Time) (DimensionSnapshot, *flowdimension.ClassificationSnapshot, string, error) {
 	if e.versions != nil {
-		version, err := e.versions.Select(tenantID, eventTime)
+		version, err := e.versions.Select(eventTime)
 		if err != nil {
 			return nil, nil, "dimension_classification_pair", err
 		}
 		return version.Dimension, version.Classification, "", nil
 	}
-	dimension, err := e.dimensions.Select(tenantID, eventTime)
+	dimension, err := e.dimensions.Select(eventTime)
 	if err != nil {
 		return nil, nil, "dimension", err
 	}
-	classification, err := e.classification.Select(tenantID, eventTime)
+	classification, err := e.classification.Select(eventTime)
 	if err != nil {
 		return nil, nil, "classification", err
 	}
@@ -387,8 +385,8 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 		}
 		return result, nil
 	}
-	if !validIdentifier(batch.TenantID, 64) || !validIdentifier(batch.CollectorID, 128) || !validIdentifier(batch.ExporterID, 128) || batch.RegistryVersion == 0 {
-		return result, invalid("tenant, collector, exporter, and registry identity are required")
+	if !validIdentifier(batch.CollectorID, 128) || !validIdentifier(batch.ExporterID, 128) || batch.RegistryVersion == 0 {
+		return result, invalid("collector, exporter, and registry identity are required")
 	}
 	if batch.Protocol < 1 || batch.Protocol > 4 {
 		return result, invalid("protocol is invalid")
@@ -518,8 +516,8 @@ func selectRemoteASN(record *Record, side flowdimension.EndpointSide, geo flowdi
 	return 0, ASNSourceUnknown
 }
 
-func blocked(dependency, tenantID, sourceStreamID string, kafkaPartition int32, kafkaOffset int64, record *Record, eventTime time.Time, cause error) error {
-	return &VersionBlockedError{Dependency: dependency, TenantID: tenantID, SourceStreamID: sourceStreamID, KafkaPartition: kafkaPartition, KafkaOffset: kafkaOffset, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
+func blocked(dependency, sourceStreamID string, kafkaPartition int32, kafkaOffset int64, record *Record, eventTime time.Time, cause error) error {
+	return &VersionBlockedError{Dependency: dependency, SourceStreamID: sourceStreamID, KafkaPartition: kafkaPartition, KafkaOffset: kafkaOffset, RecordIndex: record.RecordIndex, EventTime: eventTime, Cause: cause}
 }
 
 func invalid(message string) error {

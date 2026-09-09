@@ -22,7 +22,6 @@ type RecordBatch struct {
 	KafkaTopic          string
 	KafkaPartition      int32
 	KafkaOffset         int64
-	TenantID            string
 	CollectorID         string
 	ExporterID          string
 	RegistryVersion     uint64
