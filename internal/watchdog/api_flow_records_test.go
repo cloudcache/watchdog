@@ -160,13 +160,12 @@ func TestFlowRecordSearchValueLayerPermissionAuditAndEnvelope(t *testing.T) {
 				response.Header().Get("Content-Type") != "application/json" {
 				t.Fatalf("status=%d request-id=%q content-type=%q body=%s", response.Code, response.Header().Get(RequestIDHeader), response.Header().Get("Content-Type"), response.Body.String())
 			}
-			tenantParameter := ""
 			for _, parameter := range runner.compiled.Query.Parameters {
 				if parameter.Key == "tenant" {
-					tenantParameter = parameter.Value
+					t.Fatalf("single-domain Flow query retained tenant parameter: %+v", parameter)
 				}
 			}
-			if tenantParameter != `'tenant-a'` || runner.compiled.View != test.view ||
+			if strings.Contains(runner.compiled.Query.Body, "tenant_id") || runner.compiled.View != test.view ||
 				!strings.Contains(response.Body.String(), `"data"`) || !strings.Contains(response.Body.String(), `"meta"`) {
 				t.Fatalf("compiled=%+v body=%s", runner.compiled, response.Body.String())
 			}
