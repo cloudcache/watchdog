@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/address"
+	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
@@ -32,6 +34,10 @@ type Server struct {
 	addressArtifacts address.DiskArtifactStore
 	jobs             *opjob.Store
 	workerCancel     context.CancelFunc
+
+	agentPlanSigner agentplan.Signer
+	agentPlanPublic ed25519.PublicKey
+	agentPlanCancel context.CancelFunc
 }
 
 // New opens MySQL, applies the v2 baseline, and builds the router.
@@ -70,6 +76,10 @@ func New(cfg Config) (*Server, error) {
 	if err := s.EnsureFirstAdmin(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if err := s.startAgentPlans(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("start agent plans: %w", err)
 	}
 	if err := s.startAddressLibrary(); err != nil {
 		_ = db.Close()
@@ -127,6 +137,9 @@ func (s *Server) DB() *sql.DB { return s.db }
 
 // Close stops background workers and releases the database pool.
 func (s *Server) Close() error {
+	if s.agentPlanCancel != nil {
+		s.agentPlanCancel()
+	}
 	if s.workerCancel != nil {
 		s.workerCancel()
 	}

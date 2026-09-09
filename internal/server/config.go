@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,9 +18,19 @@ type Config struct {
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	Kafka      KafkaConfig      `yaml:"kafka"`
 	Flow       FlowConfig       `yaml:"flow"`
+	AgentPlans AgentPlansConfig `yaml:"agent_plans"`
 	Address    AddressConfig    `yaml:"address"`
 	SNMP       SNMPConfig       `yaml:"snmp"`
 	Admin      AdminConfig      `yaml:"admin"`
+}
+
+// AgentPlansConfig keeps the one installation-wide signing root on disk. The
+// public key is copied to agents during provisioning; private material never
+// appears in an API response or MySQL.
+type AgentPlansConfig struct {
+	SigningKeyID      string        `yaml:"signing_key_id"`
+	SigningPrivateKey string        `yaml:"signing_private_key"`
+	DefaultTTL        time.Duration `yaml:"default_ttl"`
 }
 
 // ServerConfig — frontend and backend are separate builds, so the server never hosts static files.
@@ -97,6 +108,7 @@ func defaultConfig() Config {
 		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default"},
 		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
 		Flow:       FlowConfig{RetentionRawDays: 365, DownsampleAfterDays: 365, Rollup1mDays: 180, Rollup1hDays: 400},
+		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		Admin:      AdminConfig{Username: "admin"},
 	}
