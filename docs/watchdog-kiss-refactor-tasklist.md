@@ -113,16 +113,18 @@
   - [x] **回归测试**：`go test ./...`、server/watchdog race、全库 vet/build、前端 45 单测、Agent 文件 Biome 和 production build 通过；未增加视觉测试。
   - [x] **已提交门禁**：本纵向切片只提交 Agent schema/API/UI/test、旧 registry 删除和必要文档核销；地址库及其他并行 WIP 不进入提交。
 
-`KISS-04A` 完成不代表整个 `KISS-04` 完成。下面 plan/ACK/LKG/四类实进程闭环仍为待办：
+#### KISS-04B/C immutable plan 与四类实进程闭环
 
-- [ ] **设计**：冻结 agent kind/capability schema、enrollment/token-or-mTLS、binding、immutable plan、ACK、heartbeat、revocation 和兼容版本矩阵。
-- [ ] **编码**：将 collector/target agent 多表收敛为 `agents/credentials/bindings/plans/acks/runs`；保留已有 plan 签名和 LKG 必要能力，删除 tenant ownership/provider/fleet 占位状态机。
-- [ ] **API/UI**：agent list/detail/enroll/rotate/revoke/bind/plan/run；所有列表服务端分页/search/sort/filter；secret 只显示一次。
-- [ ] **单元测试**：重复 enrollment、token rotation、replay、过期、capability/schema 拒绝、plan downgrade、ACK 幂等、离线/clock skew。
-- [ ] **集成测试**：system、SNMP、flow collect、flow worker 至少四种 agent 实际注册、下发、ACK、断线/LKG/吊销。
-- [ ] **变更设计/测试**：批量 rollout 用 operation job fan-out；删除未完成 canary 表前验证无生产调用。
-- [ ] **回归测试**：agent/collector 全链、认证隔离、MySQL concurrency、race/vet/build、UI。
-- [ ] **已提交门禁**：旧 agent tables/repos/routes 无引用，clean install 仅创建新表。
+- [x] **设计**：冻结 agent kind/capability schema、enrollment/token-or-mTLS、binding、immutable Ed25519 plan、ACK、heartbeat、revocation、LKG 和兼容矩阵；详细契约见 `docs/agent-plan-delivery-design.md`。
+- [x] **编码**：统一使用 `agents/agent_credentials/agent_bindings/agent_plans/agent_plan_acks/agent_runs/agent_enrollment_tokens`；system、SNMP、flow collect、flow worker 均接共享 `internal/agentplan` runtime，严格校验本进程 config，应用成功后原子安装 LKG 并 ACK；401/403 不回退 LKG，运行时 registry heartbeat 收到吊销后停止进程。无 tenant ownership/provider/fleet/canary 状态机。
+- [x] **API/UI**：agent list/detail/enroll/rotate/revoke/bind/plan/run 全链已接；新增 Agent Plans 页面，计划列表使用服务端分页/search/sort/schema+signing-key column filter，计划不可 PATCH/DELETE；secret 仍只在 enrollment/create/rotate 响应显示一次。
+- [x] **单元测试**：覆盖 canonical/signature/tamper/有效期、LKG 原子安装/历史签名校验/版本倒退、capability/schema/kind 拒绝、严格进程 config、ETag/304、5xx 离线恢复、409/401 禁止恢复、heartbeat 吊销退出、ACK 幂等/冲突/降级、离线健康和 clock skew。
+- [x] **集成测试**：真实空 MySQL 的 plan API 覆盖发布/ETag/ACK/rollout/吊销；另构建并执行 system、SNMP、flow collect、flow worker 四个生产二进制，逐一验证一次性 enrollment、凭证落盘、计划下发/应用/ACK、断网 LKG 和吊销拒绝。
+- [x] **变更设计/测试**：批量 rollout 复用唯一 `operation_jobs` 的 lease/heartbeat/cancel/retry 和 versioned checkpoint；未创建 canary/fleet/rollout 状态表；旧 payload 按 schema/version fail closed。
+- [x] **回归测试**：`internal/agentplan` race、KISS-04 真实 MySQL/四进程集成、全库 Go test/vet/build、前端 45 单测、相关文件 Biome 和 production build 均通过。全库 detached 回归同时暴露 KISS-05 已提交调用依赖两个尚未提交 helper（分页函数与导出 set ID）；验证时仅用临时 shim 隔离该既有缺口，未把地址业务改动混入 KISS-04。
+- [x] **已提交门禁**：`3a32c4fc` 收敛 operation job，`9d85df4e` 交付签名计划控制面，`6d847677` 接四进程 runtime/API UI，`94fd3124` 收口兼容矩阵与离线健康测试；KISS-04 不再修改综合 `device_agent_integration_test.go`。clean schema 实测 7 张统一 Agent 表、0 个 `tenant_id`、0 个 collector/fleet/canary 表，Gin/前端无旧 collector plan route。
+
+**KISS-04 = 完成。** 后续 SNMP/system 样本改写 ClickHouse 属 KISS-03；Flow 数据面及 enrichment 版本消费属 KISS-06，不回写本工作包。
 
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 
