@@ -24,7 +24,7 @@ func newManagementID() (ID, error) {
 	return crockford.EncodeToString(b[:]), nil
 }
 
-// newSetID returns a 36-char UUIDv4 (address sets and prefixes use CHAR(36)).
-func newSetID() string {
+// NewSetID returns a 36-char UUIDv4 (address sets and prefixes use CHAR(36)).
+func NewSetID() string {
 	return uuid.NewString()
 }
