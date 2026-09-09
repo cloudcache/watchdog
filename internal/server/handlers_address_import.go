@@ -10,14 +10,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cloudcache/watchdog/internal/address"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 )
 
-// registerAddressImportRoutes wires the address-library source imports: upload an
-// MMDB/IPDB generation, watch it decode, browse its base prefixes, and activate a
-// ready generation into its slot. View is address.view; mutating an import (upload,
-// activate, retry) is address.manage. The POST /address-imports body-size cap is
-// lifted in requestBodyLimit — uploads are bounded by cfg.Address.MaxUploadBytes.
+// registerAddressImportRoutes wires MMDB/IPDB source imports onto internal/address:
+// upload -> opjob import worker -> ready generation -> activate slot, plus base-prefix
+// browse/lookup. View is address.view; mutations are address.manage. The upload
+// body-size cap is lifted in requestBodyLimit; uploads honour cfg.Address.MaxUploadBytes.
 func (s *Server) registerAddressImportRoutes(auth *gin.RouterGroup) {
 	view := s.requirePermission("address.view")
 	manage := s.requirePermission("address.manage")
@@ -29,50 +30,73 @@ func (s *Server) registerAddressImportRoutes(auth *gin.RouterGroup) {
 	imports.GET("/:id/prefixes", view, s.listImportPrefixes)
 	imports.GET("/:id/lookup", view, s.lookupImportPrefix)
 	imports.POST("/:id/actions/activate", manage, s.activateImport)
-	imports.POST("/:id/actions/retry", manage, s.retryImport)
 
 	auth.GET("/address-import-slots/:slot", view, s.getImportSlot)
 }
 
+func writeAddressImportError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		fail(c, http.StatusNotFound, "not_found", "address import not found")
+	case errors.Is(err, address.ErrAddressImportVersionConflict):
+		fail(c, http.StatusPreconditionFailed, "version_conflict", "active address import changed since it was read")
+	case errors.Is(err, address.ErrAddressImportNotWritable):
+		fail(c, http.StatusConflict, "invalid_request", "address import generation is not writable")
+	case errors.Is(err, address.ErrAddressImportInvalid):
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+	default:
+		writeSQLError(c, err)
+	}
+}
+
+// enqueueAddressImportJob (re)schedules the async decode of an import generation.
+func (s *Server) enqueueAddressImportJob(c *gin.Context, importID, language string) (opjob.Job, error) {
+	payload, err := address.EncodeAddressImportJobPayload(importID, language, 0)
+	if err != nil {
+		return opjob.Job{}, err
+	}
+	return s.jobs.Enqueue(c.Request.Context(), opjob.Job{
+		JobType: address.AddressImportJobType, IdempotencyKey: "address-import:" + importID,
+		RequestHash: sha256hex(string(payload)), CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID,
+	})
+}
+
 func (s *Server) listImports(c *gin.Context) {
 	limit, offset := pageParams(c)
-	filter := addressImportListFilter{
-		SourceSlot: strings.TrimSpace(c.Query("source_slot")),
-		Status:     strings.TrimSpace(c.Query("status")),
-		Format:     strings.TrimSpace(c.Query("format")),
-		Search:     strings.TrimSpace(c.Query("q")),
-		Limit:      limit,
-		Offset:     offset,
-	}
-	items, total, err := s.listAddressImports(c.Request.Context(), filter)
+	items, total, err := listAddressImportsCompat(c, s.addressStore, address.AddressImportListFilter{
+		SourceSlot: strings.TrimSpace(c.Query("source_slot")), Status: strings.TrimSpace(c.Query("status")),
+		Format: strings.TrimSpace(c.Query("format")), Search: strings.TrimSpace(c.Query("q")),
+		Limit: limit, Offset: offset, TableMode: true, Sort: c.Query("sort"), Desc: sortDirection(c) == "DESC",
+	})
 	if err != nil {
-		if errors.Is(err, errAddressImportInvalid) {
-			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
 }
 
+func listAddressImportsCompat(c *gin.Context, store *address.Store, filter address.AddressImportListFilter) ([]address.AddressImport, int, error) {
+	items, _, total, err := store.ListAddressImports(c.Request.Context(), filter)
+	return items, total, err
+}
+
 func (s *Server) getImport(c *gin.Context) {
-	item, err := s.getAddressImport(c.Request.Context(), c.Param("id"))
+	item, err := s.addressStore.GetAddressImport(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, item)
 }
 
 // uploadImport streams a multipart upload (fields: file, source_slot, language)
-// straight to the artifact store, records a queued generation, and enqueues the
-// background decode. The body is not buffered in memory.
+// to the artifact store, records a queued generation, and enqueues the opjob
+// decode. The body is not buffered in memory.
 func (s *Server) uploadImport(c *gin.Context) {
 	importID := newID()
 	maxUpload := s.cfg.Address.MaxUploadBytes
 	if maxUpload <= 0 {
-		maxUpload = defaultAddressArtifactMaxBytes
+		maxUpload = 2 << 30
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUpload+(1<<20))
 	reader, err := c.Request.MultipartReader()
@@ -80,13 +104,12 @@ func (s *Server) uploadImport(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "Content-Type must be multipart/form-data")
 		return
 	}
-	store := s.addressArtifactStore()
 	var sourceSlot, language, originalName string
-	var artifact addressArtifact
+	var artifact address.Artifact
 	retained := false
 	defer func() {
 		if artifact.Ref != "" && !retained {
-			_ = store.RemoveArtifact(artifact.Ref)
+			_ = s.addressArtifacts.RemoveArtifact(artifact.Ref)
 		}
 	}()
 	for {
@@ -111,7 +134,7 @@ func (s *Server) uploadImport(c *gin.Context) {
 				fail(c, http.StatusBadRequest, "invalid_request", "address database filename is invalid")
 				return
 			}
-			artifact, err = store.SaveArtifact(c.Request.Context(), importID, originalName, part)
+			artifact, err = s.addressArtifacts.SaveArtifact(c.Request.Context(), importID, originalName, part)
 		case "source_slot":
 			sourceSlot, err = readAddressImportFormValue(part)
 		case "language":
@@ -131,26 +154,27 @@ func (s *Server) uploadImport(c *gin.Context) {
 	}
 	sourceSlot = strings.TrimSpace(sourceSlot)
 	language = strings.TrimSpace(language)
-	if !validAddressImportSlot(sourceSlot) || len(language) > 16 {
-		fail(c, http.StatusBadRequest, "invalid_request", "source_slot or language is invalid")
+	if len(language) > 16 {
+		fail(c, http.StatusBadRequest, "invalid_request", "language is invalid")
 		return
 	}
-	item, err := s.createAddressImport(c.Request.Context(), AddressImport{
+	item, err := s.addressStore.CreateAddressImport(c.Request.Context(), address.AddressImport{
 		ID: importID, SourceSlot: sourceSlot, Format: artifact.Format,
 		OriginalName: originalName, ArtifactRef: artifact.Ref, ChecksumSHA256: artifact.ChecksumSHA256,
-		SizeBytes: artifact.SizeBytes, Status: AddressImportStatusQueued, CreatedBy: currentPrincipal(c).UserID,
+		SizeBytes: artifact.SizeBytes, Status: address.AddressImportStatusQueued, CreatedBy: currentPrincipal(c).UserID,
 	})
 	if err != nil {
-		if errors.Is(err, errAddressImportInvalid) {
-			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	retained = true
-	s.enqueueAddressImport(item.ID, language)
-	c.JSON(http.StatusAccepted, gin.H{"import": item})
+	job, err := s.enqueueAddressImportJob(c, item.ID, language)
+	if err != nil {
+		_ = s.addressStore.FailAddressImport(c.Request.Context(), item.ID, "ENQUEUE_FAILED", err.Error())
+		fail(c, http.StatusInternalServerError, "internal", "failed to enqueue address import")
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"import": item, "job": job})
 }
 
 func readAddressImportFormValue(part *multipart.Part) (string, error) {
@@ -166,17 +190,15 @@ func readAddressImportFormValue(part *multipart.Part) (string, error) {
 
 func (s *Server) listImportPrefixes(c *gin.Context) {
 	ctx := c.Request.Context()
-	if _, err := s.getAddressImport(ctx, c.Param("id")); err != nil {
-		writeSQLError(c, err)
+	if _, err := s.addressStore.GetAddressImport(ctx, c.Param("id")); err != nil {
+		writeAddressImportError(c, err)
 		return
 	}
 	limit, offset := pageParams(c)
-	filter := addressBasePrefixFilter{
-		CountryCode: strings.TrimSpace(c.Query("country_code")),
-		Operator:    strings.TrimSpace(c.Query("operator")),
-		Search:      strings.TrimSpace(c.Query("q")),
-		Limit:       limit,
-		Offset:      offset,
+	filter := address.AddressBasePrefixFilter{
+		CountryCode: strings.TrimSpace(c.Query("country_code")), Operator: strings.TrimSpace(c.Query("operator")),
+		Search: strings.TrimSpace(c.Query("q")), Limit: limit, Offset: offset, TableMode: true,
+		Sort: c.Query("sort"), Desc: sortDirection(c) == "DESC",
 	}
 	if raw := strings.TrimSpace(c.Query("family")); raw != "" {
 		family, err := strconv.ParseUint(raw, 10, 8)
@@ -195,22 +217,23 @@ func (s *Server) listImportPrefixes(c *gin.Context) {
 		value := uint32(asn)
 		filter.ASN = &value
 	}
-	items, total, err := s.listAddressBasePrefixes(ctx, c.Param("id"), filter)
+	items, total, err := listAddressBasePrefixesCompat(c, s.addressStore, c.Param("id"), filter)
 	if err != nil {
-		if errors.Is(err, errAddressImportInvalid) {
-			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
 }
 
+func listAddressBasePrefixesCompat(c *gin.Context, store *address.Store, importID string, filter address.AddressBasePrefixFilter) ([]address.AddressBasePrefix, int, error) {
+	items, _, total, err := store.ListAddressBasePrefixes(c.Request.Context(), importID, filter)
+	return items, total, err
+}
+
 func (s *Server) lookupImportPrefix(c *gin.Context) {
 	ctx := c.Request.Context()
-	if _, err := s.getAddressImport(ctx, c.Param("id")); err != nil {
-		writeSQLError(c, err)
+	if _, err := s.addressStore.GetAddressImport(ctx, c.Param("id")); err != nil {
+		writeAddressImportError(c, err)
 		return
 	}
 	value := strings.TrimSpace(c.Query("ip"))
@@ -227,21 +250,14 @@ func (s *Server) lookupImportPrefix(c *gin.Context) {
 		}
 		limit = parsed
 	}
-	items, err := s.lookupAddressBasePrefixes(ctx, c.Param("id"), value, limit)
+	items, err := s.addressStore.LookupAddressBasePrefixes(ctx, c.Param("id"), value, limit)
 	if err != nil {
-		if errors.Is(err, errAddressImportInvalid) {
-			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-// activateImport points the import's slot at this ready generation. If-Match, when
-// supplied, must equal the slot's current row_version (0/absent activates an empty
-// slot or, when no If-Match is sent, replaces the current generation unconditionally).
 func (s *Server) activateImport(c *gin.Context) {
 	ctx := c.Request.Context()
 	importID := c.Param("id")
@@ -251,66 +267,35 @@ func (s *Server) activateImport(c *gin.Context) {
 		return
 	}
 	if !supplied {
-		// No precondition: read the slot this import belongs to and reuse its
-		// current version so activation is unconditional rather than failing.
-		item, err := s.getAddressImport(ctx, importID)
+		item, err := s.addressStore.GetAddressImport(ctx, importID)
 		if err != nil {
-			writeSQLError(c, err)
+			writeAddressImportError(c, err)
 			return
 		}
-		if slot, err := s.getAddressImportSlot(ctx, item.SourceSlot); err == nil {
+		if slot, err := s.addressStore.GetAddressImportSlot(ctx, item.SourceSlot); err == nil {
 			expected = slot.RowVersion
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			writeSQLError(c, err)
+			writeAddressImportError(c, err)
 			return
 		}
 	}
-	slot, err := s.activateAddressImport(ctx, importID, currentPrincipal(c).UserID, expected)
+	slot, err := s.addressStore.ActivateAddressImport(ctx, importID, currentPrincipal(c).UserID, expected)
 	if err != nil {
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			fail(c, http.StatusNotFound, "not_found", "address import not found")
-		case errors.Is(err, errAddressImportVersionConflict):
-			fail(c, http.StatusPreconditionFailed, "version_conflict", "active address import changed since it was read")
-		case errors.Is(err, errAddressImportNotWritable):
-			fail(c, http.StatusConflict, "invalid_request", "only a ready address import can be activated")
-		default:
-			writeSQLError(c, err)
-		}
+		writeAddressImportError(c, err)
 		return
 	}
 	c.Header("ETag", etag(slot.RowVersion))
 	c.JSON(http.StatusOK, slot)
 }
 
-// retryImport re-runs a failed or interrupted decode. The batch upsert is
-// idempotent, so re-streaming safely reconciles rows.
-func (s *Server) retryImport(c *gin.Context) {
-	item, err := s.getAddressImport(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	switch item.Status {
-	case AddressImportStatusReady:
-		fail(c, http.StatusConflict, "invalid_request", "import is already ready")
-		return
-	case AddressImportStatusRetired:
-		fail(c, http.StatusConflict, "invalid_request", "import is retired")
-		return
-	}
-	s.enqueueAddressImport(item.ID, item.Language)
-	c.JSON(http.StatusAccepted, gin.H{"import_id": item.ID, "status": AddressImportStatusImporting})
-}
-
 func (s *Server) getImportSlot(c *gin.Context) {
-	slot, err := s.getAddressImportSlot(c.Request.Context(), strings.TrimSpace(c.Param("slot")))
+	slot, err := s.addressStore.GetAddressImportSlot(c.Request.Context(), strings.TrimSpace(c.Param("slot")))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(c, http.StatusNotFound, "not_found", "address import slot is not active")
 			return
 		}
-		writeSQLError(c, err)
+		writeAddressImportError(c, err)
 		return
 	}
 	c.Header("ETag", etag(slot.RowVersion))

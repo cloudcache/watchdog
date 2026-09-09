@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
+	"github.com/cloudcache/watchdog/internal/address"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 )
@@ -22,6 +24,14 @@ type Server struct {
 	db            *sql.DB
 	engine        *gin.Engine
 	snmpDiscovery snmpDiscoveryRunner
+
+	addressStore     *address.Store
+	addressPublisher *address.Publisher
+	addressKeys      address.AddressDimensionPublicKeyResolver
+	addressObjects   address.DiskDimensionObjectStore
+	addressArtifacts address.DiskArtifactStore
+	jobs             *opjob.Store
+	workerCancel     context.CancelFunc
 }
 
 // New opens MySQL, applies the v2 baseline, and builds the router.
@@ -61,8 +71,50 @@ func New(cfg Config) (*Server, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
 	}
+	if err := s.startAddressLibrary(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("start address library: %w", err)
+	}
 	s.engine = s.newRouter()
 	return s, nil
+}
+
+// startAddressLibrary wires the de-tenanted address publish chain (internal/address)
+// and starts the async snapshot-build worker on the opjob engine.
+func (s *Server) startAddressLibrary() error {
+	s.addressStore = address.NewStore(s.db)
+	s.jobs = opjob.NewStore(s.db)
+	s.addressObjects = address.DiskDimensionObjectStore{Dir: s.cfg.Address.SnapshotDir}
+	s.addressArtifacts = address.DiskArtifactStore{Dir: s.cfg.Address.ArtifactDir, MaxBytes: s.cfg.Address.MaxUploadBytes}
+	publisher, err := address.NewPublisher(s.addressStore, s.addressObjects)
+	if err != nil {
+		return err
+	}
+	s.addressPublisher = publisher
+
+	trustedKeys := make([]address.AddressDimensionTrustedKeyConfig, 0, len(s.cfg.Address.TrustedKeys))
+	for _, key := range s.cfg.Address.TrustedKeys {
+		trustedKeys = append(trustedKeys, address.AddressDimensionTrustedKeyConfig{KeyID: key.KeyID, PublicKeyFile: key.PublicKeyFile})
+	}
+	resolver, err := address.LoadAddressDimensionPublicKeyResolver(trustedKeys)
+	if err != nil {
+		return fmt.Errorf("load address dimension trusted keys: %w", err)
+	}
+	s.addressKeys = resolver
+
+	workerCtx, cancel := context.WithCancel(context.Background())
+	s.workerCancel = cancel
+	importWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: address.AddressImportJobType, Owner: "watchdog-server/address-import",
+		Handler: address.NewAddressImportJobHandler(s.addressStore, s.addressArtifacts, 0),
+	}
+	go importWorker.Run(workerCtx)
+	buildWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: address.AddressSnapshotBuildJob, Owner: "watchdog-server/address",
+		Handler: address.NewAddressSnapshotBuildJobHandler(publisher),
+	}
+	go buildWorker.Run(workerCtx)
+	return nil
 }
 
 // Run starts the HTTP listener (blocking).
@@ -73,8 +125,13 @@ func (s *Server) Run() error {
 // DB exposes the connection pool for the domain packages wired in later work packages.
 func (s *Server) DB() *sql.DB { return s.db }
 
-// Close releases the database pool.
-func (s *Server) Close() error { return s.db.Close() }
+// Close stops background workers and releases the database pool.
+func (s *Server) Close() error {
+	if s.workerCancel != nil {
+		s.workerCancel()
+	}
+	return s.db.Close()
+}
 
 // ensureDatabase creates the target schema if it does not exist, so the server can
 // bootstrap from an empty MySQL instance ("空库启动") without a manual CREATE DATABASE.

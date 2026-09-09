@@ -183,9 +183,11 @@ func (s *Server) newRouter() *gin.Engine {
 	snmpProfiles.GET("/:id", s.requirePermission("device.update"), s.getSNMPProfile)
 	snmpProfiles.PATCH("/:id", s.requirePermission("device.update"), s.updateSNMPProfile)
 	snmpProfiles.DELETE("/:id", s.requirePermission("device.update"), s.deleteSNMPProfile)
-	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports.
+	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports,
+	// plus the de-tenanted publication lifecycle (preview/publish/versions/lifecycle).
 	s.registerAddressRoutes(auth)
 	s.registerAddressImportRoutes(auth)
+	s.registerAddressDimensionRoutes(auth)
 
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)

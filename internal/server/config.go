@@ -59,8 +59,16 @@ type FlowConfig struct {
 // AddressConfig controls the address-library source-import store: where uploaded
 // MMDB/IPDB artifacts are kept and the per-upload size ceiling.
 type AddressConfig struct {
-	ArtifactDir    string `yaml:"artifact_dir"`     // local dir for uploaded source databases
-	MaxUploadBytes int64  `yaml:"max_upload_bytes"` // 0 -> 2 GiB default
+	ArtifactDir    string                    `yaml:"artifact_dir"`     // local dir for uploaded source databases
+	MaxUploadBytes int64                     `yaml:"max_upload_bytes"` // 0 -> 2 GiB default
+	SnapshotDir    string                    `yaml:"snapshot_dir"`     // local dir for published WADS dimension objects
+	TrustedKeys    []AddressTrustedKeyConfig `yaml:"trusted_keys"`     // ed25519 dimension-publication approval keys
+}
+
+// AddressTrustedKeyConfig is one trusted ed25519 dimension-publication signing key.
+type AddressTrustedKeyConfig struct {
+	KeyID         string `yaml:"key_id"`
+	PublicKeyFile string `yaml:"public_key_file"`
 }
 
 // SNMPConfig layers optional LibreNMS definitions/vendor MIBs over the
@@ -89,7 +97,7 @@ func defaultConfig() Config {
 		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default"},
 		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
 		Flow:       FlowConfig{RetentionRawDays: 365, DownsampleAfterDays: 365, Rollup1mDays: 180, Rollup1hDays: 400},
-		Address:    AddressConfig{ArtifactDir: "data/address-artifacts"},
+		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		Admin:      AdminConfig{Username: "admin"},
 	}
 }
