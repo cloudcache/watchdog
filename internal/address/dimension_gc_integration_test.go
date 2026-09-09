@@ -198,3 +198,81 @@ func TestStoreAddressDimensionObjectGCLifecycle(t *testing.T) {
 		t.Fatalf("destruction receipts=%d err=%v", receipts, err)
 	}
 }
+
+// blockingDimensionObjectRemove pauses inside RemoveDimensionObject so a test can
+// observe that a concurrent reference is serialized behind the GC publication lock.
+type blockingDimensionObjectRemove struct {
+	DiskDimensionObjectStore
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingDimensionObjectRemove) RemoveDimensionObject(ref string) error {
+	close(s.started)
+	<-s.release
+	return s.DiskDimensionObjectStore.RemoveDimensionObject(ref)
+}
+
+// Faithful de-tenant port of TestMySQLAddressDimensionGCSerializesLateReference:
+// while a GC delete holds the publication lock (paused mid object-removal), a late
+// reference must block on that lock and then be rejected once the object is gone.
+func TestStoreAddressDimensionGCSerializesLateReference(t *testing.T) {
+	db := addressTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+	const userID = ID("01JADDRESSGCRACEUSER0001")
+	seedAddressTestUser(t, db, userID)
+	snapshotID := ID("01JADDRESSGCRACESNAPSHOT01")
+
+	now := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	disk := DiskDimensionObjectStore{Dir: t.TempDir(), MaxBytes: 1 << 20}
+	object, err := disk.SaveDimensionObject(ctx, snapshotID, []byte(`{"race":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO dimension_snapshots (
+			id, module_key, dimension_key, version, effective_from,
+			object_ref, checksum, draft_digest, source_manifest_version, source_manifest,
+			bundle_schema_version, status, approval_state, retention_until,
+			row_version, created_by, retired_by, created_at, retired_at
+		) VALUES (?, 'flow', 'address', 1, ?, ?, ?, ?, 0, JSON_ARRAY(), 1,
+		          'retired', 'approved', ?, 1, ?, ?, ?, ?)
+	`, snapshotID, now.Add(-48*time.Hour), object.Ref, object.Checksum,
+		"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		now.Add(-time.Hour), userID, userID, now.Add(-48*time.Hour), now.Add(-24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	blocking := &blockingDimensionObjectRemove{DiskDimensionObjectStore: disk, started: make(chan struct{}), release: make(chan struct{})}
+	publisher, err := NewPublisher(store, blocking, WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteDone := make(chan error, 1)
+	go func() {
+		_, deleteErr := publisher.DeleteAddressDimensionObject(ctx, snapshotID, "01JADDRESSGCRACEJOB0000001", userID, object.Ref, object.Checksum, now.Add(-time.Hour), now)
+		deleteDone <- deleteErr
+	}()
+	<-blocking.started
+	referenceDone := make(chan error, 1)
+	go func() {
+		_, referenceErr := publisher.ReportDimensionPublicationReference(ctx, AddressDimensionReference{
+			SnapshotID: snapshotID, ConsumerKind: "flow_fact", ConsumerID: "partition-late",
+			MinEventTime: now.Add(-time.Hour), MaxEventTime: now, RetainUntil: now.Add(time.Hour),
+		})
+		referenceDone <- referenceErr
+	}()
+	select {
+	case err := <-referenceDone:
+		t.Fatalf("reference bypassed GC publication lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(blocking.release)
+	if err := <-deleteDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-referenceDone; !errors.Is(err, ErrAddressDimensionInvalid) {
+		t.Fatalf("late reference error = %v", err)
+	}
+}
