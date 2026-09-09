@@ -1,9 +1,11 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeDeviceHost(t *testing.T) {
@@ -15,6 +17,54 @@ func TestNormalizeDeviceHost(t *testing.T) {
 	} {
 		if got := normalizeDeviceHost(input); got != want {
 			t.Errorf("normalizeDeviceHost(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestAgentCompatibilityMatrixAndOfflineHealth(t *testing.T) {
+	valid := map[string][]string{
+		"system": {"system.samples/v1"}, "snmp": {"snmp.poll/v2"},
+		"flow_collect": {"flow.receive.sflow/v1"}, "flow_worker": {"flow.write.clickhouse/v2"},
+		"probe": {"probe.execute/v1"},
+	}
+	for kind, capabilities := range valid {
+		encoded, _ := json.Marshal(capabilities)
+		if err := validateAgentCompatibility(kind, "v1", encoded); err != nil {
+			t.Errorf("valid %s contract rejected: %v", kind, err)
+		}
+		if err := validateAgentCompatibility(kind, "v2", encoded); err == nil {
+			t.Errorf("unsupported %s API version accepted", kind)
+		}
+	}
+	if err := validateAgentCompatibility("system", "v1", json.RawMessage(`["snmp.poll/v2"]`)); err == nil {
+		t.Fatal("cross-kind capability accepted")
+	}
+	if err := validateAgentFields("agent_1", "Agent 1", "system", "system", "push", "", "1.0.0", "v1"); err != nil {
+		t.Fatalf("valid agent fields rejected: %v", err)
+	}
+	if err := validateAgentFields("agent_1", strings.Repeat("n", 191), "system", "system", "push", "", "", "v1"); err == nil {
+		t.Fatal("oversized agent name accepted")
+	}
+	if !validSHA256(strings.Repeat("a", 64)) || validSHA256(strings.Repeat("z", 64)) || validSHA256("abcd") {
+		t.Fatal("SHA-256 fingerprint validation is not fail-closed")
+	}
+	now := time.Now().UTC()
+	record := agentRecord{Status: "active", Health: "healthy", HeartbeatInterval: 30, LastSeen: sql.NullTime{Time: now.Add(-4 * time.Minute), Valid: true}}
+	if got := record.effectiveHealth(now); got != "offline" {
+		t.Fatalf("stale heartbeat health=%q, want offline", got)
+	}
+	record.LastSeen.Time = now.Add(-time.Minute)
+	if got := record.effectiveHealth(now); got != "healthy" {
+		t.Fatalf("fresh heartbeat health=%q, want healthy", got)
+	}
+	record.Status = "draining"
+	record.LastSeen.Time = now.Add(-4 * time.Minute)
+	if got := record.effectiveHealth(now); got != "offline" {
+		t.Fatalf("draining agent stale heartbeat health=%q, want offline", got)
+	}
+	for legacy, want := range map[string]string{"pending": "registered", "up": "active", "down": "active", "disabled": "revoked"} {
+		if got := normalizeAgentStatus(legacy); got != want {
+			t.Errorf("normalizeAgentStatus(%q)=%q, want %q", legacy, got, want)
 		}
 	}
 }
@@ -38,7 +88,7 @@ func TestAgentAndDeviceEnums(t *testing.T) {
 	if !validAgentKind("flow_collect") || validAgentKind("arbitrary") {
 		t.Fatal("agent kind validation is not fail-closed")
 	}
-	if !validAgentStatus("disabled") || validAgentStatus("deleted") {
+	if !validAgentStatus("registered") || !validAgentStatus("revoked") || validAgentStatus("disabled") {
 		t.Fatal("agent status validation is not fail-closed")
 	}
 }
