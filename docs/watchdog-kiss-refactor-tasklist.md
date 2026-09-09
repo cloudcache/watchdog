@@ -105,8 +105,8 @@
 
 #### KISS-03A2 SNMP aggregate/export/billing 收口
 
-- [ ] **设计/编码/API**：复用同一个 `snmpch` 查询器实现跨设备/端口 aggregate、异步 CSV 与 billing reader；不恢复 DatasetProvider、旧 export fallback 或 VM DTO。
-- [ ] **测试/提交**：固定 counter fixture 对 aggregate/export/billing 做总量守恒、设备/端口权限、分页/预算、取消/重试和真实 CH 集成，并独立提交。
+- [x] **设计/编码/API**：同一 `snmpch.Store` 已实现跨设备/端口 aggregate、`operation_jobs` 异步 CSV 和只读 closed-5m billing reader；Gin 接 `/metrics/aggregate|exports`、`/exports` lifecycle 与 `/billing/accounts/:id/snmp-usage`。scope 作为 CH external table，创建/执行/下载均按当前 grant 校验；没有 DatasetProvider、旧 export fallback、VM DTO、第二套 job 状态机或新 migration。冻结契约见 `docs/kiss03-snmp-clickhouse-design.md` §5–7。
+- [x] **测试/提交**：固定 counter fixture 已覆盖总量/95th/缺端口 coverage、scope 去重、预算/白名单、CSV 原子写/checksum、设备/端口/billing/owner 权限、分页/search/filter、首轮暂时失败自动 retry 与运行中 cancel；真实 CH 验证 aggregate、generation billing 和缺端口 gap，真实一次性 MySQL 验证 API/job 全链并删除测试库；全库 test/vet/build 通过。本项按独立提交门禁提交。
 
 #### KISS-03B system/container agent 延后切片
 

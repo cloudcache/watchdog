@@ -45,6 +45,9 @@ snmp:                               # generic standard MIB discovery works with 
   poll_interval: 1m                  # scheduler wakeup; each recipe still owns its interval
   poll_limit: 500                    # maximum due devices per scheduler pass
   poll_concurrency: 32               # bounded concurrent devices
+  export_dir: "data/snmp-exports"    # async SNMP CSV artifacts; operation_jobs owns lifecycle state
+  export_retention: "24h"            # expired artifacts are no longer downloadable
+
 
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"

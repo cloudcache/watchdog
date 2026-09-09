@@ -2,6 +2,7 @@ package snmpch
 
 import (
 	"context"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -74,6 +75,16 @@ func TestRealClickHouseSNMPWriteRateAndClosedBucket(t *testing.T) {
 			t.Fatalf("rate=%v, want 8000", point.Value)
 		}
 	}
+	aggregate, err := store.Aggregate(ctx, AggregateRequest{
+		Scopes: []Scope{{DeviceID: "device-a", PortID: "port-a"}}, Metric: MetricIfInBPS,
+		Method: "sum", From: bucket, To: bucket.Add(2 * time.Minute), Step: time.Minute, MaxRows: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregate.Points) != 2 || aggregate.Points[0].Value != 8000 || aggregate.Points[1].Value != 8000 {
+		t.Fatalf("aggregate=%+v", aggregate)
+	}
 	if err := store.RebuildClosedInterfaceBucket(ctx, bucket, bucket.Add(6*time.Minute), 7); err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +95,28 @@ func TestRealClickHouseSNMPWriteRateAndClosedBucket(t *testing.T) {
 	}
 	if values.Rows() != 1 || values[0] != 1 || markers[0] != 1 {
 		t.Fatalf("closed bucket values=%v markers=%v", values, markers)
+	}
+	billing, err := store.ReadBilling(ctx, BillingRequest{
+		Ports: []BillingPort{{PortID: "port-a", Direction: "agg"}},
+		From:  bucket, To: bucket.Add(5 * time.Minute), Now: bucket.Add(10 * time.Minute), MaxBuckets: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if billing.ObservedBuckets != 1 || billing.TotalInBytes != 120000 || billing.TotalOutBytes != 120000 || billing.TotalSelectedBytes != 240000 {
+		t.Fatalf("billing totals=%+v", billing)
+	}
+	if billing.Rate95Selected != 16000 || billing.GenerationMin != 7 || billing.GenerationMax != 7 {
+		t.Fatalf("billing rates/generation=%+v", billing)
+	}
+	partial, err := store.ReadBilling(ctx, BillingRequest{
+		Ports: []BillingPort{{PortID: "port-a", Direction: "agg"}, {PortID: "port-missing", Direction: "agg"}},
+		From:  bucket, To: bucket.Add(5 * time.Minute), Now: bucket.Add(10 * time.Minute), MaxBuckets: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.ExpectedPorts != 2 || partial.ObservedBuckets != 1 || math.Abs(partial.Coverage-.2) > 1e-9 || partial.GapBuckets != 1 || partial.TotalSelectedBytes != billing.TotalSelectedBytes {
+		t.Fatalf("missing billing port was not exposed: %+v", partial)
 	}
 }

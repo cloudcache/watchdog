@@ -39,6 +39,7 @@ type Server struct {
 	clickHouse       *flowch.NativeInserter
 	snmpMetrics      *snmpch.Store
 	workerCancel     context.CancelFunc
+	snmpExportCancel context.CancelFunc
 
 	agentPlanSigner agentplan.Signer
 	agentPlanPublic ed25519.PublicKey
@@ -93,6 +94,10 @@ func New(cfg Config) (*Server, error) {
 	if err := s.startAddressLibrary(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("start address library: %w", err)
+	}
+	if err := s.startSNMPExports(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("start SNMP exports: %w", err)
 	}
 	s.engine = s.newRouter()
 	return s, nil
@@ -151,6 +156,9 @@ func (s *Server) Close() error {
 	}
 	if s.workerCancel != nil {
 		s.workerCancel()
+	}
+	if s.snmpExportCancel != nil {
+		s.snmpExportCancel()
 	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()

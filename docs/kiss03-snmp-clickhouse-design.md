@@ -1,6 +1,6 @@
 # KISS-03A：SNMP 时序切换 ClickHouse 详细设计
 
-> 状态：实现冻结（2026-09-09）。本切片只迁移 SNMP；system/container agent 时序明确延后到 KISS-03B。Flow 继续使用既有 `flowch` 数据面，不因本切片重写。
+> 状态：KISS-03A1/A2 实现冻结（2026-09-09）。本切片只迁移 SNMP；system/container agent 时序明确延后到 KISS-03B。Flow 继续使用既有 `flowch` 数据面，不因本切片重写。
 
 ## 1. 边界与删除项
 
@@ -40,19 +40,35 @@
 
 - Gin 保留 `/api/v1/metrics/catalog|query|range|realtime`。SNMP 查询必须提供一个 device/target/port 根，先经过单域 RBAC，再进入 CH。
 - API 只接受白名单参数；固定周期和自定义 RFC3339 时间范围都受最大 400 天、step 及 250000 行预算限制。`tenant_id` 等旧参数在访问 CH 前直接返回 400。
-- 返回 JSON 继续是现有前端消费的 `status + data.resultType=matrix + metric + values`，但 active handler 使用中性 DTO，不依赖任何旧 VM 类型。
-- 本切片提供设备/端口 SNMP 原始值与接口 bps 图表查询。跨设备 aggregate、异步 CSV/账单消费在复用同一 `snmpch` query 契约后作为 KISS-03A2 收口，不得回接旧 provider。
+- 返回 JSON 继续是现有前端消费的 `status + data.resultType=matrix + metric + values`，其中 value 明确编码为 `[unix_seconds, decimal_string]`；active handler 使用中性 DTO，不依赖任何旧 VM 类型。
+- `/api/v1/metrics/aggregate` 接受显式 `device_ids/target_ids/port_ids`、metric、`sum|avg|min|max|count`、固定/自定义时间和 step。Gin 先把端口解析到设备根并校验当前 device/port grant；`snmpch.Aggregate` 再把去重后的 scope 作为 CH external table 送入一条有界查询。device-wide scope 覆盖同设备的重复 port scope，避免重复计数；聚合函数来自固定白名单，不能进入 SQL 参数拼接。
+- aggregate 与 CSV 当前输出层明确为 `raw`。`value_mode/traffic_view` 兼容查询参数不能使原始 SNMP 数据冒充 supplier/customer 修正值；三层修正属于 KISS-07/Flow 对账，不在 SNMP 数据面隐式实现。
 
-## 6. 运行、失败与可观测性
+## 6. 异步 CSV 契约
+
+- `POST /api/v1/metrics/exports`（同时提供 `/api/v1/exports` 管理入口）冻结 payload v1：device/port IDs、metric、aggregate、`[from,to)`、step 和 row budget。请求最大 1000 个 scope、400 天、250000 行；幂等域是 `user + Idempotency-Key`，同域 key + request hash 返回原 job，同域 key 相同而 payload 不同返回 409，不允许不同用户碰撞并看到对方 job。
+- CSV job type 固定为 `snmp.aggregate.csv`，只复用唯一 `operation_jobs` 的 enqueue、lease、heartbeat、retry、cancel 和 takeover；不启用基线中尚未承载完整生命周期的 `export_tasks`，也不新建另一套状态机。job 创建时和 worker 真正执行时分别校验 grant，排队期间撤权会使任务 terminal fail。
+- worker 调用与同步 API 同一个 `snmpch.Aggregate`，以临时文件写入、`fsync`、同目录原子 rename 后才完成 job。CSV schema 固定为 `bucket_start,metric,aggregate,value`；结果引用只含 server 生成的 job ID 和 artifact SHA-256，下载时重新校验 checksum。这个 hash 是低频导出制品完整性校验，不进入 SNMP/Flow 热写路径。
+- 导出默认保留 24 小时（`snmp.export_dir/export_retention`）；到期返回 410。list/get/download/cancel 仅 job owner 或管理员可见，列表按 owner/type/status 做服务端分页；暂时性 CH/文件错误由 operation job 自动重试，payload/schema/授权错误不重试。
+
+## 7. Billing reader 契约
+
+- `GET /api/v1/billing/accounts/:id/snmp-usage?start=&end=&limit=&offset=&max_buckets=` 只读 `billing_account_ports` 的 `in|out|agg` 选择和 `snmp_interface_traffic_5m` 已发布 generation；不得独立重算 raw counter，也不在本步骤写/关闭 `billing_periods`。KISS-07 只能消费此 reader 的证据。
+- 时间窗必须是 UTC 对齐且已经关闭的 5 分钟 `[start,end)`，最长 400 天/120000 桶。`agg` 在每个桶内取 `in + out`；total 是所选方向逐桶字节和，average 与 nearest-rank 95th 都在同一等长 5 分钟序列上计算。
+- 查询先建立“时间桶 × 账单端口”的有限网格，再 left join generation marker 和 value；整端口缺桶时 coverage=0、gap=true，不允许仅因其他端口有行就误报完整。返回 expected/observed bucket、expected/present port、reset/gap、coverage 和 generation 范围；不完整结果可展示和对账，但 KISS-07 不得自动批准。
+- billing 可见性只由 `bill.viewAll` 或 `user_billing_permissions` 控制；能看设备/端口不等于获得财务权限。明细桶服务端分页，汇总始终对应完整请求窗口而不是当前页。
+
+## 8. 运行、失败与可观测性
 
 - server 与 collector 共用 `flowch.NativeInserter` 的有界 CH 连接实现，但使用各自进程内 pool；不引入第二套 CH 客户端配置或迁移表。
 - CH schema 缺失时启动明确失败并提示先迁移。轮询 loop 的一次 MySQL/SNMP/CH 暂时错误会记录并在下一个有界 tick 重试，不会悄悄退出。
 - `SNMP.PollLimit` 限制每轮设备数，`PollConcurrency` 限制同时访问设备数；recipe 自身 `sample_interval_seconds` 决定是否到期，scheduler wakeup 不改变采样周期。
 
-## 7. 验收矩阵
+## 9. 验收矩阵
 
-1. 单元：UInt64 精度、自然批身份、retry、32-bit wrap、reset、gap、时间/行预算、closed bucket generation、旧参数拒绝。
-2. API：管理员/设备授权、同一 JSON chart contract、查询 SQL 只访问 `snmp_samples` 且不含 tenant。
-3. 真实集成：一次性 MySQL v2 schema + 固定 SNMP varbind -> existing poller -> CH；核对 `>2^53` counter、recipe 状态和无 tenant 列。
-4. 真实 CH：raw query/rate/closed 5m generation；VictoriaMetrics 停止或不存在不影响链路。
-5. 回归：目标 Go packages、`go test ./...`、`go vet ./...`、`go build ./...`；沙箱若禁止测试监听 socket，必须在允许本地 loopback 的环境重跑，不能改测试掩盖。
+1. 单元：UInt64 精度、自然批身份、retry、32-bit wrap、reset、gap、时间/行预算、closed bucket generation、aggregate scope 去重、billing 总量/95th/coverage、CSV 原子性/取消和旧参数拒绝。
+2. API：管理员、device/port grant、billing grant、owner-only export、服务端分页、同一 JSON chart contract；查询 SQL 只访问 SNMP CH 表且不含 tenant。
+3. 真实管理面：一次性 MySQL v2 schema 验证 aggregate 授权/拒绝、CSV 首次失败后重试收敛、运行中取消无制品、owner 分页和 billing 独立授权；测试库验证后删除。
+4. 真实采集集成：一次性 MySQL v2 schema + 固定 SNMP varbind -> existing poller -> CH；核对 `>2^53` counter、recipe 状态和无 tenant 列。
+5. 真实 CH：raw query/rate/跨 scope aggregate/closed 5m generation/billing total；额外绑定一个无数据端口时必须降低 coverage 并置 gap。VictoriaMetrics 停止或不存在不影响链路。
+6. 回归：目标 Go packages、`go test ./...`、`go vet ./...`、`go build ./...`；沙箱若禁止测试监听 socket，必须在允许本地 loopback 的环境重跑，不能改测试掩盖。

@@ -95,10 +95,13 @@ type Repository interface {
 
 // Filter narrows List. Jobs are ordered newest-created first.
 type Filter struct {
-	JobType string
-	Status  string
-	Limit   int
-	Offset  int
+	JobType   string
+	Status    string
+	CreatedBy string
+	Search    string
+	Ascending bool
+	Limit     int
+	Offset    int
 }
 
 // Store is the *sql.DB-backed Repository.
@@ -222,7 +225,19 @@ func (s *Store) List(ctx context.Context, filter Filter) ([]Job, error) {
 		query += ` AND status = ?`
 		args = append(args, filter.Status)
 	}
-	query += ` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+	if filter.CreatedBy != "" {
+		query += ` AND created_by = ?`
+		args = append(args, filter.CreatedBy)
+	}
+	if filter.Search != "" {
+		query += ` AND (LOCATE(?, id)>0 OR LOCATE(?, result_ref)>0)`
+		args = append(args, filter.Search, filter.Search)
+	}
+	direction := "DESC"
+	if filter.Ascending {
+		direction = "ASC"
+	}
+	query += ` ORDER BY created_at ` + direction + `, id ` + direction + ` LIMIT ? OFFSET ?`
 	args = append(args, limit, filter.Offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -238,6 +253,33 @@ func (s *Store) List(ctx context.Context, filter Filter) ([]Job, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+// Count applies the same ownership/type/status predicates as List and is used
+// by paginated management APIs. It deliberately does not expose free-form SQL
+// search or sort over the shared operation state machine.
+func (s *Store) Count(ctx context.Context, filter Filter) (uint64, error) {
+	query := `SELECT COUNT(*) FROM ` + jobTable + ` WHERE 1=1`
+	args := []any{}
+	if filter.JobType != "" {
+		query += ` AND job_type = ?`
+		args = append(args, filter.JobType)
+	}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.CreatedBy != "" {
+		query += ` AND created_by = ?`
+		args = append(args, filter.CreatedBy)
+	}
+	if filter.Search != "" {
+		query += ` AND (LOCATE(?, id)>0 OR LOCATE(?, result_ref)>0)`
+		args = append(args, filter.Search, filter.Search)
+	}
+	var total uint64
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&total)
+	return total, err
 }
 
 func (s *Store) LeaseNext(ctx context.Context, jobType, owner string, leaseFor time.Duration) (Job, error) {

@@ -107,6 +107,8 @@ func (s *Server) newRouter() *gin.Engine {
 	metrics.GET("/query", s.requirePermission("device.view"), s.queryMetrics)
 	metrics.GET("/range", s.requirePermission("device.view"), s.queryMetrics)
 	metrics.GET("/realtime", s.requirePermission("device.view"), s.queryMetrics)
+	metrics.GET("/aggregate", s.requirePermission("device.view"), s.aggregateMetrics)
+	metrics.POST("/exports", s.requirePermission("device.view"), s.createSNMPExport)
 	dev.GET("/events", s.todo)
 	ports := auth.Group("/ports")
 	ports.GET("/:port_id", s.requirePermission("port.view"), s.getPort)
@@ -116,7 +118,9 @@ func (s *Server) newRouter() *gin.Engine {
 	bgp := auth.Group("/bgp")
 	bgp.GET("", s.requirePermission("device.view"), s.listAllBGP)
 	bgp.GET("/:session_id", s.requirePermission("device.view"), s.getBGP)
-	todoCRUD(auth.Group("/billing/accounts"), s)
+	billing := auth.Group("/billing")
+	todoCRUD(billing.Group("/accounts"), s)
+	billing.GET("/accounts/:id/snmp-usage", s.requirePermission("bill.view"), s.readSNMPBilling)
 	todoCRUD(auth.Group("/billing/parties"), s)
 
 	// Agent registration and heartbeats use agent credentials, not a user
@@ -208,7 +212,12 @@ func (s *Server) newRouter() *gin.Engine {
 
 	auth.GET("/jobs", s.todo)
 	auth.GET("/audit", s.todo)
-	auth.GET("/exports", s.todo)
+	exports := auth.Group("/exports")
+	exports.GET("", s.requirePermission("device.view"), s.listSNMPExports)
+	exports.POST("", s.requirePermission("device.view"), s.createSNMPExport)
+	exports.GET("/:id", s.requirePermission("device.view"), s.getSNMPExport)
+	exports.GET("/:id/download", s.requirePermission("device.view"), s.downloadSNMPExport)
+	exports.POST("/:id/cancel", s.requirePermission("device.view"), s.cancelSNMPExport)
 
 	return r
 }

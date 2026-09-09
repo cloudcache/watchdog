@@ -93,6 +93,8 @@ type SNMPConfig struct {
 	PollInterval       time.Duration `yaml:"poll_interval"`
 	PollLimit          int           `yaml:"poll_limit"`
 	PollConcurrency    int           `yaml:"poll_concurrency"`
+	ExportDir          string        `yaml:"export_dir"`
+	ExportRetention    time.Duration `yaml:"export_retention"`
 }
 
 // AdminConfig is used only to bootstrap the first administrator on an empty install.
@@ -113,7 +115,7 @@ func defaultConfig() Config {
 		Flow:       FlowConfig{RetentionRawDays: 365, DownsampleAfterDays: 365, Rollup1mDays: 180, Rollup1hDays: 400},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
-		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32},
+		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
 		Admin:      AdminConfig{Username: "admin"},
 	}
 }

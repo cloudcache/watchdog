@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +35,15 @@ type metricRangeQueryItem struct {
 type metricValue struct {
 	Time  time.Time
 	Value float64
+}
+
+// MarshalJSON preserves the existing frontend chart tuple contract:
+// [unix seconds, decimal string].
+func (v metricValue) MarshalJSON() ([]byte, error) {
+	return json.Marshal([2]any{
+		float64(v.Time.UTC().UnixMilli()) / 1000,
+		strconv.FormatFloat(v.Value, 'g', -1, 64),
+	})
 }
 
 func (s *Server) queryMetrics(c *gin.Context) {

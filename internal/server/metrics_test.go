@@ -52,7 +52,16 @@ func TestQueryMetricsUsesClickHouseAndKeepsChartContract(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var response metricRangeResponse
+	var response struct {
+		Status string `json:"status"`
+		Data   struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]string   `json:"metric"`
+				Values [][]json.RawMessage `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +69,11 @@ func TestQueryMetricsUsesClickHouseAndKeepsChartContract(t *testing.T) {
 		t.Fatalf("response=%+v", response)
 	}
 	item := response.Data.Result[0]
-	if item.Metric["__name__"] != snmpch.MetricIfInBPS || item.Metric["device_id"] != "device-a" || item.Metric["port_id"] != "port-a" || len(item.Values) != 1 || item.Values[0].Value != 8_000 {
+	var value string
+	if len(item.Values) == 1 && len(item.Values[0]) == 2 {
+		_ = json.Unmarshal(item.Values[0][1], &value)
+	}
+	if item.Metric["__name__"] != snmpch.MetricIfInBPS || item.Metric["device_id"] != "device-a" || item.Metric["port_id"] != "port-a" || value != "8000" {
 		t.Fatalf("result=%+v", item)
 	}
 	if !strings.Contains(exec.query.Body, "FROM snmp_samples") || strings.Contains(strings.ToLower(exec.query.Body), "tenant") {
