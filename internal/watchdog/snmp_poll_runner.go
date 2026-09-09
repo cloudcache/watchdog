@@ -10,13 +10,35 @@ import (
 )
 
 type SNMPPollRunner struct {
-	Collector         SNMPCollectorRepository
-	Network           NetworkRepository
-	Targets           TargetRepository
-	SNMP              SNMPRepository
+	Collector         SNMPPollRecipeRepository
+	Network           SNMPPollDeviceRepository
+	Targets           SNMPPollTargetRepository
+	SNMP              SNMPPollProfileRepository
 	Poller            SNMPPoller
 	Now               func() time.Time
 	GlobalConcurrency int
+}
+
+// The poll runner intentionally depends on its four read/write operations,
+// rather than the former management-wide repositories. This lets the v2 Gin
+// runtime reuse the proven poll orchestration without reintroducing legacy
+// tenant stores or their unrelated CRUD surface.
+type SNMPPollRecipeRepository interface {
+	ListDueSNMPDevices(context.Context, ID, int, time.Time) ([]ID, error)
+	ListSNMPCollectionRecipesByDevice(context.Context, ID, ID) ([]SNMPCollectionRecipe, error)
+	MarkSNMPRecipePollResult(context.Context, ID, time.Time, string) error
+}
+
+type SNMPPollDeviceRepository interface {
+	GetDevice(context.Context, ID, ID) (NetworkDevice, error)
+}
+
+type SNMPPollTargetRepository interface {
+	GetTarget(context.Context, ID, ID) (Target, error)
+}
+
+type SNMPPollProfileRepository interface {
+	GetSNMPProfile(context.Context, ID, ID) (SNMPProfile, error)
 }
 
 type SNMPPollRunnerResult struct {
@@ -85,6 +107,10 @@ func (r SNMPPollRunner) RunDue(ctx context.Context, tenantID ID, limit int) (SNM
 				results[idx] = devicePollResult{}
 				return
 			}
+			recipes = dueSNMPRecipes(recipes, now)
+			if len(recipes) == 0 {
+				return
+			}
 			dr := r.pollDevice(ctx, tenantID, devID, recipes, now)
 			dr.recipeCount = len(recipes)
 			results[idx] = dr
@@ -98,6 +124,20 @@ func (r SNMPPollRunner) RunDue(ctx context.Context, tenantID ID, limit int) (SNM
 		result.FailedCount += dr.failed
 	}
 	return result, nil
+}
+
+func dueSNMPRecipes(recipes []SNMPCollectionRecipe, now time.Time) []SNMPCollectionRecipe {
+	due := make([]SNMPCollectionRecipe, 0, len(recipes))
+	for _, recipe := range recipes {
+		interval := time.Duration(recipe.SampleIntervalSeconds) * time.Second
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		if recipe.LastPolledAt.IsZero() || !recipe.LastPolledAt.Add(interval).After(now) {
+			due = append(due, recipe)
+		}
+	}
+	return due
 }
 
 type devicePollResult struct {

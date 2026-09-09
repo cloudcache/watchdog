@@ -251,18 +251,26 @@ type SNMPStateValue struct {
 }
 
 type SNMPRawSample struct {
-	TenantID    ID
-	TargetID    ID
-	DeviceID    ID
-	EntityType  SNMPCollectorEntityType
-	EntityID    ID
-	RecipeID    ID
-	MetricName  string
-	ValueType   SNMPCollectorValueType
-	FloatValue  float64
-	StringValue string
-	SampledAt   time.Time
-	Labels      map[string]string
+	TenantID     ID
+	TargetID     ID
+	DeviceID     ID
+	EntityType   SNMPCollectorEntityType
+	EntityID     ID
+	RecipeID     ID
+	MetricName   string
+	ValueType    SNMPCollectorValueType
+	FloatValue   float64
+	CounterValue uint64
+	CounterValid bool
+	CounterWidth uint8
+	StringValue  string
+	SampledAt    time.Time
+	IntervalMS   uint32
+	QualityFlags uint32
+	PollSequence uint64
+	SourceRunID  string
+	SampleIndex  uint32
+	Labels       map[string]string
 }
 
 type SNMPTrapHandlerDefinition struct {

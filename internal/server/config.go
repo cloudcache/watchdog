@@ -86,10 +86,13 @@ type AddressTrustedKeyConfig struct {
 // collector's embedded standard MIB bundle. An empty definitions_dir keeps
 // generic IF/IP/BGP/ENTITY discovery available without OS-specific labels.
 type SNMPConfig struct {
-	DefinitionsDir     string   `yaml:"definitions_dir"`
-	DefinitionsVersion string   `yaml:"definitions_version"`
-	MIBDirs            []string `yaml:"mib_dirs"`
-	MIBLoad            string   `yaml:"mib_load"`
+	DefinitionsDir     string        `yaml:"definitions_dir"`
+	DefinitionsVersion string        `yaml:"definitions_version"`
+	MIBDirs            []string      `yaml:"mib_dirs"`
+	MIBLoad            string        `yaml:"mib_load"`
+	PollInterval       time.Duration `yaml:"poll_interval"`
+	PollLimit          int           `yaml:"poll_limit"`
+	PollConcurrency    int           `yaml:"poll_concurrency"`
 }
 
 // AdminConfig is used only to bootstrap the first administrator on an empty install.
@@ -110,6 +113,7 @@ func defaultConfig() Config {
 		Flow:       FlowConfig{RetentionRawDays: 365, DownsampleAfterDays: 365, Rollup1mDays: 180, Rollup1hDays: 400},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
+		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32},
 		Admin:      AdminConfig{Username: "admin"},
 	}
 }

@@ -295,14 +295,14 @@ SNMP 不负责 ASN/IP/地域流向分类；Flow 单独即可回答这些问题�
 
 Flow 表继续由 `internal/flowch` 的现行 Storage V2 契约管理，单域切片只移除 tenant 维度。
 
-SNMP/system/agent 使用一个原始时序模型和一个账单专用派生表：
+KISS-03 按真实数据源分片迁移，不为延期功能预建通用抽象。SNMP 先使用一个原始时序表和一个账单专用派生表：
 
-- `telemetry_samples`：`observed_at, ingested_at, source_kind, device_id, agent_id, entity_kind, entity_id, metric, value_kind, gauge_value, counter_value, interval_ms, quality_flags, source_run_id, sample_index`；
-- `interface_traffic_5m`：从连续原始 counter 计算的 in/out bytes、bps、reset/wrap/gap 标志和 coverage，供图表、95th 和对账；
-- 低频遥测事件可进入 `telemetry_events`。
+- `snmp_samples`：`observed_at, ingested_at, device_id, agent_id, entity_kind, entity_id, recipe_id, metric, value_kind, gauge_value, counter_value, counter_width, interval_ms, quality_flags, poll_sequence, source_run_id, sample_index`；
+- `snmp_interface_traffic_5m`：从连续原始 counter 计算的 in/out bytes、bps、reset/gap 标志、coverage 和 repair generation，供图表、95th 和对账；
+- system/container agent 延后时再按其真实字段冻结显式表和 API，不用 `source_kind` 把不同语义提前塞进一张万能表；低频遥测事件也只在实际需求落地时建表。
 - **日志与告警（后续单独实现）**：按 LibreNMS 的 `eventlog`/alert 表结构在 ClickHouse 存储设备事件、告警日志与告警状态，只追加、高频、可 TTL；查询也在 CH。告警规则定义等低频管理配置由该子系统按需放 MySQL。本期不实现，只先确定其存储归属为 CH（对应 §11 后续项）。
 
-`telemetry_samples` 使用 source run + sample index 的自然坐标实现幂等，不使用业务含义 hash。counter rate 必须按设备 counter width、wrap/reset、实际 poll interval 和缺口计算；账单只使用 closed 5m bucket。保留期为全局配置，CH TTL/分区生命周期负责执行，不在 MySQL 保存时序副本。
+`snmp_samples` 使用 poll sequence + source run + sample index 的自然坐标实现幂等，不使用业务含义 hash。counter rate 必须按设备 counter width、wrap/reset、实际 poll interval 和缺口计算；账单只使用 closed 5m bucket。保留期为全局配置，变更由受审查的 CH migration 执行，不在表 DDL 硬编码 30 天，也不在 MySQL 保存时序副本。详细契约见 [kiss03-snmp-clickhouse-design.md](kiss03-snmp-clickhouse-design.md)。
 
 这是 SNMP storage adapter 替换，不是 collector rewrite：collector 产出的 metric name、entity identity、raw UInt64 counter、timestamp、interval 和 quality 必须原样进入 CH adapter；新旧 sink 的相同输入测试向量除存储编码外必须一致。
 

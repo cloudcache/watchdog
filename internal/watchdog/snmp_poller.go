@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SNMPRawSampleWriter interface {
@@ -13,13 +16,15 @@ type SNMPRawSampleWriter interface {
 }
 
 type SNMPPollJob struct {
-	TenantID  ID
-	TargetID  ID
-	DeviceID  ID
-	Target    SNMPCollectorTarget
-	Profile   SNMPProfile
-	Recipes   []SNMPCollectionRecipe
-	SampledAt time.Time
+	TenantID     ID
+	TargetID     ID
+	DeviceID     ID
+	Target       SNMPCollectorTarget
+	Profile      SNMPProfile
+	Recipes      []SNMPCollectionRecipe
+	SampledAt    time.Time
+	SourceRunID  string
+	PollSequence uint64
 }
 
 type SNMPPollResult struct {
@@ -46,6 +51,14 @@ func (p SNMPPoller) Poll(ctx context.Context, job SNMPPollJob) (SNMPPollResult, 
 		sampledAt = time.Now().UTC()
 	}
 	result := SNMPPollResult{SampledAt: sampledAt}
+	runID := strings.TrimSpace(job.SourceRunID)
+	if runID == "" {
+		runID = uuid.NewString()
+	}
+	pollSequence := job.PollSequence
+	if pollSequence == 0 {
+		pollSequence = uint64(sampledAt.UnixMilli())
+	}
 	groups := groupRecipesByContext(job.Recipes)
 	var samples []SNMPRawSample
 	for contextName, recipes := range groups {
@@ -86,6 +99,9 @@ func (p SNMPPoller) Poll(ctx context.Context, job SNMPPollJob) (SNMPPollResult, 
 					return result, err
 				}
 				samples = append(samples, sample)
+				samples[len(samples)-1].SourceRunID = runID
+				samples[len(samples)-1].PollSequence = pollSequence
+				samples[len(samples)-1].SampleIndex = uint32(len(samples) - 1)
 				seen[recipe.ID] = struct{}{}
 			}
 		}
@@ -133,7 +149,25 @@ func rawSampleFromRecipe(job SNMPPollJob, recipe SNMPCollectionRecipe, vb SNMPCo
 		MetricName: recipe.MetricName,
 		ValueType:  recipe.ValueType,
 		SampledAt:  sampledAt,
+		IntervalMS: recipe.SampleIntervalSeconds * 1000,
 		Labels:     rawSampleLabels(recipe),
+	}
+	if recipe.ValueType == SNMPCollectorValueCounter32 || recipe.ValueType == SNMPCollectorValueCounter64 {
+		value, ok := snmpCollectorUint64Value(vb.Value)
+		if !ok {
+			return sample, false
+		}
+		sample.CounterValue, sample.CounterValid = value, true
+		// FloatValue remains populated for the retired Prometheus renderer and
+		// diagnostic callers. ClickHouse writes CounterValue directly, so counters
+		// above 2^53 never pass through this lossy compatibility field.
+		sample.FloatValue = float64(value)
+		if recipe.ValueType == SNMPCollectorValueCounter32 {
+			sample.CounterWidth = 32
+		} else {
+			sample.CounterWidth = 64
+		}
+		return sample, true
 	}
 	if recipe.ValueType == SNMPCollectorValueString || recipe.ValueType == SNMPCollectorValueMACAddr || recipe.ValueType == SNMPCollectorValueIPAddr {
 		sample.StringValue = snmpCollectorStringValue(vb.Value)
@@ -158,6 +192,36 @@ func rawSampleFromRecipe(job SNMPPollJob, recipe SNMPCollectionRecipe, vb SNMPCo
 	}
 	sample.FloatValue = value
 	return sample, true
+}
+
+func snmpCollectorUint64Value(value any) (uint64, bool) {
+	switch v := value.(type) {
+	case uint64:
+		return v, true
+	case uint32:
+		return uint64(v), true
+	case uint:
+		return uint64(v), true
+	case int:
+		if v >= 0 {
+			return uint64(v), true
+		}
+	case int32:
+		if v >= 0 {
+			return uint64(v), true
+		}
+	case int64:
+		if v >= 0 {
+			return uint64(v), true
+		}
+	case string:
+		parsed, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+		return parsed, err == nil
+	case []byte:
+		parsed, err := strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64)
+		return parsed, err == nil
+	}
+	return 0, false
 }
 
 func rawSampleLabels(recipe SNMPCollectionRecipe) map[string]string {
@@ -185,9 +249,6 @@ func firstSNMPCollectorID(values ...ID) ID {
 }
 
 func validateRawSample(sample SNMPRawSample) error {
-	if sample.TenantID == "" {
-		return fmt.Errorf("raw sample %s missing tenant_id", sample.MetricName)
-	}
 	if sample.DeviceID == "" {
 		return fmt.Errorf("raw sample %s missing device_id", sample.MetricName)
 	}

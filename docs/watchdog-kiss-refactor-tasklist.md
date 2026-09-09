@@ -90,16 +90,28 @@
 
 > 存储边界：MySQL 只保存 device/port/SNMP profile/MIB 配置等管理对象；SNMP 原始 counter、状态样本、派生速率、system/agent 时序、图表和导出全部以 ClickHouse 为唯一权威。不存在 VM 双写、VM 历史迁移或 VM 回退路径。
 
-- [ ] **设计**：明确“collector/MIB/OID 语义不重写，只换 writer/query”；冻结现有 `device_id/entity/metric/collected_at/poll_sequence/raw counter/counter width/interval/quality` 输入契约，以及 CH `telemetry_samples`、`interface_traffic_5m`、必要 `telemetry_events` DDL、自然幂等坐标、分区/排序键、codec、batch、TTL、closed-bucket 和查询预算。原始 32/64-bit counter 使用整数列，不经 Float64。
-- [ ] **编码—写入**：保持现有 MIB discovery、OS/module definition、SNMP v1/v2c/v3 session、poll recipe、IPv4/v6/BGP/sensor/inventory 和调度不变；将 SNMP/system/agent 样本通过有界批量 writer 直接写 CH，成功后才确认本批，失败执行有界 retry/backpressure，不逐指标查询 MySQL/CH。
-- [ ] **编码—派生**：在 CH 内从连续原始 counter 计算 rate/流量，显式处理 32/64-bit wrap、reset、乱序、重复、缺口和真实 poll interval；只生成已关闭的 5m bucket，保留原始 counter 作为审计依据。
-- [ ] **编码—查询**：实现唯一 `MetricQueryService`，设备详情、端口流量、系统/agent 图表、统计和导出全部直接查询 CH；API DTO 与现有 UI 契约保持不变，服务端分页/search/sort/filter 继续保留。
-- [ ] **编码—删除**：删除 VictoriaMetrics writer/client/provider/DeleteSeries、Prometheus remote-write/import 查询接线和 VM 配置；不保留 feature flag、双写 adapter 或 fallback。
-- [ ] **单元测试**：UInt64 精度、自然坐标幂等、batch retry、32/64-bit wrap、reset、乱序/重复、缺口、实际 interval、5m 边界、TTL、分页/filter 和 query budget。
-- [ ] **集成测试**：真实 SNMP -> collector -> CH raw -> closed 5m -> API/chart/export；进程 crash/retry 后自然坐标收敛；停止/不存在 VM 时完整链路正常。
-- [ ] **变更设计/测试**：没有历史数据，不做 VM 对比、backfill、shadow read 或整库回退；用固定 SNMP fixture 从采集输入直接核对 CH 原始行、派生 bucket、API 和导出守恒。旧 VM 配置必须报明确的 removed-field 启动错误。
-- [ ] **回归测试**：SNMP/agent、设备与端口页面、账单基础 rate、CH fresh schema、race/vet/build；不增加视觉测试。
-- [ ] **已提交门禁**：CH DDL、writer、rate/bucket、query/export、VM 删除与测试形成一个纵向闭环；运行代码中 SNMP/system/agent 数据路径不存在 VM。
+#### KISS-03A1 SNMP raw/rate/chart 纵向切片
+
+- [x] **设计**：已冻结“collector/MIB/OID 不重写，只换 writer/query”、SNMP 专用 `snmp_samples`/`snmp_interface_traffic_5m`、UInt64 counter、自然身份、无硬编码 TTL、closed-bucket generation、查询预算和进程失败语义；见 `kiss03-snmp-clickhouse-design.md`。已删除不当的通用 `telemetrych/source_kind` 设计。
+- [x] **编码—写入**：生产 collector 已从旧 BackendRuntime 改为全局 MySQL device/profile/recipe -> 既有 poller -> `snmpch` 有界同步 CH batch；CH 成功后才更新 recipe，失败有界 retry/backpressure；无 PB、tenant、VM 或双写。
+- [x] **编码—派生**：CH 内按真实相邻时间和 UInt64 counter 计算速率，覆盖 32-bit wrap、reset、gap、重复；只 rebuild 已关闭 5m bucket，value 后 marker 发布 repair generation。
+- [x] **编码—查询/API**：Gin `metrics/catalog|query|range|realtime` 直接查询 CH，沿用现有 chart JSON，保留 device/port RBAC、固定/自定义周期和 query budget；active DTO 不再引用旧 metrics backend 类型。
+- [x] **编码—schema**：MySQL `snmp_collection_recipes` 和 CH migration 012 已建立；server/collector 只做 readiness，不在启动时改 CH schema；已删除第二套 embedded CH baseline。
+- [x] **单元测试**：已覆盖 UInt64 精度、batch identity/retry、wrap/reset/gap、closed bucket、query budget、API JSON 兼容与 `tenant_id` 参数拒绝。
+- [x] **集成测试**：真实 MySQL + 固定 SNMP varbind + 既有 poller + 真实 CH 核对 `>2^53` 原值和 recipe 状态；真实 CH 覆盖 raw/rate/closed bucket；链路没有 VM 依赖。
+- [x] **变更设计/测试**：无历史数据，不 backfill/shadow read；唯一 CH migration ledger；schema 未迁移时明确拒绝启动；轮询 pass 暂时失败下个 tick 重试。
+- [x] **回归测试**：目标 packages 与真实 MySQL/CH 集成通过；允许 loopback 的环境下 `go test ./...`、`go vet ./...`、`go build ./...` 全部通过，无视觉改动。
+- [x] **已提交门禁**：本切片相关代码、DDL、测试和文档形成一个可独立构建提交，不夹带 KISS-06/address 并行 WIP。
+
+#### KISS-03A2 SNMP aggregate/export/billing 收口
+
+- [ ] **设计/编码/API**：复用同一个 `snmpch` 查询器实现跨设备/端口 aggregate、异步 CSV 与 billing reader；不恢复 DatasetProvider、旧 export fallback 或 VM DTO。
+- [ ] **测试/提交**：固定 counter fixture 对 aggregate/export/billing 做总量守恒、设备/端口权限、分页/预算、取消/重试和真实 CH 集成，并独立提交。
+
+#### KISS-03B system/container agent 延后切片
+
+- [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。
+- [ ] **删除/测试/提交**：等价迁移后物理删除剩余 VictoriaMetrics writer/client/provider/DeleteSeries、remote-write/import、配置和旧 BackendRuntime 路径；停止 VM 后做真实进程集成并独立提交。
 
 ### KISS-04 Agent registry 收敛
 

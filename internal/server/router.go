@@ -102,6 +102,11 @@ func (s *Server) newRouter() *gin.Engine {
 	dev.GET("/vlans", s.requirePermission("device.view"), s.listDeviceVLANs)
 	dev.GET("/lags", s.requirePermission("device.view"), s.listDeviceLAGs)
 	dev.POST("/snmp/discover", s.requirePermission("device.discover"), s.discoverDeviceSNMP)
+	metrics := auth.Group("/metrics")
+	metrics.GET("/catalog", s.requirePermission("device.view"), s.metricCatalog)
+	metrics.GET("/query", s.requirePermission("device.view"), s.queryMetrics)
+	metrics.GET("/range", s.requirePermission("device.view"), s.queryMetrics)
+	metrics.GET("/realtime", s.requirePermission("device.view"), s.queryMetrics)
 	dev.GET("/events", s.todo)
 	ports := auth.Group("/ports")
 	ports.GET("/:port_id", s.requirePermission("port.view"), s.getPort)
@@ -249,11 +254,12 @@ func (s *Server) health(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 	dbOK := s.db.PingContext(ctx) == nil
+	chOK := s.snmpMetrics != nil && s.snmpMetrics.Ready(ctx) == nil
 	status := http.StatusOK
-	if !dbOK {
+	if !dbOK || !chOK {
 		status = http.StatusServiceUnavailable
 	}
-	c.JSON(status, gin.H{"status": ternary(dbOK, "ok", "degraded"), "mysql": dbOK})
+	c.JSON(status, gin.H{"status": ternary(dbOK && chOK, "ok", "degraded"), "mysql": dbOK, "clickhouse": chOK})
 }
 
 func (s *Server) installStatus(c *gin.Context) {

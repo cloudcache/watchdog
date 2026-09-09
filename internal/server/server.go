@@ -10,12 +10,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/cloudcache/watchdog/internal/agentplan"
+	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/opjob"
+	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 )
@@ -33,6 +36,8 @@ type Server struct {
 	addressObjects   address.DiskDimensionObjectStore
 	addressArtifacts address.DiskArtifactStore
 	jobs             *opjob.Store
+	clickHouse       *flowch.NativeInserter
+	snmpMetrics      *snmpch.Store
 	workerCancel     context.CancelFunc
 
 	agentPlanSigner agentplan.Signer
@@ -76,6 +81,10 @@ func New(cfg Config) (*Server, error) {
 	if err := s.EnsureFirstAdmin(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if err := s.startClickHouse(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("start ClickHouse: %w", err)
 	}
 	if err := s.startAgentPlans(); err != nil {
 		_ = db.Close()
@@ -143,7 +152,42 @@ func (s *Server) Close() error {
 	if s.workerCancel != nil {
 		s.workerCancel()
 	}
+	if s.clickHouse != nil {
+		s.clickHouse.Close()
+	}
 	return s.db.Close()
+}
+
+func (s *Server) startClickHouse(ctx context.Context) error {
+	// Direct unit tests may construct Config without optional external services.
+	// Loaded production configuration always supplies the ClickHouse endpoint.
+	if strings.TrimSpace(s.cfg.ClickHouse.Address) == "" || strings.TrimSpace(s.cfg.ClickHouse.Database) == "" {
+		return nil
+	}
+	password, err := clickHousePassword(s.cfg.ClickHouse.PasswordFile)
+	if err != nil {
+		return err
+	}
+	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{
+		Address: s.cfg.ClickHouse.Address, Database: s.cfg.ClickHouse.Database,
+		User: s.cfg.ClickHouse.Username, Password: password,
+		ClientName: "watchdog-server", MaxConns: 8, MinConns: 1,
+	})
+	if err != nil {
+		return err
+	}
+	store, err := snmpch.New(native)
+	if err != nil {
+		native.Close()
+		return err
+	}
+	if err := store.Ready(ctx); err != nil {
+		native.Close()
+		return fmt.Errorf("SNMP schema is not migrated: %w", err)
+	}
+	s.clickHouse = native
+	s.snmpMetrics = store
+	return nil
 }
 
 // ensureDatabase creates the target schema if it does not exist, so the server can

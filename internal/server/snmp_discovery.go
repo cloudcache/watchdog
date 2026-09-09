@@ -145,7 +145,7 @@ func (s *Server) importSNMPDiscovery(ctx context.Context, deviceID, actorID stri
 		os=COALESCE(NULLIF(?,''),os),os_version=COALESCE(NULLIF(?,''),os_version),
 		sys_name=COALESCE(NULLIF(?,''),sys_name),sys_descr=COALESCE(NULLIF(?,''),sys_descr),
 		sys_location=COALESCE(NULLIF(?,''),sys_location),sys_object_id=COALESCE(NULLIF(?,''),sys_object_id),
-		uptime_seconds=?,status='up',status_reason='',last_polled_at=UTC_TIMESTAMP(3),updated_by=?,row_version=row_version+1
+		uptime_seconds=?,status='up',status_reason='',last_polled_at=UTC_TIMESTAMP(3),updated_by=NULLIF(?,''),row_version=row_version+1
 		WHERE id=?`, updates.Vendor, updates.Model, updates.Platform, updates.OSName, updates.OSVersion,
 		updates.SysName, updates.SysDescr, updates.SysLocation, updates.SysObjectID, uint64(updates.Uptime/time.Second), actorID, deviceID)
 	if err != nil {
@@ -197,10 +197,64 @@ func (s *Server) importSNMPDiscovery(ctx context.Context, deviceID, actorID stri
 		}
 		imported.LAGs = len(result.LAGs)
 	}
+	if err = replaceSNMPCollectionRecipes(ctx, tx, deviceID, result.Recipes, result.CompletedModules); err != nil {
+		return imported, err
+	}
 	if err := tx.Commit(); err != nil {
 		return imported, err
 	}
 	return imported, nil
+}
+
+func replaceSNMPCollectionRecipes(ctx context.Context, tx *sql.Tx, deviceID string, recipes []watchdog.SNMPCollectionRecipe, completed []string) error {
+	now := time.Now().UTC()
+	keepByModule := map[string][]string{}
+	for _, recipe := range recipes {
+		id := string(recipe.ID)
+		if id == "" || len(id) > 26 {
+			id = newID()
+		}
+		interval := recipe.SampleIntervalSeconds
+		if interval == 0 {
+			interval = 60
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO snmp_collection_recipes
+			(id,device_id,entity_kind,entity_id,module_name,metric,value_kind,oid,numeric_oid,oid_index,mib,context_name,
+			 divisor,multiplier,sample_interval_seconds,labels_json,options_json,enabled,discovered_at,last_error)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, '')
+			ON DUPLICATE KEY UPDATE value_kind=VALUES(value_kind),oid=VALUES(oid),numeric_oid=VALUES(numeric_oid),
+			mib=VALUES(mib),divisor=VALUES(divisor),multiplier=VALUES(multiplier),sample_interval_seconds=VALUES(sample_interval_seconds),
+			labels_json=VALUES(labels_json),options_json=VALUES(options_json),enabled=VALUES(enabled),discovered_at=VALUES(discovered_at),last_error=''`,
+			id, deviceID, string(recipe.EntityType), string(recipe.EntityID), recipe.ModuleName, recipe.MetricName, string(recipe.ValueType),
+			recipe.OID, recipe.NumericOID, recipe.OIDIndex, recipe.MIB, recipe.ContextName, nullableSNMPFloat(recipe.Divisor, recipe.HasDivisor),
+			nullableSNMPFloat(recipe.Multiplier, recipe.HasMultiplier), interval, mustJSON(recipe.Labels), mustJSON(recipe.Options), recipe.Enabled, now)
+		if err != nil {
+			return err
+		}
+		keepByModule[recipe.ModuleName] = append(keepByModule[recipe.ModuleName], id)
+	}
+	for _, module := range completed {
+		ids := keepByModule[module]
+		query := "DELETE FROM snmp_collection_recipes WHERE device_id=? AND module_name=?"
+		args := []any{deviceID, module}
+		if len(ids) > 0 {
+			query += " AND id NOT IN (" + placeholders(len(ids)) + ")"
+			for _, id := range ids {
+				args = append(args, id)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func nullableSNMPFloat(value float64, present bool) any {
+	if !present {
+		return nil
+	}
+	return value
 }
 
 func importDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, ports []watchdog.NetworkPort) (map[string]string, map[uint64]string, error) {

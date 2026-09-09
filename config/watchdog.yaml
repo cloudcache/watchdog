@@ -42,6 +42,9 @@ snmp:                               # generic standard MIB discovery works with 
   definitions_version: ""
   mib_dirs: []                       # optional additional vendor MIB directories
   mib_load: ""                       # optional module list or ALL
+  poll_interval: 1m                  # scheduler wakeup; each recipe still owns its interval
+  poll_limit: 500                    # maximum due devices per scheduler pass
+  poll_concurrency: 32               # bounded concurrent devices
 
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"

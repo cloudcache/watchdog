@@ -21,8 +21,19 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 11 || filepath.Base(paths[0]) != "001_flow_schema.sql" || filepath.Base(paths[1]) != "002_flow_geo_hierarchy.sql" || filepath.Base(paths[2]) != "003_flow_vpn_candidate_generation.sql" || filepath.Base(paths[3]) != "004_flow_ingest_receipt_audit.sql" || filepath.Base(paths[4]) != "005_flow_fact_provenance.sql" || filepath.Base(paths[5]) != "006_flow_ingest_audit_projection.sql" || filepath.Base(paths[6]) != "007_flow_records_codecs.sql" || filepath.Base(paths[7]) != "008_flow_aggregate_codecs.sql" || filepath.Base(paths[8]) != "009_flow_address_dict_source.sql" || filepath.Base(paths[9]) != "010_flow_aggregate_reorder.sql" || filepath.Base(paths[10]) != "011_flow_storage_v2.sql" {
+	expected := []string{
+		"001_flow_schema.sql", "002_flow_geo_hierarchy.sql", "003_flow_vpn_candidate_generation.sql",
+		"004_flow_ingest_receipt_audit.sql", "005_flow_fact_provenance.sql", "006_flow_ingest_audit_projection.sql",
+		"007_flow_records_codecs.sql", "008_flow_aggregate_codecs.sql", "009_flow_address_dict_source.sql",
+		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
+	}
+	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
+	}
+	for index, want := range expected {
+		if filepath.Base(paths[index]) != want {
+			t.Fatalf("unexpected ClickHouse migration[%d]=%s, want %s", index, paths[index], want)
+		}
 	}
 	var sql strings.Builder
 	for _, path := range paths {
@@ -34,8 +45,8 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 6 {
-		t.Fatalf("ClickHouse flow table count=%d, want 6", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 8 {
+		t.Fatalf("ClickHouse table count=%d, want 8", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
@@ -56,6 +67,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"supplier_geo_version LowCardinality(String)", "supplier_category Enum8(", "customer_geo_override_fields UInt8",
 		"deduplicate_merge_projection_mode = 'rebuild'", "flow_ingest_audit_v1", "MATERIALIZE PROJECTION flow_ingest_audit_v1",
 		"ORDER BY (kafka_topic, kafka_partition, kafka_offset, record_index, record_id)",
+		"snmp_samples", "snmp_interface_traffic_5m", "counter_value  UInt64", "counter_width  UInt8",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)
@@ -92,6 +104,15 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	} {
 		if strings.Contains(v2, forbidden) {
 			t.Fatalf("ClickHouse V2 migration retained forbidden contract %q", forbidden)
+		}
+	}
+	snmpData, err := os.ReadFile(paths[11])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"TTL observed_at", "TTL bucket_start", "tenant_id", "source_kind", "telemetry_samples"} {
+		if strings.Contains(string(snmpData), forbidden) {
+			t.Fatalf("ClickHouse SNMP migration retained forbidden contract %q", forbidden)
 		}
 	}
 }
