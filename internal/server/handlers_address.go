@@ -1,17 +1,24 @@
 package server
 
 import (
-	"database/sql"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
+	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/gin-gonic/gin"
+	"github.com/go-sql-driver/mysql"
 )
 
-// registerAddressRoutes wires the KISS-05 address library CRUD/list under the
-// authenticated group. Reads need address.view; writes need address.manage.
-// Paths match what the existing UI calls (/geo/dictionary, /network/operators,
-// /address-prefixes, /address-sets). Import (Phase 2) and publish (Phase 3) follow.
+// registerAddressRoutes wires the KISS-05 editable address library CRUD/list over
+// internal/address.Store (the single-domain de-tenanted engine) — converged from the
+// earlier raw-JSON server handlers so import/publish and editable CRUD share one
+// implementation. Reads need address.view; writes need address.manage. Contracts
+// (strict params, cursor/table pagination, If-Match/428/ETag, merge/set previews)
+// are faithful ports of internal/watchdog/api_address_sets.go + api_address_taxonomy.go.
 func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	view := s.requirePermission("address.view")
 	manage := s.requirePermission("address.manage")
@@ -33,6 +40,7 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	prefixes := auth.Group("/address-prefixes")
 	prefixes.GET("", view, s.listAddressPrefixes)
 	prefixes.POST("", manage, s.createAddressPrefix)
+	prefixes.POST("/actions/merge-preview", manage, s.mergePreviewAddressPrefixes)
 	prefixes.GET("/:id", view, s.getAddressPrefix)
 	prefixes.PATCH("/:id", manage, s.updateAddressPrefix)
 	prefixes.DELETE("/:id", manage, s.deleteAddressPrefix)
@@ -53,610 +61,276 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	lines.DELETE("/:id", manage, s.deleteGeoLine)
 }
 
-// rawOrNull returns a JSON column value or the given default when empty/null.
-func rawOr(v json.RawMessage, def string) json.RawMessage {
-	if len(v) == 0 || string(v) == "null" {
-		return json.RawMessage(def)
+// writeAddressError maps the internal/address CRUD errors to HTTP, faithfully
+// mirroring internal/watchdog.writeAddressTaxonomyError.
+func writeAddressError(c *gin.Context, err error) {
+	var mysqlErr *mysql.MySQLError
+	switch {
+	case errors.Is(err, address.ErrAddressTaxonomyInvalid):
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, address.ErrAddressTaxonomyConflict):
+		fail(c, http.StatusPreconditionFailed, "version_conflict", "address item changed since it was read")
+	case errors.Is(err, address.ErrAddressTaxonomyCycle), errors.Is(err, address.ErrAddressTaxonomyInUse):
+		fail(c, http.StatusConflict, "conflict", err.Error())
+	case errors.As(err, &mysqlErr) && (mysqlErr.Number == 1062 || mysqlErr.Number == 1451):
+		fail(c, http.StatusConflict, "conflict", "address item conflicts with an existing or referenced item")
+	default:
+		writeSQLError(c, err)
 	}
-	return v
 }
 
-func (s *Server) deleteByID(c *gin.Context, table, resource string) {
-	res, err := s.db.ExecContext(c.Request.Context(), "DELETE FROM "+table+" WHERE id = ?", c.Param("id"))
+// requireAddressIfMatch enforces the write-time optimistic-concurrency contract:
+// a missing If-Match is 428 (Precondition Required); an unparseable one is 412.
+func requireAddressIfMatch(c *gin.Context) (uint64, bool) {
+	expected, supplied, err := ifMatch(c)
+	if !supplied {
+		fail(c, http.StatusPreconditionRequired, "precondition_required", "If-Match is required")
+		return 0, false
+	}
 	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
+		fail(c, http.StatusPreconditionFailed, "version_conflict", "If-Match must be a row version")
+		return 0, false
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		fail(c, http.StatusNotFound, "not_found", resource+" not found")
-		return
-	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, resource+".delete", resource, c.Param("id"))
-	c.Status(http.StatusNoContent)
+	return expected, true
 }
 
-// -------------------- geo_dict (geographies) --------------------
-
-func (s *Server) listGeographies(c *gin.Context) {
-	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, kind, code, COALESCE(parent_id,''), name, COALESCE(short_name,''), sort_order, enabled, row_version
-		FROM geo_dict ORDER BY kind, sort_order, code`)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
+// addressDecodeStrict decodes exactly one JSON value with unknown-field rejection.
+func addressDecodeStrict(c *gin.Context, dest any, maxBytes int64) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return false
 	}
-	defer rows.Close()
-	items := []gin.H{}
-	for rows.Next() {
-		var id, kind, code, parent, name, short string
-		var sortOrder int
-		var enabled bool
-		var rv uint64
-		if err := rows.Scan(&id, &kind, &code, &parent, &name, &short, &sortOrder, &enabled, &rv); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
-			return
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		fail(c, http.StatusBadRequest, "invalid_request", "request body must contain exactly one JSON value")
+		return false
+	}
+	return true
+}
+
+func addressListParam(c *gin.Context, allowed ...string) (map[string]bool, bool) {
+	permitted := make(map[string]bool, len(allowed))
+	for _, key := range allowed {
+		permitted[key] = true
+	}
+	for key := range c.Request.URL.Query() {
+		if !permitted[key] {
+			fail(c, http.StatusBadRequest, "invalid_request", "unsupported query parameter: "+key)
+			return nil, false
 		}
-		items = append(items, gin.H{"id": id, "kind": kind, "code": code, "parent_id": parent,
-			"name": name, "short_name": short, "sort_order": sortOrder, "enabled": enabled, "row_version": rv})
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	return permitted, true
 }
 
-func (s *Server) createGeography(c *gin.Context) {
-	var req struct {
-		Kind, Code, Name, ShortName, ParentID string
-		SortOrder                             int
-		Enabled                               *bool
+func addressListPageParams(c *gin.Context) (limit, offset int, tableMode bool, cursor string, ok bool) {
+	cursor = strings.TrimSpace(c.Query("cursor"))
+	tableMode = c.Query("sort") != "" || c.Query("order") != "" || c.Query("offset") != ""
+	if cursor != "" && tableMode {
+		fail(c, http.StatusBadRequest, "invalid_request", "cursor cannot be combined with table query parameters")
+		return 0, 0, false, "", false
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Kind == "" || req.Code == "" || req.Name == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "kind, code and name are required")
-		return
+	order := strings.ToLower(strings.TrimSpace(c.Query("order")))
+	if order != "" && order != "asc" && order != "desc" {
+		fail(c, http.StatusBadRequest, "invalid_request", "order must be asc or desc")
+		return 0, 0, false, "", false
 	}
-	id := newID()
-	if _, err := s.db.ExecContext(c.Request.Context(), `
-		INSERT INTO geo_dict (id, kind, code, parent_id, name, short_name, sort_order, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, req.Kind, req.Code, nullIfEmpty(req.ParentID), req.Name, nullIfEmpty(req.ShortName), req.SortOrder, boolOrTrue(req.Enabled)); err != nil {
-		fail(c, http.StatusConflict, "conflict", "a geography with this kind+code already exists")
-		return
-	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geography.create", "geography", id)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	limit, offset = pageParams(c)
+	return limit, offset, tableMode, cursor, true
 }
 
-func (s *Server) getGeography(c *gin.Context) {
-	var kind, code, parent, name, short string
-	var sortOrder int
-	var enabled bool
-	var rv uint64
-	err := s.db.QueryRowContext(c.Request.Context(), `
-		SELECT kind, code, COALESCE(parent_id,''), name, COALESCE(short_name,''), sort_order, enabled, row_version
-		FROM geo_dict WHERE id = ?`, c.Param("id")).Scan(&kind, &code, &parent, &name, &short, &sortOrder, &enabled, &rv)
-	if err == sql.ErrNoRows {
-		fail(c, http.StatusNotFound, "not_found", "geography not found")
-		return
+func addressListResponse[T any](c *gin.Context, items []T, cursor string, total int, tableMode bool, limit, offset int) {
+	if items == nil {
+		items = []T{}
 	}
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
+	response := gin.H{"items": items, "total": total}
+	if tableMode {
+		response["limit"] = limit
+		response["offset"] = offset
 	}
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "kind": kind, "code": code, "parent_id": parent,
-		"name": name, "short_name": short, "sort_order": sortOrder, "enabled": enabled, "row_version": rv})
+	if cursor != "" {
+		response["next_cursor"] = cursor
+	}
+	c.JSON(http.StatusOK, response)
 }
-
-func (s *Server) updateGeography(c *gin.Context) {
-	var req struct {
-		Name, ShortName *string
-		SortOrder       *int
-		Enabled         *bool
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
-	if req.Name != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_dict SET name=?, row_version=row_version+1 WHERE id=?`, *req.Name, id)
-	}
-	if req.ShortName != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_dict SET short_name=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.ShortName), id)
-	}
-	if req.SortOrder != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_dict SET sort_order=?, row_version=row_version+1 WHERE id=?`, *req.SortOrder, id)
-	}
-	if req.Enabled != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_dict SET enabled=?, row_version=row_version+1 WHERE id=?`, *req.Enabled, id)
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "geography.update", "geography", id)
-	s.getGeography(c)
-}
-
-func (s *Server) deleteGeography(c *gin.Context) { s.deleteByID(c, "geo_dict", "geography") }
-
-// -------------------- isp_operators (operators) --------------------
-
-func (s *Server) listOperators(c *gin.Context) {
-	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, code, name, COALESCE(short_name,''), category, flow_isp_id, asns, sort_order, enabled, row_version
-		FROM isp_operators ORDER BY sort_order, name`)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	defer rows.Close()
-	items := []gin.H{}
-	for rows.Next() {
-		var id, code, name, short, category string
-		var flowISPID, sortOrder int
-		var enabled bool
-		var rv uint64
-		var asns json.RawMessage
-		if err := rows.Scan(&id, &code, &name, &short, &category, &flowISPID, &asns, &sortOrder, &enabled, &rv); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-		items = append(items, gin.H{"id": id, "code": code, "name": name, "short_name": short,
-			"category": category, "flow_isp_id": flowISPID, "asns": rawOr(asns, "[]"),
-			"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
-}
-
-func (s *Server) createOperator(c *gin.Context) {
-	var req struct {
-		Code, Name, ShortName, Category string
-		FlowISPID                       int             `json:"flow_isp_id"`
-		ASNs                            json.RawMessage `json:"asns"`
-		SortOrder                       int             `json:"sort_order"`
-		Enabled                         *bool
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" || req.Name == "" || req.FlowISPID <= 0 {
-		fail(c, http.StatusBadRequest, "invalid_request", "code, name and flow_isp_id are required")
-		return
-	}
-	if req.Category == "" {
-		req.Category = "other"
-	}
-	id := newID()
-	if _, err := s.db.ExecContext(c.Request.Context(), `
-		INSERT INTO isp_operators (id, code, name, short_name, category, flow_isp_id, asns, sort_order, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, req.Code, req.Name, nullIfEmpty(req.ShortName), req.Category, req.FlowISPID,
-		string(rawOr(req.ASNs, "[]")), req.SortOrder, boolOrTrue(req.Enabled)); err != nil {
-		fail(c, http.StatusConflict, "conflict", "operator code or flow_isp_id already exists")
-		return
-	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "operator.create", "operator", id)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
-}
-
-func (s *Server) getOperator(c *gin.Context) {
-	var code, name, short, category string
-	var flowISPID, sortOrder int
-	var enabled bool
-	var rv uint64
-	var asns json.RawMessage
-	err := s.db.QueryRowContext(c.Request.Context(), `
-		SELECT code, name, COALESCE(short_name,''), category, flow_isp_id, asns, sort_order, enabled, row_version
-		FROM isp_operators WHERE id = ?`, c.Param("id")).
-		Scan(&code, &name, &short, &category, &flowISPID, &asns, &sortOrder, &enabled, &rv)
-	if err == sql.ErrNoRows {
-		fail(c, http.StatusNotFound, "not_found", "operator not found")
-		return
-	}
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "code": code, "name": name, "short_name": short,
-		"category": category, "flow_isp_id": flowISPID, "asns": rawOr(asns, "[]"),
-		"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
-}
-
-func (s *Server) updateOperator(c *gin.Context) {
-	var req struct {
-		Name, ShortName, Category *string
-		ASNs                      json.RawMessage `json:"asns"`
-		SortOrder                 *int            `json:"sort_order"`
-		Enabled                   *bool
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
-	if req.Name != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET name=?, row_version=row_version+1 WHERE id=?`, *req.Name, id)
-	}
-	if req.ShortName != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET short_name=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.ShortName), id)
-	}
-	if req.Category != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET category=?, row_version=row_version+1 WHERE id=?`, *req.Category, id)
-	}
-	if len(req.ASNs) > 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET asns=?, row_version=row_version+1 WHERE id=?`, string(req.ASNs), id)
-	}
-	if req.SortOrder != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET sort_order=?, row_version=row_version+1 WHERE id=?`, *req.SortOrder, id)
-	}
-	if req.Enabled != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE isp_operators SET enabled=?, row_version=row_version+1 WHERE id=?`, *req.Enabled, id)
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "operator.update", "operator", id)
-	s.getOperator(c)
-}
-
-func (s *Server) deleteOperator(c *gin.Context) { s.deleteByID(c, "isp_operators", "operator") }
 
 // -------------------- address_prefixes --------------------
 
 func (s *Server) listAddressPrefixes(c *gin.Context) {
-	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, cidr, COALESCE(family,0), COALESCE(prefix_length,0), labels,
-		       COALESCE(geo_leaf_id,''), COALESCE(operator_id,''), COALESCE(asn,0), source, row_version
-		FROM address_prefixes ORDER BY cidr LIMIT 1000`)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
+	if _, ok := addressListParam(c, "q", "family", "source", "geo_leaf_id", "operator_id", "asn", "sort", "order", "limit", "offset", "cursor"); !ok {
 		return
 	}
-	defer rows.Close()
-	items := []gin.H{}
-	for rows.Next() {
-		var id, cidr, geo, op, source string
-		var family, prefixLen int
-		var asn uint64
-		var rv uint64
-		var labels json.RawMessage
-		if err := rows.Scan(&id, &cidr, &family, &prefixLen, &labels, &geo, &op, &asn, &source, &rv); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
+	limit, offset, tableMode, cursor, ok := addressListPageParams(c)
+	if !ok {
+		return
+	}
+	filter := address.AddressPrefixListFilter{
+		Search: strings.TrimSpace(c.Query("q")), Source: strings.TrimSpace(c.Query("source")),
+		GeoLeafID: strings.TrimSpace(c.Query("geo_leaf_id")), OperatorID: strings.TrimSpace(c.Query("operator_id")),
+		Cursor: cursor, Sort: strings.TrimSpace(c.Query("sort")), Desc: sortDirection(c) == "DESC" && c.Query("order") != "",
+		Limit: limit, Offset: offset, TableMode: tableMode,
+	}
+	if raw := strings.TrimSpace(c.Query("family")); raw != "" {
+		family, err := strconv.ParseUint(raw, 10, 8)
+		if err != nil || (family != 4 && family != 6) {
+			fail(c, http.StatusBadRequest, "invalid_request", "family must be 4 or 6")
 			return
 		}
-		items = append(items, gin.H{"id": id, "cidr": cidr, "family": family, "prefix_length": prefixLen,
-			"labels": rawOr(labels, "{}"), "geo_leaf_id": geo, "operator_id": op, "asn": asn,
-			"source": source, "row_version": rv})
+		filter.Family = uint8(family)
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	if raw := strings.TrimSpace(c.Query("asn")); raw != "" {
+		asn, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", "asn must be an unsigned 32-bit integer")
+			return
+		}
+		value := uint32(asn)
+		filter.ASN = &value
+	}
+	items, next, total, err := s.addressStore.ListAddressPrefixesPage(c.Request.Context(), filter)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	addressListResponse(c, items, next, total, tableMode, limit, offset)
+}
+
+type addressPrefixInput struct {
+	CIDR       *string            `json:"cidr,omitempty"`
+	Labels     *map[string]string `json:"labels,omitempty"`
+	GeoLeafID  *string            `json:"geo_leaf_id,omitempty"`
+	OperatorID *string            `json:"operator_id,omitempty"`
+	ASN        *uint32            `json:"asn,omitempty"`
+	Source     *string            `json:"source,omitempty"`
+}
+
+func applyAddressPrefixInput(prefix address.AddressPrefix, input addressPrefixInput) address.AddressPrefix {
+	if input.CIDR != nil {
+		prefix.CIDR = *input.CIDR
+	}
+	if input.Labels != nil {
+		prefix.Labels = *input.Labels
+	}
+	if input.GeoLeafID != nil {
+		prefix.GeoLeafID = *input.GeoLeafID
+	}
+	if input.OperatorID != nil {
+		prefix.OperatorID = *input.OperatorID
+	}
+	if input.ASN != nil {
+		if *input.ASN == 0 {
+			prefix.ASN = nil
+		} else {
+			value := *input.ASN
+			prefix.ASN = &value
+		}
+	}
+	if input.Source != nil {
+		prefix.Source = *input.Source
+	}
+	return prefix
 }
 
 func (s *Server) createAddressPrefix(c *gin.Context) {
-	var req struct {
-		CIDR       string          `json:"cidr"`
-		Labels     json.RawMessage `json:"labels"`
-		GeoLeafID  string          `json:"geo_leaf_id"`
-		OperatorID string          `json:"operator_id"`
-		ASN        *uint64         `json:"asn"`
-		Source     string          `json:"source"`
+	var input addressPrefixInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.CIDR == "" {
+	if input.CIDR == nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "cidr is required")
 		return
 	}
-	if req.Source == "" {
-		req.Source = "manual"
-	}
-	id := newID()
-	if _, err := s.db.ExecContext(c.Request.Context(), `
-		INSERT INTO address_prefixes (id, cidr, labels, geo_leaf_id, operator_id, asn, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, req.CIDR, string(rawOr(req.Labels, "{}")), nullIfEmpty(req.GeoLeafID), nullIfEmpty(req.OperatorID), req.ASN, req.Source); err != nil {
-		fail(c, http.StatusConflict, "conflict", "a prefix with this cidr already exists")
+	prefix := applyAddressPrefixInput(address.AddressPrefix{ID: address.NewSetID(), Labels: map[string]string{}, Source: "manual"}, input)
+	saved, err := s.addressStore.UpsertAddressPrefix(c.Request.Context(), prefix)
+	if err != nil {
+		writeAddressError(c, err)
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "prefix.create", "prefix", id)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "prefix.create", "prefix", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusCreated, saved)
 }
 
 func (s *Server) getAddressPrefix(c *gin.Context) {
-	var cidr, geo, op, source string
-	var family, prefixLen int
-	var asn, rv uint64
-	var labels json.RawMessage
-	err := s.db.QueryRowContext(c.Request.Context(), `
-		SELECT cidr, COALESCE(family,0), COALESCE(prefix_length,0), labels,
-		       COALESCE(geo_leaf_id,''), COALESCE(operator_id,''), COALESCE(asn,0), source, row_version
-		FROM address_prefixes WHERE id = ?`, c.Param("id")).
-		Scan(&cidr, &family, &prefixLen, &labels, &geo, &op, &asn, &source, &rv)
-	if err == sql.ErrNoRows {
-		fail(c, http.StatusNotFound, "not_found", "prefix not found")
-		return
-	}
+	prefix, err := s.addressStore.GetAddressPrefix(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		writeAddressError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "cidr": cidr, "family": family, "prefix_length": prefixLen,
-		"labels": rawOr(labels, "{}"), "geo_leaf_id": geo, "operator_id": op, "asn": asn, "source": source, "row_version": rv})
+	c.Header("ETag", etag(prefix.RowVersion))
+	c.JSON(http.StatusOK, prefix)
 }
 
 func (s *Server) updateAddressPrefix(c *gin.Context) {
-	var req struct {
-		Labels     json.RawMessage `json:"labels"`
-		GeoLeafID  *string         `json:"geo_leaf_id"`
-		OperatorID *string         `json:"operator_id"`
-		ASN        *uint64         `json:"asn"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
-	if len(req.Labels) > 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_prefixes SET labels=?, row_version=row_version+1 WHERE id=?`, string(req.Labels), id)
-	}
-	if req.GeoLeafID != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_prefixes SET geo_leaf_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.GeoLeafID), id)
-	}
-	if req.OperatorID != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_prefixes SET operator_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.OperatorID), id)
-	}
-	if req.ASN != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_prefixes SET asn=?, row_version=row_version+1 WHERE id=?`, *req.ASN, id)
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "prefix.update", "prefix", id)
-	s.getAddressPrefix(c)
-}
-
-func (s *Server) deleteAddressPrefix(c *gin.Context) { s.deleteByID(c, "address_prefixes", "prefix") }
-
-// -------------------- address_sets --------------------
-
-func (s *Server) listAddressSets(c *gin.Context) {
-	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, name, COALESCE(description,''), selector, explicit_members, explicit_exclude_members,
-		       include_set_ids, exclude_set_ids, match_direction, enabled, row_version
-		FROM address_sets ORDER BY name`)
+	prefix, err := s.addressStore.GetAddressPrefix(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		writeAddressError(c, err)
 		return
 	}
-	defer rows.Close()
-	items := []gin.H{}
-	for rows.Next() {
-		var id, name, desc, dir string
-		var enabled bool
-		var rv uint64
-		var selector, members, exclude, incl, excl json.RawMessage
-		if err := rows.Scan(&id, &name, &desc, &selector, &members, &exclude, &incl, &excl, &dir, &enabled, &rv); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-		items = append(items, gin.H{"id": id, "name": name, "description": desc,
-			"selector": rawOr(selector, "{}"), "explicit_members": rawOr(members, "[]"),
-			"explicit_exclude_members": rawOr(exclude, "[]"), "include_set_ids": rawOr(incl, "[]"),
-			"exclude_set_ids": rawOr(excl, "[]"), "match_direction": dir, "enabled": enabled, "row_version": rv})
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
-}
-
-func (s *Server) createAddressSet(c *gin.Context) {
-	var req struct {
-		Name                   string          `json:"name"`
-		Description            string          `json:"description"`
-		Selector               json.RawMessage `json:"selector"`
-		ExplicitMembers        json.RawMessage `json:"explicit_members"`
-		ExplicitExcludeMembers json.RawMessage `json:"explicit_exclude_members"`
-		IncludeSetIDs          json.RawMessage `json:"include_set_ids"`
-		ExcludeSetIDs          json.RawMessage `json:"exclude_set_ids"`
-		MatchDirection         string          `json:"match_direction"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "name is required")
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
-	if req.MatchDirection == "" {
-		req.MatchDirection = "both"
-	}
-	id := newID()
-	if _, err := s.db.ExecContext(c.Request.Context(), `
-		INSERT INTO address_sets (id, name, description, selector, explicit_members, explicit_exclude_members,
-		                          include_set_ids, exclude_set_ids, match_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, req.Name, nullIfEmpty(req.Description), string(rawOr(req.Selector, "{}")),
-		string(rawOr(req.ExplicitMembers, "[]")), string(rawOr(req.ExplicitExcludeMembers, "[]")),
-		string(rawOr(req.IncludeSetIDs, "[]")), string(rawOr(req.ExcludeSetIDs, "[]")), req.MatchDirection); err != nil {
-		fail(c, http.StatusConflict, "conflict", "an address set with this name already exists")
+	var input addressPrefixInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "address_set.create", "address_set", id)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
-}
-
-func (s *Server) getAddressSet(c *gin.Context) {
-	var name, desc, dir string
-	var enabled bool
-	var rv uint64
-	var selector, members, exclude, incl, excl json.RawMessage
-	err := s.db.QueryRowContext(c.Request.Context(), `
-		SELECT name, COALESCE(description,''), selector, explicit_members, explicit_exclude_members,
-		       include_set_ids, exclude_set_ids, match_direction, enabled, row_version
-		FROM address_sets WHERE id = ?`, c.Param("id")).
-		Scan(&name, &desc, &selector, &members, &exclude, &incl, &excl, &dir, &enabled, &rv)
-	if err == sql.ErrNoRows {
-		fail(c, http.StatusNotFound, "not_found", "address set not found")
-		return
-	}
+	updated, err := s.addressStore.UpdateAddressPrefix(c.Request.Context(), applyAddressPrefixInput(prefix, input), expected)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		writeAddressError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "name": name, "description": desc,
-		"selector": rawOr(selector, "{}"), "explicit_members": rawOr(members, "[]"),
-		"explicit_exclude_members": rawOr(exclude, "[]"), "include_set_ids": rawOr(incl, "[]"),
-		"exclude_set_ids": rawOr(excl, "[]"), "match_direction": dir, "enabled": enabled, "row_version": rv})
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "prefix.update", "prefix", updated.ID)
+	c.Header("ETag", etag(updated.RowVersion))
+	c.JSON(http.StatusOK, updated)
 }
 
-func (s *Server) updateAddressSet(c *gin.Context) {
-	var req struct {
-		Name            *string         `json:"name"`
-		Description     *string         `json:"description"`
-		Selector        json.RawMessage `json:"selector"`
-		ExplicitMembers json.RawMessage `json:"explicit_members"`
-		MatchDirection  *string         `json:"match_direction"`
-		Enabled         *bool           `json:"enabled"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+func (s *Server) deleteAddressPrefix(c *gin.Context) {
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
-	if req.Name != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET name=?, row_version=row_version+1 WHERE id=?`, *req.Name, id)
+	if err := s.addressStore.DeleteAddressPrefixVersion(c.Request.Context(), c.Param("id"), expected); err != nil {
+		writeAddressError(c, err)
+		return
 	}
-	if req.Description != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET description=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.Description), id)
-	}
-	if len(req.Selector) > 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET selector=?, row_version=row_version+1 WHERE id=?`, string(req.Selector), id)
-	}
-	if len(req.ExplicitMembers) > 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET explicit_members=?, row_version=row_version+1 WHERE id=?`, string(req.ExplicitMembers), id)
-	}
-	if req.MatchDirection != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET match_direction=?, row_version=row_version+1 WHERE id=?`, *req.MatchDirection, id)
-	}
-	if req.Enabled != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE address_sets SET enabled=?, row_version=row_version+1 WHERE id=?`, *req.Enabled, id)
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "address_set.update", "address_set", id)
-	s.getAddressSet(c)
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "prefix.delete", "prefix", c.Param("id"))
+	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) deleteAddressSet(c *gin.Context) { s.deleteByID(c, "address_sets", "address_set") }
-
-// -------------------- geo_lines (线路) --------------------
-
-func (s *Server) listGeoLines(c *gin.Context) {
-	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, COALESCE(parent_id,''), code, name, COALESCE(description,''), geo_selector,
-		       COALESCE(operator_id,''), COALESCE(address_set_id,''), sort_order, enabled, row_version
-		FROM geo_lines ORDER BY sort_order, code`)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	defer rows.Close()
-	items := []gin.H{}
-	for rows.Next() {
-		var id, parent, code, name, desc, op, set string
-		var sortOrder int
-		var enabled bool
-		var rv uint64
-		var sel json.RawMessage
-		if err := rows.Scan(&id, &parent, &code, &name, &desc, &sel, &op, &set, &sortOrder, &enabled, &rv); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-		items = append(items, gin.H{"id": id, "parent_id": parent, "code": code, "name": name,
-			"description": desc, "geo_selector": rawOr(sel, "{}"), "operator_id": op, "address_set_id": set,
-			"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+type addressPrefixMergeInput struct {
+	CIDR       string            `json:"cidr"`
+	GeoLeafID  string            `json:"geo_leaf_id"`
+	OperatorID string            `json:"operator_id"`
+	ASN        *uint32           `json:"asn"`
+	Labels     map[string]string `json:"labels"`
+	Source     string            `json:"source"`
 }
 
-func (s *Server) createGeoLine(c *gin.Context) {
-	var req struct {
-		Code, Name, Description, ParentID, OperatorID, AddressSetID string
-		GeoSelector                                                 json.RawMessage `json:"geo_selector"`
-		SortOrder                                                   int             `json:"sort_order"`
-		Enabled                                                     *bool
+func (s *Server) mergePreviewAddressPrefixes(c *gin.Context) {
+	var request struct {
+		Prefixes []addressPrefixMergeInput `json:"prefixes"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" || req.Name == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "code and name are required")
+	if !addressDecodeStrict(c, &request, 8<<20) {
 		return
 	}
-	id := newID()
-	if _, err := s.db.ExecContext(c.Request.Context(), `
-		INSERT INTO geo_lines (id, parent_id, code, name, description, geo_selector, operator_id, address_set_id, sort_order, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, nullIfEmpty(req.ParentID), req.Code, req.Name, nullIfEmpty(req.Description), string(rawOr(req.GeoSelector, "{}")),
-		nullIfEmpty(req.OperatorID), nullIfEmpty(req.AddressSetID), req.SortOrder, boolOrTrue(req.Enabled)); err != nil {
-		fail(c, http.StatusConflict, "conflict", "a line with this code already exists (or references an unknown operator/set)")
+	if len(request.Prefixes) < 2 {
+		fail(c, http.StatusBadRequest, "invalid_request", "at least two prefixes are required to merge")
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geo_line.create", "geo_line", id)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
-}
-
-func (s *Server) getGeoLine(c *gin.Context) {
-	var parent, code, name, desc, op, set string
-	var sortOrder int
-	var enabled bool
-	var rv uint64
-	var sel json.RawMessage
-	err := s.db.QueryRowContext(c.Request.Context(), `
-		SELECT COALESCE(parent_id,''), code, name, COALESCE(description,''), geo_selector,
-		       COALESCE(operator_id,''), COALESCE(address_set_id,''), sort_order, enabled, row_version
-		FROM geo_lines WHERE id = ?`, c.Param("id")).
-		Scan(&parent, &code, &name, &desc, &sel, &op, &set, &sortOrder, &enabled, &rv)
-	if err == sql.ErrNoRows {
-		fail(c, http.StatusNotFound, "not_found", "line not found")
+	if len(request.Prefixes) > address.MaxAddressOperationInputs {
+		fail(c, http.StatusBadRequest, "invalid_request", "too many prefixes to merge")
 		return
 	}
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
+	prefixes := make([]address.AddressPrefix, 0, len(request.Prefixes))
+	for _, input := range request.Prefixes {
+		prefixes = append(prefixes, address.AddressPrefix{
+			CIDR: input.CIDR, GeoLeafID: input.GeoLeafID, OperatorID: input.OperatorID,
+			ASN: input.ASN, Labels: input.Labels, Source: input.Source,
+		})
 	}
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "parent_id": parent, "code": code, "name": name,
-		"description": desc, "geo_selector": rawOr(sel, "{}"), "operator_id": op, "address_set_id": set,
-		"sort_order": sortOrder, "enabled": enabled, "row_version": rv})
-}
-
-func (s *Server) updateGeoLine(c *gin.Context) {
-	var req struct {
-		Name, Description *string
-		GeoSelector       json.RawMessage `json:"geo_selector"`
-		OperatorID        *string         `json:"operator_id"`
-		AddressSetID      *string         `json:"address_set_id"`
-		SortOrder         *int            `json:"sort_order"`
-		Enabled           *bool
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
-	if req.Name != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET name=?, row_version=row_version+1 WHERE id=?`, *req.Name, id)
-	}
-	if req.Description != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET description=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.Description), id)
-	}
-	if len(req.GeoSelector) > 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET geo_selector=?, row_version=row_version+1 WHERE id=?`, string(req.GeoSelector), id)
-	}
-	if req.OperatorID != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET operator_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.OperatorID), id)
-	}
-	if req.AddressSetID != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET address_set_id=?, row_version=row_version+1 WHERE id=?`, nullIfEmpty(*req.AddressSetID), id)
-	}
-	if req.SortOrder != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET sort_order=?, row_version=row_version+1 WHERE id=?`, *req.SortOrder, id)
-	}
-	if req.Enabled != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE geo_lines SET enabled=?, row_version=row_version+1 WHERE id=?`, *req.Enabled, id)
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "geo_line.update", "geo_line", id)
-	s.getGeoLine(c)
-}
-
-func (s *Server) deleteGeoLine(c *gin.Context) { s.deleteByID(c, "geo_lines", "geo_line") }
-
-// previewAddressSetOperation computes union/intersection/difference/complement/
-// cover/normalize over CIDR lists, reusing the exact address_math engine (no DB).
-func (s *Server) previewAddressSetOperation(c *gin.Context) {
-	var req AddressSetOperationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	preview, err := PreviewAddressSetOperation(req)
+	preview, err := address.PreviewAddressPrefixMerge(prefixes)
 	if err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -664,17 +338,543 @@ func (s *Server) previewAddressSetOperation(c *gin.Context) {
 	c.JSON(http.StatusOK, preview)
 }
 
-func boolOrTrue(b *bool) bool {
-	if b == nil {
-		return true
+// -------------------- address_sets --------------------
+
+func (s *Server) listAddressSets(c *gin.Context) {
+	if _, ok := addressListParam(c, "q", "match_direction", "enabled", "sort", "order", "limit", "offset", "cursor"); !ok {
+		return
 	}
-	return *b
+	limit, offset, tableMode, cursor, ok := addressListPageParams(c)
+	if !ok {
+		return
+	}
+	filter := address.AddressSetListFilter{
+		Search: strings.TrimSpace(c.Query("q")), MatchDirection: strings.ToLower(strings.TrimSpace(c.Query("match_direction"))),
+		Cursor: cursor, Sort: strings.TrimSpace(c.Query("sort")), Desc: sortDirection(c) == "DESC" && c.Query("order") != "",
+		Limit: limit, Offset: offset, TableMode: tableMode,
+	}
+	if filter.MatchDirection != "" && filter.MatchDirection != "in" && filter.MatchDirection != "out" && filter.MatchDirection != "both" {
+		fail(c, http.StatusBadRequest, "invalid_request", "match_direction must be in, out, or both")
+		return
+	}
+	if raw := strings.TrimSpace(c.Query("enabled")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", "enabled must be true or false")
+			return
+		}
+		filter.Enabled = &enabled
+	}
+	items, next, total, err := s.addressStore.ListAddressSetsPage(c.Request.Context(), filter)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	addressListResponse(c, items, next, total, tableMode, limit, offset)
 }
 
-// nullIfEmpty maps an empty string to SQL NULL so nullable FK columns stay clean.
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
+type addressSetInput struct {
+	Name                   *string         `json:"name,omitempty"`
+	Description            *string         `json:"description,omitempty"`
+	Selector               *map[string]any `json:"selector,omitempty"`
+	ExplicitMembers        *[]string       `json:"explicit_members,omitempty"`
+	ExplicitExcludeMembers *[]string       `json:"explicit_exclude_members,omitempty"`
+	IncludeSetIDs          *[]string       `json:"include_set_ids,omitempty"`
+	ExcludeSetIDs          *[]string       `json:"exclude_set_ids,omitempty"`
+	MatchDirection         *string         `json:"match_direction,omitempty"`
+	Enabled                *bool           `json:"enabled,omitempty"`
+}
+
+func applyAddressSetInput(set address.AddressSet, input addressSetInput) address.AddressSet {
+	if input.Name != nil {
+		set.Name = *input.Name
 	}
-	return s
+	if input.Description != nil {
+		set.Description = *input.Description
+	}
+	if input.Selector != nil {
+		set.Selector = *input.Selector
+	}
+	if input.ExplicitMembers != nil {
+		set.ExplicitMembers = append([]string(nil), (*input.ExplicitMembers)...)
+	}
+	if input.ExplicitExcludeMembers != nil {
+		set.ExplicitExcludeMembers = append([]string(nil), (*input.ExplicitExcludeMembers)...)
+	}
+	if input.IncludeSetIDs != nil {
+		set.IncludeSetIDs = append([]string(nil), (*input.IncludeSetIDs)...)
+	}
+	if input.ExcludeSetIDs != nil {
+		set.ExcludeSetIDs = append([]string(nil), (*input.ExcludeSetIDs)...)
+	}
+	if input.MatchDirection != nil {
+		set.MatchDirection = *input.MatchDirection
+	}
+	if input.Enabled != nil {
+		set.Enabled = *input.Enabled
+	}
+	return set
+}
+
+func (s *Server) createAddressSet(c *gin.Context) {
+	var input addressSetInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	if input.Name == nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "name is required")
+		return
+	}
+	set := applyAddressSetInput(address.AddressSet{ID: address.NewSetID(), Selector: map[string]any{}, MatchDirection: "both", Enabled: true}, input)
+	saved, err := s.addressStore.UpsertAddressSet(c.Request.Context(), set)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "address_set.create", "address_set", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusCreated, saved)
+}
+
+func (s *Server) getAddressSet(c *gin.Context) {
+	set, err := s.addressStore.GetAddressSet(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	c.Header("ETag", etag(set.RowVersion))
+	c.JSON(http.StatusOK, set)
+}
+
+func (s *Server) updateAddressSet(c *gin.Context) {
+	set, err := s.addressStore.GetAddressSet(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	var input addressSetInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	saved, err := s.addressStore.UpdateAddressSet(c.Request.Context(), applyAddressSetInput(set, input), expected)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "address_set.update", "address_set", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusOK, saved)
+}
+
+func (s *Server) deleteAddressSet(c *gin.Context) {
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	if err := s.addressStore.DeleteAddressSetVersion(c.Request.Context(), c.Param("id"), expected); err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "address_set.delete", "address_set", c.Param("id"))
+	c.Status(http.StatusNoContent)
+}
+
+// previewAddressSetOperation computes union/intersection/difference/cover/normalize
+// over CIDR lists, reusing the internal/address set-math engine (no DB).
+func (s *Server) previewAddressSetOperation(c *gin.Context) {
+	var req address.AddressSetOperationRequest
+	if !addressDecodeStrict(c, &req, 4<<20) {
+		return
+	}
+	preview, err := address.PreviewAddressSetOperation(req)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
+
+// -------------------- geo_dict (geographies) --------------------
+
+func (s *Server) parseTaxonomyFilter(c *gin.Context, allowed ...string) (address.AddressTaxonomyListFilter, bool) {
+	base := append([]string{"q", "enabled", "sort", "order", "limit", "offset", "cursor"}, allowed...)
+	if _, ok := addressListParam(c, base...); !ok {
+		return address.AddressTaxonomyListFilter{}, false
+	}
+	limit, offset, tableMode, cursor, ok := addressListPageParams(c)
+	if !ok {
+		return address.AddressTaxonomyListFilter{}, false
+	}
+	filter := address.AddressTaxonomyListFilter{
+		Search: strings.TrimSpace(c.Query("q")), Kind: strings.TrimSpace(c.Query("kind")),
+		ParentID: strings.TrimSpace(c.Query("parent_id")), Cursor: cursor, Sort: strings.TrimSpace(c.Query("sort")),
+		Desc: sortDirection(c) == "DESC" && c.Query("order") != "", Limit: limit, Offset: offset, TableMode: tableMode,
+	}
+	if raw := strings.TrimSpace(c.Query("enabled")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", "enabled must be true or false")
+			return address.AddressTaxonomyListFilter{}, false
+		}
+		filter.Enabled = &enabled
+	}
+	return filter, true
+}
+
+func (s *Server) listGeographies(c *gin.Context) {
+	filter, ok := s.parseTaxonomyFilter(c, "kind", "parent_id")
+	if !ok {
+		return
+	}
+	items, next, total, err := s.addressStore.ListGeoDictionary(c.Request.Context(), filter)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	addressListResponse(c, items, next, total, filter.TableMode, filter.Limit, filter.Offset)
+}
+
+type geoDictionaryInput struct {
+	Kind      *string `json:"kind,omitempty"`
+	Code      *string `json:"code,omitempty"`
+	ParentID  *string `json:"parent_id,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	ShortName *string `json:"short_name,omitempty"`
+	SortOrder *int    `json:"sort_order,omitempty"`
+	Enabled   *bool   `json:"enabled,omitempty"`
+}
+
+func applyGeoDictionaryInput(node address.GeoDictionaryNode, input geoDictionaryInput) address.GeoDictionaryNode {
+	if input.Kind != nil {
+		node.Kind = *input.Kind
+	}
+	if input.Code != nil {
+		node.Code = *input.Code
+	}
+	if input.ParentID != nil {
+		node.ParentID = *input.ParentID
+	}
+	if input.Name != nil {
+		node.Name = *input.Name
+	}
+	if input.ShortName != nil {
+		node.ShortName = *input.ShortName
+	}
+	if input.SortOrder != nil {
+		node.SortOrder = *input.SortOrder
+	}
+	if input.Enabled != nil {
+		node.Enabled = *input.Enabled
+	}
+	return node
+}
+
+func (s *Server) createGeography(c *gin.Context) {
+	var input geoDictionaryInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	if input.Kind == nil || input.Code == nil || input.Name == nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "kind, code and name are required")
+		return
+	}
+	saved, err := s.addressStore.CreateGeoDictionary(c.Request.Context(), applyGeoDictionaryInput(address.GeoDictionaryNode{Enabled: true}, input))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geography.create", "geography", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusCreated, saved)
+}
+
+func (s *Server) getGeography(c *gin.Context) {
+	node, err := s.addressStore.GetGeoDictionary(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	c.Header("ETag", etag(node.RowVersion))
+	c.JSON(http.StatusOK, node)
+}
+
+func (s *Server) updateGeography(c *gin.Context) {
+	node, err := s.addressStore.GetGeoDictionary(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	var input geoDictionaryInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	saved, err := s.addressStore.UpdateGeoDictionary(c.Request.Context(), applyGeoDictionaryInput(node, input), expected)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geography.update", "geography", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusOK, saved)
+}
+
+func (s *Server) deleteGeography(c *gin.Context) {
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	if err := s.addressStore.DeleteGeoDictionary(c.Request.Context(), c.Param("id"), expected); err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geography.delete", "geography", c.Param("id"))
+	c.Status(http.StatusNoContent)
+}
+
+// -------------------- isp_operators (operators) --------------------
+
+func (s *Server) listOperators(c *gin.Context) {
+	filter, ok := s.parseTaxonomyFilter(c)
+	if !ok {
+		return
+	}
+	items, next, total, err := s.addressStore.ListISPOperators(c.Request.Context(), filter)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	addressListResponse(c, items, next, total, filter.TableMode, filter.Limit, filter.Offset)
+}
+
+type ispOperatorInput struct {
+	Code      *string   `json:"code,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+	ShortName *string   `json:"short_name,omitempty"`
+	Category  *string   `json:"category,omitempty"`
+	ASNs      *[]uint32 `json:"asns,omitempty"`
+	SortOrder *int      `json:"sort_order,omitempty"`
+	Enabled   *bool     `json:"enabled,omitempty"`
+}
+
+func applyISPOperatorInput(operator address.ISPOperator, input ispOperatorInput) address.ISPOperator {
+	if input.Code != nil {
+		operator.Code = *input.Code
+	}
+	if input.Name != nil {
+		operator.Name = *input.Name
+	}
+	if input.ShortName != nil {
+		operator.ShortName = *input.ShortName
+	}
+	if input.Category != nil {
+		operator.Category = *input.Category
+	}
+	if input.ASNs != nil {
+		operator.ASNs = append([]uint32(nil), (*input.ASNs)...)
+	}
+	if input.SortOrder != nil {
+		operator.SortOrder = *input.SortOrder
+	}
+	if input.Enabled != nil {
+		operator.Enabled = *input.Enabled
+	}
+	return operator
+}
+
+func (s *Server) createOperator(c *gin.Context) {
+	var input ispOperatorInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	if input.Code == nil || input.Name == nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "code and name are required")
+		return
+	}
+	saved, err := s.addressStore.CreateISPOperator(c.Request.Context(), applyISPOperatorInput(address.ISPOperator{Enabled: true}, input))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "operator.create", "operator", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusCreated, saved)
+}
+
+func (s *Server) getOperator(c *gin.Context) {
+	operator, err := s.addressStore.GetISPOperator(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	c.Header("ETag", etag(operator.RowVersion))
+	c.JSON(http.StatusOK, operator)
+}
+
+func (s *Server) updateOperator(c *gin.Context) {
+	operator, err := s.addressStore.GetISPOperator(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	var input ispOperatorInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	saved, err := s.addressStore.UpdateISPOperator(c.Request.Context(), applyISPOperatorInput(operator, input), expected)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "operator.update", "operator", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusOK, saved)
+}
+
+func (s *Server) deleteOperator(c *gin.Context) {
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	if err := s.addressStore.DeleteISPOperator(c.Request.Context(), c.Param("id"), expected); err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "operator.delete", "operator", c.Param("id"))
+	c.Status(http.StatusNoContent)
+}
+
+// -------------------- geo_lines (线路) --------------------
+
+func (s *Server) listGeoLines(c *gin.Context) {
+	filter, ok := s.parseTaxonomyFilter(c, "parent_id")
+	if !ok {
+		return
+	}
+	items, next, total, err := s.addressStore.ListGeoLines(c.Request.Context(), filter)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	addressListResponse(c, items, next, total, filter.TableMode, filter.Limit, filter.Offset)
+}
+
+type geoLineInput struct {
+	ParentID     *string                  `json:"parent_id,omitempty"`
+	Code         *string                  `json:"code,omitempty"`
+	Name         *string                  `json:"name,omitempty"`
+	Description  *string                  `json:"description,omitempty"`
+	GeoSelector  *address.GeoLineSelector `json:"geo_selector,omitempty"`
+	OperatorID   *string                  `json:"operator_id,omitempty"`
+	AddressSetID *string                  `json:"address_set_id,omitempty"`
+	SortOrder    *int                     `json:"sort_order,omitempty"`
+	Enabled      *bool                    `json:"enabled,omitempty"`
+}
+
+func applyGeoLineInput(line address.GeoLine, input geoLineInput) address.GeoLine {
+	if input.ParentID != nil {
+		line.ParentID = *input.ParentID
+	}
+	if input.Code != nil {
+		line.Code = *input.Code
+	}
+	if input.Name != nil {
+		line.Name = *input.Name
+	}
+	if input.Description != nil {
+		line.Description = *input.Description
+	}
+	if input.GeoSelector != nil {
+		line.GeoSelector = *input.GeoSelector
+	}
+	if input.OperatorID != nil {
+		line.OperatorID = *input.OperatorID
+	}
+	if input.AddressSetID != nil {
+		line.AddressSetID = *input.AddressSetID
+	}
+	if input.SortOrder != nil {
+		line.SortOrder = *input.SortOrder
+	}
+	if input.Enabled != nil {
+		line.Enabled = *input.Enabled
+	}
+	return line
+}
+
+func (s *Server) createGeoLine(c *gin.Context) {
+	var input geoLineInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	if input.Code == nil || input.Name == nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "code and name are required")
+		return
+	}
+	saved, err := s.addressStore.CreateGeoLine(c.Request.Context(), applyGeoLineInput(address.GeoLine{Enabled: true}, input))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geo_line.create", "geo_line", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusCreated, saved)
+}
+
+func (s *Server) getGeoLine(c *gin.Context) {
+	line, err := s.addressStore.GetGeoLine(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	c.Header("ETag", etag(line.RowVersion))
+	c.JSON(http.StatusOK, line)
+}
+
+func (s *Server) updateGeoLine(c *gin.Context) {
+	line, err := s.addressStore.GetGeoLine(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	var input geoLineInput
+	if !addressDecodeStrict(c, &input, 1<<20) {
+		return
+	}
+	saved, err := s.addressStore.UpdateGeoLine(c.Request.Context(), applyGeoLineInput(line, input), expected)
+	if err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geo_line.update", "geo_line", saved.ID)
+	c.Header("ETag", etag(saved.RowVersion))
+	c.JSON(http.StatusOK, saved)
+}
+
+func (s *Server) deleteGeoLine(c *gin.Context) {
+	expected, ok := requireAddressIfMatch(c)
+	if !ok {
+		return
+	}
+	if err := s.addressStore.DeleteGeoLine(c.Request.Context(), c.Param("id"), expected); err != nil {
+		writeAddressError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "geo_line.delete", "geo_line", c.Param("id"))
+	c.Status(http.StatusNoContent)
 }
