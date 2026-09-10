@@ -9,6 +9,7 @@ import {
 	FingerprintIcon,
 	HardDriveIcon,
 	LogsIcon,
+	MailIcon,
 	Server,
 	ServerIcon,
 	SettingsIcon,
