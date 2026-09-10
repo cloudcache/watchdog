@@ -112,6 +112,9 @@ func (s *Server) newRouter() *gin.Engine {
 	metrics.GET("/realtime", s.requirePermission("device.view"), s.queryMetrics)
 	metrics.GET("/aggregate", s.requirePermission("device.view"), s.aggregateMetrics)
 	metrics.POST("/exports", s.requirePermission("device.view"), s.createSNMPExport)
+	graphs := auth.Group("/graph")
+	graphs.GET("/devices/:id/overview", s.requirePermission("device.view"), s.deviceGraphOverview)
+	graphs.GET("/ports/:port_id/overview", s.requirePermission("port.view"), s.portGraphOverview)
 	dev.GET("/events", s.todo)
 	ports := auth.Group("/ports")
 	ports.GET("/:port_id", s.requirePermission("port.view"), s.getPort)
@@ -121,6 +124,19 @@ func (s *Server) newRouter() *gin.Engine {
 	bgp := auth.Group("/bgp")
 	bgp.GET("", s.requirePermission("device.view"), s.listAllBGP)
 	bgp.GET("/:session_id", s.requirePermission("device.view"), s.getBGP)
+	aggregateGraphs := auth.Group("/aggregate-graphs")
+	aggregateGraphs.GET("", s.requirePermission("device.view"), s.listAggregateGraphs)
+	aggregateGraphs.POST("", s.requirePermission("device.update"), s.createAggregateGraph)
+	aggregateGraphs.GET("/:id", s.requirePermission("device.view"), s.getAggregateGraph)
+	aggregateGraphs.PATCH("/:id", s.requirePermission("device.update"), s.updateAggregateGraph)
+	aggregateGraphs.DELETE("/:id", s.requirePermission("device.update"), s.deleteAggregateGraph)
+	aggregateGraphs.GET("/:id/items", s.requirePermission("device.view"), s.listAggregateGraphItems)
+	aggregateGraphs.PUT("/:id/items", s.requirePermission("device.update"), s.replaceAggregateGraphItems)
+	aggregateGraphs.GET("/:id/ports", s.requirePermission("device.view"), s.listAggregateGraphPorts)
+	aggregateGraphs.PUT("/:id/ports", s.requirePermission("device.update"), s.replaceAggregateGraphPorts)
+	aggregateGraphs.GET("/:id/series", s.requirePermission("device.view"), s.aggregateGraphSeries)
+	aggregateGraphs.GET("/:id/data", s.requirePermission("device.view"), s.aggregateGraphData)
+	aggregateGraphs.GET("/:id/summary", s.requirePermission("device.view"), s.aggregateGraphSummary)
 	s.registerBillingRoutes(auth)
 
 	// Agent registration and heartbeats use agent credentials, not a user
@@ -149,8 +165,8 @@ func (s *Server) newRouter() *gin.Engine {
 	agents.POST("/:id/credentials/rotate", s.requirePermission("agent.manage"), s.rotateAgentCredential)
 	agents.POST("/:id/revoke", s.requirePermission("agent.manage"), s.revokeAgent)
 
-	// Temporary URL/DTO aliases for the existing UI. They call the canonical
-	// repositories above and never touch the removed targets/target_agents tables.
+	// Historical public API contract used by the existing UI. The Gin migration
+	// preserves these URLs and DTOs while replacing only the PB/tenant storage.
 	legacyNetwork := auth.Group("/network/devices")
 	legacyNetwork.GET("", s.requirePermission("device.view"), s.listNetworkDevices)
 	legacyNetwork.POST("", s.requirePermission("device.create"), s.createDevice)

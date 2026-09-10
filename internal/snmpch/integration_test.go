@@ -39,7 +39,17 @@ func TestRealClickHouseSNMPWriteRateAndClosedBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range migrations[len(migrations)-1].Statements {
+	var snmpMigration *flowch.Migration
+	for index := range migrations {
+		if migrations[index].Name == "012_snmp_telemetry.sql" {
+			snmpMigration = &migrations[index]
+			break
+		}
+	}
+	if snmpMigration == nil {
+		t.Fatal("012_snmp_telemetry.sql migration is missing")
+	}
+	for _, statement := range snmpMigration.Statements {
 		if err := admin.Do(ctx, ch.Query{Body: strings.ReplaceAll(statement, "watchdog_flow", database)}); err != nil {
 			t.Fatal(err)
 		}

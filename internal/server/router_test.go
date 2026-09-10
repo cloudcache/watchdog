@@ -9,6 +9,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestSNMPGinMigrationRoutesAreRegistered(t *testing.T) {
+	router := (&Server{}).newRouter()
+	registered := map[string]bool{}
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"GET /api/v1/network/devices",
+		"GET /api/v1/network/devices/summary",
+		"PATCH /api/v1/network/devices/:id/snmp",
+		"GET /api/v1/network/devices/:id/ports",
+		"GET /api/v1/network/ports/:port_id",
+		"GET /api/v1/network/bgp",
+		"GET /api/v1/snmp/profiles",
+		"GET /api/v1/metrics/aggregate",
+		"GET /api/v1/graph/devices/:id/overview",
+		"GET /api/v1/graph/ports/:port_id/overview",
+		"GET /api/v1/aggregate-graphs",
+		"POST /api/v1/aggregate-graphs",
+		"GET /api/v1/aggregate-graphs/:id",
+		"PATCH /api/v1/aggregate-graphs/:id",
+		"DELETE /api/v1/aggregate-graphs/:id",
+		"GET /api/v1/aggregate-graphs/:id/items",
+		"PUT /api/v1/aggregate-graphs/:id/items",
+		"GET /api/v1/aggregate-graphs/:id/ports",
+		"PUT /api/v1/aggregate-graphs/:id/ports",
+		"GET /api/v1/aggregate-graphs/:id/series",
+		"GET /api/v1/aggregate-graphs/:id/data",
+		"GET /api/v1/aggregate-graphs/:id/summary",
+	} {
+		if !registered[route] {
+			t.Fatalf("migrated SNMP route is not registered: %s", route)
+		}
+	}
+}
+
 func TestRequestBodyLimitRejectsBeforeHandler(t *testing.T) {
 	s := &Server{}
 	s.engine = s.newRouter()

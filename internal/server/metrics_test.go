@@ -93,3 +93,16 @@ func TestQueryMetricsRejectsUnknownParameterBeforeClickHouse(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestMetricWindowDurationSupportsSNMPPagePresets(t *testing.T) {
+	for input, expected := range map[string]time.Duration{
+		"5m": 5 * time.Minute, "30m": 30 * time.Minute, "1h": time.Hour,
+		"6h": 6 * time.Hour, "12h": 12 * time.Hour, "24h": 24 * time.Hour,
+		"7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour,
+	} {
+		actual, ok := metricWindowDuration(input)
+		if !ok || actual != expected {
+			t.Fatalf("metricWindowDuration(%q) = %s, %v; want %s, true", input, actual, ok, expected)
+		}
+	}
+}

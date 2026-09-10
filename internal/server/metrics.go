@@ -213,6 +213,10 @@ func metricWindowDuration(raw string) (time.Duration, bool) {
 		return 15 * time.Minute, true
 	case "30m":
 		return 30 * time.Minute, true
+	case "6h":
+		return 6 * time.Hour, true
+	case "12h":
+		return 12 * time.Hour, true
 	case "24h":
 		return 24 * time.Hour, true
 	case "7d":
