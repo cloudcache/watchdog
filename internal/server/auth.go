@@ -2,11 +2,8 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -110,53 +107,6 @@ func clientDigest(c *gin.Context) string {
 		d = d[:250]
 	}
 	return d
-}
-
-// EnsureFirstAdmin creates the single bootstrap administrator on an empty install.
-func (s *Server) EnsureFirstAdmin(ctx context.Context) error {
-	var bootstrapped bool
-	err := s.db.QueryRowContext(ctx, `SELECT admin_bootstrapped FROM watchdog_installation WHERE id = 1`).Scan(&bootstrapped)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if bootstrapped {
-		return nil
-	}
-	username := strings.TrimSpace(s.cfg.Admin.Username)
-	if username == "" {
-		username = "admin"
-	}
-	password := s.cfg.Admin.Password
-	generated := false
-	if password == "" {
-		password = randomToken()[:16]
-		generated = true
-	}
-	hash, err := hashPassword(password)
-	if err != nil {
-		return err
-	}
-	userID := newID()
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, email, display_name, password_hash, status)
-		VALUES (?, ?, '', 'Administrator', ?, 'active')`, userID, username, hash); err != nil {
-		return err
-	}
-	var roleID string
-	if err := s.db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, roleAdministrator).Scan(&roleID); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`, userID, roleID); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE watchdog_installation SET admin_bootstrapped = 1 WHERE id = 1`); err != nil {
-		return err
-	}
-	if generated {
-		log.Printf("watchdog-server: bootstrapped administrator %q with generated password: %s", username, password)
-		log.Printf("watchdog-server: set WATCHDOG_ADMIN_PASSWORD to control it, and change it after first login")
-	}
-	return nil
 }
 
 func (s *Server) createResetToken(ctx context.Context, userID string) (string, error) {

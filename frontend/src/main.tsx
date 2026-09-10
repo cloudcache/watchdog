@@ -5,14 +5,14 @@ import { Trans } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { DirectionProvider } from "@radix-ui/react-direction"
 // import { Suspense, lazy, useEffect, StrictMode } from "react"
-import { lazy, memo, Suspense, useEffect } from "react"
+import { lazy, memo, Suspense, useCallback, useEffect, useState } from "react"
 import ReactDOM from "react-dom/client"
 import Navbar from "@/components/navbar.tsx"
-import { $router } from "@/components/router.tsx"
+import { $router, navigate, prependBasePath } from "@/components/router.tsx"
 import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
-import { canManageAddressLibrary, restoreSession } from "@/lib/api.ts"
+import { canManageAddressLibrary, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
@@ -25,6 +25,7 @@ import {
 } from "@/lib/stores.ts"
 
 const LoginPage = lazy(() => import("@/components/login/login.tsx"))
+const InstallPage = lazy(() => import("@/components/install/install.tsx"))
 const AggregateCharts = lazy(() => import("@/components/routes/aggregate-charts.tsx"))
 const AggregateGraphs = lazy(() => import("@/components/routes/aggregate-graphs.tsx"))
 const AggregateGraphForm = lazy(() => import("@/components/routes/aggregate-graph-form.tsx"))
@@ -267,13 +268,28 @@ const Layout = () => {
 	const copyContent = useStore($copyContent)
 	const direction = useStore($direction)
 	const { layoutWidth } = useStore($userSettings, { keys: ["layoutWidth"] })
+	const [installStatus, setInstallStatus] = useState<InstallStatus>()
+	const [installError, setInstallError] = useState("")
+
+	const checkInstallation = useCallback(async () => {
+		setInstallError("")
+		try {
+			setInstallStatus(await fetchInstallStatus())
+		} catch (cause) {
+			setInstallError((cause as Error).message)
+		}
+	}, [])
+
+	useEffect(() => {
+		checkInstallation()
+	}, [checkInstallation])
 
 	useEffect(() => {
 		document.documentElement.dir = direction
 	}, [direction])
 
 	useEffect(() => {
-		if (watchdogDevAuth || authChecked) return
+		if (!installStatus?.installed || watchdogDevAuth || authChecked) return
 		// Login/reset pages are passive: rendering them must not make an auth
 		// request. Every other route is controlled and may restore its session.
 		if (page?.route === "forgot_password") {
@@ -281,7 +297,50 @@ const Layout = () => {
 			return
 		}
 		restoreSession().catch(() => $authChecked.set(true))
-	}, [authChecked, page?.route])
+	}, [authChecked, installStatus?.installed, page?.route])
+
+	useEffect(() => {
+		if (installStatus?.requires_install && page?.route !== "install") {
+			navigate(prependBasePath("/install"))
+		} else if (installStatus?.installed && page?.route === "install") {
+			navigate(prependBasePath("/"))
+		}
+	}, [installStatus?.installed, installStatus?.requires_install, page?.route])
+
+	if (installError) {
+		return (
+			<div className="min-h-svh grid place-content-center gap-4 px-4 text-center">
+				<p role="alert" className="text-sm text-destructive">
+					{installError}
+				</p>
+				<button type="button" className="text-sm underline" onClick={checkInstallation}>
+					<Trans>Retry</Trans>
+				</button>
+			</div>
+		)
+	}
+
+	if (!installStatus) {
+		return null
+	}
+
+	if (installStatus.requires_install) {
+		return (
+			<DirectionProvider dir={direction}>
+				<Suspense>
+					<InstallPage
+						onInstalled={(status) => {
+							setInstallStatus(status)
+							$platformIdentity.set({ ready: true, tenants: [] })
+							$authenticated.set(false)
+							$authChecked.set(true)
+							navigate(prependBasePath("/"))
+						}}
+					/>
+				</Suspense>
+			</DirectionProvider>
+		)
+	}
 
 	if (!authChecked) {
 		return null

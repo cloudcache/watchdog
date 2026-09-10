@@ -21,6 +21,9 @@ const bootstrapSchemaMigrations = `CREATE TABLE IF NOT EXISTS schema_migrations 
 
 // InstallStatus is the traceable install state surfaced by the API.
 type InstallStatus struct {
+	Installed         bool   `json:"installed"`
+	RequiresInstall   bool   `json:"requires_install"`
+	RuntimeReady      bool   `json:"runtime_ready"`
 	SchemaVersion     string `json:"schema_version"`
 	ProductVersion    string `json:"product_version"`
 	AdminBootstrapped bool   `json:"admin_bootstrapped"`
@@ -102,13 +105,24 @@ func ApplyMySQLSchema(ctx context.Context, db *sql.DB, files fs.FS) error {
 // GetInstallStatus reads the singleton install state.
 func GetInstallStatus(ctx context.Context, db *sql.DB) (InstallStatus, error) {
 	var s InstallStatus
+	var tableCount uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = DATABASE() AND table_name = 'watchdog_installation'`).Scan(&tableCount); err != nil {
+		return InstallStatus{}, err
+	}
+	if tableCount == 0 {
+		s.RequiresInstall = true
+		return s, nil
+	}
 	var installedAt sql.NullTime
 	err := db.QueryRowContext(ctx, `
 		SELECT schema_version, product_version, admin_bootstrapped, installed_at
 		FROM watchdog_installation WHERE id = 1`).
 		Scan(&s.SchemaVersion, &s.ProductVersion, &s.AdminBootstrapped, &installedAt)
 	if err == sql.ErrNoRows {
-		return InstallStatus{}, nil
+		s.RequiresInstall = true
+		return s, nil
 	}
 	if err != nil {
 		return InstallStatus{}, err
@@ -116,6 +130,8 @@ func GetInstallStatus(ctx context.Context, db *sql.DB) (InstallStatus, error) {
 	if installedAt.Valid {
 		s.InstalledAt = installedAt.Time.UTC().Format("2006-01-02T15:04:05Z")
 	}
+	s.Installed = s.AdminBootstrapped
+	s.RequiresInstall = !s.Installed
 	return s, nil
 }
 

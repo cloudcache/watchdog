@@ -106,7 +106,7 @@ type BillingConfig struct {
 // AdminConfig is used only to bootstrap the first administrator on an empty install.
 type AdminConfig struct {
 	Username string `yaml:"username"`
-	Password string `yaml:"password"` // empty -> a random password is generated and logged once
+	Password string `yaml:"password"` // optional explicit password for unattended installation
 }
 
 // DefaultConfigPath is used when neither --config nor WATCHDOG_CONFIG is set.
@@ -157,6 +157,9 @@ func LoadConfig(path string) (Config, error) {
 func applySecretEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("WATCHDOG_MYSQL_DSN")); v != "" {
 		cfg.MySQL.DSN = v
+	}
+	if v := strings.TrimSpace(os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")); v != "" {
+		cfg.ClickHouse.PasswordFile = v
 	}
 	if v := os.Getenv("WATCHDOG_ADMIN_PASSWORD"); v != "" {
 		cfg.Admin.Password = v

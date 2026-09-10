@@ -1,7 +1,7 @@
 // Package server is the KISS watchdog-server: a pure Go (Gin) HTTP service backed by
 // MySQL (management authority) and ClickHouse (time-series + log/alert). It replaces the
-// removed legacy hub. On startup it applies the embedded v2 MySQL baseline and records
-// a traceable install status, then serves the domain API (docs/watchdog-kiss-architecture.md).
+// removed legacy hub. A fresh instance serves the installer without mutating an empty
+// schema; an explicit install initializes MySQL, ClickHouse, and the first administrator.
 package server
 
 import (
@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
@@ -30,6 +32,9 @@ type Server struct {
 	db            *sql.DB
 	engine        *gin.Engine
 	snmpDiscovery snmpDiscoveryRunner
+	installMu     sync.Mutex
+	installed     atomic.Bool
+	runtimeReady  atomic.Bool
 
 	addressStore     *address.Store
 	addressPublisher *address.Publisher
@@ -50,7 +55,9 @@ type Server struct {
 	agentPlanCancel context.CancelFunc
 }
 
-// New opens MySQL, applies the v2 baseline, and builds the router.
+// New opens the configured MySQL database and builds the router. A fresh
+// database remains uninitialized unless an explicit unattended password was
+// configured; this lets the frontend redirect to the one-time installer.
 func New(cfg Config) (*Server, error) {
 	if err := ensureDatabase(cfg.MySQL.DSN); err != nil {
 		return nil, fmt.Errorf("ensure database: %w", err)
@@ -63,7 +70,7 @@ func New(cfg Config) (*Server, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(time.Hour)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -75,40 +82,56 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("configure snmp discovery: %w", err)
 	}
 	s := &Server{cfg: cfg, db: db, snmpDiscovery: discovery}
-	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+	status, err := GetInstallStatus(ctx, db)
+	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("read install status: %w", err)
 	}
-	if err := EnsureRBACSeed(ctx, db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("seed rbac: %w", err)
-	}
-	if err := s.EnsureFirstAdmin(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("bootstrap admin: %w", err)
-	}
-	if err := s.startClickHouse(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("start ClickHouse: %w", err)
-	}
-	if err := s.startAgentPlans(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("start agent plans: %w", err)
-	}
-	if err := s.startAddressLibrary(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("start address library: %w", err)
-	}
-	if err := s.startSNMPExports(); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("start SNMP exports: %w", err)
-	}
-	if err := s.startBilling(); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("start billing: %w", err)
+	s.installed.Store(status.Installed)
+	if !status.Installed && strings.TrimSpace(cfg.Admin.Password) != "" {
+		request := installRequest{Username: cfg.Admin.Username, Password: cfg.Admin.Password}
+		if err := s.completeFreshInstall(ctx, request); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("unattended install: %w", err)
+		}
+	} else if status.Installed {
+		if err := s.prepareRuntime(ctx); err != nil {
+			s.stopRuntime()
+			_ = db.Close()
+			return nil, err
+		}
+		s.runtimeReady.Store(true)
 	}
 	s.engine = s.newRouter()
 	return s, nil
+}
+
+func (s *Server) prepareRuntime(ctx context.Context) error {
+	if err := ApplyMySQLSchema(ctx, s.db, schema.MySQL); err != nil {
+		return fmt.Errorf("apply MySQL schema: %w", err)
+	}
+	if err := EnsureRBACSeed(ctx, s.db); err != nil {
+		return fmt.Errorf("seed RBAC: %w", err)
+	}
+	if err := s.applyClickHouseSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.startClickHouse(ctx); err != nil {
+		return fmt.Errorf("start ClickHouse: %w", err)
+	}
+	if err := s.startAgentPlans(); err != nil {
+		return fmt.Errorf("start agent plans: %w", err)
+	}
+	if err := s.startAddressLibrary(); err != nil {
+		return fmt.Errorf("start address library: %w", err)
+	}
+	if err := s.startSNMPExports(); err != nil {
+		return fmt.Errorf("start SNMP exports: %w", err)
+	}
+	if err := s.startBilling(); err != nil {
+		return fmt.Errorf("start billing: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) startBilling() error {
@@ -173,22 +196,33 @@ func (s *Server) DB() *sql.DB { return s.db }
 
 // Close stops background workers and releases the database pool.
 func (s *Server) Close() error {
+	s.stopRuntime()
+	return s.db.Close()
+}
+
+func (s *Server) stopRuntime() {
 	if s.agentPlanCancel != nil {
 		s.agentPlanCancel()
+		s.agentPlanCancel = nil
 	}
 	if s.workerCancel != nil {
 		s.workerCancel()
+		s.workerCancel = nil
 	}
 	if s.snmpExportCancel != nil {
 		s.snmpExportCancel()
+		s.snmpExportCancel = nil
 	}
 	if s.billingCancel != nil {
 		s.billingCancel()
+		s.billingCancel = nil
 	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()
+		s.clickHouse = nil
 	}
-	return s.db.Close()
+	s.snmpMetrics = nil
+	s.runtimeReady.Store(false)
 }
 
 func (s *Server) startClickHouse(ctx context.Context) error {

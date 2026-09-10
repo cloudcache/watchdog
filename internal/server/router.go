@@ -25,12 +25,15 @@ func (s *Server) newRouter() *gin.Engine {
 	// --- public ---
 	api.GET("/health", s.health)
 	api.GET("/install-status", s.installStatus)
-	api.POST("/session/login", s.login)
-	api.POST("/session/forgot", s.forgotPassword)
-	api.POST("/session/reset", s.resetPassword)
+	api.POST("/install", s.installWatchdog)
+	installedAPI := api.Group("")
+	installedAPI.Use(s.requireInstalled)
+	installedAPI.POST("/session/login", s.login)
+	installedAPI.POST("/session/forgot", s.forgotPassword)
+	installedAPI.POST("/session/reset", s.resetPassword)
 
 	// --- authenticated (session cookie + CSRF on mutations) ---
-	auth := api.Group("")
+	auth := installedAPI.Group("")
 	auth.Use(s.requireAuth, s.requireCSRF)
 
 	auth.POST("/session/logout", s.logout)
@@ -122,12 +125,12 @@ func (s *Server) newRouter() *gin.Engine {
 
 	// Agent registration and heartbeats use agent credentials, not a user
 	// session. Administrative registry operations remain RBAC protected.
-	api.POST("/agents/register", s.enrollAgent)
-	api.POST("/agents/:id/heartbeat", s.agentHeartbeat)
-	api.POST("/agents/:id/status", s.recordAgentStatus)
-	api.POST("/agents/:id/errors", s.recordAgentStatus)
-	api.GET("/agents/:id/plan", s.fetchAgentPlan)
-	api.POST("/agents/:id/plan-acks", s.acknowledgeAgentPlan)
+	installedAPI.POST("/agents/register", s.enrollAgent)
+	installedAPI.POST("/agents/:id/heartbeat", s.agentHeartbeat)
+	installedAPI.POST("/agents/:id/status", s.recordAgentStatus)
+	installedAPI.POST("/agents/:id/errors", s.recordAgentStatus)
+	installedAPI.GET("/agents/:id/plan", s.fetchAgentPlan)
+	installedAPI.POST("/agents/:id/plan-acks", s.acknowledgeAgentPlan)
 	agents := auth.Group("/agents")
 	agents.GET("", s.requirePermission("agent.view"), s.listAgents)
 	agents.POST("", s.requirePermission("agent.manage"), s.createAgent)
@@ -231,6 +234,14 @@ func requestID() gin.HandlerFunc {
 	}
 }
 
+func (s *Server) requireInstalled(c *gin.Context) {
+	if !s.installed.Load() {
+		fail(c, http.StatusPreconditionRequired, "install_required", "watchdog must be installed before this endpoint is available")
+		return
+	}
+	c.Next()
+}
+
 func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// The address-database upload streams tens of MB to disk; it enforces its
@@ -260,6 +271,10 @@ func (s *Server) health(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 	dbOK := s.db.PingContext(ctx) == nil
+	if !s.installed.Load() {
+		c.JSON(http.StatusOK, gin.H{"status": "install_required", "installed": false, "mysql": dbOK, "clickhouse": false})
+		return
+	}
 	chOK := s.snmpMetrics != nil && s.snmpMetrics.Ready(ctx) == nil
 	status := http.StatusOK
 	if !dbOK || !chOK {
@@ -274,6 +289,7 @@ func (s *Server) installStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal", "message": err.Error()}})
 		return
 	}
+	st.RuntimeReady = s.runtimeReady.Load()
 	c.JSON(http.StatusOK, st)
 }
 

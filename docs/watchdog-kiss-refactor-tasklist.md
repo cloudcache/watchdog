@@ -36,8 +36,14 @@
 
 #### KISS-01B MySQL 本地认证与纯 Go 入口
 
-- [ ] **设计**：冻结 v2 认证最小表白名单、FK/唯一键、ID、UTC 时间、row version、secret encryption、bcrypt、session/CSRF、首管理员初始化和 API error envelope；不复刻 PB OTP/OAuth/realtime collection。
-- [ ] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；单一 Gin server、body limit、CORS、健康检查。前端独立运行，不由后端提供 static fallback。
+- [x] **KISS-01B1 首次安装纵向切片**：后端和 `frontend/` 分离运行，公开 `GET /api/v1/install-status`、`POST /api/v1/install` 与 `/install`；空 MySQL 启动保持 0 表且登录返回 `428 install_required`，显式提交后依次应用 MySQL/ClickHouse schema，并在事务中只创建一个管理员；重复安装返回 409。安装页不主动登录，正常登录页也不在渲染时提交登录请求。
+- [x] **设计/编码/API/UI**：安装状态明确区分 `installed/requires_install/runtime_ready`；无默认或日志生成密码；前端只用 `WATCHDOG_CONFIG.API_URL` 直连 8091，Vite 8090 仅服务 `frontend/`，后端不托管前端、不做代理。运维步骤见 `docs/watchdog-install.md`。
+- [x] **单元/集成/变更测试**：覆盖用户名/密码边界；真实空 MySQL 生命周期、安装前登录阻断、安装后 cookie 登录、单管理员与重复安装；真实 ClickHouse 迁移校验命中过历史 checksum drift 时安装失败且不伪报 ready，清理无数据的开发库后 fresh apply 成功；CORS preflight、前端 `/`/`/install` history fallback 与已安装重定向均实测。
+- [x] **回归测试**：`internal/server` 测试、管理后端构建、前端 45 个单测和 production build 通过；Docker Kafka 主题 12 partitions、ClickHouse health/schema、MySQL 69 张当前嵌入表均核对。Flow 采集/处理进程未在本切片启动或修改。
+- [x] **已提交门禁**：安装 schema、server/auth/router、独立入口、前端 install route/client/page、测试和部署文档构成一个可独立审查的提交，不夹带并行 Flow WIP。
+
+- [x] **设计**：冻结 v2 认证最小表白名单、FK/唯一键、ID、UTC 时间、row version、secret encryption、bcrypt、session/CSRF、首管理员初始化和 API error envelope；不复刻 PB OTP/OAuth/realtime collection。
+- [x] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；单一 Gin server、8 MiB body limit、CORS、健康检查。前端独立运行，不由后端提供 static fallback。
 - [ ] **单元测试**：密码校验、session rotation/expiry/revoke、CSRF、禁用用户、RBAC、错误信封和敏感字段脱敏。
 - [ ] **集成测试**：空 MySQL 只初始化一个管理员；真实登录/登出/禁用/改密；纯 Go server 独立提供 API 和前端构建产物，全程不创建 PB SQLite、不读取 PB env。
 - [ ] **已提交门禁**：schema、server、auth 与测试形成可独立启动的提交。

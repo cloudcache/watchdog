@@ -2,7 +2,7 @@
 # Frontend and backend are separate builds: the server never serves static files.
 # Only two persistent authorities: MySQL (management) and ClickHouse (time-series + log/alert).
 # Kafka is RawFlow transport only. Secrets may be overridden by env (WATCHDOG_MYSQL_DSN,
-# WATCHDOG_ADMIN_PASSWORD) instead of being committed here.
+# WATCHDOG_CLICKHOUSE_PASSWORD_FILE, WATCHDOG_ADMIN_PASSWORD) instead of being committed here.
 
 server:
   listen: "127.0.0.1:8091"          # the single API_URL the frontend points at
@@ -54,4 +54,4 @@ billing:
 
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"
-  password: ""                      # empty -> a random password is generated and logged once
+  password: ""                      # empty -> interactive /install; never generated or logged

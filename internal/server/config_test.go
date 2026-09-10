@@ -21,6 +21,7 @@ admin:
 		t.Fatal(err)
 	}
 	t.Setenv("WATCHDOG_MYSQL_DSN", "env-user@tcp(localhost:3306)/from_env")
+	t.Setenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE", "/run/secrets/watchdog-clickhouse")
 	t.Setenv("WATCHDOG_ADMIN_PASSWORD", "env-secret")
 	cfg, err := LoadConfig(path)
 	if err != nil {
@@ -32,10 +33,14 @@ admin:
 	if cfg.MySQL.DSN != "env-user@tcp(localhost:3306)/from_env" || cfg.Admin.Password != "env-secret" {
 		t.Fatal("secret environment overrides were not applied")
 	}
+	if cfg.ClickHouse.PasswordFile != "/run/secrets/watchdog-clickhouse" {
+		t.Fatal("ClickHouse secret-file override was not applied")
+	}
 }
 
 func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	t.Setenv("WATCHDOG_MYSQL_DSN", "")
+	t.Setenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE", "")
 	t.Setenv("WATCHDOG_ADMIN_PASSWORD", "")
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "absent.yaml"))
 	if err != nil {

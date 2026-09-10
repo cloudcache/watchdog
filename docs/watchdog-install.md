@@ -1,137 +1,121 @@
-# Watchdog Install
+# Watchdog engineering deployment
 
-Watchdog backend processes share one YAML config file. Copy `config/watchdog.example.yaml` to `config/watchdog.yaml`, then edit the MySQL DSN and VictoriaMetrics URL.
+Watchdog has two persistent authorities: MySQL for management data and
+ClickHouse for Flow/SNMP time-series. Kafka is the replayable Flow transport.
+PocketBase, VictoriaMetrics and a same-origin frontend proxy are not part of
+this deployment.
 
-```bash
-cp config/watchdog.example.yaml config/watchdog.yaml
-go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock
-# Hub serves PocketBase auth, the SPA, and /api/v1 on one origin.
-go run ./internal/cmd/hub serve --watchdog-config config/watchdog.yaml
-# Independent SNMP discovery/polling data plane (run as a supervised service).
-go run ./cmd/watchdog-snmp-collector --config config/watchdog.yaml --loop
-```
+## 1. Start Kafka and ClickHouse
 
-The Hub intentionally serves the control plane only. Saving an SNMP device
-queues discovery; at least one `watchdog-snmp-collector --loop` process must be
-running for that tenant. The worker claims queued discovery jobs immediately,
-then continues discovery and polling at the configured intervals.
-
-The installer and embedded migration runner are intentionally idempotent:
-
-- Every run reconciles `install/init.sql`, then applies every pending embedded migration under a MySQL advisory lock and records its version and SHA-256 in `watchdog_schema_migrations`.
-- If `.watchdog.lock` does not exist, it writes the database installation marker and creates `.watchdog.lock` after schema success.
-- If `.watchdog.lock` already exists, schema reconciliation still runs before refreshing the marker; the lock file never suppresses migrations.
-- Applied migration checksum drift, an unknown newer migration, a failed statement, or an unavailable MySQL database stops startup/readiness. Migration files are immutable after release; corrections use a new forward migration.
-
-The same config flag is accepted by:
-
-- `cmd/watchdog-export-worker`
-- `cmd/watchdog-snmp-collector`
-- `cmd/watchdog-aggregate-rollup`
-- `cmd/watchdog-system-agent`
-- `cmd/watchdog-snmp-agent`
-- `cmd/watchdog-install`
-- `internal/cmd/hub serve` (uses `--watchdog-config` to avoid colliding with PocketBase flags)
-
-## Configuration contract
-
-The precedence is deterministic:
-
-```text
-explicit command flag > environment variable > YAML > built-in default
-```
-
-Only command-specific flags participate. For example, `watchdog-snmp-collector --limit` overrides `snmp_collector.poll_limit`, while processes without that flag use the environment/YAML/default value.
-
-The YAML decoder rejects unknown fields, duplicate/malformed keys, and multiple YAML documents. Startup also rejects invalid URLs, listen addresses, durations, pool sizes, unsupported export metrics, and inconsistent MySQL pool settings. Environment values are not silently ignored: an invalid integer or duration stops startup and names the offending variable. `mysql.max_idle_conns: 0` is valid and disables idle connections; an explicitly empty `WATCHDOG_SNMP_MIB_DIRS` clears the YAML list.
-
-HTTP base URLs are normalized by trimming surrounding whitespace and trailing slashes. IDs, listen addresses, export paths, metric names, and MIB paths are normalized; MIB paths are cleaned and de-duplicated. DSNs and tokens are not rewritten. Component identities and credentials are validated by the component after flags have been resolved, so an unused optional agent section does not make unrelated workers require that agent's token.
-
-## Environment overrides
-
-| Section | Variables |
-|---|---|
-| Config file | `WATCHDOG_CONFIG` |
-| MySQL | `WATCHDOG_MYSQL_DSN`, `WATCHDOG_MYSQL_MAX_OPEN_CONNS`, `WATCHDOG_MYSQL_MAX_IDLE_CONNS`, `WATCHDOG_MYSQL_CONN_MAX_LIFETIME` |
-| VictoriaMetrics | `WATCHDOG_VICTORIAMETRICS_URL` |
-| Query gateway | `WATCHDOG_QUERY_GATEWAY_ENABLED`, `WATCHDOG_QUERY_VM_ENABLED`, `WATCHDOG_QUERY_VM_MAX_CONCURRENT`, `WATCHDOG_QUERY_CLICKHOUSE_ENABLED`, `WATCHDOG_QUERY_CLICKHOUSE_MAX_CONCURRENT` |
-| Hub metrics scrape | `WATCHDOG_METRICS_SCRAPE_ENABLED`, `WATCHDOG_METRICS_SCRAPE_TOKEN_FILE`, `WATCHDOG_METRICS_SCRAPE_ALLOWED_CIDRS` |
-| Export worker | `WATCHDOG_EXPORT_DIR`, `WATCHDOG_EXPORT_WORKER_INTERVAL`, `WATCHDOG_EXPORT_WORKER_BATCH`（仅 legacy v0 扫描）, `WATCHDOG_EXPORT_WORKER_CONCURRENCY`（contract v1 operation jobs）, `WATCHDOG_EXPORT_METRIC` |
-| SNMP collector / discovery | `WATCHDOG_SNMP_COLLECTOR_TENANT_ID`, `WATCHDOG_SNMP_COLLECTOR_INTERVAL`, `WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT`, `WATCHDOG_SNMP_DISCOVERY_INTERVAL`, `WATCHDOG_SNMP_DISCOVERY_BATCH` |
-| SNMP MIBs | `WATCHDOG_SNMP_MIB_DIRS`, `WATCHDOG_SNMP_MIBS` |
-| Aggregate graph rollup | `WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL` |
-| SNMP trap agent | `WATCHDOG_SNMP_TRAP_API_URL`, `WATCHDOG_SNMP_TRAP_TOKEN`, `WATCHDOG_SNMP_TRAP_LISTEN` |
-| System agent | `WATCHDOG_AGENT_HUB_URL`, `WATCHDOG_AGENT_ID`, `WATCHDOG_AGENT_TOKEN`, `WATCHDOG_AGENT_INTERVAL` |
-
-`WATCHDOG_VICTORIALOGS_URL` and `WATCHDOG_SFLOW_VLOGS_URL` were removed with the VictoriaLogs backend. Keeping either variable in a process environment is a startup error so obsolete deployment configuration cannot be silently accepted.
-
-## Link PocketBase authentication to the management plane
-
-Before a PocketBase user can call `/api/v1`, link its PocketBase record ID to an active MySQL user projection. The operation is explicit and tenant-scoped; unknown users, disabled users, and duplicate external identities fail closed.
+The development compose file starts Kafka with the 12-partition
+`watchdog.flow.raw-v1` topic and ClickHouse on their host ports:
 
 ```bash
-go run ./cmd/watchdog-identity-link \
-  --config config/watchdog.yaml \
-  --tenant tenant_dev \
-  --user user_dev \
-  --subject POCKETBASE_USER_RECORD_ID
+WATCHDOG_CLICKHOUSE_PASSWORD=watchdog-local \
+  docker compose -f deploy/compose.flow-dev.yml up -d
+docker compose -f deploy/compose.flow-dev.yml ps
 ```
 
-The production frontend sends the PocketBase auth token on same-origin `/api/v1` calls. A user with more than one active tenant projection must also select a tenant; the client persists that selection per PocketBase subject and sends it as `X-Watchdog-Tenant-ID`. The server validates membership on every request and never accepts tenant identity from the header alone.
+Keep the ClickHouse password out of YAML. For local development only:
 
-Liveness is exposed at `/api/v1/health/live`. Readiness is exposed at `/api/v1/health/ready` and returns 503 until MySQL responds and every embedded migration version/checksum matches the ledger.
-
-The unified query endpoint is enabled by default. `query_gateway` controls provider admission and provider-global concurrency only; tenant/dataset range, row, timeout, concurrency, and raw/supplier/customer gates are managed through `/api/v1/query-policies`. VictoriaMetrics uses `victoriametrics.base_url` as its single endpoint source and participates in readiness through `/health`. Keep `query_gateway.clickhouse_enabled` false until the Flow ClickHouse provider is registered; enabling a flag never creates a second connection pool or bypasses provider readiness.
-
-Prometheus-compatible hub metrics can be exposed at `/metrics` by enabling `metrics_scrape`. This route is mounted on the existing hub listener (there is no extra metrics server), does not use an interactive PocketBase login, and requires both a bearer token loaded from `token_file` and a direct-peer match in `allowed_cidrs`. `X-Forwarded-For` is ignored. TLS therefore follows the hub listener or its trusted reverse proxy; when a proxy is used, allow the proxy's source CIDR and keep the proxy-to-hub hop private. A missing/unreadable/short token stops startup. Rotate the token file with a controlled hub restart. VictoriaMetrics or vmagent should send `Authorization: Bearer …`; GET and HEAD are the only accepted methods.
-
-For a TLS reverse proxy on the same host, keep the hub private and make the three configurations agree. The hub ACL contains the proxy-to-hub source (`127.0.0.1/32` below), not the VictoriaMetrics source and not an `X-Forwarded-For` value:
-
-```yaml
-# watchdog.yaml
-metrics_scrape:
-  enabled: true
-  token_file: /run/secrets/watchdog-metrics-token
-  allowed_cidrs: [127.0.0.1/32]
+```bash
+install -m 600 /dev/null /tmp/watchdog-clickhouse-password
+printf '%s\n' 'watchdog-local' > /tmp/watchdog-clickhouse-password
 ```
 
-```nginx
-location = /metrics {
-    proxy_pass http://127.0.0.1:8090/metrics;
-    proxy_set_header Authorization $http_authorization;
-}
+Set `WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password` when
+starting every process that connects to ClickHouse. Production uses a mounted
+secret file instead.
+
+## 2. Start the independent backend and frontend
+
+MySQL itself must be reachable, but the `watchdog` database may be absent or
+empty. The backend creates the named database only; it does not create schema
+or an administrator until installation is submitted.
+
+```bash
+WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
+  go run ./cmd/watchdog-server --config config/watchdog.yaml
 ```
 
-```yaml
-# VictoriaMetrics -promscrape.config
-scrape_configs:
-  - job_name: watchdog-hub
-    scheme: https
-    bearer_token_file: /run/secrets/watchdog-metrics-token
-    static_configs:
-      - targets: [watchdog.example.net]
+In another terminal:
+
+```bash
+npm --prefix frontend run dev
 ```
 
-Token rotation is a coordinated operation: atomically replace the hub and scraper secret files, then perform a controlled hub runtime restart (and reload/restart the scraper if its secret mount is not live). Expect at most one scrape interval of `up=0`; rollback restores both previous secret files and restarts the same two consumers. A direct request through the proxy must return 200 with the new token, 401 with the old token, and 403 when the proxy source is removed from `allowed_cidrs`.
+The frontend listens on `127.0.0.1:8090`; the API listens on
+`127.0.0.1:8091`. `frontend/public/watchdog-config.js` contains the direct
+`API_URL`. CORS is controlled by `server.origins`; no proxy or static-file
+server is involved.
 
-Keep DSNs and tokens in a process secret, root-readable environment file, or secret manager instead of committing production values to YAML. The example values are placeholders.
+## 3. First installation and login
 
-Windows agents do not download or embed `smartctl.exe` from a product-owned domain. Install the official smartmontools package or place `smartctl.exe` on `PATH` before enabling S.M.A.R.T. disk-health collection.
+On every page load the frontend reads `GET /api/v1/install-status`:
 
-## Agent registry values
+- an empty database redirects to `/install`;
+- submitting `POST /api/v1/install` applies the embedded MySQL and ClickHouse
+  schemas and atomically creates exactly one administrator;
+- a completed installation redirects to the normal login page;
+- repeated installation is rejected with `409 already_installed`;
+- all other API routes reject an uninstalled database with
+  `428 install_required`.
 
-Agent registry writes normalize surrounding whitespace and lowercase `agent_type`, `mode`, and `status`. Valid current values are:
+No password is generated or logged. `WATCHDOG_ADMIN_PASSWORD` is an explicit
+unattended-install override for automation; leave it unset for the UI flow.
+Installation is intentionally public before the first administrator exists,
+so keep the backend listener private until installation completes.
 
-- type: `snmp`, `system`;
-- mode: `push`, `pull`; a system agent must use `push`;
-- status: `pending`, `up`, `down`, `error`, `disabled`.
+Health and install state can be checked independently:
 
-The API rejects unknown JSON fields and path/body ID mismatches, and the repository repeats domain validation before writing MySQL. A disabled agent cannot fetch a plan, heartbeat, report a run, or push system samples. Run reports accept only `success` or `failure`.
+```bash
+curl -sS http://127.0.0.1:8091/api/v1/health
+curl -sS http://127.0.0.1:8091/api/v1/install-status
+```
 
-`PATCH /api/v1/agent-registry/{id}` is a true partial update: omitted fields retain their stored values, an explicitly empty endpoint clears it, and an empty token preserves the current token. A supplied body ID must match the path.
+## 4. Start the data-plane processes independently
 
-## Existing runtime compatibility configuration
+SNMP discovery/polling reads device/profile state from MySQL and writes
+samples directly to ClickHouse:
 
-The pre-existing hub `config.yml` system sync remains separate from the Watchdog YAML. It now uses the same fail-fast principles: unknown fields and multiple documents are rejected; system name/host/user emails are normalized; default port `45876` is applied before duplicate detection; missing users, missing name/host, and duplicate `(name, host, port)` entries stop the sync before writes. Existing-system matching uses that tuple directly instead of ambiguous string concatenation.
+```bash
+WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
+  go run ./cmd/watchdog-snmp-collector --config config/watchdog.yaml --loop
+```
 
-For the pre-existing `watchdog-agent` command, explicit `--url` and `--token` flags override both `WATCHDOG_AGENT_*` and unprefixed environment variables. Other unprefixed variables retain their existing `WATCHDOG_AGENT_<KEY> > <KEY> > default` precedence until they are migrated into the signed collector-plan model. The canonical product namespace, API prefix, binary names, service names, and data directories use `watchdog`; pre-rename product aliases are intentionally unsupported.
+Flow collection and Flow processing are separate processes. The collector
+decodes sFlow/NetFlow/IPFIX and publishes RawFlow to Kafka; the worker consumes
+Kafka, performs in-memory classification and writes ClickHouse. Both require
+the signed plans/publications produced through the administrator and agent
+publication workflow:
+
+```bash
+go run ./cmd/watchdog-flow-collect \
+  --plan /path/collector-plan.json \
+  --plan-public-key /path/flow-plan.pub \
+  --kafka-brokers 127.0.0.1:9092
+
+WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
+  go run ./cmd/watchdog-flow-worker \
+  --bootstrap-plan /path/collector-plan.json \
+  --plan-public-key /path/flow-plan.pub \
+  --bootstrap-version-publication /path/version-publication.json \
+  --source-stream-id local-kafka-watchdog-flow-raw-v1 \
+  --kafka-brokers 127.0.0.1:9092 \
+  --clickhouse-password-file /tmp/watchdog-clickhouse-password
+```
+
+Using agent enrollment replaces the bootstrap files with signed immutable
+plans plus local last-known-good files; it does not combine these processes
+with the backend.
+
+## Configuration precedence
+
+The backend reads `--config`, then `WATCHDOG_CONFIG`, then
+`config/watchdog.yaml`. Secret overrides are:
+
+- `WATCHDOG_MYSQL_DSN`
+- `WATCHDOG_CLICKHOUSE_PASSWORD_FILE`
+- `WATCHDOG_ADMIN_PASSWORD` (unattended first install only)
+
+The committed YAML must contain no passwords.

@@ -18,6 +18,16 @@ export type SessionUser = {
 	abilities: string[]
 }
 
+export type InstallStatus = {
+	installed: boolean
+	requires_install: boolean
+	runtime_ready: boolean
+	schema_version: string
+	product_version: string
+	admin_bootstrapped: boolean
+	installed_at: string
+}
+
 export class WatchdogAPIError extends Error {
 	status: number
 	code: string
@@ -105,6 +115,14 @@ export async function login(username: string, password: string) {
 	})
 	setAuthenticatedUser(user)
 	return user
+}
+
+export function fetchInstallStatus() {
+	return api.send<InstallStatus>("/api/v1/install-status", {})
+}
+
+export function installWatchdog(input: { username: string; password: string; email?: string; display_name?: string }) {
+	return api.send<InstallStatus>("/api/v1/install", { method: "POST", body: input })
 }
 
 function setAuthenticatedUser(user: SessionUser) {
