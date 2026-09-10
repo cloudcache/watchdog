@@ -9,7 +9,6 @@ import {
 	CrosshairIcon,
 	RouteIcon,
 	ServerIcon,
-	DatabaseBackupIcon,
 	DatabaseIcon,
 	FileDownIcon,
 	GaugeIcon,
@@ -17,12 +16,10 @@ import {
 	HardDriveIcon,
 	HistoryIcon,
 	LayoutDashboardIcon,
-	LayersIcon,
 	ScrollTextIcon,
 	ServerCogIcon,
 	LibraryIcon,
 	LogOutIcon,
-	LogsIcon,
 	MenuIcon,
 	NetworkIcon,
 	PlusIcon,
@@ -390,27 +387,12 @@ function AdminDropdownContent() {
 			<NavItem href={getPagePath($router, "users_admin")} icon={UsersIcon}>
 				<Trans>Users & Roles</Trans>
 			</NavItem>
-			<NavItem href={getPagePath($router, "modules_admin")} icon={LayersIcon}>
-				<Trans>Modules</Trans>
-			</NavItem>
 			<NavItem href={getPagePath($router, "audit_logs")} icon={ScrollTextIcon}>
 				<Trans>Audit Logs</Trans>
 			</NavItem>
 			<NavItem href={getPagePath($router, "operation_jobs")} icon={ServerCogIcon}>
 				<Trans>Background Jobs</Trans>
 			</NavItem>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/#/logs")} target="_blank" rel="noreferrer">
-					<LogsIcon className="me-2.5 h-4 w-4" />
-					<Trans>Logs</Trans>
-				</a>
-			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href={prependBasePath("/_/#/settings/backups")} target="_blank" rel="noreferrer">
-					<DatabaseBackupIcon className="me-2.5 h-4 w-4" />
-					<Trans>Backups</Trans>
-				</a>
-			</DropdownMenuItem>
 		</>
 	)
 }

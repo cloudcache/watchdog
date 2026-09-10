@@ -1,6 +1,6 @@
 import { useEffect } from "react"
-import SmartTable from "@/components/routes/system/smart-table"
 import { FooterRepoLink } from "@/components/footer-repo-link"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function Smart() {
 	useEffect(() => {
@@ -10,7 +10,15 @@ export default function Smart() {
 	return (
 		<>
 			<div className="grid gap-4">
-				<SmartTable />
+				<Card>
+					<CardHeader>
+						<CardTitle>S.M.A.R.T.</CardTitle>
+						<CardDescription>Storage telemetry is not enabled in this installation.</CardDescription>
+					</CardHeader>
+					<CardContent className="text-sm text-muted-foreground">
+						Storage data will be available after the system agent ClickHouse slice is enabled.
+					</CardContent>
+				</Card>
 			</div>
 			<FooterRepoLink />
 		</>

@@ -59,7 +59,6 @@ const NetworkPortDetail = lazy(() => import("@/components/routes/network-port.ts
 const NetworkPortForm = lazy(() => import("@/components/routes/network-port-form.tsx"))
 const NetworkPortPolicy = lazy(() => import("@/components/routes/network-port-policy.tsx"))
 const Permissions = lazy(() => import("@/components/routes/permissions.tsx"))
-const PermissionForm = lazy(() => import("@/components/routes/permission-form.tsx"))
 const Retention = lazy(() => import("@/components/routes/retention.tsx"))
 const Smart = lazy(() => import("@/components/routes/smart.tsx"))
 const SNMPMIBModuleForm = lazy(() => import("@/components/routes/snmp-mib-module-form.tsx"))
@@ -91,7 +90,7 @@ const App = memo(() => {
 		return <div className="p-3 text-sm text-muted-foreground">Loading...</div>
 	}
 	if (!watchdogDevAuth && !platformIdentity.current) {
-		return <div className="p-3 text-sm text-muted-foreground">Select a tenant from the account menu.</div>
+		return <div className="p-3 text-sm text-muted-foreground">Authentication required.</div>
 	}
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
@@ -204,9 +203,9 @@ const App = memo(() => {
 	} else if (page.route === "permissions") {
 		return <Permissions />
 	} else if (page.route === "permission_new") {
-		return <PermissionForm />
+		return <Permissions />
 	} else if (page.route === "permission_edit") {
-		return <PermissionForm id={page.params.id} />
+		return <Permissions />
 	} else if (page.route === "retention") {
 		return <Retention />
 	} else if (page.route === "smart") {
@@ -331,7 +330,7 @@ const Layout = () => {
 					<InstallPage
 						onInstalled={(status) => {
 							setInstallStatus(status)
-							$platformIdentity.set({ ready: true, tenants: [] })
+							$platformIdentity.set({ ready: true })
 							$authenticated.set(false)
 							$authChecked.set(true)
 							navigate(prependBasePath("/"))

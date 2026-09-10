@@ -573,13 +573,15 @@ const SmartDevicesTable = memo(function SmartDevicesTable({
 								return <SmartDeviceTableRow key={row.id} row={row} virtualRow={virtualRow} openSheet={openSheet} />
 							})
 						) : (
-							<TableCell colSpan={colLength} className="h-37 text-center pointer-events-none">
-								{data ? (
-									<Trans>No results.</Trans>
-								) : (
-									<LoaderCircleIcon className="animate-spin size-10 opacity-60 mx-auto" />
-								)}
-							</TableCell>
+							<TableRow>
+								<TableCell colSpan={colLength} className="h-37 text-center pointer-events-none">
+									{data ? (
+										<Trans>No results.</Trans>
+									) : (
+										<LoaderCircleIcon className="animate-spin size-10 opacity-60 mx-auto" />
+									)}
+								</TableCell>
+							</TableRow>
 						)}
 					</TableBody>
 				</table>

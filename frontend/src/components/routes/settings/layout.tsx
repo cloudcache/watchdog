@@ -2,7 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath, redirectPage } from "@nanostores/router"
-import { HeartPulseIcon, SettingsIcon } from "lucide-react"
+import { SettingsIcon } from "lucide-react"
 import { lazy, useEffect } from "react"
 import { $router } from "@/components/router.tsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx"
@@ -14,10 +14,7 @@ import { Separator } from "../../ui/separator"
 import { SidebarNav } from "./sidebar-nav.tsx"
 
 const generalSettingsImport = () => import("./general.tsx")
-const heartbeatSettingsImport = () => import("./heartbeat.tsx")
-
 const GeneralSettings = lazy(generalSettingsImport)
-const HeartbeatSettings = lazy(heartbeatSettingsImport)
 
 export async function saveSettings(newSettings: Partial<UserSettings>) {
 	try {
@@ -45,18 +42,10 @@ export default function SettingsLayout() {
 			href: getPagePath($router, "settings", { name: "general" }),
 			icon: SettingsIcon,
 		},
-		{
-			title: t`Heartbeat`,
-			href: getPagePath($router, "settings", { name: "heartbeat" }),
-			icon: HeartPulseIcon,
-			admin: true,
-			preload: heartbeatSettingsImport,
-		},
 	]
 
 	const page = useStore($router)
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: no dependencies
 	useEffect(() => {
 		document.title = `${t`Settings`} / Watchdog`
 		// @ts-expect-error redirect to account page if no page is specified
@@ -97,7 +86,5 @@ function SettingsContent({ name }: { name: string }) {
 	switch (name) {
 		case "general":
 			return <GeneralSettings userSettings={userSettings} />
-		case "heartbeat":
-			return <HeartbeatSettings />
 	}
 }

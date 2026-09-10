@@ -78,12 +78,9 @@ export async function refreshWatchdogIdentity() {
 	if (watchdogDevAuth) {
 		$platformIdentity.set({
 			ready: true,
-			tenants: [],
 			current: {
-				tenantID: "development",
 				userID: "development",
 				roleIDs: [],
-				grants: [],
 				isAdmin: true,
 				canManageAddressLibrary: true,
 			},
@@ -128,24 +125,22 @@ export function installWatchdog(input: { username: string; password: string; ema
 function setAuthenticatedUser(user: SessionUser) {
 	sessionUser = user
 	const current = normalizePlatformAuthContext(user)
-	$platformIdentity.set({ ready: true, tenants: [], current })
+	$platformIdentity.set({ ready: true, current })
 	$authenticated.set(true)
 	$authChecked.set(true)
 }
 
 function clearAuthenticatedUser() {
 	sessionUser = undefined
-	$platformIdentity.set({ ready: true, tenants: [] })
+	$platformIdentity.set({ ready: true })
 	$authenticated.set(false)
 	$authChecked.set(true)
 }
 
 function normalizePlatformAuthContext(user: SessionUser): PlatformAuthContext {
 	return {
-		tenantID: "",
 		userID: user.id,
 		roleIDs: user.roles ?? [],
-		grants: [{ actions: user.abilities ?? [] }],
 		isAdmin: user.is_admin,
 		canManageAddressLibrary: user.is_admin,
 	}

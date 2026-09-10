@@ -5,11 +5,8 @@ import { DialogDescription } from "@radix-ui/react-dialog"
 import {
 	BookIcon,
 	ContainerIcon,
-	DatabaseBackupIcon,
 	FingerprintIcon,
 	HardDriveIcon,
-	LogsIcon,
-	MailIcon,
 	Server,
 	ServerIcon,
 	SettingsIcon,
@@ -29,7 +26,7 @@ import {
 import { isAdmin } from "@/lib/api"
 import { $systems } from "@/lib/stores"
 import { getHostDisplayValue, listen } from "@/lib/utils"
-import { $router, basePath, navigate, prependBasePath } from "./router"
+import { $router, basePath, navigate } from "./router"
 
 export default memo(function CommandPalette({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
 	useEffect(() => {
@@ -136,7 +133,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 						<CommandItem
 							keywords={[t`Universal token`]}
 							onSelect={() => {
-								navigate(getPagePath($router, "settings", { name: "tokens" }))
+								navigate(getPagePath($router, "agents"))
 								setOpen(false)
 							}}
 						>
@@ -166,50 +163,13 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 								<CommandItem
 									keywords={["database"]}
 									onSelect={() => {
+										navigate(getPagePath($router, "users_admin"))
 										setOpen(false)
-										window.open(prependBasePath("/_/"), "_blank")
 									}}
 								>
 									<UsersIcon className="me-2 size-4" />
 									<span>
 										<Trans>Users</Trans>
-									</span>
-									{AdminShortcut}
-								</CommandItem>
-								<CommandItem
-									onSelect={() => {
-										setOpen(false)
-										window.open(prependBasePath("/_/#/logs"), "_blank")
-									}}
-								>
-									<LogsIcon className="me-2 size-4" />
-									<span>
-										<Trans>Logs</Trans>
-									</span>
-									{AdminShortcut}
-								</CommandItem>
-								<CommandItem
-									onSelect={() => {
-										setOpen(false)
-										window.open(prependBasePath("/_/#/settings/backups"), "_blank")
-									}}
-								>
-									<DatabaseBackupIcon className="me-2 size-4" />
-									<span>
-										<Trans>Backups</Trans>
-									</span>
-									{AdminShortcut}
-								</CommandItem>
-								<CommandItem
-									keywords={["email"]}
-									onSelect={() => {
-										setOpen(false)
-										window.open(prependBasePath("/_/#/settings/mail"), "_blank")
-									}}
-								>
-									<MailIcon className="me-2 size-4" />
-									<span>
-										<Trans>SMTP settings</Trans>
 									</span>
 									{AdminShortcut}
 								</CommandItem>

@@ -9,13 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api"
 
 type AuditLogItem = {
-	ID: string
-	ActorID?: string
-	Action: string
-	ResourceType: string
-	ResourceID?: string
-	Detail?: Record<string, unknown>
-	CreatedAt: string
+	id: string
+	actor_id?: string
+	action: string
+	resource_type: string
+	resource_id?: string
+	detail?: Record<string, unknown>
+	created_at: string
 }
 
 type AuditLogsResponse = {
@@ -152,22 +152,22 @@ export default memo(() => {
 							</TableRow>
 						) : (
 							items.map((item) => (
-								<TableRow key={item.ID}>
+								<TableRow key={item.id}>
 									<TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-										{formatAuditTime(item.CreatedAt)}
+										{formatAuditTime(item.created_at)}
 									</TableCell>
 									<TableCell>
 										<Badge variant="outline" className="font-mono text-xs font-normal">
-											{item.Action}
+											{item.action}
 										</Badge>
 									</TableCell>
 									<TableCell className="font-mono text-xs">
-										{item.ResourceType}
-										{item.ResourceID ? <span className="text-muted-foreground"> · {item.ResourceID}</span> : null}
+										{item.resource_type}
+										{item.resource_id ? <span className="text-muted-foreground"> · {item.resource_id}</span> : null}
 									</TableCell>
 									<TableCell className="font-mono text-xs">{auditActor(item)}</TableCell>
 									<TableCell className="max-w-96 truncate text-xs text-muted-foreground">
-										{formatAuditDetail(item.Detail)}
+										{formatAuditDetail(item.detail)}
 									</TableCell>
 								</TableRow>
 							))
@@ -193,10 +193,10 @@ function formatAuditTime(value: string) {
 }
 
 function auditActor(item: AuditLogItem) {
-	if (item.ActorID) {
-		return item.ActorID
+	if (item.actor_id) {
+		return item.actor_id
 	}
-	const preserved = item.Detail?.actor
+	const preserved = item.detail?.actor
 	return typeof preserved === "string" ? preserved : "—"
 }
 

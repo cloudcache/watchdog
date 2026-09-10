@@ -209,9 +209,8 @@ func (s *Server) newRouter() *gin.Engine {
 
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)
+	s.registerPlatformOperationsRoutes(auth)
 
-	auth.GET("/jobs", s.todo)
-	auth.GET("/audit", s.todo)
 	exports := auth.Group("/exports")
 	exports.GET("", s.requirePermission("device.view"), s.listSNMPExports)
 	exports.POST("", s.requirePermission("device.view"), s.createSNMPExport)
