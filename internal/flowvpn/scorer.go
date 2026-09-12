@@ -57,6 +57,44 @@ const (
 	VerdictSuppressed     Verdict = "suppressed"
 )
 
+// ProtocolFamily is a suspected VPN/proxy protocol family. At flow level these
+// are behavioral suspicions only — flow records carry no L7, so a family hint is
+// never a confirmation; Tier-2 passive probing (SNI/handshake) confirms it. A
+// scoring rule may carry a FamilyHint to tag the candidates it matches.
+type ProtocolFamily string
+
+const (
+	FamilyRegular       ProtocolFamily = "regular"
+	FamilySOCKS5        ProtocolFamily = "socks5"
+	FamilyShadowsocks   ProtocolFamily = "shadowsocks"
+	FamilySSR           ProtocolFamily = "ssr"
+	FamilyTrojan        ProtocolFamily = "trojan"
+	FamilyOpenVPN       ProtocolFamily = "openvpn"
+	FamilyHTTPSSLVPN    ProtocolFamily = "http_ssl_vpn"
+	FamilyGenericTunnel ProtocolFamily = "generic_tunnel"
+	FamilyPrivateTunnel ProtocolFamily = "private_tunnel"
+	FamilyTLSUnknown    ProtocolFamily = "tls_unknown"
+)
+
+func validProtocolFamily(value ProtocolFamily) bool {
+	switch value {
+	case FamilyRegular, FamilySOCKS5, FamilyShadowsocks, FamilySSR, FamilyTrojan,
+		FamilyOpenVPN, FamilyHTTPSSLVPN, FamilyGenericTunnel, FamilyPrivateTunnel, FamilyTLSUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func sortedProtocolFamilies(set map[ProtocolFamily]struct{}) []ProtocolFamily {
+	result := make([]ProtocolFamily, 0, len(set))
+	for family := range set {
+		result = append(result, family)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result
+}
+
 type Candidate struct {
 	WindowStart           time.Time
 	WindowEnd             time.Time
@@ -71,9 +109,11 @@ type Candidate struct {
 	FlowRecordCount       uint64
 	ActiveBucketCount     uint32
 	MaxDurationMS         uint64
+	PacketBytesP50        uint64 // median bytes-per-packet across the window's flows (0 = unknown until the materializer populates it)
 	RemoteASN             uint32
 	RemoteCountry         string
 	RemotePrefixID        string
+	LocalPrefixID         string // address-library prefix of the local/inside endpoint (symmetric to RemotePrefixID)
 	TransportHints        []TransportHint
 	CompleteRatio         float64
 	DimensionSnapshotID   string
@@ -83,25 +123,32 @@ type Candidate struct {
 
 type Match struct {
 	RemotePorts       []uint16        `json:"remote_ports,omitempty"`
+	LocalPorts        []uint16        `json:"local_ports,omitempty"`
 	Protocols         []uint8         `json:"protocols,omitempty"`
 	RemoteASNs        []uint32        `json:"remote_asns,omitempty"`
 	RemotePrefixIDs   []string        `json:"remote_prefix_ids,omitempty"`
+	LocalPrefixIDs    []string        `json:"local_prefix_ids,omitempty"`
 	RemoteCountries   []string        `json:"remote_countries,omitempty"`
+	LocalCIDRs        []string        `json:"local_cidrs,omitempty"`  // source/inside CIDR segments matched against Candidate.LocalIP
+	RemoteCIDRs       []string        `json:"remote_cidrs,omitempty"` // destination/outside CIDR segments matched against Candidate.RemoteIP
 	TransportHints    []TransportHint `json:"transport_hints,omitempty"`
 	MinDurationMS     *uint64         `json:"min_duration_ms,omitempty"`
 	MinTotalBytes     *uint64         `json:"min_total_bytes,omitempty"`
 	MinFlowRecords    *uint64         `json:"min_flow_records,omitempty"`
 	MinActiveBuckets  *uint32         `json:"min_active_buckets,omitempty"`
+	MinPacketBytesP50 *uint64         `json:"min_packet_bytes_p50,omitempty"` // median bytes-per-packet floor
+	MaxPacketBytesP50 *uint64         `json:"max_packet_bytes_p50,omitempty"` // median bytes-per-packet ceiling (small-packet proxy signal)
 	MinSymmetryRatio  *float64        `json:"min_symmetry_ratio,omitempty"`
 	MinDominanceRatio *float64        `json:"min_dominance_ratio,omitempty"`
 }
 
 type Rule struct {
-	ID       string     `json:"id"`
-	Effect   RuleEffect `json:"effect"`
-	Weight   uint16     `json:"weight"`
-	Priority uint16     `json:"priority"`
-	Match    Match      `json:"match"`
+	ID         string         `json:"id"`
+	Effect     RuleEffect     `json:"effect"`
+	Weight     uint16         `json:"weight"`
+	Priority   uint16         `json:"priority"`
+	Match      Match          `json:"match"`
+	FamilyHint ProtocolFamily `json:"family_hint,omitempty"` // suspected proxy/VPN family tagged onto matched candidates (behavioral, not confirmed)
 }
 
 type RuleSet struct {
@@ -123,20 +170,21 @@ type Evidence struct {
 }
 
 type Result struct {
-	RuleSetVersion        string     `json:"rule_set_version"`
-	DimensionSnapshotID   string     `json:"dimension_snapshot_id"`
-	GeoVersion            string     `json:"geo_version"`
-	ClassificationVersion uint32     `json:"classification_version"`
-	Score                 uint16     `json:"score"`
-	ScoreCapped           bool       `json:"score_capped"`
-	Level                 RiskLevel  `json:"level"`
-	Verdict               Verdict    `json:"verdict"`
-	SymmetryRatio         float64    `json:"symmetry_ratio"`
-	DominanceRatio        float64    `json:"dominance_ratio"`
-	Evidence              []Evidence `json:"evidence"`
-	DecisionRuleID        string     `json:"decision_rule_id,omitempty"`
-	ProbeRecommended      bool       `json:"probe_recommended"`
-	ProbeBlockReason      string     `json:"probe_block_reason,omitempty"`
+	RuleSetVersion        string           `json:"rule_set_version"`
+	DimensionSnapshotID   string           `json:"dimension_snapshot_id"`
+	GeoVersion            string           `json:"geo_version"`
+	ClassificationVersion uint32           `json:"classification_version"`
+	Score                 uint16           `json:"score"`
+	ScoreCapped           bool             `json:"score_capped"`
+	Level                 RiskLevel        `json:"level"`
+	Verdict               Verdict          `json:"verdict"`
+	SymmetryRatio         float64          `json:"symmetry_ratio"`
+	DominanceRatio        float64          `json:"dominance_ratio"`
+	Evidence              []Evidence       `json:"evidence"`
+	DecisionRuleID        string           `json:"decision_rule_id,omitempty"`
+	ProbeRecommended      bool             `json:"probe_recommended"`
+	ProbeBlockReason      string           `json:"probe_block_reason,omitempty"`
+	FamilyHints           []ProtocolFamily `json:"family_hints,omitempty"` // suspected families from matched hint rules (behavioral; Tier-2 confirms)
 }
 
 type compiledRule struct {
@@ -207,6 +255,9 @@ func NormalizeRule(rule Rule) (Rule, error) {
 	if (rule.Effect == EffectScore && (rule.Weight == 0 || rule.Weight > 100)) || (rule.Effect != EffectScore && rule.Weight != 0) {
 		return Rule{}, fmt.Errorf("VPN rule %q has an invalid weight for its effect", rule.ID)
 	}
+	if rule.FamilyHint != "" && !validProtocolFamily(rule.FamilyHint) {
+		return Rule{}, fmt.Errorf("VPN rule %q has an unsupported family hint", rule.ID)
+	}
 	canonical, err := canonicalMatch(rule.Match)
 	if err != nil {
 		return Rule{}, fmt.Errorf("VPN rule %q: %w", rule.ID, err)
@@ -231,10 +282,14 @@ func (r CompiledRuleSet) Evaluate(candidate Candidate) (Result, error) {
 	}
 	var terminal *Rule
 	var score uint32
+	families := map[ProtocolFamily]struct{}{}
 	for _, current := range r.rules {
 		matched, signals := matches(current.rule.Match, normalized, symmetry, dominance)
 		if !matched {
 			continue
+		}
+		if current.rule.FamilyHint != "" {
+			families[current.rule.FamilyHint] = struct{}{}
 		}
 		evidence := Evidence{RuleID: current.rule.ID, Effect: current.rule.Effect, Signals: signals}
 		if current.rule.Effect == EffectScore {
@@ -245,6 +300,9 @@ func (r CompiledRuleSet) Evaluate(candidate Candidate) (Result, error) {
 			terminal = &selected
 		}
 		result.Evidence = append(result.Evidence, evidence)
+	}
+	if len(families) > 0 {
+		result.FamilyHints = sortedProtocolFamilies(families)
 	}
 	if score > 100 {
 		result.Score, result.ScoreCapped = 100, true
@@ -304,6 +362,9 @@ func normalizeCandidate(input Candidate) (Candidate, error) {
 	if input.RemotePrefixID != "" && !validIdentifier(input.RemotePrefixID) {
 		return Candidate{}, errors.New("VPN candidate remote prefix is invalid")
 	}
+	if input.LocalPrefixID != "" && !validIdentifier(input.LocalPrefixID) {
+		return Candidate{}, errors.New("VPN candidate local prefix is invalid")
+	}
 	if input.RemoteCountry != "" && !validCountry(input.RemoteCountry) {
 		return Candidate{}, errors.New("VPN candidate remote country must be an uppercase two-letter code")
 	}
@@ -318,25 +379,39 @@ func normalizeCandidate(input Candidate) (Candidate, error) {
 }
 
 func canonicalMatch(input Match) (Match, error) {
-	if len(input.RemotePorts)+len(input.Protocols)+len(input.RemoteASNs)+len(input.RemotePrefixIDs)+len(input.RemoteCountries)+len(input.TransportHints) > maxValuesPerSignal*6 {
+	if len(input.RemotePorts)+len(input.LocalPorts)+len(input.Protocols)+len(input.RemoteASNs)+len(input.RemotePrefixIDs)+len(input.LocalPrefixIDs)+len(input.RemoteCountries)+len(input.TransportHints)+len(input.LocalCIDRs)+len(input.RemoteCIDRs) > maxValuesPerSignal*10 {
 		return Match{}, errors.New("match contains too many values")
 	}
-	if len(input.RemotePorts) > maxValuesPerSignal || len(input.Protocols) > maxValuesPerSignal || len(input.RemoteASNs) > maxValuesPerSignal ||
-		len(input.RemotePrefixIDs) > maxValuesPerSignal || len(input.RemoteCountries) > maxValuesPerSignal || len(input.TransportHints) > maxValuesPerSignal {
+	if len(input.RemotePorts) > maxValuesPerSignal || len(input.LocalPorts) > maxValuesPerSignal || len(input.Protocols) > maxValuesPerSignal || len(input.RemoteASNs) > maxValuesPerSignal ||
+		len(input.RemotePrefixIDs) > maxValuesPerSignal || len(input.LocalPrefixIDs) > maxValuesPerSignal || len(input.RemoteCountries) > maxValuesPerSignal || len(input.TransportHints) > maxValuesPerSignal ||
+		len(input.LocalCIDRs) > maxValuesPerSignal || len(input.RemoteCIDRs) > maxValuesPerSignal {
 		return Match{}, errors.New("match signal contains too many values")
 	}
 	result := Match{
-		RemotePorts: compactOrdered(input.RemotePorts), Protocols: compactOrdered(input.Protocols), RemoteASNs: compactOrdered(input.RemoteASNs),
-		RemotePrefixIDs: compactStrings(input.RemotePrefixIDs), RemoteCountries: compactStrings(input.RemoteCountries),
+		RemotePorts: compactOrdered(input.RemotePorts), LocalPorts: compactOrdered(input.LocalPorts), Protocols: compactOrdered(input.Protocols), RemoteASNs: compactOrdered(input.RemoteASNs),
+		RemotePrefixIDs: compactStrings(input.RemotePrefixIDs), LocalPrefixIDs: compactStrings(input.LocalPrefixIDs), RemoteCountries: compactStrings(input.RemoteCountries),
 	}
 	var err error
 	result.TransportHints, err = canonicalHints(input.TransportHints)
 	if err != nil {
 		return Match{}, err
 	}
+	result.LocalCIDRs, err = canonicalCIDRs(input.LocalCIDRs)
+	if err != nil {
+		return Match{}, err
+	}
+	result.RemoteCIDRs, err = canonicalCIDRs(input.RemoteCIDRs)
+	if err != nil {
+		return Match{}, err
+	}
 	for _, value := range result.RemotePorts {
 		if value == 0 {
 			return Match{}, errors.New("remote ports must be positive")
+		}
+	}
+	for _, value := range result.LocalPorts {
+		if value == 0 {
+			return Match{}, errors.New("local ports must be positive")
 		}
 	}
 	for _, value := range result.Protocols {
@@ -352,6 +427,11 @@ func canonicalMatch(input Match) (Match, error) {
 	for _, value := range result.RemotePrefixIDs {
 		if !validIdentifier(value) {
 			return Match{}, errors.New("remote prefix ID is invalid")
+		}
+	}
+	for _, value := range result.LocalPrefixIDs {
+		if !validIdentifier(value) {
+			return Match{}, errors.New("local prefix ID is invalid")
 		}
 	}
 	for _, value := range result.RemoteCountries {
@@ -387,6 +467,23 @@ func canonicalMatch(input Match) (Match, error) {
 		value := *input.MinActiveBuckets
 		result.MinActiveBuckets = &value
 	}
+	if input.MinPacketBytesP50 != nil {
+		if *input.MinPacketBytesP50 == 0 {
+			return Match{}, errors.New("minimum packet bytes p50 must be positive")
+		}
+		value := *input.MinPacketBytesP50
+		result.MinPacketBytesP50 = &value
+	}
+	if input.MaxPacketBytesP50 != nil {
+		if *input.MaxPacketBytesP50 == 0 {
+			return Match{}, errors.New("maximum packet bytes p50 must be positive")
+		}
+		value := *input.MaxPacketBytesP50
+		result.MaxPacketBytesP50 = &value
+	}
+	if result.MinPacketBytesP50 != nil && result.MaxPacketBytesP50 != nil && *result.MinPacketBytesP50 > *result.MaxPacketBytesP50 {
+		return Match{}, errors.New("minimum packet bytes p50 exceeds maximum")
+	}
 	if input.MinSymmetryRatio != nil {
 		if err := validRatio(*input.MinSymmetryRatio, "minimum symmetry ratio"); err != nil {
 			return Match{}, err
@@ -401,12 +498,53 @@ func canonicalMatch(input Match) (Match, error) {
 		value := *input.MinDominanceRatio
 		result.MinDominanceRatio = &value
 	}
-	if len(result.RemotePorts) == 0 && len(result.Protocols) == 0 && len(result.RemoteASNs) == 0 && len(result.RemotePrefixIDs) == 0 &&
-		len(result.RemoteCountries) == 0 && len(result.TransportHints) == 0 && result.MinDurationMS == nil && result.MinTotalBytes == nil &&
+	if len(result.RemotePorts) == 0 && len(result.LocalPorts) == 0 && len(result.Protocols) == 0 && len(result.RemoteASNs) == 0 && len(result.RemotePrefixIDs) == 0 &&
+		len(result.LocalPrefixIDs) == 0 && len(result.RemoteCountries) == 0 && len(result.LocalCIDRs) == 0 && len(result.RemoteCIDRs) == 0 && len(result.TransportHints) == 0 &&
+		result.MinDurationMS == nil && result.MinTotalBytes == nil && result.MinPacketBytesP50 == nil && result.MaxPacketBytesP50 == nil &&
 		result.MinFlowRecords == nil && result.MinActiveBuckets == nil && result.MinSymmetryRatio == nil && result.MinDominanceRatio == nil {
 		return Match{}, errors.New("match must contain at least one signal")
 	}
 	return result, nil
+}
+
+// canonicalCIDRs validates each segment, masks host bits to the network form,
+// deduplicates and sorts, so semantically equal segment sets ("10.0.0.1/8" and
+// "10.0.0.0/8") produce identical publication bytes for the rule-set hash.
+func canonicalCIDRs(input []string) ([]string, error) {
+	if len(input) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(input))
+	result := make([]string, 0, len(input))
+	for _, raw := range input {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, fmt.Errorf("CIDR segment %q is invalid", raw)
+		}
+		canonical := prefix.Masked().String()
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, canonical)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+// cidrContains reports whether addr falls inside any of the (already canonical)
+// segments. Mismatched IP families never match, which is the intended behavior.
+func cidrContains(cidrs []string, addr netip.Addr) bool {
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			continue
+		}
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func matches(match Match, candidate Candidate, symmetry, dominance float64) (bool, []string) {
@@ -415,11 +553,29 @@ func matches(match Match, candidate Candidate, symmetry, dominance float64) (boo
 	// discriminating check — the common case across many rules per candidate —
 	// allocates nothing (previously an eager make([]string,0,12) per call).
 	var signals []string
+	if len(match.LocalCIDRs) > 0 {
+		if !cidrContains(match.LocalCIDRs, candidate.LocalIP) {
+			return false, nil
+		}
+		signals = append(signals, "local_cidr")
+	}
+	if len(match.RemoteCIDRs) > 0 {
+		if !cidrContains(match.RemoteCIDRs, candidate.RemoteIP) {
+			return false, nil
+		}
+		signals = append(signals, "remote_cidr")
+	}
 	if len(match.RemotePorts) > 0 {
 		if !contains(match.RemotePorts, candidate.PrimaryRemotePort) {
 			return false, nil
 		}
 		signals = append(signals, "remote_port")
+	}
+	if len(match.LocalPorts) > 0 {
+		if !contains(match.LocalPorts, candidate.PrimaryLocalPort) {
+			return false, nil
+		}
+		signals = append(signals, "local_port")
 	}
 	if len(match.Protocols) > 0 {
 		if !contains(match.Protocols, candidate.PrimaryProtocol) {
@@ -438,6 +594,12 @@ func matches(match Match, candidate Candidate, symmetry, dominance float64) (boo
 			return false, nil
 		}
 		signals = append(signals, "remote_prefix")
+	}
+	if len(match.LocalPrefixIDs) > 0 {
+		if !contains(match.LocalPrefixIDs, candidate.LocalPrefixID) {
+			return false, nil
+		}
+		signals = append(signals, "local_prefix")
 	}
 	if len(match.RemoteCountries) > 0 {
 		if !contains(match.RemoteCountries, candidate.RemoteCountry) {
@@ -474,6 +636,18 @@ func matches(match Match, candidate Candidate, symmetry, dominance float64) (boo
 			return false, nil
 		}
 		signals = append(signals, "active_buckets")
+	}
+	if match.MinPacketBytesP50 != nil {
+		if candidate.PacketBytesP50 < *match.MinPacketBytesP50 {
+			return false, nil
+		}
+		signals = append(signals, "packet_bytes_p50")
+	}
+	if match.MaxPacketBytesP50 != nil {
+		if candidate.PacketBytesP50 == 0 || candidate.PacketBytesP50 > *match.MaxPacketBytesP50 {
+			return false, nil
+		}
+		signals = append(signals, "packet_bytes_p50")
 	}
 	if match.MinSymmetryRatio != nil {
 		if symmetry < *match.MinSymmetryRatio {

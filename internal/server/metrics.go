@@ -67,6 +67,21 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	deviceID := strings.TrimSpace(c.Query("device_id"))
 	targetID := strings.TrimSpace(c.Query("target_id"))
 	portID := strings.TrimSpace(c.Query("port_id"))
+	perPort := c.Query("per_port") == "1"
+	modes, err := snmpValueModes(c.Query("value_mode"), currentPrincipal(c) != nil && currentPrincipal(c).IsAdmin)
+	if err != nil {
+		if err == errSNMPValueMode {
+			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		} else {
+			fail(c, http.StatusForbidden, "forbidden", err.Error())
+		}
+		return
+	}
+	side, err := snmpTrafficSide(c.Query("traffic_view"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	if deviceID == "" {
 		deviceID = targetID
 	}
@@ -108,7 +123,11 @@ func (s *Server) queryMetrics(c *gin.Context) {
 			return
 		}
 		maxRows = uint32(n)
-		if c.Query("per_port") == "1" {
+		// max_data_points is a per-series/chart budget. A device-scoped
+		// query expands to multiple SNMP entities before the response is
+		// rendered, so applying it as a global intermediate-row limit makes
+		// ordinary multi-port devices fail with an empty chart.
+		if perPort || portID == "" {
 			maxRows = 250000
 		}
 	}
@@ -121,20 +140,70 @@ func (s *Server) queryMetrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
-	response := metricRangeResponse{Status: "success"}
-	response.Data.ResultType = "matrix"
-	for _, item := range series {
-		labels := map[string]string{"__name__": metric, "device_id": item.DeviceID, "entity_type": item.EntityKind, "entity_id": item.EntityID}
-		if item.EntityKind == "port" {
-			labels["port_id"] = item.EntityID
-		}
-		values := make([]metricValue, 0, len(item.Points))
-		for _, point := range item.Points {
-			values = append(values, metricValue{Time: point.Time, Value: point.Value})
-		}
-		response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: values})
+	response, err := s.renderSNMPMetricSeries(c, metric, series, modes, side, perPort || portID != "")
+	if err != nil {
+		writeSQLError(c, err)
+		return
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []snmpch.Series, modes []string, side watchdog.PortSideType, preserveSeries bool) (metricRangeResponse, error) {
+	response := metricRangeResponse{Status: "success"}
+	response.Data.ResultType = "matrix"
+	policies := map[string]watchdog.PortPolicy{}
+	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
+		var err error
+		policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
+		if err != nil {
+			return response, err
+		}
+		series = filterSNMPSeriesBySide(series, policies, side)
+	}
+	for _, mode := range modes {
+		valuesBySeries := correctedSNMPSeries(series, policies, mode == "corrected" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS))
+		if side != "" && !preserveSeries {
+			points := aggregateSNMPSeries(valuesBySeries, "sum")
+			labels := map[string]string{"__name__": metric, "value_mode": mode, "traffic_view": trafficViewName(side)}
+			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(points)})
+			continue
+		}
+		for _, item := range valuesBySeries {
+			labels := map[string]string{
+				"__name__": metric, "target_id": item.DeviceID, "device_id": item.DeviceID,
+				"entity_type": item.EntityKind, "entity_id": item.EntityID, "value_mode": mode,
+			}
+			if item.EntityKind == "port" {
+				labels["port_id"] = item.EntityID
+				if policy, ok := policies[item.EntityID]; ok {
+					labels["side_type"] = string(policy.SideType)
+				}
+			}
+			if side != "" {
+				labels["traffic_view"] = trafficViewName(side)
+			}
+			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(item.Points)})
+		}
+	}
+	return response, nil
+}
+
+func trafficViewName(side watchdog.PortSideType) string {
+	if side == watchdog.PortSideProvider {
+		return "supplier"
+	}
+	if side == watchdog.PortSideCustomer {
+		return "customer"
+	}
+	return "raw"
+}
+
+func metricValues(points []snmpch.Point) []metricValue {
+	values := make([]metricValue, 0, len(points))
+	for _, point := range points {
+		values = append(values, metricValue{Time: point.Time, Value: point.Value})
+	}
+	return values
 }
 
 func isSNMPMetric(metric string) bool {

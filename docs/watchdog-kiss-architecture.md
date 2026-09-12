@@ -287,7 +287,7 @@ SNMP 不负责 ASN/IP/地域流向分类；Flow 单独即可回答这些问题�
 | flow control | `flow_classification_profiles`, `flow_vpn_rules`, `flow_vpn_findings`, `flow_saved_filters`, `flow_storage_policy` |
 | presentation | `saved_charts`, `chart_items`, `dashboards` |
 | billing | `parties`, `billing_accounts`, `billing_account_ports`, `billing_periods`, `billing_period_values`, `billing_adjustments`, `reconciliation_runs`, `reconciliation_issues` |
-| alerts | `notification_channels`, `quiet_hours`（投递/静音配置）；告警规则/事件/日志按 LibreNMS 结构存 ClickHouse，属后续单独子系统（见 §6.2、§11 后续项） |
+| alerts | 无旧表；告警规则/投递配置/事件/日志将按 LibreNMS 结构由后续 KISS-L 独立建立，时序事件存 ClickHouse，低频规则与投递配置按需存 MySQL（见 §6.2、§11） |
 
 所有表删除 `tenant_id`。所有人工可写对象保留 `row_version`、`created_by/updated_by`、`created_at/updated_at`；软删只用于确有恢复/审计需要的对象，不作为默认模板。
 
@@ -373,7 +373,7 @@ HTTP API 只按领域暴露：
 1. 冻结一切新增 PB 依赖，盘点认证、HTTP、collection/hook/cron/realtime、agent、telemetry、alert 和前端调用，形成“迁入目标架构 / 确认死亡并删除”的精确清单；
 2. 建立最小 MySQL v2 auth schema，完成纯 Go server、本地认证、session/CSRF 和唯一管理员初始化；
 3. 前端切换为单一 `API_URL` fetch client，只在主动登录或受控 API 返回 401 时发起登录，删除 PB SDK/collection/realtime；
-4. 只迁移仍然存活的 agent/alert 最小入口；死亡的 systems/smart_devices/collection 写链直接删除，不做历史搬迁；
+4. 只迁移仍然存活的 agent 最小入口；旧 alert/systems/smart_devices/realtime/hook/cron/collection 写链直接删除，不做历史搬迁；
 5. 从 Go/JS 依赖、源码、配置、构建、运行和数据目录中物理删除 PocketBase；按精确白名单删除 PB SQLite 和仅服务旧平台调试的数据库；
 6. 在无 PB binary、env、SQLite、端口和请求条件下，从空 MySQL 启动并完成登录/agent/健康检查，KISS-01 到此才完成；
 7. 随后才建立设备根、将 SNMP 新鲜时序接 ClickHouse、去 tenant/provider/VM，并将全局地址发布与 Flow 管理面接到 v2 schema；
@@ -428,6 +428,6 @@ v2 schema 应有独立基线目录，最终由该基线生成 `install/init.sql`
 
 **后续单独实现（本次 KISS 明确不做，但已登记归属，均无历史数据迁移）：**
 
-- **日志与告警子系统**：按 LibreNMS `eventlog`/alert 表结构，存储与查询都在 ClickHouse；MySQL 只保留 `notification_channels`/`quiet_hours` 投递/静音配置。
+- **日志与告警子系统**：按 LibreNMS `eventlog`/alert 表结构从零建立，时序事件与查询在 ClickHouse；告警规则、投递和静音等低频管理配置由 KISS-L 按需建 MySQL 表。不复用、不迁移 PB 旧表。
 - **Flow 客户/供应商口径修正**：本期只存 raw；如需，按 §5.6 在渲染/导出/账单计算时对 raw 应用 MySQL 规则算出，不物化、不回写 raw。
 - **用户/服务 API token**：如需程序化访问再加，与 OAuth/OTP/找回一起作为认证扩展后续处理（替换 session authenticator，不恢复 PB）。

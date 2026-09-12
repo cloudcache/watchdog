@@ -426,12 +426,12 @@ func parseAddressTaxonomyListFilter(w http.ResponseWriter, r *http.Request, allo
 		filter.Enabled = &value
 	}
 	var err error
-	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	filter.Limit, err = parsePageInteger(query.Get("limit"), 100, 1, 500)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 		return filter, false
 	}
-	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	filter.Offset, err = parsePageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
 		return filter, false

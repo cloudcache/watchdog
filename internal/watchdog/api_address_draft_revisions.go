@@ -61,12 +61,12 @@ func (api addressDraftRevisionAPI) list(w http.ResponseWriter, r *http.Request) 
 	}
 	filter.Desc = order == "desc"
 	var err error
-	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	filter.Limit, err = parsePageInteger(query.Get("limit"), 100, 1, 500)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 		return
 	}
-	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	filter.Offset, err = parsePageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
 		return
@@ -126,12 +126,12 @@ func (api addressDraftRevisionAPI) listChanges(w http.ResponseWriter, r *http.Re
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "order must be asc or desc", nil)
 		return
 	}
-	limit, err := parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	limit, err := parsePageInteger(query.Get("limit"), 100, 1, 500)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 		return
 	}
-	offset, err := parseAgentPageInteger(query.Get("offset"), 0, 0, AddressDraftRevisionMaxOperations)
+	offset, err := parsePageInteger(query.Get("offset"), 0, 0, AddressDraftRevisionMaxOperations)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset is outside the revision operation limit", nil)
 		return

@@ -94,12 +94,12 @@ func (api addressImportAPI) listPrefixes(w http.ResponseWriter, r *http.Request)
 	}
 	filter.Desc = order == "desc"
 	var err error
-	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 100, 1, 500)
+	filter.Limit, err = parsePageInteger(query.Get("limit"), 100, 1, 500)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 		return
 	}
-	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	filter.Offset, err = parsePageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
 		return
@@ -206,12 +206,12 @@ func (api addressImportAPI) list(w http.ResponseWriter, r *http.Request) {
 	}
 	filter.Desc = order == "desc"
 	var err error
-	filter.Limit, err = parseAgentPageInteger(query.Get("limit"), 50, 1, 500)
+	filter.Limit, err = parsePageInteger(query.Get("limit"), 50, 1, 500)
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "limit must be between 1 and 500", nil)
 		return
 	}
-	filter.Offset, err = parseAgentPageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
+	filter.Offset, err = parsePageInteger(query.Get("offset"), 0, 0, int(^uint(0)>>1))
 	if err != nil {
 		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "offset must be zero or greater", nil)
 		return

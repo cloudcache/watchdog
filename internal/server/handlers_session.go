@@ -8,8 +8,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// fail writes the platform error envelope {error:{code, message, retryable}}.
 func fail(c *gin.Context, status int, code, msg string) {
-	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": msg}})
+	failDetails(c, status, code, msg, nil)
+}
+
+// failDetails writes the platform error envelope with an optional structured details
+// map: {error:{code, message, retryable, details?}}. retryable follows the platform
+// rule — a transient condition (429 or any 5xx) may be retried verbatim, while
+// validation, permission and conflict failures need a changed request first.
+func failDetails(c *gin.Context, status int, code, msg string, details map[string]any) {
+	body := gin.H{
+		"code":      code,
+		"message":   msg,
+		"retryable": status == http.StatusTooManyRequests || status >= 500,
+	}
+	if len(details) > 0 {
+		body["details"] = details
+	}
+	c.AbortWithStatusJSON(status, gin.H{"error": body})
 }
 
 // POST /session/login

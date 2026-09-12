@@ -72,3 +72,35 @@ func TestAggregateRejectsSQLMethodAndBudget(t *testing.T) {
 		t.Fatal("oversized aggregate budget was accepted")
 	}
 }
+
+type scopedExecutor struct{ query ch.Query }
+
+func (e *scopedExecutor) Do(ctx context.Context, query ch.Query) error {
+	e.query = query
+	result := query.Result.(proto.Results)
+	result[0].Data.(*proto.ColDateTime).Append(time.Date(2026, 9, 9, 1, 0, 0, 0, time.UTC))
+	result[1].Data.(*proto.ColStr).Append("device-a")
+	result[2].Data.(*proto.ColLowCardinality[string]).Append("port")
+	result[3].Data.(*proto.ColStr).Append("port-a")
+	result[4].Data.(*proto.ColFloat64).Append(12_000)
+	return query.OnResult(ctx, proto.Block{Rows: 1})
+}
+
+func TestQueryScopesKeepsPerPortValuesForPolicyApplication(t *testing.T) {
+	executor := &scopedExecutor{}
+	store, _ := New(executor)
+	series, err := store.QueryScopes(context.Background(), AggregateRequest{
+		Scopes: []Scope{{DeviceID: "device-a", PortID: "port-a"}}, Metric: MetricIfOutBPS,
+		From: time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 9, 9, 2, 0, 0, 0, time.UTC),
+		Step: 5 * time.Minute, MaxRows: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].EntityID != "port-a" || series[0].Points[0].Value != 12_000 {
+		t.Fatalf("series=%+v", series)
+	}
+	if !strings.Contains(executor.query.Body, "GROUP BY bucket,device_id,entity_kind,entity_id") || executor.query.ExternalTable != "snmp_scope" {
+		t.Fatalf("unexpected scoped SQL: %s", executor.query.Body)
+	}
+}

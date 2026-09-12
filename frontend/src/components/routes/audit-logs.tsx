@@ -208,5 +208,7 @@ function formatAuditDetail(detail?: Record<string, unknown>) {
 	if (entries.length === 0) {
 		return ""
 	}
-	return entries.map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`).join(", ")
+	return entries
+		.map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+		.join(", ")
 }

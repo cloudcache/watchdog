@@ -1,6 +1,6 @@
 # SNMP / Gin 路由迁移审计
 
-状态：2026-09-10 工作清单。本文只审计迁移完整性，不把历史存在的功能默认为死功能。
+状态：2026-09-12；SNMP 时序兼容面已完成迁移。本文只审计迁移完整性，不把历史存在的功能默认为死功能。
 
 ## 结论
 
@@ -29,12 +29,12 @@
 | 设备/端口 overview graph schema | `/graph/devices/{id}/overview`、`/graph/ports/{id}/overview` | 本批恢复；同路径，查询改走 ClickHouse |
 | 跨设备/端口聚合图 CRUD/列表 | `/aggregate-graphs...` | 本批恢复；同路径/DTO，MySQL 只存定义和成员 |
 | 聚合图 series/data/summary | `/aggregate-graphs/{id}/...` | 本批恢复；同参数/响应，时序读取改为 ClickHouse |
-| 端口 raw/supplier/customer 修正规则 | `/network/ports/{id}/policy` | **未迁移**；必须按原路径和 DTO 迁入无租户表 |
-| provider/customer 默认规则 | `/network/traffic-policy-defaults` | **未迁移**；必须按原路径和 DTO 与端口规则同批完成 |
-| MIB module CRUD | `/snmp/mib-modules...` | **未迁移**；历史 repository 仍在，需迁入 MySQL/Gin |
-| 设备事件列表 | `/network/devices/{id}/events` | **未迁移**；当前 Gin 仅有另一条 501 占位，目标为原路径 + ClickHouse eventlog reader |
-| 设备事件 facets | `/network/devices/{id}/events/facets` | **未迁移**；按原路径与事件列表同批完成 |
-| SNMP trap HTTP ingestion | `/snmp/traps` | **未迁移**；保留原路径，UDP trap agent 与 HTTP ingestion 不得重复入库 |
+| 端口 raw/supplier/customer 修正规则 | `/network/ports/{id}/policy` | 已迁移；无租户 MySQL 定义，原 DTO；metrics/aggregate/aggregate-graph 在聚合前逐端口应用同一确定性规则 |
+| provider/customer 默认规则 | `/network/traffic-policy-defaults` | 已迁移；无端口覆盖时按 side 继承全局规则，更新留审计记录 |
+| MIB module CRUD | `/snmp/mib-modules...` | 已迁移；无租户 MySQL CRUD、原 PascalCase DTO、管理写审计 |
+| 设备事件列表 | `/network/devices/{id}/events` | 已迁移；ClickHouse `snmp_events`，服务端分页/search/sort/column filter，原 VTable envelope 响应体 |
+| 设备事件 facets | `/network/devices/{id}/events/facets` | 已迁移；severity/event_type/source 的有界 facet 查询，排除当前列过滤以支持多选 |
+| SNMP trap HTTP ingestion | `/snmp/traps` | 已迁移；原 UDP listener 不重写，Bearer/mTLS 接 Agent Registry，仅 `snmp` agent 可写；具备 `device.update` 的 session 保留诊断入口；事件只写 ClickHouse |
 
 ## 当前前端仍调用、但 Gin 未闭环的非 Flow 路由
 
@@ -70,7 +70,7 @@ Flow/Geo 由并行工作负责，不在本次 SNMP 提交中改动。
 | `/historical/preview|archive|delete` | **未迁移** | 按 ClickHouse 分区操作重做执行端，保留异步 operation job 契约 |
 | `/query`、`/query-policies...` | **未迁移** | 明确 dashboard/非 Flow 查询消费者后迁入；不能用删除 DatasetProvider 代替兼容实现 |
 | `/billing/periods/{id}/compute|void` | **路径发生变化** | 当前 Gin 使用 `calculate|close`；需要恢复旧 action 别名及旧 DTO，或先完成有版本的调用方迁移 |
-| `/metrics/vmquery` | **未迁移** | 名称虽含 VM，仍是历史 API；若有调用方，应用 ClickHouse reader 保持响应后再废弃 |
+| `/metrics/vmquery` | **已迁移兼容入口** | 原 path、`query/start/end/step` 和 matrix 响应保留；执行改为 CH typed SNMP selector。VM 已裁撤，任意 MetricsQL 不再伪装可执行，非精确 selector 明确返回 400 |
 | `/config`、`/heartbeat...` | **未迁移** | 迁入 MySQL/运行时状态；保持现有配置页调用 |
 | `/containers...`、`/systemd-services...` | **未迁移（system agent 延后）** | 保留在平台任务，不能返回伪数据或静默删 UI |
 | `/smart-devices...` | **未迁移** | 明确归入 device health 或经产品决策下线；在此前视为缺口 |
@@ -81,8 +81,4 @@ tenant ID 只是作用域参数、而功能本身仍属于目标产品，则应�
 
 ## 后续迁移顺序
 
-1. 完成本批 aggregate graph + overview：保持原路径/参数/DTO，schema、ClickHouse 查询、路由契约、真实数据库集成、提交。
-2. 端口 policy + defaults：按原路径/DTO 恢复三层修正输入，并让 metrics/aggregate/billing 共用同一规则。
-3. SNMP eventlog：trap/poll/discovery 事件统一写 ClickHouse，迁移事件 VTable/facets。
-4. MIB module：复用现有解析与 discovery 基础设施，只替换管理 repository/API。
-5. 按“当前前端仍调用”和“历史非 Flow API 全量差异”逐域迁移；每批以历史契约测试为门禁，不再零散修改前端 URL。
+本轮 SNMP 五项已经按 schema、repository、API、进程认证、单元、真实 MySQL/ClickHouse 集成与路由契约闭环。后续仅按“当前前端仍调用”和“历史非 Flow API 全量差异”逐域迁移；每批以历史契约测试为门禁，不再零散修改前端 URL。system/container agent 仍按 KISS-03B 延后，不混入 SNMP 提交。

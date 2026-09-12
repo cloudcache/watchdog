@@ -29,6 +29,13 @@ type SNMPPollRecipeRepository interface {
 	MarkSNMPRecipePollResult(context.Context, ID, time.Time, string) error
 }
 
+// SNMPPollDeviceStatusRepository is optional so the proven poll runner remains
+// compatible with read-only repositories. Runtime repositories implement it to
+// keep device health and Last Seen aligned with the same completed poll.
+type SNMPPollDeviceStatusRepository interface {
+	MarkSNMPDevicePollResult(context.Context, ID, time.Time, string) error
+}
+
 type SNMPPollDeviceRepository interface {
 	GetDevice(context.Context, ID, ID) (NetworkDevice, error)
 }
@@ -154,12 +161,14 @@ func (r SNMPPollRunner) pollDevice(ctx context.Context, tenantID, deviceID ID, r
 	if err != nil {
 		result.failed = len(recipes)
 		r.markRecipes(ctx, recipes, now, err.Error())
+		r.markDevice(ctx, deviceID, now, err.Error())
 		return result
 	}
 	pollResult, err := r.Poller.Poll(ctx, job)
 	if err != nil {
 		result.failed = len(recipes)
 		r.markRecipes(ctx, recipes, now, err.Error())
+		r.markDevice(ctx, deviceID, now, err.Error())
 		return result
 	}
 	result.samples = pollResult.SampleCount
@@ -176,7 +185,14 @@ func (r SNMPPollRunner) pollDevice(ctx context.Context, tenantID, deviceID ID, r
 		}
 		_ = r.Collector.MarkSNMPRecipePollResult(ctx, recipe.ID, pollResult.SampledAt, lastError)
 	}
+	r.markDevice(ctx, deviceID, pollResult.SampledAt, "")
 	return result
+}
+
+func (r SNMPPollRunner) markDevice(ctx context.Context, deviceID ID, polledAt time.Time, lastError string) {
+	if repository, ok := r.Collector.(SNMPPollDeviceStatusRepository); ok {
+		_ = repository.MarkSNMPDevicePollResult(ctx, deviceID, polledAt, lastError)
+	}
 }
 
 func (r SNMPPollRunner) pollJob(ctx context.Context, tenantID ID, deviceID ID, recipes []SNMPCollectionRecipe, sampledAt time.Time) (SNMPPollJob, error) {

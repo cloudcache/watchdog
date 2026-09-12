@@ -624,15 +624,7 @@ func (s *Server) requireDeviceAccess(c *gin.Context, deviceID string) bool {
 		fail(c, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return false
 	}
-	if p.can("device.viewAll") {
-		return true
-	}
-	var allowed bool
-	err := s.db.QueryRowContext(c.Request.Context(), `SELECT EXISTS(
-		SELECT 1 FROM user_device_permissions WHERE user_id=? AND device_id=?
-		UNION ALL
-		SELECT 1 FROM user_device_group_permissions udgp JOIN device_group_members dgm ON dgm.device_group_id=udgp.device_group_id WHERE udgp.user_id=? AND dgm.device_id=?
-	)`, p.UserID, deviceID, p.UserID, deviceID).Scan(&allowed)
+	allowed, err := s.principalCanAccessDevice(c.Request.Context(), p, deviceID)
 	if err != nil {
 		writeSQLError(c, err)
 		return false

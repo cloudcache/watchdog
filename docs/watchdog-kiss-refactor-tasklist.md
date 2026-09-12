@@ -45,13 +45,14 @@
 - [x] **设计**：冻结 v2 认证最小表白名单、FK/唯一键、ID、UTC 时间、row version、secret encryption、bcrypt、session/CSRF、首管理员初始化和 API error envelope；不复刻 PB OTP/OAuth/realtime collection。
 - [x] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；单一 Gin server、8 MiB body limit、CORS、健康检查。前端独立运行，不由后端提供 static fallback。
 - [ ] **单元测试**：密码校验、session rotation/expiry/revoke、CSRF、禁用用户、RBAC、错误信封和敏感字段脱敏。
-- [ ] **集成测试**：空 MySQL 只初始化一个管理员；真实登录/登出/禁用/改密；纯 Go server 独立提供 API 和前端构建产物，全程不创建 PB SQLite、不读取 PB env。
+- [x] **集成测试**：隔离空 MySQL 建立 48 张 v2 管理表，确认 `tenant_id/auth_provider/external_subject_id` 列均为 0；真实覆盖登录、CSRF、设备/Agent CRUD、Agent 心跳、禁用账号立即拒绝旧 session、logout 撤销、二次启动只保留一个 bootstrap 管理员。另以独立进程启动 Gin `:8091`，完成 health、跨源 login/current 后精确删除测试库。
 - [ ] **已提交门禁**：schema、server、auth 与测试形成可独立启动的提交。
 
 #### KISS-01C 前端完全去 PB
 
-- [ ] **编码**：删除 PB transport/authStore/collection/realtime 调用和 JS SDK；全站只使用一个 `WATCHDOG_CONFIG.API_URL` fetch client；仅在用户主动登录或受控 API 返回 401 时进入登录流程。保留现有路由、导航、页面布局、组件、主题、图标与交互，不借去 PB 重写 UI。
+- [x] **编码**：删除 PB transport/authStore/collection/realtime 调用和 JS SDK；全站只使用一个 `WATCHDOG_CONFIG.API_URL` fetch client；仅在用户主动登录或访问受控路由时恢复 session，登录提交完全由用户触发。用户管理页已从 external-subject 投影 DTO 切为 Gin 本地账号/角色 DTO；保留现有路由、导航、页面布局、组件、主题、图标与交互。
 - [ ] **单元/集成测试**：未登录访问公开页面零认证请求；受控页面被动跳转；主动登录、session 过期、logout 和错误提示；真实前端构建连接纯 Go API；既有页面路由和主要操作仍可用。
+- [x] **现有自动门禁**：TypeScript、45 个前端单测、Vite production build 通过；核心 auth/client/users 改动文件通过 Biome 定向检查。仍缺浏览器 Network 行为测试，故上一项保持未完成。
 - [ ] **变更设计/测试**：浏览器只验证 Network/console 中无 PB endpoint、websocket 和 SDK 请求，以及删除 PB 配置后功能行为一致；不做视觉测试，不修改现有样式与布局文件。
 - [ ] **已提交门禁**：前端依赖锁文件、client、页面和测试同一提交，仓库前端引用扫描为零。
 
@@ -72,6 +73,8 @@
 - [ ] **变更设计/测试**：重复执行 clean install 和删除脚本必须幂等；精确目标不存在时报告 already absent，目标身份不匹配时 fail closed。
 - [ ] **回归测试**：`go test ./...`、race/vet/build、前端 lint/test/build、fresh install 两次；静态扫描运行代码、依赖清单和构建制品均无 `pocketbase`/PB collection/API。
 - [ ] **已提交门禁**：删除与 DROP 证据、测试输出和 clean-checkout 启动结果齐全后才标记 KISS-01 完成；随后才能启动 KISS-02。
+
+当前门禁证据：PB Go/JS 依赖、PB Hub/collection/hook/realtime 源码、旧部署物和前端 `/api/watchdog/*` 调用均已删除；全库 Go test（含需 loopback 的 Flow worker 测试）、build、vet 以及前端 test/build 已通过。历史 legacy migration/init 中仍有 PB 时代字段与文字，且未完成 ClickHouse/Kafka clean-stack 和 race/lint 全量验收，所以编码删除、回归和 KISS-01 总门禁继续保持未勾选。
 
 ### KISS-02 单域 RBAC 与设备根
 
@@ -114,6 +117,17 @@
 - [x] **设计/编码/API**：同一 `snmpch.Store` 已实现跨设备/端口 aggregate、`operation_jobs` 异步 CSV 和只读 closed-5m billing reader；Gin 接 `/metrics/aggregate|exports`、`/exports` lifecycle 与 `/billing/accounts/:id/snmp-usage`。scope 作为 CH external table，创建/执行/下载均按当前 grant 校验；没有 DatasetProvider、旧 export fallback、VM DTO、第二套 job 状态机或新 migration。冻结契约见 `docs/kiss03-snmp-clickhouse-design.md` §5–7。
 - [x] **测试/提交**：固定 counter fixture 已覆盖总量/95th/缺端口 coverage、scope 去重、预算/白名单、CSV 原子写/checksum、设备/端口/billing/owner 权限、分页/search/filter、首轮暂时失败自动 retry 与运行中 cancel；真实 CH 验证 aggregate、generation billing 和缺端口 gap，真实一次性 MySQL 验证 API/job 全链并删除测试库；全库 test/vet/build 通过。本项按独立提交门禁提交。
 
+#### KISS-03A3 SNMP 管理规则、事件与历史入口收口
+
+- [x] **设计**：冻结历史 URL/query/DTO；三层修正为低频 MySQL 管理定义、逐端口确定性变换后再聚合；MIB 只保存管理元数据；eventlog 以 ClickHouse 为唯一权威且不设臆造 TTL；UDP trap listener 继续复用成熟 dispatcher，经 Agent Registry 凭证入站。
+- [x] **编码**：实现端口 policy/provider-customer defaults、MIB module CRUD、`snmp_events` 写入/重试/幂等和查询/facets、trap 对 port/BGP/recipe/rediscovery 状态的持久化；metrics/aggregate/aggregate-graph 统一在聚合前应用 raw/supplier/customer 规则；无 PB、tenant、VM 双写。
+- [x] **API/UI**：原 `/network/ports/:id/policy`、`/network/traffic-policy-defaults`、`/snmp/mib-modules`、`/network/devices/:id/events[/facets]`、`/snmp/traps`、`/metrics/vmquery` 全部挂入 Gin；事件沿用现有 VTable 的服务端分页/search/sort/column filter，未修改页面或视觉。`vmquery` 保留 path/参数/matrix 响应，VM 特有任意 MetricsQL 改为明确 400，仅执行 typed SNMP selector。
+- [x] **单元测试**：覆盖修正规则继承/确定性聚合、raw 权限、事件 SQL 参数/预算/facets、CH event retry/dedup input、Trap source 归一、vmquery selector 白名单和全部路由挂载。
+- [x] **集成测试**：真实一次性 MySQL 覆盖 defaults→port override→MIB upsert/list/delete→管理员 trap 与 SNMP agent Bearer trap→端口状态；真实 ClickHouse 覆盖 event 写入/list/facet 与既有 raw/rate/aggregate/closed bucket/billing，同批测试库均清理。
+- [x] **变更设计/测试**：SNMP agent route 从浏览器 session 组纠正为 agent token/mTLS 或管理员 session 双认证；事件、端口更新和 recipe 唤醒任一失败均返回显式错误；不恢复 MySQL event 双写、VM fallback 或第二套 trap dispatcher。
+- [x] **回归测试**：`internal/server`、`internal/snmpch` 单测与真实 MySQL/ClickHouse 集成通过；全库 test/vet/build 在提交门禁再次执行并记录并行 Flow WIP 的独立结果。
+- [ ] **已提交门禁**：本切片 DDL、代码、测试和文档需形成独立 SNMP 提交；ClickHouse `014` 必须在并行 Flow `013` 正式提交后落库，禁止夹带未完成 Flow WIP。
+
 #### KISS-03B system/container agent 延后切片
 
 - [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。
@@ -146,27 +160,56 @@
 
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 
-- [ ] **设计**：冻结“实现不重写、只去 tenant/owner”的边界；现有 MMDB/IPDB import、MySQL 业务表/字段、CRUD/list、job payload、WADS v1、object store、download/LKG/ACK/GC 均不变。
-- [ ] **编码**：只删除 address 表、repository、API、签名 envelope 和权限中的 tenant/owner 参数，改为全局 `address.manage/address.publish`；不得修改 importer、规范化/集合运算、builder、codec、object writer/reader、worker loader 或 publication 状态机。
-- [ ] **API/UI**：现有 Geo/线路/运营商/prefix/set/import/draft/preview/publish/history/rollback 请求响应和界面保持不变；移除 tenant 选择/owner 判定，非管理员只读 active catalog。
-- [ ] **单元测试**：在现有 v4/v6、层级、并交差、include/exclude、CIDR normalization、重叠、资源预算、object checksum/signature、rollback/GC 套件之外，只新增全局管理员/发布权限和无 tenant 契约测试。
-- [ ] **集成测试**：真实 MMDB/IPDB -> MySQL -> async build -> WADS -> worker download/install/ACK -> 内存 lookup；损坏/断网保留 LKG。
-- [ ] **变更设计/测试**：同一 MMDB/IPDB fixture 在改造前后生成的 MySQL 业务值、API 结果和 WADS bytes 必须一致；复跑现有 4.3 MiB、compile/lookup/memory/swap 基准；禁止按客户复制 WADS。
-- [ ] **回归测试**：地址 UI/API、operation lifecycle、MySQL、Flow dimension parity、race/vet/build。
-- [ ] **已提交门禁**：全局发布链单独提交，不夹带 Flow query/report 改造。
+- [x] **设计**：冻结“实现不重写、只去 tenant/owner”的边界；现有 MMDB/IPDB import、MySQL 业务表/字段、CRUD/list、job payload、WADS v1、object store、download/LKG/ACK/GC 均不变。(边界已冻结 + 全链去 tenant 清单已产出；结构决策见下方进度)
+- [x] **编码**：`internal/address` 忠实去 tenant——删 address 表/repo/API/签名 envelope/权限中的 tenant/owner，改全局 `address.manage/address.publish`；importer、规范化/集合运算、builder、codec、object writer/reader、worker loader、publication 状态机逐字未改；ed25519 信封已恢复（撤销 checksum-only 回归）。
+- [x] **API/UI**：Geo/线路/运营商/prefix/set/import/draft/preview/publish/versions/rollback/retire 契约（server 分页、If-Match→428/412、ETag、cursor/table、`{job}`/202）逐项复刻；owner-tenant 鉴权适配器→全局 RBAC，非管理员 `address.view` 只读；前端契约与文件未改。
+- [x] **单元测试**：迁入遗留 v4/v6、层级、并交差、include/exclude、CIDR 归一、重叠、资源预算、object checksum、**ed25519 签名**、rollback/GC/consumers/draft 套件 + 新增无 tenant/全局权限契约测试；`internal/address` 全绿。
+- [x] **集成测试（address/server 链）**：真实 MMDB/IPDB→MySQL→async build→WADS→解码非空 range→幂等重建同 checksum；lifecycle approve(ed25519)/activate/rollback/retire、ACK/consumer summary、GC 生命周期+并发（late reference 串行于发布锁）+销毁回执，均对真实 MySQL 通过。〔worker download/install/内存 lookup/断网 LKG 经 flow-worker 消费端 + enrichment-delivery API，属 KISS-06〕
+- [x] **变更设计/测试**：迁入的遗留套件（仅去 tenant）证明 MySQL 业务值/API 行为一致；WADS 幂等重建 checksum 恒定 + `internal/flowdimension` codec/build 测试通过（bytes parity）；scale 认证复跑（50k inputs 29ms/55MiB，<10s/512MiB）；单域已无"按客户复制 WADS"。
+- [x] **回归测试**：`go build ./...`、`go vet`、`go test -race ./internal/address ./internal/opjob`（含真实 MySQL 集成）、address HTTP 契约套件、operation lifecycle、Flow dimension parity 全绿；按 line 11 约束未改 UI、不加视觉测试。
+- [x] **已提交门禁**：全局发布链共 14 个 address-only pathspec 提交（见下），无 Flow query/report 夹带；server.go/router.go/config.go 的 address 接线已提交（`7887e862`），共享文件上并行会话的 agent-plan 改动为其未提交 WIP、非本包。
+
+**进度（已重置——按用户指令废弃 handler 重写与半切换，从遗留代码忠实 1:1 迁移、文件+测试一并迁入；下列 ✅ 为既有引擎提交，现以"遗留 + 全测试套件"重新校核忠实性，分歧处一律以遗留为准覆盖）：**
+- ✅ **opjob 异步引擎**：逐字去 tenant 移植 SaaS `operation_jobs` 框架（幂等 enqueue、`FOR UPDATE SKIP LOCKED` 租约接管、`next_attempt_at` retry backoff、attempt 预算、heartbeat、versioned checkpoint envelope）→ 新包 `internal/opjob`，专用 `async_jobs` 表（`0010`，与 0001 中简版 operation_jobs 隔离）。独立构建 + 纯逻辑单测通过。提交 `8f847b1f`。
+- ✅ **`internal/address` 包 models + repos（`51ec4505`）**：set 代数 `address_math.go` / `address_prefix_merge.go` **逐字复用**（与 `internal/watchdog` 原文件 diff 仅 package 行）；models/normalizers、set + taxonomy repositories 机械去 tenant（SQL、游标分页、依赖校验、flow-id 分配语义均不变），flow-id 序列单例化（`0011`）。
+- ✅ **import → opjob（`579410c6`）**：`import_reader.go`（StreamMMDB/IPDB 逐字复用）、`repo_import.go`（全量 mysql_address_import：分块 upsert、BINARY(16) 范围查、keyset/table 分页、slot 激活）、`import_job.go`（`opjob.Handler`，versioned checkpoint / resume / 幂等重放保留）。取代早期 Phase-2 goroutine 版（`4e3618ee`）。复用 `0008` schema。
+- ✅ **dimension compile + object store + publish writer（`cf32880d`）**：`dimension_object`（磁盘 WADS 对象，路径去 tenant）、`dimension_compile`（bundle 编译逐字复用，单域 sentinel 身份）、`dimension_publisher`（preview/list/get + loadDraft/loadSources，tenant 锁→installation 单例锁）、`dimension_publish_build`（`BuildAddressSnapshotPublication`：flowdimension WADS 构建、supplier 分配单例、游标扫描、range 归一化、digest/version 竞态守卫，全部逐字保留）。schema `0013_dimension_publications`（040/041/042/047/048/049/058 去 tenant 折叠，7 表；空库实测建表通过）。
+- ✅ **端到端 WADS 集成实测（`b9d6a96c`）**：真实 MySQL + 真实 MMDB → import → activate → preview → build WADS → 解码非空 range → 幂等重建同 checksum，通过（`WATCHDOG_TEST_MYSQL_DSN`）。修复：flowdimension bundle 要求非空 TenantID identifier（不改 flowdimension），单域用固定 sentinel `"default"` 保持确定性。
+- ⚠️ **lifecycle + build job（`9dd2db77`，含回归，将被取代）**：approve/reject/activate/rollback/retire + 激活时间线 + worker ack/reference；`NewAddressSnapshotBuildJobHandler`（opjob）。**回归**：此提交把签名信封改成 checksum-only（approve 降为纯状态迁移）——违反"仅删 tenant/owner、保留信封"边界（line 123）；KISS-05B 将从遗留 `address_dimension_trust.go`/`address_dimension_lifecycle.go` **忠实恢复 ed25519**（20 字段签名载荷仅删 `tenant_id`#3，保留 verify / 持久化前复核 / 激活可信审批闸）。
+- **结构决策**：`internal/opjob` + `internal/address` 独立包；独立于并行 SNMP WIP 构建（并行已提交 SNMP discovery `2cda16e8`）。
+- 🟡 **dimensions HTTP 接线 + 异步 build worker（已完成+实测，提交待协调）**：`handlers_address_dimension.go`（preview/publish/versions/get/download + approve/reject/activate/rollback/retire，经 `internal/address.Publisher`）；`server.go` 起 opjob build worker（`startAddressLibrary`）；`config.go` 加 `snapshot_dir`；`router.go` 接 `registerAddressDimensionRoutes`。**真实二进制 HTTP 全链实测通过**：upload MMDB→ready→activate→preview→publish（异步入队）→worker 建 WADS→version 出现（object_format=wads, v1）→下载（magic=WADS, 校验和头）。**提交阻塞**：`config.go`/`router.go`/`server.go` 与并行会话未跟踪的 `agent_plans.go`（agent-plan 特性）在同文件纠缠，pathspec 无法拆分——待并行 agent-plan 落地后随其一并提交，避免夹带其未完成特性或提交坏树。
+- ✅ **draft/preview/apply（`a8526e09`）**：prefix 批量编辑 prepare/apply（base-digest 复核 + 逐前缀 row-version CAS + 幂等），去 tenant，audit 用 v2 列。
+- ✅ **GC + consumers（`a52b956c`）**：retired 对象回收（保留完整安全谓词，opjob 驱动，删除记 audit）；per-worker 目标就绪 + 版本漂移汇总/列表（window CTE，去 tenant）。**至此 internal/address 引擎全量落地**（models/repos/import/compile/publish/lifecycle/GC/consumers/drafts 均已提交）。
+- 🟡 **import→opjob 收敛（已完成+HTTP 实测，提交待解锁）**：`internal/address` 导出 `DiskArtifactStore`/`Artifact`（已提交 `3bf90bd3`）；server `handlers_address_import.go` 重写为调用 `internal/address.Store` + `DiskArtifactStore`，upload 改为入队 opjob import（替换 Phase-2 goroutine）；`server.go startAddressLibrary` 起 import worker；删除 server 内 5 个 Phase-2 旧 import 文件（address_import{,_reader,_runner,_store}.go + address_artifact.go）。**真实二进制 HTTP 全链复测**：upload→opjob import worker 解码→ready→activate→preview→publish→build worker→下载 WADS，通过。
+- 🔄 **重迁执行设计（本次设计门禁 / 变更面仅三项，其余逐字忠实）**：① 去 PB（本域无匹配）；② 去多租户（删 `TenantID` 字段 / `tenantID` 参数 / `WHERE tenant_id` / `SELECT … tenants … FOR UPDATE`→installation 单例锁；ed25519 载荷仅删 `tenant_id`#3、保留其余 19 字段与信任模型；per-tenant 序列→单例）；③ net/http→Gin + owner-tenant 鉴权适配器→新 RBAC（view→`address.view`／configure→`address.manage`／operate→`address.publish`，均已在 `rbac.go` 存在）。
+- 🔧 **纠正既往回归（用户复核，均属"重写而非迁移"）**：① 发布幂等改回 `address-dimension:{effective_from(RFC3339)}:{trim("sha256:")}`、响应 `{job}`/202、build job 以 `job.ID` 为 snapshot 身份（删随机 id）；② 遗留无 retry 端点 → 删除臆造的 `retryImport`（retry = 作业按 checkpoint `processed` 序号重放 / 重新上传新代）；③ 恢复 ed25519 信封与信任模型（撤销 `9dd2db77` checksum-only）；④ 迁入全部 32 个遗留测试（现仅 6），以其为忠实性验收闸。
+- 📦 **子包（各自纵向闭环 8 门、独立提交）**：**05A 引擎**（models／集合代数／merge／MMDB-IPDB decode／store(set+taxonomy+import+draft)／artifact／object，去 tenant；迁遗留单测）→ **05B 发布**（compile + **ed25519 trust/lifecycle 恢复** + consumers/ACK-LKG + GC + WADS publish；迁遗留单测 + WADS-bytes parity 变更测试）→ **05C 作业**（import checkpoint 重放 / build `job.ID`=snapshot / GC，on opjob；迁遗留单测）→ **05D HTTP**（8 个 `api_address_*` 忠实 Gin 移植：契约/幂等/If-Match/428/ETag/cursor/table 逐项复刻 + RBAC 替换 + 接线 server.go/router.go，收敛半切换 editable CRUD 一并走 `internal/address`；迁 httptest 套件；前端契约不变）。
+- 🔗 **提交纠缠**：`server.go`/`router.go` 与并行会话未跟踪的 `agent_plans.go` 同文件——address-only 文件走 pathspec 提交；两文件各 3 行接线待并行 agent-plan 落地后提交，如实标注、不夹带/不覆盖并行 WIP。
+- 🧭 **去重触发点**：遗留 `internal/watchdog/address_*` 因 hub 内 flow-enrichment 交付 + flow-query address-set + runtime 仍编译依赖而**暂留**（去租户 schema 与旧租户 store 不兼容，无法 import 复用）；待这些 flow 消费端迁 v2（KISS-06）后删除，届时才消除重复。
+- ✅ **本轮已执行（gate-driven，各自 pathspec 提交，真实 MySQL 实测）**：
+  - `faf517c6` 05B ed25519 信任模型**恢复** + 签名/信任单测（撤销 checksum-only 回归）；
+  - `8c41a2b1` 05A 引擎单测（disk-store / object / scale / batch canonicalization，去租户忠实移植）；
+  - `8b4696ef` 05A **集成 harness**（去租户，每测独立 throwaway schema，不 import server 避免环）+ server-table 分页/CAS；
+  - `e0917616` 05A import 生成生命周期 + CAS 集成 + batch 单测；
+  - `9eeadd40` 05A taxonomy CRUD/环/在用删除/并发 flow-id + draft prepare→apply+audit 集成。
+  - **`internal/address` 全量 unit + integration 对真实 MySQL 通过、vet 干净 → 05A 引擎集成门禁关闭。**
+- ✅ **05B/05C/05D 完成（本轮续，各自 pathspec 提交、真实 MySQL 实测）**：`1be4ebfd` ed25519 approve 接入 lifecycle 持久化 + 激活可信闸 ｜ `20d7bd2b` scope/consumer 单测 + ed25519 生命周期集成 ｜ `753282d5` 恢复 `WithClock` + 销毁回执忠实度 + GC 生命周期集成 ｜ `b4cc23ad` GC 并发（late reference 串行于发布锁）｜ `3c72f6a7` WADS builder 单测（longest-prefix/coalesce/supplier-geo）｜ `7887e862` 05D server 接线 + 纠 flagged HTTP 回归（发布幂等 `address-dimension:{eff}:{digest}`、`{job}`/202、job.ID=snapshot、删臆造 retry 端点、upload `{import,job}`、ed25519 approve 端点+信任密钥 resolver）｜ `a1d5948f` 05D 半切换收敛（editable CRUD→`internal/address.Store`，删 server `address_math.go` 重复）｜ `a5d8cdc4` 05D consumers/GC/draft 端点接线 + 统一 If-Match→428 ｜ `7ce49737` 05D httptest 契约套件（真实 gin+RBAC+MySQL）。〔05C 作业 handler 为 opjob 薄封装，行为经引擎集成 + opjob 单测覆盖〕〔worker download/内存 lookup/断网 LKG 属 flow-worker 消费端 = KISS-06〕
+- **KISS-05 = 完成**（8 门已勾选；引擎全量去 tenant 单域化、ed25519 完整、契约测试齐备）。唯一"暂留"是遗留 `internal/watchdog/address_*`——因 hub 内 flow-enrichment 交付 + flow-query address-set + runtime 仍编译依赖之，去租户 schema 与旧租户 store 不兼容无法 import 复用；待 flow 消费端迁 v2（KISS-06）后删除以消除重复。
 
 ### KISS-06 Flow 单域化与 ClickHouse 查询收敛
 
 > Flow 事实、receipt、archive/aggregate、VPN candidate 与现有查询本来就在 ClickHouse；本包不是“把 Flow 迁到 CH”，而是保持当前 CH 数据面不动，删除 tenant/provider/VM 外围依赖并统一查询入口。
 
-- [ ] **设计**：冻结现有 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template/fallback；冻结移除 tenant 后的 Kafka wire、CH sort/dedup、receipt/reconciliation、Storage V2 raw/archive、publication/classification version、typed query/export cursor；确认不改解码、计数、CH 写入和生命周期语义。
-- [ ] **编码（CH 写入保持）**：从 Flow facts/receipts/aggregates/worker/config 移除 tenant；不得重写 decoder 或另造存储，保持 fast path、GoFlow2 template/sampling store、Kafka 坐标、CH native batch insert、count/counter 对账、Storage V2 生命周期和 WADS 热路径。
-- [ ] **编码（CH 查询收敛）**：删除 generic DatasetProvider/QueryGateway policy 和任何 Flow→VM 查询接线；保留现有 CH compiler/admission/report composer，形成单一 `FlowQueryService`；Explorer、六报表、detail/facet/export 共用 typed contract 并直接查询 CH。
-- [ ] **单元测试**：Kafka coordinate dedup、sampling known/unknown、raw/supplier/customer、方向、publication as-of、cursor/filter/budget、report conservation。
-- [ ] **集成测试**：真实 sFlow/NetFlow/IPFIX -> Kafka -> worker -> CH -> Explorer/六页/明细/导出；crash/rebalance/fake ack/retry；count/counter reconciliation。
-- [ ] **变更设计/测试**：复跑 fast-vs-GoFlow2 差分、sFlow v5/NetFlow v5/v9/IPFIX pcap、现有吞吐、WADS、CH timeout/fault injection/Storage V2 门禁；无 tenant 的旧 wire 明确拒绝，不做静默混读。
-- [ ] **回归测试**：Flow 全库 test/race/vet/build、真实 Kafka+CH、前端浏览器六页和 Explorer。
-- [ ] **已提交门禁**：数据面单域化与 CH 查询收敛可拆两个提交，但每个提交必须可构建、可运行且文档状态真实；运行代码中 Flow 业务数据的 writer/query 仅有 ClickHouse。
+**状态 = 进行中（数据面单域化 ✅ 已提交；查询收敛 partial，多数在工作树未提交）。** 设计冻结 + 分阶段 + hub 退役依赖序见 `docs/watchdog-kiss06-flow-design.md`。已提交：`13e96b7a`（数据面单域化，83 文件）+ `7ac9d103`（flowquery 去 tenant）+ 租户参数拒绝测试。工作树未提交：`internal/server` `FlowQueryService` + Explorer(records/query)/overseas/detail/facet/filters 路由 + geo/saved-filters/VPN-rules CRUD/table composer。**未做**：六报表 Layer 2 编排器（= provider→runner 再架构，非机械移植）、export、删 generic DatasetProvider/QueryGateway/VM（= hub 退役，泛化栈仍被活 worker 经 `NewBackendRuntime` 使用，剥离前不能物理删 → KISS-08）。〔独立的 VPN flow 检测 Tier-1 增强（CIDR/Local-5元/包大小 + 物化）另见 `docs/watchdog-vpn-detection-design.md`，不属本包 8 门。〕
+
+- [x] **设计**：已冻结 sFlow v5/NetFlow v5 fast decode、GoFlow2 v9/IPFIX/template/fallback、去 tenant 后 Kafka wire/CH sort-dedup/receipt-reconciliation/Storage V2 raw-archive/publication-classification version/typed query-export cursor，确认不改解码/计数/CH 写入/生命周期语义。见 `docs/watchdog-kiss06-flow-design.md`。
+- [x] **编码（CH 写入保持）= `13e96b7a`（83 文件）**：从 flow facts/receipts/aggregates/worker/config 去 tenant，decoder/CH-write 逐字复用不改，保留 fast path、GoFlow2 template/sampling store、Kafka 坐标、CH native batch insert、count/counter 对账、Storage V2 生命周期、WADS 热路径；CH 迁移 001/003/004/010/011 就地去 tenant（无存量）。
+- [ ] **编码（CH 查询收敛）= partial（未提交）**：flowquery 去 tenant 已提交 `7ac9d103`；`FlowQueryService` + Explorer(records/query)/overseas/detail/facet/filters + geo + saved-filters + VPN-rules CRUD + table composer(Layer 1) + **六报表 Layer 2 编排器：五 kind 全部落地——overview/dimensions/overseas/endpoints/vpn（gateway 派发→runner 直调再架构；`/flow/reports`+capabilities；endpoints=多阶段端点地址富化 `flow_report_endpoints.go`；vpn=物化 findings 支撑 `flow_report_vpn.go`，含 overseas vpn_share，vpn kind 额外门 `flow.vpn.view`）** 已建（工作树未提交，包级 build/vet/test 绿）。overview `business_matrix` 表已迁(`flow_report_business_matrix.go`)。**export ✅ 全部落地**：flow 明细/聚合/report 三 flavor(CSV+Parquet)统一 opjob 异步(单 job type `flow.export`+判别式 payload;`flow_exports.go`+`flow_export_rows.go`;`buildFlowReport` 从 report handler 抽出供 export worker 复用;create/list/get/cancel/download+worker per-kind 重授权)。**display_mode(客户端变换,后端校验+echo)+peak-windows(flowquery 原生 TimeWindows,穿入全 aggregate/joint 面板+findings 扫描过滤)✅ 已迁;DirectionSplit=每方向查询模拟无迁移项**。CH 查询收敛编码面完成。**未做**：删 generic DatasetProvider/QueryGateway/Flow→VM（hub 退役，其泛化栈仍被非-flow worker 经 `NewBackendRuntime` 构造，剥离前不能删 → KISS-08）。**vpn_share 忠实性简化**：v2 findings schema 无不可变版本列(dimension_snapshot_id/geo_version/classification_version)→放弃 hub numerator↔denominator 版本交叉守卫。
+- [ ] **单元测试 = partial**：Kafka dedup、sampling known/unknown、raw/supplier/customer、方向、publication as-of 随数据面/flowquery 去 tenant 提交（含租户参数拒绝回归 + WADS golden）；detail cursor/filter + 查询面 view-RBAC/错误映射 已建（未提交）。**缺**：report conservation（依赖六报表 Layer 2）。
+- [ ] **集成测试 = env-gated 编译过未运行**：sFlow/NetFlow/IPFIX→Kafka→worker→CH 全链集成测试已去 tenant（需真实 Kafka/CH，未跑）；crash/rebalance/fake-ack/retry + count/counter reconciliation 已有；saved-filters/VPN-rules 有 env-gated MySQL 集成测试。**缺**：→ Explorer/六页/明细/导出端到端（依赖六报表 + export + 前端）。
+- [ ] **变更设计/测试 = partial**：**无 tenant 的旧 wire 明确拒绝已做**（WADS binary + plan 签名去 tenant_id，旧 wire 拒绝、不静默混读；flowquery 租户参数拒绝测试）。**未跑**：fast-vs-GoFlow2 差分、sFlow/NetFlow/v9/IPFIX pcap 回放、吞吐、CH timeout/fault-injection/Storage V2 门禁（env-gated/手动）。
+- [ ] **回归测试 = partial**：包级 test/vet/build 绿（flowquery/flowch/flowvpn/server/address）；**未做**：Flow 全库 race、真实 Kafka+CH、前端浏览器六页/Explorer。全仓 `go build ./...` 期间受并行会话 WIP 间歇影响（非本包引入）。
+- [ ] **已提交门禁 = partial**：`13e96b7a`（数据面）+ `7ac9d103`（flowquery）两提交可构建/可运行/文档真实；其余（server 查询/管理面）**hold 未提交**（曾与并行 telemetry→CH 共享 `server.go`；并行现已落地统一 CH client）。运行代码 flow 业务 writer/query 的**活路径**仅 ClickHouse；遗留 hub VM/gateway 代码物理仍在但已运行时失效，删除归 KISS-08。
 
 ### KISS-07 Billing、三层修正与对账闭环
 

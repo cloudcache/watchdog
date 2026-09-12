@@ -89,6 +89,33 @@ discovery:
 	}
 }
 
+func TestParseLibrenmsDefinitionsPreservesActiveProbeConditions(t *testing.T) {
+	dir := t.TempDir()
+	defsDir := filepath.Join(dir, "resources", "definitions", "os_detection")
+	if err := os.MkdirAll(defsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlContent := `os: supermicro-bmc
+discovery:
+    - sysObjectID: .1.3.6.1.4.1.
+      snmpget:
+        oid: ATEN-IPMI-MIB::bmcMajorVesion.0
+        op: '!='
+        value: false
+`
+	if err := os.WriteFile(filepath.Join(defsDir, "supermicro-bmc.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ParseLibrenmsDefinitions(dir, "test-v1")
+	if err != nil {
+		t.Fatalf("ParseLibrenmsDefinitions error = %v", err)
+	}
+	rules := snmpOSDetectionRules(result.OSDefinitions[0].Definition)
+	if len(rules) != 1 || rules[0]["snmpget"] == nil {
+		t.Fatalf("active probe condition was discarded: %#v", rules)
+	}
+}
+
 func TestParseLibrenmsDefinitionsReportsInvalidDetectionFile(t *testing.T) {
 	dir := t.TempDir()
 	defsDir := filepath.Join(dir, "resources", "definitions", "os_detection")

@@ -100,11 +100,11 @@ func TestMySQLDeviceDeletePreviewJobAndReceipt(t *testing.T) {
 	waitForOperationJob(t, store, tenant, accepted.JobID, OperationJobStatusSucceeded)
 
 	for query, want := range map[string]int{
-		"SELECT COUNT(*) FROM network_devices WHERE id = 'device_devdel_01'":   0,
+		"SELECT COUNT(*) FROM network_devices WHERE id = 'device_devdel_01'":      0,
 		"SELECT COUNT(*) FROM network_ports WHERE device_id = 'device_devdel_01'": 0,
 		"SELECT COUNT(*) FROM bgp_sessions WHERE device_id = 'device_devdel_01'":  0,
 		"SELECT COUNT(*) FROM aggregate_graphs WHERE id = 'aggr_dd_1'":            1,
-		"SELECT COUNT(*) FROM targets WHERE id = 'target_devdel_01'":             1,
+		"SELECT COUNT(*) FROM targets WHERE id = 'target_devdel_01'":              1,
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
 
@@ -745,17 +746,18 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 	hasTotal := false
 	for _, item := range items {
 		for _, group := range groups {
-			result, err := s.snmpMetrics.Aggregate(c.Request.Context(), snmpch.AggregateRequest{
+			series, err := s.snmpMetrics.QueryScopes(c.Request.Context(), snmpch.AggregateRequest{
 				Scopes: group.Scopes, Metric: item.Metric, Method: graph.Aggregation, From: from, To: to, Step: step, MaxRows: maxRows,
 			})
 			if err != nil {
 				return metricRangeResponse{}, nil, err
 			}
-			values := make([]metricValue, 0, len(result.Points))
-			for _, point := range result.Points {
-				values = append(values, metricValue{Time: point.Time, Value: point.Value})
-				combined[point.Time] += point.Value
-				include = true
+			policies := map[string]watchdog.PortPolicy{}
+			if item.Metric == snmpch.MetricIfInBPS || item.Metric == snmpch.MetricIfOutBPS {
+				policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
+				if err != nil {
+					return metricRangeResponse{}, nil, err
+				}
 			}
 			label := item.Label
 			if label == "" {
@@ -768,6 +770,15 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 				label += " · " + group.SideType
 			}
 			for _, mode := range modes {
+				view := correctedSNMPSeries(series, policies, mode == "corrected" && (item.Metric == snmpch.MetricIfInBPS || item.Metric == snmpch.MetricIfOutBPS))
+				points := aggregateSNMPSeries(view, graph.Aggregation)
+				values := metricValues(points)
+				if mode == "corrected" {
+					for _, point := range points {
+						combined[point.Time] += point.Value
+					}
+				}
+				include = include || len(points) > 0
 				labels := map[string]string{
 					"__name__": item.Metric, "item_id": item.ID, "label": label,
 					"direction": item.Direction, "value_mode": mode,
@@ -782,7 +793,7 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 					if totalSeries[key] == nil {
 						totalSeries[key] = map[time.Time]float64{}
 					}
-					for _, point := range result.Points {
+					for _, point := range points {
 						totalSeries[key][point.Time] += point.Value
 					}
 				}
@@ -851,24 +862,13 @@ func (s *Server) aggregateGraphScopeGroups(c *gin.Context, scopes []snmpch.Scope
 	if len(portIDs) == 0 {
 		return []aggregateGraphScopeGroup{{SideType: "unknown", Scopes: scopes}}, nil
 	}
-	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT id,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata_json,'$.side_type')),'') FROM ports WHERE id IN (`+placeholders(len(portIDs))+`)`, stringsToAny(portIDs)...)
+	policies, err := s.readPortPoliciesContext(c.Request.Context(), portIDs)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	sideByPort := make(map[string]string, len(portIDs))
-	for rows.Next() {
-		var portID, sideType string
-		if err := rows.Scan(&portID, &sideType); err != nil {
-			return nil, err
-		}
-		if sideType != "provider" && sideType != "customer" {
-			sideType = "customer"
-		}
-		sideByPort[portID] = sideType
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for portID, policy := range policies {
+		sideByPort[portID] = string(policy.SideType)
 	}
 	groups := map[string][]snmpch.Scope{}
 	for _, scope := range scopes {

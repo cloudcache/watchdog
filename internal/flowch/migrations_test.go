@@ -17,7 +17,7 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 12 || migrations[0].Name != "001_flow_schema.sql" || migrations[10].Name != "011_flow_storage_v2.sql" || migrations[11].Name != "012_snmp_telemetry.sql" {
+	if len(migrations) != 14 || migrations[0].Name != "001_flow_schema.sql" || migrations[11].Name != "012_snmp_telemetry.sql" || migrations[12].Name != "013_flow_vpn_candidate_features.sql" || migrations[13].Name != "014_snmp_events.sql" {
 		t.Fatalf("migrations=%+v", migrations)
 	}
 	for _, migration := range migrations {

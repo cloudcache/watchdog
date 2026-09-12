@@ -60,12 +60,41 @@ type KafkaConfig struct {
 	SASLPasswordFile string   `yaml:"sasl_password_file"`
 }
 
-// FlowConfig is the explicit global retention/downsample policy (no hardcoded 30 days).
+// FlowConfig is the explicit global retention/downsample policy (no hardcoded 30 days)
+// plus the flow-geo-v2 bundle location that backs the /flow/geo lookup API.
 type FlowConfig struct {
-	RetentionRawDays    int `yaml:"retention_raw_days"`
-	DownsampleAfterDays int `yaml:"downsample_after_days"`
-	Rollup1mDays        int `yaml:"rollup_1m_days"`
-	Rollup1hDays        int `yaml:"rollup_1h_days"`
+	RetentionRawDays    int              `yaml:"retention_raw_days"`
+	DownsampleAfterDays int              `yaml:"downsample_after_days"`
+	Rollup1mDays        int              `yaml:"rollup_1m_days"`
+	Rollup1hDays        int              `yaml:"rollup_1h_days"`
+	Geo                 FlowGeoConfig    `yaml:"geo"`
+	VPN                 FlowVPNConfig    `yaml:"vpn"`
+	Export              FlowExportConfig `yaml:"export"`
+}
+
+// FlowExportConfig drives the async flow-record detail export worker: it writes CSV
+// or Parquet artifacts to Dir and serves them until Retention elapses after
+// completion.
+type FlowExportConfig struct {
+	Dir       string        `yaml:"dir"`
+	Retention time.Duration `yaml:"retention"`
+}
+
+// FlowVPNConfig drives the background VPN detection pipeline: per closed window it
+// materializes candidates from flow_records, scores them against the active rule
+// set, and writes findings. Disabled by default; the risk thresholds are the one
+// rule-set-level policy (individual rules carry only weights).
+type FlowVPNConfig struct {
+	Enabled           bool    `yaml:"enabled"`
+	WindowSeconds     int     `yaml:"window_seconds"`   // candidate window size (default 300)
+	IntervalSeconds   int     `yaml:"interval_seconds"` // scheduler tick (default 300)
+	LagSeconds        int     `yaml:"lag_seconds"`      // only process windows closed at least this long ago (default 120)
+	MaxCandidates     uint32  `yaml:"max_candidates"`   // per-window cap (default 50000)
+	MediumThreshold   uint16  `yaml:"medium_threshold"` // 0<medium<high<critical<=100
+	HighThreshold     uint16  `yaml:"high_threshold"`
+	CriticalThreshold uint16  `yaml:"critical_threshold"`
+	ProbeThreshold    uint16  `yaml:"probe_threshold"`
+	MinCompleteness   float64 `yaml:"min_completeness"`
 }
 
 // AddressConfig controls the address-library source-import store: where uploaded

@@ -55,3 +55,12 @@ This deletion pass intentionally did not preserve an intermediate runnable hub:
 - Legacy comments, DTO fields and tests that still describe `auth_provider=pocketbase` are not a runnable PB dependency; they are deletion/replacement inputs for KISS-01B/D and must not survive the final static gate.
 
 No build, unit test, integration test or regression test was executed during this destructive pass.
+
+## Replacement and verification update (2026-09-08)
+
+- The native Gin server now owns local MySQL users, roles, permissions, sessions, password reset, CSRF, CORS, install health, device CRUD and agent registration/heartbeat. Request bodies are bounded at 8 MiB and bcrypt inputs at 8–72 bytes.
+- The browser client now has one cookie-based fetch transport and one `WATCHDOG_CONFIG.API_URL`; the SDK, collection/realtime calls, external identity projection fields, OTP route and `/api/watchdog/*` calls are gone. Login is user-triggered; session restoration happens only when entering a controlled route.
+- The obsolete external-subject repository/notification/quiet-hour bridges and MySQL alert-history bridge were removed. Alert/event storage will be rebuilt directly on ClickHouse under KISS-L rather than retaining the old hook model.
+- A fresh `watchdog_kiss01_check` MySQL database produced 48 v2 tables and zero `tenant_id`, `auth_provider` or `external_subject_id` columns. The real integration test covered login, CSRF, device/agent lifecycle, heartbeat, disable/revoke/logout and idempotent second startup, then the exact test database was dropped.
+- A separate `watchdog_kiss01_runtime_check` database and standalone server process on `127.0.0.1:8091` passed `/health`, cross-origin login and cookie-authenticated `/session/current`; the process, cookie file, binary and exact database were removed afterward.
+- Regression status: `go test ./...`, `go build ./...`, `go vet ./...`, TypeScript, 45 frontend tests and production build pass. The remaining KISS-01 gates are legacy migration/init wording/schema cleanup, full frontend Network behavior coverage, race/lint, and clean MySQL+ClickHouse+Kafka startup.

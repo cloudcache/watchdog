@@ -111,11 +111,13 @@ func (s *Server) newRouter() *gin.Engine {
 	metrics.GET("/range", s.requirePermission("device.view"), s.queryMetrics)
 	metrics.GET("/realtime", s.requirePermission("device.view"), s.queryMetrics)
 	metrics.GET("/aggregate", s.requirePermission("device.view"), s.aggregateMetrics)
+	metrics.GET("/vmquery", s.requirePermission("device.view"), s.vmQueryMetrics)
 	metrics.POST("/exports", s.requirePermission("device.view"), s.createSNMPExport)
 	graphs := auth.Group("/graph")
 	graphs.GET("/devices/:id/overview", s.requirePermission("device.view"), s.deviceGraphOverview)
 	graphs.GET("/ports/:port_id/overview", s.requirePermission("port.view"), s.portGraphOverview)
-	dev.GET("/events", s.todo)
+	dev.GET("/events", s.requirePermission("device.view"), s.listDeviceEvents)
+	dev.GET("/events/facets", s.requirePermission("device.view"), s.listDeviceEventFacets)
 	ports := auth.Group("/ports")
 	ports.GET("/:port_id", s.requirePermission("port.view"), s.getPort)
 	ports.PATCH("/:port_id", s.requirePermission("port.update"), s.updatePort)
@@ -147,6 +149,9 @@ func (s *Server) newRouter() *gin.Engine {
 	installedAPI.POST("/agents/:id/errors", s.recordAgentStatus)
 	installedAPI.GET("/agents/:id/plan", s.fetchAgentPlan)
 	installedAPI.POST("/agents/:id/plan-acks", s.acknowledgeAgentPlan)
+	// The UDP trap listener forwards with its SNMP agent credential. The same
+	// historical endpoint also accepts an authorized user session for diagnostics.
+	installedAPI.POST("/snmp/traps", s.authenticateSNMPTrapCaller, s.receiveSNMPTrap)
 	agents := auth.Group("/agents")
 	agents.GET("", s.requirePermission("agent.view"), s.listAgents)
 	agents.POST("", s.requirePermission("agent.manage"), s.createAgent)
@@ -184,11 +189,17 @@ func (s *Server) newRouter() *gin.Engine {
 	legacyNetwork.GET("/:id/vlans", s.requirePermission("device.view"), s.listDeviceVLANs)
 	legacyNetwork.GET("/:id/lags", s.requirePermission("device.view"), s.listDeviceLAGs)
 	legacyNetwork.POST("/:id/snmp/discover", s.requirePermission("device.discover"), s.discoverDeviceSNMP)
+	legacyNetwork.GET("/:id/events", s.requirePermission("device.view"), s.listDeviceEvents)
+	legacyNetwork.GET("/:id/events/facets", s.requirePermission("device.view"), s.listDeviceEventFacets)
+	auth.GET("/network/traffic-policy-defaults", s.requirePermission("device.view"), s.getTrafficPolicyDefaults)
+	auth.PUT("/network/traffic-policy-defaults", s.requirePermission("port.update"), s.putTrafficPolicyDefaults)
 	legacyPorts := auth.Group("/network/ports")
 	legacyPorts.GET("/:port_id", s.requirePermission("port.view"), s.getPort)
 	legacyPorts.PATCH("/:port_id", s.requirePermission("port.update"), s.updatePort)
 	legacyPorts.DELETE("/:port_id", s.requirePermission("port.update"), s.deletePort)
 	legacyPorts.GET("/:port_id/delete-preview", s.requirePermission("port.update"), s.portDeletePreview)
+	legacyPorts.GET("/:port_id/policy", s.requirePermission("port.view"), s.getPortPolicy)
+	legacyPorts.PATCH("/:port_id/policy", s.requirePermission("port.update"), s.patchPortPolicy)
 	legacyBGP := auth.Group("/network/bgp")
 	legacyBGP.GET("", s.requirePermission("device.view"), s.listAllBGP)
 	legacyBGP.GET("/:session_id", s.requirePermission("device.view"), s.getBGP)
@@ -217,22 +228,25 @@ func (s *Server) newRouter() *gin.Engine {
 	snmpProfiles.GET("/:id", s.requirePermission("device.update"), s.getSNMPProfile)
 	snmpProfiles.PATCH("/:id", s.requirePermission("device.update"), s.updateSNMPProfile)
 	snmpProfiles.DELETE("/:id", s.requirePermission("device.update"), s.deleteSNMPProfile)
+	snmpMIBModules := auth.Group("/snmp/mib-modules")
+	snmpMIBModules.GET("", s.requirePermission("device.view"), s.listMIBModules)
+	snmpMIBModules.PUT("", s.requirePermission("device.update"), s.putMIBModule)
+	snmpMIBModules.DELETE("/:module_id", s.requirePermission("device.update"), s.deleteMIBModule)
 	// KISS-05 geo/address library (owned slice): editable CRUD/list + source imports,
 	// plus the de-tenanted publication lifecycle (preview/publish/versions/lifecycle).
 	s.registerAddressRoutes(auth)
 	s.registerAddressImportRoutes(auth)
 	s.registerAddressDimensionRoutes(auth)
 
+	// KISS-06 phase-1b: ClickHouse-backed flow query API (records/facets), the v2
+	// FlowQueryService replacing the retired hub QueryGateway stack.
+	s.registerFlowRoutes(auth)
+
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)
 	s.registerPlatformOperationsRoutes(auth)
 
-	exports := auth.Group("/exports")
-	exports.GET("", s.requirePermission("device.view"), s.listSNMPExports)
-	exports.POST("", s.requirePermission("device.view"), s.createSNMPExport)
-	exports.GET("/:id", s.requirePermission("device.view"), s.getSNMPExport)
-	exports.GET("/:id/download", s.requirePermission("device.view"), s.downloadSNMPExport)
-	exports.POST("/:id/cancel", s.requirePermission("device.view"), s.cancelSNMPExport)
+	s.registerExportRoutes(auth)
 
 	return r
 }

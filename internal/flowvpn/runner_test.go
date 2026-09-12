@@ -24,8 +24,10 @@ type fakeCandidateRow struct {
 	flowRecordCount                        uint64
 	activeBucketCount                      uint32
 	maxDurationMS                          uint64
+	packetBytesP50                         uint64
 	remoteASN                              uint32
 	remoteCountry, remotePrefixID          string
+	localPrefixID                          string
 	transportHints                         []string
 	completeRatio                          float32
 	evidenceJSON                           string
@@ -265,12 +267,16 @@ func appendFakeCandidateRow(results proto.Results, row fakeCandidateRow, skip st
 			result.Data.(*proto.ColUInt32).Append(row.activeBucketCount)
 		case "max_duration_ms":
 			result.Data.(*proto.ColUInt64).Append(row.maxDurationMS)
+		case "packet_bytes_p50":
+			result.Data.(*proto.ColUInt64).Append(row.packetBytesP50)
 		case "remote_asn":
 			result.Data.(*proto.ColUInt32).Append(row.remoteASN)
 		case "remote_country":
 			result.Data.(*proto.ColStr).Append(row.remoteCountry)
 		case "remote_prefix_id":
 			result.Data.(*proto.ColStr).Append(row.remotePrefixID)
+		case "local_prefix_id":
+			result.Data.(*proto.ColStr).Append(row.localPrefixID)
 		case "transport_hints":
 			result.Data.(*proto.ColArr[string]).Append(row.transportHints)
 		case "complete_ratio":

@@ -1,0 +1,285 @@
+// SPDX-FileCopyrightText: 2026 Watchdog contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/cloudcache/watchdog/internal/flowdimension"
+	"github.com/cloudcache/watchdog/internal/flowquery"
+	"github.com/gin-gonic/gin"
+)
+
+// flow_query_modes.go carries the two /flow/query "special modes" that compose over
+// the existing ClickHouse runners rather than adding engine grammar: the
+// inbound/outbound direction split (two per-direction total queries merged under a
+// synthetic "direction" dimension) and the address-set combination (a flow_records
+// membership scan via the address-set runner). Both are faithful ports of the hub
+// query gateway's queryDirections / queryAddressSets, keeping the same wire shape so
+// the unchanged frontend works. The third mode, operator_selection, still needs the
+// operator-classification binding service (absent from the single-tenant server) and
+// stays rejected in queryFlow.
+
+// flowDirectionParts is the fixed inbound/outbound split the direction mode emits,
+// matching the hub's labels ("in"/"out" filter value → "Inbound"/"Outbound" label).
+var flowDirectionParts = []struct{ direction, label string }{
+	{direction: "in", label: "Inbound"},
+	{direction: "out", label: "Outbound"},
+}
+
+// directionSplitAllowed enforces the hub gate: the split is only defined for a
+// single total series with no pre-existing direction filter (the composer sets the
+// direction itself and forces dimension=total, top_n=1, include_other=false).
+func directionSplitAllowed(input flowQueryParameters) bool {
+	if input.Dimension != "" && input.Dimension != flowquery.DimensionTotal {
+		return false
+	}
+	return len(input.Dimensions) == 0 && input.TopN <= 1 && !input.IncludeOther && len(input.Filters.Directions) == 0
+}
+
+// queryFlowDirectionSplit runs the inbound/outbound split as two authorized
+// per-direction total queries merged into one result, so the API never asks the
+// browser to merge two independently admitted responses. A non-aggregate typed
+// filter falls back to the joint (flow_records) runner, mirroring the hub.
+func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {
+	if !directionSplitAllowed(input) {
+		fail(c, http.StatusBadRequest, "invalid_request", "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter")
+		return
+	}
+	if input.Filter != nil {
+		supported, err := flowquery.AggregateFilterSupported(*input.Filter)
+		if err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		if !supported {
+			s.queryFlowDirectionSplitJoint(c, envelope, input, view, now, tableReq)
+			return
+		}
+	}
+	step := time.Duration(envelope.StepSeconds) * time.Second
+	plan, err := flowquery.PlanAggregate(envelope.From, envelope.To, step, input.TargetPoints, now)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
+	results := make([]flowquery.Result, 0, len(flowDirectionParts))
+	labels := make([]string, 0, len(flowDirectionParts))
+	for _, part := range flowDirectionParts {
+		filters := input.Filters
+		filters.Directions = []string{part.direction}
+		compiled, err := flowquery.Compile(scope, flowquery.Request{
+			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
+			Metric: input.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: input.Filter,
+			View: view, TopN: 1, IncludeOther: false, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+		}, now)
+		if err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		result, err := s.flowQuery.aggregate.Run(c.Request.Context(), compiled)
+		if err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		results = append(results, result)
+		labels = append(labels, part.label)
+	}
+	combined := mergeFlowDirectionResults(&plan, labels, results)
+	raw, err := marshalFlowAggregateResult(combined, tableReq, s.flowGeo)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
+		view, combined.Metric.Unit, string(plan.Source), input.Timezone, plan.StepSeconds,
+		combined.RollupCompleteness.Ratio, !combined.RollupCompleteness.Complete)})
+}
+
+// mergeFlowDirectionResults folds the per-direction total results (aligned with
+// labels) into one result under a synthetic "direction" dimension: each direction's
+// points are relabeled, and completeness is reduced conservatively — widest expected
+// buckets, narrowest covered, minimum ratio, AND of complete. A faithful extract of
+// the hub's per-direction accumulation, kept pure so the fold is unit-testable.
+func mergeFlowDirectionResults(plan *flowquery.AggregatePlan, labels []string, results []flowquery.Result) flowquery.Result {
+	combined := flowquery.Result{
+		Dimension: flowquery.DimensionDefinition{Kind: flowquery.Dimension("direction"), Additive: true},
+		Plan:      plan,
+	}
+	for i, result := range results {
+		if i == 0 {
+			combined.Metric = result.Metric
+			combined.RollupCompleteness = result.RollupCompleteness
+		} else {
+			combined.RollupCompleteness.ExpectedBuckets = max(combined.RollupCompleteness.ExpectedBuckets, result.RollupCompleteness.ExpectedBuckets)
+			combined.RollupCompleteness.CoveredBuckets = min(combined.RollupCompleteness.CoveredBuckets, result.RollupCompleteness.CoveredBuckets)
+			combined.RollupCompleteness.Ratio = min(combined.RollupCompleteness.Ratio, result.RollupCompleteness.Ratio)
+			combined.RollupCompleteness.Complete = combined.RollupCompleteness.Complete && result.RollupCompleteness.Complete
+		}
+		for _, point := range result.Points {
+			if i < len(labels) {
+				point.DimensionValue = labels[i]
+			}
+			combined.Points = append(combined.Points, point)
+		}
+	}
+	return combined
+}
+
+// queryFlowDirectionSplitJoint is the flow_records fallback used when the typed
+// filter is not rollup-supported: it merges two per-direction total tuple queries.
+func (s *Server) queryFlowDirectionSplitJoint(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {
+	step := time.Duration(envelope.StepSeconds) * time.Second
+	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
+	combined := flowquery.JointResult{
+		Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
+	}
+	first := true
+	for _, part := range flowDirectionParts {
+		filters := input.Filters
+		filters.Directions = []string{part.direction}
+		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+			From: envelope.From, To: envelope.To, Interval: step, TargetPoints: input.TargetPoints,
+			Metric: input.Metric, Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},
+			Filters: filters, Filter: input.Filter, View: view, TopN: 1, IncludeOther: false,
+			Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+		}, now)
+		if err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		result, err := s.flowQuery.joint.Run(c.Request.Context(), compiled)
+		if err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		if first {
+			combined.Metric = result.Metric
+			combined.Plan = result.Plan
+			first = false
+		}
+		for _, point := range result.Points {
+			point.DimensionValues = []string{part.label}
+			combined.Points = append(combined.Points, point)
+		}
+	}
+	raw, err := marshalFlowJointResult(combined, tableReq, s.flowGeo)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
+		view, combined.Metric.Unit, string(combined.Plan.Source), input.Timezone, combined.Plan.StepSeconds, 1, true)})
+}
+
+// queryFlowAddressSet runs a synchronous address-set combination: a fixed 60-second
+// flow_records membership scan through the address-set runner, echoing the resolved
+// filter/endpoint back in the payload. A faithful port of the hub's queryAddressSets.
+func (s *Server) queryFlowAddressSet(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {
+	if s.flowQuery.addressSet == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_address_set_unavailable", "flow address-set queries require a configured ClickHouse endpoint")
+		return
+	}
+	if envelope.StepSeconds != 0 && envelope.StepSeconds != 60 {
+		fail(c, http.StatusBadRequest, "invalid_request", "synchronous address-set combinations use a fixed 60-second step")
+		return
+	}
+	var sets flowdimension.AddressSetFilter
+	if input.AddressSetFilter != nil {
+		sets = flowdimension.AddressSetFilter{
+			IncludeAny: input.AddressSetFilter.IncludeAny,
+			IncludeAll: input.AddressSetFilter.IncludeAll,
+			ExcludeAny: input.AddressSetFilter.ExcludeAny,
+		}
+	}
+	compiled, err := flowquery.CompileAddressSet(flowquery.Scope{AllowedViews: []flowquery.View{view}}, flowquery.AddressSetRequest{
+		From: envelope.From, To: envelope.To, Bucket: flowquery.BucketOneMinute,
+		Metric: input.Metric, View: view, Endpoint: flowquery.AddressSetEndpoint(strings.TrimSpace(input.AddressSetEndpoint)),
+		Sets: sets,
+		Filters: flowquery.DetailFilters{
+			Directions: input.Filters.Directions, Categories: input.Filters.Categories,
+			Businesses: input.Filters.Businesses, TargetIDs: input.Filters.TargetIDs,
+			DeviceIDs: input.Filters.DeviceIDs, ExporterIDs: input.Filters.ExporterIDs,
+		},
+	}, now)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	result, err := s.flowQuery.addressSet.Run(c.Request.Context(), compiled)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	label := flowAddressSetLabel(result)
+	points := make([]flowquery.Point, 0, len(result.Points))
+	for _, point := range result.Points {
+		points = append(points, flowquery.Point{
+			Bucket: point.Bucket, DimensionValue: label, DimensionSnapshotID: point.DimensionSnapshotID,
+			GeoVersion: point.GeoVersion, ClassificationVersion: point.ClassificationVersion,
+			Value: point.Value, ReceivedRecords: point.ReceivedRecords,
+			UnknownSamplingRecords: point.UnknownSamplingRecords, QualityRecords: point.QualityRecords,
+			SamplingCompleteness: point.SamplingCompleteness, SamplingCompletenessKnown: point.SamplingCompletenessKnown,
+			QualityRecordRatio: point.QualityRecordRatio, QualityRecordRatioKnown: point.QualityRecordRatioKnown,
+		})
+	}
+	plan := &flowquery.AggregatePlan{
+		RequestedFrom: envelope.From.UTC(), RequestedTo: envelope.To.UTC(),
+		EffectiveFrom: compiled.From, EffectiveTo: compiled.To,
+		Source: flowquery.BucketFlowRecords, SourceStep: time.Minute, Interval: time.Minute,
+		SourceSeconds: 60, StepSeconds: 60, TargetPoints: input.TargetPoints,
+	}
+	publicResult := flowquery.Result{
+		Points: points, Metric: result.Metric,
+		Dimension: flowquery.DimensionDefinition{Kind: flowquery.DimensionAddressSet, Additive: false},
+		Plan:      plan, MixedVersions: result.MixedVersions, VersionCount: result.VersionCount,
+	}
+	raw, err := marshalFlowAddressSetResult(publicResult, tableReq, result)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
+		view, result.Metric.Unit, string(flowquery.BucketFlowRecords), "UTC", 60, 1, true)})
+}
+
+// marshalFlowAddressSetResult renders an address-set combination: the standard
+// aggregate shape (with an optional table page) plus the resolved filter and
+// endpoint the client echoes. Ported from the hub query gateway.
+func marshalFlowAddressSetResult(result flowquery.Result, request *flowTableRequest, source flowquery.AddressSetResult) ([]byte, error) {
+	var table *flowTablePage
+	if request != nil {
+		plan := flowTablePlan{}
+		if result.Plan != nil {
+			plan = flowTablePlan{
+				from: result.Plan.EffectiveFrom, to: result.Plan.EffectiveTo, step: time.Duration(result.Plan.StepSeconds) * time.Second,
+				timeWindows: request.timeWindows, timezone: request.timezone,
+			}
+		}
+		built := buildFlowTable(flowAggregateTablePoints(result, nil), plan, result.Metric.Unit, *request)
+		table = &built
+	}
+	return json.Marshal(struct {
+		flowquery.Result
+		AddressSetFilter flowdimension.AddressSetFilter `json:"address_set_filter"`
+		Endpoint         flowquery.AddressSetEndpoint   `json:"address_set_endpoint"`
+		Table            *flowTablePage                 `json:"table,omitempty"`
+	}{Result: result, AddressSetFilter: source.Sets, Endpoint: source.Endpoint, Table: table})
+}
+
+// flowAddressSetLabel names the single series an address-set combination produces:
+// the lone included set when unambiguous, else a generic combination label.
+func flowAddressSetLabel(result flowquery.AddressSetResult) string {
+	if len(result.Sets.IncludeAny) == 1 && len(result.Sets.IncludeAll) == 0 && len(result.Sets.ExcludeAny) == 0 {
+		return result.Sets.IncludeAny[0]
+	}
+	return "address-set combination"
+}

@@ -20,6 +20,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/billing"
 	"github.com/cloudcache/watchdog/internal/flowch"
+	"github.com/cloudcache/watchdog/internal/flowvpn"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/gin-gonic/gin"
@@ -46,9 +47,16 @@ type Server struct {
 	billingService   *billing.Service
 	clickHouse       *flowch.NativeInserter
 	snmpMetrics      *snmpch.Store
+	flowQuery        *flowQueryService
+	flowGeo          *flowGeoService
 	workerCancel     context.CancelFunc
 	snmpExportCancel context.CancelFunc
 	billingCancel    context.CancelFunc
+
+	vpnCandidateMaterializer *flowch.VPNCandidateMaterializer
+	vpnCandidateRunner       *flowvpn.CandidateRunner
+	vpnDetectCancel          context.CancelFunc
+	flowExportCancel         context.CancelFunc
 
 	agentPlanSigner agentplan.Signer
 	agentPlanPublic ed25519.PublicKey
@@ -118,6 +126,18 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	}
 	if err := s.startClickHouse(ctx); err != nil {
 		return fmt.Errorf("start ClickHouse: %w", err)
+	}
+	if err := s.startFlowQuery(); err != nil {
+		return fmt.Errorf("start flow query: %w", err)
+	}
+	if err := s.startFlowGeo(); err != nil {
+		return fmt.Errorf("start flow geo: %w", err)
+	}
+	if err := s.startVPNDetection(); err != nil {
+		return fmt.Errorf("start VPN detection: %w", err)
+	}
+	if err := s.startFlowExports(); err != nil {
+		return fmt.Errorf("start flow exports: %w", err)
 	}
 	if err := s.startAgentPlans(); err != nil {
 		return fmt.Errorf("start agent plans: %w", err)
@@ -217,11 +237,20 @@ func (s *Server) stopRuntime() {
 		s.billingCancel()
 		s.billingCancel = nil
 	}
+	if s.vpnDetectCancel != nil {
+		s.vpnDetectCancel()
+		s.vpnDetectCancel = nil
+	}
+	if s.flowExportCancel != nil {
+		s.flowExportCancel()
+		s.flowExportCancel = nil
+	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()
 		s.clickHouse = nil
 	}
 	s.snmpMetrics = nil
+	s.flowQuery = nil
 	s.runtimeReady.Store(false)
 }
 

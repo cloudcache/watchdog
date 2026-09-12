@@ -100,11 +100,11 @@ func TestMySQLPortDeletePreviewJobAndReceipt(t *testing.T) {
 
 	for query, want := range map[string]int{
 		"SELECT COUNT(*) FROM network_ports WHERE id = 'port_portdel_01'":                    0,
-		"SELECT COUNT(*) FROM network_interface_addresses WHERE port_id = 'port_portdel_01'":  0,
-		"SELECT COUNT(*) FROM port_policies WHERE port_id = 'port_portdel_01'":                0,
-		"SELECT COUNT(*) FROM aggregate_graph_ports WHERE port_id = 'port_portdel_01'":        0,
-		"SELECT COUNT(*) FROM aggregate_graphs WHERE id = 'aggr_pd_1'":                        1,
-		"SELECT COUNT(*) FROM network_devices WHERE id = 'device_portdel_01'":                 1,
+		"SELECT COUNT(*) FROM network_interface_addresses WHERE port_id = 'port_portdel_01'": 0,
+		"SELECT COUNT(*) FROM port_policies WHERE port_id = 'port_portdel_01'":               0,
+		"SELECT COUNT(*) FROM aggregate_graph_ports WHERE port_id = 'port_portdel_01'":       0,
+		"SELECT COUNT(*) FROM aggregate_graphs WHERE id = 'aggr_pd_1'":                       1,
+		"SELECT COUNT(*) FROM network_devices WHERE id = 'device_portdel_01'":                1,
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {

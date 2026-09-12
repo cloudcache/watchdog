@@ -257,6 +257,17 @@ func (r *snmpPollRepository) MarkSNMPRecipePollResult(ctx context.Context, recip
 	return err
 }
 
+func (r *snmpPollRepository) MarkSNMPDevicePollResult(ctx context.Context, deviceID watchdog.ID, polledAt time.Time, lastError string) error {
+	status := "up"
+	if lastError != "" {
+		status = "down"
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE devices
+		SET status=?,status_reason=?,last_polled_at=?,row_version=row_version+1
+		WHERE id=?`, status, truncateUTF8(lastError, 64), polledAt.UTC(), deviceID)
+	return err
+}
+
 func (r *snmpPollRepository) GetDevice(ctx context.Context, _ watchdog.ID, deviceID watchdog.ID) (watchdog.NetworkDevice, error) {
 	var result watchdog.NetworkDevice
 	var profileID sql.NullString

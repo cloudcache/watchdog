@@ -79,6 +79,21 @@ func TestQueryMetricsUsesClickHouseAndKeepsChartContract(t *testing.T) {
 	if !strings.Contains(exec.query.Body, "FROM snmp_samples") || strings.Contains(strings.ToLower(exec.query.Body), "tenant") {
 		t.Fatalf("unexpected ClickHouse query: %s", exec.query.Body)
 	}
+	if !strings.Contains(exec.query.Body, "LIMIT 250001") {
+		t.Fatalf("device-scoped query reused the per-series max_data_points as its intermediate row budget: %s", exec.query.Body)
+	}
+}
+
+func TestSNMPScopedQueryRowBudgetSeparatesChartPointsFromIntermediateRows(t *testing.T) {
+	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}}); got != 1200 {
+		t.Fatalf("single-port budget=%d, want 1200", got)
+	}
+	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}, {DeviceID: "device-a", PortID: "port-b"}}); got != 250000 {
+		t.Fatalf("multi-port intermediate budget=%d, want 250000", got)
+	}
+	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a"}}); got != 250000 {
+		t.Fatalf("device-wide intermediate budget=%d, want 250000", got)
+	}
 }
 
 func TestQueryMetricsRejectsUnknownParameterBeforeClickHouse(t *testing.T) {

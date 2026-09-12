@@ -26,6 +26,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"004_flow_ingest_receipt_audit.sql", "005_flow_fact_provenance.sql", "006_flow_ingest_audit_projection.sql",
 		"007_flow_records_codecs.sql", "008_flow_aggregate_codecs.sql", "009_flow_address_dict_source.sql",
 		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
+		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -45,8 +46,8 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 8 {
-		t.Fatalf("ClickHouse table count=%d, want 8", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 9 {
+		t.Fatalf("ClickHouse table count=%d, want 9", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
@@ -55,6 +56,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"'on_net_local_city'=1", "'off_net_in_province'=4", "remote_geo_continent_id", "remote_geo_region_id",
 		"remote_geo_country_id", "remote_geo_province_id", "remote_geo_city_id", "'flow-geo-v2'=4",
 		"row_kind Enum8('candidate'=1,'_generation'=2)", "remote_prefix_id LowCardinality(String)",
+		"local_prefix_id LowCardinality(String)", "packet_bytes_p50 UInt64",
 		"geo_version LowCardinality(String)", "classification_version UInt32",
 		"key_row_kind UInt8", "key_dimension_snapshot_id String", "key_geo_version String", "key_classification_version UInt32",
 		"key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version",
@@ -68,6 +70,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"deduplicate_merge_projection_mode = 'rebuild'", "flow_ingest_audit_v1", "MATERIALIZE PROJECTION flow_ingest_audit_v1",
 		"ORDER BY (kafka_topic, kafka_partition, kafka_offset, record_index, record_id)",
 		"snmp_samples", "snmp_interface_traffic_5m", "counter_value  UInt64", "counter_width  UInt8",
+		"snmp_events", "ReplacingMergeTree(ingested_at)", "ORDER BY (device_id, occurred_at, id)",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

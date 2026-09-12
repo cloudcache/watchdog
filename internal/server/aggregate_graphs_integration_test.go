@@ -17,7 +17,7 @@ import (
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/gin-gonic/gin"
-	_ "github.com/go-sql-driver/mysql"
+	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 type aggregateGraphExecutor struct{}
@@ -25,14 +25,28 @@ type aggregateGraphExecutor struct{}
 func (aggregateGraphExecutor) Do(ctx context.Context, query ch.Query) error {
 	result := query.Result.(proto.Results)
 	result[0].Data.(*proto.ColDateTime).Append(time.Date(2026, 9, 10, 1, 0, 0, 0, time.UTC))
-	result[1].Data.(*proto.ColFloat64).Append(8_000)
+	result[1].Data.(*proto.ColStr).Append("device-a")
+	result[2].Data.(*proto.ColLowCardinality[string]).Append("port")
+	result[3].Data.(*proto.ColStr).Append("port-a")
+	result[4].Data.(*proto.ColFloat64).Append(8_000)
 	return query.OnResult(ctx, proto.Block{Rows: 1})
 }
 
 func TestAggregateGraphMySQLAPI(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
 		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	parsed.DBName = "watchdog_snmp_aggregate_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
 	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

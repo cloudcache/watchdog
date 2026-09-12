@@ -39,19 +39,20 @@ func TestRealClickHouseSNMPWriteRateAndClosedBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var snmpMigration *flowch.Migration
+	var snmpMigrations []flowch.Migration
 	for index := range migrations {
-		if migrations[index].Name == "012_snmp_telemetry.sql" {
-			snmpMigration = &migrations[index]
-			break
+		if migrations[index].Name == "012_snmp_telemetry.sql" || migrations[index].Name == "014_snmp_events.sql" {
+			snmpMigrations = append(snmpMigrations, migrations[index])
 		}
 	}
-	if snmpMigration == nil {
-		t.Fatal("012_snmp_telemetry.sql migration is missing")
+	if len(snmpMigrations) != 2 {
+		t.Fatal("012_snmp_telemetry.sql or 014_snmp_events.sql migration is missing")
 	}
-	for _, statement := range snmpMigration.Statements {
-		if err := admin.Do(ctx, ch.Query{Body: strings.ReplaceAll(statement, "watchdog_flow", database)}); err != nil {
-			t.Fatal(err)
+	for _, migration := range snmpMigrations {
+		for _, statement := range migration.Statements {
+			if err := admin.Do(ctx, ch.Query{Body: strings.ReplaceAll(statement, "watchdog_flow", database)}); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{Address: "127.0.0.1:9000", Database: database, User: "default", Password: password, ClientName: "watchdog-snmp-it", OperationTimeout: 30 * time.Second})
@@ -62,6 +63,22 @@ func TestRealClickHouseSNMPWriteRateAndClosedBucket(t *testing.T) {
 	store, _ := New(native)
 	if err := store.Ready(ctx); err != nil {
 		t.Fatal(err)
+	}
+	eventAt := time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC)
+	if err := store.WriteEvents(ctx, []Event{{
+		ID: "event-a", DeviceID: "device-a", EntityType: "port", EntityID: "port-a",
+		Source: "trap", Severity: "warning", EventType: "interface_down", Message: "interface down",
+		Raw: map[string]any{"oid": "1.3.6.1"}, OccurredAt: eventAt,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	events, total, err := store.QueryEvents(ctx, EventQuery{DeviceID: "device-a", Severities: []string{"warning"}, SortBy: "occurred_at", SortDirection: "DESC", Limit: 25})
+	if err != nil || total != 1 || len(events) != 1 || events[0].Raw["oid"] != "1.3.6.1" {
+		t.Fatalf("event round trip: events=%+v total=%d err=%v", events, total, err)
+	}
+	facets, err := store.QueryEventFacets(ctx, EventFacetQuery{EventQuery: EventQuery{DeviceID: "device-a", SortBy: "occurred_at", SortDirection: "DESC", Limit: 25}, Field: "source"})
+	if err != nil || len(facets) != 1 || facets[0].Value != "trap" || facets[0].Count != 1 {
+		t.Fatalf("event facets=%+v err=%v", facets, err)
 	}
 	bucket := time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)
 	for index, observed := range []time.Time{bucket.Add(-time.Minute), bucket, bucket.Add(time.Minute)} {

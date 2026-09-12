@@ -128,9 +128,9 @@ func TestMySQLCollectorDeletePreviewBlockingAndAsync(t *testing.T) {
 	waitForOperationJob(t, store, tenant, accepted.JobID, OperationJobStatusSucceeded)
 
 	for query, want := range map[string]int{
-		"SELECT COUNT(*) FROM collector_agents WHERE id = 'collector_del_clean'":       0,
+		"SELECT COUNT(*) FROM collector_agents WHERE id = 'collector_del_clean'":             0,
 		"SELECT COUNT(*) FROM collector_bindings WHERE collector_id = 'collector_del_clean'": 0,
-		"SELECT COUNT(*) FROM collector_agents WHERE id = 'collector_del_blocked'":     1,
+		"SELECT COUNT(*) FROM collector_agents WHERE id = 'collector_del_blocked'":           1,
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {

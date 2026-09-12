@@ -2,6 +2,7 @@ package watchdog
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -11,26 +12,44 @@ func DetectSNMPCollectorOS(fingerprint SNMPCollectorOSFingerprint, definitions [
 }
 
 func DetectSNMPCollectorOSWithDefinition(fingerprint SNMPCollectorOSFingerprint, definitions []SNMPCollectorOSDefinition) (SNMPCollectorOSMatch, SNMPCollectorOSDefinition, bool) {
-	var best SNMPCollectorOSMatch
-	var bestDef SNMPCollectorOSDefinition
-	bestScore := 0
-	for _, definition := range definitions {
-		for _, rule := range snmpOSDetectionRules(definition.Definition) {
-			score, reason := matchSNMPOSRule(fingerprint, rule)
-			if score > bestScore {
-				bestScore = score
-				best = SNMPCollectorOSMatch{
-					OSName:  definition.OSName,
-					OSGroup: definition.OSGroup,
-					Vendor:  definition.Vendor,
-					Class:   definition.Class,
-					Reason:  reason,
+	// LibreNMS loads os_detection YAML files in filename order and returns the
+	// first complete rule match. Keep that ordering contract: scoring matches
+	// changes its semantics and lets broad sysObjectID prefixes override an
+	// earlier, explicit OS signature in sysDescr.
+	ordered := append([]SNMPCollectorOSDefinition(nil), definitions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].OSName < ordered[j].OSName
+	})
+
+	for pass := 0; pass < 2; pass++ {
+		for _, definition := range ordered {
+			if snmpOSDefinitionIsDeferred(definition.OSName) != (pass == 1) {
+				continue
+			}
+			for _, rule := range snmpOSDetectionRules(definition.Definition) {
+				matched, reason := matchSNMPOSRule(fingerprint, rule)
+				if matched {
+					return SNMPCollectorOSMatch{
+						OSName:  definition.OSName,
+						OSGroup: definition.OSGroup,
+						Vendor:  definition.Vendor,
+						Class:   definition.Class,
+						Reason:  reason,
+					}, definition, true
 				}
-				bestDef = definition
 			}
 		}
 	}
-	return best, bestDef, bestScore > 0
+	return SNMPCollectorOSMatch{}, SNMPCollectorOSDefinition{}, false
+}
+
+func snmpOSDefinitionIsDeferred(osName string) bool {
+	switch osName {
+	case "airos", "freebsd", "generic", "linux":
+		return true
+	default:
+		return false
+	}
 }
 
 func snmpOSDetectionRules(definition map[string]any) []map[string]any {
@@ -45,47 +64,44 @@ func snmpOSDetectionRules(definition map[string]any) []map[string]any {
 	return []map[string]any{definition}
 }
 
-func matchSNMPOSRule(fingerprint SNMPCollectorOSFingerprint, rule map[string]any) (int, string) {
-	if snmpOSNegativeRuleMatches(fingerprint, rule) {
-		return 0, ""
+func matchSNMPOSRule(fingerprint SNMPCollectorOSFingerprint, rule map[string]any) (bool, string) {
+	// snmpget/snmpwalk are active probes, not fingerprint predicates. A rule
+	// containing one is incomplete until that probe has been evaluated and
+	// must never degrade into a match on only its broad static predicates.
+	if rule["snmpget"] != nil || rule["snmpwalk"] != nil {
+		return false, ""
 	}
-	score := 0
+	if snmpOSNegativeRuleMatches(fingerprint, rule) {
+		return false, ""
+	}
 	var reasons []string
 	conditions := 0
 	if values := anyStringSlice(rule["sysObjectID"]); len(values) > 0 {
 		conditions++
-		matched, prefixLen := anyPrefixMatchLen(normalizedOID(fingerprint.SysObjectID), normalizedOIDs(values))
+		matched := anyPrefixMatch(normalizedOID(fingerprint.SysObjectID), normalizedOIDs(values))
 		if !matched {
-			return 0, ""
+			return false, ""
 		}
-		effectiveLen := prefixLen
-		if prefixLen < 20 {
-			effectiveLen = prefixLen / 2
-		}
-		score += 100 + effectiveLen
 		reasons = append(reasons, "sysObjectID")
 	}
 	if values := anyStringSlice(rule["sysObjectID_regex"]); len(values) > 0 {
 		conditions++
 		if !anyRegexMatch(fingerprint.SysObjectID, values) {
-			return 0, ""
+			return false, ""
 		}
-		score += 80
 		reasons = append(reasons, "sysObjectID_regex")
 	}
 	if values := anyStringSlice(rule["sysDescr"]); len(values) > 0 {
 		conditions++
-		matched, matchLen := anyContainsMatchLen(fingerprint.SysDescr, values)
+		matched, _ := anyContainsMatchLen(fingerprint.SysDescr, values)
 		if !matched {
-			return 0, ""
+			return false, ""
 		}
-		score += 60 + matchLen
 		reasons = append(reasons, "sysDescr")
 	}
 	if values := anyStringSlice(rule["sysDescr_regex"]); len(values) > 0 {
 		conditions++
 		matched := false
-		matchLen := 0
 		for _, v := range values {
 			re, err := regexp.Compile(v)
 			if err != nil {
@@ -93,38 +109,32 @@ func matchSNMPOSRule(fingerprint SNMPCollectorOSFingerprint, rule map[string]any
 			}
 			if loc := re.FindStringIndex(fingerprint.SysDescr); loc != nil {
 				matched = true
-				if l := loc[1] - loc[0]; l > matchLen {
-					matchLen = l
-				}
 			}
 		}
 		if !matched {
-			return 0, ""
+			return false, ""
 		}
-		score += 100 + matchLen
 		reasons = append(reasons, "sysDescr_regex")
 	}
 	if values := anyStringSlice(rule["sysName"]); len(values) > 0 {
 		conditions++
-		matched, matchLen := anyContainsMatchLen(fingerprint.SysName, values)
+		matched, _ := anyContainsMatchLen(fingerprint.SysName, values)
 		if !matched {
-			return 0, ""
+			return false, ""
 		}
-		score += 20 + matchLen
 		reasons = append(reasons, "sysName")
 	}
 	if values := anyStringSlice(rule["sysName_regex"]); len(values) > 0 {
 		conditions++
 		if !anyRegexMatch(fingerprint.SysName, values) {
-			return 0, ""
+			return false, ""
 		}
-		score += 40
 		reasons = append(reasons, "sysName_regex")
 	}
 	if conditions == 0 {
-		return 0, ""
+		return false, ""
 	}
-	return score, strings.Join(reasons, "+")
+	return true, strings.Join(reasons, "+")
 }
 
 func snmpOSNegativeRuleMatches(fingerprint SNMPCollectorOSFingerprint, rule map[string]any) bool {

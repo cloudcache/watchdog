@@ -168,7 +168,7 @@ const vpnCandidateSQL = `INSERT INTO flow_vpn_candidates (
   remote_prefix_id, transport_hints, complete_ratio, evidence_json,
   rule_set_version, dimension_snapshot_id, geo_version, classification_version,
   key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version,
-  generation, generated_at)
+  generation, generated_at, local_prefix_id, packet_bytes_p50)
 WITH
   {window_start:DateTime('UTC')} AS candidate_start,
   {window_end:DateTime('UTC')} AS candidate_end,
@@ -188,7 +188,7 @@ WITH
       geo_version,
       classification_version,
       argMax(
-        tuple(ip_protocol, local_port, remote_port, remote_asn, remote_country, remote_prefix_id),
+        tuple(ip_protocol, local_port, remote_port, remote_asn, remote_country, remote_prefix_id, local_prefix_id),
         tuple(estimated_valid, estimated_bytes, raw_bytes, event_time,
           source_stream_id, kafka_partition, kafka_offset, record_index)) AS primary,
       sumIf(estimated_bytes, estimated_valid AND business_direction = 'out') AS local_to_remote_bytes,
@@ -196,6 +196,7 @@ WITH
       count() AS flow_record_count,
       uniqExact(toStartOfMinute(event_time)) AS active_bucket_count,
       max(flow_duration_ms) AS max_duration_ms,
+      toUInt64(round(if(countIf(raw_packets > 0) > 0, quantileIf(0.5)(raw_bytes / raw_packets, raw_packets > 0), 0))) AS packet_bytes_p50,
       countIf(estimated_valid) AS estimated_valid_records,
       countIf(quality_flags != 0) AS quality_records,
       groupUniqArray(ip_protocol) AS observed_protocols
@@ -245,7 +246,9 @@ SELECT
   geo_version,
   classification_version,
   {generation:UInt64},
-  {generated_at:DateTime64(3, 'UTC')}
+  {generated_at:DateTime64(3, 'UTC')},
+  tupleElement(primary, 7),
+  packet_bytes_p50
 FROM candidates
 CROSS JOIN coverage
 UNION ALL
@@ -254,4 +257,4 @@ SELECT
   CAST('', 'FixedString(32)'), toIPv6('::'), toIPv6('::'), 0, 0, 0,
   0, 0, 0, 0, 0, 0, '', '', [], 0, '{"schema_version":1}',
   {rule_set_version:String}, '', '', 0, toUInt8(2), '', '', 0, {generation:UInt64},
-  {generated_at:DateTime64(3, 'UTC')}`
+  {generated_at:DateTime64(3, 'UTC')}, '', 0`

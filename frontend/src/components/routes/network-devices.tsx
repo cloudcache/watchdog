@@ -381,14 +381,14 @@ function toTableRecord(summary: NetworkDeviceSummary): DeviceTableRecord {
 		agentStatus,
 		vendor: vendor || "-",
 		vendorLogo: vendorLogoFor(vendor),
-		searchText: `${host} ${targetName} ${deviceName} ${vendor} ${location} ${osName}`.toLowerCase(),
+		searchText: `${host} ${targetName} ${deviceName} ${vendor} ${location} ${osName} ${osVer}`.toLowerCase(),
 		target: `${statusDot} ${host}\n${deviceDisplay}`,
 		host,
 		metrics: portCount ? `${upPorts}/${portCount} up\n${downPorts} down` : "-",
 		platform: firstText(device.Platform, device.platform, device.Model, device.model) || "-",
 		os: osName
 			? osVer
-				? `${osName}\n${osVer}`
+				? `${osName} ${osVer}`
 				: osName
 			: (firstText(device.SysDescr, device.sys_descr)?.slice(0, 40) ?? "-"),
 		uptime: formatUptime(uptimeNs),

@@ -164,9 +164,11 @@ type candidateColumns struct {
 	flowRecordCount       proto.ColUInt64
 	activeBucketCount     proto.ColUInt32
 	maxDurationMS         proto.ColUInt64
+	packetBytesP50        proto.ColUInt64
 	remoteASN             proto.ColUInt32
 	remoteCountry         proto.ColStr
 	remotePrefixID        proto.ColStr
+	localPrefixID         proto.ColStr
 	transportHints        *proto.ColArr[string]
 	completeRatio         proto.ColFloat32
 	evidenceJSON          proto.ColStr
@@ -194,8 +196,10 @@ func (c *candidateColumns) results() proto.Results {
 		{Name: "primary_remote_port", Data: &c.primaryRemotePort}, {Name: "local_to_remote_bytes", Data: &c.localToRemoteBytes},
 		{Name: "remote_to_local_bytes", Data: &c.remoteToLocalBytes}, {Name: "flow_record_count", Data: &c.flowRecordCount},
 		{Name: "active_bucket_count", Data: &c.activeBucketCount}, {Name: "max_duration_ms", Data: &c.maxDurationMS},
+		{Name: "packet_bytes_p50", Data: &c.packetBytesP50},
 		{Name: "remote_asn", Data: &c.remoteASN}, {Name: "remote_country", Data: &c.remoteCountry},
-		{Name: "remote_prefix_id", Data: &c.remotePrefixID}, {Name: "transport_hints", Data: c.transportHints},
+		{Name: "remote_prefix_id", Data: &c.remotePrefixID}, {Name: "local_prefix_id", Data: &c.localPrefixID},
+		{Name: "transport_hints", Data: c.transportHints},
 		{Name: "complete_ratio", Data: &c.completeRatio}, {Name: "evidence_json", Data: &c.evidenceJSON},
 		{Name: "dimension_snapshot_id", Data: &c.dimensionSnapshotID}, {Name: "geo_version", Data: &c.geoVersion},
 		{Name: "classification_version", Data: &c.classificationVersion}, {Name: "generation", Data: &c.generation},
@@ -214,8 +218,9 @@ func (c *candidateColumns) rowCount() (int, error) {
 		"primary_local_port": c.primaryLocalPort.Rows(), "primary_remote_port": c.primaryRemotePort.Rows(),
 		"local_to_remote_bytes": c.localToRemoteBytes.Rows(), "remote_to_local_bytes": c.remoteToLocalBytes.Rows(),
 		"flow_record_count": c.flowRecordCount.Rows(), "active_bucket_count": c.activeBucketCount.Rows(),
-		"max_duration_ms": c.maxDurationMS.Rows(), "remote_asn": c.remoteASN.Rows(), "remote_country": c.remoteCountry.Rows(),
-		"remote_prefix_id": c.remotePrefixID.Rows(), "transport_hints": c.transportHints.Rows(),
+		"max_duration_ms": c.maxDurationMS.Rows(), "packet_bytes_p50": c.packetBytesP50.Rows(),
+		"remote_asn": c.remoteASN.Rows(), "remote_country": c.remoteCountry.Rows(),
+		"remote_prefix_id": c.remotePrefixID.Rows(), "local_prefix_id": c.localPrefixID.Rows(), "transport_hints": c.transportHints.Rows(),
 		"complete_ratio": c.completeRatio.Rows(), "evidence_json": c.evidenceJSON.Rows(),
 		"dimension_snapshot_id": c.dimensionSnapshotID.Rows(), "geo_version": c.geoVersion.Rows(),
 		"classification_version": c.classificationVersion.Rows(), "generation": c.generation.Rows(),
@@ -323,9 +328,11 @@ func (s *candidateResultState) candidate(columns *candidateColumns, index int) (
 		PrimaryRemotePort: columns.primaryRemotePort[index], LocalToRemoteBytes: columns.localToRemoteBytes[index],
 		RemoteToLocalBytes: columns.remoteToLocalBytes[index], FlowRecordCount: columns.flowRecordCount[index],
 		ActiveBucketCount: columns.activeBucketCount[index], MaxDurationMS: columns.maxDurationMS[index],
-		RemoteASN: columns.remoteASN[index], RemoteCountry: columns.remoteCountry.Row(index),
-		RemotePrefixID: columns.remotePrefixID.Row(index), TransportHints: transportHints,
-		CompleteRatio: float64(columns.completeRatio[index]), DimensionSnapshotID: columns.dimensionSnapshotID.Row(index),
+		PacketBytesP50: columns.packetBytesP50[index],
+		RemoteASN:      columns.remoteASN[index], RemoteCountry: columns.remoteCountry.Row(index),
+		RemotePrefixID: columns.remotePrefixID.Row(index), LocalPrefixID: columns.localPrefixID.Row(index),
+		TransportHints: transportHints,
+		CompleteRatio:  float64(columns.completeRatio[index]), DimensionSnapshotID: columns.dimensionSnapshotID.Row(index),
 		GeoVersion: columns.geoVersion.Row(index), ClassificationVersion: columns.classificationVersion[index],
 	}
 	candidate, err = normalizeCandidate(candidate)
@@ -382,8 +389,8 @@ const vpnCandidateReadSQL = `WITH
       lower(hex(conversation_key)) AS conversation_key,
       local_ip, remote_ip, primary_protocol, primary_local_port, primary_remote_port,
       local_to_remote_bytes, remote_to_local_bytes, flow_record_count,
-      active_bucket_count, max_duration_ms, remote_asn, toString(remote_country) AS remote_country,
-      remote_prefix_id, arrayMap(value -> toString(value), transport_hints) AS transport_hints,
+      active_bucket_count, max_duration_ms, packet_bytes_p50, remote_asn, toString(remote_country) AS remote_country,
+      remote_prefix_id, local_prefix_id, arrayMap(value -> toString(value), transport_hints) AS transport_hints,
       complete_ratio, evidence_json, dimension_snapshot_id, geo_version,
       classification_version, generation, generated_at
     FROM flow_vpn_candidates FINAL
@@ -400,12 +407,12 @@ const vpnCandidateReadSQL = `WITH
 SELECT
   conversation_key, local_ip, remote_ip, primary_protocol, primary_local_port,
   primary_remote_port, local_to_remote_bytes, remote_to_local_bytes, flow_record_count,
-  active_bucket_count, max_duration_ms, remote_asn, remote_country, remote_prefix_id,
+  active_bucket_count, max_duration_ms, packet_bytes_p50, remote_asn, remote_country, remote_prefix_id, local_prefix_id,
   transport_hints, complete_ratio, evidence_json, dimension_snapshot_id, geo_version,
   classification_version, generation, generated_at, 0 AS is_metadata, 0 AS marker_count
 FROM candidate_rows
 UNION ALL
 SELECT
-  '', toIPv6('::'), toIPv6('::'), 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '', [], 0, '', '', '', 0,
+  '', toIPv6('::'), toIPv6('::'), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '', '', [], 0, '', '', '', 0,
   latest_generation, toDateTime64(0, 3, 'UTC'), 1, marker_count
 FROM latest`

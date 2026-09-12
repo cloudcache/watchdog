@@ -11,6 +11,35 @@ import (
 	"time"
 )
 
+// legacyNetworkAgentRepository only backs the legacy device-summary fixture.
+// Agent management and machine control routes belong exclusively to the Gin
+// server's v2 registry and are deliberately absent from NewAPIV1Router.
+type legacyNetworkAgentRepository struct{ agent SNMPAgentConfig }
+
+func (r *legacyNetworkAgentRepository) GetAgent(context.Context, ID) (SNMPAgentConfig, error) {
+	return r.agent, nil
+}
+func (r *legacyNetworkAgentRepository) ListAgents(context.Context, ID) ([]SNMPAgentConfig, error) {
+	return []SNMPAgentConfig{r.agent}, nil
+}
+func (r *legacyNetworkAgentRepository) ListAgentsPage(context.Context, ID, bool, []ID, AgentPageFilter) ([]SNMPAgentConfig, int, error) {
+	return []SNMPAgentConfig{r.agent}, 1, nil
+}
+func (r *legacyNetworkAgentRepository) UpsertAgent(context.Context, SNMPAgentConfig) (SNMPAgentConfig, error) {
+	return SNMPAgentConfig{}, nil
+}
+func (r *legacyNetworkAgentRepository) DeleteAgent(context.Context, ID, ID) error { return nil }
+func (r *legacyNetworkAgentRepository) MarkAgentSeen(context.Context, ID) error   { return nil }
+func (r *legacyNetworkAgentRepository) RecordAgentRun(context.Context, AgentRunReport) error {
+	return nil
+}
+func (r *legacyNetworkAgentRepository) ListAgentRuns(context.Context, ID, ID, int) ([]AgentRunHistory, error) {
+	return nil, nil
+}
+func (r *legacyNetworkAgentRepository) ListAgentRunsPage(context.Context, ID, ID, AgentRunPageFilter) ([]AgentRunHistory, string, int, error) {
+	return nil, "", 0, nil
+}
+
 type fakeNetworkRepository struct {
 	devices      []NetworkDevice
 	ports        []NetworkPort
@@ -747,7 +776,7 @@ func TestAPINetworkDeviceSummariesIncludeCounts(t *testing.T) {
 			Host:     "10.0.0.1",
 			Status:   "up",
 		}}},
-		Agents: &fakeAgentRepository{agent: SNMPAgentConfig{
+		Agents: &legacyNetworkAgentRepository{agent: SNMPAgentConfig{
 			ID:       "agent-a",
 			TenantID: "tenant-a",
 			TargetID: "target-a",

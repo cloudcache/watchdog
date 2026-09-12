@@ -1,8 +1,8 @@
 # Watchdog
 
-Watchdog is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
+Watchdog is a monitoring and traffic-analysis platform for systems, network devices, and flow data.
 
-It has a friendly web interface, simple configuration, and is ready to use out of the box. It supports automatic backup, multi-user, OAuth authentication, and API access.
+It has a web interface, local user and role management, extensible agents, SNMP monitoring, and high-throughput sFlow/NetFlow analysis.
 
 [![agent Docker Image Size](https://img.shields.io/docker/image-size/cloudcache/watchdog-agent/latest?logo=docker&label=agent%20image%20size)](https://hub.docker.com/r/cloudcache/watchdog-agent)
 [![hub Docker Image Size](https://img.shields.io/docker/image-size/cloudcache/watchdog/latest?logo=docker&label=hub%20image%20size)](https://hub.docker.com/r/cloudcache/watchdog)
@@ -14,17 +14,16 @@ It has a friendly web interface, simple configuration, and is ready to use out o
 - **Simple**: Easy setup with little manual configuration required.
 - **Docker stats**: Tracks CPU, memory, and network usage history for each container.
 - **Alerts**: Configurable alerts for CPU, memory, disk, bandwidth, temperature, load average, and status.
-- **Multi-user**: Users manage their own systems. Admins can share systems across users.
-- **OAuth / OIDC**: Supports many OAuth2 providers. Password auth can be disabled.
+- **Users and roles**: Local accounts use explicit device, port, billing, and flow permissions.
 - **Automatic backups**: Save to and restore from disk or S3-compatible storage.
 <!-- - **REST API**: Use or update your data in your own scripts and applications. -->
 
 ## Architecture
 
-Watchdog consists of two main components: the **hub** and the **agent**.
+Watchdog consists of two main components: the **server** and the **agent**.
 
-- **Hub**: A web application built on [PocketBase](https://pocketbase.io/) that provides a dashboard for viewing and managing connected systems.
-- **Agent**: Runs on each system you want to monitor and communicates system metrics to the hub.
+- **Server**: A Gin API backed by MySQL for authentication and management data, with ClickHouse for telemetry and flow data.
+- **Agent**: Runs on each system you want to monitor and communicates system metrics to the server.
 
 ## Getting started
 

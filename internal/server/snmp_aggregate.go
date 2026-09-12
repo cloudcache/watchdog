@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,6 +42,20 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_aggregate", "aggregate must be sum, avg, min, max or count")
 		return
 	}
+	modes, err := snmpValueModes(c.Query("value_mode"), currentPrincipal(c) != nil && currentPrincipal(c).IsAdmin)
+	if err != nil {
+		if errors.Is(err, errSNMPValueMode) {
+			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		} else {
+			fail(c, http.StatusForbidden, "forbidden", err.Error())
+		}
+		return
+	}
+	side, err := snmpTrafficSide(c.Query("traffic_view"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	deviceIDs, err := parseSNMPIDs(c.Query("device_ids"), c.Query("target_ids"))
 	if err != nil {
 		fail(c, http.StatusBadRequest, "invalid_resource", err.Error())
@@ -69,24 +84,47 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_unavailable", "SNMP ClickHouse store is not configured")
 		return
 	}
-	result, err := s.snmpMetrics.Aggregate(c.Request.Context(), snmpch.AggregateRequest{
-		Scopes: scopes, Metric: metric, Method: method, From: from, To: to, Step: step, MaxRows: maxRows,
+	series, err := s.snmpMetrics.QueryScopes(c.Request.Context(), snmpch.AggregateRequest{
+		Scopes: scopes, Metric: metric, Method: method, From: from, To: to, Step: step,
+		MaxRows: snmpScopedQueryRowBudget(maxRows, scopes),
 	})
 	if err != nil {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
-	values := make([]metricValue, 0, len(result.Points))
-	for _, point := range result.Points {
-		values = append(values, metricValue{Time: point.Time, Value: point.Value})
+	policies := map[string]watchdog.PortPolicy{}
+	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
+		policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		series = filterSNMPSeriesBySide(series, policies, side)
 	}
 	response := metricRangeResponse{Status: "success"}
 	response.Data.ResultType = "matrix"
-	response.Data.Result = []metricRangeQueryItem{{
-		Metric: map[string]string{"__name__": metric, "aggregate": method, "value_mode": "raw"},
-		Values: values,
-	}}
+	for _, mode := range modes {
+		view := correctedSNMPSeries(series, policies, mode == "corrected" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS))
+		labels := map[string]string{"__name__": metric, "aggregate": method, "value_mode": mode}
+		if side != "" {
+			labels["traffic_view"] = trafficViewName(side)
+			labels["side_type"] = string(side)
+		}
+		response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(aggregateSNMPSeries(view, method))})
+	}
 	c.JSON(http.StatusOK, response)
+}
+
+// max_data_points limits the final chart series. QueryScopes must first read
+// one row per selected entity and time bucket so traffic policy corrections
+// can be applied before aggregation. Keep the caller's budget for a single
+// explicit port, but use the existing bounded ClickHouse safety ceiling when
+// the scope expands to multiple entities.
+func snmpScopedQueryRowBudget(requested uint32, scopes []snmpch.Scope) uint32 {
+	if len(scopes) != 1 || scopes[0].PortID == "" {
+		return 250000
+	}
+	return requested
 }
 
 func parseSNMPIDs(values ...string) ([]string, error) {

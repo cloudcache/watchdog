@@ -20,6 +20,7 @@ var abilityCatalog = []string{
 	"flow.view.customer", "flow.view.supplier", "flow.view.raw",
 	"flow.export.customer", "flow.export.supplier", "flow.export.raw", "flow.reclassify", "flow.probe",
 	"flow.device.view", "flow.device.manage",
+	"flow.vpn.view", "flow.vpn.triage", "flow.vpn.manage",
 	"agent.view", "agent.manage", "address.view", "address.manage", "address.publish",
 	"job.view", "job.manage", "audit.view",
 }
@@ -40,13 +41,13 @@ var defaultRoles = []defaultRole{
 		"device.view", "device.viewAll", "device.create", "device.update", "device.delete", "device.discover",
 		"port.view", "port.viewAll", "port.update",
 		"agent.view", "agent.manage", "job.view", "job.manage", "address.view", "audit.view",
-		"flow.device.view", "flow.device.manage",
+		"flow.device.view", "flow.device.manage", "flow.vpn.view", "flow.vpn.triage", "flow.vpn.manage",
 	}},
 	{"analyst", "Analyst", false, []string{
 		"device.view", "device.viewAll", "port.view", "port.viewAll",
 		"flow.view.customer", "flow.view.supplier", "flow.view.raw",
 		"flow.export.customer", "flow.export.supplier", "flow.export.raw",
-		"flow.device.view",
+		"flow.device.view", "flow.vpn.view", "flow.vpn.triage",
 		"bill.view", "audit.view",
 	}},
 	{"billing", "Billing", false, []string{

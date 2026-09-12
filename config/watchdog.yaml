@@ -31,6 +31,8 @@ flow:                               # explicit global retention/downsample polic
   downsample_after_days: 365        # downsample only after this age (no hardcoded 30 days)
   rollup_1m_days: 180
   rollup_1h_days: 400
+  geo:                              # geo catalog/lookup bundle for flow reports + overseas
+    path: "data/flow-geo"           # dev fixture; production feeds this from a published geo dimension artifact
 
 agent_plans:                        # one installation-wide immutable plan signer
   signing_key_id: "watchdog-agent-plan-v1"
@@ -38,9 +40,10 @@ agent_plans:                        # one installation-wide immutable plan signe
   default_ttl: "8760h"              # one year; agents may use a verified LKG while offline
 
 snmp:                               # generic standard MIB discovery works with empty values
-  definitions_dir: ""               # optional LibreNMS checkout for OS/vendor definitions
-  definitions_version: ""
-  mib_dirs: []                       # optional additional vendor MIB directories
+  definitions_dir: "/Users/chenliliang/Downloads/librenms-master" # versioned LibreNMS OS/vendor definitions
+  definitions_version: "librenms-local-2026-09-12"
+  mib_dirs:                          # external capability MIBs layered over the embedded core bundle
+    - "/Users/chenliliang/Downloads/librenms-master/mibs"
   mib_load: ""                       # optional module list or ALL
   poll_interval: 1m                  # scheduler wakeup; each recipe still owns its interval
   poll_limit: 500                    # maximum due devices per scheduler pass
@@ -51,6 +54,10 @@ snmp:                               # generic standard MIB discovery works with 
 billing:
   export_dir: "data/billing-exports" # CSV/Parquet evidence artifacts; state stays in operation_jobs
   export_retention: "168h"           # seven days; closed period evidence can be regenerated deterministically
+
+address:                            # geo/address-library source imports (MMDB/IPDB)
+  artifact_dir: "data/address-artifacts"  # where uploaded source databases are stored
+  max_upload_bytes: 2147483648      # per-upload ceiling (2 GiB); the upload route enforces this, not the 8 MiB JSON cap
 
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"

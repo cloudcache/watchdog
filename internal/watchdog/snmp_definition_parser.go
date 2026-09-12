@@ -38,6 +38,8 @@ type librenmsOSDiscovery struct {
 	SysDescrRegexExcept    librenmsStringList `yaml:"sysDescr_regex_except" json:"sysDescr_regex_except,omitempty"`
 	SysNameExcept          librenmsStringList `yaml:"sysName_except" json:"sysName_except,omitempty"`
 	SysNameRegexExcept     librenmsStringList `yaml:"sysName_regex_except" json:"sysName_regex_except,omitempty"`
+	SNMPGet                map[string]any     `yaml:"snmpget" json:"snmpget,omitempty"`
+	SNMPWalk               map[string]any     `yaml:"snmpwalk" json:"snmpwalk,omitempty"`
 }
 
 type librenmsTrapConfig struct {

@@ -64,6 +64,56 @@ func TestSNMPCollectorDetectOSBySysObjectIDAndRegex(t *testing.T) {
 	}
 }
 
+func TestSNMPCollectorDetectOSUsesLibreNMSDefinitionOrder(t *testing.T) {
+	match, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
+		SysObjectID: ".1.3.6.1.4.1.2011.2.23.282",
+		SysDescr:    "S5720-56C-EI-AC Huawei Versatile Routing Platform Software VRP (R) software,Version 5.170",
+	}, []SNMPCollectorOSDefinition{
+		{
+			OSName: "yunshan",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysObjectID": []any{".1.3.6.1.4.1.2011.2.23"},
+			}}},
+		},
+		{
+			OSName: "vrp",
+			Vendor: "huawei",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysDescr": []any{"VRP (R) Software", "Versatile Routing Platform Software"},
+			}}},
+		},
+	})
+	if !ok || match.OSName != "vrp" || match.Vendor != "huawei" || match.Reason != "sysDescr" {
+		t.Fatalf("unexpected match: %#v, ok=%v", match, ok)
+	}
+}
+
+func TestSNMPCollectorDetectOSDoesNotPartiallyMatchActiveProbeRule(t *testing.T) {
+	match, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
+		SysObjectID: ".1.3.6.1.4.1.2011.2.23.282",
+		SysDescr:    "Huawei Versatile Routing Platform Software",
+	}, []SNMPCollectorOSDefinition{
+		{
+			OSName: "supermicro-bmc",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysObjectID": ".1.3.6.1.4.1.",
+				"snmpget": map[string]any{
+					"oid": "ATEN-IPMI-MIB::bmcMajorVesion.0", "op": "!=", "value": false,
+				},
+			}}},
+		},
+		{
+			OSName: "vrp",
+			Definition: map[string]any{"discovery": []any{map[string]any{
+				"sysDescr": "Versatile Routing Platform Software",
+			}}},
+		},
+	})
+	if !ok || match.OSName != "vrp" {
+		t.Fatalf("unexpected match: %#v, ok=%v", match, ok)
+	}
+}
+
 func TestSNMPCollectorDetectOSHonorsNegativeRules(t *testing.T) {
 	_, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
 		SysObjectID: ".1.3.6.1.4.1.2011.2.23",
@@ -1055,6 +1105,9 @@ func TestSNMPCollectorPollRunnerExecutesDueRecipesByDevice(t *testing.T) {
 	if collector.recipes[0].LastPolledAt != now || collector.recipes[0].LastError != "" {
 		t.Fatalf("recipe poll result not marked: %#v", collector.recipes[0])
 	}
+	if len(collector.devicePolls) != 1 || collector.devicePolls[0].deviceID != "device-a" || collector.devicePolls[0].polledAt != now || collector.devicePolls[0].lastError != "" {
+		t.Fatalf("device poll result not marked: %#v", collector.devicePolls)
+	}
 }
 
 type fakeSNMPCollectorQueryEngine struct {
@@ -1126,6 +1179,13 @@ type fakeSNMPCollectorRepository struct {
 	eventFacetQuery   SNMPEventFacetQuery
 	eventFacets       []SNMPEventFacet
 	eventTotal        int64
+	devicePolls       []fakeSNMPDevicePollResult
+}
+
+type fakeSNMPDevicePollResult struct {
+	deviceID  ID
+	polledAt  time.Time
+	lastError string
 }
 
 func (r *fakeSNMPCollectorRepository) ListSNMPOSDefinitions(_ context.Context) ([]SNMPCollectorOSDefinition, error) {
@@ -1200,6 +1260,11 @@ func (r *fakeSNMPCollectorRepository) MarkSNMPRecipePollResult(_ context.Context
 			r.recipes[idx].LastError = lastError
 		}
 	}
+	return nil
+}
+
+func (r *fakeSNMPCollectorRepository) MarkSNMPDevicePollResult(_ context.Context, deviceID ID, polledAt time.Time, lastError string) error {
+	r.devicePolls = append(r.devicePolls, fakeSNMPDevicePollResult{deviceID: deviceID, polledAt: polledAt, lastError: lastError})
 	return nil
 }
 

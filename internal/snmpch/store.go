@@ -37,15 +37,20 @@ func (s *Store) Ready(ctx context.Context) error {
 	var required proto.ColUInt64
 	query := ch.Query{
 		Body: `SELECT count() FROM system.columns
-WHERE database=currentDatabase() AND table='snmp_samples' AND name IN
-('observed_at','ingested_at','device_id','agent_id','entity_kind','entity_id','recipe_id','metric','value_kind','gauge_value','counter_value','counter_width','interval_ms','quality_flags','poll_sequence','source_run_id','sample_index')`,
+WHERE database=currentDatabase() AND (
+  (table='snmp_samples' AND name IN
+   ('observed_at','ingested_at','device_id','agent_id','entity_kind','entity_id','recipe_id','metric','value_kind','gauge_value','counter_value','counter_width','interval_ms','quality_flags','poll_sequence','source_run_id','sample_index'))
+  OR
+  (table='snmp_events' AND name IN
+   ('id','occurred_at','ingested_at','device_id','entity_type','entity_id','source','severity','event_type','message','raw_json'))
+)`,
 		Result: proto.Results{{Name: "count()", Data: &required}},
 	}
 	if err := s.exec.Do(ctx, query); err != nil {
 		return fmt.Errorf("verify SNMP ClickHouse schema: %w", err)
 	}
-	if required.Rows() != 1 || required[0] != 17 {
-		return fmt.Errorf("SNMP ClickHouse schema is not ready (columns=%d/17)", columnOrZero(required))
+	if required.Rows() != 1 || required[0] != 28 {
+		return fmt.Errorf("SNMP ClickHouse schema is not ready (columns=%d/28)", columnOrZero(required))
 	}
 	return nil
 }
