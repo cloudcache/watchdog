@@ -450,7 +450,14 @@ export function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; 
 	const [sort, setSort] = useState("cidr:asc")
 	const [lookupActive, setLookupActive] = useState(false)
 	const [lookupIP, setLookupIP] = useState("")
+	const [selectedCidrs, setSelectedCidrs] = useState<string[]>([])
 	const requestSequence = useRef(0)
+	const selectable = useMemo(
+		() => ({
+			onSelectionChange: (recs: Record<string, unknown>[]) => setSelectedCidrs(recs.map((r) => String(r.cidr))),
+		}),
+		[]
+	)
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -599,6 +606,36 @@ export function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; 
 					<Trans>Close</Trans>
 				</Button>
 			</div>
+			<div className="flex flex-wrap items-center gap-3">
+				<div className="inline-flex w-fit rounded-md border border-border p-0.5">
+					{(
+						[
+							["", t`All`],
+							["4", "IPv4"],
+							["6", "IPv6"],
+						] as const
+					).map(([value, label]) => (
+						<Button
+							key={value}
+							variant={family === value ? "default" : "ghost"}
+							size="sm"
+							onClick={() => resetPage(() => setFamily(value))}
+						>
+							{label}
+						</Button>
+					))}
+				</div>
+				{selectedCidrs.length > 0 ? (
+					<div className="flex items-center gap-2 text-sm">
+						<span className="text-muted-foreground">
+							<Trans>Selected {selectedCidrs.length}</Trans>
+						</span>
+						<Button variant="ghost" size="sm" onClick={() => setSelectedCidrs([])}>
+							<Trans>Clear</Trans>
+						</Button>
+					</div>
+				) : null}
+			</div>
 			<div className="flex flex-wrap gap-2">
 				<Input
 					className="w-28"
@@ -665,6 +702,7 @@ export function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; 
 				}}
 				serverFiltering={serverFiltering}
 				serverSorting={serverSorting}
+				selectable={selectable}
 			/>
 		</div>
 	)
