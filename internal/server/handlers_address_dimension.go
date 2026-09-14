@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
@@ -169,42 +168,15 @@ func (s *Server) downloadAddressDimensionObject(c *gin.Context) {
 	c.FileAttachment(path, "address-snapshot.wads")
 }
 
+// approveAddressDimension marks a pending snapshot approved after an authenticated
+// operator confirms it in the UI. Accountability is the audit log + version
+// rollback; the prior ed25519 signature requirement was dropped 2026-09-14.
 func (s *Server) approveAddressDimension(c *gin.Context) {
 	expected, ok := requireAddressIfMatch(c)
 	if !ok {
 		return
 	}
-	var req struct {
-		SigningKeyID string    `json:"signing_key_id"`
-		SignedAt     time.Time `json:"signed_at"`
-		Signature    string    `json:"signature"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
-		return
-	}
-	signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.Signature))
-	if err != nil {
-		fail(c, http.StatusBadRequest, "invalid_request", "signature must be base64")
-		return
-	}
-	ctx := c.Request.Context()
-	snapshot, err := s.addressPublisher.GetAddressDimensionSnapshot(ctx, c.Param("id"))
-	if err != nil {
-		writeAddressDimensionError(c, err)
-		return
-	}
-	publicKey, err := s.addressKeys.ResolveAddressDimensionPublicKey(ctx, req.SigningKeyID)
-	if err != nil {
-		fail(c, http.StatusBadRequest, "trusted_key_not_found", "signing key is not trusted")
-		return
-	}
-	approval, err := address.VerifyAddressDimensionApproval(snapshot, req.SigningKeyID, req.SignedAt, signature, publicKey)
-	if err != nil {
-		fail(c, http.StatusBadRequest, "invalid_signature", "approval signature verification failed")
-		return
-	}
-	approved, err := s.addressPublisher.ApproveDimensionPublication(ctx, currentPrincipal(c).UserID, approval, expected)
+	approved, err := s.addressPublisher.ApproveDimensionPublication(c.Request.Context(), currentPrincipal(c).UserID, c.Param("id"), expected)
 	if err != nil {
 		writeAddressDimensionError(c, err)
 		return

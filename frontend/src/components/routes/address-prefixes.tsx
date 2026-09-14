@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { parsePrefixLabels } from "@/lib/address-set-form"
 import { api } from "@/lib/api"
+import { type AddressImport, type AddressImportSlot, ImportedPrefixBrowser } from "./address-imports"
 
 type AddressPrefix = {
 	id: string
@@ -58,7 +60,7 @@ const emptyForm = {
 	operatorID: "",
 }
 
-export default memo(function AddressPrefixes() {
+const AddressPrefixes = memo(function AddressPrefixes() {
 	const { t } = useLingui()
 	const correctionDraft = useMemo(() => readCorrectionDraft(), [])
 	const [prefixes, setPrefixes] = useState<AddressPrefix[]>([])
@@ -781,3 +783,139 @@ function readCorrectionDraft() {
 		evidence,
 	}
 }
+
+const IMPORT_SLOTS = ["combined", "geo", "asn"] as const
+
+// Read-only browse of the imported base prefixes backing the active import slots
+// (address_base_prefixes — the large, immutable per-import table). Resolves the
+// slot's active import and reuses the Imports tab's ImportedPrefixBrowser so the
+// library and the imported data live under one Prefixes tab instead of two pages.
+const AddressImportedPrefixes = memo(function AddressImportedPrefixes({
+	onBackToLibrary,
+}: {
+	onBackToLibrary: () => void
+}) {
+	const { t } = useLingui()
+	const [slots, setSlots] = useState<Record<string, AddressImportSlot | null>>({})
+	const [slot, setSlot] = useState("combined")
+	const [activeImport, setActiveImport] = useState<AddressImport | null>(null)
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+
+	// Load every slot once so the selector can default to a populated slot.
+	useEffect(() => {
+		let cancelled = false
+		const loadSlots = async () => {
+			const next: Record<string, AddressImportSlot | null> = {}
+			for (const name of IMPORT_SLOTS) {
+				try {
+					const resolved = await api.send<AddressImportSlot>(`/api/v1/address-import-slots/${name}`, {})
+					next[name] = resolved.import_id ? resolved : null
+				} catch {
+					next[name] = null
+				}
+			}
+			if (cancelled) return
+			setSlots(next)
+			const firstActive = IMPORT_SLOTS.find((name) => next[name]?.import_id)
+			if (firstActive) setSlot(firstActive)
+		}
+		loadSlots()
+		return () => {
+			cancelled = true
+		}
+	}, [])
+
+	// Resolve the chosen slot's active import (needed for the browser header + id).
+	useEffect(() => {
+		let cancelled = false
+		const importID = slots[slot]?.import_id
+		if (!importID) {
+			setActiveImport(null)
+			setLoading(false)
+			return
+		}
+		setLoading(true)
+		setError("")
+		const loadImport = async () => {
+			try {
+				const imp = await api.send<AddressImport>(`/api/v1/address-imports/${importID}`, {})
+				if (!cancelled) setActiveImport(imp)
+			} catch (err) {
+				if (!cancelled) {
+					setActiveImport(null)
+					setError(err instanceof Error ? err.message : t`Failed to load import`)
+				}
+			} finally {
+				if (!cancelled) setLoading(false)
+			}
+		}
+		loadImport()
+		return () => {
+			cancelled = true
+		}
+	}, [slot, slots, t])
+
+	return (
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center gap-2">
+				<Label className="text-sm text-muted-foreground">
+					<Trans>Import slot</Trans>
+				</Label>
+				<Select value={slot} onValueChange={setSlot}>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{IMPORT_SLOTS.map((name) => (
+							<SelectItem key={name} value={name}>
+								{slotLabel(name)}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</div>
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
+			{loading ? (
+				<div className="rounded-md border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+					<Trans>Loading…</Trans>
+				</div>
+			) : activeImport ? (
+				<ImportedPrefixBrowser item={activeImport} onClose={onBackToLibrary} />
+			) : (
+				<div className="rounded-md border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+					<Trans>No active import in this slot. Upload and activate one in the Imports tab.</Trans>
+				</div>
+			)}
+		</div>
+	)
+})
+
+function slotLabel(slot: string) {
+	if (slot === "geo") return "Geo"
+	if (slot === "asn") return "ASN"
+	return "Combined"
+}
+
+export default memo(function AddressPrefixesTab() {
+	const [mode, setMode] = useState<"library" | "imported">("library")
+	return (
+		<div className="grid gap-3">
+			<div className="inline-flex w-fit rounded-md border border-border p-0.5">
+				<Button variant={mode === "library" ? "default" : "ghost"} size="sm" onClick={() => setMode("library")}>
+					<Trans>Library</Trans>
+				</Button>
+				<Button variant={mode === "imported" ? "default" : "ghost"} size="sm" onClick={() => setMode("imported")}>
+					<Trans>Imported</Trans>
+				</Button>
+			</div>
+			{mode === "imported" ? (
+				<AddressImportedPrefixes onBackToLibrary={() => setMode("library")} />
+			) : (
+				<AddressPrefixes />
+			)}
+		</div>
+	)
+})

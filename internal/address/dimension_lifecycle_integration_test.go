@@ -2,18 +2,15 @@ package address
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"testing"
 	"time"
 )
 
 // Engine-level integration (de-tenanted) proving the publication lifecycle end to
-// end against real MySQL, with the restored ed25519 approval driven directly:
-// build a WADS snapshot -> the trusted-approval gate rejects a pending activation
-// -> verify+approve with ed25519 -> the envelope is persisted -> activate ->
-// worker ACK -> consumer summary. The HTTP approve endpoint is covered in 05D.
-func TestStoreAddressDimensionLifecycleWithEd25519Approval(t *testing.T) {
+// end against real MySQL: build a WADS snapshot -> the trusted-approval gate rejects
+// a pending activation -> approve (an audited UI confirmation, no signature) ->
+// activate -> worker ACK -> consumer summary. The HTTP approve endpoint is covered in 05D.
+func TestStoreAddressDimensionLifecycleApproval(t *testing.T) {
 	db := addressTestDB(t)
 	store := NewStore(db)
 	ctx := context.Background()
@@ -72,34 +69,15 @@ func TestStoreAddressDimensionLifecycleWithEd25519Approval(t *testing.T) {
 		t.Fatalf("pending activation error = %v, want ErrAddressDimensionInvalidTransition", err)
 	}
 
-	// Approve with a real ed25519 signature over the snapshot's signing payload.
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	// Approve is an audited UI confirmation now: it records the deciding actor and
+	// timestamp and carries no signature; accountability is the audit log + rollback.
+	approved, err := publisher.ApproveDimensionPublication(ctx, actorID, snapshot.ID, snapshot.RowVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	signedAt := time.Now().UTC().Truncate(time.Millisecond)
-	payload, err := AddressDimensionSigningPayload(snapshot, "lifecycle-key", signedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	approval, err := VerifyAddressDimensionApproval(snapshot, "lifecycle-key", signedAt, ed25519.Sign(privateKey, payload), publicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	approved, err := publisher.ApproveDimensionPublication(ctx, actorID, approval, snapshot.RowVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if approved.ApprovalState != AddressDimensionApprovalApproved || approved.SignatureAlgorithm != AddressDimensionSignatureAlgorithm ||
-		approved.SigningKeyID != "lifecycle-key" || len(approved.Signature) != ed25519.SignatureSize || approved.SignedAt == nil || approved.RowVersion != 2 {
+	if approved.ApprovalState != AddressDimensionApprovalApproved || approved.DecidedBy != actorID ||
+		approved.DecidedAt == nil || len(approved.Signature) != 0 || approved.RowVersion != 2 {
 		t.Fatalf("approved snapshot = %#v", approved)
-	}
-
-	// A tampered approval (different snapshot) must be refused at persist time.
-	other := approved
-	other.Version++
-	if err := validateVerifiedDimensionPublicationApproval(other, approval); err == nil {
-		t.Fatal("persist-time proof accepted a mutated snapshot")
 	}
 
 	// The trusted, approved snapshot activates.

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { api } from "@/lib/api"
+import { api, can } from "@/lib/api"
 
 type AddressDimensionSnapshot = {
 	id: string
@@ -19,6 +19,10 @@ type AddressDimensionSnapshot = {
 	address_set_count: number
 	max_address_sets_per_record: number
 	status: string
+	approval_state: string
+	row_version: number
+	decided_by?: string
+	decided_at?: string
 	created_at: string
 }
 
@@ -52,7 +56,9 @@ export default memo(function AddressPublications() {
 	const [working, setWorking] = useState(false)
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
+	const [selectedId, setSelectedId] = useState<string | null>(null)
 	const requestSequence = useRef(0)
+	const canPublish = can("address.publish")
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -134,11 +140,58 @@ export default memo(function AddressPublications() {
 		}
 	}
 
+	const selected = useMemo(() => items.find((item) => item.id === selectedId) ?? null, [items, selectedId])
+
+	// One authenticated confirmation drives every lifecycle verb; accountability is
+	// the audit log + version rollback (the ed25519 approval signature was dropped).
+	const runAction = useCallback(
+		async (snap: AddressDimensionSnapshot, verb: string, body?: Record<string, unknown>) => {
+			setWorking(true)
+			setError("")
+			setNotice("")
+			try {
+				await api.send(`/api/v1/dimensions/address/versions/${snap.id}/actions/${verb}`, {
+					method: "POST",
+					headers: { "If-Match": `"${snap.row_version}"` },
+					body,
+				})
+				setNotice(t`Version ${snap.version}: ${verb} applied`)
+				await fetchPage()
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Action failed`)
+			} finally {
+				setWorking(false)
+			}
+		},
+		[fetchPage, t]
+	)
+	const approve = (snap: AddressDimensionSnapshot) => {
+		if (confirm(t`Approve version ${snap.version}? It becomes eligible to activate.`)) runAction(snap, "approve")
+	}
+	const reject = (snap: AddressDimensionSnapshot) => {
+		const reason = prompt(t`Reason for rejecting version ${snap.version}?`)
+		if (reason?.trim()) runAction(snap, "reject", { reason: reason.trim() })
+	}
+	const activate = (snap: AddressDimensionSnapshot) => {
+		if (confirm(t`Activate version ${snap.version}? It goes live for all flow workers.`)) runAction(snap, "activate")
+	}
+	const rollback = (snap: AddressDimensionSnapshot) => {
+		if (confirm(t`Roll back to version ${snap.version} now? It becomes the live snapshot.`))
+			runAction(snap, "rollback", { effective_from: currentMinuteISO() })
+	}
+	const retire = (snap: AddressDimensionSnapshot) => {
+		const reason = prompt(t`Reason for retiring version ${snap.version}?`)
+		if (reason === null) return
+		runAction(snap, "retire", reason.trim() ? { reason: reason.trim() } : undefined)
+	}
+
 	const records = useMemo(
 		() =>
 			items.map((item) => ({
+				id: item.id,
 				version: item.version,
 				status: item.status,
+				approval: item.approval_state,
 				effective: formatDate(item.effective_from),
 				prefixes: item.prefix_count.toLocaleString(),
 				sets: item.address_set_count.toLocaleString(),
@@ -146,13 +199,16 @@ export default memo(function AddressPublications() {
 				schema: item.bundle_schema_version,
 				checksum: item.checksum,
 				created: formatDate(item.created_at),
+				manage: canPublish ? t`Manage` : "",
+				rowVersion: item.row_version,
 			})),
-		[items]
+		[items, canPublish, t]
 	)
 	const columns = useMemo(
 		() => [
 			{ field: "version", title: t`Version`, width: 90, style: denseCellStyle() },
 			{ field: "status", title: t`Status`, width: 100, style: denseCellStyle() },
+			{ field: "approval", title: t`Approval`, width: 110, style: denseCellStyle() },
 			{ field: "effective", title: t`Effective from`, width: 190, style: denseCellStyle() },
 			{ field: "prefixes", title: t`Prefixes`, width: 110, style: denseCellStyle() },
 			{ field: "sets", title: t`Sets`, width: 100, style: denseCellStyle() },
@@ -160,8 +216,19 @@ export default memo(function AddressPublications() {
 			{ field: "schema", title: t`Schema`, width: 90, style: denseCellStyle() },
 			{ field: "checksum", title: t`Checksum`, width: 300, style: denseCellStyle() },
 			{ field: "created", title: t`Created`, width: 190, style: denseCellStyle() },
+			...(canPublish
+				? [
+						{
+							field: "manage",
+							title: t`Actions`,
+							width: 90,
+							filter: false,
+							style: { ...denseCellStyle(), color: "#2563eb", cursor: "pointer" },
+						},
+					]
+				: []),
 		],
-		[t]
+		[t, canPublish]
 	)
 	const resetPage = (update: () => void) => {
 		setPage(0)
@@ -266,6 +333,48 @@ export default memo(function AddressPublications() {
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
 			) : null}
 			{notice ? <div className="rounded-md border border-green-500/30 p-3 text-sm text-green-700">{notice}</div> : null}
+			{selected && canPublish ? (
+				<div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-card p-3 text-sm">
+					<span className="font-medium">
+						<Trans>Version {selected.version}</Trans>
+					</span>
+					<span className="text-muted-foreground">
+						{selected.approval_state} · {selected.status}
+					</span>
+					<div className="ms-auto flex flex-wrap gap-2">
+						{selected.approval_state === "pending" && selected.status === "active" ? (
+							<>
+								<Button size="sm" onClick={() => approve(selected)} disabled={working}>
+									<Trans>Approve</Trans>
+								</Button>
+								<Button size="sm" variant="outline" onClick={() => reject(selected)} disabled={working}>
+									<Trans>Reject</Trans>
+								</Button>
+							</>
+						) : null}
+						{selected.approval_state === "approved" ? (
+							<>
+								{selected.status === "active" ? (
+									<Button size="sm" onClick={() => activate(selected)} disabled={working}>
+										<Trans>Activate</Trans>
+									</Button>
+								) : null}
+								<Button size="sm" variant="outline" onClick={() => rollback(selected)} disabled={working}>
+									<Trans>Roll back to this</Trans>
+								</Button>
+								{selected.status === "active" ? (
+									<Button size="sm" variant="outline" onClick={() => retire(selected)} disabled={working}>
+										<Trans>Retire</Trans>
+									</Button>
+								) : null}
+							</>
+						) : null}
+						<Button size="sm" variant="ghost" onClick={() => setSelectedId(null)}>
+							<Trans>Close</Trans>
+						</Button>
+					</div>
+				</div>
+			) : null}
 			<PagedVTable
 				records={records}
 				columns={columns}
@@ -275,6 +384,9 @@ export default memo(function AddressPublications() {
 				searchValue={search}
 				onSearchChange={setSearch}
 				height={420}
+				onCellClick={(record, field) => {
+					if (field === "manage") setSelectedId(String(record.id))
+				}}
 				serverPagination={{
 					page,
 					pageSize,
@@ -311,6 +423,10 @@ function parseEffectiveFrom(value: string) {
 	if (!value || Number.isNaN(date.getTime()) || date.getSeconds() !== 0 || date.getMilliseconds() !== 0)
 		throw new Error("Effective time must be a minute boundary")
 	return date.toISOString()
+}
+
+function currentMinuteISO() {
+	return new Date(Math.floor(Date.now() / 60_000) * 60_000).toISOString()
 }
 
 function denseCellStyle() {

@@ -2,7 +2,6 @@ package address
 
 import (
 	"context"
-	"crypto/ed25519"
 	"database/sql"
 	"errors"
 	"strings"
@@ -51,21 +50,23 @@ type DimensionPublicationRetireRequest struct {
 
 type AddressDimensionRetireRequest = DimensionPublicationRetireRequest
 
-// ApproveDimensionPublication moves a pending publication to approved after its
-// ed25519 approval has been verified against the immutable snapshot metadata.
-// The approval carries a private proof (VerifyDimensionPublicationApproval); this
-// re-checks that proof, then persists the signature envelope. Faithful de-tenant
-// port of the legacy MySQLDimensionPublicationStore.ApproveDimensionPublication.
-func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID ID, approval DimensionPublicationApproval, expectedRowVersion uint64) (DimensionPublicationSnapshot, error) {
-	if p == nil || p.store == nil || actorID == "" || expectedRowVersion == 0 || approval.SnapshotID == "" {
+// ApproveDimensionPublication moves a pending publication to approved after an
+// authenticated operator confirms it in the UI. The deciding actor and timestamp
+// are recorded on the row and in the audit log; accountability comes from that
+// trail plus version rollback, not a cryptographic signature. (The ed25519
+// approval ceremony was dropped 2026-09-14 for single-tenant KISS, reversing
+// faf517c6 — one authenticated admin, key-on-same-host, made it pure friction.)
+func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, snapshotID ID, expectedRowVersion uint64) (DimensionPublicationSnapshot, error) {
+	if p == nil || p.store == nil || actorID == "" || expectedRowVersion == 0 || snapshotID == "" {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalid
 	}
+	decidedAt := p.now().UTC()
 	tx, err := p.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
 	defer tx.Rollback()
-	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, approval.SnapshotID, true)
+	snapshot, err := getDimensionPublicationSnapshotTx(ctx, tx, p.scope, snapshotID, true)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -75,17 +76,13 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID ID,
 	if snapshot.Status != AddressDimensionStatusActive || snapshot.ApprovalState != AddressDimensionApprovalPending || snapshot.ObjectDeletedAt != nil {
 		return AddressDimensionSnapshot{}, ErrAddressDimensionInvalidTransition
 	}
-	if err := validateVerifiedDimensionPublicationApproval(snapshot, approval); err != nil {
-		return AddressDimensionSnapshot{}, err
-	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET approval_state = 'approved', decided_by = ?, decided_at = ?,
-		    decision_reason = NULL, signature_algorithm = ?, signing_key_id = ?,
-		    signature = ?, signed_at = ?, row_version = row_version + 1
+		    decision_reason = NULL, signature_algorithm = NULL, signing_key_id = NULL,
+		    signature = NULL, signed_at = NULL, row_version = row_version + 1
 		WHERE module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
-	`, actorID, approval.SignedAt, AddressDimensionSignatureAlgorithm, approval.SigningKeyID,
-		approval.Signature, approval.SignedAt, p.scope.ModuleKey, p.scope.DimensionKey, approval.SnapshotID, expectedRowVersion)
+	`, actorID, decidedAt, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID, expectedRowVersion)
 	if err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -93,7 +90,7 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID ID,
 		return AddressDimensionSnapshot{}, err
 	}
 	if err := insertAddressDimensionAudit(ctx, tx, actorID, snapshot.ID, "dimension.snapshot.approved", map[string]any{
-		"version": snapshot.Version, "checksum": snapshot.Checksum, "signing_key_id": approval.SigningKeyID,
+		"version": snapshot.Version, "checksum": snapshot.Checksum,
 	}); err != nil {
 		return AddressDimensionSnapshot{}, err
 	}
@@ -104,12 +101,10 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID ID,
 }
 
 // dimensionPublicationSnapshotHasTrustedApproval reports whether a snapshot may be
-// activated or rolled back to: it must be approved and carry either a legacy
-// unsigned approval or a complete ed25519 envelope. Faithful de-tenant port.
+// activated or rolled back to: it must simply be approved. (The ed25519 signature
+// requirement was dropped 2026-09-14; approval is now an audited UI confirmation.)
 func dimensionPublicationSnapshotHasTrustedApproval(snapshot DimensionPublicationSnapshot) bool {
-	return snapshot.ApprovalState == AddressDimensionApprovalApproved &&
-		((snapshot.DecidedAt == nil && len(snapshot.Signature) == 0) ||
-			(snapshot.DecidedAt != nil && snapshot.SignedAt != nil && snapshot.SignatureAlgorithm == AddressDimensionSignatureAlgorithm && snapshot.SigningKeyID != "" && len(snapshot.Signature) == ed25519.SignatureSize))
+	return snapshot.ApprovalState == AddressDimensionApprovalApproved
 }
 
 func (p *Publisher) RejectDimensionPublication(ctx context.Context, actorID, snapshotID ID, expectedRowVersion uint64, reason string) (DimensionPublicationSnapshot, error) {

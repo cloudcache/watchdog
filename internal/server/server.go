@@ -40,7 +40,6 @@ type Server struct {
 
 	addressStore     *address.Store
 	addressPublisher *address.Publisher
-	addressKeys      address.AddressDimensionPublicKeyResolver
 	addressObjects   address.DiskDimensionObjectStore
 	addressArtifacts address.DiskArtifactStore
 	addressTus       *tushandler.UnroutedHandler
@@ -182,16 +181,6 @@ func (s *Server) startAddressLibrary() error {
 		return err
 	}
 	s.addressPublisher = publisher
-
-	trustedKeys := make([]address.AddressDimensionTrustedKeyConfig, 0, len(s.cfg.Address.TrustedKeys))
-	for _, key := range s.cfg.Address.TrustedKeys {
-		trustedKeys = append(trustedKeys, address.AddressDimensionTrustedKeyConfig{KeyID: key.KeyID, PublicKeyFile: key.PublicKeyFile})
-	}
-	resolver, err := address.LoadAddressDimensionPublicKeyResolver(trustedKeys)
-	if err != nil {
-		return fmt.Errorf("load address dimension trusted keys: %w", err)
-	}
-	s.addressKeys = resolver
 
 	workerCtx, cancel := context.WithCancel(context.Background())
 	s.workerCancel = cancel

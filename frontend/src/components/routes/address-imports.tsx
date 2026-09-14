@@ -23,7 +23,7 @@ function readCsrfToken(): string {
 	return match ? decodeURIComponent(match[1]) : ""
 }
 
-type AddressImport = {
+export type AddressImport = {
 	id: string
 	source_slot: string
 	format: string
@@ -38,7 +38,7 @@ type AddressImport = {
 	created_at: string
 }
 
-type AddressImportSlot = {
+export type AddressImportSlot = {
 	source_slot: string
 	import_id: string
 	row_version: number
@@ -433,7 +433,7 @@ export default memo(function AddressImports() {
 	)
 })
 
-function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose: () => void }) {
+export function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; onClose: () => void }) {
 	const { t } = useLingui()
 	const [prefixes, setPrefixes] = useState<ImportedPrefix[]>([])
 	const [total, setTotal] = useState(0)
