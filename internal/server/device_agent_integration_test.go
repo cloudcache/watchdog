@@ -185,6 +185,18 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if systemDevice.Kind != "system" {
 		t.Fatalf("target create returned canonical device kind %q instead of target kind system", systemDevice.Kind)
 	}
+	discoveryGuard := &fakeSNMPDiscoveryRunner{}
+	s.snmpDiscovery = discoveryGuard
+	wrongDiscovery := requestJSON(t, s, http.MethodPost, "/api/v1/network/devices/"+systemDevice.ID+"/snmp/discover", nil, authHeaders, cookies...)
+	if wrongDiscovery.Code != http.StatusConflict || !strings.Contains(wrongDiscovery.Body.String(), "invalid_device_kind") || len(discoveryGuard.requests) != 0 {
+		t.Fatalf("system target reached SNMP discovery: status=%d body=%s requests=%d", wrongDiscovery.Code, wrongDiscovery.Body.String(), len(discoveryGuard.requests))
+	}
+	wrongSNMPPatch := requestJSON(t, s, http.MethodPatch, "/api/v1/network/devices/"+systemDevice.ID+"/snmp", map[string]any{
+		"snmp_profile_id": "snmp_api_test",
+	}, authHeaders, cookies...)
+	if wrongSNMPPatch.Code != http.StatusConflict || !strings.Contains(wrongSNMPPatch.Body.String(), "invalid_device_kind") {
+		t.Fatalf("system target accepted SNMP settings: status=%d body=%s", wrongSNMPPatch.Code, wrongSNMPPatch.Body.String())
+	}
 	wrongSystemBinding := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": "wrong_system_binding", "device_id": device.ID, "kind": "system", "mode": "push",
 		"token": "wrong-system-secret", "capabilities": []string{"system.samples/v1"},

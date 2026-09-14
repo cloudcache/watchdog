@@ -537,7 +537,7 @@ func targetResponse(c *gin.Context) bool {
 }
 
 func (s *Server) patchDeviceSNMP(c *gin.Context) {
-	if !s.requireDeviceAccess(c, c.Param("id")) {
+	if _, ok := s.loadScopedNetworkDevice(c, c.Param("id")); !ok {
 		return
 	}
 	var req struct {

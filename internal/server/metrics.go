@@ -72,7 +72,11 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	}
 	metric := strings.TrimSpace(c.Query("metric"))
 	if !isSNMPMetric(metric) {
-		fail(c, http.StatusBadRequest, "invalid_metric", "unsupported SNMP metric")
+		if watchdog.IsKnownMetric(metric) {
+			fail(c, http.StatusServiceUnavailable, "metric_provider_unavailable", "metric family is not configured in this server")
+		} else {
+			fail(c, http.StatusBadRequest, "invalid_metric", "unsupported metric")
+		}
 		return
 	}
 	if !s.requireMetricAccess(c, metric) {

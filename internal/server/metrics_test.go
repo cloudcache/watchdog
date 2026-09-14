@@ -109,6 +109,27 @@ func TestQueryMetricsRejectsUnknownParameterBeforeClickHouse(t *testing.T) {
 	}
 }
 
+func TestQueryMetricsDoesNotRouteContainerMetricToSNMP(t *testing.T) {
+	exec := &metricQueryExecutor{}
+	store, err := snmpch.New(exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{snmpMetrics: store}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/metrics/query?target_id=host-a&metric=watchdog_container_cpu_percent&time_mode=fixed&window=1h", nil)
+	c.Set(principalKey, &principal{IsAdmin: true})
+
+	server.queryMetrics(c)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "metric_provider_unavailable") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if exec.query.Body != "" {
+		t.Fatalf("container metric was routed to SNMP ClickHouse query: %s", exec.query.Body)
+	}
+}
+
 func TestMetricWindowDurationSupportsSNMPPagePresets(t *testing.T) {
 	for input, expected := range map[string]time.Duration{
 		"5m": 5 * time.Minute, "30m": 30 * time.Minute, "1h": time.Hour,

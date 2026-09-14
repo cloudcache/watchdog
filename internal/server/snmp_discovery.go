@@ -50,12 +50,8 @@ type snmpDiscoveryImportResult struct {
 }
 
 func (s *Server) discoverDeviceSNMP(c *gin.Context) {
-	device, ok := s.loadScopedDevice(c, c.Param("id"))
+	device, ok := s.loadScopedNetworkDevice(c, c.Param("id"))
 	if !ok {
-		return
-	}
-	if device.Kind != "network" {
-		fail(c, http.StatusConflict, "invalid_state", "SNMP discovery requires a network device")
 		return
 	}
 	if !device.SNMPProfileID.Valid || device.SNMPProfileID.String == "" {

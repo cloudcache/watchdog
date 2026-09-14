@@ -82,6 +82,18 @@ func (s *Server) loadScopedDevice(c *gin.Context, id string) (deviceRecord, bool
 	return device, true
 }
 
+func (s *Server) loadScopedNetworkDevice(c *gin.Context, id string) (deviceRecord, bool) {
+	device, ok := s.loadScopedDevice(c, id)
+	if !ok {
+		return deviceRecord{}, false
+	}
+	if device.Kind != "network" {
+		fail(c, http.StatusConflict, "invalid_device_kind", "SNMP operations require a network device")
+		return deviceRecord{}, false
+	}
+	return device, true
+}
+
 type interfaceAddressDTO struct {
 	ID, DeviceID, PortID string
 	IfIndex              uint64
