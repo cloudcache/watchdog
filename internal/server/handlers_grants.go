@@ -21,6 +21,7 @@ func (s *Server) registerAccessRoutes(auth *gin.RouterGroup) {
 	auth.GET("/users/:id/access", s.requirePermission("user.view"), s.getUserAccess)
 	auth.PUT("/users/:id/access", s.requirePermission("user.manage"), s.replaceUserAccess)
 	auth.GET("/users/:id/access-options", s.requirePermission("user.manage"), s.listUserAccessOptions)
+	auth.GET("/access-options/port-ids", s.requirePermission("user.manage"), s.listPortAccessOptionIDs)
 	auth.GET("/access-options", s.requirePermission("user.manage"), s.listAccessOptions)
 }
 
@@ -202,12 +203,16 @@ func (s *Server) listUserAccessOptions(c *gin.Context) {
 // exist yet. The catalogue and paging contract are identical to the edit page.
 func (s *Server) listAccessOptions(c *gin.Context) {
 	ctx := c.Request.Context()
-	page, ok := parseInventoryPage(c, []string{"type"}, map[string]string{"label": "label"}, "label")
+	page, ok := parseInventoryPage(c, []string{"type", "device_id"}, map[string]string{"label": "label"}, "label")
 	if !ok {
 		return
 	}
 	kind := strings.TrimSpace(c.Query("type"))
 	q := strings.TrimSpace(c.Query("q"))
+	if kind != "port" && strings.TrimSpace(c.Query("device_id")) != "" {
+		fail(c, http.StatusBadRequest, "invalid_filter", "device_id is only valid for port options")
+		return
+	}
 	if kind == "metric" {
 		items := make([]accessOption, 0, len(watchdog.MetricCatalog))
 		needle := strings.ToLower(q)
@@ -233,6 +238,7 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 	}
 
 	var selectSQL string
+	baseArgs := []any{}
 	switch kind {
 	case "device":
 		selectSQL = `SELECT d.id,COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host) label,d.host description FROM devices d`
@@ -240,6 +246,10 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 		selectSQL = `SELECT g.id,g.name label,g.kind description FROM device_groups g`
 	case "port":
 		selectSQL = `SELECT p.id,CONCAT(COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host),' / ',COALESCE(NULLIF(p.if_name,''),p.if_descr)) label,COALESCE(NULLIF(p.if_alias,''),p.if_descr) description FROM ports p JOIN devices d ON d.id=p.device_id`
+		if deviceID := strings.TrimSpace(c.Query("device_id")); deviceID != "" {
+			selectSQL += ` WHERE p.device_id=?`
+			baseArgs = append(baseArgs, deviceID)
+		}
 	case "billing_account":
 		selectSQL = `SELECT a.id,a.name label,CONCAT(a.bill_type,IF(a.ref='', '',CONCAT(' · ',a.ref))) description FROM billing_accounts a`
 	case "aggregate_graph":
@@ -248,7 +258,7 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_filter", "type must be device, device_group, port, billing_account, aggregate_graph or metric")
 		return
 	}
-	where, args := "", []any{}
+	where, args := "", append([]any{}, baseArgs...)
 	if q != "" {
 		where = ` WHERE label LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'`
 		like := "%" + escapeLike(q) + "%"
@@ -280,6 +290,56 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": page.Limit, "offset": page.Offset})
+}
+
+// listPortAccessOptionIDs returns the complete port set for one device. The
+// picker uses it to implement an exact per-device select-all across pages.
+func (s *Server) listPortAccessOptionIDs(c *gin.Context) {
+	for key := range c.Request.URL.Query() {
+		if key != "device_id" {
+			fail(c, http.StatusBadRequest, "invalid_filter", "unsupported query parameter: "+key)
+			return
+		}
+	}
+	deviceID := strings.TrimSpace(c.Query("device_id"))
+	if deviceID == "" || len(deviceID) > 26 {
+		fail(c, http.StatusBadRequest, "invalid_filter", "device_id is required")
+		return
+	}
+	ctx := c.Request.Context()
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE id=?)`, deviceID).Scan(&exists); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if !exists {
+		fail(c, http.StatusNotFound, "not_found", "device not found")
+		return
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM ports WHERE device_id=? ORDER BY if_index,id LIMIT 10001`, deviceID)
+	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if len(ids) > 10000 {
+		fail(c, http.StatusUnprocessableEntity, "selection_too_large", "a user may be granted at most 10000 ports")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ids": ids, "total": len(ids), "device_id": deviceID})
 }
 
 func (s *Server) grantIDs(ctx context.Context, table, column, userID string) ([]string, error) {

@@ -83,13 +83,20 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 	}
 
 	deviceID, groupID, portID, accountID, graphID := newID(), newID(), newID(), newID(), "aggr-rbac-create"
+	otherDeviceID, otherPortID := newID(), newID()
 	if _, err := db.Exec(`INSERT INTO devices (id,host) VALUES (?,?)`, deviceID, "rbac-router.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO devices (id,host) VALUES (?,?)`, otherDeviceID, "other-router.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO device_groups (id,name) VALUES (?,?)`, groupID, "RBAC routers"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,?,?)`, portID, deviceID, 7, "xe-0/0/7"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,?,?)`, otherPortID, otherDeviceID, 8, "xe-0/0/8"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO billing_accounts (id,name) VALUES (?,?)`, accountID, "RBAC transit"); err != nil {
@@ -150,6 +157,16 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 		"/api/v1/access-options?type=device&q=rbac-router&limit=10&sort=label&order=asc", "", nil)
 	if options.Code != http.StatusOK || !strings.Contains(options.Body.String(), deviceID) {
 		t.Fatalf("create-page access options: status=%d body=%s", options.Code, options.Body.String())
+	}
+	portOptions := rbacHandlerRequest(t, s.listAccessOptions, p, http.MethodGet,
+		"/api/v1/access-options?type=port&device_id="+deviceID+"&limit=10&sort=label&order=asc", "", nil)
+	if portOptions.Code != http.StatusOK || !strings.Contains(portOptions.Body.String(), portID) || strings.Contains(portOptions.Body.String(), otherPortID) {
+		t.Fatalf("device-scoped port options: status=%d body=%s", portOptions.Code, portOptions.Body.String())
+	}
+	portIDs := rbacHandlerRequest(t, s.listPortAccessOptionIDs, p, http.MethodGet,
+		"/api/v1/access-options/port-ids?device_id="+deviceID, "", nil)
+	if portIDs.Code != http.StatusOK || !strings.Contains(portIDs.Body.String(), portID) || strings.Contains(portIDs.Body.String(), otherPortID) {
+		t.Fatalf("device-scoped port ids: status=%d body=%s", portIDs.Code, portIDs.Body.String())
 	}
 
 	viewerID := ""

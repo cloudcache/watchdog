@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, SaveIcon, SearchIcon, UserRoundCogIcon } from "lucide-react"
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -105,8 +105,12 @@ export default memo(({ id }: { id?: string }) => {
 	const [options, setOptions] = useState<AccessOption[]>([])
 	const [total, setTotal] = useState(0)
 	const [offset, setOffset] = useState(0)
+	const [portDevices, setPortDevices] = useState<AccessOption[]>([])
+	const [portDeviceID, setPortDeviceID] = useState("")
+	const [portScopeIDs, setPortScopeIDs] = useState<string[]>([])
 	const [loading, setLoading] = useState(true)
 	const [loadingOptions, setLoadingOptions] = useState(false)
+	const [loadingPortScope, setLoadingPortScope] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 	const limit = 50
@@ -156,10 +160,71 @@ export default memo(({ id }: { id?: string }) => {
 	useEffect(() => {
 		if (!manageAccess) return
 		let current = true
+		api
+			.send<{ items?: AccessOption[] }>("/api/v1/access-options", {
+				query: { type: "device", limit: 500, offset: 0, sort: "label", order: "asc" },
+			})
+			.then((data) => {
+				if (!current) return
+				const devices = data.items ?? []
+				setPortDevices(devices)
+				setPortDeviceID((selectedDevice) =>
+					devices.some((device) => device.id === selectedDevice) ? selectedDevice : (devices[0]?.id ?? "")
+				)
+			})
+			.catch((cause) => {
+				if (current) setError(cause instanceof Error ? cause.message : t`Failed to load devices`)
+			})
+		return () => {
+			current = false
+		}
+	}, [manageAccess, t])
+
+	useEffect(() => {
+		if (!manageAccess || activeKind.kind !== "port" || !portDeviceID) {
+			setPortScopeIDs([])
+			setLoadingPortScope(false)
+			return
+		}
+		let current = true
+		setLoadingPortScope(true)
+		api
+			.send<{ ids?: string[] }>("/api/v1/access-options/port-ids", { query: { device_id: portDeviceID } })
+			.then((data) => {
+				if (current) setPortScopeIDs(data.ids ?? [])
+			})
+			.catch((cause) => {
+				if (current) setError(cause instanceof Error ? cause.message : t`Failed to load ports`)
+			})
+			.finally(() => {
+				if (current) setLoadingPortScope(false)
+			})
+		return () => {
+			current = false
+		}
+	}, [activeKind.kind, manageAccess, portDeviceID, t])
+
+	useEffect(() => {
+		if (!manageAccess) return
+		if (activeKind.kind === "port" && !portDeviceID) {
+			setOptions([])
+			setTotal(0)
+			setLoadingOptions(false)
+			return
+		}
+		let current = true
 		setLoadingOptions(true)
 		api
 			.send<{ items?: AccessOption[]; total?: number }>("/api/v1/access-options", {
-				query: { type: activeKind.kind, q: query.trim() || undefined, limit, offset, sort: "label", order: "asc" },
+				query: {
+					type: activeKind.kind,
+					device_id: activeKind.kind === "port" ? portDeviceID : undefined,
+					q: query.trim() || undefined,
+					limit,
+					offset,
+					sort: "label",
+					order: "asc",
+				},
 			})
 			.then((data) => {
 				if (!current) return
@@ -175,9 +240,23 @@ export default memo(({ id }: { id?: string }) => {
 		return () => {
 			current = false
 		}
-	}, [activeKind.kind, manageAccess, offset, query, t])
+	}, [activeKind.kind, manageAccess, offset, portDeviceID, query, t])
 
 	const selected = access[activeKind.field]
+	const selectedPortCount = useMemo(() => {
+		const selectedPorts = new Set(access.port_ids)
+		return portScopeIDs.filter((portID) => selectedPorts.has(portID)).length
+	}, [access.port_ids, portScopeIDs])
+	const selectAllDevicePorts = () => {
+		setAccess((current) => ({
+			...current,
+			port_ids: Array.from(new Set([...current.port_ids, ...portScopeIDs])),
+		}))
+	}
+	const clearDevicePorts = () => {
+		const scoped = new Set(portScopeIDs)
+		setAccess((current) => ({ ...current, port_ids: current.port_ids.filter((portID) => !scoped.has(portID)) }))
+	}
 	const toggleAccess = (resourceID: string) => {
 		setAccess((current) => ({
 			...current,
@@ -376,12 +455,62 @@ export default memo(({ id }: { id?: string }) => {
 							))}
 						</div>
 						<div className="grid min-w-0 gap-3">
+							{activeKind.kind === "port" ? (
+								<div className="grid gap-2 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(240px,1fr)_auto] md:items-end">
+									<label htmlFor="port-device" className="grid gap-1.5 text-sm">
+										<span>
+											<Trans>Device</Trans>
+										</span>
+										<Select
+											value={portDeviceID}
+											onValueChange={(deviceID) => {
+												setPortDeviceID(deviceID)
+												setQuery("")
+												setOffset(0)
+											}}
+										>
+											<SelectTrigger id="port-device">
+												<SelectValue placeholder={t`Select a device`} />
+											</SelectTrigger>
+											<SelectContent>
+												{portDevices.map((device) => (
+													<SelectItem key={device.id} value={device.id}>
+														{device.label} · {device.description}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</label>
+									<div className="flex flex-wrap items-center gap-2">
+										<span className="me-1 text-xs text-muted-foreground">
+											{selectedPortCount} / {portScopeIDs.length} <Trans>ports selected</Trans>
+										</span>
+										<Button
+											type="button"
+											variant="outline"
+											onClick={selectAllDevicePorts}
+											disabled={!portDeviceID || loadingPortScope || portScopeIDs.length === 0}
+										>
+											<Trans>Select all ports</Trans>
+										</Button>
+										<Button
+											type="button"
+											variant="outline"
+											onClick={clearDevicePorts}
+											disabled={!portDeviceID || loadingPortScope || selectedPortCount === 0}
+										>
+											<Trans>Clear device ports</Trans>
+										</Button>
+									</div>
+								</div>
+							) : null}
 							<div className="flex gap-2">
 								<div className="relative min-w-0 flex-1">
 									<SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 									<Input
 										className="pl-9"
 										value={query}
+										disabled={activeKind.kind === "port" && !portDeviceID}
 										onChange={(event) => {
 											setQuery(event.target.value)
 											setOffset(0)
@@ -389,12 +518,14 @@ export default memo(({ id }: { id?: string }) => {
 										placeholder={t`Search available resources`}
 									/>
 								</div>
-								<Button
-									variant="outline"
-									onClick={() => setAccess((current) => ({ ...current, [activeKind.field]: [] }))}
-								>
-									<Trans>Clear selection</Trans>
-								</Button>
+								{activeKind.kind !== "port" ? (
+									<Button
+										variant="outline"
+										onClick={() => setAccess((current) => ({ ...current, [activeKind.field]: [] }))}
+									>
+										<Trans>Clear selection</Trans>
+									</Button>
+								) : null}
 							</div>
 							<div className="min-h-[340px] overflow-hidden rounded-md border border-border">
 								{loadingOptions ? (
@@ -402,7 +533,12 @@ export default memo(({ id }: { id?: string }) => {
 										<Trans>Loading...</Trans>
 									</div>
 								) : null}
-								{!loadingOptions && options.length === 0 ? (
+								{activeKind.kind === "port" && !portDeviceID ? (
+									<div className="p-3 text-sm text-muted-foreground">
+										<Trans>Select a device to view its ports.</Trans>
+									</div>
+								) : null}
+								{!loadingOptions && options.length === 0 && (activeKind.kind !== "port" || portDeviceID) ? (
 									<div className="p-3 text-sm text-muted-foreground">
 										<Trans>No resources found.</Trans>
 									</div>
