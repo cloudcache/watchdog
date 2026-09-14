@@ -36,9 +36,8 @@ var (
 )
 
 // DimensionPublicationSnapshot is one immutable published generation and its
-// lifecycle state. The ed25519 approval envelope (signature_algorithm /
-// signing_key_id / signature / signed_at) binds the approval to the immutable
-// snapshot metadata; workers authenticate the stored object by Checksum.
+// lifecycle state. Approval is an audited UI confirmation (DecidedBy/DecidedAt);
+// workers authenticate the stored object by Checksum.
 type DimensionPublicationSnapshot struct {
 	ID                      ID                       `json:"id"`
 	ModuleKey               string                   `json:"module_key"`
@@ -65,10 +64,6 @@ type DimensionPublicationSnapshot struct {
 	DecidedBy               ID                       `json:"decided_by,omitempty"`
 	DecidedAt               *time.Time               `json:"decided_at,omitempty"`
 	DecisionReason          string                   `json:"decision_reason,omitempty"`
-	SignatureAlgorithm      string                   `json:"signature_algorithm,omitempty"`
-	SigningKeyID            string                   `json:"signing_key_id,omitempty"`
-	Signature               []byte                   `json:"signature,omitempty"`
-	SignedAt                *time.Time               `json:"signed_at,omitempty"`
 	RetentionUntil          *time.Time               `json:"retention_until,omitempty"`
 	ObjectDeletedAt         *time.Time               `json:"object_deleted_at,omitempty"`
 	RowVersion              uint64                   `json:"row_version"`

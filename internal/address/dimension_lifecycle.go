@@ -79,8 +79,7 @@ func (p *Publisher) ApproveDimensionPublication(ctx context.Context, actorID, sn
 	result, err := tx.ExecContext(ctx, `
 		UPDATE dimension_snapshots
 		SET approval_state = 'approved', decided_by = ?, decided_at = ?,
-		    decision_reason = NULL, signature_algorithm = NULL, signing_key_id = NULL,
-		    signature = NULL, signed_at = NULL, row_version = row_version + 1
+		    decision_reason = NULL, row_version = row_version + 1
 		WHERE module_key = ? AND dimension_key = ? AND id = ? AND row_version = ?
 	`, actorID, decidedAt, p.scope.ModuleKey, p.scope.DimensionKey, snapshotID, expectedRowVersion)
 	if err != nil {

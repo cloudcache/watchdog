@@ -76,7 +76,7 @@ func TestStoreAddressDimensionLifecycleApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	if approved.ApprovalState != AddressDimensionApprovalApproved || approved.DecidedBy != actorID ||
-		approved.DecidedAt == nil || len(approved.Signature) != 0 || approved.RowVersion != 2 {
+		approved.DecidedAt == nil || approved.RowVersion != 2 {
 		t.Fatalf("approved snapshot = %#v", approved)
 	}
 
