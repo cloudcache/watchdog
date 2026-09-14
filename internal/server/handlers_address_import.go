@@ -318,10 +318,14 @@ func (s *Server) activateImport(c *gin.Context) {
 }
 
 func (s *Server) getImportSlot(c *gin.Context) {
-	slot, err := s.addressStore.GetAddressImportSlot(c.Request.Context(), strings.TrimSpace(c.Param("slot")))
+	name := strings.TrimSpace(c.Param("slot"))
+	slot, err := s.addressStore.GetAddressImportSlot(c.Request.Context(), name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			fail(c, http.StatusNotFound, "not_found", "address import slot is not active")
+			// A slot with no activated generation is a normal, expected state — the UI
+			// probes every slot on load. Report it as an inactive slot (200) rather than
+			// a 404 the browser logs as a client error on every page view.
+			c.JSON(http.StatusOK, address.AddressImportSlot{SourceSlot: name})
 			return
 		}
 		writeAddressImportError(c, err)
