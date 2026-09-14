@@ -406,15 +406,16 @@ export default memo(({ id }: { id?: string }) => {
 								</span>
 							) : (
 								roles.map((role) => (
-									<button
-										type="button"
+									<label
 										key={role.id}
-										className="flex items-center gap-2 rounded px-2 py-1.5 text-start hover:bg-muted/60"
-										onClick={() => toggleRole(role.name)}
+										className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start hover:bg-muted/60"
 									>
-										<Checkbox className="pointer-events-none" checked={selectedRoles.includes(role.name)} />
+										<Checkbox
+											checked={selectedRoles.includes(role.name)}
+											onCheckedChange={() => toggleRole(role.name)}
+										/>
 										<span>{role.title || role.name}</span>
-									</button>
+									</label>
 								))
 							)}
 						</div>
