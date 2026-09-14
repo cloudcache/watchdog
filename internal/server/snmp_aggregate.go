@@ -37,6 +37,9 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_metric", "unsupported SNMP metric")
 		return
 	}
+	if !s.requireMetricAccess(c, metric) {
+		return
+	}
 	method := strings.TrimSpace(c.DefaultQuery("aggregate", "sum"))
 	if !validSNMPAggregateMethod(method) {
 		fail(c, http.StatusBadRequest, "invalid_aggregate", "aggregate must be sum, avg, min, max or count")

@@ -13,7 +13,18 @@ import (
 )
 
 func (s *Server) metricCatalog(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"items": watchdog.MetricCatalog})
+	items := make([]watchdog.MetricDefinition, 0, len(watchdog.MetricCatalog))
+	for _, definition := range watchdog.MetricCatalog {
+		allowed, err := s.metricAllowed(c.Request.Context(), currentPrincipal(c), definition.Name)
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		if allowed {
+			items = append(items, definition)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
 // metricRangeResponse intentionally keeps the JSON contract consumed by the
@@ -62,6 +73,9 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	metric := strings.TrimSpace(c.Query("metric"))
 	if !isSNMPMetric(metric) {
 		fail(c, http.StatusBadRequest, "invalid_metric", "unsupported SNMP metric")
+		return
+	}
+	if !s.requireMetricAccess(c, metric) {
 		return
 	}
 	deviceID := strings.TrimSpace(c.Query("device_id"))

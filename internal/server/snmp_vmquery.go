@@ -36,6 +36,9 @@ func (s *Server) vmQueryMetrics(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_metric", "unsupported SNMP metric")
 		return
 	}
+	if !s.requireMetricAccess(c, selector.Metric) {
+		return
+	}
 	if selector.PortID != "" {
 		port, err := s.readPort(c, selector.PortID)
 		if err != nil {

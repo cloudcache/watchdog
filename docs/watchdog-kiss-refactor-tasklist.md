@@ -86,6 +86,8 @@
 
 - [x] **KISS-02D 通用 SNMP discovery 与 Flow device scope（`2cda16e8`、`ed7be0e2`）**：复用既有 MIB/definition engine 和 v1/v2c/v3 session，不在 handler 拼厂商；发现结果按 completed module 事务写当前 inventory，覆盖双栈 IP/BGP、sensor/entity/VLAN/LAG，失败不裁剪上次清单，账单端口仅标记 `notPresent`。Flow exporter binding 的 list/get/create/update/delete 均叠加 device scope，列表参数 fail-closed。
 
+- [x] **KISS-02E RBAC 管理闭环（2026-09-14，本提交）**：补齐角色 create/get/update/delete 与固定 ability 目录的可维护 UI，角色变更和用户+角色写入均为事务；默认非保护角色只在首次安装播种，后续启动不再覆盖管理员修订，内置 administrator 前后端均只读且最后一个活动管理员不能被删除、禁用或移除角色。用户资源访问维护扩展为 device/device-group/port/billing-account/saved-graph/metric 六类，选择器统一服务端搜索和分页；saved graph 与 metric grant 已接 catalog/query/aggregate/export/dashboard 的查询门。导航、command palette 和直接路由统一按 ability 判定，只有 role 权限的管理员不需要附带 user.view。真实 MySQL 覆盖失败写入回滚、seed 持久性、最后管理员、资源替换/检索和图表/指标范围；前端生产构建及全库 Go 回归通过。
+
 - [x] **设计**：以 LibreNMS role abilities + `devices_perms/ports_perms/bill_perms` 为基线，冻结“全局 action + 显式资源集合”双门、固定权限 key、默认角色和 device-group scope；冻结唯一 device 根、子资源、locations 与 static/dynamic group 契约。动态组使用 typed rule + 物化成员；SNMP `sys_location` 与管理 `location_id/name` 分离。
 - [x] **编码**：新 Gin/MySQL 运行面无 tenant context/header/selector；客户/供应商是业务实体；`targets + network_devices` 已合并为 `devices`，所有子表和 Flow exporter binding 直接引用同一 `device_id`；host 唯一、display name 可选。
 - [x] **API/UI**：users/roles/permissions/device/group/location/port/SNMP/Flow-device 领域路由已接；既有 UI 继续用同 handler 的 alias，界面和风格不改。所有已迁设备 VTable 都是服务端分页/search/sort/column filter；SNMP profile 列表不出 secret，编辑和 device override 可维护，发现字段只读。

@@ -366,19 +366,7 @@ func dashboardIfMatch(c *gin.Context, current uint64) bool {
 }
 
 func appendDashboardGraphScope(where []string, args []any, principal *principal) ([]string, []any) {
-	if principal == nil || principal.can("device.viewAll") || principal.can("port.viewAll") {
-		return where, args
-	}
-	where = append(where, `NOT EXISTS (
-		SELECT 1 FROM aggregate_graph_ports scoped_graph_port
-		JOIN ports scoped_port ON scoped_port.id=scoped_graph_port.port_id
-		WHERE scoped_graph_port.aggregate_graph_id=g.id AND NOT (
-			EXISTS (SELECT 1 FROM user_port_permissions upp WHERE upp.user_id=? AND upp.port_id=scoped_port.id)
-			OR EXISTS (SELECT 1 FROM user_device_permissions udp WHERE udp.user_id=? AND udp.device_id=scoped_port.device_id)
-			OR EXISTS (SELECT 1 FROM user_device_group_permissions ugp JOIN device_group_members gm ON gm.device_group_id=ugp.device_group_id WHERE ugp.user_id=? AND gm.device_id=scoped_port.device_id)
-		)
-	)`)
-	return where, append(args, principal.UserID, principal.UserID, principal.UserID)
+	return appendAggregateGraphScopeSQL(where, args, principal)
 }
 
 func (s *Server) resolveDashboardGraphs(c *gin.Context, graphIDs []string) ([]dashboardGraphReference, error) {

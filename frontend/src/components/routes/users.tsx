@@ -1,5 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import {
+	KeyRoundIcon,
 	PencilIcon,
 	PlusIcon,
 	RefreshCwIcon,
@@ -23,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api } from "@/lib/api"
+import { api, can } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 
 type UserRecord = {
@@ -40,25 +41,50 @@ type RoleRecord = {
 	name: string
 	title: string
 	protected: boolean
+	permission_count: number
 }
+
+type RoleDetail = RoleRecord & { permissions: string[] }
+
+type PermissionRecord = { ability: string; subject: string }
+
+type UserAccess = {
+	user_id: string
+	device_ids: string[]
+	device_group_ids: string[]
+	port_ids: string[]
+	billing_account_ids: string[]
+	aggregate_graph_ids: string[]
+	metrics: string[]
+}
+
+type AccessOption = { id: string; label: string; description: string }
 
 export default memo(() => {
 	const { t } = useLingui()
+	const canViewUsers = can("user.view")
+	const canViewRoles = can("role.view")
 	const [users, setUsers] = useState<UserRecord[]>([])
 	const [roles, setRoles] = useState<RoleRecord[]>([])
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 	const [editing, setEditing] = useState<UserRecord | null>(null)
 	const [creating, setCreating] = useState(false)
-	const [newRoleName, setNewRoleName] = useState("")
+	const [editingRole, setEditingRole] = useState<RoleRecord | null>(null)
+	const [creatingRole, setCreatingRole] = useState(false)
+	const [accessUser, setAccessUser] = useState<UserRecord | null>(null)
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
 		setError("")
 		try {
 			const [userData, roleData] = await Promise.all([
-				api.send<{ items?: UserRecord[] }>("/api/v1/users", {}),
-				api.send<{ items?: RoleRecord[] }>("/api/v1/roles", {}),
+				canViewUsers
+					? api.send<{ items?: UserRecord[] }>("/api/v1/users", {})
+					: Promise.resolve({ items: [] as UserRecord[] }),
+				canViewRoles
+					? api.send<{ items?: RoleRecord[] }>("/api/v1/roles", {})
+					: Promise.resolve({ items: [] as RoleRecord[] }),
 			])
 			setUsers(userData.items ?? [])
 			setRoles(roleData.items ?? [])
@@ -67,7 +93,7 @@ export default memo(() => {
 		} finally {
 			setLoading(false)
 		}
-	}, [t])
+	}, [canViewRoles, canViewUsers, t])
 
 	useEffect(() => {
 		document.title = `${t`Users & Roles`} / Watchdog`
@@ -90,20 +116,6 @@ export default memo(() => {
 		[refresh, t]
 	)
 
-	const createRole = useCallback(async () => {
-		const name = newRoleName.trim()
-		if (!name) {
-			return
-		}
-		try {
-			await api.send("/api/v1/roles", { method: "POST", body: { name } })
-			setNewRoleName("")
-			refresh()
-		} catch (err) {
-			toast({ title: err instanceof Error ? err.message : t`Request failed`, variant: "destructive" })
-		}
-	}, [newRoleName, refresh, t])
-
 	const deleteRole = useCallback(
 		async (role: RoleRecord) => {
 			if (!globalThis.confirm(t`Delete this role? Its members and permission grants lose it immediately.`)) {
@@ -111,6 +123,20 @@ export default memo(() => {
 			}
 			try {
 				await api.send(`/api/v1/roles/${role.id}`, { method: "DELETE" })
+				refresh()
+			} catch (err) {
+				toast({ title: err instanceof Error ? err.message : t`Request failed`, variant: "destructive" })
+			}
+		},
+		[refresh, t]
+	)
+
+	const deleteUser = useCallback(
+		async (user: UserRecord) => {
+			if (!globalThis.confirm(t`Delete this user and all of their resource grants?`)) return
+			try {
+				await api.send(`/api/v1/users/${user.id}`, { method: "DELETE" })
+				toast({ title: t`User deleted` })
 				refresh()
 			} catch (err) {
 				toast({ title: err instanceof Error ? err.message : t`Request failed`, variant: "destructive" })
@@ -129,7 +155,7 @@ export default memo(() => {
 					</h1>
 				</div>
 				<div className="flex items-center gap-2">
-					<Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+					<Button variant="outline" size="sm" onClick={() => setCreating(true)} disabled={!can("user.create")}>
 						<PlusIcon className="me-2 h-4 w-4" />
 						<Trans>Add User</Trans>
 					</Button>
@@ -141,8 +167,15 @@ export default memo(() => {
 			</div>
 			{error ? <div className="text-sm text-destructive">{error}</div> : null}
 
-			<div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-				<div className="overflow-hidden rounded-md border border-border bg-card">
+			<div
+				className={
+					canViewUsers && canViewRoles
+						? "grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]"
+						: "grid gap-4"
+				}
+			>
+				{canViewUsers ? (
+					<div className="overflow-hidden rounded-md border border-border bg-card">
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -193,42 +226,68 @@ export default memo(() => {
 										</div>
 									</TableCell>
 									<TableCell className="text-xs text-muted-foreground">{user.username}</TableCell>
-									<TableCell>
-										<div className="flex items-center gap-1">
-											<Button variant="ghost" size="icon" aria-label={t`Edit user`} onClick={() => setEditing(user)}>
-												<PencilIcon className="h-4 w-4" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon"
-												aria-label={t`Disable user`}
-												disabled={user.status !== "active"}
-												onClick={() => disableUser(user)}
-											>
-												<UserRoundXIcon className="h-4 w-4" />
-											</Button>
-										</div>
+								<TableCell>
+									<div className="flex items-center gap-1">
+										<Button
+											variant="ghost"
+											size="icon"
+											aria-label={t`Edit user`}
+											disabled={!can("user.update")}
+											onClick={() => setEditing(user)}
+										>
+											<PencilIcon className="h-4 w-4" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon"
+											aria-label={t`Manage resource access`}
+											disabled={!can("user.manage")}
+											onClick={() => setAccessUser(user)}
+										>
+											<KeyRoundIcon className="h-4 w-4" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon"
+											aria-label={t`Disable user`}
+											disabled={!can("user.update") || user.status !== "active"}
+											onClick={() => disableUser(user)}
+										>
+											<UserRoundXIcon className="h-4 w-4" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon"
+											aria-label={t`Delete user`}
+											disabled={!can("user.delete")}
+											onClick={() => deleteUser(user)}
+										>
+											<Trash2Icon className="h-4 w-4" />
+										</Button>
+									</div>
 									</TableCell>
 								</TableRow>
 							))}
 						</TableBody>
 					</Table>
-				</div>
+					</div>
+				) : null}
 
-				<div className="grid content-start gap-3 rounded-md border border-border p-3">
+				{canViewRoles ? (
+					<div className="grid content-start gap-3 rounded-md border border-border p-3">
 					<div className="flex items-center gap-2 text-sm font-medium">
 						<ShieldCheckIcon className="h-4 w-4 text-muted-foreground" />
 						<Trans>Roles</Trans>
 					</div>
-					<div className="flex items-center gap-2">
-						<Input
-							placeholder={t`New role name`}
-							value={newRoleName}
-							onChange={(event) => setNewRoleName(event.target.value)}
-							onKeyDown={(event) => event.key === "Enter" && createRole()}
-						/>
-						<Button variant="outline" size="icon" aria-label={t`Create role`} onClick={createRole}>
-							<PlusIcon className="h-4 w-4" />
+					<div className="flex justify-end">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={!can("role.create")}
+							onClick={() => setCreatingRole(true)}
+						>
+							<PlusIcon className="me-2 h-4 w-4" />
+							<Trans>Add Role</Trans>
 						</Button>
 					</div>
 					<div className="grid gap-1">
@@ -238,24 +297,42 @@ export default memo(() => {
 							</div>
 						) : null}
 						{roles.map((role) => (
-							<div key={role.id} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/60">
-								<span className="text-sm">{role.title || role.name}</span>
-								<Button
-									variant="ghost"
-									size="icon"
-									aria-label={t`Delete role`}
-									disabled={role.protected}
-									onClick={() => deleteRole(role)}
-								>
-									<Trash2Icon className="h-4 w-4" />
-								</Button>
+							<div
+								key={role.id}
+								className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/60"
+							>
+								<div className="min-w-0">
+									<div className="truncate text-sm">{role.title || role.name}</div>
+									<div className="text-xs text-muted-foreground">{role.permission_count ?? 0} permissions</div>
+								</div>
+								<div className="flex items-center gap-1">
+									<Button
+										variant="ghost"
+										size="icon"
+										aria-label={t`Edit role`}
+										disabled={!can("role.update")}
+										onClick={() => setEditingRole(role)}
+									>
+									<PencilIcon className="h-4 w-4" />
+									</Button>
+									<Button
+										variant="ghost"
+										size="icon"
+										aria-label={t`Delete role`}
+										disabled={!can("role.delete") || role.protected}
+										onClick={() => deleteRole(role)}
+									>
+										<Trash2Icon className="h-4 w-4" />
+									</Button>
+								</div>
 							</div>
 						))}
 					</div>
 					<div className="text-xs text-muted-foreground">
 						<Trans>Built-in roles cannot be deleted.</Trans>
 					</div>
-				</div>
+					</div>
+				) : null}
 			</div>
 
 			{creating ? (
@@ -283,6 +360,26 @@ export default memo(() => {
 					}}
 				/>
 			) : null}
+			{creatingRole ? (
+				<RoleDialog
+					onClose={() => setCreatingRole(false)}
+					onSaved={() => {
+						setCreatingRole(false)
+						refresh()
+					}}
+				/>
+			) : null}
+			{editingRole ? (
+				<RoleDialog
+					role={editingRole}
+					onClose={() => setEditingRole(null)}
+					onSaved={() => {
+						setEditingRole(null)
+						refresh()
+					}}
+				/>
+			) : null}
+			{accessUser ? <AccessDialog user={accessUser} onClose={() => setAccessUser(null)} /> : null}
 		</div>
 	)
 })
@@ -321,7 +418,7 @@ function UserDialog({
 						email: email.trim(),
 						display_name: name.trim(),
 						status,
-						roles: selectedRoles,
+						...(can("user.manage") ? { roles: selectedRoles } : {}),
 					},
 				})
 			} else {
@@ -332,7 +429,7 @@ function UserDialog({
 						email: email.trim(),
 						display_name: name.trim(),
 						password,
-						roles: selectedRoles,
+						...(can("user.manage") ? { roles: selectedRoles } : {}),
 					},
 				})
 			}
@@ -412,7 +509,7 @@ function UserDialog({
 							</SelectContent>
 						</Select>
 					</label>
-					<div className="grid gap-1.5 text-sm">
+					{can("user.manage") ? <div className="grid gap-1.5 text-sm">
 						<span className="text-muted-foreground">
 							<Trans>Roles</Trans>
 						</span>
@@ -440,7 +537,7 @@ function UserDialog({
 								</button>
 							))}
 						</div>
-					</div>
+					</div> : null}
 				</div>
 				<DialogFooter>
 					<Button variant="outline" onClick={onClose}>
@@ -453,6 +550,255 @@ function UserDialog({
 						<Trans>Save</Trans>
 					</Button>
 				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+function RoleDialog({ role, onClose, onSaved }: { role?: RoleRecord; onClose: () => void; onSaved: () => void }) {
+	const { t } = useLingui()
+	const [name, setName] = useState(role?.name ?? "")
+	const [title, setTitle] = useState(role?.title ?? "")
+	const [permissions, setPermissions] = useState<PermissionRecord[]>([])
+	const [selected, setSelected] = useState<string[]>([])
+	const [loading, setLoading] = useState(true)
+	const [saving, setSaving] = useState(false)
+	const [error, setError] = useState("")
+
+	useEffect(() => {
+		let active = true
+		const load = async () => {
+			setLoading(true)
+			setError("")
+			try {
+				const [catalog, detail] = await Promise.all([
+					api.send<{ items: PermissionRecord[] }>("/api/v1/permissions", {}),
+					role ? api.send<RoleDetail>(`/api/v1/roles/${role.id}`, {}) : Promise.resolve(undefined),
+				])
+				if (!active) return
+				setPermissions(catalog.items ?? [])
+				if (detail) {
+					setName(detail.name)
+					setTitle(detail.title)
+					setSelected(detail.permissions ?? [])
+				}
+			} catch (cause) {
+				if (active) setError(cause instanceof Error ? cause.message : t`Failed to load role`)
+			} finally {
+				if (active) setLoading(false)
+			}
+		}
+		load()
+		return () => {
+			active = false
+		}
+	}, [role, t])
+
+	const grouped = permissions.reduce<Record<string, PermissionRecord[]>>((result, permission) => {
+		const section = permission.ability.includes(".view") ? "Visibility & data" : "Operations"
+		;(result[section] ??= []).push(permission)
+		return result
+	}, {})
+
+	const save = async () => {
+		setSaving(true)
+		try {
+			if (role) {
+				await api.send(`/api/v1/roles/${role.id}`, {
+					method: "PATCH",
+					body: role.protected ? { title: title.trim() } : { title: title.trim(), permissions: selected },
+				})
+			} else {
+				await api.send("/api/v1/roles", {
+					method: "POST",
+					body: { name: name.trim(), title: title.trim(), permissions: selected },
+				})
+			}
+			toast({ title: t`Role saved` })
+			onSaved()
+		} catch (cause) {
+			toast({ title: cause instanceof Error ? cause.message : t`Request failed`, variant: "destructive" })
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="max-w-3xl">
+				<DialogHeader>
+					<DialogTitle>{role ? t`Edit Role` : t`Add Role`}</DialogTitle>
+					<DialogDescription>
+						<Trans>View abilities control menu and data visibility; operation abilities control actions. Resource rows are assigned per user.</Trans>
+					</DialogDescription>
+				</DialogHeader>
+				{error ? <div className="text-sm text-destructive">{error}</div> : null}
+				<div className="grid gap-3 sm:grid-cols-2">
+					<label className="grid gap-1.5 text-sm">
+						<span className="text-muted-foreground"><Trans>Role name</Trans></span>
+						<Input value={name} disabled={Boolean(role)} onChange={(event) => setName(event.target.value)} placeholder="network-operator" />
+					</label>
+					<label className="grid gap-1.5 text-sm">
+						<span className="text-muted-foreground"><Trans>Display title</Trans></span>
+						<Input value={title} disabled={role?.protected} onChange={(event) => setTitle(event.target.value)} placeholder={t`Network Operator`} />
+					</label>
+				</div>
+				<div className="grid max-h-[52vh] gap-4 overflow-auto rounded-md border border-border p-3">
+					{loading ? <div className="text-sm text-muted-foreground"><Trans>Loading...</Trans></div> : null}
+					{Object.entries(grouped).map(([section, values]) => (
+						<div key={section} className="grid gap-2">
+							<div className="text-sm font-medium">{section}</div>
+							<div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+								{values.map((permission) => (
+									<button
+										type="button"
+										key={permission.ability}
+										disabled={role?.protected}
+										className="flex items-start gap-2 rounded px-2 py-1.5 text-start hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60"
+										onClick={() => setSelected((current) => current.includes(permission.ability) ? current.filter((ability) => ability !== permission.ability) : [...current, permission.ability])}
+									>
+										<Checkbox className="pointer-events-none mt-0.5" checked={selected.includes(permission.ability)} />
+										<span className="min-w-0">
+											<span className="block truncate text-sm">{permission.ability}</span>
+											<span className="block text-xs text-muted-foreground">{permission.subject}</span>
+										</span>
+									</button>
+								))}
+							</div>
+						</div>
+					))}
+				</div>
+				{role?.protected ? <div className="text-xs text-muted-foreground"><Trans>Built-in administrator abilities are immutable.</Trans></div> : null}
+				<DialogFooter>
+					<Button variant="outline" onClick={onClose}><Trans>Cancel</Trans></Button>
+					<Button onClick={save} disabled={loading || saving || !name.trim() || role?.protected}><Trans>Save</Trans></Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+const accessKinds = [
+	{ kind: "device", field: "device_ids", label: "Devices" },
+	{ kind: "device_group", field: "device_group_ids", label: "Device groups" },
+	{ kind: "port", field: "port_ids", label: "Ports" },
+	{ kind: "billing_account", field: "billing_account_ids", label: "Billing" },
+	{ kind: "aggregate_graph", field: "aggregate_graph_ids", label: "Saved graphs" },
+	{ kind: "metric", field: "metrics", label: "Metrics" },
+] as const
+
+type AccessKind = (typeof accessKinds)[number]
+
+function AccessDialog({ user, onClose }: { user: UserRecord; onClose: () => void }) {
+	const { t } = useLingui()
+	const [access, setAccess] = useState<UserAccess>()
+	const [active, setActive] = useState<AccessKind>(accessKinds[0])
+	const [query, setQuery] = useState("")
+	const [offset, setOffset] = useState(0)
+	const [options, setOptions] = useState<AccessOption[]>([])
+	const [total, setTotal] = useState(0)
+	const [loading, setLoading] = useState(true)
+	const [saving, setSaving] = useState(false)
+	const limit = 50
+
+	useEffect(() => {
+		let activeRequest = true
+		api.send<UserAccess>(`/api/v1/users/${user.id}/access`, {})
+			.then((data) => activeRequest && setAccess({
+				...data,
+				device_ids: data.device_ids ?? [], device_group_ids: data.device_group_ids ?? [], port_ids: data.port_ids ?? [],
+				billing_account_ids: data.billing_account_ids ?? [], aggregate_graph_ids: data.aggregate_graph_ids ?? [], metrics: data.metrics ?? [],
+			}))
+			.catch((cause) => toast({ title: cause instanceof Error ? cause.message : t`Request failed`, variant: "destructive" }))
+		return () => { activeRequest = false }
+	}, [t, user.id])
+
+	useEffect(() => {
+		let activeRequest = true
+		setLoading(true)
+		api.send<{ items: AccessOption[]; total: number }>(`/api/v1/users/${user.id}/access-options`, {
+			query: { type: active.kind, q: query || undefined, limit, offset, sort: "label", order: "asc" },
+		})
+			.then((data) => {
+				if (!activeRequest) return
+				setOptions(data.items ?? [])
+				setTotal(data.total ?? 0)
+			})
+			.catch((cause) => activeRequest && toast({ title: cause instanceof Error ? cause.message : t`Request failed`, variant: "destructive" }))
+			.finally(() => activeRequest && setLoading(false))
+		return () => { activeRequest = false }
+	}, [active.kind, offset, query, t, user.id])
+
+	const selected = access?.[active.field] ?? []
+	const toggle = (id: string) => {
+		if (!access) return
+		const values = access[active.field]
+		setAccess({ ...access, [active.field]: values.includes(id) ? values.filter((value) => value !== id) : [...values, id] })
+	}
+	const save = async () => {
+		if (!access) return
+		setSaving(true)
+		try {
+			await api.send(`/api/v1/users/${user.id}/access`, {
+				method: "PUT",
+				body: {
+					device_ids: access.device_ids,
+					device_group_ids: access.device_group_ids,
+					port_ids: access.port_ids,
+					billing_account_ids: access.billing_account_ids,
+					aggregate_graph_ids: access.aggregate_graph_ids,
+					metrics: access.metrics,
+				},
+			})
+			toast({ title: t`Resource access saved` })
+			onClose()
+		} catch (cause) {
+			toast({ title: cause instanceof Error ? cause.message : t`Request failed`, variant: "destructive" })
+		} finally {
+			setSaving(false)
+		}
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="max-w-4xl">
+				<DialogHeader>
+					<DialogTitle><Trans>Resource access</Trans>: {user.display_name || user.username}</DialogTitle>
+					<DialogDescription><Trans>Roles decide operations. These grants decide which rows and measurements the user can access.</Trans></DialogDescription>
+				</DialogHeader>
+				<div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
+					<div className="grid content-start gap-1">
+						{accessKinds.map((kind) => (
+							<Button key={kind.kind} variant={active.kind === kind.kind ? "secondary" : "ghost"} className="justify-between" onClick={() => { setActive(kind); setOffset(0); setQuery("") }}>
+								<span>{kind.label}</span><Badge variant="outline">{access?.[kind.field]?.length ?? 0}</Badge>
+							</Button>
+						))}
+					</div>
+					<div className="grid min-w-0 gap-2">
+						<div className="flex gap-2">
+							<Input value={query} onChange={(event) => { setQuery(event.target.value); setOffset(0) }} placeholder={t`Search available resources`} />
+							<Button variant="outline" onClick={() => access && setAccess({ ...access, [active.field]: [] })}><Trans>Clear</Trans></Button>
+						</div>
+						<div className="h-[360px] overflow-auto rounded-md border border-border">
+							{loading ? <div className="p-3 text-sm text-muted-foreground"><Trans>Loading...</Trans></div> : null}
+							{!loading && options.length === 0 ? <div className="p-3 text-sm text-muted-foreground"><Trans>No resources found.</Trans></div> : null}
+							{options.map((option) => (
+								<button key={option.id} type="button" className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-start last:border-b-0 hover:bg-muted/60" onClick={() => toggle(option.id)}>
+									<Checkbox className="pointer-events-none mt-0.5" checked={selected.includes(option.id)} />
+									<span className="min-w-0"><span className="block truncate text-sm font-medium">{option.label}</span><span className="block truncate text-xs text-muted-foreground">{option.description || option.id}</span></span>
+								</button>
+							))}
+						</div>
+						<div className="flex items-center justify-between text-xs text-muted-foreground">
+							<span>{total === 0 ? 0 : offset + 1}-{Math.min(offset + limit, total)} / {total}</span>
+							<div className="flex gap-2"><Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}><Trans>Previous</Trans></Button><Button variant="outline" size="sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}><Trans>Next</Trans></Button></div>
+						</div>
+						<div className="text-xs text-muted-foreground">
+							{active.kind === "metric" ? <Trans>No metric selection means all metrics allowed by the device/port grants. Once selected, it becomes an allow-list.</Trans> : active.kind === "aggregate_graph" ? <Trans>A saved-graph grant authorizes that graph's aggregate output directly.</Trans> : <Trans>Without a view-all role ability, only selected resources are visible.</Trans>}
+						</div>
+					</div>
+				</div>
+				<DialogFooter><Button variant="outline" onClick={onClose}><Trans>Cancel</Trans></Button><Button disabled={!access || saving} onClick={save}><Trans>Save</Trans></Button></DialogFooter>
 			</DialogContent>
 		</Dialog>
 	)

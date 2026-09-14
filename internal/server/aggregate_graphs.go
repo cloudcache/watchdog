@@ -111,17 +111,7 @@ func (s *Server) listAggregateGraphs(c *gin.Context) {
 		where = append(where, `EXISTS (SELECT 1 FROM aggregate_graph_items fi WHERE fi.aggregate_graph_id=g.id AND fi.metric=?)`)
 		args = append(args, value)
 	}
-	if p := currentPrincipal(c); p != nil && !p.can("device.viewAll") && !p.can("port.viewAll") {
-		where = append(where, `NOT EXISTS (
-			SELECT 1 FROM aggregate_graph_ports ap JOIN ports scoped_port ON scoped_port.id=ap.port_id
-			WHERE ap.aggregate_graph_id=g.id AND NOT (
-				EXISTS (SELECT 1 FROM user_port_permissions upp WHERE upp.user_id=? AND upp.port_id=scoped_port.id)
-				OR EXISTS (SELECT 1 FROM user_device_permissions udp WHERE udp.user_id=? AND udp.device_id=scoped_port.device_id)
-				OR EXISTS (SELECT 1 FROM user_device_group_permissions ugp JOIN device_group_members gm ON gm.device_group_id=ugp.device_group_id WHERE ugp.user_id=? AND gm.device_id=scoped_port.device_id)
-			)
-		)`)
-		args = append(args, p.UserID, p.UserID, p.UserID)
-	}
+	where, args = appendAggregateGraphScopeSQL(where, args, currentPrincipal(c))
 	clause := " WHERE " + strings.Join(where, " AND ")
 	var total int
 	if err := s.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM aggregate_graphs g`+clause, args...).Scan(&total); err != nil {
@@ -392,13 +382,21 @@ func (s *Server) loadAggregateGraph(c *gin.Context) (aggregateGraphRecord, bool)
 		return aggregateGraphRecord{}, false
 	}
 	if err := s.requireAggregateGraphAccess(c, graph.ID); err != nil {
-		writeSNMPScopeError(c, err)
+		writeRBACResourceError(c, err)
 		return aggregateGraphRecord{}, false
 	}
 	return graph, true
 }
 
 func (s *Server) requireAggregateGraphAccess(c *gin.Context, graphID string) error {
+	p := currentPrincipal(c)
+	direct, err := s.directlyGrantedAggregateGraph(c.Request.Context(), p, graphID)
+	if err != nil || direct {
+		return err
+	}
+	if err := s.requireAggregateGraphMetrics(c.Request.Context(), p, graphID); err != nil {
+		return err
+	}
 	ports, err := s.readAggregateGraphPorts(c, graphID)
 	if err != nil || len(ports) == 0 {
 		return err
@@ -476,6 +474,9 @@ func (s *Server) replaceAggregateGraphItems(c *gin.Context) {
 		}
 		if len(item.ID) > 64 || !isSNMPMetric(item.Metric) || !validAggregateItemDirection(item.Direction) || !validAggregateGraphType(item.GraphType) || len(item.Label) > 190 || seen[item.ID] {
 			fail(c, http.StatusBadRequest, "invalid_request", "invalid or duplicate aggregate graph item")
+			return
+		}
+		if !s.requireMetricAccess(c, item.Metric) {
 			return
 		}
 		seen[item.ID] = true

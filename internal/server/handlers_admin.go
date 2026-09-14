@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -53,8 +55,24 @@ func (s *Server) createUser(c *gin.Context) {
 		Password    string   `json:"password"`
 		Roles       []string `json:"roles"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || !validPassword(req.Password) {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.Email = strings.TrimSpace(req.Email)
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.Username == "" || len(req.Username) > 190 || len(req.Email) > 190 || len(req.DisplayName) > 190 || !validPassword(req.Password) {
 		fail(c, http.StatusBadRequest, "invalid_request", "username and password (8 to 72 bytes) required")
+		return
+	}
+	actorPrincipal := currentPrincipal(c)
+	if len(req.Roles) > 0 && !actorPrincipal.can("user.manage") {
+		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles")
+		return
+	}
+	if containsRoleName(req.Roles, roleAdministrator) && !actorPrincipal.IsAdmin {
+		fail(c, http.StatusForbidden, "forbidden", "only an administrator can assign the administrator role")
 		return
 	}
 	ctx := c.Request.Context()
@@ -65,15 +83,25 @@ func (s *Server) createUser(c *gin.Context) {
 	}
 	id := newID()
 	actor := currentPrincipal(c).UserID
-	if _, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO users (id, username, email, display_name, password_hash, status, created_by)
 		VALUES (?, ?, ?, ?, ?, 'active', ?)`,
 		id, req.Username, req.Email, req.DisplayName, hash, actor); err != nil {
 		fail(c, http.StatusConflict, "conflict", "username or email already exists")
 		return
 	}
-	if err := s.replaceUserRoles(ctx, id, req.Roles); err != nil {
+	if err := replaceUserRolesTx(ctx, tx, id, req.Roles); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	s.audit(ctx, actor, "user.create", "user", id)
@@ -111,28 +139,85 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	actor := currentPrincipal(c).UserID
+	actorPrincipal := currentPrincipal(c)
+	actor := actorPrincipal.UserID
 	if req.DisplayName != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE users SET display_name = ?, updated_by = ? WHERE id = ?`, *req.DisplayName, actor, id)
+		trimmed := strings.TrimSpace(*req.DisplayName)
+		req.DisplayName = &trimmed
 	}
 	if req.Email != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE users SET email = ?, updated_by = ? WHERE id = ?`, *req.Email, actor, id)
+		trimmed := strings.TrimSpace(*req.Email)
+		req.Email = &trimmed
+	}
+	if (req.DisplayName != nil && len(*req.DisplayName) > 190) || (req.Email != nil && len(*req.Email) > 190) {
+		fail(c, http.StatusBadRequest, "invalid_request", "email or display_name is too long")
+		return
+	}
+	if req.Roles != nil && !actorPrincipal.can("user.manage") {
+		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles")
+		return
+	}
+	if req.Roles != nil && containsRoleName(*req.Roles, roleAdministrator) && !actorPrincipal.IsAdmin {
+		fail(c, http.StatusForbidden, "forbidden", "only an administrator can assign the administrator role")
+		return
+	}
+	if req.Status != nil && id == actor && *req.Status == "disabled" {
+		fail(c, http.StatusBadRequest, "invalid_request", "cannot disable your own account")
+		return
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=?)`, id).Scan(&exists); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if !exists {
+		fail(c, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	if req.DisplayName != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET display_name = ?, updated_by = ?, row_version=row_version+1 WHERE id = ?`, *req.DisplayName, actor, id); err != nil {
+			writeSQLError(c, err)
+			return
+		}
+	}
+	if req.Email != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET email = ?, updated_by = ?, row_version=row_version+1 WHERE id = ?`, *req.Email, actor, id); err != nil {
+			writeSQLError(c, err)
+			return
+		}
 	}
 	if req.Status != nil {
 		if *req.Status != "active" && *req.Status != "disabled" {
 			fail(c, http.StatusBadRequest, "invalid_request", "status must be active or disabled")
 			return
 		}
-		_, _ = s.db.ExecContext(ctx, `UPDATE users SET status = ?, updated_by = ? WHERE id = ?`, *req.Status, actor, id)
-		if *req.Status == "disabled" {
-			_ = s.revokeUserSessions(ctx, id) // disable is immediate
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET status = ?, updated_by = ?, row_version=row_version+1 WHERE id = ?`, *req.Status, actor, id); err != nil {
+			writeSQLError(c, err)
+			return
 		}
 	}
 	if req.Roles != nil {
-		if err := s.replaceUserRoles(ctx, id, *req.Roles); err != nil {
+		if err := replaceUserRolesTx(ctx, tx, id, *req.Roles); err != nil {
 			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
+	}
+	if err := requireActiveAdministratorTx(ctx, tx); err != nil {
+		fail(c, http.StatusConflict, "last_administrator", err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if req.Status != nil && *req.Status == "disabled" {
+		_ = s.revokeUserSessions(ctx, id) // disable is immediate
 	}
 	s.audit(ctx, actor, "user.update", "user", id)
 	s.getUser(c)
@@ -145,9 +230,24 @@ func (s *Server) deleteUser(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "cannot delete your own account")
 		return
 	}
-	res, err := s.db.ExecContext(c.Request.Context(), `DELETE FROM users WHERE id = ?`, id)
+	ctx := c.Request.Context()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if err := requireActiveAdministratorTx(ctx, tx); err != nil {
+		fail(c, http.StatusConflict, "last_administrator", err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeSQLError(c, err)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -177,20 +277,52 @@ func (s *Server) adminResetPassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) replaceUserRoles(ctx context.Context, userID string, roles []string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id = ?`, userID); err != nil {
+func replaceUserRolesTx(ctx context.Context, tx *sql.Tx, userID string, roles []string) error {
+	normalized, err := normalizeGrantValues("roles", roles, 100, 64)
+	if err != nil {
 		return err
 	}
-	for _, name := range roles {
+	roleIDs := make([]string, 0, len(normalized))
+	for _, name := range normalized {
 		var roleID string
-		if err := s.db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, name).Scan(&roleID); err != nil {
-			return err // unknown role name
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, name).Scan(&roleID); err == sql.ErrNoRows {
+			return fmt.Errorf("unknown role: %s", name)
+		} else if err != nil {
+			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`, userID, roleID); err != nil {
+		roleIDs = append(roleIDs, roleID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	for _, roleID := range roleIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`, userID, roleID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func requireActiveAdministratorTx(ctx context.Context, tx *sql.Tx) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT u.id) FROM users u
+		JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
+		WHERE u.status='active' AND r.name=?`, roleAdministrator).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("at least one active administrator is required")
+	}
+	return nil
+}
+
+func containsRoleName(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // -------------------- Roles --------------------
@@ -241,18 +373,34 @@ func (s *Server) createRole(c *gin.Context) {
 		Title       string   `json:"title"`
 		Permissions []string `json:"permissions"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Name == "" || len(req.Name) > 64 || len(req.Title) > 190 {
 		fail(c, http.StatusBadRequest, "invalid_request", "name required")
 		return
 	}
 	ctx := c.Request.Context()
 	id := newID()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO roles (id, name, title, protected) VALUES (?, ?, ?, 0)`, id, req.Name, req.Title); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roles (id, name, title, protected) VALUES (?, ?, ?, 0)`, id, req.Name, req.Title); err != nil {
 		fail(c, http.StatusConflict, "conflict", "role name already exists")
 		return
 	}
-	if err := s.replaceRolePermissions(ctx, id, req.Permissions); err != nil {
+	if err := replaceRolePermissionsTx(ctx, tx, id, req.Permissions); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeSQLError(c, err)
 		return
 	}
 	s.audit(ctx, currentPrincipal(c).UserID, "role.create", "role", id)
@@ -269,24 +417,45 @@ func (s *Server) updateRole(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
 		return
 	}
+	if req.Title != nil {
+		trimmed := strings.TrimSpace(*req.Title)
+		if len(trimmed) > 190 {
+			fail(c, http.StatusBadRequest, "invalid_request", "title is too long")
+			return
+		}
+		req.Title = &trimmed
+	}
 	ctx := c.Request.Context()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	defer tx.Rollback()
 	var protected bool
-	if err := s.db.QueryRowContext(ctx, `SELECT protected FROM roles WHERE id = ?`, id).Scan(&protected); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT protected FROM roles WHERE id = ? FOR UPDATE`, id).Scan(&protected); err != nil {
 		fail(c, http.StatusNotFound, "not_found", "role not found")
 		return
 	}
-	if req.Title != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE roles SET title = ? WHERE id = ?`, *req.Title, id)
+	if protected && (req.Title != nil || req.Permissions != nil) {
+		fail(c, http.StatusForbidden, "protected", "cannot change a built-in role")
+		return
 	}
-	if req.Permissions != nil {
-		if protected {
-			fail(c, http.StatusForbidden, "protected", "cannot change permissions of a built-in role")
+	if req.Title != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE roles SET title = ?, row_version=row_version+1 WHERE id = ?`, *req.Title, id); err != nil {
+			writeSQLError(c, err)
 			return
 		}
-		if err := s.replaceRolePermissions(ctx, id, *req.Permissions); err != nil {
+	}
+	if req.Permissions != nil {
+		if err := replaceRolePermissionsTx(ctx, tx, id, *req.Permissions); err != nil {
 			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeSQLError(c, err)
+		return
 	}
 	s.audit(ctx, currentPrincipal(c).UserID, "role.update", "role", id)
 	s.getRole(c)
@@ -311,16 +480,26 @@ func (s *Server) deleteRole(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) replaceRolePermissions(ctx context.Context, roleID string, abilities []string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id = ?`, roleID); err != nil {
+func replaceRolePermissionsTx(ctx context.Context, tx *sql.Tx, roleID string, abilities []string) error {
+	normalized, err := normalizeGrantValues("permissions", abilities, len(abilityCatalog), 64)
+	if err != nil {
 		return err
 	}
-	for _, ability := range abilities {
-		var permID string
-		if err := s.db.QueryRowContext(ctx, `SELECT id FROM permissions WHERE ability = ?`, ability).Scan(&permID); err != nil {
-			return err // unknown ability
+	permissionIDs := make([]string, 0, len(normalized))
+	for _, ability := range normalized {
+		var permissionID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM permissions WHERE ability = ?`, ability).Scan(&permissionID); err == sql.ErrNoRows {
+			return fmt.Errorf("unknown ability: %s", ability)
+		} else if err != nil {
+			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, roleID, permID); err != nil {
+		permissionIDs = append(permissionIDs, permissionID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id = ?`, roleID); err != nil {
+		return err
+	}
+	for _, permissionID := range permissionIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, roleID, permissionID); err != nil {
 			return err
 		}
 	}

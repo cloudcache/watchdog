@@ -23,7 +23,7 @@ import {
 	CommandSeparator,
 	CommandShortcut,
 } from "@/components/ui/command"
-import { isAdmin } from "@/lib/api"
+import { can, canAny } from "@/lib/api"
 import { $systems } from "@/lib/stores"
 import { getHostDisplayValue, listen } from "@/lib/utils"
 import { $router, basePath, navigate } from "./router"
@@ -56,7 +56,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 				<DialogDescription className="sr-only">Command palette</DialogDescription>
 				<CommandInput placeholder={t`Search for systems or settings...`} />
 				<CommandList>
-					{systems.length > 0 && (
+					{can("device.view") && systems.length > 0 && (
 						<>
 							<CommandGroup>
 								{systems.map((system) => (
@@ -77,7 +77,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 						</>
 					)}
 					<CommandGroup heading={t`Pages / Settings`}>
-						<CommandItem
+						{can("device.view") ? <CommandItem
 							keywords={["home"]}
 							onSelect={() => {
 								navigate(basePath)
@@ -91,8 +91,8 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<CommandShortcut>
 								<Trans>Page</Trans>
 							</CommandShortcut>
-						</CommandItem>
-						<CommandItem
+						</CommandItem> : null}
+						{can("device.view") ? <CommandItem
 							onSelect={() => {
 								navigate(getPagePath($router, "containers"))
 								setOpen(false)
@@ -105,8 +105,8 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<CommandShortcut>
 								<Trans>Page</Trans>
 							</CommandShortcut>
-						</CommandItem>
-						<CommandItem
+						</CommandItem> : null}
+						{can("device.view") ? <CommandItem
 							onSelect={() => {
 								navigate(getPagePath($router, "smart"))
 								setOpen(false)
@@ -117,8 +117,8 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<CommandShortcut>
 								<Trans>Page</Trans>
 							</CommandShortcut>
-						</CommandItem>
-						<CommandItem
+						</CommandItem> : null}
+						{can("agent.view") ? <CommandItem
 							onSelect={() => {
 								navigate(getPagePath($router, "settings", { name: "general" }))
 								setOpen(false)
@@ -129,7 +129,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 								<Trans>Settings</Trans>
 							</span>
 							{SettingsShortcut}
-						</CommandItem>
+						</CommandItem> : null}
 						<CommandItem
 							keywords={[t`Universal token`]}
 							onSelect={() => {
@@ -156,7 +156,7 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<CommandShortcut>GitHub</CommandShortcut>
 						</CommandItem>
 					</CommandGroup>
-					{isAdmin() && (
+					{canAny("user.view", "role.view") && (
 						<>
 							<CommandSeparator className="mb-1.5" />
 							<CommandGroup heading={t`Admin`}>

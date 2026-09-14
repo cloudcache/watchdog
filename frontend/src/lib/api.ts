@@ -52,8 +52,11 @@ export const api = {
 }
 
 export const isAdmin = () => watchdogDevAuth || $platformIdentity.get().current?.isAdmin === true
+export const can = (ability: string) =>
+	watchdogDevAuth || sessionUser?.is_admin === true || sessionUser?.abilities?.includes(ability) === true
+export const canAny = (...abilities: string[]) => isAdmin() || abilities.some((ability) => can(ability))
 export const canManageAddressLibrary = () =>
-	watchdogDevAuth || $platformIdentity.get().current?.canManageAddressLibrary === true
+	watchdogDevAuth || can("address.manage") || can("address.publish")
 export const isReadOnlyUser = () => {
 	if (watchdogDevAuth) {
 		return false

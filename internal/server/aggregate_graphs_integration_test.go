@@ -110,6 +110,17 @@ func TestAggregateGraphMySQLAPI(t *testing.T) {
 		t.Fatalf("series: status=%d body=%s", series.Code, series.Body.String())
 	}
 	viewer := &principal{UserID: userID, Abilities: map[string]bool{"device.viewAll": true}}
+	if _, err := db.Exec(`INSERT INTO user_metric_permissions (user_id,metric) VALUES (?,?)`, userID, snmpch.MetricIfOutBPS); err != nil {
+		t.Fatal(err)
+	}
+	metricDenied := aggregateGraphRequest(t, s.aggregateGraphData, viewer, http.MethodGet,
+		"/api/v1/aggregate-graphs/"+graphID+"/data?start=2026-09-10T00:00:00Z&end=2026-09-11T00:00:00Z", graphID, nil)
+	if metricDenied.Code != http.StatusForbidden {
+		t.Fatalf("metric-restricted graph status=%d body=%s", metricDenied.Code, metricDenied.Body.String())
+	}
+	if _, err := db.Exec(`INSERT INTO user_aggregate_graph_permissions (user_id,aggregate_graph_id) VALUES (?,?)`, userID, graphID); err != nil {
+		t.Fatal(err)
+	}
 	data := aggregateGraphRequest(t, s.aggregateGraphData, viewer, http.MethodGet,
 		"/api/v1/aggregate-graphs/"+graphID+"/data?start=2026-09-10T00:00:00Z&end=2026-09-11T00:00:00Z", graphID, nil)
 	if data.Code != http.StatusOK || !strings.Contains(data.Body.String(), `"GraphID":"`+graphID+`"`) ||
@@ -122,7 +133,7 @@ func TestAggregateGraphMySQLAPI(t *testing.T) {
 	summary := aggregateGraphRequest(t, s.aggregateGraphSummary, viewer, http.MethodGet,
 		"/api/v1/aggregate-graphs/"+graphID+"/summary?start=2026-09-10T00:00:00Z&end=2026-09-11T00:00:00Z", graphID, nil)
 	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), `"samples":1`) ||
-		!strings.Contains(summary.Body.String(), `"total_bytes":144000`) {
+		!strings.Contains(summary.Body.String(), `"total_bytes":300000`) {
 		t.Fatalf("summary contract: status=%d body=%s", summary.Code, summary.Body.String())
 	}
 }

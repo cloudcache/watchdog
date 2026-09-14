@@ -89,6 +89,10 @@ func currentPrincipal(c *gin.Context) *principal {
 // EnsureRBACSeed makes the fixed ability catalogue, the built-in roles, and their
 // role_permissions exist. Idempotent; safe to run on every startup.
 func EnsureRBACSeed(ctx context.Context, db *sql.DB) error {
+	var installed bool
+	if err := db.QueryRowContext(ctx, `SELECT admin_bootstrapped FROM watchdog_installation WHERE id=1`).Scan(&installed); err != nil && err != sql.ErrNoRows {
+		return err
+	}
 	abilityIDs := map[string]string{}
 	for _, ability := range abilityCatalog {
 		id := newID()
@@ -104,15 +108,33 @@ func EnsureRBACSeed(ctx context.Context, db *sql.DB) error {
 		abilityIDs[ability] = id
 	}
 	for _, r := range defaultRoles {
-		roleID := newID()
-		if _, err := db.ExecContext(ctx,
-			`INSERT INTO roles (id, name, title, protected) VALUES (?, ?, ?, ?)
-			 ON DUPLICATE KEY UPDATE title = VALUES(title), protected = VALUES(protected)`,
-			roleID, r.name, r.title, r.protected); err != nil {
+		var roleID string
+		created := false
+		err := db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, r.name).Scan(&roleID)
+		if err == sql.ErrNoRows {
+			// Non-protected defaults are install-time templates. Once installed,
+			// deleting one is an intentional administrator action and startup must
+			// not recreate it.
+			if installed && !r.protected {
+				continue
+			}
+			roleID = newID()
+			if _, err := db.ExecContext(ctx,
+				`INSERT INTO roles (id, name, title, protected) VALUES (?, ?, ?, ?)`,
+				roleID, r.name, r.title, r.protected); err != nil {
+				return err
+			}
+			created = true
+		} else if err != nil {
 			return err
+		} else if r.protected {
+			if _, err := db.ExecContext(ctx, `UPDATE roles SET title=?, protected=1 WHERE id=?`, r.title, roleID); err != nil {
+				return err
+			}
 		}
-		if err := db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, r.name).Scan(&roleID); err != nil {
-			return err
+		if !created && !r.protected {
+			// A role edited through the API remains edited across restart.
+			continue
 		}
 		grant := r.abilities
 		if len(grant) == 1 && grant[0] == "*" {

@@ -113,6 +113,9 @@ func (s *Server) createSNMPExport(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "metric or aggregate is unsupported")
 		return
 	}
+	if !s.requireMetricAccess(c, req.Metric) {
+		return
+	}
 	from, err := time.Parse(time.RFC3339, req.Start)
 	if err != nil {
 		fail(c, http.StatusBadRequest, "invalid_range", "start must be RFC3339")
@@ -202,6 +205,13 @@ func (s *Server) runSNMPCSVExport(dir string) opjob.Handler {
 			return "", err
 		}
 		p := &principal{UserID: job.CreatedBy, IsAdmin: isAdmin, Abilities: abilities}
+		allowed, err := s.metricAllowed(ctx, p, payload.Metric)
+		if err != nil {
+			return "", err
+		}
+		if !allowed {
+			return "", opjob.TerminalError(errMetricScopeForbidden)
+		}
 		scopes, err := s.resolveSNMPScopes(ctx, p, payload.DeviceIDs, payload.PortIDs)
 		if err != nil {
 			if errors.Is(err, errSNMPScopeForbidden) || errors.Is(err, errSNMPScopeNotFound) {

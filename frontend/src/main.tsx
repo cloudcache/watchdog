@@ -12,7 +12,7 @@ import { $router, navigate, prependBasePath } from "@/components/router.tsx"
 import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
-import { canManageAddressLibrary, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
+import { canAny, canManageAddressLibrary, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
@@ -94,7 +94,12 @@ const App = memo(() => {
 	}
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
-	} else if (
+	}
+	const requiredAbilities = routeAbilities(page.route)
+	if (requiredAbilities.length > 0 && !canAny(...requiredAbilities)) {
+		return <PermissionDenied />
+	}
+	if (
 		(page.route === "address_library_root" ||
 			page.route === "address_library" ||
 			page.route === "address_prefixes" ||
@@ -259,6 +264,77 @@ const App = memo(() => {
 		return <FlowSavedFilters />
 	}
 })
+
+function PermissionDenied() {
+	return (
+		<div className="my-14 text-center">
+			<h1 className="text-2xl font-semibold"><Trans>Permission denied</Trans></h1>
+			<p className="mt-2 text-sm text-muted-foreground"><Trans>Your role does not grant access to this page.</Trans></p>
+		</div>
+	)
+}
+
+function routeAbilities(route: string): string[] {
+	switch (route) {
+		case "users_admin": return ["user.view", "role.view"]
+		case "permissions":
+		case "permission_new":
+		case "permission_edit": return ["role.view"]
+		case "billing":
+		case "billing_detail": return ["bill.view"]
+		case "billing_new": return ["bill.create"]
+		case "billing_edit": return ["bill.update"]
+		case "agents":
+		case "agent_runs":
+		case "agent_plans": return ["agent.view"]
+		case "agent_new":
+		case "agent_edit": return ["agent.manage"]
+		case "audit_logs": return ["audit.view"]
+		case "operation_jobs": return ["job.view"]
+		case "retention":
+		case "historical_data": return ["job.manage"]
+		case "target_new":
+		case "network_device_new": return ["device.create"]
+		case "target_edit":
+		case "network_device_edit":
+		case "network_device_snmp":
+		case "network_discover":
+		case "aggregate_graph_new":
+		case "aggregate_graph_edit":
+		case "dashboard_new":
+		case "dashboard_edit":
+		case "snmp_profile_new":
+		case "snmp_profile_edit":
+		case "snmp_mib_module_new":
+		case "snmp_mib_module_edit":
+		case "traffic_defaults": return ["device.update"]
+		case "network_port_edit":
+		case "network_port_policy": return ["port.update"]
+		case "network_port": return ["port.view"]
+		case "home":
+		case "targets":
+		case "target_detail":
+		case "system":
+		case "containers":
+		case "core":
+		case "network":
+		case "network_device":
+		case "aggregate_charts":
+		case "aggregate_graphs":
+		case "aggregate_graph":
+		case "dashboards": return ["device.view"]
+		case "flow_overview":
+		case "traffic_matrix":
+		case "flow_dimensions":
+		case "flow_source":
+		case "flow_destination":
+		case "flow_overseas":
+		case "flow_filters": return ["flow.view.customer", "flow.view.supplier", "flow.view.raw"]
+		case "flow_vpn": return ["flow.vpn.view"]
+		case "flow_vpn_rules": return ["flow.vpn.manage"]
+		default: return []
+	}
+}
 
 const Layout = () => {
 	const authenticated = useStore($authenticated)
