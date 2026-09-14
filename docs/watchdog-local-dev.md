@@ -1,159 +1,104 @@
-# Watchdog Local Dev Startup
+# Watchdog local development
 
-Local development runs the Vite frontend and the API/Auth Hub as two processes.
-The browser reads the single `API_URL` from `watchdog-config.js` and talks to
-the Hub directly. There is no API proxy, custom Node static server, nginx, or
-`:5173` dependency.
+Local development uses one fixed control-plane process and independent data-plane
+processes. The frontend talks directly to the API configured by
+`frontend/public/watchdog-config.js`; there is no proxy, PocketBase Hub, or static
+server in the backend.
 
-1. Initialize MySQL:
+| Process | Fixed executable | Responsibility |
+| --- | --- | --- |
+| Frontend | `npm --prefix frontend run dev` | Vite frontend on `127.0.0.1:8090` |
+| API | `build/watchdog-server` | Gin management/query API on `127.0.0.1:8091` |
+| SNMP polling | `build/watchdog-snmp-collector` | Discovery, polling, MySQL recipes, ClickHouse samples |
+| SNMP traps | `build/watchdog-snmp-agent` | UDP Trap listener and forwarding to the API |
+| Flow collection | `watchdog-flow-collect` | sFlow/NetFlow/IPFIX decode and Kafka production |
+| Flow processing | `watchdog-flow-worker` | Kafka consumption, in-memory classification, ClickHouse writes |
 
-```bash
-make watchdog-dev-db
-```
+The API exposes SNMP and Flow management/query routes, but it does not open flow
+sampling sockets, consume Kafka, or execute the SNMP polling loop. Query and export
+workers that operate on already stored data remain control-plane jobs.
 
-This creates the database, runs `cmd/watchdog-install` with
-`config/watchdog.dev.yaml`, writes `.watchdog-dev.lock`, and applies the local
-seed data.
+One exception still exists: `POST /api/v1/devices/:id/snmp/discover` performs a
+single, operator-triggered SNMP discovery inside the API process. Continuous
+discovery and polling run only in `watchdog-snmp-collector`. Moving this manual
+operation to an operation-job claimed by the collector is a separate architecture
+change; until that is implemented, the API is not a strictly network-I/O-free
+control plane.
 
-2. Start the API/Auth Hub:
+## 1. Dependencies
 
-```bash
-make dev-hub
-```
-
-This starts the production Hub entrypoint with `config/watchdog.dev.yaml` on
-`127.0.0.1:8091` and permits the local frontend origin explicitly.
-
-3. Start the frontend in another terminal:
-
-```bash
-cd internal/site
-npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:8090`. Vite only serves frontend assets during local
-development; `/api/*` is not proxied. Start the optional local agent separately
-with `make dev-agent`.
-
-4. When testing SNMP, run the independent collector/discovery worker in another terminal:
+MySQL must be reachable using `mysql.dsn` in `config/watchdog.yaml`. Kafka and
+ClickHouse for local development can be started with:
 
 ```bash
-go run ./cmd/watchdog-snmp-collector \
-  --config config/watchdog.dev.yaml \
-  --tenant tenant_dev \
-  --interval 1m \
-  --loop
+WATCHDOG_CLICKHOUSE_PASSWORD=watchdog-local make flow-dev-up
 ```
 
-The loop claims queued discovery jobs immediately, loads each device's SNMP
-profile and per-device override, imports collection recipes, and polls due
-recipes into raw samples. The Hub is the control plane and does not perform
-network polling in its HTTP process. For a one-off device diagnostic, omit
-`--loop` and pass `--device "$WATCHDOG_NETWORK_DEVICE_ID"`.
-When `--tenant`, `--interval`, or `--limit` is omitted, the command uses
-`snmp_collector.tenant_id`, `interval`, and `poll_limit` from the shared config.
-Set `--discover=false` to run due polling without requiring `--device`.
-
-## MySQL Defaults
-
-The scripts default to:
-
-```text
-host: 127.0.0.1
-port: 3306
-user: root
-password: empty
-database: watchdog_dev
-```
-
-Override them when needed:
+Store the local ClickHouse password outside YAML:
 
 ```bash
-WATCHDOG_MYSQL_USER=root \
-WATCHDOG_MYSQL_PASSWORD='your-password' \
-WATCHDOG_MYSQL_DB=watchdog_dev \
-make watchdog-dev-db
+install -m 600 /dev/null /tmp/watchdog-clickhouse-password
+printf '%s\n' 'watchdog-local' > /tmp/watchdog-clickhouse-password
 ```
 
-Use the same variables for `make dev-hub`, or set the full DSN:
+## 2. API and frontend
+
+Build and run the API under its fixed name:
 
 ```bash
-export WATCHDOG_MYSQL_DSN='root:your-password@tcp(127.0.0.1:3306)/watchdog_dev?parseTime=true&multiStatements=true'
-make dev-hub
+make build-server
+WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
+  ./build/watchdog-server --config config/watchdog.yaml
 ```
 
-The Hub reads `config/watchdog.dev.yaml` (via `--watchdog-config`). Environment
-variables override the YAML values, so changing `WATCHDOG_MYSQL_DSN` or
-`WATCHDOG_VICTORIAMETRICS_URL` is enough for local testing.
-Invalid or unknown configuration now fails startup instead of falling back
-silently; the complete override list and precedence are in
-[`watchdog-install.md`](watchdog-install.md).
-
-## Frontend API configuration
-
-`internal/site/public/watchdog-config.js` contains the frontend's only backend
-address. Its checked-in value points local development at `127.0.0.1:8091`.
-Set it to the externally reachable Hub address before a standalone build:
-
-```js
-globalThis.WATCHDOG_CONFIG = {
-	API_URL: "https://api.watchdog.example",
-}
-```
-
-`API_URL` is used by every browser API/auth/SSE/download request and by
-generated agent installation commands. The Hub must be started with the exact
-frontend origin in PocketBase's `--origins` allowlist.
-
-## Commands
-
-- `npm run dev` in `internal/site`: local frontend on `127.0.0.1:8090`, without an API proxy.
-- `npm run build` in `internal/site`: frontend build output in `internal/site/dist`.
-- `internal/cmd/hub`: PocketBase auth + `/api/v1` on `127.0.0.1:8091`. Its embedded UI remains a compatibility path.
-- `cmd/watchdog-install`: fresh MySQL installer using `install/init.sql` and a local lock file.
-- `cmd/watchdog-export-worker`: async CSV export worker.
-- `cmd/watchdog-snmp-collector`: SNMP discovery, recipe import, and raw sample polling.
-
-## Flow Kafka and ClickHouse
-
-The Flow development data plane uses the pinned single-node Kafka KRaft and
-ClickHouse LTS images in `deploy/compose.flow-dev.yml`. It binds Kafka and both
-ClickHouse endpoints to `127.0.0.1`; this is a functional integration setup,
-not the multi-node capacity or HA environment.
-
-Start the services and explicitly migrate ClickHouse:
+Run the frontend separately:
 
 ```bash
-export WATCHDOG_CLICKHOUSE_PASSWORD='watchdog-local'
-make flow-dev-up
-
-flow_secret_file=$(mktemp)
-chmod 600 "$flow_secret_file"
-printf '%s' "$WATCHDOG_CLICKHOUSE_PASSWORD" > "$flow_secret_file"
-go run ./cmd/watchdog-flow-migrate \
-  --command apply \
-  --clickhouse-password-file "$flow_secret_file"
-rm -f "$flow_secret_file"
+npm --prefix frontend run dev
 ```
 
-The migration set is embedded in `watchdog-flow-migrate`; the worker and hub
-never modify ClickHouse schema during startup. Use `--command inspect` for a
-read-only state/lock report. A failed or interrupted migration is dirty and
-requires `--command resume`. An orphaned lock can be removed only with
-`--command unlock --lock-owner <exact-owner-token>` after the operator has
-confirmed that the original process is no longer running.
+Open `http://127.0.0.1:8090`. An empty management database redirects to
+`/install`; installation creates the schema and first administrator only after
+the form is submitted.
 
-Kafka auto-topic creation is disabled. The one-shot `kafka-init` service
-idempotently creates `watchdog.flow.raw-v1` with 12 partitions. Host processes
-connect to `127.0.0.1:9092`; Compose services use `kafka:19092`.
+## 3. Independent SNMP processes
 
-Inspect or stop the local data plane without deleting its named volumes:
+Build and start continuous polling independently from Gin:
 
 ```bash
-make flow-dev-status
-make flow-dev-down
+make build-snmp-collector
+WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
+  ./build/watchdog-snmp-collector \
+  --config config/watchdog.yaml \
+  --discover=false --poll=true --loop=true
 ```
 
-`docker compose down -v` intentionally destroys the local Kafka log and
-ClickHouse data and is therefore not wrapped in a Make target.
+One-off discovery uses the same collector executable:
+
+```bash
+./build/watchdog-snmp-collector \
+  --config config/watchdog.yaml --device DEVICE_ID --discover=true --poll=false
+```
+
+The optional Trap listener is also an independent executable:
+
+```bash
+make build-snmp-agent
+./build/watchdog-snmp-agent --config PATH_TO_TRAP_AGENT_CONFIG
+```
+
+## 4. Fixed local commands
+
+- `make build-server`: compile only the Gin API to `build/watchdog-server`.
+- `make dev-server`: build and run that fixed API executable.
+- `make dev-frontend`: run the independent frontend on port 8090.
+- `make build-snmp-collector`: compile the SNMP polling process.
+- `make dev-snmp-collector`: build and run continuous SNMP polling.
+- `make build-snmp-agent`: compile the independent UDP Trap process.
+- `make build`: compile the API, system agent, SNMP collector, and SNMP Trap agent.
+- `make build-web-ui`: build the frontend separately.
+
+Do not name runtime binaries after a task (`watchdog-server-snmp`,
+`watchdog-server-rbac`, and similar), and do not let multiple sessions replace the
+listener on port 8091. Before starting a new API process, resolve the existing
+listener with `lsof -nP -iTCP:8091 -sTCP:LISTEN`.

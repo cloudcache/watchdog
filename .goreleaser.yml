@@ -7,9 +7,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: watchdog
-    binary: watchdog
-    main: internal/cmd/hub/hub.go
+  - id: watchdog-server
+    binary: watchdog-server
+    main: cmd/watchdog-server/main.go
     env:
       - CGO_ENABLED=0
     goos:
@@ -109,10 +109,10 @@ archives:
       {{- .Os }}_
       {{- .Arch }}_glibc
 
-  - id: watchdog
+  - id: watchdog-server
     formats: [tar.gz]
     ids:
-      - watchdog
+      - watchdog-server
     name_template: >-
       {{ .Binary }}_
       {{- .Os }}_

@@ -1,8 +1,6 @@
 # Default OS/ARCH values
 OS ?= $(shell go env GOOS)
 ARCH ?= $(shell go env GOARCH)
-# Skip building the web UI if true
-SKIP_WEB ?= false
 # Controls NVML/glibc agent build tag behavior:
 # - auto (default): enable on linux/amd64 glibc hosts
 # - true: always enable
@@ -41,7 +39,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build-agent build-hub build clean lint dev-agent dev-hub generate-locales watchdog-dev-db watchdog-install watchdog-dev-install flow-dev-up flow-dev-down flow-dev-status
+.PHONY: tidy build build-agent build-server build-snmp-collector build-snmp-agent build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales watchdog-install flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
 
 clean:
@@ -58,8 +56,7 @@ tidy:
 	go mod tidy
 
 build-web-ui:
-	npm install --prefix ./frontend
-	npm run --prefix ./frontend build
+	npm --prefix ./frontend run build
 
 # Conditional .NET build - only for Windows
 build-dotnet-conditional:
@@ -75,13 +72,19 @@ build-dotnet-conditional:
 	fi
 
 # Update build-agent to include conditional .NET build
-build-agent: tidy build-dotnet-conditional
+build-agent: build-dotnet-conditional
 	GOOS=$(OS) GOARCH=$(ARCH) go build $(AGENT_GO_TAGS) -o ./build/watchdog-agent_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/agent
 
-build-hub: tidy $(if $(filter false,$(SKIP_WEB)),build-web-ui)
-	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog_$(OS)_$(ARCH)$(EXE_EXT) -ldflags "-w -s" ./internal/cmd/hub
+build-server:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-server$(EXE_EXT) ./cmd/watchdog-server
 
-build: build-agent build-hub
+build-snmp-collector:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-snmp-collector$(EXE_EXT) ./cmd/watchdog-snmp-collector
+
+build-snmp-agent:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-snmp-agent$(EXE_EXT) ./cmd/watchdog-snmp-agent
+
+build: build-agent build-server build-snmp-collector build-snmp-agent
 
 generate-locales:
 	@if [ ! -f ./frontend/src/locales/en/en.ts ]; then \
@@ -89,12 +92,14 @@ generate-locales:
 		npm install --prefix ./frontend && npm run --prefix ./frontend sync; \
 	fi
 
-dev-hub:
-	@if command -v entr >/dev/null 2>&1; then \
-		find ./internal -type f -name '*.go' | entr -r -s "APP_URL=http://127.0.0.1:8091 go run ./internal/cmd/hub serve --http 127.0.0.1:8091 --origins=http://127.0.0.1:8090 --watchdog-config config/watchdog.dev.yaml"; \
-	else \
-		APP_URL=http://127.0.0.1:8091 go run ./internal/cmd/hub serve --http 127.0.0.1:8091 --origins=http://127.0.0.1:8090 --watchdog-config config/watchdog.dev.yaml; \
-	fi
+dev-server: build-server
+	./build/watchdog-server --config config/watchdog.yaml
+
+dev-frontend:
+	npm --prefix ./frontend run dev
+
+dev-snmp-collector: build-snmp-collector
+	./build/watchdog-snmp-collector --config config/watchdog.yaml --discover=false --poll=true --loop=true
 
 dev-agent:
 	@if command -v entr >/dev/null 2>&1; then \
@@ -103,14 +108,8 @@ dev-agent:
 		go run $(AGENT_GO_TAGS) github.com/cloudcache/watchdog/internal/cmd/agent; \
 	fi
 
-watchdog-dev-db:
-	./scripts/watchdog-dev-db.sh
-
 watchdog-install:
 	go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock
-
-watchdog-dev-install:
-	go run ./cmd/watchdog-install --config config/watchdog.dev.yaml --init-sql install/init.sql --lock .watchdog-dev.lock
 
 flow-dev-up:
 	docker compose -f deploy/compose.flow-dev.yml up -d
