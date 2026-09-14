@@ -1,16 +1,11 @@
 package address
 
 import (
-	"bytes"
-	"crypto/ed25519"
-	"crypto/rand"
 	"testing"
-	"time"
 )
 
-// Faithful ports of internal/watchdog/dimension_publication_test.go (pure): the
-// scope validation contract, and that the generic signing payload is byte-identical
-// to the address alias and binds the publication scope (module/dimension).
+// Faithful port of internal/watchdog/dimension_publication_test.go (pure): the
+// publication scope validation contract (module/dimension key).
 func TestDimensionPublicationScopeValidation(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -29,35 +24,5 @@ func TestDimensionPublicationScopeValidation(t *testing.T) {
 				t.Fatalf("validate() error = %v, valid = %v", err, test.valid)
 			}
 		})
-	}
-}
-
-func TestDimensionPublicationSigningBindsScopeAndPreservesAddressWire(t *testing.T) {
-	snapshot := addressDimensionSignatureFixture()
-	signedAt := time.Date(2026, 9, 7, 8, 9, 10, 111000000, time.UTC)
-	legacy, err := AddressDimensionSigningPayload(snapshot, "publisher-1", signedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	generic, err := DimensionPublicationSigningPayload(snapshot, "publisher-1", signedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(legacy, generic) {
-		t.Fatal("generic signing changed the existing address wire bytes")
-	}
-
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	approval, err := VerifyDimensionPublicationApproval(snapshot, "publisher-1", signedAt, ed25519.Sign(privateKey, generic), publicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tampered := snapshot
-	tampered.DimensionKey = "vpn_rule_set"
-	if err := validateVerifiedDimensionPublicationApproval(tampered, approval); err == nil {
-		t.Fatal("approval proof accepted a different publication scope")
 	}
 }

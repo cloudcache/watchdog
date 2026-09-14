@@ -100,16 +100,9 @@ type FlowVPNConfig struct {
 // AddressConfig controls the address-library source-import store: where uploaded
 // MMDB/IPDB artifacts are kept and the per-upload size ceiling.
 type AddressConfig struct {
-	ArtifactDir    string                    `yaml:"artifact_dir"`     // local dir for uploaded source databases
-	MaxUploadBytes int64                     `yaml:"max_upload_bytes"` // 0 -> 2 GiB default
-	SnapshotDir    string                    `yaml:"snapshot_dir"`     // local dir for published WADS dimension objects
-	TrustedKeys    []AddressTrustedKeyConfig `yaml:"trusted_keys"`     // ed25519 dimension-publication approval keys
-}
-
-// AddressTrustedKeyConfig is one trusted ed25519 dimension-publication signing key.
-type AddressTrustedKeyConfig struct {
-	KeyID         string `yaml:"key_id"`
-	PublicKeyFile string `yaml:"public_key_file"`
+	ArtifactDir    string `yaml:"artifact_dir"`     // local dir for uploaded source databases
+	MaxUploadBytes int64  `yaml:"max_upload_bytes"` // 0 -> 2 GiB default
+	SnapshotDir    string `yaml:"snapshot_dir"`     // local dir for published WADS dimension objects
 }
 
 // SNMPConfig layers optional LibreNMS definitions/vendor MIBs over the
