@@ -1,3 +1,5 @@
+import type { MessageDescriptor } from "@lingui/core"
+import { msg, t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
@@ -97,68 +99,71 @@ const INITIAL_REPORT_TABLES: Record<string, TableControl> = {
 }
 
 const METRICS = [
-	["estimated_bps", "Estimated bit rate"],
-	["estimated_bytes", "Estimated bytes"],
-	["estimated_pps", "Estimated packet rate"],
-	["estimated_packets", "Estimated packets"],
-	["raw_bps", "Sampled bit rate"],
-	["raw_bytes", "Sampled bytes"],
+	["estimated_bps", msg`Estimated bit rate`],
+	["estimated_bytes", msg`Estimated bytes`],
+	["estimated_pps", msg`Estimated packet rate`],
+	["estimated_packets", msg`Estimated packets`],
+	["raw_bps", msg`Sampled bit rate`],
+	["raw_bytes", msg`Sampled bytes`],
 ] as const
 
 const GROUPINGS = [
-	{ value: "category", label: "Default six classes", dimension: "category", categories: [] },
+	{ value: "category", label: msg`Default six classes`, dimension: "category", categories: [] },
 	{
 		value: "onnet_province",
-		label: "On-net by province",
+		label: msg`On-net by province`,
 		dimension: "geo.province",
 		categories: ["on_net_local_city", "on_net_cross_city", "on_net_cross_province"],
 	},
 	{
 		value: "offnet_operator",
-		label: "Off-net by operator",
+		label: msg`Off-net by operator`,
 		dimension: "isp",
 		categories: ["off_net_in_province", "off_net_cross_province"],
 	},
-	{ value: "overseas", label: "Overseas by country", dimension: "geo.country", categories: ["overseas"] },
-	{ value: "vpn", label: "VPN report", dimension: "category", categories: [] },
+	{ value: "overseas", label: msg`Overseas by country`, dimension: "geo.country", categories: ["overseas"] },
+	{ value: "vpn", label: msg`VPN report`, dimension: "category", categories: [] },
 ] as const
 
 const WEEKDAYS = [
-	[1, "Mon"],
-	[2, "Tue"],
-	[3, "Wed"],
-	[4, "Thu"],
-	[5, "Fri"],
-	[6, "Sat"],
-	[7, "Sun"],
+	[1, msg`Mon`],
+	[2, msg`Tue`],
+	[3, msg`Wed`],
+	[4, msg`Thu`],
+	[5, msg`Fri`],
+	[6, msg`Sat`],
+	[7, msg`Sun`],
 ] as const
 
-const PAGE_COPY: Record<FlowReportSurface, { title: string; description: string }> = {
-	overview: { title: "Flow Overview", description: "Direction, six exclusive traffic classes and business matrix." },
+const PAGE_COPY: Record<FlowReportSurface, { title: MessageDescriptor; description: MessageDescriptor }> = {
+	overview: {
+		title: msg`Flow Overview`,
+		description: msg`Direction, six exclusive traffic classes and business matrix.`,
+	},
 	dimensions: {
-		title: "Traffic by Dimension",
-		description: "Fast country, province, city, operator and business reporting.",
+		title: msg`Traffic by Dimension`,
+		description: msg`Fast country, province, city, operator and business reporting.`,
 	},
 	source: {
-		title: "Source IP Report",
-		description: "Top source addresses with direction, traffic class and drill-down.",
+		title: msg`Source IP Report`,
+		description: msg`Top source addresses with direction, traffic class and drill-down.`,
 	},
 	destination: {
-		title: "Destination IP Report",
-		description: "Top destination addresses with direction, traffic class and drill-down.",
+		title: msg`Destination IP Report`,
+		description: msg`Top destination addresses with direction, traffic class and drill-down.`,
 	},
 	overseas: {
-		title: "Overseas Traffic Report",
-		description: "Countries, regions, ASN, ports and protocols with observed-data caveats.",
+		title: msg`Overseas Traffic Report`,
+		description: msg`Countries, regions, ASN, ports and protocols with observed-data caveats.`,
 	},
 	vpn: {
-		title: "VPN Traffic Report",
-		description: "Traffic analysis separated from findings, evidence and probe disposition.",
+		title: msg`VPN Traffic Report`,
+		description: msg`Traffic analysis separated from findings, evidence and probe disposition.`,
 	},
 }
 
 export default memo(function FlowReports({ surface }: { surface: FlowReportSurface }) {
-	const { t } = useLingui()
+	const { t, i18n } = useLingui()
 	const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
 	const [range, setRange] = useState(() => queryState("range", "1h"))
 	const [customStart, setCustomStart] = useState(() => queryState("start", ""))
@@ -202,8 +207,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const lastExportQuery = useRef<FlowReportExportQuery | null>(null)
 
 	useEffect(() => {
-		document.title = `${PAGE_COPY[surface].title} / Watchdog`
-	}, [surface])
+		document.title = `${i18n._(PAGE_COPY[surface].title)} / Watchdog`
+	}, [surface, i18n])
 
 	useEffect(() => {
 		Promise.allSettled([
@@ -444,8 +449,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 		<div className="my-4 grid gap-4">
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div>
-					<h1 className="text-2xl font-semibold">{copy.title}</h1>
-					<p className="text-sm text-muted-foreground">{copy.description}</p>
+					<h1 className="text-2xl font-semibold">{i18n._(copy.title)}</h1>
+					<p className="text-sm text-muted-foreground">{i18n._(copy.description)}</p>
 				</div>
 				<Link href={getPagePath($router, "traffic_matrix")} className={buttonVariants({ variant: "outline" })}>
 					<SlidersHorizontalIcon className="mr-2 h-4 w-4" />
@@ -466,7 +471,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							label={t`Metric`}
 							value={surface === "vpn" ? "estimated_bytes" : metric}
 							onChange={setMetric}
-							options={METRICS}
+							options={METRICS.map(([value, label]) => [value, i18n._(label)] as const)}
 							disabled={surface === "vpn"}
 						/>
 						<ReportSelect
@@ -474,9 +479,9 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							value={displayMode}
 							onChange={(value) => setDisplayMode(value as FlowReportDisplayMode)}
 							options={[
-								["value", "Value"],
-								["share", "Share"],
-								["difference", "Inbound − outbound"],
+								["value", t`Value`],
+								["share", t`Share`],
+								["difference", t`Inbound − outbound`],
 							]}
 						/>
 						{surface === "dimensions" ? (
@@ -484,7 +489,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 								label={t`Quick grouping`}
 								value={groupBy}
 								onChange={(value) => (value === "vpn" ? navigate(getPagePath($router, "flow_vpn")) : setGroupBy(value))}
-								options={GROUPINGS.map((item) => [item.value, item.label] as const)}
+								options={GROUPINGS.map((item) => [item.value, i18n._(item.label)] as const)}
 							/>
 						) : null}
 						<ReportSelect
@@ -495,7 +500,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 								setProvince("all")
 								setCity("all")
 							}}
-							options={[["all", "All countries"], ...countries.map((item) => [item.id, item.name] as const)]}
+							options={[["all", t`All countries`], ...countries.map((item) => [item.id, item.name] as const)]}
 						/>
 						<ReportSelect
 							label={t`Province`}
@@ -504,14 +509,14 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 								setProvince(value)
 								setCity("all")
 							}}
-							options={[["all", "All provinces"], ...provinces.map((item) => [item.id, item.name] as const)]}
+							options={[["all", t`All provinces`], ...provinces.map((item) => [item.id, item.name] as const)]}
 							disabled={country === "all"}
 						/>
 						<ReportSelect
 							label={t`City`}
 							value={city}
 							onChange={setCity}
-							options={[["all", "All cities"], ...cities.map((item) => [item.id, item.name] as const)]}
+							options={[["all", t`All cities`], ...cities.map((item) => [item.id, item.name] as const)]}
 							disabled={province === "all"}
 						/>
 						<ReportSelect
@@ -519,7 +524,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							value={operator}
 							onChange={setOperator}
 							options={[
-								["all", "All operators"],
+								["all", t`All operators`],
 								...operators.map((item) => [item.id, item.short_name || item.name] as const),
 							]}
 						/>
@@ -528,7 +533,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							value={device}
 							onChange={setDevice}
 							options={[
-								["all", "All devices"],
+								["all", t`All devices`],
 								...devices.map((item) => [deviceID(item), deviceName(item)] as const).filter((item) => item[0]),
 							]}
 						/>
@@ -540,7 +545,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 						/>
 						<ReportInput label={t`Timezone`} value={timezone} onChange={setTimezone} />
 						<ReportInput
-							label="Top N"
+							label={t`Top N`}
 							type="number"
 							value={String(topN)}
 							onChange={(value) => setTopN(boundedNumber(value, 1, 100, 20))}
@@ -694,8 +699,12 @@ function OverviewReport({
 		<div className="grid gap-4">
 			<Card>
 				<CardHeader>
-					<CardTitle>Total traffic</CardTitle>
-					<CardDescription>Inbound and outbound from the local-network perspective.</CardDescription>
+					<CardTitle>
+						<Trans>Total traffic</Trans>
+					</CardTitle>
+					<CardDescription>
+						<Trans>Inbound and outbound from the local-network perspective.</Trans>
+					</CardDescription>
 				</CardHeader>
 				<CardContent>
 					<div className="mb-3 flex flex-wrap gap-6 text-xl font-semibold">
@@ -792,9 +801,11 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Six-class share</CardTitle>
+				<CardTitle>
+					<Trans>Six-class share</Trans>
+				</CardTitle>
 				<CardDescription>
-					Shares use the full directional total. Residual traffic remains outside the six classes.
+					<Trans>Shares use the full directional total. Residual traffic remains outside the six classes.</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="grid gap-4">
@@ -824,8 +835,10 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 					)
 				})}
 				<div className="border-t pt-3 text-sm text-muted-foreground">
-					Classified coverage: ↓ {formatShare(inboundClassified, inboundTotal)} · ↑{" "}
-					{formatShare(outboundClassified, outboundTotal)}
+					<Trans>
+						Classified coverage: ↓ {formatShare(inboundClassified, inboundTotal)} · ↑{" "}
+						{formatShare(outboundClassified, outboundTotal)}
+					</Trans>
 				</div>
 			</CardContent>
 		</Card>
@@ -852,9 +865,11 @@ function ResidualCard({
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Classification residuals</CardTitle>
+				<CardTitle>
+					<Trans>Classification residuals</Trans>
+				</CardTitle>
 				<CardDescription>
-					Residual traffic is explicit and never redistributed into the six business classes.
+					<Trans>Residual traffic is explicit and never redistributed into the six business classes.</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="grid gap-2">
@@ -884,8 +899,9 @@ function BusinessMatrix({
 	updateTable: (next: TableControl, run: boolean) => void
 	loading: boolean
 }) {
+	const { t } = useLingui()
 	if (inbound?.status === "unavailable" || outbound?.status === "unavailable")
-		return <UnavailablePanel title="Business × traffic class" reason={inbound?.reason || outbound?.reason} />
+		return <UnavailablePanel title={t`Business × traffic class`} reason={inbound?.reason || outbound?.reason} />
 	const page = inbound?.data?.matrix_table
 	const rows = (page?.items ?? []).map((item) => ({
 		business: item.business,
@@ -899,14 +915,14 @@ function BusinessMatrix({
 		residual: formatDirectionalValue(item.residual, totalUnit(inbound?.meta.unit)),
 	}))
 	const columns: ColumnDefine[] = [
-		{ field: "business", title: "Business", width: 220 },
-		{ field: "total", title: "Total · ↓ / ↑", width: 245 },
+		{ field: "business", title: t`Business`, width: 220 },
+		{ field: "total", title: t`Total · ↓ / ↑`, width: 245 },
 		...FLOW_REPORT_CATEGORIES.map((category) => ({
 			field: category,
 			title: `${flowReportCategoryLabel(category)} · ↓ / ↑`,
 			width: 245,
 		})),
-		{ field: "residual", title: "Residual · ↓ / ↑", width: 225 },
+		{ field: "residual", title: t`Residual · ↓ / ↑`, width: 225 },
 	]
 	const filtering = reportTableFiltering(page?.filter_options, table, updateTable)
 	const sorting = {
@@ -921,9 +937,11 @@ function BusinessMatrix({
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Business × traffic class</CardTitle>
+				<CardTitle>
+					<Trans>Business × traffic class</Trans>
+				</CardTitle>
 				<CardDescription>
-					Each cell is inbound / outbound and its directional share for the same frozen report window.
+					<Trans>Each cell is inbound / outbound and its directional share for the same frozen report window.</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -931,7 +949,7 @@ function BusinessMatrix({
 					records={rows}
 					columns={columns}
 					loading={loading}
-					emptyText="No business traffic"
+					emptyText={t`No business traffic`}
 					height={Math.min(440, 42 * (rows.length + 1))}
 					searchValue={table.search}
 					onSearchChange={(search) => updateTable({ ...table, search }, false)}
@@ -952,13 +970,14 @@ function BusinessMatrix({
 }
 
 function DimensionReport({ response }: { response: FlowReportResponse }) {
+	const { t } = useLingui()
 	const inbound = buildReportSeries(reportPanel(response, "dimension_in"))
 	const outbound = buildReportSeries(reportPanel(response, "dimension_out"))
 	const transformed = transformReportSeries(inbound, outbound, response.data.display_mode)
 	if (response.data.display_mode === "difference")
 		return (
 			<ChartCard
-				title="Inbound − outbound"
+				title={t`Inbound − outbound`}
 				panel={reportPanel(response, "dimension_in")}
 				series={transformed.difference}
 			/>
@@ -967,13 +986,13 @@ function DimensionReport({ response }: { response: FlowReportResponse }) {
 	return (
 		<div className="grid gap-4">
 			<ChartCard
-				title="Inbound"
+				title={t`Inbound`}
 				panel={reportPanel(response, "dimension_in")}
 				series={transformed.inbound}
 				unitOverride={unit}
 			/>
 			<ChartCard
-				title="Outbound"
+				title={t`Outbound`}
 				panel={reportPanel(response, "dimension_out")}
 				series={transformed.outbound}
 				unitOverride={unit}
@@ -1029,6 +1048,7 @@ function EndpointTable({
 	loading: boolean
 	onSelectIP: (address: string) => void
 }) {
+	const { t } = useLingui()
 	const panel = reportPanel(response, "endpoint")
 	const page = panel?.data?.table
 	const records = (page?.items ?? []).map((item) => ({
@@ -1048,30 +1068,30 @@ function EndpointTable({
 			])
 		),
 		residual: formatEndpointCategory(item.residual, totalUnit(panel?.meta.unit)),
-		correction: canManageAddressLibrary() ? "Correct attribution" : undefined,
+		correction: canManageAddressLibrary() ? t`Correct attribution` : undefined,
 		correctionHref: addressCorrectionHref(response, item.path[0] || item.name),
 	}))
 	const columns: ColumnDefine[] = [
-		{ field: "address", filterField: "dimension", title: "IP address", width: 190 },
-		{ field: "current", filterField: "last", title: "Combined · current", width: 150 },
-		{ field: "average", filterField: "average", title: "Combined · average", width: 155 },
-		{ field: "p95", filterField: "p95", title: "Combined · 95th", width: 145 },
-		{ field: "maximum", filterField: "maximum", title: "Combined · peak", width: 145 },
-		{ field: "total", filterField: "total", title: "Combined · total", width: 150 },
-		{ field: "business", title: "Business labels", width: 210 },
-		{ field: "inbound", title: "Inbound current / total", width: 190 },
-		{ field: "outbound", title: "Outbound current / total", width: 195 },
+		{ field: "address", filterField: "dimension", title: t`IP address`, width: 190 },
+		{ field: "current", filterField: "last", title: t`Combined · current`, width: 150 },
+		{ field: "average", filterField: "average", title: t`Combined · average`, width: 155 },
+		{ field: "p95", filterField: "p95", title: t`Combined · 95th`, width: 145 },
+		{ field: "maximum", filterField: "maximum", title: t`Combined · peak`, width: 145 },
+		{ field: "total", filterField: "total", title: t`Combined · total`, width: 150 },
+		{ field: "business", title: t`Business labels`, width: 210 },
+		{ field: "inbound", title: t`Inbound current / total`, width: 190 },
+		{ field: "outbound", title: t`Outbound current / total`, width: 195 },
 		...FLOW_REPORT_CATEGORIES.map((name) => ({
 			field: name,
 			title: `${flowReportCategoryLabel(name)} · ↓ / ↑`,
 			width: 205,
 		})),
-		{ field: "residual", title: "Residual · ↓ / ↑", width: 190 },
+		{ field: "residual", title: t`Residual · ↓ / ↑`, width: 190 },
 		...(canManageAddressLibrary()
 			? [
 					{
 						field: "correction",
-						title: "Correction",
+						title: t`Correction`,
 						width: 155,
 						filter: false,
 						style: { color: "#2563eb", cursor: "pointer" },
@@ -1115,11 +1135,15 @@ function EndpointTable({
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Top endpoints</CardTitle>
+				<CardTitle>
+					<Trans>Top endpoints</Trans>
+				</CardTitle>
 				<CardDescription>
-					One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same
-					addresses and frozen report window. Select a row to load records below. Attribution correction opens an
-					address-library draft; it never mutates a published snapshot.
+					<Trans>
+						One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the
+						same addresses and frozen report window. Select a row to load records below. Attribution correction opens an
+						address-library draft; it never mutates a published snapshot.
+					</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -1127,7 +1151,7 @@ function EndpointTable({
 					records={records}
 					columns={columns}
 					loading={loading}
-					emptyText="No endpoint traffic"
+					emptyText={t`No endpoint traffic`}
 					height={Math.min(520, 42 * (records.length + 1))}
 					searchValue={tableSearch}
 					onSearchChange={setTableSearch}
@@ -1169,6 +1193,7 @@ function addressCorrectionHref(response: FlowReportResponse, address: string) {
 }
 
 function OverseasReport({ response }: { response: FlowReportResponse }) {
+	const { t } = useLingui()
 	const total = reportPanel(response, "total")
 	return (
 		<div className="grid gap-4">
@@ -1176,22 +1201,22 @@ function OverseasReport({ response }: { response: FlowReportResponse }) {
 				<OverseasObservedSummary panel={reportPanel(response, "observed")} />
 				<OverseasVPNShare panel={reportPanel(response, "vpn_share")} />
 			</div>
-			<ChartCard title="Overseas inbound / outbound" panel={total} series={buildReportSeries(total)} />
+			<ChartCard title={t`Overseas inbound / outbound`} panel={total} series={buildReportSeries(total)} />
 			{[
-				["country", "Country"],
-				["region", "Region"],
-				["asn", "ASN"],
-				["remote_port", "Remote port"],
-				["protocol", "Protocol"],
+				["country", t`Country`],
+				["region", t`Region`],
+				["asn", t`ASN`],
+				["remote_port", t`Remote port`],
+				["protocol", t`Protocol`],
 			].map(([id, title]) => (
 				<div key={id} className="grid gap-4 xl:grid-cols-2">
 					<ChartCard
-						title={`${title} · inbound`}
+						title={t`${title} · inbound`}
 						panel={reportPanel(response, `${id}_in`)}
 						series={buildReportSeries(reportPanel(response, `${id}_in`))}
 					/>
 					<ChartCard
-						title={`${title} · outbound`}
+						title={t`${title} · outbound`}
 						panel={reportPanel(response, `${id}_out`)}
 						series={buildReportSeries(reportPanel(response, `${id}_out`))}
 					/>
@@ -1202,8 +1227,9 @@ function OverseasReport({ response }: { response: FlowReportResponse }) {
 }
 
 function OverseasObservedSummary({ panel }: { panel?: FlowReportPanel }) {
+	const { t } = useLingui()
 	if (!panel || panel.status === "unavailable")
-		return <UnavailablePanel title="Observed overseas endpoints" reason={panel?.reason} />
+		return <UnavailablePanel title={t`Observed overseas endpoints`} reason={panel?.reason} />
 	const points = (panel.data?.points ?? []) as Array<Record<string, unknown>>
 	const kpi = points.filter(
 		(point) => point.kind === "kpi" && point.direction === "combined" && point.ip_family === "all"
@@ -1213,22 +1239,23 @@ function OverseasObservedSummary({ panel }: { panel?: FlowReportPanel }) {
 	return (
 		<div className="grid gap-3 sm:grid-cols-2">
 			<MetricCard
-				title="Observed overseas IPs"
+				title={t`Observed overseas IPs`}
 				value={remoteIPs.toLocaleString()}
-				note="Exact observed cardinality; not sampling-expanded"
+				note={t`Exact observed cardinality; not sampling-expanded`}
 			/>
 			<MetricCard
-				title="Local hosts with overseas traffic"
+				title={t`Local hosts with overseas traffic`}
 				value={localHosts.toLocaleString()}
-				note="Exact observed cardinality; not sampling-expanded"
+				note={t`Exact observed cardinality; not sampling-expanded`}
 			/>
 		</div>
 	)
 }
 
 function OverseasVPNShare({ panel }: { panel?: FlowReportPanel }) {
+	const { t } = useLingui()
 	if (!panel || panel.status === "unavailable")
-		return <UnavailablePanel title="VPN share of overseas traffic" reason={panel?.reason} />
+		return <UnavailablePanel title={t`VPN share of overseas traffic`} reason={panel?.reason} />
 	const points = (panel.data?.points ?? []) as Array<{
 		direction: string
 		vpn_bytes: number
@@ -1240,19 +1267,25 @@ function OverseasVPNShare({ panel }: { panel?: FlowReportPanel }) {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>VPN share of overseas traffic</CardTitle>
+				<CardTitle>
+					<Trans>VPN share of overseas traffic</Trans>
+				</CardTitle>
 				<CardDescription>
-					VPN findings and estimated overseas bytes use the same frozen window and immutable classification versions.
+					<Trans>
+						VPN findings and estimated overseas bytes use the same frozen window and immutable classification versions.
+					</Trans>
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="grid gap-3">
 				<div className="text-3xl font-semibold">{combined?.ratio == null ? "—" : formatPercent(combined.ratio)}</div>
 				<div className="text-sm text-muted-foreground">
-					{formatBytes(combined?.vpn_bytes ?? 0)} VPN / {formatBytes(combined?.total_bytes ?? 0)} overseas · unknown Geo
-					excluded {formatBytes(combined?.unknown_geo_bytes ?? 0)}
+					<Trans>
+						{formatBytes(combined?.vpn_bytes ?? 0)} VPN / {formatBytes(combined?.total_bytes ?? 0)} overseas · unknown
+						Geo excluded {formatBytes(combined?.unknown_geo_bytes ?? 0)}
+					</Trans>
 				</div>
 				<Link href={getPagePath($router, "flow_vpn")} className={buttonVariants({ variant: "outline", size: "sm" })}>
-					Open VPN findings and evidence
+					<Trans>Open VPN findings and evidence</Trans>
 				</Link>
 			</CardContent>
 		</Card>
@@ -1270,22 +1303,23 @@ function VPNReport({
 	updateTable: (id: string, next: TableControl, run: boolean) => void
 	loading: boolean
 }) {
+	const { t } = useLingui()
 	const panel = reportPanel(response, "vpn_findings")
 	if (!panel || panel.status === "unavailable")
-		return <UnavailablePanel title="VPN analysis" reason={panel?.reason || "VPN findings are unavailable"} />
+		return <UnavailablePanel title={t`VPN analysis`} reason={panel?.reason || t`VPN findings are unavailable`} />
 	const summary = panel.data as unknown as VPNReportSummary
 	const totalPanel = reportPanel(response, "total")
 	const denominator = [...reportCategoryTotals(totalPanel).values()].reduce((sum, value) => sum + value, 0)
 	const trend: FlowReportSeries[] = [
 		{
-			name: "Inbound",
+			name: t`Inbound`,
 			values: (summary.trend ?? []).map((point) => ({
 				time: new Date(point.bucket).getTime(),
 				value: point.inbound_bytes,
 			})),
 		},
 		{
-			name: "Outbound",
+			name: t`Outbound`,
 			values: (summary.trend ?? []).map((point) => ({
 				time: new Date(point.bucket).getTime(),
 				value: point.outbound_bytes,
@@ -1296,38 +1330,42 @@ function VPNReport({
 		<div className="grid gap-4">
 			<div className="flex justify-end">
 				<a className={buttonVariants({ variant: "outline" })} href="#vpn-findings">
-					Review findings, evidence and probe timeline
+					<Trans>Review findings, evidence and probe timeline</Trans>
 				</a>
 			</div>
 			<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 				<MetricCard
-					title="Suspected hosts"
+					title={t`Suspected hosts`}
 					value={summary.suspected_hosts.toLocaleString()}
-					note={`${summary.finding_count.toLocaleString()} findings`}
+					note={t`${summary.finding_count.toLocaleString()} findings`}
 				/>
 				<MetricCard
-					title="VPN traffic"
+					title={t`VPN traffic`}
 					value={formatMetric(summary.total_bytes, "bytes")}
-					note={`${formatShare(summary.total_bytes, denominator)} of total`}
+					note={t`${formatShare(summary.total_bytes, denominator)} of total`}
 				/>
-				<MetricCard title="Active ports" value={summary.active_ports.toLocaleString()} note="Observed remote ports" />
 				<MetricCard
-					title="High-risk hosts"
+					title={t`Active ports`}
+					value={summary.active_ports.toLocaleString()}
+					note={t`Observed remote ports`}
+				/>
+				<MetricCard
+					title={t`High-risk hosts`}
 					value={summary.high_risk_hosts.toLocaleString()}
-					note={`Completeness ${formatPercent(summary.minimum_complete_ratio)}`}
+					note={t`Completeness ${formatPercent(summary.minimum_complete_ratio)}`}
 				/>
 			</div>
-			<ChartCard title="VPN traffic trend" panel={panel} series={trend} />
+			<ChartCard title={t`VPN traffic trend`} panel={panel} series={trend} />
 			<div className="grid gap-4 xl:grid-cols-2">
 				<DistributionTable
-					title="VPN port distribution"
+					title={t`VPN port distribution`}
 					page={summary.port_table}
 					table={tables.port_distribution}
 					updateTable={(next, run) => updateTable("port_distribution", next, run)}
 					loading={loading}
 				/>
 				<DistributionTable
-					title="VPN type distribution"
+					title={t`VPN type distribution`}
 					page={summary.type_table}
 					table={tables.type_distribution}
 					updateTable={(next, run) => updateTable("type_distribution", next, run)}
@@ -1335,8 +1373,14 @@ function VPNReport({
 				/>
 			</div>
 			<div className="grid gap-4 xl:grid-cols-2">
-				<UnavailablePanel title="Rule-set publication" reason={reportPanel(response, "vpn_rule_publication")?.reason} />
-				<UnavailablePanel title="Active probe timeline" reason={reportPanel(response, "vpn_probe_timeline")?.reason} />
+				<UnavailablePanel
+					title={t`Rule-set publication`}
+					reason={reportPanel(response, "vpn_rule_publication")?.reason}
+				/>
+				<UnavailablePanel
+					title={t`Active probe timeline`}
+					reason={reportPanel(response, "vpn_probe_timeline")?.reason}
+				/>
 			</div>
 		</div>
 	)
@@ -1353,6 +1397,7 @@ function ChartCard({
 	series: FlowReportSeries[]
 	unitOverride?: string
 }) {
+	const { t } = useLingui()
 	if (panel?.status === "unavailable") return <UnavailablePanel title={title} reason={panel.reason} />
 	const stats = reportSeriesStats(series[0])
 	const unit = unitOverride ?? panel?.meta.unit
@@ -1362,8 +1407,8 @@ function ChartCard({
 				<CardTitle>{title}</CardTitle>
 				<CardDescription>
 					{series.length
-						? `${series.length} series · current ${formatMetric(stats.current, unit)} · 95th ${formatMetric(stats.p95, unit)} · peak ${formatMetric(stats.maximum, unit)} · average ${formatMetric(stats.average, unit)}`
-						: "No traffic in the selected window."}
+						? t`${series.length} series · current ${formatMetric(stats.current, unit)} · 95th ${formatMetric(stats.p95, unit)} · peak ${formatMetric(stats.maximum, unit)} · average ${formatMetric(stats.average, unit)}`
+						: t`No traffic in the selected window.`}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -1399,7 +1444,7 @@ function ReportChart({
 	if (series.every((item) => item.values.length === 0))
 		return (
 			<div className={cn("grid place-items-center text-sm text-muted-foreground", compact ? "h-24" : "h-72")}>
-				No data
+				<Trans>No data</Trans>
 			</div>
 		)
 	return <div ref={ref} className={compact ? "mt-3 h-24" : "h-72"} />
@@ -1418,6 +1463,7 @@ function DistributionTable({
 	updateTable: (next: TableControl, run: boolean) => void
 	loading: boolean
 }) {
+	const { t } = useLingui()
 	const records = (page?.items ?? []).map((item) => ({
 		value: item.value,
 		findings: item.count.toLocaleString(),
@@ -1440,12 +1486,12 @@ function DistributionTable({
 				<PagedVTable
 					records={records}
 					columns={[
-						{ field: "value", title: "Value", width: 220 },
-						{ field: "findings", filterField: "count", title: "Findings", width: 120 },
-						{ field: "traffic", filterField: "bytes", title: "Traffic", width: 150 },
+						{ field: "value", title: t`Value`, width: 220 },
+						{ field: "findings", filterField: "count", title: t`Findings`, width: 120 },
+						{ field: "traffic", filterField: "bytes", title: t`Traffic`, width: 150 },
 					]}
 					loading={loading}
-					emptyText="No findings"
+					emptyText={t`No findings`}
 					height={Math.min(360, 42 * (records.length + 1))}
 					searchValue={table.search}
 					onSearchChange={(search) => updateTable({ ...table, search }, false)}
@@ -1478,14 +1524,17 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
 }
 
 function UnavailablePanel({ title, reason }: { title: string; reason?: string }) {
+	const { t } = useLingui()
 	return (
 		<Card>
 			<CardHeader>
 				<CardTitle>{title}</CardTitle>
-				<CardDescription>Unavailable</CardDescription>
+				<CardDescription>
+					<Trans>Unavailable</Trans>
+				</CardDescription>
 			</CardHeader>
 			<CardContent className="text-sm text-amber-700">
-				{reason || "Required data is not available for this report window."}
+				{reason || t`Required data is not available for this report window.`}
 			</CardContent>
 		</Card>
 	)
@@ -1497,7 +1546,9 @@ function ReportStatus({ response }: { response: FlowReportResponse }) {
 	if (!response.meta.partial && !unavailable.length && !warnings.length) return null
 	return (
 		<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-			<div className="font-medium">Report completeness: {formatPercent(response.meta.complete_ratio)}</div>
+			<div className="font-medium">
+				<Trans>Report completeness: {formatPercent(response.meta.complete_ratio)}</Trans>
+			</div>
 			{unavailable.map((panel) => (
 				<div key={panel.id}>
 					{panel.id}: {panel.reason}
@@ -1564,9 +1615,12 @@ function ReportInput({
 }
 
 function ReportDaySelector({ value, onChange }: { value: number[]; onChange: (value: number[]) => void }) {
+	const { i18n } = useLingui()
 	return (
 		<div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
-			<span className="text-sm font-medium">Peak weekdays</span>
+			<span className="text-sm font-medium">
+				<Trans>Peak weekdays</Trans>
+			</span>
 			{WEEKDAYS.map(([day, label]) => (
 				<label key={day} className="flex items-center gap-1.5 text-sm">
 					<Checkbox
@@ -1576,7 +1630,7 @@ function ReportDaySelector({ value, onChange }: { value: number[]; onChange: (va
 							if (next.length) onChange(next.sort((a, b) => a - b))
 						}}
 					/>
-					{label}
+					{i18n._(label)}
 				</label>
 			))}
 		</div>
@@ -1650,8 +1704,8 @@ function formatMetric(value: number, unit?: string) {
 	if (unit === "bits_per_second") return `${formatCompact(value)}bps`
 	if (unit === "packets_per_second") return `${formatCompact(value)}pps`
 	if (unit === "bytes") return formatBytes(value)
-	if (unit === "packets") return `${formatCompact(value)} packets`
-	if (unit === "records") return `${formatCompact(value)} records`
+	if (unit === "packets") return t`${formatCompact(value)} packets`
+	if (unit === "records") return t`${formatCompact(value)} records`
 	if (unit === "ratio") return formatPercent(value)
 	return formatCompact(value)
 }
