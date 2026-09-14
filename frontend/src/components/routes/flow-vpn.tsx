@@ -192,6 +192,22 @@ export default memo(() => {
 		[findings, t]
 	)
 
+	const dispositionLabel = (value: string) => {
+		switch (value) {
+			case "unreviewed":
+				return t`Unreviewed`
+			case "confirmed":
+				return t`Confirmed`
+			case "false_positive":
+				return t`False positive`
+			case "allowed":
+				return t`Allowed`
+			case "suppressed":
+				return t`Suppressed`
+			default:
+				return value
+		}
+	}
 	const columns = useMemo<ColumnDefine[]>(
 		() => [
 			{ field: "window", filterField: "window_end", title: t`Window end`, width: 175 },
@@ -202,7 +218,7 @@ export default memo(() => {
 			{ field: "remotePort", filterField: "primary_remote_port", title: t`Remote port`, width: 110 },
 			{ field: "outbound", filterField: "local_to_remote_bytes", title: t`Outbound`, width: 110 },
 			{ field: "inbound", filterField: "remote_to_local_bytes", title: t`Inbound`, width: 110 },
-			{ field: "remoteASN", filterField: "remote_asn", title: "ASN", width: 100 },
+			{ field: "remoteASN", filterField: "remote_asn", title: t`ASN`, width: 100 },
 			{ field: "country", filterField: "remote_country", title: t`Country`, width: 95 },
 			{ field: "score", title: t`Score`, width: 80 },
 			{ field: "risk", filterField: "risk_level", title: t`Risk`, width: 100 },
@@ -433,7 +449,7 @@ export default memo(() => {
 								{selected.local_ip}:{selected.primary_local_port} → {selected.remote_ip}:{selected.primary_remote_port}
 							</h2>
 							<p className="text-xs text-muted-foreground">
-								{selected.id} · {selected.rule_set_version} · generation {selected.source_generation}
+								{selected.id} · {selected.rule_set_version} · <Trans>generation {selected.source_generation}</Trans>
 							</p>
 						</div>
 						<Button size="sm" onClick={saveDisposition} disabled={saving}>
@@ -462,7 +478,7 @@ export default memo(() => {
 								<SelectContent>
 									{["unreviewed", "confirmed", "false_positive", "allowed", "suppressed"].map((value) => (
 										<SelectItem key={value} value={value}>
-											{value}
+											{dispositionLabel(value)}
 										</SelectItem>
 									))}
 								</SelectContent>

@@ -333,98 +333,99 @@ export default memo(() => {
 })
 
 function RuleFormFields({ form, onChange }: { form: RuleForm; onChange: (patch: Partial<RuleForm>) => void }) {
+	const { t } = useLingui()
 	return (
 		<div className="grid gap-4">
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-				<TextField label="Name" value={form.name} onChange={(name) => onChange({ name })} />
+				<TextField label={t`Name`} value={form.name} onChange={(name) => onChange({ name })} />
 				<SelectField
-					label="Kind"
+					label={t`Kind`}
 					value={form.kind}
 					values={["passive", "intelligence", "probe"]}
 					onChange={(kind) => onChange({ kind })}
 				/>
 				<SelectField
-					label="Effect"
+					label={t`Effect`}
 					value={form.effect}
 					values={["score", "allow", "suppress"]}
 					onChange={(effect) => onChange({ effect, weight: effect === "score" ? form.weight || "10" : "0" })}
 				/>
 				<SelectField
-					label="Status"
+					label={t`Status`}
 					value={form.status}
 					values={["draft", "active", "suspended", "retired"]}
 					onChange={(status) => onChange({ status })}
 				/>
 				<TextField
-					label="Weight"
+					label={t`Weight`}
 					value={form.weight}
 					disabled={form.effect !== "score"}
 					onChange={(weight) => onChange({ weight })}
 				/>
-				<TextField label="Priority" value={form.priority} onChange={(priority) => onChange({ priority })} />
+				<TextField label={t`Priority`} value={form.priority} onChange={(priority) => onChange({ priority })} />
 				<TextField
-					label="Remote ports"
+					label={t`Remote ports`}
 					value={form.remotePorts}
 					placeholder="443, 8443"
 					onChange={(remotePorts) => onChange({ remotePorts })}
 				/>
 				<TextField
-					label="IP protocols"
+					label={t`IP protocols`}
 					value={form.protocols}
 					placeholder="6, 17"
 					onChange={(protocols) => onChange({ protocols })}
 				/>
 				<TextField
-					label="Remote ASNs"
+					label={t`Remote ASNs`}
 					value={form.remoteASNs}
 					placeholder="4134, 4837"
 					onChange={(remoteASNs) => onChange({ remoteASNs })}
 				/>
 				<TextField
-					label="Remote prefix IDs"
+					label={t`Remote prefix IDs`}
 					value={form.remotePrefixIDs}
 					onChange={(remotePrefixIDs) => onChange({ remotePrefixIDs })}
 				/>
 				<TextField
-					label="Remote countries"
+					label={t`Remote countries`}
 					value={form.remoteCountries}
 					placeholder="CN, US"
 					onChange={(remoteCountries) => onChange({ remoteCountries })}
 				/>
 				<TextField
-					label="Transport hints"
+					label={t`Transport hints`}
 					value={form.transportHints}
 					placeholder="tcp, tls, quic"
 					onChange={(transportHints) => onChange({ transportHints })}
 				/>
 				<TextField
-					label="Minimum duration (ms)"
+					label={t`Minimum duration (ms)`}
 					value={form.minDurationMS}
 					onChange={(minDurationMS) => onChange({ minDurationMS })}
 				/>
 				<TextField
-					label="Minimum bytes"
+					label={t`Minimum bytes`}
 					value={form.minTotalBytes}
 					onChange={(minTotalBytes) => onChange({ minTotalBytes })}
 				/>
 				<TextField
-					label="Minimum flow records"
+					label={t`Minimum flow records`}
 					value={form.minFlowRecords}
 					onChange={(minFlowRecords) => onChange({ minFlowRecords })}
 				/>
 				<TextField
-					label="Minimum active buckets"
+					label={t`Minimum active buckets`}
 					value={form.minActiveBuckets}
 					onChange={(minActiveBuckets) => onChange({ minActiveBuckets })}
 				/>
 				<TextField
-					label="Minimum symmetry ratio"
+					label={t`Minimum symmetry ratio`}
 					value={form.minSymmetryRatio}
 					placeholder="0..1"
 					onChange={(minSymmetryRatio) => onChange({ minSymmetryRatio })}
 				/>
 				<TextField
-					label="Minimum dominance ratio"
+					label={t`Minimum dominance ratio`}
 					value={form.minDominanceRatio}
 					placeholder="0..1"
 					onChange={(minDominanceRatio) => onChange({ minDominanceRatio })}
