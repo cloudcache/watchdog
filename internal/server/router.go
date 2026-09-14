@@ -43,6 +43,8 @@ func (s *Server) newRouter() *gin.Engine {
 	me.GET("", s.current)
 	me.PATCH("", s.updateProfile)
 	me.POST("/password", s.changeOwnPassword)
+	me.GET("/preferences", s.getUserPreferences)
+	me.PUT("/preferences", s.putUserPreferences)
 
 	// RBAC administration (action-gated by fixed abilities)
 	users := auth.Group("/users")
