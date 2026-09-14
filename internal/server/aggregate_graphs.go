@@ -610,13 +610,13 @@ func (s *Server) aggregateGraphSeries(c *gin.Context) {
 	if !ok {
 		return
 	}
-	from, to, step, ok := aggregateGraphWindow(c)
-	if !ok {
-		return
-	}
 	maxRows, valid := parseSNMPRowBudget(c.Query("max_data_points"), 250000)
 	if !valid {
 		fail(c, http.StatusBadRequest, "invalid_range", "max_data_points must be 1..250000")
+		return
+	}
+	from, to, step, ok := aggregateGraphWindow(c, int(maxRows))
+	if !ok {
 		return
 	}
 	response, _, err := s.queryAggregateGraph(c, graph, from, to, step, maxRows)
@@ -637,7 +637,7 @@ func (s *Server) aggregateGraphSummary(c *gin.Context) {
 	query := c.Request.URL.Query()
 	query.Set("value_mode", "corrected")
 	c.Request.URL.RawQuery = query.Encode()
-	from, to, step, ok := aggregateGraphWindow(c)
+	from, to, step, ok := aggregateGraphWindow(c, 600)
 	if !ok {
 		return
 	}
@@ -659,7 +659,7 @@ func (s *Server) aggregateGraphData(c *gin.Context) {
 	query := c.Request.URL.Query()
 	query.Set("value_mode", "corrected")
 	c.Request.URL.RawQuery = query.Encode()
-	from, to, step, ok := aggregateGraphWindow(c)
+	from, to, step, ok := aggregateGraphWindow(c, 600)
 	if !ok {
 		return
 	}
@@ -686,29 +686,32 @@ func (s *Server) aggregateGraphData(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-func aggregateGraphWindow(c *gin.Context) (time.Time, time.Time, time.Duration, bool) {
+func aggregateGraphWindow(c *gin.Context, maxDataPoints int) (time.Time, time.Time, time.Duration, bool) {
+	var from, to time.Time
+	var step time.Duration
 	if c.Query("start") != "" || c.Query("end") != "" {
-		from, err := time.Parse(time.RFC3339, c.Query("start"))
+		var err error
+		from, err = time.Parse(time.RFC3339, c.Query("start"))
 		if err != nil {
 			fail(c, http.StatusBadRequest, "invalid_range", "invalid start")
 			return time.Time{}, time.Time{}, 0, false
 		}
-		to, err := time.Parse(time.RFC3339, c.Query("end"))
+		to, err = time.Parse(time.RFC3339, c.Query("end"))
 		if err != nil || !to.After(from) || to.Sub(from) > 400*24*time.Hour {
 			fail(c, http.StatusBadRequest, "invalid_range", "invalid end or range")
 			return time.Time{}, time.Time{}, 0, false
 		}
-		return from.UTC(), to.UTC(), autoSNMPStep(to.Sub(from)), true
+	} else {
+		var ok bool
+		from, to, step, ok = parseMetricWindow(c)
+		if !ok {
+			return time.Time{}, time.Time{}, 0, false
+		}
 	}
-	return parseMetricWindow(c)
-}
-
-func autoSNMPStep(window time.Duration) time.Duration {
-	step := time.Duration(math.Ceil(window.Seconds()/600)) * time.Second
-	if step < time.Minute {
-		return time.Minute
+	if strings.TrimSpace(c.Query("step")) == "" {
+		step = watchdog.AutoQueryStep(to.Sub(from), maxDataPoints)
 	}
-	return step
+	return from.UTC(), to.UTC(), step, true
 }
 
 func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord, from, to time.Time, step time.Duration, maxRows uint32) (metricRangeResponse, []snmpch.Point, error) {
@@ -747,7 +750,8 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 	for _, item := range items {
 		for _, group := range groups {
 			series, err := s.snmpMetrics.QueryScopes(c.Request.Context(), snmpch.AggregateRequest{
-				Scopes: group.Scopes, Metric: item.Metric, Method: graph.Aggregation, From: from, To: to, Step: step, MaxRows: maxRows,
+				Scopes: group.Scopes, Metric: item.Metric, Method: graph.Aggregation, From: from, To: to, Step: step,
+				MaxRows: snmpScopedQueryRowBudget(maxRows, group.Scopes),
 			})
 			if err != nil {
 				return metricRangeResponse{}, nil, err

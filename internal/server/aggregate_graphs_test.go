@@ -77,3 +77,24 @@ func TestSummarizeAggregateGraph(t *testing.T) {
 		t.Fatalf("total_bytes=%v; want 360000", result["total_bytes"])
 	}
 }
+
+func TestAggregateGraphWindowHonorsFinalPointBudget(t *testing.T) {
+	for _, test := range []struct {
+		name, query string
+		maxPoints   int
+		wantStep    time.Duration
+	}{
+		{name: "automatic", query: "?time_mode=fixed&window=24h", maxPoints: 600, wantStep: 5 * time.Minute},
+		{name: "explicit step", query: "?time_mode=fixed&window=24h&step=60", maxPoints: 600, wantStep: time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest("GET", "/api/v1/aggregate-graphs/graph/series"+test.query, nil)
+			_, _, step, ok := aggregateGraphWindow(c, test.maxPoints)
+			if !ok || step != test.wantStep {
+				t.Fatalf("step=%s ok=%v; want %s", step, ok, test.wantStep)
+			}
+		})
+	}
+}
