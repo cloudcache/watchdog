@@ -49,11 +49,13 @@ func (s *Server) listUsers(c *gin.Context) {
 
 func (s *Server) createUser(c *gin.Context) {
 	var req struct {
-		Username    string   `json:"username"`
-		Email       string   `json:"email"`
-		DisplayName string   `json:"display_name"`
-		Password    string   `json:"password"`
-		Roles       []string `json:"roles"`
+		Username    string              `json:"username"`
+		Email       string              `json:"email"`
+		DisplayName string              `json:"display_name"`
+		Password    string              `json:"password"`
+		Status      string              `json:"status"`
+		Roles       []string            `json:"roles"`
+		Access      *userAccessMutation `json:"access"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
@@ -62,13 +64,21 @@ func (s *Server) createUser(c *gin.Context) {
 	req.Username = strings.TrimSpace(req.Username)
 	req.Email = strings.TrimSpace(req.Email)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	req.Status = strings.TrimSpace(req.Status)
+	if req.Status == "" {
+		req.Status = "active"
+	}
 	if req.Username == "" || len(req.Username) > 190 || len(req.Email) > 190 || len(req.DisplayName) > 190 || !validPassword(req.Password) {
 		fail(c, http.StatusBadRequest, "invalid_request", "username and password (8 to 72 bytes) required")
 		return
 	}
+	if req.Status != "active" && req.Status != "disabled" {
+		fail(c, http.StatusBadRequest, "invalid_request", "status must be active or disabled")
+		return
+	}
 	actorPrincipal := currentPrincipal(c)
-	if len(req.Roles) > 0 && !actorPrincipal.can("user.manage") {
-		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles")
+	if (len(req.Roles) > 0 || req.Access != nil) && !actorPrincipal.can("user.manage") {
+		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles or resource access")
 		return
 	}
 	if containsRoleName(req.Roles, roleAdministrator) && !actorPrincipal.IsAdmin {
@@ -76,6 +86,15 @@ func (s *Server) createUser(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	var access map[string][]string
+	if req.Access != nil {
+		var err error
+		access, err = normalizeUserAccess(*req.Access)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", err.Error())
@@ -91,14 +110,20 @@ func (s *Server) createUser(c *gin.Context) {
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO users (id, username, email, display_name, password_hash, status, created_by)
-		VALUES (?, ?, ?, ?, ?, 'active', ?)`,
-		id, req.Username, req.Email, req.DisplayName, hash, actor); err != nil {
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, req.Username, req.Email, req.DisplayName, hash, req.Status, actor); err != nil {
 		fail(c, http.StatusConflict, "conflict", "username or email already exists")
 		return
 	}
 	if err := replaceUserRolesTx(ctx, tx, id, req.Roles); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
+	}
+	if req.Access != nil {
+		if err := replaceUserAccessTx(ctx, tx, id, access); err != nil {
+			writeSQLError(c, err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		fail(c, http.StatusInternalServerError, "internal", err.Error())
@@ -129,10 +154,11 @@ func (s *Server) getUser(c *gin.Context) {
 func (s *Server) updateUser(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		DisplayName *string   `json:"display_name"`
-		Email       *string   `json:"email"`
-		Status      *string   `json:"status"`
-		Roles       *[]string `json:"roles"`
+		DisplayName *string             `json:"display_name"`
+		Email       *string             `json:"email"`
+		Status      *string             `json:"status"`
+		Roles       *[]string           `json:"roles"`
+		Access      *userAccessMutation `json:"access"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
@@ -153,8 +179,8 @@ func (s *Server) updateUser(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "email or display_name is too long")
 		return
 	}
-	if req.Roles != nil && !actorPrincipal.can("user.manage") {
-		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles")
+	if (req.Roles != nil || req.Access != nil) && !actorPrincipal.can("user.manage") {
+		fail(c, http.StatusForbidden, "forbidden", "user.manage is required to assign roles or resource access")
 		return
 	}
 	if req.Roles != nil && containsRoleName(*req.Roles, roleAdministrator) && !actorPrincipal.IsAdmin {
@@ -164,6 +190,15 @@ func (s *Server) updateUser(c *gin.Context) {
 	if req.Status != nil && id == actor && *req.Status == "disabled" {
 		fail(c, http.StatusBadRequest, "invalid_request", "cannot disable your own account")
 		return
+	}
+	var access map[string][]string
+	if req.Access != nil {
+		var err error
+		access, err = normalizeUserAccess(*req.Access)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -205,6 +240,12 @@ func (s *Server) updateUser(c *gin.Context) {
 	if req.Roles != nil {
 		if err := replaceUserRolesTx(ctx, tx, id, *req.Roles); err != nil {
 			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	if req.Access != nil {
+		if err := replaceUserAccessTx(ctx, tx, id, access); err != nil {
+			writeSQLError(c, err)
 			return
 		}
 	}

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -19,6 +21,16 @@ func (s *Server) registerAccessRoutes(auth *gin.RouterGroup) {
 	auth.GET("/users/:id/access", s.requirePermission("user.view"), s.getUserAccess)
 	auth.PUT("/users/:id/access", s.requirePermission("user.manage"), s.replaceUserAccess)
 	auth.GET("/users/:id/access-options", s.requirePermission("user.manage"), s.listUserAccessOptions)
+	auth.GET("/access-options", s.requirePermission("user.manage"), s.listAccessOptions)
+}
+
+type userAccessMutation struct {
+	DeviceIDs         []string `json:"device_ids"`
+	DeviceGroupIDs    []string `json:"device_group_ids"`
+	PortIDs           []string `json:"port_ids"`
+	BillingAccountIDs []string `json:"billing_account_ids"`
+	AggregateGraphIDs []string `json:"aggregate_graph_ids"`
+	Metrics           []string `json:"metrics"`
 }
 
 // grant table/column pairs are code constants, never request input.
@@ -61,24 +73,14 @@ func (s *Server) getUserAccess(c *gin.Context) {
 
 func (s *Server) replaceUserAccess(c *gin.Context) {
 	id := c.Param("id")
-	var req struct {
-		DeviceIDs         []string `json:"device_ids"`
-		DeviceGroupIDs    []string `json:"device_group_ids"`
-		PortIDs           []string `json:"port_ids"`
-		BillingAccountIDs []string `json:"billing_account_ids"`
-		AggregateGraphIDs []string `json:"aggregate_graph_ids"`
-		Metrics           []string `json:"metrics"`
-	}
+	var req userAccessMutation
 	if !decodeStrictBody(c, &req) {
 		return
 	}
-	byField := map[string][]string{
-		"device_ids":          req.DeviceIDs,
-		"device_group_ids":    req.DeviceGroupIDs,
-		"port_ids":            req.PortIDs,
-		"billing_account_ids": req.BillingAccountIDs,
-		"aggregate_graph_ids": req.AggregateGraphIDs,
-		"metrics":             req.Metrics,
+	byField, err := normalizeUserAccess(req)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
 	}
 	ctx := c.Request.Context()
 	var exists bool
@@ -90,6 +92,33 @@ func (s *Server) replaceUserAccess(c *gin.Context) {
 		fail(c, http.StatusNotFound, "not_found", "user not found")
 		return
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	defer tx.Rollback()
+	if err := replaceUserAccessTx(ctx, tx, id, byField); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	s.audit(ctx, currentPrincipal(c).UserID, "user.access_update", "user", id)
+	s.getUserAccess(c)
+}
+
+func normalizeUserAccess(req userAccessMutation) (map[string][]string, error) {
+	byField := map[string][]string{
+		"device_ids":          req.DeviceIDs,
+		"device_group_ids":    req.DeviceGroupIDs,
+		"port_ids":            req.PortIDs,
+		"billing_account_ids": req.BillingAccountIDs,
+		"aggregate_graph_ids": req.AggregateGraphIDs,
+		"metrics":             req.Metrics,
+	}
 	for _, g := range accessGrantTables {
 		maxLength := 26
 		if g.field == "aggregate_graph_ids" {
@@ -99,41 +128,30 @@ func (s *Server) replaceUserAccess(c *gin.Context) {
 		}
 		normalized, err := normalizeGrantValues(g.field, byField[g.field], 10000, maxLength)
 		if err != nil {
-			fail(c, http.StatusBadRequest, "invalid_request", err.Error())
-			return
+			return nil, err
 		}
 		byField[g.field] = normalized
 	}
 	for _, metric := range byField["metrics"] {
 		if !watchdog.IsKnownMetric(metric) {
-			fail(c, http.StatusBadRequest, "invalid_request", "metrics contains an unknown metric")
-			return
+			return nil, errors.New("metrics contains an unknown metric")
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	defer tx.Rollback()
+	return byField, nil
+}
+
+func replaceUserAccessTx(ctx context.Context, tx *sql.Tx, userID string, byField map[string][]string) error {
 	for _, g := range accessGrantTables {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+g.table+" WHERE user_id = ?", id); err != nil {
-			fail(c, http.StatusInternalServerError, "internal", err.Error())
-			return
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+g.table+" WHERE user_id = ?", userID); err != nil {
+			return err
 		}
 		for _, rid := range byField[g.field] {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO "+g.table+" (user_id, "+g.column+") VALUES (?, ?)", id, rid); err != nil {
-				writeSQLError(c, err)
-				return
+			if _, err := tx.ExecContext(ctx, "INSERT INTO "+g.table+" (user_id, "+g.column+") VALUES (?, ?)", userID, rid); err != nil {
+				return err
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		fail(c, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.audit(ctx, currentPrincipal(c).UserID, "user.access_update", "user", id)
-	s.getUserAccess(c)
+	return nil
 }
 
 func normalizeGrantValues(field string, values []string, maxCount, maxLength int) ([]string, error) {
@@ -177,6 +195,13 @@ func (s *Server) listUserAccessOptions(c *gin.Context) {
 		fail(c, http.StatusNotFound, "not_found", "user not found")
 		return
 	}
+	s.listAccessOptions(c)
+}
+
+// listAccessOptions also serves the create-user page, where a user id does not
+// exist yet. The catalogue and paging contract are identical to the edit page.
+func (s *Server) listAccessOptions(c *gin.Context) {
+	ctx := c.Request.Context()
 	page, ok := parseInventoryPage(c, []string{"type"}, map[string]string{"label": "label"}, "label")
 	if !ok {
 		return

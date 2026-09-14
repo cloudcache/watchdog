@@ -45,6 +45,8 @@ const Exports = lazy(() => import("@/components/routes/exports.tsx"))
 const HistoricalData = lazy(() => import("@/components/routes/historical-data.tsx"))
 const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overview.tsx"))
 const UsersAdmin = lazy(() => import("@/components/routes/users.tsx"))
+const UserForm = lazy(() => import("@/components/routes/user-form.tsx"))
+const RoleForm = lazy(() => import("@/components/routes/role-form.tsx"))
 const ModulesAdmin = lazy(() => import("@/components/routes/modules.tsx"))
 const AuditLogs = lazy(() => import("@/components/routes/audit-logs.tsx"))
 const OperationJobs = lazy(() => import("@/components/routes/operation-jobs.tsx"))
@@ -199,6 +201,14 @@ const App = memo(() => {
 		return <NetworkPortPolicy id={page.params.id} />
 	} else if (page.route === "users_admin") {
 		return <UsersAdmin />
+	} else if (page.route === "user_new") {
+		return <UserForm />
+	} else if (page.route === "user_edit") {
+		return <UserForm id={page.params.id} />
+	} else if (page.route === "role_new") {
+		return <RoleForm />
+	} else if (page.route === "role_edit") {
+		return <RoleForm id={page.params.id} />
 	} else if (page.route === "modules_admin") {
 		return <ModulesAdmin />
 	} else if (page.route === "audit_logs") {
@@ -277,6 +287,10 @@ function PermissionDenied() {
 function routeAbilities(route: string): string[] {
 	switch (route) {
 		case "users_admin": return ["user.view", "role.view"]
+		case "user_new": return ["user.create"]
+		case "user_edit": return ["user.update", "user.manage"]
+		case "role_new": return ["role.create"]
+		case "role_edit": return ["role.update"]
 		case "permissions":
 		case "permission_new":
 		case "permission_edit": return ["role.view"]

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
+	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -79,6 +80,76 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE username='invalid-user'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("invalid user was not rolled back: count=%d err=%v", count, err)
+	}
+
+	deviceID, groupID, portID, accountID, graphID := newID(), newID(), newID(), newID(), "aggr-rbac-create"
+	if _, err := db.Exec(`INSERT INTO devices (id,host) VALUES (?,?)`, deviceID, "rbac-router.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO device_groups (id,name) VALUES (?,?)`, groupID, "RBAC routers"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,?,?)`, portID, deviceID, 7, "xe-0/0/7"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO billing_accounts (id,name) VALUES (?,?)`, accountID, "RBAC transit"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO aggregate_graphs (id,name) VALUES (?,?)`, graphID, "RBAC aggregate"); err != nil {
+		t.Fatal(err)
+	}
+	invalidAccessUser := rbacHandlerRequest(t, s.createUser, p, http.MethodPost, "/api/v1/users", "", map[string]any{
+		"username": "invalid-access", "email": "invalid-access@example.test", "password": "long-enough-password",
+		"roles": []string{"viewer"}, "access": map[string]any{"device_ids": []string{"missing-device"}},
+	})
+	if invalidAccessUser.Code != http.StatusBadRequest {
+		t.Fatalf("invalid access user status=%d body=%s", invalidAccessUser.Code, invalidAccessUser.Body.String())
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE username='invalid-access'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("user with invalid access was not rolled back: count=%d err=%v", count, err)
+	}
+
+	createdUser := rbacHandlerRequest(t, s.createUser, p, http.MethodPost, "/api/v1/users", "", map[string]any{
+		"username": "scoped-user", "email": "scoped-user@example.test", "password": "long-enough-password",
+		"roles": []string{"viewer"},
+		"access": map[string]any{
+			"device_ids": []string{deviceID}, "device_group_ids": []string{groupID}, "port_ids": []string{portID},
+			"billing_account_ids": []string{accountID}, "aggregate_graph_ids": []string{graphID},
+			"metrics": []string{watchdog.MetricSNMPIfInBps},
+		},
+	})
+	if createdUser.Code != http.StatusCreated {
+		t.Fatalf("create user with scoped user: status=%d body=%s", createdUser.Code, createdUser.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, createdUser, &created)
+	for table := range map[string]string{
+		"user_device_permissions": deviceID, "user_device_group_permissions": groupID,
+		"user_port_permissions": portID, "user_billing_permissions": accountID,
+		"user_aggregate_graph_permissions": graphID, "user_metric_permissions": watchdog.MetricSNMPIfInBps,
+	} {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE user_id=?`, created.ID).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("atomic create grant %s: count=%d err=%v", table, count, err)
+		}
+	}
+	updatedAccess := rbacHandlerRequest(t, s.updateUser, p, http.MethodPatch, "/api/v1/users/"+created.ID, created.ID, map[string]any{
+		"access": map[string]any{"device_ids": []string{deviceID}, "metrics": []string{watchdog.MetricSNMPIfOutBps}},
+	})
+	if updatedAccess.Code != http.StatusOK {
+		t.Fatalf("update user access: status=%d body=%s", updatedAccess.Code, updatedAccess.Body.String())
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_device_permissions WHERE user_id=?`, created.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("updated device grant count=%d err=%v", count, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_port_permissions WHERE user_id=?`, created.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("updated access did not replace old grants: count=%d err=%v", count, err)
+	}
+	options := rbacHandlerRequest(t, s.listAccessOptions, p, http.MethodGet,
+		"/api/v1/access-options?type=device&q=rbac-router&limit=10&sort=label&order=asc", "", nil)
+	if options.Code != http.StatusOK || !strings.Contains(options.Body.String(), deviceID) {
+		t.Fatalf("create-page access options: status=%d body=%s", options.Code, options.Body.String())
 	}
 
 	viewerID := ""
