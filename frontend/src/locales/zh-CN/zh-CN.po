@@ -4822,3 +4822,87 @@ msgstr "中转"
 #: src/lib/flow-report-model.ts
 msgid "Ambiguous"
 msgstr "归属不明"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Effect"
+msgstr "动作"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Weight"
+msgstr "权重"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Priority"
+msgstr "优先级"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Remote ports"
+msgstr "远端端口"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "IP protocols"
+msgstr "IP 协议"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Remote ASNs"
+msgstr "远端 ASN"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Remote prefix IDs"
+msgstr "远端前缀 ID"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Remote countries"
+msgstr "远端国家/地区"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Transport hints"
+msgstr "传输提示"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum duration (ms)"
+msgstr "最小时长 (ms)"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum bytes"
+msgstr "最小字节数"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum flow records"
+msgstr "最小流记录数"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum active buckets"
+msgstr "最小活跃分桶数"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum symmetry ratio"
+msgstr "最小对称比"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Minimum dominance ratio"
+msgstr "最小主导比"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Unreviewed"
+msgstr "未审核"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Confirmed"
+msgstr "已确认"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "False positive"
+msgstr "误报"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Allowed"
+msgstr "已放行"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "Suppressed"
+msgstr "已抑制"
+
+#: src/components/routes/flow-vpn.tsx
+msgid "generation {0}"
+msgstr "第 {0} 代"
