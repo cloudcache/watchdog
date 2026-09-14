@@ -26,6 +26,7 @@ var (
 	ErrAddressImportInvalid         = errors.New("address import is invalid")
 	ErrAddressImportNotWritable     = errors.New("address import generation is not writable")
 	ErrAddressImportVersionConflict = errors.New("address import slot version conflict")
+	ErrAddressImportActive          = errors.New("address import is active and cannot be deleted")
 )
 
 // AddressImport is one immutable source generation. The uploaded artifact is

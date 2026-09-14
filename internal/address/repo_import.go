@@ -423,6 +423,43 @@ func (s *Store) FailAddressImport(ctx context.Context, importID ID, code, detail
 	return ErrAddressImportNotWritable
 }
 
+// DeleteAddressImport removes an import generation and its base prefixes (FK
+// cascade) and returns the artifact ref so the caller can delete the stored source
+// file. An import that still backs an active slot is refused (ErrAddressImportActive)
+// — activate a different generation into that slot first.
+func (s *Store) DeleteAddressImport(ctx context.Context, importID ID) (string, error) {
+	if importID == "" {
+		return "", fmt.Errorf("%w: import is required", ErrAddressImportInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var artifactRef string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(artifact_ref, '') FROM address_imports WHERE id = ? FOR UPDATE
+	`, importID).Scan(&artifactRef); err != nil {
+		return "", err // sql.ErrNoRows -> not found
+	}
+	var slotCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM address_import_slots WHERE import_id = ?
+	`, importID).Scan(&slotCount); err != nil {
+		return "", err
+	}
+	if slotCount > 0 {
+		return "", ErrAddressImportActive
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM address_imports WHERE id = ?`, importID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return artifactRef, nil
+}
+
 func scanAddressImportSlot(row rowScanner) (AddressImportSlot, error) {
 	var slot AddressImportSlot
 	err := row.Scan(&slot.SourceSlot, &slot.ImportID, &slot.RowVersion, &slot.ActivatedBy, &slot.ActivatedAt)

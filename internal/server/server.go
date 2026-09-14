@@ -25,6 +25,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
+	tushandler "github.com/tus/tusd/v2/pkg/handler"
 )
 
 // Server holds the runtime dependencies.
@@ -42,6 +43,7 @@ type Server struct {
 	addressKeys      address.AddressDimensionPublicKeyResolver
 	addressObjects   address.DiskDimensionObjectStore
 	addressArtifacts address.DiskArtifactStore
+	addressTus       *tushandler.UnroutedHandler
 	jobs             *opjob.Store
 	billingStore     *billing.Store
 	billingService   *billing.Service
@@ -203,6 +205,12 @@ func (s *Server) startAddressLibrary() error {
 		Handler: address.NewAddressSnapshotBuildJobHandler(publisher),
 	}
 	go buildWorker.Run(workerCtx)
+
+	tus, err := s.newAddressImportTusHandler()
+	if err != nil {
+		return fmt.Errorf("build address import tus handler: %w", err)
+	}
+	s.addressTus = tus
 	return nil
 }
 

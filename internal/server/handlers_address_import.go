@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -30,8 +31,30 @@ func (s *Server) registerAddressImportRoutes(auth *gin.RouterGroup) {
 	imports.GET("/:id/prefixes", view, s.listImportPrefixes)
 	imports.GET("/:id/lookup", view, s.lookupImportPrefix)
 	imports.POST("/:id/actions/activate", manage, s.activateImport)
+	imports.DELETE("/:id", manage, s.deleteImport)
+	s.registerAddressImportTusRoutes(auth)
 
 	auth.GET("/address-import-slots/:slot", view, s.getImportSlot)
+}
+
+// deleteImport removes an import generation (and its base prefixes) and deletes the
+// stored source artifact. An import that still backs an active slot is refused so a
+// live generation is never pulled out from under the flow workers.
+func (s *Server) deleteImport(c *gin.Context) {
+	artifactRef, err := s.addressStore.DeleteAddressImport(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, address.ErrAddressImportActive) {
+			fail(c, http.StatusConflict, "invalid_request", "active address import cannot be deleted; activate a different generation into its slot first")
+			return
+		}
+		writeAddressImportError(c, err)
+		return
+	}
+	if artifactRef != "" {
+		_ = s.addressArtifacts.RemoveArtifact(artifactRef)
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "address.import.delete", "address_import", c.Param("id"))
+	c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
 }
 
 func writeAddressImportError(c *gin.Context, err error) {
@@ -51,13 +74,19 @@ func writeAddressImportError(c *gin.Context, err error) {
 
 // enqueueAddressImportJob (re)schedules the async decode of an import generation.
 func (s *Server) enqueueAddressImportJob(c *gin.Context, importID, language string) (opjob.Job, error) {
+	return s.enqueueAddressImportJobCtx(c.Request.Context(), importID, language, currentPrincipal(c).UserID)
+}
+
+// enqueueAddressImportJobCtx is the context-free core shared by the multipart handler
+// and the tus completion callback (which has no gin.Context).
+func (s *Server) enqueueAddressImportJobCtx(ctx context.Context, importID, language, createdBy string) (opjob.Job, error) {
 	payload, err := address.EncodeAddressImportJobPayload(importID, language, 0)
 	if err != nil {
 		return opjob.Job{}, err
 	}
-	return s.jobs.Enqueue(c.Request.Context(), opjob.Job{
+	return s.jobs.Enqueue(ctx, opjob.Job{
 		JobType: address.AddressImportJobType, IdempotencyKey: "address-import:" + importID,
-		RequestHash: sha256hex(string(payload)), CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID,
+		RequestHash: sha256hex(string(payload)), CheckpointJSON: payload, CreatedBy: createdBy,
 	})
 }
 

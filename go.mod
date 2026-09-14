@@ -25,6 +25,7 @@ require (
 	github.com/sleepinggenius2/gosmi v0.4.4
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
+	github.com/tus/tusd/v2 v2.10.0
 	github.com/twmb/franz-go v1.21.3
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1
 	golang.org/x/crypto v0.54.0

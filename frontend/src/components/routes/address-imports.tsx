@@ -1,4 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
+import { Uppy } from "@uppy/core"
+import Tus from "@uppy/tus"
 import { DatabaseZapIcon, RefreshCwIcon, UploadIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -7,6 +9,19 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
+
+// The tus resumable-upload endpoint lives under the same API base + auth as the rest
+// of the client; requests must carry the session cookie (withCredentials) and the
+// double-submit CSRF token, exactly like api.send does for other mutations.
+function tusUploadEndpoint(): string {
+	const base = (globalThis.WATCHDOG?.API_URL ?? "").replace(/\/+$/, "")
+	return `${base}/api/v1/address-imports/uploads/`
+}
+
+function readCsrfToken(): string {
+	const match = document.cookie.match(/(?:^|; )wd_csrf=([^;]+)/)
+	return match ? decodeURIComponent(match[1]) : ""
+}
 
 type AddressImport = {
 	id: string
@@ -43,7 +58,6 @@ type ImportedPrefix = {
 }
 
 type ListResponse<T> = { items?: T[]; next_cursor?: string; total?: number }
-type UploadResponse = { import: AddressImport }
 
 const importSlots = ["geo", "asn", "combined"] as const
 
@@ -64,6 +78,7 @@ export default memo(function AddressImports() {
 	const [error, setError] = useState("")
 	const [showUpload, setShowUpload] = useState(false)
 	const [uploading, setUploading] = useState(false)
+	const [uploadProgress, setUploadProgress] = useState(0)
 	const [upload, setUpload] = useState<{ file: File | null; sourceSlot: string; language: string }>({
 		file: null,
 		sourceSlot: "geo",
@@ -130,28 +145,54 @@ export default memo(function AddressImports() {
 		fetchPage()
 	}, [fetchPage])
 
-	const submitUpload = async () => {
-		if (!upload.file) {
+	// submitUpload streams the source database via tus (resumable): a dropped
+	// connection resumes from the last acked offset instead of restarting. On
+	// completion the server has already created the queued import + decode job.
+	const submitUpload = () => {
+		const file = upload.file
+		if (!file) {
 			setError(t`Select an MMDB or IPDB file`)
 			return
 		}
 		setUploading(true)
 		setError("")
-		try {
-			const body = new FormData()
-			body.append("file", upload.file)
-			body.append("source_slot", upload.sourceSlot)
-			body.append("language", upload.language.trim())
-			const response = await api.send<UploadResponse>("/api/v1/address-imports", { method: "POST", body })
-			setSelected(response.import)
+		setUploadProgress(0)
+		const uppy = new Uppy({ autoProceed: true, allowMultipleUploadBatches: false })
+		uppy.use(Tus, {
+			endpoint: tusUploadEndpoint(),
+			withCredentials: true,
+			chunkSize: 50 * 1024 * 1024,
+			retryDelays: [0, 1000, 3000, 5000, 10000],
+			headers: () => ({ "X-CSRF-Token": readCsrfToken() }),
+		})
+		uppy.setMeta({ source_slot: upload.sourceSlot, language: upload.language.trim() })
+		uppy.on("upload-progress", (_file, progress) => {
+			if (progress.bytesTotal) {
+				setUploadProgress(Math.round((progress.bytesUploaded / progress.bytesTotal) * 100))
+			}
+		})
+		uppy.on("complete", async (result) => {
+			uppy.destroy()
+			setUploading(false)
+			if (result.failed?.length) {
+				setError(result.failed[0].error?.message || t`Upload failed`)
+				return
+			}
 			setShowUpload(false)
 			setUpload({ file: null, sourceSlot: "geo", language: "en" })
-			if (page === 0) await fetchPage()
-			else setPage(0)
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to upload`)
-		} finally {
+			await fetchPage()
+		})
+		uppy.on("error", (err) => {
+			uppy.destroy()
 			setUploading(false)
+			setError(err instanceof Error ? err.message : t`Upload failed`)
+		})
+		try {
+			uppy.addFile({ name: file.name, type: file.type, data: file })
+		} catch (err) {
+			uppy.destroy()
+			setUploading(false)
+			setError(err instanceof Error ? err.message : t`Upload failed`)
 		}
 	}
 
@@ -174,6 +215,20 @@ export default memo(function AddressImports() {
 		[fetchPage, slots, t]
 	)
 
+	const deleteImport = useCallback(
+		async (item: AddressImport) => {
+			if (!confirm(t`Delete this import generation and its stored source file? This cannot be undone.`)) return
+			setError("")
+			try {
+				await api.send(`/api/v1/address-imports/${item.id}`, { method: "DELETE" })
+				await fetchPage()
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Failed to delete`)
+			}
+		},
+		[fetchPage, t]
+	)
+
 	const records = useMemo(
 		() =>
 			imports.map((item) => ({
@@ -189,6 +244,7 @@ export default memo(function AddressImports() {
 				error: [item.error_code, item.error_detail].filter(Boolean).join(": ") || "—",
 				browse: t`Browse`,
 				activate: item.status === "ready" && slots[item.source_slot]?.import_id !== item.id ? t`Activate` : "—",
+				delete: slots[item.source_slot]?.import_id === item.id ? "—" : t`Delete`,
 				item,
 			})),
 		[imports, slots, t]
@@ -206,6 +262,7 @@ export default memo(function AddressImports() {
 			{ field: "error", title: t`Error`, width: 240, style: denseCellStyle() },
 			{ field: "browse", title: t`Browse`, width: 90, filter: false, style: actionCellStyle() },
 			{ field: "activate", title: t`Activation`, width: 100, filter: false, style: actionCellStyle() },
+			{ field: "delete", title: t`Delete`, width: 90, filter: false, style: actionCellStyle() },
 		],
 		[t]
 	)
@@ -333,8 +390,8 @@ export default memo(function AddressImports() {
 						/>
 					</div>
 					<div className="flex items-end gap-2">
-						<Button onClick={submitUpload} disabled={uploading}>
-							{uploading ? <Trans>Uploading...</Trans> : <Trans>Start Import</Trans>}
+						<Button onClick={submitUpload} disabled={uploading || !upload.file}>
+							{uploading ? <Trans>Uploading… {uploadProgress}%</Trans> : <Trans>Start Import</Trans>}
 						</Button>
 						<Button variant="outline" onClick={() => setShowUpload(false)}>
 							<Trans>Cancel</Trans>
@@ -368,6 +425,7 @@ export default memo(function AddressImports() {
 					const item = record.item as AddressImport
 					if (field === "browse") setSelected(item)
 					if (field === "activate" && record.activate !== "—") activate(item)
+					if (field === "delete" && record.delete !== "—") deleteImport(item)
 				}}
 			/>
 			{selected ? <ImportedPrefixBrowser item={selected} onClose={() => setSelected(null)} /> : null}

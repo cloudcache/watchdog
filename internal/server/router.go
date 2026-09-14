@@ -139,6 +139,15 @@ func (s *Server) newRouter() *gin.Engine {
 	aggregateGraphs.GET("/:id/series", s.requirePermission("device.view"), s.aggregateGraphSeries)
 	aggregateGraphs.GET("/:id/data", s.requirePermission("device.view"), s.aggregateGraphData)
 	aggregateGraphs.GET("/:id/summary", s.requirePermission("device.view"), s.aggregateGraphSummary)
+	dashboards := auth.Group("/dashboards")
+	dashboards.GET("", s.requirePermission("device.view"), s.listDashboards)
+	dashboards.GET("/graph-options", s.requirePermission("device.view"), s.listDashboardGraphOptions)
+	dashboards.POST("", s.requirePermission("device.update"), s.createDashboard)
+	dashboards.POST("/actions/preview", s.requirePermission("device.view"), s.previewDashboardDraft)
+	dashboards.GET("/:id", s.requirePermission("device.view"), s.getDashboard)
+	dashboards.GET("/:id/preview", s.requirePermission("device.view"), s.previewDashboard)
+	dashboards.PATCH("/:id", s.requirePermission("device.update"), s.updateDashboard)
+	dashboards.DELETE("/:id", s.requirePermission("device.update"), s.deleteDashboard)
 	s.registerBillingRoutes(auth)
 
 	// Agent registration and heartbeats use agent credentials, not a user
@@ -273,9 +282,14 @@ func (s *Server) requireInstalled(c *gin.Context) {
 
 func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// The address-database upload streams tens of MB to disk; it enforces its
-		// own cfg.Address.MaxUploadBytes ceiling, so the small JSON-body cap is skipped.
+		// The address-database uploads stream tens/hundreds of MB to disk and enforce
+		// their own cfg.Address.MaxUploadBytes ceiling (multipart) or tus MaxSize
+		// (resumable chunks), so the small JSON-body cap is skipped for both.
 		if c.Request.Method == http.MethodPost && c.FullPath() == "/api/v1/address-imports" {
+			c.Next()
+			return
+		}
+		if strings.HasPrefix(c.FullPath(), "/api/v1/address-imports/uploads") {
 			c.Next()
 			return
 		}
@@ -339,9 +353,12 @@ func (s *Server) cors() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, X-CSRF-Token, X-Watchdog-Agent-Token, X-Request-ID")
-			c.Header("Access-Control-Expose-Headers", "ETag, X-Request-ID")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+			// The tus.* / Upload-* request headers and X-HTTP-Method-Override let the
+			// embedded resumable-upload endpoint work cross-origin; the exposed set lets
+			// a tus client (Uppy) read the upload URL and offset.
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, X-CSRF-Token, X-Watchdog-Agent-Token, X-Request-ID, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Upload-Concat, X-HTTP-Method-Override")
+			c.Header("Access-Control-Expose-Headers", "ETag, X-Request-ID, Location, Tus-Resumable, Tus-Version, Tus-Extension, Tus-Max-Size, Upload-Offset, Upload-Length, Upload-Metadata, X-Watchdog-Import-Id")
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
