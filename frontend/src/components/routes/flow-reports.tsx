@@ -17,7 +17,7 @@ import type { FlowFilterExpression } from "@/lib/flow-explorer-model"
 import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
-	FLOW_REPORT_CATEGORY_LABELS,
+	flowReportCategoryLabel,
 	FLOW_REPORT_RESIDUALS,
 	FLOW_REPORT_TIME_PRESETS,
 	flowReportKind,
@@ -755,7 +755,7 @@ function CategoryCard({
 	return (
 		<Card>
 			<CardHeader className="api-3">
-				<CardTitle>{FLOW_REPORT_CATEGORY_LABELS[category] ?? category}</CardTitle>
+				<CardTitle>{flowReportCategoryLabel(category)}</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<div className="grid grid-cols-2 gap-2 text-sm">
@@ -804,7 +804,7 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 					return (
 						<div key={category} className="grid gap-1">
 							<div className="flex justify-between gap-3 text-sm">
-								<span>{FLOW_REPORT_CATEGORY_LABELS[category]}</span>
+								<span>{flowReportCategoryLabel(category)}</span>
 								<span>
 									↓ {formatNullablePercent(inShare)} · ↑ {formatNullablePercent(outShare)}
 								</span>
@@ -860,7 +860,7 @@ function ResidualCard({
 			<CardContent className="grid gap-2">
 				{rows.map((row) => (
 					<div key={row.category} className="flex flex-wrap justify-between gap-3 border-b py-2 text-sm">
-						<span>{FLOW_REPORT_CATEGORY_LABELS[row.category]}</span>
+						<span>{flowReportCategoryLabel(row.category)}</span>
 						<span>
 							↓ {formatShare(row.inbound, inboundTotal)} · ↑ {formatShare(row.outbound, outboundTotal)}
 						</span>
@@ -903,7 +903,7 @@ function BusinessMatrix({
 		{ field: "total", title: "Total · ↓ / ↑", width: 245 },
 		...FLOW_REPORT_CATEGORIES.map((category) => ({
 			field: category,
-			title: `${FLOW_REPORT_CATEGORY_LABELS[category]} · ↓ / ↑`,
+			title: `${flowReportCategoryLabel(category)} · ↓ / ↑`,
 			width: 245,
 		})),
 		{ field: "residual", title: "Residual · ↓ / ↑", width: 225 },
@@ -1063,7 +1063,7 @@ function EndpointTable({
 		{ field: "outbound", title: "Outbound current / total", width: 195 },
 		...FLOW_REPORT_CATEGORIES.map((name) => ({
 			field: name,
-			title: `${FLOW_REPORT_CATEGORY_LABELS[name]} · ↓ / ↑`,
+			title: `${flowReportCategoryLabel(name)} · ↓ / ↑`,
 			width: 205,
 		})),
 		{ field: "residual", title: "Residual · ↓ / ↑", width: 190 },

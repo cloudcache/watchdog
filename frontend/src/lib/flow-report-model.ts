@@ -1,3 +1,6 @@
+import { i18n } from "@lingui/core"
+import type { MessageDescriptor } from "@lingui/core"
+import { msg } from "@lingui/core/macro"
 import type { FlowDimensionLabel, FlowJointPoint, FlowPoint } from "@/lib/flow-explorer-model"
 
 export type FlowTablePage = {
@@ -161,17 +164,26 @@ export const FLOW_REPORT_CATEGORIES = [
 
 export const FLOW_REPORT_RESIDUALS = ["unknown", "internal", "transit", "ambiguous"] as const
 
-export const FLOW_REPORT_CATEGORY_LABELS: Record<string, string> = {
-	on_net_local_city: "On-net · local city",
-	on_net_cross_city: "On-net · cross-city",
-	on_net_cross_province: "On-net · other province",
-	off_net_in_province: "Off-net · same province",
-	off_net_cross_province: "Off-net · other province",
-	overseas: "Overseas",
-	unknown: "Unknown",
-	internal: "Internal",
-	transit: "Transit",
-	ambiguous: "Ambiguous",
+// Category display labels resolve against the active locale via the global i18n
+// singleton (module scope has no React context; the report tree re-renders on
+// locale change through useLingui in FlowReports). The six exclusive traffic
+// classes read as on-net/off-net + geographic tier; residuals stay explicit.
+const FLOW_REPORT_CATEGORY_LABEL_MESSAGES: Record<string, MessageDescriptor> = {
+	on_net_local_city: msg`On-net · same city`,
+	on_net_cross_city: msg`On-net · cross-city`,
+	on_net_cross_province: msg`On-net · cross-province`,
+	off_net_in_province: msg`Off-net · same province`,
+	off_net_cross_province: msg`Off-net · cross-province`,
+	overseas: msg`Cross-border`,
+	unknown: msg`Unknown`,
+	internal: msg`Internal`,
+	transit: msg`Transit`,
+	ambiguous: msg`Ambiguous`,
+}
+
+export function flowReportCategoryLabel(key: string): string {
+	const message = FLOW_REPORT_CATEGORY_LABEL_MESSAGES[key]
+	return message ? i18n._(message) : key
 }
 
 export const FLOW_REPORT_TIME_PRESETS = [

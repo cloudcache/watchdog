@@ -4786,3 +4786,39 @@ msgstr "您的通知设置已更新。"
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "已更新您的使用者設定"
+
+#: src/lib/flow-report-model.ts
+msgid "On-net · same city"
+msgstr "本网·本市"
+
+#: src/lib/flow-report-model.ts
+msgid "On-net · cross-city"
+msgstr "本网·跨市"
+
+#: src/lib/flow-report-model.ts
+msgid "On-net · cross-province"
+msgstr "本网·跨省"
+
+#: src/lib/flow-report-model.ts
+msgid "Off-net · same province"
+msgstr "异网·省内"
+
+#: src/lib/flow-report-model.ts
+msgid "Off-net · cross-province"
+msgstr "异网·跨省"
+
+#: src/lib/flow-report-model.ts
+msgid "Cross-border"
+msgstr "跨境"
+
+#: src/lib/flow-report-model.ts
+msgid "Internal"
+msgstr "内网"
+
+#: src/lib/flow-report-model.ts
+msgid "Transit"
+msgstr "中转"
+
+#: src/lib/flow-report-model.ts
+msgid "Ambiguous"
+msgstr "归属不明"
