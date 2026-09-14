@@ -628,9 +628,37 @@ func (s *Store) ListAddressBasePrefixes(ctx context.Context, importID ID, filter
 		where += ` AND (cidr LIKE ? OR COALESCE(country_name, '') LIKE ? OR COALESCE(subdivision_name, '') LIKE ? OR COALESCE(city_name, '') LIKE ? OR COALESCE(operator_name, '') LIKE ? OR CAST(asn AS CHAR) LIKE ?)`
 		args = append(args, like, like, like, like, like, like)
 	}
+	// A COUNT(*) over millions of base prefixes on every page is the browse's main
+	// cost. For a READY import (its rows are complete + immutable) the exact per-family
+	// totals are already precomputed on the import row, so when the only filter is
+	// family (or none) use those and skip the full index scan. Any other case (filtered,
+	// not-yet-ready, or a missing/deleted import) falls back to an exact COUNT(*).
+	countOptimizable := filter.CountryCode == "" && filter.ASN == nil && filter.Operator == "" && filter.Search == ""
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_base_prefixes`+where, args...).Scan(&total); err != nil {
-		return nil, "", 0, err
+	precomputed := false
+	if countOptimizable {
+		var v4, v6 uint64
+		var status string
+		err := s.db.QueryRowContext(ctx, `SELECT row_count_v4, row_count_v6, status FROM address_imports WHERE id = ?`, importID).Scan(&v4, &v6, &status)
+		switch {
+		case err == nil && status == AddressImportStatusReady:
+			precomputed = true
+			switch filter.Family {
+			case 4:
+				total = int(v4)
+			case 6:
+				total = int(v6)
+			default:
+				total = int(v4 + v6)
+			}
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return nil, "", 0, err
+		}
+	}
+	if !precomputed {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_base_prefixes`+where, args...).Scan(&total); err != nil {
+			return nil, "", 0, err
+		}
 	}
 	query := `SELECT ` + addressBasePrefixColumns + ` FROM address_base_prefixes` + where
 	if filter.Cursor != "" {

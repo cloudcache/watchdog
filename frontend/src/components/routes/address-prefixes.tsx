@@ -432,13 +432,16 @@ export default memo(function AddressPrefixes() {
 	)
 	const columns = useMemo(
 		() => [
-			{ field: "cidr", title: t`CIDR`, width: 190, style: denseCellStyle() },
+			// Only Family has server-side filter options (serverFiltering.options); the
+			// rest would open an empty filter popover, so their filter affordance is off.
+			// Source has its own text filter below; CIDR search is the toolbar search.
+			{ field: "cidr", title: t`CIDR`, width: 190, filter: false, style: denseCellStyle() },
 			{ field: "family", title: t`Family`, width: 90, style: denseCellStyle() },
-			{ field: "labels", title: t`Labels`, width: 300, style: denseCellStyle() },
-			{ field: "geo", title: t`Geography`, width: 160, style: denseCellStyle() },
-			{ field: "operator", title: t`Operator`, width: 160, style: denseCellStyle() },
-			{ field: "asn", title: "ASN", width: 100, style: denseCellStyle() },
-			{ field: "source", title: t`Source`, width: 110, style: denseCellStyle() },
+			{ field: "labels", title: t`Labels`, width: 300, filter: false, style: denseCellStyle() },
+			{ field: "geo", title: t`Geography`, width: 160, filter: false, style: denseCellStyle() },
+			{ field: "operator", title: t`Operator`, width: 160, filter: false, style: denseCellStyle() },
+			{ field: "asn", title: "ASN", width: 100, filter: false, style: denseCellStyle() },
+			{ field: "source", title: t`Source`, width: 110, filter: false, style: denseCellStyle() },
 			{
 				field: "edit",
 				title: t`Edit`,
