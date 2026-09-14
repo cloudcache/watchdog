@@ -42,16 +42,9 @@ export function getLocale() {
 	if (import.meta.env.DEV) {
 		console.log("detected locale", locale)
 	}
-	// handle zh variants
-	if (locale?.startsWith("zh-")) {
-		// map zh variants to zh-CN
-		const zhVariantMap: Record<string, string> = {
-			"zh-HK": "zh-HK",
-			"zh-TW": "zh",
-			"zh-MO": "zh",
-			"zh-Hant": "zh",
-		}
-		return zhVariantMap[locale] || "zh-CN"
+	// only Simplified Chinese + English ship; route every Chinese variant to zh-CN
+	if (locale?.startsWith("zh")) {
+		return "zh-CN"
 	}
 	locale = (locale || "en").split("-")[0]
 	// use en if locale is not in languages
