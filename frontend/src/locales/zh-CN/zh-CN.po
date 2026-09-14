@@ -1,16 +1,16 @@
 msgid ""
 msgstr ""
+"Project-Id-Version: watchdog\n"
+"Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2024-11-01 11:30-0400\n"
+"PO-Revision-Date: 2026-04-05 18:27\n"
+"Last-Translator: \n"
+"Language-Team: Chinese Simplified\n"
+"Language: zh-CN\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
-"Language: zh\n"
-"Project-Id-Version: watchdog\n"
-"Report-Msgid-Bugs-To: \n"
-"PO-Revision-Date: 2026-04-05 18:27\n"
-"Last-Translator: \n"
-"Language-Team: Chinese Simplified\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Crowdin-Project: watchdog\n"
 "X-Crowdin-Project-ID: 733311\n"
@@ -29,10 +29,6 @@ msgstr "{0} 可用"
 msgid "{0} findings"
 msgstr "{0} 条发现"
 
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "{0} of {1} row(s) selected."
-#~ msgstr "已选择 {0} / {1} 行"
-
 #. placeholder {0}: formatShare(summary.total_bytes, denominator)
 #: src/components/routes/flow-reports.tsx
 msgid "{0} of total"
@@ -43,10 +39,15 @@ msgstr "占总量 {0}"
 msgid "{0} packets"
 msgstr "{0} 个包"
 
+#. placeholder {0}: role.permission_count ?? 0
+#: src/components/routes/users.tsx
+msgid "{0} permissions"
+msgstr "{0} 项权限"
+
 #. placeholder {0}: ports.length
 #: src/components/routes/network-discover.tsx
 msgid "{0} ports imported, {deleted} stale ports removed"
-msgstr ""
+msgstr "已导入 {0} 个端口，已移除 {deleted} 个过期端口"
 
 #. placeholder {0}: selectedPorts.length
 #: src/components/routes/aggregate-charts.tsx
@@ -75,10 +76,6 @@ msgstr "{0} 序列 · 当前 {1} · 95 分位 {2} · 峰值 {3} · 平均 {4}"
 msgid "{0} VPN / {1} overseas · unknown Geo excluded {2}"
 msgstr "{0} VPN / {1} 跨境 · 已排除未知归属 {2}"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "{bgpCount} BGP sessions discovered"
-#~ msgstr ""
-
 #: src/components/routes/system/info-bar.tsx
 msgid "{cores, plural, one {# core} other {# cores}}"
 msgstr "{cores, plural, one {# 核心} other {# 核心}}"
@@ -94,14 +91,6 @@ msgstr "{count, plural, one {{countString} 小时} other {{countString} 小时}}
 #: src/lib/utils.ts
 msgid "{count, plural, one {{countString} minute} few {{countString} minutes} many {{countString} minutes} other {{countString} minutes}}"
 msgstr "{count, plural, one {{countString} 分钟} few {{countString} 分钟} many {{countString} 分钟} other {{countString} 分钟}}"
-
-#: src/components/routes/network-device.tsx
-#~ msgid "{portCount} ports discovered"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "{sensorCount} sensors discovered"
-#~ msgstr ""
 
 #: src/components/routes/system/info-bar.tsx
 msgid "{threads, plural, one {# thread} other {# threads}}"
@@ -134,7 +123,7 @@ msgstr "1 周"
 
 #: src/lib/utils.ts
 msgid "10 minutes"
-msgstr ""
+msgstr "10 分钟"
 
 #: src/lib/utils.ts
 msgid "12 hours"
@@ -147,7 +136,7 @@ msgstr "15 分钟"
 
 #: src/lib/utils.ts
 msgid "15 minutes"
-msgstr ""
+msgstr "15 分钟"
 
 #: src/lib/utils.ts
 msgid "24 hours"
@@ -155,7 +144,7 @@ msgstr "24 小时"
 
 #: src/lib/utils.ts
 msgid "3 days"
-msgstr ""
+msgstr "3 天"
 
 #: src/lib/utils.ts
 msgid "30 days"
@@ -163,7 +152,7 @@ msgstr "30 天"
 
 #: src/lib/utils.ts
 msgid "30 minutes"
-msgstr ""
+msgstr "30 分钟"
 
 #. Load average
 #: src/components/routes/system/charts/load-average-chart.tsx
@@ -172,15 +161,11 @@ msgstr "5 分钟"
 
 #: src/lib/utils.ts
 msgid "5 minutes"
-msgstr ""
+msgstr "5 分钟"
 
 #: src/lib/utils.ts
 msgid "6 hours"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "A role named \"admin\" grants tenant administration."
-#~ msgstr "名为 \"admin\" 的角色拥有租户管理权限。"
+msgstr "6 小时"
 
 #: src/components/routes/network-device-form.tsx
 msgid "A valid SNMP profile and port are required"
@@ -188,12 +173,12 @@ msgstr "请选择有效的 SNMP 配置模板和端口"
 
 #: src/components/routes/permissions.tsx
 msgid "Ability"
-msgstr ""
+msgstr "权限项"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Absolute threshold"
-msgstr ""
+msgstr "绝对阈值"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -202,23 +187,23 @@ msgstr "已接收"
 
 #: src/components/routes/address-math.tsx
 msgid "Accepts CIDR, a single IP, or start-end. Merge and set algebra preserve the exact set. Cover may add addresses and always requires review."
-msgstr ""
+msgstr "支持 CIDR、单个 IP 或起止地址。合并和集合运算保持地址集合精确；覆盖可能增加地址，必须人工复核。"
 
 #: src/components/navbar.tsx
 msgid "Access & Billing"
-msgstr ""
+msgstr "访问权限与计费"
 
 #: src/components/routes/user-form.tsx
 msgid "Account"
-msgstr ""
+msgstr "账户"
 
 #: src/components/routes/billing.tsx
 msgid "Accounts"
-msgstr ""
+msgstr "账户"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Acknowledge"
-msgstr ""
+msgstr "确认"
 
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/audit-logs.tsx
@@ -229,7 +214,7 @@ msgstr "操作"
 
 #: src/components/routes/address-publications.tsx
 msgid "Action failed"
-msgstr ""
+msgstr "操作失败"
 
 #: src/components/routes/audit-logs.tsx
 msgid "Action prefix, e.g. user."
@@ -247,20 +232,20 @@ msgstr "操作"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Activate"
-msgstr ""
+msgstr "启用"
 
 #: src/components/routes/address-imports.tsx
 msgid "Activate this immutable generation for its source slot?"
-msgstr ""
+msgstr "将此不可变代次启用到对应源槽位？"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Activate version {0}? It goes live for all flow workers."
-msgstr ""
+msgstr "启用版本 {0}？启用后将对全部 Flow Worker 生效。"
 
 #: src/components/routes/address-imports.tsx
 msgid "Activation"
-msgstr ""
+msgstr "启用"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/billing.tsx
@@ -270,12 +255,9 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/settings/heartbeat.tsx
+#: src/components/routes/users.tsx
 msgid "Active"
 msgstr "活跃"
-
-#: src/components/active-alerts.tsx
-#~ msgid "Active Alerts"
-#~ msgstr "启用的警报"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Active ports"
@@ -297,46 +279,41 @@ msgstr "操作者"
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-devices.tsx
 msgid "Add"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Add {foo}"
-#~ msgstr "添加 {foo}"
+msgstr "添加"
 
 #: src/components/routes/address-sets.tsx
 msgid "Add Address Set"
-msgstr ""
+msgstr "添加地址集合"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Add adjustment"
-msgstr ""
+msgstr "添加调整"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Add at least one data source (metric)"
-msgstr ""
+msgstr "请至少添加一个数据源（指标）"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Add dashboard panel"
-msgstr ""
+msgstr "添加仪表盘面板"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Add label"
-msgstr ""
+msgstr "添加标签"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Add metadata"
-msgstr ""
+msgstr "添加元数据"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Add panel"
-msgstr ""
+msgstr "添加面板"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 msgid "Add Prefix"
-msgstr ""
+msgstr "添加地址段"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
@@ -349,7 +326,7 @@ msgstr "添加资源"
 #: src/components/routes/role-form.tsx
 #: src/components/routes/users.tsx
 msgid "Add Role"
-msgstr ""
+msgstr "添加角色"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Add rule"
@@ -357,25 +334,12 @@ msgstr "添加规则"
 
 #: src/components/routes/address-sets.tsx
 msgid "Add Set"
-msgstr ""
+msgstr "添加集合"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Add SNMP Device"
 msgstr "添加 SNMP 网元"
-
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#~ msgid "Add Target"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Add transform"
-#~ msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Add URL"
-#~ msgstr "添加 URL"
 
 #: src/components/routes/user-form.tsx
 #: src/components/routes/user-form.tsx
@@ -385,11 +349,11 @@ msgstr "添加用户"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "added addresses"
-msgstr ""
+msgstr "新增地址"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Address families"
-msgstr ""
+msgstr "地址族"
 
 #: src/components/routes/core.tsx
 msgid "Address Family"
@@ -398,36 +362,31 @@ msgstr "地址族"
 #: src/components/navbar.tsx
 #: src/components/routes/address-library.tsx
 msgid "Address Library"
-msgstr ""
+msgstr "地址库"
 
 #: src/main.tsx
 msgid "Address library maintenance requires an administrator."
-msgstr ""
+msgstr "地址库维护需要管理员权限。"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Address Prefixes"
-msgstr ""
+msgstr "地址段"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Address replacement applied"
-msgstr ""
-
-#: src/components/routes/traffic-matrix.tsx
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "Address Set"
-#~ msgstr ""
+msgstr "地址替换已应用"
 
 #: src/components/routes/address-math.tsx
 msgid "Address Set Tools"
-msgstr ""
+msgstr "地址集合工具"
 
 #: src/components/routes/address-sets.tsx
 msgid "Address Sets"
-msgstr ""
+msgstr "地址集合"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Address side"
-msgstr ""
+msgstr "地址方向"
 
 #: src/components/routes/settings/general.tsx
 msgid "Adjust display options for charts."
@@ -439,11 +398,11 @@ msgstr "调整主布局宽度"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Adjustment"
-msgstr ""
+msgstr "调整"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Adjustments"
-msgstr ""
+msgstr "调整记录"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
@@ -455,15 +414,20 @@ msgstr "管理员"
 
 #: src/components/routes/network-device.tsx
 msgid "Admin Down"
-msgstr ""
+msgstr "管理关闭"
 
 #: src/components/navbar.tsx
 msgid "Administration"
-msgstr ""
+msgstr "管理"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Administrator"
+msgstr "管理员"
 
 #: src/components/install/install.tsx
 msgid "Administrator username"
-msgstr ""
+msgstr "管理员用户名"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Advanced"
@@ -475,7 +439,7 @@ msgstr "高级浏览器"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Advanced Flow Explorer"
-msgstr ""
+msgstr "高级 Flow 查询"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -500,16 +464,16 @@ msgstr "客户端"
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/agent-plans.tsx
 msgid "Agent Plans"
-msgstr ""
+msgstr "Agent 计划"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "Agent Runs"
-msgstr ""
+msgstr "Agent 运行记录"
 
 #: src/components/routes/agent-form.tsx
 msgid "Agent Type"
-msgstr ""
+msgstr "Agent 类型"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/agents.tsx
@@ -519,21 +483,21 @@ msgstr "采集代理"
 
 #: src/components/routes/network-device.tsx
 msgid "Aggregate"
-msgstr ""
+msgstr "聚合"
 
 #: src/components/routes/network-device.tsx
 msgid "Aggregate ascending"
-msgstr ""
+msgstr "按聚合值升序"
 
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-charts.tsx
 msgid "Aggregate Charts"
-msgstr ""
+msgstr "聚合图表"
 
 #: src/components/routes/network-device.tsx
 msgid "Aggregate descending"
-msgstr ""
+msgstr "按聚合值降序"
 
 #: src/components/routes/target-detail.tsx
 msgid "Aggregate graphs"
@@ -548,12 +512,6 @@ msgstr "聚合图"
 msgid "Aggregation"
 msgstr "聚合方式"
 
-#: src/components/command-palette.tsx
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#: src/components/routes/settings/layout.tsx
-#~ msgid "Alert History"
-#~ msgstr "警报历史"
-
 #: src/components/routes/network-device.tsx
 msgid "Alerts"
 msgstr "警报"
@@ -563,7 +521,7 @@ msgstr "警报"
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 msgid "Algorithm"
-msgstr ""
+msgstr "算法"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
@@ -571,18 +529,18 @@ msgstr ""
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
 msgid "Alias"
-msgstr ""
+msgstr "别名"
 
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
-msgstr ""
+msgstr "全部"
 
 #: src/components/routes/network-device.tsx
 msgid "All addresses"
-msgstr ""
+msgstr "全部地址"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -604,25 +562,21 @@ msgstr "全部国家/地区"
 msgid "All devices"
 msgstr "全部设备"
 
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "All Devices"
-#~ msgstr ""
-
 #: src/components/routes/aggregate-charts.tsx
 msgid "All discovered ports"
 msgstr "全部已发现端口"
 
 #: src/components/routes/network-device.tsx
 msgid "All health"
-msgstr ""
+msgstr "全部健康状态"
 
 #: src/components/routes/network-device.tsx
 msgid "All inventory"
-msgstr ""
+msgstr "全部资产"
 
 #: src/components/routes/network-device.tsx
 msgid "All modes"
-msgstr ""
+msgstr "全部模式"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -631,7 +585,7 @@ msgstr "全部运营商"
 
 #: src/components/routes/dashboards.tsx
 msgid "All owners"
-msgstr ""
+msgstr "全部所有者"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -642,15 +596,11 @@ msgstr "全部省份"
 msgid "All resources"
 msgstr "全部资源"
 
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "All Sets"
-#~ msgstr ""
-
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "All states"
-msgstr ""
+msgstr "全部状态"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/network-device.tsx
@@ -666,63 +616,64 @@ msgstr "所有客户端"
 
 #: src/components/routes/agents.tsx
 msgid "All types"
-msgstr ""
+msgstr "全部类型"
 
 #: src/components/routes/billing.tsx
 msgid "Allowance"
-msgstr ""
+msgstr "额度"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Allowed"
 msgstr "已放行"
 
-#: src/lib/flow-report-model.ts
-msgid "Ambiguous"
-msgstr "归属不明"
-
 #: src/components/routes/billing-account-detail.tsx
 msgid "Amount"
-msgstr ""
+msgstr "数值"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Analysis"
-msgstr ""
+msgstr "分析"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Analyst"
+msgstr "分析员"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Analyze"
-msgstr ""
+msgstr "分析"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Analyze overseas traffic by direction, location, operator and protocol."
-msgstr ""
+msgstr "按方向、地域、运营商和协议分析跨境流量。"
 
 #: src/components/routes/settings/general.tsx
 msgid "Appearance"
-msgstr ""
+msgstr "外观"
 
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Apply"
-msgstr ""
+msgstr "应用"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Apply atomically"
-msgstr ""
+msgstr "原子应用"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Apply failed"
-msgstr ""
+msgstr "应用失败"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Apply in Explorer"
-msgstr ""
+msgstr "在查询器中应用"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Apply merge"
-msgstr ""
+msgstr "应用合并"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Apply the local peak window to every report panel"
@@ -730,34 +681,26 @@ msgstr "将本地峰值时段应用到所有报表面板"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Apply this address replacement atomically?"
-msgstr ""
+msgstr "原子应用此地址替换？"
 
 #: src/components/routes/address-publications.tsx
 msgid "Approval"
-msgstr ""
+msgstr "审批"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Approve"
-msgstr ""
+msgstr "批准"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Approve version {0}? It becomes eligible to activate."
-msgstr ""
+msgstr "批准版本 {0}？批准后该版本可被启用。"
 
 #: src/components/routes/historical-data.tsx
 msgid "Archive"
-msgstr ""
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Are you sure you want to delete {name}?"
-#~ msgstr "您确定要删除 {name} 吗？"
-
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "Are you sure?"
-#~ msgstr "您确定吗？"
+msgstr "归档"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -766,12 +709,12 @@ msgstr "ASN"
 
 #: src/components/routes/address-imports.tsx
 msgid "ASN must be a positive integer"
-msgstr ""
+msgstr "ASN 必须为正整数"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 msgid "ASN must be an integer between 1 and 4294967295"
-msgstr ""
+msgstr "ASN 必须是 1 到 4294967295 之间的整数"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "At least one match signal is required. TLS and QUIC are explicit upstream hints; ports never imply them."
@@ -779,11 +722,11 @@ msgstr "至少需要一个匹配信号。TLS 和 QUIC 是明确的上游提示�
 
 #: src/components/routes/agent-plans.tsx
 msgid "At least one required capability is needed."
-msgstr ""
+msgstr "至少需要选择一项必需能力。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Atomic Prefix Replacement"
-msgstr ""
+msgstr "原子地址段替换"
 
 #: src/components/routes/operation-jobs.tsx
 msgid "Attempts"
@@ -791,21 +734,17 @@ msgstr "尝试次数"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "attribution group(s)"
-msgstr ""
+msgstr "个归属组"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Attribution-preserving merge"
-msgstr ""
+msgstr "保持归属的合并"
 
 #: src/components/navbar.tsx
 #: src/components/routes/audit-logs.tsx
 #: src/components/routes/audit-logs.tsx
 msgid "Audit Logs"
 msgstr "审计日志"
-
-#: src/components/routes/users.tsx
-#~ msgid "Auth provider"
-#~ msgstr "认证提供方"
 
 #: src/components/copy-to-clipboard.tsx
 msgid "Automatic copy requires a secure context."
@@ -820,14 +759,6 @@ msgstr "平均"
 #: src/components/routes/system/charts/cpu-charts.tsx
 msgid "Average CPU utilization of containers"
 msgstr "容器的平均 CPU 使用率"
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "Average drops below <0>{value}{0}</0>"
-#~ msgstr "平均值降至<0>{value}{0}</0>以下"
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "Average exceeds <0>{value}{0}</0>"
-#~ msgstr "平均值超过<0>{value}{0}</0>"
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgid "Average number of I/O operations waiting to be serviced"
@@ -858,67 +789,63 @@ msgstr "GPU 引擎的平均利用率"
 #: src/components/routes/role-form.tsx
 #: src/components/routes/user-form.tsx
 msgid "Back"
-msgstr ""
+msgstr "返回"
 
 #: src/components/routes/agent-form.tsx
 msgid "Back to agents"
-msgstr ""
+msgstr "返回 Agent 列表"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Back to billing"
-msgstr ""
+msgstr "返回计费"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Back to dashboards"
-msgstr ""
+msgstr "返回仪表盘"
 
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/export-new.tsx
 msgid "Back to exports"
-msgstr ""
+msgstr "返回导出任务"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Back to MIB modules"
-msgstr ""
+msgstr "返回 MIB 模块"
 
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/network-port.tsx
 msgid "Back to network device"
-msgstr ""
+msgstr "返回网络设备"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-discover.tsx
 msgid "Back to network devices"
-msgstr ""
+msgstr "返回网络设备列表"
 
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
 msgid "Back to network port"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Back to OID mappings"
-#~ msgstr ""
+msgstr "返回网络端口"
 
 #: src/components/routes/permission-form.tsx
 msgid "Back to permissions"
-msgstr ""
+msgstr "返回权限列表"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Back to saved graphs"
-msgstr ""
+msgstr "返回已保存图像"
 
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Back to SNMP profiles"
-msgstr ""
+msgstr "返回 SNMP 配置档案"
 
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 msgid "Back to targets"
-msgstr ""
+msgstr "返回目标列表"
 
 #: src/components/navbar.tsx
 #: src/components/routes/operation-jobs.tsx
@@ -926,27 +853,17 @@ msgstr ""
 msgid "Background Jobs"
 msgstr "后台任务"
 
-#: src/components/command-palette.tsx
-#: src/components/navbar.tsx
-#~ msgid "Backups"
-#~ msgstr "备份"
-
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Bandwidth"
 msgstr "带宽"
 
-#. Battery label in systems table header
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Bat"
-#~ msgstr "电池"
-
 #: src/components/routes/address-revisions.tsx
 msgid "Batch"
-msgstr ""
+msgstr "批次"
 
 #: src/components/routes/address-library.tsx
 msgid "Batch Apply"
-msgstr ""
+msgstr "批量应用"
 
 #: src/components/routes/system/charts/sensor-charts.tsx
 msgid "Battery"
@@ -966,58 +883,49 @@ msgstr "变为非活动"
 msgid "Before"
 msgstr "之前"
 
-#: src/components/active-alerts.tsx
-#~ msgid "Below {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
-#~ msgstr "在过去的{2, plural, one {# 分钟} other {# 分钟}}中低于{0}{1}"
-
 #: src/components/routes/network-device.tsx
 msgid "BGP"
-msgstr ""
+msgstr "BGP"
 
 #: src/components/routes/network-device.tsx
 msgid "BGP Alerts"
-msgstr ""
+msgstr "BGP 告警"
 
 #: src/components/routes/network-device.tsx
 msgid "BGP Peer"
-msgstr ""
+msgstr "BGP 邻居"
 
 #: src/components/navbar.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/user-form.tsx
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Billing"
-msgstr ""
+msgstr "计费"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Billing Account"
-msgstr ""
+msgstr "计费账户"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Billing base bps"
-msgstr ""
+msgstr "计费基准速率 (bps)"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 msgid "Billing Day"
-msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "Billing Period"
-#~ msgstr ""
+msgstr "计费日"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Billing Ports"
-msgstr ""
+msgstr "计费端口"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Billing type"
-msgstr ""
-
-#: src/components/add-system.tsx
-#~ msgid "Binary"
-#~ msgstr "二进制"
+msgstr "计费类型"
 
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/general.tsx
@@ -1030,28 +938,24 @@ msgstr "启动状态"
 
 #: src/components/routes/address-sets.tsx
 msgid "Both"
-msgstr ""
+msgstr "双向"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-imports.tsx
 msgid "Browse"
-msgstr ""
+msgstr "浏览"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Buckets"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Built-in"
-#~ msgstr ""
+msgstr "时间桶"
 
 #: src/components/routes/role-form.tsx
 msgid "Built-in administrator abilities are immutable."
-msgstr ""
+msgstr "内置管理员的权限项不可修改。"
 
 #: src/components/routes/users.tsx
 msgid "Built-in roles cannot be deleted."
-msgstr ""
+msgstr "内置角色不可删除。"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
@@ -1069,7 +973,7 @@ msgstr "业务标签"
 
 #: src/components/routes/historical-data.tsx
 msgid "Bytes"
-msgstr ""
+msgstr "字节"
 
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/settings/general.tsx
@@ -1082,15 +986,15 @@ msgstr "缓存/缓冲区"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Calculate"
-msgstr ""
+msgstr "计算"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Calculate the period to create evidence."
-msgstr ""
+msgstr "计算此周期并生成证据。"
 
 #: src/components/routes/address-math.tsx
 msgid "Calculating..."
-msgstr ""
+msgstr "正在计算..."
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Can reload"
@@ -1121,11 +1025,11 @@ msgstr "取消"
 
 #: src/components/routes/address-math.tsx
 msgid "Canonical result"
-msgstr ""
+msgstr "规范化结果"
 
 #: src/components/routes/address-math.tsx
 msgid "Canonical result copied"
-msgstr ""
+msgstr "规范化结果已复制"
 
 #: src/components/routes/modules.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -1138,7 +1042,7 @@ msgstr "容量"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Category"
-msgstr ""
+msgstr "分类"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "Caution - potential data loss"
@@ -1178,70 +1082,66 @@ msgid "Check {email} for a reset link."
 msgstr "检查 {email} 以获取重置链接。"
 
 #: src/components/routes/settings/layout.tsx
-msgid "Check logs for more details."
-msgstr "检查日志以获取更多详细信息。"
+#~ msgid "Check logs for more details."
+#~ msgstr "检查日志以获取更多详细信息。"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Check your monitoring service"
 msgstr "检查您的监控服务"
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Check your notification service"
-#~ msgstr "检查您的通知服务"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Checksum"
-msgstr ""
+msgstr "Checksum"
 
 #: src/components/routes/settings/general.tsx
 msgid "Choose a light, dark, or system theme."
-msgstr ""
+msgstr "选择浅色、深色或跟随系统主题。"
 
 #: src/components/routes/address-sets.tsx
 msgid "Choose excluded sets"
-msgstr ""
+msgstr "选择排除集合"
 
 #: src/components/routes/address-sets.tsx
 msgid "Choose geographies"
-msgstr ""
+msgstr "选择地域"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Choose geography"
-msgstr ""
+msgstr "选择地域"
 
 #: src/components/routes/address-sets.tsx
 msgid "Choose included sets"
-msgstr ""
+msgstr "选择包含集合"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Choose operator"
-msgstr ""
+msgstr "选择运营商"
 
 #: src/components/routes/address-sets.tsx
 msgid "Choose operators"
-msgstr ""
+msgstr "选择运营商"
 
 #: src/components/routes/settings/general.tsx
 msgid "Choose the language used in navigation and pages."
-msgstr ""
+msgstr "选择导航和页面使用的语言。"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "CIDR"
-msgstr ""
+msgstr "CIDR"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "CIDR, IP, or range"
-msgstr ""
+msgstr "CIDR、IP 或地址范围"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -1255,19 +1155,19 @@ msgstr "城市目录不可用"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Class"
-msgstr ""
+msgstr "类别"
 
 #: src/components/routes/network-device.tsx
 msgid "Class (exact)"
-msgstr ""
+msgstr "类别（精确）"
 
 #: src/components/routes/network-device.tsx
 msgid "Class A–Z"
-msgstr ""
+msgstr "类别 A–Z"
 
 #: src/components/routes/network-device.tsx
 msgid "Class ascending"
-msgstr ""
+msgstr "按类别升序"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Classification residuals"
@@ -1281,7 +1181,7 @@ msgstr "已分类覆盖：↓ {0} · ↑ {1}"
 
 #: src/components/routes/retention.tsx
 msgid "Cleanup"
-msgstr ""
+msgstr "清理"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/address-revisions.tsx
@@ -1291,7 +1191,7 @@ msgstr "清除"
 
 #: src/components/routes/user-form.tsx
 msgid "Clear device ports"
-msgstr ""
+msgstr "清空该设备端口"
 
 #: src/components/address-reference-picker.tsx
 #: src/components/routes/aggregate-charts.tsx
@@ -1307,10 +1207,6 @@ msgstr "点击容器查看更多信息。"
 msgid "Click on a device to view more information."
 msgstr "点击设备查看更多信息。"
 
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Click on a system to view more information."
-#~ msgstr "点击系统查看更多信息。"
-
 #: src/components/ui/input-copy.tsx
 msgid "Click to copy"
 msgstr "点击复制"
@@ -1321,11 +1217,11 @@ msgstr "点击复制"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Close"
-msgstr ""
+msgstr "关闭"
 
 #: src/components/routes/network-device.tsx
 msgid "Collection Endpoint"
-msgstr ""
+msgstr "采集端点"
 
 #: src/components/routes/target-detail.tsx
 msgid "Collector projections"
@@ -1333,7 +1229,7 @@ msgstr "采集器投影"
 
 #: src/components/routes/address-imports.tsx
 msgid "Combined"
-msgstr ""
+msgstr "合并"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Combined · 95th"
@@ -1355,10 +1251,6 @@ msgstr "合计 · 峰值"
 msgid "Combined · total"
 msgstr "合计 · 总量"
 
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Comma separated port IDs"
-#~ msgstr ""
-
 #: src/components/routes/flow-reports.tsx
 msgid "Comma-separated labels"
 msgstr "逗号分隔的标签"
@@ -1370,11 +1262,11 @@ msgstr "命令行说明"
 
 #: src/components/routes/network-discover.tsx
 msgid "Community Override"
-msgstr ""
+msgstr "Community 覆盖值"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Comparison"
-msgstr ""
+msgstr "对比"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Completeness"
@@ -1387,23 +1279,19 @@ msgstr "完整度 {0}"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Compose Chart"
-msgstr ""
+msgstr "组合图表"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Config"
-msgstr ""
+msgstr "配置"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Config (JSON object)"
-msgstr ""
+msgstr "配置（JSON 对象）"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Config must be a JSON object."
-msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Configure how you receive alert notifications."
-#~ msgstr "配置您接收警报通知的方式。"
+msgstr "配置必须是 JSON 对象。"
 
 #: src/components/install/install.tsx
 msgid "Confirm password"
@@ -1420,11 +1308,7 @@ msgstr "冲突"
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Connect"
-msgstr ""
-
-#: src/components/active-alerts.tsx
-#~ msgid "Connection is down"
-#~ msgstr "连接已断开"
+msgstr "连接"
 
 #: src/components/navbar.tsx
 #: src/components/routes/containers.tsx
@@ -1433,73 +1317,25 @@ msgstr ""
 msgid "Containers"
 msgstr "容器"
 
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "Continue"
-#~ msgstr "继续"
-
 #: src/lib/utils.ts
 msgid "Copied to clipboard"
 msgstr "已复制到剪贴板"
 
 #: src/components/routes/address-math.tsx
 msgid "Copy"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Button to copy docker compose file content"
-#~ msgid "Copy docker compose"
-#~ msgstr "复制 docker compose 文件"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Button to copy docker run command"
-#~ msgid "Copy docker run"
-#~ msgstr "复制 docker run 命令"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Environment variables"
-#~ msgid "Copy env"
-#~ msgstr "复制环境变量"
+msgstr "复制"
 
 #: src/components/routes/address-math.tsx
 msgid "Copy failed"
-msgstr ""
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgctxt "Copy alerts from another system"
-#~ msgid "Copy from"
-#~ msgstr "复制自"
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Copy host"
-#~ msgstr "复制主机名"
+msgstr "复制失败"
 
 #: src/components/routes/agent-form.tsx
 msgid "Copy it now. It will not be shown again."
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Copy Linux command"
-#~ msgstr "复制 Linux 安装命令"
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Copy name"
-#~ msgstr "复制名称"
+msgstr "请立即复制；此后不会再次显示。"
 
 #: src/components/copy-to-clipboard.tsx
 msgid "Copy text"
 msgstr "复制文本"
-
-#: src/components/add-system.tsx
-#~ msgid "Copy the installation command for the agent below, or register agents automatically with a <0>universal token</0>."
-#~ msgstr "复制下面的客户端安装命令，或使用<0>通用令牌</0>自动注册客户端。"
-
-#: src/components/add-system.tsx
-#~ msgid "Copy the<0>docker-compose.yml</0> content for the agent below, or register agents automatically with a <1>universal token</1>."
-#~ msgstr "复制下面的客户端<0>docker-compose.yml</0>内容，或使用<1>通用令牌</1>自动注册客户端。"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Copy YAML"
-#~ msgstr "复制 YAML"
 
 #: src/components/routes/system.tsx
 msgctxt "Core system metrics"
@@ -1523,11 +1359,11 @@ msgstr "修正"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction max"
-msgstr ""
+msgstr "修正上限"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction min"
-msgstr ""
+msgstr "修正下限"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Countries, regions, ASN, ports and protocols with observed-data caveats."
@@ -1545,26 +1381,26 @@ msgstr "国家/地区"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Cover prefix preview"
-msgstr ""
+msgstr "覆盖地址段预览"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Cover selected"
-msgstr ""
+msgstr "覆盖所选"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Coverage"
-msgstr ""
+msgstr "覆盖范围"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Covering CIDR"
-msgstr ""
+msgstr "覆盖 CIDR"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/containers.tsx
 #: src/components/systemd-table/systemd-table-columns.tsx
 msgid "CPU"
-msgstr ""
+msgstr "CPU"
 
 #: src/components/routes/system/cpu-sheet.tsx
 msgid "CPU Cores"
@@ -1603,90 +1439,59 @@ msgstr "创建"
 
 #: src/components/routes/agents.tsx
 msgid "Create a 15-minute, one-time enrollment token. It is shown only here."
-msgstr ""
+msgstr "创建有效期 15 分钟的一次性注册令牌；仅在此处显示一次。"
 
 #: src/components/routes/network-device-form.tsx
 msgid "Create a network target first; devices are created by discovery or agent reports."
-msgstr ""
-
-#: src/components/login/auth-form.tsx
-#~ msgid "Create account"
-#~ msgstr "创建账户"
+msgstr "请先创建网络目标；设备由探测或 Agent 上报创建。"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-form.tsx
 msgid "Create Agent"
-msgstr ""
+msgstr "创建 Agent"
 
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Create Billing Account"
-msgstr ""
+msgstr "创建计费账户"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Create cover prefix"
-msgstr ""
+msgstr "创建覆盖地址段"
 
 #: src/components/routes/dashboard-form.tsx
 #: src/components/routes/dashboard-form.tsx
 msgid "Create Dashboard"
-msgstr ""
+msgstr "创建仪表盘"
 
 #: src/components/routes/export-new.tsx
 #: src/components/routes/export-new.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Create Export"
-msgstr ""
+msgstr "创建导出任务"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Create Graph"
-msgstr ""
+msgstr "创建图像"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Create MIB Module"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Create Network Device"
-#~ msgstr ""
-
-#: src/components/routes/network-port-form.tsx
-#: src/components/routes/network-port-form.tsx
-#~ msgid "Create Network Port"
-#~ msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Create Network Target"
-#~ msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Create new target"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Create OID Mapping"
-#~ msgstr ""
+msgstr "创建 MIB 模块"
 
 #: src/components/routes/billing.tsx
 msgid "Create party"
-msgstr ""
+msgstr "创建参与方"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Create period"
-msgstr ""
+msgstr "创建周期"
 
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permission-form.tsx
 msgid "Create Permission"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "Create role"
-#~ msgstr "创建角色"
+msgstr "创建权限"
 
 #: src/components/routes/target-form.tsx
 msgid "Create SNMP profile"
@@ -1695,16 +1500,11 @@ msgstr "新建 SNMP 配置"
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Create SNMP Profile"
-msgstr ""
-
-#: src/components/routes/target-form.tsx
-#: src/components/routes/target-form.tsx
-#~ msgid "Create Target"
-#~ msgstr ""
+msgstr "创建 SNMP 配置档案"
 
 #: src/components/routes/agents.tsx
 msgid "Create token"
-msgstr ""
+msgstr "创建令牌"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Create VPN rule"
@@ -1723,23 +1523,15 @@ msgstr "创建时间"
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Creates"
-msgstr ""
+msgstr "创建数"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Creates a new manual prefix covering the selection; the selected prefixes are kept. Set its geography/operator inline afterward."
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "Credentials live in the identity provider; this manages the authorization projection."
-#~ msgstr "凭据由身份提供方管理;此处仅维护授权投影。"
+msgstr "新建一个覆盖所选范围的手工地址段，并保留所选地址段；随后可直接设置地域和运营商。"
 
 #: src/components/routes/settings/general.tsx
 msgid "Critical (%)"
 msgstr "临界 (%)"
-
-#: src/lib/flow-report-model.ts
-msgid "Cross-border"
-msgstr "跨境"
 
 #: src/components/routes/system/network-sheet.tsx
 msgid "Cumulative Download"
@@ -1763,52 +1555,48 @@ msgstr "自定义"
 #: src/components/routes/billing.tsx
 #: src/components/routes/traffic-defaults.tsx
 msgid "Customer"
-msgstr ""
+msgstr "客户"
 
 #. Power Cycles
 #: src/components/routes/system/smart-table.tsx
 msgid "Cycles"
 msgstr "循环次数"
 
-#: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Daily"
-#~ msgstr "每日"
-
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Dark"
-msgstr ""
+msgstr "深色"
 
 #: src/components/navbar.tsx
 #: src/components/routes/dashboards.tsx
 #: src/components/routes/dashboards.tsx
 msgid "Dashboards"
-msgstr ""
+msgstr "仪表盘"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 msgid "Data"
-msgstr ""
+msgstr "数据"
 
 #: src/components/routes/user-form.tsx
 msgid "Data access"
-msgstr ""
+msgstr "数据权限"
 
 #: src/components/navbar.tsx
 msgid "Data Management"
-msgstr ""
+msgstr "数据管理"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Data Sources"
-msgstr ""
+msgstr "数据源"
 
 #: src/components/routes/address-imports.tsx
 msgid "Database Imports"
-msgstr ""
+msgstr "数据库导入"
 
 #: src/components/routes/address-imports.tsx
 msgid "Database type"
-msgstr ""
+msgstr "数据库类型"
 
 #: src/components/routes/modules.tsx
 msgid "Default"
@@ -1821,7 +1609,7 @@ msgstr "默认"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Default layer"
-msgstr ""
+msgstr "默认视角"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Default six classes"
@@ -1833,7 +1621,7 @@ msgstr "默认时间段"
 
 #: src/components/routes/address-publications.tsx
 msgid "Definition size"
-msgstr ""
+msgstr "定义大小"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-imports.tsx
@@ -1866,12 +1654,12 @@ msgstr "删除"
 #. placeholder {0}: selected.length
 #: src/components/routes/address-sets.tsx
 msgid "Delete {0} selected address sets?"
-msgstr ""
+msgstr "删除所选 {0} 个地址集合？"
 
 #. placeholder {0}: selected.length
 #: src/components/routes/address-prefixes.tsx
 msgid "Delete {0} selected prefixes?"
-msgstr ""
+msgstr "删除所选 {0} 个地址段？"
 
 #: src/components/routes/target-detail.tsx
 msgid "Delete {name}?"
@@ -1879,23 +1667,15 @@ msgstr "删除 {name}?"
 
 #: src/components/routes/export-detail.tsx
 msgid "Delete export?"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Delete fingerprint"
-#~ msgstr "删除指纹"
+msgstr "删除此导出任务？"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Delete MIB module"
-msgstr ""
-
-#: src/components/routes/permissions.tsx
-#~ msgid "Delete permission"
-#~ msgstr ""
+msgstr "删除 MIB 模块"
 
 #: src/components/routes/retention.tsx
 msgid "Delete retention policy"
-msgstr ""
+msgstr "删除保留策略"
 
 #: src/components/routes/users.tsx
 msgid "Delete role"
@@ -1904,72 +1684,64 @@ msgstr "删除角色"
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-sets.tsx
 msgid "Delete selected"
-msgstr ""
+msgstr "删除所选"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete SNMP profile"
-msgstr ""
+msgstr "删除 SNMP 配置档案"
 
 #: src/components/routes/address-sets.tsx
 msgid "Delete this address set?"
-msgstr ""
+msgstr "删除此地址集合？"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Delete this address taxonomy item?"
-msgstr ""
+msgstr "删除此地址分类条目？"
 
 #: src/components/routes/agent-form.tsx
 msgid "Delete this agent?"
-msgstr ""
+msgstr "删除此 Agent？"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Delete this aggregate graph?"
-msgstr ""
+msgstr "删除此聚合图像？"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Delete this billing account?"
-msgstr ""
+msgstr "删除此计费账户？"
 
 #: src/components/routes/dashboards.tsx
 msgid "Delete this dashboard?"
-msgstr ""
+msgstr "删除此仪表盘？"
 
 #: src/components/routes/address-imports.tsx
 msgid "Delete this import generation and its stored source file? This cannot be undone."
-msgstr ""
+msgstr "删除此导入代次及其保存的源文件？此操作无法撤销。"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Delete this MIB module?"
-msgstr ""
+msgstr "删除此 MIB 模块？"
 
 #: src/components/routes/network-device.tsx
 msgid "Delete this network device?"
-msgstr ""
+msgstr "删除此网络设备？"
 
 #: src/components/routes/network-port.tsx
 msgid "Delete this network port?"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Delete this OID mapping?"
-#~ msgstr ""
+msgstr "删除此网络端口？"
 
 #: src/components/routes/billing.tsx
 msgid "Delete this party?"
-msgstr ""
-
-#: src/components/routes/permissions.tsx
-#~ msgid "Delete this permission?"
-#~ msgstr ""
+msgstr "删除此参与方？"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Delete this prefix?"
-msgstr ""
+msgstr "删除此地址段？"
 
 #: src/components/routes/retention.tsx
 msgid "Delete this retention policy?"
-msgstr ""
+msgstr "删除此保留策略？"
 
 #: src/components/routes/users.tsx
 msgid "Delete this role? Its members and permission grants lose it immediately."
@@ -1977,19 +1749,15 @@ msgstr "确定删除该角色?其成员与权限授权将立即失效。"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Delete this saved filter?"
-msgstr ""
+msgstr "删除此已保存筛选器？"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Delete this SNMP profile?"
-msgstr ""
-
-#: src/components/routes/target-detail.tsx
-#~ msgid "Delete this target?"
-#~ msgstr ""
+msgstr "删除此 SNMP 配置档案？"
 
 #: src/components/routes/users.tsx
 msgid "Delete this user and all of their resource grants?"
-msgstr ""
+msgstr "删除此用户及其全部资源授权？"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Delete this VPN rule?"
@@ -1997,7 +1765,7 @@ msgstr "删除此 VPN 规则？"
 
 #: src/components/routes/users.tsx
 msgid "Delete user"
-msgstr ""
+msgstr "删除用户"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
@@ -2008,20 +1776,20 @@ msgstr "随删"
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Deleted user"
-msgstr ""
+msgstr "已删除用户"
 
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Deletes"
-msgstr ""
+msgstr "删除数"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Delta"
-msgstr ""
+msgstr "差值"
 
 #: src/components/routes/network-device.tsx
 msgid "Denied"
-msgstr ""
+msgstr "已拒绝"
 
 #: src/components/routes/modules.tsx
 msgid "Dependencies"
@@ -2044,20 +1812,20 @@ msgstr "描述"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Desired / acknowledged"
-msgstr ""
+msgstr "期望 / 已确认"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination ASN"
-msgstr ""
+msgstr "目的 ASN"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination IP"
-msgstr ""
+msgstr "目的 IP"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Destination IP Analysis"
-msgstr ""
+msgstr "目的 IP 分析"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Destination IP Report"
@@ -2065,7 +1833,7 @@ msgstr "目的 IP 报表"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination port"
-msgstr ""
+msgstr "目的端口"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
@@ -2097,30 +1865,31 @@ msgstr "设备"
 msgid "Device catalog is unavailable"
 msgstr "设备目录不可用"
 
+#: src/components/routes/user-form.tsx
+msgid "Device groups"
+msgstr "设备组"
+
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
 msgid "Device ID"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Device Inventory"
-#~ msgstr ""
+msgstr "设备 ID"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Device SNMP"
-msgstr ""
+msgstr "设备 SNMP"
 
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/user-form.tsx
 msgid "Devices"
 msgstr "设备"
 
 #: src/components/routes/address-publications.tsx
 msgid "Dimension Publications"
-msgstr ""
+msgstr "维度发布"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Dimension value"
-msgstr ""
+msgstr "维度值"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/address-sets.tsx
@@ -2129,7 +1898,7 @@ msgstr ""
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 msgid "Direction"
-msgstr ""
+msgstr "方向"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Direction, six exclusive traffic classes and business matrix."
@@ -2153,8 +1922,9 @@ msgstr "禁用"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/users.tsx
 msgid "Disabled"
-msgstr ""
+msgstr "已禁用"
 
 #. Context: Battery state
 #: src/lib/i18n.ts
@@ -2168,33 +1938,25 @@ msgstr "发现"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Discover Interfaces"
-msgstr ""
+msgstr "探测接口"
 
 #: src/components/routes/network-discover.tsx
 #: src/components/routes/network-discover.tsx
 msgid "Discover Network Device"
-msgstr ""
+msgstr "探测网络设备"
 
 #: src/components/routes/network-device.tsx
 msgid "discovered"
-msgstr ""
+msgstr "已探测"
 
 #. placeholder {0}: result.count ?? result.ports?.length ?? 0
 #: src/components/routes/network-device-snmp.tsx
 msgid "Discovered {0} interfaces"
-msgstr ""
-
-#: src/components/routes/network-discover.tsx
-#~ msgid "Discovery JSON"
-#~ msgstr ""
+msgstr "已探测到 {0} 个接口"
 
 #: src/components/routes/system.tsx
 msgid "Disk"
 msgstr "磁盘"
-
-#: src/components/navbar.tsx
-#~ msgid "Disk Health"
-#~ msgstr ""
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgid "Disk I/O"
@@ -2224,7 +1986,7 @@ msgstr "显示"
 
 #: src/components/install/install.tsx
 msgid "Display name"
-msgstr ""
+msgstr "显示名称"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
@@ -2233,7 +1995,7 @@ msgstr "显示名称（可选）"
 
 #: src/components/routes/role-form.tsx
 msgid "Display title"
-msgstr ""
+msgstr "显示标题"
 
 #: src/components/routes/flow-vpn.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -2242,7 +2004,7 @@ msgstr "处置"
 
 #: src/components/routes/network-port.tsx
 msgid "Distance"
-msgstr ""
+msgstr "距离"
 
 #: src/components/routes/system/charts/cpu-charts.tsx
 msgid "Docker CPU Usage"
@@ -2263,15 +2025,15 @@ msgstr "文档"
 
 #: src/components/routes/permissions.tsx
 msgid "Domain"
-msgstr ""
+msgstr "域"
 
 #: src/components/address-reference-picker.tsx
 msgid "Done"
-msgstr ""
+msgstr "已完成"
 
 #: src/components/routes/network-devices.tsx
 msgid "down"
-msgstr ""
+msgstr "故障"
 
 #. Context: System is down
 #: src/components/routes/network-device.tsx
@@ -2282,14 +2044,10 @@ msgstr ""
 msgid "Down"
 msgstr "离线"
 
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Down ({downSystemsLength})"
-#~ msgstr "离线 ({downSystemsLength})"
-
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Down Ports"
-msgstr ""
+msgstr "故障端口"
 
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/system/network-sheet.tsx
@@ -2302,15 +2060,11 @@ msgstr "下载可见数据"
 
 #: src/components/routes/address-publications.tsx
 msgid "Draft digest"
-msgstr ""
+msgstr "草稿摘要"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Draft opened from a Flow report."
-msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Draw"
-#~ msgstr ""
+msgstr "已从 Flow 报表打开草稿。"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Duration"
@@ -2337,73 +2091,60 @@ msgstr "每个单元格为入向/出向及其在同一冻结报表时段内的�
 msgid "Edit"
 msgstr "编辑"
 
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Edit {foo}"
-#~ msgstr "编辑 {foo}"
-
 #: src/components/routes/address-sets.tsx
 msgid "Edit Address Set"
-msgstr ""
+msgstr "编辑地址集合"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-form.tsx
 msgid "Edit Agent"
-msgstr ""
+msgstr "编辑 Agent"
 
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Edit Billing Account"
-msgstr ""
+msgstr "编辑计费账户"
 
 #: src/components/routes/dashboard-form.tsx
 #: src/components/routes/dashboard-form.tsx
 msgid "Edit Dashboard"
-msgstr ""
+msgstr "编辑仪表盘"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Edit Graph"
-msgstr ""
+msgstr "编辑图像"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Edit MIB module"
-msgstr ""
+msgstr "编辑 MIB 模块"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Edit MIB Module"
-msgstr ""
+msgstr "编辑 MIB 模块"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device-form.tsx
 msgid "Edit Network Device"
-msgstr ""
+msgstr "编辑网络设备"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Edit Network Port"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Edit OID Mapping"
-#~ msgstr ""
+msgstr "编辑网络端口"
 
 #: src/components/routes/billing.tsx
 msgid "Edit party"
-msgstr ""
-
-#: src/components/routes/permissions.tsx
-#~ msgid "Edit permission"
-#~ msgstr ""
+msgstr "编辑参与方"
 
 #: src/components/routes/permission-form.tsx
 #: src/components/routes/permission-form.tsx
 msgid "Edit Permission"
-msgstr ""
+msgstr "编辑权限"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Edit Prefix"
-msgstr ""
+msgstr "编辑地址段"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
@@ -2412,30 +2153,21 @@ msgstr "编辑资源"
 
 #: src/components/routes/users.tsx
 msgid "Edit role"
-msgstr ""
+msgstr "编辑角色"
 
 #: src/components/routes/role-form.tsx
 #: src/components/routes/role-form.tsx
 msgid "Edit Role"
-msgstr ""
+msgstr "编辑角色"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Edit SNMP profile"
-msgstr ""
+msgstr "编辑 SNMP 配置档案"
 
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Edit SNMP Profile"
-msgstr ""
-
-#: src/components/routes/target-form.tsx
-#: src/components/routes/target-form.tsx
-#~ msgid "Edit Target"
-#~ msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "Edit user"
-#~ msgstr "编辑用户"
+msgstr "编辑 SNMP 配置档案"
 
 #: src/components/routes/user-form.tsx
 #: src/components/routes/user-form.tsx
@@ -2444,7 +2176,7 @@ msgstr "编辑用户"
 
 #: src/components/routes/users.tsx
 msgid "Edit user and resource access"
-msgstr ""
+msgstr "编辑用户与资源权限"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Edit VPN rule"
@@ -2462,11 +2194,11 @@ msgstr "动作"
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Effective from"
-msgstr ""
+msgstr "生效时间"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Either side"
-msgstr ""
+msgstr "任一侧"
 
 #: src/components/login/forgot-pass-form.tsx
 #: src/components/routes/user-form.tsx
@@ -2476,11 +2208,7 @@ msgstr "电子邮件"
 
 #: src/components/install/install.tsx
 msgid "Email (optional)"
-msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Email notifications"
-#~ msgstr "电子邮件通知"
+msgstr "邮箱（可选）"
 
 #. Context: Battery state
 #: src/lib/i18n.ts
@@ -2505,7 +2233,7 @@ msgstr "启用"
 
 #: src/components/routes/address-publications.tsx
 msgid "Enabled sets"
-msgstr ""
+msgstr "已启用集合"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/historical-data.tsx
@@ -2514,19 +2242,14 @@ msgstr ""
 msgid "End"
 msgstr "结束"
 
-#: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "End Time"
-#~ msgstr "结束时间"
-
 #: src/components/routes/agent-runs.tsx
 msgid "Ended"
-msgstr ""
+msgstr "结束时间"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agents.tsx
 msgid "Endpoint"
-msgstr ""
+msgstr "端点"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Endpoint URL"
@@ -2538,31 +2261,15 @@ msgstr "要 ping 的端点 URL (必填)"
 
 #: src/components/routes/agents.tsx
 msgid "Enroll"
-msgstr ""
+msgstr "注册"
 
 #: src/components/routes/agents.tsx
 msgid "Enroll Agent"
-msgstr ""
+msgstr "注册 Agent"
 
 #: src/components/login/login.tsx
 msgid "Enter email address to reset password"
 msgstr "输入电子邮件地址以重置密码"
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Enter email address..."
-#~ msgstr "输入电子邮件地址..."
-
-#: src/components/login/otp-forms.tsx
-#~ msgid "Enter your one-time password."
-#~ msgstr "输入您的一次性密码。"
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Enterprise"
-#~ msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Ephemeral"
-#~ msgstr "临时"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/agent-runs.tsx
@@ -2575,23 +2282,19 @@ msgstr "输入电子邮件地址以重置密码"
 msgid "Error"
 msgstr "错误"
 
-#: src/components/routes/network-port.tsx
-#~ msgid "Errors and CRC"
-#~ msgstr ""
-
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "established"
-msgstr ""
+msgstr "已建立"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
 msgid "Established"
-msgstr ""
+msgstr "已建立"
 
 #: src/components/routes/network-device.tsx
 msgid "established / total"
-msgstr ""
+msgstr "已建立 / 总数"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Estimated bit rate"
@@ -2612,15 +2315,15 @@ msgstr "估算包数"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Event time"
-msgstr ""
+msgstr "事件时间"
 
 #: src/components/routes/network-device.tsx
 msgid "Events"
-msgstr ""
+msgstr "事件"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Every panel must reference a saved graph"
-msgstr ""
+msgstr "每个面板都必须引用一个已保存图像"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -2629,19 +2332,19 @@ msgstr "证据"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Evidence reference"
-msgstr ""
+msgstr "证据引用"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Exact destination IP..."
-msgstr ""
+msgstr "精确目的 IP..."
 
 #: src/components/routes/address-imports.tsx
 msgid "Exact IP lookup"
-msgstr ""
+msgstr "精确 IP 查询"
 
 #: src/components/routes/address-imports.tsx
 msgid "Exact lookup result"
-msgstr ""
+msgstr "精确查询结果"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
@@ -2650,35 +2353,27 @@ msgstr "精确观测基数；未做采样放大"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Exact source IP..."
-msgstr ""
+msgstr "精确源 IP..."
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Example:"
 msgstr "示例："
 
-#: src/components/routes/flow-search.tsx
-#~ msgid "Examples: dst_ip:8.8.8.8 AND dst_port:443 · src_ip:10.0.0.0/16 · proto:6 · address_sets:电信客户"
-#~ msgstr ""
-
-#: src/components/active-alerts.tsx
-#~ msgid "Exceeds {0}{1} in last {2, plural, one {# minute} other {# minutes}}"
-#~ msgstr "在过去的{2, plural, one {# 分钟} other {# 分钟}}中超过{0}{1}"
-
 #: src/components/routes/traffic-matrix.tsx
 msgid "Exclude any"
-msgstr ""
+msgstr "排除任一"
 
 #: src/components/routes/address-sets.tsx
 msgid "Excluded members"
-msgstr ""
+msgstr "排除成员"
 
 #: src/components/routes/address-sets.tsx
 msgid "Excluded sets"
-msgstr ""
+msgstr "排除集合"
 
 #: src/components/routes/address-sets.tsx
 msgid "Exclusions"
-msgstr ""
+msgstr "排除项"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Exec main PID"
@@ -2694,38 +2389,34 @@ msgstr "退出活动状态"
 
 #: src/components/routes/address-math.tsx
 msgid "Expansion — confirm"
-msgstr ""
+msgstr "地址扩展 — 请确认"
 
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/export-detail.tsx
 msgid "Expires"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Expires after one hour or on hub restart."
-#~ msgstr "一小时后或重新启动集线器时过期。"
+msgstr "过期时间"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Expires in seconds"
-msgstr ""
+msgstr "有效秒数"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Expiry must be at least 60 seconds."
-msgstr ""
+msgstr "有效期不得少于 60 秒。"
 
 #: src/components/routes/address-math.tsx
 msgid "Explicit finite universe"
-msgstr ""
+msgstr "显式有限全集"
 
 #: src/components/routes/address-sets.tsx
 msgid "Explicit members"
-msgstr ""
+msgstr "显式成员"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Explore one to four dimensions with typed filters and true tuple aggregation."
-msgstr ""
+msgstr "通过类型化筛选和真实元组聚合探索一至四个维度。"
 
 #: src/components/routes/export-detail.tsx
 msgid "Export"
@@ -2743,15 +2434,15 @@ msgstr "导出 CSV"
 
 #: src/components/routes/export-detail.tsx
 msgid "Export deletion did not return an operation job"
-msgstr ""
+msgstr "删除导出任务时未返回后台任务"
 
 #: src/components/routes/export-detail.tsx
 msgid "Export deletion is still running"
-msgstr ""
+msgstr "导出删除任务仍在运行"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Export full query"
-msgstr ""
+msgstr "导出完整查询"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Export full report"
@@ -2763,7 +2454,7 @@ msgstr "导出任务"
 
 #: src/components/routes/watchdog-overview.tsx
 msgid "Export Tasks"
-msgstr ""
+msgstr "导出任务"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "Export your current systems configuration."
@@ -2775,27 +2466,19 @@ msgstr "导出您当前的系统配置。"
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Exports"
-msgstr ""
+msgstr "导出"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "External evidence"
-msgstr ""
+msgstr "外部证据"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "External evidence is invalid"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "External subject"
-#~ msgstr "外部主体 ID"
+msgstr "外部证据无效"
 
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
 msgstr "华氏度 (°F)"
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Failed"
-#~ msgstr "失败"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Failed Attributes:"
@@ -2803,40 +2486,27 @@ msgstr "失败属性："
 
 #: src/components/routes/address-imports.tsx
 msgid "Failed to activate"
-msgstr ""
-
-#: src/lib/api.ts
-#~ msgid "Failed to authenticate"
-#~ msgstr "认证失败"
+msgstr "启用失败"
 
 #: src/components/routes/export-detail.tsx
 msgid "Failed to cancel export"
-msgstr ""
-
-#: src/components/routes/address-prefixes.tsx
-#: src/components/routes/address-sets.tsx
-#~ msgid "Failed to create"
-#~ msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "Failed to create billing period"
-#~ msgstr ""
+msgstr "取消导出任务失败"
 
 #: src/components/routes/agents.tsx
 msgid "Failed to create enrollment token"
-msgstr ""
+msgstr "创建注册令牌失败"
 
 #: src/components/routes/export-new.tsx
 msgid "Failed to create export"
-msgstr ""
+msgstr "创建导出任务失败"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Failed to create Flow detail export"
-msgstr ""
+msgstr "创建 Flow 明细导出失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to create Flow export"
-msgstr ""
+msgstr "创建 Flow 导出失败"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Failed to create Flow report export"
@@ -2844,7 +2514,7 @@ msgstr "创建 Flow 报表导出失败"
 
 #: src/components/routes/historical-data.tsx
 msgid "Failed to create historical operation"
-msgstr ""
+msgstr "创建历史数据操作失败"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2854,71 +2524,63 @@ msgstr ""
 #: src/components/routes/address-taxonomy.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Failed to delete"
-msgstr ""
+msgstr "删除失败"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to delete agent"
-msgstr ""
+msgstr "删除 Agent 失败"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Failed to delete aggregate graph"
-msgstr ""
+msgstr "删除聚合图像失败"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Failed to delete billing account"
-msgstr ""
+msgstr "删除计费账户失败"
 
 #: src/components/routes/dashboards.tsx
 msgid "Failed to delete dashboard"
-msgstr ""
+msgstr "删除仪表盘失败"
 
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/export-detail.tsx
 msgid "Failed to delete export"
-msgstr ""
+msgstr "删除导出任务失败"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Failed to delete filter"
-msgstr ""
+msgstr "删除筛选器失败"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Failed to delete MIB module"
-msgstr ""
+msgstr "删除 MIB 模块失败"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Failed to delete network device"
-msgstr ""
+msgstr "删除网络设备失败"
 
 #: src/components/routes/network-port.tsx
 #: src/components/routes/network-port.tsx
 msgid "Failed to delete network port"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Failed to delete OID mapping"
-#~ msgstr ""
+msgstr "删除网络端口失败"
 
 #: src/components/routes/billing.tsx
 msgid "Failed to delete party"
-msgstr ""
-
-#: src/components/routes/permissions.tsx
-#~ msgid "Failed to delete permission"
-#~ msgstr ""
+msgstr "删除参与方失败"
 
 #: src/components/routes/retention.tsx
 msgid "Failed to delete retention policy"
-msgstr ""
+msgstr "删除保留策略失败"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "Failed to delete SNMP profile"
-msgstr ""
+msgstr "删除 SNMP 配置档案失败"
 
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-detail.tsx
 msgid "Failed to delete target"
-msgstr ""
+msgstr "删除目标失败"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Failed to delete VPN rule"
@@ -2926,19 +2588,15 @@ msgstr "删除 VPN 规则失败"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Failed to discover interfaces"
-msgstr ""
+msgstr "探测接口失败"
 
 #: src/components/routes/network-discover.tsx
 msgid "Failed to discover network device"
-msgstr ""
+msgstr "探测网络设备失败"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Failed to export VPN findings"
 msgstr "导出 VPN 发现失败"
-
-#: src/components/routes/network-discover.tsx
-#~ msgid "Failed to import discovery result"
-#~ msgstr ""
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2946,58 +2604,54 @@ msgstr "导出 VPN 发现失败"
 #: src/components/routes/address-taxonomy.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load"
-msgstr ""
+msgstr "加载失败"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Failed to load address library references"
-msgstr ""
+msgstr "加载地址库引用失败"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-plans.tsx
 msgid "Failed to load agent"
-msgstr ""
+msgstr "加载 Agent 失败"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Failed to load agent plans"
-msgstr ""
+msgstr "加载 Agent 计划失败"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "Failed to load agent runs"
-msgstr ""
+msgstr "加载 Agent 运行记录失败"
 
 #: src/components/routes/agents.tsx
 msgid "Failed to load agents"
-msgstr ""
+msgstr "加载 Agent 列表失败"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Failed to load aggregate chart"
-msgstr ""
+msgstr "加载聚合图表失败"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Failed to load aggregate chart inputs"
-msgstr ""
+msgstr "加载聚合图表输入失败"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Failed to load aggregate graph"
-msgstr ""
+msgstr "加载聚合图像失败"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Failed to load aggregate graphs"
-msgstr ""
+msgstr "加载聚合图像失败"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Failed to load aggregate series"
-msgstr ""
+msgstr "加载聚合序列失败"
 
 #: src/components/routes/audit-logs.tsx
 msgid "Failed to load audit logs"
 msgstr "加载审计日志失败"
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Failed to load BGP metrics"
-#~ msgstr ""
 
 #: src/components/routes/core.tsx
 msgid "Failed to load BGP sessions"
@@ -3006,55 +2660,47 @@ msgstr "加载 BGP 会话失败"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Failed to load billing account"
-msgstr ""
+msgstr "加载计费账户失败"
 
 #: src/components/routes/billing.tsx
 msgid "Failed to load billing accounts"
-msgstr ""
+msgstr "加载计费账户列表失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load cities"
-msgstr ""
+msgstr "加载城市失败"
 
 #: src/components/routes/containers.tsx
 msgid "Failed to load container metrics"
-msgstr ""
+msgstr "加载容器指标失败"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to load dashboard"
-msgstr ""
+msgstr "加载仪表盘失败"
 
 #: src/components/routes/dashboards.tsx
 msgid "Failed to load dashboards"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Failed to load device resources"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Failed to load device traffic"
-#~ msgstr ""
+msgstr "加载仪表盘列表失败"
 
 #: src/components/routes/user-form.tsx
 msgid "Failed to load devices"
-msgstr ""
+msgstr "加载设备失败"
 
 #: src/components/routes/network-discover.tsx
 msgid "Failed to load discovery inputs"
-msgstr ""
+msgstr "加载探测参数失败"
 
 #: src/components/routes/export-detail.tsx
 msgid "Failed to load export"
-msgstr ""
+msgstr "加载导出任务失败"
 
 #: src/components/routes/exports.tsx
 msgid "Failed to load exports"
-msgstr ""
+msgstr "加载导出任务失败"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Failed to load Flow records"
-msgstr ""
+msgstr "加载 Flow 记录失败"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Failed to load Flow report"
@@ -3062,19 +2708,15 @@ msgstr "加载 Flow 报表失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load Geo catalog"
-msgstr ""
+msgstr "加载地域目录失败"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Failed to load import"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Failed to load interface health"
-#~ msgstr ""
+msgstr "加载导入任务失败"
 
 #: src/components/routes/network-device.tsx
 msgid "Failed to load inventory"
-msgstr ""
+msgstr "加载资产信息失败"
 
 #: src/components/routes/operation-jobs.tsx
 msgid "Failed to load jobs"
@@ -3082,11 +2724,11 @@ msgstr "加载任务失败"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Failed to load MIB module"
-msgstr ""
+msgstr "加载 MIB 模块失败"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Failed to load MIB modules"
-msgstr ""
+msgstr "加载 MIB 模块列表失败"
 
 #: src/components/routes/modules.tsx
 msgid "Failed to load modules"
@@ -3095,152 +2737,136 @@ msgstr "加载模块失败"
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Failed to load network device"
-msgstr ""
+msgstr "加载网络设备失败"
 
 #: src/components/routes/network-devices.tsx
 msgid "Failed to load network devices"
-msgstr ""
+msgstr "加载网络设备列表失败"
 
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Failed to load network port"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Failed to load OID mapping"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Failed to load OID mappings"
-#~ msgstr ""
+msgstr "加载网络端口失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load operators"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Failed to load optical power"
-#~ msgstr ""
+msgstr "加载运营商失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load overseas summary"
-msgstr ""
+msgstr "加载跨境流量摘要失败"
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "Failed to load panel"
-msgstr ""
+msgstr "加载面板失败"
 
 #: src/components/routes/billing.tsx
 msgid "Failed to load parties"
-msgstr ""
+msgstr "加载参与方列表失败"
 
 #: src/components/routes/billing.tsx
 msgid "Failed to load party"
-msgstr ""
+msgstr "加载参与方失败"
 
 #: src/components/routes/permission-form.tsx
 msgid "Failed to load permission"
-msgstr ""
+msgstr "加载权限失败"
 
 #: src/components/routes/permissions.tsx
 msgid "Failed to load permissions"
-msgstr ""
+msgstr "加载权限列表失败"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Failed to load port policy"
-msgstr ""
+msgstr "加载端口规则失败"
 
 #: src/components/routes/user-form.tsx
 msgid "Failed to load ports"
-msgstr ""
+msgstr "加载端口失败"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Failed to load prefixes"
-msgstr ""
+msgstr "加载地址段失败"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Failed to load provinces"
-msgstr ""
+msgstr "加载省份失败"
 
 #: src/components/routes/address-publications.tsx
 msgid "Failed to load publications"
-msgstr ""
+msgstr "加载发布记录失败"
 
 #: src/components/address-reference-picker.tsx
 msgid "Failed to load references"
-msgstr ""
+msgstr "加载引用失败"
 
 #: src/components/routes/user-form.tsx
 msgid "Failed to load resources"
-msgstr ""
+msgstr "加载资源失败"
 
 #: src/components/routes/retention.tsx
 msgid "Failed to load retention policies"
-msgstr ""
+msgstr "加载保留策略失败"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Failed to load revision"
-msgstr ""
+msgstr "加载修订版本失败"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Failed to load revision changes"
-msgstr ""
+msgstr "加载修订变更失败"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Failed to load revisions"
-msgstr ""
+msgstr "加载修订历史失败"
 
 #: src/components/routes/role-form.tsx
 msgid "Failed to load role"
-msgstr ""
+msgstr "加载角色失败"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Failed to load saved filters"
-msgstr ""
+msgstr "加载已保存筛选器失败"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to load saved graphs"
-msgstr ""
+msgstr "加载已保存图像失败"
 
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Failed to load SNMP profile"
-msgstr ""
+msgstr "加载 SNMP 配置档案失败"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/target-form.tsx
 msgid "Failed to load SNMP profiles"
-msgstr ""
+msgstr "加载 SNMP 配置档案失败"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Failed to load SNMP settings"
-msgstr ""
+msgstr "加载 SNMP 设置失败"
 
 #: src/components/routes/target-form.tsx
 msgid "Failed to load target"
-msgstr ""
+msgstr "加载目标失败"
 
 #: src/components/routes/target-detail.tsx
 msgid "Failed to load target metrics"
-msgstr ""
+msgstr "加载目标指标失败"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/targets.tsx
 msgid "Failed to load targets"
-msgstr ""
-
-#: src/components/routes/network-port.tsx
-#~ msgid "Failed to load traffic chart"
-#~ msgstr ""
+msgstr "加载目标失败"
 
 #: src/components/routes/traffic-defaults.tsx
 msgid "Failed to load traffic defaults"
-msgstr ""
+msgstr "加载流量默认规则失败"
 
 #: src/components/routes/user-form.tsx
 msgid "Failed to load user"
-msgstr ""
+msgstr "加载用户失败"
 
 #: src/components/routes/users.tsx
 msgid "Failed to load users"
@@ -3256,31 +2882,31 @@ msgstr "加载 VPN 规则失败"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to preview dashboard"
-msgstr ""
+msgstr "预览仪表盘失败"
 
 #: src/components/routes/historical-data.tsx
 msgid "Failed to preview historical data"
-msgstr ""
+msgstr "预览历史数据失败"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Failed to publish agent plan"
-msgstr ""
+msgstr "发布 Agent 计划失败"
 
 #: src/components/routes/network-device.tsx
 msgid "Failed to rediscover network device"
-msgstr ""
+msgstr "重新探测网络设备失败"
 
 #: src/components/routes/export-detail.tsx
 msgid "Failed to retry export"
-msgstr ""
+msgstr "重试导出任务失败"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to revoke agent"
-msgstr ""
+msgstr "吊销 Agent 失败"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to rotate agent token"
-msgstr ""
+msgstr "轮换 Agent 令牌失败"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -3290,65 +2916,57 @@ msgstr ""
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-taxonomy.tsx
 msgid "Failed to save"
-msgstr ""
+msgstr "保存失败"
 
 #: src/components/routes/agent-form.tsx
 msgid "Failed to save agent"
-msgstr ""
+msgstr "保存 Agent 失败"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Failed to save aggregate graph"
-msgstr ""
+msgstr "保存聚合图像失败"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Failed to save billing account"
-msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "Failed to save billing ports"
-#~ msgstr ""
+msgstr "保存计费账户失败"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to save dashboard"
-msgstr ""
+msgstr "保存仪表盘失败"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Failed to save filter"
-msgstr ""
+msgstr "保存筛选器失败"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "Failed to save MIB module"
-msgstr ""
+msgstr "保存 MIB 模块失败"
 
 #: src/components/routes/network-device-form.tsx
 msgid "Failed to save network device"
-msgstr ""
+msgstr "保存网络设备失败"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Failed to save network port"
-msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Failed to save OID mapping"
-#~ msgstr ""
+msgstr "保存网络端口失败"
 
 #: src/components/routes/billing.tsx
 msgid "Failed to save party"
-msgstr ""
+msgstr "保存参与方失败"
 
 #: src/components/routes/permission-form.tsx
 msgid "Failed to save permission"
-msgstr ""
+msgstr "保存权限失败"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Failed to save port policy"
-msgstr ""
+msgstr "保存端口规则失败"
 
 #: src/components/routes/retention.tsx
 msgid "Failed to save retention policy"
-msgstr ""
+msgstr "保存保留策略失败"
 
 #: src/components/routes/settings/layout.tsx
 msgid "Failed to save settings"
@@ -3356,43 +2974,27 @@ msgstr "保存设置失败"
 
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Failed to save SNMP profile"
-msgstr ""
+msgstr "保存 SNMP 配置档案失败"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Failed to save SNMP settings"
-msgstr ""
+msgstr "保存 SNMP 设置失败"
 
 #: src/components/routes/target-form.tsx
 msgid "Failed to save target"
-msgstr ""
+msgstr "保存目标失败"
 
 #: src/components/routes/traffic-defaults.tsx
 msgid "Failed to save traffic defaults"
-msgstr ""
+msgstr "保存流量默认规则失败"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Failed to save VPN rule"
 msgstr "保存 VPN 规则失败"
 
-#: src/components/routes/flow-search.tsx
-#~ msgid "Failed to search"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Failed to seed OID mappings"
-#~ msgstr ""
-
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Failed to send heartbeat"
 msgstr "发送 heartbeat 失败"
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Failed to send test notification"
-#~ msgstr "发送测试通知失败"
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "Failed to update alert"
-#~ msgstr "更新警报失败"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Failed to update VPN finding"
@@ -3405,7 +3007,7 @@ msgstr "失败: {0}"
 
 #: src/components/routes/agents.tsx
 msgid "Failures"
-msgstr ""
+msgstr "失败次数"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "False positive"
@@ -3415,7 +3017,7 @@ msgstr "误报"
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Family"
-msgstr ""
+msgstr "地址族"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Fast country, province, city, operator and business reporting."
@@ -3424,24 +3026,24 @@ msgstr "快速的国家/地区、省份、城市、运营商与业务报表。"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/export-detail.tsx
 msgid "File"
-msgstr ""
+msgstr "文件"
 
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Filter"
-msgstr ""
+msgstr "筛选器"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Filter expression"
-msgstr ""
+msgstr "筛选表达式"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Filter expression is required"
-msgstr ""
+msgstr "筛选表达式不能为空"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Filter fields include IP/CIDR, ASN, ISP, Geo, ports, protocol, direction and resources. Operators: =, !=, IN, NOT IN, >, >=, <, <= with AND/OR/NOT and parentheses. Press Ctrl/Cmd+Enter to apply."
-msgstr ""
+msgstr "筛选字段包括 IP/CIDR、ASN、ISP、地域、端口、协议、方向和资源。支持 =、!=、IN、NOT IN、>、>=、<、<=，以及 AND/OR/NOT 和括号。按 Ctrl/Cmd+Enter 应用。"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/routes/system/chart-card.tsx
@@ -3452,24 +3054,20 @@ msgstr "过滤..."
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Filters on fields not present in the 1m/1h rollups use the bounded base-fact path and are limited to 24 hours until a matching asynchronous index is published."
-msgstr ""
+msgstr "筛选 1m/1h 汇总中不存在的字段时，将使用受限的基础事实查询；在发布匹配的异步索引前，查询范围限制为 24 小时。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Find top destination addresses, trends and related dimensions."
-msgstr ""
+msgstr "查看目的地址 Top、趋势和关联维度。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Find top source addresses, trends and related dimensions."
-msgstr ""
+msgstr "查看源地址 Top、趋势和关联维度。"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Findings"
 msgstr "发现"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Fingerprint"
-#~ msgstr "指纹"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Firmware"
@@ -3478,19 +3076,15 @@ msgstr "固件"
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 msgid "Flow"
-msgstr ""
-
-#: src/components/navbar.tsx
-#~ msgid "Flow & Data"
-#~ msgstr ""
+msgstr "流量"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Flow detail export queued"
-msgstr ""
+msgstr "Flow 明细导出任务已排队"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Flow export queued"
-msgstr ""
+msgstr "Flow 导出任务已排队"
 
 #: src/components/navbar.tsx
 #: src/components/routes/flow-reports.tsx
@@ -3500,20 +3094,11 @@ msgstr "Flow 概览"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Flow record details"
-msgstr ""
+msgstr "Flow 记录明细"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Flow report export queued"
 msgstr "Flow 报表导出已排队"
-
-#: src/components/navbar.tsx
-#: src/components/routes/flow-search.tsx
-#~ msgid "Flow Search"
-#~ msgstr ""
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "For <0>{min}</0> {min, plural, one {minute} other {minutes}}"
-#~ msgstr "持续<0>{min}</0> {min, plural, one {分钟} other {分钟}}"
 
 #: src/components/login/auth-form.tsx
 msgid "Forgot password?"
@@ -3524,12 +3109,7 @@ msgstr "忘记密码？"
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 msgid "Format"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Button to copy install command"
-#~ msgid "FreeBSD command"
-#~ msgstr "FreeBSD 命令"
+msgstr "格式"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Fri"
@@ -3539,15 +3119,15 @@ msgstr "周五"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "From"
-msgstr ""
+msgstr "开始"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "from stored snapshots"
-msgstr ""
+msgstr "来自已保存快照"
 
 #: src/components/routes/network-device.tsx
 msgid "FRU only"
-msgstr ""
+msgstr "仅 FRU"
 
 #. Context: Battery state
 #: src/components/routes/system/info-bar.tsx
@@ -3557,7 +3137,7 @@ msgstr "满电"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Full width"
-msgstr ""
+msgstr "全宽"
 
 #. Context: General settings
 #: src/components/routes/settings/general.tsx
@@ -3576,7 +3156,7 @@ msgstr "地理目录不可用"
 
 #: src/components/routes/address-sets.tsx
 msgid "Geographies"
-msgstr ""
+msgstr "地域"
 
 #: src/components/routes/address-library.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -3584,19 +3164,15 @@ msgstr ""
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Geography"
-msgstr ""
+msgstr "地域"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Geography combination"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Global"
-#~ msgstr "全局"
+msgstr "地域组合"
 
 #: src/components/routes/system.tsx
 msgid "GPU"
-msgstr ""
+msgstr "GPU"
 
 #: src/components/routes/system/charts/gpu-charts.tsx
 msgid "GPU Engines"
@@ -3606,13 +3182,13 @@ msgstr "GPU 引擎"
 msgid "GPU Power Draw"
 msgstr "GPU 功耗"
 
-#: src/lib/alerts.ts
-#~ msgid "GPU Usage"
-#~ msgstr "GPU 使用率"
+#: src/components/routes/user-form.tsx
+msgid "Grant individual ports without exposing every port on a device."
+msgstr "可单独授权端口，而不开放设备上的全部端口。"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Graph"
-msgstr ""
+msgstr "图像"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/network-device.tsx
@@ -3622,11 +3198,7 @@ msgstr "图表名称"
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Graph type"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Graphs"
-#~ msgstr ""
+msgstr "图表类型"
 
 #: src/components/routes/system/info-bar.tsx
 msgid "Grid"
@@ -3634,19 +3206,19 @@ msgstr "网格"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Group by"
-msgstr ""
+msgstr "分组维度"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Group by device"
-msgstr ""
+msgstr "按设备分组"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Half width"
-msgstr ""
+msgstr "半宽"
 
 #: src/components/routes/network-device.tsx
 msgid "Hardware"
-msgstr ""
+msgstr "硬件"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/network-device.tsx
@@ -3655,16 +3227,8 @@ msgid "Health"
 msgstr "健康"
 
 #: src/components/routes/network-device.tsx
-#~ msgid "Health Samples"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
 msgid "Healthy"
-msgstr ""
-
-#: src/components/routes/settings/layout.tsx
-#~ msgid "Heartbeat"
-#~ msgstr "心跳"
+msgstr "健康"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Heartbeat Monitoring"
@@ -3677,7 +3241,7 @@ msgstr "Heartbeat 发送成功"
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "High precision days"
-msgstr ""
+msgstr "高精度保留天数"
 
 #: src/components/routes/flow-reports.tsx
 msgid "High-risk hosts"
@@ -3685,26 +3249,21 @@ msgstr "高风险主机"
 
 #: src/components/routes/dashboards.tsx
 msgid "Highest version"
-msgstr ""
+msgstr "版本最高优先"
 
 #: src/components/navbar.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/historical-data.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Historical Data"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Button to copy install command"
-#~ msgid "Homebrew command"
-#~ msgstr "Homebrew 安装命令"
+msgstr "历史数据"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 msgid "Host"
-msgstr ""
+msgstr "主机"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
@@ -3712,16 +3271,8 @@ msgid "Host / IP"
 msgstr "主机/IP"
 
 #: src/components/routes/network-device-form.tsx
-#~ msgid "Host / IP / Domain"
-#~ msgstr ""
-
-#: src/components/routes/network-device-form.tsx
 msgid "Host is required"
 msgstr "主机/IP 不能为空"
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Hostname"
-#~ msgstr ""
 
 #: src/components/navbar.tsx
 #: src/components/routes/targets.tsx
@@ -3739,7 +3290,7 @@ msgstr "HTTP 方法：POST、GET 或 HEAD (默认：POST)"
 
 #: src/components/routes/network-device.tsx
 msgid "HW Rev"
-msgstr ""
+msgstr "硬件版本"
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average operation time (iostat await)"
@@ -3758,15 +3309,11 @@ msgstr "I/O 利用率"
 
 #: src/components/routes/historical-data.tsx
 msgid "ID"
-msgstr ""
+msgstr "ID"
 
 #: src/components/routes/agents.tsx
 msgid "ID A–Z"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "Identity"
-#~ msgstr "身份绑定"
+msgstr "ID A–Z"
 
 #. Context: Battery state
 #: src/components/routes/core.tsx
@@ -3783,7 +3330,7 @@ msgstr "如果您丢失了管理员账户的密码，可以使用以下命令重
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
 msgid "ifIndex"
-msgstr ""
+msgstr "ifIndex"
 
 #: src/components/containers-table/containers-table-columns.tsx
 msgctxt "Docker image"
@@ -3792,33 +3339,24 @@ msgstr "镜像"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Import"
-msgstr ""
+msgstr "导入"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Import slot"
-msgstr ""
+msgstr "导入槽位"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Imported"
-msgstr ""
+msgstr "已导入"
 
 #: src/components/routes/address-library.tsx
 msgid "Imports"
-msgstr ""
+msgstr "导入"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
 msgid "In"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-port.tsx
-#~ msgid "In errors"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "in selected range"
-#~ msgstr ""
+msgstr "入"
 
 #: src/components/routes/billing.tsx
 msgid "Inactive"
@@ -3842,7 +3380,7 @@ msgstr "从本网视角看的入向与出向。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Inbound and outbound traffic from the published overseas rollup."
-msgstr ""
+msgstr "来自已发布跨境汇总的入站与出站流量。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Inbound current / total"
@@ -3850,81 +3388,75 @@ msgstr "入向 当前/总量"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include all"
-msgstr ""
+msgstr "包含全部"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include any"
-msgstr ""
+msgstr "包含任一"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Include billing port"
-msgstr ""
+msgstr "包含计费端口"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include Other"
-msgstr ""
+msgstr "包含其他"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
 msgid "Included sets"
-msgstr ""
+msgstr "包含集合"
 
 #: src/components/routes/network-device.tsx
 msgid "Index"
-msgstr ""
+msgstr "索引"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Index ascending"
-msgstr ""
+msgstr "按索引升序"
 
 #: src/components/routes/agent-form.tsx
 msgid "Initial token"
-msgstr ""
+msgstr "初始令牌"
 
 #: src/components/install/install.tsx
 msgid "Initialize the databases and create the first administrator."
-msgstr ""
+msgstr "初始化数据库并创建首个管理员。"
 
 #: src/components/install/install.tsx
 msgid "Initialize Watchdog"
-msgstr ""
+msgstr "初始化 Watchdog"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "off_net_in_province"
+msgstr "异网・省内"
 
 #: src/components/routes/address-math.tsx
 msgid "Inputs"
-msgstr ""
+msgstr "输入"
 
 #: src/components/install/install.tsx
 msgid "Install Watchdog"
-msgstr ""
+msgstr "安装 Watchdog"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Interface Health"
-#~ msgstr ""
-
+#. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
-msgid "Internal"
+msgid "flow.category.internal"
 msgstr "内网"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Interval"
 msgstr "间隔"
 
-#: src/components/login/auth-form.tsx
-#~ msgid "Invalid email address."
-#~ msgstr "无效的电子邮件地址。"
-
-#: src/components/routes/address-sets.tsx
-#~ msgid "Invalid JSON selector"
-#~ msgstr ""
-
 #: src/components/routes/network-device.tsx
 msgid "Inventory"
-msgstr ""
+msgstr "资产"
 
 #: src/components/routes/network-device.tsx
 msgid "Inventory class"
-msgstr ""
+msgstr "资产类别"
 
 #: src/components/routes/flow-reports.tsx
 msgid "IP address"
@@ -3932,11 +3464,11 @@ msgstr "IP 地址"
 
 #: src/components/routes/address-sets.tsx
 msgid "IP families"
-msgstr ""
+msgstr "IP 地址族"
 
 #: src/components/routes/address-sets.tsx
 msgid "IP families must be 4 or 6"
-msgstr ""
+msgstr "IP 地址族必须为 4 或 6"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "IP protocols"
@@ -3944,24 +3476,24 @@ msgstr "IP 协议"
 
 #: src/components/routes/address-math.tsx
 msgid "IPv4 addresses"
-msgstr ""
+msgstr "IPv4 地址"
 
 #: src/components/routes/address-math.tsx
 msgid "IPv4 target prefix"
-msgstr ""
+msgstr "IPv4 目标前缀"
 
 #: src/components/routes/address-math.tsx
 msgid "IPv6 addresses"
-msgstr ""
+msgstr "IPv6 地址"
 
 #: src/components/routes/address-math.tsx
 msgid "IPv6 target prefix"
-msgstr ""
+msgstr "IPv6 目标前缀"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Issues"
-msgstr ""
+msgstr "问题"
 
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn-rules.tsx
@@ -3971,21 +3503,21 @@ msgstr "分类"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "Label"
-msgstr ""
+msgstr "标签"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label key"
-msgstr ""
+msgstr "标签键"
 
 #: src/components/routes/address-sets.tsx
 msgid "Label selector"
-msgstr ""
+msgstr "标签选择器"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Label value"
-msgstr ""
+msgstr "标签值"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -3998,12 +3530,13 @@ msgstr ""
 #: src/components/routes/target-form.tsx
 #: src/components/routes/targets.tsx
 msgid "Labels"
-msgstr ""
+msgstr "标签"
 
 #: src/components/routes/network-device.tsx
 msgid "LAG groups"
-msgstr ""
+msgstr "链路聚合组"
 
+#: src/components/language-toggle.tsx
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Language"
@@ -4011,28 +3544,28 @@ msgstr "语言"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Last"
-msgstr ""
+msgstr "最近"
 
 #: src/components/routes/agents.tsx
 msgid "Last Error"
-msgstr ""
+msgstr "最近错误"
 
 #: src/components/routes/agents.tsx
 msgid "Last Run"
-msgstr ""
+msgstr "最近运行"
 
 #: src/components/routes/agents.tsx
 msgid "Last seen"
-msgstr ""
+msgstr "最后在线"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/network-devices.tsx
 msgid "Last Seen"
-msgstr ""
+msgstr "最后在线"
 
 #: src/components/routes/agents.tsx
 msgid "Last Success"
-msgstr ""
+msgstr "最近成功"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -4040,11 +3573,7 @@ msgstr ""
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing.tsx
 msgid "Layer"
-msgstr ""
-
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Layout"
-#~ msgstr "布局"
+msgstr "视角"
 
 #: src/components/routes/settings/general.tsx
 msgid "Layout width"
@@ -4060,27 +3589,28 @@ msgstr "留空则使用所选配置模板的 community。"
 
 #: src/components/routes/address-math.tsx
 msgid "Left / input set"
-msgstr ""
+msgstr "左侧 / 输入集合"
 
 #: src/components/routes/address-math.tsx
 msgid "Left range"
-msgstr ""
+msgstr "左侧范围"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Level"
-msgstr ""
+msgstr "层级"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Library"
-msgstr ""
+msgstr "地址库"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Lifecycle"
 msgstr "生命周期"
 
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Light"
-msgstr ""
+msgstr "浅色"
 
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -4089,28 +3619,11 @@ msgstr "限制"
 
 #: src/components/routes/address-library.tsx
 msgid "Lines"
-msgstr ""
+msgstr "线路"
 
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "Load Average"
 msgstr "系统负载"
-
-#: src/lib/alerts.ts
-#~ msgid "Load Average 15m"
-#~ msgstr "15 分钟内的平均负载"
-
-#: src/lib/alerts.ts
-#~ msgid "Load Average 1m"
-#~ msgstr "1 分钟负载平均值"
-
-#: src/lib/alerts.ts
-#~ msgid "Load Average 5m"
-#~ msgstr "5 分钟内的平均负载"
-
-#. Short label for load average
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Load Avg"
-#~ msgstr "负载"
 
 #: src/components/address-reference-picker.tsx
 #: src/components/routes/audit-logs.tsx
@@ -4124,11 +3637,7 @@ msgstr "加载状态"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Loading chart data..."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Loading inventory..."
-#~ msgstr ""
+msgstr "正在加载图表数据..."
 
 #: src/components/address-reference-picker.tsx
 #: src/components/address-reference-picker.tsx
@@ -4150,11 +3659,16 @@ msgstr "加载中..."
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Loading…"
-msgstr ""
+msgstr "正在加载…"
 
 #: src/components/routes/network-device.tsx
 msgid "Local AS"
-msgstr ""
+msgstr "本地 AS"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_local_city"
+msgstr "本网・本市"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Local hosts with overseas traffic"
@@ -4166,7 +3680,7 @@ msgstr "本地 IP"
 
 #: src/components/routes/user-form.tsx
 msgid "Local login identity, status and operation roles."
-msgstr ""
+msgstr "维护本地登录身份、状态和操作角色。"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Local port"
@@ -4174,7 +3688,7 @@ msgstr "本地端口"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Local side"
-msgstr ""
+msgstr "本地侧"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
@@ -4183,7 +3697,7 @@ msgstr "位置"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Location and operator filters combined with protocol or address dimensions use the bounded cross-dimension path. Ranges over 24 hours require a published asynchronous index."
-msgstr ""
+msgstr "地域或运营商与协议、地址维度组合筛选时使用受限的跨维查询；超过 24 小时的范围需要已发布的异步索引。"
 
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
@@ -4203,33 +3717,25 @@ msgstr "登录尝试失败"
 msgid "Logs"
 msgstr "日志"
 
-#: src/components/routes/flow-search.tsx
-#~ msgid "LogsQL Query"
-#~ msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Looking instead for where to create alerts? Click the bell <0/> icons in the systems table."
-#~ msgstr "在寻找创建警报的位置吗？点击系统表中的铃铛<0/>图标。"
-
 #: src/components/routes/address-imports.tsx
 msgid "Lookup"
-msgstr ""
+msgstr "查询"
 
 #: src/components/routes/address-imports.tsx
 msgid "Lookup failed"
-msgstr ""
+msgstr "查询失败"
 
 #: src/components/routes/address-math.tsx
 msgid "Lossless"
-msgstr ""
+msgstr "无损"
 
 #: src/components/routes/network-device.tsx
 msgid "MAC Address"
-msgstr ""
+msgstr "MAC 地址"
 
 #: src/components/routes/network-device.tsx
 msgid "MAC ascending"
-msgstr ""
+msgstr "按 MAC 升序"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Main PID"
@@ -4237,35 +3743,27 @@ msgstr "主进程 ID"
 
 #: src/components/routes/address-publications.tsx
 msgid "Manage"
-msgstr ""
-
-#: src/components/routes/settings/layout.tsx
-#~ msgid "Manage display and notification preferences."
-#~ msgstr "管理显示和通知偏好。"
+msgstr "管理"
 
 #: src/components/routes/settings/layout.tsx
 msgid "Manage display preferences."
-msgstr ""
+msgstr "管理显示偏好设置。"
 
 #: src/components/routes/retention.tsx
 msgid "Manual"
-msgstr ""
+msgstr "手工"
 
 #: src/components/routes/retention.tsx
 msgid "Manual cleanup"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Manual setup instructions"
-#~ msgstr "手动设置说明"
+msgstr "手工清理"
 
 #: src/components/routes/network-device.tsx
 msgid "Manufacturer"
-msgstr ""
+msgstr "制造商"
 
 #: src/components/routes/network-device.tsx
 msgid "Manufacturer A–Z"
-msgstr ""
+msgstr "制造商 A–Z"
 
 #. Chart select field. Please try to keep this short.
 #: src/components/routes/system/chart-card.tsx
@@ -4275,19 +3773,23 @@ msgstr "1分钟内最大值"
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Max memberships"
-msgstr ""
+msgstr "最大成员数"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Maximum"
-msgstr ""
+msgstr "最大值"
 
 #: src/components/routes/dashboards.tsx
 msgid "Me"
-msgstr ""
+msgstr "我"
 
 #: src/components/routes/address-sets.tsx
 msgid "Members"
-msgstr ""
+msgstr "成员"
+
+#: src/components/routes/user-form.tsx
+msgid "Membership grants follow the selected device groups."
+msgstr "按所选设备组成员关系授予访问权限。"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/containers.tsx
@@ -4316,24 +3818,24 @@ msgstr "Docker 容器的内存使用率"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Merge selected"
-msgstr ""
+msgstr "合并所选"
 
 #: src/components/routes/network-device.tsx
 msgid "Message"
-msgstr ""
+msgstr "消息"
 
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port.tsx
 msgid "Metadata"
-msgstr ""
+msgstr "元数据"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Metadata key"
-msgstr ""
+msgstr "元数据键"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Metadata value"
-msgstr ""
+msgstr "元数据值"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/flow-reports.tsx
@@ -4347,27 +3849,24 @@ msgid "Metric series"
 msgstr "指标序列"
 
 #: src/components/routes/aggregate-charts.tsx
-#~ msgid "metrics"
-#~ msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/user-form.tsx
 msgid "Metrics"
 msgstr "指标"
 
 #: src/components/routes/snmp-mib-module-form.tsx
 msgid "MIB module not found"
-msgstr ""
+msgstr "未找到 MIB 模块"
 
 #: src/components/navbar.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "MIB Modules"
-msgstr ""
+msgstr "MIB 模块"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Minimum"
-msgstr ""
+msgstr "最小值"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Minimum active buckets"
@@ -4395,33 +3894,33 @@ msgstr "最小对称比"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Missing"
-msgstr ""
+msgstr "缺失"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Missing / reset / gap"
-msgstr ""
+msgstr "缺失 / 重置 / 间断"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Missing graph references:"
-msgstr ""
+msgstr "缺失的图像引用："
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Mixed classification versions"
-msgstr ""
+msgstr "混合分类版本"
 
 #: src/components/routes/address-imports.tsx
 msgid "MMDB or IPDB file"
-msgstr ""
+msgstr "MMDB 或 IPDB 文件"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/network-device.tsx
 msgid "Mode"
-msgstr ""
+msgstr "模式"
 
 #: src/components/routes/network-device.tsx
 msgid "Mode ascending"
-msgstr ""
+msgstr "按模式升序"
 
 #. Device model
 #: src/components/routes/network-device-form.tsx
@@ -4450,35 +3949,35 @@ msgstr "周一"
 
 #: src/components/address-reference-picker.tsx
 msgid "more selected"
-msgstr ""
+msgstr "个其他已选择项"
 
 #: src/components/routes/agents.tsx
 msgid "Most failures"
-msgstr ""
+msgstr "失败最多"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Move panel down"
-msgstr ""
+msgstr "下移面板"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Move panel up"
-msgstr ""
+msgstr "上移面板"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Multi-dimension and Sankey queries read true tuples from the same Flow facts and are synchronously limited to 24 hours. Longer ranges require a published asynchronous joint index."
-msgstr ""
+msgstr "多维和桑基查询从同一 Flow 事实读取真实元组，同步查询限制为 24 小时；更长范围需要已发布的异步联合索引。"
 
 #: src/components/navbar.tsx
 msgid "Multi-dimensional Analysis"
-msgstr ""
+msgstr "多维分析"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Multi-dimensional Flow Analysis"
-msgstr ""
+msgstr "多维 Flow 分析"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Multiple devices"
-msgstr ""
+msgstr "多个设备"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/address-sets.tsx
@@ -4513,28 +4012,24 @@ msgstr "名称"
 #: src/components/routes/dashboards.tsx
 #: src/components/routes/network-device.tsx
 msgid "Name A–Z"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Name and host are required"
-#~ msgstr ""
+msgstr "Name A–Z"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Name ascending"
-msgstr ""
+msgstr "按名称升序"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Name descending"
-msgstr ""
+msgstr "按名称降序"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/dashboard-form.tsx
 msgid "Name is required"
-msgstr ""
+msgstr "名称不能为空"
 
 #: src/components/containers-table/containers-table-columns.tsx
 msgid "Net"
@@ -4546,13 +4041,9 @@ msgstr "网络"
 msgid "Network"
 msgstr "网络"
 
-#: src/components/routes/target-detail.tsx
-#~ msgid "Network Asset"
-#~ msgstr ""
-
 #: src/components/navbar.tsx
 msgid "Network Configuration"
-msgstr ""
+msgstr "网络配置"
 
 #: src/components/routes/network-device.tsx
 msgid "Network Device"
@@ -4560,7 +4051,7 @@ msgstr "网络设备"
 
 #: src/components/routes/network-device-form.tsx
 msgid "Network device ID is required"
-msgstr ""
+msgstr "网络设备 ID 不能为空"
 
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
@@ -4569,21 +4060,16 @@ msgstr "网络设备"
 
 #: src/components/routes/role-form.tsx
 msgid "Network Operator"
-msgstr ""
+msgstr "网络运营商"
 
 #: src/components/routes/network-port.tsx
 msgid "Network Port"
-msgstr ""
-
-#: src/components/routes/network-devices.tsx
-#: src/components/routes/network-devices.tsx
-#~ msgid "Network Target"
-#~ msgstr ""
+msgstr "网络端口"
 
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Network Targets"
-msgstr ""
+msgstr "网络目标"
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Network traffic of docker containers"
@@ -4603,29 +4089,25 @@ msgstr "网络单位"
 
 #: src/components/routes/agent-form.tsx
 msgid "New agent token"
-msgstr ""
+msgstr "新 Agent 令牌"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "New Filter"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "New role name"
-#~ msgstr "新角色名称"
+msgstr "新建筛选器"
 
 #: src/components/routes/exports.tsx
 msgid "Newest first"
-msgstr ""
+msgstr "最新优先"
 
 #: src/components/routes/dashboard-form.tsx
 #: src/components/routes/user-form.tsx
 msgid "Next"
-msgstr ""
+msgstr "下一页"
 
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "no"
-msgstr ""
+msgstr "否"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -4637,51 +4119,43 @@ msgstr "否"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "No active import in this slot. Upload and activate one in the Imports tab."
-msgstr ""
+msgstr "此槽位没有已启用的导入数据。请在导入页上传并启用。"
 
 #: src/components/routes/network-device.tsx
 msgid "No active warning, error, or critical events."
-msgstr ""
+msgstr "当前没有警告、错误或严重事件。"
 
 #: src/components/routes/address-imports.tsx
 msgid "No address imports found."
-msgstr ""
+msgstr "未找到地址库导入记录。"
 
 #: src/components/routes/address-sets.tsx
 msgid "No address sets found."
-msgstr ""
+msgstr "未找到地址集合。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "No adjustments."
-msgstr ""
+msgstr "暂无调整记录。"
 
 #: src/components/routes/agent-plans.tsx
 msgid "No agent plans found."
-msgstr ""
+msgstr "未找到 Agent 计划。"
 
 #: src/components/routes/agent-runs.tsx
 msgid "No agent runs found."
-msgstr ""
+msgstr "未找到 Agent 运行记录。"
 
 #: src/components/routes/agents.tsx
 msgid "No agents found."
-msgstr ""
-
-#: src/components/routes/aggregate-graphs.tsx
-#~ msgid "No aggregate graphs found."
-#~ msgstr ""
+msgstr "未找到 Agent。"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "No aggregate graphs found. Compose one from the Aggregate Charts page and save it."
-msgstr ""
+msgstr "未找到聚合图像。请在聚合图表页面组合并保存图像。"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "No aggregate samples are available for the current selection."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No alerts. Threshold-based alerting is not yet configured for this device."
-#~ msgstr ""
+msgstr "当前选择没有可用的聚合样本。"
 
 #: src/components/routes/audit-logs.tsx
 msgid "No audit records match the filters."
@@ -4690,10 +4164,6 @@ msgstr "没有匹配筛选条件的审计记录。"
 #: src/components/routes/operation-jobs.tsx
 msgid "No background jobs."
 msgstr "暂无后台任务。"
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No BGP data in this range."
-#~ msgstr ""
 
 #: src/components/routes/network-device.tsx
 msgid "No BGP sessions found."
@@ -4705,11 +4175,11 @@ msgstr "暂无 BGP 会话。网络设备完成 SNMP 发现后会显示会话。"
 
 #: src/components/routes/billing.tsx
 msgid "No billing accounts found."
-msgstr ""
+msgstr "未找到计费账户。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "No billing periods found."
-msgstr ""
+msgstr "未找到计费周期。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No business traffic"
@@ -4717,15 +4187,11 @@ msgstr "无业务流量"
 
 #: src/components/routes/address-revisions.tsx
 msgid "No changes in this revision."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No collection events recorded yet."
-#~ msgstr ""
+msgstr "此修订版本没有变更。"
 
 #: src/components/routes/dashboards.tsx
 msgid "No dashboards found."
-msgstr ""
+msgstr "未找到仪表盘。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No data"
@@ -4733,7 +4199,7 @@ msgstr "暂无数据"
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "No data in this range."
-msgstr ""
+msgstr "此时间范围内没有数据。"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
@@ -4743,31 +4209,19 @@ msgstr "未发现依赖资源。"
 
 #: src/components/routes/network-devices.tsx
 msgid "No devices match the filter."
-msgstr ""
+msgstr "没有设备符合筛选条件。"
 
 #: src/components/routes/address-publications.tsx
 msgid "No dimension publications found."
-msgstr ""
-
-#: src/components/routes/target-detail.tsx
-#~ msgid "No discovered network device is bound to this target yet."
-#~ msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "No discovered ports for selected targets."
-#~ msgstr ""
+msgstr "未找到维度发布记录。"
 
 #: src/components/routes/aggregate-graph-form.tsx
 msgid "No discovered ports."
-msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "No discovered ports. Discover or import SNMP interfaces before computing traffic billing."
-#~ msgstr ""
+msgstr "未探测到端口。"
 
 #: src/components/routes/network-device.tsx
 msgid "No down ports."
-msgstr ""
+msgstr "没有故障端口。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No endpoint traffic"
@@ -4775,11 +4229,11 @@ msgstr "无端点流量"
 
 #: src/components/routes/network-device.tsx
 msgid "No events yet. Events appear on interface status changes and SNMP traps."
-msgstr ""
+msgstr "暂无事件。接口状态变化和 SNMP Trap 将生成事件。"
 
 #: src/components/routes/exports.tsx
 msgid "No exports found."
-msgstr ""
+msgstr "未找到导出任务。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No findings"
@@ -4787,19 +4241,15 @@ msgstr "无发现"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "No Flow points found"
-msgstr ""
+msgstr "未找到 Flow 数据点"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "No Flow rows found"
-msgstr ""
-
-#: src/components/routes/flow-search.tsx
-#~ msgid "No flows found."
-#~ msgstr ""
+msgstr "未找到 Flow 数据行"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "No grouping"
-msgstr ""
+msgstr "不分组"
 
 #: src/components/routes/targets.tsx
 msgid "No hosts found."
@@ -4807,63 +4257,47 @@ msgstr "暂无主机。"
 
 #: src/components/routes/address-imports.tsx
 msgid "No imported prefixes found."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No interface health data in this range."
-#~ msgstr ""
+msgstr "未找到已导入地址段。"
 
 #: src/components/routes/network-device.tsx
 msgid "No LAG groups discovered (IEEE8023-LAG-MIB not supported or empty)."
-msgstr ""
+msgstr "未探测到链路聚合组（不支持 IEEE8023-LAG-MIB 或内容为空）。"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "No matching Flow records"
-msgstr ""
+msgstr "未找到匹配的 Flow 记录"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "No metric samples found for this range."
-msgstr ""
+msgstr "此时间范围内未找到指标样本。"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "No MIB modules found."
-msgstr ""
-
-#: src/components/routes/network-devices.tsx
-#~ msgid "No network devices found."
-#~ msgstr ""
+msgstr "未找到 MIB 模块。"
 
 #: src/components/routes/network-devices.tsx
 msgid "No network targets found."
-msgstr ""
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "No OID mappings found."
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No optical power data in this range."
-#~ msgstr ""
+msgstr "未找到网络目标。"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "No panels. Add a saved graph to compose this dashboard."
-msgstr ""
+msgstr "暂无面板。添加已保存图像以组成此仪表盘。"
 
 #: src/components/routes/billing.tsx
 msgid "No parties found."
-msgstr ""
+msgstr "未找到参与方。"
 
 #: src/components/routes/permissions.tsx
 msgid "No permissions found."
-msgstr ""
+msgstr "未找到权限。"
 
 #: src/components/routes/network-device.tsx
 msgid "No physical entities discovered. Click Rediscover to probe ENTITY-MIB."
-msgstr ""
+msgstr "未探测到物理实体。点击重新探测以查询 ENTITY-MIB。"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "No ports"
-msgstr ""
+msgstr "没有端口"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "No ports discovered yet"
@@ -4872,48 +4306,36 @@ msgstr "尚未发现任何端口"
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "No ports found."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No ports match the filter."
-#~ msgstr ""
+msgstr "未找到端口。"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "No ports match the search."
 msgstr "没有匹配的端口。"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "No ports to aggregate"
-#~ msgstr ""
-
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "No prefixes found."
-msgstr ""
+msgstr "未找到地址段。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "No reconciliation issues."
-msgstr ""
+msgstr "没有对账问题。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "No reconciliation runs."
-msgstr ""
+msgstr "没有对账运行记录。"
 
 #: src/components/address-reference-picker.tsx
 msgid "No references found."
-msgstr ""
+msgstr "未找到引用。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No report data."
 msgstr "暂无报表数据。"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "No resource data in this range."
-#~ msgstr ""
-
 #: src/components/routes/user-form.tsx
 msgid "No resources found."
-msgstr ""
+msgstr "未找到资源。"
 
 #: src/components/command-palette.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -4930,11 +4352,11 @@ msgstr "无结果。"
 
 #: src/components/routes/retention.tsx
 msgid "No retention policies found."
-msgstr ""
+msgstr "未找到保留策略。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "No revisions found."
-msgstr ""
+msgstr "未找到修订记录。"
 
 #: src/components/routes/user-form.tsx
 #: src/components/routes/users.tsx
@@ -4947,31 +4369,27 @@ msgstr "此设备没有可用的 S.M.A.R.T. 属性。"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "No samples in this range."
-msgstr ""
+msgstr "此时间范围内没有样本。"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "No saved Flow filters found."
-msgstr ""
+msgstr "未找到已保存的 Flow 筛选器。"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "No saved graphs found."
-msgstr ""
+msgstr "未找到已保存图像。"
 
 #: src/components/routes/network-device.tsx
 msgid "No saved graphs include this device yet."
-msgstr ""
+msgstr "暂无包含此设备的已保存图像。"
 
 #: src/components/routes/network-device.tsx
 msgid "No sensor alerts."
-msgstr ""
+msgstr "没有传感器告警。"
 
 #: src/components/routes/network-device.tsx
 msgid "No sensors discovered."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No sensors found."
-#~ msgstr ""
+msgstr "未探测到传感器。"
 
 #: src/components/routes/target-form.tsx
 msgid "No SNMP profile is configured."
@@ -4979,32 +4397,15 @@ msgstr "尚未配置 SNMP 配置。"
 
 #: src/components/routes/snmp-profiles.tsx
 msgid "No SNMP profiles found."
-msgstr ""
-
-#: src/components/systems-table/systems-table.tsx
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "No systems found."
-#~ msgstr "未找到系统。"
-
-#: src/components/routes/targets.tsx
-#~ msgid "No targets found."
-#~ msgstr ""
+msgstr "未找到 SNMP 配置档案。"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "No taxonomy entries found."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "No traffic data in this range."
-#~ msgstr ""
+msgstr "未找到分类条目。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No traffic in the selected window."
 msgstr "所选时段内无流量。"
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "No unused network targets found. Create one here with host, IP, or domain."
-#~ msgstr ""
 
 #: src/components/routes/users.tsx
 msgid "No users found."
@@ -5012,7 +4413,7 @@ msgstr "暂无用户。"
 
 #: src/components/routes/network-device.tsx
 msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
-msgstr ""
+msgstr "未探测到 VLAN（不支持 Q-BRIDGE-MIB 或内容为空）。"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "No VPN findings found in this time range."
@@ -5024,32 +4425,28 @@ msgstr "未找到 VPN 规则草稿。"
 
 #: src/components/routes/network-device.tsx
 msgid "Non-FRU only"
-msgstr ""
+msgstr "仅非 FRU"
 
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "None"
-msgstr ""
+msgstr "无"
 
 #: src/components/routes/network-device.tsx
 msgid "not established"
-msgstr ""
-
-#: src/components/routes/users.tsx
-#~ msgid "Not linked"
-#~ msgstr "未绑定"
+msgstr "未建立"
 
 #: src/components/routes/network-device.tsx
 msgid "not ok"
-msgstr ""
+msgstr "异常"
 
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/retention.tsx
 msgid "Notes"
-msgstr ""
+msgstr "备注"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Nothing selected: all ports are aggregated."
@@ -5057,17 +4454,7 @@ msgstr "未选择时聚合全部端口。"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Nothing to merge — no adjacent prefixes share the same attribution."
-msgstr ""
-
-#: src/components/command-palette.tsx
-#: src/components/routes/settings/layout.tsx
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Notifications"
-#~ msgstr "通知"
-
-#: src/components/login/auth-form.tsx
-#~ msgid "OAuth 2 / OIDC support"
-#~ msgstr "支持 OAuth 2/OIDC"
+msgstr "没有可合并项——不存在归属相同的相邻地址段。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Observed overseas endpoints"
@@ -5081,80 +4468,41 @@ msgstr "观测到的跨境 IP"
 msgid "Observed remote ports"
 msgstr "观测到的远端端口"
 
-#: src/lib/flow-report-model.ts
-msgid "Off-net · cross-province"
-msgstr "异网·跨省"
-
-#: src/lib/flow-report-model.ts
-msgid "Off-net · same province"
-msgstr "异网·省内"
-
 #: src/components/routes/flow-reports.tsx
 msgid "Off-net by operator"
 msgstr "异网（按运营商）"
 
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "OID mapping not found"
-#~ msgstr ""
-
-#: src/components/navbar.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "OID Mappings"
-#~ msgstr ""
-
 #: src/components/routes/exports.tsx
 msgid "Oldest first"
-msgstr ""
+msgstr "最早优先"
 
 #: src/components/routes/settings/config-yaml.tsx
 msgid "On each restart, systems in the database will be updated to match the systems defined in the file."
 msgstr "每次重启时，数据库中的系统将更新以匹配文件中定义的系统。"
 
-#: src/lib/flow-report-model.ts
-msgid "On-net · cross-city"
-msgstr "本网·跨市"
-
-#: src/lib/flow-report-model.ts
-msgid "On-net · cross-province"
-msgstr "本网·跨省"
-
-#: src/lib/flow-report-model.ts
-msgid "On-net · same city"
-msgstr "本网·本市"
-
 #: src/components/routes/flow-reports.tsx
 msgid "On-net by province"
 msgstr "本网（按省份）"
+
+#: src/components/routes/user-form.tsx
+msgid "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
+msgstr "选择后，指标将成为允许列表；不选择则保留已授权设备和端口内的全部指标。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
 msgstr "按合计流量排序的稳定单页，针对相同地址与冻结报表时段给出精确的入向/出向与流量分类值。选择某行可在下方加载记录。归属修正会打开地址库草稿；绝不会改动已发布快照。"
 
-#: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "One-time"
-#~ msgstr "一次性"
-
-#: src/components/login/auth-form.tsx
-#~ msgid "One-time password"
-#~ msgstr "一次性密码"
-
 #: src/components/routes/address-prefixes.tsx
 msgid "Only prefixes with identical geography/operator/ASN/labels merge; coverage and attribution are preserved."
-msgstr ""
+msgstr "仅合并地域、运营商、ASN 和标签完全相同的地址段，并保持覆盖范围与归属不变。"
 
 #: src/components/routes/address-math.tsx
 msgid "Only the bounded first results are shown."
-msgstr ""
-
-#: src/components/routes/export-new.tsx
-#~ msgid "Open Aggregate Charts"
-#~ msgstr ""
+msgstr "仅显示数量受限的前部结果。"
 
 #: src/components/routes/export-new.tsx
 msgid "Open Charts"
-msgstr ""
+msgstr "打开图表"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Open menu"
@@ -5170,15 +4518,15 @@ msgstr "打开 VPN 发现与证据"
 #: src/components/routes/network-port.tsx
 #: src/components/routes/network-port.tsx
 msgid "Oper"
-msgstr ""
+msgstr "运行状态"
 
 #: src/components/routes/network-device.tsx
 msgid "oper down"
-msgstr ""
+msgstr "运行故障"
 
 #: src/components/routes/network-device.tsx
 msgid "Oper Down"
-msgstr ""
+msgstr "运行故障"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/network-device.tsx
@@ -5188,15 +4536,16 @@ msgstr "操作系统"
 #: src/components/routes/address-math.tsx
 #: src/components/routes/historical-data.tsx
 msgid "Operation"
-msgstr ""
+msgstr "操作"
 
 #: src/components/routes/export-detail.tsx
 msgid "Operation job"
-msgstr ""
+msgstr "后台任务"
 
 #: src/components/routes/address-revisions.tsx
+#: src/components/routes/role-form.tsx
 msgid "Operations"
-msgstr ""
+msgstr "操作权限"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-imports.tsx
@@ -5209,6 +4558,12 @@ msgstr ""
 msgid "Operator"
 msgstr "运营商"
 
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgctxt "User role"
+msgid "Operator"
+msgstr "操作员"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Operator catalog is unavailable"
 msgstr "运营商目录不可用"
@@ -5217,37 +4572,21 @@ msgstr "运营商目录不可用"
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-sets.tsx
 msgid "Operators"
-msgstr ""
-
-#: src/components/routes/network-port.tsx
-#~ msgid "Optical Module"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Optical Power"
-#~ msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Optics/BGP"
-#~ msgstr ""
+msgstr "运营商"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
 msgid "optional"
-msgstr ""
+msgstr "可选"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Optional panel title"
-msgstr ""
-
-#: src/components/login/auth-form.tsx
-#~ msgid "Or continue with"
-#~ msgstr "或使用以下方式登录"
+msgstr "面板标题（可选）"
 
 #: src/components/routes/network-devices.tsx
 msgid "OS"
-msgstr ""
+msgstr "OS"
 
 #: src/components/routes/system/cpu-sheet.tsx
 msgid "Other"
@@ -5256,12 +4595,7 @@ msgstr "其他"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
 msgid "Out"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-port.tsx
-#~ msgid "Out errors"
-#~ msgstr ""
+msgstr "出"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/flow-reports.tsx
@@ -5274,17 +4608,33 @@ msgstr "出向"
 msgid "Outbound current / total"
 msgstr "出向 当前/总量"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Overall Traffic"
-#~ msgstr ""
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_cross_city"
+msgstr "本网・跨市"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "overseas"
+msgstr "跨境"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_cross_province"
+msgstr "本网・跨省"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "off_net_cross_province"
+msgstr "异网・跨省"
 
 #: src/components/routes/address-math.tsx
 msgid "Overlap details"
-msgstr ""
+msgstr "重叠详情"
 
 #: src/components/routes/address-math.tsx
 msgid "Overlaps"
-msgstr ""
+msgstr "重叠"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Overseas by country"
@@ -5296,12 +4646,12 @@ msgstr "跨境 入向/出向"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Overseas summary"
-msgstr ""
+msgstr "跨境流量摘要"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Overseas Traffic"
-msgstr ""
+msgstr "跨境流量"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Overseas Traffic Report"
@@ -5310,26 +4660,22 @@ msgstr "跨境流量报表"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Overuse"
-msgstr ""
+msgstr "超额使用"
 
 #: src/components/navbar.tsx
 #: src/components/routes/network-device.tsx
 msgid "Overview"
-msgstr ""
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "Overwrite existing alerts"
-#~ msgstr "覆盖现有警报"
+msgstr "概览"
 
 #: src/components/routes/dashboards.tsx
 msgid "Owned by me"
-msgstr ""
+msgstr "我创建的"
 
 #: src/components/routes/dashboards.tsx
 #: src/components/routes/dashboards.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Owner"
-msgstr ""
+msgstr "所有者"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
@@ -5337,41 +4683,37 @@ msgstr ""
 msgid "Page"
 msgstr "页面"
 
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "Page {0} of {1}"
-#~ msgstr "第 {0} 页，共 {1} 页"
-
 #: src/components/command-palette.tsx
 msgid "Pages / Settings"
 msgstr "页面 / 设置"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Panel layout"
-msgstr ""
+msgstr "面板布局"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Panel width"
-msgstr ""
+msgstr "面板宽度"
 
 #: src/components/routes/dashboards.tsx
 msgid "Panels"
-msgstr ""
+msgstr "面板"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Panels render in this order. Preview validates every saved graph reference."
-msgstr ""
+msgstr "面板按此顺序渲染；预览将验证每个已保存图像的引用。"
 
 #: src/components/routes/billing.tsx
 msgid "Parties"
-msgstr ""
+msgstr "参与方"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Party"
-msgstr ""
+msgstr "参与方"
 
 #: src/components/routes/network-device.tsx
 msgid "Passive"
-msgstr ""
+msgstr "被动"
 
 #: src/components/install/install.tsx
 #: src/components/login/auth-form.tsx
@@ -5394,23 +4736,11 @@ msgstr "已收到密码重置请求"
 
 #: src/components/install/install.tsx
 msgid "Passwords do not match."
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Past"
-#~ msgstr "过去"
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Pause"
-#~ msgstr "暂停"
+msgstr "两次输入的密码不一致。"
 
 #: src/components/routes/billing.tsx
 msgid "Paused"
 msgstr "已暂停"
-
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Paused ({pausedSystemsLength})"
-#~ msgstr "已暂停 ({pausedSystemsLength})"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Payload format"
@@ -5418,15 +4748,11 @@ msgstr "有效载荷 (Payload) 格式"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Peak"
-msgstr ""
+msgstr "峰值"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Peak end"
 msgstr "峰值结束"
-
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "Peak Rate"
-#~ msgstr ""
 
 #: src/components/routes/flow-reports.tsx
 msgid "Peak start"
@@ -5447,19 +4773,19 @@ msgstr "邻居 AS"
 
 #: src/components/routes/network-device.tsx
 msgid "Peer AS ascending"
-msgstr ""
+msgstr "按邻居 AS 升序"
 
 #: src/components/routes/network-device.tsx
 msgid "Peer AS descending"
-msgstr ""
+msgstr "按邻居 AS 降序"
 
 #: src/components/routes/network-device.tsx
 msgid "Peer ascending"
-msgstr ""
+msgstr "按邻居升序"
 
 #: src/components/routes/network-device.tsx
 msgid "Peer descending"
-msgstr ""
+msgstr "按邻居降序"
 
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
@@ -5478,7 +4804,7 @@ msgstr "磁盘忙于 I/O 操作的时间百分比"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 msgid "Percent threshold"
-msgstr ""
+msgstr "百分比阈值"
 
 #: src/components/routes/system/cpu-sheet.tsx
 msgid "Percentage of time spent in each state"
@@ -5486,40 +4812,32 @@ msgstr "在每个状态下花费的时间百分比"
 
 #: src/components/routes/export-detail.tsx
 msgid "Period"
-msgstr ""
+msgstr "周期"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Periods"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Permanent"
-#~ msgstr "永久"
+msgstr "周期"
 
 #: src/main.tsx
 #: src/main.tsx
 msgid "Permission denied"
-msgstr ""
+msgstr "权限不足"
 
 #: src/components/routes/permission-form.tsx
 msgid "Permission not found"
-msgstr ""
+msgstr "未找到权限"
 
 #: src/components/navbar.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/permissions.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Permissions"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Persistence"
-#~ msgstr "持久性"
+msgstr "权限"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "Plans"
-msgstr ""
+msgstr "计划"
 
 #: src/components/navbar.tsx
 #: src/components/routes/network-device-form.tsx
@@ -5527,34 +4845,10 @@ msgstr ""
 msgid "Platform"
 msgstr "平台"
 
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Please <0>configure an SMTP server</0> to ensure alerts are delivered."
-#~ msgstr "请<0>配置 SMTP 服务器</0>以确保警报被传递。"
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "Please check logs for more details."
-#~ msgstr "请检查日志以获取更多详细信息。"
-
 #: src/components/login/auth-form.tsx
 #: src/components/login/forgot-pass-form.tsx
 msgid "Please check your credentials and try again"
 msgstr "请检查您的凭据并重试"
-
-#: src/components/login/login.tsx
-#~ msgid "Please create an admin account"
-#~ msgstr "请创建一个管理员账户"
-
-#: src/components/login/auth-form.tsx
-#~ msgid "Please enable pop-ups for this site"
-#~ msgstr "请为此网站启用弹出窗口"
-
-#: src/lib/api.ts
-#~ msgid "Please log in again"
-#~ msgstr "请重新登录"
-
-#: src/components/login/auth-form.tsx
-#~ msgid "Please see <0>the documentation</0> for instructions."
-#~ msgstr "请参阅<0>文档</0>以获取说明。"
 
 #: src/components/login/login.tsx
 msgid "Please sign in to your account"
@@ -5562,12 +4856,7 @@ msgstr "请登录您的账户"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "points"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#: src/components/routes/network-port.tsx
-#~ msgid "Policy"
-#~ msgstr ""
+msgstr "个数据点"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/export-detail.tsx
@@ -5577,22 +4866,18 @@ msgstr ""
 msgid "Port"
 msgstr "端口"
 
-#: src/components/routes/export-new.tsx
-#~ msgid "Port ID"
-#~ msgstr ""
-
 #: src/components/routes/network-port-policy.tsx
 msgid "Port Policy"
-msgstr ""
+msgstr "端口规则"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Port side"
-msgstr ""
+msgstr "端口方向"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "ports"
-msgstr ""
+msgstr "个端口"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-detail.tsx
@@ -5603,6 +4888,7 @@ msgstr ""
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/user-form.tsx
 msgid "Ports"
 msgstr "端口"
 
@@ -5613,7 +4899,7 @@ msgstr "端口"
 
 #: src/components/routes/user-form.tsx
 msgid "ports selected"
-msgstr ""
+msgstr "个端口已选择"
 
 #. Power On Time
 #: src/components/routes/system/smart-table.tsx
@@ -5631,21 +4917,21 @@ msgstr "首选语言"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Prefix ID"
-msgstr ""
+msgstr "地址段 ID"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "prefixes"
-msgstr ""
+msgstr "个地址段"
 
 #: src/components/routes/address-library.tsx
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Prefixes"
-msgstr ""
+msgstr "地址段"
 
 #: src/components/routes/historical-data.tsx
 msgid "Preview"
-msgstr ""
+msgstr "预览"
 
 #: src/components/routes/address-math.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -5653,16 +4939,16 @@ msgstr ""
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Preview failed"
-msgstr ""
+msgstr "预览失败"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Preview replacement"
-msgstr ""
+msgstr "预览替换"
 
 #: src/components/routes/dashboard-form.tsx
 #: src/components/routes/user-form.tsx
 msgid "Previous"
-msgstr ""
+msgstr "上一页"
 
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn-rules.tsx
@@ -5673,7 +4959,7 @@ msgstr "优先级"
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Private"
-msgstr ""
+msgstr "私有"
 
 #: src/components/routes/flow-vpn.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -5682,11 +4968,11 @@ msgstr "探测"
 
 #: src/components/routes/network-device.tsx
 msgid "problems"
-msgstr ""
+msgstr "个问题"
 
 #: src/components/routes/network-device.tsx
 msgid "Problems"
-msgstr ""
+msgstr "问题"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Process started"
@@ -5700,7 +4986,7 @@ msgstr "协议"
 
 #: src/components/routes/traffic-defaults.tsx
 msgid "Provider"
-msgstr ""
+msgstr "供应方"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -5709,58 +4995,49 @@ msgstr "省份"
 
 #: src/components/routes/address-imports.tsx
 msgid "Province / City"
-msgstr ""
+msgstr "省 / 市"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Province catalog is unavailable"
 msgstr "省份目录不可用"
 
-#. Use 'Key' if your language requires many more characters
-#: src/components/add-system.tsx
-#~ msgid "Public Key"
-#~ msgstr "公钥"
-
 #: src/components/routes/address-library.tsx
 msgid "Publications"
-msgstr ""
+msgstr "发布记录"
 
 #: src/components/routes/address-publications.tsx
 msgid "Publish asynchronously"
-msgstr ""
+msgstr "异步发布"
 
 #: src/components/routes/address-publications.tsx
 msgid "Publish failed"
-msgstr ""
+msgstr "发布失败"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Publish immutable plan"
-msgstr ""
+msgstr "发布不可变计划"
 
 #: src/components/routes/address-publications.tsx
 msgid "Publish job queued"
-msgstr ""
+msgstr "发布任务已排队"
 
 #. placeholder {0}: response.job.id
 #: src/components/routes/address-publications.tsx
 msgid "Publish job queued: {0}"
-msgstr ""
+msgstr "发布任务已排队：{0}"
 
 #: src/components/routes/address-publications.tsx
 msgid "Publish this immutable address dimension snapshot?"
-msgstr ""
+msgstr "发布此不可变地址维度快照？"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Quality flags"
-msgstr ""
-
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "Query"
-#~ msgstr ""
+msgstr "质量标记"
 
 #: src/components/routes/export-detail.tsx
 msgid "Query hash"
-msgstr ""
+msgstr "查询摘要"
 
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O average queue depth"
@@ -5778,41 +5055,29 @@ msgstr "快速分组"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Quick traffic analysis"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Quiet Hours"
-#~ msgstr "静默时间"
+msgstr "快捷流量分析"
 
 #: src/components/routes/billing.tsx
 msgid "Quota"
-msgstr ""
+msgstr "配额"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Quota bytes"
-msgstr ""
+msgstr "字节配额"
 
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 msgid "Range"
-msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "Range End"
-#~ msgstr ""
-
-#: src/components/routes/billing-account-detail.tsx
-#~ msgid "Range Start"
-#~ msgstr ""
+msgstr "范围"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Raw"
-msgstr ""
+msgstr "原始"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/flow/flow-record-table.tsx
 msgid "Raw bytes"
-msgstr ""
+msgstr "原始字节数"
 
 #. Disk read
 #: src/components/routes/system/charts/disk-charts.tsx
@@ -5833,17 +5098,17 @@ msgstr "实时"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reason"
-msgstr ""
+msgstr "原因"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Reason for rejecting version {0}?"
-msgstr ""
+msgstr "拒绝版本 {0} 的原因？"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Reason for retiring version {0}?"
-msgstr ""
+msgstr "停用版本 {0} 的原因？"
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Received"
@@ -5851,35 +5116,31 @@ msgstr "接收"
 
 #: src/components/routes/dashboards.tsx
 msgid "Recently created"
-msgstr ""
+msgstr "最近创建"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/dashboards.tsx
 msgid "Recently updated"
-msgstr ""
+msgstr "最近更新"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reconcile"
-msgstr ""
+msgstr "对账"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reconciliations"
-msgstr ""
+msgstr "对账记录"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Records"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Rediscover"
-#~ msgstr ""
+msgstr "记录"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/billing.tsx
 msgid "Reference"
-msgstr ""
+msgstr "引用"
 
 #: src/components/containers-table/containers-table.tsx
 #: src/components/containers-table/containers-table.tsx
@@ -5932,7 +5193,7 @@ msgstr "区域"
 
 #: src/components/routes/address-publications.tsx
 msgid "Reject"
-msgstr ""
+msgstr "拒绝"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Relationships"
@@ -5940,7 +5201,7 @@ msgstr "关系"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Remote ASN"
-msgstr ""
+msgstr "远端 ASN"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Remote ASNs"
@@ -5969,38 +5230,31 @@ msgstr "远端前缀 ID"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Remote side"
-msgstr ""
+msgstr "远端侧"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Remove panel"
-msgstr ""
+msgstr "移除面板"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Replacement CIDR, IP, or range"
-msgstr ""
+msgstr "替换 CIDR、IP 或地址范围"
 
 #. placeholder {0}: formatPercent(response.meta.complete_ratio)
 #: src/components/routes/flow-reports.tsx
 msgid "Report completeness: {0}"
 msgstr "报表完整度：{0}"
 
-#: src/components/login/login.tsx
-#~ msgid "Request a one-time password"
-#~ msgstr "请求一次性密码"
-
 #: src/components/routes/modules.tsx
 #: src/components/routes/operation-jobs.tsx
 #: src/components/routes/role-form.tsx
+#: src/components/routes/settings/layout.tsx
 #: src/components/routes/user-form.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
 msgid "Request failed"
 msgstr "请求失败"
-
-#: src/components/login/otp-forms.tsx
-#~ msgid "Request OTP"
-#~ msgstr "请求 OTP"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Required by"
@@ -6009,7 +5263,7 @@ msgstr "被需要"
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/agent-plans.tsx
 msgid "Required capabilities"
-msgstr ""
+msgstr "必需能力"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Required data is not available for this report window."
@@ -6022,7 +5276,7 @@ msgstr "需要"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-math.tsx
 msgid "Reset"
-msgstr ""
+msgstr "重置"
 
 #: src/components/login/forgot-pass-form.tsx
 msgid "Reset Password"
@@ -6039,13 +5293,7 @@ msgstr "残差流量是显式的，绝不会重新分配到六个业务分类中
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Resolution note"
-msgstr ""
-
-#: src/components/alerts-history-columns.tsx
-#: src/components/alerts-history-columns.tsx
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "Resolved"
-#~ msgstr "已解决"
+msgstr "处理说明"
 
 #: src/components/routes/audit-logs.tsx
 #: src/components/routes/historical-data.tsx
@@ -6054,11 +5302,7 @@ msgstr "资源"
 
 #: src/components/routes/permission-form.tsx
 msgid "Resource ID"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Resource Samples"
-#~ msgstr ""
+msgstr "资源 ID"
 
 #: src/components/routes/audit-logs.tsx
 #: src/components/routes/permission-form.tsx
@@ -6076,25 +5320,21 @@ msgstr "重启次数"
 
 #: src/components/routes/address-sets.tsx
 msgid "Result = selector union explicit members union included sets, minus excluded members and excluded sets."
-msgstr ""
+msgstr "结果 = 选择器 ∪ 显式成员 ∪ 包含集合，再减去排除成员和排除集合。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Result digest"
-msgstr ""
+msgstr "结果摘要"
 
 #: src/components/routes/address-math.tsx
 msgid "Result prefixes"
-msgstr ""
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "Resume"
-#~ msgstr "恢复"
+msgstr "结果地址段"
 
 #: src/components/navbar.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "Retention"
-msgstr ""
+msgstr "保留策略"
 
 #: src/components/routes/target-detail.tsx
 msgid "Retention policies"
@@ -6102,29 +5342,29 @@ msgstr "留存策略"
 
 #: src/components/routes/address-publications.tsx
 msgid "Retire"
-msgstr ""
+msgstr "停用"
 
 #: src/components/routes/address-publications.tsx
 msgid "Retired"
-msgstr ""
+msgstr "已停用"
 
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 msgid "Retries"
-msgstr ""
+msgstr "重试次数"
 
 #: src/components/routes/export-detail.tsx
 #: src/main.tsx
 msgid "Retry"
-msgstr ""
+msgstr "重试"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reversal reason"
-msgstr ""
+msgstr "冲销原因"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reverse"
-msgstr ""
+msgstr "冲销"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Review findings, evidence and probe timeline"
@@ -6140,27 +5380,27 @@ msgstr "查看被动证据与人工处置。主动探测需单独授权。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Revision History"
-msgstr ""
+msgstr "修订历史"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Revision Preview"
-msgstr ""
+msgstr "修订预览"
 
 #: src/components/routes/agent-form.tsx
 msgid "Revoke"
-msgstr ""
+msgstr "吊销"
 
 #: src/components/routes/agent-form.tsx
 msgid "Revoke this agent and all of its credentials?"
-msgstr ""
+msgstr "吊销此 Agent 及其全部凭据？"
 
 #: src/components/routes/address-math.tsx
 msgid "Right range"
-msgstr ""
+msgstr "右侧范围"
 
 #: src/components/routes/address-math.tsx
 msgid "Right set"
-msgstr ""
+msgstr "右侧集合"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Risk"
@@ -6168,15 +5408,15 @@ msgstr "风险"
 
 #: src/components/routes/role-form.tsx
 msgid "Role"
-msgstr ""
+msgstr "角色"
 
 #: src/components/routes/role-form.tsx
 msgid "Role name"
-msgstr ""
+msgstr "角色名称"
 
 #: src/components/routes/role-form.tsx
 msgid "Role saved"
-msgstr ""
+msgstr "角色已保存"
 
 #: src/components/routes/user-form.tsx
 #: src/components/routes/users.tsx
@@ -6186,42 +5426,29 @@ msgstr "角色"
 
 #: src/components/routes/user-form.tsx
 msgid "Roles decide permitted operations. These selections decide the concrete devices, ports, metrics, billing accounts and saved graphs visible to the user."
-msgstr ""
+msgstr "角色决定允许执行的操作；此处选择决定用户可见的具体设备、端口、指标、计费账户和已保存图像。"
 
 #: src/components/routes/address-publications.tsx
 msgid "Roll back to this"
-msgstr ""
+msgstr "回滚到此版本"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Roll back to version {0} now? It becomes the live snapshot."
-msgstr ""
-
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgctxt "Root disk label"
-#~ msgid "Root"
-#~ msgstr "根"
+msgstr "立即回滚到版本 {0}？该版本将成为当前快照。"
 
 #: src/components/routes/agent-form.tsx
 msgid "Rotate this agent token? The current token will stop working immediately."
-msgstr ""
+msgstr "轮换此 Agent 令牌？当前令牌将立即失效。"
 
 #: src/components/routes/agent-form.tsx
 msgid "Rotate token"
 msgstr "轮换令牌"
 
-#: src/components/routes/agent-form.tsx
-#~ msgid "Rotate Token"
-#~ msgstr ""
-
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/export-detail.tsx
 msgid "Rows"
-msgstr ""
-
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "Rows per page"
-#~ msgstr "每页行数"
+msgstr "行"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Rule-set publication"
@@ -6239,7 +5466,7 @@ msgstr "运行历史"
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
 msgid "Runs"
-msgstr ""
+msgstr "运行记录"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Runtime Metrics"
@@ -6255,7 +5482,7 @@ msgstr "S.M.A.R.T. 自检"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Sample step"
-msgstr ""
+msgstr "采样步长"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sampled bit rate"
@@ -6267,15 +5494,15 @@ msgstr "采样字节数"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "samples"
-msgstr ""
+msgstr "个样本"
 
 #: src/components/routes/historical-data.tsx
 msgid "Samples"
-msgstr ""
+msgstr "样本"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Sampling rate"
-msgstr ""
+msgstr "采样率"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sat"
@@ -6304,19 +5531,11 @@ msgstr "周六"
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/user-form.tsx
 msgid "Save"
-msgstr ""
-
-#: src/components/add-system.tsx
-#~ msgid "Save {foo}"
-#~ msgstr "保存 {foo}"
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Save address using enter key or comma. Leave blank to disable email notifications."
-#~ msgstr "使用回车键或逗号保存地址。留空以禁用电子邮件通知。"
+msgstr "保存"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Save as graph"
-msgstr ""
+msgstr "保存为图像"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Save disposition"
@@ -6341,51 +5560,39 @@ msgstr "已保存"
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Saved Filters"
-msgstr ""
+msgstr "已保存筛选器"
 
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Saved Flow Filters"
-msgstr ""
+msgstr "已保存 Flow 筛选器"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "saved graphs"
-msgstr ""
+msgstr "个已保存图像"
+
+#: src/components/routes/user-form.tsx
+msgid "Saved graphs"
+msgstr "已保存图像"
 
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/network-device.tsx
 msgid "Saved Graphs"
-msgstr ""
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Saved in the database and does not expire until you disable it."
-#~ msgstr "保存在数据库中，在您禁用之前不会过期。"
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Schedule"
-#~ msgstr "计划"
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Schedule quiet hours where notifications will not be sent, such as during maintenance periods."
-#~ msgstr "安排静默时间，在此期间不会发送通知，例如在维护期间。"
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Schedule quiet hours where notifications will not be sent."
-#~ msgstr "安排静默时间，在此期间不会发送通知。"
+msgstr "已保存图像"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/agent-plans.tsx
 msgid "Schema"
-msgstr ""
+msgstr "结构版本"
 
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "Scope"
-msgstr ""
+msgstr "范围"
 
 #: src/components/routes/flow-vpn.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -6398,80 +5605,76 @@ msgstr "搜索"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search adjustments..."
-msgstr ""
+msgstr "搜索调整记录..."
 
 #: src/components/routes/agents.tsx
 msgid "Search agent, target, endpoint, or error..."
-msgstr ""
+msgstr "搜索 Agent、目标、端点或错误..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search alerts..."
-msgstr ""
+msgstr "搜索告警..."
 
 #: src/components/routes/user-form.tsx
 msgid "Search available resources"
-msgstr ""
+msgstr "搜索可用资源"
 
 #: src/components/routes/network-device.tsx
 msgid "Search BGP peers or AS numbers..."
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "Search BGP peers..."
-#~ msgstr ""
+msgstr "搜索 BGP 邻居或 AS 号..."
 
 #: src/components/routes/billing.tsx
 msgid "Search billing accounts..."
-msgstr ""
+msgstr "搜索计费账户..."
 
 #: src/components/routes/core.tsx
 msgid "Search by device, peer, AS..."
-msgstr ""
+msgstr "按设备、邻居或 AS 搜索..."
 
 #: src/components/address-reference-picker.tsx
 msgid "Search by name or code..."
-msgstr ""
+msgstr "按名称或代码搜索..."
 
 #: src/components/routes/network-devices.tsx
 msgid "Search by name, host, vendor..."
-msgstr ""
+msgstr "按名称、主机或厂商搜索..."
 
 #: src/components/routes/agent-plans.tsx
 msgid "Search by plan ID, digest, or signing key..."
-msgstr ""
+msgstr "按计划 ID、摘要或签名密钥搜索..."
 
 #: src/components/routes/agent-runs.tsx
 msgid "Search by run ID or error..."
-msgstr ""
+msgstr "按运行 ID 或错误搜索..."
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-revisions.tsx
 msgid "Search CIDR or labels..."
-msgstr ""
+msgstr "搜索 CIDR 或标签..."
 
 #: src/components/routes/address-imports.tsx
 msgid "Search CIDR or location..."
-msgstr ""
+msgstr "搜索 CIDR 或地域..."
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Search code or name..."
-msgstr ""
+msgstr "搜索代码或名称..."
 
 #: src/components/routes/dashboards.tsx
 msgid "Search dashboard name or description..."
-msgstr ""
+msgstr "搜索仪表盘名称或描述..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search events..."
-msgstr ""
+msgstr "搜索事件..."
 
 #: src/components/routes/exports.tsx
 msgid "Search export, target, port, or dataset..."
-msgstr ""
+msgstr "搜索导出任务、目标、端口或数据集..."
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Search Flow results..."
-msgstr ""
+msgstr "搜索 Flow 结果..."
 
 #: src/components/command-palette.tsx
 msgid "Search for systems or settings..."
@@ -6479,19 +5682,19 @@ msgstr "搜索系统或设置..."
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Search graphs, devices, metrics"
-msgstr ""
+msgstr "搜索图像、设备或指标"
 
 #: src/components/routes/targets.tsx
 msgid "Search hosts by name, host, type, or status..."
-msgstr ""
+msgstr "按名称、主机、类型或状态搜索..."
 
 #: src/components/routes/address-imports.tsx
 msgid "Search imported files..."
-msgstr ""
+msgstr "搜索已导入文件..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search inventory..."
-msgstr ""
+msgstr "搜索资产..."
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Search IP, prefix, rule set, or finding ID..."
@@ -6499,27 +5702,27 @@ msgstr "搜索 IP、前缀、规则集或发现 ID…"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search issues..."
-msgstr ""
+msgstr "搜索问题..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search LAG groups..."
-msgstr ""
+msgstr "搜索链路聚合组..."
 
 #: src/components/routes/address-sets.tsx
 msgid "Search name or description..."
-msgstr ""
+msgstr "搜索名称或描述..."
 
 #: src/components/routes/billing.tsx
 msgid "Search parties..."
-msgstr ""
+msgstr "搜索参与方..."
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search period ID..."
-msgstr ""
+msgstr "搜索周期 ID..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search ports, addresses..."
-msgstr ""
+msgstr "搜索端口或地址..."
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Search ports..."
@@ -6527,15 +5730,15 @@ msgstr "搜索端口..."
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search reconciliations..."
-msgstr ""
+msgstr "搜索对账记录..."
 
 #: src/components/routes/address-revisions.tsx
 msgid "Search revision changes..."
-msgstr ""
+msgstr "搜索修订变更..."
 
 #: src/components/routes/address-revisions.tsx
 msgid "Search revisions..."
-msgstr ""
+msgstr "搜索修订历史..."
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Search rule name or ID..."
@@ -6543,31 +5746,31 @@ msgstr "搜索规则名称或 ID…"
 
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Search saved filters..."
-msgstr ""
+msgstr "搜索已保存筛选器..."
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Search saved graphs. Results are filtered and paged by the server."
-msgstr ""
+msgstr "搜索已保存图像；结果由服务端筛选并分页。"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Search saved graphs..."
-msgstr ""
+msgstr "搜索已保存图像..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search sensors..."
-msgstr ""
+msgstr "搜索传感器..."
 
 #: src/components/routes/address-publications.tsx
 msgid "Search versions or checksums..."
-msgstr ""
+msgstr "搜索版本或校验和..."
 
 #: src/components/routes/network-device.tsx
 msgid "Search VLANs..."
-msgstr ""
+msgstr "搜索 VLAN..."
 
 #: src/components/address-reference-picker.tsx
 msgid "Searches the server and stores the stable reference ID."
-msgstr ""
+msgstr "由服务端搜索并保存稳定的引用 ID。"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Seconds between pings (default: 60)"
@@ -6575,55 +5778,39 @@ msgstr "Ping 之间的秒数 (默认：60)"
 
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Security JSON"
-msgstr ""
-
-#: src/components/alerts/alerts-sheet.tsx
-#~ msgid "See <0>notification settings</0> to configure how you receive alerts."
-#~ msgstr "查看<0>通知设置</0>以配置您接收警报的方式。"
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Seed LibreNMS"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Seeded"
-#~ msgstr ""
+msgstr "安全配置 JSON"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Seen"
-msgstr ""
+msgstr "最后在线"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Select {foo}"
-#~ msgstr "选择 {foo}"
+msgstr "选择"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Select a custom start and end time"
-msgstr ""
+msgstr "选择自定义开始和结束时间"
 
 #: src/components/routes/user-form.tsx
 msgid "Select a device"
-msgstr ""
+msgstr "选择设备"
 
 #: src/components/routes/user-form.tsx
 msgid "Select a device to view its ports."
-msgstr ""
+msgstr "请选择设备以查看其端口。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Select a location, operator and time range, then view traffic direction, protocol or Top addresses."
-msgstr ""
+msgstr "选择地域、运营商和时间范围，然后查看流量方向、协议或 Top 地址。"
 
 #: src/components/routes/network-discover.tsx
 msgid "Select a network device"
-msgstr ""
+msgstr "选择网络设备"
 
 #: src/components/routes/export-new.tsx
 msgid "Select a target before creating an export."
-msgstr ""
+msgstr "创建导出任务前请先选择目标。"
 
 #: src/components/routes/modules.tsx
 msgid "Select a tenant first"
@@ -6631,19 +5818,19 @@ msgstr "请先选择租户"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Select a Top IP row or enter an exact IPv4/IPv6 address and press Enter."
-msgstr ""
+msgstr "选择一条 Top IP，或输入精确 IPv4/IPv6 地址后按回车。"
 
 #: src/components/routes/user-form.tsx
 msgid "Select all ports"
-msgstr ""
+msgstr "全选该设备端口"
 
 #: src/components/routes/address-imports.tsx
 msgid "Select an MMDB or IPDB file"
-msgstr ""
+msgstr "选择 MMDB 或 IPDB 文件"
 
 #: src/components/routes/network-discover.tsx
 msgid "Select an SNMP profile"
-msgstr ""
+msgstr "选择 SNMP 配置档案"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Select at least one metric"
@@ -6652,52 +5839,48 @@ msgstr "请至少选择一个指标"
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
-msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Select at least one port for port metrics"
-#~ msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Select at least one target and one metric"
-#~ msgstr ""
+msgstr "请至少选择一个端口"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select Existing Prefixes"
-msgstr ""
+msgstr "选择现有地址段"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select old prefixes or enter new prefixes first"
-msgstr ""
+msgstr "请先选择旧地址段或输入新地址段"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Select or enter an IP address"
-msgstr ""
+msgstr "选择或输入 IP 地址"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Select ports"
-#~ msgstr ""
+#: src/components/routes/user-form.tsx
+msgid "Select saved aggregate graphs this user may open directly."
+msgstr "选择此用户可直接打开的已保存聚合图像。"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Select SNMP profile"
 msgstr "选择 SNMP 配置"
 
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Select targets and metrics, then draw an aggregate chart."
-#~ msgstr ""
+#: src/components/routes/user-form.tsx
+msgid "Select the billing accounts and periods this user may inspect."
+msgstr "选择此用户可查看的计费账户和周期。"
+
+#: src/components/routes/user-form.tsx
+msgid "Select the devices whose inventory and telemetry this user may see."
+msgstr "选择此用户可查看资产和遥测数据的设备。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select the existing prefixes to remove, enter their replacement set, then preview. Nothing changes until you apply the immutable revision."
-msgstr ""
+msgstr "选择要移除的现有地址段，输入替换集合后预览；在应用不可变修订版本前不会发生任何变更。"
 
 #: src/components/address-reference-picker.tsx
 msgid "selected"
-msgstr ""
+msgstr "已选择"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Selected"
-msgstr ""
+msgstr "已选择"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Selected metrics do not aggregate per port."
@@ -6705,19 +5888,15 @@ msgstr "所选指标不按端口聚合。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Selected old prefixes"
-msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Selected ports"
-#~ msgstr ""
+msgstr "已选择的旧地址段"
 
 #: src/components/routes/address-sets.tsx
 msgid "Selector"
-msgstr ""
+msgstr "选择器"
 
 #: src/components/routes/address-math.tsx
 msgid "Semantics"
-msgstr ""
+msgstr "语义"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Send a single heartbeat ping to verify your endpoint is working."
@@ -6733,16 +5912,16 @@ msgstr "发送测试 heartbeat"
 
 #: src/components/routes/network-device.tsx
 msgid "Sensor"
-msgstr ""
+msgstr "传感器"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Sensor Alerts"
-msgstr ""
+msgstr "传感器告警"
 
 #: src/components/routes/network-device.tsx
 msgid "Sensors"
-msgstr ""
+msgstr "传感器"
 
 #: src/components/routes/system/charts/network-charts.tsx
 msgid "Sent"
@@ -6751,11 +5930,11 @@ msgstr "发送"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
 msgid "Serial"
-msgstr ""
+msgstr "序列号"
 
 #: src/components/routes/network-device.tsx
 msgid "Serial A–Z"
-msgstr ""
+msgstr "序列号 A–Z"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Serial Number"
@@ -6763,11 +5942,11 @@ msgstr "序列号"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "series"
-msgstr ""
+msgstr "个序列"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Series"
-msgstr ""
+msgstr "序列"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Service Details"
@@ -6787,12 +5966,12 @@ msgstr "在您的 Watchdog hub 上设置以下环境变量以启用 heartbeat �
 
 #: src/components/routes/address-library.tsx
 msgid "Set Tools"
-msgstr ""
+msgstr "集合工具"
 
 #: src/components/routes/address-library.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Sets"
-msgstr ""
+msgstr "集合"
 
 #: src/components/command-palette.tsx
 #: src/components/command-palette.tsx
@@ -6811,7 +5990,7 @@ msgstr "设置已保存"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/network-device.tsx
 msgid "Severity"
-msgstr ""
+msgstr "严重级别"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Share"
@@ -6827,15 +6006,15 @@ msgstr "登录"
 
 #: src/components/graph/graph-panel-renderer.tsx
 msgid "signed (In ↑ / Out ↓)"
-msgstr ""
+msgstr "带符号（入 ↑ / 出 ↓）"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Signed amount"
-msgstr ""
+msgstr "带符号数值"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Signing key"
-msgstr ""
+msgstr "签名密钥"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Six-class share"
@@ -6844,19 +6023,11 @@ msgstr "六分类占比"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/export-detail.tsx
 msgid "Size"
-msgstr ""
+msgstr "大小"
 
 #: src/components/routes/address-imports.tsx
 msgid "Slot"
-msgstr ""
-
-#: src/components/command-palette.tsx
-#~ msgid "SMTP settings"
-#~ msgstr "SMTP 设置"
-
-#: src/components/routes/network-devices.tsx
-#~ msgid "SNMP"
-#~ msgstr ""
+msgstr "槽位"
 
 #: src/components/routes/network-device-form.tsx
 msgid "SNMP community"
@@ -6873,7 +6044,7 @@ msgstr "SNMP 端口"
 
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Port"
-msgstr ""
+msgstr "SNMP 端口"
 
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
@@ -6882,44 +6053,40 @@ msgstr "SNMP 配置"
 
 #: src/components/routes/network-discover.tsx
 msgid "SNMP Profile"
-msgstr ""
+msgstr "SNMP 配置档案"
 
 #: src/components/navbar.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/snmp-profiles.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "SNMP Profiles"
-msgstr ""
+msgstr "SNMP 配置档案"
 
 #: src/components/routes/network-device.tsx
 msgid "SNMP Version"
-msgstr ""
+msgstr "SNMP 版本"
 
 #: src/components/routes/agents.tsx
 #: src/components/routes/dashboards.tsx
 #: src/components/routes/exports.tsx
 msgid "Sort"
-msgstr ""
-
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Sort By"
-#~ msgstr "排序依据"
+msgstr "排序"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Sort by name"
-msgstr ""
+msgstr "按名称排序"
 
 #: src/components/routes/aggregate-graphs.tsx
 msgid "Sort by updated"
-msgstr ""
+msgstr "按更新时间排序"
 
 #: src/components/routes/network-device.tsx
 msgid "Sort inventory"
-msgstr ""
+msgstr "资产排序"
 
 #: src/components/routes/address-taxonomy.tsx
 msgid "Sort order must be an integer"
-msgstr ""
+msgstr "排序序号必须为整数"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -6929,28 +6096,28 @@ msgstr ""
 #: src/components/routes/snmp-mib-module-form.tsx
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Source"
-msgstr ""
+msgstr "来源"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Source ASN"
-msgstr ""
+msgstr "源 ASN"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Source filter"
-msgstr ""
+msgstr "源筛选器"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Source generation"
-msgstr ""
+msgstr "源数据代次"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Source IP"
-msgstr ""
+msgstr "源 IP"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Source IP Analysis"
-msgstr ""
+msgstr "源 IP 分析"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Source IP Report"
@@ -6958,29 +6125,29 @@ msgstr "源 IP 报表"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Source port"
-msgstr ""
+msgstr "源端口"
 
 #: src/components/routes/address-imports.tsx
 msgid "Source slot"
-msgstr ""
+msgstr "源槽位"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/network-port.tsx
 msgid "Speed"
-msgstr ""
+msgstr "速率"
 
 #: src/components/routes/network-port-form.tsx
 msgid "Speed bps"
-msgstr ""
+msgstr "速率 (bps)"
 
 #: src/components/routes/network-device.tsx
 msgid "Speed descending"
-msgstr ""
+msgstr "按速率降序"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Split side"
-msgstr ""
+msgstr "拆分方向"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/historical-data.tsx
@@ -6991,16 +6158,11 @@ msgstr "开始"
 
 #: src/components/routes/address-imports.tsx
 msgid "Start Import"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Start Time"
-#~ msgstr "开始时间"
+msgstr "开始导入"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Started"
-msgstr ""
+msgstr "开始时间"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -7010,7 +6172,7 @@ msgstr "状态"
 
 #: src/components/routes/network-device.tsx
 msgid "State ascending"
-msgstr ""
+msgstr "按状态升序"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/address-imports.tsx
@@ -7059,7 +6221,7 @@ msgstr "状态"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 msgid "Status ascending"
-msgstr ""
+msgstr "按状态升序"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/export-detail.tsx
@@ -7076,21 +6238,17 @@ msgstr "存储"
 msgid "Sub State"
 msgstr "子状态"
 
-#: src/components/routes/permissions.tsx
-#~ msgid "Subject"
-#~ msgstr ""
-
 #: src/components/routes/permission-form.tsx
 msgid "Subject ID"
-msgstr ""
+msgstr "主体 ID"
 
 #: src/components/routes/permission-form.tsx
 msgid "Subject type"
-msgstr ""
+msgstr "主体类型"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Summary"
-msgstr ""
+msgstr "摘要"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sun"
@@ -7099,7 +6257,7 @@ msgstr "周日"
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/billing.tsx
 msgid "Supplier"
-msgstr ""
+msgstr "供应商"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Suppressed"
@@ -7117,24 +6275,16 @@ msgstr "系统使用的 SWAP 空间"
 msgid "Swap Usage"
 msgstr "SWAP 使用率"
 
-#: src/components/mode-toggle.tsx
-#: src/components/mode-toggle.tsx
-msgid "Switch theme"
-msgstr ""
-
 #: src/components/routes/network-device.tsx
 msgid "Switching"
-msgstr ""
+msgstr "交换"
 
 #: src/components/routes/network-device.tsx
 msgid "sysDescr"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "sysName or sysDescr is required"
-#~ msgstr ""
+msgstr "sysDescr"
 
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/mode-toggle.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/system/smart-table.tsx
@@ -7151,23 +6301,15 @@ msgstr "系统负载平均值随时间变化"
 
 #: src/components/routes/network-device.tsx
 msgid "System Name"
-msgstr ""
+msgstr "系统名称"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Systemd Services"
 msgstr "Systemd 服务"
 
-#: src/components/navbar.tsx
-#~ msgid "Systems"
-#~ msgstr "系统"
-
 #: src/components/routes/settings/config-yaml.tsx
 msgid "Systems may be managed in a <0>config.yml</0> file inside your data directory."
 msgstr "系统可以在数据目录中的<0>config.yml</0>文件中管理。"
-
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Table"
-#~ msgstr "表格"
 
 #: src/components/routes/system/info-bar.tsx
 msgctxt "Tabs system layout option"
@@ -7190,52 +6332,32 @@ msgstr "标签页"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/target-detail.tsx
 msgid "Target"
-msgstr ""
+msgstr "目标"
 
 #: src/components/routes/agents.tsx
 msgid "Target A–Z"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Target host is required"
-#~ msgstr ""
+msgstr "目标 A–Z"
 
 #: src/components/routes/network-device-form.tsx
 msgid "Target is required"
-msgstr ""
+msgstr "目标不能为空"
 
 #: src/components/routes/modules.tsx
 msgid "Target Kinds"
 msgstr "资源分类"
 
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Target Name"
-#~ msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Target name is required"
-#~ msgstr ""
-
 #: src/components/routes/traffic-matrix.tsx
 msgid "Target points"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Target Source"
-#~ msgstr ""
+msgstr "目标数据点"
 
 #: src/components/routes/export-new.tsx
 msgid "Target summary"
-msgstr ""
-
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "targets"
-#~ msgstr ""
+msgstr "目标摘要"
 
 #: src/components/routes/watchdog-overview.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Targets"
-msgstr ""
+msgstr "目标"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Tasks"
@@ -7257,68 +6379,49 @@ msgstr "温度单位"
 msgid "Temperatures of system sensors"
 msgstr "系统传感器的温度"
 
-#: src/components/navbar.tsx
-#~ msgid "Tenant"
-#~ msgstr ""
-
 #: src/components/routes/retention.tsx
 #: src/components/routes/retention.tsx
 msgid "Tenant default"
-msgstr ""
+msgstr "默认范围"
 
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Tenant shared"
-msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Test <0>URL</0>"
-#~ msgstr "测试<0>URL</0>"
+msgstr "共享范围"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Test heartbeat"
 msgstr "测试 heartbeat"
 
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Test notification sent"
-#~ msgstr "测试通知已发送"
-
 #: src/components/routes/export-detail.tsx
 msgid "The export record and generated file will be permanently deleted."
-msgstr ""
+msgstr "导出记录和生成的文件将被永久删除。"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 msgstr "当所有系统都正常运行时，整体状态为 <0>ok</0>；当触发警报时为 <1>警告</1>；当任何系统故障时为 <2>错误</2>。"
 
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Theme"
-msgstr ""
+msgstr "主题"
 
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Then by"
-msgstr ""
+msgstr "次级排序"
 
 #: src/components/login/forgot-pass-form.tsx
 msgid "Then log into the backend and reset your user account password in the users table."
 msgstr "然后登录到后台并在用户表中重置您的用户账户密码。"
 
-#: src/components/systems-table/systems-table-columns.tsx
-#~ msgid "This action cannot be undone. This will permanently delete all current records for {name} from the database."
-#~ msgstr "此操作无法撤销。这将永久删除数据库中{name}的所有当前记录。"
-
 #. placeholder {0}: preview.added_addresses_v4
 #. placeholder {1}: preview.added_addresses_v6
 #: src/components/routes/address-math.tsx
 msgid "This cover adds {0} IPv4 and {1} IPv6 addresses. The source set has not been changed."
-msgstr ""
-
-#: src/components/routes/export-new.tsx
-#~ msgid "This page creates a background CSV export for one target summary or one discovered port. Use Aggregate Charts to draw and export multiple targets, multiple ports, or aggregated interfaces."
-#~ msgstr ""
+msgstr "此覆盖将增加 {0} 个 IPv4 和 {1} 个 IPv6 地址；源集合尚未变更。"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-port.tsx
@@ -7328,15 +6431,11 @@ msgstr "以下列出删除将波及的全部内容,删除的数据不可恢复�
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "This summary applies the selected device only. Country, province, city and operator filters apply to the Explorer below because the overseas rollup does not contain cross-dimension tuples."
-msgstr ""
-
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "This will permanently delete all selected records from the database."
-#~ msgstr "这将永久删除数据库中所有选定的记录。"
+msgstr "此摘要仅应用所选设备。由于跨境汇总不包含跨维元组，国家、省、市和运营商筛选仅作用于下方查询器。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Threshold"
-msgstr ""
+msgstr "阈值"
 
 #: src/components/routes/system/charts/disk-charts.tsx
 msgid "Throughput of {extraFsName}"
@@ -7367,17 +6466,13 @@ msgstr "时间格式"
 msgid "Time range"
 msgstr "时间范围"
 
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "Time Range"
-#~ msgstr ""
-
 #: src/components/routes/snmp-profiles.tsx
 msgid "Timeout"
-msgstr ""
+msgstr "超时"
 
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Timeout seconds"
-msgstr ""
+msgstr "超时秒数"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
@@ -7390,33 +6485,11 @@ msgstr "时区"
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "To"
-msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "To email(s)"
-#~ msgstr "发送到电子邮件"
-
-#: src/components/mode-toggle.tsx
-#: src/components/mode-toggle.tsx
-#~ msgid "Toggle theme"
-#~ msgstr "切换主题"
-
-#: src/components/routes/agent-form.tsx
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Token"
-#~ msgstr "令牌"
+msgstr "结束"
 
 #: src/components/command-palette.tsx
 msgid "Tokens & Fingerprints"
 msgstr "令牌与指纹"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Tokens allow agents to connect and register. Fingerprints are stable identifiers unique to each system, set on first connection."
-#~ msgstr "令牌允许客户端连接和注册。指纹是每个系统唯一的稳定标识符，在首次连接时设置。"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "Tokens and fingerprints are used to authenticate WebSocket connections to the hub."
-#~ msgstr "令牌与指纹用于验证到中心的 WebSocket 连接。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Top destination addresses with direction, traffic class and drill-down."
@@ -7460,7 +6533,7 @@ msgstr "每个接口的总发送数据量"
 #: src/components/routes/system/disk-io-sheet.tsx
 msgctxt "Disk I/O"
 msgid "Total time spent on read/write (can exceed 100%)"
-msgstr ""
+msgstr "读写总耗时占比（可能超过 100%）"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Total traffic"
@@ -7489,44 +6562,23 @@ msgstr "按维度的流量"
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
-msgstr ""
+msgstr "流量默认规则"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Traffic direction, category, completeness and current trends."
-msgstr ""
+msgstr "查看流量方向、分类、完整性和当前趋势。"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Traffic in/out is preselected; pick others only when needed."
 msgstr "已默认选中入/出流量,仅在需要时勾选其他指标。"
 
-#: src/components/navbar.tsx
-#: src/components/routes/traffic-matrix.tsx
-#~ msgid "Traffic Matrix"
-#~ msgstr ""
-
 #: src/components/routes/network-port-policy.tsx
 msgid "Traffic Policy"
-msgstr ""
+msgstr "流量规则"
 
-#: src/components/routes/network-device.tsx
-#~ msgid "Traffic Samples"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Transform"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Transform key"
-#~ msgstr ""
-
-#: src/components/routes/snmp-oid-mapping-form.tsx
-#~ msgid "Transform value"
-#~ msgstr ""
-
+#. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
-msgid "Transit"
+msgid "flow.category.transit"
 msgstr "中转"
 
 #: src/components/routes/flow-vpn-rules.tsx
@@ -7540,50 +6592,6 @@ msgstr "由...触发"
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Triggers"
 msgstr "触发器"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when 1 minute load average exceeds a threshold"
-#~ msgstr "当 1 分钟负载平均值超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when 15 minute load average exceeds a threshold"
-#~ msgstr "当 15 分钟负载平均值超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when 5 minute load average exceeds a threshold"
-#~ msgstr "当 5 分钟内的平均负载超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when any sensor exceeds a threshold"
-#~ msgstr "当任何传感器超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when battery charge drops below a threshold"
-#~ msgstr "当电池电量降至阈值以下时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when combined up/down exceeds a threshold"
-#~ msgstr "当网络的上/下行速度超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when CPU usage exceeds a threshold"
-#~ msgstr "当 CPU 使用率超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when GPU usage exceeds a threshold"
-#~ msgstr "当 GPU 使用率超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when memory usage exceeds a threshold"
-#~ msgstr "当内存使用率超过阈值时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when status switches between up and down"
-#~ msgstr "当状态在上线与掉线之间切换时触发"
-
-#: src/lib/alerts.ts
-#~ msgid "Triggers when usage of any disk exceeds a threshold"
-#~ msgstr "当任何磁盘的使用率超过阈值时触发"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Tue"
@@ -7605,6 +6613,11 @@ msgstr "周二"
 msgid "Type"
 msgstr "类型"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.category.unattributed"
+msgstr "归属不明"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Unavailable"
 msgstr "不可用"
@@ -7612,12 +6625,12 @@ msgstr "不可用"
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agents.tsx
 msgid "Unbound"
-msgstr ""
+msgstr "未绑定"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/billing-account-detail.tsx
 msgid "Unit"
-msgstr ""
+msgstr "单位"
 
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Unit file"
@@ -7635,15 +6648,19 @@ msgstr "通用令牌"
 #. Context: Battery state
 #: src/components/routes/flow-vpn.tsx
 #: src/components/routes/network-device.tsx
-#: src/lib/flow-report-model.ts
 #: src/lib/i18n.ts
 msgid "Unknown"
+msgstr "未知"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.category.unknown"
 msgstr "未知"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Unknown sampling"
-msgstr ""
+msgstr "采样率未知"
 
 #: src/components/systemd-table/systemd-table.tsx
 #: src/components/systemd-table/systemd-table.tsx
@@ -7657,7 +6674,7 @@ msgstr "未审核"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 msgid "up"
-msgstr ""
+msgstr "正常"
 
 #. Context: System is up
 #: src/components/routes/network-device.tsx
@@ -7668,17 +6685,9 @@ msgstr ""
 msgid "Up"
 msgstr "在线"
 
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Up ({upSystemsLength})"
-#~ msgstr "在线 ({upSystemsLength})"
-
 #: src/components/routes/network-device.tsx
 msgid "up / total"
-msgstr ""
-
-#: src/components/routes/settings/quiet-hours.tsx
-#~ msgid "Update"
-#~ msgstr "更新"
+msgstr "正常 / 总数"
 
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/agents.tsx
@@ -7702,17 +6711,17 @@ msgstr "上传"
 
 #: src/components/routes/address-imports.tsx
 msgid "Upload Database"
-msgstr ""
+msgstr "上传数据库"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/address-imports.tsx
 msgid "Upload failed"
-msgstr ""
+msgstr "上传失败"
 
 #: src/components/routes/address-imports.tsx
 msgid "Uploading… {uploadProgress}%"
-msgstr ""
+msgstr "正在上传… {uploadProgress}%"
 
 #: src/components/routes/core.tsx
 #: src/components/routes/network-device.tsx
@@ -7735,11 +6744,7 @@ msgstr "根分区的使用"
 
 #: src/components/routes/address-math.tsx
 msgid "Use as next input"
-msgstr ""
-
-#: src/components/routes/network-device-form.tsx
-#~ msgid "Use existing target"
-#~ msgstr ""
+msgstr "用作下一步输入"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7750,7 +6755,7 @@ msgstr "已用"
 
 #: src/components/routes/users.tsx
 msgid "User deleted"
-msgstr ""
+msgstr "用户已删除"
 
 #: src/components/routes/users.tsx
 msgid "User disabled"
@@ -7758,18 +6763,18 @@ msgstr "用户已禁用"
 
 #: src/components/routes/user-form.tsx
 msgid "User saved"
-msgstr ""
+msgstr "用户已保存"
 
 #: src/components/login/auth-form.tsx
 #: src/components/login/auth-form.tsx
 #: src/components/routes/user-form.tsx
 #: src/components/routes/users.tsx
 msgid "Username"
-msgstr ""
+msgstr "用户名"
 
 #: src/components/login/auth-form.tsx
 msgid "Username is required."
-msgstr ""
+msgstr "用户名不能为空。"
 
 #: src/components/command-palette.tsx
 msgid "Users"
@@ -7781,10 +6786,6 @@ msgstr "用户"
 msgid "Users & Roles"
 msgstr "用户与角色"
 
-#: src/components/routes/aggregate-charts.tsx
-#~ msgid "Using every discovered port under the selected targets."
-#~ msgstr ""
-
 #: src/components/routes/system/charts/disk-charts.tsx
 msgctxt "Disk I/O utilization"
 msgid "Utilization"
@@ -7793,11 +6794,11 @@ msgstr "利用率"
 #: src/components/routes/address-math.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Validate & Preview"
-msgstr ""
+msgstr "验证并预览"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Validate preview"
-msgstr ""
+msgstr "验证预览"
 
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7813,11 +6814,11 @@ msgstr "值"
 
 #: src/components/routes/network-device.tsx
 msgid "Value descending"
-msgstr ""
+msgstr "按数值降序"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Value layer"
-msgstr ""
+msgstr "数值视角"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -7849,17 +6850,17 @@ msgstr "判定"
 #: src/components/routes/snmp-profile-form.tsx
 #: src/components/routes/snmp-profiles.tsx
 msgid "Version"
-msgstr ""
+msgstr "版本"
 
 #. placeholder {0}: selected.version
 #: src/components/routes/address-publications.tsx
 msgid "Version {0}"
-msgstr ""
+msgstr "版本 {0}"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
 msgid "Version {0}: {verb} applied"
-msgstr ""
+msgstr "版本 {0}：已应用 {verb}"
 
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
@@ -7873,7 +6874,7 @@ msgstr "视图"
 
 #: src/components/routes/network-device.tsx
 msgid "View all"
-msgstr ""
+msgstr "查看全部"
 
 #: src/components/routes/system/cpu-sheet.tsx
 #: src/components/routes/system/disk-io-sheet.tsx
@@ -7881,37 +6882,34 @@ msgstr ""
 msgid "View more"
 msgstr "查看更多"
 
-#: src/components/routes/settings/alerts-history-data-table.tsx
-#~ msgid "View your 200 most recent alerts."
-#~ msgstr "查看您最近的200个警报。"
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Viewer"
+msgstr "查看者"
+
+#: src/components/routes/role-form.tsx
+msgid "Visibility & data"
+msgstr "可见性与数据权限"
 
 #: src/components/routes/role-form.tsx
 msgid "Visibility abilities control menus and data domains; operation abilities control create, update, delete and management actions."
-msgstr ""
-
-#: src/components/systems-table/systems-table.tsx
-#~ msgid "Visible Fields"
-#~ msgstr "可见列"
+msgstr "可见性权限控制菜单和数据域；操作权限控制创建、更新、删除和管理操作。"
 
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID"
-msgstr ""
+msgstr "VLAN ID"
 
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID ascending"
-msgstr ""
+msgstr "按 VLAN ID 升序"
 
 #: src/components/routes/network-device.tsx
 msgid "VLAN ID descending"
-msgstr ""
+msgstr "按 VLAN ID 降序"
 
 #: src/components/routes/network-device.tsx
 msgid "VLANs"
-msgstr ""
-
-#: src/components/routes/network-device.tsx
-#~ msgid "VLANs/LAG"
-#~ msgstr ""
+msgstr "VLAN"
 
 #: src/components/routes/flow-reports.tsx
 msgid "VPN analysis"
@@ -7973,10 +6971,6 @@ msgstr "VPN 类型分布"
 msgid "Waiting for enough records to display"
 msgstr "正在收集足够的数据来显示"
 
-#: src/components/routes/settings/general.tsx
-#~ msgid "Want to help improve our translations? Check <0>Crowdin</0> for details."
-#~ msgstr "想帮助我们改进翻译吗？查看<0>Crowdin</0>以获取更多详细信息。"
-
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Wants"
 msgstr "希望"
@@ -7989,25 +6983,9 @@ msgstr "警告 (%)"
 msgid "Warning thresholds"
 msgstr "警告阈值"
 
-#: src/components/navbar.tsx
-#~ msgid "Watchdog"
-#~ msgstr ""
-
-#: src/components/login/auth-form.tsx
-#~ msgid "Watchdog supports OpenID Connect and many OAuth2 authentication providers."
-#~ msgstr "Watchdog 支持 OpenID Connect 和其他 OAuth2 认证方式。"
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Watchdog uses <0>Shoutrrr</0> to integrate with popular notification services."
-#~ msgstr "Watchdog 使用 <0>Shoutrrr</0> 以实现与常见的通知服务集成。"
-
 #: src/components/routes/network-port.tsx
 msgid "Wavelength"
-msgstr ""
-
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Webhook / Push notifications"
-#~ msgstr "Webhook / 推送通知"
+msgstr "波长"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Wed"
@@ -8018,10 +6996,6 @@ msgstr "周三"
 msgid "Weight"
 msgstr "权重"
 
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgid "When enabled, this token allows agents to self-register without prior system creation."
-#~ msgstr "启用后，此令牌允许代理无需事先创建系统即可自行注册。"
-
 #: src/components/routes/settings/heartbeat.tsx
 msgid "When using POST, each heartbeat includes a JSON payload with system status summary, list of down systems, and triggered alerts."
 msgstr "使用 POST 时，每个 heartbeat 都包含一个 JSON 有效载荷，其中包括系统状态摘要、故障系统列表和触发的警报。"
@@ -8029,11 +7003,6 @@ msgstr "使用 POST 时，每个 heartbeat 都包含一个 JSON 有效载荷，�
 #: src/components/routes/flow-vpn.tsx
 msgid "Window end"
 msgstr "窗口结束"
-
-#: src/components/routes/settings/tokens-fingerprints.tsx
-#~ msgctxt "Button to copy install command"
-#~ msgid "Windows command"
-#~ msgstr "Windows 安装命令"
 
 #. Disk write
 #: src/components/routes/system/charts/disk-charts.tsx
@@ -8043,10 +7012,6 @@ msgstr "窗口结束"
 msgid "Write"
 msgstr "写入"
 
-#: src/components/routes/settings/layout.tsx
-#~ msgid "YAML Config"
-#~ msgstr "YAML 配置"
-
 #: src/components/routes/settings/config-yaml.tsx
 msgid "YAML Configuration"
 msgstr "YAML 配置"
@@ -8054,7 +7019,7 @@ msgstr "YAML 配置"
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "yes"
-msgstr ""
+msgstr "是"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
@@ -8064,13 +7029,9 @@ msgstr ""
 msgid "Yes"
 msgstr "是"
 
-#: src/components/routes/settings/notifications.tsx
-#~ msgid "Your notification settings have been updated."
-#~ msgstr "您的通知设置已更新。"
-
 #: src/main.tsx
 msgid "Your role does not grant access to this page."
-msgstr ""
+msgstr "您的角色无权访问此页面。"
 
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."

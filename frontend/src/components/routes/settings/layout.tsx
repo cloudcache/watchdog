@@ -24,10 +24,9 @@ export async function saveSettings(newSettings: Partial<UserSettings>) {
 			description: t`Your user settings have been updated.`,
 		})
 	} catch (e) {
-		// console.error('update settings', e)
 		toast({
 			title: t`Failed to save settings`,
-			description: t`Check logs for more details.`,
+			description: e instanceof Error ? e.message : t`Request failed`,
 			variant: "destructive",
 		})
 	}

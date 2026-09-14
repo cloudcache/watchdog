@@ -1,3 +1,5 @@
+import type { MessageDescriptor } from "@lingui/core"
+import { msg } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { ArrowLeftIcon, SaveIcon, SearchIcon, UserRoundCogIcon } from "lucide-react"
@@ -51,45 +53,53 @@ const accessKinds = [
 	{
 		kind: "device",
 		field: "device_ids",
-		label: "Devices",
-		help: "Select the devices whose inventory and telemetry this user may see.",
+		label: msg`Devices`,
+		help: msg`Select the devices whose inventory and telemetry this user may see.`,
 	},
 	{
 		kind: "device_group",
 		field: "device_group_ids",
-		label: "Device groups",
-		help: "Membership grants follow the selected device groups.",
+		label: msg`Device groups`,
+		help: msg`Membership grants follow the selected device groups.`,
 	},
 	{
 		kind: "port",
 		field: "port_ids",
-		label: "Ports",
-		help: "Grant individual ports without exposing every port on a device.",
+		label: msg`Ports`,
+		help: msg`Grant individual ports without exposing every port on a device.`,
 	},
 	{
 		kind: "metric",
 		field: "metrics",
-		label: "Metrics",
-		help: "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports.",
+		label: msg`Metrics`,
+		help: msg`Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports.`,
 	},
 	{
 		kind: "billing_account",
 		field: "billing_account_ids",
-		label: "Billing",
-		help: "Select the billing accounts and periods this user may inspect.",
+		label: msg`Billing`,
+		help: msg`Select the billing accounts and periods this user may inspect.`,
 	},
 	{
 		kind: "aggregate_graph",
 		field: "aggregate_graph_ids",
-		label: "Saved graphs",
-		help: "Select saved aggregate graphs this user may open directly.",
+		label: msg`Saved graphs`,
+		help: msg`Select saved aggregate graphs this user may open directly.`,
 	},
 ] as const
 
 type AccessKind = (typeof accessKinds)[number]
 
+const builtInRoleTitles: Record<string, MessageDescriptor> = {
+	administrator: msg`Administrator`,
+	analyst: msg`Analyst`,
+	billing: msg`Billing`,
+	operator: msg({ message: "Operator", context: "User role" }),
+	viewer: msg`Viewer`,
+}
+
 export default memo(({ id }: { id?: string }) => {
-	const { t } = useLingui()
+	const { i18n, t } = useLingui()
 	const editing = Boolean(id)
 	const manageAccess = can("user.manage")
 	const [username, setUsername] = useState("")
@@ -408,13 +418,17 @@ export default memo(({ id }: { id?: string }) => {
 								roles.map((role) => (
 									<label
 										key={role.id}
+										htmlFor={`user-role-${role.id}`}
 										className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start hover:bg-muted/60"
 									>
 										<Checkbox
+											id={`user-role-${role.id}`}
 											checked={selectedRoles.includes(role.name)}
 											onCheckedChange={() => toggleRole(role.name)}
 										/>
-										<span>{role.title || role.name}</span>
+										<span>
+											{builtInRoleTitles[role.name] ? i18n._(builtInRoleTitles[role.name]) : role.title || role.name}
+										</span>
 									</label>
 								))
 							)}
@@ -450,7 +464,7 @@ export default memo(({ id }: { id?: string }) => {
 										setOffset(0)
 									}}
 								>
-									<span>{kind.label}</span>
+									<span>{i18n._(kind.label)}</span>
 									<Badge variant="outline">{access[kind.field].length}</Badge>
 								</Button>
 							))}
@@ -562,7 +576,7 @@ export default memo(({ id }: { id?: string }) => {
 								))}
 							</div>
 							<div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-								<span>{activeKind.help}</span>
+								<span>{i18n._(activeKind.help)}</span>
 								<div className="flex shrink-0 items-center gap-2">
 									<span>
 										{total === 0 ? 0 : offset + 1}-{Math.min(offset + limit, total)} / {total}

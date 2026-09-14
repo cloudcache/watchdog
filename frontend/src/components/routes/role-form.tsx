@@ -55,12 +55,12 @@ export default memo(({ id }: { id?: string }) => {
 	const grouped = useMemo(
 		() =>
 			permissions.reduce<Record<string, PermissionRecord[]>>((result, permission) => {
-				const section = permission.ability.includes(".view") ? "Visibility & data" : "Operations"
+				const section = permission.ability.includes(".view") ? t`Visibility & data` : t`Operations`
 				if (!result[section]) result[section] = []
 				result[section].push(permission)
 				return result
 			}, {}),
-		[permissions]
+		[permissions, t]
 	)
 
 	const save = async () => {

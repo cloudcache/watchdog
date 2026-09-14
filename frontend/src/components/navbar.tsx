@@ -32,6 +32,8 @@ import {
 	UsersIcon,
 } from "lucide-react"
 import { lazy, Suspense, useState } from "react"
+import { LanguageToggle } from "@/components/language-toggle"
+import { ModeToggle } from "@/components/mode-toggle"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
 	DropdownMenu,
@@ -127,6 +129,8 @@ export default function Navbar() {
 			</Button>
 
 			<div className="ms-auto flex items-center text-xl md:hidden">
+				<LanguageToggle />
+				<ModeToggle />
 				<Button variant="ghost" size="icon" onClick={() => setCommandPaletteOpen(true)} aria-label="Search">
 					<SearchIcon className="h-[1.2rem] w-[1.2rem]" />
 				</Button>
@@ -211,6 +215,8 @@ export default function Navbar() {
 						<Trans>Data</Trans>
 					</span>
 				</Link> : null}
+				<LanguageToggle />
+				<ModeToggle />
 				<UserMenu />
 				{can("device.create") && (
 					<Button

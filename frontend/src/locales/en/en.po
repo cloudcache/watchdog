@@ -38,6 +38,11 @@ msgstr "{0} of total"
 msgid "{0} packets"
 msgstr "{0} packets"
 
+#. placeholder {0}: role.permission_count ?? 0
+#: src/components/routes/users.tsx
+msgid "{0} permissions"
+msgstr "{0} permissions"
+
 #. placeholder {0}: ports.length
 #: src/components/routes/network-discover.tsx
 msgid "{0} ports imported, {deleted} stale ports removed"
@@ -265,6 +270,7 @@ msgstr "Activation"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
 #: src/components/routes/settings/heartbeat.tsx
+#: src/components/routes/users.tsx
 msgid "Active"
 msgstr "Active"
 
@@ -455,6 +461,11 @@ msgstr "Admin Down"
 #: src/components/navbar.tsx
 msgid "Administration"
 msgstr "Administration"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Administrator"
+msgstr "Administrator"
 
 #: src/components/install/install.tsx
 msgid "Administrator username"
@@ -672,8 +683,8 @@ msgid "Allowed"
 msgstr "Allowed"
 
 #: src/lib/flow-report-model.ts
-msgid "Ambiguous"
-msgstr "Ambiguous"
+#~ msgid "Ambiguous"
+#~ msgstr "Ambiguous"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Amount"
@@ -684,6 +695,11 @@ msgstr "Amount"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Analysis"
 msgstr "Analysis"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Analyst"
+msgstr "Analyst"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Analyze"
@@ -980,6 +996,9 @@ msgstr "BGP Peer"
 #: src/components/navbar.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/user-form.tsx
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Billing"
 msgstr "Billing"
@@ -1173,8 +1192,8 @@ msgid "Check {email} for a reset link."
 msgstr "Check {email} for a reset link."
 
 #: src/components/routes/settings/layout.tsx
-msgid "Check logs for more details."
-msgstr "Check logs for more details."
+#~ msgid "Check logs for more details."
+#~ msgstr "Check logs for more details."
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Check your monitoring service"
@@ -1733,8 +1752,8 @@ msgid "Critical (%)"
 msgstr "Critical (%)"
 
 #: src/lib/flow-report-model.ts
-msgid "Cross-border"
-msgstr "Cross-border"
+#~ msgid "Cross-border"
+#~ msgstr "Cross-border"
 
 #: src/components/routes/system/network-sheet.tsx
 msgid "Cumulative Download"
@@ -1770,6 +1789,7 @@ msgstr "Cycles"
 #~ msgid "Daily"
 #~ msgstr "Daily"
 
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Dark"
 msgstr "Dark"
@@ -2092,6 +2112,10 @@ msgstr "Device"
 msgid "Device catalog is unavailable"
 msgstr "Device catalog is unavailable"
 
+#: src/components/routes/user-form.tsx
+msgid "Device groups"
+msgstr "Device groups"
+
 #: src/components/routes/network-port-form.tsx
 #: src/components/routes/network-port-policy.tsx
 msgid "Device ID"
@@ -2106,6 +2130,7 @@ msgid "Device SNMP"
 msgstr "Device SNMP"
 
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/user-form.tsx
 msgid "Devices"
 msgstr "Devices"
 
@@ -2148,6 +2173,7 @@ msgstr "disabled"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/retention.tsx
 #: src/components/routes/snmp-mib-modules.tsx
+#: src/components/routes/users.tsx
 msgid "Disabled"
 msgstr "Disabled"
 
@@ -3605,6 +3631,10 @@ msgstr "GPU Power Draw"
 #~ msgid "GPU Usage"
 #~ msgstr "GPU Usage"
 
+#: src/components/routes/user-form.tsx
+msgid "Grant individual ports without exposing every port on a device."
+msgstr "Grant individual ports without exposing every port on a device."
+
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Graph"
 msgstr "Graph"
@@ -3885,6 +3915,11 @@ msgstr "Initialize the databases and create the first administrator."
 msgid "Initialize Watchdog"
 msgstr "Initialize Watchdog"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "off_net_in_province"
+msgstr "Inner State"
+
 #: src/components/routes/address-math.tsx
 msgid "Inputs"
 msgstr "Inputs"
@@ -3897,9 +3932,14 @@ msgstr "Install Watchdog"
 #~ msgid "Interface Health"
 #~ msgstr "Interface Health"
 
+#. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
-msgid "Internal"
+msgid "flow.category.internal"
 msgstr "Internal"
+
+#: src/lib/flow-report-model.ts
+#~ msgid "Internal"
+#~ msgstr "Internal"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Interval"
@@ -3999,6 +4039,7 @@ msgstr "Labels"
 msgid "LAG groups"
 msgstr "LAG groups"
 
+#: src/components/language-toggle.tsx
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Language"
@@ -4073,6 +4114,7 @@ msgstr "Library"
 msgid "Lifecycle"
 msgstr "Lifecycle"
 
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Light"
 msgstr "Light"
@@ -4150,6 +4192,11 @@ msgstr "Loading…"
 #: src/components/routes/network-device.tsx
 msgid "Local AS"
 msgstr "Local AS"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_local_city"
+msgstr "Local City"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Local hosts with overseas traffic"
@@ -4284,6 +4331,10 @@ msgstr "Me"
 msgid "Members"
 msgstr "Members"
 
+#: src/components/routes/user-form.tsx
+msgid "Membership grants follow the selected device groups."
+msgstr "Membership grants follow the selected device groups."
+
 #: src/components/containers-table/containers-table-columns.tsx
 #: src/components/routes/containers.tsx
 #: src/components/routes/system/info-bar.tsx
@@ -4347,6 +4398,7 @@ msgstr "Metric series"
 
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graphs.tsx
+#: src/components/routes/user-form.tsx
 msgid "Metrics"
 msgstr "Metrics"
 
@@ -5077,12 +5129,12 @@ msgid "Observed remote ports"
 msgstr "Observed remote ports"
 
 #: src/lib/flow-report-model.ts
-msgid "Off-net · cross-province"
-msgstr "Off-net · cross-province"
+#~ msgid "Off-net · cross-province"
+#~ msgstr "Off-net · cross-province"
 
 #: src/lib/flow-report-model.ts
-msgid "Off-net · same province"
-msgstr "Off-net · same province"
+#~ msgid "Off-net · same province"
+#~ msgstr "Off-net · same province"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Off-net by operator"
@@ -5107,20 +5159,24 @@ msgid "On each restart, systems in the database will be updated to match the sys
 msgstr "On each restart, systems in the database will be updated to match the systems defined in the file."
 
 #: src/lib/flow-report-model.ts
-msgid "On-net · cross-city"
-msgstr "On-net · cross-city"
+#~ msgid "On-net · cross-city"
+#~ msgstr "On-net · cross-city"
 
 #: src/lib/flow-report-model.ts
-msgid "On-net · cross-province"
-msgstr "On-net · cross-province"
+#~ msgid "On-net · cross-province"
+#~ msgstr "On-net · cross-province"
 
 #: src/lib/flow-report-model.ts
-msgid "On-net · same city"
-msgstr "On-net · same city"
+#~ msgid "On-net · same city"
+#~ msgstr "On-net · same city"
 
 #: src/components/routes/flow-reports.tsx
 msgid "On-net by province"
 msgstr "On-net by province"
+
+#: src/components/routes/user-form.tsx
+msgid "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
+msgstr "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
 
 #: src/components/routes/flow-reports.tsx
 msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
@@ -5190,6 +5246,7 @@ msgid "Operation job"
 msgstr "Operation job"
 
 #: src/components/routes/address-revisions.tsx
+#: src/components/routes/role-form.tsx
 msgid "Operations"
 msgstr "Operations"
 
@@ -5201,6 +5258,12 @@ msgstr "Operations"
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
+msgid "Operator"
+msgstr "Operator"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgctxt "User role"
 msgid "Operator"
 msgstr "Operator"
 
@@ -5268,6 +5331,26 @@ msgstr "Outbound"
 #: src/components/routes/flow-reports.tsx
 msgid "Outbound current / total"
 msgstr "Outbound current / total"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_cross_city"
+msgstr "Over City"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "overseas"
+msgstr "Over Sea"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "on_net_cross_province"
+msgstr "Over State"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "off_net_cross_province"
+msgstr "Over State"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Overall Traffic"
@@ -5598,6 +5681,7 @@ msgstr "ports"
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/target-detail.tsx
+#: src/components/routes/user-form.tsx
 msgid "Ports"
 msgstr "Ports"
 
@@ -5986,6 +6070,7 @@ msgstr "Report completeness: {0}"
 #: src/components/routes/modules.tsx
 #: src/components/routes/operation-jobs.tsx
 #: src/components/routes/role-form.tsx
+#: src/components/routes/settings/layout.tsx
 #: src/components/routes/user-form.tsx
 #: src/components/routes/users.tsx
 #: src/components/routes/users.tsx
@@ -6347,6 +6432,10 @@ msgstr "Saved Flow Filters"
 msgid "saved graphs"
 msgstr "saved graphs"
 
+#: src/components/routes/user-form.tsx
+msgid "Saved graphs"
+msgstr "Saved graphs"
+
 #: src/components/navbar.tsx
 #: src/components/routes/aggregate-graphs.tsx
 #: src/components/routes/aggregate-graphs.tsx
@@ -6673,6 +6762,10 @@ msgstr "Select or enter an IP address"
 #~ msgid "Select ports"
 #~ msgstr "Select ports"
 
+#: src/components/routes/user-form.tsx
+msgid "Select saved aggregate graphs this user may open directly."
+msgstr "Select saved aggregate graphs this user may open directly."
+
 #: src/components/routes/network-device-form.tsx
 #: src/components/routes/target-form.tsx
 msgid "Select SNMP profile"
@@ -6681,6 +6774,14 @@ msgstr "Select SNMP profile"
 #: src/components/routes/aggregate-charts.tsx
 #~ msgid "Select targets and metrics, then draw an aggregate chart."
 #~ msgstr "Select targets and metrics, then draw an aggregate chart."
+
+#: src/components/routes/user-form.tsx
+msgid "Select the billing accounts and periods this user may inspect."
+msgstr "Select the billing accounts and periods this user may inspect."
+
+#: src/components/routes/user-form.tsx
+msgid "Select the devices whose inventory and telemetry this user may see."
+msgstr "Select the devices whose inventory and telemetry this user may see."
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select the existing prefixes to remove, enter their replacement set, then preview. Nothing changes until you apply the immutable revision."
@@ -7114,8 +7215,8 @@ msgstr "Swap Usage"
 
 #: src/components/mode-toggle.tsx
 #: src/components/mode-toggle.tsx
-msgid "Switch theme"
-msgstr "Switch theme"
+#~ msgid "Switch theme"
+#~ msgstr "Switch theme"
 
 #: src/components/routes/network-device.tsx
 msgid "Switching"
@@ -7130,6 +7231,7 @@ msgstr "sysDescr"
 #~ msgstr "sysName or sysDescr is required"
 
 #: src/components/containers-table/containers-table-columns.tsx
+#: src/components/mode-toggle.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/settings/general.tsx
 #: src/components/routes/system/smart-table.tsx
@@ -7287,6 +7389,7 @@ msgstr "The export record and generated file will be permanently deleted."
 msgid "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 msgstr "The overall status is <0>ok</0> when all systems are up, <1>warn</1> when alerts are triggered, and <2>error</2> when any system is down."
 
+#: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
 msgid "Theme"
 msgstr "Theme"
@@ -7520,9 +7623,14 @@ msgstr "Traffic Policy"
 #~ msgid "Transform value"
 #~ msgstr "Transform value"
 
+#. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
-msgid "Transit"
+msgid "flow.category.transit"
 msgstr "Transit"
+
+#: src/lib/flow-report-model.ts
+#~ msgid "Transit"
+#~ msgstr "Transit"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Transport hints"
@@ -7600,6 +7708,11 @@ msgstr "Tue"
 msgid "Type"
 msgstr "Type"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.category.unattributed"
+msgstr "Unattributed"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Unavailable"
 msgstr "Unavailable"
@@ -7630,9 +7743,13 @@ msgstr "Universal token"
 #. Context: Battery state
 #: src/components/routes/flow-vpn.tsx
 #: src/components/routes/network-device.tsx
-#: src/lib/flow-report-model.ts
 #: src/lib/i18n.ts
 msgid "Unknown"
+msgstr "Unknown"
+
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.category.unknown"
 msgstr "Unknown"
 
 #: src/components/routes/billing-account-detail.tsx
@@ -7879,6 +7996,15 @@ msgstr "View more"
 #: src/components/routes/settings/alerts-history-data-table.tsx
 #~ msgid "View your 200 most recent alerts."
 #~ msgstr "View your 200 most recent alerts."
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgid "Viewer"
+msgstr "Viewer"
+
+#: src/components/routes/role-form.tsx
+msgid "Visibility & data"
+msgstr "Visibility & data"
 
 #: src/components/routes/role-form.tsx
 msgid "Visibility abilities control menus and data domains; operation abilities control create, update, delete and management actions."

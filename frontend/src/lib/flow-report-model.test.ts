@@ -1,13 +1,46 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { i18n } from "@lingui/core"
 import {
 	buildReportSeries,
+	flowReportCategoryLabel,
 	reportDirectionTotals,
 	reportSeriesStats,
 	resolveFlowReportRange,
 	transformReportSeries,
 	type FlowReportPanel,
 } from "./flow-report-model.ts"
+
+test("report categories use the frozen English product wording", () => {
+	i18n.load("en", {})
+	i18n.activate("en")
+	assert.deepEqual(
+		[
+			"on_net_local_city",
+			"on_net_cross_city",
+			"on_net_cross_province",
+			"off_net_in_province",
+			"off_net_cross_province",
+			"overseas",
+			"unknown",
+			"internal",
+			"transit",
+			"ambiguous",
+		].map(flowReportCategoryLabel),
+		[
+			"Local City",
+			"Over City",
+			"Over State",
+			"Inner State",
+			"Over State",
+			"Over Sea",
+			"Unknown",
+			"Internal",
+			"Transit",
+			"Unattributed",
+		]
+	)
+})
 
 test("report range presets align closed UTC minutes and calendar boundaries", () => {
 	const now = new Date("2026-09-08T10:17:42Z")
@@ -61,10 +94,14 @@ test("share uses a same-direction denominator and difference is signed inbound m
 	const shares = transformReportSeries(inbound, outbound, "share")
 	assert.equal(shares.inbound[0].values[0].value, 0.3)
 	assert.equal(shares.outbound[0].values[0].value, 0.5)
-	const zero = transformReportSeries([
-		{ name: "a", values: [{ time: 2, value: 0 }] },
-		{ name: "b", values: [{ time: 2, value: 0 }] },
-	], [], "share")
+	const zero = transformReportSeries(
+		[
+			{ name: "a", values: [{ time: 2, value: 0 }] },
+			{ name: "b", values: [{ time: 2, value: 0 }] },
+		],
+		[],
+		"share"
+	)
 	assert.deepEqual(zero.inbound[0].values, [], "a zero denominator must remain unknown rather than becoming 0%")
 	const difference = transformReportSeries(inbound, outbound, "difference")
 	assert.equal(difference.difference.find((series) => series.name === "a")?.values[0].value, -20)

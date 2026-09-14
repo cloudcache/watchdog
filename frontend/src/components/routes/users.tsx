@@ -43,6 +43,25 @@ export default memo(() => {
 	const [roles, setRoles] = useState<RoleRecord[]>([])
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
+	const roleLabel = useCallback(
+		(roleName: string, fallback = roleName) => {
+			switch (roleName) {
+				case "administrator":
+					return t`Administrator`
+				case "analyst":
+					return t`Analyst`
+				case "billing":
+					return t`Billing`
+				case "operator":
+					return t({ message: "Operator", context: "User role" })
+				case "viewer":
+					return t`Viewer`
+				default:
+					return fallback
+			}
+		},
+		[t]
+	)
 
 	const refresh = useCallback(async () => {
 		setLoading(true)
@@ -179,7 +198,9 @@ export default memo(() => {
 										<TableCell className="font-medium">{user.email}</TableCell>
 										<TableCell>{user.display_name || "—"}</TableCell>
 										<TableCell>
-											<Badge variant={user.status === "active" ? "success" : "secondary"}>{user.status}</Badge>
+											<Badge variant={user.status === "active" ? "success" : "secondary"}>
+												{user.status === "active" ? <Trans>Active</Trans> : <Trans>Disabled</Trans>}
+											</Badge>
 										</TableCell>
 										<TableCell>
 											<div className="flex flex-wrap gap-1">
@@ -188,7 +209,7 @@ export default memo(() => {
 												) : (
 													user.roles.map((roleName) => (
 														<Badge key={roleName} variant="outline" className="font-normal">
-															{roleName}
+															{roleLabel(roleName)}
 														</Badge>
 													))
 												)}
@@ -262,8 +283,10 @@ export default memo(() => {
 									className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/60"
 								>
 									<div className="min-w-0">
-										<div className="truncate text-sm">{role.title || role.name}</div>
-										<div className="text-xs text-muted-foreground">{role.permission_count ?? 0} permissions</div>
+										<div className="truncate text-sm">{roleLabel(role.name, role.title || role.name)}</div>
+										<div className="text-xs text-muted-foreground">
+											<Trans>{role.permission_count ?? 0} permissions</Trans>
+										</div>
 									</div>
 									<div className="flex items-center gap-1">
 										{can("role.update") ? (

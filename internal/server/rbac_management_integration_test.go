@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +61,23 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 	}
 	s := &Server{db: db}
 	p := &principal{UserID: adminID, IsAdmin: true, Abilities: map[string]bool{}}
+
+	preferences := rbacHandlerRequest(t, s.putUserPreferences, p, http.MethodPut, "/api/v1/me/preferences", "", map[string]any{
+		"chartTime": "6h", "layoutWidth": 1600,
+	})
+	if preferences.Code != http.StatusOK || !strings.Contains(preferences.Body.String(), `"row_version":1`) {
+		t.Fatalf("create user preferences: status=%d body=%s", preferences.Code, preferences.Body.String())
+	}
+	loadedPreferences := rbacHandlerRequest(t, s.getUserPreferences, p, http.MethodGet, "/api/v1/me/preferences", "", nil)
+	if loadedPreferences.Code != http.StatusOK || !strings.Contains(loadedPreferences.Body.String(), `"chartTime":"6h"`) {
+		t.Fatalf("load user preferences: status=%d body=%s", loadedPreferences.Code, loadedPreferences.Body.String())
+	}
+	if _, version, err := s.upsertUserPreferences(ctx, adminID, []byte(`{"chartTime":"12h"}`), 1); err != nil || version != 2 {
+		t.Fatalf("update user preferences: version=%d err=%v", version, err)
+	}
+	if _, _, err := s.upsertUserPreferences(ctx, adminID, []byte(`{"chartTime":"24h"}`), 1); !errors.Is(err, errUserPreferencesConflict) {
+		t.Fatalf("stale user preferences update: err=%v", err)
+	}
 
 	invalidRole := rbacHandlerRequest(t, s.createRole, p, http.MethodPost, "/api/v1/roles", "", map[string]any{
 		"name": "invalid-role", "permissions": []string{"not.a.real.ability"},
