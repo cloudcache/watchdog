@@ -52,7 +52,7 @@
 
 - [x] **编码**：删除 PB transport/authStore/collection/realtime 调用和 JS SDK；全站只使用一个 `WATCHDOG_CONFIG.API_URL` fetch client；仅在用户主动登录或访问受控路由时恢复 session，登录提交完全由用户触发。用户管理页已从 external-subject 投影 DTO 切为 Gin 本地账号/角色 DTO；保留现有路由、导航、页面布局、组件、主题、图标与交互。
 - [x] **单元/集成测试**：纯路由策略单测冻结未安装/dev-auth/已检查、公开密码恢复、安装重定向、受控与未知路由的 session 恢复边界；前端 51 个单测、全量 Biome、Vite production build 通过。真实 `frontend/` Vite 直连当前纯 Go `watchdog-server`，浏览器完成受控首页被动检查→登录页、用户主动登录→主界面、session 过期→登录页、主动 logout→登录页，控制台无错误。
-- [x] **现有自动门禁**：51 个前端单测、Vite production build、全量 Biome 0 diagnostics；`api.send` JSON body 类型由错误的 `RequestInit` 交叉类型改为显式覆盖。独立 `tsc -b` 已从全站 JSON body 误报收敛为 22 项既存 DTO/失活页面类型债，登记到 PLAT-FE-03，不把非认证页面债伪装成 KISS-01C 失败。
+- [x] **现有自动门禁**：51 个前端单测、Vite production build、全量 Biome lint 0 diagnostics；`api.send` JSON body 类型由错误的 `RequestInit` 交叉类型改为显式覆盖。PLAT-FE-03 已逐项消除余下 22 项 DTO/失活页面类型债并增加 `npm run typecheck` 门禁，全量 TypeScript build 通过。
 - [x] **变更设计/测试**：浏览器只验证请求行为与 console；源码、依赖锁和构建入口扫描无 PocketBase SDK、collection endpoint 或 authStore。没有做视觉测试，也没有修改样式和布局。
 - [x] **已提交门禁**：本提交仅含 session 路由策略、统一 client body 边界、测试和核销证据；无依赖变化所以锁文件保持不变，前端 PocketBase 引用扫描为零。
 

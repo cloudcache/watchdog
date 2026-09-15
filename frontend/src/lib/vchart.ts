@@ -1,5 +1,4 @@
-// biome-ignore-all lint/suspicious/noExplicitAny: VChart specs accept a broad schema that is not stable enough for narrow local typing.
-import VChart from "@visactor/vchart"
+import VChart, { type ILineChartSpec } from "@visactor/vchart"
 import { formatMetricValue } from "@/lib/metric-format"
 
 export type LineSeries = {
@@ -37,7 +36,7 @@ export function updateLineChart(chart: VChart | null, dom: HTMLElement, options:
 	return createLineChart(dom, options)
 }
 
-function createLineChartSpec(options: LineChartOptions) {
+function createLineChartSpec(options: LineChartOptions): ILineChartSpec {
 	const values = options.series.flatMap((series) =>
 		insertGapBreaks(series.values).map((point) => ({
 			time: point.time,
@@ -58,7 +57,7 @@ function createLineChartSpec(options: LineChartOptions) {
 		xField: "time",
 		yField: "value",
 		seriesField: "type",
-		line: { style: { lineWidth: 2 }, smooth: true },
+		line: { style: { lineWidth: 2 } },
 		point: { visible: false },
 		legends: { visible: true, orient: "top", position: "start" },
 		axes: [
@@ -73,7 +72,13 @@ function createLineChartSpec(options: LineChartOptions) {
 			},
 			{
 				orient: "left",
-				label: { formatMethod: (value: number) => options.yFormatter?.(value) ?? String(value) },
+				label: {
+					formatMethod: (value: string | string[]) => {
+						const label = Array.isArray(value) ? value[0] : value
+						const numericValue = Number(label)
+						return options.yFormatter?.(Number.isFinite(numericValue) ? numericValue : null) ?? label
+					},
+				},
 				grid: { visible: true, style: { lineDash: [3, 3] } },
 			},
 		],
@@ -94,18 +99,18 @@ function createLineChartSpec(options: LineChartOptions) {
 function timeAxisLayers(domain: { min: number; max: number }) {
 	const range = Math.max(0, domain.max - domain.min)
 	if (range <= 2 * 60 * 60 * 1000) {
-		return [{ timeFormat: "%H:%M:%S", timeFormatMode: "local" }]
+		return [{ timeFormat: "%H:%M:%S", timeFormatMode: "local" as const }]
 	}
 	if (range <= 24 * 60 * 60 * 1000) {
-		return [{ timeFormat: "%H:%M", timeFormatMode: "local" }]
+		return [{ timeFormat: "%H:%M", timeFormatMode: "local" as const }]
 	}
 	if (range <= 14 * 24 * 60 * 60 * 1000) {
-		return [{ timeFormat: "%m/%d %H:%M", timeFormatMode: "local" }]
+		return [{ timeFormat: "%m/%d %H:%M", timeFormatMode: "local" as const }]
 	}
 	if (range <= 180 * 24 * 60 * 60 * 1000) {
-		return [{ timeFormat: "%m/%d", timeFormatMode: "local" }]
+		return [{ timeFormat: "%m/%d", timeFormatMode: "local" as const }]
 	}
-	return [{ timeFormat: "%Y/%m/%d", timeFormatMode: "local" }]
+	return [{ timeFormat: "%Y/%m/%d", timeFormatMode: "local" as const }]
 }
 
 function insertGapBreaks(values: { time: number; value: number | null }[]) {

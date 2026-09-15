@@ -175,7 +175,7 @@ export default memo(function AddressImports() {
 			uppy.destroy()
 			setUploading(false)
 			if (result.failed?.length) {
-				setError(result.failed[0].error?.message || t`Upload failed`)
+				setError(result.failed[0].error || t`Upload failed`)
 				return
 			}
 			setShowUpload(false)

@@ -141,7 +141,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 			deviceList.map(async (device) => {
 				const deviceID = device.ID ?? device.id ?? ""
 				if (!deviceID) {
-					return [deviceID, []] as const
+					return [deviceID, [] as NetworkPort[]] as const
 				}
 				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceID}/ports`, {})
 				return [deviceID, data.items ?? []] as const

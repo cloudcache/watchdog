@@ -242,7 +242,7 @@ export default memo(() => {
 				const data = await api.send<FacetsResponse>(`/api/v1/flow/vpn/findings/facets?${params}`, { signal })
 				return (data.items ?? []).map((item) => ({
 					value: item.value,
-					label: facetLabel(field, item.value, t),
+					label: facetLabel(field, item.value, t`Unknown`),
 					count: item.count,
 				}))
 			},
@@ -525,12 +525,12 @@ function protocolLabel(value: number) {
 	return String(value)
 }
 
-function facetLabel(field: string, value: string, translate: (message: string) => string) {
+function facetLabel(field: string, value: string, unknownLabel: string) {
 	if (field === "primary_protocol") return protocolLabel(Number(value))
-	if (field === "remote_country" && value === "_unknown") return translate("Unknown")
+	if (field === "remote_country" && value === "_unknown") return unknownLabel
 	if (field === "local_to_remote_bytes" || field === "remote_to_local_bytes") return formatBytes(Number(value))
 	if (field === "window_end") return formatDate(value)
-	return value || translate("Unknown")
+	return value || unknownLabel
 }
 
 function formatBytes(value: number) {

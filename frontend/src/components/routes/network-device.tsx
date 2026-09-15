@@ -269,7 +269,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 				api.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
 				api.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
 				api.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
-					() => ({ items: [], counts: { total: 0, problems: 0 } })
+					() => ({ items: [], total: 0, counts: { total: 0, problems: 0 } })
 				),
 				api.send<TargetsResponse>("/api/v1/targets", {}),
 				api.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),

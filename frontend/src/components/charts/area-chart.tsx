@@ -68,7 +68,7 @@ export default function AreaChartDefault(props: AreaChartDefaultProps) {
 		disposeChart(chartInstance.current)
 		chartInstance.current = createLineChart(chartRef.current, {
 			series,
-			yFormatter: (value) => tickFormatter(value, 0),
+			yFormatter: (value) => (value === null ? "—" : tickFormatter(value, 0)),
 		})
 		return () => disposeChart(chartInstance.current)
 	}, [isIntersecting, series, tickFormatter])

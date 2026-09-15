@@ -277,8 +277,7 @@ async function getLogsHtml(container: ContainerRecord): Promise<string> {
 		const [{ highlighter }, logsHtml] = await Promise.all([
 			import("@/lib/shiki"),
 			api.send<{ logs: string }>("/api/v1/containers/logs", {
-				system: container.system,
-				container: container.id,
+				query: { system: container.system, container: container.id },
 			}),
 		])
 		return logsHtml.logs ? highlighter.codeToHtml(logsHtml.logs, { lang: "log", theme: syntaxTheme }) : t`No results.`
@@ -293,8 +292,7 @@ async function getInfoHtml(container: ContainerRecord): Promise<string> {
 		let [{ highlighter }, { info }] = await Promise.all([
 			import("@/lib/shiki"),
 			api.send<{ info: string }>("/api/v1/containers/info", {
-				system: container.system,
-				container: container.id,
+				query: { system: container.system, container: container.id },
 			}),
 		])
 		try {

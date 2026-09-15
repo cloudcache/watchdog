@@ -215,7 +215,7 @@ function renderChart(
 	el: HTMLDivElement | null,
 	ref: React.MutableRefObject<ReturnType<typeof createLineChart> | null>,
 	series: Series[],
-	yFormatter: (value?: number) => string
+	yFormatter: (value?: number | null) => string
 ) {
 	if (!el || series.length === 0) {
 		disposeChart(ref.current)
@@ -230,10 +230,10 @@ function containerName(metric?: Record<string, string>) {
 	return metric?.container_name || metric?.container || metric?.name || "container"
 }
 
-function formatPercent(value?: number) {
-	return value === undefined ? "-" : `${value.toFixed(1)}%`
+function formatPercent(value?: number | null) {
+	return value == null ? "-" : `${value.toFixed(1)}%`
 }
 
-function formatMegabytes(value?: number) {
-	return value === undefined ? "-" : `${value.toFixed(1)} MB`
+function formatMegabytes(value?: number | null) {
+	return value == null ? "-" : `${value.toFixed(1)} MB`
 }

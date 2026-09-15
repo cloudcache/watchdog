@@ -329,7 +329,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					method: "POST",
 					body,
 					signal: controller.signal,
-					requestKey: null,
 				})
 				if (sequence !== requestSequence.current) return
 				setResponse(result)
@@ -1276,13 +1275,8 @@ function OverseasVPNShare({ panel }: { panel?: FlowReportPanel }) {
 	const { t } = useLingui()
 	if (!panel || panel.status === "unavailable")
 		return <UnavailablePanel title={t`VPN share of overseas traffic`} reason={panel?.reason} />
-	const points = (panel.data?.points ?? []) as Array<{
-		direction: string
-		vpn_bytes: number
-		total_bytes: number
-		ratio?: number
-		unknown_geo_bytes: number
-	}>
+	const sourcePoints: unknown[] = panel.data?.points ?? []
+	const points = sourcePoints.filter(isOverseasVPNSharePoint)
 	const combined = points.find((point) => point.direction === "combined")
 	return (
 		<Card>
@@ -1309,6 +1303,26 @@ function OverseasVPNShare({ panel }: { panel?: FlowReportPanel }) {
 				</Link>
 			</CardContent>
 		</Card>
+	)
+}
+
+type OverseasVPNSharePoint = {
+	direction: string
+	vpn_bytes: number
+	total_bytes: number
+	ratio?: number
+	unknown_geo_bytes: number
+}
+
+function isOverseasVPNSharePoint(value: unknown): value is OverseasVPNSharePoint {
+	if (!value || typeof value !== "object") return false
+	const point = value as Record<string, unknown>
+	return (
+		typeof point.direction === "string" &&
+		typeof point.vpn_bytes === "number" &&
+		typeof point.total_bytes === "number" &&
+		typeof point.unknown_geo_bytes === "number" &&
+		(point.ratio === undefined || typeof point.ratio === "number")
 	)
 }
 

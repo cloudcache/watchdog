@@ -211,7 +211,7 @@ export default memo(({ id }: TargetDetailProps) => {
 		}
 	}, [error, loading, series])
 
-	const name = target?.Name ?? target?.name ?? id
+	const name = target?.name ?? id
 
 	return (
 		<div className="grid gap-4">
@@ -263,10 +263,10 @@ export default memo(({ id }: TargetDetailProps) => {
 
 			<div className="grid gap-3 md:grid-cols-4">
 				<InfoCell label={t`Type`} value={target?.kind} />
-				<InfoCell label={t`Host`} value={target?.Host ?? target?.host} />
-				<InfoCell label={t`Status`} value={target?.Status ?? target?.status} />
+				<InfoCell label={t`Host`} value={target?.host} />
+				<InfoCell label={t`Status`} value={target?.status} />
 				<InfoCell label="ID" value={id} mono />
-				<InfoCell label={t`Labels`} value={formatLabels(target?.Labels ?? target?.labels)} />
+				<InfoCell label={t`Labels`} value={formatLabels(target?.labels)} />
 			</div>
 
 			<div className="rounded-md border border-border p-4">
@@ -374,7 +374,7 @@ function vmValues(response: VMRangeResponse) {
 		.filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
 }
 
-function formatValue(value?: number, unit?: string) {
+function formatValue(value?: number | null, unit?: string) {
 	return formatMetricValue(value, unit)
 }
 

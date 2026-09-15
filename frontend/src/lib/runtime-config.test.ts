@@ -17,8 +17,12 @@ test("runtime config preserves injected same-origin defaults", () => {
 
 test("standalone runtime config overrides the single API address", () => {
 	const configuredSource = source.replace('API_URL: "http://127.0.0.1:8091"', 'API_URL: "https://api.example"')
-	const context = { WATCHDOG: "{info}", location: { origin: "https://front.example" } }
+	const context: {
+		WATCHDOG: string | { BASE_PATH: string; VERSION: string; API_URL: string }
+		location: { origin: string }
+	} = { WATCHDOG: "{info}", location: { origin: "https://front.example" } }
 	runInNewContext(configuredSource, context)
+	if (typeof context.WATCHDOG === "string") assert.fail("runtime config was not initialized")
 	assert.equal(context.WATCHDOG.API_URL, "https://api.example")
 	assert.equal(context.WATCHDOG.BASE_PATH, "/")
 })

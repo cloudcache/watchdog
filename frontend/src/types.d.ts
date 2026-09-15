@@ -354,6 +354,7 @@ export interface SmartAttribute {
 }
 
 export interface SystemDetailsRecord extends APIRecord {
+	arch?: string
 	system: string
 	hostname: string
 	kernel: string
