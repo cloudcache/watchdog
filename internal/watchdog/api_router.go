@@ -52,7 +52,6 @@ type APIV1RouterConfig struct {
 	SNMPCollector          SNMPCollectorRepository
 	SeriesCleaner          SeriesCleaner
 	DiscoveryJobs          DiscoveryJobRepository
-	TrapDispatcher         func(ctx context.Context, device NetworkDevice, trap SNMPTrap) (SNMPTrapHandleResult, error)
 	Audit                  AuditRepository
 	AddressSets            AddressSetRepository
 	AddressTaxonomy        AddressTaxonomyRepository
@@ -235,9 +234,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)
-	}
-	if cfg.Network != nil && cfg.SNMPCollector != nil && cfg.TrapDispatcher != nil {
-		registerTrapRoutes(mux, auth, cfg.Network, cfg.SNMPCollector, cfg.TrapDispatcher, cfg.DiscoveryJobs)
 	}
 	// The legacy tenant-scoped registry CRUD has moved to Gin/MySQL. Keep the
 	// mature system plan/sample implementation until its ClickHouse sink is
