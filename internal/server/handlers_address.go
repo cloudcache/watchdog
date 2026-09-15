@@ -798,11 +798,13 @@ type geoLineInput struct {
 	Code         *string                  `json:"code,omitempty"`
 	Name         *string                  `json:"name,omitempty"`
 	Description  *string                  `json:"description,omitempty"`
-	GeoSelector  *address.GeoLineSelector `json:"geo_selector,omitempty"`
-	OperatorID   *string                  `json:"operator_id,omitempty"`
-	AddressSetID *string                  `json:"address_set_id,omitempty"`
-	SortOrder    *int                     `json:"sort_order,omitempty"`
-	Enabled      *bool                    `json:"enabled,omitempty"`
+	GeoSelector    *address.GeoLineSelector `json:"geo_selector,omitempty"`
+	Members        *[]string                `json:"members,omitempty"`
+	ExcludeLineIDs *[]address.ID            `json:"exclude_line_ids,omitempty"`
+	OperatorID     *string                  `json:"operator_id,omitempty"`
+	AddressSetID   *string                  `json:"address_set_id,omitempty"`
+	SortOrder      *int                     `json:"sort_order,omitempty"`
+	Enabled        *bool                    `json:"enabled,omitempty"`
 }
 
 func applyGeoLineInput(line address.GeoLine, input geoLineInput) address.GeoLine {
@@ -820,6 +822,12 @@ func applyGeoLineInput(line address.GeoLine, input geoLineInput) address.GeoLine
 	}
 	if input.GeoSelector != nil {
 		line.GeoSelector = *input.GeoSelector
+	}
+	if input.Members != nil {
+		line.Members = *input.Members
+	}
+	if input.ExcludeLineIDs != nil {
+		line.ExcludeLineIDs = *input.ExcludeLineIDs
 	}
 	if input.OperatorID != nil {
 		line.OperatorID = *input.OperatorID

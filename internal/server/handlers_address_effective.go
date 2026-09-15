@@ -22,32 +22,47 @@ func (s *Server) listEffectiveAddressPrefixes(c *gin.Context) {
 		return
 	}
 	limit, offset := pageParams(c)
-	filter := address.AddressBasePrefixFilter{
-		CountryCode: strings.TrimSpace(c.Query("country_code")), Operator: strings.TrimSpace(c.Query("operator")),
-		Search: strings.TrimSpace(c.Query("q")), Limit: limit, Offset: offset, TableMode: true,
-		Sort: c.Query("sort"), Desc: sortDirection(c) == "DESC",
-	}
+	var family uint8
 	if raw := strings.TrimSpace(c.Query("family")); raw != "" {
-		family, err := strconv.ParseUint(raw, 10, 8)
-		if err != nil || (family != 4 && family != 6) {
+		parsed, err := strconv.ParseUint(raw, 10, 8)
+		if err != nil || (parsed != 4 && parsed != 6) {
 			fail(c, http.StatusBadRequest, "invalid_request", "family must be 4 or 6")
 			return
 		}
-		filter.Family = uint8(family)
+		family = uint8(parsed)
 	}
-	if raw := strings.TrimSpace(c.Query("asn")); raw != "" {
-		asn, err := strconv.ParseUint(raw, 10, 32)
+	var base []address.AddressBasePrefix
+	var total int
+	// A ?line=<id> filters by a region-group's effective set (include selector ∪
+	// members − exclude lines); otherwise the plain column filters apply.
+	if line := strings.TrimSpace(c.Query("line")); line != "" {
+		var err error
+		base, total, err = s.addressStore.ListAddressPrefixesByLine(ctx, active.ImportID, address.ID(line), family, limit, offset)
 		if err != nil {
-			fail(c, http.StatusBadRequest, "invalid_request", "asn must be an unsigned 32-bit integer")
+			writeAddressImportError(c, err)
 			return
 		}
-		value := uint32(asn)
-		filter.ASN = &value
-	}
-	base, _, total, err := s.addressStore.ListAddressBasePrefixes(ctx, active.ImportID, filter)
-	if err != nil {
-		writeAddressImportError(c, err)
-		return
+	} else {
+		filter := address.AddressBasePrefixFilter{
+			CountryCode: strings.TrimSpace(c.Query("country_code")), Operator: strings.TrimSpace(c.Query("operator")),
+			Search: strings.TrimSpace(c.Query("q")), Limit: limit, Offset: offset, TableMode: true,
+			Sort: c.Query("sort"), Desc: sortDirection(c) == "DESC", Family: family,
+		}
+		if raw := strings.TrimSpace(c.Query("asn")); raw != "" {
+			asn, err := strconv.ParseUint(raw, 10, 32)
+			if err != nil {
+				fail(c, http.StatusBadRequest, "invalid_request", "asn must be an unsigned 32-bit integer")
+				return
+			}
+			value := uint32(asn)
+			filter.ASN = &value
+		}
+		var err error
+		base, _, total, err = s.addressStore.ListAddressBasePrefixes(ctx, active.ImportID, filter)
+		if err != nil {
+			writeAddressImportError(c, err)
+			return
+		}
 	}
 	cidrs := make([]string, len(base))
 	for i := range base {

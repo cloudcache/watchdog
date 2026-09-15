@@ -459,18 +459,25 @@ func (s *Store) DeleteISPOperator(ctx context.Context, id ID, expectedVersion ui
 
 const geoLineColumns = `
 	id, COALESCE(parent_id, ''), code, name, COALESCE(description, ''),
-	geo_selector, COALESCE(operator_id, ''), COALESCE(address_set_id, ''), sort_order,
+	geo_selector, COALESCE(members, '[]'), COALESCE(exclude_line_ids, '[]'),
+	COALESCE(operator_id, ''), COALESCE(address_set_id, ''), sort_order,
 	enabled, row_version, created_at, updated_at`
 
 func scanGeoLine(row rowScanner) (GeoLine, error) {
 	var item GeoLine
-	var selector []byte
+	var selector, members, excludeIDs []byte
 	if err := row.Scan(&item.ID, &item.ParentID, &item.Code, &item.Name, &item.Description,
-		&selector, &item.OperatorID, &item.AddressSetID, &item.SortOrder, &item.Enabled,
+		&selector, &members, &excludeIDs, &item.OperatorID, &item.AddressSetID, &item.SortOrder, &item.Enabled,
 		&item.RowVersion, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return GeoLine{}, err
 	}
 	if err := json.Unmarshal(selector, &item.GeoSelector); err != nil {
+		return GeoLine{}, err
+	}
+	if err := json.Unmarshal(members, &item.Members); err != nil {
+		return GeoLine{}, err
+	}
+	if err := json.Unmarshal(excludeIDs, &item.ExcludeLineIDs); err != nil {
 		return GeoLine{}, err
 	}
 	return item, nil
@@ -563,12 +570,14 @@ func (s *Store) CreateGeoLine(ctx context.Context, line GeoLine) (GeoLine, error
 		return GeoLine{}, err
 	}
 	selector, _ := json.Marshal(line.GeoSelector)
+	members, _ := json.Marshal(line.Members)
+	excludeIDs, _ := json.Marshal(line.ExcludeLineIDs)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO geo_lines (id, parent_id, code, name, description, geo_selector,
-			operator_id, address_set_id, sort_order, enabled)
-		VALUES (?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)
+			members, exclude_line_ids, operator_id, address_set_id, sort_order, enabled)
+		VALUES (?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)
 	`, line.ID, line.ParentID, line.Code, line.Name, line.Description, selector,
-		line.OperatorID, line.AddressSetID, line.SortOrder, line.Enabled)
+		members, excludeIDs, line.OperatorID, line.AddressSetID, line.SortOrder, line.Enabled)
 	if err != nil {
 		return GeoLine{}, err
 	}
@@ -591,12 +600,14 @@ func (s *Store) UpdateGeoLine(ctx context.Context, line GeoLine, expectedVersion
 		return GeoLine{}, err
 	}
 	selector, _ := json.Marshal(line.GeoSelector)
+	members, _ := json.Marshal(line.Members)
+	excludeIDs, _ := json.Marshal(line.ExcludeLineIDs)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE geo_lines SET parent_id = NULLIF(?, ''), code = ?, name = ?, description = NULLIF(?, ''),
-			geo_selector = ?, operator_id = NULLIF(?, ''), address_set_id = NULLIF(?, ''),
+			geo_selector = ?, members = ?, exclude_line_ids = ?, operator_id = NULLIF(?, ''), address_set_id = NULLIF(?, ''),
 			sort_order = ?, enabled = ?, row_version = row_version + 1
 		WHERE id = ? AND row_version = ?
-	`, line.ParentID, line.Code, line.Name, line.Description, selector, line.OperatorID, line.AddressSetID,
+	`, line.ParentID, line.Code, line.Name, line.Description, selector, members, excludeIDs, line.OperatorID, line.AddressSetID,
 		line.SortOrder, line.Enabled, line.ID, expectedVersion)
 	if err != nil {
 		return GeoLine{}, err
@@ -623,6 +634,16 @@ func (s *Store) validateGeoLineReferences(ctx context.Context, line GeoLine) err
 	for _, id := range line.GeoSelector.GeoNodeIDs {
 		if _, err := s.GetGeoDictionary(ctx, id); err != nil {
 			return fmt.Errorf("geo node %s: %w", id, err)
+		}
+	}
+	for _, id := range line.GeoSelector.OperatorIDs {
+		if _, err := s.GetISPOperator(ctx, id); err != nil {
+			return fmt.Errorf("operator %s: %w", id, err)
+		}
+	}
+	for _, id := range line.ExcludeLineIDs {
+		if _, err := s.GetGeoLine(ctx, id); err != nil {
+			return fmt.Errorf("exclude line %s: %w", id, err)
 		}
 	}
 	if line.OperatorID != "" {

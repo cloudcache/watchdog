@@ -109,26 +109,37 @@ type ISPOperator struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// GeoLineSelector is the include criteria of a line/region-group (大区组). Within
+// a dimension the values are OR'd; across dimensions they are AND'd (a prefix
+// matches when it satisfies the geo AND operator AND asn constraints that are
+// set). An empty dimension is no constraint.
 type GeoLineSelector struct {
-	GeoNodeIDs []ID  `json:"geo_node_ids,omitempty"`
-	Families   []int `json:"families,omitempty"`
+	GeoNodeIDs  []ID     `json:"geo_node_ids,omitempty"`
+	Families    []int    `json:"families,omitempty"`
+	OperatorIDs []ID     `json:"operator_ids,omitempty"`
+	ASNs        []uint32 `json:"asns,omitempty"`
 }
 
-// GeoLine (线路) is a geo-selector + operator + address-set routing definition.
+// GeoLine (线路/大区组) is a named group: an include selector plus explicit CIDR
+// members (unioned with the selector) minus the effective sets of exclude lines
+// (recursively). Also carries a single operator_id + address_set_id for legacy
+// routing.
 type GeoLine struct {
-	ID           ID              `json:"id"`
-	ParentID     ID              `json:"parent_id,omitempty"`
-	Code         string          `json:"code"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
-	GeoSelector  GeoLineSelector `json:"geo_selector"`
-	OperatorID   ID              `json:"operator_id,omitempty"`
-	AddressSetID string          `json:"address_set_id,omitempty"`
-	SortOrder    int             `json:"sort_order"`
-	Enabled      bool            `json:"enabled"`
-	RowVersion   uint64          `json:"row_version"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID             ID              `json:"id"`
+	ParentID       ID              `json:"parent_id,omitempty"`
+	Code           string          `json:"code"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	GeoSelector    GeoLineSelector `json:"geo_selector"`
+	Members        []string        `json:"members,omitempty"`
+	ExcludeLineIDs []ID            `json:"exclude_line_ids,omitempty"`
+	OperatorID     ID              `json:"operator_id,omitempty"`
+	AddressSetID   string          `json:"address_set_id,omitempty"`
+	SortOrder      int             `json:"sort_order"`
+	Enabled        bool            `json:"enabled"`
+	RowVersion     uint64          `json:"row_version"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type AddressTaxonomyListFilter struct {
@@ -502,5 +513,66 @@ func normalizeGeoLine(line GeoLine) (GeoLine, error) {
 			line.GeoSelector.Families = append(line.GeoSelector.Families, family)
 		}
 	}
+	line.GeoSelector.OperatorIDs = dedupSortedIDs(line.GeoSelector.OperatorIDs)
+	if len(line.GeoSelector.OperatorIDs) > 1_000 {
+		return GeoLine{}, fmt.Errorf("%w: line selector exceeds 1000 operators", ErrAddressTaxonomyInvalid)
+	}
+	asns := append([]uint32(nil), line.GeoSelector.ASNs...)
+	sort.Slice(asns, func(i, j int) bool { return asns[i] < asns[j] })
+	line.GeoSelector.ASNs = asns[:0]
+	for _, asn := range asns {
+		if len(line.GeoSelector.ASNs) == 0 || line.GeoSelector.ASNs[len(line.GeoSelector.ASNs)-1] != asn {
+			line.GeoSelector.ASNs = append(line.GeoSelector.ASNs, asn)
+		}
+	}
+	if len(line.GeoSelector.ASNs) > 10_000 {
+		return GeoLine{}, fmt.Errorf("%w: line selector exceeds 10000 asns", ErrAddressTaxonomyInvalid)
+	}
+	members := make([]string, 0, len(line.Members))
+	seenMember := map[string]bool{}
+	for _, raw := range line.Members {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return GeoLine{}, fmt.Errorf("%w: line member %q is not a valid CIDR", ErrAddressTaxonomyInvalid, raw)
+		}
+		canonical := prefix.Masked().String()
+		if !seenMember[canonical] {
+			seenMember[canonical] = true
+			members = append(members, canonical)
+		}
+	}
+	if len(members) > 10_000 {
+		return GeoLine{}, fmt.Errorf("%w: line exceeds 10000 members", ErrAddressTaxonomyInvalid)
+	}
+	line.Members = members
+	line.ExcludeLineIDs = dedupSortedIDs(line.ExcludeLineIDs)
+	for _, id := range line.ExcludeLineIDs {
+		if id == line.ID {
+			return GeoLine{}, fmt.Errorf("%w: line cannot exclude itself", ErrAddressTaxonomyInvalid)
+		}
+	}
+	if len(line.ExcludeLineIDs) > 1_000 {
+		return GeoLine{}, fmt.Errorf("%w: line exceeds 1000 exclude references", ErrAddressTaxonomyInvalid)
+	}
 	return line, nil
+}
+
+// dedupSortedIDs returns the non-empty ids sorted and de-duplicated.
+func dedupSortedIDs(in []ID) []ID {
+	ids := append([]ID(nil), in...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]ID, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if len(out) == 0 || out[len(out)-1] != id {
+			out = append(out, id)
+		}
+	}
+	return out
 }
