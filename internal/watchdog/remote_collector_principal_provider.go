@@ -545,4 +545,3 @@ func normalizeRemoteCollectorPrincipalProviderConfig(config *RemoteCollectorPrin
 }
 
 var _ CollectorPrincipalProvider = (*remoteCollectorPrincipalProvider)(nil)
-var _ collectorPrincipalRuntimeProvider = (*remoteCollectorPrincipalProvider)(nil)

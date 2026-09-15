@@ -278,39 +278,6 @@ func TestRemoteCollectorPrincipalProviderAllowsOneHalfOpenProbe(t *testing.T) {
 	}
 }
 
-func TestBackendRuntimePublishesPassiveCollectorPrincipalProviderHealth(t *testing.T) {
-	now := time.Unix(4_000_000, 0).UTC()
-	provider, err := newRemoteCollectorPrincipalProviderWithClient(
-		testRemoteCollectorPrincipalProviderConfig("https://provider-secret.example"),
-		&http.Client{Transport: collectorPrincipalRoundTripFunc(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("transport secret")
-		})},
-		func() time.Time { return now },
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider.recordFailure()
-	runtime := &BackendRuntime{Config: BackendConfig{CollectorPrincipalProvider: RemoteCollectorPrincipalProviderConfig{Enabled: true}}}
-	runtime.collectorPrincipalProvider = provider
-	health := runtime.Health()
-	if !health.CollectorPrincipalProvider.Enabled || health.CollectorPrincipalProvider.Health.RequestFailureTotal != 1 {
-		t.Fatalf("provider health missing from backend runtime: %+v", health)
-	}
-	metrics := string(runtime.RuntimeMetrics())
-	for _, want := range []string{
-		"watchdog_collector_principal_provider_enabled 1",
-		`watchdog_collector_principal_provider_request_total{result="failure"} 1`,
-	} {
-		if !strings.Contains(metrics, want) {
-			t.Fatalf("runtime metrics missing %q:\n%s", want, metrics)
-		}
-	}
-	if strings.Contains(metrics, "provider-secret") || strings.Contains(metrics, "transport secret") {
-		t.Fatalf("provider identity or error leaked into runtime metrics: %s", metrics)
-	}
-}
-
 func newTestRemoteCollectorPrincipalProvider(t *testing.T, baseURL string, client *http.Client) *remoteCollectorPrincipalProvider {
 	t.Helper()
 	provider, err := newRemoteCollectorPrincipalProviderWithClient(testRemoteCollectorPrincipalProviderConfig(baseURL), client, time.Now)

@@ -106,7 +106,7 @@ func ApplyMySQLMigrations(ctx context.Context, db *sql.DB) (MySQLMigrationResult
 	// top builds an incompatible `watchdog_installation` (id VARCHAR 'default',
 	// no schema_version) that stops the KISS server from booting with
 	// "Unknown column 'schema_version'". Guards both the legacy installer
-	// (RunInstall applies migrations first) and the NewBackendRuntime workers.
+	// (RunInstall applies migrations first) and any direct legacy migration caller.
 	// See docs/watchdog-kiss-cleanup-ledger.md (S3/L12).
 	var kissManaged int
 	if err := conn.QueryRowContext(ctx, `

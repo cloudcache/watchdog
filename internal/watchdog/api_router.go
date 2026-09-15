@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+// PlatformRuntimeHealth is retained only as the response contract of the
+// legacy test router after the retired all-in-one runtime was removed.
+type PlatformRuntimeHealth struct {
+	CollectorPrincipalProvider CollectorPrincipalProviderRuntimeStatus `json:"collector_principal_provider"`
+}
+
 type APIV1RouterConfig struct {
 	Auth                   AuthContextAdapter
 	TenantDiscovery        AuthContextAdapter
