@@ -45,7 +45,9 @@ type GeoLine = {
 	code: string
 	name: string
 	description?: string
-	geo_selector: { geo_node_ids?: string[]; families?: number[] }
+	geo_selector: { geo_node_ids?: string[]; families?: number[]; operator_ids?: string[]; asns?: number[] }
+	members?: string[]
+	exclude_line_ids?: string[]
 	operator_id?: string
 	address_set_id?: string
 	sort_order: number
@@ -70,6 +72,9 @@ type TaxonomyForm = {
 	description: string
 	geoNodeIDs: string[]
 	families: number[]
+	operatorIDs: string[]
+	members: string
+	excludeLineIDs: string[]
 	operatorID: string
 	addressSetID: string
 	sortOrder: string
@@ -90,6 +95,9 @@ const emptyForm: TaxonomyForm = {
 	description: "",
 	geoNodeIDs: [],
 	families: [4, 6],
+	operatorIDs: [],
+	members: "",
+	excludeLineIDs: [],
 	operatorID: "",
 	addressSetID: "",
 	sortOrder: "0",
@@ -239,6 +247,10 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					description: line.description ?? "",
 					geoNodeIDs: line.geo_selector.geo_node_ids ?? [],
 					families: line.geo_selector.families ?? [],
+					operatorIDs: line.geo_selector.operator_ids ?? [],
+					asns: (line.geo_selector.asns ?? []).join(", "),
+					members: (line.members ?? []).join("\n"),
+					excludeLineIDs: line.exclude_line_ids ?? [],
 					operatorID: line.operator_id ?? "",
 					addressSetID: line.address_set_id ?? "",
 					sortOrder: String(line.sort_order),
@@ -277,12 +289,23 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					enabled: form.enabled,
 				}
 			} else {
+				const members = form.members
+					.split(/[\s,]+/)
+					.map((value) => value.trim())
+					.filter(Boolean)
 				body = {
 					parent_id: form.parentID,
 					code: form.code,
 					name: form.name,
 					description: form.description,
-					geo_selector: { geo_node_ids: form.geoNodeIDs, families: form.families },
+					geo_selector: {
+						geo_node_ids: form.geoNodeIDs,
+						families: form.families,
+						operator_ids: form.operatorIDs,
+						asns: parseASNList(form.asns),
+					},
+					members,
+					exclude_line_ids: form.excludeLineIDs,
 					operator_id: form.operatorID,
 					address_set_id: form.addressSetID,
 					sort_order: sortOrder,
@@ -662,6 +685,52 @@ function TaxonomyEditor({
 							checked={form.families.includes(6)}
 							label="IPv6"
 							onChange={(checked) => setForm({ ...form, families: toggleListValue(form.families, 6, checked) })}
+						/>
+					</div>
+					<div className="grid gap-2 md:col-span-2">
+						<Label>
+							<Trans>Operators (selector)</Trans>
+						</Label>
+						<AddressReferencePicker
+							kind="operator"
+							value={form.operatorIDs}
+							onChange={(operatorIDs) => setForm({ ...form, operatorIDs })}
+							placeholder="Add operators to the selector"
+							multiple
+							initialOptions={operatorOptions.map((item) => ({
+								id: item.id,
+								label: item.name,
+								description: item.code,
+							}))}
+						/>
+					</div>
+					<FormInput
+						label="Selector ASNs (comma separated)"
+						value={form.asns}
+						onChange={(asns) => setForm({ ...form, asns })}
+					/>
+					<div className="grid gap-2 md:col-span-2">
+						<Label>
+							<Trans>Exclude groups</Trans>
+						</Label>
+						<AddressReferencePicker
+							kind="line"
+							value={form.excludeLineIDs}
+							onChange={(excludeLineIDs) => setForm({ ...form, excludeLineIDs })}
+							placeholder="Subtract these groups"
+							multiple
+							excludeIDs={form.id ? [form.id] : []}
+							initialOptions={lineOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
+						/>
+					</div>
+					<div className="grid gap-2 md:col-span-3">
+						<Label>
+							<Trans>Members (one CIDR per line)</Trans>
+						</Label>
+						<Textarea
+							value={form.members}
+							onChange={(event) => setForm({ ...form, members: event.target.value })}
+							placeholder="203.0.113.0/24"
 						/>
 					</div>
 				</>

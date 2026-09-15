@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { ChevronDownIcon, ChevronRightIcon, GlobeIcon, NetworkIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, GlobeIcon, LayersIcon, NetworkIcon } from "lucide-react"
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -15,6 +15,8 @@ type GeoTreeNode = {
 }
 
 type Operator = { id: string; name: string; asns?: number[] }
+
+type GeoLineLite = { id: string; code: string; name: string; enabled: boolean }
 
 type EffectivePrefix = {
 	cidr: string
@@ -37,9 +39,9 @@ const INDENT = 16
 // (continent→country→province→city) and Operators (operator→ASN) — with the
 // selected node's effective prefixes listed alongside. Addresses "分组+层级+下钻".
 export default memo(function GeoTreeBrowser() {
-	const [mode, setMode] = useState<"geo" | "operator">("geo")
+	const [mode, setMode] = useState<"geo" | "operator" | "lines">("geo")
 	const [filter, setFilter] = useState<PrefixFilter | null>(null)
-	const selectMode = useCallback((next: "geo" | "operator") => {
+	const selectMode = useCallback((next: "geo" | "operator" | "lines") => {
 		setMode(next)
 		setFilter(null)
 	}, [])
@@ -66,8 +68,23 @@ export default memo(function GeoTreeBrowser() {
 						<NetworkIcon className="h-3.5 w-3.5" />
 						<Trans>Operators</Trans>
 					</Button>
+					<Button
+						variant={mode === "lines" ? "default" : "ghost"}
+						size="sm"
+						className="flex-1 gap-1.5"
+						onClick={() => selectMode("lines")}
+					>
+						<LayersIcon className="h-3.5 w-3.5" />
+						<Trans>Groups</Trans>
+					</Button>
 				</div>
-				{mode === "geo" ? <GeoTree onSelect={setFilter} /> : <OperatorTree onSelect={setFilter} />}
+				{mode === "geo" ? (
+					<GeoTree onSelect={setFilter} />
+				) : mode === "operator" ? (
+					<OperatorTree onSelect={setFilter} />
+				) : (
+					<LinesTree onSelect={setFilter} />
+				)}
 			</div>
 			<NodePrefixes filter={filter} />
 		</div>
@@ -303,6 +320,59 @@ const OperatorTree = memo(function OperatorTree({ onSelect }: { onSelect: (filte
 						</div>
 					)
 				})}
+			</div>
+		</>
+	)
+})
+
+const LinesTree = memo(function LinesTree({ onSelect }: { onSelect: (filter: PrefixFilter) => void }) {
+	const [lines, setLines] = useState<GeoLineLite[]>([])
+	const [selectedId, setSelectedId] = useState("")
+	const [error, setError] = useState("")
+
+	useEffect(() => {
+		api
+			.send<{ items?: GeoLineLite[] }>("/api/v1/geo/lines", { query: { limit: 500 } })
+			.then((data) => setLines(data.items ?? []))
+			.catch((err) => setError(err instanceof Error ? err.message : "failed"))
+	}, [])
+
+	return (
+		<>
+			{error ? <div className="px-1 py-2 text-sm text-destructive">{error}</div> : null}
+			<div className="max-h-[520px] overflow-auto">
+				{lines.length === 0 ? (
+					<div className="px-1 py-3 text-xs text-muted-foreground">
+						<Trans>No region groups defined yet. Create one in the Lines tab.</Trans>
+					</div>
+				) : (
+					lines.map((line) => (
+						<div
+							key={line.id}
+							className={`flex items-center gap-1.5 rounded-sm py-1 pr-2 text-sm hover:bg-muted/60 ${
+								selectedId === line.id ? "bg-muted" : ""
+							}`}
+							style={{ paddingLeft: 4 }}
+						>
+							<span className="inline-block h-5 w-5" />
+							<button
+								type="button"
+								className="flex flex-1 items-center gap-2 truncate text-left"
+								onClick={() => {
+									setSelectedId(line.id)
+									onSelect({ label: line.name, query: { line: line.id } })
+								}}
+							>
+								<span className="truncate">{line.name}</span>
+								{!line.enabled ? (
+									<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+										<Trans>Disabled</Trans>
+									</span>
+								) : null}
+							</button>
+						</div>
+					))
+				)}
 			</div>
 		</>
 	)
