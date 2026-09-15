@@ -84,6 +84,20 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	if protectedDelete.Code != http.StatusConflict {
 		t.Fatalf("built-in MIB delete: status=%d body=%s", protectedDelete.Code, protectedDelete.Body.String())
 	}
+	if _, err := db.Exec(`UPDATE mib_modules SET enabled=0,version='stale',checksum='stale' WHERE id=?`, builtinMIBID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ensureBuiltinMIBModules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var builtinEnabled bool
+	var builtinVersion, builtinChecksum string
+	if err := db.QueryRow(`SELECT enabled,version,checksum FROM mib_modules WHERE id=?`, builtinMIBID).Scan(&builtinEnabled, &builtinVersion, &builtinChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if builtinEnabled || builtinVersion == "stale" || builtinChecksum == "stale" {
+		t.Fatalf("built-in MIB reseed overwrote admin state or missed content: enabled=%t version=%q checksum=%q", builtinEnabled, builtinVersion, builtinChecksum)
+	}
 
 	defaultPolicy := snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/network/ports/"+portID+"/policy", "port_id", portID, nil)
 	if defaultPolicy.Code != http.StatusOK || !strings.Contains(defaultPolicy.Body.String(), `"SideType":"provider"`) || !strings.Contains(defaultPolicy.Body.String(), `"BillingBaseBps":1073741824`) {

@@ -112,6 +112,8 @@
 - [x] **回归测试**：`go test ./...`、server/watchdog vet、`go build ./...`、45 个前端单测和 production build 通过；真实 MySQL、真实 SNMP、全部设备详情 VTable 和角色边界均有自动回归。按约束未修改视觉，不增加视觉测试。
 - [x] **已提交门禁**：schema/domain/API/test 分为可独立构建的纵向提交 `e5848ade`、`a17b313a`、`145842d3`、`bfb47e02`、`2cda16e8`、`ed7be0e2`；运行时只有一个 device ID/管理库。兼容 URL 的最终删除是 KISS-08 清理门，不再阻塞 KISS-02。
 
+> **2026-09-16 审计修正**：`/targets` alias 已补同一 `validDeviceListFilters` 门，非法 status/kind/disabled 与 canonical `/devices` 同样 fail-closed；真实 MySQL device/agent 全链回归通过。用户 grant 的未知对象由同一事务 FK + `invalid_reference` 映射拒绝并完整回滚，不增加重复预查询。
+
 ### KISS-03 SNMP/system/agent 时序统一写入并查询 ClickHouse
 
 > 存储边界：MySQL 只保存 device/port/SNMP profile/MIB 配置等管理对象；SNMP 原始 counter、状态样本、派生速率、system/agent 时序、图表和导出全部以 ClickHouse 为唯一权威。不存在 VM 双写、VM 历史迁移或 VM 回退路径。
@@ -146,6 +148,8 @@
 - [x] **变更设计/测试**：SNMP agent route 从浏览器 session 组纠正为 agent token/mTLS 或管理员 session 双认证；事件、端口更新和 recipe 唤醒任一失败均返回显式错误；不恢复 MySQL event 双写、VM fallback 或第二套 trap dispatcher。
 - [x] **回归测试**：`internal/server`、`internal/snmpch` 单测与真实 MySQL/ClickHouse 集成通过；全库 test/vet/build 在提交门禁再次执行并记录并行 Flow WIP 的独立结果。
 - [ ] **已提交门禁**：本切片 DDL、代码、测试和文档需形成独立 SNMP 提交；ClickHouse `014` 必须在并行 Flow `013` 正式提交后落库，禁止夹带未完成 Flow WIP。
+
+> **2026-09-16 MIB 生命周期修正**：内置 MIB 首次插入默认启用；后续启动只更新内嵌 version/checksum，管理员的 enabled 选择保持不变。真实 MySQL 集成覆盖 disable→reseed→内容升级且仍 disabled。本修正形成独立提交，但不倒签上面的 A3 历史提交门禁。
 
 #### KISS-03B system/container agent 延后切片
 

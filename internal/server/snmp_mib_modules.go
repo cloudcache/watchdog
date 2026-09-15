@@ -129,7 +129,7 @@ func (s *Server) ensureBuiltinMIBModules(ctx context.Context) error {
 	for _, module := range modules {
 		module.ID = watchdog.ID(stableManagementID("mib", module.Source, module.Name))
 		if _, err := tx.ExecContext(ctx, `INSERT INTO mib_modules (id,name,source,version,checksum,enabled)
-			VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE version=VALUES(version),checksum=VALUES(checksum),enabled=1`,
+			VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE version=VALUES(version),checksum=VALUES(checksum)`,
 			module.ID, module.Name, module.Source, module.Version, module.Checksum); err != nil {
 			return fmt.Errorf("seed embedded mib %s: %w", module.Name, err)
 		}

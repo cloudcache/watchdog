@@ -12,6 +12,8 @@
 2. **ClickHouse 启动脆弱** — 配好但连不上的 CH 会让**整个** server 起不来（含 RBAC/device/address）；出厂 config 空密码与 dev CH 密码不符 → 首次 `POST /install` 返回难懂的 500。
 3. **仓库卫生** — 根目录 `watchdog-server`（60MB 二进制）与 `dbbak-origin-*.sql`（DB dump）未跟踪且未 gitignore（dump 有轻度泄露风险）。
 
+> **2026-09-16 跟进状态**：风险 1 已由 Phase A 的 `28276488`/`4574289d` 拆除危险接线并加 KISS schema guard；风险 2 已由 `ed00b061` 采用管理面可用、ClickHouse 遥测显式降级语义；风险 3 已由根 `.gitignore` 的 `/watchdog-server` 与 `dbbak-*.sql` 规则关闭，本地忽略文件不做破坏性删除。下文保留的是 2026-09-15 原始证据，不应再当作当前未完成清单。
+
 ---
 
 ## 1. PocketBase 残留（KISS-01 核销）
@@ -86,6 +88,8 @@ KISS-01A 门禁是提交顺序纪律说明（非代码可补救）；KISS-01E �
 - 安装文档引用地址库 seed（`deploy/seed/load-address-library.sh`）；或首次安装时若文件存在则自动加载。
 - `listTargets` 补 `validDeviceListFilters`；`replaceUserAccess` 预校验对象存在性。
 - `ensureBuiltinMIBModules` 更新时不要无条件 `enabled=1`。
+
+> **2026-09-16 已关闭**：安装文档已给出 seed 入口；`listTargets` 已复用 canonical filter validation 并由真实 MySQL API 测试证明非法状态返回 `400 invalid_filter`；内置 MIB reseed 只刷新内嵌内容的 version/checksum，不再覆盖管理员 `enabled` 状态。`replaceUserAccess` 的“原始 FK 500”结论属于误报：现有实现先在事务中完整替换，FK `1452` 统一脱敏映射为 `400 invalid_reference`，失败事务回滚；真实 MySQL 测试已证明旧授权完整保留。为避免同一批 ID 的重复存在性 round-trip，不再另加预查询。
 
 > **精确到代码/表/字段/接口级的待清理清单 + 清理影响评估 + 执行状态**见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)（本审计的下沉版：L1-L19 代码/符号、S1-S12 schema、I1-I5 接口，逐项依赖+删除影响+严格删除顺序）。
 

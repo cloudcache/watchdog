@@ -182,6 +182,10 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if hosts.Code != http.StatusOK || !strings.Contains(hosts.Body.String(), systemDevice.ID) || strings.Contains(hosts.Body.String(), device.ID) {
 		t.Fatalf("target kind exclusion: status=%d body=%s", hosts.Code, hosts.Body.String())
 	}
+	invalidTargetFilter := requestJSON(t, s, http.MethodGet, "/api/v1/targets?status=bogus", nil, nil, cookies...)
+	if invalidTargetFilter.Code != http.StatusBadRequest || !strings.Contains(invalidTargetFilter.Body.String(), `"code":"invalid_filter"`) {
+		t.Fatalf("target invalid filter: status=%d body=%s", invalidTargetFilter.Code, invalidTargetFilter.Body.String())
+	}
 	if systemDevice.Kind != "system" {
 		t.Fatalf("target create returned canonical device kind %q instead of target kind system", systemDevice.Kind)
 	}

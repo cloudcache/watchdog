@@ -493,6 +493,9 @@ func (s *Server) deviceDeletePreview(c *gin.Context) {
 }
 
 func (s *Server) listTargets(c *gin.Context) {
+	if !validDeviceListFilters(c) {
+		return
+	}
 	rows, total, counts, err := s.queryDevices(c, c.Query("kind"))
 	if err != nil {
 		writeSQLError(c, err)
