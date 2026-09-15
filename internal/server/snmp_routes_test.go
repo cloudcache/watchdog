@@ -20,6 +20,9 @@ func TestSNMPManagementAndCompatibilityRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/snmp/mib-modules",
 		"PUT /api/v1/snmp/mib-modules",
 		"DELETE /api/v1/snmp/mib-modules/:module_id",
+		"GET /api/v1/retention/policies",
+		"PUT /api/v1/retention/policies",
+		"DELETE /api/v1/retention/policies/:policy_id",
 		"POST /api/v1/snmp/traps",
 		"GET /api/v1/metrics/vmquery",
 	} {

@@ -45,7 +45,7 @@ type FormState = {
 	notes: string
 }
 
-const tenantScope = "__tenant__"
+const globalScope = "__global__"
 
 export default memo(() => {
 	const { t } = useLingui()
@@ -53,7 +53,7 @@ export default memo(() => {
 	const [policies, setPolicies] = useState<RetentionPolicy[]>([])
 	const [form, setForm] = useState<FormState>({
 		id: "",
-		targetID: tenantScope,
+		targetID: globalScope,
 		highPrecisionDays: "400",
 		manualCleanupEnabled: true,
 		notes: "",
@@ -87,7 +87,7 @@ export default memo(() => {
 	const edit = (policy: RetentionPolicy) => {
 		setForm({
 			id: policy.ID ?? policy.id ?? "",
-			targetID: policy.TargetID ?? policy.target_id ?? tenantScope,
+			targetID: policy.TargetID ?? policy.target_id ?? globalScope,
 			highPrecisionDays: String(policy.HighPrecisionDays ?? policy.high_precision_days ?? 400),
 			manualCleanupEnabled: policy.ManualCleanupEnabled ?? policy.manual_cleanup_enabled ?? true,
 			notes: policy.Notes ?? policy.notes ?? "",
@@ -95,7 +95,7 @@ export default memo(() => {
 	}
 
 	const reset = () => {
-		setForm({ id: "", targetID: tenantScope, highPrecisionDays: "400", manualCleanupEnabled: true, notes: "" })
+		setForm({ id: "", targetID: globalScope, highPrecisionDays: "400", manualCleanupEnabled: true, notes: "" })
 	}
 
 	const save = async () => {
@@ -106,7 +106,7 @@ export default memo(() => {
 				method: "PUT",
 				body: {
 					ID: form.id,
-					TargetID: form.targetID === tenantScope ? "" : form.targetID,
+					TargetID: form.targetID === globalScope ? "" : form.targetID,
 					HighPrecisionDays: Number(form.highPrecisionDays),
 					ManualCleanupEnabled: form.manualCleanupEnabled,
 					Notes: form.notes,
@@ -162,8 +162,8 @@ export default memo(() => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value={tenantScope}>
-									<Trans>Tenant default</Trans>
+								<SelectItem value={globalScope}>
+									<Trans>Global default</Trans>
 								</SelectItem>
 								{targets.map((target) => {
 									const id = target.ID ?? target.id ?? ""
@@ -232,7 +232,7 @@ export default memo(() => {
 								<div>
 									{(policy.TargetID ?? policy.target_id)
 										? targetName(targets, policy.TargetID ?? policy.target_id ?? "")
-										: t`Tenant default`}
+										: t`Global default`}
 								</div>
 								<div>{policy.HighPrecisionDays ?? policy.high_precision_days}</div>
 								<div>{(policy.ManualCleanupEnabled ?? policy.manual_cleanup_enabled) ? t`Manual` : t`Disabled`}</div>

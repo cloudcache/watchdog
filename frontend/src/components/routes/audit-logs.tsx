@@ -11,6 +11,7 @@ import { api } from "@/lib/api"
 type AuditLogItem = {
 	id: string
 	actor_id?: string
+	actor_username?: string
 	action: string
 	resource_type: string
 	resource_id?: string
@@ -193,6 +194,9 @@ function formatAuditTime(value: string) {
 }
 
 function auditActor(item: AuditLogItem) {
+	if (item.actor_username) {
+		return item.actor_username
+	}
 	if (item.actor_id) {
 		return item.actor_id
 	}

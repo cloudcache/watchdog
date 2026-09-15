@@ -3,6 +3,7 @@ import test from "node:test"
 import { i18n } from "@lingui/core"
 import {
 	buildReportSeries,
+	FLOW_REPORT_CATEGORIES,
 	flowReportCategoryLabel,
 	reportDirectionTotals,
 	reportSeriesStats,
@@ -26,7 +27,7 @@ test("report categories use the frozen English product wording", () => {
 			"internal",
 			"transit",
 			"ambiguous",
-		].map(flowReportCategoryLabel),
+		].map((category) => flowReportCategoryLabel(category)),
 		[
 			"Local City",
 			"Over City",
@@ -39,6 +40,22 @@ test("report categories use the frozen English product wording", () => {
 			"Transit",
 			"Unattributed",
 		]
+	)
+})
+
+test("report categories resolve through the active zh-CN catalog", () => {
+	i18n.load("zh-CN", {
+		on_net_local_city: "本网・本市",
+		on_net_cross_city: "本网・跨市",
+		on_net_cross_province: "本网・跨省",
+		off_net_in_province: "异网・省内",
+		off_net_cross_province: "异网・跨省",
+		overseas: "跨境",
+	})
+	i18n.activate("zh-CN")
+	assert.deepEqual(
+		FLOW_REPORT_CATEGORIES.map((category) => flowReportCategoryLabel(category, i18n)),
+		["本网・本市", "本网・跨市", "本网・跨省", "异网・省内", "异网・跨省", "跨境"]
 	)
 })
 

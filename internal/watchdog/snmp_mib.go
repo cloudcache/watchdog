@@ -1,7 +1,9 @@
 package watchdog
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -39,6 +41,39 @@ var snmpMIBEmbeddedModules = []string{
 	"IEEE8023-LAG-MIB",
 	"CISCO-BGP4-MIB",
 	"HUAWEI-ENTITY-EXTENT-MIB",
+}
+
+const embeddedSNMPMIBSource = "watchdog-builtin"
+
+// EmbeddedSNMPMIBModules returns the exact MIB modules preloaded by the SNMP
+// collector. The management API uses this inventory so the MIB module page is
+// an honest view of collector capability instead of an unrelated empty table.
+// Source is reserved: built-in modules are versioned with the binary and cannot
+// be changed or deleted through CRUD.
+func EmbeddedSNMPMIBModules() ([]MIBModule, error) {
+	modules := make([]MIBModule, 0, len(snmpMIBEmbeddedModules))
+	for _, name := range snmpMIBEmbeddedModules {
+		content, err := watchdogEmbeddedMIBs.ReadFile("mibs/" + name)
+		if err != nil {
+			return nil, fmt.Errorf("read embedded mib %s: %w", name, err)
+		}
+		digest := sha256.Sum256(content)
+		modules = append(modules, MIBModule{
+			Name:     name,
+			Source:   embeddedSNMPMIBSource,
+			Version:  "embedded",
+			Checksum: "sha256:" + hex.EncodeToString(digest[:]),
+			Enabled:  true,
+			Builtin:  true,
+		})
+	}
+	return modules, nil
+}
+
+// IsEmbeddedSNMPMIBSource identifies the source namespace reserved for the
+// immutable MIB bundle compiled into the collector.
+func IsEmbeddedSNMPMIBSource(source string) bool {
+	return source == embeddedSNMPMIBSource
 }
 
 // SNMPMIBRegistry resolves MIB object names ("IF-MIB::ifHCInOctets",

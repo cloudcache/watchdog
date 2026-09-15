@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -49,6 +51,10 @@ func (s *Server) putMIBModule(c *gin.Context) {
 	if module.Source == "" {
 		module.Source = "librenms"
 	}
+	if watchdog.IsEmbeddedSNMPMIBSource(module.Source) {
+		fail(c, http.StatusConflict, "protected", "built-in MIB modules are managed by the watchdog binary")
+		return
+	}
 	if len(module.Name) > 190 || len(module.Source) > 64 || len(module.Version) > 64 || len(module.Checksum) > 128 {
 		fail(c, http.StatusBadRequest, "invalid_request", "mib module field is too long")
 		return
@@ -77,6 +83,15 @@ func (s *Server) putMIBModule(c *gin.Context) {
 }
 
 func (s *Server) deleteMIBModule(c *gin.Context) {
+	var source string
+	if err := s.db.QueryRowContext(c.Request.Context(), `SELECT source FROM mib_modules WHERE id=?`, c.Param("module_id")).Scan(&source); err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	if watchdog.IsEmbeddedSNMPMIBSource(source) {
+		fail(c, http.StatusConflict, "protected", "built-in MIB modules cannot be deleted")
+		return
+	}
 	result, err := s.db.ExecContext(c.Request.Context(), `DELETE FROM mib_modules WHERE id=?`, c.Param("module_id"))
 	if err != nil {
 		writeSQLError(c, err)
@@ -97,5 +112,27 @@ func (s *Server) readMIBModule(c *gin.Context, id string) (watchdog.MIBModule, e
 func scanMIBModule(row rowScanner) (watchdog.MIBModule, error) {
 	var value watchdog.MIBModule
 	err := row.Scan(&value.ID, &value.Name, &value.Source, &value.Version, &value.Checksum, &value.Enabled, &value.CreatedAt, &value.UpdatedAt)
+	value.Builtin = watchdog.IsEmbeddedSNMPMIBSource(value.Source)
 	return value, err
+}
+
+func (s *Server) ensureBuiltinMIBModules(ctx context.Context) error {
+	modules, err := watchdog.EmbeddedSNMPMIBModules()
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, module := range modules {
+		module.ID = watchdog.ID(stableManagementID("mib", module.Source, module.Name))
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mib_modules (id,name,source,version,checksum,enabled)
+			VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE version=VALUES(version),checksum=VALUES(checksum),enabled=1`,
+			module.ID, module.Name, module.Source, module.Version, module.Checksum); err != nil {
+			return fmt.Errorf("seed embedded mib %s: %w", module.Name, err)
+		}
+	}
+	return tx.Commit()
 }

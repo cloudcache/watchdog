@@ -69,6 +69,21 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	store, _ := snmpch.New(executor)
 	s := &Server{db: db, snmpMetrics: store}
 	principal := &principal{UserID: userID, IsAdmin: true}
+	if err := s.ensureBuiltinMIBModules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var builtinMIBID string
+	if err := db.QueryRow(`SELECT id FROM mib_modules WHERE name='IF-MIB' AND source='watchdog-builtin'`).Scan(&builtinMIBID); err != nil {
+		t.Fatalf("built-in IF-MIB was not seeded: %v", err)
+	}
+	builtinList := snmpManagementRequest(t, s.listMIBModules, principal, http.MethodGet, "/api/v1/snmp/mib-modules", "", "", nil)
+	if builtinList.Code != http.StatusOK || !strings.Contains(builtinList.Body.String(), `"Source":"watchdog-builtin"`) || !strings.Contains(builtinList.Body.String(), `"Builtin":true`) {
+		t.Fatalf("built-in MIB inventory: status=%d body=%s", builtinList.Code, builtinList.Body.String())
+	}
+	protectedDelete := snmpManagementRequest(t, s.deleteMIBModule, principal, http.MethodDelete, "/api/v1/snmp/mib-modules/"+builtinMIBID, "module_id", builtinMIBID, nil)
+	if protectedDelete.Code != http.StatusConflict {
+		t.Fatalf("built-in MIB delete: status=%d body=%s", protectedDelete.Code, protectedDelete.Body.String())
+	}
 
 	defaultPolicy := snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/network/ports/"+portID+"/policy", "port_id", portID, nil)
 	if defaultPolicy.Code != http.StatusOK || !strings.Contains(defaultPolicy.Body.String(), `"SideType":"provider"`) || !strings.Contains(defaultPolicy.Body.String(), `"BillingBaseBps":1073741824`) {

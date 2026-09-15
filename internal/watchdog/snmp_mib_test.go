@@ -1,6 +1,36 @@
 package watchdog
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestEmbeddedSNMPMIBModulesDescribeCollectorBundle(t *testing.T) {
+	modules, err := EmbeddedSNMPMIBModules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != len(snmpMIBEmbeddedModules) {
+		t.Fatalf("module count = %d, want %d", len(modules), len(snmpMIBEmbeddedModules))
+	}
+	want := map[string]bool{"SNMPv2-MIB": false, "IF-MIB": false, "BGP4-MIB": false}
+	for _, module := range modules {
+		if !module.Builtin || !module.Enabled || !IsEmbeddedSNMPMIBSource(module.Source) {
+			t.Fatalf("embedded module metadata is inconsistent: %+v", module)
+		}
+		if !strings.HasPrefix(module.Checksum, "sha256:") || len(module.Checksum) != len("sha256:")+64 {
+			t.Fatalf("embedded module %s checksum = %q", module.Name, module.Checksum)
+		}
+		if _, ok := want[module.Name]; ok {
+			want[module.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("collector module %s is missing from management inventory", name)
+		}
+	}
+}
 
 // Locks the MIB-resolved OIDs of every object the collector uses to their
 // canonical numeric values, so the embedded bundle and resolver mistakes are

@@ -21,6 +21,8 @@ type MIBModule = {
 	checksum?: string
 	Enabled?: boolean
 	enabled?: boolean
+	Builtin?: boolean
+	builtin?: boolean
 }
 
 type MIBModulesResponse = {
@@ -128,10 +130,20 @@ export default memo(() => {
 						) : (
 							modules.map((module) => {
 								const id = module.ID ?? module.id ?? ""
+								const builtin = module.Builtin ?? module.builtin ?? false
 								return (
 									<TableRow key={id}>
 										<TableCell className="font-medium">{module.Name ?? module.name ?? "—"}</TableCell>
-										<TableCell>{module.Source ?? module.source ?? "—"}</TableCell>
+										<TableCell>
+											<div className="flex items-center gap-2">
+												<span>{module.Source ?? module.source ?? "—"}</span>
+												{builtin ? (
+													<Badge variant="outline">
+														<Trans>Built-in</Trans>
+													</Badge>
+												) : null}
+											</div>
+										</TableCell>
 										<TableCell>{module.Version ?? module.version ?? "—"}</TableCell>
 										<TableCell className="max-w-[18rem] truncate font-mono text-xs">
 											{module.Checksum ?? module.checksum ?? "—"}
@@ -143,21 +155,25 @@ export default memo(() => {
 										</TableCell>
 										<TableCell>
 											<div className="flex justify-end gap-1">
-												<Link
-													href={getPagePath($router, "snmp_mib_module_edit", { id })}
-													className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-													aria-label={t`Edit MIB module`}
-												>
-													<PencilIcon className="h-4 w-4" />
-												</Link>
-												<Button
-													variant="ghost"
-													size="icon"
-													onClick={() => deleteModule(module)}
-													aria-label={t`Delete MIB module`}
-												>
-													<Trash2Icon className="h-4 w-4" />
-												</Button>
+												{!builtin ? (
+													<>
+														<Link
+															href={getPagePath($router, "snmp_mib_module_edit", { id })}
+															className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+															aria-label={t`Edit MIB module`}
+														>
+															<PencilIcon className="h-4 w-4" />
+														</Link>
+														<Button
+															variant="ghost"
+															size="icon"
+															onClick={() => deleteModule(module)}
+															aria-label={t`Delete MIB module`}
+														>
+															<Trash2Icon className="h-4 w-4" />
+														</Button>
+													</>
+												) : null}
 											</div>
 										</TableCell>
 									</TableRow>

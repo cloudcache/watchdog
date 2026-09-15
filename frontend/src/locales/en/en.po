@@ -1055,9 +1055,9 @@ msgstr "Browse"
 msgid "Buckets"
 msgstr "Buckets"
 
-#: src/components/routes/snmp-oid-mappings.tsx
-#~ msgid "Built-in"
-#~ msgstr "Built-in"
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Built-in"
+msgstr "Built-in"
 
 #: src/components/routes/role-form.tsx
 msgid "Built-in administrator abilities are immutable."
@@ -1824,6 +1824,11 @@ msgstr "Database Imports"
 #: src/components/routes/address-imports.tsx
 msgid "Database type"
 msgstr "Database type"
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Decrease"
+msgstr "Decrease"
 
 #: src/components/routes/modules.tsx
 msgid "Default"
@@ -3611,6 +3616,10 @@ msgstr "Geography"
 msgid "Geography combination"
 msgstr "Geography combination"
 
+#: src/components/routes/retention.tsx
+msgid "Global default"
+msgstr "Global default"
+
 #: src/components/routes/settings/quiet-hours.tsx
 #~ msgid "Global"
 #~ msgstr "Global"
@@ -3888,6 +3897,11 @@ msgstr "Include billing port"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include Other"
 msgstr "Include Other"
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Increase"
+msgstr "Increase"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -4765,6 +4779,11 @@ msgstr "No business traffic"
 #: src/components/routes/address-revisions.tsx
 msgid "No changes in this revision."
 msgstr "No changes in this revision."
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "No correction"
+msgstr "No correction"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "No collection events recorded yet."

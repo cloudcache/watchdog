@@ -122,6 +122,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	if err := EnsureRBACSeed(ctx, s.db); err != nil {
 		return fmt.Errorf("seed RBAC: %w", err)
 	}
+	if err := s.ensureBuiltinMIBModules(ctx); err != nil {
+		return fmt.Errorf("seed built-in MIB modules: %w", err)
+	}
 	if err := s.applyClickHouseSchema(ctx); err != nil {
 		return err
 	}

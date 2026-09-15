@@ -1,4 +1,4 @@
-import { i18n } from "@lingui/core"
+import { i18n as defaultI18n, type I18n } from "@lingui/core"
 import type { FlowDimensionLabel, FlowJointPoint, FlowPoint } from "@/lib/flow-explorer-model"
 
 export type FlowTablePage = {
@@ -162,11 +162,14 @@ export const FLOW_REPORT_CATEGORIES = [
 
 export const FLOW_REPORT_RESIDUALS = ["unknown", "internal", "transit", "ambiguous"] as const
 
-// Category display labels resolve against the active locale via the global i18n
-// singleton (module scope has no React context; the report tree re-renders on
-// locale change through useLingui in FlowReports). The six exclusive traffic
-// classes and residuals use the product wording frozen for the reports.
-export function flowReportCategoryLabel(key: string): string {
+// The model has no locale context. Callers rendering UI must pass the active
+// i18n instance from React; the singleton default keeps non-React callers
+// compatible. Explicit descriptors keep stable category keys in the catalog.
+
+export function flowReportCategoryLabel(key: string, translator: Pick<I18n, "_"> = defaultI18n): string {
+	// Lingui's extractor recognizes the canonical i18n._ call while the local
+	// alias still points at the React tree's active locale instance.
+	const i18n = translator
 	switch (key) {
 		case "on_net_local_city":
 			return i18n._({ id: "on_net_local_city", message: "Local City" })

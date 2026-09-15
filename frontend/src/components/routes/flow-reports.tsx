@@ -162,6 +162,11 @@ const PAGE_COPY: Record<FlowReportSurface, { title: MessageDescriptor; descripti
 	},
 }
 
+function useFlowReportCategoryLabel() {
+	const { i18n } = useLingui()
+	return useCallback((key: string) => flowReportCategoryLabel(key, i18n), [i18n])
+}
+
 export default memo(function FlowReports({ surface }: { surface: FlowReportSurface }) {
 	const { t, i18n } = useLingui()
 	const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -685,6 +690,7 @@ function OverviewReport({
 	updateTable: (next: TableControl, run: boolean) => void
 	loading: boolean
 }) {
+	const { t } = useLingui()
 	const total = reportPanel(response, "total")
 	const inbound = reportPanel(response, "category_in")
 	const outbound = reportPanel(response, "category_out")
@@ -695,6 +701,10 @@ function OverviewReport({
 	const outboundTotals = reportCategoryTotals(outbound)
 	const totalInbound = [...inboundTotals.values()].reduce((sum, value) => sum + value, 0)
 	const totalOutbound = [...outboundTotals.values()].reduce((sum, value) => sum + value, 0)
+	const displayTotalSeries = totalSeries.map((series) => ({
+		...series,
+		name: series.name === "Inbound" ? t`Inbound` : series.name === "Outbound" ? t`Outbound` : series.name,
+	}))
 	return (
 		<div className="grid gap-4">
 			<Card>
@@ -711,7 +721,7 @@ function OverviewReport({
 						<span>↓ {formatMetric(inboundCurrent, total?.meta.unit)}</span>
 						<span>↑ {formatMetric(outboundCurrent, total?.meta.unit)}</span>
 					</div>
-					<ReportChart series={totalSeries} unit={total?.meta.unit} />
+					<ReportChart series={displayTotalSeries} unit={total?.meta.unit} />
 				</CardContent>
 			</Card>
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -757,6 +767,8 @@ function CategoryCard({
 	inboundTotal: number
 	outboundTotal: number
 }) {
+	const { t } = useLingui()
+	const categoryLabel = useFlowReportCategoryLabel()
 	const inSeries = buildReportSeries(inbound).find((series) => series.name === category)
 	const outSeries = buildReportSeries(outbound).find((series) => series.name === category)
 	const inStats = reportSeriesStats(inSeries)
@@ -764,17 +776,17 @@ function CategoryCard({
 	return (
 		<Card>
 			<CardHeader className="api-3">
-				<CardTitle>{flowReportCategoryLabel(category)}</CardTitle>
+				<CardTitle>{categoryLabel(category)}</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<div className="grid grid-cols-2 gap-2 text-sm">
 					<div>
-						<span className="text-muted-foreground">Inbound</span>
+						<span className="text-muted-foreground">{t`Inbound`}</span>
 						<div className="font-semibold">{formatMetric(inStats.current, inbound?.meta.unit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(inStats.total, inboundTotal)}</div>
 					</div>
 					<div>
-						<span className="text-muted-foreground">Outbound</span>
+						<span className="text-muted-foreground">{t`Outbound`}</span>
 						<div className="font-semibold">{formatMetric(outStats.current, outbound?.meta.unit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(outStats.total, outboundTotal)}</div>
 					</div>
@@ -782,7 +794,7 @@ function CategoryCard({
 				<ReportChart
 					compact
 					series={
-						[inSeries && { ...inSeries, name: "Inbound" }, outSeries && { ...outSeries, name: "Outbound" }].filter(
+						[inSeries && { ...inSeries, name: t`Inbound` }, outSeries && { ...outSeries, name: t`Outbound` }].filter(
 							Boolean
 						) as FlowReportSeries[]
 					}
@@ -794,6 +806,7 @@ function CategoryCard({
 }
 
 function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number>; outbound: Map<string, number> }) {
+	const categoryLabel = useFlowReportCategoryLabel()
 	const inboundTotal = [...inbound.values()].reduce((sum, value) => sum + value, 0)
 	const outboundTotal = [...outbound.values()].reduce((sum, value) => sum + value, 0)
 	const inboundClassified = FLOW_REPORT_CATEGORIES.reduce((sum, category) => sum + (inbound.get(category) ?? 0), 0)
@@ -815,7 +828,7 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 					return (
 						<div key={category} className="grid gap-1">
 							<div className="flex justify-between gap-3 text-sm">
-								<span>{flowReportCategoryLabel(category)}</span>
+								<span>{categoryLabel(category)}</span>
 								<span>
 									↓ {formatNullablePercent(inShare)} · ↑ {formatNullablePercent(outShare)}
 								</span>
@@ -856,6 +869,7 @@ function ResidualCard({
 	inboundTotal: number
 	outboundTotal: number
 }) {
+	const categoryLabel = useFlowReportCategoryLabel()
 	const rows = FLOW_REPORT_RESIDUALS.map((category) => ({
 		category,
 		inbound: inbound.get(category) ?? 0,
@@ -875,7 +889,7 @@ function ResidualCard({
 			<CardContent className="grid gap-2">
 				{rows.map((row) => (
 					<div key={row.category} className="flex flex-wrap justify-between gap-3 border-b py-2 text-sm">
-						<span>{flowReportCategoryLabel(row.category)}</span>
+						<span>{categoryLabel(row.category)}</span>
 						<span>
 							↓ {formatShare(row.inbound, inboundTotal)} · ↑ {formatShare(row.outbound, outboundTotal)}
 						</span>
@@ -900,6 +914,7 @@ function BusinessMatrix({
 	loading: boolean
 }) {
 	const { t } = useLingui()
+	const categoryLabel = useFlowReportCategoryLabel()
 	if (inbound?.status === "unavailable" || outbound?.status === "unavailable")
 		return <UnavailablePanel title={t`Business × traffic class`} reason={inbound?.reason || outbound?.reason} />
 	const page = inbound?.data?.matrix_table
@@ -919,7 +934,7 @@ function BusinessMatrix({
 		{ field: "total", title: t`Total · ↓ / ↑`, width: 245 },
 		...FLOW_REPORT_CATEGORIES.map((category) => ({
 			field: category,
-			title: `${flowReportCategoryLabel(category)} · ↓ / ↑`,
+			title: `${categoryLabel(category)} · ↓ / ↑`,
 			width: 245,
 		})),
 		{ field: "residual", title: t`Residual · ↓ / ↑`, width: 225 },
@@ -1049,6 +1064,7 @@ function EndpointTable({
 	onSelectIP: (address: string) => void
 }) {
 	const { t } = useLingui()
+	const categoryLabel = useFlowReportCategoryLabel()
 	const panel = reportPanel(response, "endpoint")
 	const page = panel?.data?.table
 	const records = (page?.items ?? []).map((item) => ({
@@ -1083,7 +1099,7 @@ function EndpointTable({
 		{ field: "outbound", title: t`Outbound current / total`, width: 195 },
 		...FLOW_REPORT_CATEGORIES.map((name) => ({
 			field: name,
-			title: `${flowReportCategoryLabel(name)} · ↓ / ↑`,
+			title: `${categoryLabel(name)} · ↓ / ↑`,
 			width: 205,
 		})),
 		{ field: "residual", title: t`Residual · ↓ / ↑`, width: 190 },

@@ -949,6 +949,10 @@ msgstr "浏览"
 msgid "Buckets"
 msgstr "时间桶"
 
+#: src/components/routes/snmp-mib-modules.tsx
+msgid "Built-in"
+msgstr "内置"
+
 #: src/components/routes/role-form.tsx
 msgid "Built-in administrator abilities are immutable."
 msgstr "内置管理员的权限项不可修改。"
@@ -1597,6 +1601,11 @@ msgstr "数据库导入"
 #: src/components/routes/address-imports.tsx
 msgid "Database type"
 msgstr "数据库类型"
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Decrease"
+msgstr "向下修正"
 
 #: src/components/routes/modules.tsx
 msgid "Default"
@@ -3170,6 +3179,10 @@ msgstr "地域"
 msgid "Geography combination"
 msgstr "地域组合"
 
+#: src/components/routes/retention.tsx
+msgid "Global default"
+msgstr "全局默认"
+
 #: src/components/routes/system.tsx
 msgid "GPU"
 msgstr "GPU"
@@ -3401,6 +3414,11 @@ msgstr "包含计费端口"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include Other"
 msgstr "包含其他"
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "Increase"
+msgstr "向上修正"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -4188,6 +4206,11 @@ msgstr "无业务流量"
 #: src/components/routes/address-revisions.tsx
 msgid "No changes in this revision."
 msgstr "此修订版本没有变更。"
+
+#: src/components/routes/network-port-policy.tsx
+#: src/components/routes/traffic-defaults.tsx
+msgid "No correction"
+msgstr "不修正"
 
 #: src/components/routes/dashboards.tsx
 msgid "No dashboards found."

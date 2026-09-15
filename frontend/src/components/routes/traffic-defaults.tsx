@@ -116,6 +116,7 @@ function PolicyForm({
 	value: TrafficPolicyDefault
 	onChange: (value: TrafficPolicyDefault) => void
 }) {
+	const { t } = useLingui()
 	const billingBase = value.BillingBaseBps ?? value.billing_base_bps ?? 0
 	const sampleStep = value.SampleStep ?? value.sample_step ?? 5 * minute
 	const direction = value.CorrectionDirection ?? value.correction_direction ?? "none"
@@ -127,14 +128,14 @@ function PolicyForm({
 	return (
 		<div className="grid gap-3 rounded-md border border-border p-4">
 			<h2 className="text-base font-medium">{title}</h2>
-			<Field label="Billing base bps">
+			<Field label={t`Billing base bps`}>
 				<Input
 					type="number"
 					value={billingBase}
 					onChange={(event) => update({ BillingBaseBps: Number(event.target.value) })}
 				/>
 			</Field>
-			<Field label="Sample step">
+			<Field label={t`Sample step`}>
 				<Select
 					value={String(sampleStep / minute)}
 					onValueChange={(value) => update({ SampleStep: Number(value) * minute })}
@@ -148,27 +149,33 @@ function PolicyForm({
 					</SelectContent>
 				</Select>
 			</Field>
-			<Field label="Correction">
+			<Field label={t`Correction`}>
 				<Select value={direction} onValueChange={(value) => update({ CorrectionDirection: value })}>
 					<SelectTrigger>
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="none">none</SelectItem>
-						<SelectItem value="up">up</SelectItem>
-						<SelectItem value="down">down</SelectItem>
+						<SelectItem value="none">
+							<Trans>No correction</Trans>
+						</SelectItem>
+						<SelectItem value="up">
+							<Trans>Increase</Trans>
+						</SelectItem>
+						<SelectItem value="down">
+							<Trans>Decrease</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 			</Field>
 			<div className="grid gap-3 sm:grid-cols-2">
-				<Field label="Correction min">
+				<Field label={`${t`Correction min`} (bps)`}>
 					<Input
 						type="number"
 						value={correctionMin}
 						onChange={(event) => update({ CorrectionMin: Number(event.target.value) })}
 					/>
 				</Field>
-				<Field label="Correction max">
+				<Field label={`${t`Correction max`} (bps)`}>
 					<Input
 						type="number"
 						value={correctionMax}

@@ -225,20 +225,26 @@ export default memo(({ id }: PortPolicyProps) => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="none">none</SelectItem>
-								<SelectItem value="up">up</SelectItem>
-								<SelectItem value="down">down</SelectItem>
+								<SelectItem value="none">
+									<Trans>No correction</Trans>
+								</SelectItem>
+								<SelectItem value="up">
+									<Trans>Increase</Trans>
+								</SelectItem>
+								<SelectItem value="down">
+									<Trans>Decrease</Trans>
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</Field>
-					<Field label={t`Correction min`}>
+					<Field label={`${t`Correction min`} (bps)`}>
 						<Input
 							type="number"
 							value={policyCorrectionMin(policy)}
 							onChange={(event) => update({ CorrectionMin: Number(event.target.value) })}
 						/>
 					</Field>
-					<Field label={t`Correction max`}>
+					<Field label={`${t`Correction max`} (bps)`}>
 						<Input
 							type="number"
 							value={policyCorrectionMax(policy)}

@@ -25,6 +25,10 @@ func (s *Server) registerPlatformOperationsRoutes(auth *gin.RouterGroup) {
 		audit := auth.Group(path)
 		audit.GET("", s.requirePermission("audit.view"), s.listAuditLogs)
 	}
+	retention := auth.Group("/retention/policies")
+	retention.GET("", s.requirePermission("job.manage"), s.listRetentionPolicies)
+	retention.PUT("", s.requirePermission("job.manage"), s.putRetentionPolicy)
+	retention.DELETE("/:policy_id", s.requirePermission("job.manage"), s.deleteRetentionPolicy)
 }
 
 func (s *Server) getOperationJob(c *gin.Context) {
@@ -136,13 +140,14 @@ func (s *Server) cancelOperationJob(c *gin.Context) {
 }
 
 type auditLogView struct {
-	ID           string         `json:"id"`
-	ActorID      string         `json:"actor_id,omitempty"`
-	Action       string         `json:"action"`
-	ResourceType string         `json:"resource_type"`
-	ResourceID   string         `json:"resource_id,omitempty"`
-	Detail       map[string]any `json:"detail,omitempty"`
-	CreatedAt    string         `json:"created_at"`
+	ID            string         `json:"id"`
+	ActorID       string         `json:"actor_id,omitempty"`
+	ActorUsername string         `json:"actor_username,omitempty"`
+	Action        string         `json:"action"`
+	ResourceType  string         `json:"resource_type"`
+	ResourceID    string         `json:"resource_id,omitempty"`
+	Detail        map[string]any `json:"detail,omitempty"`
+	CreatedAt     string         `json:"created_at"`
 }
 
 func (s *Server) listAuditLogs(c *gin.Context) {
@@ -162,27 +167,28 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	where := " WHERE 1=1"
 	args := make([]any, 0, 8)
 	if resource != "" {
-		where += " AND resource = ?"
+		where += " AND a.resource = ?"
 		args = append(args, resource)
 	}
 	if action != "" {
-		where += " AND action LIKE ?"
+		where += " AND a.action LIKE ?"
 		args = append(args, action+"%")
 	}
 	if search != "" {
-		where += " AND (LOCATE(?, action)>0 OR LOCATE(?, resource)>0 OR LOCATE(?, resource_id)>0 OR LOCATE(?, COALESCE(actor_id, ''))>0)"
-		args = append(args, search, search, search, search)
+		where += " AND (LOCATE(?, a.action)>0 OR LOCATE(?, a.resource)>0 OR LOCATE(?, a.resource_id)>0 OR LOCATE(?, COALESCE(a.actor_id, ''))>0 OR LOCATE(?, COALESCE(u.username, ''))>0)"
+		args = append(args, search, search, search, search, search)
 	}
 	var total uint64
-	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT COUNT(*) FROM audit_logs"+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT COUNT(*) FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id"+where, args...).Scan(&total); err != nil {
 		writeSQLError(c, err)
 		return
 	}
 	queryArgs := append(append([]any{}, args...), limit, offset)
 	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, COALESCE(actor_id, ''), action, resource, resource_id, detail_json, occurred_at
-		FROM audit_logs`+where+`
-		ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
+		SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.username, ''), a.action, a.resource,
+		       a.resource_id, a.detail_json, a.occurred_at
+		FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id`+where+`
+		ORDER BY a.occurred_at DESC, a.id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -193,7 +199,7 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 		var item auditLogView
 		var detail sql.NullString
 		var occurredAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.ActorID, &item.Action, &item.ResourceType, &item.ResourceID, &detail, &occurredAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ActorID, &item.ActorUsername, &item.Action, &item.ResourceType, &item.ResourceID, &detail, &occurredAt); err != nil {
 			writeSQLError(c, err)
 			return
 		}

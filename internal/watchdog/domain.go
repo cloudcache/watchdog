@@ -307,6 +307,7 @@ type MIBModule struct {
 	Version   string
 	Checksum  string
 	Enabled   bool
+	Builtin   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
