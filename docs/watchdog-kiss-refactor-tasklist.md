@@ -76,6 +76,8 @@
 
 当前门禁证据：PB Go/JS 依赖、PB Hub/collection/hook/realtime 源码、旧部署物和前端 `/api/watchdog/*` 调用均已删除；全库 Go test（含需 loopback 的 Flow worker 测试）、build、vet 以及前端 test/build 已通过。历史 legacy migration/init 中仍有 PB 时代字段与文字，且未完成 ClickHouse/Kafka clean-stack 和 race/lint 全量验收，所以编码删除、回归和 KISS-01 总门禁继续保持未勾选。
 
+> **2026-09-15 审计核销（PB 残留精确清单，见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §1）**：PB 已彻底退出活跃路径（go.mod/active Go/前端/clean schema/`strings watchdog-server` 全无）。KISS-01E「编码删除」剩余的**精确**残留是三项非发布遗留物：①死的 PB-hub Dockerfile 仍在 CI（`internal/dockerfile_hub:29,31,34` 构建**已删除**的 `internal/cmd/hub`，带 PB `serve`+`/watchdog_data` volume；被 `.github/workflows/docker-images.yml:18,71` 引用）——即 line 70 未完成的「移除 PB SQLite 文件/volume 挂载路径」；②line 77 的「PB 时代字段与文字」= `install/init.sql:2020-2028`（`auth_provider`/`external_subject_id`）+ `deploy/migration/mysql/030:1-2`（"PocketBase" 注释）；③GitHub 模板指向 PB 后台 `/_/#/logs`（`.github/ISSUE_TEMPLATE/bug_report.yml:124`、`.github/DISCUSSION_TEMPLATE/support.yml:92`）。遗留 `internal/watchdog/*` 树删除属 KISS-08（仍被活跃 import）。
+
 ### KISS-02 单域 RBAC 与设备根
 
 - [x] **KISS-02A 已完成纵向切片（2026-09-08，`e5848ade`）**：新 Gin 后端已接 `devices` 与 SNMP profile 的 list/get/create/patch/delete，host 唯一且 display name 可选；labels/SNMP override 不丢失，ETag 冲突检测、固定 sort 白名单、服务端分页/search/status filter、device/device-group scope 均已接 MySQL。现有 `/network/devices` 与 `/targets` 是同一 `device_id` 的临时 handler/DTO alias，兼容层仅做 `system -> host` 类型映射，不创建或写旧表；真实 MySQL 集成测试覆盖 CRUD、host 冲突、profile secret 脱敏及 summary/target alias。
@@ -236,6 +238,10 @@
 - [ ] **回归测试**：Go/前端/真实依赖/浏览器/安装脚本/备份恢复全矩阵。
 - [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。
 - [ ] **已提交门禁**：最终删除提交后 clean checkout 可完整部署；所有遗留数据库/volume 已按各工作包的精确白名单处置，不把物理清理拖到项目末尾。
+
+> **2026-09-15 审计（见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §主题 1/2）**：`internal/server`/`cmd/*` 仍 import 遗留 `internal/watchdog`（作为共享类型库 + `NewBackendRuntime` 泛化栈），删除须先断这些 import——本包正确的延后项。但其**危险接线**建议提前拆（不需整包删除）：①**双安装系统**——`cmd/watchdog-install`+`deploy/migration/mysql`+`install/init.sql` 建出不兼容的 `watchdog_installation`（`id VARCHAR 'default'` vs KISS `id=1`），装完再起 KISS server 报 "Unknown column 'schema_version'" 直接开不了机；仍接在 `Makefile:111-112`、`scripts/watchdog-dev-db.sh`、`docs/watchdog-kiss-architecture.md:115`。②**遗留 worker** `watchdog-aggregate-rollup`/`watchdog-export-worker` 已被 in-server CH worker 取代，且查询 KISS 中不存在的 `collector_agents`/`tenants`（`flow_rollup_jobs.go:451-452`），对 KISS 库运行即失败。③遗留 worker config 仍**必填** VM base_url（`internal/watchdog/config.go:971`）。建议：为遗留安装器/worker 加「拒绝对 KISS 库操作」的响亮守卫，或从 Makefile/scripts/CI/docs 摘除接线，把物理删除留到本包。
+>
+> **install 硬化（独立小包，不阻塞）**：CH 启动 fail-fast 语义需明确——配好但连不上的 CH 会让整个 server（含 RBAC/device/address）起不来，空 CH 配置则静默降级（`server.go:128-136,257-287`）；出厂 `config/watchdog.yaml` 空密码与 dev CH `watchdog-local` 不符致首次 `POST /install` 返回难懂 500。地址库 seed（`deploy/seed/`）未被 install 加载/文档引用。详见审计 §2/§主题 2。
 
 ### 后续单独工作包（不阻塞 KISS-01…08，均无历史数据迁移，已登记归属）
 

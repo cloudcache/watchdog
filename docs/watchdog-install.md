@@ -73,6 +73,18 @@ curl -sS http://127.0.0.1:8091/api/v1/health
 curl -sS http://127.0.0.1:8091/api/v1/install-status
 ```
 
+Installation seeds only RBAC and built-in MIB modules; the geo/address library
+starts empty. To bootstrap the base library (EdgeManager-derived, ~2.66M CIDRs)
+instead of importing an MMDB by hand, load the seed after installation:
+
+```bash
+deploy/seed/load-address-library.sh watchdog   # see deploy/seed/README.md
+```
+
+The seed is data-only and loads into empty address tables (the schema must
+already be applied by a successful install). Skip this to start with an empty
+library and import your own source via the Address Library UI.
+
 ## 4. Start the data-plane processes independently
 
 SNMP discovery/polling reads device/profile state from MySQL and writes

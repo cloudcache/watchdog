@@ -39,3 +39,7 @@ dev/flow-geo/
 
 # Address library seed blob (large; see deploy/seed/README.md)
 deploy/seed/*.sql.gz
+
+# Stray build artifact + DB dumps at repo root (never commit; audit 2026-09-15)
+/watchdog-server
+dbbak-*.sql
