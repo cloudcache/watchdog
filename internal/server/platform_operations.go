@@ -161,6 +161,8 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 		offset = parsed
 	}
 	resource := strings.TrimSpace(c.Query("resource_type"))
+	resourceID := strings.TrimSpace(c.Query("resource_id"))
+	actorID := strings.TrimSpace(c.Query("actor_id"))
 	action := strings.TrimSpace(c.Query("action"))
 	search := strings.TrimSpace(c.Query("q"))
 
@@ -169,6 +171,14 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	if resource != "" {
 		where += " AND a.resource = ?"
 		args = append(args, resource)
+	}
+	if resourceID != "" {
+		where += " AND a.resource_id = ?"
+		args = append(args, resourceID)
+	}
+	if actorID != "" {
+		where += " AND a.actor_id = ?"
+		args = append(args, actorID)
 	}
 	if action != "" {
 		where += " AND a.action LIKE ?"

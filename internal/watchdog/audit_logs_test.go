@@ -3,60 +3,10 @@ package watchdog
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 )
-
-type fakeAuditLogReader struct {
-	filter AuditLogFilter
-	logs   []AuditLog
-	next   string
-}
-
-func (f *fakeAuditLogReader) ListAuditLogs(_ context.Context, _ ID, filter AuditLogFilter) ([]AuditLog, string, error) {
-	f.filter = filter
-	return f.logs, f.next, nil
-}
-
-func TestAuditLogListEndpoint(t *testing.T) {
-	reader := &fakeAuditLogReader{
-		logs: []AuditLog{{ID: "log-1", TenantID: "tenant-a", Action: "user.create", ResourceType: "user"}},
-		next: "cursor-2",
-	}
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(true), AuditLogs: reader})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/api/v1/audit-logs?resource_type=user&action=user.&limit=25&cursor=abc", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if reader.filter.ResourceType != "user" || reader.filter.Action != "user." ||
-		reader.filter.Limit != 25 || reader.filter.Cursor != "abc" {
-		t.Fatalf("filter = %+v", reader.filter)
-	}
-	var body struct {
-		Items      []AuditLog `json:"items"`
-		NextCursor string     `json:"next_cursor"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if len(body.Items) != 1 || body.NextCursor != "cursor-2" {
-		t.Fatalf("body = %+v", body)
-	}
-
-	// Non-admin viewers are rejected.
-	viewerRouter := NewAPIV1Router(APIV1RouterConfig{Auth: collectorPrincipalAPIAuth(false), AuditLogs: reader})
-	rec = httptest.NewRecorder()
-	viewerRouter.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/audit-logs", nil))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("non-admin status = %d", rec.Code)
-	}
-}
 
 // TestMySQLAuditLogWriteAndList proves the write fixes (auto id, non-user
 // actor preserved in detail instead of vanishing on the FK) and keyset

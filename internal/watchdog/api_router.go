@@ -39,7 +39,6 @@ type APIV1RouterConfig struct {
 	FlowStorage            FlowStorageLifecycleRepository
 	FlowSavedFilters       FlowSavedFilterRepository
 	QueryPolicies          QueryDatasetPolicyRepository
-	AuditLogs              AuditLogReader
 	Registries             *PlatformRegistries
 	TenantModules          TenantModuleRepository
 	FlowGeo                *FlowGeoService
@@ -240,9 +239,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.QueryPolicies != nil && cfg.Registries != nil {
 		registerQueryDatasetPolicyRoutes(mux, auth, cfg.QueryPolicies, cfg.Registries, cfg.Audit)
-	}
-	if cfg.AuditLogs != nil {
-		registerAuditLogRoutes(mux, auth, cfg.AuditLogs)
 	}
 	if cfg.Network != nil && cfg.SNMPCollector != nil && cfg.TrapDispatcher != nil {
 		registerTrapRoutes(mux, auth, cfg.Network, cfg.SNMPCollector, cfg.TrapDispatcher, cfg.DiscoveryJobs)

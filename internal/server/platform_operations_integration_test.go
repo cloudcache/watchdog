@@ -75,6 +75,12 @@ func TestPlatformRetentionAndAuditIntegration(t *testing.T) {
 	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), `"actor_username":"audit-operator"`) {
 		t.Fatalf("audit actor username: status=%d body=%s", audit.Code, audit.Body.String())
 	}
+	filteredAudit := snmpManagementRequest(t, s.listAuditLogs, principal, http.MethodGet,
+		"/api/v1/audit-logs?actor_id="+userID+"&resource_id="+string(globalPolicy.ID), "", "", nil)
+	if filteredAudit.Code != http.StatusOK || !strings.Contains(filteredAudit.Body.String(), `"actor_username":"audit-operator"`) ||
+		!strings.Contains(filteredAudit.Body.String(), `"resource_id":"`+string(globalPolicy.ID)+`"`) {
+		t.Fatalf("audit actor/resource filters: status=%d body=%s", filteredAudit.Code, filteredAudit.Body.String())
+	}
 
 	deleted := snmpManagementRequest(t, s.deleteRetentionPolicy, principal, http.MethodDelete, "/api/v1/retention/policies/"+string(globalPolicy.ID), "policy_id", string(globalPolicy.ID), nil)
 	if deleted.Code != http.StatusNoContent {

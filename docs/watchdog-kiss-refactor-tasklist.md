@@ -267,6 +267,8 @@
 
 - [x] **KISS-08F4 旧 SNMP Profile/MIB HTTP 副本删除（本提交）**：保留 Gin `/api/v1/snmp/profiles` 五个 CRUD 路由与 `/api/v1/snmp/mib-modules` 三个 CRUD 路由、请求/响应字段、ETag/CAS、密钥只在单记录读写返回、built-in MIB 保护和前端不变；只删除遗留 `net/http` profile/MIB handlers 及其专用测试。旧 network/discovery/poll runner 尚需的 `SNMPRepository`、MySQL 读取与 SNMP 引擎全部保留；其他遗留测试共用的 fake 移到中性 test helper，不以已删 HTTP 测试文件承载。Gin 全路由单测、真实 MySQL profile/MIB 集成、全库 build/test/vet 及旧 handler 符号反向扫描为提交门禁。
 
+- [x] **KISS-08F5 旧 Audit Log HTTP 副本删除（本提交）**：保留 Gin `GET /api/v1/audit-logs`、`/api/v1/audit` alias、RBAC、服务端分页、`resource_type/action/q/cursor/limit/offset` 和 actor username join；迁移审查发现 Gin 遗漏的旧 `resource_id`/`actor_id` 精确过滤参数后，再删除旧 tenant-scoped `net/http` reader/handler 及它的专用 endpoint 测试。旧包内尚被 destruction receipt 等测试使用的 audit write/list repository 未删。当前 Gin 路由单测、真实 MySQL 用户名+两个精确过滤集成、全库 build/test/vet 和旧 handler 符号反向扫描为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
