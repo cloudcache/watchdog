@@ -1007,7 +1007,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 			{ field: "country", title: t`Country`, width: 160, filter: false, style: denseCellStyle() },
 			{ field: "region", title: t`Province / City`, width: 200, filter: false, style: denseCellStyle() },
 			{ field: "asn", title: "ASN", width: 100, filter: false, style: denseCellStyle() },
-			{ field: "operator", title: t`Operator`, width: 150, filter: false, style: denseCellStyle() },
+			{ field: "operator", title: t`Operator`, width: 150, style: denseCellStyle() },
 			{ field: "source", title: t`Source`, width: 100, filter: false, style: denseCellStyle() },
 		],
 		[t]
@@ -1022,6 +1022,68 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 		setPage(0)
 		update()
 	}
+
+	// Inline edit: double-click asn/operator, commit lands as a single-CIDR
+	// correction (same bulk-reassign endpoint) then the page refetches.
+	const applyInlineEdit = useCallback(
+		async (record: Record<string, unknown>, field: string, value: string) => {
+			const cidr = String(record.cidr)
+			const trimmed = value.trim()
+			const body: { cidrs: string[]; operator_id?: string; asn?: number } = { cidrs: [cidr] }
+			if (field === "asn") {
+				if (trimmed === "" || trimmed === "—") return
+				const num = Number(trimmed)
+				if (!Number.isInteger(num) || num < 0) {
+					setError(t`ASN must be a non-negative integer`)
+					return
+				}
+				body.asn = num
+			} else if (field === "operator") {
+				if (trimmed === "" || trimmed === "—") return
+				const match = operators.find((op) => op.name.toLocaleLowerCase() === trimmed.toLocaleLowerCase())
+				if (!match) {
+					setError(t`Unknown operator "${trimmed}" — type an exact operator name`)
+					return
+				}
+				body.operator_id = match.id
+			} else {
+				return
+			}
+			setError("")
+			setNotice("")
+			try {
+				await api.send("/api/v1/address-prefixes/bulk-reassign", { method: "POST", body })
+				setNotice(t`Updated ${cidr}`)
+				await fetchPage()
+			} catch (err) {
+				setError(err instanceof Error ? err.message : t`Update failed`)
+			}
+		},
+		[operators, fetchPage, t]
+	)
+	const editable = useMemo(
+		() => ({ fields: ["asn", "operator"], onEdit: applyInlineEdit }),
+		[applyInlineEdit]
+	)
+	// Server-side header filter for Operator (17 options, single-select) — drives
+	// the same query state as the top-bar inputs so it filters the whole dataset.
+	const serverFiltering = useMemo(
+		() => ({
+			options: { operator: operators.map((op) => ({ value: op.name, label: op.name })) },
+			selected: { operator: operator ? [operator] : [] },
+			selection: { operator: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				if (field !== "operator") return
+				setPage(0)
+				setOperator(values.length ? String(values[0]) : "")
+			},
+			onClearAll: () => {
+				setPage(0)
+				setOperator("")
+			},
+		}),
+		[operators, operator]
+	)
 
 	const applyReassign = async () => {
 		if (!selectedCidrs.length) return
@@ -1074,12 +1136,6 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 					value={country}
 					onChange={(event) => resetPage(() => setCountry(event.target.value))}
 					placeholder={t`Country`}
-				/>
-				<Input
-					className="w-36"
-					value={operator}
-					onChange={(event) => resetPage(() => setOperator(event.target.value))}
-					placeholder={t`Operator`}
 				/>
 				<Input
 					className="w-28"
@@ -1150,7 +1206,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 				searchValue={search}
 				onSearchChange={setSearch}
 				searchPlaceholder={t`Search CIDR or location...`}
-				height={440}
+				height={480}
 				serverPagination={{
 					page,
 					pageSize,
@@ -1159,6 +1215,8 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
 				}}
 				selectable={selectable}
+				editable={editable}
+				serverFiltering={serverFiltering}
 			/>
 		</div>
 	)
