@@ -899,11 +899,279 @@ function slotLabel(slot: string) {
 	return "Combined"
 }
 
+type EffectivePrefix = {
+	cidr: string
+	family: number
+	country_code?: string
+	country_name?: string
+	subdivision_name?: string
+	city_name?: string
+	asn?: number
+	operator_name?: string
+	source: string
+}
+
+// Effective view: active base import overlaid with editable corrections. Select
+// rows → bulk reassign operator/ASN → lands as a correction (source=correction).
+const EffectiveWorkbench = memo(function EffectiveWorkbench() {
+	const { t } = useLingui()
+	const [family, setFamily] = useState("")
+	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(200)
+	const [country, setCountry] = useState("")
+	const [operator, setOperator] = useState("")
+	const [asn, setASN] = useState("")
+	const [search, setSearch] = useState("")
+	const [debounced, setDebounced] = useState("")
+	const [rows, setRows] = useState<EffectivePrefix[]>([])
+	const [total, setTotal] = useState(0)
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState("")
+	const [notice, setNotice] = useState("")
+	const [selectedCidrs, setSelectedCidrs] = useState<string[]>([])
+	const [operators, setOperators] = useState<{ id: string; name: string }[]>([])
+	const [reassignOpen, setReassignOpen] = useState(false)
+	const [reassignOp, setReassignOp] = useState("")
+	const [reassignAsn, setReassignAsn] = useState("")
+	const [working, setWorking] = useState(false)
+	const seq = useRef(0)
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setPage(0)
+			setDebounced(search.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [search])
+
+	useEffect(() => {
+		api
+			.send<{ items?: { id: string; name: string }[] }>("/api/v1/network/operators", { query: { limit: 500 } })
+			.then((data) => setOperators(data.items ?? []))
+			.catch(() => setOperators([]))
+	}, [])
+
+	const fetchPage = useCallback(async () => {
+		const sequence = ++seq.current
+		setLoading(true)
+		setError("")
+		try {
+			const data = await api.send<{ items?: EffectivePrefix[]; total?: number }>("/api/v1/address-prefixes/effective", {
+				query: {
+					slot: "combined",
+					family: family || undefined,
+					country_code: country.trim() || undefined,
+					operator: operator.trim() || undefined,
+					asn: asn.trim() || undefined,
+					q: debounced || undefined,
+					limit: pageSize,
+					offset: page * pageSize || undefined,
+					sort: "cidr",
+					order: "asc",
+				},
+			})
+			if (sequence !== seq.current) return
+			setRows(data.items ?? [])
+			setTotal(data.total ?? 0)
+		} catch (err) {
+			if (sequence !== seq.current) return
+			setRows([])
+			setTotal(0)
+			setError(err instanceof Error ? err.message : t`Failed to load`)
+		} finally {
+			if (sequence === seq.current) setLoading(false)
+		}
+	}, [asn, country, debounced, family, operator, page, pageSize, t])
+
+	useEffect(() => {
+		fetchPage()
+	}, [fetchPage])
+
+	const records = useMemo(
+		() =>
+			rows.map((row) => ({
+				cidr: row.cidr,
+				family: `IPv${row.family}`,
+				country: [row.country_code, row.country_name].filter(Boolean).join(" · ") || "—",
+				region: [row.subdivision_name, row.city_name].filter(Boolean).join(" / ") || "—",
+				asn: row.asn ?? "—",
+				operator: row.operator_name || "—",
+				source: row.source === "correction" ? t`Correction` : t`Base`,
+			})),
+		[rows, t]
+	)
+	const columns = useMemo(
+		() => [
+			{ field: "cidr", title: t`CIDR`, width: 180, filter: false, style: denseCellStyle() },
+			{ field: "family", title: t`Family`, width: 80, filter: false, style: denseCellStyle() },
+			{ field: "country", title: t`Country`, width: 160, filter: false, style: denseCellStyle() },
+			{ field: "region", title: t`Province / City`, width: 200, filter: false, style: denseCellStyle() },
+			{ field: "asn", title: "ASN", width: 100, filter: false, style: denseCellStyle() },
+			{ field: "operator", title: t`Operator`, width: 150, filter: false, style: denseCellStyle() },
+			{ field: "source", title: t`Source`, width: 100, filter: false, style: denseCellStyle() },
+		],
+		[t]
+	)
+	const selectable = useMemo(
+		() => ({
+			onSelectionChange: (recs: Record<string, unknown>[]) => setSelectedCidrs(recs.map((r) => String(r.cidr))),
+		}),
+		[]
+	)
+	const resetPage = (update: () => void) => {
+		setPage(0)
+		update()
+	}
+
+	const applyReassign = async () => {
+		if (!selectedCidrs.length) return
+		setWorking(true)
+		setError("")
+		setNotice("")
+		try {
+			await api.send("/api/v1/address-prefixes/bulk-reassign", {
+				method: "POST",
+				body: {
+					cidrs: selectedCidrs,
+					operator_id: reassignOp || undefined,
+					asn: reassignAsn.trim() ? Number(reassignAsn) : undefined,
+				},
+			})
+			setNotice(t`Reassigned ${selectedCidrs.length} prefixes`)
+			setReassignOpen(false)
+			setSelectedCidrs([])
+			await fetchPage()
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t`Reassign failed`)
+		} finally {
+			setWorking(false)
+		}
+	}
+
+	return (
+		<div className="grid gap-3">
+			<div className="flex flex-wrap items-center gap-3">
+				<div className="inline-flex w-fit rounded-md border border-border p-0.5">
+					{(
+						[
+							["", t`All`],
+							["4", "IPv4"],
+							["6", "IPv6"],
+						] as const
+					).map(([value, label]) => (
+						<Button
+							key={value}
+							variant={family === value ? "default" : "ghost"}
+							size="sm"
+							onClick={() => resetPage(() => setFamily(value))}
+						>
+							{label}
+						</Button>
+					))}
+				</div>
+				<Input
+					className="w-28"
+					value={country}
+					onChange={(event) => resetPage(() => setCountry(event.target.value))}
+					placeholder={t`Country`}
+				/>
+				<Input
+					className="w-36"
+					value={operator}
+					onChange={(event) => resetPage(() => setOperator(event.target.value))}
+					placeholder={t`Operator`}
+				/>
+				<Input
+					className="w-28"
+					value={asn}
+					onChange={(event) => resetPage(() => setASN(event.target.value))}
+					placeholder="ASN"
+					inputMode="numeric"
+				/>
+				{selectedCidrs.length > 0 ? (
+					<div className="flex items-center gap-2 text-sm">
+						<span className="text-muted-foreground">
+							<Trans>Selected {selectedCidrs.length}</Trans>
+						</span>
+						<Button size="sm" onClick={() => setReassignOpen((value) => !value)}>
+							<Trans>Reassign</Trans>
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setSelectedCidrs([])}>
+							<Trans>Clear</Trans>
+						</Button>
+					</div>
+				) : null}
+			</div>
+			{reassignOpen && selectedCidrs.length > 0 ? (
+				<div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-card p-3">
+					<div className="grid gap-1">
+						<Label className="text-xs text-muted-foreground">
+							<Trans>Operator</Trans>
+						</Label>
+						<Select value={reassignOp} onValueChange={setReassignOp}>
+							<SelectTrigger className="w-44">
+								<SelectValue placeholder={t`Keep current`} />
+							</SelectTrigger>
+							<SelectContent>
+								{operators.map((op) => (
+									<SelectItem key={op.id} value={op.id}>
+										{op.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+					<div className="grid gap-1">
+						<Label className="text-xs text-muted-foreground">ASN</Label>
+						<Input
+							className="w-28"
+							value={reassignAsn}
+							onChange={(event) => setReassignAsn(event.target.value)}
+							placeholder={t`Keep`}
+							inputMode="numeric"
+						/>
+					</div>
+					<Button onClick={applyReassign} disabled={working || (!reassignOp && !reassignAsn.trim())}>
+						<Trans>Apply to {selectedCidrs.length}</Trans>
+					</Button>
+				</div>
+			) : null}
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
+			{notice ? (
+				<div className="rounded-md border border-green-500/30 p-3 text-sm text-green-700">{notice}</div>
+			) : null}
+			<PagedVTable
+				records={records}
+				columns={columns}
+				loading={loading}
+				emptyText={t`No prefixes found. Activate an import first.`}
+				searchValue={search}
+				onSearchChange={setSearch}
+				searchPlaceholder={t`Search CIDR or location...`}
+				height={440}
+				serverPagination={{
+					page,
+					pageSize,
+					totalCount: total,
+					onPageChange: setPage,
+					onPageSizeChange: (value) => resetPage(() => setPageSize(value)),
+				}}
+				selectable={selectable}
+			/>
+		</div>
+	)
+})
+
 export default memo(function AddressPrefixesTab() {
-	const [mode, setMode] = useState<"library" | "imported">("library")
+	const [mode, setMode] = useState<"effective" | "library" | "imported">("effective")
 	return (
 		<div className="grid gap-3">
 			<div className="inline-flex w-fit rounded-md border border-border p-0.5">
+				<Button variant={mode === "effective" ? "default" : "ghost"} size="sm" onClick={() => setMode("effective")}>
+					<Trans>Workbench</Trans>
+				</Button>
 				<Button variant={mode === "library" ? "default" : "ghost"} size="sm" onClick={() => setMode("library")}>
 					<Trans>Library</Trans>
 				</Button>
@@ -911,7 +1179,9 @@ export default memo(function AddressPrefixesTab() {
 					<Trans>Imported</Trans>
 				</Button>
 			</div>
-			{mode === "imported" ? (
+			{mode === "effective" ? (
+				<EffectiveWorkbench />
+			) : mode === "imported" ? (
 				<AddressImportedPrefixes onBackToLibrary={() => setMode("library")} />
 			) : (
 				<AddressPrefixes />
