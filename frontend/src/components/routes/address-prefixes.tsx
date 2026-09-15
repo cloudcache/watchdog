@@ -76,7 +76,11 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
 	const [showForm, setShowForm] = useState(correctionDraft.open)
-	const [form, setForm] = useState({ ...emptyForm, cidr: correctionDraft.ip, labels: correctionDraft.open ? "evidence=flow_report" : "" })
+	const [form, setForm] = useState({
+		...emptyForm,
+		cidr: correctionDraft.ip,
+		labels: correctionDraft.open ? "evidence=flow_report" : "",
+	})
 	const [selected, setSelected] = useState<AddressPrefix[]>([])
 	const [coverPreview, setCoverPreview] = useState<AddressOperationPreview | null>(null)
 	const [coverWorking, setCoverWorking] = useState(false)
@@ -775,7 +779,9 @@ function readCorrectionDraft() {
 		query.get("dimension_snapshot_id") && `snapshot=${query.get("dimension_snapshot_id")}`,
 		query.get("geo_version") && `geo=${query.get("geo_version")}`,
 		query.get("classification_version") && `classification=${query.get("classification_version")}`,
-	].filter(Boolean).join(" · ")
+	]
+		.filter(Boolean)
+		.join(" · ")
 	return {
 		search: (query.get("q") ?? ip).trim(),
 		ip,
@@ -921,6 +927,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 	const [country, setCountry] = useState("")
 	const [operator, setOperator] = useState("")
 	const [asn, setASN] = useState("")
+	const [line, setLine] = useState("")
 	const [search, setSearch] = useState("")
 	const [debounced, setDebounced] = useState("")
 	const [rows, setRows] = useState<EffectivePrefix[]>([])
@@ -930,6 +937,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 	const [notice, setNotice] = useState("")
 	const [selectedCidrs, setSelectedCidrs] = useState<string[]>([])
 	const [operators, setOperators] = useState<{ id: string; name: string }[]>([])
+	const [groups, setGroups] = useState<{ id: string; name: string }[]>([])
 	const [reassignOpen, setReassignOpen] = useState(false)
 	const [reassignOp, setReassignOp] = useState("")
 	const [reassignAsn, setReassignAsn] = useState("")
@@ -949,6 +957,10 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 			.send<{ items?: { id: string; name: string }[] }>("/api/v1/network/operators", { query: { limit: 500 } })
 			.then((data) => setOperators(data.items ?? []))
 			.catch(() => setOperators([]))
+		api
+			.send<{ items?: { id: string; name: string }[] }>("/api/v1/geo/lines", { query: { limit: 500 } })
+			.then((data) => setGroups(data.items ?? []))
+			.catch(() => setGroups([]))
 	}, [])
 
 	const fetchPage = useCallback(async () => {
@@ -956,19 +968,25 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 		setLoading(true)
 		setError("")
 		try {
+			// A selected region group filters by its effective set (?line=), which the
+			// backend resolves from the group's selector/members/exclude — the column
+			// filters do not apply in that mode.
+			const query = line
+				? { slot: "combined", line, family: family || undefined, limit: pageSize, offset: page * pageSize || undefined }
+				: {
+						slot: "combined",
+						family: family || undefined,
+						country_code: country.trim() || undefined,
+						operator: operator.trim() || undefined,
+						asn: asn.trim() || undefined,
+						q: debounced || undefined,
+						limit: pageSize,
+						offset: page * pageSize || undefined,
+						sort: "cidr",
+						order: "asc",
+					}
 			const data = await api.send<{ items?: EffectivePrefix[]; total?: number }>("/api/v1/address-prefixes/effective", {
-				query: {
-					slot: "combined",
-					family: family || undefined,
-					country_code: country.trim() || undefined,
-					operator: operator.trim() || undefined,
-					asn: asn.trim() || undefined,
-					q: debounced || undefined,
-					limit: pageSize,
-					offset: page * pageSize || undefined,
-					sort: "cidr",
-					order: "asc",
-				},
+				query,
 			})
 			if (sequence !== seq.current) return
 			setRows(data.items ?? [])
@@ -981,7 +999,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 		} finally {
 			if (sequence === seq.current) setLoading(false)
 		}
-	}, [asn, country, debounced, family, operator, page, pageSize, t])
+	}, [asn, country, debounced, family, line, operator, page, pageSize, t])
 
 	useEffect(() => {
 		fetchPage()
@@ -1061,10 +1079,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 		},
 		[operators, fetchPage, t]
 	)
-	const editable = useMemo(
-		() => ({ fields: ["asn", "operator"], onEdit: applyInlineEdit }),
-		[applyInlineEdit]
-	)
+	const editable = useMemo(() => ({ fields: ["asn", "operator"], onEdit: applyInlineEdit }), [applyInlineEdit])
 	// Server-side header filter for Operator (17 options, single-select) — drives
 	// the same query state as the top-bar inputs so it filters the whole dataset.
 	const serverFiltering = useMemo(
@@ -1131,11 +1146,28 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 						</Button>
 					))}
 				</div>
+				<Select
+					value={line || "__none__"}
+					onValueChange={(value) => resetPage(() => setLine(value === "__none__" ? "" : value))}
+				>
+					<SelectTrigger className="w-48">
+						<SelectValue placeholder={t`Region group`} />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="__none__">{t`All (no group)`}</SelectItem>
+						{groups.map((group) => (
+							<SelectItem key={group.id} value={group.id}>
+								{group.name}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 				<Input
 					className="w-28"
 					value={country}
 					onChange={(event) => resetPage(() => setCountry(event.target.value))}
 					placeholder={t`Country`}
+					disabled={!!line}
 				/>
 				<Input
 					className="w-28"
@@ -1143,6 +1175,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 					onChange={(event) => resetPage(() => setASN(event.target.value))}
 					placeholder="ASN"
 					inputMode="numeric"
+					disabled={!!line}
 				/>
 				{selectedCidrs.length > 0 ? (
 					<div className="flex items-center gap-2 text-sm">
@@ -1195,9 +1228,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 			{error ? (
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
 			) : null}
-			{notice ? (
-				<div className="rounded-md border border-green-500/30 p-3 text-sm text-green-700">{notice}</div>
-			) : null}
+			{notice ? <div className="rounded-md border border-green-500/30 p-3 text-sm text-green-700">{notice}</div> : null}
 			<PagedVTable
 				records={records}
 				columns={columns}
