@@ -147,9 +147,9 @@
 - [x] **集成测试**：真实一次性 MySQL 覆盖 defaults→port override→MIB upsert/list/delete→管理员 trap 与 SNMP agent Bearer trap→端口状态；真实 ClickHouse 覆盖 event 写入/list/facet 与既有 raw/rate/aggregate/closed bucket/billing，同批测试库均清理。
 - [x] **变更设计/测试**：SNMP agent route 从浏览器 session 组纠正为 agent token/mTLS 或管理员 session 双认证；事件、端口更新和 recipe 唤醒任一失败均返回显式错误；不恢复 MySQL event 双写、VM fallback 或第二套 trap dispatcher。
 - [x] **回归测试**：`internal/server`、`internal/snmpch` 单测与真实 MySQL/ClickHouse 集成通过；全库 test/vet/build 在提交门禁再次执行并记录并行 Flow WIP 的独立结果。
-- [ ] **已提交门禁**：本切片 DDL、代码、测试和文档需形成独立 SNMP 提交；ClickHouse `014` 必须在并行 Flow `013` 正式提交后落库，禁止夹带未完成 Flow WIP。
+- [x] **已提交/偏差记录**：A3 的 DDL、代码、测试和文档已经进入 `8f9ea87f`，且 ClickHouse `013`/`014` 的迁移顺序正确；但该历史提交同时包含并行 Flow/VPN/address 工作，**没有满足原定的独立 SNMP 提交边界**。不通过重写历史或重复搬运稳定代码伪造门禁；后续 `fd338550`、`6d2bb510`、`23bf277b`、`e2ad0a14`、`eee7a95e`、`03acebdc`、`f825fac5` 已按 SNMP 纵向修正提交，当前 `internal/server`、`internal/snmpch` 及全库 test/vet/build 通过。本偏差永久保留供审计，后续工作包仍必须先满足独立提交边界再勾选。
 
-> **2026-09-16 MIB 生命周期修正**：内置 MIB 首次插入默认启用；后续启动只更新内嵌 version/checksum，管理员的 enabled 选择保持不变。真实 MySQL 集成覆盖 disable→reseed→内容升级且仍 disabled。本修正形成独立提交，但不倒签上面的 A3 历史提交门禁。
+> **2026-09-16 MIB 生命周期修正**：内置 MIB 首次插入默认启用；后续启动只更新内嵌 version/checksum，管理员的 enabled 选择保持不变。真实 MySQL 集成覆盖 disable→reseed→内容升级且仍 disabled。本修正形成独立提交，但不改变上面记录的 A3 历史偏差。
 
 #### KISS-03B system/container agent 延后切片
 
