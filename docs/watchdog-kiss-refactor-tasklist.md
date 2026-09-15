@@ -279,6 +279,8 @@
 
 - [x] **KISS-08F10 旧 BGP HTTP 副本删除（本提交）**：当前 Gin 已完整承接 canonical `/api/v1/bgp`、`/api/v1/devices/:id/bgp`，包含 v4/v6 afi/safi、服务端分页/搜索/排序/过滤和设备资源权限；删除只注册已禁用 `/api/v1/network/...` 别名的旧 tenant-scoped `net/http` handler 与专属测试。BGP domain/repository、SNMP discovery 写入与 MySQL 表不变。Gin 路由、IPv6/分页集成、前端 canonical API 扫描、全库 test/vet/build 和旧 handler 零引用为提交门禁。
 
+- [x] **KISS-08F11 旧 Graph Overview HTTP 副本删除（本提交）**：当前 Gin 已在单一 device root 上承接 `/api/v1/graph/devices/:id/overview`、`/api/v1/graph/ports/:port_id/overview`，仅返回可授权设备/端口的面板查询，并由 canonical ClickHouse metrics API 解析。将旧 handler 用例的 signed 进出流量、BGP 和 sensor 面板契约转入现行真实 MySQL 集成测试后，删除旧 tenant-scoped `net/http` handler/test-router 注入与专属测试；共享 graph panel builder 保留。真实 MySQL、全库 test/vet/build 和旧 handler 零引用为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。

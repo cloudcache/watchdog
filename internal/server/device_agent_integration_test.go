@@ -946,6 +946,11 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 		VALUES ('sensor_test',?,'port_api_test',1,'temperature','FPC temperature','1','.1.3.6.1.2.1','C',72,65,80,'warning',JSON_OBJECT('mib','ENTITY-SENSOR-MIB'))`, deviceID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(`INSERT INTO sensors
+		(id,device_id,port_id,sensor_index,class,label,oid_index,oid,unit,value_num,status,metadata_json)
+		VALUES ('sensor_optical_test',?,'port_api_test',2,'dbm','Rx power','2','.1.3.6.1.2.2','dBm',-8,'ok',JSON_OBJECT('mib','ENTITY-SENSOR-MIB'))`, deviceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`INSERT INTO physical_entities
 		(id,device_id,entity_index,name,description,class,vendor_type,contained_in,parent_rel_pos,hardware_revision,
 		 firmware_revision,software_revision,serial,manufacturer_name,model_name,alias,asset_id,is_fru)
@@ -957,6 +962,19 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 	}
 	if _, err := s.db.Exec(`INSERT INTO lag_groups (id,device_id,lag_if_index,name,mac_address,mode) VALUES ('lag_test',?,500,'ae0','00:11:22:33:44:55','lacp')`, deviceID); err != nil {
 		t.Fatal(err)
+	}
+
+	deviceOverview := requestJSON(t, s, http.MethodGet, "/api/v1/graph/devices/"+deviceID+"/overview", nil, nil, cookies...)
+	if deviceOverview.Code != http.StatusOK || !strings.Contains(deviceOverview.Body.String(), `"id":"overall-traffic"`) ||
+		!strings.Contains(deviceOverview.Body.String(), `"stack":"signed"`) ||
+		!strings.Contains(deviceOverview.Body.String(), `"id":"bgp-prefixes"`) ||
+		!strings.Contains(deviceOverview.Body.String(), `"id":"optical-power"`) {
+		t.Fatalf("device graph overview: status=%d body=%s", deviceOverview.Code, deviceOverview.Body.String())
+	}
+	portOverview := requestJSON(t, s, http.MethodGet, "/api/v1/graph/ports/port_api_test/overview", nil, nil, cookies...)
+	if portOverview.Code != http.StatusOK || !strings.Contains(portOverview.Body.String(), `"id":"traffic"`) ||
+		!strings.Contains(portOverview.Body.String(), `"stack":"signed"`) {
+		t.Fatalf("port graph overview: status=%d body=%s", portOverview.Code, portOverview.Body.String())
 	}
 
 	ports := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/ports?address_family=ipv6&q=2001:db8&sort=speed&order=desc&limit=10&offset=0", nil, nil, cookies...)

@@ -159,7 +159,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.Network != nil {
 		registerNetworkRoutes(mux, auth, cfg.Network, cfg.Targets, cfg.Agents, cfg.SNMP, cfg.SNMPDiscovery, cfg.SNMPCollector, cfg.SeriesCleaner, cfg.DiscoveryJobs, cfg.Audit, cfg.DeviceDeletePreview, cfg.OperationJobs)
 		registerPortRoutes(mux, auth, cfg.Network, cfg.PortDeletePreview, cfg.OperationJobs, cfg.SeriesCleaner)
-		registerGraphRoutes(mux, auth, cfg.Network)
 	}
 	if cfg.Exports != nil {
 		registerExportRoutes(mux, auth, cfg.Exports, cfg.ExportFiles, cfg.Network, cfg.Audit, cfg.OperationJobs, cfg.QueryGateway, cfg.FlowRecords, cfg.FlowRecordNow, cfg.ExportMetric, cfg.ExportCollectionStep)
