@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { ChevronDownIcon, ChevronRightIcon, GlobeIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, GlobeIcon, NetworkIcon } from "lucide-react"
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Button } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { api } from "@/lib/api"
 
@@ -13,11 +14,12 @@ type GeoTreeNode = {
 	child_count: number
 }
 
+type Operator = { id: string; name: string; asns?: number[] }
+
 type EffectivePrefix = {
 	cidr: string
 	family: number
 	country_code?: string
-	country_name?: string
 	subdivision_name?: string
 	city_name?: string
 	asn?: number
@@ -25,18 +27,61 @@ type EffectivePrefix = {
 	source: string
 }
 
+// A selection in either tree resolves to a label + the effective-view query it
+// filters by (null query = a branch node with nothing to list, e.g. a continent).
+type PrefixFilter = { label: string; query: Record<string, string | number> | null }
+
 const INDENT = 16
 
-// GeoTreeBrowser: lazily drill the geo hierarchy (continent → country →
-// province → city); selecting a node lists its effective prefixes on the right.
+// Two virtual hierarchy trees over the active base library — Geography
+// (continent→country→province→city) and Operators (operator→ASN) — with the
+// selected node's effective prefixes listed alongside. Addresses "分组+层级+下钻".
 export default memo(function GeoTreeBrowser() {
+	const [mode, setMode] = useState<"geo" | "operator">("geo")
+	const [filter, setFilter] = useState<PrefixFilter | null>(null)
+	const selectMode = useCallback((next: "geo" | "operator") => {
+		setMode(next)
+		setFilter(null)
+	}, [])
+
+	return (
+		<div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
+			<div className="rounded-md border border-border bg-card p-2">
+				<div className="mb-2 inline-flex w-full rounded-md border border-border p-0.5">
+					<Button
+						variant={mode === "geo" ? "default" : "ghost"}
+						size="sm"
+						className="flex-1 gap-1.5"
+						onClick={() => selectMode("geo")}
+					>
+						<GlobeIcon className="h-3.5 w-3.5" />
+						<Trans>Geography</Trans>
+					</Button>
+					<Button
+						variant={mode === "operator" ? "default" : "ghost"}
+						size="sm"
+						className="flex-1 gap-1.5"
+						onClick={() => selectMode("operator")}
+					>
+						<NetworkIcon className="h-3.5 w-3.5" />
+						<Trans>Operators</Trans>
+					</Button>
+				</div>
+				{mode === "geo" ? <GeoTree onSelect={setFilter} /> : <OperatorTree onSelect={setFilter} />}
+			</div>
+			<NodePrefixes filter={filter} />
+		</div>
+	)
+})
+
+const GeoTree = memo(function GeoTree({ onSelect }: { onSelect: (filter: PrefixFilter) => void }) {
 	const { t } = useLingui()
 	const [roots, setRoots] = useState<GeoTreeNode[]>([])
 	const [childrenById, setChildrenById] = useState<Record<string, GeoTreeNode[]>>({})
 	const [expanded, setExpanded] = useState<Set<string>>(new Set())
 	const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set())
-	const [selected, setSelected] = useState<GeoTreeNode | null>(null)
-	const [treeError, setTreeError] = useState("")
+	const [selectedId, setSelectedId] = useState("")
+	const [error, setError] = useState("")
 
 	const kindLabel = useCallback(
 		(kind: string) => {
@@ -66,14 +111,13 @@ export default memo(function GeoTreeBrowser() {
 	useEffect(() => {
 		fetchChildren("")
 			.then(setRoots)
-			.catch((err) => setTreeError(err instanceof Error ? err.message : "failed"))
+			.catch((err) => setError(err instanceof Error ? err.message : "failed"))
 	}, [fetchChildren])
 
 	const toggle = useCallback(
 		async (node: GeoTreeNode) => {
-			const isOpen = expanded.has(node.id)
 			const next = new Set(expanded)
-			if (isOpen) {
+			if (next.has(node.id)) {
 				next.delete(node.id)
 				setExpanded(next)
 				return
@@ -83,10 +127,11 @@ export default memo(function GeoTreeBrowser() {
 			if (!childrenById[node.id]) {
 				setLoadingIds((prev) => new Set(prev).add(node.id))
 				try {
+					setChildrenById((prev) => ({ ...prev, [node.id]: [] })) // mark requested
 					const kids = await fetchChildren(node.id)
 					setChildrenById((prev) => ({ ...prev, [node.id]: kids }))
 				} catch (err) {
-					setTreeError(err instanceof Error ? err.message : "failed")
+					setError(err instanceof Error ? err.message : "failed")
 				} finally {
 					setLoadingIds((prev) => {
 						const copy = new Set(prev)
@@ -99,6 +144,17 @@ export default memo(function GeoTreeBrowser() {
 		[expanded, childrenById, fetchChildren]
 	)
 
+	const select = useCallback(
+		(node: GeoTreeNode) => {
+			setSelectedId(node.id)
+			let query: Record<string, string> | null = null
+			if (node.kind === "country") query = { country_code: node.code }
+			else if (node.kind === "province" || node.kind === "city") query = { q: node.name }
+			onSelect({ label: node.name, query })
+		},
+		[onSelect]
+	)
+
 	const renderNodes = (nodes: GeoTreeNode[], depth: number): ReactNode =>
 		nodes.map((node) => {
 			const isOpen = expanded.has(node.id)
@@ -107,7 +163,7 @@ export default memo(function GeoTreeBrowser() {
 				<div key={node.id}>
 					<div
 						className={`flex items-center gap-1.5 rounded-sm py-1 pr-2 text-sm hover:bg-muted/60 ${
-							selected?.id === node.id ? "bg-muted" : ""
+							selectedId === node.id ? "bg-muted" : ""
 						}`}
 						style={{ paddingLeft: depth * INDENT + 4 }}
 					>
@@ -126,7 +182,7 @@ export default memo(function GeoTreeBrowser() {
 						<button
 							type="button"
 							className="flex flex-1 items-center gap-2 truncate text-left"
-							onClick={() => setSelected(node)}
+							onClick={() => select(node)}
 						>
 							<span className="truncate">{node.name}</span>
 							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -135,37 +191,125 @@ export default memo(function GeoTreeBrowser() {
 							{hasChildren ? <span className="text-xs text-muted-foreground">{node.child_count}</span> : null}
 						</button>
 					</div>
-					{isOpen ? (
-						loadingIds.has(node.id) ? (
-							<div className="py-1 text-xs text-muted-foreground" style={{ paddingLeft: (depth + 1) * INDENT + 8 }}>
-								<Trans>Loading...</Trans>
-							</div>
-						) : (
-							renderNodes(childrenById[node.id] ?? [], depth + 1)
-						)
+					{isOpen && !loadingIds.has(node.id) ? renderNodes(childrenById[node.id] ?? [], depth + 1) : null}
+					{isOpen && loadingIds.has(node.id) ? (
+						<div className="py-1 text-xs text-muted-foreground" style={{ paddingLeft: (depth + 1) * INDENT + 8 }}>
+							<Trans>Loading...</Trans>
+						</div>
 					) : null}
 				</div>
 			)
 		})
 
 	return (
-		<div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
-			<div className="rounded-md border border-border bg-card p-2">
-				<div className="mb-1 flex items-center gap-1.5 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					<GlobeIcon className="h-3.5 w-3.5" />
-					<Trans>Geography</Trans>
-				</div>
-				{treeError ? <div className="px-1 py-2 text-sm text-destructive">{treeError}</div> : null}
-				<div className="max-h-[540px] overflow-auto">{renderNodes(roots, 0)}</div>
-			</div>
-			<GeoNodePrefixes node={selected} />
-		</div>
+		<>
+			{error ? <div className="px-1 py-2 text-sm text-destructive">{error}</div> : null}
+			<div className="max-h-[520px] overflow-auto">{renderNodes(roots, 0)}</div>
+		</>
 	)
 })
 
-// GeoNodePrefixes lists the effective prefixes for the selected geo node
-// (country → country_code filter; province/city → location search).
-const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeNode | null }) {
+const OperatorTree = memo(function OperatorTree({ onSelect }: { onSelect: (filter: PrefixFilter) => void }) {
+	const { t } = useLingui()
+	const [operators, setOperators] = useState<Operator[]>([])
+	const [expanded, setExpanded] = useState<Set<string>>(new Set())
+	const [selectedKey, setSelectedKey] = useState("")
+	const [error, setError] = useState("")
+
+	useEffect(() => {
+		api
+			.send<{ items?: Operator[] }>("/api/v1/network/operators", { query: { limit: 500 } })
+			.then((data) => setOperators(data.items ?? []))
+			.catch((err) => setError(err instanceof Error ? err.message : "failed"))
+	}, [])
+
+	const toggle = useCallback((id: string) => {
+		setExpanded((prev) => {
+			const next = new Set(prev)
+			if (next.has(id)) next.delete(id)
+			else next.add(id)
+			return next
+		})
+	}, [])
+
+	return (
+		<>
+			{error ? <div className="px-1 py-2 text-sm text-destructive">{error}</div> : null}
+			<div className="max-h-[520px] overflow-auto">
+				{operators.map((op) => {
+					const isOpen = expanded.has(op.id)
+					const asns = op.asns ?? []
+					return (
+						<div key={op.id}>
+							<div
+								className={`flex items-center gap-1.5 rounded-sm py-1 pr-2 text-sm hover:bg-muted/60 ${
+									selectedKey === `op:${op.id}` ? "bg-muted" : ""
+								}`}
+								style={{ paddingLeft: 4 }}
+							>
+								{asns.length > 0 ? (
+									<button
+										type="button"
+										className="flex h-5 w-5 items-center justify-center rounded hover:bg-muted"
+										onClick={() => toggle(op.id)}
+										aria-label={isOpen ? t`Collapse` : t`Expand`}
+									>
+										{isOpen ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
+									</button>
+								) : (
+									<span className="inline-block h-5 w-5" />
+								)}
+								<button
+									type="button"
+									className="flex flex-1 items-center gap-2 truncate text-left"
+									onClick={() => {
+										setSelectedKey(`op:${op.id}`)
+										onSelect({ label: op.name, query: { operator: op.name } })
+									}}
+								>
+									<span className="truncate">{op.name}</span>
+									<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+										<Trans>Operator</Trans>
+									</span>
+									{asns.length > 0 ? <span className="text-xs text-muted-foreground">{asns.length}</span> : null}
+								</button>
+							</div>
+							{isOpen
+								? asns.map((asn) => (
+										<div
+											key={asn}
+											className={`flex items-center gap-1.5 rounded-sm py-1 pr-2 text-sm hover:bg-muted/60 ${
+												selectedKey === `asn:${asn}` ? "bg-muted" : ""
+											}`}
+											style={{ paddingLeft: INDENT + 4 }}
+										>
+											<span className="inline-block h-5 w-5" />
+											<button
+												type="button"
+												className="flex flex-1 items-center gap-2 truncate text-left"
+												onClick={() => {
+													setSelectedKey(`asn:${asn}`)
+													onSelect({ label: `AS${asn}`, query: { asn } })
+												}}
+											>
+												<span className="truncate">AS{asn}</span>
+												<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+													ASN
+												</span>
+											</button>
+										</div>
+									))
+								: null}
+						</div>
+					)
+				})}
+			</div>
+		</>
+	)
+})
+
+// NodePrefixes lists the effective prefixes for the current tree selection.
+const NodePrefixes = memo(function NodePrefixes({ filter }: { filter: PrefixFilter | null }) {
 	const { t } = useLingui()
 	const [rows, setRows] = useState<EffectivePrefix[]>([])
 	const [total, setTotal] = useState(0)
@@ -175,17 +319,13 @@ const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeN
 	const [error, setError] = useState("")
 	const seq = useRef(0)
 
-	// Reset paging when the selected node changes.
+	const query = filter?.query ?? null
+	const queryKey = query ? JSON.stringify(query) : ""
+
+	// Reset paging when the selection changes.
 	useEffect(() => {
 		setPage(0)
-	}, [node?.id])
-
-	const query = useMemo(() => {
-		if (!node) return null
-		if (node.kind === "country") return { country_code: node.code }
-		if (node.kind === "province" || node.kind === "city") return { q: node.name }
-		return null // continent: drill into a country to view prefixes
-	}, [node])
+	}, [queryKey])
 
 	useEffect(() => {
 		if (!query) {
@@ -221,7 +361,8 @@ const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeN
 			.finally(() => {
 				if (sequence === seq.current) setLoading(false)
 			})
-	}, [query, page, pageSize, t])
+		// queryKey captures the query object identity for the effect.
+	}, [queryKey, page, pageSize, t])
 
 	const records = useMemo(
 		() =>
@@ -247,10 +388,10 @@ const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeN
 		[t]
 	)
 
-	if (!node) {
+	if (!filter) {
 		return (
 			<div className="flex min-h-[200px] items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-				<Trans>Select a region to view its prefixes.</Trans>
+				<Trans>Select a node to view its prefixes.</Trans>
 			</div>
 		)
 	}
@@ -264,7 +405,7 @@ const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeN
 	return (
 		<div className="grid gap-2">
 			<div className="text-sm font-medium">
-				{node.name} · <span className="text-muted-foreground">{total.toLocaleString()}</span>
+				{filter.label} · <span className="text-muted-foreground">{total.toLocaleString()}</span>
 			</div>
 			{error ? (
 				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
@@ -273,7 +414,7 @@ const GeoNodePrefixes = memo(function GeoNodePrefixes({ node }: { node: GeoTreeN
 				records={records}
 				columns={columns}
 				loading={loading}
-				emptyText={t`No prefixes for this region.`}
+				emptyText={t`No prefixes for this selection.`}
 				showSearch={false}
 				height={Math.min(540, 44 + records.length * 42)}
 				serverPagination={{
