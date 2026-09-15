@@ -33,7 +33,7 @@
 | L6 | file-cluster | `victoriametrics.go`,`query_gateway.go`,`query_provider_*.go`,`export_vm.go` | KISS-08 | 仅经 `NewBackendRuntime`（worker） | 断遗留 worker | L10/L11 退役 | KISS-08 | blocked-by-workers |
 | L7 | file-cluster | `flow_*.go`(17)，含 `flow_rollup_jobs.go:450-452` (`collector_agents⋈tenants`) | KISS-08 | `NewBackendRuntime`（worker） | 断 aggregate/export worker | L10/L11 | KISS-08 | blocked |
 | L8 | file-cluster | `address_*.go`/`dimension_*.go`(19) | KISS-08 | worker 侧 flow-enrichment/query-provider | 已被 `internal/address` 取代 | flow 消费端迁 v2 | KISS-05→08 | blocked |
-| L9 | file-cluster | `mysql_*.go`(36),`collector_*`(13),`operation_job*.go`(4),`platform_*`,`billing_*`,`dashboard.go` | KISS-08 | `NewBackendRuntime`（worker） | 断遗留 worker | L10/L11 | KISS-08 | blocked |
+| L9 | file-cluster | `mysql_*.go`(36),`collector_*`(13),`operation_job*.go`(4),`platform_*`,`billing_*`；旧 `dashboard.go` 纵向副本已删 | KISS-08 | 余项仍由遗留包内部引用 | Dashboard 已由 Gin/MySQL 单域实现承接；余项继续按真实闭包拆除 | L2/L14 | KISS-08 | **partial：dashboard done** |
 | L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；旧命令对 KISS 库查 `collector_agents⋈tenants` 即失败 | 已满足 | KISS-08B | **done** |
 | L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
 | L12 | cmd/schema | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、Makefile target 与 dev-db 脚本已删除；旧 schema/实现只被 `internal/watchdog` 历史测试引用 | schema 树随 L1 删除 | KISS-08C/D | **entry done; files blocked-by-L1** |
@@ -133,6 +133,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 | S2(030 注释) | **未做**：改注释会动 `checksums.sha256`+破 checksum 测试，价值极低；随 KISS-08 整树删除 |
 | L5(api_*.go 53 文件) | **尝试后回退——分类修正**：并非 DEAD-now 可整批删。删除后 `go build ./internal/watchdog` 断裂：api_*.go **不只是旧 HTTP 层**，还定义了被全包引用的共享类型/接口——`FlowGeoConfig`(config.go)、`SNMPDeviceDiscoverer`(discovery_scheduler.go)、`flowDetailRunner`/`flowOverseasRunner`(runtime.go/export_vm.go/query_provider_flow.go)、`flowVPNFindingExportCreateRequest`、`MetricsAggregateRequest`、`metricsSelector` 等。仅 `Router()`/`NewAPIV1Router` 是 HTTP 死码，但这些类型与运行时/worker 代码交织。→ **不是独立可删项**：须与 Phase B/D 的类型解耦一起做，不能单独 git rm。runtime.go `Router()` 方法本身可删（无调用者），但收益须整包一起。已回退，无净改动。|
 | L14(SNMP trap agent) | 命令改为只读取共享 YAML 的 `snmp_trap_agent` section，并继续接受原 `WATCHDOG_SNMP_TRAP_*` 和 CLI 覆盖；本地 wire DTO 保持 `/api/v1/snmp/traps` JSON 不变。源码已无 `internal/watchdog` import；system agent 未动、继续延期。 | KISS-08E |
+| L9(Dashboard) | 删除旧 tenant-scoped domain/repository/API/MySQL/test 六文件，从旧 Router/runtime 摘除注册；当前 Gin `/api/v1/dashboards` 全路由、MySQL 单域实现和 UI 不变。共享 JSON EOF guard 移到旧通用 API helper，避免因错误文件归属误删其他 handler 的输入完整性校验。 | KISS-08F1 |
 
 **Phase A 剩余**：L16(yaml,须先退役 worker)、S2(随整树删)、L5(api——**经证实须解耦，非独立删**)。
 

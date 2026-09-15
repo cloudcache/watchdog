@@ -259,6 +259,8 @@
 
 - [x] **KISS-08E SNMP trap agent 配置解耦（本提交）**：`watchdog-snmp-agent` 不再为 3 个配置字段和一个 JSON DTO import 整个遗留 `internal/watchdog` 包。命令内最小配置读取器继续支持共享 YAML 的 `snmp_trap_agent` section、`WATCHDOG_SNMP_TRAP_*` 环境变量及原命令行覆盖顺序；只严格校验自己拥有的 section，不受平台其余配置生命周期影响。trap 上报 URL、Authorization 和 JSON 字段保持不变，示例/开发配置纠正为独立 Gin 后端 `:8091`。配置边界、错误向量、仓库配置兼容和 HTTP wire contract 均有单测；目标 build 与源码反向扫描为提交门禁。`watchdog-system-agent` 按已冻结范围继续延期，不在本切片改写。
 
+- [x] **KISS-08F1 旧 Dashboard 纵向副本删除（本提交）**：当前 Gin `/api/v1/dashboards` 的 list/get/create/preview/patch/delete/graph-options、MySQL 单域表和既有前端保持不变；删除遗留包中第二套 tenant-scoped `Dashboard` domain/repository/HTTP handlers、MySQL 实现及仅验证旧实现的测试，并从旧 `APIV1RouterConfig`/`BackendRuntime.Router` 摘除注册。被其他旧 handler 共用但错误命名在 dashboard 文件中的 JSON 单文档校验移至通用 `api.go`，行为不变。当前 server Dashboard 测试、遗留包回归、全库 build/test/vet 和旧符号反向扫描为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。

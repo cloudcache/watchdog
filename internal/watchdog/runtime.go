@@ -427,7 +427,6 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		ExportCollectionStep:   r.Config.SNMPCollector.Interval,
 		Billing:                r.Store,
 		AggregateGraphs:        r.Store,
-		Dashboards:             r.Store,
 		Permissions:            r.Store,
 		Idempotency:            r.Store,
 		TargetDeletePreview:    r.Store,

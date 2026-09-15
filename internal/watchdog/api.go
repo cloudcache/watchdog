@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 )
 
@@ -171,6 +172,20 @@ func WriteAPIJSONRaw(w http.ResponseWriter, status int, data json.RawMessage) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
+}
+
+// ensureDashboardJSONEOF is the historical name of the shared one-document
+// request-body guard used by the remaining legacy handlers. It is not owned by
+// the retired dashboard API.
+func ensureDashboardJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain one JSON object")
+		}
+		return err
+	}
+	return nil
 }
 
 func WriteAPIError(w http.ResponseWriter, status int, code APIErrorCode, message string, details map[string]any) {
