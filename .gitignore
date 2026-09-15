@@ -36,3 +36,6 @@ akvorado/
 
 # offline geo bundles exported from EdgeManager (large, regenerable)
 dev/flow-geo/
+
+# Address library seed blob (large; see deploy/seed/README.md)
+deploy/seed/*.sql.gz
