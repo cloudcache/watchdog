@@ -77,6 +77,8 @@
 当前门禁证据：PB Go/JS 依赖、PB Hub/collection/hook/realtime 源码、旧部署物和前端 `/api/watchdog/*` 调用均已删除；全库 Go test（含需 loopback 的 Flow worker 测试）、build、vet 以及前端 test/build 已通过。历史 legacy migration/init 中仍有 PB 时代字段与文字，且未完成 ClickHouse/Kafka clean-stack 和 race/lint 全量验收，所以编码删除、回归和 KISS-01 总门禁继续保持未勾选。
 
 > **2026-09-15 审计核销（PB 残留精确清单，见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §1）**：PB 已彻底退出活跃路径（go.mod/active Go/前端/clean schema/`strings watchdog-server` 全无）。KISS-01E「编码删除」剩余的**精确**残留是三项非发布遗留物：①死的 PB-hub Dockerfile 仍在 CI（`internal/dockerfile_hub:29,31,34` 构建**已删除**的 `internal/cmd/hub`，带 PB `serve`+`/watchdog_data` volume；被 `.github/workflows/docker-images.yml:18,71` 引用）——即 line 70 未完成的「移除 PB SQLite 文件/volume 挂载路径」；②line 77 的「PB 时代字段与文字」= `install/init.sql:2020-2028`（`auth_provider`/`external_subject_id`）+ `deploy/migration/mysql/030:1-2`（"PocketBase" 注释）；③GitHub 模板指向 PB 后台 `/_/#/logs`（`.github/ISSUE_TEMPLATE/bug_report.yml:124`、`.github/DISCUSSION_TEMPLATE/support.yml:92`）。遗留 `internal/watchdog/*` 树删除属 KISS-08（仍被活跃 import）。
+>
+> **2026-09-15 Phase A 已执行（见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md) §6）**：①PB 残留已清——删死的 hub Dockerfile+CI repoint 到 `dockerfile_server`(cmd/watchdog-server)、GitHub 模板去 `/_/#/logs`、`init.sql` 删 `auth_provider`/`external_subject_id`（commit 28276488）；②遗留迁移器加 KISS 库守卫，`watchdog-install`/超期 worker 对 KISS 库即拒绝，**不再能 brick boot**（commit 4574289d）。KISS-01E「编码删除」的 PB 残留项已完成；`internal/watchdog` 整包 + 遗留 schema 树的物理删除仍属 KISS-08（须先 Phase B 抽 SNMP 切片 + 退役 worker）。
 
 ### KISS-02 单域 RBAC 与设备根
 

@@ -120,3 +120,17 @@ canonical 面已存在：`/devices`（CRUD + `/devices/:id/{ports,addresses,bgp,
 - **无 blocker/major 代码缺陷**：KISS 运行时不依赖以上任何遗留物；本台账所有"阻断"均为**遗留物删除的前置**，非运行时故障。
 
 配套：CH 启动语义（audit 主题 2）、地址库 seed 接线属独立 install 硬化小包，见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §2/§主题 2。
+
+## 6. 执行记录（2026-09-15 Phase A 已做）
+
+| 项 | 动作 | commit |
+|---|---|---|
+| S3/S5/L10-L12 危险接线 | **遗留迁移器加 KISS 库守卫**：`ApplyMySQLMigrations` 检测到 KISS 标记表 `schema_migrations` 即拒绝（覆盖 `watchdog-install` + `NewBackendRuntime` 的 aggregate-rollup/export-worker），对真实 KISS `watchdog` 库验证拒绝生效——即使遗留安装器/worker 仍在，也**不再能 brick KISS boot** | 4574289d |
+| L19a | 删死的 `internal/dockerfile_hub`（建已删的 internal/cmd/hub+PB serve+/watchdog_data），新增 `internal/dockerfile_server` 建 cmd/watchdog-server(8091)，CI 两处 repoint | 28276488 |
+| L19b | GitHub 模板 `Hub Logs / PocketBase /_/#/logs` → `Server Logs` | 28276488 |
+| S1 | `install/init.sql` 删 PB 列 `auth_provider`/`external_subject_id`+索引（仅存于 init.sql，迁移树无；init↔migration 既有 parity 缺口无关且未动） | 28276488 |
+| L16(yaml) | **未做**：example/dev yaml 的 VM/tenant 键——遗留 worker config `LoadBackendConfig` 仍**必填** VM base_url，裸删会断其配置加载；随 L15/worker 退役一并处理 |
+| S2(030 注释) | **未做**：改注释会动 `checksums.sha256`+破 checksum 测试，价值极低；随 KISS-08 整树删除 |
+| L5(api_*.go 53 文件) | **未做**：DEAD-now 但需整批 git rm + 改 runtime.go 去 `Router()`/`NewAPIV1Router`/`MetricsScrapeHandler`，留作聚焦子任务 |
+
+**Phase A 剩余**：L16(yaml,须先退役 worker)、S2(随整树删)、L5(api 死码整批删)。**Phase B**（抽 `internal/snmpdomain` 断 server→watchdog import）与退役 worker 未开始。KISS-01E 代码删除门的 PB 残留（L19/S1）已清；`internal/watchdog` 整包 + init.sql/migration 整树物理删除仍属 KISS-08（须先 Phase B + 退役 worker + 处理 ~20 遗留测试）。
