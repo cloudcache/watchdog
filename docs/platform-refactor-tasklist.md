@@ -1,6 +1,6 @@
 # Watchdog 平台架构重构 Tasklist
 
-> **已冻结，不再新增实施项：** 2026-09-08 起平台重构以 [Watchdog KISS Tasklist](watchdog-kiss-refactor-tasklist.md) 为唯一入口。本文保留既有提交证据；下述旧“当前活动切片”全部取消。当前唯一活动平台包是 **KISS-01 PocketBase 彻底移除**，完成前不得继续 PB 收缩、多租户、VM/provider、通用 module/target 旧路线。
+> **已冻结，不再新增实施项：** 2026-09-08 起平台重构以 [Watchdog KISS Tasklist](watchdog-kiss-refactor-tasklist.md) 为唯一入口。本文保留既有提交证据；下述旧“当前活动切片”全部取消。所有仍显示为 `[ ]` 的旧条目已在 [归档映射](platform-refactor-archive-map.md) 逐项判定为“KISS 完成 / 删除旧路线 / Flow 继续”，不得再从本文启动工作。
 
 > **时序存储更正：** 下文所有 VictoriaMetrics 写入、查询、双写、shadow read、迁移和新增集成任务均已取消，只作为历史提交证据保留。目标任务只有两条：SNMP/system/agent 时序在 KISS-03 统一写入并查询 ClickHouse；Flow 业务数据已经在 ClickHouse，在 KISS-06 仅保持现有 writer 并收敛 CH query service。
 

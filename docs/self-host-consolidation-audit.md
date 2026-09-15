@@ -1,6 +1,6 @@
 # Watchdog 自托管收敛审计 (Self-Host Consolidation Audit)
 
-> 状态：审计草案，待决策。本文重开并部分取代 `docs/storage-consolidation.md`（ADR-SC-001，其冻结了"不合并 VM/CH""保留 PB 认证内核"两条，本次方向明确反转）。
+> **历史审计 / 决策已完成：** 本文提出的去 PB、去多租户、MySQL + ClickHouse 方向已经冻结到 [Watchdog KISS 目标架构](watchdog-kiss-architecture.md)。本文不再是待决策或实施入口，仅保留当时的现状证据。
 
 ## 0. 目标（用户指令）
 

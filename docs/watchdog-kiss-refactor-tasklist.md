@@ -5,7 +5,7 @@
 ## 0. 执行规则
 
 - 没有业务数据需要迁移：不做 backfill、双写、shadow read 或逐表在线 DROP；使用独立 v2 clean schema 一次切换。
-- **当前唯一活动工作包是 KISS-01 PocketBase 彻底移除。** KISS-02 及以后全部阻塞在其完成门禁之后；Flow 仅允许处理不触及平台契约的紧急数据面缺陷，不得继续叠加 PB/tenant/provider 兼容层。
+- **KISS-01 已完成并解除后续阻塞。** 后续工作按本清单中各包的真实状态推进；Flow 只在 Flow 清单执行，不得重新叠加 PB/tenant/provider 兼容层。
 - 每个工作包必须纵向闭环：设计、编码、单元、真实集成、变更设计、变更测试、回归、已提交。任一项缺失不得标记完成。
 - 一个工作包只拥有自己的目录/契约；不得顺手重写 Flow 热路径或相邻半成品。
 - **UI 与现有界面风格保持不变。** 平台重构只替换认证、API 调用和后端数据来源，不修改导航、信息架构、页面布局、组件样式、颜色、字体、图标或交互；因此不新增视觉回归测试，界面文件的非必要变更直接视为越界。
@@ -22,8 +22,8 @@
 - [x] **设计**：冻结单部署域、MySQL + ClickHouse、Kafka transport、全局地址发布、一个 device 根、两个 typed query service、三层 Flow 口径。
 - [x] **代码审查**：确认 89 张 MySQL 表/77 张 tenant 表、PB Go/前端耦合、VM/provider 耦合、target/device 双身份和 agent 表膨胀。
 - [x] **变更设计**：确认无业务数据迁移，使用 v2 clean schema，不采用 tenant PIN、PB fork 或 VM 双写。
-- [ ] **文档归档**：把旧平台清单未完成项逐项标为“保留到 KISS 包 / 删除 / Flow 业务继续”；该归档可随 KISS-01A 盘点完成，但不得成为延迟 PB 清理的前置工作。
-- [ ] **已提交门禁**：ADR、清单、旧文档 superseded 标记独立提交，不夹带业务代码。
+- [x] **文档归档**：旧平台清单剩余项已在 [platform-refactor-archive-map.md](platform-refactor-archive-map.md) 逐项标为“KISS 完成 / 删除旧路线 / Flow 继续”；旧架构与自托管审计入口均明确标为历史。
+- [x] **已提交门禁**：KISS ADR/初始清单由 `391fd43f` 独立提交；本次归档映射和 superseded 状态由纯文档提交闭环，不夹带业务代码。
 
 ### KISS-01 PocketBase 彻底移除（第一要务 / 阻断项）
 
@@ -32,7 +32,7 @@
 - [x] **设计**：逐项枚举 PB 当前承担的认证、HTTP/router/static、collection/hook/cron/realtime、agent-connect、system telemetry、alert 和前端 SDK 路径；每项只能判定为“迁入目标架构”或“确认死亡并删除”，禁止第三种永久兼容状态。
 - [x] **代码/数据盘点**：用仓库引用、启动配置、进程、监听端口、数据库列表、活动连接和表/collection 访问证据，形成精确文件/包/依赖/SQLite/MySQL/ClickHouse 删除白名单；明确哪些未跟踪文件和其他任务改动不属于本包。证据见 [pocketbase-removal-inventory.md](pocketbase-removal-inventory.md)。
 - [x] **变更设计/测试**：已按精确目标先停 PB hub，再删源码/依赖/SQLite，最后 DROP 无连接调试库；`watchdog_dev`、非 Watchdog 数据库和其他任务改动均保留。按用户指令不执行中间编译/回归。
-- [ ] **已提交门禁**：盘点、白名单和命令清单先独立提交；未完成前不得执行文件删除或 `DROP DATABASE`。
+- [x] **已提交门禁**：盘点、白名单和命令清单由 `391fd43f` 独立提交；后续删除与 DROP 证据分别在 KISS-01E 提交链和 [pocketbase-removal-inventory.md](pocketbase-removal-inventory.md) 留痕。
 
 #### KISS-01B MySQL 本地认证与纯 Go 入口
 
@@ -76,7 +76,7 @@
 - [x] **回归测试**：`go test ./...`、race/vet/build、前端 lint/test/build、fresh install 两次；静态扫描运行代码、依赖清单和构建制品均无 `pocketbase`/PB collection/API。
 - [x] **已提交门禁**：删除与 DROP 证据、测试输出和 clean-checkout 启动结果已由 KISS-01E 的独立提交链闭环；这只完成物理删除包，不倒签 KISS-01B/C 尚未核销的认证单测与浏览器 Network 验收。
 
-当前门禁证据（2026-09-16）：PB Go/JS dependency、生产 Gin/前端源码和临时构建的 `watchdog-server` 制品扫描均为零；独立临时 ClickHouse（空 `watchdog_flow`）+ 临时 MySQL 在现有健康 Kafka 旁完成 schema、管理员、登录、一次性 enrollment、SNMP agent register/heartbeat、health 以及 SNMP/Flow query/export/billing worker 接线，临时库/容器均删除。全库 Go test/build/vet、server race、47 个前端 test 和 production build 通过。独立前端卫生包将全量 Biome 从 42 errors/38 warnings 收敛为 **0 diagnostics**：修复 Radix Checkbox 标签关联、装饰 SVG 语义、事件回调类型、未知值边界、systemd D-Bus DTO 的 `unknown[]` 边界及一处真实 CSS 缺分号；Tailwind v4 自定义指令仅在入口 CSS 对 Biome 2.2.4 不适用的 `noUnknownAtRules` 做单文件豁免，其他 CSS 规则保持启用。KISS-01E 回归与提交门完成；KISS-01B/C 的未勾选测试仍须各自闭环。
+当前门禁证据（2026-09-16）：PB Go/JS dependency、生产 Gin/前端源码和临时构建的 `watchdog-server` 制品扫描均为零；独立临时 ClickHouse（空 `watchdog_flow`）+ 临时 MySQL 在现有健康 Kafka 旁完成 schema、管理员、登录、一次性 enrollment、SNMP agent register/heartbeat、health 以及 SNMP/Flow query/export/billing worker 接线，临时库/容器均删除。全库 Go test/build/vet、server race、前端 test/lint/typecheck/build 通过。KISS-01B/C/E 的认证、被动登录、物理删除和提交门均已闭环；后续平台工作不得重新引入 PB、tenant 或 VM 兼容层。
 
 > **2026-09-15 审计核销（PB 残留精确清单，见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §1）**：PB 已彻底退出活跃路径（go.mod/active Go/前端/clean schema/`strings watchdog-server` 全无）。KISS-01E「编码删除」剩余的**精确**残留是三项非发布遗留物：①死的 PB-hub Dockerfile 仍在 CI（`internal/dockerfile_hub:29,31,34` 构建**已删除**的 `internal/cmd/hub`，带 PB `serve`+`/watchdog_data` volume；被 `.github/workflows/docker-images.yml:18,71` 引用）——即 line 70 未完成的「移除 PB SQLite 文件/volume 挂载路径」；②line 77 的「PB 时代字段与文字」= `install/init.sql:2020-2028`（`auth_provider`/`external_subject_id`）+ `deploy/migration/mysql/030:1-2`（"PocketBase" 注释）；③GitHub 模板指向 PB 后台 `/_/#/logs`（`.github/ISSUE_TEMPLATE/bug_report.yml:124`、`.github/DISCUSSION_TEMPLATE/support.yml:92`）。遗留 `internal/watchdog/*` 树删除属 KISS-08（仍被活跃 import）。
 >
