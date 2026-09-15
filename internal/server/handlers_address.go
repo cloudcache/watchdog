@@ -30,6 +30,11 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 	geo.PATCH("/:id", manage, s.updateGeography)
 	geo.DELETE("/:id", manage, s.deleteGeography)
 
+	// Virtual hierarchy tree: lazily drill geo_dict (continent → country →
+	// province → city). Separate path so the static "tree" segment does not
+	// collide with /geo/dictionary/:id.
+	auth.GET("/geo/tree", view, s.listGeoTree)
+
 	ops := auth.Group("/network/operators")
 	ops.GET("", view, s.listOperators)
 	ops.POST("", manage, s.createOperator)
@@ -757,6 +762,20 @@ func (s *Server) deleteOperator(c *gin.Context) {
 	}
 	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "operator.delete", "operator", c.Param("id"))
 	c.Status(http.StatusNoContent)
+}
+
+// -------------------- geo tree (虚拟层级) --------------------
+
+// listGeoTree returns the geo_dict children of ?parent (or root continents when
+// empty), each with its child count, for the drill-down hierarchy browser.
+func (s *Server) listGeoTree(c *gin.Context) {
+	parent := strings.TrimSpace(c.Query("parent"))
+	nodes, err := s.addressStore.GeoTreeChildren(c.Request.Context(), address.ID(parent))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": nodes})
 }
 
 // -------------------- geo_lines (线路) --------------------

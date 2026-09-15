@@ -5,6 +5,7 @@ import { memo } from "react"
 import { $router, navigate } from "@/components/router"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import AddressImports from "./address-imports"
+import AddressLines from "./address-lines"
 import AddressMath from "./address-math"
 import AddressPublications from "./address-publications"
 import AddressPrefixes from "./address-prefixes"
@@ -81,7 +82,7 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 			{active === "publications" ? <AddressPublications /> : null}
 			{active === "geography" ? <AddressTaxonomy kind="geography" /> : null}
 			{active === "operators" ? <AddressTaxonomy kind="operators" /> : null}
-			{active === "lines" ? <AddressTaxonomy kind="lines" /> : null}
+			{active === "lines" ? <AddressLines /> : null}
 		</div>
 	)
 })
