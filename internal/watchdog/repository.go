@@ -302,21 +302,6 @@ type BillingRepository interface {
 	UpdateBillingPeriodStatus(ctx context.Context, tenantID, periodID ID, status BillingPeriodStatus) error
 }
 
-type AggregateGraphRepository interface {
-	ListAggregateGraphs(ctx context.Context, tenantID ID) ([]AggregateGraph, error)
-	GetAggregateGraph(ctx context.Context, tenantID, graphID ID) (AggregateGraph, error)
-	CreateAggregateGraph(ctx context.Context, graph AggregateGraph) (AggregateGraph, error)
-	UpdateAggregateGraph(ctx context.Context, graph AggregateGraph) (AggregateGraph, error)
-	DeleteAggregateGraph(ctx context.Context, tenantID, graphID ID) error
-	ListAggregateGraphItems(ctx context.Context, tenantID, graphID ID) ([]AggregateGraphItem, error)
-	ReplaceAggregateGraphItems(ctx context.Context, tenantID, graphID ID, items []AggregateGraphItem) error
-	ListAggregateGraphPorts(ctx context.Context, tenantID, graphID ID) ([]AggregateGraphPort, error)
-	ReplaceAggregateGraphPorts(ctx context.Context, tenantID, graphID ID, ports []AggregateGraphPort) error
-	AppendAggregateGraphData(ctx context.Context, point AggregateGraphDataPoint) error
-	ListAggregateGraphData(ctx context.Context, tenantID, graphID ID, start, end time.Time) ([]AggregateGraphDataPoint, error)
-	ListAllAggregateGraphs(ctx context.Context) ([]AggregateGraph, error)
-}
-
 type ExportStatus string
 
 const (

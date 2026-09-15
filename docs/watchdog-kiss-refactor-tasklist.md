@@ -273,6 +273,8 @@
 
 - [x] **KISS-08F7 旧 Aggregate Graph HTTP 副本删除（本提交）**：当前 Gin `/api/v1/aggregate-graphs` 已完整承接 CRUD、items/ports 绑定、series/data/summary、两门 RBAC、服务端约束和 ClickHouse SNMP 查询；删除旧 tenant-scoped `net/http` handler、router 注入点和专属 endpoint test。仍被旧包内 rollup 测试闭包使用的 tenant repository/domain 暂不混入本切片，后续按真实引用闭包删除。当前 Gin aggregate graph 单元、真实 MySQL + CH query executor 契约集成、全库 test/vet/build 与旧 handler 符号零引用为提交门禁。
 
+- [x] **KISS-08F8 旧 Aggregate Graph rollup/repository 闭包删除（本提交）**：F7 摘除最后生产入口后，反向引用确认旧 `AggregateGraphRollup`、tenant repository/DTO、MySQL 实现和 graph-series builder 只在自身测试内成环；物理删除该闭包以及已经无消费者的 `aggregate_graph.rollup_interval` YAML/env/config。当前 Gin 单域 `aggregate_graphs/items/ports` 表、请求响应、ClickHouse 即时查询和页面不变；仍被旧 VM query 使用的通用 `aggregatePortSeries` 保留。当前 Gin aggregate 单元/真实 MySQL 契约、配置测试、全库 test/vet/build 和旧符号零引用为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。

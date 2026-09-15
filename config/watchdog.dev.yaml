@@ -58,9 +58,6 @@ collector_plan_signing:
   key_id: ""
   private_key_file: ""
 
-aggregate_graph:
-  rollup_interval: 5m
-
 snmp:
   mib_dirs:
     - "/Users/chenliliang/Downloads/librenms-master/mibs"

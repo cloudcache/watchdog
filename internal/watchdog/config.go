@@ -91,10 +91,9 @@ type BackendConfig struct {
 	CollectorPrincipalProvider RemoteCollectorPrincipalProviderConfig `yaml:"collector_principal_provider"`
 	CollectorPlanSigning       CollectorPlanSigningConfig             `yaml:"collector_plan_signing"`
 
-	AggregateGraph AggregateGraphConfig `yaml:"aggregate_graph"`
-	SNMP           SNMPConfig           `yaml:"snmp"`
-	SNMPTrapAgent  SNMPTrapAgentConfig  `yaml:"snmp_trap_agent"`
-	Agent          AgentClientConfig    `yaml:"agent"`
+	SNMP          SNMPConfig          `yaml:"snmp"`
+	SNMPTrapAgent SNMPTrapAgentConfig `yaml:"snmp_trap_agent"`
+	Agent         AgentClientConfig   `yaml:"agent"`
 }
 
 // MetricsScrapeConfig exposes the composed hub metrics on the existing HTTP
@@ -268,10 +267,6 @@ type SNMPCollectorConfig struct {
 	DiscoveryBatch    int           `yaml:"discovery_batch"`
 }
 
-type AggregateGraphConfig struct {
-	RollupInterval time.Duration `yaml:"rollup_interval"`
-}
-
 type SNMPConfig struct {
 	MIBDirs []string `yaml:"mib_dirs"`
 	MIBLoad string   `yaml:"mib_load"`
@@ -403,10 +398,6 @@ func defaultBackendConfig() BackendConfig {
 			MaxReadBytes: defaultFlowReconciliationReadBytes, LeaseFor: defaultFlowReconciliationLease,
 			MaxAttempts: defaultFlowReconciliationAttempts, RetryBase: defaultFlowReconciliationRetryBase,
 			KafkaSASLMechanism: string(flowstream.SASLNone),
-		},
-
-		AggregateGraph: AggregateGraphConfig{
-			RollupInterval: defaultAggregateGraphRollupInterval,
 		},
 		SNMPTrapAgent: SNMPTrapAgentConfig{
 			Listen: defaultSNMPTrapListen,
@@ -688,9 +679,6 @@ func applyBackendConfigEnv(cfg *BackendConfig) error {
 	}
 	cfg.SNMP.MIBDirs = getEnvStringList("WATCHDOG_SNMP_MIB_DIRS", cfg.SNMP.MIBDirs)
 	cfg.SNMP.MIBLoad = getEnv("WATCHDOG_SNMP_MIBS", cfg.SNMP.MIBLoad)
-	if cfg.AggregateGraph.RollupInterval, err = getEnvDuration("WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL", cfg.AggregateGraph.RollupInterval); err != nil {
-		return err
-	}
 	cfg.SNMPTrapAgent.APIURL = getEnv("WATCHDOG_SNMP_TRAP_API_URL", cfg.SNMPTrapAgent.APIURL)
 	cfg.SNMPTrapAgent.Token = getEnv("WATCHDOG_SNMP_TRAP_TOKEN", cfg.SNMPTrapAgent.Token)
 	cfg.SNMPTrapAgent.Listen = getEnv("WATCHDOG_SNMP_TRAP_LISTEN", cfg.SNMPTrapAgent.Listen)
@@ -1033,9 +1021,6 @@ func validateWatchdogConfig(cfg BackendConfig, requireMySQL bool) error {
 	}
 	if cfg.SNMPCollector.Interval <= 0 || cfg.SNMPCollector.PollLimit <= 0 || cfg.SNMPCollector.DiscoveryInterval <= 0 || cfg.SNMPCollector.DiscoveryBatch <= 0 {
 		return errors.New("snmp_collector interval, limit, and batch values must be positive")
-	}
-	if cfg.AggregateGraph.RollupInterval <= 0 {
-		return errors.New("aggregate_graph.rollup_interval must be positive")
 	}
 	if err := validateHTTPBaseURL("snmp_trap_agent.api_url", cfg.SNMPTrapAgent.APIURL, false); err != nil {
 		return err

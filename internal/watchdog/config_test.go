@@ -633,7 +633,6 @@ func TestLoadWatchdogConfigRejectsRemovedVictoriaLogsYAML(t *testing.T) {
 }
 
 func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *testing.T) {
-	t.Setenv("WATCHDOG_AGGREGATE_GRAPH_ROLLUP_INTERVAL", "2m")
 	t.Setenv("WATCHDOG_SNMP_COLLECTOR_TENANT_ID", " tenant-a ")
 	t.Setenv("WATCHDOG_SNMP_COLLECTOR_POLL_LIMIT", "42")
 	t.Setenv("WATCHDOG_SNMP_DISCOVERY_INTERVAL", "20s")
@@ -644,9 +643,6 @@ func TestLoadWatchdogConfigNormalizesValuesAndAppliesAllRuntimeIntervals(t *test
 	cfg, err := LoadWatchdogConfig("")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.AggregateGraph.RollupInterval != 2*time.Minute {
-		t.Fatalf("aggregate graph config = %#v", cfg.AggregateGraph)
 	}
 	if cfg.SNMPCollector.TenantID != "tenant-a" || cfg.SNMPCollector.PollLimit != 42 || cfg.SNMPCollector.DiscoveryInterval != 20*time.Second || cfg.SNMPCollector.DiscoveryBatch != 7 {
 		t.Fatalf("snmp collector config = %#v", cfg.SNMPCollector)

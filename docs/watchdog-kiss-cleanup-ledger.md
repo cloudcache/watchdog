@@ -33,7 +33,7 @@
 | L6 | file-cluster | `victoriametrics.go`,`query_gateway.go`,`query_provider_*.go`,`export_vm.go` | KISS-08 | 旧 runtime 已删；仅剩包内类型/测试闭包 | 删除遗留 VM query/export | L2 边界类型解耦 | KISS-08 | **ready-for-closure-audit** |
 | L7 | file-cluster | `flow_*.go`(17)，含 `flow_rollup_jobs.go:450-452` (`collector_agents⋈tenants`) | KISS-08 | `NewBackendRuntime`（worker） | 断 aggregate/export worker | L10/L11 | KISS-08 | blocked |
 | L8 | file-cluster | `address_*.go`/`dimension_*.go`(19) | KISS-08 | worker 侧 flow-enrichment/query-provider | 已被 `internal/address` 取代 | flow 消费端迁 v2 | KISS-05→08 | blocked |
-| L9 | file-cluster | `mysql_*.go`,`collector_*`(13),`operation_job*.go`(4),`platform_*`,`billing_*`；旧 Dashboard/Retention/User Preferences 纵向副本已删 | KISS-08 | 余项仍由遗留包内部引用 | 三个已由 Gin/MySQL 单域实现承接；余项继续按真实闭包拆除 | L2/L14 | KISS-08 | **partial：dashboard/retention/preferences done** |
+| L9 | file-cluster | `mysql_*.go`,`collector_*`(13),`operation_job*.go`(4),`platform_*`,`billing_*`；旧 Dashboard/Retention/User Preferences/Aggregate Graph repository 纵向副本已删 | KISS-08 | 余项仍由遗留包内部引用 | 已由 Gin/MySQL 单域实现承接的闭包逐项物理删除；余项继续按真实引用拆除 | L2/L14 | KISS-08 | **partial：4 个管理闭包 done** |
 | L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；旧命令对 KISS 库查 `collector_agents⋈tenants` 即失败 | 已满足 | KISS-08B | **done** |
 | L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
 | L12 | cmd/schema | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、Makefile target 与 dev-db 脚本已删除；旧 schema/实现只被 `internal/watchdog` 历史测试引用 | schema 树随 L1 删除 | KISS-08C/D | **entry done; files blocked-by-L1** |
@@ -140,6 +140,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 | L5(Audit Log HTTP) | 在 Gin 恢复旧 `actor_id`/`resource_id` 精确过滤后删除旧 tenant-scoped reader/handler/endpoint test；当前 `/api/v1/audit-logs`、服务端分页、用户名 join 和 UI 不变。遗留包内部尚用的 audit repository 未删。 | KISS-08F5 |
 | L5/L6/L7/L9(Backend Runtime) | 确认全库生产零调用后删除 816 行 all-in-one runtime 及仅构造它的测试；server/SNMP/Flow 独立 command 不变。旧 test router 的 health response DTO 临时留在 router 边界；由 runtime 假活的 VM/provider/repository 闭包转为可单独审计。 | KISS-08F6 |
 | L5(Aggregate Graph HTTP) | 当前 Gin 已承接完整 CRUD、items/ports、series/data/summary 与 CH 查询后，删除旧 tenant-scoped HTTP handler、router 注入和 endpoint test；旧包内 rollup/repository/domain 留待引用闭包后续删除。 | KISS-08F7 |
+| L9/L15(Aggregate Graph rollup) | F7 后旧 rollup、tenant repository/DTO、MySQL 实现、graph-series helper 和专属测试仅自循环，整组删除；同时移除无消费者的旧 rollup YAML/env/config，当前 Gin+CH 路径不变。 | KISS-08F8 |
 
 **Phase A 剩余**：L16(yaml,须先退役 worker)、S2(随整树删)、L5(api——**经证实须解耦，非独立删**)。
 

@@ -85,9 +85,6 @@ collector_plan_signing:
 # key_id: "collector-plan-2026-01"
 # private_key_file: "/run/secrets/watchdog-collector-plan-ed25519"
 
-aggregate_graph:
-  rollup_interval: 5m
-
 # MIB resolution. The collector ships an embedded core MIB bundle
 # (IF-MIB, ENTITY-MIB, BGP4-MIB, HOST-RESOURCES-MIB, ...) so it works with no
 # config. mib_dirs layers extra MIB trees on top (e.g. a LibreNMS checkout's

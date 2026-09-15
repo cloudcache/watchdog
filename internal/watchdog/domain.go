@@ -226,60 +226,6 @@ type BGPSession struct {
 	UpdatedAt          time.Time
 }
 
-type AggregateGraphMethod string
-
-const (
-	AggregateSum   AggregateGraphMethod = "sum"
-	AggregateAvg   AggregateGraphMethod = "avg"
-	AggregateMax   AggregateGraphMethod = "max"
-	AggregateMin   AggregateGraphMethod = "min"
-	AggregateCount AggregateGraphMethod = "count"
-)
-
-type AggregateGraph struct {
-	ID          ID
-	TenantID    ID
-	Name        string
-	Aggregation AggregateGraphMethod
-	ValueMode   MetricValueMode
-	Unit        string
-	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
-type AggregateGraphItem struct {
-	ID        ID
-	TenantID  ID
-	GraphID   ID
-	Sequence  uint32
-	Metric    string
-	Direction string
-	Label     string
-	GraphType string
-	Total     bool
-	CreatedAt time.Time
-}
-
-type AggregateGraphPort struct {
-	AggregateGraphID ID
-	TenantID         ID
-	PortID           ID
-	CreatedAt        time.Time
-}
-
-// AggregateGraphDataPoint is one immutable stored aggregate sample for one
-// graph item (metric/direction) at a point in time.
-type AggregateGraphDataPoint struct {
-	ID        ID
-	TenantID  ID
-	GraphID   ID
-	ItemID    ID
-	Timestamp time.Time
-	Value     float64
-	CreatedAt time.Time
-}
-
 type SNMPVersion string
 
 const (
