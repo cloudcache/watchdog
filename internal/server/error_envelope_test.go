@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -56,6 +57,54 @@ func TestFailDetailsEnvelope(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"details":{"field":"metric"}`) || !strings.Contains(body, `"retryable":false`) || !strings.Contains(body, `"code":"QUERY_INVALID"`) {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestAuthMiddlewareUsesErrorEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("authentication", func(t *testing.T) {
+		router := gin.New()
+		router.Use((&Server{}).requireAuth)
+		router.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+		assertErrorEnvelope(t, response, http.StatusUnauthorized, "unauthorized")
+	})
+
+	t.Run("permission", func(t *testing.T) {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(principalKey, &principal{Abilities: map[string]bool{}})
+			c.Next()
+		})
+		router.GET("/", (&Server{}).requirePermission("device.view"), func(c *gin.Context) { c.Status(http.StatusOK) })
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+		assertErrorEnvelope(t, response, http.StatusForbidden, "forbidden")
+	})
+
+	t.Run("csrf", func(t *testing.T) {
+		router := gin.New()
+		router.Use((&Server{}).requireCSRF)
+		router.POST("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", nil))
+		assertErrorEnvelope(t, response, http.StatusForbidden, "csrf")
+	})
+}
+
+func assertErrorEnvelope(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status = %d, want %d: %s", response.Code, status, response.Body.String())
+	}
+	var envelope errorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != code || envelope.Error.Message == "" || envelope.Error.Retryable {
+		t.Fatalf("error envelope = %+v", envelope.Error)
 	}
 }
 

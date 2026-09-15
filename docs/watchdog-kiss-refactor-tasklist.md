@@ -44,9 +44,9 @@
 
 - [x] **设计**：冻结 v2 认证最小表白名单、FK/唯一键、ID、UTC 时间、row version、secret encryption、bcrypt、session/CSRF、首管理员初始化和 API error envelope；不复刻 PB OTP/OAuth/realtime collection。
 - [x] **编码**：建立 v2 baseline/install；实现 MySQL `users/sessions/roles/permissions` 最小闭环、HttpOnly session、login/logout/current/password change/disable；单一 Gin server、8 MiB body limit、CORS、健康检查。前端独立运行，不由后端提供 static fallback。
-- [ ] **单元测试**：密码校验、session rotation/expiry/revoke、CSRF、禁用用户、RBAC、错误信封和敏感字段脱敏。
+- [x] **单元测试**：密码字节边界/bcrypt、认证/权限/CSRF middleware 统一错误信封均有无数据库单测；独立真实 MySQL 生命周期进一步覆盖登录 token 轮换、库内仅存 token SHA-256、session expiry/logout/password-change revoke、禁用用户即时失效、RBAC 拒绝以及登录/current/users 响应不暴露密码、hash、session/CSRF token。
 - [x] **集成测试**：隔离空 MySQL 建立 48 张 v2 管理表，确认 `tenant_id/auth_provider/external_subject_id` 列均为 0；真实覆盖登录、CSRF、设备/Agent CRUD、Agent 心跳、禁用账号立即拒绝旧 session、logout 撤销、二次启动只保留一个 bootstrap 管理员。另以独立进程启动 Gin `:8091`，完成 health、跨源 login/current 后精确删除测试库。
-- [ ] **已提交门禁**：schema、server、auth 与测试形成可独立启动的提交。
+- [x] **已提交门禁**：schema/server/auth 已由 KISS-01B 纵向切片提交；本独立提交补齐统一 error envelope 与完整生命周期测试，不依赖 PB、ClickHouse 或 Flow。
 
 #### KISS-01C 前端完全去 PB
 

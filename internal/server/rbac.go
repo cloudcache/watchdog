@@ -196,7 +196,7 @@ func loadPrincipalAbilities(ctx context.Context, db *sql.DB, userID string) (map
 func (s *Server) requireAuth(c *gin.Context) {
 	p, err := s.authenticate(c)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthorized", "message": "authentication required"}})
+		fail(c, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 	c.Set(principalKey, p)
@@ -210,7 +210,7 @@ func (s *Server) requirePermission(ability string) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "forbidden", "message": "missing ability: " + ability}})
+		fail(c, http.StatusForbidden, "forbidden", "missing ability: "+ability)
 	}
 }
 
@@ -221,7 +221,7 @@ func (s *Server) requireCSRF(c *gin.Context) {
 		cookie, _ := c.Cookie(csrfCookie)
 		header := c.GetHeader("X-CSRF-Token")
 		if cookie == "" || header == "" || cookie != header {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "csrf", "message": "invalid CSRF token"}})
+			fail(c, http.StatusForbidden, "csrf", "invalid CSRF token")
 			return
 		}
 	}
