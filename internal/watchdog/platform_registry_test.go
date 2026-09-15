@@ -2,8 +2,6 @@ package watchdog
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -185,6 +183,8 @@ func TestBuiltinPlatformRegistriesComposeFiveKinds(t *testing.T) {
 	}
 }
 
+// fakeTenantModuleRepository remains a shared QueryGateway test fixture while
+// the legacy registry closure is retired. It no longer backs an HTTP API.
 type fakeTenantModuleRepository struct {
 	states map[string]bool
 	sets   []string
@@ -204,86 +204,4 @@ func (f *fakeTenantModuleRepository) SetTenantModuleEnabled(_ context.Context, _
 	f.states[moduleKey] = enabled
 	f.sets = append(f.sets, moduleKey)
 	return nil
-}
-
-func newModuleTestRouter(t *testing.T, repo TenantModuleRepository) http.Handler {
-	t.Helper()
-	registries, err := NewBuiltinPlatformRegistries()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return NewAPIV1Router(APIV1RouterConfig{
-		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{TenantID: "tenant-a", UserID: "admin-a", IsAdmin: true}, nil
-		},
-		Registries:    registries,
-		TenantModules: repo,
-		Audit:         &recordingAuditRepository{},
-	})
-}
-
-func TestModuleAPIListsEffectiveStates(t *testing.T) {
-	router := newModuleTestRouter(t, &fakeTenantModuleRepository{states: map[string]bool{"network": false}})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/modules", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `"Key":"network","Version":"1","DisplayName":"Network","Dependencies":["core"],"DefaultEnabled":true,"Enabled":false`) {
-		t.Fatalf("network override missing: %s", body)
-	}
-	if !strings.Contains(body, `"Key":"edge"`) || !strings.Contains(body, `"DefaultEnabled":false`) {
-		t.Fatalf("edge module missing: %s", body)
-	}
-}
-
-func TestModuleAPIPutValidatesAndAudits(t *testing.T) {
-	repo := &fakeTenantModuleRepository{}
-	router := newModuleTestRouter(t, repo)
-
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-a/modules",
-		strings.NewReader(`{"modules":{"ghost":true}}`)))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("unknown module status = %d", rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-a/modules",
-		strings.NewReader(`{"modules":{"core":false}}`)))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("core disable status = %d", rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-b/modules",
-		strings.NewReader(`{"modules":{"network":false}}`)))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("foreign tenant status = %d", rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-a/modules",
-		strings.NewReader(`{"modules":{"network":false}}`)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("valid put status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if len(repo.sets) != 1 || repo.states["network"] != false {
-		t.Fatalf("repo state = %+v", repo)
-	}
-}
-
-func TestModuleAPIListsTargetKinds(t *testing.T) {
-	router := newModuleTestRouter(t, &fakeTenantModuleRepository{})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/modules/target-kinds", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	for _, expected := range []string{`"Key":"network"`, `"Key":"edge"`, `"Readiness":"planned"`, `"MenuGroup":"resources"`} {
-		if !strings.Contains(rec.Body.String(), expected) {
-			t.Fatalf("missing %s in %s", expected, rec.Body.String())
-		}
-	}
 }

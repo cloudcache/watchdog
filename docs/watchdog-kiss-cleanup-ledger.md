@@ -29,7 +29,7 @@
 | L2 | symbol-set | 65 符号 / 19 锚文件 + SNMP 引擎闭包(~18) — `domain.go`/`traffic_policy.go`/`metric_catalog.go`/`metrics_query.go`/`snmp_*` | **EXTRACT-first** | `internal/server` 13 文件（`snmp_*`,`metrics.go`,`aggregate_graphs.go`,`graph_overview.go`,`retention.go`,`handlers_grants.go`） | 不抽则 server 无法脱离 watchdog | 建 `internal/snmpdomain`，迁 `gosmi`/`gosnmp` | KISS-08 | **ready** |
 | L3 | file(split) | `config.go:275 SNMPConfig`（余为遗留 BackendConfig） | EXTRACT-first | `snmp_discovery.go:26` | server 少 MIB 注册入参类型 | 从 BackendConfig 拆出 | KISS-08 | ready |
 | L4 | file(split) | `repository.go:468 MetricRetentionPolicy` | EXTRACT-first | 无（已归属 `internal/server/retention.go`） | 无 | 已完成 | KISS-08F2 | **done** |
-| L5 | file-cluster | 旧 HTTP 层 `api_*.go` + `api_router.go`；旧 all-in-one `runtime.go` 已删 | **NOT-clean（2026-09-15 尝试回退，§6）** | api_*.go 还定义共享类型 `FlowGeoConfig`/`SNMPDeviceDiscoverer`/`flowDetailRunner`/`MetricsAggregateRequest`/`metricsSelector` 被全包用；10 个可独立纵向副本与旧 runtime 已删 | 仅等价 Gin 功能已验收的纵向片可先删，其余类型交织旧 handler/test | 与 Phase B/D 类型解耦一起 | KISS-08 | **partial：runtime + 10 副本已删** |
+| L5 | file-cluster | 旧 HTTP 层 `api_*.go` + `api_router.go`；旧 all-in-one `runtime.go` 已删 | **NOT-clean（2026-09-15 尝试回退，§6）** | api_*.go 还定义共享类型 `FlowGeoConfig`/`SNMPDeviceDiscoverer`/`flowDetailRunner`/`MetricsAggregateRequest`/`metricsSelector` 被全包用；11 个可独立纵向副本与旧 runtime 已删 | 仅等价 Gin 功能已验收的纵向片可先删，其余类型交织旧 handler/test | 与 Phase B/D 类型解耦一起 | KISS-08 | **partial：runtime + 11 副本已删** |
 | L6 | file-cluster | `victoriametrics.go`,`query_gateway.go`,`query_provider_*.go`,`export_vm.go` | KISS-08 | 旧 runtime 已删；仅剩包内类型/测试闭包 | 删除遗留 VM query/export | L2 边界类型解耦 | KISS-08 | **ready-for-closure-audit** |
 | L7 | file-cluster | `flow_*.go`(17)，含 `flow_rollup_jobs.go:450-452` (`collector_agents⋈tenants`) | KISS-08 | `NewBackendRuntime`（worker） | 断 aggregate/export worker | L10/L11 | KISS-08 | blocked |
 | L8 | file-cluster | `address_*.go`/`dimension_*.go`(19) | KISS-08 | worker 侧 flow-enrichment/query-provider | 已被 `internal/address` 取代 | flow 消费端迁 v2 | KISS-05→08 | blocked |
@@ -145,6 +145,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 | L5(BGP HTTP) | 当前 Gin canonical BGP API 已承接 v4/v6、分页/搜索/排序/过滤与资源授权后，删除仅服务已禁用 `/network/...` 别名的旧 tenant-scoped HTTP handler/test；BGP 采集和 domain/repository 保留。 | KISS-08F10 |
 | L5(Graph Overview HTTP) | 将 signed 进出流量、BGP、sensor 面板契约转入现行 Gin 真实 MySQL 集成测试后，删除旧 tenant-scoped overview handler/test；共享 panel builder 仍由 Gin 使用。 | KISS-08F11 |
 | L5(SNMP Trap HTTP) | 当前 Gin 原 URL 已承接管理员/agent 认证、绑定、dispatcher、CH event sink 和状态更新后，删除仍经 tenant repository 写入的旧 handler/router config；trap domain 保留。 | KISS-08F12 |
+| L5/I5(Module Center HTTP) | 单域固定产品无 tenant module 开关或 target-kind runtime 管理面；删除旧 handler/router 和仅自测的用例，底层 registry 等 QueryGateway/Flow 闭包解除后再删。 | KISS-08F13 |
 
 **Phase A 剩余**：L16(yaml,须先退役 worker)、S2(随整树删)、L5(api——**经证实须解耦，非独立删**)。
 

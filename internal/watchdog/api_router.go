@@ -165,9 +165,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	if cfg.Billing != nil {
 		registerBillingRoutes(mux, auth, cfg.Billing, cfg.Network, cfg.Metrics)
 	}
-	if cfg.Registries != nil {
-		registerModuleRoutes(mux, auth, cfg.Registries, cfg.TenantModules, cfg.Audit)
-	}
 	if cfg.FlowGeo != nil {
 		registerFlowGeoRoutes(mux, auth, cfg.FlowGeo)
 	}
