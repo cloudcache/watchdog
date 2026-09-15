@@ -1206,7 +1206,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 				searchValue={search}
 				onSearchChange={setSearch}
 				searchPlaceholder={t`Search CIDR or location...`}
-				height={480}
+				height={Math.min(560, 44 + records.length * 42)}
 				serverPagination={{
 					page,
 					pageSize,

@@ -411,7 +411,7 @@ export default memo(function AddressImports() {
 				searchPlaceholder={t`Search imported files...`}
 				searchValue={search}
 				onSearchChange={setSearch}
-				height={420}
+				height={Math.min(420, 44 + records.length * 42)}
 				serverPagination={{
 					page,
 					pageSize,
@@ -692,7 +692,7 @@ export function ImportedPrefixBrowser({ item, onClose }: { item: AddressImport; 
 				searchValue={search}
 				onSearchChange={setSearch}
 				searchPlaceholder={t`Search CIDR or location...`}
-				height={380}
+				height={Math.min(560, 44 + records.length * 42)}
 				serverPagination={{
 					page,
 					pageSize,
