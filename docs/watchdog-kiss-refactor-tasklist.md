@@ -277,6 +277,8 @@
 
 - [x] **KISS-08F9 旧 Permission CRUD 副本删除（本提交）**：目标模型已经冻结为固定 ability catalog、角色绑定 ability、用户绑定 device/group/port/billing/graph/metric 资源；当前 Gin 保留 `GET /api/v1/permissions`、roles CRUD 与 users access CRUD/picker。删除旧 tenant-scoped 任意 `subject/resource/action` Permission PUT/DELETE/effective handler、test-router 注入与专属测试；同时删除已不可达且调用不存在 PUT API 的前端 permission form 和两个旧路由 alias，活跃 `/permissions` catalog 页面与视觉不变。Gin RBAC 单元/真实 MySQL 管理集成、前端路由/test/lint/typecheck/build、全库 test/vet/build 和旧 handler/URL 零引用为提交门禁。
 
+- [x] **KISS-08F10 旧 BGP HTTP 副本删除（本提交）**：当前 Gin 已完整承接 canonical `/api/v1/bgp`、`/api/v1/devices/:id/bgp`，包含 v4/v6 afi/safi、服务端分页/搜索/排序/过滤和设备资源权限；删除只注册已禁用 `/api/v1/network/...` 别名的旧 tenant-scoped `net/http` handler 与专属测试。BGP domain/repository、SNMP discovery 写入与 MySQL 表不变。Gin 路由、IPv6/分页集成、前端 canonical API 扫描、全库 test/vet/build 和旧 handler 零引用为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。

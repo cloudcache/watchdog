@@ -654,55 +654,6 @@ func TestAPIDeviceSwitchingPagesRejectInvalidQueries(t *testing.T) {
 	}
 }
 
-func TestAPIBGPSessionsPaged(t *testing.T) {
-	// Server-driven opt-in: search/state/sort/offset thread into the query, the
-	// grant scope is pushed down, and the first page carries the badge counts.
-	repo := &fakeNetworkRepository{
-		devices:      []NetworkDevice{{ID: "device-a", TenantID: "tenant-a", TargetID: "target-a", SysName: "edge1"}},
-		bgp:          []BGPSession{{ID: "bgp-a", TenantID: "tenant-a", DeviceID: "device-a", PeerAddr: "10.0.0.1", State: "established"}},
-		bgpPageTotal: 6,
-		bgpCounts:    BGPSessionCounts{Total: 9, Established: 4},
-	}
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: networkTestAuth, Network: repo})
-
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/api/v1/network/bgp?limit=25&q=edge&state=established&sort=peer_as&order=desc", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	if !repo.pagedCalled {
-		t.Fatal("bgp paged path not taken")
-	}
-	if repo.bgpQuery.Search != "edge" || repo.bgpQuery.State != "established" ||
-		repo.bgpQuery.Sort != "peer_as" || !repo.bgpQuery.Desc || repo.bgpQuery.Limit != 25 {
-		t.Fatalf("query not threaded: %+v", repo.bgpQuery)
-	}
-	if repo.pagedAll || len(repo.pagedAllowed) != 1 || repo.pagedAllowed[0] != "target-a" {
-		t.Fatalf("grant pushdown wrong: all=%v allowed=%v", repo.pagedAll, repo.pagedAllowed)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `"DeviceSysName":"edge1"`) || !strings.Contains(body, `"total":6`) ||
-		!strings.Contains(body, `"counts":{"total":9,"established":4}`) {
-		t.Fatalf("bgp paged body = %s", body)
-	}
-
-	// Every page includes the filtered total and searched-set counts; "all"
-	// state clears the filter.
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/bgp?limit=25&offset=25&state=all", nil))
-	if repo.bgpQuery.Offset != 25 || repo.bgpQuery.State != "" || !strings.Contains(rec.Body.String(), `"counts"`) {
-		t.Fatalf("offset/all page: %+v body=%s", repo.bgpQuery, rec.Body.String())
-	}
-	for _, query := range []string{"limit=0", "limit=501", "offset=-1", "sort=unsafe", "order=sideways", "state=broken", "unknown=1"} {
-		rec = httptest.NewRecorder()
-		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/network/bgp?"+query, nil))
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("query=%q status=%d body=%s", query, rec.Code, rec.Body.String())
-		}
-	}
-}
-
 func TestAPINetworkDeviceSummariesPaged(t *testing.T) {
 	// Server-driven opt-in: search/status/sort/offset thread into the query, the
 	// grant scope is pushed down, the page is enriched, and the first page
