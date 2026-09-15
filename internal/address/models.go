@@ -9,13 +9,18 @@ import (
 	"time"
 )
 
-// Geographic hierarchy kinds.
+// Geographic hierarchy kinds. continent→country→province→city form the parented
+// hierarchy; region and the three flat base-data kinds (search_engine,
+// cloud_provider, natural_region) stand alone (no parent).
 const (
-	GeoKindContinent = "continent"
-	GeoKindRegion    = "region"
-	GeoKindCountry   = "country"
-	GeoKindProvince  = "province"
-	GeoKindCity      = "city"
+	GeoKindContinent     = "continent"
+	GeoKindRegion        = "region"
+	GeoKindCountry       = "country"
+	GeoKindProvince      = "province"
+	GeoKindCity          = "city"
+	GeoKindSearchEngine  = "search_engine"
+	GeoKindCloudProvider = "cloud_provider"
+	GeoKindNaturalRegion = "natural_region"
 )
 
 // AddressPrefix is a manually-maintained prefix with geo/operator/ASN attribution.
@@ -439,7 +444,8 @@ func normalizeGeoDictionaryNode(node GeoDictionaryNode) (GeoDictionaryNode, erro
 
 func validGeoKind(kind string) bool {
 	switch kind {
-	case GeoKindContinent, GeoKindRegion, GeoKindCountry, GeoKindProvince, GeoKindCity:
+	case GeoKindContinent, GeoKindRegion, GeoKindCountry, GeoKindProvince, GeoKindCity,
+		GeoKindSearchEngine, GeoKindCloudProvider, GeoKindNaturalRegion:
 		return true
 	default:
 		return false

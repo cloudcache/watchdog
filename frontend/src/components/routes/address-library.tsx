@@ -4,6 +4,7 @@ import { DatabaseIcon } from "lucide-react"
 import { memo } from "react"
 import { $router, navigate } from "@/components/router"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import AddressBaseData from "./address-base-data"
 import AddressImports from "./address-imports"
 import AddressLines from "./address-lines"
 import AddressMath from "./address-math"
@@ -20,6 +21,7 @@ const sections = [
 	"tools",
 	"batch",
 	"publications",
+	"base-data",
 	"geography",
 	"operators",
 	"lines",
@@ -63,6 +65,9 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 					<TabsTrigger value="publications">
 						<Trans>Publications</Trans>
 					</TabsTrigger>
+					<TabsTrigger value="base-data">
+						<Trans>Base Data</Trans>
+					</TabsTrigger>
 					<TabsTrigger value="geography">
 						<Trans>Geography</Trans>
 					</TabsTrigger>
@@ -80,6 +85,7 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 			{active === "tools" ? <AddressMath /> : null}
 			{active === "batch" ? <AddressRevisions /> : null}
 			{active === "publications" ? <AddressPublications /> : null}
+			{active === "base-data" ? <AddressBaseData /> : null}
 			{active === "geography" ? <AddressTaxonomy kind="geography" /> : null}
 			{active === "operators" ? <AddressTaxonomy kind="operators" /> : null}
 			{active === "lines" ? <AddressLines /> : null}

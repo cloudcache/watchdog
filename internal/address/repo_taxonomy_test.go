@@ -201,6 +201,40 @@ func TestStoreAddressTaxonomyCRUDHierarchyAndCAS(t *testing.T) {
 
 // Integration port (de-tenanted): concurrent operator creation allocates unique
 // Flow-ISP ids from the singleton sequence, and exhaustion is reported.
+// P4: the three flat base-data kinds are accepted with no parent, listable by
+// kind, and reject a parent (they are not part of the geo hierarchy).
+func TestStoreBaseDataFlatKinds(t *testing.T) {
+	db := addressTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	for _, tc := range []struct{ kind, code, name string }{
+		{GeoKindSearchEngine, "baidu", "百度"},
+		{GeoKindCloudProvider, "aliyun", "阿里云"},
+		{GeoKindNaturalRegion, "north-china", "华北"},
+	} {
+		node, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{Kind: tc.kind, Code: tc.code, Name: tc.name, Enabled: true})
+		if err != nil {
+			t.Fatalf("create %s: %v", tc.kind, err)
+		}
+		if node.Kind != tc.kind {
+			t.Fatalf("kind = %q, want %q", node.Kind, tc.kind)
+		}
+		items, _, _, err := store.ListGeoDictionary(ctx, AddressTaxonomyListFilter{Kind: tc.kind, TableMode: true, Limit: 10})
+		if err != nil || len(items) != 1 || items[0].ID != node.ID {
+			t.Fatalf("list by kind %s = %d items (err=%v)", tc.kind, len(items), err)
+		}
+	}
+
+	continent, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{Kind: GeoKindContinent, Code: "AS", Name: "Asia", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateGeoDictionary(ctx, GeoDictionaryNode{Kind: GeoKindSearchEngine, Code: "bing", Name: "Bing", ParentID: continent.ID}); !errors.Is(err, ErrAddressTaxonomyInvalid) {
+		t.Fatalf("a flat base-data kind must reject a parent, got %v", err)
+	}
+}
+
 func TestStoreISPOperatorFlowIdentityConcurrentAllocation(t *testing.T) {
 	db := addressTestDB(t)
 	store := NewStore(db)

@@ -110,7 +110,20 @@ const endpointByKind: Record<TaxonomyKind, string> = {
 	lines: "/api/v1/geo/lines",
 }
 
-export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
+// geo_dict kinds: continent→country→province→city are the parented hierarchy;
+// region + the three base-data kinds stand alone (P4).
+const GEO_KINDS = [
+	"continent",
+	"region",
+	"country",
+	"province",
+	"city",
+	"search_engine",
+	"cloud_provider",
+	"natural_region",
+] as const
+
+export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: TaxonomyKind; fixedKind?: string }) {
 	const { t } = useLingui()
 	const [items, setItems] = useState<TaxonomyItem[]>([])
 	const [total, setTotal] = useState(0)
@@ -166,7 +179,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 			const data = await api.send<ListResponse<TaxonomyItem>>(endpointByKind[kind], {
 				query: {
 					q: debouncedSearch || undefined,
-					kind: kind === "geography" && geoKind ? geoKind : undefined,
+					kind: kind === "geography" ? (fixedKind ?? (geoKind || undefined)) : undefined,
 					enabled: enabled || undefined,
 					limit: pageSize,
 					offset: page * pageSize || undefined,
@@ -186,7 +199,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 		} finally {
 			if (sequence === requestSequence.current) setLoading(false)
 		}
-	}, [debouncedSearch, enabled, geoKind, kind, loadReferences, page, pageSize, reloadKey, sort, t])
+	}, [debouncedSearch, enabled, fixedKind, geoKind, kind, loadReferences, page, pageSize, reloadKey, sort, t])
 
 	useEffect(() => {
 		fetchPage()
@@ -421,8 +434,8 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 		}
 		const selected: Record<string, unknown[]> = { enabled: enabled ? [enabled] : [] }
 		const selection: Record<string, "single"> = { enabled: "single" }
-		if (kind === "geography") {
-			options.kind = ["continent", "region", "country", "province", "city"].map((value) => ({ value }))
+		if (kind === "geography" && !fixedKind) {
+			options.kind = GEO_KINDS.map((value) => ({ value }))
 			selected.kind = geoKind ? [geoKind] : []
 			selection.kind = "single"
 		}
@@ -442,7 +455,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					setEnabled("")
 				}),
 		}
-	}, [enabled, geoKind, kind, t])
+	}, [enabled, fixedKind, geoKind, kind, t])
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
 	const serverSorting = useMemo(() => {
 		const fields: Record<string, string> = { code: "code", name: "name", order: "order", enabled: "enabled" }
@@ -476,7 +489,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 					<Button
 						size="sm"
 						onClick={() => {
-							setForm(emptyForm)
+							setForm(fixedKind ? { ...emptyForm, kind: fixedKind } : emptyForm)
 							setShowForm(true)
 						}}
 					>
@@ -488,6 +501,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 			{showForm ? (
 				<TaxonomyEditor
 					kind={kind}
+					fixedKind={fixedKind}
 					form={form}
 					setForm={setForm}
 					geoOptions={geoOptions}
@@ -534,6 +548,7 @@ export default memo(function AddressTaxonomy({ kind }: { kind: TaxonomyKind }) {
 
 function TaxonomyEditor({
 	kind,
+	fixedKind,
 	form,
 	setForm,
 	geoOptions,
@@ -544,6 +559,7 @@ function TaxonomyEditor({
 	onCancel,
 }: {
 	kind: TaxonomyKind
+	fixedKind?: string
 	form: TaxonomyForm
 	setForm: (value: TaxonomyForm) => void
 	geoOptions: GeoNode[]
@@ -565,36 +581,40 @@ function TaxonomyEditor({
 			/>
 			{kind === "geography" ? (
 				<>
-					<div className="grid gap-2">
-						<Label>
-							<Trans>Level</Trans>
-						</Label>
-						<Select value={form.kind} onValueChange={(value) => setForm({ ...form, kind: value })}>
-							<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{["continent", "region", "country", "province", "city"].map((value) => (
-									<SelectItem key={value} value={value}>
-										{value}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</div>
-					<ReferenceField
-						label="Parent geography"
-						kind="geography"
-						value={form.parentID}
-						onChange={(parentID) => setForm({ ...form, parentID })}
-						placeholder="Choose parent geography"
-						options={geoOptions.map((item) => ({
-							id: item.id,
-							label: `${item.kind} · ${item.name}`,
-							description: item.code,
-						}))}
-						excludeIDs={form.id ? [form.id] : []}
-					/>
+					{fixedKind ? null : (
+						<div className="grid gap-2">
+							<Label>
+								<Trans>Level</Trans>
+							</Label>
+							<Select value={form.kind} onValueChange={(value) => setForm({ ...form, kind: value })}>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{GEO_KINDS.map((value) => (
+										<SelectItem key={value} value={value}>
+											{value}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					)}
+					{["continent", "region", "search_engine", "cloud_provider", "natural_region"].includes(form.kind) ? null : (
+						<ReferenceField
+							label="Parent geography"
+							kind="geography"
+							value={form.parentID}
+							onChange={(parentID) => setForm({ ...form, parentID })}
+							placeholder="Choose parent geography"
+							options={geoOptions.map((item) => ({
+								id: item.id,
+								label: `${item.kind} · ${item.name}`,
+								description: item.code,
+							}))}
+							excludeIDs={form.id ? [form.id] : []}
+						/>
+					)}
 					<FormInput
 						label="Short name"
 						value={form.shortName}
