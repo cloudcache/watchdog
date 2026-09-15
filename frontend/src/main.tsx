@@ -13,6 +13,7 @@ import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
 import { canAny, canManageAddressLibrary, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
+import { isInstallRedirectRoute, isPublicSessionRoute, shouldRestoreSession } from "@/lib/auth-route-policy.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
@@ -365,13 +366,16 @@ const Layout = () => {
 	}, [direction])
 
 	useEffect(() => {
-		if (!installStatus?.installed || watchdogDevAuth || authChecked) return
+		const route = page?.route
 		// Login/reset pages are passive: rendering them must not make an auth
-		// request. Every other route is controlled and may restore its session.
-		if (page?.route === "forgot_password") {
+		// request. The installed setup route redirects before the protected
+		// destination restores its session.
+		if (installStatus?.installed && !watchdogDevAuth && !authChecked && isPublicSessionRoute(route)) {
 			$authChecked.set(true)
 			return
 		}
+		if (isInstallRedirectRoute(route)) return
+		if (!shouldRestoreSession({ installed: installStatus?.installed === true, developmentAuth: watchdogDevAuth, authChecked, route })) return
 		restoreSession().catch(() => $authChecked.set(true))
 	}, [authChecked, installStatus?.installed, page?.route])
 

@@ -164,7 +164,7 @@ async function sendWatchdogAPI<T>(path: string, options: WatchdogAPIOptions = {}
 	return response.json() as Promise<T>
 }
 
-type WatchdogAPIOptions = RequestInit & {
+type WatchdogAPIOptions = Omit<RequestInit, "body"> & {
 	body?: unknown
 	query?: Record<string, string | number | boolean | undefined>
 	// onResponse exposes raw headers such as ETag for optimistic concurrency.
@@ -172,7 +172,8 @@ type WatchdogAPIOptions = RequestInit & {
 }
 
 export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions = {}) {
-	const headers = new Headers(options.headers)
+	const { body, query, onResponse, ...requestInit } = options
+	const headers = new Headers(requestInit.headers)
 	if (!headers.has("X-Request-ID")) {
 		headers.set("X-Request-ID", crypto.randomUUID())
 	}
@@ -182,27 +183,27 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 		if (csrf) headers.set("X-CSRF-Token", csrf)
 	}
 	const url = new URL(buildAPIURL(path))
-	for (const [key, value] of Object.entries(options.query ?? {})) {
+	for (const [key, value] of Object.entries(query ?? {})) {
 		if (value !== undefined) {
 			url.searchParams.set(key, String(value))
 		}
 	}
 	const init: RequestInit = {
-		...options,
+		...requestInit,
 		headers,
 		credentials: "include",
 	}
-	delete (init as RequestInit & { query?: unknown }).query
-	delete (init as RequestInit & { onResponse?: unknown }).onResponse
-	if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
+	if (body instanceof FormData || typeof body === "string") {
+		init.body = body
+	} else if (body !== undefined && body !== null) {
 		headers.set("Content-Type", "application/json")
-		init.body = JSON.stringify(options.body)
+		init.body = JSON.stringify(body)
 	}
-	if (typeof options.body === "string" && options.body && !headers.has("Content-Type")) {
+	if (typeof body === "string" && body && !headers.has("Content-Type")) {
 		headers.set("Content-Type", "application/json")
 	}
 	const response = await fetch(url, init)
-	options.onResponse?.(response)
+	onResponse?.(response)
 	return response
 }
 
