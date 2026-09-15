@@ -433,7 +433,6 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		DeviceDeletePreview:    r.Store,
 		PortDeletePreview:      r.Store,
 		CollectorDeletePreview: r.Store,
-		UserPreferences:        r.Store,
 		CollectorCredentials:   r.Store,
 		CollectorEnrollment:    r.Store,
 		Registries:             r.Registries,

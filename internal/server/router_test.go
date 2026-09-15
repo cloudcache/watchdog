@@ -56,6 +56,21 @@ func TestSNMPGinMigrationRoutesAreRegistered(t *testing.T) {
 	}
 }
 
+func TestUserPreferenceRoutesAreRegistered(t *testing.T) {
+	registered := map[string]bool{}
+	for _, route := range (&Server{}).newRouter().Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"GET /api/v1/me/preferences",
+		"PUT /api/v1/me/preferences",
+	} {
+		if !registered[route] {
+			t.Fatalf("user preference route is not registered: %s", route)
+		}
+	}
+}
+
 func TestFlowEnrichmentPublicationRoutesAreRegistered(t *testing.T) {
 	router := (&Server{}).newRouter()
 	registered := map[string]bool{}

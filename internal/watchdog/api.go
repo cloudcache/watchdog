@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 )
 
 type APIErrorCode string
@@ -186,6 +187,26 @@ func ensureDashboardJSONEOF(decoder *json.Decoder) error {
 		return err
 	}
 	return nil
+}
+
+// parseUserPreferencesIfMatch is the historical name of the shared quoted
+// row-version parser still used by legacy address revision handlers. It is not
+// owned by the retired user-preferences API.
+func parseUserPreferencesIfMatch(w http.ResponseWriter, r *http.Request) (uint64, bool) {
+	raw := r.Header.Get("If-Match")
+	if raw == "" || raw == "*" {
+		return 0, true
+	}
+	if len(raw) < 3 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "If-Match must be a quoted row_version", nil)
+		return 0, false
+	}
+	version, err := strconv.ParseUint(raw[1:len(raw)-1], 10, 64)
+	if err != nil {
+		WriteAPIError(w, http.StatusBadRequest, APIErrorInvalidRequest, "If-Match must be a quoted row_version", nil)
+		return 0, false
+	}
+	return version, true
 }
 
 func WriteAPIError(w http.ResponseWriter, status int, code APIErrorCode, message string, details map[string]any) {

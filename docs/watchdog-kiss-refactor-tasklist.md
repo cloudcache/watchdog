@@ -263,6 +263,8 @@
 
 - [x] **KISS-08F2 旧 Retention 纵向副本删除（本提交）**：保留当前 Gin `GET/PUT/DELETE /api/v1/retention/policies`、`metric_retention_policies` 单域表、既有 JSON 字段和前端不变；将 response DTO 归属到 `internal/server`，删除遗留包中第二套 tenant-scoped repository/HTTP/MySQL 实现及仅验证旧实现的测试，并从旧 Router/runtime 摘除注册。当前 server 路由和真实 MySQL 集成测试、全库 build/test/vet 及旧符号反向扫描为提交门禁。
 
+- [x] **KISS-08F3 旧 User Preferences 纵向副本删除（本提交）**：保留当前 Gin `GET/PUT /api/v1/me/preferences`、`user_preferences` 单域表、被动读取、1 MiB 输入限制、JSON object 校验、ETag/If-Match 乐观并发语义和前端不变；删除遗留包中第二套 tenant-scoped domain/repository/HTTP/MySQL 实现及旧测试，并从旧 Router/runtime 摘除注册。被遗留地址修订 API 复用的 quoted row-version parser 移到旧通用 API helper，不改其 CAS 行为。当前 Gin 路由单测、真实 MySQL create/read/update/stale-conflict 集成、全库 build/test/vet 和旧符号反向扫描为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
