@@ -1,0 +1,32 @@
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+
+WORKDIR /app
+
+# Download Go modules
+COPY ../go.mod ../go.sum ./
+RUN go mod download
+
+# Copy source files
+COPY . ./
+
+RUN apk add --no-cache \
+    unzip \
+    ca-certificates
+
+RUN update-ca-certificates
+
+# Build the KISS API server (MySQL + ClickHouse; no PocketBase).
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOGC=75 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-w -s" -o /watchdog-server ./cmd/watchdog-server
+
+# ? -------------------------
+FROM scratch
+
+COPY --from=builder /watchdog-server /
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+EXPOSE 8091
+
+# Provide --config (and secret files such as WATCHDOG_CLICKHOUSE_PASSWORD_FILE)
+# at deploy time; the server reads config/watchdog.yaml by default.
+ENTRYPOINT [ "/watchdog-server" ]

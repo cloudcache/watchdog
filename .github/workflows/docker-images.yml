@@ -15,7 +15,7 @@ jobs:
         include:
           # cloudcache/watchdog
           - image: cloudcache/watchdog
-            dockerfile: ./internal/dockerfile_hub
+            dockerfile: ./internal/dockerfile_server
             registry: docker.io
             username_secret: DOCKERHUB_USERNAME
             password_secret: DOCKERHUB_TOKEN
@@ -68,7 +68,7 @@ jobs:
 
           # ghcr.io/cloudcache/watchdog
           - image: ghcr.io/${{ github.repository }}
-            dockerfile: ./internal/dockerfile_hub
+            dockerfile: ./internal/dockerfile_server
             registry: ghcr.io
             username: ${{ github.actor }}
             password_secret: GITHUB_TOKEN

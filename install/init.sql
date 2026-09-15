@@ -2017,15 +2017,11 @@ CREATE TABLE IF NOT EXISTS `users` (
   `email` varchar(320) COLLATE utf8mb4_unicode_ci NOT NULL,
   `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
   `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
-  `auth_provider` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `external_subject_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_users_tenant_email` (`tenant_id`,`email`),
-  UNIQUE KEY `uq_users_external_identity` (`auth_provider`,`external_subject_id`,`tenant_id`),
   KEY `idx_users_tenant_status` (`tenant_id`,`status`),
-  KEY `idx_users_external_identity` (`auth_provider`,`external_subject_id`),
   CONSTRAINT `fk_users_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -118,11 +118,11 @@ body:
       render: yaml
   
   - type: textarea
-    id: hub-logs
+    id: server-logs
     attributes:
-      label: Hub Logs
-      description: Check the logs page in PocketBase (`/_/#/logs`) for relevant errors (copy JSON).
-      render: json
+      label: Server Logs
+      description: Relevant errors from the watchdog-server logs (stdout / journal).
+      render: shell
   
   - type: textarea
     id: agent-logs
