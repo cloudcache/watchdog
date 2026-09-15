@@ -39,7 +39,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build build-agent build-server build-snmp-collector build-snmp-agent build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales watchdog-install flow-dev-up flow-dev-down flow-dev-status
+.PHONY: tidy build build-agent build-server build-snmp-collector build-snmp-agent build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
 
 clean:
@@ -107,9 +107,6 @@ dev-agent:
 	else \
 		go run $(AGENT_GO_TAGS) github.com/cloudcache/watchdog/internal/cmd/agent; \
 	fi
-
-watchdog-install:
-	go run ./cmd/watchdog-install --config config/watchdog.yaml --init-sql install/init.sql --lock .watchdog.lock
 
 flow-dev-up:
 	docker compose -f deploy/compose.flow-dev.yml up -d

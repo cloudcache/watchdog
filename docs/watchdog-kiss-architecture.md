@@ -112,7 +112,7 @@ Core 只拥有：
 - `operation_jobs / audit_logs / idempotency_records / export_tasks`；
 - 全局配置和安装状态。
 
-本地认证只实现当前产品需要的闭环：`users.password_hash` 使用 bcrypt；登录生成 32-byte 随机 session token，浏览器只持有 `HttpOnly + Secure + SameSite=Lax` cookie，MySQL `sessions` 只保存 token SHA-256、用户、创建/最后活动/过期/吊销时间和客户端摘要。这里的 session token hash 是低频安全边界，与已删除的逐 Flow record hash 无关。状态修改使用 CSRF token；禁用用户立即拒绝其全部 session。首个 administrator 由 `watchdog-install` 在空库创建，不内置默认密码。暂不复刻 PB 的 OAuth、OTP/MFA、找回邮件和 realtime collection；以后如需 SSO，替换 session authenticator，不恢复 PB。
+本地认证只实现当前产品需要的闭环：`users.password_hash` 使用 bcrypt；登录生成 32-byte 随机 session token，浏览器只持有 `HttpOnly + Secure + SameSite=Lax` cookie，MySQL `sessions` 只保存 token SHA-256、用户、创建/最后活动/过期/吊销时间和客户端摘要。这里的 session token hash 是低频安全边界，与已删除的逐 Flow record hash 无关。状态修改使用 CSRF token；禁用用户立即拒绝其全部 session。首个 administrator 只由 `POST /api/v1/install` 在空库创建，不内置默认密码；旧 `watchdog-install` CLI 已删除。暂不复刻 PB 的 OAuth、OTP/MFA、找回邮件和 realtime collection；以后如需 SSO，替换 session authenticator，不恢复 PB。
 
 前端启动只读取公开页面和本地 session 状态；访问受控 API 得到 401 或用户主动点击登录时才显示登录页。不得在页面加载时自动提交登录、刷新无效 token或循环调用认证接口。
 
