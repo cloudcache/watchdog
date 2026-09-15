@@ -39,8 +39,10 @@ func (s *Server) registerAddressRoutes(auth *gin.RouterGroup) {
 
 	prefixes := auth.Group("/address-prefixes")
 	prefixes.GET("", view, s.listAddressPrefixes)
+	prefixes.GET("/effective", view, s.listEffectiveAddressPrefixes)
 	prefixes.POST("", manage, s.createAddressPrefix)
 	prefixes.POST("/actions/merge-preview", manage, s.mergePreviewAddressPrefixes)
+	prefixes.POST("/bulk-reassign", manage, s.bulkReassignAddressPrefixes)
 	prefixes.GET("/:id", view, s.getAddressPrefix)
 	prefixes.PATCH("/:id", manage, s.updateAddressPrefix)
 	prefixes.DELETE("/:id", manage, s.deleteAddressPrefix)
