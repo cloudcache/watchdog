@@ -129,7 +129,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 	const loadCatalog = useCallback(async () => {
 		const [metricData, deviceData] = await Promise.all([
 			api.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
-			api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+			api.send<{ items?: NetworkDevice[] }>("/api/v1/devices", { query: { kind: "network" } }),
 		])
 		setMetrics(metricData.items ?? [])
 		setDevices(deviceData.items ?? [])
@@ -143,7 +143,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				if (!deviceID) {
 					return [deviceID, [] as NetworkPort[]] as const
 				}
-				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${deviceID}/ports`, {})
+				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/devices/${deviceID}/ports`, {})
 				return [deviceID, data.items ?? []] as const
 			})
 		)

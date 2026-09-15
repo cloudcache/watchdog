@@ -79,14 +79,14 @@ export default memo(({ id }: TargetDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetData = await api.send<TargetRecord>(`/api/v1/targets/${id}`, {})
+			const targetData = await api.send<TargetRecord>(`/api/v1/devices/${id}`, {})
 			setTarget(targetData)
 			if (targetData.kind === "network") {
 				// The device page is the canonical view for network targets;
 				// this page only remains for network targets not yet discovered.
 				const devices = await api.send<{
 					items?: { ID?: string; id?: string; TargetID?: string; target_id?: string }[]
-				}>("/api/v1/network/devices", {})
+				}>("/api/v1/devices", {})
 				const device = (devices.items ?? []).find((item) => (item.TargetID ?? item.target_id) === id)
 				const deviceID = device?.ID ?? device?.id
 				if (deviceID) {
@@ -142,7 +142,7 @@ export default memo(({ id }: TargetDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await api.send<{ impacts?: DeleteImpact[] }>(`/api/v1/targets/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: DeleteImpact[] }>(`/api/v1/devices/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			// Preview is advisory; deletion still confirms with an empty list.
@@ -158,7 +158,7 @@ export default memo(({ id }: TargetDetailProps) => {
 		try {
 			// Deletion is asynchronous: the API answers 202 with a job id and a
 			// worker performs the cascade. Poll the job until it finishes.
-			const response = await api.send<{ job_id?: string } | null>(`/api/v1/targets/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/devices/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {

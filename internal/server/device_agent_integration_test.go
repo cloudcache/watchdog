@@ -110,11 +110,14 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("duplicate host: status=%d body=%s", duplicate.Code, duplicate.Body.String())
 	}
 
-	patched := requestJSON(t, s, http.MethodPatch, "/api/v1/targets/"+device.ID, map[string]any{
-		"name": "Core-1", "status": "up",
+	patched := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+device.ID, map[string]any{
+		"name": "Core-1", "status": "up", "snmp_security": map[string]string{"community": "device-updated"},
 	}, map[string]string{"X-CSRF-Token": csrf, "If-Match": created.Header().Get("ETag")}, cookies...)
 	if patched.Code != http.StatusOK {
-		t.Fatalf("patch device through target alias: status=%d body=%s", patched.Code, patched.Body.String())
+		t.Fatalf("patch device: status=%d body=%s", patched.Code, patched.Body.String())
+	}
+	if err := s.db.QueryRow(`SELECT JSON_UNQUOTE(JSON_EXTRACT(snmp_security_json,'$.community')) FROM devices WHERE id=?`, device.ID).Scan(&storedCommunity); err != nil || storedCommunity != "device-updated" {
+		t.Fatalf("device SNMP override was not updated atomically: value=%q err=%v", storedCommunity, err)
 	}
 	stale := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+device.ID, map[string]any{
 		"display_name": "stale overwrite",
@@ -125,7 +128,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	exerciseDeviceOrganizationAPI(t, s, device.ID, patched.Header().Get("ETag"), authHeaders, cookies)
 	exerciseSNMPDiscoveryAPI(t, s, device.ID, authHeaders, cookies)
 
-	summary := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/summary?q=core-1", nil, nil, cookies...)
+	summary := requestJSON(t, s, http.MethodGet, "/api/v1/devices/summary?q=core-1", nil, nil, cookies...)
 	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), device.ID) {
 		t.Fatalf("device summary: status=%d body=%s", summary.Code, summary.Body.String())
 	}
@@ -166,7 +169,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 		t.Fatalf("delete session test user: status=%d body=%s", deletedUser.Code, deletedUser.Body.String())
 	}
 
-	systemCreated := requestJSON(t, s, http.MethodPost, "/api/v1/targets", map[string]any{
+	systemCreated := requestJSON(t, s, http.MethodPost, "/api/v1/devices", map[string]any{
 		"host": "host.example.com", "name": "System host", "kind": "system",
 	}, authHeaders, cookies...)
 	if systemCreated.Code != http.StatusCreated {
@@ -174,15 +177,15 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	}
 	var systemDevice deviceDTO
 	decodeJSON(t, systemCreated, &systemDevice)
-	loadedSystem := requestJSON(t, s, http.MethodGet, "/api/v1/targets/"+systemDevice.ID, nil, nil, cookies...)
+	loadedSystem := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+systemDevice.ID, nil, nil, cookies...)
 	if loadedSystem.Code != http.StatusOK || !strings.Contains(loadedSystem.Body.String(), `"kind":"system"`) {
 		t.Fatalf("system target kind mapping: status=%d body=%s", loadedSystem.Code, loadedSystem.Body.String())
 	}
-	hosts := requestJSON(t, s, http.MethodGet, "/api/v1/targets?exclude_kind=network", nil, nil, cookies...)
+	hosts := requestJSON(t, s, http.MethodGet, "/api/v1/devices?exclude_kind=network", nil, nil, cookies...)
 	if hosts.Code != http.StatusOK || !strings.Contains(hosts.Body.String(), systemDevice.ID) || strings.Contains(hosts.Body.String(), device.ID) {
 		t.Fatalf("target kind exclusion: status=%d body=%s", hosts.Code, hosts.Body.String())
 	}
-	invalidTargetFilter := requestJSON(t, s, http.MethodGet, "/api/v1/targets?status=bogus", nil, nil, cookies...)
+	invalidTargetFilter := requestJSON(t, s, http.MethodGet, "/api/v1/devices?status=bogus", nil, nil, cookies...)
 	if invalidTargetFilter.Code != http.StatusBadRequest || !strings.Contains(invalidTargetFilter.Body.String(), `"code":"invalid_filter"`) {
 		t.Fatalf("target invalid filter: status=%d body=%s", invalidTargetFilter.Code, invalidTargetFilter.Body.String())
 	}
@@ -191,11 +194,11 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	}
 	discoveryGuard := &fakeSNMPDiscoveryRunner{}
 	s.snmpDiscovery = discoveryGuard
-	wrongDiscovery := requestJSON(t, s, http.MethodPost, "/api/v1/network/devices/"+systemDevice.ID+"/snmp/discover", nil, authHeaders, cookies...)
+	wrongDiscovery := requestJSON(t, s, http.MethodPost, "/api/v1/devices/"+systemDevice.ID+"/snmp/discover", nil, authHeaders, cookies...)
 	if wrongDiscovery.Code != http.StatusConflict || !strings.Contains(wrongDiscovery.Body.String(), "invalid_device_kind") || len(discoveryGuard.requests) != 0 {
 		t.Fatalf("system target reached SNMP discovery: status=%d body=%s requests=%d", wrongDiscovery.Code, wrongDiscovery.Body.String(), len(discoveryGuard.requests))
 	}
-	wrongSNMPPatch := requestJSON(t, s, http.MethodPatch, "/api/v1/network/devices/"+systemDevice.ID+"/snmp", map[string]any{
+	wrongSNMPPatch := requestJSON(t, s, http.MethodPatch, "/api/v1/devices/"+systemDevice.ID+"/snmp", map[string]any{
 		"snmp_profile_id": "snmp_api_test",
 	}, authHeaders, cookies...)
 	if wrongSNMPPatch.Code != http.StatusConflict || !strings.Contains(wrongSNMPPatch.Body.String(), "invalid_device_kind") {
@@ -473,7 +476,7 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if staleFlow.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale flow binding update: status=%d body=%s", staleFlow.Code, staleFlow.Body.String())
 	}
-	preview := requestJSON(t, s, http.MethodGet, "/api/v1/targets/"+device.ID+"/delete-preview", nil, nil, cookies...)
+	preview := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+device.ID+"/delete-preview", nil, nil, cookies...)
 	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"resource_type":"flow_exporter_binding"`) || !strings.Contains(preview.Body.String(), `"behavior":"blocked"`) {
 		t.Fatalf("device delete preview omitted flow binding: status=%d body=%s", preview.Code, preview.Body.String())
 	}
@@ -842,11 +845,11 @@ func exerciseSNMPDiscoveryAPI(t *testing.T, s *Server, deviceID string, authHead
 	fake := &fakeSNMPDiscoveryRunner{results: []watchdog.SNMPCollectorDiscoveryResult{first, second}}
 	s.snmpDiscovery = fake
 
-	discovered := requestJSON(t, s, http.MethodPost, "/api/v1/network/devices/"+deviceID+"/snmp/discover", nil, authHeaders, cookies...)
+	discovered := requestJSON(t, s, http.MethodPost, "/api/v1/devices/"+deviceID+"/snmp/discover", nil, authHeaders, cookies...)
 	if discovered.Code != http.StatusOK || !strings.Contains(discovered.Body.String(), `"ports":3`) || !strings.Contains(discovered.Body.String(), `"bgp_sessions":2`) {
 		t.Fatalf("SNMP discovery: status=%d body=%s", discovered.Code, discovered.Body.String())
 	}
-	if len(fake.requests) != 1 || fake.requests[0].Profile.Security["community"] != "device-private" || fake.requests[0].Target.Port != 161 {
+	if len(fake.requests) != 1 || fake.requests[0].Profile.Security["community"] != "device-updated" || fake.requests[0].Target.Port != 161 {
 		t.Fatalf("SNMP profile/device override was not passed to discovery: %+v", fake.requests)
 	}
 	loaded := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID, nil, nil, cookies...)
@@ -956,7 +959,7 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 		t.Fatal(err)
 	}
 
-	ports := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/ports?address_family=ipv6&q=2001:db8&sort=speed&order=desc&limit=10&offset=0", nil, nil, cookies...)
+	ports := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/ports?address_family=ipv6&q=2001:db8&sort=speed&order=desc&limit=10&offset=0", nil, nil, cookies...)
 	if ports.Code != http.StatusOK || !strings.Contains(ports.Body.String(), `"ID":"port_api_test"`) ||
 		!strings.Contains(ports.Body.String(), `"Family":"ipv6"`) || !strings.Contains(ports.Body.String(), `"counts":{"down":2,"total":3,"up":1}`) {
 		t.Fatalf("paged ports with IPv6: status=%d body=%s", ports.Code, ports.Body.String())
@@ -965,27 +968,27 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 	if addresses.Code != http.StatusOK || !strings.Contains(addresses.Body.String(), "2001:db8::1") || strings.Contains(addresses.Body.String(), "192.0.2.1") {
 		t.Fatalf("IPv6 address list: status=%d body=%s", addresses.Code, addresses.Body.String())
 	}
-	loadedPort := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/port_api_test", nil, nil, cookies...)
+	loadedPort := requestJSON(t, s, http.MethodGet, "/api/v1/ports/port_api_test", nil, nil, cookies...)
 	if loadedPort.Code != http.StatusOK || loadedPort.Header().Get("ETag") == "" || !strings.Contains(loadedPort.Body.String(), `"source":"IF-MIB"`) {
 		t.Fatalf("get port: status=%d body=%s", loadedPort.Code, loadedPort.Body.String())
 	}
-	badPort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"AdminStatus": "fabricated"},
+	badPort := requestJSON(t, s, http.MethodPatch, "/api/v1/ports/port_api_test", map[string]any{"AdminStatus": "fabricated"},
 		authHeaders, cookies...)
 	if badPort.Code != http.StatusBadRequest {
 		t.Fatalf("invalid port state accepted: status=%d body=%s", badPort.Code, badPort.Body.String())
 	}
-	updatedPort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"IfAlias": "customer-a"},
+	updatedPort := requestJSON(t, s, http.MethodPatch, "/api/v1/ports/port_api_test", map[string]any{"IfAlias": "customer-a"},
 		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": loadedPort.Header().Get("ETag")}, cookies...)
 	if updatedPort.Code != http.StatusOK || !strings.Contains(updatedPort.Body.String(), `"IfAlias":"customer-a"`) {
 		t.Fatalf("patch port: status=%d body=%s", updatedPort.Code, updatedPort.Body.String())
 	}
-	stalePort := requestJSON(t, s, http.MethodPatch, "/api/v1/network/ports/port_api_test", map[string]any{"IfAlias": "stale"},
+	stalePort := requestJSON(t, s, http.MethodPatch, "/api/v1/ports/port_api_test", map[string]any{"IfAlias": "stale"},
 		map[string]string{"X-CSRF-Token": authHeaders["X-CSRF-Token"], "If-Match": loadedPort.Header().Get("ETag")}, cookies...)
 	if stalePort.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale port update: status=%d body=%s", stalePort.Code, stalePort.Body.String())
 	}
 
-	bgp6 := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/bgp?afi=ipv6&q=2001:db8&limit=10", nil, nil, cookies...)
+	bgp6 := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/bgp?afi=ipv6&q=2001:db8&limit=10", nil, nil, cookies...)
 	if bgp6.Code != http.StatusOK || !strings.Contains(bgp6.Body.String(), "2001:db8:ffff::1") || strings.Contains(bgp6.Body.String(), "203.0.113.1") {
 		t.Fatalf("IPv6 BGP list: status=%d body=%s", bgp6.Code, bgp6.Body.String())
 	}
@@ -993,19 +996,19 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 	if allBGP.Code != http.StatusOK || !strings.Contains(allBGP.Body.String(), "bgp_v4_test") || !strings.Contains(allBGP.Body.String(), "bgp_v6_test") {
 		t.Fatalf("global BGP list: status=%d body=%s", allBGP.Code, allBGP.Body.String())
 	}
-	sensors := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/sensors?health=problem&q=temp&sort=value&order=desc", nil, nil, cookies...)
+	sensors := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/sensors?health=problem&q=temp&sort=value&order=desc", nil, nil, cookies...)
 	if sensors.Code != http.StatusOK || !strings.Contains(sensors.Body.String(), `"Status":"warning"`) || !strings.Contains(sensors.Body.String(), `"problems":1`) {
 		t.Fatalf("sensor list: status=%d body=%s", sensors.Code, sensors.Body.String())
 	}
-	inventory := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/inventory?class=powerSupply&fru=true&q=PSU", nil, nil, cookies...)
+	inventory := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/inventory?class=powerSupply&fru=true&q=PSU", nil, nil, cookies...)
 	if inventory.Code != http.StatusOK || !strings.Contains(inventory.Body.String(), `"SerialNumber":"PSU123"`) || !strings.Contains(inventory.Body.String(), `"IsFRU":true`) {
 		t.Fatalf("inventory list: status=%d body=%s", inventory.Code, inventory.Body.String())
 	}
-	vlans := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/vlans?status=active&q=user", nil, nil, cookies...)
+	vlans := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/vlans?status=active&q=user", nil, nil, cookies...)
 	if vlans.Code != http.StatusOK || !strings.Contains(vlans.Body.String(), `"VLANID":100`) {
 		t.Fatalf("VLAN list: status=%d body=%s", vlans.Code, vlans.Body.String())
 	}
-	lags := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/lags?mode=lacp&q=00:11", nil, nil, cookies...)
+	lags := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/lags?mode=lacp&q=00:11", nil, nil, cookies...)
 	if lags.Code != http.StatusOK || !strings.Contains(lags.Body.String(), `"AggregateIndex":500`) {
 		t.Fatalf("LAG list: status=%d body=%s", lags.Code, lags.Body.String())
 	}
@@ -1018,18 +1021,18 @@ func exerciseDeviceInventoryAPI(t *testing.T, s *Server, deviceID string, authHe
 	if _, err := s.db.Exec(`INSERT INTO billing_account_ports (account_id,port_id) VALUES ('bill_port_delete','port_delete_test')`); err != nil {
 		t.Fatal(err)
 	}
-	deletePreview := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/port_delete_test/delete-preview", nil, nil, cookies...)
+	deletePreview := requestJSON(t, s, http.MethodGet, "/api/v1/ports/port_delete_test/delete-preview", nil, nil, cookies...)
 	if deletePreview.Code != http.StatusOK || !strings.Contains(deletePreview.Body.String(), `"resource_type":"billing_account"`) || !strings.Contains(deletePreview.Body.String(), `"behavior":"blocked"`) {
 		t.Fatalf("port delete preview: status=%d body=%s", deletePreview.Code, deletePreview.Body.String())
 	}
-	blocked := requestJSON(t, s, http.MethodDelete, "/api/v1/network/ports/port_delete_test", nil, authHeaders, cookies...)
+	blocked := requestJSON(t, s, http.MethodDelete, "/api/v1/ports/port_delete_test", nil, authHeaders, cookies...)
 	if blocked.Code != http.StatusConflict {
 		t.Fatalf("billing port deletion was not blocked: status=%d body=%s", blocked.Code, blocked.Body.String())
 	}
 	if _, err := s.db.Exec(`DELETE FROM billing_accounts WHERE id='bill_port_delete'`); err != nil {
 		t.Fatal(err)
 	}
-	deleted := requestJSON(t, s, http.MethodDelete, "/api/v1/network/ports/port_delete_test", nil, authHeaders, cookies...)
+	deleted := requestJSON(t, s, http.MethodDelete, "/api/v1/ports/port_delete_test", nil, authHeaders, cookies...)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete detached port: status=%d body=%s", deleted.Code, deleted.Body.String())
 	}
@@ -1066,15 +1069,15 @@ func assertExplicitPortScope(t *testing.T, s *Server, deviceID, grantedPortID, h
 		t.Fatalf("port viewer login: status=%d body=%s", login.Code, login.Body.String())
 	}
 	portCookies := login.Result().Cookies()
-	list := requestJSON(t, s, http.MethodGet, "/api/v1/network/devices/"+deviceID+"/ports?limit=100", nil, nil, portCookies...)
+	list := requestJSON(t, s, http.MethodGet, "/api/v1/devices/"+deviceID+"/ports?limit=100", nil, nil, portCookies...)
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), grantedPortID) || strings.Contains(list.Body.String(), hiddenPortID) || !strings.Contains(list.Body.String(), `"total":1`) {
 		t.Fatalf("explicit port list scope: status=%d body=%s", list.Code, list.Body.String())
 	}
-	granted := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/"+grantedPortID, nil, nil, portCookies...)
+	granted := requestJSON(t, s, http.MethodGet, "/api/v1/ports/"+grantedPortID, nil, nil, portCookies...)
 	if granted.Code != http.StatusOK {
 		t.Fatalf("explicit port grant: status=%d body=%s", granted.Code, granted.Body.String())
 	}
-	hidden := requestJSON(t, s, http.MethodGet, "/api/v1/network/ports/"+hiddenPortID, nil, nil, portCookies...)
+	hidden := requestJSON(t, s, http.MethodGet, "/api/v1/ports/"+hiddenPortID, nil, nil, portCookies...)
 	if hidden.Code != http.StatusForbidden {
 		t.Fatalf("ungranted port: status=%d body=%s", hidden.Code, hidden.Body.String())
 	}

@@ -61,7 +61,7 @@ export default memo(() => {
 		setError("")
 		try {
 			const [deviceData, profileData] = await Promise.all([
-				api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+				api.send<{ items?: NetworkDevice[] }>("/api/v1/devices", { query: { kind: "network" } }),
 				api.send<{ items?: SNMPProfile[] }>("/api/v1/snmp/profiles", {}),
 			])
 			const nextDevices = deviceData.items ?? []
@@ -108,7 +108,7 @@ export default memo(() => {
 		setError("")
 		setSummary("")
 		try {
-			await api.send(`/api/v1/network/devices/${deviceID}/snmp`, {
+			await api.send(`/api/v1/devices/${deviceID}/snmp`, {
 				method: "PATCH",
 				body: {
 					SNMPProfileID: profileID,
@@ -116,7 +116,7 @@ export default memo(() => {
 					SNMPSecurity: community.trim() ? { community: community.trim() } : undefined,
 				},
 			})
-			const result = await api.send<DiscoveryResult>(`/api/v1/network/devices/${deviceID}/snmp/discover`, { method: "POST" })
+			const result = await api.send<DiscoveryResult>(`/api/v1/devices/${deviceID}/snmp/discover`, { method: "POST" })
 			const ports = result.Ports ?? result.ports ?? []
 			const deleted = result.DeletedPorts ?? result.deleted_ports ?? 0
 			setSummary(t`${ports.length} ports imported, ${deleted} stale ports removed`)

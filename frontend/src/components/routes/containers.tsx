@@ -61,7 +61,7 @@ export default memo(() => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetData = await api.send<TargetsResponse>("/api/v1/targets?kind=system&limit=500", {})
+			const targetData = await api.send<TargetsResponse>("/api/v1/devices?kind=system&limit=500", {})
 			const items = (targetData.items ?? []).filter((item) => item.kind === "system")
 			setTargets(items)
 			const selectedStillExists = items.some((item) => (item.ID ?? item.id) === targetID)

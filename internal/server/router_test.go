@@ -16,12 +16,12 @@ func TestSNMPGinMigrationRoutesAreRegistered(t *testing.T) {
 		registered[route.Method+" "+route.Path] = true
 	}
 	for _, route := range []string{
-		"GET /api/v1/network/devices",
-		"GET /api/v1/network/devices/summary",
-		"PATCH /api/v1/network/devices/:id/snmp",
-		"GET /api/v1/network/devices/:id/ports",
-		"GET /api/v1/network/ports/:port_id",
-		"GET /api/v1/network/bgp",
+		"GET /api/v1/devices",
+		"GET /api/v1/devices/summary",
+		"PATCH /api/v1/devices/:id/snmp",
+		"GET /api/v1/devices/:id/ports",
+		"GET /api/v1/ports/:port_id",
+		"GET /api/v1/bgp",
 		"GET /api/v1/snmp/profiles",
 		"GET /api/v1/metrics/aggregate",
 		"GET /api/v1/graph/devices/:id/overview",
@@ -41,6 +41,17 @@ func TestSNMPGinMigrationRoutesAreRegistered(t *testing.T) {
 	} {
 		if !registered[route] {
 			t.Fatalf("migrated SNMP route is not registered: %s", route)
+		}
+	}
+	for route := range registered {
+		path := strings.TrimPrefix(route, strings.SplitN(route, " ", 2)[0]+" ")
+		for _, prefix := range []string{
+			"/api/v1/network/devices", "/api/v1/network/ports", "/api/v1/network/bgp",
+			"/api/v1/network/traffic-policy-defaults", "/api/v1/targets",
+		} {
+			if path == prefix || strings.HasPrefix(path, prefix+"/") {
+				t.Fatalf("compatibility route is still registered: %s", route)
+			}
 		}
 	}
 }

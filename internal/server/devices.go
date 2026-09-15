@@ -78,7 +78,7 @@ func (r deviceRecord) dto() deviceDTO {
 	labels := map[string]string{}
 	_ = json.Unmarshal(r.Labels, &labels)
 	return deviceDTO{
-		ID: r.ID, TargetID: r.ID, Host: r.Host, DisplayName: r.DisplayName, Name: name, Kind: r.Kind,
+		ID: r.ID, TargetID: r.ID, Host: r.Host, DisplayName: r.DisplayName, Name: name, Kind: publicDeviceKind(r.Kind),
 		Labels: labels,
 		Vendor: r.Vendor, Model: r.Model, Platform: r.Platform, SysName: r.SysName, SysDescr: r.SysDescr,
 		SysObjectID: r.SysObjectID, OS: r.OS, OSName: r.OS, OSVersion: r.OSVersion, Hardware: r.Hardware,
@@ -129,22 +129,6 @@ func (s *Server) listDevices(c *gin.Context) {
 		return
 	}
 	rows, total, counts, err := s.queryDevices(c, c.Query("kind"))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	items := make([]deviceDTO, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, row.dto())
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "counts": counts})
-}
-
-func (s *Server) listNetworkDevices(c *gin.Context) {
-	if !validDeviceListFilters(c) {
-		return
-	}
-	rows, total, counts, err := s.queryDevices(c, "network")
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -341,11 +325,6 @@ func (s *Server) createDevice(c *gin.Context) {
 	c.Header("ETag", etag(r.RowVersion))
 	c.Header("Location", "/api/v1/devices/"+id)
 	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "device.create", "device", id)
-	if targetResponse(c) {
-		c.Header("Location", "/api/v1/targets/"+id)
-		c.JSON(http.StatusCreated, targetDTO(r.dto()))
-		return
-	}
 	c.JSON(http.StatusCreated, r.dto())
 }
 
@@ -397,8 +376,8 @@ func (s *Server) updateDevice(c *gin.Context) {
 	} else if req.Name != nil {
 		display = strings.TrimSpace(*req.Name)
 	}
-	result, err := s.db.ExecContext(c.Request.Context(), `UPDATE devices SET host=?,display_name=?,labels_json=?,kind=?,vendor=?,model=?,platform=?,os=?,os_version=?,sys_name=?,sys_descr=NULLIF(?,''),sys_object_id=?,hardware=?,serial=?,location_id=?,snmp_profile_id=?,snmp_port=?,status=?,disabled=?,ignore_alerts=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`,
-		host, display, patchLabels(req.Labels, current.Labels), kind, patchString(req.Vendor, current.Vendor), patchString(req.Model, current.Model), patchString(req.Platform, current.Platform), patchOS(req, current.OS), patchOSVersion(req, current.OSVersion), patchSysName(req, current.SysName), patchSysDescr(req, current.SysDescr), patchSysObjectID(req, current.SysObjectID), patchString(req.Hardware, current.Hardware), patchString(req.Serial, current.Serial), patchNullString(req.LocationID, current.LocationID), patchNullString(firstPointer(req.SNMPProfileID, req.LegacySNMPProfileID), current.SNMPProfileID), patchNullInt(req.SNMPPort, current.SNMPPort), status, patchBool(req.Disabled, current.Disabled), patchBool(req.IgnoreAlerts, current.IgnoreAlerts), principalUserID(c), current.ID, current.RowVersion)
+	result, err := s.db.ExecContext(c.Request.Context(), `UPDATE devices SET host=?,display_name=?,labels_json=?,kind=?,vendor=?,model=?,platform=?,os=?,os_version=?,sys_name=?,sys_descr=NULLIF(?,''),sys_object_id=?,hardware=?,serial=?,location_id=?,snmp_profile_id=?,snmp_port=?,snmp_security_json=COALESCE(?,snmp_security_json),status=?,disabled=?,ignore_alerts=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`,
+		host, display, patchLabels(req.Labels, current.Labels), kind, patchString(req.Vendor, current.Vendor), patchString(req.Model, current.Model), patchString(req.Platform, current.Platform), patchOS(req, current.OS), patchOSVersion(req, current.OSVersion), patchSysName(req, current.SysName), patchSysDescr(req, current.SysDescr), patchSysObjectID(req, current.SysObjectID), patchString(req.Hardware, current.Hardware), patchString(req.Serial, current.Serial), patchNullString(req.LocationID, current.LocationID), patchNullString(firstPointer(req.SNMPProfileID, req.LegacySNMPProfileID), current.SNMPProfileID), patchNullInt(req.SNMPPort, current.SNMPPort), nullableJSON(firstSecurity(req.SNMPSecurity, req.LegacySNMPSecurity)), status, patchBool(req.Disabled, current.Disabled), patchBool(req.IgnoreAlerts, current.IgnoreAlerts), principalUserID(c), current.ID, current.RowVersion)
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -418,10 +397,6 @@ func (s *Server) updateDevice(c *gin.Context) {
 	}
 	c.Header("ETag", etag(r.RowVersion))
 	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "device.update", "device", current.ID)
-	if targetResponse(c) {
-		c.JSON(http.StatusOK, targetDTO(r.dto()))
-		return
-	}
 	c.JSON(http.StatusOK, r.dto())
 }
 
@@ -492,53 +467,6 @@ func (s *Server) deviceDeletePreview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"device": device.dto(), "impacts": impacts})
 }
 
-func (s *Server) listTargets(c *gin.Context) {
-	if !validDeviceListFilters(c) {
-		return
-	}
-	rows, total, counts, err := s.queryDevices(c, c.Query("kind"))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	items := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		d := row.dto()
-		items = append(items, targetDTO(d))
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "counts": counts})
-}
-
-func (s *Server) getTarget(c *gin.Context) {
-	if !s.requireDeviceAccess(c, c.Param("id")) {
-		return
-	}
-	r, err := s.readDevice(c, c.Param("id"))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	d := r.dto()
-	c.Header("ETag", etag(r.RowVersion))
-	c.JSON(http.StatusOK, targetDTO(d))
-}
-
-func (s *Server) createTarget(c *gin.Context) {
-	c.Set("target_response", true)
-	s.createDevice(c)
-}
-
-func (s *Server) updateTarget(c *gin.Context) {
-	c.Set("target_response", true)
-	s.updateDevice(c)
-}
-
-func targetResponse(c *gin.Context) bool {
-	value, _ := c.Get("target_response")
-	result, _ := value.(bool)
-	return result
-}
-
 func (s *Server) patchDeviceSNMP(c *gin.Context) {
 	if _, ok := s.loadScopedNetworkDevice(c, c.Param("id")); !ok {
 		return
@@ -590,12 +518,11 @@ func canonicalDeviceKind(v string) string {
 	return v
 }
 
-func targetDTO(d deviceDTO) gin.H {
-	kind := d.Kind
-	if kind == "host" {
-		kind = "system"
+func publicDeviceKind(v string) string {
+	if v == "host" {
+		return "system"
 	}
-	return gin.H{"id": d.ID, "name": d.Name, "host": d.Host, "kind": kind, "status": d.Status, "labels": d.Labels, "row_version": d.RowVersion, "updated_at": d.UpdatedAt}
+	return v
 }
 func validDeviceStatus(v string) bool {
 	return v == "pending" || v == "up" || v == "down" || v == "paused"

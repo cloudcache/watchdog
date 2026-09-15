@@ -75,7 +75,7 @@ export default memo(() => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		api.send<BGPSessionsResponse>("/api/v1/network/bgp", { query: buildQuery() })
+		api.send<BGPSessionsResponse>("/api/v1/bgp", { query: buildQuery() })
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setSessions(data.items ?? [])

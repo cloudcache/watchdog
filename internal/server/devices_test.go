@@ -85,6 +85,9 @@ func TestAgentAndDeviceEnums(t *testing.T) {
 	if !validDeviceKind("network") || !validDeviceKind(canonicalDeviceKind("system")) || validDeviceKind("target") {
 		t.Fatal("device kind validation is not fail-closed")
 	}
+	if canonicalDeviceKind("system") != "host" || publicDeviceKind("host") != "system" || publicDeviceKind("network") != "network" {
+		t.Fatal("device kind API boundary is not stable")
+	}
 	if !validAgentKind("flow_collect") || validAgentKind("arbitrary") {
 		t.Fatal("agent kind validation is not fail-closed")
 	}

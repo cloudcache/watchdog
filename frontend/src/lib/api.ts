@@ -321,8 +321,8 @@ export async function saveUserPreferences(newSettings: Partial<UserSettings>): P
 	return merged
 }
 
-// A page of the target list. GET /api/v1/targets paginates opt-in (only when a
-// limit or cursor is passed); the Hosts view pages with exclude_kind=network.
+// A page of the unified device list. The Hosts view excludes network devices
+// server-side so pagination applies to the requested resource kind.
 export interface TargetListItem {
 	id: string
 	name: string
@@ -344,7 +344,7 @@ export async function fetchTargetsPage(opts: {
 	order?: "asc" | "desc"
 	offset?: number
 }): Promise<{ items: TargetListItem[]; nextCursor: string; total?: number }> {
-	const res = await api.send<{ items?: TargetListItem[]; next_cursor?: string; total?: number }>("/api/v1/targets", {
+	const res = await api.send<{ items?: TargetListItem[]; next_cursor?: string; total?: number }>("/api/v1/devices", {
 		query: {
 			limit: opts.limit ?? 100,
 			cursor: opts.cursor || undefined,

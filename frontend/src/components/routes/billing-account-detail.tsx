@@ -162,7 +162,7 @@ export default memo(({ id }: { id: string }) => {
 			api.send<Page<BillingPort>>(`/api/v1/billing/accounts/${id}/ports`, {
 				query: { limit: 500, offset: 0, sort: "device_id", order: "asc" },
 			}),
-			api.send<Page<NetworkDevice>>("/api/v1/network/devices", { query: { limit: 500, offset: 0 } }),
+			api.send<Page<NetworkDevice>>("/api/v1/devices", { query: { kind: "network", limit: 500, offset: 0 } }),
 		])
 		setAccount(detail.account)
 		if (!initializedWindow.current) {
@@ -175,7 +175,7 @@ export default memo(({ id }: { id: string }) => {
 		setBindings(Object.fromEntries((bound.items ?? []).map((item) => [item.port_id, item.direction])))
 		const loaded = await Promise.all(
 			(devices.items ?? []).map(async (device) => {
-				const page = await api.send<Page<NetworkPort>>(`/api/v1/network/devices/${device.id}/ports`, {
+				const page = await api.send<Page<NetworkPort>>(`/api/v1/devices/${device.id}/ports`, {
 					query: { limit: 500, offset: 0 },
 				})
 				return (page.items ?? []).map((port) => ({

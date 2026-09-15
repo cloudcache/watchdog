@@ -219,7 +219,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 		Promise.allSettled([
 			api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", { query: { level: "country", limit: 500 } }),
 			api.send<ListResponse<OperatorItem>>("/api/v1/network/operators", { query: { enabled: true, limit: 500 } }),
-			api.send<ListResponse<DeviceItem>>("/api/v1/network/devices", {}),
+			api.send<ListResponse<DeviceItem>>("/api/v1/devices", { query: { kind: "network" } }),
 		]).then(([geo, operatorResult, deviceResult]) => {
 			const warnings: string[] = []
 			if (geo.status === "fulfilled") {

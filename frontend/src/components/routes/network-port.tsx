@@ -134,7 +134,7 @@ export default memo(({ id }: PortDetailProps) => {
 		setError("")
 		try {
 			const [data, dashboardData] = await Promise.all([
-				api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
+				api.send<NetworkPortResponse>(`/api/v1/ports/${id}`, {}),
 				api.send<GraphDashboard>(`/api/v1/graph/ports/${id}/overview`, {}).catch(() => null),
 			])
 			setPort(data.port ?? null)
@@ -160,7 +160,7 @@ export default memo(({ id }: PortDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await api.send<{ impacts?: PortDeleteImpact[] }>(`/api/v1/network/ports/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: PortDeleteImpact[] }>(`/api/v1/ports/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			setDeleteImpacts([])
@@ -173,7 +173,7 @@ export default memo(({ id }: PortDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const response = await api.send<{ job_id?: string } | null>(`/api/v1/network/ports/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/ports/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {

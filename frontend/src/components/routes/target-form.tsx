@@ -83,7 +83,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const target = await api.send<TargetRecord>(`/api/v1/targets/${id}`, {
+			const target = await api.send<TargetRecord>(`/api/v1/devices/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -158,7 +158,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 					body.snmp_security = { community: form.snmpCommunity }
 				}
 			}
-			const saved = await api.send<TargetRecord>(id ? `/api/v1/targets/${id}` : "/api/v1/targets", {
+			const saved = await api.send<TargetRecord>(id ? `/api/v1/devices/${id}` : "/api/v1/devices", {
 				method: id ? "PATCH" : "POST",
 				headers: id && etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body,

@@ -180,7 +180,7 @@ allow = has(flow.view.<layer>)
 
 设备、端口、BGP、inventory 的服务端分页/搜索/排序/filter 继续保留；这是 UI 能力，不需要通用 resource registry。设备与端口的字段口径参考 LibreNMS（device: `host/sys_name/os/version/hardware/serial/sysObjectID/status/disabled/uptime/last_polled/location_id/kind`；port: `device_id/if_index/if_name/if_descr/if_alias/if_speed/if_oper_status/if_admin_status` 及 in/out octet 原值），但只保留产品实际使用的列。
 
-设备详情的 MySQL inventory API 固定为 `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags}`，同时在前端切换完成前保留等价 `/network/devices/:id/*` URL alias；alias 只复用同一 handler/表/ID，不设第二套 repository。端口 scope 使用两级并集：`device`/device-group grant 继承全部端口，显式 `user_port_permissions` 只放行指定端口。端口、接口地址、BGP 与硬件清单是当前发现状态；counter/rate、sensor 时序和事件/告警事实只进 ClickHouse，禁止在 MySQL 再造时序副本。
+设备详情的 MySQL inventory API 固定为 `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags,events}`，设备 SNMP 设置/发现固定为 `/devices/:id/snmp` 与 `/devices/:id/snmp/discover`，端口与 BGP 固定为 `/ports/:id`、`/bgp`。`/network/devices`、`/network/ports`、`/network/bgp` 和 `/targets` 兼容路由已在前端切换后删除，不设第二套 URL、DTO 或 repository。端口 scope 使用两级并集：`device`/device-group grant 继承全部端口，显式 `user_port_permissions` 只放行指定端口。端口、接口地址、BGP 与硬件清单是当前发现状态；counter/rate、sensor 时序和事件/告警事实只进 ClickHouse，禁止在 MySQL 再造时序副本。
 
 SNMP 采集实现不是重构对象。现有 MIB 驱动发现、OS/module definition、v1/v2c/v3 会话、poll recipe、IPv4/IPv6/BGP/sensor/inventory 采集、counter 原值和 agent/collector 调度语义全部保留。平台重构只做两类机械接线：把管理外键从旧 target/device ID 改到唯一 `device_id`，把时序 writer/query 从 VictoriaMetrics 改到 ClickHouse；不得趁机改 OID 规则、设备识别、轮询频率或 counter 算法。
 
@@ -344,7 +344,7 @@ HTTP API 只按领域暴露：
 
 删除通用 `/query` 的 `dataset/provider/tenant` envelope。保留现有 Flow typed compiler、能力白名单、扫描预算、全有或全无响应和 report composition；它们下沉为 Flow 域内部实现。设备指标使用固定 metric allowlist 的 `MetricQueryService`。
 
-设备管理的唯一权威路径是 `/api/v1/devices`，`host` 唯一且是创建时唯一必填身份字段。现有 UI 迁移期间的 `/api/v1/network/devices` 和 `/api/v1/targets` 仅为同一 Gin handler/repository 的 URL/DTO alias：其中 `target_id == device_id`，旧 `system` 类型只在 DTO 边界映射为新 `host`，不创建 `targets`、`network_devices` 或 `target_agents` 兼容表，也不双写。前端切换到 canonical path 后删除这些 alias。Agent 不保留 `/api/v1/agent-registry` alias，前端与五类 agent 实进程只访问 canonical `/api/v1/agents...` Gin/MySQL 路径。
+设备管理的唯一权威路径是 `/api/v1/devices`，`host` 唯一且是创建时唯一必填身份字段。数据库内部用 `host` 表示 system device，API 为保持产品词汇稳定返回 `kind=system`；`target_id == device_id` 只保留为现有 DTO 的同值字段，不存在 `targets`、`network_devices` 或 `target_agents` 表及双写。旧 `/api/v1/network/{devices,ports,bgp}`、`/api/v1/network/traffic-policy-defaults` 和 `/api/v1/targets` 已删除。Agent 不保留 `/api/v1/agent-registry` alias，前端与五类 agent 实进程只访问 canonical `/api/v1/agents...` Gin/MySQL 路径。
 
 前端是独立 npm 构建，只读取一个 `WATCHDOG_CONFIG.API_URL`。`npm run dev` 直接调用配置的 API；生产是否由 Go 同进程提供 `dist` 只是部署便利，不引入第二个 HUB_URL、同源 proxy 或专用 static server。收到受控 API 的 401 或用户主动点击登录时才显示/提交登录，不在应用启动时尝试认证。去 PB 只替换 transport、auth state 和数据获取；现有路由、导航、页面布局、主题、组件、图标和交互保持不变。该切片只做 API/认证功能测试，不增加视觉测试。
 

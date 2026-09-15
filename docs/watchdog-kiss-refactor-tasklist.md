@@ -105,14 +105,14 @@
 
 - [x] **设计**：以 LibreNMS role abilities + `devices_perms/ports_perms/bill_perms` 为基线，冻结“全局 action + 显式资源集合”双门、固定权限 key、默认角色和 device-group scope；冻结唯一 device 根、子资源、locations 与 static/dynamic group 契约。动态组使用 typed rule + 物化成员；SNMP `sys_location` 与管理 `location_id/name` 分离。
 - [x] **编码**：新 Gin/MySQL 运行面无 tenant context/header/selector；客户/供应商是业务实体；`targets + network_devices` 已合并为 `devices`，所有子表和 Flow exporter binding 直接引用同一 `device_id`；host 唯一、display name 可选。
-- [x] **API/UI**：users/roles/permissions/device/group/location/port/SNMP/Flow-device 领域路由已接；既有 UI 继续用同 handler 的 alias，界面和风格不改。所有已迁设备 VTable 都是服务端分页/search/sort/column filter；SNMP profile 列表不出 secret，编辑和 device override 可维护，发现字段只读。
+- [x] **API/UI**：users/roles/permissions/device/group/location/port/SNMP/Flow-device 领域路由已接；既有 UI 已切到 canonical `/devices`、`/ports`、`/bgp`、`/traffic-policy-defaults`，界面和风格不改。所有已迁设备 VTable 都是服务端分页/search/sort/column filter；SNMP profile 列表不出 secret，编辑和 device override 可维护，发现字段只读。
 - [x] **单元测试**：固定 role ability、动态组 typed rule、device/group grant、port 显式 grant与设备继承、billing 独立 grant校验、Flow-device ability + device scope、对象 update/delete 权限和空范围 fail-closed 已覆盖；host 规范化/冲突、SNMP v1/v2c/v3 session、sysName/sysDescr 非必填、双栈 IP/BGP 通用结果已覆盖。Flow 高基数记录层的 layer+device/port query/export 下推归 KISS-06，账单对象状态机归 KISS-07，不在本包伪造占位实现。
 - [x] **集成测试**：隔离空 MySQL 全链覆盖 device/profile/discovery/current inventory/organization/grants/Flow exporter/ETag/delete-preview/audit；确定性 fixture 覆盖所有双栈子资源和模块失败/裁剪边界；另对 `103.83.65.0` 完成真实 SNMP discovery 并把真实结果写入另一个空 v2 MySQL 验证。异步 poll plan/ACK 是 KISS-03/04，不为手工 discover 另造 job。
-- [x] **变更设计/测试**：canonical 路径与 `/network/devices`、`/targets`、`/network/ports` compat DTO 清单已冻结；alias 只转同一 handler、repository 和 ID，不建旧表、不双写。当前 UI 切换完成前保留 alias，最终物理删除归 KISS-08。
+- [x] **变更设计/测试**：canonical 路径与历史 compat DTO 清单已冻结；迁移只替换 URL，设备内部 `host` kind 在统一 DTO 边界稳定返回 `system`，网络设备选择器显式下推 `kind=network`。旧 alias 已由 KISS-08A 物理删除，不建旧表、不双写。
 - [x] **回归测试**：`go test ./...`、server/watchdog vet、`go build ./...`、45 个前端单测和 production build 通过；真实 MySQL、真实 SNMP、全部设备详情 VTable 和角色边界均有自动回归。按约束未修改视觉，不增加视觉测试。
 - [x] **已提交门禁**：schema/domain/API/test 分为可独立构建的纵向提交 `e5848ade`、`a17b313a`、`145842d3`、`bfb47e02`、`2cda16e8`、`ed7be0e2`；运行时只有一个 device ID/管理库。兼容 URL 的最终删除是 KISS-08 清理门，不再阻塞 KISS-02。
 
-> **2026-09-16 审计修正**：`/targets` alias 已补同一 `validDeviceListFilters` 门，非法 status/kind/disabled 与 canonical `/devices` 同样 fail-closed；真实 MySQL device/agent 全链回归通过。用户 grant 的未知对象由同一事务 FK + `invalid_reference` 映射拒绝并完整回滚，不增加重复预查询。
+> **2026-09-16 审计修正**：旧 `/targets` alias 删除前曾补同一 `validDeviceListFilters` 门；KISS-08A 已将其调用方切换到 canonical `/devices` 后物理删除。非法 status/kind/disabled 仍 fail-closed；真实 MySQL device/agent 全链回归通过。用户 grant 的未知对象由同一事务 FK + `invalid_reference` 映射拒绝并完整回滚，不增加重复预查询。
 
 ### KISS-03 SNMP/system/agent 时序统一写入并查询 ClickHouse
 
@@ -142,7 +142,7 @@
 
 - [x] **设计**：冻结历史 URL/query/DTO；三层修正为低频 MySQL 管理定义、逐端口确定性变换后再聚合；MIB 只保存管理元数据；eventlog 以 ClickHouse 为唯一权威且不设臆造 TTL；UDP trap listener 继续复用成熟 dispatcher，经 Agent Registry 凭证入站。
 - [x] **编码**：实现端口 policy/provider-customer defaults、MIB module CRUD、`snmp_events` 写入/重试/幂等和查询/facets、trap 对 port/BGP/recipe/rediscovery 状态的持久化；metrics/aggregate/aggregate-graph 统一在聚合前应用 raw/supplier/customer 规则；无 PB、tenant、VM 双写。
-- [x] **API/UI**：原 `/network/ports/:id/policy`、`/network/traffic-policy-defaults`、`/snmp/mib-modules`、`/network/devices/:id/events[/facets]`、`/snmp/traps`、`/metrics/vmquery` 全部挂入 Gin；事件沿用现有 VTable 的服务端分页/search/sort/column filter，未修改页面或视觉。`vmquery` 保留 path/参数/matrix 响应，VM 特有任意 MetricsQL 改为明确 400，仅执行 typed SNMP selector。
+- [x] **API/UI**：端口策略、全局默认、MIB、设备事件、trap 与历史指标契约均已挂入 Gin；当前 canonical URL 为 `/ports/:id/policy`、`/traffic-policy-defaults`、`/snmp/mib-modules`、`/devices/:id/events[/facets]`、`/snmp/traps`、`/metrics/vmquery`。事件沿用现有 VTable 的服务端分页/search/sort/column filter，未修改页面或视觉。`vmquery` 保留 path/参数/matrix 响应，VM 特有任意 MetricsQL 改为明确 400，仅执行 typed SNMP selector。
 - [x] **单元测试**：覆盖修正规则继承/确定性聚合、raw 权限、事件 SQL 参数/预算/facets、CH event retry/dedup input、Trap source 归一、vmquery selector 白名单和全部路由挂载。
 - [x] **集成测试**：真实一次性 MySQL 覆盖 defaults→port override→MIB upsert/list/delete→管理员 trap 与 SNMP agent Bearer trap→端口状态；真实 ClickHouse 覆盖 event 写入/list/facet 与既有 raw/rate/aggregate/closed bucket/billing，同批测试库均清理。
 - [x] **变更设计/测试**：SNMP agent route 从浏览器 session 组纠正为 agent token/mTLS 或管理员 session 双认证；事件、端口更新和 recipe 唤醒任一失败均返回显式错误；不恢复 MySQL event 双写、VM fallback 或第二套 trap dispatcher。
@@ -249,6 +249,8 @@
 
 ### KISS-08 最终遗留清理与验收
 
+- [x] **KISS-08A 设备 API 单根收敛（本提交）**：补齐 `/devices/summary`、`/devices/:id/snmp`、`/ports/:id/policy` 与 `/traffic-policy-defaults`，前端全部改用 canonical `/devices`、`/ports`、`/bgp`，网络列表显式下推 `kind=network`；删除 `/targets` 与 `/network/{devices,ports,bgp,traffic-policy-defaults}` Gin 路由、专用 handler/DTO 分支。API/UI 参数和响应字段保持兼容，未修改页面路由、布局或视觉。路由反向测试与前端源码门禁禁止旧路径回流；真实隔离 MySQL 完成 device/profile/discovery/inventory/agent/RBAC CRUD 全链，Go/前端全量回归通过。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
@@ -258,7 +260,7 @@
 - [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。
 - [ ] **已提交门禁**：最终删除提交后 clean checkout 可完整部署；所有遗留数据库/volume 已按各工作包的精确白名单处置，不把物理清理拖到项目末尾。
 
-> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。摘要：KISS-08 被**一条 import 链**（`internal/server`→`internal/watchdog` 的 SNMP 域+引擎，65 符号/19 锚文件，L2 可抽出断链）+ **6 遗留 worker**（L10-L14，2 个已被 in-server CH 取代）+ **前端 65 处 compat 调用**（I1-I5）三者钉住，可分步拆，全程不动 KISS 运行时。Phase A（PB 收尾 + 拆危险接线 + 删死码）**现在可做**。
+> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A 已清除前端 compat 调用和 I1-I5 路由；剩余物理清理只由 `internal/server`→`internal/watchdog` 的 SNMP 域 import 链及遗留 worker 钉住，按 Phase B/C/D 推进。
 >
 > **2026-09-15 审计（见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §主题 1/2）**：`internal/server`/`cmd/*` 仍 import 遗留 `internal/watchdog`（作为共享类型库 + `NewBackendRuntime` 泛化栈），删除须先断这些 import——本包正确的延后项。但其**危险接线**建议提前拆（不需整包删除）：①**双安装系统**——`cmd/watchdog-install`+`deploy/migration/mysql`+`install/init.sql` 建出不兼容的 `watchdog_installation`（`id VARCHAR 'default'` vs KISS `id=1`），装完再起 KISS server 报 "Unknown column 'schema_version'" 直接开不了机；仍接在 `Makefile:111-112`、`scripts/watchdog-dev-db.sh`、`docs/watchdog-kiss-architecture.md:115`。②**遗留 worker** `watchdog-aggregate-rollup`/`watchdog-export-worker` 已被 in-server CH worker 取代，且查询 KISS 中不存在的 `collector_agents`/`tenants`（`flow_rollup_jobs.go:451-452`），对 KISS 库运行即失败。③遗留 worker config 仍**必填** VM base_url（`internal/watchdog/config.go:971`）。建议：为遗留安装器/worker 加「拒绝对 KISS 库操作」的响亮守卫，或从 Makefile/scripts/CI/docs 摘除接线，把物理删除留到本包。
 >

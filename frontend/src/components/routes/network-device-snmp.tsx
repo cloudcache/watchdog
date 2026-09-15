@@ -86,9 +86,9 @@ export default memo(({ id }: DeviceSNMPProps) => {
 		setMessage("")
 		try {
 			const [deviceData, profilesData, targetsData] = await Promise.all([
-				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				api.send<NetworkDevice>(`/api/v1/devices/${id}`, {}),
 				api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}),
-				api.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<TargetsResponse>("/api/v1/devices", {}),
 			])
 			setDevice(deviceData)
 			const targetID = deviceData.TargetID ?? deviceData.target_id ?? ""
@@ -124,7 +124,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 			if (snmpCommunity) {
 				body.SNMPSecurity = { community: snmpCommunity }
 			}
-			const updated = await api.send<NetworkDevice>(`/api/v1/network/devices/${id}/snmp`, {
+			const updated = await api.send<NetworkDevice>(`/api/v1/devices/${id}/snmp`, {
 				method: "PATCH",
 				body,
 			})
@@ -142,7 +142,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 		setDiscovering(true)
 		setMessage("")
 		try {
-			const result = await api.send<SNMPDiscoverResponse>(`/api/v1/network/devices/${id}/snmp/discover`, {
+			const result = await api.send<SNMPDiscoverResponse>(`/api/v1/devices/${id}/snmp/discover`, {
 				method: "POST",
 			})
 			setMessage(t`Discovered ${result.count ?? result.ports?.length ?? 0} interfaces`)

@@ -90,8 +90,8 @@ export default memo(({ id }: PortPolicyProps) => {
 		setMessage("")
 		try {
 			const [portData, policyData] = await Promise.all([
-				api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {}),
-				api.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {}),
+				api.send<NetworkPortResponse>(`/api/v1/ports/${id}`, {}),
+				api.send<PortPolicy>(`/api/v1/ports/${id}/policy`, {}),
 			])
 			setPort(portData.port ?? null)
 			setDevice(portData.device ?? null)
@@ -115,7 +115,7 @@ export default memo(({ id }: PortPolicyProps) => {
 		setSaving(true)
 		setMessage("")
 		try {
-			const saved = await api.send<PortPolicy>(`/api/v1/network/ports/${id}/policy`, {
+			const saved = await api.send<PortPolicy>(`/api/v1/ports/${id}/policy`, {
 				method: "PATCH",
 				body: normalizePolicy(policy, id),
 			})

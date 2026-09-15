@@ -91,7 +91,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<NetworkPortResponse>(`/api/v1/network/ports/${id}`, {
+			const data = await api.send<NetworkPortResponse>(`/api/v1/ports/${id}`, {
 				onResponse: (response) => {
 					etagRef.current = response.headers.get("ETag") ?? ""
 				},
@@ -125,7 +125,7 @@ export default memo(({ id }: NetworkPortFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			const saved = await api.send<NetworkPort>(`/api/v1/network/ports/${id}`, {
+			const saved = await api.send<NetworkPort>(`/api/v1/ports/${id}`, {
 				method: "PATCH",
 				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
 				body: {

@@ -17,6 +17,14 @@ type NetworkDevice = {
 	id?: string
 	TargetID?: string
 	target_id?: string
+	Name?: string
+	name?: string
+	Host?: string
+	host?: string
+	Status?: string
+	status?: string
+	Labels?: Record<string, string>
+	labels?: Record<string, string>
 	Vendor?: string
 	vendor?: string
 	Model?: string
@@ -50,19 +58,6 @@ type SNMPProfile = {
 
 type SNMPProfilesResponse = {
 	items?: SNMPProfile[]
-}
-
-type TargetRecord = {
-	ID?: string
-	id?: string
-	Name?: string
-	name?: string
-	Host?: string
-	host?: string
-	Status?: string
-	status?: string
-	Labels?: Record<string, string>
-	labels?: Record<string, string>
 }
 
 type NetworkDeviceFormProps = {
@@ -117,9 +112,9 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
-	// Weak ETag of the target from the last load, echoed as If-Match on save so a
+	// Weak ETag of the device from the last load, echoed as If-Match on save so a
 	// concurrent edit is rejected (412) instead of silently overwritten.
-	const targetEtagRef = useRef("")
+	const deviceEtagRef = useRef("")
 
 	const load = useCallback(async () => {
 		setLoading(true)
@@ -131,7 +126,11 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				return
 			}
 			const [device, profilesResponse] = await Promise.all([
-				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
+				api.send<NetworkDevice>(`/api/v1/devices/${id}`, {
+					onResponse: (response) => {
+						deviceEtagRef.current = response.headers.get("ETag") ?? ""
+					},
+				}),
 				api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {}).catch((err) => {
 					setProfilesError(err instanceof Error ? err.message : t`Failed to load SNMP profiles`)
 					return { items: [] }
@@ -139,24 +138,14 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 			])
 			const profiles = profilesResponse.items ?? []
 			setSNMPProfiles(profiles)
-			const targetID = device.TargetID ?? device.target_id ?? ""
-			let target: TargetRecord = {}
-			if (targetID) {
-				target = await api
-					.send<TargetRecord>(`/api/v1/targets/${targetID}`, {
-						onResponse: (response) => {
-							targetEtagRef.current = response.headers.get("ETag") ?? ""
-						},
-					})
-					.catch(() => ({}))
-			}
+			const deviceID = device.ID ?? device.id ?? id
 			setForm({
-				id: device.ID ?? device.id ?? id,
-				targetID,
-				targetName: target.Name ?? target.name ?? "",
-				host: target.Host ?? target.host ?? "",
-				status: target.Status ?? target.status ?? "pending",
-				labels: target.Labels ?? target.labels ?? {},
+				id: deviceID,
+				targetID: deviceID,
+				targetName: device.Name ?? device.name ?? "",
+				host: device.Host ?? device.host ?? "",
+				status: device.Status ?? device.status ?? "pending",
+				labels: device.Labels ?? device.labels ?? {},
 				vendor: device.Vendor ?? device.vendor ?? "",
 				model: device.Model ?? device.model ?? "",
 				platform: device.Platform ?? device.platform ?? "",
@@ -202,51 +191,31 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 		setSaving(true)
 		setError("")
 		try {
-			await api.send(`/api/v1/targets/${form.targetID}`, {
-				method: "PATCH",
-				headers: targetEtagRef.current ? { "If-Match": targetEtagRef.current } : undefined,
-				body: {
-					id: form.targetID,
-					name: form.targetName.trim(),
-					kind: "network",
-					host: form.host.trim(),
-					status: form.status,
-					labels: form.labels,
-				},
-			})
-			const body = {
-				ID: form.id.trim(),
-				TargetID: form.targetID,
-				Vendor: form.vendor.trim(),
-				Model: form.model.trim(),
-				Platform: form.platform.trim(),
-				OSName: form.osName.trim(),
-				OSVersion: form.osVersion.trim(),
-				SysName: form.sysName.trim(),
-				SysObjectID: form.sysObjectID.trim(),
-				SysDescr: form.sysDescr.trim(),
-			}
-			const snmpBody: {
-				SNMPProfileID: string
-				SNMPPort: number
-				SNMPSecurity?: { community: string }
-			} = {
-				SNMPProfileID: form.snmpProfileID,
-				SNMPPort: Number(form.snmpPort),
+			const body: Record<string, unknown> = {
+				display_name: form.targetName.trim(),
+				kind: "network",
+				host: form.host.trim(),
+				status: form.status,
+				labels: form.labels,
+				vendor: form.vendor.trim(),
+				model: form.model.trim(),
+				platform: form.platform.trim(),
+				os: form.osName.trim(),
+				os_version: form.osVersion.trim(),
+				sys_name: form.sysName.trim(),
+				sys_object_id: form.sysObjectID.trim(),
+				sys_descr: form.sysDescr.trim(),
+				snmp_profile_id: form.snmpProfileID,
+				snmp_port: Number(form.snmpPort),
 			}
 			if (form.snmpCommunity) {
-				snmpBody.SNMPSecurity = { community: form.snmpCommunity }
+				body.snmp_security = { community: form.snmpCommunity }
 			}
-			const [saved] = await Promise.all([
-				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {
-					method: "PATCH",
-					body,
-				}),
-				api.send(`/api/v1/network/devices/${id}/snmp`, {
-					method: "PATCH",
-					body: snmpBody,
-				}),
-			])
+			const saved = await api.send<NetworkDevice>(`/api/v1/devices/${form.id}`, {
+				method: "PATCH",
+				headers: deviceEtagRef.current ? { "If-Match": deviceEtagRef.current } : undefined,
+				body,
+			})
 			navigate(getPagePath($router, "network_device", { id: saved.ID ?? saved.id ?? form.id }))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to save network device`)

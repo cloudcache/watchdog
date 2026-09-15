@@ -165,7 +165,7 @@ export default memo(() => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		api.send<DeviceSummariesResponse>("/api/v1/network/devices/summary", { query: buildQuery() })
+		api.send<DeviceSummariesResponse>("/api/v1/devices/summary", { query: buildQuery() })
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setRecords((data.items ?? []).map(toTableRecord))

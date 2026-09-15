@@ -130,7 +130,7 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 				portIDs.map((portID) =>
 					api
 						// the endpoint wraps the row as { device, port }
-						.send<{ device?: PortDevice; port?: NetworkPort } & NetworkPort>(`/api/v1/network/ports/${portID}`, {})
+						.send<{ device?: PortDevice; port?: NetworkPort } & NetworkPort>(`/api/v1/ports/${portID}`, {})
 						.then((response): PortMember => ({ device: response.device, port: response.port ?? response }))
 						.catch(() => null as PortMember | null)
 				)

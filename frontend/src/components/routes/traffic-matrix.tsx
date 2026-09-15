@@ -328,7 +328,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	useEffect(() => {
 		Promise.all([
 			api.send<AddressSetList>("/api/v1/address-sets", {}),
-			api.send<DeviceList>("/api/v1/network/devices", {}),
+			api.send<DeviceList>("/api/v1/devices", { query: { kind: "network" } }),
 		])
 			.then(([sets, devs]) => {
 				setAddressSets(sets.items ?? [])

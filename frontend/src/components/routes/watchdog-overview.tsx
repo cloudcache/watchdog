@@ -33,8 +33,8 @@ export default memo(() => {
 
 	const refresh = useCallback(async () => {
 		const [networkTargets, targets, exports, billing, permissions, snmp] = await Promise.allSettled([
-			countItems("/api/v1/network/devices/summary"),
-			countItems("/api/v1/targets"),
+			countItems("/api/v1/devices/summary"),
+			countItems("/api/v1/devices"),
 			countItems("/api/v1/exports"),
 			countItems("/api/v1/billing/accounts"),
 			countItems("/api/v1/permissions"),

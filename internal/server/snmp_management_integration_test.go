@@ -99,22 +99,22 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 		t.Fatalf("built-in MIB reseed overwrote admin state or missed content: enabled=%t version=%q checksum=%q", builtinEnabled, builtinVersion, builtinChecksum)
 	}
 
-	defaultPolicy := snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/network/ports/"+portID+"/policy", "port_id", portID, nil)
+	defaultPolicy := snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/ports/"+portID+"/policy", "port_id", portID, nil)
 	if defaultPolicy.Code != http.StatusOK || !strings.Contains(defaultPolicy.Body.String(), `"SideType":"provider"`) || !strings.Contains(defaultPolicy.Body.String(), `"BillingBaseBps":1073741824`) {
 		t.Fatalf("default policy: status=%d body=%s", defaultPolicy.Code, defaultPolicy.Body.String())
 	}
-	updatedDefaults := snmpManagementRequest(t, s.putTrafficPolicyDefaults, principal, http.MethodPut, "/api/v1/network/traffic-policy-defaults", "", "", map[string]any{
+	updatedDefaults := snmpManagementRequest(t, s.putTrafficPolicyDefaults, principal, http.MethodPut, "/api/v1/traffic-policy-defaults", "", "", map[string]any{
 		"Provider": map[string]any{"BillingBaseBps": 2_000_000_000, "SampleStep": int64(5 * time.Minute), "CorrectionDirection": "none"},
 		"Customer": map[string]any{"BillingBaseBps": 1_000_000_000, "SampleStep": int64(time.Minute), "CorrectionDirection": "none"},
 	})
 	if updatedDefaults.Code != http.StatusOK {
 		t.Fatalf("update defaults: status=%d body=%s", updatedDefaults.Code, updatedDefaults.Body.String())
 	}
-	defaultPolicy = snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/network/ports/"+portID+"/policy", "port_id", portID, nil)
+	defaultPolicy = snmpManagementRequest(t, s.getPortPolicy, principal, http.MethodGet, "/api/v1/ports/"+portID+"/policy", "port_id", portID, nil)
 	if !strings.Contains(defaultPolicy.Body.String(), `"BillingBaseBps":2000000000`) {
 		t.Fatalf("admin default was not inherited: %s", defaultPolicy.Body.String())
 	}
-	override := snmpManagementRequest(t, s.patchPortPolicy, principal, http.MethodPatch, "/api/v1/network/ports/"+portID+"/policy", "port_id", portID, map[string]any{
+	override := snmpManagementRequest(t, s.patchPortPolicy, principal, http.MethodPatch, "/api/v1/ports/"+portID+"/policy", "port_id", portID, map[string]any{
 		"SideType": "customer", "BillingBaseBps": 1_000_000_000, "SampleStep": int64(time.Minute),
 		"CorrectionDirection": "up", "CorrectionMin": 10, "CorrectionMax": 10, "Enabled": true,
 	})

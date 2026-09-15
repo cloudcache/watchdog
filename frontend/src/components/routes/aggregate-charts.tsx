@@ -145,7 +145,7 @@ export default memo(() => {
 		setError("")
 		try {
 			const [deviceData, metricData] = await Promise.all([
-				api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+				api.send<{ items?: NetworkDevice[] }>("/api/v1/devices", { query: { kind: "network" } }),
 				api.send<{ items?: MetricDefinition[] }>("/api/v1/metrics/catalog", {}),
 			])
 			const nextDevices = deviceData.items ?? []
@@ -155,7 +155,7 @@ export default memo(() => {
 				nextDevices.map(async (device) => {
 					const id = deviceID(device)
 					const data = await api
-						.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
+						.send<{ items?: NetworkPort[] }>(`/api/v1/devices/${id}/ports`, {})
 						.catch(() => ({ items: [] as NetworkPort[] }))
 					return [id, data.items ?? []] as const
 				})

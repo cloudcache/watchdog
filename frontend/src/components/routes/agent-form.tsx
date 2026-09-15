@@ -71,7 +71,7 @@ export default memo(({ id }: AgentFormProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const targetsData = await api.send<TargetsResponse>("/api/v1/targets", {})
+			const targetsData = await api.send<TargetsResponse>("/api/v1/devices", {})
 			const targetItems = targetsData.items ?? []
 			setTargets(targetItems)
 			if (!id) {

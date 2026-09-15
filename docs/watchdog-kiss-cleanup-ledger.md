@@ -13,9 +13,9 @@
 | **KISS-01E** 编码删除 | 移除 PB 源码/依赖/SQLite/volume + PB 时代字段文字 | 活跃路径 PB=0（已核）。剩余仅**非运行时**文字残留：死的 PB-hub Dockerfile+CI（L19a）、init/migration PB 字段与注释（S1/S2、L19c）、GitHub 模板（L19b）、PB 告警表 dump（S10） | **ready**——清完这几项即可勾「编码删除」；「回归/clean-stack 验收」门属运维另计 |
 | **KISS-08** 遗留清理 | 删 `internal/watchdog`/VM/tenant/provider/旧 targets/兼容 adapter | **唯一硬阻断链**：`internal/server`（13 文件）import `internal/watchdog`（65 符号=SNMP 域+引擎，L1/L2）。分解为 (a) 抽 SNMP 切片断 import（L2-L4，ready）；(b) 退役 6 遗留 worker（L10-L14，2 个已被 in-server CH 取代）。之后整包 + `robfig/cron` + VM 配置随之删（L1/L6-L9/L15/L17） | **blocked-by-L2 + workers**——但可分步 |
 | **危险接线**（属 KISS-08，但可现在拆） | —— | 遗留安装器建不兼容 `watchdog_installation` 会 brick KISS boot（S3/L12）；两超期 worker 查 KISS 不存在的 `collector_agents⋈tenants`（S5/L10-L11） | **ready**——加库守卫或摘 Makefile/scripts/CI 接线 |
-| **接口收敛**（KISS-02→08） | 删 `/targets`+`/network/*` compat alias | 35 条 compat 路由（I1-I5）仍被前端 65 处调用；且端口 CRUD/策略、设备 snmp-patch、设备 events **仅在** alias 上，canonical 面不全 | **blocked-by-前端迁移 + 补 canonical** |
+| **接口收敛**（KISS-02→08） | 删 `/targets`+设备领域 `/network/*` compat alias | canonical 缺口已补、前端调用已迁、I1-I5 路由及专用 target handler/DTO 分支已删除；源码与路由反向测试防回流 | **done（KISS-08A）** |
 
-**一句话结论**：KISS 运行时（`cmd/watchdog-server`→`internal/server`→`deploy/schema/mysql`）干净自洽、无 blocker。所有遗留物由**一条 import 链**（server→watchdog 的 SNMP 切片）+ **6 个遗留 cmd worker** + **前端 compat 调用**三者钉住；三者互相独立，可分步拆除，全程不动 KISS 运行时。
+**一句话结论**：KISS 运行时（`cmd/watchdog-server`→`internal/server`→`deploy/schema/mysql`）干净自洽、无 blocker。设备 API compat 调用与路由已清；剩余遗留物由**一条 import 链**（server→watchdog 的 SNMP 切片）+ **6 个遗留 cmd worker**钉住，两者可分步拆除。
 
 ---
 
@@ -76,17 +76,17 @@ KISS `deploy/schema/mysql` 30 迁移 = live 79 表；真实 `tenant_id`/PB 列 *
 
 ## 3. 接口 / 路由台账（I1–I5）
 
-canonical 面已存在：`/devices`（CRUD + `/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags,snmp/discover}`）、`/device-groups`、`/locations`、`/snmp-profiles`。compat alias 全部委派同一批 device/port handler（无逻辑分叉，见审计 §4）。
+canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devices/:id/{ports,addresses,bgp,sensors,inventory,vlans,lags,events}`）、`/ports`（CRUD/policy）、`/bgp`、`/traffic-policy-defaults`、`/device-groups`、`/locations`、`/snmp-profiles`。I1-I5 已在 KISS-08A 删除。
 
 | ID | 路由组 | 精确位置 | 条数 | 前端调用 | 删除影响 | 前置 | 归属 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| I1 | `/network/devices` | `router.go:186-204` | 19 | ×37 | 委派同 handler | 前端切 `/devices` | KISS-08 | blocked-by-前端 |
-| I2 | `/network/ports` | `router.go:207-213` | 6 | ×9 | 委派同 handler；**端口 CRUD/policy 仅在此** | 前端切 + **补 canonical `/ports`** | KISS-08 | blocked |
-| I3 | `/network/bgp` | `router.go:214-216` | 2 | ×1 | 委派同 handler | 前端切 `/devices/:id/bgp` | KISS-08 | blocked-by-前端 |
-| I4 | `/targets` | `router.go:217-223` | 6 | ×18 | 委派 device handler（`system↔host` DTO 映射） | 前端切 `/devices` | KISS-08 | blocked-by-前端 |
-| I5 | `/network/traffic-policy-defaults` + `/network/devices/:id/snmp`、`/:id/events` | `router.go:194,203-206` | 2+ | 含于上 | `patchDeviceSNMP`/设备 events **仅在** alias | 补 canonical 后前端切 | KISS-08 | blocked |
+| I1 | `/network/devices` | 历史 `router.go` | 19 | 0 | 已删；network 列表通过 `/devices?kind=network`，summary 通过 `/devices/summary` | 已满足 | KISS-08A | done |
+| I2 | `/network/ports` | 历史 `router.go` | 6 | 0 | 已删；CRUD/delete-preview/policy 均由 `/ports` 承接 | 已满足 | KISS-08A | done |
+| I3 | `/network/bgp` | 历史 `router.go` | 2 | 0 | 已删；全局 BGP 由 `/bgp` 承接 | 已满足 | KISS-08A | done |
+| I4 | `/targets` | 历史 `router.go` | 6 | 0 | 已删；host/network 共用 `/devices`，内部 `host` kind 在 API 返回 `system` | 已满足 | KISS-08A | done |
+| I5 | `/network/traffic-policy-defaults` + 设备 SNMP/events | 历史 `router.go` | 2+ | 0 | 已删；分别由 `/traffic-policy-defaults`、`/devices/:id/snmp`、`/devices/:id/events` 承接 | 已满足 | KISS-08A | done |
 
-**影响评估**：compat 路由本身零逻辑分叉（安全），但**不是纯冗余**——端口 CRUD/策略、设备 SNMP-patch、设备 events 只在 `/network/*` 上，canonical 面不全。故删 compat 的正确顺序：①补齐 canonical `/ports` 与设备 snmp-patch/events；②前端 65 处调用（`/network/devices`×37、`/network/ports`×9、`/targets`×18、`/network/bgp`×1）迁到 canonical；③删 I1-I5。**注意 UI 契约冻结规则**（tasklist §0：不改导航/IA/交互）——前端迁移须纯换 URL。
+**完成证据**：先补 canonical 缺口，再机械迁移前端 API URL并给 network 选择器增加服务端 `kind=network`，最后删除 I1-I5 与 target 专用响应分支。路由反向测试禁止旧 alias 挂载，前端源码测试禁止旧 API 字符串回流；未修改浏览器页面路由、导航、布局和视觉。
 
 ---
 
@@ -108,8 +108,8 @@ canonical 面已存在：`/devices`（CRUD + `/devices/:id/{ports,addresses,bgp,
 **Phase D — 整包 + 依赖 + schema 树删除（KISS-08 收尾）**
 6. 无 importer 后删整 `internal/watchdog`（L1、L6-L9）+ `robfig/cron`（L17）+ 遗留 VM 校验（L15）+ 遗留 schema 树 `deploy/migration/mysql`+`install/init.sql`（S3-S12 载体）。
 
-**Phase E — 接口收敛（独立，可最后）**
-7. 补 canonical `/ports`/snmp-patch/events → 前端 65 处迁 URL → 删 compat I1-I5。
+**Phase E — 接口收敛（KISS-08A 已完成）**
+7. 已补 canonical `/ports`/snmp-patch/events/defaults，前端设备领域调用已迁到 canonical URL，compat I1-I5 已删除；真实 MySQL device/agent CRUD 与 Go/前端门禁通过。
 
 ---
 

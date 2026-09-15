@@ -67,7 +67,7 @@ export default memo(() => {
 		setError("")
 		try {
 			const [targetData, retentionData] = await Promise.all([
-				api.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<TargetsResponse>("/api/v1/devices", {}),
 				api.send<RetentionPoliciesResponse>("/api/v1/retention/policies", {}),
 			])
 			setTargets(targetData.items ?? [])

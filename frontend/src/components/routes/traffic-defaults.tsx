@@ -47,7 +47,7 @@ export default memo(() => {
 		setLoading(true)
 		setMessage("")
 		try {
-			const data = await api.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {})
+			const data = await api.send<TrafficPolicyDefaults>("/api/v1/traffic-policy-defaults", {})
 			setProvider(data.Provider ?? data.provider ?? { SideType: "provider" })
 			setCustomer(data.Customer ?? data.customer ?? { SideType: "customer" })
 		} catch (err) {
@@ -66,7 +66,7 @@ export default memo(() => {
 		setSaving(true)
 		setMessage("")
 		try {
-			const data = await api.send<TrafficPolicyDefaults>("/api/v1/network/traffic-policy-defaults", {
+			const data = await api.send<TrafficPolicyDefaults>("/api/v1/traffic-policy-defaults", {
 				method: "PUT",
 				body: { Provider: provider, Customer: customer },
 			})

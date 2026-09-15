@@ -265,13 +265,13 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setError("")
 		try {
 			const [deviceData, portsData, bgpData, sensorData, targetsData, dashboardData] = await Promise.all([
-				api.send<NetworkDevice>(`/api/v1/network/devices/${id}`, {}),
-				api.send<NetworkPortsResponse>(`/api/v1/network/devices/${id}/ports`, {}),
-				api.send<BGPSessionsResponse>(`/api/v1/network/devices/${id}/bgp?limit=1`, {}),
-				api.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
+				api.send<NetworkDevice>(`/api/v1/devices/${id}`, {}),
+				api.send<NetworkPortsResponse>(`/api/v1/devices/${id}/ports`, {}),
+				api.send<BGPSessionsResponse>(`/api/v1/devices/${id}/bgp?limit=1`, {}),
+				api.send<NetworkDeviceSensorsResponse>(`/api/v1/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
 					() => ({ items: [], total: 0, counts: { total: 0, problems: 0 } })
 				),
-				api.send<TargetsResponse>("/api/v1/targets", {}),
+				api.send<TargetsResponse>("/api/v1/devices", {}),
 				api.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
 			])
 			setDevice(deviceData)
@@ -382,7 +382,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const openDeletePreview = async () => {
 		setError("")
 		try {
-			const preview = await api.send<{ impacts?: DeviceDeleteImpact[] }>(`/api/v1/network/devices/${id}/delete-preview`, {})
+			const preview = await api.send<{ impacts?: DeviceDeleteImpact[] }>(`/api/v1/devices/${id}/delete-preview`, {})
 			setDeleteImpacts(preview.impacts ?? [])
 		} catch {
 			setDeleteImpacts([])
@@ -395,7 +395,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setLoading(true)
 		setError("")
 		try {
-			const response = await api.send<{ job_id?: string } | null>(`/api/v1/network/devices/${id}`, { method: "DELETE" })
+			const response = await api.send<{ job_id?: string } | null>(`/api/v1/devices/${id}`, { method: "DELETE" })
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
@@ -420,7 +420,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 		setRediscovering(true)
 		setError("")
 		try {
-			await api.send(`/api/v1/network/devices/${id}/snmp/discover`, { method: "POST" })
+			await api.send(`/api/v1/devices/${id}/snmp/discover`, { method: "POST" })
 			await refresh()
 			await refreshPortTraffic()
 		} catch (err) {
@@ -951,7 +951,7 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<NetworkDeviceSensorsResponse>(`/api/v1/network/devices/${deviceId}/sensors`, {
+			const data = await api.send<NetworkDeviceSensorsResponse>(`/api/v1/devices/${deviceId}/sensors`, {
 				query: {
 					q: query || undefined,
 					health: health === "all" ? undefined : health,
@@ -1127,7 +1127,7 @@ function DevicePortsTable({
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<NetworkPortsResponse>(`/api/v1/network/devices/${deviceId}/ports`, {
+			const data = await api.send<NetworkPortsResponse>(`/api/v1/devices/${deviceId}/ports`, {
 				query: {
 					q: query || undefined,
 					admin_status: adminStatus === "all" ? undefined : adminStatus,
@@ -1337,7 +1337,7 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<BGPSessionsResponse>(`/api/v1/network/devices/${deviceId}/bgp`, {
+			const data = await api.send<BGPSessionsResponse>(`/api/v1/devices/${deviceId}/bgp`, {
 				query: {
 					q: query || undefined,
 					state: state === "all" ? undefined : state,
@@ -1780,7 +1780,7 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 		setError("")
 		try {
 			const data = await api.send<{ items?: DeviceVLAN[]; total?: number }>(
-				`/api/v1/network/devices/${deviceId}/vlans`,
+				`/api/v1/devices/${deviceId}/vlans`,
 				{
 					query: {
 						q: query || undefined,
@@ -1936,7 +1936,7 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 		setError("")
 		try {
 			const data = await api.send<{ items?: DeviceLAGGroup[]; total?: number }>(
-				`/api/v1/network/devices/${deviceId}/lags`,
+				`/api/v1/devices/${deviceId}/lags`,
 				{
 					query: {
 						q: query || undefined,
@@ -2126,7 +2126,7 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 				if (values.length > 0) params.set(`filter.${field}`, values.join(","))
 			}
 			const data = await api.send<{ items?: SNMPEventEntry[]; total?: number }>(
-				`/api/v1/network/devices/${deviceId}/events?${params.toString()}`,
+				`/api/v1/devices/${deviceId}/events?${params.toString()}`,
 				{}
 			)
 			if (sequence !== requestSequence.current) return
@@ -2204,7 +2204,7 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 				if (values.length > 0) params.set(`filter.${filterField}`, values.join(","))
 			}
 			const data = await api.send<{ items?: { value: string; count: number }[] }>(
-				`/api/v1/network/devices/${deviceId}/events/facets?${params.toString()}`,
+				`/api/v1/devices/${deviceId}/events/facets?${params.toString()}`,
 				{ signal }
 			)
 			return (data.items ?? []).map((item) => ({ value: item.value, count: item.count }))
@@ -2293,7 +2293,7 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 			if (classQuery) params.set("class", classQuery)
 			if (fru !== "all") params.set("fru", fru)
 			const data = await api.send<{ items?: PhysicalEntity[]; total?: number }>(
-				`/api/v1/network/devices/${deviceId}/inventory?${params}`,
+				`/api/v1/devices/${deviceId}/inventory?${params}`,
 				{}
 			)
 			if (sequence === requestSequence.current) {

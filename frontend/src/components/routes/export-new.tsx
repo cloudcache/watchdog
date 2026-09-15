@@ -74,8 +74,8 @@ export default memo(() => {
 	useEffect(() => {
 		document.title = `${t`Create Export`} / Watchdog`
 		Promise.all([
-			api.send<TargetsResponse>("/api/v1/targets", {}),
-			api.send<{ items?: NetworkDevice[] }>("/api/v1/network/devices", {}),
+			api.send<TargetsResponse>("/api/v1/devices", {}),
+			api.send<{ items?: NetworkDevice[] }>("/api/v1/devices", { query: { kind: "network" } }),
 		])
 			.then(([targetData, deviceData]) => {
 				setTargets(targetData.items ?? [])
@@ -115,7 +115,7 @@ export default memo(() => {
 		}
 		Promise.all(
 			missingDeviceIDs.map(async (id) => {
-				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/network/devices/${id}/ports`, {})
+				const data = await api.send<{ items?: NetworkPort[] }>(`/api/v1/devices/${id}/ports`, {})
 				return [id, data.items ?? []] as const
 			})
 		)

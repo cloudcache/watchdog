@@ -293,7 +293,7 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 		setToken("")
 		setError("")
 		api
-			.send<{ items?: EnrollmentTarget[] }>("/api/v1/targets", { query: { limit: 500 } })
+			.send<{ items?: EnrollmentTarget[] }>("/api/v1/devices", { query: { limit: 500 } })
 			.then((result) => setTargets(result.items ?? []))
 			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load targets`))
 	}, [open, t])
