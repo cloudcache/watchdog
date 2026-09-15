@@ -104,7 +104,10 @@ func (s *Store) resolveLinePredicate(ctx context.Context, line GeoLine, visited 
 	if len(excludeParts) == 0 {
 		return inc, incArgs, nil
 	}
-	return "(" + inc + ") AND NOT (" + strings.Join(excludeParts, " OR ") + ")", append(incArgs, excludeArgs...), nil
+	// `IS TRUE` guards SQL three-valued logic: a bare NOT(pred) is NULL (not TRUE)
+	// when pred is NULL — e.g. NOT(subdivision_name='x') on a NULL subdivision —
+	// which would wrongly drop rows that are simply not in the excluded set.
+	return "(" + inc + ") AND NOT ((" + strings.Join(excludeParts, " OR ") + ") IS TRUE)", append(incArgs, excludeArgs...), nil
 }
 
 // includePredicate builds "(family AND geo AND operator AND asn) OR members" for
