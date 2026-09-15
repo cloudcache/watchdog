@@ -5,7 +5,8 @@ import * as RechartsPrimitive from "recharts"
 import { chartTimeData, cn } from "@/lib/utils"
 import type { ChartData } from "@/types"
 import { Separator } from "./separator"
-import { AxisDomain } from "recharts/types/util/types"
+import type { NameType, Payload as TooltipPayload, ValueType } from "recharts/types/component/DefaultTooltipContent"
+import type { AxisDomain } from "recharts/types/util/types"
 
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const
@@ -101,7 +102,7 @@ const ChartTooltipContent = React.forwardRef<
 			labelKey?: string
 			unit?: string
 			filter?: string
-			contentFormatter?: (item: any, key: string) => React.ReactNode | string
+			contentFormatter?: (item: TooltipPayload<ValueType, NameType>, key: string) => React.ReactNode | string
 			truncate?: boolean
 			showTotal?: boolean
 			totalLabel?: React.ReactNode
@@ -175,7 +176,7 @@ const ChartTooltipContent = React.forwardRef<
 			}
 
 			const totalKey = "__total__"
-			const totalItem: any = {
+			const totalItem: TooltipPayload<ValueType, NameType> = {
 				value: totalValue,
 				name: totalName,
 				dataKey: totalKey,

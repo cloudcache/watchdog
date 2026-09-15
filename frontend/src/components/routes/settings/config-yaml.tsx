@@ -23,10 +23,10 @@ export default function ConfigYaml() {
 			setIsLoading(true)
 			const { config } = await api.send<{ config: string }>("/api/v1/config", {})
 			setConfigContent(config)
-		} catch (error: any) {
+		} catch (error: unknown) {
 			toast({
 				title: t`Error`,
-				description: error.message,
+				description: error instanceof Error ? error.message : String(error),
 				variant: "destructive",
 			})
 		} finally {

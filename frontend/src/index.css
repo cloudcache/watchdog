@@ -158,7 +158,7 @@
 
 	thead.sticky:before {
 		content: "";
-		@apply absolute -top-2 left-0 w-full h-4 bg-table-header z-50
+		@apply absolute -top-2 left-0 w-full h-4 bg-table-header z-50;
 	}
 }
 

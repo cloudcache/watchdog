@@ -169,8 +169,8 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
 ## 平台缺陷登记
 
 - [x] **PLAT-DEV-01 npm-only 本地启动契约**：删除 Bun lock/CI/Makefile 分支、development-tag 代理、custom static server 和全部 `:5173` 运行时代码；前端用 `npm run dev` 固定启动 `:8090`，Hub 用 `make dev-hub` 启动 `:8091`。Vite仅承担本地前端开发和 `npm run build`，不代理 API。
-- [ ] **PLAT-FE-01 前端静态检查基线**：全量 Biome 仍有历史问题（最近审计 52 errors/45 warnings，集中在非本轮 router/types/login 等文件）；后续按目录建立 no-new-error 门禁并分片清零。当前工作包只要求变更文件定向 lint 通过，禁止借 Flow 功能提交做全局格式重写。
-- [ ] **PLAT-FE-02 Node 25 VTable 测试依赖兼容**：`npm test` 当前 37/38 通过，`src/lib/vtable.test.ts` 在 Node 25 加载 `@visactor/vtable-editors` 时因包内 `es/index.js` 无扩展导入 `es/input-editor` 报 `ERR_MODULE_NOT_FOUND`；Vite production build 与本轮变更文件 Biome 均通过。平台侧应冻结受支持 Node 版本或升级/patch 上游包并恢复完整测试门禁，禁止在 Flow 提交里改写依赖解析。
+- [x] **PLAT-FE-01 前端静态检查基线**：2026-09-16 独立卫生包已把全量 Biome 从 42 errors/38 warnings 清零；修复均限于类型边界、可访问性语义和一处 CSS 缺分号，不改视觉、路由或 API。Tailwind v4 自定义 at-rule 仅在 `src/index.css` 对 Biome 2.2.4 的不适用规则做单文件豁免。全量 lint、47 个前端测试和 production build 通过。
+- [x] **PLAT-FE-02 Node 25 VTable 测试依赖兼容**：Node `v25.2.1` 下 `src/lib/vtable.test.ts` 已随全量 `npm test` 正常加载，47/47 通过，不再出现 `ERR_MODULE_NOT_FOUND`；当前 package/lockfile 无需为此引入 patch 或第二套解析路径。
 - [ ] **PLAT-WEB-01 前后端独立运行边界**：前端运行时只配置一个 `API_URL` 并由浏览器直连 API/Auth Hub，禁止内置 API 代理。Hub 用 allowlist CORS 开放所需 method/header/exposed header；覆盖登录/登出、OAuth、SSE、下载、base path、API 故障恢复和旧单体兼容。镜像、nginx 和静态托管不在本任务范围。
   - [x] **设计/编码**：`watchdog-config.js` 只有一个 `API_URL`，浏览器 API/auth/SSE/download 与生成的 agent 命令全部使用它；PocketBase client 和 `/api/v1` raw fetch 共用同一 API base；本地前端只通过 `npm run dev` 启动，Vite 无 proxy；Hub 响应暴露 ETag/Content-Disposition/X-Request-ID，origin admission 使用显式 `serve --origins`。
   - [x] **单元/进程内集成**：runtime config 合并、单一 API base 的单体同源/独立跨源选择、Content-Disposition 下载文件名和 Hub exposed headers 已覆盖；不以进程内测试冒充浏览器 CORS admission。

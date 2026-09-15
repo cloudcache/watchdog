@@ -300,8 +300,12 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 								{isAdmin() && <SelectItem value="both">both</SelectItem>}
 							</SelectContent>
 						</Select>
-						<label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-							<Checkbox checked={splitSideType} onCheckedChange={(value) => setSplitSideType(value === true)} />
+						<label htmlFor="aggregate-graph-split-side" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+							<Checkbox
+								id="aggregate-graph-split-side"
+								checked={splitSideType}
+								onCheckedChange={(value) => setSplitSideType(value === true)}
+							/>
 							<Trans>Split side</Trans>
 						</label>
 						<Select value={windowValue} onValueChange={setWindowValue}>

@@ -176,10 +176,13 @@ export default memo(({ id }: ExportDetailProps) => {
 					<Button
 						size="sm"
 						disabled={!canDownload}
-						onClick={() =>
-							task &&
-							void downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
-						}
+						onClick={() => {
+							if (task) {
+								downloadExport(task).catch((error) =>
+									setError(error instanceof Error ? error.message : String(error))
+								)
+							}
+						}}
 					>
 						<DownloadIcon className="me-2 h-4 w-4" />
 						<Trans>Download</Trans>

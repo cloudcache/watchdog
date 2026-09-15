@@ -303,5 +303,5 @@ function InfoLinkCell({ label, value, detail, href }: { label: string; value?: s
 }
 
 function firstValue(...values: (string | undefined)[]) {
-	return values.find((value) => value && value.trim()) ?? "-"
+	return values.find((value) => value?.trim()) ?? "-"
 }

@@ -263,7 +263,9 @@ export default memo(() => {
 					onCellClick={(record, field) => {
 						const task = record.task as ExportTask
 						if (field === "action" && exportStatus(task) === "complete") {
-							void downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
+							downloadExport(task).catch((error) =>
+								setError(error instanceof Error ? error.message : String(error))
+							)
 						}
 						else navigate(getPagePath($router, "export_detail", { id: exportID(task) }))
 					}}

@@ -558,8 +558,12 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 						<ReportInput label={t`Peak start`} type="time" value={peakStart} onChange={setPeakStart} />
 						<ReportInput label={t`Peak end`} type="time" value={peakEnd} onChange={setPeakEnd} />
 					</div>
-					<label className="flex items-center gap-2 text-sm">
-						<Checkbox checked={peakEnabled} onCheckedChange={(checked) => setPeakEnabled(checked === true)} />
+					<label htmlFor="flow-report-peak-enabled" className="flex items-center gap-2 text-sm">
+						<Checkbox
+							id="flow-report-peak-enabled"
+							checked={peakEnabled}
+							onCheckedChange={(checked) => setPeakEnabled(checked === true)}
+						/>
 						<Trans>Apply the local peak window to every report panel</Trans>
 					</label>
 					{peakEnabled ? <ReportDaySelector value={peakDays} onChange={setPeakDays} /> : null}
@@ -1638,8 +1642,9 @@ function ReportDaySelector({ value, onChange }: { value: number[]; onChange: (va
 				<Trans>Peak weekdays</Trans>
 			</span>
 			{WEEKDAYS.map(([day, label]) => (
-				<label key={day} className="flex items-center gap-1.5 text-sm">
+				<label key={day} htmlFor={`flow-report-peak-day-${day}`} className="flex items-center gap-1.5 text-sm">
 					<Checkbox
+						id={`flow-report-peak-day-${day}`}
 						checked={value.includes(day)}
 						onCheckedChange={(checked) => {
 							const next = checked === true ? [...value, day] : value.filter((item) => item !== day)

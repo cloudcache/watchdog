@@ -26,7 +26,7 @@ export function KeyValueEditor({ value, onChange, disabled, keyLabel, valueLabel
 	const addRow = () => {
 		let key = "key"
 		let index = 1
-		while (Object.prototype.hasOwnProperty.call(value, key)) {
+		while (Object.hasOwn(value, key)) {
 			index += 1
 			key = `key_${index}`
 		}

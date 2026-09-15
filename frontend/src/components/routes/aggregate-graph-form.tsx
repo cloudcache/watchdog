@@ -430,8 +430,15 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 								placeholder={t`Label`}
 							/>
 							<div className="flex items-center gap-2">
-								<label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
-									<Checkbox checked={item.total} onCheckedChange={(value) => updateItem(index, { total: value === true })} />
+								<label
+									htmlFor={`aggregate-graph-item-total-${index}`}
+									className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground"
+								>
+									<Checkbox
+										id={`aggregate-graph-item-total-${index}`}
+										checked={item.total}
+										onCheckedChange={(value) => updateItem(index, { total: value === true })}
+									/>
 									<Trans>Total</Trans>
 								</label>
 								<Button type="button" variant="ghost" size="icon" onClick={() => removeItem(index)}>
@@ -461,8 +468,16 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 							visiblePorts.map((port) => {
 								const portID = port.ID ?? port.id ?? ""
 								return (
-									<label key={portID} className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
-										<Checkbox checked={selectedPorts.includes(portID)} onCheckedChange={() => togglePort(portID)} />
+									<label
+										key={portID}
+										htmlFor={`aggregate-graph-port-${portID}`}
+										className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60"
+									>
+										<Checkbox
+											id={`aggregate-graph-port-${portID}`}
+											checked={selectedPorts.includes(portID)}
+											onCheckedChange={() => togglePort(portID)}
+										/>
 										<span className="min-w-0">
 											<span className="block truncate text-sm font-medium">{portLabel(port)}</span>
 											<span className="block truncate text-xs text-muted-foreground">

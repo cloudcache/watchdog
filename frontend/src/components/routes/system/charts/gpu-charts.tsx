@@ -193,7 +193,7 @@ function GpuEnginesChart({ chartData }: { chartData: ChartData }) {
 		if (!gpus) continue
 		for (const id in gpus) {
 			if (gpus[id].e) {
-				enginesKey = id + "\0" + Object.keys(gpus[id].e).sort().join("\0")
+				enginesKey = `${id}\0${Object.keys(gpus[id].e).sort().join("\0")}`
 				break
 			}
 		}
