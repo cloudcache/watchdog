@@ -100,6 +100,27 @@ func ApplyMySQLMigrations(ctx context.Context, db *sql.DB) (MySQLMigrationResult
 	}
 	defer conn.ExecContext(context.Background(), "SELECT RELEASE_LOCK(?)", mysqlMigrationLock)
 
+	// Refuse to touch a KISS-managed database. The clean stack
+	// (cmd/watchdog-server → internal/server) tracks its schema in
+	// `schema_migrations`; layering this legacy multi-tenant tree + init.sql on
+	// top builds an incompatible `watchdog_installation` (id VARCHAR 'default',
+	// no schema_version) that stops the KISS server from booting with
+	// "Unknown column 'schema_version'". Guards both the legacy installer
+	// (RunInstall applies migrations first) and the NewBackendRuntime workers.
+	// See docs/watchdog-kiss-cleanup-ledger.md (S3/L12).
+	var kissManaged int
+	if err := conn.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = DATABASE() AND table_name = 'schema_migrations'
+	`).Scan(&kissManaged); err != nil {
+		return MySQLMigrationResult{}, err
+	}
+	if kissManaged > 0 {
+		return MySQLMigrationResult{}, errors.New(
+			"refusing to apply legacy migrations: this database is managed by the KISS server (found schema_migrations); " +
+				"use the watchdog-server HTTP /install flow instead of watchdog-install/legacy workers")
+	}
+
 	if _, err := conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS watchdog_schema_migrations (
 			version VARCHAR(32) PRIMARY KEY,
