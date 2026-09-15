@@ -85,6 +85,8 @@ KISS-01A 门禁是提交顺序纪律说明（非代码可补救）；KISS-01E �
 - `listTargets` 补 `validDeviceListFilters`；`replaceUserAccess` 预校验对象存在性。
 - `ensureBuiltinMIBModules` 更新时不要无条件 `enabled=1`。
 
+> **精确到代码/表/字段/接口级的待清理清单 + 清理影响评估 + 执行状态**见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)（本审计的下沉版：L1-L19 代码/符号、S1-S12 schema、I1-I5 接口，逐项依赖+删除影响+严格删除顺序）。
+
 ## 按 KISS 包归属
 
 - **KISS-01（PB）**：主题 1 的 Docker/CI + init/migration 文字 + GitHub 模板 → 可核销 KISS-01E 代码删除门的这部分；`internal/watchdog` 删除仍属 KISS-08。
