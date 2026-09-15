@@ -11,7 +11,7 @@
 | KISS 任务 | 门禁项 | 精确阻断/剩余 | 现状 |
 |---|---|---|---|
 | **KISS-01E** 编码删除 | 移除 PB 源码/依赖/SQLite/volume + PB 时代字段文字 | 活跃路径 PB=0（已核）。剩余仅**非运行时**文字残留：死的 PB-hub Dockerfile+CI（L19a）、init/migration PB 字段与注释（S1/S2、L19c）、GitHub 模板（L19b）、PB 告警表 dump（S10） | **ready**——清完这几项即可勾「编码删除」；「回归/clean-stack 验收」门属运维另计 |
-| **KISS-08** 遗留清理 | 删 `internal/watchdog`/VM/tenant/provider/旧 targets/兼容 adapter | **唯一硬阻断链**：`internal/server`（13 文件）import `internal/watchdog`（65 符号=SNMP 域+引擎，L1/L2）。分解为 (a) 抽 SNMP 切片断 import（L2-L4，ready）；(b) 退役 6 遗留 worker（L10-L14，2 个已被 in-server CH 取代）。之后整包 + `robfig/cron` + VM 配置随之删（L1/L6-L9/L15/L17） | **blocked-by-L2 + workers**——但可分步 |
+| **KISS-08** 遗留清理 | 删 `internal/watchdog`/VM/tenant/provider/旧 targets/兼容 adapter | **唯一硬阻断链**：`internal/server`（13 文件）import `internal/watchdog`（65 符号=SNMP 域+引擎，L1/L2）。分解为 (a) 抽 SNMP 切片断 import（L2-L4，ready）；(b) 退役遗留命令（L10-L14，其中 L10/L11 已由 KISS-08B 删除）。之后整包 + `robfig/cron` + VM 配置随之删（L1/L6-L9/L15/L17） | **blocked-by-L2 + remaining commands**——但可分步 |
 | **危险接线**（属 KISS-08，但可现在拆） | —— | 遗留安装器建不兼容 `watchdog_installation` 会 brick KISS boot（S3/L12）；两超期 worker 查 KISS 不存在的 `collector_agents⋈tenants`（S5/L10-L11） | **ready**——加库守卫或摘 Makefile/scripts/CI 接线 |
 | **接口收敛**（KISS-02→08） | 删 `/targets`+设备领域 `/network/*` compat alias | canonical 缺口已补、前端调用已迁、I1-I5 路由及专用 target handler/DTO 分支已删除；源码与路由反向测试防回流 | **done（KISS-08A）** |
 
@@ -25,7 +25,7 @@
 
 | ID | 类别 | 精确位置 | 分类 | 依赖它的活跃代码 | 删除影响 | 前置 | 归属 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| L1 | package | `internal/watchdog/`（237 文件） | KISS-08 | `internal/server`(13) + 6 worker main | 包级 import，未断前一文件不可删 | L2 + L10-L14 | KISS-08 | blocked-by-L2 |
+| L1 | package | `internal/watchdog/`（237 文件） | KISS-08 | `internal/server`(13) + 4 遗留 command main | 包级 import，未断前一文件不可删 | L2 + L12-L14 | KISS-08 | blocked-by-L2 |
 | L2 | symbol-set | 65 符号 / 19 锚文件 + SNMP 引擎闭包(~18) — `domain.go`/`traffic_policy.go`/`metric_catalog.go`/`metrics_query.go`/`snmp_*` | **EXTRACT-first** | `internal/server` 13 文件（`snmp_*`,`metrics.go`,`aggregate_graphs.go`,`graph_overview.go`,`retention.go`,`handlers_grants.go`） | 不抽则 server 无法脱离 watchdog | 建 `internal/snmpdomain`，迁 `gosmi`/`gosnmp` | KISS-08 | **ready** |
 | L3 | file(split) | `config.go:275 SNMPConfig`（余为遗留 BackendConfig） | EXTRACT-first | `snmp_discovery.go:26` | server 少 MIB 注册入参类型 | 从 BackendConfig 拆出 | KISS-08 | ready |
 | L4 | file(split) | `repository.go:468 MetricRetentionPolicy` | EXTRACT-first | `retention.go:25,100` | server retention 断 | 从遗留 repo 拆出 | KISS-08 | ready |
@@ -34,8 +34,8 @@
 | L7 | file-cluster | `flow_*.go`(17)，含 `flow_rollup_jobs.go:450-452` (`collector_agents⋈tenants`) | KISS-08 | `NewBackendRuntime`（worker） | 断 aggregate/export worker | L10/L11 | KISS-08 | blocked |
 | L8 | file-cluster | `address_*.go`/`dimension_*.go`(19) | KISS-08 | worker 侧 flow-enrichment/query-provider | 已被 `internal/address` 取代 | flow 消费端迁 v2 | KISS-05→08 | blocked |
 | L9 | file-cluster | `mysql_*.go`(36),`collector_*`(13),`operation_job*.go`(4),`platform_*`,`billing_*`,`dashboard.go` | KISS-08 | `NewBackendRuntime`（worker） | 断遗留 worker | L10/L11 | KISS-08 | blocked |
-| L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-guard-then-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；对 KISS 库查 `collector_agents⋈tenants` 即失败 | 加库守卫 / 摘 CI+Makefile | KISS-08 | **ready** |
-| L11 | cmd | `cmd/watchdog-export-worker` | legacy-guard-then-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 同上 | KISS-08 | **ready** |
+| L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；旧命令对 KISS 库查 `collector_agents⋈tenants` 即失败 | 已满足 | KISS-08B | **done** |
+| L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
 | L12 | cmd | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-guard-then-delete | 无 | 建 boot-breaking `watchdog_installation`（见 S3） | 确认 HTTP `/install` 唯一；摘 `Makefile:111-112`、`scripts/watchdog-dev-db.sh:24`、`docs/...architecture.md:115` | KISS-08 | **ready** |
 | L13 | cmd | `cmd/watchdog-librenms-extract` | legacy-delete | dev 工具 | 无（`ParseLibrenmsDefinitions` 随 L2 迁走） | L2 | KISS-08 | ready |
 | L14 | cmd | `cmd/watchdog-snmp-agent` / `cmd/watchdog-system-agent` | legacy-guard | 无（未发布） | KISS-03B/路线图 | 路线图决策 | KISS-08/03B | blocked(路线图) |
@@ -103,7 +103,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 4. **抽 SNMP 切片**：19 锚文件 + 引擎闭包 + 拆 `SNMPConfig`/`MetricRetentionPolicy` → 新 `internal/snmpdomain`，迁 `gosmi`/`gosnmp`，repoint 13 个 `internal/server` 文件（L2-L4、L18）。验收：`internal/server` 不再 import `internal/watchdog`；`go build ./...` + SNMP 集成回归。
 
 **Phase C — 退役遗留 worker**
-5. L10/L11（已被 in-server CH 取代）停发布 + 删；L13 删（dev 工具）；L12 删（HTTP `/install` 唯一）；L14 按路线图（KISS-03B/Tier2）。
+5. L10/L11 已在 KISS-08B 物理删除；L13 删（dev 工具）；L12 删（HTTP `/install` 唯一）；L14 按路线图（KISS-03B/Tier2）。
 
 **Phase D — 整包 + 依赖 + schema 树删除（KISS-08 收尾）**
 6. 无 importer 后删整 `internal/watchdog`（L1、L6-L9）+ `robfig/cron`（L17）+ 遗留 VM 校验（L15）+ 遗留 schema 树 `deploy/migration/mysql`+`install/init.sql`（S3-S12 载体）。

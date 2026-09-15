@@ -97,7 +97,7 @@ flowchart LR
 - `watchdog-system-agent`、`watchdog-snmp-agent/collector`、`watchdog-probe-agent`：按能力注册；
 - `watchdog-flow-collect`：只做 UDP 接收、来源准入、RawFlow envelope 和写 Kafka，不做协议解码；
 - `watchdog-flow-worker`：按 partition 有序执行当前 fast/GoFlow2 decode、内存分类、批量写 CH、提交 offset；
-- `watchdog-export-worker` 可先保留独立进程；任务量低时可并入 server 的 operation worker。
+- aggregate rollup 与 export 统一由 server 内的 `operation_jobs` worker 执行；旧 `watchdog-aggregate-rollup` / `watchdog-export-worker` 已删除，禁止恢复第二套任务状态机或依赖旧 tenant/collector 表的进程。
 
 不再存在 PB server、PB SQLite、VM、VLogs、通用 provider 服务或第二套 Flow job 状态机。
 
