@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,26 +15,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 	"github.com/gin-gonic/gin"
 )
 
-// flow_operator_query.go pins an operator-scoped flow query to a single customer ISP
-// identity and to the address dimension snapshots that were effective — and verified
-// installed on every active flow worker — over the query's time range. It is the
-// KISS re-derivation of the hub's operator-classification binding
-// (internal/watchdog/flow_operator_query.go): the hub's flow_enrichment_publications
-// timeline + per-worker ACK table were redesigned in KISS into
-// dimension_snapshot_activations + dimension_snapshot_acks, and multi-tenancy was
-// dropped, so the resolver is rebuilt against those tables rather than copied.
-//
-// classification_version is intentionally NOT pinned: KISS does not persist it in the
-// control plane (it lives only in worker-delivered classification bundles), and the
-// worker fails closed unless a bundle's DimensionSnapshotID equals the address
-// snapshot id it is paired with — so pinning the snapshot id transitively pins the
-// classification version. remote_isp_id (the flowquery `isp` field) is the customer
-// ISP identity that matches an operator's flow_isp_id.
+// flow_operator_query.go pins an operator-scoped Flow query to one customer ISP
+// identity and to every immutable AddressSnap + classification publication pair
+// effective over the requested range. A pair is queryable only after every active
+// flow worker has reported an installed_at milestone for that exact publication.
+// remote_isp_id (the flowquery `isp` field) is the customer ISP identity that
+// matches an operator's global flow_isp_id.
 
 var (
 	errFlowOperatorInvalid     = errors.New("flow operator query selection is invalid")
@@ -43,14 +34,16 @@ var (
 // flowOperatorQueryBinding is the immutable bridge between a management-plane operator
 // and the customer ISP identity stored in Flow facts.
 type flowOperatorQueryBinding struct {
-	OperatorID           string
-	FlowISPID            uint16
-	DimensionSnapshotIDs []string
-	ExpectedWorkers      uint32
+	OperatorID             string
+	FlowISPID              uint16
+	PublicationIDs         []string
+	DimensionSnapshotIDs   []string
+	ClassificationVersions []uint32
+	ExpectedWorkers        uint32
 }
 
 // resolveFlowOperatorQueryBinding uses one repeatable-read snapshot so the operator
-// identity, the effective dimension-snapshot timeline, the active worker set and the
+// identity, the effective pair timeline, the active worker set and the
 // install ACK counts cannot be combined from different control-plane moments.
 func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID string, from, to time.Time) (flowOperatorQueryBinding, error) {
 	if db == nil || ctx == nil || strings.TrimSpace(operatorID) == "" || from.IsZero() || to.IsZero() || !to.After(from) {
@@ -75,38 +68,39 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 		return flowOperatorQueryBinding{}, errFlowOperatorInvalid
 	}
 
-	// The address-dimension activation timeline is append-only and event-time ordered;
-	// a snapshot's window is [effective_from, next activation's effective_from). Select
-	// the windows overlapping [from,to) — the same coverage predicate the hub used.
+	// The signed pair timeline is append-only and event-time ordered. A publication's
+	// window is [effective_from, next publication's effective_from). Select every pair
+	// whose window overlaps [from,to).
 	rows, err := tx.QueryContext(ctx, `
-		WITH activation_timeline AS (
-			SELECT snapshot_id, effective_from,
+		WITH publication_timeline AS (
+			SELECT id, dimension_snapshot_id, classification_version, effective_from,
 			       LEAD(effective_from) OVER (ORDER BY effective_from) AS next_effective_from
-			FROM dimension_snapshot_activations
-			WHERE module_key = ? AND dimension_key = ?
+			FROM flow_enrichment_publications
 		)
-		SELECT snapshot_id, effective_from
-		FROM activation_timeline
+		SELECT id, dimension_snapshot_id, classification_version, effective_from
+		FROM publication_timeline
 		WHERE effective_from < ?
 		  AND (next_effective_from IS NULL OR next_effective_from > ?)
 		ORDER BY effective_from
-	`, address.AddressDimensionModuleKey, address.AddressDimensionKey, to.UTC(), from.UTC())
+	`, to.UTC(), from.UTC())
 	if err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
-	type activationRow struct {
-		snapshotID    string
-		effectiveFrom time.Time
+	type publicationRow struct {
+		publicationID         string
+		snapshotID            string
+		classificationVersion uint32
+		effectiveFrom         time.Time
 	}
-	activations := make([]activationRow, 0, 4)
+	publications := make([]publicationRow, 0, 4)
 	for rows.Next() {
-		var row activationRow
-		if err := rows.Scan(&row.snapshotID, &row.effectiveFrom); err != nil {
+		var row publicationRow
+		if err := rows.Scan(&row.publicationID, &row.snapshotID, &row.classificationVersion, &row.effectiveFrom); err != nil {
 			rows.Close()
 			return flowOperatorQueryBinding{}, err
 		}
 		row.effectiveFrom = row.effectiveFrom.UTC()
-		activations = append(activations, row)
+		publications = append(publications, row)
 	}
 	if err := rows.Close(); err != nil {
 		return flowOperatorQueryBinding{}, err
@@ -114,23 +108,30 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 	if err := rows.Err(); err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
-	// The earliest overlapping activation must start at or before `from`, else the
+	// The earliest overlapping publication must start at or before `from`, else the
 	// range's start is uncovered by any published enrichment.
-	if len(activations) == 0 || activations[0].effectiveFrom.After(from.UTC()) {
+	if len(publications) == 0 || publications[0].effectiveFrom.After(from.UTC()) {
 		return flowOperatorQueryBinding{}, errFlowOperatorUnavailable
 	}
-	if len(activations) > 100 {
-		return flowOperatorQueryBinding{}, fmt.Errorf("%w: query crosses more than 100 address dimension publications", errFlowOperatorUnavailable)
+	if len(publications) > 100 {
+		return flowOperatorQueryBinding{}, fmt.Errorf("%w: query crosses more than 100 enrichment publications", errFlowOperatorUnavailable)
 	}
 
-	snapshotSeen := make(map[string]struct{}, len(activations))
-	snapshotIDs := make([]string, 0, len(activations))
-	for _, row := range activations {
-		if _, ok := snapshotSeen[row.snapshotID]; ok {
-			continue
+	publicationIDs := make([]string, 0, len(publications))
+	snapshotSeen := make(map[string]struct{}, len(publications))
+	snapshotIDs := make([]string, 0, len(publications))
+	classificationSeen := make(map[uint32]struct{}, len(publications))
+	classificationVersions := make([]uint32, 0, len(publications))
+	for _, row := range publications {
+		publicationIDs = append(publicationIDs, row.publicationID)
+		if _, ok := snapshotSeen[row.snapshotID]; !ok {
+			snapshotSeen[row.snapshotID] = struct{}{}
+			snapshotIDs = append(snapshotIDs, row.snapshotID)
 		}
-		snapshotSeen[row.snapshotID] = struct{}{}
-		snapshotIDs = append(snapshotIDs, row.snapshotID)
+		if _, ok := classificationSeen[row.classificationVersion]; !ok {
+			classificationSeen[row.classificationVersion] = struct{}{}
+			classificationVersions = append(classificationVersions, row.classificationVersion)
+		}
 	}
 
 	var expectedWorkers uint32
@@ -142,29 +143,28 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 		return flowOperatorQueryBinding{}, errFlowOperatorUnavailable
 	}
 
-	// Per snapshot, count the active flow workers that have installed it. The flow
-	// worker registers its agent id and reports ACKs under the same worker id
-	// (cmd/watchdog-flow-worker: AgentID == WorkerID == --worker-id), so the join
-	// dimension_snapshot_acks.worker_id = agents.id is exact.
-	placeholders := make([]string, len(snapshotIDs))
-	args := make([]any, len(snapshotIDs))
-	for i, id := range snapshotIDs {
+	// Per publication, count active flow workers that have ever installed the exact
+	// pair. installed_at is an irreversible milestone: a later failed refresh may
+	// update state/error fields but must not erase readiness for the installed pair.
+	placeholders := make([]string, len(publicationIDs))
+	args := make([]any, len(publicationIDs))
+	for i, id := range publicationIDs {
 		placeholders[i] = "?"
 		args[i] = id
 	}
 	readyRows, err := tx.QueryContext(ctx, `
-		SELECT acks.snapshot_id, COUNT(DISTINCT acks.worker_id)
-		FROM dimension_snapshot_acks AS acks
+		SELECT acks.publication_id, COUNT(DISTINCT acks.worker_id)
+		FROM flow_enrichment_publication_acks AS acks
 		JOIN agents AS workers ON workers.id = acks.worker_id
-		WHERE acks.snapshot_id IN (`+strings.Join(placeholders, ",")+`)
-		  AND acks.state = 'installed'
+		WHERE acks.publication_id IN (`+strings.Join(placeholders, ",")+`)
+		  AND acks.installed_at IS NOT NULL
 		  AND workers.kind = 'flow_worker' AND workers.status = 'active'
-		GROUP BY acks.snapshot_id
+		GROUP BY acks.publication_id
 	`, args...)
 	if err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
-	readyByID := make(map[string]uint32, len(snapshotIDs))
+	readyByID := make(map[string]uint32, len(publicationIDs))
 	for readyRows.Next() {
 		var id string
 		var ready uint32
@@ -180,18 +180,20 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 	if err := readyRows.Err(); err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
-	for _, id := range snapshotIDs {
+	for _, id := range publicationIDs {
 		if readyByID[id] != expectedWorkers {
-			return flowOperatorQueryBinding{}, fmt.Errorf("%w: snapshot %s installed on %d of %d active flow workers", errFlowOperatorUnavailable, id, readyByID[id], expectedWorkers)
+			return flowOperatorQueryBinding{}, fmt.Errorf("%w: publication %s installed on %d of %d active flow workers", errFlowOperatorUnavailable, id, readyByID[id], expectedWorkers)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
 	sort.Strings(snapshotIDs)
+	sort.Slice(classificationVersions, func(i, j int) bool { return classificationVersions[i] < classificationVersions[j] })
 	return flowOperatorQueryBinding{
 		OperatorID: operatorID, FlowISPID: flowISPID,
-		DimensionSnapshotIDs: snapshotIDs, ExpectedWorkers: expectedWorkers,
+		PublicationIDs: publicationIDs, DimensionSnapshotIDs: snapshotIDs,
+		ClassificationVersions: classificationVersions, ExpectedWorkers: expectedWorkers,
 	}, nil
 }
 
@@ -245,18 +247,25 @@ func (s *Server) applyFlowOperatorSelection(c *gin.Context, sel *flowOperatorSel
 		}
 		return false
 	}
-	if err := injectFlowOperatorConstraints(filters, filter, binding.DimensionSnapshotIDs, binding.FlowISPID); err != nil {
+	if err := injectFlowOperatorConstraints(filters, filter, binding.DimensionSnapshotIDs, binding.ClassificationVersions, binding.FlowISPID); err != nil {
 		writeFlowQueryError(c, err)
 		return false
 	}
+	sel.SchemaVersion = flowEnrichmentPairSchemaVersion
+	sel.FlowISPID = uint32(binding.FlowISPID)
+	sel.PublicationIDs = append([]string(nil), binding.PublicationIDs...)
+	sel.DimensionSnapshotIDs = append([]string(nil), binding.DimensionSnapshotIDs...)
+	sel.ClassificationVersions = append([]uint32(nil), binding.ClassificationVersions...)
 	return true
 }
 
 // injectFlowOperatorConstraints pins the query filters to the operator's ISP identity
 // (an isp=<flow_isp_id> predicate ANDed onto any existing typed filter) and to the
-// effective dimension snapshots. Pure so the filter merge is unit-testable.
-func injectFlowOperatorConstraints(filters *flowquery.Filters, filter **flowquery.FilterExpression, snapshotIDs []string, flowISPID uint16) error {
+// effective dimension snapshots and classification versions. Pure so the filter
+// merge is unit-testable.
+func injectFlowOperatorConstraints(filters *flowquery.Filters, filter **flowquery.FilterExpression, snapshotIDs []string, classificationVersions []uint32, flowISPID uint16) error {
 	filters.DimensionSnapshotIDs = append([]string(nil), snapshotIDs...)
+	filters.ClassificationVersions = append([]uint32(nil), classificationVersions...)
 	isp := flowquery.FilterExpression{
 		Op: flowquery.FilterPredicate, Field: "isp", Operator: flowquery.FilterEqual,
 		Values: []string{strconv.FormatUint(uint64(flowISPID), 10)},
@@ -273,4 +282,22 @@ func injectFlowOperatorConstraints(filters *flowquery.Filters, filter **flowquer
 	}
 	*filter = &combined
 	return nil
+}
+
+// auditFlowQuery records the resolved version provenance for operator-scoped
+// queries. Non-operator queries keep the compact generic audit row.
+func (s *Server) auditFlowQuery(ctx context.Context, actor, action, resource, resourceID string, selection *flowOperatorSelection) {
+	if selection == nil || selection.SchemaVersion == 0 {
+		s.audit(ctx, actor, action, resource, resourceID)
+		return
+	}
+	detail, err := json.Marshal(map[string]any{
+		"operator_selection": selection,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_logs
+		(id,actor_id,action,resource,resource_id,detail_json) VALUES (?,?,?,?,?,CAST(? AS JSON))`,
+		newID(), actor, action, resource, resourceID, detail)
 }

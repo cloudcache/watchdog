@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowquery"
+	"github.com/gin-gonic/gin"
 )
 
 // TestFlowQueryEnvelopeDecode: the hub /flow/query wire envelope (dataset + gateway
@@ -71,26 +72,26 @@ func TestFlowExportCreateDispatch(t *testing.T) {
 		return req
 	}
 
-	report := decode(`"report": {"schema_version": 1, "kind": "overview", "display_mode": "value"}`)
+	report := decode(`"operator_selection": {"operator_id": "op-report"}, "report": {"schema_version": 1, "kind": "overview", "display_mode": "value"}`)
 	if report.Query.Parameters.Report == nil {
 		t.Fatalf("report export not detected")
 	}
-	if r := report.Query.toReportRequest(); r.Kind != flowReportOverview || r.View != flowquery.ViewCustomer || r.Metric != "estimated_bps" {
+	if r := report.Query.toReportRequest(); r.Kind != flowReportOverview || r.View != flowquery.ViewCustomer || r.Metric != "estimated_bps" || r.Operator == nil || r.Operator.OperatorID != "op-report" {
 		t.Fatalf("report mapping = %+v", r)
 	}
 
-	query := decode(`"dimension": "category"`)
+	query := decode(`"dimension": "category", "operator_selection": {"operator_id": "op-query"}`)
 	if query.Query.Parameters.Report != nil {
 		t.Fatalf("query export mis-detected as report")
 	}
-	if q := query.Query.toAggregateInput(); q.Dimension != flowquery.DimensionCategory || q.View != flowquery.ViewCustomer || q.Metric != "estimated_bps" {
+	if q := query.Query.toAggregateInput(); q.Dimension != flowquery.DimensionCategory || q.View != flowquery.ViewCustomer || q.Metric != "estimated_bps" || q.Operator == nil || q.Operator.OperatorID != "op-query" {
 		t.Fatalf("query mapping = %+v", q)
 	}
 }
 
 // TestFlowQueryResultMeta exposes the hub meta fields the clients read.
 func TestFlowQueryResultMeta(t *testing.T) {
-	meta := flowQueryResultMeta(flowquery.ViewCustomer, "bps", "flow_1m", "UTC", 60, 0.9, true)
+	meta := flowQueryResultMeta(flowquery.ViewCustomer, "bps", "flow_1m", "UTC", 60, 0.9, true, nil)
 	for _, key := range []string{"request_id", "as_of", "source", "value_layer", "unit", "timezone", "step_seconds", "complete_ratio", "unknown_ratio", "partial"} {
 		if _, ok := meta[key]; !ok {
 			t.Fatalf("meta missing %q: %+v", key, meta)
@@ -98,5 +99,15 @@ func TestFlowQueryResultMeta(t *testing.T) {
 	}
 	if meta["unit"] != "bps" || meta["value_layer"] != flowquery.ViewCustomer || meta["partial"] != true {
 		t.Fatalf("meta values = %+v", meta)
+	}
+	selection := &flowOperatorSelection{
+		SchemaVersion: 1, OperatorID: "operator-a", FlowISPID: 42,
+		PublicationIDs: []string{"publication-a"}, DimensionSnapshotIDs: []string{"snapshot-a"},
+		ClassificationVersions: []uint32{7},
+	}
+	prepared := flowQueryResultMeta(flowquery.ViewCustomer, "bps", "flow_1m", "UTC", 60, 1, false, selection)
+	versions, ok := prepared["versions"].(gin.H)
+	if !ok || prepared["operator_selection"] != selection || len(versions["classification_versions"].([]uint32)) != 1 {
+		t.Fatalf("prepared operator provenance = %+v", prepared)
 	}
 }

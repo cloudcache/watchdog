@@ -45,6 +45,32 @@ func TestSNMPGinMigrationRoutesAreRegistered(t *testing.T) {
 	}
 }
 
+func TestFlowEnrichmentPublicationRoutesAreRegistered(t *testing.T) {
+	router := (&Server{}).newRouter()
+	registered := map[string]bool{}
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"GET /api/v1/flow/classification-profile",
+		"PUT /api/v1/flow/classification-profile",
+		"GET /api/v1/flow/enrichment-publications",
+		"POST /api/v1/flow/enrichment-publications",
+		"GET /api/v1/flow/enrichment-publications/facets",
+		"GET /api/v1/flow/enrichment-publications/:publication_id",
+		"GET /api/v1/flow/enrichment-publications/:publication_id/acks",
+		"GET /api/v1/flow/enrichment-publications/:publication_id/acks/facets",
+		"GET /api/v1/flow-workers/:id/trust-bundle",
+		"GET /api/v1/flow-workers/:id/enrichment-publications",
+		"GET /api/v1/flow-workers/:id/enrichment-publications/:publication_id/objects/:kind",
+		"POST /api/v1/flow-workers/:id/enrichment-publications/:publication_id/ack",
+	} {
+		if !registered[route] {
+			t.Fatalf("Flow enrichment publication route is not registered: %s", route)
+		}
+	}
+}
+
 func TestRequestBodyLimitRejectsBeforeHandler(t *testing.T) {
 	s := &Server{}
 	s.engine = s.newRouter()

@@ -81,7 +81,7 @@ func (env flowExportQueryEnvelope) toReportRequest() flowReportRequest {
 	req := flowReportRequest{
 		Metric: p.Metric, View: env.ValueLayer, Filters: p.Filters, Filter: p.Filter,
 		From: env.From, To: env.To, TargetPoints: p.TargetPoints, TopN: p.TopN,
-		Timezone: p.Timezone, Table: p.Table,
+		Timezone: p.Timezone, Operator: p.Operator, Table: p.Table,
 	}
 	if p.Report != nil {
 		req.Kind, req.Side, req.GroupBy = p.Report.Kind, p.Report.Side, p.Report.GroupBy
@@ -98,15 +98,24 @@ func (env flowExportQueryEnvelope) toAggregateInput() flowAggregateInput {
 		From: env.From, To: env.To, StepSeconds: env.StepSeconds, TargetPoints: p.TargetPoints,
 		Metric: p.Metric, View: env.ValueLayer, Dimension: p.Dimension, Dimensions: p.Dimensions,
 		Filters: p.Filters, Filter: p.Filter, TopN: p.TopN, IncludeOther: p.IncludeOther, Timezone: p.Timezone,
+		Operator: p.Operator,
 	}
 }
 
 // flowQueryResultMeta builds the hub `meta` envelope (the QueryResultMeta subset the
 // clients read: unit/source/value_layer/timezone/step + completeness).
-func flowQueryResultMeta(view flowquery.View, unit, source, timezone string, stepSeconds uint32, completeRatio float64, partial bool) gin.H {
-	return gin.H{
+func flowQueryResultMeta(view flowquery.View, unit, source, timezone string, stepSeconds uint32, completeRatio float64, partial bool, operator *flowOperatorSelection) gin.H {
+	meta := gin.H{
 		"request_id": newID(), "schema_version": "query-result-v2", "as_of": time.Now().UTC(),
 		"source": source, "value_layer": view, "unit": unit, "timezone": timezone,
 		"step_seconds": stepSeconds, "complete_ratio": completeRatio, "unknown_ratio": 0, "partial": partial,
 	}
+	if operator != nil && operator.SchemaVersion != 0 {
+		meta["versions"] = gin.H{
+			"publication_ids": operator.PublicationIDs, "dimension_snapshot_ids": operator.DimensionSnapshotIDs,
+			"classification_versions": operator.ClassificationVersions,
+		}
+		meta["operator_selection"] = operator
+	}
+	return meta
 }

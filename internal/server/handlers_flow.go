@@ -158,6 +158,7 @@ type flowAggregateInput struct {
 	TopN         uint16                      `json:"top_n,omitempty"`
 	IncludeOther bool                        `json:"include_other,omitempty"`
 	Timezone     string                      `json:"timezone,omitempty"`
+	Operator     *flowOperatorSelection      `json:"operator_selection,omitempty"`
 	Table        *flowTableRequest           `json:"table,omitempty"`
 }
 
@@ -243,9 +244,9 @@ func (s *Server) queryFlow(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, "internal", "encode flow result")
 			return
 		}
-		s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+		s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric), input.Operator)
 		c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
-			view, result.Metric.Unit, string(compiled.Plan.Source), input.Timezone, compiled.Plan.StepSeconds, 1, false)})
+			view, result.Metric.Unit, string(compiled.Plan.Source), input.Timezone, compiled.Plan.StepSeconds, 1, false, input.Operator)})
 		return
 	}
 
@@ -273,10 +274,10 @@ func (s *Server) queryFlow(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric), input.Operator)
 	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
 		view, result.Metric.Unit, string(plan.Source), input.Timezone, plan.StepSeconds,
-		result.RollupCompleteness.Ratio, !result.RollupCompleteness.Complete)})
+		result.RollupCompleteness.Ratio, !result.RollupCompleteness.Complete, input.Operator)})
 }
 
 // flowQueryReady guards the ClickHouse-backed flow query handlers: when the

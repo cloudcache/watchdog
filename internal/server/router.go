@@ -31,6 +31,11 @@ func (s *Server) newRouter() *gin.Engine {
 	installedAPI.POST("/session/login", s.login)
 	installedAPI.POST("/session/forgot", s.forgotPassword)
 	installedAPI.POST("/session/reset", s.resetPassword)
+	flowWorkers := installedAPI.Group("/flow-workers/:id")
+	flowWorkers.GET("/trust-bundle", s.fetchFlowWorkerTrustBundle)
+	flowWorkers.GET("/enrichment-publications", s.fetchFlowWorkerPublications)
+	flowWorkers.GET("/enrichment-publications/:publication_id/objects/:kind", s.fetchFlowWorkerObject)
+	flowWorkers.POST("/enrichment-publications/:publication_id/ack", s.acknowledgeFlowWorkerPublication)
 
 	// --- authenticated (session cookie + CSRF on mutations) ---
 	auth := installedAPI.Group("")
@@ -252,6 +257,15 @@ func (s *Server) newRouter() *gin.Engine {
 	// KISS-06 phase-1b: ClickHouse-backed flow query API (records/facets), the v2
 	// FlowQueryService replacing the retired hub QueryGateway stack.
 	s.registerFlowRoutes(auth)
+	flowEnrichment := auth.Group("/flow")
+	flowEnrichment.GET("/classification-profile", s.requirePermission("address.view"), s.getFlowClassificationProfile)
+	flowEnrichment.PUT("/classification-profile", s.requirePermission("address.manage"), s.putFlowClassificationProfile)
+	flowEnrichment.GET("/enrichment-publications", s.requirePermission("address.view"), s.listFlowEnrichmentPublications)
+	flowEnrichment.POST("/enrichment-publications", s.requirePermission("address.publish"), s.publishFlowEnrichment)
+	flowEnrichment.GET("/enrichment-publications/facets", s.requirePermission("address.view"), s.listFlowEnrichmentPublicationFacets)
+	flowEnrichment.GET("/enrichment-publications/:publication_id", s.requirePermission("address.view"), s.getFlowEnrichmentPublication)
+	flowEnrichment.GET("/enrichment-publications/:publication_id/acks", s.requirePermission("address.view"), s.listFlowEnrichmentACKs)
+	flowEnrichment.GET("/enrichment-publications/:publication_id/acks/facets", s.requirePermission("address.view"), s.listFlowEnrichmentACKFacets)
 
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)

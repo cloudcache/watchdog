@@ -1,0 +1,95 @@
+-- FLOW-03C-G: global classification profile and immutable AddressSnap +
+-- classification publication pairs for the independent flow worker.
+--
+-- This is the single-domain port of legacy migration 059. It deliberately
+-- references the KISS roots (users, dimension_snapshots, agents) and contains
+-- no tenant or collector-registry compatibility columns.
+
+CREATE TABLE IF NOT EXISTS flow_classification_profiles (
+  id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  home_province VARCHAR(6) NOT NULL DEFAULT '',
+  home_city VARCHAR(6) NOT NULL DEFAULT '',
+  home_isp_ids JSON NOT NULL,
+  home_asns JSON NOT NULL,
+  overseas_includes_hmt TINYINT(1) NOT NULL DEFAULT 0,
+  internal_policy VARCHAR(8) NOT NULL DEFAULT 'count',
+  transit_policy VARCHAR(8) NOT NULL DEFAULT 'count',
+  definition_digest CHAR(64) NOT NULL,
+  row_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_by CHAR(26) NULL,
+  updated_by CHAR(26) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  CONSTRAINT fk_flow_classification_profile_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_flow_classification_profile_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chk_flow_classification_profile_singleton CHECK (id = 1),
+  CONSTRAINT chk_flow_classification_profile_isp_ids CHECK (JSON_TYPE(home_isp_ids) = 'ARRAY'),
+  CONSTRAINT chk_flow_classification_profile_asns CHECK (JSON_TYPE(home_asns) = 'ARRAY'),
+  CONSTRAINT chk_flow_classification_profile_internal CHECK (internal_policy IN ('count','drop')),
+  CONSTRAINT chk_flow_classification_profile_transit CHECK (transit_policy IN ('count','drop'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS flow_enrichment_publications (
+  id CHAR(26) NOT NULL,
+  pair_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  classification_version INT UNSIGNED NOT NULL,
+  effective_from DATETIME(3) NOT NULL,
+  profile_row_version BIGINT UNSIGNED NOT NULL,
+  dimension_snapshot_id CHAR(26) NOT NULL,
+  dimension_version BIGINT UNSIGNED NOT NULL,
+  dimension_effective_from DATETIME(3) NOT NULL,
+  dimension_object_ref VARCHAR(512) NOT NULL,
+  dimension_object_format VARCHAR(16) NOT NULL,
+  dimension_object_format_version SMALLINT UNSIGNED NOT NULL,
+  dimension_checksum CHAR(71) NOT NULL,
+  classification_schema_version SMALLINT UNSIGNED NOT NULL,
+  classification_object_ref VARCHAR(512) NOT NULL,
+  classification_checksum CHAR(71) NOT NULL,
+  signature_algorithm VARCHAR(16) NOT NULL,
+  signing_key_id VARCHAR(64) NOT NULL,
+  signature VARBINARY(64) NOT NULL,
+  signed_at DATETIME(3) NOT NULL,
+  row_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_by CHAR(26) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_flow_enrichment_publication_version (classification_version),
+  UNIQUE KEY uq_flow_enrichment_publication_effective (effective_from),
+  KEY idx_flow_enrichment_publication_dimension (dimension_snapshot_id, effective_from),
+  KEY idx_flow_enrichment_publication_signing_key (signing_key_id, effective_from),
+  CONSTRAINT fk_flow_enrichment_publication_dimension FOREIGN KEY (dimension_snapshot_id) REFERENCES dimension_snapshots(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_flow_enrichment_publication_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chk_flow_enrichment_publication_pair_schema CHECK (pair_schema_version = 1),
+  CONSTRAINT chk_flow_enrichment_publication_classification_version CHECK (classification_version > 0),
+  CONSTRAINT chk_flow_enrichment_publication_profile_version CHECK (profile_row_version > 0),
+  CONSTRAINT chk_flow_enrichment_publication_dimension CHECK (dimension_version > 0 AND dimension_effective_from <= effective_from),
+  CONSTRAINT chk_flow_enrichment_publication_dimension_format CHECK (dimension_object_format = 'wads' AND dimension_object_format_version = 1),
+  CONSTRAINT chk_flow_enrichment_publication_classification_schema CHECK (classification_schema_version = 1),
+  CONSTRAINT chk_flow_enrichment_publication_signature CHECK (signature_algorithm = 'ed25519' AND OCTET_LENGTH(signature) = 64)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS flow_enrichment_publication_acks (
+  publication_id CHAR(26) NOT NULL,
+  worker_id CHAR(26) NOT NULL,
+  boot_id VARCHAR(128) NOT NULL,
+  software_version VARCHAR(64) NOT NULL,
+  state VARCHAR(16) NOT NULL,
+  attempted_at DATETIME(3) NOT NULL,
+  downloaded_at DATETIME(3) NULL,
+  installed_at DATETIME(3) NULL,
+  error_code VARCHAR(64) NULL,
+  error_message VARCHAR(512) NULL,
+  row_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (publication_id, worker_id),
+  KEY idx_flow_enrichment_ack_worker (worker_id, attempted_at),
+  KEY idx_flow_enrichment_ack_state (publication_id, state, attempted_at),
+  CONSTRAINT fk_flow_enrichment_ack_publication FOREIGN KEY (publication_id) REFERENCES flow_enrichment_publications(id) ON DELETE CASCADE,
+  CONSTRAINT fk_flow_enrichment_ack_worker FOREIGN KEY (worker_id) REFERENCES agents(id) ON DELETE CASCADE,
+  CONSTRAINT chk_flow_enrichment_ack_state CHECK (state IN ('downloaded','installed','failed')),
+  CONSTRAINT chk_flow_enrichment_ack_downloaded CHECK (state <> 'downloaded' OR downloaded_at IS NOT NULL),
+  CONSTRAINT chk_flow_enrichment_ack_installed CHECK (state <> 'installed' OR (downloaded_at IS NOT NULL AND installed_at IS NOT NULL)),
+  CONSTRAINT chk_flow_enrichment_ack_failed CHECK ((state = 'failed') = (error_code IS NOT NULL))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

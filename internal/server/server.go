@@ -59,9 +59,12 @@ type Server struct {
 	vpnDetectCancel          context.CancelFunc
 	flowExportCancel         context.CancelFunc
 
-	agentPlanSigner agentplan.Signer
-	agentPlanPublic ed25519.PublicKey
-	agentPlanCancel context.CancelFunc
+	agentPlanSigner     agentplan.Signer
+	agentPlanPublic     ed25519.PublicKey
+	agentPlanCancel     context.CancelFunc
+	flowTrustBundle     []byte
+	flowTrustChecksum   string
+	flowTrustGeneration uint64
 }
 
 // New opens the configured MySQL database and builds the router. A fresh
@@ -148,6 +151,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	}
 	if err := s.startAddressLibrary(); err != nil {
 		return fmt.Errorf("start address library: %w", err)
+	}
+	if err := s.startFlowEnrichment(ctx); err != nil {
+		return fmt.Errorf("start Flow enrichment publication: %w", err)
 	}
 	if err := s.startSNMPExports(); err != nil {
 		return fmt.Errorf("start SNMP exports: %w", err)

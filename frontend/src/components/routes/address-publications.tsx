@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { api, can } from "@/lib/api"
+import FlowEnrichmentPublications from "./flow-enrichment-publications"
 
 type AddressDimensionSnapshot = {
 	id: string
@@ -397,6 +398,7 @@ export default memo(function AddressPublications() {
 				serverFiltering={serverFiltering}
 				serverSorting={serverSorting}
 			/>
+			<FlowEnrichmentPublications />
 		</div>
 	)
 })

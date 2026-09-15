@@ -303,6 +303,11 @@ func (s *Server) buildQueryExportPayload(c *gin.Context, query flowAggregateInpu
 	if !s.authorizeFlowResourceFilters(c, query.Filters.TargetIDs, query.Filters.DeviceIDs, query.Filters.ExporterIDs) {
 		return flowExportPayload{}, false
 	}
+	if query.Operator != nil && strings.TrimSpace(query.Operator.OperatorID) != "" {
+		if !s.applyFlowOperatorSelection(c, query.Operator, view, query.From, query.To, &query.Filters, &query.Filter) {
+			return flowExportPayload{}, false
+		}
+	}
 	query.View = view
 	query.Table = nil
 	return flowExportPayload{Kind: flowExportKindQuery, Format: format, MaxRows: maxFlowDetailExportRows, View: view, Query: &query}, true
@@ -320,6 +325,11 @@ func (s *Server) buildReportExportPayload(c *gin.Context, report flowReportReque
 	}
 	if !s.authorizeFlowResourceFilters(c, report.Filters.TargetIDs, report.Filters.DeviceIDs, report.Filters.ExporterIDs) {
 		return flowExportPayload{}, false
+	}
+	if report.Operator != nil && strings.TrimSpace(report.Operator.OperatorID) != "" {
+		if !s.applyFlowOperatorSelection(c, report.Operator, view, report.From, report.To, &report.Filters, &report.Filter) {
+			return flowExportPayload{}, false
+		}
 	}
 	if report.Kind == flowReportVPN && !currentPrincipal(c).can("flow.vpn.view") {
 		fail(c, http.StatusForbidden, "forbidden", "vpn reports require flow.vpn.view")

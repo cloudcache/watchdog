@@ -33,18 +33,22 @@ func TestFlowFilterReferencesISP(t *testing.T) {
 	}
 }
 
-// TestInjectFlowOperatorConstraints: the pin sets the snapshot filter and either
+// TestInjectFlowOperatorConstraints: the pin sets the paired snapshot/classification
+// filters and either
 // installs the isp predicate directly (no prior filter) or ANDs it onto an existing
 // one (verified by finding isp in the merged tree).
 func TestInjectFlowOperatorConstraints(t *testing.T) {
 	// No existing filter → the isp predicate becomes the whole filter.
 	var filters flowquery.Filters
 	var filter *flowquery.FilterExpression
-	if err := injectFlowOperatorConstraints(&filters, &filter, []string{"snap-a", "snap-b"}, 42); err != nil {
+	if err := injectFlowOperatorConstraints(&filters, &filter, []string{"snap-a", "snap-b"}, []uint32{7, 9}, 42); err != nil {
 		t.Fatal(err)
 	}
 	if len(filters.DimensionSnapshotIDs) != 2 || filters.DimensionSnapshotIDs[0] != "snap-a" || filters.DimensionSnapshotIDs[1] != "snap-b" {
 		t.Fatalf("snapshot pin = %+v", filters.DimensionSnapshotIDs)
+	}
+	if len(filters.ClassificationVersions) != 2 || filters.ClassificationVersions[0] != 7 || filters.ClassificationVersions[1] != 9 {
+		t.Fatalf("classification pin = %+v", filters.ClassificationVersions)
 	}
 	if filter == nil || filter.Op != flowquery.FilterPredicate || filter.Field != "isp" ||
 		filter.Operator != flowquery.FilterEqual || len(filter.Values) != 1 || filter.Values[0] != "42" {
@@ -56,7 +60,7 @@ func TestInjectFlowOperatorConstraints(t *testing.T) {
 	existing := &flowquery.FilterExpression{Op: flowquery.FilterPredicate, Field: "business", Operator: flowquery.FilterEqual, Values: []string{"b1"}}
 	var filters2 flowquery.Filters
 	filter2 := existing
-	if err := injectFlowOperatorConstraints(&filters2, &filter2, []string{"snap-c"}, 9); err != nil {
+	if err := injectFlowOperatorConstraints(&filters2, &filter2, []string{"snap-c"}, []uint32{11}, 9); err != nil {
 		t.Fatal(err)
 	}
 	if !flowFilterReferencesISP(filter2) {
@@ -64,5 +68,8 @@ func TestInjectFlowOperatorConstraints(t *testing.T) {
 	}
 	if len(filters2.DimensionSnapshotIDs) != 1 || filters2.DimensionSnapshotIDs[0] != "snap-c" {
 		t.Fatalf("snapshot pin (existing filter) = %+v", filters2.DimensionSnapshotIDs)
+	}
+	if len(filters2.ClassificationVersions) != 1 || filters2.ClassificationVersions[0] != 11 {
+		t.Fatalf("classification pin (existing filter) = %+v", filters2.ClassificationVersions)
 	}
 }

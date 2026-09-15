@@ -74,6 +74,7 @@ type flowReportRequest struct {
 	TargetPoints uint16                       `json:"target_points,omitempty"`
 	TopN         uint16                       `json:"top_n,omitempty"`
 	Timezone     string                       `json:"timezone,omitempty"`
+	Operator     *flowOperatorSelection       `json:"operator_selection,omitempty"`
 	Table        *flowTableRequest            `json:"table,omitempty"`  // endpoint report: client sort/search/filter/pagination of the enriched endpoint table
 	Tables       map[string]*flowTableRequest `json:"tables,omitempty"` // vpn report: named client tables (port_distribution/type_distribution)
 }
@@ -115,9 +116,9 @@ type flowReportSpecInput struct {
 }
 
 // flowOperatorSelection is the operator-scoped query binding. The frontend sends
-// only {operator_id}; the full binding (ISP + immutable publication timeline)
-// requires the operator-classification service, which is not yet ported — a
-// populated selection is honored on the wire but rejected faithfully at execution.
+// only {operator_id}; the server resolves and pins the immutable publication pair
+// timeline before compiling the query. Populated resolved fields from clients are
+// rejected so they cannot forge historical classification provenance.
 type flowOperatorSelection struct {
 	SchemaVersion          uint16   `json:"schema_version,omitempty"`
 	OperatorID             string   `json:"operator_id"`
@@ -136,7 +137,7 @@ func (in flowReportQueryInput) toReportRequest() flowReportRequest {
 		PanelIDs: in.Report.PanelIDs, Tables: in.Report.Tables,
 		Metric: in.Metric, View: in.ValueLayer, Filters: in.Filters, Filter: in.Filter,
 		From: in.From, To: in.To, TargetPoints: in.TargetPoints, TopN: in.TopN,
-		Timezone: in.Timezone, Table: in.Table,
+		Timezone: in.Timezone, Operator: in.Operator, Table: in.Table,
 	}
 }
 
@@ -376,8 +377,8 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 	// and the address snapshots effective (and installed on all active flow workers)
 	// over the report range, by injecting the constraints into the shared report
 	// filters before the panels compile.
-	if input.Operator != nil && strings.TrimSpace(input.Operator.OperatorID) != "" {
-		if !s.applyFlowOperatorSelection(c, input.Operator, view, req.From, req.To, &req.Filters, &req.Filter) {
+	if req.Operator != nil && strings.TrimSpace(req.Operator.OperatorID) != "" {
+		if !s.applyFlowOperatorSelection(c, req.Operator, view, req.From, req.To, &req.Filters, &req.Filter) {
 			return
 		}
 	}
@@ -402,7 +403,7 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 		return
 	}
 	completeRatio, partial := flowReportCompleteness(panels, warnings)
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.report.query", "flow_report", string(req.Kind))
+	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.report.query", "flow_report", string(req.Kind), req.Operator)
 	data := gin.H{
 		"schema_version": flowReportSchemaVersion,
 		"kind":           req.Kind,
@@ -420,16 +421,24 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 	if req.Side != "" {
 		data["side"] = req.Side
 	}
+	meta := gin.H{
+		"request_id": newID(), "as_of": now, "timezone": req.Timezone, "step_seconds": plan.StepSeconds,
+		"complete_ratio": completeRatio, "unknown_ratio": 0, "partial": partial,
+	}
+	if req.Operator != nil && req.Operator.SchemaVersion != 0 {
+		meta["versions"] = gin.H{
+			"publication_ids": req.Operator.PublicationIDs, "dimension_snapshot_ids": req.Operator.DimensionSnapshotIDs,
+			"classification_versions": req.Operator.ClassificationVersions,
+		}
+		meta["operator_selection"] = req.Operator
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"data": data,
 		// meta carries completeness scalars; the report's panel warnings live in
 		// data.warnings. The frontend concatenates data.warnings + meta.warnings, so
 		// mirroring the same list here would double every warning — v2 produces no
 		// separate completeness-level warnings, so meta.warnings stays absent.
-		"meta": gin.H{
-			"request_id": newID(), "as_of": now, "timezone": req.Timezone, "step_seconds": plan.StepSeconds,
-			"complete_ratio": completeRatio, "unknown_ratio": 0, "partial": partial,
-		},
+		"meta": meta,
 	})
 }
 

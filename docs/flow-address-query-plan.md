@@ -90,7 +90,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 导入与发布是两个不同 SLA。MMDB/IPDB 导入是低频、通常一次性的 operation job，允许分钟级后台运行；验收重点是持久状态、页级 checkpoint、失败原因、重试接管、行数/校验和与最终 generation 可追溯。发布是平台管理员每次地址、地域、运营商或集合编辑后的常态 operation job；API 只入队，job 状态、进度、错误和结果引用可查询，旧 active publication 在 build/审批/安装任一阶段失败时持续服务。preview digest 钉住本次草稿，编辑会使旧 preview 终止；重新 preview 后构建新的不可变对象，只有签名审批、activation 和 worker installed ACK 完整收敛后才切换。导入耗时不作为发布响应 SLA，也不能成为发布时重复解析原始文件的理由。
 
-地址库不是业务 tenant 数据。当前身份实现允许一个外部身份拥有多个 tenant membership，但 `admin` 仍是 tenant 内角色，尚无 platform-admin。因此配置用 `address_library.owner_tenant_id` 把现有 tenant-scoped 管理表固定为一个全局存储/授权命名空间（当前默认 `tenant_dev`）：只有该外部身份在 owner 命名空间中的权威 membership 为 admin 时，才可上传、激活 import，编辑 prefix/set/Geo/operator/line，执行集合/合并 preview，以及 preview/publish/approve/activate/rollback/retire/GC AddressSnap；该能力不随当前 UI 选择的业务 tenant 丢失。其他已认证用户只读同一命名空间，不能以“其他 tenant 的 admin”获得维护权限。`GET /api/v1/me` 与写 API 都按 owner membership 服务端派生/强制 `can_manage_address_library`；浏览器能力仅改善 UX，客户端 tenant header 不能提升权限。这个 owner 是兼容现有表结构的实现锚点，不代表地址库按 tenant 分片。未来引入 platform-admin 时只替换授权来源，不迁移或复制地址数据。
+地址库是安装级全局数据，不归属于用户或 tenant。KISS 身份体系只保留本机 user/role/permission：拥有 `address.manage/address.publish` 的管理员才可上传并激活 import，编辑 prefix/set/Geo/operator/line，执行集合/合并 preview，以及 build/publish/approve/activate/rollback/retire/GC AddressSnap；其他已认证用户按 `address.view` 只读。`GET /api/v1/me` 与每个写 API 使用同一全局 RBAC 投影，浏览器能力仅改善 UX，后端始终是授权边界。MySQL schema、DTO、对象路径和签名 payload 均无 tenant/owner 字段；客户端夹带 `tenant_id` 会被严格 JSON/query 校验拒绝。
 
 ## 5. 分发与 worker 加载
 
@@ -106,7 +106,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 gossip 可作为后续低延迟提示，只传播 `(scope,version,checksum,control endpoint)`；权威 metadata、认证下载和 ACK 仍在平台。它不是 v1 的前置条件。
 
-控制面版本对由 migration 059 保存：`flow_classification_profiles` 是 tenant 单行编辑态，`flow_enrichment_publications` 是不可变 event-time pair，`flow_enrichment_publication_acks` 保存每个注册 worker 的 downloaded/installed/failed 里程碑。当前唯一默认 tenant 的 pair 已正确引用 owner AddressSnap。059 的复合外键和签名 envelope 仍要求 classification tenant 与 dimension tenant 相同，所以在接入第二个业务 tenant 前必须做一次前向契约变更：classification/profile 可继续按业务 tenant，`dimension_snapshot_id` 改为引用全局 owner AddressSnap，loader/catalog 对多个 classification 共享同一已编译 AddressSnap 指针，ACK 仍按 worker + pair 记录；禁止通过给每个 tenant 创建同 checksum snapshot/WADS 来绕过。MySQL 只保存 profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。publish 选择 `effective_from <= 请求时间` 的最新 owner address activation，且只接受已审批签名、未删除的 WADS/1；classification version/effective time 严格单调。分类对象和完整 pair 使用同一个 active 平台 Ed25519 key 签名，worker 复用 collector-plan monotonic trust bundle，不建立第二套 key 表。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
+KISS 控制面版本对由 migration 0031 保存：`flow_classification_profiles` 是 `id=1` 的全局 CAS 编辑态，`flow_enrichment_publications` 是全局单调且不可变的 event-time pair，`flow_enrichment_publication_acks` 保存每个 `agents(kind=flow_worker)` 的 downloaded/installed/failed 里程碑。`dimension_snapshot_id` 直接引用唯一全局 AddressSnap；MySQL 只保存 profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。publish 选择 `effective_from <= 请求时间` 的最新全局 address activation，且只接受已审批、active、未删除的 WADS/1；classification version/effective time 严格单调。分类对象和完整 pair 使用同一个 active agent-plan Ed25519 key 签名，worker 复用其单调 trust bundle，不建立第二套 key 表。旧 Hub migration 059 的 tenant 版本只保留为迁移来源，不再运行、双写或约束新 wire。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
 
 ## 6. 写入、查询与历史修正
 
@@ -119,7 +119,7 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 - 单维与常用预聚合按 fact 已存稳定 ID/version 汇总；显示名称按相同历史版本解析。
 - `primary_prefix` 在每个 endpoint role 内互斥可加；`address_set` 可重叠，响应必须标 `additive=false`。
 - 明细返回原始 endpoint 和 ingest-time 派生值/版本，不能用当前地址库覆盖历史字段。
-- 便捷运营商筛选只提交 tenant 内稳定 `operator_id`，不再把当前运营商的 ASN 列表展开到请求。QueryGateway 的 Flow preparer 在一个 MySQL repeatable-read 快照内解析只读 `flow_isp_id`、覆盖 `[from,to)` 的全部 enrichment publication，以及 active `flow_worker/pull` 注册集合；每个 publication 必须对每个 active worker 存在不可逆 `installed_at` 里程碑。无 worker、时间窗早于首个 publication、任一 ACK 缺失或运营商禁用均显式返回 `QUERY_INCOMPLETE/QUERY_INVALID`，绝不回退 ASN。
+- 便捷运营商筛选只提交全局稳定 `operator_id`，不再把当前运营商的 ASN 列表展开到请求。Gin Flow preparer 在一个 MySQL repeatable-read 快照内解析只读 `flow_isp_id`、覆盖 `[from,to)` 的全部 enrichment publication，以及 active `flow_worker` 注册集合；每个 publication 必须对每个 active worker 存在不可逆 `installed_at` 里程碑。无 worker、时间窗早于首个 publication、任一 ACK 缺失或运营商禁用均显式返回 `flow_operator_unavailable/invalid_request`，绝不回退 ASN。
 - 门禁通过后，服务端把 `isp = flow_isp_id`、精确 `dimension_snapshot_ids` 和 `classification_versions` 注入 canonical provider parameters。`schema_version=1` 的 prepared `operator_selection` 保存 operator、UInt16 identity、publication IDs 和版本集合；交互执行、延迟导出 query hash、响应 provenance 与查询审计使用同一份参数。客户端伪造或修改任一 prepared 字段、ISP predicate 或版本集合都会拒绝。跨版本仍以稳定 UInt16 过滤，并由事实自身 snapshot/classification version 分行/展示，不用当前名称改写历史。
 - 这里的 expected fleet 是唯一 collector registry 中状态为 active 的 `flow/flow_worker/pull` 身份，不是 ACK 中“曾观察到的 worker”集合。后续 failed attempt 不清除此前 installed milestone；新注册 active worker 会暂时关闭门禁，直到它补装时间窗所需的历史版本。该控制面检查只在用户查询准备/导出创建时执行，不进入 Kafka 消费或逐 flow 热路径，也不新增表。
 
@@ -141,7 +141,7 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 1. 先发布 AddressSnap v1 codec/builder 和双读 worker；旧 JSON dimension + Geo 目录仍可启动。
 2. 用同一真实 corpus 做旧 loader 与 AddressSnap lookup 全字段 parity，覆盖 v4/v6 边界、嵌套 override、多组、无 ASN 和 supplier/customer ISP 分离。
 3. 部署全部 reader 后才允许平台写 AddressSnap；worker ACK 达标后切 activation。
-4. MySQL migration 058 增加 publication object format/version/builder/build-job 元数据和 supplier ISP 稳定 ID ledger；059 增加 classification profile、不可变版本对 metadata 与 worker ACK；060 只增加 AddressSnap immutable-generation keyset 发布扫描索引。MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
+4. 旧 Hub 的 058/059/060 已作为行为与数据约束来源移植进 KISS schema：0011/0013 保存稳定运营商身份和 AddressSnap 发布血缘，0031 保存全局 classification profile、不可变版本对 metadata 与 `agents` worker ACK。MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
 5. 停止 worker 的 MySQL/目录装载入口并保留 LKG/rollback 窗口。
 6. migration 009 和 `address_dict_integration_test.go` 标注为历史 CH 字典实验；不回改历史 migration，也不新增“拆 IP_TRIE 字段”的 migration。待兼容窗口结束再以前向清理移除未使用对象。
 

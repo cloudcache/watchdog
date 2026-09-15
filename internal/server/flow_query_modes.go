@@ -20,9 +20,8 @@ import (
 // synthetic "direction" dimension) and the address-set combination (a flow_records
 // membership scan via the address-set runner). Both are faithful ports of the hub
 // query gateway's queryDirections / queryAddressSets, keeping the same wire shape so
-// the unchanged frontend works. The third mode, operator_selection, still needs the
-// operator-classification binding service (absent from the single-tenant server) and
-// stays rejected in queryFlow.
+// the unchanged frontend works. operator_selection is prepared before these modes
+// run and therefore shares their typed filter/query path.
 
 // flowDirectionParts is the fixed inbound/outbound split the direction mode emits,
 // matching the hub's labels ("in"/"out" filter value → "Inbound"/"Outbound" label).
@@ -96,10 +95,10 @@ func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvel
 		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric), input.Operator)
 	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
 		view, combined.Metric.Unit, string(plan.Source), input.Timezone, plan.StepSeconds,
-		combined.RollupCompleteness.Ratio, !combined.RollupCompleteness.Complete)})
+		combined.RollupCompleteness.Ratio, !combined.RollupCompleteness.Complete, input.Operator)})
 }
 
 // mergeFlowDirectionResults folds the per-direction total results (aligned with
@@ -174,9 +173,9 @@ func (s *Server) queryFlowDirectionSplitJoint(c *gin.Context, envelope flowQuery
 		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
 		return
 	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
+	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric), input.Operator)
 	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
-		view, combined.Metric.Unit, string(combined.Plan.Source), input.Timezone, combined.Plan.StepSeconds, 1, true)})
+		view, combined.Metric.Unit, string(combined.Plan.Source), input.Timezone, combined.Plan.StepSeconds, 1, true, input.Operator)})
 }
 
 // queryFlowAddressSet runs a synchronous address-set combination: a fixed 60-second
@@ -248,7 +247,7 @@ func (s *Server) queryFlowAddressSet(c *gin.Context, envelope flowQueryEnvelope,
 	}
 	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow.query", "flow_query", string(input.Metric))
 	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
-		view, result.Metric.Unit, string(flowquery.BucketFlowRecords), "UTC", 60, 1, true)})
+		view, result.Metric.Unit, string(flowquery.BucketFlowRecords), "UTC", 60, 1, true, nil)})
 }
 
 // marshalFlowAddressSetResult renders an address-set combination: the standard

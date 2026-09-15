@@ -69,13 +69,13 @@
 
 地址归属必须区分三种口径：`primary_prefix` 是每个 endpoint 唯一的最长前缀；Geo 是 continent → region → country → province → city 的单路径层级，同一 flow 在每个 level 各归一次；address set 是任意多个可重叠组。ASN/ISP 是可空属性，不是地址段或组的必填身份。相同 CIDR 只存一行，嵌套 CIDR 继承父级不同 key 的标签、子级覆盖同 key；组名独立于 CIDR 和 ASN。主前缀与 Geo 同层含 `_unassigned` 时可加，address set 组间及不同 Geo level 之间不可相加。
 
-address set 的集合公式固定为 `(selector ∪ explicit CIDRs ∪ included sets) − (excluded CIDRs ∪ excluded sets)`；同字段多值 OR、不同字段 AND，排除最终生效。引用必须同租户且无环，IPv4/IPv6 分开归一，发布期切分重叠边界并预计算 membership。查询的并/交/差必须对 base fact 的 membership 去重求值，禁止通过相加重叠组的 rollup 得到“并集”。补集必须指定有限 universe。
+address set 的集合公式固定为 `(selector ∪ explicit CIDRs ∪ included sets) − (excluded CIDRs ∪ excluded sets)`；同字段多值 OR、不同字段 AND，排除最终生效。引用必须指向同一套全局地址库且无环，IPv4/IPv6 分开归一，发布期切分重叠边界并预计算 membership。查询的并/交/差必须对 base fact 的 membership 去重求值，禁止通过相加重叠组的 rollup 得到“并集”。补集必须指定有限 universe。
 
 ## 4. F1–F9 功能需求
 
 ### F1 采集、准入、解码与质量
 
-- 独立 `watchdog-flow-collect` 只做 UDP 接收、来源前缀准入、RawFlow envelope 和 Kafka 异步发送；不连接 MySQL、CH、VM，不解码 Flow，不落本地 WAL。
+- 独立 `watchdog-flow-collect` 只做 UDP 接收、来源前缀准入、RawFlow envelope 和 Kafka 异步发送；不连接 MySQL 或 CH，不解码 Flow，不落本地 WAL。
 - Kafka 后的 `watchdog-flow-worker` 按 partition 有序使用 GoFlow2 解码 sFlow/NetFlow/IPFIX并维护模板状态。
 - 未登记来源只计低基数拒绝指标，不保存 payload、不进入分析库。
 - 记录 datagram、exporter、listener、协议、event/receive time、Kafka position、模板/采样/序列质量。
@@ -90,7 +90,7 @@ address set 的集合公式固定为 `(selector ∪ explicit CIDRs ∪ included 
 - 升级后的地址包必须让每个不重叠 range 引用一个 `geo_leaf_code`，由 `geo_dict.parent_code` 预编译完整五级路径；事实存稳定 ID，名称按事件时间版本解析。
 - 无 ASN/ISP 的 CIDR 仍可定义独立组名、层级标签和多个 address set；缺失值显式为 unknown，不拒绝发布或猜测归属。
 - address set 支持 selector、显式成员/排除 CIDR、include/exclude 组；发布前做引用 DAG、集合边界、最坏展开量和冲突预览，超限拒绝而非截断。
-- 支持租户级前缀、业务、provider/customer 标签和 Geo override；配置按事件时间版本化。
+- 支持全局前缀、业务、provider/customer 标签和 Geo override；配置按事件时间版本化。
 - 原始值不可变；supplier/customer 修正作为版本化规则在查询或派生层应用，带 reason、actor、审批和有效期。
 
 ### F3 六类总览
@@ -102,7 +102,7 @@ address set 的集合公式固定为 `(selector ∪ explicit CIDRs ∪ included 
 ### F4 多维分析
 
 - 分组：六类、Geo 各级、运营商、ASN、地址段、address set、业务、端口/协议、观察接口；一次查询只能选择一个 Geo level。
-- 筛选：租户、target/device/exporter、业务、运营商、时间、高峰段、方向、IP 族和修正视图。
+- 筛选：target/device/exporter、业务、运营商、时间、高峰段、方向、IP 族和修正视图。
 - 模式：流量值、占比、差值；TopN 必须有稳定 tie-breaker 和 `other` 桶。
 - 固定报表提供“默认六类、本网按省、异网运营商、境外、VPN”快捷分组和独立上下行趋势；灵活查询器继续承担任意维度/图形组合，不能把快捷分组退化成要求用户手工编写 filter。
 - 查询器必须把时间窗、目标点数/显式展示步长、底层聚合 resolution、维度、过滤、TopN 和图表类型分别建模；后端按时间窗与目标点数选择数据源和展示步长，前端不得把 `1m/1h` 当作仅有的时间范围。
@@ -145,10 +145,10 @@ VPN 固定报表还必须展示疑似主机、VPN 流量/占总量比例、活�
 
 ### F9 权限、生命周期与非功能
 
-- 配置、查看、导出、修正、探测、审批分别授权；tenant/resource scope 继承平台 RBAC。
+- 配置、查看、导出、修正、探测、审批分别授权；device/port/billing/graph/metric 等 resource scope 继承平台 RBAC。
 - 查询限制时间范围、点数、序列数、TopN、扫描字节和并发；导出异步执行。
 - 数据生命周期覆盖 RawFlow Kafka、CH base/rollup、Geo/规则快照、导出和审计；引用版本的保留期不短于事实。
-- collector/worker/CH/Kafka/Geo/VM 每层独立健康；故障不能伪装为 0 流量。
+- collector/worker/CH/Kafka/Geo 每层独立健康；故障不能伪装为 0 流量。
 - P1 性能门槛由真实 datagram 大小、采样率和设备数量压测确定，不用链路带宽直接假设 records/s。
 
 ## 5. sFlow、NetFlow/IPFIX、SNMP 的角色
@@ -171,7 +171,7 @@ VPN 固定报表还必须展示疑似主机、VPN 流量/占总量比例、活�
 | Akvorado | RawFlow→Kafka→outlet 架构成熟，Kafka/CH 运维实践完整 | 采用其职责切分、franz-go 配置和故障语义；按 AGPL 来源保留文件头与归属 |
 | GoFlow2 v3 | sFlow/NetFlow/IPFIX 解码成熟、吞吐高 | 作为 worker 解码库；不把 GoFlow2 放在 collector 热路径 |
 | ntop/nProbe/nDPI | L7/行为识别和风险线索丰富 | nDPI 作为可选 analyzer/probe 插件，不成为 P1 基础链路 |
-| SNMP | 接口总量和设备状态权威 | 继续写 VM，作为独立监控及可选 reconciliation |
+| SNMP | 接口总量和设备状态权威 | 独立采集并写 ClickHouse，作为设备监控及可选 reconciliation |
 
 最终链路只有一条：
 
@@ -188,7 +188,7 @@ router UDP
 
 ## 7. watchdog 映射与前置条件
 
-现有可复用能力：MySQL 管理库、tenant/RBAC、collector registry/plan、target/device/port、VM 指标、Geo bundle loader、Flow dimension/worker 基础。当前实现进度以 tasklist 为准，不能把设计存在等同于运行时完成。
+现有可复用能力：MySQL 管理库、单域 RBAC、agent registry/plan、device/port、ClickHouse SNMP 指标、Geo/AddressSnap loader、Flow dimension/worker 基础。当前实现进度以 tasklist 为准，不能把设计存在等同于运行时完成。
 
 上线前必须明确：
 

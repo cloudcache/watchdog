@@ -7059,3 +7059,172 @@ msgstr "您的角色无权访问此页面。"
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "您的用户设置已更新。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Address checksum"
+msgstr "地址库校验和"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Address snapshot"
+msgstr "地址库快照"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Address version"
+msgstr "地址库版本"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Attempted"
+msgstr "尝试时间"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Boot ID"
+msgstr "启动 ID"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Classification checksum"
+msgstr "分类校验和"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Classification profile saved"
+msgstr "分类配置已保存"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Classification version"
+msgstr "分类版本"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Count"
+msgstr "计入"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Count Hong Kong, Macao and Taiwan as overseas"
+msgstr "将中国香港、澳门和台湾计为跨境"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Drop"
+msgstr "丢弃"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Effective time must be a minute boundary"
+msgstr "生效时间必须对齐到整分钟"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load Flow enrichment publications"
+msgstr "加载 Flow 增强发布版本失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load Flow enrichment settings"
+msgstr "加载 Flow 增强设置失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load worker acknowledgements"
+msgstr "加载 Worker 回执失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to publish Flow enrichment version"
+msgstr "发布 Flow 增强版本失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to save classification profile"
+msgstr "保存分类配置失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow Classification Publication"
+msgstr "Flow 分类发布"
+
+#. placeholder {0}: published.classification_version
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow enrichment version {0} published"
+msgstr "Flow 增强版本 {0} 已发布"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home ASNs"
+msgstr "本网 ASN"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home ASNs must be comma-separated positive integers"
+msgstr "本网 ASN 必须是以逗号分隔的正整数"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home city code"
+msgstr "本地市代码"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home ISP IDs"
+msgstr "本网运营商 ID"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home ISP IDs must be comma-separated positive integers"
+msgstr "本网运营商 ID 必须是以逗号分隔的正整数"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Home province code"
+msgstr "本地省代码"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Installed"
+msgstr "安装时间"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Internal traffic policy"
+msgstr "内网流量策略"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No Flow enrichment publications found."
+msgstr "未找到 Flow 增强发布版本。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No worker acknowledgements found."
+msgstr "未找到 Worker 回执。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Publication"
+msgstr "发布版本"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Publish Flow version pair"
+msgstr "发布 Flow 配对版本"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Publishing is immutable. Workers pull it asynchronously and keep the last-known-good pair for offline restart."
+msgstr "发布版本不可变。Worker 异步拉取，并保留最后可用的配对版本用于离线重启。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Save classification profile"
+msgstr "保存分类配置"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Search publication, snapshot, checksum, or signing key..."
+msgstr "搜索发布版本、快照、校验和或签名密钥……"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Search worker acknowledgements..."
+msgstr "搜索 Worker 回执……"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Software version"
+msgstr "软件版本"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "The active approved address snapshot and this profile are signed and published as one worker version."
+msgstr "当前已批准的地址库快照与此分类配置将签名并作为一个 Worker 版本发布。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Transit traffic policy"
+msgstr "中转流量策略"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "View ACKs"
+msgstr "查看回执"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Worker"
+msgstr "Worker"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Worker acknowledgements"
+msgstr "Worker 回执"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Worker ACKs"
+msgstr "Worker 回执"
