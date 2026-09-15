@@ -208,10 +208,6 @@ const App = memo(() => {
 		return <OperationJobs />
 	} else if (page.route === "permissions") {
 		return <Permissions />
-	} else if (page.route === "permission_new") {
-		return <Permissions />
-	} else if (page.route === "permission_edit") {
-		return <Permissions />
 	} else if (page.route === "retention") {
 		return <Retention />
 	} else if (page.route === "snmp_profiles") {
@@ -280,9 +276,7 @@ function routeAbilities(route: string): string[] {
 		case "user_edit": return ["user.update", "user.manage"]
 		case "role_new": return ["role.create"]
 		case "role_edit": return ["role.update"]
-		case "permissions":
-		case "permission_new":
-		case "permission_edit": return ["role.view"]
+		case "permissions": return ["role.view"]
 		case "billing":
 		case "billing_detail": return ["bill.view"]
 		case "billing_new": return ["bill.create"]

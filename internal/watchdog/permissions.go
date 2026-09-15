@@ -1,5 +1,10 @@
 package watchdog
 
+import (
+	"errors"
+	"fmt"
+)
+
 type Action string
 
 const (
@@ -49,6 +54,34 @@ type Permission struct {
 	ResourceType ResourceType
 	ResourceID   ID
 	Actions      []Action
+}
+
+// normalizePermissionActions remains the shared validation contract for
+// legacy authorization snapshots while their consumers are retired. The
+// tenant-scoped Permission CRUD API no longer owns this helper.
+func normalizePermissionActions(actions []Action) ([]Action, error) {
+	if len(actions) == 0 {
+		return nil, errors.New("at least one permission action is required")
+	}
+	allowed := map[Action]bool{
+		ActionView: true, ActionConfigure: true, ActionOperate: true, ActionExport: true, ActionAdmin: true,
+		ActionViewRaw: true, ActionViewSupplier: true, ActionViewCustomer: true,
+		ActionExportRaw: true, ActionExportSupplier: true, ActionExportCustomer: true,
+		ActionVPNView: true, ActionVPNExport: true, ActionVPNTriage: true, ActionVPNProbe: true,
+		ActionConfigureAdjustment: true,
+	}
+	seen := make(map[Action]bool, len(actions))
+	normalized := make([]Action, 0, len(actions))
+	for _, action := range actions {
+		if !allowed[action] {
+			return nil, fmt.Errorf("unsupported permission action %q", action)
+		}
+		if !seen[action] {
+			seen[action] = true
+			normalized = append(normalized, action)
+		}
+	}
+	return normalized, nil
 }
 
 type AccessRequest struct {

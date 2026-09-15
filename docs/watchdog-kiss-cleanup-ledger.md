@@ -29,7 +29,7 @@
 | L2 | symbol-set | 65 符号 / 19 锚文件 + SNMP 引擎闭包(~18) — `domain.go`/`traffic_policy.go`/`metric_catalog.go`/`metrics_query.go`/`snmp_*` | **EXTRACT-first** | `internal/server` 13 文件（`snmp_*`,`metrics.go`,`aggregate_graphs.go`,`graph_overview.go`,`retention.go`,`handlers_grants.go`） | 不抽则 server 无法脱离 watchdog | 建 `internal/snmpdomain`，迁 `gosmi`/`gosnmp` | KISS-08 | **ready** |
 | L3 | file(split) | `config.go:275 SNMPConfig`（余为遗留 BackendConfig） | EXTRACT-first | `snmp_discovery.go:26` | server 少 MIB 注册入参类型 | 从 BackendConfig 拆出 | KISS-08 | ready |
 | L4 | file(split) | `repository.go:468 MetricRetentionPolicy` | EXTRACT-first | 无（已归属 `internal/server/retention.go`） | 无 | 已完成 | KISS-08F2 | **done** |
-| L5 | file-cluster | 旧 HTTP 层 `api_*.go` + `api_router.go`；旧 all-in-one `runtime.go` 已删 | **NOT-clean（2026-09-15 尝试回退，§6）** | api_*.go 还定义共享类型 `FlowGeoConfig`/`SNMPDeviceDiscoverer`/`flowDetailRunner`/`MetricsAggregateRequest`/`metricsSelector` 被全包用；6 个可独立纵向副本与旧 runtime 已删 | 仅等价 Gin 功能已验收的纵向片可先删，其余类型交织旧 handler/test | 与 Phase B/D 类型解耦一起 | KISS-08 | **partial：runtime + 6 副本已删** |
+| L5 | file-cluster | 旧 HTTP 层 `api_*.go` + `api_router.go`；旧 all-in-one `runtime.go` 已删 | **NOT-clean（2026-09-15 尝试回退，§6）** | api_*.go 还定义共享类型 `FlowGeoConfig`/`SNMPDeviceDiscoverer`/`flowDetailRunner`/`MetricsAggregateRequest`/`metricsSelector` 被全包用；7 个可独立纵向副本与旧 runtime 已删 | 仅等价 Gin 功能已验收的纵向片可先删，其余类型交织旧 handler/test | 与 Phase B/D 类型解耦一起 | KISS-08 | **partial：runtime + 7 副本已删** |
 | L6 | file-cluster | `victoriametrics.go`,`query_gateway.go`,`query_provider_*.go`,`export_vm.go` | KISS-08 | 旧 runtime 已删；仅剩包内类型/测试闭包 | 删除遗留 VM query/export | L2 边界类型解耦 | KISS-08 | **ready-for-closure-audit** |
 | L7 | file-cluster | `flow_*.go`(17)，含 `flow_rollup_jobs.go:450-452` (`collector_agents⋈tenants`) | KISS-08 | `NewBackendRuntime`（worker） | 断 aggregate/export worker | L10/L11 | KISS-08 | blocked |
 | L8 | file-cluster | `address_*.go`/`dimension_*.go`(19) | KISS-08 | worker 侧 flow-enrichment/query-provider | 已被 `internal/address` 取代 | flow 消费端迁 v2 | KISS-05→08 | blocked |
@@ -141,6 +141,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 | L5/L6/L7/L9(Backend Runtime) | 确认全库生产零调用后删除 816 行 all-in-one runtime 及仅构造它的测试；server/SNMP/Flow 独立 command 不变。旧 test router 的 health response DTO 临时留在 router 边界；由 runtime 假活的 VM/provider/repository 闭包转为可单独审计。 | KISS-08F6 |
 | L5(Aggregate Graph HTTP) | 当前 Gin 已承接完整 CRUD、items/ports、series/data/summary 与 CH 查询后，删除旧 tenant-scoped HTTP handler、router 注入和 endpoint test；旧包内 rollup/repository/domain 留待引用闭包后续删除。 | KISS-08F7 |
 | L9/L15(Aggregate Graph rollup) | F7 后旧 rollup、tenant repository/DTO、MySQL 实现、graph-series helper 和专属测试仅自循环，整组删除；同时移除无消费者的旧 rollup YAML/env/config，当前 Gin+CH 路径不变。 | KISS-08F8 |
+| L5/I4(Permission CRUD) | 删除与单域 RBAC 冲突的 tenant-scoped 任意授权 HTTP handler/test-router 注入和不可达前端 form/route；当前固定 catalog、role ability 与 user resource grants 保持唯一入口。 | KISS-08F9 |
 
 **Phase A 剩余**：L16(yaml,须先退役 worker)、S2(随整树删)、L5(api——**经证实须解耦，非独立删**)。
 

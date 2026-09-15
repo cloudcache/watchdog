@@ -40,8 +40,6 @@ const routes = {
 	role_edit: "/roles/:id/edit",
 	audit_logs: "/audit-logs",
 	operation_jobs: "/jobs",
-	permission_new: "/permissions/new",
-	permission_edit: "/permissions/:id/edit",
 	retention: "/retention",
 	watchdog_overview: "/watchdog",
 	snmp_profiles: "/snmp/profiles",

@@ -9,7 +9,7 @@ import (
 )
 
 func TestAPIHistoricalPreviewRequiresAdmin(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: permissionTestAuth(false)})
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: historicalTestAuth(false)})
 	rec := httptest.NewRecorder()
 	body := `{"TargetID":"target-a","Start":"2026-06-01T00:00:00Z","End":"2026-07-01T00:00:00Z"}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/historical/preview", strings.NewReader(body)))
@@ -19,7 +19,7 @@ func TestAPIHistoricalPreviewRequiresAdmin(t *testing.T) {
 }
 
 func TestAPIHistoricalPreviewReturnsEstimate(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: permissionTestAuth(true)})
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: historicalTestAuth(true)})
 	rec := httptest.NewRecorder()
 	body := `{"TargetID":"target-a","Start":"2026-06-01T00:00:00Z","End":"2026-06-01T01:00:00Z"}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/historical/preview?sample_step=300", strings.NewReader(body)))
@@ -32,7 +32,7 @@ func TestAPIHistoricalPreviewReturnsEstimate(t *testing.T) {
 }
 
 func TestAPIHistoricalArchiveAcceptsAdminRequest(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{Auth: permissionTestAuth(true)})
+	router := NewAPIV1Router(APIV1RouterConfig{Auth: historicalTestAuth(true)})
 	rec := httptest.NewRecorder()
 	body := `{"TargetID":"target-a","Start":"2026-06-01T00:00:00Z","End":"2026-07-01T00:00:00Z"}`
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/historical/archive?operation_id=hist-a", strings.NewReader(body)))
@@ -44,6 +44,22 @@ func TestAPIHistoricalArchiveAcceptsAdminRequest(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"Status":"pending_manual_execution"`) {
 		t.Fatalf("body missing pending status: %s", rec.Body.String())
+	}
+}
+
+func historicalTestAuth(admin bool) AuthContextAdapter {
+	return func(*http.Request) (AuthContext, error) {
+		actions := []Action{ActionView}
+		if admin {
+			actions = append(actions, ActionAdmin)
+		}
+		return AuthContext{
+			TenantID: "tenant-a", UserID: "user-a", IsAdmin: admin,
+			Grants: []Permission{{
+				TenantID: "tenant-a", SubjectType: SubjectUser, SubjectID: "user-a",
+				ResourceType: ResourceTenant, ResourceID: "tenant-a", Actions: actions,
+			}},
+		}, nil
 	}
 }
 
