@@ -215,10 +215,14 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 	if err := os.WriteFile(secret, []byte(os.Getenv("WATCHDOG_SNMP_CLICKHOUSE_PASSWORD")), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	clickHouseAddress := strings.TrimSpace(os.Getenv("WATCHDOG_TEST_CLICKHOUSE_ADDRESS"))
+	if clickHouseAddress == "" {
+		clickHouseAddress = "127.0.0.1:9000"
+	}
 	cfg := Config{
 		MySQL: MySQLConfig{DSN: dsn},
 		ClickHouse: ClickHouseConfig{
-			Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default", PasswordFile: secret,
+			Address: clickHouseAddress, Database: "watchdog_flow", Username: "default", PasswordFile: secret,
 		},
 		Address: AddressConfig{ArtifactDir: root + "/address-imports", SnapshotDir: root + "/address-snapshots"},
 		Flow:    FlowConfig{Export: FlowExportConfig{Dir: root + "/flow-exports"}},
@@ -236,6 +240,46 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 	}, nil)
 	if installed.Code != http.StatusCreated {
 		t.Fatalf("install with ClickHouse: code=%d body=%s", installed.Code, installed.Body.String())
+	}
+	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]string{
+		"username": "admin", "password": "install-password",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login with ClickHouse: code=%d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	csrf := cookieValue(cookies, csrfCookie)
+	enrollment := requestJSON(t, s, http.MethodPost, "/api/v1/agents/enrollment-tokens", map[string]any{
+		"kind": "snmp", "expires_in_seconds": 300,
+	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
+	var enrollmentBody struct {
+		Token string `json:"token"`
+	}
+	decodeJSON(t, enrollment, &enrollmentBody)
+	if enrollment.Code != http.StatusCreated || enrollmentBody.Token == "" {
+		t.Fatalf("clean-stack enrollment: code=%d body=%s", enrollment.Code, enrollment.Body.String())
+	}
+	registered := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"id": "clean_stack_snmp", "enrollment_token": enrollmentBody.Token, "name": "Clean stack SNMP", "kind": "snmp",
+		"capabilities": []string{"snmp.poll/v2"},
+	}, nil)
+	var registeredBody struct {
+		Agent struct {
+			ID string `json:"id"`
+		} `json:"agent"`
+		Credential struct {
+			Token string `json:"token"`
+		} `json:"credential"`
+	}
+	decodeJSON(t, registered, &registeredBody)
+	if registered.Code != http.StatusCreated || registeredBody.Agent.ID != "clean_stack_snmp" || registeredBody.Credential.Token == "" {
+		t.Fatalf("clean-stack register: code=%d body=%s", registered.Code, registered.Body.String())
+	}
+	heartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/clean_stack_snmp/heartbeat", map[string]any{
+		"software_version": "clean-stack", "capabilities": []string{"snmp.poll/v2"},
+	}, map[string]string{"X-Watchdog-Agent-Token": registeredBody.Credential.Token})
+	if heartbeat.Code != http.StatusAccepted {
+		t.Fatalf("clean-stack heartbeat: code=%d body=%s", heartbeat.Code, heartbeat.Body.String())
 	}
 	if s.jobs == nil || s.clickHouse == nil || s.snmpMetrics == nil || s.flowQuery == nil ||
 		s.flowExportCancel == nil || s.snmpExportCancel == nil || s.billingService == nil {
