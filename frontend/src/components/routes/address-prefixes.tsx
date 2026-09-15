@@ -940,6 +940,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 	const [groups, setGroups] = useState<{ id: string; name: string }[]>([])
 	const [reassignOpen, setReassignOpen] = useState(false)
 	const [reassignOp, setReassignOp] = useState("")
+	const [reassignGeo, setReassignGeo] = useState("")
 	const [reassignAsn, setReassignAsn] = useState("")
 	const [working, setWorking] = useState(false)
 	const seq = useRef(0)
@@ -1111,11 +1112,15 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 				body: {
 					cidrs: selectedCidrs,
 					operator_id: reassignOp || undefined,
+					geo_leaf_id: reassignGeo || undefined,
 					asn: reassignAsn.trim() ? Number(reassignAsn) : undefined,
 				},
 			})
 			setNotice(t`Reassigned ${selectedCidrs.length} prefixes`)
 			setReassignOpen(false)
+			setReassignOp("")
+			setReassignGeo("")
+			setReassignAsn("")
 			setSelectedCidrs([])
 			await fetchPage()
 		} catch (err) {
@@ -1211,6 +1216,19 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 						</Select>
 					</div>
 					<div className="grid gap-1">
+						<Label className="text-xs text-muted-foreground">
+							<Trans>Geography</Trans>
+						</Label>
+						<div className="w-52">
+							<AddressReferencePicker
+								kind="geography"
+								value={reassignGeo ? [reassignGeo] : []}
+								onChange={(ids) => setReassignGeo(ids[0] ?? "")}
+								placeholder={t`Keep current`}
+							/>
+						</div>
+					</div>
+					<div className="grid gap-1">
 						<Label className="text-xs text-muted-foreground">ASN</Label>
 						<Input
 							className="w-28"
@@ -1220,7 +1238,7 @@ const EffectiveWorkbench = memo(function EffectiveWorkbench() {
 							inputMode="numeric"
 						/>
 					</div>
-					<Button onClick={applyReassign} disabled={working || (!reassignOp && !reassignAsn.trim())}>
+					<Button onClick={applyReassign} disabled={working || (!reassignOp && !reassignGeo && !reassignAsn.trim())}>
 						<Trans>Apply to {selectedCidrs.length}</Trans>
 					</Button>
 				</div>
