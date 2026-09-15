@@ -600,7 +600,7 @@ function TaxonomyEditor({
 							</Select>
 						</div>
 					)}
-					{["continent", "region", "search_engine", "cloud_provider", "natural_region"].includes(form.kind) ? null : (
+					{["continent", "search_engine", "cloud_provider", "natural_region"].includes(form.kind) ? null : (
 						<ReferenceField
 							label="Parent geography"
 							kind="geography"

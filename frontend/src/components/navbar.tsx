@@ -305,7 +305,7 @@ function FlowItems() {
 			{canManageAddressLibrary() ? (
 				<>
 					<DropdownMenuSeparator />
-					<NavItem href={getPagePath($router, "address_library", { section: "imports" })} icon={GlobeIcon}>
+					<NavItem href={getPagePath($router, "address_library", { section: "prefixes" })} icon={GlobeIcon}>
 						<Trans>Address Library</Trans>
 					</NavItem>
 				</>

@@ -1,39 +1,71 @@
 import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { DatabaseIcon } from "lucide-react"
-import { memo } from "react"
+import { memo, type ReactNode } from "react"
 import { $router, navigate } from "@/components/router"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import AddressBaseData from "./address-base-data"
 import AddressImports from "./address-imports"
 import AddressLines from "./address-lines"
 import AddressMath from "./address-math"
-import AddressPublications from "./address-publications"
 import AddressPrefixes from "./address-prefixes"
+import AddressPublications from "./address-publications"
 import AddressRevisions from "./address-revisions"
 import AddressSets from "./address-sets"
-import AddressTaxonomy from "./address-taxonomy"
 
-const sections = [
-	"imports",
-	"prefixes",
-	"sets",
-	"tools",
-	"batch",
-	"publications",
-	"base-data",
-	"geography",
-	"operators",
-	"lines",
-] as const
-type AddressLibrarySection = (typeof sections)[number]
+// P5 IA convergence: the flat tabs collapse into four top-level groups, with the
+// prefix-working features as a Workbench sub-strip. Geography/Operators fold into
+// Base Data (kept as legacy section aliases so old URLs still resolve).
+type Leaf = "prefixes" | "imports" | "sets" | "tools" | "batch" | "lines" | "base-data" | "publications"
 
-function normalizeSection(value: string): AddressLibrarySection {
-	return sections.includes(value as AddressLibrarySection) ? (value as AddressLibrarySection) : "imports"
+const LEAF_SECTIONS: Leaf[] = ["prefixes", "imports", "sets", "tools", "batch", "lines", "base-data", "publications"]
+const LEGACY_ALIASES: Record<string, Leaf> = { geography: "base-data", operators: "base-data" }
+
+function normalizeSection(value: string): Leaf {
+	if (LEAF_SECTIONS.includes(value as Leaf)) return value as Leaf
+	return LEGACY_ALIASES[value] ?? "prefixes"
+}
+
+const LEAF_COMPONENTS: Record<Leaf, ReactNode> = {
+	prefixes: <AddressPrefixes />,
+	imports: <AddressImports />,
+	sets: <AddressSets />,
+	tools: <AddressMath />,
+	batch: <AddressRevisions />,
+	lines: <AddressLines />,
+	"base-data": <AddressBaseData />,
+	publications: <AddressPublications />,
 }
 
 export default memo(function AddressLibrary({ section }: { section: string }) {
 	const active = normalizeSection(section)
+	const groups: { key: string; label: ReactNode; sections: { key: Leaf; label: ReactNode }[] }[] = [
+		{
+			key: "workbench",
+			label: <Trans>Workbench</Trans>,
+			sections: [
+				{ key: "prefixes", label: <Trans>Prefixes</Trans> },
+				{ key: "imports", label: <Trans>Imports</Trans> },
+				{ key: "sets", label: <Trans>Sets</Trans> },
+				{ key: "tools", label: <Trans>Set Tools</Trans> },
+				{ key: "batch", label: <Trans>Batch Apply</Trans> },
+			],
+		},
+		{ key: "lines", label: <Trans>Lines & Regions</Trans>, sections: [{ key: "lines", label: <Trans>Lines</Trans> }] },
+		{
+			key: "base-data",
+			label: <Trans>Base Data</Trans>,
+			sections: [{ key: "base-data", label: <Trans>Base Data</Trans> }],
+		},
+		{
+			key: "publications",
+			label: <Trans>Versions</Trans>,
+			sections: [{ key: "publications", label: <Trans>Publications</Trans> }],
+		},
+	]
+	const activeGroup = groups.find((group) => group.sections.some((entry) => entry.key === active)) ?? groups[0]
+	const go = (leaf: Leaf) => navigate(getPagePath($router, "address_library", { section: leaf }))
+
 	return (
 		<div className="grid gap-4">
 			<div className="flex items-center gap-2">
@@ -43,52 +75,29 @@ export default memo(function AddressLibrary({ section }: { section: string }) {
 				</h1>
 			</div>
 			<Tabs
-				value={active}
-				onValueChange={(value) => navigate(getPagePath($router, "address_library", { section: value }))}
+				value={activeGroup.key}
+				onValueChange={(value) => go(groups.find((g) => g.key === value)?.sections[0].key ?? "prefixes")}
 			>
 				<TabsList className="h-11 w-full justify-start overflow-x-auto p-1.5">
-					<TabsTrigger value="imports">
-						<Trans>Imports</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="prefixes">
-						<Trans>Prefixes</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="sets">
-						<Trans>Sets</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="tools">
-						<Trans>Set Tools</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="batch">
-						<Trans>Batch Apply</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="publications">
-						<Trans>Publications</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="base-data">
-						<Trans>Base Data</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="geography">
-						<Trans>Geography</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="operators">
-						<Trans>Operators</Trans>
-					</TabsTrigger>
-					<TabsTrigger value="lines">
-						<Trans>Lines</Trans>
-					</TabsTrigger>
+					{groups.map((group) => (
+						<TabsTrigger key={group.key} value={group.key}>
+							{group.label}
+						</TabsTrigger>
+					))}
 				</TabsList>
 			</Tabs>
-			{active === "imports" ? <AddressImports /> : null}
-			{active === "prefixes" ? <AddressPrefixes /> : null}
-			{active === "sets" ? <AddressSets /> : null}
-			{active === "tools" ? <AddressMath /> : null}
-			{active === "batch" ? <AddressRevisions /> : null}
-			{active === "publications" ? <AddressPublications /> : null}
-			{active === "base-data" ? <AddressBaseData /> : null}
-			{active === "geography" ? <AddressTaxonomy kind="geography" /> : null}
-			{active === "operators" ? <AddressTaxonomy kind="operators" /> : null}
-			{active === "lines" ? <AddressLines /> : null}
+			{activeGroup.sections.length > 1 ? (
+				<Tabs value={active} onValueChange={(value) => go(value as Leaf)}>
+					<TabsList className="h-9 w-full justify-start overflow-x-auto bg-transparent p-0">
+						{activeGroup.sections.map((entry) => (
+							<TabsTrigger key={entry.key} value={entry.key}>
+								{entry.label}
+							</TabsTrigger>
+						))}
+					</TabsList>
+				</Tabs>
+			) : null}
+			{LEAF_COMPONENTS[active]}
 		</div>
 	)
 })

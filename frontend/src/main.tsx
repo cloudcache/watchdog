@@ -242,7 +242,7 @@ const App = memo(() => {
 	} else if (page.route === "traffic_defaults") {
 		return <TrafficDefaults />
 	} else if (page.route === "address_library_root") {
-		return <AddressLibrary section="imports" />
+		return <AddressLibrary section="prefixes" />
 	} else if (page.route === "address_library") {
 		return <AddressLibrary section={page.params.section} />
 	} else if (page.route === "address_prefixes") {
