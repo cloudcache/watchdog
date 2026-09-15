@@ -334,12 +334,31 @@ func (s *Server) health(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "install_required", "installed": false, "mysql": dbOK, "clickhouse": false})
 		return
 	}
-	chOK := s.snmpMetrics != nil && s.snmpMetrics.Ready(ctx) == nil
+	chOK := false
+	clickHouseError := s.clickHouseError()
+	if s.snmpMetrics != nil {
+		if err := s.snmpMetrics.Ready(ctx); err == nil {
+			chOK = true
+		} else {
+			clickHouseError = err.Error()
+		}
+	}
 	status := http.StatusOK
 	if !dbOK || !chOK {
 		status = http.StatusServiceUnavailable
 	}
-	c.JSON(status, gin.H{"status": ternary(dbOK && chOK, "ok", "degraded"), "mysql": dbOK, "clickhouse": chOK})
+	body := gin.H{
+		"status": ternary(dbOK && chOK, "ok", "degraded"), "mysql": dbOK,
+		"clickhouse": chOK, "runtime_ready": s.runtimeReady.Load(),
+	}
+	if !chOK {
+		if clickHouseError == "" {
+			clickHouseError = "ClickHouse is not ready"
+		}
+		body["clickhouse_error"] = clickHouseError
+		body["clickhouse_recovery"] = "fix the dependency and restart watchdog-server"
+	}
+	c.JSON(status, body)
 }
 
 func (s *Server) installStatus(c *gin.Context) {

@@ -82,6 +82,15 @@
 >
 > **2026-09-15 Phase A 已执行（见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md) §6）**：①PB 残留已清——删死的 hub Dockerfile+CI repoint 到 `dockerfile_server`(cmd/watchdog-server)、GitHub 模板去 `/_/#/logs`、`init.sql` 删 `auth_provider`/`external_subject_id`（commit 28276488）；②遗留迁移器加 KISS 库守卫，`watchdog-install`/超期 worker 对 KISS 库即拒绝，**不再能 brick boot**（commit 4574289d）。KISS-01E「编码删除」的 PB 残留项已完成；`internal/watchdog` 整包 + 遗留 schema 树的物理删除仍属 KISS-08（须先 Phase B 抽 SNMP 切片 + 退役 worker）。
 
+#### KISS-01F 管理面与 ClickHouse 启动解耦
+
+- [x] **设计**：MySQL 的 install/session/RBAC/device/agent/address/billing 管理 CRUD 是服务启动硬依赖；ClickHouse 仍是 Flow/SNMP 唯一时序权威，但允许启动时非致命降级，绝不恢复 VM/PB fallback。`runtime_ready` 只表示管理运行面完成，ClickHouse 单独报告健康；修复依赖后由重启执行幂等迁移和接线，暂不引入并发热重连状态机。
+- [x] **编码**：`prepareRuntime` 先建立唯一 `operation_jobs` store，再启动 agent/address/geo 管理能力，随后尝试 ClickHouse；配置、认证、schema 或连接失败只记录可操作原因。ClickHouse 正常时再接 Flow query、SNMP query、Flow/SNMP export 与 billing reader。修复了 Flow export 在 `operation_jobs` 建立前检查、从而静默不启动的历史顺序错误。
+- [x] **API/运维**：`GET /api/v1/health` 在降级时返回 `503`、`runtime_ready:true`、`clickhouse:false`、具体 `clickhouse_error` 与 restart recovery；Flow/SNMP 时序 query/export 继续 fail-closed `503`，MySQL 管理 API 可用。缺地址/库名的半配置响亮拒绝。
+- [x] **单元/集成测试**：真实临时 MySQL + 不可达 ClickHouse 覆盖首次安装、登录、设备列表、降级 health、Flow query 503 和重启后再次登录；真实 MySQL + Docker ClickHouse 覆盖 SNMP/Flow query store、两类 export worker、billing reader 与共享 job store 全部完成接线。
+- [x] **变更设计/测试**：无 schema/data migration；ClickHouse 是启动时可恢复依赖，运行中已建立的 native pool 由驱动负责连接恢复，启动时完全失败则显式要求 restart，避免动态替换 query/store/worker 指针产生竞态。Flow collector/worker 仍为独立进程，本切片未改 decode、Kafka 和写入热路径。
+- [x] **回归/已提交门禁**：定向单元、真实 MySQL 正反向 CH 集成、全库 Go build/test/vet 与前端 test/build 全通过后独立提交；并行地址库文件不纳入提交。
+
 ### KISS-02 单域 RBAC 与设备根
 
 - [x] **KISS-02A 已完成纵向切片（2026-09-08，`e5848ade`）**：新 Gin 后端已接 `devices` 与 SNMP profile 的 list/get/create/patch/delete，host 唯一且 display name 可选；labels/SNMP override 不丢失，ETag 冲突检测、固定 sort 白名单、服务端分页/search/status filter、device/device-group scope 均已接 MySQL。现有 `/network/devices` 与 `/targets` 是同一 `device_id` 的临时 handler/DTO alias，兼容层仅做 `system -> host` 类型映射，不创建或写旧表；真实 MySQL 集成测试覆盖 CRUD、host 冲突、profile secret 脱敏及 summary/target alias。

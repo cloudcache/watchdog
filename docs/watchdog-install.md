@@ -27,6 +27,16 @@ Set `WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password` when
 starting every process that connects to ClickHouse. Production uses a mounted
 secret file instead.
 
+Kafka and ClickHouse are telemetry dependencies, not prerequisites for the
+MySQL management-plane install. Starting them first makes Flow/SNMP query and
+export available immediately. If ClickHouse is unavailable or its credentials
+are wrong, installation and the login/RBAC/device/agent/address/billing
+management APIs still start; `/api/v1/health` reports `503 degraded` with
+`clickhouse_error`, and ClickHouse-backed query/export APIs return an explicit
+`503`. Fix the dependency and restart `watchdog-server`; startup reruns the
+idempotent ClickHouse migrations and wires the telemetry services. Kafka is
+used only by the independent Flow collector/worker processes.
+
 ## 2. Start the independent backend and frontend
 
 MySQL itself must be reachable, but the `watchdog` database may be absent or
@@ -54,8 +64,9 @@ server is involved.
 On every page load the frontend reads `GET /api/v1/install-status`:
 
 - an empty database redirects to `/install`;
-- submitting `POST /api/v1/install` applies the embedded MySQL and ClickHouse
-  schemas and atomically creates exactly one administrator;
+- submitting `POST /api/v1/install` applies the embedded MySQL schema and
+  atomically creates exactly one administrator; it also applies the ClickHouse
+  schema when ClickHouse is reachable;
 - a completed installation redirects to the normal login page;
 - repeated installation is rejected with `409 already_installed`;
 - all other API routes reject an uninstalled database with
@@ -72,6 +83,11 @@ Health and install state can be checked independently:
 curl -sS http://127.0.0.1:8091/api/v1/health
 curl -sS http://127.0.0.1:8091/api/v1/install-status
 ```
+
+`runtime_ready:true` means that the MySQL management runtime is available.
+Telemetry readiness is reported independently by `clickhouse:true|false`; a
+degraded health response therefore does not imply that login or management
+CRUD is unavailable.
 
 Installation seeds only RBAC and built-in MIB modules; the geo/address library
 starts empty. To bootstrap the base library (EdgeManager-derived, ~2.66M CIDRs)

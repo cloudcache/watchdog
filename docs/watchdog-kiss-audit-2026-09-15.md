@@ -77,6 +77,8 @@ KISS-01A 门禁是提交顺序纪律说明（非代码可补救）；KISS-01E �
 - **决策并文档化 CH 启动语义**（Major）：要么让 CH「配了但连不上」时非致命降级（log + `snmpMetrics/clickHouse=nil` + health `clickhouse:false`），与空配置路径一致，使 CH 故障不拖垮 RBAC/device/address；要么明确 fail-fast 并在配置为空密码时**响亮报错**而非静默降级。区分 CH-auth 与其他错误，给 `install_failed` 可操作原因。
 - 出厂 YAML 保持无密码；`make dev-*` 可自动导出密码文件。
 
+> **2026-09-16 已关闭**：采用非致命降级语义。MySQL install/session/RBAC/device/agent/address/billing 管理运行面先完成；ClickHouse 失败原因进入日志和 `GET /api/v1/health`，其时序 query/export 明确返回 `503`，不接 VM/PB fallback。真实 MySQL 测试覆盖不可达 CH 下安装、登录、设备 API 与重启；真实 Docker ClickHouse 测试覆盖 SNMP/Flow query、两类 export worker、billing reader 的完整接线。`operation_jobs` 已前置为共享管理依赖，同时修复 Flow export worker 的静默漏启动顺序错误。恢复方式是修复配置/依赖后重启 server 并执行幂等 CH migration，不增加热重连状态机。
+
 ### 主题 3 — 仓库卫生（跨 §3/§4）
 - gitignore 或删除根目录 `watchdog-server`（60MB）与 `dbbak-origin-*.sql`（DB dump，勿提交）。
 

@@ -1,7 +1,8 @@
 // Package server is the KISS watchdog-server: a pure Go (Gin) HTTP service backed by
 // MySQL (management authority) and ClickHouse (time-series + log/alert). It replaces the
 // removed legacy hub. A fresh instance serves the installer without mutating an empty
-// schema; an explicit install initializes MySQL, ClickHouse, and the first administrator.
+// schema; an explicit install initializes MySQL and the first administrator. ClickHouse
+// is initialized when reachable but does not prevent the management plane from starting.
 package server
 
 import (
@@ -10,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +39,7 @@ type Server struct {
 	installMu     sync.Mutex
 	installed     atomic.Bool
 	runtimeReady  atomic.Bool
+	clickHouseErr atomic.Pointer[string]
 
 	addressStore     *address.Store
 	addressPublisher *address.Publisher
@@ -128,24 +131,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	if err := s.ensureBuiltinMIBModules(ctx); err != nil {
 		return fmt.Errorf("seed built-in MIB modules: %w", err)
 	}
-	if err := s.applyClickHouseSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.startClickHouse(ctx); err != nil {
-		return fmt.Errorf("start ClickHouse: %w", err)
-	}
-	if err := s.startFlowQuery(); err != nil {
-		return fmt.Errorf("start flow query: %w", err)
-	}
-	if err := s.startFlowGeo(); err != nil {
-		return fmt.Errorf("start flow geo: %w", err)
-	}
-	if err := s.startVPNDetection(); err != nil {
-		return fmt.Errorf("start VPN detection: %w", err)
-	}
-	if err := s.startFlowExports(); err != nil {
-		return fmt.Errorf("start flow exports: %w", err)
-	}
+	// operation_jobs is a management-plane dependency shared by address, agent,
+	// SNMP and Flow workers. Create it before any worker checks the store.
+	s.jobs = opjob.NewStore(s.db)
 	if err := s.startAgentPlans(); err != nil {
 		return fmt.Errorf("start agent plans: %w", err)
 	}
@@ -155,6 +143,32 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	if err := s.startFlowEnrichment(ctx); err != nil {
 		return fmt.Errorf("start Flow enrichment publication: %w", err)
 	}
+	if err := s.startFlowGeo(); err != nil {
+		return fmt.Errorf("start flow geo: %w", err)
+	}
+
+	// ClickHouse is the sole telemetry authority, but it is not an auth/device
+	// dependency. A configuration, authentication or availability failure keeps
+	// the management plane running and is exposed by health and query 503s. A
+	// restart retries schema application and connection after the operator fixes
+	// the dependency.
+	if err := s.prepareClickHouse(ctx); err != nil {
+		s.setClickHouseError(err)
+		if strings.TrimSpace(s.cfg.ClickHouse.Address) != "" || strings.TrimSpace(s.cfg.ClickHouse.Database) != "" {
+			log.Printf("watchdog ClickHouse unavailable; management plane remains available: %v", err)
+		}
+	} else {
+		s.setClickHouseError(nil)
+	}
+	if err := s.startFlowQuery(); err != nil {
+		return fmt.Errorf("start flow query: %w", err)
+	}
+	if err := s.startVPNDetection(); err != nil {
+		return fmt.Errorf("start VPN detection: %w", err)
+	}
+	if err := s.startFlowExports(); err != nil {
+		return fmt.Errorf("start flow exports: %w", err)
+	}
 	if err := s.startSNMPExports(); err != nil {
 		return fmt.Errorf("start SNMP exports: %w", err)
 	}
@@ -162,6 +176,40 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 		return fmt.Errorf("start billing: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) prepareClickHouse(ctx context.Context) error {
+	address := strings.TrimSpace(s.cfg.ClickHouse.Address)
+	database := strings.TrimSpace(s.cfg.ClickHouse.Database)
+	if address == "" && database == "" {
+		return errors.New("ClickHouse is not configured")
+	}
+	if address == "" || database == "" {
+		return errors.New("ClickHouse configuration requires both address and database")
+	}
+	if err := s.applyClickHouseSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.startClickHouse(ctx); err != nil {
+		return fmt.Errorf("start ClickHouse: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) setClickHouseError(err error) {
+	if err == nil {
+		s.clickHouseErr.Store(nil)
+		return
+	}
+	message := err.Error()
+	s.clickHouseErr.Store(&message)
+}
+
+func (s *Server) clickHouseError() string {
+	if message := s.clickHouseErr.Load(); message != nil {
+		return *message
+	}
+	return ""
 }
 
 func (s *Server) startBilling() error {
@@ -182,7 +230,9 @@ func (s *Server) startBilling() error {
 // and starts the async snapshot-build worker on the opjob engine.
 func (s *Server) startAddressLibrary() error {
 	s.addressStore = address.NewStore(s.db)
-	s.jobs = opjob.NewStore(s.db)
+	if s.jobs == nil {
+		s.jobs = opjob.NewStore(s.db)
+	}
 	s.addressObjects = address.DiskDimensionObjectStore{Dir: s.cfg.Address.SnapshotDir}
 	s.addressArtifacts = address.DiskArtifactStore{Dir: s.cfg.Address.ArtifactDir, MaxBytes: s.cfg.Address.MaxUploadBytes}
 	publisher, err := address.NewPublisher(s.addressStore, s.addressObjects)

@@ -100,3 +100,152 @@ func TestFreshInstallLifecycle(t *testing.T) {
 		t.Fatalf("administrator cardinality: users=%d error=%v", users, err)
 	}
 }
+
+// TestInstallAndManagementPlaneSurviveUnavailableClickHouse freezes the
+// deployment boundary: MySQL installation, authentication and device APIs do
+// not depend on ClickHouse availability. Telemetry health/query surfaces stay
+// explicit and fail closed until the dependency is fixed and the server is
+// restarted. Opt-in via WATCHDOG_TEST_MYSQL_DSN.
+func TestInstallAndManagementPlaneSurviveUnavailableClickHouse(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	parsed.DBName = "watchdog_install_ch_degraded_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	cfg := Config{
+		MySQL: MySQLConfig{DSN: dsn},
+		ClickHouse: ClickHouseConfig{
+			Address: "127.0.0.1:1", Database: "watchdog_flow", Username: "default",
+		},
+		Address: AddressConfig{ArtifactDir: t.TempDir(), SnapshotDir: t.TempDir()},
+	}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("start fresh server: %v", err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = s.Close()
+		}
+	}()
+	installed := requestJSON(t, s, http.MethodPost, "/api/v1/install", map[string]string{
+		"username": "admin", "password": "install-password",
+	}, nil)
+	if installed.Code != http.StatusCreated || !strings.Contains(installed.Body.String(), `"runtime_ready":true`) {
+		t.Fatalf("install with unavailable ClickHouse: code=%d body=%s", installed.Code, installed.Body.String())
+	}
+
+	login := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]string{
+		"username": "admin", "password": "install-password",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login with unavailable ClickHouse: code=%d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	devices := requestJSON(t, s, http.MethodGet, "/api/v1/devices?limit=1", nil, nil, cookies...)
+	if devices.Code != http.StatusOK {
+		t.Fatalf("management API with unavailable ClickHouse: code=%d body=%s", devices.Code, devices.Body.String())
+	}
+	health := requestJSON(t, s, http.MethodGet, "/api/v1/health", nil, nil)
+	if health.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(health.Body.String(), `"clickhouse":false`) ||
+		!strings.Contains(health.Body.String(), `"runtime_ready":true`) ||
+		!strings.Contains(health.Body.String(), `"clickhouse_recovery"`) {
+		t.Fatalf("degraded health: code=%d body=%s", health.Code, health.Body.String())
+	}
+	csrf := cookieValue(cookies, csrfCookie)
+	flow := requestJSON(t, s, http.MethodPost, "/api/v1/flow/query", nil,
+		map[string]string{"X-CSRF-Token": csrf}, cookies...)
+	if flow.Code != http.StatusServiceUnavailable || !strings.Contains(flow.Body.String(), "flow_query_unavailable") {
+		t.Fatalf("Flow query without ClickHouse: code=%d body=%s", flow.Code, flow.Body.String())
+	}
+	if s.jobs == nil {
+		t.Fatal("management operation job store was not initialized")
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	restarted, err := New(cfg)
+	if err != nil {
+		t.Fatalf("restart installed server with unavailable ClickHouse: %v", err)
+	}
+	defer restarted.Close()
+	relogin := requestJSON(t, restarted, http.MethodPost, "/api/v1/session/login", map[string]string{
+		"username": "admin", "password": "install-password",
+	}, nil)
+	if relogin.Code != http.StatusOK {
+		t.Fatalf("login after degraded restart: code=%d body=%s", relogin.Code, relogin.Body.String())
+	}
+}
+
+// TestInstalledRuntimeStartsClickHouseWorkers proves the positive half of the
+// same boundary against real MySQL and ClickHouse: once ClickHouse is ready,
+// every query/service worker that depends on it is wired to the single shared
+// operation-job store. Opt-in to avoid requiring ClickHouse for unit runs.
+func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
+	if os.Getenv("WATCHDOG_SERVER_CLICKHOUSE_INTEGRATION") != "1" {
+		t.Skip("WATCHDOG_SERVER_CLICKHOUSE_INTEGRATION is not set")
+	}
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Fatal("WATCHDOG_TEST_MYSQL_DSN is required")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	parsed.DBName = "watchdog_install_ch_ready_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+
+	root := t.TempDir()
+	secret := root + "/clickhouse-password"
+	if err := os.WriteFile(secret, []byte(os.Getenv("WATCHDOG_SNMP_CLICKHOUSE_PASSWORD")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		MySQL: MySQLConfig{DSN: dsn},
+		ClickHouse: ClickHouseConfig{
+			Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default", PasswordFile: secret,
+		},
+		Address: AddressConfig{ArtifactDir: root + "/address-imports", SnapshotDir: root + "/address-snapshots"},
+		Flow:    FlowConfig{Export: FlowExportConfig{Dir: root + "/flow-exports"}},
+		SNMP:    SNMPConfig{ExportDir: root + "/snmp-exports"},
+		Billing: BillingConfig{ExportDir: root + "/billing-exports"},
+	}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("start fresh server: %v", err)
+	}
+	defer s.Close()
+	installed := requestJSON(t, s, http.MethodPost, "/api/v1/install", map[string]string{
+		"username": "admin", "password": "install-password",
+	}, nil)
+	if installed.Code != http.StatusCreated {
+		t.Fatalf("install with ClickHouse: code=%d body=%s", installed.Code, installed.Body.String())
+	}
+	if s.jobs == nil || s.clickHouse == nil || s.snmpMetrics == nil || s.flowQuery == nil ||
+		s.flowExportCancel == nil || s.snmpExportCancel == nil || s.billingService == nil {
+		t.Fatalf("incomplete ClickHouse runtime: jobs=%t ch=%t snmp=%t flow=%t flow_export=%t snmp_export=%t billing=%t",
+			s.jobs != nil, s.clickHouse != nil, s.snmpMetrics != nil, s.flowQuery != nil,
+			s.flowExportCancel != nil, s.snmpExportCancel != nil, s.billingService != nil)
+	}
+	health := requestJSON(t, s, http.MethodGet, "/api/v1/health", nil, nil)
+	if health.Code != http.StatusOK || !strings.Contains(health.Body.String(), `"clickhouse":true`) ||
+		!strings.Contains(health.Body.String(), `"runtime_ready":true`) {
+		t.Fatalf("healthy runtime: code=%d body=%s", health.Code, health.Body.String())
+	}
+}
