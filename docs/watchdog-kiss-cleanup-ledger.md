@@ -25,7 +25,7 @@
 
 | ID | 类别 | 精确位置 | 分类 | 依赖它的活跃代码 | 删除影响 | 前置 | 归属 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| L1 | package | `internal/watchdog/`（237 文件） | KISS-08 | `internal/server`(13) + 3 遗留 command main | 包级 import，未断前一文件不可删 | L2 + L13-L14 | KISS-08 | blocked-by-L2 |
+| L1 | package | `internal/watchdog/`（237 文件） | KISS-08 | `internal/server`(13) + 2 延期 agent command main | 包级 import，未断前一文件不可删 | L2 + L14 | KISS-08 | blocked-by-L2 |
 | L2 | symbol-set | 65 符号 / 19 锚文件 + SNMP 引擎闭包(~18) — `domain.go`/`traffic_policy.go`/`metric_catalog.go`/`metrics_query.go`/`snmp_*` | **EXTRACT-first** | `internal/server` 13 文件（`snmp_*`,`metrics.go`,`aggregate_graphs.go`,`graph_overview.go`,`retention.go`,`handlers_grants.go`） | 不抽则 server 无法脱离 watchdog | 建 `internal/snmpdomain`，迁 `gosmi`/`gosnmp` | KISS-08 | **ready** |
 | L3 | file(split) | `config.go:275 SNMPConfig`（余为遗留 BackendConfig） | EXTRACT-first | `snmp_discovery.go:26` | server 少 MIB 注册入参类型 | 从 BackendConfig 拆出 | KISS-08 | ready |
 | L4 | file(split) | `repository.go:468 MetricRetentionPolicy` | EXTRACT-first | `retention.go:25,100` | server retention 断 | 从遗留 repo 拆出 | KISS-08 | ready |
@@ -37,7 +37,7 @@
 | L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；旧命令对 KISS 库查 `collector_agents⋈tenants` 即失败 | 已满足 | KISS-08B | **done** |
 | L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
 | L12 | cmd/schema | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、Makefile target 与 dev-db 脚本已删除；旧 schema/实现只被 `internal/watchdog` 历史测试引用 | schema 树随 L1 删除 | KISS-08C/D | **entry done; files blocked-by-L1** |
-| L13 | cmd | `cmd/watchdog-librenms-extract` | legacy-delete | dev 工具 | 无（`ParseLibrenmsDefinitions` 随 L2 迁走） | L2 | KISS-08 | ready |
+| L13 | cmd | `cmd/watchdog-librenms-extract` | legacy-delete | 无（未发布） | server 已按配置直接加载 `ParseLibrenmsDefinitions`，旧命令只写不存在的多租户 definition 表 | 已满足 | KISS-08D | **done** |
 | L14 | cmd | `cmd/watchdog-snmp-agent` / `cmd/watchdog-system-agent` | legacy-guard | 无（未发布） | KISS-03B/路线图 | 路线图决策 | KISS-08/03B | blocked(路线图) |
 | L15 | config | `config.go:971` **必填** `victoriametrics.base_url`；VM/tenant 键 `:80,114-115,232-233,246,258,264,125,199` | KISS-08 | 遗留 worker 经 `LoadBackendConfig` | 断遗留配置加载 | L10-L14 | KISS-08 | blocked |
 | L16 | config | `config/watchdog.example.yaml`(`:7,13-16,41,57,65-77`)、`watchdog.dev.yaml`(`:7,10-13,27,37,43,84-90`) VM/tenant/provider 键 | **DEAD-now**(server 忽略) | 无（server 用 `internal/server/config.go`） | 无 | —— | KISS-08 | **ready** |
@@ -103,7 +103,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 4. **抽 SNMP 切片**：19 锚文件 + 引擎闭包 + 拆 `SNMPConfig`/`MetricRetentionPolicy` → 新 `internal/snmpdomain`，迁 `gosmi`/`gosnmp`，repoint 13 个 `internal/server` 文件（L2-L4、L18）。验收：`internal/server` 不再 import `internal/watchdog`；`go build ./...` + SNMP 集成回归。
 
 **Phase C — 退役遗留 worker**
-5. L10/L11 已在 KISS-08B 物理删除；L12 的 CLI/Makefile/script 入口已在 KISS-08C 删除；L13 删（dev 工具）；L14 按路线图（KISS-03B/Tier2）。
+5. L10/L11 已在 KISS-08B 物理删除；L12 的 CLI/Makefile/script 入口已在 KISS-08C 删除；L13 已在 KISS-08D 删除；L14 按路线图（KISS-03B/Tier2）。
 
 **Phase D — 整包 + 依赖 + schema 树删除（KISS-08 收尾）**
 6. 无 importer 后删整 `internal/watchdog`（L1、L6-L9）+ `robfig/cron`（L17）+ 遗留 VM 校验（L15）+ 遗留 schema 树 `deploy/migration/mysql`+`install/init.sql`（S3-S12 载体）。
