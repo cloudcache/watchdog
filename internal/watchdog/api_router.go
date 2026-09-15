@@ -23,7 +23,6 @@ type APIV1RouterConfig struct {
 	ExportMetric           string
 	ExportCollectionStep   time.Duration
 	Billing                BillingRepository
-	AggregateGraphs        AggregateGraphRepository
 	Permissions            PermissionRepository
 	Idempotency            IdempotencyRepository
 	TargetDeletePreview    TargetDeletePreviewRepository
@@ -169,9 +168,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.Billing != nil {
 		registerBillingRoutes(mux, auth, cfg.Billing, cfg.Network, cfg.Metrics)
-	}
-	if cfg.AggregateGraphs != nil {
-		registerAggregateGraphRoutes(mux, auth, cfg.AggregateGraphs, cfg.Network, cfg.Metrics)
 	}
 	if cfg.Permissions != nil {
 		registerPermissionRoutes(mux, auth, cfg.Permissions)

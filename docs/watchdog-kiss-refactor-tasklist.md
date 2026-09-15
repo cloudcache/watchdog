@@ -271,6 +271,8 @@
 
 - [x] **KISS-08F6 旧 all-in-one Backend Runtime 删除（本提交）**：全库生产代码已无 `NewBackendRuntime`/`BackendRuntime` 调用；当前 `watchdog-server`、`watchdog-snmp-collector`、SNMP trap agent 和 Flow 进程均由独立入口组装。因此物理删除这个同时组装 tenant/PB 后遗留 management API、VM query/export、SNMP poll、Flow rollup、aggregate rollup、remote provider 和后台 goroutine 的 816 行死 runtime，并删除仅构造该死 runtime 的测试。旧 test router 暂需的 runtime-health response DTO 留在 router 边界，不再拥有运行时实现。当前 server/SNMP/Flow 独立 command build、目标包测试、全库 test/vet 和旧 runtime 符号零引用为提交门禁。
 
+- [x] **KISS-08F7 旧 Aggregate Graph HTTP 副本删除（本提交）**：当前 Gin `/api/v1/aggregate-graphs` 已完整承接 CRUD、items/ports 绑定、series/data/summary、两门 RBAC、服务端约束和 ClickHouse SNMP 查询；删除旧 tenant-scoped `net/http` handler、router 注入点和专属 endpoint test。仍被旧包内 rollup 测试闭包使用的 tenant repository/domain 暂不混入本切片，后续按真实引用闭包删除。当前 Gin aggregate graph 单元、真实 MySQL + CH query executor 契约集成、全库 test/vet/build 与旧 handler 符号零引用为提交门禁。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
@@ -280,7 +282,7 @@
 - [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。
 - [ ] **已提交门禁**：最终删除提交后 clean checkout 可完整部署；所有遗留数据库/volume 已按各工作包的精确白名单处置，不把物理清理拖到项目末尾。
 
-> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A–E 已清除 compat 路由/旧命令/旧安装接线/旧 importer 并解耦 trap agent；KISS-08F 已按纵向切片删除 Dashboard、Retention、User Preferences、SNMP Profile/MIB、Audit Log 旧 HTTP/存储副本及 all-in-one Backend Runtime。剩余物理清理由 `internal/server`→`internal/watchdog` 的 SNMP 域 import 链及延期的 system agent 命令钉住，按 Phase B/C/D 推进。
+> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A–E 已清除 compat 路由/旧命令/旧安装接线/旧 importer 并解耦 trap agent；KISS-08F 已按纵向切片删除 Dashboard、Retention、User Preferences、SNMP Profile/MIB、Audit Log、Aggregate Graph 旧 HTTP/存储副本及 all-in-one Backend Runtime。剩余物理清理由 `internal/server`→`internal/watchdog` 的 SNMP 域 import 链及延期的 system agent 命令钉住，按 Phase B/C/D 推进。
 >
 > **2026-09-15 审计（见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §主题 1/2）**：`internal/server`/`cmd/*` 仍 import 遗留 `internal/watchdog`（作为共享类型库 + `NewBackendRuntime` 泛化栈），删除须先断这些 import——本包正确的延后项。但其**危险接线**建议提前拆（不需整包删除）：①**双安装系统**——`cmd/watchdog-install`+`deploy/migration/mysql`+`install/init.sql` 建出不兼容的 `watchdog_installation`（`id VARCHAR 'default'` vs KISS `id=1`），装完再起 KISS server 报 "Unknown column 'schema_version'" 直接开不了机；仍接在 `Makefile:111-112`、`scripts/watchdog-dev-db.sh`、`docs/watchdog-kiss-architecture.md:115`。②**遗留 worker** `watchdog-aggregate-rollup`/`watchdog-export-worker` 已被 in-server CH worker 取代，且查询 KISS 中不存在的 `collector_agents`/`tenants`（`flow_rollup_jobs.go:451-452`），对 KISS 库运行即失败。③遗留 worker config 仍**必填** VM base_url（`internal/watchdog/config.go:971`）。建议：为遗留安装器/worker 加「拒绝对 KISS 库操作」的响亮守卫，或从 Makefile/scripts/CI/docs 摘除接线，把物理删除留到本包。
 >
