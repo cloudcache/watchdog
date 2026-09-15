@@ -257,6 +257,8 @@
 
 - [x] **KISS-08D 旧 LibreNMS DB importer 退役（本提交）**：删除未发布且未接构建/脚本的 `watchdog-librenms-extract`；该命令通过 `NewBackendRuntime` 把定义写入旧多租户表，目标架构不再有对应表。生产 server 继续直接从 `snmp.definitions_dir` 调用同一 `ParseLibrenmsDefinitions`，并叠加 embedded/配置 MIB，自动 OS/vendor/module discovery 能力不变；parser/discovery 测试与全库 test/vet/build 为门禁。
 
+- [x] **KISS-08E SNMP trap agent 配置解耦（本提交）**：`watchdog-snmp-agent` 不再为 3 个配置字段和一个 JSON DTO import 整个遗留 `internal/watchdog` 包。命令内最小配置读取器继续支持共享 YAML 的 `snmp_trap_agent` section、`WATCHDOG_SNMP_TRAP_*` 环境变量及原命令行覆盖顺序；只严格校验自己拥有的 section，不受平台其余配置生命周期影响。trap 上报 URL、Authorization 和 JSON 字段保持不变，示例/开发配置纠正为独立 Gin 后端 `:8091`。配置边界、错误向量、仓库配置兼容和 HTTP wire contract 均有单测；目标 build 与源码反向扫描为提交门禁。`watchdog-system-agent` 按已冻结范围继续延期，不在本切片改写。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
@@ -266,7 +268,7 @@
 - [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。
 - [ ] **已提交门禁**：最终删除提交后 clean checkout 可完整部署；所有遗留数据库/volume 已按各工作包的精确白名单处置，不把物理清理拖到项目末尾。
 
-> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A 已清除前端 compat 调用和 I1-I5 路由，KISS-08B 已删除被新 operation worker 取代的 aggregate/export 旧命令，KISS-08C 已删除旧 CLI 安装接线，KISS-08D 已删除旧 LibreNMS DB importer；剩余物理清理由 `internal/server`→`internal/watchdog` 的 SNMP 域 import 链及延期 agent 命令钉住，按 Phase B/C/D 推进。
+> **2026-09-15 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A 已清除前端 compat 调用和 I1-I5 路由，KISS-08B 已删除被新 operation worker 取代的 aggregate/export 旧命令，KISS-08C 已删除旧 CLI 安装接线，KISS-08D 已删除旧 LibreNMS DB importer，KISS-08E 已断开 trap agent 对遗留包的 import；剩余物理清理由 `internal/server`→`internal/watchdog` 的 SNMP 域 import 链及延期的 system agent 命令钉住，按 Phase B/C/D 推进。
 >
 > **2026-09-15 审计（见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §主题 1/2）**：`internal/server`/`cmd/*` 仍 import 遗留 `internal/watchdog`（作为共享类型库 + `NewBackendRuntime` 泛化栈），删除须先断这些 import——本包正确的延后项。但其**危险接线**建议提前拆（不需整包删除）：①**双安装系统**——`cmd/watchdog-install`+`deploy/migration/mysql`+`install/init.sql` 建出不兼容的 `watchdog_installation`（`id VARCHAR 'default'` vs KISS `id=1`），装完再起 KISS server 报 "Unknown column 'schema_version'" 直接开不了机；仍接在 `Makefile:111-112`、`scripts/watchdog-dev-db.sh`、`docs/watchdog-kiss-architecture.md:115`。②**遗留 worker** `watchdog-aggregate-rollup`/`watchdog-export-worker` 已被 in-server CH worker 取代，且查询 KISS 中不存在的 `collector_agents`/`tenants`（`flow_rollup_jobs.go:451-452`），对 KISS 库运行即失败。③遗留 worker config 仍**必填** VM base_url（`internal/watchdog/config.go:971`）。建议：为遗留安装器/worker 加「拒绝对 KISS 库操作」的响亮守卫，或从 Makefile/scripts/CI/docs 摘除接线，把物理删除留到本包。
 >

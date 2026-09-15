@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	g "github.com/gosnmp/gosnmp"
 )
 
@@ -29,21 +28,20 @@ func main() {
 	listen := flag.String("listen", "", "UDP listen address for SNMP traps")
 	flag.Parse()
 
-	cfg, err := watchdog.LoadWatchdogConfig(*configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	trapCfg := cfg.SNMPTrapAgent
 	if strings.TrimSpace(*apiURL) != "" {
-		trapCfg.APIURL = *apiURL
+		cfg.APIURL = *apiURL
 	}
 	if *token != "" {
-		trapCfg.Token = *token
+		cfg.Token = *token
 	}
 	if strings.TrimSpace(*listen) != "" {
-		trapCfg.Listen = *listen
+		cfg.Listen = *listen
 	}
-	trapCfg, err = watchdog.NormalizeAndValidateSNMPTrapAgentConfig(trapCfg)
+	cfg, err = normalizeAndValidateConfig(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -53,7 +51,7 @@ func main() {
 
 	trapListener := g.NewTrapListener()
 	trapListener.OnNewTrap = func(packet *g.SnmpPacket, addr *net.UDPAddr) {
-		handleTrap(ctx, trapCfg.APIURL, trapCfg.Token, packet, addr)
+		handleTrap(ctx, cfg.APIURL, cfg.Token, packet, addr)
 	}
 	trapListener.Params = &g.GoSNMP{
 		Version: g.Version2c,
@@ -65,8 +63,8 @@ func main() {
 		trapListener.Close()
 	}()
 
-	log.Printf("watchdog snmp trap agent listening on UDP %s, forwarding to %s", trapCfg.Listen, trapCfg.APIURL)
-	if err := trapListener.Listen(trapCfg.Listen); err != nil && !errors.Is(err, context.Canceled) {
+	log.Printf("watchdog snmp trap agent listening on UDP %s, forwarding to %s", cfg.Listen, cfg.APIURL)
+	if err := trapListener.Listen(cfg.Listen); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("trap listener stopped: %v", err)
 	}
 }
@@ -74,13 +72,17 @@ func main() {
 type netUDPAddr = net.UDPAddr
 
 func handleTrap(ctx context.Context, apiURL, token string, packet *g.SnmpPacket, addr *net.UDPAddr) {
+	handleTrapWithClient(ctx, apiURL, token, packet, addr, &http.Client{Timeout: 30 * time.Second})
+}
+
+func handleTrapWithClient(ctx context.Context, apiURL, token string, packet *g.SnmpPacket, addr *net.UDPAddr, client *http.Client) {
 	trapOID := ""
-	varbinds := make([]watchdog.SNMPTrapVarBind, 0, len(packet.Variables))
+	varbinds := make([]trapVarBind, 0, len(packet.Variables))
 	for _, vb := range packet.Variables {
 		if vb.Type == g.ObjectIdentifier {
 			trapOID = fmt.Sprintf("%v", vb.Value)
 		}
-		varbinds = append(varbinds, watchdog.SNMPTrapVarBind{
+		varbinds = append(varbinds, trapVarBind{
 			OID:   vb.Name,
 			Value: fmt.Sprintf("%v", vb.Value),
 		})
@@ -112,7 +114,6 @@ func handleTrap(ctx context.Context, apiURL, token string, packet *g.SnmpPacket,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("forward trap to API: %v", err)

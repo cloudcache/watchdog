@@ -100,7 +100,7 @@ snmp:
   mib_load: ""
 
 snmp_trap_agent:
-  api_url: "http://127.0.0.1:8090"
+  api_url: "http://127.0.0.1:8091"
   token: "change-me"
   listen: ":162"
 
