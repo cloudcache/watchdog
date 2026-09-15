@@ -33,10 +33,10 @@ func TestNormalizeFlowSavedFilter(t *testing.T) {
 			t.Fatalf("normalized = %+v", item)
 		}
 	})
-	t.Run("explicit tenant", func(t *testing.T) {
-		item, err := normalizeFlowSavedFilter(flowSavedFilter{Name: "Team view", ShareScope: "TENANT", Filter: validSavedFilterExpr()})
-		if err != nil || item.ShareScope != flowSavedFilterTenant {
-			t.Fatalf("tenant scope = %+v err=%v", item, err)
+	t.Run("explicit shared", func(t *testing.T) {
+		item, err := normalizeFlowSavedFilter(flowSavedFilter{Name: "Team view", ShareScope: "SHARED", Filter: validSavedFilterExpr()})
+		if err != nil || item.ShareScope != flowSavedFilterShared {
+			t.Fatalf("shared scope = %+v err=%v", item, err)
 		}
 	})
 	for _, tc := range []struct {
@@ -46,7 +46,7 @@ func TestNormalizeFlowSavedFilter(t *testing.T) {
 		{"empty name", flowSavedFilter{Name: "  ", Filter: validSavedFilterExpr()}},
 		{"name too long", flowSavedFilter{Name: string(longName), Filter: validSavedFilterExpr()}},
 		{"description too long", flowSavedFilter{Name: "ok", Description: string(longName) + string(longName) + string(longName) + string(longName) + string(longName) + string(longName), Filter: validSavedFilterExpr()}},
-		{"bad scope", flowSavedFilter{Name: "ok", ShareScope: "shared", Filter: validSavedFilterExpr()}},
+		{"legacy tenant scope rejected", flowSavedFilter{Name: "ok", ShareScope: "tenant", Filter: validSavedFilterExpr()}},
 		{"resource field rejected", flowSavedFilter{Name: "ok", Filter: resourceExpr}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestCanEditFlowSavedFilter(t *testing.T) {
 	owner := &principal{UserID: "u1", Abilities: map[string]bool{"flow.view.customer": true}}
 	other := &principal{UserID: "u2", Abilities: map[string]bool{"flow.view.customer": true}}
 
-	shared := flowSavedFilter{OwnerUserID: "u1", ShareScope: flowSavedFilterTenant}
+	shared := flowSavedFilter{OwnerUserID: "u1", ShareScope: flowSavedFilterShared}
 	if !canEditFlowSavedFilter(admin, shared) {
 		t.Fatal("admin may edit a shared filter")
 	}

@@ -6410,8 +6410,8 @@ msgstr "默认范围"
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
-msgid "Tenant shared"
-msgstr "共享范围"
+msgid "Shared"
+msgstr "共享"
 
 #: src/components/routes/settings/heartbeat.tsx
 msgid "Test heartbeat"

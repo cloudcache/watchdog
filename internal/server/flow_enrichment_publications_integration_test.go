@@ -22,7 +22,8 @@ import (
 // TestFlowEnrichmentPublicationGinWorkerIntegration proves the complete
 // single-domain chain against a disposable MySQL database: admin profile and
 // pair publication, authenticated flow_worker pull, signature/object checks,
-// downloaded+installed ACKs, durable LKG restore, and stable trust on restart.
+// downloaded+installed ACKs, rejection of a corrupt upgrade without replacing
+// the durable LKG, offline restore, and stable trust on restart.
 func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
 	if baseDSN == "" {
@@ -89,7 +90,7 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatalf("wrong-kind agent can pull Flow enrichment: status=%d body=%s", wrongKindPull.Code, wrongKindPull.Body.String())
 	}
 
-	effectiveFrom := time.Now().UTC().Truncate(time.Minute)
+	effectiveFrom := time.Now().UTC().Truncate(time.Minute).Add(-5 * time.Minute)
 	prepareFlowEnrichmentAddressSnapshot(t, s, effectiveFrom)
 
 	profile := requestJSON(t, s, http.MethodGet, "/api/v1/flow/classification-profile", nil, nil, cookies...)
@@ -185,6 +186,46 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		nil, nil, cookies...)
 	if ackFacets.Code != http.StatusOK || !bytes.Contains(ackFacets.Body.Bytes(), []byte(`"value":"installed"`)) {
 		t.Fatalf("acknowledgement facets: status=%d body=%s", ackFacets.Code, ackFacets.Body.String())
+	}
+
+	secondProfileHeaders := map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": savedProfile.Header().Get("ETag")}
+	secondProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
+		"home_province": "330000", "home_city": "330100", "home_isp_ids": []uint16{1, 2},
+		"home_asns": []uint32{4134, 4812, 64500}, "overseas_includes_hmt": true,
+		"internal_policy": "count", "transit_policy": "drop",
+	}, secondProfileHeaders, cookies...)
+	if secondProfile.Code != http.StatusOK || secondProfile.Header().Get("ETag") != `"2"` {
+		t.Fatalf("save second profile: status=%d etag=%q body=%s", secondProfile.Code, secondProfile.Header().Get("ETag"), secondProfile.Body.String())
+	}
+	secondPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
+		"effective_from": effectiveFrom.Add(time.Minute),
+	}, adminHeaders, cookies...)
+	var secondPublication flowEnrichmentPublication
+	decodeJSON(t, secondPublished, &secondPublication)
+	if secondPublished.Code != http.StatusCreated || secondPublication.ClassificationVersion != 2 {
+		t.Fatalf("publish second pair: status=%d publication=%+v body=%s", secondPublished.Code, secondPublication, secondPublished.Body.String())
+	}
+	classificationPath, err := s.addressObjects.ResolveDimensionObject(secondPublication.ClassificationObjectRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(classificationPath, []byte("corrupt-publication"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	failedResult, err := syncer.SyncOnce(context.Background(), 1)
+	if err == nil || failedResult.Installed != 0 || failedResult.HighestVersion != 1 {
+		t.Fatalf("corrupt upgrade replaced active version: result=%+v err=%v", failedResult, err)
+	}
+	if _, ok := catalog.ClassificationVersion(2); ok {
+		t.Fatal("corrupt classification version became query-visible")
+	}
+	if _, ok := catalog.ClassificationVersion(1); !ok {
+		t.Fatal("corrupt upgrade removed the active classification version")
+	}
+	var failedState, failedCode string
+	if err := s.db.QueryRow(`SELECT state,COALESCE(error_code,'') FROM flow_enrichment_publication_acks WHERE publication_id=? AND worker_id=?`,
+		secondPublication.ID, workerID).Scan(&failedState, &failedCode); err != nil || failedState != "failed" || failedCode != "verify:CLASSIFICATION_OBJECT_INVALID" {
+		t.Fatalf("corrupt upgrade ACK: state=%q code=%q err=%v", failedState, failedCode, err)
 	}
 
 	restartedLKG, err := flowworker.NewDiskVersionLKG(lkgDir)

@@ -48,7 +48,17 @@ func (e *snmpA2Executor) Do(ctx context.Context, query ch.Query) error {
 		return ctx.Err()
 	}
 	results := query.Result.(proto.Results)
-	if len(results) == 2 { // Aggregate.
+	if len(results) == 5 { // Scoped aggregate input; server applies policy, then aggregates.
+		devices := query.ExternalData[0].Data.(*proto.ColStr)
+		ports := query.ExternalData[1].Data.(*proto.ColStr)
+		results[0].Data.(*proto.ColDateTime).Append(time.Date(2026, 9, 9, 1, 0, 0, 0, time.UTC))
+		results[1].Data.(*proto.ColStr).Append(devices.Row(0))
+		results[2].Data.(*proto.ColLowCardinality[string]).Append("port")
+		results[3].Data.(*proto.ColStr).Append(ports.Row(0))
+		results[4].Data.(*proto.ColFloat64).Append(8000)
+		return query.OnResult(ctx, proto.Block{Rows: 1})
+	}
+	if len(results) == 2 { // Export aggregate; no presentation policy is applied.
 		results[0].Data.(*proto.ColDateTime).Append(time.Date(2026, 9, 9, 1, 0, 0, 0, time.UTC))
 		results[1].Data.(*proto.ColFloat64).Append(8000)
 		return query.OnResult(ctx, proto.Block{Rows: 1})

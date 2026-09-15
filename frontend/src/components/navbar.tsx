@@ -5,7 +5,6 @@ import {
 	ActivityIcon,
 	BarChart3Icon,
 	BookmarkIcon,
-	ContainerIcon,
 	CrosshairIcon,
 	RouteIcon,
 	ServerIcon,
@@ -13,8 +12,6 @@ import {
 	FileDownIcon,
 	GaugeIcon,
 	GlobeIcon,
-	HardDriveIcon,
-	HistoryIcon,
 	LayoutDashboardIcon,
 	ScrollTextIcon,
 	ServerCogIcon,
@@ -245,14 +242,8 @@ function ResourceItems() {
 			<NavItem href={getPagePath($router, "targets")} icon={ServerIcon}>
 				<Trans>Hosts</Trans>
 			</NavItem>
-			<NavItem href={getPagePath($router, "containers")} icon={ContainerIcon}>
-				<Trans>Containers</Trans>
-			</NavItem>
 			<NavItem href={getPagePath($router, "network")} icon={NetworkIcon}>
 				<Trans>Network</Trans>
-			</NavItem>
-			<NavItem href={getPagePath($router, "smart")} icon={HardDriveIcon}>
-				<Trans>Storage</Trans>
 			</NavItem>
 			<NavItem href={getPagePath($router, "core")} icon={RouteIcon}>
 				<Trans>Core (BGP)</Trans>
@@ -384,9 +375,6 @@ function AdminDropdownContent() {
 			</DropdownMenuLabel> : null}
 			{can("job.manage") ? <NavItem href={getPagePath($router, "retention")} icon={DatabaseIcon}>
 				<Trans>Retention</Trans>
-			</NavItem> : null}
-			{can("job.manage") ? <NavItem href={getPagePath($router, "historical_data")} icon={HistoryIcon}>
-				<Trans>Historical Data</Trans>
 			</NavItem> : null}
 			<DropdownMenuSeparator />
 			<DropdownMenuLabel>

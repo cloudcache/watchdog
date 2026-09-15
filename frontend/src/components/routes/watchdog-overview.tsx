@@ -130,9 +130,6 @@ export default memo(() => {
 						<Link href={getPagePath($router, "traffic_defaults")} className="text-muted-foreground hover:underline">
 							<Trans>Traffic Defaults</Trans>
 						</Link>
-						<Link href={getPagePath($router, "historical_data")} className="text-muted-foreground hover:underline">
-							<Trans>Historical Data</Trans>
-						</Link>
 					</div>
 				</div>
 			</div>

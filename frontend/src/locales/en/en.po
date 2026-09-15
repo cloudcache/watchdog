@@ -7385,8 +7385,8 @@ msgstr "Tenant default"
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-saved-filters.tsx
-msgid "Tenant shared"
-msgstr "Tenant shared"
+msgid "Shared"
+msgstr "Shared"
 
 #: src/components/routes/settings/notifications.tsx
 #~ msgid "Test <0>URL</0>"

@@ -65,6 +65,8 @@
 
 当前核销：生产 agent machine API 唯一路径是 Gin `agents/register|heartbeat|status|errors`，直写 v2 MySQL；旧 watchdog `/agent-registry` 和重复的 heartbeat/status/errors 路由已删除。尚待 KISS-03 等价迁入 Gin+ClickHouse 的历史 system plan/sample 实现及测试继续保留，它不是 PB 路径，也不与 Gin machine API 双写。旧 PB alerts hook/collection/realtime、systems/smart write chain、WebSocket hub、cron、external-subject identity/notification/quiet-hours bridge 已物理删除。
 
+> **2026-09-15 前端活入口核销**：新增依赖图门禁，从 `frontend/src/main.tsx` 递归扫描实际可达模块中的 `/api/v1/*`，逐条和生产 Gin 路由表匹配；延后的 containers/system history/S.M.A.R.T./旧 modules 页面已从 router、导航和 command palette 卸载，保留源码不等于保留运行入口。Retention、Dashboard、MIB 等已有 Gin 契约的页面继续挂载。该处理没有添加 404 占位 API，也没有重写页面视觉。
+
 #### KISS-01E 物理删除 PocketBase 与旧库
 
 - [ ] **编码删除**：按白名单删除 `internal/hub` 的 PB server/hooks/collections、PB migrations/assets/config/env、Go module 依赖、前端 SDK 和所有已确认无引用的辅助/测试死代码；移除 PB SQLite 文件/volume 的创建和挂载路径。
@@ -122,6 +124,8 @@
 
 - [x] **设计/编码/API**：同一 `snmpch.Store` 已实现跨设备/端口 aggregate、`operation_jobs` 异步 CSV 和只读 closed-5m billing reader；Gin 接 `/metrics/aggregate|exports`、`/exports` lifecycle 与 `/billing/accounts/:id/snmp-usage`。scope 作为 CH external table，创建/执行/下载均按当前 grant 校验；没有 DatasetProvider、旧 export fallback、VM DTO、第二套 job 状态机或新 migration。冻结契约见 `docs/kiss03-snmp-clickhouse-design.md` §5–7。
 - [x] **测试/提交**：固定 counter fixture 已覆盖总量/95th/缺端口 coverage、scope 去重、预算/白名单、CSV 原子写/checksum、设备/端口/billing/owner 权限、分页/search/filter、首轮暂时失败自动 retry 与运行中 cancel；真实 CH 验证 aggregate、generation billing 和缺端口 gap，真实一次性 MySQL 验证 API/job 全链并删除测试库；全库 test/vet/build 通过。本项按独立提交门禁提交。
+
+> **2026-09-15 回归门修正**：A2 HTTP 集成替身现按生产 `snmpch` 的三种查询契约分别返回 scoped query（5 列）、aggregate/export（2 列）与 billing（12 列），不再以错误列型掩盖 handler 行为；同一测试已在一次性真实 MySQL 上重跑通过。
 
 #### KISS-03A3 SNMP 管理规则、事件与历史入口收口
 

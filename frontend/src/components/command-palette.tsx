@@ -4,9 +4,7 @@ import { getPagePath } from "@nanostores/router"
 import { DialogDescription } from "@radix-ui/react-dialog"
 import {
 	BookIcon,
-	ContainerIcon,
 	FingerprintIcon,
-	HardDriveIcon,
 	Server,
 	ServerIcon,
 	SettingsIcon,
@@ -88,32 +86,6 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 							<span>
 								<Trans>All Systems</Trans>
 							</span>
-							<CommandShortcut>
-								<Trans>Page</Trans>
-							</CommandShortcut>
-						</CommandItem> : null}
-						{can("device.view") ? <CommandItem
-							onSelect={() => {
-								navigate(getPagePath($router, "containers"))
-								setOpen(false)
-							}}
-						>
-							<ContainerIcon className="me-2 size-4" />
-							<span>
-								<Trans>All Containers</Trans>
-							</span>
-							<CommandShortcut>
-								<Trans>Page</Trans>
-							</CommandShortcut>
-						</CommandItem> : null}
-						{can("device.view") ? <CommandItem
-							onSelect={() => {
-								navigate(getPagePath($router, "smart"))
-								setOpen(false)
-							}}
-						>
-							<HardDriveIcon className="me-2 size-4" />
-							<span>S.M.A.R.T.</span>
 							<CommandShortcut>
 								<Trans>Page</Trans>
 							</CommandShortcut>

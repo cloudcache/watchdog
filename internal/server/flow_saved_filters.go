@@ -22,11 +22,11 @@ import (
 // de-tenanted port of the hub flow_saved_filters domain). They deliberately
 // exclude query time, dimensions and resource selectors: those stay explicit on
 // each query and are authorized at execution time, so a saved filter can never
-// widen a caller's resource scope. share_scope keeps the hub wire values
-// private/tenant ("tenant" = visible to every user of this single-tenant install).
+// widen a caller's resource scope. In a single-domain install, share_scope is
+// either private or shared (visible to every user allowed to view Flow).
 const (
 	flowSavedFilterPrivate = "private"
-	flowSavedFilterTenant  = "tenant"
+	flowSavedFilterShared  = "shared"
 
 	flowSavedFilterSchemaVersion  = uint16(1)
 	flowSavedFilterNameMax        = 190
@@ -79,8 +79,8 @@ func normalizeFlowSavedFilter(item flowSavedFilter) (flowSavedFilter, error) {
 	if item.ShareScope == "" {
 		item.ShareScope = flowSavedFilterPrivate
 	}
-	if item.ShareScope != flowSavedFilterPrivate && item.ShareScope != flowSavedFilterTenant {
-		return flowSavedFilter{}, fmt.Errorf("%w: share_scope must be private or tenant", errFlowSavedFilterInvalid)
+	if item.ShareScope != flowSavedFilterPrivate && item.ShareScope != flowSavedFilterShared {
+		return flowSavedFilter{}, fmt.Errorf("%w: share_scope must be private or shared", errFlowSavedFilterInvalid)
 	}
 	canonical, err := flowquery.CanonicalFilter(item.Filter)
 	if err != nil {
@@ -112,7 +112,7 @@ func canShareFlowFilter(p *principal) bool {
 // filter: shared filters require the share permission; private filters are
 // owner-only.
 func canEditFlowSavedFilter(p *principal, item flowSavedFilter) bool {
-	if item.ShareScope == flowSavedFilterTenant {
+	if item.ShareScope == flowSavedFilterShared {
 		return canShareFlowFilter(p)
 	}
 	return p != nil && item.OwnerUserID != "" && item.OwnerUserID == p.UserID
@@ -152,7 +152,7 @@ func scanFlowSavedFilter(row rowScanner) (flowSavedFilter, error) {
 func (s *Server) readFlowSavedFilter(ctx context.Context, id, viewerID string) (flowSavedFilter, error) {
 	return scanFlowSavedFilter(s.db.QueryRowContext(ctx, `SELECT `+flowSavedFilterColumns+`
 		FROM flow_saved_filters f LEFT JOIN users u ON u.id = f.owner_user_id
-		WHERE f.id = ? AND f.deleted_at IS NULL AND (f.share_scope = 'tenant' OR f.owner_user_id = ?)`, id, viewerID))
+		WHERE f.id = ? AND f.deleted_at IS NULL AND (f.share_scope = 'shared' OR f.owner_user_id = ?)`, id, viewerID))
 }
 
 func (s *Server) registerFlowSavedFilterRoutes(auth *gin.RouterGroup, view gin.HandlerFunc) {
@@ -174,7 +174,7 @@ func (s *Server) listFlowSavedFilters(c *gin.Context) {
 		return
 	}
 	p := currentPrincipal(c)
-	where := []string{"f.deleted_at IS NULL", "(f.share_scope = 'tenant' OR f.owner_user_id = ?)"}
+	where := []string{"f.deleted_at IS NULL", "(f.share_scope = 'shared' OR f.owner_user_id = ?)"}
 	args := []any{p.UserID}
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		like := "%" + escapeLike(q) + "%"
@@ -182,8 +182,8 @@ func (s *Server) listFlowSavedFilters(c *gin.Context) {
 		args = append(args, like, like)
 	}
 	if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
-		if scope != flowSavedFilterPrivate && scope != flowSavedFilterTenant {
-			fail(c, http.StatusBadRequest, "invalid_filter", "scope must be private or tenant")
+		if scope != flowSavedFilterPrivate && scope != flowSavedFilterShared {
+			fail(c, http.StatusBadRequest, "invalid_filter", "scope must be private or shared")
 			return
 		}
 		where = append(where, "f.share_scope = ?")
@@ -258,7 +258,7 @@ func (s *Server) createFlowSavedFilter(c *gin.Context) {
 		writeFlowSavedFilterError(c, err)
 		return
 	}
-	if item.ShareScope == flowSavedFilterTenant && !canShareFlowFilter(p) {
+	if item.ShareScope == flowSavedFilterShared && !canShareFlowFilter(p) {
 		fail(c, http.StatusForbidden, "forbidden", "sharing a saved filter requires flow management permission")
 		return
 	}
@@ -319,7 +319,7 @@ func (s *Server) patchFlowSavedFilter(c *gin.Context) {
 		writeFlowSavedFilterError(c, err)
 		return
 	}
-	if item.ShareScope == flowSavedFilterTenant && !canShareFlowFilter(p) {
+	if item.ShareScope == flowSavedFilterShared && !canShareFlowFilter(p) {
 		fail(c, http.StatusForbidden, "forbidden", "sharing a saved filter requires flow management permission")
 		return
 	}
@@ -412,7 +412,7 @@ func (s *Server) listFlowSavedFilterOwners(c *gin.Context) {
 		return
 	}
 	p := currentPrincipal(c)
-	where := []string{"f.deleted_at IS NULL", "(f.share_scope = 'tenant' OR f.owner_user_id = ?)"}
+	where := []string{"f.deleted_at IS NULL", "(f.share_scope = 'shared' OR f.owner_user_id = ?)"}
 	args := []any{p.UserID}
 	if search != "" {
 		like := "%" + escapeLike(search) + "%"

@@ -23,7 +23,7 @@ type FlowSavedFilter = {
 	owner_name?: string
 	name: string
 	description: string
-	share_scope: "private" | "tenant"
+	share_scope: "private" | "shared"
 	filter: FlowFilterExpression
 	row_version: number
 	can_edit: boolean
@@ -46,7 +46,7 @@ type FilterForm = {
 	canEdit: boolean
 	name: string
 	description: string
-	shareScope: "private" | "tenant"
+	shareScope: "private" | "shared"
 	expression: string
 }
 
@@ -245,7 +245,7 @@ export default memo(function FlowSavedFilters() {
 			options: {
 				scope: [
 					{ value: "private", label: t`Private` },
-					{ value: "tenant", label: t`Tenant shared` },
+					{ value: "shared", label: t`Shared` },
 				],
 				owner_id: [] as ServerFilterOption[],
 			},
@@ -255,7 +255,7 @@ export default memo(function FlowSavedFilters() {
 				if (field === "scope") {
 					return [
 						{ value: "private", label: t`Private` },
-						{ value: "tenant", label: t`Tenant shared` },
+						{ value: "shared", label: t`Shared` },
 					]
 				}
 				const data = await api.send<OwnerFacetResponse>("/api/v1/flow/filters/facets/owners", {
@@ -322,12 +322,12 @@ export default memo(function FlowSavedFilters() {
 						<Select
 							disabled={!form.canEdit}
 							value={form.shareScope}
-							onValueChange={(value: "private" | "tenant") => setForm({ ...form, shareScope: value })}
+							onValueChange={(value: "private" | "shared") => setForm({ ...form, shareScope: value })}
 						>
 							<SelectTrigger><SelectValue /></SelectTrigger>
 							<SelectContent>
 								<SelectItem value="private"><Trans>Private</Trans></SelectItem>
-								{canShare || form.shareScope === "tenant" ? <SelectItem value="tenant"><Trans>Tenant shared</Trans></SelectItem> : null}
+								{canShare || form.shareScope === "shared" ? <SelectItem value="shared"><Trans>Shared</Trans></SelectItem> : null}
 							</SelectContent>
 						</Select>
 					</div>

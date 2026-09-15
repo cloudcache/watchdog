@@ -4,12 +4,15 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 
+	watchdogschema "github.com/cloudcache/watchdog/deploy/schema"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -131,5 +134,69 @@ func TestFlowSavedFiltersAPI(t *testing.T) {
 	after := requestJSON(t, s, http.MethodGet, "/api/v1/flow/filters/"+filterID, nil, nil, cookies...)
 	if after.Code != http.StatusNotFound {
 		t.Fatalf("get after delete: %d %s", after.Code, after.Body.String())
+	}
+}
+
+// TestFlowSavedFilterSharedScopeMigration proves the forward migration keeps
+// existing saved filters while collapsing the removed tenant scope into the
+// single-domain shared scope. Opt-in via WATCHDOG_TEST_MYSQL_DSN.
+func TestFlowSavedFilterSharedScopeMigration(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	parsed.DBName = "watchdog_flow_saved_filter_scope_it"
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(parsed.FormatDSN()); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	db, err := sql.Open("mysql", parsed.FormatDSN())
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE users (
+		id CHAR(26) NOT NULL PRIMARY KEY
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`); err != nil {
+		t.Fatalf("create prerequisite users table: %v", err)
+	}
+	applyMigrationFile(t, db, "mysql/0017_flow_saved_filters.sql")
+	if _, err := db.Exec(`INSERT INTO flow_saved_filters
+		(id, owner_user_id, name, share_scope, filter_json)
+		VALUES ('sf_legacy', NULL, 'legacy tenant scope', 'tenant', '{"op":"true"}')`); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	applyMigrationFile(t, db, "mysql/0032_flow_saved_filter_shared_scope.sql")
+	var scope string
+	if err := db.QueryRow(`SELECT share_scope FROM flow_saved_filters WHERE id = 'sf_legacy'`).Scan(&scope); err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if scope != "shared" {
+		t.Fatalf("migrated scope = %q, want shared", scope)
+	}
+	if _, err := db.Exec(`INSERT INTO flow_saved_filters
+		(id, owner_user_id, name, share_scope, filter_json)
+		VALUES ('sf_invalid', NULL, 'invalid tenant scope', 'tenant', '{"op":"true"}')`); err == nil {
+		t.Fatal("tenant scope insert succeeded after shared-scope migration")
+	}
+}
+
+func applyMigrationFile(t *testing.T, db *sql.DB, path string) {
+	t.Helper()
+	body, err := fs.ReadFile(watchdogschema.MySQL, path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, statement := range splitStatements(string(body)) {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("apply %s: %v\n%s", path, err, statement)
+		}
 	}
 }

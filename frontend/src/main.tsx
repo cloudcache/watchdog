@@ -42,15 +42,12 @@ const BillingAccountForm = lazy(() => import("@/components/routes/billing-accoun
 const ExportDetail = lazy(() => import("@/components/routes/export-detail.tsx"))
 const ExportNew = lazy(() => import("@/components/routes/export-new.tsx"))
 const Exports = lazy(() => import("@/components/routes/exports.tsx"))
-const HistoricalData = lazy(() => import("@/components/routes/historical-data.tsx"))
 const WatchdogOverview = lazy(() => import("@/components/routes/watchdog-overview.tsx"))
 const UsersAdmin = lazy(() => import("@/components/routes/users.tsx"))
 const UserForm = lazy(() => import("@/components/routes/user-form.tsx"))
 const RoleForm = lazy(() => import("@/components/routes/role-form.tsx"))
-const ModulesAdmin = lazy(() => import("@/components/routes/modules.tsx"))
 const AuditLogs = lazy(() => import("@/components/routes/audit-logs.tsx"))
 const OperationJobs = lazy(() => import("@/components/routes/operation-jobs.tsx"))
-const Containers = lazy(() => import("@/components/routes/containers.tsx"))
 const CoreBGP = lazy(() => import("@/components/routes/core.tsx"))
 const NetworkDeviceDetail = lazy(() => import("@/components/routes/network-device.tsx"))
 const NetworkDeviceForm = lazy(() => import("@/components/routes/network-device-form.tsx"))
@@ -62,7 +59,6 @@ const NetworkPortForm = lazy(() => import("@/components/routes/network-port-form
 const NetworkPortPolicy = lazy(() => import("@/components/routes/network-port-policy.tsx"))
 const Permissions = lazy(() => import("@/components/routes/permissions.tsx"))
 const Retention = lazy(() => import("@/components/routes/retention.tsx"))
-const Smart = lazy(() => import("@/components/routes/smart.tsx"))
 const SNMPMIBModuleForm = lazy(() => import("@/components/routes/snmp-mib-module-form.tsx"))
 const SNMPMIBModules = lazy(() => import("@/components/routes/snmp-mib-modules.tsx"))
 const SNMPProfileForm = lazy(() => import("@/components/routes/snmp-profile-form.tsx"))
@@ -166,8 +162,6 @@ const App = memo(() => {
 		return <TargetForm id={page.params.id} />
 	} else if (page.route === "target_detail") {
 		return <TargetDetail id={page.params.id} />
-	} else if (page.route === "containers") {
-		return <Containers />
 	} else if (page.route === "core") {
 		return <CoreBGP />
 	} else if (page.route === "export_new") {
@@ -179,8 +173,6 @@ const App = memo(() => {
 		return <ExportDetail id={page.params.id} />
 	} else if (page.route === "exports") {
 		return <Exports />
-	} else if (page.route === "historical_data") {
-		return <HistoricalData />
 	} else if (page.route === "network") {
 		return <NetworkDevices />
 	} else if (page.route === "network_discover") {
@@ -209,8 +201,6 @@ const App = memo(() => {
 		return <RoleForm />
 	} else if (page.route === "role_edit") {
 		return <RoleForm id={page.params.id} />
-	} else if (page.route === "modules_admin") {
-		return <ModulesAdmin />
 	} else if (page.route === "audit_logs") {
 		return <AuditLogs />
 	} else if (page.route === "operation_jobs") {
@@ -223,8 +213,6 @@ const App = memo(() => {
 		return <Permissions />
 	} else if (page.route === "retention") {
 		return <Retention />
-	} else if (page.route === "smart") {
-		return <Smart />
 	} else if (page.route === "snmp_profiles") {
 		return <SNMPProfiles />
 	} else if (page.route === "snmp_profile_new") {
@@ -306,7 +294,7 @@ function routeAbilities(route: string): string[] {
 		case "audit_logs": return ["audit.view"]
 		case "operation_jobs": return ["job.view"]
 		case "retention":
-		case "historical_data": return ["job.manage"]
+			return ["job.manage"]
 		case "target_new":
 		case "network_device_new": return ["device.create"]
 		case "target_edit":
@@ -329,7 +317,6 @@ function routeAbilities(route: string): string[] {
 		case "targets":
 		case "target_detail":
 		case "system":
-		case "containers":
 		case "core":
 		case "network":
 		case "network_device":
