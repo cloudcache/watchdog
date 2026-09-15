@@ -245,12 +245,6 @@ type NetworkPortCounts struct {
 	Down  int `json:"down"`
 }
 
-type RetentionRepository interface {
-	ListRetentionPolicies(ctx context.Context, tenantID ID) ([]MetricRetentionPolicy, error)
-	UpsertRetentionPolicy(ctx context.Context, policy MetricRetentionPolicy) (MetricRetentionPolicy, error)
-	DeleteRetentionPolicy(ctx context.Context, tenantID, policyID ID) error
-}
-
 type SNMPRepository interface {
 	ListSNMPProfiles(ctx context.Context, tenantID ID) ([]SNMPProfile, error)
 	GetSNMPProfile(ctx context.Context, tenantID, profileID ID) (SNMPProfile, error)
@@ -463,17 +457,6 @@ type BillingPeriod struct {
 	ComputedAt       time.Time           `json:"computed_at"`
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`
-}
-
-type MetricRetentionPolicy struct {
-	ID                   ID
-	TenantID             ID
-	TargetID             ID
-	HighPrecisionDays    uint32
-	ManualCleanupEnabled bool
-	Notes                string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
 }
 
 type AuditLog struct {

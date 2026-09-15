@@ -439,7 +439,6 @@ func (r *BackendRuntime) Router(auth AuthContextAdapter, tenantDiscovery ...Auth
 		Registries:             r.Registries,
 		TenantModules:          r.Store,
 		FlowGeo:                r.FlowGeo,
-		Retention:              r.Store,
 		SNMP:                   r.Store,
 		SNMPDiscovery:          r.SNMPDiscovery,
 		SNMPCollector:          r.Store,

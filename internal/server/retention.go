@@ -4,12 +4,24 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
 
 const globalRetentionScope = "__global__"
+
+// metricRetentionPolicy preserves the established API field names while the
+// current single-domain implementation remains owned by the Gin server.
+type metricRetentionPolicy struct {
+	ID                   string
+	TargetID             string
+	HighPrecisionDays    uint32
+	ManualCleanupEnabled bool
+	Notes                string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
 
 func (s *Server) listRetentionPolicies(c *gin.Context) {
 	rows, err := s.db.QueryContext(c.Request.Context(), `
@@ -22,7 +34,7 @@ func (s *Server) listRetentionPolicies(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-	items := make([]watchdog.MetricRetentionPolicy, 0)
+	items := make([]metricRetentionPolicy, 0)
 	for rows.Next() {
 		item, err := scanSingleDomainRetentionPolicy(rows)
 		if err != nil {
@@ -39,12 +51,12 @@ func (s *Server) listRetentionPolicies(c *gin.Context) {
 }
 
 func (s *Server) putRetentionPolicy(c *gin.Context) {
-	var policy watchdog.MetricRetentionPolicy
+	var policy metricRetentionPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
 		return
 	}
-	policy.TargetID = watchdog.ID(strings.TrimSpace(string(policy.TargetID)))
+	policy.TargetID = strings.TrimSpace(policy.TargetID)
 	policy.Notes = strings.TrimSpace(policy.Notes)
 	if policy.HighPrecisionDays == 0 {
 		fail(c, http.StatusBadRequest, "invalid_request", "high precision days is required")
@@ -58,7 +70,7 @@ func (s *Server) putRetentionPolicy(c *gin.Context) {
 	if policy.TargetID != "" {
 		scope = string(policy.TargetID)
 	}
-	policy.ID = watchdog.ID(stableManagementID("metric-retention", scope))
+	policy.ID = stableManagementID("metric-retention", scope)
 	_, err := s.db.ExecContext(c.Request.Context(), `
 		INSERT INTO metric_retention_policies
 			(id,scope_key,target_id,high_precision_days,manual_cleanup_enabled,notes)
@@ -97,8 +109,8 @@ func (s *Server) deleteRetentionPolicy(c *gin.Context) {
 	c.Writer.WriteHeaderNow()
 }
 
-func scanSingleDomainRetentionPolicy(row rowScanner) (watchdog.MetricRetentionPolicy, error) {
-	var value watchdog.MetricRetentionPolicy
+func scanSingleDomainRetentionPolicy(row rowScanner) (metricRetentionPolicy, error) {
+	var value metricRetentionPolicy
 	err := row.Scan(&value.ID, &value.TargetID, &value.HighPrecisionDays, &value.ManualCleanupEnabled,
 		&value.Notes, &value.CreatedAt, &value.UpdatedAt)
 	return value, err

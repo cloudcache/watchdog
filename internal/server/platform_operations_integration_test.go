@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -57,7 +56,7 @@ func TestPlatformRetentionAndAuditIntegration(t *testing.T) {
 	if global.Code != http.StatusOK {
 		t.Fatalf("put global retention: status=%d body=%s", global.Code, global.Body.String())
 	}
-	var globalPolicy watchdog.MetricRetentionPolicy
+	var globalPolicy metricRetentionPolicy
 	if err := json.Unmarshal(global.Body.Bytes(), &globalPolicy); err != nil || globalPolicy.ID == "" {
 		t.Fatalf("decode global retention: value=%+v err=%v", globalPolicy, err)
 	}

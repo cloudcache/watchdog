@@ -44,7 +44,6 @@ type APIV1RouterConfig struct {
 	Registries             *PlatformRegistries
 	TenantModules          TenantModuleRepository
 	FlowGeo                *FlowGeoService
-	Retention              RetentionRepository
 	SNMP                   SNMPRepository
 	Metrics                MetricsService
 	SNMPDiscovery          SNMPDeviceDiscoverer
@@ -181,9 +180,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	}
 	if cfg.FlowGeo != nil {
 		registerFlowGeoRoutes(mux, auth, cfg.FlowGeo)
-	}
-	if cfg.Retention != nil {
-		registerRetentionRoutes(mux, auth, cfg.Retention)
 	}
 	if cfg.CollectorEvidence != nil {
 		registerCollectorEvidenceRoutes(mux, cfg.CollectorEvidence)
