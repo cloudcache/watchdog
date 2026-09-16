@@ -38,7 +38,7 @@
 | L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
 | L12 | cmd/schema | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、Makefile target 与 dev-db 脚本已删除；旧 schema/实现只被 `internal/watchdog` 历史测试引用 | schema 树随 L1 删除 | KISS-08C/D | **entry done; files blocked-by-L1** |
 | L13 | cmd | `cmd/watchdog-librenms-extract` | legacy-delete | 无（未发布） | server 已按配置直接加载 `ParseLibrenmsDefinitions`，旧命令只写不存在的多租户 definition 表 | 已满足 | KISS-08D | **done** |
-| L14 | cmd | `cmd/watchdog-snmp-agent` / `cmd/watchdog-system-agent` | legacy-guard | trap agent 已有独立最小配置/wire DTO；system agent 仍延期 | trap agent 行为不变且已断旧包；system agent 归后续路线图 | system agent 路线图决策 | KISS-08E/03B | **partial：trap done；system blocked** |
+| L14 | cmd | `cmd/watchdog-snmp-agent` / `cmd/watchdog-system-agent` | KEEP | 两个独立 agent 都只读取自身配置并使用各自 wire DTO | 行为不变且均已断旧包；system telemetry 产品增强仍延期，但不再阻断清理 | 无 | KISS-08E/G4 | **done** |
 | L15 | config | `config.go:971` **必填** `victoriametrics.base_url`；VM/tenant 键 `:80,114-115,232-233,246,258,264,125,199` | KISS-08 | 遗留 worker 经 `LoadBackendConfig` | 断遗留配置加载 | L10-L14 | KISS-08 | blocked |
 | L16 | config | `config/watchdog.example.yaml`(`:7,13-16,41,57,65-77`)、`watchdog.dev.yaml`(`:7,10-13,27,37,43,84-90`) VM/tenant/provider 键 | **DEAD-now**(server 忽略) | 无（server 用 `internal/server/config.go`） | 无 | —— | KISS-08 | **ready** |
 | L17 | dep | `go.mod robfig/cron/v3` | KISS-08 | 仅 `operation_job_schedule.go:12` | 无（L1 后） | L1 | KISS-08 | blocked-by-L1 |
@@ -103,7 +103,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 4. **抽 SNMP 切片**：19 锚文件 + 引擎闭包 + 拆 `SNMPConfig`/`MetricRetentionPolicy` → 新 `internal/snmpdomain`，迁 `gosmi`/`gosnmp`，repoint 13 个 `internal/server` 文件（L2-L4、L18）。验收：`internal/server` 不再 import `internal/watchdog`；`go build ./...` + SNMP 集成回归。
 
 **Phase C — 退役遗留 worker**
-5. L10/L11 已在 KISS-08B 物理删除；L12 的 CLI/Makefile/script 入口已在 KISS-08C 删除；L13 已在 KISS-08D 删除；L14 的 SNMP trap agent 已在 KISS-08E 断开旧包，system agent 按路线图延期（KISS-03B/Tier2）。
+5. L10/L11 已在 KISS-08B 物理删除；L12 的 CLI/Makefile/script 入口已在 KISS-08C 删除；L13 已在 KISS-08D 删除；L14 的 SNMP trap agent 与 system agent 已分别在 KISS-08E/G4 断开旧包。system telemetry 产品增强仍可延期，但不再钉住遗留包。
 
 **Phase D — 整包 + 依赖 + schema 树删除（KISS-08 收尾）**
 6. 无 importer 后删整 `internal/watchdog`（L1、L6-L9）+ `robfig/cron`（L17）+ 遗留 VM 校验（L15）+ 遗留 schema 树 `deploy/migration/mysql`+`install/init.sql`（S3-S12 载体）。

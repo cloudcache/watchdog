@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/agentplan"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/google/uuid"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -40,16 +39,15 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg, err := watchdog.LoadWatchdogConfig(*configPath)
+	agentCfg, err := loadAgentConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	agentCfg := cfg.Agent
 	if strings.TrimSpace(*hubURL) != "" {
 		agentCfg.HubURL = *hubURL
 	}
 	if strings.TrimSpace(*agentID) != "" {
-		agentCfg.AgentID = watchdog.ID(*agentID)
+		agentCfg.AgentID = *agentID
 	}
 	if *agentToken != "" {
 		agentCfg.Token = *agentToken
@@ -57,7 +55,7 @@ func main() {
 	if *interval > 0 {
 		agentCfg.Interval = *interval
 	}
-	agentRuntime := systemAgentRuntime(agentCfg.HubURL, string(agentCfg.AgentID), agentCfg.Token, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
+	agentRuntime := systemAgentRuntime(agentCfg.HubURL, agentCfg.AgentID, agentCfg.Token, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applySystemAgentPlan(&agentCfg.Interval, rootPath, spec)
@@ -82,12 +80,12 @@ func main() {
 	} else if *agentPlanCheck {
 		log.Fatal("agent plan public key, LKG, and hub URL are required")
 	}
-	agentCfg, err = watchdog.NormalizeAndValidateAgentClientConfig(agentCfg)
+	agentCfg, err = normalizeAndValidateAgentConfig(agentCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	client := watchdog.SystemAgentClient{
+	client := systemAgentClient{
 		HubURL:     agentCfg.HubURL,
 		AgentID:    agentCfg.AgentID,
 		AgentToken: agentCfg.Token,
@@ -142,7 +140,7 @@ func systemAgentRuntime(baseURL, agentID, token, tokenFile, enrollmentFile, publ
 	}
 }
 
-func run(ctx context.Context, client watchdog.SystemAgentClient, collector *localSystemCollector, interval time.Duration) error {
+func run(ctx context.Context, client systemAgentClient, collector *localSystemCollector, interval time.Duration) error {
 	planInterval, err := collectOnce(ctx, client, collector)
 	if err != nil {
 		log.Printf("watchdog system agent collection failed: %v", err)
@@ -167,27 +165,27 @@ func run(ctx context.Context, client watchdog.SystemAgentClient, collector *loca
 	}
 }
 
-func collectOnce(ctx context.Context, client watchdog.SystemAgentClient, collector *localSystemCollector) (time.Duration, error) {
+func collectOnce(ctx context.Context, client systemAgentClient, collector *localSystemCollector) (time.Duration, error) {
 	startedAt := time.Now().UTC()
 	plan, err := client.FetchPlan(ctx)
 	if err != nil {
-		_ = client.ReportError(ctx, watchdog.AgentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
+		_ = client.ReportError(ctx, agentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return 0, err
 	}
 	if err := client.Heartbeat(ctx); err != nil {
-		_ = client.ReportError(ctx, watchdog.AgentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
+		_ = client.ReportError(ctx, agentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return plan.Interval, err
 	}
 	batch, err := collector.Collect(ctx, plan)
 	if err != nil {
-		_ = client.ReportError(ctx, watchdog.AgentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
+		_ = client.ReportError(ctx, agentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return plan.Interval, err
 	}
 	if err := client.PushSamples(ctx, batch); err != nil {
-		_ = client.ReportError(ctx, watchdog.AgentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
+		_ = client.ReportError(ctx, agentRunReport{Error: err.Error(), StartedAt: startedAt, EndedAt: time.Now().UTC()})
 		return plan.Interval, err
 	}
-	return plan.Interval, client.ReportStatus(ctx, watchdog.AgentRunReport{StartedAt: startedAt, EndedAt: time.Now().UTC()})
+	return plan.Interval, client.ReportStatus(ctx, agentRunReport{StartedAt: startedAt, EndedAt: time.Now().UTC()})
 }
 
 type localSystemCollector struct {
@@ -201,15 +199,15 @@ type systemNetCounters struct {
 	sampledAt     time.Time
 }
 
-func (c *localSystemCollector) Collect(ctx context.Context, plan watchdog.SystemAgentPlan) (watchdog.SystemSampleBatch, error) {
+func (c *localSystemCollector) Collect(ctx context.Context, plan systemAgentPlan) (systemSampleBatch, error) {
 	now := time.Now().UTC()
 	cpuValues, err := cpu.PercentWithContext(ctx, 200*time.Millisecond, false)
 	if err != nil {
-		return watchdog.SystemSampleBatch{}, err
+		return systemSampleBatch{}, err
 	}
 	memory, err := mem.VirtualMemoryWithContext(ctx)
 	if err != nil {
-		return watchdog.SystemSampleBatch{}, err
+		return systemSampleBatch{}, err
 	}
 	rootPath := c.rootPath
 	if rootPath == "" {
@@ -217,11 +215,11 @@ func (c *localSystemCollector) Collect(ctx context.Context, plan watchdog.System
 	}
 	diskUsage, err := disk.UsageWithContext(ctx, rootPath)
 	if err != nil {
-		return watchdog.SystemSampleBatch{}, err
+		return systemSampleBatch{}, err
 	}
 	netCounters, err := c.readNetworkCounters(ctx, now)
 	if err != nil {
-		return watchdog.SystemSampleBatch{}, err
+		return systemSampleBatch{}, err
 	}
 	netInBps, netOutBps := c.networkRates(netCounters)
 	c.prevNet = netCounters
@@ -230,11 +228,11 @@ func (c *localSystemCollector) Collect(ctx context.Context, plan watchdog.System
 	if len(cpuValues) > 0 {
 		cpuPercent = cpuValues[0]
 	}
-	return watchdog.SystemSampleBatch{
+	return systemSampleBatch{
 		TenantID:  plan.Agent.TenantID,
 		TargetID:  plan.Agent.TargetID,
 		SampledAt: now,
-		System: watchdog.SystemResourceSample{
+		System: systemResourceSample{
 			CPUPercent:    cpuPercent,
 			MemoryPercent: memory.UsedPercent,
 			DiskPercent:   diskUsage.UsedPercent,
