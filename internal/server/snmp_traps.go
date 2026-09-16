@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -10,17 +9,17 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
 type snmpTrapRequest struct {
-	SourceIP string                     `json:"source_ip"`
-	Hostname string                     `json:"hostname"`
-	TrapOID  string                     `json:"trap_oid"`
-	Uptime   uint64                     `json:"uptime"`
-	VarBinds []watchdog.SNMPTrapVarBind `json:"varbinds"`
-	RawText  string                     `json:"raw_text"`
+	SourceIP string                   `json:"source_ip"`
+	Hostname string                   `json:"hostname"`
+	TrapOID  string                   `json:"trap_oid"`
+	Uptime   uint64                   `json:"uptime"`
+	VarBinds []snmpdomain.TrapVarBind `json:"varbinds"`
+	RawText  string                   `json:"raw_text"`
 }
 
 const snmpTrapAgentContextKey = "wd_snmp_trap_agent"
@@ -119,13 +118,13 @@ func (s *Server) receiveSNMPTrap(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	trap := watchdog.SNMPTrap{
+	trap := snmpdomain.Trap{
 		SourceIP: request.SourceIP, Hostname: request.Hostname, TrapOID: request.TrapOID,
 		Uptime: request.Uptime, VarBinds: request.VarBinds, RawText: request.RawText,
 		ReceivedAt: time.Now().UTC(),
 	}
-	dispatcher := watchdog.NewSNMPTrapDispatcher(watchdog.DefaultSNMPTrapHandlers(ports, portRecipes, sessions, bgpRecipes))
-	result, err := dispatcher.Dispatch(c.Request.Context(), trapNetworkDevice(device), trap)
+	dispatcher := snmpdomain.NewTrapDispatcher(snmpdomain.DefaultTrapHandlers(ports, portRecipes, sessions, bgpRecipes))
+	result, err := dispatcher.Dispatch(c.Request.Context(), snmpdomain.TrapDevice{ID: device.ID}, trap)
 	if err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -196,43 +195,19 @@ func (s *Server) findTrapDevice(c *gin.Context, sourceIP, hostname string) (devi
 	return value, err
 }
 
-func trapNetworkDevice(value deviceRecord) watchdog.NetworkDevice {
-	return watchdog.NetworkDevice{
-		ID: watchdog.ID(value.ID), TargetID: watchdog.ID(value.ID), Vendor: value.Vendor, Model: value.Model,
-		Platform: value.Platform, OSName: value.OS, OSVersion: value.OSVersion, SysObjectID: value.SysObjectID,
-		SysName: value.SysName, SysDescr: value.SysDescr, SysLocation: value.SysLocation,
-		Uptime: time.Duration(value.UptimeSeconds) * time.Second,
-	}
-}
-
-func (s *Server) loadTrapPorts(c *gin.Context, deviceID string) (map[uint64]watchdog.NetworkPort, map[watchdog.ID][]watchdog.ID, error) {
+func (s *Server) loadTrapPorts(c *gin.Context, deviceID string) (map[uint64]snmpdomain.TrapPort, map[string][]string, error) {
 	rows, err := s.db.QueryContext(c.Request.Context(), portSelect+" WHERE p.device_id=?", deviceID)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	ports := make(map[uint64]watchdog.NetworkPort)
+	ports := make(map[uint64]snmpdomain.TrapPort)
 	for rows.Next() {
 		row, err := scanPort(rows)
 		if err != nil {
 			return nil, nil, err
 		}
-		metadataAny := map[string]any{}
-		_ = json.Unmarshal(row.Metadata, &metadataAny)
-		metadata := make(map[string]string, len(metadataAny))
-		for key, value := range metadataAny {
-			if text, ok := value.(string); ok {
-				metadata[key] = text
-			}
-		}
-		port := watchdog.NetworkPort{
-			ID: watchdog.ID(row.ID), DeviceID: watchdog.ID(row.DeviceID), IfIndex: row.IfIndex,
-			IfName: row.IfName, IfAlias: row.IfAlias, IfDescr: row.IfDescr,
-			AdminStatus: row.AdminStatus, OperStatus: row.OperStatus, Metadata: metadata, UpdatedAt: row.UpdatedAt,
-		}
-		if row.IfSpeed.Valid && row.IfSpeed.Int64 > 0 {
-			port.SpeedBps = uint64(row.IfSpeed.Int64)
-		}
+		port := snmpdomain.TrapPort{ID: row.ID, IfIndex: row.IfIndex, IfName: row.IfName, OperStatus: row.OperStatus}
 		ports[row.IfIndex] = port
 	}
 	if err := rows.Err(); err != nil {
@@ -242,30 +217,19 @@ func (s *Server) loadTrapPorts(c *gin.Context, deviceID string) (map[uint64]watc
 	return ports, recipes, err
 }
 
-func (s *Server) loadTrapBGPSessions(c *gin.Context, deviceID string) (map[string]watchdog.BGPSession, map[watchdog.ID][]watchdog.ID, error) {
+func (s *Server) loadTrapBGPSessions(c *gin.Context, deviceID string) (map[string]snmpdomain.TrapBGPSession, map[string][]string, error) {
 	rows, err := s.db.QueryContext(c.Request.Context(), bgpSelect+" WHERE b.device_id=?", deviceID)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	result := make(map[string]watchdog.BGPSession)
+	result := make(map[string]snmpdomain.TrapBGPSession)
 	for rows.Next() {
 		row, err := scanBGPSession(rows)
 		if err != nil {
 			return nil, nil, err
 		}
-		metadata := make(map[string]string, len(row.Metadata))
-		for key, value := range row.Metadata {
-			if text, ok := value.(string); ok {
-				metadata[key] = text
-			}
-		}
-		result[row.PeerAddr] = watchdog.BGPSession{
-			ID: watchdog.ID(row.ID), DeviceID: watchdog.ID(row.DeviceID), PeerAddr: row.PeerAddr,
-			PeerAS: row.PeerAS, LocalAS: row.LocalAS, AFI: row.AFI, SAFI: row.SAFI, State: row.State,
-			AcceptedPrefixes: row.AcceptedPrefixes, DeniedPrefixes: row.DeniedPrefixes,
-			AdvertisedPrefixes: row.AdvertisedPrefixes, Uptime: time.Duration(row.Uptime), Metadata: metadata, UpdatedAt: row.Updated,
-		}
+		result[row.PeerAddr] = snmpdomain.TrapBGPSession{ID: row.ID, PeerAddr: row.PeerAddr, State: row.State}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
@@ -274,16 +238,16 @@ func (s *Server) loadTrapBGPSessions(c *gin.Context, deviceID string) (map[strin
 	return result, recipes, err
 }
 
-func (s *Server) loadTrapRecipeIDs(c *gin.Context, deviceID, entityKind string) (map[watchdog.ID][]watchdog.ID, error) {
+func (s *Server) loadTrapRecipeIDs(c *gin.Context, deviceID, entityKind string) (map[string][]string, error) {
 	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT id,entity_id FROM snmp_collection_recipes
 		WHERE device_id=? AND entity_kind=? AND enabled=1`, deviceID, entityKind)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := make(map[watchdog.ID][]watchdog.ID)
+	result := make(map[string][]string)
 	for rows.Next() {
-		var recipeID, entityID watchdog.ID
+		var recipeID, entityID string
 		if err := rows.Scan(&recipeID, &entityID); err != nil {
 			return nil, err
 		}
@@ -292,11 +256,11 @@ func (s *Server) loadTrapRecipeIDs(c *gin.Context, deviceID, entityKind string) 
 	return result, rows.Err()
 }
 
-func (s *Server) persistTrapResult(c *gin.Context, deviceID string, result watchdog.SNMPTrapHandleResult) error {
+func (s *Server) persistTrapResult(c *gin.Context, deviceID string, result snmpdomain.TrapHandleResult) error {
 	events := make([]snmpch.Event, 0, len(result.Events))
 	for _, event := range result.Events {
 		events = append(events, snmpch.Event{
-			ID: string(event.ID), DeviceID: string(event.DeviceID), EntityType: string(event.EntityType), EntityID: string(event.EntityID),
+			ID: event.ID, DeviceID: event.DeviceID, EntityType: string(event.EntityType), EntityID: event.EntityID,
 			Source: event.Source, Severity: event.Severity, EventType: event.EventType, Message: event.Message,
 			Raw: event.Raw, OccurredAt: event.OccurredAt,
 		})
@@ -311,7 +275,7 @@ func (s *Server) persistTrapResult(c *gin.Context, deviceID string, result watch
 	defer tx.Rollback()
 	for _, port := range result.PortUpdates {
 		if _, err := tx.ExecContext(c.Request.Context(), `UPDATE ports SET if_oper_status=?,updated_at=UTC_TIMESTAMP(3),row_version=row_version+1 WHERE id=? AND device_id=?`,
-			watchdog.NormalizeIfStatus(port.OperStatus), port.ID, deviceID); err != nil {
+			snmpdomain.NormalizeIfStatus(port.OperStatus), port.ID, deviceID); err != nil {
 			return err
 		}
 	}

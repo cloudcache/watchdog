@@ -16,7 +16,6 @@ import (
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -143,7 +142,7 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	if putMIB.Code != http.StatusOK || !strings.Contains(putMIB.Body.String(), `"Name":"IF-MIB"`) {
 		t.Fatalf("put MIB: status=%d body=%s", putMIB.Code, putMIB.Body.String())
 	}
-	var mib watchdog.MIBModule
+	var mib snmpdomain.MIBModule
 	if err := json.Unmarshal(putMIB.Body.Bytes(), &mib); err != nil || mib.ID == "" {
 		t.Fatalf("decode MIB: value=%+v err=%v", mib, err)
 	}
@@ -153,7 +152,7 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	}
 
 	trap := snmpManagementRequest(t, s.receiveSNMPTrap, principal, http.MethodPost, "/api/v1/snmp/traps", "", "", map[string]any{
-		"source_ip": "192.0.2.9:162", "trap_oid": watchdog.SNMPTrapOIDLinkDown,
+		"source_ip": "192.0.2.9:162", "trap_oid": snmpdomain.TrapOIDLinkDown,
 		"varbinds": []map[string]string{{"oid": "IF-MIB::ifIndex", "value": "7"}},
 	})
 	if trap.Code != http.StatusOK || !strings.Contains(trap.Body.String(), `"port_updates":1`) || executor.inserts != 1 {
@@ -176,7 +175,7 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	router := gin.New()
 	router.POST("/api/v1/snmp/traps", s.authenticateSNMPTrapCaller, s.receiveSNMPTrap)
 	machineBody, _ := json.Marshal(map[string]any{
-		"source_ip": "192.0.2.9", "trap_oid": watchdog.SNMPTrapOIDLinkUp,
+		"source_ip": "192.0.2.9", "trap_oid": snmpdomain.TrapOIDLinkUp,
 		"varbinds": []map[string]string{{"oid": "IF-MIB::ifIndex", "value": "7"}},
 	})
 	machineRequest := httptest.NewRequest(http.MethodPost, "/api/v1/snmp/traps", bytes.NewReader(machineBody))
