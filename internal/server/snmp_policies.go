@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,14 +32,14 @@ func (s *Server) getPortPolicy(c *gin.Context) {
 			writeSQLError(c, defaultsErr)
 			return
 		}
-		side := watchdog.PortSideCustomer
+		side := snmpdomain.PortSideCustomer
 		metadata := map[string]any{}
 		_ = json.Unmarshal(port.Metadata, &metadata)
-		if metadata["side_type"] == string(watchdog.PortSideProvider) {
-			side = watchdog.PortSideProvider
+		if metadata["side_type"] == string(snmpdomain.PortSideProvider) {
+			side = snmpdomain.PortSideProvider
 		}
-		policy = watchdog.DefaultPortPolicyWithDefaults("", watchdog.ID(port.ID), side, defaults)
-		policy.ID = watchdog.ID(stableManagementID("port-policy", port.ID))
+		policy = snmpdomain.DefaultPortPolicyWithDefaults(port.ID, side, defaults)
+		policy.ID = snmpdomain.ID(stableManagementID("port-policy", port.ID))
 		err = nil
 	}
 	if err != nil {
@@ -58,15 +58,14 @@ func (s *Server) patchPortPolicy(c *gin.Context) {
 	if _, ok := s.portScope(c, port.DeviceID, port.ID); !ok {
 		return
 	}
-	var policy watchdog.PortPolicy
+	var policy snmpdomain.PortPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
 		return
 	}
-	policy.PortID = watchdog.ID(port.ID)
-	policy.TenantID = ""
+	policy.PortID = snmpdomain.ID(port.ID)
 	if policy.ID == "" {
-		policy.ID = watchdog.ID(stableManagementID("port-policy", port.ID))
+		policy.ID = snmpdomain.ID(stableManagementID("port-policy", port.ID))
 	}
 	policy = policy.Normalize()
 	if err := validatePortPolicy(policy); err != nil {
@@ -93,8 +92,8 @@ func (s *Server) patchPortPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-func (s *Server) readPortPolicy(c *gin.Context, portID string) (watchdog.PortPolicy, error) {
-	var p watchdog.PortPolicy
+func (s *Server) readPortPolicy(c *gin.Context, portID string) (snmpdomain.PortPolicy, error) {
+	var p snmpdomain.PortPolicy
 	var seconds uint16
 	err := s.db.QueryRowContext(c.Request.Context(), `SELECT id,port_id,side_type,billing_base_bps,sample_step_seconds,
 		correction_direction,correction_min,correction_max,enabled FROM port_policies WHERE port_id=?`, portID).
@@ -113,15 +112,15 @@ func (s *Server) getTrafficPolicyDefaults(c *gin.Context) {
 }
 
 func (s *Server) putTrafficPolicyDefaults(c *gin.Context) {
-	var defaults watchdog.TrafficPolicyDefaults
+	var defaults snmpdomain.TrafficPolicyDefaults
 	if err := c.ShouldBindJSON(&defaults); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
 		return
 	}
-	defaults.Provider = defaults.Provider.Normalize(watchdog.PortSideProvider)
-	defaults.Customer = defaults.Customer.Normalize(watchdog.PortSideCustomer)
-	defaults.Provider.ID = watchdog.ID("snmp-default-provider")
-	defaults.Customer.ID = watchdog.ID("snmp-default-customer")
+	defaults.Provider = defaults.Provider.Normalize(snmpdomain.PortSideProvider)
+	defaults.Customer = defaults.Customer.Normalize(snmpdomain.PortSideCustomer)
+	defaults.Provider.ID = snmpdomain.ID("snmp-default-provider")
+	defaults.Customer.ID = snmpdomain.ID("snmp-default-customer")
 	if err := validateTrafficPolicyDefault(defaults.Provider); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -136,7 +135,7 @@ func (s *Server) putTrafficPolicyDefaults(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
-	for _, value := range []watchdog.TrafficPolicyDefault{defaults.Provider, defaults.Customer} {
+	for _, value := range []snmpdomain.TrafficPolicyDefault{defaults.Provider, defaults.Customer} {
 		if _, err = tx.ExecContext(c.Request.Context(), `INSERT INTO traffic_policy_defaults
 			(id,side_type,billing_base_bps,sample_step_seconds,correction_direction,correction_min,correction_max)
 			VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE billing_base_bps=VALUES(billing_base_bps),
@@ -155,12 +154,12 @@ func (s *Server) putTrafficPolicyDefaults(c *gin.Context) {
 	s.getTrafficPolicyDefaults(c)
 }
 
-func (s *Server) readTrafficPolicyDefaults(c *gin.Context) (watchdog.TrafficPolicyDefaults, error) {
+func (s *Server) readTrafficPolicyDefaults(c *gin.Context) (snmpdomain.TrafficPolicyDefaults, error) {
 	return s.readTrafficPolicyDefaultsContext(c.Request.Context())
 }
 
-func (s *Server) readTrafficPolicyDefaultsContext(ctx context.Context) (watchdog.TrafficPolicyDefaults, error) {
-	defaults := watchdog.BuiltinTrafficPolicyDefaults
+func (s *Server) readTrafficPolicyDefaultsContext(ctx context.Context) (snmpdomain.TrafficPolicyDefaults, error) {
+	defaults := snmpdomain.BuiltinTrafficPolicyDefaults
 	if s == nil || s.db == nil {
 		return defaults, nil
 	}
@@ -171,24 +170,24 @@ func (s *Server) readTrafficPolicyDefaultsContext(ctx context.Context) (watchdog
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var value watchdog.TrafficPolicyDefault
+		var value snmpdomain.TrafficPolicyDefault
 		var seconds uint16
 		if err := rows.Scan(&value.ID, &value.SideType, &value.BillingBaseBps, &seconds, &value.CorrectionDirection, &value.CorrectionMin, &value.CorrectionMax); err != nil {
 			return defaults, err
 		}
 		value.SampleStep = time.Duration(seconds) * time.Second
 		switch value.SideType {
-		case watchdog.PortSideProvider:
-			defaults.Provider = value.Normalize(watchdog.PortSideProvider)
-		case watchdog.PortSideCustomer:
-			defaults.Customer = value.Normalize(watchdog.PortSideCustomer)
+		case snmpdomain.PortSideProvider:
+			defaults.Provider = value.Normalize(snmpdomain.PortSideProvider)
+		case snmpdomain.PortSideCustomer:
+			defaults.Customer = value.Normalize(snmpdomain.PortSideCustomer)
 		}
 	}
 	return defaults, rows.Err()
 }
 
-func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) (map[string]watchdog.PortPolicy, error) {
-	result := make(map[string]watchdog.PortPolicy, len(portIDs))
+func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) (map[string]snmpdomain.PortPolicy, error) {
+	result := make(map[string]snmpdomain.PortPolicy, len(portIDs))
 	if len(portIDs) == 0 {
 		return result, nil
 	}
@@ -198,8 +197,8 @@ func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) 
 	}
 	if s == nil || s.db == nil {
 		for _, portID := range portIDs {
-			policy := watchdog.DefaultPortPolicyWithDefaults("", watchdog.ID(portID), watchdog.PortSideCustomer, defaults)
-			policy.ID = watchdog.ID(stableManagementID("port-policy", portID))
+			policy := snmpdomain.DefaultPortPolicyWithDefaults(portID, snmpdomain.PortSideCustomer, defaults)
+			policy.ID = snmpdomain.ID(stableManagementID("port-policy", portID))
 			result[portID] = policy
 		}
 		return result, nil
@@ -221,18 +220,18 @@ func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) 
 		if err := rows.Scan(&portID, &metadataSide, &policyID, &side, &base, &step, &direction, &minimum, &maximum, &enabled); err != nil {
 			return nil, err
 		}
-		defaultSide := watchdog.PortSideCustomer
-		if metadataSide == string(watchdog.PortSideProvider) {
-			defaultSide = watchdog.PortSideProvider
+		defaultSide := snmpdomain.PortSideCustomer
+		if metadataSide == string(snmpdomain.PortSideProvider) {
+			defaultSide = snmpdomain.PortSideProvider
 		}
-		policy := watchdog.DefaultPortPolicyWithDefaults("", watchdog.ID(portID), defaultSide, defaults)
-		policy.ID = watchdog.ID(stableManagementID("port-policy", portID))
+		policy := snmpdomain.DefaultPortPolicyWithDefaults(portID, defaultSide, defaults)
+		policy.ID = snmpdomain.ID(stableManagementID("port-policy", portID))
 		if policyID.Valid {
-			policy.ID = watchdog.ID(policyID.String)
-			policy.SideType = watchdog.PortSideType(side.String)
+			policy.ID = snmpdomain.ID(policyID.String)
+			policy.SideType = snmpdomain.PortSideType(side.String)
 			policy.BillingBaseBps = uint64(base.Int64)
 			policy.SampleStep = time.Duration(step.Int64) * time.Second
-			policy.CorrectionDirection = watchdog.CorrectionDirection(direction.String)
+			policy.CorrectionDirection = snmpdomain.CorrectionDirection(direction.String)
 			policy.CorrectionMin = minimum.Int64
 			policy.CorrectionMax = maximum.Int64
 			policy.Enabled = enabled.Valid && enabled.Bool
@@ -253,21 +252,21 @@ func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) 
 //
 // A port-specific row overrides only the layer named by its side_type. The
 // other layer continues to inherit its global default.
-func (s *Server) readPortPoliciesForViewContext(ctx context.Context, portIDs []string, view watchdog.PortSideType) (map[string]watchdog.PortPolicy, error) {
-	result := make(map[string]watchdog.PortPolicy, len(portIDs))
+func (s *Server) readPortPoliciesForViewContext(ctx context.Context, portIDs []string, view snmpdomain.PortSideType) (map[string]snmpdomain.PortPolicy, error) {
+	result := make(map[string]snmpdomain.PortPolicy, len(portIDs))
 	if len(portIDs) == 0 {
 		return result, nil
 	}
-	if view != watchdog.PortSideProvider && view != watchdog.PortSideCustomer {
-		view = watchdog.PortSideCustomer
+	if view != snmpdomain.PortSideProvider && view != snmpdomain.PortSideCustomer {
+		view = snmpdomain.PortSideCustomer
 	}
 	defaults, err := s.readTrafficPolicyDefaultsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, portID := range portIDs {
-		policy := watchdog.DefaultPortPolicyWithDefaults("", watchdog.ID(portID), view, defaults)
-		policy.ID = watchdog.ID(stableManagementID("port-policy", portID+":"+string(view)))
+		policy := snmpdomain.DefaultPortPolicyWithDefaults(portID, view, defaults)
+		policy.ID = snmpdomain.ID(stableManagementID("port-policy", portID+":"+string(view)))
 		result[portID] = policy
 	}
 	if s == nil || s.db == nil {
@@ -281,7 +280,7 @@ func (s *Server) readPortPoliciesForViewContext(ctx context.Context, portIDs []s
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var policy watchdog.PortPolicy
+		var policy snmpdomain.PortPolicy
 		var seconds uint16
 		if err := rows.Scan(&policy.ID, &policy.PortID, &policy.SideType, &policy.BillingBaseBps, &seconds,
 			&policy.CorrectionDirection, &policy.CorrectionMin, &policy.CorrectionMax, &policy.Enabled); err != nil {
@@ -299,35 +298,35 @@ func (s *Server) readPortPoliciesForViewContext(ctx context.Context, portIDs []s
 	return result, nil
 }
 
-func (s *Server) trafficPolicyStepContext(ctx context.Context, view watchdog.PortSideType) (time.Duration, error) {
+func (s *Server) trafficPolicyStepContext(ctx context.Context, view snmpdomain.PortSideType) (time.Duration, error) {
 	defaults, err := s.readTrafficPolicyDefaultsContext(ctx)
 	if err != nil {
 		return 0, err
 	}
-	if view == watchdog.PortSideProvider {
-		return defaults.Provider.Normalize(watchdog.PortSideProvider).SampleStep, nil
+	if view == snmpdomain.PortSideProvider {
+		return defaults.Provider.Normalize(snmpdomain.PortSideProvider).SampleStep, nil
 	}
-	if view == watchdog.PortSideCustomer {
-		return defaults.Customer.Normalize(watchdog.PortSideCustomer).SampleStep, nil
+	if view == snmpdomain.PortSideCustomer {
+		return defaults.Customer.Normalize(snmpdomain.PortSideCustomer).SampleStep, nil
 	}
 	return 0, nil
 }
 
-func validatePortPolicy(value watchdog.PortPolicy) error {
+func validatePortPolicy(value snmpdomain.PortPolicy) error {
 	if len(value.ID) > 26 {
 		return errors.New("port policy id must not exceed 26 characters")
 	}
-	if value.SideType != watchdog.PortSideProvider && value.SideType != watchdog.PortSideCustomer {
+	if value.SideType != snmpdomain.PortSideProvider && value.SideType != snmpdomain.PortSideCustomer {
 		return errors.New("side type must be provider or customer")
 	}
 	return validatePolicyValues(value.BillingBaseBps, value.SampleStep, value.CorrectionDirection, value.CorrectionMin, value.CorrectionMax)
 }
 
-func validateTrafficPolicyDefault(value watchdog.TrafficPolicyDefault) error {
+func validateTrafficPolicyDefault(value snmpdomain.TrafficPolicyDefault) error {
 	return validatePolicyValues(value.BillingBaseBps, value.SampleStep, value.CorrectionDirection, value.CorrectionMin, value.CorrectionMax)
 }
 
-func validatePolicyValues(base uint64, step time.Duration, direction watchdog.CorrectionDirection, minimum, maximum int64) error {
+func validatePolicyValues(base uint64, step time.Duration, direction snmpdomain.CorrectionDirection, minimum, maximum int64) error {
 	if base == 0 {
 		return errors.New("billing base bps must be positive")
 	}
@@ -340,7 +339,7 @@ func validatePolicyValues(base uint64, step time.Duration, direction watchdog.Co
 	if step != time.Minute && step != 5*time.Minute {
 		return errors.New("sample step must be 1m or 5m")
 	}
-	if direction != watchdog.CorrectionNone && direction != watchdog.CorrectionUp && direction != watchdog.CorrectionDown {
+	if direction != snmpdomain.CorrectionNone && direction != snmpdomain.CorrectionUp && direction != snmpdomain.CorrectionDown {
 		return errors.New("correction direction must be none, up or down")
 	}
 	if minimum < 0 || maximum < minimum {

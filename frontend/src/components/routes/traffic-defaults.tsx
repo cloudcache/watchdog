@@ -10,8 +10,6 @@ import { api } from "@/lib/api"
 type TrafficPolicyDefault = {
 	ID?: string
 	id?: string
-	TenantID?: string
-	tenant_id?: string
 	SideType?: string
 	side_type?: string
 	BillingBaseBps?: number

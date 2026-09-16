@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 )
 
 var (
@@ -33,14 +33,14 @@ func snmpValueModes(raw string, admin bool) ([]string, error) {
 	return []string{mode}, nil
 }
 
-func snmpTrafficSide(raw string) (watchdog.PortSideType, error) {
+func snmpTrafficSide(raw string) (snmpdomain.PortSideType, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "raw":
 		return "", nil
 	case "supplier":
-		return watchdog.PortSideProvider, nil
+		return snmpdomain.PortSideProvider, nil
 	case "customer":
-		return watchdog.PortSideCustomer, nil
+		return snmpdomain.PortSideCustomer, nil
 	default:
 		return "", errSNMPTrafficView
 	}
@@ -61,7 +61,7 @@ func snmpSeriesPortIDs(series []snmpch.Series) []string {
 	return result
 }
 
-func correctedSNMPSeries(series []snmpch.Series, policies map[string]watchdog.PortPolicy, corrected bool) []snmpch.Series {
+func correctedSNMPSeries(series []snmpch.Series, policies map[string]snmpdomain.PortPolicy, corrected bool) []snmpch.Series {
 	result := make([]snmpch.Series, 0, len(series))
 	for _, item := range series {
 		copyItem := item
@@ -70,7 +70,7 @@ func correctedSNMPSeries(series []snmpch.Series, policies map[string]watchdog.Po
 			if policy, ok := policies[item.EntityID]; ok {
 				for index := range copyItem.Points {
 					point := &copyItem.Points[index]
-					point.Value = watchdog.ApplyCorrectionFloat(point.Value, policy, watchdog.DeterministicCorrectionRNG(item.EntityID, point.Time))
+					point.Value = snmpdomain.ApplyCorrectionFloat(point.Value, policy, snmpdomain.DeterministicCorrectionRNG(item.EntityID, point.Time))
 				}
 			}
 		}

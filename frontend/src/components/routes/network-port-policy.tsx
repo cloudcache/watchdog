@@ -50,8 +50,6 @@ type NetworkPortResponse = {
 type PortPolicy = {
 	ID?: string
 	id?: string
-	TenantID?: string
-	tenant_id?: string
 	PortID?: string
 	port_id?: string
 	SideType?: string
@@ -282,7 +280,6 @@ function InfoCell({ label, value, mono }: { label: string; value?: string; mono?
 function normalizePolicy(policy: PortPolicy, portID: string): PortPolicy {
 	return {
 		ID: policy.ID ?? policy.id,
-		TenantID: policy.TenantID ?? policy.tenant_id,
 		PortID: portID,
 		SideType: policySide(policy),
 		BillingBaseBps: policyBillingBase(policy),

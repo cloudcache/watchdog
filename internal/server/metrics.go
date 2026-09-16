@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
@@ -173,15 +174,15 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []snmpch.Series, modes []string, side watchdog.PortSideType, preserveSeries bool) (metricRangeResponse, error) {
+func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []snmpch.Series, modes []string, side snmpdomain.PortSideType, preserveSeries bool) (metricRangeResponse, error) {
 	response := metricRangeResponse{Status: "success"}
 	response.Data.ResultType = "matrix"
-	policies := map[string]watchdog.PortPolicy{}
+	policies := map[string]snmpdomain.PortPolicy{}
 	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
 		var err error
 		policyView := side
 		if policyView == "" {
-			policyView = watchdog.PortSideCustomer
+			policyView = snmpdomain.PortSideCustomer
 		}
 		policies, err = s.readPortPoliciesForViewContext(c.Request.Context(), snmpSeriesPortIDs(series), policyView)
 		if err != nil {
@@ -216,11 +217,11 @@ func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []
 	return response, nil
 }
 
-func trafficViewName(side watchdog.PortSideType) string {
-	if side == watchdog.PortSideProvider {
+func trafficViewName(side snmpdomain.PortSideType) string {
+	if side == snmpdomain.PortSideProvider {
 		return "supplier"
 	}
-	if side == watchdog.PortSideCustomer {
+	if side == snmpdomain.PortSideCustomer {
 		return "customer"
 	}
 	return "raw"

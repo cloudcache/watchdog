@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 )
 
 func TestSNMPValueModesEnforceRawAdminBoundary(t *testing.T) {
@@ -27,13 +27,13 @@ func TestSNMPPolicyIsAppliedBeforeAggregation(t *testing.T) {
 		{EntityKind: "port", EntityID: "port-a", Points: []snmpch.Point{{Time: observed, Value: 100}}},
 		{EntityKind: "port", EntityID: "port-b", Points: []snmpch.Point{{Time: observed, Value: 200}}},
 	}
-	supplierPolicies := map[string]watchdog.PortPolicy{
-		"port-a": {PortID: "port-a", SideType: watchdog.PortSideProvider, Enabled: true, CorrectionDirection: watchdog.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
-		"port-b": {PortID: "port-b", SideType: watchdog.PortSideProvider, Enabled: true, CorrectionDirection: watchdog.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
+	supplierPolicies := map[string]snmpdomain.PortPolicy{
+		"port-a": {PortID: "port-a", SideType: snmpdomain.PortSideProvider, Enabled: true, CorrectionDirection: snmpdomain.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
+		"port-b": {PortID: "port-b", SideType: snmpdomain.PortSideProvider, Enabled: true, CorrectionDirection: snmpdomain.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
 	}
-	customerPolicies := map[string]watchdog.PortPolicy{
-		"port-a": {PortID: "port-a", SideType: watchdog.PortSideCustomer, Enabled: true, CorrectionDirection: watchdog.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
-		"port-b": {PortID: "port-b", SideType: watchdog.PortSideCustomer, Enabled: true, CorrectionDirection: watchdog.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
+	customerPolicies := map[string]snmpdomain.PortPolicy{
+		"port-a": {PortID: "port-a", SideType: snmpdomain.PortSideCustomer, Enabled: true, CorrectionDirection: snmpdomain.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
+		"port-b": {PortID: "port-b", SideType: snmpdomain.PortSideCustomer, Enabled: true, CorrectionDirection: snmpdomain.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
 	}
 	supplier := aggregateSNMPSeries(correctedSNMPSeries(series, supplierPolicies, true), "sum")
 	if len(supplier) != 1 || supplier[0].Value != 320 {
@@ -50,9 +50,9 @@ func TestSNMPPolicyIsAppliedBeforeAggregation(t *testing.T) {
 }
 
 func TestSNMPDefaultPolicyKeepsSideSpecificBases(t *testing.T) {
-	provider := watchdog.DefaultPortPolicyWithDefaults("", "p", watchdog.PortSideProvider, watchdog.BuiltinTrafficPolicyDefaults)
-	customer := watchdog.DefaultPortPolicyWithDefaults("", "c", watchdog.PortSideCustomer, watchdog.BuiltinTrafficPolicyDefaults)
-	if provider.BillingBaseBps != watchdog.ProviderBillingBaseBps || customer.BillingBaseBps != watchdog.CustomerBillingBaseBps {
+	provider := snmpdomain.DefaultPortPolicyWithDefaults("p", snmpdomain.PortSideProvider, snmpdomain.BuiltinTrafficPolicyDefaults)
+	customer := snmpdomain.DefaultPortPolicyWithDefaults("c", snmpdomain.PortSideCustomer, snmpdomain.BuiltinTrafficPolicyDefaults)
+	if provider.BillingBaseBps != snmpdomain.ProviderBillingBaseBps || customer.BillingBaseBps != snmpdomain.CustomerBillingBaseBps {
 		t.Fatalf("provider=%d customer=%d", provider.BillingBaseBps, customer.BillingBaseBps)
 	}
 }
@@ -60,16 +60,16 @@ func TestSNMPDefaultPolicyKeepsSideSpecificBases(t *testing.T) {
 func TestEffectiveViewPoliciesKeepTheSamePorts(t *testing.T) {
 	server := (*Server)(nil)
 	portIDs := []string{"port-a", "port-b"}
-	supplier, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, watchdog.PortSideProvider)
+	supplier, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, snmpdomain.PortSideProvider)
 	if err != nil {
 		t.Fatal(err)
 	}
-	customer, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, watchdog.PortSideCustomer)
+	customer, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, snmpdomain.PortSideCustomer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, portID := range portIDs {
-		if supplier[portID].SideType != watchdog.PortSideProvider || customer[portID].SideType != watchdog.PortSideCustomer {
+		if supplier[portID].SideType != snmpdomain.PortSideProvider || customer[portID].SideType != snmpdomain.PortSideCustomer {
 			t.Fatalf("port %s supplier=%+v customer=%+v", portID, supplier[portID], customer[portID])
 		}
 	}

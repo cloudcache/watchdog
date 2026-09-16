@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -129,11 +129,11 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
-	policies := map[string]watchdog.PortPolicy{}
+	policies := map[string]snmpdomain.PortPolicy{}
 	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
 		policyView := side
 		if policyView == "" {
-			policyView = watchdog.PortSideCustomer
+			policyView = snmpdomain.PortSideCustomer
 		}
 		policies, err = s.readPortPoliciesForViewContext(c.Request.Context(), snmpSeriesPortIDs(series), policyView)
 		if err != nil {

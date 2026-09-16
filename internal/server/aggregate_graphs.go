@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
@@ -757,7 +758,7 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 			if err != nil {
 				return metricRangeResponse{}, nil, err
 			}
-			policies := map[string]watchdog.PortPolicy{}
+			policies := map[string]snmpdomain.PortPolicy{}
 			if item.Metric == snmpch.MetricIfInBPS || item.Metric == snmpch.MetricIfOutBPS {
 				policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
 				if err != nil {

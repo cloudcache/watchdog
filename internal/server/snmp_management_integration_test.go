@@ -15,6 +15,7 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
@@ -121,18 +122,18 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	if override.Code != http.StatusOK || !strings.Contains(override.Body.String(), `"SideType":"customer"`) || !strings.Contains(override.Body.String(), `"CorrectionMin":10`) {
 		t.Fatalf("port override: status=%d body=%s", override.Code, override.Body.String())
 	}
-	supplierPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, watchdog.PortSideProvider)
+	supplierPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, snmpdomain.PortSideProvider)
 	if err != nil {
 		t.Fatal(err)
 	}
-	customerPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, watchdog.PortSideCustomer)
+	customerPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, snmpdomain.PortSideCustomer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if supplierPolicies[portID].BillingBaseBps != 2_000_000_000 || supplierPolicies[portID].CorrectionDirection != watchdog.CorrectionNone {
+	if supplierPolicies[portID].BillingBaseBps != 2_000_000_000 || supplierPolicies[portID].CorrectionDirection != snmpdomain.CorrectionNone {
 		t.Fatalf("supplier view did not retain its default on the same port: %+v", supplierPolicies[portID])
 	}
-	if customerPolicies[portID].BillingBaseBps != 1_000_000_000 || customerPolicies[portID].CorrectionDirection != watchdog.CorrectionUp {
+	if customerPolicies[portID].BillingBaseBps != 1_000_000_000 || customerPolicies[portID].CorrectionDirection != snmpdomain.CorrectionUp {
 		t.Fatalf("customer view did not apply its override on the same port: %+v", customerPolicies[portID])
 	}
 

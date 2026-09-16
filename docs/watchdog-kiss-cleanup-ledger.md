@@ -158,3 +158,5 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 - **反向成本**：抽出后 watchdog 约 200 文件仍引用被移符号→须在 watchdog 建 ~65 条 re-export 别名(`type X = snmpdomain.X`/const/var)；类型可 alias，未导出符号(如 collectorStableID)不可 alias 只能全移。
 
 **结论**：Phase B 可行但是**真实多文件重构**（移 ~30 文件 + 5 处小类型抽取 + graph_panel 文件拆分 + 未导出符号清点 + ~65 别名 + repoint 13 server 文件 + 全量 build/vet/test），非一次安全推完。已干净回退（`git reset --hard` + 无 snmpdomain 残留，full build 绿）。⚠ **教训：共享 worktree 中 `git reset --hard` 会毁掉并行 session 的未提交改动**（本次瞬时清掉并行 flow-enrichment-publications 的 server.go/router.go 未提交改，并行 session 已重放恢复）——清理未落地改动应用 `git stash`/`git checkout -- <path>` 限定范围，勿用 reset --hard。KISS-01E 代码删除门的 PB 残留（L19/S1）已清；`internal/watchdog` 整包 + init.sql/migration 整树物理删除仍属 KISS-08（须先 Phase B + 退役 worker + 处理 ~20 遗留测试）。
+
+**Phase B 增量执行（2026-09-16）**：G1 已把端口三层策略和修正算法迁入无租户的 `internal/snmpdomain`；当前 Gin 策略 CRUD、SNMP series/aggregate 和 aggregate graph 不再从 `internal/watchdog` 取这些符号。旧包保留的仅是字段兼容转换，待其余历史闭包删除后一起移除。该切片没有移动 discovery/poller/MIB/trap 引擎，避免再次形成一次性大爆炸式重构；G2 按同一方式继续抽设备公共类型和 SNMP 引擎。
