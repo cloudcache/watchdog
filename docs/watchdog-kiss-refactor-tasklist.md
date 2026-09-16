@@ -289,7 +289,9 @@
 
 - [x] **KISS-08F14 旧 Tenant discovery HTTP 删除（本提交）**：当前单域 Gin、前端和 agent 均无租户选择/切换；运行态 `/api/v1/tenants` 与 `/api/v1/me/tenants` 已是 404。删除遗留 test-router 的两条 tenant discovery 路由及 `APIV1RouterConfig.TenantDiscovery/Tenants` 注入点，以 404 反向测试冻结边界。仍被旧 Flow rollup 内部扫描引用的 `TenantRepository` 暂留，未修改 Flow 数据面、rollup 或 worker；目标包测试、全库 test/vet/build 和旧 router 注入零引用为提交门禁。
 
-> **2026-09-16 运行门禁状态**：统一 `build/watchdog-server` 已由当前 HEAD 重建并替换 9 月 15 日旧进程；真实 `:8091` 返回 MySQL/ClickHouse/`runtime_ready=true`，canonical dashboard/SNMP MIB/BGP/graph/agent 路由在未登录时均返回 401，已删除的 module/tenant/旧 role-permission 路由返回 404，`8090 -> 8091` CORS 预检为 204。独立前端可打开登录页且控制台无 error/warn。以上关闭的是**进程、依赖和路由运行门禁**；登录后 device/SNMP/agent/dashboard 的真实业务读写仍须有效管理员会话验证，未因 401 探针而虚假标完。
+> **2026-09-16 门禁修复包已闭环**：Saved Filter 的持久化/API 只接受 `private/shared`，旧 scope 有独立迁移测试；四个真实进程测试只从 KISS embedded schema 启动 `system/snmp/flow_collect/flow_worker` 并覆盖 register→plan→ACK→LKG→revoke；SNMP A2 替身按 scoped/aggregate/billing 三种真实列契约执行；`frontend_route_contract_test.go` 从 `main.tsx` 递归扫描所有可达前端 `/api/v1` 调用并与 Gin production route table 对照，禁止再次产生“页面已迁、后端 404”。四项均已在真实隔离 MySQL 上通过。
+>
+> **2026-09-16 运行闭环包已闭环（产品五进程）**：`make build-runtime` 是 frontend、server、SNMP collector、Flow collector、Flow worker 的唯一批量构建入口，产物固定在 `frontend/dist` 与 `build/watchdog-*`；开发启动固定为 `make dev-frontend`、`make dev-server`、`make dev-snmp-collector`，Flow 按签名计划启动固定 build 产物，不再使用 task-specific `/private/tmp/watchdog-server-*` 或 `go run`。本地 CH secret 固定为忽略提交且 mode 0600 的 `data/secrets/clickhouse-password`，`make flow-dev-up` 与全部进程读取同一值。真实空 MySQL opt-in 测试已完成 install→login→agent register/heartbeat→device create→SNMP CH write/query→Flow CH write/closed rollup→Gin Flow query→overview report，并按唯一 device/source 清理 CH 验收数据。该证据关闭运行包，不倒签 KISS-08 的地址 publication、六报表、账单/导出/告警全量空库验收。
 
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。

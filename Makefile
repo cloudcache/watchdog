@@ -39,8 +39,11 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build build-agent build-server build-snmp-collector build-snmp-agent build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales flow-dev-up flow-dev-down flow-dev-status
+.PHONY: tidy build build-runtime build-agent build-server build-snmp-collector build-snmp-agent build-flow-collect build-flow-worker build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales local-secrets flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
+
+WATCHDOG_CLICKHOUSE_PASSWORD ?= watchdog-local
+LOCAL_CLICKHOUSE_PASSWORD_FILE ?= data/secrets/clickhouse-password
 
 clean:
 	go clean
@@ -84,7 +87,17 @@ build-snmp-collector:
 build-snmp-agent:
 	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-snmp-agent$(EXE_EXT) ./cmd/watchdog-snmp-agent
 
-build: build-agent build-server build-snmp-collector build-snmp-agent
+build-flow-collect:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-flow-collect$(EXE_EXT) ./cmd/watchdog-flow-collect
+
+build-flow-worker:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-flow-worker$(EXE_EXT) ./cmd/watchdog-flow-worker
+
+# The five independently deployed product processes have one canonical build
+# location. Extra agents (system and SNMP trap) remain separate optional builds.
+build-runtime: build-web-ui build-server build-snmp-collector build-flow-collect build-flow-worker
+
+build: build-agent build-runtime build-snmp-agent
 
 generate-locales:
 	@if [ ! -f ./frontend/src/locales/en/en.ts ]; then \
@@ -92,13 +105,17 @@ generate-locales:
 		npm install --prefix ./frontend && npm run --prefix ./frontend sync; \
 	fi
 
-dev-server: build-server
+local-secrets:
+	@mkdir -p "$(dir $(LOCAL_CLICKHOUSE_PASSWORD_FILE))"
+	@umask 077; printf '%s\n' "$(WATCHDOG_CLICKHOUSE_PASSWORD)" > "$(LOCAL_CLICKHOUSE_PASSWORD_FILE)"
+
+dev-server: local-secrets build-server
 	./build/watchdog-server --config config/watchdog.yaml
 
 dev-frontend:
 	npm --prefix ./frontend run dev
 
-dev-snmp-collector: build-snmp-collector
+dev-snmp-collector: local-secrets build-snmp-collector
 	./build/watchdog-snmp-collector --config config/watchdog.yaml --discover=false --poll=true --loop=true
 
 dev-agent:
@@ -108,8 +125,8 @@ dev-agent:
 		go run $(AGENT_GO_TAGS) github.com/cloudcache/watchdog/internal/cmd/agent; \
 	fi
 
-flow-dev-up:
-	docker compose -f deploy/compose.flow-dev.yml up -d
+flow-dev-up: local-secrets
+	WATCHDOG_CLICKHOUSE_PASSWORD="$(WATCHDOG_CLICKHOUSE_PASSWORD)" docker compose -f deploy/compose.flow-dev.yml up -d
 
 flow-dev-down:
 	docker compose -f deploy/compose.flow-dev.yml down

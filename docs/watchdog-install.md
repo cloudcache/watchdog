@@ -11,21 +11,14 @@ The development compose file starts Kafka with the 12-partition
 `watchdog.flow.raw-v1` topic and ClickHouse on their host ports:
 
 ```bash
-WATCHDOG_CLICKHOUSE_PASSWORD=watchdog-local \
-  docker compose -f deploy/compose.flow-dev.yml up -d
+make flow-dev-up
 docker compose -f deploy/compose.flow-dev.yml ps
 ```
 
-Keep the ClickHouse password out of YAML. For local development only:
-
-```bash
-install -m 600 /dev/null /tmp/watchdog-clickhouse-password
-printf '%s\n' 'watchdog-local' > /tmp/watchdog-clickhouse-password
-```
-
-Set `WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password` when
-starting every process that connects to ClickHouse. Production uses a mounted
-secret file instead.
+The make target writes the local password with mode 0600 to the ignored stable
+path `data/secrets/clickhouse-password`; `config/watchdog.yaml` references that
+path. Override `WATCHDOG_CLICKHOUSE_PASSWORD` if needed. Production should set
+`WATCHDOG_CLICKHOUSE_PASSWORD_FILE` to its mounted secret instead.
 
 Kafka and ClickHouse are telemetry dependencies, not prerequisites for the
 MySQL management-plane install. Starting them first makes Flow/SNMP query and
@@ -44,8 +37,7 @@ empty. The backend creates the named database only; it does not create schema
 or an administrator until installation is submitted.
 
 ```bash
-WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
-  go run ./cmd/watchdog-server --config config/watchdog.yaml
+make dev-server
 ```
 
 In another terminal:
@@ -107,8 +99,7 @@ SNMP discovery/polling reads device/profile state from MySQL and writes
 samples directly to ClickHouse:
 
 ```bash
-WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
-  go run ./cmd/watchdog-snmp-collector --config config/watchdog.yaml --loop
+make dev-snmp-collector
 ```
 
 Flow collection and Flow processing are separate processes. The collector
@@ -118,19 +109,20 @@ the signed plans/publications produced through the administrator and agent
 publication workflow:
 
 ```bash
-go run ./cmd/watchdog-flow-collect \
+make build-flow-collect build-flow-worker
+
+./build/watchdog-flow-collect \
   --plan /path/collector-plan.json \
   --plan-public-key /path/flow-plan.pub \
   --kafka-brokers 127.0.0.1:9092
 
-WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
-  go run ./cmd/watchdog-flow-worker \
+./build/watchdog-flow-worker \
   --bootstrap-plan /path/collector-plan.json \
   --plan-public-key /path/flow-plan.pub \
   --bootstrap-version-publication /path/version-publication.json \
   --source-stream-id local-kafka-watchdog-flow-raw-v1 \
   --kafka-brokers 127.0.0.1:9092 \
-  --clickhouse-password-file /tmp/watchdog-clickhouse-password
+  --clickhouse-password-file data/secrets/clickhouse-password
 ```
 
 Using agent enrollment replaces the bootstrap files with signed immutable

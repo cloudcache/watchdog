@@ -11,8 +11,8 @@ server in the backend.
 | API | `build/watchdog-server` | Gin management/query API on `127.0.0.1:8091` |
 | SNMP polling | `build/watchdog-snmp-collector` | Discovery, polling, MySQL recipes, ClickHouse samples |
 | SNMP traps | `build/watchdog-snmp-agent` | UDP Trap listener and forwarding to the API |
-| Flow collection | `watchdog-flow-collect` | sFlow/NetFlow/IPFIX decode and Kafka production |
-| Flow processing | `watchdog-flow-worker` | Kafka consumption, in-memory classification, ClickHouse writes |
+| Flow collection | `build/watchdog-flow-collect` | sFlow/NetFlow/IPFIX receive and Kafka production |
+| Flow processing | `build/watchdog-flow-worker` | Kafka consumption, fast decode, in-memory classification, ClickHouse writes |
 
 The API exposes SNMP and Flow management/query routes, but it does not open flow
 sampling sockets, consume Kafka, or execute the SNMP polling loop. Query and export
@@ -30,15 +30,13 @@ control plane.
 MySQL must be reachable using `mysql.dsn` in `config/watchdog.yaml`. Kafka and
 ClickHouse for local development can be started with:
 
-```bash
-WATCHDOG_CLICKHOUSE_PASSWORD=watchdog-local make flow-dev-up
-```
+`make flow-dev-up` creates the mode-0600 local secret at
+`data/secrets/clickhouse-password` and starts both dependencies with the same
+password. Override `WATCHDOG_CLICKHOUSE_PASSWORD` when needed; no process relies
+on a task-specific or `/tmp` secret path.
 
-Store the local ClickHouse password outside YAML:
-
 ```bash
-install -m 600 /dev/null /tmp/watchdog-clickhouse-password
-printf '%s\n' 'watchdog-local' > /tmp/watchdog-clickhouse-password
+make flow-dev-up
 ```
 
 ## 2. API and frontend
@@ -46,9 +44,7 @@ printf '%s\n' 'watchdog-local' > /tmp/watchdog-clickhouse-password
 Build and run the API under its fixed name:
 
 ```bash
-make build-server
-WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
-  ./build/watchdog-server --config config/watchdog.yaml
+make dev-server
 ```
 
 Run the frontend separately:
@@ -67,8 +63,7 @@ Build and start continuous polling independently from Gin:
 
 ```bash
 make build-snmp-collector
-WATCHDOG_CLICKHOUSE_PASSWORD_FILE=/tmp/watchdog-clickhouse-password \
-  ./build/watchdog-snmp-collector \
+./build/watchdog-snmp-collector \
   --config config/watchdog.yaml \
   --discover=false --poll=true --loop=true
 ```
@@ -95,7 +90,10 @@ make build-snmp-agent
 - `make build-snmp-collector`: compile the SNMP polling process.
 - `make dev-snmp-collector`: build and run continuous SNMP polling.
 - `make build-snmp-agent`: compile the independent UDP Trap process.
-- `make build`: compile the API, system agent, SNMP collector, and SNMP Trap agent.
+- `make build-flow-collect`: compile the Flow receiver to `build/watchdog-flow-collect`.
+- `make build-flow-worker`: compile the Flow worker to `build/watchdog-flow-worker`.
+- `make build-runtime`: build the independent frontend and five product processes.
+- `make build`: build the complete runtime plus optional system/SNMP Trap agents.
 - `make build-web-ui`: build the frontend separately.
 
 Do not name runtime binaries after a task (`watchdog-server-snmp`,
