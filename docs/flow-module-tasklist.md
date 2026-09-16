@@ -470,7 +470,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [ ] **FLOW-08A3 集群/发布门禁**：旧/新实际制品滚动、Replicated/Distributed/ON CLUSTER DDL、Kafka controller/broker quorum、ISR 收缩、N+1 和 RPO/RTO 演练；单节点 Compose 不勾选。
 - [x] **FLOW-08A3 回归**：Flow 全范围 race/vet、全库 test/vet、compose config 与 diff check 全过。
 - [x] **FLOW-08A3 已提交（单节点兼容范围）**：版本/restart 证据进入 `d67f08aa`，active-statement deadline/resume 进入 `5d7f9761`，静默断包与生产操作时限进入 `f13b57d3`；集群/发布门禁继续保持未完成。
-- [ ] 完成 retention/repair/backup、健康告警、容量预测、tenant purge、版本信息、RPO/RTO、N+1/AZ 和恢复演练。
+- [ ] 完成 retention/repair/backup、健康告警、容量预测、版本信息、RPO/RTO、N+1/AZ 和恢复演练；单域生命周期 L1（schema/守卫/旧静态配置拒绝）已于 2026-09-16 完成，L2–L5 以 `watchdog-kiss-refactor-tasklist.md` 的唯一任务状态为准，不再恢复 tenant purge。
 - [ ] 固定硬件执行 2× 峰值 30m、3× 突发 5m、72h soak；报告 UDP drop、Kafka lag、CH count、CPU/RSS/GC。
 - [ ] 完成 Kafka/CH/Geo/VM 组合故障、备份恢复、许可证/NOTICE/源码提供、canary/rollback/forward-fix。
 

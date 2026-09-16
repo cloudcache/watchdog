@@ -17,7 +17,8 @@ snmp_trap_agent:
   token: "secret"
   listen: " :1162 "
 flow:
-  retention_raw_days: 365
+  geo:
+    path: data/flow-geo
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)

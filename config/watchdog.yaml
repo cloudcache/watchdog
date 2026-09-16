@@ -26,11 +26,7 @@ kafka:                              # RawFlow transport (buffering/replay only)
   sasl_username: ""
   sasl_password_file: ""
 
-flow:                               # explicit global retention/downsample policy
-  retention_raw_days: 365           # keep raw flow at full precision (~1 year)
-  downsample_after_days: 365        # downsample only after this age (no hardcoded 30 days)
-  rollup_1m_days: 180
-  rollup_1h_days: 400
+flow:                               # runtime inputs; lifecycle policy is published from MySQL
   geo:                              # geo catalog/lookup bundle for flow reports + overseas
     path: "data/flow-geo"           # dev fixture; production feeds this from a published geo dimension artifact
 

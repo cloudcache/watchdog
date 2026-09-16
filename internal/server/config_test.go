@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,17 @@ admin:
 	}
 	if cfg.ClickHouse.PasswordFile != "/run/secrets/watchdog-clickhouse" {
 		t.Fatal("ClickHouse secret-file override was not applied")
+	}
+}
+
+func TestLoadConfigRejectsRemovedStaticFlowRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("flow:\n  retention_raw_days: 365\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "publish the global Flow lifecycle policy") {
+		t.Fatalf("removed static lifecycle setting error=%v", err)
 	}
 }
 

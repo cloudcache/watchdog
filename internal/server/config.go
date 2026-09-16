@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -60,16 +61,13 @@ type KafkaConfig struct {
 	SASLPasswordFile string   `yaml:"sasl_password_file"`
 }
 
-// FlowConfig is the explicit global retention/downsample policy (no hardcoded 30 days)
-// plus the flow-geo-v2 bundle location that backs the /flow/geo lookup API.
+// FlowConfig contains runtime locations and workers only. Flow retention is an
+// immutable, auditable management-plane policy in MySQL; keeping a second set
+// of day-count knobs here would create a non-functional competing authority.
 type FlowConfig struct {
-	RetentionRawDays    int              `yaml:"retention_raw_days"`
-	DownsampleAfterDays int              `yaml:"downsample_after_days"`
-	Rollup1mDays        int              `yaml:"rollup_1m_days"`
-	Rollup1hDays        int              `yaml:"rollup_1h_days"`
-	Geo                 FlowGeoConfig    `yaml:"geo"`
-	VPN                 FlowVPNConfig    `yaml:"vpn"`
-	Export              FlowExportConfig `yaml:"export"`
+	Geo    FlowGeoConfig    `yaml:"geo"`
+	VPN    FlowVPNConfig    `yaml:"vpn"`
+	Export FlowExportConfig `yaml:"export"`
 }
 
 // FlowExportConfig drives the async flow-record detail export worker: it writes CSV
@@ -140,7 +138,6 @@ func defaultConfig() Config {
 		MySQL:      MySQLConfig{DSN: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"},
 		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default"},
 		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
-		Flow:       FlowConfig{RetentionRawDays: 365, DownsampleAfterDays: 365, Rollup1mDays: 180, Rollup1hDays: 400},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
@@ -160,6 +157,9 @@ func LoadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
+		if err := rejectDeprecatedFlowLifecycleConfig(data); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}
@@ -173,6 +173,25 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Admin.Username = "admin"
 	}
 	return cfg, nil
+}
+
+func rejectDeprecatedFlowLifecycleConfig(data []byte) error {
+	var document struct {
+		Flow struct {
+			RetentionRawDays    *int `yaml:"retention_raw_days"`
+			DownsampleAfterDays *int `yaml:"downsample_after_days"`
+			Rollup1mDays        *int `yaml:"rollup_1m_days"`
+			Rollup1hDays        *int `yaml:"rollup_1h_days"`
+		} `yaml:"flow"`
+	}
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	if document.Flow.RetentionRawDays != nil || document.Flow.DownsampleAfterDays != nil ||
+		document.Flow.Rollup1mDays != nil || document.Flow.Rollup1hDays != nil {
+		return errors.New("flow retention_raw_days/downsample_after_days/rollup_*_days were removed; publish the global Flow lifecycle policy through the management API")
+	}
+	return nil
 }
 
 // applySecretEnvOverrides lets secrets be injected without committing them to the file.

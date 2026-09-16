@@ -1,5 +1,7 @@
 # Flow Storage V2 重大变更设计与实施计划
 
+> **KISS 单域修订（2026-09-16）**：本文保留 Storage V2 从旧多租户平台切换时的历史推导，出现的 `tenant_id`、migration 056 与 `internal/watchdog/*flow_storage*` 不再是当前实现入口。当前单域契约从 `deploy/schema/mysql/0033_flow_storage_lifecycle.sql` 和 `internal/flowlifecycle` 开始：配置文件不再接受静态 365/180/400 天参数；MySQL 保存全局不可变 policy revision、UTC 日状态、Kafka next-offset 水位、备份恢复证据和删除回执；`flow_records` 按 UTC 日物理分区，`flow_aggregate_1h` 按 UTC 月物理分区。删除 worker 尚未启用，必须在 operation job、真实 Kafka 覆盖、CH 守恒和备份恢复故障测试闭环后才可打开。
+
 状态：**Accepted / guarded implementation complete; destructive cutover locked**
 生效范围：Flow Kafka→worker→ClickHouse 写入、审计对账、明细查询、导出、原始数据老化与 downsample。
 替代关系：本文是上述范围的唯一生效设计；`flow-pipeline-adr.md`、`flow-module-design.md`、`flow-reliability-remediation.md` 中与 30 天原始 TTL、实时 1m/1h rollup、`record_id`/`ingest_batch_id`/内容 checksum 冲突的段落均按本文解释。001–010 已发布迁移保持逐字节不可变，只允许新增向前迁移。
@@ -67,7 +69,7 @@ scanner 必须逐个枚举有界的 `[next_offset, committed_next_offset)`，不
 
 ## 4. 生命周期与 downsample 状态机
 
-DDL 不再硬编码原始、receipt、1m 或 1h 的 TTL。默认行为是**不自动删除**。每个租户的已发布策略至少包含：
+DDL 不再硬编码原始、receipt、1m 或 1h 的 TTL。默认行为是**不自动删除**。当前只有一套全局已发布策略（下文“每个租户”是旧架构历史措辞），至少包含：
 
 | 字段 | 约束 | 语义 |
 |---|---:|---|
