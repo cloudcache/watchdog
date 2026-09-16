@@ -20,7 +20,6 @@ require (
 	github.com/netsampler/goflow2/v3 v3.0.0-20260528232550-6dee964c38ee
 	github.com/oschwald/maxminddb-golang/v2 v2.5.0
 	github.com/parquet-go/parquet-go v0.32.0
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.3
 	github.com/sleepinggenius2/gosmi v0.4.4
 	github.com/spf13/pflag v1.0.10

@@ -26,47 +26,39 @@
 | ID | 类别 | 精确位置 | 分类 | 依赖它的活跃代码 | 删除影响 | 前置 | 归属 | 状态 |
 |---|---|---|---|---|---|---|---|---|
 | L1 | package | `internal/watchdog/`（最终 366 文件，含测试） | KISS-08 | 无；server/SNMP/system-agent 已全部解耦 | 无 | 已在 KISS-08H 物理删除 | KISS-08 | **done** |
-| L2 | symbol-set | 65 符号 / 19 锚文件 + SNMP 引擎闭包(~18) — `domain.go`/`traffic_policy.go`/`metric_catalog.go`/`metrics_query.go`/`snmp_*` | **EXTRACT-first** | 生产 Gin/collector 已全部改用 `internal/snmpdomain`；`internal/server` 生产源码对旧包 import=0 | discovery/poll/query/CH writer 已完成抽取；旧包只剩历史内部闭包与显式 compatibility wrapper | 继续按 repository/import/runtime 引用闭包删除，不再迁算法 | KISS-08 | **G3d2b2 done；物理清理待续** |
-| L3 | file(split) | `config.go:275 SNMPConfig`（余为遗留 BackendConfig） | EXTRACT-first | `snmp_discovery.go:26` | server 少 MIB 注册入参类型 | 从 BackendConfig 拆出 | KISS-08 | ready |
+| L2 | symbol-set | 历史 65 符号 / 19 锚文件 + SNMP 引擎闭包 | **EXTRACT-first** | 生产 Gin/collector 已全部改用 `internal/snmpdomain`；旧 package 已删除 | discovery/poll/query/CH writer 已原样抽取 | KISS-08H 物理删除 | KISS-08 | **done** |
+| L3 | file(split) | 历史 `SNMPConfig`/`BackendConfig` 混合定义 | EXTRACT-first | `internal/server.Config.SNMP` | 现行 server 配置已独立 | KISS-08H 物理删除 | KISS-08 | **done** |
 | L4 | file(split) | `repository.go:468 MetricRetentionPolicy` | EXTRACT-first | 无（已归属 `internal/server/retention.go`） | 无 | 已完成 | KISS-08F2 | **done** |
 | L5–L9 | file-cluster | 旧 HTTP、VM/query gateway/provider、Flow/address、tenant MySQL/operation job/管理闭包 | KISS-08 | 无外部调用；迁出后的遗留实现仅包内自循环 | A–G4 已逐域验证当前替代路径，H 删除剩余闭包 | 无 | KISS-08H | **done** |
 | L10 | cmd | `cmd/watchdog-aggregate-rollup` | legacy-delete | 无（未发布） | **已被** in-server CH `aggregate_graphs.go`/`snmp_aggregate.go`+`internal/snmpch` 取代；旧命令对 KISS 库查 `collector_agents⋈tenants` 即失败 | 已满足 | KISS-08B | **done** |
 | L11 | cmd | `cmd/watchdog-export-worker` | legacy-delete | 无 | **已被** in-server opjob CH 导出 `exports.go:25`/`snmp_exports.go`/`flow_exports.go` 取代 | 已满足 | KISS-08B | **done** |
-| L12 | cmd/schema | `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、Makefile target 与 dev-db 脚本已删除；旧 schema/实现只被 `internal/watchdog` 历史测试引用 | schema 树随 L1 删除 | KISS-08C/D | **entry done; files blocked-by-L1** |
+| L12 | cmd/schema | 历史 `cmd/watchdog-install` + `install/init.sql` + `deploy/migration/mysql/` | legacy-delete | HTTP `/install` + `deploy/schema/mysql` | CLI、脚本、旧包和冲突 schema 均已删除 | KISS-08I 物理删除 | KISS-08C/D/I | **done** |
 | L13 | cmd | `cmd/watchdog-librenms-extract` | legacy-delete | 无（未发布） | server 已按配置直接加载 `ParseLibrenmsDefinitions`，旧命令只写不存在的多租户 definition 表 | 已满足 | KISS-08D | **done** |
 | L14 | cmd | `cmd/watchdog-snmp-agent` / `cmd/watchdog-system-agent` | KEEP | 两个独立 agent 都只读取自身配置并使用各自 wire DTO | 行为不变且均已断旧包；system telemetry 产品增强仍延期，但不再阻断清理 | 无 | KISS-08E/G4 | **done** |
 | L15 | config | 已删除的旧 `internal/watchdog/config.go` VM/tenant/provider runtime 配置 | KISS-08 | 无 | KISS-08H 随遗留 package 删除 | 无 | KISS-08H | **done** |
-| L16 | config | `config/watchdog.example.yaml`(`:7,13-16,41,57,65-77`)、`watchdog.dev.yaml`(`:7,10-13,27,37,43,84-90`) VM/tenant/provider 键 | **DEAD-now**(server 忽略) | 无（server 用 `internal/server/config.go`） | 无 | —— | KISS-08 | **ready** |
-| L17 | dep | `go.mod robfig/cron/v3` | KISS-08 | 仅 `operation_job_schedule.go:12` | 无（L1 后） | L1 | KISS-08 | blocked-by-L1 |
-| L18 | dep | `gosmi` / `gosnmp` | **KEEP(relocate)** | 活跃 SNMP 引擎 | —— | 随 L2 迁 | KISS-08 | ready |
-| L19 | PB 残留 | a) `internal/dockerfile_hub:29,31,34` + `.github/workflows/docker-images.yml:18,71`；b) `.github/ISSUE_TEMPLATE/bug_report.yml:124`、`DISCUSSION_TEMPLATE/support.yml:92`（`/_/#/logs`）；c) 见 S1/S2 | **DEAD-now** | 无 | 关闭 KISS-01E「编码删除」 | 无 | KISS-01E | **ready** |
+| L16 | config | 历史 `config/watchdog.example.yaml`、`watchdog.dev.yaml` 的 VM/tenant/provider/旧 rollup 键 | legacy-delete | `config/watchdog.yaml` | 第二配置体系已删除；可选 agent section 并入唯一配置且不存 secret | KISS-08I | KISS-08 | **done** |
+| L17 | dep | 历史 `go.mod robfig/cron/v3` | KISS-08 | 无 | 零引用依赖已从 `go.mod/go.sum` 精确删除 | KISS-08I | KISS-08 | **done** |
+| L18 | dep | `gosmi` / `gosnmp` | **KEEP(relocate)** | 活跃 `internal/snmpdomain` 引擎 | —— | 已随 L2 迁移 | KISS-08 | **done** |
+| L19 | PB 残留 | 历史 PB Dockerfile/template/schema 文字 | **DEAD-now** | 无 | runtime 与旧 schema 载体均已删除 | KISS-01E/KISS-08I | KISS-01E | **done** |
 
 **关键精确性**：`internal/server` 对 watchdog 的 65 符号里 ~53 为 VALUE（域类型/常量/纯 helper）、~12 为 RUNTIME，且 RUNTIME **全是活跃 SNMP 采集引擎**（poller/discovery/query-engine/CH-writer/MIB-registry/trap-dispatcher，KISS-03 代码，也被 `watchdog-snmp-collector` 用）——**零** `NewBackendRuntime`/`QueryGateway`/`DatasetProvider`/`VictoriaMetrics` 引用。故 L2 抽出的是**自足的 SNMP 域+引擎切片**，不牵扯遗留平台运行时。
 
 ---
 
-## 2. Schema / 表 / 字段台账（S1–S12，K1–K2）
+## 2. Schema / 表 / 字段历史台账（S1–S12，K1–K2）
 
-KISS `deploy/schema/mysql` 30 迁移 = live 79 表；真实 `tenant_id`/PB 列 **0**（14 处 `tenant_id` 全注释）。遗留 `install/init.sql`=89 表/363 real `tenant_id`；`deploy/migration/mysql`=413。
+KISS `deploy/schema/mysql` 是唯一 live schema；真实 `tenant_id`/PB 列 **0**。下表 S1–S12 记录的旧对象载体已在 KISS-08I 整体删除，状态统一为 done，只用于解释删除决策。
 
 | ID | 对象 | 精确位置 | 分类 | KISS 等价 | 读写它的代码 | 删除/保留影响 | 归属 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| S1 | `users.auth_provider`,`external_subject_id` | `install/init.sql:2020-2021,2026,2028` | DEAD-now(PB) | 无 | 无（dump） | 消除最后 PB schema 字段 | KISS-01E | **待删** |
-| S2 | "PocketBase" 注释 | `deploy/migration/mysql/030:1` | DEAD-now(PB) | 无 | 无 | 纯文字 | KISS-01E | 待删 |
-| S3 | `watchdog_installation`(旧形状 `id VARCHAR 'default'`,无 `schema_version`) | `deploy/migration/mysql/001:6`+`install/init.sql:2032` | DEAD-now(冲突) | `watchdog_installation`(0001:29 `id=1`+`schema_version`) | 仅 `internal/watchdog` 历史实现/测试 | CLI/Makefile/script 入口已删，不能再污染 KISS 库；文件随 L1 删除 | KISS-08C/D | **runtime-safe; files blocked-by-L1** |
-| S4 | `watchdog_schema_migrations` | `internal/watchdog/mysql_migrator.go:104` | DEAD-now | `schema_migrations`(0001:19) | `internal/watchdog/{mysql_migrator,install}.go` | 双 ledger；随包删 | KISS-08 | 延后 |
-| S5 | `collector_agents`,`tenants` | init 568/1959；migration 018/001 | DEAD-now | `agents`(0003)/无 | **rw `flow_rollup_jobs.go:451-452`**,`mysql_collector_machine_authenticator.go:54`,`mysql_target_repository.go:298` | 超期 worker 查询→对 KISS 库即失败 | KISS-08(worker 现守卫) | **阻断** |
-| S6 | collector_* 治理表(9 张) | migration 018/019/052/053 | DEAD-now | 部分折叠入 `agent_*`/`operation_jobs` | 仅 `internal/watchdog` | 无 KISS 读者 | KISS-08 | 延后 |
-| S7 | snmp 定义/事件表(6 张) | migration 007 | DEAD-now | 定义→代码引擎；`snmp_events`→ClickHouse | `snmp_events` 仅 CH(`internal/snmpch`)；余仅 watchdog | CH 已承接 events | KISS-08 | 延后 |
-| S8 | operation_job 卫星表(4)+`discovery_jobs` | migration 028/044/009 | DEAD-now | `operation_jobs`(0001:368) | 仅 watchdog | 单 job 引擎已收敛 | KISS-08 | 延后 |
-| S9 | flow 泛化表(`query_dataset_policies`,`flow_storage_*`,`flow_classification_profiles`,`aggregate_graph_data`) | migration 045/056/059/022 | DEAD-now | CH-side / 无 | watchdog 泛化栈 | 剥 hub 泛化栈后删 | KISS-08(=hub 退役) | 延后 |
-| S10 | PB 告警表(`alerts_history`,`notification_channels`,`quiet_hours`) | `install/init.sql:453,1505,1675` | DEAD-now(PB) | 无(KISS-L 在 CH 重建) | 无 | 已无写链 | KISS-01E/L | 待删 |
-| S11 | 遗留 device/target/network 表(§见审计) | migration 001/004/008/016 | KISS-equivalent | `devices/ports/sensors/…` | `mysql_target_repository.go` 等 | 已被 `devices` 根取代 | KISS-08 | 延后 |
-| S12 | `tenant_modules` | migration 023:4 | DEAD-now | 无 | 仅 watchdog | module registry 已删 | KISS-08 | 延后 |
+| S1–S3 | PB identity 字段、旧 installation shape、PB 注释 | 已删除的 `install/init.sql` / `deploy/migration/mysql` | DEAD-now | 现行 `users`/`watchdog_installation` | 无 | 冲突 schema 载体已删除 | KISS-01E/08I | **done** |
+| S4–S6 | 双 migration ledger、tenant/collector 治理表 | 已删除的旧 package/schema | DEAD-now | `schema_migrations`、`agents`、`operation_jobs` | 无 | 旧实现与 schema 同时删除 | KISS-08H/I | **done** |
+| S7–S9 | 旧 SNMP/operation job/Flow 泛化表 | 已删除的旧 schema | DEAD-now | `snmpdomain`+CH、单域 jobs/Flow schema | 无 | 旧 schema 载体已删除 | KISS-08I | **done** |
+| S10–S12 | PB 告警、双 device/target、tenant module 表 | 已删除的旧 schema | DEAD-now | 后续 CH 告警、单一 `devices`、无 module platform | 无 | 旧 schema 载体已删除 | KISS-01E/08I | **done** |
 | K1 | 双定义 billing 表 | `0001:433-557` vs `0020:3-250` | **done**(intra-KISS 收敛) | `0020`(先 DROP 再建) | `internal/server` | 无需动 | — | done |
 | K2 | `async_jobs`→`operation_jobs` | `0010`→`0014` RENAME | **done** | `operation_jobs` | server/address | 无需动 | — | done |
 
-整树可删单元：`deploy/migration/mysql/*.sql`(44)+`install/init.sql`(89 表 dump)——唯一应用者是 `cmd/watchdog-install` + 3 个 `NewBackendRuntime` worker + `mysql_migrator.go`；断 L2 + 退役 worker(L10-L14) + 摘接线后整体删。
+遗留 schema 树 `deploy/migration/mysql`、`install/init.sql` 及 tenant seed 已在 KISS-08I 删除；新装与升级只使用 embedded `deploy/schema/mysql`。
 
 ---
 
@@ -102,7 +94,7 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 5. L10/L11 已在 KISS-08B 物理删除；L12 的 CLI/Makefile/script 入口已在 KISS-08C 删除；L13 已在 KISS-08D 删除；L14 的 SNMP trap agent 与 system agent 已分别在 KISS-08E/G4 断开旧包。system telemetry 产品增强仍可延期，但不再钉住遗留包。
 
 **Phase D — 整包 + 依赖 + schema 树删除（KISS-08 收尾）**
-6. `internal/watchdog`（L1、L5-L9）与遗留 VM runtime 校验（L15）已在 KISS-08H 删除；继续独立删除 `robfig/cron`（确认零引用后）、遗留 schema 树 `deploy/migration/mysql`+`install/init.sql`（S3-S12 载体）和 legacy YAML，避免把不同回滚边界混成一个提交。
+6. `internal/watchdog`（L1、L5-L9）与遗留 VM runtime 校验（L15）已在 KISS-08H 删除；KISS-08I 随后独立删除零引用 `robfig/cron`、遗留 schema 树、tenant seed 和 legacy YAML。现行运行配置与 schema 均只剩一套。
 
 **Phase E — 接口收敛（KISS-08A 已完成）**
 7. 已补 canonical `/ports`/snmp-patch/events/defaults，前端设备领域调用已迁到 canonical URL，compat I1-I5 已删除；真实 MySQL device/agent CRUD 与 Go/前端门禁通过。
@@ -111,8 +103,8 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 
 ## 5. 剩余任务执行状态确认
 
-- **KISS-01E 编码删除**：唯一剩余是**非运行时** PB 文字残留（L19、S1/S2/S10）——`ready`，Phase A.1 完成即可勾选该子项；其余门（clean-stack 空库启动、race/lint 全量）属运维验收，非本清理范畴。
-- **KISS-08**：不是"未开始"，而是"被一条 import 链 + 6 worker + 前端调用精确钉住"。可分步：Phase B（抽切片）为核心前置；Phase A.2/A.3 可**立即**消除危险与死码。全部完成后整包删除条件满足。
+- **KISS-01E 编码删除**：PB 运行代码、依赖、Docker/模板入口和旧 schema 载体均已删除；剩余只可能出现在明确标记为历史的审计文档。
+- **KISS-08 代码/schema/config 清理**：A–I 已完成；剩余验收是历史文档收敛、clean-stack 全产品故障矩阵与固定硬件性能门禁，不再有旧 package/schema 阻断。
 - **无 blocker/major 代码缺陷**：KISS 运行时不依赖以上任何遗留物；本台账所有"阻断"均为**遗留物删除的前置**，非运行时故障。
 
 配套：CH 启动语义（audit 主题 2）、地址库 seed 接线属独立 install 硬化小包，见 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) §2/§主题 2。

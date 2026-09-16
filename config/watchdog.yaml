@@ -1,4 +1,5 @@
-# Watchdog v2 (KISS) configuration — single YAML shared by the server and flow workers.
+# Watchdog v2 (KISS) configuration — the single YAML shared by server, collectors,
+# workers, and optional standalone agents.
 # Frontend and backend are separate builds: the server never serves static files.
 # Only two persistent authorities: MySQL (management) and ClickHouse (time-series + log/alert).
 # Kafka is RawFlow transport only. Secrets may be overridden by env (WATCHDOG_MYSQL_DSN,
@@ -67,3 +68,17 @@ address:                            # geo/address-library source imports (MMDB/I
 admin:                              # first-run bootstrap only; ignored once an admin exists
   username: "admin"
   password: ""                      # empty -> interactive /install; never generated or logged
+
+# Optional standalone agents read only their own section. Their credentials are
+# enrolled by the server and must be supplied through the documented environment
+# variables or an owner-readable deployment override; they are never committed.
+snmp_trap_agent:
+  api_url: "http://127.0.0.1:8091"
+  token: ""                         # WATCHDOG_SNMP_TRAP_TOKEN
+  listen: ":1162"
+
+agent:
+  hub_url: "http://127.0.0.1:8091"
+  agent_id: ""
+  token: ""                         # WATCHDOG_AGENT_TOKEN
+  interval: "1m"

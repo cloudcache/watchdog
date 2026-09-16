@@ -36,22 +36,19 @@ flow:
 	}
 }
 
-func TestLoadConfigAcceptsRepositoryConfigurations(t *testing.T) {
+func TestLoadConfigAcceptsCanonicalRepositoryConfiguration(t *testing.T) {
 	clearConfigEnvironment(t)
-	for _, name := range []string{"watchdog.example.yaml", "watchdog.dev.yaml"} {
-		t.Run(name, func(t *testing.T) {
-			cfg, err := loadConfig(filepath.Join("..", "..", "config", name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			cfg, err = normalizeAndValidateConfig(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.APIURL != "http://127.0.0.1:8091" {
-				t.Fatalf("API URL = %q", cfg.APIURL)
-			}
-		})
+	t.Setenv("WATCHDOG_SNMP_TRAP_TOKEN", "test-secret")
+	cfg, err := loadConfig(filepath.Join("..", "..", "config", "watchdog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = normalizeAndValidateConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIURL != "http://127.0.0.1:8091" || cfg.Listen != ":1162" {
+		t.Fatalf("config = %#v", cfg)
 	}
 }
 

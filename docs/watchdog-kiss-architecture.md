@@ -35,15 +35,15 @@ Watchdog 不是通用 SaaS 平台。它是一个自托管的网络与流量分�
 
 ### 2.1 复杂度不是业务复杂度，而是重复抽象
 
-代码库当前事实：
+下列内容是 2026-09-15 重构前审计快照，所列旧 package/schema 已在 KISS-08H/I 删除，不再是当前运行结构：
 
-- [`install/init.sql`](../install/init.sql) 有 89 张 MySQL 表，其中 77 张带 `tenant_id`；`tenant_id` 在该文件出现 410 次；
+- 历史 `install/init.sql` 有 89 张 MySQL 表，其中 77 张带 `tenant_id`；该文件已删除；
 - PocketBase 相关 Go 代码分布在 58 个文件，前端 PB transport/auth/collection 引用分布在 75 个文件；
 - VictoriaMetrics 相关实现、配置和测试分布在 52 个文件；
-- [`internal/hub/hub.go`](../internal/hub/hub.go) 的 `Hub` 直接内嵌 `core.App`，PB 同时承担 HTTP server、认证、SQLite collection、hook、cron 和 realtime；[`platform_backend.go`](../internal/hub/platform_backend.go) 再把标准 `/api/v1` handler 挂回 PB router；
+- 历史 `internal/hub` 的 Hub 直接内嵌 PB `core.App`，同时承担 HTTP、认证、SQLite collection、hook、cron 和 realtime；该目录已删除；
 - MySQL `users` 已被改成 PB 的授权投影，`password_hash` 已删除，因此当前生产登录仍离不开 PB；
 - `targets` 与 `network_devices` 为同一网络设备保存两层 ID、状态和生命周期；
-- [`platform_registry.go`](../internal/watchdog/platform_registry.go) 的 `ModuleRegistry/ResourceRegistry/TargetKindRegistry/DatasetRegistry` 和 [`query_gateway.go`](../internal/watchdog/query_gateway.go) 的 `QueryProviderRegistry` 为尚不存在的多租户通用平台付出持续复杂度；
+- 历史 `internal/watchdog` 的 module/resource/target/dataset/provider registry 为不存在的多租户通用平台付出持续复杂度；该 package 已删除；
 - SNMP/system 时序写 VM，Flow 写 CH，查询再由通用 gateway 路由到两个 provider，导致配置、权限、健康、导出和错误语义重复。
 
 这些结构不是 Flow、SNMP 或账单本身需要的复杂度。继续在其上补兼容层，只会让一次功能修改横跨身份投影、tenant、module、provider 和两个存储。
@@ -385,7 +385,7 @@ HTTP API 只按领域暴露：
 
 每个破坏性步骤必须先只读记录数据库引擎、精确库名、用途、配置/代码引用、运行进程和活动连接，并进入当前工作包的删除白名单。禁止通配、模糊名称、宽目录、未解析环境变量；禁止删除 MySQL/ClickHouse 系统库、EdgeManager 库、备份库或并行任务正在使用的开发/测试库。目标不存在可以幂等跳过；身份或归属不匹配必须 fail closed。实际文件删除和 DROP 结果写入对应工作包的提交证据，不留到最终大扫除。
 
-v2 schema 应有独立基线目录，最终由该基线生成 `install/init.sql`。旧 migration 仅保留在 Git 历史或归档目录，不允许新安装先跑 60 个旧 migration 再执行大量 DROP。
+v2 schema 的唯一基线目录是 `deploy/schema/mysql`，由 server 原位嵌入并按连续版本执行；旧 migration 与 `install/init.sql` 只保留在 Git 历史。新安装不得运行第二套 schema。
 
 ## 10. 性能、可靠性和准确性门禁
 
