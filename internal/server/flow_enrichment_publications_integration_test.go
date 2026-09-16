@@ -52,6 +52,14 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	var legacyTableCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema=DATABASE() AND table_name IN ('tenants','collector_agents')`).Scan(&legacyTableCount); err != nil {
+		t.Fatalf("inspect clean KISS schema: %v", err)
+	}
+	if legacyTableCount != 0 {
+		t.Fatalf("clean KISS schema contains %d legacy tenant/collector tables", legacyTableCount)
+	}
 	closed := false
 	defer func() {
 		if !closed {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 type fakeSNMPDiscoveryRunner struct {
@@ -677,14 +677,14 @@ func exerciseDeviceOrganizationAPI(t *testing.T, s *Server, deviceID, deviceETag
 	decodeJSON(t, userCreated, &user)
 	access := requestJSON(t, s, http.MethodPut, "/api/v1/users/"+user.ID+"/access", map[string]any{
 		"device_group_ids": []string{staticGroup.ID, staticGroup.ID},
-		"metrics":          []string{watchdog.MetricSNMPIfInBps},
+		"metrics":          []string{metricdomain.SNMPIfInBps},
 	}, authHeaders, cookies...)
-	if access.Code != http.StatusOK || strings.Count(access.Body.String(), staticGroup.ID) != 1 || !strings.Contains(access.Body.String(), watchdog.MetricSNMPIfInBps) {
+	if access.Code != http.StatusOK || strings.Count(access.Body.String(), staticGroup.ID) != 1 || !strings.Contains(access.Body.String(), metricdomain.SNMPIfInBps) {
 		t.Fatalf("replace user access: status=%d body=%s", access.Code, access.Body.String())
 	}
 	metricOptions := requestJSON(t, s, http.MethodGet, "/api/v1/users/"+user.ID+"/access-options?type=metric&q=snmp&limit=10&sort=label&order=asc", nil, nil, cookies...)
 	deviceOptions := requestJSON(t, s, http.MethodGet, "/api/v1/users/"+user.ID+"/access-options?type=device&q=core&limit=10&sort=label&order=asc", nil, nil, cookies...)
-	if metricOptions.Code != http.StatusOK || !strings.Contains(metricOptions.Body.String(), watchdog.MetricSNMPIfInBps) || deviceOptions.Code != http.StatusOK || !strings.Contains(deviceOptions.Body.String(), deviceID) {
+	if metricOptions.Code != http.StatusOK || !strings.Contains(metricOptions.Body.String(), metricdomain.SNMPIfInBps) || deviceOptions.Code != http.StatusOK || !strings.Contains(deviceOptions.Body.String(), deviceID) {
 		t.Fatalf("access options failed: metrics=%d/%s devices=%d/%s", metricOptions.Code, metricOptions.Body.String(), deviceOptions.Code, deviceOptions.Body.String())
 	}
 	badAccess := requestJSON(t, s, http.MethodPut, "/api/v1/users/"+user.ID+"/access", map[string]any{
@@ -694,7 +694,7 @@ func exerciseDeviceOrganizationAPI(t *testing.T, s *Server, deviceID, deviceETag
 		t.Fatalf("unknown grant accepted: status=%d body=%s", badAccess.Code, badAccess.Body.String())
 	}
 	afterBadAccess := requestJSON(t, s, http.MethodGet, "/api/v1/users/"+user.ID+"/access", nil, nil, cookies...)
-	if afterBadAccess.Code != http.StatusOK || !strings.Contains(afterBadAccess.Body.String(), staticGroup.ID) || !strings.Contains(afterBadAccess.Body.String(), watchdog.MetricSNMPIfInBps) {
+	if afterBadAccess.Code != http.StatusOK || !strings.Contains(afterBadAccess.Body.String(), staticGroup.ID) || !strings.Contains(afterBadAccess.Body.String(), metricdomain.SNMPIfInBps) {
 		t.Fatalf("failed access replacement was not atomic: status=%d body=%s", afterBadAccess.Code, afterBadAccess.Body.String())
 	}
 	viewerLogin := requestJSON(t, s, http.MethodPost, "/api/v1/session/login", map[string]any{

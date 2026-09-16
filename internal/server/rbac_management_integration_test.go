@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -140,7 +140,7 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 		"access": map[string]any{
 			"device_ids": []string{deviceID}, "device_group_ids": []string{groupID}, "port_ids": []string{portID},
 			"billing_account_ids": []string{accountID}, "aggregate_graph_ids": []string{graphID},
-			"metrics": []string{watchdog.MetricSNMPIfInBps},
+			"metrics": []string{metricdomain.SNMPIfInBps},
 		},
 	})
 	if createdUser.Code != http.StatusCreated {
@@ -153,14 +153,14 @@ func TestRBACManagementTransactionsAndSeedPersistence(t *testing.T) {
 	for table := range map[string]string{
 		"user_device_permissions": deviceID, "user_device_group_permissions": groupID,
 		"user_port_permissions": portID, "user_billing_permissions": accountID,
-		"user_aggregate_graph_permissions": graphID, "user_metric_permissions": watchdog.MetricSNMPIfInBps,
+		"user_aggregate_graph_permissions": graphID, "user_metric_permissions": metricdomain.SNMPIfInBps,
 	} {
 		if err := db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE user_id=?`, created.ID).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("atomic create grant %s: count=%d err=%v", table, count, err)
 		}
 	}
 	updatedAccess := rbacHandlerRequest(t, s.updateUser, p, http.MethodPatch, "/api/v1/users/"+created.ID, created.ID, map[string]any{
-		"access": map[string]any{"device_ids": []string{deviceID}, "metrics": []string{watchdog.MetricSNMPIfOutBps}},
+		"access": map[string]any{"device_ids": []string{deviceID}, "metrics": []string{metricdomain.SNMPIfOutBps}},
 	})
 	if updatedAccess.Code != http.StatusOK {
 		t.Fatalf("update user access: status=%d body=%s", updatedAccess.Code, updatedAccess.Body.String())
