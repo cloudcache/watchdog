@@ -14,7 +14,7 @@ import (
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/flowch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -83,20 +83,21 @@ func TestRealSNMPV2RecipePollWritesClickHouseWithoutVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	var snmpMigrations []flowch.Migration
 	for _, migration := range migrations {
-		if migration.Name != "012_snmp_telemetry.sql" {
-			continue
+		if migration.Name == "012_snmp_telemetry.sql" || migration.Name == "014_snmp_events.sql" {
+			snmpMigrations = append(snmpMigrations, migration)
 		}
-		found = true
+	}
+	if len(snmpMigrations) != 2 {
+		t.Fatal("SNMP ClickHouse migrations are missing")
+	}
+	for _, migration := range snmpMigrations {
 		for _, statement := range migration.Statements {
 			if err := chAdmin.Do(ctx, ch.Query{Body: strings.ReplaceAll(statement, "watchdog_flow", chDatabase)}); err != nil {
 				t.Fatal(err)
 			}
 		}
-	}
-	if !found {
-		t.Fatal("SNMP ClickHouse migration not found")
 	}
 	secret := t.TempDir() + "/clickhouse-password"
 	if err := os.WriteFile(secret, []byte(chPassword), 0o600); err != nil {
@@ -139,13 +140,13 @@ func TestRealSNMPV2RecipePollWritesClickHouseWithoutVM(t *testing.T) {
 
 type fixedSNMPQuery struct{ value uint64 }
 
-func (q fixedSNMPQuery) Get(_ context.Context, request watchdog.SNMPCollectorGetRequest) (watchdog.SNMPCollectorResponse, error) {
+func (q fixedSNMPQuery) Get(_ context.Context, request snmpdomain.GetRequest) (snmpdomain.QueryResponse, error) {
 	if len(request.OIDs) != 1 {
-		return watchdog.SNMPCollectorResponse{}, fmt.Errorf("unexpected OIDs: %v", request.OIDs)
+		return snmpdomain.QueryResponse{}, fmt.Errorf("unexpected OIDs: %v", request.OIDs)
 	}
-	return watchdog.SNMPCollectorResponse{VarBinds: []watchdog.SNMPCollectorVarBind{{OID: request.OIDs[0], Value: q.value, ValueType: watchdog.SNMPCollectorValueCounter64}}}, nil
+	return snmpdomain.QueryResponse{VarBinds: []snmpdomain.VarBind{{OID: request.OIDs[0], Value: q.value, ValueType: snmpdomain.ValueCounter64}}}, nil
 }
 
-func (q fixedSNMPQuery) Walk(context.Context, watchdog.SNMPCollectorWalkRequest) (watchdog.SNMPCollectorResponse, error) {
-	return watchdog.SNMPCollectorResponse{}, errors.New("unexpected walk")
+func (q fixedSNMPQuery) Walk(context.Context, snmpdomain.WalkRequest) (snmpdomain.QueryResponse, error) {
+	return snmpdomain.QueryResponse{}, errors.New("unexpected walk")
 }

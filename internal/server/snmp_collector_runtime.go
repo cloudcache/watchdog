@@ -14,6 +14,7 @@ import (
 
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/snmpch"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
@@ -25,17 +26,17 @@ type SNMPCollectorRuntime struct {
 	clickHouse *flowch.NativeInserter
 	store      *snmpch.Store
 	repo       *snmpPollRepository
-	runner     watchdog.SNMPPollRunner
+	runner     snmpdomain.PollRunner
 	discovery  snmpDiscoveryRunner
 	rollupMu   sync.Mutex
 	lastRollup time.Time
 }
 
 func OpenSNMPCollectorRuntime(ctx context.Context, cfg Config, agentID string) (*SNMPCollectorRuntime, error) {
-	return openSNMPCollectorRuntime(ctx, cfg, agentID, watchdog.NewGoSNMPCollectorQueryEngine())
+	return openSNMPCollectorRuntime(ctx, cfg, agentID, snmpdomain.NewGoSNMPQueryEngine())
 }
 
-func openSNMPCollectorRuntime(ctx context.Context, cfg Config, agentID string, query watchdog.SNMPCollectorQueryEngine) (*SNMPCollectorRuntime, error) {
+func openSNMPCollectorRuntime(ctx context.Context, cfg Config, agentID string, query snmpdomain.QueryEngine) (*SNMPCollectorRuntime, error) {
 	if query == nil {
 		return nil, errors.New("SNMP query engine is required")
 	}
@@ -84,11 +85,11 @@ func openSNMPCollectorRuntime(ctx context.Context, cfg Config, agentID string, q
 	repo := &snmpPollRepository{db: db}
 	return &SNMPCollectorRuntime{
 		db: db, clickHouse: native, store: store, repo: repo, discovery: discovery,
-		runner: watchdog.SNMPPollRunner{
-			Collector: repo, Network: repo, Targets: repo, SNMP: repo,
-			Poller: watchdog.SNMPPoller{
+		runner: snmpdomain.PollRunner{
+			Recipes: repo, Devices: repo, Targets: repo, Profiles: repo,
+			Poller: snmpdomain.Poller{
 				Query:  query,
-				Writer: watchdog.ClickHouseSNMPRawWriter{Store: store, AgentID: strings.TrimSpace(agentID)},
+				Writer: snmpdomain.ClickHouseRawWriter{Store: store, AgentID: strings.TrimSpace(agentID)},
 			},
 			GlobalConcurrency: cfg.SNMP.PollConcurrency,
 		},
@@ -108,11 +109,11 @@ func (r *SNMPCollectorRuntime) Close() error {
 	return nil
 }
 
-func (r *SNMPCollectorRuntime) RunDue(ctx context.Context, limit int) (watchdog.SNMPPollRunnerResult, error) {
+func (r *SNMPCollectorRuntime) RunDue(ctx context.Context, limit int) (snmpdomain.PollRunnerResult, error) {
 	if r == nil || r.repo == nil {
-		return watchdog.SNMPPollRunnerResult{}, errors.New("SNMP collector runtime is not initialized")
+		return snmpdomain.PollRunnerResult{}, errors.New("SNMP collector runtime is not initialized")
 	}
-	result, err := r.runner.RunDue(ctx, "", limit)
+	result, err := r.runner.RunDue(ctx, limit)
 	if err != nil {
 		return result, err
 	}
@@ -152,23 +153,23 @@ func (r *SNMPCollectorRuntime) RunLoop(ctx context.Context, interval time.Durati
 }
 
 func (r *SNMPCollectorRuntime) DiscoverDevice(ctx context.Context, deviceID string) error {
-	device, err := r.repo.GetDevice(ctx, "", watchdog.ID(strings.TrimSpace(deviceID)))
+	device, err := r.repo.GetDevice(ctx, strings.TrimSpace(deviceID))
 	if err != nil {
 		return err
 	}
-	target, err := r.repo.GetTarget(ctx, "", device.TargetID)
+	target, err := r.repo.GetTarget(ctx, device.TargetID)
 	if err != nil {
 		return err
 	}
-	profile, err := r.repo.GetSNMPProfile(ctx, "", device.SNMPProfileID)
+	profile, err := r.repo.GetProfile(ctx, device.SNMPProfileID)
 	if err != nil {
 		return err
 	}
-	profile = watchdog.ApplyDeviceSNMPOverrides(profile, device)
+	profile = snmpdomain.ApplyDeviceOverrides(profile, device)
 	result, err := r.discovery.Discover(ctx, watchdog.SNMPDiscoveryEngineRequest{
-		TargetID: device.TargetID,
+		TargetID: watchdog.ID(device.TargetID),
 		Target:   watchdog.SNMPCollectorTarget{Host: target.Host, Port: device.SNMPPort},
-		Device:   device, Profile: profile,
+		Device:   legacySNMPDevice(device), Profile: legacySNMPProfile(profile),
 	})
 	if err != nil {
 		_, _ = r.db.ExecContext(ctx, "UPDATE devices SET status='down',status_reason=?,last_polled_at=UTC_TIMESTAMP(3),row_version=row_version+1 WHERE id=?", truncateUTF8(err.Error(), 64), deviceID)
@@ -192,7 +193,7 @@ func clickHousePassword(path string) (string, error) {
 
 type snmpPollRepository struct{ db *sql.DB }
 
-func (r *snmpPollRepository) ListDueSNMPDevices(ctx context.Context, _ watchdog.ID, limit int, now time.Time) ([]watchdog.ID, error) {
+func (r *snmpPollRepository) ListDueDevices(ctx context.Context, limit int, now time.Time) ([]string, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -205,9 +206,9 @@ func (r *snmpPollRepository) ListDueSNMPDevices(ctx context.Context, _ watchdog.
 		return nil, err
 	}
 	defer rows.Close()
-	var result []watchdog.ID
+	var result []string
 	for rows.Next() {
-		var id watchdog.ID
+		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
@@ -216,7 +217,7 @@ func (r *snmpPollRepository) ListDueSNMPDevices(ctx context.Context, _ watchdog.
 	return result, rows.Err()
 }
 
-func (r *snmpPollRepository) ListSNMPCollectionRecipesByDevice(ctx context.Context, _ watchdog.ID, deviceID watchdog.ID) ([]watchdog.SNMPCollectionRecipe, error) {
+func (r *snmpPollRepository) ListRecipesByDevice(ctx context.Context, deviceID string) ([]snmpdomain.Recipe, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id,device_id,entity_kind,entity_id,module_name,metric,value_kind,
 		oid,numeric_oid,oid_index,mib,context_name,divisor,multiplier,sample_interval_seconds,
 		labels_json,options_json,enabled,discovered_at,last_polled_at,last_error,created_at,updated_at
@@ -225,9 +226,9 @@ func (r *snmpPollRepository) ListSNMPCollectionRecipesByDevice(ctx context.Conte
 		return nil, err
 	}
 	defer rows.Close()
-	var result []watchdog.SNMPCollectionRecipe
+	var result []snmpdomain.Recipe
 	for rows.Next() {
-		var recipe watchdog.SNMPCollectionRecipe
+		var recipe snmpdomain.Recipe
 		var divisor, multiplier sql.NullFloat64
 		var lastPolled sql.NullTime
 		var labels, options []byte
@@ -252,12 +253,12 @@ func (r *snmpPollRepository) ListSNMPCollectionRecipesByDevice(ctx context.Conte
 	return result, rows.Err()
 }
 
-func (r *snmpPollRepository) MarkSNMPRecipePollResult(ctx context.Context, recipeID watchdog.ID, polledAt time.Time, lastError string) error {
+func (r *snmpPollRepository) MarkRecipePollResult(ctx context.Context, recipeID string, polledAt time.Time, lastError string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE snmp_collection_recipes SET last_polled_at=?,last_error=? WHERE id=?`, polledAt.UTC(), truncateUTF8(lastError, 2048), recipeID)
 	return err
 }
 
-func (r *snmpPollRepository) MarkSNMPDevicePollResult(ctx context.Context, deviceID watchdog.ID, polledAt time.Time, lastError string) error {
+func (r *snmpPollRepository) MarkDevicePollResult(ctx context.Context, deviceID string, polledAt time.Time, lastError string) error {
 	status := "up"
 	if lastError != "" {
 		status = "down"
@@ -268,8 +269,8 @@ func (r *snmpPollRepository) MarkSNMPDevicePollResult(ctx context.Context, devic
 	return err
 }
 
-func (r *snmpPollRepository) GetDevice(ctx context.Context, _ watchdog.ID, deviceID watchdog.ID) (watchdog.NetworkDevice, error) {
-	var result watchdog.NetworkDevice
+func (r *snmpPollRepository) GetDevice(ctx context.Context, deviceID string) (snmpdomain.Device, error) {
+	var result snmpdomain.Device
 	var profileID sql.NullString
 	var port sql.NullInt64
 	var overrides []byte
@@ -286,7 +287,7 @@ func (r *snmpPollRepository) GetDevice(ctx context.Context, _ watchdog.ID, devic
 	result.TargetID = result.ID
 	result.Uptime = time.Duration(uptime) * time.Second
 	if profileID.Valid {
-		result.SNMPProfileID = watchdog.ID(profileID.String)
+		result.SNMPProfileID = profileID.String
 	}
 	if port.Valid {
 		result.SNMPPort = uint16(port.Int64)
@@ -297,15 +298,15 @@ func (r *snmpPollRepository) GetDevice(ctx context.Context, _ watchdog.ID, devic
 	return result, nil
 }
 
-func (r *snmpPollRepository) GetTarget(ctx context.Context, _ watchdog.ID, targetID watchdog.ID) (watchdog.Target, error) {
-	var result watchdog.Target
+func (r *snmpPollRepository) GetTarget(ctx context.Context, targetID string) (snmpdomain.Target, error) {
+	var result snmpdomain.Target
 	err := r.db.QueryRowContext(ctx, `SELECT id,COALESCE(NULLIF(display_name,''),NULLIF(sys_name,''),host),host,status,created_at,updated_at FROM devices WHERE id=?`, targetID).
 		Scan(&result.ID, &result.Name, &result.Host, &result.Status, &result.CreatedAt, &result.UpdatedAt)
 	return result, err
 }
 
-func (r *snmpPollRepository) GetSNMPProfile(ctx context.Context, _ watchdog.ID, profileID watchdog.ID) (watchdog.SNMPProfile, error) {
-	var result watchdog.SNMPProfile
+func (r *snmpPollRepository) GetProfile(ctx context.Context, profileID string) (snmpdomain.Profile, error) {
+	var result snmpdomain.Profile
 	var version string
 	var security []byte
 	var timeoutMS uint32
@@ -316,11 +317,11 @@ func (r *snmpPollRepository) GetSNMPProfile(ctx context.Context, _ watchdog.ID, 
 	}
 	switch strings.ToLower(strings.TrimSpace(version)) {
 	case "v1", "1":
-		result.Version = watchdog.SNMPVersion1
+		result.Version = snmpdomain.Version1
 	case "v2c", "2c":
-		result.Version = watchdog.SNMPVersion2c
+		result.Version = snmpdomain.Version2c
 	case "v3", "3":
-		result.Version = watchdog.SNMPVersion3
+		result.Version = snmpdomain.Version3
 	default:
 		return result, fmt.Errorf("unsupported SNMP version %q", version)
 	}
@@ -329,4 +330,22 @@ func (r *snmpPollRepository) GetSNMPProfile(ctx context.Context, _ watchdog.ID, 
 		return result, err
 	}
 	return result, nil
+}
+
+func legacySNMPDevice(device snmpdomain.Device) watchdog.NetworkDevice {
+	return watchdog.NetworkDevice{
+		ID: watchdog.ID(device.ID), TargetID: watchdog.ID(device.TargetID), Vendor: device.Vendor,
+		Model: device.Model, Platform: device.Platform, OSName: device.OSName, OSVersion: device.OSVersion,
+		SysObjectID: device.SysObjectID, SysName: device.SysName, SysDescr: device.SysDescr,
+		SysLocation: device.SysLocation, Uptime: device.Uptime, SNMPProfileID: watchdog.ID(device.SNMPProfileID),
+		SNMPPort: device.SNMPPort, SNMPSecurity: device.SNMPSecurity, UpdatedAt: device.UpdatedAt,
+	}
+}
+
+func legacySNMPProfile(profile snmpdomain.Profile) watchdog.SNMPProfile {
+	return watchdog.SNMPProfile{
+		ID: watchdog.ID(profile.ID), Name: profile.Name, Version: watchdog.SNMPVersion(profile.Version),
+		Security: profile.Security, Timeout: profile.Timeout, Retries: profile.Retries,
+		CreatedAt: profile.CreatedAt, UpdatedAt: profile.UpdatedAt,
+	}
 }
