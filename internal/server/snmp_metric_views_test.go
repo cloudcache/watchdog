@@ -54,3 +54,25 @@ func TestSNMPDefaultPolicyKeepsSideSpecificBases(t *testing.T) {
 		t.Fatalf("provider=%d customer=%d", provider.BillingBaseBps, customer.BillingBaseBps)
 	}
 }
+
+func TestExplicitSNMPScopeSideFiltering(t *testing.T) {
+	scopes := []snmpch.Scope{
+		{DeviceID: "device-a", PortID: "provider"},
+		{DeviceID: "device-a", PortID: "customer"},
+	}
+	portIDs, explicit := explicitSNMPScopePortIDs(scopes)
+	if !explicit || len(portIDs) != 2 {
+		t.Fatalf("explicit scopes=%v portIDs=%v", explicit, portIDs)
+	}
+	policies := map[string]watchdog.PortPolicy{
+		"provider": {PortID: "provider", SideType: watchdog.PortSideProvider},
+		"customer": {PortID: "customer", SideType: watchdog.PortSideCustomer},
+	}
+	filtered := filterSNMPScopesBySide(scopes, policies, watchdog.PortSideProvider)
+	if len(filtered) != 1 || filtered[0].PortID != "provider" {
+		t.Fatalf("provider scopes=%+v", filtered)
+	}
+	if _, explicit := explicitSNMPScopePortIDs([]snmpch.Scope{{DeviceID: "device-a"}}); explicit {
+		t.Fatal("device-wide scope was treated as an explicit port set")
+	}
+}

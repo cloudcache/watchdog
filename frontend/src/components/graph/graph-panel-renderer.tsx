@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { createContext, memo, useContext, useEffect, useRef, useState } from "react"
+import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { trafficViewQueryStep, trafficViewRateBase, type TrafficViewMode } from "@/lib/traffic-view"
@@ -109,12 +109,14 @@ export type GraphPanelRendererProps = {
 	panel: GraphPanel
 	range: string
 	refreshInterval?: number
+	knownEmpty?: boolean
+	emptyMessage?: React.ReactNode
 }
 
 /** GraphPanelRenderer executes a panel's queries and renders the chart. Pages
  * consume dashboard schemas via this component instead of issuing their own
  * scattered metric queries. Device context comes from GraphContextProvider. */
-export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: GraphPanelRendererProps) => {
+export const GraphPanelRenderer = memo(({ panel, range, refreshInterval, knownEmpty = false, emptyMessage }: GraphPanelRendererProps) => {
 	const { t } = useLingui()
 	const ctx = useContext(GraphContext)
 	const chartRef = useRef<HTMLDivElement>(null)
@@ -122,37 +124,49 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 	const [series, setSeries] = useState<Series[]>([])
 	const [state, setState] = useState<PanelState>("loading")
 	const [error, setError] = useState("")
+	const requestSequence = useRef(0)
+	const activeRequest = useRef<AbortController | null>(null)
 
-	const load = async () => {
+	const load = useCallback(async () => {
+		if (knownEmpty) {
+			++requestSequence.current
+			activeRequest.current?.abort()
+			setSeries([])
+			setError("")
+			setState("no_data")
+			return
+		}
 		if (!ctx) {
 			setState("error")
 			setError("GraphPanelRenderer requires GraphContextProvider")
 			return
 		}
+		const sequence = ++requestSequence.current
+		activeRequest.current?.abort()
+		const controller = new AbortController()
+		activeRequest.current = controller
 		setState("loading")
 		setError("")
 		try {
 			const results = await Promise.all(
-				panel.queries.map(async (query) => {
-					try {
-						return await execPanelQuery(query, ctx, range, panel.query_options.max_data_points)
-					} catch {
-						return { name: query.label || query.metric, values: [] as SeriesPoint[] }
-					}
-				})
+				panel.queries.map((query) =>
+					execPanelQuery(query, ctx, range, panel.query_options.max_data_points, controller.signal)
+				)
 			)
+			if (sequence !== requestSequence.current) return
 			setSeries(results)
 			setState(results.every((item) => item.values.length === 0) ? "no_data" : "ok")
 		} catch (err) {
+			if (controller.signal.aborted || sequence !== requestSequence.current) return
 			setError(err instanceof Error ? err.message : t`Failed to load panel`)
 			setState("error")
 		}
-	}
+	}, [ctx, knownEmpty, panel, range, t])
 
 	useEffect(() => {
 		load().catch(() => undefined)
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [panel, range, ctx?.deviceId, ctx?.targetId, ctx?.valueMode, ctx?.trafficView, ctx?.portIds.join(",")])
+		return () => activeRequest.current?.abort()
+	}, [load])
 
 	useEffect(() => {
 		if (!refreshInterval || refreshInterval <= 0) return
@@ -160,8 +174,7 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 			load().catch(() => undefined)
 		}, refreshInterval * 1000)
 		return () => globalThis.clearInterval(timer)
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [refreshInterval])
+	}, [refreshInterval, load])
 
 	useEffect(() => {
 		const el = chartRef.current
@@ -215,7 +228,7 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 				</div>
 			) : state === "no_data" ? (
 				<div className="flex h-[200px] items-center justify-center rounded-md bg-muted/20 text-sm text-muted-foreground">
-					<Trans>No data in this range.</Trans>
+					{emptyMessage ?? <Trans>No data in this range.</Trans>}
 				</div>
 			) : (
 				<div ref={chartRef} className="h-[200px] w-full" />
@@ -228,7 +241,8 @@ async function execPanelQuery(
 	query: GraphQuery,
 	ctx: GraphContextValue,
 	range: string,
-	maxDataPoints: number
+	maxDataPoints: number,
+	signal?: AbortSignal
 ): Promise<Series> {
 	const params = new URLSearchParams({
 		time_mode: "fixed",
@@ -262,7 +276,7 @@ async function execPanelQuery(
 		}
 		url = `/api/v1/metrics/query?${params.toString()}`
 	}
-	const data = await api.send<VMRangeResponse>(url, {})
+	const data = await api.send<VMRangeResponse>(url, { signal })
 	let values = vmValues(data)
 	if (query.transform?.negative) {
 		values = values.map((point) => ({ time: point.time, value: -point.value }))

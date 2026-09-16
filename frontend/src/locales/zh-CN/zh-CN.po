@@ -1558,6 +1558,8 @@ msgstr "自定义"
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Customer"
 msgstr "客户"
 
@@ -4414,6 +4416,10 @@ msgstr "没有传感器告警。"
 msgid "No sensors discovered."
 msgstr "未探测到传感器。"
 
+#: src/components/routes/network-device.tsx
+msgid "No supplier ports are assigned to this device."
+msgstr "此设备尚未分配供应商端口。"
+
 #: src/components/routes/target-form.tsx
 msgid "No SNMP profile is configured."
 msgstr "尚未配置 SNMP 配置。"
@@ -5094,6 +5100,8 @@ msgid "Range"
 msgstr "范围"
 
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Raw"
 msgstr "原始"
 
@@ -6279,6 +6287,8 @@ msgstr "周日"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Supplier"
 msgstr "供应商"
 

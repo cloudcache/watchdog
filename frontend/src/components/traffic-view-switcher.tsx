@@ -1,7 +1,8 @@
 import { Building2Icon, DatabaseIcon, HandshakeIcon } from "lucide-react"
+import { useLingui } from "@lingui/react/macro"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { trafficViewLabel, trafficViewModes, type TrafficViewMode } from "@/lib/traffic-view"
+import { trafficViewModes, type TrafficViewMode } from "@/lib/traffic-view"
 
 export function TrafficViewSwitcher({
 	value,
@@ -14,6 +15,12 @@ export function TrafficViewSwitcher({
 	allowRaw?: boolean
 	className?: string
 }) {
+	const { t } = useLingui()
+	const labels: Record<TrafficViewMode, string> = {
+		customer: t`Customer`,
+		supplier: t`Supplier`,
+		raw: t`Raw`,
+	}
 	return (
 		<div className={cn("flex flex-wrap items-center gap-1 rounded-md border border-border p-1", className)}>
 			{trafficViewModes.map((mode) => {
@@ -30,7 +37,7 @@ export function TrafficViewSwitcher({
 						className="h-8"
 					>
 						<Icon className="me-2 h-4 w-4" />
-						{trafficViewLabel(mode)}
+						{labels[mode]}
 					</Button>
 				)
 			})}

@@ -1776,6 +1776,8 @@ msgstr "Custom"
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/billing.tsx
 #: src/components/routes/traffic-defaults.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Customer"
 msgstr "Customer"
 
@@ -5036,6 +5038,10 @@ msgid "No sensors discovered."
 msgstr "No sensors discovered."
 
 #: src/components/routes/network-device.tsx
+msgid "No supplier ports are assigned to this device."
+msgstr "No supplier ports are assigned to this device."
+
+#: src/components/routes/network-device.tsx
 #~ msgid "No sensors found."
 #~ msgstr "No sensors found."
 
@@ -5904,6 +5910,8 @@ msgstr "Range"
 #~ msgstr "Range Start"
 
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Raw"
 msgstr "Raw"
 
@@ -7213,6 +7221,8 @@ msgstr "Sun"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/billing.tsx
+#: src/components/routes/network-device.tsx
+#: src/components/traffic-view-switcher.tsx
 msgid "Supplier"
 msgstr "Supplier"
 

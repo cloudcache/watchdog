@@ -92,6 +92,8 @@ type NetworkPort = {
 	oper_status?: string
 	SpeedBps?: number
 	speed_bps?: number
+	SideType?: string
+	side_type?: string
 	Addresses?: NetworkInterfaceAddress[]
 	addresses?: NetworkInterfaceAddress[]
 }
@@ -297,6 +299,23 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const targetID = device?.TargetID ?? device?.target_id ?? ""
 	const deviceID = device?.ID ?? device?.id ?? id
 	const portIDs = ports.map((port) => port.ID ?? port.id ?? "").filter(Boolean)
+	const portIDsKey = portIDs.join(",")
+	const supplierPortCount = ports.filter((port) => (port.SideType ?? port.side_type) === "provider").length
+	const trafficViewDisplayLabel =
+		trafficView === "customer" ? t`Customer` : trafficView === "supplier" ? t`Supplier` : t`Raw`
+	const graphContext = useMemo(
+		() => ({
+			deviceId: deviceID,
+			targetId: targetID,
+			portIds: portIDs,
+			trafficView,
+			valueMode: trafficViewValueMode(trafficView, isAdmin()),
+		}),
+		// portIDs is derived on every render; the joined value is the stable
+		// dependency for this immutable graph query context.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[deviceID, targetID, portIDsKey, trafficView]
+	)
 
 	const refreshPortTraffic = useCallback(async () => {
 		if (!targetID || !deviceID || portIDs.length === 0) {
@@ -325,7 +344,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 		} catch {
 			// port traffic is best-effort; PortStatusOverview tolerates stale data
 		}
-	}, [targetID, deviceID, portIDs.join(","), trafficView])
+	}, [targetID, deviceID, portIDsKey, trafficView])
 
 	useEffect(() => {
 		refreshPortTraffic()
@@ -532,20 +551,12 @@ export default memo(({ id }: DeviceDetailProps) => {
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<TrafficViewSwitcher value={trafficView} onChange={setTrafficView} allowRaw={isAdmin()} />
 				<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-					<span>{trafficViewLabel(trafficView)}</span>
+					<span>{trafficViewDisplayLabel}</span>
 					<span>{trafficViewValueMode(trafficView, isAdmin())}</span>
 				</div>
 			</div>
 
-			<GraphContextProvider
-				value={{
-					deviceId: deviceID,
-					targetId: targetID,
-					portIds: portIDs,
-					trafficView,
-					valueMode: trafficViewValueMode(trafficView, isAdmin()),
-				}}
-			>
+			<GraphContextProvider value={graphContext}>
 				<Tabs value={activeTab} onValueChange={setActiveTab} className="grid gap-3">
 					<TabsList className="w-full justify-start overflow-x-auto">
 						<TabsTrigger value="overview">
@@ -586,6 +597,12 @@ export default memo(({ id }: DeviceDetailProps) => {
 											panel={panel}
 											range={chartWindow}
 											refreshInterval={dashboard.refresh}
+											knownEmpty={trafficView === "supplier" && supplierPortCount === 0}
+											emptyMessage={
+												trafficView === "supplier" && supplierPortCount === 0 ? (
+													<Trans>No supplier ports are assigned to this device.</Trans>
+												) : undefined
+											}
 										/>
 									))
 							: null}
