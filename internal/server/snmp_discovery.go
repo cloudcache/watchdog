@@ -11,38 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
 // snmpDiscoveryRunner keeps the HTTP/database boundary independently testable
 // while production reuses the existing generic MIB-driven discovery engine.
-type snmpDiscoveryRunner interface {
-	Discover(context.Context, watchdog.SNMPDiscoveryEngineRequest) (watchdog.SNMPCollectorDiscoveryResult, error)
-}
-
-func newSNMPDiscoveryRunner(cfg SNMPConfig) (snmpDiscoveryRunner, error) {
-	if len(cfg.MIBDirs) > 0 || strings.TrimSpace(cfg.MIBLoad) != "" {
-		if err := watchdog.ConfigureSNMPMIBRegistry(watchdog.SNMPConfig{MIBDirs: cfg.MIBDirs, MIBLoad: cfg.MIBLoad}); err != nil {
-			return nil, err
-		}
-	}
-	var definitions []watchdog.SNMPCollectorOSDefinition
-	if dir := strings.TrimSpace(cfg.DefinitionsDir); dir != "" {
-		parsed, err := watchdog.ParseLibrenmsDefinitions(dir, cfg.DefinitionsVersion)
-		if err != nil {
-			return nil, err
-		}
-		definitions = parsed.OSDefinitions
-	}
-	registry := watchdog.DefaultSNMPCollectorModuleRegistry()
-	return watchdog.SNMPDiscoveryEngine{
-		Query:             watchdog.NewGoSNMPCollectorQueryEngine(),
-		OSDefinitions:     definitions,
-		ModuleDefinitions: map[string]watchdog.SNMPCollectorModuleDefinition{},
-		Modules:           registry.DiscoveryModulesForDefinitions(nil),
-	}, nil
-}
+type snmpDiscoveryRunner = snmpdomain.DiscoveryRunner
 
 type snmpDiscoveryImportResult struct {
 	Ports, DeletedPorts, InterfaceAddresses, BGPSessions int
@@ -88,18 +63,18 @@ func (s *Server) discoverDeviceSNMP(c *gin.Context) {
 	if device.SNMPPort.Valid && device.SNMPPort.Int64 > 0 {
 		port = uint16(device.SNMPPort.Int64)
 	}
-	request := watchdog.SNMPDiscoveryEngineRequest{
-		TargetID: watchdog.ID(device.ID),
-		Target:   watchdog.SNMPCollectorTarget{Host: device.Host, Port: port},
-		Device: watchdog.NetworkDevice{
-			ID: watchdog.ID(device.ID), TargetID: watchdog.ID(device.ID), Vendor: device.Vendor,
+	request := snmpdomain.DiscoveryRequest{
+		TargetID: device.ID,
+		Target:   snmpdomain.QueryTarget{Host: device.Host, Port: port},
+		Device: snmpdomain.Device{
+			ID: device.ID, TargetID: device.ID, Vendor: device.Vendor,
 			Model: device.Model, Platform: device.Platform, OSName: device.OS, OSVersion: device.OSVersion,
 			SysObjectID: device.SysObjectID, SysName: device.SysName, SysDescr: device.SysDescr,
 			SysLocation: device.SysLocation, Uptime: time.Duration(device.UptimeSeconds) * time.Second,
-			SNMPProfileID: watchdog.ID(profile.ID), SNMPPort: port, SNMPSecurity: security,
+			SNMPProfileID: profile.ID, SNMPPort: port, SNMPSecurity: security,
 		},
-		Profile: watchdog.SNMPProfile{
-			ID: watchdog.ID(profile.ID), Name: profile.Name, Version: watchdog.SNMPVersion(profile.Version),
+		Profile: snmpdomain.Profile{
+			ID: profile.ID, Name: profile.Name, Version: snmpdomain.Version(profile.Version),
 			Security: security, Timeout: time.Duration(profile.TimeoutMS) * time.Millisecond, Retries: profile.Retries,
 		},
 	}
@@ -129,7 +104,7 @@ func (s *Server) discoverDeviceSNMP(c *gin.Context) {
 	})
 }
 
-func (s *Server) importSNMPDiscovery(ctx context.Context, deviceID, actorID string, result watchdog.SNMPCollectorDiscoveryResult) (snmpDiscoveryImportResult, error) {
+func (s *Server) importSNMPDiscovery(ctx context.Context, deviceID, actorID string, result snmpdomain.DiscoveryResult) (snmpDiscoveryImportResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return snmpDiscoveryImportResult{}, err
@@ -202,7 +177,7 @@ func (s *Server) importSNMPDiscovery(ctx context.Context, deviceID, actorID stri
 	return imported, nil
 }
 
-func replaceSNMPCollectionRecipes(ctx context.Context, tx *sql.Tx, deviceID string, recipes []watchdog.SNMPCollectionRecipe, completed []string) error {
+func replaceSNMPCollectionRecipes(ctx context.Context, tx *sql.Tx, deviceID string, recipes []snmpdomain.Recipe, completed []string) error {
 	now := time.Now().UTC()
 	keepByModule := map[string][]string{}
 	for _, recipe := range recipes {
@@ -253,7 +228,7 @@ func nullableSNMPFloat(value float64, present bool) any {
 	return value
 }
 
-func importDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, ports []watchdog.NetworkPort) (map[string]string, map[uint64]string, error) {
+func importDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, ports []snmpdomain.Port) (map[string]string, map[uint64]string, error) {
 	byDiscoveryID := make(map[string]string, len(ports))
 	byIfIndex := make(map[uint64]string, len(ports))
 	for _, port := range ports {
@@ -273,7 +248,7 @@ func importDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, por
 			if_speed=VALUES(if_speed),if_type=VALUES(if_type),if_oper_status=VALUES(if_oper_status),
 			if_admin_status=VALUES(if_admin_status),metadata_json=VALUES(metadata_json),discovered_at=VALUES(discovered_at),row_version=row_version+1`,
 			id, deviceID, port.IfIndex, port.IfName, port.IfDescr, port.IfAlias, port.SpeedBps, ifType,
-			watchdog.NormalizeIfStatus(port.OperStatus), watchdog.NormalizeIfStatus(port.AdminStatus), mustJSON(metadata))
+			snmpdomain.NormalizeIfStatus(port.OperStatus), snmpdomain.NormalizeIfStatus(port.AdminStatus), mustJSON(metadata))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -287,7 +262,7 @@ func importDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, por
 	return byDiscoveryID, byIfIndex, nil
 }
 
-func pruneDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, current []watchdog.NetworkPort) (int, error) {
+func pruneDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, current []snmpdomain.Port) (int, error) {
 	indexes := make([]uint64, 0, len(current))
 	for _, port := range current {
 		indexes = append(indexes, port.IfIndex)
@@ -313,7 +288,7 @@ func pruneDiscoveredPorts(ctx context.Context, tx *sql.Tx, deviceID string, curr
 	return int(count), nil
 }
 
-func replaceInterfaceAddresses(ctx context.Context, tx *sql.Tx, deviceID string, addresses []watchdog.NetworkInterfaceAddress, byDiscoveryID map[string]string, byIfIndex map[uint64]string) error {
+func replaceInterfaceAddresses(ctx context.Context, tx *sql.Tx, deviceID string, addresses []snmpdomain.InterfaceAddress, byDiscoveryID map[string]string, byIfIndex map[uint64]string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM interface_addresses WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -343,7 +318,7 @@ func replaceInterfaceAddresses(ctx context.Context, tx *sql.Tx, deviceID string,
 	return nil
 }
 
-func replaceBGPSessions(ctx context.Context, tx *sql.Tx, deviceID string, sessions []watchdog.BGPSession) error {
+func replaceBGPSessions(ctx context.Context, tx *sql.Tx, deviceID string, sessions []snmpdomain.BGPSession) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM bgp_sessions WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -366,7 +341,7 @@ func replaceBGPSessions(ctx context.Context, tx *sql.Tx, deviceID string, sessio
 	return nil
 }
 
-func replaceSensors(ctx context.Context, tx *sql.Tx, deviceID string, sensors []watchdog.NetworkDeviceSensor, portIDs map[string]string) error {
+func replaceSensors(ctx context.Context, tx *sql.Tx, deviceID string, sensors []snmpdomain.Sensor, portIDs map[string]string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sensors WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -386,7 +361,7 @@ func replaceSensors(ctx context.Context, tx *sql.Tx, deviceID string, sensors []
 	return nil
 }
 
-func replacePhysicalEntities(ctx context.Context, tx *sql.Tx, deviceID string, entities []watchdog.PhysicalEntity) error {
+func replacePhysicalEntities(ctx context.Context, tx *sql.Tx, deviceID string, entities []snmpdomain.PhysicalEntity) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM physical_entities WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -403,7 +378,7 @@ func replacePhysicalEntities(ctx context.Context, tx *sql.Tx, deviceID string, e
 	return nil
 }
 
-func replaceVLANs(ctx context.Context, tx *sql.Tx, deviceID string, vlans []watchdog.DeviceVLAN) error {
+func replaceVLANs(ctx context.Context, tx *sql.Tx, deviceID string, vlans []snmpdomain.VLAN) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM vlans WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -415,7 +390,7 @@ func replaceVLANs(ctx context.Context, tx *sql.Tx, deviceID string, vlans []watc
 	return nil
 }
 
-func replaceLAGs(ctx context.Context, tx *sql.Tx, deviceID string, lags []watchdog.DeviceLAGGroup) error {
+func replaceLAGs(ctx context.Context, tx *sql.Tx, deviceID string, lags []snmpdomain.LAGGroup) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM lag_groups WHERE device_id=?", deviceID); err != nil {
 		return err
 	}
@@ -437,4 +412,4 @@ func truncateUTF8(value string, max int) string {
 	return string(runes[:max])
 }
 
-var _ snmpDiscoveryRunner = watchdog.SNMPDiscoveryEngine{}
+var _ snmpDiscoveryRunner = legacySNMPDiscoveryRunner{}

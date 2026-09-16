@@ -137,15 +137,20 @@ type Recipe struct {
 	OIDIndex              string
 	MIB                   string
 	ContextName           string
+	PollerType            string
 	Divisor               float64
 	HasDivisor            bool
 	Multiplier            float64
 	HasMultiplier         bool
+	UserFunc              string
+	StateMapID            string
+	Unit                  string
 	SampleIntervalSeconds uint32
 	Labels                map[string]string
 	Options               map[string]string
 	Enabled               bool
 	DiscoveredAt          time.Time
+	LastSeenAt            time.Time
 	LastPolledAt          time.Time
 	LastError             string
 	CreatedAt             time.Time

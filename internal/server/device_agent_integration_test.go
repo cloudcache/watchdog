@@ -12,18 +12,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 type fakeSNMPDiscoveryRunner struct {
-	results  []watchdog.SNMPCollectorDiscoveryResult
-	requests []watchdog.SNMPDiscoveryEngineRequest
+	results  []snmpdomain.DiscoveryResult
+	requests []snmpdomain.DiscoveryRequest
 }
 
-func (f *fakeSNMPDiscoveryRunner) Discover(_ context.Context, request watchdog.SNMPDiscoveryEngineRequest) (watchdog.SNMPCollectorDiscoveryResult, error) {
+func (f *fakeSNMPDiscoveryRunner) Discover(_ context.Context, request snmpdomain.DiscoveryRequest) (snmpdomain.DiscoveryResult, error) {
 	f.requests = append(f.requests, request)
 	if len(f.results) == 0 {
-		return watchdog.SNMPCollectorDiscoveryResult{}, context.Canceled
+		return snmpdomain.DiscoveryResult{}, context.Canceled
 	}
 	result := f.results[0]
 	f.results = f.results[1:]
@@ -811,38 +812,38 @@ func assertAgentDeviceScope(t *testing.T, s *Server, deviceID, agentID string) {
 
 func exerciseSNMPDiscoveryAPI(t *testing.T, s *Server, deviceID string, authHeaders map[string]string, cookies []*http.Cookie) {
 	t.Helper()
-	first := watchdog.SNMPCollectorDiscoveryResult{
-		DeviceUpdates: watchdog.NetworkDevice{
+	first := snmpdomain.DiscoveryResult{
+		DeviceUpdates: snmpdomain.Device{
 			Vendor: "Acme Networks", Model: "XR-1", OSName: "acmeos", OSVersion: "9.1",
 			SysName: "core-snmp.example.test", SysDescr: "Acme XR-1 Version 9.1",
 			SysLocation: "rack A7", SysObjectID: ".1.3.6.1.4.1.99999.1", Uptime: 48 * time.Hour,
 		},
 		CompletedModules: []string{"ports", "bgp", "sensors", "entity-physical", "vlans", "lags"},
-		Ports: []watchdog.NetworkPort{
+		Ports: []snmpdomain.Port{
 			{ID: "snmp_port_100", IfIndex: 100, IfName: "xe-0/0/0", IfDescr: "uplink", IfAlias: "transit", AdminStatus: "1", OperStatus: "1", SpeedBps: 100_000_000_000, Metadata: map[string]string{"if_type": "ethernetCsmacd"}},
 			{ID: "snmp_port_101", IfIndex: 101, IfName: "xe-0/0/1", IfDescr: "billable", AdminStatus: "1", OperStatus: "1", SpeedBps: 10_000_000_000},
 			{ID: "snmp_port_102", IfIndex: 102, IfName: "xe-0/0/2", IfDescr: "transient", AdminStatus: "1", OperStatus: "2", SpeedBps: 10_000_000_000},
 		},
-		InterfaceAddresses: []watchdog.NetworkInterfaceAddress{
+		InterfaceAddresses: []snmpdomain.InterfaceAddress{
 			{ID: "snmp_addr_v4", PortID: "snmp_port_100", IfIndex: 100, Address: "192.0.2.5", Family: "ipv4", PrefixLength: 31, Origin: "manual", ContextName: "default"},
 			{ID: "snmp_addr_v6", PortID: "snmp_port_100", IfIndex: 100, Address: "2001:db8:100::1", Family: "ipv6", PrefixLength: 127, Origin: "manual", ContextName: "default"},
 		},
-		BGPSessions: []watchdog.BGPSession{
+		BGPSessions: []snmpdomain.BGPSession{
 			{ID: "snmp_bgp_v4", PeerAddr: "198.51.100.1", PeerAS: 64501, LocalAS: 64500, AFI: "ipv4", SAFI: "unicast", State: "established", AcceptedPrefixes: 42, Uptime: time.Hour},
 			{ID: "snmp_bgp_v6", PeerAddr: "2001:db8:ffff::1", PeerAS: 64502, LocalAS: 64500, AFI: "ipv6", SAFI: "unicast", State: "established", AcceptedPrefixes: 84, Uptime: 2 * time.Hour},
 		},
-		Sensors:          []watchdog.NetworkDeviceSensor{{ID: "snmp_sensor_1", SensorIndex: 1, Class: "temperature", Name: "FPC", OID: ".1.3.6.1.4.1.1", Unit: "C", Value: 40, WarnLimit: 70, CritLimit: 80, Status: "ok"}},
-		PhysicalEntities: []watchdog.PhysicalEntity{{Index: 1, Name: "Chassis", Class: "chassis", SerialNumber: "SERIAL-1", ManufacturerName: "Acme", ModelName: "XR-1", IsFRU: true}},
-		VLANs:            []watchdog.DeviceVLAN{{VLANID: 100, Name: "users", Status: "active"}},
-		LAGs:             []watchdog.DeviceLAGGroup{{AggregateIndex: 500, MACAddress: "00:11:22:33:44:55", Mode: "lacp"}},
+		Sensors:          []snmpdomain.Sensor{{ID: "snmp_sensor_1", SensorIndex: 1, Class: "temperature", Name: "FPC", OID: ".1.3.6.1.4.1.1", Unit: "C", Value: 40, WarnLimit: 70, CritLimit: 80, Status: "ok"}},
+		PhysicalEntities: []snmpdomain.PhysicalEntity{{Index: 1, Name: "Chassis", Class: "chassis", SerialNumber: "SERIAL-1", ManufacturerName: "Acme", ModelName: "XR-1", IsFRU: true}},
+		VLANs:            []snmpdomain.VLAN{{VLANID: 100, Name: "users", Status: "active"}},
+		LAGs:             []snmpdomain.LAGGroup{{AggregateIndex: 500, MACAddress: "00:11:22:33:44:55", Mode: "lacp"}},
 	}
-	second := watchdog.SNMPCollectorDiscoveryResult{
+	second := snmpdomain.DiscoveryResult{
 		DeviceUpdates:      first.DeviceUpdates,
 		CompletedModules:   []string{"ports"},
 		Ports:              first.Ports[:1],
 		InterfaceAddresses: first.InterfaceAddresses,
 	}
-	fake := &fakeSNMPDiscoveryRunner{results: []watchdog.SNMPCollectorDiscoveryResult{first, second}}
+	fake := &fakeSNMPDiscoveryRunner{results: []snmpdomain.DiscoveryResult{first, second}}
 	s.snmpDiscovery = fake
 
 	discovered := requestJSON(t, s, http.MethodPost, "/api/v1/devices/"+deviceID+"/snmp/discover", nil, authHeaders, cookies...)

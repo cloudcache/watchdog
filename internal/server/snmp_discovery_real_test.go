@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -66,12 +66,12 @@ func TestRealSNMPDiscovery(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	result, err := runner.Discover(ctx, watchdog.SNMPDiscoveryEngineRequest{
-		TargetID: watchdog.ID(deviceID),
-		Target:   watchdog.SNMPCollectorTarget{Host: targetHost, Port: port},
-		Device:   watchdog.NetworkDevice{ID: watchdog.ID(deviceID), TargetID: watchdog.ID(deviceID)},
-		Profile: watchdog.SNMPProfile{
-			ID: watchdog.ID(profileID), Name: profileName, Version: watchdog.SNMPVersion(version),
+	result, err := runner.Discover(ctx, snmpdomain.DiscoveryRequest{
+		TargetID: deviceID,
+		Target:   snmpdomain.QueryTarget{Host: targetHost, Port: port},
+		Device:   snmpdomain.Device{ID: deviceID, TargetID: deviceID},
+		Profile: snmpdomain.Profile{
+			ID: profileID, Name: profileName, Version: snmpdomain.Version(version),
 			Security: security, Timeout: time.Duration(timeoutMS) * time.Millisecond, Retries: retries,
 		},
 	})

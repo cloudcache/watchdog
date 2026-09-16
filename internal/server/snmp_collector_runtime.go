@@ -15,7 +15,6 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 )
 
 // SNMPCollectorRuntime is the KISS-03A production data path. It reads global
@@ -166,10 +165,11 @@ func (r *SNMPCollectorRuntime) DiscoverDevice(ctx context.Context, deviceID stri
 		return err
 	}
 	profile = snmpdomain.ApplyDeviceOverrides(profile, device)
-	result, err := r.discovery.Discover(ctx, watchdog.SNMPDiscoveryEngineRequest{
-		TargetID: watchdog.ID(device.TargetID),
-		Target:   watchdog.SNMPCollectorTarget{Host: target.Host, Port: device.SNMPPort},
-		Device:   legacySNMPDevice(device), Profile: legacySNMPProfile(profile),
+	result, err := r.discovery.Discover(ctx, snmpdomain.DiscoveryRequest{
+		TargetID: device.TargetID,
+		Target:   snmpdomain.QueryTarget{Host: target.Host, Port: device.SNMPPort},
+		Device:   device,
+		Profile:  profile,
 	})
 	if err != nil {
 		_, _ = r.db.ExecContext(ctx, "UPDATE devices SET status='down',status_reason=?,last_polled_at=UTC_TIMESTAMP(3),row_version=row_version+1 WHERE id=?", truncateUTF8(err.Error(), 64), deviceID)
@@ -330,22 +330,4 @@ func (r *snmpPollRepository) GetProfile(ctx context.Context, profileID string) (
 		return result, err
 	}
 	return result, nil
-}
-
-func legacySNMPDevice(device snmpdomain.Device) watchdog.NetworkDevice {
-	return watchdog.NetworkDevice{
-		ID: watchdog.ID(device.ID), TargetID: watchdog.ID(device.TargetID), Vendor: device.Vendor,
-		Model: device.Model, Platform: device.Platform, OSName: device.OSName, OSVersion: device.OSVersion,
-		SysObjectID: device.SysObjectID, SysName: device.SysName, SysDescr: device.SysDescr,
-		SysLocation: device.SysLocation, Uptime: device.Uptime, SNMPProfileID: watchdog.ID(device.SNMPProfileID),
-		SNMPPort: device.SNMPPort, SNMPSecurity: device.SNMPSecurity, UpdatedAt: device.UpdatedAt,
-	}
-}
-
-func legacySNMPProfile(profile snmpdomain.Profile) watchdog.SNMPProfile {
-	return watchdog.SNMPProfile{
-		ID: watchdog.ID(profile.ID), Name: profile.Name, Version: watchdog.SNMPVersion(profile.Version),
-		Security: profile.Security, Timeout: profile.Timeout, Retries: profile.Retries,
-		CreatedAt: profile.CreatedAt, UpdatedAt: profile.UpdatedAt,
-	}
 }
