@@ -61,6 +61,7 @@ type Server struct {
 	vpnCandidateRunner       *flowvpn.CandidateRunner
 	vpnDetectCancel          context.CancelFunc
 	flowExportCancel         context.CancelFunc
+	flowReconciliationCancel context.CancelFunc
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey
@@ -159,6 +160,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 		}
 	} else {
 		s.setClickHouseError(nil)
+	}
+	if err := s.startFlowReconciliation(); err != nil {
+		log.Printf("watchdog Flow reconciliation unavailable; management plane remains available: %v", err)
 	}
 	if err := s.startFlowQuery(); err != nil {
 		return fmt.Errorf("start flow query: %w", err)
@@ -300,6 +304,10 @@ func (s *Server) stopRuntime() {
 	if s.flowExportCancel != nil {
 		s.flowExportCancel()
 		s.flowExportCancel = nil
+	}
+	if s.flowReconciliationCancel != nil {
+		s.flowReconciliationCancel()
+		s.flowReconciliationCancel = nil
 	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()

@@ -293,13 +293,13 @@
 >
 > **2026-09-16 运行闭环包已闭环（产品五进程）**：`make build-runtime` 是 frontend、server、SNMP collector、Flow collector、Flow worker 的唯一批量构建入口，产物固定在 `frontend/dist` 与 `build/watchdog-*`；开发启动固定为 `make dev-frontend`、`make dev-server`、`make dev-snmp-collector`，Flow 按签名计划启动固定 build 产物，不再使用 task-specific `/private/tmp/watchdog-server-*` 或 `go run`。本地 CH secret 固定为忽略提交且 mode 0600 的 `data/secrets/clickhouse-password`，`make flow-dev-up` 与全部进程读取同一值。真实空 MySQL opt-in 测试已完成 install→login→agent register/heartbeat→device create→SNMP CH write/query→Flow CH write/closed rollup→Gin Flow query→overview report，并按唯一 device/source 清理 CH 验收数据。该证据关闭运行包，不倒签 KISS-08 的地址 publication、六报表、账单/导出/告警全量空库验收。
 
-> **2026-09-16 生命周期包 L1 已闭环**：新增单域 `0033_flow_storage_lifecycle.sql`，冻结全局 immutable policy revision、UTC 日归档状态、Kafka committed/reconciled next-offset、水位状态、备份恢复证据和不可变物理删除回执；`internal/flowlifecycle` 冻结 generation、`max(raw retention, late window)`、delete grace、count/counter、Kafka coverage 与 backup fail-closed 守卫。删除配置文件中未接执行器的 365/180/400 天字段，并让旧字段启动时报明确错误，避免“写了配置但数据不删除”的假象。真实空 MySQL install 已应用全部 schema；包级/Server 单测与目标 build 通过。**尚未完成**：policy/API/repository、reconciliation operation job、归档 job、raw 日分区删除、archive 月分区删除、备份恢复演练；当前没有任何删除动作被打开。
+> **2026-09-16 生命周期包 L1–L3 已闭环**：L1 新增单域 `0033_flow_storage_lifecycle.sql` 与 fail-closed 守卫并删除未生效的静态天数字段；L2 完成全局 policy/API/repository；L3 接通真实 Kafka stable committed-next-offset、ClickHouse 连续 count/counter scanner、`operation_jobs` checkpoint/retry/cancel/lease 和 MySQL 单调水位。真实 Kafka 4.3.1、ClickHouse 26.3、MySQL 空库及失败后 checkpoint 续跑均通过。**尚未完成**：归档 job、raw 日分区删除、archive 月分区删除、备份恢复演练；当前没有任何删除动作被打开。
 
 生命周期包后续按纵向切片推进：
 
 - [x] **L1 契约/Schema/静态假象删除**：单域表、纯函数守卫、clean install、旧配置拒绝。
 - [x] **L2 管理面**：全局 policy draft/publish/retire、状态/水位/回执查询 API 与现有 Retention 页面 Flow 区域；`job.view/job.manage` 权限、强制 `If-Match` CAS、审计和服务端分页/search/sort/status-filter VTable。真实空 MySQL 已验证草稿更新、过期版本拒绝、单 published revision、上一版本自动 retired、删除开关 fail-closed 和审计条数；前端路由扫描、TypeScript 与 production build 通过。物理删除动作未暴露。
-- [ ] **L3 Kafka 对账**：稳定 committed-next-offset snapshot、显式 bootstrap、连续 receipt/fact count+counter scanner、checkpoint/heartbeat/cancel/retry 和持久水位。
+- [x] **L3 Kafka 对账**：稳定 committed-next-offset snapshot、显式 bootstrap、连续 receipt/fact count+counter scanner、checkpoint/heartbeat/cancel/retry 和持久水位。默认关闭且不猜 offset 0；启用配置按 interval bucket 幂等入队。真实 Kafka/CH 验证 clean、count mismatch、missing receipt/records 与预算切分；真实 MySQL operation job 首次 CH 暂时错误后 attempt 2 只读取一次 Kafka 快照并从 frozen checkpoint 收敛，水位推进到 103。
 - [ ] **L4 归档**：UTC 日 24 个 1h bucket rebuild、generation repair、源/归档守恒、迟到重修和连续 archive boundary。
 - [ ] **L5 删除保护**：raw 按日、archive 按月；每次删除必须引用覆盖该分区的 Kafka 快照、有效备份与 restore-tested evidence，并写不可变回执。组合故障和恢复演练完成前保持关闭。
 

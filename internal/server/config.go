@@ -57,6 +57,7 @@ type KafkaConfig struct {
 	Brokers          []string `yaml:"brokers"`
 	Topic            string   `yaml:"topic"`
 	ConsumerGroup    string   `yaml:"consumer_group"`
+	SASLMechanism    string   `yaml:"sasl_mechanism"`
 	SASLUsername     string   `yaml:"sasl_username"`
 	SASLPasswordFile string   `yaml:"sasl_password_file"`
 }
@@ -65,9 +66,23 @@ type KafkaConfig struct {
 // immutable, auditable management-plane policy in MySQL; keeping a second set
 // of day-count knobs here would create a non-functional competing authority.
 type FlowConfig struct {
-	Geo    FlowGeoConfig    `yaml:"geo"`
-	VPN    FlowVPNConfig    `yaml:"vpn"`
-	Export FlowExportConfig `yaml:"export"`
+	Geo            FlowGeoConfig            `yaml:"geo"`
+	VPN            FlowVPNConfig            `yaml:"vpn"`
+	Export         FlowExportConfig         `yaml:"export"`
+	Reconciliation FlowReconciliationConfig `yaml:"reconciliation"`
+}
+
+// FlowReconciliationConfig schedules cold-path Kafka-to-ClickHouse count and
+// counter reconciliation. BootstrapOffsets are consulted only for partitions
+// without a durable MySQL watermark; an omitted entry never means offset zero.
+type FlowReconciliationConfig struct {
+	Enabled          bool              `yaml:"enabled"`
+	SourceStreamID   string            `yaml:"source_stream_id"`
+	Interval         time.Duration     `yaml:"interval"`
+	BootstrapOffsets map[uint32]uint64 `yaml:"bootstrap_offsets"`
+	MaxBatches       int               `yaml:"max_batches"`
+	MaxFactRows      int               `yaml:"max_fact_rows"`
+	MaxReadBytes     uint64            `yaml:"max_read_bytes"`
 }
 
 // FlowExportConfig drives the async flow-record detail export worker: it writes CSV
@@ -138,6 +153,9 @@ func defaultConfig() Config {
 		MySQL:      MySQLConfig{DSN: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"},
 		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default"},
 		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
+		Flow: FlowConfig{Reconciliation: FlowReconciliationConfig{
+			Interval: 5 * time.Minute, MaxBatches: 1000, MaxFactRows: 250_000, MaxReadBytes: 512 << 20,
+		}},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
@@ -172,7 +190,22 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Admin.Username == "" {
 		cfg.Admin.Username = "admin"
 	}
+	if err := validateFlowReconciliationConfig(cfg); err != nil {
+		return Config{}, fmt.Errorf("validate flow reconciliation: %w", err)
+	}
 	return cfg, nil
+}
+
+func validateFlowReconciliationConfig(cfg Config) error {
+	reconciliation := cfg.Flow.Reconciliation
+	if !reconciliation.Enabled {
+		return nil
+	}
+	if reconciliation.Interval < time.Minute {
+		return errors.New("interval must be at least one minute")
+	}
+	_, err := flowReconciliationPayload(cfg)
+	return err
 }
 
 func rejectDeprecatedFlowLifecycleConfig(data []byte) error {

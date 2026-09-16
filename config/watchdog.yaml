@@ -23,12 +23,21 @@ kafka:                              # RawFlow transport (buffering/replay only)
     - "127.0.0.1:9092"
   topic: "watchdog.flow.raw"
   consumer_group: "watchdog-flow-worker"
+  sasl_mechanism: ""               # none/plain/scram-sha-256/scram-sha-512
   sasl_username: ""
   sasl_password_file: ""
 
 flow:                               # runtime inputs; lifecycle policy is published from MySQL
   geo:                              # geo catalog/lookup bundle for flow reports + overseas
     path: "data/flow-geo"           # dev fixture; production feeds this from a published geo dimension artifact
+  reconciliation:                   # Kafka->ClickHouse count/counter audit; no per-record hash
+    enabled: false                  # source_stream_id/bootstrap are deployment-specific; never guess offset zero
+    source_stream_id: ""
+    interval: "5m"
+    bootstrap_offsets: {}
+    max_batches: 1000
+    max_fact_rows: 250000
+    max_read_bytes: 536870912
 
 agent_plans:                        # one installation-wide immutable plan signer
   signing_key_id: "watchdog-agent-plan-v1"

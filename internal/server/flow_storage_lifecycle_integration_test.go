@@ -5,15 +5,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/deploy/schema"
+	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowlifecycle"
+	"github.com/cloudcache/watchdog/internal/flowstream"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -128,6 +133,182 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 	var auditCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_retention_policy'`, userID).Scan(&auditCount); err != nil || auditCount != 5 {
 		t.Fatalf("audit count=%d error=%v", auditCount, err)
+	}
+}
+
+func TestFlowReconciliationWatermarkIntegration(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.DBName = "watchdog_flow_reconciliation_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+		t.Fatal(err)
+	}
+	store := flowlifecycle.NewStore(db)
+	config := flowlifecycle.ReconciliationConfig{
+		SourceStreamID: "site-a:raw-v2:boot-1", KafkaTopic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker",
+		BootstrapOffset: map[uint32]uint64{0: 10}, MaxBatches: 100, MaxFactRows: 10_000, MaxReadBytes: 1 << 20,
+	}
+	if _, err := store.FreezeReconciliation(ctx, config, 0, nil, 20, time.Now()); !errors.Is(err, flowlifecycle.ErrBootstrapRequired) {
+		t.Fatalf("missing bootstrap error=%v", err)
+	}
+	bootstrap := uint64(10)
+	watermark, err := store.FreezeReconciliation(ctx, config, 0, &bootstrap, 20, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watermark.BootstrapOffset != 10 || watermark.ReconciledNextOffset != 10 || watermark.CommittedNextOffset != 20 {
+		t.Fatalf("initial watermark=%#v", watermark)
+	}
+	if _, err := store.FreezeReconciliation(ctx, config, 0, &bootstrap, 19, time.Now()); !errors.Is(err, flowlifecycle.ErrOffsetRegression) {
+		t.Fatalf("committed regression error=%v", err)
+	}
+	if err := store.CompleteReconciliation(ctx, config, 0, 20, 15, 2, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	assertFlowWatermark(t, db, config.SourceStreamID, 0, 20, 15, "mismatch", 2)
+
+	watermark, err = store.FreezeReconciliation(ctx, config, 0, nil, 25, time.Now())
+	if err != nil || watermark.ReconciledNextOffset != 15 {
+		t.Fatalf("resume watermark=%#v error=%v", watermark, err)
+	}
+	if err := store.CompleteReconciliation(ctx, config, 0, 25, 25, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	assertFlowWatermark(t, db, config.SourceStreamID, 0, 25, 25, "healthy", 0)
+	// A stale overlapping job may finish after a newer clean window; it is a
+	// no-op and must never move the durable next offset backwards.
+	if err := store.CompleteReconciliation(ctx, config, 0, 20, 20, 0, time.Now()); err != nil {
+		t.Fatalf("stale overlapping completion: %v", err)
+	}
+	assertFlowWatermark(t, db, config.SourceStreamID, 0, 25, 25, "healthy", 0)
+}
+
+type testReconciliationOffsets struct{ calls atomic.Int32 }
+
+func (reader *testReconciliationOffsets) CommittedOffsets(context.Context, string, string) ([]flowstream.CommittedPartitionOffset, error) {
+	reader.calls.Add(1)
+	return []flowstream.CommittedPartitionOffset{{Partition: 0, NextOffset: 103}}, nil
+}
+
+type testRetryReconciliationScanner struct{ calls atomic.Int32 }
+
+func (scanner *testRetryReconciliationScanner) Scan(_ context.Context, request flowch.ReconciliationScanRequest) (flowch.ReconciliationScanResult, error) {
+	if scanner.calls.Add(1) == 1 {
+		return flowch.ReconciliationScanResult{}, errors.New("temporary ClickHouse read failure")
+	}
+	next := request.Cursor
+	next.NextOffset = request.CloseOffset
+	return flowch.ReconciliationScanResult{
+		NextCursor: next, Complete: true,
+		Comparison: flowch.IngestReconciliationComparison{Batches: 3, Facts: 6},
+	}, nil
+}
+
+func TestFlowReconciliationOperationJobRetriesFromCheckpointIntegration(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.DBName = "watchdog_flow_reconciliation_job_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := defaultConfig()
+	cfg.Flow.Reconciliation.Enabled = true
+	cfg.Flow.Reconciliation.SourceStreamID = "site-a:raw-v2:boot-2"
+	cfg.Flow.Reconciliation.BootstrapOffsets = map[uint32]uint64{0: 100}
+	queued, err := flowReconciliationOperationJob(cfg, time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := opjob.NewStore(db)
+	queued, err = jobs.Enqueue(ctx, queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offsets := &testReconciliationOffsets{}
+	scanner := &testRetryReconciliationScanner{}
+	worker := &opjob.Worker{
+		Repo: jobs, JobType: flowlifecycle.ReconciliationJobType, Owner: "flow-reconciliation-integration",
+		Handler:      flowlifecycle.NewReconciliationHandler(offsets, scanner, flowlifecycle.NewStore(db)),
+		PollInterval: 5 * time.Millisecond, LeaseFor: 300 * time.Millisecond, RetryBase: 5 * time.Millisecond, MaxAttempts: 3,
+	}
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	defer stopWorker()
+	go worker.Run(workerCtx)
+
+	var completed opjob.Job
+	for {
+		completed, err = jobs.Get(ctx, queued.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed.Terminal() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("operation job did not finish: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if completed.Status != opjob.StatusSucceeded || completed.AttemptCount != 2 || completed.ProgressDone != 3 {
+		t.Fatalf("completed job=%+v", completed)
+	}
+	if offsets.calls.Load() != 1 || scanner.calls.Load() != 2 || !bytes.Contains(completed.CheckpointJSON, []byte(`"frozen": true`)) {
+		t.Fatalf("offset calls=%d scanner calls=%d checkpoint=%s", offsets.calls.Load(), scanner.calls.Load(), completed.CheckpointJSON)
+	}
+	assertFlowWatermark(t, db, cfg.Flow.Reconciliation.SourceStreamID, 0, 103, 103, "healthy", 0)
+}
+
+func assertFlowWatermark(t *testing.T, db *sql.DB, stream string, partition uint32, committed, reconciled uint64, status string, mismatches uint64) {
+	t.Helper()
+	var gotCommitted, gotReconciled, gotMismatches uint64
+	var gotStatus string
+	if err := db.QueryRow(`SELECT committed_next_offset,reconciled_next_offset,status,mismatch_count
+		FROM flow_reconciliation_watermarks WHERE source_stream_id=? AND kafka_partition=?`, stream, partition).
+		Scan(&gotCommitted, &gotReconciled, &gotStatus, &gotMismatches); err != nil {
+		t.Fatal(err)
+	}
+	if gotCommitted != committed || gotReconciled != reconciled || gotStatus != status || gotMismatches != mismatches {
+		t.Fatalf("watermark committed=%d reconciled=%d status=%s mismatches=%d", gotCommitted, gotReconciled, gotStatus, gotMismatches)
 	}
 }
 
