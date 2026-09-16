@@ -76,6 +76,7 @@ func NormalizePolicy(policy Policy) (Policy, error) {
 		policy.BootstrapFrom.IsZero() || policy.RawRetentionSeconds < 86400 || policy.RawRetentionSeconds > 315576000 ||
 		policy.ArchiveResolutionSeconds != uint32(ArchiveResolution/time.Second) ||
 		(policy.ArchiveRetentionSeconds != 0 && policy.ArchiveRetentionSeconds <= policy.RawRetentionSeconds) ||
+		(policy.ArchiveDeleteEnabled && policy.ArchiveRetentionSeconds == 0) ||
 		policy.LateArrivalSeconds > 604800 || policy.DeleteGraceSeconds < 3600 || policy.DeleteGraceSeconds > 2592000 ||
 		policy.MaxPartitionsPerRun < 1 || policy.MaxPartitionsPerRun > 366 {
 		return Policy{}, ErrInvalidPolicy

@@ -22,7 +22,8 @@ func TestValidateRestoreDrillRequest(t *testing.T) {
 	valid := RestoreDrillRequest{
 		SourceDatabase: "watchdog_flow", RestoreDatabase: "watchdog_restore_20260916",
 		BackupDisk: "flow_backups", BackupName: "raw/2026-09-16", BackupManifestFile: "/backup/.backup",
-		SourceDate: time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC),
+		SourceDate:   time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC),
+		ArchiveMonth: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 	}
 	if err := validateRestoreDrillRequest(valid); err != nil {
 		t.Fatal(err)
@@ -40,6 +41,7 @@ func TestValidateRestoreDrillRequest(t *testing.T) {
 		"unsafe backup":   func(value *RestoreDrillRequest) { value.BackupName = "raw/'backup'" },
 		"manifest":        func(value *RestoreDrillRequest) { value.BackupManifestFile = "" },
 		"unaligned day":   func(value *RestoreDrillRequest) { value.SourceDate = value.SourceDate.Add(time.Hour) },
+		"unaligned month": func(value *RestoreDrillRequest) { value.ArchiveMonth = value.ArchiveMonth.AddDate(0, 0, 1) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := valid
@@ -78,6 +80,7 @@ func TestEqualRestoreDrillSnapshotIncludesEveryProof(t *testing.T) {
 	want := RestoreDrillSnapshot{
 		Raw: StorageCounters{1, 2, 3, 4, 5, 6}, Archive: StorageCounters{1, 2, 3, 4, 5, 6}, PhysicalRecords: 2,
 		KafkaCoverage: []DayOffsetCoverage{{SourceStreamID: "a", KafkaTopic: "raw", KafkaPartition: 1, FirstOffset: 2, LastOffsetExclusive: 3}},
+		ArchiveMonth:  &RestoreDrillArchiveMonthSnapshot{Counters: StorageCounters{1, 2, 3, 4, 5, 6}, PhysicalRecords: 3},
 	}
 	if !equalRestoreDrillSnapshot(want, want) {
 		t.Fatal("equal snapshot rejected")
@@ -92,6 +95,11 @@ func TestEqualRestoreDrillSnapshotIncludesEveryProof(t *testing.T) {
 	changed.KafkaCoverage[0].LastOffsetExclusive++
 	if equalRestoreDrillSnapshot(want, changed) {
 		t.Fatal("Kafka coverage mismatch accepted")
+	}
+	changed = want
+	changed.ArchiveMonth = &RestoreDrillArchiveMonthSnapshot{Counters: want.ArchiveMonth.Counters, PhysicalRecords: 4}
+	if equalRestoreDrillSnapshot(want, changed) {
+		t.Fatal("archive month physical record mismatch accepted")
 	}
 }
 
@@ -151,13 +159,14 @@ func TestRealClickHouseExternalBackupRestoreDrill(t *testing.T) {
 	result, err := RunRestoreDrill(ctx, dataConfig, RestoreDrillRequest{
 		SourceDatabase: sourceDatabase, RestoreDatabase: restoreDatabase,
 		BackupDisk: "flow_backups", BackupName: backupName,
-		BackupManifestFile: filepath.Join(backupPath, ".backup"), SourceDate: day,
+		BackupManifestFile: filepath.Join(backupPath, ".backup"), SourceDate: day, ArchiveMonth: day.AddDate(0, 0, 1-day.Day()),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Matched || !result.RestoreDatabaseCleaned || result.RestoreOperationID == "" ||
 		result.BackupManifestUUID == "" || len(result.ManifestSHA256) != 64 || result.SourceBefore.PhysicalRecords != 2 ||
+		result.SourceBefore.ArchiveMonth == nil || result.SourceBefore.ArchiveMonth.PhysicalRecords == 0 ||
 		result.SourceBefore.Raw != (StorageCounters{RecordCount: 2, RawBytes: 500, RawPackets: 2, EstimatedBytes: 5000, EstimatedPackets: 20, EstimatedValidRecords: 2}) ||
 		len(result.SourceBefore.KafkaCoverage) != 1 {
 		t.Fatalf("restore drill result=%+v", result)

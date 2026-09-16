@@ -35,14 +35,21 @@ type RestoreDrillRequest struct {
 	BackupName          string
 	BackupManifestFile  string
 	SourceDate          time.Time
+	ArchiveMonth        time.Time
 	KeepRestoreDatabase bool
 }
 
+type RestoreDrillArchiveMonthSnapshot struct {
+	Counters        StorageCounters `json:"counters"`
+	PhysicalRecords uint64          `json:"physical_records"`
+}
+
 type RestoreDrillSnapshot struct {
-	Raw             StorageCounters     `json:"raw"`
-	Archive         StorageCounters     `json:"archive"`
-	PhysicalRecords uint64              `json:"physical_records"`
-	KafkaCoverage   []DayOffsetCoverage `json:"kafka_coverage"`
+	Raw             StorageCounters                   `json:"raw"`
+	Archive         StorageCounters                   `json:"archive"`
+	PhysicalRecords uint64                            `json:"physical_records"`
+	KafkaCoverage   []DayOffsetCoverage               `json:"kafka_coverage"`
+	ArchiveMonth    *RestoreDrillArchiveMonthSnapshot `json:"archive_month,omitempty"`
 }
 
 // RestoreDrillResult is suitable for attaching to the immutable MySQL backup
@@ -56,6 +63,7 @@ type RestoreDrillResult struct {
 	SourceDatabase         string               `json:"source_database"`
 	RestoreDatabase        string               `json:"restore_database"`
 	SourceDate             time.Time            `json:"source_date"`
+	ArchiveMonth           time.Time            `json:"archive_month,omitzero"`
 	StartedAt              time.Time            `json:"started_at"`
 	CompletedAt            time.Time            `json:"completed_at"`
 	RestoreOperationID     string               `json:"restore_operation_id"`
@@ -85,6 +93,7 @@ func RunRestoreDrill(ctx context.Context, config NativeConfig, request RestoreDr
 		SourceDatabase:  request.SourceDatabase,
 		RestoreDatabase: request.RestoreDatabase,
 		SourceDate:      request.SourceDate,
+		ArchiveMonth:    request.ArchiveMonth,
 		StartedAt:       time.Now().UTC().Truncate(time.Millisecond),
 	}
 	manifestUUID, checksum, err := readBackupManifest(request.BackupManifestFile)
@@ -120,7 +129,7 @@ func RunRestoreDrill(ctx context.Context, config NativeConfig, request RestoreDr
 	if err := source.Ready(ctx); err != nil {
 		return result, fmt.Errorf("verify source Flow schema: %w", err)
 	}
-	result.SourceBefore, err = readRestoreDrillSnapshot(ctx, source, request.SourceDate)
+	result.SourceBefore, err = readRestoreDrillSnapshot(ctx, source, request.SourceDate, request.ArchiveMonth)
 	if err != nil {
 		return result, fmt.Errorf("read source evidence before restore: %w", err)
 	}
@@ -160,12 +169,12 @@ func RunRestoreDrill(ctx context.Context, config NativeConfig, request RestoreDr
 		restored.Close()
 		return result, fmt.Errorf("verify restored Flow schema: %w", err)
 	}
-	result.Restored, err = readRestoreDrillSnapshot(ctx, restored, request.SourceDate)
+	result.Restored, err = readRestoreDrillSnapshot(ctx, restored, request.SourceDate, request.ArchiveMonth)
 	restored.Close()
 	if err != nil {
 		return result, fmt.Errorf("read restored evidence: %w", err)
 	}
-	result.SourceAfter, err = readRestoreDrillSnapshot(ctx, source, request.SourceDate)
+	result.SourceAfter, err = readRestoreDrillSnapshot(ctx, source, request.SourceDate, request.ArchiveMonth)
 	if err != nil {
 		return result, fmt.Errorf("read source evidence after restore: %w", err)
 	}
@@ -185,6 +194,9 @@ func normalizeRestoreDrillRequest(request RestoreDrillRequest) RestoreDrillReque
 	request.BackupName = strings.TrimSpace(request.BackupName)
 	request.BackupManifestFile = strings.TrimSpace(request.BackupManifestFile)
 	request.SourceDate = request.SourceDate.UTC()
+	if !request.ArchiveMonth.IsZero() {
+		request.ArchiveMonth = request.ArchiveMonth.UTC()
+	}
 	return request
 }
 
@@ -194,7 +206,8 @@ func validateRestoreDrillRequest(request RestoreDrillRequest) error {
 		!validClickHouseIdentifier(request.BackupDisk) || !validBackupName(request.BackupName) ||
 		len("clickhouse-disk://")+len(request.BackupDisk)+1+len(request.BackupName) > 512 ||
 		strings.HasPrefix(request.BackupName, "/") || strings.Contains(request.BackupName, "\\") ||
-		request.BackupManifestFile == "" || request.SourceDate.IsZero() || request.SourceDate != request.SourceDate.Truncate(24*time.Hour) {
+		request.BackupManifestFile == "" || request.SourceDate.IsZero() || request.SourceDate != request.SourceDate.Truncate(24*time.Hour) ||
+		(!request.ArchiveMonth.IsZero() && (request.ArchiveMonth.Day() != 1 || request.ArchiveMonth != request.ArchiveMonth.Truncate(24*time.Hour))) {
 		return ErrInvalidRestoreDrill
 	}
 	for _, segment := range strings.Split(request.BackupName, "/") {
@@ -241,7 +254,7 @@ func readBackupManifest(path string) (string, string, error) {
 	return strings.TrimSpace(manifest.UUID), hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func readRestoreDrillSnapshot(ctx context.Context, native *NativeInserter, day time.Time) (RestoreDrillSnapshot, error) {
+func readRestoreDrillSnapshot(ctx context.Context, native *NativeInserter, day, archiveMonth time.Time) (RestoreDrillSnapshot, error) {
 	runner, err := NewRollupRunner(native)
 	if err != nil {
 		return RestoreDrillSnapshot{}, err
@@ -259,7 +272,19 @@ func readRestoreDrillSnapshot(ctx context.Context, native *NativeInserter, day t
 		return RestoreDrillSnapshot{}, err
 	}
 	slices.SortFunc(coverage, compareDayOffsetCoverage)
-	return RestoreDrillSnapshot{Raw: raw, Archive: archive, PhysicalRecords: physical, KafkaCoverage: coverage}, nil
+	result := RestoreDrillSnapshot{Raw: raw, Archive: archive, PhysicalRecords: physical, KafkaCoverage: coverage}
+	if !archiveMonth.IsZero() {
+		counters, err := runner.ArchiveMonthStorageCounters(ctx, archiveMonth)
+		if err != nil {
+			return RestoreDrillSnapshot{}, err
+		}
+		physicalRecords, err := runner.ArchiveMonthPhysicalRecords(ctx, archiveMonth)
+		if err != nil {
+			return RestoreDrillSnapshot{}, err
+		}
+		result.ArchiveMonth = &RestoreDrillArchiveMonthSnapshot{Counters: counters, PhysicalRecords: physicalRecords}
+	}
+	return result, nil
 }
 
 func compareDayOffsetCoverage(left, right DayOffsetCoverage) int {
@@ -292,7 +317,14 @@ func compareDayOffsetCoverage(left, right DayOffsetCoverage) int {
 
 func equalRestoreDrillSnapshot(left, right RestoreDrillSnapshot) bool {
 	return left.Raw == right.Raw && left.Archive == right.Archive && left.PhysicalRecords == right.PhysicalRecords &&
-		slices.Equal(left.KafkaCoverage, right.KafkaCoverage)
+		slices.Equal(left.KafkaCoverage, right.KafkaCoverage) && equalArchiveMonthSnapshot(left.ArchiveMonth, right.ArchiveMonth)
+}
+
+func equalArchiveMonthSnapshot(left, right *RestoreDrillArchiveMonthSnapshot) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func clickHouseDatabaseExists(ctx context.Context, executor queryExecutor, database string) (bool, error) {

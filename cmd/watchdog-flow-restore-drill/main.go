@@ -28,7 +28,7 @@ type options struct {
 	dialTimeout, readTimeout, operationTimeout time.Duration
 	sourceDatabase, restoreDatabase            string
 	backupDisk, backupName, backupManifestFile string
-	sourceDate                                 string
+	sourceDate, archiveMonth                   string
 	keepRestoreDatabase                        bool
 }
 
@@ -53,6 +53,7 @@ func main() {
 	flag.StringVar(&opt.backupName, "backup-name", "", "relative backup object name on the named disk")
 	flag.StringVar(&opt.backupManifestFile, "backup-manifest-file", "", "local path to the backup's .backup manifest")
 	flag.StringVar(&opt.sourceDate, "source-date", "", "UTC raw partition date (YYYY-MM-DD)")
+	flag.StringVar(&opt.archiveMonth, "archive-month", "", "optional UTC archive month to verify (YYYY-MM)")
 	flag.BoolVar(&opt.keepRestoreDatabase, "keep-restore-database", false, "retain the isolated restore database after verification")
 	flag.Parse()
 
@@ -90,6 +91,13 @@ func buildRestoreDrillInput(opt options) (flowch.NativeConfig, flowch.RestoreDri
 	if err != nil {
 		return flowch.NativeConfig{}, flowch.RestoreDrillRequest{}, errors.New("source-date must use YYYY-MM-DD")
 	}
+	var archiveMonth time.Time
+	if value := strings.TrimSpace(opt.archiveMonth); value != "" {
+		archiveMonth, err = time.Parse("2006-01", value)
+		if err != nil {
+			return flowch.NativeConfig{}, flowch.RestoreDrillRequest{}, errors.New("archive-month must use YYYY-MM")
+		}
+	}
 	password := ""
 	if strings.TrimSpace(opt.passwordFile) != "" {
 		password, err = flowstream.ReadSecretFile(strings.TrimSpace(opt.passwordFile))
@@ -112,7 +120,7 @@ func buildRestoreDrillInput(opt options) (flowch.NativeConfig, flowch.RestoreDri
 	request := flowch.RestoreDrillRequest{
 		SourceDatabase: strings.TrimSpace(opt.sourceDatabase), RestoreDatabase: strings.TrimSpace(opt.restoreDatabase),
 		BackupDisk: strings.TrimSpace(opt.backupDisk), BackupName: strings.TrimSpace(opt.backupName),
-		BackupManifestFile: strings.TrimSpace(opt.backupManifestFile), SourceDate: day,
+		BackupManifestFile: strings.TrimSpace(opt.backupManifestFile), SourceDate: day, ArchiveMonth: archiveMonth,
 		KeepRestoreDatabase: opt.keepRestoreDatabase,
 	}
 	return config, request, nil

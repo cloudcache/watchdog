@@ -125,9 +125,6 @@ func (store *Store) CreateDraft(ctx context.Context, policy Policy, actor string
 	if err != nil {
 		return Policy{}, err
 	}
-	if policy.ArchiveDeleteEnabled {
-		return Policy{}, ErrDeleteLocked
-	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Policy{}, err
@@ -147,10 +144,10 @@ func (store *Store) CreateDraft(ctx context.Context, policy Policy, actor string
 		(id,policy_version,status,bootstrap_from,raw_retention_seconds,archive_resolution_seconds,
 		 archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,max_partitions_per_run,
 		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,created_by)
-		VALUES (?,?,'draft',?,?,?,?,?,?,?,?,0,?,NULLIF(?,''))`,
+		VALUES (?,?,'draft',?,?,?,?,?,?,?,?,?,?,NULLIF(?,''))`,
 		policy.ID, policy.Version, policy.BootstrapFrom, policy.RawRetentionSeconds, policy.ArchiveResolutionSeconds,
 		policy.ArchiveRetentionSeconds, policy.LateArrivalSeconds, policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun,
-		policy.RawDeleteEnabled, policy.RequireBackupBeforeDelete, strings.TrimSpace(actor))
+		policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete, strings.TrimSpace(actor))
 	if err != nil {
 		return Policy{}, err
 	}
@@ -166,16 +163,13 @@ func (store *Store) UpdateDraft(ctx context.Context, policy Policy, expected uin
 	if err != nil || expected == 0 {
 		return Policy{}, ErrInvalidPolicy
 	}
-	if policy.ArchiveDeleteEnabled {
-		return Policy{}, ErrDeleteLocked
-	}
 	result, err := store.db.ExecContext(ctx, `UPDATE flow_retention_policy_revisions SET
 		bootstrap_from=?,raw_retention_seconds=?,archive_resolution_seconds=?,archive_retention_seconds=?,
 		late_arrival_seconds=?,delete_grace_seconds=?,max_partitions_per_run=?,raw_delete_enabled=?,
-		archive_delete_enabled=0,require_backup_before_delete=?,row_version=row_version+1
+		archive_delete_enabled=?,require_backup_before_delete=?,row_version=row_version+1
 		WHERE id=? AND status='draft' AND row_version=?`, policy.BootstrapFrom, policy.RawRetentionSeconds,
 		policy.ArchiveResolutionSeconds, policy.ArchiveRetentionSeconds, policy.LateArrivalSeconds,
-		policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun, policy.RawDeleteEnabled, policy.RequireBackupBeforeDelete, policy.ID, expected)
+		policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun, policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete, policy.ID, expected)
 	if err != nil {
 		return Policy{}, err
 	}
@@ -224,9 +218,6 @@ func (store *Store) Publish(ctx context.Context, id, actor string, expected uint
 	}
 	if policy.RowVersion != expected {
 		return Policy{}, ErrVersionConflict
-	}
-	if policy.ArchiveDeleteEnabled {
-		return Policy{}, ErrDeleteLocked
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE flow_retention_policy_revisions SET status='retired',retired_by=?,retired_at=?,row_version=row_version+1 WHERE status='published'`, actor, now); err != nil {
 		return Policy{}, err

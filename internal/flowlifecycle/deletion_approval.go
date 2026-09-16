@@ -316,3 +316,138 @@ func (store *Store) RevokeRawDayDeleteApproval(ctx context.Context, id string, e
 	state, err = store.GetPartition(ctx, approval.PartitionStart)
 	return approval, state, err
 }
+
+func (store *Store) ApproveArchiveMonthDelete(ctx context.Context, readiness ArchiveMonthDeleteReadiness, expectedPolicyVersion uint64, actor string, now time.Time) (DeletionApproval, error) {
+	if store == nil || store.db == nil || !readiness.EvidenceReady || readiness.PolicyRowVersion != expectedPolicyVersion ||
+		expectedPolicyVersion == 0 || strings.TrimSpace(actor) == "" || now.IsZero() || readiness.CheckedAt.IsZero() ||
+		readiness.CheckedAt.After(now) || readiness.Source != readiness.Archive || readiness.PhysicalRecords == 0 || readiness.DeleteApprovalID != "" {
+		return DeletionApproval{}, ErrInvalidDeletionApproval
+	}
+	month, end, err := archiveMonth(readiness.MonthStart)
+	if err != nil || !end.Equal(readiness.MonthEnd) {
+		return DeletionApproval{}, ErrInvalidDeletionApproval
+	}
+	now = now.UTC().Truncate(time.Millisecond)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	defer tx.Rollback()
+	policy, err := scanPolicy(tx.QueryRowContext(ctx, "SELECT "+policyColumns+" FROM flow_retention_policy_revisions WHERE status='published' FOR UPDATE"))
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	if policy.ID != readiness.PolicyID || policy.Version != readiness.PolicyVersion || policy.RowVersion != expectedPolicyVersion ||
+		policy.ArchiveRetentionSeconds == 0 {
+		return DeletionApproval{}, ErrVersionConflict
+	}
+	expectedGeneration, err := Generation(policy.Version, 1)
+	if err != nil || expectedGeneration != readiness.Generation {
+		return DeletionApproval{}, ErrTransition
+	}
+	expectedCounters, deletedDays, complete, err := store.archiveMonthStateEvidence(ctx, tx, month, end, true)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	if !complete || deletedDays != readiness.ExpectedDays || expectedCounters != readiness.Source {
+		return DeletionApproval{}, ErrTransition
+	}
+	if policy.RequireBackupBeforeDelete {
+		backup, err := scanBackupEvidence(tx.QueryRowContext(ctx, "SELECT "+backupEvidenceColumns+" FROM flow_backup_restore_evidence WHERE id=? FOR UPDATE", readiness.BackupEvidenceID))
+		if err != nil {
+			return DeletionApproval{}, err
+		}
+		if !backup.covers("archive", month, end) {
+			return DeletionApproval{}, ErrDeleteLocked
+		}
+	}
+	var existingID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM flow_deletion_approvals
+		WHERE storage_kind='archive' AND partition_start=? AND status='approved' FOR UPDATE`, month).Scan(&existingID)
+	if err == nil {
+		return DeletionApproval{}, ErrTransition
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return DeletionApproval{}, err
+	}
+	approval := DeletionApproval{
+		ID: newID(), StorageKind: "archive", PartitionGranularity: "month", PartitionStart: month, PartitionEnd: end,
+		PolicyID: policy.ID, PolicyVersion: policy.Version, Generation: readiness.Generation, BackupEvidenceID: readiness.BackupEvidenceID,
+		KafkaCoverage: []OffsetCoverage{}, Source: readiness.Source, PhysicalRecords: readiness.PhysicalRecords, Archive: readiness.Archive,
+		Status: "approved", ApprovedBy: actor, ApprovedAt: now,
+	}
+	coverageJSON, err := json.Marshal(approval.KafkaCoverage)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO flow_deletion_approvals
+		(id,storage_kind,partition_granularity,partition_start,partition_end,policy_id,policy_version,generation,backup_evidence_id,kafka_coverage_json,
+		 source_record_count,source_physical_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
+		 archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
+		 status,approved_by,approved_at)
+		VALUES (
+		 ?,'archive','month',
+		 ?,?,?,?,?,
+		 NULLIF(?,''),?,
+		 ?,?,?,?,?,?,?,
+		 ?,?,?,?,?,?,
+		 'approved',?,?)`,
+		approval.ID, month, end, policy.ID, policy.Version, approval.Generation, approval.BackupEvidenceID, coverageJSON,
+		approval.Source.RecordCount, approval.PhysicalRecords, approval.Source.RawBytes, approval.Source.RawPackets,
+		approval.Source.EstimatedBytes, approval.Source.EstimatedPackets, approval.Source.EstimatedValidRecords,
+		approval.Archive.RecordCount, approval.Archive.RawBytes, approval.Archive.RawPackets,
+		approval.Archive.EstimatedBytes, approval.Archive.EstimatedPackets, approval.Archive.EstimatedValidRecords,
+		actor, now)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return DeletionApproval{}, err
+	}
+	return store.GetDeletionApproval(ctx, approval.ID)
+}
+
+func (store *Store) RevokeArchiveMonthDeleteApproval(ctx context.Context, id string, expected uint64, actor string, now time.Time) (DeletionApproval, error) {
+	if store == nil || store.db == nil || strings.TrimSpace(id) == "" || expected == 0 || strings.TrimSpace(actor) == "" || now.IsZero() {
+		return DeletionApproval{}, ErrInvalidDeletionApproval
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	defer tx.Rollback()
+	approval, err := scanDeletionApproval(tx.QueryRowContext(ctx, "SELECT "+deletionApprovalColumns+" FROM flow_deletion_approvals WHERE id=? FOR UPDATE", id))
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	if approval.RowVersion != expected {
+		return DeletionApproval{}, ErrVersionConflict
+	}
+	if approval.Status != "approved" || approval.StorageKind != "archive" || approval.PartitionGranularity != "month" {
+		return DeletionApproval{}, ErrTransition
+	}
+	var receiptStatus string
+	err = tx.QueryRowContext(ctx, "SELECT status FROM flow_deletion_receipts WHERE deletion_approval_id=? FOR UPDATE", id).Scan(&receiptStatus)
+	if err == nil && receiptStatus != "failed" {
+		return DeletionApproval{}, ErrTransition
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return DeletionApproval{}, err
+	}
+	now = now.UTC().Truncate(time.Millisecond)
+	result, err := tx.ExecContext(ctx, `UPDATE flow_deletion_approvals SET status='revoked',revoked_by=?,revoked_at=?,row_version=row_version+1
+		WHERE id=? AND status='approved' AND row_version=?`, actor, now, id, expected)
+	if err != nil {
+		return DeletionApproval{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return DeletionApproval{}, err
+		}
+		return DeletionApproval{}, ErrVersionConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return DeletionApproval{}, err
+	}
+	return store.GetDeletionApproval(ctx, id)
+}

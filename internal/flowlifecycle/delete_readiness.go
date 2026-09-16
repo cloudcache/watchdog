@@ -205,20 +205,7 @@ func (store *Store) offsetCoverage(ctx context.Context, span flowch.DayOffsetCov
 }
 
 func (store *Store) coveringBackup(ctx context.Context, day time.Time) (*BackupEvidence, error) {
-	var evidence BackupEvidence
-	err := store.db.QueryRowContext(ctx, `SELECT id,storage_kind,covered_from,covered_through,backup_ref,checksum_sha256,status,verified_at,restore_tested_at,restore_test_ref
-		FROM flow_backup_restore_evidence
-		WHERE status='verified' AND storage_kind IN ('raw','all') AND covered_from<=? AND covered_through>=?
-		ORDER BY restore_tested_at DESC,id ASC LIMIT 1`, day, day.Add(24*time.Hour)).
-		Scan(&evidence.ID, &evidence.StorageKind, &evidence.CoveredFrom, &evidence.CoveredThrough, &evidence.BackupRef, &evidence.ChecksumSHA256,
-			&evidence.Status, &evidence.VerifiedAt, &evidence.RestoreTestedAt, &evidence.RestoreTestRef)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &evidence, nil
+	return store.coveringBackupForKind(ctx, "raw", day, day.Add(24*time.Hour))
 }
 
 func appendUnique(values []string, value string) []string {

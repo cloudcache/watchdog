@@ -58,14 +58,15 @@ type Server struct {
 	snmpExportCancel context.CancelFunc
 	billingCancel    context.CancelFunc
 
-	vpnCandidateMaterializer *flowch.VPNCandidateMaterializer
-	vpnCandidateRunner       *flowvpn.CandidateRunner
-	vpnDetectCancel          context.CancelFunc
-	flowExportCancel         context.CancelFunc
-	flowReconciliationCancel context.CancelFunc
-	flowArchiveCancel        context.CancelFunc
-	flowLifecycle            *flowlifecycle.Store
-	flowDeleteEvidence       flowlifecycle.RawDayEvidenceReader
+	vpnCandidateMaterializer  *flowch.VPNCandidateMaterializer
+	vpnCandidateRunner        *flowvpn.CandidateRunner
+	vpnDetectCancel           context.CancelFunc
+	flowExportCancel          context.CancelFunc
+	flowReconciliationCancel  context.CancelFunc
+	flowArchiveCancel         context.CancelFunc
+	flowLifecycle             *flowlifecycle.Store
+	flowDeleteEvidence        flowlifecycle.RawDayEvidenceReader
+	flowArchiveDeleteEvidence flowlifecycle.ArchiveMonthEvidenceReader
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey
@@ -329,6 +330,7 @@ func (s *Server) stopRuntime() {
 	s.flowQuery = nil
 	s.flowLifecycle = nil
 	s.flowDeleteEvidence = nil
+	s.flowArchiveDeleteEvidence = nil
 	s.runtimeReady.Store(false)
 }
 

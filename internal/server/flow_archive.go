@@ -38,6 +38,7 @@ func (s *Server) startFlowArchive() error {
 	}
 	s.flowLifecycle = store
 	s.flowDeleteEvidence = runner
+	s.flowArchiveDeleteEvidence = runner
 	workerContext, cancel := context.WithCancel(context.Background())
 	s.flowArchiveCancel = cancel
 	worker := &opjob.Worker{
@@ -55,6 +56,17 @@ func (s *Server) startFlowArchive() error {
 			}
 		},
 	}
+	archiveDeleteWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowlifecycle.ArchiveDeleteJobType, Owner: "watchdog-server/flow-archive-delete",
+		Handler: flowlifecycle.NewArchiveDeleteHandler(store, runner), Logf: log.Printf,
+		OnTerminalFailure: func(job opjob.Job, code, detail string) {
+			failureContext, cancelFailure := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelFailure()
+			if err := store.MarkArchiveDeleteTerminalFailure(failureContext, job.ID, code, detail, time.Now()); err != nil {
+				log.Printf("watchdog Flow archive deletion %s terminal receipt: %v", job.ID, err)
+			}
+		},
+	}
 	scheduler := &flowlifecycle.ArchiveScheduler{
 		Store: store, Jobs: s.jobs, Runner: runner,
 		Interval: flowArchiveScanInterval, LateCheckEvery: flowLateCheckInterval,
@@ -62,6 +74,7 @@ func (s *Server) startFlowArchive() error {
 	}
 	go worker.Run(workerContext)
 	go deleteWorker.Run(workerContext)
+	go archiveDeleteWorker.Run(workerContext)
 	go scheduler.Run(workerContext)
 	return nil
 }

@@ -38,3 +38,30 @@ func (r *RollupRunner) DropRawDay(ctx context.Context, sourceDate time.Time, que
 	}
 	return nil
 }
+
+// DropArchiveMonth removes exactly one UTC calendar-month partition from the
+// immutable one-hour archive. Callers must freeze and revalidate the complete
+// month evidence before invoking this physical operation.
+func (r *RollupRunner) DropArchiveMonth(ctx context.Context, monthStart time.Time, queryID string) error {
+	if r == nil || r.executor == nil {
+		return Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	month := monthStart.UTC()
+	queryID = strings.TrimSpace(queryID)
+	if month.IsZero() || month.Location() != time.UTC || month.Day() != 1 || month.Hour() != 0 || month.Minute() != 0 || month.Second() != 0 || month.Nanosecond() != 0 ||
+		queryID == "" || len(queryID) > 128 {
+		return Permanent(errors.New("archive deletion requires a UTC month and bounded query ID"))
+	}
+	partition := month.Year()*100 + int(month.Month())
+	query := ch.Query{
+		Body:    fmt.Sprintf("ALTER TABLE flow_aggregate_1h DROP PARTITION %d", partition),
+		QueryID: queryID,
+		Settings: []ch.Setting{
+			{Key: "alter_sync", Value: "2", Important: true},
+		},
+	}
+	if err := r.executor.Do(ctx, query); err != nil {
+		return classifyClickHouseError(fmt.Errorf("drop Flow archive partition %d: %w", partition, err))
+	}
+	return nil
+}

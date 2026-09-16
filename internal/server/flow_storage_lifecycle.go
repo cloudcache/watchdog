@@ -85,6 +85,8 @@ func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 	storage.GET("/partitions", s.requirePermission("job.view"), s.listFlowRetentionPartitions)
 	storage.GET("/partitions/:date/delete-readiness", s.requirePermission("job.view"), s.getFlowRawDeleteReadiness)
 	storage.POST("/partitions/:date/actions/approve-delete", s.requirePermission("job.manage"), s.approveFlowRawDelete)
+	storage.GET("/archive-months/:month/delete-readiness", s.requirePermission("job.view"), s.getFlowArchiveDeleteReadiness)
+	storage.POST("/archive-months/:month/actions/approve-delete", s.requirePermission("job.manage"), s.approveFlowArchiveDelete)
 	storage.GET("/watermarks", s.requirePermission("job.view"), s.listFlowReconciliationWatermarks)
 	storage.GET("/deletion-receipts", s.requirePermission("job.view"), s.listFlowDeletionReceipts)
 	storage.GET("/deletion-approvals", s.requirePermission("job.view"), s.listFlowDeletionApprovals)
@@ -102,11 +104,39 @@ func (s *Server) executeFlowRawDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if s.flowLifecycle == nil || s.jobs == nil || s.flowDeleteEvidence == nil {
+	if s.flowLifecycle == nil || s.jobs == nil {
 		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle deletion worker is unavailable")
 		return
 	}
 	now := time.Now().UTC()
+	approval, err := s.flowLifecycle.GetDeletionApproval(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	if approval.StorageKind == "archive" {
+		if s.flowArchiveDeleteEvidence == nil {
+			fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow archive deletion worker is unavailable")
+			return
+		}
+		job, receipt, err := s.flowLifecycle.ScheduleArchiveMonthDelete(
+			c.Request.Context(), approval.ID, expected, currentPrincipal(c).UserID, now)
+		if err != nil {
+			writeFlowLifecycleError(c, err)
+			return
+		}
+		s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_archive_delete.schedule", "flow_deletion_receipt", receipt.ID)
+		c.JSON(http.StatusAccepted, gin.H{"job": job, "receipt": receipt})
+		return
+	}
+	if approval.StorageKind != "raw" {
+		writeFlowLifecycleError(c, flowlifecycle.ErrInvalidDeletionApproval)
+		return
+	}
+	if s.flowDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow raw deletion worker is unavailable")
+		return
+	}
 	barrier, err := s.flowLifecycle.EnsureRawDeleteBarrierForApproval(
 		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, now)
 	if err != nil {
@@ -191,8 +221,26 @@ func (s *Server) revokeFlowDeletionApproval(c *gin.Context) {
 	if !ok {
 		return
 	}
-	approval, partition, err := flowlifecycle.NewStore(s.db).RevokeRawDayDeleteApproval(
-		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, time.Now())
+	store := flowlifecycle.NewStore(s.db)
+	current, err := store.GetDeletionApproval(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	if current.StorageKind == "archive" {
+		approval, err := store.RevokeArchiveMonthDeleteApproval(
+			c.Request.Context(), current.ID, expected, currentPrincipal(c).UserID, time.Now())
+		if err != nil {
+			writeFlowLifecycleError(c, err)
+			return
+		}
+		s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_deletion_approval.revoke", "flow_deletion_approval", approval.ID)
+		c.Header("ETag", etag(approval.RowVersion))
+		c.JSON(http.StatusOK, gin.H{"approval": approval})
+		return
+	}
+	approval, partition, err := store.RevokeRawDayDeleteApproval(
+		c.Request.Context(), current.ID, expected, currentPrincipal(c).UserID, time.Now())
 	if err != nil {
 		writeFlowLifecycleError(c, err)
 		return
@@ -200,6 +248,57 @@ func (s *Server) revokeFlowDeletionApproval(c *gin.Context) {
 	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_deletion_approval.revoke", "flow_deletion_approval", approval.ID)
 	c.Header("ETag", etag(approval.RowVersion))
 	c.JSON(http.StatusOK, gin.H{"approval": approval, "partition": partition})
+}
+
+func (s *Server) getFlowArchiveDeleteReadiness(c *gin.Context) {
+	month, err := time.Parse("2006-01", strings.TrimSpace(c.Param("month")))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_archive_month", "archive month must use YYYY-MM")
+		return
+	}
+	if s.flowLifecycle == nil || s.flowArchiveDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle evidence reader is unavailable")
+		return
+	}
+	readiness, err := s.flowLifecycle.ArchiveMonthDeleteReadiness(c.Request.Context(), month, time.Now().UTC(), s.flowArchiveDeleteEvidence)
+	if err != nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_evidence_failed", "Flow archive lifecycle evidence could not be verified")
+		return
+	}
+	c.Header("ETag", etag(readiness.PolicyRowVersion))
+	c.JSON(http.StatusOK, readiness)
+}
+
+func (s *Server) approveFlowArchiveDelete(c *gin.Context) {
+	expected, ok := requiredFlowLifecycleIfMatch(c)
+	if !ok {
+		return
+	}
+	month, err := time.Parse("2006-01", strings.TrimSpace(c.Param("month")))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_archive_month", "archive month must use YYYY-MM")
+		return
+	}
+	if s.flowLifecycle == nil || s.flowArchiveDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle evidence reader is unavailable")
+		return
+	}
+	now := time.Now().UTC()
+	readiness, err := s.flowLifecycle.ArchiveMonthDeleteReadiness(c.Request.Context(), month, now, s.flowArchiveDeleteEvidence)
+	if err == nil && !readiness.EvidenceReady {
+		err = flowlifecycle.ErrDeleteLocked
+	}
+	var approval flowlifecycle.DeletionApproval
+	if err == nil {
+		approval, err = s.flowLifecycle.ApproveArchiveMonthDelete(c.Request.Context(), readiness, expected, currentPrincipal(c).UserID, now)
+	}
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_deletion_approval.create", "flow_deletion_approval", approval.ID)
+	c.Header("ETag", etag(approval.RowVersion))
+	c.JSON(http.StatusCreated, gin.H{"approval": approval})
 }
 
 func (s *Server) listFlowBackupEvidence(c *gin.Context) {

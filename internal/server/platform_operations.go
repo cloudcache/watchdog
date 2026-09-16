@@ -127,8 +127,8 @@ func (s *Server) cancelOperationJob(c *gin.Context) {
 		fail(c, http.StatusConflict, "invalid_state", "terminal operation jobs cannot be canceled")
 		return
 	}
-	if job.JobType == flowlifecycle.RawDeleteJobType {
-		fail(c, http.StatusConflict, "destructive_job_not_cancelable", "a scheduled raw partition deletion cannot be canceled; revoke the approval before scheduling")
+	if job.JobType == flowlifecycle.RawDeleteJobType || job.JobType == flowlifecycle.ArchiveDeleteJobType {
+		fail(c, http.StatusConflict, "destructive_job_not_cancelable", "a scheduled Flow partition deletion cannot be canceled; revoke the approval before scheduling")
 		return
 	}
 	if err := s.jobs.RequestCancel(c.Request.Context(), job.ID); err != nil {

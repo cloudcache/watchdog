@@ -60,6 +60,33 @@ func TestGenerationRoundTripAndBounds(t *testing.T) {
 	}
 }
 
+func TestArchiveDeleteRequiresExplicitRetentionAndFullUTCMonth(t *testing.T) {
+	policy := validPolicy()
+	policy.ArchiveRetentionSeconds = 30 * 86400
+	policy.ArchiveDeleteEnabled = true
+	policy, err := NormalizePolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	month := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	eligible, err := ArchiveDeleteEligibleAt(month, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)
+	if !eligible.Equal(want) {
+		t.Fatalf("eligible=%s want=%s", eligible, want)
+	}
+	withoutRetention := policy
+	withoutRetention.ArchiveRetentionSeconds = 0
+	if _, err := NormalizePolicy(withoutRetention); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatalf("archive deletion without retention error=%v", err)
+	}
+	if _, err := ArchiveDeleteEligibleAt(month.Add(24*time.Hour), policy); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatalf("partial month error=%v", err)
+	}
+}
+
 func TestWatermarkRequiresContiguousCommittedCoverage(t *testing.T) {
 	valid := Watermark{SourceStreamID: "stream-a", KafkaTopic: "raw", ConsumerGroup: "worker", BootstrapOffset: 10, ReconciledNextOffset: 20, CommittedNextOffset: 21}
 	if err := valid.Validate(); err != nil {

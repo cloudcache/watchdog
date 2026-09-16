@@ -79,6 +79,64 @@ func TestRealClickHouseRawDayDeletion(t *testing.T) {
 	}
 }
 
+func TestRealClickHouseArchiveMonthDeletion(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_archive_delete")
+	september := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	october := september.AddDate(0, 1, 0)
+	septemberRecord := integrationRecord(1, september.Add(5*24*time.Hour+10*time.Minute), "geo-city-a", 100)
+	octoberRecord := integrationRecord(2, october.Add(5*24*time.Hour+10*time.Minute), "geo-city-b", 50)
+	insertIntegrationBatch(t, ctx, native, integrationBatch(20, septemberRecord.EventTime, septemberRecord))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(21, octoberRecord.EventTime, octoberRecord))
+
+	runner, err := NewRollupRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bucket := range []time.Time{septemberRecord.EventTime.Truncate(time.Hour), octoberRecord.EventTime.Truncate(time.Hour)} {
+		if err := runner.Run(ctx, RollupRequest{Resolution: RollupOneHour, Bucket: bucket, Generation: 1, GeneratedAt: bucket.Add(2 * time.Hour)}); err != nil {
+			t.Fatalf("roll up %s: %v", bucket, err)
+		}
+	}
+	before, err := runner.ArchiveMonthStorageCounters(ctx, september)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRows, err := runner.ArchiveMonthPhysicalRecords(ctx, september)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherBefore, err := runner.ArchiveMonthStorageCounters(ctx, october)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.RecordCount != 1 || before.RawBytes != 100 || beforeRows == 0 || otherBefore.RecordCount != 1 || otherBefore.RawBytes != 50 {
+		t.Fatalf("pre-delete september=%+v rows=%d october=%+v", before, beforeRows, otherBefore)
+	}
+
+	const queryID = "flow-archive-delete-real-it"
+	if err := runner.DropArchiveMonth(ctx, september, queryID); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.DropArchiveMonth(ctx, september, queryID); err != nil {
+		t.Fatalf("idempotent replay: %v", err)
+	}
+	after, err := runner.ArchiveMonthStorageCounters(ctx, september)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRows, err := runner.ArchiveMonthPhysicalRecords(ctx, september)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAfter, err := runner.ArchiveMonthStorageCounters(ctx, october)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != (StorageCounters{}) || afterRows != 0 || otherAfter != otherBefore {
+		t.Fatalf("post-delete september=%+v rows=%d october=%+v want=%+v", after, afterRows, otherAfter, otherBefore)
+	}
+}
+
 func TestRealClickHouseLateDatagramQuarantineIsDurableAndIdempotent(t *testing.T) {
 	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_raw_quarantine")
 	eventTime := time.Date(2026, 9, 5, 10, 15, 0, 0, time.UTC)

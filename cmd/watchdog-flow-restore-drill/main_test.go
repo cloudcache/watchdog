@@ -20,7 +20,7 @@ func validOptions() options {
 		readTimeout: time.Second, operationTimeout: time.Minute,
 		sourceDatabase: "watchdog_flow", restoreDatabase: "watchdog_restore_test",
 		backupDisk: "flow_backups", backupName: "raw/2026-09-16",
-		backupManifestFile: "/backup/.backup", sourceDate: "2026-09-16",
+		backupManifestFile: "/backup/.backup", sourceDate: "2026-09-16", archiveMonth: "2026-09",
 	}
 }
 
@@ -29,13 +29,18 @@ func TestBuildRestoreDrillInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Address != "127.0.0.1:9000" || config.MaxConns != 1 || request.SourceDate.Format(time.DateOnly) != "2026-09-16" || request.BackupName != "raw/2026-09-16" {
+	if config.Address != "127.0.0.1:9000" || config.MaxConns != 1 || request.SourceDate.Format(time.DateOnly) != "2026-09-16" || request.ArchiveMonth.Format("2006-01") != "2026-09" || request.BackupName != "raw/2026-09-16" {
 		t.Fatalf("config=%+v request=%+v", config, request)
 	}
 	invalid := validOptions()
 	invalid.sourceDate = "today"
 	if _, _, err := buildRestoreDrillInput(invalid); err == nil {
 		t.Fatal("invalid source date accepted")
+	}
+	invalid = validOptions()
+	invalid.archiveMonth = "September"
+	if _, _, err := buildRestoreDrillInput(invalid); err == nil {
+		t.Fatal("invalid archive month accepted")
 	}
 }
 

@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**当前活动切片：Storage V2 L5B4（archive 月批准/删除/恢复）。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。L5B3b 已完成删除日期 tombstone publication、worker ACK/LKG 和极晚完整 datagram quarantine；L5B3c 已用真实外置 backup disk、非空 Flow、原生 BACKUP/RESTORE 和隔离库完成 Kafka 坐标、物理行数与六项 counters 复算。两项均有独立门禁与提交；archive 月删除完成前相关策略仍 fail closed。
+**当前活动切片：FLOW-06B 历史重分类。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。Storage V2 L5B3b/L5B3c/L5B4 已分别完成 worker tombstone、外部恢复演练和完整 UTC 月 archive 批准/删除/恢复；删除仍由 published policy、不可变 backup evidence、人工批准和执行时实时复核逐分区 fail closed，不存在按保留期自动裸删。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -37,7 +37,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | V2-A schema/cutover | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | 实现已提交；维护窗口/回滚演练待完成 |
 | V2-B writer/receipt | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；组合故障/性能门禁待完成 |
 | V2-C query/reconcile/export | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；端到端同参数对账待完成 |
-| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | raw 日证据/批准/tombstone/恢复/删除闭环；archive 月删除待完成 |
+| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [x] | [ ] | [x] | raw 日与 archive 月证据/批准/恢复/删除闭环；产品级全链回归仍归 FLOW-08 |
 
 详细可勾选项与未满足门禁只维护在 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) §8；本页不复制第二套状态。
 

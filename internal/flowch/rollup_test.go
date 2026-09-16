@@ -168,6 +168,48 @@ func TestRawDayPhysicalRecordsCountsAllLogicalRows(t *testing.T) {
 	}
 }
 
+func TestArchiveMonthCountersAndPhysicalRowsUseCalendarBounds(t *testing.T) {
+	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	want := StorageCounters{RecordCount: 3, RawBytes: 40, RawPackets: 4, EstimatedBytes: 400, EstimatedPackets: 40, EstimatedValidRecords: 2}
+	counters := &storageCounterExecutor{values: []StorageCounters{want}}
+	runner := &RollupRunner{executor: counters}
+	got, err := runner.ArchiveMonthStorageCounters(context.Background(), month)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want || len(counters.queries) != 1 {
+		t.Fatalf("counters=%+v queries=%d", got, len(counters.queries))
+	}
+	query := counters.queries[0]
+	if !strings.Contains(query.Body, "FROM flow_aggregate_1h FINAL") || !strings.Contains(query.Body, "dimension_kind = '_generation'") ||
+		parameter(query, "start") != "'2026-09-01 00:00:00'" || parameter(query, "end") != "'2026-10-01 00:00:00'" {
+		t.Fatalf("month counter query=%+v", query)
+	}
+
+	physical := &scalarSequenceExecutor{values: []uint64{91}}
+	runner = &RollupRunner{executor: physical}
+	rows, err := runner.ArchiveMonthPhysicalRecords(context.Background(), month)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != 91 || !strings.Contains(physical.queries[0].Body, "FROM flow_aggregate_1h FINAL") ||
+		parameter(physical.queries[0], "end") != "'2026-10-01 00:00:00'" {
+		t.Fatalf("physical=%d query=%+v", rows, physical.queries[0])
+	}
+}
+
+func TestArchiveMonthReadersRejectUnalignedMonth(t *testing.T) {
+	runner := &RollupRunner{executor: &storageCounterExecutor{}}
+	for _, invalid := range []time.Time{
+		time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 1, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)),
+	} {
+		if _, err := runner.ArchiveMonthStorageCounters(context.Background(), invalid); err == nil {
+			t.Fatalf("invalid month accepted: %s", invalid)
+		}
+	}
+}
+
 func TestBuildRollupQueryRejectsUnalignedOrUnsafeRequests(t *testing.T) {
 	valid := RollupRequest{
 		Resolution: RollupOneHour,

@@ -89,8 +89,14 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 	unsafeInput := cloneFlowLifecycleMap(input)
 	unsafeInput["archive_delete_enabled"] = true
 	unsafe := flowLifecycleRequest(t, s.createFlowRetentionPolicy, admin, http.MethodPost, "/api/v1/flow/storage/policies", "", "", unsafeInput, "")
-	if unsafe.Code != http.StatusConflict || !strings.Contains(unsafe.Body.String(), "flow_deletion_locked") {
-		t.Fatalf("unsafe create: status=%d body=%s", unsafe.Code, unsafe.Body.String())
+	var archivePolicy flowlifecycle.Policy
+	if unsafe.Code != http.StatusCreated || json.Unmarshal(unsafe.Body.Bytes(), &archivePolicy) != nil || !archivePolicy.ArchiveDeleteEnabled {
+		t.Fatalf("archive-delete policy create: status=%d body=%s", unsafe.Code, unsafe.Body.String())
+	}
+	archivePublished := flowLifecycleRequest(t, s.publishFlowRetentionPolicy, admin, http.MethodPost,
+		"/api/v1/flow/storage/policies/"+archivePolicy.ID+"/actions/publish", "id", archivePolicy.ID, nil, `"1"`)
+	if archivePublished.Code != http.StatusOK || !strings.Contains(archivePublished.Body.String(), `"archive_delete_enabled":true`) {
+		t.Fatalf("archive-delete policy publish: status=%d body=%s", archivePublished.Code, archivePublished.Body.String())
 	}
 
 	rawDeleteInput := cloneFlowLifecycleMap(input)
@@ -111,7 +117,7 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM flow_retention_policy_revisions WHERE status='retired'`).Scan(&retiredCount); err != nil {
 		t.Fatal(err)
 	}
-	if activeCount != 1 || retiredCount != 1 {
+	if activeCount != 1 || retiredCount != 2 {
 		t.Fatalf("published=%d retired=%d", activeCount, retiredCount)
 	}
 
@@ -166,7 +172,7 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 		t.Fatalf("revoke backup evidence: status=%d etag=%q body=%s", backupRevoked.Code, backupRevoked.Header().Get("ETag"), backupRevoked.Body.String())
 	}
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_retention_policy'`, userID).Scan(&auditCount); err != nil || auditCount != 5 {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_retention_policy'`, userID).Scan(&auditCount); err != nil || auditCount != 7 {
 		t.Fatalf("audit count=%d error=%v", auditCount, err)
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_backup_evidence'`, userID).Scan(&auditCount); err != nil || auditCount != 2 {
@@ -313,6 +319,43 @@ func (reader *testRawDeleteEvidence) DropRawDay(_ context.Context, day time.Time
 	defer reader.mu.Unlock()
 	if !day.Equal(day.UTC().Truncate(24*time.Hour)) || queryID == "" {
 		return errors.New("invalid raw deletion request")
+	}
+	reader.dropCalls++
+	reader.dropped = true
+	return nil
+}
+
+type testArchiveDeleteEvidence struct {
+	mu        sync.Mutex
+	counters  flowch.StorageCounters
+	physical  uint64
+	dropped   bool
+	dropCalls int
+}
+
+func (reader *testArchiveDeleteEvidence) ArchiveMonthStorageCounters(context.Context, time.Time) (flowch.StorageCounters, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.dropped {
+		return flowch.StorageCounters{}, nil
+	}
+	return reader.counters, nil
+}
+
+func (reader *testArchiveDeleteEvidence) ArchiveMonthPhysicalRecords(context.Context, time.Time) (uint64, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.dropped {
+		return 0, nil
+	}
+	return reader.physical, nil
+}
+
+func (reader *testArchiveDeleteEvidence) DropArchiveMonth(_ context.Context, month time.Time, queryID string) error {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if month.Location() != time.UTC || month.Day() != 1 || queryID == "" {
+		return errors.New("invalid archive deletion request")
 	}
 	reader.dropCalls++
 	reader.dropped = true
@@ -603,6 +646,184 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	reader.mu.Unlock()
 	if receipt.Status != "succeeded" || receipt.PostDeleteRecordCount != 0 || partition.State != flowlifecycle.PartitionRawDeleted || dropCalls != 1 {
 		t.Fatalf("raw deletion did not converge: job=%+v receipt=%+v partition=%+v drops=%d", finished, receipt, partition, dropCalls)
+	}
+}
+
+func TestFlowArchiveMonthDeleteLifecycleIntegration(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.DBName = "watchdog_flow_archive_delete_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+		t.Fatal(err)
+	}
+	userID := "01JARCHDELETEADMIN00000000"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id,username,status) VALUES (?,?,'active')`, userID, "archive-delete-admin"); err != nil {
+		t.Fatal(err)
+	}
+	month := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := month.AddDate(0, 1, 0)
+	now := monthEnd.Add(40 * 24 * time.Hour)
+	policyID := "01JARCHDELETEPOLICY0000000"
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_retention_policy_revisions
+		(id,policy_version,status,bootstrap_from,raw_retention_seconds,archive_resolution_seconds,
+		 archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,max_partitions_per_run,
+		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,published_at)
+		VALUES (?,4,'published',?,86400,3600,2592000,3600,3600,7,1,1,1,?)`, policyID, month, month); err != nil {
+		t.Fatal(err)
+	}
+	dayCounters := flowlifecycle.Counters{RecordCount: 1, RawBytes: 100, RawPackets: 10, EstimatedBytes: 1_000, EstimatedPackets: 100, EstimatedValidRecords: 1}
+	for day := month; day.Before(monthEnd.Add(-24 * time.Hour)); day = day.Add(24 * time.Hour) {
+		insertArchiveDeletedDay(t, ctx, db, day, policyID, 4, dayCounters)
+	}
+	reader := &testArchiveDeleteEvidence{
+		counters: flowch.StorageCounters{RecordCount: 31, RawBytes: 3_100, RawPackets: 310, EstimatedBytes: 31_000, EstimatedPackets: 3_100, EstimatedValidRecords: 31},
+		physical: 744,
+	}
+	store := flowlifecycle.NewStore(db)
+	readiness, err := store.ArchiveMonthDeleteReadiness(ctx, month, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.EvidenceReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerMonthIncomplete) || readiness.RawDeletedDays != 30 {
+		t.Fatalf("incomplete month was accepted: %+v", readiness)
+	}
+	insertArchiveDeletedDay(t, ctx, db, monthEnd.Add(-24*time.Hour), policyID, 4, dayCounters)
+	backupID := "01JARCHDELETEBACKUP0000000"
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_backup_restore_evidence
+		(id,storage_kind,covered_from,covered_through,backup_ref,checksum_sha256,status,verified_at,restore_tested_at,restore_test_ref)
+		VALUES (?,'archive',?,?,?,REPEAT('b',64),'verified',?,?,?)`, backupID, month, monthEnd,
+		"s3://backup/flow/archive/2026-01", now.Add(-48*time.Hour), now.Add(-24*time.Hour), "restore-run/archive-2026-01"); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = store.ArchiveMonthDeleteReadiness(ctx, month, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.EvidenceReady || readiness.DeletionReady || readiness.PolicyRowVersion != 1 || readiness.BackupEvidenceID != backupID ||
+		!containsString(readiness.Blockers, flowlifecycle.DeleteBlockerApprovalRequired) {
+		t.Fatalf("complete month was not approvable: %+v", readiness)
+	}
+	admin := &principal{UserID: userID, Username: "archive-delete-admin", IsAdmin: true}
+	s := &Server{db: db, flowLifecycle: store, flowArchiveDeleteEvidence: reader, jobs: opjob.NewStore(db)}
+	readinessResponse := flowLifecycleRequest(t, s.getFlowArchiveDeleteReadiness, admin, http.MethodGet,
+		"/api/v1/flow/storage/archive-months/2026-01/delete-readiness", "month", "2026-01", nil, "")
+	if readinessResponse.Code != http.StatusOK || readinessResponse.Header().Get("ETag") != `"1"` ||
+		!strings.Contains(readinessResponse.Body.String(), `"evidence_ready":true`) {
+		t.Fatalf("archive readiness API: status=%d etag=%q body=%s", readinessResponse.Code, readinessResponse.Header().Get("ETag"), readinessResponse.Body.String())
+	}
+	approvedResponse := flowLifecycleRequest(t, s.approveFlowArchiveDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/archive-months/2026-01/actions/approve-delete", "month", "2026-01", nil, `"1"`)
+	if approvedResponse.Code != http.StatusCreated || approvedResponse.Header().Get("ETag") != `"1"` {
+		t.Fatalf("approve archive delete: status=%d body=%s", approvedResponse.Code, approvedResponse.Body.String())
+	}
+	var approved struct {
+		Approval flowlifecycle.DeletionApproval `json:"approval"`
+	}
+	if err := json.Unmarshal(approvedResponse.Body.Bytes(), &approved); err != nil {
+		t.Fatal(err)
+	}
+	if approved.Approval.StorageKind != "archive" || approved.Approval.PartitionGranularity != "month" ||
+		approved.Approval.Source.RecordCount != 31 || approved.Approval.Archive != approved.Approval.Source ||
+		approved.Approval.PhysicalRecords != reader.physical || len(approved.Approval.KafkaCoverage) != 0 {
+		t.Fatalf("archive approval did not freeze month evidence: %+v", approved.Approval)
+	}
+	executeResponse := flowLifecycleRequest(t, s.executeFlowRawDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+approved.Approval.ID+"/actions/execute", "id", approved.Approval.ID, nil, `"1"`)
+	if executeResponse.Code != http.StatusAccepted {
+		t.Fatalf("schedule archive delete: status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
+	}
+	var scheduled struct {
+		Job     opjob.Job                     `json:"job"`
+		Receipt flowlifecycle.DeletionReceipt `json:"receipt"`
+	}
+	if err := json.Unmarshal(executeResponse.Body.Bytes(), &scheduled); err != nil {
+		t.Fatal(err)
+	}
+	if scheduled.Job.JobType != flowlifecycle.ArchiveDeleteJobType || scheduled.Receipt.StorageKind != "archive" ||
+		scheduled.Receipt.PartitionGranularity != "month" || scheduled.Receipt.PhysicalRecords != reader.physical {
+		t.Fatalf("archive schedule mismatch: %+v", scheduled)
+	}
+	cancelResponse := flowLifecycleRequest(t, s.cancelOperationJob, admin, http.MethodPost,
+		"/api/v1/operation-jobs/"+scheduled.Job.ID+"/actions/cancel", "id", scheduled.Job.ID, nil, "")
+	if cancelResponse.Code != http.StatusConflict || !strings.Contains(cancelResponse.Body.String(), "destructive_job_not_cancelable") {
+		t.Fatalf("archive destructive cancel: status=%d body=%s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	workerContext, stopWorker := context.WithCancel(ctx)
+	worker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowlifecycle.ArchiveDeleteJobType, Owner: "archive-delete-integration",
+		Handler: flowlifecycle.NewArchiveDeleteHandler(store, reader), PollInterval: time.Millisecond,
+		LeaseFor: time.Second, RetryBase: time.Millisecond,
+	}
+	go worker.Run(workerContext)
+	deadline := time.Now().Add(5 * time.Second)
+	var finished opjob.Job
+	for time.Now().Before(deadline) {
+		finished, err = s.jobs.Get(ctx, scheduled.Job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if finished.Terminal() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopWorker()
+	if finished.Status != opjob.StatusSucceeded {
+		t.Fatalf("archive deletion job did not succeed: %+v", finished)
+	}
+	receipt, err := store.GetDeletionReceiptByJob(ctx, scheduled.Job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.mu.Lock()
+	dropCalls := reader.dropCalls
+	reader.mu.Unlock()
+	if receipt.Status != "succeeded" || receipt.PostDeleteRecordCount != 0 || dropCalls != 1 {
+		t.Fatalf("archive deletion did not converge: receipt=%+v drops=%d", receipt, dropCalls)
+	}
+	revokeAfterSuccess := flowLifecycleRequest(t, s.revokeFlowDeletionApproval, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+approved.Approval.ID+"/actions/revoke", "id", approved.Approval.ID, nil, `"1"`)
+	if revokeAfterSuccess.Code != http.StatusConflict {
+		t.Fatalf("successful archive approval was revoked: status=%d body=%s", revokeAfterSuccess.Code, revokeAfterSuccess.Body.String())
+	}
+}
+
+func insertArchiveDeletedDay(t testing.TB, ctx context.Context, db *sql.DB, day time.Time, policyID string, policyVersion uint64, counters flowlifecycle.Counters) {
+	t.Helper()
+	generation, err := flowlifecycle.Generation(policyVersion, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO flow_retention_partition_states
+		(source_date,policy_id,policy_version,state,generation,repair_attempt,
+		 source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
+		 archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
+		 archived_at,reconciled_at,late_checked_at,delete_eligible_at,raw_deleted_at)
+		VALUES (?,?,?,'raw_deleted',?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, day, policyID, policyVersion, generation,
+		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
+		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
+		day.Add(48*time.Hour), day.Add(48*time.Hour), day.Add(48*time.Hour), day.Add(49*time.Hour), day.Add(50*time.Hour))
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

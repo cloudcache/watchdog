@@ -341,6 +341,75 @@ WHERE event_time >= {start:DateTime('UTC')}
 	})
 }
 
+// ArchiveMonthStorageCounters reads the latest complete generation for every
+// one-hour bucket present in one UTC calendar month. The management lifecycle
+// separately proves that every UTC day in the month reached raw_deleted.
+func (r *RollupRunner) ArchiveMonthStorageCounters(ctx context.Context, monthStart time.Time) (StorageCounters, error) {
+	month, end, err := archiveMonthBounds(monthStart)
+	if err != nil {
+		return StorageCounters{}, Permanent(err)
+	}
+	if r == nil || r.executor == nil {
+		return StorageCounters{}, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	return r.storageCounters(ctx, ch.Query{
+		Body: `SELECT
+  sum(received_records) AS record_count,
+  sum(raw_bytes) AS raw_bytes,
+  sum(raw_packets) AS raw_packets,
+  sum(estimated_bytes) AS estimated_bytes,
+  sum(estimated_packets) AS estimated_packets,
+  toUInt64(sum(received_records) - sum(unknown_sampling_records)) AS estimated_valid_records
+FROM flow_aggregate_1h FINAL
+INNER JOIN (
+  SELECT bucket, max(generation) AS generation
+  FROM flow_aggregate_1h FINAL
+  WHERE bucket >= {start:DateTime('UTC')}
+    AND bucket < {end:DateTime('UTC')}
+    AND dimension_kind = '_generation'
+  GROUP BY bucket
+) AS latest USING (bucket, generation)
+WHERE bucket >= {start:DateTime('UTC')}
+  AND bucket < {end:DateTime('UTC')}
+  AND dimension_kind = 'total'`,
+		Parameters: ch.Parameters(map[string]any{
+			"start": month.Format("2006-01-02 15:04:05"),
+			"end":   end.Format("2006-01-02 15:04:05"),
+		}),
+	})
+}
+
+// ArchiveMonthPhysicalRecords includes public dimensions and generation
+// markers. It prevents an empty billable total from being mistaken for an
+// already-removed physical archive partition.
+func (r *RollupRunner) ArchiveMonthPhysicalRecords(ctx context.Context, monthStart time.Time) (uint64, error) {
+	month, end, err := archiveMonthBounds(monthStart)
+	if err != nil {
+		return 0, Permanent(err)
+	}
+	if r == nil || r.executor == nil {
+		return 0, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	return r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT count() AS value
+FROM flow_aggregate_1h FINAL
+WHERE bucket >= {start:DateTime('UTC')}
+  AND bucket < {end:DateTime('UTC')}`,
+		Parameters: ch.Parameters(map[string]any{
+			"start": month.Format("2006-01-02 15:04:05"),
+			"end":   end.Format("2006-01-02 15:04:05"),
+		}),
+	})
+}
+
+func archiveMonthBounds(value time.Time) (time.Time, time.Time, error) {
+	month := value.UTC()
+	if month.IsZero() || value.Location() != time.UTC || month.Day() != 1 || month.Hour() != 0 || month.Minute() != 0 || month.Second() != 0 || month.Nanosecond() != 0 {
+		return time.Time{}, time.Time{}, errors.New("UTC-aligned archive month is required")
+	}
+	return month, month.AddDate(0, 1, 0), nil
+}
+
 func (r *RollupRunner) storageCounters(ctx context.Context, query ch.Query) (StorageCounters, error) {
 	var recordCount, rawBytes, rawPackets, estimatedBytes, estimatedPackets, estimatedValid proto.ColUInt64
 	var result StorageCounters
