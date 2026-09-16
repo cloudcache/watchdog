@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/cloudcache/watchdog/internal/snmpch"
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,11 +33,11 @@ func (s *Server) listDeviceEvents(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
-	result := make([]watchdog.SNMPEvent, 0, len(items))
+	result := make([]snmpdomain.Event, 0, len(items))
 	for _, item := range items {
-		result = append(result, watchdog.SNMPEvent{
-			ID: watchdog.ID(item.ID), DeviceID: watchdog.ID(item.DeviceID),
-			EntityType: watchdog.SNMPCollectorEntityType(item.EntityType), EntityID: watchdog.ID(item.EntityID),
+		result = append(result, snmpdomain.Event{
+			ID: item.ID, DeviceID: item.DeviceID,
+			EntityType: snmpdomain.EntityType(item.EntityType), EntityID: item.EntityID,
 			Source: item.Source, Severity: item.Severity, EventType: item.EventType,
 			Message: item.Message, Raw: item.Raw, OccurredAt: item.OccurredAt, CreatedAt: item.IngestedAt,
 		})

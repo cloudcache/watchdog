@@ -2,9 +2,8 @@ package server
 
 import (
 	"encoding/json"
-	"time"
 
-	watchdogdomain "github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -39,7 +38,7 @@ func (s *Server) deviceGraphOverview(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-	ports := make([]watchdogdomain.NetworkPort, 0)
+	ports := make([]snmpdomain.GraphPort, 0)
 	for rows.Next() {
 		port, err := scanPort(rows)
 		if err != nil {
@@ -53,17 +52,12 @@ func (s *Server) deviceGraphOverview(c *gin.Context) {
 		return
 	}
 
-	bgpSessions := make([]watchdogdomain.BGPSession, 0)
 	var hasBGP bool
 	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT EXISTS(SELECT 1 FROM bgp_sessions WHERE device_id=?)", deviceID).Scan(&hasBGP); err != nil {
 		writeSQLError(c, err)
 		return
 	}
-	if hasBGP {
-		bgpSessions = append(bgpSessions, watchdogdomain.BGPSession{})
-	}
-
-	sensors := make([]watchdogdomain.NetworkDeviceSensor, 0)
+	sensors := make([]snmpdomain.GraphSensor, 0)
 	sensorRows, err := s.db.QueryContext(c.Request.Context(), "SELECT class,label,unit FROM sensors WHERE device_id=?", deviceID)
 	if err != nil {
 		writeSQLError(c, err)
@@ -71,7 +65,7 @@ func (s *Server) deviceGraphOverview(c *gin.Context) {
 	}
 	defer sensorRows.Close()
 	for sensorRows.Next() {
-		var sensor watchdogdomain.NetworkDeviceSensor
+		var sensor snmpdomain.GraphSensor
 		if err := sensorRows.Scan(&sensor.Class, &sensor.Name, &sensor.Unit); err != nil {
 			writeSQLError(c, err)
 			return
@@ -83,7 +77,7 @@ func (s *Server) deviceGraphOverview(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, watchdogdomain.NewNetworkDeviceOverviewDashboard(graphNetworkDevice(device), ports, bgpSessions, sensors))
+	c.JSON(200, snmpdomain.NewDeviceOverviewDashboard(graphNetworkDevice(device), ports, hasBGP, sensors))
 }
 
 func (s *Server) portGraphOverview(c *gin.Context) {
@@ -95,29 +89,18 @@ func (s *Server) portGraphOverview(c *gin.Context) {
 	if _, ok := s.portScope(c, port.DeviceID, port.ID); !ok {
 		return
 	}
-	c.JSON(200, watchdogdomain.NewNetworkPortOverviewDashboard(graphNetworkPort(port)))
+	c.JSON(200, snmpdomain.NewPortOverviewDashboard(graphNetworkPort(port)))
 }
 
-func graphNetworkDevice(value deviceRecord) watchdogdomain.NetworkDevice {
-	return watchdogdomain.NetworkDevice{
-		ID:            watchdogdomain.ID(value.ID),
-		Vendor:        value.Vendor,
-		Model:         value.Model,
-		Platform:      value.Platform,
-		OSName:        value.OS,
-		OSVersion:     value.OSVersion,
-		SysObjectID:   value.SysObjectID,
-		SysName:       value.SysName,
-		SysDescr:      value.SysDescr,
-		SysLocation:   value.SysLocation,
-		Uptime:        time.Duration(value.UptimeSeconds) * time.Second,
-		SNMPProfileID: watchdogdomain.ID(value.SNMPProfileID.String),
-		SNMPPort:      uint16(value.SNMPPort.Int64),
-		UpdatedAt:     value.UpdatedAt,
+func graphNetworkDevice(value deviceRecord) snmpdomain.GraphDevice {
+	return snmpdomain.GraphDevice{
+		ID:      value.ID,
+		Model:   value.Model,
+		SysName: value.SysName,
 	}
 }
 
-func graphNetworkPort(value portRecord) watchdogdomain.NetworkPort {
+func graphNetworkPort(value portRecord) snmpdomain.GraphPort {
 	metadata := map[string]string{}
 	var raw map[string]any
 	if json.Unmarshal(value.Metadata, &raw) == nil {
@@ -130,21 +113,10 @@ func graphNetworkPort(value portRecord) watchdogdomain.NetworkPort {
 	if value.IfType != "" {
 		metadata["if_type"] = value.IfType
 	}
-	speed := uint64(0)
-	if value.IfSpeed.Valid && value.IfSpeed.Int64 > 0 {
-		speed = uint64(value.IfSpeed.Int64)
-	}
-	return watchdogdomain.NetworkPort{
-		ID:          watchdogdomain.ID(value.ID),
-		DeviceID:    watchdogdomain.ID(value.DeviceID),
-		IfIndex:     value.IfIndex,
-		IfName:      value.IfName,
-		IfAlias:     value.IfAlias,
-		IfDescr:     value.IfDescr,
-		AdminStatus: value.AdminStatus,
-		OperStatus:  value.OperStatus,
-		SpeedBps:    speed,
-		Metadata:    metadata,
-		UpdatedAt:   value.UpdatedAt,
+	return snmpdomain.GraphPort{
+		ID:       value.ID,
+		IfName:   value.IfName,
+		IfDescr:  value.IfDescr,
+		Metadata: metadata,
 	}
 }
