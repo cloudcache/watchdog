@@ -285,6 +285,10 @@
 
 - [x] **KISS-08F13 旧 Module Center HTTP 删除（本提交）**：单域固定产品不存在 tenant module enable/disable 或 runtime target-kind registry 管理面；全库扫描确认前端和 Gin 无 `/api/v1/modules`、`/api/v1/tenants/:id/modules` 消费者。删除旧 `net/http` module handler、router 注册和只验证该旧面的测试；暂留仍被旧 QueryGateway/Flow 测试引用的底层 registry，不在本切片越界修改 Flow。全库 test/vet/build、前端零 URL 和旧 handler 零引用为提交门禁。
 
+- [x] **KISS-08F14 旧 Tenant discovery HTTP 删除（本提交）**：当前单域 Gin、前端和 agent 均无租户选择/切换；运行态 `/api/v1/tenants` 与 `/api/v1/me/tenants` 已是 404。删除遗留 test-router 的两条 tenant discovery 路由及 `APIV1RouterConfig.TenantDiscovery/Tenants` 注入点，以 404 反向测试冻结边界。仍被旧 Flow rollup 内部扫描引用的 `TenantRepository` 暂留，未修改 Flow 数据面、rollup 或 worker；目标包测试、全库 test/vet/build 和旧 router 注入零引用为提交门禁。
+
+> **2026-09-16 运行门禁状态**：统一 `build/watchdog-server` 已由当前 HEAD 重建并替换 9 月 15 日旧进程；真实 `:8091` 返回 MySQL/ClickHouse/`runtime_ready=true`，canonical dashboard/SNMP MIB/BGP/graph/agent 路由在未登录时均返回 401，已删除的 module/tenant/旧 role-permission 路由返回 404，`8090 -> 8091` CORS 预检为 204。独立前端可打开登录页且控制台无 error/warn。以上关闭的是**进程、依赖和路由运行门禁**；登录后 device/SNMP/agent/dashboard 的真实业务读写仍须有效管理员会话验证，未因 401 探针而虚假标完。
+
 - [ ] **编码**：KISS-01 已保证 PB 为零；本包只删除 VM/VLogs、tenant、module/resource/dataset/provider registries、旧 targets、兼容 adapter 和废弃配置。
 - [ ] **静态门禁**：仓库扫描无 `pocketbase`、`tenant_id`、tenant header、VictoriaMetrics/VictoriaLogs、DatasetProvider 和 target/network-device 双身份运行代码。
 - [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。

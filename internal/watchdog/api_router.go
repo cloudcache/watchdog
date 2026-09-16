@@ -14,7 +14,6 @@ type PlatformRuntimeHealth struct {
 
 type APIV1RouterConfig struct {
 	Auth                   AuthContextAdapter
-	TenantDiscovery        AuthContextAdapter
 	Targets                TargetRepository
 	Agents                 AgentRepository
 	Network                NetworkRepository
@@ -64,7 +63,6 @@ type APIV1RouterConfig struct {
 	DimensionConsumers     AddressDimensionConsumerStatusReader
 	DimensionGC            AddressDimensionGCRepository
 	DimensionKeys          AddressDimensionPublicKeyResolver
-	Tenants                TenantRepository
 	Readiness              func(context.Context) error
 	RuntimeHealth          func() PlatformRuntimeHealth
 	RuntimeMetrics         func() []byte
@@ -87,10 +85,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 	auth := AuthMiddleware(cfg.Auth)
 	addressViewAdapter, addressAdminAdapter := addressLibraryAuthAdapters(cfg.Auth, cfg.AddressLibraryOwner)
 	addressViewAuth, addressAdminAuth := AuthMiddleware(addressViewAdapter), AuthMiddleware(addressAdminAdapter)
-	tenantDiscovery := auth
-	if cfg.TenantDiscovery != nil {
-		tenantDiscovery = AuthMiddleware(cfg.TenantDiscovery)
-	}
 	mux.Handle("GET /api/v1/health", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		WriteAPIJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
@@ -134,24 +128,6 @@ func NewAPIV1Router(cfg APIV1RouterConfig) http.Handler {
 		}
 		WriteAPIJSON(w, http.StatusOK, user)
 	})))
-	listTenants := tenantDiscovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity, _ := AuthFromContext(r.Context())
-		items := identity.AvailableTenants
-		if items == nil && cfg.Tenants != nil {
-			var err error
-			items, err = cfg.Tenants.ListTenantsForUser(r.Context(), identity.UserID)
-			if err != nil {
-				WriteAPIError(w, http.StatusServiceUnavailable, APIErrorServiceUnavailable, "Tenant membership is unavailable", nil)
-				return
-			}
-		}
-		if items == nil {
-			items = []Tenant{}
-		}
-		WriteAPIJSON(w, http.StatusOK, map[string]any{"items": items})
-	}))
-	mux.Handle("GET /api/v1/tenants", listTenants)
-	mux.Handle("GET /api/v1/me/tenants", listTenants)
 	if cfg.Targets != nil {
 		registerTargetRoutes(mux, auth, cfg.Targets, cfg.SeriesCleaner, cfg.Network, cfg.DiscoveryJobs, cfg.SNMP, cfg.TargetDeletePreview, cfg.OperationJobs)
 	}

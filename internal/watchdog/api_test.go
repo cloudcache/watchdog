@@ -184,19 +184,14 @@ func TestNewAPIV1RouterServesMe(t *testing.T) {
 	}
 }
 
-func TestNewAPIV1RouterUsesTenantDiscoveryAuth(t *testing.T) {
-	router := NewAPIV1Router(APIV1RouterConfig{
-		Auth: func(*http.Request) (AuthContext, error) {
-			return AuthContext{}, &AuthAdapterError{Status: http.StatusBadRequest, Code: APIErrorInvalidRequest, Message: "scope is required"}
-		},
-		TenantDiscovery: func(*http.Request) (AuthContext, error) {
-			return AuthContext{AvailableTenants: []Tenant{{ID: "tenant-a", Name: "Tenant A", Status: "active"}}}, nil
-		},
-	})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me/tenants", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ID":"tenant-a"`) {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+func TestNewAPIV1RouterDoesNotExposeTenantDiscoveryRoutes(t *testing.T) {
+	router := NewAPIV1Router(APIV1RouterConfig{})
+	for _, path := range []string{"/api/v1/tenants", "/api/v1/me/tenants"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, rec.Code)
+		}
 	}
 }
 
