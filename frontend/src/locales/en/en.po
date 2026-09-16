@@ -959,6 +959,10 @@ msgstr "Batch"
 msgid "Batch Apply"
 msgstr "Batch Apply"
 
+#: src/components/routes/address-library.tsx
+msgid "Base Data"
+msgstr "Base Data"
+
 #: src/components/routes/system/charts/sensor-charts.tsx
 msgid "Battery"
 msgstr "Battery"
@@ -4143,6 +4147,10 @@ msgstr "limit"
 #: src/components/routes/address-library.tsx
 msgid "Lines"
 msgstr "Lines"
+
+#: src/components/routes/address-library.tsx
+msgid "Lines & Regions"
+msgstr "Lines & Regions"
 
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "Load Average"
@@ -7998,6 +8006,10 @@ msgstr "Version {0}"
 msgid "Version {0}: {verb} applied"
 msgstr "Version {0}: {verb} applied"
 
+#: src/components/routes/address-library.tsx
+msgid "Versions"
+msgstr "Versions"
+
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/export-detail.tsx
@@ -8175,6 +8187,11 @@ msgstr "When using POST, each heartbeat includes a JSON payload with system stat
 #: src/components/routes/flow-vpn.tsx
 msgid "Window end"
 msgstr "Window end"
+
+#: src/components/routes/address-library.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Workbench"
+msgstr "Workbench"
 
 #: src/components/routes/settings/tokens-fingerprints.tsx
 #~ msgctxt "Button to copy install command"

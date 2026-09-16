@@ -865,6 +865,10 @@ msgstr "批次"
 msgid "Batch Apply"
 msgstr "批量应用"
 
+#: src/components/routes/address-library.tsx
+msgid "Base Data"
+msgstr "基础数据"
+
 #: src/components/routes/system/charts/sensor-charts.tsx
 msgid "Battery"
 msgstr "电池"
@@ -3640,6 +3644,10 @@ msgstr "限制"
 #: src/components/routes/address-library.tsx
 msgid "Lines"
 msgstr "线路"
+
+#: src/components/routes/address-library.tsx
+msgid "Lines & Regions"
+msgstr "线路与区域"
 
 #: src/components/routes/system/charts/load-average-chart.tsx
 msgid "Load Average"
@@ -6891,6 +6899,10 @@ msgstr "版本 {0}"
 msgid "Version {0}: {verb} applied"
 msgstr "版本 {0}：已应用 {verb}"
 
+#: src/components/routes/address-library.tsx
+msgid "Versions"
+msgstr "版本"
+
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/address-revisions.tsx
 #: src/components/routes/export-detail.tsx
@@ -7032,6 +7044,11 @@ msgstr "使用 POST 时，每个 heartbeat 都包含一个 JSON 有效载荷，�
 #: src/components/routes/flow-vpn.tsx
 msgid "Window end"
 msgstr "窗口结束"
+
+#: src/components/routes/address-library.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Workbench"
+msgstr "工作台"
 
 #. Disk write
 #: src/components/routes/system/charts/disk-charts.tsx
