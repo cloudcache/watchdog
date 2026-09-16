@@ -34,6 +34,7 @@ func (s *Server) startFlowArchive() error {
 	}
 	store := flowlifecycle.NewStore(s.db)
 	s.flowLifecycle = store
+	s.flowDeleteEvidence = runner
 	workerContext, cancel := context.WithCancel(context.Background())
 	s.flowArchiveCancel = cancel
 	worker := &opjob.Worker{

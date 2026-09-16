@@ -53,8 +53,27 @@ func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 
 	storage := auth.Group("/flow/storage")
 	storage.GET("/partitions", s.requirePermission("job.view"), s.listFlowRetentionPartitions)
+	storage.GET("/partitions/:date/delete-readiness", s.requirePermission("job.view"), s.getFlowRawDeleteReadiness)
 	storage.GET("/watermarks", s.requirePermission("job.view"), s.listFlowReconciliationWatermarks)
 	storage.GET("/deletion-receipts", s.requirePermission("job.view"), s.listFlowDeletionReceipts)
+}
+
+func (s *Server) getFlowRawDeleteReadiness(c *gin.Context) {
+	day, err := time.Parse(time.DateOnly, strings.TrimSpace(c.Param("date")))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_source_date", "source date must use YYYY-MM-DD")
+		return
+	}
+	if s.flowLifecycle == nil || s.flowDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle evidence reader is unavailable")
+		return
+	}
+	readiness, err := s.flowLifecycle.RawDayDeleteReadiness(c.Request.Context(), day, time.Now().UTC(), s.flowDeleteEvidence)
+	if err != nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_evidence_failed", "Flow lifecycle evidence could not be verified")
+		return
+	}
+	c.JSON(http.StatusOK, readiness)
 }
 
 func (s *Server) listFlowRetentionPolicies(c *gin.Context) {

@@ -153,19 +153,23 @@ func (watermark Watermark) Validate() error {
 // deletion receipt. LastOffsetExclusive is derived from all receipts whose
 // min/max event time intersects the UTC partition being removed.
 type OffsetCoverage struct {
-	SourceStreamID       string `json:"source_stream_id"`
-	KafkaTopic           string `json:"kafka_topic"`
-	ConsumerGroup        string `json:"consumer_group"`
-	KafkaPartition       uint32 `json:"kafka_partition"`
-	FirstOffset          uint64 `json:"first_offset"`
-	LastOffsetExclusive  uint64 `json:"last_offset_exclusive"`
-	CommittedNextOffset  uint64 `json:"committed_next_offset"`
-	ReconciledNextOffset uint64 `json:"reconciled_next_offset"`
+	SourceStreamID       string    `json:"source_stream_id"`
+	KafkaTopic           string    `json:"kafka_topic"`
+	ConsumerGroup        string    `json:"consumer_group"`
+	KafkaPartition       uint32    `json:"kafka_partition"`
+	BootstrapOffset      uint64    `json:"bootstrap_offset"`
+	FirstOffset          uint64    `json:"first_offset"`
+	LastOffsetExclusive  uint64    `json:"last_offset_exclusive"`
+	CommittedNextOffset  uint64    `json:"committed_next_offset"`
+	ReconciledNextOffset uint64    `json:"reconciled_next_offset"`
+	CommittedSnapshotAt  time.Time `json:"committed_snapshot_at"`
+	VerifiedAt           time.Time `json:"verified_at"`
 }
 
 func (coverage OffsetCoverage) validate() error {
 	if strings.TrimSpace(coverage.SourceStreamID) == "" || strings.TrimSpace(coverage.KafkaTopic) == "" ||
-		strings.TrimSpace(coverage.ConsumerGroup) == "" || coverage.FirstOffset >= coverage.LastOffsetExclusive ||
+		strings.TrimSpace(coverage.ConsumerGroup) == "" || coverage.BootstrapOffset > coverage.FirstOffset ||
+		coverage.FirstOffset >= coverage.LastOffsetExclusive || coverage.CommittedSnapshotAt.IsZero() || coverage.VerifiedAt.IsZero() ||
 		coverage.LastOffsetExclusive > coverage.CommittedNextOffset || coverage.LastOffsetExclusive > coverage.ReconciledNextOffset {
 		return ErrDeleteLocked
 	}
@@ -173,6 +177,7 @@ func (coverage OffsetCoverage) validate() error {
 }
 
 type BackupEvidence struct {
+	ID              string
 	StorageKind     string
 	CoveredFrom     time.Time
 	CoveredThrough  time.Time
@@ -219,8 +224,8 @@ func ValidateRawDayDelete(guard RawDayDeleteGuard) error {
 		return ErrDeleteLocked
 	}
 	day := UTCDate(guard.SourceDate)
-	wantGeneration, err := Generation(policy.Version, uint32(guard.Generation))
-	if err != nil || uint64(uint32(guard.Generation>>32)) != policy.Version || wantGeneration != guard.Generation {
+	version, _, err := SplitGeneration(guard.Generation)
+	if err != nil || uint64(version) != policy.Version {
 		return ErrDeleteLocked
 	}
 	earliest, err := RawDeleteEligibleAt(day, policy)

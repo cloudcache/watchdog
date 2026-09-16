@@ -210,6 +210,34 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	}
 }
 
+func TestRealClickHouseRawDayOffsetCoverage(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_retention_coverage")
+	day := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	insertIntegrationBatch(t, ctx, native, integrationBatch(10, day.Add(time.Hour),
+		integrationRecord(1, day.Add(time.Hour), "geo-city-a", 100)))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(11, day.Add(24*time.Hour),
+		integrationRecord(1, day.Add(23*time.Hour), "geo-city-a", 200),
+		integrationRecord(2, day.Add(25*time.Hour), "geo-city-b", 300)))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(12, day.Add(26*time.Hour),
+		integrationRecord(1, day.Add(26*time.Hour), "geo-city-b", 400)))
+	runner, err := NewRollupRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage, err := runner.DayOffsetCoverage(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coverage) != 1 {
+		t.Fatalf("coverage=%+v", coverage)
+	}
+	got := coverage[0]
+	if got.SourceStreamID != "cluster-a:raw-v1:incarnation-1" || got.KafkaTopic != "watchdog.flow.raw-v1" ||
+		got.KafkaPartition != 3 || got.FirstOffset != 10 || got.LastOffsetExclusive != 12 {
+		t.Fatalf("UTC-day coverage=%+v", got)
+	}
+}
+
 func TestRealClickHouseDetailPaginationAndLimits(t *testing.T) {
 	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_detail")
 

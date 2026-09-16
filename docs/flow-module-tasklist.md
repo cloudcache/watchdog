@@ -37,7 +37,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | V2-A schema/cutover | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | 实现已提交；维护窗口/回滚演练待完成 |
 | V2-B writer/receipt | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；组合故障/性能门禁待完成 |
 | V2-C query/reconcile/export | [x] | [x] | [x] | [ ] | [x] | [ ] | [ ] | [x] | 实现已提交；端到端同参数对账待完成 |
-| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | 非破坏路径已提交；物理删除保持锁定 |
+| V2-D aging/downsample | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | L5A 删除证据只读闭环；批准、恢复演练和物理删除保持锁定 |
 
 详细可勾选项与未满足门禁只维护在 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) §8；本页不复制第二套状态。
 

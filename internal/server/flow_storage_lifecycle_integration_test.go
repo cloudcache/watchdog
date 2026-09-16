@@ -238,6 +238,146 @@ func (runner *testRetryArchiveRunner) DayStorageCounters(context.Context, time.T
 	return counters, counters, nil
 }
 
+type testRawDeleteEvidence struct {
+	counters flowch.StorageCounters
+	coverage []flowch.DayOffsetCoverage
+}
+
+func (reader *testRawDeleteEvidence) DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error) {
+	return reader.counters, reader.counters, nil
+}
+
+func (reader *testRawDeleteEvidence) DayOffsetCoverage(context.Context, time.Time) ([]flowch.DayOffsetCoverage, error) {
+	return append([]flowch.DayOffsetCoverage(nil), reader.coverage...), nil
+}
+
+func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.DBName = "watchdog_flow_delete_readiness_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := day.Add(5 * 24 * time.Hour)
+	policyID := "01JDELETEPOLICY0000000000"
+	generation, err := flowlifecycle.Generation(3, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_retention_policy_revisions
+		(id,policy_version,status,bootstrap_from,raw_retention_seconds,archive_resolution_seconds,
+		 archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,max_partitions_per_run,
+		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,published_at)
+		VALUES (?,3,'published',?,86400,3600,0,3600,3600,7,1,0,1,?)`, policyID, day, day); err != nil {
+		t.Fatal(err)
+	}
+	counters := flowch.StorageCounters{RecordCount: 7, RawBytes: 100, RawPackets: 10, EstimatedBytes: 900, EstimatedPackets: 90, EstimatedValidRecords: 6}
+	eligible := day.Add(49 * time.Hour)
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_retention_partition_states
+		(source_date,policy_id,policy_version,state,generation,repair_attempt,
+		 source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
+		 archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
+		 archived_at,reconciled_at,late_checked_at,delete_eligible_at)
+		VALUES (?,?,3,'delete_eligible',?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, day, policyID, generation,
+		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
+		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
+		day.Add(48*time.Hour), day.Add(48*time.Hour), day.Add(48*time.Hour), eligible); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_reconciliation_watermarks
+		(source_stream_id,kafka_topic,consumer_group,kafka_partition,bootstrap_offset,committed_next_offset,reconciled_next_offset,
+		 status,mismatch_count,committed_snapshot_at,last_verified_at)
+		VALUES ('site-a:boot-1','watchdog.flow.raw','watchdog-flow-worker',0,0,30,30,'healthy',0,?,?)`, day.Add(3*24*time.Hour), day.Add(3*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	backupID := "01JDELETEBACKUP0000000000"
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_backup_restore_evidence
+		(id,storage_kind,covered_from,covered_through,backup_ref,checksum_sha256,status,verified_at,restore_tested_at)
+		VALUES (?,'raw',?,?,?,REPEAT('a',64),'verified',?,?)`, backupID, day, day.Add(24*time.Hour), "s3://backup/flow/2026-01-01", day.Add(3*24*time.Hour), day.Add(4*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	reader := &testRawDeleteEvidence{counters: counters, coverage: []flowch.DayOffsetCoverage{{
+		SourceStreamID: "site-a:boot-1", KafkaTopic: "watchdog.flow.raw", KafkaPartition: 0,
+		FirstOffset: 10, LastOffsetExclusive: 21,
+	}}}
+	store := flowlifecycle.NewStore(db)
+	readiness, err := store.RawDayDeleteReadiness(ctx, day, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.EvidenceReady || !readiness.DeletionReady || len(readiness.Blockers) != 0 || readiness.BackupEvidenceID != backupID {
+		t.Fatalf("ready evidence=%+v", readiness)
+	}
+	s := &Server{flowLifecycle: store, flowDeleteEvidence: reader}
+	response := flowLifecycleRequest(t, s.getFlowRawDeleteReadiness, &principal{IsAdmin: true}, http.MethodGet,
+		"/api/v1/flow/storage/partitions/2026-01-01/delete-readiness", "date", "2026-01-01", nil, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"evidence_ready":true`) || !strings.Contains(response.Body.String(), `"deletion_ready":true`) {
+		t.Fatalf("readiness API status=%d body=%s", response.Code, response.Body.String())
+	}
+	var state string
+	var rowVersion uint64
+	if err := db.QueryRowContext(ctx, `SELECT state,row_version FROM flow_retention_partition_states WHERE source_date=?`, day).Scan(&state, &rowVersion); err != nil {
+		t.Fatal(err)
+	}
+	if state != flowlifecycle.PartitionDeleteEligible || rowVersion != 1 {
+		t.Fatalf("readiness check mutated partition state=%q row_version=%d", state, rowVersion)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE flow_retention_partition_states SET state='reconciled' WHERE source_date=?`, day); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = store.RawDayDeleteReadiness(ctx, day, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerApprovalRequired) {
+		t.Fatalf("evidence must not imply approval: %+v", readiness)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE flow_retention_partition_states SET state='delete_eligible' WHERE source_date=?`, day); err != nil {
+		t.Fatal(err)
+	}
+	missingWatermarkReader := &testRawDeleteEvidence{counters: counters, coverage: append(append([]flowch.DayOffsetCoverage(nil), reader.coverage...), flowch.DayOffsetCoverage{
+		SourceStreamID: "site-b:boot-1", KafkaTopic: "watchdog.flow.raw", KafkaPartition: 1,
+		FirstOffset: 40, LastOffsetExclusive: 42,
+	})}
+	readiness, err = store.RawDayDeleteReadiness(ctx, day, now, missingWatermarkReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerWatermarkMissing) {
+		t.Fatalf("partially proven Kafka coverage was accepted: %+v", readiness)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE flow_reconciliation_watermarks SET reconciled_next_offset=20,status='mismatch',mismatch_count=1 WHERE source_stream_id='site-a:boot-1' AND kafka_partition=0`); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = store.RawDayDeleteReadiness(ctx, day, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerWatermarkUnhealthy) || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerWatermarkBehind) {
+		t.Fatalf("unsafe evidence was accepted: %+v", readiness)
+	}
+}
+
 func TestFlowArchiveOperationJobRetriesFromCheckpointIntegration(t *testing.T) {
 	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
 	if baseDSN == "" {

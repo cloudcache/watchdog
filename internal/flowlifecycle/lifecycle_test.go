@@ -81,7 +81,7 @@ func TestRawDeleteGuardRequiresEveryProof(t *testing.T) {
 		Now: earliest.Add(time.Second), SourceDate: day, Policy: policy,
 		State: PartitionDeleteEligible, Generation: generation, ReconciledAt: earliest.Add(-time.Hour), DeleteEligibleAt: earliest,
 		Source: counters, Archive: counters,
-		Coverage: []OffsetCoverage{{SourceStreamID: "stream-a", KafkaTopic: "raw", ConsumerGroup: "worker", FirstOffset: 50, LastOffsetExclusive: 61, CommittedNextOffset: 62, ReconciledNextOffset: 61}},
+		Coverage: []OffsetCoverage{{SourceStreamID: "stream-a", KafkaTopic: "raw", ConsumerGroup: "worker", BootstrapOffset: 10, FirstOffset: 50, LastOffsetExclusive: 61, CommittedNextOffset: 62, ReconciledNextOffset: 61, CommittedSnapshotAt: earliest.Add(-2 * time.Hour), VerifiedAt: earliest.Add(-time.Hour)}},
 		Backup:   &BackupEvidence{StorageKind: "raw", CoveredFrom: day, CoveredThrough: day.Add(24 * time.Hour), Status: "verified", VerifiedAt: day.Add(48 * time.Hour), RestoreTestedAt: day.Add(48 * time.Hour)},
 	}
 	if err := ValidateRawDayDelete(guard); err != nil {

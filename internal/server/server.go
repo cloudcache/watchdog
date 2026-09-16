@@ -65,6 +65,7 @@ type Server struct {
 	flowReconciliationCancel context.CancelFunc
 	flowArchiveCancel        context.CancelFunc
 	flowLifecycle            *flowlifecycle.Store
+	flowDeleteEvidence       flowlifecycle.RawDayEvidenceReader
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey
@@ -326,6 +327,7 @@ func (s *Server) stopRuntime() {
 	s.snmpMetrics = nil
 	s.flowQuery = nil
 	s.flowLifecycle = nil
+	s.flowDeleteEvidence = nil
 	s.runtimeReady.Store(false)
 }
 

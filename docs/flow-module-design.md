@@ -60,9 +60,11 @@ router/switch
 | 生命周期 | MySQL 全局 immutable policy + UTC 日状态；候选日必须越过 `max(raw_retention, late_arrival_window)`，再由 `operation_jobs` 写 24 个 1h bucket 并核对守恒；每 6h 轮转复核迟到数据，差异进入下一 repair generation |
 | generation | `(policy_version << 32) | repair_attempt`；新策略和 repair 单调前进，不与 legacy generation 冲突 |
 | 查询 | 连续 reconciled 日之前读 1h archive，之后读 raw；两段互斥且 union 后再做全局 TopN。1m 和未物化的联合维度读 raw |
-| 删除 | 当前 fail closed；`raw_delete_enabled=true` 不可发布。只有 Kafka 日覆盖、delete grace、审计和故障恢复门禁完成后才新增显式 delete handler |
+| 删除 | 当前 fail closed；`raw_delete_enabled=true` 不可发布。L5A 已提供 Kafka 日覆盖/水位/counter/restore evidence 的只读就绪度；只有批准、真实恢复和故障门禁完成后才新增显式 delete handler |
 
-管理 API 固定为 `GET/POST /api/v1/flow/storage/policies`、`GET/PATCH/DELETE /api/v1/flow/storage/policies/{id}`、`POST .../{id}/actions/publish` 和 `GET /api/v1/flow/storage/partitions`。修改/删除 draft 与发布均使用 row-version/`If-Match`，整个安装同时只能有一个 published policy。server 内的固定扫描预算只限制单轮工作量，不定义保留时长；不存在第二套 `flow_storage` 天数配置。归档 worker 复用 `operation_jobs` 的 lease/heartbeat/cancel/retry/checkpoint，失败后从 `next_hour` 续跑，同 generation 重建幂等。MySQL 只把连续 `reconciled/delete_eligible/raw_deleted` UTC 日暴露为 archive boundary；首个缺口、运行中或失败日立即停止边界，查询从该处读取 raw，禁止按年龄猜测归档完整。物理删除仍未启动。
+管理 API 固定为 `GET/POST /api/v1/flow/storage/policies`、`GET/PATCH/DELETE /api/v1/flow/storage/policies/{id}`、`POST .../{id}/actions/publish`、`GET /api/v1/flow/storage/partitions` 和只读 `GET /api/v1/flow/storage/partitions/{YYYY-MM-DD}/delete-readiness`。修改/删除 draft 与发布均使用 row-version/`If-Match`，整个安装同时只能有一个 published policy。server 内的固定扫描预算只限制单轮工作量，不定义保留时长；不存在第二套 `flow_storage` 天数配置。归档 worker 复用 `operation_jobs` 的 lease/heartbeat/cancel/retry/checkpoint，失败后从 `next_hour` 续跑，同 generation 重建幂等。MySQL 只把连续 `reconciled/delete_eligible/raw_deleted` UTC 日暴露为 archive boundary；首个缺口、运行中或失败日立即停止边界，查询从该处读取 raw，禁止按年龄猜测归档完整。物理删除仍未启动。
+
+删除就绪度读取从 `flow_ingest_receipts FINAL` 聚合所有 `record_count>0` 且 `[min_event_time,max_event_time]` 与目标 UTC 日相交的消息，得到每个 `(source_stream_id,kafka_topic,kafka_partition)` 的 `[min(offset),max(offset)+1)`；跨午夜消息会被保守纳入两日。每个范围必须匹配 MySQL 同 stream/partition 的唯一水位，topic/consumer group 不漂移、`bootstrap_offset<=first_offset`、状态 healthy、mismatch 为零、committed snapshot 与 last verified 时间非空，且 committed/reconciled next-offset 都越过范围末端。随后重新读取 raw/1h archive 六项 counter 并与持久分区状态一致，按策略要求选择覆盖整日且已 restore-tested 的 backup evidence。API 分开返回 `evidence_ready` 和 `deletion_ready`：前者不包含删除开关与人工批准，后者必须通过完整 fail-closed guard；读取不会把 `reconciled` 推成 `delete_eligible`，不会创建 deletion receipt，也不会执行 ClickHouse DDL。
 
 ## 2. RawFlow、Kafka 与 collector
 

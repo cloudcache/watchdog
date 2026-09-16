@@ -94,7 +94,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 归档 generation 固定编码为 `(policy_version << 32) | repair_attempt`。这保证新策略的首次构建严格高于任何旧策略 repair；迁移 011 会拒绝 legacy generation 已进入高 32-bit 命名空间的数据库。任务幂等键包含 UTC 日、策略版本和 repair attempt，取消、租约接管或失败重试不能复用更旧 generation 覆盖新结果。调度持久化顺序固定为 `enqueue operation job -> bind sealed partition state/job/generation -> advance watermark`；任一步失败重扫都由幂等键收敛，绝不能在分区状态存在前推进水位。被清理的 terminal job 以 `job.id IS NULL` 继续进入 repair 候选，不能把 UTC 日永久搁浅。
 
-`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。原因不是 downsample 尚不可用，而是物理删除还缺少 durable Kafka committed-offset 日覆盖证明；仅有 ClickHouse receipt 不能证明 Kafka 已提交窗口。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。两类删除在独立故障注入、审计与恢复门禁完成前不得由 TTL 或人工 SQL 绕过。
+`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。两类删除在真实备份恢复、批准状态、独立故障注入、审计与恢复门禁完成前不得由 TTL 或人工 SQL 绕过。
 
 ## 5. 查询与导出切换
 
@@ -118,10 +118,11 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 | CH 自然坐标表、逐消息 receipt、无固定 TTL、legacy 保留 | `deploy/migration/clickhouse/011_flow_storage_v2.sql` | 维护窗口执行；worker readiness 拒绝 V1/V2 混用 |
 | worker `source_stream_id`、自然坐标写入、无逐记录 hash | `cmd/watchdog-flow-worker`、`internal/flowworker`、`internal/flowch` | production 必须显式提供 stream incarnation ID |
 | count/counter reconciliation | `internal/flowch/reconciliation*.go` | 调用方必须提供 Kafka committed-next-offset；扫描有界且不完整不报伪零 |
-| system reconciliation job | `internal/flowstream/committed_offsets.go`、`internal/watchdog/flow_reconciliation_*` | franz-go 向真实 group coordinator 读稳定水位；显式 cutover、冻结快照、checkpoint/system watermark 与五类 gauge；不解锁 raw delete |
+| system reconciliation job | `internal/flowstream/committed_offsets.go`、`internal/flowlifecycle/reconciliation*.go`、`internal/server/flow_reconciliation.go` | franz-go 向真实 group coordinator 读稳定水位；显式 cutover、冻结快照、checkpoint/system watermark；不解锁 raw delete |
 | 策略、UTC 日状态、水位和 CAS API | KISS migration `0033_flow_storage_lifecycle.sql`、`internal/flowlifecycle`、`internal/server/flow_storage_lifecycle.go` | 单域 policy draft/publish/retire；`raw_delete_enabled=true` 稳定拒绝；旧 tenant 管理面不再作为当前实现 |
-| aging/downsample operation job | `internal/watchdog/flow_storage_jobs.go`、`internal/flowch/rollup.go` | 只写 1h archive；守恒不通过进入 failed/repair |
-| raw/archive 混合查询 | `internal/flowquery`、`internal/watchdog/query_provider_flow*.go`、`api_flow_overseas.go` | 只采用连续 reconciled boundary；1m/raw 与 1h/hybrid 语义分开 |
+| aging/downsample operation job | `internal/flowlifecycle/archive*.go`、`internal/server/flow_archive.go`、`internal/flowch/rollup.go` | 只写 1h archive；守恒不通过进入 failed/repair |
+| raw 日删除只读证据 | `internal/flowch/retention_coverage.go`、`internal/flowlifecycle/delete_readiness.go` | receipt 日交集 + durable watermark + counters + restore evidence；不改状态、不删数据 |
+| raw/archive 混合查询 | `internal/flowquery`、`internal/server/flow_query*.go`、`internal/server/flow_reports*.go` | 只采用连续 reconciled boundary；1m/raw 与 1h/hybrid 语义分开 |
 
 开关固定为 `flow_storage.enabled`；legacy `flow_rollup.enabled` 仅供回滚观察窗，两者同时为 true 时配置校验直接失败。迁移本身不自动启动 worker、hub、downsample 或删除作业。
 
@@ -173,9 +174,10 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 - [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
+- [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。
 - [ ] **编码/集成（破坏路径）**：接入 durable Kafka 日覆盖证据后实现显式 raw/archive delete handler；故障、取消或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换。真实 MySQL operation-job checkpoint 续跑、真实 CH 全天守恒/hybrid/raw-only/overseas 已通过；DDL 不确定 ACK、维护窗口/回滚、组合故障和物理删除仍按各自未勾选门禁保持锁定。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A 只读证据链单独提交。真实 MySQL operation-job checkpoint/水位保护、真实 CH 全天守恒/hybrid/raw-only/overseas/日级 offset coverage 已通过；DDL 不确定 ACK、维护窗口/回滚、批准、真实 restore 和物理删除仍按各自未勾选门禁保持锁定。
 
 ## 9. 本次验证证据（2026-09-07）
 
