@@ -140,6 +140,7 @@ func (s *Server) registerFlowVPNRuleRoutes(auth *gin.RouterGroup) {
 	rules.GET("/:rule_id", view, s.getVPNRule)
 	rules.PATCH("/:rule_id", manage, s.updateVPNRule)
 	rules.DELETE("/:rule_id", manage, s.deleteVPNRule)
+	s.registerFlowVPNRuleSetRoutes(auth)
 }
 
 func (s *Server) listVPNRules(c *gin.Context) {

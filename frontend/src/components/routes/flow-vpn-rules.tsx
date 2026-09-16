@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, SaveIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, SaveIcon, SendIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { api } from "@/lib/api"
+import { api, can } from "@/lib/api"
 import {
 	optionalPositive,
 	optionalRatio,
@@ -33,6 +33,35 @@ type VPNRule = {
 }
 
 type RuleResponse = { items?: VPNRule[]; total?: number }
+type VPNRuleSet = {
+	id: string
+	version: number
+	effective_from: string
+	entry_count: number
+	status: string
+	approval_state: string
+	checksum: string
+	row_version: number
+	created_at: string
+}
+type RuleSetResponse = { items?: VPNRuleSet[]; total?: number }
+type RuleSetPreview = { draft_digest: string }
+type VPNRuleSetConsumer = {
+	worker_id: string
+	software_version: string
+	target_state: string
+	drift: string
+	target_error_code?: string
+	target_attempted_at?: string
+}
+type ConsumerResponse = { items?: VPNRuleSetConsumer[] }
+type RuleSetPolicy = {
+	medium_threshold: number
+	high_threshold: number
+	critical_threshold: number
+	probe_threshold: number
+	minimum_completeness: number
+}
 type SortDirection = "asc" | "desc"
 type RuleForm = {
 	name: string
@@ -98,8 +127,31 @@ export default memo(() => {
 	const [showForm, setShowForm] = useState(false)
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
+	const [ruleSets, setRuleSets] = useState<VPNRuleSet[]>([])
+	const [ruleSetTotal, setRuleSetTotal] = useState(0)
+	const [ruleSetPage, setRuleSetPage] = useState(0)
+	const [ruleSetPageSize, setRuleSetPageSize] = useState(25)
+	const [ruleSetSearch, setRuleSetSearch] = useState("")
+	const [ruleSetQuery, setRuleSetQuery] = useState("")
+	const [ruleSetFilters, setRuleSetFilters] = useState<Record<string, unknown[]>>({})
+	const [ruleSetSort, setRuleSetSort] = useState("version")
+	const [ruleSetOrder, setRuleSetOrder] = useState<SortDirection>("desc")
+	const [ruleSetLoading, setRuleSetLoading] = useState(true)
+	const [selectedRuleSet, setSelectedRuleSet] = useState<VPNRuleSet | null>(null)
+	const [consumers, setConsumers] = useState<VPNRuleSetConsumer[]>([])
+	const [effectiveFrom, setEffectiveFrom] = useState(defaultEffectiveFrom)
+	const [policy, setPolicy] = useState<RuleSetPolicy>({
+		medium_threshold: 30,
+		high_threshold: 60,
+		critical_threshold: 85,
+		probe_threshold: 70,
+		minimum_completeness: 0.8,
+	})
+	const [publishing, setPublishing] = useState(false)
 	const [error, setError] = useState("")
 	const requestSequence = useRef(0)
+	const publicationRequestSequence = useRef(0)
+	const canPublish = can("flow.vpn.publish")
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -108,6 +160,14 @@ export default memo(() => {
 		}, 300)
 		return () => window.clearTimeout(timer)
 	}, [search])
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setRuleSetPage(0)
+			setRuleSetQuery(ruleSetSearch.trim())
+		}, 300)
+		return () => window.clearTimeout(timer)
+	}, [ruleSetSearch])
 
 	const refresh = useCallback(async () => {
 		const sequence = ++requestSequence.current
@@ -139,10 +199,56 @@ export default memo(() => {
 		}
 	}, [filters, page, pageSize, query, sortDirection, sortField, t])
 
+	const refreshRuleSets = useCallback(async () => {
+		const sequence = ++publicationRequestSequence.current
+		setRuleSetLoading(true)
+		const params = new URLSearchParams({
+			limit: String(ruleSetPageSize),
+			offset: String(ruleSetPage * ruleSetPageSize),
+			sort: ruleSetSort,
+			order: ruleSetOrder,
+		})
+		if (ruleSetQuery) params.set("q", ruleSetQuery)
+		const status = ruleSetFilters.status?.[0]
+		const approval = ruleSetFilters.approval_state?.[0]
+		if (status) params.set("status", String(status))
+		if (approval) params.set("approval_state", String(approval))
+		try {
+			const data = await api.send<RuleSetResponse>(`/api/v1/flow/vpn/rule-sets?${params}`, {})
+			if (sequence !== publicationRequestSequence.current) return
+			setRuleSets(data.items ?? [])
+			setRuleSetTotal(data.total ?? 0)
+		} catch (reason) {
+			if (sequence !== publicationRequestSequence.current) return
+			setRuleSets([])
+			setRuleSetTotal(0)
+			setError(reason instanceof Error ? reason.message : t`Failed to load VPN rule-set publications`)
+		} finally {
+			if (sequence === publicationRequestSequence.current) setRuleSetLoading(false)
+		}
+	}, [ruleSetFilters, ruleSetOrder, ruleSetPage, ruleSetPageSize, ruleSetQuery, ruleSetSort, t])
+
 	useEffect(() => {
 		document.title = `${t`VPN Rules`} / Watchdog`
 		refresh()
-	}, [refresh, t])
+		refreshRuleSets()
+	}, [refresh, refreshRuleSets, t])
+
+	const loadConsumers = useCallback(
+		async (ruleSet: VPNRuleSet) => {
+			try {
+				const response = await api.send<ConsumerResponse>(
+					`/api/v1/flow/vpn/rule-sets/${ruleSet.id}/consumers?limit=100`,
+					{}
+				)
+				setConsumers(response.items ?? [])
+			} catch (reason) {
+				setConsumers([])
+				setError(reason instanceof Error ? reason.message : t`Failed to load VPN rule-set consumers`)
+			}
+		},
+		[t]
+	)
 
 	const columns = useMemo<ColumnDefine[]>(
 		() => [
@@ -196,6 +302,114 @@ export default memo(() => {
 		}),
 		[sortDirection, sortField]
 	)
+	const ruleSetColumns = useMemo<ColumnDefine[]>(
+		() => [
+			{ field: "version", title: t`Version`, width: 100 },
+			{ field: "effective", title: t`Effective from`, width: 190 },
+			{ field: "rules", title: t`Rules`, width: 90 },
+			{ field: "approval_state", filterField: "approval_state", title: t`Approval`, width: 120 },
+			{ field: "status", filterField: "status", title: t`Status`, width: 110 },
+			{ field: "checksum_short", title: t`Checksum`, width: 190 },
+			{ field: "created", title: t`Created`, width: 190 },
+		],
+		[t]
+	)
+	const ruleSetRecords = useMemo(
+		() =>
+			ruleSets.map((item) => ({
+				...item,
+				effective: new Date(item.effective_from).toLocaleString(),
+				rules: item.entry_count,
+				checksum_short: item.checksum.slice(0, 24),
+				created: new Date(item.created_at).toLocaleString(),
+				ruleSet: item,
+			})),
+		[ruleSets]
+	)
+	const ruleSetFiltering = useMemo(
+		() => ({
+			options: {
+				status: ["active", "retired"].map(valueOption),
+				approval_state: ["pending", "approved", "rejected"].map(valueOption),
+			},
+			selected: ruleSetFilters,
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				setRuleSetPage(0)
+				setRuleSetFilters((current) => ({ ...current, [field]: values.slice(-1) }))
+			},
+			onClearAll: () => {
+				setRuleSetPage(0)
+				setRuleSetFilters({})
+			},
+		}),
+		[ruleSetFilters]
+	)
+	const ruleSetSorting = useMemo(
+		() => ({
+			field: ruleSetSort,
+			direction: ruleSetOrder,
+			fields: {
+				version: "version",
+				effective: "effective",
+				approval_state: "approval",
+				status: "status",
+				checksum_short: "checksum",
+				created: "created",
+			},
+			onSortChange: (field: string, direction: SortDirection) => {
+				setRuleSetPage(0)
+				setRuleSetSort(field)
+				setRuleSetOrder(direction)
+			},
+		}),
+		[ruleSetOrder, ruleSetSort]
+	)
+
+	const publish = async () => {
+		setPublishing(true)
+		setError("")
+		try {
+			const effective_from = parseEffectiveFrom(effectiveFrom)
+			const preview = await api.send<RuleSetPreview>("/api/v1/flow/vpn/rule-sets/preview", {
+				method: "POST",
+				body: { effective_from, policy },
+			})
+			await api.send("/api/v1/flow/vpn/rule-sets/publish", {
+				method: "POST",
+				body: { effective_from, preview_digest: preview.draft_digest, policy },
+			})
+			window.setTimeout(refreshRuleSets, 500)
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : t`Failed to publish VPN rule set`)
+		} finally {
+			setPublishing(false)
+		}
+	}
+	const lifecycle = async (action: "approve" | "reject" | "activate" | "rollback" | "retire") => {
+		if (!selectedRuleSet) return
+		setPublishing(true)
+		setError("")
+		try {
+			const body =
+				action === "rollback"
+					? { effective_from: parseEffectiveFrom(effectiveFrom) }
+					: action === "reject" || action === "retire"
+						? { reason: "operator request" }
+						: undefined
+			await api.send(`/api/v1/flow/vpn/rule-sets/${selectedRuleSet.id}/actions/${action}`, {
+				method: "POST",
+				headers: { "If-Match": `"${selectedRuleSet.row_version}"` },
+				body,
+			})
+			setSelectedRuleSet(null)
+			setConsumers([])
+			await refreshRuleSets()
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : t`Failed to update VPN rule-set publication`)
+		} finally {
+			setPublishing(false)
+		}
+	}
 
 	const beginCreate = () => {
 		setEditing(null)
@@ -306,6 +520,158 @@ export default memo(() => {
 					height={440}
 					onRowClick={(record) => beginEdit(record.rule as VPNRule)}
 				/>
+			</div>
+
+			<div className="grid gap-3 rounded-md border border-border bg-card p-3">
+				<div className="flex flex-wrap items-end justify-between gap-3">
+					<div>
+						<h2 className="font-semibold">
+							<Trans>Rule-set publications</Trans> ({ruleSetTotal})
+						</h2>
+						<p className="text-sm text-muted-foreground">
+							<Trans>Only an approved, activated and installed version is used for scoring.</Trans>
+						</p>
+					</div>
+					<div className="flex flex-wrap items-end gap-2">
+						<PolicyInput
+							label={t`Medium`}
+							value={policy.medium_threshold}
+							onChange={(medium_threshold) => setPolicy((current) => ({ ...current, medium_threshold }))}
+						/>
+						<PolicyInput
+							label={t`High`}
+							value={policy.high_threshold}
+							onChange={(high_threshold) => setPolicy((current) => ({ ...current, high_threshold }))}
+						/>
+						<PolicyInput
+							label={t`Critical`}
+							value={policy.critical_threshold}
+							onChange={(critical_threshold) => setPolicy((current) => ({ ...current, critical_threshold }))}
+						/>
+						<PolicyInput
+							label={t`Probe`}
+							value={policy.probe_threshold}
+							onChange={(probe_threshold) => setPolicy((current) => ({ ...current, probe_threshold }))}
+						/>
+						<PolicyInput
+							label={t`Completeness`}
+							value={policy.minimum_completeness}
+							step="0.05"
+							onChange={(minimum_completeness) => setPolicy((current) => ({ ...current, minimum_completeness }))}
+						/>
+						<div className="grid gap-1">
+							<Label htmlFor="vpn-rule-set-effective">
+								<Trans>Effective from</Trans>
+							</Label>
+							<Input
+								id="vpn-rule-set-effective"
+								type="datetime-local"
+								value={effectiveFrom}
+								onChange={(event) => setEffectiveFrom(event.target.value)}
+							/>
+						</div>
+						<Button variant="outline" onClick={refreshRuleSets} disabled={ruleSetLoading}>
+							<RefreshCwIcon className="me-2 h-4 w-4" />
+							<Trans>Refresh</Trans>
+						</Button>
+						{canPublish ? (
+							<Button onClick={publish} disabled={publishing}>
+								<SendIcon className="me-2 h-4 w-4" />
+								<Trans>Preview and publish</Trans>
+							</Button>
+						) : null}
+					</div>
+				</div>
+				<PagedVTable
+					records={ruleSetRecords}
+					columns={ruleSetColumns}
+					loading={ruleSetLoading}
+					emptyText={t`No VPN rule-set publications found.`}
+					searchPlaceholder={t`Search version, ID or checksum...`}
+					searchValue={ruleSetSearch}
+					onSearchChange={setRuleSetSearch}
+					onSearchSubmit={(value) => {
+						setRuleSetPage(0)
+						setRuleSetQuery(value.trim())
+					}}
+					serverFiltering={ruleSetFiltering}
+					serverSorting={ruleSetSorting}
+					serverPagination={{
+						page: ruleSetPage,
+						pageSize: ruleSetPageSize,
+						totalCount: ruleSetTotal,
+						onPageChange: setRuleSetPage,
+						onPageSizeChange: (value) => {
+							setRuleSetPage(0)
+							setRuleSetPageSize(value)
+						},
+					}}
+					height={320}
+					onRowClick={(record) => {
+						const item = record.ruleSet as VPNRuleSet
+						setSelectedRuleSet(item)
+						loadConsumers(item)
+					}}
+				/>
+				{selectedRuleSet ? (
+					<div className="grid gap-3 rounded-md border border-border p-3">
+						<div className="flex flex-wrap items-center justify-between gap-2">
+							<div className="text-sm">
+								<Trans>Selected version</Trans> {selectedRuleSet.version}: {selectedRuleSet.approval_state} /{" "}
+								{selectedRuleSet.status}
+							</div>
+							{canPublish ? (
+								<div className="flex flex-wrap gap-2">
+									{selectedRuleSet.approval_state === "pending" ? (
+										<>
+											<Button size="sm" onClick={() => lifecycle("approve")}>
+												<Trans>Approve</Trans>
+											</Button>
+											<Button size="sm" variant="outline" onClick={() => lifecycle("reject")}>
+												<Trans>Reject</Trans>
+											</Button>
+										</>
+									) : null}
+									{selectedRuleSet.approval_state === "approved" && selectedRuleSet.status === "active" ? (
+										<>
+											<Button size="sm" onClick={() => lifecycle("activate")}>
+												<Trans>Activate</Trans>
+											</Button>
+											<Button size="sm" variant="outline" onClick={() => lifecycle("rollback")}>
+												<Trans>Rollback</Trans>
+											</Button>
+											<Button size="sm" variant="destructive" onClick={() => lifecycle("retire")}>
+												<Trans>Retire</Trans>
+											</Button>
+										</>
+									) : null}
+								</div>
+							) : null}
+						</div>
+						<div className="grid gap-2 text-sm">
+							<div className="font-medium">
+								<Trans>Worker installation status</Trans>
+							</div>
+							{consumers.length ? (
+								consumers.map((consumer) => (
+									<div key={consumer.worker_id} className="grid grid-cols-4 gap-2 rounded border border-border p-2">
+										<span>{consumer.worker_id}</span>
+										<span>{consumer.software_version}</span>
+										<span>{consumer.target_state}</span>
+										<span>
+											{consumer.drift}
+											{consumer.target_error_code ? ` · ${consumer.target_error_code}` : ""}
+										</span>
+									</div>
+								))
+							) : (
+								<div className="text-muted-foreground">
+									<Trans>No worker has reported this version.</Trans>
+								</div>
+							)}
+						</div>
+					</div>
+				) : null}
 			</div>
 
 			{showForm ? (
@@ -554,4 +920,42 @@ function join(values?: Array<string | number>) {
 }
 function optionalString(value?: number) {
 	return value == null ? "" : String(value)
+}
+
+function PolicyInput({
+	label,
+	value,
+	step = "1",
+	onChange,
+}: {
+	label: string
+	value: number
+	step?: string
+	onChange: (value: number) => void
+}) {
+	return (
+		<div className="grid w-24 gap-1">
+			<Label>{label}</Label>
+			<Input
+				type="number"
+				min="0"
+				step={step}
+				value={value}
+				onChange={(event) => onChange(Number(event.target.value))}
+			/>
+		</div>
+	)
+}
+
+function defaultEffectiveFrom() {
+	const now = new Date(Math.ceil(Date.now() / 60_000) * 60_000)
+	return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function parseEffectiveFrom(value: string) {
+	const parsed = new Date(value)
+	if (!value || Number.isNaN(parsed.getTime()) || parsed.getSeconds() !== 0 || parsed.getMilliseconds() !== 0) {
+		throw new Error("Effective time must be a minute boundary")
+	}
+	return parsed.toISOString()
 }

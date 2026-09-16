@@ -107,14 +107,15 @@ type AddressDimensionPublishRequest struct {
 }
 
 type AddressDimensionListFilter struct {
-	Status    string
-	Search    string
-	Sort      string
-	Desc      bool
-	Limit     int
-	Offset    int
-	Cursor    string
-	TableMode bool
+	Status        string
+	ApprovalState string
+	Search        string
+	Sort          string
+	Desc          bool
+	Limit         int
+	Offset        int
+	Cursor        string
+	TableMode     bool
 }
 
 type DimensionPublicationActivation struct {

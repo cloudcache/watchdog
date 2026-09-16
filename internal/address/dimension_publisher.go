@@ -190,6 +190,7 @@ var addressDimensionSnapshotSortColumns = map[string]string{
 	"":               "version",
 	"version":        "version",
 	"status":         "status",
+	"approval":       "approval_state",
 	"effective":      "effective_from",
 	"prefixes":       "prefix_count",
 	"sets":           "address_set_count",
@@ -201,8 +202,12 @@ var addressDimensionSnapshotSortColumns = map[string]string{
 
 func (p *Publisher) ListAddressDimensionSnapshots(ctx context.Context, filter AddressDimensionListFilter) ([]AddressDimensionSnapshot, string, int, error) {
 	filter.Status = strings.TrimSpace(filter.Status)
+	filter.ApprovalState = strings.TrimSpace(filter.ApprovalState)
 	filter.Search = strings.TrimSpace(filter.Search)
 	if filter.Status != "" && filter.Status != AddressDimensionStatusActive && filter.Status != AddressDimensionStatusRetired {
+		return nil, "", 0, ErrAddressDimensionInvalid
+	}
+	if filter.ApprovalState != "" && filter.ApprovalState != AddressDimensionApprovalPending && filter.ApprovalState != AddressDimensionApprovalApproved && filter.ApprovalState != AddressDimensionApprovalRejected {
 		return nil, "", 0, ErrAddressDimensionInvalid
 	}
 	if filter.Limit <= 0 {
@@ -220,6 +225,10 @@ func (p *Publisher) ListAddressDimensionSnapshots(ctx context.Context, filter Ad
 	if filter.Status != "" {
 		where += ` AND status = ?`
 		args = append(args, filter.Status)
+	}
+	if filter.ApprovalState != "" {
+		where += ` AND approval_state = ?`
+		args = append(args, filter.ApprovalState)
 	}
 	if filter.Search != "" {
 		like := "%" + escapeSQLLike(filter.Search) + "%"

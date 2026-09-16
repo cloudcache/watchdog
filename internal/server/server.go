@@ -42,24 +42,27 @@ type Server struct {
 	runtimeReady  atomic.Bool
 	clickHouseErr atomic.Pointer[string]
 
-	addressStore     *address.Store
-	addressPublisher *address.Publisher
-	addressObjects   address.DiskDimensionObjectStore
-	addressArtifacts address.DiskArtifactStore
-	addressTus       *tushandler.UnroutedHandler
-	jobs             *opjob.Store
-	billingStore     *billing.Store
-	billingService   *billing.Service
-	clickHouse       *flowch.NativeInserter
-	snmpMetrics      *snmpch.Store
-	flowQuery        *flowQueryService
-	flowGeo          *flowGeoService
-	workerCancel     context.CancelFunc
-	snmpExportCancel context.CancelFunc
-	billingCancel    context.CancelFunc
+	addressStore        *address.Store
+	addressPublisher    *address.Publisher
+	vpnRuleSetPublisher *address.Publisher
+	addressObjects      address.DiskDimensionObjectStore
+	addressArtifacts    address.DiskArtifactStore
+	addressTus          *tushandler.UnroutedHandler
+	jobs                *opjob.Store
+	billingStore        *billing.Store
+	billingService      *billing.Service
+	clickHouse          *flowch.NativeInserter
+	snmpMetrics         *snmpch.Store
+	flowQuery           *flowQueryService
+	flowGeo             *flowGeoService
+	workerCancel        context.CancelFunc
+	snmpExportCancel    context.CancelFunc
+	billingCancel       context.CancelFunc
 
 	vpnCandidateMaterializer   *flowch.VPNCandidateMaterializer
 	vpnCandidateRunner         *flowvpn.CandidateRunner
+	vpnRuleSetCatalog          *flowvpn.RuleSetCatalog
+	vpnRuleSetBootID           string
 	vpnDetectCancel            context.CancelFunc
 	flowExportCancel           context.CancelFunc
 	flowReconciliationCancel   context.CancelFunc
@@ -271,6 +274,16 @@ func (s *Server) startAddressLibrary() error {
 		Handler: address.NewAddressSnapshotBuildJobHandler(publisher),
 	}
 	go buildWorker.Run(workerCtx)
+	vpnPublisher, err := address.NewScopedPublisher(s.addressStore, s.addressObjects, address.VPNRuleSetPublicationScope)
+	if err != nil {
+		return err
+	}
+	s.vpnRuleSetPublisher = vpnPublisher
+	vpnWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: vpnRuleSetPublishJobType, Owner: "watchdog-server/vpn-rule-set",
+		Handler: s.vpnRuleSetPublishHandler(),
+	}
+	go vpnWorker.Run(workerCtx)
 
 	tus, err := s.newAddressImportTusHandler()
 	if err != nil {

@@ -42,6 +42,22 @@ func TestRuleSetBundleCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuleSetBundlePreservesFamilyHint(t *testing.T) {
+	bundle := testRuleSetBundle()
+	bundle.Rules[0].FamilyHint = FamilyTrojan
+	data, checksum, err := EncodeRuleSetBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, _, err := DecodeAndCompileRuleSetBundle(data, checksum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.rules[0].rule.FamilyHint != FamilyTrojan {
+		t.Fatalf("family hint was not preserved: %q", compiled.rules[0].rule.FamilyHint)
+	}
+}
+
 func TestRuleSetBundleRejectsInvalidWireAndConfiguration(t *testing.T) {
 	valid, _, err := EncodeRuleSetBundle(testRuleSetBundle())
 	if err != nil {

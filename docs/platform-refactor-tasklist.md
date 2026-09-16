@@ -239,15 +239,15 @@ P2 backend 持久化工作包按以下顺序冻结；编号不是空占位，只
   - [x] **单元/集成**：现有地址仓储/API 套件通过；隔离真实 MySQL 注入同租户 `flow/vpn_rule_set` 快照，证明地址 get 与 reject 生命周期均返回 no rows，异类对象保持未修改。
   - [x] **变更/回归**：地址 snapshot ID、响应和签名 wire schema 不变；全库 test、Watchdog race、vet/build 与 diff check 作为提交门禁，既有生产地址发布无需迁移。
   - [x] **已提交门禁**：范围修复、真实 MySQL 测试与任务清单由本独立提交原子交付，不夹带 Flow writer/rollup 或用户已有 maintenance/delete-preview 文件。
-- [ ] **PLAT-04A2f scoped publication 通用内核**：为第二种 immutable object 提取现有四表生命周期，保持单实现、双 typed adapter；不复制地址仓储，不让 VPN 借用 address/EdgeManager 命名。
-  - [x] **详细设计**：scope 是必填 `(module_key, dimension_key)` 值对象并由服务端构造；所有 snapshot/version/effective-time/activation/ACK/reference/consumer/GC SQL 都同时绑定 tenant+scope，snapshot ID 虽全局唯一也不能代替授权范围。通用 metadata 使用既有列；无 source 的 object 固定 manifest v0/空数组和地址 count=0。地址签名 payload v2 wire 保持不变，内部 verifier/persistence 接收 scope；trusted-key 部署入口提升为 `publication.trusted_keys[]`，旧 address 配置只作地址 scope 的兼容别名。
-  - [x] **编码（共享仓储核心）**：已提取 server-owned scope 值对象与 scope-parametric snapshot/lifecycle/signing/consumer/GC store；地址 publisher 只保留 typed publish 与兼容 adapter，现有 `/dimensions/address/**` wire 不变，generic API 不接受客户端 module/dimension（`bfb37bc5`）。
-  - [ ] **编码（部署配置）**：trusted-key 部署入口提升为 `publication.trusted_keys[]`，旧 `address_library.trusted_keys[]` 仅映射地址 scope；空/冲突双配置失败关闭。
-  - [x] **单元（核心）**：scope 字符集/空值、签名绑定 scope、旧地址签名 bytes 完全一致已覆盖；现有地址 lifecycle/consumer/GC 套件继续通过。
+- [ ] **PLAT-04A2f scoped publication 通用内核**：共享核心已经被 VPN 真实使用，但完整跨 scope 生命周期矩阵和独立提交门禁仍未关闭，因此父项保持待办；不得因一个 typed adapter 可用就把整项标完。
+  - [x] **详细设计**：scope 是必填 `(module_key, dimension_key)` 值对象并由服务端构造；所有 snapshot/version/effective-time/activation/ACK/reference/consumer/GC SQL 都同时绑定 scope，snapshot ID 虽全局唯一也不能代替范围约束。通用 metadata 使用既有列；无 source 的 object 固定 manifest v0/空数组和地址 count=0。单域 KISS 审批使用 RBAC+If-Match+审计，不再新增 publication trusted-key 配置。
+  - [x] **编码（共享仓储核心）**：已提取 server-owned scope 值对象与 scope-parametric snapshot/lifecycle/consumer/GC store；地址 publisher 保留 typed publish 与兼容 adapter，VPN 通过 `NewScopedPublisher` 使用同一实现，generic API 不接受客户端 module/dimension。
+  - [x] **编码（部署配置）**：按单域 KISS 决策取消 VPN trusted-key/签名配置扩展；不再制造 `publication.trusted_keys[]` 与旧 address 配置的双入口。
+  - [x] **单元（核心）**：scope 字符集/空值及现有地址 lifecycle/consumer/GC 套件继续通过；VPN bundle checksum/schema/identity 校验由 typed adapter 覆盖。
   - [ ] **单元（双 kind 矩阵）**：补齐 ACK/reference/activation/GC 对另一 scope 的逐入口拒绝，不能只以 snapshot get 代替。
-  - [x] **集成（基础隔离）**：真实 MySQL 同租户、同 version/effective time 并置 `flow/address` 与 `flow/vpn_rule_set`，证明双 timeline 约束独立、双向 get 隔离，VPN reject 不修改地址 snapshot。
+  - [x] **集成（基础隔离）**：真实 MySQL 同 version/effective time 并置 `flow/address` 与 `flow/vpn_rule_set`，证明双 timeline 约束独立、双向 get 隔离，VPN reject 不修改地址 snapshot；本轮又覆盖 VPN draft→异步 object→审批/激活→detection worker 与机器 worker ACK。
   - [ ] **集成（完整生命周期）**：并发 lifecycle、ACK/reference/activation/rollback/GC 逐项只影响目标 scope。
-  - [ ] **变更设计/测试**：复用 040/042/043/047/048/049 四表和 operation jobs，不新增 migration；配置兼容期、旧地址对象/签名、运行中 job 和 rolling upgrade 全部回归。若数据库约束证明不能表达双 kind 才允许从 migration 058 前向修复，禁止预占空迁移。
+  - [ ] **变更设计/测试**：复用现有 publication 表和 operation jobs，不新增 migration；旧地址对象、运行中 job 和 rolling upgrade 全部回归。若数据库约束证明不能表达双 kind 才允许领取新的前向 migration，禁止预占空迁移。
   - [ ] **回归/已提交门禁**：地址 API/MySQL E2E、Watchdog/全库/race/vet/build、fresh init/checksum 均通过并独立提交；不得夹带 Flow writer/rollup 或用户已有 maintenance/delete-preview 文件。
 - [x] **PLAT-04C1 address-prefix/set 管理内核**：typed schema/CRUD、canonical CIDR/IPv6、members/exclude/include DAG、集合并交差/显式 universe 有限补集、冲突/最坏展开量 preview、draft revision 原子 apply、分页/filter、ETag/审计与管理 VTable 已形成一个已提交闭环；Flow 不复制 CRUD。
   - [x] **设计（集合数学）**：冻结 CIDR/裸 IP/start-end 全量校验、v4/v6 分族并交差、显式 universe 有限补集、重叠 lint、结果/地址量上限；普通 merge 保持集合完全相等，可能扩大的 `/24` 整理独立为 `cover + added-address preview + confirm`。

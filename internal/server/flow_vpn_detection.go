@@ -5,13 +5,14 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log"
+	"os"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowvpn"
 )
@@ -25,29 +26,17 @@ import (
 var errNoActiveVPNRules = errors.New("no active VPN rules to compile")
 
 type vpnDetectionSettings struct {
-	window, interval, lag         time.Duration
-	maxCandidates                 uint32
-	medium, high, critical, probe uint16
-	minCompleteness               float64
+	window, interval, lag time.Duration
+	maxCandidates         uint32
 }
 
 func vpnDetectionSettingsFrom(cfg FlowVPNConfig) vpnDetectionSettings {
 	settings := vpnDetectionSettings{
 		window: seconds(cfg.WindowSeconds, 300), interval: seconds(cfg.IntervalSeconds, 300), lag: seconds(cfg.LagSeconds, 120),
-		maxCandidates: cfg.MaxCandidates, medium: cfg.MediumThreshold, high: cfg.HighThreshold,
-		critical: cfg.CriticalThreshold, probe: cfg.ProbeThreshold, minCompleteness: cfg.MinCompleteness,
+		maxCandidates: cfg.MaxCandidates,
 	}
 	if settings.maxCandidates == 0 {
 		settings.maxCandidates = flowvpn.MaxScoredCandidates
-	}
-	if settings.medium == 0 && settings.high == 0 && settings.critical == 0 {
-		settings.medium, settings.high, settings.critical = 30, 60, 85
-	}
-	if settings.probe == 0 {
-		settings.probe = 70
-	}
-	if settings.minCompleteness == 0 {
-		settings.minCompleteness = 0.8
 	}
 	return settings
 }
@@ -80,6 +69,8 @@ func (s *Server) startVPNDetection() error {
 	}
 	s.vpnCandidateMaterializer = materializer
 	s.vpnCandidateRunner = runner
+	s.vpnRuleSetCatalog = flowvpn.NewRuleSetCatalog()
+	s.vpnRuleSetBootID = newID()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.vpnDetectCancel = cancel
 	go s.vpnDetectionLoop(ctx, vpnDetectionSettingsFrom(s.cfg.Flow.VPN))
@@ -104,20 +95,20 @@ func (s *Server) vpnDetectionLoop(ctx context.Context, settings vpnDetectionSett
 // a window is safe; a missed tick simply skips that window (a cursor-tracked
 // backfill is a later refinement).
 func (s *Server) runVPNDetectionTick(ctx context.Context, settings vpnDetectionSettings) {
-	ruleSet, version, err := s.buildVPNRuleSet(ctx, settings)
-	if err != nil {
-		if !errors.Is(err, errNoActiveVPNRules) {
-			log.Printf("watchdog VPN detection: build rule set: %v", err)
-		}
-		return
-	}
 	now := time.Now().UTC()
 	to := now.Add(-settings.lag).Truncate(settings.window)
 	from := to.Add(-settings.window)
 	if !to.After(from) {
 		return
 	}
-	count, err := s.runVPNDetectionWindow(ctx, from, to, ruleSet, version, settings.maxCandidates)
+	installed, err := s.installVPNRuleSetForEventTime(ctx, to)
+	if err != nil {
+		if !errors.Is(err, errNoActiveVPNRules) {
+			log.Printf("watchdog VPN detection: install published rule set for %s: %v", to.Format(time.RFC3339), err)
+		}
+		return
+	}
+	count, err := s.runVPNDetectionWindow(ctx, from, to, installed.Rules, installed.Metadata.SnapshotID, settings.maxCandidates)
 	if err != nil {
 		log.Printf("watchdog VPN detection window [%s,%s): %v", from.Format(time.RFC3339), to.Format(time.RFC3339), err)
 		return
@@ -145,49 +136,93 @@ func (s *Server) runVPNDetectionWindow(ctx context.Context, from, to time.Time, 
 	return s.materializeVPNFindings(ctx, scored.Candidates)
 }
 
-// buildVPNRuleSet compiles the active rules into an immutable rule set. The version
-// is a deterministic hash of the active rules, so a rule change yields a new
-// version (and thus a fresh candidate generation) while the risk thresholds come
-// from configuration. Candidate materialization and scoring share this version.
-func (s *Server) buildVPNRuleSet(ctx context.Context, settings vpnDetectionSettings) (flowvpn.CompiledRuleSet, string, error) {
-	rows, err := s.db.QueryContext(ctx, vpnRuleSelect+" WHERE status='active' AND deleted_at IS NULL ORDER BY id")
-	if err != nil {
-		return flowvpn.CompiledRuleSet{}, "", err
+const (
+	vpnDetectionWorkerID      = "watchdog-server-vpn-detection"
+	vpnDetectionWorkerVersion = "watchdog-vpn-detection-v1"
+)
+
+// installVPNRuleSetForEventTime resolves the publication active at the closed
+// window boundary, verifies its immutable object, and atomically swaps the
+// scorer. Any failure is ACKed and leaves the previous catalog entry untouched.
+func (s *Server) installVPNRuleSetForEventTime(ctx context.Context, eventTime time.Time) (flowvpn.InstalledRuleSet, error) {
+	if s.vpnRuleSetPublisher == nil || s.vpnRuleSetCatalog == nil || s.vpnRuleSetBootID == "" {
+		return flowvpn.InstalledRuleSet{}, errors.New("VPN rule-set publication consumer is unavailable")
 	}
-	defer rows.Close()
-	var rules []flowvpn.Rule
-	for rows.Next() {
-		item, err := scanVPNRule(rows)
-		if err != nil {
-			return flowvpn.CompiledRuleSet{}, "", err
+	activation, err := s.vpnRuleSetPublisher.GetDimensionPublicationActivationAt(ctx, eventTime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return flowvpn.InstalledRuleSet{}, errNoActiveVPNRules
+	}
+	if err != nil {
+		return flowvpn.InstalledRuleSet{}, err
+	}
+	snapshot, err := s.vpnRuleSetPublisher.GetDimensionPublicationSnapshot(ctx, activation.SnapshotID)
+	if err != nil {
+		return flowvpn.InstalledRuleSet{}, err
+	}
+	if snapshot.ApprovalState != address.AddressDimensionApprovalApproved || snapshot.ObjectDeletedAt != nil {
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "PUBLICATION_NOT_INSTALLABLE", errors.New("activated VPN rule set is not approved and available"))
+	}
+	if current, ok := s.vpnRuleSetCatalog.Current(); ok && current.Metadata.SnapshotID == snapshot.ID && current.Metadata.Checksum == snapshot.Checksum {
+		return current, nil
+	}
+
+	path, err := s.addressObjects.ResolveDimensionObject(snapshot.ObjectRef)
+	if err != nil {
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "OBJECT_UNAVAILABLE", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > flowvpn.MaxRuleSetBundleBytes {
+		if err == nil {
+			err = fmt.Errorf("VPN rule-set object must be a regular file of 1..%d bytes", flowvpn.MaxRuleSetBundleBytes)
 		}
-		rules = append(rules, flowvpn.Rule{
-			ID: item.ID, Effect: item.Effect, Weight: item.Weight, Priority: item.Priority,
-			Match: item.Match, FamilyHint: item.FamilyHint,
-		})
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "OBJECT_UNAVAILABLE", err)
 	}
-	if err := rows.Err(); err != nil {
-		return flowvpn.CompiledRuleSet{}, "", err
-	}
-	if len(rules) == 0 {
-		return flowvpn.CompiledRuleSet{}, "", errNoActiveVPNRules
-	}
-	version := vpnRuleSetVersion(rules)
-	compiled, err := flowvpn.CompileRuleSet(flowvpn.RuleSet{
-		SchemaVersion: flowvpn.RuleSchemaV1, Version: version,
-		MediumThreshold: settings.medium, HighThreshold: settings.high, CriticalThreshold: settings.critical,
-		ProbeThreshold: settings.probe, MinimumCompleteness: settings.minCompleteness, Rules: rules,
-	})
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return flowvpn.CompiledRuleSet{}, "", err
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "OBJECT_UNAVAILABLE", err)
 	}
-	return compiled, version, nil
+	if err := s.reportVPNRuleSetACK(ctx, snapshot, address.DimensionPublicationAckDownloaded, "", ""); err != nil {
+		return flowvpn.InstalledRuleSet{}, err
+	}
+	rules, metadata, err := flowvpn.DecodeAndCompileRuleSetBundle(data, snapshot.Checksum)
+	if err != nil {
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "VERIFY_FAILED", err)
+	}
+	if metadata.SnapshotID != snapshot.ID || metadata.Version != snapshot.Version || !metadata.EffectiveFrom.Equal(snapshot.EffectiveFrom.UTC()) {
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "IDENTITY_MISMATCH", errors.New("VPN rule-set object metadata does not match publication"))
+	}
+	previous, hadPrevious := s.vpnRuleSetCatalog.Current()
+	if err := s.vpnRuleSetCatalog.Install(rules, metadata); err != nil {
+		return flowvpn.InstalledRuleSet{}, s.failVPNRuleSetInstall(ctx, snapshot, "INSTALL_FAILED", err)
+	}
+	if err := s.reportVPNRuleSetACK(ctx, snapshot, address.DimensionPublicationAckInstalled, "", ""); err != nil {
+		s.vpnRuleSetCatalog.Restore(previous, hadPrevious)
+		return flowvpn.InstalledRuleSet{}, err
+	}
+	installed, ok := s.vpnRuleSetCatalog.Current()
+	if !ok {
+		return flowvpn.InstalledRuleSet{}, errors.New("VPN rule-set catalog lost installed publication")
+	}
+	return installed, nil
 }
 
-// vpnRuleSetVersion is a deterministic identifier of the active rules (already
-// ordered by id), valid as a candidate rule_set_version.
-func vpnRuleSetVersion(rules []flowvpn.Rule) string {
-	raw, _ := json.Marshal(rules)
-	sum := sha256.Sum256(raw)
-	return "rs-" + hex.EncodeToString(sum[:])[:16]
+func (s *Server) failVPNRuleSetInstall(ctx context.Context, snapshot address.DimensionPublicationSnapshot, code string, cause error) error {
+	message := cause.Error()
+	runes := []rune(message)
+	if len(runes) > 512 {
+		message = string(runes[:512])
+	}
+	if err := s.reportVPNRuleSetACK(ctx, snapshot, address.DimensionPublicationAckFailed, code, message); err != nil {
+		return errors.Join(cause, fmt.Errorf("report failed VPN rule-set install: %w", err))
+	}
+	return cause
+}
+
+func (s *Server) reportVPNRuleSetACK(ctx context.Context, snapshot address.DimensionPublicationSnapshot, state, errorCode, errorMessage string) error {
+	_, err := s.vpnRuleSetPublisher.ReportDimensionPublicationAcknowledgement(ctx, address.DimensionPublicationAcknowledgement{
+		SnapshotID: snapshot.ID, WorkerID: vpnDetectionWorkerID, BootID: s.vpnRuleSetBootID,
+		SoftwareVersion: vpnDetectionWorkerVersion, Checksum: snapshot.Checksum, State: state,
+		ErrorCode: errorCode, ErrorMessage: errorMessage,
+	})
+	return err
 }

@@ -8357,3 +8357,44 @@ msgstr "Published"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Search policy ID or status..."
 msgstr "Search policy ID or status..."
+msgid "Failed to load VPN rule-set consumers"
+msgstr "Failed to load VPN rule-set consumers"
+
+msgid "Failed to load VPN rule-set publications"
+msgstr "Failed to load VPN rule-set publications"
+
+msgid "Failed to publish VPN rule set"
+msgstr "Failed to publish VPN rule set"
+
+msgid "Failed to update VPN rule-set publication"
+msgstr "Failed to update VPN rule-set publication"
+
+msgid "No VPN rule-set publications found."
+msgstr "No VPN rule-set publications found."
+
+msgid "No worker has reported this version."
+msgstr "No worker has reported this version."
+
+msgid "Only an approved, activated and installed version is used for scoring."
+msgstr "Only an approved, activated and installed version is used for scoring."
+
+msgid "Preview and publish"
+msgstr "Preview and publish"
+
+msgid "Rule-set publications"
+msgstr "Rule-set publications"
+
+msgid "Search version, ID or checksum..."
+msgstr "Search version, ID or checksum..."
+
+msgid "Selected version"
+msgstr "Selected version"
+
+msgid "Worker installation status"
+msgstr "Worker installation status"
+
+msgid "Medium"
+msgstr "Medium"
+
+msgid "Critical"
+msgstr "Critical"

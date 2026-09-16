@@ -33,13 +33,14 @@ const (
 // rule. Findings can resolve historical labels from the exact producing
 // bundle instead of consulting mutable drafts.
 type PublishedRule struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Kind     RuleKind   `json:"kind"`
-	Effect   RuleEffect `json:"effect"`
-	Weight   uint16     `json:"weight"`
-	Priority uint16     `json:"priority"`
-	Match    Match      `json:"match"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Kind       RuleKind       `json:"kind"`
+	Effect     RuleEffect     `json:"effect"`
+	Weight     uint16         `json:"weight"`
+	Priority   uint16         `json:"priority"`
+	FamilyHint ProtocolFamily `json:"family_hint,omitempty"`
+	Match      Match          `json:"match"`
 }
 
 // RuleSetBundle is the immutable wire object installed by workers. SnapshotID
@@ -153,7 +154,7 @@ func canonicalRuleSetBundle(bundle RuleSetBundle) (RuleSetBundle, CompiledRuleSe
 	for index, rule := range canonicalRules {
 		executableRules[index] = Rule{
 			ID: rule.ID, Effect: rule.Effect, Weight: rule.Weight,
-			Priority: rule.Priority, Match: rule.Match,
+			Priority: rule.Priority, FamilyHint: rule.FamilyHint, Match: rule.Match,
 		}
 	}
 	bundle.EffectiveFrom = effective
@@ -180,13 +181,13 @@ func normalizePublishedRule(rule PublishedRule) (PublishedRule, error) {
 	}
 	canonical, err := NormalizeRule(Rule{
 		ID: rule.ID, Effect: rule.Effect, Weight: rule.Weight,
-		Priority: rule.Priority, Match: rule.Match,
+		Priority: rule.Priority, FamilyHint: rule.FamilyHint, Match: rule.Match,
 	})
 	if err != nil {
 		return PublishedRule{}, err
 	}
 	rule.ID, rule.Effect, rule.Weight = canonical.ID, canonical.Effect, canonical.Weight
-	rule.Priority, rule.Match = canonical.Priority, canonical.Match
+	rule.Priority, rule.FamilyHint, rule.Match = canonical.Priority, canonical.FamilyHint, canonical.Match
 	return rule, nil
 }
 

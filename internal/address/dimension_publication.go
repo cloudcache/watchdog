@@ -22,6 +22,13 @@ var addressDimensionPublicationScope = DimensionPublicationScope{
 	ModuleKey: AddressDimensionModuleKey, DimensionKey: AddressDimensionKey,
 }
 
+// VPNRuleSetPublicationScope is the second immutable object carried by the
+// shared publication tables. Keeping the scope here makes every lifecycle
+// query use the same fail-closed module/dimension predicate as AddressSnap.
+var VPNRuleSetPublicationScope = DimensionPublicationScope{
+	ModuleKey: "flow", DimensionKey: "vpn_rule_set",
+}
+
 func (scope DimensionPublicationScope) validate() error {
 	for _, value := range []string{scope.ModuleKey, scope.DimensionKey} {
 		if value == "" || len(value) > 64 || strings.TrimSpace(value) != value {
@@ -74,15 +81,22 @@ func WithClock(now func() time.Time) PublisherOption {
 
 // NewPublisher builds the address dimension publisher over a Store and object store.
 func NewPublisher(store *Store, objects DimensionObjectStore, options ...PublisherOption) (*Publisher, error) {
+	return NewScopedPublisher(store, objects, addressDimensionPublicationScope, options...)
+}
+
+// NewScopedPublisher creates a typed adapter over the common immutable
+// publication lifecycle. Callers must use a compile-time scope; request data is
+// never allowed to choose module_key or dimension_key.
+func NewScopedPublisher(store *Store, objects DimensionObjectStore, scope DimensionPublicationScope, options ...PublisherOption) (*Publisher, error) {
 	if store == nil || store.db == nil || objects == nil {
 		return nil, errors.New("store and dimension object store are required")
 	}
-	if err := addressDimensionPublicationScope.validate(); err != nil {
+	if err := scope.validate(); err != nil {
 		return nil, err
 	}
 	p := &Publisher{
 		store: store, objects: objects, objectRetention: defaultAddressObjectRetention,
-		now: func() time.Time { return time.Now().UTC() }, scope: addressDimensionPublicationScope,
+		now: func() time.Time { return time.Now().UTC() }, scope: scope,
 	}
 	for _, option := range options {
 		if option == nil {

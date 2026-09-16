@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**当前活动切片：FLOW-06C4-P/W VPN publication 与 worker ACK。** FLOW-06B 历史重分类已按单域契约实现：冻结源/目标 publication、view、UTC 窗口和 generation，复用 `operation_jobs` 分页续跑，写入隔离 CH projection；Kafka 自然坐标双向覆盖与 count/raw/estimated counter 守恒后才写 marker 并在 MySQL 原子激活。真实 ClickHouse 和真实 MySQL 已分别覆盖幂等页写、customer/supplier 查询以及 cancel/activate 竞争。固定硬件吞吐仍统一留在 FLOW-08 发布门，不冒充生产容量结论。
+**当前活动切片：真实非空 Flow 产品回归。** FLOW-06C4-P/W 已按单域契约接入公共 publication 生命周期：低频异步编译 immutable VPN rule-set，真实 detection worker 按关闭窗口事件时间安装、ACK 且失败保留 LKG；不再从可变 draft 构造运行时规则。FLOW-06B 历史重分类已冻结源/目标 publication、view、UTC 窗口和 generation，并以 Kafka 自然坐标与 count/raw/estimated counter 守恒后切换。固定硬件吞吐仍统一留在 FLOW-08 发布门，不冒充生产容量结论。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -48,8 +48,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | FLOW-03 sampling/dimension | [x] | [x] | [x] | [ ] | [x] | [x] | [x] | [x] | 数据面完成；API 接线/外部集成待办 |
 | FLOW-04 CH/rollup/metrics | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | Storage V2 非破坏路径完成；L5 删除/恢复与组合故障门继续 |
 | FLOW-05 query/API/UI | [x] | [x] | [x] | [x] | [x] | [ ] | [x] | [x] | Explorer、typed query、六固定报表和导出已交付；集群容量/滚动兼容门未过 |
-| FLOW-06 correction/reclass/export | [x] | [ ] | [x] | [x] | [x] | [x] | [x] | [ ] | raw/supplier/customer、导出与历史重分类完成；VPN/adjustment publication 未完成 |
-| FLOW-07 overseas/VPN | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | 境外和 VPN 被动数据面完成；rule publication/ACK 与主动探测未完成 |
+| FLOW-06 correction/reclass/export | [x] | [ ] | [x] | [x] | [x] | [x] | [x] | [ ] | raw/supplier/customer、导出、历史重分类和 VPN publication 完成；adjustment publication 未完成 |
+| FLOW-07 overseas/VPN | [x] | [ ] | [x] | [x] | [x] | [x] | [x] | [ ] | 境外、VPN 被动数据面及 rule publication/ACK 完成；主动探测未完成 |
 | FLOW-08 HA/lifecycle/release | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | migration/reliability 基础完成；集群、性能、恢复和许可证门未完成 |
 
 “已提交”表示当前已有实现和证据已进入可复现提交，不等于该行全部发布门禁已经完成；只有设计、编码、单元、集成、变更和回归各列全部为 `[x]` 时，阶段才算完全关闭。父项只要仍有一个明确子门禁未满足就保持 `[ ]`，并必须在同一行写明剩余条件。
@@ -95,7 +95,8 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - FLOW-08A3 partial response：`ffcc64e3 test(flow): reject partial ClickHouse responses`；透明代理在服务端响应第 64 byte 截断 TCP，production executor 必须立即返回 transport/decode error，不等内部 operation deadline、不暴露半条 result、不在连接层重试；新连接池随后恢复。三种代理故障组合真实 CH race 连续 5 次通过。
 - FLOW-08A3 dedup-window-independent replay：`33c3f95f test(flow): verify replay beyond dedup window`；隔离表显式设置 `non_replicated_deduplication_window=0` 并停止 merge，同一 block 完整写两次后物理层为 4 facts/2 receipts，证明未借助短期 server dedup；`FINAL` 仍收敛为 2 facts/1 receipt、900 raw bytes/2 packets 和精确 checksum。四类 CH 故障/幂等门禁组合 race 连续 5 次通过。
 - FLOW-08A3 Kafka worker 恢复：`11cd81b0 test(flow): verify Kafka template replay recovery`；同一真实 consumer group 先提交 v9/IPFIX 模板和数据至 offset 4，新数据不带模板；全新 worker 经 assignment 有界回放后能解码新数据，注入 durable failure 时 committed offset 保持 4，下一全新 worker 再次接管并精确推进至 6。真实 Kafka 连续 5 次及正常 corpus 组合 race 2 次通过，隔离 topic 已清理。
-- FLOW-06C4-R1/R2：`dab020b3 feat(flow): add VPN rule draft management`；typed draft CRUD、专用权限、ETag/audit、服务端 VTable 和完整 schema v1 表单已提交。隔离真实 MySQL CRUD/CAS/tenant-scope 通过；8090→8091 浏览器完成创建、编辑、双会话 stale 412、软删、服务端搜索与列筛选弹窗边界，活动数据恢复为空且控制台无应用错误。
+- FLOW-06C4-R1/R2：`dab020b3 feat(flow): add VPN rule draft management`；typed draft CRUD、专用权限、ETag/audit、服务端 VTable 和完整 schema v1 表单已提交。原隔离 MySQL CRUD/CAS 证据已经在 KISS 单域迁移后重新回归，不再把历史 tenant 字段列为现行契约；8090→8091 浏览器完成创建、编辑、双会话 stale 412、软删、服务端搜索与列筛选弹窗边界，活动数据恢复为空且控制台无应用错误。
+- FLOW-06C4-P/W：本切片复用单域 publication 表、公共 operation job 与 scope-parametric lifecycle，交付 immutable VPN bundle、preview/publish/lifecycle API、服务端 publication VTable、真实 detection worker event-time 安装/LKG/ACK 以及外部 flow worker desired/object/ACK 接口；没有新增 migration、队列或状态机。`go test ./internal/address ./internal/flowvpn ./internal/server`、同范围 race、全库 test/vet/build、前端 54 项测试/定向 Biome/production build 与 `git diff --check` 通过；隔离真实 MySQL `TestVPNRuleSetPublicationWorkerACK` 覆盖 active draft→preview→异步 publish→approve→activate→detection install ACK→机器 worker download/install ACK。全前端 `typecheck` 仅被并行工作区 `graph-panel-renderer.tsx` 既存的两处 `Timeout`/`number` 错误阻塞，本切片没有越界改动该文件。
 - 尚未具备的证据：Linux `SO_RXQ_OVFL` 压力、实际 worker/CH restart 与组合故障、版本混跑、集群 DDL、固定硬件压测和 72h soak，继续保留在 §5 外部门禁，不能由本轮单节点证据替代。
 
 ## 3. 已完成实现与证据
@@ -399,23 +400,23 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
     - [x] **变更设计/测试**：`dataset_key` 为扩展字段，既有 046 表/operation job 足够，故不占 migration；旧 contract-0 VM 任务通过显式 fallback 保持兼容，VPN 的 `step=0` 不再被通用归一化改成 5 分钟。
     - [x] **回归/已提交门禁**：Watchdog/全库/race/vet/build、前端 test/定向 Biome/build 和 diff check 通过后由本提交原子交付，不夹带并行 maintenance/delete-preview 文件。
   - [ ] **FLOW-06C4 publication 管理**：按 C4-D/R1/R2/P/W/A 拆分交付，避免把 VPN 草稿、修正规则、不可变发布和 AddressSnap builder 再揉成一个长期半成品；复用平台 immutable publication，不复制地址库 CRUD。
-    - [x] **C4-D 现状对账/变更设计**：平台 PLAT-04A2a–A2d 已真实提供 trusted-key、RBAC、If-Match、签名审批、event-time activation/rollback、consumer ACK/status 和安全 object GC；旧 FLOW-07A 文案声称这些能力缺失已判定过期。未完成面明确拆为 VPN rule-set 编译/发布、Flow worker 下载安装和 supplier/customer adjustment publication；地址发布链属于 FLOW-03C AddressSnap，不在规则 CRUD 中改 CH。
-    - [x] **C4-R1 VPN rule typed draft CRUD**：复用 migration 055 的 `flow_vpn_rules`，新增 `GET/POST /flow/vpn/rules` 与 `GET/PATCH/DELETE /flow/vpn/rules/{id}`；list 为 tenant-scoped 服务端搜索/分页/typed kind/effect/status filter/稳定排序，mutation 使用专用 `configure_adjustment`、严格 JSON、quoted If-Match、软删和逐动作审计。match 直接复用 `flowvpn.NormalizeRule` 的固定 schema v1 canonical validator，API 不暴露尚无数据面语义的 behavior/intelligence/probe JSON 保留列，避免保存“看似可配但永不生效”的字段。复用既有表，故无 migration 058。
-    - [x] **C4-R1 单元/集成/变更测试**：覆盖 snake_case wire schema、去重排序、空 match、terminal weight、未知字段/tenant 注入、权限、ETag/audit、tenant 隔离、服务端筛选、name conflict、CAS 和软删；真实 MySQL 用例沿用 `WATCHDOG_TEST_MYSQL_DSN` 门禁，无实例时明确 skip。旧 scorer 构造方式与规则求值语义不变。
+    - [x] **C4-D 现状对账/变更设计**：平台已真实提供单域 RBAC、If-Match、审计审批、event-time activation/rollback、consumer ACK/status 和 publication object 生命周期；旧 tenant/trusted-key/签名审批文案已按 KISS 决策删除。VPN rule-set 编译/发布和实际 detection worker 安装已闭环；supplier/customer adjustment publication 仍是独立待办，地址发布链属于 FLOW-03C AddressSnap，不在规则 CRUD 中改 CH。
+    - [x] **C4-R1 VPN rule typed draft CRUD**：复用 migration 055 的 `flow_vpn_rules`，新增 `GET/POST /flow/vpn/rules` 与 `GET/PATCH/DELETE /flow/vpn/rules/{id}`；list 为单域服务端搜索/分页/typed kind/effect/status filter/稳定排序，mutation 使用专用 `flow.vpn.manage`、严格 JSON、quoted If-Match、软删和逐动作审计。match 直接复用 `flowvpn.NormalizeRule` 的固定 schema v1 canonical validator，API 不暴露尚无数据面语义的 behavior/intelligence/probe JSON 保留列，避免保存“看似可配但永不生效”的字段。复用既有表，故无 migration 058。
+    - [x] **C4-R1 单元/集成/变更测试**：覆盖 snake_case wire schema、去重排序、空 match、terminal weight、未知身份字段、权限、ETag/audit、服务端筛选、name conflict、CAS 和软删；真实 MySQL 用例沿用 `WATCHDOG_TEST_MYSQL_DSN` 门禁，无实例时明确 skip。旧 scorer 构造方式与规则求值语义不变。
     - [x] **C4-R1 已提交门禁**：代码、测试、设计和任务清单由独立提交 `dab020b3` 交付，不夹带用户已有 maintenance/delete-preview 工作区。
     - [x] **C4-R2 VPN rule VTable/form**：列表必须服务端分页/搜索/排序/column filter，filter popover 使用公共 portal/collision；表单只显示 schema v1 真正生效字段，编辑/删除发送最新 ETag，未发布状态明确显示为 draft 管理态。
       - [x] **设计/编码**：新增独立 `/flow/vpn/rules`，findings 与规则页互相跳转；PagedVTable 下推 q/kind/effect/status/sort/page，300ms 搜索和旧请求隔离；表单覆盖全部十二类 schema v1 match signal，TLS/QUIC 明示为上游 hint，不由端口猜测；编辑/删除使用行内 row_version 生成 quoted If-Match。
       - [x] **单元/回归**：前端 parser 覆盖整数集合去重排序、标识符规范化、正值和比例边界；定向 Biome、41 项前端测试、production build、全库 Go test、Flow/Watchdog race、vet/build 和 diff check 通过。
-      - [x] **集成/变更测试**：隔离真实 MySQL 运行 CRUD/CAS/tenant-scope 门禁通过；`npm run dev :8090 → API_URL :8091` 的真实浏览器完成创建、编辑、双会话 stale ETag 412、软删及刷新持久化，Kind 列 filter popover 未溢出、服务端搜索归零，控制台无应用错误。浏览器测试记录最终为 `deleted/row_version=4`，活动列表恢复为空。
+      - [x] **集成/变更测试**：隔离真实 MySQL 运行 CRUD/CAS 单域门禁通过；`npm run dev :8090 → API_URL :8091` 的真实浏览器完成创建、编辑、双会话 stale ETag 412、软删及刷新持久化，Kind 列 filter popover 未溢出、服务端搜索归零，控制台无应用错误。浏览器测试记录最终为 `deleted/row_version=4`，活动列表恢复为空。
       - [x] **已提交门禁**：页面、模型测试、路由、权限入口与 R1 backend 由 `dab020b3` 同一切片提交；真实 MySQL/浏览器证据由本清单验收提交补记，均未夹带用户已有 maintenance/delete-preview 文件。
-    - [ ] **C4-P immutable VPN rule-set publication**：按 P-D/P-B/P-S/P-L/P-UI 拆分；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。现有四张 publication 表足以承载 `flow/vpn_rule_set`，当前不创建空 migration；若实现发现真实新持久字段才从 migration 058 领取并同步 fresh-init/checksum/replay。
-      - [x] **C4-P-D 详细设计**：冻结 bundle schema v1、阈值、历史 name/kind 解释、canonical active rule digest、4 MiB 预算、tenant-local version、UTC minute、发布重试幂等、API/RBAC、签名、event-time activation/rollback、finding reference/GC 和 rolling-upgrade 失败语义。明确对象级 SHA-256 只发生在低频管理发布，不进入逐 flow 写路径。
-      - [x] **C4-P-B immutable bundle 编码/单元/变更测试**：`flowvpn` 增加 canonical encoder 与 strict decoder/compiler；object 固定 snapshot/tenant/version/effective time、五个 threshold 和带历史 name/kind 的规则，规则按 ID 排序并复用 scorer validator；拒绝 checksum/schema/unknown field/trailing JSON/noncanonical bytes/超限/非法 identity/time/threshold/rule/name/kind/duplicate。scorer 继续只消费执行字段，既有 draft 常量改为复用同一 kind enum；FlowVPN/Watchdog 单元通过。
-      - [x] **C4-P-B 回归/已提交门禁**：FlowVPN/Watchdog、全库 test、FlowVPN race、vet/build 与 diff check 通过后由本提交独立交付；不夹带用户已有 maintenance/delete-preview 和 Flow writer/rollup 工作区。
-      - [ ] **C4-P-S scoped publisher/operation job**：先完成 PLAT-04A2f，再以 `(flow,vpn_rule_set)` 读取 active draft、计算语义 digest、preview、锁内复核、保存对象和插入 pending snapshot；commit 后重试返回同一 snapshot，同分钟不同内容 conflict；复用 operation job lease/retry/cancel，不复制规则 JSON或状态机。
-      - [ ] **C4-P-L lifecycle/API**：list/get/approve/reject/activate/rollback/retire/consumer status/reference/GC 全部走 scope 内核；GET 使用 `vpn_view`，preview 用 `configure_adjustment`，publish/lifecycle 用 `operate`，mutation 强制 If-Match，跨 tenant/scope ID fail closed。
-      - [ ] **C4-P-UI publication VTable**：规则页与 publication 页双向入口；版本列表服务端分页/搜索/排序/column filter，popover portal+collision；详情展示审批、activation timeline、worker ACK/drift、引用/retention，不把创建或 activation 显示成 ready。
-    - [ ] **C4-W worker 安装/ACK**：worker 只下载已批准且 event-time active 的 rule-set object，校验 checksum/schema/版本后原子切换 scorer catalog，再写 downloaded/installed/failed ACK；失败保持上一 generation。
+    - [x] **C4-P immutable VPN rule-set publication**：按 P-D/P-B/P-S/P-L/P-UI 拆分；复用平台 publication lifecycle 的通用内核，不把地址专属字段/路径硬套给 VPN。现有 publication 表足以承载 `flow/vpn_rule_set`，本切片没有创建空 migration。
+      - [x] **C4-P-D 详细设计**：冻结 bundle schema v1、阈值、历史 name/kind 解释、canonical active rule digest、4 MiB 预算、scope-local version、UTC minute、发布重试幂等、API/RBAC、checksum、event-time activation/rollback 和 LKG 失败语义。明确对象级 SHA-256 只发生在低频管理发布，不进入逐 flow 写路径；finding retention 未冻结前 VPN object GC 保持关闭。
+      - [x] **C4-P-B immutable bundle 编码/单元/变更测试**：`flowvpn` 增加 canonical encoder 与 strict decoder/compiler；object 固定 snapshot/version/effective time、五个 threshold 和带历史 name/kind 的规则，规则按 ID 排序并复用 scorer validator；拒绝 checksum/schema/unknown field/trailing JSON/noncanonical bytes/超限/非法 identity/time/threshold/rule/name/kind/duplicate。scorer 继续只消费执行字段，既有 draft 常量改为复用同一 kind enum；FlowVPN/Watchdog 单元通过。
+      - [x] **C4-P-B 回归/已提交门禁**：FlowVPN/Watchdog、全库 test、FlowVPN race、vet/build 与 diff check 已通过，由本提交独立交付；不夹带并行 `graph-panel-renderer.tsx`、`dev_mmdb_stream_test.go` 和 Flow writer/rollup 工作区。
+      - [x] **C4-P-S scoped publisher/operation job**：公共 publisher 以固定 `(flow,vpn_rule_set)` scope 读取 active draft、计算语义 digest、preview、锁内复核、保存对象和插入 pending snapshot；commit 后按 operation job/snapshot identity 幂等，同分钟不同内容 conflict；复用 operation job lease/retry/cancel，不复制规则 JSON 或状态机。
+      - [x] **C4-P-L lifecycle/API**：list/get/object/approve/reject/activate/rollback/retire/consumer status 全部走 scope 内核；GET 使用 `flow.vpn.view`，preview 用 `flow.vpn.manage`，publish/lifecycle 用 `flow.vpn.publish`，mutation 强制 If-Match，跨 scope ID fail closed。Finding 尚无删除策略，因此 VPN object GC 明确保持关闭而不是伪造 reference 到期。
+      - [x] **C4-P-UI publication VTable**：规则页内提供独立 publication 区；版本列表服务端分页/搜索/排序/column filter，复用公共 PagedVTable portal/collision；可配置五个评分阈值并执行 preview+异步 publish，选中版本执行 lifecycle action并查看 worker ACK/drift，不把创建或 activation 显示成 ready。
+    - [x] **C4-W worker 安装/ACK**：实际 VPN detection worker 按关闭窗口事件时间只下载已批准且 active 的 rule-set object，校验 checksum/schema/identity 后原子切换 scorer catalog，再写 downloaded/installed/failed ACK；校验、对象或 ACK 失败不运行该窗口且恢复上一已确认 generation。外部 `flow_worker` 机器 API 同样支持 desired/object/ACK。
     - [ ] **C4-A supplier/customer adjustment publication**：归属平台 P3 adjustment policy，不与 VPN rule-set 共表或共享含义；raw 永不可修正，查询/导出固定 policy version，历史重分类复用 FLOW-06B。
 
 ### FLOW-07 Overseas/VPN
@@ -426,7 +427,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-07A 集成（数据面）**：真实 CH 顺序 migration、base writer、两个 1m rollup、candidate materializer 和 scorer 串联；验证反向原始流归一为同一 local/remote 会话、稳定 SHA-256 key、count/quality/coverage 完整度、迟到 generation 2 和 generation 3 权威空修复。finding/MySQL/probe 编排仍属平台侧。
 - [x] **FLOW-07A 变更设计**：candidate/评分结果携带 dimension snapshot、Geo、classification 和 rule-set 四类版本；规则升级生成新 generation/result，不改历史机器 verdict；terminal 决策规则单列，人工 disposition 仍由管理面独立维护。
 - [x] **FLOW-07A 数据面变更测试**：确定性 evidence/score、未知 schema、规则顺序/输入修改、dimension/Geo/classification 跨版本 CH 物化，以及 immutable rule-set v1→v2→回切 v1 的 generation/result 隔离均已覆盖；证据提交 `a7ea3f2d`。
-- [ ] **FLOW-07A 管理面 publication 门禁**：平台 PLAT-04A2a–A2d（migrations 042/043/047/048/049）已关闭 trusted-key/RBAC API、签名审批、If-Match、event-time activate/rollback、ACK/status/reference 和安全 object GC。当前阻断只剩 FLOW-06C4-P/W 的 VPN rule-set 专用 object compiler、发布适配和真实 worker 安装 ACK；数据面直接选取已编译 immutable rule set 的测试不能替代。
+- [x] **FLOW-07A 管理面 publication 门禁**：VPN rule-set canonical object、异步发布 adapter、RBAC/If-Match/审批、event-time activate/rollback、consumer status，以及真实 detection worker 的 checksum/schema/identity 校验、catalog LKG 和 downloaded/installed/failed ACK 已闭环；真实 MySQL 端到端覆盖 draft→publish job→approve→activate→安装与机器 worker ACK。主动探测授权仍属于 FLOW-07B，不由本项冒充。
 - [x] **FLOW-07A2 schema 门禁**：003 前向增加 `remote_prefix_id/geo_version/classification_version/row_kind` 并扩展 replacement key；001/002 未回改，旧行默认 candidate，新读取契约只接受有 marker 的 generation。
 - [x] **FLOW-07A2 materializer**：单条同步 `INSERT SELECT ... UNION ALL` 写候选和 `_generation`；空修复可推进 generation，版本不互相覆盖，同请求 dedup token 稳定；未知采样不混 raw/estimated，443 不推断 TLS/QUIC。
 - [x] **FLOW-07A2 单元/变更测试**：覆盖 UTC/闭窗/1m..24h、安全标识符、原子 marker、稳定主 tuple、双向计数、rollup/sampling 完整度、四类版本、永久/暂时 CH 错误和 authoritative generation read。

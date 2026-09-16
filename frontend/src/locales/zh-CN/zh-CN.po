@@ -7370,3 +7370,44 @@ msgstr "已发布"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Search policy ID or status..."
 msgstr "搜索策略 ID 或状态..."
+msgid "Failed to load VPN rule-set consumers"
+msgstr "加载 VPN 规则集消费者失败"
+
+msgid "Failed to load VPN rule-set publications"
+msgstr "加载 VPN 规则集发布版本失败"
+
+msgid "Failed to publish VPN rule set"
+msgstr "发布 VPN 规则集失败"
+
+msgid "Failed to update VPN rule-set publication"
+msgstr "更新 VPN 规则集发布状态失败"
+
+msgid "No VPN rule-set publications found."
+msgstr "没有 VPN 规则集发布版本。"
+
+msgid "No worker has reported this version."
+msgstr "尚无工作进程上报此版本。"
+
+msgid "Only an approved, activated and installed version is used for scoring."
+msgstr "只有已审批、已激活并完成安装的版本才用于评分。"
+
+msgid "Preview and publish"
+msgstr "预览并发布"
+
+msgid "Rule-set publications"
+msgstr "规则集发布版本"
+
+msgid "Search version, ID or checksum..."
+msgstr "搜索版本、ID 或校验和..."
+
+msgid "Selected version"
+msgstr "已选版本"
+
+msgid "Worker installation status"
+msgstr "工作进程安装状态"
+
+msgid "Medium"
+msgstr "中风险"
+
+msgid "Critical"
+msgstr "严重"

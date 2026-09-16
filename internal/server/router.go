@@ -36,6 +36,9 @@ func (s *Server) newRouter() *gin.Engine {
 	flowWorkers.GET("/enrichment-publications", s.fetchFlowWorkerPublications)
 	flowWorkers.GET("/enrichment-publications/:publication_id/objects/:kind", s.fetchFlowWorkerObject)
 	flowWorkers.POST("/enrichment-publications/:publication_id/ack", s.acknowledgeFlowWorkerPublication)
+	flowWorkers.GET("/vpn-rule-set", s.fetchFlowWorkerVPNRuleSet)
+	flowWorkers.GET("/vpn-rule-sets/:snapshot_id/object", s.fetchFlowWorkerVPNRuleSetObject)
+	flowWorkers.POST("/vpn-rule-sets/:snapshot_id/ack", s.acknowledgeFlowWorkerVPNRuleSet)
 	flowWorkers.GET("/raw-delete-barrier", s.fetchFlowWorkerRawDeleteBarrier)
 	flowWorkers.POST("/raw-delete-barriers/:barrier_id/ack", s.acknowledgeFlowWorkerRawDeleteBarrier)
 
