@@ -124,7 +124,17 @@ func oneFixturePayload(t testing.TB, family, name string) []byte {
 	if !ok {
 		t.Fatal("resolve fixture test path")
 	}
-	path := filepath.Join(filepath.Dir(currentFile), "..", "..", "akvorado", "outlet", "flow", "decoder", family, "testdata", name)
+	root := os.Getenv("WATCHDOG_AKVORADO_FIXTURE_DIR")
+	if root == "" {
+		root = filepath.Join(filepath.Dir(currentFile), "..", "..", "akvorado")
+	}
+	path := filepath.Join(root, "outlet", "flow", "decoder", family, "testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("Akvorado fixture is not available at %s", path)
+		}
+		t.Fatalf("stat Akvorado fixture: %v", err)
+	}
 	payloads := readPCAPUDPPayloads(t, path)
 	if len(payloads) != 1 {
 		t.Fatalf("%s contains %d packets, want 1", path, len(payloads))

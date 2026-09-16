@@ -10,7 +10,7 @@ import (
 )
 
 func TestStreamMMDBReadsAkvoradoFixtures(t *testing.T) {
-	path := filepath.Join("..", "..", "akvorado", "orchestrator", "geoip", "testdata", "GeoLite2-City-Test.mmdb")
+	path := akvoradoMMDBFixture(t, "GeoLite2-City-Test.mmdb")
 	var records []AddressImportRecord
 	metadata, err := StreamMMDB(path, func(record AddressImportRecord) error {
 		records = append(records, record)
@@ -30,7 +30,7 @@ func TestStreamMMDBReadsAkvoradoFixtures(t *testing.T) {
 }
 
 func TestStreamMMDBDoesNotTreatASNOrganizationAsISP(t *testing.T) {
-	path := filepath.Join("..", "..", "akvorado", "orchestrator", "geoip", "testdata", "GeoLite2-ASN-Test.mmdb")
+	path := akvoradoMMDBFixture(t, "GeoLite2-ASN-Test.mmdb")
 	foundASN := false
 	metadata, err := StreamMMDB(path, func(record AddressImportRecord) error {
 		if record.ASN != 0 {
@@ -47,6 +47,22 @@ func TestStreamMMDBDoesNotTreatASNOrganizationAsISP(t *testing.T) {
 	if metadata.DatabaseType != "GeoLite2-ASN" || !foundASN {
 		t.Fatalf("metadata=%#v found_asn=%v", metadata, foundASN)
 	}
+}
+
+func akvoradoMMDBFixture(t *testing.T, name string) string {
+	t.Helper()
+	root := os.Getenv("WATCHDOG_AKVORADO_FIXTURE_DIR")
+	if root == "" {
+		root = filepath.Join("..", "..", "akvorado")
+	}
+	path := filepath.Join(root, "orchestrator", "geoip", "testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("Akvorado fixture is not available at %s", path)
+		}
+		t.Fatalf("stat Akvorado fixture: %v", err)
+	}
+	return path
 }
 
 func TestStreamIPDBEnumeratesTrieBoundaries(t *testing.T) {
