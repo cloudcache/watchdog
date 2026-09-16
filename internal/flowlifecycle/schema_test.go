@@ -48,3 +48,19 @@ func TestArchiveLifecycleSchemaAddsRotatingLateCheckEvidence(t *testing.T) {
 		t.Fatal("archive lifecycle migration retained tenant_id")
 	}
 }
+
+func TestBackupEvidenceSchemaAddsTraceAndCAS(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/schema/mysql/0035_flow_backup_evidence_cas.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(data)
+	for _, required := range []string{"flow_backup_restore_evidence", "restore_test_ref", "row_version"} {
+		if !strings.Contains(schema, required) {
+			t.Fatalf("backup evidence migration is missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "tenant_id") {
+		t.Fatal("backup evidence migration retained tenant_id")
+	}
+}

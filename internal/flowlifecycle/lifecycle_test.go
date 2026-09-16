@@ -2,6 +2,7 @@ package flowlifecycle
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,7 +83,11 @@ func TestRawDeleteGuardRequiresEveryProof(t *testing.T) {
 		State: PartitionDeleteEligible, Generation: generation, ReconciledAt: earliest.Add(-time.Hour), DeleteEligibleAt: earliest,
 		Source: counters, Archive: counters,
 		Coverage: []OffsetCoverage{{SourceStreamID: "stream-a", KafkaTopic: "raw", ConsumerGroup: "worker", BootstrapOffset: 10, FirstOffset: 50, LastOffsetExclusive: 61, CommittedNextOffset: 62, ReconciledNextOffset: 61, CommittedSnapshotAt: earliest.Add(-2 * time.Hour), VerifiedAt: earliest.Add(-time.Hour)}},
-		Backup:   &BackupEvidence{StorageKind: "raw", CoveredFrom: day, CoveredThrough: day.Add(24 * time.Hour), Status: "verified", VerifiedAt: day.Add(48 * time.Hour), RestoreTestedAt: day.Add(48 * time.Hour)},
+		Backup: &BackupEvidence{
+			StorageKind: "raw", CoveredFrom: day, CoveredThrough: day.Add(24 * time.Hour), Status: "verified",
+			BackupRef: "s3://watchdog/flow/day", ChecksumSHA256: strings.Repeat("a", 64),
+			VerifiedAt: day.Add(48 * time.Hour), RestoreTestedAt: day.Add(48 * time.Hour), RestoreTestRef: "restore-run/a",
+		},
 	}
 	if err := ValidateRawDayDelete(guard); err != nil {
 		t.Fatalf("valid guard: %v", err)

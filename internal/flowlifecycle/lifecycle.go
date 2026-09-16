@@ -177,18 +177,27 @@ func (coverage OffsetCoverage) validate() error {
 }
 
 type BackupEvidence struct {
-	ID              string
-	StorageKind     string
-	CoveredFrom     time.Time
-	CoveredThrough  time.Time
-	Status          string
-	VerifiedAt      time.Time
-	RestoreTestedAt time.Time
+	ID              string    `json:"id"`
+	StorageKind     string    `json:"storage_kind"`
+	CoveredFrom     time.Time `json:"covered_from"`
+	CoveredThrough  time.Time `json:"covered_through"`
+	BackupRef       string    `json:"backup_ref"`
+	ChecksumSHA256  string    `json:"checksum_sha256"`
+	Status          string    `json:"status"`
+	VerifiedBy      string    `json:"verified_by,omitempty"`
+	VerifiedAt      time.Time `json:"verified_at"`
+	RestoreTestedAt time.Time `json:"restore_tested_at"`
+	RestoreTestRef  string    `json:"restore_test_ref"`
+	RevokedBy       string    `json:"revoked_by,omitempty"`
+	RevokedAt       time.Time `json:"revoked_at,omitzero"`
+	RowVersion      uint64    `json:"row_version"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (evidence BackupEvidence) covers(kind string, start, end time.Time) bool {
 	return evidence.Status == "verified" && (evidence.StorageKind == kind || evidence.StorageKind == "all") &&
-		!evidence.VerifiedAt.IsZero() && !evidence.RestoreTestedAt.IsZero() &&
+		!evidence.VerifiedAt.IsZero() && !evidence.RestoreTestedAt.IsZero() && strings.TrimSpace(evidence.BackupRef) != "" &&
+		validSHA256(evidence.ChecksumSHA256) && strings.TrimSpace(evidence.RestoreTestRef) != "" &&
 		!UTCDate(start).Before(UTCDate(evidence.CoveredFrom)) && !UTCDate(evidence.CoveredThrough).Before(UTCDate(end))
 }
 

@@ -94,7 +94,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 归档 generation 固定编码为 `(policy_version << 32) | repair_attempt`。这保证新策略的首次构建严格高于任何旧策略 repair；迁移 011 会拒绝 legacy generation 已进入高 32-bit 命名空间的数据库。任务幂等键包含 UTC 日、策略版本和 repair attempt，取消、租约接管或失败重试不能复用更旧 generation 覆盖新结果。调度持久化顺序固定为 `enqueue operation job -> bind sealed partition state/job/generation -> advance watermark`；任一步失败重扫都由幂等键收敛，绝不能在分区状态存在前推进水位。被清理的 terminal job 以 `job.id IS NULL` 继续进入 repair 候选，不能把 UTC 日永久搁浅。
 
-`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。两类删除在真实备份恢复、批准状态、独立故障注入、审计与恢复门禁完成前不得由 TTL 或人工 SQL 绕过。
+`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。L5B1 只增加全局备份恢复证据的创建/分页/详情/带 ETag 撤销 API；证据不可编辑或删除，必须同时有覆盖范围、对象引用、SHA-256、恢复时间与演练引用，且所有变更审计。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。两类删除在真实备份恢复、批准状态、独立故障注入、审计与恢复门禁完成前不得由 TTL 或人工 SQL 绕过。
 
 ## 5. 查询与导出切换
 

@@ -131,9 +131,42 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 			}
 		})
 	}
+	backupInput := map[string]any{
+		"storage_kind": "raw", "covered_from": "2026-01-01", "covered_through": "2026-01-02",
+		"backup_ref": "s3://backups/flow/raw/2026-01-01", "checksum_sha256": strings.Repeat("a", 64),
+		"restore_tested_at": time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+		"restore_test_ref":  "restore-run/2026-09-16/flow-raw-2026-01-01",
+	}
+	backupCreated := flowLifecycleRequest(t, s.createFlowBackupEvidence, admin, http.MethodPost, "/api/v1/flow/storage/backup-evidence", "", "", backupInput, "")
+	if backupCreated.Code != http.StatusCreated || backupCreated.Header().Get("ETag") != `"1"` {
+		t.Fatalf("create backup evidence: status=%d etag=%q body=%s", backupCreated.Code, backupCreated.Header().Get("ETag"), backupCreated.Body.String())
+	}
+	var backup flowlifecycle.BackupEvidence
+	if err := json.Unmarshal(backupCreated.Body.Bytes(), &backup); err != nil {
+		t.Fatal(err)
+	}
+	backupListed := flowLifecycleRequest(t, s.listFlowBackupEvidence, admin, http.MethodGet, "/api/v1/flow/storage/backup-evidence?status=verified&q=restore-run", "", "", nil, "")
+	if backupListed.Code != http.StatusOK || !strings.Contains(backupListed.Body.String(), `"total":1`) || !strings.Contains(backupListed.Body.String(), backup.ID) {
+		t.Fatalf("list backup evidence: status=%d body=%s", backupListed.Code, backupListed.Body.String())
+	}
+	backupGet := flowLifecycleRequest(t, s.getFlowBackupEvidence, admin, http.MethodGet, "/api/v1/flow/storage/backup-evidence/"+backup.ID, "id", backup.ID, nil, "")
+	if backupGet.Code != http.StatusOK || backupGet.Header().Get("ETag") != `"1"` {
+		t.Fatalf("get backup evidence: status=%d etag=%q body=%s", backupGet.Code, backupGet.Header().Get("ETag"), backupGet.Body.String())
+	}
+	backupStale := flowLifecycleRequest(t, s.revokeFlowBackupEvidence, admin, http.MethodPost, "/api/v1/flow/storage/backup-evidence/"+backup.ID+"/actions/revoke", "id", backup.ID, nil, `"2"`)
+	if backupStale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale revoke backup evidence: status=%d body=%s", backupStale.Code, backupStale.Body.String())
+	}
+	backupRevoked := flowLifecycleRequest(t, s.revokeFlowBackupEvidence, admin, http.MethodPost, "/api/v1/flow/storage/backup-evidence/"+backup.ID+"/actions/revoke", "id", backup.ID, nil, `"1"`)
+	if backupRevoked.Code != http.StatusOK || backupRevoked.Header().Get("ETag") != `"2"` || !strings.Contains(backupRevoked.Body.String(), `"status":"revoked"`) {
+		t.Fatalf("revoke backup evidence: status=%d etag=%q body=%s", backupRevoked.Code, backupRevoked.Header().Get("ETag"), backupRevoked.Body.String())
+	}
 	var auditCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_retention_policy'`, userID).Scan(&auditCount); err != nil || auditCount != 5 {
 		t.Fatalf("audit count=%d error=%v", auditCount, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_backup_evidence'`, userID).Scan(&auditCount); err != nil || auditCount != 2 {
+		t.Fatalf("backup audit count=%d error=%v", auditCount, err)
 	}
 }
 
@@ -312,8 +345,8 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	}
 	backupID := "01JDELETEBACKUP0000000000"
 	if _, err := db.ExecContext(ctx, `INSERT INTO flow_backup_restore_evidence
-		(id,storage_kind,covered_from,covered_through,backup_ref,checksum_sha256,status,verified_at,restore_tested_at)
-		VALUES (?,'raw',?,?,?,REPEAT('a',64),'verified',?,?)`, backupID, day, day.Add(24*time.Hour), "s3://backup/flow/2026-01-01", day.Add(3*24*time.Hour), day.Add(4*24*time.Hour)); err != nil {
+		(id,storage_kind,covered_from,covered_through,backup_ref,checksum_sha256,status,verified_at,restore_tested_at,restore_test_ref)
+		VALUES (?,'raw',?,?,?,REPEAT('a',64),'verified',?,?,?)`, backupID, day, day.Add(24*time.Hour), "s3://backup/flow/2026-01-01", day.Add(3*24*time.Hour), day.Add(4*24*time.Hour), "restore-run/2026-01-05"); err != nil {
 		t.Fatal(err)
 	}
 	reader := &testRawDeleteEvidence{counters: counters, coverage: []flowch.DayOffsetCoverage{{

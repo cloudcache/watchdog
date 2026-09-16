@@ -23,6 +23,36 @@ type flowRetentionPolicyInput struct {
 	RequireBackupBeforeDelete *bool  `json:"require_backup_before_delete"`
 }
 
+type flowBackupEvidenceInput struct {
+	StorageKind     string `json:"storage_kind"`
+	CoveredFrom     string `json:"covered_from"`
+	CoveredThrough  string `json:"covered_through"`
+	BackupRef       string `json:"backup_ref"`
+	ChecksumSHA256  string `json:"checksum_sha256"`
+	RestoreTestedAt string `json:"restore_tested_at"`
+	RestoreTestRef  string `json:"restore_test_ref"`
+}
+
+func (request flowBackupEvidenceInput) evidence(id string) (flowlifecycle.BackupEvidence, error) {
+	coveredFrom, err := time.Parse(time.DateOnly, strings.TrimSpace(request.CoveredFrom))
+	if err != nil {
+		return flowlifecycle.BackupEvidence{}, flowlifecycle.ErrInvalidBackupEvidence
+	}
+	coveredThrough, err := time.Parse(time.DateOnly, strings.TrimSpace(request.CoveredThrough))
+	if err != nil {
+		return flowlifecycle.BackupEvidence{}, flowlifecycle.ErrInvalidBackupEvidence
+	}
+	restoreTestedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(request.RestoreTestedAt))
+	if err != nil {
+		return flowlifecycle.BackupEvidence{}, flowlifecycle.ErrInvalidBackupEvidence
+	}
+	return flowlifecycle.BackupEvidence{
+		ID: id, StorageKind: request.StorageKind, CoveredFrom: coveredFrom, CoveredThrough: coveredThrough,
+		BackupRef: request.BackupRef, ChecksumSHA256: request.ChecksumSHA256,
+		RestoreTestedAt: restoreTestedAt, RestoreTestRef: request.RestoreTestRef,
+	}, nil
+}
+
 func (request flowRetentionPolicyInput) policy(id string) (flowlifecycle.Policy, error) {
 	bootstrap, err := time.Parse("2006-01-02", strings.TrimSpace(request.BootstrapFrom))
 	if err != nil {
@@ -56,6 +86,68 @@ func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 	storage.GET("/partitions/:date/delete-readiness", s.requirePermission("job.view"), s.getFlowRawDeleteReadiness)
 	storage.GET("/watermarks", s.requirePermission("job.view"), s.listFlowReconciliationWatermarks)
 	storage.GET("/deletion-receipts", s.requirePermission("job.view"), s.listFlowDeletionReceipts)
+	storage.GET("/backup-evidence", s.requirePermission("job.view"), s.listFlowBackupEvidence)
+	storage.POST("/backup-evidence", s.requirePermission("job.manage"), s.createFlowBackupEvidence)
+	storage.GET("/backup-evidence/:id", s.requirePermission("job.view"), s.getFlowBackupEvidence)
+	storage.POST("/backup-evidence/:id/actions/revoke", s.requirePermission("job.manage"), s.revokeFlowBackupEvidence)
+}
+
+func (s *Server) listFlowBackupEvidence(c *gin.Context) {
+	limit, offset := pageParams(c)
+	items, total, err := flowlifecycle.NewStore(s.db).ListBackupEvidence(c.Request.Context(), flowlifecycle.BackupEvidenceFilter{
+		StorageKind: strings.TrimSpace(c.Query("storage_kind")), Status: strings.TrimSpace(c.Query("status")),
+		Search: strings.TrimSpace(c.Query("q")), Sort: strings.TrimSpace(c.Query("sort")),
+		Order: strings.TrimSpace(c.Query("order")), Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+func (s *Server) getFlowBackupEvidence(c *gin.Context) {
+	evidence, err := flowlifecycle.NewStore(s.db).GetBackupEvidence(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	c.Header("ETag", etag(evidence.RowVersion))
+	c.JSON(http.StatusOK, evidence)
+}
+
+func (s *Server) createFlowBackupEvidence(c *gin.Context) {
+	var request flowBackupEvidenceInput
+	if err := c.ShouldBindJSON(&request); err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
+		return
+	}
+	evidence, err := request.evidence(newID())
+	if err == nil {
+		evidence, err = flowlifecycle.NewStore(s.db).CreateBackupEvidence(c.Request.Context(), evidence, currentPrincipal(c).UserID, time.Now())
+	}
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_backup_evidence.create", "flow_backup_evidence", evidence.ID)
+	c.Header("ETag", etag(evidence.RowVersion))
+	c.JSON(http.StatusCreated, evidence)
+}
+
+func (s *Server) revokeFlowBackupEvidence(c *gin.Context) {
+	expected, ok := requiredFlowLifecycleIfMatch(c)
+	if !ok {
+		return
+	}
+	evidence, err := flowlifecycle.NewStore(s.db).RevokeBackupEvidence(c.Request.Context(), c.Param("id"), currentPrincipal(c).UserID, expected, time.Now())
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_backup_evidence.revoke", "flow_backup_evidence", evidence.ID)
+	c.Header("ETag", etag(evidence.RowVersion))
+	c.JSON(http.StatusOK, evidence)
 }
 
 func (s *Server) getFlowRawDeleteReadiness(c *gin.Context) {
@@ -207,6 +299,8 @@ func writeFlowLifecycleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, flowlifecycle.ErrInvalidPolicy):
 		fail(c, http.StatusBadRequest, "invalid_flow_retention_policy", err.Error())
+	case errors.Is(err, flowlifecycle.ErrInvalidBackupEvidence):
+		fail(c, http.StatusBadRequest, "invalid_flow_backup_evidence", err.Error())
 	case errors.Is(err, flowlifecycle.ErrDeleteLocked):
 		fail(c, http.StatusConflict, "flow_deletion_locked", "physical deletion remains locked until reconciliation and backup restore gates are enabled")
 	case errors.Is(err, flowlifecycle.ErrVersionConflict):
