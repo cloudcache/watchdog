@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -12,25 +12,24 @@ func TestDefinitionDrivenProcessorsFromOSDiscovery(t *testing.T) {
 	cpuOID := snmpMIBOID("HUAWEI-ENTITY-EXTENT-MIB::hwEntityCpuUsage")
 	operOID := snmpMIBOID("HUAWEI-ENTITY-EXTENT-MIB::hwEntityOperStatus")
 	nameOID := snmpMIBOID("ENTITY-MIB::entPhysicalName")
-	query := fakeSNMPCollectorQueryEngine{
-		walks: map[string]SNMPCollectorResponse{
-			cpuOID: {VarBinds: []SNMPCollectorVarBind{
+	query := fakeQueryEngine{
+		walks: map[string]QueryResponse{
+			cpuOID: {VarBinds: []VarBind{
 				{OID: cpuOID + ".9", Value: "17"},
 				{OID: cpuOID + ".12", Value: "44"},
 			}},
-			operOID: {VarBinds: []SNMPCollectorVarBind{
+			operOID: {VarBinds: []VarBind{
 				{OID: operOID + ".9", Value: "3"},  // enabled -> kept
 				{OID: operOID + ".12", Value: "2"}, // != 3 -> skipped
 			}},
-			nameOID: {VarBinds: []SNMPCollectorVarBind{
+			nameOID: {VarBinds: []VarBind{
 				{OID: nameOID + ".9", Value: "MPU Board"},
 			}},
 		},
 	}
-	req := SNMPCollectorDiscoveryContext{
-		TenantID: "tenant_dev",
-		Device:   NetworkDevice{ID: "dev1"},
-		Query:    query,
+	req := DiscoveryContext{
+		Device: Device{ID: "dev1"},
+		Query:  query,
 		OSDiscovery: map[string]any{
 			"processors": map[string]any{
 				"data": []any{map[string]any{
@@ -50,7 +49,7 @@ func TestDefinitionDrivenProcessorsFromOSDiscovery(t *testing.T) {
 	if len(recipes) != 2 {
 		t.Fatalf("expected 2 recipes (usage + device percent) for the one kept row, got %d", len(recipes))
 	}
-	byMetric := map[string]SNMPCollectionRecipe{}
+	byMetric := map[string]Recipe{}
 	for _, recipe := range recipes {
 		byMetric[recipe.MetricName] = recipe
 	}
@@ -83,18 +82,17 @@ func TestDefinitionValueOIDFallsBackToNumOIDTemplate(t *testing.T) {
 
 func TestDefinitionSensorsApplyDivisorAndSkip(t *testing.T) {
 	tempOID := snmpMIBOID("HUAWEI-ENTITY-EXTENT-MIB::hwEntityTemperature")
-	query := fakeSNMPCollectorQueryEngine{
-		walks: map[string]SNMPCollectorResponse{
-			tempOID: {VarBinds: []SNMPCollectorVarBind{
+	query := fakeQueryEngine{
+		walks: map[string]QueryResponse{
+			tempOID: {VarBinds: []VarBind{
 				{OID: tempOID + ".9", Value: "41"},
 				{OID: tempOID + ".12", Value: "2147483647"}, // sentinel -> skipped
 			}},
 		},
 	}
-	req := SNMPCollectorDiscoveryContext{
-		TenantID: "tenant_dev",
-		Device:   NetworkDevice{ID: "dev1"},
-		Query:    query,
+	req := DiscoveryContext{
+		Device: Device{ID: "dev1"},
+		Query:  query,
 		OSDiscovery: map[string]any{
 			"sensors": map[string]any{
 				"temperature": map[string]any{
@@ -126,13 +124,13 @@ func TestDefinitionSensorsApplyDivisorAndSkip(t *testing.T) {
 func TestCandidateProbingCollectsOnlyAnsweredSources(t *testing.T) {
 	hwCPU := snmpMIBOID("HUAWEI-ENTITY-EXTENT-MIB::hwEntityCpuUsage")
 	hrCPU := snmpMIBOID("HOST-RESOURCES-MIB::hrProcessorLoad")
-	query := fakeSNMPCollectorQueryEngine{
-		walks: map[string]SNMPCollectorResponse{
+	query := fakeQueryEngine{
+		walks: map[string]QueryResponse{
 			// Device answers the Huawei table only; hrProcessorLoad walks empty.
-			hwCPU: {VarBinds: []SNMPCollectorVarBind{{OID: hwCPU + ".9", Value: "12"}}},
+			hwCPU: {VarBinds: []VarBind{{OID: hwCPU + ".9", Value: "12"}}},
 		},
 	}
-	req := SNMPCollectorDiscoveryContext{TenantID: "tenant_dev", Device: NetworkDevice{ID: "dev1"}, Query: query}
+	req := DiscoveryContext{Device: Device{ID: "dev1"}, Query: query}
 	recipes := probeCPUCandidates(context.Background(), req, map[string]bool{})
 	if len(recipes) != 2 {
 		t.Fatalf("expected 2 recipes from the one answering source, got %d", len(recipes))

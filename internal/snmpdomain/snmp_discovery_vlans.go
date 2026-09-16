@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -17,15 +17,15 @@ type SNMPVLANsDiscoveryModule struct{}
 
 func (SNMPVLANsDiscoveryModule) Name() string { return snmpCollectorModuleVLANs }
 
-func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 
 	// Walk dot1qVlanStaticName for VLAN names
-	resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	resp, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: snmpOIDDot1qVlanStaticName,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	nameMap := map[uint32]string{}
 	if err == nil {
@@ -40,7 +40,7 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 
 	// Extract configured VLANs from Vlanif interfaces in ports
 	configuredVLANs := map[uint32]bool{}
-	for _, port := range []NetworkPort{} {
+	for _, port := range []Port{} {
 		_ = port
 	}
 	// Ports are discovered before vlans in the module order,
@@ -48,9 +48,9 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 	// from the device's existing port list or from the discovery context.
 	// Since ports module runs before vlans, the ports aren't available here.
 	// Instead, walk ifDescr to find Vlanif interfaces.
-	ifDescrResp, ifErr := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	ifDescrResp, ifErr := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: snmpOIDIfDescr,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if ifErr == nil {
 		descrs := valuesByNumericSuffix(snmpOIDIfDescr, ifDescrResp)
@@ -63,9 +63,9 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 	}
 
 	// Also check ifName
-	ifNameResp, ifErr2 := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	ifNameResp, ifErr2 := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: snmpOIDIfName,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if ifErr2 == nil {
 		names := valuesByNumericSuffix(snmpOIDIfName, ifNameResp)
@@ -77,13 +77,13 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 		}
 	}
 
-	vlans := make([]DeviceVLAN, 0, len(configuredVLANs))
+	vlans := make([]VLAN, 0, len(configuredVLANs))
 	for vlanID := range configuredVLANs {
 		name := nameMap[vlanID]
 		if name == "" {
 			name = "VLAN " + strconv.FormatUint(uint64(vlanID), 10)
 		}
-		vlans = append(vlans, DeviceVLAN{
+		vlans = append(vlans, VLAN{
 			VLANID: vlanID,
 			Name:   name,
 			Status: "active",
@@ -96,7 +96,7 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 			if vlanID == 0 || vlanID == 1 || vlanID > 4094 {
 				continue
 			}
-			vlans = append(vlans, DeviceVLAN{
+			vlans = append(vlans, VLAN{
 				VLANID: vlanID,
 				Name:   name,
 				Status: "active",
@@ -104,7 +104,7 @@ func (m SNMPVLANsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 		}
 	}
 
-	return SNMPCollectorDiscoveryResult{VLANs: vlans}, nil
+	return DiscoveryResult{VLANs: vlans}, nil
 }
 
 func extractVlanifID(name string) (uint32, bool) {

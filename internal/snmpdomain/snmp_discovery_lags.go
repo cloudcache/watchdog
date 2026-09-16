@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -16,35 +16,35 @@ type SNMPLAGsDiscoveryModule struct{}
 
 func (SNMPLAGsDiscoveryModule) Name() string { return snmpCollectorModuleLAGs }
 
-func (m SNMPLAGsDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPLAGsDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
-	resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	resp, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: snmpOIDDot3adAggMACAddress,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
-		return SNMPCollectorDiscoveryResult{}, err
+		return DiscoveryResult{}, err
 	}
 	macs := valuesByNumericSuffix(snmpOIDDot3adAggMACAddress, resp)
-	resp2, _ := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	resp2, _ := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: snmpOIDDot3adAggAggMode,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	modes := valuesByNumericSuffix(snmpOIDDot3adAggAggMode, resp2)
-	lags := make([]DeviceLAGGroup, 0, len(macs))
+	lags := make([]LAGGroup, 0, len(macs))
 	for index, mac := range macs {
 		if index == 0 {
 			continue
 		}
-		lags = append(lags, DeviceLAGGroup{
+		lags = append(lags, LAGGroup{
 			AggregateIndex: index,
 			MACAddress:     formatMacAddress(cleanSNMPValue(mac)),
 			Mode:           lagMode(modes[index]),
 		})
 	}
-	return SNMPCollectorDiscoveryResult{LAGs: lags}, nil
+	return DiscoveryResult{LAGs: lags}, nil
 }
 
 func lagMode(value string) string {

@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -44,9 +44,9 @@ func (SNMPBGPDiscoveryModule) Name() string {
 	return snmpCollectorModuleBGP
 }
 
-func (m SNMPBGPDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPBGPDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	contextName := snmpCollectorDefinitionString(req.Definition.Definition, "context_name")
 	if result := m.discoverMIBProviders(ctx, req, contextName); len(result.BGPSessions) > 0 {
@@ -54,7 +54,7 @@ func (m SNMPBGPDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorD
 	}
 	result, err := m.discoverBGP4MIB(ctx, req, contextName)
 	if err != nil {
-		return SNMPCollectorDiscoveryResult{}, err
+		return DiscoveryResult{}, err
 	}
 	if len(result.BGPSessions) == 0 {
 		ciscoResult, cerr := m.discoverCiscoBGP(ctx, req, contextName)
@@ -65,14 +65,14 @@ func (m SNMPBGPDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorD
 	return result, nil
 }
 
-func (m SNMPBGPDiscoveryModule) discoverBGP4MIB(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPBGPDiscoveryModule) discoverBGP4MIB(ctx context.Context, req DiscoveryContext, contextName string) (DiscoveryResult, error) {
 	columns, err := m.walkBGPColumns(ctx, req, contextName)
 	if err != nil {
-		return SNMPCollectorDiscoveryResult{}, err
+		return DiscoveryResult{}, err
 	}
 	localAS := m.localAS(ctx, req, contextName)
 	sessions := make([]BGPSession, 0, len(columns[snmpOIDBGPPeerState]))
-	recipes := make([]SNMPCollectionRecipe, 0, len(columns[snmpOIDBGPPeerState])*5)
+	recipes := make([]Recipe, 0, len(columns[snmpOIDBGPPeerState])*5)
 	for index, state := range columns[snmpOIDBGPPeerState] {
 		peerAddr := firstNonEmptySNMPString(cleanSNMPValue(columns[snmpOIDBGPPeerRemoteAddr][index]), bgpPeerAddrFromIndex(index))
 		peerAS := parseUintValue(columns[snmpOIDBGPPeerRemoteAS][index])
@@ -80,8 +80,7 @@ func (m SNMPBGPDiscoveryModule) discoverBGP4MIB(ctx context.Context, req SNMPCol
 			continue
 		}
 		session := BGPSession{
-			ID:       collectorStableID("bgp", string(req.TenantID), string(req.Device.ID), peerAddr, strconv.FormatUint(peerAS, 10), "ipv4", "unicast"),
-			TenantID: req.TenantID,
+			ID:       collectorStableID("bgp", "", string(req.Device.ID), peerAddr, strconv.FormatUint(peerAS, 10), "ipv4", "unicast"),
 			DeviceID: req.Device.ID,
 			PeerAddr: peerAddr,
 			PeerAS:   peerAS,
@@ -95,10 +94,10 @@ func (m SNMPBGPDiscoveryModule) discoverBGP4MIB(ctx context.Context, req SNMPCol
 		sessions = append(sessions, session)
 		recipes = append(recipes, bgpPeerRecipes(req, session, index, contextName)...)
 	}
-	return SNMPCollectorDiscoveryResult{BGPSessions: sessions, Recipes: recipes}, nil
+	return DiscoveryResult{BGPSessions: sessions, Recipes: recipes}, nil
 }
 
-func (m SNMPBGPDiscoveryModule) discoverCiscoBGP(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPBGPDiscoveryModule) discoverCiscoBGP(ctx context.Context, req DiscoveryContext, contextName string) (DiscoveryResult, error) {
 	ciscoOIDs := map[string]string{
 		"state":          snmpOIDCbgpPeer2State,
 		"remoteAddr":     snmpOIDCbgpPeer2RemoteAddr,
@@ -111,18 +110,18 @@ func (m SNMPBGPDiscoveryModule) discoverCiscoBGP(ctx context.Context, req SNMPCo
 	}
 	columns := make(map[string]map[string]string, len(ciscoOIDs))
 	for key, oid := range ciscoOIDs {
-		resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+		resp, err := req.Query.Walk(ctx, WalkRequest{
 			Target: req.Target, Profile: req.Profile, Context: contextName, BaseOID: oid,
-			Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+			Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 		})
 		if err != nil {
-			return SNMPCollectorDiscoveryResult{}, err
+			return DiscoveryResult{}, err
 		}
 		columns[key] = valuesBySNMPIndex(oid, resp)
 	}
 	localAS := m.localAS(ctx, req, contextName)
 	sessions := make([]BGPSession, 0, len(columns["state"]))
-	recipes := make([]SNMPCollectionRecipe, 0, len(columns["state"])*6)
+	recipes := make([]Recipe, 0, len(columns["state"])*6)
 	for index, state := range columns["state"] {
 		peerAddr := cleanSNMPValue(columns["remoteAddr"][index])
 		if peerAddr == "" {
@@ -133,8 +132,7 @@ func (m SNMPBGPDiscoveryModule) discoverCiscoBGP(ctx context.Context, req SNMPCo
 			continue
 		}
 		session := BGPSession{
-			ID:       collectorStableID("bgp", string(req.TenantID), string(req.Device.ID), peerAddr, strconv.FormatUint(peerAS, 10), "ipv4", "unicast"),
-			TenantID: req.TenantID,
+			ID:       collectorStableID("bgp", "", string(req.Device.ID), peerAddr, strconv.FormatUint(peerAS, 10), "ipv4", "unicast"),
 			DeviceID: req.Device.ID,
 			PeerAddr: peerAddr,
 			PeerAS:   peerAS,
@@ -148,10 +146,10 @@ func (m SNMPBGPDiscoveryModule) discoverCiscoBGP(ctx context.Context, req SNMPCo
 		sessions = append(sessions, session)
 		recipes = append(recipes, ciscoBGPPeerRecipes(req, session, index, contextName)...)
 	}
-	return SNMPCollectorDiscoveryResult{BGPSessions: sessions, Recipes: recipes}, nil
+	return DiscoveryResult{BGPSessions: sessions, Recipes: recipes}, nil
 }
 
-func (m SNMPBGPDiscoveryModule) walkBGPColumns(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string) (map[string]map[string]string, error) {
+func (m SNMPBGPDiscoveryModule) walkBGPColumns(ctx context.Context, req DiscoveryContext, contextName string) (map[string]map[string]string, error) {
 	oids := []string{
 		snmpOIDBGPPeerState,
 		snmpOIDBGPPeerRemoteAddr,
@@ -164,12 +162,12 @@ func (m SNMPBGPDiscoveryModule) walkBGPColumns(ctx context.Context, req SNMPColl
 	}
 	columns := make(map[string]map[string]string, len(oids))
 	for _, oid := range oids {
-		response, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+		response, err := req.Query.Walk(ctx, WalkRequest{
 			Target:  req.Target,
 			Profile: req.Profile,
 			Context: contextName,
 			BaseOID: oid,
-			Flags: SNMPCollectorQueryFlags{
+			Flags: QueryFlags{
 				UseBulk:        true,
 				MaxRepetitions: 25,
 			},
@@ -182,8 +180,8 @@ func (m SNMPBGPDiscoveryModule) walkBGPColumns(ctx context.Context, req SNMPColl
 	return columns, nil
 }
 
-func (m SNMPBGPDiscoveryModule) localAS(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string) uint64 {
-	response, err := req.Query.Get(ctx, SNMPCollectorGetRequest{
+func (m SNMPBGPDiscoveryModule) localAS(ctx context.Context, req DiscoveryContext, contextName string) uint64 {
+	response, err := req.Query.Get(ctx, GetRequest{
 		Target:  req.Target,
 		Profile: req.Profile,
 		Context: contextName,
@@ -192,10 +190,10 @@ func (m SNMPBGPDiscoveryModule) localAS(ctx context.Context, req SNMPCollectorDi
 	if err != nil || len(response.VarBinds) == 0 {
 		return 0
 	}
-	return parseUintValue(snmpCollectorStringValue(response.VarBinds[0].Value))
+	return parseUintValue(stringValue(response.VarBinds[0].Value))
 }
 
-func valuesBySNMPIndex(baseOID string, response SNMPCollectorResponse) map[string]string {
+func valuesBySNMPIndex(baseOID string, response QueryResponse) map[string]string {
 	values := make(map[string]string, len(response.VarBinds))
 	prefix := strings.TrimPrefix(baseOID, ".") + "."
 	for _, vb := range response.VarBinds {
@@ -204,33 +202,32 @@ func valuesBySNMPIndex(baseOID string, response SNMPCollectorResponse) map[strin
 		if suffix == oid || suffix == "" {
 			continue
 		}
-		values[suffix] = snmpCollectorStringValue(vb.Value)
+		values[suffix] = stringValue(vb.Value)
 	}
 	return values
 }
 
-func bgpPeerRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, oidIndex string, contextName string) []SNMPCollectionRecipe {
+func bgpPeerRecipes(req DiscoveryContext, session BGPSession, oidIndex string, contextName string) []Recipe {
 	definitions := []struct {
 		metric    string
 		oid       string
-		valueType SNMPCollectorValueType
+		valueType ValueType
 		unit      string
 	}{
-		{MetricBGPState, snmpOIDBGPPeerState, SNMPCollectorValueState, "state"},
-		{MetricBGPPeerInUpdatesTotal, snmpOIDBGPPeerInUpdates, SNMPCollectorValueCounter32, "updates"},
-		{MetricBGPPeerOutUpdatesTotal, snmpOIDBGPPeerOutUpdates, SNMPCollectorValueCounter32, "updates"},
-		{MetricBGPPeerInMessagesTotal, snmpOIDBGPPeerInTotalMessages, SNMPCollectorValueCounter32, "messages"},
-		{MetricBGPPeerOutMessagesTotal, snmpOIDBGPPeerOutTotalMessages, SNMPCollectorValueCounter32, "messages"},
-		{MetricBGPPeerEstablishedSeconds, snmpOIDBGPPeerEstablishedSeconds, SNMPCollectorValueGauge, "seconds"},
+		{MetricBGPState, snmpOIDBGPPeerState, ValueState, "state"},
+		{MetricBGPPeerInUpdatesTotal, snmpOIDBGPPeerInUpdates, ValueCounter32, "updates"},
+		{MetricBGPPeerOutUpdatesTotal, snmpOIDBGPPeerOutUpdates, ValueCounter32, "updates"},
+		{MetricBGPPeerInMessagesTotal, snmpOIDBGPPeerInTotalMessages, ValueCounter32, "messages"},
+		{MetricBGPPeerOutMessagesTotal, snmpOIDBGPPeerOutTotalMessages, ValueCounter32, "messages"},
+		{MetricBGPPeerEstablishedSeconds, snmpOIDBGPPeerEstablishedSeconds, ValueGauge, "seconds"},
 	}
-	recipes := make([]SNMPCollectionRecipe, 0, len(definitions))
+	recipes := make([]Recipe, 0, len(definitions))
 	for _, definition := range definitions {
-		recipeID := collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleBGP, string(SNMPCollectorEntityBGPPeer), string(session.ID), definition.metric, oidIndex, contextName)
-		recipes = append(recipes, SNMPCollectionRecipe{
+		recipeID := collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleBGP, string(EntityBGPPeer), string(session.ID), definition.metric, oidIndex, contextName)
+		recipes = append(recipes, Recipe{
 			ID:                    recipeID,
-			TenantID:              req.TenantID,
 			DeviceID:              req.Device.ID,
-			EntityType:            SNMPCollectorEntityBGPPeer,
+			EntityType:            EntityBGPPeer,
 			EntityID:              session.ID,
 			ModuleName:            snmpCollectorModuleBGP,
 			MetricName:            definition.metric,
@@ -260,7 +257,7 @@ func bgpPeerRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, oidIn
 	return recipes
 }
 
-func ciscoBGPPeerRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, oidIndex string, contextName string) []SNMPCollectionRecipe {
+func ciscoBGPPeerRecipes(req DiscoveryContext, session BGPSession, oidIndex string, contextName string) []Recipe {
 	definitions := []struct {
 		metric string
 		oid    string
@@ -272,18 +269,17 @@ func ciscoBGPPeerRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, 
 		{MetricBGPPeerOutMessagesTotal, snmpOIDCbgpPeer2OutMessages},
 		{MetricBGPPeerEstablishedSeconds, snmpOIDCbgpPeer2EstablishedSec},
 	}
-	recipes := make([]SNMPCollectionRecipe, 0, len(definitions))
+	recipes := make([]Recipe, 0, len(definitions))
 	for _, def := range definitions {
-		recipeID := collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleBGP, string(SNMPCollectorEntityBGPPeer), string(session.ID), def.metric, oidIndex, contextName)
-		recipes = append(recipes, SNMPCollectionRecipe{
+		recipeID := collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleBGP, string(EntityBGPPeer), string(session.ID), def.metric, oidIndex, contextName)
+		recipes = append(recipes, Recipe{
 			ID:                    recipeID,
-			TenantID:              req.TenantID,
 			DeviceID:              req.Device.ID,
-			EntityType:            SNMPCollectorEntityBGPPeer,
+			EntityType:            EntityBGPPeer,
 			EntityID:              session.ID,
 			ModuleName:            snmpCollectorModuleBGP,
 			MetricName:            def.metric,
-			ValueType:             SNMPCollectorValueCounter32,
+			ValueType:             ValueCounter32,
 			OID:                   snmpMIBDisplayOID(def.oid + "." + oidIndex),
 			NumericOID:            def.oid + "." + oidIndex,
 			OIDIndex:              oidIndex,

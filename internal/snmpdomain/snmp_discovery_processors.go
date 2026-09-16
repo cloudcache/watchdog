@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -14,9 +14,9 @@ type SNMPProcessorsDiscoveryModule struct{}
 
 func (SNMPProcessorsDiscoveryModule) Name() string { return snmpCollectorModuleProcessors }
 
-func (m SNMPProcessorsDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPProcessorsDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	// The matched OS's os_discovery definition contributes first (it knows
 	// skip rules and description templates); then every generic candidate
@@ -24,28 +24,27 @@ func (m SNMPProcessorsDiscoveryModule) Discover(ctx context.Context, req SNMPCol
 	// assumed from vendor or model.
 	recipes := discoverDefinitionProcessors(ctx, req)
 	recipes = append(recipes, probeCPUCandidates(ctx, req, claimedOIDSet(recipes))...)
-	return SNMPCollectorDiscoveryResult{Recipes: recipes}, nil
+	return DiscoveryResult{Recipes: recipes}, nil
 }
 
 // deviceCPUPercentRecipe duplicates a processor-load OID under the
 // device-level metric name that the CPU/Memory overview panel queries.
-func deviceCPUPercentRecipe(req SNMPCollectorDiscoveryContext, entityID ID, idx, oid, mib, descr string) SNMPCollectionRecipe {
+func deviceCPUPercentRecipe(req DiscoveryContext, entityID string, idx, oid, mib, descr string) Recipe {
 	recipe := processorRecipe(req, entityID, idx, oid, mib, descr)
-	recipe.ID = collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleProcessors, string(SNMPCollectorEntityProcessor), string(entityID), MetricSNMPDeviceCPUPercent, idx, "")
+	recipe.ID = collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleProcessors, string(EntityProcessor), string(entityID), MetricSNMPDeviceCPUPercent, idx, "")
 	recipe.MetricName = MetricSNMPDeviceCPUPercent
 	return recipe
 }
 
-func processorRecipe(req SNMPCollectorDiscoveryContext, entityID ID, idx, oid, mib, descr string) SNMPCollectionRecipe {
-	return SNMPCollectionRecipe{
-		ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleProcessors, string(SNMPCollectorEntityProcessor), string(entityID), MetricSNMPProcessorUsage, idx, ""),
-		TenantID:              req.TenantID,
+func processorRecipe(req DiscoveryContext, entityID string, idx, oid, mib, descr string) Recipe {
+	return Recipe{
+		ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleProcessors, string(EntityProcessor), string(entityID), MetricSNMPProcessorUsage, idx, ""),
 		DeviceID:              req.Device.ID,
-		EntityType:            SNMPCollectorEntityProcessor,
+		EntityType:            EntityProcessor,
 		EntityID:              entityID,
 		ModuleName:            snmpCollectorModuleProcessors,
 		MetricName:            MetricSNMPProcessorUsage,
-		ValueType:             SNMPCollectorValueGauge,
+		ValueType:             ValueGauge,
 		OID:                   snmpMIBDisplayOID(oid),
 		NumericOID:            oid,
 		OIDIndex:              idx,

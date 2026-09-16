@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -25,9 +25,9 @@ type SNMPEntityPhysicalDiscoveryModule struct{}
 
 func (SNMPEntityPhysicalDiscoveryModule) Name() string { return snmpCollectorModuleEntityPhysical }
 
-func (m SNMPEntityPhysicalDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPEntityPhysicalDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	oids := []string{
 		snmpOIDEntPhysicalDescr, snmpOIDEntPhysicalClass, snmpOIDEntPhysicalName,
@@ -37,12 +37,12 @@ func (m SNMPEntityPhysicalDiscoveryModule) Discover(ctx context.Context, req SNM
 	}
 	columns := make(map[string]map[uint64]string, len(oids))
 	for _, oid := range oids {
-		resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+		resp, err := req.Query.Walk(ctx, WalkRequest{
 			Target: req.Target, Profile: req.Profile, BaseOID: oid,
-			Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+			Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 		})
 		if err != nil {
-			return SNMPCollectorDiscoveryResult{}, err
+			return DiscoveryResult{}, err
 		}
 		columns[oid] = valuesByNumericSuffix(oid, resp)
 	}
@@ -64,7 +64,7 @@ func (m SNMPEntityPhysicalDiscoveryModule) Discover(ctx context.Context, req SNM
 			IsFRU:            parseUintValue(columns[snmpOIDEntPhysicalIsFRU][index]) == 1,
 		})
 	}
-	return SNMPCollectorDiscoveryResult{PhysicalEntities: entities}, nil
+	return DiscoveryResult{PhysicalEntities: entities}, nil
 }
 
 func entPhysicalClass(value string) string {

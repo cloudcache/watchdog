@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -90,7 +90,7 @@ func defValueOID(entry map[string]any, key string) string {
 	numOID = strings.TrimSpace(defIndexTemplate.ReplaceAllString(numOID, ""))
 	numOID = strings.TrimSuffix(numOID, ".")
 	numOID = strings.TrimPrefix(numOID, ".")
-	if numOID == "" || !isNumericOID(numOID) {
+	if numOID == "" || !IsNumericOID(numOID) {
 		return ""
 	}
 	return numOID
@@ -108,13 +108,13 @@ func defResolve(ref string) string {
 	return oid
 }
 
-func defWalk(ctx context.Context, req SNMPCollectorDiscoveryContext, oid string) map[string]string {
+func defWalk(ctx context.Context, req DiscoveryContext, oid string) map[string]string {
 	if oid == "" {
 		return map[string]string{}
 	}
-	resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	resp, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: oid,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
 		return map[string]string{}
@@ -123,7 +123,7 @@ func defWalk(ctx context.Context, req SNMPCollectorDiscoveryContext, oid string)
 }
 
 // defSkipper evaluates the entry's skip_values rules per row index.
-func defSkipper(ctx context.Context, req SNMPCollectorDiscoveryContext, entry map[string]any) func(index string) bool {
+func defSkipper(ctx context.Context, req DiscoveryContext, entry map[string]any) func(index string) bool {
 	rules := anyMapList(entry["skip_values"])
 	if len(rules) == 0 {
 		return func(string) bool { return false }
@@ -197,7 +197,7 @@ var defTemplateToken = regexp.MustCompile(`\{\{\s*([^}]+?)\s*\}\}`)
 // defDescriber renders the entry's descr template per row: `{{ $index }}` and
 // `{{ MOD::object }}` lookups are supported; templates using other tokens
 // fall back to the plain label plus index.
-func defDescriber(ctx context.Context, req SNMPCollectorDiscoveryContext, entry map[string]any, fallback string) func(index string) string {
+func defDescriber(ctx context.Context, req DiscoveryContext, entry map[string]any, fallback string) func(index string) string {
 	template := defString(entry, "descr")
 	if template == "" {
 		return func(index string) string { return fallback + " " + index }
@@ -255,8 +255,8 @@ func defDivisor(entry map[string]any) float64 {
 
 // discoverDefinitionProcessors builds CPU recipes from the OS discovery
 // definition's processors section.
-func discoverDefinitionProcessors(ctx context.Context, req SNMPCollectorDiscoveryContext) []SNMPCollectionRecipe {
-	var recipes []SNMPCollectionRecipe
+func discoverDefinitionProcessors(ctx context.Context, req DiscoveryContext) []Recipe {
+	var recipes []Recipe
 	for _, entry := range osDiscoverySection(req.OSDiscovery, "processors") {
 		valueOID := defValueOID(entry, "value")
 		if valueOID == "" {
@@ -272,7 +272,7 @@ func discoverDefinitionProcessors(ctx context.Context, req SNMPCollectorDiscover
 			if skip(index) {
 				continue
 			}
-			entityID := collectorStableID("processor", string(req.TenantID), string(req.Device.ID), "def", index)
+			entityID := collectorStableID("processor", "", string(req.Device.ID), "def", index)
 			descr := describe(index)
 			recipes = append(recipes, processorRecipe(req, entityID, index, valueOID+"."+index, defMIBLabel(entry), descr))
 			recipes = append(recipes, deviceCPUPercentRecipe(req, entityID, index, valueOID+"."+index, defMIBLabel(entry), descr))
@@ -283,8 +283,8 @@ func discoverDefinitionProcessors(ctx context.Context, req SNMPCollectorDiscover
 
 // discoverDefinitionMempools builds memory recipes from the mempools section.
 // Supported columns: percent/percent_used (device memory %), total, used.
-func discoverDefinitionMempools(ctx context.Context, req SNMPCollectorDiscoveryContext) []SNMPCollectionRecipe {
-	var recipes []SNMPCollectionRecipe
+func discoverDefinitionMempools(ctx context.Context, req DiscoveryContext) []Recipe {
+	var recipes []Recipe
 	for _, entry := range osDiscoverySection(req.OSDiscovery, "mempools") {
 		percentOID := defValueOID(entry, "percent_used")
 		if percentOID == "" {
@@ -306,7 +306,7 @@ func discoverDefinitionMempools(ctx context.Context, req SNMPCollectorDiscoveryC
 			if skip(index) {
 				continue
 			}
-			entityID := collectorStableID("memory", string(req.TenantID), string(req.Device.ID), "def", index)
+			entityID := collectorStableID("memory", "", string(req.Device.ID), "def", index)
 			descr := describe(index)
 			if percentOID != "" {
 				recipe := memoryRecipe(req, entityID, MetricSNMPDeviceMemPercent, index, percentOID+"."+index, defMIBLabel(entry), descr, 1, nil)
@@ -326,8 +326,8 @@ func discoverDefinitionMempools(ctx context.Context, req SNMPCollectorDiscoveryC
 
 // discoverDefinitionStorage builds storage recipes from the storage section
 // (size + optional used column; `units` multiplies raw values into bytes).
-func discoverDefinitionStorage(ctx context.Context, req SNMPCollectorDiscoveryContext) []SNMPCollectionRecipe {
-	var recipes []SNMPCollectionRecipe
+func discoverDefinitionStorage(ctx context.Context, req DiscoveryContext) []Recipe {
+	var recipes []Recipe
 	for _, entry := range osDiscoverySection(req.OSDiscovery, "storage") {
 		sizeOID := defValueOID(entry, "size")
 		if sizeOID == "" {
@@ -353,7 +353,7 @@ func discoverDefinitionStorage(ctx context.Context, req SNMPCollectorDiscoveryCo
 			if skip(index) {
 				continue
 			}
-			entityID := collectorStableID("storage", string(req.TenantID), string(req.Device.ID), "def", index)
+			entityID := collectorStableID("storage", "", string(req.Device.ID), "def", index)
 			name := cleanSNMPValue(descrValues[index])
 			if name == "" {
 				name = describe(index)
@@ -368,16 +368,15 @@ func discoverDefinitionStorage(ctx context.Context, req SNMPCollectorDiscoveryCo
 	return recipes
 }
 
-func storageDefinitionRecipe(req SNMPCollectorDiscoveryContext, entityID ID, metric, idx, oid, mib, name string, units float64) SNMPCollectionRecipe {
-	recipe := SNMPCollectionRecipe{
-		ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleStorage, string(SNMPCollectorEntityStorage), string(entityID), metric, idx, ""),
-		TenantID:              req.TenantID,
+func storageDefinitionRecipe(req DiscoveryContext, entityID string, metric, idx, oid, mib, name string, units float64) Recipe {
+	recipe := Recipe{
+		ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleStorage, string(EntityStorage), string(entityID), metric, idx, ""),
 		DeviceID:              req.Device.ID,
-		EntityType:            SNMPCollectorEntityStorage,
+		EntityType:            EntityStorage,
 		EntityID:              entityID,
 		ModuleName:            snmpCollectorModuleStorage,
 		MetricName:            metric,
-		ValueType:             SNMPCollectorValueGauge,
+		ValueType:             ValueGauge,
 		OID:                   snmpMIBDisplayOID(oid),
 		NumericOID:            oid,
 		OIDIndex:              idx,
@@ -401,7 +400,7 @@ func storageDefinitionRecipe(req SNMPCollectorDiscoveryContext, entityID ID, met
 
 // discoverDefinitionSensors builds sensor rows and recipes from the sensors
 // section for value-bearing classes.
-func discoverDefinitionSensors(ctx context.Context, req SNMPCollectorDiscoveryContext) ([]NetworkDeviceSensor, []SNMPCollectionRecipe) {
+func discoverDefinitionSensors(ctx context.Context, req DiscoveryContext) ([]Sensor, []Recipe) {
 	classUnits := map[string]string{
 		"temperature": "C",
 		"voltage":     "V",
@@ -411,8 +410,8 @@ func discoverDefinitionSensors(ctx context.Context, req SNMPCollectorDiscoveryCo
 		"humidity":    "%",
 		"dbm":         "dBm",
 	}
-	var sensors []NetworkDeviceSensor
-	var recipes []SNMPCollectionRecipe
+	var sensors []Sensor
+	var recipes []Recipe
 	for class, entries := range osDiscoverySensorClasses(req.OSDiscovery) {
 		unit, supported := classUnits[class]
 		if !supported {
@@ -442,9 +441,8 @@ func discoverDefinitionSensors(ctx context.Context, req SNMPCollectorDiscoveryCo
 					value /= divisor
 				}
 				name := describe(index)
-				sensor := NetworkDeviceSensor{
-					ID:       collectorStableID("sensor", string(req.TenantID), string(req.Device.ID), "def", class, strconv.Itoa(entryIdx), index),
-					TenantID: req.TenantID,
+				sensor := Sensor{
+					ID:       collectorStableID("sensor", "", string(req.Device.ID), "def", class, strconv.Itoa(entryIdx), index),
 					DeviceID: req.Device.ID,
 					Class:    class,
 					Name:     name,
@@ -455,15 +453,14 @@ func discoverDefinitionSensors(ctx context.Context, req SNMPCollectorDiscoveryCo
 					Metadata: map[string]string{"sensor_type": "os_discovery:" + class},
 				}
 				sensors = append(sensors, sensor)
-				recipe := SNMPCollectionRecipe{
-					ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleSensors, string(SNMPCollectorEntitySensor), string(sensor.ID), MetricSNMPSensorValue, index, ""),
-					TenantID:              req.TenantID,
+				recipe := Recipe{
+					ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleSensors, string(EntitySensor), string(sensor.ID), MetricSNMPSensorValue, index, ""),
 					DeviceID:              req.Device.ID,
-					EntityType:            SNMPCollectorEntitySensor,
+					EntityType:            EntitySensor,
 					EntityID:              sensor.ID,
 					ModuleName:            snmpCollectorModuleSensors,
 					MetricName:            MetricSNMPSensorValue,
-					ValueType:             SNMPCollectorValueGauge,
+					ValueType:             ValueGauge,
 					OID:                   snmpMIBDisplayOID(valueOID + "." + index),
 					NumericOID:            valueOID + "." + index,
 					OIDIndex:              index,

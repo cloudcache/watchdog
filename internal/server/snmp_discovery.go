@@ -412,4 +412,4 @@ func truncateUTF8(value string, max int) string {
 	return string(runes[:max])
 }
 
-var _ snmpDiscoveryRunner = legacySNMPDiscoveryRunner{}
+var _ snmpDiscoveryRunner = snmpdomain.DiscoveryEngine{}

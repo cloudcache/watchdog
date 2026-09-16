@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -41,9 +41,9 @@ var defaultSNMPInterfaceAddressProviders = []snmpInterfaceAddressProvider{
 	},
 }
 
-func discoverSNMPInterfaceAddresses(ctx context.Context, req SNMPCollectorDiscoveryContext) []NetworkInterfaceAddress {
+func discoverSNMPInterfaceAddresses(ctx context.Context, req DiscoveryContext) []InterfaceAddress {
 	seenFamilies := map[string]bool{}
-	var result []NetworkInterfaceAddress
+	var result []InterfaceAddress
 	for _, provider := range defaultSNMPInterfaceAddressProviders {
 		if provider.legacyV4 && seenFamilies["ipv4"] || provider.legacyV6 && seenFamilies["ipv6"] {
 			continue
@@ -57,7 +57,7 @@ func discoverSNMPInterfaceAddresses(ctx context.Context, req SNMPCollectorDiscov
 	return deduplicateSNMPInterfaceAddresses(result)
 }
 
-func discoverSNMPInterfaceAddressesWithProvider(ctx context.Context, req SNMPCollectorDiscoveryContext, provider snmpInterfaceAddressProvider) []NetworkInterfaceAddress {
+func discoverSNMPInterfaceAddressesWithProvider(ctx context.Context, req DiscoveryContext, provider snmpInterfaceAddressProvider) []InterfaceAddress {
 	if provider.legacyV4 {
 		return discoverLegacyIPv4Addresses(ctx, req, provider)
 	}
@@ -76,13 +76,13 @@ func discoverSNMPInterfaceAddressesWithProvider(ctx context.Context, req SNMPCol
 	originOID, _ := resolveSNMPCapabilityOID(provider.origin)
 	prefixes := walkSNMPColumn(ctx, req, prefixOID)
 	origins := walkSNMPColumn(ctx, req, originOID)
-	addresses := make([]NetworkInterfaceAddress, 0, len(ifIndexes))
+	addresses := make([]InterfaceAddress, 0, len(ifIndexes))
 	for index, ifIndexValue := range ifIndexes {
 		family, ip, ok := parseIPAddressTableIndex(index)
 		if !ok {
 			continue
 		}
-		ifIndex := parseUintValue(snmpCollectorStringValue(ifIndexValue))
+		ifIndex := parseUintValue(stringValue(ifIndexValue))
 		if ifIndex == 0 {
 			continue
 		}
@@ -92,7 +92,7 @@ func discoverSNMPInterfaceAddressesWithProvider(ctx context.Context, req SNMPCol
 	return addresses
 }
 
-func discoverLegacyIPv4Addresses(ctx context.Context, req SNMPCollectorDiscoveryContext, provider snmpInterfaceAddressProvider) []NetworkInterfaceAddress {
+func discoverLegacyIPv4Addresses(ctx context.Context, req DiscoveryContext, provider snmpInterfaceAddressProvider) []InterfaceAddress {
 	ifIndexOID, ok := resolveSNMPCapabilityOID(provider.ifIndex)
 	if !ok {
 		return nil
@@ -103,15 +103,15 @@ func discoverLegacyIPv4Addresses(ctx context.Context, req SNMPCollectorDiscovery
 	}
 	netmaskOID, _ := resolveSNMPCapabilityOID(provider.netmask)
 	netmasks := walkSNMPColumn(ctx, req, netmaskOID)
-	addresses := make([]NetworkInterfaceAddress, 0, len(ifIndexes))
+	addresses := make([]InterfaceAddress, 0, len(ifIndexes))
 	for index, ifIndexValue := range ifIndexes {
 		ip := net.ParseIP(index).To4()
-		ifIndex := parseUintValue(snmpCollectorStringValue(ifIndexValue))
+		ifIndex := parseUintValue(stringValue(ifIndexValue))
 		if ip == nil || ifIndex == 0 {
 			continue
 		}
 		prefixLength := uint8(32)
-		if mask := net.ParseIP(snmpCollectorStringValue(netmasks[index])).To4(); mask != nil {
+		if mask := net.ParseIP(stringValue(netmasks[index])).To4(); mask != nil {
 			if ones, bits := net.IPMask(mask).Size(); bits == 32 && ones >= 0 {
 				prefixLength = uint8(ones)
 			}
@@ -121,13 +121,13 @@ func discoverLegacyIPv4Addresses(ctx context.Context, req SNMPCollectorDiscovery
 	return addresses
 }
 
-func discoverLegacyIPv6Addresses(ctx context.Context, req SNMPCollectorDiscoveryContext, provider snmpInterfaceAddressProvider) []NetworkInterfaceAddress {
+func discoverLegacyIPv6Addresses(ctx context.Context, req DiscoveryContext, provider snmpInterfaceAddressProvider) []InterfaceAddress {
 	prefixOID, ok := resolveSNMPCapabilityOID(provider.prefix)
 	if !ok {
 		return nil
 	}
 	prefixes := walkSNMPColumn(ctx, req, prefixOID)
-	addresses := make([]NetworkInterfaceAddress, 0, len(prefixes))
+	addresses := make([]InterfaceAddress, 0, len(prefixes))
 	for index, prefixValue := range prefixes {
 		parts, ok := parseNumericOIDParts(index)
 		if !ok || len(parts) < 17 {
@@ -145,7 +145,7 @@ func discoverLegacyIPv6Addresses(ctx context.Context, req SNMPCollectorDiscovery
 		if ip == nil || ifIndex == 0 {
 			continue
 		}
-		prefixLength := parseUintValue(snmpCollectorStringValue(prefixValue))
+		prefixLength := parseUintValue(stringValue(prefixValue))
 		if prefixLength > 128 {
 			prefixLength = 128
 		}
@@ -154,13 +154,12 @@ func discoverLegacyIPv6Addresses(ctx context.Context, req SNMPCollectorDiscovery
 	return addresses
 }
 
-func newSNMPInterfaceAddress(req SNMPCollectorDiscoveryContext, source string, ifIndex uint64, family string, ip net.IP, prefixLength uint8, origin string) NetworkInterfaceAddress {
+func newSNMPInterfaceAddress(req DiscoveryContext, source string, ifIndex uint64, family string, ip net.IP, prefixLength uint8, origin string) InterfaceAddress {
 	address := ip.String()
-	return NetworkInterfaceAddress{
-		ID:           collectorStableID("interface-address", string(req.TenantID), string(req.Device.ID), strconv.FormatUint(ifIndex, 10), family, address, strconv.Itoa(int(prefixLength))),
-		TenantID:     req.TenantID,
+	return InterfaceAddress{
+		ID:           collectorStableID("interface-address", "", string(req.Device.ID), strconv.FormatUint(ifIndex, 10), family, address, strconv.Itoa(int(prefixLength))),
 		DeviceID:     req.Device.ID,
-		PortID:       collectorStableID("port", string(req.TenantID), string(req.Device.ID), strconv.FormatUint(ifIndex, 10)),
+		PortID:       collectorStableID("port", "", string(req.Device.ID), strconv.FormatUint(ifIndex, 10)),
 		IfIndex:      ifIndex,
 		Address:      address,
 		Family:       family,
@@ -178,13 +177,13 @@ func resolveSNMPCapabilityOID(ref string) (string, bool) {
 	return oid, err == nil && oid != ""
 }
 
-func walkSNMPColumn(ctx context.Context, req SNMPCollectorDiscoveryContext, oid string) map[string]any {
+func walkSNMPColumn(ctx context.Context, req DiscoveryContext, oid string) map[string]any {
 	if oid == "" {
 		return nil
 	}
-	response, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	response, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: oid,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
 		return nil
@@ -260,7 +259,7 @@ func prefixLengthFromRowPointer(value any, family string) uint8 {
 	if family == "ipv4" {
 		maximum = 32
 	}
-	text := strings.Trim(snmpCollectorStringValue(value), ". ")
+	text := strings.Trim(stringValue(value), ". ")
 	if text != "" && text != "0.0" {
 		parts := strings.Split(text, ".")
 		if prefix, err := strconv.ParseUint(parts[len(parts)-1], 10, 8); err == nil && prefix <= maximum {
@@ -271,7 +270,7 @@ func prefixLengthFromRowPointer(value any, family string) uint8 {
 }
 
 func ipAddressOrigin(value any) string {
-	switch strings.TrimSpace(snmpCollectorStringValue(value)) {
+	switch strings.TrimSpace(stringValue(value)) {
 	case "1", "other":
 		return "other"
 	case "2", "manual":
@@ -287,9 +286,9 @@ func ipAddressOrigin(value any) string {
 	}
 }
 
-func deduplicateSNMPInterfaceAddresses(addresses []NetworkInterfaceAddress) []NetworkInterfaceAddress {
-	seen := make(map[ID]bool, len(addresses))
-	result := make([]NetworkInterfaceAddress, 0, len(addresses))
+func deduplicateSNMPInterfaceAddresses(addresses []InterfaceAddress) []InterfaceAddress {
+	seen := make(map[string]bool, len(addresses))
+	result := make([]InterfaceAddress, 0, len(addresses))
 	for _, address := range addresses {
 		if seen[address.ID] {
 			continue

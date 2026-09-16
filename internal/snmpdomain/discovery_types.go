@@ -118,6 +118,43 @@ type DiscoveryResult struct {
 	Events             []Event
 }
 
+type Table struct {
+	Rows map[string]map[string]VarBind
+}
+
+type PreCacheRequest struct {
+	Module string
+	MIB    string
+	OID    string
+	Mode   string
+	Flags  QueryFlags
+}
+
+type PreCache struct {
+	ByOID   map[string]QueryResponse
+	ByTable map[string]Table
+}
+
+type DiscoveryModule interface {
+	Name() string
+	Discover(context.Context, DiscoveryContext) (DiscoveryResult, error)
+}
+
+type DiscoveryContext struct {
+	TargetID   string
+	Target     QueryTarget
+	Device     Device
+	Profile    Profile
+	OS         OSMatch
+	Query      QueryEngine
+	PreCache   PreCache
+	Definition ModuleDefinition
+	// OSDiscovery is the matched OS's LibreNMS os_discovery "modules" map;
+	// definition-driven modules walk what it declares instead of hardcoding
+	// vendor branches.
+	OSDiscovery map[string]any
+}
+
 type DiscoveryRunner interface {
 	Discover(context.Context, DiscoveryRequest) (DiscoveryResult, error)
 }

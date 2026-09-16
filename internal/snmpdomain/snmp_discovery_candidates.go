@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -85,13 +85,13 @@ func candidateOID(ref string) string {
 	return oid
 }
 
-func candidateWalk(ctx context.Context, req SNMPCollectorDiscoveryContext, oid string) map[string]string {
+func candidateWalk(ctx context.Context, req DiscoveryContext, oid string) map[string]string {
 	if oid == "" {
 		return nil
 	}
-	resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	resp, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: oid,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
 		return nil
@@ -108,7 +108,7 @@ func candidateDescr(descrValues map[string]string, index, fallback string) strin
 
 // claimedOIDSet records the numeric base OIDs already produced by the OS
 // discovery definition so candidate probing does not duplicate them.
-func claimedOIDSet(recipes []SNMPCollectionRecipe) map[string]bool {
+func claimedOIDSet(recipes []Recipe) map[string]bool {
 	claimed := make(map[string]bool, len(recipes))
 	for _, recipe := range recipes {
 		oid := recipe.NumericOID
@@ -120,8 +120,8 @@ func claimedOIDSet(recipes []SNMPCollectionRecipe) map[string]bool {
 	return claimed
 }
 
-func probeCPUCandidates(ctx context.Context, req SNMPCollectorDiscoveryContext, claimed map[string]bool) []SNMPCollectionRecipe {
-	var recipes []SNMPCollectionRecipe
+func probeCPUCandidates(ctx context.Context, req DiscoveryContext, claimed map[string]bool) []Recipe {
+	var recipes []Recipe
 	for _, candidate := range snmpCPUCandidates {
 		valueOID := candidateOID(candidate.value)
 		if valueOID == "" || claimed[valueOID] {
@@ -134,7 +134,7 @@ func probeCPUCandidates(ctx context.Context, req SNMPCollectorDiscoveryContext, 
 		descrValues := candidateWalk(ctx, req, candidateOID(candidate.descr))
 		mib := candidateMIBLabel(candidate.value)
 		for index := range values {
-			entityID := collectorStableID("processor", string(req.TenantID), string(req.Device.ID), "cand", valueOID, index)
+			entityID := collectorStableID("processor", "", string(req.Device.ID), "cand", valueOID, index)
 			descr := candidateDescr(descrValues, index, "Processor")
 			recipes = append(recipes, processorRecipe(req, entityID, index, valueOID+"."+index, mib, descr))
 			recipes = append(recipes, deviceCPUPercentRecipe(req, entityID, index, valueOID+"."+index, mib, descr))
@@ -143,8 +143,8 @@ func probeCPUCandidates(ctx context.Context, req SNMPCollectorDiscoveryContext, 
 	return recipes
 }
 
-func probeMemoryCandidates(ctx context.Context, req SNMPCollectorDiscoveryContext, claimed map[string]bool) []SNMPCollectionRecipe {
-	var recipes []SNMPCollectionRecipe
+func probeMemoryCandidates(ctx context.Context, req DiscoveryContext, claimed map[string]bool) []Recipe {
+	var recipes []Recipe
 	for _, candidate := range snmpMemPercentCandidates {
 		valueOID := candidateOID(candidate.value)
 		if valueOID == "" || claimed[valueOID] {
@@ -170,7 +170,7 @@ func probeMemoryCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 			if sizes != nil && parseUintValue(sizes[index]) == 0 {
 				continue
 			}
-			entityID := collectorStableID("memory", string(req.TenantID), string(req.Device.ID), "cand", valueOID, index)
+			entityID := collectorStableID("memory", "", string(req.Device.ID), "cand", valueOID, index)
 			recipe := memoryRecipe(req, entityID, MetricSNMPDeviceMemPercent, index, valueOID+"."+index, mib, candidateDescr(descrValues, index, "Memory"), 1, nil)
 			recipe.Unit = "percent"
 			recipes = append(recipes, recipe)
@@ -194,7 +194,7 @@ func probeMemoryCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 			if sizeBytes == 0 {
 				continue
 			}
-			entityID := collectorStableID("memory", string(req.TenantID), string(req.Device.ID), "cand", usageOID, index)
+			entityID := collectorStableID("memory", "", string(req.Device.ID), "cand", usageOID, index)
 			descr := candidateDescr(descrValues, index, "Memory")
 			// used = usage% x size; total = size.
 			recipes = append(recipes, memoryRecipe(req, entityID, MetricSNMPMemoryUsed, index, usageOID+"."+index, mib, descr, float64(sizeBytes)/100, nil))
@@ -213,16 +213,16 @@ func probeMemoryCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 		descrValues := candidateWalk(ctx, req, candidateOID(candidate.descr))
 		mib := candidateMIBLabel(candidate.value)
 		for index := range values {
-			entityID := collectorStableID("memory", string(req.TenantID), string(req.Device.ID), "cand", valueOID, index)
+			entityID := collectorStableID("memory", "", string(req.Device.ID), "cand", valueOID, index)
 			recipes = append(recipes, memoryRecipe(req, entityID, MetricSNMPMemoryUsed, index, valueOID+"."+index, mib, candidateDescr(descrValues, index, "Memory pool"), 1, nil))
 		}
 	}
 	return recipes
 }
 
-func probeSensorCandidates(ctx context.Context, req SNMPCollectorDiscoveryContext, claimed map[string]bool) ([]NetworkDeviceSensor, []SNMPCollectionRecipe) {
-	var sensors []NetworkDeviceSensor
-	var recipes []SNMPCollectionRecipe
+func probeSensorCandidates(ctx context.Context, req DiscoveryContext, claimed map[string]bool) ([]Sensor, []Recipe) {
+	var sensors []Sensor
+	var recipes []Recipe
 	for _, candidate := range snmpDBMPairCandidates {
 		rxOID := candidateOID(candidate.rx)
 		txOID := candidateOID(candidate.tx)
@@ -255,9 +255,8 @@ func probeSensorCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 				if candidate.divisor > 1 {
 					value /= candidate.divisor
 				}
-				sensor := NetworkDeviceSensor{
-					ID:       collectorStableID("sensor", string(req.TenantID), string(req.Device.ID), "cand-dbm", strings.ToLower(direction.label), direction.oid, index),
-					TenantID: req.TenantID,
+				sensor := Sensor{
+					ID:       collectorStableID("sensor", "", string(req.Device.ID), "cand-dbm", strings.ToLower(direction.label), direction.oid, index),
 					DeviceID: req.Device.ID,
 					Class:    "dbm",
 					Name:     name + " " + direction.label + " power",
@@ -290,9 +289,8 @@ func probeSensorCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 			if err != nil || value <= 0 {
 				continue
 			}
-			sensor := NetworkDeviceSensor{
-				ID:       collectorStableID("sensor", string(req.TenantID), string(req.Device.ID), "cand-temp", valueOID, index),
-				TenantID: req.TenantID,
+			sensor := Sensor{
+				ID:       collectorStableID("sensor", "", string(req.Device.ID), "cand-temp", valueOID, index),
 				DeviceID: req.Device.ID,
 				Class:    "temperature",
 				Name:     candidateDescr(descrValues, index, "Temperature"),
@@ -309,16 +307,15 @@ func probeSensorCandidates(ctx context.Context, req SNMPCollectorDiscoveryContex
 	return sensors, recipes
 }
 
-func candidateSensorRecipe(req SNMPCollectorDiscoveryContext, sensor NetworkDeviceSensor, metric, unit string, divisor float64) SNMPCollectionRecipe {
-	recipe := SNMPCollectionRecipe{
-		ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleSensors, string(SNMPCollectorEntitySensor), string(sensor.ID), metric, sensor.OID, ""),
-		TenantID:              req.TenantID,
+func candidateSensorRecipe(req DiscoveryContext, sensor Sensor, metric, unit string, divisor float64) Recipe {
+	recipe := Recipe{
+		ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleSensors, string(EntitySensor), string(sensor.ID), metric, sensor.OID, ""),
 		DeviceID:              req.Device.ID,
-		EntityType:            SNMPCollectorEntitySensor,
+		EntityType:            EntitySensor,
 		EntityID:              sensor.ID,
 		ModuleName:            snmpCollectorModuleSensors,
 		MetricName:            metric,
-		ValueType:             SNMPCollectorValueGauge,
+		ValueType:             ValueGauge,
 		OID:                   snmpMIBDisplayOID(sensor.OID),
 		NumericOID:            sensor.OID,
 		OIDIndex:              sensorOIDIndex(sensor.OID),

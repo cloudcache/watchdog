@@ -1,9 +1,8 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -36,23 +35,22 @@ func (SNMPPortsDiscoveryModule) Name() string {
 	return snmpCollectorModulePorts
 }
 
-func (m SNMPPortsDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPPortsDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	columns, err := m.walkPortColumns(ctx, req)
 	if err != nil {
-		return SNMPCollectorDiscoveryResult{}, err
+		return DiscoveryResult{}, err
 	}
-	ports := make([]NetworkPort, 0, len(columns[snmpOIDIfDescr]))
-	recipes := make([]SNMPCollectionRecipe, 0, len(columns[snmpOIDIfDescr])*8)
+	ports := make([]Port, 0, len(columns[snmpOIDIfDescr]))
+	recipes := make([]Recipe, 0, len(columns[snmpOIDIfDescr])*8)
 	for ifIndex, descr := range columns[snmpOIDIfDescr] {
 		if ifIndex == 0 {
 			continue
 		}
-		port := NetworkPort{
-			ID:          collectorStableID("port", string(req.TenantID), string(req.Device.ID), strconv.FormatUint(ifIndex, 10)),
-			TenantID:    req.TenantID,
+		port := Port{
+			ID:          collectorStableID("port", "", string(req.Device.ID), strconv.FormatUint(ifIndex, 10)),
 			DeviceID:    req.Device.ID,
 			IfIndex:     ifIndex,
 			IfDescr:     descr,
@@ -69,14 +67,14 @@ func (m SNMPPortsDiscoveryModule) Discover(ctx context.Context, req SNMPCollecto
 		ports = append(ports, port)
 		recipes = append(recipes, portRecipes(req, port, hasColumnIndex(columns[snmpOIDIfHCInOctets], ifIndex), hasColumnIndex(columns[snmpOIDIfHCOutOctets], ifIndex))...)
 	}
-	return SNMPCollectorDiscoveryResult{
+	return DiscoveryResult{
 		Ports:              ports,
 		InterfaceAddresses: discoverSNMPInterfaceAddresses(ctx, req),
 		Recipes:            recipes,
 	}, nil
 }
 
-func (m SNMPPortsDiscoveryModule) walkPortColumns(ctx context.Context, req SNMPCollectorDiscoveryContext) (map[string]map[uint64]string, error) {
+func (m SNMPPortsDiscoveryModule) walkPortColumns(ctx context.Context, req DiscoveryContext) (map[string]map[uint64]string, error) {
 	oids := []string{
 		snmpOIDIfDescr,
 		snmpOIDIfType,
@@ -92,12 +90,12 @@ func (m SNMPPortsDiscoveryModule) walkPortColumns(ctx context.Context, req SNMPC
 	}
 	columns := make(map[string]map[uint64]string, len(oids))
 	for _, oid := range oids {
-		response, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+		response, err := req.Query.Walk(ctx, WalkRequest{
 			Target:  req.Target,
 			Profile: req.Profile,
 			Context: "",
 			BaseOID: oid,
-			Flags: SNMPCollectorQueryFlags{
+			Flags: QueryFlags{
 				UseBulk:        true,
 				MaxRepetitions: 25,
 			},
@@ -110,7 +108,7 @@ func (m SNMPPortsDiscoveryModule) walkPortColumns(ctx context.Context, req SNMPC
 	return columns, nil
 }
 
-func valuesByNumericSuffix(baseOID string, response SNMPCollectorResponse) map[uint64]string {
+func valuesByNumericSuffix(baseOID string, response QueryResponse) map[uint64]string {
 	values := make(map[uint64]string, len(response.VarBinds))
 	prefix := strings.TrimPrefix(baseOID, ".") + "."
 	for _, vb := range response.VarBinds {
@@ -123,47 +121,46 @@ func valuesByNumericSuffix(baseOID string, response SNMPCollectorResponse) map[u
 		if err != nil {
 			continue
 		}
-		values[ifIndex] = snmpCollectorStringValue(vb.Value)
+		values[ifIndex] = stringValue(vb.Value)
 	}
 	return values
 }
 
-func portRecipes(req SNMPCollectorDiscoveryContext, port NetworkPort, hasHCIn bool, hasHCOut bool) []SNMPCollectionRecipe {
+func portRecipes(req DiscoveryContext, port Port, hasHCIn bool, hasHCOut bool) []Recipe {
 	idx := strconv.FormatUint(port.IfIndex, 10)
 	inOctetsOID := snmpOIDIfHCInOctets
-	inOctetsType := SNMPCollectorValueCounter64
+	inOctetsType := ValueCounter64
 	if !hasHCIn {
 		inOctetsOID = snmpOIDIfInOctets
-		inOctetsType = SNMPCollectorValueCounter32
+		inOctetsType = ValueCounter32
 	}
 	outOctetsOID := snmpOIDIfHCOutOctets
-	outOctetsType := SNMPCollectorValueCounter64
+	outOctetsType := ValueCounter64
 	if !hasHCOut {
 		outOctetsOID = snmpOIDIfOutOctets
-		outOctetsType = SNMPCollectorValueCounter32
+		outOctetsType = ValueCounter32
 	}
 	definitions := []struct {
 		metric    string
 		oid       string
-		valueType SNMPCollectorValueType
+		valueType ValueType
 	}{
 		{MetricSNMPIfInOctetsTotal, inOctetsOID, inOctetsType},
 		{MetricSNMPIfOutOctetsTotal, outOctetsOID, outOctetsType},
-		{MetricSNMPIfInErrorsTotal, snmpOIDIfInErrors, SNMPCollectorValueCounter32},
-		{MetricSNMPIfOutErrorsTotal, snmpOIDIfOutErrors, SNMPCollectorValueCounter32},
-		{MetricSNMPIfInDiscardsTotal, snmpOIDIfInDiscards, SNMPCollectorValueCounter32},
-		{MetricSNMPIfOutDiscardsTotal, snmpOIDIfOutDiscards, SNMPCollectorValueCounter32},
-		{MetricSNMPIfAdminStatus, snmpOIDIfAdminStatus, SNMPCollectorValueState},
-		{MetricSNMPIfOperStatus, snmpOIDIfOperStatus, SNMPCollectorValueState},
+		{MetricSNMPIfInErrorsTotal, snmpOIDIfInErrors, ValueCounter32},
+		{MetricSNMPIfOutErrorsTotal, snmpOIDIfOutErrors, ValueCounter32},
+		{MetricSNMPIfInDiscardsTotal, snmpOIDIfInDiscards, ValueCounter32},
+		{MetricSNMPIfOutDiscardsTotal, snmpOIDIfOutDiscards, ValueCounter32},
+		{MetricSNMPIfAdminStatus, snmpOIDIfAdminStatus, ValueState},
+		{MetricSNMPIfOperStatus, snmpOIDIfOperStatus, ValueState},
 	}
-	recipes := make([]SNMPCollectionRecipe, 0, len(definitions))
+	recipes := make([]Recipe, 0, len(definitions))
 	for _, definition := range definitions {
-		recipeID := collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModulePorts, string(SNMPCollectorEntityPort), string(port.ID), definition.metric, idx, "")
-		recipes = append(recipes, SNMPCollectionRecipe{
+		recipeID := collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModulePorts, string(EntityPort), string(port.ID), definition.metric, idx, "")
+		recipes = append(recipes, Recipe{
 			ID:                    recipeID,
-			TenantID:              req.TenantID,
 			DeviceID:              req.Device.ID,
-			EntityType:            SNMPCollectorEntityPort,
+			EntityType:            EntityPort,
 			EntityID:              port.ID,
 			ModuleName:            snmpCollectorModulePorts,
 			MetricName:            definition.metric,
@@ -203,11 +200,11 @@ func portSpeedBps(ifHighSpeed string, ifSpeed string) uint64 {
 	return speed
 }
 
-func counterBits(valueType SNMPCollectorValueType) string {
-	if valueType == SNMPCollectorValueCounter64 {
+func counterBits(valueType ValueType) string {
+	if valueType == ValueCounter64 {
 		return "64"
 	}
-	if valueType == SNMPCollectorValueCounter32 {
+	if valueType == ValueCounter32 {
 		return "32"
 	}
 	return ""
@@ -220,31 +217,6 @@ func firstNonEmptySNMPString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func snmpCollectorStringValue(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	case int:
-		return strconv.Itoa(v)
-	case uint:
-		return strconv.FormatUint(uint64(v), 10)
-	case int32:
-		return strconv.FormatInt(int64(v), 10)
-	case uint32:
-		return strconv.FormatUint(uint64(v), 10)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case uint64:
-		return strconv.FormatUint(v, 10)
-	default:
-		return strings.TrimSpace(fmt.Sprintf("%v", v))
-	}
 }
 
 var errSNMPCollectorQueryRequired = errors.New("snmp collector query engine is required")

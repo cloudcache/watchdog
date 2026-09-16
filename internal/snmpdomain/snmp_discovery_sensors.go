@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -19,16 +19,16 @@ func (SNMPSensorsDiscoveryModule) Name() string {
 	return snmpCollectorModuleSensors
 }
 
-func (m SNMPSensorsDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPSensorsDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	columns, err := m.walkSensorColumns(ctx, req)
 	if err != nil {
-		return SNMPCollectorDiscoveryResult{}, err
+		return DiscoveryResult{}, err
 	}
-	sensors := make([]NetworkDeviceSensor, 0, len(columns[oidEntPhySensorValue]))
-	recipes := make([]SNMPCollectionRecipe, 0, len(columns[oidEntPhySensorValue])*2)
+	sensors := make([]Sensor, 0, len(columns[oidEntPhySensorValue]))
+	recipes := make([]Recipe, 0, len(columns[oidEntPhySensorValue])*2)
 	for index, rawValue := range columns[oidEntPhySensorValue] {
 		if index == 0 {
 			continue
@@ -40,9 +40,8 @@ func (m SNMPSensorsDiscoveryModule) Discover(ctx context.Context, req SNMPCollec
 			class+" "+strconv.FormatUint(index, 10),
 		)
 		value, _ := parseFloatValue(rawValue)
-		sensor := NetworkDeviceSensor{
-			ID:          collectorStableID("sensor", string(req.TenantID), string(req.Device.ID), class, strconv.FormatUint(index, 10), name),
-			TenantID:    req.TenantID,
+		sensor := Sensor{
+			ID:          collectorStableID("sensor", "", string(req.Device.ID), class, strconv.FormatUint(index, 10), name),
 			DeviceID:    req.Device.ID,
 			SensorIndex: index,
 			Class:       class,
@@ -66,10 +65,10 @@ func (m SNMPSensorsDiscoveryModule) Discover(ctx context.Context, req SNMPCollec
 	candSensors, candRecipes := probeSensorCandidates(ctx, req, claimedOIDSet(recipes))
 	sensors = append(sensors, candSensors...)
 	recipes = append(recipes, candRecipes...)
-	return SNMPCollectorDiscoveryResult{Sensors: sensors, Recipes: recipes}, nil
+	return DiscoveryResult{Sensors: sensors, Recipes: recipes}, nil
 }
 
-func (m SNMPSensorsDiscoveryModule) walkSensorColumns(ctx context.Context, req SNMPCollectorDiscoveryContext) (map[string]map[uint64]string, error) {
+func (m SNMPSensorsDiscoveryModule) walkSensorColumns(ctx context.Context, req DiscoveryContext) (map[string]map[uint64]string, error) {
 	oids := []string{
 		oidEntPhySensorType,
 		oidEntPhySensorScale,
@@ -82,12 +81,12 @@ func (m SNMPSensorsDiscoveryModule) walkSensorColumns(ctx context.Context, req S
 	}
 	columns := make(map[string]map[uint64]string, len(oids))
 	for _, oid := range oids {
-		response, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+		response, err := req.Query.Walk(ctx, WalkRequest{
 			Target:  req.Target,
 			Profile: req.Profile,
 			Context: "",
 			BaseOID: oid,
-			Flags: SNMPCollectorQueryFlags{
+			Flags: QueryFlags{
 				UseBulk:        true,
 				MaxRepetitions: 25,
 			},
@@ -100,26 +99,25 @@ func (m SNMPSensorsDiscoveryModule) walkSensorColumns(ctx context.Context, req S
 	return columns, nil
 }
 
-func sensorRecipes(req SNMPCollectorDiscoveryContext, sensor NetworkDeviceSensor, scale string, precision string) []SNMPCollectionRecipe {
+func sensorRecipes(req DiscoveryContext, sensor Sensor, scale string, precision string) []Recipe {
 	idx := strconv.FormatUint(sensor.SensorIndex, 10)
 	multiplier := entitySensorScaleMultiplier(scale, precision)
 	definitions := []struct {
 		metric    string
 		oid       string
-		valueType SNMPCollectorValueType
+		valueType ValueType
 		unit      string
 	}{
-		{MetricSNMPSensorValue, trimSNMPCollectorOID(oidEntPhySensorValue), SNMPCollectorValueGauge, sensor.Unit},
-		{MetricSNMPSensorState, trimSNMPCollectorOID(oidEntPhySensorOper), SNMPCollectorValueState, ""},
+		{MetricSNMPSensorValue, trimSNMPCollectorOID(oidEntPhySensorValue), ValueGauge, sensor.Unit},
+		{MetricSNMPSensorState, trimSNMPCollectorOID(oidEntPhySensorOper), ValueState, ""},
 	}
-	recipes := make([]SNMPCollectionRecipe, 0, len(definitions))
+	recipes := make([]Recipe, 0, len(definitions))
 	for _, definition := range definitions {
-		recipeID := collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleSensors, string(SNMPCollectorEntitySensor), string(sensor.ID), definition.metric, idx, "")
-		recipe := SNMPCollectionRecipe{
+		recipeID := collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleSensors, string(EntitySensor), string(sensor.ID), definition.metric, idx, "")
+		recipe := Recipe{
 			ID:                    recipeID,
-			TenantID:              req.TenantID,
 			DeviceID:              req.Device.ID,
-			EntityType:            SNMPCollectorEntitySensor,
+			EntityType:            EntitySensor,
 			EntityID:              sensor.ID,
 			ModuleName:            snmpCollectorModuleSensors,
 			MetricName:            definition.metric,

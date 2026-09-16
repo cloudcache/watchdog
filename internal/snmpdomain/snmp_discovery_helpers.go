@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -20,15 +20,6 @@ var (
 	oidEntPhySensorUnits     = snmpMIBOID("ENTITY-SENSOR-MIB::entPhySensorUnitsDisplay")
 )
 
-func firstID(values ...ID) ID {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func mergeStringMap(base map[string]string, updates map[string]string) map[string]string {
 	if len(base) == 0 && len(updates) == 0 {
 		return nil
@@ -43,13 +34,10 @@ func mergeStringMap(base map[string]string, updates map[string]string) map[strin
 	return merged
 }
 
-func mergeDiscoveredDevice(current NetworkDevice, updates NetworkDevice) NetworkDevice {
+func mergeDiscoveredDevice(current Device, updates Device) Device {
 	merged := current
 	if updates.ID != "" {
 		merged.ID = updates.ID
-	}
-	if updates.TenantID != "" {
-		merged.TenantID = updates.TenantID
 	}
 	if updates.TargetID != "" {
 		merged.TargetID = updates.TargetID
@@ -248,10 +236,10 @@ func entitySensorStatus(value string) string {
 	}
 }
 
-func walkColumn(ctx context.Context, req SNMPCollectorDiscoveryContext, oid string) map[uint64]string {
-	resp, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+func walkColumn(ctx context.Context, req DiscoveryContext, oid string) map[uint64]string {
+	resp, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, BaseOID: oid,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
 		return map[uint64]string{}

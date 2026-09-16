@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -87,12 +87,12 @@ type bgpProviderFamily struct {
 	Advertised uint64
 }
 
-func (m SNMPBGPDiscoveryModule) discoverMIBProviders(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string) SNMPCollectorDiscoveryResult {
+func (m SNMPBGPDiscoveryModule) discoverMIBProviders(ctx context.Context, req DiscoveryContext, contextName string) DiscoveryResult {
 	providers := bgpMIBProvidersFromDefinition(req.Definition.Definition)
 	if len(providers) == 0 {
 		providers = defaultBGPMIBProviders
 	}
-	var best SNMPCollectorDiscoveryResult
+	var best DiscoveryResult
 	bestScore := 0
 	for _, provider := range providers {
 		resolved, ok := resolveBGPMIBProvider(provider)
@@ -140,37 +140,37 @@ func resolveBGPMIBProvider(provider bgpMIBProvider) (resolvedBGPMIBProvider, boo
 	return resolved, true
 }
 
-func (m SNMPBGPDiscoveryModule) discoverMIBProvider(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName string, provider resolvedBGPMIBProvider) SNMPCollectorDiscoveryResult {
+func (m SNMPBGPDiscoveryModule) discoverMIBProvider(ctx context.Context, req DiscoveryContext, contextName string, provider resolvedBGPMIBProvider) DiscoveryResult {
 	columns := make(map[string]map[string]any, len(provider.oids))
 	for name, oid := range provider.oids {
 		columns[name] = walkSNMPColumnWithContext(ctx, req, contextName, oid)
 	}
 	if len(columns["state"]) == 0 || len(columns["remote_as"]) == 0 || len(columns["remote_address"]) == 0 {
-		return SNMPCollectorDiscoveryResult{}
+		return DiscoveryResult{}
 	}
 	peers := make([]bgpProviderPeer, 0, len(columns["state"]))
 	for index, stateValue := range columns["state"] {
-		peerAS := parseUintValue(snmpCollectorStringValue(columns["remote_as"][index]))
-		addressType := parseUintValue(snmpCollectorStringValue(columns["remote_address_type"][index]))
+		peerAS := parseUintValue(stringValue(columns["remote_as"][index]))
+		addressType := parseUintValue(stringValue(columns["remote_address_type"][index]))
 		address, family := parseSNMPInetAddress(columns["remote_address"][index], addressType)
 		if address == "" || peerAS == 0 {
 			continue
 		}
-		peerIndex := snmpCollectorStringValue(columns["peer_index"][index])
+		peerIndex := stringValue(columns["peer_index"][index])
 		if peerIndex == "" {
 			peerIndex = index
 		}
 		peers = append(peers, bgpProviderPeer{
 			index: index, peerIndex: peerIndex, address: address, addressAFI: family,
 			peerAS:  peerAS,
-			localAS: parseUintValue(snmpCollectorStringValue(columns["local_as"][index])),
-			state:   bgpPeerState(snmpCollectorStringValue(stateValue)),
-			uptime:  time.Duration(parseUintValue(snmpCollectorStringValue(columns["established_seconds"][index]))) * time.Second,
+			localAS: parseUintValue(stringValue(columns["local_as"][index])),
+			state:   bgpPeerState(stringValue(stateValue)),
+			uptime:  time.Duration(parseUintValue(stringValue(columns["established_seconds"][index]))) * time.Second,
 		})
 	}
 	families := bgpProviderFamilies(columns)
 	var sessions []BGPSession
-	var recipes []SNMPCollectionRecipe
+	var recipes []Recipe
 	for _, peer := range peers {
 		peerFamilies := families[peer.peerIndex]
 		if len(peerFamilies) == 0 {
@@ -181,8 +181,8 @@ func (m SNMPBGPDiscoveryModule) discoverMIBProvider(ctx context.Context, req SNM
 		})
 		for _, family := range peerFamilies {
 			session := BGPSession{
-				ID:       collectorStableID("bgp", string(req.TenantID), string(req.Device.ID), peer.address, strconv.FormatUint(peer.peerAS, 10), family.AFI, family.SAFI),
-				TenantID: req.TenantID, DeviceID: req.Device.ID, PeerAddr: peer.address,
+				ID:       collectorStableID("bgp", "", string(req.Device.ID), peer.address, strconv.FormatUint(peer.peerAS, 10), family.AFI, family.SAFI),
+				DeviceID: req.Device.ID, PeerAddr: peer.address,
 				PeerAS: peer.peerAS, LocalAS: peer.localAS, AFI: family.AFI, SAFI: family.SAFI,
 				State: peer.state, Uptime: peer.uptime, AcceptedPrefixes: family.Accepted,
 				DeniedPrefixes: family.Denied, AdvertisedPrefixes: family.Advertised,
@@ -194,7 +194,7 @@ func (m SNMPBGPDiscoveryModule) discoverMIBProvider(ctx context.Context, req SNM
 			}
 		}
 	}
-	return SNMPCollectorDiscoveryResult{BGPSessions: sessions, Recipes: recipes}
+	return DiscoveryResult{BGPSessions: sessions, Recipes: recipes}
 }
 
 func bgpProviderFamilies(columns map[string]map[string]any) map[string][]bgpProviderFamily {
@@ -205,28 +205,28 @@ func bgpProviderFamilies(columns map[string]map[string]any) map[string][]bgpProv
 			continue
 		}
 		peerIndex := parts[0]
-		afi := bgpAFI(parseUintValue(snmpCollectorStringValue(afiValue)))
-		safi := bgpSAFI(parseUintValue(snmpCollectorStringValue(columns["prefix_safi"][index])))
+		afi := bgpAFI(parseUintValue(stringValue(afiValue)))
+		safi := bgpSAFI(parseUintValue(stringValue(columns["prefix_safi"][index])))
 		if afi == "" || safi == "" {
 			continue
 		}
 		result[peerIndex] = append(result[peerIndex], bgpProviderFamily{
 			AFI: afi, SAFI: safi,
-			Accepted:   parseUintValue(snmpCollectorStringValue(columns["accepted_prefixes"][index])),
-			Denied:     parseUintValue(snmpCollectorStringValue(columns["denied_prefixes"][index])),
-			Advertised: parseUintValue(snmpCollectorStringValue(columns["advertised_prefixes"][index])),
+			Accepted:   parseUintValue(stringValue(columns["accepted_prefixes"][index])),
+			Denied:     parseUintValue(stringValue(columns["denied_prefixes"][index])),
+			Advertised: parseUintValue(stringValue(columns["advertised_prefixes"][index])),
 		})
 	}
 	return result
 }
 
-func walkSNMPColumnWithContext(ctx context.Context, req SNMPCollectorDiscoveryContext, contextName, oid string) map[string]any {
+func walkSNMPColumnWithContext(ctx context.Context, req DiscoveryContext, contextName, oid string) map[string]any {
 	if oid == "" {
 		return nil
 	}
-	response, err := req.Query.Walk(ctx, SNMPCollectorWalkRequest{
+	response, err := req.Query.Walk(ctx, WalkRequest{
 		Target: req.Target, Profile: req.Profile, Context: contextName, BaseOID: oid,
-		Flags: SNMPCollectorQueryFlags{UseBulk: true, MaxRepetitions: 25},
+		Flags: QueryFlags{UseBulk: true, MaxRepetitions: 25},
 	})
 	if err != nil {
 		return nil
@@ -255,7 +255,7 @@ func parseSNMPInetAddress(value any, addressType uint64) (string, string) {
 		}
 		ip = net.IP(bytes)
 	default:
-		ip = net.ParseIP(strings.TrimSpace(snmpCollectorStringValue(value)))
+		ip = net.ParseIP(strings.TrimSpace(stringValue(value)))
 	}
 	if ip == nil {
 		return "", ""
@@ -311,29 +311,29 @@ func bgpSAFI(value uint64) string {
 	}
 }
 
-func bgpProviderRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, index, contextName string, provider resolvedBGPMIBProvider) []SNMPCollectionRecipe {
+func bgpProviderRecipes(req DiscoveryContext, session BGPSession, index, contextName string, provider resolvedBGPMIBProvider) []Recipe {
 	definitions := []struct {
 		metric    string
 		field     string
-		valueType SNMPCollectorValueType
+		valueType ValueType
 		unit      string
 	}{
-		{MetricBGPState, "state", SNMPCollectorValueState, "state"},
-		{MetricBGPPeerInUpdatesTotal, "in_updates", SNMPCollectorValueCounter32, "updates"},
-		{MetricBGPPeerOutUpdatesTotal, "out_updates", SNMPCollectorValueCounter32, "updates"},
-		{MetricBGPPeerInMessagesTotal, "in_messages", SNMPCollectorValueCounter32, "messages"},
-		{MetricBGPPeerOutMessagesTotal, "out_messages", SNMPCollectorValueCounter32, "messages"},
-		{MetricBGPPeerEstablishedSeconds, "established_seconds", SNMPCollectorValueGauge, "seconds"},
+		{MetricBGPState, "state", ValueState, "state"},
+		{MetricBGPPeerInUpdatesTotal, "in_updates", ValueCounter32, "updates"},
+		{MetricBGPPeerOutUpdatesTotal, "out_updates", ValueCounter32, "updates"},
+		{MetricBGPPeerInMessagesTotal, "in_messages", ValueCounter32, "messages"},
+		{MetricBGPPeerOutMessagesTotal, "out_messages", ValueCounter32, "messages"},
+		{MetricBGPPeerEstablishedSeconds, "established_seconds", ValueGauge, "seconds"},
 	}
-	var recipes []SNMPCollectionRecipe
+	var recipes []Recipe
 	for _, definition := range definitions {
 		oid := provider.oids[definition.field]
 		if oid == "" {
 			continue
 		}
-		recipes = append(recipes, SNMPCollectionRecipe{
-			ID:       collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleBGP, string(SNMPCollectorEntityBGPPeer), string(session.ID), definition.metric, index, contextName),
-			TenantID: req.TenantID, DeviceID: req.Device.ID, EntityType: SNMPCollectorEntityBGPPeer,
+		recipes = append(recipes, Recipe{
+			ID:       collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleBGP, string(EntityBGPPeer), string(session.ID), definition.metric, index, contextName),
+			DeviceID: req.Device.ID, EntityType: EntityBGPPeer,
 			EntityID: session.ID, ModuleName: snmpCollectorModuleBGP, MetricName: definition.metric,
 			ValueType: definition.valueType, OID: snmpMIBDisplayOID(oid + "." + index),
 			NumericOID: oid + "." + index, OIDIndex: index, MIB: provider.Name,
@@ -350,7 +350,7 @@ func bgpProviderRecipes(req SNMPCollectorDiscoveryContext, session BGPSession, i
 	return recipes
 }
 
-func bgpProviderResultScore(result SNMPCollectorDiscoveryResult) int {
+func bgpProviderResultScore(result DiscoveryResult) int {
 	families := map[string]bool{}
 	for _, session := range result.BGPSessions {
 		families[session.AFI+"/"+session.SAFI] = true

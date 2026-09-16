@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -27,9 +27,9 @@ type SNMPMemoryDiscoveryModule struct{}
 
 func (SNMPMemoryDiscoveryModule) Name() string { return snmpCollectorModuleMemory }
 
-func (m SNMPMemoryDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPMemoryDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	// Definition-driven mempools first, then every generic candidate the
 	// device answers (probed, never vendor-gated), then RAM rows from
@@ -39,13 +39,13 @@ func (m SNMPMemoryDiscoveryModule) Discover(ctx context.Context, req SNMPCollect
 	if len(recipes) == 0 {
 		recipes = m.discoverHostResources(ctx, req)
 	}
-	return SNMPCollectorDiscoveryResult{Recipes: recipes}, nil
+	return DiscoveryResult{Recipes: recipes}, nil
 }
 
-func (m SNMPMemoryDiscoveryModule) discoverHostResources(ctx context.Context, req SNMPCollectorDiscoveryContext) []SNMPCollectionRecipe {
+func (m SNMPMemoryDiscoveryModule) discoverHostResources(ctx context.Context, req DiscoveryContext) []Recipe {
 	descrs := walkColumn(ctx, req, snmpOIDHrStorageDescr)
 	units := walkColumn(ctx, req, snmpOIDHrStorageAllocUnits)
-	recipes := make([]SNMPCollectionRecipe, 0, len(descrs)*2)
+	recipes := make([]Recipe, 0, len(descrs)*2)
 	for index, descr := range descrs {
 		if index == 0 {
 			continue
@@ -55,7 +55,7 @@ func (m SNMPMemoryDiscoveryModule) discoverHostResources(ctx context.Context, re
 			continue
 		}
 		idx := strconv.FormatUint(index, 10)
-		entityID := collectorStableID("memory", string(req.TenantID), string(req.Device.ID), idx)
+		entityID := collectorStableID("memory", "", string(req.Device.ID), idx)
 		allocUnits := parseUintValue(units[index])
 		multiplier := float64(allocUnits)
 		if multiplier == 0 {
@@ -75,16 +75,15 @@ func (m SNMPMemoryDiscoveryModule) discoverHostResources(ctx context.Context, re
 	return recipes
 }
 
-func memoryRecipe(req SNMPCollectorDiscoveryContext, entityID ID, metric, idx, oid, mib, name string, multiplier float64, options map[string]string) SNMPCollectionRecipe {
-	recipe := SNMPCollectionRecipe{
-		ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleMemory, string(SNMPCollectorEntityMemory), string(entityID), metric, idx, ""),
-		TenantID:              req.TenantID,
+func memoryRecipe(req DiscoveryContext, entityID string, metric, idx, oid, mib, name string, multiplier float64, options map[string]string) Recipe {
+	recipe := Recipe{
+		ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleMemory, string(EntityMemory), string(entityID), metric, idx, ""),
 		DeviceID:              req.Device.ID,
-		EntityType:            SNMPCollectorEntityMemory,
+		EntityType:            EntityMemory,
 		EntityID:              entityID,
 		ModuleName:            snmpCollectorModuleMemory,
 		MetricName:            metric,
-		ValueType:             SNMPCollectorValueGauge,
+		ValueType:             ValueGauge,
 		OID:                   snmpMIBDisplayOID(oid),
 		NumericOID:            oid,
 		OIDIndex:              idx,

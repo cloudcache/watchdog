@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -6,22 +6,21 @@ import (
 )
 
 func TestSNMPMemoryDiscoveryHuaweiUsesMIBUsageAndSize(t *testing.T) {
-	query := fakeSNMPCollectorQueryEngine{
-		walks: map[string]SNMPCollectorResponse{
+	query := fakeQueryEngine{
+		walks: map[string]QueryResponse{
 			snmpOIDHwEntityMemUsage: {
-				VarBinds: []SNMPCollectorVarBind{{OID: snmpOIDHwEntityMemUsage + ".9", Value: "43"}},
+				VarBinds: []VarBind{{OID: snmpOIDHwEntityMemUsage + ".9", Value: "43"}},
 			},
 			snmpOIDHwEntityMemSize: {
-				VarBinds: []SNMPCollectorVarBind{{OID: snmpOIDHwEntityMemSize + ".9", Value: "2147483648"}},
+				VarBinds: []VarBind{{OID: snmpOIDHwEntityMemSize + ".9", Value: "2147483648"}},
 			},
 		},
 	}
 	module := SNMPMemoryDiscoveryModule{}
-	result, err := module.Discover(context.Background(), SNMPCollectorDiscoveryContext{
-		TenantID: "tenant_dev",
-		Device:   NetworkDevice{ID: "dev1"},
-		OS:       SNMPCollectorOSMatch{OSName: "vrp", Vendor: "huawei"},
-		Query:    query,
+	result, err := module.Discover(context.Background(), DiscoveryContext{
+		Device: Device{ID: "dev1"},
+		OS:     OSMatch{OSName: "vrp", Vendor: "huawei"},
+		Query:  query,
 	})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
@@ -29,7 +28,7 @@ func TestSNMPMemoryDiscoveryHuaweiUsesMIBUsageAndSize(t *testing.T) {
 	if len(result.Recipes) != 3 {
 		t.Fatalf("expected 3 recipes (used/total/percent), got %d", len(result.Recipes))
 	}
-	byMetric := map[string]SNMPCollectionRecipe{}
+	byMetric := map[string]Recipe{}
 	for _, recipe := range result.Recipes {
 		byMetric[recipe.MetricName] = recipe
 	}
@@ -57,21 +56,20 @@ func TestSNMPMemoryDiscoveryHuaweiUsesMIBUsageAndSize(t *testing.T) {
 }
 
 func TestSNMPMemoryDiscoveryHostResourcesAppliesAllocationUnits(t *testing.T) {
-	query := fakeSNMPCollectorQueryEngine{
-		walks: map[string]SNMPCollectorResponse{
+	query := fakeQueryEngine{
+		walks: map[string]QueryResponse{
 			snmpOIDHrStorageDescr: {
-				VarBinds: []SNMPCollectorVarBind{{OID: snmpOIDHrStorageDescr + ".4", Value: "Physical memory"}},
+				VarBinds: []VarBind{{OID: snmpOIDHrStorageDescr + ".4", Value: "Physical memory"}},
 			},
 			snmpOIDHrStorageAllocUnits: {
-				VarBinds: []SNMPCollectorVarBind{{OID: snmpOIDHrStorageAllocUnits + ".4", Value: "4096"}},
+				VarBinds: []VarBind{{OID: snmpOIDHrStorageAllocUnits + ".4", Value: "4096"}},
 			},
 		},
 	}
 	module := SNMPMemoryDiscoveryModule{}
-	result, err := module.Discover(context.Background(), SNMPCollectorDiscoveryContext{
-		TenantID: "tenant_dev",
-		Device:   NetworkDevice{ID: "dev1"},
-		Query:    query,
+	result, err := module.Discover(context.Background(), DiscoveryContext{
+		Device: Device{ID: "dev1"},
+		Query:  query,
 	})
 	if err != nil {
 		t.Fatalf("discover: %v", err)

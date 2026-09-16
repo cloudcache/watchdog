@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"context"
@@ -16,16 +16,16 @@ type SNMPStorageDiscoveryModule struct{}
 
 func (SNMPStorageDiscoveryModule) Name() string { return snmpCollectorModuleStorage }
 
-func (m SNMPStorageDiscoveryModule) Discover(ctx context.Context, req SNMPCollectorDiscoveryContext) (SNMPCollectorDiscoveryResult, error) {
+func (m SNMPStorageDiscoveryModule) Discover(ctx context.Context, req DiscoveryContext) (DiscoveryResult, error) {
 	if req.Query == nil {
-		return SNMPCollectorDiscoveryResult{}, errSNMPCollectorQueryRequired
+		return DiscoveryResult{}, errSNMPCollectorQueryRequired
 	}
 	if recipes := discoverDefinitionStorage(ctx, req); len(recipes) > 0 {
-		return SNMPCollectorDiscoveryResult{Recipes: recipes}, nil
+		return DiscoveryResult{Recipes: recipes}, nil
 	}
 	descrs := walkColumn(ctx, req, snmpOIDHrStorageDescr)
 	units := walkColumn(ctx, req, snmpOIDHrStorageAllocUnits)
-	recipes := make([]SNMPCollectionRecipe, 0, len(descrs)*2)
+	recipes := make([]Recipe, 0, len(descrs)*2)
 	for index, descr := range descrs {
 		if index == 0 {
 			continue
@@ -35,7 +35,7 @@ func (m SNMPStorageDiscoveryModule) Discover(ctx context.Context, req SNMPCollec
 			continue
 		}
 		idx := strconv.FormatUint(index, 10)
-		entityID := collectorStableID("storage", string(req.TenantID), string(req.Device.ID), idx)
+		entityID := collectorStableID("storage", "", string(req.Device.ID), idx)
 		allocUnits := parseUintValue(units[index])
 		multiplier := float64(allocUnits)
 		if multiplier == 0 {
@@ -48,15 +48,14 @@ func (m SNMPStorageDiscoveryModule) Discover(ctx context.Context, req SNMPCollec
 			{MetricSNMPStorageUsed, snmpOIDHrStorageUsed},
 			{MetricSNMPStorageTotal, snmpOIDHrStorageSize},
 		} {
-			recipe := SNMPCollectionRecipe{
-				ID:                    collectorStableID("snmp-recipe", string(req.TenantID), string(req.Device.ID), snmpCollectorModuleStorage, string(SNMPCollectorEntityStorage), string(entityID), def.metric, idx, ""),
-				TenantID:              req.TenantID,
+			recipe := Recipe{
+				ID:                    collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModuleStorage, string(EntityStorage), string(entityID), def.metric, idx, ""),
 				DeviceID:              req.Device.ID,
-				EntityType:            SNMPCollectorEntityStorage,
+				EntityType:            EntityStorage,
 				EntityID:              entityID,
 				ModuleName:            snmpCollectorModuleStorage,
 				MetricName:            def.metric,
-				ValueType:             SNMPCollectorValueGauge,
+				ValueType:             ValueGauge,
 				OID:                   snmpMIBDisplayOID(def.oid + "." + idx),
 				NumericOID:            def.oid + "." + idx,
 				OIDIndex:              idx,
@@ -81,5 +80,5 @@ func (m SNMPStorageDiscoveryModule) Discover(ctx context.Context, req SNMPCollec
 			recipes = append(recipes, recipe)
 		}
 	}
-	return SNMPCollectorDiscoveryResult{Recipes: recipes}, nil
+	return DiscoveryResult{Recipes: recipes}, nil
 }

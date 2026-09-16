@@ -12,6 +12,9 @@ const (
 	EntityMemory    EntityType = "memory"
 	EntityStorage   EntityType = "storage"
 	EntityBGPPeer   EntityType = "bgp_peer"
+	EntityVLAN      EntityType = "vlan"
+	EntityLAG       EntityType = "lag"
+	EntityPhysical  EntityType = "physical_entity"
 )
 
 // Event is the single-domain API representation of an SNMP event. Events are
