@@ -21,6 +21,11 @@ type rawDeleteStoreFake struct {
 	completeErr    error
 	readinessCalls int
 	completeCalls  int
+	barrierErr     error
+}
+
+func (store *rawDeleteStoreFake) RawDeleteBarrierReadyForDay(context.Context, time.Time) (DeleteBarrierStatus, error) {
+	return DeleteBarrierStatus{Ready: store.barrierErr == nil}, store.barrierErr
 }
 
 func (store *rawDeleteStoreFake) LoadRawDeleteExecution(context.Context, string) (RawDeleteExecution, error) {

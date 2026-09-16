@@ -19,6 +19,7 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
@@ -32,16 +33,16 @@ type deadlineRecorder struct {
 }
 
 type readinessExecutor struct {
-	requiredRecords, requiredReceipts   uint64
-	forbiddenRecords, forbiddenReceipts uint64
+	requiredRecords, requiredReceipts, requiredQuarantine uint64
+	forbiddenRecords, forbiddenReceipts                   uint64
 }
 
 func (e readinessExecutor) Do(ctx context.Context, query ch.Query) error {
 	results := query.Result.(proto.Results)
-	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.forbiddenRecords, e.forbiddenReceipts} {
+	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.requiredQuarantine, e.forbiddenRecords, e.forbiddenReceipts} {
 		results[index].Data.(*proto.ColUInt64).Append(value)
 	}
-	return query.OnResult(ctx, proto.Block{Columns: 4, Rows: 1})
+	return query.OnResult(ctx, proto.Block{Columns: 5, Rows: 1})
 }
 
 func (r *deadlineRecorder) Do(ctx context.Context, _ ch.Query) error {
@@ -87,15 +88,16 @@ func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) 
 }
 
 func TestNativeReadyRequiresStorageV2WithoutLegacyHashColumns(t *testing.T) {
-	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 11}}
+	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8}}
 	if err := ready.Ready(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []readinessExecutor{
-		{requiredRecords: 4, requiredReceipts: 11},
-		{requiredRecords: 5, requiredReceipts: 10},
-		{requiredRecords: 5, requiredReceipts: 11, forbiddenRecords: 1},
-		{requiredRecords: 5, requiredReceipts: 11, forbiddenReceipts: 1},
+		{requiredRecords: 4, requiredReceipts: 11, requiredQuarantine: 8},
+		{requiredRecords: 5, requiredReceipts: 10, requiredQuarantine: 8},
+		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 7},
+		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, forbiddenRecords: 1},
+		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, forbiddenReceipts: 1},
 	} {
 		if err := (&NativeInserter{executor: test}).Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "not Storage V2") {
 			t.Fatalf("legacy/mixed schema was accepted: executor=%+v error=%v", test, err)
@@ -207,6 +209,41 @@ func TestNativeInserterWritesReceiptOnlyForNonPersistedMessage(t *testing.T) {
 	assertEnumValue(t, recorder.queries[0].Input, "message_disposition", "decode_rejected")
 	if got := columnValue(recorder.queries[0].Input, "record_count").(proto.ColUInt64).Row(0); got != 0 {
 		t.Fatalf("receipt-only record_count=%d", got)
+	}
+}
+
+func TestNativeInserterWritesQuarantineBeforeReceipt(t *testing.T) {
+	batch := &flowworker.RecordBatch{
+		BatchSchemaVersion: flowworker.RecordBatchSchemaVersion, MessageDisposition: flowworker.MessageDispositionPersisted,
+		SourceStreamID: "site-a:epoch-1", KafkaTopic: "watchdog.flow.raw.v1", KafkaPartition: 2, KafkaOffset: 19,
+		CollectorID: "collector-a", ExporterID: "exporter-a", ReceivedAtUnixMS: time.Date(2026, 9, 16, 1, 0, 0, 0, time.UTC).UnixMilli(),
+		RawPayload: []byte{0, 1, 2, 3}, Records: []*flowworker.Record{{
+			RecordIndex: 0, EventTimeUnixMS: time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC).UnixMilli(), RawBytes: 100, RawPackets: 2,
+			EstimatedValid: true, EstimatedBytes: 1000, EstimatedPackets: 20,
+		}},
+	}
+	item, err := prepareQuarantine(batch, flowtombstone.Decision{Revision: 3, DeletedThrough: "2026-08-01", EventDay: "2026-08-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &queryRecorder{}
+	inserter := &NativeInserter{executor: recorder}
+	if err := inserter.InsertFlowQuarantine(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.queries) != 2 || !strings.HasPrefix(recorder.queries[0].Body, `INSERT INTO "flow_quarantined_datagrams"`) ||
+		!strings.HasPrefix(recorder.queries[1].Body, `INSERT INTO "flow_ingest_receipts"`) {
+		t.Fatalf("unexpected quarantine queries: %+v", recorder.queries)
+	}
+	if got := columnValue(recorder.queries[0].Input, "raw_payload").(*proto.ColStr).Row(0); got != string(batch.RawPayload) {
+		t.Fatalf("raw payload=%q", got)
+	}
+	assertEnumValue(t, recorder.queries[1].Input, "message_disposition", "late_quarantined")
+	if got := columnValue(recorder.queries[1].Input, "record_count").(proto.ColUInt64).Row(0); got != 1 {
+		t.Fatalf("quarantine receipt record_count=%d", got)
+	}
+	if got := columnValue(recorder.queries[1].Input, "generation").(proto.ColUInt64).Row(0); got != 1<<63|3 {
+		t.Fatalf("quarantine receipt generation=%d", got)
 	}
 }
 

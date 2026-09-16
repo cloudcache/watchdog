@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowstream"
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
@@ -124,5 +127,114 @@ func TestBuildVersionHTTPClientRejectsCleartextRemoteHost(t *testing.T) {
 	}, flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"})
 	if err == nil {
 		t.Fatal("cleartext non-loopback control plane was accepted")
+	}
+}
+
+func TestLoadRawDeleteBarrierPersistsThenFallsBackToLKG(t *testing.T) {
+	directory := t.TempDir()
+	token := filepath.Join(directory, "agent-token")
+	if err := os.WriteFile(token, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	barrier, err := flowtombstone.Advance(nil, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC), "barrier-startup", 2, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acks := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Watchdog-Agent-Token") != "secret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/raw-delete-barrier"):
+			_ = json.NewEncoder(w).Encode(barrier)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/raw-delete-barriers/"+barrier.ID+"/ack"):
+			acks++
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	identity := flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"}
+	opt := options{
+		controlPlaneURL: server.URL, agentTokenFile: token, versionLKGDir: filepath.Join(directory, "lkg"),
+		controlPlaneTimeout: 5 * time.Second,
+	}
+	guard, _, err := loadRawDeleteBarrier(context.Background(), opt, identity)
+	if err != nil || acks != 1 {
+		server.Close()
+		t.Fatalf("load barrier: acks=%d err=%v", acks, err)
+	}
+	if current, ok := guard.Current(); !ok || current.ID != barrier.ID {
+		server.Close()
+		t.Fatalf("installed barrier=%+v ok=%t", current, ok)
+	}
+	server.Close()
+	guard, _, err = loadRawDeleteBarrier(context.Background(), opt, identity)
+	if err != nil {
+		t.Fatalf("LKG fallback: %v", err)
+	}
+	if current, ok := guard.Current(); !ok || current.ID != barrier.ID {
+		t.Fatalf("restored barrier=%+v ok=%t", current, ok)
+	}
+}
+
+func TestLoadRawDeleteBarrierFailsClosedWithoutLKG(t *testing.T) {
+	directory := t.TempDir()
+	token := filepath.Join(directory, "agent-token")
+	if err := os.WriteFile(token, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := loadRawDeleteBarrier(context.Background(), options{
+		controlPlaneURL: "http://127.0.0.1:1", agentTokenFile: token, versionLKGDir: filepath.Join(directory, "lkg"),
+		controlPlaneTimeout: 5 * time.Second,
+	}, flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"})
+	if err == nil || !strings.Contains(err.Error(), "without LKG") {
+		t.Fatalf("startup error=%v", err)
+	}
+}
+
+func TestLoadRawDeleteBarrierCanConsumeAfterDurableInstallWhileACKRetries(t *testing.T) {
+	directory := t.TempDir()
+	token := filepath.Join(directory, "agent-token")
+	if err := os.WriteFile(token, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	barrier, err := flowtombstone.Advance(nil, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC), "barrier-ack-retry", 4, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/raw-delete-barrier"):
+			_ = json.NewEncoder(w).Encode(barrier)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/raw-delete-barriers/"+barrier.ID+"/ack"):
+			ackAttempts++
+			if ackAttempts == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	opt := options{
+		controlPlaneURL: server.URL, agentTokenFile: token, versionLKGDir: filepath.Join(directory, "lkg"),
+		controlPlaneTimeout: 5 * time.Second,
+	}
+	guard, syncBarrier, err := loadRawDeleteBarrier(context.Background(), opt,
+		flowworker.VersionWorkerIdentity{WorkerID: "worker-a", BootID: "boot-a", SoftwareVersion: "test"})
+	if err != nil {
+		t.Fatalf("durably installed barrier should allow startup while ACK retries: %v", err)
+	}
+	if current, ok := guard.Current(); !ok || current.ID != barrier.ID || ackAttempts != 1 {
+		t.Fatalf("installed barrier=%+v ok=%t attempts=%d", current, ok, ackAttempts)
+	}
+	if err := syncBarrier(context.Background()); err != nil || ackAttempts != 2 {
+		t.Fatalf("ACK retry attempts=%d err=%v", ackAttempts, err)
 	}
 }

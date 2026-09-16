@@ -100,3 +100,23 @@ func TestRawDeleteExecutionSchemaKeepsApprovalScopedReceipts(t *testing.T) {
 		t.Fatal("raw deletion execution migration retained tenant_id")
 	}
 }
+
+func TestRawDeleteBarrierSchemaFreezesWorkerACKGate(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/schema/mysql/0038_flow_raw_delete_barriers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(data)
+	for _, required := range []string{
+		"flow_raw_delete_barriers", "revision", "deleted_through", "exception_days_json",
+		"flow_raw_delete_barrier_acks", "worker_id", "required", "installed_at",
+		"FOREIGN KEY (worker_id) REFERENCES agents(id)",
+	} {
+		if !strings.Contains(schema, required) {
+			t.Fatalf("raw-delete barrier schema is missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "tenant_id") {
+		t.Fatal("raw-delete barrier schema retained tenant_id")
+	}
+}

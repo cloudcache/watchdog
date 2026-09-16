@@ -140,6 +140,9 @@ func (store *Store) ScheduleRawDayDelete(ctx context.Context, approvalID string,
 	if err := validateScheduledRawDelete(approval, state, policy); err != nil {
 		return opjob.Job{}, DeletionReceipt{}, PartitionState{}, err
 	}
+	if err := rawDeleteBarrierReadyTx(ctx, tx, approval.PartitionStart); err != nil {
+		return opjob.Job{}, DeletionReceipt{}, PartitionState{}, err
+	}
 	if policy.RequireBackupBeforeDelete {
 		backup, err := scanBackupEvidence(tx.QueryRowContext(ctx, "SELECT "+backupEvidenceColumns+" FROM flow_backup_restore_evidence WHERE id=? FOR UPDATE", approval.BackupEvidenceID))
 		if err != nil {
@@ -246,6 +249,7 @@ type rawDeleteExecutionStore interface {
 	LoadRawDeleteExecution(context.Context, string) (RawDeleteExecution, error)
 	RawDayDeleteReadiness(context.Context, time.Time, time.Time, RawDayEvidenceReader) (RawDeleteReadiness, error)
 	CompleteRawDayDelete(context.Context, string, time.Time) error
+	RawDeleteBarrierReadyForDay(context.Context, time.Time) (DeleteBarrierStatus, error)
 }
 
 func NewRawDeleteHandler(store rawDeleteExecutionStore, runner RawDayDeleteRunner) opjob.Handler {
@@ -270,6 +274,9 @@ func NewRawDeleteHandler(store rawDeleteExecutionStore, runner RawDayDeleteRunne
 		}
 		if !rawDeleteExecutionMatches(job, payload, day, execution) {
 			return "", opjob.TerminalError(ErrDeleteLocked)
+		}
+		if _, err := store.RawDeleteBarrierReadyForDay(ctx, day); err != nil {
+			return "", err
 		}
 		raw, archive, err := runner.DayStorageCounters(ctx, day)
 		if err != nil {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowplan"
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 )
 
 func TestRemoteVersionSyncRetriesACKWithoutRedownloadingObjects(t *testing.T) {
@@ -229,6 +230,46 @@ func TestVersionHTTPClientRequiresExactlyOneMachineCredential(t *testing.T) {
 	mtls.MutualTLS = true
 	if _, err := NewVersionHTTPClient(mtls); err != nil {
 		t.Fatalf("mTLS-only client: %v", err)
+	}
+}
+
+func TestVersionHTTPClientFetchesAndAcknowledgesRawDeleteBarrier(t *testing.T) {
+	barrier, err := flowtombstone.Advance(nil, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC), "barrier-http", 7, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ack rawDeleteBarrierAckRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Watchdog-Agent-Token") != "agent-secret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/raw-delete-barrier"):
+			_ = json.NewEncoder(w).Encode(barrier)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/raw-delete-barriers/"+barrier.ID+"/ack"):
+			if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
+				t.Errorf("decode raw-delete ACK: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newTestVersionHTTPClient(t, server.URL, server.Client())
+	got, found, err := client.FetchRawDeleteBarrier(context.Background())
+	if err != nil || !found || got.ID != barrier.ID || got.Revision != barrier.Revision {
+		t.Fatalf("barrier=%+v found=%t err=%v", got, found, err)
+	}
+	if err := client.AcknowledgeRawDeleteBarrier(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	if ack.Revision != barrier.Revision || ack.BootID != "boot-a" || ack.SoftwareVersion != "1.2.3" || ack.State != "installed" {
+		t.Fatalf("raw-delete ACK=%+v", ack)
 	}
 }
 

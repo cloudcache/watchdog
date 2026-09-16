@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**当前活动切片：Storage V2 L5B3b（实现待验收、未提交）。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。L5B3b 当前工作树正在接入 tombstone publication、worker ACK/LKG 和极晚 datagram quarantine；在完整门禁和独立提交完成前不得标记交付。
+**当前活动切片：Storage V2 L5B3c（外部 backup/restore drill）。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。L5B3b 已完成删除日期 tombstone publication、worker ACK/LKG 和极晚完整 datagram quarantine，并以真实 MySQL/ClickHouse、scanner 对账、race/vet/test/build 门禁独立提交；L5B3c 完成前删除开关继续 fail closed。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 

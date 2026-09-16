@@ -26,7 +26,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"004_flow_ingest_receipt_audit.sql", "005_flow_fact_provenance.sql", "006_flow_ingest_audit_projection.sql",
 		"007_flow_records_codecs.sql", "008_flow_aggregate_codecs.sql", "009_flow_address_dict_source.sql",
 		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
-		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql",
+		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql", "015_flow_raw_delete_quarantine.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -46,8 +46,8 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 9 {
-		t.Fatalf("ClickHouse table count=%d, want 9", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 10 {
+		t.Fatalf("ClickHouse table count=%d, want 10", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
@@ -71,6 +71,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"ORDER BY (kafka_topic, kafka_partition, kafka_offset, record_index, record_id)",
 		"snmp_samples", "snmp_interface_traffic_5m", "counter_value  UInt64", "counter_width  UInt8",
 		"snmp_events", "ReplacingMergeTree(ingested_at)", "ORDER BY (device_id, occurred_at, id)",
+		"flow_quarantined_datagrams", "late_quarantined", "raw_payload String CODEC(ZSTD(3))",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

@@ -176,9 +176,9 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。
-- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；删除日期 publication、所有活跃 worker ACK 与极晚 datagram 隔离正在实现，完整门禁和独立提交前不计为完成。L5B3c 真实外部 restore drill 与 archive 月删除仍未完成；故障或证据缺失均不得删除。
+- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；L5B3b 已完成删除日期 publication、所有活跃 worker ACK/LKG 与极晚完整 datagram 隔离，重放后 scanner 对账保持完整且不误报丢数。L5B3c 真实外部 restore drill 与 archive 月删除仍未完成；故障或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；L5B3b、真实外部 restore 和开关解锁仍保持未完成。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；L5B3b 的 worker tombstone/ACK/LKG、极晚 datagram quarantine、receipt replacement 和 scanner 对账由独立提交交付。真实外部 restore 和删除开关解锁仍保持未完成。
 
 ## 9. 本次验证证据（2026-09-07）
 

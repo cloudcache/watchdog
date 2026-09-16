@@ -79,6 +79,10 @@ type PreparedReceipt struct {
 	MinEventTime          time.Time
 	MaxEventTime          time.Time
 	ReceivedAt            time.Time
+	// Generation is normally derived from ReceivedAt. Lifecycle dispositions
+	// may set it explicitly so they deterministically replace an older receipt
+	// for the same natural Kafka coordinate.
+	Generation uint64
 }
 
 func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]PreparedBlock, error) {

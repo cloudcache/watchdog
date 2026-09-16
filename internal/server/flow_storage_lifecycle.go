@@ -106,8 +106,21 @@ func (s *Server) executeFlowRawDelete(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle deletion worker is unavailable")
 		return
 	}
+	now := time.Now().UTC()
+	barrier, err := s.flowLifecycle.EnsureRawDeleteBarrierForApproval(
+		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, now)
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	if !barrier.Ready {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "flow_delete_barrier_pending", "message": "raw deletion is waiting for every required Flow worker to install the tombstone", "barrier": barrier,
+		})
+		return
+	}
 	job, receipt, partition, err := s.flowLifecycle.ScheduleRawDayDelete(
-		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, time.Now().UTC())
+		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, now)
 	if err != nil {
 		writeFlowLifecycleError(c, err)
 		return
@@ -403,6 +416,8 @@ func writeFlowLifecycleError(c *gin.Context, err error) {
 		fail(c, http.StatusBadRequest, "invalid_flow_deletion_approval", err.Error())
 	case errors.Is(err, flowlifecycle.ErrDeleteLocked):
 		fail(c, http.StatusConflict, "flow_deletion_locked", "physical deletion remains locked until reconciliation and backup restore gates are enabled")
+	case errors.Is(err, flowlifecycle.ErrDeleteBarrierPending):
+		fail(c, http.StatusConflict, "flow_delete_barrier_pending", err.Error())
 	case errors.Is(err, flowlifecycle.ErrVersionConflict):
 		fail(c, http.StatusPreconditionFailed, "version_conflict", "record changed since it was loaded")
 	case errors.Is(err, flowlifecycle.ErrTransition):

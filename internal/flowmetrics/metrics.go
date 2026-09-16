@@ -157,6 +157,8 @@ func (m *Worker) Handler() http.Handler {
 		writeUint(output, "watchdog_flow_worker_sampling_unknown_records_total", "Persisted records without a valid sampling estimate.", "counter", pipeline.SamplingUnknown)
 		writeUint(output, "watchdog_flow_worker_sampling_conflict_records_total", "Persisted records with conflicting sampling semantics.", "counter", pipeline.SamplingConflict)
 		writeUint(output, "watchdog_flow_worker_snapshot_miss_total", "Enrichment attempts blocked by an unavailable event-time snapshot.", "counter", pipeline.SnapshotMiss)
+		writeUint(output, "watchdog_flow_worker_quarantined_datagrams_total", "RawFlow datagrams diverted by an installed raw-delete tombstone.", "counter", pipeline.QuarantinedDatagrams)
+		writeUint(output, "watchdog_flow_worker_quarantined_records_total", "Decoded Flow records contained in tombstoned datagrams.", "counter", pipeline.QuarantinedRecords)
 		writeUint(output, "watchdog_flow_clickhouse_insert_attempts_total", "ClickHouse flow block insert attempts.", "counter", writer.InsertAttempts)
 		writeFamily(output, "watchdog_flow_clickhouse_insert_errors_total", "ClickHouse flow block insert attempt failures.", "counter",
 			sample{labels: `{class="retryable"}`, value: uintValue(writer.RetryableErrors)},
@@ -167,6 +169,8 @@ func (m *Worker) Handler() http.Handler {
 		writeFloat(output, "watchdog_flow_clickhouse_insert_duration_seconds_total", "Cumulative time spent in ClickHouse flow block insert attempts.", "counter", float64(writer.InsertDurationNanos)/float64(time.Second))
 		writeInt(output, "watchdog_flow_clickhouse_blocks_retrying", "Flow blocks currently retrying a ClickHouse insert; a sustained non-zero value marks a stuck partition.", "gauge", writer.RetryingNow)
 		writeUint(output, "watchdog_flow_clickhouse_insert_budget_exceeded_total", "Flow blocks that exhausted their retry budget and were surfaced for replay.", "counter", writer.BudgetExceeded)
+		writeUint(output, "watchdog_flow_clickhouse_quarantined_datagrams_total", "Tombstoned RawFlow datagrams durably written to quarantine.", "counter", writer.QuarantinedDatagrams)
+		writeUint(output, "watchdog_flow_clickhouse_quarantined_records_total", "Decoded records represented by durable quarantine rows.", "counter", writer.QuarantinedRecords)
 		m.process.write(output)
 	})
 }

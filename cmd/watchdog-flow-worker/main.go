@@ -30,6 +30,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowmetrics"
 	"github.com/cloudcache/watchdog/internal/flowplan"
 	"github.com/cloudcache/watchdog/internal/flowstream"
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 	"github.com/cloudcache/watchdog/internal/flowworker"
 	"github.com/google/uuid"
 )
@@ -196,6 +197,14 @@ func run(opt options) error {
 		log.Printf("flow-worker configuration valid: plans=%d bootstrap_versions=%d geo_versions=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
 		return nil
 	}
+	var barrierGuard *flowtombstone.Guard
+	var barrierSync func(context.Context) error
+	if versionSync != nil {
+		barrierGuard, barrierSync, err = loadRawDeleteBarrier(ctx, opt, identity)
+		if err != nil {
+			return err
+		}
+	}
 
 	enricher, err := flowworker.NewEnricherWithVersionCatalog(versions, geo, flowworker.EnrichmentLimits{})
 	if err != nil {
@@ -216,7 +225,12 @@ func run(opt options) error {
 	if err != nil {
 		return err
 	}
-	pipeline, err := flowch.NewPipeline(enricher, writer)
+	var pipeline *flowch.Pipeline
+	if barrierGuard != nil {
+		pipeline, err = flowch.NewGuardedPipeline(enricher, writer, barrierGuard)
+	} else {
+		pipeline, err = flowch.NewPipeline(enricher, writer)
+	}
 	if err != nil {
 		return err
 	}
@@ -264,7 +278,7 @@ func run(opt options) error {
 	if versionSync != nil {
 		done := make(chan struct{})
 		versionSyncDone = done
-		go runVersionSyncLoop(runCtx, versionSync, versionCursor, opt.versionRefreshInterval, done)
+		go runVersionSyncLoop(runCtx, versionSync, versionCursor, barrierSync, opt.versionRefreshInterval, done)
 	}
 	consumerErrCh := make(chan error, 1)
 	go func() { consumerErrCh <- consumer.RunPartitionBatches(runCtx, processor.HandleRecords) }()
@@ -609,7 +623,7 @@ func isLoopbackControlPlane(host string) bool {
 	return address != nil && address.IsLoopback()
 }
 
-func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSync, cursor uint32, interval time.Duration, done chan<- struct{}) {
+func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSync, cursor uint32, barrierSync func(context.Context) error, interval time.Duration, done chan<- struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -618,6 +632,11 @@ func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSyn
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if barrierSync != nil {
+				if err := barrierSync(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Printf("flow-worker raw-delete barrier sync failed; retaining LKG: %v", err)
+				}
+			}
 			result, err := syncer.SyncOnce(ctx, cursor)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {
@@ -631,6 +650,54 @@ func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSyn
 			}
 		}
 	}
+}
+
+func loadRawDeleteBarrier(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowtombstone.Guard, func(context.Context) error, error) {
+	client, err := buildVersionHTTPClient(opt, identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	path := filepath.Join(opt.versionLKGDir, "raw-delete-barrier.json")
+	guard, err := flowtombstone.NewGuard(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if restored, loadErr := flowtombstone.LoadFile(path); loadErr == nil {
+		if err := guard.Install(restored); err != nil {
+			return nil, nil, fmt.Errorf("restore raw-delete barrier LKG: %w", err)
+		}
+	} else if !errors.Is(loadErr, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("read raw-delete barrier LKG: %w", loadErr)
+	}
+	syncOnce := func(syncCtx context.Context) error {
+		barrier, found, fetchErr := client.FetchRawDeleteBarrier(syncCtx)
+		if fetchErr != nil {
+			return fetchErr
+		}
+		if !found {
+			if _, installed := guard.Current(); installed {
+				return errors.New("control plane omitted an installed raw-delete barrier")
+			}
+			return nil
+		}
+		if err := flowtombstone.SaveFile(path, barrier); err != nil {
+			return fmt.Errorf("persist raw-delete barrier LKG: %w", err)
+		}
+		if err := guard.Install(barrier); err != nil {
+			return fmt.Errorf("install raw-delete barrier: %w", err)
+		}
+		if err := client.AcknowledgeRawDeleteBarrier(syncCtx, barrier); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := syncOnce(ctx); err != nil {
+		if _, installed := guard.Current(); !installed {
+			return nil, nil, fmt.Errorf("initial raw-delete barrier sync without LKG: %w", err)
+		}
+		log.Printf("flow-worker raw-delete barrier acknowledgement unavailable; using installed LKG and retrying: %v", err)
+	}
+	return guard, syncOnce, nil
 }
 
 type fileObjectSource struct{}

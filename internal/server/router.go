@@ -36,6 +36,8 @@ func (s *Server) newRouter() *gin.Engine {
 	flowWorkers.GET("/enrichment-publications", s.fetchFlowWorkerPublications)
 	flowWorkers.GET("/enrichment-publications/:publication_id/objects/:kind", s.fetchFlowWorkerObject)
 	flowWorkers.POST("/enrichment-publications/:publication_id/ack", s.acknowledgeFlowWorkerPublication)
+	flowWorkers.GET("/raw-delete-barrier", s.fetchFlowWorkerRawDeleteBarrier)
+	flowWorkers.POST("/raw-delete-barriers/:barrier_id/ack", s.acknowledgeFlowWorkerRawDeleteBarrier)
 
 	// --- authenticated (session cookie + CSRF on mutations) ---
 	auth := installedAPI.Group("")

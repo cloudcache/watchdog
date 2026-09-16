@@ -12,11 +12,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
 type BlockInserter interface {
 	InsertFlowBlock(context.Context, PreparedBlock) error
+}
+
+type quarantineInserter interface {
+	InsertFlowQuarantine(context.Context, PreparedQuarantine) error
 }
 
 type WriterConfig struct {
@@ -43,16 +48,18 @@ type Writer struct {
 }
 
 type writerStats struct {
-	insertAttempts      atomic.Uint64
-	insertErrors        atomic.Uint64
-	retryableErrors     atomic.Uint64
-	permanentErrors     atomic.Uint64
-	retries             atomic.Uint64
-	blocks              atomic.Uint64
-	rows                atomic.Uint64
-	insertDurationNanos atomic.Uint64
-	retryingNow         atomic.Int64
-	budgetExceeded      atomic.Uint64
+	insertAttempts       atomic.Uint64
+	insertErrors         atomic.Uint64
+	retryableErrors      atomic.Uint64
+	permanentErrors      atomic.Uint64
+	retries              atomic.Uint64
+	blocks               atomic.Uint64
+	rows                 atomic.Uint64
+	insertDurationNanos  atomic.Uint64
+	retryingNow          atomic.Int64
+	budgetExceeded       atomic.Uint64
+	quarantinedDatagrams atomic.Uint64
+	quarantinedRecords   atomic.Uint64
 }
 
 type WriterStats struct {
@@ -68,8 +75,67 @@ type WriterStats struct {
 	// that has failed at least once and is grinding). A sustained non-zero value
 	// is the "stuck partition" signal. BudgetExceeded counts blocks that hit
 	// RetryMaxElapsed and were surfaced for replay.
-	RetryingNow    int64
-	BudgetExceeded uint64
+	RetryingNow          int64
+	BudgetExceeded       uint64
+	QuarantinedDatagrams uint64
+	QuarantinedRecords   uint64
+}
+
+// WriteQuarantined durably stores one exceptional source datagram and its
+// receipt. It is deliberately outside PrepareBlocks because this cold path
+// preserves the original Kafka payload rather than enriched facts.
+func (w *Writer) WriteQuarantined(ctx context.Context, batch *flowworker.RecordBatch, decision flowtombstone.Decision) error {
+	if w == nil || w.inserter == nil {
+		return errors.New("ClickHouse Flow writer is not initialized")
+	}
+	inserter, ok := w.inserter.(quarantineInserter)
+	if !ok {
+		return errors.New("ClickHouse Flow quarantine inserter is not configured")
+	}
+	item, err := prepareQuarantine(batch, decision)
+	if err != nil {
+		return err
+	}
+	delay := w.config.RetryInitial
+	deadline := time.Now().Add(w.config.RetryMaxElapsed)
+	for {
+		w.stats.insertAttempts.Add(1)
+		started := time.Now()
+		err = inserter.InsertFlowQuarantine(ctx, item)
+		w.stats.insertDurationNanos.Add(uint64(time.Since(started)))
+		if err == nil {
+			w.stats.quarantinedDatagrams.Add(1)
+			w.stats.quarantinedRecords.Add(item.Receipt.RecordCount)
+			return nil
+		}
+		w.stats.insertErrors.Add(1)
+		var permanent *PermanentError
+		if errors.As(err, &permanent) {
+			w.stats.permanentErrors.Add(1)
+			return err
+		}
+		w.stats.retryableErrors.Add(1)
+		if ctx.Err() != nil {
+			return errors.Join(err, ctx.Err())
+		}
+		if time.Now().After(deadline) {
+			w.stats.budgetExceeded.Add(1)
+			return fmt.Errorf("ClickHouse Flow quarantine insert exceeded %s retry budget: %w", w.config.RetryMaxElapsed, err)
+		}
+		timer := time.NewTimer(jitter(delay))
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		w.stats.retries.Add(1)
+		if delay < w.config.RetryMax {
+			delay = min(delay*2, w.config.RetryMax)
+		}
+	}
 }
 
 type PermanentError struct{ Err error }
@@ -203,6 +269,7 @@ func (w *Writer) Stats() WriterStats {
 		Retries: w.stats.retries.Load(), Blocks: w.stats.blocks.Load(), Rows: w.stats.rows.Load(),
 		InsertDurationNanos: w.stats.insertDurationNanos.Load(),
 		RetryingNow:         w.stats.retryingNow.Load(), BudgetExceeded: w.stats.budgetExceeded.Load(),
+		QuarantinedDatagrams: w.stats.quarantinedDatagrams.Load(), QuarantinedRecords: w.stats.quarantinedRecords.Load(),
 	}
 }
 

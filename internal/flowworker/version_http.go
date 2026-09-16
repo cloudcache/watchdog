@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowplan"
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 )
 
 const (
@@ -63,6 +64,15 @@ type versionHTTPAckRequest struct {
 	FailureMessage         string `json:"failure_message,omitempty"`
 }
 
+type rawDeleteBarrierAckRequest struct {
+	Revision        uint64 `json:"revision"`
+	BootID          string `json:"boot_id"`
+	SoftwareVersion string `json:"software_version"`
+	State           string `json:"state"`
+	ErrorCode       string `json:"error_code,omitempty"`
+	ErrorMessage    string `json:"error_message,omitempty"`
+}
+
 func NewVersionHTTPClient(config VersionHTTPClientConfig) (*VersionHTTPClient, error) {
 	base, err := url.Parse(strings.TrimSpace(config.BaseURL))
 	if err != nil || base == nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" ||
@@ -107,6 +117,58 @@ func (c *VersionHTTPClient) FetchTrustBundle(ctx context.Context) ([]byte, error
 		return nil, fmt.Errorf("%w: trust bundle headers do not match payload", ErrVersionRemoteInvalid)
 	}
 	return data, nil
+}
+
+// FetchRawDeleteBarrier returns the latest immutable tombstone publication.
+// A 204 response means raw deletion has never been published for this install.
+func (c *VersionHTTPClient) FetchRawDeleteBarrier(ctx context.Context) (flowtombstone.Barrier, bool, error) {
+	response, err := c.get(ctx, "api", "v1", "flow-workers", c.identity.WorkerID, "raw-delete-barrier")
+	if err != nil {
+		return flowtombstone.Barrier{}, false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return flowtombstone.Barrier{}, false, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		return flowtombstone.Barrier{}, false, versionHTTPStatusError("fetch raw-delete barrier", response)
+	}
+	data, err := readVersionHTTPBody(response.Body, 1<<20)
+	if err != nil {
+		return flowtombstone.Barrier{}, false, fmt.Errorf("%w: raw-delete barrier body: %v", ErrVersionRemoteInvalid, err)
+	}
+	var barrier flowtombstone.Barrier
+	if err := decodeVersionHTTPJSON(data, &barrier); err != nil || barrier.Validate() != nil {
+		return flowtombstone.Barrier{}, false, fmt.Errorf("%w: raw-delete barrier payload", ErrVersionRemoteInvalid)
+	}
+	return barrier, true, nil
+}
+
+func (c *VersionHTTPClient) AcknowledgeRawDeleteBarrier(ctx context.Context, barrier flowtombstone.Barrier) error {
+	if barrier.Validate() != nil {
+		return flowtombstone.ErrInvalidBarrier
+	}
+	payload, err := json.Marshal(rawDeleteBarrierAckRequest{
+		Revision: barrier.Revision, BootID: c.identity.BootID, SoftwareVersion: c.identity.SoftwareVersion, State: "installed",
+	})
+	if err != nil {
+		return err
+	}
+	request, err := c.newRequest(ctx, http.MethodPost, nil, bytes.NewReader(payload), "api", "v1", "flow-workers", c.identity.WorkerID, "raw-delete-barriers", barrier.ID, "ack")
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("%w: acknowledge raw-delete barrier: %v", ErrVersionRemoteUnavailable, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return versionHTTPStatusError("acknowledge raw-delete barrier", response)
+	}
+	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, versionHTTPMaxErrorBytes+1))
+	return err
 }
 
 func (c *VersionHTTPClient) FetchDesired(ctx context.Context, afterVersion uint32, limit int) (VersionPublicationHTTPPage, error) {

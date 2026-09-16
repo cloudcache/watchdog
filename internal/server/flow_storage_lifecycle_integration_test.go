@@ -508,6 +508,42 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 		t.Fatal(err)
 	}
 	s.jobs = opjob.NewStore(db)
+	workerID, workerToken := "flow_worker_delete_gate", "wda_flow_delete_gate_secret"
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents (id,name,kind,status,health,api_version,capabilities_json)
+		VALUES (?,?,'flow_worker','active','ok','v1',JSON_ARRAY('flow.write.clickhouse/v1'))`, workerID, "Flow delete gate worker"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256)
+		VALUES (?,?,'token',?)`, newID(), workerID, sha256hex(workerToken)); err != nil {
+		t.Fatal(err)
+	}
+	pendingResponse := flowLifecycleRequest(t, s.executeFlowRawDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+reapproved.Approval.ID+"/actions/execute", "id", reapproved.Approval.ID, nil, `"1"`)
+	if pendingResponse.Code != http.StatusConflict || !strings.Contains(pendingResponse.Body.String(), `"error":"flow_delete_barrier_pending"`) {
+		t.Fatalf("unacknowledged worker did not block delete: status=%d body=%s", pendingResponse.Code, pendingResponse.Body.String())
+	}
+	var pending struct {
+		Barrier flowlifecycle.DeleteBarrierStatus `json:"barrier"`
+	}
+	if err := json.Unmarshal(pendingResponse.Body.Bytes(), &pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending.Barrier.Ready || pending.Barrier.RequiredWorkers != 1 || pending.Barrier.InstalledWorkers != 0 {
+		t.Fatalf("unexpected pending barrier status: %+v", pending.Barrier)
+	}
+	s.installed.Store(true)
+	s.engine = s.newRouter()
+	fetchedBarrier := machineRequest(t, s, http.MethodGet, "/api/v1/flow-workers/"+workerID+"/raw-delete-barrier", workerToken, nil)
+	if fetchedBarrier.Code != http.StatusOK || !strings.Contains(fetchedBarrier.Body.String(), pending.Barrier.Barrier.ID) {
+		t.Fatalf("fetch raw-delete barrier: status=%d body=%s", fetchedBarrier.Code, fetchedBarrier.Body.String())
+	}
+	acknowledged := machineRequest(t, s, http.MethodPost,
+		"/api/v1/flow-workers/"+workerID+"/raw-delete-barriers/"+pending.Barrier.Barrier.ID+"/ack", workerToken, map[string]any{
+			"revision": pending.Barrier.Barrier.Revision, "boot_id": "delete-gate-boot", "software_version": "integration-test", "state": "installed",
+		})
+	if acknowledged.Code != http.StatusAccepted {
+		t.Fatalf("acknowledge raw-delete barrier: status=%d body=%s", acknowledged.Code, acknowledged.Body.String())
+	}
 	executeResponse := flowLifecycleRequest(t, s.executeFlowRawDelete, admin, http.MethodPost,
 		"/api/v1/flow/storage/deletion-approvals/"+reapproved.Approval.ID+"/actions/execute", "id", reapproved.Approval.ID, nil, `"1"`)
 	if executeResponse.Code != http.StatusAccepted {

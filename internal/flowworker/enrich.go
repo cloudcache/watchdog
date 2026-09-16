@@ -376,7 +376,7 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 	if batch.ReceivedAtUnixMS <= 0 {
 		return result, invalid("receive time is invalid")
 	}
-	if batch.MessageDisposition < MessageDispositionPersisted || batch.MessageDisposition > MessageDispositionMappingRejected {
+	if batch.MessageDisposition < MessageDispositionPersisted || batch.MessageDisposition > MessageDispositionLateQuarantined {
 		return result, invalid("message disposition is invalid")
 	}
 	if batch.MessageDisposition != MessageDispositionPersisted {

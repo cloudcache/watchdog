@@ -94,6 +94,8 @@ func TestFlowEnrichmentPublicationRoutesAreRegistered(t *testing.T) {
 		"GET /api/v1/flow-workers/:id/enrichment-publications",
 		"GET /api/v1/flow-workers/:id/enrichment-publications/:publication_id/objects/:kind",
 		"POST /api/v1/flow-workers/:id/enrichment-publications/:publication_id/ack",
+		"GET /api/v1/flow-workers/:id/raw-delete-barrier",
+		"POST /api/v1/flow-workers/:id/raw-delete-barriers/:barrier_id/ack",
 	} {
 		if !registered[route] {
 			t.Fatalf("Flow enrichment publication route is not registered: %s", route)

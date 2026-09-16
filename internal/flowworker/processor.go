@@ -152,6 +152,7 @@ func (p *Processor) decodeRecord(record *kgo.Record) (*RecordBatch, error) {
 		p.stats.retryableErrors.Add(1)
 		return nil, err
 	}
+	batch.RawPayload = record.Value
 	return batch, nil
 }
 

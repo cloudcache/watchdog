@@ -11,6 +11,7 @@ const (
 	MessageDispositionEmpty
 	MessageDispositionDecodeRejected
 	MessageDispositionMappingRejected
+	MessageDispositionLateQuarantined
 )
 
 // RecordBatch is the in-memory handoff between RawFlow decode and enrichment.
@@ -33,7 +34,10 @@ type RecordBatch struct {
 	SubAgentID          uint32
 	DatagramSequence    uint32
 	AgentIP             []byte
-	ExporterEpoch       uint64
+	// RawPayload aliases the Kafka record value until the synchronous durable
+	// handler returns. Only the exceptional tombstone path persists it.
+	RawPayload    []byte
+	ExporterEpoch uint64
 }
 
 // ValidSourceStreamID validates the operator-assigned Kafka cluster/topic

@@ -8,7 +8,9 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowtombstone"
 	"github.com/cloudcache/watchdog/internal/flowworker"
 )
 
@@ -31,6 +33,17 @@ func (e *recordingEnricher) EnrichBatch(batch *flowworker.RecordBatch) (*flowwor
 type recordingBatchWriter struct {
 	batches []*flowworker.EnrichedBatch
 	err     error
+}
+
+type recordingQuarantineWriter struct {
+	batch    *flowworker.RecordBatch
+	decision flowtombstone.Decision
+	err      error
+}
+
+func (w *recordingQuarantineWriter) WriteQuarantined(_ context.Context, batch *flowworker.RecordBatch, decision flowtombstone.Decision) error {
+	w.batch, w.decision = batch, decision
+	return w.err
 }
 
 func (w *recordingBatchWriter) Write(_ context.Context, batches []*flowworker.EnrichedBatch) error {
@@ -93,5 +106,44 @@ func TestPipelinePropagatesDurableFailure(t *testing.T) {
 	}
 	if stats := pipeline.Stats(); stats.Records != 0 || stats.SamplingUnknown != 0 || stats.SamplingConflict != 0 {
 		t.Fatalf("failed durable write changed committed stats: %+v", stats)
+	}
+}
+
+func TestPipelineQuarantinesTombstonedDatagramBeforeEnrichment(t *testing.T) {
+	publishedAt := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	barrier, err := flowtombstone.Advance(nil, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), "barrier_a", 1, publishedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, _ := flowtombstone.NewGuard(&barrier)
+	batch := &flowworker.RecordBatch{MessageDisposition: flowworker.MessageDispositionPersisted, Records: []*flowworker.Record{{EventTimeUnixMS: time.Date(2026, 8, 1, 23, 0, 0, 0, time.UTC).UnixMilli()}}}
+	normal := &recordingBatchWriter{}
+	quarantine := &recordingQuarantineWriter{}
+	pipeline := &Pipeline{
+		enricher: &recordingEnricher{failOn: batch, failErr: errors.New("must not enrich tombstoned data")},
+		writer:   normal, quarantine: quarantine, barrier: guard,
+	}
+	if err := pipeline.Handle(context.Background(), []*flowworker.RecordBatch{batch}); err != nil {
+		t.Fatal(err)
+	}
+	if quarantine.batch != batch || quarantine.decision.Revision != 1 || len(normal.batches) != 0 {
+		t.Fatalf("quarantine=%+v normal=%d", quarantine.decision, len(normal.batches))
+	}
+	if stats := pipeline.Stats(); stats.QuarantinedDatagrams != 1 || stats.QuarantinedRecords != 1 || stats.Records != 0 {
+		t.Fatalf("unexpected quarantine stats: %+v", stats)
+	}
+}
+
+func TestPipelineQuarantineFailureLeavesBatchRetryable(t *testing.T) {
+	barrier, _ := flowtombstone.Advance(nil, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), "barrier_a", 1, time.Now().UTC())
+	guard, _ := flowtombstone.NewGuard(&barrier)
+	batch := &flowworker.RecordBatch{MessageDisposition: flowworker.MessageDispositionPersisted, Records: []*flowworker.Record{{EventTimeUnixMS: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli()}}}
+	want := errors.New("quarantine unavailable")
+	pipeline := &Pipeline{enricher: &recordingEnricher{}, writer: &recordingBatchWriter{}, quarantine: &recordingQuarantineWriter{err: want}, barrier: guard}
+	if err := pipeline.Handle(context.Background(), []*flowworker.RecordBatch{batch}); !errors.Is(err, want) {
+		t.Fatalf("error=%v", err)
+	}
+	if stats := pipeline.Stats(); stats.QuarantinedDatagrams != 0 || stats.Records != 0 {
+		t.Fatalf("failed quarantine changed durable stats: %+v", stats)
 	}
 }

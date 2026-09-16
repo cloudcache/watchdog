@@ -50,6 +50,7 @@ const (
 	IngestDispositionEmpty           IngestMessageDisposition = "empty"
 	IngestDispositionDecodeRejected  IngestMessageDisposition = "decode_rejected"
 	IngestDispositionMappingRejected IngestMessageDisposition = "mapping_rejected"
+	IngestDispositionLateQuarantined IngestMessageDisposition = "late_quarantined"
 )
 
 type IngestAuditReceipt struct {
@@ -209,7 +210,7 @@ func validateAuditReceipt(receipt IngestAuditReceipt) error {
 	if receipt.Disposition == IngestDispositionPersisted && receipt.Counters.RecordCount == 0 {
 		return errors.New("persisted receipt count is invalid")
 	}
-	if receipt.Disposition != IngestDispositionPersisted && receipt.Counters != (IngestAuditCounters{}) {
+	if receipt.Disposition != IngestDispositionPersisted && receipt.Disposition != IngestDispositionLateQuarantined && receipt.Counters != (IngestAuditCounters{}) {
 		return errors.New("non-persisted receipt must have zero counters")
 	}
 	return nil
@@ -218,7 +219,7 @@ func validateAuditReceipt(receipt IngestAuditReceipt) error {
 func validIngestDisposition(value IngestMessageDisposition) bool {
 	switch value {
 	case IngestDispositionPersisted, IngestDispositionTemplateMissing, IngestDispositionEmpty,
-		IngestDispositionDecodeRejected, IngestDispositionMappingRejected:
+		IngestDispositionDecodeRejected, IngestDispositionMappingRejected, IngestDispositionLateQuarantined:
 		return true
 	default:
 		return false

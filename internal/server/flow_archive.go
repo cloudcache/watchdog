@@ -32,7 +32,10 @@ func (s *Server) startFlowArchive() error {
 	if err != nil {
 		return err
 	}
-	store := flowlifecycle.NewStore(s.db)
+	store := s.flowLifecycle
+	if store == nil {
+		store = flowlifecycle.NewStore(s.db)
+	}
 	s.flowLifecycle = store
 	s.flowDeleteEvidence = runner
 	workerContext, cancel := context.WithCancel(context.Background())

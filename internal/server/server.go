@@ -139,6 +139,7 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	// operation_jobs is a management-plane dependency shared by address, agent,
 	// SNMP and Flow workers. Create it before any worker checks the store.
 	s.jobs = opjob.NewStore(s.db)
+	s.flowLifecycle = flowlifecycle.NewStore(s.db)
 	if err := s.startAgentPlans(); err != nil {
 		return fmt.Errorf("start agent plans: %w", err)
 	}

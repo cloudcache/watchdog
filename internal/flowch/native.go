@@ -26,6 +26,7 @@ const (
 	defaultOperationTimeout   = 2 * time.Minute
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_receipts"
+	flowQuarantineTable       = "flow_quarantined_datagrams"
 	receiptSchemaVersion      = 4
 	factSchemaVersion         = 3
 )
@@ -140,7 +141,7 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
 	if n == nil || n.executor == nil {
 		return errors.New("ClickHouse native connection is not initialized")
 	}
-	var requiredRecords, requiredReceipts, forbiddenRecords, forbiddenReceipts proto.ColUInt64
+	var requiredRecords, requiredReceipts, requiredQuarantine, forbiddenRecords, forbiddenReceipts proto.ColUInt64
 	seen := false
 	query := ch.Query{
 		Body: `SELECT
@@ -152,13 +153,18 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
     'record_count', 'raw_bytes', 'raw_packets', 'estimated_bytes',
     'estimated_packets', 'estimated_valid_records', 'generation'
   )) AS required_receipts,
+	countIf(table = 'flow_quarantined_datagrams' AND name IN (
+	  'source_stream_id', 'kafka_partition', 'kafka_offset', 'barrier_revision',
+	  'raw_payload', 'decoded_record_count', 'matched_event_day'
+	)) + countIf(table = 'flow_ingest_receipts' AND name = 'message_disposition' AND position(type, 'late_quarantined') > 0) AS required_quarantine,
   countIf(table = 'flow_records' AND name IN ('record_id', 'ingest_batch_id', 'dimension_fingerprint')) AS forbidden_records,
   countIf(table = 'flow_ingest_receipts' AND name IN ('ingest_batch_id', 'checksum', 'first_offset', 'last_offset')) AS forbidden_receipts
 FROM system.columns
-WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_receipts')`,
+WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_receipts', 'flow_quarantined_datagrams')`,
 		Result: proto.Results{
 			{Name: "required_records", Data: &requiredRecords},
 			{Name: "required_receipts", Data: &requiredReceipts},
+			{Name: "required_quarantine", Data: &requiredQuarantine},
 			{Name: "forbidden_records", Data: &forbiddenRecords},
 			{Name: "forbidden_receipts", Data: &forbiddenReceipts},
 		},
@@ -167,7 +173,7 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 		if block.Rows == 0 {
 			return nil
 		}
-		if seen || block.Rows != 1 || requiredRecords.Rows() != 1 || requiredReceipts.Rows() != 1 || forbiddenRecords.Rows() != 1 || forbiddenReceipts.Rows() != 1 {
+		if seen || block.Rows != 1 || requiredRecords.Rows() != 1 || requiredReceipts.Rows() != 1 || requiredQuarantine.Rows() != 1 || forbiddenRecords.Rows() != 1 || forbiddenReceipts.Rows() != 1 {
 			return errors.New("ClickHouse Flow schema readiness returned an invalid row count")
 		}
 		seen = true
@@ -176,9 +182,9 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 	if err := n.executor.Do(ctx, query); err != nil {
 		return fmt.Errorf("verify ClickHouse Flow Storage V2 schema: %w", err)
 	}
-	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 11 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
-		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/11 forbidden=%d/%d)",
-			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
+	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 11 || requiredQuarantine[0] != 8 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
+		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/11 quarantine=%d/8 forbidden=%d/%d)",
+			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(requiredQuarantine), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
 	}
 	return nil
 }
@@ -560,7 +566,10 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		estimatedValid.Append(receipt.EstimatedValidRecords)
 		minEventTime.Append(receipt.MinEventTime.UTC())
 		maxEventTime.Append(receipt.MaxEventTime.UTC())
-		rowGeneration := uint64(receipt.ReceivedAt.UnixMilli())
+		rowGeneration := receipt.Generation
+		if rowGeneration == 0 {
+			rowGeneration = uint64(receipt.ReceivedAt.UnixMilli())
+		}
 		generationCol.Append(rowGeneration)
 		legacyInsertedAt.Append(receipt.ReceivedAt.UTC())
 	}
@@ -587,7 +596,7 @@ func validatePreparedReceipts(block PreparedBlock) error {
 		if receipt.Disposition == flowworker.MessageDispositionPersisted && receipt.RecordCount == 0 {
 			return fmt.Errorf("%w: persisted receipt %d has no records", ErrInvalidBatchGroup, index)
 		}
-		if receipt.Disposition != flowworker.MessageDispositionPersisted &&
+		if receipt.Disposition != flowworker.MessageDispositionPersisted && receipt.Disposition != flowworker.MessageDispositionLateQuarantined &&
 			(receipt.RecordCount != 0 || receipt.RawBytes != 0 || receipt.RawPackets != 0 || receipt.EstimatedBytes != 0 || receipt.EstimatedPackets != 0 || receipt.EstimatedValidRecords != 0) {
 			return fmt.Errorf("%w: non-persisted receipt %d has counters", ErrInvalidBatchGroup, index)
 		}
@@ -607,6 +616,8 @@ func messageDispositionName(value flowworker.MessageDisposition) (string, bool) 
 		return "decode_rejected", true
 	case flowworker.MessageDispositionMappingRejected:
 		return "mapping_rejected", true
+	case flowworker.MessageDispositionLateQuarantined:
+		return "late_quarantined", true
 	default:
 		return "", false
 	}
