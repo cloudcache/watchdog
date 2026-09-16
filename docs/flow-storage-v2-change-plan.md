@@ -169,16 +169,16 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 ### V2-D aging/downsample
 
-> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0037` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 仅是待 KISS-08 删除的历史实现。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw-day DDL executor/receipt 已接线但策略开关继续 fail closed，不能在缺少 ingest tombstone ACK 屏障时运行。
+> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0037` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 已随 KISS-08 删除。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw-day DDL executor/receipt 已接线，但策略开关在 ingest tombstone ACK 和真实外部 restore drill 完成前继续 fail closed。
 
 - [x] **设计**：冻结管理策略表/API、UTC 分区粒度、目标 schema、守恒证据、generation 命名空间和删除授权。
 - [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。
-- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；仍须实现删除日期 publication/所有活跃 worker ACK/极晚事件隔离，再开放 raw 开关。archive 月删除另行实现；故障或证据缺失均不得删除。
+- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；删除日期 publication、所有活跃 worker ACK 与极晚 datagram 隔离正在实现，完整门禁和独立提交前不计为完成。L5B3c 真实外部 restore drill 与 archive 月删除仍未完成；故障或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；ingest tombstone ACK、真实外部 restore 和开关解锁仍保持未完成。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；L5B3b、真实外部 restore 和开关解锁仍保持未完成。
 
 ## 9. 本次验证证据（2026-09-07）
 

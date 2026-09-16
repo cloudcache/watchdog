@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**刚完成切片：FLOW-05G 固定运营报表。** 六个稳定入口已经从共享 Explorer/preset 收敛为独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 已覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。开发库当前无 Flow 事实，因此真实浏览器验收明确为空数据状态，没有写入样例数据冒充非空结果；非空统计、守恒、分页和导出由确定性 provider fixture 覆盖。按用户要求在此提交后停止，不顺手推进 FLOW-05F、Storage V2 或历史重分类。
+**当前活动切片：Storage V2 L5B3b（实现待验收、未提交）。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。L5B3b 当前工作树正在接入 tombstone publication、worker ACK/LKG 和极晚 datagram quarantine；在完整门禁和独立提交完成前不得标记交付。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -46,11 +46,11 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | FLOW-01 RawFlow collector | [x] | [x] | [x] | [ ] | [x] | [x] | [x] | [x] | 外部集成门未过 |
 | FLOW-02 Kafka worker/GoFlow2 | [x] | [x] | [x] | [ ] | [ ] | [ ] | [x] | [x] | 外部集成门未过 |
 | FLOW-03 sampling/dimension | [x] | [x] | [x] | [ ] | [x] | [x] | [x] | [x] | 数据面完成；API 接线/外部集成待办 |
-| FLOW-04 CH/rollup/metrics | [x] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | **进行中** |
-| FLOW-05 query/API/UI | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
-| FLOW-06 correction/reclass/export | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
-| FLOW-07 overseas/VPN | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
-| FLOW-08 HA/lifecycle/release | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | 待办 |
+| FLOW-04 CH/rollup/metrics | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | Storage V2 非破坏路径完成；L5 删除/恢复与组合故障门继续 |
+| FLOW-05 query/API/UI | [x] | [x] | [x] | [x] | [x] | [ ] | [x] | [x] | Explorer、typed query、六固定报表和导出已交付；集群容量/滚动兼容门未过 |
+| FLOW-06 correction/reclass/export | [x] | [ ] | [ ] | [ ] | [x] | [ ] | [ ] | [ ] | raw/supplier/customer 与导出完成；历史重分类和 publication 未完成 |
+| FLOW-07 overseas/VPN | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | 境外和 VPN 被动数据面完成；rule publication/ACK 与主动探测未完成 |
+| FLOW-08 HA/lifecycle/release | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | migration/reliability 基础完成；集群、性能、恢复和许可证门未完成 |
 
 “已提交”表示当前已有实现和证据已进入可复现提交，不等于该行全部发布门禁已经完成；只有设计、编码、单元、集成、变更和回归各列全部为 `[x]` 时，阶段才算完全关闭。父项只要仍有一个明确子门禁未满足就保持 `[ ]`，并必须在同一行写明剩余条件。
 
