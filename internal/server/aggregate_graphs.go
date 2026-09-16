@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
 
@@ -711,7 +711,7 @@ func aggregateGraphWindow(c *gin.Context, maxDataPoints int) (time.Time, time.Ti
 		}
 	}
 	if strings.TrimSpace(c.Query("step")) == "" {
-		step = watchdog.AutoQueryStep(to.Sub(from), maxDataPoints)
+		step = metricdomain.AutoQueryStep(to.Sub(from), maxDataPoints)
 	}
 	return from.UTC(), to.UTC(), step, true
 }

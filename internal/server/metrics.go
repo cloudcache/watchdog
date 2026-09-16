@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
-	"github.com/cloudcache/watchdog/internal/watchdog"
 	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) metricCatalog(c *gin.Context) {
-	items := make([]watchdog.MetricDefinition, 0, len(watchdog.MetricCatalog))
-	for _, definition := range watchdog.MetricCatalog {
+	items := make([]metricdomain.Definition, 0, len(metricdomain.Catalog))
+	for _, definition := range metricdomain.Catalog {
 		allowed, err := s.metricAllowed(c.Request.Context(), currentPrincipal(c), definition.Name)
 		if err != nil {
 			writeSQLError(c, err)
@@ -73,7 +73,7 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	}
 	metric := strings.TrimSpace(c.Query("metric"))
 	if !isSNMPMetric(metric) {
-		if watchdog.IsKnownMetric(metric) {
+		if metricdomain.IsKnown(metric) {
 			fail(c, http.StatusServiceUnavailable, "metric_provider_unavailable", "metric family is not configured in this server")
 		} else {
 			fail(c, http.StatusBadRequest, "invalid_metric", "unsupported metric")
@@ -236,7 +236,7 @@ func metricValues(points []snmpch.Point) []metricValue {
 }
 
 func isSNMPMetric(metric string) bool {
-	for _, definition := range watchdog.MetricCatalog {
+	for _, definition := range metricdomain.Catalog {
 		if definition.Name == metric && (strings.HasPrefix(definition.Family, "snmp_") || definition.Family == "bgp") {
 			return true
 		}
@@ -283,7 +283,7 @@ func parseMetricWindow(c *gin.Context) (time.Time, time.Time, time.Duration, boo
 		fail(c, http.StatusBadRequest, "invalid_range", "range must be positive and at most 400 days")
 		return from, to, 0, false
 	}
-	step := watchdog.AutoQueryStep(to.Sub(from), 1200)
+	step := metricdomain.AutoQueryStep(to.Sub(from), 1200)
 	if raw := strings.TrimSpace(c.Query("step")); raw != "" {
 		seconds, err := strconv.ParseUint(raw, 10, 32)
 		if err != nil || seconds == 0 {

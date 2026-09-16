@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -134,7 +134,7 @@ func normalizeUserAccess(req userAccessMutation) (map[string][]string, error) {
 		byField[g.field] = normalized
 	}
 	for _, metric := range byField["metrics"] {
-		if !watchdog.IsKnownMetric(metric) {
+		if !metricdomain.IsKnown(metric) {
 			return nil, errors.New("metrics contains an unknown metric")
 		}
 	}
@@ -214,9 +214,9 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 		return
 	}
 	if kind == "metric" {
-		items := make([]accessOption, 0, len(watchdog.MetricCatalog))
+		items := make([]accessOption, 0, len(metricdomain.Catalog))
 		needle := strings.ToLower(q)
-		for _, metric := range watchdog.MetricCatalog {
+		for _, metric := range metricdomain.Catalog {
 			haystack := strings.ToLower(metric.Name + " " + metric.Family + " " + metric.Description)
 			if needle == "" || strings.Contains(haystack, needle) {
 				items = append(items, accessOption{ID: metric.Name, Label: metric.Name, Description: metric.Family + " · " + metric.Description})

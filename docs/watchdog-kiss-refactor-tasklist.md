@@ -289,7 +289,9 @@
 
 - [x] **KISS-08F14 旧 Tenant discovery HTTP 删除（本提交）**：当前单域 Gin、前端和 agent 均无租户选择/切换；运行态 `/api/v1/tenants` 与 `/api/v1/me/tenants` 已是 404。删除遗留 test-router 的两条 tenant discovery 路由及 `APIV1RouterConfig.TenantDiscovery/Tenants` 注入点，以 404 反向测试冻结边界。仍被旧 Flow rollup 内部扫描引用的 `TenantRepository` 暂留，未修改 Flow 数据面、rollup 或 worker；目标包测试、全库 test/vet/build 和旧 router 注入零引用为提交门禁。
 
-- [x] **KISS-08G1 SNMP 端口策略域抽取（本提交）**：新增无 tenant 字段的 `internal/snmpdomain`，成为 supplier/customer/raw 端口策略、1024/1000 billing base、1m/5m step、上下修正和确定性逐点修正的唯一实现；Gin 的策略 CRUD、SNMP 查询、aggregate graph 均直接使用新域。`internal/watchdog` 只保留旧类型到新类型的显式转换，避免尚未拆除的历史测试/代码复制算法。有效 API 字段、MySQL `port_policies/traffic_policy_defaults` 字段和 ClickHouse 原始数据均未改变；响应/前端 DTO 中最后一个始终为空的 `TenantID` 兼容字段已删除，不改视觉。新域单元、兼容回归、真实 MySQL 策略/MIB/trap 生命周期及生产源码反向扫描通过；后续 G2 继续抽 SNMP 设备/发现/轮询类型与引擎闭包。
+- [x] **KISS-08G1 SNMP 端口策略域抽取（`3f04ec97`）**：新增无 tenant 字段的 `internal/snmpdomain`，成为 supplier/customer/raw 端口策略、1024/1000 billing base、1m/5m step、上下修正和确定性逐点修正的唯一实现；Gin 的策略 CRUD、SNMP 查询、aggregate graph 均直接使用新域。`internal/watchdog` 只保留旧类型到新类型的显式转换，避免尚未拆除的历史测试/代码复制算法。有效 API 字段、MySQL `port_policies/traffic_policy_defaults` 字段和 ClickHouse 原始数据均未改变；响应/前端 DTO 中最后一个始终为空的 `TenantID` 兼容字段已删除，不改视觉。新域单元、兼容回归、真实 MySQL 策略/MIB/trap 生命周期及生产源码反向扫描通过。
+
+- [x] **KISS-08G2 公共指标目录抽取（本提交）**：新增 `internal/metricdomain`，集中管理 system/container/SNMP/BGP 指标定义、scope/unit/value-mode 和自动查询步进；Gin metric catalog、用户指标授权 picker、聚合图与时序查询已直接使用新包，旧包仅保留同名兼容 alias/wrapper。指标名、返回字段、步进集合和权限判断不变，目录与 1h/24h/30d 自动步进均有独立测试。完成后生产 Gin 只剩 SNMP 设备/图表、发现/轮询、MIB、事件/trap 闭包依赖旧包；G3 再迁这些类型与引擎。
 
 > **2026-09-16 门禁修复包已闭环**：Saved Filter 的持久化/API 只接受 `private/shared`，旧 scope 有独立迁移测试；四个真实进程测试只从 KISS embedded schema 启动 `system/snmp/flow_collect/flow_worker` 并覆盖 register→plan→ACK→LKG→revoke；SNMP A2 替身按 scoped/aggregate/billing 三种真实列契约执行；`frontend_route_contract_test.go` 从 `main.tsx` 递归扫描所有可达前端 `/api/v1` 调用并与 Gin production route table 对照，禁止再次产生“页面已迁、后端 404”。四项均已在真实隔离 MySQL 上通过。
 >
