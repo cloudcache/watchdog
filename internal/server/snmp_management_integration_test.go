@@ -121,6 +121,20 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 	if override.Code != http.StatusOK || !strings.Contains(override.Body.String(), `"SideType":"customer"`) || !strings.Contains(override.Body.String(), `"CorrectionMin":10`) {
 		t.Fatalf("port override: status=%d body=%s", override.Code, override.Body.String())
 	}
+	supplierPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, watchdog.PortSideProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customerPolicies, err := s.readPortPoliciesForViewContext(ctx, []string{portID}, watchdog.PortSideCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supplierPolicies[portID].BillingBaseBps != 2_000_000_000 || supplierPolicies[portID].CorrectionDirection != watchdog.CorrectionNone {
+		t.Fatalf("supplier view did not retain its default on the same port: %+v", supplierPolicies[portID])
+	}
+	if customerPolicies[portID].BillingBaseBps != 1_000_000_000 || customerPolicies[portID].CorrectionDirection != watchdog.CorrectionUp {
+		t.Fatalf("customer view did not apply its override on the same port: %+v", customerPolicies[portID])
+	}
 
 	putMIB := snmpManagementRequest(t, s.putMIBModule, principal, http.MethodPut, "/api/v1/snmp/mib-modules", "", "", map[string]any{
 		"Name": "IF-MIB", "Source": "librenms", "Version": "2026.09", "Checksum": "sha256:test", "Enabled": true,

@@ -4416,10 +4416,6 @@ msgstr "没有传感器告警。"
 msgid "No sensors discovered."
 msgstr "未探测到传感器。"
 
-#: src/components/routes/network-device.tsx
-msgid "No supplier ports are assigned to this device."
-msgstr "此设备尚未分配供应商端口。"
-
 #: src/components/routes/target-form.tsx
 msgid "No SNMP profile is configured."
 msgstr "尚未配置 SNMP 配置。"
@@ -4900,8 +4896,8 @@ msgid "Port Policy"
 msgstr "端口规则"
 
 #: src/components/routes/network-port-policy.tsx
-msgid "Port side"
-msgstr "端口方向"
+msgid "Policy view"
+msgstr "策略视角"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx

@@ -50,7 +50,7 @@ flow 的业务需求和数据面分别见 [flow-direction-requirements.md](flow-
 | P1 | metric catalog 静态，查询后端固定为 VM，任意 flow 高基数查询无法接入 | 引入 dataset/metric provider 和统一 QueryGateway，支持 VM 与 ClickHouse |
 | P1 | aggregate graph 只绑定 port，item 只有 metric/direction | 图表定义改为 provider + dataset + query JSON + resource binding，支持 flow group-by/filter |
 | P1 | export task 固定 target/port、VM、CSV | export provider 化，任务保存 dataset、query snapshot、value layer、policy version |
-| P1 | 当前 `raw/corrected` 只有一层修正；supplier/customer 主要改变采样步长；修正算法是确定性随机加减固定值 | 改为 raw/supplier/customer 三个明确且可审计的平行数据层，禁止隐式随机修正 |
+| P1 | 历史实现曾把 supplier/customer 误作端口分组 | raw/supplier/customer 固定为同一端口事实的三个视角；按视角选择步进、显示基数和可复现修正规则，禁止过滤端口或回写 raw |
 | P1（已完成门禁） | `install/init.sql` 与分散 migration 的表演进存在维护成本 | migration 已嵌入二进制并按连续版本/checksum/advisory lock 执行；`checksums.sha256` 锁定已发布文件，数据库 ledger 漂移 fail closed，真实 MySQL parity gate 验证 init 与全量 migration 表结构一致；修复只能追加下一版本 migration |
 
 ### 2.3 本轮重构执行状态（2026-09-03）
@@ -913,7 +913,7 @@ CREATE TABLE metric_adjustment_policies (
 要求：
 
 - raw 永远不可修正或覆盖；
-- 操作为确定性 decimal `scale/add/clamp`，删除当前随机区间修正语义；
+- SNMP 兼容策略沿用 `correction_direction + correction_min/max`：对每个 `(port_id,bucket)` 以稳定种子在闭区间内选择修正值，保证重复查询、导出和对账可复算；不得使用进程级真随机数；
 - dimension filter 只允许 dataset descriptor 声明的字段，例如 direction、category、business、ASN、地址集；
 - 匹配顺序为 resource specificity → dimension specificity → priority → version；同优先级重叠 active 规则拒绝发布；
 - draft→active 需要 `configure_adjustment`，可配置双人审批；active 不原地修改，创建新 version；

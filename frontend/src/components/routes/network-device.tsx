@@ -92,8 +92,6 @@ type NetworkPort = {
 	oper_status?: string
 	SpeedBps?: number
 	speed_bps?: number
-	SideType?: string
-	side_type?: string
 	Addresses?: NetworkInterfaceAddress[]
 	addresses?: NetworkInterfaceAddress[]
 }
@@ -300,7 +298,6 @@ export default memo(({ id }: DeviceDetailProps) => {
 	const deviceID = device?.ID ?? device?.id ?? id
 	const portIDs = ports.map((port) => port.ID ?? port.id ?? "").filter(Boolean)
 	const portIDsKey = portIDs.join(",")
-	const supplierPortCount = ports.filter((port) => (port.SideType ?? port.side_type) === "provider").length
 	const trafficViewDisplayLabel =
 		trafficView === "customer" ? t`Customer` : trafficView === "supplier" ? t`Supplier` : t`Raw`
 	const graphContext = useMemo(
@@ -597,12 +594,6 @@ export default memo(({ id }: DeviceDetailProps) => {
 											panel={panel}
 											range={chartWindow}
 											refreshInterval={dashboard.refresh}
-											knownEmpty={trafficView === "supplier" && supplierPortCount === 0}
-											emptyMessage={
-												trafficView === "supplier" && supplierPortCount === 0 ? (
-													<Trans>No supplier ports are assigned to this device.</Trans>
-												) : undefined
-											}
 										/>
 									))
 							: null}

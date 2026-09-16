@@ -29,7 +29,7 @@
 | 设备/端口 overview graph schema | `/graph/devices/{id}/overview`、`/graph/ports/{id}/overview` | 本批恢复；同路径，查询改走 ClickHouse |
 | 跨设备/端口聚合图 CRUD/列表 | `/aggregate-graphs...` | 本批恢复；同路径/DTO，MySQL 只存定义和成员 |
 | 聚合图 series/data/summary | `/aggregate-graphs/{id}/...` | 本批恢复；同参数/响应，时序读取改为 ClickHouse |
-| 端口 raw/supplier/customer 修正规则 | `/network/ports/{id}/policy` | 已迁移；无租户 MySQL 定义，原 DTO；metrics/aggregate/aggregate-graph 在聚合前逐端口应用同一确定性规则 |
+| 端口 raw/supplier/customer 修正规则 | `/network/ports/{id}/policy` | 已迁移；无租户 MySQL 定义，原 DTO；三视角使用同一端口集合，supplier/customer 分别应用对应 policy 后再聚合，raw 永不修正 |
 | provider/customer 默认规则 | `/network/traffic-policy-defaults` | 已迁移；无端口覆盖时按 side 继承全局规则，更新留审计记录 |
 | MIB module CRUD | `/snmp/mib-modules...` | 已迁移；无租户 MySQL CRUD、原 PascalCase DTO、管理写审计 |
 | 设备事件列表 | `/network/devices/{id}/events` | 已迁移；ClickHouse `snmp_events`，服务端分页/search/sort/column filter，原 VTable envelope 响应体 |

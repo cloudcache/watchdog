@@ -74,22 +74,16 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		writeSNMPScopeError(c, err)
 		return
 	}
-	policies := map[string]watchdog.PortPolicy{}
-	preFilteredBySide := false
-	if (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS) && side != "" {
-		if scopedPortIDs, allExplicit := explicitSNMPScopePortIDs(scopes); allExplicit {
-			policies, err = s.readPortPoliciesContext(c.Request.Context(), scopedPortIDs)
-			if err != nil {
-				writeSQLError(c, err)
-				return
-			}
-			scopes = filterSNMPScopesBySide(scopes, policies, side)
-			preFilteredBySide = true
-		}
-	}
 	from, to, step, ok := parseMetricWindow(c)
 	if !ok {
 		return
+	}
+	if side != "" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS) {
+		step, err = s.trafficPolicyStepContext(c.Request.Context(), side)
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
 	}
 	maxRows, ok := parseSNMPRowBudget(c.Query("max_data_points"), 250000)
 	if !ok {
@@ -102,9 +96,8 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 	}
 	// Raw values need no per-port correction. Aggregate them in ClickHouse so
 	// a device graph returns one row per time bucket instead of transferring
-	// every port/bucket pair to Go. A side-filtered request can use the same
-	// path after its explicit port scopes have been filtered by policy.
-	if len(modes) == 1 && modes[0] == "raw" && (side == "" || preFilteredBySide) {
+	// every port/bucket pair to Go. traffic_view never changes port membership.
+	if len(modes) == 1 && modes[0] == "raw" {
 		response := metricRangeResponse{Status: "success"}
 		response.Data.ResultType = "matrix"
 		labels := map[string]string{"__name__": metric, "aggregate": method, "value_mode": "raw"}
@@ -136,16 +129,16 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
+	policies := map[string]watchdog.PortPolicy{}
 	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
-		if len(policies) == 0 {
-			policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
-			if err != nil {
-				writeSQLError(c, err)
-				return
-			}
+		policyView := side
+		if policyView == "" {
+			policyView = watchdog.PortSideCustomer
 		}
-		if !preFilteredBySide {
-			series = filterSNMPSeriesBySide(series, policies, side)
+		policies, err = s.readPortPoliciesForViewContext(c.Request.Context(), snmpSeriesPortIDs(series), policyView)
+		if err != nil {
+			writeSQLError(c, err)
+			return
 		}
 	}
 	response := metricRangeResponse{Status: "success"}
@@ -160,30 +153,6 @@ func (s *Server) aggregateMetrics(c *gin.Context) {
 		response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(aggregateSNMPSeries(view, method))})
 	}
 	c.JSON(http.StatusOK, response)
-}
-
-func explicitSNMPScopePortIDs(scopes []snmpch.Scope) ([]string, bool) {
-	portIDs := make([]string, 0, len(scopes))
-	for _, scope := range scopes {
-		if scope.PortID == "" {
-			return nil, false
-		}
-		portIDs = append(portIDs, scope.PortID)
-	}
-	return portIDs, true
-}
-
-func filterSNMPScopesBySide(scopes []snmpch.Scope, policies map[string]watchdog.PortPolicy, side watchdog.PortSideType) []snmpch.Scope {
-	if side == "" {
-		return scopes
-	}
-	filtered := make([]snmpch.Scope, 0, len(scopes))
-	for _, scope := range scopes {
-		if policy, ok := policies[scope.PortID]; ok && policy.SideType == side {
-			filtered = append(filtered, scope)
-		}
-	}
-	return filtered
 }
 
 // max_data_points limits the final chart series. QueryScopes must first read

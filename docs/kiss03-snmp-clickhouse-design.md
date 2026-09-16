@@ -42,7 +42,8 @@
 - API 只接受白名单参数；固定周期和自定义 RFC3339 时间范围都受最大 400 天、step 及 250000 行预算限制。`tenant_id` 等旧参数在访问 CH 前直接返回 400。
 - 返回 JSON 继续是现有前端消费的 `status + data.resultType=matrix + metric + values`，其中 value 明确编码为 `[unix_seconds, decimal_string]`；active handler 使用中性 DTO，不依赖任何旧 VM 类型。
 - `/api/v1/metrics/aggregate` 接受显式 `device_ids/target_ids/port_ids`、metric、`sum|avg|min|max|count`、固定/自定义时间和 step。Gin 先把端口解析到设备根并校验当前 device/port grant；`snmpch.Aggregate` 再把去重后的 scope 作为 CH external table 送入一条有界查询。device-wide scope 覆盖同设备的重复 port scope，避免重复计数；聚合函数来自固定白名单，不能进入 SQL 参数拼接。
-- aggregate 与 CSV 当前输出层明确为 `raw`。`value_mode/traffic_view` 兼容查询参数不能使原始 SNMP 数据冒充 supplier/customer 修正值；三层修正属于 KISS-07/Flow 对账，不在 SNMP 数据面隐式实现。
+- SNMP 原始 counter/rate 只在 ClickHouse 保存一份且不可改写。`raw/customer/supplier` 是同一设备、同一端口集合的三个读取视角，不是三组端口：`raw` 直接读取原值；`customer` 与 `supplier` 分别按对应 MySQL policy 的 sample step，在每个端口、每个时间桶上应用 min/max 区间内的确定性伪随机修正，再执行跨端口聚合。重复查询同一 `(port_id,bucket)` 必须得到相同修正值。
+- `customer` 使用十进制 1000 显示基数，`supplier` 使用二进制 1024 显示基数；基数只改变单位格式化，不能改变 CH 中的 bps 事实。`traffic_view` 选择策略层，严禁再以 `side_type` 过滤端口成员。
 
 ## 6. 异步 CSV 契约
 

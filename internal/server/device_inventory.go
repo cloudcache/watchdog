@@ -105,7 +105,6 @@ type interfaceAddressDTO struct {
 
 type portRecord struct {
 	ID, DeviceID, IfName, IfDescr, IfAlias, IfType, PhysAddress, OperStatus, AdminStatus string
-	SideType                                                                             string
 	IfIndex                                                                              uint64
 	IfSpeed                                                                              sql.NullInt64
 	IfHighSpeed                                                                          sql.NullInt64
@@ -118,7 +117,6 @@ type portRecord struct {
 
 type portDTO struct {
 	ID, DeviceID, IfName, IfDescr, IfAlias, AdminStatus, OperStatus string
-	SideType                                                        string
 	IfIndex, SpeedBps                                               uint64
 	Disabled, IgnoreAlerts                                          bool
 	Metadata                                                        map[string]any
@@ -149,7 +147,6 @@ func (r portRecord) dto() portDTO {
 	return portDTO{
 		ID: r.ID, DeviceID: r.DeviceID, IfIndex: r.IfIndex, IfName: r.IfName, IfDescr: r.IfDescr,
 		IfAlias: r.IfAlias, AdminStatus: r.AdminStatus, OperStatus: r.OperStatus, SpeedBps: speed,
-		SideType: r.SideType,
 		Disabled: r.Disabled, IgnoreAlerts: r.IgnoreAlerts, Metadata: metadata,
 		Addresses: []interfaceAddressDTO{}, RowVersion: r.RowVersion, UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -157,15 +154,13 @@ func (r portRecord) dto() portDTO {
 
 const portSelect = `SELECT p.id,p.device_id,p.if_index,p.if_name,p.if_descr,p.if_alias,p.if_speed,p.if_high_speed,
 	p.if_type,p.if_mtu,p.if_phys_address,p.if_oper_status,p.if_admin_status,p.disabled,p.ignore_alerts,
-	COALESCE(p.metadata_json,JSON_OBJECT()),p.row_version,p.updated_at,
-	COALESCE(NULLIF(pp.side_type,''),NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.metadata_json,'$.side_type')),''),'customer')
-	FROM ports p LEFT JOIN port_policies pp ON pp.port_id=p.id`
+	COALESCE(p.metadata_json,JSON_OBJECT()),p.row_version,p.updated_at FROM ports p`
 
 func scanPort(row rowScanner) (portRecord, error) {
 	var r portRecord
 	err := row.Scan(&r.ID, &r.DeviceID, &r.IfIndex, &r.IfName, &r.IfDescr, &r.IfAlias, &r.IfSpeed,
 		&r.IfHighSpeed, &r.IfType, &r.IfMTU, &r.PhysAddress, &r.OperStatus, &r.AdminStatus,
-		&r.Disabled, &r.IgnoreAlerts, &r.Metadata, &r.RowVersion, &r.UpdatedAt, &r.SideType)
+		&r.Disabled, &r.IgnoreAlerts, &r.Metadata, &r.RowVersion, &r.UpdatedAt)
 	return r, err
 }
 

@@ -133,6 +133,13 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if side != "" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS) {
+		step, err = s.trafficPolicyStepContext(c.Request.Context(), side)
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
+	}
 	maxRows := uint32(250000)
 	if raw := strings.TrimSpace(c.Query("max_data_points")); raw != "" {
 		n, err := strconv.ParseUint(raw, 10, 32)
@@ -172,11 +179,14 @@ func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []
 	policies := map[string]watchdog.PortPolicy{}
 	if metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS {
 		var err error
-		policies, err = s.readPortPoliciesContext(c.Request.Context(), snmpSeriesPortIDs(series))
+		policyView := side
+		if policyView == "" {
+			policyView = watchdog.PortSideCustomer
+		}
+		policies, err = s.readPortPoliciesForViewContext(c.Request.Context(), snmpSeriesPortIDs(series), policyView)
 		if err != nil {
 			return response, err
 		}
-		series = filterSNMPSeriesBySide(series, policies, side)
 	}
 	for _, mode := range modes {
 		valuesBySeries := correctedSNMPSeries(series, policies, mode == "corrected" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS))

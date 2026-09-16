@@ -16,8 +16,8 @@ export function trafficViewLabel(mode: TrafficViewMode) {
 export function trafficViewValueMode(mode: TrafficViewMode, canUseRaw = true) {
 	switch (mode) {
 		case "raw":
-		case "supplier":
 			return canUseRaw ? "raw" : "corrected"
+		case "supplier":
 		case "customer":
 			return "corrected"
 	}

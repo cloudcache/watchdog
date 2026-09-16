@@ -187,14 +187,18 @@ export default memo(({ id }: PortPolicyProps) => {
 				</div>
 
 				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-					<Field label={t`Port side`}>
+					<Field label={t`Policy view`}>
 						<Select value={policySide(policy)} onValueChange={(value) => update({ SideType: value })}>
 							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="provider">provider</SelectItem>
-								<SelectItem value="customer">customer</SelectItem>
+								<SelectItem value="provider">
+									<Trans>Supplier</Trans>
+								</SelectItem>
+								<SelectItem value="customer">
+									<Trans>Customer</Trans>
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</Field>

@@ -24,24 +24,26 @@ func TestSNMPValueModesEnforceRawAdminBoundary(t *testing.T) {
 func TestSNMPPolicyIsAppliedBeforeAggregation(t *testing.T) {
 	observed := time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC)
 	series := []snmpch.Series{
-		{EntityKind: "port", EntityID: "provider", Points: []snmpch.Point{{Time: observed, Value: 100}}},
-		{EntityKind: "port", EntityID: "customer", Points: []snmpch.Point{{Time: observed, Value: 200}}},
+		{EntityKind: "port", EntityID: "port-a", Points: []snmpch.Point{{Time: observed, Value: 100}}},
+		{EntityKind: "port", EntityID: "port-b", Points: []snmpch.Point{{Time: observed, Value: 200}}},
 	}
-	policies := map[string]watchdog.PortPolicy{
-		"provider": {PortID: "provider", SideType: watchdog.PortSideProvider, Enabled: true, CorrectionDirection: watchdog.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
-		"customer": {PortID: "customer", SideType: watchdog.PortSideCustomer, Enabled: true, CorrectionDirection: watchdog.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
+	supplierPolicies := map[string]watchdog.PortPolicy{
+		"port-a": {PortID: "port-a", SideType: watchdog.PortSideProvider, Enabled: true, CorrectionDirection: watchdog.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
+		"port-b": {PortID: "port-b", SideType: watchdog.PortSideProvider, Enabled: true, CorrectionDirection: watchdog.CorrectionUp, CorrectionMin: 10, CorrectionMax: 10},
 	}
-	provider := filterSNMPSeriesBySide(series, policies, watchdog.PortSideProvider)
-	corrected := correctedSNMPSeries(provider, policies, true)
-	points := aggregateSNMPSeries(corrected, "sum")
-	if len(points) != 1 || points[0].Value != 110 {
-		t.Fatalf("provider corrected total=%+v", points)
+	customerPolicies := map[string]watchdog.PortPolicy{
+		"port-a": {PortID: "port-a", SideType: watchdog.PortSideCustomer, Enabled: true, CorrectionDirection: watchdog.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
+		"port-b": {PortID: "port-b", SideType: watchdog.PortSideCustomer, Enabled: true, CorrectionDirection: watchdog.CorrectionDown, CorrectionMin: 20, CorrectionMax: 20},
 	}
-	all := aggregateSNMPSeries(correctedSNMPSeries(series, policies, true), "sum")
-	if len(all) != 1 || all[0].Value != 290 {
-		t.Fatalf("all corrected total=%+v", all)
+	supplier := aggregateSNMPSeries(correctedSNMPSeries(series, supplierPolicies, true), "sum")
+	if len(supplier) != 1 || supplier[0].Value != 320 {
+		t.Fatalf("supplier corrected total=%+v", supplier)
 	}
-	raw := aggregateSNMPSeries(correctedSNMPSeries(series, policies, false), "sum")
+	customer := aggregateSNMPSeries(correctedSNMPSeries(series, customerPolicies, true), "sum")
+	if len(customer) != 1 || customer[0].Value != 260 {
+		t.Fatalf("customer corrected total=%+v", customer)
+	}
+	raw := aggregateSNMPSeries(correctedSNMPSeries(series, supplierPolicies, false), "sum")
 	if raw[0].Value != 300 {
 		t.Fatalf("raw total=%+v", raw)
 	}
@@ -55,24 +57,26 @@ func TestSNMPDefaultPolicyKeepsSideSpecificBases(t *testing.T) {
 	}
 }
 
-func TestExplicitSNMPScopeSideFiltering(t *testing.T) {
-	scopes := []snmpch.Scope{
-		{DeviceID: "device-a", PortID: "provider"},
-		{DeviceID: "device-a", PortID: "customer"},
+func TestEffectiveViewPoliciesKeepTheSamePorts(t *testing.T) {
+	server := (*Server)(nil)
+	portIDs := []string{"port-a", "port-b"}
+	supplier, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, watchdog.PortSideProvider)
+	if err != nil {
+		t.Fatal(err)
 	}
-	portIDs, explicit := explicitSNMPScopePortIDs(scopes)
-	if !explicit || len(portIDs) != 2 {
-		t.Fatalf("explicit scopes=%v portIDs=%v", explicit, portIDs)
+	customer, err := server.readPortPoliciesForViewContext(t.Context(), portIDs, watchdog.PortSideCustomer)
+	if err != nil {
+		t.Fatal(err)
 	}
-	policies := map[string]watchdog.PortPolicy{
-		"provider": {PortID: "provider", SideType: watchdog.PortSideProvider},
-		"customer": {PortID: "customer", SideType: watchdog.PortSideCustomer},
+	for _, portID := range portIDs {
+		if supplier[portID].SideType != watchdog.PortSideProvider || customer[portID].SideType != watchdog.PortSideCustomer {
+			t.Fatalf("port %s supplier=%+v customer=%+v", portID, supplier[portID], customer[portID])
+		}
 	}
-	filtered := filterSNMPScopesBySide(scopes, policies, watchdog.PortSideProvider)
-	if len(filtered) != 1 || filtered[0].PortID != "provider" {
-		t.Fatalf("provider scopes=%+v", filtered)
+	if len(supplier) != len(portIDs) || len(customer) != len(portIDs) {
+		t.Fatalf("supplier ports=%d customer ports=%d", len(supplier), len(customer))
 	}
-	if _, explicit := explicitSNMPScopePortIDs([]snmpch.Scope{{DeviceID: "device-a"}}); explicit {
-		t.Fatal("device-wide scope was treated as an explicit port set")
+	if supplier["port-a"].SampleStep != 5*time.Minute || customer["port-a"].SampleStep != 5*time.Minute {
+		t.Fatalf("supplier step=%v customer step=%v", supplier["port-a"].SampleStep, customer["port-a"].SampleStep)
 	}
 }

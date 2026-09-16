@@ -109,14 +109,12 @@ export type GraphPanelRendererProps = {
 	panel: GraphPanel
 	range: string
 	refreshInterval?: number
-	knownEmpty?: boolean
-	emptyMessage?: React.ReactNode
 }
 
 /** GraphPanelRenderer executes a panel's queries and renders the chart. Pages
  * consume dashboard schemas via this component instead of issuing their own
  * scattered metric queries. Device context comes from GraphContextProvider. */
-export const GraphPanelRenderer = memo(({ panel, range, refreshInterval, knownEmpty = false, emptyMessage }: GraphPanelRendererProps) => {
+export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: GraphPanelRendererProps) => {
 	const { t } = useLingui()
 	const ctx = useContext(GraphContext)
 	const chartRef = useRef<HTMLDivElement>(null)
@@ -128,14 +126,6 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval, knownEm
 	const activeRequest = useRef<AbortController | null>(null)
 
 	const load = useCallback(async () => {
-		if (knownEmpty) {
-			++requestSequence.current
-			activeRequest.current?.abort()
-			setSeries([])
-			setError("")
-			setState("no_data")
-			return
-		}
 		if (!ctx) {
 			setState("error")
 			setError("GraphPanelRenderer requires GraphContextProvider")
@@ -161,7 +151,7 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval, knownEm
 			setError(err instanceof Error ? err.message : t`Failed to load panel`)
 			setState("error")
 		}
-	}, [ctx, knownEmpty, panel, range, t])
+	}, [ctx, panel, range, t])
 
 	useEffect(() => {
 		load().catch(() => undefined)
@@ -228,7 +218,7 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval, knownEm
 				</div>
 			) : state === "no_data" ? (
 				<div className="flex h-[200px] items-center justify-center rounded-md bg-muted/20 text-sm text-muted-foreground">
-					{emptyMessage ?? <Trans>No data in this range.</Trans>}
+					<Trans>No data in this range.</Trans>
 				</div>
 			) : (
 				<div ref={chartRef} className="h-[200px] w-full" />

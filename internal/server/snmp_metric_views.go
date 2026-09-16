@@ -61,20 +61,6 @@ func snmpSeriesPortIDs(series []snmpch.Series) []string {
 	return result
 }
 
-func filterSNMPSeriesBySide(series []snmpch.Series, policies map[string]watchdog.PortPolicy, side watchdog.PortSideType) []snmpch.Series {
-	if side == "" {
-		return series
-	}
-	result := make([]snmpch.Series, 0, len(series))
-	for _, item := range series {
-		policy, ok := policies[item.EntityID]
-		if item.EntityKind == "port" && ok && policy.SideType == side {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
 func correctedSNMPSeries(series []snmpch.Series, policies map[string]watchdog.PortPolicy, corrected bool) []snmpch.Series {
 	result := make([]snmpch.Series, 0, len(series))
 	for _, item := range series {

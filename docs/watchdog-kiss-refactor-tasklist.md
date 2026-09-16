@@ -151,6 +151,8 @@
 
 > **2026-09-16 MIB 生命周期修正**：内置 MIB 首次插入默认启用；后续启动只更新内嵌 version/checksum，管理员的 enabled 选择保持不变。真实 MySQL 集成覆盖 disable→reseed→内容升级且仍 disabled。本修正形成独立提交，但不改变上面记录的 A3 历史偏差。
 
+> **2026-09-16 三视角语义修正**：`customer/supplier/raw` 固定读取同一端口集合；前两者分别使用 customer/provider policy 的步进、1000/1024 显示基数及每端口每桶可复现的区间修正，raw 不修正。删除把 `side_type` 当端口归属过滤器的错误实现，并以同端口三结果、快速切换取消、中文标签和真实设备 62 端口门禁锁定。
+
 #### KISS-03B system/container agent 延后切片
 
 - [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。

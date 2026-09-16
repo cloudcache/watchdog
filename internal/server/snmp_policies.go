@@ -246,6 +246,73 @@ func (s *Server) readPortPoliciesContext(ctx context.Context, portIDs []string) 
 	return result, nil
 }
 
+// readPortPoliciesForViewContext returns one effective policy for every
+// requested port in the selected accounting view. Customer and supplier are
+// alternative derived views of the same raw port samples; SideType selects
+// the policy layer and must never be used to remove ports from the result.
+//
+// A port-specific row overrides only the layer named by its side_type. The
+// other layer continues to inherit its global default.
+func (s *Server) readPortPoliciesForViewContext(ctx context.Context, portIDs []string, view watchdog.PortSideType) (map[string]watchdog.PortPolicy, error) {
+	result := make(map[string]watchdog.PortPolicy, len(portIDs))
+	if len(portIDs) == 0 {
+		return result, nil
+	}
+	if view != watchdog.PortSideProvider && view != watchdog.PortSideCustomer {
+		view = watchdog.PortSideCustomer
+	}
+	defaults, err := s.readTrafficPolicyDefaultsContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, portID := range portIDs {
+		policy := watchdog.DefaultPortPolicyWithDefaults("", watchdog.ID(portID), view, defaults)
+		policy.ID = watchdog.ID(stableManagementID("port-policy", portID+":"+string(view)))
+		result[portID] = policy
+	}
+	if s == nil || s.db == nil {
+		return result, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,port_id,side_type,billing_base_bps,sample_step_seconds,
+		correction_direction,correction_min,correction_max,enabled
+		FROM port_policies WHERE port_id IN (`+placeholders(len(portIDs))+`)`, stringsToAny(portIDs)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var policy watchdog.PortPolicy
+		var seconds uint16
+		if err := rows.Scan(&policy.ID, &policy.PortID, &policy.SideType, &policy.BillingBaseBps, &seconds,
+			&policy.CorrectionDirection, &policy.CorrectionMin, &policy.CorrectionMax, &policy.Enabled); err != nil {
+			return nil, err
+		}
+		if policy.SideType != view {
+			continue
+		}
+		policy.SampleStep = time.Duration(seconds) * time.Second
+		result[string(policy.PortID)] = policy.Normalize()
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Server) trafficPolicyStepContext(ctx context.Context, view watchdog.PortSideType) (time.Duration, error) {
+	defaults, err := s.readTrafficPolicyDefaultsContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if view == watchdog.PortSideProvider {
+		return defaults.Provider.Normalize(watchdog.PortSideProvider).SampleStep, nil
+	}
+	if view == watchdog.PortSideCustomer {
+		return defaults.Customer.Normalize(watchdog.PortSideCustomer).SampleStep, nil
+	}
+	return 0, nil
+}
+
 func validatePortPolicy(value watchdog.PortPolicy) error {
 	if len(value.ID) > 26 {
 		return errors.New("port policy id must not exceed 26 characters")

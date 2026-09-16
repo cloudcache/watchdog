@@ -5038,10 +5038,6 @@ msgid "No sensors discovered."
 msgstr "No sensors discovered."
 
 #: src/components/routes/network-device.tsx
-msgid "No supplier ports are assigned to this device."
-msgstr "No supplier ports are assigned to this device."
-
-#: src/components/routes/network-device.tsx
 #~ msgid "No sensors found."
 #~ msgstr "No sensors found."
 
@@ -5689,8 +5685,8 @@ msgid "Port Policy"
 msgstr "Port Policy"
 
 #: src/components/routes/network-port-policy.tsx
-msgid "Port side"
-msgstr "Port side"
+msgid "Policy view"
+msgstr "Policy view"
 
 #: src/components/routes/network-device.tsx
 #: src/components/routes/network-device.tsx
