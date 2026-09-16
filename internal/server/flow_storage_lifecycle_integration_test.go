@@ -123,6 +123,7 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 		"partitions": {s.listFlowRetentionPartitions, "/api/v1/flow/storage/partitions"},
 		"watermarks": {s.listFlowReconciliationWatermarks, "/api/v1/flow/storage/watermarks"},
 		"receipts":   {s.listFlowDeletionReceipts, "/api/v1/flow/storage/deletion-receipts"},
+		"approvals":  {s.listFlowDeletionApprovals, "/api/v1/flow/storage/deletion-approvals"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := flowLifecycleRequest(t, test.handler, admin, http.MethodGet, test.path, "", "", nil, "")
@@ -310,6 +311,10 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
 		t.Fatal(err)
 	}
+	userID := "01JDELETEADMIN000000000000"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id,username,status) VALUES (?,?,'active')`, userID, "delete-approval-admin"); err != nil {
+		t.Fatal(err)
+	}
 	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := day.Add(5 * 24 * time.Hour)
 	policyID := "01JDELETEPOLICY0000000000"
@@ -331,7 +336,7 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 		 source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
 		 archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
 		 archived_at,reconciled_at,late_checked_at,delete_eligible_at)
-		VALUES (?,?,3,'delete_eligible',?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, day, policyID, generation,
+		VALUES (?,?,3,'reconciled',?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, day, policyID, generation,
 		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
 		counters.RecordCount, counters.RawBytes, counters.RawPackets, counters.EstimatedBytes, counters.EstimatedPackets, counters.EstimatedValidRecords,
 		day.Add(48*time.Hour), day.Add(48*time.Hour), day.Add(48*time.Hour), eligible); err != nil {
@@ -358,13 +363,14 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !readiness.EvidenceReady || !readiness.DeletionReady || len(readiness.Blockers) != 0 || readiness.BackupEvidenceID != backupID {
+	if !readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerApprovalRequired) || readiness.BackupEvidenceID != backupID {
 		t.Fatalf("ready evidence=%+v", readiness)
 	}
-	s := &Server{flowLifecycle: store, flowDeleteEvidence: reader}
-	response := flowLifecycleRequest(t, s.getFlowRawDeleteReadiness, &principal{IsAdmin: true}, http.MethodGet,
+	admin := &principal{UserID: userID, Username: "delete-approval-admin", IsAdmin: true}
+	s := &Server{db: db, flowLifecycle: store, flowDeleteEvidence: reader}
+	response := flowLifecycleRequest(t, s.getFlowRawDeleteReadiness, admin, http.MethodGet,
 		"/api/v1/flow/storage/partitions/2026-01-01/delete-readiness", "date", "2026-01-01", nil, "")
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"evidence_ready":true`) || !strings.Contains(response.Body.String(), `"deletion_ready":true`) {
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` || !strings.Contains(response.Body.String(), `"evidence_ready":true`) || !strings.Contains(response.Body.String(), `"deletion_ready":false`) {
 		t.Fatalf("readiness API status=%d body=%s", response.Code, response.Body.String())
 	}
 	var state string
@@ -372,21 +378,57 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	if err := db.QueryRowContext(ctx, `SELECT state,row_version FROM flow_retention_partition_states WHERE source_date=?`, day).Scan(&state, &rowVersion); err != nil {
 		t.Fatal(err)
 	}
-	if state != flowlifecycle.PartitionDeleteEligible || rowVersion != 1 {
+	if state != flowlifecycle.PartitionReconciled || rowVersion != 1 {
 		t.Fatalf("readiness check mutated partition state=%q row_version=%d", state, rowVersion)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE flow_retention_partition_states SET state='reconciled' WHERE source_date=?`, day); err != nil {
+	approvedResponse := flowLifecycleRequest(t, s.approveFlowRawDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/partitions/2026-01-01/actions/approve-delete", "date", "2026-01-01", nil, `"1"`)
+	if approvedResponse.Code != http.StatusCreated || approvedResponse.Header().Get("ETag") != `"1"` || !strings.Contains(approvedResponse.Body.String(), `"state":"delete_eligible"`) {
+		t.Fatalf("approve delete: status=%d etag=%q body=%s", approvedResponse.Code, approvedResponse.Header().Get("ETag"), approvedResponse.Body.String())
+	}
+	var approved struct {
+		Approval flowlifecycle.DeletionApproval `json:"approval"`
+	}
+	if err := json.Unmarshal(approvedResponse.Body.Bytes(), &approved); err != nil {
 		t.Fatal(err)
+	}
+	expectedCounters := flowlifecycle.Counters{RecordCount: 7, RawBytes: 100, RawPackets: 10, EstimatedBytes: 900, EstimatedPackets: 90, EstimatedValidRecords: 6}
+	if approved.Approval.PolicyID != policyID || approved.Approval.Generation != generation || approved.Approval.BackupEvidenceID != backupID ||
+		approved.Approval.Source != expectedCounters ||
+		len(approved.Approval.KafkaCoverage) != 1 || approved.Approval.KafkaCoverage[0].LastOffsetExclusive != 21 {
+		t.Fatalf("approval did not freeze evidence: %+v", approved.Approval)
+	}
+	listed := flowLifecycleRequest(t, s.listFlowDeletionApprovals, admin, http.MethodGet,
+		"/api/v1/flow/storage/deletion-approvals?status=approved&storage_kind=raw", "", "", nil, "")
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"total":1`) || !strings.Contains(listed.Body.String(), approved.Approval.ID) {
+		t.Fatalf("list deletion approvals: status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	gotApproval := flowLifecycleRequest(t, s.getFlowDeletionApproval, admin, http.MethodGet,
+		"/api/v1/flow/storage/deletion-approvals/"+approved.Approval.ID, "id", approved.Approval.ID, nil, "")
+	if gotApproval.Code != http.StatusOK || gotApproval.Header().Get("ETag") != `"1"` {
+		t.Fatalf("get deletion approval: status=%d etag=%q body=%s", gotApproval.Code, gotApproval.Header().Get("ETag"), gotApproval.Body.String())
+	}
+	staleRevoke := flowLifecycleRequest(t, s.revokeFlowDeletionApproval, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+approved.Approval.ID+"/actions/revoke", "id", approved.Approval.ID, nil, `"2"`)
+	if staleRevoke.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale revoke approval: status=%d body=%s", staleRevoke.Code, staleRevoke.Body.String())
+	}
+	revokedResponse := flowLifecycleRequest(t, s.revokeFlowDeletionApproval, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+approved.Approval.ID+"/actions/revoke", "id", approved.Approval.ID, nil, `"1"`)
+	if revokedResponse.Code != http.StatusOK || revokedResponse.Header().Get("ETag") != `"2"` ||
+		!strings.Contains(revokedResponse.Body.String(), `"status":"revoked"`) || !strings.Contains(revokedResponse.Body.String(), `"state":"reconciled"`) {
+		t.Fatalf("revoke approval: status=%d etag=%q body=%s", revokedResponse.Code, revokedResponse.Header().Get("ETag"), revokedResponse.Body.String())
 	}
 	readiness, err = store.RawDayDeleteReadiness(ctx, day, now, reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerApprovalRequired) {
-		t.Fatalf("evidence must not imply approval: %+v", readiness)
+		t.Fatalf("revoked approval must relock deletion: %+v", readiness)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE flow_retention_partition_states SET state='delete_eligible' WHERE source_date=?`, day); err != nil {
-		t.Fatal(err)
+	var approvalAudits int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND resource='flow_deletion_approval'`, userID).Scan(&approvalAudits); err != nil || approvalAudits != 2 {
+		t.Fatalf("approval audit count=%d error=%v", approvalAudits, err)
 	}
 	missingWatermarkReader := &testRawDeleteEvidence{counters: counters, coverage: append(append([]flowch.DayOffsetCoverage(nil), reader.coverage...), flowch.DayOffsetCoverage{
 		SourceStreamID: "site-b:boot-1", KafkaTopic: "watchdog.flow.raw", KafkaPartition: 1,

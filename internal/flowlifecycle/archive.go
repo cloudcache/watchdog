@@ -33,6 +33,8 @@ type PartitionState struct {
 	Source           Counters  `json:"source"`
 	Archive          Counters  `json:"archive"`
 	ArchiveJobID     string    `json:"archive_job_id,omitempty"`
+	DeleteJobID      string    `json:"delete_job_id,omitempty"`
+	DeleteApprovalID string    `json:"delete_approval_id,omitempty"`
 	ArchivedAt       time.Time `json:"archived_at,omitzero"`
 	ReconciledAt     time.Time `json:"reconciled_at,omitzero"`
 	LateCheckedAt    time.Time `json:"late_checked_at,omitzero"`
@@ -183,7 +185,7 @@ func lifecycleCounters(value flowch.StorageCounters) Counters {
 const partitionColumns = `source_date,policy_id,policy_version,state,generation,repair_attempt,
 	source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
 	archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
-	COALESCE(archive_job_id,''),archived_at,reconciled_at,late_checked_at,delete_eligible_at,raw_deleted_at,
+	COALESCE(archive_job_id,''),COALESCE(delete_job_id,''),COALESCE(delete_approval_id,''),archived_at,reconciled_at,late_checked_at,delete_eligible_at,raw_deleted_at,
 	COALESCE(last_error_code,''),COALESCE(last_error_detail,''),row_version`
 
 func scanPartition(row rowScanner) (PartitionState, error) {
@@ -192,7 +194,7 @@ func scanPartition(row rowScanner) (PartitionState, error) {
 	err := row.Scan(&state.SourceDate, &state.PolicyID, &state.PolicyVersion, &state.State, &state.Generation, &state.RepairAttempt,
 		&state.Source.RecordCount, &state.Source.RawBytes, &state.Source.RawPackets, &state.Source.EstimatedBytes, &state.Source.EstimatedPackets, &state.Source.EstimatedValidRecords,
 		&state.Archive.RecordCount, &state.Archive.RawBytes, &state.Archive.RawPackets, &state.Archive.EstimatedBytes, &state.Archive.EstimatedPackets, &state.Archive.EstimatedValidRecords,
-		&state.ArchiveJobID, &archivedAt, &reconciledAt, &checkedAt, &eligibleAt, &deletedAt,
+		&state.ArchiveJobID, &state.DeleteJobID, &state.DeleteApprovalID, &archivedAt, &reconciledAt, &checkedAt, &eligibleAt, &deletedAt,
 		&state.LastErrorCode, &state.LastErrorDetail, &state.RowVersion)
 	if archivedAt.Valid {
 		state.ArchivedAt = archivedAt.Time
@@ -263,7 +265,7 @@ func (store *Store) BeginArchive(ctx context.Context, policy Policy, sourceDate 
 			policy_id=?,policy_version=?,state='sealed',generation=?,repair_attempt=?,archive_job_id=?,
 			source_record_count=0,source_raw_bytes=0,source_raw_packets=0,source_estimated_bytes=0,source_estimated_packets=0,source_estimated_valid_records=0,
 			archive_record_count=0,archive_raw_bytes=0,archive_raw_packets=0,archive_estimated_bytes=0,archive_estimated_packets=0,archive_estimated_valid_records=0,
-			archived_at=NULL,reconciled_at=NULL,late_checked_at=NULL,delete_eligible_at=NULL,
+			delete_job_id=NULL,delete_approval_id=NULL,archived_at=NULL,reconciled_at=NULL,late_checked_at=NULL,delete_eligible_at=NULL,
 			last_error_code=NULL,last_error_detail=NULL,row_version=row_version+1 WHERE source_date=?`,
 			policy.ID, policy.Version, generation, attempt, jobID, day)
 	}

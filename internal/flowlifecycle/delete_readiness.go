@@ -47,6 +47,8 @@ type RawDeleteReadiness struct {
 	PolicyID         string           `json:"policy_id,omitempty"`
 	PolicyVersion    uint64           `json:"policy_version,omitempty"`
 	PartitionState   string           `json:"partition_state,omitempty"`
+	PartitionVersion uint64           `json:"partition_row_version,omitempty"`
+	DeleteApprovalID string           `json:"delete_approval_id,omitempty"`
 	Generation       uint64           `json:"generation,omitempty"`
 	DeleteEligibleAt time.Time        `json:"delete_eligible_at,omitzero"`
 	EvidenceReady    bool             `json:"evidence_ready"`
@@ -81,7 +83,8 @@ func (store *Store) RawDayDeleteReadiness(ctx context.Context, sourceDate, now t
 	if err != nil {
 		return RawDeleteReadiness{}, err
 	}
-	result.PartitionState, result.Generation, result.DeleteEligibleAt = state.State, state.Generation, state.DeleteEligibleAt
+	result.PartitionState, result.PartitionVersion = state.State, state.RowVersion
+	result.DeleteApprovalID, result.Generation, result.DeleteEligibleAt = state.DeleteApprovalID, state.Generation, state.DeleteEligibleAt
 
 	raw, archive, err := reader.DayStorageCounters(ctx, day)
 	if err != nil {

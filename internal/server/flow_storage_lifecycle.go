@@ -84,12 +84,89 @@ func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 	storage := auth.Group("/flow/storage")
 	storage.GET("/partitions", s.requirePermission("job.view"), s.listFlowRetentionPartitions)
 	storage.GET("/partitions/:date/delete-readiness", s.requirePermission("job.view"), s.getFlowRawDeleteReadiness)
+	storage.POST("/partitions/:date/actions/approve-delete", s.requirePermission("job.manage"), s.approveFlowRawDelete)
 	storage.GET("/watermarks", s.requirePermission("job.view"), s.listFlowReconciliationWatermarks)
 	storage.GET("/deletion-receipts", s.requirePermission("job.view"), s.listFlowDeletionReceipts)
+	storage.GET("/deletion-approvals", s.requirePermission("job.view"), s.listFlowDeletionApprovals)
+	storage.GET("/deletion-approvals/:id", s.requirePermission("job.view"), s.getFlowDeletionApproval)
+	storage.POST("/deletion-approvals/:id/actions/revoke", s.requirePermission("job.manage"), s.revokeFlowDeletionApproval)
 	storage.GET("/backup-evidence", s.requirePermission("job.view"), s.listFlowBackupEvidence)
 	storage.POST("/backup-evidence", s.requirePermission("job.manage"), s.createFlowBackupEvidence)
 	storage.GET("/backup-evidence/:id", s.requirePermission("job.view"), s.getFlowBackupEvidence)
 	storage.POST("/backup-evidence/:id/actions/revoke", s.requirePermission("job.manage"), s.revokeFlowBackupEvidence)
+}
+
+func (s *Server) listFlowDeletionApprovals(c *gin.Context) {
+	limit, offset := pageParams(c)
+	items, total, err := flowlifecycle.NewStore(s.db).ListDeletionApprovals(c.Request.Context(), flowlifecycle.DeletionApprovalFilter{
+		StorageKind: strings.TrimSpace(c.Query("storage_kind")), Status: strings.TrimSpace(c.Query("status")),
+		Search: strings.TrimSpace(c.Query("q")), Sort: strings.TrimSpace(c.Query("sort")),
+		Order: strings.TrimSpace(c.Query("order")), Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+func (s *Server) getFlowDeletionApproval(c *gin.Context) {
+	approval, err := flowlifecycle.NewStore(s.db).GetDeletionApproval(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	c.Header("ETag", etag(approval.RowVersion))
+	c.JSON(http.StatusOK, approval)
+}
+
+func (s *Server) approveFlowRawDelete(c *gin.Context) {
+	expected, ok := requiredFlowLifecycleIfMatch(c)
+	if !ok {
+		return
+	}
+	day, err := time.Parse(time.DateOnly, strings.TrimSpace(c.Param("date")))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_source_date", "source date must use YYYY-MM-DD")
+		return
+	}
+	if s.flowLifecycle == nil || s.flowDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle evidence reader is unavailable")
+		return
+	}
+	now := time.Now().UTC()
+	readiness, err := s.flowLifecycle.RawDayDeleteReadiness(c.Request.Context(), day, now, s.flowDeleteEvidence)
+	if err == nil && !readiness.EvidenceReady {
+		err = flowlifecycle.ErrDeleteLocked
+	}
+	var approval flowlifecycle.DeletionApproval
+	var partition flowlifecycle.PartitionState
+	if err == nil {
+		approval, partition, err = s.flowLifecycle.ApproveRawDayDelete(c.Request.Context(), readiness, expected, currentPrincipal(c).UserID, now)
+	}
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_deletion_approval.create", "flow_deletion_approval", approval.ID)
+	c.Header("ETag", etag(approval.RowVersion))
+	c.JSON(http.StatusCreated, gin.H{"approval": approval, "partition": partition})
+}
+
+func (s *Server) revokeFlowDeletionApproval(c *gin.Context) {
+	expected, ok := requiredFlowLifecycleIfMatch(c)
+	if !ok {
+		return
+	}
+	approval, partition, err := flowlifecycle.NewStore(s.db).RevokeRawDayDeleteApproval(
+		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, time.Now())
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_deletion_approval.revoke", "flow_deletion_approval", approval.ID)
+	c.Header("ETag", etag(approval.RowVersion))
+	c.JSON(http.StatusOK, gin.H{"approval": approval, "partition": partition})
 }
 
 func (s *Server) listFlowBackupEvidence(c *gin.Context) {
@@ -165,6 +242,7 @@ func (s *Server) getFlowRawDeleteReadiness(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_evidence_failed", "Flow lifecycle evidence could not be verified")
 		return
 	}
+	c.Header("ETag", etag(readiness.PartitionVersion))
 	c.JSON(http.StatusOK, readiness)
 }
 
@@ -301,6 +379,8 @@ func writeFlowLifecycleError(c *gin.Context, err error) {
 		fail(c, http.StatusBadRequest, "invalid_flow_retention_policy", err.Error())
 	case errors.Is(err, flowlifecycle.ErrInvalidBackupEvidence):
 		fail(c, http.StatusBadRequest, "invalid_flow_backup_evidence", err.Error())
+	case errors.Is(err, flowlifecycle.ErrInvalidDeletionApproval):
+		fail(c, http.StatusBadRequest, "invalid_flow_deletion_approval", err.Error())
 	case errors.Is(err, flowlifecycle.ErrDeleteLocked):
 		fail(c, http.StatusConflict, "flow_deletion_locked", "physical deletion remains locked until reconciliation and backup restore gates are enabled")
 	case errors.Is(err, flowlifecycle.ErrVersionConflict):
@@ -315,7 +395,7 @@ func writeFlowLifecycleError(c *gin.Context, err error) {
 func (s *Server) listFlowRetentionPartitions(c *gin.Context) {
 	listFlowStorageRows(c, s.db, "flow_retention_partition_states", []string{
 		"source_date", "policy_id", "policy_version", "state", "generation", "repair_attempt",
-		"source_record_count", "archive_record_count", "delete_eligible_at", "raw_deleted_at", "row_version", "updated_at",
+		"source_record_count", "archive_record_count", "delete_approval_id", "delete_job_id", "delete_eligible_at", "raw_deleted_at", "row_version", "updated_at",
 	}, "source_date", map[string]string{"state": "state", "policy_id": "policy_id"})
 }
 
@@ -329,7 +409,7 @@ func (s *Server) listFlowReconciliationWatermarks(c *gin.Context) {
 func (s *Server) listFlowDeletionReceipts(c *gin.Context) {
 	listFlowStorageRows(c, s.db, "flow_deletion_receipts", []string{
 		"id", "storage_kind", "partition_granularity", "partition_start", "partition_end", "policy_version",
-		"generation", "operation_job_id", "backup_evidence_id", "source_record_count", "ch_query_id", "status", "requested_at", "completed_at",
+		"generation", "operation_job_id", "deletion_approval_id", "backup_evidence_id", "source_record_count", "ch_query_id", "status", "requested_at", "completed_at",
 	}, "requested_at", map[string]string{"status": "status", "storage_kind": "storage_kind", "operation_job_id": "operation_job_id"})
 }
 

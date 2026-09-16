@@ -64,3 +64,21 @@ func TestBackupEvidenceSchemaAddsTraceAndCAS(t *testing.T) {
 		t.Fatal("backup evidence migration retained tenant_id")
 	}
 }
+
+func TestDeletionApprovalSchemaFreezesEvidence(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/schema/mysql/0036_flow_deletion_approvals.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(data)
+	for _, required := range []string{
+		"flow_deletion_approvals", "kafka_coverage_json", "backup_evidence_id", "delete_approval_id", "deletion_approval_id",
+	} {
+		if !strings.Contains(schema, required) {
+			t.Fatalf("deletion approval migration is missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "tenant_id") {
+		t.Fatal("deletion approval migration retained tenant_id")
+	}
+}
