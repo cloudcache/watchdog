@@ -101,7 +101,10 @@ func (s *Server) runVPNDetectionTick(ctx context.Context, settings vpnDetectionS
 	if !to.After(from) {
 		return
 	}
-	installed, err := s.installVPNRuleSetForEventTime(ctx, to)
+	// The scored window is half-open [from,to); resolve the rules at its final
+	// included instant so an activation exactly at to starts with the next window.
+	// Publication activation timestamps are stored at millisecond precision.
+	installed, err := s.installVPNRuleSetForEventTime(ctx, to.Add(-time.Millisecond))
 	if err != nil {
 		if !errors.Is(err, errNoActiveVPNRules) {
 			log.Printf("watchdog VPN detection: install published rule set for %s: %v", to.Format(time.RFC3339), err)

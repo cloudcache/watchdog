@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**当前活动切片：真实非空 Flow 产品回归。** FLOW-06C4-P/W 已按单域契约接入公共 publication 生命周期：低频异步编译 immutable VPN rule-set，真实 detection worker 按关闭窗口事件时间安装、ACK 且失败保留 LKG；不再从可变 draft 构造运行时规则。FLOW-06B 历史重分类已冻结源/目标 publication、view、UTC 窗口和 generation，并以 Kafka 自然坐标与 count/raw/estimated counter 守恒后切换。固定硬件吞吐仍统一留在 FLOW-08 发布门，不冒充生产容量结论。
+**当前活动切片：FLOW-08 集群、性能与发布门禁。** 真实空 MySQL + 无持久卷 ClickHouse 已用同一生产安装/运行测试写入六类非空事实，跑通 Explorer、总览/多维/源/目的/境外/VPN 六报表、源/目的服务端分页和 operation-job CSV 导出；VPN 报表同时读取真实 finding 与事件时间生效的 immutable rule-set/worker ACK。该证据只关闭单节点产品数据回归，不冒充浏览器、Kafka/CH 集群、固定硬件容量、滚动制品或许可证门禁。FLOW-06C4-P/W 已按单域契约接入公共 publication 生命周期；FLOW-06B 历史重分类已按 Kafka 自然坐标与 count/raw/estimated counter 守恒后切换。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -309,9 +309,9 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
   - [x] **平台版本对 schema**：历史 Hub migration 059 固定过 tenant 版契约；KISS migration 0031 已将其等价收敛为全局 singleton profile、不可变 event-time dimension+classification pair metadata 与 `agents` worker ACK，彻底删除 tenant/collector 外键。AddressSnap/classification 大对象继续位于有界 object store；真实 MySQL fresh schema、重复启动和 Gin→worker 纵向链已验证。
   - [x] **签名 envelope core**：canonical wire v1 将两对象完整元数据/ref/checksum 绑定为一个 Ed25519 install unit；复用 collector-plan monotonic trust bundle 与 active/retiring/revoked 语义，不新建 trust root。篡改、未知字段、非 canonical payload、过期 key 均 fail closed；平台 HTTP desired/object/ACK 已完成，worker HTTP client/LKG 仍未完成。
   - [x] **classification profile 与 pair writer**：profile CAS 自动 trim、排序、去重并由统一 classification compiler 校验；发布事务按 event time 锁定 active signed WADS、profile row version、单调 classification version 与 active 平台 signing key，classification JSON 落不可变 object store 后写 pair metadata/audit。真实 MySQL 验证对象可解码且 envelope 可由已发布 trust bundle校验；不把管理写路径引入逐 flow ingest。
-  - [ ] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
+  - [x] **数据面绑定**：供应商/customer ISP 分命名空间；默认查询读 fact 已存版本，按新口径历史查询复用 FLOW-06B 异步 generation 与 count/counter 守恒，不接 `dictGet`。
     - [x] **当前事实/默认查询绑定**：WADS loader 已把 supplier/customer ISP 独立写入 fact；便捷运营商查询不再展开 ASN，只提交稳定 operator ID。服务端以 repeatable-read 读取 migration 0031 的 event-time pair timeline，要求每个 pair 对全部 active flow worker 都保留 `installed_at` 里程碑，再同时注入 customer `remote_isp_id`、snapshot IDs 与 classification versions；prepared 参数进入查询/延迟导出 hash、响应 provenance 和 audit detail，客户端篡改、覆盖缺口、零 worker或部分 ACK 均 fail closed。真实 MySQL 覆盖单/双 pair、迟到 failed 不抹除 installed 以及不完整 rollout；没有第二套 ACK/查询表。
-    - [ ] **历史新口径绑定**：由 FLOW-06B reclassification generation 读取指定 AddressSnap 重算 raw 窗口，以 Kafka 坐标和 count/counter 守恒后切换；不在默认查询里临时改写历史。
+    - [x] **历史新口径绑定**：FLOW-06B reclassification generation 已读取固定 source/target publication 和 view 重算 raw 窗口，以 Kafka 自然坐标双向差集及 count/raw/estimated counter 守恒后原子切换；archive/raw 已删除窗口 fail closed，默认查询不临时改写历史。生产实现、真实 MySQL/ClickHouse 门禁已进入独立提交 `39840f90`。
   - [x] **性能（object/build/lookup）**：真实 GeoLite2-ASN 的 WADS 为 4,291,551 bytes，worker compile 82ms/75.6 MiB，lookup 10.25M/s、p95 292ns/p99 500ns，证明无需 DIR-24-8。builder 经单遍 canonical merge、layer 引用、共享 Geo 紧凑行、精确容量和 migration 060 keyset 索引，从 9m04.618s/1,630.7 MiB 降至 28.292s/457.5 MiB；嵌套 LPM、产物计数与抽样结果保持一致。
   - [x] **性能（平台单例/swap）**：真实 WADS 只安装一份，retained heap 约 48.0 MiB；并发 ingest lookup 时 catalog install pointer pause 17.791µs，观测到的最大 lookup 64.25µs。AddressSnap 是全平台共享发布物，禁止按业务 tenant 复制，原 1/4/16 tenant 容量门禁已废除；swap <10ms、并发 lookup <100ms 的门禁保留。
   - [x] **平台单例/权限修正**：KISS 用户模型无 tenant/owner 投影；地址维护、运算 preview、WADS build/审批/发布/GC 与 Flow profile/pair 发布均由全局 RBAC 的 `address.view/manage/publish` 强制，前端能力只控制入口，Gin 仍是最终授权边界。唯一默认管理员拥有这些权限，普通角色可按需只读；trusted signing key 复用全局 agent-plan root。WADS 构建继续走可追溯 operation job，已就绪 WADS 与小型 classification 的 pair 签名发布不重新解析 MMDB/IPDB。
@@ -344,7 +344,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **R0 后端公共内核**：固定报表 composition service 在一次 QueryGateway admission 内冻结 effective range、source resolution、dimension/classification publication、资源授权和 watermark；各 panel 复用现有 typed provider，浏览器不并发拼接普通查询；无新增持久字段，未创建空 migration。
 - [x] **R0 API**：`GET /api/v1/flow/reports/capabilities` 与 `POST /api/v1/flow/reports/query` 已实现 strict JSON、kind-specific validation、稳定错误 envelope、取消/timeout/扫描预算、panel schema 和 warning；旧 `/flow/query`、`/flow/overseas/query` 保持原义。
 - [x] **R0 前端公共报表壳**：统一时间预设+自定义、时区、业务/地域/运营商/resource filters、峰段、metric、value/share/difference、TopN、请求取消、URL state、loading/partial/unavailable/empty 和数据导出；Advanced Explorer 为独立入口。
-- [x] **R0 单元/集成/变更/回归/已提交**：缺桶、零分母、残差、混合版本、可选/必需 panel、旧 API 并存、权限和故障零部分响应已有测试；真实 CH HTTP 六 kind、前端 45 项、production build、全库测试与浏览器回归纳入本原子提交。
+- [x] **R0 单元/集成/变更/回归/已提交**：缺桶、零分母、残差、混合版本、可选/必需 panel、旧 API 并存、权限和故障零部分响应已有测试；真实 CH HTTP 六 kind、前端模型测试、production build、全库测试与既有浏览器回归已纳入提交。2026-09-16 又复用生产安装测试，以真实空 MySQL + 无持久卷 ClickHouse 写入六类非空事实并逐一验证六报表，避免另造第二套验收 harness。
 
 - [x] **R1 总览设计/编码**：总入/出 KPI 与趋势；六个互斥业务类卡片（本网本市、本网跨市、本网外省、异网本省、异网外省、境外）的入/出、sparkline、占总量比例；六类占比；业务 × 总量/六类的入/出/占比矩阵；`unknown/internal/transit/ambiguous` 作为显式完整性残差，禁止分摊或隐藏。
 - [x] **R1 总览测试/变更/回归/已提交**：六类+残差、两个方向、多个业务、采样未知、缺桶和版本 fixture 覆盖逐 panel/总量守恒；矩阵在服务端完整结果上过滤排序分页；页面与全量异步导出冻结同一请求，真实空库明确显示 No data。
@@ -359,10 +359,10 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **R5 测试/变更/回归/已提交**：country/region/ASN/端口/协议、IPv4/v6/unknown 口径、VPN 分子分母同窗同版本、observed 与 estimated 分离、旧 overseas API 兼容及导出 flatten 已覆盖；不可证明的 observed/typed-filter 组合显式 unavailable。
 
 - [x] **R6 VPN 运营报表设计/编码**：将流量分析与低容量 findings/处置表分层；提供疑似主机数、VPN 总流量/占比、活跃端口、高风险主机、入/出趋势、端口分布和 VPN 类型分布，向下链接 finding 证据。规则 publication、finding materialization 或 probe 不可用时逐 panel 标明原因，不生成样例数据。
-- [x] **R6 测试/变更/回归/已提交**：规则证据类型、端口、双向/单向 counter、规则版本、generation、完整度、空/partial/unavailable、RBAC、findings 联动、分布 VTable 和导出一致性已覆盖。主动 probe 和不可变 rule-set 的真实数据生成仍属于 FLOW-07C 上游工作，不阻塞报表对 unavailable 状态的正确呈现。
+- [x] **R6 测试/变更/回归/已提交**：规则证据类型、端口、双向/单向 counter、规则版本、generation、完整度、空/partial/unavailable、RBAC、findings 联动、分布 VTable 和导出一致性已覆盖。报表现按半开窗口 `[from,to)` 的最后一个 MySQL `DATETIME(3)` tick 解析 immutable rule-set publication，并展示 snapshot/version、rule count、queryability 与 worker ACK 汇总；activation 恰在 `to` 时只对下一窗口生效。主动 probe 编排仍属于 FLOW-07C，不由 publication panel 冒充。
 
 - [x] **固定报表异步导出**：`/flow/exports` 冻结 report kind、规范请求和 panel selector；CSV/Parquet 复用 `export_tasks + operation_jobs`，不新建状态机。prepare 阶段删除交互 VTable page projection，因此全量导出不受当前页影响；unavailable panel 写明状态/原因而非伪造数据。
-- [x] **六页整体验收**：真实 8090 在 1280×720 与 1920×1080 均无页面横向 overflow，六路由均使用真实 ClickHouse provider 且控制台零错误；所有固定报表 VTable 使用服务端分页/搜索/稳定排序/column filter；必需 panel 失败为整请求失败，可选依赖失败显式 unavailable；真实 CH 空窗与确定性非空 fixture 共同覆盖页面/API/导出契约。
+- [x] **六页整体验收**：真实 8090 在 1280×720 与 1920×1080 均无页面横向 overflow，六路由均使用真实 ClickHouse provider 且控制台零错误；所有固定报表 VTable 使用服务端分页/搜索/稳定排序/column filter；必需 panel 失败为整请求失败，可选依赖失败显式 unavailable。真实空 MySQL + 无持久卷 ClickHouse 的生产安装测试已写入六类、双方向、境内/境外的确定性非空事实，逐一验证总览/多维/源/目的/境外/VPN、源/目的两页服务端分页和同请求异步 CSV 下载；测试按唯一数据库清理，不改开发数据。
 
 ### FLOW-06 Correction/Reclass/Export
 

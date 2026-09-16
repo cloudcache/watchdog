@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/netip"
 	"os"
@@ -13,7 +14,9 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowquery"
+	"github.com/cloudcache/watchdog/internal/flowvpn"
 	"github.com/cloudcache/watchdog/internal/flowworker"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -352,11 +355,46 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 		SupplierRemoteASNSource: flowworker.ASNSourceUnknown, SupplierCategory: flowdimension.CategoryUnknown,
 		Disposition: flowdimension.DispositionCount, ClassificationVersion: 1,
 	}
+	flowRecord := func(index uint32, direction flowdimension.BusinessDirection, category flowdimension.Category, source, destination, country, region string, rawBytes uint64) flowworker.EnrichedRecord {
+		item := record
+		item.RecordIndex = index
+		item.EventTime = bucket.Add(time.Duration(30+index) * time.Second)
+		item.SourceIP = netip.MustParseAddr(source)
+		item.DestinationIP = netip.MustParseAddr(destination)
+		item.RawBytes, item.RawPackets = rawBytes, max(uint64(1), rawBytes/10_000)
+		item.EstimatedBytes, item.EstimatedPackets = rawBytes*10, item.RawPackets*10
+		item.Dimensions.Direction = direction
+		item.Category = category
+		item.RemoteGeo.Country, item.RemoteGeo.CountryID, item.RemoteGeo.RegionID = country, country, region
+		item.RemoteGeo.Version = "acceptance-geo"
+		item.RemoteASN = 64500 + index
+		item.RemotePort = 443 + uint16(index)
+		if direction == flowdimension.DirectionIn {
+			item.Dimensions.Local = flowdimension.EndpointDimension{IP: item.DestinationIP, Side: flowdimension.EndpointDst, PrefixID: "local-acceptance", PrefixCIDR: "10.0.0.0/24"}
+			item.Dimensions.Remote = flowdimension.EndpointDimension{IP: item.SourceIP, Side: flowdimension.EndpointSrc, PrefixID: "remote-acceptance", PrefixCIDR: "203.0.113.0/24"}
+			item.SourcePort, item.DestinationPort = item.RemotePort, 49152+uint16(index)
+			item.LocalPort = item.DestinationPort
+		} else {
+			item.Dimensions.Local = flowdimension.EndpointDimension{IP: item.SourceIP, Side: flowdimension.EndpointSrc, PrefixID: "local-acceptance", PrefixCIDR: "10.0.0.0/24"}
+			item.Dimensions.Remote = flowdimension.EndpointDimension{IP: item.DestinationIP, Side: flowdimension.EndpointDst, PrefixID: "remote-acceptance", PrefixCIDR: "203.0.113.0/24"}
+			item.SourcePort, item.DestinationPort = 49152+uint16(index), item.RemotePort
+			item.LocalPort = item.SourcePort
+		}
+		return item
+	}
+	records := []flowworker.EnrichedRecord{
+		record,
+		flowRecord(1, flowdimension.DirectionIn, flowdimension.CategoryOnNetLocalCity, "203.0.113.9", "10.0.0.2", "CN", "EastAsia", 210_000),
+		flowRecord(2, flowdimension.DirectionOut, flowdimension.CategoryOnNetCrossCity, "10.0.0.3", "203.0.113.10", "CN", "EastAsia", 320_000),
+		flowRecord(3, flowdimension.DirectionIn, flowdimension.CategoryOffNetInProvince, "203.0.113.11", "10.0.0.4", "CN", "EastAsia", 430_000),
+		flowRecord(4, flowdimension.DirectionOut, flowdimension.CategoryOffNetCrossProvince, "10.0.0.5", "203.0.113.12", "CN", "EastAsia", 540_000),
+		flowRecord(5, flowdimension.DirectionOut, flowdimension.CategoryOverseas, "10.0.0.6", "198.51.100.6", "US", "NorthAmerica", 650_000),
+	}
 	batch := &flowworker.EnrichedBatch{
 		SchemaVersion: flowworker.EnrichedBatchSchemaVersion, MessageDisposition: flowworker.MessageDispositionPersisted,
 		SourceStreamID: sourceStreamID, KafkaTopic: "watchdog.flow.raw-v1", KafkaPartition: 0, KafkaOffset: time.Now().UnixNano(),
 		CollectorID: "acceptance-flow-collect", ExporterID: "acceptance-exporter", RegistryVersion: 1,
-		ReceivedAt: bucket.Add(31 * time.Second), SourceIP: netip.MustParseAddr("192.0.2.1"), Records: []flowworker.EnrichedRecord{record},
+		ReceivedAt: bucket.Add(40 * time.Second), SourceIP: netip.MustParseAddr("192.0.2.1"), Records: records,
 	}
 	blocks, err := flowch.PrepareBlocks([]*flowworker.EnrichedBatch{batch}, flowch.BatchLimits{})
 	if err != nil || len(blocks) != 1 {
@@ -389,16 +427,159 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 		!strings.Contains(flowQuery.Body.String(), `"value":123456`) {
 		t.Fatalf("query acceptance Flow data: code=%d body=%s", flowQuery.Code, flowQuery.Body.String())
 	}
-	report := requestJSON(t, s, http.MethodPost, "/api/v1/flow/reports/query", map[string]any{
-		"from": bucket, "to": bucket.Add(time.Minute), "value_layer": flowquery.ViewCustomer,
-		"metric": flowquery.MetricRawBytes, "filters": map[string]any{"device_ids": []string{deviceID}},
-		"top_n": 20, "target_points": 5, "timezone": "UTC",
-		"report": map[string]any{"schema_version": 1, "kind": "overview", "panel_ids": []string{"total", "category_out"}},
+
+	// Materialize one real finding in the same window so the VPN report proves
+	// the MySQL findings branch is non-empty while its denominator comes from CH.
+	finding := scoredFixture()
+	finding.Candidate.WindowStart, finding.Candidate.WindowEnd = bucket, bucket.Add(50*time.Second)
+	finding.Candidate.ConversationKey = strings.Repeat("cd", 32)
+	finding.Candidate.LocalIP, finding.Candidate.RemoteIP = netip.MustParseAddr("10.0.0.6"), netip.MustParseAddr("198.51.100.6")
+	finding.Candidate.PrimaryProtocol, finding.Candidate.PrimaryLocalPort, finding.Candidate.PrimaryRemotePort = 6, 49157, 448
+	finding.Candidate.LocalToRemoteBytes, finding.Candidate.RemoteToLocalBytes = 6_500_000, 3_250_000
+	finding.Candidate.FlowRecordCount, finding.Candidate.ActiveBucketCount = 1, 1
+	finding.Candidate.RemoteASN, finding.Candidate.RemoteCountry = 64505, "US"
+	finding.Candidate.LocalPrefixID, finding.Candidate.RemotePrefixID = "local-acceptance", "remote-acceptance"
+	finding.Candidate.CompleteRatio = 1
+	finding.Candidate.DimensionSnapshotID, finding.Candidate.GeoVersion, finding.Candidate.ClassificationVersion = "acceptance-snapshot", "acceptance-geo", 1
+	finding.Score.RuleSetVersion = "acceptance-vpn-v1"
+	finding.Score.FamilyHints = []flowvpn.ProtocolFamily{flowvpn.FamilyTrojan}
+	finding.GeneratedAt = bucket.Add(2 * time.Minute)
+	if n, err := s.materializeVPNFindings(ctx, []flowvpn.ScoredCandidate{finding}); err != nil || n != 1 {
+		t.Fatalf("materialize acceptance VPN finding: n=%d err=%v", n, err)
+	}
+
+	type reportEnvelope struct {
+		Data struct {
+			Kind   flowReportKind    `json:"kind"`
+			Side   string            `json:"side"`
+			Panels []flowReportPanel `json:"panels"`
+		} `json:"data"`
+	}
+	reportRequest := func(kind flowReportKind, side string, metric flowquery.Metric, table map[string]any) map[string]any {
+		reportSpec := map[string]any{"schema_version": 1, "kind": kind}
+		if side != "" {
+			reportSpec["side"] = side
+		}
+		payload := map[string]any{
+			"from": bucket, "to": bucket.Add(time.Minute), "value_layer": flowquery.ViewCustomer,
+			"metric": metric, "filters": map[string]any{"device_ids": []string{deviceID}},
+			"top_n": 20, "target_points": 5, "timezone": "UTC", "report": reportSpec,
+		}
+		if kind == flowReportDimensions {
+			reportSpec["group_by"] = flowquery.DimensionGeoCountry
+		}
+		if table != nil {
+			payload["table"] = table
+		}
+		return payload
+	}
+	panelByID := func(t *testing.T, report reportEnvelope, id string) flowReportPanel {
+		t.Helper()
+		for _, panel := range report.Data.Panels {
+			if panel.ID == id {
+				return panel
+			}
+		}
+		t.Fatalf("report %s/%s omitted panel %s", report.Data.Kind, report.Data.Side, id)
+		return flowReportPanel{}
+	}
+
+	reportCases := []struct {
+		name, side, panel string
+		kind              flowReportKind
+		metric            flowquery.Metric
+		table             map[string]any
+		want              string
+	}{
+		{name: "overview", kind: flowReportOverview, metric: flowquery.MetricRawBytes, panel: "category_out", want: `"dimension_value":"on_net_cross_province"`},
+		{name: "dimensions", kind: flowReportDimensions, metric: flowquery.MetricRawBytes, panel: "dimension_out", want: `"dimension_value":"US"`},
+		{name: "source", kind: flowReportEndpoints, side: "source", metric: flowquery.MetricRawBytes, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "maximum", "sort_direction": "desc"}, want: `"limit":2`},
+		{name: "destination", kind: flowReportEndpoints, side: "destination", metric: flowquery.MetricRawBytes, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "maximum", "sort_direction": "desc"}, want: `"limit":2`},
+		{name: "overseas", kind: flowReportOverseas, metric: flowquery.MetricRawBytes, panel: "country_out", want: `"dimension_value":"US"`},
+		{name: "vpn", kind: flowReportVPN, metric: flowquery.MetricEstimatedBytes, panel: "vpn_findings", want: `"finding_count":1`},
+	}
+	for _, test := range reportCases {
+		t.Run("nonempty_"+test.name, func(t *testing.T) {
+			response := requestJSON(t, s, http.MethodPost, "/api/v1/flow/reports/query",
+				reportRequest(test.kind, test.side, test.metric, test.table), map[string]string{"X-CSRF-Token": csrf}, cookies...)
+			if response.Code != http.StatusOK {
+				t.Fatalf("report: code=%d body=%s", response.Code, response.Body.String())
+			}
+			var report reportEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+			panel := panelByID(t, report, test.panel)
+			if panel.Status != "ready" || !strings.Contains(string(panel.Data), test.want) {
+				t.Fatalf("panel %s: status=%s data=%s", panel.ID, panel.Status, panel.Data)
+			}
+			if test.kind == flowReportEndpoints {
+				var data struct {
+					Table struct {
+						Items  []json.RawMessage `json:"items"`
+						Total  int               `json:"total"`
+						Limit  uint16            `json:"limit"`
+						Offset uint32            `json:"offset"`
+					} `json:"table"`
+				}
+				if err := json.Unmarshal(panel.Data, &data); err != nil {
+					t.Fatal(err)
+				}
+				if data.Table.Total != len(records) || data.Table.Limit != 2 || data.Table.Offset != 0 || len(data.Table.Items) != 2 {
+					t.Fatalf("first endpoint page: %+v", data.Table)
+				}
+				secondPayload := reportRequest(test.kind, test.side, test.metric,
+					map[string]any{"limit": 2, "offset": 2, "sort_by": "maximum", "sort_direction": "desc"})
+				second := requestJSON(t, s, http.MethodPost, "/api/v1/flow/reports/query", secondPayload,
+					map[string]string{"X-CSRF-Token": csrf}, cookies...)
+				var secondReport reportEnvelope
+				decodeJSON(t, second, &secondReport)
+				secondPanel := panelByID(t, secondReport, "endpoint")
+				if err := json.Unmarshal(secondPanel.Data, &data); err != nil {
+					t.Fatal(err)
+				}
+				if second.Code != http.StatusOK || data.Table.Total != len(records) || data.Table.Offset != 2 || len(data.Table.Items) != 2 {
+					t.Fatalf("second endpoint page: code=%d table=%+v body=%s", second.Code, data.Table, second.Body.String())
+				}
+			}
+		})
+	}
+
+	// The same report contract must complete through the asynchronous export
+	// worker and produce a downloadable non-empty artifact.
+	export := requestJSON(t, s, http.MethodPost, "/api/v1/flow/exports", map[string]any{
+		"query": map[string]any{
+			"dataset": "flow.traffic", "from": bucket, "to": bucket.Add(time.Minute), "value_layer": flowquery.ViewCustomer,
+			"parameters": map[string]any{
+				"metric": flowquery.MetricRawBytes, "filters": map[string]any{"device_ids": []string{deviceID}},
+				"top_n": 20, "target_points": 5, "timezone": "UTC",
+				"report": map[string]any{"schema_version": 1, "kind": "overview"},
+			},
+		},
+		"format": "csv", "idempotency_key": "acceptance-flow-report-export",
 	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
-	if report.Code != http.StatusOK || !strings.Contains(report.Body.String(), `"kind":"overview"`) ||
-		!strings.Contains(report.Body.String(), `"id":"category_out"`) ||
-		!strings.Contains(report.Body.String(), `"dimension_value":"on_net_cross_province"`) {
-		t.Fatalf("query acceptance Flow report: code=%d body=%s", report.Code, report.Body.String())
+	if export.Code != http.StatusAccepted {
+		t.Fatalf("create acceptance Flow export: code=%d body=%s", export.Code, export.Body.String())
+	}
+	var exportView flowExportResponse
+	decodeJSON(t, export, &exportView)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		job, err := s.jobs.Get(ctx, exportView.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Status == opjob.StatusSucceeded {
+			break
+		}
+		if job.Status == opjob.StatusFailed || time.Now().After(deadline) {
+			t.Fatalf("acceptance Flow export status=%s error=%s", job.Status, job.LastErrorDetail)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	download := requestJSON(t, s, http.MethodGet, "/api/v1/flow/exports/"+exportView.ID+"/download", nil, nil, cookies...)
+	if download.Code != http.StatusOK || !strings.Contains(download.Body.String(), "on_net_cross_province") || download.Body.Len() < 100 {
+		t.Fatalf("download acceptance Flow export: code=%d bytes=%d body=%s", download.Code, download.Body.Len(), download.Body.String())
 	}
 }
 

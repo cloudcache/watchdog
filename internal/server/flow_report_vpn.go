@@ -5,13 +5,16 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/address"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 	"github.com/gin-gonic/gin"
 )
@@ -104,8 +107,8 @@ func normalizeFlowReportTables(req *flowReportRequest) error {
 	return nil
 }
 
-// vpnReportPanels appends the vpn report's findings-backed panels: vpn_findings
-// (summarized from the store) plus the two faithfully-unavailable Tier-2 panels.
+// vpnReportPanels appends the VPN report's findings, immutable rule-set
+// publication state and the still-deferred active-probe timeline.
 func (s *Server) vpnReportPanels(ctx context.Context, req flowReportRequest, now time.Time) ([]flowReportPanel, error) {
 	items, err := s.listVPNFindingsForReport(ctx, req.From, req.To, maxVPNFindingReportRows)
 	if err != nil {
@@ -133,9 +136,54 @@ func (s *Server) vpnReportPanels(ctx context.Context, req flowReportRequest, now
 			"complete_ratio": summary.MinimumCompleteRatio,
 			"partial":        summary.MinimumCompleteRatio < 1,
 		}},
-		{ID: "vpn_rule_publication", Status: "unavailable", Reason: "immutable VPN rule-set publication is not active"},
+		s.vpnRulePublicationReportPanel(ctx, req.To),
 		{ID: "vpn_probe_timeline", Status: "unavailable", Reason: "authorized active-probe orchestration is not configured"},
 	}, nil
+}
+
+// vpnRulePublicationReportPanel resolves the immutable publication effective at
+// the final instant in the report's half-open [from,to) window. Publication
+// readiness is independent of findings: the panel remains useful even when the
+// selected window contains no suspected VPN hosts.
+func (s *Server) vpnRulePublicationReportPanel(ctx context.Context, windowEnd time.Time) flowReportPanel {
+	const panelID = "vpn_rule_publication"
+	if s.vpnRuleSetPublisher == nil || windowEnd.IsZero() {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "immutable VPN rule-set publication is not configured"}
+	}
+	// Activations are persisted at millisecond precision; subtract one stored
+	// tick rather than one nanosecond, which MySQL would round back to windowEnd.
+	eventTime := windowEnd.UTC().Add(-time.Millisecond)
+	activation, err := s.vpnRuleSetPublisher.GetDimensionPublicationActivationAt(ctx, eventTime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "no VPN rule set is active for this report window"}
+	}
+	if err != nil {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "VPN rule-set publication status is unavailable"}
+	}
+	snapshot, err := s.vpnRuleSetPublisher.GetDimensionPublicationSnapshot(ctx, activation.SnapshotID)
+	if err != nil || snapshot.ApprovalState != address.AddressDimensionApprovalApproved || snapshot.ObjectDeletedAt != nil {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "the active VPN rule-set object is not installable"}
+	}
+	consumers, err := s.vpnRuleSetPublisher.GetAddressDimensionConsumerSummary(ctx, snapshot.ID)
+	if err != nil {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "VPN rule-set worker status is unavailable"}
+	}
+	data, err := json.Marshal(gin.H{
+		"snapshot_id": snapshot.ID, "version": snapshot.Version, "effective_from": activation.EffectiveFrom,
+		"checksum": snapshot.Checksum, "rule_count": snapshot.EntryCount, "approval_state": snapshot.ApprovalState,
+		"queryability": consumers.Queryability, "observed_workers": consumers.Observed,
+		"ready_workers": consumers.Ready, "failed_workers": consumers.Failed,
+		"behind_workers": consumers.Behind, "uninstalled_workers": consumers.Uninstalled,
+	})
+	if err != nil {
+		return flowReportPanel{ID: panelID, Status: "unavailable", Reason: "VPN rule-set publication status is unavailable"}
+	}
+	partial := consumers.Observed > 0 && consumers.Ready != consumers.Observed
+	return flowReportPanel{ID: panelID, Status: "ready", Data: data, Meta: gin.H{
+		"effective_at": eventTime, "queryability": consumers.Queryability,
+		"complete_ratio": 1.0, "partial": partial,
+		"versions": gin.H{"vpn_rule_set_version": strconv.FormatUint(snapshot.Version, 10), "vpn_rule_set_snapshot_id": snapshot.ID},
+	}}
 }
 
 // filterFindingsByPeakWindows keeps only findings whose window end falls inside one

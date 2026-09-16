@@ -83,6 +83,19 @@ type VPNReportSummary = {
 	source_generations: number[]
 }
 
+type VPNRulePublicationSummary = {
+	snapshot_id: string
+	version: number
+	effective_from: string
+	rule_count: number
+	queryability: string
+	observed_workers: number
+	ready_workers: number
+	failed_workers: number
+	behind_workers: number
+	uninstalled_workers: number
+}
+
 const INITIAL_TABLE: TableControl = {
 	search: "",
 	page: 0,
@@ -1407,16 +1420,53 @@ function VPNReport({
 				/>
 			</div>
 			<div className="grid gap-4 xl:grid-cols-2">
-				<UnavailablePanel
-					title={t`Rule-set publication`}
-					reason={reportPanel(response, "vpn_rule_publication")?.reason}
-				/>
+				<VPNRulePublication panel={reportPanel(response, "vpn_rule_publication")} />
 				<UnavailablePanel
 					title={t`Active probe timeline`}
 					reason={reportPanel(response, "vpn_probe_timeline")?.reason}
 				/>
 			</div>
 		</div>
+	)
+}
+
+function VPNRulePublication({ panel }: { panel?: FlowReportPanel }) {
+	const { t } = useLingui()
+	if (!panel || panel.status === "unavailable")
+		return <UnavailablePanel title={t`Rule-set publication`} reason={panel?.reason} />
+	const publication = panel.data as unknown as VPNRulePublicationSummary
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>
+					<Trans>Rule-set publication</Trans>
+				</CardTitle>
+				<CardDescription>
+					<Trans>
+						Version {publication.version} · effective {new Date(publication.effective_from).toLocaleString()}
+					</Trans>
+				</CardDescription>
+			</CardHeader>
+			<CardContent className="grid gap-2 text-sm">
+				<div className="text-2xl font-semibold">
+					<Trans>{publication.rule_count.toLocaleString()} rules</Trans>
+				</div>
+				<div className="text-muted-foreground">
+					<Trans>
+						{publication.ready_workers.toLocaleString()} of {publication.observed_workers.toLocaleString()} observed
+						workers ready · {publication.queryability}
+					</Trans>
+				</div>
+				{publication.failed_workers + publication.behind_workers + publication.uninstalled_workers > 0 ? (
+					<div className="text-amber-700">
+						<Trans>
+							{publication.failed_workers.toLocaleString()} failed · {publication.behind_workers.toLocaleString()}{" "}
+							behind · {publication.uninstalled_workers.toLocaleString()} uninstalled
+						</Trans>
+					</div>
+				) : null}
+			</CardContent>
+		</Card>
 	)
 }
 

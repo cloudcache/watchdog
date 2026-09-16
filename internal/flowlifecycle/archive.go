@@ -344,10 +344,14 @@ func (store *Store) ListArchiveRepairCandidates(ctx context.Context, limit int) 
 		return nil, ErrInvalidPolicy
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT `+partitionColumns+`
-		FROM flow_retention_partition_states AS state
-		LEFT JOIN operation_jobs AS job ON job.id=state.archive_job_id
-		WHERE state.state='failed' OR (state.state IN ('sealed','archive_written') AND (job.id IS NULL OR job.status IN ('failed','canceled')))
-		ORDER BY state.source_date ASC LIMIT ?`, limit)
+		FROM flow_retention_partition_states AS partition_state
+		WHERE partition_state.state='failed' OR (
+			partition_state.state IN ('sealed','archive_written') AND NOT EXISTS (
+				SELECT 1 FROM operation_jobs AS job
+				WHERE job.id=partition_state.archive_job_id AND job.status NOT IN ('failed','canceled')
+			)
+		)
+		ORDER BY partition_state.source_date ASC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

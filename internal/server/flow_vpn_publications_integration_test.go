@@ -159,6 +159,31 @@ func TestVPNRuleSetPublicationWorkerACK(t *testing.T) {
 	if consumers.Code != http.StatusOK {
 		t.Fatalf("consumers: %d %s", consumers.Code, consumers.Body.String())
 	}
+
+	// Fixed reports use half-open windows. A publication activated exactly at the
+	// report end belongs to the next window; the following window exposes the
+	// approved snapshot and both installed consumers.
+	before := s.vpnRulePublicationReportPanel(t.Context(), effective)
+	if before.Status != "unavailable" {
+		t.Fatalf("publication leaked across report boundary: %+v", before)
+	}
+	panel := s.vpnRulePublicationReportPanel(t.Context(), effective.Add(time.Minute))
+	if panel.Status != "ready" {
+		t.Fatalf("publication panel: %+v", panel)
+	}
+	var publication struct {
+		SnapshotID      string `json:"snapshot_id"`
+		RuleCount       uint64 `json:"rule_count"`
+		ObservedWorkers uint64 `json:"observed_workers"`
+		ReadyWorkers    uint64 `json:"ready_workers"`
+	}
+	if err := json.Unmarshal(panel.Data, &publication); err != nil {
+		t.Fatal(err)
+	}
+	if publication.SnapshotID != publishBody.Job.ID || publication.RuleCount != 1 ||
+		publication.ObservedWorkers != 2 || publication.ReadyWorkers != 2 {
+		t.Fatalf("publication panel data: %+v", publication)
+	}
 }
 
 func waitForVPNPublishJob(t *testing.T, s *Server, id string) {
