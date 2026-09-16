@@ -22,10 +22,17 @@ type rawDeleteStoreFake struct {
 	readinessCalls int
 	completeCalls  int
 	barrierErr     error
+	reclassErr     error
+	reclassCalls   int
 }
 
 func (store *rawDeleteStoreFake) RawDeleteBarrierReadyForDay(context.Context, time.Time) (DeleteBarrierStatus, error) {
 	return DeleteBarrierStatus{Ready: store.barrierErr == nil}, store.barrierErr
+}
+
+func (store *rawDeleteStoreFake) EnsureNoActiveReclassificationForDay(context.Context, time.Time) error {
+	store.reclassCalls++
+	return store.reclassErr
 }
 
 func (store *rawDeleteStoreFake) LoadRawDeleteExecution(context.Context, string) (RawDeleteExecution, error) {
@@ -161,6 +168,18 @@ func TestRawDeleteHandlerRejectsChangedFrozenEvidenceBeforeDDL(t *testing.T) {
 	}
 	if runner.dropCalls != 0 || store.completeCalls != 0 {
 		t.Fatalf("changed evidence reached deletion: runner=%+v store=%+v", runner, store)
+	}
+}
+
+func TestRawDeleteHandlerRejectsActiveHistoricalReclassification(t *testing.T) {
+	job, execution, readiness, counters := rawDeleteFixture(t)
+	store := &rawDeleteStoreFake{execution: execution, readiness: readiness, reclassErr: ErrDeleteLocked}
+	runner := &rawDeleteRunnerFake{beforeRaw: counters, beforeArchive: counters, beforePhysical: execution.Approval.PhysicalRecords}
+	if _, err := NewRawDeleteHandler(store, runner)(context.Background(), job); !errors.Is(err, ErrDeleteLocked) {
+		t.Fatalf("active reclassification error=%v", err)
+	}
+	if store.reclassCalls != 1 || runner.counterCalls != 0 || runner.dropCalls != 0 {
+		t.Fatalf("active reclassification reached ClickHouse: store=%+v runner=%+v", store, runner)
 	}
 }
 

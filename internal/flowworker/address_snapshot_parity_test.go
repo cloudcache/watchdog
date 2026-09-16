@@ -105,11 +105,20 @@ func TestAddressSnapshotMatchesLegacyReaderOnSharedCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	version, err := versions.Select(effective.Add(30 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(legacyResult.Records) != len(wadsResult.Records) {
 		t.Fatalf("record counts differ: legacy=%d WADS=%d", len(legacyResult.Records), len(wadsResult.Records))
 	}
 	for index := range legacyResult.Records {
 		assertAddressSnapshotParity(t, legacyResult.Records[index], wadsResult.Records[index])
+		reclassified, reclassifyErr := ReclassifyRecord(batch.Records[index], version.Dimension, version.Classification)
+		if reclassifyErr != nil {
+			t.Fatalf("reclassify record %d: %v", index, reclassifyErr)
+		}
+		assertAddressSnapshotParity(t, wadsResult.Records[index], reclassified)
 	}
 }
 

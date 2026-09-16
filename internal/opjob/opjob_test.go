@@ -10,9 +10,10 @@ import (
 )
 
 type failureCaptureRepository struct {
-	code   string
-	detail string
-	retry  bool
+	code     string
+	detail   string
+	retry    bool
+	canceled bool
 }
 
 func (*failureCaptureRepository) Enqueue(context.Context, Job) (Job, error) { return Job{}, nil }
@@ -29,7 +30,10 @@ func (*failureCaptureRepository) Heartbeat(context.Context, string, string, time
 func (*failureCaptureRepository) CompleteSucceeded(context.Context, string, string, string) error {
 	return nil
 }
-func (*failureCaptureRepository) CompleteCanceled(context.Context, string, string) error { return nil }
+func (r *failureCaptureRepository) CompleteCanceled(context.Context, string, string) error {
+	r.canceled = true
+	return nil
+}
 func (r *failureCaptureRepository) CompleteFailed(_ context.Context, _, _, code, detail string, retry bool, _ time.Time) error {
 	r.code, r.detail, r.retry = code, detail, retry
 	return nil
@@ -132,5 +136,18 @@ func TestWorkerTerminalFailureCallbackReceivesPersistedDetail(t *testing.T) {
 	}
 	if callbackCode != repo.code || callbackDetail != repo.detail {
 		t.Fatalf("callback failure = code %q detail %q, want persisted values", callbackCode, callbackDetail)
+	}
+}
+
+func TestWorkerCancelRequestedErrorCompletesCanceled(t *testing.T) {
+	repo := &failureCaptureRepository{}
+	w := &Worker{Repo: repo}
+	w.finishAttempt(context.Background(), Job{ID: "job-1", LeaseToken: "lease-1"}, false, "", ErrCancelRequested)
+
+	if !repo.canceled {
+		t.Fatal("cancel-requested error must complete the operation job as canceled")
+	}
+	if repo.code != "" {
+		t.Fatalf("cancel-requested error must not record a failure, got %q", repo.code)
 	}
 }

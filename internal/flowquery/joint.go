@@ -36,6 +36,15 @@ type JointRequest struct {
 	IncludeOther bool
 	Timezone     string
 	TimeWindows  []LocalTimeWindow
+	// Reclassification is server-owned. It switches the bounded base-fact
+	// query to one already activated historical generation; clients never
+	// supply a table name or SQL fragment.
+	Reclassification *ReclassificationSource
+}
+
+type ReclassificationSource struct {
+	ID         string
+	Generation uint64
 }
 
 type JointPlan struct {
@@ -70,13 +79,24 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	if request.View == "" {
 		return CompiledJoint{}, requestError("view", ErrorRequired, "view is required")
 	}
-	if request.View != ViewCustomer {
-		return CompiledJoint{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in joint schema v1")
+	sourceTable := "flow_records"
+	if request.Reclassification == nil {
+		if request.View != ViewCustomer {
+			return CompiledJoint{}, requestError("view", ErrorUnsupported, "only the materialized customer view is queryable in joint schema v1")
+		}
+	} else {
+		if !validSourceIdentifier(request.Reclassification.ID) || request.Reclassification.Generation == 0 {
+			return CompiledJoint{}, requestError("reclassification", ErrorInvalid, "reclassification identity and generation are required")
+		}
+		if request.View != ViewCustomer && request.View != ViewSupplier {
+			return CompiledJoint{}, requestError("view", ErrorUnsupported, "historical reclassification supports customer and supplier views")
+		}
+		sourceTable = "flow_reclassified_records"
 	}
-	if !scope.allowsView(ViewCustomer) {
+	if !scope.allowsView(request.View) {
 		return CompiledJoint{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
 	}
-	dimensions, expressions, err := compileJointDimensions(request.Dimensions)
+	dimensions, expressions, err := compileJointDimensions(request.Dimensions, request.View)
 	if err != nil {
 		return CompiledJoint{}, err
 	}
@@ -135,9 +155,19 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
 	}
-	conditions, filterParameters, err := compileBaseFilters(request.Filters, expressions, request.Filter)
+	conditions, filterParameters, err := compileBaseFilters(request.View, request.Filters, expressions, request.Filter)
 	if err != nil {
 		return CompiledJoint{}, err
+	}
+	if request.Reclassification != nil {
+		parameters = append(parameters,
+			stringParameter("reclassification_id", request.Reclassification.ID),
+			uintParameter("reclassification_generation", request.Reclassification.Generation),
+		)
+		conditions = append(conditions,
+			"AND reclassification_id = {reclassification_id:String}",
+			"AND reclassification_generation = {reclassification_generation:UInt64}",
+		)
 	}
 	parameters = append(parameters, filterParameters...)
 	timeCondition, timeParameters, err := compileLocalTimeWindows(request.TimeWindows, timezone, "event_time")
@@ -160,6 +190,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	otherValues := strings.TrimSuffix(strings.Repeat("'_other', ", len(dimensions)), ", ")
 	body := fmt.Sprintf(jointQuerySQL,
 		strings.Join(expressions, ",\n        "),
+		sourceTable,
 		strings.Join(conditions, "\n      "),
 		metric.column,
 		otherValues,
@@ -167,7 +198,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	)
 	plan := JointPlan{
 		RequestedFrom: from, RequestedTo: to, EffectiveFrom: from, EffectiveTo: to,
-		Source: "flow_records", StepSeconds: uint32(interval / time.Second), TargetPoints: targetPoints,
+		Source: sourceTable, StepSeconds: uint32(interval / time.Second), TargetPoints: targetPoints,
 		MaxRangeSeconds: uint32(MaxJointRange / time.Second),
 	}
 	return CompiledJoint{
@@ -190,7 +221,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	}, nil
 }
 
-func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string, error) {
+func compileJointDimensions(input []Dimension, view View) ([]DimensionDefinition, []string, error) {
 	if len(input) < MinJointDimensions || len(input) > MaxJointDimensions {
 		return nil, nil, requestError("dimensions", ErrorLimitExceeded, "base-fact dimensions must contain 1..4 ordered entries")
 	}
@@ -209,7 +240,7 @@ func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string,
 			return nil, nil, requestError("dimensions", ErrorUnsupported, "total is only valid as the sole base-fact result dimension")
 		}
 		seen[dimension] = struct{}{}
-		expression, exists := jointDimensionExpressions[dimension]
+		expression, exists := jointDimensionExpression(view, dimension)
 		if !exists {
 			return nil, nil, requestError("dimensions", ErrorUnsupported, fmt.Sprintf("dimension %q requires an asynchronous joint index", dimension))
 		}
@@ -219,9 +250,13 @@ func compileJointDimensions(input []Dimension) ([]DimensionDefinition, []string,
 	return definitions, expressions, nil
 }
 
-func compileBaseFilters(filters Filters, dimensionExpressions []string, filter *FilterExpression) ([]string, []proto.Parameter, error) {
+func compileBaseFilters(view View, filters Filters, dimensionExpressions []string, filter *FilterExpression) ([]string, []proto.Parameter, error) {
 	dimensionValues := filters.DimensionValues
 	filters.DimensionValues = nil
+	supplierCategories, supplierGeoVersions := filters.Categories, filters.GeoVersions
+	if view == ViewSupplier {
+		filters.Categories, filters.GeoVersions = nil, nil
+	}
 	conditions, parameters, err := compileFilters(filters)
 	if err != nil {
 		return nil, nil, err
@@ -245,8 +280,36 @@ func compileBaseFilters(filters Filters, dimensionExpressions []string, filter *
 		}
 		conditions = append(conditions, fmt.Sprintf("AND (%s) IN (%s)", dimensionExpressions[0], strings.Join(placeholders, ", ")))
 	}
+	if view == ViewSupplier {
+		if len(supplierCategories) > maxValuesPerFilter || len(supplierGeoVersions) > maxValuesPerFilter ||
+			len(supplierCategories)+len(supplierGeoVersions)+baseFilterValueCount(filters) > maxFilterValues {
+			return nil, nil, requestError("filters", ErrorLimitExceeded, "too many filter values")
+		}
+		for _, item := range []struct {
+			field, column, prefix string
+			values                []string
+			allowed               map[string]struct{}
+		}{
+			{"filters.categories", "supplier_category", "supplier_category", supplierCategories, validCategories},
+			{"filters.geo_versions", "supplier_geo_version", "supplier_geo_version", supplierGeoVersions, nil},
+		} {
+			values, normalizeErr := normalizeStrings(item.field, item.values, item.allowed)
+			if normalizeErr != nil {
+				return nil, nil, normalizeErr
+			}
+			placeholders := make([]string, 0, len(values))
+			for index, value := range values {
+				key := fmt.Sprintf("%s_%d", item.prefix, index)
+				placeholders = append(placeholders, fmt.Sprintf("{%s:String}", key))
+				parameters = append(parameters, stringParameter(key, value))
+			}
+			if len(placeholders) > 0 {
+				conditions = append(conditions, fmt.Sprintf("AND %s IN (%s)", item.column, strings.Join(placeholders, ", ")))
+			}
+		}
+	}
 	if filter != nil {
-		expression, typedParameters, err := compileBaseFilter(*filter)
+		expression, typedParameters, err := compileBaseFilterForView(*filter, view)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -254,6 +317,11 @@ func compileBaseFilters(filters Filters, dimensionExpressions []string, filter *
 		parameters = append(parameters, typedParameters...)
 	}
 	return conditions, parameters, nil
+}
+
+func baseFilterValueCount(filters Filters) int {
+	return len(filters.Directions) + len(filters.Businesses) + len(filters.TargetIDs) + len(filters.DeviceIDs) +
+		len(filters.ExporterIDs) + len(filters.DimensionSnapshotIDs) + len(filters.ClassificationVersions)
 }
 
 var jointDimensionExpressions = map[Dimension]string{
@@ -274,6 +342,41 @@ var jointDimensionExpressions = map[Dimension]string{
 	DimensionRemotePort:           "if(remote_port = 0, '_unassigned', toString(remote_port))",
 	DimensionProtocol:             "toString(ip_protocol)",
 	DimensionObservationInterface: "if(observation_if_index = 0, '_unassigned', toString(observation_if_index))",
+}
+
+func jointDimensionExpression(view View, dimension Dimension) (string, bool) {
+	expression, exists := jointDimensionExpressions[dimension]
+	if !exists || view != ViewSupplier {
+		return expression, exists
+	}
+	supplier := map[Dimension]string{
+		DimensionCategory:     "toString(supplier_category)",
+		DimensionGeoContinent: "if(empty(supplier_remote_geo_continent_id), '_unassigned', supplier_remote_geo_continent_id)",
+		DimensionGeoRegion:    "if(empty(supplier_remote_geo_region_id), '_unassigned', supplier_remote_geo_region_id)",
+		DimensionGeoCountry:   "if(empty(supplier_remote_geo_country_id), '_unassigned', supplier_remote_geo_country_id)",
+		DimensionGeoProvince:  "if(empty(supplier_remote_geo_province_id), '_unassigned', supplier_remote_geo_province_id)",
+		DimensionGeoCity:      "if(empty(supplier_remote_geo_city_id), '_unassigned', supplier_remote_geo_city_id)",
+		DimensionISP:          "if(supplier_remote_isp_id = 0, '_unassigned', toString(supplier_remote_isp_id))",
+		DimensionASN:          "if(supplier_remote_asn = 0, '_unassigned', toString(supplier_remote_asn))",
+	}
+	if value := supplier[dimension]; value != "" {
+		return value, true
+	}
+	return expression, true
+}
+
+func validSourceIdentifier(value string) bool {
+	if value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("._:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 const jointQuerySQL = `WITH
@@ -298,7 +401,7 @@ const jointQuerySQL = `WITH
       countIf(NOT estimated_valid) AS unknown_sampling_records,
       countIf(quality_flags != 0) AS quality_records,
       max(received_time) AS observed_at
-    FROM flow_records FINAL
+    FROM %s FINAL
     WHERE event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
       %s

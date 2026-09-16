@@ -24,8 +24,9 @@ import (
 const jobTable = "operation_jobs"
 
 var (
-	ErrLeaseLost    = errors.New("operation job lease is no longer held")
-	ErrHashMismatch = errors.New("idempotency key was already used with a different request")
+	ErrLeaseLost       = errors.New("operation job lease is no longer held")
+	ErrHashMismatch    = errors.New("idempotency key was already used with a different request")
+	ErrCancelRequested = errors.New("operation job cancellation was requested")
 )
 
 const (

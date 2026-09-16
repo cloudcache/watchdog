@@ -250,6 +250,7 @@ type rawDeleteExecutionStore interface {
 	RawDayDeleteReadiness(context.Context, time.Time, time.Time, RawDayEvidenceReader) (RawDeleteReadiness, error)
 	CompleteRawDayDelete(context.Context, string, time.Time) error
 	RawDeleteBarrierReadyForDay(context.Context, time.Time) (DeleteBarrierStatus, error)
+	EnsureNoActiveReclassificationForDay(context.Context, time.Time) error
 }
 
 func NewRawDeleteHandler(store rawDeleteExecutionStore, runner RawDayDeleteRunner) opjob.Handler {
@@ -276,6 +277,9 @@ func NewRawDeleteHandler(store rawDeleteExecutionStore, runner RawDayDeleteRunne
 			return "", opjob.TerminalError(ErrDeleteLocked)
 		}
 		if _, err := store.RawDeleteBarrierReadyForDay(ctx, day); err != nil {
+			return "", err
+		}
+		if err := store.EnsureNoActiveReclassificationForDay(ctx, day); err != nil {
 			return "", err
 		}
 		raw, archive, err := runner.DayStorageCounters(ctx, day)
@@ -332,6 +336,27 @@ func NewRawDeleteHandler(store rawDeleteExecutionStore, runner RawDayDeleteRunne
 		}
 		return rawDeleteResultRef(execution.Receipt), nil
 	}
+}
+
+// EnsureNoActiveReclassificationForDay prevents physical raw deletion while
+// an overlapping historical reclassification still depends on those facts.
+func (store *Store) EnsureNoActiveReclassificationForDay(ctx context.Context, day time.Time) error {
+	if store == nil || store.db == nil {
+		return ErrDeleteLocked
+	}
+	day = UTCDate(day)
+	var count uint64
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*)
+FROM flow_reclassifications r
+JOIN operation_jobs j ON j.id=r.operation_job_id
+WHERE r.window_start < ? AND r.window_end > ? AND r.activated_at IS NULL
+  AND j.status IN ('queued','running','cancel_requested')`, day.Add(24*time.Hour), day).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return ErrDeleteLocked
+	}
+	return nil
 }
 
 func rawDeleteExecutionMatches(job opjob.Job, payload RawDeletePayload, day time.Time, execution RawDeleteExecution) bool {

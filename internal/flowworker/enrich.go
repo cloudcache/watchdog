@@ -255,16 +255,42 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 
 func (e *Enricher) enrichRecord(sourceStreamID string, kafkaPartition int32, kafkaOffset int64, decoded *Record) (EnrichedRecord, error) {
 	eventTime := time.UnixMilli(decoded.EventTimeUnixMS).UTC()
-	source, _ := parseAddress16(decoded.SourceIP)
-	destination, _ := parseAddress16(decoded.DestinationIP)
 	dimensionSnapshot, classificationSnapshot, dependency, err := e.selectVersions(eventTime)
 	if err != nil {
 		return EnrichedRecord{}, blocked(dependency, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
 	}
+	record, dependency, err := enrichRecordWithSnapshots(decoded, dimensionSnapshot, classificationSnapshot, e.geo)
+	if err != nil {
+		return EnrichedRecord{}, blocked(dependency, sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
+	}
+	return record, nil
+}
+
+// ReclassifyRecord applies one already-validated immutable AddressSnap and
+// classification pair to a stored raw fact. Unlike the live event-time
+// catalog path, this deliberately does not select a version by event time: a
+// historical reclassification job freezes the exact target publication in its
+// immutable payload. AddressSnap carries both supplier and customer Geo data,
+// so this path performs no database, file or network I/O per record.
+func ReclassifyRecord(decoded *Record, dimension DimensionSnapshot, classification *flowdimension.ClassificationSnapshot) (EnrichedRecord, error) {
+	if decoded == nil || dimension == nil || classification == nil {
+		return EnrichedRecord{}, errors.New("record and fixed enrichment snapshots are required")
+	}
+	record, dependency, err := enrichRecordWithSnapshots(decoded, dimension, classification, nil)
+	if err != nil {
+		return EnrichedRecord{}, fmt.Errorf("reclassify %s: %w", dependency, err)
+	}
+	return record, nil
+}
+
+func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnapshot, classificationSnapshot *flowdimension.ClassificationSnapshot, geoCatalog *flowdimension.GeoCatalog) (EnrichedRecord, string, error) {
+	eventTime := time.UnixMilli(decoded.EventTimeUnixMS).UTC()
+	source, _ := parseAddress16(decoded.SourceIP)
+	destination, _ := parseAddress16(decoded.DestinationIP)
 	dimensionMetadata := dimensionSnapshot.Metadata()
 	classificationMetadata := classificationSnapshot.Metadata()
 	if classificationMetadata.DimensionSnapshotID != dimensionMetadata.SnapshotID {
-		return EnrichedRecord{}, blocked("classification_dimension_pair", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
+		return EnrichedRecord{}, "classification_dimension_pair", ErrVersionSkew
 	}
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
 	var supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
@@ -283,12 +309,12 @@ func (e *Enricher) enrichRecord(sourceStreamID string, kafkaPartition int32, kaf
 			}
 		}
 	} else {
-		if e.geo == nil {
-			return EnrichedRecord{}, blocked("geo", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, flowdimension.ErrNoGeoIndex)
+		if geoCatalog == nil {
+			return EnrichedRecord{}, "geo", flowdimension.ErrNoGeoIndex
 		}
-		geoIndex, err := e.geo.Select(eventTime)
+		geoIndex, err := geoCatalog.Select(eventTime)
 		if err != nil {
-			return EnrichedRecord{}, blocked("geo", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, err)
+			return EnrichedRecord{}, "geo", err
 		}
 		geoMetadata := geoIndex.Metadata()
 		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
@@ -299,7 +325,7 @@ func (e *Enricher) enrichRecord(sourceStreamID string, kafkaPartition int32, kaf
 		}
 		legacySnapshot, ok := dimensionSnapshot.(*flowdimension.CompiledSnapshot)
 		if !ok {
-			return EnrichedRecord{}, blocked("dimension", sourceStreamID, kafkaPartition, kafkaOffset, decoded, eventTime, ErrVersionSkew)
+			return EnrichedRecord{}, "dimension", ErrVersionSkew
 		}
 		remoteGeo, overrideFields, _ = legacySnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
 	}
@@ -335,7 +361,7 @@ func (e *Enricher) enrichRecord(sourceStreamID string, kafkaPartition int32, kaf
 		Disposition:           classificationSnapshot.Disposition(dimensions.Direction),
 		ClassificationVersion: classificationMetadata.Version,
 	}
-	return record, nil
+	return record, "", nil
 }
 
 func (e *Enricher) selectVersions(eventTime time.Time) (DimensionSnapshot, *flowdimension.ClassificationSnapshot, string, error) {

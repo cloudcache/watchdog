@@ -124,6 +124,41 @@ func TestCompileJointSupportsFilteredTotalOnBasePath(t *testing.T) {
 	}
 }
 
+func TestCompileJointHistoricalGenerationPinsTableIdentityAndSupplierColumns(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	request := validJointRequest(now)
+	request.View = ViewSupplier
+	request.Reclassification = &ReclassificationSource{ID: "reclassification-01", Generation: 7}
+	request.Filters.Categories = []string{"overseas"}
+	request.Filters.GeoVersions = []string{"supplier-geo-v2"}
+	request.Filter = &FilterExpression{Op: FilterAnd, Args: []FilterExpression{
+		{Op: FilterPredicate, Field: "geo.country", Operator: FilterEqual, Values: []string{"US"}},
+		{Op: FilterPredicate, Field: "asn", Operator: FilterGreaterThanOrEqual, Values: []string{"64512"}},
+	}}
+	compiled, err := CompileJoint(Scope{AllowedViews: []View{ViewSupplier}}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"FROM flow_reclassified_records FINAL",
+		"reclassification_id = {reclassification_id:String}",
+		"reclassification_generation = {reclassification_generation:UInt64}",
+		"supplier_remote_geo_country_id", "supplier_remote_asn", "supplier_category", "supplier_geo_version",
+	} {
+		if !strings.Contains(compiled.Query.Body, fragment) {
+			t.Fatalf("historical supplier SQL missing %q:\n%s", fragment, compiled.Query.Body)
+		}
+	}
+	if compiled.Plan.Source != "flow_reclassified_records" {
+		t.Fatalf("source=%q", compiled.Plan.Source)
+	}
+
+	request.Reclassification.ID = "bad id"
+	if _, err := CompileJoint(Scope{AllowedViews: []View{ViewSupplier}}, request, now); !IsRequestError(err, "reclassification", ErrorInvalid) {
+		t.Fatalf("invalid source error=%v", err)
+	}
+}
+
 func validJointRequest(now time.Time) JointRequest {
 	return JointRequest{
 		From: now.Add(-time.Hour), To: now, Metric: MetricEstimatedBPS,

@@ -41,6 +41,7 @@ func (s *Server) registerFlowRoutes(auth *gin.RouterGroup) {
 	s.registerFlowReportRoutes(auth, view)
 	s.registerFlowGeoRoutes(auth, view)
 	s.registerFlowExportRoutes(auth)
+	s.registerFlowReclassificationRoutes(auth)
 }
 
 // flowFilterCatalog returns the typed filter-field registry (fields, operators,

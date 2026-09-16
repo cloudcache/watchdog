@@ -412,13 +412,13 @@ Geo 不足得到 `unknown`。港澳台口径由 snapshot 固定。`home_isp_ids/
 
 - `raw`：导出协议直接携带的 src/dst IP、端口、ASN、接口和原始/估算计数；不附会 Geo、ISP、地址组或业务归属。方向未知时仍保留 src/dst，不为得到 local/remote 而猜测客户地址库；
 - `supplier`：事件时间命中的只读供应商 Geo bundle 基线，以及“供应商 ASN 优先、缺失时回退 exporter ASN”的明确来源；方向、local/remote 和 category 仍使用同一客户 publication 的网络边界/分类规则，但不得包含客户 Geo/ASN/ISP override；
-- `customer`：同一 supplier 基线上叠加租户版本化 prefix、Geo/ASN/ISP、address set 和 business override 后的生产视图。
+- `customer`：同一 supplier 基线上叠加全局版本化 prefix、Geo/ASN/ISP、address set 和 business override 后的生产视图；“客户”是数据口径，不是 tenant 隔离边界。
 
 `flow_records` 只保存一份原始 tuple/计数，同时保存 supplier 基线和 customer 最终值：`source_asn/destination_asn` 属于 raw；`supplier_remote_* / supplier_category / supplier_geo_version` 属于 supplier；现有 `remote_* / category / dimension_snapshot_id / classification_version` 属于 customer。`customer_geo_override_fields` 是稳定 bitset（country/admin/subdivision/city/isp/asn 分别为 bit 0..5），用于解释两个视图为何不同。`fact_schema=1` 的旧事实没有 supplier 基线，supplier 查询必须报告 unavailable/incomplete，禁止拿 customer 值冒充；migration 005 后由 worker 显式写 `fact_schema=2`。
 
-规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；新流量按事件时间选择已发布版本。历史修正必须复用 `operation_jobs`，输入固定为 tenant、时间窗、源/目标 publication、目标 view 和 generation；只从仍在线的原始事实，或具有连续 Kafka 坐标与版本证据的授权重放源重算，不能从单维 1h archive 伪造记录级重分类。作业先写隔离的新 generation，再按自然 Kafka 坐标覆盖、record count 和 raw/estimated counters 守恒，最后原子切换可见 generation；失败、取消或校验不通过继续读取旧 generation。禁止 `ALTER/UPDATE flow_records`、禁止复用 `ingest_generation` 表达分类版本，也禁止在请求线程扫描原始事实做大范围修正。原始事实已经按策略销毁且没有可验证重放源时稳定拒绝，不能产生“部分已修正”的结果。
+规则含 reason、actor、审批、`effective_from/expires_at`、row version。修正只产生新 snapshot；新流量按事件时间选择已发布版本。历史修正复用 `operation_jobs`，输入固定为单域时间窗、源/目标 publication、目标 view 和 generation；只从仍在线的原始事实，或具有连续 Kafka 坐标与版本证据的授权重放源重算，不能从单维 1h archive 伪造记录级重分类。作业先写隔离的新 generation，再按自然 Kafka 坐标覆盖、record count 和 raw/estimated counters 守恒，最后原子切换可见 generation；失败、取消或校验不通过不激活该 generation。禁止 `ALTER/UPDATE flow_records`、禁止复用 `ingest_generation` 表达分类版本，也禁止在请求线程扫描原始事实做大范围修正。原始事实已经按策略销毁且没有可验证重放源时稳定拒绝，不能产生“部分已修正”的结果。
 
-本节冻结的是语义和事实 provenance。历史修正的派生投影/aggregate 写入契约必须在 FLOW-06B 通过真实 CH 容量测试后选定；在此之前不新增第六张高基数表，也不开放 supplier/raw aggregate API。这样 migration 005 是后续任何实现都必需的无损基线，不预埋未经验证的 overlay 状态机。
+FLOW-06B 已选择唯一落地契约：`flow_reclassified_records` 克隆当前完整 fact schema，并以前置 `(reclassification_id,reclassification_generation)` 隔离；`flow_reclassification_generations` 只保存完成 marker 与守恒计数。分页重试使用稳定 CH dedup token，身份仍是源事实的 `(source_stream_id,kafka_partition,kafka_offset,record_index)`，不增加逐记录 hash。只有 CH marker 与 MySQL `activated_at` 同时存在时查询才可见，且查询表名与 generation 由服务端读取不可变作业记录注入，客户端不能指定。该投影不是新的事实权威，也不替代 raw 生命周期：raw 日删除执行前检查重分类依赖，重分类创建时检查重叠删除批准，两侧均 fail closed。固定硬件容量和集群发布仍由 FLOW-08 门禁验收。
 
 ## 5. 管理和操作流程
 

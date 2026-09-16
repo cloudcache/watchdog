@@ -386,16 +386,35 @@ func canonicalIPFilterValue(raw string) (string, error) {
 type filterCompileState struct {
 	parameters []proto.Parameter
 	next       int
+	columns    map[string]string
 }
 
 func compileBaseFilter(input FilterExpression) (string, []proto.Parameter, error) {
+	return compileBaseFilterForView(input, ViewCustomer)
+}
+
+func compileBaseFilterForView(input FilterExpression, view View) (string, []proto.Parameter, error) {
 	canonical, err := CanonicalFilter(input)
 	if err != nil {
 		return "", nil, err
 	}
 	state := filterCompileState{parameters: make([]proto.Parameter, 0)}
+	if view == ViewSupplier {
+		state.columns = supplierFilterColumns
+	}
 	expression, err := state.compile(canonical)
 	return expression, state.parameters, err
+}
+
+var supplierFilterColumns = map[string]string{
+	"category":      "supplier_category",
+	"asn":           "supplier_remote_asn",
+	"isp":           "supplier_remote_isp_id",
+	"geo.continent": "supplier_remote_geo_continent_id",
+	"geo.region":    "supplier_remote_geo_region_id",
+	"geo.country":   "supplier_remote_geo_country_id",
+	"geo.province":  "supplier_remote_geo_province_id",
+	"geo.city":      "supplier_remote_geo_city_id",
 }
 
 func (s *filterCompileState) compile(input FilterExpression) (string, error) {
@@ -429,6 +448,9 @@ func (s *filterCompileState) compile(input FilterExpression) (string, error) {
 
 func (s *filterCompileState) compilePredicate(input FilterExpression) (string, error) {
 	spec := filterFieldRegistry[input.Field]
+	if column := s.columns[input.Field]; column != "" {
+		spec.column = column
+	}
 	if spec.valueType == filterIP {
 		parts := make([]string, 0, len(input.Values))
 		for _, value := range input.Values {

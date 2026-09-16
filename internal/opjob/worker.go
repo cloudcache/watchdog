@@ -203,7 +203,7 @@ func (w *Worker) runAttempt(ctx context.Context, job Job) {
 
 func (w *Worker) finishAttempt(ctx context.Context, job Job, cancelRequested bool, resultRef string, handlerErr error) {
 	switch {
-	case cancelRequested:
+	case cancelRequested || errors.Is(handlerErr, ErrCancelRequested):
 		if err := w.Repo.CompleteCanceled(ctx, job.ID, job.LeaseToken); err != nil {
 			w.logf("operation job %s cancel finish: %v", job.ID, err)
 		}

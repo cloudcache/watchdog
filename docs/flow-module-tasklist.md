@@ -26,7 +26,7 @@
 
 ## 2. 当前状态
 
-**当前活动切片：FLOW-06B 历史重分类。** FLOW-05G 固定运营报表已经完成并进入提交：六个稳定入口使用独立固定报表契约、服务端 composition、VTable 和异步导出；真实 ClickHouse HTTP 覆盖六种 report kind，生产 8090 六页和两个断点完成浏览器回归。Storage V2 L5B3b/L5B3c/L5B4 已分别完成 worker tombstone、外部恢复演练和完整 UTC 月 archive 批准/删除/恢复；删除仍由 published policy、不可变 backup evidence、人工批准和执行时实时复核逐分区 fail closed，不存在按保留期自动裸删。
+**当前活动切片：FLOW-06C4-P/W VPN publication 与 worker ACK。** FLOW-06B 历史重分类已按单域契约实现：冻结源/目标 publication、view、UTC 窗口和 generation，复用 `operation_jobs` 分页续跑，写入隔离 CH projection；Kafka 自然坐标双向覆盖与 count/raw/estimated counter 守恒后才写 marker 并在 MySQL 原子激活。真实 ClickHouse 和真实 MySQL 已分别覆盖幂等页写、customer/supplier 查询以及 cancel/activate 竞争。固定硬件吞吐仍统一留在 FLOW-08 发布门，不冒充生产容量结论。
 
 FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 复用同一个 ClickHouse rebuild primitive 和平台 operation job 状态机，但以 `flow_storage_downsample`、UTC 日、policy-version generation 和独立水位调度。配置已禁止 legacy rollup 与 Storage V2 同时启用。
 
@@ -48,7 +48,7 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 | FLOW-03 sampling/dimension | [x] | [x] | [x] | [ ] | [x] | [x] | [x] | [x] | 数据面完成；API 接线/外部集成待办 |
 | FLOW-04 CH/rollup/metrics | [x] | [x] | [x] | [x] | [x] | [ ] | [ ] | [x] | Storage V2 非破坏路径完成；L5 删除/恢复与组合故障门继续 |
 | FLOW-05 query/API/UI | [x] | [x] | [x] | [x] | [x] | [ ] | [x] | [x] | Explorer、typed query、六固定报表和导出已交付；集群容量/滚动兼容门未过 |
-| FLOW-06 correction/reclass/export | [x] | [ ] | [ ] | [ ] | [x] | [ ] | [ ] | [ ] | raw/supplier/customer 与导出完成；历史重分类和 publication 未完成 |
+| FLOW-06 correction/reclass/export | [x] | [ ] | [x] | [x] | [x] | [x] | [x] | [ ] | raw/supplier/customer、导出与历史重分类完成；VPN/adjustment publication 未完成 |
 | FLOW-07 overseas/VPN | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | 境外和 VPN 被动数据面完成；rule publication/ACK 与主动探测未完成 |
 | FLOW-08 HA/lifecycle/release | [x] | [ ] | [x] | [ ] | [x] | [ ] | [ ] | [ ] | migration/reliability 基础完成；集群、性能、恢复和许可证门未完成 |
 
@@ -381,9 +381,11 @@ FLOW-04B 的 legacy `flow_rollup` runner 只保留回滚观察窗；Storage V2 �
 - [x] **FLOW-06A3 回归**：Flow race/vet、全库 test/vet 与 diff check 全过；真实 CH 集成仍按上一项保留外部门禁。
 - [x] **FLOW-06A3 已提交**：生产代码、测试与契约文档已进入独立提交 `d56bc3f6`；工作区不再残留该切片生产文件。
 - [x] **FLOW-06A2/06A3 外部证据已提交**：真实 provenance 数据门禁、String/Bool wire type 修复和对应单元契约进入提交 `b2c07af9`；平台权限项未被错误勾选。
-- [ ] **FLOW-06B 历史重分类**：冻结 tenant/window/source+target publication/view/generation payload；真实 CH 容量测试后选择唯一派生投影路径，复用 operation_jobs 扫描/lease/retry/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。
+- [x] **FLOW-06B 历史重分类设计/编码**：冻结单域 window/source+target publication/view/generation payload；唯一派生路径为 `flow_reclassified_records` 隔离完整投影及 `flow_reclassification_generations` marker，复用 `operation_jobs` lease/retry/checkpoint/cancel，不修改 base、不复用 ingest generation、不新增 Flow 状态机。只从仍在线且精确匹配源 AddressSnap/classification 的 raw facts 重算；archive 或已删除 raw 稳定拒绝。
 - [x] **FLOW-06B1 平台前置已解除**：PLAT-04G 已提供 lease-token fenced、单调 progress/checkpoint reporter、heartbeat flush 和 takeover 续跑，并由 commit `f0fb1444` 关闭。FLOW-06B 仍须另行冻结 CH 派生投影与容量门禁，不能因平台原语完成而自动勾选历史重分类。
-- [ ] **FLOW-06B 守恒/切换**：新 generation 隔离写入，自然 Kafka 坐标覆盖、record count、raw/estimated counters 全通过后原子可见；失败/取消保留旧 generation。覆盖重叠规则、事件时间、幂等、Storage V2 原始/归档边界、失败续跑和回退；原始已销毁且无可验证 Kafka 重放源时必须拒绝。
+- [x] **FLOW-06B 守恒/切换与查询**：新 generation 隔离写入；源前后 evidence、自然 Kafka 坐标双向差集、record count、raw/estimated counters 全通过后，先写 CH completion marker，再由持 lease token 的 worker 在 MySQL 原子激活。失败/取消不激活；cancel/activate 锁同一行并由真实 MySQL 验证先提交者语义。raw 日删除在重分类 queued/running/cancel-requested 期间 fail closed，已有 raw 删除批准覆盖的窗口禁止创建新作业。查询只接受 server-owned 固定 projection 和已激活 `(id,generation,view,window)`，复用 typed compiler/RBAC，不接受客户端表名。真实 CH 覆盖分页、重复页 token、完整性、customer/supplier 结果和 marker；固定硬件吞吐归 FLOW-08。
+- [x] **FLOW-06B 单元/变更/回归**：live 与 fixed-snapshot enrichment corpus 等价；非法 source、view/window、旧事实、坐标/计数不守恒、取消和 lease 丢失 fail closed；migration 016/0040、query compiler、worker 与 server 定向测试通过。operation job 的取消哨兵明确落为 `canceled` 而不是 `failed`；守恒累计使用 Decimal256，真实 CH 已覆盖两条 `MaxUint64` counter 求和不溢出。
+- [x] **FLOW-06B 已提交门禁**：生产代码、MySQL/ClickHouse migrations、真实库集成测试和本文档由独立切片提交，不夹带并行地址库或前端改动。
 - [ ] **FLOW-06C 管理/导出**：按 06C1–06C4 独立交付；父项在 raw/supplier 明细和 publication 生命周期都关闭前保持未完成，不复制地址库 CRUD 或平台任务状态机。
   - [x] **FLOW-06C1 customer aggregate export**：复用平台 `export_tasks + operation_jobs` 完成策略有界的完整查询 CSV/Parquet、query/policy/auth 快照、权限复核、取消/重试/下载/过期销毁；提交 `a9fc7622`。
   - [x] **FLOW-06C2 raw/supplier detail export**：使用独立 `flow.records` detail schema/capability 和 Kafka 坐标 cursor 逐页读取；分别要求 `view_raw+export_raw`、`view_supplier+export_supplier`，冻结字段、filter、排序和 provenance。禁止复用 aggregate row schema、当前页导出或 customer 补值。

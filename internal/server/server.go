@@ -58,15 +58,17 @@ type Server struct {
 	snmpExportCancel context.CancelFunc
 	billingCancel    context.CancelFunc
 
-	vpnCandidateMaterializer  *flowch.VPNCandidateMaterializer
-	vpnCandidateRunner        *flowvpn.CandidateRunner
-	vpnDetectCancel           context.CancelFunc
-	flowExportCancel          context.CancelFunc
-	flowReconciliationCancel  context.CancelFunc
-	flowArchiveCancel         context.CancelFunc
-	flowLifecycle             *flowlifecycle.Store
-	flowDeleteEvidence        flowlifecycle.RawDayEvidenceReader
-	flowArchiveDeleteEvidence flowlifecycle.ArchiveMonthEvidenceReader
+	vpnCandidateMaterializer   *flowch.VPNCandidateMaterializer
+	vpnCandidateRunner         *flowvpn.CandidateRunner
+	vpnDetectCancel            context.CancelFunc
+	flowExportCancel           context.CancelFunc
+	flowReconciliationCancel   context.CancelFunc
+	flowArchiveCancel          context.CancelFunc
+	flowLifecycle              *flowlifecycle.Store
+	flowDeleteEvidence         flowlifecycle.RawDayEvidenceReader
+	flowArchiveDeleteEvidence  flowlifecycle.ArchiveMonthEvidenceReader
+	flowReclassificationRunner *flowch.ReclassificationRunner
+	flowReclassificationCancel context.CancelFunc
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey
@@ -175,6 +177,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	}
 	if err := s.startFlowQuery(); err != nil {
 		return fmt.Errorf("start flow query: %w", err)
+	}
+	if err := s.startFlowReclassification(); err != nil {
+		return fmt.Errorf("start flow historical reclassification: %w", err)
 	}
 	if err := s.startVPNDetection(); err != nil {
 		return fmt.Errorf("start VPN detection: %w", err)
@@ -322,6 +327,10 @@ func (s *Server) stopRuntime() {
 		s.flowArchiveCancel()
 		s.flowArchiveCancel = nil
 	}
+	if s.flowReclassificationCancel != nil {
+		s.flowReclassificationCancel()
+		s.flowReclassificationCancel = nil
+	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()
 		s.clickHouse = nil
@@ -331,6 +340,7 @@ func (s *Server) stopRuntime() {
 	s.flowLifecycle = nil
 	s.flowDeleteEvidence = nil
 	s.flowArchiveDeleteEvidence = nil
+	s.flowReclassificationRunner = nil
 	s.runtimeReady.Store(false)
 }
 

@@ -247,11 +247,11 @@ MySQL 继续保存导入后的可编辑地址数据、draft/revision、publicati
 
 | 口径 | 含义 | 存储/可变性 |
 |---|---|---|
-| raw | exporter 原始 tuple、counter、采样元数据和 Kafka provenance | **唯一被存储**，永不覆盖 |
-| supplier | 按供应商/运营商资料对 raw 归集的结算基线 | 不存储；渲染/导出/账单计算时按规则从 raw 算出（后续能力） |
-| customer | 在 supplier 之上应用客户归属/业务/地址集合/处置规则 | 不存储；同上（后续能力） |
+| raw | exporter 原始 tuple、counter、采样元数据和 Kafka provenance | 永不覆盖；作为可复算事实根 |
+| supplier | 按供应商 Geo/ASN 资料对 raw 归集的结算基线 | live facts 保存版本化基线；历史重分类写隔离 generation |
+| customer | 在 supplier 之上应用地址/Geo/ASN/ISP/业务归属覆盖 | live facts 保存最终值与 override provenance；历史重分类写隔离 generation |
 
-**本期只存原始（raw），不做客户/供应商口径修正。** CH 里的 Flow 事实永远是 exporter 原始 tuple/counter/采样元数据/Kafka provenance，不物化 supplier/customer 列。客户/供应商修正暂不在范围内；**后续如需也按同一方式处理：存储永远是 raw，必要时在渲染/导出时按客户维度/供应商维度对 raw 应用规则算出呈现，绝不回写 raw，也不跑历史重分类作业。** 届时的规则就是 MySQL 里几张表（`parties`、address set、分类/归属/处置 rule，与 PB 无关、也不是租户），可作为 CH dictionary/join 在查询期下推；改规则只改变随后的呈现，raw 不变。
+CH 的 `flow_records` 保持 exporter raw tuple/counter/Kafka provenance 不可变，同时保存入库时已发布 AddressSnap/classification 产生的 supplier 基线、customer 最终值和版本证据。规则更新不 `ALTER/UPDATE` base，也不在查询请求中临时扫描并改写历史。需要按新 publication 重算历史时，唯一允许路径是 FLOW-06B：异步读取仍在线的 raw facts，写入按 `(reclassification_id,generation)` 隔离的派生投影，经 Kafka 坐标与 count/counter 守恒后原子激活；失败或取消不改变默认事实。原始事实已销毁且没有可验证重放源时拒绝重分类。
 
 账单是唯一需要冻结的场景（见 §5.7 与不变量 6）：账单在计算时按对手方维度从 raw 归集，关闭时快照当期结果、规则版本、地址发布版本和采样完整度，使已关闭周期可复算。地址/地域/运营商富化仍在采集入库阶段由内存 WADS 完成（见 §5.4），与这里的口径修正是两件独立的事。
 
