@@ -14,6 +14,7 @@ import (
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/flowch"
+	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/go-sql-driver/mysql"
 )
@@ -108,7 +109,8 @@ func TestRealSNMPV2RecipePollWritesClickHouseWithoutVM(t *testing.T) {
 		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: chDatabase, Username: "default", PasswordFile: secret},
 		SNMP:       SNMPConfig{PollConcurrency: 1},
 	}
-	runtime, err := openSNMPCollectorRuntime(ctx, cfg, "snmp-agent-a", fixedSNMPQuery{value: 1<<53 + 33})
+	query := &sequenceSNMPQuery{next: 1<<53 + 33, increment: 1024}
+	runtime, err := openSNMPCollectorRuntime(ctx, cfg, "snmp-agent-a", query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +129,32 @@ func TestRealSNMPV2RecipePollWritesClickHouseWithoutVM(t *testing.T) {
 	}
 	if count.Rows() != 1 || count[0] != 1 || counter[0] != 1<<53+33 {
 		t.Fatalf("ClickHouse count=%v counter=%v", count, counter)
+	}
+	// A traffic graph needs two consecutive counter observations. Force the
+	// fixture recipe due again, then prove the same store used by the Gin API
+	// can derive a non-empty bps series. This catches a collector that writes a
+	// single point but is not actually capable of keeping charts alive.
+	if _, err := runtime.db.ExecContext(ctx, "UPDATE snmp_collection_recipes SET last_polled_at=NULL WHERE id='recipe-a'"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	second, err := runtime.RunDue(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SampleCount != 1 || second.FailedCount != 0 {
+		t.Fatalf("second poll result=%+v", second)
+	}
+	series, err := runtime.store.Query(ctx, snmpch.QueryRequest{
+		DeviceID: "device-a", Metric: snmpch.MetricIfInBPS,
+		From: time.Now().UTC().Add(-time.Minute), To: time.Now().UTC().Add(time.Minute),
+		Step: time.Second, MaxRows: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || len(series[0].Points) == 0 || series[0].Points[0].Value <= 0 {
+		t.Fatalf("derived bps series=%+v", series)
 	}
 	var polled sql.NullTime
 	if err := runtime.db.QueryRowContext(ctx, "SELECT last_polled_at FROM snmp_collection_recipes WHERE id='recipe-a'").Scan(&polled); err != nil || !polled.Valid {
@@ -148,5 +176,22 @@ func (q fixedSNMPQuery) Get(_ context.Context, request snmpdomain.GetRequest) (s
 }
 
 func (q fixedSNMPQuery) Walk(context.Context, snmpdomain.WalkRequest) (snmpdomain.QueryResponse, error) {
+	return snmpdomain.QueryResponse{}, errors.New("unexpected walk")
+}
+
+type sequenceSNMPQuery struct {
+	next, increment uint64
+}
+
+func (q *sequenceSNMPQuery) Get(_ context.Context, request snmpdomain.GetRequest) (snmpdomain.QueryResponse, error) {
+	if len(request.OIDs) != 1 {
+		return snmpdomain.QueryResponse{}, fmt.Errorf("unexpected OIDs: %v", request.OIDs)
+	}
+	value := q.next
+	q.next += q.increment
+	return snmpdomain.QueryResponse{VarBinds: []snmpdomain.VarBind{{OID: request.OIDs[0], Value: value, ValueType: snmpdomain.ValueCounter64}}}, nil
+}
+
+func (*sequenceSNMPQuery) Walk(context.Context, snmpdomain.WalkRequest) (snmpdomain.QueryResponse, error) {
 	return snmpdomain.QueryResponse{}, errors.New("unexpected walk")
 }

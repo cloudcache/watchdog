@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,10 +33,7 @@ func (f *fakeSNMPDiscoveryRunner) Discover(_ context.Context, request snmpdomain
 // TestDeviceAndAgentAPI exercises the complete management path against a real,
 // empty MySQL schema. It is opt-in so ordinary unit tests do not require MySQL.
 func TestDeviceAndAgentAPI(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
-	}
+	dsn := isolatedMySQLDSN(t)
 	cfg := Config{
 		MySQL: MySQLConfig{DSN: dsn},
 		Admin: AdminConfig{Username: "api-test-admin", Password: "api-test-password"},

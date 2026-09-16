@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -96,10 +95,7 @@ func (e *snmpA2Executor) Do(ctx context.Context, query ch.Query) error {
 }
 
 func TestSNMPA2APIPermissionsJobsAndBilling(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
-	}
+	dsn := isolatedMySQLDSN(t)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Fatal(err)

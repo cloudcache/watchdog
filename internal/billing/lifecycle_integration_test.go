@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -39,10 +38,7 @@ func (failedFlowBilling) ReadBilling(context.Context, flowch.FlowBillingRequest)
 }
 
 func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
-	}
+	dsn := isolatedMySQLDSN(t)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Fatal(err)

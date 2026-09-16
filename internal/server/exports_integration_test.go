@@ -9,7 +9,6 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,10 +26,7 @@ import (
 // merge/dispatch pieces are covered DB-free in exports_test.go; this asserts the
 // parts that only a real opjob store can prove. Gated on WATCHDOG_TEST_MYSQL_DSN.
 func TestExportsGenericLifecycle(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
-	}
+	dsn := isolatedMySQLDSN(t)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Fatal(err)

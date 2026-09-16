@@ -50,10 +50,7 @@ func apiBillingRateBuckets(from time.Time, secondComplete bool) []flowch.Billing
 }
 
 func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
-	}
+	dsn := isolatedMySQLDSN(t)
 	exportDir := t.TempDir()
 	s, err := New(Config{MySQL: MySQLConfig{DSN: dsn}, Admin: AdminConfig{Username: "kiss07-admin", Password: "kiss07-password"}, Billing: BillingConfig{ExportDir: exportDir}})
 	if err != nil {

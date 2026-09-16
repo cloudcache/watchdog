@@ -26,10 +26,10 @@ func TestRealClickHouseFlowAndSNMPBillingPeriod(t *testing.T) {
 	if os.Getenv("WATCHDOG_BILLING_CLICKHOUSE_INTEGRATION") != "1" {
 		t.Skip("set WATCHDOG_BILLING_CLICKHOUSE_INTEGRATION=1 to run")
 	}
-	dsn := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	dsn := isolatedMySQLDSN(t)
 	passwordFile := os.Getenv("WATCHDOG_CLICKHOUSE_PASSWORD_FILE")
-	if dsn == "" || passwordFile == "" {
-		t.Skip("WATCHDOG_TEST_MYSQL_DSN and WATCHDOG_CLICKHOUSE_PASSWORD_FILE are required")
+	if passwordFile == "" {
+		t.Skip("WATCHDOG_CLICKHOUSE_PASSWORD_FILE is required")
 	}
 	passwordBytes, err := os.ReadFile(passwordFile)
 	if err != nil {
