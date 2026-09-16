@@ -94,7 +94,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 归档 generation 固定编码为 `(policy_version << 32) | repair_attempt`。这保证新策略的首次构建严格高于任何旧策略 repair；迁移 011 会拒绝 legacy generation 已进入高 32-bit 命名空间的数据库。任务幂等键包含 UTC 日、策略版本和 repair attempt，取消、租约接管或失败重试不能复用更旧 generation 覆盖新结果。调度持久化顺序固定为 `enqueue operation job -> bind sealed partition state/job/generation -> advance watermark`；任一步失败重扫都由幂等键收敛，绝不能在分区状态存在前推进水位。被清理的 terminal job 以 `job.id IS NULL` 继续进入 repair 候选，不能把 UTC 日永久搁浅。
 
-`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。L5B1 管理不可变备份恢复证据；L5B2 的独立批准 action 用分区 ETag 在同一事务冻结 policy/generation、Kafka coverage、raw/archive counters 和 backup evidence 后推进 `delete_eligible`，且允许在 delete job 尚未绑定时带批准 ETag 撤销。批准 ID 已成为分区与最终 deletion receipt 的显式外键。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。两类删除在真实备份恢复、DDL 歧义、takeover/cancel、删除后查询与恢复门禁完成前不得由 TTL 或人工 SQL 绕过。
+`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。L5B1 管理不可变备份恢复证据；L5B2 的独立批准 action 用分区 ETag 在同一事务冻结 policy/generation、Kafka coverage、raw/archive counters 和 backup evidence 后推进 `delete_eligible`，且允许在 delete job 尚未绑定时带批准 ETag 撤销。L5B3a 已实现但仍被开关锁住：批准、canonical `operation_jobs`、requested receipt 和 partition job binding 在同一 MySQL 事务提交；worker 再实时复核全部证据及包含 `disposition=drop` 的逻辑物理行数，以稳定 QueryID 执行 `DROP PARTITION`，并在 post-check 后原子写终态。调度后不得取消，调度前以撤销批准停止，避免 DDL 已执行但 cancel 状态谎报。真实 MySQL 与 ClickHouse 已验证成功、证据变化拒绝、永久/暂时错误、接管及 ambiguous ACK 收敛。仍未解除的阻断是：Flow worker 尚无已删除 UTC 日的 publication/ACK 写入屏障，极晚事件可能重新创建分区；在该屏障和真实外部备份恢复演练完成前不得开放策略开关。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。
 
 ## 5. 查询与导出切换
 
@@ -122,6 +122,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 | 策略、UTC 日状态、水位和 CAS API | KISS migration `0033_flow_storage_lifecycle.sql`、`internal/flowlifecycle`、`internal/server/flow_storage_lifecycle.go` | 单域 policy draft/publish/retire；`raw_delete_enabled=true` 稳定拒绝；旧 tenant 管理面不再作为当前实现 |
 | aging/downsample operation job | `internal/flowlifecycle/archive*.go`、`internal/server/flow_archive.go`、`internal/flowch/rollup.go` | 只写 1h archive；守恒不通过进入 failed/repair |
 | raw 日删除只读证据 | `internal/flowch/retention_coverage.go`、`internal/flowlifecycle/delete_readiness.go` | receipt 日交集 + durable watermark + counters + restore evidence；不改状态、不删数据 |
+| raw 日删除执行器（L5B3a） | `0037_flow_raw_delete_execution.sql`、`internal/flowlifecycle/raw_delete.go`、`internal/flowch/raw_delete.go` | 原子 job/receipt、实时复核、稳定 QueryID、post-check；缺 worker tombstone ACK，策略开关保持关闭 |
 | raw/archive 混合查询 | `internal/flowquery`、`internal/server/flow_query*.go`、`internal/server/flow_reports*.go` | 只采用连续 reconciled boundary；1m/raw 与 1h/hybrid 语义分开 |
 
 开关固定为 `flow_storage.enabled`；legacy `flow_rollup.enabled` 仅供回滚观察窗，两者同时为 true 时配置校验直接失败。迁移本身不自动启动 worker、hub、downsample 或删除作业。
@@ -168,16 +169,16 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 ### V2-D aging/downsample
 
-> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033` + `0034` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 仅是待 KISS-08 删除的历史实现。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。物理删除未接线。
+> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0037` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 仅是待 KISS-08 删除的历史实现。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw-day DDL executor/receipt 已接线但策略开关继续 fail closed，不能在缺少 ingest tombstone ACK 屏障时运行。
 
 - [x] **设计**：冻结管理策略表/API、UTC 分区粒度、目标 schema、守恒证据、generation 命名空间和删除授权。
 - [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。
-- [ ] **编码/集成（破坏路径）**：接入 durable Kafka 日覆盖证据后实现显式 raw/archive delete handler；故障、取消或证据缺失均不得删除。
+- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；仍须实现删除日期 publication/所有活跃 worker ACK/极晚事件隔离，再开放 raw 开关。archive 月删除另行实现；故障或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A 只读证据链单独提交。真实 MySQL operation-job checkpoint/水位保护、真实 CH 全天守恒/hybrid/raw-only/overseas/日级 offset coverage 已通过；DDL 不确定 ACK、维护窗口/回滚、批准、真实 restore 和物理删除仍按各自未勾选门禁保持锁定。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；ingest tombstone ACK、真实外部 restore 和开关解锁仍保持未完成。
 
 ## 9. 本次验证证据（2026-09-07）
 

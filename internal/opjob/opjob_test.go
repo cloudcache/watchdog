@@ -1,10 +1,40 @@
 package opjob
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 )
+
+type failureCaptureRepository struct {
+	code   string
+	detail string
+	retry  bool
+}
+
+func (*failureCaptureRepository) Enqueue(context.Context, Job) (Job, error) { return Job{}, nil }
+func (*failureCaptureRepository) Get(context.Context, string) (Job, error) {
+	return Job{}, sql.ErrNoRows
+}
+func (*failureCaptureRepository) List(context.Context, Filter) ([]Job, error) { return nil, nil }
+func (*failureCaptureRepository) LeaseNext(context.Context, string, string, time.Duration) (Job, error) {
+	return Job{}, sql.ErrNoRows
+}
+func (*failureCaptureRepository) Heartbeat(context.Context, string, string, time.Duration, uint64, json.RawMessage) (bool, error) {
+	return false, nil
+}
+func (*failureCaptureRepository) CompleteSucceeded(context.Context, string, string, string) error {
+	return nil
+}
+func (*failureCaptureRepository) CompleteCanceled(context.Context, string, string) error { return nil }
+func (r *failureCaptureRepository) CompleteFailed(_ context.Context, _, _, code, detail string, retry bool, _ time.Time) error {
+	r.code, r.detail, r.retry = code, detail, retry
+	return nil
+}
+func (*failureCaptureRepository) RequestCancel(context.Context, string) error { return nil }
 
 func TestEncodeDecodePayloadRoundTrip(t *testing.T) {
 	type p struct {
@@ -81,5 +111,26 @@ func TestReporterReportNilIsNoOp(t *testing.T) {
 	var r *Reporter
 	if err := r.Report(nil, 5, nil); err != nil {
 		t.Fatalf("nil reporter Report must be a no-op, got %v", err)
+	}
+}
+
+func TestWorkerTerminalFailureCallbackReceivesPersistedDetail(t *testing.T) {
+	repo := &failureCaptureRepository{}
+	var callbackCode, callbackDetail string
+	w := &Worker{
+		Repo: repo,
+		OnTerminalFailure: func(_ Job, code, detail string) {
+			callbackCode, callbackDetail = code, detail
+		},
+	}
+	job := Job{ID: "job-1", LeaseToken: "lease-1", AttemptCount: 2}
+	w.finishAttempt(context.Background(), job, false, "", TerminalError(errors.New("invalid payload")))
+
+	wantDetail := "attempt 2: invalid payload"
+	if repo.code != CodeTerminal || repo.detail != wantDetail || repo.retry {
+		t.Fatalf("persisted failure = code %q detail %q retry %v", repo.code, repo.detail, repo.retry)
+	}
+	if callbackCode != repo.code || callbackDetail != repo.detail {
+		t.Fatalf("callback failure = code %q detail %q, want persisted values", callbackCode, callbackDetail)
 	}
 }

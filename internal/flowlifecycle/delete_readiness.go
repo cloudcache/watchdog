@@ -33,6 +33,7 @@ const (
 
 type RawDayEvidenceReader interface {
 	DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error)
+	RawDayPhysicalRecords(context.Context, time.Time) (uint64, error)
 	DayOffsetCoverage(context.Context, time.Time) ([]flowch.DayOffsetCoverage, error)
 }
 
@@ -56,6 +57,7 @@ type RawDeleteReadiness struct {
 	Blockers         []string         `json:"blockers"`
 	Source           Counters         `json:"source"`
 	Archive          Counters         `json:"archive"`
+	PhysicalRecords  uint64           `json:"physical_record_count"`
 	Coverage         []OffsetCoverage `json:"kafka_coverage"`
 	BackupEvidenceID string           `json:"backup_evidence_id,omitempty"`
 }
@@ -91,6 +93,10 @@ func (store *Store) RawDayDeleteReadiness(ctx context.Context, sourceDate, now t
 		return RawDeleteReadiness{}, err
 	}
 	result.Source, result.Archive = lifecycleCounters(raw), lifecycleCounters(archive)
+	result.PhysicalRecords, err = reader.RawDayPhysicalRecords(ctx, day)
+	if err != nil {
+		return RawDeleteReadiness{}, err
+	}
 	spans, err := reader.DayOffsetCoverage(ctx, day)
 	if err != nil {
 		return RawDeleteReadiness{}, err

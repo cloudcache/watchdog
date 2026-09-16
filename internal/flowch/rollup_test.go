@@ -152,6 +152,22 @@ func TestDayStorageCountersRejectsNonUTCDay(t *testing.T) {
 	}
 }
 
+func TestRawDayPhysicalRecordsCountsAllLogicalRows(t *testing.T) {
+	day := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	executor := &scalarSequenceExecutor{values: []uint64{9}}
+	runner := &RollupRunner{executor: executor}
+	got, err := runner.RawDayPhysicalRecords(context.Background(), day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 9 || executor.index != 1 {
+		t.Fatalf("physical records=%d queries=%d", got, executor.index)
+	}
+	if body := executor.queries[0].Body; !strings.Contains(body, "FROM flow_records FINAL") || strings.Contains(body, "disposition") {
+		t.Fatalf("physical count does not cover all logical records: %s", body)
+	}
+}
+
 func TestBuildRollupQueryRejectsUnalignedOrUnsafeRequests(t *testing.T) {
 	valid := RollupRequest{
 		Resolution: RollupOneHour,
@@ -257,13 +273,15 @@ func TestRecordReaperRepairAndPermanentGapCount(t *testing.T) {
 // scalarSequenceExecutor returns one UInt64 per Do call, in order, so a test can
 // drive the two queries BucketNeedsRepair issues (stored total, then live count).
 type scalarSequenceExecutor struct {
-	values []uint64
-	index  int
+	values  []uint64
+	index   int
+	queries []ch.Query
 }
 
 func (e *scalarSequenceExecutor) Do(ctx context.Context, query ch.Query) error {
 	current := e.index
 	e.index++
+	e.queries = append(e.queries, query)
 	results, ok := query.Result.(proto.Results)
 	if !ok || len(results) != 1 {
 		return errors.New("unexpected scalar result contract")

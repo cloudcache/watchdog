@@ -89,11 +89,31 @@ func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 	storage.GET("/deletion-receipts", s.requirePermission("job.view"), s.listFlowDeletionReceipts)
 	storage.GET("/deletion-approvals", s.requirePermission("job.view"), s.listFlowDeletionApprovals)
 	storage.GET("/deletion-approvals/:id", s.requirePermission("job.view"), s.getFlowDeletionApproval)
+	storage.POST("/deletion-approvals/:id/actions/execute", s.requirePermission("job.manage"), s.executeFlowRawDelete)
 	storage.POST("/deletion-approvals/:id/actions/revoke", s.requirePermission("job.manage"), s.revokeFlowDeletionApproval)
 	storage.GET("/backup-evidence", s.requirePermission("job.view"), s.listFlowBackupEvidence)
 	storage.POST("/backup-evidence", s.requirePermission("job.manage"), s.createFlowBackupEvidence)
 	storage.GET("/backup-evidence/:id", s.requirePermission("job.view"), s.getFlowBackupEvidence)
 	storage.POST("/backup-evidence/:id/actions/revoke", s.requirePermission("job.manage"), s.revokeFlowBackupEvidence)
+}
+
+func (s *Server) executeFlowRawDelete(c *gin.Context) {
+	expected, ok := requiredFlowLifecycleIfMatch(c)
+	if !ok {
+		return
+	}
+	if s.flowLifecycle == nil || s.jobs == nil || s.flowDeleteEvidence == nil {
+		fail(c, http.StatusServiceUnavailable, "flow_lifecycle_unavailable", "Flow lifecycle deletion worker is unavailable")
+		return
+	}
+	job, receipt, partition, err := s.flowLifecycle.ScheduleRawDayDelete(
+		c.Request.Context(), c.Param("id"), expected, currentPrincipal(c).UserID, time.Now().UTC())
+	if err != nil {
+		writeFlowLifecycleError(c, err)
+		return
+	}
+	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "flow_raw_delete.schedule", "flow_deletion_receipt", receipt.ID)
+	c.JSON(http.StatusAccepted, gin.H{"job": job, "receipt": receipt, "partition": partition})
 }
 
 func (s *Server) listFlowDeletionApprovals(c *gin.Context) {
@@ -409,7 +429,8 @@ func (s *Server) listFlowReconciliationWatermarks(c *gin.Context) {
 func (s *Server) listFlowDeletionReceipts(c *gin.Context) {
 	listFlowStorageRows(c, s.db, "flow_deletion_receipts", []string{
 		"id", "storage_kind", "partition_granularity", "partition_start", "partition_end", "policy_version",
-		"generation", "operation_job_id", "deletion_approval_id", "backup_evidence_id", "source_record_count", "ch_query_id", "status", "requested_at", "completed_at",
+		"generation", "operation_job_id", "deletion_approval_id", "backup_evidence_id", "source_record_count", "source_physical_record_count",
+		"source_estimated_valid_records", "ch_query_id", "post_delete_record_count", "status", "error_code", "requested_at", "completed_at",
 	}, "requested_at", map[string]string{"status": "status", "storage_kind": "storage_kind", "operation_job_id": "operation_job_id"})
 }
 

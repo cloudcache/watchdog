@@ -165,6 +165,26 @@ func scanJob(row rowScanner) (Job, error) {
 }
 
 func (s *Store) Enqueue(ctx context.Context, job Job) (Job, error) {
+	return enqueue(ctx, s.db, job)
+}
+
+type enqueueDB interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// EnqueueTx inserts an operation job through the canonical state machine while
+// allowing a caller to atomically bind its own domain row in the same MySQL
+// transaction. The caller owns commit/rollback; no second job table or worker
+// state machine is introduced.
+func EnqueueTx(ctx context.Context, tx *sql.Tx, job Job) (Job, error) {
+	if tx == nil {
+		return Job{}, errors.New("operation job transaction is required")
+	}
+	return enqueue(ctx, tx, job)
+}
+
+func enqueue(ctx context.Context, db enqueueDB, job Job) (Job, error) {
 	if job.JobType == "" || job.IdempotencyKey == "" || len(job.RequestHash) != 64 {
 		return Job{}, errors.New("operation job type, idempotency key and request hash are required")
 	}
@@ -179,7 +199,7 @@ func (s *Store) Enqueue(ctx context.Context, job Job) (Job, error) {
 	if job.CreatedBy != "" {
 		createdBy = job.CreatedBy
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO `+jobTable+` (
 			id, job_type, status, idempotency_key, request_hash,
 			progress_total, checkpoint_json, created_by, next_attempt_at
@@ -189,7 +209,7 @@ func (s *Store) Enqueue(ctx context.Context, job Job) (Job, error) {
 		string(checkpoint), createdBy, time.Now().UTC()); err != nil {
 		return Job{}, err
 	}
-	stored, err := scanJob(s.db.QueryRowContext(ctx, `
+	stored, err := scanJob(db.QueryRowContext(ctx, `
 		SELECT `+jobColumns+` FROM `+jobTable+`
 		WHERE job_type = ? AND idempotency_key = ?
 	`, job.JobType, job.IdempotencyKey))

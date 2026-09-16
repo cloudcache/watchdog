@@ -28,6 +28,7 @@ func TestPlatformOperationRoutesAreRegistered(t *testing.T) {
 		http.MethodGet + " /api/v1/flow/storage/deletion-receipts":                        false,
 		http.MethodGet + " /api/v1/flow/storage/deletion-approvals":                       false,
 		http.MethodGet + " /api/v1/flow/storage/deletion-approvals/:id":                   false,
+		http.MethodPost + " /api/v1/flow/storage/deletion-approvals/:id/actions/execute":  false,
 		http.MethodPost + " /api/v1/flow/storage/deletion-approvals/:id/actions/revoke":   false,
 		http.MethodGet + " /api/v1/flow/storage/backup-evidence":                          false,
 		http.MethodPost + " /api/v1/flow/storage/backup-evidence":                         false,

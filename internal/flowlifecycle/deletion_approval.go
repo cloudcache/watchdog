@@ -23,6 +23,7 @@ type DeletionApproval struct {
 	BackupEvidenceID     string           `json:"backup_evidence_id,omitempty"`
 	KafkaCoverage        []OffsetCoverage `json:"kafka_coverage"`
 	Source               Counters         `json:"source"`
+	PhysicalRecords      uint64           `json:"physical_record_count"`
 	Archive              Counters         `json:"archive"`
 	Status               string           `json:"status"`
 	ApprovedBy           string           `json:"approved_by"`
@@ -45,7 +46,7 @@ type DeletionApprovalFilter struct {
 
 const deletionApprovalColumns = `id,storage_kind,partition_granularity,partition_start,partition_end,
 	policy_id,policy_version,generation,COALESCE(backup_evidence_id,''),kafka_coverage_json,
-	source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
+	source_record_count,source_physical_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
 	archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
 	status,approved_by,approved_at,COALESCE(revoked_by,''),revoked_at,row_version,created_at`
 
@@ -55,7 +56,7 @@ func scanDeletionApproval(row rowScanner) (DeletionApproval, error) {
 	var revokedAt sql.NullTime
 	err := row.Scan(&approval.ID, &approval.StorageKind, &approval.PartitionGranularity, &approval.PartitionStart, &approval.PartitionEnd,
 		&approval.PolicyID, &approval.PolicyVersion, &approval.Generation, &approval.BackupEvidenceID, &coverage,
-		&approval.Source.RecordCount, &approval.Source.RawBytes, &approval.Source.RawPackets, &approval.Source.EstimatedBytes, &approval.Source.EstimatedPackets, &approval.Source.EstimatedValidRecords,
+		&approval.Source.RecordCount, &approval.PhysicalRecords, &approval.Source.RawBytes, &approval.Source.RawPackets, &approval.Source.EstimatedBytes, &approval.Source.EstimatedPackets, &approval.Source.EstimatedValidRecords,
 		&approval.Archive.RecordCount, &approval.Archive.RawBytes, &approval.Archive.RawPackets, &approval.Archive.EstimatedBytes, &approval.Archive.EstimatedPackets, &approval.Archive.EstimatedValidRecords,
 		&approval.Status, &approval.ApprovedBy, &approval.ApprovedAt, &approval.RevokedBy, &revokedAt, &approval.RowVersion, &approval.CreatedAt)
 	if err == nil {
@@ -186,19 +187,19 @@ func (store *Store) ApproveRawDayDelete(ctx context.Context, readiness RawDelete
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO flow_deletion_approvals
 		(id,storage_kind,partition_granularity,partition_start,partition_end,policy_id,policy_version,generation,backup_evidence_id,kafka_coverage_json,
-		 source_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
+		 source_record_count,source_physical_record_count,source_raw_bytes,source_raw_packets,source_estimated_bytes,source_estimated_packets,source_estimated_valid_records,
 		 archive_record_count,archive_raw_bytes,archive_raw_packets,archive_estimated_bytes,archive_estimated_packets,archive_estimated_valid_records,
 		 status,approved_by,approved_at)
 		VALUES (
 		 ?,'raw','day',
 		 ?,?,?,?,?,
 		 NULLIF(?,''),?,
-		 ?,?,?,?,?,?,
+		 ?,?,?,?,?,?,?,
 		 ?,?,?,?,?,?,
 		 'approved',?,?)`,
 		approval.ID, approval.PartitionStart, approval.PartitionEnd, approval.PolicyID, approval.PolicyVersion, approval.Generation,
 		approval.BackupEvidenceID, coverageJSON,
-		approval.Source.RecordCount, approval.Source.RawBytes, approval.Source.RawPackets, approval.Source.EstimatedBytes, approval.Source.EstimatedPackets, approval.Source.EstimatedValidRecords,
+		approval.Source.RecordCount, readiness.PhysicalRecords, approval.Source.RawBytes, approval.Source.RawPackets, approval.Source.EstimatedBytes, approval.Source.EstimatedPackets, approval.Source.EstimatedValidRecords,
 		approval.Archive.RecordCount, approval.Archive.RawBytes, approval.Archive.RawPackets, approval.Archive.EstimatedBytes, approval.Archive.EstimatedPackets, approval.Archive.EstimatedValidRecords,
 		actor, now)
 	if err != nil {

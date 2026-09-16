@@ -86,8 +86,9 @@ type Worker struct {
 	Logf         func(format string, args ...any)
 	// OnTerminalFailure, when set, fires once after a job of this type is durably
 	// recorded as terminally failed. code is CodeTerminal for a non-retryable
-	// error, otherwise the retryable code that exhausted the budget.
-	OnTerminalFailure func(job Job, code string)
+	// error, otherwise the retryable code that exhausted the budget. detail is
+	// the same bounded attempt detail stored on the operation job.
+	OnTerminalFailure func(job Job, code, detail string)
 }
 
 func (w *Worker) logf(format string, args ...any) {
@@ -230,7 +231,7 @@ func (w *Worker) finishAttempt(ctx context.Context, job Job, cancelRequested boo
 			return
 		}
 		if !retry && w.OnTerminalFailure != nil {
-			w.OnTerminalFailure(job, code)
+			w.OnTerminalFailure(job, code, detail)
 		}
 	}
 }

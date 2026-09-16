@@ -41,12 +41,24 @@ func (s *Server) startFlowArchive() error {
 		Repo: s.jobs, JobType: flowlifecycle.ArchiveJobType, Owner: "watchdog-server/flow-archive",
 		Handler: flowlifecycle.NewArchiveHandler(store, runner), Logf: log.Printf,
 	}
+	deleteWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowlifecycle.RawDeleteJobType, Owner: "watchdog-server/flow-raw-delete",
+		Handler: flowlifecycle.NewRawDeleteHandler(store, runner), Logf: log.Printf,
+		OnTerminalFailure: func(job opjob.Job, code, detail string) {
+			failureContext, cancelFailure := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelFailure()
+			if err := store.MarkRawDeleteTerminalFailure(failureContext, job.ID, code, detail, time.Now()); err != nil {
+				log.Printf("watchdog Flow raw deletion %s terminal receipt: %v", job.ID, err)
+			}
+		},
+	}
 	scheduler := &flowlifecycle.ArchiveScheduler{
 		Store: store, Jobs: s.jobs, Runner: runner,
 		Interval: flowArchiveScanInterval, LateCheckEvery: flowLateCheckInterval,
 		MaxPartitions: flowArchiveScanBudget, MaxLateChecks: flowArchiveScanBudget, Logf: log.Printf,
 	}
 	go worker.Run(workerContext)
+	go deleteWorker.Run(workerContext)
 	go scheduler.Run(workerContext)
 	return nil
 }

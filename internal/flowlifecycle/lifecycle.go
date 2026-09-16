@@ -1,5 +1,5 @@
 // Package flowlifecycle owns the single-domain Flow storage lifecycle
-// contract. It contains no scheduler and performs no deletion; operation_jobs
+// contract, scheduler state, and guarded operation-job handlers. Destructive
 // handlers must satisfy these guards before issuing ClickHouse partition DDL.
 package flowlifecycle
 

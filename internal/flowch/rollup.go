@@ -317,6 +317,30 @@ WHERE bucket >= {start:DateTime('UTC')}
 	return raw, archive, nil
 }
 
+// RawDayPhysicalRecords counts every logical Flow fact in the UTC partition,
+// including disposition=drop rows excluded from conservation/billing totals.
+// Destructive verification uses this count so a zero billable total cannot be
+// mistaken for an already-absent partition.
+func (r *RollupRunner) RawDayPhysicalRecords(ctx context.Context, sourceDate time.Time) (uint64, error) {
+	if r == nil || r.executor == nil {
+		return 0, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	day := sourceDate.UTC()
+	if day.IsZero() || day != day.Truncate(24*time.Hour) {
+		return 0, Permanent(errors.New("physical record count requires a UTC-aligned source date"))
+	}
+	return r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT count() AS value
+FROM flow_records FINAL
+WHERE event_time >= {start:DateTime('UTC')}
+  AND event_time < {end:DateTime('UTC')}`,
+		Parameters: ch.Parameters(map[string]any{
+			"start": day.Format("2006-01-02 15:04:05"),
+			"end":   day.Add(24 * time.Hour).Format("2006-01-02 15:04:05"),
+		}),
+	})
+}
+
 func (r *RollupRunner) storageCounters(ctx context.Context, query ch.Query) (StorageCounters, error) {
 	var recordCount, rawBytes, rawPackets, estimatedBytes, estimatedPackets, estimatedValid proto.ColUInt64
 	var result StorageCounters

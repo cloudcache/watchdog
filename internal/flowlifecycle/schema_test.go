@@ -82,3 +82,21 @@ func TestDeletionApprovalSchemaFreezesEvidence(t *testing.T) {
 		t.Fatal("deletion approval migration retained tenant_id")
 	}
 }
+
+func TestRawDeleteExecutionSchemaKeepsApprovalScopedReceipts(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/schema/mysql/0037_flow_raw_delete_execution.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(data)
+	for _, required := range []string{
+		"deletion_approval_id CHAR(26) NOT NULL", "source_physical_record_count", "source_estimated_valid_records", "post_delete_record_count", "row_version", "uq_flow_deletion_receipt_approval",
+	} {
+		if !strings.Contains(schema, required) {
+			t.Fatalf("raw deletion execution migration is missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "tenant_id") {
+		t.Fatal("raw deletion execution migration retained tenant_id")
+	}
+}

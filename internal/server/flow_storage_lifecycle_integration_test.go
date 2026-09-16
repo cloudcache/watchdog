@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 	}
 
 	unsafeInput := cloneFlowLifecycleMap(input)
-	unsafeInput["raw_delete_enabled"] = true
+	unsafeInput["archive_delete_enabled"] = true
 	unsafe := flowLifecycleRequest(t, s.createFlowRetentionPolicy, admin, http.MethodPost, "/api/v1/flow/storage/policies", "", "", unsafeInput, "")
 	if unsafe.Code != http.StatusConflict || !strings.Contains(unsafe.Body.String(), "flow_deletion_locked") {
 		t.Fatalf("unsafe create: status=%d body=%s", unsafe.Code, unsafe.Body.String())
@@ -273,16 +274,47 @@ func (runner *testRetryArchiveRunner) DayStorageCounters(context.Context, time.T
 }
 
 type testRawDeleteEvidence struct {
-	counters flowch.StorageCounters
-	coverage []flowch.DayOffsetCoverage
+	mu        sync.Mutex
+	counters  flowch.StorageCounters
+	physical  uint64
+	coverage  []flowch.DayOffsetCoverage
+	dropped   bool
+	dropCalls int
 }
 
 func (reader *testRawDeleteEvidence) DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.dropped {
+		return flowch.StorageCounters{}, reader.counters, nil
+	}
 	return reader.counters, reader.counters, nil
 }
 
+func (reader *testRawDeleteEvidence) RawDayPhysicalRecords(context.Context, time.Time) (uint64, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.dropped {
+		return 0, nil
+	}
+	return reader.physical, nil
+}
+
 func (reader *testRawDeleteEvidence) DayOffsetCoverage(context.Context, time.Time) ([]flowch.DayOffsetCoverage, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
 	return append([]flowch.DayOffsetCoverage(nil), reader.coverage...), nil
+}
+
+func (reader *testRawDeleteEvidence) DropRawDay(_ context.Context, day time.Time, queryID string) error {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if !day.Equal(day.UTC().Truncate(24*time.Hour)) || queryID == "" {
+		return errors.New("invalid raw deletion request")
+	}
+	reader.dropCalls++
+	reader.dropped = true
+	return nil
 }
 
 func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.T) {
@@ -354,7 +386,7 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 		VALUES (?,'raw',?,?,?,REPEAT('a',64),'verified',?,?,?)`, backupID, day, day.Add(24*time.Hour), "s3://backup/flow/2026-01-01", day.Add(3*24*time.Hour), day.Add(4*24*time.Hour), "restore-run/2026-01-05"); err != nil {
 		t.Fatal(err)
 	}
-	reader := &testRawDeleteEvidence{counters: counters, coverage: []flowch.DayOffsetCoverage{{
+	reader := &testRawDeleteEvidence{counters: counters, physical: 9, coverage: []flowch.DayOffsetCoverage{{
 		SourceStreamID: "site-a:boot-1", KafkaTopic: "watchdog.flow.raw", KafkaPartition: 0,
 		FirstOffset: 10, LastOffsetExclusive: 21,
 	}}}
@@ -394,7 +426,7 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	}
 	expectedCounters := flowlifecycle.Counters{RecordCount: 7, RawBytes: 100, RawPackets: 10, EstimatedBytes: 900, EstimatedPackets: 90, EstimatedValidRecords: 6}
 	if approved.Approval.PolicyID != policyID || approved.Approval.Generation != generation || approved.Approval.BackupEvidenceID != backupID ||
-		approved.Approval.Source != expectedCounters ||
+		approved.Approval.Source != expectedCounters || approved.Approval.PhysicalRecords != 9 ||
 		len(approved.Approval.KafkaCoverage) != 1 || approved.Approval.KafkaCoverage[0].LastOffsetExclusive != 21 {
 		t.Fatalf("approval did not freeze evidence: %+v", approved.Approval)
 	}
@@ -450,6 +482,89 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	}
 	if readiness.EvidenceReady || readiness.DeletionReady || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerWatermarkUnhealthy) || !containsString(readiness.Blockers, flowlifecycle.DeleteBlockerWatermarkBehind) {
 		t.Fatalf("unsafe evidence was accepted: %+v", readiness)
+	}
+
+	// Restore the Kafka proof, approve a new immutable attempt, and drive the
+	// canonical operation_jobs worker through the destructive transition.
+	if _, err := db.ExecContext(ctx, `UPDATE flow_reconciliation_watermarks SET reconciled_next_offset=30,status='healthy',mismatch_count=0 WHERE source_stream_id='site-a:boot-1' AND kafka_partition=0`); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = store.RawDayDeleteReadiness(ctx, day, now, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.EvidenceReady || readiness.PartitionVersion == 0 {
+		t.Fatalf("restored evidence is not approvable: %+v", readiness)
+	}
+	reapprovedResponse := flowLifecycleRequest(t, s.approveFlowRawDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/partitions/2026-01-01/actions/approve-delete", "date", "2026-01-01", nil, etag(readiness.PartitionVersion))
+	if reapprovedResponse.Code != http.StatusCreated {
+		t.Fatalf("reapprove delete: status=%d body=%s", reapprovedResponse.Code, reapprovedResponse.Body.String())
+	}
+	var reapproved struct {
+		Approval flowlifecycle.DeletionApproval `json:"approval"`
+	}
+	if err := json.Unmarshal(reapprovedResponse.Body.Bytes(), &reapproved); err != nil {
+		t.Fatal(err)
+	}
+	s.jobs = opjob.NewStore(db)
+	executeResponse := flowLifecycleRequest(t, s.executeFlowRawDelete, admin, http.MethodPost,
+		"/api/v1/flow/storage/deletion-approvals/"+reapproved.Approval.ID+"/actions/execute", "id", reapproved.Approval.ID, nil, `"1"`)
+	if executeResponse.Code != http.StatusAccepted {
+		t.Fatalf("schedule raw delete: status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
+	}
+	var scheduled struct {
+		Job     opjob.Job                     `json:"job"`
+		Receipt flowlifecycle.DeletionReceipt `json:"receipt"`
+	}
+	if err := json.Unmarshal(executeResponse.Body.Bytes(), &scheduled); err != nil {
+		t.Fatal(err)
+	}
+	if scheduled.Job.Status != opjob.StatusQueued || scheduled.Receipt.Status != "requested" ||
+		scheduled.Receipt.PhysicalRecords != reader.physical || scheduled.Receipt.OperationJobID != scheduled.Job.ID {
+		t.Fatalf("scheduled job/receipt mismatch: %+v", scheduled)
+	}
+	cancelResponse := flowLifecycleRequest(t, s.cancelOperationJob, admin, http.MethodPost,
+		"/api/v1/operation-jobs/"+scheduled.Job.ID+"/actions/cancel", "id", scheduled.Job.ID, nil, "")
+	if cancelResponse.Code != http.StatusConflict || !strings.Contains(cancelResponse.Body.String(), "destructive_job_not_cancelable") {
+		t.Fatalf("scheduled destructive cancel: status=%d body=%s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	workerContext, stopWorker := context.WithCancel(ctx)
+	worker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowlifecycle.RawDeleteJobType, Owner: "raw-delete-integration",
+		Handler: flowlifecycle.NewRawDeleteHandler(store, reader), PollInterval: time.Millisecond,
+		LeaseFor: time.Second, RetryBase: time.Millisecond,
+	}
+	go worker.Run(workerContext)
+	deadline := time.Now().Add(5 * time.Second)
+	var finished opjob.Job
+	for time.Now().Before(deadline) {
+		finished, err = s.jobs.Get(ctx, scheduled.Job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if finished.Terminal() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopWorker()
+	if finished.Status != opjob.StatusSucceeded {
+		t.Fatalf("raw deletion job did not succeed: %+v", finished)
+	}
+	receipt, err := store.GetDeletionReceiptByJob(ctx, scheduled.Job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := store.GetPartition(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.mu.Lock()
+	dropCalls := reader.dropCalls
+	reader.mu.Unlock()
+	if receipt.Status != "succeeded" || receipt.PostDeleteRecordCount != 0 || partition.State != flowlifecycle.PartitionRawDeleted || dropCalls != 1 {
+		t.Fatalf("raw deletion did not converge: job=%+v receipt=%+v partition=%+v drops=%d", finished, receipt, partition, dropCalls)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cloudcache/watchdog/internal/flowlifecycle"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 )
@@ -124,6 +125,10 @@ func (s *Server) cancelOperationJob(c *gin.Context) {
 	}
 	if job.Terminal() {
 		fail(c, http.StatusConflict, "invalid_state", "terminal operation jobs cannot be canceled")
+		return
+	}
+	if job.JobType == flowlifecycle.RawDeleteJobType {
+		fail(c, http.StatusConflict, "destructive_job_not_cancelable", "a scheduled raw partition deletion cannot be canceled; revoke the approval before scheduling")
 		return
 	}
 	if err := s.jobs.RequestCancel(c.Request.Context(), job.ID); err != nil {
