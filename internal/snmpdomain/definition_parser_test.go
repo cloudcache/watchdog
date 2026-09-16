@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"os"
@@ -80,7 +80,7 @@ discovery:
 	if len(result.OSDefinitions) != 1 {
 		t.Fatalf("os definitions = %d, want 1", len(result.OSDefinitions))
 	}
-	match, ok := DetectSNMPCollectorOS(SNMPCollectorOSFingerprint{
+	match, ok := DetectOS(OSFingerprint{
 		SysObjectID: ".1.3.6.1.4.1.2636.1.1.1.2.25",
 		SysDescr:    "Juniper Networks, Inc. mx480 internet router, kernel JUNOS 21.2R3-S8.5",
 	}, result.OSDefinitions)

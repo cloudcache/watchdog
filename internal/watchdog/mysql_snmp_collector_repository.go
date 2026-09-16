@@ -32,7 +32,7 @@ func (s *MySQLStore) ListSNMPOSDefinitions(ctx context.Context) ([]SNMPCollector
 
 func (s *MySQLStore) UpsertSNMPOSDefinition(ctx context.Context, definition SNMPCollectorOSDefinition) (SNMPCollectorOSDefinition, error) {
 	if definition.ID == "" {
-		definition.ID = collectorStableID("snmp-os", definition.Source, definition.OSName)
+		definition.ID = string(collectorStableID("snmp-os", definition.Source, definition.OSName))
 	}
 	if definition.Source == "" {
 		definition.Source = "librenms"
@@ -85,7 +85,7 @@ func (s *MySQLStore) ListSNMPModuleDefinitions(ctx context.Context, moduleType S
 
 func (s *MySQLStore) UpsertSNMPModuleDefinition(ctx context.Context, definition SNMPCollectorModuleDefinition) (SNMPCollectorModuleDefinition, error) {
 	if definition.ID == "" {
-		definition.ID = collectorStableID("snmp-module", definition.Source, string(definition.ModuleType), definition.ModuleName)
+		definition.ID = string(collectorStableID("snmp-module", definition.Source, string(definition.ModuleType), definition.ModuleName))
 	}
 	if definition.Source == "" {
 		definition.Source = "librenms"
@@ -135,7 +135,7 @@ func (s *MySQLStore) UpsertSNMPDeviceModule(ctx context.Context, module SNMPColl
 
 func (s *MySQLStore) UpsertSNMPStateTranslation(ctx context.Context, translation SNMPStateTranslation) (SNMPStateTranslation, error) {
 	if translation.ID == "" {
-		translation.ID = collectorStableID("snmp-state", translation.Source, translation.Name)
+		translation.ID = string(collectorStableID("snmp-state", translation.Source, translation.Name))
 	}
 	if translation.Source == "" {
 		translation.Source = "librenms"
@@ -352,7 +352,7 @@ func (s *MySQLStore) ListSNMPTrapHandlers(ctx context.Context) ([]SNMPTrapHandle
 
 func (s *MySQLStore) UpsertSNMPTrapHandler(ctx context.Context, handler SNMPTrapHandlerDefinition) (SNMPTrapHandlerDefinition, error) {
 	if handler.ID == "" {
-		handler.ID = collectorStableID("snmp-trap", handler.TrapOID)
+		handler.ID = string(collectorStableID("snmp-trap", handler.TrapOID))
 	}
 	optionsJSON, err := encodeStringMapJSON(handler.Options)
 	if err != nil {

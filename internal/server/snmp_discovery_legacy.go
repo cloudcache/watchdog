@@ -19,9 +19,9 @@ func newSNMPDiscoveryRunner(cfg SNMPConfig) (snmpDiscoveryRunner, error) {
 			return nil, err
 		}
 	}
-	var definitions []watchdog.SNMPCollectorOSDefinition
+	var definitions []snmpdomain.OSDefinition
 	if dir := strings.TrimSpace(cfg.DefinitionsDir); dir != "" {
-		parsed, err := watchdog.ParseLibrenmsDefinitions(dir, cfg.DefinitionsVersion)
+		parsed, err := snmpdomain.ParseLibrenmsDefinitions(dir, cfg.DefinitionsVersion)
 		if err != nil {
 			return nil, err
 		}

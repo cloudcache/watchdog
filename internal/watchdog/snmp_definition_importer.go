@@ -2,12 +2,9 @@ package watchdog
 
 import "context"
 
-type SNMPDefinitionImport struct {
-	OSDefinitions     []SNMPCollectorOSDefinition
-	ModuleDefinitions []SNMPCollectorModuleDefinition
-	StateTranslations []SNMPStateTranslation
-	TrapHandlers      []SNMPTrapHandlerDefinition
-}
+import "github.com/cloudcache/watchdog/internal/snmpdomain"
+
+type SNMPDefinitionImport = snmpdomain.DefinitionImport
 
 type SNMPDefinitionImportReport struct {
 	OSDefinitions     int

@@ -35,12 +35,12 @@ const (
 	SNMPCollectorValueMACAddr   SNMPCollectorValueType = "macaddr"
 )
 
-type SNMPCollectorModuleType string
+type SNMPCollectorModuleType = snmpdomain.ModuleType
 
 const (
-	SNMPCollectorModuleDiscovery SNMPCollectorModuleType = "discovery"
-	SNMPCollectorModulePoller    SNMPCollectorModuleType = "poller"
-	SNMPCollectorModuleTrap      SNMPCollectorModuleType = "trap"
+	SNMPCollectorModuleDiscovery = snmpdomain.ModuleDiscovery
+	SNMPCollectorModulePoller    = snmpdomain.ModulePoller
+	SNMPCollectorModuleTrap      = snmpdomain.ModuleTrap
 )
 
 type SNMPCollectorModuleStatus string
@@ -52,47 +52,13 @@ const (
 	SNMPCollectorModuleSkipped SNMPCollectorModuleStatus = "skipped"
 )
 
-type SNMPCollectorOSFingerprint struct {
-	SysObjectID  string
-	SysDescr     string
-	SysName      string
-	SysLocation  string
-	SysUpTime    uint64
-	SNMPEngineID string
-}
+type SNMPCollectorOSFingerprint = snmpdomain.OSFingerprint
 
-type SNMPCollectorOSMatch struct {
-	OSName  string
-	OSGroup string
-	Vendor  string
-	Class   string
-	Model   string
-	Reason  string
-}
+type SNMPCollectorOSMatch = snmpdomain.OSMatch
 
-type SNMPCollectorOSDefinition struct {
-	ID            ID
-	OSName        string
-	OSGroup       string
-	Vendor        string
-	Class         string
-	Definition    map[string]any
-	Source        string
-	SourceVersion string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
+type SNMPCollectorOSDefinition = snmpdomain.OSDefinition
 
-type SNMPCollectorModuleDefinition struct {
-	ID            ID
-	ModuleName    string
-	ModuleType    SNMPCollectorModuleType
-	Definition    map[string]any
-	Source        string
-	SourceVersion string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
+type SNMPCollectorModuleDefinition = snmpdomain.ModuleDefinition
 
 type SNMPCollectorDeviceModule struct {
 	ID               ID
@@ -237,14 +203,7 @@ type SNMPCollectionRecipe struct {
 	UpdatedAt             time.Time
 }
 
-type SNMPStateTranslation struct {
-	ID        ID
-	Name      string
-	Source    string
-	States    []SNMPStateValue
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
+type SNMPStateTranslation = snmpdomain.StateTranslation
 
 type SNMPStateValue = snmpdomain.SNMPStateValue
 
@@ -271,15 +230,7 @@ type SNMPRawSample struct {
 	Labels       map[string]string
 }
 
-type SNMPTrapHandlerDefinition struct {
-	ID         ID
-	TrapOID    string
-	HandlerKey string
-	Enabled    bool
-	Options    map[string]string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
+type SNMPTrapHandlerDefinition = snmpdomain.TrapHandlerDefinition
 
 type SNMPTrap struct {
 	SourceIP   string
