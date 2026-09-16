@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cloudcache/watchdog/internal/watchdog"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,7 +18,7 @@ func (s *Server) listMIBModules(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-	items := []watchdog.MIBModule{}
+	items := []snmpdomain.MIBModule{}
 	for rows.Next() {
 		item, err := scanMIBModule(rows)
 		if err != nil {
@@ -35,7 +35,7 @@ func (s *Server) listMIBModules(c *gin.Context) {
 }
 
 func (s *Server) putMIBModule(c *gin.Context) {
-	var module watchdog.MIBModule
+	var module snmpdomain.MIBModule
 	if err := c.ShouldBindJSON(&module); err != nil {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid body")
 		return
@@ -51,7 +51,7 @@ func (s *Server) putMIBModule(c *gin.Context) {
 	if module.Source == "" {
 		module.Source = "librenms"
 	}
-	if watchdog.IsEmbeddedSNMPMIBSource(module.Source) {
+	if snmpdomain.IsEmbeddedSNMPMIBSource(module.Source) {
 		fail(c, http.StatusConflict, "protected", "built-in MIB modules are managed by the watchdog binary")
 		return
 	}
@@ -60,7 +60,7 @@ func (s *Server) putMIBModule(c *gin.Context) {
 		return
 	}
 	if module.ID == "" {
-		module.ID = watchdog.ID(stableManagementID("mib", module.Source, module.Name))
+		module.ID = snmpdomain.ID(stableManagementID("mib", module.Source, module.Name))
 	}
 	if len(module.ID) > 26 {
 		fail(c, http.StatusBadRequest, "invalid_request", "mib module id must not exceed 26 characters")
@@ -88,7 +88,7 @@ func (s *Server) deleteMIBModule(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	if watchdog.IsEmbeddedSNMPMIBSource(source) {
+	if snmpdomain.IsEmbeddedSNMPMIBSource(source) {
 		fail(c, http.StatusConflict, "protected", "built-in MIB modules cannot be deleted")
 		return
 	}
@@ -105,19 +105,19 @@ func (s *Server) deleteMIBModule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-func (s *Server) readMIBModule(c *gin.Context, id string) (watchdog.MIBModule, error) {
+func (s *Server) readMIBModule(c *gin.Context, id string) (snmpdomain.MIBModule, error) {
 	return scanMIBModule(s.db.QueryRowContext(c.Request.Context(), `SELECT id,name,source,version,checksum,enabled,created_at,updated_at FROM mib_modules WHERE id=?`, id))
 }
 
-func scanMIBModule(row rowScanner) (watchdog.MIBModule, error) {
-	var value watchdog.MIBModule
+func scanMIBModule(row rowScanner) (snmpdomain.MIBModule, error) {
+	var value snmpdomain.MIBModule
 	err := row.Scan(&value.ID, &value.Name, &value.Source, &value.Version, &value.Checksum, &value.Enabled, &value.CreatedAt, &value.UpdatedAt)
-	value.Builtin = watchdog.IsEmbeddedSNMPMIBSource(value.Source)
+	value.Builtin = snmpdomain.IsEmbeddedSNMPMIBSource(value.Source)
 	return value, err
 }
 
 func (s *Server) ensureBuiltinMIBModules(ctx context.Context) error {
-	modules, err := watchdog.EmbeddedSNMPMIBModules()
+	modules, err := snmpdomain.EmbeddedSNMPMIBModules()
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (s *Server) ensureBuiltinMIBModules(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	for _, module := range modules {
-		module.ID = watchdog.ID(stableManagementID("mib", module.Source, module.Name))
+		module.ID = snmpdomain.ID(stableManagementID("mib", module.Source, module.Name))
 		if _, err := tx.ExecContext(ctx, `INSERT INTO mib_modules (id,name,source,version,checksum,enabled)
 			VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE version=VALUES(version),checksum=VALUES(checksum)`,
 			module.ID, module.Name, module.Source, module.Version, module.Checksum); err != nil {

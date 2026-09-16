@@ -1,4 +1,4 @@
-package watchdog
+package snmpdomain
 
 import (
 	"strings"

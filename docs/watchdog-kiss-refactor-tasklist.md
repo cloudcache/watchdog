@@ -293,6 +293,8 @@
 
 - [x] **KISS-08G2 公共指标目录抽取（本提交）**：新增 `internal/metricdomain`，集中管理 system/container/SNMP/BGP 指标定义、scope/unit/value-mode 和自动查询步进；Gin metric catalog、用户指标授权 picker、聚合图与时序查询已直接使用新包，旧包仅保留同名兼容 alias/wrapper。指标名、返回字段、步进集合和权限判断不变，目录与 1h/24h/30d 自动步进均有独立测试。完成后生产 Gin 只剩 SNMP 设备/图表、发现/轮询、MIB、事件/trap 闭包依赖旧包；G3 再迁这些类型与引擎。
 
+- [x] **KISS-08G3a SNMP MIB registry 抽取（本提交）**：将 28 个内置 MIB、gosmi 全局 registry、OID 正反解析、状态枚举和 built-in MIB inventory 迁入 `internal/snmpdomain`；Gin MIB CRUD/启动 seed 直接使用新包，旧 SNMP discovery 仅经薄 wrapper 共用同一 registry，不复制 parser 或内置资源。`mib_modules` 表、API 字段、built-in 保护和外部 `mib_dirs/mib_load` 语义不变；目标包、真实 MySQL MIB 生命周期、全库 test/vet/build 与 race 为门禁。G3b 继续迁设备/发现/轮询公共类型和引擎。
+
 > **2026-09-16 门禁修复包已闭环**：Saved Filter 的持久化/API 只接受 `private/shared`，旧 scope 有独立迁移测试；四个真实进程测试只从 KISS embedded schema 启动 `system/snmp/flow_collect/flow_worker` 并覆盖 register→plan→ACK→LKG→revoke；SNMP A2 替身按 scoped/aggregate/billing 三种真实列契约执行；`frontend_route_contract_test.go` 从 `main.tsx` 递归扫描所有可达前端 `/api/v1` 调用并与 Gin production route table 对照，禁止再次产生“页面已迁、后端 404”。四项均已在真实隔离 MySQL 上通过。
 >
 > **2026-09-16 运行闭环包已闭环（产品五进程）**：`make build-runtime` 是 frontend、server、SNMP collector、Flow collector、Flow worker 的唯一批量构建入口，产物固定在 `frontend/dist` 与 `build/watchdog-*`；开发启动固定为 `make dev-frontend`、`make dev-server`、`make dev-snmp-collector`，Flow 按签名计划启动固定 build 产物，不再使用 task-specific `/private/tmp/watchdog-server-*` 或 `go run`。本地 CH secret 固定为忽略提交且 mode 0600 的 `data/secrets/clickhouse-password`，`make flow-dev-up` 与全部进程读取同一值。真实空 MySQL opt-in 测试已完成 install→login→agent register/heartbeat→device create→SNMP CH write/query→Flow CH write/closed rollup→Gin Flow query→overview report，并按唯一 device/source 清理 CH 验收数据。该证据关闭运行包，不倒签 KISS-08 的地址 publication、六报表、账单/导出/告警全量空库验收。

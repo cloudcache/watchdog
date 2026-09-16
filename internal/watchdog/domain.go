@@ -1,6 +1,10 @@
 package watchdog
 
-import "time"
+import (
+	"time"
+
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
+)
 
 type ID string
 
@@ -246,17 +250,7 @@ type SNMPProfile struct {
 	UpdatedAt time.Time
 }
 
-type MIBModule struct {
-	ID        ID
-	Name      string
-	Source    string
-	Version   string
-	Checksum  string
-	Enabled   bool
-	Builtin   bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
+type MIBModule = snmpdomain.MIBModule
 
 type MetricLabelSet struct {
 	TenantID ID

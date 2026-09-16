@@ -3,6 +3,8 @@ package watchdog
 import (
 	"context"
 	"time"
+
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 )
 
 type SNMPCollectorEntityType string
@@ -244,11 +246,7 @@ type SNMPStateTranslation struct {
 	UpdatedAt time.Time
 }
 
-type SNMPStateValue struct {
-	Value   int
-	Generic int
-	Label   string
-}
+type SNMPStateValue = snmpdomain.SNMPStateValue
 
 type SNMPRawSample struct {
 	TenantID     ID

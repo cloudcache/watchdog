@@ -95,7 +95,7 @@ func (s *MySQLStore) ListMIBModules(ctx context.Context) ([]MIBModule, error) {
 
 func (s *MySQLStore) UpsertMIBModule(ctx context.Context, module MIBModule) (MIBModule, error) {
 	if module.ID == "" {
-		module.ID = stableID("mib", module.Source, module.Name)
+		module.ID = string(stableID("mib", module.Source, module.Name))
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO mib_modules (

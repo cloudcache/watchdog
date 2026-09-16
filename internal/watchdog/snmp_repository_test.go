@@ -43,7 +43,7 @@ func (r *fakeSNMPRepository) ListMIBModules(context.Context) ([]MIBModule, error
 
 func (r *fakeSNMPRepository) UpsertMIBModule(_ context.Context, module MIBModule) (MIBModule, error) {
 	if module.ID == "" {
-		module.ID = stableID("mib", module.Source, module.Name)
+		module.ID = string(stableID("mib", module.Source, module.Name))
 	}
 	r.modules = append(r.modules, module)
 	return module, nil
