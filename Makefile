@@ -39,7 +39,7 @@ endif
 # Set executable extension based on target OS
 EXE_EXT := $(if $(filter windows,$(OS)),.exe,)
 
-.PHONY: tidy build build-runtime build-agent build-server build-snmp-collector build-snmp-agent build-flow-collect build-flow-worker build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales local-secrets flow-dev-up flow-dev-down flow-dev-status
+.PHONY: tidy build build-runtime build-flow-tools build-agent build-server build-snmp-collector build-snmp-agent build-flow-collect build-flow-worker build-web-ui clean lint dev-agent dev-server dev-frontend dev-snmp-collector generate-locales local-secrets flow-dev-up flow-dev-down flow-dev-status
 .DEFAULT_GOAL := build
 
 WATCHDOG_CLICKHOUSE_PASSWORD ?= watchdog-local
@@ -92,6 +92,10 @@ build-flow-collect:
 
 build-flow-worker:
 	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-flow-worker$(EXE_EXT) ./cmd/watchdog-flow-worker
+
+build-flow-tools:
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-flow-migrate$(EXE_EXT) ./cmd/watchdog-flow-migrate
+	GOOS=$(OS) GOARCH=$(ARCH) go build -o ./build/watchdog-flow-restore-drill$(EXE_EXT) ./cmd/watchdog-flow-restore-drill
 
 # The five independently deployed product processes have one canonical build
 # location. Extra agents (system and SNMP trap) remain separate optional builds.

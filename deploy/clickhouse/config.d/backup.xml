@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<clickhouse>
+  <!--
+    Local development keeps backup objects on a volume independent from the
+    ClickHouse data volume. Production supplies an equivalent named disk (or
+    an object-store disk) through its own ClickHouse configuration.
+  -->
+  <storage_configuration>
+    <disks>
+      <flow_backups>
+        <type>local</type>
+        <path>/var/lib/clickhouse/backups/</path>
+      </flow_backups>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>flow_backups</allowed_disk>
+  </backups>
+</clickhouse>

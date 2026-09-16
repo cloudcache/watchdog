@@ -93,9 +93,11 @@ func TestFlowStoragePolicyLifecycleIntegration(t *testing.T) {
 		t.Fatalf("unsafe create: status=%d body=%s", unsafe.Code, unsafe.Body.String())
 	}
 
-	secondCreated := flowLifecycleRequest(t, s.createFlowRetentionPolicy, admin, http.MethodPost, "/api/v1/flow/storage/policies", "", "", input, "")
+	rawDeleteInput := cloneFlowLifecycleMap(input)
+	rawDeleteInput["raw_delete_enabled"] = true
+	secondCreated := flowLifecycleRequest(t, s.createFlowRetentionPolicy, admin, http.MethodPost, "/api/v1/flow/storage/policies", "", "", rawDeleteInput, "")
 	var second flowlifecycle.Policy
-	if secondCreated.Code != http.StatusCreated || json.Unmarshal(secondCreated.Body.Bytes(), &second) != nil {
+	if secondCreated.Code != http.StatusCreated || json.Unmarshal(secondCreated.Body.Bytes(), &second) != nil || !second.RawDeleteEnabled || second.ArchiveDeleteEnabled {
 		t.Fatalf("second create: status=%d body=%s", secondCreated.Code, secondCreated.Body.String())
 	}
 	secondPublished := flowLifecycleRequest(t, s.publishFlowRetentionPolicy, admin, http.MethodPost, "/api/v1/flow/storage/policies/"+second.ID+"/actions/publish", "id", second.ID, nil, `"1"`)

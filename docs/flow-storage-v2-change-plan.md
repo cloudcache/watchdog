@@ -94,7 +94,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 归档 generation 固定编码为 `(policy_version << 32) | repair_attempt`。这保证新策略的首次构建严格高于任何旧策略 repair；迁移 011 会拒绝 legacy generation 已进入高 32-bit 命名空间的数据库。任务幂等键包含 UTC 日、策略版本和 repair attempt，取消、租约接管或失败重试不能复用更旧 generation 覆盖新结果。调度持久化顺序固定为 `enqueue operation job -> bind sealed partition state/job/generation -> advance watermark`；任一步失败重扫都由幂等键收敛，绝不能在分区状态存在前推进水位。被清理的 terminal job 以 `job.id IS NULL` 继续进入 repair 候选，不能把 UTC 日永久搁浅。
 
-`raw_delete_enabled` 当前必须为 false，创建、修改和发布三条路径都会 fail closed。L5A 已能从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；这只是可复算的只读证据，不是删除授权。`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。L5B1 管理不可变备份恢复证据；L5B2 的独立批准 action 用分区 ETag 在同一事务冻结 policy/generation、Kafka coverage、raw/archive counters 和 backup evidence 后推进 `delete_eligible`，且允许在 delete job 尚未绑定时带批准 ETag 撤销。L5B3a 已实现但仍被开关锁住：批准、canonical `operation_jobs`、requested receipt 和 partition job binding 在同一 MySQL 事务提交；worker 再实时复核全部证据及包含 `disposition=drop` 的逻辑物理行数，以稳定 QueryID 执行 `DROP PARTITION`，并在 post-check 后原子写终态。调度后不得取消，调度前以撤销批准停止，避免 DDL 已执行但 cancel 状态谎报。真实 MySQL 与 ClickHouse 已验证成功、证据变化拒绝、永久/暂时错误、接管及 ambiguous ACK 收敛。仍未解除的阻断是：Flow worker 尚无已删除 UTC 日的 publication/ACK 写入屏障，极晚事件可能重新创建分区；在该屏障和真实外部备份恢复演练完成前不得开放策略开关。`archive_retention` 同样只先保存为策略意图，不启动归档删除作业。
+L5B3c 完成后，policy CRUD 已允许显式发布 `raw_delete_enabled=true`，但这不是自动删除授权。L5A 从 ClickHouse 逐消息 receipt 计算与 UTC 日相交的自然 Kafka 坐标范围，并逐项要求 MySQL durable watermark 具有同一 stream/topic/partition、显式 bootstrap、健康 committed/reconciled next-offset 以及真实 snapshot/verified 时间；`GET /api/v1/flow/storage/partitions/:date/delete-readiness` 将证据是否齐全与 feature switch/人工批准分别返回，读取不推进状态、不写回执、不执行 DDL。L5B1 管理不可变备份恢复证据；L5B2 的独立批准 action 用分区 ETag 在同一事务冻结 policy/generation、Kafka coverage、raw/archive counters 和 backup evidence 后推进 `delete_eligible`，且允许在 delete job 尚未绑定时带批准 ETag 撤销。L5B3a 把批准、canonical `operation_jobs`、requested receipt 和 partition job binding 在同一 MySQL 事务提交；worker 每次执行再实时复核全部证据及包含 `disposition=drop` 的逻辑物理行数，以稳定 QueryID 执行 `DROP PARTITION`，并在 post-check 后原子写终态。L5B3b 要求全部活跃 worker 安装删除 tombstone 并 ACK，极晚 datagram 进入隔离表；L5B3c 从实际外置 backup 恢复隔离库并复算全部证据。任一逐日证据、ACK 或批准缺失仍 fail closed。`archive_delete_enabled` 继续在 create/update/publish 三条路径锁死，直到 L5B4 完成。
 
 ## 5. 查询与导出切换
 
@@ -169,16 +169,41 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 ### V2-D aging/downsample
 
-> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0037` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 已随 KISS-08 删除。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw-day DDL executor/receipt 已接线，但策略开关在 ingest tombstone ACK 和真实外部 restore drill 完成前继续 fail closed。
+> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0038` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 已随 KISS-08 删除。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw-day DDL executor/receipt、ingest tombstone ACK 和真实外部 restore drill 均已接线，raw 开关可显式发布但每个 UTC 日仍逐项 fail closed；archive 开关继续锁定到 L5B4。
 
 - [x] **设计**：冻结管理策略表/API、UTC 分区粒度、目标 schema、守恒证据、generation 命名空间和删除授权。
 - [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。
-- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；L5B3b 已完成删除日期 publication、所有活跃 worker ACK/LKG 与极晚完整 datagram 隔离，重放后 scanner 对账保持完整且不误报丢数。L5B3c 真实外部 restore drill 与 archive 月删除仍未完成；故障或证据缺失均不得删除。
+- [ ] **编码/集成（破坏路径）**：raw-day handler/receipt/真实 CH DDL 已完成 L5B3a；L5B3b 已完成删除日期 publication、所有活跃 worker ACK/LKG 与极晚完整 datagram 隔离，重放后 scanner 对账保持完整且不误报丢数；L5B3c 已从真实外置 backup disk 恢复非空 Flow 到隔离库，并复算 Kafka 坐标、物理行数和 raw/archive 六项 counters。archive 月删除仍未完成；故障或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；L5B3b 的 worker tombstone/ACK/LKG、极晚 datagram quarantine、receipt replacement 和 scanner 对账由独立提交交付。真实外部 restore 和删除开关解锁仍保持未完成。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换，L5A/L5B1/L5B2 已分别提交。L5B3a 的真实 MySQL operation job/receipt 与真实 CH 精确分区删除、archive 保留、QueryID 重放已通过；L5B3b 的 worker tombstone/ACK/LKG、极晚 datagram quarantine、receipt replacement 和 scanner 对账由独立提交交付；L5B3c 的一次性恢复演练工具、外置 disk 配置、manifest SHA-256、非空真实 BACKUP→RESTORE 与全库门禁由独立提交交付。archive 月删除和其策略解锁仍保持未完成。
+
+### V2-D1 外部恢复演练（L5B3c）
+
+L5B3c 不增加常驻服务、数据库状态机或另一套 job。外部备份系统先把**完整 Flow ClickHouse 数据库**写到已允许的 named backup disk；运维人员再运行一次性 `watchdog-flow-restore-drill`。工具拒绝复用已有数据库，只允许 `watchdog_restore_*` 隔离库；它读取真实 `.backup` manifest 并计算 SHA-256（manifest 内含每个备份文件的 checksum），执行原生 `RESTORE DATABASE ... AS ...`，对同一 UTC 日分别在源库恢复前、源库恢复后和隔离恢复库复算：
+
+- raw 六项 count/counter；
+- 1h archive 六项 count/counter；
+- 包含 drop fact 的物理行数；
+- 从 receipt 事件时间交集得到的自然 Kafka `(stream, topic, partition, first, last-exclusive)` 坐标。
+
+三份证据完全一致才输出 `matched=true` 与 `restore_test_ref`；默认随后删除隔离库。管理面的 `flow_backup_restore_evidence` 仍只是不可变引用：将工具输出的 `backup_ref`、`manifest_sha256`、`restore_test_ref` 和实际时间登记进去，不能用手工填表替代演练。没有新增 migration，因为结果继续使用已提交的 `0033/0035` evidence 契约。
+
+本地开发的 `flow_backups` 指向独立于 ClickHouse data volume 的忽略提交目录 `data/clickhouse-backups`；生产应把同名 disk 配到独立存储或对象存储。典型演练命令：
+
+```sh
+make build-flow-tools
+./build/watchdog-flow-restore-drill \
+  -clickhouse-password-file data/secrets/clickhouse-password \
+  -source-database watchdog_flow \
+  -restore-database watchdog_restore_20260916 \
+  -backup-disk flow_backups \
+  -backup-name flow-full-20260916 \
+  -backup-manifest-file data/clickhouse-backups/flow-full-20260916/.backup \
+  -source-date 2026-09-15
+```
 
 ## 9. 本次验证证据（2026-09-07）
 
