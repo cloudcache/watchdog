@@ -594,11 +594,15 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 	if err != nil {
 		return nil, nil, err
 	}
-	compiled, err := flowquery.Compile(scope, flowquery.Request{
+	queryRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: req.Metric, Dimension: spec.Dimensions[0], Filters: spec.Filters, Filter: req.Filter,
 		View: view, TopN: spec.TopN, IncludeOther: spec.IncludeOther, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-	}, now)
+	}
+	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
+		return nil, nil, err
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -635,6 +639,9 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 			Directions: req.Filters.Directions, Businesses: req.Filters.Businesses,
 			TargetIDs: req.Filters.TargetIDs, DeviceIDs: req.Filters.DeviceIDs, ExporterIDs: req.Filters.ExporterIDs,
 		},
+	}
+	if err := s.applyFlowOverseasStorageBoundary(ctx, &overseasReq); err != nil {
+		return flowReportPanel{}, err
 	}
 	compiled, err := flowquery.CompileOverseas(flowquery.Scope{AllowedViews: []flowquery.View{view}}, overseasReq, now)
 	if err != nil {

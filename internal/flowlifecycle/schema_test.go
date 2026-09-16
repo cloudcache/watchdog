@@ -32,3 +32,19 @@ func TestLifecycleSchemaIsSingleDomainAndFailClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestArchiveLifecycleSchemaAddsRotatingLateCheckEvidence(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/schema/mysql/0034_flow_archive_lifecycle.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(data)
+	for _, required := range []string{"late_checked_at", "idx_flow_retention_late_check"} {
+		if !strings.Contains(schema, required) {
+			t.Fatalf("archive lifecycle schema is missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "tenant_id") {
+		t.Fatal("archive lifecycle migration retained tenant_id")
+	}
+}

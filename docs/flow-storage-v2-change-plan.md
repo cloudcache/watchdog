@@ -167,13 +167,15 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 
 ### V2-D aging/downsample
 
+> **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033` + `0034` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 仅是待 KISS-08 删除的历史实现。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。物理删除未接线。
+
 - [x] **设计**：冻结管理策略表/API、UTC 分区粒度、目标 schema、守恒证据、generation 命名空间和删除授权。
 - [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [ ] **编码/集成（破坏路径）**：接入 durable Kafka 日覆盖证据后实现显式 raw/archive delete handler；故障、取消或证据缺失均不得删除。
 - [ ] **回归**：总览/Explorer/六页/custom range/导出、Kafka/CH 故障注入、全库 race/vet/test。
-- [x] **已提交门禁**：实现、迁移、测试和本变更计划已进入 `a9fc7622 feat(flow): implement storage v2 lifecycle`；DDL 不确定 ACK、维护窗口/回滚、组合故障、system-scope Kafka 水位和物理删除仍按各自未勾选门禁保持锁定。
+- [x] **已提交门禁**：旧多租户基线曾进入 `a9fc7622`；当前单域 L1–L4 由后续独立提交替换。真实 MySQL operation-job checkpoint 续跑、真实 CH 全天守恒/hybrid/raw-only/overseas 已通过；DDL 不确定 ACK、维护窗口/回滚、组合故障和物理删除仍按各自未勾选门禁保持锁定。
 
 ## 9. 本次验证证据（2026-09-07）
 

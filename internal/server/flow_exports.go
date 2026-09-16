@@ -491,11 +491,15 @@ func (s *Server) runFlowQueryExportResult(ctx context.Context, view flowquery.Vi
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := flowquery.Compile(scope, flowquery.Request{
+	queryRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: input.Metric, Dimension: input.Dimension, Filters: input.Filters, Filter: input.Filter,
 		View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone,
-	}, now)
+	}
+	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
+		return nil, err
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
 	if err != nil {
 		return nil, err
 	}

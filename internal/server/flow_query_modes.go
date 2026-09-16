@@ -72,11 +72,16 @@ func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvel
 	for _, part := range flowDirectionParts {
 		filters := input.Filters
 		filters.Directions = []string{part.direction}
-		compiled, err := flowquery.Compile(scope, flowquery.Request{
+		queryRequest := flowquery.Request{
 			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 			Metric: input.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: input.Filter,
 			View: view, TopN: 1, IncludeOther: false, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
-		}, now)
+		}
+		if err := s.applyFlowStorageBoundary(c.Request.Context(), &queryRequest); err != nil {
+			writeFlowQueryError(c, err)
+			return
+		}
+		compiled, err := flowquery.Compile(scope, queryRequest, now)
 		if err != nil {
 			writeFlowQueryError(c, err)
 			return

@@ -255,11 +255,16 @@ func (s *Server) queryFlow(c *gin.Context) {
 		writeFlowQueryError(c, err)
 		return
 	}
-	compiled, err := flowquery.Compile(scope, flowquery.Request{
+	queryRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: input.Metric, Dimension: input.Dimension, Filters: input.Filters, Filter: input.Filter,
 		View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
-	}, now)
+	}
+	if err := s.applyFlowStorageBoundary(c.Request.Context(), &queryRequest); err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
 	if err != nil {
 		writeFlowQueryError(c, err)
 		return
@@ -315,6 +320,10 @@ func (s *Server) queryFlowOverseas(c *gin.Context) {
 		return
 	}
 	input.View = view
+	if err := s.applyFlowOverseasStorageBoundary(c.Request.Context(), &input); err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
 	compiled, err := flowquery.CompileOverseas(flowquery.Scope{AllowedViews: []flowquery.View{view}}, input, time.Now().UTC())
 	if err != nil {
 		writeFlowQueryError(c, err)

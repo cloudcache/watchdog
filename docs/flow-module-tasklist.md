@@ -8,7 +8,7 @@
 
 > 这是 Flow 唯一执行状态。需求见 [flow-direction-requirements.md](flow-direction-requirements.md)，现行设计见 [flow-module-design.md](flow-module-design.md)，数据面取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)。平台通用缺陷只登记到 [platform-refactor-tasklist.md](platform-refactor-tasklist.md)。
 
-> **Storage V2 冻结口径**：原始在线时长是 tenant policy，不再写死 30 天或 1 年；只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 才生成 1h archive。1h 查询按 MySQL 连续 reconciled boundary 混合读取 archive/raw，1m 与联合维度查询保留 raw 精确语义。原始/归档物理删除在 Kafka committed-offset 覆盖门禁完成前保持关闭。
+> **Storage V2 冻结口径**：原始在线时长是安装级全局 policy，不再写死 30 天或 1 年；只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 才生成 1h archive。1h 查询按 MySQL 连续 reconciled boundary 混合读取 archive/raw，1m 与联合维度查询保留 raw 精确语义。原始/归档物理删除在 Kafka committed-offset 覆盖门禁完成前保持关闭。
 
 ## 1. 自动循环协议
 

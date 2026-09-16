@@ -17,6 +17,7 @@ import (
 	"github.com/cloudcache/watchdog/deploy/schema"
 	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowlifecycle"
+	"github.com/cloudcache/watchdog/internal/flowquery"
 	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
@@ -221,6 +222,131 @@ func (scanner *testRetryReconciliationScanner) Scan(_ context.Context, request f
 		NextCursor: next, Complete: true,
 		Comparison: flowch.IngestReconciliationComparison{Batches: 3, Facts: 6},
 	}, nil
+}
+
+type testRetryArchiveRunner struct{ calls atomic.Int32 }
+
+func (runner *testRetryArchiveRunner) Run(context.Context, flowch.RollupRequest) error {
+	if runner.calls.Add(1) == 4 {
+		return errors.New("temporary ClickHouse rollup failure")
+	}
+	return nil
+}
+
+func (runner *testRetryArchiveRunner) DayStorageCounters(context.Context, time.Time) (flowch.StorageCounters, flowch.StorageCounters, error) {
+	counters := flowch.StorageCounters{RecordCount: 7, RawBytes: 100, RawPackets: 10, EstimatedBytes: 900, EstimatedPackets: 90, EstimatedValidRecords: 6}
+	return counters, counters, nil
+}
+
+func TestFlowArchiveOperationJobRetriesFromCheckpointIntegration(t *testing.T) {
+	baseDSN := os.Getenv("WATCHDOG_TEST_MYSQL_DSN")
+	if baseDSN == "" {
+		t.Skip("WATCHDOG_TEST_MYSQL_DSN is not set")
+	}
+	parsed, err := mysqldriver.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.DBName = "watchdog_flow_archive_job_it"
+	dsn := parsed.FormatDSN()
+	dropTestDatabase(t, baseDSN, parsed.DBName)
+	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
+	if err := ensureDatabase(dsn); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := ApplyMySQLSchema(ctx, db, schema.MySQL); err != nil {
+		t.Fatal(err)
+	}
+	policy := flowlifecycle.Policy{
+		ID: "01JARCHIVEPOLICY000000000", Version: 1, Status: flowlifecycle.PolicyPublished,
+		BootstrapFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), RawRetentionSeconds: 86400,
+		ArchiveResolutionSeconds: 3600, ArchiveRetentionSeconds: 0, LateArrivalSeconds: 3600,
+		DeleteGraceSeconds: 3600, MaxPartitionsPerRun: 7, RequireBackupBeforeDelete: true,
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO flow_retention_policy_revisions
+		(id,policy_version,status,bootstrap_from,raw_retention_seconds,archive_resolution_seconds,
+		 archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,max_partitions_per_run,
+		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,published_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,0,0,1,?)`, policy.ID, policy.Version, policy.Status, policy.BootstrapFrom,
+		policy.RawRetentionSeconds, policy.ArchiveResolutionSeconds, policy.ArchiveRetentionSeconds,
+		policy.LateArrivalSeconds, policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	job, err := flowlifecycle.NewArchiveOperationJob(policy, policy.BootstrapFrom, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := opjob.NewStore(db)
+	job, err = jobs.Enqueue(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &testRetryArchiveRunner{}
+	worker := &opjob.Worker{
+		Repo: jobs, JobType: flowlifecycle.ArchiveJobType, Owner: "flow-archive-integration",
+		Handler:      flowlifecycle.NewArchiveHandler(flowlifecycle.NewStore(db), runner),
+		PollInterval: 5 * time.Millisecond, LeaseFor: 300 * time.Millisecond, RetryBase: 5 * time.Millisecond, MaxAttempts: 3,
+	}
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	defer stopWorker()
+	go worker.Run(workerCtx)
+
+	var completed opjob.Job
+	for {
+		completed, err = jobs.Get(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed.Terminal() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("archive operation job did not finish: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if completed.Status != opjob.StatusSucceeded || completed.AttemptCount != 2 || completed.ProgressDone != 24 || runner.calls.Load() != 25 {
+		t.Fatalf("completed=%+v rollup_calls=%d", completed, runner.calls.Load())
+	}
+	var state, errorCode string
+	var lateCheckedAt sql.NullTime
+	if err := db.QueryRowContext(ctx, `SELECT state,COALESCE(last_error_code,''),late_checked_at
+		FROM flow_retention_partition_states WHERE source_date=?`, policy.BootstrapFrom).Scan(&state, &errorCode, &lateCheckedAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != flowlifecycle.PartitionReconciled || errorCode != "" || !lateCheckedAt.Valid {
+		t.Fatalf("partition state=%q error=%q late_checked=%v", state, errorCode, lateCheckedAt)
+	}
+	boundary, err := flowlifecycle.NewStore(db).ArchiveThrough(ctx, policy.BootstrapFrom, policy.BootstrapFrom.Add(48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := policy.BootstrapFrom.Add(24 * time.Hour); !boundary.Equal(want) {
+		t.Fatalf("continuous archive boundary=%v want=%v", boundary, want)
+	}
+	s := &Server{flowLifecycle: flowlifecycle.NewStore(db)}
+	request := flowquery.Request{From: policy.BootstrapFrom.Add(12 * time.Hour), To: policy.BootstrapFrom.Add(36 * time.Hour), Bucket: flowquery.BucketOneHour}
+	if err := s.applyFlowStorageBoundary(ctx, &request); err != nil {
+		t.Fatal(err)
+	}
+	if !request.StorageV2 || !request.ArchiveThrough.Equal(policy.BootstrapFrom.Add(24*time.Hour)) {
+		t.Fatalf("hourly query boundary=%+v", request)
+	}
+	minuteRequest := flowquery.Request{From: policy.BootstrapFrom.Add(12 * time.Hour), To: policy.BootstrapFrom.Add(13 * time.Hour), Bucket: flowquery.BucketOneMinute}
+	if err := s.applyFlowStorageBoundary(ctx, &minuteRequest); err != nil {
+		t.Fatal(err)
+	}
+	if !minuteRequest.StorageV2 || !minuteRequest.ArchiveThrough.Equal(minuteRequest.From) {
+		t.Fatalf("minute query must stay raw-only: %+v", minuteRequest)
+	}
 }
 
 func TestFlowReconciliationOperationJobRetriesFromCheckpointIntegration(t *testing.T) {

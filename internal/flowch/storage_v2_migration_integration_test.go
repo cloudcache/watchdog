@@ -48,10 +48,17 @@ func TestRealClickHouseStorageV2MigrationBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 11 {
-		t.Fatalf("migration count=%d, want 11", len(migrations))
+	storageV2Index := -1
+	for index, migration := range migrations {
+		if migration.Name == "011_flow_storage_v2.sql" {
+			storageV2Index = index
+			break
+		}
 	}
-	applyStorageV2Migrations(t, ctx, admin, database, migrations[:10])
+	if storageV2Index < 1 {
+		t.Fatalf("Storage V2 migration not found in %+v", migrations)
+	}
+	applyStorageV2Migrations(t, ctx, admin, database, migrations[:storageV2Index])
 
 	dataConfig := realMigrationConfig(t, "watchdog-flow-storage-v2-upgrade", 30*time.Second)
 	dataConfig.Database = database
@@ -78,7 +85,7 @@ func TestRealClickHouseStorageV2MigrationBackfill(t *testing.T) {
 		t.Fatalf("insert legacy fact: %v", err)
 	}
 
-	applyStorageV2Migrations(t, ctx, admin, database, migrations[10:])
+	applyStorageV2Migrations(t, ctx, admin, database, migrations[storageV2Index:storageV2Index+1])
 	if err := native.Ready(ctx); err != nil {
 		t.Fatalf("V2 readiness after migration: %v", err)
 	}

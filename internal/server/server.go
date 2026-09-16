@@ -22,6 +22,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/billing"
 	"github.com/cloudcache/watchdog/internal/flowch"
+	"github.com/cloudcache/watchdog/internal/flowlifecycle"
 	"github.com/cloudcache/watchdog/internal/flowvpn"
 	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/cloudcache/watchdog/internal/snmpch"
@@ -62,6 +63,8 @@ type Server struct {
 	vpnDetectCancel          context.CancelFunc
 	flowExportCancel         context.CancelFunc
 	flowReconciliationCancel context.CancelFunc
+	flowArchiveCancel        context.CancelFunc
+	flowLifecycle            *flowlifecycle.Store
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey
@@ -163,6 +166,9 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	}
 	if err := s.startFlowReconciliation(); err != nil {
 		log.Printf("watchdog Flow reconciliation unavailable; management plane remains available: %v", err)
+	}
+	if err := s.startFlowArchive(); err != nil {
+		log.Printf("watchdog Flow archive lifecycle unavailable; management plane remains available: %v", err)
 	}
 	if err := s.startFlowQuery(); err != nil {
 		return fmt.Errorf("start flow query: %w", err)
@@ -309,12 +315,17 @@ func (s *Server) stopRuntime() {
 		s.flowReconciliationCancel()
 		s.flowReconciliationCancel = nil
 	}
+	if s.flowArchiveCancel != nil {
+		s.flowArchiveCancel()
+		s.flowArchiveCancel = nil
+	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()
 		s.clickHouse = nil
 	}
 	s.snmpMetrics = nil
 	s.flowQuery = nil
+	s.flowLifecycle = nil
 	s.runtimeReady.Store(false)
 }
 

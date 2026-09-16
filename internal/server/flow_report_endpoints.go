@@ -130,11 +130,15 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err
 	}
-	compiled, err := flowquery.Compile(scope, flowquery.Request{
+	queryRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: req.Metric, Dimension: dimension, Filters: filters, Filter: req.Filter,
 		View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-	}, now)
+	}
+	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
+		return nil, flowquery.AggregatePlan{}, err
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err
 	}

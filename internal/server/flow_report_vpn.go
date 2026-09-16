@@ -478,11 +478,15 @@ func (s *Server) overseasDirectionTotalBytes(ctx context.Context, scope flowquer
 	filters := req.Filters
 	filters.Categories = []string{"overseas"}
 	filters.Directions = []string{direction}
-	compiled, err := flowquery.Compile(scope, flowquery.Request{
+	queryRequest := flowquery.Request{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: req.Filter,
 		View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-	}, now)
+	}
+	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
+		return 0, err
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
 	if err != nil {
 		return 0, err
 	}

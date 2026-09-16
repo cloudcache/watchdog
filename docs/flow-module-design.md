@@ -4,7 +4,7 @@
 
 > 状态：现行。本文只定义当前实现契约；需求口径见 [flow-direction-requirements.md](flow-direction-requirements.md)，架构取舍和废弃方案见 [flow-pipeline-adr.md](flow-pipeline-adr.md)，唯一执行状态见 [flow-module-tasklist.md](flow-module-tasklist.md)。完成历史不得回填到本文。
 
-> **修订(2026-09)——保留与降精度模型**：原始/全精度是在线主查询面，保留时长完全来自 tenant Storage V2 policy，不写死 30 天或 1 年。只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 后才生成 1h archive；1m 不再持续物化。固定 TTL、实时双 rollup 和 hash 身份的后续旧段落仅保留为 V1 历史。
+> **修订(2026-09)——保留与降精度模型**：原始/全精度是在线主查询面，保留时长完全来自安装级 Storage V2 policy，不写死 30 天或 1 年。只有整个 UTC 日越过 `max(raw_retention, late_arrival_window)` 后才生成 1h archive；1m 不再持续物化。固定 TTL、实时双 rollup 和 hash 身份的后续旧段落仅保留为 V1 历史。
 
 > **修订(2026-09)——自研 v5 快解码器**:**NetFlow v5 与 sFlow v5 已由自研定长/TLV 快解码器处理**(零反射、零分配、对 GoFlow2 逐字段差分验证);GoFlow2 仅剩 **NetFlow v9 / IPFIX** 与 sFlow 未覆盖记录的回落。因此本文 §1.1 图的 decode 步、以及 §「采样与旁带元数据」中"sFlow 的 sub-agent/source-id/sample-pool/drop 靠 GoFlow2 producer 同序旁带保留"仅对 **GoFlow2 路径(v9/IPFIX)** 成立;**sFlow v5 快路径直接在自研解码器内复刻这些字段**。NetFlow v9/IPFIX 的 GoFlow2 template/sampling store 语义不变。详见 [flow-decode-fastpath.md](flow-decode-fastpath.md)。
 
@@ -57,12 +57,12 @@ router/switch
 | 事实身份 | `(source_stream_id, kafka_partition, kafka_offset, record_index)`；`source_stream_id` 表示 Kafka cluster/topic incarnation，topic 重建后禁止复用 |
 | 写入 | 大 columnar block 写事实，逐 Kafka message 写 receipt；无 `record_id`、`ingest_batch_id`、dimension fingerprint 或内容 checksum 热路径计算 |
 | 对账 | 由 Kafka `committed_next_offset` 给出闭合右边界；逐 offset 检查 receipt、连续 record index、count 及 raw/estimated bytes/packets |
-| 生命周期 | MySQL immutable policy + UTC 日状态；候选日必须越过 `max(raw_retention, late_arrival_window)`，再由 `operation_jobs` 写 24 个 1h bucket 并核对守恒 |
+| 生命周期 | MySQL 全局 immutable policy + UTC 日状态；候选日必须越过 `max(raw_retention, late_arrival_window)`，再由 `operation_jobs` 写 24 个 1h bucket 并核对守恒；每 6h 轮转复核迟到数据，差异进入下一 repair generation |
 | generation | `(policy_version << 32) | repair_attempt`；新策略和 repair 单调前进，不与 legacy generation 冲突 |
 | 查询 | 连续 reconciled 日之前读 1h archive，之后读 raw；两段互斥且 union 后再做全局 TopN。1m 和未物化的联合维度读 raw |
 | 删除 | 当前 fail closed；`raw_delete_enabled=true` 不可发布。只有 Kafka 日覆盖、delete grace、审计和故障恢复门禁完成后才新增显式 delete handler |
 
-管理 API 固定为 `GET/POST /api/v1/flow/storage/policies`、`GET/PATCH/DELETE /api/v1/flow/storage/policies/{id}`、`POST .../{id}/actions/publish` 和 `GET /api/v1/flow/storage/partitions`。修改/删除 draft 与发布均使用 row-version/`If-Match`，一个 tenant 同时只能有一个 published policy。静态 `flow_storage` 配置只控制扫描、并发、租约与重试预算；保留时长不写入进程配置。`flow_rollup.enabled` 与 `flow_storage.enabled` 互斥。
+管理 API 固定为 `GET/POST /api/v1/flow/storage/policies`、`GET/PATCH/DELETE /api/v1/flow/storage/policies/{id}`、`POST .../{id}/actions/publish` 和 `GET /api/v1/flow/storage/partitions`。修改/删除 draft 与发布均使用 row-version/`If-Match`，整个安装同时只能有一个 published policy。server 内的固定扫描预算只限制单轮工作量，不定义保留时长；不存在第二套 `flow_storage` 天数配置。归档 worker 复用 `operation_jobs` 的 lease/heartbeat/cancel/retry/checkpoint，失败后从 `next_hour` 续跑，同 generation 重建幂等。MySQL 只把连续 `reconciled/delete_eligible/raw_deleted` UTC 日暴露为 archive boundary；首个缺口、运行中或失败日立即停止边界，查询从该处读取 raw，禁止按年龄猜测归档完整。物理删除仍未启动。
 
 ## 2. RawFlow、Kafka 与 collector
 
