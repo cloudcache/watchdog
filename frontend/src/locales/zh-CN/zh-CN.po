@@ -7251,3 +7251,122 @@ msgstr "Worker 回执"
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Worker ACKs"
 msgstr "Worker 回执"
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Archive retention"
+msgstr "归档保留期"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Archive retention (days, 0 = unlimited)"
+msgstr "归档保留期（天，0 表示永久保留）"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Bootstrap date"
+msgstr "起始日期"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Cancel editing"
+msgstr "取消编辑"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Create draft"
+msgstr "新建草稿"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Delete draft"
+msgstr "删除草稿"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Delete grace (hours)"
+msgstr "删除宽限期（小时）"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Deletion receipts"
+msgstr "删除回执"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Edit draft"
+msgstr "编辑草稿"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Failed to load Flow storage lifecycle"
+msgstr "加载 Flow 存储生命周期失败"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Failed to save Flow storage policy"
+msgstr "保存 Flow 存储策略失败"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Flow storage lifecycle"
+msgstr "Flow 存储生命周期"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Flow storage lifecycle action failed"
+msgstr "Flow 存储生命周期操作失败"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Kafka watermarks"
+msgstr "Kafka 水位"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Late arrival"
+msgstr "迟到窗口"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Late-arrival window (hours)"
+msgstr "迟到窗口（小时）"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Maximum partitions per run"
+msgstr "单次最大分区数"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "No Flow storage policies found."
+msgstr "没有 Flow 存储策略。"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Partition states"
+msgstr "分区状态"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Published policy revisions drive archive eligibility. Physical deletion remains locked."
+msgstr "已发布的策略版本决定归档资格；物理删除当前保持锁定。"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Raw retention"
+msgstr "原始数据保留期"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Raw retention (days)"
+msgstr "原始数据保留期（天）"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Require verified backup"
+msgstr "删除前要求已验证备份"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Save draft"
+msgstr "保存草稿"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "days"
+msgstr "天"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "hours"
+msgstr "小时"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Draft"
+msgstr "草稿"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Publish"
+msgstr "发布"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Published"
+msgstr "已发布"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Search policy ID or status..."
+msgstr "搜索策略 ID 或状态..."

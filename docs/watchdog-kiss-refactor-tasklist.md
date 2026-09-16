@@ -298,7 +298,7 @@
 生命周期包后续按纵向切片推进：
 
 - [x] **L1 契约/Schema/静态假象删除**：单域表、纯函数守卫、clean install、旧配置拒绝。
-- [ ] **L2 管理面**：全局 policy draft/publish/retire、状态/水位/回执查询 API 与现有 Retention 页面 Flow 区域；管理员权限、CAS、审计和服务端 VTable。
+- [x] **L2 管理面**：全局 policy draft/publish/retire、状态/水位/回执查询 API 与现有 Retention 页面 Flow 区域；`job.view/job.manage` 权限、强制 `If-Match` CAS、审计和服务端分页/search/sort/status-filter VTable。真实空 MySQL 已验证草稿更新、过期版本拒绝、单 published revision、上一版本自动 retired、删除开关 fail-closed 和审计条数；前端路由扫描、TypeScript 与 production build 通过。物理删除动作未暴露。
 - [ ] **L3 Kafka 对账**：稳定 committed-next-offset snapshot、显式 bootstrap、连续 receipt/fact count+counter scanner、checkpoint/heartbeat/cancel/retry 和持久水位。
 - [ ] **L4 归档**：UTC 日 24 个 1h bucket rebuild、generation repair、源/归档守恒、迟到重修和连续 archive boundary。
 - [ ] **L5 删除保护**：raw 按日、archive 按月；每次删除必须引用覆盖该分区的 Kafka 快照、有效备份与 restore-tested evidence，并写不可变回执。组合故障和恢复演练完成前保持关闭。

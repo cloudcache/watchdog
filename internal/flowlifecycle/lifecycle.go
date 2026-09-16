@@ -37,19 +37,26 @@ var (
 // Seconds are used at API/SQL boundaries so the stored contract is language
 // independent. ArchiveRetentionSeconds == 0 means retain indefinitely.
 type Policy struct {
-	ID                        string
-	Version                   uint64
-	Status                    string
-	BootstrapFrom             time.Time
-	RawRetentionSeconds       uint64
-	ArchiveResolutionSeconds  uint32
-	ArchiveRetentionSeconds   uint64
-	LateArrivalSeconds        uint32
-	DeleteGraceSeconds        uint32
-	MaxPartitionsPerRun       uint32
-	RawDeleteEnabled          bool
-	ArchiveDeleteEnabled      bool
-	RequireBackupBeforeDelete bool
+	ID                        string    `json:"id"`
+	Version                   uint64    `json:"policy_version"`
+	Status                    string    `json:"status"`
+	BootstrapFrom             time.Time `json:"bootstrap_from"`
+	RawRetentionSeconds       uint64    `json:"raw_retention_seconds"`
+	ArchiveResolutionSeconds  uint32    `json:"archive_resolution_seconds"`
+	ArchiveRetentionSeconds   uint64    `json:"archive_retention_seconds"`
+	LateArrivalSeconds        uint32    `json:"late_arrival_seconds"`
+	DeleteGraceSeconds        uint32    `json:"delete_grace_seconds"`
+	MaxPartitionsPerRun       uint32    `json:"max_partitions_per_run"`
+	RawDeleteEnabled          bool      `json:"raw_delete_enabled"`
+	ArchiveDeleteEnabled      bool      `json:"archive_delete_enabled"`
+	RequireBackupBeforeDelete bool      `json:"require_backup_before_delete"`
+	RowVersion                uint64    `json:"row_version"`
+	CreatedBy                 string    `json:"created_by,omitempty"`
+	PublishedBy               string    `json:"published_by,omitempty"`
+	RetiredBy                 string    `json:"retired_by,omitempty"`
+	CreatedAt                 time.Time `json:"created_at"`
+	PublishedAt               time.Time `json:"published_at,omitzero"`
+	RetiredAt                 time.Time `json:"retired_at,omitzero"`
 }
 
 // NormalizePolicy applies only semantic defaults; it deliberately has no

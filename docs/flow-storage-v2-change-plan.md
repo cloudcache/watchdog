@@ -119,7 +119,7 @@ hot -> sealed -> downsample_written -> reconciled -> delete_eligible -> raw_dele
 | worker `source_stream_id`、自然坐标写入、无逐记录 hash | `cmd/watchdog-flow-worker`、`internal/flowworker`、`internal/flowch` | production 必须显式提供 stream incarnation ID |
 | count/counter reconciliation | `internal/flowch/reconciliation*.go` | 调用方必须提供 Kafka committed-next-offset；扫描有界且不完整不报伪零 |
 | system reconciliation job | `internal/flowstream/committed_offsets.go`、`internal/watchdog/flow_reconciliation_*` | franz-go 向真实 group coordinator 读稳定水位；显式 cutover、冻结快照、checkpoint/system watermark 与五类 gauge；不解锁 raw delete |
-| 策略、UTC 日状态、水位和 CAS API | MySQL migration 056、`internal/watchdog/*flow_storage*` | `raw_delete_enabled=true` 稳定拒绝 |
+| 策略、UTC 日状态、水位和 CAS API | KISS migration `0033_flow_storage_lifecycle.sql`、`internal/flowlifecycle`、`internal/server/flow_storage_lifecycle.go` | 单域 policy draft/publish/retire；`raw_delete_enabled=true` 稳定拒绝；旧 tenant 管理面不再作为当前实现 |
 | aging/downsample operation job | `internal/watchdog/flow_storage_jobs.go`、`internal/flowch/rollup.go` | 只写 1h archive；守恒不通过进入 failed/repair |
 | raw/archive 混合查询 | `internal/flowquery`、`internal/watchdog/query_provider_flow*.go`、`api_flow_overseas.go` | 只采用连续 reconciled boundary；1m/raw 与 1h/hybrid 语义分开 |
 

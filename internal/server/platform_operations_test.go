@@ -10,10 +10,20 @@ import (
 func TestPlatformOperationRoutesAreRegistered(t *testing.T) {
 	router := (&Server{}).newRouter()
 	want := map[string]bool{
-		http.MethodGet + " /api/v1/audit-logs":                         false,
-		http.MethodGet + " /api/v1/operation-jobs":                     false,
-		http.MethodGet + " /api/v1/operation-jobs/:id":                 false,
-		http.MethodPost + " /api/v1/operation-jobs/:id/actions/cancel": false,
+		http.MethodGet + " /api/v1/audit-logs":                                 false,
+		http.MethodGet + " /api/v1/operation-jobs":                             false,
+		http.MethodGet + " /api/v1/operation-jobs/:id":                         false,
+		http.MethodPost + " /api/v1/operation-jobs/:id/actions/cancel":         false,
+		http.MethodGet + " /api/v1/flow/storage/policies":                      false,
+		http.MethodPost + " /api/v1/flow/storage/policies":                     false,
+		http.MethodGet + " /api/v1/flow/storage/policies/:id":                  false,
+		http.MethodPatch + " /api/v1/flow/storage/policies/:id":                false,
+		http.MethodDelete + " /api/v1/flow/storage/policies/:id":               false,
+		http.MethodPost + " /api/v1/flow/storage/policies/:id/actions/publish": false,
+		http.MethodPost + " /api/v1/flow/storage/policies/:id/actions/retire":  false,
+		http.MethodGet + " /api/v1/flow/storage/partitions":                    false,
+		http.MethodGet + " /api/v1/flow/storage/watermarks":                    false,
+		http.MethodGet + " /api/v1/flow/storage/deletion-receipts":             false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path

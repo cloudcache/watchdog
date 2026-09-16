@@ -8238,3 +8238,122 @@ msgstr "Your role does not grant access to this page."
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "Your user settings have been updated."
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Archive retention"
+msgstr "Archive retention"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Archive retention (days, 0 = unlimited)"
+msgstr "Archive retention (days, 0 = unlimited)"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Bootstrap date"
+msgstr "Bootstrap date"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Cancel editing"
+msgstr "Cancel editing"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Create draft"
+msgstr "Create draft"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Delete draft"
+msgstr "Delete draft"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Delete grace (hours)"
+msgstr "Delete grace (hours)"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Deletion receipts"
+msgstr "Deletion receipts"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Edit draft"
+msgstr "Edit draft"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Failed to load Flow storage lifecycle"
+msgstr "Failed to load Flow storage lifecycle"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Failed to save Flow storage policy"
+msgstr "Failed to save Flow storage policy"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Flow storage lifecycle"
+msgstr "Flow storage lifecycle"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Flow storage lifecycle action failed"
+msgstr "Flow storage lifecycle action failed"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Kafka watermarks"
+msgstr "Kafka watermarks"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Late arrival"
+msgstr "Late arrival"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Late-arrival window (hours)"
+msgstr "Late-arrival window (hours)"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Maximum partitions per run"
+msgstr "Maximum partitions per run"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "No Flow storage policies found."
+msgstr "No Flow storage policies found."
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Partition states"
+msgstr "Partition states"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Published policy revisions drive archive eligibility. Physical deletion remains locked."
+msgstr "Published policy revisions drive archive eligibility. Physical deletion remains locked."
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Raw retention"
+msgstr "Raw retention"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Raw retention (days)"
+msgstr "Raw retention (days)"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Require verified backup"
+msgstr "Require verified backup"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Save draft"
+msgstr "Save draft"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "days"
+msgstr "days"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "hours"
+msgstr "hours"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Draft"
+msgstr "Draft"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Publish"
+msgstr "Publish"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Published"
+msgstr "Published"
+
+#: src/components/routes/flow-storage-lifecycle.tsx
+msgid "Search policy ID or status..."
+msgstr "Search policy ID or status..."

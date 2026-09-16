@@ -222,6 +222,7 @@ func (s *Server) newRouter() *gin.Engine {
 	// KISS-06 phase-1b: ClickHouse-backed flow query API (records/facets), the v2
 	// FlowQueryService replacing the retired hub QueryGateway stack.
 	s.registerFlowRoutes(auth)
+	s.registerFlowStorageLifecycleRoutes(auth)
 	flowEnrichment := auth.Group("/flow")
 	flowEnrichment.GET("/classification-profile", s.requirePermission("address.view"), s.getFlowClassificationProfile)
 	flowEnrichment.PUT("/classification-profile", s.requirePermission("address.manage"), s.putFlowClassificationProfile)

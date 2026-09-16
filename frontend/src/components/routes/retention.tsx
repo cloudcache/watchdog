@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import FlowStorageLifecycle from "./flow-storage-lifecycle"
 
 type TargetRecord = {
 	ID?: string
@@ -255,6 +256,8 @@ export default memo(() => {
 					})
 				)}
 			</div>
+
+			<FlowStorageLifecycle />
 		</div>
 	)
 })
