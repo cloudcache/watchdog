@@ -433,17 +433,17 @@ function PortTrafficPreview({
 }
 
 function graphPortStatusDotClass(status: ReturnType<typeof normalizeGraphPortStatus>) {
-	if (status === "up") return "bg-emerald-500"
-	if (status === "down") return "bg-slate-500"
+	if (status === "up") return "bg-blue-600/80 dark:bg-blue-400/80"
+	if (status === "down") return "bg-slate-400 dark:bg-slate-500"
 	if (status === "disabled") return "bg-slate-300 dark:bg-slate-600"
-	return "bg-amber-500"
+	return "bg-slate-400/70 dark:bg-slate-500/70"
 }
 
 function graphPortStatusTextClass(status: ReturnType<typeof normalizeGraphPortStatus>) {
-	if (status === "up") return "text-emerald-700 dark:text-emerald-300"
-	if (status === "down") return "text-slate-600 dark:text-slate-400"
+	if (status === "up") return "text-blue-700 dark:text-blue-300"
+	if (status === "down") return "text-slate-500 dark:text-slate-400"
 	if (status === "disabled") return "text-muted-foreground"
-	return "text-amber-700 dark:text-amber-300"
+	return "text-slate-500 dark:text-slate-400"
 }
 
 async function execPanelQuery(

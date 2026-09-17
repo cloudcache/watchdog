@@ -881,7 +881,7 @@ function PortStatusOverview({ ports }: { ports: NetworkPort[] }) {
 			<div className="grid grid-cols-4 gap-2 text-sm tabular-nums">
 				<PortCount label={<Trans>Total</Trans>} value={ports.length} className="text-foreground" />
 				<PortCount label={<Trans>Up</Trans>} value={up} className="text-blue-700 dark:text-blue-300" />
-				<PortCount label={<Trans>Down</Trans>} value={down} className="text-red-600 dark:text-red-300" />
+				<PortCount label={<Trans>Down</Trans>} value={down} className="text-slate-500 dark:text-slate-400" />
 				<PortCount label={<Trans>Disabled</Trans>} value={disabled + unknown} className="text-muted-foreground" />
 			</div>
 		</div>
