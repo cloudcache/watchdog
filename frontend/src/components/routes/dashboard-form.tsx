@@ -35,6 +35,7 @@ import {
 	removeDashboardPanel,
 } from "@/lib/dashboard-ui"
 import { cn } from "@/lib/utils"
+import { newUUID } from "@/lib/random"
 
 type Dashboard = {
 	id: string
@@ -344,7 +345,7 @@ export default memo(({ id }: DashboardFormProps) => {
 					const selectedID = graphID(graph)
 					if (!selectedID) return
 					setKnownGraphs((current) => ({ ...current, [selectedID]: graph }))
-					setPanels((current) => addDashboardPanel(current, { id: crypto.randomUUID(), graph_id: selectedID, span: 1 }))
+					setPanels((current) => addDashboardPanel(current, { id: newUUID(), graph_id: selectedID, span: 1 }))
 					setPreview(null)
 					setPickerOpen(false)
 				}}

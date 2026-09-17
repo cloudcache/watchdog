@@ -21,6 +21,7 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, downloadWatchdogFile } from "@/lib/api"
+import { newUUID } from "@/lib/random"
 import { cn } from "@/lib/utils"
 import type { ColumnDefine } from "@/lib/vtable"
 
@@ -285,7 +286,7 @@ export default memo(({ id }: { id: string }) => {
 		try {
 			const job = await api.send<Job>(`/api/v1/billing/periods/${selected.id}/${kind}`, {
 				method: "POST",
-				headers: { "If-Match": selectedETag, "Idempotency-Key": crypto.randomUUID() },
+				headers: { "If-Match": selectedETag, "Idempotency-Key": newUUID() },
 				body: {},
 			})
 			await waitForJob(`/api/v1/billing/jobs/${job.id}`)
@@ -392,7 +393,7 @@ export default memo(({ id }: { id: string }) => {
 		try {
 			const job = await api.send<Job>(`/api/v1/billing/periods/${selected.id}/exports`, {
 				method: "POST",
-				headers: { "Idempotency-Key": crypto.randomUUID() },
+				headers: { "Idempotency-Key": newUUID() },
 				body: { format, calculation_version: selected.calculation_version },
 			})
 			await waitForJob(`/api/v1/billing/exports/${job.id}`)

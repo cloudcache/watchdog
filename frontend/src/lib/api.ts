@@ -2,6 +2,7 @@ import { basePath } from "@/components/router"
 import type { ChartTimes, UserSettings } from "@/types"
 import { $platformIdentity, type PlatformAuthContext } from "./platform-auth"
 import { resolveAPIBase, responseFilename } from "./api-transport"
+import { newUUID } from "./random"
 import { $allSystemsById, $allSystemsByName, $authenticated, $authChecked, $userSettings } from "./stores"
 import { chartTimeData } from "./utils"
 
@@ -175,7 +176,7 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 	const { body, query, onResponse, ...requestInit } = options
 	const headers = new Headers(requestInit.headers)
 	if (!headers.has("X-Request-ID")) {
-		headers.set("X-Request-ID", crypto.randomUUID())
+		headers.set("X-Request-ID", newUUID())
 	}
 	const method = (options.method ?? "GET").toUpperCase()
 	if (!["GET", "HEAD", "OPTIONS"].includes(method) && !headers.has("X-CSRF-Token")) {
