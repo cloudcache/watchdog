@@ -7885,3 +7885,16 @@ msgstr "合同带宽 / 保底 / 流量配额"
 #: src/components/routes/billing-account-form.tsx
 msgid "Failed to load device ports"
 msgstr "加载设备端口失败"
+
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Address source data is imported but no Flow address snapshot is active"
+msgstr "地址源数据已导入，但尚未发布并激活 Flow 地址快照"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Failed to load geography dictionary"
+msgstr "加载地理字典失败"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Geography dictionary is unavailable"
+msgstr "地理字典不可用"

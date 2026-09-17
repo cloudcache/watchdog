@@ -8862,3 +8862,16 @@ msgstr "Contract / minimum / allowance"
 #: src/components/routes/billing-account-form.tsx
 msgid "Failed to load device ports"
 msgstr "Failed to load device ports"
+
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
+msgid "Address source data is imported but no Flow address snapshot is active"
+msgstr "Address source data is imported but no Flow address snapshot is active"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Failed to load geography dictionary"
+msgstr "Failed to load geography dictionary"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Geography dictionary is unavailable"
+msgstr "Geography dictionary is unavailable"

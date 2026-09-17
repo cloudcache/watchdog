@@ -46,6 +46,7 @@ type ReferenceItem = { id: string; name: string; path?: Array<{ id: string; name
 type OperatorItem = { id: string; name: string; short_name?: string }
 type DeviceItem = { ID?: string; id?: string; SysName?: string; sys_name?: string; Name?: string; name?: string }
 type ListResponse<T> = { items?: T[]; version?: string }
+type AddressDimensionRuntimeStatus = { snapshot?: { id?: string } }
 type FlowReportExportQuery = {
 	dataset: "flow.traffic"
 	from: string
@@ -230,15 +231,23 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 
 	useEffect(() => {
 		Promise.allSettled([
-			api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", { query: { level: "country", limit: 500 } }),
+			api.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
+				query: { kind: "country", enabled: true, limit: 500 },
+			}),
+			api.send<AddressDimensionRuntimeStatus>("/api/v1/dimensions/address/status"),
 			api.send<ListResponse<OperatorItem>>("/api/v1/network/operators", { query: { enabled: true, limit: 500 } }),
 			api.send<ListResponse<DeviceItem>>("/api/v1/devices", { query: { kind: "network" } }),
-		]).then(([geo, operatorResult, deviceResult]) => {
+		]).then(([geo, addressRuntime, operatorResult, deviceResult]) => {
 			const warnings: string[] = []
 			if (geo.status === "fulfilled") {
 				setCountries(sortByName(geo.value.items ?? []))
-				setGeoVersion(geo.value.version ?? "")
-			} else warnings.push(t`Geo catalog is unavailable`)
+			} else warnings.push(t`Geography dictionary is unavailable`)
+			if (addressRuntime.status === "fulfilled" && addressRuntime.value.snapshot?.id) {
+				setGeoVersion(addressRuntime.value.snapshot.id)
+			} else {
+				setGeoVersion("")
+				warnings.push(t`Address source data is imported but no Flow address snapshot is active`)
+			}
 			if (operatorResult.status === "fulfilled") setOperators(sortByName(operatorResult.value.items ?? []))
 			else warnings.push(t`Operator catalog is unavailable`)
 			if (deviceResult.status === "fulfilled") setDevices(deviceResult.value.items ?? [])
@@ -252,24 +261,26 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			setProvinces([])
 			return
 		}
-		api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
-			query: { level: "province", parent: country, version: geoVersion, limit: 500 },
-		})
+		api
+			.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
+				query: { kind: "province", parent_id: country, enabled: true, limit: 500 },
+			})
 			.then((result) => setProvinces(sortByName(result.items ?? [])))
 			.catch(() => setReferenceWarning(t`Province catalog is unavailable`))
-	}, [country, geoVersion, t])
+	}, [country, t])
 
 	useEffect(() => {
 		if (province === "all") {
 			setCities([])
 			return
 		}
-		api.send<ListResponse<ReferenceItem>>("/api/v1/flow/geo/catalog", {
-			query: { level: "city", parent: province, version: geoVersion, limit: 500 },
-		})
+		api
+			.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
+				query: { kind: "city", parent_id: province, enabled: true, limit: 500 },
+			})
 			.then((result) => setCities(sortByName(result.items ?? [])))
 			.catch(() => setReferenceWarning(t`City catalog is unavailable`))
-	}, [geoVersion, province, t])
+	}, [province, t])
 
 	const refresh = useCallback(
 		async (nextTable?: TableControl, nextReportTables?: Record<string, TableControl>) => {

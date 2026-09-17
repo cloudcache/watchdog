@@ -165,6 +165,7 @@ type NetworkOperator = {
 }
 type ListResponse<T> = { items?: T[] }
 type FlowGeoCatalogResponse = ListResponse<GeoNode> & { version: string; total: number }
+type AddressDimensionRuntimeStatus = { snapshot?: { id?: string } }
 
 type GraphMode = FlowGraphType | "table"
 type QuickAnalysisMode = "direction" | "protocol" | "src_ip" | "dst_ip" | "local_prefix" | "remote_prefix"
@@ -339,22 +340,27 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 
 	useEffect(() => {
 		Promise.allSettled([
-			api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
-				query: { level: "country", limit: 500 },
+			api.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
+				query: { kind: "country", enabled: true, limit: 500 },
 			}),
+			api.send<AddressDimensionRuntimeStatus>("/api/v1/dimensions/address/status"),
 			api.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
 				query: { enabled: true, limit: 500 },
 			}),
 		])
-			.then(([geo, networkOperators]) => {
+			.then(([geo, addressRuntime, networkOperators]) => {
 				const errors: string[] = []
 				if (geo.status === "fulfilled") {
 					setCountries(sortReferences(geo.value.items ?? []))
-					setGeoVersion(geo.value.version)
 				} else {
 					setCountries([])
+					errors.push(geo.reason instanceof Error ? geo.reason.message : t`Failed to load geography dictionary`)
+				}
+				if (addressRuntime.status === "fulfilled" && addressRuntime.value.snapshot?.id) {
+					setGeoVersion(addressRuntime.value.snapshot.id)
+				} else {
 					setGeoVersion("")
-					errors.push(geo.reason instanceof Error ? geo.reason.message : t`Failed to load Geo catalog`)
+					errors.push(t`Address source data is imported but no Flow address snapshot is active`)
 				}
 				if (networkOperators.status === "fulfilled") {
 					setOperators(sortReferences(networkOperators.value.items ?? []))
@@ -377,13 +383,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			return
 		}
 		api
-			.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
-				query: { level: "province", parent: selectedCountry, version: geoVersion, limit: 500 },
+			.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
+				query: { kind: "province", parent_id: selectedCountry, enabled: true, limit: 500 },
 			})
 			.then((result) => setProvinces(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load provinces`))
 			.finally(() => setProvincesLoaded(true))
-	}, [geoVersion, selectedCountry, t])
+	}, [selectedCountry, t])
 
 	useEffect(() => {
 		setCitiesLoaded(false)
@@ -393,13 +399,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			return
 		}
 		api
-			.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
-				query: { level: "city", parent: selectedProvince, version: geoVersion, limit: 500 },
+			.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
+				query: { kind: "city", parent_id: selectedProvince, enabled: true, limit: 500 },
 			})
 			.then((result) => setCities(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load cities`))
 			.finally(() => setCitiesLoaded(true))
-	}, [geoVersion, selectedProvince, t])
+	}, [selectedProvince, t])
 
 	const refresh = useCallback(
 		async (modeOverride?: QueryMode, tableOverride?: FlowTableControl) => {
