@@ -1,9 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react"
+import { Link } from "@/components/router"
 import { api } from "@/lib/api"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { trafficViewQueryStep, trafficViewRateBase, type TrafficViewMode } from "@/lib/traffic-view"
-import { createLineChart, disposeChart } from "@/lib/vchart"
+import { type createLineChart, disposeChart, updateLineChart } from "@/lib/vchart"
 
 // ---------------------------------------------------------------------------
 // Declarative dashboard model (matches backend GraphDashboard).
@@ -174,26 +175,42 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 			return
 		}
 		let cancelled = false
-		let created = false
+		let retryTimer: ReturnType<typeof setTimeout> | undefined
 		const formatter = (value?: number | null) => formatGraphValue(value, panel.unit, ctx?.trafficView)
 		const draw = () => {
-			if (cancelled || created || !chartRef.current) return
+			if (cancelled || !chartRef.current) return
 			const rect = chartRef.current.getBoundingClientRect()
-			if (rect.width < 2 || rect.height < 2) return
-			disposeChart(chartInstance.current)
-			chartInstance.current = createLineChart(chartRef.current, {
+			if (rect.width < 2 || rect.height < 2) {
+				if (retryTimer === undefined) {
+					retryTimer = globalThis.setTimeout(() => {
+						retryTimer = undefined
+						draw()
+					}, 50)
+				}
+				return
+			}
+			if (retryTimer !== undefined) {
+				globalThis.clearTimeout(retryTimer)
+				retryTimer = undefined
+			}
+			chartInstance.current = updateLineChart(chartInstance.current, chartRef.current, {
 				series: series.map((entry) => ({ name: entry.name, values: entry.values })),
 				yFormatter: formatter,
 			})
-			created = true
-			observer.disconnect()
 		}
 		const observer = new ResizeObserver(draw)
 		observer.observe(el)
 		const frame = globalThis.requestAnimationFrame(draw)
+		retryTimer = globalThis.setTimeout(() => {
+			retryTimer = undefined
+			draw()
+		}, 0)
 		return () => {
 			cancelled = true
 			globalThis.cancelAnimationFrame(frame)
+			if (retryTimer !== undefined) {
+				globalThis.clearTimeout(retryTimer)
+			}
 			observer.disconnect()
 			disposeChart(chartInstance.current)
 			chartInstance.current = null
@@ -223,9 +240,25 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 			) : (
 				<div ref={chartRef} className="h-[200px] w-full" />
 			)}
+			{panel.links && panel.links.length > 0 ? <GraphPanelLinks links={panel.links} /> : null}
 		</div>
 	)
 })
+
+function GraphPanelLinks({ links }: { links: NonNullable<GraphPanel["links"]> }) {
+	return (
+		<div className="max-h-28 overflow-auto border-t border-border pt-3 text-sm leading-6">
+			{links.map((link, index) => (
+				<span key={`${link.href}:${link.label}`}>
+					<Link href={link.href} className="text-blue-700 hover:underline dark:text-blue-300">
+						{link.label}
+					</Link>
+					{index < links.length - 1 ? <span className="text-muted-foreground">, </span> : null}
+				</span>
+			))}
+		</div>
+	)
+}
 
 async function execPanelQuery(
 	query: GraphQuery,
