@@ -251,7 +251,7 @@ func (s *Server) listAccessOptions(c *gin.Context) {
 			baseArgs = append(baseArgs, deviceID)
 		}
 	case "billing_account":
-		selectSQL = `SELECT a.id,a.name label,CONCAT(a.bill_type,IF(a.ref='', '',CONCAT(' · ',a.ref))) description FROM billing_accounts a`
+		selectSQL = `SELECT a.id,a.name label,CONCAT(a.measurement_type,IF(a.ref='', '',CONCAT(' · ',a.ref))) description FROM billing_accounts a`
 	case "aggregate_graph":
 		selectSQL = `SELECT g.id,g.name label,COALESCE(g.description,'') description FROM aggregate_graphs g`
 	default:

@@ -28,17 +28,17 @@ type BillingAccount = {
 	id: string
 	name: string
 	status: string
-	bill_type: string
+	measurement_type: string
+	billing_method: string
 	algorithm: string
 	billing_day: number
 	timezone: string
 	direction: string
 	default_layer: string
-	pricing_model: string
 	price_currency: string
 	unit_price: string
-	cdr_bps?: number
-	quota_bytes?: number
+	minimum_percent: number
+	traffic_allowance_bytes?: number
 	row_version: number
 }
 type BillingPort = {
@@ -73,6 +73,7 @@ type Value = {
 	out_bytes: number
 	selected_bytes: number
 	rate_95th_bps: number
+	rate_daily_95th_bps: number
 	rate_average_bps: number
 	algorithm_value: number
 	coverage: number
@@ -344,6 +345,7 @@ export default memo(({ id }: { id: string }) => {
 					algorithm_value: number,
 					selected_bytes: total ? number : 0,
 					rate_95th_bps: selected.algorithm === "95th" ? number : 0,
+					rate_daily_95th_bps: selected.algorithm === "daily_95th" ? number : 0,
 					rate_average_bps: selected.algorithm === "average" ? number : 0,
 					coverage: observedBuckets / expectedBuckets,
 					expected_buckets: expectedBuckets,
@@ -475,31 +477,35 @@ export default memo(({ id }: { id: string }) => {
 			) : null}
 			<div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
 				<Info
-					label={t`Type`}
-					value={account?.bill_type === "cdr" ? t`Committed bandwidth` : account ? t`Traffic quota` : undefined}
+					label={t`Measurement type`}
+					value={account?.measurement_type === "bandwidth" ? t`Bandwidth` : account ? t`Traffic` : undefined}
 				/>
 				<Info
-					label={t`Algorithm`}
+					label={t`Billing method`}
 					value={
-						account?.algorithm === "95th"
-							? t`95th percentile bandwidth`
-							: account?.algorithm === "average"
-								? t`Average bandwidth`
-								: account
-									? t`Total traffic`
-									: undefined
+						account?.billing_method === "package_port"
+							? t`Port package`
+							: account?.billing_method === "monthly_95th"
+								? t`Monthly 95th`
+								: account?.billing_method === "daily_95th"
+									? t`Daily 95th`
+									: account
+										? t`Monthly average`
+										: undefined
 					}
 				/>
 				<Info label={t`Direction`} value={account?.direction} />
 				<Info label={t`Value strategy`} value={account?.default_layer} />
 				<Info
-					label={t`Pricing model`}
+					label={account?.measurement_type === "traffic" ? t`Traffic allowance` : t`Billing minimum`}
 					value={
-						account?.pricing_model === "usage_95th"
-							? t`95th percentile per Mbps`
-							: account
-								? t`Fixed price per port`
-								: undefined
+						account?.measurement_type === "traffic"
+							? formatBytes(account.traffic_allowance_bytes)
+							: account?.billing_method === "package_port"
+								? "—"
+								: account
+									? `${account.minimum_percent ?? 0}%`
+									: undefined
 					}
 				/>
 				<Info label={t`Unit price`} value={account ? `${account.price_currency} ${account.unit_price}` : undefined} />

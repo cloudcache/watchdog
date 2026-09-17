@@ -14,6 +14,6 @@ export function parseBillingUnit(value: string, multiplier: number): number | un
 	return result
 }
 
-export function reconciliationUnit(algorithm: "95th" | "average" | "total") {
+export function reconciliationUnit(algorithm: "95th" | "daily_95th" | "average" | "total") {
 	return algorithm === "total" ? { label: "GB", multiplier: BYTES_PER_GB } : { label: "Mbps", multiplier: BPS_PER_MBPS }
 }

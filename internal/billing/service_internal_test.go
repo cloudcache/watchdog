@@ -27,7 +27,7 @@ func TestCommonCompleteBillingRatesUsesOneSharedDenominator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || len(rates[LayerSNMP]) != 1 || rates[LayerSNMP][0] != 1000 || rates[LayerRaw][0] != 800 || rates[LayerSupplier][0] != 700 || rates[LayerCustomer][0] != 600 {
+	if count != 1 || len(rates[LayerSNMP]) != 1 || rates[LayerSNMP][0].Value != 1000 || rates[LayerRaw][0].Value != 800 || rates[LayerSupplier][0].Value != 700 || rates[LayerCustomer][0].Value != 600 {
 		t.Fatalf("common rates=%+v count=%d", rates, count)
 	}
 }

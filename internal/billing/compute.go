@@ -4,9 +4,16 @@ package billing
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
+	"time"
 )
+
+type RateSample struct {
+	Time  time.Time
+	Value float64
+}
 
 type LayerStats struct {
 	Layer                  Layer
@@ -14,6 +21,8 @@ type LayerStats struct {
 	OutBytes               uint64
 	SelectedBytes          uint64
 	SelectedRates          []float64
+	RateSamples            []RateSample
+	Timezone               string
 	Coverage               float64
 	ExpectedBuckets        uint32
 	ObservedBuckets        uint32
@@ -27,6 +36,7 @@ type LayerStats struct {
 
 func BuildValue(periodID string, generation uint64, algorithm Algorithm, stats LayerStats) Value {
 	p95, average := RateStatistics(stats.SelectedRates)
+	daily95, _ := Daily95thAverage(stats.RateSamples, stats.Timezone)
 	missing := uint32(0)
 	if stats.ExpectedBuckets > stats.ObservedBuckets {
 		missing = stats.ExpectedBuckets - stats.ObservedBuckets
@@ -34,6 +44,8 @@ func BuildValue(periodID string, generation uint64, algorithm Algorithm, stats L
 	unit := "bps"
 	algorithmValue := p95
 	switch algorithm {
+	case AlgorithmDaily95:
+		algorithmValue = daily95
 	case AlgorithmAverage:
 		algorithmValue = average
 	case AlgorithmTotal:
@@ -47,7 +59,7 @@ func BuildValue(periodID string, generation uint64, algorithm Algorithm, stats L
 	return Value{
 		PeriodID: periodID, CalculationVersion: generation, Layer: stats.Layer,
 		Algorithm: algorithm, Unit: unit, InBytes: stats.InBytes, OutBytes: stats.OutBytes,
-		SelectedBytes: stats.SelectedBytes, Rate95thBPS: p95, RateAverageBPS: average,
+		SelectedBytes: stats.SelectedBytes, Rate95thBPS: p95, RateDaily95thBPS: daily95, RateAverageBPS: average,
 		AlgorithmValue: algorithmValue, Coverage: clamp01(stats.Coverage),
 		ExpectedBuckets: stats.ExpectedBuckets, ObservedBuckets: stats.ObservedBuckets,
 		MissingBuckets: missing, ResetBuckets: stats.ResetBuckets, GapBuckets: stats.GapBuckets,
@@ -55,6 +67,33 @@ func BuildValue(periodID string, generation uint64, algorithm Algorithm, stats L
 		SourceGenerationMin:    stats.SourceGenerationMin, SourceGenerationMax: stats.SourceGenerationMax,
 		Provenance: provenance,
 	}
+}
+
+// Daily95thAverage calculates nearest-rank P95 for each local calendar day,
+// then averages those daily values into the period's billable rate.
+func Daily95thAverage(samples []RateSample, timezone string) (uint64, error) {
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return 0, err
+	}
+	byDay := make(map[string][]float64)
+	for _, sample := range samples {
+		if sample.Time.IsZero() || sample.Value < 0 || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
+			continue
+		}
+		day := sample.Time.In(location).Format("2006-01-02")
+		byDay[day] = append(byDay[day], sample.Value)
+	}
+	if len(byDay) == 0 {
+		return 0, errors.New("daily 95th requires timestamped rate samples")
+	}
+	var sum float64
+	for _, values := range byDay {
+		slices.Sort(values)
+		index := int(math.Ceil(.95*float64(len(values)))) - 1
+		sum += values[index]
+	}
+	return roundUint64(sum / float64(len(byDay))), nil
 }
 
 func RateStatistics(input []float64) (p95 uint64, average uint64) {

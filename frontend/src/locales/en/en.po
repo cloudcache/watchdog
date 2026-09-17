@@ -8546,3 +8546,75 @@ msgstr "Traffic quota (GB)"
 #: src/components/routes/billing-account-form.tsx
 msgid "Usage contract"
 msgstr "Usage contract"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Measurement type"
+msgstr "Measurement type"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Billing method"
+msgstr "Billing method"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Port package"
+msgstr "Port package"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Monthly 95th"
+msgstr "Monthly 95th"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Daily 95th"
+msgstr "Daily 95th"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Monthly average"
+msgstr "Monthly average"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Minimum usage (%)"
+msgstr "Minimum usage (%)"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Minimum usage"
+msgstr "Minimum usage"
+
+#: src/components/routes/billing.tsx
+msgid "Minimum / allowance"
+msgstr "Minimum / allowance"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Percentage of the combined nominal bandwidth of the selected ports."
+msgstr "Percentage of the combined nominal bandwidth of the selected ports."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per Mbps / day"
+msgstr "Price per Mbps / day"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic allowance (GB)"
+msgstr "Traffic allowance (GB)"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Traffic allowance"
+msgstr "Traffic allowance"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Billing minimum"
+msgstr "Billing minimum"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic above this allowance is period overuse."
+msgstr "Total traffic above this allowance is period overuse."

@@ -7559,3 +7559,75 @@ msgstr "流量配额（GB）"
 #: src/components/routes/billing-account-form.tsx
 msgid "Usage contract"
 msgstr "计量类型"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Measurement type"
+msgstr "计量类型"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Billing method"
+msgstr "计费方式"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Port package"
+msgstr "包端口"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Monthly 95th"
+msgstr "月95"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Daily 95th"
+msgstr "日95"
+
+#: src/components/routes/billing-account-detail.tsx
+#: src/components/routes/billing-account-form.tsx
+#: src/components/routes/billing.tsx
+msgid "Monthly average"
+msgstr "月平均"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Minimum usage (%)"
+msgstr "保底（%）"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Minimum usage"
+msgstr "保底"
+
+#: src/components/routes/billing.tsx
+msgid "Minimum / allowance"
+msgstr "保底 / 流量配额"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Percentage of the combined nominal bandwidth of the selected ports."
+msgstr "按所选端口标称带宽合计值的百分比计算。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per Mbps / day"
+msgstr "每 Mbps / 日单价"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic allowance (GB)"
+msgstr "流量配额（GB）"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Traffic allowance"
+msgstr "流量配额"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Billing minimum"
+msgstr "保底"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic above this allowance is period overuse."
+msgstr "账期总流量超过配额的部分计为超用。"

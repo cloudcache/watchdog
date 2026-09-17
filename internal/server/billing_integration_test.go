@@ -99,9 +99,9 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	decodeJSON(t, partyResponse, &party)
 	invalidAccountName := "Invalid API account " + deviceID
 	invalidAccount := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
-		"party_id": party.ID, "name": invalidAccountName, "status": "active", "bill_type": "cdr", "algorithm": "95th",
-		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "cdr_bps": 900,
-		"pricing_model": "usage_95th", "price_currency": "CNY", "unit_price": "1.000000",
+		"party_id": party.ID, "name": invalidAccountName, "status": "active", "measurement_type": "bandwidth", "billing_method": "monthly_95th",
+		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "minimum_percent": 0,
+		"price_currency": "CNY", "unit_price": "1.000000",
 		"items": []map[string]any{{"port_id": "missing-port", "direction": "agg"}},
 	}, headers, cookies...)
 	if invalidAccount.Code != http.StatusForbidden {
@@ -112,9 +112,9 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 		t.Fatalf("invalid account was partially committed: count=%d err=%v", invalidAccountRows, err)
 	}
 	accountResponse := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
-		"party_id": party.ID, "name": "API account " + deviceID, "status": "active", "bill_type": "cdr", "algorithm": "95th",
-		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "cdr_bps": 900, "reconcile_percent": 5,
-		"pricing_model": "usage_95th", "price_currency": "CNY", "unit_price": "12.345600",
+		"party_id": party.ID, "name": "API account " + deviceID, "status": "active", "measurement_type": "bandwidth", "billing_method": "monthly_95th",
+		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "minimum_percent": 0, "reconcile_percent": 5,
+		"price_currency": "CNY", "unit_price": "12.345600",
 		"items": []map[string]any{{"port_id": portID, "direction": "in"}, {"port_id": secondPortID, "direction": "out"}},
 	}, headers, cookies...)
 	if accountResponse.Code != http.StatusCreated || accountResponse.Header().Get("ETag") != `"1"` {
@@ -138,7 +138,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 		_, _ = s.db.Exec(`DELETE FROM audit_logs WHERE actor_id=?`, actor)
 	})
 
-	accounts := requestJSON(t, s, http.MethodGet, "/api/v1/billing/accounts?limit=10&offset=0&q="+deviceID+"&status=active&type=cdr&sort=name&order=asc", nil, nil, cookies...)
+	accounts := requestJSON(t, s, http.MethodGet, "/api/v1/billing/accounts?limit=10&offset=0&q="+deviceID+"&status=active&type=bandwidth&sort=name&order=asc", nil, nil, cookies...)
 	if accounts.Code != http.StatusOK || !strings.Contains(accounts.Body.String(), account.ID) || !strings.Contains(accounts.Body.String(), `"total":1`) {
 		t.Fatalf("account VTable=%d %s", accounts.Code, accounts.Body.String())
 	}

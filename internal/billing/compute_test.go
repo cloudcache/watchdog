@@ -93,11 +93,10 @@ func TestSuggestedPeriodWindowUsesTimezoneBillingDayAndShortMonth(t *testing.T) 
 }
 
 func TestBillingPricingContractValidation(t *testing.T) {
-	cdr := uint64(1_000_000)
 	valid := Account{
-		Name: "customer-a", Status: "active", BillType: "cdr", Algorithm: Algorithm95th,
+		Name: "customer-a", Status: "active", MeasurementType: MeasurementBandwidth, BillingMethod: BillingMonthly95th, Algorithm: Algorithm95th,
 		BillingDay: 1, Timezone: "UTC", Direction: DirectionAgg, DefaultLayer: LayerCustomer,
-		PricingModel: PricingUsage95th, PriceCurrency: "CNY", UnitPrice: "12.345600", CDRBPS: &cdr,
+		PriceCurrency: "CNY", UnitPrice: "12.345600", MinimumPercent: 30,
 	}
 	if err := ValidateAccount(valid); err != nil {
 		t.Fatalf("valid pricing contract: %v", err)
@@ -107,6 +106,12 @@ func TestBillingPricingContractValidation(t *testing.T) {
 		func() Account { item := valid; item.UnitPrice = "1.0000001"; return item }(),
 		func() Account { item := valid; item.UnitPrice = "-1"; return item }(),
 		func() Account { item := valid; item.Algorithm = AlgorithmAverage; return item }(),
+		func() Account { item := valid; item.MinimumPercent = 101; return item }(),
+		func() Account {
+			item := valid
+			item.BillingMethod, item.Algorithm = BillingPackagePort, AlgorithmAverage
+			return item
+		}(),
 	}
 	for index, account := range tests {
 		if err := ValidateAccount(account); err == nil {
@@ -115,10 +120,24 @@ func TestBillingPricingContractValidation(t *testing.T) {
 	}
 	quota := uint64(1_000_000)
 	flat := valid
-	flat.BillType, flat.Algorithm, flat.CDRBPS, flat.QuotaBytes = "quota", AlgorithmTotal, nil, &quota
-	flat.PricingModel = PricingFlatPort
+	flat.MeasurementType, flat.BillingMethod, flat.Algorithm, flat.TrafficAllowance = MeasurementTraffic, BillingPackagePort, AlgorithmTotal, &quota
+	flat.MinimumPercent = 0
 	if err := ValidateAccount(flat); err != nil {
 		t.Fatalf("valid flat-port pricing contract: %v", err)
+	}
+}
+
+func TestDaily95thAveragesLocalCalendarDays(t *testing.T) {
+	from := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	samples := make([]RateSample, 0, 40)
+	for day := 0; day < 2; day++ {
+		for index := 1; index <= 20; index++ {
+			samples = append(samples, RateSample{Time: from.Add(time.Duration(day)*24*time.Hour + time.Duration(index)*5*time.Minute), Value: float64(index + day*20)})
+		}
+	}
+	value, err := Daily95thAverage(samples, "UTC")
+	if err != nil || value != 29 { // daily P95 values 19 and 39, averaged and rounded.
+		t.Fatalf("daily95=%d err=%v", value, err)
 	}
 }
 

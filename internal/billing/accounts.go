@@ -11,30 +11,23 @@ import (
 	"strings"
 )
 
-const accountColumns = `id,COALESCE(party_id,''),name,status,bill_type,algorithm,billing_day,timezone,direction,default_layer,
-	pricing_model,price_currency,CAST(unit_price AS CHAR),cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
+const accountColumns = `id,COALESCE(party_id,''),name,status,measurement_type,billing_method,algorithm,billing_day,timezone,direction,default_layer,
+	price_currency,CAST(unit_price AS CHAR),minimum_percent,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
 	COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 	var item Account
-	var cdr, quota sql.NullString
-	err := scanner.Scan(&item.ID, &item.PartyID, &item.Name, &item.Status, &item.BillType, &item.Algorithm, &item.BillingDay,
-		&item.Timezone, &item.Direction, &item.DefaultLayer, &item.PricingModel, &item.PriceCurrency, &item.UnitPrice,
-		&cdr, &quota, &item.ReconcileAbs, &item.ReconcilePercent,
+	var allowance sql.NullString
+	err := scanner.Scan(&item.ID, &item.PartyID, &item.Name, &item.Status, &item.MeasurementType, &item.BillingMethod, &item.Algorithm, &item.BillingDay,
+		&item.Timezone, &item.Direction, &item.DefaultLayer, &item.PriceCurrency, &item.UnitPrice,
+		&item.MinimumPercent, &allowance, &item.ReconcileAbs, &item.ReconcilePercent,
 		&item.Ref, &item.Notes, &item.RowVersion, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return Account{}, normalizeSQLError(err)
 	}
-	if cdr.Valid {
-		if value, parseErr := strconv.ParseUint(cdr.String, 10, 64); parseErr == nil {
-			item.CDRBPS = &value
-		} else {
-			return Account{}, parseErr
-		}
-	}
-	if quota.Valid {
-		if value, parseErr := strconv.ParseUint(quota.String, 10, 64); parseErr == nil {
-			item.QuotaBytes = &value
+	if allowance.Valid {
+		if value, parseErr := strconv.ParseUint(allowance.String, 10, 64); parseErr == nil {
+			item.TrafficAllowance = &value
 		} else {
 			return Account{}, parseErr
 		}
@@ -43,9 +36,9 @@ func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 }
 
 func accountArgs(item Account, actor string) []any {
-	return []any{nullString(item.PartyID), item.Name, item.Status, item.BillType, item.Algorithm, item.BillingDay, item.Timezone,
-		item.Direction, item.DefaultLayer, item.PricingModel, item.PriceCurrency, item.UnitPrice,
-		item.CDRBPS, item.QuotaBytes, item.ReconcileAbs, item.ReconcilePercent,
+	return []any{nullString(item.PartyID), item.Name, item.Status, item.MeasurementType, item.BillingMethod, item.Algorithm, item.BillingDay, item.Timezone,
+		item.Direction, item.DefaultLayer, item.PriceCurrency, item.UnitPrice, item.MinimumPercent,
+		item.TrafficAllowance, item.ReconcileAbs, item.ReconcilePercent,
 		item.Ref, item.Notes, nullString(actor)}
 }
 
@@ -55,11 +48,11 @@ func normalizeAccount(item Account) Account {
 	if item.Status == "" {
 		item.Status = "active"
 	}
-	if item.BillType == "" {
-		item.BillType = "cdr"
+	if item.MeasurementType == "" {
+		item.MeasurementType = MeasurementBandwidth
 	}
-	if item.Algorithm == "" {
-		item.Algorithm = Algorithm95th
+	if item.BillingMethod == "" {
+		item.BillingMethod = BillingMonthly95th
 	}
 	if item.BillingDay == 0 {
 		item.BillingDay = 1
@@ -73,13 +66,7 @@ func normalizeAccount(item Account) Account {
 	if item.DefaultLayer == "" {
 		item.DefaultLayer = LayerCustomer
 	}
-	if item.PricingModel == "" {
-		if item.BillType == "cdr" && item.Algorithm == Algorithm95th {
-			item.PricingModel = PricingUsage95th
-		} else {
-			item.PricingModel = PricingFlatPort
-		}
-	}
+	item.Algorithm = algorithmFor(item.MeasurementType, item.BillingMethod)
 	item.PriceCurrency = strings.ToUpper(strings.TrimSpace(item.PriceCurrency))
 	if item.PriceCurrency == "" {
 		item.PriceCurrency = "CNY"
@@ -88,10 +75,8 @@ func normalizeAccount(item Account) Account {
 	if item.UnitPrice == "" {
 		item.UnitPrice = "0"
 	}
-	if item.BillType == "cdr" {
-		item.QuotaBytes = nil
-	} else if item.BillType == "quota" {
-		item.CDRBPS = nil
+	if item.MeasurementType == MeasurementBandwidth {
+		item.TrafficAllowance = nil
 	}
 	return item
 }
@@ -101,7 +86,7 @@ func (s *Store) GetAccount(ctx context.Context, id string) (Account, error) {
 }
 
 func (s *Store) ListAccounts(ctx context.Context, filter PageFilter, userID string, viewAll bool) ([]Account, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"name": "a.name", "status": "a.status", "bill_type": "a.bill_type", "algorithm": "a.algorithm", "created_at": "a.created_at", "updated_at": "a.updated_at"}, "name")
+	filter, order, err := normalizePage(filter, map[string]string{"name": "a.name", "status": "a.status", "measurement_type": "a.measurement_type", "billing_method": "a.billing_method", "algorithm": "a.algorithm", "created_at": "a.created_at", "updated_at": "a.updated_at"}, "name")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -116,7 +101,7 @@ func (s *Store) ListAccounts(ctx context.Context, filter PageFilter, userID stri
 		where, args = append(where, "a.status=?"), append(args, filter.Status)
 	}
 	if filter.Type != "" {
-		where, args = append(where, "a.bill_type=?"), append(args, filter.Type)
+		where, args = append(where, "a.measurement_type=?"), append(args, filter.Type)
 	}
 	predicate := strings.Join(where, " AND ")
 	var total int
@@ -165,7 +150,7 @@ func (s *Store) createAccount(ctx context.Context, item Account, ports []Account
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO billing_accounts
-		(id,party_id,name,status,bill_type,algorithm,billing_day,timezone,direction,default_layer,pricing_model,price_currency,unit_price,cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
+		(id,party_id,name,status,measurement_type,billing_method,algorithm,billing_day,timezone,direction,default_layer,price_currency,unit_price,minimum_percent,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
 		VALUES (?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, nullString(actor))...)
 	if err != nil {
 		return Account{}, fmt.Errorf("create billing account: %w", err)
@@ -174,7 +159,7 @@ func (s *Store) createAccount(ctx context.Context, item Account, ports []Account
 		return Account{}, err
 	}
 	if err := auditTx(ctx, tx, actor, "billing.account.create", "billing_account", item.ID,
-		fmt.Sprintf(`{"bill_type":%q,"algorithm":%q,"pricing_model":%q,"port_count":%d}`, item.BillType, item.Algorithm, item.PricingModel, len(normalizedPorts))); err != nil {
+		fmt.Sprintf(`{"measurement_type":%q,"billing_method":%q,"algorithm":%q,"port_count":%d}`, item.MeasurementType, item.BillingMethod, item.Algorithm, len(normalizedPorts))); err != nil {
 		return Account{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -215,8 +200,8 @@ func (s *Store) updateAccount(ctx context.Context, item Account, ports *[]Accoun
 		return Account{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET party_id=?,name=?,status=?,bill_type=?,algorithm=?,billing_day=?,timezone=?,direction=?,default_layer=?,
-		pricing_model=?,price_currency=?,unit_price=?,cdr_bps=?,quota_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
+	result, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET party_id=?,name=?,status=?,measurement_type=?,billing_method=?,algorithm=?,billing_day=?,timezone=?,direction=?,default_layer=?,
+		price_currency=?,unit_price=?,minimum_percent=?,traffic_allowance_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
 	if err != nil {
 		return Account{}, fmt.Errorf("update billing account: %w", err)
 	}

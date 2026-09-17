@@ -57,7 +57,7 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO devices (id,host) VALUES (?,?)`, deviceID, "kiss07-"+deviceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,7,'xe-0/0/7')`, portID, deviceID); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO ports (id,device_id,if_index,if_name,if_speed,if_high_speed) VALUES (?,?,7,'xe-0/0/7',4294967295,10000)`, portID, deviceID); err != nil {
 		t.Fatal(err)
 	}
 	var party billing.Party
@@ -82,11 +82,11 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cdr := uint64(10)
 	account, err = store.CreateAccount(ctx, billing.Account{
-		PartyID: party.ID, Name: "KISS-07 account " + userID, Status: "active", BillType: "cdr",
-		Algorithm: billing.Algorithm95th, BillingDay: 1, Timezone: "Asia/Singapore", Direction: billing.DirectionAgg,
-		DefaultLayer: billing.LayerCustomer, CDRBPS: &cdr, ReconcilePercent: 5,
+		PartyID: party.ID, Name: "KISS-07 account " + userID, Status: "active", MeasurementType: billing.MeasurementBandwidth,
+		BillingMethod: billing.BillingMonthly95th,
+		Algorithm:     billing.Algorithm95th, BillingDay: 1, Timezone: "Asia/Singapore", Direction: billing.DirectionAgg,
+		DefaultLayer: billing.LayerCustomer, MinimumPercent: 10, ReconcilePercent: 5,
 	}, userID)
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +104,13 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	period, err := store.CreatePeriod(ctx, account.ID, from, from.Add(100*time.Minute), from.Add(24*time.Hour), userID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if period.Allowed == nil || *period.Allowed != 1_000_000_000 {
+		t.Fatalf("period minimum=%v, want 10%% of frozen 10 Gbps capacity", period.Allowed)
+	}
+	periodPorts, err := store.ListPeriodPorts(ctx, period.ID)
+	if err != nil || len(periodPorts) != 1 || periodPorts[0].CapacityBPS != 10_000_000_000 {
+		t.Fatalf("period port capacity snapshot=%+v err=%v", periodPorts, err)
 	}
 	if err := store.DeleteAccount(ctx, account.ID, account.RowVersion, userID); !errors.Is(err, billing.ErrInUse) {
 		t.Fatalf("account with billing evidence could be deleted: %v", err)
@@ -133,7 +140,7 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	if err != nil || period.Direction != billing.DirectionAgg || period.ReconcilePercent != 5 {
 		t.Fatalf("period account snapshot changed with live account: %+v err=%v", period, err)
 	}
-	periodPorts, err := store.ListPeriodPorts(ctx, period.ID)
+	periodPorts, err = store.ListPeriodPorts(ctx, period.ID)
 	if err != nil || len(periodPorts) != 1 || periodPorts[0].Direction != billing.DirectionAgg {
 		t.Fatalf("period port snapshot changed with live binding: %+v err=%v", periodPorts, err)
 	}

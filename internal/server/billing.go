@@ -291,25 +291,25 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 		return
 	}
 	var input struct {
-		PartyID          *string                `json:"party_id"`
-		Name             *string                `json:"name"`
-		Status           *string                `json:"status"`
-		BillType         *string                `json:"bill_type"`
-		Algorithm        *billing.Algorithm     `json:"algorithm"`
-		BillingDay       *uint8                 `json:"billing_day"`
-		Timezone         *string                `json:"timezone"`
-		Direction        *billing.Direction     `json:"direction"`
-		DefaultLayer     *billing.Layer         `json:"default_layer"`
-		PricingModel     *billing.PricingModel  `json:"pricing_model"`
-		PriceCurrency    *string                `json:"price_currency"`
-		UnitPrice        *string                `json:"unit_price"`
-		CDRBPS           *uint64                `json:"cdr_bps"`
-		QuotaBytes       *uint64                `json:"quota_bytes"`
-		ReconcileAbs     *uint64                `json:"reconcile_abs"`
-		ReconcilePercent *float64               `json:"reconcile_percent"`
-		Ref              *string                `json:"ref"`
-		Notes            *string                `json:"notes"`
-		Items            *[]billing.AccountPort `json:"items"`
+		PartyID          *string                  `json:"party_id"`
+		Name             *string                  `json:"name"`
+		Status           *string                  `json:"status"`
+		MeasurementType  *billing.MeasurementType `json:"measurement_type"`
+		BillingMethod    *billing.BillingMethod   `json:"billing_method"`
+		Algorithm        *billing.Algorithm       `json:"algorithm"`
+		BillingDay       *uint8                   `json:"billing_day"`
+		Timezone         *string                  `json:"timezone"`
+		Direction        *billing.Direction       `json:"direction"`
+		DefaultLayer     *billing.Layer           `json:"default_layer"`
+		PriceCurrency    *string                  `json:"price_currency"`
+		UnitPrice        *string                  `json:"unit_price"`
+		MinimumPercent   *float64                 `json:"minimum_percent"`
+		TrafficAllowance *uint64                  `json:"traffic_allowance_bytes"`
+		ReconcileAbs     *uint64                  `json:"reconcile_abs"`
+		ReconcilePercent *float64                 `json:"reconcile_percent"`
+		Ref              *string                  `json:"ref"`
+		Notes            *string                  `json:"notes"`
+		Items            *[]billing.AccountPort   `json:"items"`
 	}
 	if !addressDecodeStrict(c, &input, 256<<10) {
 		return
@@ -323,8 +323,11 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 	if input.Status != nil {
 		item.Status = *input.Status
 	}
-	if input.BillType != nil {
-		item.BillType = *input.BillType
+	if input.MeasurementType != nil {
+		item.MeasurementType = *input.MeasurementType
+	}
+	if input.BillingMethod != nil {
+		item.BillingMethod = *input.BillingMethod
 	}
 	if input.Algorithm != nil {
 		item.Algorithm = *input.Algorithm
@@ -341,20 +344,17 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 	if input.DefaultLayer != nil {
 		item.DefaultLayer = *input.DefaultLayer
 	}
-	if input.PricingModel != nil {
-		item.PricingModel = *input.PricingModel
-	}
 	if input.PriceCurrency != nil {
 		item.PriceCurrency = *input.PriceCurrency
 	}
 	if input.UnitPrice != nil {
 		item.UnitPrice = *input.UnitPrice
 	}
-	if input.CDRBPS != nil {
-		item.CDRBPS = input.CDRBPS
+	if input.MinimumPercent != nil {
+		item.MinimumPercent = *input.MinimumPercent
 	}
-	if input.QuotaBytes != nil {
-		item.QuotaBytes = input.QuotaBytes
+	if input.TrafficAllowance != nil {
+		item.TrafficAllowance = input.TrafficAllowance
 	}
 	if input.ReconcileAbs != nil {
 		item.ReconcileAbs = *input.ReconcileAbs
@@ -591,6 +591,7 @@ func (s *Server) importExternalBillingValue(c *gin.Context) {
 		OutBytes               uint64          `json:"out_bytes"`
 		SelectedBytes          uint64          `json:"selected_bytes"`
 		Rate95thBPS            uint64          `json:"rate_95th_bps"`
+		RateDaily95thBPS       uint64          `json:"rate_daily_95th_bps"`
 		RateAverageBPS         uint64          `json:"rate_average_bps"`
 		AlgorithmValue         uint64          `json:"algorithm_value"`
 		Coverage               float64         `json:"coverage"`
@@ -607,7 +608,8 @@ func (s *Server) importExternalBillingValue(c *gin.Context) {
 	}
 	item, err := s.billingStore.SaveExternalDraft(c, period.ID, billing.Value{
 		Unit: input.Unit, InBytes: input.InBytes, OutBytes: input.OutBytes, SelectedBytes: input.SelectedBytes,
-		Rate95thBPS: input.Rate95thBPS, RateAverageBPS: input.RateAverageBPS, AlgorithmValue: input.AlgorithmValue,
+		Rate95thBPS: input.Rate95thBPS, RateDaily95thBPS: input.RateDaily95thBPS,
+		RateAverageBPS: input.RateAverageBPS, AlgorithmValue: input.AlgorithmValue,
 		Coverage: input.Coverage, ExpectedBuckets: input.ExpectedBuckets, ObservedBuckets: input.ObservedBuckets,
 		MissingBuckets: input.MissingBuckets, ResetBuckets: input.ResetBuckets, GapBuckets: input.GapBuckets,
 		UnknownSamplingRecords: input.UnknownSamplingRecords, Provenance: input.Provenance,

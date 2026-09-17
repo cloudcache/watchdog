@@ -11,13 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import {
-	BPS_PER_MBPS,
-	BYTES_PER_GB,
-	formatBillingUnit,
-	parseBillingUnit,
-	reconciliationUnit,
-} from "@/lib/billing-units"
+import { BYTES_PER_GB, formatBillingUnit, parseBillingUnit, reconciliationUnit } from "@/lib/billing-units"
 import { cn } from "@/lib/utils"
 
 type BillingAccount = {
@@ -25,17 +19,17 @@ type BillingAccount = {
 	party_id?: string
 	name: string
 	status: string
-	bill_type: "cdr" | "quota"
-	algorithm: "95th" | "average" | "total"
+	measurement_type: "bandwidth" | "traffic"
+	billing_method: "package_port" | "monthly_95th" | "daily_95th" | "monthly_average"
+	algorithm: "95th" | "daily_95th" | "average" | "total"
 	billing_day: number
 	timezone: string
 	direction: "in" | "out" | "agg"
 	default_layer: "raw" | "supplier" | "customer"
-	pricing_model: "flat_port" | "usage_95th"
 	price_currency: string
 	unit_price: string
-	cdr_bps?: number
-	quota_bytes?: number
+	minimum_percent: number
+	traffic_allowance_bytes?: number
 	reconcile_abs: number
 	reconcile_percent: number
 	ref: string
@@ -69,11 +63,11 @@ type NetworkPort = {
 type Page<T> = { items?: T[]; total?: number }
 type FormState = Omit<
 	BillingAccount,
-	"id" | "billing_day" | "cdr_bps" | "quota_bytes" | "reconcile_abs" | "reconcile_percent"
+	"id" | "billing_day" | "minimum_percent" | "traffic_allowance_bytes" | "reconcile_abs" | "reconcile_percent"
 > & {
 	billing_day: string
-	committed_mbps: string
-	quota_gb: string
+	minimum_percent: string
+	traffic_allowance_gb: string
 	reconcile_absolute: string
 	reconcile_percent: string
 }
@@ -82,17 +76,17 @@ const emptyForm: FormState = {
 	party_id: "",
 	name: "",
 	status: "active",
-	bill_type: "cdr",
+	measurement_type: "bandwidth",
+	billing_method: "monthly_95th",
 	algorithm: "95th",
 	billing_day: "1",
 	timezone: "UTC",
 	direction: "agg",
 	default_layer: "customer",
-	pricing_model: "usage_95th",
 	price_currency: "CNY",
 	unit_price: "0",
-	committed_mbps: "",
-	quota_gb: "",
+	minimum_percent: "0",
+	traffic_allowance_gb: "",
 	reconcile_absolute: "0",
 	reconcile_percent: "5",
 	ref: "",
@@ -160,17 +154,17 @@ export default memo(({ id }: { id?: string }) => {
 				party_id: item.party_id ?? "",
 				name: item.name,
 				status: item.status,
-				bill_type: item.bill_type,
+				measurement_type: item.measurement_type,
+				billing_method: item.billing_method,
 				algorithm: item.algorithm,
 				billing_day: String(item.billing_day),
 				timezone: item.timezone,
 				direction: item.direction,
 				default_layer: item.default_layer,
-				pricing_model: item.pricing_model ?? "flat_port",
 				price_currency: item.price_currency ?? "CNY",
 				unit_price: item.unit_price ?? "0",
-				committed_mbps: formatBillingUnit(item.cdr_bps, BPS_PER_MBPS),
-				quota_gb: formatBillingUnit(item.quota_bytes, BYTES_PER_GB),
+				minimum_percent: String(item.minimum_percent ?? 0),
+				traffic_allowance_gb: formatBillingUnit(item.traffic_allowance_bytes, BYTES_PER_GB),
 				reconcile_absolute: formatBillingUnit(item.reconcile_abs, reconciliationUnit(item.algorithm).multiplier),
 				reconcile_percent: String(item.reconcile_percent),
 				ref: item.ref,
@@ -222,29 +216,28 @@ export default memo(({ id }: { id?: string }) => {
 		setSaving(true)
 		setError("")
 		try {
-			const allowance =
-				form.bill_type === "cdr"
-					? parseBillingUnit(form.committed_mbps, BPS_PER_MBPS)
-					: parseBillingUnit(form.quota_gb, BYTES_PER_GB)
+			const trafficAllowance =
+				form.measurement_type === "traffic"
+					? parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB)
+					: undefined
 			const reconcileAbs = parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier)
-			if (allowance === undefined || reconcileAbs === undefined) {
+			if ((form.measurement_type === "traffic" && trafficAllowance === undefined) || reconcileAbs === undefined) {
 				throw new Error(t`Enter valid billing and reconciliation values`)
 			}
 			const body = {
 				party_id: form.party_id || undefined,
 				name: form.name.trim(),
 				status: form.status,
-				bill_type: form.bill_type,
-				algorithm: form.algorithm,
+				measurement_type: form.measurement_type,
+				billing_method: form.billing_method,
 				billing_day: Number(form.billing_day),
 				timezone: form.timezone.trim(),
 				direction: form.direction,
 				default_layer: form.default_layer,
-				pricing_model: form.pricing_model,
 				price_currency: form.price_currency.trim().toUpperCase(),
 				unit_price: form.unit_price.trim(),
-				cdr_bps: form.bill_type === "cdr" ? allowance : undefined,
-				quota_bytes: form.bill_type === "quota" ? allowance : undefined,
+				minimum_percent: Number(form.minimum_percent),
+				traffic_allowance_bytes: trafficAllowance,
 				reconcile_abs: reconcileAbs,
 				reconcile_percent: Number(form.reconcile_percent),
 				ref: form.ref.trim(),
@@ -272,9 +265,12 @@ export default memo(({ id }: { id?: string }) => {
 			setError(err instanceof Error ? err.message : t`Failed to delete billing account`)
 		}
 	}
-	const allowance = form.bill_type === "cdr" ? form.committed_mbps : form.quota_gb
-	const validAllowance =
-		parseBillingUnit(allowance, form.bill_type === "cdr" ? BPS_PER_MBPS : BYTES_PER_GB) !== undefined
+	const minimumPercent = Number(form.minimum_percent)
+	const validMinimumPercent =
+		form.minimum_percent.trim() !== "" && Number.isFinite(minimumPercent) && minimumPercent >= 0 && minimumPercent <= 100
+	const validTrafficAllowance =
+		form.measurement_type !== "traffic" ||
+		parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB) !== undefined
 	const validReconcileAbsolute =
 		parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier) !== undefined
 	const reconcilePercent = Number(form.reconcile_percent)
@@ -289,7 +285,8 @@ export default memo(({ id }: { id?: string }) => {
 		form.timezone.trim() &&
 		Number(form.billing_day) >= 1 &&
 		Number(form.billing_day) <= 31 &&
-		validAllowance &&
+		validMinimumPercent &&
+		validTrafficAllowance &&
 		validReconcileAbsolute &&
 		validReconcilePercent &&
 		validPrice &&
@@ -360,38 +357,41 @@ export default memo(({ id }: { id?: string }) => {
 						</SelectContent>
 					</Select>
 				</Field>
-				<Field label={t`Usage contract`}>
+				<Field label={t`Measurement type`}>
 					<Select
-						value={form.bill_type}
-						onValueChange={(value: "cdr" | "quota") =>
+						value={form.measurement_type}
+						onValueChange={(value: "bandwidth" | "traffic") => {
+							const method = value === "traffic" ? "package_port" : form.billing_method
 							update({
-								bill_type: value,
-								algorithm: value === "quota" ? "total" : form.algorithm === "total" ? "95th" : form.algorithm,
-								pricing_model: value === "quota" ? "flat_port" : form.pricing_model,
+								measurement_type: value,
+								billing_method: method,
+								algorithm: billingAlgorithm(value, method),
+								minimum_percent: method === "package_port" ? "0" : form.minimum_percent,
 								reconcile_absolute: "0",
 							})
-						}
+						}}
 					>
 						<SelectTrigger>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="cdr">
-								<Trans>Committed bandwidth</Trans>
+							<SelectItem value="bandwidth">
+								<Trans>Bandwidth</Trans>
 							</SelectItem>
-							<SelectItem value="quota">
-								<Trans>Traffic quota</Trans>
+							<SelectItem value="traffic">
+								<Trans>Traffic</Trans>
 							</SelectItem>
 						</SelectContent>
 					</Select>
 				</Field>
-				<Field label={t`Calculation method`}>
+				<Field label={t`Billing method`}>
 					<Select
-						value={form.algorithm}
-						onValueChange={(value: "95th" | "average" | "total") =>
+						value={form.billing_method}
+						onValueChange={(value: "package_port" | "monthly_95th" | "daily_95th" | "monthly_average") =>
 							update({
-								algorithm: value,
-								pricing_model: value === "95th" ? form.pricing_model : "flat_port",
+								billing_method: value,
+								algorithm: billingAlgorithm(form.measurement_type, value),
+								minimum_percent: value === "package_port" ? "0" : form.minimum_percent,
 								reconcile_absolute: "0",
 							})
 						}
@@ -400,18 +400,24 @@ export default memo(({ id }: { id?: string }) => {
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{form.bill_type === "cdr" ? (
+							{form.measurement_type === "bandwidth" ? (
 								<>
-									<SelectItem value="95th">
-										<Trans>95th percentile bandwidth</Trans>
+									<SelectItem value="package_port">
+										<Trans>Port package</Trans>
 									</SelectItem>
-									<SelectItem value="average">
-										<Trans>Average bandwidth</Trans>
+									<SelectItem value="monthly_95th">
+										<Trans>Monthly 95th</Trans>
+									</SelectItem>
+									<SelectItem value="daily_95th">
+										<Trans>Daily 95th</Trans>
+									</SelectItem>
+									<SelectItem value="monthly_average">
+										<Trans>Monthly average</Trans>
 									</SelectItem>
 								</>
 							) : (
-								<SelectItem value="total">
-									<Trans>Total traffic</Trans>
+								<SelectItem value="package_port">
+									<Trans>Port package</Trans>
 								</SelectItem>
 							)}
 						</SelectContent>
@@ -466,30 +472,6 @@ export default memo(({ id }: { id?: string }) => {
 						</SelectContent>
 					</Select>
 				</Field>
-				<Field label={t`Pricing model`}>
-					<Select
-						value={form.pricing_model}
-						onValueChange={(value: "flat_port" | "usage_95th") =>
-							update({
-								pricing_model: value,
-								bill_type: value === "usage_95th" ? "cdr" : form.bill_type,
-								algorithm: value === "usage_95th" ? "95th" : form.algorithm,
-							})
-						}
-					>
-						<SelectTrigger>
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="flat_port">
-								<Trans>Fixed price per port</Trans>
-							</SelectItem>
-							<SelectItem value="usage_95th">
-								<Trans>95th percentile per Mbps</Trans>
-							</SelectItem>
-						</SelectContent>
-					</Select>
-				</Field>
 				<Field label={t`Currency`}>
 					<Input
 						maxLength={3}
@@ -500,7 +482,11 @@ export default memo(({ id }: { id?: string }) => {
 				</Field>
 				<Field
 					label={
-						form.pricing_model === "flat_port" ? t`Price per port / billing cycle` : t`Price per Mbps / billing cycle`
+						form.billing_method === "package_port"
+							? t`Price per port / billing cycle`
+							: form.billing_method === "daily_95th"
+								? t`Price per Mbps / day`
+								: t`Price per Mbps / billing cycle`
 					}
 				>
 					<Input
@@ -510,32 +496,31 @@ export default memo(({ id }: { id?: string }) => {
 						placeholder="0.000000"
 					/>
 				</Field>
-				{form.bill_type === "cdr" ? (
+				{form.measurement_type === "bandwidth" && form.billing_method !== "package_port" ? (
 					<Field
-						label={
-							form.algorithm === "95th" ? t`Committed bandwidth / 95th floor (Mbps)` : t`Committed bandwidth (Mbps)`
-						}
-						hint={t`Sets the period guarantee; overuse starts above this bandwidth.`}
+						label={t`Minimum usage (%)`}
+						hint={t`Percentage of the combined nominal bandwidth of the selected ports.`}
 					>
 						<Input
 							type="number"
 							min="0"
-							step="0.001"
-							value={form.committed_mbps}
-							onChange={(event) => update({ committed_mbps: event.target.value })}
+							max="100"
+							step="0.01"
+							value={form.minimum_percent}
+							onChange={(event) => update({ minimum_percent: event.target.value })}
 						/>
 					</Field>
-				) : (
-					<Field label={t`Traffic quota (GB)`} hint={t`Total traffic above this quota is period overuse.`}>
+				) : form.measurement_type === "traffic" ? (
+					<Field label={t`Traffic allowance (GB)`} hint={t`Total traffic above this allowance is period overuse.`}>
 						<Input
 							type="number"
 							min="0"
 							step="0.001"
-							value={form.quota_gb}
-							onChange={(event) => update({ quota_gb: event.target.value })}
+							value={form.traffic_allowance_gb}
+							onChange={(event) => update({ traffic_allowance_gb: event.target.value })}
 						/>
 					</Field>
-				)}
+				) : null}
 				<div className="md:col-span-2 xl:col-span-3">
 					<h2 className="text-sm font-medium">
 						<Trans>Reconciliation alert thresholds</Trans>
@@ -719,6 +704,16 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 			{hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
 		</div>
 	)
+}
+
+function billingAlgorithm(
+	measurement: FormState["measurement_type"],
+	method: FormState["billing_method"]
+): FormState["algorithm"] {
+	if (measurement === "traffic") return "total"
+	if (method === "monthly_95th") return "95th"
+	if (method === "daily_95th") return "daily_95th"
+	return "average"
 }
 
 function networkDeviceID(device?: NetworkDevice) {

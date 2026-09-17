@@ -143,10 +143,21 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 		return Period{}, err
 	}
 	var allowed *uint64
-	if account.BillType == "cdr" {
-		allowed = account.CDRBPS
-	} else {
-		allowed = account.QuotaBytes
+	if account.MeasurementType == MeasurementTraffic {
+		allowed = account.TrafficAllowance
+	} else if account.BillingMethod != BillingPackagePort {
+		var capacity uint64
+		for _, port := range ports {
+			if math.MaxUint64-capacity < port.CapacityBPS {
+				return Period{}, errors.New("aggregate billing port capacity overflows uint64")
+			}
+			capacity += port.CapacityBPS
+		}
+		if account.MinimumPercent > 0 && capacity == 0 {
+			return Period{}, errors.New("billing minimum percent requires discovered port capacity")
+		}
+		floor := uint64(math.Round(float64(capacity) * account.MinimumPercent / 100))
+		allowed = &floor
 	}
 	id := NewID()
 	_, err = tx.ExecContext(ctx, `INSERT INTO billing_periods
@@ -158,8 +169,8 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 	}
 	for _, port := range ports {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO billing_period_ports
-			(period_id,port_id,device_id,if_index,if_name,direction) VALUES (?,?,?,?,?,?)`,
-			id, port.PortID, port.DeviceID, port.IfIndex, port.IfName, port.Direction); err != nil {
+			(period_id,port_id,device_id,if_index,if_name,capacity_bps,direction) VALUES (?,?,?,?,?,?,?)`,
+			id, port.PortID, port.DeviceID, port.IfIndex, port.IfName, port.CapacityBPS, port.Direction); err != nil {
 			return Period{}, fmt.Errorf("snapshot billing period port: %w", err)
 		}
 	}
@@ -204,7 +215,8 @@ func SuggestedPeriodWindow(account Account, now time.Time) (time.Time, time.Time
 }
 
 func listAccountPortsTx(ctx context.Context, tx *sql.Tx, accountID string) ([]AccountPort, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,bap.direction,
+	rows, err := tx.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,
+		COALESCE(NULLIF(p.if_high_speed,0)*1000000,NULLIF(p.if_speed,0),0),bap.direction,
 		COALESCE(bap.created_by,''),bap.created_at FROM billing_account_ports bap JOIN ports p ON p.id=bap.port_id
 		WHERE bap.account_id=? ORDER BY p.device_id,p.if_index,p.id`, accountID)
 	if err != nil {
@@ -214,7 +226,7 @@ func listAccountPortsTx(ctx context.Context, tx *sql.Tx, accountID string) ([]Ac
 	items := make([]AccountPort, 0)
 	for rows.Next() {
 		var item AccountPort
-		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.CapacityBPS, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -223,7 +235,7 @@ func listAccountPortsTx(ctx context.Context, tx *sql.Tx, accountID string) ([]Ac
 }
 
 func (s *Store) ListPeriodPorts(ctx context.Context, periodID string) ([]AccountPort, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.account_id,bpp.port_id,bpp.device_id,bpp.if_index,bpp.if_name,bpp.direction,
+	rows, err := s.db.QueryContext(ctx, `SELECT p.account_id,bpp.port_id,bpp.device_id,bpp.if_index,bpp.if_name,bpp.capacity_bps,bpp.direction,
 		'',p.created_at FROM billing_period_ports bpp JOIN billing_periods p ON p.id=bpp.period_id
 		WHERE bpp.period_id=? ORDER BY bpp.device_id,bpp.if_index,bpp.port_id`, periodID)
 	if err != nil {
@@ -233,7 +245,7 @@ func (s *Store) ListPeriodPorts(ctx context.Context, periodID string) ([]Account
 	items := make([]AccountPort, 0)
 	for rows.Next() {
 		var item AccountPort
-		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.CapacityBPS, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -242,14 +254,14 @@ func (s *Store) ListPeriodPorts(ctx context.Context, periodID string) ([]Account
 }
 
 const valueColumns = `id,period_id,calculation_version,layer,algorithm,unit,in_bytes,out_bytes,selected_bytes,
-	rate_95th_bps,rate_average_bps,algorithm_value,coverage,expected_buckets,observed_buckets,missing_buckets,
+	rate_95th_bps,rate_daily_95th_bps,rate_average_bps,algorithm_value,coverage,expected_buckets,observed_buckets,missing_buckets,
 	reset_buckets,gap_buckets,unknown_sampling_records,source_generation_min,source_generation_max,provenance_json,created_at`
 
 func scanValue(scanner interface{ Scan(...any) error }) (Value, error) {
 	var item Value
 	var provenance []byte
 	err := scanner.Scan(&item.ID, &item.PeriodID, &item.CalculationVersion, &item.Layer, &item.Algorithm, &item.Unit,
-		&item.InBytes, &item.OutBytes, &item.SelectedBytes, &item.Rate95thBPS, &item.RateAverageBPS, &item.AlgorithmValue,
+		&item.InBytes, &item.OutBytes, &item.SelectedBytes, &item.Rate95thBPS, &item.RateDaily95thBPS, &item.RateAverageBPS, &item.AlgorithmValue,
 		&item.Coverage, &item.ExpectedBuckets, &item.ObservedBuckets, &item.MissingBuckets, &item.ResetBuckets, &item.GapBuckets,
 		&item.UnknownSamplingRecords, &item.SourceGenerationMin, &item.SourceGenerationMax, &provenance, &item.CreatedAt)
 	item.Provenance = json.RawMessage(provenance)
@@ -359,6 +371,10 @@ func ValidateExternalValue(value Value) error {
 		if value.AlgorithmValue != value.Rate95thBPS {
 			return errors.New("external algorithm value does not match rate_95th_bps")
 		}
+	case AlgorithmDaily95:
+		if value.AlgorithmValue != value.RateDaily95thBPS {
+			return errors.New("external algorithm value does not match rate_daily_95th_bps")
+		}
 	case AlgorithmAverage:
 		if value.AlgorithmValue != value.RateAverageBPS {
 			return errors.New("external algorithm value does not match rate_average_bps")
@@ -393,10 +409,10 @@ func insertValue(ctx context.Context, tx *sql.Tx, value Value) error {
 		return errors.New("billing value is invalid")
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO billing_period_values
-		(id,period_id,calculation_version,layer,algorithm,unit,in_bytes,out_bytes,selected_bytes,rate_95th_bps,rate_average_bps,algorithm_value,
+		(id,period_id,calculation_version,layer,algorithm,unit,in_bytes,out_bytes,selected_bytes,rate_95th_bps,rate_daily_95th_bps,rate_average_bps,algorithm_value,
 		coverage,expected_buckets,observed_buckets,missing_buckets,reset_buckets,gap_buckets,unknown_sampling_records,source_generation_min,source_generation_max,provenance_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.PeriodID, value.CalculationVersion, value.Layer, value.Algorithm, value.Unit,
-		value.InBytes, value.OutBytes, value.SelectedBytes, value.Rate95thBPS, value.RateAverageBPS, value.AlgorithmValue, value.Coverage,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.PeriodID, value.CalculationVersion, value.Layer, value.Algorithm, value.Unit,
+		value.InBytes, value.OutBytes, value.SelectedBytes, value.Rate95thBPS, value.RateDaily95thBPS, value.RateAverageBPS, value.AlgorithmValue, value.Coverage,
 		value.ExpectedBuckets, value.ObservedBuckets, value.MissingBuckets, value.ResetBuckets, value.GapBuckets, value.UnknownSamplingRecords,
 		value.SourceGenerationMin, value.SourceGenerationMax, value.Provenance)
 	return err

@@ -18,14 +18,15 @@ type BillingAccount = {
 	party_id?: string
 	name: string
 	status: string
-	bill_type: string
+	measurement_type: string
+	billing_method: string
 	algorithm: string
 	billing_day: number
 	timezone: string
 	direction: string
 	default_layer: string
-	cdr_bps?: number
-	quota_bytes?: number
+	minimum_percent: number
+	traffic_allowance_bytes?: number
 	row_version: number
 }
 
@@ -84,7 +85,7 @@ function AccountsTable() {
 	const [search, setSearch] = useState("")
 	const [query, setQuery] = useState("")
 	const [status, setStatus] = useState("")
-	const [billType, setBillType] = useState("")
+	const [measurementType, setMeasurementType] = useState("")
 	const [sort, setSort] = useState("name:asc")
 	const [reload, setReload] = useState(0)
 	const [loading, setLoading] = useState(true)
@@ -109,7 +110,7 @@ function AccountsTable() {
 					offset: page * pageSize,
 					q: query || undefined,
 					status: status || undefined,
-					type: billType || undefined,
+					type: measurementType || undefined,
 					sort: field,
 					order,
 				},
@@ -128,18 +129,18 @@ function AccountsTable() {
 			.finally(() => {
 				if (current === sequence.current) setLoading(false)
 			})
-	}, [billType, page, pageSize, query, reload, sort, status, t])
+	}, [measurementType, page, pageSize, query, reload, sort, status, t])
 	const columns = useMemo<ColumnDefine[]>(
 		() => [
 			{ field: "name", title: t`Name`, width: 240 },
 			{ field: "status", title: t`Status`, width: 110, filterField: "status" },
-			{ field: "bill_type_display", title: t`Type`, width: 180, filterField: "type" },
-			{ field: "algorithm_display", title: t`Algorithm`, width: 180 },
+			{ field: "measurement_display", title: t`Measurement type`, width: 150, filterField: "type" },
+			{ field: "method_display", title: t`Billing method`, width: 170 },
 			{ field: "billing_day", title: t`Billing Day`, width: 110 },
 			{ field: "timezone", title: t`Timezone`, width: 180 },
 			{ field: "direction", title: t`Direction`, width: 100 },
 			{ field: "default_layer", title: t`Layer`, width: 110 },
-			{ field: "allowance", title: t`Allowance`, width: 160 },
+			{ field: "allowance", title: t`Minimum / allowance`, width: 160 },
 		],
 		[t]
 	)
@@ -147,14 +148,19 @@ function AccountsTable() {
 		() =>
 			items.map((item) => ({
 				...item,
-				bill_type_display: item.bill_type === "cdr" ? t`Committed bandwidth` : t`Traffic quota`,
-				algorithm_display:
-					item.algorithm === "95th"
-						? t`95th percentile bandwidth`
-						: item.algorithm === "average"
-							? t`Average bandwidth`
-							: t`Total traffic`,
-				allowance: item.bill_type === "cdr" ? formatBPS(item.cdr_bps) : formatBytes(item.quota_bytes),
+				measurement_display: item.measurement_type === "bandwidth" ? t`Bandwidth` : t`Traffic`,
+				method_display:
+					item.billing_method === "package_port"
+						? t`Port package`
+						: item.billing_method === "monthly_95th"
+							? t`Monthly 95th`
+							: item.billing_method === "daily_95th"
+								? t`Daily 95th`
+								: t`Monthly average`,
+				allowance:
+					item.measurement_type === "bandwidth"
+						? `${item.minimum_percent ?? 0}%`
+						: formatBytes(item.traffic_allowance_bytes),
 			})),
 		[items, t]
 	)
@@ -166,23 +172,23 @@ function AccountsTable() {
 					{ value: "paused", label: t`Paused` },
 				],
 				type: [
-					{ value: "cdr", label: t`Committed bandwidth` },
-					{ value: "quota", label: t`Traffic quota` },
+					{ value: "bandwidth", label: t`Bandwidth` },
+					{ value: "traffic", label: t`Traffic` },
 				],
 			},
-			selected: { status: status ? [status] : [], type: billType ? [billType] : [] },
+			selected: { status: status ? [status] : [], type: measurementType ? [measurementType] : [] },
 			selection: { status: "single" as const, type: "single" as const },
 			onColumnFilterChange: (field: string, values: unknown[]) => {
 				setPage(0)
-				field === "status" ? setStatus(String(values[0] ?? "")) : setBillType(String(values[0] ?? ""))
+				field === "status" ? setStatus(String(values[0] ?? "")) : setMeasurementType(String(values[0] ?? ""))
 			},
 			onClearAll: () => {
 				setPage(0)
 				setStatus("")
-				setBillType("")
+				setMeasurementType("")
 			},
 		}),
-		[billType, status, t]
+		[measurementType, status, t]
 	)
 	const [sortField, sortDirection] = sort.split(":") as [string, SortDirection]
 	return (
@@ -213,7 +219,7 @@ function AccountsTable() {
 					serverSorting={{
 						field: sortField,
 						direction: sortDirection,
-						fields: { name: "name", status: "status", bill_type: "bill_type", algorithm: "algorithm" },
+						fields: { name: "name", status: "status", measurement_display: "measurement_type", method_display: "billing_method" },
 						onSortChange: (field, direction) => {
 							setPage(0)
 							setSort(`${field}:${direction}`)
@@ -497,12 +503,4 @@ function formatBytes(value?: number) {
 	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)} GB`
 	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} MB`
 	return `${value} B`
-}
-
-function formatBPS(value?: number) {
-	if (!value) return "—"
-	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)} Gbps`
-	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} Mbps`
-	if (value >= 1_000) return `${(value / 1_000).toFixed(2)} Kbps`
-	return `${value} bps`
 }

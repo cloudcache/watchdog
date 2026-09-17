@@ -174,10 +174,10 @@ func TestRealClickHouseFlowAndSNMPBillingPeriod(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cdr := uint64(1000)
 	account, err = store.CreateAccount(ctx, billing.Account{
-		PartyID: party.ID, Name: "CH account " + userID, Status: "active", BillType: "cdr", Algorithm: billing.Algorithm95th,
-		BillingDay: 1, Timezone: "UTC", Direction: billing.DirectionIn, DefaultLayer: billing.LayerCustomer, CDRBPS: &cdr,
+		PartyID: party.ID, Name: "CH account " + userID, Status: "active", MeasurementType: billing.MeasurementBandwidth,
+		BillingMethod: billing.BillingMonthly95th, Algorithm: billing.Algorithm95th,
+		BillingDay: 1, Timezone: "UTC", Direction: billing.DirectionIn, DefaultLayer: billing.LayerCustomer,
 	}, userID)
 	if err != nil {
 		t.Fatal(err)

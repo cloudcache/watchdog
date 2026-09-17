@@ -191,12 +191,14 @@ func billingReadWindowsMatch(period Period, snmpResult snmpch.BillingResult, flo
 		flowResult.From.Equal(period.DateFrom) && flowResult.To.Equal(period.DateTo)
 }
 
-func flowValues(period Period, result flowch.FlowBillingResult, rates map[Layer][]float64) []Value {
+func flowValues(period Period, result flowch.FlowBillingResult, rates map[Layer][]RateSample) []Value {
 	values := make([]Value, 0, len(result.Layers))
 	for _, layer := range result.Layers {
+		layerRates := rates[Layer(layer.Layer)]
 		values = append(values, BuildValue(period.ID, 0, period.Algorithm, LayerStats{
 			Layer: Layer(layer.Layer), InBytes: layer.InBytes, OutBytes: layer.OutBytes, SelectedBytes: layer.SelectedBytes,
-			SelectedRates: rates[Layer(layer.Layer)], Coverage: layer.Coverage, ExpectedBuckets: layer.ExpectedBuckets,
+			SelectedRates: rateValues(layerRates), RateSamples: layerRates, Timezone: period.Timezone,
+			Coverage: layer.Coverage, ExpectedBuckets: layer.ExpectedBuckets,
 			ObservedBuckets: layer.ObservedBuckets, UnknownSamplingRecords: layer.UnknownSamplingRecords,
 			SourceGenerationMin: result.SourceGenerationMin, SourceGenerationMax: result.SourceGenerationMax,
 			Provenance: map[string]any{
@@ -209,17 +211,18 @@ func flowValues(period Period, result flowch.FlowBillingResult, rates map[Layer]
 	return values
 }
 
-func snmpValue(period Period, result snmpch.BillingResult, rates []float64) Value {
+func snmpValue(period Period, result snmpch.BillingResult, rates []RateSample) Value {
 	return BuildValue(period.ID, 0, period.Algorithm, LayerStats{
 		Layer: LayerSNMP, InBytes: result.TotalInBytes, OutBytes: result.TotalOutBytes, SelectedBytes: result.TotalSelectedBytes,
-		SelectedRates: rates, Coverage: result.Coverage, ExpectedBuckets: result.ExpectedBuckets, ObservedBuckets: result.ObservedBuckets,
+		SelectedRates: rateValues(rates), RateSamples: rates, Timezone: period.Timezone,
+		Coverage: result.Coverage, ExpectedBuckets: result.ExpectedBuckets, ObservedBuckets: result.ObservedBuckets,
 		ResetBuckets: result.ResetBuckets, GapBuckets: result.GapBuckets, SourceGenerationMin: result.GenerationMin, SourceGenerationMax: result.GenerationMax,
 		Provenance: map[string]any{"source": "snmp_interface_traffic_5m", "gap_buckets": result.GapBuckets, "expected_ports": result.ExpectedPorts,
 			"rate_policy": "common_complete_5m_intersection", "rate_bucket_count": len(rates)},
 	})
 }
 
-func commonCompleteBillingRates(period Period, snmpResult snmpch.BillingResult, flowResult flowch.FlowBillingResult) (map[Layer][]float64, int, error) {
+func commonCompleteBillingRates(period Period, snmpResult snmpch.BillingResult, flowResult flowch.FlowBillingResult) (map[Layer][]RateSample, int, error) {
 	expected := int(period.DateTo.Sub(period.DateFrom) / (5 * time.Minute))
 	if expected <= 0 || snmpResult.ExpectedBuckets != uint32(expected) {
 		return nil, 0, errors.New("SNMP bucket grid does not equal billing period")
@@ -252,9 +255,10 @@ func commonCompleteBillingRates(period Period, snmpResult snmpch.BillingResult, 
 			return nil, 0, errors.New("Flow rate evidence is missing grid buckets")
 		}
 	}
-	rates := map[Layer][]float64{LayerRaw: {}, LayerSupplier: {}, LayerCustomer: {}, LayerSNMP: {}}
+	rates := map[Layer][]RateSample{LayerRaw: {}, LayerSupplier: {}, LayerCustomer: {}, LayerSNMP: {}}
 	for index := 0; index < expected; index++ {
-		when := period.DateFrom.Add(time.Duration(index) * 5 * time.Minute).Unix()
+		timestamp := period.DateFrom.Add(time.Duration(index) * 5 * time.Minute)
+		when := timestamp.Unix()
 		snmpBucket, ok := snmpByTime[when]
 		if !ok {
 			continue
@@ -273,12 +277,20 @@ func commonCompleteBillingRates(period Period, snmpResult snmpch.BillingResult, 
 		if !snmpComplete || !rawOK || !supplierOK || !customerOK || !raw.Complete || !supplier.Complete || !customer.Complete {
 			continue
 		}
-		rates[LayerRaw] = append(rates[LayerRaw], raw.SelectedBPS)
-		rates[LayerSupplier] = append(rates[LayerSupplier], supplier.SelectedBPS)
-		rates[LayerCustomer] = append(rates[LayerCustomer], customer.SelectedBPS)
-		rates[LayerSNMP] = append(rates[LayerSNMP], snmpBucket.SelectedBPS)
+		rates[LayerRaw] = append(rates[LayerRaw], RateSample{Time: timestamp, Value: raw.SelectedBPS})
+		rates[LayerSupplier] = append(rates[LayerSupplier], RateSample{Time: timestamp, Value: supplier.SelectedBPS})
+		rates[LayerCustomer] = append(rates[LayerCustomer], RateSample{Time: timestamp, Value: customer.SelectedBPS})
+		rates[LayerSNMP] = append(rates[LayerSNMP], RateSample{Time: timestamp, Value: snmpBucket.SelectedBPS})
 	}
 	return rates, len(rates[LayerRaw]), nil
+}
+
+func rateValues(samples []RateSample) []float64 {
+	values := make([]float64, 0, len(samples))
+	for _, sample := range samples {
+		values = append(values, sample.Value)
+	}
+	return values
 }
 
 func publicationReferences(result flowch.FlowBillingResult) (string, error) {

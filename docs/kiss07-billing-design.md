@@ -7,14 +7,14 @@
 1. `raw` 是 Flow 估算计数的原始口径；`supplier` 是采集时冻结的供应商事实；`customer` 是供应商事实叠加客户规则后的口径。三层值并排保存，任何一层都不得覆盖 Flow 原始事实。
 2. SNMP 使用 KISS-03A2 已发布、已闭合的 5 分钟接口桶；counter interval 定义为 `(previous_at, observed_at]`，起点样本只作 baseline，终点样本参与最后一个 interval，跨边界 interval 排除并降低 coverage/gap。Flow 使用 `flow_records FINAL` 按设备、接口和方向聚合成同一 UTC 5 分钟窗。缺采样率不以 raw bytes 冒充估算值。
 3. 所有周期是左闭右开 `[date_from,date_to)`，数据库保存 UTC；`timezone` 保存 IANA 展示/账期边界快照。边界必须落在 5 分钟上，最长 400 天。同一账户的 period 禁止任何重叠，避免重复计费；`billing_day` 是生成默认周期的本地日 00:00（短月取最后一天），账户详情 API/UI 默认给出最近一个已经完整结束的周期，操作员仍可为补结/短周期显式输入非重叠窗口。
-4. 算法仅为 `95th`、`average`、`total`。95th 使用 nearest-rank：排序后索引 `ceil(0.95*N)-1`；average 是闭桶速率算术平均；total 使用 counter/estimated bytes 总量，绝不对 bps 裸求和。rate 的唯一分母是 SNMP + raw + supplier + customer **共同完整**的 UTC 5m bucket 交集；缺桶、SNMP reset/gap、任一 Flow 层 unknown/partial sampling 都从所有 rate 层同步排除并报告 issue，绝不以 0 污染平均/95th。bytes 总量仍保存已知事实并携带 coverage。
+4. 算法为 `95th`、`daily_95th`、`average`、`total`。月 95 使用 nearest-rank：排序后索引 `ceil(0.95*N)-1`；日 95 按账户时区逐自然日计算 nearest-rank P95，再对账期内各日 P95 做算术平均；月平均是闭桶速率算术平均；total 使用 counter/estimated bytes 总量，绝不对 bps 裸求和。rate 的唯一分母是 SNMP + raw + supplier + customer **共同完整**的 UTC 5m bucket 交集；缺桶、SNMP reset/gap、任一 Flow 层 unknown/partial sampling 都从所有 rate 层同步排除并报告 issue，绝不以 0 污染平均/95th。bytes 总量仍保存已知事实并携带 coverage。
 5. 周期状态机为 `open -> calculated -> approved -> closed`。`open/calculated` 可重算并生成新的 `calculation_version`；`approved/closed` 的基础值不可覆盖。审批必须携带 `If-Match` 和当前 `calculation_version`，防止 stale approval。
 6. adjustment 是 append-only **用量** ledger，unit 只能是 bps/bytes；批准后生效。reversal 必须新建符号相反、指向原 adjustment 的记录，永不 UPDATE/DELETE 原用量。关闭时把有效 ledger 冻结到 period，关闭后的 reversal 只进入当前纠错 ledger，不改变关闭证据。有 period 的 account、被 account 引用的 party 均禁止删除；证据外键使用 RESTRICT，不允许级联抹掉账单。
 7. reconciliation 只产生证据和 issue，不改任何层的值。绝对阈值和百分比阈值取较大者；采样缺失、SNMP reset/gap、窗口错位始终单独报 issue。reader 回传窗口错位会写一条幂等 `window_offset` critical run/issue/audit，但不写 value、不推进 calculation generation，也不改变 period row；operation job 将其判为不可重试的契约错误。
 8. 所有 mutation 有 RBAC、CSRF、row-version CAS 和 audit。`bill.viewAll` 或 `user_billing_permissions` 决定账户可见性；能看端口不自动获得财务权限。
 9. calculate/reconcile/export 复用平台 `operation_jobs` 的 lease、heartbeat、retry、cancel、idempotency；单条 external evidence 的 CAS 保存是短事务，不创建 billing job 状态机。
 10. CSV/Parquet 导出包含 period/account/party/port 快照、三层、SNMP、external、adjustment、reconciliation、issue、source generation 和完整 provenance；Excel 公式前缀必须转义。关闭后的同一 calculation version 导出可复算且字段稳定。
-11. account 的基础计价合同只允许两种：`flat_port` 按绑定端口数×每端口每账期单价，`usage_95th` 的计费量为 `max(cdr_bps, 所选 raw|supplier|customer 口径的 95th bps) / 1,000,000`，再乘每 Mbps 每账期单价；因此 `cdr_bps` 就是 95 计费保底/承诺带宽，不是另一种计费类型。币种是 ISO 4217 三位大写代码，单价以 `DECIMAL(20,6)` 保存并作为字符串经 API 往返，禁止浮点数污染合同金额。当前不引入阶梯、税率、折扣和发票总额舍入；adjustment 仍是 signed bps/bytes 用量，不是钱。
+11. `measurement_type` 只表示计量单位：`bandwidth`（bps）或 `traffic`（bytes）；`billing_method` 表示计费方式：`package_port`（包端口）、`monthly_95th`（月95）、`daily_95th`（日95）、`monthly_average`（月平均）。带宽用量计费的保底是 `minimum_percent`，基数为所选端口标称带宽之和：优先 `if_high_speed*1,000,000`，缺失时才使用 `if_speed`，避免高速接口的 32 位 `ifSpeed` 上限低估容量；创建账期时同时冻结每个端口的 `capacity_bps` 与计算后的保底 bps，之后端口速率变化不改旧账。包端口不使用保底百分比；保底大于 0 但所有端口均无速率时拒绝创建账期。流量计量当前仅允许包端口，并保留 `traffic_allowance_bytes` 作为超用证据。币种是 ISO 4217 三位大写代码，单价以 `DECIMAL(20,6)` 保存并作为字符串经 API 往返；不引入阶梯、税率、折扣和浮点金额。
 12. API/MySQL 的权威单位保持 bps/bytes，避免迁移和精度歧义；操作界面统一使用十进制 Mbps（`1 Mbps = 1,000,000 bps`）和 GB（`1 GB = 1,000,000,000 bytes`）并在提交/回显边界转换。`reconcile_abs` 与算法同量纲：95th/average 为 bps（界面 Mbps），total 为 bytes（界面 GB）；`reconcile_percent` 为百分比。两种阈值只决定是否产生差异 issue，不改变 used、overuse、计费量或价格。
 
 ## 2. 管理模型
@@ -25,7 +25,7 @@
 
 ### account / port
 
-账户冻结 `party_id, status, bill_type(cdr|quota), algorithm, billing_day, timezone, direction, default_layer, pricing_model, price_currency, unit_price, cdr_bps, quota_bytes, reconcile_abs, reconcile_percent, ref, notes`。`default_layer` 就是账单取值策略；`usage_95th` 强制 `bill_type=cdr, algorithm=95th`。account direction 是新增绑定的默认值；每个 port direction 是实际计费权威，显式值覆盖默认值。一个账户可跨设备绑定 1–1000 个端口，创建/编辑账户时账户字段与完整端口集合在同一 MySQL 事务提交，任一端口不存在或越权则整体回滚。创建 period 时把已解析方向以及 `port_id/device_id/if_index/if_name` 和账户计价字段写入快照，后续修改账户、party、端口元数据或绑定不改变既有账期。
+账户冻结 `party_id, status, measurement_type, billing_method, algorithm, billing_day, timezone, direction, default_layer, price_currency, unit_price, minimum_percent, traffic_allowance_bytes, reconcile_abs, reconcile_percent, ref, notes`。`algorithm` 由计量类型和计费方式唯一派生，API 调用方不能组合出互相矛盾的值；`default_layer` 是 raw/supplier/customer 取值策略。account direction 是新增绑定的默认值；每个 port direction 是实际计费权威，显式值覆盖默认值。一个账户可跨设备绑定 1–1000 个端口，创建/编辑账户时账户字段与完整端口集合在同一 MySQL 事务提交，任一端口不存在或越权则整体回滚。创建 period 时把已解析方向以及 `port_id/device_id/if_index/if_name/capacity_bps` 和账户计价字段写入快照，后续修改账户、party、端口元数据或绑定不改变既有账期。
 
 ### period / value
 
@@ -85,7 +85,8 @@ adjustment 保存 layer、unit、signed amount、reason/evidence、状态、批�
 - adjustment `+100` 的 reversal 必须为新记录 `-100`，两行合计为零。
 - CSV/Parquet 对同一 generation 的行数、值、provenance 一致。
 - 两台设备各选一个端口并创建 account 后应得到两条绑定；任一 port 不存在或超出调用者 device/port scope 时 account 与绑定均不落库。
-- `12.345600` 必须按原字符串精度往返；小写币种、负数、超过 6 位小数和 `usage_95th + average` 必须拒绝。
+- `12.345600` 必须按原字符串精度往返；小写币种、负数、超过 6 位小数、计量类型与计费方式不兼容、保底超出 `0..100` 必须拒绝。
+- 两个标称 10 Gbps 端口配置 30% 保底，账期冻结的保底必须是 6 Gbps；日 95 的跨时区自然日分组和逐日 P95 平均必须有确定性测试向量。
 
 ## 6. 已执行验证（2026-09-17）
 
