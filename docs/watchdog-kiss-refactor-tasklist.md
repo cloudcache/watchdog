@@ -202,6 +202,8 @@
 - [ ] **生产验收**：MySQL 中四类实际部署进程有唯一 Agent 行，`desired=acked`、heartbeat 新鲜、run 可追溯；吊销任一 credential 后对应进程停止并由 systemd 显式失败，不允许用 LKG 绕过 401/403。重启后离线 LKG、恢复联网和计划升级各验证一次。
 - [ ] **当前生产事实（2026-09-18）**：SNMP 与 flow collect 虽 enabled/active，但 ExecStart 未带任何 Registry bootstrap，`agents` 无对应登记；flow worker disabled/inactive 且 `/etc/watchdog/flow/worker.env` 缺失。因此数据接收进程存活不能冒充 KISS-04D 完成。
 
+> **KISS-04D 部署契约补齐（2026-09-18）**：仓库现提供四类统一 systemd unit 与 `deploy/systemd/activate-agent.sh`。管理员 UI 的 enrollment 结果同时给出一次性 token、公钥、Registry 参数和不含明文 secret 的本机激活命令；Watchdog 总览直接暴露 Agents 入口。激活脚本消费文件化 token、安装 unit、enable 并 restart（确保旧静态 unit 也切入 Registry 模式），注册成功后 runtime 删除 enrollment 文件、只保留 mode 0600 machine credential。它不把 `systemctl`/Docker socket/root 交给 Gin，也不绕过 Flow worker 的 publication 前置。此项在生产三进程真正登记、worker 发布物就绪并完成 ACK 前仍保持未勾选。
+
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 
 - [x] **设计**：冻结“实现不重写、只去 tenant/owner”的边界；现有 MMDB/IPDB import、MySQL 业务表/字段、CRUD/list、job payload、WADS v1、object store、download/LKG/ACK/GC 均不变。(边界已冻结 + 全链去 tenant 清单已产出；结构决策见下方进度)

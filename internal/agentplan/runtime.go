@@ -165,6 +165,12 @@ func (r RuntimeConfig) Sync(ctx context.Context, apply ApplyFunc) (SyncResult, s
 		if err != nil {
 			return SyncResult{}, "", err
 		}
+		// The enrollment secret is single-use. Once the durable machine
+		// credential has been installed, keeping the bootstrap secret serves no
+		// recovery purpose and only leaves misleading deployment state behind.
+		if err := os.Remove(r.EnrollmentFile); err != nil && !os.IsNotExist(err) {
+			return SyncResult{}, "", err
+		}
 	}
 	client := Client{
 		BaseURL: r.BaseURL, AgentID: r.AgentID, Token: token, HTTPClient: r.HTTPClient,

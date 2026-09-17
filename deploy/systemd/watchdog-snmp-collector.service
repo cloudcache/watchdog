@@ -1,0 +1,21 @@
+[Unit]
+Description=Watchdog SNMP collector
+After=network-online.target watchdog-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=watchdog
+Group=watchdog
+WorkingDirectory=/var/lib/watchdog
+EnvironmentFile=-/etc/watchdog/agents/watchdog-snmp-collector.env
+ExecStart=/opt/watchdog/current/bin/watchdog-snmp-collector --config /etc/watchdog/watchdog.yaml --discover=false --poll=true --loop=true $WATCHDOG_AGENT_ARGS
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/watchdog
+
+[Install]
+WantedBy=multi-user.target

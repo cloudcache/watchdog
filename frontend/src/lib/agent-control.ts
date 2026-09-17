@@ -42,12 +42,26 @@ export function registryArguments(kind: string, agentID: string, apiURL: string)
 		"-agent-token-file",
 		`${root}/credential`,
 		"-agent-enrollment-token-file",
-		`/etc/watchdog/agents/${agentID}.enrollment`,
+		`${root}/enrollment`,
 		"-agent-plan-public-key",
 		"/etc/watchdog/agents/agent-plan.pub",
 		"-agent-plan-lkg",
 		`${root}/plan.lkg`,
 	]
+}
+
+export function agentActivationCommand(kind: string, agentID: string, apiURL: string) {
+	const serviceName = agentServiceName(kind)
+	if (!serviceName) return ""
+	return [
+		"sudo",
+		"/opt/watchdog/current/deploy/systemd/activate-agent.sh",
+		kind,
+		agentID,
+		"/path/to/enrollment-token",
+		"/path/to/agent-plan.pub",
+		apiURL.replace(/\/+$/, ""),
+	].join(" ")
 }
 
 export function registryArgumentsText(kind: string, agentID: string, apiURL: string) {

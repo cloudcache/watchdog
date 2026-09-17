@@ -1,0 +1,23 @@
+[Unit]
+Description=Watchdog Flow worker
+After=network-online.target watchdog-server.service watchdog-infra.service
+Requires=watchdog-infra.service
+ConditionPathExists=/etc/watchdog/flow/worker.env
+
+[Service]
+Type=simple
+User=watchdog
+Group=watchdog
+WorkingDirectory=/var/lib/watchdog
+EnvironmentFile=/etc/watchdog/flow/worker.env
+EnvironmentFile=-/etc/watchdog/agents/watchdog-flow-worker.env
+ExecStart=/opt/watchdog/current/bin/watchdog-flow-worker $WATCHDOG_FLOW_WORKER_ARGS $WATCHDOG_AGENT_ARGS
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/watchdog
+
+[Install]
+WantedBy=multi-user.target

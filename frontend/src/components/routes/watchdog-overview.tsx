@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import {
+	BotIcon,
 	CrosshairIcon,
 	FileDownIcon,
 	GaugeIcon,
@@ -32,13 +33,14 @@ export default memo(() => {
 	const [metrics, setMetrics] = useState<OverviewMetric[]>([])
 
 	const refresh = useCallback(async () => {
-		const [networkTargets, targets, exports, billing, permissions, snmp] = await Promise.allSettled([
+		const [networkTargets, targets, exports, billing, permissions, snmp, agents] = await Promise.allSettled([
 			countItems("/api/v1/devices/summary"),
 			countItems("/api/v1/devices"),
 			countItems("/api/v1/exports"),
 			countItems("/api/v1/billing/accounts"),
 			countItems("/api/v1/permissions"),
 			countItems("/api/v1/snmp/profiles"),
+			countItems("/api/v1/agents"),
 		])
 		setMetrics([
 			{
@@ -82,6 +84,13 @@ export default memo(() => {
 				value: resultValue(snmp),
 				href: getPagePath($router, "snmp_profiles"),
 				icon: GaugeIcon,
+			},
+			{
+				key: "agents",
+				label: t`Agents`,
+				value: resultValue(agents),
+				href: getPagePath($router, "agents"),
+				icon: BotIcon,
 			},
 		])
 	}, [t])

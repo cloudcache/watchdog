@@ -7979,9 +7979,17 @@ msgstr "每轮轮询任务数"
 msgid "Registry arguments"
 msgstr "Registry 启动参数"
 
+#: src/components/routes/agents.tsx
+msgid "Host activation command"
+msgstr "主机激活命令"
+
 #: src/components/routes/agent-plans.tsx
 msgid "Root path"
 msgstr "根目录"
+
+#: src/components/routes/agents.tsx
+msgid "Save the token and public key to owner-readable files first. The command installs the matching systemd unit and enables it; it does not put either secret on the command line."
+msgstr "请先把令牌和公钥保存到仅属主可读的文件。该命令会安装并启用对应的 systemd 服务，且不会把任何密钥放入命令行。"
 
 #: src/components/routes/agents.tsx
 msgid "Save the token and public key at the paths above, add the registry arguments to {serviceName}, then enable and start that service."

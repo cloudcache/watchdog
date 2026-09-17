@@ -18,7 +18,13 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
-import { agentServiceName, compatibleDeviceKind, defaultAgentID, registryArgumentsText } from "@/lib/agent-control"
+import {
+	agentActivationCommand,
+	agentServiceName,
+	compatibleDeviceKind,
+	defaultAgentID,
+	registryArgumentsText,
+} from "@/lib/agent-control"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
@@ -336,6 +342,7 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 	const apiURL = new URL(api.buildURL("/api/v1"), window.location.origin).origin
 	const registryArgs = token ? registryArgumentsText(kind, agentID.trim(), apiURL) : ""
 	const serviceName = agentServiceName(kind)
+	const activationCommand = token ? agentActivationCommand(kind, agentID.trim(), apiURL) : ""
 	return (
 		<Dialog open={open} onOpenChange={(value) => !value && onClose()}>
 			<DialogContent className="max-w-2xl">
@@ -433,6 +440,20 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 								</Label>
 								<InputCopy id="agent-registry-arguments" name="agent-registry-arguments" value={registryArgs} />
 							</div>
+							{activationCommand ? (
+								<div className="grid gap-1.5">
+									<Label>
+										<Trans>Host activation command</Trans>
+									</Label>
+									<InputCopy id="agent-activation-command" name="agent-activation-command" value={activationCommand} />
+									<p className="text-xs text-muted-foreground">
+										<Trans>
+											Save the token and public key to owner-readable files first. The command installs the matching
+											systemd unit and enables it; it does not put either secret on the command line.
+										</Trans>
+									</p>
+								</div>
+							) : null}
 							<p className="text-xs text-muted-foreground">
 								{serviceName ? (
 									<Trans>
