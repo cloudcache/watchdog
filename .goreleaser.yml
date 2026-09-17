@@ -126,12 +126,12 @@ nfpms:
     package_name: watchdog-agent
     description: |-
       Agent for Watchdog
-      Watchdog is a lightweight server monitoring platform that includes Docker
-      statistics, historical data, and alert functions. It has a friendly web
-      interface, simple configuration, and is ready to use out of the box.
-      It supports automatic backup, multi-user, OAuth authentication, and
-      API access.
-    maintainer: henrygd <hank@henrygd.me>
+      Watchdog is a self-hosted monitoring and traffic-analysis platform for
+      systems, network devices, and flow data. It provides a web interface,
+      local user and role management, SNMP monitoring, and high-throughput
+      sFlow/NetFlow/IPFIX flow analysis. The agent runs on each monitored
+      host and reports system and container metrics to the server.
+    maintainer: cloudcache <noreply@github.com>
     section: net
     ids:
       - watchdog-agent
@@ -166,32 +166,9 @@ scoops:
       owner: cloudcache
       name: watchdog-scoops
     homepage: "https://github.com/cloudcache/watchdog"
-    description: "Agent for Watchdog, a lightweight server monitoring platform."
+    description: "Agent for Watchdog, a self-hosted monitoring and traffic-analysis platform."
     license: MIT
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
-
-# # Needs choco installed, so doesn't build on linux / default gh workflow :(
-# chocolateys:
-#   - title: Watchdog Agent
-#     ids: [watchdog-agent]
-#     package_source_url: https://github.com/cloudcache/watchdog-chocolatey
-#     owners: henrygd
-#     authors: henrygd
-#     summary: 'Agent for Watchdog, a lightweight server monitoring platform.'
-#     description: |
-#       Watchdog is a lightweight server monitoring platform that includes Docker statistics, historical data, and alert functions.
-
-#       It has a friendly web interface, simple configuration, and is ready to use out of the box. It supports automatic backup, multi-user, OAuth authentication, and API access.
-#     license_url: https://github.com/cloudcache/watchdog/blob/main/LICENSE
-#     project_url: https://github.com/cloudcache/watchdog
-#     project_source_url: https://github.com/cloudcache/watchdog
-#     docs_url: https://github.com/cloudcache/watchdog/tree/main/docs
-#     icon_url: https://cdn.jsdelivr.net/gh/selfhst/icons/png/watchdog.png
-#     bug_tracker_url: https://github.com/cloudcache/watchdog/issues
-#     copyright: 2025 henrygd
-#     tags: foss cross-platform admin monitoring
-#     require_license_acceptance: false
-#     release_notes: 'https://github.com/cloudcache/watchdog/releases/tag/v{{ .Version }}'
 
 brews:
   - ids: [watchdog-agent]
@@ -200,7 +177,7 @@ brews:
       owner: cloudcache
       name: homebrew-watchdog
     homepage: "https://github.com/cloudcache/watchdog"
-    description: "Agent for Watchdog, a lightweight server monitoring platform."
+    description: "Agent for Watchdog, a self-hosted monitoring and traffic-analysis platform."
     license: MIT
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
     extra_install: |
@@ -229,18 +206,18 @@ winget:
     publisher: cloudcache
     license: MIT
     license_url: "https://github.com/cloudcache/watchdog/blob/main/LICENSE"
-    copyright: "2025 henrygd"
+    copyright: "2026 cloudcache"
     homepage: "https://github.com/cloudcache/watchdog"
     release_notes_url: "https://github.com/cloudcache/watchdog/releases/tag/v{{ .Version }}"
     publisher_support_url: "https://github.com/cloudcache/watchdog/issues"
-    short_description: "Agent for Watchdog, a lightweight server monitoring platform."
+    short_description: "Agent for Watchdog, a self-hosted monitoring and traffic-analysis platform."
     skip_upload: '{{ if eq (tolower .Env.IS_FORK) "true" }}true{{ else }}auto{{ end }}'
     description: |
-      Watchdog is a lightweight server monitoring platform that includes Docker
-      statistics, historical data, and alert functions. It has a friendly web
-      interface, simple configuration, and is ready to use out of the box.
-      It supports automatic backup, multi-user, OAuth authentication, and
-      API access.
+      Watchdog is a self-hosted monitoring and traffic-analysis platform for
+      systems, network devices, and flow data. It provides a web interface,
+      local user and role management, SNMP monitoring, and high-throughput
+      sFlow/NetFlow/IPFIX flow analysis. The agent runs on each monitored host
+      and reports system and container metrics to the server.
     tags:
       - homelab
       - monitoring
