@@ -7083,6 +7083,74 @@ msgstr "您的角色无权访问此页面。"
 msgid "Your user settings have been updated."
 msgstr "您的用户设置已更新。"
 
+#: src/components/routes/address-taxonomy.tsx
+msgid "Address set"
+msgstr "地址集合"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Code"
+msgstr "代码"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Families"
+msgstr "地址族"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Geography Dictionary"
+msgstr "地域字典"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Geography / Operator Lines"
+msgstr "地域与运营商线路"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "ISP Operators"
+msgstr "运营商"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Parent"
+msgstr "上级"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Short name"
+msgstr "简称"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Sort order"
+msgstr "排序"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Continents"
+msgstr "洲"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Countries"
+msgstr "国家"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Provinces"
+msgstr "省/州"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Cities"
+msgstr "城市"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Regions"
+msgstr "区域"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Search engines"
+msgstr "搜索引擎"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Cloud providers"
+msgstr "云服务商"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Natural regions"
+msgstr "自然区域"
+
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Address checksum"
 msgstr "地址库校验和"

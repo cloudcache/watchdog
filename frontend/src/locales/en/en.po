@@ -8238,6 +8238,74 @@ msgstr "Your role does not grant access to this page."
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "Your user settings have been updated."
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Address set"
+msgstr "Address set"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Code"
+msgstr "Code"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Families"
+msgstr "Families"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Geography Dictionary"
+msgstr "Geography Dictionary"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Geography / Operator Lines"
+msgstr "Geography / Operator Lines"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "ISP Operators"
+msgstr "ISP Operators"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Parent"
+msgstr "Parent"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Short name"
+msgstr "Short name"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Sort order"
+msgstr "Sort order"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Continents"
+msgstr "Continents"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Countries"
+msgstr "Countries"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Provinces"
+msgstr "Provinces"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Cities"
+msgstr "Cities"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Regions"
+msgstr "Regions"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Search engines"
+msgstr "Search engines"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Cloud providers"
+msgstr "Cloud providers"
+
+#: src/components/routes/address-base-data.tsx
+msgid "Natural regions"
+msgstr "Natural regions"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Archive retention"
 msgstr "Archive retention"

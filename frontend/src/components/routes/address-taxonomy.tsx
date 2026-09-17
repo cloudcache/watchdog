@@ -377,7 +377,7 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 						kind: geo.kind,
 						parent: names.geo.get(geo.parent_id ?? "") ?? "—",
 						shortName: geo.short_name || "—",
-						enabled: yesNo(geo.enabled),
+						enabled: geo.enabled ? t`Yes` : t`No`,
 						order: geo.sort_order,
 						edit: t`Edit`,
 						delete: t`Delete`,
@@ -393,7 +393,7 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 						name: operator.name,
 						category: operator.category,
 						asns: operator.asns.join(", ") || "—",
-						enabled: yesNo(operator.enabled),
+						enabled: operator.enabled ? t`Yes` : t`No`,
 						order: operator.sort_order,
 						edit: t`Edit`,
 						delete: t`Delete`,
@@ -410,7 +410,7 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 					families: (line.geo_selector.families ?? []).map((value) => `IPv${value}`).join(", ") || "—",
 					operator: names.operators.get(line.operator_id ?? "") ?? "—",
 					addressSet: names.sets.get(line.address_set_id ?? "") ?? "—",
-					enabled: yesNo(line.enabled),
+					enabled: line.enabled ? t`Yes` : t`No`,
 					order: line.sort_order,
 					edit: t`Edit`,
 					delete: t`Delete`,
@@ -420,7 +420,32 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 		[items, kind, names, t]
 	)
 
-	const columns = useMemo(() => taxonomyColumns(kind, t), [kind, t])
+	const columns = useMemo(
+		() =>
+			taxonomyColumns(kind, {
+				code: t`Code`,
+				name: t`Name`,
+				level: t`Level`,
+				parent: t`Parent`,
+				shortName: t`Short name`,
+				category: t`Category`,
+				geography: t`Geography`,
+				families: t`Families`,
+				operator: t`Operator`,
+				addressSet: t`Address set`,
+				sortOrder: t`Sort order`,
+				enabled: t`Enabled`,
+				edit: t`Edit`,
+				delete: t`Delete`,
+			}),
+		[kind, t]
+	)
+	const title =
+		kind === "geography"
+			? t`Geography Dictionary`
+			: kind === "operators"
+				? t`ISP Operators`
+				: t`Geography / Operator Lines`
 	const resetPage = (update: () => void) => {
 		setPage(0)
 		update()
@@ -479,7 +504,7 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<Icon className="h-5 w-5 text-muted-foreground" />
-					<h2 className="text-lg font-semibold">{taxonomyTitle(kind)}</h2>
+					<h2 className="text-lg font-semibold">{title}</h2>
 				</div>
 				<div className="flex gap-2">
 					<Button variant="outline" size="sm" onClick={() => setReloadKey((value) => value + 1)}>
@@ -848,49 +873,56 @@ function CheckOption({
 	)
 }
 
-function taxonomyTitle(kind: TaxonomyKind) {
-	if (kind === "geography") return "Geography Dictionary"
-	if (kind === "operators") return "ISP Operators"
-	return "Geography / Operator Lines"
+type TaxonomyColumnLabels = {
+	code: string
+	name: string
+	level: string
+	parent: string
+	shortName: string
+	category: string
+	geography: string
+	families: string
+	operator: string
+	addressSet: string
+	sortOrder: string
+	enabled: string
+	edit: string
+	delete: string
 }
 
-function taxonomyColumns(kind: TaxonomyKind, t: (message: TemplateStringsArray) => string) {
+function taxonomyColumns(kind: TaxonomyKind, labels: TaxonomyColumnLabels) {
 	const common = [
-		{ field: "code", title: t`Code`, width: 140, style: denseCellStyle() },
-		{ field: "name", title: t`Name`, width: 180, style: denseCellStyle() },
+		{ field: "code", title: labels.code, width: 140, style: denseCellStyle() },
+		{ field: "name", title: labels.name, width: 180, style: denseCellStyle() },
 	]
 	const specific =
 		kind === "geography"
 			? [
-					{ field: "kind", title: t`Level`, width: 110, style: denseCellStyle() },
-					{ field: "parent", title: t`Parent`, width: 180, style: denseCellStyle() },
-					{ field: "shortName", title: t`Short name`, width: 140, style: denseCellStyle() },
+					{ field: "kind", title: labels.level, width: 110, style: denseCellStyle() },
+					{ field: "parent", title: labels.parent, width: 180, style: denseCellStyle() },
+					{ field: "shortName", title: labels.shortName, width: 140, style: denseCellStyle() },
 				]
 			: kind === "operators"
 				? [
 						{ field: "flowISPID", title: "Flow ISP ID", width: 120, style: denseCellStyle() },
-						{ field: "category", title: t`Category`, width: 130, style: denseCellStyle() },
+						{ field: "category", title: labels.category, width: 130, style: denseCellStyle() },
 						{ field: "asns", title: "ASNs", width: 260, style: denseCellStyle() },
 					]
 				: [
-						{ field: "parent", title: t`Parent`, width: 150, style: denseCellStyle() },
-						{ field: "geography", title: t`Geography`, width: 260, style: denseCellStyle() },
-						{ field: "families", title: t`Families`, width: 110, style: denseCellStyle() },
-						{ field: "operator", title: t`Operator`, width: 160, style: denseCellStyle() },
-						{ field: "addressSet", title: t`Address set`, width: 160, style: denseCellStyle() },
+						{ field: "parent", title: labels.parent, width: 150, style: denseCellStyle() },
+						{ field: "geography", title: labels.geography, width: 260, style: denseCellStyle() },
+						{ field: "families", title: labels.families, width: 110, style: denseCellStyle() },
+						{ field: "operator", title: labels.operator, width: 160, style: denseCellStyle() },
+						{ field: "addressSet", title: labels.addressSet, width: 160, style: denseCellStyle() },
 					]
 	return [
 		...common,
 		...specific,
-		{ field: "order", title: t`Sort order`, width: 100, style: denseCellStyle() },
-		{ field: "enabled", title: t`Enabled`, width: 100, style: denseCellStyle() },
-		{ field: "edit", title: t`Edit`, width: 80, filter: false, style: actionCellStyle("#2563eb") },
-		{ field: "delete", title: t`Delete`, width: 80, filter: false, style: actionCellStyle("#dc2626") },
+		{ field: "order", title: labels.sortOrder, width: 100, style: denseCellStyle() },
+		{ field: "enabled", title: labels.enabled, width: 100, style: denseCellStyle() },
+		{ field: "edit", title: labels.edit, width: 80, filter: false, style: actionCellStyle("#2563eb") },
+		{ field: "delete", title: labels.delete, width: 80, filter: false, style: actionCellStyle("#dc2626") },
 	]
-}
-
-function yesNo(value: boolean) {
-	return value ? "yes" : "no"
 }
 
 function denseCellStyle() {
