@@ -343,8 +343,8 @@ msgstr "Add Prefix"
 #: src/components/navbar.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Add Resource"
-msgstr "Add Resource"
+msgid "Add Target"
+msgstr "Add Target"
 
 #: src/components/routes/role-form.tsx
 #: src/components/routes/role-form.tsx
@@ -364,11 +364,6 @@ msgstr "Add Set"
 #: src/components/routes/target-form.tsx
 msgid "Add SNMP Device"
 msgstr "Add SNMP Device"
-
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-#~ msgid "Add Target"
-#~ msgstr "Add Target"
 
 #: src/components/routes/snmp-oid-mapping-form.tsx
 #~ msgid "Add transform"
@@ -2439,8 +2434,8 @@ msgstr "Edit Prefix"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Edit Resource"
-msgstr "Edit Resource"
+msgid "Edit Target"
+msgstr "Edit Target"
 
 #: src/components/routes/users.tsx
 msgid "Edit role"
@@ -2459,11 +2454,6 @@ msgstr "Edit SNMP profile"
 #: src/components/routes/snmp-profile-form.tsx
 msgid "Edit SNMP Profile"
 msgstr "Edit SNMP Profile"
-
-#: src/components/routes/target-form.tsx
-#: src/components/routes/target-form.tsx
-#~ msgid "Edit Target"
-#~ msgstr "Edit Target"
 
 #: src/components/routes/users.tsx
 #~ msgid "Edit user"
@@ -6176,11 +6166,6 @@ msgstr "Resource ID"
 msgid "Resource type"
 msgstr "Resource type"
 
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-msgid "Resources"
-msgstr "Resources"
-
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Restarts"
 msgstr "Restarts"
@@ -6433,6 +6418,7 @@ msgstr "Save as graph"
 msgid "Save disposition"
 msgstr "Save disposition"
 
+#: src/components/routes/flow-storage-lifecycle.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Save draft"
 msgstr "Save draft"
@@ -7593,6 +7579,7 @@ msgctxt "Disk I/O"
 msgid "Total time spent on read/write (can exceed 100%)"
 msgstr "Total time spent on read/write (can exceed 100%)"
 
+#: src/components/routes/billing-account-form.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Total traffic"
 msgstr "Total traffic"
@@ -8306,6 +8293,136 @@ msgstr "Cloud providers"
 #: src/components/routes/address-base-data.tsx
 msgid "Natural regions"
 msgstr "Natural regions"
+
+#: src/components/routes/flow-reports.tsx
+msgid "{0} failed · {1} behind · {2} uninstalled"
+msgstr "{0} failed · {1} behind · {2} uninstalled"
+
+#: src/components/routes/flow-reports.tsx
+msgid "{0} of {1} observed workers ready · {2}"
+msgstr "{0} of {1} observed workers ready · {2}"
+
+#: src/components/routes/flow-reports.tsx
+msgid "{0} rules"
+msgstr "{0} rules"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "All (no group)"
+msgstr "All (no group)"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Apply to {0}"
+msgstr "Apply to {0}"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "ASN must be a non-negative integer"
+msgstr "ASN must be a non-negative integer"
+
+#: src/components/routes/address-geo-tree.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Base"
+msgstr "Base"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Collapse"
+msgstr "Collapse"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Continent"
+msgstr "Continent"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Drill into a country, province, or city to view prefixes."
+msgstr "Drill into a country, province, or city to view prefixes."
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Exclude groups"
+msgstr "Exclude groups"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Expand"
+msgstr "Expand"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Groups"
+msgstr "Groups"
+
+#: src/components/routes/flow-vpn-rules.tsx
+msgid "High"
+msgstr "High"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Keep"
+msgstr "Keep"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Keep current"
+msgstr "Keep current"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Members (one CIDR per line)"
+msgstr "Members (one CIDR per line)"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "No prefixes for this selection."
+msgstr "No prefixes for this selection."
+
+#: src/components/routes/address-prefixes.tsx
+msgid "No prefixes found. Activate an import first."
+msgstr "No prefixes found. Activate an import first."
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "No region groups defined yet. Create one in the Lines tab."
+msgstr "No region groups defined yet. Create one in the Lines tab."
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Operators (selector)"
+msgstr "Operators (selector)"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassign"
+msgstr "Reassign"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassign failed"
+msgstr "Reassign failed"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassigned {0} prefixes"
+msgstr "Reassigned {0} prefixes"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Region group"
+msgstr "Region group"
+
+#: src/components/routes/flow-vpn-rules.tsx
+msgid "Rollback"
+msgstr "Rollback"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Select a node to view its prefixes."
+msgstr "Select a node to view its prefixes."
+
+#: src/components/routes/address-imports.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Selected {0}"
+msgstr "Selected {0}"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Unknown operator \"{trimmed}\" — type an exact operator name"
+msgstr "Unknown operator \"{trimmed}\" — type an exact operator name"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Update failed"
+msgstr "Update failed"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Updated {cidr}"
+msgstr "Updated {cidr}"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Version {0} · effective {1}"
+msgstr "Version {0} · effective {1}"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Archive retention"
 msgstr "Archive retention"
@@ -8397,10 +8514,6 @@ msgstr "Raw retention (days)"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Require verified backup"
 msgstr "Require verified backup"
-
-#: src/components/routes/flow-storage-lifecycle.tsx
-msgid "Save draft"
-msgstr "Save draft"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "days"
@@ -8594,10 +8707,6 @@ msgstr "Sets the period guarantee; overuse starts above this bandwidth."
 #: src/components/routes/billing-account-form.tsx
 msgid "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
 msgstr "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
-
-#: src/components/routes/billing-account-form.tsx
-msgid "Total traffic"
-msgstr "Total traffic"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Total traffic above this quota is period overuse."

@@ -319,8 +319,8 @@ msgstr "添加地址段"
 #: src/components/navbar.tsx
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Add Resource"
-msgstr "添加资源"
+msgid "Add Target"
+msgstr "添加目标"
 
 #: src/components/routes/role-form.tsx
 #: src/components/routes/role-form.tsx
@@ -2163,8 +2163,8 @@ msgstr "编辑地址段"
 
 #: src/components/routes/target-form.tsx
 #: src/components/routes/target-form.tsx
-msgid "Edit Resource"
-msgstr "编辑资源"
+msgid "Edit Target"
+msgstr "编辑目标"
 
 #: src/components/routes/users.tsx
 msgid "Edit role"
@@ -5344,11 +5344,6 @@ msgstr "资源 ID"
 msgid "Resource type"
 msgstr "资源类型"
 
-#: src/components/navbar.tsx
-#: src/components/navbar.tsx
-msgid "Resources"
-msgstr "资源"
-
 #: src/components/systemd-table/systemd-table.tsx
 msgid "Restarts"
 msgstr "重启次数"
@@ -5576,6 +5571,7 @@ msgstr "保存为图像"
 msgid "Save disposition"
 msgstr "保存处置"
 
+#: src/components/routes/flow-storage-lifecycle.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Save draft"
 msgstr "保存草稿"
@@ -6572,6 +6568,7 @@ msgctxt "Disk I/O"
 msgid "Total time spent on read/write (can exceed 100%)"
 msgstr "读写总耗时占比（可能超过 100%）"
 
+#: src/components/routes/billing-account-form.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Total traffic"
 msgstr "总流量"
@@ -7151,6 +7148,136 @@ msgstr "云服务商"
 msgid "Natural regions"
 msgstr "自然区域"
 
+#: src/components/routes/flow-reports.tsx
+msgid "{0} failed · {1} behind · {2} uninstalled"
+msgstr "{0} 个失败 · {1} 个落后 · {2} 个未安装"
+
+#: src/components/routes/flow-reports.tsx
+msgid "{0} of {1} observed workers ready · {2}"
+msgstr "已观测 Worker 中 {0}/{1} 已就绪 · {2}"
+
+#: src/components/routes/flow-reports.tsx
+msgid "{0} rules"
+msgstr "{0} 条规则"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "All (no group)"
+msgstr "全部（未分组）"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Apply to {0}"
+msgstr "应用到 {0} 项"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "ASN must be a non-negative integer"
+msgstr "ASN 必须为非负整数"
+
+#: src/components/routes/address-geo-tree.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Base"
+msgstr "基础"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Collapse"
+msgstr "收起"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Continent"
+msgstr "洲"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Drill into a country, province, or city to view prefixes."
+msgstr "选择国家、省/州或城市逐级查看地址段。"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Exclude groups"
+msgstr "排除组"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Expand"
+msgstr "展开"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Groups"
+msgstr "分组"
+
+#: src/components/routes/flow-vpn-rules.tsx
+msgid "High"
+msgstr "高"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Keep"
+msgstr "保留"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Keep current"
+msgstr "保留当前值"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Members (one CIDR per line)"
+msgstr "成员（每行一个 CIDR）"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "No prefixes for this selection."
+msgstr "当前选择没有地址段。"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "No prefixes found. Activate an import first."
+msgstr "未找到地址段，请先启用一个导入版本。"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "No region groups defined yet. Create one in the Lines tab."
+msgstr "尚未定义区域组，请先在线路页创建。"
+
+#: src/components/routes/address-taxonomy.tsx
+msgid "Operators (selector)"
+msgstr "运营商（选择条件）"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassign"
+msgstr "重新归属"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassign failed"
+msgstr "重新归属失败"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Reassigned {0} prefixes"
+msgstr "已重新归属 {0} 个地址段"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Region group"
+msgstr "区域组"
+
+#: src/components/routes/flow-vpn-rules.tsx
+msgid "Rollback"
+msgstr "回滚"
+
+#: src/components/routes/address-geo-tree.tsx
+msgid "Select a node to view its prefixes."
+msgstr "请选择一个节点查看其地址段。"
+
+#: src/components/routes/address-imports.tsx
+#: src/components/routes/address-prefixes.tsx
+msgid "Selected {0}"
+msgstr "已选择 {0} 项"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Unknown operator \"{trimmed}\" — type an exact operator name"
+msgstr "未知运营商“{trimmed}”，请输入完整且准确的运营商名称"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Update failed"
+msgstr "更新失败"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Updated {cidr}"
+msgstr "已更新 {cidr}"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Version {0} · effective {1}"
+msgstr "版本 {0} · 生效时间 {1}"
+
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Address checksum"
 msgstr "地址库校验和"
@@ -7412,10 +7539,6 @@ msgid "Require verified backup"
 msgstr "删除前要求已验证备份"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
-msgid "Save draft"
-msgstr "保存草稿"
-
-#: src/components/routes/flow-storage-lifecycle.tsx
 msgid "days"
 msgstr "天"
 
@@ -7607,10 +7730,6 @@ msgstr "设置账期保底带宽；超出该带宽的部分计为超用量。"
 #: src/components/routes/billing-account-form.tsx
 msgid "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
 msgstr "这些阈值仅用于标记 SNMP、Flow 和外部凭据之间的差异，不会改变用量或价格。"
-
-#: src/components/routes/billing-account-form.tsx
-msgid "Total traffic"
-msgstr "总流量"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Total traffic above this quota is period overuse."

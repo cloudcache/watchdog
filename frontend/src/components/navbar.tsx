@@ -144,7 +144,7 @@ export default function Navbar() {
 						</NavItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel>
-							<Trans>Resources</Trans>
+							<Trans>Targets</Trans>
 						</DropdownMenuLabel>
 						<ResourceItems />
 						<DropdownMenuSeparator />
@@ -171,7 +171,7 @@ export default function Navbar() {
 						{canViewAdministration() && <AdminSubmenu />}
 						{can("device.create") && (
 							<NavItem href={getPagePath($router, "target_new")} icon={PlusIcon}>
-								<Trans>Add Resource</Trans>
+								<Trans>Add Target</Trans>
 							</NavItem>
 						)}
 						<DropdownMenuSeparator />
@@ -193,7 +193,7 @@ export default function Navbar() {
 					<LayoutDashboardIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
 					<span className="hidden xl:inline">Watchdog</span>
 				</Link>
-				{can("device.view") ? <DesktopNavMenu label={<Trans>Resources</Trans>} icon={CrosshairIcon}>
+				{can("device.view") ? <DesktopNavMenu label={<Trans>Targets</Trans>} icon={CrosshairIcon}>
 					<ResourceItems />
 				</DesktopNavMenu> : null}
 				{can("device.view") ? <DesktopNavMenu label={<Trans>Analysis</Trans>} icon={BarChart3Icon}>
@@ -223,7 +223,7 @@ export default function Navbar() {
 					>
 						<PlusIcon className="h-4 w-4 -ms-1" />
 						<span className="hidden lg:inline">
-							<Trans>Add Resource</Trans>
+							<Trans>Add Target</Trans>
 						</span>
 					</Button>
 				)}

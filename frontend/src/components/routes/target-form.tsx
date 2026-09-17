@@ -108,7 +108,7 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 	}, [id, t])
 
 	useEffect(() => {
-		document.title = `${isEditing ? t`Edit Resource` : defaultKind === "network" ? t`Add SNMP Device` : t`Add Resource`} / Watchdog`
+		document.title = `${isEditing ? t`Edit Target` : defaultKind === "network" ? t`Add SNMP Device` : t`Add Target`} / Watchdog`
 		loadTarget()
 	}, [defaultKind, isEditing, loadTarget, t])
 
@@ -199,11 +199,11 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 					<CrosshairIcon className="h-5 w-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
 					<h1 className="truncate text-xl font-semibold tracking-normal">
 						{isEditing ? (
-							<Trans>Edit Resource</Trans>
+							<Trans>Edit Target</Trans>
 						) : defaultKind === "network" ? (
 							<Trans>Add SNMP Device</Trans>
 						) : (
-							<Trans>Add Resource</Trans>
+							<Trans>Add Target</Trans>
 						)}
 					</h1>
 				</div>
@@ -227,8 +227,12 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="system">system</SelectItem>
-									<SelectItem value="network">network</SelectItem>
+									<SelectItem value="system">
+										<Trans>System</Trans>
+									</SelectItem>
+									<SelectItem value="network">
+										<Trans>Network</Trans>
+									</SelectItem>
 								</SelectContent>
 							</Select>
 						</Field>
@@ -292,10 +296,18 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="pending">pending</SelectItem>
-								<SelectItem value="up">up</SelectItem>
-								<SelectItem value="down">down</SelectItem>
-								<SelectItem value="paused">paused</SelectItem>
+								<SelectItem value="pending">
+									<Trans>Pending</Trans>
+								</SelectItem>
+								<SelectItem value="up">
+									<Trans>Up</Trans>
+								</SelectItem>
+								<SelectItem value="down">
+									<Trans>Down</Trans>
+								</SelectItem>
+								<SelectItem value="paused">
+									<Trans>Paused</Trans>
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</Field>
