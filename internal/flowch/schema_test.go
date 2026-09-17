@@ -27,7 +27,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"007_flow_records_codecs.sql", "008_flow_aggregate_codecs.sql", "009_flow_address_dict_source.sql",
 		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
 		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql", "015_flow_raw_delete_quarantine.sql",
-		"016_flow_historical_reclassification.sql",
+		"016_flow_historical_reclassification.sql", "017_flow_reclassification_counter_totals.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)

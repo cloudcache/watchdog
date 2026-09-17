@@ -17,13 +17,16 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 16 || migrations[0].Name != "001_flow_schema.sql" || migrations[11].Name != "012_snmp_telemetry.sql" || migrations[12].Name != "013_flow_vpn_candidate_features.sql" || migrations[13].Name != "014_snmp_events.sql" || migrations[14].Name != "015_flow_raw_delete_quarantine.sql" || migrations[15].Name != "016_flow_historical_reclassification.sql" {
+	if len(migrations) != 17 || migrations[0].Name != "001_flow_schema.sql" || migrations[11].Name != "012_snmp_telemetry.sql" || migrations[12].Name != "013_flow_vpn_candidate_features.sql" || migrations[13].Name != "014_snmp_events.sql" || migrations[14].Name != "015_flow_raw_delete_quarantine.sql" || migrations[15].Name != "016_flow_historical_reclassification.sql" || migrations[16].Name != "017_flow_reclassification_counter_totals.sql" {
 		t.Fatalf("migrations=%+v", migrations)
 	}
 	for _, migration := range migrations {
 		if len(migration.Checksum) != 64 || len(migration.Statements) == 0 {
 			t.Fatalf("invalid loaded migration=%+v", migration)
 		}
+	}
+	if got, want := migrations[15].Checksum, "0000ff24eeaee56b83649fb8c3778c98802c16f956d9566e1cae4bbaba422252"; got != want {
+		t.Fatalf("released migration 016 checksum drifted: got %s, want %s", got, want)
 	}
 	data, err := os.ReadFile("../../deploy/migration/clickhouse/001_flow_schema.sql")
 	if err != nil {

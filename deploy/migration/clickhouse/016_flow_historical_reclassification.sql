@@ -30,10 +30,10 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_reclassification_generations (
   window_start DateTime64(3, 'UTC'),
   window_end DateTime64(3, 'UTC'),
   record_count UInt64,
-  raw_bytes Decimal(39, 0),
-  raw_packets Decimal(39, 0),
-  estimated_bytes Decimal(39, 0),
-  estimated_packets Decimal(39, 0),
+  raw_bytes UInt64,
+  raw_packets UInt64,
+  estimated_bytes UInt64,
+  estimated_packets UInt64,
   estimated_valid_records UInt64,
   completed_at DateTime64(3, 'UTC')
 )
