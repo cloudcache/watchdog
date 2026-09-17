@@ -44,7 +44,7 @@ func TestQueryTrafficUsesCounterRateAndNoTenantScope(t *testing.T) {
 	if len(series) != 1 || len(series[0].Points) != 1 || series[0].Metric != MetricIfInBPS {
 		t.Fatalf("series=%+v", series)
 	}
-	for _, required := range []string{"lagInFrame", "counter_width=32", "interval_ms", "entity_id={entity:String}"} {
+	for _, required := range []string{"lagInFrame", "lagInFrame(counter_width)", "counter_width=previous_width", "counter_width=32", "interval_ms", "entity_id={entity:String}"} {
 		if !strings.Contains(exec.query.Body, required) {
 			t.Fatalf("rate query missing %q: %s", required, exec.query.Body)
 		}

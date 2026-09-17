@@ -53,21 +53,22 @@ WITH dedup AS (
 ), ordered AS (
   SELECT *,row_number() OVER w rn,
     lagInFrame(observed_at) OVER w previous_at,
-    lagInFrame(counter_value) OVER w previous_value
+    lagInFrame(counter_value) OVER w previous_value,
+    lagInFrame(counter_width) OVER w previous_width
   FROM dedup WINDOW w AS (PARTITION BY device_id,entity_id,metric ORDER BY observed_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 ), segments AS (
   SELECT *,dateDiff('millisecond',previous_at,observed_at) elapsed_ms,
-    counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729 wrap32,
-    counter_value>=previous_value forward,
-    multiIf(counter_value>=previous_value,counter_value-previous_value,
-      counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729,
+    counter_width=previous_width AND counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729 wrap32,
+    counter_width=previous_width AND counter_value>=previous_value forward,
+    multiIf(counter_width=previous_width AND counter_value>=previous_value,counter_value-previous_value,
+      counter_width=previous_width AND counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729,
       4294967296-previous_value+counter_value,0) delta
   FROM ordered
 ), per_metric AS (
   SELECT device_id,entity_id,metric,
     sumIf(delta,rn>1 AND elapsed_ms>0 AND elapsed_ms<=greatest(toInt64(interval_ms)*3,900000) AND (forward OR wrap32)) bytes,
     sumIf(elapsed_ms,rn>1 AND elapsed_ms>0 AND elapsed_ms<=greatest(toInt64(interval_ms)*3,900000) AND (forward OR wrap32)) accepted_ms,
-    countIf(rn>1 AND elapsed_ms>0 AND NOT forward AND NOT wrap32)>0 reset_flag,
+    countIf(rn>1 AND elapsed_ms>0 AND counter_width=previous_width AND NOT forward AND NOT wrap32)>0 reset_flag,
     countIf(rn>1 AND elapsed_ms>greatest(toInt64(interval_ms)*3,900000))>0 gap_flag
   FROM segments
   WHERE observed_at>fromUnixTimestamp64Milli({bucket_ms:Int64}) AND observed_at<=fromUnixTimestamp64Milli({end_ms:Int64})

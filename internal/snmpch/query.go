@@ -141,12 +141,13 @@ const rateQuerySQL = `WITH dedup AS (
 ), ordered AS (
   SELECT *,row_number() OVER w rn,
     lagInFrame(observed_at) OVER w previous_at,
-    lagInFrame(counter_value) OVER w previous_value
+    lagInFrame(counter_value) OVER w previous_value,
+    lagInFrame(counter_width) OVER w previous_width
   FROM dedup WINDOW w AS (PARTITION BY device_id,entity_kind,entity_id ORDER BY observed_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 ), segments AS (
   SELECT *,dateDiff('millisecond',previous_at,observed_at) elapsed_ms,
-    (counter_value>=previous_value OR (counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729)) accepted,
-    if(counter_value>=previous_value,counter_value-previous_value,4294967296-previous_value+counter_value) delta
+    (counter_width=previous_width AND (counter_value>=previous_value OR (counter_width=32 AND previous_value>=3865470566 AND counter_value<=429496729))) accepted,
+    multiIf(counter_width!=previous_width,0,counter_value>=previous_value,counter_value-previous_value,4294967296-previous_value+counter_value) delta
   FROM ordered
 )
 SELECT toStartOfInterval(observed_at,toIntervalSecond({step:UInt64})) bucket,

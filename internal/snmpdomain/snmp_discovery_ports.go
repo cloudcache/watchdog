@@ -141,22 +141,30 @@ func portRecipes(req DiscoveryContext, port Port, hasHCIn bool, hasHCOut bool) [
 		outOctetsType = ValueCounter32
 	}
 	definitions := []struct {
-		metric    string
-		oid       string
-		valueType ValueType
+		metric      string
+		oid         string
+		fallbackOID string
+		valueType   ValueType
 	}{
-		{MetricSNMPIfInOctetsTotal, inOctetsOID, inOctetsType},
-		{MetricSNMPIfOutOctetsTotal, outOctetsOID, outOctetsType},
-		{MetricSNMPIfInErrorsTotal, snmpOIDIfInErrors, ValueCounter32},
-		{MetricSNMPIfOutErrorsTotal, snmpOIDIfOutErrors, ValueCounter32},
-		{MetricSNMPIfInDiscardsTotal, snmpOIDIfInDiscards, ValueCounter32},
-		{MetricSNMPIfOutDiscardsTotal, snmpOIDIfOutDiscards, ValueCounter32},
-		{MetricSNMPIfAdminStatus, snmpOIDIfAdminStatus, ValueState},
-		{MetricSNMPIfOperStatus, snmpOIDIfOperStatus, ValueState},
+		{MetricSNMPIfInOctetsTotal, inOctetsOID, snmpOIDIfInOctets, inOctetsType},
+		{MetricSNMPIfOutOctetsTotal, outOctetsOID, snmpOIDIfOutOctets, outOctetsType},
+		{MetricSNMPIfInErrorsTotal, snmpOIDIfInErrors, "", ValueCounter32},
+		{MetricSNMPIfOutErrorsTotal, snmpOIDIfOutErrors, "", ValueCounter32},
+		{MetricSNMPIfInDiscardsTotal, snmpOIDIfInDiscards, "", ValueCounter32},
+		{MetricSNMPIfOutDiscardsTotal, snmpOIDIfOutDiscards, "", ValueCounter32},
+		{MetricSNMPIfAdminStatus, snmpOIDIfAdminStatus, "", ValueState},
+		{MetricSNMPIfOperStatus, snmpOIDIfOperStatus, "", ValueState},
 	}
 	recipes := make([]Recipe, 0, len(definitions))
 	for _, definition := range definitions {
 		recipeID := collectorStableID("snmp-recipe", "", string(req.Device.ID), snmpCollectorModulePorts, string(EntityPort), string(port.ID), definition.metric, idx, "")
+		options := map[string]string{
+			"counter_bits": counterBits(definition.valueType),
+		}
+		if definition.valueType == ValueCounter64 && definition.fallbackOID != "" {
+			options["fallback_numeric_oid"] = definition.fallbackOID + "." + idx
+			options["fallback_counter_bits"] = "32"
+		}
 		recipes = append(recipes, Recipe{
 			ID:                    recipeID,
 			DeviceID:              req.Device.ID,
@@ -178,9 +186,7 @@ func portRecipes(req DiscoveryContext, port Port, hasHCIn bool, hasHCOut bool) [
 				"if_name":   port.IfName,
 				"module":    snmpCollectorModulePorts,
 			},
-			Options: map[string]string{
-				"counter_bits": counterBits(definition.valueType),
-			},
+			Options: options,
 			Enabled: true,
 		})
 	}

@@ -82,20 +82,93 @@ func (p Poller) Poll(ctx context.Context, job PollJob) (PollResult, error) {
 			return result, err
 		}
 		seen := make(map[string]struct{}, len(recipes))
-		for _, vb := range response.VarBinds {
-			for _, recipe := range byOID[strings.TrimPrefix(vb.OID, ".")] {
-				sample, ok := sampleFromRecipe(job, recipe, vb, sampledAt)
-				if !ok {
-					continue
+		collect := func(response QueryResponse, recipesByOID map[string][]Recipe) error {
+			for _, vb := range response.VarBinds {
+				for _, recipe := range recipesByOID[strings.TrimPrefix(vb.OID, ".")] {
+					sample, ok := sampleFromRecipe(job, recipe, vb, sampledAt)
+					if !ok {
+						continue
+					}
+					if err := validateRawSample(sample); err != nil {
+						return err
+					}
+					sample.SourceRunID = runID
+					sample.PollSequence = pollSequence
+					sample.SampleIndex = uint32(len(samples))
+					samples = append(samples, sample)
+					seen[recipe.ID] = struct{}{}
 				}
-				if err := validateRawSample(sample); err != nil {
+			}
+			return nil
+		}
+		if err := collect(response, byOID); err != nil {
+			return result, err
+		}
+		// A large device may time out only one GET chunk. Retry the missing
+		// high-capacity interface counters first, using their original OIDs,
+		// before considering the 32-bit compatibility counter. Otherwise a
+		// transient timeout can switch widths and manufacture a false delta.
+		primaryRetryOIDs := make([]string, 0)
+		primaryRetryByOID := make(map[string][]Recipe)
+		for _, recipe := range recipes {
+			if !recipe.Enabled {
+				continue
+			}
+			if _, ok := seen[recipe.ID]; ok {
+				continue
+			}
+			if _, ok := fallbackCounterRecipe(recipe); !ok {
+				continue
+			}
+			oid := strings.TrimPrefix(strings.TrimSpace(recipe.NumericOID), ".")
+			if _, exists := primaryRetryByOID[oid]; !exists {
+				primaryRetryOIDs = append(primaryRetryOIDs, oid)
+			}
+			primaryRetryByOID[oid] = append(primaryRetryByOID[oid], recipe)
+		}
+		primaryRetryReturned := make(map[string]struct{}, len(primaryRetryOIDs))
+		if len(primaryRetryOIDs) > 0 {
+			primaryRetry, retryErr := p.Query.Get(ctx, GetRequest{Target: job.Target, Profile: job.Profile, Context: contextName, OIDs: primaryRetryOIDs, Flags: QueryFlags{MaxOids: p.maxOids()}})
+			if retryErr == nil {
+				for _, vb := range primaryRetry.VarBinds {
+					primaryRetryReturned[strings.TrimPrefix(vb.OID, ".")] = struct{}{}
+				}
+				if err := collect(primaryRetry, primaryRetryByOID); err != nil {
 					return result, err
 				}
-				sample.SourceRunID = runID
-				sample.PollSequence = pollSequence
-				sample.SampleIndex = uint32(len(samples))
-				samples = append(samples, sample)
-				seen[recipe.ID] = struct{}{}
+			}
+		}
+		fallbackOIDs := make([]string, 0)
+		fallbackByOID := make(map[string][]Recipe)
+		for _, recipe := range recipes {
+			if !recipe.Enabled {
+				continue
+			}
+			if _, ok := seen[recipe.ID]; ok {
+				continue
+			}
+			fallback, ok := fallbackCounterRecipe(recipe)
+			if !ok {
+				continue
+			}
+			// Only fall back after the device explicitly returned the primary
+			// OID without a usable value. An OID omitted by a failed chunk is a
+			// transport failure, not evidence that the HC counter is unsupported.
+			primaryOID := strings.TrimPrefix(strings.TrimSpace(recipe.NumericOID), ".")
+			if _, ok := primaryRetryReturned[primaryOID]; !ok {
+				continue
+			}
+			if _, exists := fallbackByOID[fallback.NumericOID]; !exists {
+				fallbackOIDs = append(fallbackOIDs, fallback.NumericOID)
+			}
+			fallbackByOID[fallback.NumericOID] = append(fallbackByOID[fallback.NumericOID], fallback)
+		}
+		if len(fallbackOIDs) > 0 {
+			fallbackResponse, fallbackErr := p.Query.Get(ctx, GetRequest{Target: job.Target, Profile: job.Profile, Context: contextName, OIDs: fallbackOIDs, Flags: QueryFlags{MaxOids: p.maxOids()}})
+			if fallbackErr == nil {
+				if err := collect(fallbackResponse, fallbackByOID); err != nil {
+					return result, err
+				}
 			}
 		}
 		for _, recipe := range recipes {
@@ -113,6 +186,28 @@ func (p Poller) Poll(ctx context.Context, job PollJob) (PollResult, error) {
 	}
 	result.SampleCount = len(samples)
 	return result, nil
+}
+
+func fallbackCounterRecipe(recipe Recipe) (Recipe, bool) {
+	if recipe.ValueType != ValueCounter64 {
+		return Recipe{}, false
+	}
+	fallbackOID := strings.TrimPrefix(strings.TrimSpace(recipe.Options["fallback_numeric_oid"]), ".")
+	if fallbackOID == "" && strings.TrimSpace(recipe.OIDIndex) != "" {
+		switch recipe.MetricName {
+		case MetricSNMPIfInOctetsTotal:
+			fallbackOID = snmpOIDIfInOctets + "." + recipe.OIDIndex
+		case MetricSNMPIfOutOctetsTotal:
+			fallbackOID = snmpOIDIfOutOctets + "." + recipe.OIDIndex
+		}
+	}
+	if fallbackOID == "" || fallbackOID == strings.TrimPrefix(strings.TrimSpace(recipe.NumericOID), ".") {
+		return Recipe{}, false
+	}
+	fallback := recipe
+	fallback.NumericOID = fallbackOID
+	fallback.ValueType = ValueCounter32
+	return fallback, true
 }
 
 func (p Poller) maxOids() int {

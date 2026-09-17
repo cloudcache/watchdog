@@ -48,6 +48,113 @@ func TestPollerPreservesCounter64ForClickHouse(t *testing.T) {
 	}
 }
 
+type missingHCInQuery struct {
+	calls [][]string
+}
+
+func (q *missingHCInQuery) Get(_ context.Context, request GetRequest) (QueryResponse, error) {
+	q.calls = append(q.calls, append([]string(nil), request.OIDs...))
+	if len(q.calls) == 1 {
+		return QueryResponse{VarBinds: []VarBind{{OID: "1.3.6.1.2.1.31.1.1.1.10.79", Value: uint64(900), ValueType: ValueCounter64}}}, nil
+	}
+	if len(q.calls) == 2 {
+		return QueryResponse{VarBinds: []VarBind{{OID: "1.3.6.1.2.1.31.1.1.1.6.79", Value: nil, ValueType: ValueString}}}, nil
+	}
+	return QueryResponse{VarBinds: []VarBind{{OID: "1.3.6.1.2.1.2.2.1.10.79", Value: uint32(450), ValueType: ValueCounter32}}}, nil
+}
+
+func (*missingHCInQuery) Walk(context.Context, WalkRequest) (QueryResponse, error) {
+	return QueryResponse{}, errors.New("unexpected walk")
+}
+
+func TestPollerFallsBackPerDirectionWhenHCCounterIsMissing(t *testing.T) {
+	query := &missingHCInQuery{}
+	store := &sampleStore{}
+	poller := Poller{Query: query, Writer: ClickHouseRawWriter{Store: store}}
+	result, err := poller.Poll(context.Background(), PollJob{
+		TargetID: "device-a", DeviceID: "device-a", Target: QueryTarget{Host: "192.0.2.1"},
+		Profile: Profile{Version: Version2c}, SampledAt: time.Unix(100, 0),
+		Recipes: []Recipe{
+			{ID: "in", DeviceID: "device-a", EntityType: EntityPort, EntityID: "port-a", MetricName: MetricSNMPIfInOctetsTotal, ValueType: ValueCounter64, NumericOID: "1.3.6.1.2.1.31.1.1.1.6.79", OIDIndex: "79", SampleIntervalSeconds: 60, Enabled: true},
+			{ID: "out", DeviceID: "device-a", EntityType: EntityPort, EntityID: "port-a", MetricName: MetricSNMPIfOutOctetsTotal, ValueType: ValueCounter64, NumericOID: "1.3.6.1.2.1.31.1.1.1.10.79", OIDIndex: "79", SampleIntervalSeconds: 60, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SampleCount != 2 || len(result.MissingRecipeIDs) != 0 || len(store.rows) != 2 {
+		t.Fatalf("result=%+v rows=%+v", result, store.rows)
+	}
+	if len(query.calls) != 3 || len(query.calls[1]) != 1 || query.calls[1][0] != "1.3.6.1.2.1.31.1.1.1.6.79" || len(query.calls[2]) != 1 || query.calls[2][0] != "1.3.6.1.2.1.2.2.1.10.79" {
+		t.Fatalf("fallback calls=%v", query.calls)
+	}
+	byMetric := map[string]snmpch.Sample{}
+	for _, row := range store.rows {
+		byMetric[row.Metric] = row
+	}
+	if row := byMetric[MetricSNMPIfInOctetsTotal]; row.CounterValue != 450 || row.CounterWidth != 32 {
+		t.Fatalf("inbound fallback row=%+v", row)
+	}
+	if row := byMetric[MetricSNMPIfOutOctetsTotal]; row.CounterValue != 900 || row.CounterWidth != 64 {
+		t.Fatalf("outbound primary row=%+v", row)
+	}
+}
+
+type transientMissingHCInQuery struct {
+	calls [][]string
+}
+
+func (q *transientMissingHCInQuery) Get(_ context.Context, request GetRequest) (QueryResponse, error) {
+	q.calls = append(q.calls, append([]string(nil), request.OIDs...))
+	if len(q.calls) == 1 {
+		return QueryResponse{VarBinds: []VarBind{{OID: "1.3.6.1.2.1.31.1.1.1.10.79", Value: uint64(900), ValueType: ValueCounter64}}}, nil
+	}
+	return QueryResponse{VarBinds: []VarBind{{OID: "1.3.6.1.2.1.31.1.1.1.6.79", Value: uint64(450), ValueType: ValueCounter64}}}, nil
+}
+
+func (*transientMissingHCInQuery) Walk(context.Context, WalkRequest) (QueryResponse, error) {
+	return QueryResponse{}, errors.New("unexpected walk")
+}
+
+func TestPollerRetriesPrimaryHCCounterBeforeFallback(t *testing.T) {
+	query := &transientMissingHCInQuery{}
+	store := &sampleStore{}
+	poller := Poller{Query: query, Writer: ClickHouseRawWriter{Store: store}}
+	result, err := poller.Poll(context.Background(), PollJob{
+		TargetID: "device-a", DeviceID: "device-a", Target: QueryTarget{Host: "192.0.2.1"},
+		Profile: Profile{Version: Version2c}, SampledAt: time.Unix(100, 0),
+		Recipes: []Recipe{
+			{ID: "in", DeviceID: "device-a", EntityType: EntityPort, EntityID: "port-a", MetricName: MetricSNMPIfInOctetsTotal, ValueType: ValueCounter64, NumericOID: "1.3.6.1.2.1.31.1.1.1.6.79", OIDIndex: "79", SampleIntervalSeconds: 60, Enabled: true},
+			{ID: "out", DeviceID: "device-a", EntityType: EntityPort, EntityID: "port-a", MetricName: MetricSNMPIfOutOctetsTotal, ValueType: ValueCounter64, NumericOID: "1.3.6.1.2.1.31.1.1.1.10.79", OIDIndex: "79", SampleIntervalSeconds: 60, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SampleCount != 2 || len(result.MissingRecipeIDs) != 0 || len(query.calls) != 2 {
+		t.Fatalf("result=%+v calls=%v", result, query.calls)
+	}
+	for _, row := range store.rows {
+		if row.CounterWidth != 64 {
+			t.Fatalf("transient miss changed counter width: %+v", row)
+		}
+	}
+}
+
+func TestPortRecipesPublishStandardCounterFallbacks(t *testing.T) {
+	recipes := portRecipes(DiscoveryContext{TargetID: "target-a", Device: Device{ID: "device-a"}}, Port{ID: "port-a", IfIndex: 79}, true, true)
+	byMetric := make(map[string]Recipe, len(recipes))
+	for _, recipe := range recipes {
+		byMetric[recipe.MetricName] = recipe
+	}
+	if got := byMetric[MetricSNMPIfInOctetsTotal].Options["fallback_numeric_oid"]; got != "1.3.6.1.2.1.2.2.1.10.79" {
+		t.Fatalf("inbound fallback OID=%q", got)
+	}
+	if got := byMetric[MetricSNMPIfOutOctetsTotal].Options["fallback_numeric_oid"]; got != "1.3.6.1.2.1.2.2.1.16.79" {
+		t.Fatalf("outbound fallback OID=%q", got)
+	}
+}
+
 type pollRepository struct {
 	device     Device
 	target     Target

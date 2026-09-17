@@ -17,7 +17,7 @@ func TestRebuildClosedInterfaceBucketPublishesValuesBeforeMarker(t *testing.T) {
 	if len(exec.queries) != 2 {
 		t.Fatalf("queries=%d, want values+marker", len(exec.queries))
 	}
-	for _, required := range []string{"counter_width=32", "previous_value>=3865470566", "interval_ms", "reset_flag", "gap_flag"} {
+	for _, required := range []string{"lagInFrame(counter_width)", "counter_width=previous_width", "counter_width=32", "previous_value>=3865470566", "interval_ms", "reset_flag", "gap_flag"} {
 		if !strings.Contains(exec.queries[0].Body, required) {
 			t.Fatalf("rollup missing %q: %s", required, exec.queries[0].Body)
 		}

@@ -43,7 +43,7 @@ func TestAggregateUsesOneScopedRateQuery(t *testing.T) {
 	if len(result.Points) != 1 || result.Points[0].Value != 12_000 {
 		t.Fatalf("result=%+v", result)
 	}
-	if !strings.Contains(exec.query.Body, "FROM snmp_samples AS s FINAL") || !strings.Contains(exec.query.Body, "sum(value)") || strings.Contains(strings.ToLower(exec.query.Body), "tenant") {
+	if !strings.Contains(exec.query.Body, "FROM snmp_samples AS s FINAL") || !strings.Contains(exec.query.Body, "sum(value)") || !strings.Contains(exec.query.Body, "counter_width=previous_width") || strings.Contains(strings.ToLower(exec.query.Body), "tenant") {
 		t.Fatalf("unexpected aggregate SQL: %s", exec.query.Body)
 	}
 	if exec.query.ExternalTable != "snmp_scope" || len(exec.query.ExternalData) != 2 {
