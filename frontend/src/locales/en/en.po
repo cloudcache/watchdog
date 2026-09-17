@@ -8875,3 +8875,95 @@ msgstr "Failed to load geography dictionary"
 #: src/components/routes/flow-reports.tsx
 msgid "Geography dictionary is unavailable"
 msgstr "Geography dictionary is unavailable"
+
+#: src/components/routes/agents.tsx
+msgid "ACK / desired"
+msgstr "ACK / desired"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Advanced JSON"
+msgstr "Advanced JSON"
+
+#: src/components/routes/agents.tsx
+msgid "Agent ID"
+msgstr "Agent ID"
+
+#: src/components/routes/agents.tsx
+msgid "Agent ID must contain 1–26 characters."
+msgstr "Agent ID must contain 1–26 characters."
+
+#: src/components/routes/agents.tsx
+msgid "Agent plan public key"
+msgstr "Agent plan public key"
+
+#: src/components/routes/agents.tsx
+msgid "Bootstrap this process"
+msgstr "Bootstrap this process"
+
+#: src/components/routes/agent-plans.tsx
+msgid "ClickHouse block bytes"
+msgstr "ClickHouse block bytes"
+
+#: src/components/routes/agent-plans.tsx
+msgid "ClickHouse block rows"
+msgstr "ClickHouse block rows"
+
+#: src/components/routes/agents.tsx
+msgid "Create a 15-minute, one-time enrollment token and connect an independently managed process."
+msgstr "Create a 15-minute, one-time enrollment token and connect an independently managed process."
+
+#: src/components/routes/agents.tsx
+msgid "Install the matching process, save the token and public key, then start it with the registry arguments above."
+msgstr "Install the matching process, save the token and public key, then start it with the registry arguments above."
+
+#: src/components/routes/agent-plans.tsx
+msgid "Interval (seconds)"
+msgstr "Interval (seconds)"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Kafka maximum wait (ms)"
+msgstr "Kafka maximum wait (ms)"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Kafka minimum fetch (bytes)"
+msgstr "Kafka minimum fetch (bytes)"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Listener sockets"
+msgstr "Listener sockets"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Maximum datagram (bytes)"
+msgstr "Maximum datagram (bytes)"
+
+#: src/components/routes/agents.tsx
+msgid "One-time enrollment token"
+msgstr "One-time enrollment token"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Poll interval (seconds)"
+msgstr "Poll interval (seconds)"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Receive buffer (bytes)"
+msgstr "Receive buffer (bytes)"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Recipes per cycle"
+msgstr "Recipes per cycle"
+
+#: src/components/routes/agents.tsx
+msgid "Registry arguments"
+msgstr "Registry arguments"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Root path"
+msgstr "Root path"
+
+#: src/components/routes/agents.tsx
+msgid "Save the token and public key at the paths above, add the registry arguments to {serviceName}, then enable and start that service."
+msgstr "Save the token and public key at the paths above, add the registry arguments to {serviceName}, then enable and start that service."
+
+#: src/components/routes/agents.tsx
+msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
+msgstr "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."

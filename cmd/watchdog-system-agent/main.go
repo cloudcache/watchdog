@@ -39,6 +39,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agentLifecycle := make(chan error, 1)
 	agentCfg, err := loadAgentConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
@@ -60,20 +61,33 @@ func main() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applySystemAgentPlan(&agentCfg.Interval, rootPath, spec)
 		})
-		if err != nil {
+		if errors.Is(err, agentplan.ErrUnauthorized) && !*agentPlanCheck {
+			log.Printf("system agent credential is revoked; stopping without restart")
+			return
+		}
+		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || *agentPlanCheck) {
 			log.Fatal(err)
 		}
 		agentCfg.Token = token
-		log.Printf("system agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
-		if *agentPlanCheck {
+		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
+		if errors.Is(err, agentplan.ErrNoPlan) {
+			log.Printf("system agent registered without a desired plan; using bootstrap values until a plan is published")
+		} else {
+			log.Printf("system agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
 			if result.AckError != nil {
 				log.Fatal(result.AckError)
 			}
-			return
+			if *agentPlanCheck {
+				return
+			}
 		}
-		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("system agent registry heartbeat: %v", err)
-			if errors.Is(err, agentplan.ErrUnauthorized) {
+			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
+				select {
+				case agentLifecycle <- err:
+				default:
+				}
 				stop()
 			}
 		})
@@ -99,6 +113,13 @@ func main() {
 	}
 	if err := run(ctx, client, collector, agentCfg.Interval); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
+	}
+	select {
+	case lifecycleErr := <-agentLifecycle:
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+			log.Fatal(lifecycleErr)
+		}
+	default:
 	}
 }
 

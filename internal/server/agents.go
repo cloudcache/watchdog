@@ -603,7 +603,9 @@ func (s *Server) agentHeartbeat(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"accepted": true})
+	c.JSON(http.StatusAccepted, gin.H{
+		"accepted": true, "desired_plan_version": current.DesiredPlan, "acked_plan_version": current.AckedPlan,
+	})
 }
 
 func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {

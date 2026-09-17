@@ -131,7 +131,7 @@ func TestClientRemoteACKOfflineLKGAndRevocation(t *testing.T) {
 		if status == http.StatusOK && mode.Load() == 3 {
 			status, body = http.StatusConflict, nil
 		}
-		if status == http.StatusOK && mode.Load() == 4 {
+		if status == http.StatusOK && mode.Load() == 4 && request.Method == http.MethodGet {
 			if request.Header.Get("If-None-Match") == expectedETag {
 				status, body = http.StatusNotModified, nil
 			} else {
@@ -162,8 +162,8 @@ func TestClientRemoteACKOfflineLKGAndRevocation(t *testing.T) {
 	}
 	mode.Store(4)
 	result, err = client.Sync(context.Background(), func(context.Context, Spec) error { applied++; return nil })
-	if err != nil || result.Source != "lkg" {
-		t.Fatalf("not-modified LKG sync=%+v err=%v", result, err)
+	if err != nil || result.Source != "lkg" || result.AckError != nil || acknowledgements.Load() != 2 {
+		t.Fatalf("not-modified LKG sync=%+v ack=%d err=%v", result, acknowledgements.Load(), err)
 	}
 	mode.Store(3)
 	if _, err := client.Sync(context.Background(), func(context.Context, Spec) error { return nil }); err == nil || !strings.Contains(err.Error(), "HTTP 409") {

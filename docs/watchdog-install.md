@@ -125,9 +125,25 @@ make build-flow-collect build-flow-worker
   --clickhouse-password-file data/secrets/clickhouse-password
 ```
 
-Using agent enrollment replaces the bootstrap files with signed immutable
-plans plus local last-known-good files; it does not combine these processes
-with the backend.
+Agent enrollment does **not** replace process bootstrap or Flow business
+artifacts. The host service manager still owns the binary, endpoints, secret
+file paths, listener ports, restart policy and `enable --now`. Enrollment adds
+the stable process identity and credential; the immutable Agent plan controls
+only the process tunables implemented by that binary and is cached as an LKG.
+The Flow collector source/sampling plan and the Flow worker enrichment
+publication remain separate signed domain artifacts with their own version and
+ACK. The administrator UI exposes Agent CRUD, enrollment, credential rotation,
+binding, plans, ACK health and runs; it intentionally does not grant the Gin
+process root access to invoke `systemctl`.
+
+Use `Restart=on-failure` for each Agent-owned systemd service. A newly enrolled
+process may run on its validated bootstrap/default tunables before the first
+Agent plan exists. Heartbeats carry the desired plan version; publishing a new
+immutable plan makes the process drain and exit non-zero, so systemd restarts
+it and startup applies/ACKs that version. Revocation is different: a running
+process receiving 401/403 drains and exits successfully, so it remains stopped
+instead of entering a restart loop. The UI manages desired state and evidence;
+the host service manager remains the only process-start authority.
 
 ## Configuration precedence
 

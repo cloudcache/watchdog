@@ -36,6 +36,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agentLifecycle := make(chan error, 1)
 	if *discover && strings.TrimSpace(*deviceID) == "" && !*loop && !*agentPlanCheck {
 		log.Fatal("device id is required")
 	}
@@ -86,13 +87,29 @@ func main() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applySNMPAgentPlan(&resolvedInterval, &resolvedLimit, spec)
 		})
-		if err != nil {
+		if errors.Is(err, agentplan.ErrUnauthorized) {
+			log.Printf("SNMP agent credential is revoked; stopping without restart")
+			return
+		}
+		if err != nil && !errors.Is(err, agentplan.ErrNoPlan) {
 			log.Fatal(err)
 		}
-		log.Printf("SNMP agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
-		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
+		if errors.Is(err, agentplan.ErrNoPlan) {
+			log.Printf("SNMP agent registered without a desired plan; using bootstrap values until a plan is published")
+		} else {
+			log.Printf("SNMP agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
+			if result.AckError != nil {
+				log.Fatal(result.AckError)
+			}
+		}
+		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("SNMP agent heartbeat: %v", err)
-			if errors.Is(err, agentplan.ErrUnauthorized) {
+			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
+				select {
+				case agentLifecycle <- err:
+				default:
+				}
 				stop()
 			}
 		})
@@ -126,9 +143,17 @@ func main() {
 			if err := runtime.RunLoop(ctx, resolvedInterval, resolvedLimit); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("poll scheduler stopped: %v", err)
 			}
-			return
+		} else {
+			<-ctx.Done()
 		}
-		<-ctx.Done()
+	}
+	select {
+	case lifecycleErr := <-agentLifecycle:
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+			_ = runtime.Close()
+			log.Fatal(lifecycleErr)
+		}
+	default:
 	}
 }
 

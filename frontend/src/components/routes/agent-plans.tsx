@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { defaultAgentPlan } from "@/lib/agent-control"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
@@ -74,6 +75,9 @@ export default memo(({ id }: { id: string }) => {
 				setAgent(loadedAgent)
 				setSigningKeyID(key.key_id ?? "")
 				setCapabilities((loadedAgent.capabilities ?? []).join(", "))
+				setConfig((current) =>
+					current === "{}" ? JSON.stringify(defaultAgentPlan(loadedAgent.kind), null, 2) : current
+				)
 			})
 			.catch((reason) => setError(reason instanceof Error ? reason.message : t`Failed to load agent`))
 	}, [id, reloadKey, t])
@@ -162,6 +166,34 @@ export default memo(({ id }: { id: string }) => {
 			})),
 		[plans]
 	)
+	const typedConfig = useMemo(() => parseConfig(config), [config])
+	const planFields = useMemo(
+		() =>
+			fieldsForAgent(agent?.kind ?? "", {
+				intervalSeconds: t`Interval (seconds)`,
+				rootPath: t`Root path`,
+				pollIntervalSeconds: t`Poll interval (seconds)`,
+				recipesPerCycle: t`Recipes per cycle`,
+				listenerSockets: t`Listener sockets`,
+				receiveBufferBytes: t`Receive buffer (bytes)`,
+				maximumDatagramBytes: t`Maximum datagram (bytes)`,
+				kafkaMinimumFetchBytes: t`Kafka minimum fetch (bytes)`,
+				kafkaMaximumWaitMS: t`Kafka maximum wait (ms)`,
+				clickHouseBlockRows: t`ClickHouse block rows`,
+				clickHouseBlockBytes: t`ClickHouse block bytes`,
+			}),
+		[agent?.kind, t]
+	)
+	const updateConfigField = (field: PlanField, value: string) => {
+		const next = { ...typedConfig }
+		if (field.type === "number") {
+			const parsed = Number(value)
+			if (Number.isFinite(parsed)) next[field.name] = parsed
+		} else {
+			next[field.name] = value
+		}
+		setConfig(JSON.stringify(next, null, 2))
+	}
 	const columns = useMemo<ColumnDefine[]>(
 		() => [
 			{ field: "plan_version", title: t`Version`, width: 100 },
@@ -258,14 +290,34 @@ export default memo(({ id }: { id: string }) => {
 						<Input type="number" min={60} value={expiresIn} onChange={(event) => setExpiresIn(event.target.value)} />
 					</Field>
 				</div>
-				<Field label={t`Config (JSON object)`}>
-					<Textarea
-						rows={5}
-						value={config}
-						onChange={(event) => setConfig(event.target.value)}
-						className="font-mono text-xs"
-					/>
-				</Field>
+				{planFields.length > 0 ? (
+					<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+						{planFields.map((field) => (
+							<Field key={field.name} label={field.label}>
+								<Input
+									type={field.type}
+									value={String(typedConfig[field.name] ?? "")}
+									onChange={(event) => updateConfigField(field, event.target.value)}
+								/>
+							</Field>
+						))}
+					</div>
+				) : null}
+				<details>
+					<summary className="cursor-pointer text-sm font-medium">
+						<Trans>Advanced JSON</Trans>
+					</summary>
+					<div className="mt-3">
+						<Field label={t`Config (JSON object)`}>
+							<Textarea
+								rows={7}
+								value={config}
+								onChange={(event) => setConfig(event.target.value)}
+								className="font-mono text-xs"
+							/>
+						</Field>
+					</div>
+				</details>
 				<div className="flex items-center justify-between gap-3">
 					<div className="text-xs text-muted-foreground">
 						<Trans>Desired / acknowledged</Trans>: {agent?.desired_plan_version ?? 0} / {agent?.acked_plan_version ?? 0}
@@ -317,4 +369,59 @@ function formatDate(value?: string) {
 	if (!value) return "-"
 	const date = new Date(value)
 	return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString()
+}
+
+type PlanField = { name: string; label: string; type: "text" | "number" }
+
+type PlanFieldLabels = {
+	intervalSeconds: string
+	rootPath: string
+	pollIntervalSeconds: string
+	recipesPerCycle: string
+	listenerSockets: string
+	receiveBufferBytes: string
+	maximumDatagramBytes: string
+	kafkaMinimumFetchBytes: string
+	kafkaMaximumWaitMS: string
+	clickHouseBlockRows: string
+	clickHouseBlockBytes: string
+}
+
+function fieldsForAgent(kind: string, labels: PlanFieldLabels): PlanField[] {
+	switch (kind) {
+		case "system":
+			return [
+				{ name: "interval_seconds", label: labels.intervalSeconds, type: "number" },
+				{ name: "root_path", label: labels.rootPath, type: "text" },
+			]
+		case "snmp":
+			return [
+				{ name: "interval_seconds", label: labels.pollIntervalSeconds, type: "number" },
+				{ name: "poll_limit", label: labels.recipesPerCycle, type: "number" },
+			]
+		case "flow_collect":
+			return [
+				{ name: "sockets", label: labels.listenerSockets, type: "number" },
+				{ name: "receive_buffer_bytes", label: labels.receiveBufferBytes, type: "number" },
+				{ name: "max_datagram_bytes", label: labels.maximumDatagramBytes, type: "number" },
+			]
+		case "flow_worker":
+			return [
+				{ name: "kafka_fetch_min_bytes", label: labels.kafkaMinimumFetchBytes, type: "number" },
+				{ name: "kafka_fetch_max_wait_ms", label: labels.kafkaMaximumWaitMS, type: "number" },
+				{ name: "clickhouse_block_max_rows", label: labels.clickHouseBlockRows, type: "number" },
+				{ name: "clickhouse_block_max_bytes", label: labels.clickHouseBlockBytes, type: "number" },
+			]
+		default:
+			return []
+	}
+}
+
+function parseConfig(value: string): Record<string, string | number> {
+	try {
+		const parsed = JSON.parse(value)
+		return parsed && !Array.isArray(parsed) && typeof parsed === "object" ? parsed : {}
+	} catch {
+		return {}
+	}
 }

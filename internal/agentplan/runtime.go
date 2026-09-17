@@ -37,7 +37,17 @@ type RuntimeConfig struct {
 	HTTPClient      *http.Client
 }
 
+type HeartbeatState struct {
+	DesiredPlanVersion uint64 `json:"desired_plan_version"`
+	AckedPlanVersion   uint64 `json:"acked_plan_version"`
+}
+
 func (r RuntimeConfig) Heartbeat(ctx context.Context, token string) error {
+	_, err := r.heartbeat(ctx, token)
+	return err
+}
+
+func (r RuntimeConfig) heartbeat(ctx context.Context, token string) (HeartbeatState, error) {
 	payload, err := json.Marshal(map[string]any{
 		"software_version": r.SoftwareVersion,
 		"api_version":      r.APIVersion,
@@ -45,12 +55,12 @@ func (r RuntimeConfig) Heartbeat(ctx context.Context, token string) error {
 		"sent_at":          time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
-		return err
+		return HeartbeatState{}, err
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(r.BaseURL), "/") + "/api/v1/agents/" + url.PathEscape(r.AgentID) + "/heartbeat"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return HeartbeatState{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
@@ -60,20 +70,34 @@ func (r RuntimeConfig) Heartbeat(ctx context.Context, token string) error {
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return HeartbeatState{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return ErrUnauthorized
+		return HeartbeatState{}, ErrUnauthorized
 	}
 	if response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		return errors.New("agent heartbeat failed: " + response.Status + ": " + strings.TrimSpace(string(body)))
+		return HeartbeatState{}, errors.New("agent heartbeat failed: " + response.Status + ": " + strings.TrimSpace(string(body)))
 	}
-	return nil
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	if err != nil {
+		return HeartbeatState{}, err
+	}
+	// Older control-plane versions returned an empty 202 response. Accepting it
+	// keeps rolling upgrades safe; plan convergence becomes active as soon as
+	// the server starts returning the version fields.
+	if len(bytes.TrimSpace(data)) == 0 {
+		return HeartbeatState{}, nil
+	}
+	var state HeartbeatState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return HeartbeatState{}, errors.New("agent heartbeat response is invalid")
+	}
+	return state, nil
 }
 
-func (r RuntimeConfig) RunHeartbeats(ctx context.Context, token string, interval time.Duration, report func(error)) {
+func (r RuntimeConfig) RunHeartbeats(ctx context.Context, token string, interval time.Duration, appliedPlanVersion uint64, report func(error)) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -84,11 +108,15 @@ func (r RuntimeConfig) RunHeartbeats(ctx context.Context, token string, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := r.Heartbeat(ctx, token); err != nil {
+			state, err := r.heartbeat(ctx, token)
+			if err == nil && state.DesiredPlanVersion > appliedPlanVersion {
+				err = ErrPlanChanged
+			}
+			if err != nil {
 				if report != nil {
 					report(err)
 				}
-				if errors.Is(err, ErrUnauthorized) {
+				if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrPlanChanged) {
 					return
 				}
 			}

@@ -7898,3 +7898,95 @@ msgstr "加载地理字典失败"
 #: src/components/routes/flow-reports.tsx
 msgid "Geography dictionary is unavailable"
 msgstr "地理字典不可用"
+
+#: src/components/routes/agents.tsx
+msgid "ACK / desired"
+msgstr "已确认 / 期望版本"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Advanced JSON"
+msgstr "高级 JSON"
+
+#: src/components/routes/agents.tsx
+msgid "Agent ID"
+msgstr "Agent ID"
+
+#: src/components/routes/agents.tsx
+msgid "Agent ID must contain 1–26 characters."
+msgstr "Agent ID 必须为 1–26 个字符。"
+
+#: src/components/routes/agents.tsx
+msgid "Agent plan public key"
+msgstr "Agent 计划公钥"
+
+#: src/components/routes/agents.tsx
+msgid "Bootstrap this process"
+msgstr "引导注册此进程"
+
+#: src/components/routes/agent-plans.tsx
+msgid "ClickHouse block bytes"
+msgstr "ClickHouse 批次字节数"
+
+#: src/components/routes/agent-plans.tsx
+msgid "ClickHouse block rows"
+msgstr "ClickHouse 批次行数"
+
+#: src/components/routes/agents.tsx
+msgid "Create a 15-minute, one-time enrollment token and connect an independently managed process."
+msgstr "创建一个 15 分钟内有效的一次性注册令牌，用于接入独立运行的进程。"
+
+#: src/components/routes/agents.tsx
+msgid "Install the matching process, save the token and public key, then start it with the registry arguments above."
+msgstr "安装对应进程，保存令牌和公钥，然后使用上述注册参数启动。"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Interval (seconds)"
+msgstr "采集间隔（秒）"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Kafka maximum wait (ms)"
+msgstr "Kafka 最长等待时间（毫秒）"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Kafka minimum fetch (bytes)"
+msgstr "Kafka 最小拉取量（字节）"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Listener sockets"
+msgstr "监听套接字数"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Maximum datagram (bytes)"
+msgstr "最大报文长度（字节）"
+
+#: src/components/routes/agents.tsx
+msgid "One-time enrollment token"
+msgstr "一次性注册令牌"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Poll interval (seconds)"
+msgstr "轮询间隔（秒）"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Receive buffer (bytes)"
+msgstr "接收缓冲区（字节）"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Recipes per cycle"
+msgstr "每轮轮询任务数"
+
+#: src/components/routes/agents.tsx
+msgid "Registry arguments"
+msgstr "Registry 启动参数"
+
+#: src/components/routes/agent-plans.tsx
+msgid "Root path"
+msgstr "根目录"
+
+#: src/components/routes/agents.tsx
+msgid "Save the token and public key at the paths above, add the registry arguments to {serviceName}, then enable and start that service."
+msgstr "按上述路径保存令牌和公钥，将 Registry 参数加入 {serviceName}，然后启用并启动该服务。"
+
+#: src/components/routes/agents.tsx
+msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
+msgstr "平台管理身份、签名配置、确认状态和健康状态；进程启动、重启及宿主机权限由 systemd 或容器运行时管理。"

@@ -13,9 +13,12 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog"
 import { InputCopy } from "@/components/ui/input-copy"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
+import { agentServiceName, compatibleDeviceKind, defaultAgentID, registryArgumentsText } from "@/lib/agent-control"
 import type { ColumnDefine } from "@/lib/vtable"
 
 type AgentRecord = {
@@ -25,6 +28,9 @@ type AgentRecord = {
 	mode?: string
 	endpoint?: string
 	status: string
+	health?: string
+	desired_plan_version?: number
+	acked_plan_version?: number
 	last_seen?: string
 	last_run?: string
 	last_success?: string
@@ -115,6 +121,8 @@ export default memo(() => {
 				mode: agent.mode ?? "—",
 				endpoint: agent.endpoint ?? "—",
 				status: agent.status,
+				health: agent.health ?? "unknown",
+				plan: `${agent.acked_plan_version ?? 0} / ${agent.desired_plan_version ?? 0}`,
 				lastSeen: formatTime(agent.last_seen),
 				lastRun: formatTime(agent.last_run),
 				lastSuccess: formatTime(agent.last_success),
@@ -133,6 +141,8 @@ export default memo(() => {
 			{ field: "mode", title: t`Mode`, width: 100 },
 			{ field: "endpoint", title: t`Endpoint`, width: 260 },
 			{ field: "status", title: t`Status`, width: 120 },
+			{ field: "health", title: t`Health`, width: 120 },
+			{ field: "plan", title: t`ACK / desired`, width: 130 },
 			{ field: "lastSeen", title: t`Last Seen`, width: 180 },
 			{ field: "lastRun", title: t`Last Run`, width: 180 },
 			{ field: "lastSuccess", title: t`Last Success`, width: 180 },
@@ -283,18 +293,27 @@ export default memo(() => {
 function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 	const { t } = useLingui()
 	const [kind, setKind] = useState("system")
+	const [agentID, setAgentID] = useState(() => defaultAgentID("system"))
 	const [deviceID, setDeviceID] = useState("")
 	const [targets, setTargets] = useState<EnrollmentTarget[]>([])
 	const [token, setToken] = useState("")
+	const [publicKey, setPublicKey] = useState("")
+	const [keyID, setKeyID] = useState("")
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 	useEffect(() => {
 		if (!open) return
 		setToken("")
 		setError("")
-		api
-			.send<{ items?: EnrollmentTarget[] }>("/api/v1/devices", { query: { limit: 500 } })
-			.then((result) => setTargets(result.items ?? []))
+		Promise.all([
+			api.send<{ items?: EnrollmentTarget[] }>("/api/v1/devices", { query: { limit: 500 } }),
+			api.send<{ key_id?: string; public_key?: string }>("/api/v1/agents/plan-public-key", {}),
+		])
+			.then(([devices, trust]) => {
+				setTargets(devices.items ?? [])
+				setKeyID(trust.key_id ?? "")
+				setPublicKey(trust.public_key ?? "")
+			})
 			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load targets`))
 	}, [open, t])
 	const compatibleTargets = targets.filter((target) => compatibleAgentTarget(kind, target.kind))
@@ -302,6 +321,7 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 		setSaving(true)
 		setError("")
 		try {
+			if (!agentID.trim() || agentID.trim().length > 26) throw new Error(t`Agent ID must contain 1–26 characters.`)
 			const result = await api.send<{ token: string }>("/api/v1/agents/enrollment-tokens", {
 				method: "POST",
 				body: { kind, device_id: deviceID, expires_in_seconds: 900 },
@@ -313,22 +333,38 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 			setSaving(false)
 		}
 	}
+	const apiURL = new URL(api.buildURL("/api/v1"), window.location.origin).origin
+	const registryArgs = token ? registryArgumentsText(kind, agentID.trim(), apiURL) : ""
+	const serviceName = agentServiceName(kind)
 	return (
 		<Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-			<DialogContent className="max-w-md">
+			<DialogContent className="max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>
 						<Trans>Enroll Agent</Trans>
 					</DialogTitle>
 					<DialogDescription>
-						<Trans>Create a 15-minute, one-time enrollment token. It is shown only here.</Trans>
+						<Trans>Create a 15-minute, one-time enrollment token and connect an independently managed process.</Trans>
 					</DialogDescription>
 				</DialogHeader>
 				<div className="grid gap-3">
+					<div className="grid gap-1.5">
+						<Label htmlFor="agent-enrollment-id">
+							<Trans>Agent ID</Trans>
+						</Label>
+						<Input
+							id="agent-enrollment-id"
+							value={agentID}
+							maxLength={26}
+							disabled={Boolean(token)}
+							onChange={(event) => setAgentID(event.target.value)}
+						/>
+					</div>
 					<Select
 						value={kind}
 						onValueChange={(value) => {
 							setKind(value)
+							setAgentID(defaultAgentID(value))
 							setDeviceID((current) => {
 								const selected = targets.find((target) => target.id === current)
 								return selected && compatibleAgentTarget(value, selected.kind) ? current : ""
@@ -368,14 +404,57 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 							))}
 						</SelectContent>
 					</Select>
-					{token ? <InputCopy id="agent-enrollment-token" name="agent-enrollment-token" value={token} /> : null}
+					{token ? (
+						<div className="grid gap-3 rounded-md border border-border p-3">
+							<div className="text-sm font-medium">
+								<Trans>Bootstrap this process</Trans>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								<Trans>
+									The platform manages identity, signed configuration, ACK and health. systemd or a container runtime
+									owns process start, restart and host privileges.
+								</Trans>
+							</p>
+							<div className="grid gap-1.5">
+								<Label>
+									<Trans>One-time enrollment token</Trans>
+								</Label>
+								<InputCopy id="agent-enrollment-token" name="agent-enrollment-token" value={token} />
+							</div>
+							<div className="grid gap-1.5">
+								<Label>
+									<Trans>Agent plan public key</Trans> ({keyID || "-"})
+								</Label>
+								<InputCopy id="agent-plan-public-key" name="agent-plan-public-key" value={publicKey} />
+							</div>
+							<div className="grid gap-1.5">
+								<Label>
+									<Trans>Registry arguments</Trans>
+								</Label>
+								<InputCopy id="agent-registry-arguments" name="agent-registry-arguments" value={registryArgs} />
+							</div>
+							<p className="text-xs text-muted-foreground">
+								{serviceName ? (
+									<Trans>
+										Save the token and public key at the paths above, add the registry arguments to {serviceName}, then
+										enable and start that service.
+									</Trans>
+								) : (
+									<Trans>
+										Install the matching process, save the token and public key, then start it with the registry
+										arguments above.
+									</Trans>
+								)}
+							</p>
+						</div>
+					) : null}
 					{error ? <div className="text-sm text-destructive">{error}</div> : null}
 				</div>
 				<DialogFooter>
 					<Button variant="outline" onClick={onClose}>
 						<Trans>Close</Trans>
 					</Button>
-					<Button onClick={create} disabled={saving}>
+					<Button onClick={create} disabled={saving || Boolean(token)}>
 						<Trans>Create token</Trans>
 					</Button>
 				</DialogFooter>
@@ -414,7 +493,6 @@ function formatTime(value?: string) {
 }
 
 function compatibleAgentTarget(agentKind: string, deviceKind: string) {
-	if (agentKind === "system") return deviceKind === "system"
-	if (agentKind === "snmp") return deviceKind === "network"
-	return true
+	const expected = compatibleDeviceKind(agentKind)
+	return expected === "" || deviceKind === expected
 }

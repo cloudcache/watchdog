@@ -9,6 +9,7 @@ import { InputCopy } from "@/components/ui/input-copy"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
+import { agentCapabilities, compatibleDeviceKind } from "@/lib/agent-control"
 import { cn } from "@/lib/utils"
 
 type AgentRecord = {
@@ -386,23 +387,10 @@ function targetKind(target: TargetRecord) {
 }
 
 function agentTargetKind(agentType: string) {
-	if (agentType === "system") return "system"
-	if (agentType === "snmp") return "network"
-	return ""
+	return compatibleDeviceKind(agentType)
 }
 
 function firstTargetIDForKind(targets: TargetRecord[], agentType: string) {
 	const target = targets.find((item) => targetKind(item) === agentTargetKind(agentType))
 	return target?.ID ?? target?.id ?? ""
-}
-
-function agentCapabilities(agentType: string) {
-	const values: Record<string, string[]> = {
-		system: ["system.samples/v1"],
-		snmp: ["snmp.poll/v2"],
-		flow_collect: ["flow.receive.sflow/v1", "flow.receive.netflow/v1"],
-		flow_worker: ["flow.write.clickhouse/v2"],
-		probe: ["probe.execute/v1"],
-	}
-	return values[agentType] ?? []
 }

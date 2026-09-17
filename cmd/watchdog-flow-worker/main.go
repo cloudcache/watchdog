@@ -145,6 +145,7 @@ func main() {
 func run(opt options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agentLifecycle := make(chan error, 1)
 	identity := flowworker.VersionWorkerIdentity{
 		WorkerID: strings.TrimSpace(opt.workerID), BootID: uuid.NewString(), SoftwareVersion: "watchdog-flow-worker-v1",
 	}
@@ -153,16 +154,32 @@ func run(opt options) error {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applyFlowWorkerAgentPlan(&opt, spec)
 		})
-		if err != nil {
+		if errors.Is(err, agentplan.ErrUnauthorized) && !opt.agentPlanCheck {
+			log.Printf("flow-worker agent credential is revoked; stopping without restart")
+			return nil
+		}
+		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {
 			return err
 		}
-		log.Printf("flow-worker agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
-		if opt.agentPlanCheck {
-			return result.AckError
+		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
+		if errors.Is(err, agentplan.ErrNoPlan) {
+			log.Printf("flow-worker registered without a desired agent plan; using bootstrap values until a plan is published")
+		} else {
+			log.Printf("flow-worker agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
+			if result.AckError != nil {
+				return result.AckError
+			}
+			if opt.agentPlanCheck {
+				return nil
+			}
 		}
-		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("flow-worker agent heartbeat: %v", err)
-			if errors.Is(err, agentplan.ErrUnauthorized) {
+			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
+				select {
+				case agentLifecycle <- err:
+				default:
+				}
 				stop()
 			}
 		})
@@ -297,6 +314,14 @@ func run(opt options) error {
 	}
 	stats := processor.Stats()
 	log.Printf("flow-worker stopped: datagrams=%d records=%d template_missing=%d rejected=%d retryable_errors=%d", stats.Datagrams, stats.Records, stats.TemplateMissing, stats.Rejected, stats.RetryableErrors)
+	select {
+	case lifecycleErr := <-agentLifecycle:
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+			return errors.Join(err, lifecycleErr)
+		}
+		return err
+	default:
+	}
 	return err
 }
 

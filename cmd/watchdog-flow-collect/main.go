@@ -80,21 +80,38 @@ func main() {
 func run(opt options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agentLifecycle := make(chan error, 1)
 	runtimeConfig := flowCollectAgentRuntime(opt)
 	if runtimeConfig.Enabled() {
 		result, token, err := runtimeConfig.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applyFlowCollectAgentPlan(&opt, spec)
 		})
-		if err != nil {
+		if errors.Is(err, agentplan.ErrUnauthorized) && !opt.agentPlanCheck {
+			log.Printf("flow-collect agent credential is revoked; stopping without restart")
+			return nil
+		}
+		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {
 			return err
 		}
-		log.Printf("flow-collect agent plan applied: version=%d source=%s", result.Envelope.Metadata.PlanVersion, result.Source)
-		if opt.agentPlanCheck {
-			return result.AckError
+		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
+		if errors.Is(err, agentplan.ErrNoPlan) {
+			log.Printf("flow-collect registered without a desired agent plan; using bootstrap values until a plan is published")
+		} else {
+			log.Printf("flow-collect agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
+			if result.AckError != nil {
+				return result.AckError
+			}
+			if opt.agentPlanCheck {
+				return nil
+			}
 		}
-		go runtimeConfig.RunHeartbeats(ctx, token, 30*time.Second, func(err error) {
+		go runtimeConfig.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("flow-collect agent heartbeat: %v", err)
-			if errors.Is(err, agentplan.ErrUnauthorized) {
+			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
+				select {
+				case agentLifecycle <- err:
+				default:
+				}
 				stop()
 			}
 		})
@@ -241,6 +258,14 @@ func run(opt options) error {
 		first = errors.Join(first, <-errCh)
 	}
 	<-closeDone
+	select {
+	case lifecycleErr := <-agentLifecycle:
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+			return errors.Join(first, lifecycleErr)
+		}
+		return first
+	default:
+	}
 	return first
 }
 

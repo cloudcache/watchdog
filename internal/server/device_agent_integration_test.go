@@ -253,6 +253,15 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if heartbeat.Code != http.StatusAccepted {
 		t.Fatalf("heartbeat: status=%d body=%s", heartbeat.Code, heartbeat.Body.String())
 	}
+	var heartbeatState struct {
+		Accepted           bool   `json:"accepted"`
+		DesiredPlanVersion uint64 `json:"desired_plan_version"`
+		AckedPlanVersion   uint64 `json:"acked_plan_version"`
+	}
+	decodeJSON(t, heartbeat, &heartbeatState)
+	if !heartbeatState.Accepted || heartbeatState.DesiredPlanVersion != 0 || heartbeatState.AckedPlanVersion != 0 {
+		t.Fatalf("unexpected heartbeat state: %+v", heartbeatState)
+	}
 	var firstHeartbeatVersion uint64
 	if err := s.db.QueryRow(`SELECT row_version FROM agents WHERE id='agent_api_test'`).Scan(&firstHeartbeatVersion); err != nil {
 		t.Fatal(err)

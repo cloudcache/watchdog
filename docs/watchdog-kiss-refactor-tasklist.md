@@ -190,7 +190,17 @@
 - [x] **回归测试**：`internal/agentplan` race、KISS-04 真实 MySQL/四进程集成、全库 Go test/vet/build、前端 45 单测、相关文件 Biome 和 production build 均通过。全库 detached 回归同时暴露 KISS-05 已提交调用依赖两个尚未提交 helper（分页函数与导出 set ID）；验证时仅用临时 shim 隔离该既有缺口，未把地址业务改动混入 KISS-04。
 - [x] **已提交门禁**：`3a32c4fc` 收敛 operation job，`9d85df4e` 交付签名计划控制面，`6d847677` 接四进程 runtime/API UI，`94fd3124` 收口兼容矩阵与离线健康测试；KISS-04 不再修改综合 `device_agent_integration_test.go`。clean schema 实测 7 张统一 Agent 表、0 个 `tenant_id`、0 个 collector/fleet/canary 表，Gin/前端无旧 collector plan route。
 
-**KISS-04 = 完成。** 后续 SNMP/system 样本改写 ClickHouse 属 KISS-03；Flow 数据面及 enrichment 版本消费属 KISS-06，不回写本工作包。
+**KISS-04A–C（产品代码）= 完成。** 后续 SNMP/system 样本改写 ClickHouse 属 KISS-03；Flow 数据面及 enrichment 版本消费属 KISS-06，不回写本工作包。生产主机的注册和自启动属于下面 KISS-04D，不能拿四进程测试替代实际部署验收。
+
+#### KISS-04D 生产 Agent 激活与进程生命周期闭环
+
+- [x] **设计边界**：systemd/容器唯一负责安装、`enable --now`、restart、权限和资源限制；Gin/Agent Registry 负责 identity/token/binding/heartbeat/plan/ACK/LKG/run，禁止给 Web 后端 root 或 Docker socket。Flow source plan 与 enrichment publication 是独立业务签名域，不塞进 Agent plan。
+- [x] **API/UI/提交前门禁**：管理员导航暴露 Agents；enroll 显示一次性 token、计划公钥、稳定 Agent ID 和真实 bootstrap 参数；plan 从裸 JSON 补为四类进程已实现字段的表单并保留高级 JSON；能力版本与真实二进制一致。前端 typecheck、64 单测和 production build 已通过；仍须随本纵向切片提交，不能据此倒签生产部署。
+- [x] **运行期计划收敛**：首次 enrollment 后没有 desired plan 时，正常运行模式保留本地 bootstrap/default tunable 并继续心跳，`-agent-plan-check` 仍严格失败；heartbeat 返回 desired/acked，发现新版本后四类进程排空并非零退出，由现有 `Restart=on-failure` 重启加载；401/403 排空后正常停止；304/LKG 路径重试 ACK。共享 runtime 与 server heartbeat 契约单测已覆盖。
+- [ ] **部署**：以统一 unit/drop-in 给 system、SNMP、flow collect、flow worker 写入 control-plane/ID/token/enrollment/public-key/LKG 参数并 `enable --now`；不得继续仅靠静态命令行绕过 Registry。一次性 token 消费后只保留 mode 0600 的 machine credential。
+- [ ] **Flow worker 前置**：另行满足 Kafka/ClickHouse secret、source stream incarnation ID、source plan 与已批准 enrichment publication/LKG；Agent 注册成功不等于 Flow worker 可以启动。
+- [ ] **生产验收**：MySQL 中四类实际部署进程有唯一 Agent 行，`desired=acked`、heartbeat 新鲜、run 可追溯；吊销任一 credential 后对应进程停止并由 systemd 显式失败，不允许用 LKG 绕过 401/403。重启后离线 LKG、恢复联网和计划升级各验证一次。
+- [ ] **当前生产事实（2026-09-18）**：SNMP 与 flow collect 虽 enabled/active，但 ExecStart 未带任何 Registry bootstrap，`agents` 无对应登记；flow worker disabled/inactive 且 `/etc/watchdog/flow/worker.env` 缺失。因此数据接收进程存活不能冒充 KISS-04D 完成。
 
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 

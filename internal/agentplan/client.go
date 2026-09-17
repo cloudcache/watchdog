@@ -18,6 +18,7 @@ import (
 var (
 	ErrUnauthorized = errors.New("agent credential is invalid or revoked")
 	ErrNoPlan       = errors.New("agent has no desired plan")
+	ErrPlanChanged  = errors.New("agent has a newer desired plan")
 )
 
 type Client struct {
@@ -62,7 +63,11 @@ func (c Client) Sync(ctx context.Context, apply ApplyFunc) (SyncResult, error) {
 		return SyncResult{}, err
 	}
 	if status == http.StatusNotModified {
-		return c.restore(ctx, apply, nil)
+		result, err := c.restore(ctx, apply, nil)
+		if err == nil {
+			result.AckError = c.ack(ctx, result.Envelope.Metadata, "applied", "", "")
+		}
+		return result, err
 	}
 	now := c.now()
 	envelope, spec, err := Verify(data, c.PublicKey, now, true)

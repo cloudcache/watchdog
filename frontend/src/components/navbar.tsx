@@ -3,6 +3,7 @@ import { useStore } from "@nanostores/react"
 import { getPagePath } from "@nanostores/router"
 import {
 	ActivityIcon,
+	BotIcon,
 	BarChart3Icon,
 	BookmarkIcon,
 	CrosshairIcon,
@@ -389,6 +390,9 @@ function AdminDropdownContent() {
 			{can("job.view") ? <NavItem href={getPagePath($router, "operation_jobs")} icon={ServerCogIcon}>
 				<Trans>Background Jobs</Trans>
 			</NavItem> : null}
+			{can("agent.view") ? <NavItem href={getPagePath($router, "agents")} icon={BotIcon}>
+				<Trans>Agents</Trans>
+			</NavItem> : null}
 		</>
 	)
 }
@@ -398,7 +402,7 @@ function canViewFlow() {
 }
 
 function canViewAdministration() {
-	return canAny("user.view", "role.view", "bill.view", "device.update", "job.view", "job.manage", "audit.view")
+	return canAny("user.view", "role.view", "bill.view", "device.update", "job.view", "job.manage", "audit.view", "agent.view")
 }
 
 const Kbd = ({ children }: { children: React.ReactNode }) => (
