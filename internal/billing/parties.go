@@ -37,7 +37,7 @@ func (s *Store) GetParty(ctx context.Context, id string) (Party, error) {
 }
 
 func (s *Store) ListParties(ctx context.Context, filter PageFilter) ([]Party, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"name": "name", "kind": "kind", "status": "status", "created_at": "created_at", "updated_at": "updated_at"}, "name")
+	filter, order, err := normalizePage(filter, map[string]string{"name": "name", "kind": "kind", "status": "status", "created_at": "created_at", "updated_at": "updated_at"}, "name", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}

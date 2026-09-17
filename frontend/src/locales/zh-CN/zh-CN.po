@@ -7631,3 +7631,55 @@ msgstr "保底"
 #: src/components/routes/billing-account-form.tsx
 msgid "Total traffic above this allowance is period overuse."
 msgstr "账期总流量超过配额的部分计为超用。"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Contract bandwidth"
+msgstr "合同总带宽"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Contract bandwidth (Mbps)"
+msgstr "合同总带宽（Mbps）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Commercial contract value used as the billing authority."
+msgstr "计费以该商务合同值为准。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "The billing floor is contract bandwidth multiplied by this percentage."
+msgstr "计费保底为合同总带宽乘以该百分比。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "{0} selected ports have no discovered speed; capacity cannot be fully checked."
+msgstr "所选端口中有 {0} 个未发现速率，无法完整校验容量。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity is below the contract bandwidth. Check the bindings or correct the contract value."
+msgstr "所选端口总容量低于合同总带宽，请检查绑定或修正合同值。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity exceeds the contract bandwidth. Check for duplicate or unintended ports."
+msgstr "所选端口总容量高于合同总带宽，请检查重复或误选端口。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity matches the contract bandwidth."
+msgstr "所选端口总容量与合同总带宽一致。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Enter the contract bandwidth to check selected port capacity."
+msgstr "请填写合同总带宽，以校验所选端口容量。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Contract"
+msgstr "合同带宽"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected capacity"
+msgstr "所选容量"
+
+#: src/components/routes/billing.tsx
+msgid "Contract / minimum / allowance"
+msgstr "合同带宽 / 保底 / 流量配额"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Failed to load device ports"
+msgstr "加载设备端口失败"

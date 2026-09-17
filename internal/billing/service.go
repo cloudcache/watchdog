@@ -45,17 +45,21 @@ type CalculationResult struct {
 }
 
 func (s *Service) Calculate(ctx context.Context, periodID string, expectedRowVersion uint64, actor string) (CalculationResult, error) {
-	return s.calculate(ctx, periodID, expectedRowVersion, actor, "")
+	return s.calculate(ctx, periodID, expectedRowVersion, actor, "", nil)
 }
 
 func (s *Service) CalculateForOperation(ctx context.Context, periodID string, expectedRowVersion uint64, actor, operationRef string) (CalculationResult, error) {
+	return s.CalculateForOperationProgress(ctx, periodID, expectedRowVersion, actor, operationRef, nil)
+}
+
+func (s *Service) CalculateForOperationProgress(ctx context.Context, periodID string, expectedRowVersion uint64, actor, operationRef string, progress func(uint64) error) (CalculationResult, error) {
 	if operationRef == "" {
 		return CalculationResult{}, errors.New("calculation operation reference is required")
 	}
-	return s.calculate(ctx, periodID, expectedRowVersion, actor, operationRef)
+	return s.calculate(ctx, periodID, expectedRowVersion, actor, operationRef, progress)
 }
 
-func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVersion uint64, actor, operationRef string) (CalculationResult, error) {
+func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVersion uint64, actor, operationRef string, progress func(uint64) error) (CalculationResult, error) {
 	if operationRef != "" {
 		if run, runErr := s.store.GetRunByOperation(ctx, operationRef); runErr == nil {
 			if run.PeriodID != periodID {
@@ -70,6 +74,11 @@ func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVer
 			evidence, err := s.store.ExportEvidence(ctx, periodID, run.CalculationVersion)
 			if err != nil {
 				return CalculationResult{}, err
+			}
+			if progress != nil {
+				if err := progress(4); err != nil {
+					return CalculationResult{}, err
+				}
 			}
 			return CalculationResult{Period: evidence.Period, Values: evidence.Values, Issues: evidence.Issues}, nil
 		} else if !errors.Is(runErr, ErrNotFound) {
@@ -92,6 +101,11 @@ func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVer
 	}
 	if len(ports) == 0 {
 		return CalculationResult{}, errors.New("billing account has no bound ports")
+	}
+	if progress != nil {
+		if err := progress(1); err != nil {
+			return CalculationResult{}, err
+		}
 	}
 	snmpPorts := make([]snmpch.BillingPort, 0, len(ports))
 	flowPorts := make([]flowch.BillingPortScope, 0, len(ports))
@@ -123,6 +137,11 @@ func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVer
 	if snmpRead.err != nil || flowRead.err != nil {
 		cancel()
 		return CalculationResult{}, fmt.Errorf("%w: SNMP=%v Flow=%v", ErrEvidenceUnavailable, snmpRead.err, flowRead.err)
+	}
+	if progress != nil {
+		if err := progress(2); err != nil {
+			return CalculationResult{}, err
+		}
 	}
 	if !billingReadWindowsMatch(period, snmpRead.result, flowRead.result) {
 		detail, _ := json.Marshal(map[string]any{
@@ -163,9 +182,14 @@ func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVer
 		"rate_bucket_count":   completeBuckets,
 		"generated_at":        now,
 	})
-	publicationRef, err := publicationReferences(flowRead.result)
+	publicationRef, err := publicationReferences(flowRead.result, s.store.limits)
 	if err != nil {
 		return CalculationResult{}, err
+	}
+	if progress != nil {
+		if err := progress(3); err != nil {
+			return CalculationResult{}, err
+		}
 	}
 	updated, err := s.store.CommitCalculation(ctx, CalculationCommit{
 		PeriodID: period.ID, ExpectedRowVersion: period.RowVersion,
@@ -175,11 +199,16 @@ func (s *Service) calculate(ctx context.Context, periodID string, expectedRowVer
 	if err != nil {
 		return CalculationResult{}, err
 	}
+	if progress != nil {
+		if err := progress(4); err != nil {
+			return CalculationResult{}, err
+		}
+	}
 	committedValues, err := s.store.ListValues(ctx, period.ID, updated.CalculationVersion)
 	if err != nil {
 		return CalculationResult{}, err
 	}
-	committedIssues, _, err := s.store.ListIssues(ctx, period.ID, updated.CalculationVersion, PageFilter{Limit: 500, Sort: "created_at"})
+	committedIssues, _, err := s.store.ListIssues(ctx, period.ID, updated.CalculationVersion, PageFilter{Limit: s.store.limits.MaxPageSize, Sort: "created_at"})
 	if err != nil {
 		return CalculationResult{}, err
 	}
@@ -293,15 +322,15 @@ func rateValues(samples []RateSample) []float64 {
 	return values
 }
 
-func publicationReferences(result flowch.FlowBillingResult) (string, error) {
-	if len(result.DimensionSnapshotRefs)+len(result.GeoVersionRefs)+len(result.ClassificationVersions) > 10000 {
+func publicationReferences(result flowch.FlowBillingResult, limits Limits) (string, error) {
+	if len(result.DimensionSnapshotRefs)+len(result.GeoVersionRefs)+len(result.ClassificationVersions) > limits.MaxPublicationRefs {
 		return "", errors.New("billing publication reference budget exceeded")
 	}
 	value, err := json.Marshal(map[string]any{"dimension": result.DimensionSnapshotRefs, "geo": result.GeoVersionRefs, "classification": result.ClassificationVersions})
 	if err != nil {
 		return "", err
 	}
-	if len(value) > 8<<20 {
+	if len(value) > limits.MaxPublicationBytes {
 		return "", errors.New("billing publication reference byte budget exceeded")
 	}
 	return string(value), nil

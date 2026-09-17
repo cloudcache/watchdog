@@ -264,7 +264,7 @@ func (s *Server) createBillingExport(c *gin.Context) {
 		return
 	}
 	job, err := s.jobs.Enqueue(c, opjob.Job{JobType: billingExportJobType, IdempotencyKey: sha256hex(currentPrincipal(c).UserID + "\x00" + idempotencyKey),
-		RequestHash: sha256hex(string(payload)), CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID})
+		RequestHash: sha256hex(string(payload)), ProgressTotal: 3, CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID})
 	if errors.Is(err, opjob.ErrHashMismatch) {
 		fail(c, http.StatusConflict, "idempotency_conflict", err.Error())
 		return
@@ -300,6 +300,11 @@ func (s *Server) runBillingExport(ctx context.Context, job opjob.Job) (string, e
 	if err != nil {
 		return "", classifyBillingJobError(err)
 	}
+	if reporter := opjob.ReporterFromContext(ctx); reporter != nil {
+		if err := reporter.Report(ctx, 1, nil); err != nil {
+			return "", err
+		}
+	}
 	rows := billingEvidenceRows(evidence)
 	var data []byte
 	if payload.Format == "csv" {
@@ -311,7 +316,7 @@ func (s *Server) runBillingExport(ctx context.Context, job opjob.Job) (string, e
 		return "", err
 	}
 	if reporter := opjob.ReporterFromContext(ctx); reporter != nil {
-		if err := reporter.Report(ctx, uint64(len(rows)), nil); err != nil {
+		if err := reporter.Report(ctx, 2, nil); err != nil {
 			return "", err
 		}
 	}
@@ -326,6 +331,11 @@ func (s *Server) runBillingExport(ctx context.Context, job opjob.Job) (string, e
 	filename := job.ID + "-" + hex.EncodeToString(digest[:]) + "." + payload.Format
 	if err := writeBillingArtifact(dir, filename, data); err != nil {
 		return "", err
+	}
+	if reporter := opjob.ReporterFromContext(ctx); reporter != nil {
+		if err := reporter.Report(ctx, 3, nil); err != nil {
+			return "", err
+		}
 	}
 	s.audit(ctx, job.CreatedBy, "billing.period.export", "billing_period", period.ID)
 	return "billing-export/" + filename, nil
@@ -364,7 +374,7 @@ func writeBillingArtifact(dir, filename string, data []byte) error {
 }
 
 func (s *Server) listBillingExports(c *gin.Context) {
-	page, ok := billingPage(c, "limit", "offset", "q", "status", "sort", "order")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "status", "sort", "order")
 	if !ok {
 		return
 	}

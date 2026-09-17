@@ -26,6 +26,7 @@ type BillingAccount = {
 	direction: string
 	default_layer: string
 	minimum_percent: number
+	contract_bandwidth_bps?: number
 	traffic_allowance_bytes?: number
 	row_version: number
 }
@@ -140,7 +141,7 @@ function AccountsTable() {
 			{ field: "timezone", title: t`Timezone`, width: 180 },
 			{ field: "direction", title: t`Direction`, width: 100 },
 			{ field: "default_layer", title: t`Layer`, width: 110 },
-			{ field: "allowance", title: t`Minimum / allowance`, width: 160 },
+			{ field: "allowance", title: t`Contract / minimum / allowance`, width: 220 },
 		],
 		[t]
 	)
@@ -159,7 +160,7 @@ function AccountsTable() {
 								: t`Monthly average`,
 				allowance:
 					item.measurement_type === "bandwidth"
-						? `${item.minimum_percent ?? 0}%`
+						? `${formatBPS(item.contract_bandwidth_bps)} · ${item.minimum_percent ?? 0}%`
 						: formatBytes(item.traffic_allowance_bytes),
 			})),
 		[items, t]
@@ -219,7 +220,12 @@ function AccountsTable() {
 					serverSorting={{
 						field: sortField,
 						direction: sortDirection,
-						fields: { name: "name", status: "status", measurement_display: "measurement_type", method_display: "billing_method" },
+						fields: {
+							name: "name",
+							status: "status",
+							measurement_display: "measurement_type",
+							method_display: "billing_method",
+						},
 						onSortChange: (field, direction) => {
 							setPage(0)
 							setSort(`${field}:${direction}`)
@@ -503,4 +509,11 @@ function formatBytes(value?: number) {
 	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)} GB`
 	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} MB`
 	return `${value} B`
+}
+
+function formatBPS(value?: number) {
+	if (!value) return "—"
+	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)} Gbps`
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} Mbps`
+	return `${value} bps`
 }

@@ -12,15 +12,15 @@ import (
 )
 
 const accountColumns = `id,COALESCE(party_id,''),name,status,measurement_type,billing_method,algorithm,billing_day,timezone,direction,default_layer,
-	price_currency,CAST(unit_price AS CHAR),minimum_percent,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
+	price_currency,CAST(unit_price AS CHAR),minimum_percent,contract_bandwidth_bps,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
 	COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 	var item Account
-	var allowance sql.NullString
+	var contractBandwidth, allowance sql.NullString
 	err := scanner.Scan(&item.ID, &item.PartyID, &item.Name, &item.Status, &item.MeasurementType, &item.BillingMethod, &item.Algorithm, &item.BillingDay,
 		&item.Timezone, &item.Direction, &item.DefaultLayer, &item.PriceCurrency, &item.UnitPrice,
-		&item.MinimumPercent, &allowance, &item.ReconcileAbs, &item.ReconcilePercent,
+		&item.MinimumPercent, &contractBandwidth, &allowance, &item.ReconcileAbs, &item.ReconcilePercent,
 		&item.Ref, &item.Notes, &item.RowVersion, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return Account{}, normalizeSQLError(err)
@@ -32,12 +32,19 @@ func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 			return Account{}, parseErr
 		}
 	}
+	if contractBandwidth.Valid {
+		value, parseErr := strconv.ParseUint(contractBandwidth.String, 10, 64)
+		if parseErr != nil {
+			return Account{}, parseErr
+		}
+		item.ContractBandwidthBPS = &value
+	}
 	return item, nil
 }
 
 func accountArgs(item Account, actor string) []any {
 	return []any{nullString(item.PartyID), item.Name, item.Status, item.MeasurementType, item.BillingMethod, item.Algorithm, item.BillingDay, item.Timezone,
-		item.Direction, item.DefaultLayer, item.PriceCurrency, item.UnitPrice, item.MinimumPercent,
+		item.Direction, item.DefaultLayer, item.PriceCurrency, item.UnitPrice, item.MinimumPercent, item.ContractBandwidthBPS,
 		item.TrafficAllowance, item.ReconcileAbs, item.ReconcilePercent,
 		item.Ref, item.Notes, nullString(actor)}
 }
@@ -77,6 +84,8 @@ func normalizeAccount(item Account) Account {
 	}
 	if item.MeasurementType == MeasurementBandwidth {
 		item.TrafficAllowance = nil
+	} else {
+		item.ContractBandwidthBPS = nil
 	}
 	return item
 }
@@ -86,7 +95,7 @@ func (s *Store) GetAccount(ctx context.Context, id string) (Account, error) {
 }
 
 func (s *Store) ListAccounts(ctx context.Context, filter PageFilter, userID string, viewAll bool) ([]Account, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"name": "a.name", "status": "a.status", "measurement_type": "a.measurement_type", "billing_method": "a.billing_method", "algorithm": "a.algorithm", "created_at": "a.created_at", "updated_at": "a.updated_at"}, "name")
+	filter, order, err := normalizePage(filter, map[string]string{"name": "a.name", "status": "a.status", "measurement_type": "a.measurement_type", "billing_method": "a.billing_method", "algorithm": "a.algorithm", "created_at": "a.created_at", "updated_at": "a.updated_at"}, "name", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -139,7 +148,7 @@ func (s *Store) createAccount(ctx context.Context, item Account, ports []Account
 	if err := ValidateAccount(item); err != nil {
 		return Account{}, err
 	}
-	normalizedPorts, err := normalizeAccountPorts(ports, item.Direction, requirePorts)
+	normalizedPorts, err := normalizeAccountPorts(ports, item.Direction, requirePorts, s.limits.MaxAccountPorts)
 	if err != nil {
 		return Account{}, err
 	}
@@ -150,8 +159,8 @@ func (s *Store) createAccount(ctx context.Context, item Account, ports []Account
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO billing_accounts
-		(id,party_id,name,status,measurement_type,billing_method,algorithm,billing_day,timezone,direction,default_layer,price_currency,unit_price,minimum_percent,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
-		VALUES (?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, nullString(actor))...)
+		(id,party_id,name,status,measurement_type,billing_method,algorithm,billing_day,timezone,direction,default_layer,price_currency,unit_price,minimum_percent,contract_bandwidth_bps,traffic_allowance_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
+		VALUES (?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, nullString(actor))...)
 	if err != nil {
 		return Account{}, fmt.Errorf("create billing account: %w", err)
 	}
@@ -189,7 +198,7 @@ func (s *Store) updateAccount(ctx context.Context, item Account, ports *[]Accoun
 	var normalizedPorts []AccountPort
 	if ports != nil {
 		var err error
-		normalizedPorts, err = normalizeAccountPorts(*ports, item.Direction, true)
+		normalizedPorts, err = normalizeAccountPorts(*ports, item.Direction, true, s.limits.MaxAccountPorts)
 		if err != nil {
 			return Account{}, err
 		}
@@ -201,7 +210,7 @@ func (s *Store) updateAccount(ctx context.Context, item Account, ports *[]Accoun
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET party_id=?,name=?,status=?,measurement_type=?,billing_method=?,algorithm=?,billing_day=?,timezone=?,direction=?,default_layer=?,
-		price_currency=?,unit_price=?,minimum_percent=?,traffic_allowance_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
+		price_currency=?,unit_price=?,minimum_percent=?,contract_bandwidth_bps=?,traffic_allowance_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
 	if err != nil {
 		return Account{}, fmt.Errorf("update billing account: %w", err)
 	}
@@ -257,7 +266,8 @@ func (s *Store) DeleteAccount(ctx context.Context, id string, expected uint64, a
 }
 
 func (s *Store) ListAccountPorts(ctx context.Context, accountID string) ([]AccountPort, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,bap.direction,
+	rows, err := s.db.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,
+		COALESCE(NULLIF(p.if_high_speed,0)*1000000,NULLIF(p.if_speed,0),0),bap.direction,
 		COALESCE(bap.created_by,''),bap.created_at FROM billing_account_ports bap JOIN ports p ON p.id=bap.port_id
 		WHERE bap.account_id=? ORDER BY p.device_id,p.if_index,p.id`, accountID)
 	if err != nil {
@@ -267,7 +277,7 @@ func (s *Store) ListAccountPorts(ctx context.Context, accountID string) ([]Accou
 	items := make([]AccountPort, 0)
 	for rows.Next() {
 		var item AccountPort
-		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.CapacityBPS, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -278,7 +288,7 @@ func (s *Store) ListAccountPorts(ctx context.Context, accountID string) ([]Accou
 func (s *Store) ListAccountPortsPage(ctx context.Context, accountID string, filter PageFilter) ([]AccountPort, int, error) {
 	filter, order, err := normalizePage(filter, map[string]string{
 		"device_id": "p.device_id", "if_index": "p.if_index", "if_name": "p.if_name", "direction": "bap.direction", "created_at": "bap.created_at",
-	}, "device_id")
+	}, "device_id", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -296,7 +306,8 @@ func (s *Store) ListAccountPortsPage(ctx context.Context, accountID string, filt
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM billing_account_ports bap JOIN ports p ON p.id=bap.port_id WHERE `+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,bap.direction,
+	rows, err := s.db.QueryContext(ctx, `SELECT bap.account_id,bap.port_id,p.device_id,p.if_index,p.if_name,
+		COALESCE(NULLIF(p.if_high_speed,0)*1000000,NULLIF(p.if_speed,0),0),bap.direction,
 		COALESCE(bap.created_by,''),bap.created_at FROM billing_account_ports bap JOIN ports p ON p.id=bap.port_id
 		WHERE `+predicate+` ORDER BY `+order+`,p.id LIMIT ? OFFSET ?`, append(args, filter.Limit, filter.Offset)...)
 	if err != nil {
@@ -306,7 +317,7 @@ func (s *Store) ListAccountPortsPage(ctx context.Context, accountID string, filt
 	items := make([]AccountPort, 0)
 	for rows.Next() {
 		var item AccountPort
-		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PortID, &item.DeviceID, &item.IfIndex, &item.IfName, &item.CapacityBPS, &item.Direction, &item.CreatedBy, &item.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, item)
@@ -315,8 +326,8 @@ func (s *Store) ListAccountPortsPage(ctx context.Context, accountID string, filt
 }
 
 func (s *Store) ReplaceAccountPorts(ctx context.Context, accountID string, ports []AccountPort, expected uint64, actor string) error {
-	if accountID == "" || expected == 0 || len(ports) > 1000 {
-		return errors.New("billing account and at most 1000 ports are required")
+	if accountID == "" || expected == 0 || len(ports) > s.limits.MaxAccountPorts {
+		return fmt.Errorf("billing account and at most %d ports are required", s.limits.MaxAccountPorts)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -331,7 +342,7 @@ func (s *Store) ReplaceAccountPorts(ctx context.Context, accountID string, ports
 	if current != expected {
 		return ErrConflict
 	}
-	ports, err = normalizeAccountPorts(ports, defaultDirection, false)
+	ports, err = normalizeAccountPorts(ports, defaultDirection, false, s.limits.MaxAccountPorts)
 	if err != nil {
 		return err
 	}
@@ -351,9 +362,9 @@ func (s *Store) ReplaceAccountPorts(ctx context.Context, accountID string, ports
 	return tx.Commit()
 }
 
-func normalizeAccountPorts(ports []AccountPort, defaultDirection Direction, require bool) ([]AccountPort, error) {
-	if len(ports) > 1000 || (require && len(ports) == 0) {
-		return nil, errors.New("billing account requires 1..1000 ports")
+func normalizeAccountPorts(ports []AccountPort, defaultDirection Direction, require bool, limit int) ([]AccountPort, error) {
+	if len(ports) > limit || (require && len(ports) == 0) {
+		return nil, fmt.Errorf("billing account requires 1..%d ports", limit)
 	}
 	normalized := make([]AccountPort, len(ports))
 	seen := make(map[string]bool, len(ports))

@@ -101,7 +101,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	invalidAccount := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
 		"party_id": party.ID, "name": invalidAccountName, "status": "active", "measurement_type": "bandwidth", "billing_method": "monthly_95th",
 		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "minimum_percent": 0,
-		"price_currency": "CNY", "unit_price": "1.000000",
+		"price_currency": "CNY", "unit_price": "1.000000", "contract_bandwidth_bps": 20_000_000_000,
 		"items": []map[string]any{{"port_id": "missing-port", "direction": "agg"}},
 	}, headers, cookies...)
 	if invalidAccount.Code != http.StatusForbidden {
@@ -114,7 +114,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	accountResponse := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
 		"party_id": party.ID, "name": "API account " + deviceID, "status": "active", "measurement_type": "bandwidth", "billing_method": "monthly_95th",
 		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "minimum_percent": 0, "reconcile_percent": 5,
-		"price_currency": "CNY", "unit_price": "12.345600",
+		"price_currency": "CNY", "unit_price": "12.345600", "contract_bandwidth_bps": 20_000_000_000,
 		"items": []map[string]any{{"port_id": portID, "direction": "in"}, {"port_id": secondPortID, "direction": "out"}},
 	}, headers, cookies...)
 	if accountResponse.Code != http.StatusCreated || accountResponse.Header().Get("ETag") != `"1"` {
@@ -145,7 +145,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	accountDetail := requestJSON(t, s, http.MethodGet, "/api/v1/billing/accounts/"+account.ID, nil, nil, cookies...)
 	if accountDetail.Code != http.StatusOK || !strings.Contains(accountDetail.Body.String(), `"suggested_period"`) ||
 		!strings.Contains(accountDetail.Body.String(), portID) || !strings.Contains(accountDetail.Body.String(), secondPortID) ||
-		!strings.Contains(accountDetail.Body.String(), `"unit_price":"12.345600"`) {
+		!strings.Contains(accountDetail.Body.String(), `"unit_price":"12.345600"`) || !strings.Contains(accountDetail.Body.String(), `"capacity_check"`) {
 		t.Fatalf("account suggested period=%d %s", accountDetail.Code, accountDetail.Body.String())
 	}
 	ports := requestJSON(t, s, http.MethodPut, "/api/v1/billing/accounts/"+account.ID+"/ports", map[string]any{
@@ -312,13 +312,18 @@ func waitBillingJob(t *testing.T, s *Server, jobID string, cookies []*http.Cooki
 			t.Fatalf("billing job=%d %s", response.Code, response.Body.String())
 		}
 		var job struct {
-			Status string `json:"status"`
-			Error  string `json:"last_error_detail"`
+			Status        string `json:"status"`
+			Error         string `json:"last_error_detail"`
+			ProgressDone  uint64 `json:"progress_done"`
+			ProgressTotal uint64 `json:"progress_total"`
 		}
 		if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
 			t.Fatal(err)
 		}
 		if job.Status == "succeeded" {
+			if job.ProgressTotal == 0 || job.ProgressDone != job.ProgressTotal {
+				t.Fatalf("billing job completed without final progress: done=%d total=%d", job.ProgressDone, job.ProgressTotal)
+			}
 			return
 		}
 		if job.Status == "failed" || job.Status == "canceled" {
@@ -338,13 +343,18 @@ func waitBillingExport(t *testing.T, s *Server, jobID string, cookies []*http.Co
 			t.Fatalf("billing export=%d %s", response.Code, response.Body.String())
 		}
 		var job struct {
-			Status string `json:"status"`
-			Error  string `json:"last_error_detail"`
+			Status        string `json:"status"`
+			Error         string `json:"last_error_detail"`
+			ProgressDone  uint64 `json:"progress_done"`
+			ProgressTotal uint64 `json:"progress_total"`
 		}
 		if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
 			t.Fatal(err)
 		}
 		if job.Status == "succeeded" {
+			if job.ProgressTotal == 0 || job.ProgressDone != job.ProgressTotal {
+				t.Fatalf("billing export completed without final progress: done=%d total=%d", job.ProgressDone, job.ProgressTotal)
+			}
 			return
 		}
 		if job.Status == "failed" || job.Status == "canceled" {

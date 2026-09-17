@@ -65,6 +65,56 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Flow.Reconciliation.Enabled || cfg.Flow.Reconciliation.Interval != 5*time.Minute || cfg.Flow.Reconciliation.MaxBatches != 1000 {
 		t.Fatalf("unexpected reconciliation defaults: %+v", cfg.Flow.Reconciliation)
 	}
+	if cfg.Billing.MaxAccountPorts != 1000 || cfg.Billing.MaxPageSize != 500 || cfg.Billing.MaxPeriodDuration != 400*24*time.Hour ||
+		cfg.Billing.WorkerLease != 30*time.Second || cfg.Billing.WorkerMaxAttempts != 5 {
+		t.Fatalf("unexpected billing defaults: %+v", cfg.Billing)
+	}
+}
+
+func TestLoadConfigBillingBudgets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte(`
+billing:
+  max_account_ports: 250
+  max_page_size: 200
+  max_period_duration: 2160h
+  max_export_rows: 25000
+  max_publication_refs: 2000
+  max_publication_bytes: 1048576
+  worker_poll_interval: 500ms
+  worker_lease: 15s
+  worker_max_attempts: 3
+  worker_retry_base: 5s
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Billing.MaxAccountPorts != 250 || cfg.Billing.MaxPageSize != 200 || cfg.Billing.MaxPeriodDuration != 90*24*time.Hour ||
+		cfg.Billing.MaxExportRows != 25000 || cfg.Billing.WorkerPollInterval != 500*time.Millisecond || cfg.Billing.WorkerLease != 15*time.Second ||
+		cfg.Billing.WorkerMaxAttempts != 3 || cfg.Billing.WorkerRetryBase != 5*time.Second {
+		t.Fatalf("unexpected billing config: %+v", cfg.Billing)
+	}
+}
+
+func TestLoadConfigRejectsInvalidBillingBudgets(t *testing.T) {
+	for name, body := range map[string]string{
+		"zero budget":         "billing:\n  max_export_rows: 0\n",
+		"reader port ceiling": "billing:\n  max_account_ports: 1001\n",
+		"reader time ceiling": "billing:\n  max_period_duration: 9601h\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "watchdog.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate billing") {
+				t.Fatalf("expected billing validation failure, got %v", err)
+			}
+		})
+	}
 }
 
 func TestLoadConfigFlowReconciliation(t *testing.T) {

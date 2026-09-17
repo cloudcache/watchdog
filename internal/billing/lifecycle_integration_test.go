@@ -78,6 +78,7 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	})
 
 	store := billing.NewStore(db)
+	contractBandwidth := uint64(8_000_000_000)
 	party, err = store.CreateParty(ctx, billing.Party{Kind: "customer", Status: "active", Name: "KISS-07 customer " + userID}, userID)
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +88,7 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 		BillingMethod: billing.BillingMonthly95th,
 		Algorithm:     billing.Algorithm95th, BillingDay: 1, Timezone: "Asia/Singapore", Direction: billing.DirectionAgg,
 		DefaultLayer: billing.LayerCustomer, MinimumPercent: 10, ReconcilePercent: 5,
+		ContractBandwidthBPS: &contractBandwidth,
 	}, userID)
 	if err != nil {
 		t.Fatal(err)
@@ -105,8 +107,8 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if period.Allowed == nil || *period.Allowed != 1_000_000_000 {
-		t.Fatalf("period minimum=%v, want 10%% of frozen 10 Gbps capacity", period.Allowed)
+	if period.Allowed == nil || *period.Allowed != 800_000_000 {
+		t.Fatalf("period minimum=%v, want 10%% of frozen 8 Gbps contract", period.Allowed)
 	}
 	periodPorts, err := store.ListPeriodPorts(ctx, period.ID)
 	if err != nil || len(periodPorts) != 1 || periodPorts[0].CapacityBPS != 10_000_000_000 {
@@ -145,7 +147,7 @@ func TestBillingLifecycleMySQLAndClickHouseEvidence(t *testing.T) {
 		t.Fatalf("period port snapshot changed with live binding: %+v err=%v", periodPorts, err)
 	}
 	var snapshot billing.PeriodAccountSnapshot
-	if err := json.Unmarshal(period.AccountSnapshot, &snapshot); err != nil || snapshot.Account.Direction != billing.DirectionAgg || snapshot.Party == nil || strings.HasSuffix(snapshot.Party.Name, " edited") {
+	if err := json.Unmarshal(period.AccountSnapshot, &snapshot); err != nil || snapshot.Account.Direction != billing.DirectionAgg || snapshot.Party == nil || strings.HasSuffix(snapshot.Party.Name, " edited") || snapshot.CapacityCheck.Status != "excess" {
 		t.Fatalf("frozen account/party snapshot=%+v err=%v", snapshot, err)
 	}
 	_, err = store.SaveExternalDraft(ctx, period.ID, billing.Value{

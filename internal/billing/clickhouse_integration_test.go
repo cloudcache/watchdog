@@ -170,6 +170,7 @@ func TestRealClickHouseFlowAndSNMPBillingPeriod(t *testing.T) {
 	}
 
 	store := billing.NewStore(db)
+	contractBandwidth := uint64(1_000_000_000)
 	party, err = store.CreateParty(ctx, billing.Party{Kind: "customer", Status: "active", Name: "CH customer " + userID}, userID)
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +179,7 @@ func TestRealClickHouseFlowAndSNMPBillingPeriod(t *testing.T) {
 		PartyID: party.ID, Name: "CH account " + userID, Status: "active", MeasurementType: billing.MeasurementBandwidth,
 		BillingMethod: billing.BillingMonthly95th, Algorithm: billing.Algorithm95th,
 		BillingDay: 1, Timezone: "UTC", Direction: billing.DirectionIn, DefaultLayer: billing.LayerCustomer,
+		ContractBandwidthBPS: &contractBandwidth,
 	}, userID)
 	if err != nil {
 		t.Fatal(err)

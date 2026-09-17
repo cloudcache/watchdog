@@ -38,6 +38,7 @@ type BillingAccount = {
 	price_currency: string
 	unit_price: string
 	minimum_percent: number
+	contract_bandwidth_bps?: number
 	traffic_allowance_bytes?: number
 	row_version: number
 }
@@ -496,6 +497,7 @@ export default memo(({ id }: { id: string }) => {
 				/>
 				<Info label={t`Direction`} value={account?.direction} />
 				<Info label={t`Value strategy`} value={account?.default_layer} />
+				<Info label={t`Contract bandwidth`} value={formatBPS(account?.contract_bandwidth_bps)} />
 				<Info
 					label={account?.measurement_type === "traffic" ? t`Traffic allowance` : t`Billing minimum`}
 					value={

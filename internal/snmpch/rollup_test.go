@@ -22,10 +22,10 @@ func TestRebuildClosedInterfaceBucketPublishesValuesBeforeMarker(t *testing.T) {
 			t.Fatalf("rollup missing %q: %s", required, exec.queries[0].Body)
 		}
 	}
-	if !strings.Contains(exec.queries[0].Body, "observed_at>=fromUnixTimestamp64Milli({bucket_ms:Int64})") ||
-		!strings.Contains(exec.queries[0].Body, "observed_at<fromUnixTimestamp64Milli({end_ms:Int64})") ||
+	if !strings.Contains(exec.queries[0].Body, "observed_at>fromUnixTimestamp64Milli({bucket_ms:Int64})") ||
+		!strings.Contains(exec.queries[0].Body, "observed_at<=fromUnixTimestamp64Milli({end_ms:Int64})") ||
 		strings.Contains(exec.queries[0].Body, "previous_at>=fromUnixTimestamp64Milli({bucket_ms:Int64})") {
-		t.Fatalf("rollup does not assign deltas to the [bucket,end) containing observed_at: %s", exec.queries[0].Body)
+		t.Fatalf("rollup does not assign (previous_at,observed_at] deltas to the matching (bucket,end] interval: %s", exec.queries[0].Body)
 	}
 	if !strings.Contains(exec.queries[1].Body, "'generation'") {
 		t.Fatalf("last write is not the publication marker: %s", exec.queries[1].Body)

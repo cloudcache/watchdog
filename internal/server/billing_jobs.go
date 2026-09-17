@@ -33,10 +33,18 @@ func (s *Server) startBillingJobs() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.billingCancel = cancel
 	for _, jobType := range []string{billingCalculateJobType, billingReconcileJobType} {
-		worker := &opjob.Worker{Repo: s.jobs, JobType: jobType, Owner: "watchdog-server/" + jobType, Handler: s.runBillingJob(jobType)}
+		worker := &opjob.Worker{
+			Repo: s.jobs, JobType: jobType, Owner: "watchdog-server/" + jobType, Handler: s.runBillingJob(jobType),
+			PollInterval: s.cfg.Billing.WorkerPollInterval, LeaseFor: s.cfg.Billing.WorkerLease,
+			MaxAttempts: s.cfg.Billing.WorkerMaxAttempts, RetryBase: s.cfg.Billing.WorkerRetryBase,
+		}
 		go worker.Run(ctx)
 	}
-	exportWorker := &opjob.Worker{Repo: s.jobs, JobType: billingExportJobType, Owner: "watchdog-server/" + billingExportJobType, Handler: s.runBillingExport}
+	exportWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: billingExportJobType, Owner: "watchdog-server/" + billingExportJobType, Handler: s.runBillingExport,
+		PollInterval: s.cfg.Billing.WorkerPollInterval, LeaseFor: s.cfg.Billing.WorkerLease,
+		MaxAttempts: s.cfg.Billing.WorkerMaxAttempts, RetryBase: s.cfg.Billing.WorkerRetryBase,
+	}
 	go exportWorker.Run(ctx)
 }
 
@@ -68,13 +76,29 @@ func (s *Server) runBillingJob(jobType string) opjob.Handler {
 			return "", opjob.TerminalError(errors.New("billing account access was revoked"))
 		}
 		if jobType == billingReconcileJobType {
+			if reporter := opjob.ReporterFromContext(ctx); reporter != nil {
+				if err := reporter.Report(ctx, 1, nil); err != nil {
+					return "", err
+				}
+			}
 			run, err := s.billingStore.ReconcileCurrent(ctx, period.ID, payload.ExpectedRowVersion, job.CreatedBy, job.ID)
 			if err != nil {
 				return "", classifyBillingJobError(err)
 			}
+			if reporter := opjob.ReporterFromContext(ctx); reporter != nil {
+				if err := reporter.Report(ctx, 2, nil); err != nil {
+					return "", err
+				}
+			}
 			return "billing-period/" + period.ID + "/reconciliation/" + run.ID, nil
 		}
-		result, err := s.billingService.CalculateForOperation(ctx, period.ID, payload.ExpectedRowVersion, job.CreatedBy, job.ID)
+		result, err := s.billingService.CalculateForOperationProgress(ctx, period.ID, payload.ExpectedRowVersion, job.CreatedBy, job.ID, func(done uint64) error {
+			reporter := opjob.ReporterFromContext(ctx)
+			if reporter == nil {
+				return nil
+			}
+			return reporter.Report(ctx, done, nil)
+		})
 		if err != nil {
 			return "", classifyBillingJobError(err)
 		}
@@ -143,8 +167,12 @@ func (s *Server) enqueueBillingOperation(c *gin.Context, jobType string) {
 		writeSQLError(c, err)
 		return
 	}
+	progressTotal := uint64(4)
+	if jobType == billingReconcileJobType {
+		progressTotal = 2
+	}
 	job, err := s.jobs.Enqueue(c, opjob.Job{JobType: jobType, IdempotencyKey: sha256hex(currentPrincipal(c).UserID + "\x00" + idempotencyKey),
-		RequestHash: sha256hex(string(payload)), CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID})
+		RequestHash: sha256hex(string(payload)), ProgressTotal: progressTotal, CheckpointJSON: payload, CreatedBy: currentPrincipal(c).UserID})
 	if errors.Is(err, opjob.ErrHashMismatch) {
 		fail(c, http.StatusConflict, "idempotency_conflict", err.Error())
 		return

@@ -107,7 +107,7 @@ func (s *Store) allAdjustments(ctx context.Context, period Period) ([]Adjustment
 	defer rows.Close()
 	items := make([]Adjustment, 0)
 	for rows.Next() {
-		if len(items) >= 100000 {
+		if len(items) >= s.limits.MaxExportRows {
 			return nil, errors.New("billing export adjustment budget exceeded")
 		}
 		item, scanErr := scanAdjustment(rows)
@@ -144,7 +144,7 @@ func (s *Store) allReconciliationEvidence(ctx context.Context, periodID string, 
 	defer issueRows.Close()
 	issues := make([]ReconciliationIssue, 0)
 	for issueRows.Next() {
-		if len(issues) >= 100000 {
+		if len(issues) >= s.limits.MaxExportRows {
 			return nil, nil, errors.New("billing export issue budget exceeded")
 		}
 		item, scanErr := scanIssue(issueRows)

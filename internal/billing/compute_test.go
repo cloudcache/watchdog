@@ -93,10 +93,11 @@ func TestSuggestedPeriodWindowUsesTimezoneBillingDayAndShortMonth(t *testing.T) 
 }
 
 func TestBillingPricingContractValidation(t *testing.T) {
+	contract := uint64(10_000_000_000)
 	valid := Account{
 		Name: "customer-a", Status: "active", MeasurementType: MeasurementBandwidth, BillingMethod: BillingMonthly95th, Algorithm: Algorithm95th,
 		BillingDay: 1, Timezone: "UTC", Direction: DirectionAgg, DefaultLayer: LayerCustomer,
-		PriceCurrency: "CNY", UnitPrice: "12.345600", MinimumPercent: 30,
+		PriceCurrency: "CNY", UnitPrice: "12.345600", MinimumPercent: 30, ContractBandwidthBPS: &contract,
 	}
 	if err := ValidateAccount(valid); err != nil {
 		t.Fatalf("valid pricing contract: %v", err)
@@ -121,21 +122,52 @@ func TestBillingPricingContractValidation(t *testing.T) {
 	quota := uint64(1_000_000)
 	flat := valid
 	flat.MeasurementType, flat.BillingMethod, flat.Algorithm, flat.TrafficAllowance = MeasurementTraffic, BillingPackagePort, AlgorithmTotal, &quota
+	flat.ContractBandwidthBPS = nil
 	flat.MinimumPercent = 0
 	if err := ValidateAccount(flat); err != nil {
 		t.Fatalf("valid flat-port pricing contract: %v", err)
 	}
 }
 
+func TestCapacityCheckIsEvidenceNotBillingAuthority(t *testing.T) {
+	contract := uint64(8_000_000_000)
+	check := BuildCapacityCheck(&contract, []AccountPort{{CapacityBPS: 10_000_000_000}})
+	if check.Status != "excess" || check.ContractBPS != contract || check.SelectedBPS != 10_000_000_000 || check.DifferenceBPS != 2_000_000_000 {
+		t.Fatalf("capacity check=%+v", check)
+	}
+	unknown := BuildCapacityCheck(&contract, []AccountPort{{CapacityBPS: 10_000_000_000}, {}})
+	if unknown.Status != "unknown" || unknown.UnknownPortCount != 1 {
+		t.Fatalf("unknown capacity check=%+v", unknown)
+	}
+	insufficient := BuildCapacityCheck(&contract, []AccountPort{{CapacityBPS: 5_000_000_000}})
+	if insufficient.Status != "insufficient" || insufficient.DifferenceBPS != 3_000_000_000 {
+		t.Fatalf("insufficient capacity check=%+v", insufficient)
+	}
+	match := BuildCapacityCheck(&contract, []AccountPort{{CapacityBPS: contract}})
+	if match.Status != "match" || match.DifferenceBPS != 0 {
+		t.Fatalf("matching capacity check=%+v", match)
+	}
+}
+
 func TestDaily95thAveragesLocalCalendarDays(t *testing.T) {
-	from := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	location, err := time.LoadLocation("Asia/Singapore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both local-day groups fall on the same UTC date. Grouping by UTC would
+	// produce P95=38; grouping by the frozen account timezone produces
+	// per-day P95 values 19 and 39, then their rounded average 29.
+	starts := []time.Time{
+		time.Date(2026, time.September, 1, 22, 20, 0, 0, location),
+		time.Date(2026, time.September, 2, 0, 0, 0, 0, location),
+	}
 	samples := make([]RateSample, 0, 40)
-	for day := 0; day < 2; day++ {
-		for index := 1; index <= 20; index++ {
-			samples = append(samples, RateSample{Time: from.Add(time.Duration(day)*24*time.Hour + time.Duration(index)*5*time.Minute), Value: float64(index + day*20)})
+	for day, start := range starts {
+		for index := 0; index < 20; index++ {
+			samples = append(samples, RateSample{Time: start.Add(time.Duration(index) * 5 * time.Minute).UTC(), Value: float64(index + 1 + day*20)})
 		}
 	}
-	value, err := Daily95thAverage(samples, "UTC")
+	value, err := Daily95thAverage(samples, "Asia/Singapore")
 	if err != nil || value != 29 { // daily P95 values 19 and 39, averaged and rounded.
 		t.Fatalf("daily95=%d err=%v", value, err)
 	}

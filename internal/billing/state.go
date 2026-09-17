@@ -400,7 +400,7 @@ func (s *Store) GetAdjustment(ctx context.Context, id string) (Adjustment, error
 }
 
 func (s *Store) ListAdjustments(ctx context.Context, periodID string, filter PageFilter) ([]Adjustment, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"created_at": "created_at", "status": "status", "layer": "layer", "amount": "amount"}, "created_at")
+	filter, order, err := normalizePage(filter, map[string]string{"created_at": "created_at", "status": "status", "layer": "layer", "amount": "amount"}, "created_at", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -572,7 +572,7 @@ func scanIssue(scanner interface{ Scan(...any) error }) (ReconciliationIssue, er
 }
 
 func (s *Store) ListIssues(ctx context.Context, periodID string, generation uint64, filter PageFilter) ([]ReconciliationIssue, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"created_at": "i.created_at", "status": "i.status", "severity": "i.severity", "kind": "i.kind", "delta_value": "i.delta_value"}, "created_at")
+	filter, order, err := normalizePage(filter, map[string]string{"created_at": "i.created_at", "status": "i.status", "severity": "i.severity", "kind": "i.kind", "delta_value": "i.delta_value"}, "created_at", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -627,7 +627,7 @@ func (s *Store) GetRunByOperation(ctx context.Context, operationRef string) (Rec
 }
 
 func (s *Store) ListReconciliationRuns(ctx context.Context, periodID string, filter PageFilter) ([]ReconciliationRun, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"created_at": "created_at", "status": "status", "calculation_version": "calculation_version", "issue_count": "issue_count"}, "created_at")
+	filter, order, err := normalizePage(filter, map[string]string{"created_at": "created_at", "status": "status", "calculation_version": "calculation_version", "issue_count": "issue_count"}, "created_at", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}

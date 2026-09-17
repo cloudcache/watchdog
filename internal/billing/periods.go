@@ -64,7 +64,7 @@ func (s *Store) GetPeriod(ctx context.Context, id string) (Period, error) {
 }
 
 func (s *Store) ListPeriods(ctx context.Context, accountID string, filter PageFilter) ([]Period, int, error) {
-	filter, order, err := normalizePage(filter, map[string]string{"date_from": "date_from", "date_to": "date_to", "status": "status", "used": "used", "created_at": "created_at"}, "date_from")
+	filter, order, err := normalizePage(filter, map[string]string{"date_from": "date_from", "date_to": "date_to", "status": "status", "used": "used", "created_at": "created_at"}, "date_from", s.limits.MaxPageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -109,7 +109,7 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 	if account.Status != "active" {
 		return Period{}, errors.New("billing account is paused")
 	}
-	if err := ValidatePeriodWindow(from, to, account.Timezone, now); err != nil {
+	if err := validatePeriodWindow(from, to, account.Timezone, now, s.limits.MaxPeriodDuration); err != nil {
 		return Period{}, err
 	}
 	var overlaps bool
@@ -135,10 +135,8 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 		}
 		party = &item
 	}
-	accountSnapshot, err := json.Marshal(struct {
-		Account Account `json:"account"`
-		Party   *Party  `json:"party,omitempty"`
-	}{Account: account, Party: party})
+	capacityCheck := BuildCapacityCheck(account.ContractBandwidthBPS, ports)
+	accountSnapshot, err := json.Marshal(PeriodAccountSnapshot{Account: account, Party: party, CapacityCheck: capacityCheck})
 	if err != nil {
 		return Period{}, err
 	}
@@ -146,17 +144,10 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 	if account.MeasurementType == MeasurementTraffic {
 		allowed = account.TrafficAllowance
 	} else if account.BillingMethod != BillingPackagePort {
-		var capacity uint64
-		for _, port := range ports {
-			if math.MaxUint64-capacity < port.CapacityBPS {
-				return Period{}, errors.New("aggregate billing port capacity overflows uint64")
-			}
-			capacity += port.CapacityBPS
+		if account.ContractBandwidthBPS == nil || *account.ContractBandwidthBPS == 0 {
+			return Period{}, errors.New("billing contract bandwidth is required")
 		}
-		if account.MinimumPercent > 0 && capacity == 0 {
-			return Period{}, errors.New("billing minimum percent requires discovered port capacity")
-		}
-		floor := uint64(math.Round(float64(capacity) * account.MinimumPercent / 100))
+		floor := uint64(math.Round(float64(*account.ContractBandwidthBPS) * account.MinimumPercent / 100))
 		allowed = &floor
 	}
 	id := NewID()
@@ -182,6 +173,43 @@ func (s *Store) CreatePeriod(ctx context.Context, accountID string, from, to tim
 		return Period{}, err
 	}
 	return s.GetPeriod(ctx, id)
+}
+
+// BuildCapacityCheck compares discovered interface capacity with the commercial
+// contract. It is evidence only: it never changes the contract or a period's
+// billing floor. Any unknown interface speed makes the comparison incomplete.
+func BuildCapacityCheck(contract *uint64, ports []AccountPort) CapacityCheck {
+	check := CapacityCheck{Status: "unknown"}
+	if contract != nil {
+		check.ContractBPS = *contract
+	}
+	for _, port := range ports {
+		if port.CapacityBPS == 0 {
+			check.UnknownPortCount++
+			continue
+		}
+		check.KnownPortCount++
+		if math.MaxUint64-check.SelectedBPS < port.CapacityBPS {
+			check.Status = "overflow"
+			check.SelectedBPS = math.MaxUint64
+			return check
+		}
+		check.SelectedBPS += port.CapacityBPS
+	}
+	if check.ContractBPS == 0 || check.UnknownPortCount > 0 {
+		return check
+	}
+	switch {
+	case check.SelectedBPS < check.ContractBPS:
+		check.Status = "insufficient"
+		check.DifferenceBPS = check.ContractBPS - check.SelectedBPS
+	case check.SelectedBPS > check.ContractBPS:
+		check.Status = "excess"
+		check.DifferenceBPS = check.SelectedBPS - check.ContractBPS
+	default:
+		check.Status = "match"
+	}
+	return check
 }
 
 // SuggestedPeriodWindow returns the latest fully closed account billing cycle.

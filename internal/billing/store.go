@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var (
@@ -23,9 +24,71 @@ var (
 
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-type Store struct{ db *sql.DB }
+// These ceilings mirror the current SNMP/Flow billing reader contracts. The
+// configurable limits may lower them, but lifting them requires the chunked
+// reader/checkpoint work tracked by KISS-07C.
+const (
+	HardMaxAccountPorts   = 1000
+	HardMaxPeriodDuration = 400 * 24 * time.Hour
+)
 
-func NewStore(db *sql.DB) *Store { return &Store{db: db} }
+type Limits struct {
+	MaxAccountPorts     int
+	MaxPageSize         int
+	MaxPeriodDuration   time.Duration
+	MaxExportRows       int
+	MaxPublicationRefs  int
+	MaxPublicationBytes int
+}
+
+func DefaultLimits() Limits {
+	return Limits{
+		MaxAccountPorts:     HardMaxAccountPorts,
+		MaxPageSize:         500,
+		MaxPeriodDuration:   HardMaxPeriodDuration,
+		MaxExportRows:       100000,
+		MaxPublicationRefs:  10000,
+		MaxPublicationBytes: 8 << 20,
+	}
+}
+
+func normalizeLimits(limits Limits) Limits {
+	defaults := DefaultLimits()
+	if limits.MaxAccountPorts <= 0 {
+		limits.MaxAccountPorts = defaults.MaxAccountPorts
+	} else if limits.MaxAccountPorts > HardMaxAccountPorts {
+		limits.MaxAccountPorts = HardMaxAccountPorts
+	}
+	if limits.MaxPageSize <= 0 {
+		limits.MaxPageSize = defaults.MaxPageSize
+	}
+	if limits.MaxPeriodDuration <= 0 {
+		limits.MaxPeriodDuration = defaults.MaxPeriodDuration
+	} else if limits.MaxPeriodDuration > HardMaxPeriodDuration {
+		limits.MaxPeriodDuration = HardMaxPeriodDuration
+	}
+	if limits.MaxExportRows <= 0 {
+		limits.MaxExportRows = defaults.MaxExportRows
+	}
+	if limits.MaxPublicationRefs <= 0 {
+		limits.MaxPublicationRefs = defaults.MaxPublicationRefs
+	}
+	if limits.MaxPublicationBytes <= 0 {
+		limits.MaxPublicationBytes = defaults.MaxPublicationBytes
+	}
+	return limits
+}
+
+type Store struct {
+	db     *sql.DB
+	limits Limits
+}
+
+func NewStore(db *sql.DB) *Store { return NewStoreWithLimits(db, Limits{}) }
+
+func NewStoreWithLimits(db *sql.DB, limits Limits) *Store {
+	return &Store{db: db, limits: normalizeLimits(limits)}
+}
 
 func NewID() string {
 	var value [16]byte
@@ -46,12 +109,12 @@ type PageFilter struct {
 	Type   string
 }
 
-func normalizePage(filter PageFilter, allowedSort map[string]string, fallback string) (PageFilter, string, error) {
+func normalizePage(filter PageFilter, allowedSort map[string]string, fallback string, maxPageSize int) (PageFilter, string, error) {
 	if filter.Limit == 0 {
 		filter.Limit = 50
 	}
-	if filter.Limit < 1 || filter.Limit > 500 || filter.Offset < 0 {
-		return filter, "", errors.New("pagination must use limit 1..500 and a non-negative offset")
+	if filter.Limit < 1 || filter.Limit > maxPageSize || filter.Offset < 0 {
+		return filter, "", fmt.Errorf("pagination must use limit 1..%d and a non-negative offset", maxPageSize)
 	}
 	filter.Query, filter.Status, filter.Kind, filter.Type = strings.TrimSpace(filter.Query), strings.TrimSpace(filter.Status), strings.TrimSpace(filter.Kind), strings.TrimSpace(filter.Type)
 	filter.Sort = strings.TrimSpace(filter.Sort)

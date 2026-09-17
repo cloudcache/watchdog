@@ -60,6 +60,16 @@ snmp:                               # generic standard MIB discovery works with 
 billing:
   export_dir: "data/billing-exports" # CSV/Parquet evidence artifacts; state stays in operation_jobs
   export_retention: "168h"           # seven days; closed period evidence can be regenerated deterministically
+  max_account_ports: 1000            # operational budget, not a billing formula
+  max_page_size: 500                  # maximum rows returned by one billing VTable request
+  max_period_duration: "9600h"       # 400 days; supports annual backfill without unbounded queries
+  max_export_rows: 100000            # bounded evidence materialization per export
+  max_publication_refs: 10000        # provenance cardinality budget
+  max_publication_bytes: 8388608     # provenance JSON byte budget
+  worker_poll_interval: "2s"
+  worker_lease: "30s"                # heartbeat renews this lease while a job is running
+  worker_max_attempts: 5
+  worker_retry_base: "30s"
 
 address:                            # geo/address-library source imports (MMDB/IPDB)
   artifact_dir: "data/address-artifacts"  # where uploaded source databases are stored

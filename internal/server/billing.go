@@ -102,11 +102,25 @@ func requireBillingIfMatch(c *gin.Context) (uint64, bool) {
 	return expected, true
 }
 
-func billingPage(c *gin.Context, allowed ...string) (billing.PageFilter, bool) {
+func (s *Server) billingPage(c *gin.Context, allowed ...string) (billing.PageFilter, bool) {
 	if _, ok := addressListParam(c, allowed...); !ok {
 		return billing.PageFilter{}, false
 	}
-	limit, offset := pageParams(c)
+	maxPageSize := s.cfg.Billing.MaxPageSize
+	if maxPageSize <= 0 {
+		maxPageSize = billing.DefaultLimits().MaxPageSize
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit < 1 {
+		limit = 25
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	return billing.PageFilter{
 		Limit: limit, Offset: offset, Query: c.Query("q"), Sort: c.Query("sort"), Order: c.Query("order"),
 		Status: c.Query("status"), Kind: c.Query("kind"), Type: c.Query("type"),
@@ -114,7 +128,7 @@ func billingPage(c *gin.Context, allowed ...string) (billing.PageFilter, bool) {
 }
 
 func (s *Server) listBillingParties(c *gin.Context) {
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status", "kind")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status", "kind")
 	if !ok {
 		return
 	}
@@ -208,7 +222,7 @@ func (s *Server) deleteBillingParty(c *gin.Context) {
 }
 
 func (s *Server) listBillingAccounts(c *gin.Context) {
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status", "type")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status", "type")
 	if !ok {
 		return
 	}
@@ -267,8 +281,9 @@ func (s *Server) getBillingAccount(c *gin.Context) {
 	}
 	c.Header("ETag", etag(item.RowVersion))
 	c.JSON(http.StatusOK, gin.H{
-		"account": item,
-		"ports":   ports,
+		"account":        item,
+		"ports":          ports,
+		"capacity_check": billing.BuildCapacityCheck(item.ContractBandwidthBPS, ports),
 		"suggested_period": gin.H{
 			"date_from": dateFrom,
 			"date_to":   dateTo,
@@ -291,25 +306,26 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 		return
 	}
 	var input struct {
-		PartyID          *string                  `json:"party_id"`
-		Name             *string                  `json:"name"`
-		Status           *string                  `json:"status"`
-		MeasurementType  *billing.MeasurementType `json:"measurement_type"`
-		BillingMethod    *billing.BillingMethod   `json:"billing_method"`
-		Algorithm        *billing.Algorithm       `json:"algorithm"`
-		BillingDay       *uint8                   `json:"billing_day"`
-		Timezone         *string                  `json:"timezone"`
-		Direction        *billing.Direction       `json:"direction"`
-		DefaultLayer     *billing.Layer           `json:"default_layer"`
-		PriceCurrency    *string                  `json:"price_currency"`
-		UnitPrice        *string                  `json:"unit_price"`
-		MinimumPercent   *float64                 `json:"minimum_percent"`
-		TrafficAllowance *uint64                  `json:"traffic_allowance_bytes"`
-		ReconcileAbs     *uint64                  `json:"reconcile_abs"`
-		ReconcilePercent *float64                 `json:"reconcile_percent"`
-		Ref              *string                  `json:"ref"`
-		Notes            *string                  `json:"notes"`
-		Items            *[]billing.AccountPort   `json:"items"`
+		PartyID           *string                  `json:"party_id"`
+		Name              *string                  `json:"name"`
+		Status            *string                  `json:"status"`
+		MeasurementType   *billing.MeasurementType `json:"measurement_type"`
+		BillingMethod     *billing.BillingMethod   `json:"billing_method"`
+		Algorithm         *billing.Algorithm       `json:"algorithm"`
+		BillingDay        *uint8                   `json:"billing_day"`
+		Timezone          *string                  `json:"timezone"`
+		Direction         *billing.Direction       `json:"direction"`
+		DefaultLayer      *billing.Layer           `json:"default_layer"`
+		PriceCurrency     *string                  `json:"price_currency"`
+		UnitPrice         *string                  `json:"unit_price"`
+		MinimumPercent    *float64                 `json:"minimum_percent"`
+		ContractBandwidth *uint64                  `json:"contract_bandwidth_bps"`
+		TrafficAllowance  *uint64                  `json:"traffic_allowance_bytes"`
+		ReconcileAbs      *uint64                  `json:"reconcile_abs"`
+		ReconcilePercent  *float64                 `json:"reconcile_percent"`
+		Ref               *string                  `json:"ref"`
+		Notes             *string                  `json:"notes"`
+		Items             *[]billing.AccountPort   `json:"items"`
 	}
 	if !addressDecodeStrict(c, &input, 256<<10) {
 		return
@@ -352,6 +368,9 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 	}
 	if input.MinimumPercent != nil {
 		item.MinimumPercent = *input.MinimumPercent
+	}
+	if input.ContractBandwidth != nil {
+		item.ContractBandwidthBPS = input.ContractBandwidth
 	}
 	if input.TrafficAllowance != nil {
 		item.TrafficAllowance = input.TrafficAllowance
@@ -406,7 +425,7 @@ func (s *Server) listBillingAccountPorts(c *gin.Context) {
 	if !s.requireBillingAccountAccess(c, id) {
 		return
 	}
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "type")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "type")
 	if !ok {
 		return
 	}
@@ -490,7 +509,7 @@ func (s *Server) listBillingPeriods(c *gin.Context) {
 	if !s.requireBillingAccountAccess(c, accountID) {
 		return
 	}
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status")
 	if !ok {
 		return
 	}
@@ -676,7 +695,7 @@ func (s *Server) listBillingAdjustments(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status")
 	if !ok {
 		return
 	}
@@ -773,7 +792,7 @@ func (s *Server) listBillingIssues(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status", "type")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status", "type")
 	if !ok {
 		return
 	}
@@ -790,7 +809,7 @@ func (s *Server) listBillingReconciliations(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, ok := billingPage(c, "limit", "offset", "q", "sort", "order", "status")
+	page, ok := s.billingPage(c, "limit", "offset", "q", "sort", "order", "status")
 	if !ok {
 		return
 	}

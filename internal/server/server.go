@@ -234,7 +234,11 @@ func (s *Server) clickHouseError() string {
 }
 
 func (s *Server) startBilling() error {
-	s.billingStore = billing.NewStore(s.db)
+	s.billingStore = billing.NewStoreWithLimits(s.db, billing.Limits{
+		MaxAccountPorts: s.cfg.Billing.MaxAccountPorts, MaxPageSize: s.cfg.Billing.MaxPageSize, MaxPeriodDuration: s.cfg.Billing.MaxPeriodDuration,
+		MaxExportRows: s.cfg.Billing.MaxExportRows, MaxPublicationRefs: s.cfg.Billing.MaxPublicationRefs,
+		MaxPublicationBytes: s.cfg.Billing.MaxPublicationBytes,
+	})
 	if s.snmpMetrics == nil || s.clickHouse == nil {
 		return nil
 	}

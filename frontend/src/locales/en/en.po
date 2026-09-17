@@ -8618,3 +8618,55 @@ msgstr "Billing minimum"
 #: src/components/routes/billing-account-form.tsx
 msgid "Total traffic above this allowance is period overuse."
 msgstr "Total traffic above this allowance is period overuse."
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Contract bandwidth"
+msgstr "Contract bandwidth"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Contract bandwidth (Mbps)"
+msgstr "Contract bandwidth (Mbps)"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Commercial contract value used as the billing authority."
+msgstr "Commercial contract value used as the billing authority."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "The billing floor is contract bandwidth multiplied by this percentage."
+msgstr "The billing floor is contract bandwidth multiplied by this percentage."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "{0} selected ports have no discovered speed; capacity cannot be fully checked."
+msgstr "{0} selected ports have no discovered speed; capacity cannot be fully checked."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity is below the contract bandwidth. Check the bindings or correct the contract value."
+msgstr "Selected port capacity is below the contract bandwidth. Check the bindings or correct the contract value."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity exceeds the contract bandwidth. Check for duplicate or unintended ports."
+msgstr "Selected port capacity exceeds the contract bandwidth. Check for duplicate or unintended ports."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected port capacity matches the contract bandwidth."
+msgstr "Selected port capacity matches the contract bandwidth."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Enter the contract bandwidth to check selected port capacity."
+msgstr "Enter the contract bandwidth to check selected port capacity."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Contract"
+msgstr "Contract"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Selected capacity"
+msgstr "Selected capacity"
+
+#: src/components/routes/billing.tsx
+msgid "Contract / minimum / allowance"
+msgstr "Contract / minimum / allowance"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Failed to load device ports"
+msgstr "Failed to load device ports"

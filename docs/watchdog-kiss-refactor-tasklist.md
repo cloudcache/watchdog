@@ -240,14 +240,31 @@
 
 **状态 = 完成（2026-09-09）。** 详细冻结契约和复算向量见 `docs/kiss07-billing-design.md`。本包只新增单域 Billing 管理/证据链，复用 KISS-03 `snmpch`、现有 Flow ClickHouse facts 和平台 `operation_jobs`；未恢复 tenant/PB/VM/DatasetProvider，也未改 Flow decode/write。
 
-- [x] **设计**：已冻结 party/account/port/period/value/adjustment/reconciliation 字段、`open -> calculated -> approved -> closed` 状态机、月 95/日 95/月平均/总量算法、IANA timezone + `billing_day` 默认周期、CAS 审批和关闭证据不可变语义。2026-09-17 产品修正后明确拆分 `measurement_type=bandwidth|traffic` 与 `billing_method=package_port|monthly_95th|daily_95th|monthly_average`；带宽保底直接使用端口标称带宽合计值的百分比并冻结到账期，不再使用 `cdr` 或固定 Mbps“承诺带宽”。
+- [x] **设计**：已冻结 party/account/port/period/value/adjustment/reconciliation 字段、`open -> calculated -> approved -> closed` 状态机、月 95/日 95/月平均/总量算法、IANA timezone + `billing_day` 默认周期、CAS 审批和关闭证据不可变语义。2026-09-17 产品复核后明确拆分 `measurement_type=bandwidth|traffic` 与 `billing_method=package_port|monthly_95th|daily_95th|monthly_average`；合同总带宽由操作员直接填写，保底为合同总带宽的百分比。SNMP 端口速率只用于容量一致性提示和证据冻结，不进入计费公式。
 - [x] **编码**：MySQL 保存 raw/supplier/customer/snmp/external generation、account+party+port 快照、关闭 adjustment 快照、reconciliation/issues；ClickHouse reader 计算同一 scope 的 Flow 与 SNMP；实现 external evidence、阈值、append-only adjustment/reversal、approve/close 和确定性 CSV/Parquet export。
 - [x] **API/UI**：party/account CRUD、端口绑定、默认/自定义周期、异步 calculate/reconcile/export、五层对比、issue 处理、adjustment 审批/反转、period 审批/关闭和 evidence 下载已接 Gin/现有三页 UI；`/billing/new` 与编辑页按设备名称/IP 搜索后选择/全选端口，可跨设备绑定并为每个端口指定 in/out/agg，账户字段与完整端口集合原子提交，同时配置 raw/supplier/customer 取值策略、带宽/流量计量、包端口/月 95/日 95/月平均和百分比保底；account/party/period/port/issues/adjustments/runs/exports 均使用服务端分页、搜索、排序和列过滤 VTable。
-- [x] **单元测试**：已覆盖 `[1..19,100] -> p95 19 / average 15`、逐自然日日 95 后取平均、total bytes、百分比保底与端口 capacity 快照、UTC 5m、DST/短月 billing day、共同完整桶、缺桶/gap/reset、direction、unknown sampling、三层 delta、external 一致性、重复 operation、stale approval、adjustment/reversal、CSV/Parquet 同行与 provenance、公式注入转义；无 timestamped `RateBuckets` 的 fallback 明确拒绝。
+- [x] **单元测试**：已覆盖 `[1..19,100] -> p95 19 / average 15`、逐自然日日 95 后取平均、total bytes、合同总带宽百分比保底与独立端口 capacity 校验/快照、UTC 5m、DST/短月 billing day、共同完整桶、缺桶/gap/reset、direction、unknown sampling、三层 delta、external 一致性、重复 operation、stale approval、adjustment/reversal、CSV/Parquet 同行与 provenance、公式注入转义；无 timestamped `RateBuckets` 的 fallback 明确拒绝。
 - [x] **集成测试**：真实 MySQL + 临时 ClickHouse database 写 fresh Flow/SNMP 后，同端口 10 分钟四层均得到 `800 bps / 60000 bytes / 2 buckets`；重复 generation 数值确定；关闭后拒绝重算/导入/普通 adjustment，关闭 evidence 不受事后 reversal 影响；真实 Gin/MySQL operation job 覆盖 CRUD→计算→处理→审批→关闭→CSV/Parquet 下载和 artifact checksum/retention。
 - [x] **变更设计/测试**：已故意注入 Flow reader failure、unknown sampling、SNMP reset/gap、缺 bucket 和 reader window offset；均只产生/保留 evidence issue，不自动调平。window offset 形成幂等 critical run/issue/audit、零 value generation，并以 terminal error 停止重试。
 - [x] **回归测试**：billing/flowch/snmpch/server test+race+vet、`go build ./...`、真实 MySQL/CH、HTTP/RBAC/CSRF/CAS/audit/job/export、57 个前端单测、Billing Biome 和 production build 均通过。
 - [x] **已提交门禁**：独立只读 reviewer 三轮复核并复算 95th/average/total、三层 delta、SNMP/Flow fixture 与 adjustment/reversal；前两轮 9 项阻断全部修复，第三轮结论 `PASS，无 blocking`，随后才允许本纵向切片提交。
+
+#### KISS-07B 合同带宽与运行预算补强（2026-09-17）
+
+- [x] **设计**：纠正“端口速度决定合同总带宽”的倒置关系；冻结商业权威、容量证据、硬语义边界和可配置运行预算。
+- [x] **编码/API/UI**：新增 `contract_bandwidth_bps`；账期按合同值计算保底；账户详情返回容量校验，表单即时提示不足/超出/未知/一致；计费运行预算和 worker lease/retry 进入 YAML。
+- [x] **单元测试**：覆盖容量 `insufficient/excess/unknown/match`；合同 8 Gbps、端口 10 Gbps 时保底只按合同值计算；未知端口速度不伪造确定结论。日 95 用落在同一 UTC 日、不同 Asia/Singapore 自然日的时间戳向量验证时区分组。
+- [x] **集成/变更/回归**：真实隔离 MySQL 库通过 migration 0043 与 Gin account/period/calculate/export 作业全链；真实 ClickHouse 向量暴露并修正 SNMP counter 桶边界；全仓 Go test/vet/build、目标 race、57 个前端测试、typecheck/build 通过。
+- [x] **已提交门禁**：本切片独立提交，不携带 `internal/address/dev_mmdb_stream_test.go`、`软件著作权申请资料/` 等其他工作区文件。
+
+#### KISS-07C 超大账期渐进计算与流式导出（待办）
+
+- [ ] **设计**：冻结 `calculate-v2/export-v2` payload、UTC 时间片大小、单片 CH execution-time/thread/memory 预算、`next_from`、部分统计器/日 95 有序样本、source generation 范围、临时产物、最终 generation 提交和过期清理契约；旧 v1 payload 只允许完成或明确拒绝，禁止猜测升级。
+- [ ] **编码**：SNMP/Flow billing reader 按相同 5m 片查询，每片完成后持久 fenced checkpoint；中断/接管从 `next_from` 继续，最后在单一 MySQL 事务将 staging 收敛为新 generation。CSV/Parquet 按页读取证据并流式写临时文件，fsync + rename 后才发布 artifact。
+- [ ] **API/UI**：保持现有 202/job API 不变，返回可理解的 bucket/row 进度与当前阶段；取消后页面保留已完成量和可重试状态。
+- [ ] **单元测试**：片边界、时区/日 95 跨片合并、P95 稳定性、checkpoint 单调、lease fencing、cancel、takeover、旧 payload 拒绝、临时文件清理。
+- [ ] **集成/变更测试**：真实 MySQL+CH 在 SNMP/Flow 片之间 crash/retry，结果与一次性计算逐字段一致；重启不产生半 generation/重复行；导出中断不发布半文件。
+- [ ] **回归/已提交门禁**：小账期输出与 v1 黄金向量一致；超大账期内存/查询时长受配置预算控制；独立提交前跑真实依赖、race/vet/build/frontend 全门禁。
 
 ### KISS-08 最终遗留清理与验收
 

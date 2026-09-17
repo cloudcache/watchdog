@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/billing"
 	"gopkg.in/yaml.v3"
 )
 
@@ -134,8 +135,18 @@ type SNMPConfig struct {
 }
 
 type BillingConfig struct {
-	ExportDir       string        `yaml:"export_dir"`
-	ExportRetention time.Duration `yaml:"export_retention"`
+	ExportDir           string        `yaml:"export_dir"`
+	ExportRetention     time.Duration `yaml:"export_retention"`
+	MaxAccountPorts     int           `yaml:"max_account_ports"`
+	MaxPageSize         int           `yaml:"max_page_size"`
+	MaxPeriodDuration   time.Duration `yaml:"max_period_duration"`
+	MaxExportRows       int           `yaml:"max_export_rows"`
+	MaxPublicationRefs  int           `yaml:"max_publication_refs"`
+	MaxPublicationBytes int           `yaml:"max_publication_bytes"`
+	WorkerPollInterval  time.Duration `yaml:"worker_poll_interval"`
+	WorkerLease         time.Duration `yaml:"worker_lease"`
+	WorkerMaxAttempts   uint32        `yaml:"worker_max_attempts"`
+	WorkerRetryBase     time.Duration `yaml:"worker_retry_base"`
 }
 
 // AdminConfig is used only to bootstrap the first administrator on an empty install.
@@ -159,8 +170,13 @@ func defaultConfig() Config {
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
-		Billing:    BillingConfig{ExportDir: "data/billing-exports", ExportRetention: 7 * 24 * time.Hour},
-		Admin:      AdminConfig{Username: "admin"},
+		Billing: BillingConfig{
+			ExportDir: "data/billing-exports", ExportRetention: 7 * 24 * time.Hour,
+			MaxAccountPorts: 1000, MaxPageSize: 500, MaxPeriodDuration: 400 * 24 * time.Hour, MaxExportRows: 100000,
+			MaxPublicationRefs: 10000, MaxPublicationBytes: 8 << 20,
+			WorkerPollInterval: 2 * time.Second, WorkerLease: 30 * time.Second, WorkerMaxAttempts: 5, WorkerRetryBase: 30 * time.Second,
+		},
+		Admin: AdminConfig{Username: "admin"},
 	}
 }
 
@@ -193,7 +209,24 @@ func LoadConfig(path string) (Config, error) {
 	if err := validateFlowReconciliationConfig(cfg); err != nil {
 		return Config{}, fmt.Errorf("validate flow reconciliation: %w", err)
 	}
+	if err := validateBillingConfig(cfg.Billing); err != nil {
+		return Config{}, fmt.Errorf("validate billing: %w", err)
+	}
 	return cfg, nil
+}
+
+func validateBillingConfig(cfg BillingConfig) error {
+	if cfg.MaxAccountPorts <= 0 || cfg.MaxPageSize <= 0 || cfg.MaxPeriodDuration <= 0 || cfg.MaxExportRows <= 0 ||
+		cfg.MaxPublicationRefs <= 0 || cfg.MaxPublicationBytes <= 0 {
+		return errors.New("billing limits must be positive")
+	}
+	if cfg.WorkerPollInterval <= 0 || cfg.WorkerLease < 3*time.Second || cfg.WorkerMaxAttempts == 0 || cfg.WorkerRetryBase <= 0 {
+		return errors.New("billing worker poll, lease, attempts and retry base must be positive; lease must be at least 3s")
+	}
+	if cfg.MaxAccountPorts > billing.HardMaxAccountPorts || cfg.MaxPeriodDuration > billing.HardMaxPeriodDuration {
+		return fmt.Errorf("billing account ports and period duration cannot exceed current reader ceilings (%d ports, %s)", billing.HardMaxAccountPorts, billing.HardMaxPeriodDuration)
+	}
+	return nil
 }
 
 func validateFlowReconciliationConfig(cfg Config) error {

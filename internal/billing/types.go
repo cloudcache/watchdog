@@ -83,30 +83,31 @@ type Party struct {
 }
 
 type Account struct {
-	ID               string          `json:"id"`
-	PartyID          string          `json:"party_id,omitempty"`
-	Name             string          `json:"name"`
-	Status           string          `json:"status"`
-	MeasurementType  MeasurementType `json:"measurement_type"`
-	BillingMethod    BillingMethod   `json:"billing_method"`
-	Algorithm        Algorithm       `json:"algorithm"`
-	BillingDay       uint8           `json:"billing_day"`
-	Timezone         string          `json:"timezone"`
-	Direction        Direction       `json:"direction"`
-	DefaultLayer     Layer           `json:"default_layer"`
-	PriceCurrency    string          `json:"price_currency"`
-	UnitPrice        string          `json:"unit_price"`
-	MinimumPercent   float64         `json:"minimum_percent"`
-	TrafficAllowance *uint64         `json:"traffic_allowance_bytes,omitempty"`
-	ReconcileAbs     uint64          `json:"reconcile_abs"`
-	ReconcilePercent float64         `json:"reconcile_percent"`
-	Ref              string          `json:"ref"`
-	Notes            string          `json:"notes"`
-	RowVersion       uint64          `json:"row_version"`
-	CreatedBy        string          `json:"created_by,omitempty"`
-	UpdatedBy        string          `json:"updated_by,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID                   string          `json:"id"`
+	PartyID              string          `json:"party_id,omitempty"`
+	Name                 string          `json:"name"`
+	Status               string          `json:"status"`
+	MeasurementType      MeasurementType `json:"measurement_type"`
+	BillingMethod        BillingMethod   `json:"billing_method"`
+	Algorithm            Algorithm       `json:"algorithm"`
+	BillingDay           uint8           `json:"billing_day"`
+	Timezone             string          `json:"timezone"`
+	Direction            Direction       `json:"direction"`
+	DefaultLayer         Layer           `json:"default_layer"`
+	PriceCurrency        string          `json:"price_currency"`
+	UnitPrice            string          `json:"unit_price"`
+	MinimumPercent       float64         `json:"minimum_percent"`
+	ContractBandwidthBPS *uint64         `json:"contract_bandwidth_bps,omitempty"`
+	TrafficAllowance     *uint64         `json:"traffic_allowance_bytes,omitempty"`
+	ReconcileAbs         uint64          `json:"reconcile_abs"`
+	ReconcilePercent     float64         `json:"reconcile_percent"`
+	Ref                  string          `json:"ref"`
+	Notes                string          `json:"notes"`
+	RowVersion           uint64          `json:"row_version"`
+	CreatedBy            string          `json:"created_by,omitempty"`
+	UpdatedBy            string          `json:"updated_by,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type AccountPort struct {
@@ -153,8 +154,18 @@ type Period struct {
 }
 
 type PeriodAccountSnapshot struct {
-	Account Account `json:"account"`
-	Party   *Party  `json:"party,omitempty"`
+	Account       Account       `json:"account"`
+	Party         *Party        `json:"party,omitempty"`
+	CapacityCheck CapacityCheck `json:"capacity_check"`
+}
+
+type CapacityCheck struct {
+	ContractBPS      uint64 `json:"contract_bps"`
+	SelectedBPS      uint64 `json:"selected_bps"`
+	DifferenceBPS    uint64 `json:"difference_bps"`
+	KnownPortCount   int    `json:"known_port_count"`
+	UnknownPortCount int    `json:"unknown_port_count"`
+	Status           string `json:"status"`
 }
 
 type Value struct {
@@ -272,6 +283,12 @@ func ValidateAccount(account Account) error {
 	if account.BillingMethod == BillingPackagePort && account.MinimumPercent != 0 {
 		return errors.New("package_port billing does not use a minimum percent")
 	}
+	if account.MeasurementType == MeasurementBandwidth && (account.ContractBandwidthBPS == nil || *account.ContractBandwidthBPS == 0) {
+		return errors.New("contract_bandwidth_bps is required for bandwidth measurement")
+	}
+	if account.MeasurementType == MeasurementTraffic && account.ContractBandwidthBPS != nil {
+		return errors.New("contract_bandwidth_bps is only valid for bandwidth measurement")
+	}
 	if account.BillingDay < 1 || account.BillingDay > 31 {
 		return errors.New("billing day must be 1..31")
 	}
@@ -288,12 +305,16 @@ func ValidateAccount(account Account) error {
 }
 
 func ValidatePeriodWindow(from, to time.Time, timezone string, now time.Time) error {
+	return validatePeriodWindow(from, to, timezone, now, DefaultLimits().MaxPeriodDuration)
+}
+
+func validatePeriodWindow(from, to time.Time, timezone string, now time.Time, maxDuration time.Duration) error {
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return fmt.Errorf("invalid IANA timezone: %w", err)
 	}
 	from, to = from.UTC(), to.UTC()
-	if !to.After(from) || to.Sub(from) > 400*24*time.Hour {
-		return errors.New("billing period must be a positive interval of at most 400 days")
+	if !to.After(from) || to.Sub(from) > maxDuration {
+		return fmt.Errorf("billing period must be a positive interval of at most %s", maxDuration)
 	}
 	if !from.Equal(from.Truncate(5*time.Minute)) || !to.Equal(to.Truncate(5*time.Minute)) {
 		return errors.New("billing period boundaries must align to UTC five-minute buckets")

@@ -11,7 +11,13 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import { BYTES_PER_GB, formatBillingUnit, parseBillingUnit, reconciliationUnit } from "@/lib/billing-units"
+import {
+	BPS_PER_MBPS,
+	BYTES_PER_GB,
+	formatBillingUnit,
+	parseBillingUnit,
+	reconciliationUnit,
+} from "@/lib/billing-units"
 import { cn } from "@/lib/utils"
 
 type BillingAccount = {
@@ -29,6 +35,7 @@ type BillingAccount = {
 	price_currency: string
 	unit_price: string
 	minimum_percent: number
+	contract_bandwidth_bps?: number
 	traffic_allowance_bytes?: number
 	reconcile_abs: number
 	reconcile_percent: number
@@ -37,7 +44,14 @@ type BillingAccount = {
 }
 type Party = { id: string; name: string; kind: string; status: string }
 type BillingDirection = "in" | "out" | "agg"
-type BillingPort = { port_id: string; direction: BillingDirection }
+type BillingPort = {
+	port_id: string
+	device_id: string
+	if_index?: number
+	if_name?: string
+	capacity_bps?: number
+	direction: BillingDirection
+}
 type NetworkDevice = {
 	id?: string
 	ID?: string
@@ -59,14 +73,25 @@ type NetworkPort = {
 	IfAlias?: string
 	oper_status?: string
 	OperStatus?: string
+	speed_bps?: number
+	SpeedBps?: number
+	metadata?: Record<string, unknown>
+	Metadata?: Record<string, unknown>
 }
 type Page<T> = { items?: T[]; total?: number }
 type FormState = Omit<
 	BillingAccount,
-	"id" | "billing_day" | "minimum_percent" | "traffic_allowance_bytes" | "reconcile_abs" | "reconcile_percent"
+	| "id"
+	| "billing_day"
+	| "minimum_percent"
+	| "contract_bandwidth_bps"
+	| "traffic_allowance_bytes"
+	| "reconcile_abs"
+	| "reconcile_percent"
 > & {
 	billing_day: string
 	minimum_percent: string
+	contract_bandwidth_mbps: string
 	traffic_allowance_gb: string
 	reconcile_absolute: string
 	reconcile_percent: string
@@ -86,6 +111,7 @@ const emptyForm: FormState = {
 	price_currency: "CNY",
 	unit_price: "0",
 	minimum_percent: "0",
+	contract_bandwidth_mbps: "",
 	traffic_allowance_gb: "",
 	reconcile_absolute: "0",
 	reconcile_percent: "5",
@@ -106,9 +132,11 @@ export default memo(({ id }: { id?: string }) => {
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
 	const etag = useRef("")
+	const loadedPortDeviceIDs = useRef(new Set<string>())
 	const load = useCallback(async () => {
 		setLoading(true)
 		setError("")
+		loadedPortDeviceIDs.current.clear()
 		try {
 			const [partyPage, devicePage, detail] = await Promise.all([
 				api.send<Page<Party>>("/api/v1/billing/parties", {
@@ -128,26 +156,24 @@ export default memo(({ id }: { id?: string }) => {
 			setParties(partyPage.items ?? [])
 			const loadedDevices = devicePage.items ?? []
 			setDevices(loadedDevices)
-			const portEntries = await Promise.all(
-				loadedDevices.map(async (device) => {
-					const deviceID = networkDeviceID(device)
-					if (!deviceID) return ["", [] as NetworkPort[]] as const
-					const page = await api.send<Page<NetworkPort>>(`/api/v1/devices/${deviceID}/ports`, {
-						query: { limit: 500, offset: 0 },
-					})
-					return [deviceID, page.items ?? []] as const
+			const loadedPorts: Record<string, NetworkPort[]> = {}
+			for (const port of detail?.ports ?? []) {
+				if (!port.device_id) continue
+				loadedPorts[port.device_id] ??= []
+				loadedPorts[port.device_id].push({
+					id: port.port_id,
+					if_index: port.if_index,
+					if_name: port.if_name,
+					speed_bps: port.capacity_bps,
 				})
-			)
-			const loadedPorts = Object.fromEntries(portEntries.filter(([deviceID]) => Boolean(deviceID)))
+			}
 			setPortsByDevice(loadedPorts)
 			const loadedBindings: Record<string, BillingDirection> = Object.fromEntries(
 				(detail?.ports ?? []).map((port) => [port.port_id, port.direction])
 			)
 			setBindings(loadedBindings)
-			const firstBoundDevice = loadedDevices.find((device) =>
-				(loadedPorts[networkDeviceID(device)] ?? []).some((port) => networkPortID(port) in loadedBindings)
-			)
-			setActiveDeviceID(networkDeviceID(firstBoundDevice ?? loadedDevices[0]))
+			const firstBoundDeviceID = detail?.ports.find((port) => port.device_id)?.device_id
+			setActiveDeviceID(firstBoundDeviceID ?? networkDeviceID(loadedDevices[0]))
 			if (!detail) return
 			const item = detail.account
 			setForm({
@@ -164,6 +190,7 @@ export default memo(({ id }: { id?: string }) => {
 				price_currency: item.price_currency ?? "CNY",
 				unit_price: item.unit_price ?? "0",
 				minimum_percent: String(item.minimum_percent ?? 0),
+				contract_bandwidth_mbps: formatBillingUnit(item.contract_bandwidth_bps, BPS_PER_MBPS),
 				traffic_allowance_gb: formatBillingUnit(item.traffic_allowance_bytes, BYTES_PER_GB),
 				reconcile_absolute: formatBillingUnit(item.reconcile_abs, reconciliationUnit(item.algorithm).multiplier),
 				reconcile_percent: String(item.reconcile_percent),
@@ -180,6 +207,24 @@ export default memo(({ id }: { id?: string }) => {
 		document.title = `${id ? t`Edit Billing Account` : t`Create Billing Account`} / Watchdog`
 		load()
 	}, [id, load, t])
+	useEffect(() => {
+		if (!activeDeviceID || loadedPortDeviceIDs.current.has(activeDeviceID)) return
+		loadedPortDeviceIDs.current.add(activeDeviceID)
+		api
+			.send<Page<NetworkPort>>(`/api/v1/devices/${activeDeviceID}/ports`, {
+				query: { limit: 500, offset: 0 },
+			})
+			.then((page) =>
+				setPortsByDevice((current) => ({
+					...current,
+					[activeDeviceID]: mergePortsByID(current[activeDeviceID] ?? [], page.items ?? []),
+				}))
+			)
+			.catch((err) => {
+				loadedPortDeviceIDs.current.delete(activeDeviceID)
+				setError(err instanceof Error ? err.message : t`Failed to load device ports`)
+			})
+	}, [activeDeviceID, t])
 	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
 	const activePorts = useMemo(() => portsByDevice[activeDeviceID] ?? [], [activeDeviceID, portsByDevice])
 	const filteredDevices = useMemo(() => {
@@ -216,12 +261,16 @@ export default memo(({ id }: { id?: string }) => {
 		setSaving(true)
 		setError("")
 		try {
+			const contractBandwidth =
+				form.measurement_type === "bandwidth" ? parseBillingUnit(form.contract_bandwidth_mbps, BPS_PER_MBPS) : undefined
 			const trafficAllowance =
-				form.measurement_type === "traffic"
-					? parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB)
-					: undefined
+				form.measurement_type === "traffic" ? parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB) : undefined
 			const reconcileAbs = parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier)
-			if ((form.measurement_type === "traffic" && trafficAllowance === undefined) || reconcileAbs === undefined) {
+			if (
+				(form.measurement_type === "bandwidth" && (!contractBandwidth || contractBandwidth <= 0)) ||
+				(form.measurement_type === "traffic" && trafficAllowance === undefined) ||
+				reconcileAbs === undefined
+			) {
 				throw new Error(t`Enter valid billing and reconciliation values`)
 			}
 			const body = {
@@ -237,6 +286,7 @@ export default memo(({ id }: { id?: string }) => {
 				price_currency: form.price_currency.trim().toUpperCase(),
 				unit_price: form.unit_price.trim(),
 				minimum_percent: Number(form.minimum_percent),
+				contract_bandwidth_bps: contractBandwidth,
 				traffic_allowance_bytes: trafficAllowance,
 				reconcile_abs: reconcileAbs,
 				reconcile_percent: Number(form.reconcile_percent),
@@ -267,10 +317,29 @@ export default memo(({ id }: { id?: string }) => {
 	}
 	const minimumPercent = Number(form.minimum_percent)
 	const validMinimumPercent =
-		form.minimum_percent.trim() !== "" && Number.isFinite(minimumPercent) && minimumPercent >= 0 && minimumPercent <= 100
+		form.minimum_percent.trim() !== "" &&
+		Number.isFinite(minimumPercent) &&
+		minimumPercent >= 0 &&
+		minimumPercent <= 100
 	const validTrafficAllowance =
-		form.measurement_type !== "traffic" ||
-		parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB) !== undefined
+		form.measurement_type !== "traffic" || parseBillingUnit(form.traffic_allowance_gb, BYTES_PER_GB) !== undefined
+	const contractBandwidthBPS = parseBillingUnit(form.contract_bandwidth_mbps, BPS_PER_MBPS)
+	const validContractBandwidth =
+		form.measurement_type !== "bandwidth" || (contractBandwidthBPS !== undefined && contractBandwidthBPS > 0)
+	const selectedCapacity = useMemo(() => {
+		let bps = 0
+		let unknown = 0
+		for (const ports of Object.values(portsByDevice)) {
+			for (const port of ports) {
+				if (!(networkPortID(port) in bindings)) continue
+				const capacity = networkPortCapacity(port)
+				if (capacity > 0) bps += capacity
+				else unknown++
+			}
+		}
+		return { bps, unknown }
+	}, [bindings, portsByDevice])
+	const capacityStatus = capacityComparison(contractBandwidthBPS, selectedCapacity.bps, selectedCapacity.unknown)
 	const validReconcileAbsolute =
 		parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier) !== undefined
 	const reconcilePercent = Number(form.reconcile_percent)
@@ -286,6 +355,7 @@ export default memo(({ id }: { id?: string }) => {
 		Number(form.billing_day) >= 1 &&
 		Number(form.billing_day) <= 31 &&
 		validMinimumPercent &&
+		validContractBandwidth &&
 		validTrafficAllowance &&
 		validReconcileAbsolute &&
 		validReconcilePercent &&
@@ -497,17 +567,44 @@ export default memo(({ id }: { id?: string }) => {
 					/>
 				</Field>
 				{form.measurement_type === "bandwidth" && form.billing_method !== "package_port" ? (
+					<>
+						<Field
+							label={t`Contract bandwidth (Mbps)`}
+							hint={t`Commercial contract value used as the billing authority.`}
+						>
+							<Input
+								type="number"
+								min="0.001"
+								step="0.001"
+								value={form.contract_bandwidth_mbps}
+								onChange={(event) => update({ contract_bandwidth_mbps: event.target.value })}
+							/>
+						</Field>
+						<Field
+							label={t`Minimum usage (%)`}
+							hint={t`The billing floor is contract bandwidth multiplied by this percentage.`}
+						>
+							<Input
+								type="number"
+								min="0"
+								max="100"
+								step="0.01"
+								value={form.minimum_percent}
+								onChange={(event) => update({ minimum_percent: event.target.value })}
+							/>
+						</Field>
+					</>
+				) : form.measurement_type === "bandwidth" ? (
 					<Field
-						label={t`Minimum usage (%)`}
-						hint={t`Percentage of the combined nominal bandwidth of the selected ports.`}
+						label={t`Contract bandwidth (Mbps)`}
+						hint={t`Commercial contract value used as the billing authority.`}
 					>
 						<Input
 							type="number"
-							min="0"
-							max="100"
-							step="0.01"
-							value={form.minimum_percent}
-							onChange={(event) => update({ minimum_percent: event.target.value })}
+							min="0.001"
+							step="0.001"
+							value={form.contract_bandwidth_mbps}
+							onChange={(event) => update({ contract_bandwidth_mbps: event.target.value })}
 						/>
 					</Field>
 				) : form.measurement_type === "traffic" ? (
@@ -691,6 +788,39 @@ export default memo(({ id }: { id?: string }) => {
 						<Trans>Select at least one billing port.</Trans>
 					</p>
 				) : null}
+				{form.measurement_type === "bandwidth" && selectedPortCount > 0 ? (
+					<div
+						className={cn(
+							"rounded-md border px-3 py-2 text-sm",
+							capacityStatus === "match"
+								? "border-emerald-500/30 text-emerald-700"
+								: "border-amber-500/40 text-amber-700"
+						)}
+					>
+						{capacityStatus === "unknown" ? (
+							<Trans>
+								{selectedCapacity.unknown} selected ports have no discovered speed; capacity cannot be fully checked.
+							</Trans>
+						) : capacityStatus === "insufficient" ? (
+							<Trans>
+								Selected port capacity is below the contract bandwidth. Check the bindings or correct the contract
+								value.
+							</Trans>
+						) : capacityStatus === "excess" ? (
+							<Trans>
+								Selected port capacity exceeds the contract bandwidth. Check for duplicate or unintended ports.
+							</Trans>
+						) : capacityStatus === "match" ? (
+							<Trans>Selected port capacity matches the contract bandwidth.</Trans>
+						) : (
+							<Trans>Enter the contract bandwidth to check selected port capacity.</Trans>
+						)}
+						<div className="mt-1 text-xs text-muted-foreground">
+							<Trans>Contract</Trans>: {formatMbps(contractBandwidthBPS)} · <Trans>Selected capacity</Trans>:{" "}
+							{formatMbps(selectedCapacity.bps)}
+						</div>
+					</div>
+				) : null}
 			</div>
 		</div>
 	)
@@ -749,8 +879,35 @@ function networkPortID(port: NetworkPort) {
 	return port.ID ?? port.id ?? ""
 }
 
+function mergePortsByID(first: NetworkPort[], second: NetworkPort[]) {
+	const ports = new Map(first.map((port) => [networkPortID(port), port]))
+	for (const port of second) ports.set(networkPortID(port), port)
+	return [...ports.values()].filter((port) => networkPortID(port))
+}
+
 function networkPortLabel(port: NetworkPort) {
 	const name = port.IfName ?? port.if_name ?? networkPortID(port)
 	const alias = port.IfAlias ?? port.if_alias
 	return alias ? `${name} · ${alias}` : name
+}
+
+function networkPortCapacity(port: NetworkPort) {
+	const metadata = port.Metadata ?? port.metadata ?? {}
+	const highSpeed = Number(metadata.if_high_speed_mbps ?? 0)
+	if (Number.isFinite(highSpeed) && highSpeed > 0) return highSpeed * BPS_PER_MBPS
+	const speed = Number(port.SpeedBps ?? port.speed_bps ?? 0)
+	return Number.isFinite(speed) && speed > 0 ? speed : 0
+}
+
+function capacityComparison(contract: number | undefined, selected: number, unknown: number) {
+	if (!contract) return "missing"
+	if (unknown > 0) return "unknown"
+	if (selected < contract) return "insufficient"
+	if (selected > contract) return "excess"
+	return "match"
+}
+
+function formatMbps(value: number | undefined) {
+	if (!value) return "—"
+	return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(value / BPS_PER_MBPS)} Mbps`
 }
