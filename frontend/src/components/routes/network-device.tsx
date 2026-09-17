@@ -380,8 +380,8 @@ export default memo(({ id }: DeviceDetailProps) => {
 				method: "PUT",
 				body: {
 					items: [
-						{ metric: "watchdog_snmp_if_in_bps", direction: "in", label: "In", total: true },
-						{ metric: "watchdog_snmp_if_out_bps", direction: "out", label: "Out", total: true },
+						{ metric: "watchdog_snmp_if_in_bps", direction: "in", label: "Inbound", total: true },
+						{ metric: "watchdog_snmp_if_out_bps", direction: "out", label: "Outbound", total: true },
 					],
 				},
 			})
@@ -547,10 +547,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<TrafficViewSwitcher value={trafficView} onChange={setTrafficView} allowRaw={isAdmin()} />
-				<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-					<span>{trafficViewDisplayLabel}</span>
-					<span>{trafficViewValueMode(trafficView, isAdmin())}</span>
-				</div>
+				<span className="text-xs text-muted-foreground">{trafficViewDisplayLabel}</span>
 			</div>
 
 			<GraphContextProvider value={graphContext}>

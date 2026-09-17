@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { downloadWatchdogFile, api } from "@/lib/api"
-import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
+import { trafficViewFromValue } from "@/lib/traffic-view"
 import type { ColumnDefine } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
 import {
@@ -89,20 +89,22 @@ export default memo(() => {
 
 	const records = useMemo(
 		() =>
-			tasks.map((task) => ({
-				id: exportID(task),
-				status: exportStatus(task) || "—",
-				target: task.TargetID ?? task.target_id ?? "—",
-				port: task.PortID ?? task.port_id ?? "—",
-				range: formatExportRange(task),
-				aggregation: task.Aggregation ?? task.aggregation ?? "—",
-				view: trafficViewLabel(exportTrafficView(task)),
-				value: task.ValueMode ?? task.value_mode ?? "corrected",
-				format: task.Format ?? task.format ?? "—",
-				action: exportStatus(task) === "complete" ? "Download" : "Open",
-				task,
-			})),
-		[tasks]
+			tasks.map((task) => {
+				const view = exportTrafficView(task)
+				return {
+					id: exportID(task),
+					status: exportStatus(task) || "—",
+					target: task.TargetID ?? task.target_id ?? "—",
+					port: task.PortID ?? task.port_id ?? "—",
+					range: formatExportRange(task),
+					aggregation: task.Aggregation ?? task.aggregation ?? "—",
+					view: view === "customer" ? t`Customer` : view === "supplier" ? t`Supplier` : t`Raw`,
+					format: task.Format ?? task.format ?? "—",
+					action: exportStatus(task) === "complete" ? "Download" : "Open",
+					task,
+				}
+			}),
+		[tasks, t]
 	)
 	const columns = useMemo<ColumnDefine[]>(
 		() => [
@@ -112,7 +114,6 @@ export default memo(() => {
 			{ field: "range", title: t`Range`, width: 270, style: denseCellStyle() },
 			{ field: "aggregation", title: t`Aggregation`, width: 130, style: denseCellStyle() },
 			{ field: "view", title: t`View`, width: 110, style: denseCellStyle() },
-			{ field: "value", title: t`Value`, width: 110, style: denseCellStyle() },
 			{ field: "format", title: t`Format`, width: 100, style: denseCellStyle() },
 			{ field: "action", title: t`Actions`, width: 110, filter: false, style: denseCellStyle() },
 		],
@@ -206,11 +207,15 @@ export default memo(() => {
 					<SelectItem value="all">
 						<Trans>All</Trans>
 					</SelectItem>
-					{["raw", "supplier", "customer"].map((value) => (
-						<SelectItem key={value} value={value}>
-							{value}
-						</SelectItem>
-					))}
+					<SelectItem value="raw">
+						<Trans>Raw</Trans>
+					</SelectItem>
+					<SelectItem value="supplier">
+						<Trans>Supplier</Trans>
+					</SelectItem>
+					<SelectItem value="customer">
+						<Trans>Customer</Trans>
+					</SelectItem>
 				</ExportFilter>
 				<ExportFilter value={format} onChange={(value) => resetPage(() => setFormat(value))} label={t`Format`}>
 					<SelectItem value="all">

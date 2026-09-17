@@ -98,11 +98,11 @@ msgstr "{threads, plural, one {# 线程} other {# 线程}}"
 
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · inbound"
-msgstr "{title} · 入向"
+msgstr "{title} · 流入"
 
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · outbound"
-msgstr "{title} · 出向"
+msgstr "{title} · 流出"
 
 #: src/lib/utils.ts
 msgid "1 hour"
@@ -537,6 +537,14 @@ msgstr "别名"
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr "全部"
+
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/dashboard-form.tsx
+#: src/components/routes/export-new.tsx
+msgid "All values"
+msgstr "全部数据"
 
 #: src/components/routes/network-device.tsx
 msgid "All addresses"
@@ -1365,6 +1373,13 @@ msgstr "修正归属"
 msgid "Correction"
 msgstr "修正"
 
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/dashboard-form.tsx
+#: src/components/routes/export-new.tsx
+msgid "Corrected"
+msgstr "修正值"
+
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction max"
 msgstr "修正上限"
@@ -2087,7 +2102,7 @@ msgstr "持续时间"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Each cell is inbound / outbound and its directional share for the same frozen report window."
-msgstr "每个单元格为入向/出向及其在同一冻结报表时段内的方向占比。"
+msgstr "每个单元格为流入/流出及其在同一冻结报表时段内的方向占比。"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -3375,7 +3390,7 @@ msgstr "导入"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
 msgid "In"
-msgstr "入"
+msgstr "流入"
 
 #: src/components/routes/billing.tsx
 msgid "Inactive"
@@ -3386,24 +3401,24 @@ msgstr "非活跃"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
 msgid "Inbound"
-msgstr "入向"
+msgstr "流入"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Inbound − outbound"
-msgstr "入向 − 出向"
+msgstr "流入 − 流出"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Inbound and outbound from the local-network perspective."
-msgstr "从本网视角看的入向与出向。"
+msgstr "从本网视角看的流入与流出。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Inbound and outbound traffic from the published overseas rollup."
-msgstr "来自已发布跨境汇总的入站与出站流量。"
+msgstr "来自已发布跨境汇总的流入与流出流量。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Inbound current / total"
-msgstr "入向 当前/总量"
+msgstr "流入 当前/总量"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include all"
@@ -4523,7 +4538,7 @@ msgstr "选择后，指标将成为允许列表；不选择则保留已授权设
 
 #: src/components/routes/flow-reports.tsx
 msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
-msgstr "按合计流量排序的稳定单页，针对相同地址与冻结报表时段给出精确的入向/出向与流量分类值。选择某行可在下方加载记录。归属修正会打开地址库草稿；绝不会改动已发布快照。"
+msgstr "按合计流量排序的稳定单页，针对相同地址与冻结报表时段给出精确的流入/流出与流量分类值。选择某行可在下方加载记录。归属修正会打开地址库草稿；绝不会改动已发布快照。"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Only prefixes with identical geography/operator/ASN/labels merge; coverage and attribution are preserved."
@@ -4628,18 +4643,18 @@ msgstr "其他"
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/network-device.tsx
 msgid "Out"
-msgstr "出"
+msgstr "流出"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
 msgid "Outbound"
-msgstr "出向"
+msgstr "流出"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Outbound current / total"
-msgstr "出向 当前/总量"
+msgstr "流出 当前/总量"
 
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
@@ -4675,7 +4690,7 @@ msgstr "跨境（按国家/地区）"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Overseas inbound / outbound"
-msgstr "跨境 入向/出向"
+msgstr "跨境流入/流出"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Overseas summary"
@@ -6604,7 +6619,7 @@ msgstr "查看流量方向、分类、完整性和当前趋势。"
 
 #: src/components/routes/aggregate-charts.tsx
 msgid "Traffic in/out is preselected; pick others only when needed."
-msgstr "已默认选中入/出流量,仅在需要时勾选其他指标。"
+msgstr "已默认选中流入/流出流量，仅在需要时勾选其他指标。"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Traffic Policy"
@@ -7629,7 +7644,7 @@ msgstr "端口固定价"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "In + out"
-msgstr "入 + 出"
+msgstr "流入 + 流出"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "No accessible network devices."
@@ -7661,7 +7676,7 @@ msgstr "请至少选择一个计费端口。"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Select ports from any device. Each port can use inbound, outbound, or combined traffic."
-msgstr "可从任意设备选择端口；每个端口可分别选择入流量、出流量或合计流量。"
+msgstr "可从任意设备选择端口；每个端口可分别选择流入、流出或合计流量。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Unit price"

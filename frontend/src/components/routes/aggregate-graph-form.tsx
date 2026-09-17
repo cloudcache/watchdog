@@ -364,12 +364,18 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 								disabled={!isAdmin() && form.valueMode !== "corrected"}
 							>
 								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="corrected">corrected</SelectItem>
-									<SelectItem value="raw">raw</SelectItem>
-									<SelectItem value="both">both</SelectItem>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="corrected">
+									<Trans>Corrected</Trans>
+								</SelectItem>
+								<SelectItem value="raw">
+									<Trans>Raw</Trans>
+								</SelectItem>
+								<SelectItem value="both">
+									<Trans>All values</Trans>
+								</SelectItem>
 								</SelectContent>
 							</Select>
 						</Field>
@@ -416,12 +422,18 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 							</Select>
 							<Select value={item.direction} onValueChange={(value) => updateItem(index, { direction: value })}>
 								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="in">in</SelectItem>
-									<SelectItem value="out">out</SelectItem>
-									<SelectItem value="other">other</SelectItem>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="in">
+									<Trans>Inbound</Trans>
+								</SelectItem>
+								<SelectItem value="out">
+									<Trans>Outbound</Trans>
+								</SelectItem>
+								<SelectItem value="other">
+									<Trans>Other</Trans>
+								</SelectItem>
 								</SelectContent>
 							</Select>
 							<Input
@@ -519,8 +531,8 @@ function portLabel(port: NetworkPort & { deviceName?: string }) {
 
 function defaultTrafficItems(): ItemState[] {
 	return [
-		{ id: "item_in", metric: "watchdog_snmp_if_in_bps", direction: "in", label: "In", total: true },
-		{ id: "item_out", metric: "watchdog_snmp_if_out_bps", direction: "out", label: "Out", total: true },
+		{ id: "item_in", metric: "watchdog_snmp_if_in_bps", direction: "in", label: "Inbound", total: true },
+		{ id: "item_out", metric: "watchdog_snmp_if_out_bps", direction: "out", label: "Outbound", total: true },
 	]
 }
 

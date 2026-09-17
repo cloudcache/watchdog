@@ -232,9 +232,6 @@ export default memo(() => {
 										<TableHead>
 											<Trans>Aggregation</Trans>
 										</TableHead>
-										<TableHead>
-											<Trans>Value</Trans>
-										</TableHead>
 										<TableHead className="text-right">
 											<Trans>Actions</Trans>
 										</TableHead>
@@ -283,7 +280,6 @@ export default memo(() => {
 												</TableCell>
 												<TableCell className="font-mono text-xs">{graph.PortCount ?? 0}</TableCell>
 												<TableCell>{graph.Aggregation ?? graph.aggregation ?? "—"}</TableCell>
-												<TableCell>{graph.ValueMode ?? graph.value_mode ?? "corrected"}</TableCell>
 												<TableCell className="text-right">
 													<div className="flex justify-end gap-2">
 														<Link

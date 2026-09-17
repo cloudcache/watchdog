@@ -73,11 +73,12 @@ export default memo(({ id }: DashboardFormProps) => {
 		if (!id) return
 		let cancelled = false
 		setLoading(true)
-		api.send<DashboardPreview>(`/api/v1/dashboards/${id}/preview`, {
-			onResponse: (response) => {
-				etagRef.current = response.headers.get("ETag") ?? ""
-			},
-		})
+		api
+			.send<DashboardPreview>(`/api/v1/dashboards/${id}/preview`, {
+				onResponse: (response) => {
+					etagRef.current = response.headers.get("ETag") ?? ""
+				},
+			})
 			.then((data) => {
 				if (cancelled) return
 				setName(data.dashboard.name)
@@ -479,7 +480,7 @@ function GraphPicker({
 							<span className="text-xs text-muted-foreground">
 								{graph.Description ??
 									graph.description ??
-									`${graph.Aggregation ?? graph.aggregation ?? "sum"} · ${graph.ValueMode ?? graph.value_mode ?? "corrected"}`}
+									`${graph.Aggregation ?? graph.aggregation ?? "sum"} · ${graphValueModeLabel(graph, t)}`}
 							</span>
 						</button>
 					))}
@@ -515,4 +516,9 @@ function GraphPicker({
 			</DialogContent>
 		</Dialog>
 	)
+}
+
+function graphValueModeLabel(graph: DashboardGraph, t: (message: TemplateStringsArray) => string) {
+	const mode = graph.ValueMode ?? graph.value_mode ?? "corrected"
+	return mode === "raw" ? t`Raw` : mode === "both" ? t`All values` : t`Corrected`
 }

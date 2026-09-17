@@ -110,6 +110,8 @@ export default memo(() => {
 	const [chartLoading, setChartLoading] = useState(false)
 	const [savingGraph, setSavingGraph] = useState(false)
 	const [error, setError] = useState("")
+	const trafficViewDisplayLabel =
+		trafficView === "customer" ? t`Customer` : trafficView === "supplier" ? t`Supplier` : t`Raw`
 
 	const applyTrafficView = useCallback((mode: TrafficViewMode) => {
 		setTrafficView(mode)
@@ -232,8 +234,15 @@ export default memo(() => {
 					timeParams: buildTimeParams(),
 				})
 				for (const item of metricSeries) {
+					const metricLabel =
+						name === "watchdog_snmp_if_in_bps"
+							? t`Inbound`
+							: name === "watchdog_snmp_if_out_bps"
+								? t`Outbound`
+								: labelForMetric(metric)
+					const modeLabel = item.mode === "raw" ? ` (${t`Raw`})` : ""
 					nextSeries.push({
-						name: `${labelForMetric(metric)} ${aggregate}${item.mode ? ` (${item.mode})` : ""}`,
+						name: `${metricLabel}${modeLabel}`,
 						unit,
 						values: item.values,
 					})
@@ -290,7 +299,7 @@ export default memo(() => {
 				return {
 					metric,
 					direction,
-					label: direction === "in" ? "In" : direction === "out" ? "Out" : metric,
+					label: direction === "in" ? "Inbound" : direction === "out" ? "Outbound" : metric,
 					total: direction === "in" || direction === "out",
 				}
 			})
@@ -412,9 +421,7 @@ export default memo(() => {
 						<ChevronRightIcon className="ms-1 h-3.5 w-3.5" />
 					)}
 				</Button>
-				<span className="ms-auto text-xs text-muted-foreground">
-					{trafficViewLabel(trafficView)} · {aggregate} · {valueMode}
-				</span>
+				<span className="ms-auto text-xs text-muted-foreground">{trafficViewDisplayLabel}</span>
 			</div>
 
 			{advancedOpen ? (
@@ -456,9 +463,19 @@ export default memo(() => {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="corrected">corrected</SelectItem>
-									{isAdmin() && <SelectItem value="raw">raw</SelectItem>}
-									{isAdmin() && <SelectItem value="both">both</SelectItem>}
+									<SelectItem value="corrected">
+										<Trans>Corrected</Trans>
+									</SelectItem>
+									{isAdmin() && (
+										<SelectItem value="raw">
+											<Trans>Raw</Trans>
+										</SelectItem>
+									)}
+									{isAdmin() && (
+										<SelectItem value="both">
+											<Trans>All values</Trans>
+										</SelectItem>
+									)}
 								</SelectContent>
 							</Select>
 						</LabeledControl>

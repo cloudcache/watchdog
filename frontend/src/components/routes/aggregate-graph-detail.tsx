@@ -159,7 +159,12 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 				params.set("split_side_type", "true")
 			}
 			const data = await api.send<VMRangeResponse>(`/api/v1/aggregate-graphs/${id}/series?${params.toString()}`, {})
-			setChartSeries(vmSeries(data))
+			setChartSeries(
+				vmSeries(data).map((series) => ({
+					...series,
+					name: localizedSeriesName(series.name, t),
+				}))
+			)
 		} catch (err) {
 			setChartError(err instanceof Error ? err.message : t`Failed to load aggregate series`)
 		} finally {
@@ -271,7 +276,6 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 				<div className="grid gap-3 rounded-md border border-border p-4">
 					<div className="flex flex-wrap items-center gap-2 text-sm">
 						<Badge variant="outline">{graph.Aggregation ?? graph.aggregation ?? "sum"}</Badge>
-						<Badge variant="outline">{graph.ValueMode ?? graph.value_mode ?? "corrected"}</Badge>
 						<span className="font-mono text-xs text-muted-foreground">{graph.Metric ?? graph.metric}</span>
 						{unit ? <span className="text-xs text-muted-foreground">· {unit}</span> : null}
 					</div>
@@ -295,12 +299,25 @@ export default memo(({ id }: AggregateGraphDetailProps) => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="corrected">corrected</SelectItem>
-								{isAdmin() && <SelectItem value="raw">raw</SelectItem>}
-								{isAdmin() && <SelectItem value="both">both</SelectItem>}
+								<SelectItem value="corrected">
+									<Trans>Default</Trans>
+								</SelectItem>
+								{isAdmin() && (
+									<SelectItem value="raw">
+										<Trans>Raw</Trans>
+									</SelectItem>
+								)}
+								{isAdmin() && (
+									<SelectItem value="both">
+										<Trans>All values</Trans>
+									</SelectItem>
+								)}
 							</SelectContent>
 						</Select>
-						<label htmlFor="aggregate-graph-split-side" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+						<label
+							htmlFor="aggregate-graph-split-side"
+							className="flex items-center gap-1.5 text-xs text-muted-foreground"
+						>
 							<Checkbox
 								id="aggregate-graph-split-side"
 								checked={splitSideType}
@@ -441,6 +458,23 @@ function vmSeries(response: VMRangeResponse): ChartSeries[] {
 			return { name: label, values }
 		})
 		.filter((entry) => entry.values.length > 0)
+}
+
+function localizedSeriesName(name: string, t: (message: TemplateStringsArray) => string) {
+	const normalized = name.trim().toLowerCase()
+	if (normalized === "in" || normalized === "inbound" || normalized.includes(" inbound ")) {
+		return t`Inbound`
+	}
+	if (normalized === "out" || normalized === "outbound" || normalized.includes(" outbound ")) {
+		return t`Outbound`
+	}
+	if (normalized === "raw") {
+		return t`Raw`
+	}
+	if (normalized === "corrected") {
+		return t`Series`
+	}
+	return name.replace(/\s*\(corrected\)\s*$/i, "")
 }
 
 function SummaryTile({ label, value }: { label: React.ReactNode; value: string }) {

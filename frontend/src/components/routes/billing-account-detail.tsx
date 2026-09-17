@@ -495,8 +495,30 @@ export default memo(({ id }: { id: string }) => {
 										: undefined
 					}
 				/>
-				<Info label={t`Direction`} value={account?.direction} />
-				<Info label={t`Value strategy`} value={account?.default_layer} />
+				<Info
+					label={t`Direction`}
+					value={
+						account?.direction === "in"
+							? t`Inbound`
+							: account?.direction === "out"
+								? t`Outbound`
+								: account
+									? t`In + out`
+									: undefined
+					}
+				/>
+				<Info
+					label={t`Value strategy`}
+					value={
+						account?.default_layer === "customer"
+							? t`Customer`
+							: account?.default_layer === "supplier"
+								? t`Supplier`
+								: account
+									? t`Raw`
+									: undefined
+					}
+				/>
 				<Info label={t`Contract bandwidth`} value={formatBPS(account?.contract_bandwidth_bps)} />
 				<Info
 					label={account?.measurement_type === "traffic" ? t`Traffic allowance` : t`Billing minimum`}
@@ -568,9 +590,15 @@ export default memo(({ id }: { id: string }) => {
 												<SelectValue />
 											</SelectTrigger>
 											<SelectContent>
-												<SelectItem value="in">in</SelectItem>
-												<SelectItem value="out">out</SelectItem>
-												<SelectItem value="agg">in + out</SelectItem>
+												<SelectItem value="in">
+													<Trans>Inbound</Trans>
+												</SelectItem>
+												<SelectItem value="out">
+													<Trans>Outbound</Trans>
+												</SelectItem>
+												<SelectItem value="agg">
+													<Trans>In + out</Trans>
+												</SelectItem>
 											</SelectContent>
 										</Select>
 									</div>

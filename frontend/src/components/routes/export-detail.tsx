@@ -24,7 +24,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { downloadWatchdogFile, api } from "@/lib/api"
-import { trafficViewFromValue, trafficViewLabel } from "@/lib/traffic-view"
+import { trafficViewFromValue } from "@/lib/traffic-view"
 import { cn } from "@/lib/utils"
 import {
 	exportDownloadURL,
@@ -75,7 +75,15 @@ export default memo(({ id }: ExportDetailProps) => {
 	const canCancel =
 		task && (status === "pending" || status === "running") && Boolean(task.OperationJobID ?? task.operation_job_id)
 	const canDelete = task && (status === "complete" || status === "failed" || status === "canceled")
-	const viewMode = task ? trafficViewLabel(exportTrafficView(task)) : "-"
+	const trafficView = task ? exportTrafficView(task) : null
+	const viewMode =
+		trafficView === "customer"
+			? t`Customer`
+			: trafficView === "supplier"
+				? t`Supplier`
+				: trafficView === "raw"
+					? t`Raw`
+					: "-"
 
 	const retry = async () => {
 		if (!task) {
@@ -178,9 +186,7 @@ export default memo(({ id }: ExportDetailProps) => {
 						disabled={!canDownload}
 						onClick={() => {
 							if (task) {
-								downloadExport(task).catch((error) =>
-									setError(error instanceof Error ? error.message : String(error))
-								)
+								downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
 							}
 						}}
 					>
@@ -201,7 +207,6 @@ export default memo(({ id }: ExportDetailProps) => {
 				<InfoCell label={t`Format`} value={task?.Format ?? task?.format ?? "csv"} />
 				<InfoCell label={t`View`} value={viewMode} />
 				<InfoCell label={t`Aggregation`} value={task?.Aggregation ?? task?.aggregation} />
-				<InfoCell label={t`Value`} value={task?.ValueMode ?? task?.value_mode ?? "corrected"} />
 				<InfoCell label={t`Query hash`} value={task?.QueryHash ?? task?.query_hash} mono wide />
 				<InfoCell label={t`Operation job`} value={task?.OperationJobID ?? task?.operation_job_id} mono wide />
 				<InfoCell label={t`Rows`} value={task?.RowCount ?? task?.row_count} />

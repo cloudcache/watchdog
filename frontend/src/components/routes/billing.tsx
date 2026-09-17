@@ -139,8 +139,8 @@ function AccountsTable() {
 			{ field: "method_display", title: t`Billing method`, width: 170 },
 			{ field: "billing_day", title: t`Billing Day`, width: 110 },
 			{ field: "timezone", title: t`Timezone`, width: 180 },
-			{ field: "direction", title: t`Direction`, width: 100 },
-			{ field: "default_layer", title: t`Layer`, width: 110 },
+			{ field: "direction_display", title: t`Direction`, width: 100 },
+			{ field: "layer_display", title: t`Layer`, width: 110 },
 			{ field: "allowance", title: t`Contract / minimum / allowance`, width: 220 },
 		],
 		[t]
@@ -158,6 +158,9 @@ function AccountsTable() {
 							: item.billing_method === "daily_95th"
 								? t`Daily 95th`
 								: t`Monthly average`,
+				direction_display: item.direction === "in" ? t`Inbound` : item.direction === "out" ? t`Outbound` : t`In + out`,
+				layer_display:
+					item.default_layer === "customer" ? t`Customer` : item.default_layer === "supplier" ? t`Supplier` : t`Raw`,
 				allowance:
 					item.measurement_type === "bandwidth"
 						? `${formatBPS(item.contract_bandwidth_bps)} · ${item.minimum_percent ?? 0}%`

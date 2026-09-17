@@ -515,9 +515,15 @@ export default memo(({ id }: { id?: string }) => {
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="in">in</SelectItem>
-							<SelectItem value="out">out</SelectItem>
-							<SelectItem value="agg">in + out</SelectItem>
+							<SelectItem value="in">
+								<Trans>Inbound</Trans>
+							</SelectItem>
+							<SelectItem value="out">
+								<Trans>Outbound</Trans>
+							</SelectItem>
+							<SelectItem value="agg">
+								<Trans>In + out</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 				</Field>

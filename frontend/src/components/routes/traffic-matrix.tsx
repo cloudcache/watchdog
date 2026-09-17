@@ -376,9 +376,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setProvincesLoaded(true)
 			return
 		}
-		api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
-			query: { level: "province", parent: selectedCountry, version: geoVersion, limit: 500 },
-		})
+		api
+			.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+				query: { level: "province", parent: selectedCountry, version: geoVersion, limit: 500 },
+			})
 			.then((result) => setProvinces(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load provinces`))
 			.finally(() => setProvincesLoaded(true))
@@ -391,9 +392,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			setCitiesLoaded(true)
 			return
 		}
-		api.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
-			query: { level: "city", parent: selectedProvince, version: geoVersion, limit: 500 },
-		})
+		api
+			.send<FlowGeoCatalogResponse>("/api/v1/flow/geo/catalog", {
+				query: { level: "city", parent: selectedProvince, version: geoVersion, limit: 500 },
+			})
 			.then((result) => setCities(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load cities`))
 			.finally(() => setCitiesLoaded(true))
@@ -1300,6 +1302,7 @@ function OverseasSummary({
 	loading: boolean
 	isNarrowed: boolean
 }) {
+	const { t } = useLingui()
 	const chartRef = useRef<HTMLDivElement>(null)
 	const chartInstance = useRef<ReturnType<typeof createFlowExplorerChart> | null>(null)
 	const points = response?.data.points ?? []
@@ -1315,7 +1318,7 @@ function OverseasSummary({
 			const current = grouped.get(key)
 			grouped.set(key, {
 				bucket: point.bucket,
-				dimension_value: point.direction === "in" ? "Inbound" : "Outbound",
+				dimension_value: point.direction === "in" ? t`Inbound` : t`Outbound`,
 				other: false,
 				value: (current?.value ?? 0) + point.value,
 				dimension_snapshot_id: current?.dimension_snapshot_id ?? point.dimension_snapshot_id,
@@ -1343,7 +1346,7 @@ function OverseasSummary({
 			target_points: rows.length,
 		}
 		return buildFlowSeries(rows, plan, unit)
-	}, [points, response?.meta.source, response?.meta.step_seconds, unit])
+	}, [points, response?.meta.source, response?.meta.step_seconds, t, unit])
 
 	useEffect(() => {
 		disposeChart(chartInstance.current)
@@ -1440,8 +1443,8 @@ function OverseasSummary({
 						{latestBucket && <span>{new Date(latestBucket).toLocaleString()}</span>}
 					</div>
 					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-						<FlowMetricCard label="Inbound" value={formatFlowValue(directionValue("in"), unit)} />
-						<FlowMetricCard label="Outbound" value={formatFlowValue(directionValue("out"), unit)} />
+						<FlowMetricCard label={t`Inbound`} value={formatFlowValue(directionValue("in"), unit)} />
+						<FlowMetricCard label={t`Outbound`} value={formatFlowValue(directionValue("out"), unit)} />
 						<FlowMetricCard label="Observed remote IPs" value={observedRemoteIPs.toLocaleString()} />
 						<FlowMetricCard label="Observed local hosts" value={observedLocalHosts.toLocaleString()} />
 					</div>

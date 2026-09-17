@@ -11,7 +11,6 @@ import { isAdmin, api } from "@/lib/api"
 import {
 	trafficViewExportAggregation,
 	trafficViewExportStep,
-	trafficViewLabel,
 	trafficViewValueMode,
 	type TrafficViewMode,
 } from "@/lib/traffic-view"
@@ -90,6 +89,10 @@ export default memo(() => {
 	const targetDevices = devices.filter((device) => deviceTargetID(device) === form.targetID)
 	const targetPorts = targetDevices.flatMap((device) => portsByDevice[deviceID(device)] ?? [])
 	const canUseRaw = isAdmin()
+	const trafficViewDisplayLabel =
+		trafficView === "customer" ? t`Customer` : trafficView === "supplier" ? t`Supplier` : t`Raw`
+	const valueModeDisplayLabel =
+		form.valueMode === "raw" ? t`Raw` : form.valueMode === "both" ? t`All values` : t`Corrected`
 
 	const applyTrafficView = useCallback(
 		(mode: TrafficViewMode) => {
@@ -187,8 +190,8 @@ export default memo(() => {
 					</Link>
 				</div>
 				<div className="grid gap-3 md:grid-cols-4">
-					<ViewSummary label={t`View`} value={trafficViewLabel(trafficView)} />
-					<ViewSummary label={t`Value`} value={form.valueMode} />
+					<ViewSummary label={t`View`} value={trafficViewDisplayLabel} />
+					<ViewSummary label={t`Value`} value={valueModeDisplayLabel} />
 					<ViewSummary label={t`Aggregation`} value={form.aggregation} />
 					<ViewSummary label={t`Step`} value={form.step === "60000000000" ? "1m" : "5m"} />
 				</div>
@@ -278,9 +281,19 @@ export default memo(() => {
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="corrected">corrected</SelectItem>
-							{isAdmin() ? <SelectItem value="raw">raw</SelectItem> : null}
-							{isAdmin() ? <SelectItem value="both">both</SelectItem> : null}
+							<SelectItem value="corrected">
+								<Trans>Corrected</Trans>
+							</SelectItem>
+							{isAdmin() ? (
+								<SelectItem value="raw">
+									<Trans>Raw</Trans>
+								</SelectItem>
+							) : null}
+							{isAdmin() ? (
+								<SelectItem value="both">
+									<Trans>All values</Trans>
+								</SelectItem>
+							) : null}
 						</SelectContent>
 					</Select>
 					<Select value={form.format} onValueChange={(format) => setForm((current) => ({ ...current, format }))}>

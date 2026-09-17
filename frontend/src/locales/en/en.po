@@ -581,6 +581,14 @@ msgstr "Alias"
 msgid "All"
 msgstr "All"
 
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-detail.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/dashboard-form.tsx
+#: src/components/routes/export-new.tsx
+msgid "All values"
+msgstr "All values"
+
 #: src/components/routes/network-device.tsx
 msgid "All addresses"
 msgstr "All addresses"
@@ -1533,6 +1541,13 @@ msgstr "Correct attribution"
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction"
 msgstr "Correction"
+
+#: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/aggregate-graph-form.tsx
+#: src/components/routes/dashboard-form.tsx
+#: src/components/routes/export-new.tsx
+msgid "Corrected"
+msgstr "Corrected"
 
 #: src/components/routes/network-port-policy.tsx
 msgid "Correction max"

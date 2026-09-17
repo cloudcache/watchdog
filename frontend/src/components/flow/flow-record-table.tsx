@@ -174,7 +174,14 @@ export function FlowRecordTable({
 		return () => activeRequest.current?.abort()
 	}, [loadPage])
 
-	const records = useMemo(() => buildFlowRecordRows(rows), [rows])
+	const records = useMemo(
+		() =>
+			buildFlowRecordRows(rows).map((row) => ({
+				...row,
+				direction: row.direction === "in" ? t`Inbound` : row.direction === "out" ? t`Outbound` : row.direction,
+			})),
+		[rows, t]
+	)
 	const columns = useMemo(() => {
 		const common = [
 			{ field: "event_time", title: t`Event time`, width: 180 },
@@ -234,7 +241,14 @@ export function FlowRecordTable({
 				})
 				return (response.data.items ?? []).map((item) => ({
 					value: item.value,
-					label: flowFacetLabel(field, item.value),
+					label:
+						field === "business_direction"
+							? item.value === "in"
+								? t`Inbound`
+								: item.value === "out"
+									? t`Outbound`
+									: item.value
+							: flowFacetLabel(field, item.value),
 					count: item.count,
 				}))
 			},
@@ -248,7 +262,7 @@ export function FlowRecordTable({
 			},
 			onClearAll: () => setColumnFilters({}),
 		}),
-		[columnFilters, endpoint, from, selectedIP, to, view]
+		[columnFilters, endpoint, from, selectedIP, t, to, view]
 	)
 	const serverSorting = useMemo(
 		() => ({
