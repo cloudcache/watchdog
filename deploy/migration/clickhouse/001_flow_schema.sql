@@ -92,7 +92,6 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_records (
 ENGINE = ReplacingMergeTree(ingest_generation)
 PARTITION BY toYYYYMMDD(event_time)
 ORDER BY (toStartOfHour(event_time), record_id)
-TTL event_time + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1m (
@@ -175,7 +174,7 @@ CREATE TABLE IF NOT EXISTS watchdog_flow.flow_ingest_batches (
 ENGINE = ReplacingMergeTree(generation)
 PARTITION BY toYYYYMM(inserted_at)
 ORDER BY (kafka_topic, kafka_partition, first_offset, last_offset, ingest_batch_id)
-TTL inserted_at + INTERVAL 45 DAY;
+TTL toDateTime(inserted_at) + INTERVAL 45 DAY;
 
 CREATE TABLE IF NOT EXISTS watchdog_flow.flow_vpn_candidates (
   window_start DateTime('UTC'),
