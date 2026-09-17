@@ -11,9 +11,9 @@ func TestDeviceOverviewDashboardUsesCapabilitiesAndPhysicalPorts(t *testing.T) {
 	dashboard := NewDeviceOverviewDashboard(
 		GraphDevice{ID: "device-a", SysName: "edge-a"},
 		[]GraphPort{
-			{ID: "physical", IfName: "xe-0/0/0", Metadata: map[string]string{"if_type": "6"}},
-			{ID: "vlan", IfName: "Vlanif10", Metadata: map[string]string{"if_type": "6"}},
-			{ID: "lag", IfName: "ae0", Metadata: map[string]string{"if_type": "161"}},
+			{ID: "physical", IfName: "xe-0/0/0", AdminStatus: "up", OperStatus: "up", Metadata: map[string]string{"if_type": "6"}},
+			{ID: "vlan", IfName: "Vlanif10", AdminStatus: "up", OperStatus: "down", Metadata: map[string]string{"if_type": "6"}},
+			{ID: "lag", IfName: "ae0", AdminStatus: "down", OperStatus: "down", Metadata: map[string]string{"if_type": "161"}},
 		},
 		true,
 		[]GraphSensor{{Class: "optical", Name: "Rx power", Unit: "dBm"}},
@@ -32,6 +32,32 @@ func TestDeviceOverviewDashboardUsesCapabilitiesAndPhysicalPorts(t *testing.T) {
 	}
 	if got := dashboard.Panels[0].Queries[0].PortIDs; !slices.Equal(got, []string{"physical"}) {
 		t.Fatalf("device aggregate includes virtual ports: %v", got)
+	}
+	links := dashboard.Panels[0].Links
+	if len(links) != 3 || links[0].PortID != "physical" || links[0].Status != "up" ||
+		links[1].Status != "down" || links[2].Status != "disabled" {
+		t.Fatalf("port link identity/status contract is incomplete: %+v", links)
+	}
+}
+
+func TestGraphPortStatusDistinguishesOperationalAndDisabledPorts(t *testing.T) {
+	tests := []struct {
+		name string
+		port GraphPort
+		want string
+	}{
+		{name: "numeric up", port: GraphPort{AdminStatus: "1", OperStatus: "1"}, want: "up"},
+		{name: "operational down", port: GraphPort{AdminStatus: "up", OperStatus: "down"}, want: "down"},
+		{name: "administratively down", port: GraphPort{AdminStatus: "2", OperStatus: "1"}, want: "disabled"},
+		{name: "explicitly disabled", port: GraphPort{Disabled: true, AdminStatus: "up", OperStatus: "up"}, want: "disabled"},
+		{name: "unknown", port: GraphPort{AdminStatus: "testing", OperStatus: "testing"}, want: "unknown"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := graphPortStatus(test.port); got != test.want {
+				t.Fatalf("graphPortStatus()=%q want %q", got, test.want)
+			}
+		})
 	}
 }
 

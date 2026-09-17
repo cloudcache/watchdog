@@ -1,9 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { Link } from "@/components/router"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
+import { graphPortIDFromLink, normalizeGraphPortStatus } from "@/lib/graph-port-links"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import { trafficViewQueryStep, trafficViewRateBase, type TrafficViewMode } from "@/lib/traffic-view"
+import { cn } from "@/lib/utils"
 import { type createLineChart, disposeChart, updateLineChart } from "@/lib/vchart"
 
 // ---------------------------------------------------------------------------
@@ -27,8 +30,15 @@ export type GraphPanel = {
 	unit?: string
 	stack?: string // "" | "normal" | "signed"
 	queries: GraphQuery[]
-	links?: { href: string; label: string }[]
+	links?: GraphLink[]
 	query_options: { max_data_points: number; min_interval: string }
+}
+
+export type GraphLink = {
+	href: string
+	label: string
+	port_id?: string
+	status?: string
 }
 
 export type GraphDashboard = {
@@ -240,24 +250,200 @@ export const GraphPanelRenderer = memo(({ panel, range, refreshInterval }: Graph
 			) : (
 				<div ref={chartRef} className="h-[200px] w-full" />
 			)}
-			{panel.links && panel.links.length > 0 ? <GraphPanelLinks links={panel.links} /> : null}
+			{panel.links && panel.links.length > 0 ? (
+				<GraphPanelLinks links={panel.links} range={range} context={ctx} />
+			) : null}
 		</div>
 	)
 })
 
-function GraphPanelLinks({ links }: { links: NonNullable<GraphPanel["links"]> }) {
+function GraphPanelLinks({
+	links,
+	range,
+	context,
+}: {
+	links: NonNullable<GraphPanel["links"]>
+	range: string
+	context: GraphContextValue | null
+}) {
 	return (
-		<div className="max-h-28 overflow-auto border-t border-border pt-3 text-sm leading-6">
-			{links.map((link, index) => (
-				<span key={`${link.href}:${link.label}`}>
-					<Link href={link.href} className="text-blue-700 hover:underline dark:text-blue-300">
-						{link.label}
-					</Link>
-					{index < links.length - 1 ? <span className="text-muted-foreground">, </span> : null}
-				</span>
+		<div className="flex max-h-28 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-border pt-3 text-sm leading-6">
+			{links.map((link) => (
+				<GraphPanelLink key={`${link.href}:${link.label}`} link={link} range={range} context={context} />
 			))}
 		</div>
 	)
+}
+
+function GraphPanelLink({
+	link,
+	range,
+	context,
+}: {
+	link: GraphLink
+	range: string
+	context: GraphContextValue | null
+}) {
+	const { t } = useLingui()
+	const [open, setOpen] = useState(false)
+	const portID = graphPortIDFromLink(link)
+	const status = normalizeGraphPortStatus(link.status)
+	const statusLabel =
+		status === "up" ? t`Up` : status === "down" ? t`Down` : status === "disabled" ? t`Disabled` : t`Unknown`
+	if (!portID || !context) {
+		return (
+			<Link href={link.href} className="text-blue-700 hover:underline dark:text-blue-300">
+				{link.label}
+			</Link>
+		)
+	}
+	return (
+		<Tooltip open={open} onOpenChange={setOpen}>
+			<TooltipTrigger asChild>
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<span className={cn("size-2 shrink-0 rounded-full", graphPortStatusDotClass(status))} aria-hidden="true" />
+					<Link
+						href={link.href}
+						className={cn("truncate hover:underline", graphPortStatusTextClass(status))}
+						aria-label={`${link.label}: ${statusLabel}`}
+					>
+						{link.label}
+					</Link>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent
+				side="top"
+				align="center"
+				sideOffset={8}
+				collisionPadding={12}
+				className="pointer-events-none w-[min(420px,calc(100vw-24px))] p-3 text-left text-sm text-foreground"
+			>
+				<div className="mb-2 flex items-center justify-between gap-3">
+					<span className="truncate font-medium">{link.label}</span>
+					<span className={cn("shrink-0 text-xs", graphPortStatusTextClass(status))}>{statusLabel}</span>
+				</div>
+				<PortTrafficPreview open={open} portID={portID} range={range} context={context} />
+			</TooltipContent>
+		</Tooltip>
+	)
+}
+
+function PortTrafficPreview({
+	open,
+	portID,
+	range,
+	context,
+}: {
+	open: boolean
+	portID: string
+	range: string
+	context: GraphContextValue
+}) {
+	const { t } = useLingui()
+	const chartRef = useRef<HTMLDivElement>(null)
+	const chartInstance = useRef<ReturnType<typeof createLineChart> | null>(null)
+	const [series, setSeries] = useState<Series[]>([])
+	const [state, setState] = useState<PanelState>("loading")
+	const [error, setError] = useState("")
+
+	useEffect(() => {
+		if (!open) return
+		const controller = new AbortController()
+		setState("loading")
+		setError("")
+		Promise.all([
+			execPanelQuery(
+				{ metric: "watchdog_snmp_if_in_bps", scope: "port", port_id: portID, label: t`Inbound` },
+				context,
+				range,
+				180,
+				controller.signal
+			),
+			execPanelQuery(
+				{
+					metric: "watchdog_snmp_if_out_bps",
+					scope: "port",
+					port_id: portID,
+					label: t`Outbound`,
+					transform: { negative: true },
+				},
+				context,
+				range,
+				180,
+				controller.signal
+			),
+		])
+			.then((result) => {
+				setSeries(result)
+				setState(result.every((item) => item.values.length === 0) ? "no_data" : "ok")
+			})
+			.catch((err) => {
+				if (controller.signal.aborted) return
+				setError(err instanceof Error ? err.message : t`Failed to load panel`)
+				setState("error")
+			})
+		return () => controller.abort()
+	}, [open, portID, range, context, t])
+
+	useEffect(() => {
+		const element = chartRef.current
+		if (!open || !element || state !== "ok") {
+			disposeChart(chartInstance.current)
+			chartInstance.current = null
+			return
+		}
+		const draw = () => {
+			if (!chartRef.current) return
+			const rect = chartRef.current.getBoundingClientRect()
+			if (rect.width < 2 || rect.height < 2) return
+			chartInstance.current = updateLineChart(chartInstance.current, chartRef.current, {
+				series,
+				yFormatter: (value) => formatGraphValue(value, "bps", context.trafficView),
+			})
+		}
+		const observer = new ResizeObserver(draw)
+		observer.observe(element)
+		const frame = globalThis.requestAnimationFrame(draw)
+		return () => {
+			globalThis.cancelAnimationFrame(frame)
+			observer.disconnect()
+			disposeChart(chartInstance.current)
+			chartInstance.current = null
+		}
+	}, [context.trafficView, open, series, state])
+
+	if (state === "loading") {
+		return (
+			<div className="flex h-40 items-center justify-center text-muted-foreground">
+				<Trans>Loading...</Trans>
+			</div>
+		)
+	}
+	if (state === "error") {
+		return <div className="flex h-40 items-center justify-center text-destructive">{error}</div>
+	}
+	if (state === "no_data") {
+		return (
+			<div className="flex h-40 items-center justify-center text-muted-foreground">
+				<Trans>No data in this range.</Trans>
+			</div>
+		)
+	}
+	return <div ref={chartRef} className="h-40 w-full" />
+}
+
+function graphPortStatusDotClass(status: ReturnType<typeof normalizeGraphPortStatus>) {
+	if (status === "up") return "bg-emerald-500"
+	if (status === "down") return "bg-red-500"
+	if (status === "disabled") return "bg-slate-400"
+	return "bg-amber-500"
+}
+
+function graphPortStatusTextClass(status: ReturnType<typeof normalizeGraphPortStatus>) {
+	if (status === "up") return "text-emerald-700 dark:text-emerald-300"
+	if (status === "down") return "text-red-600 dark:text-red-300"
+	if (status === "disabled") return "text-muted-foreground"
+	return "text-amber-700 dark:text-amber-300"
 }
 
 async function execPanelQuery(

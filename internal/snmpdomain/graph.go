@@ -42,8 +42,10 @@ type GraphQueryTransform struct {
 }
 
 type GraphLink struct {
-	Href  string `json:"href"`
-	Label string `json:"label"`
+	Href   string `json:"href"`
+	Label  string `json:"label"`
+	PortID string `json:"port_id,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 type GraphQueryOptions struct {
@@ -61,10 +63,13 @@ type GraphDevice struct {
 }
 
 type GraphPort struct {
-	ID       string
-	IfName   string
-	IfDescr  string
-	Metadata map[string]string
+	ID          string
+	IfName      string
+	IfDescr     string
+	AdminStatus string
+	OperStatus  string
+	Disabled    bool
+	Metadata    map[string]string
 }
 
 type GraphSensor struct {
@@ -120,7 +125,9 @@ func aggregatableGraphPorts(ports []GraphPort) []GraphPort {
 func NewDeviceOverviewDashboard(device GraphDevice, ports []GraphPort, hasBGP bool, sensors []GraphSensor) GraphDashboard {
 	links := make([]GraphLink, 0, len(ports))
 	for _, port := range ports {
-		links = append(links, GraphLink{Href: "/network/ports/" + port.ID, Label: graphPortName(port)})
+		links = append(links, GraphLink{
+			Href: "/network/ports/" + port.ID, Label: graphPortName(port), PortID: port.ID, Status: graphPortStatus(port),
+		})
 	}
 	panels := make([]GraphPanel, 0, 5)
 	if len(ports) > 0 {
@@ -230,6 +237,20 @@ func hasOpticalGraphSensor(sensors []GraphSensor) bool {
 
 func graphPortName(port GraphPort) string {
 	return firstGraphValue(port.IfName, port.IfDescr, port.ID)
+}
+
+func graphPortStatus(port GraphPort) string {
+	admin, oper := strings.ToLower(port.AdminStatus), strings.ToLower(port.OperStatus)
+	if port.Disabled || admin == "down" || admin == "2" {
+		return "disabled"
+	}
+	if oper == "up" || oper == "1" {
+		return "up"
+	}
+	if oper == "down" || oper == "2" {
+		return "down"
+	}
+	return "unknown"
 }
 
 func firstGraphValue(values ...string) string {

@@ -114,9 +114,12 @@ func graphNetworkPort(value portRecord) snmpdomain.GraphPort {
 		metadata["if_type"] = value.IfType
 	}
 	return snmpdomain.GraphPort{
-		ID:       value.ID,
-		IfName:   value.IfName,
-		IfDescr:  value.IfDescr,
-		Metadata: metadata,
+		ID:          value.ID,
+		IfName:      value.IfName,
+		IfDescr:     value.IfDescr,
+		AdminStatus: value.AdminStatus,
+		OperStatus:  value.OperStatus,
+		Disabled:    value.Disabled,
+		Metadata:    metadata,
 	}
 }
