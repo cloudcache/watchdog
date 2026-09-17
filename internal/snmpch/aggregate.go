@@ -256,8 +256,8 @@ const valueAggregateSQL = `WITH scoped AS (
        argMax(s.gauge_value,tuple(s.observed_at,s.ingested_at))) value
   FROM snmp_samples AS s FINAL
   INNER JOIN snmp_scope AS scope
-    ON s.device_id=scope.device_id AND (scope.port_id='' OR s.entity_id=scope.port_id)
-  WHERE s.metric={metric:String}
+    ON s.device_id=scope.device_id
+  WHERE (scope.port_id='' OR s.entity_id=scope.port_id) AND s.metric={metric:String}
     AND s.observed_at>=fromUnixTimestamp64Milli({from_ms:Int64})
     AND s.observed_at<fromUnixTimestamp64Milli({to_ms:Int64})
   GROUP BY bucket,s.device_id,s.entity_kind,s.entity_id
@@ -272,8 +272,8 @@ const rateAggregateSQL = `WITH dedup AS (
     argMax(s.interval_ms,s.ingested_at) interval_ms
   FROM snmp_samples AS s FINAL
   INNER JOIN snmp_scope AS scope
-    ON s.device_id=scope.device_id AND (scope.port_id='' OR s.entity_id=scope.port_id)
-  WHERE s.metric={metric:String} AND s.entity_kind='port'
+    ON s.device_id=scope.device_id
+  WHERE (scope.port_id='' OR s.entity_id=scope.port_id) AND s.metric={metric:String} AND s.entity_kind='port'
     AND s.observed_at>=subtractMinutes(fromUnixTimestamp64Milli({from_ms:Int64}),15)
     AND s.observed_at<fromUnixTimestamp64Milli({to_ms:Int64})
   GROUP BY s.observed_at,s.device_id,s.entity_kind,s.entity_id
@@ -308,8 +308,8 @@ const valueScopedSQL = `SELECT
      argMax(s.gauge_value,tuple(s.observed_at,s.ingested_at))) value
 FROM snmp_samples AS s FINAL
 INNER JOIN snmp_scope AS scope
-  ON s.device_id=scope.device_id AND (scope.port_id='' OR s.entity_id=scope.port_id)
-WHERE s.metric={metric:String}
+  ON s.device_id=scope.device_id
+WHERE (scope.port_id='' OR s.entity_id=scope.port_id) AND s.metric={metric:String}
   AND s.observed_at>=fromUnixTimestamp64Milli({from_ms:Int64})
   AND s.observed_at<fromUnixTimestamp64Milli({to_ms:Int64})
 GROUP BY bucket,s.device_id,s.entity_kind,s.entity_id
@@ -323,8 +323,8 @@ const rateScopedSQL = `WITH dedup AS (
     argMax(s.interval_ms,s.ingested_at) interval_ms
   FROM snmp_samples AS s FINAL
   INNER JOIN snmp_scope AS scope
-    ON s.device_id=scope.device_id AND (scope.port_id='' OR s.entity_id=scope.port_id)
-  WHERE s.metric={metric:String} AND s.entity_kind='port'
+    ON s.device_id=scope.device_id
+  WHERE (scope.port_id='' OR s.entity_id=scope.port_id) AND s.metric={metric:String} AND s.entity_kind='port'
     AND s.observed_at>=subtractMinutes(fromUnixTimestamp64Milli({from_ms:Int64}),15)
     AND s.observed_at<fromUnixTimestamp64Milli({to_ms:Int64})
   GROUP BY s.observed_at,s.device_id,s.entity_kind,s.entity_id
