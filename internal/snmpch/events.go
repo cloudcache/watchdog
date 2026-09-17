@@ -139,7 +139,7 @@ func (s *Store) QueryEvents(ctx context.Context, request EventQuery) ([]Event, i
 	where, params := eventWhere(request, "")
 	var totalColumn proto.ColUInt64
 	count := ch.Query{Body: "SELECT count() FROM snmp_events FINAL WHERE " + where,
-		Parameters: ch.Parameters(params), Result: proto.Results{{Name: "count()", Data: &totalColumn}}, Settings: snmpQuerySettings(1)}
+		Parameters: ch.Parameters(params), Result: proto.Results{{Name: "count()", Data: &totalColumn}}, Settings: s.querySettings(1)}
 	if err := s.exec.Do(ctx, count); err != nil {
 		return nil, 0, fmt.Errorf("count SNMP events: %w", err)
 	}
@@ -161,7 +161,7 @@ func (s *Store) QueryEvents(ctx context.Context, request EventQuery) ([]Event, i
 		{Name: "entity_id", Data: &entityIDs}, {Name: "source", Data: sources}, {Name: "severity", Data: severities},
 		{Name: "event_type", Data: types}, {Name: "message", Data: &messages}, {Name: "raw_json", Data: &raw},
 		{Name: "occurred_at", Data: occurred}, {Name: "ingested_at", Data: ingested},
-	}, Settings: snmpQuerySettings(uint32(request.Limit))}
+	}, Settings: s.querySettings(uint32(request.Limit))}
 	items := make([]Event, 0, request.Limit)
 	query.OnResult = func(_ context.Context, block proto.Block) error {
 		for i := 0; i < block.Rows; i++ {
@@ -204,7 +204,7 @@ func (s *Store) QueryEventFacets(ctx context.Context, request EventFacetQuery) (
 	var counts proto.ColUInt64
 	body := "SELECT CAST(if(" + column + "='', '_unknown', " + column + ") AS String) value,count() count FROM snmp_events FINAL WHERE " + where +
 		" GROUP BY value ORDER BY count DESC,value ASC LIMIT " + strconv.Itoa(request.Limit)
-	query := ch.Query{Body: body, Parameters: ch.Parameters(params), Result: proto.Results{{Name: "value", Data: &values}, {Name: "count", Data: &counts}}, Settings: snmpQuerySettings(uint32(request.Limit))}
+	query := ch.Query{Body: body, Parameters: ch.Parameters(params), Result: proto.Results{{Name: "value", Data: &values}, {Name: "count", Data: &counts}}, Settings: s.querySettings(uint32(request.Limit))}
 	items := make([]EventFacet, 0, request.Limit)
 	query.OnResult = func(_ context.Context, block proto.Block) error {
 		for i := 0; i < block.Rows; i++ {

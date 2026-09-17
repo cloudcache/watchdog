@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	maxAggregateScopes = 1000
-	maxAggregateRows   = 250000
+	// HardMaxAggregateScopes and HardMaxAggregateRows are process safety
+	// ceilings, not chart or billing defaults. Runtime configuration may lower
+	// them, but raising them requires a reviewed memory/query-plan change.
+	HardMaxAggregateScopes = 1000
+	HardMaxAggregateRows   = 250000
 )
 
 // Scope is one authorized device or port included in an aggregate. An empty
@@ -52,7 +55,7 @@ func (s *Store) QueryScopes(ctx context.Context, req AggregateRequest) ([]Series
 	if err != nil {
 		return nil, err
 	}
-	if req.Metric == "" || !req.To.After(req.From) || req.To.Sub(req.From) > 400*24*time.Hour || req.Step < time.Second || req.Step > 24*time.Hour || req.MaxRows == 0 || req.MaxRows > maxAggregateRows {
+	if req.Metric == "" || !req.To.After(req.From) || req.To.Sub(req.From) > 400*24*time.Hour || req.Step < time.Second || req.Step > 24*time.Hour || !s.allowsRows(req.MaxRows) {
 		return nil, errors.New("invalid SNMP scoped query")
 	}
 	metric, rate := req.Metric, false
@@ -90,7 +93,7 @@ func (s *Store) QueryScopes(ctx context.Context, req AggregateRequest) ([]Series
 			{Name: "bucket", Data: &buckets}, {Name: "device_id", Data: &resultDevices},
 			{Name: "entity_kind", Data: kinds}, {Name: "entity_id", Data: &entities}, {Name: "value", Data: &values},
 		},
-		Settings: snmpQuerySettings(req.MaxRows),
+		Settings: s.querySettings(req.MaxRows),
 	}
 	byKey := make(map[string]*Series)
 	rows := uint32(0)
@@ -141,7 +144,7 @@ func (s *Store) Aggregate(ctx context.Context, req AggregateRequest) (AggregateR
 	if err != nil {
 		return AggregateResult{}, err
 	}
-	if req.Metric == "" || !req.To.After(req.From) || req.To.Sub(req.From) > 400*24*time.Hour || req.Step < time.Second || req.Step > 24*time.Hour || req.MaxRows == 0 || req.MaxRows > maxAggregateRows {
+	if req.Metric == "" || !req.To.After(req.From) || req.To.Sub(req.From) > 400*24*time.Hour || req.Step < time.Second || req.Step > 24*time.Hour || !s.allowsRows(req.MaxRows) {
 		return AggregateResult{}, errors.New("invalid SNMP aggregate query")
 	}
 
@@ -177,7 +180,7 @@ func (s *Store) Aggregate(ctx context.Context, req AggregateRequest) (AggregateR
 		ExternalTable: "snmp_scope",
 		ExternalData:  []proto.InputColumn{{Name: "device_id", Data: devices}, {Name: "port_id", Data: ports}},
 		Result:        proto.Results{{Name: "bucket", Data: &buckets}, {Name: "value", Data: &values}},
-		Settings:      snmpQuerySettings(req.MaxRows),
+		Settings:      s.querySettings(req.MaxRows),
 	}
 	result := AggregateResult{Metric: req.Metric, Method: req.Method}
 	query.OnResult = func(_ context.Context, block proto.Block) error {
@@ -196,7 +199,7 @@ func (s *Store) Aggregate(ctx context.Context, req AggregateRequest) (AggregateR
 }
 
 func normalizeScopes(input []Scope) ([]Scope, error) {
-	if len(input) == 0 || len(input) > maxAggregateScopes {
+	if len(input) == 0 || len(input) > HardMaxAggregateScopes {
 		return nil, errors.New("SNMP aggregate requires 1..1000 scopes")
 	}
 	deviceWide := make(map[string]bool, len(input))
@@ -242,18 +245,6 @@ func aggregateFunction(method string) (string, error) {
 		return "count", nil
 	default:
 		return "", errors.New("unsupported SNMP aggregate method")
-	}
-}
-
-func snmpQuerySettings(maxRows uint32) []ch.Setting {
-	return []ch.Setting{
-		{Key: "max_execution_time", Value: "15", Important: true},
-		{Key: "max_result_rows", Value: strconv.FormatUint(uint64(maxRows)+1, 10), Important: true},
-		{Key: "result_overflow_mode", Value: "throw", Important: true},
-		{Key: "max_rows_to_read", Value: "50000000", Important: true},
-		{Key: "read_overflow_mode", Value: "throw", Important: true},
-		{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
-		{Key: "max_memory_usage", Value: "2147483648", Important: true},
 	}
 }
 

@@ -67,7 +67,7 @@ func TestAggregateRejectsSQLMethodAndBudget(t *testing.T) {
 		t.Fatal("unsafe aggregate method was accepted")
 	}
 	base.Method = "sum"
-	base.MaxRows = maxAggregateRows + 1
+	base.MaxRows = HardMaxAggregateRows + 1
 	if _, err := store.Aggregate(context.Background(), base); err == nil {
 		t.Fatal("oversized aggregate budget was accepted")
 	}

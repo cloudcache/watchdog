@@ -2,13 +2,17 @@ package server
 
 import (
 	"errors"
+	"math"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/metricdomain"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"github.com/cloudcache/watchdog/internal/snmpdomain"
 )
+
+const defaultSNMPChartPointBudget uint32 = 1200
 
 var (
 	errSNMPRawForbidden = errors.New("raw metric value mode requires admin permission")
@@ -118,4 +122,83 @@ func aggregateSNMPSeries(series []snmpch.Series, method string) []snmpch.Point {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Time.Before(result[j].Time) })
 	return result
+}
+
+// snmpIntermediateRowBudget separates two different limits which used to be
+// conflated: max_data_points bounds the final rendered series, while this
+// budget bounds the per-port rows needed before correction and aggregation.
+func snmpIntermediateRowBudget(finalPoints uint32, scopes []snmpch.Scope, from, to time.Time, step time.Duration, ceiling uint32) uint32 {
+	if ceiling == 0 || ceiling > snmpch.HardMaxAggregateRows {
+		ceiling = snmpch.HardMaxAggregateRows
+	}
+	if finalPoints == 0 {
+		finalPoints = defaultSNMPChartPointBudget
+	}
+	if len(scopes) == 0 || step <= 0 || !to.After(from) {
+		return min(finalPoints, ceiling)
+	}
+	explicitPorts := uint64(0)
+	for _, scope := range scopes {
+		if scope.PortID == "" {
+			return ceiling
+		}
+		explicitPorts++
+	}
+	buckets := uint64(math.Ceil(float64(to.Sub(from)) / float64(step)))
+	// One row of slack per port covers boundary rounding without turning the
+	// final chart budget into an unbounded ClickHouse read.
+	estimated := (buckets + 1) * explicitPorts
+	if estimated < uint64(finalPoints) {
+		estimated = uint64(finalPoints)
+	}
+	if estimated > uint64(ceiling) {
+		return ceiling
+	}
+	return uint32(estimated)
+}
+
+func (s *Server) snmpQueryRowCeiling() uint32 {
+	if s != nil && s.cfg.SNMP.QueryMaxIntermediateRows > 0 && s.cfg.SNMP.QueryMaxIntermediateRows <= snmpch.HardMaxAggregateRows {
+		return s.cfg.SNMP.QueryMaxIntermediateRows
+	}
+	return snmpch.HardMaxAggregateRows
+}
+
+// downsampleSNMPPoints is applied only after correction and aggregation. Rate
+// and gauge samples use a mean per display bucket; monotonic counters and
+// state metrics use the last observation so their semantics are preserved.
+func downsampleSNMPPoints(points []snmpch.Point, maxPoints uint32, useLast bool) []snmpch.Point {
+	if maxPoints == 0 || len(points) <= int(maxPoints) {
+		return points
+	}
+	result := make([]snmpch.Point, 0, maxPoints)
+	n := len(points)
+	for bucket := 0; bucket < int(maxPoints); bucket++ {
+		start := bucket * n / int(maxPoints)
+		end := (bucket + 1) * n / int(maxPoints)
+		last := points[end-1]
+		if useLast {
+			result = append(result, last)
+			continue
+		}
+		var total float64
+		for _, point := range points[start:end] {
+			total += point.Value
+		}
+		last.Value = total / float64(end-start)
+		result = append(result, last)
+	}
+	return result
+}
+
+func snmpMetricUsesLastSample(metric string) bool {
+	if strings.HasSuffix(metric, "_total") {
+		return true
+	}
+	switch metric {
+	case metricdomain.SNMPIfOperStatus, metricdomain.SNMPIfAdminStatus, metricdomain.BGPState:
+		return true
+	default:
+		return false
+	}
 }

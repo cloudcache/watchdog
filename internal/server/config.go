@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/billing"
+	"github.com/cloudcache/watchdog/internal/snmpch"
 	"gopkg.in/yaml.v3"
 )
 
@@ -132,6 +133,14 @@ type SNMPConfig struct {
 	PollConcurrency    int           `yaml:"poll_concurrency"`
 	ExportDir          string        `yaml:"export_dir"`
 	ExportRetention    time.Duration `yaml:"export_retention"`
+	// QueryMaxIntermediateRows bounds synchronous chart expansion before
+	// correction/aggregation/downsampling. It is not the final chart point
+	// count and it is unrelated to billing formula or account limits.
+	QueryMaxIntermediateRows uint32        `yaml:"query_max_intermediate_rows"`
+	QueryMaxExecutionTime    time.Duration `yaml:"query_max_execution_time"`
+	QueryMaxRowsToRead       uint64        `yaml:"query_max_rows_to_read"`
+	QueryMaxBytesToRead      uint64        `yaml:"query_max_bytes_to_read"`
+	QueryMaxMemoryBytes      uint64        `yaml:"query_max_memory_bytes"`
 }
 
 type BillingConfig struct {
@@ -169,7 +178,13 @@ func defaultConfig() Config {
 		}},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
-		SNMP:       SNMPConfig{PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32, ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour},
+		SNMP: SNMPConfig{
+			PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32,
+			ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour,
+			QueryMaxIntermediateRows: snmpch.HardMaxAggregateRows,
+			QueryMaxExecutionTime:    15 * time.Second, QueryMaxRowsToRead: 50_000_000,
+			QueryMaxBytesToRead: 4 << 30, QueryMaxMemoryBytes: 2 << 30,
+		},
 		Billing: BillingConfig{
 			ExportDir: "data/billing-exports", ExportRetention: 7 * 24 * time.Hour,
 			MaxAccountPorts: 1000, MaxPageSize: 500, MaxPeriodDuration: 400 * 24 * time.Hour, MaxExportRows: 100000,
@@ -212,7 +227,22 @@ func LoadConfig(path string) (Config, error) {
 	if err := validateBillingConfig(cfg.Billing); err != nil {
 		return Config{}, fmt.Errorf("validate billing: %w", err)
 	}
+	if err := validateSNMPConfig(cfg.SNMP); err != nil {
+		return Config{}, fmt.Errorf("validate SNMP: %w", err)
+	}
 	return cfg, nil
+}
+
+func validateSNMPConfig(cfg SNMPConfig) error {
+	return snmpch.ValidateQueryLimits(snmpQueryLimits(cfg))
+}
+
+func snmpQueryLimits(cfg SNMPConfig) snmpch.QueryLimits {
+	return snmpch.QueryLimits{
+		MaxResultRows: cfg.QueryMaxIntermediateRows, MaxExecutionTime: cfg.QueryMaxExecutionTime,
+		MaxRowsToRead: cfg.QueryMaxRowsToRead, MaxBytesToRead: cfg.QueryMaxBytesToRead,
+		MaxMemoryBytes: cfg.QueryMaxMemoryBytes,
+	}
 }
 
 func validateBillingConfig(cfg BillingConfig) error {

@@ -56,6 +56,11 @@ snmp:                               # generic standard MIB discovery works with 
   poll_concurrency: 32               # bounded concurrent devices
   export_dir: "data/snmp-exports"    # async SNMP CSV artifacts; operation_jobs owns lifecycle state
   export_retention: "24h"            # expired artifacts are no longer downloadable
+  query_max_intermediate_rows: 250000 # correction/aggregation input ceiling; max_data_points remains the final chart budget
+  query_max_execution_time: "15s"     # per ClickHouse read; billing v2 will use smaller checkpointed slices
+  query_max_rows_to_read: 50000000
+  query_max_bytes_to_read: 4294967296  # 4 GiB
+  query_max_memory_bytes: 2147483648   # 2 GiB
 
 billing:
   export_dir: "data/billing-exports" # CSV/Parquet evidence artifacts; state stays in operation_jobs

@@ -84,15 +84,33 @@ func TestQueryMetricsUsesClickHouseAndKeepsChartContract(t *testing.T) {
 	}
 }
 
-func TestSNMPScopedQueryRowBudgetSeparatesChartPointsFromIntermediateRows(t *testing.T) {
-	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}}); got != 1200 {
-		t.Fatalf("single-port budget=%d, want 1200", got)
+func TestSNMPIntermediateRowBudgetSeparatesChartPointsFromCorrectionRows(t *testing.T) {
+	from := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	if got := snmpIntermediateRowBudget(180, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}}, from, to, 5*time.Minute, 250000); got != 289 {
+		t.Fatalf("single-port budget=%d, want 289", got)
 	}
-	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}, {DeviceID: "device-a", PortID: "port-b"}}); got != 250000 {
-		t.Fatalf("multi-port intermediate budget=%d, want 250000", got)
+	if got := snmpIntermediateRowBudget(180, []snmpch.Scope{{DeviceID: "device-a", PortID: "port-a"}, {DeviceID: "device-a", PortID: "port-b"}}, from, to, 5*time.Minute, 250000); got != 578 {
+		t.Fatalf("multi-port intermediate budget=%d, want 578", got)
 	}
-	if got := snmpScopedQueryRowBudget(1200, []snmpch.Scope{{DeviceID: "device-a"}}); got != 250000 {
+	if got := snmpIntermediateRowBudget(180, []snmpch.Scope{{DeviceID: "device-a"}}, from, to, 5*time.Minute, 250000); got != 250000 {
 		t.Fatalf("device-wide intermediate budget=%d, want 250000", got)
+	}
+}
+
+func TestDownsampleSNMPPointsAfterCorrection(t *testing.T) {
+	base := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	points := []snmpch.Point{
+		{Time: base, Value: 1}, {Time: base.Add(time.Minute), Value: 3},
+		{Time: base.Add(2 * time.Minute), Value: 5}, {Time: base.Add(3 * time.Minute), Value: 7},
+	}
+	averages := downsampleSNMPPoints(points, 2, false)
+	if len(averages) != 2 || averages[0].Value != 2 || averages[1].Value != 6 || !averages[1].Time.Equal(points[3].Time) {
+		t.Fatalf("average downsample=%+v", averages)
+	}
+	last := downsampleSNMPPoints(points, 2, true)
+	if len(last) != 2 || last[0].Value != 3 || last[1].Value != 7 {
+		t.Fatalf("last-value downsample=%+v", last)
 	}
 }
 

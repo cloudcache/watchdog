@@ -91,7 +91,7 @@ func (s *Store) ReadBilling(ctx context.Context, req BillingRequest) (BillingRes
 	if maxBuckets == 0 {
 		maxBuckets = maxBillingBuckets
 	}
-	if expected == 0 || expected > maxBuckets || maxBuckets > maxBillingBuckets {
+	if expected == 0 || expected > maxBuckets || maxBuckets > maxBillingBuckets || !s.allowsRows(maxBuckets) {
 		return BillingResult{}, errors.New("SNMP billing range exceeds bucket budget")
 	}
 
@@ -119,7 +119,7 @@ func (s *Store) ReadBilling(ctx context.Context, req BillingRequest) (BillingRes
 			{Name: "selected_bps", Data: &selectedBPS}, {Name: "coverage", Data: &coverage}, {Name: "reset_flag", Data: &reset},
 			{Name: "gap_flag", Data: &gap}, {Name: "generation", Data: &generations}, {Name: "present_ports", Data: &presentPorts},
 		},
-		Settings: snmpQuerySettings(maxBuckets),
+		Settings: s.querySettings(maxBuckets),
 	}
 	result := BillingResult{From: from, To: to, ExpectedBuckets: expected, ExpectedPorts: uint32(len(ports))}
 	query.OnResult = func(_ context.Context, block proto.Block) error {
@@ -143,7 +143,7 @@ func (s *Store) ReadBilling(ctx context.Context, req BillingRequest) (BillingRes
 }
 
 func normalizeBillingPorts(input []BillingPort) ([]BillingPort, error) {
-	if len(input) == 0 || len(input) > maxAggregateScopes {
+	if len(input) == 0 || len(input) > HardMaxAggregateScopes {
 		return nil, errors.New("SNMP billing requires 1..1000 ports")
 	}
 	seen := make(map[string]string, len(input))

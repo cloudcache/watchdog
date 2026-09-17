@@ -69,6 +69,50 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 		cfg.Billing.WorkerLease != 30*time.Second || cfg.Billing.WorkerMaxAttempts != 5 {
 		t.Fatalf("unexpected billing defaults: %+v", cfg.Billing)
 	}
+	if cfg.SNMP.QueryMaxIntermediateRows != 250000 || cfg.SNMP.QueryMaxExecutionTime != 15*time.Second ||
+		cfg.SNMP.QueryMaxRowsToRead != 50000000 || cfg.SNMP.QueryMaxBytesToRead != 4<<30 || cfg.SNMP.QueryMaxMemoryBytes != 2<<30 {
+		t.Fatalf("unexpected SNMP query defaults: %+v", cfg.SNMP)
+	}
+}
+
+func TestLoadConfigSNMPQueryBudgets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte(`
+snmp:
+  query_max_intermediate_rows: 5000
+  query_max_execution_time: 30s
+  query_max_rows_to_read: 1000000
+  query_max_bytes_to_read: 268435456
+  query_max_memory_bytes: 134217728
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SNMP.QueryMaxIntermediateRows != 5000 || cfg.SNMP.QueryMaxExecutionTime != 30*time.Second ||
+		cfg.SNMP.QueryMaxRowsToRead != 1000000 || cfg.SNMP.QueryMaxBytesToRead != 268435456 || cfg.SNMP.QueryMaxMemoryBytes != 134217728 {
+		t.Fatalf("unexpected SNMP query config: %+v", cfg.SNMP)
+	}
+}
+
+func TestLoadConfigRejectsUnsafeSNMPQueryBudgets(t *testing.T) {
+	for name, body := range map[string]string{
+		"zero rows":         "snmp:\n  query_max_intermediate_rows: 0\n",
+		"execution ceiling": "snmp:\n  query_max_execution_time: 121s\n",
+		"memory ceiling":    "snmp:\n  query_max_memory_bytes: 8589934593\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "watchdog.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate SNMP") {
+				t.Fatalf("expected SNMP validation failure, got %v", err)
+			}
+		})
+	}
 }
 
 func TestLoadConfigBillingBudgets(t *testing.T) {

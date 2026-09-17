@@ -153,6 +153,13 @@
 
 > **2026-09-16 三视角语义修正**：`customer/supplier/raw` 固定读取同一端口集合；前两者分别使用 customer/provider policy 的步进、1000/1024 显示基数及每端口每桶可复现的区间修正，raw 不修正。删除把 `side_type` 当端口归属过滤器的错误实现，并以同端口三结果、快速切换取消、中文标签和真实设备 62 端口门禁锁定。
 
+#### KISS-03A4 SNMP 图表点数、中间行与 ClickHouse 预算分离（2026-09-17）
+
+- [x] **设计**：冻结 `max_data_points` 仅限制最终单曲线点数；customer/supplier 必须先按策略步进读取、逐端口修正、聚合后再降采样。运行预算与绝对硬上限分类见 `docs/runtime-budget-audit.md`。
+- [x] **编码/API**：单端口按范围/步进计算中间行，多端口/device-wide 使用 `snmp.query_max_intermediate_rows`；rate/gauge 均值降采样，counter/state 末值降采样；metrics/aggregate/saved aggregate graph 使用同一实现。CH execution/read rows/read bytes/memory 均进入 YAML，配置只能在硬安全上限内调整。
+- [x] **单元测试**：覆盖 24h/5m/180 点需要 289 行中间预算、双端口预算、device-wide 上限、均值/末值降采样、YAML 覆盖/越界拒绝和 CH settings 下推。
+- [ ] **集成/回归/已提交门禁**：真实 :8091 + ClickHouse 对现有端口执行 24h raw/customer/supplier hover，确认无 row-budget 错误且每曲线不超过 180 点；全库 test/vet/build 后独立提交，不携带并行删除/address/软著文件。
+
 #### KISS-03B system/container agent 延后切片
 
 - [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。

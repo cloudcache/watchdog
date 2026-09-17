@@ -60,3 +60,41 @@ func TestQueryRejectsUnboundedRequest(t *testing.T) {
 		t.Fatal("zero step and row budget were accepted")
 	}
 }
+
+func TestQueryUsesConfiguredClickHouseBudgets(t *testing.T) {
+	exec := &queryExecutor{}
+	limits := DefaultQueryLimits()
+	limits.MaxResultRows = 20
+	limits.MaxExecutionTime = 30 * time.Second
+	limits.MaxRowsToRead = 1000
+	limits.MaxBytesToRead = 2000
+	limits.MaxMemoryBytes = 3000
+	store, err := NewWithQueryLimits(exec, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Query(context.Background(), QueryRequest{
+		DeviceID: "device-a", EntityID: "port-a", Metric: MetricIfInBPS,
+		From: time.Unix(0, 0), To: time.Unix(300, 0), Step: time.Minute, MaxRows: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]string{}
+	for _, setting := range exec.query.Settings {
+		settings[setting.Key] = setting.Value
+	}
+	for key, want := range map[string]string{
+		"max_execution_time": "30", "max_result_rows": "11", "max_rows_to_read": "1000",
+		"max_bytes_to_read": "2000", "max_memory_usage": "3000",
+	} {
+		if settings[key] != want {
+			t.Fatalf("setting %s=%q, want %q; all=%v", key, settings[key], want, settings)
+		}
+	}
+	if _, err := store.Query(context.Background(), QueryRequest{
+		DeviceID: "device-a", Metric: "metric", From: time.Unix(0, 0), To: time.Unix(300, 0), Step: time.Minute, MaxRows: 21,
+	}); err == nil {
+		t.Fatal("request above configured result-row budget was accepted")
+	}
+}

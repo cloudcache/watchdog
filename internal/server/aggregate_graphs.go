@@ -612,7 +612,7 @@ func (s *Server) aggregateGraphSeries(c *gin.Context) {
 	if !ok {
 		return
 	}
-	maxRows, valid := parseSNMPRowBudget(c.Query("max_data_points"), 250000)
+	maxRows, valid := parseSNMPRowBudget(c.Query("max_data_points"), defaultSNMPChartPointBudget)
 	if !valid {
 		fail(c, http.StatusBadRequest, "invalid_range", "max_data_points must be 1..250000")
 		return
@@ -705,7 +705,7 @@ func aggregateGraphWindow(c *gin.Context, maxDataPoints int) (time.Time, time.Ti
 		}
 	} else {
 		var ok bool
-		from, to, step, ok = parseMetricWindow(c)
+		from, to, step, ok = parseMetricWindow(c, maxDataPoints)
 		if !ok {
 			return time.Time{}, time.Time{}, 0, false
 		}
@@ -753,7 +753,7 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 		for _, group := range groups {
 			series, err := s.snmpMetrics.QueryScopes(c.Request.Context(), snmpch.AggregateRequest{
 				Scopes: group.Scopes, Metric: item.Metric, Method: graph.Aggregation, From: from, To: to, Step: step,
-				MaxRows: snmpScopedQueryRowBudget(maxRows, group.Scopes),
+				MaxRows: snmpIntermediateRowBudget(maxRows, group.Scopes, from, to, step, s.snmpQueryRowCeiling()),
 			})
 			if err != nil {
 				return metricRangeResponse{}, nil, err
@@ -778,7 +778,7 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 			for _, mode := range modes {
 				view := correctedSNMPSeries(series, policies, mode == "corrected" && (item.Metric == snmpch.MetricIfInBPS || item.Metric == snmpch.MetricIfOutBPS))
 				points := aggregateSNMPSeries(view, graph.Aggregation)
-				values := metricValues(points)
+				values := metricValues(downsampleSNMPPoints(points, maxRows, snmpMetricUsesLastSample(item.Metric)))
 				if mode == "corrected" {
 					for _, point := range points {
 						combined[point.Time] += point.Value
@@ -809,10 +809,6 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 	if hasTotal {
 		for key, totals := range totalSeries {
 			mode, sideType, _ := strings.Cut(key, "\x00")
-			values := make([]metricValue, 0, len(totals))
-			for _, point := range sortedAggregatePoints(totals) {
-				values = append(values, metricValue{Time: point.Time, Value: point.Value})
-			}
 			label := "Total"
 			if sideType != "" {
 				label += " · " + sideType
@@ -821,7 +817,8 @@ func (s *Server) queryAggregateGraph(c *gin.Context, graph aggregateGraphRecord,
 			if sideType != "" {
 				labels["side_type"] = sideType
 			}
-			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: values})
+			points := sortedAggregatePoints(totals)
+			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(downsampleSNMPPoints(points, maxRows, false))})
 		}
 	}
 	if !include {

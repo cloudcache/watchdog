@@ -41,7 +41,7 @@ func (s *Store) Query(ctx context.Context, req QueryRequest) ([]Series, error) {
 	if s == nil || s.exec == nil {
 		return nil, errors.New("SNMP ClickHouse store is not initialized")
 	}
-	if req.DeviceID == "" || req.Metric == "" || !req.To.After(req.From) || req.Step < time.Second || req.MaxRows == 0 {
+	if req.DeviceID == "" || req.Metric == "" || !req.To.After(req.From) || req.Step < time.Second || !s.allowsRows(req.MaxRows) {
 		return nil, errors.New("invalid SNMP query")
 	}
 	metric, rate := req.Metric, false
@@ -80,6 +80,7 @@ func (s *Store) Query(ctx context.Context, req QueryRequest) ([]Series, error) {
 			{Name: "entity_kind", Data: kinds}, {Name: "entity_id", Data: &entities},
 			{Name: "value", Data: &values},
 		},
+		Settings: s.querySettings(req.MaxRows),
 	}
 	byKey := map[string]*Series{}
 	rows := uint32(0)

@@ -379,7 +379,7 @@ func (s *Server) startClickHouse(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	store, err := snmpch.New(native)
+	store, err := snmpch.NewWithQueryLimits(native, snmpQueryLimits(s.cfg.SNMP))
 	if err != nil {
 		native.Close()
 		return err

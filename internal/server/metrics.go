@@ -130,7 +130,12 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	if !s.requireDeviceAccess(c, deviceID) {
 		return
 	}
-	from, to, step, ok := parseMetricWindow(c)
+	maxPoints, ok := parseSNMPRowBudget(c.Query("max_data_points"), defaultSNMPChartPointBudget)
+	if !ok {
+		fail(c, http.StatusBadRequest, "invalid_range", "max_data_points must be 1..250000")
+		return
+	}
+	from, to, step, ok := parseMetricWindow(c, int(maxPoints))
 	if !ok {
 		return
 	}
@@ -141,22 +146,7 @@ func (s *Server) queryMetrics(c *gin.Context) {
 			return
 		}
 	}
-	maxRows := uint32(250000)
-	if raw := strings.TrimSpace(c.Query("max_data_points")); raw != "" {
-		n, err := strconv.ParseUint(raw, 10, 32)
-		if err != nil || n == 0 || n > 250000 {
-			fail(c, http.StatusBadRequest, "invalid_range", "max_data_points must be 1..250000")
-			return
-		}
-		maxRows = uint32(n)
-		// max_data_points is a per-series/chart budget. A device-scoped
-		// query expands to multiple SNMP entities before the response is
-		// rendered, so applying it as a global intermediate-row limit makes
-		// ordinary multi-port devices fail with an empty chart.
-		if perPort || portID == "" {
-			maxRows = 250000
-		}
-	}
+	maxRows := snmpIntermediateRowBudget(maxPoints, []snmpch.Scope{{DeviceID: deviceID, PortID: portID}}, from, to, step, s.snmpQueryRowCeiling())
 	if s.snmpMetrics == nil {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_unavailable", "SNMP ClickHouse store is not configured")
 		return
@@ -166,7 +156,7 @@ func (s *Server) queryMetrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "clickhouse_query_failed", err.Error())
 		return
 	}
-	response, err := s.renderSNMPMetricSeries(c, metric, series, modes, side, perPort || portID != "")
+	response, err := s.renderSNMPMetricSeries(c, metric, series, modes, side, perPort || portID != "", maxPoints)
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -174,7 +164,7 @@ func (s *Server) queryMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []snmpch.Series, modes []string, side snmpdomain.PortSideType, preserveSeries bool) (metricRangeResponse, error) {
+func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []snmpch.Series, modes []string, side snmpdomain.PortSideType, preserveSeries bool, maxPoints uint32) (metricRangeResponse, error) {
 	response := metricRangeResponse{Status: "success"}
 	response.Data.ResultType = "matrix"
 	policies := map[string]snmpdomain.PortPolicy{}
@@ -192,7 +182,7 @@ func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []
 	for _, mode := range modes {
 		valuesBySeries := correctedSNMPSeries(series, policies, mode == "corrected" && (metric == snmpch.MetricIfInBPS || metric == snmpch.MetricIfOutBPS))
 		if side != "" && !preserveSeries {
-			points := aggregateSNMPSeries(valuesBySeries, "sum")
+			points := downsampleSNMPPoints(aggregateSNMPSeries(valuesBySeries, "sum"), maxPoints, snmpMetricUsesLastSample(metric))
 			labels := map[string]string{"__name__": metric, "value_mode": mode, "traffic_view": trafficViewName(side)}
 			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(points)})
 			continue
@@ -211,7 +201,7 @@ func (s *Server) renderSNMPMetricSeries(c *gin.Context, metric string, series []
 			if side != "" {
 				labels["traffic_view"] = trafficViewName(side)
 			}
-			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(item.Points)})
+			response.Data.Result = append(response.Data.Result, metricRangeQueryItem{Metric: labels, Values: metricValues(downsampleSNMPPoints(item.Points, maxPoints, snmpMetricUsesLastSample(metric)))})
 		}
 	}
 	return response, nil
@@ -244,7 +234,7 @@ func isSNMPMetric(metric string) bool {
 	return false
 }
 
-func parseMetricWindow(c *gin.Context) (time.Time, time.Time, time.Duration, bool) {
+func parseMetricWindow(c *gin.Context, maxDataPoints int) (time.Time, time.Time, time.Duration, bool) {
 	now := time.Now().UTC()
 	mode := strings.TrimSpace(c.Query("time_mode"))
 	if mode == "" {
@@ -283,7 +273,7 @@ func parseMetricWindow(c *gin.Context) (time.Time, time.Time, time.Duration, boo
 		fail(c, http.StatusBadRequest, "invalid_range", "range must be positive and at most 400 days")
 		return from, to, 0, false
 	}
-	step := metricdomain.AutoQueryStep(to.Sub(from), 1200)
+	step := metricdomain.AutoQueryStep(to.Sub(from), maxDataPoints)
 	if raw := strings.TrimSpace(c.Query("step")); raw != "" {
 		seconds, err := strconv.ParseUint(raw, 10, 32)
 		if err != nil || seconds == 0 {
