@@ -165,6 +165,8 @@
 - [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。
 - [ ] **删除/测试/提交**：等价迁移后物理删除剩余 VictoriaMetrics writer/client/provider/DeleteSeries、remote-write/import、配置和旧 BackendRuntime 路径；停止 VM 后做真实进程集成并独立提交。
 
+> **2026-09-17 精确范围（设计见 [watchdog-kiss03b-system-agent-design.md](watchdog-kiss03b-system-agent-design.md)）**：核实后本切片= ①去多租户：仅系统 agent `cmd/watchdog-system-agent` 本地类型带 `TenantID`（types.go:6,17；main.go:232 `plan.Agent.TenantID`）+ 其 plan 契约去 tenant；发行版 agent `internal/cmd/agent` 已干净不动。②「VM→CH」实为**在 CH 上从零实现系统遥测**（KISS 路径当前既无 VM 也无 CH 系统遥测存储，`agents.go:977` 仅登记 `system.samples/` 能力标签），照 KISS-03A：新 `system_samples` CH schema（模 `deploy/migration/clickhouse/012_snmp_telemetry.sql`）+ `internal/systemch`（模 `internal/snmpch`）+ `POST /agents/:id/system-samples` ingest（agent 鉴权）+ agent client 改端点 + host/target 页 CH 查询接线。③**去 PocketBase=空操作**（agent 代码 0 PB 引用）。⚠ 触及 `internal/server`（并行 session flow-enrichment 区），须 worktree 执行、禁 `git reset --hard`。goreleaser/debian 的 henrygd/Beszel 改品为独立小项（需用户给维护者名/邮箱/描述）。
+
 ### KISS-04 Agent registry 收敛
 
 - [x] **KISS-04A 注册/CRUD 纵向切片（基础提交 `e5848ade`，本次闭环提交见 Git history）**
