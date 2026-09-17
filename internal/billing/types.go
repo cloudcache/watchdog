@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -36,6 +37,22 @@ const (
 	DirectionAgg Direction = "agg"
 )
 
+type PricingModel string
+
+const (
+	// PricingFlatPort charges UnitPrice for every bound port in a billing cycle.
+	PricingFlatPort PricingModel = "flat_port"
+	// PricingUsage95th charges UnitPrice for every Mbps of the selected layer's
+	// 95th-percentile value. The monetary result is produced by the invoice
+	// layer; this package preserves the exact contract and usage evidence.
+	PricingUsage95th PricingModel = "usage_95th"
+)
+
+var (
+	decimalPricePattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,13})(\.[0-9]{1,6})?$`)
+	currencyPattern     = regexp.MustCompile(`^[A-Z]{3}$`)
+)
+
 type PeriodStatus string
 
 const (
@@ -60,27 +77,30 @@ type Party struct {
 }
 
 type Account struct {
-	ID               string    `json:"id"`
-	PartyID          string    `json:"party_id,omitempty"`
-	Name             string    `json:"name"`
-	Status           string    `json:"status"`
-	BillType         string    `json:"bill_type"`
-	Algorithm        Algorithm `json:"algorithm"`
-	BillingDay       uint8     `json:"billing_day"`
-	Timezone         string    `json:"timezone"`
-	Direction        Direction `json:"direction"`
-	DefaultLayer     Layer     `json:"default_layer"`
-	CDRBPS           *uint64   `json:"cdr_bps,omitempty"`
-	QuotaBytes       *uint64   `json:"quota_bytes,omitempty"`
-	ReconcileAbs     uint64    `json:"reconcile_abs"`
-	ReconcilePercent float64   `json:"reconcile_percent"`
-	Ref              string    `json:"ref"`
-	Notes            string    `json:"notes"`
-	RowVersion       uint64    `json:"row_version"`
-	CreatedBy        string    `json:"created_by,omitempty"`
-	UpdatedBy        string    `json:"updated_by,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               string       `json:"id"`
+	PartyID          string       `json:"party_id,omitempty"`
+	Name             string       `json:"name"`
+	Status           string       `json:"status"`
+	BillType         string       `json:"bill_type"`
+	Algorithm        Algorithm    `json:"algorithm"`
+	BillingDay       uint8        `json:"billing_day"`
+	Timezone         string       `json:"timezone"`
+	Direction        Direction    `json:"direction"`
+	DefaultLayer     Layer        `json:"default_layer"`
+	PricingModel     PricingModel `json:"pricing_model"`
+	PriceCurrency    string       `json:"price_currency"`
+	UnitPrice        string       `json:"unit_price"`
+	CDRBPS           *uint64      `json:"cdr_bps,omitempty"`
+	QuotaBytes       *uint64      `json:"quota_bytes,omitempty"`
+	ReconcileAbs     uint64       `json:"reconcile_abs"`
+	ReconcilePercent float64      `json:"reconcile_percent"`
+	Ref              string       `json:"ref"`
+	Notes            string       `json:"notes"`
+	RowVersion       uint64       `json:"row_version"`
+	CreatedBy        string       `json:"created_by,omitempty"`
+	UpdatedBy        string       `json:"updated_by,omitempty"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 type AccountPort struct {
@@ -222,6 +242,18 @@ func ValidateAccount(account Account) error {
 	}
 	if !ValidAlgorithm(account.Algorithm) || !ValidDirection(account.Direction) || !ValidFlowLayer(account.DefaultLayer) {
 		return errors.New("billing account algorithm, direction or default layer is invalid")
+	}
+	if account.PricingModel != PricingFlatPort && account.PricingModel != PricingUsage95th {
+		return errors.New("billing pricing model must be flat_port or usage_95th")
+	}
+	if !currencyPattern.MatchString(account.PriceCurrency) {
+		return errors.New("billing price currency must be a three-letter uppercase code")
+	}
+	if !decimalPricePattern.MatchString(account.UnitPrice) {
+		return errors.New("billing unit price must be a non-negative decimal with at most six fractional digits")
+	}
+	if account.PricingModel == PricingUsage95th && (account.BillType != "cdr" || account.Algorithm != Algorithm95th) {
+		return errors.New("usage_95th pricing requires a cdr account using the 95th algorithm")
 	}
 	if account.BillingDay < 1 || account.BillingDay > 31 {
 		return errors.New("billing day must be 1..31")

@@ -7411,3 +7411,71 @@ msgstr "中风险"
 
 msgid "Critical"
 msgstr "严重"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "{selectedPortCount} selected"
+msgstr "已选 {selectedPortCount} 个"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "95th percentile per Mbps"
+msgstr "按 95th Mbps 计费"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Billing metric"
+msgstr "计费指标"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Billing ports and metrics"
+msgstr "计费端口与指标"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Currency"
+msgstr "币种"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Fixed price per port"
+msgstr "端口固定价"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "In + out"
+msgstr "入 + 出"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No accessible network devices."
+msgstr "没有可访问的网络设备。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No discovered ports on this device."
+msgstr "该设备尚未发现端口。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per Mbps / billing cycle"
+msgstr "每 Mbps / 账期单价"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per port / billing cycle"
+msgstr "每端口 / 账期单价"
+
+#: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
+msgid "Pricing model"
+msgstr "计价方式"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select all ports on this device"
+msgstr "全选该设备端口"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select at least one billing port."
+msgstr "请至少选择一个计费端口。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select ports from any device. Each port can use inbound, outbound, or combined traffic."
+msgstr "可从任意设备选择端口；每个端口可分别选择入流量、出流量或合计流量。"
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Unit price"
+msgstr "单价"
+
+#: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
+msgid "Value strategy"
+msgstr "取值策略"

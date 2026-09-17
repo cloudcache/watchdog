@@ -1,6 +1,6 @@
 # KISS-07：Billing、三层修正与对账闭环设计
 
-> 状态：实现冻结（2026-09-09）。单域、无租户；MySQL 保存管理状态和不可变证据，ClickHouse 保存并计算 SNMP/Flow 事实。没有 DatasetProvider、VictoriaMetrics DTO、PB collection 或第二套异步状态机。
+> 状态：实现冻结（2026-09-17）。单域、无租户；MySQL 保存管理状态和不可变证据，ClickHouse 保存并计算 SNMP/Flow 事实。没有 DatasetProvider、VictoriaMetrics DTO、PB collection 或第二套异步状态机。
 
 ## 1. 不变量
 
@@ -14,7 +14,7 @@
 8. 所有 mutation 有 RBAC、CSRF、row-version CAS 和 audit。`bill.viewAll` 或 `user_billing_permissions` 决定账户可见性；能看端口不自动获得财务权限。
 9. calculate/reconcile/export 复用平台 `operation_jobs` 的 lease、heartbeat、retry、cancel、idempotency；单条 external evidence 的 CAS 保存是短事务，不创建 billing job 状态机。
 10. CSV/Parquet 导出包含 period/account/party/port 快照、三层、SNMP、external、adjustment、reconciliation、issue、source generation 和完整 provenance；Excel 公式前缀必须转义。关闭后的同一 calculation version 导出可复算且字段稳定。
-11. KISS-07 的结算结果是带宽/流量用量，不虚构货币合同：没有得到 currency、单价、阶梯、税率和舍入规则前，不计算 monetary charge。门禁里的 adjustment amount 明确定义为 signed bps/bytes，不是钱；货币开票必须另行冻结合同模型后增加。
+11. account 的基础计价合同只允许两种：`flat_port` 按绑定端口数×每端口每账期单价，`usage_95th` 按所选 `raw|supplier|customer` 口径的 95th Mbps×每 Mbps 每账期单价。币种是 ISO 4217 三位大写代码，单价以 `DECIMAL(20,6)` 保存并作为字符串经 API 往返，禁止浮点数污染合同金额。当前不引入阶梯、税率、折扣和发票总额舍入；adjustment 仍是 signed bps/bytes 用量，不是钱。
 
 ## 2. 管理模型
 
@@ -24,7 +24,7 @@
 
 ### account / port
 
-账户冻结 `party_id, status, bill_type(cdr|quota), algorithm, billing_day, timezone, direction, default_layer, cdr_bps, quota_bytes, reconcile_abs, reconcile_percent, ref, notes`。account direction 是新增绑定的默认值；每个 port direction 是实际计费权威，显式值覆盖默认值。创建 period 时把已解析方向以及 `port_id/device_id/if_index/if_name` 写入 `billing_period_ports`，后续修改账户、party、端口元数据或绑定不改变既有账期。
+账户冻结 `party_id, status, bill_type(cdr|quota), algorithm, billing_day, timezone, direction, default_layer, pricing_model, price_currency, unit_price, cdr_bps, quota_bytes, reconcile_abs, reconcile_percent, ref, notes`。`default_layer` 就是账单取值策略；`usage_95th` 强制 `bill_type=cdr, algorithm=95th`。account direction 是新增绑定的默认值；每个 port direction 是实际计费权威，显式值覆盖默认值。一个账户可跨设备绑定 1–1000 个端口，创建/编辑账户时账户字段与完整端口集合在同一 MySQL 事务提交，任一端口不存在或越权则整体回滚。创建 period 时把已解析方向以及 `port_id/device_id/if_index/if_name` 和账户计价字段写入快照，后续修改账户、party、端口元数据或绑定不改变既有账期。
 
 ### period / value
 
@@ -53,8 +53,8 @@ adjustment 保存 layer、unit、signed amount、reason/evidence、状态、批�
 |---|---|---|---|
 | GET/POST | `/api/v1/billing/parties` | `bill.viewAll` / `bill.create` | party VTable / 新建 |
 | GET/PATCH/DELETE | `/api/v1/billing/parties/:id` | viewAll/update/delete | 详情、CAS 更新、未引用删除 |
-| GET/POST | `/api/v1/billing/accounts` | view/create | 授权范围 VTable / 新建 |
-| GET/PATCH/DELETE | `/api/v1/billing/accounts/:id` | view/update/delete | 详情、CAS 更新；存在 period 时禁止删除 |
+| GET/POST | `/api/v1/billing/accounts` | view/create | 授权范围 VTable / 新建；POST 的 `items[]` 与账户原子创建 |
+| GET/PATCH/DELETE | `/api/v1/billing/accounts/:id` | view/update/delete | 详情、CAS 更新；PATCH 可用 `items[]` 原子替换跨设备端口；存在 period 时禁止删除 |
 | GET/PUT | `/api/v1/billing/accounts/:id/ports` | view/update | 绑定 VTable / 原子替换 |
 | GET/POST | `/api/v1/billing/accounts/:id/periods` | view/create | 周期 VTable / 新建 |
 | GET | `/api/v1/billing/periods/:id` | view | 周期、当前 values 和 reconciliation summary |
@@ -83,10 +83,13 @@ adjustment 保存 layer、unit、signed amount、reason/evidence、状态、批�
 - approval 的 calculation version 或 row version 过期返回 412；closed 后 calculate/import/普通 adjustment 均拒绝。
 - adjustment `+100` 的 reversal 必须为新记录 `-100`，两行合计为零。
 - CSV/Parquet 对同一 generation 的行数、值、provenance 一致。
+- 两台设备各选一个端口并创建 account 后应得到两条绑定；任一 port 不存在或超出调用者 device/port scope 时 account 与绑定均不落库。
+- `12.345600` 必须按原字符串精度往返；小写币种、负数、超过 6 位小数和 `usage_95th + average` 必须拒绝。
 
-## 6. 已执行验证（2026-09-09）
+## 6. 已执行验证（2026-09-17）
 
 - 纯函数与仓储：`go test ./internal/billing`，覆盖 95th/average/total、UTC/DST 桶、三层 delta、sampling unknown、counter reset、external 一致性、adjustment/reversal。
 - 真实依赖：独立 MySQL 管理库 + ClickHouse 临时 database 写入 fresh SNMP counter 和 fresh Flow records；同一端口、同一 10 分钟周期四层均复算为 `800 bps / 60000 bytes / 2 of 2 buckets`，重复计算一致。另以真实 MySQL 验证 window offset 只生成一条幂等 run/critical issue/audit、无 value generation，operation retry 仍返回终止错误。
 - HTTP 端到端：真实 Gin/MySQL 覆盖 party/account/port/period、异步 calculate、issue 处理、adjustment、approve/close、CSV/Parquet、RBAC/CSRF/CAS/audit；篡改 artifact 返回 `export_corrupt`，过期 artifact 返回 `export_expired`，存在 period 的 account 删除返回 409。
 - 回归：billing/flowch/snmpch/server 包 test+vet、45 个前端单测、Billing 三页 Biome、Vite production build 通过。完整全仓门禁在提交前再执行一次。
+- 计价与绑定扩展：真实空 MySQL migration 后，经 Gin 完成跨两台设备的两端口原子创建、CAS 原子更新、精确单价往返；无效端口验证整笔回滚。设备概览仅保留 Total/Up/Down/Disabled 统计，不再重复渲染全部端口名称。

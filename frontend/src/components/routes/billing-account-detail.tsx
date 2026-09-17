@@ -34,6 +34,9 @@ type BillingAccount = {
 	timezone: string
 	direction: string
 	default_layer: string
+	pricing_model: string
+	price_currency: string
+	unit_price: string
 	cdr_bps?: number
 	quota_bytes?: number
 	row_version: number
@@ -474,7 +477,9 @@ export default memo(({ id }: { id: string }) => {
 				<Info label={t`Type`} value={account?.bill_type} />
 				<Info label={t`Algorithm`} value={account?.algorithm} />
 				<Info label={t`Direction`} value={account?.direction} />
-				<Info label={t`Layer`} value={account?.default_layer} />
+				<Info label={t`Value strategy`} value={account?.default_layer} />
+				<Info label={t`Pricing model`} value={account?.pricing_model} />
+				<Info label={t`Unit price`} value={account ? `${account.price_currency} ${account.unit_price}` : undefined} />
 				<Info label={t`Timezone`} value={account?.timezone} />
 				<Info label={t`Billing Day`} value={account?.billing_day} />
 			</div>

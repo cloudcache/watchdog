@@ -260,7 +260,7 @@ CH 的 `flow_records` 保持 exporter raw tuple/counter/Kafka provenance 不可�
 账单借鉴 LibreNMS 的 bill + ports + period/history，但增加 Flow 所需的口径证据：
 
 - `parties`：customer/supplier，不承担登录或隔离；
-- `billing_accounts`：counterparty、bill type、billing day、direction、算法、额度/费率和默认 view；
+- `billing_accounts`：counterparty、bill type、billing day、direction、算法、额度、`raw|supplier|customer` 取值策略，以及端口固定价或 95th Mbps 单价/币种；金额字段使用精确十进制；
 - `billing_account_ports`：账单与端口/方向关系；
 - `billing_periods`：时间窗、状态、固定算法与 publication version；
 - `billing_period_values`：raw/supplier/customer、SNMP interface counter、对方导入值及差值；

@@ -21,10 +21,11 @@ import (
 type apiBillingSNMPReader struct{}
 
 func (apiBillingSNMPReader) ReadBilling(_ context.Context, request snmpch.BillingRequest) (snmpch.BillingResult, error) {
+	presentPorts := uint32(len(request.Ports))
 	return snmpch.BillingResult{
 		From: request.From, To: request.To, ExpectedBuckets: 2, ObservedBuckets: 2, Coverage: 1,
-		TotalInBytes: 100, TotalOutBytes: 200, TotalSelectedBytes: 300, GenerationMin: 4, GenerationMax: 4, ExpectedPorts: 1,
-		Buckets: []snmpch.BillingBucket{{SelectedBPS: 1000, Coverage: 1, PresentPorts: 1}, {SelectedBPS: 1000, Coverage: 1, PresentPorts: 1}},
+		TotalInBytes: 100, TotalOutBytes: 200, TotalSelectedBytes: 300, GenerationMin: 4, GenerationMax: 4, ExpectedPorts: presentPorts,
+		Buckets: []snmpch.BillingBucket{{SelectedBPS: 1000, Coverage: 1, PresentPorts: presentPorts}, {SelectedBPS: 1000, Coverage: 1, PresentPorts: presentPorts}},
 	}, nil
 }
 
@@ -74,11 +75,17 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT id FROM users WHERE username='kiss07-admin'`).Scan(&actor); err != nil {
 		t.Fatal(err)
 	}
-	deviceID, portID := newID(), newID()
+	deviceID, portID, secondDeviceID, secondPortID := newID(), newID(), newID(), newID()
 	if _, err := s.db.Exec(`INSERT INTO devices (id,host) VALUES (?,?)`, deviceID, "kiss07-api-"+deviceID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(`INSERT INTO devices (id,host) VALUES (?,?)`, secondDeviceID, "kiss07-api-"+secondDeviceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,9,'et-0/0/9')`, portID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO ports (id,device_id,if_index,if_name) VALUES (?,?,10,'et-0/0/10')`, secondPortID, secondDeviceID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,11 +97,27 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 	}
 	var party billing.Party
 	decodeJSON(t, partyResponse, &party)
+	invalidAccountName := "Invalid API account " + deviceID
+	invalidAccount := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
+		"party_id": party.ID, "name": invalidAccountName, "status": "active", "bill_type": "cdr", "algorithm": "95th",
+		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "cdr_bps": 900,
+		"pricing_model": "usage_95th", "price_currency": "CNY", "unit_price": "1.000000",
+		"items": []map[string]any{{"port_id": "missing-port", "direction": "agg"}},
+	}, headers, cookies...)
+	if invalidAccount.Code != http.StatusForbidden {
+		t.Fatalf("invalid atomic account=%d %s", invalidAccount.Code, invalidAccount.Body.String())
+	}
+	var invalidAccountRows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM billing_accounts WHERE name=?`, invalidAccountName).Scan(&invalidAccountRows); err != nil || invalidAccountRows != 0 {
+		t.Fatalf("invalid account was partially committed: count=%d err=%v", invalidAccountRows, err)
+	}
 	accountResponse := requestJSON(t, s, http.MethodPost, "/api/v1/billing/accounts", map[string]any{
 		"party_id": party.ID, "name": "API account " + deviceID, "status": "active", "bill_type": "cdr", "algorithm": "95th",
 		"billing_day": 1, "timezone": "Asia/Singapore", "direction": "agg", "default_layer": "customer", "cdr_bps": 900, "reconcile_percent": 5,
+		"pricing_model": "usage_95th", "price_currency": "CNY", "unit_price": "12.345600",
+		"items": []map[string]any{{"port_id": portID, "direction": "in"}, {"port_id": secondPortID, "direction": "out"}},
 	}, headers, cookies...)
-	if accountResponse.Code != http.StatusCreated {
+	if accountResponse.Code != http.StatusCreated || accountResponse.Header().Get("ETag") != `"1"` {
 		t.Fatalf("account=%d %s", accountResponse.Code, accountResponse.Body.String())
 	}
 	var account billing.Account
@@ -111,6 +134,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 		_, _ = s.db.Exec(`DELETE FROM billing_accounts WHERE id=?`, account.ID)
 		_, _ = s.db.Exec(`DELETE FROM parties WHERE id=?`, party.ID)
 		_, _ = s.db.Exec(`DELETE FROM devices WHERE id=?`, deviceID)
+		_, _ = s.db.Exec(`DELETE FROM devices WHERE id=?`, secondDeviceID)
 		_, _ = s.db.Exec(`DELETE FROM audit_logs WHERE actor_id=?`, actor)
 	})
 
@@ -119,14 +143,24 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 		t.Fatalf("account VTable=%d %s", accounts.Code, accounts.Body.String())
 	}
 	accountDetail := requestJSON(t, s, http.MethodGet, "/api/v1/billing/accounts/"+account.ID, nil, nil, cookies...)
-	if accountDetail.Code != http.StatusOK || !strings.Contains(accountDetail.Body.String(), `"suggested_period"`) {
+	if accountDetail.Code != http.StatusOK || !strings.Contains(accountDetail.Body.String(), `"suggested_period"`) ||
+		!strings.Contains(accountDetail.Body.String(), portID) || !strings.Contains(accountDetail.Body.String(), secondPortID) ||
+		!strings.Contains(accountDetail.Body.String(), `"unit_price":"12.345600"`) {
 		t.Fatalf("account suggested period=%d %s", accountDetail.Code, accountDetail.Body.String())
 	}
 	ports := requestJSON(t, s, http.MethodPut, "/api/v1/billing/accounts/"+account.ID+"/ports", map[string]any{
-		"items": []map[string]any{{"port_id": portID, "direction": "agg"}},
+		"items": []map[string]any{{"port_id": portID, "direction": "agg"}, {"port_id": secondPortID, "direction": "agg"}},
 	}, map[string]string{"X-CSRF-Token": headers["X-CSRF-Token"], "If-Match": accountResponse.Header().Get("ETag")}, cookies...)
 	if ports.Code != http.StatusOK || ports.Header().Get("ETag") != `"2"` {
 		t.Fatalf("ports=%d %s", ports.Code, ports.Body.String())
+	}
+	updatedAccount := requestJSON(t, s, http.MethodPatch, "/api/v1/billing/accounts/"+account.ID, map[string]any{
+		"unit_price": "13.500000",
+		"items":      []map[string]any{{"port_id": portID, "direction": "in"}, {"port_id": secondPortID, "direction": "out"}},
+	}, map[string]string{"X-CSRF-Token": headers["X-CSRF-Token"], "If-Match": ports.Header().Get("ETag")}, cookies...)
+	if updatedAccount.Code != http.StatusOK || updatedAccount.Header().Get("ETag") != `"3"` ||
+		!strings.Contains(updatedAccount.Body.String(), `"unit_price":"13.500000"`) {
+		t.Fatalf("atomic account update=%d %s", updatedAccount.Code, updatedAccount.Body.String())
 	}
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
@@ -259,7 +293,7 @@ func TestBillingAPIAsyncLifecycleAndVTables(t *testing.T) {
 		t.Fatalf("expired export=%d %s", expired.Code, expired.Body.String())
 	}
 	accountDelete := requestJSON(t, s, http.MethodDelete, "/api/v1/billing/accounts/"+account.ID, nil,
-		map[string]string{"X-CSRF-Token": headers["X-CSRF-Token"], "If-Match": `"2"`}, cookies...)
+		map[string]string{"X-CSRF-Token": headers["X-CSRF-Token"], "If-Match": `"3"`}, cookies...)
 	if accountDelete.Code != http.StatusConflict {
 		t.Fatalf("account with evidence deleted=%d %s", accountDelete.Code, accountDelete.Body.String())
 	}

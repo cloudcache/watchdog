@@ -12,14 +12,15 @@ import (
 )
 
 const accountColumns = `id,COALESCE(party_id,''),name,status,bill_type,algorithm,billing_day,timezone,direction,default_layer,
-	cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
+	pricing_model,price_currency,CAST(unit_price AS CHAR),cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,row_version,
 	COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 	var item Account
 	var cdr, quota sql.NullString
 	err := scanner.Scan(&item.ID, &item.PartyID, &item.Name, &item.Status, &item.BillType, &item.Algorithm, &item.BillingDay,
-		&item.Timezone, &item.Direction, &item.DefaultLayer, &cdr, &quota, &item.ReconcileAbs, &item.ReconcilePercent,
+		&item.Timezone, &item.Direction, &item.DefaultLayer, &item.PricingModel, &item.PriceCurrency, &item.UnitPrice,
+		&cdr, &quota, &item.ReconcileAbs, &item.ReconcilePercent,
 		&item.Ref, &item.Notes, &item.RowVersion, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return Account{}, normalizeSQLError(err)
@@ -43,7 +44,8 @@ func scanAccount(scanner interface{ Scan(...any) error }) (Account, error) {
 
 func accountArgs(item Account, actor string) []any {
 	return []any{nullString(item.PartyID), item.Name, item.Status, item.BillType, item.Algorithm, item.BillingDay, item.Timezone,
-		item.Direction, item.DefaultLayer, item.CDRBPS, item.QuotaBytes, item.ReconcileAbs, item.ReconcilePercent,
+		item.Direction, item.DefaultLayer, item.PricingModel, item.PriceCurrency, item.UnitPrice,
+		item.CDRBPS, item.QuotaBytes, item.ReconcileAbs, item.ReconcilePercent,
 		item.Ref, item.Notes, nullString(actor)}
 }
 
@@ -70,6 +72,21 @@ func normalizeAccount(item Account) Account {
 	}
 	if item.DefaultLayer == "" {
 		item.DefaultLayer = LayerCustomer
+	}
+	if item.PricingModel == "" {
+		if item.BillType == "cdr" && item.Algorithm == Algorithm95th {
+			item.PricingModel = PricingUsage95th
+		} else {
+			item.PricingModel = PricingFlatPort
+		}
+	}
+	item.PriceCurrency = strings.ToUpper(strings.TrimSpace(item.PriceCurrency))
+	if item.PriceCurrency == "" {
+		item.PriceCurrency = "CNY"
+	}
+	item.UnitPrice = strings.TrimSpace(item.UnitPrice)
+	if item.UnitPrice == "" {
+		item.UnitPrice = "0"
 	}
 	if item.BillType == "cdr" {
 		item.QuotaBytes = nil
@@ -123,8 +140,22 @@ func (s *Store) ListAccounts(ctx context.Context, filter PageFilter, userID stri
 }
 
 func (s *Store) CreateAccount(ctx context.Context, item Account, actor string) (Account, error) {
+	return s.createAccount(ctx, item, nil, false, actor)
+}
+
+// CreateAccountWithPorts atomically creates an account and its complete port
+// scope so API callers cannot leave a partially configured billing account.
+func (s *Store) CreateAccountWithPorts(ctx context.Context, item Account, ports []AccountPort, actor string) (Account, error) {
+	return s.createAccount(ctx, item, ports, true, actor)
+}
+
+func (s *Store) createAccount(ctx context.Context, item Account, ports []AccountPort, requirePorts bool, actor string) (Account, error) {
 	item, item.ID = normalizeAccount(item), NewID()
 	if err := ValidateAccount(item); err != nil {
+		return Account{}, err
+	}
+	normalizedPorts, err := normalizeAccountPorts(ports, item.Direction, requirePorts)
+	if err != nil {
 		return Account{}, err
 	}
 	args := append([]any{item.ID}, accountArgs(item, actor)...)
@@ -134,12 +165,16 @@ func (s *Store) CreateAccount(ctx context.Context, item Account, actor string) (
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO billing_accounts
-		(id,party_id,name,status,bill_type,algorithm,billing_day,timezone,direction,default_layer,cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
-		VALUES (?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, nullString(actor))...)
+		(id,party_id,name,status,bill_type,algorithm,billing_day,timezone,direction,default_layer,pricing_model,price_currency,unit_price,cdr_bps,quota_bytes,reconcile_abs,reconcile_percent,ref,notes,created_by,updated_by)
+		VALUES (?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, nullString(actor))...)
 	if err != nil {
 		return Account{}, fmt.Errorf("create billing account: %w", err)
 	}
-	if err := auditTx(ctx, tx, actor, "billing.account.create", "billing_account", item.ID, fmt.Sprintf(`{"bill_type":%q,"algorithm":%q}`, item.BillType, item.Algorithm)); err != nil {
+	if err := insertAccountPortsTx(ctx, tx, item.ID, normalizedPorts, actor); err != nil {
+		return Account{}, err
+	}
+	if err := auditTx(ctx, tx, actor, "billing.account.create", "billing_account", item.ID,
+		fmt.Sprintf(`{"bill_type":%q,"algorithm":%q,"pricing_model":%q,"port_count":%d}`, item.BillType, item.Algorithm, item.PricingModel, len(normalizedPorts))); err != nil {
 		return Account{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -149,12 +184,30 @@ func (s *Store) CreateAccount(ctx context.Context, item Account, actor string) (
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, item Account, expected uint64, actor string) (Account, error) {
+	return s.updateAccount(ctx, item, nil, expected, actor)
+}
+
+// UpdateAccountWithPorts atomically replaces account settings and the complete
+// port scope under one optimistic-concurrency check.
+func (s *Store) UpdateAccountWithPorts(ctx context.Context, item Account, ports []AccountPort, expected uint64, actor string) (Account, error) {
+	return s.updateAccount(ctx, item, &ports, expected, actor)
+}
+
+func (s *Store) updateAccount(ctx context.Context, item Account, ports *[]AccountPort, expected uint64, actor string) (Account, error) {
 	item = normalizeAccount(item)
 	if item.ID == "" || expected == 0 {
 		return Account{}, errors.New("billing account id and row version are required")
 	}
 	if err := ValidateAccount(item); err != nil {
 		return Account{}, err
+	}
+	var normalizedPorts []AccountPort
+	if ports != nil {
+		var err error
+		normalizedPorts, err = normalizeAccountPorts(*ports, item.Direction, true)
+		if err != nil {
+			return Account{}, err
+		}
 	}
 	args := append(accountArgs(item, actor), item.ID, expected)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -163,14 +216,20 @@ func (s *Store) UpdateAccount(ctx context.Context, item Account, expected uint64
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET party_id=?,name=?,status=?,bill_type=?,algorithm=?,billing_day=?,timezone=?,direction=?,default_layer=?,
-		cdr_bps=?,quota_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
+		pricing_model=?,price_currency=?,unit_price=?,cdr_bps=?,quota_bytes=?,reconcile_abs=?,reconcile_percent=?,ref=?,notes=?,updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, args...)
 	if err != nil {
 		return Account{}, fmt.Errorf("update billing account: %w", err)
 	}
 	if err := changed(result); err != nil {
 		return Account{}, err
 	}
-	if err := auditTx(ctx, tx, actor, "billing.account.update", "billing_account", item.ID, fmt.Sprintf(`{"row_version":%d}`, expected+1)); err != nil {
+	if ports != nil {
+		if err := replaceAccountPortsTx(ctx, tx, item.ID, normalizedPorts, actor); err != nil {
+			return Account{}, err
+		}
+	}
+	if err := auditTx(ctx, tx, actor, "billing.account.update", "billing_account", item.ID,
+		fmt.Sprintf(`{"row_version":%d,"port_scope_replaced":%t,"port_count":%d}`, expected+1, ports != nil, len(normalizedPorts))); err != nil {
 		return Account{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -287,25 +346,12 @@ func (s *Store) ReplaceAccountPorts(ctx context.Context, accountID string, ports
 	if current != expected {
 		return ErrConflict
 	}
-	seen := make(map[string]bool, len(ports))
-	for i := range ports {
-		ports[i].PortID = strings.TrimSpace(ports[i].PortID)
-		if ports[i].Direction == "" {
-			ports[i].Direction = defaultDirection
-		}
-		if ports[i].PortID == "" || !ValidDirection(ports[i].Direction) || seen[ports[i].PortID] {
-			return errors.New("billing port scope is invalid or duplicated")
-		}
-		seen[ports[i].PortID] = true
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM billing_account_ports WHERE account_id=?`, accountID); err != nil {
+	ports, err = normalizeAccountPorts(ports, defaultDirection, false)
+	if err != nil {
 		return err
 	}
-	for _, port := range ports {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO billing_account_ports (account_id,port_id,direction,created_by)
-			VALUES (?,?,?,NULLIF(?,''))`, accountID, port.PortID, port.Direction, actor); err != nil {
-			return err
-		}
+	if err := replaceAccountPortsTx(ctx, tx, accountID, ports, actor); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET updated_by=NULLIF(?,''),row_version=row_version+1 WHERE id=? AND row_version=?`, actor, accountID, expected)
 	if err != nil {
@@ -318,6 +364,43 @@ func (s *Store) ReplaceAccountPorts(ctx context.Context, accountID string, ports
 		return err
 	}
 	return tx.Commit()
+}
+
+func normalizeAccountPorts(ports []AccountPort, defaultDirection Direction, require bool) ([]AccountPort, error) {
+	if len(ports) > 1000 || (require && len(ports) == 0) {
+		return nil, errors.New("billing account requires 1..1000 ports")
+	}
+	normalized := make([]AccountPort, len(ports))
+	seen := make(map[string]bool, len(ports))
+	for i := range ports {
+		normalized[i] = ports[i]
+		normalized[i].PortID = strings.TrimSpace(normalized[i].PortID)
+		if normalized[i].Direction == "" {
+			normalized[i].Direction = defaultDirection
+		}
+		if normalized[i].PortID == "" || !ValidDirection(normalized[i].Direction) || seen[normalized[i].PortID] {
+			return nil, errors.New("billing port scope is invalid or duplicated")
+		}
+		seen[normalized[i].PortID] = true
+	}
+	return normalized, nil
+}
+
+func insertAccountPortsTx(ctx context.Context, tx *sql.Tx, accountID string, ports []AccountPort, actor string) error {
+	for _, port := range ports {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO billing_account_ports (account_id,port_id,direction,created_by)
+			VALUES (?,?,?,NULLIF(?,''))`, accountID, port.PortID, port.Direction, actor); err != nil {
+			return fmt.Errorf("bind billing port: %w", err)
+		}
+	}
+	return nil
+}
+
+func replaceAccountPortsTx(ctx context.Context, tx *sql.Tx, accountID string, ports []AccountPort, actor string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM billing_account_ports WHERE account_id=?`, accountID); err != nil {
+		return err
+	}
+	return insertAccountPortsTx(ctx, tx, accountID, ports, actor)
 }
 
 func nullString(value string) any {

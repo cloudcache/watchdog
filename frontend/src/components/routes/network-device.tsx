@@ -339,7 +339,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 			])
 			setPortTraffic(mergePortTraffic(latestPortValues(inPorts), latestPortValues(outPorts)))
 		} catch {
-			// port traffic is best-effort; PortStatusOverview tolerates stale data
+			// Port traffic is best-effort and is shown by the paged Ports table.
 		}
 	}, [targetID, deviceID, portIDsKey, trafficView])
 
@@ -597,12 +597,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 										/>
 									))
 							: null}
-						<PortStatusOverview
-							ports={ports}
-							selectedPortIDs={portIDs}
-							portTraffic={portTraffic}
-							trafficView={trafficView}
-						/>
+						<PortStatusOverview ports={ports} />
 						<DeviceStatusSummary ports={ports} sensorCount={sensorCounts.total} bgpCounts={bgpCounts} />
 						<DeviceSavedGraphs deviceId={id} />
 					</TabsContent>
@@ -873,21 +868,10 @@ function CompactIssueList({
 	)
 }
 
-function PortStatusOverview({
-	ports,
-	selectedPortIDs,
-	portTraffic,
-	trafficView,
-}: {
-	ports: NetworkPort[]
-	selectedPortIDs: string[]
-	portTraffic: Record<string, { in?: number; out?: number }>
-	trafficView: TrafficViewMode
-}) {
+function PortStatusOverview({ ports }: { ports: NetworkPort[] }) {
 	if (ports.length === 0) {
 		return null
 	}
-	const selected = new Set(selectedPortIDs)
 	const up = ports.filter((port) => portState(port) === "up").length
 	const down = ports.filter((port) => portState(port) === "down").length
 	const disabled = ports.filter((port) => portState(port) === "disabled").length
@@ -899,23 +883,6 @@ function PortStatusOverview({
 				<PortCount label={<Trans>Up</Trans>} value={up} className="text-blue-700 dark:text-blue-300" />
 				<PortCount label={<Trans>Down</Trans>} value={down} className="text-red-600 dark:text-red-300" />
 				<PortCount label={<Trans>Disabled</Trans>} value={disabled + unknown} className="text-muted-foreground" />
-			</div>
-			<div className="max-h-28 overflow-auto text-sm leading-6">
-				{ports.map((port, index) => {
-					const id = port.ID ?? port.id ?? ""
-					return (
-						<span key={id || index}>
-							<Link
-								href={getPagePath($router, "network_port", { id })}
-								title={portTrafficTitle(port, portTraffic[id], trafficView)}
-								className={cn("hover:underline", portColor(port), !selected.has(id) && "opacity-45")}
-							>
-								{portLabel(port)}
-							</Link>
-							{index < ports.length - 1 ? <span className="text-muted-foreground">, </span> : null}
-						</span>
-					)
-				})}
 			</div>
 		</div>
 	)
@@ -1691,33 +1658,6 @@ function portState(port: NetworkPort) {
 		return "down"
 	}
 	return "unknown"
-}
-
-function portColor(port: NetworkPort) {
-	const state = portState(port)
-	if (state === "up") {
-		return "text-blue-700 dark:text-blue-300"
-	}
-	if (state === "down") {
-		return "text-red-600 dark:text-red-300"
-	}
-	return "text-muted-foreground"
-}
-
-function portTrafficTitle(
-	port: NetworkPort,
-	traffic: { in?: number; out?: number } | undefined,
-	trafficView: TrafficViewMode
-) {
-	const rateBase = trafficViewRateBase(trafficView)
-	return [
-		portLabel(port),
-		`In: ${formatBitsPerSecond(traffic?.in, rateBase)}`,
-		`Out: ${formatBitsPerSecond(traffic?.out, rateBase)}`,
-		`Admin: ${port.AdminStatus ?? port.admin_status ?? "—"}`,
-		`Oper: ${port.OperStatus ?? port.oper_status ?? "—"}`,
-		`Speed: ${formatBitsPerSecond(port.SpeedBps ?? port.speed_bps)}`,
-	].join("\n")
 }
 
 function createAggregateGraphID() {

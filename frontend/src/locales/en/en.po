@@ -8398,3 +8398,71 @@ msgstr "Medium"
 
 msgid "Critical"
 msgstr "Critical"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "{selectedPortCount} selected"
+msgstr "{selectedPortCount} selected"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "95th percentile per Mbps"
+msgstr "95th percentile per Mbps"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Billing metric"
+msgstr "Billing metric"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Billing ports and metrics"
+msgstr "Billing ports and metrics"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Currency"
+msgstr "Currency"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Fixed price per port"
+msgstr "Fixed price per port"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "In + out"
+msgstr "In + out"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No accessible network devices."
+msgstr "No accessible network devices."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No discovered ports on this device."
+msgstr "No discovered ports on this device."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per Mbps / billing cycle"
+msgstr "Price per Mbps / billing cycle"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Price per port / billing cycle"
+msgstr "Price per port / billing cycle"
+
+#: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
+msgid "Pricing model"
+msgstr "Pricing model"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select all ports on this device"
+msgstr "Select all ports on this device"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select at least one billing port."
+msgstr "Select at least one billing port."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Select ports from any device. Each port can use inbound, outbound, or combined traffic."
+msgstr "Select ports from any device. Each port can use inbound, outbound, or combined traffic."
+
+#: src/components/routes/billing-account-detail.tsx
+msgid "Unit price"
+msgstr "Unit price"
+
+#: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
+msgid "Value strategy"
+msgstr "Value strategy"

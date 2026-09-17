@@ -92,6 +92,36 @@ func TestSuggestedPeriodWindowUsesTimezoneBillingDayAndShortMonth(t *testing.T) 
 	}
 }
 
+func TestBillingPricingContractValidation(t *testing.T) {
+	cdr := uint64(1_000_000)
+	valid := Account{
+		Name: "customer-a", Status: "active", BillType: "cdr", Algorithm: Algorithm95th,
+		BillingDay: 1, Timezone: "UTC", Direction: DirectionAgg, DefaultLayer: LayerCustomer,
+		PricingModel: PricingUsage95th, PriceCurrency: "CNY", UnitPrice: "12.345600", CDRBPS: &cdr,
+	}
+	if err := ValidateAccount(valid); err != nil {
+		t.Fatalf("valid pricing contract: %v", err)
+	}
+	tests := []Account{
+		func() Account { item := valid; item.PriceCurrency = "cny"; return item }(),
+		func() Account { item := valid; item.UnitPrice = "1.0000001"; return item }(),
+		func() Account { item := valid; item.UnitPrice = "-1"; return item }(),
+		func() Account { item := valid; item.Algorithm = AlgorithmAverage; return item }(),
+	}
+	for index, account := range tests {
+		if err := ValidateAccount(account); err == nil {
+			t.Fatalf("invalid pricing contract %d was accepted: %+v", index, account)
+		}
+	}
+	quota := uint64(1_000_000)
+	flat := valid
+	flat.BillType, flat.Algorithm, flat.CDRBPS, flat.QuotaBytes = "quota", AlgorithmTotal, nil, &quota
+	flat.PricingModel = PricingFlatPort
+	if err := ValidateAccount(flat); err != nil {
+		t.Fatalf("valid flat-port pricing contract: %v", err)
+	}
+}
+
 func TestReconciliationReportsEvidenceAndNeverAdjusts(t *testing.T) {
 	values := []Value{
 		{Layer: LayerSNMP, AlgorithmValue: 1000, Coverage: .9, ExpectedBuckets: 20, ObservedBuckets: 18, MissingBuckets: 2, ResetBuckets: 1, GapBuckets: 1},

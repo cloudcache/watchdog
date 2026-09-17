@@ -222,11 +222,17 @@ func (s *Server) listBillingAccounts(c *gin.Context) {
 }
 
 func (s *Server) createBillingAccount(c *gin.Context) {
-	var input billing.Account
-	if !addressDecodeStrict(c, &input, 64<<10) {
+	var input struct {
+		billing.Account
+		Items []billing.AccountPort `json:"items"`
+	}
+	if !addressDecodeStrict(c, &input, 256<<10) {
 		return
 	}
-	item, err := s.billingStore.CreateAccount(c, input, currentPrincipal(c).UserID)
+	if !s.requireBillingPortScope(c, input.Items) {
+		return
+	}
+	item, err := s.billingStore.CreateAccountWithPorts(c, input.Account, input.Items, currentPrincipal(c).UserID)
 	if err != nil {
 		writeBillingError(c, err)
 		return
@@ -285,23 +291,27 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 		return
 	}
 	var input struct {
-		PartyID          *string            `json:"party_id"`
-		Name             *string            `json:"name"`
-		Status           *string            `json:"status"`
-		BillType         *string            `json:"bill_type"`
-		Algorithm        *billing.Algorithm `json:"algorithm"`
-		BillingDay       *uint8             `json:"billing_day"`
-		Timezone         *string            `json:"timezone"`
-		Direction        *billing.Direction `json:"direction"`
-		DefaultLayer     *billing.Layer     `json:"default_layer"`
-		CDRBPS           *uint64            `json:"cdr_bps"`
-		QuotaBytes       *uint64            `json:"quota_bytes"`
-		ReconcileAbs     *uint64            `json:"reconcile_abs"`
-		ReconcilePercent *float64           `json:"reconcile_percent"`
-		Ref              *string            `json:"ref"`
-		Notes            *string            `json:"notes"`
+		PartyID          *string                `json:"party_id"`
+		Name             *string                `json:"name"`
+		Status           *string                `json:"status"`
+		BillType         *string                `json:"bill_type"`
+		Algorithm        *billing.Algorithm     `json:"algorithm"`
+		BillingDay       *uint8                 `json:"billing_day"`
+		Timezone         *string                `json:"timezone"`
+		Direction        *billing.Direction     `json:"direction"`
+		DefaultLayer     *billing.Layer         `json:"default_layer"`
+		PricingModel     *billing.PricingModel  `json:"pricing_model"`
+		PriceCurrency    *string                `json:"price_currency"`
+		UnitPrice        *string                `json:"unit_price"`
+		CDRBPS           *uint64                `json:"cdr_bps"`
+		QuotaBytes       *uint64                `json:"quota_bytes"`
+		ReconcileAbs     *uint64                `json:"reconcile_abs"`
+		ReconcilePercent *float64               `json:"reconcile_percent"`
+		Ref              *string                `json:"ref"`
+		Notes            *string                `json:"notes"`
+		Items            *[]billing.AccountPort `json:"items"`
 	}
-	if !addressDecodeStrict(c, &input, 64<<10) {
+	if !addressDecodeStrict(c, &input, 256<<10) {
 		return
 	}
 	if input.PartyID != nil {
@@ -331,6 +341,15 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 	if input.DefaultLayer != nil {
 		item.DefaultLayer = *input.DefaultLayer
 	}
+	if input.PricingModel != nil {
+		item.PricingModel = *input.PricingModel
+	}
+	if input.PriceCurrency != nil {
+		item.PriceCurrency = *input.PriceCurrency
+	}
+	if input.UnitPrice != nil {
+		item.UnitPrice = *input.UnitPrice
+	}
 	if input.CDRBPS != nil {
 		item.CDRBPS = input.CDRBPS
 	}
@@ -349,7 +368,15 @@ func (s *Server) updateBillingAccount(c *gin.Context) {
 	if input.Notes != nil {
 		item.Notes = *input.Notes
 	}
-	updated, err := s.billingStore.UpdateAccount(c, item, expected, currentPrincipal(c).UserID)
+	var updated billing.Account
+	if input.Items != nil {
+		if !s.requireBillingPortScope(c, *input.Items) {
+			return
+		}
+		updated, err = s.billingStore.UpdateAccountWithPorts(c, item, *input.Items, expected, currentPrincipal(c).UserID)
+	} else {
+		updated, err = s.billingStore.UpdateAccount(c, item, expected, currentPrincipal(c).UserID)
+	}
 	if err != nil {
 		writeBillingError(c, err)
 		return
@@ -406,6 +433,9 @@ func (s *Server) replaceBillingAccountPorts(c *gin.Context) {
 	if !addressDecodeStrict(c, &input, 256<<10) {
 		return
 	}
+	if !s.requireBillingPortScope(c, input.Items) {
+		return
+	}
 	if err := s.billingStore.ReplaceAccountPorts(c, id, input.Items, expected, currentPrincipal(c).UserID); err != nil {
 		writeBillingError(c, err)
 		return
@@ -422,6 +452,37 @@ func (s *Server) replaceBillingAccountPorts(c *gin.Context) {
 	}
 	c.Header("ETag", etag(account.RowVersion))
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items), "row_version": account.RowVersion})
+}
+
+// requireBillingPortScope applies the same device-root and explicit-port
+// grants as device, SNMP and aggregate-graph queries. Billing permissions
+// authorize the operation; they do not grant access to otherwise hidden ports.
+func (s *Server) requireBillingPortScope(c *gin.Context, items []billing.AccountPort) bool {
+	seen := make(map[string]struct{}, len(items))
+	portIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		portID := strings.TrimSpace(item.PortID)
+		if portID == "" {
+			continue
+		}
+		if _, exists := seen[portID]; exists {
+			continue
+		}
+		seen[portID] = struct{}{}
+		portIDs = append(portIDs, portID)
+	}
+	if len(portIDs) == 0 {
+		return true
+	}
+	if _, err := s.resolveSNMPScopes(c.Request.Context(), currentPrincipal(c), nil, portIDs); err != nil {
+		if errors.Is(err, errSNMPScopeForbidden) {
+			fail(c, http.StatusForbidden, "forbidden", "billing port is outside the caller's resource scope")
+		} else {
+			writeSQLError(c, err)
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) listBillingPeriods(c *gin.Context) {
