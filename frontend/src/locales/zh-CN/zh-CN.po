@@ -7479,3 +7479,83 @@ msgstr "单价"
 #: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
 msgid "Value strategy"
 msgstr "取值策略"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "95th percentile bandwidth"
+msgstr "95 分位带宽"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Absolute difference threshold ({0})"
+msgstr "绝对差异阈值（{0}）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Average bandwidth"
+msgstr "平均带宽"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Calculation method"
+msgstr "计算方法"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth"
+msgstr "承诺带宽"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth (Mbps)"
+msgstr "承诺带宽（Mbps）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth / 95th floor (Mbps)"
+msgstr "承诺带宽 / 95 计费保底（Mbps）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Difference threshold (%)"
+msgstr "差异阈值（%）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Enter valid billing and reconciliation values"
+msgstr "请输入有效的计费与对账数值"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No matching devices."
+msgstr "没有匹配的设备。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Reconciliation alert thresholds"
+msgstr "对账告警阈值"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Search by device name or IP..."
+msgstr "按设备名称或 IP 搜索..."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Search devices"
+msgstr "搜索设备"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Sets the period guarantee; overuse starts above this bandwidth."
+msgstr "设置账期保底带宽；超出该带宽的部分计为超用量。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
+msgstr "这些阈值仅用于标记 SNMP、Flow 和外部凭据之间的差异，不会改变用量或价格。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic"
+msgstr "总流量"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic above this quota is period overuse."
+msgstr "超过此配额的总流量计为账期超用量。"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic quota"
+msgstr "流量配额"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic quota (GB)"
+msgstr "流量配额（GB）"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Usage contract"
+msgstr "计量类型"

@@ -8466,3 +8466,83 @@ msgstr "Unit price"
 #: src/components/routes/billing-account-detail.tsx src/components/routes/billing-account-form.tsx
 msgid "Value strategy"
 msgstr "Value strategy"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "95th percentile bandwidth"
+msgstr "95th percentile bandwidth"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Absolute difference threshold ({0})"
+msgstr "Absolute difference threshold ({0})"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Average bandwidth"
+msgstr "Average bandwidth"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Calculation method"
+msgstr "Calculation method"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth"
+msgstr "Committed bandwidth"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth (Mbps)"
+msgstr "Committed bandwidth (Mbps)"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Committed bandwidth / 95th floor (Mbps)"
+msgstr "Committed bandwidth / 95th floor (Mbps)"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Difference threshold (%)"
+msgstr "Difference threshold (%)"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Enter valid billing and reconciliation values"
+msgstr "Enter valid billing and reconciliation values"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "No matching devices."
+msgstr "No matching devices."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Reconciliation alert thresholds"
+msgstr "Reconciliation alert thresholds"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Search by device name or IP..."
+msgstr "Search by device name or IP..."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Search devices"
+msgstr "Search devices"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Sets the period guarantee; overuse starts above this bandwidth."
+msgstr "Sets the period guarantee; overuse starts above this bandwidth."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
+msgstr "These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage or price."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic"
+msgstr "Total traffic"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Total traffic above this quota is period overuse."
+msgstr "Total traffic above this quota is period overuse."
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic quota"
+msgstr "Traffic quota"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Traffic quota (GB)"
+msgstr "Traffic quota (GB)"
+
+#: src/components/routes/billing-account-form.tsx
+msgid "Usage contract"
+msgstr "Usage contract"

@@ -42,9 +42,10 @@ type PricingModel string
 const (
 	// PricingFlatPort charges UnitPrice for every bound port in a billing cycle.
 	PricingFlatPort PricingModel = "flat_port"
-	// PricingUsage95th charges UnitPrice for every Mbps of the selected layer's
-	// 95th-percentile value. The monetary result is produced by the invoice
-	// layer; this package preserves the exact contract and usage evidence.
+	// PricingUsage95th charges UnitPrice for every Mbps of the greater of the
+	// committed rate and selected layer's 95th-percentile value. The monetary
+	// result is produced by the invoice layer; this package preserves the exact
+	// contract and usage evidence.
 	PricingUsage95th PricingModel = "usage_95th"
 )
 

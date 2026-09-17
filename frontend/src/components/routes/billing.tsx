@@ -133,8 +133,8 @@ function AccountsTable() {
 		() => [
 			{ field: "name", title: t`Name`, width: 240 },
 			{ field: "status", title: t`Status`, width: 110, filterField: "status" },
-			{ field: "bill_type", title: t`Type`, width: 100, filterField: "type" },
-			{ field: "algorithm", title: t`Algorithm`, width: 110 },
+			{ field: "bill_type_display", title: t`Type`, width: 180, filterField: "type" },
+			{ field: "algorithm_display", title: t`Algorithm`, width: 180 },
 			{ field: "billing_day", title: t`Billing Day`, width: 110 },
 			{ field: "timezone", title: t`Timezone`, width: 180 },
 			{ field: "direction", title: t`Direction`, width: 100 },
@@ -147,9 +147,16 @@ function AccountsTable() {
 		() =>
 			items.map((item) => ({
 				...item,
+				bill_type_display: item.bill_type === "cdr" ? t`Committed bandwidth` : t`Traffic quota`,
+				algorithm_display:
+					item.algorithm === "95th"
+						? t`95th percentile bandwidth`
+						: item.algorithm === "average"
+							? t`Average bandwidth`
+							: t`Total traffic`,
 				allowance: item.bill_type === "cdr" ? formatBPS(item.cdr_bps) : formatBytes(item.quota_bytes),
 			})),
-		[items]
+		[items, t]
 	)
 	const filters = useMemo(
 		() => ({
@@ -159,8 +166,8 @@ function AccountsTable() {
 					{ value: "paused", label: t`Paused` },
 				],
 				type: [
-					{ value: "cdr", label: "CDR" },
-					{ value: "quota", label: t`Quota` },
+					{ value: "cdr", label: t`Committed bandwidth` },
+					{ value: "quota", label: t`Traffic quota` },
 				],
 			},
 			selected: { status: status ? [status] : [], type: billType ? [billType] : [] },

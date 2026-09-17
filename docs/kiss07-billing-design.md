@@ -14,7 +14,8 @@
 8. 所有 mutation 有 RBAC、CSRF、row-version CAS 和 audit。`bill.viewAll` 或 `user_billing_permissions` 决定账户可见性；能看端口不自动获得财务权限。
 9. calculate/reconcile/export 复用平台 `operation_jobs` 的 lease、heartbeat、retry、cancel、idempotency；单条 external evidence 的 CAS 保存是短事务，不创建 billing job 状态机。
 10. CSV/Parquet 导出包含 period/account/party/port 快照、三层、SNMP、external、adjustment、reconciliation、issue、source generation 和完整 provenance；Excel 公式前缀必须转义。关闭后的同一 calculation version 导出可复算且字段稳定。
-11. account 的基础计价合同只允许两种：`flat_port` 按绑定端口数×每端口每账期单价，`usage_95th` 按所选 `raw|supplier|customer` 口径的 95th Mbps×每 Mbps 每账期单价。币种是 ISO 4217 三位大写代码，单价以 `DECIMAL(20,6)` 保存并作为字符串经 API 往返，禁止浮点数污染合同金额。当前不引入阶梯、税率、折扣和发票总额舍入；adjustment 仍是 signed bps/bytes 用量，不是钱。
+11. account 的基础计价合同只允许两种：`flat_port` 按绑定端口数×每端口每账期单价，`usage_95th` 的计费量为 `max(cdr_bps, 所选 raw|supplier|customer 口径的 95th bps) / 1,000,000`，再乘每 Mbps 每账期单价；因此 `cdr_bps` 就是 95 计费保底/承诺带宽，不是另一种计费类型。币种是 ISO 4217 三位大写代码，单价以 `DECIMAL(20,6)` 保存并作为字符串经 API 往返，禁止浮点数污染合同金额。当前不引入阶梯、税率、折扣和发票总额舍入；adjustment 仍是 signed bps/bytes 用量，不是钱。
+12. API/MySQL 的权威单位保持 bps/bytes，避免迁移和精度歧义；操作界面统一使用十进制 Mbps（`1 Mbps = 1,000,000 bps`）和 GB（`1 GB = 1,000,000,000 bytes`）并在提交/回显边界转换。`reconcile_abs` 与算法同量纲：95th/average 为 bps（界面 Mbps），total 为 bytes（界面 GB）；`reconcile_percent` 为百分比。两种阈值只决定是否产生差异 issue，不改变 used、overuse、计费量或价格。
 
 ## 2. 管理模型
 

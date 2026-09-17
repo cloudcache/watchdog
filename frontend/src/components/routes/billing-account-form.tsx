@@ -11,6 +11,13 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import {
+	BPS_PER_MBPS,
+	BYTES_PER_GB,
+	formatBillingUnit,
+	parseBillingUnit,
+	reconciliationUnit,
+} from "@/lib/billing-units"
 import { cn } from "@/lib/utils"
 
 type BillingAccount = {
@@ -65,9 +72,9 @@ type FormState = Omit<
 	"id" | "billing_day" | "cdr_bps" | "quota_bytes" | "reconcile_abs" | "reconcile_percent"
 > & {
 	billing_day: string
-	cdr_bps: string
-	quota_bytes: string
-	reconcile_abs: string
+	committed_mbps: string
+	quota_gb: string
+	reconcile_absolute: string
 	reconcile_percent: string
 }
 
@@ -84,9 +91,9 @@ const emptyForm: FormState = {
 	pricing_model: "usage_95th",
 	price_currency: "CNY",
 	unit_price: "0",
-	cdr_bps: "",
-	quota_bytes: "",
-	reconcile_abs: "0",
+	committed_mbps: "",
+	quota_gb: "",
+	reconcile_absolute: "0",
 	reconcile_percent: "5",
 	ref: "",
 	notes: "",
@@ -99,6 +106,7 @@ export default memo(({ id }: { id?: string }) => {
 	const [devices, setDevices] = useState<NetworkDevice[]>([])
 	const [portsByDevice, setPortsByDevice] = useState<Record<string, NetworkPort[]>>({})
 	const [activeDeviceID, setActiveDeviceID] = useState("")
+	const [deviceSearch, setDeviceSearch] = useState("")
 	const [bindings, setBindings] = useState<Record<string, BillingDirection>>({})
 	const [loading, setLoading] = useState(Boolean(id))
 	const [saving, setSaving] = useState(false)
@@ -161,9 +169,9 @@ export default memo(({ id }: { id?: string }) => {
 				pricing_model: item.pricing_model ?? "flat_port",
 				price_currency: item.price_currency ?? "CNY",
 				unit_price: item.unit_price ?? "0",
-				cdr_bps: String(item.cdr_bps ?? ""),
-				quota_bytes: String(item.quota_bytes ?? ""),
-				reconcile_abs: String(item.reconcile_abs),
+				committed_mbps: formatBillingUnit(item.cdr_bps, BPS_PER_MBPS),
+				quota_gb: formatBillingUnit(item.quota_bytes, BYTES_PER_GB),
+				reconcile_absolute: formatBillingUnit(item.reconcile_abs, reconciliationUnit(item.algorithm).multiplier),
 				reconcile_percent: String(item.reconcile_percent),
 				ref: item.ref,
 				notes: item.notes,
@@ -180,6 +188,11 @@ export default memo(({ id }: { id?: string }) => {
 	}, [id, load, t])
 	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
 	const activePorts = useMemo(() => portsByDevice[activeDeviceID] ?? [], [activeDeviceID, portsByDevice])
+	const filteredDevices = useMemo(() => {
+		const query = deviceSearch.trim().toLocaleLowerCase()
+		if (!query) return devices
+		return devices.filter((device) => networkDeviceSearchText(device).includes(query))
+	}, [deviceSearch, devices])
 	const selectedPortCount = Object.keys(bindings).length
 	const selectedOnActiveDevice = activePorts.filter((port) => networkPortID(port) in bindings).length
 	const allActivePortsSelected = activePorts.length > 0 && selectedOnActiveDevice === activePorts.length
@@ -209,6 +222,14 @@ export default memo(({ id }: { id?: string }) => {
 		setSaving(true)
 		setError("")
 		try {
+			const allowance =
+				form.bill_type === "cdr"
+					? parseBillingUnit(form.committed_mbps, BPS_PER_MBPS)
+					: parseBillingUnit(form.quota_gb, BYTES_PER_GB)
+			const reconcileAbs = parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier)
+			if (allowance === undefined || reconcileAbs === undefined) {
+				throw new Error(t`Enter valid billing and reconciliation values`)
+			}
 			const body = {
 				party_id: form.party_id || undefined,
 				name: form.name.trim(),
@@ -222,9 +243,9 @@ export default memo(({ id }: { id?: string }) => {
 				pricing_model: form.pricing_model,
 				price_currency: form.price_currency.trim().toUpperCase(),
 				unit_price: form.unit_price.trim(),
-				cdr_bps: form.bill_type === "cdr" ? Number(form.cdr_bps) : undefined,
-				quota_bytes: form.bill_type === "quota" ? Number(form.quota_bytes) : undefined,
-				reconcile_abs: Number(form.reconcile_abs),
+				cdr_bps: form.bill_type === "cdr" ? allowance : undefined,
+				quota_bytes: form.bill_type === "quota" ? allowance : undefined,
+				reconcile_abs: reconcileAbs,
 				reconcile_percent: Number(form.reconcile_percent),
 				ref: form.ref.trim(),
 				notes: form.notes.trim(),
@@ -251,8 +272,17 @@ export default memo(({ id }: { id?: string }) => {
 			setError(err instanceof Error ? err.message : t`Failed to delete billing account`)
 		}
 	}
-	const allowance = form.bill_type === "cdr" ? form.cdr_bps : form.quota_bytes
-	const validAllowance = allowance.trim() !== "" && Number.isFinite(Number(allowance)) && Number(allowance) >= 0
+	const allowance = form.bill_type === "cdr" ? form.committed_mbps : form.quota_gb
+	const validAllowance =
+		parseBillingUnit(allowance, form.bill_type === "cdr" ? BPS_PER_MBPS : BYTES_PER_GB) !== undefined
+	const validReconcileAbsolute =
+		parseBillingUnit(form.reconcile_absolute, reconciliationUnit(form.algorithm).multiplier) !== undefined
+	const reconcilePercent = Number(form.reconcile_percent)
+	const validReconcilePercent =
+		form.reconcile_percent.trim() !== "" &&
+		Number.isFinite(reconcilePercent) &&
+		reconcilePercent >= 0 &&
+		reconcilePercent <= 100
 	const validPrice = /^(0|[1-9][0-9]{0,13})(\.[0-9]{1,6})?$/.test(form.unit_price.trim())
 	const canSave =
 		form.name.trim() &&
@@ -260,6 +290,8 @@ export default memo(({ id }: { id?: string }) => {
 		Number(form.billing_day) >= 1 &&
 		Number(form.billing_day) <= 31 &&
 		validAllowance &&
+		validReconcileAbsolute &&
+		validReconcilePercent &&
 		validPrice &&
 		/^[A-Za-z]{3}$/.test(form.price_currency.trim()) &&
 		selectedPortCount > 0
@@ -328,7 +360,7 @@ export default memo(({ id }: { id?: string }) => {
 						</SelectContent>
 					</Select>
 				</Field>
-				<Field label={t`Billing type`}>
+				<Field label={t`Usage contract`}>
 					<Select
 						value={form.bill_type}
 						onValueChange={(value: "cdr" | "quota") =>
@@ -336,6 +368,7 @@ export default memo(({ id }: { id?: string }) => {
 								bill_type: value,
 								algorithm: value === "quota" ? "total" : form.algorithm === "total" ? "95th" : form.algorithm,
 								pricing_model: value === "quota" ? "flat_port" : form.pricing_model,
+								reconcile_absolute: "0",
 							})
 						}
 					>
@@ -343,16 +376,24 @@ export default memo(({ id }: { id?: string }) => {
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="cdr">cdr</SelectItem>
-							<SelectItem value="quota">quota</SelectItem>
+							<SelectItem value="cdr">
+								<Trans>Committed bandwidth</Trans>
+							</SelectItem>
+							<SelectItem value="quota">
+								<Trans>Traffic quota</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 				</Field>
-				<Field label={t`Algorithm`}>
+				<Field label={t`Calculation method`}>
 					<Select
 						value={form.algorithm}
 						onValueChange={(value: "95th" | "average" | "total") =>
-							update({ algorithm: value, pricing_model: value === "95th" ? form.pricing_model : "flat_port" })
+							update({
+								algorithm: value,
+								pricing_model: value === "95th" ? form.pricing_model : "flat_port",
+								reconcile_absolute: "0",
+							})
 						}
 					>
 						<SelectTrigger>
@@ -361,11 +402,17 @@ export default memo(({ id }: { id?: string }) => {
 						<SelectContent>
 							{form.bill_type === "cdr" ? (
 								<>
-									<SelectItem value="95th">95th</SelectItem>
-									<SelectItem value="average">average</SelectItem>
+									<SelectItem value="95th">
+										<Trans>95th percentile bandwidth</Trans>
+									</SelectItem>
+									<SelectItem value="average">
+										<Trans>Average bandwidth</Trans>
+									</SelectItem>
 								</>
 							) : (
-								<SelectItem value="total">total</SelectItem>
+								<SelectItem value="total">
+									<Trans>Total traffic</Trans>
+								</SelectItem>
 							)}
 						</SelectContent>
 					</Select>
@@ -464,33 +511,52 @@ export default memo(({ id }: { id?: string }) => {
 					/>
 				</Field>
 				{form.bill_type === "cdr" ? (
-					<Field label="CDR (bps)">
+					<Field
+						label={
+							form.algorithm === "95th" ? t`Committed bandwidth / 95th floor (Mbps)` : t`Committed bandwidth (Mbps)`
+						}
+						hint={t`Sets the period guarantee; overuse starts above this bandwidth.`}
+					>
 						<Input
 							type="number"
 							min="0"
-							value={form.cdr_bps}
-							onChange={(event) => update({ cdr_bps: event.target.value })}
+							step="0.001"
+							value={form.committed_mbps}
+							onChange={(event) => update({ committed_mbps: event.target.value })}
 						/>
 					</Field>
 				) : (
-					<Field label={t`Quota bytes`}>
+					<Field label={t`Traffic quota (GB)`} hint={t`Total traffic above this quota is period overuse.`}>
 						<Input
 							type="number"
 							min="0"
-							value={form.quota_bytes}
-							onChange={(event) => update({ quota_bytes: event.target.value })}
+							step="0.001"
+							value={form.quota_gb}
+							onChange={(event) => update({ quota_gb: event.target.value })}
 						/>
 					</Field>
 				)}
-				<Field label={t`Absolute threshold`}>
+				<div className="md:col-span-2 xl:col-span-3">
+					<h2 className="text-sm font-medium">
+						<Trans>Reconciliation alert thresholds</Trans>
+					</h2>
+					<p className="text-xs text-muted-foreground">
+						<Trans>
+							These thresholds only flag differences between SNMP, Flow, and external evidence. They never change usage
+							or price.
+						</Trans>
+					</p>
+				</div>
+				<Field label={t`Absolute difference threshold (${reconciliationUnit(form.algorithm).label})`}>
 					<Input
 						type="number"
 						min="0"
-						value={form.reconcile_abs}
-						onChange={(event) => update({ reconcile_abs: event.target.value })}
+						step="0.001"
+						value={form.reconcile_absolute}
+						onChange={(event) => update({ reconcile_absolute: event.target.value })}
 					/>
 				</Field>
-				<Field label={t`Percent threshold`}>
+				<Field label={t`Difference threshold (%)`}>
 					<Input
 						type="number"
 						min="0"
@@ -523,23 +589,44 @@ export default memo(({ id }: { id?: string }) => {
 						<Trans>{selectedPortCount} selected</Trans>
 					</Badge>
 				</div>
-				<Field label={t`Device`}>
-					<Select value={activeDeviceID} onValueChange={setActiveDeviceID} disabled={devices.length === 0}>
-						<SelectTrigger>
-							<SelectValue placeholder={t`Select a device`} />
-						</SelectTrigger>
-						<SelectContent>
-							{devices.map((device) => {
-								const deviceID = networkDeviceID(device)
-								return (
-									<SelectItem key={deviceID} value={deviceID}>
-										{networkDeviceLabel(device)}
-									</SelectItem>
-								)
-							})}
-						</SelectContent>
-					</Select>
-				</Field>
+				<div className="grid gap-3 md:grid-cols-2">
+					<Field label={t`Search devices`}>
+						<Input
+							value={deviceSearch}
+							onChange={(event) => setDeviceSearch(event.target.value)}
+							placeholder={t`Search by device name or IP...`}
+						/>
+					</Field>
+					<Field label={t`Device`}>
+						<Select
+							value={activeDeviceID}
+							onValueChange={(value) => {
+								setActiveDeviceID(value)
+								setDeviceSearch("")
+							}}
+							disabled={devices.length === 0}
+						>
+							<SelectTrigger>
+								<SelectValue placeholder={t`Select a device`} />
+							</SelectTrigger>
+							<SelectContent>
+								{filteredDevices.map((device) => {
+									const deviceID = networkDeviceID(device)
+									return (
+										<SelectItem key={deviceID} value={deviceID}>
+											{networkDeviceOptionLabel(device)}
+										</SelectItem>
+									)
+								})}
+								{filteredDevices.length === 0 ? (
+									<div className="px-2 py-1.5 text-sm text-muted-foreground">
+										<Trans>No matching devices.</Trans>
+									</div>
+								) : null}
+							</SelectContent>
+						</Select>
+					</Field>
+				</div>
 				{activePorts.length > 0 ? (
 					<div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
 						<label htmlFor="billing-select-all-ports" className="flex items-center gap-2 text-sm font-medium">
@@ -624,11 +711,12 @@ export default memo(({ id }: { id?: string }) => {
 	)
 })
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
 	return (
 		<div className="grid gap-1.5">
 			<Label>{label}</Label>
 			{children}
+			{hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
 		</div>
 	)
 }
@@ -647,6 +735,19 @@ function networkDeviceLabel(device: NetworkDevice) {
 		device.host ??
 		networkDeviceID(device)
 	)
+}
+
+function networkDeviceOptionLabel(device: NetworkDevice) {
+	const label = networkDeviceLabel(device)
+	const host = device.Host ?? device.host ?? ""
+	return host && host !== label ? `${label} · ${host}` : label
+}
+
+function networkDeviceSearchText(device: NetworkDevice) {
+	return [device.SysName, device.sys_name, device.Name, device.name, device.Host, device.host, networkDeviceID(device)]
+		.filter(Boolean)
+		.join(" ")
+		.toLocaleLowerCase()
 }
 
 function networkPortID(port: NetworkPort) {

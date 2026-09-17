@@ -474,11 +474,34 @@ export default memo(({ id }: { id: string }) => {
 				<div className="rounded-md border border-border p-3 text-sm text-muted-foreground">{message}</div>
 			) : null}
 			<div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-				<Info label={t`Type`} value={account?.bill_type} />
-				<Info label={t`Algorithm`} value={account?.algorithm} />
+				<Info
+					label={t`Type`}
+					value={account?.bill_type === "cdr" ? t`Committed bandwidth` : account ? t`Traffic quota` : undefined}
+				/>
+				<Info
+					label={t`Algorithm`}
+					value={
+						account?.algorithm === "95th"
+							? t`95th percentile bandwidth`
+							: account?.algorithm === "average"
+								? t`Average bandwidth`
+								: account
+									? t`Total traffic`
+									: undefined
+					}
+				/>
 				<Info label={t`Direction`} value={account?.direction} />
 				<Info label={t`Value strategy`} value={account?.default_layer} />
-				<Info label={t`Pricing model`} value={account?.pricing_model} />
+				<Info
+					label={t`Pricing model`}
+					value={
+						account?.pricing_model === "usage_95th"
+							? t`95th percentile per Mbps`
+							: account
+								? t`Fixed price per port`
+								: undefined
+					}
+				/>
 				<Info label={t`Unit price`} value={account ? `${account.price_currency} ${account.unit_price}` : undefined} />
 				<Info label={t`Timezone`} value={account?.timezone} />
 				<Info label={t`Billing Day`} value={account?.billing_day} />
