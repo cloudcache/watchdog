@@ -9463,3 +9463,31 @@ msgstr "Select a Flow device before running the report"
 #: src/components/routes/flow-reports.tsx
 msgid "Six traffic classes"
 msgstr "Six traffic classes"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Display mode"
+msgstr "Display mode"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Traffic value"
+msgstr "Traffic value"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Traffic share"
+msgstr "Traffic share"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Analysis dimension"
+msgstr "Analysis dimension"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Peak-period start"
+msgstr "Peak-period start"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Peak-period end"
+msgstr "Peak-period end"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Only include the selected peak period"
+msgstr "Only include the selected peak period"

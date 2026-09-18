@@ -435,7 +435,7 @@ msgstr "高级"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Advanced Explorer"
-msgstr "高级浏览器"
+msgstr "高级查询"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Advanced Flow Explorer"
@@ -981,7 +981,7 @@ msgstr "业务"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Business × traffic class"
-msgstr "业务 × 流量分类"
+msgstr "业务 × 六类流量"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Business labels"
@@ -1187,13 +1187,13 @@ msgstr "按类别升序"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Classification residuals"
-msgstr "分类残差"
+msgstr "未归类流量"
 
 #. placeholder {0}: formatShare(inboundClassified, inboundTotal)
 #. placeholder {1}: formatShare(outboundClassified, outboundTotal)
 #: src/components/routes/flow-reports.tsx
 msgid "Classified coverage: ↓ {0} · ↑ {1}"
-msgstr "已分类覆盖：↓ {0} · ↑ {1}"
+msgstr "六类流量覆盖：↓ {0} · ↑ {1}"
 
 #: src/components/routes/retention.tsx
 msgid "Cleanup"
@@ -1390,7 +1390,7 @@ msgstr "修正下限"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Countries, regions, ASN, ports and protocols with observed-data caveats."
-msgstr "国家/地区、区域、ASN、端口与协议，附观测数据说明。"
+msgstr "按国家/地区、区域、ASN、端口和协议展示跨境流量，并明确观测口径。"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/address-imports.tsx
@@ -1859,7 +1859,7 @@ msgstr "目的 IP 分析"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Destination IP Report"
-msgstr "目的 IP 报表"
+msgstr "目的 IP 分析"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination port"
@@ -1932,7 +1932,7 @@ msgstr "方向"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Direction, six exclusive traffic classes and business matrix."
-msgstr "方向、六个互斥流量分类与业务矩阵。"
+msgstr "流向、六类互斥流量和业务矩阵。"
 
 #: src/components/routes/users.tsx
 msgid "Disable this user? They will lose access until re-enabled."
@@ -2086,7 +2086,7 @@ msgstr "下载"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Download visible data"
-msgstr "下载可见数据"
+msgstr "下载当前结果"
 
 #: src/components/routes/address-publications.tsx
 msgid "Draft digest"
@@ -2102,7 +2102,7 @@ msgstr "持续时间"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Each cell is inbound / outbound and its directional share for the same frozen report window."
-msgstr "每个单元格为流入/流出及其在同一冻结报表时段内的方向占比。"
+msgstr "每格依次显示流入、流出及其在同一报表时段内的方向占比。"
 
 #: src/components/routes/address-prefixes.tsx
 #: src/components/routes/address-prefixes.tsx
@@ -2328,12 +2328,12 @@ msgstr "已建立 / 总数"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Estimated bit rate"
-msgstr "估算比特率"
+msgstr "估算速率"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Estimated bytes"
-msgstr "估算字节数"
+msgstr "估算流量"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Estimated packet rate"
@@ -2379,7 +2379,7 @@ msgstr "精确查询结果"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Exact observed cardinality; not sampling-expanded"
-msgstr "精确观测基数；未做采样放大"
+msgstr "观测去重数（未按采样率放大）"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Exact source IP..."
@@ -2476,7 +2476,7 @@ msgstr "导出完整查询"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Export full report"
-msgstr "导出完整报表"
+msgstr "异步导出完整报表"
 
 #: src/components/routes/target-detail.tsx
 msgid "Export tasks"
@@ -3051,7 +3051,7 @@ msgstr "地址族"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Fast country, province, city, operator and business reporting."
-msgstr "快速的国家/地区、省份、城市、运营商与业务报表。"
+msgstr "按国家/地区、省、市、运营商和业务快速分析流量。"
 
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/export-detail.tsx
@@ -3097,7 +3097,7 @@ msgstr "查看源地址 Top、趋势和关联维度。"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Findings"
-msgstr "发现"
+msgstr "识别结果"
 
 #: src/components/routes/system/smart-table.tsx
 msgid "Firmware"
@@ -3120,7 +3120,7 @@ msgstr "Flow 导出任务已排队"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Flow Overview"
-msgstr "Flow 概览"
+msgstr "流量概览"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Flow record details"
@@ -3418,7 +3418,7 @@ msgstr "来自已发布跨境汇总的流入与流出流量。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Inbound current / total"
-msgstr "流入 当前/总量"
+msgstr "流入：当前值 / 总量"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include all"
@@ -4273,7 +4273,7 @@ msgstr "没有故障端口。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No endpoint traffic"
-msgstr "无端点流量"
+msgstr "暂无 IP 流量"
 
 #: src/components/routes/network-device.tsx
 msgid "No events yet. Events appear on interface status changes and SNMP traps."
@@ -4285,7 +4285,7 @@ msgstr "未找到导出任务。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "No findings"
-msgstr "无发现"
+msgstr "暂无识别结果"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "No Flow points found"
@@ -4506,11 +4506,11 @@ msgstr "没有可合并项——不存在归属相同的相邻地址段。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Observed overseas endpoints"
-msgstr "观测到的跨境端点"
+msgstr "已观测跨境端点"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Observed overseas IPs"
-msgstr "观测到的跨境 IP"
+msgstr "已观测跨境 IP"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Observed remote ports"
@@ -4518,7 +4518,7 @@ msgstr "观测到的远端端口"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Off-net by operator"
-msgstr "异网（按运营商）"
+msgstr "异网・按运营商"
 
 #: src/components/routes/exports.tsx
 msgid "Oldest first"
@@ -4530,7 +4530,7 @@ msgstr "每次重启时，数据库中的系统将更新以匹配文件中定义
 
 #: src/components/routes/flow-reports.tsx
 msgid "On-net by province"
-msgstr "本网（按省份）"
+msgstr "本网・按省份"
 
 #: src/components/routes/user-form.tsx
 msgid "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
@@ -4538,7 +4538,7 @@ msgstr "选择后，指标将成为允许列表；不选择则保留已授权设
 
 #: src/components/routes/flow-reports.tsx
 msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
-msgstr "按合计流量排序的稳定单页，针对相同地址与冻结报表时段给出精确的流入/流出与流量分类值。选择某行可在下方加载记录。归属修正会打开地址库草稿；绝不会改动已发布快照。"
+msgstr "按合计流量排序，统一展示同一 IP 在固定报表时段内的流入、流出和六类流量。选择一行可加载明细；归属修正只创建地址库草稿，不会修改已发布快照。"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Only prefixes with identical geography/operator/ASN/labels merge; coverage and attribution are preserved."
@@ -4654,7 +4654,7 @@ msgstr "流出"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Outbound current / total"
-msgstr "流出 当前/总量"
+msgstr "流出：当前值 / 总量"
 
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
@@ -4686,11 +4686,11 @@ msgstr "重叠"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Overseas by country"
-msgstr "跨境（按国家/地区）"
+msgstr "跨境・按国家/地区"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Overseas inbound / outbound"
-msgstr "跨境流入/流出"
+msgstr "跨境流入 / 流出"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Overseas summary"
@@ -4808,7 +4808,7 @@ msgstr "峰值开始"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Peak weekdays"
-msgstr "高峰星期"
+msgstr "高峰日期"
 
 #: src/components/routes/core.tsx
 msgid "Peer"
@@ -5335,11 +5335,11 @@ msgstr "重置密码"
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Residual · ↓ / ↑"
-msgstr "残差 · ↓ / ↑"
+msgstr "未归类 · ↓ / ↑"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Residual traffic is explicit and never redistributed into the six business classes."
-msgstr "残差流量是显式的，绝不会重新分配到六个业务分类中。"
+msgstr "未归类流量单独展示，不会分摊到六类流量中。"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Resolution note"
@@ -5413,7 +5413,7 @@ msgstr "冲销"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Review findings, evidence and probe timeline"
-msgstr "查看发现、证据与探测时间线"
+msgstr "查看识别结果、证据和探测时间线"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Review note"
@@ -5497,7 +5497,7 @@ msgstr "行"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Rule-set publication"
-msgstr "规则集发布"
+msgstr "规则版本"
 
 #: src/components/routes/flow-vpn.tsx
 msgid "Rules"
@@ -5531,11 +5531,11 @@ msgstr "采样步长"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sampled bit rate"
-msgstr "采样比特率"
+msgstr "原始采样速率"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sampled bytes"
-msgstr "采样字节数"
+msgstr "原始采样流量"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "samples"
@@ -6167,7 +6167,7 @@ msgstr "源 IP 分析"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Source IP Report"
-msgstr "源 IP 报表"
+msgstr "源 IP 分析"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Source port"
@@ -6541,11 +6541,11 @@ msgstr "令牌与指纹"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Top destination addresses with direction, traffic class and drill-down."
-msgstr "按方向、流量分类与下钻列出的 Top 目的地址。"
+msgstr "按流量排序的目的 IP，展示流向和六类流量并支持下钻。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Top endpoints"
-msgstr "Top 端点"
+msgstr "高流量 IP 地址"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -6555,7 +6555,7 @@ msgstr "Top N"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Top source addresses with direction, traffic class and drill-down."
-msgstr "按方向、流量分类与下钻列出的 Top 源地址。"
+msgstr "按流量排序的源 IP，展示流向和六类流量并支持下钻。"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -6600,11 +6600,11 @@ msgstr "流量"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Traffic analysis separated from findings, evidence and probe disposition."
-msgstr "流量分析与发现、证据和探测处置相分离。"
+msgstr "分析 VPN 流量；识别结果、证据和探测处置独立展示。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Traffic by Dimension"
-msgstr "按维度的流量"
+msgstr "多维流量分析"
 
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-defaults.tsx
@@ -6669,7 +6669,7 @@ msgstr "归属不明"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Unavailable"
-msgstr "不可用"
+msgstr "暂不可用"
 
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agents.tsx
@@ -6974,11 +6974,11 @@ msgstr "VPN 发现导出已排队"
 
 #: src/components/routes/flow-reports.tsx
 msgid "VPN findings and estimated overseas bytes use the same frozen window and immutable classification versions."
-msgstr "VPN 发现与估算的跨境字节使用相同的冻结时段和不可变分类版本。"
+msgstr "VPN 识别结果和跨境估算流量使用相同的固定时段与分类版本。"
 
 #: src/components/routes/flow-reports.tsx
 msgid "VPN findings are unavailable"
-msgstr "VPN 发现不可用"
+msgstr "VPN 识别结果不可用"
 
 #: src/components/routes/flow-reports.tsx
 msgid "VPN port distribution"
@@ -8272,7 +8272,7 @@ msgstr "创建客户 CIDR，并为其指定地域和运营商。"
 #: src/components/routes/flow-attribution.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Flow Data Attribution"
-msgstr "Flow 数据归属"
+msgstr "流量数据归属"
 
 #: src/components/routes/flow-attribution.tsx
 msgid "Maintain one relationship chain: geography and operator → customer source prefix → Flow device."
@@ -8494,3 +8494,31 @@ msgstr "运行报表前请选择一台 Flow 设备"
 #: src/components/routes/flow-reports.tsx
 msgid "Six traffic classes"
 msgstr "六类流量"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Display mode"
+msgstr "显示方式"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Traffic value"
+msgstr "流量值"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Traffic share"
+msgstr "流量占比"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Analysis dimension"
+msgstr "分析维度"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Peak-period start"
+msgstr "高峰时段开始"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Peak-period end"
+msgstr "高峰时段结束"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Only include the selected peak period"
+msgstr "仅统计所选高峰时段"

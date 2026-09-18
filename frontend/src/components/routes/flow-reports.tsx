@@ -540,18 +540,18 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							disabled={surface === "vpn"}
 						/>
 						<ReportSelect
-							label={t`Display`}
+							label={t`Display mode`}
 							value={displayMode}
 							onChange={(value) => setDisplayMode(value as FlowReportDisplayMode)}
 							options={[
-								["value", t`Value`],
-								["share", t`Share`],
+								["value", t`Traffic value`],
+								["share", t`Traffic share`],
 								["difference", t`Inbound − outbound`],
 							]}
 						/>
 						{surface === "dimensions" ? (
 							<ReportSelect
-								label={t`Quick grouping`}
+								label={t`Analysis dimension`}
 								value={groupBy}
 								onChange={(value) => (value === "vpn" ? navigate(getPagePath($router, "flow_vpn")) : setGroupBy(value))}
 								options={GROUPINGS.map((item) => [item.value, i18n._(item.label)] as const)}
@@ -644,15 +644,15 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 								value={String(topN)}
 								onChange={(value) => setTopN(boundedNumber(value, 1, 100, 20))}
 							/>
-							<ReportInput label={t`Peak start`} type="time" value={peakStart} onChange={setPeakStart} />
-							<ReportInput label={t`Peak end`} type="time" value={peakEnd} onChange={setPeakEnd} />
+							<ReportInput label={t`Peak-period start`} type="time" value={peakStart} onChange={setPeakStart} />
+							<ReportInput label={t`Peak-period end`} type="time" value={peakEnd} onChange={setPeakEnd} />
 							<label htmlFor="flow-report-peak-enabled" className="flex items-center gap-2 text-sm sm:col-span-2">
 								<Checkbox
 									id="flow-report-peak-enabled"
 									checked={peakEnabled}
 									onCheckedChange={(checked) => setPeakEnabled(checked === true)}
 								/>
-								<Trans>Apply the local peak window to every report panel</Trans>
+								<Trans>Only include the selected peak period</Trans>
 							</label>
 							{peakEnabled ? (
 								<div className="sm:col-span-2 lg:col-span-4 xl:col-span-6">
