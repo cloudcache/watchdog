@@ -450,9 +450,13 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 func flowReportCompleteness(panels []flowReportPanel, warnings []string) (float64, bool) {
 	complete := 1.0
 	partial := len(warnings) > 0
+	if partial {
+		complete = 0
+	}
 	for _, panel := range panels {
 		if panel.Status != "ready" {
 			partial = true
+			complete = 0
 		}
 		if panel.Meta == nil {
 			continue
@@ -752,7 +756,7 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 	if err != nil {
 		return flowReportPanel{}, err
 	}
-	overseasReq := flowquery.OverseasRequest{
+	base := flowquery.OverseasRequest{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Metric: req.Metric,
 		GeoLevel: flowquery.OverseasGeoCountry, View: view, TopN: req.TopN, IncludeOther: true,
 		Filters: flowquery.OverseasFilters{
@@ -760,22 +764,72 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 			TargetIDs: req.Filters.TargetIDs, DeviceIDs: req.Filters.DeviceIDs, ExporterIDs: req.Filters.ExporterIDs,
 		},
 	}
-	if err := s.applyFlowOverseasStorageBoundary(ctx, &overseasReq); err != nil {
-		return flowReportPanel{}, err
+	result := flowquery.OverseasResult{GeoLevel: base.GeoLevel, TopN: base.TopN, IncludeOther: base.IncludeOther}
+	versions := make(map[string]struct{})
+	usesRaw := false
+	for _, window := range flowObservedQueryWindows(plan.EffectiveFrom, plan.EffectiveTo, plan.SourceStep) {
+		query := base
+		query.From, query.To = window[0], window[1]
+		if err := s.applyFlowOverseasStorageBoundary(ctx, &query); err != nil {
+			return flowReportPanel{}, err
+		}
+		compiled, err := flowquery.CompileOverseas(flowquery.Scope{AllowedViews: []flowquery.View{view}}, query, now)
+		if err != nil {
+			return flowReportPanel{}, err
+		}
+		part, err := s.flowQuery.overseas.Run(ctx, compiled)
+		if err != nil {
+			return flowReportPanel{}, err
+		}
+		result.Metric = part.Metric
+		usesRaw = usesRaw || compiled.UsesRawFacts
+		result.RollupCompleteness.ExpectedBuckets += part.RollupCompleteness.ExpectedBuckets
+		result.RollupCompleteness.CoveredBuckets += part.RollupCompleteness.CoveredBuckets
+		for _, point := range part.Points {
+			// The fixed report uses only observed endpoint counters. Country/region
+			// series already have dedicated panels, so do not duplicate them here.
+			if point.Kind != flowquery.OverseasRowKPI {
+				continue
+			}
+			result.Points = append(result.Points, point)
+			versions[point.DimensionSnapshotID+"\x00"+point.GeoVersion+"\x00"+fmt.Sprint(point.ClassificationVersion)] = struct{}{}
+		}
 	}
-	compiled, err := flowquery.CompileOverseas(flowquery.Scope{AllowedViews: []flowquery.View{view}}, overseasReq, now)
-	if err != nil {
-		return flowReportPanel{}, err
+	if result.RollupCompleteness.ExpectedBuckets > 0 {
+		result.RollupCompleteness.Ratio = float64(result.RollupCompleteness.CoveredBuckets) / float64(result.RollupCompleteness.ExpectedBuckets)
 	}
-	result, err := s.flowQuery.overseas.Run(ctx, compiled)
-	if err != nil {
-		return flowReportPanel{}, err
-	}
+	result.RollupCompleteness.Complete = result.RollupCompleteness.ExpectedBuckets > 0 &&
+		result.RollupCompleteness.CoveredBuckets == result.RollupCompleteness.ExpectedBuckets
+	result.VersionCount = uint64(len(versions))
+	result.MixedVersions = result.VersionCount > 1
 	raw, err := json.Marshal(gin.H{"result": result, "geo_labels": s.flowOverseasGeoLabels(result)})
 	if err != nil {
 		return flowReportPanel{}, err
 	}
 	return flowReportPanel{ID: "observed", Status: "ready", Data: raw, Meta: gin.H{
-		"source": overseasReq.Bucket, "step_seconds": uint32(compiled.BucketDuration / time.Second), "uses_raw": compiled.UsesRawFacts,
+		"source": base.Bucket, "step_seconds": plan.SourceSeconds, "uses_raw": usesRaw,
+		"complete_ratio": result.RollupCompleteness.Ratio, "partial": !result.RollupCompleteness.Complete,
 	}}, nil
+}
+
+const flowObservedBucketsPerQuery = 12
+
+// flowObservedQueryWindows bounds the high-cardinality src/dst-IP scan without
+// changing the requested report range. Each result is exact for its source
+// bucket and the non-overlapping results are concatenated in chronological order.
+func flowObservedQueryWindows(from, to time.Time, sourceStep time.Duration) [][2]time.Time {
+	if sourceStep <= 0 || !to.After(from) {
+		return nil
+	}
+	span := flowObservedBucketsPerQuery * sourceStep
+	windows := make([][2]time.Time, 0, int((to.Sub(from)+span-1)/span))
+	for start := from; start.Before(to); {
+		end := start.Add(span)
+		if end.After(to) {
+			end = to
+		}
+		windows = append(windows, [2]time.Time{start, end})
+		start = end
+	}
+	return windows
 }

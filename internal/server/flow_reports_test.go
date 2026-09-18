@@ -55,7 +55,7 @@ func TestFlowReportCompleteness(t *testing.T) {
 	if ratio, partial := flowReportCompleteness(nil, nil); ratio != 1 || partial {
 		t.Fatalf("empty = %v %v", ratio, partial)
 	}
-	if _, partial := flowReportCompleteness(nil, []string{"observed: unavailable"}); !partial {
+	if ratio, partial := flowReportCompleteness(nil, []string{"observed: unavailable"}); ratio != 0 || !partial {
 		t.Fatalf("a warning must mark the report partial")
 	}
 	panels := []flowReportPanel{
@@ -63,8 +63,24 @@ func TestFlowReportCompleteness(t *testing.T) {
 		{ID: "b", Status: "ready", Meta: gin.H{"complete_ratio": 1.0}},
 		{ID: "c", Status: "unavailable"},
 	}
-	if ratio, partial := flowReportCompleteness(panels, nil); ratio != 0.8 || !partial {
+	if ratio, partial := flowReportCompleteness(panels, nil); ratio != 0 || !partial {
 		t.Fatalf("panels = %v %v", ratio, partial)
+	}
+}
+
+func TestFlowObservedQueryWindowsBoundsHighCardinalityScans(t *testing.T) {
+	from := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	windows := flowObservedQueryWindows(from, from.Add(25*time.Hour), time.Hour)
+	if len(windows) != 3 || windows[0][0] != from || windows[0][1] != from.Add(12*time.Hour) ||
+		windows[1][1] != from.Add(24*time.Hour) || windows[2][1] != from.Add(25*time.Hour) {
+		t.Fatalf("hour windows = %+v", windows)
+	}
+	minute := flowObservedQueryWindows(from, from.Add(time.Hour), time.Minute)
+	if len(minute) != 5 || minute[0][1].Sub(minute[0][0]) != 12*time.Minute {
+		t.Fatalf("minute windows = %+v", minute)
+	}
+	if invalid := flowObservedQueryWindows(from, from, time.Hour); invalid != nil {
+		t.Fatalf("invalid windows = %+v", invalid)
 	}
 }
 

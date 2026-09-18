@@ -240,7 +240,7 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 }
 
 func flowAggregateGeoLabels(result flowquery.Result, geo *flowGeoService) map[string]FlowGeoLabel {
-	if geo == nil || !isFlowNamedDimension(result.Dimension.Kind) {
+	if !isFlowNamedDimension(result.Dimension.Kind) || (geo == nil && result.Dimension.Kind != flowquery.DimensionProtocol) {
 		return nil
 	}
 	labels := make(map[string]FlowGeoLabel)
@@ -260,9 +260,6 @@ func flowAggregateGeoLabels(result flowquery.Result, geo *flowGeoService) map[st
 }
 
 func flowJointGeoLabels(result flowquery.JointResult, geo *flowGeoService) map[string]FlowGeoLabel {
-	if geo == nil {
-		return nil
-	}
 	labels := make(map[string]FlowGeoLabel)
 	for _, point := range result.Points {
 		if point.Other {
@@ -289,14 +286,37 @@ func flowJointGeoLabels(result flowquery.JointResult, geo *flowGeoService) map[s
 }
 
 func isFlowNamedDimension(dimension flowquery.Dimension) bool {
-	return isFlowGeoDimension(dimension) || dimension == flowquery.DimensionISP
+	return isFlowGeoDimension(dimension) || dimension == flowquery.DimensionISP || dimension == flowquery.DimensionProtocol
 }
 
 func flowDimensionLabel(geo *flowGeoService, view flowquery.View, dimension flowquery.Dimension, version, value string) (FlowGeoLabel, bool) {
+	if dimension == flowquery.DimensionProtocol {
+		name, ok := flowIPProtocolName(value)
+		if !ok {
+			return FlowGeoLabel{}, false
+		}
+		return FlowGeoLabel{Code: value, Name: name, Kind: string(dimension), Version: version}, true
+	}
+	if geo == nil {
+		return FlowGeoLabel{}, false
+	}
 	if dimension == flowquery.DimensionISP {
 		return geo.OperatorLabel(version, view, value)
 	}
 	return geo.Label(version, value)
+}
+
+// flowIPProtocolName translates the stable IANA protocol numbers emitted by
+// sFlow/NetFlow into the names operators use. Unknown values remain numeric in
+// the response instead of being guessed.
+func flowIPProtocolName(value string) (string, bool) {
+	name, ok := flowIPProtocolNames[value]
+	return name, ok
+}
+
+var flowIPProtocolNames = map[string]string{
+	"1": "ICMP", "2": "IGMP", "6": "TCP", "17": "UDP", "41": "IPv6",
+	"47": "GRE", "50": "ESP", "51": "AH", "58": "ICMPv6", "89": "OSPF", "132": "SCTP",
 }
 
 func isFlowGeoDimension(dimension flowquery.Dimension) bool {

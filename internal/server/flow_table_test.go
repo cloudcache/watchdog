@@ -65,6 +65,38 @@ func TestMarshalFlowAggregateResultIncludesTable(t *testing.T) {
 	}
 }
 
+func TestMarshalFlowAggregateResultResolvesProtocolNamesWithoutGeo(t *testing.T) {
+	t0 := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	result := flowquery.Result{
+		Metric:    flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bps"},
+		Dimension: flowquery.DimensionDefinition{Kind: flowquery.DimensionProtocol},
+		Points: []flowquery.Point{
+			{Bucket: t0, DimensionValue: "6", Value: 100},
+			{Bucket: t0, DimensionValue: "17", Value: 50},
+			{Bucket: t0, DimensionValue: "253", Value: 1},
+		},
+	}
+	raw, err := marshalFlowAggregateResult(result, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if label := out.DimensionLabels[":6"]; label.Name != "TCP" {
+		t.Fatalf("TCP label = %+v", label)
+	}
+	if label := out.DimensionLabels[":17"]; label.Name != "UDP" {
+		t.Fatalf("UDP label = %+v", label)
+	}
+	if _, exists := out.DimensionLabels[":253"]; exists {
+		t.Fatal("unassigned IANA protocol must remain numeric")
+	}
+}
+
 func TestMarshalFlowAggregateResultResolvesWADSOperatorName(t *testing.T) {
 	path, checksum := writeWADSGeoBundle(t)
 	publication, err := loadWADSGeoPublication(path, checksum)
