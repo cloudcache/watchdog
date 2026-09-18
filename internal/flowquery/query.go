@@ -21,7 +21,9 @@ import (
 )
 
 const (
-	maxTopN             = 100
+	// MaxTopN bounds a single grouped query so callers can split wider work
+	// without duplicating the query engine's cardinality contract.
+	MaxTopN             = 100
 	maxFilterValues     = 4_096
 	maxValuesPerFilter  = 2_048
 	maxFilterValueBytes = 256
@@ -315,7 +317,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	if !scope.allowsView(ViewCustomer) {
 		return Compiled{}, requestError("view", ErrorPermissionDenied, "principal is not entitled to this value-layer view")
 	}
-	if request.TopN < 1 || request.TopN > maxTopN {
+	if request.TopN < 1 || request.TopN > MaxTopN {
 		return Compiled{}, requestError("top_n", ErrorLimitExceeded, "top_n must be 1..100")
 	}
 	if request.Dimension == DimensionTotal && request.TopN != 1 {

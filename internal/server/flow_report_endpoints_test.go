@@ -63,6 +63,28 @@ func TestFlowReportEndpointAddresses(t *testing.T) {
 	}
 }
 
+func TestFlowEndpointCategoryChunksBoundEachJointQuery(t *testing.T) {
+	categories := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	for _, tc := range []struct {
+		addresses int
+		chunks    int
+	}{
+		{addresses: 8, chunks: 1},
+		{addresses: 20, chunks: 2},
+		{addresses: 100, chunks: 10},
+	} {
+		chunks := flowEndpointCategoryChunks(tc.addresses, categories)
+		if len(chunks) != tc.chunks {
+			t.Fatalf("addresses=%d chunks=%d want=%d", tc.addresses, len(chunks), tc.chunks)
+		}
+		for _, chunk := range chunks {
+			if len(chunk)*tc.addresses > flowquery.MaxTopN {
+				t.Fatalf("addresses=%d chunk=%d exceeds top-n bound", tc.addresses, len(chunk))
+			}
+		}
+	}
+}
+
 // TestComposeFlowEndpointReportTable merges direction/category/business panels into
 // the enriched per-endpoint table, computing category shares and residual rollups.
 func TestComposeFlowEndpointReportTable(t *testing.T) {

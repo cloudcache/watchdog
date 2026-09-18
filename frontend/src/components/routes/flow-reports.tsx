@@ -1094,7 +1094,10 @@ function DimensionReport({ response }: { response: FlowReportResponse }) {
 	// with their agreed labels (本网・跨省 …). The labeler returns non-category
 	// keys unchanged, so province/operator groupings are unaffected.
 	const labelSeries = (series: FlowReportSeries[]): FlowReportSeries[] =>
-		series.map((item) => ({ ...item, name: categoryLabel(item.name) }))
+		series.map((item) => ({
+			...item,
+			name: item.name === "_other" ? t`Other` : item.name === "_unassigned" ? t`Unassigned` : categoryLabel(item.name),
+		}))
 	const inbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_in")))
 	const outbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_out")))
 	const transformed = transformReportSeries(inbound, outbound, response.data.display_mode)

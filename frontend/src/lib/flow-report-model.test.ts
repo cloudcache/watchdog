@@ -132,6 +132,45 @@ test("report series preserves category identity and exact bucket statistics", ()
 	assert.deepEqual(reportSeriesStats(series[0]), { current: 100, average: 26.5, p95: 100, maximum: 100, total: 106 })
 })
 
+test("report series displays immutable geography names instead of storage IDs", () => {
+	const panel = {
+		id: "dimension_in",
+		status: "ready",
+		meta: {},
+		data: {
+			points: [
+				{
+					bucket: "2026-09-19T00:00:00Z",
+					dimension_value: "supplier/province/CN/320000",
+					other: false,
+					value: 268_360_000,
+					dimension_snapshot_id: "snapshot-7",
+					geo_version: "geo-7",
+					classification_version: 7,
+					received_records: 1,
+					unknown_sampling_records: 0,
+					quality_records: 0,
+					generated_at: "2026-09-19T00:01:00Z",
+				},
+			],
+			dimension_labels: {
+				"geo-7:supplier/province/CN/320000": {
+					code: "supplier/province/CN/320000",
+					name: "Jiangsu",
+					kind: "province",
+					path: [
+						{ id: "supplier/country/CN", name: "China", kind: "country" },
+						{ id: "supplier/province/CN/320000", name: "Jiangsu", kind: "province" },
+					],
+					additive: true,
+					version: "geo-7",
+				},
+			},
+		},
+	} as FlowReportPanel
+	assert.equal(buildReportSeries(panel)[0]?.name, "Jiangsu")
+})
+
 test("share uses a same-direction denominator and difference is signed inbound minus outbound", () => {
 	const inbound = [
 		{ name: "a", values: [{ time: 1, value: 30 }] },

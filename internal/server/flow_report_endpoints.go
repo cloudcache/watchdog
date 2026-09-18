@@ -189,49 +189,58 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 	return raw, plan, nil
 }
 
-// runEndpointCategoryPanel queries each traffic class for the endpoint set and
-// combines the results into joint [endpoint, category] points plus per-endpoint,
-// per-category whole-window totals for the table.
+// runEndpointCategoryPanel fetches endpoint/category pairs in bounded chunks.
+// This avoids one ClickHouse scan per category while keeping each joint query
+// within the query engine's result-cardinality limit.
 func (s *Server) runEndpointCategoryPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, dimension flowquery.Dimension, direction string, addresses []string, now time.Time) (json.RawMessage, uint32, error) {
 	categories := append(append([]string(nil), flowReportCategories...), flowReportResiduals...)
 	combined := make([]flowquery.JointPoint, 0, len(addresses)*len(categories))
 	summaries := make([]endpointCategorySummaryEntry, 0, len(addresses)*len(categories))
 	var unit string
 	var step uint32
-	for _, category := range categories {
+	addressFilter, err := flowEndpointAddressFilter(req.Filter, dimension, addresses)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, categoryChunk := range flowEndpointCategoryChunks(len(addresses), categories) {
 		filters := req.Filters
 		filters.Directions = []string{direction}
-		filters.Categories = []string{category}
-		filters.DimensionValues = append([]string(nil), addresses...)
-		table := flowTableRequest{SortBy: "dimension", SortDirection: "asc", Limit: uint16(len(addresses))}
-		raw, plan, err := s.runEndpointAggregate(ctx, scope, view, req, dimension, filters, &table, flowquery.MinTargetPoints, uint16(len(addresses)), now)
+		filters.Categories = categoryChunk
+		filters.DimensionValues = nil
+		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+			From: req.From, To: req.To, TargetPoints: flowquery.MinTargetPoints, Metric: req.Metric,
+			Dimensions: []flowquery.Dimension{dimension, flowquery.DimensionCategory}, Filters: filters,
+			Filter: addressFilter, View: view, TopN: flowquery.MaxTopN, IncludeOther: false,
+			Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		}, now)
 		if err != nil {
 			return nil, 0, err
 		}
-		step = plan.StepSeconds
-		points, err := flowReportDimensionPoints(raw)
+		result, err := s.flowQuery.joint.Run(ctx, compiled)
 		if err != nil {
 			return nil, 0, err
 		}
-		for _, point := range points {
-			combined = append(combined, flowquery.JointPoint{
-				Bucket: point.Bucket, DimensionValues: []string{point.DimensionValue, category}, Other: point.Other,
-				DimensionSnapshotID: point.DimensionSnapshotID, GeoVersion: point.GeoVersion,
-				ClassificationVersion: point.ClassificationVersion, Value: point.Value,
-				ReceivedRecords: point.ReceivedRecords, UnknownSamplingRecords: point.UnknownSamplingRecords,
-				QualityRecords: point.QualityRecords, ObservedAt: point.GeneratedAt,
-			})
+		step = compiled.Plan.StepSeconds
+		unit = result.Metric.Unit
+		combined = append(combined, result.Points...)
+		table := flowTableRequest{SortBy: "dimension", SortDirection: "asc", Limit: flowquery.MaxTopN}
+		raw, err := marshalFlowJointResult(result, &table, s.flowGeo)
+		if err != nil {
+			return nil, 0, err
 		}
 		var envelope struct {
-			Metric flowquery.MetricDefinition `json:"metric"`
-			Table  flowTablePage              `json:"table"`
+			Table flowTablePage `json:"table"`
 		}
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return nil, 0, err
 		}
-		unit = envelope.Metric.Unit
 		for _, row := range envelope.Table.Items {
-			summaries = append(summaries, endpointCategorySummaryEntry{Address: endpointAddress(row), Category: category, Total: row.Total})
+			if len(row.Path) < 2 || row.Path[0] == "" || row.Path[1] == "" {
+				continue
+			}
+			summaries = append(summaries, endpointCategorySummaryEntry{
+				Address: row.Path[0], Category: row.Path[1], Total: row.Total,
+			})
 		}
 	}
 	data, err := json.Marshal(struct {
@@ -249,19 +258,43 @@ func (s *Server) runEndpointCategoryPanel(ctx context.Context, scope flowquery.S
 	return data, step, nil
 }
 
-// runEndpointBusinessPanel queries the distinct business labels per endpoint as a
-// joint [endpoint, business] query, constraining to the endpoint set with a typed
-// filter (composed under the caller's filter).
-func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, dimension flowquery.Dimension, addresses []string, now time.Time) (json.RawMessage, gin.H, error) {
+func flowEndpointAddressFilter(base *flowquery.FilterExpression, dimension flowquery.Dimension, addresses []string) (*flowquery.FilterExpression, error) {
 	addressFilter := flowquery.FilterExpression{
 		Op: flowquery.FilterPredicate, Field: string(dimension), Operator: flowquery.FilterIn,
 		Values: append([]string(nil), addresses...),
 	}
 	combined := addressFilter
-	if req.Filter != nil {
-		combined = flowquery.FilterExpression{Op: flowquery.FilterAnd, Args: []flowquery.FilterExpression{*req.Filter, addressFilter}}
+	if base != nil {
+		combined = flowquery.FilterExpression{Op: flowquery.FilterAnd, Args: []flowquery.FilterExpression{*base, addressFilter}}
 	}
 	canonical, err := flowquery.CanonicalFilter(combined)
+	if err != nil {
+		return nil, err
+	}
+	return &canonical, nil
+}
+
+func flowEndpointCategoryChunks(addressCount int, categories []string) [][]string {
+	if addressCount < 1 || len(categories) == 0 {
+		return nil
+	}
+	chunkSize := flowquery.MaxTopN / addressCount
+	if chunkSize < 1 {
+		chunkSize = 1
+	}
+	chunks := make([][]string, 0, (len(categories)+chunkSize-1)/chunkSize)
+	for start := 0; start < len(categories); start += chunkSize {
+		end := min(start+chunkSize, len(categories))
+		chunks = append(chunks, categories[start:end])
+	}
+	return chunks
+}
+
+// runEndpointBusinessPanel queries the distinct business labels per endpoint as a
+// joint [endpoint, business] query, constraining to the endpoint set with a typed
+// filter (composed under the caller's filter).
+func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, dimension flowquery.Dimension, addresses []string, now time.Time) (json.RawMessage, gin.H, error) {
+	addressFilter, err := flowEndpointAddressFilter(req.Filter, dimension, addresses)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -269,7 +302,7 @@ func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.S
 	filters.DimensionValues = nil
 	compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
 		From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
-		Dimensions: []flowquery.Dimension{dimension, flowquery.DimensionBusiness}, Filters: filters, Filter: &canonical,
+		Dimensions: []flowquery.Dimension{dimension, flowquery.DimensionBusiness}, Filters: filters, Filter: addressFilter,
 		View: view, TopN: 100, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
 	}, now)
 	if err != nil {

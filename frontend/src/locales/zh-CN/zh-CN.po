@@ -6668,6 +6668,10 @@ msgid "flow.category.unattributed"
 msgstr "归属不明"
 
 #: src/components/routes/flow-reports.tsx
+msgid "Unassigned"
+msgstr "未归属"
+
+#: src/components/routes/flow-reports.tsx
 msgid "Unavailable"
 msgstr "暂不可用"
 

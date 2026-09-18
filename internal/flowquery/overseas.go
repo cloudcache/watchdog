@@ -81,7 +81,7 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 	if err != nil {
 		return CompiledOverseas{}, err
 	}
-	if request.TopN < 1 || request.TopN > maxTopN {
+	if request.TopN < 1 || request.TopN > MaxTopN {
 		return CompiledOverseas{}, requestError("top_n", ErrorLimitExceeded, "top_n must be 1..100")
 	}
 

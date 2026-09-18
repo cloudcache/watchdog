@@ -100,7 +100,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 	if err != nil {
 		return CompiledJoint{}, err
 	}
-	if request.TopN < 1 || request.TopN > maxTopN {
+	if request.TopN < 1 || request.TopN > MaxTopN {
 		return CompiledJoint{}, requestError("top_n", ErrorLimitExceeded, "top_n must be 1..100")
 	}
 	from, to := request.From.UTC(), request.To.UTC()

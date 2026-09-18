@@ -333,9 +333,11 @@ export function panelJointPoints(panel?: FlowReportPanel): FlowJointPoint[] {
 export function buildReportSeries(panel?: FlowReportPanel): FlowReportSeries[] {
 	const grouped = new Map<string, Array<{ time: number; value: number }>>()
 	for (const point of panelPoints(panel)) {
-		const values = grouped.get(point.dimension_value) ?? []
+		const label = panel?.data?.dimension_labels?.[`${point.geo_version}:${point.dimension_value}`]
+		const name = point.other ? "_other" : (point.dimension_name ?? label?.name ?? point.dimension_value)
+		const values = grouped.get(name) ?? []
 		values.push({ time: new Date(point.bucket).getTime(), value: point.value })
-		grouped.set(point.dimension_value, values)
+		grouped.set(name, values)
 	}
 	return [...grouped.entries()]
 		.map(([name, values]) => ({ name, values: values.sort((a, b) => a.time - b.time) }))

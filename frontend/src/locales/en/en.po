@@ -7749,6 +7749,10 @@ msgid "flow.category.unattributed"
 msgstr "Unattributed"
 
 #: src/components/routes/flow-reports.tsx
+msgid "Unassigned"
+msgstr "Unassigned"
+
+#: src/components/routes/flow-reports.tsx
 msgid "Unavailable"
 msgstr "Unavailable"
 
