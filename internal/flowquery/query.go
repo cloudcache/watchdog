@@ -380,6 +380,10 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
 	}
+	request.Filters.DimensionValues, err = storageDimensionValues(request.Dimension, request.Filters.DimensionValues)
+	if err != nil {
+		return Compiled{}, err
+	}
 	conditions, filterParameters, err := compileFilters(request.Filters)
 	if err != nil {
 		return Compiled{}, err

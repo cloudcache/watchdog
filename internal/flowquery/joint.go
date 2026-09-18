@@ -156,7 +156,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
 	}
-	conditions, filterParameters, err := compileBaseFilters(request.View, request.Filters, expressions, request.Filter)
+	conditions, filterParameters, err := compileBaseFilters(request.View, request.Filters, request.Dimensions, expressions, request.Filter)
 	if err != nil {
 		return CompiledJoint{}, err
 	}
@@ -251,9 +251,16 @@ func compileJointDimensions(input []Dimension, view View) ([]DimensionDefinition
 	return definitions, expressions, nil
 }
 
-func compileBaseFilters(view View, filters Filters, dimensionExpressions []string, filter *FilterExpression) ([]string, []proto.Parameter, error) {
+func compileBaseFilters(view View, filters Filters, dimensions []Dimension, dimensionExpressions []string, filter *FilterExpression) ([]string, []proto.Parameter, error) {
 	dimensionValues := filters.DimensionValues
 	filters.DimensionValues = nil
+	if len(dimensions) == 1 {
+		var err error
+		dimensionValues, err = storageDimensionValues(dimensions[0], dimensionValues)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	supplierCategories, supplierGeoVersions := filters.Categories, filters.GeoVersions
 	if view == ViewSupplier {
 		filters.Categories, filters.GeoVersions = nil, nil

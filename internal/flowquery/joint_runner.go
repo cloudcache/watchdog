@@ -186,6 +186,16 @@ func (s *jointResultState) consume(columns *jointResultColumns) error {
 func (s *jointResultState) point(columns *jointResultColumns, index int) (JointPoint, resultVersion, jointPointKey, error) {
 	bucket := columns.bucket.Row(index).UTC()
 	dimensions := append([]string(nil), columns.dimensionValues.Row(index)...)
+	if len(dimensions) != len(s.compiled.Dimensions) {
+		return JointPoint{}, resultVersion{}, jointPointKey{}, errors.New("invalid ClickHouse Flow joint result: point identity is incomplete")
+	}
+	for dimensionIndex := range dimensions {
+		var err error
+		dimensions[dimensionIndex], err = resultDimensionValue(s.compiled.Dimensions[dimensionIndex].Kind, dimensions[dimensionIndex])
+		if err != nil {
+			return JointPoint{}, resultVersion{}, jointPointKey{}, err
+		}
+	}
 	other := columns.isOther[index]
 	version := resultVersion{
 		dimensionSnapshotID: columns.dimensionSnapshotID.Row(index), geoVersion: columns.geoVersion.Row(index),
@@ -199,7 +209,7 @@ func (s *jointResultState) point(columns *jointResultColumns, index int) (JointP
 	if bucket.Before(s.compiled.From) || !bucket.Before(s.compiled.To) || bucket.Sub(s.compiled.From)%s.compiled.BucketDuration != 0 {
 		return JointPoint{}, resultVersion{}, jointPointKey{}, errors.New("invalid ClickHouse Flow joint result: point bucket is outside or unaligned")
 	}
-	if len(dimensions) != len(s.compiled.Dimensions) || other > 1 || version.dimensionSnapshotID == "" || version.geoVersion == "" || version.classificationVersion == 0 {
+	if other > 1 || version.dimensionSnapshotID == "" || version.geoVersion == "" || version.classificationVersion == 0 {
 		return JointPoint{}, resultVersion{}, jointPointKey{}, errors.New("invalid ClickHouse Flow joint result: point identity is incomplete")
 	}
 	for _, dimension := range dimensions {

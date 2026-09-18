@@ -177,6 +177,20 @@ func TestCompileJointHistoricalGenerationPinsTableIdentityAndSupplierColumns(t *
 	}
 }
 
+func TestCompileJointMapsCanonicalIPv4DimensionFilterToClickHouseStorage(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	request := validJointRequest(now)
+	request.Dimensions = []Dimension{DimensionDestinationIP}
+	request.Filters.DimensionValues = []string{"192.0.2.20"}
+	compiled, err := CompileJoint(Scope{}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queryParameter(compiled.Query, "base_dimension_value_0") != "'::ffff:192.0.2.20'" {
+		t.Fatalf("joint IP dimension filter parameters were not normalized: %+v", compiled.Query.Parameters)
+	}
+}
+
 func validJointRequest(now time.Time) JointRequest {
 	return JointRequest{
 		From: now.Add(-time.Hour), To: now, Metric: MetricEstimatedBPS,

@@ -79,7 +79,8 @@ func (r *Runner) Run(ctx context.Context, compiled Compiled) (Result, error) {
 	state := resultState{
 		maxRows: compiled.MaxResultRows,
 		from:    compiled.From, to: compiled.To, bucketDuration: compiled.BucketDuration,
-		seen: make(map[resultPointKey]struct{}), versions: make(map[resultVersion]struct{}),
+		dimension: compiled.Dimension.Kind,
+		seen:      make(map[resultPointKey]struct{}), versions: make(map[resultVersion]struct{}),
 	}
 	query.OnResult = func(_ context.Context, _ proto.Block) error {
 		if state.err != nil {
@@ -198,6 +199,7 @@ type resultState struct {
 	maxRows        uint64
 	from, to       time.Time
 	bucketDuration time.Duration
+	dimension      Dimension
 	seen           map[resultPointKey]struct{}
 	versions       map[resultVersion]struct{}
 	err            error
@@ -254,7 +256,10 @@ func (s *resultState) consumeMetadata(columns *resultColumns, index int) error {
 
 func (s *resultState) point(columns *resultColumns, index int) (Point, resultVersion, resultPointKey, error) {
 	bucket := columns.bucket.Row(index).UTC()
-	dimensionValue := columns.dimensionValue.Row(index)
+	dimensionValue, err := resultDimensionValue(s.dimension, columns.dimensionValue.Row(index))
+	if err != nil {
+		return Point{}, resultVersion{}, resultPointKey{}, err
+	}
 	isOther := columns.isOther[index]
 	dimensionSnapshotID := columns.dimensionSnapshotID.Row(index)
 	geoVersion := columns.geoVersion.Row(index)

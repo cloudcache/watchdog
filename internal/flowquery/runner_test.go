@@ -125,6 +125,24 @@ func TestRunnerPreservesEmptyResultAndIncompleteRollup(t *testing.T) {
 	}
 }
 
+func TestRunnerUnmapsIPv4DimensionsAndPreservesIPv6(t *testing.T) {
+	compiled := compiledQuery(t)
+	compiled.Dimension = dimensionRegistry[DimensionSourceIP]
+	ipv4 := dataRow(compiled.From, "::ffff:192.0.2.10", false)
+	ipv6 := dataRow(compiled.From.Add(time.Minute), "2001:db8::10", false)
+	runner, err := NewRunner(fakeResultExecutor{blocks: [][]fakeResultRow{{ipv4, ipv6, metadataRow(60)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Points[0].DimensionValue != "192.0.2.10" || result.Points[1].DimensionValue != "2001:db8::10" {
+		t.Fatalf("IP dimensions were not normalized: %+v", result.Points)
+	}
+}
+
 func TestRunnerUsesSourceBucketsForCompletenessAndPresentationBucketsForAlignment(t *testing.T) {
 	request := validRequest()
 	request.Interval = 15 * time.Minute

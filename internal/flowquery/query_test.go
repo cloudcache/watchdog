@@ -93,6 +93,20 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 	}
 }
 
+func TestCompileMapsCanonicalIPv4DimensionFilterToClickHouseStorage(t *testing.T) {
+	request := validRequest()
+	request.Dimension = DimensionSourceIP
+	request.Filters.DimensionValues = []string{"192.0.2.10", "2001:db8::10"}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queryParameter(compiled.Query, "dimension_value_0") != "'2001:db8::10'" ||
+		queryParameter(compiled.Query, "dimension_value_1") != "'::ffff:192.0.2.10'" {
+		t.Fatalf("IP dimension filter parameters were not normalized: %+v", compiled.Query.Parameters)
+	}
+}
+
 func TestCompileRejectsUnsupportedUnsafeOrIncompleteRequests(t *testing.T) {
 	now := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
 	tests := []struct {

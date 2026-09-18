@@ -90,6 +90,26 @@ func TestJointRunnerFailsClosedOnMalformedTupleOrExecutionFailure(t *testing.T) 
 	}
 }
 
+func TestJointRunnerUnmapsOnlyIPv4AddressDimensions(t *testing.T) {
+	compiled := compiledJointQuery(t)
+	compiled.Dimensions = []DimensionDefinition{
+		dimensionRegistry[DimensionSourceIP], dimensionRegistry[DimensionDestinationIP], dimensionRegistry[DimensionProtocol],
+	}
+	row := validFakeJointRow(compiled.From, []string{"::ffff:192.0.2.10", "2001:db8::20", "6"})
+	runner, err := NewJointRunner(fakeJointExecutor{blocks: [][]fakeJointRow{{row}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := result.Points[0].DimensionValues
+	if len(values) != 3 || values[0] != "192.0.2.10" || values[1] != "2001:db8::20" || values[2] != "6" {
+		t.Fatalf("joint IP dimensions were not normalized: %v", values)
+	}
+}
+
 func compiledJointQuery(t *testing.T) CompiledJoint {
 	t.Helper()
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
