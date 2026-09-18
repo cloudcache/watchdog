@@ -8967,3 +8967,123 @@ msgstr "Save the token and public key at the paths above, add the registry argum
 #: src/components/routes/agents.tsx
 msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
 msgstr "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "{activeWorkerCount}/{0} active · {1} installed the latest version"
+msgstr "{activeWorkerCount}/{0} active · {1} installed the latest version"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Activate a WADS snapshot first."
+msgstr "Activate a WADS snapshot first."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Applying lifecycle change…"
+msgstr "Applying lifecycle change…"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Approve and activate"
+msgstr "Approve and activate"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Blocked"
+msgstr "Blocked"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build a WADS snapshot first."
+msgstr "Build a WADS snapshot first."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build address snapshot"
+msgstr "Build address snapshot"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build WADS snapshot"
+msgstr "Build WADS snapshot"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Compile the address library, activate it, publish the classification version, then start a worker."
+msgstr "Compile the address library, activate it, publish the classification version, then start a worker."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Complete"
+msgstr "Complete"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Enroll and start worker"
+msgstr "Enroll and start worker"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Failed"
+msgstr "Failed"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Failed to load Flow activation status"
+msgstr "Failed to load Flow activation status"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow activation"
+msgstr "Flow activation"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow v{0} · WADS v{1}"
+msgstr "Flow v{0} · WADS v{1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow v{0} uses an older address snapshot."
+msgstr "Flow v{0} uses an older address snapshot."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Job {0} · {1}"
+msgstr "Job {0} · {1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "No Flow worker is enrolled."
+msgstr "No Flow worker is enrolled."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "No WADS snapshot has been built."
+msgstr "No WADS snapshot has been built."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Operation failed"
+msgstr "Operation failed"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish Flow classification"
+msgstr "Publish Flow classification"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish Flow version"
+msgstr "Publish Flow version"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish the active address snapshot with the saved classification profile."
+msgstr "Publish the active address snapshot with the saved classification profile."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Refresh status"
+msgstr "Refresh status"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Running"
+msgstr "Running"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Start Flow worker"
+msgstr "Start Flow worker"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "The last build failed."
+msgstr "The last build failed."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} · {1}"
+msgstr "WADS v{0} · {1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} is active."
+msgstr "WADS v{0} is active."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} is waiting for approval or activation."
+msgstr "WADS v{0} is waiting for approval or activation."

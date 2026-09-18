@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { api, can } from "@/lib/api"
 import FlowEnrichmentPublications from "./flow-enrichment-publications"
+import FlowActivationGuide from "./flow-activation-guide"
 
 type AddressDimensionSnapshot = {
 	id: string
@@ -274,6 +275,7 @@ export default memo(function AddressPublications() {
 
 	return (
 		<div className="grid gap-4">
+			<FlowActivationGuide onChanged={fetchPage} />
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<RocketIcon className="h-5 w-5 text-muted-foreground" />

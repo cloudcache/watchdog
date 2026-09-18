@@ -7998,3 +7998,123 @@ msgstr "按上述路径保存令牌和公钥，将 Registry 参数加入 {servic
 #: src/components/routes/agents.tsx
 msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
 msgstr "平台管理身份、签名配置、确认状态和健康状态；进程启动、重启及宿主机权限由 systemd 或容器运行时管理。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "{activeWorkerCount}/{0} active · {1} installed the latest version"
+msgstr "{activeWorkerCount}/{0} 个运行中 · {1} 个已加载最新版本"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Activate a WADS snapshot first."
+msgstr "请先激活地址快照。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Applying lifecycle change…"
+msgstr "正在执行…"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Approve and activate"
+msgstr "审批并激活"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Blocked"
+msgstr "等待前置步骤"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build a WADS snapshot first."
+msgstr "请先生成地址快照。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build address snapshot"
+msgstr "生成地址快照"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Build WADS snapshot"
+msgstr "生成地址快照"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Compile the address library, activate it, publish the classification version, then start a worker."
+msgstr "依次生成并激活地址快照、发布流量分类版本，然后启动处理服务。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Complete"
+msgstr "已完成"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Enroll and start worker"
+msgstr "注册并启动处理服务"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Failed"
+msgstr "失败"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Failed to load Flow activation status"
+msgstr "加载 Flow 启用状态失败"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow activation"
+msgstr "Flow 启用向导"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow v{0} · WADS v{1}"
+msgstr "Flow 版本 {0} · 地址快照版本 {1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Flow v{0} uses an older address snapshot."
+msgstr "Flow 版本 {0} 使用的是旧地址快照。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Job {0} · {1}"
+msgstr "任务 {0} · {1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "No Flow worker is enrolled."
+msgstr "尚未注册 Flow 处理服务。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "No WADS snapshot has been built."
+msgstr "尚未生成地址快照。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Operation failed"
+msgstr "操作失败"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish Flow classification"
+msgstr "发布流量分类版本"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish Flow version"
+msgstr "发布 Flow 版本"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish the active address snapshot with the saved classification profile."
+msgstr "将已激活的地址快照和已保存的六分类设置发布为一个版本。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Refresh status"
+msgstr "刷新状态"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Running"
+msgstr "进行中"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Start Flow worker"
+msgstr "启动 Flow 处理服务"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "The last build failed."
+msgstr "上次生成失败。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} · {1}"
+msgstr "地址快照版本 {0} · {1}"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} is active."
+msgstr "地址快照版本 {0} 已激活。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "WADS v{0} is waiting for approval or activation."
+msgstr "地址快照版本 {0} 等待审批或激活。"

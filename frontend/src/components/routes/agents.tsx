@@ -58,6 +58,11 @@ type EnrollmentTarget = {
 	kind: string
 }
 
+function requestedAgentKind() {
+	const value = new URLSearchParams(window.location.search).get("enroll") ?? ""
+	return ["system", "snmp", "flow_collect", "flow_worker", "probe"].includes(value) ? value : ""
+}
+
 export default memo(() => {
 	const { t } = useLingui()
 	const [agents, setAgents] = useState<AgentRecord[]>([])
@@ -71,7 +76,8 @@ export default memo(() => {
 	const [sort, setSort] = useState("updated_at:desc")
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState("")
-	const [enrollmentOpen, setEnrollmentOpen] = useState(false)
+	const requestedEnrollmentKind = requestedAgentKind()
+	const [enrollmentOpen, setEnrollmentOpen] = useState(Boolean(requestedEnrollmentKind))
 	const requestSequence = useRef(0)
 
 	useEffect(() => {
@@ -291,15 +297,19 @@ export default memo(() => {
 					onRowClick={(record) => navigate(getPagePath($router, "agent_runs", { id: String(record.id) }))}
 				/>
 			</div>
-			<EnrollmentDialog open={enrollmentOpen} onClose={() => setEnrollmentOpen(false)} />
+			<EnrollmentDialog
+				open={enrollmentOpen}
+				initialKind={requestedEnrollmentKind || "system"}
+				onClose={() => setEnrollmentOpen(false)}
+			/>
 		</div>
 	)
 })
 
-function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function EnrollmentDialog({ open, initialKind, onClose }: { open: boolean; initialKind: string; onClose: () => void }) {
 	const { t } = useLingui()
-	const [kind, setKind] = useState("system")
-	const [agentID, setAgentID] = useState(() => defaultAgentID("system"))
+	const [kind, setKind] = useState(initialKind)
+	const [agentID, setAgentID] = useState(() => defaultAgentID(initialKind))
 	const [deviceID, setDeviceID] = useState("")
 	const [targets, setTargets] = useState<EnrollmentTarget[]>([])
 	const [token, setToken] = useState("")
@@ -309,6 +319,8 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 	const [error, setError] = useState("")
 	useEffect(() => {
 		if (!open) return
+		setKind(initialKind)
+		setAgentID(defaultAgentID(initialKind))
 		setToken("")
 		setError("")
 		Promise.all([
@@ -321,7 +333,7 @@ function EnrollmentDialog({ open, onClose }: { open: boolean; onClose: () => voi
 				setPublicKey(trust.public_key ?? "")
 			})
 			.catch((err) => setError(err instanceof Error ? err.message : t`Failed to load targets`))
-	}, [open, t])
+	}, [initialKind, open, t])
 	const compatibleTargets = targets.filter((target) => compatibleAgentTarget(kind, target.kind))
 	const create = async () => {
 		setSaving(true)
