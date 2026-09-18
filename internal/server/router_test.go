@@ -86,6 +86,7 @@ func TestFlowEnrichmentPublicationRoutesAreRegistered(t *testing.T) {
 		"PUT /api/v1/flow/classification-profile",
 		"GET /api/v1/flow/enrichment-publications",
 		"POST /api/v1/flow/enrichment-publications",
+		"POST /api/v1/flow/enrichment-publications/bootstrap",
 		"GET /api/v1/flow/enrichment-publications/facets",
 		"GET /api/v1/flow/enrichment-publications/:publication_id",
 		"GET /api/v1/flow/enrichment-publications/:publication_id/acks",

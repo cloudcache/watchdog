@@ -303,6 +303,25 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 		}
 	}
 
+	const bootstrapPair = async () => {
+		setWorking(true)
+		setError("")
+		setNotice("")
+		try {
+			const published = await api.send<EnrichmentPublication>("/api/v1/flow/enrichment-publications/bootstrap", {
+				method: "POST",
+				body: {},
+			})
+			setNotice(t`Unclassified Flow ingestion version ${published.classification_version} published`)
+			await fetchPublications()
+			await onChanged?.()
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : t`Failed to publish unclassified Flow ingestion version`)
+		} finally {
+			setWorking(false)
+		}
+	}
+
 	const fetchACKs = useCallback(async () => {
 		if (!selectedPublication) return
 		const [sortField, order] = ackSort.split(":")
@@ -600,9 +619,7 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 							</SelectContent>
 						</Select>
 						<p className="text-xs text-muted-foreground">
-							<Trans>
-								Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot.
-							</Trans>
+							<Trans>Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot.</Trans>
 						</p>
 						{selectedDeviceProfile && canManage ? (
 							<Button type="button" variant="outline" size="sm" className="w-fit" onClick={removeSelectedDeviceProfile}>
@@ -615,9 +632,7 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 							<Trans>Customer source prefixes</Trans>
 						</Label>
 						<p className="text-xs text-muted-foreground">
-							<Trans>
-								The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories.
-							</Trans>
+							<Trans>The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories.</Trans>
 						</p>
 						<div className="grid max-h-64 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
 							{sourcePrefixes.map((prefix) => {
@@ -685,9 +700,20 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 						</Trans>
 					</p>
 					{profileVersion === 0 ? (
-						<p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700">
-							<Trans>Save a complete classification profile before publishing a Flow version.</Trans>
-						</p>
+						<div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700">
+							<p>
+								<Trans>
+									Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a
+									precise version after configuring each Flow device.
+								</Trans>
+							</p>
+							{canPublish && total === 0 ? (
+								<Button type="button" variant="outline" onClick={bootstrapPair} disabled={working}>
+									<SendIcon className="me-2 h-4 w-4" />
+									<Trans>Start unclassified Flow ingestion</Trans>
+								</Button>
+							) : null}
+						</div>
 					) : null}
 					{canPublish ? (
 						<Button onClick={publishPair} disabled={working || profileVersion === 0}>

@@ -100,6 +100,21 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 
 	effectiveFrom := time.Now().UTC().Truncate(time.Minute).Add(-5 * time.Minute)
 	prepareFlowEnrichmentAddressSnapshot(t, s, effectiveFrom)
+	bootstrap := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications/bootstrap", map[string]any{}, adminHeaders, cookies...)
+	var bootstrapPublication flowEnrichmentPublication
+	decodeJSON(t, bootstrap, &bootstrapPublication)
+	if bootstrap.Code != http.StatusCreated || bootstrapPublication.ClassificationVersion != 1 ||
+		!bootstrapPublication.EffectiveFrom.Equal(effectiveFrom) ||
+		bootstrapPublication.ClassificationSchemaVersion != uint16(flowdimension.LegacyClassificationSchemaVersion) {
+		t.Fatalf("bootstrap unclassified pair: status=%d publication=%+v body=%s", bootstrap.Code, bootstrapPublication, bootstrap.Body.String())
+	}
+	duplicateBootstrap := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications/bootstrap", map[string]any{}, adminHeaders, cookies...)
+	if duplicateBootstrap.Code != http.StatusConflict {
+		t.Fatalf("duplicate bootstrap was accepted: status=%d body=%s", duplicateBootstrap.Code, duplicateBootstrap.Body.String())
+	}
+	if _, err := s.db.Exec(`DELETE FROM flow_enrichment_publications WHERE id=?`, bootstrapPublication.ID); err != nil {
+		t.Fatalf("remove bootstrap fixture: %v", err)
+	}
 	if _, err := s.db.Exec(`INSERT INTO devices (id,host,kind) VALUES ('flow-device-it','192.0.2.10','network')`); err != nil {
 		t.Fatal(err)
 	}

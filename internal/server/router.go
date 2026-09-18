@@ -233,6 +233,7 @@ func (s *Server) newRouter() *gin.Engine {
 	flowEnrichment.PUT("/classification-profile", s.requirePermission("address.manage"), s.putFlowClassificationProfile)
 	flowEnrichment.GET("/enrichment-publications", s.requirePermission("address.view"), s.listFlowEnrichmentPublications)
 	flowEnrichment.POST("/enrichment-publications", s.requirePermission("address.publish"), s.publishFlowEnrichment)
+	flowEnrichment.POST("/enrichment-publications/bootstrap", s.requirePermission("address.publish"), s.bootstrapFlowEnrichment)
 	flowEnrichment.GET("/enrichment-publications/facets", s.requirePermission("address.view"), s.listFlowEnrichmentPublicationFacets)
 	flowEnrichment.GET("/enrichment-publications/:publication_id", s.requirePermission("address.view"), s.getFlowEnrichmentPublication)
 	flowEnrichment.GET("/enrichment-publications/:publication_id/acks", s.requirePermission("address.view"), s.listFlowEnrichmentACKs)
