@@ -20,6 +20,11 @@ import (
 
 const maxClickHouseMigrationBytes = 4 << 20
 
+const (
+	canonicalFlowSchemaV1Checksum = "7aa74a10f2d0837c71b1905a442918803c703d49f5d94e1fdc4f9d680c7f4c51"
+	flowSchemaV1NoRawTTLChecksum  = "929be83ce51b012c0e5692e32593a37adcb4925176eda8ef7bc00195f3a67d9e"
+)
+
 var clickHouseMigrationName = regexp.MustCompile(`^([0-9]{3})_([a-z0-9][a-z0-9_]*)\.sql$`)
 
 type Migration struct {
@@ -140,7 +145,7 @@ func PlanMigrations(available []Migration, recorded []AppliedMigration, resume b
 			return MigrationPlan{}, fmt.Errorf("ClickHouse schema version %03d is newer than the available migration set", state.Version)
 		}
 		migration := available[state.Version-1]
-		if state.Name != migration.Name || state.Checksum != migration.Checksum {
+		if state.Name != migration.Name || !compatibleMigrationChecksum(migration, state.Checksum) {
 			return MigrationPlan{}, fmt.Errorf("ClickHouse migration %03d checksum or name drift detected", state.Version)
 		}
 		switch state.State {
@@ -169,6 +174,21 @@ func PlanMigrations(available []Migration, recorded []AppliedMigration, resume b
 	}
 	plan.Pending = append(plan.Pending, available[len(states):]...)
 	return plan, nil
+}
+
+// compatibleMigrationChecksum recognizes the one released 001 variant that
+// reached installations before the immutable checksum gate was enforced. Its
+// schema differences are converged by migration 011 (raw table rebuilt without
+// a TTL); accepting it avoids rewriting an applied production ledger. No other
+// migration or checksum receives a compatibility bypass.
+func compatibleMigrationChecksum(migration Migration, recorded string) bool {
+	if recorded == migration.Checksum {
+		return true
+	}
+	return migration.Version == 1 &&
+		migration.Name == "001_flow_schema.sql" &&
+		migration.Checksum == canonicalFlowSchemaV1Checksum &&
+		recorded == flowSchemaV1NoRawTTLChecksum
 }
 
 func migrationNameVersion(matches []string) string {

@@ -25,7 +25,7 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 			t.Fatalf("invalid loaded migration=%+v", migration)
 		}
 	}
-	if got, want := migrations[0].Checksum, "7aa74a10f2d0837c71b1905a442918803c703d49f5d94e1fdc4f9d680c7f4c51"; got != want {
+	if got, want := migrations[0].Checksum, canonicalFlowSchemaV1Checksum; got != want {
 		t.Fatalf("released migration 001 checksum drifted: got %s, want %s", got, want)
 	}
 	if got, want := migrations[15].Checksum, "0000ff24eeaee56b83649fb8c3778c98802c16f956d9566e1cae4bbaba422252"; got != want {
@@ -42,6 +42,28 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 	}
 	if changedMigrations[0].Checksum == migrations[0].Checksum {
 		t.Fatal("exact-byte migration checksum ignored a content change")
+	}
+}
+
+func TestPlanMigrationsAcceptsOnlyReleased001CompatibilityChecksum(t *testing.T) {
+	migrations, err := LoadMigrations(os.DirFS("../../deploy/migration/clickhouse"), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := []AppliedMigration{{
+		Version: 1, Name: migrations[0].Name, Checksum: flowSchemaV1NoRawTTLChecksum,
+		State: MigrationApplied, CompletedStatements: uint32(len(migrations[0].Statements)),
+	}}
+	plan, err := PlanMigrations(migrations, recorded, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Applied) != 1 || len(plan.Pending) != len(migrations)-1 {
+		t.Fatalf("compatibility plan=%+v", plan)
+	}
+	recorded[0].Checksum = strings.Repeat("0", 64)
+	if _, err := PlanMigrations(migrations, recorded, false); err == nil {
+		t.Fatal("unknown migration 001 checksum was accepted")
 	}
 }
 
