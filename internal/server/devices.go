@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -263,8 +264,14 @@ func (s *Server) getDevice(c *gin.Context) {
 }
 
 func (s *Server) readDevice(c *gin.Context, id string) (deviceRecord, error) {
+	return s.readDeviceByID(c.Request.Context(), id)
+}
+
+// readDeviceByID is the context-based device read used by non-HTTP callers such
+// as the SNMP discovery reconcile loop.
+func (s *Server) readDeviceByID(ctx context.Context, id string) (deviceRecord, error) {
 	var r deviceRecord
-	err := s.db.QueryRowContext(c.Request.Context(), `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_location,d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT d.id,d.host,d.display_name,COALESCE(d.labels_json,JSON_OBJECT()),d.kind,d.vendor,d.model,d.platform,d.sys_name,COALESCE(d.sys_descr,''),d.sys_location,d.sys_object_id,d.os,d.os_version,d.hardware,d.serial,d.location_id,l.name,d.snmp_profile_id,d.snmp_port,d.status,d.status_reason,d.disabled,d.ignore_alerts,d.uptime_seconds,d.last_polled_at,d.row_version,d.created_at,d.updated_at
 		FROM devices d LEFT JOIN locations l ON l.id=d.location_id WHERE d.id=?`, id).Scan(
 		&r.ID, &r.Host, &r.DisplayName, &r.Labels, &r.Kind, &r.Vendor, &r.Model, &r.Platform, &r.SysName, &r.SysDescr, &r.SysLocation, &r.SysObjectID, &r.OS, &r.OSVersion, &r.Hardware, &r.Serial, &r.LocationID, &r.LocationName, &r.SNMPProfileID, &r.SNMPPort, &r.Status, &r.StatusReason, &r.Disabled, &r.IgnoreAlerts, &r.UptimeSeconds, &r.LastPolledAt, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt)
 	return r, err

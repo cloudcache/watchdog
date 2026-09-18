@@ -57,6 +57,7 @@ type Server struct {
 	flowGeo             *flowGeoService
 	workerCancel        context.CancelFunc
 	snmpExportCancel    context.CancelFunc
+	snmpDiscoverCancel  context.CancelFunc
 	billingCancel       context.CancelFunc
 
 	vpnCandidateMaterializer   *flowch.VPNCandidateMaterializer
@@ -193,6 +194,7 @@ func (s *Server) prepareRuntime(ctx context.Context) error {
 	if err := s.startSNMPExports(); err != nil {
 		return fmt.Errorf("start SNMP exports: %w", err)
 	}
+	s.startSNMPDiscoveryReconcile()
 	if err := s.startBilling(); err != nil {
 		return fmt.Errorf("start billing: %w", err)
 	}
@@ -323,6 +325,10 @@ func (s *Server) stopRuntime() {
 	if s.snmpExportCancel != nil {
 		s.snmpExportCancel()
 		s.snmpExportCancel = nil
+	}
+	if s.snmpDiscoverCancel != nil {
+		s.snmpDiscoverCancel()
+		s.snmpDiscoverCancel = nil
 	}
 	if s.billingCancel != nil {
 		s.billingCancel()

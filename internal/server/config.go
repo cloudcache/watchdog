@@ -131,6 +131,13 @@ type SNMPConfig struct {
 	PollInterval       time.Duration `yaml:"poll_interval"`
 	PollLimit          int           `yaml:"poll_limit"`
 	PollConcurrency    int           `yaml:"poll_concurrency"`
+	// AutoDiscover runs the server-side discovery reconcile loop so that binding
+	// an SNMP profile to a network device actually starts collection: it
+	// discovers devices that have a profile but no enabled recipes, and (like
+	// LibreNMS separating discovery from polling) re-discovers healthy devices
+	// every RediscoverInterval to pick up new interfaces/sensors over time.
+	AutoDiscover       bool          `yaml:"auto_discover"`
+	RediscoverInterval time.Duration `yaml:"rediscover_interval"`
 	ExportDir          string        `yaml:"export_dir"`
 	ExportRetention    time.Duration `yaml:"export_retention"`
 	// QueryMaxIntermediateRows bounds synchronous chart expansion before
@@ -180,6 +187,7 @@ func defaultConfig() Config {
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP: SNMPConfig{
 			PollInterval: time.Minute, PollLimit: 500, PollConcurrency: 32,
+			AutoDiscover: true, RediscoverInterval: 6 * time.Hour,
 			ExportDir: "data/snmp-exports", ExportRetention: 24 * time.Hour,
 			QueryMaxIntermediateRows: snmpch.HardMaxAggregateRows,
 			QueryMaxExecutionTime:    15 * time.Second, QueryMaxRowsToRead: 50_000_000,

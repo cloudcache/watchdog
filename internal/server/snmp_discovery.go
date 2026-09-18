@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,35 +25,38 @@ type snmpDiscoveryImportResult struct {
 	Sensors, PhysicalEntities, VLANs, LAGs               int
 }
 
-func (s *Server) discoverDeviceSNMP(c *gin.Context) {
-	device, ok := s.loadScopedNetworkDevice(c, c.Param("id"))
-	if !ok {
-		return
-	}
+// errDeviceNoSNMPProfile is returned when discovery is attempted on a device
+// without an SNMP profile bound; the HTTP handler maps it to 409.
+var errDeviceNoSNMPProfile = errors.New("device has no SNMP profile")
+
+// snmpDiscoveryFailure wraps a reachability/auth/timeout failure from the SNMP
+// engine so callers can surface the reason (HTTP 502) instead of a 500.
+type snmpDiscoveryFailure struct{ reason string }
+
+func (e snmpDiscoveryFailure) Error() string { return e.reason }
+
+// buildSNMPDiscoveryRequest loads the device's SNMP profile, merges any
+// device-level security overrides, and resolves the port into a discovery
+// request. Shared by the HTTP handler and the reconcile loop.
+func (s *Server) buildSNMPDiscoveryRequest(ctx context.Context, device deviceRecord) (snmpdomain.DiscoveryRequest, error) {
 	if !device.SNMPProfileID.Valid || device.SNMPProfileID.String == "" {
-		fail(c, http.StatusConflict, "invalid_state", "device has no SNMP profile")
-		return
+		return snmpdomain.DiscoveryRequest{}, errDeviceNoSNMPProfile
 	}
-	actorID := currentPrincipal(c).UserID
-	profile, err := s.readSNMPProfile(c, device.SNMPProfileID.String)
+	profile, err := s.readSNMPProfileByID(ctx, device.SNMPProfileID.String)
 	if err != nil {
-		writeSQLError(c, err)
-		return
+		return snmpdomain.DiscoveryRequest{}, err
 	}
 	security := map[string]string{}
 	if err := json.Unmarshal(profile.Security, &security); err != nil {
-		fail(c, http.StatusInternalServerError, "invalid_snmp_profile", "SNMP profile security is invalid")
-		return
+		return snmpdomain.DiscoveryRequest{}, fmt.Errorf("SNMP profile security is invalid: %w", err)
 	}
 	var overrides json.RawMessage
-	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT COALESCE(snmp_security_json,JSON_OBJECT()) FROM devices WHERE id=?", device.ID).Scan(&overrides); err != nil {
-		writeSQLError(c, err)
-		return
+	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(snmp_security_json,JSON_OBJECT()) FROM devices WHERE id=?", device.ID).Scan(&overrides); err != nil {
+		return snmpdomain.DiscoveryRequest{}, err
 	}
 	var overrideValues map[string]string
 	if err := json.Unmarshal(overrides, &overrideValues); err != nil {
-		fail(c, http.StatusInternalServerError, "invalid_device_snmp", "device SNMP security override is invalid")
-		return
+		return snmpdomain.DiscoveryRequest{}, fmt.Errorf("device SNMP security override is invalid: %w", err)
 	}
 	for key, value := range overrideValues {
 		if strings.TrimSpace(value) != "" {
@@ -63,7 +67,7 @@ func (s *Server) discoverDeviceSNMP(c *gin.Context) {
 	if device.SNMPPort.Valid && device.SNMPPort.Int64 > 0 {
 		port = uint16(device.SNMPPort.Int64)
 	}
-	request := snmpdomain.DiscoveryRequest{
+	return snmpdomain.DiscoveryRequest{
 		TargetID: device.ID,
 		Target:   snmpdomain.QueryTarget{Host: device.Host, Port: port},
 		Device: snmpdomain.Device{
@@ -77,25 +81,56 @@ func (s *Server) discoverDeviceSNMP(c *gin.Context) {
 			ID: profile.ID, Name: profile.Name, Version: snmpdomain.Version(profile.Version),
 			Security: security, Timeout: time.Duration(profile.TimeoutMS) * time.Millisecond, Retries: profile.Retries,
 		},
+	}, nil
+}
+
+// discoverAndImport runs SNMP discovery for a network device and imports the
+// result, updating device status. It is shared by the HTTP handler and the
+// server-side discovery reconcile loop. On a discovery (reachability/auth)
+// failure it records status='down' and returns snmpDiscoveryFailure.
+func (s *Server) discoverAndImport(ctx context.Context, device deviceRecord, actorID string) (snmpDiscoveryImportResult, snmpdomain.DiscoveryResult, error) {
+	request, err := s.buildSNMPDiscoveryRequest(ctx, device)
+	if err != nil {
+		return snmpDiscoveryImportResult{}, snmpdomain.DiscoveryResult{}, err
 	}
-	result, err := s.snmpDiscovery.Discover(c.Request.Context(), request)
+	result, err := s.snmpDiscovery.Discover(ctx, request)
 	if err != nil {
 		reason := truncateUTF8(err.Error(), 64)
-		_, _ = s.db.ExecContext(c.Request.Context(), "UPDATE devices SET status='down',status_reason=?,last_polled_at=UTC_TIMESTAMP(3),updated_by=?,row_version=row_version+1 WHERE id=?", reason, actorID, device.ID)
-		s.audit(c.Request.Context(), actorID, "snmp.discovery.failed", "device", device.ID)
-		fail(c, http.StatusBadGateway, "snmp_discovery_failed", reason)
-		return
+		_, _ = s.db.ExecContext(ctx, "UPDATE devices SET status='down',status_reason=?,last_polled_at=UTC_TIMESTAMP(3),updated_by=NULLIF(?,''),row_version=row_version+1 WHERE id=?", reason, actorID, device.ID)
+		s.audit(ctx, actorID, "snmp.discovery.failed", "device", device.ID)
+		return snmpDiscoveryImportResult{}, snmpdomain.DiscoveryResult{}, snmpDiscoveryFailure{reason: reason}
 	}
-	imported, err := s.importSNMPDiscovery(c.Request.Context(), device.ID, actorID, result)
+	imported, err := s.importSNMPDiscovery(ctx, device.ID, actorID, result)
 	if err != nil {
+		return snmpDiscoveryImportResult{}, result, err
+	}
+	if err := s.syncDynamicGroupsForDevice(ctx, device.ID); err != nil {
+		return imported, result, err
+	}
+	s.audit(ctx, actorID, "snmp.discovery.succeeded", "device", device.ID)
+	return imported, result, nil
+}
+
+func (s *Server) discoverDeviceSNMP(c *gin.Context) {
+	device, ok := s.loadScopedNetworkDevice(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	actorID := currentPrincipal(c).UserID
+	imported, result, err := s.discoverAndImport(c.Request.Context(), device, actorID)
+	if err != nil {
+		if errors.Is(err, errDeviceNoSNMPProfile) {
+			fail(c, http.StatusConflict, "invalid_state", "device has no SNMP profile")
+			return
+		}
+		var df snmpDiscoveryFailure
+		if errors.As(err, &df) {
+			fail(c, http.StatusBadGateway, "snmp_discovery_failed", df.reason)
+			return
+		}
 		writeSQLError(c, err)
 		return
 	}
-	if err := s.syncDynamicGroupsForDevice(c.Request.Context(), device.ID); err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	s.audit(c.Request.Context(), actorID, "snmp.discovery.succeeded", "device", device.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"device_id": device.ID, "ports": imported.Ports, "deleted": imported.DeletedPorts,
 		"interface_addresses": imported.InterfaceAddresses, "bgp_sessions": imported.BGPSessions,

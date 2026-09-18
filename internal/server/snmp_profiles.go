@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"math"
@@ -85,7 +86,13 @@ func scanSNMPProfile(row scanner) (snmpProfileRecord, error) {
 }
 
 func (s *Server) readSNMPProfile(c *gin.Context, id string) (snmpProfileRecord, error) {
-	return scanSNMPProfile(s.db.QueryRowContext(c.Request.Context(), `SELECT id,name,version,security_json,port,timeout_ms,retries,row_version FROM snmp_profiles WHERE id=?`, id))
+	return s.readSNMPProfileByID(c.Request.Context(), id)
+}
+
+// readSNMPProfileByID is the context-based profile read used by non-HTTP callers
+// such as the SNMP discovery reconcile loop.
+func (s *Server) readSNMPProfileByID(ctx context.Context, id string) (snmpProfileRecord, error) {
+	return scanSNMPProfile(s.db.QueryRowContext(ctx, `SELECT id,name,version,security_json,port,timeout_ms,retries,row_version FROM snmp_profiles WHERE id=?`, id))
 }
 
 func (s *Server) getSNMPProfile(c *gin.Context) {

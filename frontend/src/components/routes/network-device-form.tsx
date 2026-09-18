@@ -154,8 +154,7 @@ export default memo(({ id }: NetworkDeviceFormProps) => {
 				sysName: device.SysName ?? device.sys_name ?? "",
 				sysObjectID: device.SysObjectID ?? device.sys_object_id ?? "",
 				sysDescr: device.SysDescr ?? device.sys_descr ?? "",
-				snmpProfileID:
-					device.SNMPProfileID ?? device.snmp_profile_id ?? (profiles.length === 1 ? profileID(profiles[0]) : ""),
+				snmpProfileID: device.SNMPProfileID ?? device.snmp_profile_id ?? "",
 				snmpPort: String(device.SNMPPort ?? device.snmp_port ?? 161),
 				snmpCommunity: "",
 			})

@@ -73,6 +73,10 @@ type NetworkDevice = {
 	snmp_profile_id?: string
 	SNMPPort?: number
 	snmp_port?: number
+	Status?: string
+	status?: string
+	StatusReason?: string
+	status_reason?: string
 }
 
 type NetworkPort = {
@@ -458,6 +462,11 @@ export default memo(({ id }: DeviceDetailProps) => {
 		targetLabelValues.region
 	)
 	const title = firstValue(device?.SysName, device?.sys_name, device?.Name, device?.name, targetName, id)
+	// Surface why a device is (not) collecting: a discovery/poll failure reason,
+	// or the fact that a profiled-but-undiscovered device has no recipes yet.
+	const snmpStatus = firstText(device?.Status, device?.status)
+	const snmpReason = firstText(device?.StatusReason, device?.status_reason)
+	const hasSNMPProfile = Boolean(firstText(device?.SNMPProfileID, device?.snmp_profile_id))
 
 	return (
 		<div className="grid gap-4">
@@ -510,6 +519,13 @@ export default memo(({ id }: DeviceDetailProps) => {
 								) : null}
 								{resolvedLocation ? <span>{resolvedLocation}</span> : null}
 							</div>
+							{snmpReason ? (
+								<div className="mt-1 text-xs text-red-600 dark:text-red-400">SNMP: {snmpReason}</div>
+							) : hasSNMPProfile && snmpStatus !== "up" && ports.length === 0 ? (
+								<div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+									<Trans>Not yet discovered — collection starts automatically.</Trans>
+								</div>
+							) : null}
 						</div>
 					</div>
 					<div className="flex shrink-0 items-center gap-1.5">
