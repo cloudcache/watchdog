@@ -65,6 +65,38 @@ func TestMarshalFlowAggregateResultIncludesTable(t *testing.T) {
 	}
 }
 
+func TestMarshalFlowAggregateResultResolvesWADSOperatorName(t *testing.T) {
+	path, checksum := writeWADSGeoBundle(t)
+	publication, err := loadWADSGeoPublication(path, checksum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	geo := newFlowGeoService("")
+	geo.installWADS(publication, true)
+	result := flowquery.Result{
+		View:      flowquery.ViewSupplier,
+		Metric:    flowquery.MetricDefinition{Name: flowquery.MetricEstimatedBPS, Unit: "bps"},
+		Dimension: flowquery.DimensionDefinition{Kind: flowquery.DimensionISP, Additive: true},
+		Points: []flowquery.Point{{
+			Bucket: time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC), DimensionValue: "1",
+			GeoVersion: "snapshot-wads", DimensionSnapshotID: "snapshot-wads", Value: 100,
+		}},
+	}
+	raw, err := marshalFlowAggregateResult(result, nil, geo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		DimensionLabels map[string]FlowGeoLabel `json:"dimension_labels"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if label := out.DimensionLabels["snapshot-wads:1"]; label.Name != "China Telecom" {
+		t.Fatalf("operator label = %+v", label)
+	}
+}
+
 // TestNormalizeFlowTableRequest applies defaults and rejects unsupported fields.
 func TestNormalizeFlowTableRequest(t *testing.T) {
 	req := &flowTableRequest{Limit: 25}

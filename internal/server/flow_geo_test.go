@@ -115,6 +115,8 @@ func writeWADSGeoBundle(t *testing.T) (string, string) {
 	values, err := flowdimension.CanonicalAddressSnapshotStrings(
 		"AS", "Asia", "CN", "China", "Jiangsu", "320000", "continent", "country", "province",
 		"supplier/continent/AS", "supplier/country/CN", "supplier/province/CN/320000",
+		"supplier-telecom", "supplier-telecom-code", "China Telecom", "carrier",
+		"customer-one", "customer-one-code", "Customer One",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +139,10 @@ func writeWADSGeoBundle(t *testing.T) (string, string) {
 			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/continent/AS"), Kind: index("continent"), Code: index("AS"), Name: index("Asia"), Enabled: true},
 			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/country/CN"), Kind: index("country"), Code: index("CN"), Name: index("China"), ParentID: index("supplier/continent/AS"), Enabled: true},
 			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/province/CN/320000"), Kind: index("province"), Code: index("320000"), Name: index("Jiangsu"), ParentID: index("supplier/country/CN"), Enabled: true},
+		},
+		Operators: []flowdimension.AddressSnapshotOperator{
+			{Namespace: flowdimension.AddressSnapshotOperatorSupplier, ID: 1, StableID: index("supplier-telecom"), Code: index("supplier-telecom-code"), Name: index("China Telecom"), Category: index("carrier"), ASNs: []uint32{4134}, Enabled: true},
+			{Namespace: flowdimension.AddressSnapshotOperatorCustomer, ID: 1, StableID: index("customer-one"), Code: index("customer-one-code"), Name: index("Customer One"), Category: index("carrier"), Enabled: true},
 		},
 		Values: []flowdimension.AddressSnapshotValue{{}},
 	}
@@ -229,6 +235,14 @@ func TestFlowGeoServiceLoadsWADSStableIDsAsDisplayLabels(t *testing.T) {
 	}
 	if got := label.Breadcrumb; len(got) != 3 || got[0] != "Asia" || got[1] != "China" || got[2] != "Jiangsu" {
 		t.Fatalf("breadcrumb = %#v", got)
+	}
+	supplier, found := service.OperatorLabel("snapshot-wads", flowquery.ViewSupplier, "1")
+	if !found || supplier.Name != "China Telecom" || supplier.Kind != "operator" {
+		t.Fatalf("supplier operator = %+v found=%v", supplier, found)
+	}
+	customer, found := service.OperatorLabel("snapshot-wads", flowquery.ViewCustomer, "1")
+	if !found || customer.Name != "Customer One" {
+		t.Fatalf("customer operator = %+v found=%v", customer, found)
 	}
 	status := service.Status()
 	if !status.Loaded || status.Version != "snapshot-wads" || status.Path != path {

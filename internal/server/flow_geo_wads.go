@@ -24,15 +24,16 @@ type wadsGeoCatalogState struct {
 }
 
 type wadsGeoPublication struct {
-	path          string
-	version       string
-	effectiveFrom time.Time
-	rowsV4        uint64
-	rowsV6        uint64
-	operators     uint64
-	index         *flowdimension.AddressSnapshotIndex
-	labels        map[string]FlowGeoLabel
-	items         []FlowGeoCatalogItem
+	path           string
+	version        string
+	effectiveFrom  time.Time
+	rowsV4         uint64
+	rowsV6         uint64
+	operators      uint64
+	index          *flowdimension.AddressSnapshotIndex
+	labels         map[string]FlowGeoLabel
+	operatorLabels map[uint8]map[string]FlowGeoLabel
+	items          []FlowGeoCatalogItem
 }
 
 // loadActiveFlowGeoWADS loads labels and lookup data from the same active WADS
@@ -100,11 +101,44 @@ func loadWADSGeoPublication(path, expectedChecksum string) (*wadsGeoPublication,
 	if err != nil {
 		return nil, err
 	}
+	operatorLabels, err := buildWADSOperatorLabels(artifact)
+	if err != nil {
+		return nil, err
+	}
 	return &wadsGeoPublication{
 		path: path, version: artifact.SnapshotID, effectiveFrom: artifact.EffectiveFrom,
 		rowsV4: uint64(len(artifact.IPv4Ranges)), rowsV6: uint64(len(artifact.IPv6Ranges)), operators: uint64(len(artifact.Operators)),
-		index: index, labels: labels, items: items,
+		index: index, labels: labels, operatorLabels: operatorLabels, items: items,
 	}, nil
+}
+
+func buildWADSOperatorLabels(artifact flowdimension.AddressSnapshotArtifact) (map[uint8]map[string]FlowGeoLabel, error) {
+	text := func(reference uint32) (string, error) {
+		if int(reference) >= len(artifact.Strings) {
+			return "", errors.New("WADS operator contains an invalid string reference")
+		}
+		return artifact.Strings[reference], nil
+	}
+	labels := map[uint8]map[string]FlowGeoLabel{
+		flowdimension.AddressSnapshotOperatorSupplier: {},
+		flowdimension.AddressSnapshotOperatorCustomer: {},
+	}
+	for _, operator := range artifact.Operators {
+		if !operator.Enabled {
+			continue
+		}
+		name, err := text(operator.Name)
+		if err != nil {
+			return nil, err
+		}
+		code := fmt.Sprint(operator.ID)
+		labels[operator.Namespace][code] = FlowGeoLabel{
+			Code: code, Name: name, Kind: "operator",
+			Path:       []FlowGeoPathNode{{ID: code, Name: name, Kind: "operator"}},
+			Breadcrumb: []string{name}, Additive: true, Version: artifact.SnapshotID,
+		}
+	}
+	return labels, nil
 }
 
 func buildWADSGeoLabels(artifact flowdimension.AddressSnapshotArtifact) (map[string]FlowGeoLabel, []FlowGeoCatalogItem, error) {

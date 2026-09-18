@@ -49,6 +49,7 @@ type RollupCompleteness struct {
 
 type Result struct {
 	Points             []Point             `json:"points"`
+	View               View                `json:"view"`
 	Metric             MetricDefinition    `json:"metric"`
 	Dimension          DimensionDefinition `json:"dimension"`
 	Plan               *AggregatePlan      `json:"plan,omitempty"`
@@ -109,7 +110,7 @@ func (r *Runner) Run(ctx context.Context, compiled Compiled) (Result, error) {
 	}
 	completeness.Complete = expected > 0 && state.coveredBuckets == expected
 	return Result{
-		Points: state.points, Metric: compiled.Metric, Dimension: compiled.Dimension,
+		Points: state.points, View: compiled.View, Metric: compiled.Metric, Dimension: compiled.Dimension,
 		RollupCompleteness: completeness, MixedVersions: len(state.versions) > 1,
 		VersionCount: uint64(len(state.versions)),
 	}, nil

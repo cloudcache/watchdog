@@ -159,6 +159,7 @@ type MetricDefinition struct {
 
 type Compiled struct {
 	Query  ch.Query
+	View   View
 	From   time.Time
 	To     time.Time
 	Bucket Bucket
@@ -465,7 +466,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		},
 	}
 	return Compiled{
-		Query: query, From: from, To: to, Bucket: request.Bucket,
+		Query: query, View: request.View, From: from, To: to, Bucket: request.Bucket,
 		SourceBucketDuration: sourceDuration, BucketDuration: interval,
 		Metric: metric.definition, Dimension: dimension, Timezone: timezone,
 		EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,

@@ -216,6 +216,28 @@ func (s *flowGeoService) Label(version, code string) (FlowGeoLabel, bool) {
 	return FlowGeoLabel{}, false
 }
 
+// OperatorLabel resolves the compact UInt16 operator key stored in Flow facts
+// through the operator namespace that belongs to the selected value-layer view.
+func (s *flowGeoService) OperatorLabel(version string, view flowquery.View, code string) (FlowGeoLabel, bool) {
+	if s == nil || version == "" || code == "" {
+		return FlowGeoLabel{}, false
+	}
+	namespace := flowdimension.AddressSnapshotOperatorCustomer
+	if view == flowquery.ViewSupplier {
+		namespace = flowdimension.AddressSnapshotOperatorSupplier
+	}
+	state := s.wads.Load()
+	if state == nil {
+		return FlowGeoLabel{}, false
+	}
+	publication := state.byVersion[version]
+	if publication == nil {
+		return FlowGeoLabel{}, false
+	}
+	label, found := publication.operatorLabels[namespace][code]
+	return label, found
+}
+
 // Catalog lists one exact hierarchy level from one immutable publication. An
 // empty version selects the active publication; it never merges versions.
 func (s *flowGeoService) Catalog(version, level, parentID string, maximum int) (FlowGeoCatalogResult, error) {

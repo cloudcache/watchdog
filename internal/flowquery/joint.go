@@ -60,6 +60,7 @@ type JointPlan struct {
 
 type CompiledJoint struct {
 	Query          ch.Query
+	View           View
 	From           time.Time
 	To             time.Time
 	BucketDuration time.Duration
@@ -215,7 +216,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 				{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
 			},
 		},
-		From: from, To: to, BucketDuration: interval, Metric: metric.definition,
+		View: request.View, From: from, To: to, BucketDuration: interval, Metric: metric.definition,
 		Dimensions: dimensions, Timezone: timezone, EstimatedRows: uint64(estimatedRows),
 		MaxResultRows: maxResultRows, Plan: plan,
 	}, nil

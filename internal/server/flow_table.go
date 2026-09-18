@@ -212,8 +212,8 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 				path[index] = "Other"
 			}
 		} else {
-			for index, dimension := range result.Dimensions {
-				if index >= len(path) || !isFlowGeoDimension(dimension.Kind) {
+			for index := range result.Dimensions {
+				if index >= len(path) {
 					continue
 				}
 				if label, ok := labels[point.GeoVersion+":"+path[index]]; ok {
@@ -240,7 +240,7 @@ func marshalFlowJointResult(result flowquery.JointResult, request *flowTableRequ
 }
 
 func flowAggregateGeoLabels(result flowquery.Result, geo *flowGeoService) map[string]FlowGeoLabel {
-	if geo == nil || !isFlowGeoDimension(result.Dimension.Kind) {
+	if geo == nil || !isFlowNamedDimension(result.Dimension.Kind) {
 		return nil
 	}
 	labels := make(map[string]FlowGeoLabel)
@@ -252,7 +252,7 @@ func flowAggregateGeoLabels(result flowquery.Result, geo *flowGeoService) map[st
 		if _, exists := labels[key]; exists {
 			continue
 		}
-		if label, ok := geo.Label(point.GeoVersion, point.DimensionValue); ok {
+		if label, ok := flowDimensionLabel(geo, result.View, result.Dimension.Kind, point.GeoVersion, point.DimensionValue); ok {
 			labels[key] = label
 		}
 	}
@@ -269,7 +269,7 @@ func flowJointGeoLabels(result flowquery.JointResult, geo *flowGeoService) map[s
 			continue
 		}
 		for index, dimension := range result.Dimensions {
-			if index >= len(point.DimensionValues) || !isFlowGeoDimension(dimension.Kind) {
+			if index >= len(point.DimensionValues) || !isFlowNamedDimension(dimension.Kind) {
 				continue
 			}
 			value := point.DimensionValues[index]
@@ -280,12 +280,23 @@ func flowJointGeoLabels(result flowquery.JointResult, geo *flowGeoService) map[s
 			if _, exists := labels[key]; exists {
 				continue
 			}
-			if label, ok := geo.Label(point.GeoVersion, value); ok {
+			if label, ok := flowDimensionLabel(geo, result.View, dimension.Kind, point.GeoVersion, value); ok {
 				labels[key] = label
 			}
 		}
 	}
 	return labels
+}
+
+func isFlowNamedDimension(dimension flowquery.Dimension) bool {
+	return isFlowGeoDimension(dimension) || dimension == flowquery.DimensionISP
+}
+
+func flowDimensionLabel(geo *flowGeoService, view flowquery.View, dimension flowquery.Dimension, version, value string) (FlowGeoLabel, bool) {
+	if dimension == flowquery.DimensionISP {
+		return geo.OperatorLabel(version, view, value)
+	}
+	return geo.Label(version, value)
 }
 
 func isFlowGeoDimension(dimension flowquery.Dimension) bool {

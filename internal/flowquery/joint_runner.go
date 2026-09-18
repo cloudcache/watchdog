@@ -33,6 +33,7 @@ type JointPoint struct {
 
 type JointResult struct {
 	Points        []JointPoint          `json:"points"`
+	View          View                  `json:"view"`
 	Metric        MetricDefinition      `json:"metric"`
 	Dimensions    []DimensionDefinition `json:"dimensions"`
 	Plan          JointPlan             `json:"plan"`
@@ -80,7 +81,7 @@ func (r *JointRunner) Run(ctx context.Context, compiled CompiledJoint) (JointRes
 		return JointResult{}, state.err
 	}
 	return JointResult{
-		Points: state.points, Metric: compiled.Metric, Dimensions: append([]DimensionDefinition(nil), compiled.Dimensions...),
+		Points: state.points, View: compiled.View, Metric: compiled.Metric, Dimensions: append([]DimensionDefinition(nil), compiled.Dimensions...),
 		Plan: compiled.Plan, MixedVersions: len(state.versions) > 1, VersionCount: uint64(len(state.versions)),
 	}, nil
 }

@@ -118,6 +118,7 @@ func mergeFlowDirectionResults(plan *flowquery.AggregatePlan, labels []string, r
 	}
 	for i, result := range results {
 		if i == 0 {
+			combined.View = result.View
 			combined.Metric = result.Metric
 			combined.RollupCompleteness = result.RollupCompleteness
 		} else {
@@ -142,6 +143,7 @@ func (s *Server) queryFlowDirectionSplitJoint(c *gin.Context, envelope flowQuery
 	step := time.Duration(envelope.StepSeconds) * time.Second
 	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
 	combined := flowquery.JointResult{
+		View:       view,
 		Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
 	}
 	first := true
@@ -241,7 +243,7 @@ func (s *Server) queryFlowAddressSet(c *gin.Context, envelope flowQueryEnvelope,
 		SourceSeconds: 60, StepSeconds: 60, TargetPoints: input.TargetPoints,
 	}
 	publicResult := flowquery.Result{
-		Points: points, Metric: result.Metric,
+		Points: points, View: view, Metric: result.Metric,
 		Dimension: flowquery.DimensionDefinition{Kind: flowquery.DimensionAddressSet, Additive: false},
 		Plan:      plan, MixedVersions: result.MixedVersions, VersionCount: result.VersionCount,
 	}

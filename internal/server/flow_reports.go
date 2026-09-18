@@ -640,6 +640,7 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 	}
 	if baseFacts {
 		combined := flowquery.JointResult{
+			View:       view,
 			Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
 		}
 		first := true
