@@ -3943,7 +3943,7 @@ msgstr "Initialize Watchdog"
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "off_net_in_province"
-msgstr "Inner State"
+msgstr "Off-net · within province"
 
 #: src/components/routes/address-math.tsx
 msgid "Inputs"
@@ -4225,7 +4225,7 @@ msgstr "Local AS"
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "on_net_local_city"
-msgstr "Local City"
+msgstr "On-net · local city"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Local hosts with overseas traffic"
@@ -5369,22 +5369,22 @@ msgstr "Outbound current / total"
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "on_net_cross_city"
-msgstr "Over City"
+msgstr "On-net · cross-city"
 
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "overseas"
-msgstr "Over Sea"
+msgstr "Cross-border"
 
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "on_net_cross_province"
-msgstr "Over State"
+msgstr "On-net · cross-province"
 
 #. js-lingui-explicit-id
 #: src/lib/flow-report-model.ts
 msgid "off_net_cross_province"
-msgstr "Over State"
+msgstr "Off-net · cross-province"
 
 #: src/components/routes/network-device.tsx
 #~ msgid "Overall Traffic"
@@ -9431,3 +9431,35 @@ msgstr "Run this command on the Watchdog host, then paste the one-time token whe
 #: src/components/routes/agents.tsx
 msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
 msgstr "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
+
+#: src/components/routes/flow-reports.tsx
+msgid "Advanced filters"
+msgstr "Advanced filters"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Built-in filters"
+msgstr "Built-in filters"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Evening peak"
+msgstr "Evening peak"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Hide advanced filters"
+msgstr "Hide advanced filters"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Loading devices…"
+msgstr "Loading devices…"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Select a Flow device"
+msgstr "Select a Flow device"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Select a Flow device before running the report"
+msgstr "Select a Flow device before running the report"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Six traffic classes"
+msgstr "Six traffic classes"

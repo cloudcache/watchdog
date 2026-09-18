@@ -130,7 +130,7 @@ const METRICS = [
 ] as const
 
 const GROUPINGS = [
-	{ value: "category", label: msg`Default six classes`, dimension: "category", categories: [] },
+	{ value: "category", label: msg`Six traffic classes`, dimension: "category", categories: [] },
 	{
 		value: "onnet_province",
 		label: msg`On-net by province`,
@@ -192,10 +192,10 @@ function useFlowReportCategoryLabel() {
 export default memo(function FlowReports({ surface }: { surface: FlowReportSurface }) {
 	const { t, i18n } = useLingui()
 	const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-	const [range, setRange] = useState(() => queryState("range", "1h"))
+	const [range, setRange] = useState(() => queryState("range", "24h"))
 	const [customStart, setCustomStart] = useState(() => queryState("start", ""))
 	const [customEnd, setCustomEnd] = useState(() => queryState("end", ""))
-	const [timezone, setTimezone] = useState(() => queryState("timezone", defaultTimezone))
+	const [timezone] = useState(() => queryState("timezone", defaultTimezone))
 	const [metric, setMetric] = useState(() =>
 		queryState("metric", surface === "vpn" ? "estimated_bytes" : "estimated_bps")
 	)
@@ -209,7 +209,10 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const [province, setProvince] = useState(() => queryState("province", "all"))
 	const [city, setCity] = useState(() => queryState("city", "all"))
 	const [operator, setOperator] = useState(() => queryState("operator", "all"))
-	const [device, setDevice] = useState(() => queryState("device", "all"))
+	const [device, setDevice] = useState(() => {
+		const selected = queryState("device", "")
+		return selected === "all" ? "" : selected
+	})
 	const [peakStart, setPeakStart] = useState(() => queryState("peak_start", "20:00"))
 	const [peakEnd, setPeakEnd] = useState(() => queryState("peak_end", "23:00"))
 	const [peakEnabled, setPeakEnabled] = useState(() => queryState("peak", "") === "1")
@@ -219,6 +222,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const [cities, setCities] = useState<ReferenceItem[]>([])
 	const [operators, setOperators] = useState<OperatorItem[]>([])
 	const [devices, setDevices] = useState<DeviceItem[]>([])
+	const [referencesLoaded, setReferencesLoaded] = useState(false)
+	const [advancedOpen, setAdvancedOpen] = useState(false)
 	const [table, setTable] = useState<TableControl>(INITIAL_TABLE)
 	const [reportTables, setReportTables] = useState<Record<string, TableControl>>(INITIAL_REPORT_TABLES)
 	const [tableSearch, setTableSearch] = useState("")
@@ -231,6 +236,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const requestSequence = useRef(0)
 	const abortRef = useRef<AbortController | null>(null)
 	const lastExportQuery = useRef<FlowReportExportQuery | null>(null)
+	const initialRequestStarted = useRef(false)
 
 	useEffect(() => {
 		document.title = `${i18n._(PAGE_COPY[surface].title)} / Watchdog`
@@ -252,9 +258,15 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			} else warnings.push(t`Geography dictionary is unavailable`)
 			if (operatorResult.status === "fulfilled") setOperators(sortByName(operatorResult.value.items ?? []))
 			else warnings.push(t`Operator catalog is unavailable`)
-			if (deviceResult.status === "fulfilled") setDevices(flowObservationDevices(deviceResult.value.items ?? []))
-			else warnings.push(t`Device catalog is unavailable`)
+			if (deviceResult.status === "fulfilled") {
+				const available = flowObservationDevices(deviceResult.value.items ?? [])
+				setDevices(available)
+				setDevice((current) =>
+					current && available.some((item) => item.id === current) ? current : (available[0]?.id ?? "")
+				)
+			} else warnings.push(t`Device catalog is unavailable`)
 			setReferenceWarning(warnings.join("; "))
+			setReferencesLoaded(true)
 		})
 	}, [t])
 
@@ -286,6 +298,10 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 
 	const refresh = useCallback(
 		async (nextTable?: TableControl, nextReportTables?: Record<string, TableControl>) => {
+			if (!device) {
+				setError(t`Select a Flow device before running the report`)
+				return
+			}
 			const activeTable = nextTable ?? table
 			const activeReportTables = nextReportTables ?? reportTables
 			const sequence = ++requestSequence.current
@@ -425,12 +441,14 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	)
 
 	useEffect(() => {
+		if (!referencesLoaded || !device || initialRequestStarted.current) return
+		initialRequestStarted.current = true
 		refresh().catch(() => {})
 		return () => abortRef.current?.abort()
 		// The initial request is intentional; subsequent controls use Refresh so
 		// editing a time or filter does not produce query storms.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [surface])
+	}, [surface, referencesLoaded, device])
 
 	const runTable = useCallback(
 		(next: TableControl) => {
@@ -499,12 +517,20 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 
 			<Card>
 				<CardContent className="grid gap-4 pt-6">
-					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
 						<ReportSelect
 							label={t`Time range`}
 							value={range}
 							onChange={setRange}
 							options={FLOW_REPORT_TIME_PRESETS.map((item) => [item.value, item.label])}
+						/>
+						<ReportSelect
+							label={t`Device`}
+							value={device}
+							onChange={setDevice}
+							options={devices.map((item) => [deviceID(item), deviceName(item)] as const).filter((item) => item[0])}
+							placeholder={referencesLoaded ? t`Select a Flow device` : t`Loading devices…`}
+							disabled={!referencesLoaded || devices.length === 0}
 						/>
 						<ReportSelect
 							label={t`Metric`}
@@ -531,84 +557,112 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 								options={GROUPINGS.map((item) => [item.value, i18n._(item.label)] as const)}
 							/>
 						) : null}
-						<ReportSelect
-							label={t`Country`}
-							value={country}
-							onChange={(value) => {
-								setCountry(value)
-								setProvince("all")
-								setCity("all")
-							}}
-							options={[["all", t`All countries`], ...countries.map((item) => [item.id, item.name] as const)]}
-						/>
-						<ReportSelect
-							label={t`Province`}
-							value={province}
-							onChange={(value) => {
-								setProvince(value)
-								setCity("all")
-							}}
-							options={[["all", t`All provinces`], ...provinces.map((item) => [item.id, item.name] as const)]}
-							disabled={country === "all"}
-						/>
-						<ReportSelect
-							label={t`City`}
-							value={city}
-							onChange={setCity}
-							options={[["all", t`All cities`], ...cities.map((item) => [item.id, item.name] as const)]}
-							disabled={province === "all"}
-						/>
-						<ReportSelect
-							label={t`Operator`}
-							value={operator}
-							onChange={setOperator}
-							options={[
-								["all", t`All operators`],
-								...operators.map((item) => [item.id, item.short_name || item.name] as const),
-							]}
-						/>
-						<ReportSelect
-							label={t`Device`}
-							value={device}
-							onChange={setDevice}
-							options={[
-								["all", t`All devices`],
-								...devices.map((item) => [deviceID(item), deviceName(item)] as const).filter((item) => item[0]),
-							]}
-						/>
-						<ReportInput
-							label={t`Business`}
-							value={business}
-							onChange={setBusiness}
-							placeholder={t`Comma-separated labels`}
-						/>
-						<ReportInput label={t`Timezone`} value={timezone} onChange={setTimezone} />
-						<ReportInput
-							label={t`Top N`}
-							type="number"
-							value={String(topN)}
-							onChange={(value) => setTopN(boundedNumber(value, 1, 100, 20))}
-						/>
-						<ReportInput label={t`Peak start`} type="time" value={peakStart} onChange={setPeakStart} />
-						<ReportInput label={t`Peak end`} type="time" value={peakEnd} onChange={setPeakEnd} />
 					</div>
-					<label htmlFor="flow-report-peak-enabled" className="flex items-center gap-2 text-sm">
-						<Checkbox
-							id="flow-report-peak-enabled"
-							checked={peakEnabled}
-							onCheckedChange={(checked) => setPeakEnabled(checked === true)}
-						/>
-						<Trans>Apply the local peak window to every report panel</Trans>
-					</label>
-					{peakEnabled ? <ReportDaySelector value={peakDays} onChange={setPeakDays} /> : null}
+					<div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-3">
+						<span className="mr-1 text-sm font-medium">
+							<Trans>Built-in filters</Trans>
+						</span>
+						<Button
+							type="button"
+							variant={groupBy === "category" ? "default" : "outline"}
+							size="sm"
+							onClick={() => setGroupBy("category")}
+						>
+							<Trans>Six traffic classes</Trans>
+						</Button>
+						<Button
+							type="button"
+							variant={peakEnabled ? "default" : "outline"}
+							size="sm"
+							onClick={() => {
+								setPeakEnabled((value) => !value)
+								setPeakDays([1, 2, 3, 4, 5])
+								setPeakStart("20:00")
+								setPeakEnd("23:00")
+							}}
+						>
+							<Trans>Evening peak</Trans>
+						</Button>
+						<Button type="button" variant="ghost" size="sm" onClick={() => setAdvancedOpen((value) => !value)}>
+							<SlidersHorizontalIcon className="mr-2 h-4 w-4" />
+							{advancedOpen ? <Trans>Hide advanced filters</Trans> : <Trans>Advanced filters</Trans>}
+						</Button>
+					</div>
 					{range === "custom" ? (
 						<div className="grid gap-3 sm:grid-cols-2">
 							<ReportInput label={t`Start`} type="datetime-local" value={customStart} onChange={setCustomStart} />
 							<ReportInput label={t`End`} type="datetime-local" value={customEnd} onChange={setCustomEnd} />
 						</div>
 					) : null}
+					{advancedOpen ? (
+						<div className="grid gap-3 rounded-md border p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+							<ReportSelect
+								label={t`Country`}
+								value={country}
+								onChange={(value) => {
+									setCountry(value)
+									setProvince("all")
+									setCity("all")
+								}}
+								options={[["all", t`All countries`], ...countries.map((item) => [item.id, item.name] as const)]}
+							/>
+							<ReportSelect
+								label={t`Province`}
+								value={province}
+								onChange={(value) => {
+									setProvince(value)
+									setCity("all")
+								}}
+								options={[["all", t`All provinces`], ...provinces.map((item) => [item.id, item.name] as const)]}
+								disabled={country === "all"}
+							/>
+							<ReportSelect
+								label={t`City`}
+								value={city}
+								onChange={setCity}
+								options={[["all", t`All cities`], ...cities.map((item) => [item.id, item.name] as const)]}
+								disabled={province === "all"}
+							/>
+							<ReportSelect
+								label={t`Operator`}
+								value={operator}
+								onChange={setOperator}
+								options={[
+									["all", t`All operators`],
+									...operators.map((item) => [item.id, item.short_name || item.name] as const),
+								]}
+							/>
+							<ReportInput
+								label={t`Business`}
+								value={business}
+								onChange={setBusiness}
+								placeholder={t`Comma-separated labels`}
+							/>
+							<ReportInput
+								label={t`Top N`}
+								type="number"
+								value={String(topN)}
+								onChange={(value) => setTopN(boundedNumber(value, 1, 100, 20))}
+							/>
+							<ReportInput label={t`Peak start`} type="time" value={peakStart} onChange={setPeakStart} />
+							<ReportInput label={t`Peak end`} type="time" value={peakEnd} onChange={setPeakEnd} />
+							<label htmlFor="flow-report-peak-enabled" className="flex items-center gap-2 text-sm sm:col-span-2">
+								<Checkbox
+									id="flow-report-peak-enabled"
+									checked={peakEnabled}
+									onCheckedChange={(checked) => setPeakEnabled(checked === true)}
+								/>
+								<Trans>Apply the local peak window to every report panel</Trans>
+							</label>
+							{peakEnabled ? (
+								<div className="sm:col-span-2 lg:col-span-4 xl:col-span-6">
+									<ReportDaySelector value={peakDays} onChange={setPeakDays} />
+								</div>
+							) : null}
+						</div>
+					) : null}
 					<div className="flex flex-wrap items-center gap-2">
-						<Button onClick={() => refresh()} disabled={loading}>
+						<Button onClick={() => refresh()} disabled={loading || !device}>
 							<RefreshCwIcon className={cn("mr-2 h-4 w-4", loading && "animate-spin")} />
 							<Trans>Refresh</Trans>
 						</Button>
@@ -760,7 +814,7 @@ function OverviewReport({
 						<span>↓ {formatMetric(inboundCurrent, totalPanelUnit)}</span>
 						<span>↑ {formatMetric(outboundCurrent, totalPanelUnit)}</span>
 					</div>
-					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} />
+					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} mirrorSecond />
 				</CardContent>
 			</Card>
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -834,6 +888,7 @@ function CategoryCard({
 				</div>
 				<ReportChart
 					compact
+					mirrorSecond
 					series={
 						[inSeries && { ...inSeries, name: t`Inbound` }, outSeries && { ...outSeries, name: t`Outbound` }].filter(
 							Boolean
@@ -856,7 +911,7 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 		<Card>
 			<CardHeader>
 				<CardTitle>
-					<Trans>Six-class share</Trans>
+					<Trans>Six traffic classes</Trans>
 				</CardTitle>
 				<CardDescription>
 					<Trans>Shares use the full directional total. Residual traffic remains outside the six classes.</Trans>
@@ -1027,8 +1082,15 @@ function BusinessMatrix({
 
 function DimensionReport({ response }: { response: FlowReportResponse }) {
 	const { t } = useLingui()
-	const inbound = buildReportSeries(reportPanel(response, "dimension_in"))
-	const outbound = buildReportSeries(reportPanel(response, "dimension_out"))
+	const categoryLabel = useFlowReportCategoryLabel()
+	// Series are named by the raw dimension_value; for the six-class category
+	// grouping those are enum keys (on_net_cross_province, …) that must render
+	// with their agreed labels (本网・跨省 …). The labeler returns non-category
+	// keys unchanged, so province/operator groupings are unaffected.
+	const labelSeries = (series: FlowReportSeries[]): FlowReportSeries[] =>
+		series.map((item) => ({ ...item, name: categoryLabel(item.name) }))
+	const inbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_in")))
+	const outbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_out")))
 	const transformed = transformReportSeries(inbound, outbound, response.data.display_mode)
 	if (response.data.display_mode === "difference")
 		return (
@@ -1534,10 +1596,12 @@ function ReportChart({
 	series,
 	unit,
 	compact = false,
+	mirrorSecond = false,
 }: {
 	series: FlowReportSeries[]
 	unit?: string
 	compact?: boolean
+	mirrorSecond?: boolean
 }) {
 	const ref = useRef<HTMLDivElement>(null)
 	const instance = useRef<ReturnType<typeof createLineChart> | null>(null)
@@ -1545,14 +1609,23 @@ function ReportChart({
 		if (!ref.current || series.every((item) => item.values.length === 0)) return
 		disposeChart(instance.current)
 		instance.current = createLineChart(ref.current, {
-			series: series.slice(0, compact ? 2 : 20).map((item) => ({ ...item, unit })),
+			series: series.slice(0, compact ? 2 : 20).map((item, index) => ({
+				...item,
+				unit,
+				values:
+					mirrorSecond && index === 1
+						? item.values.map((point) => ({ ...point, value: point.value === null ? null : -Math.abs(point.value) }))
+						: item.values,
+			})),
 			yFormatter: (value) => formatMetric(value ?? 0, unit),
+			colors: ["#2563eb", "#d97706"],
+			absoluteValues: mirrorSecond,
 		})
 		return () => {
 			disposeChart(instance.current)
 			instance.current = null
 		}
-	}, [compact, series, unit])
+	}, [compact, mirrorSecond, series, unit])
 	if (series.every((item) => item.values.length === 0))
 		return (
 			<div className={cn("grid place-items-center text-sm text-muted-foreground", compact ? "h-24" : "h-72")}>
@@ -1679,19 +1752,21 @@ function ReportSelect({
 	onChange,
 	options,
 	disabled = false,
+	placeholder,
 }: {
 	label: string
 	value: string
 	onChange: (value: string) => void
 	options: ReadonlyArray<readonly [string, string]>
 	disabled?: boolean
+	placeholder?: string
 }) {
 	return (
 		<div className="grid gap-1.5">
 			<Label>{label}</Label>
-			<Select value={value} onValueChange={onChange} disabled={disabled}>
+			<Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger>
-					<SelectValue />
+					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
 				<SelectContent>
 					{options.map(([option, title]) => (

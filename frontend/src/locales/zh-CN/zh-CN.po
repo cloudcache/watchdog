@@ -8462,3 +8462,35 @@ msgstr "在 Watchdog 主机上运行此命令，然后按提示粘贴一次性�
 #: src/components/routes/agents.tsx
 msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
 msgstr "自动化部署时，将令牌和公钥保存到受保护文件，把注册参数加入 {serviceName}，然后启用该服务。"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Advanced filters"
+msgstr "高级筛选"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Built-in filters"
+msgstr "内置筛选"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Evening peak"
+msgstr "晚高峰"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Hide advanced filters"
+msgstr "收起高级筛选"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Loading devices…"
+msgstr "正在加载设备…"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Select a Flow device"
+msgstr "请选择 Flow 设备"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Select a Flow device before running the report"
+msgstr "运行报表前请选择一台 Flow 设备"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Six traffic classes"
+msgstr "六类流量"

@@ -10,6 +10,8 @@ export type LineSeries = {
 export type LineChartOptions = {
 	series: LineSeries[]
 	yFormatter?: (value: number | null) => string
+	colors?: string[]
+	absoluteValues?: boolean
 }
 
 const colors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"]
@@ -41,7 +43,11 @@ function createLineChartSpec(options: LineChartOptions): ILineChartSpec {
 		insertGapBreaks(series.values).map((point) => ({
 			time: point.time,
 			value: point.value,
-			valueLabel: formatPointValue(point.value, series.unit, options.yFormatter),
+			valueLabel: formatPointValue(
+				point.value === null || !options.absoluteValues ? point.value : Math.abs(point.value),
+				series.unit,
+				options.yFormatter
+			),
 			type: series.name,
 		}))
 	)
@@ -52,7 +58,7 @@ function createLineChartSpec(options: LineChartOptions): ILineChartSpec {
 	return {
 		type: "line",
 		background: "transparent",
-		color: colors,
+		color: options.colors ?? colors,
 		data: [{ id: "data", values }],
 		xField: "time",
 		yField: "value",
@@ -76,7 +82,12 @@ function createLineChartSpec(options: LineChartOptions): ILineChartSpec {
 					formatMethod: (value: string | string[]) => {
 						const label = Array.isArray(value) ? value[0] : value
 						const numericValue = Number(label)
-						return options.yFormatter?.(Number.isFinite(numericValue) ? numericValue : null) ?? label
+						const displayValue = Number.isFinite(numericValue)
+							? options.absoluteValues
+								? Math.abs(numericValue)
+								: numericValue
+							: null
+						return options.yFormatter?.(displayValue) ?? label
 					},
 				},
 				grid: { visible: true, style: { lineDash: [3, 3] } },

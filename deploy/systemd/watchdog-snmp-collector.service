@@ -8,6 +8,7 @@ Type=simple
 User=watchdog
 Group=watchdog
 WorkingDirectory=/var/lib/watchdog
+EnvironmentFile=/etc/watchdog/secrets/runtime.env
 EnvironmentFile=-/etc/watchdog/agents/watchdog-snmp-collector.env
 ExecStart=/opt/watchdog/current/bin/watchdog-snmp-collector --config /etc/watchdog/watchdog.yaml --discover=false --poll=true --loop=true $WATCHDOG_AGENT_ARGS
 Restart=on-failure

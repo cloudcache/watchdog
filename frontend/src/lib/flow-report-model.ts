@@ -172,17 +172,17 @@ export function flowReportCategoryLabel(key: string, translator: Pick<I18n, "_">
 	const i18n = translator
 	switch (key) {
 		case "on_net_local_city":
-			return i18n._({ id: "on_net_local_city", message: "Local City" })
+			return i18n._({ id: "on_net_local_city", message: "On-net · local city" })
 		case "on_net_cross_city":
-			return i18n._({ id: "on_net_cross_city", message: "Over City" })
+			return i18n._({ id: "on_net_cross_city", message: "On-net · cross-city" })
 		case "on_net_cross_province":
-			return i18n._({ id: "on_net_cross_province", message: "Over State" })
+			return i18n._({ id: "on_net_cross_province", message: "On-net · cross-province" })
 		case "off_net_in_province":
-			return i18n._({ id: "off_net_in_province", message: "Inner State" })
+			return i18n._({ id: "off_net_in_province", message: "Off-net · within province" })
 		case "off_net_cross_province":
-			return i18n._({ id: "off_net_cross_province", message: "Over State" })
+			return i18n._({ id: "off_net_cross_province", message: "Off-net · cross-province" })
 		case "overseas":
-			return i18n._({ id: "overseas", message: "Over Sea" })
+			return i18n._({ id: "overseas", message: "Cross-border" })
 		case "unknown":
 			return i18n._({ id: "flow.category.unknown", message: "Unknown" })
 		case "internal":

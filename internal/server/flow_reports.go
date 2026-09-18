@@ -579,7 +579,11 @@ func uniqueSortedStrings(values []string) []string {
 // uses the aggregate runner (planned onto a rollup); multiple dimensions use the
 // joint runner. Both reuse the Layer-1 table composer (with geo labels).
 func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, spec reportPanelSpec, now time.Time) (json.RawMessage, gin.H, error) {
-	if len(spec.Dimensions) > 1 {
+	baseFacts, err := flowReportNeedsBaseFacts(req.Filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(spec.Dimensions) > 1 || baseFacts {
 		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
 			From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
 			Dimensions: spec.Dimensions, Filters: spec.Filters, Filter: req.Filter, View: view,
@@ -630,6 +634,54 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 // resource filters (including device_id) and the browser never has to derive a
 // total from a truncated Top-N category response.
 func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, spec reportPanelSpec, now time.Time) (json.RawMessage, gin.H, error) {
+	baseFacts, err := flowReportNeedsBaseFacts(req.Filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	if baseFacts {
+		combined := flowquery.JointResult{
+			Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
+		}
+		first := true
+		for _, part := range flowDirectionParts {
+			filters := spec.Filters
+			filters.Directions = []string{part.direction}
+			compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+				From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
+				Dimensions: []flowquery.Dimension{flowquery.DimensionTotal}, Filters: filters, Filter: req.Filter,
+				View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+			}, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			result, err := s.flowQuery.joint.Run(ctx, compiled)
+			if err != nil {
+				return nil, nil, err
+			}
+			if first {
+				combined.Metric = result.Metric
+				combined.Plan = result.Plan
+				first = false
+			}
+			for _, point := range result.Points {
+				point.DimensionValues = []string{part.label}
+				combined.Points = append(combined.Points, point)
+			}
+			combined.MixedVersions = combined.MixedVersions || result.MixedVersions
+			if result.VersionCount > combined.VersionCount {
+				combined.VersionCount = result.VersionCount
+			}
+		}
+		raw, err := marshalFlowJointResult(combined, nil, s.flowGeo)
+		if err != nil {
+			return nil, nil, err
+		}
+		return raw, gin.H{
+			"step_seconds": combined.Plan.StepSeconds,
+			"source":       combined.Plan.Source,
+			"unit":         combined.Metric.Unit,
+		}, nil
+	}
 	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
 	if err != nil {
 		return nil, nil, err
@@ -668,6 +720,20 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 		"source":       plan.Source,
 		"unit":         combined.Metric.Unit,
 	}, nil
+}
+
+// flowReportNeedsBaseFacts keeps fixed reports on rollups whenever their typed
+// predicate is materialized there, and selects the existing bounded flow_records
+// query path for cross-dimension Geo/operator predicates.
+func flowReportNeedsBaseFacts(filter *flowquery.FilterExpression) (bool, error) {
+	if filter == nil {
+		return false, nil
+	}
+	supported, err := flowquery.AggregateFilterSupported(*filter)
+	if err != nil {
+		return false, err
+	}
+	return !supported, nil
 }
 
 // runOverseasObservedPanel builds the overseas observed-cardinality panel through

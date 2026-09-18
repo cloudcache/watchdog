@@ -126,6 +126,42 @@ func (s *Server) enrichEndpointReport(ctx context.Context, scope flowquery.Scope
 // runEndpointAggregate runs one single-dimension endpoint query (planned onto a
 // rollup) and marshals it with a table. IncludeOther is always off for endpoints.
 func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, dimension flowquery.Dimension, filters flowquery.Filters, table *flowTableRequest, targetPoints, topN uint16, now time.Time) (json.RawMessage, flowquery.AggregatePlan, error) {
+	baseFacts, err := flowReportNeedsBaseFacts(req.Filter)
+	if err != nil {
+		return nil, flowquery.AggregatePlan{}, err
+	}
+	if baseFacts {
+		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+			From: req.From, To: req.To, TargetPoints: targetPoints, Metric: req.Metric,
+			Dimensions: []flowquery.Dimension{dimension}, Filters: filters, Filter: req.Filter,
+			View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		}, now)
+		if err != nil {
+			return nil, flowquery.AggregatePlan{}, err
+		}
+		result, err := s.flowQuery.joint.Run(ctx, compiled)
+		if err != nil {
+			return nil, flowquery.AggregatePlan{}, err
+		}
+		raw, err := marshalFlowJointResult(result, table, s.flowGeo)
+		if err != nil {
+			return nil, flowquery.AggregatePlan{}, err
+		}
+		step := time.Duration(compiled.Plan.StepSeconds) * time.Second
+		plan := flowquery.AggregatePlan{
+			RequestedFrom: compiled.Plan.RequestedFrom,
+			RequestedTo:   compiled.Plan.RequestedTo,
+			EffectiveFrom: compiled.Plan.EffectiveFrom,
+			EffectiveTo:   compiled.Plan.EffectiveTo,
+			Source:        flowquery.BucketFlowRecords,
+			SourceStep:    time.Minute,
+			Interval:      step,
+			SourceSeconds: 60,
+			StepSeconds:   compiled.Plan.StepSeconds,
+			TargetPoints:  compiled.Plan.TargetPoints,
+		}
+		return raw, plan, nil
+	}
 	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, targetPoints, now)
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err

@@ -246,3 +246,21 @@ func TestUniqueSortedStrings(t *testing.T) {
 		t.Fatalf("empty input must return empty, got %v", out)
 	}
 }
+
+func TestFlowReportNeedsBaseFacts(t *testing.T) {
+	if needed, err := flowReportNeedsBaseFacts(nil); err != nil || needed {
+		t.Fatalf("nil filter: needed=%v err=%v", needed, err)
+	}
+	rollup := &flowquery.FilterExpression{
+		Op: flowquery.FilterPredicate, Field: "business", Operator: flowquery.FilterEqual, Values: []string{"customer-a"},
+	}
+	if needed, err := flowReportNeedsBaseFacts(rollup); err != nil || needed {
+		t.Fatalf("rollup filter: needed=%v err=%v", needed, err)
+	}
+	geo := &flowquery.FilterExpression{
+		Op: flowquery.FilterPredicate, Field: "geo.country", Operator: flowquery.FilterEqual, Values: []string{"CN"},
+	}
+	if needed, err := flowReportNeedsBaseFacts(geo); err != nil || !needed {
+		t.Fatalf("geo filter: needed=%v err=%v", needed, err)
+	}
+}
