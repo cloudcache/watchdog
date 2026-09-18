@@ -5,7 +5,14 @@ import react from "@vitejs/plugin-react-swc"
 import { lingui } from "@lingui/vite-plugin"
 
 export default defineConfig({
-	base: "./",
+	// Absolute base so hashed bundles, /watchdog-config.js and static assets load
+	// from the site root regardless of the current SPA route. A relative base
+	// ("./") makes a hard refresh on a deep route (e.g. /network/devices/)
+	// resolve assets against that route, which the SPA fallback answers with
+	// index.html — breaking module scripts with a text/html MIME type. Client-side
+	// routing under a sub-path is handled separately at runtime by
+	// WATCHDOG.BASE_PATH, not by the asset base.
+	base: "/",
 	plugins: [
 		react({
 			plugins: [["@lingui/swc-plugin", {}]],
