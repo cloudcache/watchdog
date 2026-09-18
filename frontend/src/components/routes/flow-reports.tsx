@@ -1817,7 +1817,7 @@ function formatDirectionalValue(
 
 function formatMetric(value: number, unit?: string) {
 	if (!Number.isFinite(value)) return "—"
-	if (unit === "bits_per_second") return formatBitsPerSecond(value)
+	if (unit === "bits_per_second" || unit === "bps") return formatBitsPerSecond(value)
 	if (unit === "packets_per_second") return `${formatCompact(value)}pps`
 	if (unit === "bytes") return formatBytes(value)
 	if (unit === "packets") return t`${formatCompact(value)} packets`
@@ -1827,7 +1827,7 @@ function formatMetric(value: number, unit?: string) {
 }
 
 function totalUnit(unit?: string) {
-	if (unit === "bits_per_second") return "bytes"
+	if (unit === "bits_per_second" || unit === "bps") return "bytes"
 	return unit
 }
 
