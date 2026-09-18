@@ -19,6 +19,7 @@ type FlowExporter = {
 type NetworkDevice = {
 	id: string
 	name?: string
+	sys_name?: string
 	host: string
 	kind: string
 }
@@ -74,7 +75,7 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		for (const exporter of exporters.items ?? []) {
 			if (!unique.has(exporter.device_id)) unique.set(exporter.device_id, exporter)
 		}
-		const nextDevices = devicePage.items ?? []
+		const nextDevices = (devicePage.items ?? []).filter((device) => unique.has(device.id))
 		setDevices(nextDevices)
 		setExportersByDevice(unique)
 		setCustomers(customerPage.items ?? [])
@@ -119,6 +120,10 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		[devices, selectedDeviceID]
 	)
 	const selectedExporter = exportersByDevice.get(selectedDeviceID)
+	const deviceLabel = (device: NetworkDevice) => {
+		const name = device.sys_name || device.name || device.host
+		return name === device.host ? device.host : `${name} · ${device.host}`
+	}
 
 	const resetForm = () => {
 		setEditingID("")
@@ -231,8 +236,7 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 					<SelectContent>
 						{devices.map((device) => (
 							<SelectItem key={device.id} value={device.id}>
-								{device.name || device.host} · {device.host}
-								{exportersByDevice.has(device.id) ? " · Flow" : ""}
+								{deviceLabel(device)} · Flow
 							</SelectItem>
 						))}
 					</SelectContent>
