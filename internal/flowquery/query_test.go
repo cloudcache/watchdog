@@ -200,10 +200,18 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 		"SELECT * FROM archive_rows",
 		"UNION ALL\n      SELECT * FROM raw_rows",
 		"FROM filtered",
+		"sum(estimated_bytes) OVER",
+		"dense_rank() OVER",
+		"series_rank <= {top_n:UInt16}",
 		"SELECT count() FROM archive_latest",
 	} {
 		if !strings.Contains(compiled.Query.Body, required) {
 			t.Fatalf("Storage V2 query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	for _, forbidden := range []string{"top_series AS", "FROM top_series"} {
+		if strings.Contains(compiled.Query.Body, forbidden) {
+			t.Fatalf("Storage V2 query still performs a second ranking scan via %q:\n%s", forbidden, compiled.Query.Body)
 		}
 	}
 	if !compiled.UsesRawFacts || !compiled.ArchiveThrough.Equal(request.ArchiveThrough) ||

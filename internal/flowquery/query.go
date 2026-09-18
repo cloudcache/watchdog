@@ -457,9 +457,8 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			{Key: "max_rows_to_read", Value: "50000000", Important: true},
 			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
-			// This is the heaviest reader (two FINAL scans + a tuple(...) IN
-			// semi-join); cap memory so a wide/high-cardinality query throws
-			// rather than starving other tenants on the shared server.
+			// Keep a hard memory guard even though ranking and output now share
+			// one FINAL scan through a window-ranked pipeline.
 			{Key: "max_memory_usage", Value: "4294967296", Important: true},
 		},
 	}
@@ -769,20 +768,24 @@ const storageV2QuerySQL = `WITH
     WHERE 1 = 1
     %s
   ),
-  top_series AS (
-    SELECT
-      dimension_value, dimension_snapshot_id, geo_version, classification_version,
-      sum(%s) AS rank_value
+  scored AS (
+    SELECT *,
+      sum(%s) OVER (
+        PARTITION BY dimension_value, dimension_snapshot_id, geo_version, classification_version
+      ) AS rank_value
     FROM filtered
-    GROUP BY dimension_value, dimension_snapshot_id, geo_version, classification_version
-    ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC
-    LIMIT {top_n:UInt16}
+  ),
+  ranked AS (
+    SELECT *,
+      dense_rank() OVER (
+        ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC,
+          geo_version ASC, classification_version ASC
+      ) AS series_rank
+    FROM scored
   ),
   tagged AS (
-    SELECT *, tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) IN (
-      SELECT tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) FROM top_series
-    ) AS is_top
-    FROM filtered
+    SELECT *, toUInt8(series_rank <= {top_n:UInt16}) AS is_top
+    FROM ranked
   ),
   series_rows AS (
     SELECT

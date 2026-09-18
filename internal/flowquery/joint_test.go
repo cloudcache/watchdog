@@ -28,7 +28,7 @@ func TestCompileJointUsesSameFactForOrderedDimensionTuple(t *testing.T) {
 		"if(empty(remote_geo_country_id), '_unassigned', remote_geo_country_id)",
 		"if(remote_asn = 0, '_unassigned', toString(remote_asn))",
 		"] AS source_dimensions", "GROUP BY output_bucket, source_dimensions",
-		"tuple(source_dimensions, dimension_snapshot_id, geo_version, classification_version)",
+		"PARTITION BY source_dimensions, dimension_snapshot_id, geo_version, classification_version",
 		"if(is_top, source_dimensions, ['_other', '_other']) AS dimension_values",
 		"max_rows_to_read", // checked below in settings, retained here as intent only
 	} {
@@ -50,6 +50,24 @@ func TestCompileJointUsesSameFactForOrderedDimensionTuple(t *testing.T) {
 	for _, key := range []string{"max_execution_time", "max_result_rows", "max_rows_to_read", "max_bytes_to_read", "max_memory_usage"} {
 		if settings[key] == "" {
 			t.Fatalf("missing ClickHouse guard %s", key)
+		}
+	}
+}
+
+func TestCompileJointRanksTopSeriesWithoutRescanningGroupedFacts(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	compiled, err := CompileJoint(Scope{}, validJointRequest(now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"sum(estimated_bytes) OVER", "dense_rank() OVER", "series_rank <= {top_n:UInt16}"} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("joint query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	for _, forbidden := range []string{"top_series AS", "FROM top_series"} {
+		if strings.Contains(compiled.Query.Body, forbidden) {
+			t.Fatalf("joint query still performs a second ranking scan via %q:\n%s", forbidden, compiled.Query.Body)
 		}
 	}
 }

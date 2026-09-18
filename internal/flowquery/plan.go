@@ -70,6 +70,14 @@ func PlanAggregate(from, to time.Time, requestedStep time.Duration, targetPoints
 	if interval == 0 {
 		minimum := time.Duration((to.Sub(from) + time.Duration(targetPoints) - 1) / time.Duration(targetPoints))
 		interval = chooseNiceInterval(minimum)
+		// A full-day dashboard over current raw facts must not fan out into
+		// minute source buckets. Keep explicit caller-selected steps intact,
+		// but make the automatic report plan use the hourly path at 24h and
+		// above. This bounds grouping cardinality while preserving the exact
+		// requested business window.
+		if to.Sub(from) >= 24*time.Hour {
+			interval = max(interval, time.Hour)
+		}
 	} else if interval < time.Minute || interval%time.Minute != 0 || interval > 30*24*time.Hour {
 		return AggregatePlan{}, requestError("step_seconds", ErrorInvalid, "step_seconds must be a whole number of minutes from 60 seconds through 30 days")
 	}

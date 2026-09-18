@@ -20,10 +20,13 @@ import { formatBitsPerSecond } from "@/lib/metric-format"
 import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
+	FLOW_REPORT_URL_STATE_VERSION,
 	flowReportCategoryLabel,
 	FLOW_REPORT_RESIDUALS,
 	FLOW_REPORT_TIME_PRESETS,
 	flowReportKind,
+	initialFlowReportRange,
+	mirrorFlowDirectionSeries,
 	panelJointPoints,
 	panelPoints,
 	reportCategoryTotals,
@@ -40,7 +43,7 @@ import {
 	type FlowDistributionPage,
 	type FlowTablePage,
 } from "@/lib/flow-report-model"
-import { createLineChart, disposeChart } from "@/lib/vchart"
+import { createLineChart, disposeChart, TRAFFIC_DIRECTION_COLORS } from "@/lib/vchart"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
 
@@ -192,7 +195,9 @@ function useFlowReportCategoryLabel() {
 export default memo(function FlowReports({ surface }: { surface: FlowReportSurface }) {
 	const { t, i18n } = useLingui()
 	const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-	const [range, setRange] = useState(() => queryState("range", "24h"))
+	const [range, setRange] = useState(() =>
+		initialFlowReportRange(typeof window === "undefined" ? "" : window.location.search)
+	)
 	const [customStart, setCustomStart] = useState(() => queryState("start", ""))
 	const [customEnd, setCustomEnd] = useState(() => queryState("end", ""))
 	const [timezone] = useState(() => queryState("timezone", defaultTimezone))
@@ -386,6 +391,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					parameters,
 				}
 				writeURLState({
+					state_version: FLOW_REPORT_URL_STATE_VERSION,
 					range,
 					start: customStart,
 					end: customEnd,
@@ -1608,17 +1614,14 @@ function ReportChart({
 	useEffect(() => {
 		if (!ref.current || series.every((item) => item.values.length === 0)) return
 		disposeChart(instance.current)
+		const chartSeries = series.slice(0, compact ? 2 : 20).map((item) => ({
+			...item,
+			unit,
+		}))
 		instance.current = createLineChart(ref.current, {
-			series: series.slice(0, compact ? 2 : 20).map((item, index) => ({
-				...item,
-				unit,
-				values:
-					mirrorSecond && index === 1
-						? item.values.map((point) => ({ ...point, value: point.value === null ? null : -Math.abs(point.value) }))
-						: item.values,
-			})),
+			series: mirrorSecond ? mirrorFlowDirectionSeries(chartSeries) : chartSeries,
 			yFormatter: (value) => formatMetric(value ?? 0, unit),
-			colors: ["#2563eb", "#d97706"],
+			colors: TRAFFIC_DIRECTION_COLORS,
 			absoluteValues: mirrorSecond,
 		})
 		return () => {
@@ -1628,11 +1631,11 @@ function ReportChart({
 	}, [compact, mirrorSecond, series, unit])
 	if (series.every((item) => item.values.length === 0))
 		return (
-			<div className={cn("grid place-items-center text-sm text-muted-foreground", compact ? "h-24" : "h-72")}>
+			<div className={cn("grid place-items-center text-sm text-muted-foreground", compact ? "h-44" : "h-72")}>
 				<Trans>No data</Trans>
 			</div>
 		)
-	return <div ref={ref} className={compact ? "mt-3 h-24" : "h-72"} />
+	return <div ref={ref} className={compact ? "mt-3 h-44" : "h-72"} />
 }
 
 function DistributionTable({

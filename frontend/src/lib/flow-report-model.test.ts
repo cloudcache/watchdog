@@ -4,7 +4,10 @@ import { i18n } from "@lingui/core"
 import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
+	FLOW_REPORT_URL_STATE_VERSION,
 	flowReportCategoryLabel,
+	initialFlowReportRange,
+	mirrorFlowDirectionSeries,
 	reportDirectionTotals,
 	reportPanelUnit,
 	reportSeriesStats,
@@ -12,6 +15,24 @@ import {
 	transformReportSeries,
 	type FlowReportPanel,
 } from "./flow-report-model.ts"
+
+test("legacy implicit one-hour report URLs migrate to the 24-hour default", () => {
+	assert.equal(initialFlowReportRange(""), "24h")
+	assert.equal(initialFlowReportRange("?range=1h"), "24h")
+	assert.equal(initialFlowReportRange(`?range=1h&state_version=${FLOW_REPORT_URL_STATE_VERSION}`), "1h")
+	assert.equal(initialFlowReportRange("?range=6h"), "6h")
+})
+
+test("direction chart keeps timestamps and mirrors outbound below zero", () => {
+	const mirrored = mirrorFlowDirectionSeries([
+		{ name: "Inbound", values: [{ time: 10, value: 3 }] },
+		{ name: "Outbound", values: [{ time: 10, value: 7 }] },
+	])
+	assert.deepEqual(mirrored, [
+		{ name: "Inbound", values: [{ time: 10, value: 3 }] },
+		{ name: "Outbound", values: [{ time: 10, value: -7 }] },
+	])
+})
 
 test("report panel unit falls back to the embedded metric definition", () => {
 	const panel = {

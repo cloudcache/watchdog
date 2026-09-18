@@ -407,19 +407,24 @@ const jointQuerySQL = `WITH
       %s
     GROUP BY output_bucket, source_dimensions, dimension_snapshot_id, geo_version, classification_version
   ),
-  top_series AS (
-    SELECT source_dimensions, dimension_snapshot_id, geo_version, classification_version,
-      sum(%s) AS rank_value
+  scored AS (
+    SELECT *,
+      sum(%s) OVER (
+        PARTITION BY source_dimensions, dimension_snapshot_id, geo_version, classification_version
+      ) AS rank_value
     FROM grouped
-    GROUP BY source_dimensions, dimension_snapshot_id, geo_version, classification_version
-    ORDER BY rank_value DESC, source_dimensions ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC
-    LIMIT {top_n:UInt16}
+  ),
+  ranked AS (
+    SELECT *,
+      dense_rank() OVER (
+        ORDER BY rank_value DESC, source_dimensions ASC, dimension_snapshot_id ASC,
+          geo_version ASC, classification_version ASC
+      ) AS series_rank
+    FROM scored
   ),
   tagged AS (
-    SELECT *, tuple(source_dimensions, dimension_snapshot_id, geo_version, classification_version) IN (
-      SELECT tuple(source_dimensions, dimension_snapshot_id, geo_version, classification_version) FROM top_series
-    ) AS is_top
-    FROM grouped
+    SELECT *, toUInt8(series_rank <= {top_n:UInt16}) AS is_top
+    FROM ranked
   )
 SELECT
   output_bucket AS bucket,

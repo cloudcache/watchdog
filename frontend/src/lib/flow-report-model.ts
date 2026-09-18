@@ -151,6 +151,32 @@ export type FlowReportSeries = {
 	values: Array<{ time: number; value: number }>
 }
 
+export const FLOW_REPORT_URL_STATE_VERSION = "2"
+
+// Old report links were generated while 1h was the product default. Migrate
+// that implicit state once, while preserving an intentional 1h selection on
+// links written by the current UI.
+export function initialFlowReportRange(search: string): string {
+	const parameters = new URLSearchParams(search)
+	const range = parameters.get("range")
+	if (!range) return "24h"
+	if (range === "1h" && parameters.get("state_version") !== FLOW_REPORT_URL_STATE_VERSION) return "24h"
+	return range
+}
+
+// Plot inbound above and outbound below the zero axis. Values remain absolute
+// in labels/tooltips, but the signed chart coordinates keep the two directions
+// visibly separate even when their magnitudes are similar.
+export function mirrorFlowDirectionSeries(series: FlowReportSeries[]): FlowReportSeries[] {
+	return series.map((item, index) => ({
+		...item,
+		values: item.values.map((point) => ({
+			...point,
+			value: index === 1 ? -Math.abs(point.value) : Math.abs(point.value),
+		})),
+	}))
+}
+
 export const FLOW_REPORT_CATEGORIES = [
 	"on_net_local_city",
 	"on_net_cross_city",

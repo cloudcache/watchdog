@@ -19,7 +19,7 @@ func TestPlanAggregateKeepsRangeIndependentFromStorageResolution(t *testing.T) {
 		{"five minutes", 5 * time.Minute, BucketOneMinute, time.Minute},
 		{"one hour", time.Hour, BucketOneMinute, time.Minute},
 		{"six hours", 6 * time.Hour, BucketOneMinute, 5 * time.Minute},
-		{"one day", 24 * time.Hour, BucketOneMinute, 5 * time.Minute},
+		{"one day", 24 * time.Hour, BucketOneHour, time.Hour},
 		{"seven days", 7 * 24 * time.Hour, BucketOneHour, time.Hour},
 		{"thirty days", 30 * 24 * time.Hour, BucketOneHour, 3 * time.Hour},
 		{"one year", 365 * 24 * time.Hour, BucketOneHour, 2 * 24 * time.Hour},
@@ -48,6 +48,24 @@ func TestPlanAggregateHonorsExplicitDisplayStepWithoutTreatingItAsATableName(t *
 	}
 	if plan.Source != BucketOneMinute || plan.SourceStep != time.Minute || plan.Interval != 15*time.Minute {
 		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func TestPlanAggregateUsesHourlySourceForAutomaticFullDayButPreservesExplicitStep(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	automatic, err := PlanAggregate(now.Add(-24*time.Hour), now, 0, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.Source != BucketOneHour || automatic.SourceStep != time.Hour || automatic.Interval != time.Hour {
+		t.Fatalf("automatic plan=%+v", automatic)
+	}
+	explicit, err := PlanAggregate(now.Add(-24*time.Hour), now, 15*time.Minute, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.Source != BucketOneMinute || explicit.SourceStep != time.Minute || explicit.Interval != 15*time.Minute {
+		t.Fatalf("explicit plan=%+v", explicit)
 	}
 }
 
