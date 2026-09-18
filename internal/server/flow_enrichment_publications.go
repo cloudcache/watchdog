@@ -431,6 +431,23 @@ func resolveFlowClassificationDeviceProfiles(ctx context.Context, tx *sql.Tx, pr
 		}
 		resolved := flowdimension.ClassificationDeviceProfile{DeviceID: profile.DeviceID, SourcePrefixes: make([]flowdimension.ClassificationSourcePrefix, 0, len(profile.SourcePrefixIDs))}
 		for _, id := range profile.SourcePrefixIDs {
+			var customerCIDR, customerID, customerName string
+			err := tx.QueryRowContext(ctx, `SELECT p.cidr,b.customer_id,c.name FROM flow_customer_source_prefixes p
+				JOIN flow_device_customers b ON b.id=p.device_customer_id JOIN parties c ON c.id=b.customer_id
+				WHERE p.id=? AND b.device_id=? AND c.kind='customer'`, id, profile.DeviceID).
+				Scan(&customerCIDR, &customerID, &customerName)
+			if err == nil {
+				resolved.SourcePrefixes = append(resolved.SourcePrefixes, flowdimension.ClassificationSourcePrefix{
+					ID: id, CIDR: customerCIDR, CustomerID: customerID, CustomerName: customerName,
+				})
+				continue
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			// Compatibility for an already-saved schema-v2 profile. New customer
+			// boundaries never enter AddressSnap, but a legacy profile may still
+			// reference an address-library prefix until it is edited.
 			published, exists := snapshotPrefixes[id]
 			cidr := published.CIDR
 			if snapshotPrefixes == nil {
@@ -1336,7 +1353,7 @@ func writeFlowEnrichmentError(c *gin.Context, err error) {
 	case errors.Is(err, errFlowEnrichmentDimension):
 		fail(c, http.StatusPreconditionFailed, "address_snapshot_unavailable", err.Error())
 	case errors.Is(err, sql.ErrNoRows):
-		fail(c, http.StatusPreconditionFailed, "classification_profile_unavailable", "Flow classification profile has not been configured")
+		fail(c, http.StatusPreconditionFailed, "classification_profile_unavailable", "add customer source ranges for at least one Flow device before publishing")
 	case errors.As(err, &mysqlErr) && mysqlErr.Number == 1062:
 		fail(c, http.StatusConflict, "version_conflict", errFlowEnrichmentConflict.Error())
 	default:

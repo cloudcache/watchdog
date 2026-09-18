@@ -166,6 +166,38 @@ func TestClassificationSchemaV2DirectionCoversIPv4AndIPv6(t *testing.T) {
 	}
 }
 
+func TestClassificationSchemaV2ReturnsCustomerAttribution(t *testing.T) {
+	snapshot, err := CompileClassification(ClassificationDefinition{
+		Version: 10, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-10",
+		DeviceProfiles: []ClassificationDeviceProfile{{DeviceID: "device-a", SourcePrefixes: []ClassificationSourcePrefix{
+			{ID: "customer-a-prefix-1", CIDR: "10.1.0.0/16", CustomerID: "customer-a", CustomerName: "Customer A"},
+			{ID: "customer-b-prefix-1", CIDR: "10.2.0.0/16", CustomerID: "customer-b", CustomerName: "Customer B"},
+		}}},
+		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, source, destination, customer string
+		wantDirection                       BusinessDirection
+	}{
+		{"customer-a-out", "10.1.2.3", "203.0.113.1", "Customer A", DirectionOut},
+		{"customer-b-in", "203.0.113.1", "10.2.3.4", "Customer B", DirectionIn},
+		{"internal-prefers-source", "10.1.2.3", "10.2.3.4", "Customer A", DirectionInternal},
+		{"transit", "192.0.2.1", "203.0.113.1", "", DirectionTransit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			direction, customer, configured := snapshot.DeviceDirectionAttribution(
+				"device-a", netip.MustParseAddr(test.source), netip.MustParseAddr(test.destination),
+			)
+			if !configured || direction != test.wantDirection || customer != test.customer {
+				t.Fatalf("direction=%q customer=%q configured=%v, want %q/%q", direction, customer, configured, test.wantDirection, test.customer)
+			}
+		})
+	}
+}
+
 func TestClassificationSchemaV2DefaultLimitSupportsManyDevices(t *testing.T) {
 	profiles := make([]ClassificationDeviceProfile, 1_000)
 	for index := range profiles {

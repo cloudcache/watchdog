@@ -82,6 +82,12 @@ func TestFlowEnrichmentPublicationRoutesAreRegistered(t *testing.T) {
 		registered[route.Method+" "+route.Path] = true
 	}
 	for _, route := range []string{
+		"GET /api/v1/flow/customers",
+		"POST /api/v1/flow/customers",
+		"GET /api/v1/flow/customer-bindings",
+		"POST /api/v1/flow/customer-bindings",
+		"PATCH /api/v1/flow/customer-bindings/:id",
+		"DELETE /api/v1/flow/customer-bindings/:id",
 		"GET /api/v1/flow/classification-profile",
 		"PUT /api/v1/flow/classification-profile",
 		"GET /api/v1/flow/enrichment-publications",

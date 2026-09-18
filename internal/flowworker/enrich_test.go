@@ -93,8 +93,8 @@ func TestEnrichBatchUsesObservationDeviceClassificationContext(t *testing.T) {
 	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
 		Version: 1, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "dimension-1",
 		DeviceProfiles: []flowdimension.ClassificationDeviceProfile{
-			{DeviceID: "device-a", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-a", CIDR: "10.0.0.0/8"}}},
-			{DeviceID: "device-b", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-b", CIDR: "172.16.0.0/12"}}},
+			{DeviceID: "device-a", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-a-prefix", CIDR: "10.0.0.0/8", CustomerID: "customer-a", CustomerName: "Customer A"}}},
+			{DeviceID: "device-b", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-b-prefix", CIDR: "172.16.0.0/12", CustomerID: "customer-b", CustomerName: "Customer B"}}},
 		},
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
@@ -118,12 +118,14 @@ func TestEnrichBatchUsesObservationDeviceClassificationContext(t *testing.T) {
 	}
 	if result.Records[0].Category != flowdimension.CategoryOnNetLocalCity ||
 		result.Records[0].Dimensions.Direction != flowdimension.DirectionOut ||
+		result.Records[0].Dimensions.Business != "Customer A" ||
 		result.Records[1].Category != flowdimension.CategoryTransit ||
 		result.Records[1].Dimensions.Direction != flowdimension.DirectionTransit ||
+		result.Records[1].Dimensions.Business != "_unassigned" ||
 		result.Records[2].Category != flowdimension.CategoryUnknown {
-		t.Fatalf("device classifications = %s/%q, %s/%q, %s/%q",
-			result.Records[0].Dimensions.Direction, result.Records[0].Category,
-			result.Records[1].Dimensions.Direction, result.Records[1].Category,
+		t.Fatalf("device classifications = %s/%q/%q, %s/%q/%q, %s/%q",
+			result.Records[0].Dimensions.Direction, result.Records[0].Category, result.Records[0].Dimensions.Business,
+			result.Records[1].Dimensions.Direction, result.Records[1].Category, result.Records[1].Dimensions.Business,
 			result.Records[2].Dimensions.Direction, result.Records[2].Category)
 	}
 }

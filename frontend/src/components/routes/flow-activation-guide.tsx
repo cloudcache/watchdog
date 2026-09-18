@@ -227,9 +227,9 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 			: state.publication
 				? t`Flow v${state.publication.classification_version} uses an older address snapshot.`
 				: !classificationProfileSaved
-					? t`Select and save the local province, city and on-net operators first.`
+					? t`Add customer source ranges for at least one Flow device first.`
 					: state.activeSnapshot
-						? t`Publish the active address snapshot with the saved classification profile.`
+						? t`Publish the active shared address snapshot with the compiled customer boundaries.`
 						: t`Activate a WADS snapshot first.`
 	const workerStatus =
 		state.workers.length === 0
@@ -298,7 +298,13 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 						publicationMatchesActive ? "done" : state.activeSnapshot && classificationProfileSaved ? "todo" : "blocked"
 					}
 					action={
-						canPublish && state.activeSnapshot && classificationProfileSaved && !publicationMatchesActive ? (
+						!classificationProfileSaved ? (
+							<Button size="sm" variant="outline" asChild>
+								<a href="#flow-customer-boundaries">
+									<Trans>Configure customer source ranges</Trans>
+								</a>
+							</Button>
+						) : canPublish && state.activeSnapshot && !publicationMatchesActive ? (
 							<Button size="sm" onClick={publishFlowVersion} disabled={Boolean(working)}>
 								<Trans>Publish Flow version</Trans>
 							</Button>

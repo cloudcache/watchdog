@@ -9262,3 +9262,160 @@ msgstr "Manage base data"
 #: src/components/routes/flow-attribution.tsx
 msgid "Select the customer source prefixes observed behind each Flow device, then publish one immutable version pair."
 msgstr "Select the customer source prefixes observed behind each Flow device, then publish one immutable version pair."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "+ Create customer"
+msgstr "+ Create customer"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Add customer boundary"
+msgstr "Add customer boundary"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Add customer source ranges for at least one Flow device first."
+msgstr "Add customer source ranges for at least one Flow device first."
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Address snapshot lifecycle"
+msgstr "Address snapshot lifecycle"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
+msgstr "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Compiled customer boundaries"
+msgstr "Compiled customer boundaries"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Confirm delete"
+msgstr "Confirm delete"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Customer name"
+msgstr "Customer name"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
+msgstr "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
+msgstr "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source ranges"
+msgstr "Customer source ranges"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Customer source ranges saved"
+msgstr "Customer source ranges saved"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Device customer boundaries"
+msgstr "Device customer boundaries"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Each Flow device can serve multiple customers. Enter one or more source CIDRs per customer here; they do not enter the shared Geo address library."
+msgstr "Each Flow device can serve multiple customers. Enter one or more source CIDRs per customer here; they do not enter the shared Geo address library."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Enter at least one customer source range"
+msgstr "Enter at least one customer source range"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to delete customer source ranges"
+msgstr "Failed to delete customer source ranges"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to load Flow customer boundaries"
+msgstr "Failed to load Flow customer boundaries"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to publish unclassified Flow ingestion version"
+msgstr "Failed to publish unclassified Flow ingestion version"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to save customer source ranges"
+msgstr "Failed to save customer source ranges"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow devices with customer source ranges"
+msgstr "Flow devices with customer source ranges"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Keep the shared Geo/operator library separate from each Flow device's customer source boundaries."
+msgstr "Keep the shared Geo/operator library separate from each Flow device's customer source boundaries."
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Maintain reusable Internet geography, operators, and ASN evidence. Do not add customer-only source ranges here."
+msgstr "Maintain reusable Internet geography, operators, and ASN evidence. Do not add customer-only source ranges here."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No customers are configured for this Flow device."
+msgstr "No customers are configured for this Flow device."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No network devices are available."
+msgstr "No network devices are available."
+
+#: src/components/routes/network-device.tsx
+msgid "Not yet discovered — collection starts automatically."
+msgstr "Not yet discovered — collection starts automatically."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "One CIDR per line, for example 192.0.2.0/24"
+msgstr "One CIDR per line, for example 192.0.2.0/24"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Configure customer source ranges"
+msgstr "Configure customer source ranges"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Overlapping ranges between different customers on the same device are rejected."
+msgstr "Overlapping ranges between different customers on the same device are rejected."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish the active shared address snapshot with the compiled customer boundaries."
+msgstr "Publish the active shared address snapshot with the compiled customer boundaries."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Save changes"
+msgstr "Save changes"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select a Flow device and customer"
+msgstr "Select a Flow device and customer"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select a Flow-enabled device"
+msgstr "Select a Flow-enabled device"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select or create a customer"
+msgstr "Select or create a customer"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Selected operator is unavailable"
+msgstr "Selected operator is unavailable"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Shared Geo and operator library"
+msgstr "Shared Geo and operator library"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Start unclassified Flow ingestion"
+msgstr "Start unclassified Flow ingestion"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "This device has no enabled Flow exporter binding. Configure the binding before saving customer boundaries."
+msgstr "This device has no enabled Flow exporter binding. Configure the binding before saving customer boundaries."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "This list comes from the network device inventory. Flow exporter identity is maintained independently."
+msgstr "This list comes from the network device inventory. Flow exporter identity is maintained independently."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Unclassified Flow ingestion version {0} published"
+msgstr "Unclassified Flow ingestion version {0} published"

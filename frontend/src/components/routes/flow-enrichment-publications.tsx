@@ -1,14 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
-import { RefreshCwIcon, SaveIcon, SendIcon } from "lucide-react"
+import { RefreshCwIcon, SendIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { $router } from "@/components/router"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api, can } from "@/lib/api"
 
 type ClassificationDraft = {
@@ -42,31 +38,6 @@ type EnrichmentPublication = {
 
 type PublicationPage = { items?: EnrichmentPublication[]; total?: number }
 type FacetResponse = { items?: { value: string; label?: string; count?: number }[] }
-
-type AddressPrefix = {
-	id: string
-	cidr: string
-	labels?: Record<string, string>
-	geo_leaf_id?: string
-	operator_id?: string
-}
-
-type ListResponse<T> = { items?: T[] }
-
-type ReferenceItem = { id: string; name: string }
-
-type NetworkDevice = {
-	id: string
-	name?: string
-	host: string
-}
-
-type FlowExporter = {
-	device_id: string
-	device_name: string
-	device_host: string
-	enabled: boolean
-}
 
 type EnrichmentACK = {
 	publication_id: string
@@ -104,12 +75,6 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 	const { t } = useLingui()
 	const [profile, setProfile] = useState<ClassificationDraft>(emptyDraft)
 	const [profileVersion, setProfileVersion] = useState(0)
-	const [sourcePrefixes, setSourcePrefixes] = useState<AddressPrefix[]>([])
-	const [devices, setDevices] = useState<NetworkDevice[]>([])
-	const [geographyNames, setGeographyNames] = useState<Map<string, string>>(new Map())
-	const [operatorNames, setOperatorNames] = useState<Map<string, string>>(new Map())
-	const [selectedDeviceID, setSelectedDeviceID] = useState("")
-	const [referencesLoading, setReferencesLoading] = useState(true)
 	const [effectiveFrom, setEffectiveFrom] = useState(defaultEffectiveFrom)
 	const [items, setItems] = useState<EnrichmentPublication[]>([])
 	const [total, setTotal] = useState(0)
@@ -134,7 +99,6 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
 	const requestSequence = useRef(0)
-	const canManage = can("address.manage")
 	const canPublish = can("address.publish")
 
 	useEffect(() => {
@@ -159,40 +123,6 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 		setProfile({ ...emptyDraft, ...definition, device_profiles: definition.device_profiles ?? [] })
 		setProfileVersion(data.row_version ?? 0)
 	}, [])
-
-	const fetchReferences = useCallback(async () => {
-		setReferencesLoading(true)
-		try {
-			const [prefixResult, exporterResult, geographyResult, operatorResult] = await Promise.all([
-				api.send<ListResponse<AddressPrefix>>("/api/v1/address-prefixes", {
-					query: { limit: 500, sort: "cidr", order: "asc" },
-				}),
-				api.send<ListResponse<FlowExporter>>("/api/v1/flow/devices", {
-					query: { enabled: true, limit: 500, sort: "device", order: "asc" },
-				}),
-				api.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", { query: { limit: 500 } }),
-				api.send<ListResponse<ReferenceItem>>("/api/v1/network/operators", { query: { limit: 500 } }),
-			])
-			setSourcePrefixes(prefixResult.items ?? [])
-			setGeographyNames(new Map((geographyResult.items ?? []).map((item) => [item.id, item.name])))
-			setOperatorNames(new Map((operatorResult.items ?? []).map((item) => [item.id, item.name])))
-			const uniqueDevices = new Map<string, NetworkDevice>()
-			for (const exporter of exporterResult.items ?? []) {
-				if (!uniqueDevices.has(exporter.device_id)) {
-					uniqueDevices.set(exporter.device_id, {
-						id: exporter.device_id,
-						name: exporter.device_name,
-						host: exporter.device_host,
-					})
-				}
-			}
-			setDevices([...uniqueDevices.values()])
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : t`Failed to load classification choices`)
-		} finally {
-			setReferencesLoading(false)
-		}
-	}, [t])
 
 	const fetchPublications = useCallback(async () => {
 		const sequence = ++requestSequence.current
@@ -224,73 +154,10 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 	}, [debouncedSearch, filters, page, pageSize, sort, t])
 
 	useEffect(() => {
-		Promise.all([fetchProfile(), fetchPublications(), fetchReferences()]).catch((cause) =>
+		Promise.all([fetchProfile(), fetchPublications()]).catch((cause) =>
 			setError(cause instanceof Error ? cause.message : t`Failed to load Flow enrichment settings`)
 		)
-	}, [fetchProfile, fetchPublications, fetchReferences, t])
-
-	useEffect(() => {
-		if (selectedDeviceID) return
-		setSelectedDeviceID(profile.device_profiles[0]?.device_id ?? devices[0]?.id ?? "")
-	}, [devices, profile.device_profiles, selectedDeviceID])
-
-	const selectedDeviceProfile = useMemo(
-		() => profile.device_profiles.find((item) => item.device_id === selectedDeviceID),
-		[profile.device_profiles, selectedDeviceID]
-	)
-	const updateSelectedDeviceProfile = (changes: Partial<ClassificationDeviceProfile>) => {
-		if (!selectedDeviceID) return
-		setProfile((current) => {
-			const existing = current.device_profiles.find((item) => item.device_id === selectedDeviceID) ?? {
-				device_id: selectedDeviceID,
-				source_prefix_ids: [],
-			}
-			const next = { ...existing, ...changes }
-			return {
-				...current,
-				device_profiles: [...current.device_profiles.filter((item) => item.device_id !== selectedDeviceID), next].sort(
-					(left, right) => left.device_id.localeCompare(right.device_id)
-				),
-			}
-		})
-	}
-
-	const removeSelectedDeviceProfile = () => {
-		if (!selectedDeviceID) return
-		setProfile((current) => ({
-			...current,
-			device_profiles: current.device_profiles.filter((item) => item.device_id !== selectedDeviceID),
-		}))
-	}
-
-	const saveProfile = async () => {
-		setWorking(true)
-		setError("")
-		setNotice("")
-		try {
-			if (profile.device_profiles.length === 0) throw new Error(t`Configure at least one Flow observation device`)
-			for (const item of profile.device_profiles) {
-				if (item.source_prefix_ids.length === 0)
-					throw new Error(t`Select at least one customer source prefix for every configured device`)
-			}
-			const definition: ClassificationDraft = {
-				...profile,
-			}
-			const saved = await api.send<ClassificationProfile>("/api/v1/flow/classification-profile", {
-				method: "PUT",
-				headers: { "If-Match": `"${profileVersion}"` },
-				body: definition,
-			})
-			setProfile(saved.definition)
-			setProfileVersion(saved.row_version)
-			setNotice(t`Classification profile saved`)
-			await onChanged?.()
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : t`Failed to save classification profile`)
-		} finally {
-			setWorking(false)
-		}
-	}
+	}, [fetchProfile, fetchPublications, t])
 
 	const publishPair = async () => {
 		setWorking(true)
@@ -596,7 +463,7 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 				<Button
 					variant="outline"
 					size="sm"
-					onClick={() => Promise.all([fetchProfile(), fetchPublications(), fetchReferences()])}
+					onClick={() => Promise.all([fetchProfile(), fetchPublications()])}
 					disabled={working}
 				>
 					<RefreshCwIcon className="me-2 h-4 w-4" />
@@ -604,93 +471,30 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 				</Button>
 			</div>
 			<div className="grid gap-4 rounded-md border border-border bg-card p-4 lg:grid-cols-2">
-				<div className="grid gap-3 sm:grid-cols-2">
-					<div className="grid gap-2 sm:col-span-2">
-						<div className="flex items-center justify-between gap-2">
-							<Label htmlFor="flow-classification-device">
-								<Trans>Flow observation device</Trans>
-							</Label>
-							<span className="text-xs text-muted-foreground">
-								<Trans>{profile.device_profiles.length} devices configured</Trans>
-							</span>
-						</div>
-						<Select value={selectedDeviceID || undefined} disabled={!canManage || referencesLoading} onValueChange={setSelectedDeviceID}>
-							<SelectTrigger id="flow-classification-device">
-								<SelectValue placeholder={t`Select the device that exports Flow`} />
-							</SelectTrigger>
-							<SelectContent>
-								{devices.map((device) => (
-									<SelectItem key={device.id} value={device.id}>
-										{deviceLabel(device)}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						<p className="text-xs text-muted-foreground">
-							<Trans>Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot.</Trans>
-						</p>
-						{selectedDeviceProfile && canManage ? (
-							<Button type="button" variant="outline" size="sm" className="w-fit" onClick={removeSelectedDeviceProfile}>
-								<Trans>Remove device classification</Trans>
-							</Button>
-						) : null}
-					</div>
-					<div className="grid gap-2 sm:col-span-2">
-						<Label>
-							<Trans>Customer source prefixes</Trans>
-						</Label>
-						<p className="text-xs text-muted-foreground">
-							<Trans>The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories.</Trans>
-						</p>
-						<div className="grid max-h-64 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
-							{sourcePrefixes.map((prefix) => {
-								const checked = selectedDeviceProfile?.source_prefix_ids.includes(prefix.id) ?? false
-								const checkboxID = `flow-classification-prefix-${selectedDeviceID}-${prefix.id}`
-								return (
-									<label key={prefix.id} htmlFor={checkboxID} className="flex items-start gap-2 text-sm">
-										<Checkbox
-											id={checkboxID}
-											checked={checked}
-											disabled={!canManage || referencesLoading || !selectedDeviceID}
-											onCheckedChange={(next) =>
-												updateSelectedDeviceProfile({
-													source_prefix_ids: next
-														? [...(selectedDeviceProfile?.source_prefix_ids ?? []), prefix.id].sort()
-														: (selectedDeviceProfile?.source_prefix_ids ?? []).filter((id) => id !== prefix.id),
-												})
-											}
-										/>
-										<span className="grid">
-											<span className="font-medium">{prefix.cidr}</span>
-											<span className="text-xs text-muted-foreground">
-												{prefixSummary(prefix, geographyNames, operatorNames, t`Geography`, t`Operator`)}
-											</span>
-										</span>
-									</label>
-								)
-							})}
-							{!referencesLoading && sourcePrefixes.length === 0 ? (
-								<p className="text-sm text-muted-foreground">
-									<Trans>No customer source prefixes are available in the address library.</Trans>
-								</p>
-							) : null}
+				<div className="grid content-start gap-3">
+					<h3 className="font-medium">
+						<Trans>Compiled customer boundaries</Trans>
+					</h3>
+					<div className="rounded-md border border-border p-3">
+						<div className="text-2xl font-semibold">{profile.device_profiles.length}</div>
+						<div className="text-sm text-muted-foreground">
+							<Trans>Flow devices with customer source ranges</Trans>
 						</div>
 					</div>
-					<p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 sm:col-span-2">
-						<Trans>Maintain the CIDR, geography, and operator in the address library, then select the CIDR here for each Flow device.</Trans>{" "}
-						<a className="font-medium underline" href={getPagePath($router, "address_prefixes")}>
-							<Trans>Manage address prefixes</Trans>
-						</a>
-						. <Trans>Rebuild and activate the address snapshot after changing address attributes.</Trans>
+					<div className="rounded-md border border-border p-3">
+						<div className="text-2xl font-semibold">
+							{profile.device_profiles.reduce((total, item) => total + item.source_prefix_ids.length, 0)}
+						</div>
+						<div className="text-sm text-muted-foreground">
+							<Trans>Customer source ranges</Trans>
+						</div>
+					</div>
+					<p className="text-sm text-muted-foreground">
+						<Trans>
+							Customer ranges determine direction and customer attribution. Geography and operator are resolved
+							independently from the active shared address snapshot.
+						</Trans>
 					</p>
-					{canManage ? (
-						<div className="sm:col-span-2">
-							<Button onClick={saveProfile} disabled={working}>
-								<SaveIcon className="me-2 h-4 w-4" />
-								<Trans>Save classification profile</Trans>
-							</Button>
-						</div>
-					) : null}
 				</div>
 				<div className="grid content-start gap-3">
 					<Label htmlFor="flow-enrichment-effective-from">
@@ -828,24 +632,4 @@ function denseCellStyle() {
 function formatDate(value: string) {
 	const date = new Date(value)
 	return Number.isNaN(date.getTime()) ? value || "—" : date.toLocaleString()
-}
-
-function deviceLabel(device: NetworkDevice) {
-	const name = device.name || device.host
-	return name === device.host ? name : `${name} (${device.host})`
-}
-
-function prefixSummary(
-	prefix: AddressPrefix,
-	geographyNames: Map<string, string>,
-	operatorNames: Map<string, string>,
-	geographyLabel: string,
-	operatorLabel: string
-) {
-	const labels = Object.entries(prefix.labels ?? {})
-		.filter(([key]) => key !== "flow")
-		.map(([key, value]) => `${key}=${value}`)
-	if (prefix.geo_leaf_id) labels.push(`${geographyLabel}=${geographyNames.get(prefix.geo_leaf_id) ?? prefix.geo_leaf_id}`)
-	if (prefix.operator_id) labels.push(`${operatorLabel}=${operatorNames.get(prefix.operator_id) ?? prefix.operator_id}`)
-	return labels.join(" · ") || "—"
 }

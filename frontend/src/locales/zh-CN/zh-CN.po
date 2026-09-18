@@ -8293,3 +8293,160 @@ msgstr "管理基础数据"
 #: src/components/routes/flow-attribution.tsx
 msgid "Select the customer source prefixes observed behind each Flow device, then publish one immutable version pair."
 msgstr "为每台 Flow 设备选择其下联客户源地址段，然后发布一对不可变版本。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "+ Create customer"
+msgstr "+ 新建客户"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Add customer boundary"
+msgstr "添加客户地址"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Add customer source ranges for at least one Flow device first."
+msgstr "请先为至少一台 Flow 设备添加客户源地址段。"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Address snapshot lifecycle"
+msgstr "地址快照生命周期"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
+msgstr "独立生成并激活共享地域/运营商快照，发布 Flow 时再与客户地址边界配对。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Compiled customer boundaries"
+msgstr "已编译的客户地址边界"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Confirm delete"
+msgstr "确认删除"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Customer name"
+msgstr "客户名称"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
+msgstr "客户地址段用于判断流向和客户归属；地域与运营商独立从当前共享地址快照解析。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
+msgstr "尚未配置客户源地址段。可以先按未分类流量开始采集，再在配置各 Flow 设备后发布精确分类版本。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source ranges"
+msgstr "客户源地址段"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Customer source ranges saved"
+msgstr "客户源地址段已保存"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Device customer boundaries"
+msgstr "设备客户地址边界"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Each Flow device can serve multiple customers. Enter one or more source CIDRs per customer here; they do not enter the shared Geo address library."
+msgstr "每台 Flow 设备可承载多个客户。请在这里按行编辑每个客户的一段或多段源 CIDR；这些数据不会写入共享 Geo 地址库。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Enter at least one customer source range"
+msgstr "请至少输入一个客户源地址段"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to delete customer source ranges"
+msgstr "删除客户源地址段失败"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to load Flow customer boundaries"
+msgstr "加载 Flow 客户地址边界失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to publish unclassified Flow ingestion version"
+msgstr "发布未分类 Flow 采集版本失败"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Failed to save customer source ranges"
+msgstr "保存客户源地址段失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow devices with customer source ranges"
+msgstr "已配置客户源地址段的 Flow 设备"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Keep the shared Geo/operator library separate from each Flow device's customer source boundaries."
+msgstr "共享地域/运营商地址库与各 Flow 设备的客户源地址边界分开维护。"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Maintain reusable Internet geography, operators, and ASN evidence. Do not add customer-only source ranges here."
+msgstr "维护可复用的互联网地域、运营商与 ASN 数据；不要在这里添加单个客户专用的源地址段。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No customers are configured for this Flow device."
+msgstr "该 Flow 设备尚未配置客户。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No network devices are available."
+msgstr "暂无网络设备。"
+
+#: src/components/routes/network-device.tsx
+msgid "Not yet discovered — collection starts automatically."
+msgstr "尚未发现——采集将自动开始。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "One CIDR per line, for example 192.0.2.0/24"
+msgstr "每行一个 CIDR，例如 192.0.2.0/24"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Configure customer source ranges"
+msgstr "配置客户源地址段"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Overlapping ranges between different customers on the same device are rejected."
+msgstr "同一设备上不同客户的地址段不得重叠。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Publish the active shared address snapshot with the compiled customer boundaries."
+msgstr "将当前共享地址快照与已编译的客户地址边界一起发布。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Save changes"
+msgstr "保存修改"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select a Flow device and customer"
+msgstr "请选择 Flow 设备和客户"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select a Flow-enabled device"
+msgstr "选择已启用 Flow 的设备"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select or create a customer"
+msgstr "选择或新建客户"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Selected operator is unavailable"
+msgstr "所选运营商不可用"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Shared Geo and operator library"
+msgstr "共享地域与运营商地址库"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Start unclassified Flow ingestion"
+msgstr "开始采集未分类 Flow"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "This device has no enabled Flow exporter binding. Configure the binding before saving customer boundaries."
+msgstr "该设备尚未启用 Flow exporter 绑定，请先完成绑定再保存客户地址边界。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "This list comes from the network device inventory. Flow exporter identity is maintained independently."
+msgstr "设备列表来自统一网络设备清单；Flow exporter 身份映射独立维护。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Unclassified Flow ingestion version {0} published"
+msgstr "未分类 Flow 采集版本 {0} 已发布"

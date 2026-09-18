@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -61,12 +62,15 @@ type ClassificationDeviceProfile struct {
 	SourcePrefixes []ClassificationSourcePrefix `json:"source_prefixes"`
 }
 
-// ClassificationSourcePrefix binds one address-library prefix to the Flow
-// observation device that owns it. Geo and operator properties are deliberately
-// not copied here: the paired AddressSnap remains their single source of truth.
+// ClassificationSourcePrefix binds one operational customer boundary to the
+// Flow observation device that owns it. It is deliberately separate from the
+// shared Geo/operator address library; the paired AddressSnap remains the
+// source of geography and operator attributes for every endpoint.
 type ClassificationSourcePrefix struct {
-	ID   string `json:"id"`
-	CIDR string `json:"cidr"`
+	ID           string `json:"id"`
+	CIDR         string `json:"cidr"`
+	CustomerID   string `json:"customer_id,omitempty"`
+	CustomerName string `json:"customer_name,omitempty"`
 }
 
 // ClassificationBundle is the immutable wire object published by the control
@@ -144,9 +148,15 @@ func EncodeClassificationBundle(definition ClassificationDefinition) ([]byte, st
 type ClassificationSnapshot struct {
 	metadata       ClassificationMetadata
 	home           HomeProfile
-	deviceSources  map[string]*bart.Table[struct{}]
+	deviceSources  map[string]*bart.Table[classificationSourceAttribution]
 	deviceProfiles []ClassificationDeviceProfile
 	legacyGlobal   bool
+}
+
+type classificationSourceAttribution struct {
+	PrefixID     string
+	CustomerID   string
+	CustomerName string
 }
 
 func CompileClassification(definition ClassificationDefinition) (*ClassificationSnapshot, error) {
@@ -216,7 +226,7 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 	if err != nil {
 		return nil, err
 	}
-	deviceSources := make(map[string]*bart.Table[struct{}], len(definition.DeviceProfiles))
+	deviceSources := make(map[string]*bart.Table[classificationSourceAttribution], len(definition.DeviceProfiles))
 	profiles := canonicalClassificationDeviceProfiles(definition.DeviceProfiles)
 	for _, profile := range profiles {
 		if !validIdentifier(profile.DeviceID, 128) {
@@ -228,7 +238,7 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 		if len(profile.SourcePrefixes) == 0 {
 			return nil, fmt.Errorf("classification device %s requires at least one source prefix", profile.DeviceID)
 		}
-		tree := &bart.Table[struct{}]{}
+		tree := &bart.Table[classificationSourceAttribution]{}
 		prefixIDs := make(map[string]struct{}, len(profile.SourcePrefixes))
 		prefixCIDRs := make(map[netip.Prefix]struct{}, len(profile.SourcePrefixes))
 		for _, source := range profile.SourcePrefixes {
@@ -245,9 +255,15 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 			if _, exists := prefixCIDRs[prefix]; exists {
 				return nil, fmt.Errorf("classification device %s source prefix CIDRs must be unique", profile.DeviceID)
 			}
+			source.CustomerID = strings.TrimSpace(source.CustomerID)
+			source.CustomerName = strings.TrimSpace(source.CustomerName)
+			if (source.CustomerID == "") != (source.CustomerName == "") ||
+				(source.CustomerID != "" && (!validIdentifier(source.CustomerID, 128) || len(source.CustomerName) > 190)) {
+				return nil, fmt.Errorf("classification device %s source prefix customer is invalid", profile.DeviceID)
+			}
 			prefixIDs[source.ID] = struct{}{}
 			prefixCIDRs[prefix] = struct{}{}
-			tree.Insert(prefix, struct{}{})
+			tree.Insert(prefix, classificationSourceAttribution{PrefixID: source.ID, CustomerID: source.CustomerID, CustomerName: source.CustomerName})
 		}
 		deviceSources[profile.DeviceID] = tree
 	}
@@ -348,24 +364,32 @@ func (s *ClassificationSnapshot) ClassifyForDevice(deviceID string, direction Bu
 // configured for the observation device. Missing device configuration fails
 // closed instead of borrowing another device's network boundary.
 func (s *ClassificationSnapshot) DeviceDirection(deviceID string, source, destination netip.Addr) (BusinessDirection, bool) {
+	direction, _, ok := s.DeviceDirectionAttribution(deviceID, source, destination)
+	return direction, ok
+}
+
+// DeviceDirectionAttribution also returns the customer owning the local
+// endpoint. Customer boundaries are independent from the shared Geo/operator
+// snapshot; that snapshot still supplies both endpoints' geographic facts.
+func (s *ClassificationSnapshot) DeviceDirectionAttribution(deviceID string, source, destination netip.Addr) (BusinessDirection, string, bool) {
 	if s == nil || s.legacyGlobal {
-		return DirectionAmbiguous, false
+		return DirectionAmbiguous, "", false
 	}
 	local, ok := s.deviceSources[deviceID]
 	if !ok || !source.IsValid() || !destination.IsValid() {
-		return DirectionAmbiguous, false
+		return DirectionAmbiguous, "", false
 	}
-	_, sourceLocal := local.Lookup(source.Unmap())
-	_, destinationLocal := local.Lookup(destination.Unmap())
+	sourceAttribution, sourceLocal := local.Lookup(source.Unmap())
+	destinationAttribution, destinationLocal := local.Lookup(destination.Unmap())
 	switch {
 	case sourceLocal && !destinationLocal:
-		return DirectionOut, true
+		return DirectionOut, sourceAttribution.CustomerName, true
 	case !sourceLocal && destinationLocal:
-		return DirectionIn, true
+		return DirectionIn, destinationAttribution.CustomerName, true
 	case sourceLocal && destinationLocal:
-		return DirectionInternal, true
+		return DirectionInternal, sourceAttribution.CustomerName, true
 	default:
-		return DirectionTransit, true
+		return DirectionTransit, "", true
 	}
 }
 

@@ -294,7 +294,7 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 	}
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
 	if classificationSnapshot.UsesDeviceSources() {
-		direction, _ := classificationSnapshot.DeviceDirection(decoded.DeviceID, source, destination)
+		direction, customerName, _ := classificationSnapshot.DeviceDirectionAttribution(decoded.DeviceID, source, destination)
 		directional, ok := dimensionSnapshot.(interface {
 			ClassifyEndpointsForDirection(netip.Addr, netip.Addr, flowdimension.BusinessDirection) flowdimension.ClassifiedEndpoints
 		})
@@ -302,6 +302,9 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 			return EnrichedRecord{}, "dimension", ErrVersionSkew
 		}
 		dimensions = directional.ClassifyEndpointsForDirection(source, destination, direction)
+		if customerName != "" {
+			dimensions.Business = customerName
+		}
 	}
 	var supplierLocalGeo, localGeo, supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
 	var overrideFields flowdimension.GeoOverrideFields

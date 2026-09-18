@@ -6,8 +6,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { api, can } from "@/lib/api"
-import FlowEnrichmentPublications from "./flow-enrichment-publications"
-import FlowActivationGuide from "./flow-activation-guide"
 
 type AddressDimensionSnapshot = {
 	id: string
@@ -59,7 +57,6 @@ export default memo(function AddressPublications() {
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
 	const [selectedId, setSelectedId] = useState<string | null>(null)
-	const [flowLifecycleRevision, setFlowLifecycleRevision] = useState(0)
 	const requestSequence = useRef(0)
 	const canPublish = can("address.publish")
 
@@ -99,11 +96,6 @@ export default memo(function AddressPublications() {
 			if (sequence === requestSequence.current) setLoading(false)
 		}
 	}, [debouncedSearch, page, pageSize, sort, status, t])
-	const refreshFlowLifecycle = useCallback(async () => {
-		setFlowLifecycleRevision((current) => current + 1)
-		await fetchPage()
-	}, [fetchPage])
-
 	useEffect(() => {
 		fetchPage()
 	}, [fetchPage])
@@ -280,7 +272,6 @@ export default memo(function AddressPublications() {
 
 	return (
 		<div className="grid gap-4">
-			<FlowActivationGuide key={flowLifecycleRevision} onChanged={refreshFlowLifecycle} />
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<RocketIcon className="h-5 w-5 text-muted-foreground" />
@@ -405,7 +396,6 @@ export default memo(function AddressPublications() {
 				serverFiltering={serverFiltering}
 				serverSorting={serverSorting}
 			/>
-			<FlowEnrichmentPublications onChanged={refreshFlowLifecycle} />
 		</div>
 	)
 })

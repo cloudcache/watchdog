@@ -1,13 +1,16 @@
 import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
-import { DatabaseIcon, MapPinnedIcon, NetworkIcon } from "lucide-react"
-import { memo, type ReactNode } from "react"
+import { DatabaseIcon, MapPinnedIcon } from "lucide-react"
+import { memo, type ReactNode, useState } from "react"
 import { $router, Link } from "@/components/router"
 import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import FlowCustomerBoundaries from "./flow-customer-boundaries"
+import FlowActivationGuide from "./flow-activation-guide"
 import FlowEnrichmentPublications from "./flow-enrichment-publications"
 
 export default memo(function FlowAttribution() {
+	const [publicationRevision, setPublicationRevision] = useState(0)
 	return (
 		<div className="my-4 grid gap-4">
 			<div>
@@ -15,33 +18,43 @@ export default memo(function FlowAttribution() {
 					<Trans>Flow Data Attribution</Trans>
 				</h1>
 				<p className="text-sm text-muted-foreground">
-					<Trans>Maintain one relationship chain: geography and operator → customer source prefix → Flow device.</Trans>
+					<Trans>
+						Keep the shared Geo/operator library separate from each Flow device's customer source boundaries.
+					</Trans>
 				</p>
 			</div>
-			<div className="grid gap-3 lg:grid-cols-3">
+			<div className="grid gap-3 lg:grid-cols-2">
 				<AttributionStep
 					icon={MapPinnedIcon}
-					title={<Trans>1. Geography and operators</Trans>}
-					description={<Trans>Maintain the reusable geography tree, operator names, and operator ASN sets.</Trans>}
+					title={<Trans>Shared Geo and operator library</Trans>}
+					description={
+						<Trans>
+							Maintain reusable Internet geography, operators, and ASN evidence. Do not add customer-only source ranges
+							here.
+						</Trans>
+					}
 					href={getPagePath($router, "address_library", { section: "base-data" })}
 					linkLabel={<Trans>Manage base data</Trans>}
 				/>
 				<AttributionStep
 					icon={DatabaseIcon}
-					title={<Trans>2. Customer source prefixes</Trans>}
-					description={<Trans>Create each customer CIDR and assign its geography and operator.</Trans>}
-					href={getPagePath($router, "address_library", { section: "prefixes" })}
-					linkLabel={<Trans>Manage address prefixes</Trans>}
-				/>
-				<AttributionStep
-					icon={NetworkIcon}
-					title={<Trans>3. Device association and publication</Trans>}
-					description={<Trans>Select the customer source prefixes observed behind each Flow device, then publish one immutable version pair.</Trans>}
+					title={<Trans>Address snapshot lifecycle</Trans>}
+					description={
+						<Trans>
+							Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries
+							when publishing Flow.
+						</Trans>
+					}
 					href={getPagePath($router, "address_library", { section: "publications" })}
 					linkLabel={<Trans>Manage address versions</Trans>}
 				/>
 			</div>
-			<FlowEnrichmentPublications />
+			<FlowActivationGuide
+				key={`guide-${publicationRevision}`}
+				onChanged={() => setPublicationRevision((value) => value + 1)}
+			/>
+			<FlowCustomerBoundaries onChanged={() => setPublicationRevision((value) => value + 1)} />
+			<FlowEnrichmentPublications key={`publications-${publicationRevision}`} />
 		</div>
 	)
 })

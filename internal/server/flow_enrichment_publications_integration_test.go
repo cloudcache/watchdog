@@ -123,6 +123,63 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		VALUES ('flow-binding-it','flow-device-it','192.0.2.10/32','sflow5',JSON_ARRAY(),JSON_OBJECT())`); err != nil {
 		t.Fatal(err)
 	}
+	createdCustomer := requestJSON(t, s, http.MethodPost, "/api/v1/flow/customers", map[string]any{
+		"name": "Integration customer",
+	}, adminHeaders, cookies...)
+	var customer struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, createdCustomer, &customer)
+	if createdCustomer.Code != http.StatusCreated || customer.ID == "" {
+		t.Fatalf("create Flow customer: status=%d body=%s", createdCustomer.Code, createdCustomer.Body.String())
+	}
+	createdBoundary := requestJSON(t, s, http.MethodPost, "/api/v1/flow/customer-bindings", map[string]any{
+		"device_id": "flow-device-it", "customer_id": customer.ID,
+		"source_ranges": []string{"198.51.100.0/24", "2001:db8:100::/48"},
+	}, adminHeaders, cookies...)
+	if createdBoundary.Code != http.StatusCreated {
+		t.Fatalf("create Flow customer boundary: status=%d body=%s", createdBoundary.Code, createdBoundary.Body.String())
+	}
+	listedBoundaries := requestJSON(t, s, http.MethodGet,
+		"/api/v1/flow/customer-bindings?device_id=flow-device-it&limit=25&offset=0", nil, nil, cookies...)
+	var boundaryPage struct {
+		Items []flowCustomerBoundary `json:"items"`
+		Total int                    `json:"total"`
+	}
+	decodeJSON(t, listedBoundaries, &boundaryPage)
+	if listedBoundaries.Code != http.StatusOK || boundaryPage.Total != 1 || len(boundaryPage.Items) != 1 ||
+		len(boundaryPage.Items[0].SourceRanges) != 2 || boundaryPage.Items[0].CustomerName != "Integration customer" {
+		t.Fatalf("list Flow customer boundaries: status=%d page=%+v body=%s", listedBoundaries.Code, boundaryPage, listedBoundaries.Body.String())
+	}
+	boundaryPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
+		"effective_from": effectiveFrom,
+	}, adminHeaders, cookies...)
+	var boundaryPublication flowEnrichmentPublication
+	decodeJSON(t, boundaryPublished, &boundaryPublication)
+	if boundaryPublished.Code != http.StatusCreated || boundaryPublication.ClassificationVersion != 1 {
+		t.Fatalf("publish customer boundary pair: status=%d body=%s", boundaryPublished.Code, boundaryPublished.Body.String())
+	}
+	boundaryClassificationPath, err := s.addressObjects.ResolveDimensionObject(boundaryPublication.ClassificationObjectRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classificationObject, err := os.ReadFile(boundaryClassificationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(classificationObject, []byte(`"customer_name":"Integration customer"`)) ||
+		!bytes.Contains(classificationObject, []byte(`"cidr":"198.51.100.0/24"`)) {
+		t.Fatalf("compiled customer boundary object = %s", classificationObject)
+	}
+	if _, err := s.db.Exec(`DELETE FROM flow_enrichment_publications WHERE id=?`, boundaryPublication.ID); err != nil {
+		t.Fatal(err)
+	}
+	deletedBoundary := requestJSON(t, s, http.MethodDelete,
+		"/api/v1/flow/customer-bindings/"+boundaryPage.Items[0].ID, nil,
+		map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": `"1"`}, cookies...)
+	if deletedBoundary.Code != http.StatusNoContent {
+		t.Fatalf("delete Flow customer boundary: status=%d body=%s", deletedBoundary.Code, deletedBoundary.Body.String())
+	}
 	if _, err := s.db.Exec(`INSERT INTO address_prefixes
 		(id,cidr,family,prefix_length,ip_start,ip_end,labels,source)
 		VALUES
