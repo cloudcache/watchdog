@@ -4,6 +4,8 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -18,9 +20,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// FlowGeoConfig points the runtime at a flow-geo-v2 bundle directory (usually the
-// exporter's `current` symlink). An empty path leaves the routes available but
-// returns service_unavailable until a bundle is configured.
+// FlowGeoConfig optionally points the runtime at a legacy flow-geo-v2 bundle
+// directory or a WADS address snapshot. The active WADS publication in MySQL is
+// loaded automatically, so Path is only needed for a standalone deployment.
 type FlowGeoConfig struct {
 	Path            string   `yaml:"path"`
 	HistoricalPaths []string `yaml:"historical_paths"`
@@ -40,11 +42,14 @@ var (
 type flowGeoService struct {
 	Path    string
 	catalog *flowdimension.GeoCatalog
+	wads    atomic.Pointer[wadsGeoCatalogState]
 	lastErr atomic.Pointer[string]
 }
 
 func newFlowGeoService(path string) *flowGeoService {
-	return &flowGeoService{Path: path, catalog: flowdimension.NewGeoCatalog()}
+	service := &flowGeoService{Path: path, catalog: flowdimension.NewGeoCatalog()}
+	service.wads.Store(&wadsGeoCatalogState{byVersion: map[string]*wadsGeoPublication{}})
+	return service
 }
 
 // startFlowGeo constructs the geo service and best-effort loads the configured
@@ -53,18 +58,37 @@ func newFlowGeoService(path string) *flowGeoService {
 // to load is fatal, since historical result labels would then be incomplete.
 func (s *Server) startFlowGeo() error {
 	geo := newFlowGeoService(s.cfg.Flow.Geo.Path)
+	loaded := false
+	var configuredErr error
 	if s.cfg.Flow.Geo.Path != "" {
 		if err := geo.Reload(); err != nil {
-			log.Printf("watchdog flow geo bundle load failed (serving without geo until reload): %v", err)
+			configuredErr = err
 		} else {
+			loaded = true
 			for _, path := range s.cfg.Flow.Geo.HistoricalPaths {
 				if err := geo.LoadHistorical(path); err != nil {
 					return fmt.Errorf("load historical Flow Geo bundle %q: %w", path, err)
 				}
 			}
-			status := geo.Status()
-			log.Printf("watchdog flow geo bundle loaded version=%s v4=%d v6=%d", status.Version, status.RowsV4, status.RowsV6)
 		}
+	}
+	// AddressSnap/WADS is the current publication contract. Load it after the
+	// optional legacy path so labels use the same immutable snapshot ID that is
+	// persisted with every Flow row.
+	wadsErr := s.loadActiveFlowGeoWADS(context.Background(), geo)
+	if wadsErr != nil {
+		if !errors.Is(wadsErr, sql.ErrNoRows) {
+			log.Printf("watchdog active WADS geo load failed: %v", wadsErr)
+		}
+	} else {
+		loaded = true
+	}
+	if configuredErr != nil && wadsErr != nil {
+		log.Printf("watchdog configured legacy flow geo bundle load failed: %v", configuredErr)
+	}
+	if loaded {
+		status := geo.Status()
+		log.Printf("watchdog flow geo loaded version=%s v4=%d v6=%d", status.Version, status.RowsV4, status.RowsV6)
 	}
 	s.flowGeo = geo
 	return nil
@@ -73,6 +97,11 @@ func (s *Server) startFlowGeo() error {
 // Reload re-reads the configured bundle into the catalog. The path is never
 // request-supplied.
 func (s *flowGeoService) Reload() error {
+	if publication, err := loadWADSGeoPublication(s.Path, ""); err == nil {
+		s.installWADS(publication, true)
+		s.lastErr.Store(nil)
+		return nil
+	}
 	if _, err := s.catalog.Reload(s.Path, flowdimension.GeoLoadLimits{}); err != nil {
 		message := err.Error()
 		s.lastErr.Store(&message)
@@ -88,6 +117,10 @@ func (s *flowGeoService) LoadHistorical(path string) error {
 	if s == nil || s.catalog == nil {
 		return ErrFlowGeoNotLoaded
 	}
+	if publication, err := loadWADSGeoPublication(path, ""); err == nil {
+		s.installWADS(publication, false)
+		return nil
+	}
 	if _, err := s.catalog.LoadHistorical(path, flowdimension.GeoLoadLimits{}); err != nil {
 		return err
 	}
@@ -99,6 +132,14 @@ func (s *flowGeoService) LoadHistorical(path string) error {
 func (s *flowGeoService) Lookup(addr netip.Addr) (flowdimension.GeoInfo, bool) {
 	if s == nil {
 		return flowdimension.GeoInfo{}, false
+	}
+	if state := s.wads.Load(); state != nil {
+		if publication := state.byVersion[state.active]; publication != nil && publication.index != nil {
+			resolved, found := publication.index.ResolveAddress(addr)
+			if found {
+				return resolved.SupplierGeo, true
+			}
+		}
 	}
 	index, ok := s.catalog.Active()
 	if !ok || index == nil {
@@ -161,16 +202,18 @@ func (s *flowGeoService) Label(version, code string) (FlowGeoLabel, bool) {
 	if s == nil || s.catalog == nil || version == "" || code == "" {
 		return FlowGeoLabel{}, false
 	}
-	index, ok := s.catalog.Get(version)
-	if !ok || index == nil {
-		return FlowGeoLabel{}, false
+	if index, ok := s.catalog.Get(version); ok && index != nil {
+		if entries, found := index.GeoBreadcrumb(code); found && len(entries) != 0 {
+			return flowGeoLabel(version, entries), true
+		}
 	}
-	entries, ok := index.GeoBreadcrumb(code)
-	if !ok || len(entries) == 0 {
-		return FlowGeoLabel{}, false
+	if state := s.wads.Load(); state != nil {
+		if publication := state.byVersion[version]; publication != nil {
+			label, found := publication.labels[code]
+			return label, found
+		}
 	}
-	label := flowGeoLabel(version, entries)
-	return label, true
+	return FlowGeoLabel{}, false
 }
 
 // Catalog lists one exact hierarchy level from one immutable publication. An
@@ -178,6 +221,15 @@ func (s *flowGeoService) Label(version, code string) (FlowGeoLabel, bool) {
 func (s *flowGeoService) Catalog(version, level, parentID string, maximum int) (FlowGeoCatalogResult, error) {
 	if s == nil || s.catalog == nil {
 		return FlowGeoCatalogResult{}, ErrFlowGeoNotLoaded
+	}
+	if state := s.wads.Load(); state != nil {
+		selectedVersion := version
+		if selectedVersion == "" {
+			selectedVersion = state.active
+		}
+		if publication := state.byVersion[selectedVersion]; publication != nil {
+			return publication.catalog(level, parentID, maximum)
+		}
 	}
 	var index *flowdimension.GeoIndex
 	var ok bool
@@ -238,6 +290,18 @@ func (s *flowGeoService) Status() FlowGeoStatus {
 	status := FlowGeoStatus{Path: s.Path}
 	if message := s.lastErr.Load(); message != nil {
 		status.LastError = *message
+	}
+	if state := s.wads.Load(); state != nil {
+		if publication := state.byVersion[state.active]; publication != nil {
+			status.Path = publication.path
+			status.Loaded = true
+			status.Version = publication.version
+			status.GeneratedAt = publication.effectiveFrom
+			status.RowsV4 = publication.rowsV4
+			status.RowsV6 = publication.rowsV6
+			status.Operators = publication.operators
+			return status
+		}
 	}
 	index, ok := s.catalog.Active()
 	if !ok || index == nil {

@@ -109,6 +109,49 @@ func writeFlowGeoBundleData(t *testing.T, schema, version, ipv4, ipv6 string, op
 	return dir
 }
 
+func writeWADSGeoBundle(t *testing.T) (string, string) {
+	t.Helper()
+	manifestChecksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	values, err := flowdimension.CanonicalAddressSnapshotStrings(
+		"AS", "Asia", "CN", "China", "Jiangsu", "320000", "continent", "country", "province",
+		"supplier/continent/AS", "supplier/country/CN", "supplier/province/CN/320000",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := func(value string) uint32 {
+		for position, candidate := range values {
+			if candidate == value {
+				return uint32(position)
+			}
+		}
+		t.Fatalf("missing WADS fixture string %q", value)
+		return 0
+	}
+	artifact := flowdimension.AddressSnapshotArtifact{
+		SnapshotID: "snapshot-wads", Version: 2,
+		EffectiveFrom:  time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC),
+		BuilderVersion: "watchdog-test", SourceManifestSHA256: manifestChecksum,
+		Strings: values,
+		GeoNodes: []flowdimension.AddressSnapshotGeoNode{
+			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/continent/AS"), Kind: index("continent"), Code: index("AS"), Name: index("Asia"), Enabled: true},
+			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/country/CN"), Kind: index("country"), Code: index("CN"), Name: index("China"), ParentID: index("supplier/continent/AS"), Enabled: true},
+			{Namespace: flowdimension.AddressSnapshotGeoSupplier, ID: index("supplier/province/CN/320000"), Kind: index("province"), Code: index("320000"), Name: index("Jiangsu"), ParentID: index("supplier/country/CN"), Enabled: true},
+		},
+		Values: []flowdimension.AddressSnapshotValue{{}},
+	}
+	data, err := flowdimension.EncodeAddressSnapshot(artifact, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "address-snapshot.wads")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	return path, "sha256:" + hex.EncodeToString(digest[:])
+}
+
 func geoCSVRows(value string) []string {
 	lines := strings.Split(strings.TrimSpace(value), "\n")
 	if len(lines) < 2 {
@@ -168,6 +211,32 @@ func TestFlowGeoServiceReloadLookupStatus(t *testing.T) {
 	}
 	if _, found := service.Lookup(netip.MustParseAddr("203.0.113.1")); found {
 		t.Fatal("uncovered address must not resolve")
+	}
+}
+
+func TestFlowGeoServiceLoadsWADSStableIDsAsDisplayLabels(t *testing.T) {
+	path, checksum := writeWADSGeoBundle(t)
+	publication, err := loadWADSGeoPublication(path, checksum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newFlowGeoService("")
+	service.installWADS(publication, true)
+
+	label, found := service.Label("snapshot-wads", "supplier/province/CN/320000")
+	if !found || label.Name != "Jiangsu" || label.Kind != "province" || label.ParentID != "supplier/country/CN" {
+		t.Fatalf("label = %+v found=%v", label, found)
+	}
+	if got := label.Breadcrumb; len(got) != 3 || got[0] != "Asia" || got[1] != "China" || got[2] != "Jiangsu" {
+		t.Fatalf("breadcrumb = %#v", got)
+	}
+	status := service.Status()
+	if !status.Loaded || status.Version != "snapshot-wads" || status.Path != path {
+		t.Fatalf("status = %+v", status)
+	}
+	catalog, err := service.Catalog("snapshot-wads", "province", "supplier/country/CN", 10)
+	if err != nil || catalog.Total != 1 || catalog.Items[0].Name != "Jiangsu" {
+		t.Fatalf("catalog = %+v err=%v", catalog, err)
 	}
 }
 
