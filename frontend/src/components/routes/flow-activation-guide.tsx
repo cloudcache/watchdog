@@ -59,6 +59,7 @@ type LifecycleState = {
 	activeSnapshot: Snapshot | null
 	buildJob: BuildJob | null
 	publication: EnrichmentPublication | null
+	classificationProfileVersion: number
 	workers: Worker[]
 	acks: WorkerACK[]
 }
@@ -68,6 +69,7 @@ const emptyState: LifecycleState = {
 	activeSnapshot: null,
 	buildJob: null,
 	publication: null,
+	classificationProfileVersion: 0,
 	workers: [],
 	acks: [],
 }
@@ -84,7 +86,7 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 		setLoading(true)
 		setError("")
 		try {
-			const [versions, jobs, publications, workers, runtime] = await Promise.all([
+			const [versions, jobs, publications, workers, runtime, classificationProfile] = await Promise.all([
 				api.send<{ items?: Snapshot[] }>("/api/v1/dimensions/address/versions", {
 					query: { limit: 1, offset: 0, sort: "version", order: "desc" },
 				}),
@@ -98,6 +100,7 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 					query: { kind: "flow_worker", limit: 100, offset: 0, sort: "updated_at", order: "desc" },
 				}),
 				loadRuntimeStatus(),
+				api.send<{ row_version?: number }>("/api/v1/flow/classification-profile"),
 			])
 			const publication = publications.items?.[0] ?? null
 			let acks: WorkerACK[] = []
@@ -113,6 +116,7 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 				activeSnapshot: runtime?.snapshot ?? null,
 				buildJob: jobs.items?.[0] ?? null,
 				publication,
+				classificationProfileVersion: classificationProfile.row_version ?? 0,
 				workers: workers.items ?? [],
 				acks,
 			})
@@ -216,14 +220,17 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 		: state.latestSnapshot
 			? t`WADS v${state.latestSnapshot.version} is waiting for approval or activation.`
 			: t`Build a WADS snapshot first.`
+	const classificationProfileSaved = state.classificationProfileVersion > 0
 	const publicationStatus =
 		publicationMatchesActive && state.publication
 			? t`Flow v${state.publication.classification_version} · WADS v${state.publication.dimension_version}`
 			: state.publication
 				? t`Flow v${state.publication.classification_version} uses an older address snapshot.`
-				: state.activeSnapshot
-					? t`Publish the active address snapshot with the saved classification profile.`
-					: t`Activate a WADS snapshot first.`
+				: !classificationProfileSaved
+					? t`Select and save the local province, city and on-net operators first.`
+					: state.activeSnapshot
+						? t`Publish the active address snapshot with the saved classification profile.`
+						: t`Activate a WADS snapshot first.`
 	const workerStatus =
 		state.workers.length === 0
 			? t`No Flow worker is enrolled.`
@@ -287,9 +294,11 @@ export default memo(function FlowActivationGuide({ onChanged }: { onChanged?: ()
 					number={3}
 					title={t`Publish Flow classification`}
 					detail={publicationStatus}
-					state={publicationMatchesActive ? "done" : state.activeSnapshot ? "todo" : "blocked"}
+					state={
+						publicationMatchesActive ? "done" : state.activeSnapshot && classificationProfileSaved ? "todo" : "blocked"
+					}
 					action={
-						canPublish && state.activeSnapshot && !publicationMatchesActive ? (
+						canPublish && state.activeSnapshot && classificationProfileSaved && !publicationMatchesActive ? (
 							<Button size="sm" onClick={publishFlowVersion} disabled={Boolean(working)}>
 								<Trans>Publish Flow version</Trans>
 							</Button>

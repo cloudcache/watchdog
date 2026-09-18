@@ -8118,3 +8118,75 @@ msgstr "地址快照版本 {0} 已激活。"
 #: src/components/routes/flow-activation-guide.tsx
 msgid "WADS v{0} is waiting for approval or activation."
 msgstr "地址快照版本 {0} 等待审批或激活。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load classification choices"
+msgstr "加载分类选项失败"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Local city"
+msgstr "本地城市"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Local province"
+msgstr "本地省份"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No enabled operators are available."
+msgstr "没有可用的已启用运营商。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "On-net operators"
+msgstr "本网运营商"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Save a complete classification profile before publishing a Flow version."
+msgstr "请先保存完整的六分类配置，再发布 Flow 版本。"
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Select and save the local province, city and on-net operators first."
+msgstr "请先选择并保存本地省份、城市和本网运营商。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select at least one on-net operator"
+msgstr "请至少选择一个本网运营商"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select operators from the active address library. Internal IDs no longer need to be entered manually."
+msgstr "从地址库选择运营商，无需再手工填写内部 ID。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local city"
+msgstr "请选择本地城市"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local province"
+msgstr "请选择本地省份"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local province first"
+msgstr "请先选择本地省份"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load local cities"
+msgstr "加载本地城市失败"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Use as a local network prefix for Flow direction"
+msgstr "作为 Flow 流向识别的本地网络地址段"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Flow uses these prefixes to decide inbound, outbound, internal and transit traffic. Rebuild and activate the address snapshot after changing them."
+msgstr "Flow 使用这些地址段识别流入、流出、内网和中转流量。修改后需要重新生成并激活地址快照。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Direction classification also requires your own CIDRs to be marked as local network prefixes."
+msgstr "流向分类还要求将自有 CIDR 标记为本地网络地址段。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Configure local prefixes"
+msgstr "配置本地地址段"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Rebuild and activate the address snapshot after changing local prefixes."
+msgstr "修改本地地址段后，请重新生成并激活地址快照。"

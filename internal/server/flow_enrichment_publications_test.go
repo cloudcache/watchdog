@@ -36,6 +36,10 @@ func TestNormalizeFlowClassificationProfileCanonicalizesDefinition(t *testing.T)
 
 func TestNormalizeFlowClassificationProfileRejectsInvalidHome(t *testing.T) {
 	for _, draft := range []flowClassificationProfileDraft{
+		{InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
+		{HomeProvince: "330000", HomeISPIDs: []uint16{1}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
+		{HomeProvince: "330000", HomeCity: "330100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
+		{HomeProvince: "330000", HomeCity: "330100", HomeASNs: []uint32{4134}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
 		{HomeProvince: "330100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
 		{HomeProvince: "330000", HomeCity: "320100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
 		{HomeISPIDs: []uint16{0}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},

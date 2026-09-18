@@ -3,6 +3,7 @@ import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "luci
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -58,6 +59,7 @@ const emptyForm = {
 	asn: "",
 	geoLeafID: "",
 	operatorID: "",
+	localNetwork: false,
 }
 
 const AddressPrefixes = memo(function AddressPrefixes() {
@@ -135,6 +137,8 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 		if (!form.cidr.trim()) return
 		try {
 			const labels = parsePrefixLabels(form.labels)
+			if (form.localNetwork) labels.flow = "local"
+			else if (labels.flow === "local") delete labels.flow
 			const asn = form.asn.trim() ? Number(form.asn) : undefined
 			if (asn !== undefined && (!Number.isInteger(asn) || asn <= 0 || asn > 4_294_967_295)) {
 				throw new Error(t`ASN must be an integer between 1 and 4294967295`)
@@ -167,12 +171,14 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 			rowVersion: prefix.row_version,
 			cidr: prefix.cidr,
 			labels: Object.entries(prefix.labels ?? {})
+				.filter(([key, value]) => key !== "flow" || value !== "local")
 				.map(([key, value]) => `${key}=${value}`)
 				.join(","),
 			source: prefix.source,
 			asn: prefix.asn ? String(prefix.asn) : "",
 			geoLeafID: prefix.geo_leaf_id ?? "",
 			operatorID: prefix.operator_id ?? "",
+			localNetwork: prefix.labels?.flow === "local",
 		})
 		setShowForm(true)
 		setError("")
@@ -595,6 +601,27 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 							placeholder="region=杭州,type=客户,provider=电信"
 						/>
 					</div>
+					<label
+						htmlFor="address-prefix-local-network"
+						className="flex items-start gap-2 rounded-md border border-border p-3 md:col-span-2"
+					>
+						<Checkbox
+							id="address-prefix-local-network"
+							checked={form.localNetwork}
+							onCheckedChange={(checked) => setForm({ ...form, localNetwork: checked === true })}
+						/>
+						<span className="grid gap-1 text-sm">
+							<span className="font-medium">
+								<Trans>Use as a local network prefix for Flow direction</Trans>
+							</span>
+							<span className="text-xs text-muted-foreground">
+								<Trans>
+									Flow uses these prefixes to decide inbound, outbound, internal and transit traffic. Rebuild and
+									activate the address snapshot after changing them.
+								</Trans>
+							</span>
+						</span>
+					</label>
 					<div className="grid gap-2">
 						<Label>
 							ASN (<Trans>optional</Trans>)

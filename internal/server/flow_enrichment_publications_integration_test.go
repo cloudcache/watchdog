@@ -121,7 +121,8 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatalf("save profile: status=%d etag=%q body=%s", savedProfile.Code, savedProfile.Header().Get("ETag"), savedProfile.Body.String())
 	}
 	staleProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
-		"home_province": "330000", "internal_policy": "count", "transit_policy": "count",
+		"home_province": "330000", "home_city": "330100", "home_isp_ids": []uint16{1},
+		"internal_policy": "count", "transit_policy": "count",
 	}, profileHeaders, cookies...)
 	if staleProfile.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale profile update was accepted: status=%d body=%s", staleProfile.Code, staleProfile.Body.String())

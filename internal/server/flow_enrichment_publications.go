@@ -241,6 +241,12 @@ func normalizeFlowClassificationProfile(draft flowClassificationProfileDraft) (f
 	draft.HomeCity = strings.TrimSpace(draft.HomeCity)
 	draft.HomeISPIDs = canonicalUint16s(draft.HomeISPIDs)
 	draft.HomeASNs = canonicalUint32s(draft.HomeASNs)
+	if draft.HomeProvince == "" || draft.HomeCity == "" {
+		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: local province and city are required", errFlowClassificationInvalid)
+	}
+	if len(draft.HomeISPIDs) == 0 {
+		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: at least one on-net operator is required", errFlowClassificationInvalid)
+	}
 	if draft.InternalPolicy == "" {
 		draft.InternalPolicy = flowdimension.RecordPolicyCount
 	}

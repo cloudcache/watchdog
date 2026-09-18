@@ -9087,3 +9087,75 @@ msgstr "WADS v{0} is active."
 #: src/components/routes/flow-activation-guide.tsx
 msgid "WADS v{0} is waiting for approval or activation."
 msgstr "WADS v{0} is waiting for approval or activation."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load classification choices"
+msgstr "Failed to load classification choices"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Local city"
+msgstr "Local city"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Local province"
+msgstr "Local province"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No enabled operators are available."
+msgstr "No enabled operators are available."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "On-net operators"
+msgstr "On-net operators"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Save a complete classification profile before publishing a Flow version."
+msgstr "Save a complete classification profile before publishing a Flow version."
+
+#: src/components/routes/flow-activation-guide.tsx
+msgid "Select and save the local province, city and on-net operators first."
+msgstr "Select and save the local province, city and on-net operators first."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select at least one on-net operator"
+msgstr "Select at least one on-net operator"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select operators from the active address library. Internal IDs no longer need to be entered manually."
+msgstr "Select operators from the active address library. Internal IDs no longer need to be entered manually."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local city"
+msgstr "Select the local city"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local province"
+msgstr "Select the local province"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the local province first"
+msgstr "Select the local province first"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Failed to load local cities"
+msgstr "Failed to load local cities"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Use as a local network prefix for Flow direction"
+msgstr "Use as a local network prefix for Flow direction"
+
+#: src/components/routes/address-prefixes.tsx
+msgid "Flow uses these prefixes to decide inbound, outbound, internal and transit traffic. Rebuild and activate the address snapshot after changing them."
+msgstr "Flow uses these prefixes to decide inbound, outbound, internal and transit traffic. Rebuild and activate the address snapshot after changing them."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Direction classification also requires your own CIDRs to be marked as local network prefixes."
+msgstr "Direction classification also requires your own CIDRs to be marked as local network prefixes."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Configure local prefixes"
+msgstr "Configure local prefixes"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Rebuild and activate the address snapshot after changing local prefixes."
+msgstr "Rebuild and activate the address snapshot after changing local prefixes."

@@ -1,7 +1,9 @@
 import { Trans, useLingui } from "@lingui/react/macro"
+import { getPagePath } from "@nanostores/router"
 import { RefreshCwIcon, SaveIcon, SendIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { $router } from "@/components/router"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -42,6 +44,26 @@ type EnrichmentPublication = {
 type PublicationPage = { items?: EnrichmentPublication[]; total?: number }
 type FacetResponse = { items?: { value: string; label?: string; count?: number }[] }
 
+type GeoNode = {
+	id: string
+	kind: string
+	code: string
+	parent_id?: string
+	name: string
+	short_name?: string
+}
+
+type NetworkOperator = {
+	id: string
+	flow_isp_id: number
+	code: string
+	name: string
+	short_name?: string
+	enabled: boolean
+}
+
+type ListResponse<T> = { items?: T[] }
+
 type EnrichmentACK = {
 	publication_id: string
 	worker_id: string
@@ -80,12 +102,15 @@ const publicationFilterFields = [
 
 const acknowledgementFilterFields = ["worker_id", "state", "software_version", "error_code"] as const
 
-export default memo(function FlowEnrichmentPublications() {
+export default memo(function FlowEnrichmentPublications({ onChanged }: { onChanged?: () => void | Promise<void> }) {
 	const { t } = useLingui()
 	const [profile, setProfile] = useState<ClassificationDraft>(emptyDraft)
 	const [profileVersion, setProfileVersion] = useState(0)
-	const [ispIDs, setISpIDs] = useState("")
-	const [asns, setASNs] = useState("")
+	const [provinces, setProvinces] = useState<GeoNode[]>([])
+	const [cities, setCities] = useState<GeoNode[]>([])
+	const [operators, setOperators] = useState<NetworkOperator[]>([])
+	const [referencesLoading, setReferencesLoading] = useState(true)
+	const [citiesLoading, setCitiesLoading] = useState(false)
 	const [effectiveFrom, setEffectiveFrom] = useState(defaultEffectiveFrom)
 	const [items, setItems] = useState<EnrichmentPublication[]>([])
 	const [total, setTotal] = useState(0)
@@ -133,10 +158,28 @@ export default memo(function FlowEnrichmentPublications() {
 		const data = await api.send<ClassificationProfile>("/api/v1/flow/classification-profile")
 		const definition = data.definition ?? emptyDraft
 		setProfile({ ...emptyDraft, ...definition })
-		setISpIDs((definition.home_isp_ids ?? []).join(", "))
-		setASNs((definition.home_asns ?? []).join(", "))
 		setProfileVersion(data.row_version ?? 0)
 	}, [])
+
+	const fetchReferences = useCallback(async () => {
+		setReferencesLoading(true)
+		try {
+			const [provinceResult, operatorResult] = await Promise.all([
+				api.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", {
+					query: { kind: "province", enabled: true, limit: 500, sort: "order", order: "asc" },
+				}),
+				api.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
+					query: { enabled: true, limit: 500, sort: "order", order: "asc" },
+				}),
+			])
+			setProvinces(provinceResult.items ?? [])
+			setOperators(operatorResult.items ?? [])
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : t`Failed to load classification choices`)
+		} finally {
+			setReferencesLoading(false)
+		}
+	}, [t])
 
 	const fetchPublications = useCallback(async () => {
 		const sequence = ++requestSequence.current
@@ -168,20 +211,61 @@ export default memo(function FlowEnrichmentPublications() {
 	}, [debouncedSearch, filters, page, pageSize, sort, t])
 
 	useEffect(() => {
-		Promise.all([fetchProfile(), fetchPublications()]).catch((cause) =>
+		Promise.all([fetchProfile(), fetchPublications(), fetchReferences()]).catch((cause) =>
 			setError(cause instanceof Error ? cause.message : t`Failed to load Flow enrichment settings`)
 		)
-	}, [fetchProfile, fetchPublications, t])
+	}, [fetchProfile, fetchPublications, fetchReferences, t])
+
+	const selectedProvince = useMemo(
+		() => provinces.find((item) => item.code === profile.home_province),
+		[profile.home_province, provinces]
+	)
+	const availableCities = useMemo(
+		() => (selectedProvince ? cities.filter((item) => item.parent_id === selectedProvince.id) : []),
+		[cities, selectedProvince]
+	)
+
+	useEffect(() => {
+		setCities([])
+		if (!selectedProvince) return
+		let cancelled = false
+		setCitiesLoading(true)
+		api
+			.send<ListResponse<GeoNode>>("/api/v1/geo/dictionary", {
+				query: {
+					kind: "city",
+					parent_id: selectedProvince.id,
+					enabled: true,
+					limit: 500,
+					sort: "order",
+					order: "asc",
+				},
+			})
+			.then((result) => {
+				if (!cancelled) setCities(result.items ?? [])
+			})
+			.catch((cause) => {
+				if (!cancelled) setError(cause instanceof Error ? cause.message : t`Failed to load local cities`)
+			})
+			.finally(() => {
+				if (!cancelled) setCitiesLoading(false)
+			})
+		return () => {
+			cancelled = true
+		}
+	}, [selectedProvince, t])
 
 	const saveProfile = async () => {
 		setWorking(true)
 		setError("")
 		setNotice("")
 		try {
+			if (!profile.home_province) throw new Error(t`Select the local province`)
+			if (!profile.home_city) throw new Error(t`Select the local city`)
+			if (profile.home_isp_ids.length === 0) throw new Error(t`Select at least one on-net operator`)
 			const definition: ClassificationDraft = {
 				...profile,
-				home_isp_ids: parsePositiveIntegers(ispIDs, 65_535, t`Home ISP IDs must be comma-separated positive integers`),
-				home_asns: parsePositiveIntegers(asns, 4_294_967_295, t`Home ASNs must be comma-separated positive integers`),
+				home_asns: [],
 			}
 			const saved = await api.send<ClassificationProfile>("/api/v1/flow/classification-profile", {
 				method: "PUT",
@@ -190,9 +274,8 @@ export default memo(function FlowEnrichmentPublications() {
 			})
 			setProfile(saved.definition)
 			setProfileVersion(saved.row_version)
-			setISpIDs(saved.definition.home_isp_ids.join(", "))
-			setASNs(saved.definition.home_asns.join(", "))
 			setNotice(t`Classification profile saved`)
+			await onChanged?.()
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t`Failed to save classification profile`)
 		} finally {
@@ -211,6 +294,7 @@ export default memo(function FlowEnrichmentPublications() {
 			})
 			setNotice(t`Flow enrichment version ${published.classification_version} published`)
 			await fetchPublications()
+			await onChanged?.()
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t`Failed to publish Flow enrichment version`)
 		} finally {
@@ -484,7 +568,7 @@ export default memo(function FlowEnrichmentPublications() {
 				<Button
 					variant="outline"
 					size="sm"
-					onClick={() => Promise.all([fetchProfile(), fetchPublications()])}
+					onClick={() => Promise.all([fetchProfile(), fetchPublications(), fetchReferences()])}
 					disabled={working}
 				>
 					<RefreshCwIcon className="me-2 h-4 w-4" />
@@ -493,36 +577,76 @@ export default memo(function FlowEnrichmentPublications() {
 			</div>
 			<div className="grid gap-4 rounded-md border border-border bg-card p-4 lg:grid-cols-2">
 				<div className="grid gap-3 sm:grid-cols-2">
-					<Field
+					<GeoField
 						id="flow-classification-home-province"
-						label={t`Home province code`}
+						label={t`Local province`}
+						placeholder={t`Select the local province`}
 						value={profile.home_province}
-						disabled={!canManage}
-						onChange={(value) => setProfile((current) => ({ ...current, home_province: value }))}
+						items={provinces}
+						disabled={!canManage || referencesLoading}
+						onChange={(value) => {
+							setProfile((current) => ({
+								...current,
+								home_province: value,
+								home_city: current.home_province === value ? current.home_city : "",
+							}))
+						}}
 					/>
-					<Field
+					<GeoField
 						id="flow-classification-home-city"
-						label={t`Home city code`}
+						label={t`Local city`}
+						placeholder={profile.home_province ? t`Select the local city` : t`Select the local province first`}
 						value={profile.home_city}
-						disabled={!canManage}
+						items={availableCities}
+						disabled={!canManage || referencesLoading || citiesLoading || !profile.home_province}
 						onChange={(value) => setProfile((current) => ({ ...current, home_city: value }))}
 					/>
-					<Field
-						id="flow-classification-home-isp-ids"
-						label={t`Home ISP IDs`}
-						value={ispIDs}
-						disabled={!canManage}
-						placeholder="1, 2"
-						onChange={setISpIDs}
-					/>
-					<Field
-						id="flow-classification-home-asns"
-						label={t`Home ASNs`}
-						value={asns}
-						disabled={!canManage}
-						placeholder="4134, 4812"
-						onChange={setASNs}
-					/>
+					<div className="grid gap-2 sm:col-span-2">
+						<Label>
+							<Trans>On-net operators</Trans>
+						</Label>
+						<p className="text-xs text-muted-foreground">
+							<Trans>
+								Select operators from the active address library. Internal IDs no longer need to be entered manually.
+							</Trans>
+						</p>
+						<div className="grid max-h-48 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
+							{operators.map((operator) => {
+								const checked = profile.home_isp_ids.includes(operator.flow_isp_id)
+								const checkboxID = `flow-classification-operator-${operator.id}`
+								return (
+									<label key={operator.id} htmlFor={checkboxID} className="flex items-start gap-2 text-sm">
+										<Checkbox
+											id={checkboxID}
+											checked={checked}
+											disabled={!canManage || referencesLoading}
+											onCheckedChange={(next) =>
+												setProfile((current) => ({
+													...current,
+													home_isp_ids: next
+														? [...current.home_isp_ids, operator.flow_isp_id].sort((a, b) => a - b)
+														: current.home_isp_ids.filter((id) => id !== operator.flow_isp_id),
+												}))
+											}
+										/>
+										<span className="font-medium">{operator.name}</span>
+									</label>
+								)
+							})}
+							{!referencesLoading && operators.length === 0 ? (
+								<p className="text-sm text-muted-foreground">
+									<Trans>No enabled operators are available.</Trans>
+								</p>
+							) : null}
+						</div>
+					</div>
+					<p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 sm:col-span-2">
+						<Trans>Direction classification also requires your own CIDRs to be marked as local network prefixes.</Trans>{" "}
+						<a className="font-medium underline" href={getPagePath($router, "address_prefixes")}>
+							<Trans>Configure local prefixes</Trans>
+						</a>
+						. <Trans>Rebuild and activate the address snapshot after changing local prefixes.</Trans>
+					</p>
 					<PolicyField
 						id="flow-classification-internal-policy"
 						label={t`Internal traffic policy`}
@@ -574,8 +698,13 @@ export default memo(function FlowEnrichmentPublications() {
 							restart.
 						</Trans>
 					</p>
+					{profileVersion === 0 ? (
+						<p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700">
+							<Trans>Save a complete classification profile before publishing a Flow version.</Trans>
+						</p>
+					) : null}
 					{canPublish ? (
-						<Button onClick={publishPair} disabled={working}>
+						<Button onClick={publishPair} disabled={working || profileVersion === 0}>
 							<SendIcon className="me-2 h-4 w-4" />
 							<Trans>Publish Flow version pair</Trans>
 						</Button>
@@ -657,31 +786,38 @@ export default memo(function FlowEnrichmentPublications() {
 	)
 })
 
-function Field({
+function GeoField({
 	id,
 	label,
-	value,
-	disabled,
 	placeholder,
+	value,
+	items,
+	disabled,
 	onChange,
 }: {
 	id: string
 	label: string
+	placeholder: string
 	value: string
+	items: GeoNode[]
 	disabled: boolean
-	placeholder?: string
 	onChange: (value: string) => void
 }) {
 	return (
 		<div className="grid gap-2">
 			<Label htmlFor={id}>{label}</Label>
-			<Input
-				id={id}
-				value={value}
-				disabled={disabled}
-				placeholder={placeholder}
-				onChange={(event) => onChange(event.target.value)}
-			/>
+			<Select value={value || undefined} disabled={disabled} onValueChange={onChange}>
+				<SelectTrigger id={id}>
+					<SelectValue placeholder={placeholder} />
+				</SelectTrigger>
+				<SelectContent>
+					{items.map((item) => (
+						<SelectItem key={item.id} value={item.code}>
+							{item.name} ({item.code})
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
 		</div>
 	)
 }
@@ -717,13 +853,6 @@ function PolicyField({
 			</Select>
 		</div>
 	)
-}
-
-function parsePositiveIntegers(value: string, maximum: number, errorMessage: string) {
-	if (!value.trim()) return []
-	const numbers = value.split(",").map((part) => Number(part.trim()))
-	if (numbers.some((item) => !Number.isSafeInteger(item) || item < 1 || item > maximum)) throw new Error(errorMessage)
-	return [...new Set(numbers)].sort((left, right) => left - right)
 }
 
 function defaultEffectiveFrom() {
