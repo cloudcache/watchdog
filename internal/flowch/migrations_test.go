@@ -25,6 +25,9 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 			t.Fatalf("invalid loaded migration=%+v", migration)
 		}
 	}
+	if got, want := migrations[0].Checksum, "7aa74a10f2d0837c71b1905a442918803c703d49f5d94e1fdc4f9d680c7f4c51"; got != want {
+		t.Fatalf("released migration 001 checksum drifted: got %s, want %s", got, want)
+	}
 	if got, want := migrations[15].Checksum, "0000ff24eeaee56b83649fb8c3778c98802c16f956d9566e1cae4bbaba422252"; got != want {
 		t.Fatalf("released migration 016 checksum drifted: got %s, want %s", got, want)
 	}
