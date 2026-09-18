@@ -8251,3 +8251,45 @@ msgstr "维护地址段"
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Rebuild and activate the address snapshot after changing address attributes."
 msgstr "地址属性修改后，请重新生成并激活地址快照。"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "1. Geography and operators"
+msgstr "1. 地域与运营商"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "2. Customer source prefixes"
+msgstr "2. 客户源地址段"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "3. Device association and publication"
+msgstr "3. 设备关联与发布"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Create each customer CIDR and assign its geography and operator."
+msgstr "创建客户 CIDR，并为其指定地域和运营商。"
+
+#: src/components/navbar.tsx
+#: src/components/routes/flow-attribution.tsx
+#: src/components/routes/flow-reports.tsx
+msgid "Flow Data Attribution"
+msgstr "Flow 数据归属"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Maintain one relationship chain: geography and operator → customer source prefix → Flow device."
+msgstr "只维护一条关系链：地域和运营商 → 客户源地址段 → Flow 设备。"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Maintain the reusable geography tree, operator names, and operator ASN sets."
+msgstr "维护可复用的地域树、运营商名称和运营商 ASN 集合。"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Manage address versions"
+msgstr "管理地址版本"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Manage base data"
+msgstr "管理基础数据"
+
+#: src/components/routes/flow-attribution.tsx
+msgid "Select the customer source prefixes observed behind each Flow device, then publish one immutable version pair."
+msgstr "为每台 Flow 设备选择其下联客户源地址段，然后发布一对不可变版本。"

@@ -297,6 +297,9 @@ function FlowItems() {
 			{canManageAddressLibrary() ? (
 				<>
 					<DropdownMenuSeparator />
+					<NavItem href={getPagePath($router, "flow_attribution")} icon={RouteIcon}>
+						<Trans>Flow Data Attribution</Trans>
+					</NavItem>
 					<NavItem href={getPagePath($router, "address_library", { section: "prefixes" })} icon={GlobeIcon}>
 						<Trans>Address Library</Trans>
 					</NavItem>

@@ -53,6 +53,8 @@ type AddressPrefix = {
 
 type ListResponse<T> = { items?: T[] }
 
+type ReferenceItem = { id: string; name: string }
+
 type NetworkDevice = {
 	id: string
 	name?: string
@@ -104,6 +106,8 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 	const [profileVersion, setProfileVersion] = useState(0)
 	const [sourcePrefixes, setSourcePrefixes] = useState<AddressPrefix[]>([])
 	const [devices, setDevices] = useState<NetworkDevice[]>([])
+	const [geographyNames, setGeographyNames] = useState<Map<string, string>>(new Map())
+	const [operatorNames, setOperatorNames] = useState<Map<string, string>>(new Map())
 	const [selectedDeviceID, setSelectedDeviceID] = useState("")
 	const [referencesLoading, setReferencesLoading] = useState(true)
 	const [effectiveFrom, setEffectiveFrom] = useState(defaultEffectiveFrom)
@@ -159,15 +163,19 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 	const fetchReferences = useCallback(async () => {
 		setReferencesLoading(true)
 		try {
-			const [prefixResult, exporterResult] = await Promise.all([
+			const [prefixResult, exporterResult, geographyResult, operatorResult] = await Promise.all([
 				api.send<ListResponse<AddressPrefix>>("/api/v1/address-prefixes", {
 					query: { limit: 500, sort: "cidr", order: "asc" },
 				}),
 				api.send<ListResponse<FlowExporter>>("/api/v1/flow/devices", {
 					query: { enabled: true, limit: 500, sort: "device", order: "asc" },
 				}),
+				api.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", { query: { limit: 500 } }),
+				api.send<ListResponse<ReferenceItem>>("/api/v1/network/operators", { query: { limit: 500 } }),
 			])
 			setSourcePrefixes(prefixResult.items ?? [])
+			setGeographyNames(new Map((geographyResult.items ?? []).map((item) => [item.id, item.name])))
+			setOperatorNames(new Map((operatorResult.items ?? []).map((item) => [item.id, item.name])))
 			const uniqueDevices = new Map<string, NetworkDevice>()
 			for (const exporter of exporterResult.items ?? []) {
 				if (!uniqueDevices.has(exporter.device_id)) {
@@ -654,7 +662,9 @@ export default memo(function FlowEnrichmentPublications({ onChanged }: { onChang
 										/>
 										<span className="grid">
 											<span className="font-medium">{prefix.cidr}</span>
-											<span className="text-xs text-muted-foreground">{prefixSummary(prefix)}</span>
+											<span className="text-xs text-muted-foreground">
+												{prefixSummary(prefix, geographyNames, operatorNames, t`Geography`, t`Operator`)}
+											</span>
 										</span>
 									</label>
 								)
@@ -825,11 +835,17 @@ function deviceLabel(device: NetworkDevice) {
 	return name === device.host ? name : `${name} (${device.host})`
 }
 
-function prefixSummary(prefix: AddressPrefix) {
+function prefixSummary(
+	prefix: AddressPrefix,
+	geographyNames: Map<string, string>,
+	operatorNames: Map<string, string>,
+	geographyLabel: string,
+	operatorLabel: string
+) {
 	const labels = Object.entries(prefix.labels ?? {})
 		.filter(([key]) => key !== "flow")
 		.map(([key, value]) => `${key}=${value}`)
-	if (prefix.geo_leaf_id) labels.push(`geo=${prefix.geo_leaf_id}`)
-	if (prefix.operator_id) labels.push(`operator=${prefix.operator_id}`)
+	if (prefix.geo_leaf_id) labels.push(`${geographyLabel}=${geographyNames.get(prefix.geo_leaf_id) ?? prefix.geo_leaf_id}`)
+	if (prefix.operator_id) labels.push(`${operatorLabel}=${operatorNames.get(prefix.operator_id) ?? prefix.operator_id}`)
 	return labels.join(" · ") || "—"
 }

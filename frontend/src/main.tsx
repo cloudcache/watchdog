@@ -73,6 +73,7 @@ const AddressPrefixes = lazy(() => import("@/components/routes/address-prefixes.
 const AddressSets = lazy(() => import("@/components/routes/address-sets.tsx"))
 const TrafficMatrix = lazy(() => import("@/components/routes/traffic-matrix.tsx"))
 const FlowReports = lazy(() => import("@/components/routes/flow-reports.tsx"))
+const FlowAttribution = lazy(() => import("@/components/routes/flow-attribution.tsx"))
 const FlowVPN = lazy(() => import("@/components/routes/flow-vpn.tsx"))
 const FlowVPNRules = lazy(() => import("@/components/routes/flow-vpn-rules.tsx"))
 const FlowSavedFilters = lazy(() => import("@/components/routes/flow-saved-filters.tsx"))
@@ -236,6 +237,8 @@ const App = memo(() => {
 		return <AddressSets />
 	} else if (page.route === "flow_overview") {
 		return <FlowReports surface="overview" />
+	} else if (page.route === "flow_attribution") {
+		return <FlowAttribution />
 	} else if (page.route === "traffic_matrix") {
 		return <TrafficMatrix key="advanced" surface="overview" />
 	} else if (page.route === "flow_dimensions") {
@@ -319,6 +322,7 @@ function routeAbilities(route: string): string[] {
 		case "aggregate_graphs":
 		case "aggregate_graph":
 		case "dashboards": return ["device.view"]
+		case "flow_attribution": return ["address.view"]
 		case "flow_overview":
 		case "traffic_matrix":
 		case "flow_dimensions":

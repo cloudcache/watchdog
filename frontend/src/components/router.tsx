@@ -59,6 +59,7 @@ const routes = {
 	address_prefixes: "/address-prefixes",
 	address_sets: "/address-sets",
 	flow_overview: "/flow",
+	flow_attribution: "/flow/attribution",
 	flow_dimensions: "/flow/dimensions",
 	flow_source: "/flow/source",
 	flow_destination: "/flow/destination",

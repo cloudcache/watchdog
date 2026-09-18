@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/components/ui/use-toast"
 import { canManageAddressLibrary, api } from "@/lib/api"
 import type { FlowFilterExpression } from "@/lib/flow-explorer-model"
+import { formatBitsPerSecond } from "@/lib/metric-format"
 import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
@@ -474,10 +475,17 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					<h1 className="text-2xl font-semibold">{i18n._(copy.title)}</h1>
 					<p className="text-sm text-muted-foreground">{i18n._(copy.description)}</p>
 				</div>
-				<Link href={getPagePath($router, "traffic_matrix")} className={buttonVariants({ variant: "outline" })}>
-					<SlidersHorizontalIcon className="mr-2 h-4 w-4" />
-					<Trans>Advanced Explorer</Trans>
-				</Link>
+				<div className="flex flex-wrap gap-2">
+					{canManageAddressLibrary() ? (
+						<Link href={getPagePath($router, "flow_attribution")} className={buttonVariants({ variant: "outline" })}>
+							<Trans>Flow Data Attribution</Trans>
+						</Link>
+					) : null}
+					<Link href={getPagePath($router, "traffic_matrix")} className={buttonVariants({ variant: "outline" })}>
+						<SlidersHorizontalIcon className="mr-2 h-4 w-4" />
+						<Trans>Advanced Explorer</Trans>
+					</Link>
+				</div>
 			</div>
 
 			<Card>
@@ -1798,7 +1806,7 @@ function formatDirectionalValue(
 
 function formatMetric(value: number, unit?: string) {
 	if (!Number.isFinite(value)) return "—"
-	if (unit === "bits_per_second") return `${formatCompact(value)}bps`
+	if (unit === "bits_per_second") return formatBitsPerSecond(value)
 	if (unit === "packets_per_second") return `${formatCompact(value)}pps`
 	if (unit === "bytes") return formatBytes(value)
 	if (unit === "packets") return t`${formatCompact(value)} packets`
