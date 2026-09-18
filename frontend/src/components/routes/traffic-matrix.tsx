@@ -147,11 +147,8 @@ type DeviceItem = { ID?: string; id?: string; SysName?: string; sys_name?: strin
 type DeviceList = { items: DeviceItem[] }
 type GeoNode = {
 	id: string
-	kind: string
 	parent_id?: string
 	name: string
-	path: Array<{ id: string; name: string; kind: string }>
-	additive: boolean
 }
 type NetworkOperator = {
 	id: string
@@ -159,13 +156,10 @@ type NetworkOperator = {
 	code: string
 	name: string
 	short_name?: string
-	asns: number[]
 	sort_order: number
-	enabled: boolean
 }
 type ListResponse<T> = { items?: T[] }
-type FlowGeoCatalogResponse = ListResponse<GeoNode> & { version: string; total: number }
-type AddressDimensionRuntimeStatus = { snapshot?: { id?: string } }
+type FlowReferenceResponse<T> = ListResponse<T> & { snapshot_id?: string; total?: number }
 
 type GraphMode = FlowGraphType | "table"
 type QuickAnalysisMode = "direction" | "protocol" | "src_ip" | "dst_ip" | "local_prefix" | "remote_prefix"
@@ -294,7 +288,6 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [countries, setCountries] = useState<GeoNode[]>([])
 	const [provinces, setProvinces] = useState<GeoNode[]>([])
 	const [cities, setCities] = useState<GeoNode[]>([])
-	const [geoVersion, setGeoVersion] = useState("")
 	const [operators, setOperators] = useState<NetworkOperator[]>([])
 	const [selectedCountry, setSelectedCountry] = useState(() => queryState("country", "all"))
 	const [selectedProvince, setSelectedProvince] = useState(() => queryState("province", "all"))
@@ -340,27 +333,20 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 
 	useEffect(() => {
 		Promise.allSettled([
-			api.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
-				query: { kind: "country", enabled: true, limit: 500 },
+			api.send<FlowReferenceResponse<GeoNode>>("/api/v1/flow/reports/references", {
+				query: { kind: "country" },
 			}),
-			api.send<AddressDimensionRuntimeStatus>("/api/v1/dimensions/address/status"),
-			api.send<ListResponse<NetworkOperator>>("/api/v1/network/operators", {
-				query: { enabled: true, limit: 500 },
+			api.send<FlowReferenceResponse<NetworkOperator>>("/api/v1/flow/reports/references", {
+				query: { kind: "operator" },
 			}),
 		])
-			.then(([geo, addressRuntime, networkOperators]) => {
+			.then(([geo, networkOperators]) => {
 				const errors: string[] = []
 				if (geo.status === "fulfilled") {
 					setCountries(sortReferences(geo.value.items ?? []))
 				} else {
 					setCountries([])
 					errors.push(geo.reason instanceof Error ? geo.reason.message : t`Failed to load geography dictionary`)
-				}
-				if (addressRuntime.status === "fulfilled" && addressRuntime.value.snapshot?.id) {
-					setGeoVersion(addressRuntime.value.snapshot.id)
-				} else {
-					setGeoVersion("")
-					errors.push(t`Address source data is imported but no Flow address snapshot is active`)
 				}
 				if (networkOperators.status === "fulfilled") {
 					setOperators(sortReferences(networkOperators.value.items ?? []))
@@ -383,8 +369,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			return
 		}
 		api
-			.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
-				query: { kind: "province", parent_id: selectedCountry, enabled: true, limit: 500 },
+			.send<FlowReferenceResponse<GeoNode>>("/api/v1/flow/reports/references", {
+				query: { kind: "province", parent_id: selectedCountry },
 			})
 			.then((result) => setProvinces(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load provinces`))
@@ -399,8 +385,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			return
 		}
 		api
-			.send<FlowGeoCatalogResponse>("/api/v1/geo/dictionary", {
-				query: { kind: "city", parent_id: selectedProvince, enabled: true, limit: 500 },
+			.send<FlowReferenceResponse<GeoNode>>("/api/v1/flow/reports/references", {
+				query: { kind: "city", parent_id: selectedProvince },
 			})
 			.then((result) => setCities(sortReferences(result.items ?? [])))
 			.catch((err) => setReferenceError(err instanceof Error ? err.message : t`Failed to load cities`))
@@ -422,7 +408,6 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				let selectedTopN: number
 				let canonicalFilter: FlowFilterExpression | undefined
 				let filters: FlowFilters = {}
-				let operatorID: string | undefined
 				const addressSetSelectionActive = includeAnySets.length + includeAllSets.length > 0
 				if (!addressSetSelectionActive && excludeAnySets.length > 0) {
 					throw new Error("Address set exclusion requires an include-any or include-all selection")
@@ -451,13 +436,12 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					const province = selectedReference(provinces, selectedProvince, "province")
 					const city = selectedReference(cities, selectedCity, "city")
 					const networkOperator = selectedReference(operators, selectedOperator, "operator")
-					operatorID = networkOperator?.id
 					canonicalFilter = buildFlowQuickFilter({
-						countryCode: country?.id,
-						provinceCode: province?.id,
-						cityCode: city?.id,
+						countryID: country?.id,
+						provinceID: province?.id,
+						cityID: city?.id,
+						ispID: networkOperator?.flow_isp_id,
 					})
-					if ((country || province || city) && geoVersion) filters.geo_versions = [geoVersion]
 					selectedDimension = activeMode === "direction" ? "total" : QUICK_DIMENSIONS[activeMode]
 					selectedDimensions = [selectedDimension]
 					selectedTopN = activeMode === "direction" ? 1 : Math.max(1, Math.min(100, topN))
@@ -485,7 +469,6 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						value_layer: "customer",
 						parameters: {
 							metric,
-							operator_selection: operatorID ? { operator_id: operatorID } : undefined,
 							...grouping,
 							filters: queryFilters,
 							filter: canonicalFilter,
@@ -615,7 +598,6 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			countries,
 			provinces,
 			cities,
-			geoVersion,
 			operators,
 			selectedCountry,
 			selectedProvince,

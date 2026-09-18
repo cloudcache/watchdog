@@ -119,19 +119,21 @@ test("canonical Flow filters format to a lossless editable expression", () => {
 	assert.deepEqual(parseFlowFilter(formatFlowFilter(filter)), filter)
 })
 
-test("quick filters use published geo codes while operator identity is resolved by the server", () => {
+test("quick filters use the stable identities stored by the active WADS publication", () => {
 	assert.deepEqual(
 		buildFlowQuickFilter({
-			countryCode: "CN",
-			provinceCode: "330000",
-			cityCode: "330100",
+			countryID: "supplier/country/CN",
+			provinceID: "supplier/province/330000",
+			cityID: "supplier/city/330100",
+			ispID: 12,
 		}),
 		{
 			op: "and",
 			args: [
-				{ op: "predicate", field: "geo.country", operator: "eq", values: ["CN"] },
-				{ op: "predicate", field: "geo.province", operator: "eq", values: ["330000"] },
-				{ op: "predicate", field: "geo.city", operator: "eq", values: ["330100"] },
+				{ op: "predicate", field: "geo.country", operator: "eq", values: ["supplier/country/CN"] },
+				{ op: "predicate", field: "geo.province", operator: "eq", values: ["supplier/province/330000"] },
+				{ op: "predicate", field: "geo.city", operator: "eq", values: ["supplier/city/330100"] },
+				{ op: "predicate", field: "isp", operator: "eq", values: ["12"] },
 			],
 		}
 	)

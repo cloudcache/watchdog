@@ -43,10 +43,9 @@ import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
 import { cn } from "@/lib/utils"
 
 type ReferenceItem = { id: string; name: string; path?: Array<{ id: string; name: string }> }
-type OperatorItem = { id: string; name: string; short_name?: string }
+type OperatorItem = { id: string; name: string; short_name?: string; flow_isp_id: number }
 type DeviceItem = { ID?: string; id?: string; SysName?: string; sys_name?: string; Name?: string; name?: string }
-type ListResponse<T> = { items?: T[]; version?: string }
-type AddressDimensionRuntimeStatus = { snapshot?: { id?: string } }
+type ListResponse<T> = { items?: T[]; snapshot_id?: string }
 type FlowReportExportQuery = {
 	dataset: "flow.traffic"
 	from: string
@@ -211,7 +210,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const [cities, setCities] = useState<ReferenceItem[]>([])
 	const [operators, setOperators] = useState<OperatorItem[]>([])
 	const [devices, setDevices] = useState<DeviceItem[]>([])
-	const [geoVersion, setGeoVersion] = useState("")
 	const [table, setTable] = useState<TableControl>(INITIAL_TABLE)
 	const [reportTables, setReportTables] = useState<Record<string, TableControl>>(INITIAL_REPORT_TABLES)
 	const [tableSearch, setTableSearch] = useState("")
@@ -231,23 +229,16 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 
 	useEffect(() => {
 		Promise.allSettled([
-			api.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
-				query: { kind: "country", enabled: true, limit: 500 },
+			api.send<ListResponse<ReferenceItem>>("/api/v1/flow/reports/references", {
+				query: { kind: "country" },
 			}),
-			api.send<AddressDimensionRuntimeStatus>("/api/v1/dimensions/address/status"),
-			api.send<ListResponse<OperatorItem>>("/api/v1/network/operators", { query: { enabled: true, limit: 500 } }),
+			api.send<ListResponse<OperatorItem>>("/api/v1/flow/reports/references", { query: { kind: "operator" } }),
 			api.send<ListResponse<DeviceItem>>("/api/v1/devices", { query: { kind: "network" } }),
-		]).then(([geo, addressRuntime, operatorResult, deviceResult]) => {
+		]).then(([geo, operatorResult, deviceResult]) => {
 			const warnings: string[] = []
 			if (geo.status === "fulfilled") {
 				setCountries(sortByName(geo.value.items ?? []))
 			} else warnings.push(t`Geography dictionary is unavailable`)
-			if (addressRuntime.status === "fulfilled" && addressRuntime.value.snapshot?.id) {
-				setGeoVersion(addressRuntime.value.snapshot.id)
-			} else {
-				setGeoVersion("")
-				warnings.push(t`Address source data is imported but no Flow address snapshot is active`)
-			}
 			if (operatorResult.status === "fulfilled") setOperators(sortByName(operatorResult.value.items ?? []))
 			else warnings.push(t`Operator catalog is unavailable`)
 			if (deviceResult.status === "fulfilled") setDevices(deviceResult.value.items ?? [])
@@ -262,8 +253,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			return
 		}
 		api
-			.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
-				query: { kind: "province", parent_id: country, enabled: true, limit: 500 },
+			.send<ListResponse<ReferenceItem>>("/api/v1/flow/reports/references", {
+				query: { kind: "province", parent_id: country },
 			})
 			.then((result) => setProvinces(sortByName(result.items ?? [])))
 			.catch(() => setReferenceWarning(t`Province catalog is unavailable`))
@@ -275,8 +266,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			return
 		}
 		api
-			.send<ListResponse<ReferenceItem>>("/api/v1/geo/dictionary", {
-				query: { kind: "city", parent_id: province, enabled: true, limit: 500 },
+			.send<ListResponse<ReferenceItem>>("/api/v1/flow/reports/references", {
+				query: { kind: "city", parent_id: province },
 			})
 			.then((result) => setCities(sortByName(result.items ?? [])))
 			.catch(() => setReferenceWarning(t`City catalog is unavailable`))
@@ -295,7 +286,12 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			lastExportQuery.current = null
 			try {
 				const selectedRange = resolveFlowReportRange(range, customStart, customEnd, timezone)
-				const filter = geoFilter(country, province, city)
+				const selectedOperator =
+					operator === "all"
+						? undefined
+						: operators.find((item) => item.id === operator || String(item.flow_isp_id) === operator)
+				if (operator !== "all" && !selectedOperator) throw new Error(t`Selected operator is unavailable`)
+				const filter = flowDimensionFilter(country, province, city, selectedOperator?.flow_isp_id)
 				const filters: Record<string, unknown> = {}
 				const businesses = business
 					.split(",")
@@ -305,7 +301,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 				const grouping = GROUPINGS.find((item) => item.value === groupBy) ?? GROUPINGS[0]
 				if (surface === "dimensions" && grouping.categories.length) filters.categories = grouping.categories
 				if (device !== "all") filters.device_ids = [device]
-				if (filter && geoVersion) filters.geo_versions = [geoVersion]
 				const body: Record<string, unknown> = {
 					from: selectedRange.start,
 					to: selectedRange.end,
@@ -319,7 +314,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					include_other: true,
 					timezone,
 					target_points: 300,
-					operator_selection: operator === "all" ? undefined : { operator_id: operator },
 					report: {
 						schema_version: 1,
 						kind: flowReportKind(surface),
@@ -401,10 +395,10 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			customStart,
 			device,
 			displayMode,
-			geoVersion,
 			groupBy,
 			metric,
 			operator,
+			operators,
 			peakDays,
 			peakEnabled,
 			peakEnd,
@@ -1733,12 +1727,19 @@ function ReportDaySelector({ value, onChange }: { value: number[]; onChange: (va
 	)
 }
 
-function geoFilter(country: string, province: string, city: string): FlowFilterExpression | undefined {
+function flowDimensionFilter(
+	country: string,
+	province: string,
+	city: string,
+	operatorFlowID?: number
+): FlowFilterExpression | undefined {
 	const predicates: FlowFilterExpression[] = []
 	if (country !== "all") predicates.push({ op: "predicate", field: "geo.country", operator: "eq", values: [country] })
 	if (province !== "all")
 		predicates.push({ op: "predicate", field: "geo.province", operator: "eq", values: [province] })
 	if (city !== "all") predicates.push({ op: "predicate", field: "geo.city", operator: "eq", values: [city] })
+	if (operatorFlowID !== undefined)
+		predicates.push({ op: "predicate", field: "isp", operator: "eq", values: [String(operatorFlowID)] })
 	if (!predicates.length) return undefined
 	if (predicates.length === 1) return predicates[0]
 	return { op: "and", args: predicates }

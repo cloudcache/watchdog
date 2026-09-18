@@ -73,6 +73,8 @@ type Server struct {
 	flowArchiveDeleteEvidence  flowlifecycle.ArchiveMonthEvidenceReader
 	flowReclassificationRunner *flowch.ReclassificationRunner
 	flowReclassificationCancel context.CancelFunc
+	flowReportReferenceMu      sync.Mutex
+	flowReportReferenceCache   *flowReportReferenceCatalog
 
 	agentPlanSigner     agentplan.Signer
 	agentPlanPublic     ed25519.PublicKey

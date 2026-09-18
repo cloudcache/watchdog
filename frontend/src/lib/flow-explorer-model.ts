@@ -91,9 +91,10 @@ export type FlowFilterExpression = {
 }
 
 export type FlowQuickFilterInput = {
-	countryCode?: string
-	provinceCode?: string
-	cityCode?: string
+	countryID?: string
+	provinceID?: string
+	cityID?: string
+	ispID?: number
 }
 
 export type FlowTrafficSurface = "overview" | "dimensions" | "source" | "destination" | "overseas"
@@ -278,9 +279,10 @@ export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFil
 export function buildFlowQuickFilter(input: FlowQuickFilterInput): FlowFilterExpression | undefined {
 	const predicates: FlowFilterExpression[] = []
 	for (const [field, value] of [
-		["geo.country", input.countryCode],
-		["geo.province", input.provinceCode],
-		["geo.city", input.cityCode],
+		["geo.country", input.countryID],
+		["geo.province", input.provinceID],
+		["geo.city", input.cityID],
+		["isp", input.ispID === undefined ? undefined : String(input.ispID)],
 	] as const) {
 		if (value) predicates.push({ op: "predicate", field, operator: "eq", values: [value] })
 	}

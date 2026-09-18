@@ -171,6 +171,7 @@ var flowReportGroupings = map[flowquery.Dimension]struct{}{
 func (s *Server) registerFlowReportRoutes(auth *gin.RouterGroup, view gin.HandlerFunc) {
 	reports := auth.Group("/flow/reports", view)
 	reports.GET("/capabilities", s.flowReportCapabilities)
+	reports.GET("/references", s.flowReportReferences)
 	reports.POST("/query", s.queryFlowReport)
 }
 
