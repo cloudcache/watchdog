@@ -90,6 +90,9 @@ export interface CreateTableOptions {
 	rowHeight?: number
 	headerRowHeight?: number
 	widthMode?: "standard" | "autoWidth" | "adaptive"
+	autoFillWidth?: boolean
+	frozenColCount?: number
+	rightFrozenColCount?: number
 	columnResize?: boolean
 	theme?: any
 	pagination?: { totalCount?: number; perPageCount: number; currentPage?: number }
@@ -197,7 +200,14 @@ export function createListTable(dom: HTMLElement, options: CreateTableOptions): 
 		theme,
 		hover: { highlightMode: "row" },
 		widthMode: options.widthMode ?? "adaptive",
-		autoFillWidth: true,
+		autoFillWidth: options.autoFillWidth ?? true,
+		frozenColCount: options.frozenColCount ?? 0,
+		rightFrozenColCount: options.rightFrozenColCount ?? 0,
+		tooltip: {
+			renderMode: "html",
+			isShowOverflowTextTooltip: true,
+			confine: true,
+		},
 		columnResizeMode: options.columnResize === false ? "none" : "all",
 		editCellTrigger: options.editable ? "doubleclick" : undefined,
 		pagination: options.pagination,

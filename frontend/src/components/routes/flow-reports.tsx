@@ -1203,6 +1203,9 @@ function EndpointTable({
 				<PagedVTable
 					records={records}
 					columns={columns}
+					widthMode="standard"
+					frozenColCount={1}
+					rightFrozenColCount={canManageAddressLibrary() ? 1 : 0}
 					loading={loading}
 					emptyText={t`No endpoint traffic`}
 					height={Math.min(520, 42 * (records.length + 1))}

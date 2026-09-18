@@ -37,6 +37,9 @@ export function PagedVTable({
 	editable,
 	selectable,
 	onCellDblClick,
+	widthMode = "adaptive",
+	frozenColCount = 0,
+	rightFrozenColCount = 0,
 }: {
 	records: Record<string, unknown>[]
 	columns: ColumnDefine[]
@@ -65,6 +68,9 @@ export function PagedVTable({
 	editable?: EditableOptions
 	selectable?: SelectableOptions
 	onCellDblClick?: (record: Record<string, unknown>, field: string) => void
+	widthMode?: "standard" | "autoWidth" | "adaptive"
+	frozenColCount?: number
+	rightFrozenColCount?: number
 }) {
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
@@ -123,7 +129,10 @@ export function PagedVTable({
 			columns: effectiveColumns,
 			rowHeight,
 			headerRowHeight: 38,
-			widthMode: "adaptive",
+			widthMode,
+			autoFillWidth: widthMode === "adaptive",
+			frozenColCount,
+			rightFrozenColCount,
 			pagination: {
 				perPageCount: serverMode ? Math.max(1, searchedRecords.length) : effectivePageSize,
 				currentPage: 0,
@@ -168,6 +177,9 @@ export function PagedVTable({
 		editable,
 		selectable,
 		onCellDblClick,
+		widthMode,
+		frozenColCount,
+		rightFrozenColCount,
 	])
 
 	useEffect(() => {
