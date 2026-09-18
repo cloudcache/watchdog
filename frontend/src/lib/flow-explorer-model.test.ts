@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
 	buildFlowCSV,
+	buildFlowDeviceFilter,
 	buildFlowJointSeries,
 	buildFlowQuickFilter,
 	buildFlowSeries,
@@ -138,6 +139,12 @@ test("quick filters use the stable identities stored by the active WADS publicat
 		}
 	)
 	assert.equal(buildFlowQuickFilter({}), undefined)
+})
+
+test("device selection always becomes a stable Flow device filter", () => {
+	assert.deepEqual(buildFlowDeviceFilter("device-1"), { device_ids: ["device-1"] })
+	assert.deepEqual(buildFlowDeviceFilter(" all "), {})
+	assert.deepEqual(buildFlowDeviceFilter(""), {})
 })
 
 test("flow series statistics use actual final bucket duration", () => {

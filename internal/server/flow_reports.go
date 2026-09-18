@@ -311,7 +311,8 @@ func reportPanelSpecs(req flowReportRequest) []reportPanelSpec {
 		base.Categories = append(append([]string(nil), base.Categories...), "overseas")
 	}
 	specs := []reportPanelSpec{{
-		ID: "total", Dimensions: []flowquery.Dimension{flowquery.DimensionTotal}, TopN: 1, IncludeOther: false, Filters: base,
+		ID: "total", Dimensions: []flowquery.Dimension{flowquery.DimensionTotal}, TopN: 1, IncludeOther: false,
+		Filters: base, Special: "direction_split",
 	}}
 	addDirections := func(prefix string, optional bool, dimensions ...flowquery.Dimension) {
 		for _, direction := range []string{"in", "out"} {
@@ -480,6 +481,12 @@ func (s *Server) buildFlowReport(ctx context.Context, scope flowquery.Scope, vie
 	warnings := make([]string, 0)
 	for _, spec := range specs {
 		switch spec.Special {
+		case "direction_split":
+			raw, meta, err := s.runReportDirectionPanel(ctx, scope, view, req, spec, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			panels = append(panels, flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta})
 		case "observed":
 			panel, err := s.runOverseasObservedPanel(ctx, view, req, now)
 			if err != nil {
@@ -589,7 +596,7 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 		if err != nil {
 			return nil, nil, err
 		}
-		return raw, gin.H{"step_seconds": compiled.Plan.StepSeconds, "source": compiled.Plan.Source}, nil
+		return raw, gin.H{"step_seconds": compiled.Plan.StepSeconds, "source": compiled.Plan.Source, "unit": result.Metric.Unit}, nil
 	}
 	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
 	if err != nil {
@@ -615,7 +622,52 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 	if err != nil {
 		return nil, nil, err
 	}
-	return raw, gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source}, nil
+	return raw, gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source, "unit": result.Metric.Unit}, nil
+}
+
+// runReportDirectionPanel returns the report headline as two faithful directional
+// totals. Keeping the split on the server ensures every panel uses the same
+// resource filters (including device_id) and the browser never has to derive a
+// total from a truncated Top-N category response.
+func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, spec reportPanelSpec, now time.Time) (json.RawMessage, gin.H, error) {
+	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	results := make([]flowquery.Result, 0, len(flowDirectionParts))
+	labels := make([]string, 0, len(flowDirectionParts))
+	for _, part := range flowDirectionParts {
+		filters := spec.Filters
+		filters.Directions = []string{part.direction}
+		request := flowquery.Request{
+			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
+			Metric: req.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: req.Filter,
+			View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		}
+		if err := s.applyFlowStorageBoundary(ctx, &request); err != nil {
+			return nil, nil, err
+		}
+		compiled, err := flowquery.Compile(scope, request, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err := s.flowQuery.aggregate.Run(ctx, compiled)
+		if err != nil {
+			return nil, nil, err
+		}
+		results = append(results, result)
+		labels = append(labels, part.label)
+	}
+	combined := mergeFlowDirectionResults(&plan, labels, results)
+	raw, err := marshalFlowAggregateResult(combined, nil, s.flowGeo)
+	if err != nil {
+		return nil, nil, err
+	}
+	return raw, gin.H{
+		"step_seconds": plan.StepSeconds,
+		"source":       plan.Source,
+		"unit":         combined.Metric.Unit,
+	}, nil
 }
 
 // runOverseasObservedPanel builds the overseas observed-cardinality panel through

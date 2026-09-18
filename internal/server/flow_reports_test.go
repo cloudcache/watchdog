@@ -112,7 +112,10 @@ func TestNormalizeFlowReport(t *testing.T) {
 // honors a panel_ids subset.
 func TestReportPanelSpecs(t *testing.T) {
 	from, to := reportWindow()
-	overview := flowReportRequest{Kind: flowReportOverview, TopN: 20, From: from, To: to}
+	overview := flowReportRequest{
+		Kind: flowReportOverview, TopN: 20, From: from, To: to,
+		Filters: flowquery.Filters{DeviceIDs: []string{"device-1"}},
+	}
 	specs := reportPanelSpecs(overview)
 	ids := panelIDs(specs)
 	if !reflect.DeepEqual(ids, []string{"total", "category_in", "category_out", "business_category_in", "business_category_out"}) {
@@ -120,6 +123,14 @@ func TestReportPanelSpecs(t *testing.T) {
 	}
 	// category_in filters to the in direction; business_category is a joint (2 dims) and optional.
 	byID := specByID(specs)
+	if byID["total"].Special != "direction_split" {
+		t.Fatalf("total panel special = %q", byID["total"].Special)
+	}
+	for _, spec := range specs {
+		if !reflect.DeepEqual(spec.Filters.DeviceIDs, []string{"device-1"}) {
+			t.Fatalf("%s lost device filter: %v", spec.ID, spec.Filters.DeviceIDs)
+		}
+	}
 	if got := byID["category_in"].Filters.Directions; !reflect.DeepEqual(got, []string{"in"}) {
 		t.Fatalf("category_in directions = %v", got)
 	}

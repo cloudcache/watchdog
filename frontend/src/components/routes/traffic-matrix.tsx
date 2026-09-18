@@ -15,13 +15,13 @@ import { toast } from "@/components/ui/use-toast"
 import { createFlowExplorerChart, type FlowGraphType } from "@/lib/flow-explorer-chart"
 import {
 	buildFlowJointSeries,
+	buildFlowDeviceFilter,
 	buildFlowQuickFilter,
 	buildFlowSeries,
 	FLOW_TIME_PRESETS,
 	enrichFlowGeoPoints,
 	enrichFlowJointGeoPoints,
 	flowSurfacePreset,
-	mergeFlowFilters,
 	parseFlowFilter,
 	resolveOverseasRange,
 	resolveFlowTimeRange,
@@ -143,8 +143,15 @@ type OverseasQueryResponse = {
 
 type AddressSetItem = { id: string; name: string }
 type AddressSetList = { items: AddressSetItem[] }
-type DeviceItem = { ID?: string; id?: string; SysName?: string; sys_name?: string; Name?: string; name?: string }
-type DeviceList = { items: DeviceItem[] }
+type FlowDeviceItem = { id: string; name: string }
+type FlowExporterItem = {
+	id: string
+	device_id: string
+	device_host: string
+	device_name: string
+	enabled: boolean
+}
+type FlowExporterList = { items: FlowExporterItem[] }
 type GeoNode = {
 	id: string
 	parent_id?: string
@@ -284,7 +291,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [filterExpression, setFilterExpression] = useState(() => queryState("filter", surfacePreset.filter))
 	const [advancedOpen, setAdvancedOpen] = useState(surfacePreset.advancedOpen)
 	const [addressSets, setAddressSets] = useState<AddressSetItem[]>([])
-	const [devices, setDevices] = useState<DeviceItem[]>([])
+	const [devices, setDevices] = useState<FlowDeviceItem[]>([])
 	const [countries, setCountries] = useState<GeoNode[]>([])
 	const [provinces, setProvinces] = useState<GeoNode[]>([])
 	const [cities, setCities] = useState<GeoNode[]>([])
@@ -322,11 +329,13 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	useEffect(() => {
 		Promise.all([
 			api.send<AddressSetList>("/api/v1/address-sets", {}),
-			api.send<DeviceList>("/api/v1/devices", { query: { kind: "network" } }),
+			api.send<FlowExporterList>("/api/v1/flow/devices", {
+				query: { enabled: true, limit: 100, sort: "device", order: "asc" },
+			}),
 		])
-			.then(([sets, devs]) => {
+			.then(([sets, exporters]) => {
 				setAddressSets(sets.items ?? [])
-				setDevices(devs.items ?? [])
+				setDevices(flowObservationDevices(exporters.items ?? []))
 			})
 			.catch(() => {})
 	}, [])
@@ -407,7 +416,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				let selectedDimensions: string[]
 				let selectedTopN: number
 				let canonicalFilter: FlowFilterExpression | undefined
-				let filters: FlowFilters = {}
+				const filters: FlowFilters = buildFlowDeviceFilter(selectedDevice)
 				const addressSetSelectionActive = includeAnySets.length + includeAllSets.length > 0
 				if (!addressSetSelectionActive && excludeAnySets.length > 0) {
 					throw new Error("Address set exclusion requires an include-any or include-all selection")
@@ -428,9 +437,6 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					if (addressSetSelectionActive && canonicalFilter) {
 						throw new Error("Address set combinations and typed filters are separate bounded query modes")
 					}
-					const selectionFilters: FlowFilters = {}
-					if (selectedDevice !== "all") selectionFilters.device_ids = [selectedDevice]
-					filters = mergeFlowFilters({}, selectionFilters)
 				} else {
 					const country = selectedReference(countries, selectedCountry, "country")
 					const province = selectedReference(provinces, selectedProvince, "province")
@@ -1104,8 +1110,8 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							options={[
 								{ value: "all", label: t`All devices` },
 								...devices.map((item) => ({
-									value: item.ID ?? item.id ?? "",
-									label: item.SysName ?? item.sys_name ?? item.Name ?? item.name ?? item.ID ?? item.id ?? "",
+									value: item.id,
+									label: item.name,
 								})),
 							]}
 						/>
@@ -1649,6 +1655,19 @@ function flowDimensionLabel(value: string, mode: QueryMode) {
 	if (mode !== "protocol") return value
 	const match = /^(\d+)(.*)$/.exec(value)
 	return match ? `${protocolLabel(match[1])}${match[2]}` : value
+}
+
+function flowObservationDevices(exporters: FlowExporterItem[]): FlowDeviceItem[] {
+	const devices = new Map<string, FlowDeviceItem>()
+	for (const exporter of exporters) {
+		if (!exporter.enabled || !exporter.device_id || devices.has(exporter.device_id)) continue
+		const label = exporter.device_name || exporter.device_host || exporter.device_id
+		devices.set(exporter.device_id, {
+			id: exporter.device_id,
+			name: label === exporter.device_host ? label : `${label} · ${exporter.device_host}`,
+		})
+	}
+	return [...devices.values()].sort((left, right) => left.name.localeCompare(right.name))
 }
 
 function formatFlowRatio(value: number) {

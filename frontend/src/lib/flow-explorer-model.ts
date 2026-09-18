@@ -276,6 +276,11 @@ export function mergeFlowFilters(base: FlowFilters, extra: FlowFilters): FlowFil
 	return result
 }
 
+export function buildFlowDeviceFilter(deviceID: string): FlowFilters {
+	const id = deviceID.trim()
+	return !id || id === "all" ? {} : { device_ids: [id] }
+}
+
 export function buildFlowQuickFilter(input: FlowQuickFilterInput): FlowFilterExpression | undefined {
 	const predicates: FlowFilterExpression[] = []
 	for (const [field, value] of [

@@ -15,7 +15,7 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { canManageAddressLibrary, api } from "@/lib/api"
-import type { FlowFilterExpression } from "@/lib/flow-explorer-model"
+import { buildFlowDeviceFilter, type FlowFilterExpression } from "@/lib/flow-explorer-model"
 import { formatBitsPerSecond } from "@/lib/metric-format"
 import {
 	buildReportSeries,
@@ -45,7 +45,14 @@ import { cn } from "@/lib/utils"
 
 type ReferenceItem = { id: string; name: string; path?: Array<{ id: string; name: string }> }
 type OperatorItem = { id: string; name: string; short_name?: string; flow_isp_id: number }
-type DeviceItem = { ID?: string; id?: string; SysName?: string; sys_name?: string; Name?: string; name?: string }
+type FlowExporterItem = {
+	id: string
+	device_id: string
+	device_host: string
+	device_name: string
+	enabled: boolean
+}
+type DeviceItem = { id: string; name: string }
 type ListResponse<T> = { items?: T[]; snapshot_id?: string }
 type FlowReportExportQuery = {
 	dataset: "flow.traffic"
@@ -234,7 +241,9 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 				query: { kind: "country" },
 			}),
 			api.send<ListResponse<OperatorItem>>("/api/v1/flow/reports/references", { query: { kind: "operator" } }),
-			api.send<ListResponse<DeviceItem>>("/api/v1/devices", { query: { kind: "network" } }),
+			api.send<ListResponse<FlowExporterItem>>("/api/v1/flow/devices", {
+				query: { enabled: true, limit: 100, sort: "device", order: "asc" },
+			}),
 		]).then(([geo, operatorResult, deviceResult]) => {
 			const warnings: string[] = []
 			if (geo.status === "fulfilled") {
@@ -242,7 +251,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 			} else warnings.push(t`Geography dictionary is unavailable`)
 			if (operatorResult.status === "fulfilled") setOperators(sortByName(operatorResult.value.items ?? []))
 			else warnings.push(t`Operator catalog is unavailable`)
-			if (deviceResult.status === "fulfilled") setDevices(deviceResult.value.items ?? [])
+			if (deviceResult.status === "fulfilled") setDevices(flowObservationDevices(deviceResult.value.items ?? []))
 			else warnings.push(t`Device catalog is unavailable`)
 			setReferenceWarning(warnings.join("; "))
 		})
@@ -293,7 +302,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 						: operators.find((item) => item.id === operator || String(item.flow_isp_id) === operator)
 				if (operator !== "all" && !selectedOperator) throw new Error(t`Selected operator is unavailable`)
 				const filter = flowDimensionFilter(country, province, city, selectedOperator?.flow_isp_id)
-				const filters: Record<string, unknown> = {}
+				const filters: Record<string, unknown> = buildFlowDeviceFilter(device)
 				const businesses = business
 					.split(",")
 					.map((value) => value.trim())
@@ -301,7 +310,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 				if (businesses.length) filters.businesses = businesses
 				const grouping = GROUPINGS.find((item) => item.value === groupBy) ?? GROUPINGS[0]
 				if (surface === "dimensions" && grouping.categories.length) filters.categories = grouping.categories
-				if (device !== "all") filters.device_ids = [device]
 				const body: Record<string, unknown> = {
 					from: selectedRange.start,
 					to: selectedRange.end,
@@ -1882,10 +1890,23 @@ function sortByName<T extends { name: string }>(items: T[]) {
 }
 
 function deviceID(device: DeviceItem) {
-	return device.ID || device.id || ""
+	return device.id
 }
 function deviceName(device: DeviceItem) {
-	return device.SysName || device.sys_name || device.Name || device.name || deviceID(device)
+	return device.name || device.id
+}
+
+function flowObservationDevices(exporters: FlowExporterItem[]): DeviceItem[] {
+	const devices = new Map<string, DeviceItem>()
+	for (const exporter of exporters) {
+		if (!exporter.enabled || !exporter.device_id || devices.has(exporter.device_id)) continue
+		const label = exporter.device_name || exporter.device_host || exporter.device_id
+		devices.set(exporter.device_id, {
+			id: exporter.device_id,
+			name: label === exporter.device_host ? label : `${label} · ${exporter.device_host}`,
+		})
+	}
+	return [...devices.values()].sort((left, right) => left.name.localeCompare(right.name))
 }
 
 function downloadReport(response: FlowReportResponse, surface: FlowReportSurface) {
