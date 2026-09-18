@@ -133,24 +133,29 @@ only the process tunables implemented by that binary and is cached as an LKG.
 The Flow collector source/sampling plan and the Flow worker enrichment
 publication remain separate signed domain artifacts with their own version and
 ACK. The administrator UI exposes Agent CRUD, enrollment, credential rotation,
-binding, plans, ACK health and runs. It also displays the exact local
-activation command. Save its one-time token and public key to owner-readable
-files, then run:
+binding, plans, ACK health and runs. For a process on the Watchdog host it also
+displays one local activation command. Run it and paste the one-time token at
+the hidden prompt:
 
 ```bash
 sudo /opt/watchdog/current/deploy/systemd/activate-agent.sh \
-  snmp snmp-main /path/to/enrollment-token /path/to/agent-plan.pub \
-  http://127.0.0.1:8091
+  snmp snmp-main --plan-public-key PUBLIC_KEY_FROM_UI
 ```
 
-The command installs the packaged unit, writes only file paths and the stable
-identity to its environment file, then enables and restarts the service (the
-restart also upgrades a previously active static unit into Registry mode).
+The script uses the local API, installs the public trust key embedded in the
+command, creates the protected bootstrap files and installs the packaged unit.
+It then writes only file paths and the stable identity to its environment
+file, and enables and restarts the service (the restart also upgrades a
+previously active static unit into Registry mode). The explicit file-based form
+remains available under the UI's advanced section for remote automation.
 Registration atomically writes the long-lived credential with mode 0600 and
 deletes the consumed enrollment file. Flow worker activation deliberately
 refuses to run until `/etc/watchdog/flow/worker.env` exists; that file is the
 deployment-owned Kafka/ClickHouse/source-stream/publication bootstrap, not an
-Agent plan. The Gin process is never granted root access to invoke `systemctl`.
+Agent plan. Its Agent registry URL is separate from the Flow enrichment
+publication URL, so enrollment cannot silently switch a working bootstrap
+worker's data source. The Gin process is never granted root access to invoke
+`systemctl`.
 
 Use `Restart=on-failure` for each Agent-owned systemd service. A newly enrolled
 process may run on its validated bootstrap/default tunables before the first

@@ -354,7 +354,7 @@ function EnrollmentDialog({ open, initialKind, onClose }: { open: boolean; initi
 	const apiURL = new URL(api.buildURL("/api/v1"), window.location.origin).origin
 	const registryArgs = token ? registryArgumentsText(kind, agentID.trim(), apiURL) : ""
 	const serviceName = agentServiceName(kind)
-	const activationCommand = token ? agentActivationCommand(kind, agentID.trim(), apiURL) : ""
+	const activationCommand = token ? agentActivationCommand(kind, agentID.trim(), publicKey) : ""
 	return (
 		<Dialog open={open} onOpenChange={(value) => !value && onClose()}>
 			<DialogContent className="max-w-2xl">
@@ -440,18 +440,6 @@ function EnrollmentDialog({ open, initialKind, onClose }: { open: boolean; initi
 								</Label>
 								<InputCopy id="agent-enrollment-token" name="agent-enrollment-token" value={token} />
 							</div>
-							<div className="grid gap-1.5">
-								<Label>
-									<Trans>Agent plan public key</Trans> ({keyID || "-"})
-								</Label>
-								<InputCopy id="agent-plan-public-key" name="agent-plan-public-key" value={publicKey} />
-							</div>
-							<div className="grid gap-1.5">
-								<Label>
-									<Trans>Registry arguments</Trans>
-								</Label>
-								<InputCopy id="agent-registry-arguments" name="agent-registry-arguments" value={registryArgs} />
-							</div>
 							{activationCommand ? (
 								<div className="grid gap-1.5">
 									<Label>
@@ -460,25 +448,44 @@ function EnrollmentDialog({ open, initialKind, onClose }: { open: boolean; initi
 									<InputCopy id="agent-activation-command" name="agent-activation-command" value={activationCommand} />
 									<p className="text-xs text-muted-foreground">
 										<Trans>
-											Save the token and public key to owner-readable files first. The command installs the matching
-											systemd unit and enables it; it does not put either secret on the command line.
+											Run this command on the Watchdog host, then paste the one-time token when prompted. The token is
+											not echoed or stored in shell history.
 										</Trans>
 									</p>
 								</div>
 							) : null}
-							<p className="text-xs text-muted-foreground">
-								{serviceName ? (
-									<Trans>
-										Save the token and public key at the paths above, add the registry arguments to {serviceName}, then
-										enable and start that service.
-									</Trans>
-								) : (
-									<Trans>
-										Install the matching process, save the token and public key, then start it with the registry
-										arguments above.
-									</Trans>
-								)}
-							</p>
+							<details className="rounded-md border border-border p-3">
+								<summary className="cursor-pointer text-sm font-medium">
+									<Trans>Advanced manual setup</Trans>
+								</summary>
+								<div className="mt-3 grid gap-3">
+									<div className="grid gap-1.5">
+										<Label>
+											<Trans>Agent plan public key</Trans> ({keyID || "-"})
+										</Label>
+										<InputCopy id="agent-plan-public-key" name="agent-plan-public-key" value={publicKey} />
+									</div>
+									<div className="grid gap-1.5">
+										<Label>
+											<Trans>Registry arguments</Trans>
+										</Label>
+										<InputCopy id="agent-registry-arguments" name="agent-registry-arguments" value={registryArgs} />
+									</div>
+									<p className="text-xs text-muted-foreground">
+										{serviceName ? (
+											<Trans>
+												For automated deployment, save the token and public key to protected files, add the registry
+												arguments to {serviceName}, then enable that service.
+											</Trans>
+										) : (
+											<Trans>
+												Install the matching process, save the token and public key, then start it with the registry
+												arguments above.
+											</Trans>
+										)}
+									</p>
+								</div>
+							</details>
 						</div>
 					) : null}
 					{error ? <div className="text-sm text-destructive">{error}</div> : null}

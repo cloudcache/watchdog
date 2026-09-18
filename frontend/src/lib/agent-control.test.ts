@@ -18,7 +18,12 @@ test("agent capabilities match the production process contracts", () => {
 
 test("registry arguments keep lifecycle and domain configuration separate", () => {
 	const args = registryArguments("flow_worker", "flow-worker-a", "http://127.0.0.1:8091/")
-	assert.deepEqual(args.slice(0, 4), ["-control-plane-url", "http://127.0.0.1:8091", "-worker-id", "flow-worker-a"])
+	assert.deepEqual(args.slice(0, 4), [
+		"-agent-control-plane-url",
+		"http://127.0.0.1:8091",
+		"-worker-id",
+		"flow-worker-a",
+	])
 	assert.ok(args.includes("-agent-enrollment-token-file"))
 	assert.ok(args.includes("/var/lib/watchdog/agents/flow-worker-a/enrollment"))
 	assert.ok(!args.includes("-bootstrap-plan"))
@@ -27,10 +32,11 @@ test("registry arguments keep lifecycle and domain configuration separate", () =
 
 test("activation command delegates process ownership to the host service manager", () => {
 	assert.equal(
-		agentActivationCommand("snmp", "snmp-main", "http://127.0.0.1:8091/"),
-		"sudo /opt/watchdog/current/deploy/systemd/activate-agent.sh snmp snmp-main /path/to/enrollment-token /path/to/agent-plan.pub http://127.0.0.1:8091"
+		agentActivationCommand("snmp", "snmp-main", "lgP7WFNFsIV8ENJoce9DmKruygubb8c+0VbxIW74fcE="),
+		"sudo /opt/watchdog/current/deploy/systemd/activate-agent.sh snmp snmp-main --plan-public-key lgP7WFNFsIV8ENJoce9DmKruygubb8c+0VbxIW74fcE="
 	)
-	assert.equal(agentActivationCommand("probe", "probe-main", "http://127.0.0.1:8091"), "")
+	assert.equal(agentActivationCommand("probe", "probe-main", "lgP7WFNFsIV8ENJoce9DmKruygubb8c+0VbxIW74fcE="), "")
+	assert.equal(agentActivationCommand("snmp", "snmp-main", "not-a-public-key"), "")
 })
 
 test("typed plan defaults use only fields implemented by each process", () => {

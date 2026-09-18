@@ -32,7 +32,8 @@ export function defaultAgentID(kind: string) {
 
 export function registryArguments(kind: string, agentID: string, apiURL: string) {
 	const root = `/var/lib/watchdog/agents/${agentID}`
-	const controlFlag = kind === "system" ? "-hub-url" : "-control-plane-url"
+	const controlFlag =
+		kind === "system" ? "-hub-url" : kind === "flow_worker" ? "-agent-control-plane-url" : "-control-plane-url"
 	const identityFlag = kind === "flow_worker" ? "-worker-id" : "-agent-id"
 	return [
 		controlFlag,
@@ -50,17 +51,18 @@ export function registryArguments(kind: string, agentID: string, apiURL: string)
 	]
 }
 
-export function agentActivationCommand(kind: string, agentID: string, apiURL: string) {
+export function agentActivationCommand(kind: string, agentID: string, publicKey: string) {
 	const serviceName = agentServiceName(kind)
 	if (!serviceName) return ""
+	const normalizedPublicKey = publicKey.trim()
+	if (!/^[A-Za-z0-9+/]{43}=$/.test(normalizedPublicKey)) return ""
 	return [
 		"sudo",
 		"/opt/watchdog/current/deploy/systemd/activate-agent.sh",
 		kind,
 		agentID,
-		"/path/to/enrollment-token",
-		"/path/to/agent-plan.pub",
-		apiURL.replace(/\/+$/, ""),
+		"--plan-public-key",
+		normalizedPublicKey,
 	].join(" ")
 }
 

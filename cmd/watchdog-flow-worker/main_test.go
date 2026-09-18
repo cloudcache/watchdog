@@ -130,6 +130,32 @@ func TestBuildVersionHTTPClientRejectsCleartextRemoteHost(t *testing.T) {
 	}
 }
 
+func TestAgentControlPlaneDoesNotEnableRemoteEnrichment(t *testing.T) {
+	opt := options{
+		agentControlPlaneURL: "http://127.0.0.1:8091",
+		agentTokenFile:       "/var/lib/watchdog/agents/flow-worker-a/credential",
+		agentPlanPublicKey:   "/etc/watchdog/agents/agent-plan.pub",
+		workerID:             "flow-worker-a",
+	}
+	runtime := flowWorkerAgentRuntime(opt, "boot-a")
+	if runtime.BaseURL != opt.agentControlPlaneURL {
+		t.Fatalf("agent control plane=%q want %q", runtime.BaseURL, opt.agentControlPlaneURL)
+	}
+	if hasRemoteVersionOptions(opt) {
+		t.Fatal("agent registry bootstrap unexpectedly enabled remote enrichment")
+	}
+}
+
+func TestSharedControlPlaneRemainsBackwardCompatible(t *testing.T) {
+	opt := options{
+		controlPlaneURL: "https://watchdog.example", agentPlanPublicKey: "/etc/watchdog/agents/agent-plan.pub",
+		workerID: "flow-worker-a",
+	}
+	if runtime := flowWorkerAgentRuntime(opt, "boot-a"); runtime.BaseURL != opt.controlPlaneURL {
+		t.Fatalf("legacy agent control plane=%q want %q", runtime.BaseURL, opt.controlPlaneURL)
+	}
+}
+
 func TestLoadRawDeleteBarrierPersistsThenFallsBackToLKG(t *testing.T) {
 	directory := t.TempDir()
 	token := filepath.Join(directory, "agent-token")

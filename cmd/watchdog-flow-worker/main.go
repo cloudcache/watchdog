@@ -52,7 +52,8 @@ func (values *stringList) Set(value string) error {
 type options struct {
 	planFiles, versionPublications, geoBundles                    stringList
 	planPublicKey, workerID                                       string
-	controlPlaneURL, agentTokenFile, versionLKGDir                string
+	controlPlaneURL, agentControlPlaneURL, agentTokenFile         string
+	versionLKGDir                                                 string
 	agentEnrollmentFile, agentPlanPublicKey, agentPlanLKG         string
 	controlPlaneCAFile, controlPlaneCertFile, controlPlaneKeyFile string
 	controlPlaneServerName                                        string
@@ -86,6 +87,7 @@ func main() {
 	flag.Var(&opt.geoBundles, "geo-bundle", "legacy JSON dimension Geo bundle directory; optional for WADS-only bootstrap, repeat oldest to newest")
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
 	flag.StringVar(&opt.controlPlaneURL, "control-plane-url", "", "Watchdog API base URL for signed enrichment publications")
+	flag.StringVar(&opt.agentControlPlaneURL, "agent-control-plane-url", "", "Watchdog API base URL for agent registration, plan, ACK, and health")
 	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_worker machine token")
 	flag.StringVar(&opt.agentEnrollmentFile, "agent-enrollment-token-file", "", "one-time enrollment token file")
 	flag.StringVar(&opt.agentPlanPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
@@ -362,8 +364,14 @@ func flowWorkerAgentRuntime(opt options, bootID string) agentplan.RuntimeConfig 
 	if strings.TrimSpace(opt.agentPlanPublicKey) == "" && strings.TrimSpace(opt.agentPlanLKG) == "" && strings.TrimSpace(opt.agentEnrollmentFile) == "" && !opt.agentPlanCheck {
 		return agentplan.RuntimeConfig{}
 	}
+	agentControlPlaneURL := strings.TrimSpace(opt.agentControlPlaneURL)
+	if agentControlPlaneURL == "" {
+		// Backward compatibility for workers that used the original shared
+		// control-plane URL for both agent lifecycle and enrichment delivery.
+		agentControlPlaneURL = strings.TrimSpace(opt.controlPlaneURL)
+	}
 	return agentplan.RuntimeConfig{
-		BaseURL: opt.controlPlaneURL, AgentID: strings.TrimSpace(opt.workerID), Name: strings.TrimSpace(opt.workerID),
+		BaseURL: agentControlPlaneURL, AgentID: strings.TrimSpace(opt.workerID), Name: strings.TrimSpace(opt.workerID),
 		Kind: "flow_worker", Role: "flow_worker", Mode: "push", SoftwareVersion: "watchdog-flow-worker-v1",
 		APIVersion: "v1", Capabilities: []string{"flow.write.clickhouse/v1"}, TokenFile: opt.agentTokenFile,
 		EnrollmentFile: opt.agentEnrollmentFile, PublicKeyFile: opt.agentPlanPublicKey,
@@ -635,7 +643,7 @@ func buildVersionHTTPClient(opt options, identity flowworker.VersionWorkerIdenti
 }
 
 func hasRemoteVersionOptions(opt options) bool {
-	return strings.TrimSpace(opt.agentTokenFile) != "" || strings.TrimSpace(opt.versionLKGDir) != "" ||
+	return strings.TrimSpace(opt.versionLKGDir) != "" ||
 		strings.TrimSpace(opt.controlPlaneCAFile) != "" || strings.TrimSpace(opt.controlPlaneCertFile) != "" ||
 		strings.TrimSpace(opt.controlPlaneKeyFile) != "" || strings.TrimSpace(opt.controlPlaneServerName) != ""
 }

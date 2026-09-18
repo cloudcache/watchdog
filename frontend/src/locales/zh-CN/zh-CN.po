@@ -8450,3 +8450,15 @@ msgstr "设备列表来自统一网络设备清单；Flow exporter 身份映射�
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Unclassified Flow ingestion version {0} published"
 msgstr "未分类 Flow 采集版本 {0} 已发布"
+
+#: src/components/routes/agents.tsx
+msgid "Advanced manual setup"
+msgstr "高级手工接入"
+
+#: src/components/routes/agents.tsx
+msgid "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
+msgstr "在 Watchdog 主机上运行此命令，然后按提示粘贴一次性令牌。令牌不会回显，也不会写入命令历史。"
+
+#: src/components/routes/agents.tsx
+msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
+msgstr "自动化部署时，将令牌和公钥保存到受保护文件，把注册参数加入 {serviceName}，然后启用该服务。"

@@ -3,24 +3,75 @@ set -euo pipefail
 
 usage() {
 	cat >&2 <<'EOF'
-usage: activate-agent.sh KIND AGENT_ID ENROLLMENT_TOKEN_FILE PUBLIC_KEY_FILE [CONTROL_PLANE_URL]
+usage:
+  activate-agent.sh KIND AGENT_ID [CONTROL_PLANE_URL]
+  activate-agent.sh KIND AGENT_ID --plan-public-key BASE64 [CONTROL_PLANE_URL]
+  activate-agent.sh KIND AGENT_ID ENROLLMENT_TOKEN_FILE PUBLIC_KEY_FILE [CONTROL_PLANE_URL]
 
 KIND is one of: system, snmp, flow_collect, flow_worker.
-The enrollment token and public key must be copied from the administrator UI
-to owner-readable files before invoking this command. Secrets are never passed
-as command-line values.
+The short form prompts for the one-time token without echoing it. It reuses an
+installed Watchdog plan public key, or prompts for the public key on a new host.
+The long form is retained for non-interactive automation. Secrets are never
+passed as command-line values.
 EOF
 	exit 2
 }
 
-[[ $# -ge 4 && $# -le 5 ]] || usage
 [[ ${EUID} -eq 0 ]] || { echo "activate-agent.sh must run as root" >&2; exit 1; }
 
-kind=$1
-agent_id=$2
-enrollment_source=$3
-public_key_source=$4
-control_plane_url=${5:-http://127.0.0.1:8091}
+temp_root=
+env_tmp=
+cleanup() {
+	[[ -z $env_tmp ]] || rm -f "$env_tmp"
+	[[ -z $temp_root ]] || rm -rf "$temp_root"
+}
+trap cleanup EXIT
+
+interactive_bootstrap() {
+	control_plane_url=$1
+	public_key=${2:-}
+	temp_root=$(mktemp -d)
+	enrollment_source="$temp_root/enrollment"
+	public_key_source="$temp_root/agent-plan.pub"
+	IFS= read -r -s -p "One-time enrollment token: " enrollment_token
+	printf '\n'
+	[[ -n $enrollment_token ]] || { echo "enrollment token is empty" >&2; exit 2; }
+	printf '%s\n' "$enrollment_token" >"$enrollment_source"
+	unset enrollment_token
+	if [[ -n $public_key ]]; then
+		printf '%s\n' "$public_key" >"$public_key_source"
+		unset public_key
+	elif [[ -s /etc/watchdog/agents/agent-plan.pub ]]; then
+		public_key_source=/etc/watchdog/agents/agent-plan.pub
+	else
+		IFS= read -r -p "Agent plan public key: " public_key
+		[[ -n $public_key ]] || { echo "agent plan public key is empty" >&2; exit 2; }
+		printf '%s\n' "$public_key" >"$public_key_source"
+		unset public_key
+	fi
+}
+
+case $# in
+	2|3)
+		kind=$1
+		agent_id=$2
+		control_plane_url=${3:-http://127.0.0.1:8091}
+		interactive_bootstrap "$control_plane_url"
+		;;
+	4|5)
+		kind=$1
+		agent_id=$2
+		if [[ $3 == --plan-public-key ]]; then
+			control_plane_url=${5:-http://127.0.0.1:8091}
+			interactive_bootstrap "$control_plane_url" "$4"
+		else
+			enrollment_source=$3
+			public_key_source=$4
+			control_plane_url=${5:-http://127.0.0.1:8091}
+		fi
+		;;
+	*) usage ;;
+esac
 
 [[ $agent_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,25}$ ]] || {
 	echo "agent id must contain 1..26 safe characters" >&2
@@ -51,7 +102,10 @@ case $kind in
 		;;
 	flow_worker)
 		service=watchdog-flow-worker
-		control_flag=-control-plane-url
+		# Agent lifecycle and Flow enrichment publication delivery are separate
+		# contracts. Do not switch a working bootstrap worker into remote
+		# enrichment mode merely by enrolling it in the Agent registry.
+		control_flag=-agent-control-plane-url
 		identity_flag=-worker-id
 		[[ -s /etc/watchdog/flow/worker.env ]] || {
 			echo "flow worker remains disabled: /etc/watchdog/flow/worker.env is missing" >&2
@@ -76,17 +130,18 @@ env_target="$config_dir/$service.env"
 install -d -m 0750 -o watchdog -g watchdog "$state_dir"
 install -d -m 0755 -o root -g root "$config_dir"
 install -m 0600 -o watchdog -g watchdog "$enrollment_source" "$enrollment_target"
-install -m 0644 -o root -g root "$public_key_source" "$config_dir/agent-plan.pub"
+if [[ $(readlink -f "$public_key_source") != $(readlink -f "$config_dir/agent-plan.pub" 2>/dev/null || true) ]]; then
+	install -m 0644 -o root -g root "$public_key_source" "$config_dir/agent-plan.pub"
+fi
 
 env_tmp=$(mktemp "$config_dir/.${service}.env.XXXXXX")
-trap 'rm -f "$env_tmp"' EXIT
 printf 'WATCHDOG_AGENT_ARGS="%s %s %s %s -agent-token-file %s -agent-enrollment-token-file %s -agent-plan-public-key %s -agent-plan-lkg %s"\n' \
 	"$control_flag" "$control_plane_url" "$identity_flag" "$agent_id" "$credential_target" "$enrollment_target" \
 	"$config_dir/agent-plan.pub" "$lkg_target" >"$env_tmp"
 chmod 0644 "$env_tmp"
 chown root:root "$env_tmp"
 mv -f "$env_tmp" "$env_target"
-trap - EXIT
+env_tmp=
 
 install -m 0644 -o root -g root "$unit_source" "/etc/systemd/system/$service.service"
 systemctl daemon-reload

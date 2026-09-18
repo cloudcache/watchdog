@@ -9419,3 +9419,15 @@ msgstr "This list comes from the network device inventory. Flow exporter identit
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Unclassified Flow ingestion version {0} published"
 msgstr "Unclassified Flow ingestion version {0} published"
+
+#: src/components/routes/agents.tsx
+msgid "Advanced manual setup"
+msgstr "Advanced manual setup"
+
+#: src/components/routes/agents.tsx
+msgid "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
+msgstr "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
+
+#: src/components/routes/agents.tsx
+msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
+msgstr "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
