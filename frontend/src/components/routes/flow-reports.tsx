@@ -25,8 +25,8 @@ import {
 	FLOW_REPORT_RESIDUALS,
 	FLOW_REPORT_TIME_PRESETS,
 	flowReportKind,
+	initialFlowReportDisplayMode,
 	initialFlowReportRange,
-	mirrorFlowDirectionSeries,
 	panelJointPoints,
 	panelPoints,
 	reportCategoryTotals,
@@ -205,7 +205,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 		queryState("metric", surface === "vpn" ? "estimated_bytes" : "estimated_bps")
 	)
 	const [displayMode, setDisplayMode] = useState<FlowReportDisplayMode>(
-		() => queryState("display", "value") as FlowReportDisplayMode
+		() => initialFlowReportDisplayMode(typeof window === "undefined" ? "" : window.location.search)
 	)
 	const [groupBy, setGroupBy] = useState(() => queryState("group", "category"))
 	const [topN, setTopN] = useState(() => boundedNumber(queryState("top", "20"), 1, 100, 20))
@@ -552,7 +552,6 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							options={[
 								["value", t`Traffic value`],
 								["share", t`Traffic share`],
-								["difference", t`Inbound − outbound`],
 							]}
 						/>
 						{surface === "dimensions" ? (
@@ -820,7 +819,7 @@ function OverviewReport({
 						<span>↓ {formatMetric(inboundCurrent, totalPanelUnit)}</span>
 						<span>↑ {formatMetric(outboundCurrent, totalPanelUnit)}</span>
 					</div>
-					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} mirrorSecond />
+					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} />
 				</CardContent>
 			</Card>
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -894,7 +893,6 @@ function CategoryCard({
 				</div>
 				<ReportChart
 					compact
-					mirrorSecond
 					series={
 						[inSeries && { ...inSeries, name: t`Inbound` }, outSeries && { ...outSeries, name: t`Outbound` }].filter(
 							Boolean
@@ -1100,16 +1098,9 @@ function DimensionReport({ response }: { response: FlowReportResponse }) {
 		}))
 	const inbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_in")))
 	const outbound = labelSeries(buildReportSeries(reportPanel(response, "dimension_out")))
-	const transformed = transformReportSeries(inbound, outbound, response.data.display_mode)
-	if (response.data.display_mode === "difference")
-		return (
-			<ChartCard
-				title={t`Inbound − outbound`}
-				panel={reportPanel(response, "dimension_in")}
-				series={transformed.difference}
-			/>
-		)
-	const unit = response.data.display_mode === "share" ? "ratio" : undefined
+	const displayMode = response.data.display_mode === "share" ? "share" : "value"
+	const transformed = transformReportSeries(inbound, outbound, displayMode)
+	const unit = displayMode === "share" ? "ratio" : undefined
 	return (
 		<div className="grid gap-4">
 			<ChartCard
@@ -1605,12 +1596,10 @@ function ReportChart({
 	series,
 	unit,
 	compact = false,
-	mirrorSecond = false,
 }: {
 	series: FlowReportSeries[]
 	unit?: string
 	compact?: boolean
-	mirrorSecond?: boolean
 }) {
 	const ref = useRef<HTMLDivElement>(null)
 	const instance = useRef<ReturnType<typeof createLineChart> | null>(null)
@@ -1622,16 +1611,15 @@ function ReportChart({
 			unit,
 		}))
 		instance.current = createLineChart(ref.current, {
-			series: mirrorSecond ? mirrorFlowDirectionSeries(chartSeries) : chartSeries,
+			series: chartSeries,
 			yFormatter: (value) => formatMetric(value ?? 0, unit),
 			colors: TRAFFIC_DIRECTION_COLORS,
-			absoluteValues: mirrorSecond,
 		})
 		return () => {
 			disposeChart(instance.current)
 			instance.current = null
 		}
-	}, [compact, mirrorSecond, series, unit])
+	}, [compact, series, unit])
 	if (series.every((item) => item.values.length === 0))
 		return (
 			<div className={cn("grid place-items-center text-sm text-muted-foreground", compact ? "h-44" : "h-72")}>

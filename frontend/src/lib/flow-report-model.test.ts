@@ -6,8 +6,8 @@ import {
 	FLOW_REPORT_CATEGORIES,
 	FLOW_REPORT_URL_STATE_VERSION,
 	flowReportCategoryLabel,
+	initialFlowReportDisplayMode,
 	initialFlowReportRange,
-	mirrorFlowDirectionSeries,
 	reportDirectionTotals,
 	reportPanelUnit,
 	reportSeriesStats,
@@ -23,15 +23,12 @@ test("legacy implicit one-hour report URLs migrate to the 24-hour default", () =
 	assert.equal(initialFlowReportRange("?range=6h"), "6h")
 })
 
-test("direction chart keeps timestamps and mirrors outbound below zero", () => {
-	const mirrored = mirrorFlowDirectionSeries([
-		{ name: "Inbound", values: [{ time: 10, value: 3 }] },
-		{ name: "Outbound", values: [{ time: 10, value: 7 }] },
-	])
-	assert.deepEqual(mirrored, [
-		{ name: "Inbound", values: [{ time: 10, value: 3 }] },
-		{ name: "Outbound", values: [{ time: 10, value: -7 }] },
-	])
+test("report display mode never restores the removed signed-difference view", () => {
+	assert.equal(initialFlowReportDisplayMode(""), "value")
+	assert.equal(initialFlowReportDisplayMode("?display=value"), "value")
+	assert.equal(initialFlowReportDisplayMode("?display=share"), "share")
+	assert.equal(initialFlowReportDisplayMode("?display=difference"), "value")
+	assert.equal(initialFlowReportDisplayMode("?display=unexpected"), "value")
 })
 
 test("report panel unit falls back to the embedded metric definition", () => {
@@ -171,7 +168,7 @@ test("report series displays immutable geography names instead of storage IDs", 
 	assert.equal(buildReportSeries(panel)[0]?.name, "Jiangsu")
 })
 
-test("share uses a same-direction denominator and difference is signed inbound minus outbound", () => {
+test("share uses a same-direction denominator without changing traffic direction", () => {
 	const inbound = [
 		{ name: "a", values: [{ time: 1, value: 30 }] },
 		{ name: "b", values: [{ time: 1, value: 70 }] },
@@ -192,9 +189,6 @@ test("share uses a same-direction denominator and difference is signed inbound m
 		"share"
 	)
 	assert.deepEqual(zero.inbound[0].values, [], "a zero denominator must remain unknown rather than becoming 0%")
-	const difference = transformReportSeries(inbound, outbound, "difference")
-	assert.equal(difference.difference.find((series) => series.name === "a")?.values[0].value, -20)
-	assert.equal(difference.difference.find((series) => series.name === "b")?.values[0].value, 20)
 })
 
 test("direction total recognizes the provider's stable labels", () => {

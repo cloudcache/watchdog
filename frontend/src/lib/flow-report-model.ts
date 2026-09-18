@@ -44,7 +44,7 @@ export type FlowEndpointCategorySummary = {
 
 export type FlowReportKind = "overview" | "dimensions" | "endpoints" | "overseas" | "vpn"
 export type FlowReportSurface = "overview" | "dimensions" | "source" | "destination" | "overseas" | "vpn"
-export type FlowReportDisplayMode = "value" | "share" | "difference"
+export type FlowReportDisplayMode = "value" | "share"
 
 export type FlowReportPanelData = {
 	points?: (FlowPoint | FlowJointPoint)[] | null
@@ -164,17 +164,9 @@ export function initialFlowReportRange(search: string): string {
 	return range
 }
 
-// Plot inbound above and outbound below the zero axis. Values remain absolute
-// in labels/tooltips, but the signed chart coordinates keep the two directions
-// visibly separate even when their magnitudes are similar.
-export function mirrorFlowDirectionSeries(series: FlowReportSeries[]): FlowReportSeries[] {
-	return series.map((item, index) => ({
-		...item,
-		values: item.values.map((point) => ({
-			...point,
-			value: index === 1 ? -Math.abs(point.value) : Math.abs(point.value),
-		})),
-	}))
+export function initialFlowReportDisplayMode(search: string): FlowReportDisplayMode {
+	const mode = new URLSearchParams(search).get("display")
+	return mode === "share" ? "share" : "value"
 }
 
 export const FLOW_REPORT_CATEGORIES = [
@@ -363,25 +355,9 @@ export function transformReportSeries(
 	inbound: FlowReportSeries[],
 	outbound: FlowReportSeries[],
 	mode: FlowReportDisplayMode
-): { inbound: FlowReportSeries[]; outbound: FlowReportSeries[]; difference: FlowReportSeries[] } {
-	if (mode === "value") return { inbound, outbound, difference: [] }
-	if (mode === "share") {
-		return { inbound: shareSeries(inbound), outbound: shareSeries(outbound), difference: [] }
-	}
-	const names = new Set([...inbound.map((series) => series.name), ...outbound.map((series) => series.name)])
-	const inMap = seriesPointMap(inbound)
-	const outMap = seriesPointMap(outbound)
-	const difference: FlowReportSeries[] = []
-	for (const name of names) {
-		const times = new Set([...(inMap.get(name)?.keys() ?? []), ...(outMap.get(name)?.keys() ?? [])])
-		difference.push({
-			name,
-			values: [...times]
-				.sort((a, b) => a - b)
-				.map((time) => ({ time, value: (inMap.get(name)?.get(time) ?? 0) - (outMap.get(name)?.get(time) ?? 0) })),
-		})
-	}
-	return { inbound: [], outbound: [], difference: difference.sort((a, b) => seriesTotal(b) - seriesTotal(a)) }
+): { inbound: FlowReportSeries[]; outbound: FlowReportSeries[] } {
+	if (mode === "share") return { inbound: shareSeries(inbound), outbound: shareSeries(outbound) }
+	return { inbound, outbound }
 }
 
 export function reportCategoryTotals(panel?: FlowReportPanel): Map<string, number> {
@@ -409,10 +385,6 @@ function shareSeries(series: FlowReportSeries[]): FlowReportSeries[] {
 			return total > 0 ? [{ ...point, value: point.value / total }] : []
 		}),
 	}))
-}
-
-function seriesPointMap(series: FlowReportSeries[]) {
-	return new Map(series.map((item) => [item.name, new Map(item.values.map((point) => [point.time, point.value]))]))
 }
 
 function seriesTotal(series: FlowReportSeries) {
