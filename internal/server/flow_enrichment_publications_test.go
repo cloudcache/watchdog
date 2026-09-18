@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,40 +16,69 @@ import (
 
 func TestNormalizeFlowClassificationProfileCanonicalizesDefinition(t *testing.T) {
 	draft, digest, err := normalizeFlowClassificationProfile(flowClassificationProfileDraft{
-		HomeProvince: " 330000 ", HomeCity: " 330100 ",
-		HomeISPIDs: []uint16{4, 3, 4}, HomeASNs: []uint32{4812, 4134, 4812},
+		DeviceProfiles: []flowClassificationDeviceProfileDraft{{
+			DeviceID: " device-b ", SourcePrefixIDs: []string{" prefix-b ", "prefix-a", "prefix-b"},
+		}, {
+			DeviceID: "device-a", SourcePrefixIDs: []string{"prefix-c"},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.HomeProvince != "330000" || draft.HomeCity != "330100" ||
-		len(draft.HomeISPIDs) != 2 || draft.HomeISPIDs[0] != 3 || draft.HomeISPIDs[1] != 4 ||
-		len(draft.HomeASNs) != 2 || draft.HomeASNs[0] != 4134 || draft.HomeASNs[1] != 4812 ||
-		draft.InternalPolicy != flowdimension.RecordPolicyCount || draft.TransitPolicy != flowdimension.RecordPolicyCount ||
+	if len(draft.DeviceProfiles) != 2 || draft.DeviceProfiles[0].DeviceID != "device-a" ||
+		draft.DeviceProfiles[1].DeviceID != "device-b" || len(draft.DeviceProfiles[1].SourcePrefixIDs) != 2 ||
+		draft.DeviceProfiles[1].SourcePrefixIDs[0] != "prefix-a" || draft.DeviceProfiles[1].SourcePrefixIDs[1] != "prefix-b" ||
 		!flowSHA256("sha256:"+digest) {
 		t.Fatalf("profile was not canonicalized: %+v digest=%q", draft, digest)
 	}
 
 	again, againDigest, err := normalizeFlowClassificationProfile(draft)
-	if err != nil || againDigest != digest || len(again.HomeISPIDs) != 2 || len(again.HomeASNs) != 2 {
+	if err != nil || againDigest != digest || len(again.DeviceProfiles) != 2 || len(again.DeviceProfiles[1].SourcePrefixIDs) != 2 {
 		t.Fatalf("normalization is not idempotent: %+v digest=%q err=%v", again, againDigest, err)
 	}
 }
 
-func TestNormalizeFlowClassificationProfileRejectsInvalidHome(t *testing.T) {
+func TestNormalizeFlowClassificationProfileRejectsInvalidDeviceSources(t *testing.T) {
 	for _, draft := range []flowClassificationProfileDraft{
-		{InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeProvince: "330000", HomeISPIDs: []uint16{1}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeProvince: "330000", HomeCity: "330100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeProvince: "330000", HomeCity: "330100", HomeASNs: []uint32{4134}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeProvince: "330100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeProvince: "330000", HomeCity: "320100", InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{HomeISPIDs: []uint16{0}, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount},
-		{InternalPolicy: "ignore", TransitPolicy: flowdimension.RecordPolicyCount},
+		{},
+		{DeviceProfiles: []flowClassificationDeviceProfileDraft{{DeviceID: "device-a"}}},
+		{DeviceProfiles: []flowClassificationDeviceProfileDraft{{DeviceID: "", SourcePrefixIDs: []string{"prefix-a"}}}},
+		{DeviceProfiles: []flowClassificationDeviceProfileDraft{{DeviceID: "device-a", SourcePrefixIDs: []string{"prefix-a"}}, {DeviceID: "device-a", SourcePrefixIDs: []string{"prefix-b"}}}},
 	} {
 		if _, _, err := normalizeFlowClassificationProfile(draft); err == nil {
 			t.Fatalf("invalid profile accepted: %+v", draft)
 		}
+	}
+}
+
+func TestLoadFlowAddressSnapshotPrefixesUsesPublishedWADS(t *testing.T) {
+	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: "snapshot-prefix-catalog", Version: 1,
+		EffectiveFrom: time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC),
+		Prefixes:      []flowdimension.PrefixDefinition{{ID: "customer-prefix", CIDR: "10.0.0.0/8", Labels: map[string]string{"business": "customer"}}},
+	}, flowdimension.CompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := flowdimension.BuildAddressSnapshot(flowdimension.AddressSnapshotBuildInput{
+		Definition: definition, BuilderVersion: "server-test",
+	}, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "address-snapshot.wads")
+	if err := os.WriteFile(path, built.Data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := loadFlowAddressSnapshotPrefixes(path, built.ChecksumSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes["customer-prefix"]; got.CIDR != "10.0.0.0/8" || got.HasCity || got.HasOperator {
+		t.Fatalf("published prefix = %+v", got)
+	}
+	if _, err := loadFlowAddressSnapshotPrefixes(path, "sha256:"+strings.Repeat("0", 64)); err == nil {
+		t.Fatal("checksum mismatch was accepted")
 	}
 }
 

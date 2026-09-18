@@ -8190,3 +8190,64 @@ msgstr "配置本地地址段"
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Rebuild and activate the address snapshot after changing local prefixes."
 msgstr "修改本地地址段后，请重新生成并激活地址快照。"
+
+#. placeholder {0}: profile.device_profiles.length
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "{0} devices configured"
+msgstr "已配置 {0} 台设备"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Complete the province, city, and on-net operators for every configured device"
+msgstr "请补全每台已配置设备的省份、城市和本网运营商"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Configure at least one Flow observation device"
+msgstr "请至少配置一台 Flow 观测设备"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow observation device"
+msgstr "Flow 观测设备"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Province, city, and on-net operators belong to this observation device. Other devices keep their own settings."
+msgstr "省份、城市和本网运营商仅属于当前观测设备，其他设备保留各自配置。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Remove device classification"
+msgstr "移除设备分类配置"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the device that exports Flow"
+msgstr "选择发送 Flow 的设备"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select at least one customer source prefix for every configured device"
+msgstr "请为每台已配置设备至少选择一个客户源地址段"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot."
+msgstr "只需选择该设备的客户源地址段；省份、地市和运营商均从配对的地址快照读取。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source prefixes"
+msgstr "客户源地址段"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories."
+msgstr "这些 CIDR 同时用于识别流入和流出方向，其地址库属性用于计算六类流量。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No customer source prefixes are available in the address library."
+msgstr "地址库中没有可用的客户源地址段。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Maintain the CIDR, geography, and operator in the address library, then select the CIDR here for each Flow device."
+msgstr "CIDR、地域和运营商统一在地址库维护；这里只为每台 Flow 设备选择对应地址段。"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Manage address prefixes"
+msgstr "维护地址段"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Rebuild and activate the address snapshot after changing address attributes."
+msgstr "地址属性修改后，请重新生成并激活地址快照。"

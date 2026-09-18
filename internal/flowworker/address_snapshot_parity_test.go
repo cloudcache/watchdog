@@ -73,7 +73,7 @@ func TestAddressSnapshotMatchesLegacyReaderOnSharedCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	classificationData, err := json.Marshal(flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 1, EffectiveFrom: effective, DimensionSnapshotID: "dimension-parity",
+		SchemaVersion: flowdimension.LegacyClassificationSchemaVersion, Version: 1, EffectiveFrom: effective, DimensionSnapshotID: "dimension-parity",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})

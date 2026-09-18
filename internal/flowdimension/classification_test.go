@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 
 func TestDecodeAndCompileClassificationBundleVerifiesWireContract(t *testing.T) {
 	bundle := ClassificationBundle{
-		SchemaVersion: ClassificationSchemaVersion, Version: 7,
+		SchemaVersion: LegacyClassificationSchemaVersion, Version: 7,
 		EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-7",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3, 4}, HomeASNs: []uint32{4134, 4812},
 		OverseasIncludesHMT: true, InternalPolicy: RecordPolicyDrop, TransitPolicy: RecordPolicyCount,
@@ -70,6 +72,155 @@ func TestEncodeClassificationBundleCanonicalizesSets(t *testing.T) {
 	}
 	if !strings.Contains(string(empty), `"home_isp_ids":[]`) || !strings.Contains(string(empty), `"home_asns":[]`) {
 		t.Fatalf("empty classification sets are not JSON arrays: %s", empty)
+	}
+}
+
+func TestClassificationSchemaV2SelectsPerDeviceContext(t *testing.T) {
+	definition := ClassificationDefinition{
+		Version: 9, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-9",
+		DeviceProfiles: []ClassificationDeviceProfile{
+			{DeviceID: "device-zhejiang", SourcePrefixes: []ClassificationSourcePrefix{{ID: "zhejiang-customer", CIDR: "10.0.0.0/8"}}},
+			{DeviceID: "device-jiangsu", SourcePrefixes: []ClassificationSourcePrefix{{ID: "jiangsu-customer", CIDR: "172.16.0.0/12"}}},
+		},
+		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	}
+	data, checksum, err := EncodeClassificationBundle(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"schema_version":2`) || !strings.Contains(string(data), `"device_profiles"`) {
+		t.Fatalf("schema v2 bundle = %s", data)
+	}
+	snapshot, err := DecodeAndCompileClassificationBundle(data, checksum, ClassificationCompileLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := netip.MustParseAddr("10.1.2.3")
+	destination := netip.MustParseAddr("203.0.113.20")
+	if direction, ok := snapshot.DeviceDirection("device-zhejiang", source, destination); !ok || direction != DirectionOut {
+		t.Fatalf("zhejiang direction = %q, configured=%v", direction, ok)
+	}
+	if direction, ok := snapshot.DeviceDirection("device-jiangsu", source, destination); !ok || direction != DirectionTransit {
+		t.Fatalf("jiangsu direction = %q, configured=%v", direction, ok)
+	}
+	if direction, ok := snapshot.DeviceDirection("device-jiangsu", destination, netip.MustParseAddr("172.16.1.1")); !ok || direction != DirectionIn {
+		t.Fatalf("jiangsu inbound direction = %q, configured=%v", direction, ok)
+	}
+	if direction, ok := snapshot.DeviceDirection("missing-device", source, destination); ok || direction != DirectionAmbiguous {
+		t.Fatalf("missing direction = %q, configured=%v", direction, ok)
+	}
+	local := GeoInfo{Country: "CN", AdminCode: "330100", ISPID: 3, ASN: 4134}
+	remote := GeoInfo{Country: "CN", AdminCode: "330100", ISPID: 3, ASN: 4134}
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, remote); got != CategoryOnNetLocalCity {
+		t.Fatalf("zhejiang category = %q", got)
+	}
+	remote.AdminCode = "320100"
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, remote); got != CategoryOnNetCrossProvince {
+		t.Fatalf("cross-province category = %q", got)
+	}
+	remote.Country = "HK"
+	remote.AdminCode = "810000"
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, remote); got != CategoryOverseas {
+		t.Fatalf("cross-border category = %q", got)
+	}
+	if got := snapshot.ClassifyResolvedEndpoints("missing-device", DirectionOut, local, remote); got != CategoryUnknown {
+		t.Fatalf("missing device category = %q", got)
+	}
+	if got := snapshot.Classify(DirectionOut, remote); got != CategoryUnknown {
+		t.Fatalf("v2 global fallback category = %q", got)
+	}
+}
+
+func TestClassificationSchemaV2DirectionCoversIPv4AndIPv6(t *testing.T) {
+	snapshot, err := CompileClassification(ClassificationDefinition{
+		Version: 10, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-10",
+		DeviceProfiles: []ClassificationDeviceProfile{{DeviceID: "device-a", SourcePrefixes: []ClassificationSourcePrefix{
+			{ID: "customer-v4", CIDR: "10.0.0.0/8"},
+			{ID: "customer-v6", CIDR: "2001:db8:100::/48"},
+		}}},
+		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		source      string
+		destination string
+		want        BusinessDirection
+	}{
+		{name: "v4-out", source: "10.1.2.3", destination: "203.0.113.10", want: DirectionOut},
+		{name: "v4-in", source: "203.0.113.10", destination: "10.1.2.3", want: DirectionIn},
+		{name: "v4-internal", source: "10.1.2.3", destination: "10.2.3.4", want: DirectionInternal},
+		{name: "v4-transit", source: "192.0.2.1", destination: "203.0.113.10", want: DirectionTransit},
+		{name: "v6-out", source: "2001:db8:100::10", destination: "2001:db8:200::20", want: DirectionOut},
+		{name: "v6-in", source: "2001:db8:200::20", destination: "2001:db8:100::10", want: DirectionIn},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, configured := snapshot.DeviceDirection("device-a", netip.MustParseAddr(test.source), netip.MustParseAddr(test.destination))
+			if !configured || got != test.want {
+				t.Fatalf("direction = %q configured=%v, want %q", got, configured, test.want)
+			}
+		})
+	}
+}
+
+func TestClassificationSchemaV2DefaultLimitSupportsManyDevices(t *testing.T) {
+	profiles := make([]ClassificationDeviceProfile, 1_000)
+	for index := range profiles {
+		profiles[index] = ClassificationDeviceProfile{
+			DeviceID: fmt.Sprintf("device-%04d", index),
+			SourcePrefixes: []ClassificationSourcePrefix{{
+				ID:   fmt.Sprintf("customer-prefix-%04d", index),
+				CIDR: "10.0.0.0/8",
+			}},
+		}
+	}
+	data, checksum, err := EncodeClassificationBundle(ClassificationDefinition{
+		Version: 12, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-12",
+		DeviceProfiles: profiles, InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) <= 64<<10 {
+		t.Fatalf("test bundle is only %d bytes", len(data))
+	}
+	if _, err := DecodeAndCompileClassificationBundle(data, checksum, ClassificationCompileLimits{}); err != nil {
+		t.Fatalf("default limit rejected %d-byte global device catalog: %v", len(data), err)
+	}
+}
+
+func TestCompileClassificationRejectsInvalidDeviceSources(t *testing.T) {
+	valid := ClassificationDefinition{
+		Version: 11, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-11",
+		DeviceProfiles: []ClassificationDeviceProfile{{DeviceID: "device-a", SourcePrefixes: []ClassificationSourcePrefix{{ID: "prefix-a", CIDR: "10.0.0.0/8"}}}},
+		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	}
+	for name, mutate := range map[string]func(*ClassificationDefinition){
+		"missing prefix": func(value *ClassificationDefinition) { value.DeviceProfiles[0].SourcePrefixes = nil },
+		"duplicate device": func(value *ClassificationDefinition) {
+			value.DeviceProfiles = append(value.DeviceProfiles, value.DeviceProfiles[0])
+		},
+		"duplicate prefix id": func(value *ClassificationDefinition) {
+			value.DeviceProfiles[0].SourcePrefixes = append(value.DeviceProfiles[0].SourcePrefixes, ClassificationSourcePrefix{ID: "prefix-a", CIDR: "172.16.0.0/12"})
+		},
+		"duplicate prefix cidr": func(value *ClassificationDefinition) {
+			value.DeviceProfiles[0].SourcePrefixes = append(value.DeviceProfiles[0].SourcePrefixes, ClassificationSourcePrefix{ID: "prefix-b", CIDR: "10.0.0.0/8"})
+		},
+		"noncanonical prefix": func(value *ClassificationDefinition) { value.DeviceProfiles[0].SourcePrefixes[0].CIDR = "10.1.2.3/8" },
+		"legacy mix":          func(value *ClassificationDefinition) { value.HomeProvince = "330000" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			definition := valid
+			definition.DeviceProfiles = append([]ClassificationDeviceProfile(nil), valid.DeviceProfiles...)
+			definition.DeviceProfiles[0].SourcePrefixes = append([]ClassificationSourcePrefix(nil), valid.DeviceProfiles[0].SourcePrefixes...)
+			mutate(&definition)
+			if _, err := CompileClassification(definition); err == nil {
+				t.Fatal("invalid device source definition was accepted")
+			}
+		})
 	}
 }
 

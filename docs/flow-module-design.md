@@ -315,7 +315,7 @@ base fact 一条 flow 只写一行：保存唯一 `local_prefix_id/remote_prefix
 
 平台 writer 使用 `address_snapshot_build` job，API 线程只入队。job ID 也是不可变 snapshot/build ID；handler 以 `(family,ip_start,prefix_length,id)` keyset 分页读取 preview digest 所固定的 import generations，核对 durable v4/v6 原始行数并验证 CIDR 与二进制 start/end 一致。同 source 的嵌套 CIDR 是合法输入，必须先按最长前缀语义展平成互斥区间，不能要求“原始行数 = 输出区间数”。构建在长事务外进行，最终短事务锁全局地址库并再次核对 draft/source/version 后才插入 approval pending publication；版本竞争重试，草稿变化终止，二者都不能改 activation。导入是低频后台资料装载，允许分钟级完成但必须 checkpoint/状态/结果可追溯；发布是平台管理员每次编辑修订后的常态操作，不能重新解析原始 MMDB/IPDB，必须直接读取已就绪 generation，且 operation job 的状态、进度、错误和结果引用均可查询。旧 active 在新对象 build、审批或 worker 安装失败时持续服务。AddressSnap 是平台级单例，不归属于用户或 tenant；只有拥有全局 `address.manage/address.publish` 的管理员能上传、编辑、preview、build、审批及发布，其他角色最多只读，禁止复制 WADS。KISS migration 0013 保存 WADS format/version/builder/build-job 血缘，0031 的签名 pair 同时绑定 snapshot/version/ref/checksum 与 classification 对象；旧 JSON reader 只为滚动升级兼容，不能再被新 writer 生成。
 
-KISS AuthContext 只有本机安装域的 user/role/permission，不再存在 tenant membership、owner tenant、tenant header 或“当前租户”切换。`GET /api/v1/me` 返回同一全局 RBAC 投影；前端据此隐藏维护入口，但每个 Gin API 仍分别强制 `address.view/manage/publish`。classification profile 是 `id=1` 的全局 CAS 编辑态，publication timeline 全局单调；0031 直接以 `dimension_snapshot_id` 外键引用唯一地址库快照，并让所有 worker catalog 共享同一份已编译 WADS。API 严格拒绝客户端夹带 `tenant_id`，从 schema、DTO、查询键、签名 envelope 到对象路径都不再保留 tenant 兼容列。
+KISS AuthContext 只有本机安装域的 user/role/permission，不再存在 tenant membership、owner tenant、tenant header 或“当前租户”切换。`GET /api/v1/me` 返回同一全局 RBAC 投影；前端据此隐藏维护入口，但每个 Gin API 仍分别强制 `address.view/manage/publish`。classification profile 是 `id=1` 的全局 CAS 编辑态，publication timeline 全局单调；schema v2 的 `device_profiles[]` 每项只以稳定 `device_id` 绑定客户源地址段 ID 集合。设备没有独立的省、市、运营商、ASN、内网/中转策略或港澳台口径配置：地址属性由 0031/0044 所配对的唯一 AddressSnap 提供，跨境直接比较本地与远端国家属性，内网与中转事实固定保留。发布时 prefix ID 必须能在该 WADS 中解析为固化 CIDR，并已具备地市与运营商属性，否则拒绝发布；所有 worker catalog 共享同一不可变 WADS+classification pair。API 严格拒绝客户端夹带 `tenant_id` 或旧的全局分类字段，从 schema、DTO、查询键、签名 envelope 到对象路径都不再保留 tenant 兼容列。
 
 默认查询使用 fact 已存的派生稳定 ID 与其 snapshot/classification version，原始 `src_ip/dst_ip` 始终保留。按新地址定义重看历史通过 operation job 加载明确 AddressSnap 版本并从 raw fact 写新的派生 generation；以 Kafka 自然坐标、record count、raw/estimated byte/packet counter 守恒后才切换。查询、rollup 和修正均不使用 CH `dictGet`，也不以当前名称覆盖历史显示。完整格式、发布、迁移和验收见 [Flow 地址发布与查询计划](flow-address-query-plan.md)。
 
@@ -323,12 +323,12 @@ KISS AuthContext 只有本机安装域的 user/role/permission，不再存在 te
 
 ### 4.3 KISS 单域发布与投递契约
 
-发布链只迁移旧 Hub 已验证的行为，不重写数据面内核。WADS import/build 仍是可追溯 operation job；classification profile 是小型管理配置，使用 `If-Match` 同步 CAS；pair publish 只选择已经 active+approved 的 WADS、编译一个有界 classification JSON、生成 Ed25519 envelope，并在短事务内写 metadata/audit。worker 随后异步 pull，在 Kafka 消费热路径之外完成下载、验签、CRC/SHA、离线编译、LKG 持久化和 atomic catalog swap。实际每条 flow 的六分类仍是 Kafka 后 worker 内的同步内存 lookup，不访问 MySQL、ClickHouse、HTTP 或文件；查询和报表读取已经写入 CH 的 category/version，不按当前配置现场重分类。
+发布链只迁移旧 Hub 已验证的行为，不重写数据面内核。WADS import/build 仍是可追溯 operation job；classification profile 是小型管理配置，使用 `If-Match` 同步 CAS；pair publish 只选择已经 active+approved 的 WADS、编译一个有界 classification JSON（全局策略 + 按 `device_id` 排序的观测点上下文）、生成 Ed25519 envelope，并在短事务内写 metadata/audit。worker 随后异步 pull，在 Kafka 消费热路径之外完成下载、验签、CRC/SHA、离线编译、LKG 持久化和 atomic catalog swap。实际每条 flow 的六分类仍是 Kafka 后 worker 内的同步内存 lookup：先用记录已有的 `device_id` 对不可变 map 做 O(1) 观测点选择，再执行分类纯函数，不访问 MySQL、ClickHouse、HTTP 或文件；v2 中设备未配置必须得到 `unknown`，不得借用另一设备或全局默认。查询和报表读取已经写入 CH 的 category/version，不按当前配置现场重分类。
 
 | 生命周期 | 执行位置与时序 | 权威存储 | 失败语义 |
 |---|---|---|---|
 | MMDB/IPDB 导入、AddressSnap build | 平台异步 operation job，低频 | MySQL 状态/血缘 + object store WADS | 可重试且全程可查；旧 active 不变 |
-| classification profile 编辑 | Gin 同步 CAS，低频 | MySQL singleton | stale `If-Match` 拒绝，不产生半更新 |
+| classification profile 编辑 | Gin 同步 CAS，低频 | MySQL singleton 内含多设备上下文 | stale `If-Match` 拒绝，不产生半更新；修改一台设备不覆盖其他设备 |
 | pair publish | Gin 同步短事务，常态但低频 | MySQL immutable metadata + object store JSON | WADS/profile/version 任一变化即拒绝；孤儿对象补偿删除 |
 | worker distribution/install | worker 周期异步 pull | 磁盘 LKG + 进程内 catalog | 任一校验/编译失败保留 LKG，不暴露半版本并 ACK failed |
 | 单条 flow 分类 | flow worker 同步执行，逐记录 | 只读进程内 immutable snapshot | event time 无可用版本时暂停分区，绝不回退当前版本 |
@@ -404,7 +404,7 @@ Geo 树也按集合化简：同层节点互斥；祖先包含后代。`parent �
 | 5 | `off_net_in_province` | 异网、同省 |
 | 6 | `off_net_cross_province` | 异网、外省 |
 
-Geo 不足得到 `unknown`。港澳台口径由 snapshot 固定。`home_isp_ids/home_asns` 分别匹配结构化 ISP ID/ASN，任一命中即为“本网”；只有远端具有与已配置集合可比较的身份时才判定异网，否则为 unknown，不以 ASN 名称字符串猜测。规则实现为纯函数，输入 record + immutable snapshot，输出 direction/category/provenance；property test 验证守恒和确定性。
+Geo 不足得到 `unknown`。分类先按 `record.device_id` 选取该设备的客户源地址段 trie：仅源端命中为流出、仅目的端命中为流入、两端命中为内网、两端不命中为中转。随后从同一 AddressSnap 解析本地端和远端的结构化国家/省/市、ISP ID 与 ASN：国家不同即跨境；国家相同后，任一稳定 ISP ID 或 ASN 相等即为本网，否则为异网；缺少可比较身份时为 unknown，不以运营商名称字符串猜测。规则实现为纯函数，输入 record + immutable WADS/classification pair，输出 direction/category/provenance；property test 验证守恒、确定性和不同设备之间不串用 CIDR 集合。
 
 ### 4.6 修正视图
 
@@ -483,7 +483,7 @@ Flow exporter 不是 collector，也不是第二份设备。KISS 管理面以全
 | 表 | 必需字段 | 唯一身份与索引 | 生命周期 |
 |---|---|---|---|
 | flow_exporter_bindings | device、可空 flow-collect agent、规范 source prefix、protocol、可空 observation domain、sampling mode/rules、observations、enabled、ownership epoch、row/published version | 稳定 binding ID；protocol+source prefix+domain 唯一；device/collector 索引 | 新增/编辑只改变 desired row；`published_row_version == row_version` 才表示对应配置已发布，enabled=false 且撤销版本已发布后才可物理删除 |
-| flow_classification_profiles | singleton id、home province/city、home ISP/ASN、港澳台口径、internal/transit policy、definition digest、row version | `id=1` 主键与 CHECK | 全局单行 CAS 编辑态；数组规范排序/去重，发布时由统一 compiler 再校验 |
+| flow_classification_profiles | singleton id、`device_profiles`（device id、customer source prefix IDs）、definition digest、row version | `id=1` 主键与 JSON CHECK；设备、Flow binding、地址段在保存时校验，发布时还必须存在于配对 WADS | 全局单行 CAS 编辑态承载多观测点；按 device id/地址段数组规范排序去重，发布物固化 prefix ID+CIDR；Geo/运营商/ASN 只在 AddressSnap；旧 scalar/策略列只为 schema v1 历史兼容，schema v2 固定 count |
 | flow_enrichment_publications | classification version/effective time/profile version、WADS snapshot/version/effective/ref/checksum、classification ref/checksum、Ed25519 key/signature | classification version 与 effective time 分别全局唯一 | metadata/version pair 不可变；大对象不进 MySQL；新 signing key 只签新版本，不回写旧 pair |
 | flow_enrichment_publication_acks | publication、worker、boot/software、download/install milestone、最后 attempt/error、row version | publication+worker 主键；按 worker/state 查询 | downloaded -> installed；后续失败保留既有成功 milestone，不把失败尝试伪装成卸载 |
 | flow_vpn_rules | kind、versioned selectors/behavior/intelligence/probe policy、weight、status、row version | 活跃名称按 tenant 唯一；按 tenant+status 查询 | draft -> active <-> suspended -> retired -> deleted |
@@ -786,7 +786,7 @@ Geo 选择目录为 `GET /api/v1/flow/geo/catalog?level=<country|province|city>&
 
 ### 9.6 境外 KPI 与 country/region 查询
 
-境外专题只读 1m/1h aggregate 的最新 generation，不同步扫描 `flow_records`，也不增加第二张境外事实表。`category=overseas` 是数据面按事件时间 classification snapshot 生成的唯一境外权威；查询层不得再次用国家名称、ISO 字符串或当前港澳台设置重判历史。`geo_level` 首发只接受 `country/region`，分别固定读取 `geo.country/geo.region` rollup；Geo 名称和 breadcrumb 由结果行自己的 `geo_version` 在共享 `flowdimension.GeoCatalog` 中解析，不能跨版本按名称合并。
+境外专题只读 1m/1h aggregate 的最新 generation，不同步扫描 `flow_records`，也不增加第二张境外事实表。`category=overseas` 是数据面按事件时间 classification snapshot 比较本地与远端国家属性生成的唯一境外权威；查询层不得再次用国家名称、ISO 字符串或当前配置重判历史。`geo_level` 首发只接受 `country/region`，分别固定读取 `geo.country/geo.region` rollup；Geo 名称和 breadcrumb 由结果行自己的 `geo_version` 在共享 `flowdimension.GeoCatalog` 中解析，不能跨版本按名称合并。
 
 境外页将通用 Explorer 与专题 aggregate 明确分层：专题区展示入/出 KPI 与趋势、观测境外 IP/本地主机、country/region TopN、采样未知比例、闭桶覆盖率和版本混用告警；查询跨度不超过 7 天时使用闭合 UTC `1m` 桶，更长跨度使用闭合 UTC `1h` 桶。专题 schema v1 只能下推 direction/business/resource，因此设备筛选可直接生效，而国家/省/市/运营商的交叉条件必须交给下方 bounded Explorer；界面必须提示这一口径差异，不得把分别查询的边际分布拼成联合结果。Geo 展示键为 `geo_version:geo_value`，后端在同版本发布目录解析名称和 breadcrumb，解析失败时显示稳定 ID，绝不回退到当前 active version。
 

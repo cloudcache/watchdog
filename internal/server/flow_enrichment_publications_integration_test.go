@@ -100,6 +100,21 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 
 	effectiveFrom := time.Now().UTC().Truncate(time.Minute).Add(-5 * time.Minute)
 	prepareFlowEnrichmentAddressSnapshot(t, s, effectiveFrom)
+	if _, err := s.db.Exec(`INSERT INTO devices (id,host,kind) VALUES ('flow-device-it','192.0.2.10','network')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO flow_exporter_bindings
+		(id,device_id,source_prefix,protocol,sampling_rules_json,observations_json)
+		VALUES ('flow-binding-it','flow-device-it','192.0.2.10/32','sflow5',JSON_ARRAY(),JSON_OBJECT())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO address_prefixes
+		(id,cidr,family,prefix_length,ip_start,ip_end,labels,source)
+		VALUES
+		('customer-prefix-it','10.0.0.0/8',4,8,INET6_ATON('10.0.0.0'),INET6_ATON('10.255.255.255'),JSON_OBJECT(),'manual'),
+		('draft-only-prefix-it','172.16.0.0/12',4,12,INET6_ATON('172.16.0.0'),INET6_ATON('172.31.255.255'),JSON_OBJECT(),'manual')`); err != nil {
+		t.Fatal(err)
+	}
 
 	profile := requestJSON(t, s, http.MethodGet, "/api/v1/flow/classification-profile", nil, nil, cookies...)
 	if profile.Code != http.StatusOK || profile.Header().Get("ETag") != `"0"` {
@@ -113,16 +128,13 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatalf("legacy tenant field was accepted: status=%d body=%s", legacyProfile.Code, legacyProfile.Body.String())
 	}
 	savedProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
-		"home_province": "330000", "home_city": "330100", "home_isp_ids": []uint16{2, 1, 2},
-		"home_asns": []uint32{4812, 4134, 4812}, "overseas_includes_hmt": true,
-		"internal_policy": "count", "transit_policy": "drop",
+		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
 	}, profileHeaders, cookies...)
 	if savedProfile.Code != http.StatusOK || savedProfile.Header().Get("ETag") != `"1"` {
 		t.Fatalf("save profile: status=%d etag=%q body=%s", savedProfile.Code, savedProfile.Header().Get("ETag"), savedProfile.Body.String())
 	}
 	staleProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
-		"home_province": "330000", "home_city": "330100", "home_isp_ids": []uint16{1},
-		"internal_policy": "count", "transit_policy": "count",
+		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
 	}, profileHeaders, cookies...)
 	if staleProfile.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale profile update was accepted: status=%d body=%s", staleProfile.Code, staleProfile.Body.String())
@@ -199,12 +211,23 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 
 	secondProfileHeaders := map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": savedProfile.Header().Get("ETag")}
 	secondProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
-		"home_province": "330000", "home_city": "330100", "home_isp_ids": []uint16{1, 2},
-		"home_asns": []uint32{4134, 4812, 64500}, "overseas_includes_hmt": true,
-		"internal_policy": "count", "transit_policy": "drop",
+		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"draft-only-prefix-it"}}},
 	}, secondProfileHeaders, cookies...)
 	if secondProfile.Code != http.StatusOK || secondProfile.Header().Get("ETag") != `"2"` {
 		t.Fatalf("save second profile: status=%d etag=%q body=%s", secondProfile.Code, secondProfile.Header().Get("ETag"), secondProfile.Body.String())
+	}
+	draftOnlyPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
+		"effective_from": effectiveFrom.Add(time.Minute),
+	}, adminHeaders, cookies...)
+	if draftOnlyPublished.Code != http.StatusBadRequest || !bytes.Contains(draftOnlyPublished.Body.Bytes(), []byte("not present in the active address snapshot")) {
+		t.Fatalf("draft-only prefix was published: status=%d body=%s", draftOnlyPublished.Code, draftOnlyPublished.Body.String())
+	}
+	thirdProfileHeaders := map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": secondProfile.Header().Get("ETag")}
+	thirdProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
+		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
+	}, thirdProfileHeaders, cookies...)
+	if thirdProfile.Code != http.StatusOK || thirdProfile.Header().Get("ETag") != `"3"` {
+		t.Fatalf("restore published profile: status=%d etag=%q body=%s", thirdProfile.Code, thirdProfile.Header().Get("ETag"), thirdProfile.Body.String())
 	}
 	secondPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
 		"effective_from": effectiveFrom.Add(time.Minute),
@@ -273,16 +296,31 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 func prepareFlowEnrichmentAddressSnapshot(t *testing.T, s *Server, effectiveFrom time.Time) {
 	t.Helper()
 	const snapshotID = "address_snapshot_it"
-	artifact := flowdimension.AddressSnapshotArtifact{
-		SnapshotID: snapshotID, Version: 1, EffectiveFrom: effectiveFrom, BuilderVersion: "integration-test",
-		SourceManifestSHA256: "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)),
-		Strings:              []string{""}, Values: []flowdimension.AddressSnapshotValue{{}},
-	}
-	data, err := flowdimension.EncodeAddressSnapshot(artifact, flowdimension.AddressSnapshotLimits{})
+	definition, err := flowdimension.CompileBundle(flowdimension.SnapshotBundle{
+		SchemaVersion: flowdimension.BundleSchemaVersion, SnapshotID: snapshotID, Version: 1, EffectiveFrom: effectiveFrom,
+		GeoNodes: []flowdimension.GeoNodeDefinition{
+			{ID: "city-hangzhou-it", Kind: "city", Code: "330100", Name: "Hangzhou", ParentID: "province-zhejiang-it", Enabled: true},
+			{ID: "continent-asia-it", Kind: "continent", Code: "AS", Name: "Asia", Enabled: true},
+			{ID: "country-cn-it", Kind: "country", Code: "CN", Name: "China", ParentID: "continent-asia-it", Enabled: true},
+			{ID: "province-zhejiang-it", Kind: "province", Code: "330000", Name: "Zhejiang", ParentID: "country-cn-it", Enabled: true},
+		},
+		Operators: []flowdimension.OperatorDefinition{{ID: "operator-it", FlowISPID: 1, Code: "IT", Name: "Integration Carrier", Category: "carrier", ASNs: []uint32{4134}, Enabled: true}},
+		Prefixes: []flowdimension.PrefixDefinition{{ID: "customer-prefix-it", CIDR: "10.0.0.0/8", Labels: map[string]string{
+			"geo.continent": "AS", "geo.continent_id": "continent-asia-it", "geo.country": "CN", "geo.country_id": "country-cn-it",
+			"geo.province": "330000", "geo.province_id": "province-zhejiang-it", "geo.city": "330100", "geo.city_id": "city-hangzhou-it",
+			"operator.id": "operator-it", "asn": "4134", "business": "customer",
+		}}},
+	}, flowdimension.CompileLimits{})
 	if err != nil {
-		t.Fatalf("encode WADS: %v", err)
+		t.Fatalf("compile address definition: %v", err)
 	}
-	object, err := s.addressObjects.SaveDimensionObject(context.Background(), snapshotID, data)
+	built, err := flowdimension.BuildAddressSnapshot(flowdimension.AddressSnapshotBuildInput{
+		Definition: definition, BuilderVersion: "integration-test",
+	}, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		t.Fatalf("build WADS: %v", err)
+	}
+	object, err := s.addressObjects.SaveDimensionObject(context.Background(), snapshotID, built.Data)
 	if err != nil {
 		t.Fatalf("save WADS: %v", err)
 	}

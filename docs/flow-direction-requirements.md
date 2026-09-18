@@ -56,7 +56,7 @@
 
 | 优先级 | 类别 | 判定 |
 |---:|---|---|
-| 1 | `overseas` 境外 | 对端 country 不属于中国口径；港澳台是否归境外由版本配置决定 |
+| 1 | `overseas` 境外 | 对端 country 与该设备客户地址段的 country 不同；不再维护额外的港澳台开关 |
 | 2 | `on_net_local_city` 本网本市 | 对端属于本网，且 city = 本地城市 |
 | 3 | `on_net_cross_city` 本网跨市 | 对端属于本网、同省、非本市 |
 | 4 | `on_net_cross_province` 本网外省 | 对端属于本网、非本省 |
@@ -65,7 +65,7 @@
 
 `internal`、`transit`、`unknown`、`ambiguous` 是处理状态，不塞进六类；六类和这些状态的计数之和必须与已接受 base fact 守恒。
 
-分类输入必须带版本：本地前缀、本网运营商/ASN、Geo、业务/address set、分类规则。最长前缀匹配决定主地址段；address set 可多归属，用于标签和查询，不改变主分类守恒。
+分类输入必须带版本：每台观测设备的客户源地址段集合、全局 AddressSnap（Geo/运营商/ASN、业务/address set）和固定分类规则。设备配置不重复保存省、市、运营商、ASN 或分类口径；worker 按 `device_id` 选择客户 CIDR trie，并从配对 AddressSnap 解析两端属性。最长前缀匹配决定主地址段；address set 可多归属，用于标签和查询，不改变主分类守恒。
 
 地址归属必须区分三种口径：`primary_prefix` 是每个 endpoint 唯一的最长前缀；Geo 是 continent → region → country → province → city 的单路径层级，同一 flow 在每个 level 各归一次；address set 是任意多个可重叠组。ASN/ISP 是可空属性，不是地址段或组的必填身份。相同 CIDR 只存一行，嵌套 CIDR 继承父级不同 key 的标签、子级覆盖同 key；组名独立于 CIDR 和 ASN。主前缀与 Geo 同层含 `_unassigned` 时可加，address set 组间及不同 Geo level 之间不可相加。
 

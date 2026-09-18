@@ -106,7 +106,7 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 gossip 可作为后续低延迟提示，只传播 `(scope,version,checksum,control endpoint)`；权威 metadata、认证下载和 ACK 仍在平台。它不是 v1 的前置条件。
 
-KISS 控制面版本对由 migration 0031 保存：`flow_classification_profiles` 是 `id=1` 的全局 CAS 编辑态，`flow_enrichment_publications` 是全局单调且不可变的 event-time pair，`flow_enrichment_publication_acks` 保存每个 `agents(kind=flow_worker)` 的 downloaded/installed/failed 里程碑。`dimension_snapshot_id` 直接引用唯一全局 AddressSnap；MySQL 只保存 profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。publish 选择 `effective_from <= 请求时间` 的最新全局 address activation，且只接受已审批、active、未删除的 WADS/1；classification version/effective time 严格单调。分类对象和完整 pair 使用同一个 active agent-plan Ed25519 key 签名，worker 复用其单调 trust bundle，不建立第二套 key 表。旧 Hub migration 059 的 tenant 版本只保留为迁移来源，不再运行、双写或约束新 wire。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
+KISS 控制面版本对由 migration 0031/0044 保存：`flow_classification_profiles` 是 `id=1` 的全局 CAS 编辑态，其中 `device_profiles[]` **只保存“观测设备 → 客户源地址段 ID 集合”**；省份、地市、运营商、ASN、内网/中转处置策略和港澳台口径都不再作为 Flow 管理项。地址属性全部来自配对的 AddressSnap，schema v2 固定保留内网与中转事实。`flow_enrichment_publications` 是全局单调且不可变的 event-time pair，`flow_enrichment_publication_acks` 保存每个 `agents(kind=flow_worker)` 的 downloaded/installed/failed 里程碑。一次“全局发布”保证所有 worker 收到同一份多设备边界和地址属性版本，但每条记录仍按 collector 已写入的稳定 `device_id` 选择自己的 CIDR trie。publish 选择 `effective_from <= 请求时间` 的最新全局 address activation，只接受已审批、active、未删除的 WADS/1，并强制每个所选 prefix ID/固化 CIDR 都存在于该 WADS且已有地市和运营商属性，禁止用 MySQL 当前草稿与旧快照混搭。worker 以两端对该设备 CIDR 集合的命中关系计算流入/流出/内网/中转，再从同一 WADS 读取本地端和远端的 Geo/运营商/ASN 计算六分类；跨境由本地与远端国家属性直接比较，缺设备配置时归为 unknown。MySQL 只保存 profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。分类对象和完整 pair 使用同一个 active agent-plan Ed25519 key 签名，worker 复用其单调 trust bundle，不建立第二套 key 表。旧 Hub migration 059 的 tenant 版本只保留为迁移来源，不再运行、双写或约束新 wire。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
 
 ## 6. 写入、查询与历史修正
 
@@ -141,7 +141,7 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 1. 先发布 AddressSnap v1 codec/builder 和双读 worker；旧 JSON dimension + Geo 目录仍可启动。
 2. 用同一真实 corpus 做旧 loader 与 AddressSnap lookup 全字段 parity，覆盖 v4/v6 边界、嵌套 override、多组、无 ASN 和 supplier/customer ISP 分离。
 3. 部署全部 reader 后才允许平台写 AddressSnap；worker ACK 达标后切 activation。
-4. 旧 Hub 的 058/059/060 已作为行为与数据约束来源移植进 KISS schema：0011/0013 保存稳定运营商身份和 AddressSnap 发布血缘，0031 保存全局 classification profile、不可变版本对 metadata 与 `agents` worker ACK。MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
+4. 旧 Hub 的 058/059/060 已作为行为与数据约束来源移植进 KISS schema：0011/0013 保存稳定运营商身份和 AddressSnap 发布血缘，0031/0044 保存全局 classification 编辑态（内含按设备上下文）、不可变版本对 metadata 与 `agents` worker ACK。MySQL 仍是管理/血缘库，不成为 worker 运行时依赖。`max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES` 限制落盘对象，默认 512 MiB。
 5. 停止 worker 的 MySQL/目录装载入口并保留 LKG/rollback 窗口。
 6. migration 009 和 `address_dict_integration_test.go` 标注为历史 CH 字典实验；不回改历史 migration，也不新增“拆 IP_TRIE 字段”的 migration。待兼容窗口结束再以前向清理移除未使用对象。
 

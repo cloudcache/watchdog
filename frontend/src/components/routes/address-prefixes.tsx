@@ -3,7 +3,6 @@ import { GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "luci
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AddressReferencePicker } from "@/components/address-reference-picker"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
@@ -601,27 +600,6 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 							placeholder="region=杭州,type=客户,provider=电信"
 						/>
 					</div>
-					<label
-						htmlFor="address-prefix-local-network"
-						className="flex items-start gap-2 rounded-md border border-border p-3 md:col-span-2"
-					>
-						<Checkbox
-							id="address-prefix-local-network"
-							checked={form.localNetwork}
-							onCheckedChange={(checked) => setForm({ ...form, localNetwork: checked === true })}
-						/>
-						<span className="grid gap-1 text-sm">
-							<span className="font-medium">
-								<Trans>Use as a local network prefix for Flow direction</Trans>
-							</span>
-							<span className="text-xs text-muted-foreground">
-								<Trans>
-									Flow uses these prefixes to decide inbound, outbound, internal and transit traffic. Rebuild and
-									activate the address snapshot after changing them.
-								</Trans>
-							</span>
-						</span>
-					</label>
 					<div className="grid gap-2">
 						<Label>
 							ASN (<Trans>optional</Trans>)

@@ -9159,3 +9159,64 @@ msgstr "Configure local prefixes"
 #: src/components/routes/flow-enrichment-publications.tsx
 msgid "Rebuild and activate the address snapshot after changing local prefixes."
 msgstr "Rebuild and activate the address snapshot after changing local prefixes."
+
+#. placeholder {0}: profile.device_profiles.length
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "{0} devices configured"
+msgstr "{0} devices configured"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Complete the province, city, and on-net operators for every configured device"
+msgstr "Complete the province, city, and on-net operators for every configured device"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Configure at least one Flow observation device"
+msgstr "Configure at least one Flow observation device"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Flow observation device"
+msgstr "Flow observation device"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Province, city, and on-net operators belong to this observation device. Other devices keep their own settings."
+msgstr "Province, city, and on-net operators belong to this observation device. Other devices keep their own settings."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Remove device classification"
+msgstr "Remove device classification"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select the device that exports Flow"
+msgstr "Select the device that exports Flow"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select at least one customer source prefix for every configured device"
+msgstr "Select at least one customer source prefix for every configured device"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot."
+msgstr "Select this device's customer source prefixes. Province, city, and operator are read from the paired address snapshot."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Customer source prefixes"
+msgstr "Customer source prefixes"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories."
+msgstr "The same CIDRs determine inbound and outbound direction. Their address-library attributes determine the six traffic categories."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "No customer source prefixes are available in the address library."
+msgstr "No customer source prefixes are available in the address library."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Maintain the CIDR, geography, and operator in the address library, then select the CIDR here for each Flow device."
+msgstr "Maintain the CIDR, geography, and operator in the address library, then select the CIDR here for each Flow device."
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Manage address prefixes"
+msgstr "Manage address prefixes"
+
+#: src/components/routes/flow-enrichment-publications.tsx
+msgid "Rebuild and activate the address snapshot after changing address attributes."
+msgstr "Rebuild and activate the address snapshot after changing address attributes."

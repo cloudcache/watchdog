@@ -293,15 +293,30 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 		return EnrichedRecord{}, "classification_dimension_pair", ErrVersionSkew
 	}
 	dimensions := dimensionSnapshot.ClassifyEndpoints(source, destination)
-	var supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
+	if classificationSnapshot.UsesDeviceSources() {
+		direction, _ := classificationSnapshot.DeviceDirection(decoded.DeviceID, source, destination)
+		directional, ok := dimensionSnapshot.(interface {
+			ClassifyEndpointsForDirection(netip.Addr, netip.Addr, flowdimension.BusinessDirection) flowdimension.ClassifiedEndpoints
+		})
+		if !ok {
+			return EnrichedRecord{}, "dimension", ErrVersionSkew
+		}
+		dimensions = directional.ClassifyEndpointsForDirection(source, destination, direction)
+	}
+	var supplierLocalGeo, localGeo, supplierRemoteGeo, remoteGeo flowdimension.GeoInfo
 	var overrideFields flowdimension.GeoOverrideFields
 	geoMatched := false
 	addressSnapshotResolved := false
 	if addressSnapshot, ok := dimensionSnapshot.(interface {
 		ResolveAddress(netip.Addr) (flowdimension.AddressSnapshotResolution, bool)
 	}); ok {
-		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: dimensionMetadata.SnapshotID, Source: flowdimension.GeoSchemaV2}
-		remoteGeo = supplierRemoteGeo
+		unknown := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: dimensionMetadata.SnapshotID, Source: flowdimension.GeoSchemaV2}
+		supplierLocalGeo, localGeo, supplierRemoteGeo, remoteGeo = unknown, unknown, unknown, unknown
+		if dimensions.Local.IP.IsValid() {
+			if resolved, matched := addressSnapshot.ResolveAddress(dimensions.Local.IP); matched {
+				supplierLocalGeo, localGeo = resolved.SupplierGeo, resolved.CustomerGeo
+			}
+		}
 		if dimensions.Remote.IP.IsValid() {
 			if resolved, matched := addressSnapshot.ResolveAddress(dimensions.Remote.IP); matched {
 				supplierRemoteGeo, remoteGeo = resolved.SupplierGeo, resolved.CustomerGeo
@@ -317,7 +332,13 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 			return EnrichedRecord{}, "geo", err
 		}
 		geoMetadata := geoIndex.Metadata()
-		supplierRemoteGeo = flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
+		unknown := flowdimension.GeoInfo{Country: flowdimension.GeoUnknownCountry, Version: geoMetadata.Version, Source: geoMetadata.Schema}
+		supplierLocalGeo, localGeo, supplierRemoteGeo, remoteGeo = unknown, unknown, unknown, unknown
+		if dimensions.Local.IP.IsValid() {
+			if resolved, matched := geoIndex.Lookup(dimensions.Local.IP); matched {
+				supplierLocalGeo = resolved
+			}
+		}
 		if dimensions.Remote.IP.IsValid() {
 			if resolved, matched := geoIndex.Lookup(dimensions.Remote.IP); matched {
 				supplierRemoteGeo, geoMatched = resolved, true
@@ -327,6 +348,7 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 		if !ok {
 			return EnrichedRecord{}, "dimension", ErrVersionSkew
 		}
+		localGeo, _, _ = legacySnapshot.ApplyGeoOverride(dimensions.Local.IP, supplierLocalGeo)
 		remoteGeo, overrideFields, _ = legacySnapshot.ApplyGeoOverride(dimensions.Remote.IP, supplierRemoteGeo)
 	}
 	supplierRemoteASN, supplierRemoteASNSource := selectRemoteASN(decoded, dimensions.Remote.Side, supplierRemoteGeo, geoMatched, 0)
@@ -356,8 +378,8 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 		Dimensions: dimensions, LocalPort: localPort, RemotePort: remotePort,
 		RemoteGeo: remoteGeo, RemoteASN: remoteASN, RemoteASNSource: remoteASNSource,
 		SupplierRemoteGeo: supplierRemoteGeo, SupplierRemoteASN: supplierRemoteASN, SupplierRemoteASNSource: supplierRemoteASNSource,
-		SupplierCategory: classificationSnapshot.Classify(dimensions.Direction, supplierRemoteGeo), CustomerGeoOverrideFields: overrideFields,
-		Category:              classificationSnapshot.Classify(dimensions.Direction, remoteGeo),
+		SupplierCategory: classificationSnapshot.ClassifyResolvedEndpoints(decoded.DeviceID, dimensions.Direction, supplierLocalGeo, supplierRemoteGeo), CustomerGeoOverrideFields: overrideFields,
+		Category:              classificationSnapshot.ClassifyResolvedEndpoints(decoded.DeviceID, dimensions.Direction, localGeo, remoteGeo),
 		Disposition:           classificationSnapshot.Disposition(dimensions.Direction),
 		ClassificationVersion: classificationMetadata.Version,
 	}

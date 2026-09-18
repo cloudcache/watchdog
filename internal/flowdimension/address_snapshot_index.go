@@ -206,6 +206,33 @@ func (i *AddressSnapshotIndex) ResolveAddress(address netip.Addr) (AddressSnapsh
 }
 
 func (i *AddressSnapshotIndex) ClassifyEndpoints(source, destination netip.Addr) ClassifiedEndpoints {
+	if i == nil {
+		return ClassifiedEndpoints{Direction: DirectionAmbiguous, Business: UnassignedDimensionID}
+	}
+	if !source.IsValid() || !destination.IsValid() {
+		return ClassifiedEndpoints{SnapshotID: i.metadata.SnapshotID, Version: i.metadata.Version, Direction: DirectionAmbiguous, Business: UnassignedDimensionID}
+	}
+	source, destination = source.Unmap(), destination.Unmap()
+	sourceValue, sourceMatched := i.lookup(source)
+	destinationValue, destinationMatched := i.lookup(destination)
+	sourceLocal := sourceMatched && sourceValue.local
+	destinationLocal := destinationMatched && destinationValue.local
+	direction := DirectionTransit
+	switch {
+	case sourceLocal && !destinationLocal:
+		direction = DirectionOut
+	case !sourceLocal && destinationLocal:
+		direction = DirectionIn
+	case sourceLocal && destinationLocal:
+		direction = DirectionInternal
+	}
+	return i.classifyEndpointsForDirection(source, destination, sourceValue, sourceMatched, destinationValue, destinationMatched, direction)
+}
+
+// ClassifyEndpointsForDirection builds the persisted local/remote dimensions
+// from an explicit per-device direction. AddressSnap still supplies prefix,
+// set, business and Geo attribution; only the network boundary is device-local.
+func (i *AddressSnapshotIndex) ClassifyEndpointsForDirection(source, destination netip.Addr, direction BusinessDirection) ClassifiedEndpoints {
 	result := ClassifiedEndpoints{Direction: DirectionAmbiguous, Business: UnassignedDimensionID}
 	if i == nil {
 		return result
@@ -217,26 +244,35 @@ func (i *AddressSnapshotIndex) ClassifyEndpoints(source, destination netip.Addr)
 	source, destination = source.Unmap(), destination.Unmap()
 	sourceValue, sourceMatched := i.lookup(source)
 	destinationValue, destinationMatched := i.lookup(destination)
-	sourceLocal := sourceMatched && sourceValue.local
-	destinationLocal := destinationMatched && destinationValue.local
-	switch {
-	case sourceLocal && !destinationLocal:
-		result.Direction = DirectionOut
-		result.Local = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, result.Direction)
-		result.Remote = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, result.Direction)
-		result.Business = sourceValue.business
-	case !sourceLocal && destinationLocal:
-		result.Direction = DirectionIn
-		result.Local = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, result.Direction)
-		result.Remote = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, result.Direction)
-		result.Business = destinationValue.business
-	case sourceLocal && destinationLocal:
-		result.Direction = DirectionInternal
-		result.Local = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, result.Direction)
-		result.Remote = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, result.Direction)
-		result.Business = sourceValue.business
+	return i.classifyEndpointsForDirection(source, destination, sourceValue, sourceMatched, destinationValue, destinationMatched, direction)
+}
+
+func (i *AddressSnapshotIndex) classifyEndpointsForDirection(source, destination netip.Addr, sourceValue *compiledAddressSnapshotValue, sourceMatched bool, destinationValue *compiledAddressSnapshotValue, destinationMatched bool, direction BusinessDirection) ClassifiedEndpoints {
+	result := ClassifiedEndpoints{SnapshotID: i.metadata.SnapshotID, Version: i.metadata.Version, Direction: direction, Business: UnassignedDimensionID}
+	switch direction {
+	case DirectionOut:
+		result.Local = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, direction)
+		result.Remote = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, direction)
+		if sourceMatched {
+			result.Business = sourceValue.business
+		}
+	case DirectionIn:
+		result.Local = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, direction)
+		result.Remote = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, direction)
+		if destinationMatched {
+			result.Business = destinationValue.business
+		}
+	case DirectionInternal:
+		result.Local = addressSnapshotEndpoint(source, EndpointSrc, sourceValue, sourceMatched, direction)
+		result.Remote = addressSnapshotEndpoint(destination, EndpointDst, destinationValue, destinationMatched, direction)
+		if sourceMatched {
+			result.Business = sourceValue.business
+		}
+	case DirectionTransit:
+	case DirectionAmbiguous:
+		result.Direction = DirectionAmbiguous
 	default:
-		result.Direction = DirectionTransit
+		result.Direction = DirectionAmbiguous
 	}
 	return result
 }

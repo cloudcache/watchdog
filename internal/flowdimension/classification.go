@@ -7,16 +7,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/gaissmai/bart"
 )
 
 const (
-	ClassificationSchemaVersion   = 1
-	defaultMaxClassificationBytes = 64 << 10
-	maxHomeISPIDs                 = 4_096
-	maxHomeASNs                   = 4_096
+	LegacyClassificationSchemaVersion = 1
+	ClassificationSchemaVersion       = 2
+	defaultMaxClassificationBytes     = 16 << 20
+	maxHomeISPIDs                     = 4_096
+	maxHomeASNs                       = 4_096
 )
 
 var ErrNoClassificationSnapshot = errors.New("no classification snapshot for event time")
@@ -46,23 +50,41 @@ type ClassificationDefinition struct {
 	OverseasIncludesHMT bool
 	InternalPolicy      RecordPolicy
 	TransitPolicy       RecordPolicy
+	DeviceProfiles      []ClassificationDeviceProfile
+}
+
+// ClassificationDeviceProfile contains only the customer address boundary of
+// one observation device. Geography, operator and ASN remain properties of the
+// paired AddressSnap and are never duplicated into Flow configuration.
+type ClassificationDeviceProfile struct {
+	DeviceID       string                       `json:"device_id"`
+	SourcePrefixes []ClassificationSourcePrefix `json:"source_prefixes"`
+}
+
+// ClassificationSourcePrefix binds one address-library prefix to the Flow
+// observation device that owns it. Geo and operator properties are deliberately
+// not copied here: the paired AddressSnap remains their single source of truth.
+type ClassificationSourcePrefix struct {
+	ID   string `json:"id"`
+	CIDR string `json:"cidr"`
 }
 
 // ClassificationBundle is the immutable wire object published by the control
 // plane. ClassificationDefinition remains the programmatic compile input so a
 // schema version is never silently optional on the wire.
 type ClassificationBundle struct {
-	SchemaVersion       uint32       `json:"schema_version"`
-	Version             uint32       `json:"version"`
-	EffectiveFrom       time.Time    `json:"effective_from"`
-	DimensionSnapshotID string       `json:"dimension_snapshot_id"`
-	HomeProvince        string       `json:"home_province"`
-	HomeCity            string       `json:"home_city"`
-	HomeISPIDs          []uint16     `json:"home_isp_ids"`
-	HomeASNs            []uint32     `json:"home_asns"`
-	OverseasIncludesHMT bool         `json:"overseas_includes_hmt"`
-	InternalPolicy      RecordPolicy `json:"internal_policy"`
-	TransitPolicy       RecordPolicy `json:"transit_policy"`
+	SchemaVersion       uint32                        `json:"schema_version"`
+	Version             uint32                        `json:"version"`
+	EffectiveFrom       time.Time                     `json:"effective_from"`
+	DimensionSnapshotID string                        `json:"dimension_snapshot_id"`
+	HomeProvince        string                        `json:"home_province"`
+	HomeCity            string                        `json:"home_city"`
+	HomeISPIDs          []uint16                      `json:"home_isp_ids"`
+	HomeASNs            []uint32                      `json:"home_asns"`
+	OverseasIncludesHMT bool                          `json:"overseas_includes_hmt"`
+	InternalPolicy      RecordPolicy                  `json:"internal_policy"`
+	TransitPolicy       RecordPolicy                  `json:"transit_policy"`
+	DeviceProfiles      []ClassificationDeviceProfile `json:"device_profiles,omitempty"`
 }
 
 type ClassificationCompileLimits struct {
@@ -94,13 +116,19 @@ func EncodeClassificationBundle(definition ClassificationDefinition) ([]byte, st
 		asns = []uint32{}
 	}
 	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
+	profiles := canonicalClassificationDeviceProfiles(definition.DeviceProfiles)
+	schemaVersion := uint32(LegacyClassificationSchemaVersion)
+	if len(profiles) > 0 {
+		schemaVersion = ClassificationSchemaVersion
+	}
 	bundle := ClassificationBundle{
-		SchemaVersion: ClassificationSchemaVersion,
+		SchemaVersion: schemaVersion,
 		Version:       definition.Version, EffectiveFrom: definition.EffectiveFrom.UTC(),
 		DimensionSnapshotID: definition.DimensionSnapshotID,
 		HomeProvince:        definition.HomeProvince, HomeCity: definition.HomeCity,
 		HomeISPIDs: ispIDs, HomeASNs: asns, OverseasIncludesHMT: definition.OverseasIncludesHMT,
 		InternalPolicy: definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
+		DeviceProfiles: profiles,
 	}
 	data, err := json.Marshal(bundle)
 	if err != nil {
@@ -114,8 +142,11 @@ func EncodeClassificationBundle(definition ClassificationDefinition) ([]byte, st
 // event time. Its dimension reference makes an incomplete control-plane
 // publication fail closed instead of mixing independently current versions.
 type ClassificationSnapshot struct {
-	metadata ClassificationMetadata
-	home     HomeProfile
+	metadata       ClassificationMetadata
+	home           HomeProfile
+	deviceSources  map[string]*bart.Table[struct{}]
+	deviceProfiles []ClassificationDeviceProfile
+	legacyGlobal   bool
 }
 
 func CompileClassification(definition ClassificationDefinition) (*ClassificationSnapshot, error) {
@@ -147,8 +178,14 @@ func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, 
 	if err := ensureJSONEOF(decoder); err != nil {
 		return nil, fmt.Errorf("decode classification bundle: %w", err)
 	}
-	if bundle.SchemaVersion != ClassificationSchemaVersion {
+	if bundle.SchemaVersion != LegacyClassificationSchemaVersion && bundle.SchemaVersion != ClassificationSchemaVersion {
 		return nil, fmt.Errorf("unsupported classification bundle schema_version %d", bundle.SchemaVersion)
+	}
+	if bundle.SchemaVersion == ClassificationSchemaVersion && len(bundle.DeviceProfiles) == 0 {
+		return nil, errors.New("classification schema v2 requires device_profiles")
+	}
+	if bundle.SchemaVersion == LegacyClassificationSchemaVersion && len(bundle.DeviceProfiles) != 0 {
+		return nil, errors.New("classification schema v1 does not support device_profiles")
 	}
 	return compileClassification(ClassificationDefinition{
 		Version: bundle.Version, EffectiveFrom: bundle.EffectiveFrom,
@@ -156,6 +193,7 @@ func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, 
 		HomeCity: bundle.HomeCity, HomeISPIDs: bundle.HomeISPIDs, HomeASNs: bundle.HomeASNs,
 		OverseasIncludesHMT: bundle.OverseasIncludesHMT,
 		InternalPolicy:      bundle.InternalPolicy, TransitPolicy: bundle.TransitPolicy,
+		DeviceProfiles: bundle.DeviceProfiles,
 	}, "sha256:"+hex.EncodeToString(got[:]))
 }
 
@@ -168,44 +206,50 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 	if effectiveFrom.IsZero() || offset != 0 || effectiveFrom.Second() != 0 || effectiveFrom.Nanosecond() != 0 {
 		return nil, errors.New("classification effective_from must be a UTC minute boundary")
 	}
-	if definition.HomeProvince != "" {
-		if _, ok := provincePart(definition.HomeProvince); !ok || definition.HomeProvince[2:] != "0000" {
-			return nil, errors.New("classification home province must be a canonical six-digit province code")
-		}
-	}
-	if definition.HomeCity != "" {
-		city, cityOK := cityPart(definition.HomeCity)
-		province, provinceOK := provincePart(definition.HomeProvince)
-		if !cityOK || !provinceOK || definition.HomeCity[4:] != "00" || city[:2] != province {
-			return nil, errors.New("classification home city must be a canonical city code inside the home province")
-		}
-	}
 	if !validRecordPolicy(definition.InternalPolicy) || !validRecordPolicy(definition.TransitPolicy) {
 		return nil, errors.New("classification internal and transit policies must be count or drop")
 	}
-	if len(definition.HomeISPIDs) > maxHomeISPIDs {
-		return nil, fmt.Errorf("classification home ISP IDs exceed limit %d", maxHomeISPIDs)
+	if len(definition.DeviceProfiles) > 0 && (definition.HomeProvince != "" || definition.HomeCity != "" || len(definition.HomeISPIDs) > 0 || len(definition.HomeASNs) > 0) {
+		return nil, errors.New("classification global home and device profiles cannot be combined")
 	}
-	if len(definition.HomeASNs) > maxHomeASNs {
-		return nil, fmt.Errorf("classification home ASNs exceed limit %d", maxHomeASNs)
+	legacyHome, err := compileHomeProfile(definition.HomeProvince, definition.HomeCity, definition.HomeISPIDs, definition.HomeASNs, definition.OverseasIncludesHMT, definition.Version)
+	if err != nil {
+		return nil, err
 	}
-	ispIDs := append([]uint16(nil), definition.HomeISPIDs...)
-	sort.Slice(ispIDs, func(left, right int) bool { return ispIDs[left] < ispIDs[right] })
-	ispSet := make(map[uint16]struct{}, len(ispIDs))
-	for index, id := range ispIDs {
-		if id == 0 || (index > 0 && id == ispIDs[index-1]) {
-			return nil, errors.New("classification home ISP IDs must be non-zero and unique")
+	deviceSources := make(map[string]*bart.Table[struct{}], len(definition.DeviceProfiles))
+	profiles := canonicalClassificationDeviceProfiles(definition.DeviceProfiles)
+	for _, profile := range profiles {
+		if !validIdentifier(profile.DeviceID, 128) {
+			return nil, errors.New("classification device ID is invalid")
 		}
-		ispSet[id] = struct{}{}
-	}
-	asns := append([]uint32(nil), definition.HomeASNs...)
-	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
-	asnSet := make(map[uint32]struct{}, len(asns))
-	for index, asn := range asns {
-		if asn == 0 || (index > 0 && asn == asns[index-1]) {
-			return nil, errors.New("classification home ASNs must be non-zero and unique")
+		if _, exists := deviceSources[profile.DeviceID]; exists {
+			return nil, errors.New("classification device IDs must be unique")
 		}
-		asnSet[asn] = struct{}{}
+		if len(profile.SourcePrefixes) == 0 {
+			return nil, fmt.Errorf("classification device %s requires at least one source prefix", profile.DeviceID)
+		}
+		tree := &bart.Table[struct{}]{}
+		prefixIDs := make(map[string]struct{}, len(profile.SourcePrefixes))
+		prefixCIDRs := make(map[netip.Prefix]struct{}, len(profile.SourcePrefixes))
+		for _, source := range profile.SourcePrefixes {
+			if !validIdentifier(source.ID, 128) {
+				return nil, fmt.Errorf("classification device %s source prefix ID is invalid", profile.DeviceID)
+			}
+			prefix, err := netip.ParsePrefix(source.CIDR)
+			if err != nil || prefix != prefix.Masked() {
+				return nil, fmt.Errorf("classification device %s source prefix must be canonical IPv4 or IPv6 CIDR", profile.DeviceID)
+			}
+			if _, exists := prefixIDs[source.ID]; exists {
+				return nil, fmt.Errorf("classification device %s source prefix IDs must be unique", profile.DeviceID)
+			}
+			if _, exists := prefixCIDRs[prefix]; exists {
+				return nil, fmt.Errorf("classification device %s source prefix CIDRs must be unique", profile.DeviceID)
+			}
+			prefixIDs[source.ID] = struct{}{}
+			prefixCIDRs[prefix] = struct{}{}
+			tree.Insert(prefix, struct{}{})
+		}
+		deviceSources[profile.DeviceID] = tree
 	}
 	return &ClassificationSnapshot{
 		metadata: ClassificationMetadata{
@@ -214,11 +258,63 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 			InternalPolicy:      definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
 			Checksum: checksum,
 		},
-		home: HomeProfile{
-			Province: definition.HomeProvince, City: definition.HomeCity, ISPIDs: ispSet, ASNs: asnSet,
-			OverseasIncludesHMT: definition.OverseasIncludesHMT, Version: definition.Version,
-		},
+		home: legacyHome, deviceSources: deviceSources, deviceProfiles: profiles, legacyGlobal: len(definition.DeviceProfiles) == 0,
 	}, nil
+}
+
+func compileHomeProfile(province, city string, ispValues []uint16, asnValues []uint32, overseasIncludesHMT bool, version uint32) (HomeProfile, error) {
+	if province != "" {
+		if _, ok := provincePart(province); !ok || province[2:] != "0000" {
+			return HomeProfile{}, errors.New("classification home province must be a canonical six-digit province code")
+		}
+	}
+	if city != "" {
+		cityPartValue, cityOK := cityPart(city)
+		provincePartValue, provinceOK := provincePart(province)
+		if !cityOK || !provinceOK || city[4:] != "00" || cityPartValue[:2] != provincePartValue {
+			return HomeProfile{}, errors.New("classification home city must be a canonical city code inside the home province")
+		}
+	}
+	if len(ispValues) > maxHomeISPIDs {
+		return HomeProfile{}, fmt.Errorf("classification home ISP IDs exceed limit %d", maxHomeISPIDs)
+	}
+	if len(asnValues) > maxHomeASNs {
+		return HomeProfile{}, fmt.Errorf("classification home ASNs exceed limit %d", maxHomeASNs)
+	}
+	ispIDs := append([]uint16(nil), ispValues...)
+	sort.Slice(ispIDs, func(left, right int) bool { return ispIDs[left] < ispIDs[right] })
+	ispSet := make(map[uint16]struct{}, len(ispIDs))
+	for index, id := range ispIDs {
+		if id == 0 || (index > 0 && id == ispIDs[index-1]) {
+			return HomeProfile{}, errors.New("classification home ISP IDs must be non-zero and unique")
+		}
+		ispSet[id] = struct{}{}
+	}
+	asns := append([]uint32(nil), asnValues...)
+	sort.Slice(asns, func(left, right int) bool { return asns[left] < asns[right] })
+	asnSet := make(map[uint32]struct{}, len(asns))
+	for index, asn := range asns {
+		if asn == 0 || (index > 0 && asn == asns[index-1]) {
+			return HomeProfile{}, errors.New("classification home ASNs must be non-zero and unique")
+		}
+		asnSet[asn] = struct{}{}
+	}
+	return HomeProfile{Province: province, City: city, ISPIDs: ispSet, ASNs: asnSet, OverseasIncludesHMT: overseasIncludesHMT, Version: version}, nil
+}
+
+func canonicalClassificationDeviceProfiles(values []ClassificationDeviceProfile) []ClassificationDeviceProfile {
+	result := append([]ClassificationDeviceProfile(nil), values...)
+	for index := range result {
+		result[index].SourcePrefixes = append([]ClassificationSourcePrefix(nil), result[index].SourcePrefixes...)
+		sort.Slice(result[index].SourcePrefixes, func(left, right int) bool {
+			if result[index].SourcePrefixes[left].ID == result[index].SourcePrefixes[right].ID {
+				return result[index].SourcePrefixes[left].CIDR < result[index].SourcePrefixes[right].CIDR
+			}
+			return result[index].SourcePrefixes[left].ID < result[index].SourcePrefixes[right].ID
+		})
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].DeviceID < result[right].DeviceID })
+	return result
 }
 
 func (s *ClassificationSnapshot) Metadata() ClassificationMetadata {
@@ -229,10 +325,68 @@ func (s *ClassificationSnapshot) Metadata() ClassificationMetadata {
 }
 
 func (s *ClassificationSnapshot) Classify(direction BusinessDirection, remote GeoInfo) Category {
-	if s == nil {
+	if s == nil || !s.legacyGlobal {
 		return CategoryUnknown
 	}
 	return ClassifyCategory(direction, remote, s.home)
+}
+
+// ClassifyForDevice selects the immutable local context using the device ID
+// carried by the Flow record. Schema v1 publications retain their historical
+// global behavior; schema v2 fails closed for an unconfigured device.
+func (s *ClassificationSnapshot) ClassifyForDevice(deviceID string, direction BusinessDirection, remote GeoInfo) Category {
+	if s == nil {
+		return CategoryUnknown
+	}
+	if s.legacyGlobal {
+		return ClassifyCategory(direction, remote, s.home)
+	}
+	return CategoryUnknown
+}
+
+// DeviceDirection selects the local endpoint using the customer source CIDRs
+// configured for the observation device. Missing device configuration fails
+// closed instead of borrowing another device's network boundary.
+func (s *ClassificationSnapshot) DeviceDirection(deviceID string, source, destination netip.Addr) (BusinessDirection, bool) {
+	if s == nil || s.legacyGlobal {
+		return DirectionAmbiguous, false
+	}
+	local, ok := s.deviceSources[deviceID]
+	if !ok || !source.IsValid() || !destination.IsValid() {
+		return DirectionAmbiguous, false
+	}
+	_, sourceLocal := local.Lookup(source.Unmap())
+	_, destinationLocal := local.Lookup(destination.Unmap())
+	switch {
+	case sourceLocal && !destinationLocal:
+		return DirectionOut, true
+	case !sourceLocal && destinationLocal:
+		return DirectionIn, true
+	case sourceLocal && destinationLocal:
+		return DirectionInternal, true
+	default:
+		return DirectionTransit, true
+	}
+}
+
+func (s *ClassificationSnapshot) UsesDeviceSources() bool {
+	return s != nil && !s.legacyGlobal
+}
+
+// ClassifyResolvedEndpoints compares the already-resolved local and remote
+// address-library attributes. This keeps province/city/operator ownership in
+// AddressSnap and performs no allocation or external lookup per record.
+func (s *ClassificationSnapshot) ClassifyResolvedEndpoints(deviceID string, direction BusinessDirection, local, remote GeoInfo) Category {
+	if s == nil {
+		return CategoryUnknown
+	}
+	if s.legacyGlobal {
+		return ClassifyCategory(direction, remote, s.home)
+	}
+	if _, ok := s.deviceSources[deviceID]; !ok {
+		return CategoryUnknown
+	}
+	return ClassifyCategoryFromEndpoints(direction, local, remote)
 }
 
 func (s *ClassificationSnapshot) Disposition(direction BusinessDirection) RecordDisposition {
@@ -341,6 +495,19 @@ func sameClassification(left, right *ClassificationSnapshot) bool {
 	for asn := range left.home.ASNs {
 		if _, exists := right.home.ASNs[asn]; !exists {
 			return false
+		}
+	}
+	if len(left.deviceProfiles) != len(right.deviceProfiles) {
+		return false
+	}
+	for index := range left.deviceProfiles {
+		if left.deviceProfiles[index].DeviceID != right.deviceProfiles[index].DeviceID || len(left.deviceProfiles[index].SourcePrefixes) != len(right.deviceProfiles[index].SourcePrefixes) {
+			return false
+		}
+		for prefixIndex := range left.deviceProfiles[index].SourcePrefixes {
+			if left.deviceProfiles[index].SourcePrefixes[prefixIndex] != right.deviceProfiles[index].SourcePrefixes[prefixIndex] {
+				return false
+			}
 		}
 	}
 	return true

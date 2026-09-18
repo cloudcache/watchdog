@@ -30,7 +30,7 @@ import (
 const (
 	flowEnrichmentPairSchemaVersion = uint16(1)
 	flowEnrichmentPageLimit         = 100
-	flowClassificationObjectMax     = int64(64 << 10)
+	flowClassificationObjectMax     = int64(16 << 20)
 	flowDimensionObjectMax          = int64(512 << 20)
 	flowTrustSettingKey             = "flow.enrichment.trust_bundle"
 )
@@ -43,13 +43,12 @@ var (
 )
 
 type flowClassificationProfileDraft struct {
-	HomeProvince        string                     `json:"home_province"`
-	HomeCity            string                     `json:"home_city"`
-	HomeISPIDs          []uint16                   `json:"home_isp_ids"`
-	HomeASNs            []uint32                   `json:"home_asns"`
-	OverseasIncludesHMT bool                       `json:"overseas_includes_hmt"`
-	InternalPolicy      flowdimension.RecordPolicy `json:"internal_policy"`
-	TransitPolicy       flowdimension.RecordPolicy `json:"transit_policy"`
+	DeviceProfiles []flowClassificationDeviceProfileDraft `json:"device_profiles"`
+}
+
+type flowClassificationDeviceProfileDraft struct {
+	DeviceID        string   `json:"device_id"`
+	SourcePrefixIDs []string `json:"source_prefix_ids"`
 }
 
 type flowClassificationProfile struct {
@@ -237,34 +236,30 @@ func flowTrustKeyState(bundle flowplan.TrustBundle, keyID string, publicKey ed25
 }
 
 func normalizeFlowClassificationProfile(draft flowClassificationProfileDraft) (flowClassificationProfileDraft, string, error) {
-	draft.HomeProvince = strings.TrimSpace(draft.HomeProvince)
-	draft.HomeCity = strings.TrimSpace(draft.HomeCity)
-	draft.HomeISPIDs = canonicalUint16s(draft.HomeISPIDs)
-	draft.HomeASNs = canonicalUint32s(draft.HomeASNs)
-	if draft.HomeProvince == "" || draft.HomeCity == "" {
-		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: local province and city are required", errFlowClassificationInvalid)
+	draft.DeviceProfiles = append([]flowClassificationDeviceProfileDraft(nil), draft.DeviceProfiles...)
+	for index := range draft.DeviceProfiles {
+		profile := &draft.DeviceProfiles[index]
+		profile.DeviceID = strings.TrimSpace(profile.DeviceID)
+		profile.SourcePrefixIDs = canonicalStrings(profile.SourcePrefixIDs)
+		if profile.DeviceID == "" || len(profile.DeviceID) > 128 || len(profile.SourcePrefixIDs) == 0 {
+			return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: every observation device requires at least one source prefix", errFlowClassificationInvalid)
+		}
 	}
-	if len(draft.HomeISPIDs) == 0 {
-		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: at least one on-net operator is required", errFlowClassificationInvalid)
+	sort.Slice(draft.DeviceProfiles, func(left, right int) bool {
+		return draft.DeviceProfiles[left].DeviceID < draft.DeviceProfiles[right].DeviceID
+	})
+	if len(draft.DeviceProfiles) == 0 {
+		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: at least one observation device profile is required", errFlowClassificationInvalid)
 	}
-	if draft.InternalPolicy == "" {
-		draft.InternalPolicy = flowdimension.RecordPolicyCount
-	}
-	if draft.TransitPolicy == "" {
-		draft.TransitPolicy = flowdimension.RecordPolicyCount
-	}
-	if _, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
-		Version: 1, EffectiveFrom: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
-		DimensionSnapshotID: "profile-validation", HomeProvince: draft.HomeProvince, HomeCity: draft.HomeCity,
-		HomeISPIDs: draft.HomeISPIDs, HomeASNs: draft.HomeASNs, OverseasIncludesHMT: draft.OverseasIncludesHMT,
-		InternalPolicy: draft.InternalPolicy, TransitPolicy: draft.TransitPolicy,
-	}); err != nil {
-		return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: %v", errFlowClassificationInvalid, err)
+	for index := 1; index < len(draft.DeviceProfiles); index++ {
+		if draft.DeviceProfiles[index].DeviceID == draft.DeviceProfiles[index-1].DeviceID {
+			return flowClassificationProfileDraft{}, "", fmt.Errorf("%w: observation device IDs must be unique", errFlowClassificationInvalid)
+		}
 	}
 	canonical, err := json.Marshal(struct {
 		SchemaVersion uint16                         `json:"schema_version"`
 		Definition    flowClassificationProfileDraft `json:"definition"`
-	}{SchemaVersion: 1, Definition: draft})
+	}{SchemaVersion: uint16(flowdimension.ClassificationSchemaVersion), Definition: draft})
 	if err != nil {
 		return flowClassificationProfileDraft{}, "", err
 	}
@@ -272,15 +267,14 @@ func normalizeFlowClassificationProfile(draft flowClassificationProfileDraft) (f
 	return draft, hex.EncodeToString(digest[:]), nil
 }
 
-func canonicalUint16s(values []uint16) []uint16 {
-	result := append([]uint16{}, values...)
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
-	return compactSorted(result)
-}
-
-func canonicalUint32s(values []uint32) []uint32 {
-	result := append([]uint32{}, values...)
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+func canonicalStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
 	return compactSorted(result)
 }
 
@@ -297,10 +291,7 @@ func compactSorted[T comparable](values []T) []T {
 func (s *Server) getFlowClassificationProfile(c *gin.Context) {
 	profile, err := s.readFlowClassificationProfile(c.Request.Context())
 	if errors.Is(err, sql.ErrNoRows) {
-		profile.Definition.HomeISPIDs = []uint16{}
-		profile.Definition.HomeASNs = []uint32{}
-		profile.Definition.InternalPolicy = flowdimension.RecordPolicyCount
-		profile.Definition.TransitPolicy = flowdimension.RecordPolicyCount
+		profile.Definition.DeviceProfiles = []flowClassificationDeviceProfileDraft{}
 		c.Header("ETag", etag(0))
 		c.JSON(http.StatusOK, profile)
 		return
@@ -332,8 +323,7 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 		writeFlowEnrichmentError(c, err)
 		return
 	}
-	ispJSON, _ := json.Marshal(draft.HomeISPIDs)
-	asnJSON, _ := json.Marshal(draft.HomeASNs)
+	profilesJSON, _ := json.Marshal(draft.DeviceProfiles)
 	actor := stringValue(principalUserID(c))
 	tx, err := s.db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
@@ -346,10 +336,9 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows) && expected == 0:
 		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO flow_classification_profiles
-			(id,home_province,home_city,home_isp_ids,home_asns,overseas_includes_hmt,internal_policy,transit_policy,definition_digest,created_by,updated_by)
-			VALUES (1,?,?,CAST(? AS JSON),CAST(? AS JSON),?,?,?,?,NULLIF(?,''),NULLIF(?,''))`,
-			draft.HomeProvince, draft.HomeCity, ispJSON, asnJSON, draft.OverseasIncludesHMT,
-			draft.InternalPolicy, draft.TransitPolicy, digest, actor, actor)
+			(id,home_province,home_city,home_isp_ids,home_asns,device_profiles,overseas_includes_hmt,internal_policy,transit_policy,definition_digest,created_by,updated_by)
+			VALUES (1,'','',JSON_ARRAY(),JSON_ARRAY(),CAST(? AS JSON),0,'count','count',?,NULLIF(?,''),NULLIF(?,''))`,
+			profilesJSON, digest, actor, actor)
 	case err != nil:
 		writeSQLError(c, err)
 		return
@@ -358,16 +347,20 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 		return
 	default:
 		_, err = tx.ExecContext(c.Request.Context(), `UPDATE flow_classification_profiles SET
-			home_province=?,home_city=?,home_isp_ids=CAST(? AS JSON),home_asns=CAST(? AS JSON),overseas_includes_hmt=?,
-			internal_policy=?,transit_policy=?,definition_digest=?,updated_by=NULLIF(?,''),row_version=row_version+1 WHERE id=1 AND row_version=?`,
-			draft.HomeProvince, draft.HomeCity, ispJSON, asnJSON, draft.OverseasIncludesHMT,
-			draft.InternalPolicy, draft.TransitPolicy, digest, actor, expected)
+			home_province='',home_city='',home_isp_ids=JSON_ARRAY(),home_asns=JSON_ARRAY(),device_profiles=CAST(? AS JSON),overseas_includes_hmt=0,
+			internal_policy='count',transit_policy='count',definition_digest=?,updated_by=NULLIF(?,''),row_version=row_version+1 WHERE id=1 AND row_version=?`,
+			profilesJSON, digest, actor, expected)
 	}
 	if err != nil {
 		writeSQLError(c, err)
 		return
 	}
-	if err := insertFlowEnrichmentAudit(c.Request.Context(), tx, actor, "flow.classification_profile.saved", "classification_profile", "global", map[string]any{"definition_digest": digest}); err != nil {
+	_, err = resolveFlowClassificationDeviceProfiles(c.Request.Context(), tx, draft.DeviceProfiles, false, nil)
+	if err != nil {
+		writeFlowEnrichmentError(c, err)
+		return
+	}
+	if err := insertFlowEnrichmentAudit(c.Request.Context(), tx, actor, "flow.classification_profile.saved", "classification_profile", "global", map[string]any{"definition_digest": digest, "device_profile_count": len(draft.DeviceProfiles)}); err != nil {
 		writeSQLError(c, err)
 		return
 	}
@@ -385,7 +378,7 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 }
 
 func (s *Server) readFlowClassificationProfile(ctx context.Context) (flowClassificationProfile, error) {
-	return scanFlowClassificationProfile(s.db.QueryRowContext(ctx, `SELECT home_province,home_city,home_isp_ids,home_asns,overseas_includes_hmt,internal_policy,transit_policy,
+	return scanFlowClassificationProfile(s.db.QueryRowContext(ctx, `SELECT device_profiles,
 		definition_digest,row_version,COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at
 		FROM flow_classification_profiles WHERE id=1`))
 }
@@ -394,20 +387,127 @@ type flowRowScanner interface{ Scan(...any) error }
 
 func scanFlowClassificationProfile(row flowRowScanner) (flowClassificationProfile, error) {
 	var profile flowClassificationProfile
-	var ispJSON, asnJSON []byte
-	err := row.Scan(&profile.Definition.HomeProvince, &profile.Definition.HomeCity, &ispJSON, &asnJSON,
-		&profile.Definition.OverseasIncludesHMT, &profile.Definition.InternalPolicy, &profile.Definition.TransitPolicy,
-		&profile.DefinitionDigest, &profile.RowVersion, &profile.CreatedBy, &profile.UpdatedBy, &profile.CreatedAt, &profile.UpdatedAt)
+	var profilesJSON []byte
+	err := row.Scan(&profilesJSON, &profile.DefinitionDigest, &profile.RowVersion,
+		&profile.CreatedBy, &profile.UpdatedBy, &profile.CreatedAt, &profile.UpdatedAt)
 	if err != nil {
 		return profile, err
 	}
-	if err := json.Unmarshal(ispJSON, &profile.Definition.HomeISPIDs); err != nil {
-		return flowClassificationProfile{}, err
-	}
-	if err := json.Unmarshal(asnJSON, &profile.Definition.HomeASNs); err != nil {
+	if err := json.Unmarshal(profilesJSON, &profile.Definition.DeviceProfiles); err != nil {
 		return flowClassificationProfile{}, err
 	}
 	return profile, nil
+}
+
+type flowAddressSnapshotPrefix struct {
+	CIDR        string
+	HasCity     bool
+	HasOperator bool
+}
+
+func resolveFlowClassificationDeviceProfiles(ctx context.Context, tx *sql.Tx, profiles []flowClassificationDeviceProfileDraft, requireAll bool, snapshotPrefixes map[string]flowAddressSnapshotPrefix) ([]flowdimension.ClassificationDeviceProfile, error) {
+	var enabledDeviceCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT device_id) FROM flow_exporter_bindings WHERE enabled=1`).Scan(&enabledDeviceCount); err != nil {
+		return nil, err
+	}
+	if requireAll && enabledDeviceCount != len(profiles) {
+		return nil, fmt.Errorf("%w: every enabled Flow device requires source prefixes", errFlowClassificationInvalid)
+	}
+	result := make([]flowdimension.ClassificationDeviceProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		var kind string
+		var bindingCount int
+		if err := tx.QueryRowContext(ctx, `SELECT d.kind,(SELECT COUNT(*) FROM flow_exporter_bindings f WHERE f.device_id=d.id AND f.enabled=1) FROM devices d WHERE d.id=?`, profile.DeviceID).Scan(&kind, &bindingCount); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("%w: observation device %s does not exist", errFlowClassificationInvalid, profile.DeviceID)
+			}
+			return nil, err
+		}
+		if canonicalDeviceKind(kind) != "network" {
+			return nil, fmt.Errorf("%w: observation device %s is not a network device", errFlowClassificationInvalid, profile.DeviceID)
+		}
+		if bindingCount == 0 {
+			return nil, fmt.Errorf("%w: observation device %s has no enabled Flow exporter binding", errFlowClassificationInvalid, profile.DeviceID)
+		}
+		resolved := flowdimension.ClassificationDeviceProfile{DeviceID: profile.DeviceID, SourcePrefixes: make([]flowdimension.ClassificationSourcePrefix, 0, len(profile.SourcePrefixIDs))}
+		for _, id := range profile.SourcePrefixIDs {
+			published, exists := snapshotPrefixes[id]
+			cidr := published.CIDR
+			if snapshotPrefixes == nil {
+				if err := tx.QueryRowContext(ctx, `SELECT cidr FROM address_prefixes WHERE id=?`, id).Scan(&cidr); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						return nil, fmt.Errorf("%w: source prefix %s does not exist", errFlowClassificationInvalid, id)
+					}
+					return nil, err
+				}
+				exists = true
+			}
+			if !exists {
+				return nil, fmt.Errorf("%w: source prefix %s is not present in the active address snapshot", errFlowClassificationInvalid, id)
+			}
+			if snapshotPrefixes != nil && (!published.HasCity || !published.HasOperator) {
+				return nil, fmt.Errorf("%w: source prefix %s requires city and operator attributes in the active address snapshot", errFlowClassificationInvalid, id)
+			}
+			resolved.SourcePrefixes = append(resolved.SourcePrefixes, flowdimension.ClassificationSourcePrefix{ID: id, CIDR: cidr})
+		}
+		result = append(result, resolved)
+	}
+	return result, nil
+}
+
+func loadFlowAddressSnapshotPrefixes(path, expectedChecksum string) (map[string]flowAddressSnapshotPrefix, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > flowDimensionObjectMax {
+		return nil, errors.New("address snapshot object size is invalid")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, flowDimensionObjectMax+1))
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(data)
+	if "sha256:"+hex.EncodeToString(digest[:]) != expectedChecksum {
+		return nil, errors.New("address snapshot checksum mismatch")
+	}
+	artifact, err := flowdimension.DecodeAddressSnapshot(data, flowdimension.AddressSnapshotLimits{})
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]flowAddressSnapshotPrefix)
+	for _, value := range artifact.Values {
+		if value.PrimaryPrefixID == 0 {
+			continue
+		}
+		if int(value.PrimaryPrefixID) >= len(artifact.Strings) || int(value.PrimaryPrefixCIDR) >= len(artifact.Strings) {
+			return nil, errors.New("address snapshot contains an invalid source prefix reference")
+		}
+		id := artifact.Strings[value.PrimaryPrefixID]
+		cidr := artifact.Strings[value.PrimaryPrefixCIDR]
+		if id == "" || cidr == "" {
+			return nil, errors.New("address snapshot contains an incomplete source prefix")
+		}
+		entry := flowAddressSnapshotPrefix{
+			CIDR:        cidr,
+			HasCity:     value.CustomerGeo.CityID != 0 || value.CustomerGeo.City != 0,
+			HasOperator: value.CustomerISPID != 0,
+		}
+		if existing, exists := result[id]; exists {
+			if existing.CIDR != cidr {
+				return nil, fmt.Errorf("address snapshot prefix %s has conflicting CIDRs", id)
+			}
+			entry.HasCity = existing.HasCity && entry.HasCity
+			entry.HasOperator = existing.HasOperator && entry.HasOperator
+		}
+		result[id] = entry
+	}
+	return result, nil
 }
 
 type flowAddressSnapshotRef struct {
@@ -468,8 +568,8 @@ func (s *Server) publishFlowEnrichment(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	profile, err := scanFlowClassificationProfile(tx.QueryRowContext(c.Request.Context(), `SELECT home_province,home_city,home_isp_ids,home_asns,
-		overseas_includes_hmt,internal_policy,transit_policy,definition_digest,row_version,COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at
+	profile, err := scanFlowClassificationProfile(tx.QueryRowContext(c.Request.Context(), `SELECT device_profiles,
+		definition_digest,row_version,COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at
 		FROM flow_classification_profiles WHERE id=1 FOR UPDATE`))
 	if err != nil {
 		writeFlowEnrichmentError(c, err)
@@ -490,8 +590,19 @@ func (s *Server) publishFlowEnrichment(c *gin.Context) {
 		writeFlowEnrichmentError(c, errFlowEnrichmentDimension)
 		return
 	}
-	if _, err := s.addressObjects.ResolveDimensionObject(snapshot.ObjectRef); err != nil {
+	snapshotPath, err := s.addressObjects.ResolveDimensionObject(snapshot.ObjectRef)
+	if err != nil {
 		writeFlowEnrichmentError(c, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err))
+		return
+	}
+	snapshotPrefixes, err := loadFlowAddressSnapshotPrefixes(snapshotPath, snapshot.Checksum)
+	if err != nil {
+		writeFlowEnrichmentError(c, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err))
+		return
+	}
+	deviceProfiles, err := resolveFlowClassificationDeviceProfiles(c.Request.Context(), tx, profile.Definition.DeviceProfiles, true, snapshotPrefixes)
+	if err != nil {
+		writeFlowEnrichmentError(c, err)
 		return
 	}
 	var currentVersion uint64
@@ -507,10 +618,8 @@ func (s *Server) publishFlowEnrichment(c *gin.Context) {
 	classificationVersion := uint32(currentVersion + 1)
 	classificationData, classificationChecksum, err := flowdimension.EncodeClassificationBundle(flowdimension.ClassificationDefinition{
 		Version: classificationVersion, EffectiveFrom: effectiveFrom, DimensionSnapshotID: snapshot.ID,
-		HomeProvince: profile.Definition.HomeProvince, HomeCity: profile.Definition.HomeCity,
-		HomeISPIDs: profile.Definition.HomeISPIDs, HomeASNs: profile.Definition.HomeASNs,
-		OverseasIncludesHMT: profile.Definition.OverseasIncludesHMT,
-		InternalPolicy:      profile.Definition.InternalPolicy, TransitPolicy: profile.Definition.TransitPolicy,
+		DeviceProfiles: deviceProfiles,
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
 	if err != nil {
 		writeFlowEnrichmentError(c, err)

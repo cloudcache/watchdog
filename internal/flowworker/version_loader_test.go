@@ -119,7 +119,11 @@ func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
 		},
 		Operators: []flowdimension.OperatorDefinition{{ID: "customer-carrier", FlowISPID: 3, Code: "CUSTOMER", Name: "Customer Carrier", Category: "carrier", ASNs: []uint32{64500}, Enabled: true}},
 		Prefixes: []flowdimension.PrefixDefinition{
-			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{"flow": "local", "business": "customer"}},
+			{ID: "local", CIDR: "10.0.0.0/8", Labels: map[string]string{
+				"business": "customer", "geo.continent": "AS", "geo.continent_id": "continent-asia", "geo.country": "CN", "geo.country_id": "country-cn",
+				"geo.province": "330000", "geo.province_id": "province-zhejiang", "geo.city": "330100", "geo.city_id": "city-hangzhou",
+				"operator.id": "customer-carrier", "asn": "64500",
+			}},
 			{ID: "remote", CIDR: "203.0.113.0/24", Labels: map[string]string{
 				"geo.continent": "AS", "geo.continent_id": "continent-asia", "geo.country": "CN", "geo.country_id": "country-cn",
 				"geo.province": "330000", "geo.province_id": "province-zhejiang", "geo.city": "330100", "geo.city_id": "city-hangzhou",
@@ -147,6 +151,16 @@ func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
 		ObjectFormat: VersionObjectFormatWADS, ObjectFormatVersion: flowdimension.AddressSnapshotFormatVersion,
 	}
 	source.objects[publication.Dimension.ObjectRef] = built.Data
+	classificationData, classificationChecksum, err := flowdimension.EncodeClassificationBundle(flowdimension.ClassificationDefinition{
+		Version: publication.ClassificationVersion, EffectiveFrom: publication.ClassificationEffectiveFrom, DimensionSnapshotID: publication.DimensionSnapshotID,
+		DeviceProfiles: []flowdimension.ClassificationDeviceProfile{{DeviceID: "device-a", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "local", CIDR: "10.0.0.0/8"}}}},
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication.Classification.Checksum = classificationChecksum
+	source.objects[publication.Classification.ObjectRef] = classificationData
 
 	catalog, _ := NewEnrichmentVersionCatalog()
 	acks := &recordingVersionAcknowledger{}
@@ -170,7 +184,7 @@ func TestVersionLoaderInstallsWADSAndEnrichesWithoutGeoCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := result.Records[0]
-	if record.Category != flowdimension.CategoryOnNetLocalCity || record.SupplierCategory != flowdimension.CategoryOffNetInProvince ||
+	if record.Dimensions.Direction != flowdimension.DirectionOut || record.Category != flowdimension.CategoryOnNetLocalCity || record.SupplierCategory != flowdimension.CategoryUnknown ||
 		record.RemoteGeo.ISPID != 3 || record.SupplierRemoteGeo.ISPID != 9 || record.RemoteASN != 64500 || record.RemoteASNSource != ASNSourceGeoV2 ||
 		record.RemoteGeo.Version != "dimension-wads" || record.Dimensions.Remote.AddressSets.Count() != 1 {
 		t.Fatalf("WADS enrichment = %+v", record)
@@ -274,7 +288,7 @@ func TestVersionLoaderReusesInstalledDimensionForHomeOnlyPublication(t *testing.
 		t.Fatal(err)
 	}
 	classificationData, err := json.Marshal(flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 2,
+		SchemaVersion: flowdimension.LegacyClassificationSchemaVersion, Version: 2,
 		EffectiveFrom: testMinute(13, 0), DimensionSnapshotID: "dimension-1",
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{4}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
@@ -358,7 +372,7 @@ func testVersionPublication(t testing.TB, version uint32, effectiveFrom time.Tim
 		},
 	}
 	classificationBundle := flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: version,
+		SchemaVersion: flowdimension.LegacyClassificationSchemaVersion, Version: version,
 		EffectiveFrom: effectiveFrom, DimensionSnapshotID: snapshotID,
 		HomeProvince: "330000", HomeCity: "330100", HomeISPIDs: []uint16{3}, OverseasIncludesHMT: true,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,

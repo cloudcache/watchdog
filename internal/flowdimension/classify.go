@@ -110,6 +110,50 @@ func (s *CompiledSnapshot) ClassifyEndpoints(source, destination netip.Addr) Cla
 	return result
 }
 
+// ClassifyEndpointsForDirection is the legacy JSON snapshot equivalent of the
+// WADS method. New publications use WADS, but keeping the method here preserves
+// rolling-upgrade behavior without reintroducing a global local-network flag.
+func (s *CompiledSnapshot) ClassifyEndpointsForDirection(source, destination netip.Addr, direction BusinessDirection) ClassifiedEndpoints {
+	result := ClassifiedEndpoints{Direction: DirectionAmbiguous, Business: UnassignedDimensionID}
+	if s == nil {
+		return result
+	}
+	result.SnapshotID, result.Version = s.metadata.SnapshotID, s.metadata.Version
+	if !source.IsValid() || !destination.IsValid() {
+		return result
+	}
+	source, destination = source.Unmap(), destination.Unmap()
+	sourcePrefix, sourceMatched := s.lookup(source)
+	destinationPrefix, destinationMatched := s.lookup(destination)
+	result.Direction = direction
+	switch direction {
+	case DirectionOut:
+		result.Local = s.endpoint(source, EndpointSrc, sourcePrefix, sourceMatched, direction)
+		result.Remote = s.endpoint(destination, EndpointDst, destinationPrefix, destinationMatched, direction)
+		if sourceMatched {
+			result.Business = businessLabel(sourcePrefix)
+		}
+	case DirectionIn:
+		result.Local = s.endpoint(destination, EndpointDst, destinationPrefix, destinationMatched, direction)
+		result.Remote = s.endpoint(source, EndpointSrc, sourcePrefix, sourceMatched, direction)
+		if destinationMatched {
+			result.Business = businessLabel(destinationPrefix)
+		}
+	case DirectionInternal:
+		result.Local = s.endpoint(source, EndpointSrc, sourcePrefix, sourceMatched, direction)
+		result.Remote = s.endpoint(destination, EndpointDst, destinationPrefix, destinationMatched, direction)
+		if sourceMatched {
+			result.Business = businessLabel(sourcePrefix)
+		}
+	case DirectionTransit:
+	case DirectionAmbiguous:
+		result.Direction = DirectionAmbiguous
+	default:
+		result.Direction = DirectionAmbiguous
+	}
+	return result
+}
+
 func (s *CompiledSnapshot) endpoint(ip netip.Addr, side EndpointSide, prefix compiledPrefix, matched bool, direction BusinessDirection) EndpointDimension {
 	endpoint := EndpointDimension{IP: ip, Side: side, PrefixID: UnassignedDimensionID}
 	if matched {
@@ -242,6 +286,73 @@ func ClassifyCategory(direction BusinessDirection, remote GeoInfo, home HomeProf
 		return CategoryUnknown
 	}
 	if remoteCity == homeCity {
+		return CategoryOnNetLocalCity
+	}
+	return CategoryOnNetCrossCity
+}
+
+// ClassifyCategoryFromEndpoints derives the six-category home context from the
+// local customer prefix selected for this exact record. The paired AddressSnap
+// owns both endpoint attributes, so a device move only requires changing its
+// bound source CIDRs and publishing a new version.
+func ClassifyCategoryFromEndpoints(direction BusinessDirection, local, remote GeoInfo) Category {
+	switch direction {
+	case DirectionInternal:
+		return CategoryInternal
+	case DirectionTransit:
+		return CategoryTransit
+	case DirectionAmbiguous:
+		return CategoryAmbiguous
+	case DirectionIn, DirectionOut:
+	default:
+		return CategoryUnknown
+	}
+	remoteCountry := strings.ToUpper(strings.TrimSpace(remote.Country))
+	if !validCountryCode(remoteCountry) || remoteCountry == GeoUnknownCountry {
+		return CategoryUnknown
+	}
+	localCountry := strings.ToUpper(strings.TrimSpace(local.Country))
+	if !validCountryCode(localCountry) || localCountry == GeoUnknownCountry {
+		return CategoryUnknown
+	}
+	if remoteCountry != localCountry {
+		return CategoryOverseas
+	}
+	remoteAdminCode := strings.TrimSpace(remote.AdminCode)
+	localAdminCode := strings.TrimSpace(local.AdminCode)
+	remoteProvince, remoteProvinceOK := provincePart(remoteAdminCode)
+	localProvince, localProvinceOK := provincePart(localAdminCode)
+	if !remoteProvinceOK || !localProvinceOK {
+		return CategoryUnknown
+	}
+	identityAvailable := false
+	onNet := false
+	if local.ISPID != 0 && remote.ISPID != 0 {
+		identityAvailable = true
+		onNet = local.ISPID == remote.ISPID
+	}
+	if local.ASN != 0 && remote.ASN != 0 {
+		identityAvailable = true
+		onNet = onNet || local.ASN == remote.ASN
+	}
+	if !identityAvailable {
+		return CategoryUnknown
+	}
+	if !onNet {
+		if remoteProvince == localProvince {
+			return CategoryOffNetInProvince
+		}
+		return CategoryOffNetCrossProvince
+	}
+	if remoteProvince != localProvince {
+		return CategoryOnNetCrossProvince
+	}
+	remoteCity, remoteCityOK := cityPart(remoteAdminCode)
+	localCity, localCityOK := cityPart(localAdminCode)
+	if !remoteCityOK || !localCityOK {
+		return CategoryUnknown
+	}
+	if remoteCity == localCity {
 		return CategoryOnNetLocalCity
 	}
 	return CategoryOnNetCrossCity

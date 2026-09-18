@@ -14,7 +14,7 @@ import (
 const (
 	defaultMaxDimensionObjectBytes       = 64 << 20
 	defaultMaxAddressSnapshotObjectBytes = 512 << 20
-	defaultMaxClassificationObjectBytes  = 64 << 10
+	defaultMaxClassificationObjectBytes  = 16 << 20
 	VersionObjectFormatJSON              = "json"
 	VersionObjectFormatWADS              = "wads"
 )

@@ -87,6 +87,47 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	}
 }
 
+func TestEnrichBatchUsesObservationDeviceClassificationContext(t *testing.T) {
+	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
+	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
+	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
+		Version: 1, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "dimension-1",
+		DeviceProfiles: []flowdimension.ClassificationDeviceProfile{
+			{DeviceID: "device-a", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-a", CIDR: "10.0.0.0/8"}}},
+			{DeviceID: "device-b", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{{ID: "customer-b", CIDR: "172.16.0.0/12"}}},
+		},
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classifications, _ := flowdimension.NewClassificationCatalog(classification)
+	geo := flowdimension.NewGeoCatalog()
+	loadGeo(t, geo, "geo-1", testMinute(12, 0), "10.0.0.0,10.255.255.255,CN,330100,Zhejiang,Hangzhou,3,64500\n203.0.113.0,203.0.113.255,CN,330100,Zhejiang,Hangzhou,3,64500")
+	batch := testBatch(testMinute(12, 30))
+	second := cloneRecord(batch.Records[0])
+	second.RecordIndex = 1
+	second.DeviceID = "device-b"
+	third := cloneRecord(batch.Records[0])
+	third.RecordIndex = 2
+	third.DeviceID = "device-unconfigured"
+	batch.Records = append(batch.Records, second, third)
+	result, err := newTestEnricher(t, dimensions, geo, classifications).EnrichBatch(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Records[0].Category != flowdimension.CategoryOnNetLocalCity ||
+		result.Records[0].Dimensions.Direction != flowdimension.DirectionOut ||
+		result.Records[1].Category != flowdimension.CategoryTransit ||
+		result.Records[1].Dimensions.Direction != flowdimension.DirectionTransit ||
+		result.Records[2].Category != flowdimension.CategoryUnknown {
+		t.Fatalf("device classifications = %s/%q, %s/%q, %s/%q",
+			result.Records[0].Dimensions.Direction, result.Records[0].Category,
+			result.Records[1].Dimensions.Direction, result.Records[1].Category,
+			result.Records[2].Dimensions.Direction, result.Records[2].Category)
+	}
+}
+
 func TestEnrichBatchAppliesGeoOverrideAndPreservesExplicitUnknownASN(t *testing.T) {
 	override := map[string]string{
 		"flow.geo.country": "CN", "flow.geo.admin_code": "330100", "flow.geo.isp_id": "3", "flow.geo.asn": "0", "flow.geo.reason": "verified",
@@ -455,7 +496,7 @@ func loadGeoSchema(t testing.TB, catalog *flowdimension.GeoCatalog, schema, vers
 		rows := uint64(0)
 		switch name {
 		case "ipv4.csv.zst":
-			rows = 1
+			rows = uint64(strings.Count(strings.TrimSpace(ipv4Row), "\n") + 1)
 		case "operators.json":
 			rows = uint64(len(operators))
 		case "geo_dict.json":
