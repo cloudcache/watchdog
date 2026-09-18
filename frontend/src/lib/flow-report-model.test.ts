@@ -6,11 +6,23 @@ import {
 	FLOW_REPORT_CATEGORIES,
 	flowReportCategoryLabel,
 	reportDirectionTotals,
+	reportPanelUnit,
 	reportSeriesStats,
 	resolveFlowReportRange,
 	transformReportSeries,
 	type FlowReportPanel,
 } from "./flow-report-model.ts"
+
+test("report panel unit falls back to the embedded metric definition", () => {
+	const panel = {
+		status: "ready",
+		meta: {},
+		data: { metric: { name: "estimated_bps", unit: "bits_per_second" } },
+	} as FlowReportPanel
+	assert.equal(reportPanelUnit(panel), "bits_per_second")
+	panel.meta.unit = "bps"
+	assert.equal(reportPanelUnit(panel), "bps")
+})
 
 test("report categories use the frozen English product wording", () => {
 	i18n.load("en", {})

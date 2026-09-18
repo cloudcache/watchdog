@@ -28,6 +28,7 @@ import {
 	panelPoints,
 	reportCategoryTotals,
 	reportPanel,
+	reportPanelUnit,
 	reportSeriesStats,
 	resolveFlowReportRange,
 	transformReportSeries,
@@ -738,6 +739,7 @@ function OverviewReport({
 	const outboundTotals = reportCategoryTotals(outbound)
 	const totalInbound = [...inboundTotals.values()].reduce((sum, value) => sum + value, 0)
 	const totalOutbound = [...outboundTotals.values()].reduce((sum, value) => sum + value, 0)
+	const totalPanelUnit = reportPanelUnit(total)
 	const displayTotalSeries = totalSeries.map((series) => ({
 		...series,
 		name: series.name === "Inbound" ? t`Inbound` : series.name === "Outbound" ? t`Outbound` : series.name,
@@ -755,10 +757,10 @@ function OverviewReport({
 				</CardHeader>
 				<CardContent>
 					<div className="mb-3 flex flex-wrap gap-6 text-xl font-semibold">
-						<span>↓ {formatMetric(inboundCurrent, total?.meta.unit)}</span>
-						<span>↑ {formatMetric(outboundCurrent, total?.meta.unit)}</span>
+						<span>↓ {formatMetric(inboundCurrent, totalPanelUnit)}</span>
+						<span>↑ {formatMetric(outboundCurrent, totalPanelUnit)}</span>
 					</div>
-					<ReportChart series={displayTotalSeries} unit={total?.meta.unit} />
+					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} />
 				</CardContent>
 			</Card>
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -810,6 +812,8 @@ function CategoryCard({
 	const outSeries = buildReportSeries(outbound).find((series) => series.name === category)
 	const inStats = reportSeriesStats(inSeries)
 	const outStats = reportSeriesStats(outSeries)
+	const inboundUnit = reportPanelUnit(inbound)
+	const outboundUnit = reportPanelUnit(outbound)
 	return (
 		<Card>
 			<CardHeader className="api-3">
@@ -819,12 +823,12 @@ function CategoryCard({
 				<div className="grid grid-cols-2 gap-2 text-sm">
 					<div>
 						<span className="text-muted-foreground">{t`Inbound`}</span>
-						<div className="font-semibold">{formatMetric(inStats.current, inbound?.meta.unit)}</div>
+						<div className="font-semibold">{formatMetric(inStats.current, inboundUnit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(inStats.total, inboundTotal)}</div>
 					</div>
 					<div>
 						<span className="text-muted-foreground">{t`Outbound`}</span>
-						<div className="font-semibold">{formatMetric(outStats.current, outbound?.meta.unit)}</div>
+						<div className="font-semibold">{formatMetric(outStats.current, outboundUnit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(outStats.total, outboundTotal)}</div>
 					</div>
 				</div>
@@ -835,7 +839,7 @@ function CategoryCard({
 							Boolean
 						) as FlowReportSeries[]
 					}
-					unit={inbound?.meta.unit}
+					unit={inboundUnit ?? outboundUnit}
 				/>
 			</CardContent>
 		</Card>
@@ -957,14 +961,14 @@ function BusinessMatrix({
 	const page = inbound?.data?.matrix_table
 	const rows = (page?.items ?? []).map((item) => ({
 		business: item.business,
-		total: formatDirectionalValue(item.total, totalUnit(inbound?.meta.unit)),
+		total: formatDirectionalValue(item.total, totalUnit(reportPanelUnit(inbound))),
 		...Object.fromEntries(
 			FLOW_REPORT_CATEGORIES.map((category) => [
 				category,
-				formatDirectionalValue(item.categories[category], totalUnit(inbound?.meta.unit)),
+				formatDirectionalValue(item.categories[category], totalUnit(reportPanelUnit(inbound))),
 			])
 		),
-		residual: formatDirectionalValue(item.residual, totalUnit(inbound?.meta.unit)),
+		residual: formatDirectionalValue(item.residual, totalUnit(reportPanelUnit(inbound))),
 	}))
 	const columns: ColumnDefine[] = [
 		{ field: "business", title: t`Business`, width: 220 },
@@ -1106,21 +1110,21 @@ function EndpointTable({
 	const page = panel?.data?.table
 	const records = (page?.items ?? []).map((item) => ({
 		address: item.path[0] || item.name,
-		current: formatMetric(item.last, panel?.meta.unit),
-		average: formatMetric(item.average, panel?.meta.unit),
-		p95: formatMetric(item.p95, panel?.meta.unit),
-		maximum: formatMetric(item.maximum, panel?.meta.unit),
-		total: formatMetric(item.total, totalUnit(panel?.meta.unit)),
-		inbound: formatEndpointDirection(item.inbound, panel?.meta.unit),
-		outbound: formatEndpointDirection(item.outbound, panel?.meta.unit),
+		current: formatMetric(item.last, reportPanelUnit(panel)),
+		average: formatMetric(item.average, reportPanelUnit(panel)),
+		p95: formatMetric(item.p95, reportPanelUnit(panel)),
+		maximum: formatMetric(item.maximum, reportPanelUnit(panel)),
+		total: formatMetric(item.total, totalUnit(reportPanelUnit(panel))),
+		inbound: formatEndpointDirection(item.inbound, reportPanelUnit(panel)),
+		outbound: formatEndpointDirection(item.outbound, reportPanelUnit(panel)),
 		business: item.businesses?.join(", ") || "—",
 		...Object.fromEntries(
 			FLOW_REPORT_CATEGORIES.map((name) => [
 				name,
-				formatEndpointCategory(item.categories?.[name], totalUnit(panel?.meta.unit)),
+				formatEndpointCategory(item.categories?.[name], totalUnit(reportPanelUnit(panel))),
 			])
 		),
-		residual: formatEndpointCategory(item.residual, totalUnit(panel?.meta.unit)),
+		residual: formatEndpointCategory(item.residual, totalUnit(reportPanelUnit(panel))),
 		correction: canManageAddressLibrary() ? t`Correct attribution` : undefined,
 		correctionHref: addressCorrectionHref(response, item.path[0] || item.name),
 	}))
@@ -1508,7 +1512,7 @@ function ChartCard({
 	const { t } = useLingui()
 	if (panel?.status === "unavailable") return <UnavailablePanel title={title} reason={panel.reason} />
 	const stats = reportSeriesStats(series[0])
-	const unit = unitOverride ?? panel?.meta.unit
+	const unit = unitOverride ?? reportPanelUnit(panel)
 	return (
 		<Card>
 			<CardHeader>

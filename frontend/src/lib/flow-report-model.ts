@@ -286,6 +286,14 @@ export function reportPanel(response: FlowReportResponse | null, id: string): Fl
 	return response?.data.panels.find((panel) => panel.id === id)
 }
 
+// Report responses carry the display unit in panel metadata, while the embedded
+// query result also carries the same metric definition. Prefer the envelope but
+// retain the query result as a compatibility fallback so a partially upgraded
+// server cannot make a bit rate fall back to an unqualified compact number.
+export function reportPanelUnit(panel?: FlowReportPanel): string | undefined {
+	return panel?.meta?.unit || panel?.data?.metric?.unit
+}
+
 export function panelPoints(panel?: FlowReportPanel): FlowPoint[] {
 	if (!panel?.data?.points) return []
 	return panel.data.points.filter((point): point is FlowPoint => "dimension_value" in point)
