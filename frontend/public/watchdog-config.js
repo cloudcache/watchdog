@@ -1,7 +1,7 @@
-// Local development talks directly to the API server; there is no API proxy.
-// A standalone build may replace this file with its externally reachable API URL.
+// Frontend and API are separate processes on the same host by default. A
+// deployment with a different API host may replace this file after building.
 globalThis.WATCHDOG_CONFIG = {
-	API_URL: "http://127.0.0.1:8091",
+	API_URL: `${globalThis.location.protocol}//${globalThis.location.hostname}:8091`,
 }
 
 const injected = globalThis.WATCHDOG
