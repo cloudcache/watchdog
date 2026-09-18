@@ -9,8 +9,10 @@ db="${1:-watchdog}"
 host="${MYSQL_HOST:-127.0.0.1}"
 user="${MYSQL_USER:-root}"
 seed="$(cd "$(dirname "$0")" && pwd)/address-library-em.sql.gz"
+normalization="$(cd "$(dirname "$0")" && pwd)/normalize-address-library.sql"
 
 [ -f "$seed" ] || { echo "seed not found: $seed (see deploy/seed/README.md)" >&2; exit 1; }
+[ -f "$normalization" ] || { echo "normalization not found: $normalization" >&2; exit 1; }
 
 existing=$(mysql -N -h"$host" -u"$user" "$db" -e \
   "SELECT COUNT(*) FROM address_base_prefixes" 2>/dev/null || echo "err")
@@ -25,4 +27,5 @@ fi
 
 echo "Loading $(du -h "$seed" | cut -f1) address library into $db@$host ..."
 gzip -dc "$seed" | mysql --default-character-set=utf8mb4 -h"$host" -u"$user" "$db"
+mysql --default-character-set=utf8mb4 -h"$host" -u"$user" "$db" < "$normalization"
 echo "done: $(mysql -N -h"$host" -u"$user" "$db" -e 'SELECT COUNT(*) FROM address_base_prefixes') base prefixes"

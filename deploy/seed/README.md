@@ -7,11 +7,20 @@ data, for bootstrapping a fresh watchdog install without re-importing.
 
 | table | rows | notes |
 |---|---|---|
-| `isp_operators` | 17 | operator dictionary (name/category/ASNs); Chinese names in utf8mb4 |
+| `isp_operators` | 17 | 14 active primary operators plus 3 disabled legacy search labels |
+| `address_sets` | 3 | overlapping Google/Bing/Baidu search-engine ASN labels |
 | `geo_dict` | 606 | continent→country→province→city hierarchy (parent_id) |
 | `address_imports` | 1 | synthetic import `edgemanager-geo-base` (`created_by` NULL) |
 | `address_import_slots` | 1 | `combined` slot, pre-activated → this import |
 | `address_base_prefixes` | 2,657,403 | base CIDRs (v4 right-aligned 16-byte, v6 native), ~1.98M with ASN |
+
+`load-address-library.sh` then applies `normalize-address-library.sql`. The
+EdgeManager export contains search-engine labels whose ASNs overlap cloud
+providers (Google/GoogleCloud, Bing/Azure, Baidu Search/Baidu Cloud). Watchdog's
+ISP dimension is single-valued, so the loader keeps the cloud provider as the
+primary ISP owner and converts each search-engine label to an overlapping
+address set. This preserves both meanings and produces a publishable WADS
+snapshot; disabling this validation would make the ISP result order-dependent.
 
 The dump header sets `SET NAMES utf8mb4` and `FOREIGN_KEY_CHECKS=0`, so table
 order and the self-referential `geo_dict.parent_id` load cleanly. `created_by` /
@@ -38,6 +47,8 @@ or manually:
 ```bash
 gzip -dc deploy/seed/address-library-em.sql.gz \
   | mysql --default-character-set=utf8mb4 -h127.0.0.1 -uroot watchdog
+mysql --default-character-set=utf8mb4 -h127.0.0.1 -uroot watchdog \
+  < deploy/seed/normalize-address-library.sql
 ```
 
 Load only into **empty** address tables (plain `INSERT`s; loading twice fails on
