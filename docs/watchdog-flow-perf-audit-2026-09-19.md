@@ -342,7 +342,50 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - 24h 默认报表在固定并发、固定设备过滤下的端到端 SLO；
 - 故障注入下 block 边界是否确定、超窗重试是否重复、receipt/fact count/counter 是否最终收敛。
 
-## 9. 审计结论
+## 9. 执行任务清单（持续更新）
+
+> 执行原则：先冻结同一设备、端口、时间窗和计量口径，再定位差额；不得用未说明的倍率、修正值或扩大 ClickHouse 限额制造“看起来一致”。每个工作包按“设计/证据 → 编码 → 单元 → 真实 MySQL+Kafka+ClickHouse 集成 → 故障/变更测试 → 回归 → 独立提交”闭环。
+
+### PERF-Q1 Storage V2 查询过滤下推
+
+- [x] **设计/编码**：将 `business_direction/category/business/target/device/exporter/classification_version` 显式下推到 archive 与 raw 分支；`dimension_value/snapshot/geo` 等聚合后语义保留在 `UNION ALL` 之后。
+- [x] **单元测试**：验证 archive 使用 `source.*`、raw 使用原生列或与既有分组一致的转换；验证聚合后过滤没有被错误下推。
+- [x] **真实 ClickHouse 集成**：从 Storage V2 迁移到当前完整 schema 后，覆盖 direction/category/device/snapshot/geo/version 的 raw 查询向量并核对结果。
+- [ ] **性能验收**：生产同参数运行 `EXPLAIN indexes=1` 和 `query_log` 前后对照，记录 `read_rows/read_bytes/P95/memory_usage`；无明确收益不得把该项写成性能完成。
+- [ ] **提交门禁**：代码、单元、真实 CH 回归与本文证据作为一个独立提交，不夹带无关 UI/架构改动。
+
+### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
+
+- [ ] **设计/证据**：以设备绑定为作用域，冻结七牛客户的 IPv4、原生 IPv6 CIDR 清单及边界样本；核对 MySQL 草稿、已批准 WADS 地址快照、Flow 配对版本、worker ACK/LKG 四个版本号，不把全局 Geo 地址库当客户碎片地址的维护入口。
+- [ ] **编码**：统一地址规范为 16 字节可比较形式；IPv4 与 IPv4-mapped IPv6 只在协议边界显式 `Unmap`，原生 IPv6 不降级、不加/减伪前缀；worker 对源/目的地址各做一次 LPM，最长前缀命中结果同时供客户归属、方向和六分类使用。
+- [ ] **写入校验**：在 `flow_records` 核对原始 src/dst、local/remote、device/exporter、business、category、address/dimension snapshot 与 classification version；若旧事实版本不含新客户边界，明确走历史重分类，不允许查询层临时猜归属。
+- [ ] **查询校验**：源 IP、目的 IP、多维、六报表和导出均显示“七牛”而非 `_unassigned`；IPv4/IPv6 使用相同客户口径，展示层将 `::ffff:x.x.x.x` 规范为 IPv4 文本但不误改原生 IPv6。
+- [ ] **单元测试**：覆盖 IPv4、IPv4-mapped IPv6、原生 IPv6、CIDR 首尾地址、相邻不命中、重叠前缀最长匹配、同客户多 CIDR、同设备多客户、跨设备同 CIDR 隔离。
+- [ ] **真实链路集成**：发布包含七牛双栈 CIDR 的 WADS → worker 拉取/验签/ACK → 写入 CH → query/report/export；断言双栈均归属七牛且流入/流出、六分类和计数器守恒。
+- [ ] **变更/回归/提交门禁**：旧快照继续由 LKG 可启动；无效 IPv6、重叠冲突、版本回退 fail-closed；跑 flowdimension/flowworker/flowch/flowquery/server 全链后独立提交。
+
+### PERF-RECON1 172.57.1.2 的 SNMP ↔ sFlow 端口守恒对账
+
+- [ ] **身份与范围冻结**：设备 `172.57.1.2` 与 `103.83.64.2` 是两台独立设备；前者通过自身接口地址 `100.64.20.2` 向 collector 发送 sFlow。冻结实际启用 sFlow 的 10 个 ifIndex、同一 UTC `[from,to)` 窗口、SNMP 采样步长、Flow exporter/device 映射和分类版本。
+- [ ] **SNMP 口径**：按端口用 `ifHCOutOctets` 差分得到字节数，识别 counter reset/wrap、`ifCounterDiscontinuityTime`、缺桶和端口状态变化；不得把瞬时 bps 相加当窗口字节，也不得混入未开启 sFlow 的端口。
+- [ ] **sFlow 口径**：按同一设备和 10 个端口核对 datagram agent/source、input/output ifIndex、sample pool/sequence、sampling rate、raw bytes/packets 与 estimated bytes/packets；逐层统计 UDP 接收、decode reject、unknown sampling、Kafka produce/consume、CH accepted/reconciled/drop。
+- [ ] **方向与端口映射**：明确“设备端口流出”和“本地网络视角流出”不是天然同义；分别产出 observation-port 守恒表与业务方向守恒表，验证 input/output ifIndex 的选择，不允许因客户 CIDR 未命中而让总量消失。
+- [ ] **差额分类**：逐端口计算 `flow_estimated_out_bytes / snmp_ifHCOutOctets_delta`，把差额归入 exporter 未覆盖、ifIndex 错配、采样率未知/变化、序列缺口、collector/kernel drop、Kafka/worker lag、CH reject、查询漏筛或二层同流多端口计数；只报告差异，不自动调平。
+- [ ] **实现/API**：复用现有 SNMP CH reader 与 Flow fact reader，提供有界同窗 reconciliation 结果（设备、端口、SNMP、Flow、比率、证据/质量标志）；长窗口和批量端口通过 operation job 渐进执行、可取消/重试/导出，不占 HTTP 生命周期。
+- [ ] **单元测试**：10 端口、不同采样率、sampling unknown、sequence gap、counter reset/wrap、缺桶、端口 down、IPv4/IPv6、重复 Kafka 消费与同一流经多端口场景。
+- [ ] **真实集成**：真实 SNMP CH + Flow CH 同窗对账；核对 receipts 的 count/counter 与事实一致；注入丢包/缺采样/错 ifIndex 后只产生对应问题，不修改原始数据。
+- [ ] **性能/回归/提交门禁**：对账必须按 device+ifIndex+time 裁剪，记录 read_rows/P95；跑 snmpch/flowch/flowquery/billing/server 以及真实 CH 回归后独立提交。容差由生产基线和采样统计确定，不在代码中拍脑袋写死。
+
+### PERF-Q2 查询、聚类与存储后续闭环
+
+- [ ] **查询**：完成 Phase 1 的两段式 top-N、direction 联合扫描、端点 N+1 消除、境外单遍聚合、facet 合并、预算档与异步导出；每项保持小窗口数值等价。
+- [ ] **聚类/维度**：验证六分类互斥+残差守恒，客户/Geo/运营商 LPM 只在 worker 内存快照中完成；不得在逐 flow 写路径查 MySQL/ClickHouse，也不得在查询时重新发明归属。
+- [ ] **存储**：只依据真实慢查询影子 A/B 候选 projection/index；闭环确定性重放与去重后再评估去 `FINAL`；receipt/archive/delete 均由水位和 operation job 驱动。
+- [ ] **可观测性**：补 collector datagrams/records/reject/drop、Kafka lag、worker enrich/write、unknown sampling/address miss、CH rows/block/insert/merge、reconciliation drift 指标及告警。
+- [ ] **回归矩阵**：raw-only、archive-only、跨边界；IPv4/IPv6；流入/流出；六分类；客户/运营商/Geo；重复/迟到/rebalance/CH timeout；报表、明细、分页、导出与计费。
+- [ ] **发布门禁**：固定硬件并发压测和 72h soak；达到准确性、性能、可靠性和生命周期门禁后才允许生产发布。
+
+## 10. 审计结论
 
 生产基线把优先级收敛为四个闭环：**过滤下推、合并重复扫描并修复空 1m 依赖（R4/C1）**；**让跨 poll 有界合批真正接近设计批量（R6）**；**补对账事件时间边界并保持 `FINAL` 直到去重闭环通过（R7/R2）**；**把 receipt、archive、delete 纳入水位驱动生命周期（R5）**。这些工作都应先保持统计、计费和六分类语义不变，再用 §8 基线做前后对照。
 

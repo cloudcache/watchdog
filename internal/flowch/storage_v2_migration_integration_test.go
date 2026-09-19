@@ -85,7 +85,7 @@ func TestRealClickHouseStorageV2MigrationBackfill(t *testing.T) {
 		t.Fatalf("insert legacy fact: %v", err)
 	}
 
-	applyStorageV2Migrations(t, ctx, admin, database, migrations[storageV2Index:storageV2Index+1])
+	applyStorageV2Migrations(t, ctx, admin, database, migrations[storageV2Index:])
 	if err := native.Ready(ctx); err != nil {
 		t.Fatalf("V2 readiness after migration: %v", err)
 	}
@@ -178,6 +178,11 @@ FROM flow_records FINAL`,
 		From: day.Add(2 * time.Hour), To: day.Add(3 * time.Hour), Bucket: flowquery.BucketOneMinute,
 		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal,
 		View: flowquery.ViewCustomer, TopN: 1, StorageV2: true, ArchiveThrough: day.Add(2 * time.Hour),
+		Filters: flowquery.Filters{
+			Directions: []string{"out"}, Categories: []string{"overseas"},
+			DimensionSnapshotIDs: []string{"snapshot-a"}, GeoVersions: []string{"geo-a"},
+			ClassificationVersions: []uint32{9},
+		},
 	}, day.Add(72*time.Hour))
 	if err != nil {
 		t.Fatal(err)

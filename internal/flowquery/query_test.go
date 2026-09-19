@@ -234,6 +234,74 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 	}
 }
 
+func TestCompileStorageV2PushesSelectiveFiltersBelowRawAggregation(t *testing.T) {
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = time.Hour
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Filters = Filters{
+		Directions: []string{"in"}, Categories: []string{"overseas"},
+		Businesses: []string{"business-a"}, TargetIDs: []string{"target-a"},
+		DeviceIDs: []string{"device-a"}, ExporterIDs: []string{"exporter-a"},
+		DimensionValues: []string{"330100"}, DimensionSnapshotIDs: []string{"snapshot-a"},
+		GeoVersions: []string{"geo-a"}, ClassificationVersions: []uint32{7},
+	}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := compiled.Query.Body
+	rawStart := strings.Index(body, "FROM flow_records FINAL")
+	rawEnd := strings.Index(body[rawStart:], "GROUP BY bucket")
+	if rawStart < 0 || rawEnd < 0 {
+		t.Fatalf("raw aggregation not found:\n%s", body)
+	}
+	rawWhere := body[rawStart : rawStart+rawEnd]
+	for _, required := range []string{
+		"AND toString(business_direction) IN ({direction_0:String})",
+		"AND toString(category) IN ({category_0:String})",
+		"AND business IN ({business_0:String})",
+		"AND target_id IN ({target_0:String})",
+		"AND device_id IN ({device_0:String})",
+		"AND exporter_id IN ({exporter_0:String})",
+		"AND classification_version IN ({classification_version_0:UInt32})",
+	} {
+		if !strings.Contains(rawWhere, required) {
+			t.Fatalf("raw WHERE did not push %q below GROUP BY:\n%s", required, rawWhere)
+		}
+	}
+	for _, forbidden := range []string{"dimension_value IN", "dimension_snapshot_id IN", "geo_version IN"} {
+		if strings.Contains(rawWhere, forbidden) {
+			t.Fatalf("derived/publication predicate %q was pushed into raw WHERE:\n%s", forbidden, rawWhere)
+		}
+	}
+	filteredStart := strings.Index(body, "filtered AS")
+	if filteredStart < 0 {
+		t.Fatalf("filtered union not found:\n%s", body)
+	}
+	filtered := body[filteredStart:]
+	for _, required := range []string{
+		"AND dimension_value IN ({dimension_value_0:String})",
+		"AND dimension_snapshot_id IN ({dimension_snapshot_0:String})",
+		"AND geo_version IN ({geo_version_0:String})",
+	} {
+		if !strings.Contains(filtered, required) {
+			t.Fatalf("residual filter missing %q after UNION:\n%s", required, filtered)
+		}
+	}
+	for _, required := range []string{
+		"AND source.device_id IN ({device_0:String})",
+		"AND source.classification_version IN ({classification_version_0:UInt32})",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("archive predicate missing %q:\n%s", required, body)
+		}
+	}
+}
+
 func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.T) {
 	request := validRequest()
 	request.StorageV2 = true

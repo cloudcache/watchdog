@@ -388,6 +388,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	if err != nil {
 		return Compiled{}, err
 	}
+	namedFilterConditionCount := len(conditions)
 	parameters = append(parameters, filterParameters...)
 	timeCondition, timeParameters, err := compileLocalTimeWindows(request.TimeWindows, timezone, "bucket")
 	if err != nil {
@@ -446,12 +447,19 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		if expressionErr != nil {
 			return Compiled{}, expressionErr
 		}
+		archiveFilters, rawFilters, residualFilters, filterErr := compileStorageV2Filters(request.Filters)
+		if filterErr != nil {
+			return Compiled{}, filterErr
+		}
+		residualFilters = append(residualFilters, conditions[namedFilterConditionCount:]...)
 		parameters = append(parameters,
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
 		)
-		body = fmt.Sprintf(storageV2QuerySQL, table, table, dimensionExpression,
-			strings.Join(conditions, "\n    "), metric.column, valueExpression)
+		body = fmt.Sprintf(storageV2QuerySQL, table, table,
+			strings.Join(archiveFilters, "\n      "), dimensionExpression,
+			strings.Join(rawFilters, "\n      "), strings.Join(residualFilters, "\n    "),
+			metric.column, valueExpression)
 		usesRawFacts = archiveThrough.Before(to)
 	}
 	query := ch.Query{
@@ -500,22 +508,38 @@ func bucketSpec(bucket Bucket) (time.Duration, string, int, error) {
 	}
 }
 
+type aggregateFilterColumns struct {
+	direction, category, business, target, device, exporter              string
+	dimensionValue, dimensionSnapshot, geoVersion, classificationVersion string
+}
+
+var defaultAggregateFilterColumns = aggregateFilterColumns{
+	direction: "business_direction", category: "category", business: "business",
+	target: "target_id", device: "device_id", exporter: "exporter_id",
+	dimensionValue: "dimension_value", dimensionSnapshot: "dimension_snapshot_id",
+	geoVersion: "geo_version", classificationVersion: "classification_version",
+}
+
 func compileFilters(filters Filters) ([]string, []proto.Parameter, error) {
+	return compileFiltersWithColumns(filters, defaultAggregateFilterColumns)
+}
+
+func compileFiltersWithColumns(filters Filters, columns aggregateFilterColumns) ([]string, []proto.Parameter, error) {
 	type stringFilter struct {
 		field, column, prefix string
 		values                []string
 		allowed               map[string]struct{}
 	}
 	stringFilters := []stringFilter{
-		{"filters.directions", "business_direction", "direction", filters.Directions, validDirections},
-		{"filters.categories", "category", "category", filters.Categories, validCategories},
-		{"filters.businesses", "business", "business", filters.Businesses, nil},
-		{"filters.target_ids", "target_id", "target", filters.TargetIDs, nil},
-		{"filters.device_ids", "device_id", "device", filters.DeviceIDs, nil},
-		{"filters.exporter_ids", "exporter_id", "exporter", filters.ExporterIDs, nil},
-		{"filters.dimension_values", "dimension_value", "dimension_value", filters.DimensionValues, nil},
-		{"filters.dimension_snapshot_ids", "dimension_snapshot_id", "dimension_snapshot", filters.DimensionSnapshotIDs, nil},
-		{"filters.geo_versions", "geo_version", "geo_version", filters.GeoVersions, nil},
+		{"filters.directions", columns.direction, "direction", filters.Directions, validDirections},
+		{"filters.categories", columns.category, "category", filters.Categories, validCategories},
+		{"filters.businesses", columns.business, "business", filters.Businesses, nil},
+		{"filters.target_ids", columns.target, "target", filters.TargetIDs, nil},
+		{"filters.device_ids", columns.device, "device", filters.DeviceIDs, nil},
+		{"filters.exporter_ids", columns.exporter, "exporter", filters.ExporterIDs, nil},
+		{"filters.dimension_values", columns.dimensionValue, "dimension_value", filters.DimensionValues, nil},
+		{"filters.dimension_snapshot_ids", columns.dimensionSnapshot, "dimension_snapshot", filters.DimensionSnapshotIDs, nil},
+		{"filters.geo_versions", columns.geoVersion, "geo_version", filters.GeoVersions, nil},
 	}
 	conditions := make([]string, 0, len(stringFilters)+1)
 	parameters := make([]proto.Parameter, 0)
@@ -569,9 +593,50 @@ func compileFilters(filters Filters) ([]string, []proto.Parameter, error) {
 		parameters = append(parameters, uintParameter(key, uint64(version)))
 	}
 	if len(placeholders) > 0 {
-		conditions = append(conditions, fmt.Sprintf("AND classification_version IN (%s)", strings.Join(placeholders, ", ")))
+		conditions = append(conditions, fmt.Sprintf("AND %s IN (%s)", columns.classificationVersion, strings.Join(placeholders, ", ")))
 	}
 	return conditions, parameters, nil
+}
+
+// compileStorageV2Filters pushes predicates that exist on both archive rows and
+// raw facts below the raw GROUP BY. Dimension-value and publication-version
+// predicates stay after the archive/raw UNION because the raw dimension value
+// is a derived expression and both branches must keep the same public contract.
+func compileStorageV2Filters(filters Filters) (archive, raw, residual []string, err error) {
+	pushdown := filters
+	pushdown.DimensionValues = nil
+	pushdown.DimensionSnapshotIDs = nil
+	pushdown.GeoVersions = nil
+	remaining := Filters{
+		DimensionValues:      filters.DimensionValues,
+		DimensionSnapshotIDs: filters.DimensionSnapshotIDs,
+		GeoVersions:          filters.GeoVersions,
+	}
+	archiveColumns := aggregateFilterColumns{
+		direction: "source.business_direction", category: "source.category", business: "source.business",
+		target: "source.target_id", device: "source.device_id", exporter: "source.exporter_id",
+		dimensionValue: "source.dimension_value", dimensionSnapshot: "source.dimension_snapshot_id",
+		geoVersion: "source.geo_version", classificationVersion: "source.classification_version",
+	}
+	rawColumns := aggregateFilterColumns{
+		direction: "toString(business_direction)", category: "toString(category)", business: "business",
+		target: "target_id", device: "device_id", exporter: "exporter_id",
+		dimensionValue: "dimension_value", dimensionSnapshot: "CAST(dimension_snapshot_id AS String)",
+		geoVersion: "CAST(geo_version AS String)", classificationVersion: "classification_version",
+	}
+	archive, _, err = compileFiltersWithColumns(pushdown, archiveColumns)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	raw, _, err = compileFiltersWithColumns(pushdown, rawColumns)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	residual, _, err = compileFilters(remaining)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return archive, raw, residual, nil
 }
 
 func normalizeStrings(field string, input []string, allowed map[string]struct{}) ([]string, error) {
@@ -738,6 +803,7 @@ const storageV2QuerySQL = `WITH
     INNER JOIN archive_latest USING (bucket, generation)
     WHERE source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
       AND source.dimension_kind = {dimension:String}
+	  %s
   ),
   raw_rows AS (
     SELECT
@@ -761,6 +827,7 @@ const storageV2QuerySQL = `WITH
     FROM flow_records FINAL
     WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
+	  %s
     GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
       category, business, dimension_value, dimension_snapshot_id, geo_version,
       classification_version
