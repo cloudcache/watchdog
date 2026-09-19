@@ -88,7 +88,9 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 	}
 	// The heaviest reader must carry both a byte and a memory ceiling so a wide
 	// query throws rather than starving the shared server.
-	if setting(first.Query, "max_bytes_to_read") == "" || setting(first.Query, "max_memory_usage") == "" {
+	if setting(first.Query, "max_bytes_to_read") == "" || setting(first.Query, "max_memory_usage") == "" ||
+		setting(first.Query, "max_bytes_before_external_group_by") != "1073741824" ||
+		setting(first.Query, "max_bytes_before_external_sort") != "1073741824" {
 		t.Fatalf("query missing byte/memory guards: %+v", first.Query.Settings)
 	}
 }

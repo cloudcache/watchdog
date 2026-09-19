@@ -174,6 +174,8 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
 			{Key: "join_use_nulls", Value: "0", Important: true},
+			{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
+			{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
 		},
 	}
 	return CompiledOverseas{

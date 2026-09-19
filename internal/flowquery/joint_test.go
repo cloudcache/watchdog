@@ -47,7 +47,7 @@ func TestCompileJointUsesSameFactForOrderedDimensionTuple(t *testing.T) {
 	for _, setting := range first.Query.Settings {
 		settings[setting.Key] = setting.Value
 	}
-	for _, key := range []string{"max_execution_time", "max_result_rows", "max_rows_to_read", "max_bytes_to_read", "max_memory_usage"} {
+	for _, key := range []string{"max_execution_time", "max_result_rows", "max_rows_to_read", "max_bytes_to_read", "max_memory_usage", "max_bytes_before_external_group_by", "max_bytes_before_external_sort"} {
 		if settings[key] == "" {
 			t.Fatalf("missing ClickHouse guard %s", key)
 		}

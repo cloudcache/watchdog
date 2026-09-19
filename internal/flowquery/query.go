@@ -475,6 +475,12 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			// Keep a hard memory guard even though ranking and output now share
 			// one FINAL scan through a window-ranked pipeline.
 			{Key: "max_memory_usage", Value: "4294967296", Important: true},
+			// High-cardinality endpoint dimensions can exceed the in-memory
+			// aggregation/sort budget before the final Top N is selected. Spill
+			// intermediate states instead of turning a bounded 24h query into a
+			// user-visible MEMORY_LIMIT_EXCEEDED response.
+			{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
+			{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
 		},
 	}
 	return Compiled{

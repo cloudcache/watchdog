@@ -325,6 +325,8 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 `system.query_log` 中多类线上产品查询单次读取约 3,500 万～4,740 万行、约 1.2～2.3GiB。多数样本 P95 约 0.7～2.2s，但最慢一类 P95 为 10.313s、平均内存约 3.49GiB。它解释了 24h 多维、源/目的 IP、境外和 VPN 页面逼近或触发 50M/4GiB 护栏的现象；不能通过单纯调大常量解决。
 
+2026-09-19 的进一步故障取证确认了两次真实 `MEMORY_LIMIT_EXCEEDED`：分别读取 15,751,262 行/811.23MiB 与 20,938,826 行/1.05GiB，均在 `AggregatingTransform` 将中间状态扩张到约 4.03/4.08GiB 时触发 4GiB 硬上限。失败 SQL 仍是旧部署形状：先按 `dst_ip` 聚合全量事实，随后才在外层按设备过滤。处置因此分为两部分：部署 `a777ac83` 的源扫描过滤下推；主查询、联合查询与境外查询统一在 1GiB 时启用 external group-by/external sort，同时继续保留 50M rows、4GiB read、4GiB memory 和 15s 的 fail-closed 上限。该修复只改变中间状态承载方式，不改变计量、Top-N、六分类或 `_other` 语义。
+
 同一个 Kafka offset 窄窗口（11,000,000～11,001,000）返回相同的 3,889 条事实时：
 
 | 查询形状 | 读取行 | 读取字节 | 耗时 | 内存 | 读取路径 |
@@ -353,6 +355,14 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **真实 ClickHouse 集成**：从 Storage V2 迁移到当前完整 schema 后，覆盖 direction/category/device/snapshot/geo/version 的 raw 查询向量并核对结果。
 - [ ] **性能验收**：生产同参数运行 `EXPLAIN indexes=1` 和 `query_log` 前后对照，记录 `read_rows/read_bytes/P95/memory_usage`；无明确收益不得把该项写成性能完成。
 - [ ] **提交门禁**：代码、单元、真实 CH 回归与本文证据作为一个独立提交，不夹带无关 UI/架构改动。
+
+### PERF-Q1B 24h 查询聚合内存闭环
+
+- [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
+- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；保留原有 50M rows、4GiB read、4GiB memory、15s 执行上限，不以放大硬限制规避问题。
+- [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值，并继续断言既有读取、结果和内存硬上限。
+- [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；以同设备、24h、同 Top-N 重放，核对结果与可完成小窗口等价，并记录 `read_rows/read_bytes/memory_usage/duration`。
+- [ ] **回归/提交门禁**：`flowquery/server` 通过后独立提交；生产仍超过 50M/15s 的全设备或高基数查询不得再抬同步上限，应进入两段式 Top-N、热查询层或异步导出工作包。
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
 

@@ -68,6 +68,8 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 	}
 	if setting(first.Query, "max_rows_to_read") != "50000000" || setting(first.Query, "max_bytes_to_read") != "4294967296" ||
 		setting(first.Query, "max_memory_usage") != "4294967296" || setting(first.Query, "max_result_rows") != "250000" ||
+		setting(first.Query, "max_bytes_before_external_group_by") != "1073741824" ||
+		setting(first.Query, "max_bytes_before_external_sort") != "1073741824" ||
 		setting(first.Query, "join_use_nulls") != "0" {
 		t.Fatalf("overseas query budgets=%+v", first.Query.Settings)
 	}
