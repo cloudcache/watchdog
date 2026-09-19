@@ -163,6 +163,8 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		"{{METRIC_COLUMN}}", metric.column,
 		"{{VALUE_EXPRESSION}}", valueExpression,
 	).Replace(template)
+	identityScoped := len(request.Filters.DeviceIDs) > 0 || len(request.Filters.TargetIDs) > 0 || len(request.Filters.ExporterIDs) > 0
+	maxRowsToRead, maxBytesToRead := rawScanBudgets(usesRawFacts && identityScoped)
 	query := ch.Query{
 		Body: body, Parameters: parameters,
 		Settings: []ch.Setting{
@@ -170,8 +172,8 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 			{Key: "max_memory_usage", Value: "4294967296", Important: true},
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
-			{Key: "max_rows_to_read", Value: "50000000", Important: true},
-			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
+			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
+			{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
 			{Key: "join_use_nulls", Value: "0", Important: true},
 			{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},

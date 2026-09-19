@@ -72,6 +72,26 @@ func TestCompileJointRanksTopSeriesWithoutRescanningGroupedFacts(t *testing.T) {
 	}
 }
 
+func TestCompileJointUsesLargerReadBudgetOnlyWithIdentityScope(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	unscoped, err := CompileJoint(Scope{}, validJointRequest(now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validJointRequest(now)
+	request.Filters.DeviceIDs = []string{"device-a"}
+	scoped, err := CompileJoint(Scope{}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setting(unscoped.Query, "max_rows_to_read") != "50000000" || setting(unscoped.Query, "max_bytes_to_read") != "4294967296" {
+		t.Fatalf("unscoped budgets rows=%q bytes=%q", setting(unscoped.Query, "max_rows_to_read"), setting(unscoped.Query, "max_bytes_to_read"))
+	}
+	if setting(scoped.Query, "max_rows_to_read") != "200000000" || setting(scoped.Query, "max_bytes_to_read") != "8589934592" {
+		t.Fatalf("scoped budgets rows=%q bytes=%q", setting(scoped.Query, "max_rows_to_read"), setting(scoped.Query, "max_bytes_to_read"))
+	}
+}
+
 func TestCompileJointRejectsAmbiguousOrUnboundedRequests(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

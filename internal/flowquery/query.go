@@ -28,17 +28,25 @@ const (
 	maxValuesPerFilter  = 2_048
 	maxFilterValueBytes = 256
 	maxResultRows       = 250_000
-	// Endpoint Top-N uses two bounded raw scans: one memory-bounded heavy-hitter
-	// candidate pass and one exact bucket pass over only those candidates. The
-	// ordinary 50M guard cannot serve a selected device that legitimately emits
-	// more than 50M sampled records in 24 hours. The endpoint path is enabled
-	// only with an explicit device/target/exporter scope; its two raw scans have
-	// separate row/read-byte budgets while retaining the ordinary 4 GiB memory
-	// and 15 second execution guards.
-	maxEndpointCandidateScanRows  = 200_000_000
-	maxEndpointCandidateScanBytes = 8 << 30
+	// A selected device/target/exporter can legitimately emit more than 50M
+	// sampled records in 24 hours. Identity-scoped raw queries may therefore use
+	// this larger read budget. Unscoped queries keep the ordinary fail-closed
+	// guard so an interactive request cannot scan the whole installation.
+	maxIdentityScopedRawScanRows  = 200_000_000
+	maxIdentityScopedRawScanBytes = 8 << 30
 	endpointCandidateMultiplier   = 8
 )
+
+func hasIdentityScope(filters Filters) bool {
+	return len(filters.DeviceIDs) > 0 || len(filters.TargetIDs) > 0 || len(filters.ExporterIDs) > 0
+}
+
+func rawScanBudgets(identityScoped bool) (string, string) {
+	if identityScoped {
+		return strconv.Itoa(maxIdentityScopedRawScanRows), strconv.FormatUint(maxIdentityScopedRawScanBytes, 10)
+	}
+	return "50000000", "4294967296"
+}
 
 type Bucket string
 
@@ -440,6 +448,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	usesRawFacts := false
 	archiveThrough := time.Time{}
 	endpointCandidateQuery := false
+	identityScopedRawQuery := false
 	if request.StorageV2 {
 		archiveThrough = request.ArchiveThrough.UTC()
 		if archiveThrough.IsZero() {
@@ -467,8 +476,8 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
 		)
-		endpointScoped := len(request.Filters.DeviceIDs) > 0 || len(request.Filters.TargetIDs) > 0 || len(request.Filters.ExporterIDs) > 0
-		endpointCandidateQuery = archiveThrough.Equal(from) && endpointScoped &&
+		identityScopedRawQuery = archiveThrough.Before(to) && hasIdentityScope(request.Filters)
+		endpointCandidateQuery = archiveThrough.Equal(from) && identityScopedRawQuery &&
 			(request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP) &&
 			len(residualFilters) == 0
 		if endpointCandidateQuery {
@@ -492,19 +501,27 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 				dimensionExpression, metricInput, strings.Join(rawFilters, "\n      "),
 				candidateValueExpression)
 		} else {
-			body = fmt.Sprintf(storageV2QuerySQL, table, table,
-				strings.Join(archiveFilters, "\n      "), dimensionExpression,
-				strings.Join(rawFilters, "\n      "), strings.Join(residualFilters, "\n    "),
-				metric.column, valueExpression)
+			metricInput := metric.column
+			if request.Metric == MetricReceivedRecords {
+				metricInput = "toUInt64(1)"
+			}
+			storageValueExpression := "toFloat64(sum(metric_value))"
+			if metric.rate {
+				multiplier := uint64(1)
+				if request.Metric == MetricRawBitsPerSecond || request.Metric == MetricEstimatedBPS {
+					multiplier = 8
+				}
+				denominator := "greatest(toUInt32(1), least({bucket_seconds:UInt32}, toUInt32(dateDiff('second', output_bucket, {to:DateTime('UTC')}))))"
+				storageValueExpression = fmt.Sprintf("toFloat64(sum(metric_value)) * %d / %s", multiplier, denominator)
+			}
+			body = fmt.Sprintf(storageV2QuerySQL,
+				table, metric.column, table, strings.Join(archiveFilters, "\n      "),
+				dimensionExpression, metricInput, strings.Join(rawFilters, "\n      "),
+				strings.Join(residualFilters, "\n    "), storageValueExpression)
 		}
 		usesRawFacts = archiveThrough.Before(to)
 	}
-	maxRowsToRead := "50000000"
-	maxBytesToRead := "4294967296"
-	if endpointCandidateQuery {
-		maxRowsToRead = strconv.Itoa(maxEndpointCandidateScanRows)
-		maxBytesToRead = strconv.FormatUint(maxEndpointCandidateScanBytes, 10)
-	}
+	maxRowsToRead, maxBytesToRead := rawScanBudgets(identityScopedRawQuery)
 	query := ch.Query{
 		Body:       body,
 		Parameters: parameters,
@@ -845,8 +862,8 @@ const storageV2QuerySQL = `WITH
       source.bucket, source.target_id, source.device_id, source.exporter_id,
       source.business_direction, source.category, source.business,
       source.dimension_value, source.dimension_snapshot_id, source.geo_version,
-      source.classification_version, source.raw_bytes, source.raw_packets,
-      source.estimated_bytes, source.estimated_packets, source.received_records,
+	  source.classification_version, source.%s AS metric_value,
+	  source.received_records,
       source.unknown_sampling_records, source.quality_records, source.generated_at
     FROM %s AS source FINAL
     INNER JOIN archive_latest USING (bucket, generation)
@@ -865,10 +882,7 @@ const storageV2QuerySQL = `WITH
       CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
       CAST(geo_version AS String) AS geo_version,
       classification_version,
-      sum(raw_bytes) AS raw_bytes,
-      sum(raw_packets) AS raw_packets,
-      sum(estimated_bytes) AS estimated_bytes,
-      sum(estimated_packets) AS estimated_packets,
+	  sum(%s) AS metric_value,
       count() AS received_records,
       countIf(NOT estimated_valid) AS unknown_sampling_records,
       countIf(quality_flags != 0) AS quality_records,
@@ -893,7 +907,7 @@ const storageV2QuerySQL = `WITH
   ),
   scored AS (
     SELECT *,
-      sum(%s) OVER (
+	  sum(metric_value) OVER (
         PARTITION BY dimension_value, dimension_snapshot_id, geo_version, classification_version
       ) AS rank_value
     FROM filtered

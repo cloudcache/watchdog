@@ -197,6 +197,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		otherValues,
 		valueExpression,
 	)
+	maxRowsToRead, maxBytesToRead := rawScanBudgets(hasIdentityScope(request.Filters))
 	plan := JointPlan{
 		RequestedFrom: from, RequestedTo: to, EffectiveFrom: from, EffectiveTo: to,
 		Source: sourceTable, StepSeconds: uint32(interval / time.Second), TargetPoints: targetPoints,
@@ -209,8 +210,8 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 				{Key: "max_execution_time", Value: "15", Important: true},
 				{Key: "max_result_rows", Value: fmt.Sprint(maxResultRows), Important: true},
 				{Key: "result_overflow_mode", Value: "throw", Important: true},
-				{Key: "max_rows_to_read", Value: "50000000", Important: true},
-				{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
+				{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
+				{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
 				{Key: "read_overflow_mode", Value: "throw", Important: true},
 				{Key: "max_memory_usage", Value: "4294967296", Important: true},
 				{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},

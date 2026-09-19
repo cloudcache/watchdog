@@ -216,7 +216,9 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 		"SELECT * FROM archive_rows",
 		"UNION ALL\n      SELECT * FROM raw_rows",
 		"FROM filtered",
-		"sum(estimated_bytes) OVER",
+		"source.estimated_bytes AS metric_value",
+		"sum(estimated_bytes) AS metric_value",
+		"sum(metric_value) OVER",
 		"dense_rank() OVER",
 		"series_rank <= {top_n:UInt16}",
 		"SELECT count() FROM archive_latest",
@@ -233,6 +235,42 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 	if !compiled.UsesRawFacts || !compiled.ArchiveThrough.Equal(request.ArchiveThrough) ||
 		queryParameter(compiled.Query, "source_seconds") != "'3600'" {
 		t.Fatalf("compiled Storage V2 metadata=%+v", compiled)
+	}
+}
+
+func TestCompileStorageV2ScopedRawQueryProjectsMetricAndUsesScopedBudget(t *testing.T) {
+	request := validRequest()
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Dimension = DimensionTotal
+	request.TopN = 1
+	request.IncludeOther = false
+	request.Filters.DeviceIDs = []string{"device-a"}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"source.estimated_bytes AS metric_value",
+		"sum(estimated_bytes) AS metric_value",
+		"sum(metric_value) OVER",
+		"toFloat64(sum(metric_value)) * 8 /",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("scoped raw query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	for _, forbidden := range []string{
+		"sum(raw_bytes) AS raw_bytes",
+		"sum(raw_packets) AS raw_packets",
+		"sum(estimated_packets) AS estimated_packets",
+	} {
+		if strings.Contains(compiled.Query.Body, forbidden) {
+			t.Fatalf("scoped raw query reads an unrequested metric via %q:\n%s", forbidden, compiled.Query.Body)
+		}
+	}
+	if setting(compiled.Query, "max_rows_to_read") != "200000000" || setting(compiled.Query, "max_bytes_to_read") != "8589934592" {
+		t.Fatalf("scoped raw guards rows=%q bytes=%q", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"))
 	}
 }
 
