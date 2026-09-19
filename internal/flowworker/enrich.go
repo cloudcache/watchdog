@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	RecordBatchSchemaVersion   = 3
-	EnrichedBatchSchemaVersion = 5
+	RecordBatchSchemaVersion   = 4
+	EnrichedBatchSchemaVersion = 6
 	defaultMaxRecordsPerBatch  = 1_024
 	hardMaxRecordsPerBatch     = 65_535
 	defaultMaxFutureSkew       = 5 * time.Minute
@@ -77,6 +77,7 @@ type EnrichedBatch struct {
 	AgentIP             netip.Addr
 	ExporterEpoch       uint64
 	Records             []EnrichedRecord
+	CounterRecords      []InterfaceCounterRecord
 }
 
 type EnrichedRecord struct {
@@ -215,14 +216,17 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	}
 	if e == nil || (e.versions == nil && (e.geo == nil || e.dimensions == nil || e.classification == nil)) {
 		result.Records = result.Records[:0]
+		result.CounterRecords = result.CounterRecords[:0]
 		return invalid("enricher is not initialized")
 	}
 	validated, err := validateBatch(batch, e.limits)
 	if err != nil {
 		result.Records = result.Records[:0]
+		result.CounterRecords = result.CounterRecords[:0]
 		return err
 	}
 	records := result.Records[:0]
+	counters := result.CounterRecords[:0]
 	*result = EnrichedBatch{
 		SchemaVersion:      EnrichedBatchSchemaVersion,
 		MessageDisposition: batch.MessageDisposition,
@@ -234,7 +238,7 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 		ObservationDomainID: batch.ObservationDomainID,
 		SubAgentID:          batch.SubAgentID, DatagramSequence: batch.DatagramSequence,
 		AgentIP: validated.agentIP, ExporterEpoch: batch.ExporterEpoch,
-		Records: records,
+		Records: records, CounterRecords: counters,
 	}
 	if batch.MessageDisposition != MessageDispositionPersisted {
 		return nil
@@ -242,10 +246,17 @@ func (e *Enricher) EnrichBatchInto(batch *RecordBatch, result *EnrichedBatch) er
 	if cap(result.Records) < len(batch.Records) {
 		result.Records = make([]EnrichedRecord, 0, len(batch.Records))
 	}
+	if cap(result.CounterRecords) < len(batch.CounterRecords) {
+		result.CounterRecords = make([]InterfaceCounterRecord, 0, len(batch.CounterRecords))
+	}
+	for _, counter := range batch.CounterRecords {
+		result.CounterRecords = append(result.CounterRecords, *counter)
+	}
 	for _, decoded := range batch.Records {
 		record, err := e.enrichRecord(batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, decoded)
 		if err != nil {
 			result.Records = result.Records[:0]
+			result.CounterRecords = result.CounterRecords[:0]
 			return err
 		}
 		result.Records = append(result.Records, record)
@@ -431,7 +442,7 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 		return result, invalid("message disposition is invalid")
 	}
 	if batch.MessageDisposition != MessageDispositionPersisted {
-		if len(batch.Records) != 0 {
+		if len(batch.Records) != 0 || len(batch.CounterRecords) != 0 {
 			return result, invalid("non-persisted message must not carry records")
 		}
 		return result, nil
@@ -451,7 +462,7 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 			return result, invalid("sFlow agent IP must be empty or a 16-byte address")
 		}
 	}
-	if len(batch.Records) == 0 || len(batch.Records) > limits.MaxRecordsPerBatch {
+	if len(batch.Records)+len(batch.CounterRecords) == 0 || len(batch.Records)+len(batch.CounterRecords) > limits.MaxRecordsPerBatch {
 		return result, invalid("record count exceeds the configured boundary")
 	}
 	for position, record := range batch.Records {
@@ -462,7 +473,25 @@ func validateBatch(batch *RecordBatch, limits EnrichmentLimits) (validatedBatch,
 			return result, fmt.Errorf("%w: record_index must start at zero and be contiguous", ErrInvalidRecordBatch)
 		}
 	}
+	for position, counter := range batch.CounterRecords {
+		if err := validateCounterRecord(batch, counter); err != nil {
+			return result, fmt.Errorf("%w: counter_record[%d]: %v", ErrInvalidRecordBatch, position, err)
+		}
+	}
 	return result, nil
+}
+
+func validateCounterRecord(batch *RecordBatch, record *InterfaceCounterRecord) error {
+	if record == nil {
+		return errors.New("counter record is required")
+	}
+	if record.EventTimeUnixMS <= 0 || record.EventTimeUnixMS > batch.ReceivedAtUnixMS || !validIdentifier(record.TargetID, 128) || !validOptionalIdentifier(record.DeviceID, 128) {
+		return errors.New("counter time, target, or device identity is invalid")
+	}
+	if record.IfIndex == 0 {
+		return errors.New("counter interface index is required")
+	}
+	return nil
 }
 
 func validateRecord(batch *RecordBatch, record *Record, limits EnrichmentLimits) error {

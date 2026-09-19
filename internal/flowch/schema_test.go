@@ -28,6 +28,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
 		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql", "015_flow_raw_delete_quarantine.sql",
 		"016_flow_historical_reclassification.sql", "017_flow_reclassification_counter_totals.sql",
+		"018_sflow_interface_counters.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -47,8 +48,8 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 12 {
-		t.Fatalf("ClickHouse table count=%d, want 12", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 13 {
+		t.Fatalf("ClickHouse table count=%d, want 13", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
@@ -74,6 +75,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"snmp_events", "ReplacingMergeTree(ingested_at)", "ORDER BY (device_id, occurred_at, id)",
 		"flow_quarantined_datagrams", "late_quarantined", "raw_payload String CODEC(ZSTD(3))",
 		"flow_reclassified_records", "flow_reclassification_generations", "reclassification_generation", "raw_bytes Decimal(39, 0)",
+		"sflow_interface_counters", "counter_record_count UInt64", "if_in_octets UInt64", "if_out_octets UInt64",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

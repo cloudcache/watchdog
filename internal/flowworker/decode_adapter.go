@@ -100,6 +100,7 @@ func (a DecodeAdapter) Map(kafkaRecord *kgo.Record, decoded flowstream.DecodedBa
 		DatagramSequence:    decoded.DatagramSequence,
 		ExporterEpoch:       binding.EffectiveOwnershipEpoch(),
 		Records:             make([]*Record, 0, len(decoded.Records)),
+		CounterRecords:      make([]*InterfaceCounterRecord, 0, len(decoded.CounterRecords)),
 	}
 	if decoded.AgentIP.IsValid() {
 		result.AgentIP = canonicalAddressBytes(decoded.AgentIP)
@@ -115,6 +116,23 @@ func (a DecodeAdapter) Map(kafkaRecord *kgo.Record, decoded flowstream.DecodedBa
 			return nil, fmt.Errorf("%w: record[%d]: %v", ErrDecodedFlowInvalid, index, err)
 		}
 		result.Records = append(result.Records, record)
+	}
+	for index := range decoded.CounterRecords {
+		counter := decoded.CounterRecords[index]
+		result.CounterRecords = append(result.CounterRecords, &InterfaceCounterRecord{
+			EventTimeUnixMS: decoded.ReceivedAt.UnixMilli(),
+			TargetID:        binding.TargetID, DeviceID: binding.DeviceID,
+			SubAgentID: counter.SubAgentID, SourceIDType: counter.SourceIDType, SourceIDValue: counter.SourceIDValue,
+			SampleSequence: counter.SampleSequence, SampleIndex: counter.SampleIndex, RecordIndex: counter.RecordIndex,
+			IfIndex: counter.IfIndex, IfType: counter.IfType, IfSpeed: counter.IfSpeed,
+			IfDirection: counter.IfDirection, IfStatus: counter.IfStatus,
+			IfInOctets: counter.IfInOctets, IfInUcastPkts: counter.IfInUcastPkts,
+			IfInMulticastPkts: counter.IfInMulticastPkts, IfInBroadcastPkts: counter.IfInBroadcastPkts,
+			IfInDiscards: counter.IfInDiscards, IfInErrors: counter.IfInErrors, IfInUnknownProtos: counter.IfInUnknownProtos,
+			IfOutOctets: counter.IfOutOctets, IfOutUcastPkts: counter.IfOutUcastPkts,
+			IfOutMulticastPkts: counter.IfOutMulticastPkts, IfOutBroadcastPkts: counter.IfOutBroadcastPkts,
+			IfOutDiscards: counter.IfOutDiscards, IfOutErrors: counter.IfOutErrors, IfPromiscuousMode: counter.IfPromiscuousMode,
+		})
 	}
 	return result, nil
 }

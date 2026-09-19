@@ -27,7 +27,8 @@ const (
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_receipts"
 	flowQuarantineTable       = "flow_quarantined_datagrams"
-	receiptSchemaVersion      = 4
+	sflowCountersTable        = "sflow_interface_counters"
+	receiptSchemaVersion      = 5
 	factSchemaVersion         = 3
 )
 
@@ -141,7 +142,7 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
 	if n == nil || n.executor == nil {
 		return errors.New("ClickHouse native connection is not initialized")
 	}
-	var requiredRecords, requiredReceipts, requiredQuarantine, forbiddenRecords, forbiddenReceipts proto.ColUInt64
+	var requiredRecords, requiredReceipts, requiredQuarantine, requiredCounters, forbiddenRecords, forbiddenReceipts proto.ColUInt64
 	seen := false
 	query := ch.Query{
 		Body: `SELECT
@@ -151,8 +152,12 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
   countIf(table = 'flow_ingest_receipts' AND name IN (
     'source_stream_id', 'kafka_partition', 'kafka_offset', 'message_disposition',
     'record_count', 'raw_bytes', 'raw_packets', 'estimated_bytes',
-    'estimated_packets', 'estimated_valid_records', 'generation'
+    'counter_record_count', 'estimated_packets', 'estimated_valid_records', 'generation'
   )) AS required_receipts,
+	countIf(table = 'sflow_interface_counters' AND name IN (
+	  'source_stream_id', 'kafka_partition', 'kafka_offset', 'sample_index',
+	  'record_index', 'device_id', 'if_index', 'if_in_octets', 'if_out_octets'
+	)) AS required_counters,
 	countIf(table = 'flow_quarantined_datagrams' AND name IN (
 	  'source_stream_id', 'kafka_partition', 'kafka_offset', 'barrier_revision',
 	  'raw_payload', 'decoded_record_count', 'matched_event_day'
@@ -160,11 +165,12 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
   countIf(table = 'flow_records' AND name IN ('record_id', 'ingest_batch_id', 'dimension_fingerprint')) AS forbidden_records,
   countIf(table = 'flow_ingest_receipts' AND name IN ('ingest_batch_id', 'checksum', 'first_offset', 'last_offset')) AS forbidden_receipts
 FROM system.columns
-WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_receipts', 'flow_quarantined_datagrams')`,
+WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_receipts', 'flow_quarantined_datagrams', 'sflow_interface_counters')`,
 		Result: proto.Results{
 			{Name: "required_records", Data: &requiredRecords},
 			{Name: "required_receipts", Data: &requiredReceipts},
 			{Name: "required_quarantine", Data: &requiredQuarantine},
+			{Name: "required_counters", Data: &requiredCounters},
 			{Name: "forbidden_records", Data: &forbiddenRecords},
 			{Name: "forbidden_receipts", Data: &forbiddenReceipts},
 		},
@@ -173,7 +179,7 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 		if block.Rows == 0 {
 			return nil
 		}
-		if seen || block.Rows != 1 || requiredRecords.Rows() != 1 || requiredReceipts.Rows() != 1 || requiredQuarantine.Rows() != 1 || forbiddenRecords.Rows() != 1 || forbiddenReceipts.Rows() != 1 {
+		if seen || block.Rows != 1 || requiredRecords.Rows() != 1 || requiredReceipts.Rows() != 1 || requiredQuarantine.Rows() != 1 || requiredCounters.Rows() != 1 || forbiddenRecords.Rows() != 1 || forbiddenReceipts.Rows() != 1 {
 			return errors.New("ClickHouse Flow schema readiness returned an invalid row count")
 		}
 		seen = true
@@ -182,9 +188,9 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 	if err := n.executor.Do(ctx, query); err != nil {
 		return fmt.Errorf("verify ClickHouse Flow Storage V2 schema: %w", err)
 	}
-	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 11 || requiredQuarantine[0] != 8 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
-		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/11 quarantine=%d/8 forbidden=%d/%d)",
-			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(requiredQuarantine), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
+	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 12 || requiredQuarantine[0] != 8 || requiredCounters[0] != 9 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
+		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/12 quarantine=%d/8 counters=%d/9 forbidden=%d/%d)",
+			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(requiredQuarantine), columnOrZero(requiredCounters), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
 	}
 	return nil
 }
@@ -214,7 +220,16 @@ func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBloc
 		if err := n.executor.Do(ctx, insertQuery(flowRecordsTable, token, records)); err != nil {
 			return classifyClickHouseError(fmt.Errorf("insert flow records: %w", err))
 		}
-	} else if len(block.Receipts) == 0 {
+	}
+	if len(block.CounterRecords) > 0 {
+		counters, err := buildCounterInput(block)
+		if err != nil {
+			return Permanent(err)
+		}
+		if err := n.executor.Do(ctx, insertQuery(sflowCountersTable, token+":counters", counters)); err != nil {
+			return classifyClickHouseError(fmt.Errorf("insert sFlow interface counters: %w", err))
+		}
+	} else if len(block.Records) == 0 && len(block.Receipts) == 0 {
 		return Permanent(fmt.Errorf("%w: prepared block has neither records nor receipts", ErrInvalidBatchGroup))
 	}
 	if len(block.Receipts) > 0 {
@@ -227,8 +242,8 @@ func (n *NativeInserter) InsertFlowBlock(ctx context.Context, block PreparedBloc
 }
 
 func blockDeduplicationToken(block PreparedBlock) string {
-	return fmt.Sprintf("flow-v2:%s:%d:%d:%d:%d:%d:%d:%d", block.SourceStreamID, block.KafkaPartition,
-		block.FirstOffset, block.FirstRecordIndex, block.LastOffset, block.LastRecordIndex, len(block.Records), len(block.Receipts))
+	return fmt.Sprintf("flow-v2:%s:%d:%d:%d:%d:%d:%d:%d:%d", block.SourceStreamID, block.KafkaPartition,
+		block.FirstOffset, block.FirstRecordIndex, block.LastOffset, block.LastRecordIndex, len(block.Records), len(block.CounterRecords), len(block.Receipts))
 }
 
 func insertQuery(table, token string, input proto.Input) ch.Query {
@@ -529,6 +544,119 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 	}, nil
 }
 
+func buildCounterInput(block PreparedBlock) (proto.Input, error) {
+	if !flowworker.ValidSourceStreamID(block.SourceStreamID) || block.KafkaPartition < 0 || block.FirstOffset < 0 || block.LastOffset < block.FirstOffset || len(block.CounterRecords) == 0 {
+		return nil, fmt.Errorf("%w: prepared counter block identity or records are missing", ErrInvalidBatchGroup)
+	}
+	var (
+		eventTime          = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		receivedTime       = new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli)
+		sourceStreamID     = new(proto.ColStr).LowCardinality()
+		ingestGeneration   proto.ColUInt64
+		kafkaTopic         = new(proto.ColStr).LowCardinality()
+		kafkaPartition     proto.ColUInt32
+		kafkaOffset        proto.ColUInt64
+		sampleIndex        proto.ColUInt32
+		recordIndex        proto.ColUInt32
+		collectorID        = new(proto.ColStr).LowCardinality()
+		exporterID         = new(proto.ColStr).LowCardinality()
+		targetID           = new(proto.ColStr).LowCardinality()
+		deviceID           = new(proto.ColStr).LowCardinality()
+		registryVersion    proto.ColUInt64
+		exporterEpoch      proto.ColUInt64
+		exporterSourceIP   proto.ColIPv6
+		subAgentID         proto.ColUInt32
+		datagramSequence   proto.ColUInt32
+		agentIP            proto.ColIPv6
+		agentIPValid       proto.ColBool
+		sourceIDType       proto.ColUInt32
+		sourceIDValue      proto.ColUInt32
+		sampleSequence     proto.ColUInt32
+		ifIndex            proto.ColUInt32
+		ifType             proto.ColUInt32
+		ifSpeed            proto.ColUInt64
+		ifDirection        proto.ColUInt32
+		ifStatus           proto.ColUInt32
+		ifInOctets         proto.ColUInt64
+		ifInUcastPkts      proto.ColUInt32
+		ifInMulticastPkts  proto.ColUInt32
+		ifInBroadcastPkts  proto.ColUInt32
+		ifInDiscards       proto.ColUInt32
+		ifInErrors         proto.ColUInt32
+		ifInUnknownProtos  proto.ColUInt32
+		ifOutOctets        proto.ColUInt64
+		ifOutUcastPkts     proto.ColUInt32
+		ifOutMulticastPkts proto.ColUInt32
+		ifOutBroadcastPkts proto.ColUInt32
+		ifOutDiscards      proto.ColUInt32
+		ifOutErrors        proto.ColUInt32
+		ifPromiscuousMode  proto.ColUInt32
+	)
+	for _, ref := range block.CounterRecords {
+		if ref.Batch == nil || ref.Counter == nil || ref.Counter.EventTimeUnixMS <= 0 || ref.Counter.IfIndex == 0 {
+			return nil, fmt.Errorf("%w: prepared counter record is incomplete", ErrInvalidBatchGroup)
+		}
+		counter := ref.Counter
+		eventTime.Append(time.UnixMilli(counter.EventTimeUnixMS).UTC())
+		receivedTime.Append(ref.Batch.ReceivedAt.UTC())
+		sourceStreamID.Append(ref.Batch.SourceStreamID)
+		ingestGeneration.Append(uint64(ref.Batch.ReceivedAt.UnixMilli()))
+		kafkaTopic.Append(ref.Batch.KafkaTopic)
+		kafkaPartition.Append(uint32(ref.Batch.KafkaPartition))
+		kafkaOffset.Append(uint64(ref.Batch.KafkaOffset))
+		sampleIndex.Append(counter.SampleIndex)
+		recordIndex.Append(counter.RecordIndex)
+		collectorID.Append(ref.Batch.CollectorID)
+		exporterID.Append(ref.Batch.ExporterID)
+		targetID.Append(counter.TargetID)
+		deviceID.Append(counter.DeviceID)
+		registryVersion.Append(ref.Batch.RegistryVersion)
+		exporterEpoch.Append(ref.Batch.ExporterEpoch)
+		exporterSourceIP.Append(clickHouseIP(ref.Batch.SourceIP))
+		subAgentID.Append(counter.SubAgentID)
+		datagramSequence.Append(ref.Batch.DatagramSequence)
+		agentIP.Append(clickHouseIP(ref.Batch.AgentIP))
+		agentIPValid.Append(ref.Batch.AgentIP.IsValid())
+		sourceIDType.Append(counter.SourceIDType)
+		sourceIDValue.Append(counter.SourceIDValue)
+		sampleSequence.Append(counter.SampleSequence)
+		ifIndex.Append(counter.IfIndex)
+		ifType.Append(counter.IfType)
+		ifSpeed.Append(counter.IfSpeed)
+		ifDirection.Append(counter.IfDirection)
+		ifStatus.Append(counter.IfStatus)
+		ifInOctets.Append(counter.IfInOctets)
+		ifInUcastPkts.Append(counter.IfInUcastPkts)
+		ifInMulticastPkts.Append(counter.IfInMulticastPkts)
+		ifInBroadcastPkts.Append(counter.IfInBroadcastPkts)
+		ifInDiscards.Append(counter.IfInDiscards)
+		ifInErrors.Append(counter.IfInErrors)
+		ifInUnknownProtos.Append(counter.IfInUnknownProtos)
+		ifOutOctets.Append(counter.IfOutOctets)
+		ifOutUcastPkts.Append(counter.IfOutUcastPkts)
+		ifOutMulticastPkts.Append(counter.IfOutMulticastPkts)
+		ifOutBroadcastPkts.Append(counter.IfOutBroadcastPkts)
+		ifOutDiscards.Append(counter.IfOutDiscards)
+		ifOutErrors.Append(counter.IfOutErrors)
+		ifPromiscuousMode.Append(counter.IfPromiscuousMode)
+	}
+	return proto.Input{
+		{Name: "event_time", Data: eventTime}, {Name: "received_time", Data: receivedTime},
+		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "ingest_generation", Data: ingestGeneration},
+		{Name: "kafka_topic", Data: kafkaTopic}, {Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset},
+		{Name: "sample_index", Data: sampleIndex}, {Name: "record_index", Data: recordIndex},
+		{Name: "collector_id", Data: collectorID}, {Name: "exporter_id", Data: exporterID}, {Name: "target_id", Data: targetID}, {Name: "device_id", Data: deviceID},
+		{Name: "registry_version", Data: registryVersion}, {Name: "exporter_epoch", Data: exporterEpoch}, {Name: "exporter_source_ip", Data: exporterSourceIP},
+		{Name: "sub_agent_id", Data: subAgentID}, {Name: "datagram_sequence", Data: datagramSequence}, {Name: "agent_ip", Data: agentIP}, {Name: "agent_ip_valid", Data: agentIPValid},
+		{Name: "source_id_type", Data: sourceIDType}, {Name: "source_id_value", Data: sourceIDValue}, {Name: "sample_sequence", Data: sampleSequence},
+		{Name: "if_index", Data: ifIndex}, {Name: "if_type", Data: ifType}, {Name: "if_speed", Data: ifSpeed}, {Name: "if_direction", Data: ifDirection}, {Name: "if_status", Data: ifStatus},
+		{Name: "if_in_octets", Data: ifInOctets}, {Name: "if_in_ucast_pkts", Data: ifInUcastPkts}, {Name: "if_in_multicast_pkts", Data: ifInMulticastPkts}, {Name: "if_in_broadcast_pkts", Data: ifInBroadcastPkts},
+		{Name: "if_in_discards", Data: ifInDiscards}, {Name: "if_in_errors", Data: ifInErrors}, {Name: "if_in_unknown_protos", Data: ifInUnknownProtos},
+		{Name: "if_out_octets", Data: ifOutOctets}, {Name: "if_out_ucast_pkts", Data: ifOutUcastPkts}, {Name: "if_out_multicast_pkts", Data: ifOutMulticastPkts}, {Name: "if_out_broadcast_pkts", Data: ifOutBroadcastPkts},
+		{Name: "if_out_discards", Data: ifOutDiscards}, {Name: "if_out_errors", Data: ifOutErrors}, {Name: "if_promiscuous_mode", Data: ifPromiscuousMode},
+	}, nil
+}
+
 func buildReceiptInput(block PreparedBlock) proto.Input {
 	var (
 		sourceStreamID     = new(proto.ColStr).LowCardinality()
@@ -539,6 +667,7 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		kafkaPartition     proto.ColUInt32
 		kafkaOffset        proto.ColUInt64
 		recordCount        proto.ColUInt64
+		counterRecordCount proto.ColUInt64
 		rawBytes           proto.ColUInt64
 		rawPackets         proto.ColUInt64
 		estimatedBytes     proto.ColUInt64
@@ -559,6 +688,7 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 		kafkaPartition.Append(uint32(receipt.KafkaPartition))
 		kafkaOffset.Append(uint64(receipt.KafkaOffset))
 		recordCount.Append(receipt.RecordCount)
+		counterRecordCount.Append(receipt.CounterRecordCount)
 		rawBytes.Append(receipt.RawBytes)
 		rawPackets.Append(receipt.RawPackets)
 		estimatedBytes.Append(receipt.EstimatedBytes)
@@ -576,7 +706,7 @@ func buildReceiptInput(block PreparedBlock) proto.Input {
 	return proto.Input{
 		{Name: "source_stream_id", Data: sourceStreamID}, {Name: "worker_schema", Data: workerSchema}, {Name: "receipt_schema", Data: receiptSchema}, {Name: "message_disposition", Data: &receiptDisposition}, {Name: "kafka_topic", Data: kafkaTopic},
 		{Name: "kafka_partition", Data: kafkaPartition}, {Name: "kafka_offset", Data: kafkaOffset},
-		{Name: "record_count", Data: recordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
+		{Name: "record_count", Data: recordCount}, {Name: "counter_record_count", Data: counterRecordCount}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
 		{Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets}, {Name: "estimated_valid_records", Data: estimatedValid},
 		{Name: "min_event_time", Data: minEventTime}, {Name: "max_event_time", Data: maxEventTime}, {Name: "generation", Data: generationCol}, {Name: "inserted_at", Data: legacyInsertedAt},
 	}
@@ -593,11 +723,11 @@ func validatePreparedReceipts(block PreparedBlock) error {
 			receipt.ReceivedAt.UnixMilli() <= 0 {
 			return fmt.Errorf("%w: prepared receipt %d identity is invalid", ErrInvalidBatchGroup, index)
 		}
-		if receipt.Disposition == flowworker.MessageDispositionPersisted && receipt.RecordCount == 0 {
+		if receipt.Disposition == flowworker.MessageDispositionPersisted && receipt.RecordCount+receipt.CounterRecordCount == 0 {
 			return fmt.Errorf("%w: persisted receipt %d has no records", ErrInvalidBatchGroup, index)
 		}
 		if receipt.Disposition != flowworker.MessageDispositionPersisted && receipt.Disposition != flowworker.MessageDispositionLateQuarantined &&
-			(receipt.RecordCount != 0 || receipt.RawBytes != 0 || receipt.RawPackets != 0 || receipt.EstimatedBytes != 0 || receipt.EstimatedPackets != 0 || receipt.EstimatedValidRecords != 0) {
+			(receipt.RecordCount != 0 || receipt.CounterRecordCount != 0 || receipt.RawBytes != 0 || receipt.RawPackets != 0 || receipt.EstimatedBytes != 0 || receipt.EstimatedPackets != 0 || receipt.EstimatedValidRecords != 0) {
 			return fmt.Errorf("%w: non-persisted receipt %d has counters", ErrInvalidBatchGroup, index)
 		}
 	}

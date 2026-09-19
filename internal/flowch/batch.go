@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	WorkerSchemaVersion = 5
+	WorkerSchemaVersion = 6
 	defaultMaxRows      = 50_000
 	defaultMaxBytes     = 64 << 20
 	hardMaxRows         = 1_000_000
@@ -40,6 +40,11 @@ type RecordRef struct {
 	Record *flowworker.EnrichedRecord
 }
 
+type CounterRef struct {
+	Batch   *flowworker.EnrichedBatch
+	Counter *flowworker.InterfaceCounterRecord
+}
+
 type PreparedBlock struct {
 	SourceStreamID        string
 	KafkaTopic            string
@@ -58,6 +63,7 @@ type PreparedBlock struct {
 	MaxEventTime          time.Time
 	ApproxBytes           int
 	Records               []RecordRef
+	CounterRecords        []CounterRef
 	Receipts              []PreparedReceipt
 }
 
@@ -71,6 +77,7 @@ type PreparedReceipt struct {
 	KafkaPartition        int32
 	KafkaOffset           int64
 	RecordCount           uint64
+	CounterRecordCount    uint64
 	RawBytes              uint64
 	RawPackets            uint64
 	EstimatedBytes        uint64
@@ -101,7 +108,10 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 	}
 	currentPartitions := make(map[storagePartition]struct{})
 	currentOffset := int64(-1)
-	blockEmpty := func() bool { return len(current.Records) == 0 && len(current.Receipts) == 0 }
+	blockEmpty := func() bool {
+		return len(current.Records) == 0 && len(current.CounterRecords) == 0 && len(current.Receipts) == 0
+	}
+	blockRows := func() int { return len(current.Records) + len(current.CounterRecords) }
 	flush := func() error {
 		if blockEmpty() {
 			return nil
@@ -123,7 +133,7 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			return nil, fmt.Errorf("%w: receipt %s/%d/%d exceeds block byte limit", ErrInvalidBatchGroup, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset)
 		}
 		if batch.MessageDisposition != flowworker.MessageDispositionPersisted {
-			if !blockEmpty() && (len(current.Records) >= limits.MaxRows || len(current.Receipts) >= limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-receiptBytes) {
+			if !blockEmpty() && (blockRows() >= limits.MaxRows || len(current.Receipts) >= limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-receiptBytes) {
 				if err := flush(); err != nil {
 					return nil, err
 				}
@@ -152,7 +162,7 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			partition := storagePartition{day: int32(eventTime.Unix() / 86400)}
 			_, samePartition := currentPartitions[partition]
 			exceedsPartitions := !samePartition && len(currentPartitions) >= limits.MaxPartitionDays
-			lastRecord := index == len(batch.Records)-1
+			lastRecord := index == len(batch.Records)-1 && len(batch.CounterRecords) == 0
 			requiredBytes := recordBytes
 			if lastRecord {
 				requiredBytes += receiptBytes
@@ -160,7 +170,7 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 			if requiredBytes > limits.MaxApproxBytes {
 				return nil, fmt.Errorf("%w: record and receipt %s/%d/%d/%d exceed block byte limit", ErrInvalidBatchGroup, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, record.RecordIndex)
 			}
-			if !blockEmpty() && (len(current.Records) == limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-requiredBytes || exceedsPartitions) {
+			if !blockEmpty() && (blockRows() == limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-requiredBytes || exceedsPartitions) {
 				if err := flush(); err != nil {
 					return nil, err
 				}
@@ -208,6 +218,53 @@ func PrepareBlocks(batches []*flowworker.EnrichedBatch, limits BatchLimits) ([]P
 				current.ApproxBytes += receiptBytes
 			}
 		}
+		for index := range batch.CounterRecords {
+			counter := &batch.CounterRecords[index]
+			counterBytes := approximateCounterBytes(batch, counter)
+			if counterBytes > limits.MaxApproxBytes {
+				return nil, fmt.Errorf("%w: counter %s/%d/%d/%d/%d exceeds block byte limit", ErrInvalidBatchGroup, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, counter.SampleIndex, counter.RecordIndex)
+			}
+			eventTime := time.UnixMilli(counter.EventTimeUnixMS).UTC()
+			partition := storagePartition{day: int32(eventTime.Unix() / 86400)}
+			_, samePartition := currentPartitions[partition]
+			exceedsPartitions := !samePartition && len(currentPartitions) >= limits.MaxPartitionDays
+			lastCounter := index == len(batch.CounterRecords)-1
+			requiredBytes := counterBytes
+			if lastCounter {
+				requiredBytes += receiptBytes
+			}
+			if requiredBytes > limits.MaxApproxBytes {
+				return nil, fmt.Errorf("%w: counter and receipt %s/%d/%d/%d/%d exceed block byte limit", ErrInvalidBatchGroup, batch.SourceStreamID, batch.KafkaPartition, batch.KafkaOffset, counter.SampleIndex, counter.RecordIndex)
+			}
+			if !blockEmpty() && (blockRows() == limits.MaxRows || current.ApproxBytes > limits.MaxApproxBytes-requiredBytes || exceedsPartitions) {
+				if err := flush(); err != nil {
+					return nil, err
+				}
+			}
+			if blockEmpty() {
+				current.FirstOffset = batch.KafkaOffset
+				current.FirstRecordIndex = counter.RecordIndex
+			}
+			current.LastOffset = batch.KafkaOffset
+			current.LastRecordIndex = counter.RecordIndex
+			if currentOffset != batch.KafkaOffset {
+				current.SourceBatchCount++
+				currentOffset = batch.KafkaOffset
+			}
+			if current.MinEventTime.IsZero() || eventTime.Before(current.MinEventTime) {
+				current.MinEventTime = eventTime
+			}
+			if eventTime.After(current.MaxEventTime) {
+				current.MaxEventTime = eventTime
+			}
+			currentPartitions[partition] = struct{}{}
+			current.ApproxBytes += counterBytes
+			current.CounterRecords = append(current.CounterRecords, CounterRef{Batch: batch, Counter: counter})
+			if lastCounter {
+				current.Receipts = append(current.Receipts, receipt)
+				current.ApproxBytes += receiptBytes
+			}
+		}
 	}
 	if err := flush(); err != nil {
 		return nil, err
@@ -242,10 +299,10 @@ func validateBatchGroup(batches []*flowworker.EnrichedBatch) error {
 		if batch == nil || batch.SchemaVersion != flowworker.EnrichedBatchSchemaVersion || batch.SourceStreamID != batches[0].SourceStreamID || batch.KafkaTopic != batches[0].KafkaTopic || batch.KafkaPartition != batches[0].KafkaPartition || batch.KafkaOffset < 0 || batch.ReceivedAt.UnixMilli() <= 0 || batch.MessageDisposition < flowworker.MessageDispositionPersisted || batch.MessageDisposition > flowworker.MessageDispositionMappingRejected {
 			return fmt.Errorf("%w: source batch %d has invalid identity or records", ErrInvalidBatchGroup, index)
 		}
-		if batch.MessageDisposition == flowworker.MessageDispositionPersisted && len(batch.Records) == 0 {
+		if batch.MessageDisposition == flowworker.MessageDispositionPersisted && len(batch.Records)+len(batch.CounterRecords) == 0 {
 			return fmt.Errorf("%w: persisted source batch %d requires records", ErrInvalidBatchGroup, index)
 		}
-		if batch.MessageDisposition != flowworker.MessageDispositionPersisted && len(batch.Records) != 0 {
+		if batch.MessageDisposition != flowworker.MessageDispositionPersisted && (len(batch.Records) != 0 || len(batch.CounterRecords) != 0) {
 			return fmt.Errorf("%w: non-persisted source batch %d carries records", ErrInvalidBatchGroup, index)
 		}
 		if index > 0 && batches[index-1].KafkaOffset >= batch.KafkaOffset {
@@ -255,6 +312,12 @@ func validateBatchGroup(batches []*flowworker.EnrichedBatch) error {
 			record := &batch.Records[recordIndex]
 			if record.EventTime.IsZero() {
 				return fmt.Errorf("%w: source batch %d record %d is incomplete", ErrInvalidBatchGroup, index, recordIndex)
+			}
+		}
+		for counterIndex := range batch.CounterRecords {
+			counter := &batch.CounterRecords[counterIndex]
+			if counter.EventTimeUnixMS <= 0 || counter.IfIndex == 0 || counter.TargetID == "" {
+				return fmt.Errorf("%w: source batch %d counter %d is incomplete", ErrInvalidBatchGroup, index, counterIndex)
 			}
 		}
 	}
@@ -282,13 +345,17 @@ func approximateRecordBytes(batch *flowworker.EnrichedBatch, record *flowworker.
 	return size
 }
 
+func approximateCounterBytes(batch *flowworker.EnrichedBatch, record *flowworker.InterfaceCounterRecord) int {
+	return 256 + len(batch.SourceStreamID) + len(batch.KafkaTopic) + len(batch.CollectorID) + len(batch.ExporterID) + len(record.TargetID) + len(record.DeviceID)
+}
+
 func prepareReceipt(batch *flowworker.EnrichedBatch) (PreparedReceipt, error) {
 	receipt := PreparedReceipt{
 		Disposition:    batch.MessageDisposition,
 		SourceStreamID: batch.SourceStreamID, KafkaTopic: batch.KafkaTopic,
 		KafkaPartition: batch.KafkaPartition, KafkaOffset: batch.KafkaOffset,
-		RecordCount: uint64(len(batch.Records)),
-		ReceivedAt:  batch.ReceivedAt.UTC(),
+		RecordCount: uint64(len(batch.Records)), CounterRecordCount: uint64(len(batch.CounterRecords)),
+		ReceivedAt: batch.ReceivedAt.UTC(),
 	}
 	for _, record := range batch.Records {
 		if receipt.RawBytes > math.MaxUint64-record.RawBytes || receipt.RawPackets > math.MaxUint64-record.RawPackets {

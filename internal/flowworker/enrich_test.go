@@ -87,6 +87,29 @@ func TestEnrichBatchSelectsEveryVersionByRecordEventTime(t *testing.T) {
 	}
 }
 
+func TestEnrichBatchCarriesCounterOnlyDatagramWithoutDimensionLookup(t *testing.T) {
+	receivedAt := testMinute(12, 30)
+	batch := testBatch(receivedAt)
+	batch.Records = nil
+	batch.CounterRecords = []*InterfaceCounterRecord{{
+		EventTimeUnixMS: receivedAt.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
+		SubAgentID: 7, SourceIDValue: 81, SampleSequence: 91, SampleIndex: 2, RecordIndex: 1,
+		IfIndex: 81, IfType: 6, IfSpeed: 25_000_000_000, IfStatus: 3,
+		IfInOctets: 100, IfOutOctets: 200,
+	}}
+	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
+	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
+	classification := compileClassification(t, 1, testMinute(12, 0), "dimension-1", flowdimension.RecordPolicyCount, flowdimension.RecordPolicyCount)
+	classifications, _ := flowdimension.NewClassificationCatalog(classification)
+	result, err := newTestEnricher(t, dimensions, flowdimension.NewGeoCatalog(), classifications).EnrichBatch(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Records) != 0 || len(result.CounterRecords) != 1 || result.CounterRecords[0].IfIndex != 81 || result.CounterRecords[0].IfOutOctets != 200 {
+		t.Fatalf("counter-only enrichment changed the payload: %+v", result)
+	}
+}
+
 func TestEnrichBatchUsesObservationDeviceClassificationContext(t *testing.T) {
 	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
 	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)

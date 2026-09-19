@@ -13,6 +13,8 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
 	"github.com/netsampler/goflow2/v3/decoders/netflow"
 	"github.com/netsampler/goflow2/v3/decoders/netflowlegacy"
+	"github.com/netsampler/goflow2/v3/decoders/sflow"
+	decoderutils "github.com/netsampler/goflow2/v3/decoders/utils"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 )
@@ -48,6 +50,51 @@ func TestProcessorHandlesDecodedBatchBeforeOffsetSuccess(t *testing.T) {
 		t.Fatalf("unexpected handled batch: %+v", handled)
 	}
 	if stats := processor.Stats(); stats.Datagrams != 1 || stats.Records != 1 || stats.Rejected != 0 || stats.RetryableErrors != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestProcessorPersistsCounterOnlySFlowDatagram(t *testing.T) {
+	receivedAt := time.Date(2026, 9, 19, 2, 3, 4, 0, time.UTC)
+	packet := sflow.Packet{
+		Version: 5, IPVersion: 1, AgentIP: decoderutils.IPAddress{172, 57, 1, 2},
+		SubAgentId: 7, SequenceNumber: 108, Uptime: 1000,
+		Samples: []interface{}{sflow.CounterSample{
+			Header: sflow.SampleHeader{SampleSequenceNumber: 40, SourceIdValue: 72},
+			Records: []sflow.CounterRecord{{Data: sflow.IfCounters{
+				IfIndex: 72, IfType: 6, IfSpeed: 25_000_000_000, IfDirection: 1, IfStatus: 3,
+				IfInOctets: 101, IfInUcastPkts: 102, IfOutOctets: 201, IfOutUcastPkts: 202,
+			}}},
+		}},
+	}
+	payload, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var handled *RecordBatch
+	processor, err := NewProcessor(time.Minute,
+		func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
+			return bindingFixture(), nil
+		},
+		func(_ context.Context, batch *RecordBatch) error { handled = batch; return nil },
+		func(*kgo.Record, RejectReason, error) { t.Fatal("valid counter datagram was rejected") },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer processor.Close()
+	record := workerRawRecordAt(t, flowpb.RawFlow_DECODER_SFLOW, payload, receivedAt)
+	if err := processor.HandleRecord(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if handled == nil || handled.MessageDisposition != MessageDispositionPersisted || len(handled.Records) != 0 || len(handled.CounterRecords) != 1 {
+		t.Fatalf("unexpected handled batch: %+v", handled)
+	}
+	counter := handled.CounterRecords[0]
+	if counter.EventTimeUnixMS != receivedAt.UnixMilli() || counter.TargetID != "target-a" || counter.DeviceID != "device-a" || counter.IfIndex != 72 || counter.IfSpeed != 25_000_000_000 || counter.IfInOctets != 101 || counter.IfOutOctets != 201 {
+		t.Fatalf("unexpected mapped counter: %+v", counter)
+	}
+	if stats := processor.Stats(); stats.Datagrams != 1 || stats.Records != 0 || stats.CounterRecords != 1 || stats.Rejected != 0 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 }
@@ -206,8 +253,12 @@ func TestBatchProcessorWritesOneOrderedPartitionGroup(t *testing.T) {
 }
 
 func workerRawRecord(t testing.TB, decoder flowpb.RawFlow_Decoder, payload []byte) *kgo.Record {
+	return workerRawRecordAt(t, decoder, payload, time.Date(2026, 9, 5, 1, 2, 3, 0, time.UTC))
+}
+
+func workerRawRecordAt(t testing.TB, decoder flowpb.RawFlow_Decoder, payload []byte, receivedAt time.Time) *kgo.Record {
 	t.Helper()
-	raw, err := flowstream.NewRawFlow("collector-a", "netflow", 7, time.Date(2026, 9, 5, 1, 2, 3, 0, time.UTC), netip.MustParseAddrPort("192.0.2.1:9999"), decoder, payload)
+	raw, err := flowstream.NewRawFlow("collector-a", "netflow", 7, receivedAt, netip.MustParseAddrPort("192.0.2.1:9999"), decoder, payload)
 	if err != nil {
 		t.Fatal(err)
 	}

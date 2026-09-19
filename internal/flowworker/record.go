@@ -34,10 +34,45 @@ type RecordBatch struct {
 	SubAgentID          uint32
 	DatagramSequence    uint32
 	AgentIP             []byte
+	CounterRecords      []*InterfaceCounterRecord
 	// RawPayload aliases the Kafka record value until the synchronous durable
 	// handler returns. Only the exceptional tombstone path persists it.
 	RawPayload    []byte
 	ExporterEpoch uint64
+}
+
+// InterfaceCounterRecord is one cumulative generic-interface counter sample.
+// It is stored verbatim; rate, reset and wrap handling belong to the query and
+// reconciliation layer so ingestion never mutates device truth.
+type InterfaceCounterRecord struct {
+	EventTimeUnixMS    int64
+	TargetID           string
+	DeviceID           string
+	SubAgentID         uint32
+	SourceIDType       uint32
+	SourceIDValue      uint32
+	SampleSequence     uint32
+	SampleIndex        uint32
+	RecordIndex        uint32
+	IfIndex            uint32
+	IfType             uint32
+	IfSpeed            uint64
+	IfDirection        uint32
+	IfStatus           uint32
+	IfInOctets         uint64
+	IfInUcastPkts      uint32
+	IfInMulticastPkts  uint32
+	IfInBroadcastPkts  uint32
+	IfInDiscards       uint32
+	IfInErrors         uint32
+	IfInUnknownProtos  uint32
+	IfOutOctets        uint64
+	IfOutUcastPkts     uint32
+	IfOutMulticastPkts uint32
+	IfOutBroadcastPkts uint32
+	IfOutDiscards      uint32
+	IfOutErrors        uint32
+	IfPromiscuousMode  uint32
 }
 
 // ValidSourceStreamID validates the operator-assigned Kafka cluster/topic

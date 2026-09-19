@@ -382,12 +382,12 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 > 约束：counter sample 与 packet flow sample 是两条独立遥测通道。丢弃 counter 不会直接降低 `estimated_bytes`，但会丢失同源接口真值和“哪些端口/方向实际启用了包采样”的证据。任何校准结果必须是带版本和 provenance 的派生口径，绝不覆盖 raw/estimated 事实。
 
 - [x] **设计冻结**：支持标准/expanded counter sample 的 generic interface counter；冻结 agent/sub-agent/datagram sequence、sample source/sequence/index、record index、ifIndex/ifSpeed/ifDirection/ifStatus、in/out octets、单播/组播/广播包、discard/error/unknown-protocol 字段及 Kafka 坐标身份。
-- [x] **解码**：fast sFlow 解码器已读取 generic interface counter；未知的合法 counter record 只跳过该 record，并覆盖标准/expanded、counter-only、多 record 和截断测试。当前只完成 decoder carrier，counter-only 只有在下一个 Kafka→worker→CH 切片完成后才能从 `empty` 改为 `persisted`，避免假回执。继续保留 flow sample 原有零拷贝路径。
-- [ ] **可靠传输/回执**：CounterRecord 随原 datagram 经 Kafka→worker；回执分别记录 flow fact count 与 counter record count，重放以 Kafka 坐标幂等，crash/rebalance/CH timeout 后两类事实与回执最终收敛。
-- [ ] **ClickHouse 存储**：新增累计量表 `sflow_interface_counters`，以 device/exporter+ifIndex+event time 查询，以 Kafka 坐标去重；差分层处理 32/64 位 wrap、reset、乱序、迟到和 discontinuity。不得无来源标记地混写现有 SNMP 表。
+- [x] **解码**：fast sFlow 解码器已读取 generic interface counter；未知的合法 counter record 只跳过该 record，并覆盖标准/expanded、counter-only、多 record 和截断测试。继续保留 flow sample 原有零拷贝路径。
+- [x] **可靠传输/回执**：CounterRecord 随原 datagram 经 Kafka→worker；counter-only 数据报由 `empty` 改为 `persisted`，回执分别记录 flow fact count 与 counter record count，重放仍以 Kafka 坐标幂等。单元测试覆盖 decoder→worker 的 counter-only 持久化语义以及 worker→CH 的独立 counter 回执。
+- [x] **ClickHouse 存储**：迁移 `018_sflow_interface_counters.sql` 新增累计量表 `sflow_interface_counters`，以 device/exporter+ifIndex+event time 查询，以 Kafka 坐标去重；累计量不混写 SNMP 表。差分层的 wrap、reset、乱序、迟到和 discontinuity 仍归入下一项对账实现。
 - [ ] **对账/告警**：按 `(device,ifIndex,direction,5m)` 计算 counter delta、Flow estimated 与 `k=counter/estimated`；分别输出“有 counter 无 flow 样本”的覆盖问题、持续漂移、序列缺口、未知倍率、绑定/ifIndex 错误，不自动调平。
 - [ ] **派生校准口径**：raw/estimated 永久不变；仅在质量门禁通过时生成 versioned calibrated 派生值，保存 counter 窗口、倍率、版本和证据。供应商/客户视角及 billing 是否采用必须显式配置，缺 counter/覆盖不足时 fail-closed，不回退为隐式倍率。
-- [ ] **单元测试**：标准/expanded、counter-only、混合 sample、多 record、未知 record、截断、IPv4/IPv6 agent；差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。
+- [ ] **单元测试**：已完成标准/expanded、counter-only、混合 sample、多 record、未知 record、截断以及 counter-only Kafka→worker→CH 回执；尚需随对账层完成 IPv4/IPv6 agent、差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。
 - [ ] **真实集成/性能**：真实 Huawei CE datagram→Kafka→worker→CH；与 SNMP 同窗 10 端口核对，验证 counter 与 SNMP、packet estimate 三方差异；记录 decoder records/s、worker P95、CH read_rows/bytes，72h soak 无回执漂移后独立提交。
 
 ### PERF-Q2 查询、聚类与存储后续闭环

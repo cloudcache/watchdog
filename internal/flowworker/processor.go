@@ -42,6 +42,7 @@ type Processor struct {
 type processorStats struct {
 	datagrams       atomic.Uint64
 	records         atomic.Uint64
+	counterRecords  atomic.Uint64
 	templateMissing atomic.Uint64
 	rejected        atomic.Uint64
 	retryableErrors atomic.Uint64
@@ -50,6 +51,7 @@ type processorStats struct {
 type ProcessorStats struct {
 	Datagrams       uint64
 	Records         uint64
+	CounterRecords  uint64
 	TemplateMissing uint64
 	Rejected        uint64
 	RetryableErrors uint64
@@ -124,6 +126,7 @@ func (p *Processor) HandleRecords(ctx context.Context, records []*kgo.Record) er
 	for _, batch := range batches {
 		if batch.MessageDisposition == MessageDispositionPersisted {
 			p.stats.records.Add(uint64(len(batch.Records)))
+			p.stats.counterRecords.Add(uint64(len(batch.CounterRecords)))
 		}
 	}
 	return nil
@@ -140,7 +143,7 @@ func (p *Processor) decodeRecord(record *kgo.Record) (*RecordBatch, error) {
 		return p.receiptBatch(record, MessageDispositionDecodeRejected, time.Time{}), nil
 	}
 	p.stats.datagrams.Add(1)
-	if len(decoded.Records) == 0 {
+	if len(decoded.Records) == 0 && len(decoded.CounterRecords) == 0 {
 		return p.receiptBatch(record, MessageDispositionEmpty, decoded.ReceivedAt), nil
 	}
 	batch, err := p.adapter.Map(record, decoded)
@@ -204,6 +207,7 @@ func (p *Processor) Stats() ProcessorStats {
 	return ProcessorStats{
 		Datagrams:       p.stats.datagrams.Load(),
 		Records:         p.stats.records.Load(),
+		CounterRecords:  p.stats.counterRecords.Load(),
 		TemplateMissing: p.stats.templateMissing.Load(),
 		Rejected:        p.stats.rejected.Load(),
 		RetryableErrors: p.stats.retryableErrors.Load(),

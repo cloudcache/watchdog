@@ -33,16 +33,16 @@ type deadlineRecorder struct {
 }
 
 type readinessExecutor struct {
-	requiredRecords, requiredReceipts, requiredQuarantine uint64
-	forbiddenRecords, forbiddenReceipts                   uint64
+	requiredRecords, requiredReceipts, requiredQuarantine, requiredCounters uint64
+	forbiddenRecords, forbiddenReceipts                                     uint64
 }
 
 func (e readinessExecutor) Do(ctx context.Context, query ch.Query) error {
 	results := query.Result.(proto.Results)
-	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.requiredQuarantine, e.forbiddenRecords, e.forbiddenReceipts} {
+	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.requiredQuarantine, e.requiredCounters, e.forbiddenRecords, e.forbiddenReceipts} {
 		results[index].Data.(*proto.ColUInt64).Append(value)
 	}
-	return query.OnResult(ctx, proto.Block{Columns: 5, Rows: 1})
+	return query.OnResult(ctx, proto.Block{Columns: 6, Rows: 1})
 }
 
 func (r *deadlineRecorder) Do(ctx context.Context, _ ch.Query) error {
@@ -88,16 +88,17 @@ func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) 
 }
 
 func TestNativeReadyRequiresStorageV2WithoutLegacyHashColumns(t *testing.T) {
-	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8}}
+	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9}}
 	if err := ready.Ready(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []readinessExecutor{
-		{requiredRecords: 4, requiredReceipts: 11, requiredQuarantine: 8},
-		{requiredRecords: 5, requiredReceipts: 10, requiredQuarantine: 8},
-		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 7},
-		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, forbiddenRecords: 1},
-		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, forbiddenReceipts: 1},
+		{requiredRecords: 4, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9},
+		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, requiredCounters: 9},
+		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 7, requiredCounters: 9},
+		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 8},
+		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenRecords: 1},
+		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenReceipts: 1},
 	} {
 		if err := (&NativeInserter{executor: test}).Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "not Storage V2") {
 			t.Fatalf("legacy/mixed schema was accepted: executor=%+v error=%v", test, err)
@@ -163,6 +164,32 @@ func TestNativeInserterWritesRecordsBeforeReceiptWithStableIdentity(t *testing.T
 		"supplier_remote_geo_country_id": "US", "supplier_remote_geo_city_id": "SFO", "supplier_geo_version": "supplier-geo-a",
 	} {
 		assertLowCardinalityString(t, recorder.queries[0].Input, name, want)
+	}
+}
+
+func TestNativeInserterWritesCounterOnlyDatagramBeforeReceipt(t *testing.T) {
+	batch := testEnrichedBatch(10)
+	batch.CounterRecords = []flowworker.InterfaceCounterRecord{{
+		EventTimeUnixMS: batch.ReceivedAt.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
+		SubAgentID: 7, SampleIndex: 2, RecordIndex: 1, IfIndex: 81, IfType: 6,
+		IfSpeed: 25_000_000_000, IfInOctets: 100, IfOutOctets: 200,
+	}}
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || len(blocks[0].Records) != 0 || len(blocks[0].CounterRecords) != 1 || blocks[0].Receipts[0].CounterRecordCount != 1 {
+		t.Fatalf("unexpected counter block: %+v", blocks)
+	}
+	recorder := &queryRecorder{}
+	if err := (&NativeInserter{executor: recorder}).InsertFlowBlock(context.Background(), blocks[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.queries) != 2 || !strings.HasPrefix(recorder.queries[0].Body, `INSERT INTO "sflow_interface_counters"`) || !strings.HasPrefix(recorder.queries[1].Body, `INSERT INTO "flow_ingest_receipts"`) {
+		t.Fatalf("unexpected counter insert sequence: %+v", recorder.queries)
+	}
+	if got := columnValue(recorder.queries[1].Input, "counter_record_count").(proto.ColUInt64).Row(0); got != 1 {
+		t.Fatalf("counter receipt count=%d", got)
 	}
 }
 
@@ -248,7 +275,12 @@ func TestNativeInserterWritesQuarantineBeforeReceipt(t *testing.T) {
 }
 
 func TestNativeInputColumnsMatchAuthoritativeMigration(t *testing.T) {
-	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))}, BatchLimits{})
+	batch := testEnrichedBatch(10, testEnrichedRecord(1, 100, 1_000))
+	batch.CounterRecords = []flowworker.InterfaceCounterRecord{{
+		EventTimeUnixMS: batch.ReceivedAt.UnixMilli(), TargetID: "target-a", DeviceID: "device-a",
+		IfIndex: 81, IfSpeed: 25_000_000_000, IfInOctets: 100, IfOutOctets: 200,
+	}}
+	blocks, err := PrepareBlocks([]*flowworker.EnrichedBatch{batch}, BatchLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,9 +289,14 @@ func TestNativeInputColumnsMatchAuthoritativeMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := buildReceiptInput(blocks[0])
+	counters, err := buildCounterInput(blocks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
 	schema := readClickHouseMigrations(t)
 	assertColumnsMatchDDL(t, schema, "flow_records", records)
 	assertColumnsMatchDDL(t, schema, "flow_ingest_receipts", receipt)
+	assertColumnsMatchDDL(t, schema, "sflow_interface_counters", counters)
 }
 
 func TestReceiptInputCarriesDeterministicAuditMetadata(t *testing.T) {
@@ -368,6 +405,9 @@ func assertColumnsMatchDDL(t *testing.T, schema, table string, input proto.Input
 	staging := table + "_v2_staging"
 	start := strings.Index(schema, "CREATE TABLE watchdog_flow."+staging+" (")
 	if start < 0 {
+		start = strings.Index(schema, "CREATE TABLE IF NOT EXISTS watchdog_flow."+table+" (")
+	}
+	if start < 0 {
 		t.Fatalf("table %s not found", table)
 	}
 	section := schema[start:]
@@ -379,6 +419,14 @@ func assertColumnsMatchDDL(t *testing.T, schema, table string, input proto.Input
 	want := make([]string, 0, len(matches))
 	for _, match := range matches {
 		want = append(want, match[1])
+	}
+	if table == "flow_ingest_receipts" {
+		for index, name := range want {
+			if name == "record_count" {
+				want = append(want[:index+1], append([]string{"counter_record_count"}, want[index+1:]...)...)
+				break
+			}
+		}
 	}
 	got := make([]string, 0, len(input))
 	for _, column := range input {

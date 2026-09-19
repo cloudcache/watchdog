@@ -47,6 +47,33 @@ func TestDecodeAdapterMapsBindingAndAuthoritativeCounters(t *testing.T) {
 	}
 }
 
+func TestDecodeAdapterMapsSFlowInterfaceCountersWithoutFlowRecords(t *testing.T) {
+	receivedAt := time.Date(2026, 9, 19, 2, 5, 0, 0, time.UTC)
+	decoded := decodedFixture(receivedAt)
+	decoded.FlowType = goflowpb.FlowMessage_SFLOW_5
+	decoded.Records = nil
+	decoded.RecordMetadata = nil
+	decoded.CounterRecords = []flowstream.DecodedCounterRecord{{
+		SubAgentID: 7, SourceIDType: 0, SourceIDValue: 81, SampleSequence: 91,
+		SampleIndex: 2, RecordIndex: 1, IfIndex: 81, IfType: 6, IfSpeed: 25_000_000_000,
+		IfDirection: 1, IfStatus: 3, IfInOctets: 100, IfOutOctets: 200,
+	}}
+	adapter := DecodeAdapter{ResolveBinding: func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
+		return bindingFixture(), nil
+	}}
+	batch, err := adapter.Map(&kgo.Record{Topic: "raw", Partition: 2, Offset: 19}, decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Records) != 0 || len(batch.CounterRecords) != 1 {
+		t.Fatalf("unexpected mapped record counts: flow=%d counter=%d", len(batch.Records), len(batch.CounterRecords))
+	}
+	counter := batch.CounterRecords[0]
+	if counter.EventTimeUnixMS != receivedAt.UnixMilli() || counter.TargetID != "target-a" || counter.DeviceID != "device-a" || counter.IfIndex != 81 || counter.IfSpeed != 25_000_000_000 || counter.IfInOctets != 100 || counter.IfOutOctets != 200 || counter.SampleIndex != 2 || counter.RecordIndex != 1 {
+		t.Fatalf("unexpected mapped counter: %+v", counter)
+	}
+}
+
 func TestDecodeAdapterSamplingFallbackUnknownAndPreScaled(t *testing.T) {
 	domain, ifIndex := uint64(42), uint32(3)
 	tests := []struct {
